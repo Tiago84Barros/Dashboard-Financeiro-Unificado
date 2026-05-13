@@ -8,6 +8,7 @@ Motivo: isolamento de erros por módulo e compatibilidade futura com autenticaç
 import importlib
 
 import streamlit as st
+from core.auth import verificar_autenticacao
 from core.config import settings
 from design.componentes import mensagem_erro
 from design.tema import aplicar_tema
@@ -21,6 +22,11 @@ st.set_page_config(
 
 # ── Tema visual ───────────────────────────────────────────────────────────────
 aplicar_tema()
+
+# ── Autenticacao ──────────────────────────────────────────────────────────────
+# Para a execucao se APP_PASSWORD estiver configurado e o usuario nao autenticado.
+# Sem APP_PASSWORD configurado: libera acesso (modo dev local).
+verificar_autenticacao()
 
 # ── Mapeamento: label da sidebar → módulo em pages/ ──────────────────────────
 _ROTAS: dict[str, str] = {
@@ -40,7 +46,7 @@ _ROTAS: dict[str, str] = {
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📊 Dashboard Financeiro")
-    st.caption("v0.2.0 · Fase 2")
+    st.caption("v0.4.0 · Fase 4")
     st.divider()
 
     # Seção: Visão Geral
