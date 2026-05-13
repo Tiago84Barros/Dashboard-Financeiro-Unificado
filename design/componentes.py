@@ -225,3 +225,177 @@ def barra_progresso(
 
     st.progress(pct)
     st.caption(f"{v_str} de {t_str}")
+
+
+# ══════════════════════════════════════════════════════════════════
+# Alertas compactos (para dashboard — versão resumida)
+# ══════════════════════════════════════════════════════════════════
+
+def card_alerta_resumo(
+    tipo: str,
+    icone: str,
+    titulo: str,
+    descricao: str,
+    modulo: str = "",
+) -> None:
+    """
+    Card compacto de alerta para o Dashboard Geral.
+    Diferente do card completo de pages/alertas.py — mais denso e sem ação.
+
+    tipo: 'sucesso' | 'alerta' | 'erro' | 'info'
+    """
+    paleta_borda = {
+        "sucesso": "#00C896",
+        "alerta":  "#F6C90E",
+        "erro":    "#FC5C7D",
+        "info":    "#4A9EFF",
+    }
+    paleta_fundo = {
+        "sucesso": "rgba(0,200,150,0.06)",
+        "alerta":  "rgba(246,201,14,0.06)",
+        "erro":    "rgba(252,92,125,0.06)",
+        "info":    "rgba(74,158,255,0.06)",
+    }
+    borda = paleta_borda.get(tipo, "#4A9EFF")
+    fundo = paleta_fundo.get(tipo, "rgba(74,158,255,0.06)")
+    modulo_html = (
+        f'<div style="font-size:0.72rem;color:#4A5568;margin-top:4px">📁 {modulo}</div>'
+        if modulo else ""
+    )
+    st.markdown(
+        f"""<div style="
+            background:{fundo};
+            border-left:3px solid {borda};
+            border-radius:0 8px 8px 0;
+            padding:10px 14px;
+            margin-bottom:8px;
+        ">
+            <div style="font-size:0.92rem;font-weight:600;color:#E2E8F0">
+                {icone} {titulo}
+            </div>
+            <div style="font-size:0.80rem;color:#9CA3AF;margin-top:3px">
+                {descricao}
+            </div>
+            {modulo_html}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
+# Próximos passos (ações recomendadas numeradas)
+# ══════════════════════════════════════════════════════════════════
+
+def card_proximo_passo(
+    numero: int,
+    titulo: str,
+    descricao: str,
+    urgencia: str = "media",
+    modulo: str = "",
+) -> None:
+    """
+    Card de próximo passo financeiro com número, urgência e módulo-destino.
+
+    urgencia: 'alta' | 'media' | 'baixa'
+    """
+    cores_urgencia = {
+        "alta":  ("#FC5C7D", "Alta"),
+        "media": ("#F6C90E", "Média"),
+        "baixa": ("#4A9EFF", "Baixa"),
+    }
+    cor, label_urgencia = cores_urgencia.get(urgencia, cores_urgencia["media"])
+    modulo_html = (
+        f'<span style="color:#4A5568;font-size:0.72rem">→ {modulo}</span>'
+        if modulo else ""
+    )
+    st.markdown(
+        f"""<div style="
+            display:flex;
+            gap:14px;
+            align-items:flex-start;
+            padding:10px 14px;
+            background:#1A1F2E;
+            border:1px solid #2D3748;
+            border-radius:10px;
+            margin-bottom:8px;
+        ">
+            <div style="
+                min-width:32px;height:32px;
+                background:{cor};
+                color:#0E1117;
+                border-radius:50%;
+                display:flex;align-items:center;justify-content:center;
+                font-weight:800;font-size:0.9rem;
+                flex-shrink:0;margin-top:2px;
+            ">{numero}</div>
+            <div>
+                <div style="font-size:0.92rem;font-weight:600;color:#E2E8F0">
+                    {titulo}
+                    <span style="
+                        font-size:0.68rem;font-weight:600;
+                        color:{cor};margin-left:8px;
+                        vertical-align:middle;
+                    ">{label_urgencia}</span>
+                </div>
+                <div style="font-size:0.80rem;color:#9CA3AF;margin-top:3px">
+                    {descricao}
+                </div>
+                {modulo_html}
+            </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
+# Score de saúde financeira
+# ══════════════════════════════════════════════════════════════════
+
+def score_saude(score: int, label: str = "Saúde Financeira") -> None:
+    """
+    Exibe o score de saúde financeira (0–100) com cor e classificação.
+
+    0–39  → Crítico  (vermelho)
+    40–59 → Atenção  (amarelo)
+    60–79 → Bom      (azul)
+    80–100→ Ótimo    (verde)
+    """
+    if score >= 80:
+        cor, classificacao = "#00C896", "Ótimo"
+    elif score >= 60:
+        cor, classificacao = "#4A9EFF", "Bom"
+    elif score >= 40:
+        cor, classificacao = "#F6C90E", "Atenção"
+    else:
+        cor, classificacao = "#FC5C7D", "Crítico"
+
+    st.markdown(
+        f"""<div style="
+            text-align:center;
+            background:#1A1F2E;
+            border:1px solid #2D3748;
+            border-radius:12px;
+            padding:20px 16px;
+        ">
+            <div style="font-size:0.72rem;font-weight:600;text-transform:uppercase;
+                        letter-spacing:0.08em;color:#718096;margin-bottom:8px">
+                {label}
+            </div>
+            <div style="font-size:3rem;font-weight:800;color:{cor};line-height:1">
+                {score}
+            </div>
+            <div style="font-size:0.85rem;font-weight:600;color:{cor};margin-top:4px">
+                {classificacao}
+            </div>
+            <div style="
+                background:#2D3748;border-radius:4px;height:6px;
+                margin-top:12px;overflow:hidden;
+            ">
+                <div style="
+                    background:{cor};width:{score}%;height:100%;
+                    border-radius:4px;transition:width 0.5s;
+                "></div>
+            </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
