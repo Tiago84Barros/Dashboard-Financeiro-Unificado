@@ -22,8 +22,8 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 | **4.0** | Estratégia e documentação | ✅ Concluída |
 | **4.1** | Auditoria dos bancos atuais | ✅ Concluída |
 | **4.2** | Modelo canônico | ✅ Concluída |
-| **4.3** | Scripts SQL não destrutivos | ✅ Concluída (aplicação direta autorizada) |
-| **4.4** | Revisão humana dos scripts | ✅ Concluída (autorização explícita do proprietário) |
+| **4.3** | Scripts SQL não destrutivos | ✅ Concluída |
+| **4.4** | Revisão humana dos scripts | ✅ Concluída — scripts aprovados com ajustes |
 | **4.5** | Aplicação manual no Supabase | ✅ Concluída — 22 tabelas + RLS + role criados |
 | **4.6** | Scripts de migração ETL | ⏳ Próxima |
 | **4.7** | Migração controlada | ⏳ Pendente |
@@ -258,6 +258,35 @@ não estiver configurado — zero regressão.
 | DM-012 | Schema `public` vs. `app4` — aguarda resultado da Fase 4.1 (auditoria) |
 
 **Critério para avançar para Fase 4.3:** proprietário aprova o modelo canônico e as decisões DM-001 / DM-012.
+
+---
+
+## Fase 4.4 — Revisão Humana dos Scripts SQL (✅ Concluída em 2026-05-13)
+
+**Análise estática completa de todos os 8 scripts SQL da Fase 4.3.**
+**Decisão: ⚠️ APROVADO COM AJUSTES — nenhum bloqueador para execução.**
+
+| Categoria | Resultado |
+|-----------|:---------:|
+| Comandos destrutivos | ✅ Zero |
+| Credenciais | ✅ Zero |
+| Primary Keys (22/22) | ✅ |
+| `user_id` em tabelas pessoais | ✅ |
+| Lógica das views | ✅ |
+| Problemas críticos | ✅ Zero |
+| Problemas médios | ⚠️ 5 (não bloqueadores) |
+| Problemas baixos | ⚠️ 5 (melhorias opcionais) |
+
+**Documentação:**
+- `docs/fase_4_4_revisao_humana_sql.md` — relatório completo com todos os achados
+- `docs/fase_4_4_plano_correcao_sql.md` — SQL de correção dos 5 problemas médios (arquivo 009)
+
+**Principais ajustes a aplicar antes da Fase 4.6 (via `009_schema_amendments.sql`):**
+- M01: `transactions.account_id ON DELETE RESTRICT` (proteção contra órfãos)
+- M02: FKs para `assets` com `ON DELETE RESTRICT`
+- M03: Policy INSERT para `profiles` (para uso futuro via API)
+- M04: Refatorar `categories_write_owner` para não sobrepor SELECT
+- M05: Corrigir exemplo 'digital_bank' no 008 (não está no CHECK constraint)
 
 ---
 
