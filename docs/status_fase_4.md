@@ -4,6 +4,7 @@
 > Versão: v0.4.0
 > ruff: All checks passed!
 > Startup: HTTP 200 ✅
+> Atualizado em: 2026-05-13 — estratégia de banco revisada (plano gratuito Supabase)
 
 ---
 
@@ -161,18 +162,91 @@ não estiver configurado — zero regressão.
 
 ---
 
+## ⚠️ Revisão de Estratégia — Banco Supabase Unificado (plano gratuito)
+
+> Atualização pós-criação de `docs/estrategia_supabase_unificado_plano_gratuito.md`
+
+### Contexto da mudança
+
+O plano gratuito do Supabase permite no máximo **2 projetos ativos**.
+Os dois projetos já existentes são:
+- **Dashboard Financeiro** (`finapp-prod` / `finapp-dev`) — projetado como agregador
+- **Controle Financeiro** — transações, categorias, orçamentos
+
+Criar um terceiro projeto para o App 4 não é possível sem upgrade para plano pago.
+
+### Decisão D01 — Revisada
+
+| | Antes | Depois |
+|---|---|---|
+| Projeto alvo | `finapp-dev` (novo projeto dedicado) | **Dashboard Financeiro** (projeto existente) |
+| Justificativa | Isolamento total | Aproveitamento do plano gratuito; projeto já arquitetado como agregador |
+
+### Estratégia adotada
+
+**Opção A — Usar o projeto "Dashboard Financeiro" como banco unificado.**
+
+- Schema próprio do App 4 criado via `CREATE SCHEMA IF NOT EXISTS app4`
+- Coexistência segura com os dados dos apps Next.js
+- Role `app4_reader` com `SELECT` apenas nas tabelas do App 4
+- Projeto "Controle Financeiro" torna-se fonte de migração → depois staging do App 3
+
+### Fases de execução (P0–P7)
+
+| Fase | Nome | Ação |
+|------|------|------|
+| P0 | Backup | Export `.sql` de ambos os projetos antes de qualquer mudança |
+| P1 | Auditoria de schema | Mapear tabelas existentes no Dashboard Financeiro |
+| P2 | Criação do schema | `CREATE SCHEMA IF NOT EXISTS app4` + DDL 10 tabelas (sem DROP) |
+| P3 | Migração Controle Financeiro | ETL somente-leitura do projeto Controle Financeiro |
+| P4 | Migração SQLite investimentos | `SOURCE_DB_APP2` → `importar_app2_investimentos()` |
+| P5 | Validação | Contagem de linhas, spot checks, testes de queries |
+| P6 | Chaveamento gradual | `MOCK_MODE=false` + `SUPABASE_UNIFICADO_URL` configurado |
+| P7 | Repropósito | Controle Financeiro vira staging exclusivo do App 3 |
+
+**Regra inviolável:** nenhum `DROP TABLE`, `TRUNCATE` ou `DELETE` sem backup confirmado
+e autorização manual explícita. Ver `docs/estrategia_supabase_unificado_plano_gratuito.md`.
+
+### Variáveis de ambiente — nomes propostos
+
+```ini
+# Banco unificado (App 4 usa como destino)
+SUPABASE_UNIFICADO_URL=""
+SUPABASE_UNIFICADO_ANON_KEY=""
+SUPABASE_UNIFICADO_SERVICE_ROLE_KEY=""   # somente local, nunca expor
+
+# Fonte de migração (Controle Financeiro → leitura)
+SUPABASE_ORIGEM_CONTROLE_URL=""
+SUPABASE_ORIGEM_CONTROLE_ANON_KEY=""
+```
+
+Prioridade de `db_url` em `core/config.py` (a implementar):
+
+```python
+@property
+def db_url(self) -> str:
+    return (
+        self.SUPABASE_UNIFICADO_URL
+        or self.DATABASE_URL
+        or self.SUPABASE_DB_URL
+        or ""
+    )
+```
+
+---
+
 ## Próximo Passo: Configurar Banco
 
-Para ativar dados reais:
+Para ativar dados reais (sequência atualizada):
 
-1. No Supabase (projeto `finapp-dev`), executar o SQL da aba Setup das Configurações
-   para criar o role `app4_reader`
-2. Copiar `.env.example` para `.env`
-3. Preencher `DATABASE_URL` com a connection string do pooler (Transaction Mode)
-4. Preencher `OWNER_USER_ID` com o UUID do usuário: `SELECT id FROM usuarios LIMIT 1;`
-5. Alterar `MOCK_MODE=false` no `.env`
-6. Executar "Criar tabelas" na aba Banco de Dados das Configurações
-7. Implementar `_visao_geral_real()` em `core/financeiro.py`
+1. Executar backup `.sql` do projeto Dashboard Financeiro no Supabase (P0)
+2. Auditar tabelas existentes no projeto Dashboard Financeiro (P1)
+3. Criar schema `app4` e as 10 tabelas via aba "Banco de Dados" das Configurações (P2)
+4. Configurar `.env` com `SUPABASE_UNIFICADO_URL` + `OWNER_USER_ID` + `MOCK_MODE=false`
+5. Criar role `app4_reader` executando o SQL da aba "📋 Setup" das Configurações
+6. Implementar `_visao_geral_real()` em `core/financeiro.py`
+
+> Sequência completa: `docs/estrategia_supabase_unificado_plano_gratuito.md`
 
 ---
 
