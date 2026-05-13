@@ -87,7 +87,7 @@ COMMENT ON COLUMN categories.color   IS 'Hex color no formato #RRGGBB.';
 CREATE TABLE IF NOT EXISTS transactions (
     id                  UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id             UUID          NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    account_id          UUID          NOT NULL REFERENCES accounts(id),
+    account_id          UUID          NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
     card_id             UUID          REFERENCES cards(id),
     category_id         UUID          REFERENCES categories(id),
     description         VARCHAR(255)  NOT NULL,

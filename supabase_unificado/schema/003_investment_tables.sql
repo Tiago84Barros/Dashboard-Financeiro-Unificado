@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS portfolio_positions (
     id             UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id        UUID          NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
     portfolio_id   UUID          NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
-    asset_id       UUID          NOT NULL REFERENCES assets(id),
+    asset_id       UUID          NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
     quantity       NUMERIC(18,8) NOT NULL,
     average_price  NUMERIC(15,6) NOT NULL,
     total_invested NUMERIC(15,2) NOT NULL,
@@ -83,7 +83,7 @@ COMMENT ON COLUMN portfolio_positions.updated_at    IS 'Última atualização. P
 CREATE TABLE IF NOT EXISTS investment_transactions (
     id               UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id          UUID          NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    asset_id         UUID          NOT NULL REFERENCES assets(id),
+    asset_id         UUID          NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
     portfolio_id     UUID          REFERENCES portfolios(id),
     type             VARCHAR(10)   NOT NULL CHECK (type IN ('buy','sell')),
     quantity         NUMERIC(18,8) NOT NULL,
@@ -106,7 +106,7 @@ COMMENT ON COLUMN investment_transactions.unit_price   IS 'Preço unitário na d
 CREATE TABLE IF NOT EXISTS dividends (
     id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         UUID          NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    asset_id        UUID          NOT NULL REFERENCES assets(id),
+    asset_id        UUID          NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
     type            VARCHAR(30)   NOT NULL
                       CHECK (type IN ('dividend','jcp','reit_income','amortization','other')),
     amount_per_unit NUMERIC(15,6) NOT NULL,

@@ -271,8 +271,10 @@ END; $$;
 -- ────────────────────────────────────────────────────────────
 -- NOTA: financial_institutions
 -- Cadastrar via Supabase Table Editor ou inserção manual.
+-- Valores válidos para type: 'bank', 'broker', 'fintech', 'insurance'
+-- (Nubank é 'fintech', não 'digital_bank' — este valor não existe no CHECK)
 -- Exemplo:
 --   INSERT INTO financial_institutions (name, type, bank_code)
---   VALUES ('Nubank', 'digital_bank', '260')
+--   VALUES ('Nubank', 'fintech', '260')
 --   ON CONFLICT DO NOTHING;
 -- ────────────────────────────────────────────────────────────

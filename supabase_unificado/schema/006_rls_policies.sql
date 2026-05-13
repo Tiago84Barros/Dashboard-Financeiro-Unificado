@@ -89,6 +89,17 @@ DO $$ BEGIN
     END IF;
 END; $$;
 
+-- M03: policy INSERT para profiles — necessária para criação via Supabase API
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies
+                   WHERE schemaname='public' AND tablename='profiles'
+                   AND policyname='profiles_owner_insert') THEN
+        CREATE POLICY profiles_owner_insert ON profiles
+            FOR INSERT
+            WITH CHECK (id = auth.uid());
+    END IF;
+END; $$;
+
 -- ── accounts ─────────────────────────────────────────────────
 DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policies
@@ -122,14 +133,33 @@ DO $$ BEGIN
     END IF;
 END; $$;
 
--- Escrita: apenas categorias do próprio usuário
+-- M04: escrita separada em INSERT / UPDATE / DELETE para não sobrepor a policy SELECT acima
 DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policies
                    WHERE schemaname='public' AND tablename='categories'
                    AND policyname='categories_write_owner') THEN
         CREATE POLICY categories_write_owner ON categories
-            FOR ALL USING (user_id = auth.uid())
+            FOR INSERT
             WITH CHECK (user_id = auth.uid());
+    END IF;
+END; $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies
+                   WHERE schemaname='public' AND tablename='categories'
+                   AND policyname='categories_update_owner') THEN
+        CREATE POLICY categories_update_owner ON categories
+            FOR UPDATE USING (user_id = auth.uid())
+            WITH CHECK (user_id = auth.uid());
+    END IF;
+END; $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies
+                   WHERE schemaname='public' AND tablename='categories'
+                   AND policyname='categories_delete_owner') THEN
+        CREATE POLICY categories_delete_owner ON categories
+            FOR DELETE USING (user_id = auth.uid());
     END IF;
 END; $$;
 
