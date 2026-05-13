@@ -261,6 +261,32 @@ não estiver configurado — zero regressão.
 
 ---
 
+## Fase 4.3 — Scripts SQL Não Destrutivos (✅ Concluída em 2026-05-13)
+
+**8 arquivos SQL versionados, idempotentes e não destrutivos criados em `supabase_unificado/schema/`.**
+
+| Arquivo | Conteúdo |
+|---------|---------|
+| `001_core_tables.sql` | `profiles`, `financial_institutions` |
+| `002_financial_tables.sql` | `accounts`, `cards`, `categories`, `transactions`, `budgets`, `financial_goals`, `debts` |
+| `003_investment_tables.sql` | `assets`, `portfolios`, `portfolio_positions`, `investment_transactions`, `dividends`, `asset_quotes`, `benchmarks`, `benchmark_quotes` |
+| `004_import_migration_tables.sql` | `alerts`, `user_settings`, `import_batches`, `import_logs`, `migration_source_map` |
+| `005_indexes.sql` | ~30 índices com `CREATE INDEX IF NOT EXISTS` |
+| `006_rls_policies.sql` | Role `app4_reader`, RLS em 15 tabelas, 17 policies idempotentes |
+| `007_views.sql` | 6 views analíticas: `v_account_balance`, `v_monthly_cashflow`, `v_category_spending_mtd`, `v_budget_usage_mtd`, `v_investment_summary`, `v_net_worth` |
+| `008_seed_reference_data.sql` | 5 benchmarks + 23 categorias do sistema (`user_id = NULL`) |
+| `README_EXECUCAO_SQL.md` | Guia de execução, checklist pré/pós, alertas de segurança |
+
+**Validação textual (zero ocorrências em todos os 8 arquivos):**
+`DROP TABLE` · `DROP SCHEMA` · `TRUNCATE` · `DELETE` · `DROP INDEX` · credenciais/connection strings
+
+**Documentação:** `docs/fase_4_3_scripts_sql_nao_destrutivos.md`
+
+> Scripts são idempotentes — seguros para executar múltiplas vezes.
+> Executar no SQL Editor do Supabase em ordem numérica (001 → 008).
+
+---
+
 ## Fase 4.5 — Aplicação do Schema (✅ Concluída em 2026-05-13)
 
 **Aplicado diretamente via Python/SQLAlchemy com autorização explícita do proprietário.**
