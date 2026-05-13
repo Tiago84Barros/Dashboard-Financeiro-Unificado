@@ -1,0 +1,11 @@
+# Backups do banco de dados — nunca commitar
+# Arquivos .sql e .dump podem conter dados pessoais reais
+
+*.sql
+*.dump
+*.gz
+*.tar
+*.zip
+
+# Manter o diretório no git (via este .gitignore)
+# Não remover este arquivo

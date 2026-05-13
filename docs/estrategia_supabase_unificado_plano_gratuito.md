@@ -1,437 +1,224 @@
 # Estratégia Supabase Unificado — Plano Gratuito
 
-> Data: 2026-05-13
-> Contexto: Conta Supabase gratuita com limite de 2 projetos.
-> Projetos existentes: "Dashboard Financeiro" e "Controle Financeiro".
-> Objetivo: Usar um dos dois como banco unificado para o App 4 (Dashboard-Financeiro-Unificado).
+> Documento: `docs/estrategia_supabase_unificado_plano_gratuito.md`
+> Criado em: 2026-05-13 | Atualizado em: 2026-05-13 (Fase 4.0 — decisão finalizada)
+> Status: **Decisão tomada e documentada**
+> Fases detalhadas: `docs/banco_unificado_fases.md`
+> Regras de segurança: `docs/banco_unificado_regras_de_seguranca.md`
 
 ---
 
 ## REGRA DE SEGURANÇA ABSOLUTA
 
 > **Nenhum script, comando ou instrução neste documento pode conter ou executar:**
->
-> - `DROP TABLE`
-> - `DROP SCHEMA`
-> - `TRUNCATE`
-> - `DELETE` (sem cláusula `WHERE` explícita e autorização manual)
+> - `DROP TABLE` · `DROP SCHEMA` · `TRUNCATE` · `DELETE` sem WHERE explícito e autorização manual
 > - `ALTER TABLE ... DROP COLUMN`
-> - Qualquer operação destrutiva irreversível
+> - Qualquer operação destrutiva ou irreversível
 >
 > **Toda operação destrutiva exige:**
 > 1. Backup confirmado e verificado
-> 2. Aprovação manual explícita do proprietário
+> 2. Aprovação manual explícita e escrita do proprietário
 > 3. Execução em ambiente de teste primeiro
 > 4. Registro no log de mudanças
 
 ---
 
-## Contexto do Ecossistema
+## Decisão Arquitetural
 
-Conforme documentado em `MAPA_SUPABASE.md` e `MAPA_GERAL_DOS_APPS.md`:
+**O projeto Supabase do Dashboard Financeiro é o banco unificado do App 4.**
 
-| Projeto Supabase | App Principal | Domínio de Dados |
-|-----------------|---------------|-----------------|
-| **Dashboard Financeiro** | App 1 (agregador) | Visão geral: saldo, fluxo, patrimônio, alertas. Consome App 2 e App 3 |
-| **Controle Financeiro** | App 3 (produtor) | Transações, categorias, orçamentos, metas |
+Esta decisão foi tomada em 2026-05-13 e é definitiva para o ciclo atual de desenvolvimento.
+Não haverá criação de terceiro projeto Supabase (plano gratuito = máximo 2 projetos).
 
-O App 4 (Dashboard-Financeiro-Unificado) precisa de todas as 10 tabelas do schema unificado:
-`usuarios · contas · categorias · transacoes · orcamentos · metas · ativos · operacoes · proventos · cotacoes`
-
----
-
-## Comparação das Opções
-
-### Opção A — Dashboard Financeiro como banco unificado
-
-O projeto "Dashboard Financeiro" passa a ser o banco central do App 4.
-O "Controle Financeiro" vira fonte de migração e depois backup/teste.
-
-#### Vantagens
-
-| # | Vantagem |
-|---|---------|
-| A1 | App 1 (Dashboard Financeiro) foi **projetado como agregador** — exatamente o papel do App 4 |
-| A2 | Schema planejado já inclui todos os 10 domínios (transações, investimentos, controle) |
-| A3 | Alinhamento estratégico: App 4 e App 1 têm o mesmo propósito de visão unificada |
-| A4 | Tabelas de investimentos (`ativos`, `operacoes`, `proventos`, `cotacoes`) já fazem parte do design original deste projeto |
-| A5 | Se App 1 (Next.js) for construído no futuro, pode reutilizar o mesmo banco sem migração |
-| A6 | A conexão futura `App 4 → finapp-prod` já está prevista em `MAPA_SUPABASE.md` |
-
-#### Riscos
-
-| # | Risco | Probabilidade | Severidade |
-|---|-------|:---:|:---:|
-| RA1 | Schema atual pode ter tabelas incompletas ou divergentes da modelagem planejada | Média | Médio |
-| RA2 | Dados existentes no projeto podem colidir com o novo schema unificado | Baixa | Alto |
-| RA3 | Qualquer erro de configuração afeta também o App 1 futuro | Baixa | Médio |
-
-#### Impacto nos apps existentes
-
-- **App 1 (Dashboard Financeiro — Next.js):** Em planejamento — sem código em produção.
-  Impacto praticamente nulo: schema unificado beneficia o App 1 quando for construído.
-- **App 3 (Controle Financeiro — Next.js):** Não conectado a este projeto. Sem impacto.
-- **App 4 (Streamlit):** Receptor — esse é o objetivo da mudança. Impacto positivo.
-
-#### Complexidade de migração
-
-**Baixa.** O projeto Dashboard Financeiro já tem o schema correto por design. A migração consiste em:
-1. Adicionar as tabelas faltantes (se alguma não existir ainda)
-2. Migrar dados do projeto Controle Financeiro para cá
-3. Conectar o App 4 via `DATABASE_URL`
+| Aspecto | Decisão |
+|---------|---------|
+| Banco unificado | Projeto Supabase **Dashboard Financeiro** |
+| Fonte de migração | Projeto Supabase **Controle Financeiro** (temporário) |
+| Dados de investimentos | SQLite local do Dashboard-Investimentos (migração futura) |
+| Terceiro projeto Supabase | ❌ Não criar |
+| Plano pago | ❌ Não necessário |
 
 ---
 
-### Opção B — Controle Financeiro como banco unificado
+## Por Que o Projeto Dashboard Financeiro
 
-O projeto "Controle Financeiro" passa a ser o banco central do App 4.
-O "Dashboard Financeiro" vira fonte de migração e depois backup/teste.
+### 1. Alinhamento de propósito
 
-#### Vantagens
+O App 4 (Dashboard-Financeiro-Unificado) é, por definição, um **agregador de visão financeira**.
+O projeto Supabase "Dashboard Financeiro" foi arquitetado exatamente para este papel —
+consolidar dados de múltiplas fontes em uma visão única.
 
-| # | Vantagem |
-|---|---------|
-| B1 | Dados do Controle Financeiro (transações, orçamentos) já estão neste projeto — sem migração para a parte financeira |
-| B2 | App 3 (Controle Financeiro — Next.js) continuaria conectado ao mesmo banco sem precisar migrar |
+Usar o banco do agregador como banco unificado é a escolha arquiteturalmente correta.
 
-#### Riscos
+### 2. Schema por design
 
-| # | Risco | Probabilidade | Severidade |
-|---|---------|:---:|:---:|
-| RB1 | Schema do Controle Financeiro **não foi projetado para investimentos** — faltam `ativos`, `operacoes`, `proventos`, `cotacoes` | Alta | Alto |
-| RB2 | Adicionar tabelas de investimentos em um schema de controle cria mistura de domínios e dificulta manutenção | Alta | Médio |
-| RB3 | Conflito futuro: App 3 (Next.js) e App 4 (Streamlit) usando o mesmo banco com lógicas diferentes | Média | Alto |
-| RB4 | App 1 ficaria sem banco, pois o projeto mais alinhado (Dashboard Financeiro) passaria a ser apenas origem de migração | Alta | Alto |
-| RB5 | Desvio arquitetural: o banco do App 3 não deve ser o banco central — ele é um **produtor**, não um **agregador** | Alta | Alto |
-
-#### Impacto nos apps existentes
-
-- **App 3 (Controle Financeiro — Next.js):** Compartilhamento de banco com o App 4 cria acoplamento indesejado.
-  Mudanças de schema do App 4 podem afetar o App 3 e vice-versa.
-- **App 1 (Dashboard Financeiro):** Perde seu banco natural — precisaria de uma terceira decisão futura.
-- **App 4 (Streamlit):** Funciona, mas carrega dívida técnica por estar em banco errado por design.
-
-#### Complexidade de migração
-
-**Alta.** Requer:
-1. Adicionar tabelas de investimentos em schema de controle (desvio arquitetural)
-2. Migrar dados do Dashboard Financeiro para o Controle Financeiro (sentido contrário ao natural)
-3. Resolver conflitos de naming e FK entre os dois domínios
-4. Aceitar que App 3 e App 4 dividem banco — risco de RLS conflitante
-
----
-
-## Comparação Resumida
-
-| Critério | Opção A (Dashboard Financeiro) | Opção B (Controle Financeiro) |
-|----------|:---:|:---:|
-| Alinhamento arquitetural | ✅ Alto — banco do agregador | ⚠️ Baixo — banco do produtor |
-| Schema completo (10 tabelas) | ✅ Já planejado | ❌ Faltam 4 tabelas de investimento |
-| Risco de perda de dados | 🟡 Baixo | 🔴 Médio (migração no sentido errado) |
-| Impacto no App 3 | ✅ Nenhum | 🔴 Alto — App 3 divide banco |
-| Impacto no App 1 futuro | ✅ Positivo — banco pronto para App 1 | 🔴 Negativo — App 1 fica sem banco |
-| Complexidade de migração | 🟡 Baixa | 🔴 Alta |
-| Facilidade de manutenção futura | ✅ Alta | 🔴 Baixa — mistura de domínios |
-| Dívida técnica | Nenhuma | Alta |
-
----
-
-## Recomendação: Opção A
-
-**Usar o projeto "Dashboard Financeiro" como banco unificado.**
-
-**Justificativa principal:**
-
-1. **Alinhamento de propósito:** App 4 e App 1 são ambos agregadores de visão financeira.
-   O banco do App 1 foi projetado exatamente para essa função.
-
-2. **Schema por design:** A modelagem em `modelagem_inicial.md` já inclui todas as 10 tabelas
-   necessárias. Não é necessário "forçar" tabelas de investimento em um banco de controle.
-
-3. **Caminho de upgrade natural:** Quando o App 1 (Next.js) for construído, ele usa o mesmo banco —
-   sem custo adicional de migração, sem terceiro projeto Supabase.
-
-4. **Isolamento do App 3:** O projeto Controle Financeiro pode continuar existindo como banco
-   do App 3 sem interferência, ou ser reaproveitado como ambiente de teste/backup.
-
-5. **Conformidade com CLAUDE_INSTRUCTIONS.md:** A decisão respeita a regra
-   "unificação deve acontecer por módulos, não de uma vez só" e
-   "nenhuma alteração sem identificar qual app será impactado".
-
----
-
-## Plano de Execução em Fases
-
-> **Princípio:** nenhuma fase avança sem a anterior estar concluída e validada.
-> **Critério de parada:** qualquer erro inesperado interrompe o plano.
-
----
-
-### Fase P0 — Backup (pré-requisito absoluto)
-
-**Objetivo:** garantir que nenhum dado seja perdido antes de qualquer alteração.
-
-| Ação | Como | Onde guardar |
-|------|------|-------------|
-| Exportar dump completo do projeto Dashboard Financeiro | Supabase Dashboard → Settings → Database → Backups → Download | `backups/dump_dashboard_financeiro_YYYYMMDD.sql` |
-| Exportar dump completo do projeto Controle Financeiro | Idem | `backups/dump_controle_financeiro_YYYYMMDD.sql` |
-| Verificar integridade dos dumps | Abrir arquivo, confirmar que não está vazio ou corrompido | Local |
-| Registrar versão atual do schema de cada projeto | Listar tabelas e colunas antes de qualquer mudança | `docs/schema_dashboard_financeiro_antes.txt` |
-
-**Critério de conclusão:** ambos os dumps existem, têm tamanho > 0 e foram abertos com sucesso.
-
-**🚫 Não avançar sem este passo concluído.**
-
----
-
-### Fase P1 — Auditoria dos Schemas Existentes
-
-**Objetivo:** entender exatamente o que existe em cada projeto antes de qualquer mudança.
-
-SQL para executar no SQL Editor de cada projeto (somente leitura):
-
-```sql
--- Lista todas as tabelas e colunas do projeto
-SELECT
-    table_name,
-    column_name,
-    data_type,
-    is_nullable,
-    column_default
-FROM information_schema.columns
-WHERE table_schema = 'public'
-ORDER BY table_name, ordinal_position;
-```
-
-```sql
--- Lista todas as tabelas com contagem de registros
-SELECT
-    relname AS tabela,
-    n_live_tup AS registros_estimados
-FROM pg_stat_user_tables
-ORDER BY n_live_tup DESC;
-```
-
-```sql
--- Lista todas as policies RLS
-SELECT
-    tablename,
-    policyname,
-    cmd,
-    qual
-FROM pg_policies
-WHERE schemaname = 'public'
-ORDER BY tablename;
-```
-
-**Documentar:**
-- Quais tabelas existem em cada projeto
-- Quais colunas cada tabela tem
-- Quais tabelas têm dados reais
-- Quais RLS policies estão ativas
-- Divergências em relação à `modelagem_inicial.md`
-
----
-
-### Fase P2 — Criação do Schema Unificado (sem apagar nada)
-
-**Objetivo:** criar as tabelas do schema unificado no projeto Dashboard Financeiro,
-**sem remover nenhuma tabela existente**.
-
-Regra estrita:
-- Usar `CREATE TABLE IF NOT EXISTS` — nunca `DROP TABLE` antes
-- Usar `ADD COLUMN IF NOT EXISTS` para colunas novas em tabelas existentes
-- Tabelas antigas permanecem intactas até validação completa da Fase P4
-
-Sequência de criação (respeita dependências FK):
-```
-1. usuarios          ← base de tudo
-2. contas            ← depende de usuarios
-3. categorias        ← depende de usuarios (self-referencing pai_id)
-4. transacoes        ← depende de usuarios, contas, categorias
-5. orcamentos        ← depende de usuarios, categorias
-6. metas             ← depende de usuarios
-7. ativos            ← independente (dados de mercado)
-8. operacoes         ← depende de usuarios, ativos
-9. proventos         ← depende de usuarios, ativos
-10. cotacoes         ← depende de ativos
-```
-
-O DDL já está em `etl/schema_setup.py` do App 4 — pode ser executado via
-"Criar tabelas" na aba Configurações do App 4 após configurar `DATABASE_URL`.
-
-**Verificação pós-criação:**
-```sql
--- Confirmar que todas as 10 tabelas existem
-SELECT table_name
-FROM information_schema.tables
-WHERE table_schema = 'public'
-  AND table_name IN (
-    'usuarios','contas','categorias','transacoes',
-    'orcamentos','metas','ativos','operacoes','proventos','cotacoes'
-  )
-ORDER BY table_name;
--- Resultado esperado: 10 linhas
-```
-
----
-
-### Fase P3 — Migração de Dados do Controle Financeiro
-
-**Objetivo:** copiar os dados existentes no projeto Controle Financeiro para o
-banco unificado (Dashboard Financeiro), sem apagar a origem.
-
-Estratégia: **INSERT ... ON CONFLICT DO NOTHING** — segura e idempotente.
-
-Ferramentas disponíveis:
-- `etl/importacao.py` → `ImportadorPostgres` com `importar_tabela_generica()`
-- `SOURCE_DB_CONTROLE` no `.env` aponta para o Controle Financeiro como origem
-
-**Ordem de migração:**
-1. `usuarios` (ou criar usuário manualmente no banco destino)
-2. `contas`
-3. `categorias`
-4. `transacoes`
-5. `orcamentos`
-6. `metas`
-
-**Regras de migração:**
-- Sempre com `dry_run=True` na primeira execução
-- Confirmar contagens antes e depois de cada tabela
-- Registrar resultado de cada etapa em `docs/log_migracao_YYYYMMDD.md`
-- Nunca executar na origem — apenas no destino
-
-**Verificação pós-migração:**
-```sql
--- Comparar contagens origem × destino por tabela
-SELECT 'transacoes' AS tabela, COUNT(*) AS total FROM transacoes
-UNION ALL
-SELECT 'orcamentos', COUNT(*) FROM orcamentos
-UNION ALL
-SELECT 'metas', COUNT(*) FROM metas;
--- Comparar com os mesmos números da fase P1
-```
-
----
-
-### Fase P4 — Migração de Dados de Investimentos (Dashboard-Investimentos SQLite)
-
-**Objetivo:** importar operações, proventos e ativos do banco SQLite do
-Dashboard-Investimentos (`investment_dashboard.db`).
-
-Ferramenta: `ImportadorPostgres` com `SOURCE_DB_APP2="sqlite:///..."`.
-
-Detalhes documentados em `docs/auditoria_dados_investimentos.md` (seção 9).
-
-Mapeamento:
-- `transactions` (SQLite) → `operacoes` (PostgreSQL)
-- `incomes` (SQLite) → `proventos` (PostgreSQL)
-- `assets` (SQLite) → `ativos` (PostgreSQL)
-
----
-
-### Fase P5 — Validação
-
-**Objetivo:** garantir que os dados migrados estão corretos antes de apontar o App 4.
-
-Checklist de validação:
+A modelagem em `modelagem_inicial.md` (Obsidian) já inclui as 10 tabelas necessárias:
 
 ```
-[ ] Contagem de registros bate entre origem e destino
-[ ] Todas as 10 tabelas existem no banco unificado
-[ ] Pelo menos 1 usuário existe em `usuarios`
-[ ] OWNER_USER_ID configurado no .env do App 4
-[ ] App 4 com MOCK_MODE=false consegue carregar dados
-[ ] Dashboard Geral exibe valores reais (não zeros)
-[ ] Nenhuma query retorna erro de FK violada
-[ ] RLS não bloqueia as queries do app4_reader
-[ ] Configurações → Banco de Dados mostra todos os badges verdes
+usuarios → contas → categorias → transacoes → orcamentos → metas
+ativos → operacoes → proventos → cotacoes
 ```
 
----
+Todas as 10 tabelas fazem sentido neste projeto. Nenhuma é um "remendo".
 
-### Fase P6 — Troca Gradual do App 4 para o Banco Unificado
+### 3. Caminho de upgrade natural
 
-**Objetivo:** ativar o banco real no App 4 em etapas, com rollback disponível.
+Quando o App 1 (Dashboard Financeiro — Next.js) for construído no futuro,
+ele usará este mesmo banco sem custo de migração adicional.
+O investimento feito agora beneficia dois apps.
 
-| Etapa | Ação | Rollback se falhar |
-|-------|------|-------------------|
-| P6.1 | Configurar `DATABASE_URL` no `.env` apontando para Dashboard Financeiro | Reverter para `MOCK_MODE=true` |
-| P6.2 | Setar `MOCK_MODE=false` | Voltar para `MOCK_MODE=true` |
-| P6.3 | Testar Dashboard Geral com dados reais | `MOCK_MODE=true` |
-| P6.4 | Implementar `_visao_geral_real()` em `core/financeiro.py` | Manter mock |
-| P6.5 | Habilitar demais módulos com dados reais (Fase 5, 6...) | Por módulo |
+### 4. Isolamento do App 3
 
----
+O projeto Controle Financeiro continua independente.
+O App 3 (Controle Financeiro — Next.js), quando construído, poderá usar
+seu próprio projeto Supabase sem interferência do App 4.
 
-### Fase P7 — Desativação ou Reaproveitamento do Controle Financeiro
+### 5. Conformidade com CLAUDE_INSTRUCTIONS.md
 
-**Objetivo:** decidir o destino do projeto Controle Financeiro após migração validada.
+> "A unificação deve acontecer por módulos, não de uma vez só."
+> "Nenhuma alteração técnica sem identificar qual app será impactado."
 
-**Opção P7-A: Reaproveitamento como ambiente de teste/staging**
-- Renomear para `finapp-staging` ou `finapp-dev`
-- Usar para testar schemas antes de aplicar em produção
-- Manter dados reais para comparação com destino
-- **Recomendada:** menor risco, sem perda de dados
-
-**Opção P7-B: Uso como banco do App 3 (Controle Financeiro — Next.js)**
-- Quando o App 3 for construído, este projeto fica como banco dedicado
-- Schema será expandido para o domínio do App 3
-- **Recomendada se App 3 for construído antes do App 1**
-
-**Opção P7-C: Manter como backup ativo**
-- Manter dados do Controle Financeiro intactos como ponto de recuperação
-- Fazer sync periódico manual
-- **Recomendada como complemento à P7-A ou P7-B**
-
-**🚫 Não executar DROP DATABASE ou DELETE geral — apenas rename ou arquivamento.**
+Esta decisão respeita ambas as regras: o banco unificado cresce por fases,
+e o impacto de cada fase é documentado antes de qualquer execução.
 
 ---
 
-## Variáveis de Ambiente Propostas
+## Papel do Projeto Controle Financeiro
 
-> Regra: nenhum valor de credencial neste documento. Apenas nomes de variáveis.
+### Fase atual: origem temporária de migração
 
-### Arquivo `.env` do Dashboard-Financeiro-Unificado
+O projeto Supabase "Controle Financeiro" contém dados reais de:
+- Transações financeiras
+- Categorias de gastos
+- Orçamentos mensais
+- Metas financeiras
+
+Esses dados serão **copiados** (não movidos) para o banco unificado durante a Fase 4.7.
+A origem permanece intacta durante todo o processo.
+
+### Papel futuro: banco dedicado do App 3
+
+Após a migração, o projeto Controle Financeiro terá três opções:
+
+| Opção | Descrição | Recomendação |
+|-------|-----------|:------------:|
+| **A** | Banco dedicado do App 3 (Controle Financeiro — Next.js) | ✅ Preferida |
+| **B** | Ambiente de staging/teste do ecossistema | ✅ Complementar |
+| **C** | Backup ativo com dados históricos preservados | ✅ Complementar |
+
+**O projeto Controle Financeiro não será apagado, renomeado ou destruído.**
+Qualquer decisão sobre seu uso futuro ocorre na Fase 4.9 ou posterior.
+
+---
+
+## Papel Futuro dos Dados de Investimentos
+
+O Dashboard-Investimentos usa atualmente:
+- **SQLite local** (`investment_dashboard.db`) como banco principal
+- **Yahoo Finance, BCB, AwesomeAPI** como fontes de cotações
+- **Excel (B3, XP) e PDF (Nomad)** como fontes de importação
+
+### Estratégia de integração
+
+Os dados do SQLite serão migrados para as tabelas de investimentos do banco unificado:
+
+| Tabela SQLite (origem) | Tabela PostgreSQL (destino) | Fase |
+|------------------------|----------------------------|------|
+| `transactions` | `operacoes` | 4.7 |
+| `incomes` | `proventos` | 4.7 |
+| `assets` | `ativos` | 4.7 |
+| `xp_positions` | `cotacoes` (snapshot) | 4.7 |
+
+A lógica de importação (parsers Excel/PDF) permanece no Dashboard-Investimentos
+e será reaproveitada no App 4 via `etl/importacao.py`.
+
+Detalhes completos em `docs/auditoria_dados_investimentos.md`.
+
+---
+
+## Benefícios desta Arquitetura
+
+| Benefício | Impacto |
+|-----------|---------|
+| Zero custo adicional | Plano gratuito preservado |
+| Schema unificado correto por design | Sem dívida técnica |
+| App 1 futuro já tem banco pronto | Sem migração adicional no futuro |
+| App 3 mantém seu projeto independente | Sem acoplamento entre apps |
+| SQLite de investimentos migra naturalmente | SQLAlchemy suporta sqlite nativo |
+| MOCK_MODE preservado durante toda a migração | Zero regressão durante a transição |
+| Rollback disponível em toda fase | Segurança de execução |
+
+---
+
+## Riscos e Mitigações
+
+| ID | Risco | Probabilidade | Severidade | Mitigação |
+|----|-------|:---:|:---:|-----------|
+| R1 | Schema atual do Dashboard Financeiro diverge da modelagem | Média | Médio | Auditoria 4.1 mapeia divergências antes de qualquer DDL |
+| R2 | Dados do Controle Financeiro têm FK não mapeadas | Baixa | Alto | Dry-run na Fase 4.7 detecta antes de gravar |
+| R3 | SQLite de investimentos tem colunas sem equivalente | Média | Baixo | Mapeamento documentado em `auditoria_dados_investimentos.md` |
+| R4 | Posições Nomad em USD precisam de conversão PTAX | Alta | Médio | `nomad_import_service_v2.py` já faz a conversão — reutilizar |
+| R5 | Erro de configuração afeta o App 1 futuro | Baixa | Médio | Schema em schema separado (`app4`) ou prefixo de tabela |
+| R6 | Backup não feito antes de DDL | Baixa | Alto | Regra 4 em `banco_unificado_regras_de_seguranca.md` — obrigatório |
+
+---
+
+## Fases de Execução (resumo)
+
+> Detalhamento completo em `docs/banco_unificado_fases.md`
+
+| Fase | Nome | Executor |
+|------|------|:--------:|
+| **4.0** | Estratégia e documentação | ✅ Concluída |
+| **4.1** | Auditoria dos bancos atuais | Humano (SQL read-only) |
+| **4.2** | Modelo canônico | Claude + aprovação humana |
+| **4.3** | Scripts SQL não destrutivos | Claude |
+| **4.4** | Revisão humana dos scripts | **Humano (obrigatório)** |
+| **4.5** | Aplicação manual no Supabase | **Humano (SQL Editor)** |
+| **4.6** | Scripts de migração ETL | Claude |
+| **4.7** | Migração controlada | Humano + app |
+| **4.8** | Validação dos dados | Humano + app |
+| **4.9** | Conexão do app ao banco | Claude + humano |
+
+**Princípio:** nenhuma fase avança sem a anterior estar concluída e validada.
+**Critério de parada:** qualquer erro inesperado interrompe o plano.
+
+---
+
+## Variáveis de Ambiente (nomes propostos)
+
+> Regra: este documento contém apenas nomes de variáveis — nunca valores.
 
 ```ini
-# ── Banco unificado (Dashboard Financeiro → banco central do App 4) ───────────
-# Connection string do pooler Supabase (Transaction Mode, porta 6543).
+# ── Banco unificado (Dashboard Financeiro → banco central do App 4) ──────────
+# Connection string do pooler Supabase (Transaction Mode, porta 6543)
 # Formato: postgresql://app4_reader:SENHA@HOST.pooler.supabase.com:6543/postgres
 SUPABASE_UNIFICADO_URL=""
 
-# Chave anon (pública) — necessária para algumas integrações Supabase futuras.
-# Não usada nas queries SQLAlchemy diretas.
+# Chave anon (pública) — para integrações REST futuras com o Supabase
 SUPABASE_UNIFICADO_ANON_KEY=""
 
-# Chave service_role — SOMENTE para uso local (nunca no Streamlit Cloud).
-# Necessária para operações de admin (criar tabelas, seed inicial).
-# Nunca commitar. Nunca expor no frontend.
-SUPABASE_UNIFICADO_SERVICE_ROLE_KEY=""  # apenas local, nunca em produção
+# Chave service_role — SOMENTE local, nunca no Streamlit Cloud, nunca commitada
+SUPABASE_UNIFICADO_SERVICE_ROLE_KEY=""
 
-# ── Banco de origem (Controle Financeiro → fonte de migração) ─────────────────
-# Connection string do pooler do projeto Controle Financeiro.
-# Usado apenas para leitura durante a migração de dados históricos.
-# Nunca usado para gravação.
+# ── Banco de origem (Controle Financeiro → leitura durante migração) ─────────
+# Connection string somente-leitura do projeto Controle Financeiro
 SUPABASE_ORIGEM_CONTROLE_URL=""
 
-# Chave anon do projeto Controle Financeiro.
-# Usada opcionalmente para listar tabelas via API REST do Supabase.
+# Chave anon do projeto Controle Financeiro (opcional, para REST)
 SUPABASE_ORIGEM_CONTROLE_ANON_KEY=""
 
-# ── Compatibilidade com variáveis existentes ──────────────────────────────────
-# DATABASE_URL e SUPABASE_DB_URL continuam funcionando para retrocompatibilidade.
-# Preferir SUPABASE_UNIFICADO_URL quando possível.
-DATABASE_URL=""           # alias para SUPABASE_UNIFICADO_URL (pooler port 6543)
-SUPABASE_DB_URL=""        # alias alternativo (mesma string)
+# ── Retrocompatibilidade ──────────────────────────────────────────────────────
+# DATABASE_URL continua funcionando como alias de SUPABASE_UNIFICADO_URL
+DATABASE_URL=""
 ```
 
-### Prioridade de leitura em `core/config.py`
+### Prioridade de leitura em `core/config.py` (a implementar na Fase 4.9)
 
 ```python
-# Ordem de preferência: SUPABASE_UNIFICADO_URL > DATABASE_URL > SUPABASE_DB_URL
 @property
 def db_url(self) -> str:
+    """Retorna URL do banco unificado com fallback para variáveis legadas."""
     return (
         self.SUPABASE_UNIFICADO_URL
         or self.DATABASE_URL
@@ -442,68 +229,66 @@ def db_url(self) -> str:
 
 ---
 
-## Impacto no Schema Existente do App 4
+## Estrutura Operacional
 
-As tabelas criadas por `etl/schema_setup.py` são compatíveis com o schema
-definido em `modelagem_inicial.md`. Diferenças menores (nomes de colunas,
-tipos de dados) serão resolvidas nas Fases P1/P2 sem quebrar nada.
+A pasta `supabase_unificado/` centraliza todos os artefatos de execução:
 
-Tabela de compatibilidade:
-
-| Tabela App 4 (schema_setup) | Tabela Modelagem (modelagem_inicial) | Compatível |
-|-----------------------------|--------------------------------------|:---------:|
-| `usuarios` | `usuarios` | ✅ |
-| `contas` | `contas` | ✅ |
-| `categorias` | `categorias` | ✅ |
-| `transacoes` | `transacoes` | ✅ |
-| `orcamentos` | `orcamentos` | ✅ |
-| `metas` | `metas` | ✅ |
-| `ativos` | `ativos` | ✅ |
-| `operacoes` | `operacoes` | ✅ |
-| `proventos` | `proventos` | ✅ |
-| `cotacoes` | `cotacoes` | ✅ |
+```
+supabase_unificado/
+├── README.md          ← guia de uso e avisos
+├── schema/            ← scripts DDL versionados (001_*.sql ... 012_*.sql)
+├── migrations/        ← scripts ETL de migração (001_*.py ... 004_*.py)
+├── backups/           ← dumps de backup (não commitados — .gitignore ativo)
+└── validation/        ← logs e relatórios de validação
+```
 
 ---
 
-## Checklist Geral de Segurança
+## Checklist de Segurança
 
 ```
-[ ] SERVICE_ROLE_KEY nunca no Streamlit Cloud (só local)
-[ ] ANON_KEY nunca em código Python (só no .env)
-[ ] app4_reader role com SELECT apenas (sem BYPASSRLS)
-[ ] Todas as queries incluem WHERE usuario_id = :owner_id
-[ ] Backup verificado antes de qualquer operação no banco
-[ ] Nenhum DROP/TRUNCATE/DELETE sem autorização manual
+[ ] SERVICE_ROLE_KEY nunca commitada no repositório
+[ ] SERVICE_ROLE_KEY nunca em código que roda no Streamlit Cloud
+[ ] ANON_KEY nunca commitada com valor real
 [ ] .env está no .gitignore
-[ ] Nenhuma credencial em docs, commits ou logs
+[ ] app4_reader tem apenas SELECT (sem BYPASSRLS)
+[ ] Toda query inclui WHERE usuario_id = :owner_id
+[ ] RLS habilitada nas 8 tabelas de dados pessoais
+[ ] Backup verificado antes de qualquer DDL ou DML
+[ ] Nenhum DROP/TRUNCATE/DELETE sem autorização escrita
+[ ] Scripts SQL numerados e imutáveis após aplicação
+[ ] Log de migração salvo em supabase_unificado/validation/
+[ ] Somatórios financeiros comparados origem × destino
 ```
 
 ---
 
-## Próximos Passos Imediatos
+## Próximo Passo
 
-1. Executar Fase P0 (backup) — **não pular**
-2. Executar auditoria P1 em ambos os projetos (SQL de leitura)
-3. Configurar `.env` com `SUPABASE_UNIFICADO_URL` e `OWNER_USER_ID`
-4. Executar "Criar tabelas" nas Configurações do App 4 (Fase P2)
-5. Testar conexão com `MOCK_MODE=false`
-6. Implementar `_visao_geral_real()` em `core/financeiro.py`
+**Fase 4.1 — Auditoria dos bancos atuais**
+
+Acessar o SQL Editor dos dois projetos Supabase e executar as 5 queries
+de auditoria documentadas em `docs/banco_unificado_fases.md` (seção Fase 4.1).
+
+Salvar os resultados em:
+- `supabase_unificado/validation/auditoria_banco_dashboard_financeiro.md`
+- `supabase_unificado/validation/auditoria_banco_controle_financeiro.md`
+
+Sem este passo concluído, não é possível avançar para a Fase 4.2.
 
 ---
 
-## Links Internos (Obsidian)
+## Links de Referência
 
-- [[MAPA_SUPABASE]] — mapa dos projetos Supabase
-- [[modelagem_inicial]] — DDL completo das 10 tabelas
-- [[STATUS_DOS_APPS]] — status atual de cada app
-- [[04_App_Dashboard_Financeiro_Unificado/pendencias_e_melhorias]] — riscos abertos
-- [[04_App_Dashboard_Financeiro_Unificado/proximos_passos]] — plano de ação
-
-## Links no Repositório
-
-- `docs/status_fase_4.md` — status atualizado da Fase 4
+### No repositório
+- `docs/banco_unificado_fases.md` — plano completo das 10 fases
+- `docs/banco_unificado_regras_de_seguranca.md` — regras de segurança
 - `docs/auditoria_dados_investimentos.md` — mapeamento do SQLite de investimentos
-- `docs/fase_4_supabase_auditoria.md` — auditoria de integração Supabase
-- `etl/schema_setup.py` — DDL das 10 tabelas
-- `etl/importacao.py` — ImportadorPostgres para migração
-- `pages/configuracoes.py` — interface de setup e importação
+- `etl/schema_setup.py` — DDL atual das 10 tabelas
+- `supabase_unificado/` — pasta operacional
+
+### No Obsidian (ProjetoIA)
+- `MAPA_SUPABASE.md` — mapa dos projetos Supabase
+- `modelagem_inicial.md` — DDL completo planejado
+- `STATUS_DOS_APPS.md` — status de todos os apps
+- `MAPA_GERAL_DOS_APPS.md` — papel de cada app no ecossistema

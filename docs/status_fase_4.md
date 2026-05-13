@@ -1,18 +1,55 @@
-# Status — Fase 4: Segurança e Camada de Importação ETL
+# Status — Fase 4: Banco Supabase Unificado
 
 > Data: 2026-05-13
 > Versão: v0.4.0
 > ruff: All checks passed!
 > Startup: HTTP 200 ✅
-> Atualizado em: 2026-05-13 — estratégia de banco revisada (plano gratuito Supabase)
+> Atualizado em: 2026-05-13 — Fase 4 redefinida para "Banco Supabase Unificado usando projeto existente do Dashboard Financeiro"
 
 ---
 
-## Objetivo da Fase
+## Redefinição da Fase 4
 
-Implementar integração segura com banco de dados PostgreSQL/Supabase sem quebrar o funcionamento
-existente (MOCK_MODE preservado como padrão), adicionando:
+A Fase 4 foi redefinida e expandida em 10 subfases (4.0 a 4.9) para construir
+o banco Supabase unificado de forma segura, sem perda de dados e sem criar
+um terceiro projeto Supabase (limitação do plano gratuito).
 
+**Decisão arquitetural:** usar o projeto Supabase existente do **Dashboard Financeiro**
+como banco unificado. O projeto **Controle Financeiro** é fonte temporária de migração.
+
+| Subfase | Nome | Status |
+|---------|------|:------:|
+| **4.0** | Estratégia e documentação | ✅ Concluída |
+| **4.1** | Auditoria dos bancos atuais | ⏳ Próxima |
+| **4.2** | Modelo canônico | ⏳ Pendente |
+| **4.3** | Scripts SQL não destrutivos | ⏳ Pendente |
+| **4.4** | Revisão humana dos scripts | ⏳ Pendente |
+| **4.5** | Aplicação manual no Supabase | ⏳ Pendente |
+| **4.6** | Scripts de migração ETL | ⏳ Pendente |
+| **4.7** | Migração controlada | ⏳ Pendente |
+| **4.8** | Validação dos dados | ⏳ Pendente |
+| **4.9** | Conexão do app ao banco | ⏳ Pendente |
+
+**Documentação completa:**
+- `docs/banco_unificado_fases.md` — detalhamento de cada subfase
+- `docs/estrategia_supabase_unificado_plano_gratuito.md` — decisão e estratégia
+- `docs/banco_unificado_regras_de_seguranca.md` — regras de segurança
+- `supabase_unificado/` — pasta operacional (schema, migrations, backups, validation)
+
+---
+
+## Fase 4.0 — Estratégia e Documentação (✅ Concluída)
+
+**O que foi entregue nesta subfase:**
+
+---
+
+## Implementação de Base (Fases 4.0 anterior → código)
+
+Entregue antes da redefinição da Fase 4 — código permanece válido e é a base
+sobre a qual as Fases 4.1–4.9 serão construídas.
+
+Objetivo original implementado:
 1. Gate de autenticação para proteção no Streamlit Cloud
 2. Gerenciamento de schema do banco (CREATE TABLE IF NOT EXISTS)
 3. Camada de importação ETL (CSV/Excel e PostgreSQL-to-PostgreSQL)
@@ -162,7 +199,23 @@ não estiver configurado — zero regressão.
 
 ---
 
-## ⚠️ Revisão de Estratégia — Banco Supabase Unificado (plano gratuito)
+## Próxima Subfase: 4.1 — Auditoria dos Bancos Atuais
+
+Executar as 5 queries de leitura documentadas em `docs/banco_unificado_fases.md`
+no SQL Editor dos dois projetos Supabase:
+
+1. **Dashboard Financeiro** (destino — banco unificado)
+2. **Controle Financeiro** (origem — fonte de migração)
+
+Salvar resultados em:
+- `supabase_unificado/validation/auditoria_banco_dashboard_financeiro.md`
+- `supabase_unificado/validation/auditoria_banco_controle_financeiro.md`
+
+**Sem a Fase 4.1, não é possível gerar o schema canônico (4.2) nem os scripts DDL (4.3).**
+
+---
+
+## ⚠️ Contexto da Redefinição — Banco Supabase Unificado (plano gratuito)
 
 > Atualização pós-criação de `docs/estrategia_supabase_unificado_plano_gratuito.md`
 
