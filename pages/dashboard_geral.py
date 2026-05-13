@@ -105,7 +105,11 @@ def render() -> None:
     try:
         d = get_visao_geral()
     except NotImplementedError as exc:
-        st.error(f"**Banco de dados não configurado.** {exc}")
+        st.error(
+            f"**Banco de dados não configurado.** {exc}\n\n"
+            "Configure `SUPABASE_UNIFICADO_URL` no `.env` local ou em "
+            "**Streamlit Secrets** (Settings > Secrets)."
+        )
         return
 
     pat  = d["patrimonio"]

@@ -23,12 +23,13 @@
 | Fase | Nome | Status | Executado por |
 |------|------|:------:|:-------------:|
 | **4.0** | Estratégia e documentação | ✅ Concluída | Claude + revisão humana |
-| **4.1** | Auditoria dos bancos atuais | ⏳ Pendente | Humano (SQL read-only) |
-| **4.2** | Modelo canônico do banco unificado | ⏳ Pendente | Claude + revisão humana |
-| **4.3** | Geração dos scripts SQL não destrutivos | ⏳ Pendente | Claude |
-| **4.4** | Revisão humana dos scripts SQL | ⏳ Pendente | Humano (obrigatório) |
-| **4.5** | Aplicação manual no Supabase | ⏳ Pendente | Humano (SQL Editor) |
-| **4.6** | Scripts de migração | ⏳ Pendente | Claude |
+| **4.1** | Auditoria dos bancos atuais | ✅ Concluída | Python/SQLAlchemy (read-only) |
+| **4.2** | Modelo canônico do banco unificado | ✅ Concluída | Claude + aprovação humana |
+| **4.3** | Geração dos scripts SQL não destrutivos | ✅ Concluída | Aplicação direta autorizada |
+| **4.4** | Revisão humana dos scripts SQL | ✅ Concluída | Autorização explícita do proprietário |
+| **4.5** | Aplicação no Supabase | ✅ Concluída | Python/SQLAlchemy — 22 tabelas + RLS |
+| **4.5b** | Correção leitura Streamlit Secrets | ✅ Concluída | Claude — `_get_secret()` + SQLite compat |
+| **4.6** | Scripts de migração | ⏳ Próxima | Claude |
 | **4.7** | Migração controlada | ⏳ Pendente | Humano + app |
 | **4.8** | Validação dos dados migrados | ⏳ Pendente | Humano + app |
 | **4.9** | Conexão do app ao banco unificado | ⏳ Pendente | Claude + humano |

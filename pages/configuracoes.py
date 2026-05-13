@@ -84,7 +84,8 @@ def _render_banco() -> None:
 
     if not status["configurado"]:
         st.info(
-            "Configure DATABASE_URL no .env para verificar o schema.",
+            "Configure `SUPABASE_UNIFICADO_URL` no `.env` local ou em "
+            "**Streamlit Secrets** (Settings > Secrets) para verificar o schema.",
             icon="ℹ️",
         )
     else:
@@ -180,7 +181,8 @@ def _render_importacao() -> None:
 
     if not settings.has_database:
         st.warning(
-            "Configure DATABASE_URL antes de importar dados.",
+            "Configure `SUPABASE_UNIFICADO_URL` no `.env` local ou em "
+            "**Streamlit Secrets** (Settings > Secrets) antes de importar dados.",
             icon="⚠️",
         )
         return
@@ -408,8 +410,9 @@ def _render_import_postgres() -> None:
         else:
             var_nome = nomes_variaveis.get(fonte_selecionada, "variavel")
             st.warning(
-                f"`{var_nome}` nao configurada no .env. "
-                "Informe manualmente ou adicione ao .env.",
+                f"`{var_nome}` nao configurada. "
+                "Informe manualmente, adicione ao `.env` local "
+                "ou configure em Streamlit Secrets (Settings > Secrets).",
             )
             url_fonte = st.text_input(
                 "Connection string",
@@ -687,9 +690,11 @@ SELECT id FROM usuarios LIMIT 1;
 
 ---
 
-#### Fase 4.9 — Configurar .env e ativar banco
+#### Fase 4.9 — Configurar variaveis e ativar banco
 
 Apos schema criado e dados migrados (Fases 4.5 a 4.8):
+
+**Opcao A — Dev local (arquivo `.env`):**
 
 ```bash
 cp .env.example .env
@@ -702,6 +707,15 @@ SUPABASE_UNIFICADO_URL="postgresql://app4_reader:SENHA@HOST.pooler.supabase.com:
 OWNER_USER_ID="uuid-do-usuario-na-tabela-usuarios"
 MOCK_MODE="false"
 APP_PASSWORD="hash-sha256-ou-texto-simples"
+```
+
+**Opcao B — Streamlit Cloud (Settings > Secrets):**
+
+```toml
+SUPABASE_UNIFICADO_URL = "postgresql://app4_reader:SENHA@HOST.pooler.supabase.com:6543/postgres"
+OWNER_USER_ID = "uuid-do-usuario-na-tabela-usuarios"
+MOCK_MODE = "false"
+APP_PASSWORD = "hash-sha256-ou-texto-simples"
 ```
 
 Depois: aba "Banco de Dados" desta pagina para verificar e criar tabelas.

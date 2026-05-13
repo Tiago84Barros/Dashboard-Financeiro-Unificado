@@ -25,13 +25,17 @@ def get_engine():
     if not url:
         return None
 
-    return create_engine(
-        url,
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=2,
-        connect_args={"connect_timeout": 10},
-    )
+    is_sqlite = url.startswith("sqlite")
+    kwargs: dict = {"pool_pre_ping": True}
+    if not is_sqlite:
+        kwargs.update(
+            {
+                "pool_size": 5,
+                "max_overflow": 2,
+                "connect_args": {"connect_timeout": 10},
+            }
+        )
+    return create_engine(url, **kwargs)
 
 
 @st.cache_resource

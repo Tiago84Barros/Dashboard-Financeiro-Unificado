@@ -2,7 +2,7 @@
 core/financeiro.py
 Camada de serviço financeiro — abstrai a fonte de dados entre mock e banco real.
 
-USE_MOCK é controlado por settings.MOCK_MODE (lido do .env).
+USE_MOCK é controlado por settings.MOCK_MODE (lido do .env ou de Streamlit Secrets).
   MOCK_MODE=true  → retorna dados de core/mock_data.py (Fases 1–3)
   MOCK_MODE=false → executa queries SQL via core/database.py (Fase 4+)
 
@@ -58,12 +58,14 @@ def _visao_geral_mock() -> dict:
 
 def _visao_geral_real() -> dict:
     """
-    Placeholder para queries SQL reais (Fase 4).
-    Requer DATABASE_URL configurado no .env e banco com schema correto.
+    Placeholder para queries SQL reais (Fase 4.9).
+    Requer SUPABASE_UNIFICADO_URL configurada (.env local ou Streamlit Secrets)
+    e banco com schema correto (Fases 4.3–4.5 concluidas).
     """
     raise NotImplementedError(
         "Integração com banco de dados não implementada. "
-        "Configure DATABASE_URL no .env e aguarde a Fase 4."
+        "Configure SUPABASE_UNIFICADO_URL no .env ou em Streamlit Secrets "
+        "(Settings > Secrets) e aguarde a Fase 4.9."
     )
 
 

@@ -133,7 +133,10 @@ class ImportadorCSV:
 
         engine = get_engine()
         if engine is None:
-            res.erros.append("Sem conexão com banco. Configure DATABASE_URL.")
+            res.erros.append(
+                "Sem conexao com banco. Configure SUPABASE_UNIFICADO_URL "
+                "no .env local ou em Streamlit Secrets (Settings > Secrets)."
+            )
             return res
 
         registros: list[dict] = []

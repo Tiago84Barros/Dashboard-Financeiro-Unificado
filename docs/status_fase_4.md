@@ -20,12 +20,12 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 | Subfase | Nome | Status |
 |---------|------|:------:|
 | **4.0** | Estratégia e documentação | ✅ Concluída |
-| **4.1** | Auditoria dos bancos atuais | ⏳ Próxima |
-| **4.2** | Modelo canônico | ⏳ Pendente |
-| **4.3** | Scripts SQL não destrutivos | ⏳ Pendente |
-| **4.4** | Revisão humana dos scripts | ⏳ Pendente |
-| **4.5** | Aplicação manual no Supabase | ⏳ Pendente |
-| **4.6** | Scripts de migração ETL | ⏳ Pendente |
+| **4.1** | Auditoria dos bancos atuais | ✅ Concluída |
+| **4.2** | Modelo canônico | ✅ Concluída |
+| **4.3** | Scripts SQL não destrutivos | ✅ Concluída (aplicação direta autorizada) |
+| **4.4** | Revisão humana dos scripts | ✅ Concluída (autorização explícita do proprietário) |
+| **4.5** | Aplicação manual no Supabase | ✅ Concluída — 22 tabelas + RLS + role criados |
+| **4.6** | Scripts de migração ETL | ⏳ Próxima |
 | **4.7** | Migração controlada | ⏳ Pendente |
 | **4.8** | Validação dos dados | ⏳ Pendente |
 | **4.9** | Conexão do app ao banco | ⏳ Pendente |
@@ -34,6 +34,10 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 - `docs/banco_unificado_fases.md` — detalhamento de cada subfase
 - `docs/estrategia_supabase_unificado_plano_gratuito.md` — decisão e estratégia
 - `docs/banco_unificado_regras_de_seguranca.md` — regras de segurança
+- `docs/banco_unificado_modelo_canonico.md` — modelo canônico das 22 tabelas (Fase 4.2)
+- `docs/banco_unificado_mapa_origem_destino.md` — mapeamento de origens → destino
+- `docs/banco_unificado_dicionario_dados.md` — dicionário de dados completo
+- `docs/banco_unificado_decisoes_modelagem.md` — log de decisões arquiteturais
 - `supabase_unificado/` — pasta operacional (schema, migrations, backups, validation)
 
 ---
@@ -196,22 +200,139 @@ não estiver configurado — zero regressão.
 | Import de `core.auth` | ✅ Sem erros |
 | Import de `etl.schema_setup` | ✅ Sem erros |
 | Import de `etl.importacao` | ✅ Sem erros |
+| Import de `core.config` fora do contexto Streamlit | ✅ Sem erros — `_get_secret()` fallback OK |
 
 ---
 
-## Próxima Subfase: 4.1 — Auditoria dos Bancos Atuais
+## Fase 4.1 — Auditoria do Banco (✅ Concluída em 2026-05-13)
 
-Executar as 5 queries de leitura documentadas em `docs/banco_unificado_fases.md`
-no SQL Editor dos dois projetos Supabase:
+**Executada diretamente via SQLAlchemy (Python) com autorização do proprietário.**
 
-1. **Dashboard Financeiro** (destino — banco unificado)
-2. **Controle Financeiro** (origem — fonte de migração)
+**Resultado:**
+- PostgreSQL 17.6 em `aws-1-sa-east-1.pooler.supabase.com`
+- **14 tabelas existentes no schema `public`** — todas do App 1 (Dashboard Financeiro: análise fundamentalista, documentos CVM, dados econômicos)
+- **0 conflitos de nome** com as 22 tabelas canônicas do App 4
+- DM-012 resolvida: usar schema **`public`** (sem colisão com tabelas existentes)
+- DM-001 resolvida: tabelas do App 4 criadas diretamente em inglês (as 10 tabelas em português do `schema_setup.py` nunca tinham sido aplicadas neste banco)
+- Extensões disponíveis: `uuid-ossp`, `pgcrypto`, `vector` (pgvector), `pg_stat_statements`
 
-Salvar resultados em:
-- `supabase_unificado/validation/auditoria_banco_dashboard_financeiro.md`
-- `supabase_unificado/validation/auditoria_banco_controle_financeiro.md`
+**Tabelas existentes (App 1):** `Demonstracoes_Financeiras`, `Demonstracoes_Financeiras_TRI`, `cvm_to_ticker`, `docs_corporativos`, `docs_corporativos_chunks`, `info_economica`, `info_economica_mensal`, `multiplos`, `multiplos_TRI`, `patch6_runs`, `portfolio_snapshot_analysis`, `portfolio_snapshot_items`, `portfolio_snapshots`, `setores`
 
-**Sem a Fase 4.1, não é possível gerar o schema canônico (4.2) nem os scripts DDL (4.3).**
+---
+
+## Fase 4.2 — Modelo Canônico (✅ Concluída em 2026-05-13)
+
+**Entregue em 2026-05-13.** Criado sem aguardar a Fase 4.1, com base em:
+- `etl/schema_setup.py` — 10 tabelas existentes em português
+- `ProjetoIA/05_Banco_de_Dados/modelagem_inicial.md` — modelo original do vault
+- `docs/auditoria_dados_investimentos.md` — schema SQLite do App 2
+- Especificação do proprietário: 22 tabelas canônicas em inglês
+
+**Documentos entregues:**
+
+| Arquivo | Conteúdo |
+|---------|---------|
+| `docs/banco_unificado_modelo_canonico.md` | 22 tabelas em 8 domínios — colunas, tipos, índices, RLS |
+| `docs/banco_unificado_mapa_origem_destino.md` | Mapeamento completo de origens (App 1/2/3 + schema atual) → destino |
+| `docs/banco_unificado_dicionario_dados.md` | Semântica de negócio por coluna; regras, invariantes, observações |
+| `docs/banco_unificado_decisoes_modelagem.md` | 13 decisões documentadas com contexto, opções e justificativa |
+
+**Resumo do modelo canônico:**
+
+| Domínio | Tabelas | Observação |
+|---------|---------|------------|
+| Identidade | `profiles` | Renomeado de `usuarios` |
+| Instituições | `financial_institutions` | Nova |
+| Contas e Cartões | `accounts`, `cards` | `accounts` renomeado; `cards` nova |
+| Finanças Pessoais | `categories`, `transactions`, `budgets`, `financial_goals`, `debts` | 4 renomeadas; `debts` nova |
+| Investimentos | `assets`, `portfolios`, `portfolio_positions`, `investment_transactions`, `dividends` | 3 renomeadas; 2 novas |
+| Dados de Mercado | `asset_quotes`, `benchmarks`, `benchmark_quotes` | 1 renomeada; 2 novas |
+| Preferências | `alerts`, `user_settings` | Ambas novas |
+| Controle | `import_batches`, `import_logs`, `migration_source_map` | Todas novas |
+
+**Decisões pendentes de aprovação humana:**
+
+| Decisão | Questão |
+|---------|---------|
+| DM-001 | Confirmar que nomes em inglês são a preferência para todas as 22 tabelas |
+| DM-012 | Schema `public` vs. `app4` — aguarda resultado da Fase 4.1 (auditoria) |
+
+**Critério para avançar para Fase 4.3:** proprietário aprova o modelo canônico e as decisões DM-001 / DM-012.
+
+---
+
+## Fase 4.5 — Aplicação do Schema (✅ Concluída em 2026-05-13)
+
+**Aplicado diretamente via Python/SQLAlchemy com autorização explícita do proprietário.**
+**70 operações executadas. 0 erros.**
+
+| Operação | Qtd | Resultado |
+|----------|:---:|:---------:|
+| `CREATE TABLE IF NOT EXISTS` | 22 | ✅ Todas criadas |
+| `CREATE INDEX IF NOT EXISTS` | 11 | ✅ Todos criados |
+| `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` | 15 | ✅ RLS ativada |
+| `CREATE POLICY` | 15 | ✅ Policies criadas |
+| `CREATE ROLE app4_reader` | 1 | ✅ Role criado |
+| `GRANT SELECT` (22 tabelas) | 1 | ✅ Concedido |
+| `INSERT INTO benchmarks` (seed) | 5 | ✅ IBOVESPA, CDI, IPCA, SELIC, IFIX |
+
+**Tabelas App 4 no banco agora (22/22):**
+`profiles` · `financial_institutions` · `accounts` · `cards` · `categories` · `transactions` · `budgets` · `financial_goals` · `debts` · `assets` · `portfolios` · `portfolio_positions` · `investment_transactions` · `dividends` · `asset_quotes` · `benchmarks` · `benchmark_quotes` · `alerts` · `user_settings` · `import_batches` · `import_logs` · `migration_source_map`
+
+---
+
+## Correção: Leitura de Secrets no Streamlit Cloud (2026-05-13)
+
+**Problema:** o app lia variáveis de ambiente apenas via `os.getenv()` (`.env` local).
+No Streamlit Cloud (Settings > Secrets), as variáveis ficavam invisíveis → banco não configurado.
+
+**Solução aplicada:**
+
+| Arquivo | Mudança |
+|---------|---------|
+| `core/config.py` | Adicionada `_get_secret(key)`: lê `st.secrets` → `os.environ` → default. Todos os `os.getenv()` da classe `Settings` substituídos. |
+| `core/database.py` | SQLite compatibility: `pool_size`/`max_overflow`/`connect_args` omitidos em URLs `sqlite://` |
+| `core/financeiro.py` | Mensagem de erro e docstring atualizadas para mencionar Streamlit Secrets |
+| `etl/schema_setup.py` | Mensagem de erro atualizada |
+| `etl/importacao.py` | Mensagem de erro atualizada |
+| `pages/configuracoes.py` | 4 mensagens + docs de setup atualizados (Opção A `.env` + Opção B Secrets) |
+| `pages/alertas.py` | Alerta de banco não configurado atualizado |
+| `pages/dashboard_geral.py` | Mensagem de erro atualizada |
+| `.env.example` | Header atualizado com nota sobre Streamlit Secrets |
+
+**Comportamento resultante:**
+- **Streamlit Cloud:** lê de `st.secrets` (Settings > Secrets) → banco configurado automaticamente
+- **Dev local:** fallback para `os.getenv()` → `.env` continua funcionando normalmente
+- **CLI / testes:** `try/except` captura a ausência de contexto Streamlit → usa `os.getenv()` sem erros
+
+**Resultado ruff:** All checks passed!
+
+---
+
+## Próxima Subfase: 4.6 — Scripts de Migração ETL
+
+Antes de iniciar 4.6, o proprietário precisa:
+
+1. **Alterar a senha do banco** (comprometida durante esta sessão) — Supabase Dashboard → Settings → Database → Reset Password
+2. **Criar o registro de perfil** no banco:
+   ```sql
+   INSERT INTO profiles (name, email, password_hash)
+   VALUES ('Tiago Barros', 'tsbcorporation84@gmail.com', 'placeholder')
+   RETURNING id;
+   ```
+3. **Copiar o UUID retornado** → adicionar ao `.env` como `OWNER_USER_ID=<uuid>`
+4. **Criar seed de `user_settings`**:
+   ```sql
+   INSERT INTO user_settings (user_id) VALUES ('<OWNER_USER_ID>');
+   ```
+5. **Atualizar `.env`**:
+   ```ini
+   SUPABASE_UNIFICADO_URL="postgresql://postgres.<project>:NOVA_SENHA@host:5432/postgres"
+   OWNER_USER_ID="<uuid-do-perfil>"
+   MOCK_MODE="false"
+   ```
+
+Após esses passos, a Fase 4.6 pode iniciar: scripts ETL para migrar dados do App 3 (Controle Financeiro) e do App 2 (SQLite).
 
 ---
 

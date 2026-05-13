@@ -213,7 +213,10 @@ def criar_schema() -> dict[str, object]:
             "ok": False,
             "criadas": [],
             "ja_existiam": [],
-            "erros": ["Sem conexão com banco. Configure DATABASE_URL."],
+            "erros": [
+                "Sem conexao com banco. Configure SUPABASE_UNIFICADO_URL "
+                "no .env local ou em Streamlit Secrets (Settings > Secrets)."
+            ],
         }
 
     estado_antes = verificar_schema()

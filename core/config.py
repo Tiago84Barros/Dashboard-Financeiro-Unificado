@@ -1,61 +1,87 @@
 """
 core/config.py
 Carregamento e validacao de variaveis de ambiente.
-Le o arquivo .env na raiz do projeto via python-dotenv.
+
+Ordem de prioridade (da maior para a menor):
+  1. st.secrets  — Streamlit Cloud (Settings > Secrets) ou .streamlit/secrets.toml local
+  2. os.environ  — populado por load_dotenv() do arquivo .env local
+  3. valor padrao embutido
 
 Estrategia de banco (Fase 4.0):
   Prioridade de db_url: SUPABASE_UNIFICADO_URL > DATABASE_URL > SUPABASE_DB_URL
-  - SUPABASE_UNIFICADO_URL  : projeto Supabase Dashboard Financeiro (banco central)
+  - SUPABASE_UNIFICADO_URL      : projeto Supabase Dashboard Financeiro (banco central)
   - SUPABASE_ORIGEM_CONTROLE_URL: projeto Supabase Controle Financeiro (migracao)
-  - SOURCE_DB_APP2          : SQLite do Dashboard-Investimentos (migracao)
+  - SOURCE_DB_APP2              : SQLite do Dashboard-Investimentos (migracao)
 """
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def _get_secret(key: str, default: str = "") -> str:
+    """
+    Le a variavel `key` em ordem de prioridade:
+      1. st.secrets (Streamlit Cloud / .streamlit/secrets.toml)
+      2. os.environ (populado por load_dotenv do .env local)
+      3. default
+
+    Nunca lanca excecao — seguro fora de contexto Streamlit (testes, CLI).
+    Valores TOML nao-string (bool, int) sao convertidos para str antes de retornar.
+    """
+    try:
+        import streamlit as st  # importacao local: evita falha em contextos sem Streamlit
+
+        val = st.secrets.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    except Exception:
+        pass
+    return os.getenv(key, default)
 
 
 class Settings:
     # ── Banco unificado (Dashboard Financeiro — banco central do App 4) ───────
     # Connection string do pooler Supabase (Transaction Mode, porta 6543).
     # Formato: postgresql://app4_reader:SENHA@HOST.pooler.supabase.com:6543/postgres
-    SUPABASE_UNIFICADO_URL: str = os.getenv("SUPABASE_UNIFICADO_URL", "")
-    SUPABASE_UNIFICADO_ANON_KEY: str = os.getenv("SUPABASE_UNIFICADO_ANON_KEY", "")
+    SUPABASE_UNIFICADO_URL: str = _get_secret("SUPABASE_UNIFICADO_URL")
+    SUPABASE_UNIFICADO_ANON_KEY: str = _get_secret("SUPABASE_UNIFICADO_ANON_KEY")
 
     # ── Banco de origem (Controle Financeiro — leitura durante migracao) ──────
     # Usado apenas para importar dados historicos. Nunca para gravacao.
-    SUPABASE_ORIGEM_CONTROLE_URL: str = os.getenv("SUPABASE_ORIGEM_CONTROLE_URL", "")
-    SUPABASE_ORIGEM_CONTROLE_ANON_KEY: str = os.getenv("SUPABASE_ORIGEM_CONTROLE_ANON_KEY", "")
+    SUPABASE_ORIGEM_CONTROLE_URL: str = _get_secret("SUPABASE_ORIGEM_CONTROLE_URL")
+    SUPABASE_ORIGEM_CONTROLE_ANON_KEY: str = _get_secret("SUPABASE_ORIGEM_CONTROLE_ANON_KEY")
 
     # ── Variaveis legadas (retrocompatibilidade) ──────────────────────────────
     # Mantidas para nao quebrar .env existentes. Preferir SUPABASE_UNIFICADO_URL.
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
-    SUPABASE_DB_URL: str = os.getenv("SUPABASE_DB_URL", "")
+    DATABASE_URL: str = _get_secret("DATABASE_URL")
+    SUPABASE_DB_URL: str = _get_secret("SUPABASE_DB_URL")
 
     # ── Inteligencia artificial ───────────────────────────────────────────────
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    AI_PROVIDER: str = os.getenv("AI_PROVIDER", "openai")
-    AI_MODEL: str = os.getenv("AI_MODEL", "gpt-4o-mini")
-    AI_TIMEOUT_S: int = int(os.getenv("AI_TIMEOUT_S", "45"))
-    AI_MAX_RETRIES: int = int(os.getenv("AI_MAX_RETRIES", "2"))
+    OPENAI_API_KEY: str = _get_secret("OPENAI_API_KEY")
+    AI_PROVIDER: str = _get_secret("AI_PROVIDER", "openai")
+    AI_MODEL: str = _get_secret("AI_MODEL", "gpt-4o-mini")
+    AI_TIMEOUT_S: int = int(_get_secret("AI_TIMEOUT_S", "45"))
+    AI_MAX_RETRIES: int = int(_get_secret("AI_MAX_RETRIES", "2"))
 
     # ── Ambiente ──────────────────────────────────────────────────────────────
-    APP_ENV: str = os.getenv("APP_ENV", "development")
-    MOCK_MODE: bool = os.getenv("MOCK_MODE", "true").lower() == "true"
+    APP_ENV: str = _get_secret("APP_ENV", "development")
+    MOCK_MODE: bool = _get_secret("MOCK_MODE", "true").lower() == "true"
 
     # ── Autenticacao simples (Streamlit Cloud) ────────────────────────────────
     # Texto simples ou hash SHA-256 da senha. Vazio = sem senha (dev local).
     # Gerar hash: python -c "import hashlib; print(hashlib.sha256(b'senha').hexdigest())"
-    APP_PASSWORD: str = os.getenv("APP_PASSWORD", "")
+    APP_PASSWORD: str = _get_secret("APP_PASSWORD")
 
     # ── Usuario proprietario dos dados ────────────────────────────────────────
     # UUID do usuario na tabela `usuarios`. Todas as queries filtram por este ID.
-    OWNER_USER_ID: str = os.getenv("OWNER_USER_ID", "")
+    OWNER_USER_ID: str = _get_secret("OWNER_USER_ID")
 
     # ── Fontes de importacao (apps originais — somente leitura) ──────────────
-    SOURCE_DB_APP1: str = os.getenv("SOURCE_DB_APP1", "")  # Dashboard (PostgreSQL)
-    SOURCE_DB_APP2: str = os.getenv("SOURCE_DB_APP2", "")  # Dashboard-Investimentos (SQLite)
-    SOURCE_DB_APP3: str = os.getenv("SOURCE_DB_APP3", "")  # Controle_Financeiro (alias legado)
+    SOURCE_DB_APP1: str = _get_secret("SOURCE_DB_APP1")  # Dashboard (PostgreSQL)
+    SOURCE_DB_APP2: str = _get_secret("SOURCE_DB_APP2")  # Dashboard-Investimentos (SQLite)
+    SOURCE_DB_APP3: str = _get_secret("SOURCE_DB_APP3")  # Controle_Financeiro (alias legado)
 
     # ── Propriedades derivadas ────────────────────────────────────────────────
 
@@ -126,7 +152,10 @@ class Settings:
         """
         warnings = []
         if not self.has_database:
-            warnings.append("DATABASE_URL nao configurada — banco desativado.")
+            warnings.append(
+                "Banco de dados nao configurado — defina SUPABASE_UNIFICADO_URL "
+                "no .env local ou em Streamlit Secrets (Settings > Secrets)."
+            )
         if not self.has_openai:
             warnings.append("OPENAI_API_KEY nao configurada — IA desativada.")
         if self.MOCK_MODE:

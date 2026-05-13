@@ -53,8 +53,9 @@ _ALERTAS = [
         "tipo":      "erro",
         "icone":     "🔴",
         "titulo":    "Banco de dados não configurado",
-        "descricao": "DATABASE_URL ausente. Configure o arquivo .env para "
-                     "ativar os dados reais.",
+        "descricao": "SUPABASE_UNIFICADO_URL ausente. Configure no arquivo .env "
+                     "(dev local) ou em Streamlit Secrets (Settings > Secrets) "
+                     "para ativar os dados reais.",
         "modulo":    "Configurações",
         "data":      "Sempre",
     },
