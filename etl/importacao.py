@@ -51,6 +51,11 @@ _TABELAS_VALIDAS = {
     "orcamentos", "metas", "ativos", "operacoes", "proventos", "cotacoes",
 }
 
+# Palavras-chave proibidas no filtro_sql para prevenir operacoes destrutivas
+_PALAVRAS_PROIBIDAS_FILTRO: frozenset = frozenset({
+    "drop", "delete", "truncate", "insert", "update", "--", ";",
+})
+
 
 # ── Resultado de importação ───────────────────────────────────────────────────
 
@@ -352,9 +357,12 @@ class ImportadorPostgres:
             self.erro_conexao = "URL da fonte não configurada."
             return
         try:
+            # connect_timeout e especifico de PostgreSQL — omitir para SQLite
+            is_sqlite = self.source_url.startswith("sqlite")
+            connect_args = {} if is_sqlite else {"connect_timeout": 10}
             engine = create_engine(
                 self.source_url,
-                connect_args={"connect_timeout": 10},
+                connect_args=connect_args,
                 pool_pre_ping=True,
             )
             with engine.connect() as conn:
@@ -410,6 +418,15 @@ class ImportadorPostgres:
             res.erros.append(
                 f"Tabela destino inválida: '{tabela_destino}'. "
                 f"Permitidas: {sorted(_TABELAS_VALIDAS)}"
+            )
+            return res
+
+        if filtro_sql and any(
+            p in filtro_sql.lower() for p in _PALAVRAS_PROIBIDAS_FILTRO
+        ):
+            res.erros.append(
+                "filtro_sql contém palavra-chave não permitida. "
+                "Use apenas cláusulas WHERE de leitura (ex: WHERE ativo = true)."
             )
             return res
 

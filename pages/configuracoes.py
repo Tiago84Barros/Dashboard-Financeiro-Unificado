@@ -11,6 +11,7 @@ Secoes:
 from __future__ import annotations
 
 import io
+import os
 
 import pandas as pd
 import streamlit as st
@@ -103,12 +104,38 @@ def _render_banco() -> None:
 
         with col_btn:
             if ausentes > 0:
-                if st.button(
-                    f"Criar {ausentes} tabela(s)",
-                    type="primary",
-                    use_container_width=True,
-                ):
-                    _executar_criar_schema()
+                if settings.has_supabase_unificado:
+                    with st.expander("⚠️ Banco unificado — expandir para confirmar"):
+                        st.warning(
+                            "**ATENCAO:** `SUPABASE_UNIFICADO_URL` detectada.\n\n"
+                            "Este botao executara DDL diretamente no banco unificado "
+                            "(projeto Dashboard Financeiro). "
+                            "A estrategia definida (Fases 4.4/4.5) recomenda execucao "
+                            "manual no SQL Editor do Supabase apos revisao dos scripts "
+                            "em `supabase_unificado/schema/`.\n\n"
+                            "**Pre-requisito obrigatorio:** backup verificado.",
+                            icon="⚠️",
+                        )
+                        confirmar = st.checkbox(
+                            "Li os scripts em supabase_unificado/schema/, "
+                            "fiz o backup e quero criar as tabelas via app.",
+                            key="_confirmar_criar_schema",
+                        )
+                        if confirmar:
+                            if st.button(
+                                f"Criar {ausentes} tabela(s) no banco unificado",
+                                type="primary",
+                                use_container_width=True,
+                                key="_btn_criar_schema_unificado",
+                            ):
+                                _executar_criar_schema()
+                else:
+                    if st.button(
+                        f"Criar {ausentes} tabela(s)",
+                        type="primary",
+                        use_container_width=True,
+                    ):
+                        _executar_criar_schema()
             else:
                 st.success("Schema completo ✓")
 
@@ -158,7 +185,7 @@ def _render_importacao() -> None:
         )
         return
 
-    sub_csv, sub_postgres = st.tabs(["📄 CSV / Excel", "🐘 Banco de Origem (PostgreSQL)"])
+    sub_csv, sub_postgres = st.tabs(["📄 CSV / Excel", "🔗 Banco de Origem"])
 
     with sub_csv:
         _render_import_csv()
@@ -340,10 +367,23 @@ def _render_import_postgres() -> None:
 
     # Mostra se as conexoes de fonte estao pre-configuradas
     fontes_conf = {
-        "App 1 — Dashboard":               settings.SOURCE_DB_APP1,
-        "App 2 — Investimentos":            settings.SOURCE_DB_APP2,
-        "App 3 — Controle Financeiro":      settings.SOURCE_DB_APP3,
+        "App 2 — Dashboard Investimentos (SQLite local)":   settings.SOURCE_DB_APP2,
+        "App 3 — Controle Financeiro (origem de migracao)": settings.url_origem_controle,
+        "App 1 — Dashboard":                                settings.SOURCE_DB_APP1,
     }
+    nomes_variaveis = {
+        "App 2 — Dashboard Investimentos (SQLite local)":   "SOURCE_DB_APP2",
+        "App 3 — Controle Financeiro (origem de migracao)": "SUPABASE_ORIGEM_CONTROLE_URL / SOURCE_DB_APP3",
+        "App 1 — Dashboard":                                "SOURCE_DB_APP1",
+    }
+
+    st.info(
+        "**App 2 — Investimentos** usa SQLite local "
+        "(`sqlite:///caminho/para/investment_dashboard.db`). "
+        "**App 3 — Controle Financeiro** usa `SUPABASE_ORIGEM_CONTROLE_URL` "
+        "(origem temporaria de migracao — somente leitura).",
+        icon="ℹ️",
+    )
 
     fonte_selecionada = st.selectbox(
         "Fonte pre-configurada",
@@ -355,7 +395,7 @@ def _render_import_postgres() -> None:
         url_fonte = st.text_input(
             "Connection string da fonte",
             type="password",
-            placeholder="postgresql://usuario:senha@host:5432/banco",
+            placeholder="postgresql://usuario:senha@host:5432/banco  ou  sqlite:///caminho/db.db",
             help="Nunca salva — usada apenas nesta sessao.",
         )
     else:
@@ -363,15 +403,18 @@ def _render_import_postgres() -> None:
         if url_conf:
             url_fonte = url_conf
             st.success(f"URL pre-configurada para {fonte_selecionada} ✓")
+            if "SQLite" in fonte_selecionada:
+                st.caption("Fonte SQLite detectada — conexao direta ao arquivo local.")
         else:
+            var_nome = nomes_variaveis.get(fonte_selecionada, "variavel")
             st.warning(
-                f"SOURCE_DB_APP{list(fontes_conf.keys()).index(fonte_selecionada) + 1} "
-                "nao configurada no .env. Informe manualmente ou adicione ao .env.",
+                f"`{var_nome}` nao configurada no .env. "
+                "Informe manualmente ou adicione ao .env.",
             )
             url_fonte = st.text_input(
                 "Connection string",
                 type="password",
-                placeholder="postgresql://...",
+                placeholder="postgresql://...  ou  sqlite:///caminho/db.db",
             )
 
     col_test, _ = st.columns([1, 3])
@@ -534,7 +577,8 @@ def _render_seguranca() -> None:
     checks = [
         (True,                         ".env no .gitignore — credenciais fora do repositorio"),
         (True,                         "secrets.toml no .gitignore"),
-        (True,                         "service_role_key nunca referenciada no codigo"),
+        (not bool(os.getenv("SUPABASE_UNIFICADO_SERVICE_ROLE_KEY", "")),
+                                       "service_role_key ausente do ambiente de execucao"),
         (True,                         "get_db_status() nao expoe URL nem credenciais"),
         (bool(settings.APP_PASSWORD),  "Senha de acesso configurada (APP_PASSWORD)"),
         (settings.has_owner,           "Filtro de usuario ativo (OWNER_USER_ID)"),
@@ -571,55 +615,100 @@ def _render_seguranca() -> None:
 def _render_setup() -> None:
     secao_titulo("Configuracao Inicial", "📋")
 
+    st.info(
+        "**Estrategia de banco:** usar o projeto Supabase **existente** do "
+        "Dashboard Financeiro como banco unificado. "
+        "Nao criar novo projeto — plano gratuito permite apenas 2 projetos. "
+        "Guia completo: `docs/banco_unificado_fases.md`",
+        icon="ℹ️",
+    )
+
     st.markdown("""
-### Passos para ativar o banco de dados (Fase 4)
+### Roteiro de ativacao — Banco Unificado (Fases 4.1 a 4.9)
 
-**1. Criar o banco no Supabase**
-```
-Supabase Dashboard → New Project → finapp-dev
-Region: South America (Sa Paulo)
-```
+---
 
-**2. Criar o usuario do app no Supabase SQL Editor**
+#### Fase 4.1 — Auditar os bancos existentes (proxima etapa)
+
+No SQL Editor do Supabase, executar em **ambos** os projetos:
+
 ```sql
--- Executar no Supabase SQL Editor (finapp-dev)
--- Substitua os valores antes de executar
-INSERT INTO usuarios (nome, email, senha_hash)
-VALUES ('Tiago Barros', 'seu@email.com', 'placeholder')
-RETURNING id;
--- Copie o UUID retornado para OWNER_USER_ID no .env
+-- Listar tabelas e colunas existentes
+SELECT table_name, column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'public'
+ORDER BY table_name, ordinal_position;
 ```
 
-**3. Criar role de leitura segura**
+Salvar os resultados em `supabase_unificado/validation/`.
+
+---
+
+#### Fases 4.2 a 4.4 — Gerar e revisar scripts SQL
+
+O Claude gerara os scripts DDL em `supabase_unificado/schema/`
+apos a auditoria. **Revisar cada script antes de executar.**
+
+---
+
+#### Fase 4.5 — Aplicar scripts no Supabase (execucao manual)
+
+Executar os scripts aprovados no SQL Editor do projeto **Dashboard Financeiro**.
+Ordem: `001_usuarios.sql` ate `012_rls_policies.sql`.
+
+**Pre-requisito obrigatorio:** backup do projeto Dashboard Financeiro verificado.
+
+---
+
+#### Role de leitura segura (executar na Fase 4.5)
+
 ```sql
--- Substitua 'senha_segura' por uma senha real
+-- Executar no SQL Editor do projeto Dashboard Financeiro
+-- Substituir 'senha_segura' por uma senha real antes de executar
 CREATE ROLE app4_reader WITH LOGIN PASSWORD 'senha_segura';
 GRANT CONNECT ON DATABASE postgres TO app4_reader;
+GRANT USAGE ON SCHEMA public TO app4_reader;
 GRANT SELECT ON
-  usuarios, contas, categorias, transacoes, orcamentos, metas,
-  ativos, operacoes, proventos, cotacoes
+    usuarios, contas, categorias, transacoes, orcamentos, metas,
+    ativos, operacoes, proventos, cotacoes
 TO app4_reader;
--- NÃO conceder: INSERT, UPDATE, DELETE, BYPASSRLS
+-- NAO conceder: INSERT, UPDATE, DELETE, BYPASSRLS
 ```
 
-**4. Copiar .env.example para .env**
+---
+
+#### Obter OWNER_USER_ID (apos criar usuario)
+
+```sql
+-- Executar no SQL Editor do Dashboard Financeiro apos criar o usuario
+SELECT id FROM usuarios LIMIT 1;
+-- Copiar o UUID retornado para OWNER_USER_ID no .env
+```
+
+---
+
+#### Fase 4.9 — Configurar .env e ativar banco
+
+Apos schema criado e dados migrados (Fases 4.5 a 4.8):
+
 ```bash
 cp .env.example .env
 ```
 
-**5. Preencher o .env**
+Preencher no `.env`:
+
 ```
-DATABASE_URL="postgresql://app4_reader:senha_segura@pooler.supabase.com:5432/postgres"
-OWNER_USER_ID="uuid-copiado-do-passo-2"
-APP_PASSWORD="hash-sha256-ou-texto"
+SUPABASE_UNIFICADO_URL="postgresql://app4_reader:SENHA@HOST.pooler.supabase.com:6543/postgres"
+OWNER_USER_ID="uuid-do-usuario-na-tabela-usuarios"
 MOCK_MODE="false"
-APP_ENV="production"
+APP_PASSWORD="hash-sha256-ou-texto-simples"
 ```
 
-**6. Inicializar o schema** (aba "Banco de Dados" → botao "Criar tabelas")
-
-**7. Importar dados historicos** (aba "Importacao de Dados")
+Depois: aba "Banco de Dados" desta pagina para verificar e criar tabelas.
     """)
 
     st.divider()
-    st.caption("Dashboard Financeiro Unificado — v0.4.0 · Fase 4")
+    st.caption(
+        "Dashboard Financeiro Unificado — v0.4.0 · Fase 4 "
+        "| Ver docs/banco_unificado_fases.md para o roteiro completo"
+    )
