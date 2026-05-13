@@ -1,9 +1,13 @@
-streamlit
-pandas
-plotly
-sqlalchemy
-psycopg2-binary
-python-dotenv
-openai
-yfinance
-requests
+# Dashboard Financeiro Unificado — dependências
+# Versões fixadas em 2026-05-13 com base no ambiente de desenvolvimento.
+# Para atualizar: testar em ambiente limpo antes de ampliar os limites superiores.
+
+streamlit>=1.39.0,<2.0.0
+pandas>=2.2.0,<3.0.0
+plotly>=5.24.0,<6.0.0
+sqlalchemy>=2.0.0,<3.0.0
+psycopg2-binary>=2.9.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
+openai>=1.63.0,<2.0.0
+yfinance>=0.2.26,<0.3.0
+requests>=2.32.0,<3.0.0

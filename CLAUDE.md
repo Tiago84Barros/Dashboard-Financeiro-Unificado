@@ -40,3 +40,4 @@ Aplicação Streamlit unificada para:
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
+```
