@@ -1,10 +1,10 @@
 # Status — Fase 4: Banco Supabase Unificado
 
-> Data: 2026-05-13
-> Versão: v0.4.0
+> Data: 2026-05-14
+> Versão: v0.4.8
 > ruff: All checks passed!
 > Startup: HTTP 200 ✅
-> Atualizado em: 2026-05-13 — Fase 4 redefinida para "Banco Supabase Unificado usando projeto existente do Dashboard Financeiro"
+> Atualizado em: 2026-05-14 — Fase 4.8 concluída: validação pós-migração realizada (aprovado com ressalvas)
 
 ---
 
@@ -27,8 +27,8 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 | **4.5** | Aplicação manual no Supabase | ✅ Concluída — 22 tabelas + RLS + role criados |
 | **4.6** | Scripts de migração ETL | ✅ Concluída — 8 scripts Python criados (dry_run por padrão) |
 | **4.7** | Migração controlada | ✅ Concluída — dry run com dados reais aprovado (0 erros, 3 fontes, 9/9 validações) |
-| **4.8** | Validação dos dados | ⏳ Pendente |
-| **4.9** | Conexão do app ao banco | ⏳ Pendente |
+| **4.8** | Validação dos dados | ✅ Concluída — aprovado com ressalvas (1 correção crítica pendente) |
+| **4.9** | Conexão do app ao banco | ⏳ Pendente — aguarda correção P1 |
 
 **Documentação completa:**
 - `docs/banco_unificado_fases.md` — detalhamento de cada subfase
@@ -39,6 +39,74 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 - `docs/banco_unificado_dicionario_dados.md` — dicionário de dados completo
 - `docs/banco_unificado_decisoes_modelagem.md` — log de decisões arquiteturais
 - `supabase_unificado/` — pasta operacional (schema, migrations, backups, validation)
+- `docs/fase_4_8_validacao_pos_migracao.md` — relatório completo da validação (Fase 4.8)
+
+---
+
+## Fase 4.8 — Validação Pós-Migração (✅ Concluída — aprovado com ressalvas)
+
+> Data: 2026-05-14
+
+### Resultado geral
+
+**⚠️ APROVADO COM RESSALVAS** — dados íntegros, 1 correção crítica necessária antes de conectar o app.
+
+### Contagens validadas
+
+| Tabela | Registros | Fonte |
+|--------|----------:|-------|
+| `transactions` | 251 | App3 (Controle Financeiro) |
+| `assets` | 82 | App2 (Investimentos SQLite) |
+| `investment_transactions` | 1.351 | App2 |
+| `dividends` | 517 | App2 |
+| `categories` | 38 | Seeds |
+| `accounts` | 2 | Seed manual |
+| `financial_institutions` | 7 | App2 |
+| **Total migrado** | **2.211** | |
+
+### Integridade
+
+- ✅ 12/12 verificações de integridade OK
+- ✅ Zero violações de FK
+- ✅ Zero `user_id` nulos em tabelas pessoais
+- ✅ Zero `category_id` órfãos
+- ✅ Zero datas futuras ou nulas
+- ✅ 82/82 ativos com setor preenchido
+
+### Somatórios
+
+- **Receitas:** R$ 319.708,65 (47 transações)
+- **Despesas:** R$ 215.656,57 (183 transações)
+- **Saldo líquido:** R$ 104.052,08
+- **Volume compras (investimentos):** R$ 4.311.419,97 (874 operações)
+- **Volume vendas (investimentos):** R$ 2.959.385,92 (477 operações)
+- **Total proventos:** R$ 114.144,19 (517 eventos)
+
+### Views
+
+| View | Status |
+|------|:------:|
+| `v_account_balance` | ⚠️ Saldo incorreto (P1) |
+| `v_budget_usage_mtd` | ℹ️ Sem dados (esperado) |
+| `v_category_spending_mtd` | ⚠️ 0 linhas (P1) |
+| `v_investment_summary` | ⚠️ 0 linhas (P2) |
+| `v_monthly_cashflow` | ⚠️ Expenses = R$ 0 (P1) |
+| `v_net_worth` | ⚠️ Patrimônio incorreto (P1+P2) |
+
+### Problemas identificados
+
+| ID | Severidade | Descrição |
+|----|:----------:|-----------|
+| **P1** | 🔴 Crítico | 183 despesas com `amount > 0` — views financeiras incorretas. Correção: `UPDATE transactions SET amount = -amount WHERE type='expense' AND amount > 0` |
+| **P2** | 🟡 Moderado | `portfolio_positions` vazia — `v_investment_summary` = 0, `v_net_worth.investment_total` = 0. Resolver na Fase 4.9. |
+| **P3** | 🟢 Leve | App2 não rastreado em `migration_source_map` (ON CONFLICT protege) |
+| **P4** | ⚪ Info | Um `import_batch` com `status='processing'` stale (não deletável) |
+
+### Pré-requisitos para Fase 4.9
+
+1. Aplicar correção P1 (UPDATE de amounts) — **autorização do usuário necessária**
+2. Criar `compute_portfolio_positions.py` para popular `portfolio_positions`
+3. Com P1+P2 resolvidos: conectar app (`MOCK_MODE = False`)
 
 ---
 
