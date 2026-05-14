@@ -25,9 +25,10 @@ from design.componentes import container_pagina, secao_titulo
 def render() -> None:
     container_pagina("Configuracoes", "Banco de dados, importacao e seguranca", "⚙️")
 
-    tab_banco, tab_import, tab_seguranca, tab_setup = st.tabs([
+    tab_banco, tab_import, tab_cotacoes, tab_seguranca, tab_setup = st.tabs([
         "🗄️ Banco de Dados",
         "📥 Importacao de Dados",
+        "📊 Cotacoes",
         "🔒 Seguranca",
         "📋 Setup",
     ])
@@ -37,6 +38,9 @@ def render() -> None:
 
     with tab_import:
         _render_importacao()
+
+    with tab_cotacoes:
+        _render_cotacoes()
 
     with tab_seguranca:
         _render_seguranca()
@@ -548,7 +552,249 @@ def _executar_import_postgres(
                 st.code(e)
 
 
-# ── Tab 3: Seguranca ──────────────────────────────────────────────────────────
+# ── Tab 3: Cotacoes ───────────────────────────────────────────────────────────
+
+def _render_cotacoes() -> None:
+    secao_titulo("Atualizacao de Cotacoes", "📊", "Importa historico via yfinance")
+
+    if not settings.has_database:
+        st.warning(
+            "Configure `SUPABASE_UNIFICADO_URL` antes de atualizar cotacoes.",
+            icon="⚠️",
+        )
+        return
+
+    from core.database import get_engine
+    from sqlalchemy import text
+
+    engine = get_engine()
+    if engine is None:
+        st.error("Banco nao conectado.")
+        return
+
+    # ── Status ────────────────────────────────────────────────────────────────
+    try:
+        with engine.connect() as conn:
+            total_ativos = conn.execute(
+                text("SELECT COUNT(*) FROM assets")
+            ).scalar() or 0
+            com_cotacao = conn.execute(
+                text("SELECT COUNT(DISTINCT asset_id) FROM asset_quotes")
+            ).scalar() or 0
+            sem_cotacao = total_ativos - com_cotacao
+            ultima_cot  = conn.execute(
+                text("SELECT MAX(timestamp) FROM asset_quotes")
+            ).scalar()
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Total de Ativos", total_ativos)
+        with c2:
+            st.metric("Com Cotacoes", com_cotacao)
+        with c3:
+            st.metric(
+                "Sem Cotacoes",
+                sem_cotacao,
+                delta=f"-{sem_cotacao}" if sem_cotacao > 0 else None,
+                delta_color="inverse",
+            )
+        with c4:
+            st.metric(
+                "Ultima Atualizacao",
+                ultima_cot.strftime("%d/%m/%Y") if ultima_cot else "Nunca",
+            )
+
+    except Exception as e:
+        st.error(f"Erro ao verificar cotacoes: {e}")
+        return
+
+    if sem_cotacao > 0:
+        st.warning(
+            f"{sem_cotacao} ativo(s) sem cotacoes. "
+            "Clique em **Atualizar** para baixar via yfinance.",
+            icon="⚠️",
+        )
+    else:
+        st.success("Todos os ativos tem cotacoes atualizadas! ✓")
+
+    st.info(
+        "Ativos B3 recebem o sufixo `.SA` automaticamente (ex: `PETR3F` → `PETR3F.SA`). "
+        "Ativos USD usam o ticker original. Em caso de erro, verifique o ticker "
+        "na tabela `assets`.",
+        icon="ℹ️",
+    )
+
+    st.divider()
+
+    # ── Parametros ────────────────────────────────────────────────────────────
+    col1, col2 = st.columns(2)
+    with col1:
+        periodo = st.selectbox(
+            "Periodo historico",
+            ["1mo", "3mo", "6mo", "1y", "2y", "5y"],
+            index=3,
+            format_func=lambda x: {
+                "1mo": "1 mes",
+                "3mo": "3 meses",
+                "6mo": "6 meses",
+                "1y":  "1 ano",
+                "2y":  "2 anos",
+                "5y":  "5 anos",
+            }[x],
+        )
+    with col2:
+        apenas_sem = st.checkbox(
+            "Apenas ativos sem cotacao",
+            value=True,
+            help="Desmarcado: atualiza todos os ativos (mais demorado).",
+        )
+
+    col_btn, _ = st.columns([2, 3])
+    with col_btn:
+        if st.button(
+            f"📊 Atualizar {'ativos sem cotacao' if apenas_sem else 'todos os ativos'}",
+            type="primary",
+            use_container_width=True,
+            disabled=total_ativos == 0,
+        ):
+            _executar_update_cotacoes(engine, periodo, apenas_sem)
+
+
+def _executar_update_cotacoes(engine, periodo: str, apenas_sem: bool) -> None:
+    """Baixa cotacoes via yfinance e insere em asset_quotes."""
+    try:
+        import yfinance as yf
+        from sqlalchemy import text
+    except ImportError:
+        st.error(
+            "yfinance nao instalado. Adicione `yfinance` ao `requirements.txt` "
+            "e reinicie o app."
+        )
+        return
+
+    try:
+        with engine.connect() as conn:
+            if apenas_sem:
+                rows = conn.execute(text("""
+                    SELECT id::text AS id, ticker, currency
+                    FROM   assets
+                    WHERE  NOT EXISTS (
+                        SELECT 1 FROM asset_quotes aq WHERE aq.asset_id = assets.id
+                    )
+                    ORDER BY ticker
+                """)).fetchall()
+            else:
+                rows = conn.execute(
+                    text("SELECT id::text AS id, ticker, currency FROM assets ORDER BY ticker")
+                ).fetchall()
+
+        if not rows:
+            st.success("Nenhum ativo para atualizar.")
+            return
+
+        total = len(rows)
+        st.markdown(f"**Atualizando {total} ativo(s)...**")
+        prog = st.progress(0, text="Iniciando...")
+        log  = st.empty()
+
+        sucesso   = 0
+        sem_dados = 0
+        erros     = 0
+        total_pts = 0
+        log_lines: list[str] = []
+
+        _SQL_UPSERT = text("""
+            INSERT INTO asset_quotes
+                (asset_id, timestamp, open, high, low, close, volume)
+            VALUES
+                (:asset_id, :ts, :open, :high, :low, :close, :volume)
+            ON CONFLICT (asset_id, timestamp) DO UPDATE
+                SET close  = EXCLUDED.close,
+                    open   = EXCLUDED.open,
+                    high   = EXCLUDED.high,
+                    low    = EXCLUDED.low,
+                    volume = EXCLUDED.volume
+        """)
+
+        for i, r in enumerate(rows):
+            ticker_yf = f"{r.ticker}.SA" if (r.currency or "BRL") == "BRL" else r.ticker
+            prog.progress((i + 1) / total, text=f"{ticker_yf} ({i+1}/{total})")
+
+            try:
+                hist = yf.download(
+                    ticker_yf,
+                    period=periodo,
+                    progress=False,
+                    auto_adjust=True,
+                    actions=False,
+                )
+
+                if hist.empty:
+                    sem_dados += 1
+                    log_lines.append(f"⚠️ {ticker_yf}: sem dados")
+                    continue
+
+                records = []
+                for ts, row_data in hist.iterrows():
+                    close_val = float(row_data.get("Close", 0) or 0)
+                    if close_val > 0:
+                        records.append({
+                            "asset_id": r.id,
+                            "ts":       ts.to_pydatetime(),
+                            "open":     float(row_data.get("Open",   0) or 0) or None,
+                            "high":     float(row_data.get("High",   0) or 0) or None,
+                            "low":      float(row_data.get("Low",    0) or 0) or None,
+                            "close":    close_val,
+                            "volume":   float(row_data.get("Volume", 0) or 0) or None,
+                        })
+
+                if records:
+                    with engine.begin() as conn:
+                        conn.execute(_SQL_UPSERT, records)
+                    total_pts += len(records)
+                    sucesso   += 1
+                    log_lines.append(f"✅ {ticker_yf}: {len(records)} pts")
+                else:
+                    sem_dados += 1
+                    log_lines.append(f"⚠️ {ticker_yf}: nenhum dado valido")
+
+            except Exception as e:
+                erros += 1
+                log_lines.append(f"❌ {ticker_yf}: {str(e)[:60]}")
+
+            # Exibe as ultimas 5 linhas de log
+            log.code("\n".join(log_lines[-5:]))
+
+        prog.empty()
+        log.empty()
+
+        # Resumo final
+        if sucesso:
+            st.success(
+                f"✅ {sucesso} ativo(s) atualizados · {total_pts:,} pontos inseridos"
+                .replace(",", ".")
+            )
+        if sem_dados:
+            st.warning(f"⚠️ {sem_dados} ativo(s) sem dados no yfinance")
+        if erros:
+            st.error(f"❌ {erros} erro(s) — verifique o log acima")
+
+        if log_lines:
+            with st.expander("Ver log completo"):
+                st.code("\n".join(log_lines))
+
+        # Invalida caches de investimentos
+        if sucesso > 0:
+            from core.investimentos import get_carteira, get_cashflow_mensal
+            get_carteira.clear()
+            get_cashflow_mensal.clear()
+            st.rerun()
+
+    except Exception as e:
+        st.error(f"Erro inesperado: {e}")
+
+
+# ── Tab 4: Seguranca ──────────────────────────────────────────────────────────
 
 def _render_seguranca() -> None:
     secao_titulo("Seguranca", "🔒")
@@ -613,7 +859,7 @@ def _render_seguranca() -> None:
         st.caption("Cole este hash no campo APP_PASSWORD do .env ou secrets.toml")
 
 
-# ── Tab 4: Setup ──────────────────────────────────────────────────────────────
+# ── Tab 5: Setup ──────────────────────────────────────────────────────────────
 
 def _render_setup() -> None:
     secao_titulo("Configuracao Inicial", "📋")

@@ -46,7 +46,7 @@ _ROTAS: dict[str, str] = {
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📊 Dashboard Financeiro")
-    st.caption("v0.4.9 · Fase 4")
+    st.caption("v0.5.10 · Fase 5")
     st.divider()
 
     # Seção: Visão Geral
