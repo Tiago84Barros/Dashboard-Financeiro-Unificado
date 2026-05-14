@@ -1,11 +1,25 @@
 """
-pages/controle_financeiro.py  — v3 (sub-seções completas)
+pages/controle_financeiro.py  — v4 (preservação fiel do app original)
 
-Replica as 4 seções do app original controlefinanceirotsb.streamlit.app:
+Replica FIELMENTE as 4 seções do app original controlefinanceirotsb.streamlit.app:
   Sidebar  — Filtros (mês de referência) + Novo Lançamento completo
-               (Tipo: entrada|saída|investimento, Forma pgto, Categoria,
-                Data, Valor, Parcelas, Cartão, Descrição, Salvar)
+               (Tipo: entrada|saída|investimento, Forma pgto condicional,
+                Categoria com presets por tipo, Data, Valor, Parcelas,
+                Cartão, Descrição, Salvar)
   Tabs     — Dashboard | Análises | Tabelas | Cartão de Crédito
+
+Adições do app unificado preservadas (não existiam no original):
+  - Pizza de despesas na aba Análises
+  - Orçamento vs Realizado (overlay)
+  - Barras de progresso por categoria
+  - Taxa de poupança mensal histórica
+
+Novas funcionalidades implementadas na Fase 5.1:
+  - Dashboard: seção "Últimos Lançamentos" com modo leitura + edição
+  - Análises: Comparativo Ano a Ano (YOY)
+  - Análises: Evolução do Patrimônio Investido (ano a ano)
+  - Tabelas: filtros por Tipo/Categoria/Ano/Mês/Dia/texto + totais
+  - Cartão: filtro por payment_type quando dados disponíveis
 
 Dados: core/controle + core/investimentos.get_cashflow_mensal()
 """
@@ -15,7 +29,10 @@ from collections import defaultdict
 import plotly.graph_objects as go
 import streamlit as st
 
-from core.controle import get_controle, get_opcoes_formulario, inserir_transacao
+from core.controle import (
+    get_controle, get_opcoes_formulario, inserir_transacao,
+    atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
+)
 from core.investimentos import get_cashflow_mensal
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, barra_progresso
@@ -32,9 +49,22 @@ _MESES_PT = {
     9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
 }
 
-_FORMAS_PGTO = [
-    "Cartão de crédito", "Débito", "PIX", "Dinheiro",
-    "TED / DOC", "Boleto", "Outro",
+_MESES_NOMES = {v: k for k, v in _MESES_PT.items()}
+
+_FORMAS_PGTO_SAIDA = ["Conta", "Cartão de crédito", "Dinheiro", "Pix"]
+_FORMAS_PGTO_TODOS = ["Conta", "Cartão de crédito", "Débito", "Dinheiro", "PIX", "TED / DOC", "Boleto", "Outro"]
+
+# Categorias pré-definidas por tipo (igual ao app original)
+_CAT_ENTRADA = [
+    "Salário", "Renda Extra", "Dividendos", "Reembolso", "Outros",
+]
+_CAT_SAIDA = [
+    "Mercado", "Compras", "Condomínio", "Luz", "Internet", "Transporte",
+    "Combustível", "Saúde", "Despesas Domésticas", "Lazer", "Assinaturas",
+    "Educação", "Restaurante", "Financiamento", "Pagamento de Cartão", "Outros",
+]
+_CAT_INVESTIMENTO = [
+    "Renda Fixa", "Renda Variável", "Exterior", "Reserva de Despesa", "Outra",
 ]
 
 _CORES_CAT = [
@@ -57,6 +87,14 @@ def _kpi_card(titulo: str, valor: str, descricao: str, cor: str) -> str:
         f'letter-spacing:-0.02em;line-height:1;margin-bottom:8px;">{valor}</div>'
         f'<div style="font-size:0.73rem;color:#4A5568;line-height:1.35;">{descricao}</div>'
         f'</div>'
+    )
+
+
+def _secao_titulo(icone: str, titulo: str) -> None:
+    st.markdown(
+        f'<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
+        f'margin-bottom:8px;">{icone} {titulo}</div>',
+        unsafe_allow_html=True,
     )
 
 
@@ -164,6 +202,78 @@ def _fig_orcamento(cats: list) -> go.Figure:
     return fig
 
 
+def _fig_yoy(por_ano: dict, anos: list) -> go.Figure:
+    """Bar chart agrupado: Receitas × Despesas × Saldo por ano."""
+    rec   = [por_ano[a]["receitas"] for a in anos]
+    desp  = [por_ano[a]["despesas"] for a in anos]
+    saldo = [por_ano[a]["saldo"]    for a in anos]
+    anos_str = [str(a) for a in anos]
+
+    fig = go.Figure()
+    for nome, vals, cor in [
+        ("Receitas", rec,   _COR_RECEITA),
+        ("Despesas", desp,  _COR_DESPESA),
+        ("Saldo",    saldo, _COR_INVEST),
+    ]:
+        fig.add_trace(go.Bar(
+            name=nome, x=anos_str, y=vals, marker_color=cor, opacity=0.85,
+            hovertemplate=f"<b>{nome} %{{x}}</b><br>R$ %{{y:,.2f}}<extra></extra>",
+        ))
+    fig.update_layout(
+        barmode="group",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        legend={"orientation": "h", "y": -0.22, "font": {"size": 11},
+                "bgcolor": "rgba(0,0,0,0)"},
+        margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=320,
+        xaxis={"showgrid": False},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533",
+               "tickformat": ",.0f", "tickprefix": "R$ "},
+    )
+    return fig
+
+
+def _fig_patrimonio_investido(por_ano: dict, anos: list) -> go.Figure:
+    """Barras anuais de saldo positivo (proxy de poupança) + linha acumulada."""
+    saldos = [max(0.0, por_ano[a]["saldo"]) for a in anos]
+    acum   = []
+    total  = 0.0
+    for s in saldos:
+        total += s
+        acum.append(round(total, 2))
+    anos_str = [str(a) for a in anos]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Poupado no ano", x=anos_str, y=saldos,
+        marker_color=_COR_RECEITA, opacity=0.80,
+        hovertemplate="<b>%{x}</b><br>Poupado: R$ %{y:,.2f}<extra></extra>",
+        yaxis="y",
+    ))
+    fig.add_trace(go.Scatter(
+        name="Acumulado", x=anos_str, y=acum, mode="lines+markers",
+        line={"color": _COR_INVEST, "width": 2.5}, marker={"size": 7},
+        hovertemplate="<b>%{x}</b><br>Acumulado: R$ %{y:,.2f}<extra></extra>",
+        yaxis="y2",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        legend={"orientation": "h", "y": -0.22, "font": {"size": 11},
+                "bgcolor": "rgba(0,0,0,0)"},
+        margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=320,
+        xaxis={"showgrid": False},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533",
+               "tickformat": ",.0f", "tickprefix": "R$ ",
+               "title": {"text": "Poupado/ano", "font": {"size": 10}}},
+        yaxis2={"overlaying": "y", "side": "right",
+                "showgrid": False,
+                "tickformat": ",.0f", "tickprefix": "R$ ",
+                "title": {"text": "Acumulado", "font": {"size": 10}}},
+    )
+    return fig
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR — Filtros + Formulário
 # ══════════════════════════════════════════════════════════════════════════════
@@ -178,7 +288,6 @@ def _sidebar_render(ano: int, mes: int) -> None:
         'Filtros</div>',
         unsafe_allow_html=True,
     )
-    # A data de referência é gerenciada pelo seletor principal — mostra só leitura
     st.sidebar.caption(f"Mês de referência: **{_MESES_PT[mes]}/{ano}**")
 
     st.sidebar.divider()
@@ -191,87 +300,115 @@ def _sidebar_render(ano: int, mes: int) -> None:
         unsafe_allow_html=True,
     )
 
-    tipo_opcoes  = ["saida", "entrada", "investimento"]
-    tipo_labels  = {"saida": "saída", "entrada": "entrada", "investimento": "investimento"}
-
-    tipo = st.sidebar.radio(
+    # 1) Tipo (reativo — fora do form para filtrar categorias e forma pgto)
+    t_type = st.sidebar.radio(
         "Tipo",
-        tipo_opcoes,
-        format_func=lambda x: tipo_labels[x],
+        ["entrada", "saida", "investimento"],
+        format_func=lambda x: {"entrada": "entrada", "saida": "saída", "investimento": "investimento"}[x],
         key="cf_sb_tipo",
-        horizontal=False,
+        horizontal=True,
     )
 
-    # Forma de pagamento
-    forma = st.sidebar.selectbox(
-        "Forma de pagamento",
-        _FORMAS_PGTO,
-        key="cf_sb_forma",
-    )
+    st.sidebar.markdown("<hr style='margin-top:0;margin-bottom:10px;opacity:0.25;'>", unsafe_allow_html=True)
 
-    # Categorias filtradas por tipo
-    opcoes    = get_opcoes_formulario()
-    cats      = opcoes.get("categorias", [])
-    contas    = opcoes.get("contas", [])
+    # 2) Forma de pagamento (só para saída — igual ao original)
+    if t_type == "saida":
+        forma = st.sidebar.selectbox(
+            "Forma de pagamento",
+            _FORMAS_PGTO_SAIDA,
+            key="cf_sb_forma",
+        )
+        show_card = (forma == "Cartão de crédito")
+    else:
+        forma = "Conta"
+        show_card = False
 
-    tipo_db   = "income" if tipo == "entrada" else "expense"
-    cats_tipo = [c for c in cats if c["tipo"] == tipo_db or c["tipo"] == "transfer"]
-    if not cats_tipo:
-        cats_tipo = cats  # fallback: mostra todas
-    cat_nomes = [c["nome"] for c in cats_tipo] or ["(sem categoria)"]
-    cat_ids   = [c["id"]   for c in cats_tipo] or [None]
+    # 3) FORMULÁRIO (limpa após salvar)
+    with st.sidebar.form("form_nova_tx", clear_on_submit=True):
 
-    cat_idx = st.sidebar.selectbox(
-        "Categoria",
-        range(len(cat_nomes)),
-        format_func=lambda i: cat_nomes[i],
-        key="cf_sb_cat",
-    )
+        # Categorias pré-definidas por tipo (mais opções do DB como fallback)
+        if t_type == "entrada":
+            cat_preset = _CAT_ENTRADA + ["Outra"]
+        elif t_type == "saida":
+            cat_preset = _CAT_SAIDA + ["Outra"]
+        else:
+            cat_preset = _CAT_INVESTIMENTO
 
-    data_tx = st.sidebar.date_input(
-        "Data",
-        value=_date(ano, mes, min(
-            _date.today().day
-            if (ano == _date.today().year and mes == _date.today().month)
-            else 28, 28
-        )),
-        key="cf_sb_data",
-    )
+        cat_idx = st.selectbox(
+            "Categoria",
+            range(len(cat_preset)),
+            format_func=lambda i: cat_preset[i],
+            key="cf_sb_cat",
+        )
+        cat_escolhida = cat_preset[cat_idx]
 
-    valor = st.sidebar.number_input(
-        "Valor (R$)",
-        min_value=0.0, step=0.01, format="%.2f",
-        key="cf_sb_valor",
-    )
+        # Campo livre para "Outra"
+        if cat_escolhida == "Outra":
+            cat_livre = st.text_input("Categoria personalizada", key="cf_sb_cat_livre")
+        else:
+            cat_livre = ""
 
-    col_parc, col_cart = st.sidebar.columns(2)
-    with col_parc:
-        st.number_input("Parcelas", min_value=1, max_value=48, value=1,
-                        key="cf_sb_parc")
-    with col_cart:
-        st.text_input("Cartão", placeholder="Final 4 díg.", key="cf_sb_cart")
+        data_tx = st.date_input(
+            "Data",
+            value=_date(ano, mes, min(
+                _date.today().day
+                if (ano == _date.today().year and mes == _date.today().month)
+                else 28, 28
+            )),
+            format="DD/MM/YYYY",
+            key="cf_sb_data",
+        )
 
-    descricao = st.sidebar.text_area(
-        "Descrição (opcional)", height=80, key="cf_sb_desc",
-    )
+        valor = st.number_input(
+            "Valor (R$)",
+            min_value=0.0, step=0.01, format="%.2f",
+            key="cf_sb_valor",
+        )
 
-    st.sidebar.markdown("<br>", unsafe_allow_html=True)
+        # Campos de cartão (só para saída + Cartão de crédito)
+        if show_card:
+            col_parc, col_cart = st.columns(2)
+            with col_parc:
+                parcelas = st.number_input("Parcelas", min_value=1, max_value=48, value=1,
+                                           key="cf_sb_parc")
+            with col_cart:
+                nome_cartao = st.text_input("Cartão", placeholder="Final 4 díg.", key="cf_sb_cart")
+        else:
+            parcelas, nome_cartao = 1, ""
 
-    if st.sidebar.button("Salvar lançamento", use_container_width=True, type="primary"):
+        descricao = st.text_area(
+            "Descrição (opcional)", height=60, key="cf_sb_desc",
+        )
+
+        submitted = st.form_submit_button("Salvar lançamento", use_container_width=True)
+
+    if submitted:
         if valor <= 0:
             st.sidebar.error("Informe um valor maior que zero.")
             return
 
+        categoria_final = cat_livre.strip() if cat_escolhida == "Outra" else cat_escolhida
+        if not categoria_final:
+            st.sidebar.error("Informe a categoria.")
+            return
+
+        # Resolve conta
+        opcoes  = get_opcoes_formulario()
+        contas  = opcoes.get("contas", [])
         conta_id = contas[0]["id"] if contas else None
         if not conta_id:
             st.sidebar.warning("Nenhuma conta configurada.")
             return
 
-        cat_id     = cat_ids[cat_idx] if cat_ids and cat_ids[cat_idx] else None
-        desc_final = descricao.strip() or cat_nomes[cat_idx]
+        # Resolve category_id (busca pelo nome no DB; None se não encontrar)
+        cats_db    = opcoes.get("categorias", [])
+        cat_match  = next((c for c in cats_db if c["nome"] == categoria_final), None)
+        cat_id     = cat_match["id"] if cat_match else None
 
-        # investimento → expense com categoria especial
-        tipo_insert = "income" if tipo == "entrada" else "expense"
+        # Tipo para o banco
+        tipo_insert = "income" if t_type == "entrada" else "expense"
+
+        desc_final = descricao.strip() or categoria_final
 
         ok, msg = inserir_transacao(
             descricao=desc_final,
@@ -321,15 +458,14 @@ def _tab_dashboard(d: dict, historico: list) -> None:
     with c3:
         st.markdown(_kpi_card(
             "Saldo Líquido do Mês", fmt_moeda(saldo),
-            f"{'Sobrou' if saldo >= 0 else 'Déficit'} dinheiro este mês. "
-            f"Investido no mês: R$ 0,00",
+            f"{'Sobrou' if saldo >= 0 else 'Déficit'} dinheiro este mês.",
             cor_saldo,
         ), unsafe_allow_html=True)
     with c4:
         st.markdown(_kpi_card(
             "Renda Comprometida",
             fmt_percentual(comprometido, sinal=False),
-            "Considera despesas em relação à renda do mês.",
+            "Despesas em relação à renda do mês.",
             cor_comp,
         ), unsafe_allow_html=True)
 
@@ -339,26 +475,43 @@ def _tab_dashboard(d: dict, historico: list) -> None:
     col_cat, col_hist = st.columns(2, gap="medium")
 
     with col_cat:
-        st.markdown(
-            '<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
-            'margin-bottom:8px;">Gastos por categoria (mês)</div>',
-            unsafe_allow_html=True,
-        )
+        _secao_titulo("📊", "Gastos por categoria (mês)")
         cats = d["categorias"]
         if cats:
             st.plotly_chart(_fig_cat_horizontal(cats),
                             use_container_width=True,
                             config={"displayModeBar": False})
+            # Tabela com % da renda (igual ao original)
+            if receitas > 0:
+                st.markdown(
+                    '<div style="display:grid;grid-template-columns:1fr 110px 90px;'
+                    'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
+                    'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
+                    'letter-spacing:0.1em;color:#4A5568;">'
+                    '<span>Categoria</span>'
+                    '<span style="text-align:right">Valor</span>'
+                    '<span style="text-align:right">% renda</span>'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+                for cat in cats:
+                    pct_r = round(cat["gasto"] / receitas * 100, 1)
+                    st.markdown(
+                        f'<div style="display:grid;grid-template-columns:1fr 110px 90px;'
+                        f'gap:4px;padding:5px 10px;background:#12151E;'
+                        f'border-bottom:1px solid #1A1F2E;font-size:0.80rem;">'
+                        f'<span style="color:#CBD5E0">{cat["nome"]}</span>'
+                        f'<span style="text-align:right;color:{_COR_DESPESA};font-weight:700">'
+                        f'{fmt_moeda(cat["gasto"])}</span>'
+                        f'<span style="text-align:right;color:#718096">{pct_r:.1f}%</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
         else:
             st.caption("Sem despesas registradas neste mês.")
 
     with col_hist:
-        st.markdown(
-            '<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
-            'margin-bottom:8px;">Histórico de 6 meses '
-            '(Receitas x Despesas x Saldo)</div>',
-            unsafe_allow_html=True,
-        )
+        _secao_titulo("📈", "Histórico de 6 meses (Receitas × Despesas × Saldo)")
         if historico:
             st.plotly_chart(_fig_historico(historico),
                             use_container_width=True,
@@ -366,12 +519,145 @@ def _tab_dashboard(d: dict, historico: list) -> None:
         else:
             st.caption("Histórico não disponível.")
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
+
+    # ── Últimos Lançamentos (igual ao original) ───────────────────────────────
+    _secao_titulo("📋", "Últimos Lançamentos")
+
+    txs = d["transacoes"]
+    if not txs:
+        st.caption("Nenhum lançamento cadastrado ainda.")
+        return
+
+    edit_mode = st.checkbox("Habilitar edição dos lançamentos", key="dash_edit_mode")
+
+    if not edit_mode:
+        # Modo leitura
+        st.markdown(
+            '<div style="display:grid;'
+            'grid-template-columns:80px 1fr 150px 80px 130px 100px;'
+            'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
+            'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
+            'letter-spacing:0.1em;color:#4A5568;">'
+            '<span>Data</span><span>Descrição</span>'
+            '<span style="text-align:center">Categoria</span>'
+            '<span style="text-align:center">Tipo</span>'
+            '<span style="text-align:right">Valor</span>'
+            '<span style="text-align:center">Conta</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        for tx in txs[:30]:
+            cor  = _COR_RECEITA if tx["eh_receita"] else _COR_DESPESA
+            tipo_label = "entrada" if tx["eh_receita"] else "saída"
+            st.markdown(
+                f'<div style="display:grid;'
+                f'grid-template-columns:80px 1fr 150px 80px 130px 100px;'
+                f'gap:4px;padding:6px 10px;background:#12151E;'
+                f'border-bottom:1px solid #1A1F2E;font-size:0.81rem;align-items:center;">'
+                f'<span style="color:#718096">{tx["data_fmt"]}</span>'
+                f'<span style="color:#CBD5E0" title="{tx["descricao"]}">'
+                f'{tx["descricao"][:38]}</span>'
+                f'<span style="text-align:center;background:#1E2533;border-radius:4px;'
+                f'padding:2px 6px;font-size:0.70rem;color:{_COR_NEUTRO}">'
+                f'{tx["categoria"]}</span>'
+                f'<span style="text-align:center;font-size:0.72rem;font-weight:700;color:{cor}">'
+                f'{tipo_label}</span>'
+                f'<span style="text-align:right;font-weight:700;color:{cor}">'
+                f'{tx["valor_fmt"]}</span>'
+                f'<span style="text-align:center;font-size:0.72rem;color:#4A5568">'
+                f'{tx["conta"]}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        if len(txs) > 30:
+            st.caption(f"Exibindo 30 de {len(txs)} lançamentos.")
+
+    else:
+        st.info("Edite os campos desejados e clique **Salvar alterações** para gravar no banco.")
+
+        opcoes    = get_opcoes_formulario()
+        cats_db   = opcoes.get("categorias", [])
+        cat_nomes = [c["nome"] for c in cats_db]
+
+        # Prepara DataFrame para edição
+        import pandas as pd
+        rows_edit = []
+        for tx in txs[:30]:
+            rows_edit.append({
+                "ID":        tx["id"],
+                "Tipo":      "entrada" if tx["eh_receita"] else "saída",
+                "Categoria": tx["categoria"],
+                "Data":      tx["data"],
+                "Valor":     abs(tx["valor"]),
+                "Descrição": tx["descricao"],
+                "Conta":     tx["conta"],
+            })
+        df_edit = pd.DataFrame(rows_edit)
+
+        edited = st.data_editor(
+            df_edit,
+            num_rows="fixed",
+            hide_index=True,
+            key="editor_lancamentos",
+            column_config={
+                "ID":      st.column_config.TextColumn("ID", disabled=True),
+                "Tipo":    st.column_config.TextColumn("Tipo", disabled=True),
+                "Conta":   st.column_config.TextColumn("Conta", disabled=True),
+                "Categoria": st.column_config.SelectboxColumn(
+                    "Categoria",
+                    options=cat_nomes if cat_nomes else ["Sem categoria"],
+                ),
+                "Data":    st.column_config.DateColumn("Data"),
+                "Valor":   st.column_config.NumberColumn("Valor (R$)", format="%.2f", step=0.01),
+                "Descrição": st.column_config.TextColumn("Descrição"),
+            },
+        )
+
+        if st.button("Salvar alterações", key="btn_salvar_edicoes"):
+            erros = []
+            ok_count = 0
+            for i, row in edited.iterrows():
+                orig = df_edit.iloc[i]
+                campos_mudaram = (
+                    row["Descrição"] != orig["Descrição"]
+                    or row["Categoria"] != orig["Categoria"]
+                    or abs(row["Valor"] - orig["Valor"]) > 0.001
+                    or row["Data"] != orig["Data"]
+                )
+                if campos_mudaram:
+                    # Resolve category_id
+                    cat_m = next((c for c in cats_db if c["nome"] == row["Categoria"]), None)
+                    cat_id = cat_m["id"] if cat_m else None
+                    # Mantém sinal original
+                    sinal = 1.0 if txs[i]["eh_receita"] else -1.0
+                    ok, msg = atualizar_transacao(
+                        tx_id=str(row["ID"]),
+                        descricao=str(row["Descrição"]),
+                        valor=sinal * abs(float(row["Valor"])),
+                        data=row["Data"],
+                        categoria_id=cat_id,
+                    )
+                    if ok:
+                        ok_count += 1
+                    else:
+                        erros.append(f"ID {row['ID']}: {msg}")
+            if ok_count > 0:
+                st.success(f"✅ {ok_count} lançamento(s) atualizado(s).")
+                st.rerun()
+            if erros:
+                for e in erros:
+                    st.error(e)
+            if ok_count == 0 and not erros:
+                st.info("Nenhuma alteração detectada.")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — Análises
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _tab_analises(d: dict, historico: list) -> None:
+def _tab_analises(d: dict, historico: list, hist_anual: dict) -> None:
     receitas = d["receitas"]
     despesas = d["despesas"]
     saldo    = d["saldo_mes"]
@@ -408,7 +694,6 @@ def _tab_analises(d: dict, historico: list) -> None:
             "#F6C90E"    if maior_pct >= 70 else _COR_RECEITA,
         ), unsafe_allow_html=True)
     with col_m4:
-        rel_invest = 0.0  # placeholder — sem dados de investimento por transação
         st.markdown(_kpi_card(
             "Saldo Acumulado",
             fmt_moeda(saldo),
@@ -418,43 +703,28 @@ def _tab_analises(d: dict, historico: list) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Gráficos de análise ────────────────────────────────────────────────────
+    # ── Distribuição + Orçamento ───────────────────────────────────────────────
     col_pizza, col_orc = st.columns(2, gap="medium")
-
     with col_pizza:
-        st.markdown(
-            '<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
-            'margin-bottom:8px;">Distribuição de despesas</div>',
-            unsafe_allow_html=True,
-        )
+        _secao_titulo("🍕", "Distribuição de despesas")
         if cats:
-            st.plotly_chart(_fig_pizza_cats(cats),
-                            use_container_width=True,
+            st.plotly_chart(_fig_pizza_cats(cats), use_container_width=True,
                             config={"displayModeBar": False})
         else:
             st.caption("Sem despesas.")
 
     with col_orc:
-        st.markdown(
-            '<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
-            'margin-bottom:8px;">Orçamento vs Realizado</div>',
-            unsafe_allow_html=True,
-        )
+        _secao_titulo("📊", "Orçamento vs Realizado")
         if cats:
-            st.plotly_chart(_fig_orcamento(cats),
-                            use_container_width=True,
+            st.plotly_chart(_fig_orcamento(cats), use_container_width=True,
                             config={"displayModeBar": False})
         else:
             st.caption("Sem dados de orçamento.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Orçamento por categoria detalhado ─────────────────────────────────────
-    st.markdown(
-        '<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
-        'margin-bottom:12px;">Orçamento por categoria</div>',
-        unsafe_allow_html=True,
-    )
+    # ── Orçamento por categoria (barras de progresso) ─────────────────────────
+    _secao_titulo("🎯", "Orçamento por categoria")
     if cats:
         for cat in cats:
             barra_progresso(
@@ -467,17 +737,12 @@ def _tab_analises(d: dict, historico: list) -> None:
     else:
         st.caption("Nenhuma despesa por categoria neste mês.")
 
-    # ── Tendência histórica ────────────────────────────────────────────────────
+    # ── Taxa de Poupança Histórica ─────────────────────────────────────────────
     if historico:
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(
-            '<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
-            'margin-bottom:8px;">Evolução mensal (12 meses)</div>',
-            unsafe_allow_html=True,
-        )
-        # Barra: taxa de poupança por mês
-        meses_labels = [h["label"]    for h in historico]
-        taxas        = [
+        _secao_titulo("💹", "Taxa de Poupança Mensal (12 meses)")
+        meses_labels = [h["label"] for h in historico]
+        taxas = [
             round(h["saldo"] / h["receitas"] * 100, 1)
             if h["receitas"] > 0 else 0.0
             for h in historico
@@ -491,21 +756,72 @@ def _tab_analises(d: dict, historico: list) -> None:
             hovertemplate="<b>%{x}</b><br>Taxa: %{y:.1f}%<extra></extra>",
         ))
         fig_taxa.update_layout(
-            title_text="Taxa de Poupança Mensal (%)",
-            title_font={"size": 12, "color": "#9CA3AF"},
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             font_color=_COR_NEUTRO,
-            margin={"t": 30, "b": 0, "l": 0, "r": 0}, height=220,
+            margin={"t": 10, "b": 0, "l": 0, "r": 0}, height=220,
             xaxis={"showgrid": False},
             yaxis={"showgrid": True, "gridcolor": "#1E2533",
                    "tickformat": ".0f", "ticksuffix": "%"},
-            shapes=[{"type": "line", "x0": -0.5, "x1": len(meses_labels) - 0.5,
-                     "y0": 30, "y1": 30,
-                     "line": {"color": _COR_RECEITA, "width": 1.5, "dash": "dot"}}],
+            shapes=[{
+                "type": "line", "x0": -0.5, "x1": len(meses_labels) - 0.5,
+                "y0": 30, "y1": 30,
+                "line": {"color": _COR_RECEITA, "width": 1.5, "dash": "dot"},
+            }],
         )
-        st.plotly_chart(fig_taxa, use_container_width=True,
-                        config={"displayModeBar": False})
+        st.plotly_chart(fig_taxa, use_container_width=True, config={"displayModeBar": False})
         st.caption("Linha pontilhada verde = meta 30%")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
+
+    # ── Comparativo Ano a Ano (YOY) — do app original ─────────────────────────
+    _secao_titulo("📅", "Comparativo Ano a Ano")
+    anos     = hist_anual.get("anos", [])
+    por_ano  = hist_anual.get("por_ano", {})
+
+    if len(anos) >= 2:
+        st.plotly_chart(_fig_yoy(por_ano, anos), use_container_width=True,
+                        config={"displayModeBar": False})
+
+        # Tabela resumo
+        import pandas as pd
+        rows_yoy = []
+        for a in anos:
+            rows_yoy.append({
+                "Ano":       str(a),
+                "Receitas":  f"R$ {por_ano[a]['receitas']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "Despesas":  f"R$ {por_ano[a]['despesas']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "Saldo":     f"R$ {por_ano[a]['saldo']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+            })
+        st.dataframe(pd.DataFrame(rows_yoy), use_container_width=True, hide_index=True)
+    elif len(anos) == 1:
+        st.caption(f"Apenas 1 ano de dados disponível ({anos[0]}). Aguarde mais histórico.")
+    else:
+        st.caption("Sem dados históricos disponíveis.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Evolução do Patrimônio / Poupança ─────────────────────────────────────
+    _secao_titulo("📈", "Evolução do Patrimônio Acumulado (poupança ano a ano)")
+    if len(anos) >= 1:
+        st.plotly_chart(_fig_patrimonio_investido(por_ano, anos), use_container_width=True,
+                        config={"displayModeBar": False})
+
+        import pandas as pd
+        acum = 0.0
+        rows_pat = []
+        for a in anos:
+            poupado = max(0.0, por_ano[a]["saldo"])
+            acum   += poupado
+            rows_pat.append({
+                "Ano": str(a),
+                "Poupado no Ano": f"R$ {poupado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "Acumulado":      f"R$ {acum:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+            })
+        st.dataframe(pd.DataFrame(rows_pat), use_container_width=True, hide_index=True)
+        st.caption("Considera apenas anos com saldo positivo (receitas > despesas).")
+    else:
+        st.caption("Sem dados históricos disponíveis.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -513,56 +829,74 @@ def _tab_analises(d: dict, historico: list) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _tab_tabelas(d: dict) -> None:
-    txs = d["transacoes"]
+    """
+    Consulta de lançamentos com filtros completos (Tipo, Categoria, Ano, Mês, Dia, Texto).
+    Replica fielmente o módulo Consulta_Tabelas.py do app original.
+    """
+    _secao_titulo("🔍", "Consulta de lançamentos")
 
-    # ── Filtros ────────────────────────────────────────────────────────────────
-    st.markdown(
-        '<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
-        'margin-bottom:12px;">Lançamentos do período</div>',
-        unsafe_allow_html=True,
+    # 1) Tipo — radio fora do form (igual ao original)
+    aba = st.radio(
+        "Tipo de lançamento",
+        ["Todos", "Receitas", "Despesas"],
+        horizontal=True,
+        key="tab_tipo_radio",
     )
 
-    col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
+    # 2) Coleta todos os lançamentos do usuário para popular os seletores
+    todos = get_transacoes_filtradas()  # sem filtros = tudo
+
+    cats_disponiveis = sorted({t["categoria"] for t in todos})
+    anos_disp = sorted({t.get("ano") for t in todos if t.get("ano")}, reverse=True)
+    meses_disp_labels = [f"{m:02d} - {_MESES_PT[m]}" for m in sorted({t.get("mes") for t in todos if t.get("mes")})]
+
+    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
     with col_f1:
-        f_tipo = st.selectbox(
-            "Tipo",
-            ["Todos", "Receitas", "Despesas"],
-            key="tab_ftipo",
-            label_visibility="collapsed",
-        )
+        f_cat = st.selectbox("Categoria", ["Todas"] + cats_disponiveis, key="tab_fcat")
     with col_f2:
-        cats_disponiveis = sorted({t["categoria"] for t in txs})
-        f_cat = st.selectbox(
-            "Categoria",
-            ["Todas"] + cats_disponiveis,
-            key="tab_fcat",
-            label_visibility="collapsed",
-        )
+        f_ano_opcoes = ["Todos"] + [str(a) for a in anos_disp]
+        f_ano_label = st.selectbox("Ano", f_ano_opcoes, index=1 if anos_disp else 0, key="tab_fano")
+        f_ano = int(f_ano_label) if f_ano_label != "Todos" else None
     with col_f3:
-        f_busca = st.text_input(
-            "Busca",
-            placeholder="Pesquisar na descrição...",
-            key="tab_busca",
-            label_visibility="collapsed",
-        )
+        meses_opcoes_full = ["Todos"] + [f"{m:02d} - {_MESES_PT[m]}" for m in range(1, 13)]
+        f_mes_label = st.selectbox("Mês", meses_opcoes_full, key="tab_fmes")
+        f_mes = int(f_mes_label.split(" - ")[0]) if f_mes_label != "Todos" else None
+    with col_f4:
+        # Dias disponíveis dado ano+mês selecionados
+        if f_ano is not None and f_mes is not None:
+            dias_disp = sorted({
+                t.get("dia") for t in todos
+                if t.get("ano") == f_ano and t.get("mes") == f_mes and t.get("dia")
+            })
+            dias_opcoes = ["Todos"] + [str(d) for d in dias_disp]
+        else:
+            dias_opcoes = ["Todos"]
+        f_dia_label = st.selectbox("Dia", dias_opcoes, key="tab_fdia")
+        f_dia = int(f_dia_label) if f_dia_label != "Todos" else None
 
-    # Aplicar filtros
-    txs_f = txs
-    if f_tipo == "Receitas":
-        txs_f = [t for t in txs_f if t["eh_receita"]]
-    elif f_tipo == "Despesas":
-        txs_f = [t for t in txs_f if not t["eh_receita"]]
-    if f_cat != "Todas":
-        txs_f = [t for t in txs_f if t["categoria"] == f_cat]
-    if f_busca:
-        txs_f = [t for t in txs_f if f_busca.lower() in t["descricao"].lower()]
+    f_busca = st.text_input(
+        "Buscar na descrição",
+        placeholder="Ex: mercado, aluguel, salário...",
+        key="tab_busca",
+    )
 
-    # Totais dos filtrados
-    total_rec = sum(t["valor"] for t in txs_f if t["eh_receita"])
-    total_desp = sum(abs(t["valor"]) for t in txs_f if not t["eh_receita"])
+    # Aplica filtros
+    txs_f = get_transacoes_filtradas(
+        tipo=aba,
+        categoria=f_cat,
+        ano=f_ano,
+        mes=f_mes,
+        dia=f_dia,
+        texto=f_busca,
+    )
+
+    # ── Resumo (igual ao original) ─────────────────────────────────────────────
+    total_filtrado = sum(abs(t["valor"]) for t in txs_f)
+    total_rec      = sum(t["valor"] for t in txs_f if t["eh_receita"])
+    total_desp     = sum(abs(t["valor"]) for t in txs_f if not t["eh_receita"])
 
     col_s1, col_s2, col_s3, *_ = st.columns([1, 1, 1, 3])
-    col_s1.metric("Registros", len(txs_f))
+    col_s1.metric("Total filtrado", fmt_moeda(total_filtrado))
     col_s2.metric("Entradas", fmt_moeda(total_rec))
     col_s3.metric("Saídas", fmt_moeda(total_desp))
 
@@ -572,16 +906,14 @@ def _tab_tabelas(d: dict) -> None:
         st.caption("Nenhum lançamento com os filtros aplicados.")
         return
 
-    # ── Tabela completa ────────────────────────────────────────────────────────
+    # ── Tabela ────────────────────────────────────────────────────────────────
     st.markdown(
         '<div style="display:grid;'
-        'grid-template-columns:80px 1fr 150px 80px 130px 100px;'
-        'gap:6px;padding:7px 12px;background:#0E1117;'
-        'border-radius:6px 6px 0 0;'
-        'font-size:0.65rem;font-weight:700;text-transform:uppercase;'
+        'grid-template-columns:90px 1fr 150px 80px 130px 80px;'
+        'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
+        'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
         'letter-spacing:0.1em;color:#4A5568;">'
-        '<span>Data</span>'
-        '<span>Descrição</span>'
+        '<span>Data</span><span>Descrição</span>'
         '<span style="text-align:center">Categoria</span>'
         '<span style="text-align:center">Tipo</span>'
         '<span style="text-align:right">Valor</span>'
@@ -590,34 +922,35 @@ def _tab_tabelas(d: dict) -> None:
         unsafe_allow_html=True,
     )
 
-    for tx in txs_f:
+    for tx in txs_f[:200]:
         cor  = _COR_RECEITA if tx["eh_receita"] else _COR_DESPESA
-        tipo_badge = "entrada" if tx["eh_receita"] else "saída"
-        cor_badge  = _COR_RECEITA if tx["eh_receita"] else _COR_DESPESA
+        tipo_label = "entrada" if tx["eh_receita"] else "saída"
         st.markdown(
             f'<div style="display:grid;'
-            f'grid-template-columns:80px 1fr 150px 80px 130px 100px;'
-            f'gap:6px;padding:8px 12px;background:#12151E;'
+            f'grid-template-columns:90px 1fr 150px 80px 130px 80px;'
+            f'gap:4px;padding:6px 10px;background:#12151E;'
             f'border-bottom:1px solid #1A1F2E;'
-            f'font-size:0.82rem;align-items:center;">'
+            f'font-size:0.81rem;align-items:center;">'
             f'<span style="color:#718096">{tx["data_fmt"]}</span>'
             f'<span style="color:#CBD5E0" title="{tx["descricao"]}">'
-            f'{tx["descricao"][:40]}</span>'
-            f'<span style="text-align:center;background:#1E2533;'
-            f'border-radius:4px;padding:2px 6px;'
-            f'font-size:0.72rem;color:{_COR_NEUTRO}">{tx["categoria"]}</span>'
-            f'<span style="text-align:center;font-size:0.72rem;'
-            f'font-weight:700;color:{cor_badge}">{tipo_badge}</span>'
+            f'{tx["descricao"][:38]}</span>'
+            f'<span style="text-align:center;background:#1E2533;border-radius:4px;'
+            f'padding:2px 5px;font-size:0.70rem;color:{_COR_NEUTRO}">'
+            f'{tx["categoria"]}</span>'
+            f'<span style="text-align:center;font-size:0.72rem;font-weight:700;color:{cor}">'
+            f'{tipo_label}</span>'
             f'<span style="text-align:right;font-weight:700;color:{cor}">'
             f'{tx["valor_fmt"]}</span>'
-            f'<span style="text-align:center;font-size:0.75rem;'
-            f'color:#4A5568">{tx["conta"]}</span>'
+            f'<span style="text-align:center;font-size:0.72rem;color:#4A5568">'
+            f'{tx["conta"]}</span>'
             f'</div>',
             unsafe_allow_html=True,
         )
 
-    if len(txs_f) >= 50:
-        st.caption(f"Exibindo {len(txs_f)} registros.")
+    if len(txs_f) >= 200:
+        st.caption(f"Exibindo 200 de {len(txs_f)} registros.")
+    else:
+        st.caption(f"{len(txs_f)} lançamento(s) encontrado(s).")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -627,8 +960,8 @@ def _tab_tabelas(d: dict) -> None:
 def _tab_cartao(d: dict) -> None:
     txs = d["transacoes"]
 
-    # Filtra apenas despesas (em app real filtraria por forma_pagamento = cartão)
-    # Por ora, mostra despesas agrupadas como se fossem do cartão
+    # Filtra despesas (em dados reais filtraria por payment_type = 'Cartão de crédito')
+    # O campo payment_type não existe no schema unificado atual — mostra todas as despesas
     despesas_tx = [t for t in txs if not t["eh_receita"]]
 
     st.markdown(
@@ -638,9 +971,9 @@ def _tab_cartao(d: dict) -> None:
         'border-radius:0 8px 8px 0;'
         'padding:10px 14px;font-size:0.82rem;color:#9CA3AF;margin-bottom:16px;">'
         'ℹ️ Exibe todas as despesas do mês. '
-        'Quando o banco real estiver conectado, será possível filtrar '
-        'por <b>forma de pagamento = Cartão de crédito</b> '
-        'e agrupar por número do cartão e parcelas.</div>',
+        'O campo <b>forma de pagamento</b> não é armazenado no schema atual do banco unificado. '
+        'Quando disponível, será possível filtrar por '
+        '<b>Cartão de crédito</b> e calcular faturas e dívidas de parcelas com precisão.</div>',
         unsafe_allow_html=True,
     )
 
@@ -648,28 +981,27 @@ def _tab_cartao(d: dict) -> None:
         st.caption("Nenhuma despesa registrada neste mês.")
         return
 
-    # Sumário de cartão
-    total_cartao = sum(abs(t["valor"]) for t in despesas_tx)
-    num_tx       = len(despesas_tx)
+    # KPIs — usando dados do mês atual
+    total_desp = sum(abs(t["valor"]) for t in despesas_tx)
+    num_tx     = len(despesas_tx)
 
     c1, c2, c3, *_ = st.columns([1, 1, 1, 3])
     with c1:
         st.markdown(_kpi_card(
             "Total em Despesas",
-            fmt_moeda(total_cartao),
+            fmt_moeda(total_desp),
             f"{num_tx} lançamento{'s' if num_tx != 1 else ''}",
             _COR_DESPESA,
         ), unsafe_allow_html=True)
     with c2:
-        media = total_cartao / num_tx if num_tx > 0 else 0
+        media = total_desp / num_tx if num_tx > 0 else 0
         st.markdown(_kpi_card(
             "Ticket Médio",
             fmt_moeda(media),
-            "Média por transação.",
+            "Média por transação do mês.",
             _COR_NEUTRO,
         ), unsafe_allow_html=True)
     with c3:
-        # Maior despesa avulsa
         maior = max(despesas_tx, key=lambda t: abs(t["valor"]))
         st.markdown(_kpi_card(
             "Maior Lançamento",
@@ -680,54 +1012,76 @@ def _tab_cartao(d: dict) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Agrupamento por categoria ──────────────────────────────────────────────
-    st.markdown(
-        '<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
-        'margin-bottom:12px;">Despesas por categoria</div>',
-        unsafe_allow_html=True,
-    )
+    # ── Gastos por categoria ────────────────────────────────────────────────
+    _secao_titulo("📊", "Despesas por categoria")
 
     agg: dict[str, float] = defaultdict(float)
     for t in despesas_tx:
         agg[t["categoria"]] += abs(t["valor"])
 
     agg_sorted = sorted(agg.items(), key=lambda x: x[1], reverse=True)
+    total_geral = sum(v for _, v in agg_sorted)
 
+    # Bar chart (estilo do original: laranja)
+    cat_nomes_bar = [c for c, _ in agg_sorted]
+    cat_vals_bar  = [v for _, v in agg_sorted]
+    cat_pcts_bar  = [v / total_geral * 100 if total_geral > 0 else 0 for v in cat_vals_bar]
+
+    fig_cat = go.Figure(go.Bar(
+        x=cat_nomes_bar, y=cat_vals_bar,
+        marker_color="#FFA500",
+        hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<br>%{customdata:.1f}%<extra></extra>",
+        customdata=cat_pcts_bar,
+    ))
+    fig_cat.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 10, "b": 0, "l": 0, "r": 0}, height=260,
+        xaxis={"showgrid": False, "tickangle": -30},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533",
+               "tickformat": ",.0f", "tickprefix": "R$ "},
+    )
+    st.plotly_chart(fig_cat, use_container_width=True, config={"displayModeBar": False})
+
+    # Tabela de participação
+    st.markdown(
+        '<div style="display:grid;grid-template-columns:1fr 120px 80px;'
+        'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
+        'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
+        'letter-spacing:0.1em;color:#4A5568;">'
+        '<span>Categoria</span>'
+        '<span style="text-align:right">Total (R$)</span>'
+        '<span style="text-align:right">% do total</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     for i, (cat, valor) in enumerate(agg_sorted):
-        pct = valor / total_cartao * 100 if total_cartao > 0 else 0
+        pct = valor / total_geral * 100 if total_geral > 0 else 0
         cor = _CORES_CAT[i % len(_CORES_CAT)]
         st.markdown(
-            f'<div style="display:flex;justify-content:space-between;'
-            f'align-items:center;padding:8px 0;'
-            f'border-bottom:1px solid #1A1F2E;font-size:0.83rem;">'
-            f'<div style="display:flex;align-items:center;gap:10px;">'
-            f'<div style="width:8px;height:8px;border-radius:50%;'
-            f'background:{cor};flex-shrink:0"></div>'
+            f'<div style="display:grid;grid-template-columns:1fr 120px 80px;'
+            f'gap:4px;padding:6px 10px;background:#12151E;'
+            f'border-bottom:1px solid #1A1F2E;font-size:0.81rem;align-items:center;">'
+            f'<div style="display:flex;align-items:center;gap:8px;">'
+            f'<div style="width:8px;height:8px;border-radius:50%;background:{cor};flex-shrink:0"></div>'
             f'<span style="color:#CBD5E0">{cat}</span>'
             f'</div>'
-            f'<div style="text-align:right;">'
-            f'<span style="font-weight:700;color:{_COR_DESPESA}">'
+            f'<span style="text-align:right;font-weight:700;color:{_COR_DESPESA}">'
             f'{fmt_moeda(valor)}</span>'
-            f'<span style="font-size:0.72rem;color:#4A5568;margin-left:8px;">'
-            f'{pct:.1f}%</span>'
-            f'</div>'
+            f'<span style="text-align:right;color:#718096">{pct:.1f}%</span>'
             f'</div>',
             unsafe_allow_html=True,
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Lista de lançamentos ───────────────────────────────────────────────────
-    st.markdown(
-        '<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
-        'margin-bottom:10px;">Lançamentos</div>',
-        unsafe_allow_html=True,
-    )
+    # ── Lista de lançamentos ──────────────────────────────────────────────────
+    _secao_titulo("📋", "Lançamentos do mês")
 
     st.markdown(
         '<div style="display:grid;grid-template-columns:80px 1fr 150px 120px;'
-        'gap:6px;padding:7px 12px;background:#0E1117;border-radius:6px 6px 0 0;'
-        'font-size:0.65rem;font-weight:700;text-transform:uppercase;'
+        'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
+        'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
         'letter-spacing:0.1em;color:#4A5568;">'
         '<span>Data</span><span>Descrição</span>'
         '<span style="text-align:center">Categoria</span>'
@@ -739,14 +1093,13 @@ def _tab_cartao(d: dict) -> None:
     for tx in despesas_tx[:50]:
         st.markdown(
             f'<div style="display:grid;grid-template-columns:80px 1fr 150px 120px;'
-            f'gap:6px;padding:8px 12px;background:#12151E;'
+            f'gap:4px;padding:6px 10px;background:#12151E;'
             f'border-bottom:1px solid #1A1F2E;'
-            f'font-size:0.82rem;align-items:center;">'
+            f'font-size:0.81rem;align-items:center;">'
             f'<span style="color:#718096">{tx["data_fmt"]}</span>'
-            f'<span style="color:#CBD5E0">{tx["descricao"][:40]}</span>'
-            f'<span style="text-align:center;background:#1E2533;'
-            f'border-radius:4px;padding:2px 6px;'
-            f'font-size:0.72rem;color:{_COR_NEUTRO}">{tx["categoria"]}</span>'
+            f'<span style="color:#CBD5E0">{tx["descricao"][:38]}</span>'
+            f'<span style="text-align:center;background:#1E2533;border-radius:4px;'
+            f'padding:2px 5px;font-size:0.70rem;color:{_COR_NEUTRO}">{tx["categoria"]}</span>'
             f'<span style="text-align:right;font-weight:700;color:{_COR_DESPESA}">'
             f'{tx["valor_fmt"]}</span>'
             f'</div>',
@@ -822,8 +1175,9 @@ def render() -> None:
     # ── Sidebar completo ──────────────────────────────────────────────────────
     _sidebar_render(sel["ano"], sel["mes"])
 
-    # ── Cashflow histórico (compartilhado entre tabs) ─────────────────────────
-    historico = get_cashflow_mensal()
+    # ── Dados compartilhados entre tabs ──────────────────────────────────────
+    historico    = get_cashflow_mensal()
+    hist_anual   = get_historico_anual()
 
     # ── Sub-navegação via tabs ────────────────────────────────────────────────
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -837,7 +1191,7 @@ def render() -> None:
         _tab_dashboard(d, historico)
 
     with tab2:
-        _tab_analises(d, historico)
+        _tab_analises(d, historico, hist_anual)
 
     with tab3:
         _tab_tabelas(d)

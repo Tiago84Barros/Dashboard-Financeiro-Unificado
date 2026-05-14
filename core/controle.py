@@ -13,7 +13,8 @@ Tabelas consultadas (Fase 5.4):
   budgets       — limites de orçamento por categoria/mês (pode estar vazio)
 
 Operações de escrita (Fase 5.4):
-  inserir_transacao()  — INSERT em transactions com user_id obrigatório
+  inserir_transacao()      — INSERT em transactions com user_id obrigatório
+  atualizar_transacao()    — UPDATE de campos editáveis (Fase 5.1)
   Uso de engine.begin() para transações atômicas.
 
 Estratégia de mês:
@@ -35,6 +36,15 @@ Schema do dict retornado por get_controle():
 Schema do dict retornado por get_opcoes_formulario():
   categorias  list  [{id, nome, tipo}]
   contas      list  [{id, nome}]
+
+Schema do dict retornado por get_historico_anual():
+  data_source  str
+  anos         list[int]
+  por_ano      dict[int, {receitas, despesas, saldo}]
+
+Schema da list retornada por get_transacoes_filtradas():
+  lista de dicts idêntica ao schema de 'transacoes' em get_controle()
+  extra: ano, mes, dia (ints)
 """
 import logging
 from datetime import date as _date
@@ -130,6 +140,47 @@ _SQL_INSERT_TX = """
     VALUES
         (:uid, :account_id, :category_id, :description, :amount,
          :due_date, :type, 'settled', 'manual')
+"""
+
+_SQL_UPDATE_TX = """
+    UPDATE transactions
+    SET    description = :description,
+           category_id = :category_id,
+           amount      = :amount,
+           due_date    = :due_date
+    WHERE  id       = :tx_id::uuid
+      AND  user_id  = :uid::uuid
+"""
+
+_SQL_HISTORICO_ANUAL = """
+    SELECT
+        EXTRACT(YEAR FROM due_date)::int   AS ano,
+        type,
+        SUM(amount)                        AS total
+    FROM   transactions
+    WHERE  user_id = :uid
+      AND  type    IN ('income', 'expense')
+    GROUP  BY ano, type
+    ORDER  BY ano, type
+"""
+
+_SQL_TRANSACOES_FILTRADAS = """
+    SELECT
+        t.id::text,
+        t.description,
+        t.amount,
+        t.due_date,
+        t.type,
+        t.status,
+        COALESCE(c.name, 'Sem categoria') AS category_name,
+        COALESCE(ac.name, 'Sem conta')    AS account_name,
+        EXTRACT(year  FROM t.due_date)::int AS ano,
+        EXTRACT(month FROM t.due_date)::int AS mes,
+        EXTRACT(day   FROM t.due_date)::int AS dia
+    FROM   transactions t
+    LEFT JOIN categories c  ON c.id  = t.category_id
+    LEFT JOIN accounts   ac ON ac.id = t.account_id
+    WHERE  t.user_id = :uid
 """
 
 
@@ -246,6 +297,101 @@ def inserir_transacao(
     except Exception as exc:
         logger.error("[controle] Falha ao inserir transação: %s", exc)
         return False, str(exc)
+
+
+def atualizar_transacao(
+    tx_id: str,
+    descricao: str,
+    valor: float,
+    data: _date,
+    categoria_id: Optional[str],
+) -> tuple[bool, str]:
+    """
+    Atualiza campos editáveis de uma transação existente.
+    Preserva user_id como filtro para segurança.
+    """
+    if settings.MOCK_MODE:
+        return False, "Modo mock ativo — UPDATE não executado."
+
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            return False, "Banco não configurado."
+
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            return False, "OWNER_USER_ID não configurado."
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(_SQL_UPDATE_TX),
+                {
+                    "tx_id":       tx_id,
+                    "uid":         owner,
+                    "description": descricao.strip(),
+                    "category_id": categoria_id,
+                    "amount":      valor,
+                    "due_date":    data,
+                },
+            )
+
+        get_controle.clear()
+        return True, ""
+
+    except Exception as exc:
+        logger.error("[controle] Falha ao atualizar transação: %s", exc)
+        return False, str(exc)
+
+
+@st.cache_data(ttl=300)
+def get_historico_anual() -> dict:
+    """
+    Retorna receitas e despesas agrupadas por ano (todos os anos disponíveis).
+    Para a seção 'Comparativo Ano a Ano' e 'Patrimônio Investido'.
+    TTL=5min — dados históricos mudam pouco.
+    """
+    if settings.MOCK_MODE:
+        d = _historico_anual_mock()
+        d["data_source"] = "mock"
+        return d
+
+    try:
+        d = _historico_anual_real()
+        d["data_source"] = "real"
+        return d
+    except Exception as exc:
+        logger.warning(
+            "[controle] get_historico_anual falhou (%s) — usando mock.", type(exc).__name__
+        )
+        d = _historico_anual_mock()
+        d["data_source"] = "mock_fallback"
+        return d
+
+
+@st.cache_data(ttl=60)
+def get_transacoes_filtradas(
+    tipo: str = "Todos",
+    categoria: str = "Todas",
+    ano: Optional[int] = None,
+    mes: Optional[int] = None,
+    dia: Optional[int] = None,
+    texto: str = "",
+) -> list:
+    """
+    Retorna transações filtradas para a aba Tabelas.
+    Aplica filtros opcionais em Python (sobre lista completa do usuário).
+    """
+    if settings.MOCK_MODE:
+        return _transacoes_mock_filtradas(tipo, categoria, ano, mes, dia, texto)
+
+    try:
+        return _transacoes_real_filtradas(tipo, categoria, ano, mes, dia, texto)
+    except Exception as exc:
+        logger.warning("[controle] get_transacoes_filtradas falhou (%s) — usando mock.", type(exc).__name__)
+        return _transacoes_mock_filtradas(tipo, categoria, ano, mes, dia, texto)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -435,3 +581,189 @@ def _opcoes_real() -> dict:
         "categorias": [{"id": r.id, "nome": r.name, "tipo": r.type} for r in cat_rows],
         "contas":     [{"id": r.id, "nome": r.name}                  for r in cont_rows],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HISTÓRICO ANUAL — mock + real
+# ─────────────────────────────────────────────────────────────────────────────
+
+_MOCK_YOY = {
+    2024: {"receitas": 95_000.0, "despesas": 68_000.0},
+    2025: {"receitas": 108_000.0, "despesas": 74_000.0},
+    2026: {"receitas": 42_500.0, "despesas": 30_000.0},
+}
+
+
+def _historico_anual_mock() -> dict:
+    anos = sorted(_MOCK_YOY.keys())
+    por_ano = {
+        a: {
+            **_MOCK_YOY[a],
+            "saldo": round(_MOCK_YOY[a]["receitas"] - _MOCK_YOY[a]["despesas"], 2),
+        }
+        for a in anos
+    }
+    return {"anos": anos, "por_ano": por_ano}
+
+
+def _historico_anual_real() -> dict:
+    from sqlalchemy import text
+    from core.database import get_engine
+
+    engine = get_engine()
+    if engine is None:
+        raise RuntimeError("Engine indisponível.")
+
+    owner = settings.OWNER_USER_ID
+    if not owner:
+        raise RuntimeError("OWNER_USER_ID não configurado.")
+
+    with engine.connect() as conn:
+        rows = conn.execute(text(_SQL_HISTORICO_ANUAL), {"uid": owner}).fetchall()
+
+    por_ano: dict[int, dict] = {}
+    for r in rows:
+        a = int(r.ano)
+        if a not in por_ano:
+            por_ano[a] = {"receitas": 0.0, "despesas": 0.0}
+        if r.type == "income":
+            por_ano[a]["receitas"] += float(r.total)
+        elif r.type == "expense":
+            por_ano[a]["despesas"] += abs(float(r.total))
+
+    for a in por_ano:
+        por_ano[a]["saldo"] = round(por_ano[a]["receitas"] - por_ano[a]["despesas"], 2)
+        por_ano[a]["receitas"] = round(por_ano[a]["receitas"], 2)
+        por_ano[a]["despesas"] = round(por_ano[a]["despesas"], 2)
+
+    anos = sorted(por_ano.keys())
+    return {"anos": anos, "por_ano": por_ano}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRANSAÇÕES FILTRADAS — mock + real (para aba Tabelas)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _tx_to_dict(tx: dict) -> dict:
+    """Garante campos extras (ano, mes, dia) a partir de data."""
+    d = tx.get("data")
+    if d is not None:
+        tx.setdefault("ano", d.year)
+        tx.setdefault("mes", d.month)
+        tx.setdefault("dia", d.day)
+    return tx
+
+
+def _transacoes_mock_filtradas(
+    tipo: str, categoria: str, ano: Optional[int],
+    mes: Optional[int], dia: Optional[int], texto: str,
+) -> list:
+    """Filtra o mock de transações."""
+    from datetime import date as _dt
+
+    raw = []
+    for i, (desc, val, tp, data_str, cat, conta) in enumerate(_MOCK_TRANS):
+        data = _dt.fromisoformat(data_str)
+        eh_r = val > 0
+        raw.append({
+            "id": str(i + 1),
+            "descricao": desc,
+            "valor": val,
+            "valor_fmt": (
+                f"{'+ ' if eh_r else '- '}R$ {abs(val):,.2f}"
+                .replace(",", "X").replace(".", ",").replace("X", ".")
+            ),
+            "data": data,
+            "data_fmt": data.strftime("%d/%m/%Y"),
+            "tipo": tp,
+            "status": "settled",
+            "categoria": cat,
+            "conta": conta,
+            "eh_receita": eh_r,
+            "ano": data.year,
+            "mes": data.month,
+            "dia": data.day,
+        })
+
+    return _filtrar_transacoes(raw, tipo, categoria, ano, mes, dia, texto)
+
+
+def _transacoes_real_filtradas(
+    tipo: str, categoria: str, ano: Optional[int],
+    mes: Optional[int], dia: Optional[int], texto: str,
+) -> list:
+    from sqlalchemy import text
+    from core.database import get_engine
+
+    engine = get_engine()
+    if engine is None:
+        raise RuntimeError("Engine indisponível.")
+
+    owner = settings.OWNER_USER_ID
+    if not owner:
+        raise RuntimeError("OWNER_USER_ID não configurado.")
+
+    # Busca todas as transações do usuário (sem filtro de mês)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(_SQL_TRANSACOES_FILTRADAS + " ORDER BY t.due_date DESC, t.created_at DESC"),
+            {"uid": owner},
+        ).fetchall()
+
+    txs = []
+    for r in rows:
+        val = float(r.amount) if r.amount is not None else 0.0
+        eh_r = val > 0
+        data = r.due_date
+        txs.append({
+            "id": r.id,
+            "descricao": r.description,
+            "valor": val,
+            "valor_fmt": (
+                f"{'+ ' if eh_r else '- '}R$ {abs(val):,.2f}"
+                .replace(",", "X").replace(".", ",").replace("X", ".")
+            ),
+            "data": data,
+            "data_fmt": data.strftime("%d/%m/%Y") if data else "—",
+            "tipo": r.type,
+            "status": r.status,
+            "categoria": r.category_name,
+            "conta": r.account_name,
+            "eh_receita": eh_r,
+            "ano": int(r.ano) if r.ano else None,
+            "mes": int(r.mes) if r.mes else None,
+            "dia": int(r.dia) if r.dia else None,
+        })
+
+    return _filtrar_transacoes(txs, tipo, categoria, ano, mes, dia, texto)
+
+
+def _filtrar_transacoes(
+    txs: list, tipo: str, categoria: str,
+    ano: Optional[int], mes: Optional[int], dia: Optional[int], texto: str,
+) -> list:
+    """Aplica filtros em memória."""
+    out = txs
+
+    if tipo == "Receitas":
+        out = [t for t in out if t["eh_receita"]]
+    elif tipo == "Despesas":
+        out = [t for t in out if not t["eh_receita"]]
+
+    if categoria and categoria != "Todas":
+        out = [t for t in out if t["categoria"] == categoria]
+
+    if ano is not None:
+        out = [t for t in out if t.get("ano") == ano]
+
+    if mes is not None:
+        out = [t for t in out if t.get("mes") == mes]
+
+    if dia is not None:
+        out = [t for t in out if t.get("dia") == dia]
+
+    if texto:
+        txt_low = texto.lower()
+        out = [t for t in out if txt_low in (t["descricao"] or "").lower()]
+
+    return out
