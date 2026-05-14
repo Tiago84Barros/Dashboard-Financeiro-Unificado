@@ -10,11 +10,12 @@
 
 ## Decisão Final
 
-> **⚠️ APROVADO COM RESSALVAS**
+> **✅ APROVADO — pronto para Fase 4.9**
 >
 > Os dados estão íntegros e completos. Nenhuma perda de registros.  
-> **Um problema crítico (P1)** impede o funcionamento correto das views financeiras e deve ser corrigido antes de conectar o app ao banco real.  
-> O problema P2 (investimentos) é esperado para esta fase e será resolvido na Fase 4.9.
+> **P1 corrigido em 2026-05-14** — `UPDATE transactions SET amount = -amount WHERE type='expense' AND amount > 0` (182 registros).  
+> Todas as 6 views financeiras funcionam corretamente após a correção.  
+> O problema P2 (portfolio_positions) é esperado para esta fase e será resolvido na Fase 4.9.
 
 ---
 
@@ -128,26 +129,43 @@
 
 ## 5. Validação das Views
 
-| View | Status | Observação |
-|------|:------:|------------|
-| `v_account_balance` | ⚠️ | Retorna 2 linhas. Saldos **incorretos** por causa do P1 (expenses positivos) |
-| `v_budget_usage_mtd` | ℹ️ | 0 linhas — esperado (sem orçamentos cadastrados) |
-| `v_category_spending_mtd` | ⚠️ | 0 linhas — **incorreto**: 17 despesas em maio/2026 existem, mas `amount > 0` (P1) |
-| `v_investment_summary` | ⚠️ | 0 linhas — esperado parcialmente: depende de `portfolio_positions` vazia (P2) |
-| `v_monthly_cashflow` | ⚠️ | 8 linhas. `total_expenses = 0` em todos os meses — **incorreto** por causa de P1 |
-| `v_net_worth` | ⚠️ | 1 linha. `investment_total = 0` (P2). `bank_balance` inflado por P1 |
+### Estado final (pós-correção P1)
 
-### Detalhes das views com problema
+| View | Status | Resultado |
+|------|:------:|-----------|
+| `v_account_balance` | ✅ | 2 linhas — Conta Corrente R$ 245.043,17 · C6 R$ −33.527,06 |
+| `v_budget_usage_mtd` | ℹ️ | 0 linhas — esperado (sem orçamentos) |
+| `v_category_spending_mtd` | ✅ | 9 categorias em maio/2026 · Top: Outros R$ 4.666,67 |
+| `v_investment_summary` | ⚠️ | 0 linhas — depende de `portfolio_positions` (P2, Fase 4.9) |
+| `v_monthly_cashflow` | ✅ | 8 meses · Receitas e despesas corretas por mês |
+| `v_net_worth` | ⚠️ | bank_balance R$ 211.516,11 ✅ · investment_total R$ 0 (P2) |
 
-**`v_monthly_cashflow`** — usa `amount > 0` para receita e `amount < 0` para despesa.
-Como todas as despesas têm `amount > 0`, são contadas como receita. Exemplo:
-- Novembro/2025: view mostra `total_income = R$ 62.610,77` mas o real é `receita = R$ 27.406,10` e `despesa = R$ 35.204,67`.
+### `v_monthly_cashflow` — resultado pós-P1
 
-**`v_category_spending_mtd`** — filtra `AND amount < 0`. Nenhuma despesa tem `amount < 0`, portanto retorna 0 linhas sempre.
+| Mês | Receita | Despesa | Saldo |
+|-----|--------:|--------:|------:|
+| 2025-03 | — | R$ 10.539,40 | R$ −10.539,40 |
+| 2025-11 | R$ 27.406,10 | R$ 35.204,67 | R$ −7.798,57 |
+| 2025-12 | R$ 78.285,12 | R$ 47.577,58 | R$ +30.707,54 |
+| 2026-01 | R$ 47.220,88 | R$ 39.658,02 | R$ +7.562,86 |
+| 2026-02 | R$ 41.368,55 | R$ 23.368,55 | R$ +18.000,00 |
+| 2026-03 | R$ 73.834,83 | R$ 22.363,36 | R$ +51.471,47 |
+| 2026-04 | R$ 23.920,75 | R$ 23.019,59 | R$ +901,16 |
+| 2026-05 | R$ 27.672,42 | R$ 13.925,40 | R$ +13.747,02 |
 
-**`v_account_balance`** — soma todos os `amount` settled. Com expenses positivos, o saldo de "Conta Corrente" aparece como R$ 609.302,19 (deveria ser aproximadamente R$ 319.708,65 − R$ 182.129,51 = R$ 137.579,14).
+### `v_category_spending_mtd` — maio/2026
 
-**`v_net_worth`** — `bank_balance` herdado de `v_account_balance` (inflado). `investment_total = 0` porque `portfolio_positions` está vazia.
+| Categoria | Gasto |
+|-----------|------:|
+| Outros | R$ 4.666,67 |
+| Pagamento de Cartão | R$ 3.025,57 |
+| Financiamento | R$ 1.677,40 |
+| Condomínio | R$ 1.591,08 |
+| Despesas Domésticas | R$ 1.390,00 |
+| Saúde | R$ 720,00 |
+| Luz | R$ 336,91 |
+| Combustível | R$ 332,77 |
+| Internet | R$ 185,00 |
 
 ---
 
@@ -224,45 +242,35 @@ Como todas as despesas têm `amount > 0`, são contadas como receita. Exemplo:
 
 ## 9. Problemas Identificados
 
-### P1 — CRÍTICO: Sinal de `amount` invertido nas despesas
+### P1 — ✅ CORRIGIDO: Sinal de `amount` invertido nas despesas
 
-**Descrição:**  
-Todas as 183 transações do tipo `expense` têm `amount > 0` (positivo). As views do schema canônico usam a convenção `amount < 0` para despesas:
+**Status:** Corrigido em 2026-05-14 (182 registros atualizados)
 
-```sql
--- v_monthly_cashflow usa:
-CASE WHEN amount > 0 THEN amount ELSE 0 END  -- receita
-CASE WHEN amount < 0 THEN amount ELSE 0 END  -- despesa
-
--- v_category_spending_mtd usa:
-WHERE amount < 0 AND type = 'expense'
-```
+**Descrição original:**  
+Todas as 183 transações do tipo `expense` tinham `amount > 0` (positivo). As views do schema canônico usam a convenção `amount < 0` para despesas.
 
 **Causa raiz:**  
 O script `04_transform_to_canonical.py` mapeou corretamente `saida → expense` (tipo), mas não negou o valor do `amount`. O App3 original armazenava todos os valores como positivos.
 
-**Impacto:**
-- `v_monthly_cashflow`: despesas = R$ 0 em todos os meses (expenses contabilizados como receita)
-- `v_category_spending_mtd`: retorna 0 linhas sempre
-- `v_account_balance`: saldo inflado (R$ 609.302,19 e R$ 33.527,06 sem dedução de despesas)
-- `v_net_worth.bank_balance`: valor incorreto (R$ 642.829,25 vs. saldo real estimado R$ ~137.000)
-- `v_budget_usage_mtd`: não funcionará quando houver orçamentos
-
-**Registros afetados:** 183 transações — R$ 215.656,57 em despesas
-
-**Correção recomendada (a aplicar na Fase 4.9, com autorização do usuário):**
+**Correção aplicada:**
 ```sql
--- Aplica sinal negativo apenas em expenses (não afeta income nem transfer)
 UPDATE transactions
 SET amount = -amount
 WHERE type = 'expense'
   AND amount > 0;
-
--- Verificação pós-correção (deve retornar 183):
-SELECT COUNT(*) FROM transactions WHERE type = 'expense' AND amount < 0;
+-- Resultado: 182 rows updated (1 expense com amount=0 permanece)
 ```
 
-> Esta correção é **não destrutiva** (UPDATE reversível), respeita todas as regras da Fase 4.8 e é pré-requisito para a Fase 4.9.
+**Verificação pós-correção:**
+- `expenses com amount < 0`: 182 ✅
+- `expenses com amount > 0`: 0 ✅  
+- `expenses com amount = 0`: 1 (correto — zero é neutro)
+
+**Impacto após correção:**
+- `v_monthly_cashflow`: despesas e receitas corretas por mês ✅
+- `v_category_spending_mtd`: retorna categorias de gasto do mês atual ✅
+- `v_account_balance`: Conta Corrente = R$ 245.043,17 | Cartão C6 = R$ −33.527,06 ✅
+- `v_net_worth.bank_balance`: R$ 211.516,11 (saldo líquido real) ✅
 
 ---
 
@@ -319,12 +327,12 @@ Existe um registro em `import_batches` com `status='processing'` e `imported_rec
 
 ## 11. Correções Recomendadas (por prioridade)
 
-| # | Prioridade | Descrição | Pré-requisito para Fase 4.9 |
-|---|:----------:|-----------|:---------------------------:|
-| 1 | 🔴 Alta | Negar `amount` de expenses (`UPDATE transactions SET amount = -amount WHERE type='expense' AND amount > 0`) | ✅ Sim |
-| 2 | 🟡 Média | Computar `portfolio_positions` a partir de `investment_transactions` | ✅ Sim |
-| 3 | 🟢 Baixa | Registrar App2 em `migration_source_map` | Não |
-| 4 | ⚪ Muito baixa | Limpar batch stale em `import_batches` (aguardar permissão de DELETE) | Não |
+| # | Prioridade | Descrição | Status |
+|---|:----------:|-----------|:------:|
+| 1 | 🔴 Alta | Negar `amount` de expenses | ✅ Aplicado em 2026-05-14 |
+| 2 | 🟡 Média | Computar `portfolio_positions` a partir de `investment_transactions` | ⏳ Fase 4.9 |
+| 3 | 🟢 Baixa | Registrar App2 em `migration_source_map` | ⏳ Futuro |
+| 4 | ⚪ Muito baixa | Limpar batch stale em `import_batches` (aguardar permissão de DELETE) | ⏳ Futuro |
 
 ---
 
@@ -340,15 +348,15 @@ Existe um registro em `import_batches` com `status='processing'` e `imported_rec
 - [x] Distribuição de setores verificada (82 assets, cobertura 100%)
 - [x] Somatórios financeiros calculados e documentados
 - [x] Problemas identificados, categorizados e com correções propostas
-- [ ] P1 corrigido (pré-requisito para conectar app) — **pendente aprovação**
+- [x] P1 corrigido — `UPDATE` aplicado, 182 registros, views validadas
 - [ ] portfolio_positions computadas — **pendente Fase 4.9**
 
 ---
 
 ## Próximos Passos
 
-1. **Aplicar correção P1** (autorização do usuário → executar UPDATE)
-2. **Criar script `compute_portfolio_positions.py`** para Fase 4.9
+1. ~~**Aplicar correção P1**~~ ✅ Concluído
+2. **Criar script `compute_portfolio_positions.py`** — Fase 4.9
 3. **Conectar o app ao banco** (`MOCK_MODE = False`) — Fase 4.9
 4. **Testar o app com dados reais** e validar visualizações
 
