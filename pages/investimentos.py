@@ -511,9 +511,9 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
             st.plotly_chart(_fig_evolucao(cashflow, total),
                             use_container_width=True,
                             config={"displayModeBar": False})
-            st.caption("Evolução estimada com base no cashflow mensal acumulado.")
+            st.caption("Evolução estimada com base no fluxo de caixa mensal acumulado.")
         else:
-            st.caption("Sem dados de cashflow.")
+            st.caption("Sem dados de fluxo de caixa.")
 
     # ── Análise de Risco ──────────────────────────────────────────────────────
     _secao_titulo_orig("🎯", "Análise de Risco")
@@ -584,31 +584,56 @@ def _tab_historico(cashflow: list, proventos: dict) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     if not cashflow:
-        st.info("Sem dados históricos de cashflow.", icon="📊")
+        st.info("Sem dados históricos de fluxo de caixa.", icon="📊")
         return
 
-    # Gráfico cashflow
-    _secao_titulo_orig("📊", "Cashflow Mensal", "Receitas, despesas e saldo — últimos 12 meses")
+    # Gráfico Fluxo de Caixa
+    _secao_titulo_orig("📊", "Fluxo de Caixa", "Receitas, despesas e saldo — últimos 12 meses")
     st.plotly_chart(_fig_cashflow_hist(cashflow),
                     use_container_width=True,
                     config={"displayModeBar": False})
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Proventos por mês
-    _secao_titulo_orig("💵", "Proventos Mensais", "Dividendos e rendimentos recebidos")
+    # Proventos — seleção Mensal / Anual
     hist_prov = proventos.get("historico_mensal", [])
+
+    col_prov_title, col_prov_vis = st.columns([3, 1])
+    with col_prov_title:
+        _secao_titulo_orig("💵", "Proventos", "Dividendos e rendimentos recebidos")
+    with col_prov_vis:
+        st.markdown("<br>", unsafe_allow_html=True)
+        visao_prov = st.selectbox(
+            "Visualização",
+            ["Mensal", "Anual"],
+            key="inv_hist_prov_visao",
+            label_visibility="collapsed",
+        )
+
     if hist_prov:
-        meses_p  = [h["label"] for h in hist_prov]
-        vals_p   = [h["total"] for h in hist_prov]
+        if visao_prov == "Mensal":
+            labels_p = [h["label"] for h in hist_prov]
+            vals_p   = [h["total"] for h in hist_prov]
+        else:
+            # Agrega por ano
+            agg: dict[int, float] = {}
+            for h in hist_prov:
+                agg[h["ano"]] = agg.get(h["ano"], 0.0) + h["total"]
+            labels_p = [str(a) for a in sorted(agg)]
+            vals_p   = [round(agg[a], 2) for a in sorted(agg)]
+
         fig_prov = go.Figure(go.Bar(
-            x=meses_p, y=vals_p, marker_color=_COR_ALERTA, opacity=0.85,
+            x=labels_p, y=vals_p,
+            marker_color=_COR_ALERTA, opacity=0.85,
+            text=[f"R$ {v:,.0f}".replace(",", ".") for v in vals_p],
+            textposition="outside",
+            textfont={"size": 10, "color": "#E2E8F0"},
             hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
         ))
         fig_prov.update_layout(
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             font_color=_COR_NEUTRO,
-            margin={"t": 10, "b": 0, "l": 0, "r": 0}, height=250,
+            margin={"t": 30, "b": 0, "l": 0, "r": 0}, height=260,
             xaxis={"showgrid": False},
             yaxis={"showgrid": True, "gridcolor": "#1E2533",
                    "tickformat": ",.0f", "tickprefix": "R$ "},
@@ -616,12 +641,29 @@ def _tab_historico(cashflow: list, proventos: dict) -> None:
         )
         st.plotly_chart(fig_prov, use_container_width=True,
                         config={"displayModeBar": False})
+
+        # Totalizador por ano abaixo do gráfico (sempre visível)
+        if visao_prov == "Anual":
+            total_exibido = sum(vals_p)
+            st.markdown(
+                f'<div style="font-size:0.78rem;color:{_COR_ALERTA};'
+                f'font-weight:700;text-align:right;margin-top:-8px;">'
+                f'Total no período: R$ {total_exibido:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".") +
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            total_exibido = sum(vals_p)
+            st.caption(
+                f"Total no período: **R$ {total_exibido:,.2f}**".replace(",", "X").replace(".", ",").replace("X", ".")
+                + f" · {len(hist_prov)} meses"
+            )
     else:
         st.caption("Sem histórico de proventos.")
 
-    # Tabela de cashflow
+    # Tabela de fluxo de caixa
     st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo_orig("🧾", "Tabela Mensal")
+    _secao_titulo_orig("🧾", "Tabela de Fluxo de Caixa")
 
     df_cf = pd.DataFrame([{
         "Mês":      c["label"],
