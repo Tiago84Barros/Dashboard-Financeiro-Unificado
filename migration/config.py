@@ -102,7 +102,7 @@ class MigrationConfig:
     def from_env(cls, dry_run: bool = True) -> "MigrationConfig":
         """Cria configuração a partir de variáveis de ambiente. dry_run=True por padrão."""
         return cls(
-            dest_url=_env("SUPABASE_UNIFICADO_URL"),
+            dest_url=_env("SUPABASE_UNIFICADO_URL") or _env("SUPABASE_DB_URL"),
             owner_id=_env("OWNER_USER_ID"),
             app1_url=_env("SOURCE_DB_APP1"),
             app2_path=_env("SOURCE_DB_APP2"),
