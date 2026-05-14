@@ -1,10 +1,10 @@
 # Status — Fase 4: Banco Supabase Unificado
 
 > Data: 2026-05-14
-> Versão: v0.4.8
+> Versão: v0.4.9
 > ruff: All checks passed!
 > Startup: HTTP 200 ✅
-> Atualizado em: 2026-05-14 — Fase 4.8 concluída: validação pós-migração realizada (aprovado com ressalvas)
+> Atualizado em: 2026-05-14 — Fase 4.9 concluída: Visão Geral conectada ao banco real com fallback mock
 
 ---
 
@@ -28,9 +28,10 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 | **4.6** | Scripts de migração ETL | ✅ Concluída — 8 scripts Python criados (dry_run por padrão) |
 | **4.7** | Migração controlada | ✅ Concluída — dry run com dados reais aprovado (0 erros, 3 fontes, 9/9 validações) |
 | **4.8** | Validação dos dados | ✅ Concluída — aprovado · P1 corrigido · pronto para Fase 4.9 |
-| **4.9** | Conexão do app ao banco | ⏳ Pendente |
+| **4.9** | Conexão do app ao banco | ✅ Concluída — Visão Geral conectada · fallback mock · indicador de fonte |
 
 **Documentação completa:**
+- `docs/fase_4_9_conexao_app_banco_real.md` — relatório completo da Fase 4.9
 - `docs/banco_unificado_fases.md` — detalhamento de cada subfase
 - `docs/estrategia_supabase_unificado_plano_gratuito.md` — decisão e estratégia
 - `docs/banco_unificado_regras_de_seguranca.md` — regras de segurança
@@ -116,7 +117,102 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 
 1. ~~Aplicar correção P1~~ ✅ Concluído em 2026-05-14
 2. ~~Computar portfolio_positions~~ ✅ Concluído em 2026-05-14 (Fase 4.8.1)
-3. **Conectar app (`MOCK_MODE = False`)** ← próximo passo
+3. ~~Conectar app (`MOCK_MODE = False`)~~ ✅ Concluído em 2026-05-14 (Fase 4.9)
+
+---
+
+## Fase 4.9 — Conexão do App ao Banco Real (✅ Concluída)
+
+> Data: 2026-05-14
+
+### Escopo
+
+Conectar a página **Visão Geral / Dashboard Geral** ao banco Supabase unificado,
+mantendo fallback automático para mock em caso de falha.
+
+### Arquivos modificados
+
+| Arquivo | Ação | Descrição |
+|---------|:----:|-----------|
+| `core/financeiro.py` | **MODIFICADO** | `_visao_geral_real()` implementada + fallback + `data_source` |
+| `pages/dashboard_geral.py` | **MODIFICADO** | Badge dinâmico ("Dados reais" / "Modo mock" / "Fallback") |
+
+### Views conectadas
+
+| View | Dados fornecidos |
+|------|----------------|
+| `v_net_worth` | `patrimonio.total`, `.investido`, `.saldo_bancario` |
+| `v_monthly_cashflow` | `fluxo_mes`, `historico_mensal` (últimos 6 meses) |
+| `v_category_spending_mtd` | `categorias_despesa`, `maior_categoria`, `categoria_alerta` |
+| `v_investment_summary` | `classes_ativo`, `portfolio.num_ativos` |
+| `v_budget_usage_mtd` | `categorias_despesa.orcamento` (quando configurado) |
+| `dividends` | `portfolio.dividendos_mes`, `portfolio.dividendos_ano` |
+
+### Lógica de fallback
+
+```python
+# MOCK_MODE=true  → mock intencional (data_source="mock")
+# MOCK_MODE=false → tenta banco real
+#   → OK   : data_source="real"
+#   → FALHA : data_source="mock_fallback" (log de aviso, sem crash)
+```
+
+### Indicador de fonte (dashboard_geral.py)
+
+| Fonte | Badge | Cor |
+|-------|-------|-----|
+| `"real"` | ✅ Dados reais | Verde |
+| `"mock"` | ⚠️ Modo mock | Amarelo |
+| `"mock_fallback"` | ❌ Fallback (mock) | Vermelho |
+
+### Valores reais (Mai 2026)
+
+| Indicador | Valor |
+|-----------|------:|
+| Patrimônio total | R$ 405.073,96 |
+| Saldo bancário | R$ 211.516,11 |
+| Patrimônio investido | R$ 193.557,85 |
+| Receitas do mês | R$ 27.672,42 |
+| Despesas do mês | R$ 13.925,40 |
+| Economia | R$ 13.747,02 |
+| Taxa de poupança | 49,7% |
+| Meses de reserva | 15,2× |
+| Score de saúde | 70/100 |
+
+### Limitações conhecidas (resolvidas nas próximas fases)
+
+| Limitação | Causa | Solução futura |
+|-----------|-------|----------------|
+| `rentabilidade_mes_pct = 0%` | `asset_quotes` vazia | Fase 5: alimentar cotações |
+| `dividendos_ano = R$ 0` | Dividendos históricos (datas em anos anteriores) | Revisão dos `ex_date` nos registros |
+| `orcamento` gerado (120% do gasto) | Nenhum budget cadastrado | Cadastrar budgets via UI |
+
+### Testes executados
+
+| Teste | Resultado |
+|-------|-----------|
+| `ruff check core/financeiro.py pages/dashboard_geral.py` | ✅ All checks passed! |
+| Importação `core.financeiro` fora do contexto Streamlit | ✅ OK |
+| `_visao_geral_mock()` — schema completo | ✅ 9/9 chaves |
+| `_visao_geral_real()` com banco real | ✅ 9/9 chaves · schema idêntico ao mock |
+| Fallback `engine=None` → RuntimeError | ✅ propagada corretamente |
+| Fallback `owner_id=''` → RuntimeError | ✅ propagada corretamente |
+| `calcular_saude_score(50, 15, 0, 7, False)` | ✅ → 70 |
+
+### Para ativar no Streamlit Cloud
+
+Adicione em **Settings > Secrets**:
+
+```toml
+MOCK_MODE = "false"
+OWNER_USER_ID = "<uuid-do-usuario>"
+# Uma das três (prioridade nesta ordem):
+SUPABASE_UNIFICADO_URL = "postgresql://..."
+# ou DATABASE_URL = "postgresql://..."
+# ou SUPABASE_DB_URL = "postgresql://..."
+```
+
+> ⚠️ **Nunca** adicionar a connection string ao código-fonte ou ao git.
 
 ---
 

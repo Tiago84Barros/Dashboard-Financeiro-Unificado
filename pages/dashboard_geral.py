@@ -126,9 +126,21 @@ def render() -> None:
         "📊",
     )
 
+    # ── Indicador de fonte de dados ───────────────────────────────────────
+    _fonte = d.get("data_source", "mock")
+    if _fonte == "real":
+        _badge_label = "Dados reais"
+        _badge_tipo  = "sucesso"
+    elif _fonte == "mock_fallback":
+        _badge_label = "Fallback (mock)"
+        _badge_tipo  = "erro"
+    else:
+        _badge_label = "Modo mock"
+        _badge_tipo  = "alerta"
+
     col_b1, col_b2, col_b3, *_ = st.columns([1, 1, 1, 4])
     with col_b1:
-        badge_status("Modo mock", "alerta")
+        badge_status(_badge_label, _badge_tipo)
     with col_b2:
         badge_status(d["mes_referencia"], "info")
     with col_b3:
