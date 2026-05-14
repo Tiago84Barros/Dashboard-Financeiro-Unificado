@@ -96,6 +96,17 @@ APP3_COL_MAP: dict[str, dict[str, str]] = {
     },
 }
 
+# Mapeamento App 3 (schema REAL auditado 2026-05-14) → canônico
+# Colunas já estão em inglês; apenas renomeações necessárias.
+APP3_TRANSACTIONS_COL_MAP: dict[str, str] = {
+    "date":         "due_date",          # date → due_date
+    "installments": "installment_total", # installments → installment_total
+    # "category" → preservado como nota (sem FK de categoria no App3)
+    # "user_id"  → sobrescrito com owner_id
+    # "type"     → mapeado via AUTO_VALUE_MAP["transactions.type"]
+    # "amount", "description", "payment_type", "card_name" → sem renomeação
+}
+
 # Mapeamento App 2 (SQLite) → canônico
 APP2_COL_MAP: dict[str, dict[str, str]] = {
     "assets": {
@@ -151,6 +162,12 @@ CANONICAL_CHECKS: dict[str, set[str]] = {
 
 # Mapeamentos automáticos de valores fora do canônico
 AUTO_VALUE_MAP: dict[str, dict[str, str]] = {
+    # App 3 — valores reais da coluna type
+    "transactions.type": {
+        "entrada":      "income",
+        "saida":        "expense",
+        "investimento": "transfer",
+    },
     "assets.class": {
         "acao": "stock", "ação": "stock", "Ação": "stock",
         "fii": "reit", "FII": "reit",
@@ -322,6 +339,58 @@ def transform_financial_goals(records: list[dict], owner_id: str) -> tuple[list[
     return out, warnings
 
 
+def transform_app3_transactions(
+    records: list[dict], owner_id: str
+) -> tuple[list[dict], list[str]]:
+    """
+    Transforma transações do App 3 (schema real, colunas em inglês).
+
+    Mapeamento:
+      date          → due_date
+      type          → type (saida→expense, entrada→income, investimento→transfer)
+      amount        → amount (Decimal)
+      category      → anexado à description se description vazia
+      installments  → installment_total
+      user_id       → sobrescrito com owner_id
+    """
+    out, warnings = [], []
+    for r in records:
+        # 1. Renomear colunas estruturais
+        rec = _rename_cols(r, APP3_TRANSACTIONS_COL_MAP)
+
+        # 2. Forçar user_id → owner
+        rec["user_id"] = owner_id
+
+        # 3. Normalizar type (saida/entrada/investimento → canônico)
+        rec["type"] = _map_value(
+            "transactions.type", rec.get("type"), warnings, str(rec.get("id", "?"))
+        )
+
+        # 4. Normalizar amount
+        rec["amount"] = _normalize_decimal(rec.get("amount"), 2)
+
+        # 5. Normalizar data
+        rec["due_date"] = _normalize_date(rec.get("due_date"))
+
+        # 6. description: combinar description + category se description vazia
+        desc = str(rec.get("description") or "").strip()
+        cat = str(rec.get("category") or "").strip()
+        if not desc and cat:
+            rec["description"] = cat
+        elif desc and cat and cat.lower() != desc.lower():
+            rec["description"] = f"{desc} [{cat}]"
+        # else: description já tem valor, manter
+
+        # 7. Defaults canônicos
+        rec.setdefault("status", "settled")
+        rec.setdefault("source", "import")
+        rec.setdefault("recurring", False)
+        rec["payment_date"] = _normalize_date(rec.get("payment_date"))
+
+        out.append(rec)
+    return out, warnings
+
+
 def transform_assets(records: list[dict]) -> tuple[list[dict], list[str]]:
     """Transforma assets do App 2 (SQLite)."""
     out, warnings = [], []
@@ -395,26 +464,10 @@ def transform_all(cfg) -> dict[str, Any]:  # noqa: ANN001
 
     output_dir = cfg.output_dir
 
-    # ── App 3 ──────────────────────────────────────────────────────────────
-    transformers_app3 = [
-        ("contas", "accounts", transform_accounts),
-        ("categorias", "categories", transform_categories),
-        ("transacoes", "transactions", transform_transactions),
-        ("orcamentos", "budgets", transform_budgets),
-        ("metas", "financial_goals", transform_financial_goals),
-    ]
-
-    for src_table, dest_table, transformer in transformers_app3:
-        src_file = output_dir / f"02_app3_{src_table}.json"
-        if not src_file.exists():
-            result["entities"][dest_table] = {
-                "source": f"app3/{src_table}",
-                "count": 0,
-                "warnings": [f"Arquivo não encontrado: {src_file.name}"],
-            }
-            continue
-
-        with open(src_file, encoding="utf-8") as f:
+    # ── App 3 (schema real auditado 2026-05-14: tabela 'transactions') ────
+    src_file_app3 = output_dir / "02_app3_transactions.json"
+    if src_file_app3.exists():
+        with open(src_file_app3, encoding="utf-8") as f:
             data = json.load(f)
 
         records = data.get("records", [])
@@ -422,25 +475,26 @@ def transform_all(cfg) -> dict[str, Any]:  # noqa: ANN001
             # dry_run: usar apenas sample para preview
             records = data["sample"]
 
-        try:
-            if dest_table in ("accounts", "categories", "transactions", "budgets"):
-                transformed, warnings = transformer(records, cfg.owner_id)
-            elif dest_table == "financial_goals":
-                transformed, warnings = transformer(records, cfg.owner_id)
-            else:
-                transformed, warnings = transformer(records)
-        except TypeError:
-            transformed, warnings = transformer(records, cfg.owner_id)
-
-        result["entities"][dest_table] = {
-            "source": f"app3/{src_table}",
+        transformed, t_warnings = transform_app3_transactions(records, cfg.owner_id)
+        result["entities"]["transactions"] = {
+            "source": "app3/transactions",
             "count": len(transformed),
             "records": transformed if not cfg.dry_run else transformed[:3],
-            "warnings": warnings,
+            "warnings": t_warnings,
         }
         result["total_records"] += len(transformed)
-        result["warnings"].extend(warnings)
-        print(f"  ✅ {src_table:<20} → {dest_table:<25} {len(transformed):>5,} registros")
+        result["warnings"].extend(t_warnings)
+        print(
+            f"  ✅ {'transactions':<20} → {'transactions':<25} "
+            f"{len(transformed):>5,} registros"
+        )
+    else:
+        result["entities"]["transactions"] = {
+            "source": "app3/transactions",
+            "count": 0,
+            "warnings": ["Arquivo não encontrado: 02_app3_transactions.json"],
+        }
+        print("  ⚠️  02_app3_transactions.json não encontrado — transactions: 0 registros")
 
     # ── App 2 (SQLite) ────────────────────────────────────────────────────
     transformers_app2 = [

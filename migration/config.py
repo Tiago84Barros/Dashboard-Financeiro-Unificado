@@ -25,6 +25,26 @@ from pathlib import Path
 from typing import Optional
 
 
+def _load_dotenv(path: Path | None = None) -> None:
+    """
+    Carrega .env se existir, sem sobrescrever variáveis já definidas no ambiente.
+    Garante leitura em UTF-8 (resolve problema de encoding no Windows com acentos).
+    """
+    env_file = path or (Path(__file__).parent.parent / ".env")
+    if not env_file.exists():
+        return
+    with open(env_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
 def _ensure_utf8_stdout() -> None:
     """Configura stdout para UTF-8 no Windows para evitar UnicodeEncodeError com emojis."""
     if hasattr(sys.stdout, "reconfigure"):
@@ -100,7 +120,9 @@ class MigrationConfig:
     # ---------------------------------------------------------------------------
     @classmethod
     def from_env(cls, dry_run: bool = True) -> "MigrationConfig":
-        """Cria configuração a partir de variáveis de ambiente. dry_run=True por padrão."""
+        """Cria configuração a partir de variáveis de ambiente. dry_run=True por padrão.
+        Carrega .env automaticamente se existir na raiz do projeto (UTF-8)."""
+        _load_dotenv()
         return cls(
             dest_url=_env("SUPABASE_UNIFICADO_URL") or _env("SUPABASE_DB_URL"),
             owner_id=_env("OWNER_USER_ID"),

@@ -26,7 +26,7 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 | **4.4** | Revisão humana dos scripts | ✅ Concluída — scripts aprovados com ajustes |
 | **4.5** | Aplicação manual no Supabase | ✅ Concluída — 22 tabelas + RLS + role criados |
 | **4.6** | Scripts de migração ETL | ✅ Concluída — 8 scripts Python criados (dry_run por padrão) |
-| **4.7** | Migração controlada | ✅ Concluída — dry run estrutural aprovado (0 erros, 0 conexões reais) |
+| **4.7** | Migração controlada | ✅ Concluída — dry run com dados reais aprovado (0 erros, 3 fontes, 9/9 validações) |
 | **4.8** | Validação dos dados | ⏳ Pendente |
 | **4.9** | Conexão do app ao banco | ⏳ Pendente |
 
@@ -398,21 +398,35 @@ SOURCE_DB_APP2="sqlite:///caminho/absoluto/investimentos.db"  # App 2
 
 ## Fase 4.7 — Dry Run da Migração Controlada (✅ Concluída em 2026-05-14)
 
-**Pipeline completo executado com `dry_run=True`. Zero erros. Zero conexões reais. Zero dados gravados.**
+**Dois ciclos executados. Zero erros em ambos. Zero dados gravados.**
 
-### Bugs corrigidos nesta fase
+### Ciclo 1 — Dry Run Estrutural (sem credenciais)
 
 | Bug | Gravidade | Descrição | Correção |
 |-----|:---------:|-----------|---------|
 | B01 | 🔴 Crítico | `migration/config.py` inexistente — todos os scripts falhavam na importação | Criado `migration/config.py` como módulo importável; `00_config.py` virou CLI wrapper |
 | B02 | 🟡 Médio | Script 05 exigia credenciais mesmo em dry_run | Verificação de credenciais condicionada ao modo real |
-| B03 | 🟢 Baixo | `f-string` sem placeholder detectada pelo ruff (F541) | Prefixo `f` removido |
+| B03 | 🟢 Baixo | `f-string` sem placeholder (ruff F541) | Prefixo `f` removido |
 
-### Novo arquivo: `migration/run_dry_run.py`
+### Ciclo 2 — Dry Run com Dados Reais (todas as credenciais configuradas)
 
-Orquestrador que executa o pipeline completo (Steps 0–7) em dry_run, com:
-- `_assert_dry_run()` executado 3× antes/durante/após a carga
-- Sumário final com fontes detectadas, warnings e decisão
+| Bug | Gravidade | Descrição | Correção |
+|-----|:---------:|-----------|---------|
+| B04 | 🔴 Alto | Schema real do App3 diferente do documentado (colunas inglês, tabela `transactions`) | `02_extract_controle_financeiro.py` e `04_transform_to_canonical.py` reescritos para schema real |
+| B05 | 🟡 Médio | Caminho SQLite com "Área de Trabalho" perdia encoding no PowerShell | `_load_dotenv()` adicionado ao `config.py` — lê `.env` em UTF-8 diretamente |
+| B06 | 🟡 Médio | Transform buscava arquivos de tabelas antigas do App3 (ex: `02_app3_transacoes.json`) | Substituído por handler único para `02_app3_transactions.json` |
+
+### Resultado do dry run com dados reais
+
+```
+Fontes disponíveis   : 3/3 (App2 SQLite + App3 Supabase + banco unificado)
+App3 transactions    : 251 registros confirmados (colunas: id, type, category, date, amount, ...)
+App2 SQLite          : 2.155 registros (assets 82, transactions 1.351, incomes 517, ...)
+Validações           : 9/9 passaram (100%)
+Total erros          : 0
+Total warnings       : 3 (tabelas opcionais App2 — não bloqueadores)
+RESULTADO            : PRONTO PARA MIGRAÇÃO REAL (após checklist)
+```
 
 ### Confirmações de segurança
 
@@ -420,24 +434,14 @@ Orquestrador que executa o pipeline completo (Steps 0–7) em dry_run, com:
 |-------------|:---------:|
 | `dry_run=True` padrão em todos os scripts | ✅ |
 | Script 05 não conecta ao banco em dry_run | ✅ |
-| `make_engine()` não foi chamado nenhuma vez | ✅ |
+| `make_engine()` não chamado nas fontes em dry_run | ✅ |
 | `migration/output/` no `.gitignore` | ✅ |
 | Zero dados escritos no banco unificado | ✅ |
 | Zero dados alterados nas fontes | ✅ |
-| ruff: All checks passed! | ✅ |
 
-### Resultado do dry run (sem credenciais — estrutural)
+### Novo arquivo: `migration/run_dry_run.py`
 
-```
-dry_run              : TRUE (nenhum dado gravado)
-Duracao              : 0.2s
-Fontes disponiveis   : 0 (credenciais não configuradas)
-Fontes ausentes      : 3
-Total warnings       : 12 (todos esperados — sem credenciais)
-Total erros          : 0
-```
-
-**Decisão:** ✅ Pipeline estrutural aprovado. Próximo passo: configurar credenciais e executar dry run com dados reais.
+Orquestrador que executa o pipeline completo (Steps 0–7) em dry_run, com `_assert_dry_run()` executado 3× e sumário final de fontes detectadas, warnings e decisão.
 
 **Documentação:** `docs/fase_4_7_dry_run_migracao.md`
 
@@ -473,30 +477,18 @@ No Streamlit Cloud (Settings > Secrets), as variáveis ficavam invisíveis → b
 
 ## Próxima Subfase: 4.8 — Migração Real dos Dados
 
-**Fase 4.7 concluída (dry run estrutural).** Antes de executar a migração real (Fase 4.8), o proprietário precisa:
+**Fase 4.7 concluída (dry run com dados reais aprovado).** Para executar a migração real (Fase 4.8), o checklist abaixo deve ser satisfeito:
 
-1. **Alterar a senha do banco** (comprometida durante esta sessão) — Supabase Dashboard → Settings → Database → Reset Password
-2. **Criar o registro de perfil** no banco:
-   ```sql
-   INSERT INTO profiles (name, email, password_hash)
-   VALUES ('Tiago Barros', 'tsbcorporation84@gmail.com', 'placeholder')
-   RETURNING id;
-   ```
-3. **Copiar o UUID retornado** → adicionar ao `.env` como `OWNER_USER_ID=<uuid>`
-4. **Criar seed de `user_settings`**:
-   ```sql
-   INSERT INTO user_settings (user_id) VALUES ('<OWNER_USER_ID>');
-   ```
-5. **Atualizar `.env`**:
-   ```ini
-   SUPABASE_UNIFICADO_URL="postgresql://postgres.<project>:NOVA_SENHA@host:5432/postgres"
-   OWNER_USER_ID="<uuid-do-perfil>"
-   MOCK_MODE="false"
-   ```
+1. **`009_schema_amendments.sql` aplicado no Supabase** (M01–M05 da Fase 4.4)
+2. **Backup do banco unificado** — Supabase Dashboard → Settings → Database → Backups
+3. **Revisar amostra** das 251 transações App3 em `migration/output/02_app3_transactions.json`
+4. **Revisar amostra** dos ativos App2 em `migration/output/03_app2_assets.json`
+5. **Confirmar categorias existentes** (23 em `categories`) vs categorias do App3
+6. **Confirmar accounts existentes** (ou criar) para `account_id` das transactions
 
-Após esses passos, a Fase 4.8 pode iniciar: executar `--no-dry-run` no pipeline de migração para gravar dados do App 3 (Controle Financeiro) e do App 2 (SQLite) no banco unificado.
+Após checklist: `python -m migration.05_load_to_unified_supabase --no-dry-run`
 
-Ver checklist completo: `docs/fase_4_7_dry_run_migracao.md` (Seção 12 — Etapa B).
+Ver checklist completo: `docs/fase_4_7_dry_run_migracao.md` (Seção 12).
 
 ---
 

@@ -3,10 +3,17 @@ migration/02_extract_controle_financeiro.py
 ===========================================
 Extrai dados do Supabase Controle Financeiro (App 3) — fonte de migração.
 
-Fase 4.6 — Extração (App 3)
+Fase 4.7 — Extração (App 3) — schema real auditado em 2026-05-14
 
-Tabelas extraídas (nomes em português — schema original do App 3):
-  transacoes, contas, categorias, orcamentos, metas
+Schema real do App 3 (auditado via dry run Fase 4.7):
+  transactions  — 251 registros
+    id (bigint), type (saida/entrada/investimento), category (text),
+    date (date), amount (numeric), payment_type, card_name,
+    installments, description, user_id (uuid)
+  app_users  — 2 registros (não migrado — profiles já criado manualmente)
+
+Nota: o App 3 não tem tabelas separadas de contas/categorias/orcamentos/metas.
+Todas as transações estão em uma única tabela com categoria como texto livre.
 
 Regras:
   - Conexão somente leitura (apenas SELECT).
@@ -30,33 +37,29 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Tabelas esperadas no App 3 (Controle Financeiro)
+# Tabelas do App 3 (schema real auditado em 2026-05-14)
 # ---------------------------------------------------------------------------
 
 APP3_TABLES: list[str] = [
-    "transacoes",
-    "contas",
-    "categorias",
-    "orcamentos",
-    "metas",
+    "transactions",   # Tabela principal — 251 registros
+    # "app_users"     # Não migrado — profiles já criado manualmente
 ]
 
 # Colunas de identificador por tabela (usado como source_id)
 APP3_ID_COLUMNS: dict[str, str] = {
-    "transacoes": "id",
-    "contas": "id",
-    "categorias": "id",
-    "orcamentos": "id",
-    "metas": "id",
+    "transactions": "id",
 }
 
 # Colunas mínimas esperadas (para validação de schema)
 APP3_EXPECTED_COLS: dict[str, list[str]] = {
-    "transacoes": ["id", "descricao", "valor"],
-    "contas": ["id", "nome"],
-    "categorias": ["id", "nome", "tipo"],
-    "orcamentos": ["id"],
-    "metas": ["id", "nome"],
+    "transactions": ["id", "type", "amount", "date", "user_id"],
+}
+
+# Mapeamento de tipo: valores reais → canônico
+APP3_TYPE_MAP: dict[str, str] = {
+    "entrada":       "income",
+    "saida":         "expense",
+    "investimento":  "transfer",
 }
 
 
