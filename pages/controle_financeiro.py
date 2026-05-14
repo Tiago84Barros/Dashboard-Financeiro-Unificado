@@ -32,6 +32,7 @@ import streamlit as st
 from core.controle import (
     get_controle, get_opcoes_formulario, inserir_transacao,
     atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
+    get_gastos_cartao_mensal,
 )
 from core.investimentos import get_cashflow_mensal
 from core.utils import fmt_moeda, fmt_percentual
@@ -203,17 +204,17 @@ def _fig_orcamento(cats: list) -> go.Figure:
 
 
 def _fig_yoy(por_ano: dict, anos: list) -> go.Figure:
-    """Bar chart agrupado: Receitas × Despesas × Saldo por ano."""
-    rec   = [por_ano[a]["receitas"] for a in anos]
-    desp  = [por_ano[a]["despesas"] for a in anos]
-    saldo = [por_ano[a]["saldo"]    for a in anos]
+    """Bar chart agrupado: Receitas × Despesas × Investimentos por ano (igual ao original)."""
+    rec   = [por_ano[a]["receitas"]      for a in anos]
+    desp  = [por_ano[a]["despesas"]      for a in anos]
+    inv   = [por_ano[a].get("investimentos", 0.0) for a in anos]
     anos_str = [str(a) for a in anos]
 
     fig = go.Figure()
     for nome, vals, cor in [
-        ("Receitas", rec,   _COR_RECEITA),
-        ("Despesas", desp,  _COR_DESPESA),
-        ("Saldo",    saldo, _COR_INVEST),
+        ("Receitas",       rec,  _COR_RECEITA),
+        ("Despesas",       desp, _COR_DESPESA),
+        ("Investimentos",  inv,  _COR_INVEST),
     ]:
         fig.add_trace(go.Bar(
             name=nome, x=anos_str, y=vals, marker_color=cor, opacity=0.85,
@@ -234,26 +235,27 @@ def _fig_yoy(por_ano: dict, anos: list) -> go.Figure:
 
 
 def _fig_patrimonio_investido(por_ano: dict, anos: list) -> go.Figure:
-    """Barras anuais de saldo positivo (proxy de poupança) + linha acumulada."""
-    saldos = [max(0.0, por_ano[a]["saldo"]) for a in anos]
-    acum   = []
-    total  = 0.0
-    for s in saldos:
-        total += s
+    """Barras anuais de investimentos + linha acumulada (igual ao original)."""
+    # Usa investimentos reais se disponíveis; fallback para saldo positivo
+    vals  = [por_ano[a].get("investimentos") or max(0.0, por_ano[a]["saldo"]) for a in anos]
+    acum  = []
+    total = 0.0
+    for v in vals:
+        total += v
         acum.append(round(total, 2))
     anos_str = [str(a) for a in anos]
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        name="Poupado no ano", x=anos_str, y=saldos,
-        marker_color=_COR_RECEITA, opacity=0.80,
-        hovertemplate="<b>%{x}</b><br>Poupado: R$ %{y:,.2f}<extra></extra>",
+        name="Investido no ano", x=anos_str, y=vals,
+        marker_color="#87CEEB", opacity=0.90,
+        hovertemplate="<b>Ano %{x}</b><br>Investido no ano: R$ %{y:,.2f}<extra></extra>",
         yaxis="y",
     ))
     fig.add_trace(go.Scatter(
-        name="Acumulado", x=anos_str, y=acum, mode="lines+markers",
-        line={"color": _COR_INVEST, "width": 2.5}, marker={"size": 7},
-        hovertemplate="<b>%{x}</b><br>Acumulado: R$ %{y:,.2f}<extra></extra>",
+        name="Acumulado investido", x=anos_str, y=acum, mode="lines+markers",
+        line={"color": "#4A9EFF", "width": 2.5}, marker={"size": 7},
+        hovertemplate="<b>Ano %{x}</b><br>Acumulado até o ano: R$ %{y:,.2f}<extra></extra>",
         yaxis="y2",
     ))
     fig.update_layout(
@@ -262,14 +264,14 @@ def _fig_patrimonio_investido(por_ano: dict, anos: list) -> go.Figure:
         legend={"orientation": "h", "y": -0.22, "font": {"size": 11},
                 "bgcolor": "rgba(0,0,0,0)"},
         margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=320,
-        xaxis={"showgrid": False},
+        xaxis={"showgrid": False, "title": {"text": "Ano", "font": {"size": 10}}},
         yaxis={"showgrid": True, "gridcolor": "#1E2533",
                "tickformat": ",.0f", "tickprefix": "R$ ",
-               "title": {"text": "Poupado/ano", "font": {"size": 10}}},
+               "title": {"text": "Investido no ano (R$)", "font": {"size": 10}}},
         yaxis2={"overlaying": "y", "side": "right",
                 "showgrid": False,
                 "tickformat": ",.0f", "tickprefix": "R$ ",
-                "title": {"text": "Acumulado", "font": {"size": 10}}},
+                "title": {"text": "Acumulado (R$)", "font": {"size": 10}}},
     )
     return fig
 
@@ -405,8 +407,9 @@ def _sidebar_render(ano: int, mes: int) -> None:
         cat_match  = next((c for c in cats_db if c["nome"] == categoria_final), None)
         cat_id     = cat_match["id"] if cat_match else None
 
-        # Tipo para o banco
-        tipo_insert = "income" if t_type == "entrada" else "expense"
+        # Tipo para o banco (investimento preservado como tipo próprio)
+        _MAP_TIPO = {"entrada": "income", "saida": "expense", "investimento": "investment"}
+        tipo_insert = _MAP_TIPO.get(t_type, "expense")
 
         desc_final = descricao.strip() or categoria_final
 
@@ -657,7 +660,7 @@ def _tab_dashboard(d: dict, historico: list) -> None:
 # TAB 2 — Análises
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _tab_analises(d: dict, historico: list, hist_anual: dict) -> None:
+def _tab_analises(d: dict, historico: list, hist_anual: dict, gastos_cartao: dict) -> None:
     receitas = d["receitas"]
     despesas = d["despesas"]
     saldo    = d["saldo_mes"]
@@ -783,15 +786,16 @@ def _tab_analises(d: dict, historico: list, hist_anual: dict) -> None:
         st.plotly_chart(_fig_yoy(por_ano, anos), use_container_width=True,
                         config={"displayModeBar": False})
 
-        # Tabela resumo
+        # Tabela resumo (igual ao original: Ano | Receitas | Investimentos | Despesas)
         import pandas as pd
         rows_yoy = []
         for a in anos:
+            inv = por_ano[a].get("investimentos", 0.0)
             rows_yoy.append({
-                "Ano":       str(a),
-                "Receitas":  f"R$ {por_ano[a]['receitas']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-                "Despesas":  f"R$ {por_ano[a]['despesas']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-                "Saldo":     f"R$ {por_ano[a]['saldo']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "Ano":            str(a),
+                "Receitas":       f"R$ {por_ano[a]['receitas']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "Investimentos":  f"R$ {inv:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "Despesas":       f"R$ {por_ano[a]['despesas']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
             })
         st.dataframe(pd.DataFrame(rows_yoy), use_container_width=True, hide_index=True)
     elif len(anos) == 1:
@@ -801,8 +805,51 @@ def _tab_analises(d: dict, historico: list, hist_anual: dict) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Evolução do Patrimônio / Poupança ─────────────────────────────────────
-    _secao_titulo("📈", "Evolução do Patrimônio Acumulado (poupança ano a ano)")
+    # ── Gastos com pagamento de cartão (mensal) — do app original ─────────────
+    _secao_titulo("💳", "Gastos com pagamento de cartão (mensal)")
+    # anos disponíveis = anos que têm dados de cartão; fallback = anos do YOY
+    _anos_cartao = sorted(
+        {str(a) for a in anos if gastos_cartao.get(str(a))},
+        reverse=True,
+    ) or [str(a) for a in sorted(anos, reverse=True)]
+    _ano_sel_str = st.selectbox(
+        "Ano de referência", _anos_cartao,
+        key="cf_cartao_ano_sel",
+    ) if _anos_cartao else str(_date.today().year)
+    dados_cartao = gastos_cartao.get(_ano_sel_str, [])
+    if dados_cartao:
+        import pandas as pd
+        labels = [item["label"] for item in dados_cartao]
+        totais = [item["total"] for item in dados_cartao]
+
+        fig_cartao = go.Figure()
+        fig_cartao.add_trace(go.Bar(
+            x=labels, y=totais,
+            marker_color="#87CEEB", opacity=0.9,
+            hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
+        ))
+        fig_cartao.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font_color=_COR_NEUTRO,
+            margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=300,
+            xaxis={"showgrid": False, "title": {"text": "Mês", "font": {"size": 10}}},
+            yaxis={"showgrid": True, "gridcolor": "#1E2533",
+                   "tickformat": ",.0f", "tickprefix": "R$ ",
+                   "title": {"text": "Total relacionado a cartão (R$)", "font": {"size": 10}}},
+        )
+        st.plotly_chart(fig_cartao, use_container_width=True, config={"displayModeBar": False})
+
+        rows_cart = [{"Mês": item["label"],
+                      "Total (R$)": f"R$ {item['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")}
+                     for item in dados_cartao]
+        st.dataframe(pd.DataFrame(rows_cart), use_container_width=True, hide_index=False)
+    else:
+        st.caption(f"Sem lançamentos de 'Pagamento de Cartão' para {_ano_sel_str}.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Evolução do Patrimônio Investido (igual ao original) ──────────────────
+    _secao_titulo("📈", "Evolução do patrimônio investido (ano a ano)")
     if len(anos) >= 1:
         st.plotly_chart(_fig_patrimonio_investido(por_ano, anos), use_container_width=True,
                         config={"displayModeBar": False})
@@ -811,15 +858,14 @@ def _tab_analises(d: dict, historico: list, hist_anual: dict) -> None:
         acum = 0.0
         rows_pat = []
         for a in anos:
-            poupado = max(0.0, por_ano[a]["saldo"])
-            acum   += poupado
+            inv  = por_ano[a].get("investimentos") or max(0.0, por_ano[a]["saldo"])
+            acum += inv
             rows_pat.append({
-                "Ano": str(a),
-                "Poupado no Ano": f"R$ {poupado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-                "Acumulado":      f"R$ {acum:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "Ano":                str(a),
+                "Investido no ano (R$)":   f"R$ {inv:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "Acumulado investido (R$)": f"R$ {acum:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
             })
         st.dataframe(pd.DataFrame(rows_pat), use_container_width=True, hide_index=True)
-        st.caption("Considera apenas anos com saldo positivo (receitas > despesas).")
     else:
         st.caption("Sem dados históricos disponíveis.")
 
@@ -1179,6 +1225,15 @@ def render() -> None:
     historico    = get_cashflow_mensal()
     hist_anual   = get_historico_anual()
 
+    # Gastos com Pagamento de Cartão — agrupados por ano → {ano_str: [items]}
+    _ano_ref = sel["ano"]
+    _anos_hist = hist_anual.get("anos", [_ano_ref])
+    gastos_cartao: dict = {"todos": []}
+    for _a in _anos_hist:
+        _dados_a = get_gastos_cartao_mensal(_a)
+        gastos_cartao[str(_a)] = _dados_a
+        gastos_cartao["todos"].extend(_dados_a)
+
     # ── Sub-navegação via tabs ────────────────────────────────────────────────
     tab1, tab2, tab3, tab4 = st.tabs([
         "📊  Dashboard",
@@ -1191,7 +1246,7 @@ def render() -> None:
         _tab_dashboard(d, historico)
 
     with tab2:
-        _tab_analises(d, historico, hist_anual)
+        _tab_analises(d, historico, hist_anual, gastos_cartao)
 
     with tab3:
         _tab_tabelas(d)

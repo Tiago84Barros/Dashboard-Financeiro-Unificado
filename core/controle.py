@@ -159,9 +159,23 @@ _SQL_HISTORICO_ANUAL = """
         SUM(amount)                        AS total
     FROM   transactions
     WHERE  user_id = :uid
-      AND  type    IN ('income', 'expense')
+      AND  type    IN ('income', 'expense', 'investment',
+                       'entrada', 'saida', 'investimento')
     GROUP  BY ano, type
     ORDER  BY ano, type
+"""
+
+_SQL_GASTOS_CARTAO_MENSAL = """
+    SELECT
+        EXTRACT(YEAR  FROM t.due_date)::int  AS ano,
+        EXTRACT(MONTH FROM t.due_date)::int  AS mes,
+        SUM(ABS(t.amount))                   AS total
+    FROM   transactions t
+    LEFT JOIN categories c ON c.id = t.category_id
+    WHERE  t.user_id = :uid
+      AND  c.name    = 'Pagamento de Cartão'
+    GROUP  BY ano, mes
+    ORDER  BY ano, mes
 """
 
 _SQL_TRANSACOES_FILTRADAS = """
@@ -395,6 +409,64 @@ def get_transacoes_filtradas(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GASTOS COM PAGAMENTO DE CARTÃO (MENSAL) — mock + real
+# ─────────────────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300)
+def get_gastos_cartao_mensal(ano: int) -> list:
+    """
+    Retorna gastos mensais na categoria 'Pagamento de Cartão' para o ano dado.
+    Cada item: {"mes": int, "label": str, "total": float}
+    """
+    if settings.MOCK_MODE:
+        return _gastos_cartao_mock(ano)
+    try:
+        return _gastos_cartao_real(ano)
+    except Exception as exc:
+        logger.warning("[controle] get_gastos_cartao_mensal falhou (%s) — usando mock.", type(exc).__name__)
+        return _gastos_cartao_mock(ano)
+
+
+def _gastos_cartao_mock(ano: int) -> list:
+    from datetime import date as _dt
+    ano_atual = _dt.today().year
+    dados = _MOCK_GASTOS_CARTAO if ano == ano_atual else {}
+    return [
+        {"mes": m, "label": f"{m:02d}/{ano}", "total": round(v, 2)}
+        for m, v in sorted(dados.items())
+    ]
+
+
+def _gastos_cartao_real(ano: int) -> list:
+    from sqlalchemy import text
+    from core.database import get_engine
+
+    engine = get_engine()
+    if engine is None:
+        raise RuntimeError("Engine indisponível.")
+
+    owner = settings.OWNER_USER_ID
+    if not owner:
+        raise RuntimeError("OWNER_USER_ID não configurado.")
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(_SQL_GASTOS_CARTAO_MENSAL),
+            {"uid": owner},
+        ).fetchall()
+
+    return [
+        {
+            "mes":   int(r.mes),
+            "label": f"{int(r.mes):02d}/{int(r.ano)}",
+            "total": round(float(r.total), 2),
+        }
+        for r in rows
+        if int(r.ano) == ano
+    ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MOCK
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -588,9 +660,15 @@ def _opcoes_real() -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _MOCK_YOY = {
-    2024: {"receitas": 95_000.0, "despesas": 68_000.0},
-    2025: {"receitas": 108_000.0, "despesas": 74_000.0},
-    2026: {"receitas": 42_500.0, "despesas": 30_000.0},
+    2024: {"receitas": 95_000.0, "despesas": 68_000.0, "investimentos": 12_000.0},
+    2025: {"receitas": 108_000.0, "despesas": 74_000.0, "investimentos": 28_409.0},
+    2026: {"receitas": 42_500.0, "despesas": 30_000.0, "investimentos": 10_200.0},
+}
+
+# Mock mensal de "Pagamento de Cartão" para o ano atual
+_MOCK_GASTOS_CARTAO = {
+    1: 11_416.54, 2: 10_158.53, 3: 6_867.12,
+    4: 11_266.55, 5: 3_025.57,
 }
 
 
@@ -599,7 +677,12 @@ def _historico_anual_mock() -> dict:
     por_ano = {
         a: {
             **_MOCK_YOY[a],
-            "saldo": round(_MOCK_YOY[a]["receitas"] - _MOCK_YOY[a]["despesas"], 2),
+            "saldo": round(
+                _MOCK_YOY[a]["receitas"]
+                - _MOCK_YOY[a]["despesas"]
+                - _MOCK_YOY[a]["investimentos"],
+                2,
+            ),
         }
         for a in anos
     }
@@ -621,20 +704,33 @@ def _historico_anual_real() -> dict:
     with engine.connect() as conn:
         rows = conn.execute(text(_SQL_HISTORICO_ANUAL), {"uid": owner}).fetchall()
 
+    _INCOME_TYPES = {"income", "entrada"}
+    _EXPENSE_TYPES = {"expense", "saida"}
+    _INVEST_TYPES  = {"investment", "investimento"}
+
     por_ano: dict[int, dict] = {}
     for r in rows:
         a = int(r.ano)
         if a not in por_ano:
-            por_ano[a] = {"receitas": 0.0, "despesas": 0.0}
-        if r.type == "income":
+            por_ano[a] = {"receitas": 0.0, "despesas": 0.0, "investimentos": 0.0}
+        tp = (r.type or "").lower()
+        if tp in _INCOME_TYPES:
             por_ano[a]["receitas"] += float(r.total)
-        elif r.type == "expense":
+        elif tp in _EXPENSE_TYPES:
             por_ano[a]["despesas"] += abs(float(r.total))
+        elif tp in _INVEST_TYPES:
+            por_ano[a]["investimentos"] += abs(float(r.total))
 
     for a in por_ano:
-        por_ano[a]["saldo"] = round(por_ano[a]["receitas"] - por_ano[a]["despesas"], 2)
-        por_ano[a]["receitas"] = round(por_ano[a]["receitas"], 2)
-        por_ano[a]["despesas"] = round(por_ano[a]["despesas"], 2)
+        por_ano[a]["saldo"] = round(
+            por_ano[a]["receitas"]
+            - por_ano[a]["despesas"]
+            - por_ano[a]["investimentos"],
+            2,
+        )
+        por_ano[a]["receitas"]      = round(por_ano[a]["receitas"], 2)
+        por_ano[a]["despesas"]      = round(por_ano[a]["despesas"], 2)
+        por_ano[a]["investimentos"] = round(por_ano[a]["investimentos"], 2)
 
     anos = sorted(por_ano.keys())
     return {"anos": anos, "por_ano": por_ano}
