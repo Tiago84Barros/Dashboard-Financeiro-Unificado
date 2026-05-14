@@ -61,28 +61,17 @@ def _card_patrimonio(pat: dict, flx: dict) -> None:
     score_w = min(score, 100)
 
     st.markdown(f"""
-    <div style="
-        background:#12151E;
-        border:1px solid #1E2533;
-        border-top:3px solid {_COR_PATRIMONIO};
-        border-radius:12px;
-        padding:22px 20px 18px;
-        height:100%;
-        min-height:260px;
-    ">
+    <div style="background:#12151E;border:1px solid #1E2533;border-top:3px solid {_COR_PATRIMONIO};
+                border-radius:12px;padding:22px 20px 18px;height:100%;min-height:260px;">
         <div style="font-size:0.65rem;font-weight:800;text-transform:uppercase;
                     letter-spacing:0.14em;color:{_COR_PATRIMONIO};margin-bottom:14px;">
-            💰 Patrimônio & Saúde
+            💰 Patrimônio &amp; Saúde
         </div>
-
-        <!-- Valor principal -->
         <div style="font-size:0.78rem;color:#718096;margin-bottom:3px">Patrimônio Total</div>
         <div style="font-size:1.85rem;font-weight:800;color:#E2E8F0;
                     letter-spacing:-0.02em;margin-bottom:14px;line-height:1">
             {fmt_moeda(pat["total"])}
         </div>
-
-        <!-- Linhas secundárias -->
         <div style="display:flex;justify-content:space-between;
                     align-items:center;margin-bottom:8px;">
             <span style="font-size:0.80rem;color:#9CA3AF">💳 Saldo bancário</span>
@@ -97,11 +86,7 @@ def _card_patrimonio(pat: dict, flx: dict) -> None:
                 {fmt_moeda(pat["investido"])}
             </span>
         </div>
-
-        <!-- Divisor -->
         <div style="border-top:1px solid #1E2533;margin-bottom:14px"></div>
-
-        <!-- Score de saúde -->
         <div style="display:flex;justify-content:space-between;
                     align-items:center;margin-bottom:6px;">
             <span style="font-size:0.78rem;color:#718096">Saúde Financeira</span>
@@ -129,21 +114,12 @@ def _card_fluxo(flx: dict) -> None:
     cor_saldo = _COR_FLUXO if saldo >= 0 else _COR_NEGATIVO
 
     st.markdown(f"""
-    <div style="
-        background:#12151E;
-        border:1px solid #1E2533;
-        border-top:3px solid {_COR_FLUXO};
-        border-radius:12px;
-        padding:22px 20px 18px;
-        height:100%;
-        min-height:260px;
-    ">
+    <div style="background:#12151E;border:1px solid #1E2533;border-top:3px solid {_COR_FLUXO};
+                border-radius:12px;padding:22px 20px 18px;height:100%;min-height:260px;">
         <div style="font-size:0.65rem;font-weight:800;text-transform:uppercase;
                     letter-spacing:0.14em;color:{_COR_FLUXO};margin-bottom:14px;">
             📊 Fluxo do Mês
         </div>
-
-        <!-- Receitas e Despesas -->
         <div style="display:flex;justify-content:space-between;
                     align-items:center;margin-bottom:8px;">
             <span style="font-size:0.80rem;color:#9CA3AF">↑ Receitas</span>
@@ -158,18 +134,12 @@ def _card_fluxo(flx: dict) -> None:
                 {fmt_moeda(flx["despesas"])}
             </span>
         </div>
-
-        <!-- Divisor -->
         <div style="border-top:1px solid #1E2533;margin-bottom:12px"></div>
-
-        <!-- Economia (valor principal secundário) -->
         <div style="font-size:0.78rem;color:#718096;margin-bottom:3px">Economia do mês</div>
         <div style="font-size:1.50rem;font-weight:800;color:{cor_saldo};
                     margin-bottom:14px;line-height:1">
             {fmt_moeda(saldo)}
         </div>
-
-        <!-- Taxa de poupança + barra -->
         <div style="display:flex;justify-content:space-between;
                     align-items:center;margin-bottom:5px;">
             <span style="font-size:0.78rem;color:#718096">Taxa de poupança</span>
@@ -196,28 +166,17 @@ def _card_investimentos(pat: dict, port: dict, flx: dict) -> None:
     rent_str = fmt_percentual(rent) if rent != 0 else "0,00%"
 
     st.markdown(f"""
-    <div style="
-        background:#12151E;
-        border:1px solid #1E2533;
-        border-top:3px solid {_COR_INVEST};
-        border-radius:12px;
-        padding:22px 20px 18px;
-        height:100%;
-        min-height:260px;
-    ">
+    <div style="background:#12151E;border:1px solid #1E2533;border-top:3px solid {_COR_INVEST};
+                border-radius:12px;padding:22px 20px 18px;height:100%;min-height:260px;">
         <div style="font-size:0.65rem;font-weight:800;text-transform:uppercase;
                     letter-spacing:0.14em;color:{_COR_INVEST};margin-bottom:14px;">
             📈 Investimentos
         </div>
-
-        <!-- Valor principal -->
         <div style="font-size:0.78rem;color:#718096;margin-bottom:3px">Patrimônio Investido</div>
         <div style="font-size:1.85rem;font-weight:800;color:{_COR_INVEST};
                     letter-spacing:-0.02em;margin-bottom:14px;line-height:1">
             {fmt_moeda(pat["investido"])}
         </div>
-
-        <!-- Linhas secundárias -->
         <div style="display:flex;justify-content:space-between;
                     align-items:center;margin-bottom:8px;">
             <span style="font-size:0.80rem;color:#9CA3AF">Rentabilidade mês</span>
@@ -237,16 +196,12 @@ def _card_investimentos(pat: dict, port: dict, flx: dict) -> None:
                 {port["num_ativos"]}
             </span>
         </div>
-
-        <!-- Divisor -->
         <div style="border-top:1px solid #1E2533;margin-bottom:12px"></div>
-
-        <!-- Reserva de emergência -->
         <div style="display:flex;justify-content:space-between;
                     align-items:center;margin-bottom:5px;">
             <span style="font-size:0.78rem;color:#718096">🛡️ Reserva de emergência</span>
             <span style="font-size:0.88rem;font-weight:700;color:{cor_reserva}">
-                {reserva:.1f}× <span style="font-size:0.70rem;color:#4A5568">/ meta 6×</span>
+                {reserva:.1f}x <span style="font-size:0.70rem;color:#4A5568">/ meta 6x</span>
             </span>
         </div>
         <div style="background:#1E2533;border-radius:4px;height:6px;overflow:hidden">
