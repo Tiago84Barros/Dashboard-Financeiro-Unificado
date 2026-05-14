@@ -49,7 +49,7 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 
 ### Resultado geral
 
-**⚠️ APROVADO COM RESSALVAS** — dados íntegros, 1 correção crítica necessária antes de conectar o app.
+**✅ APROVADO** — dados íntegros, P1 e P2 corrigidos, todas as views funcionando. Pronto para Fase 4.9.
 
 ### Contagens validadas
 
@@ -86,27 +86,37 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 
 | View | Status |
 |------|:------:|
-| `v_account_balance` | ⚠️ Saldo incorreto (P1) |
+| `v_account_balance` | ✅ CC R$ 245.043 · C6 R$ −33.527 |
 | `v_budget_usage_mtd` | ℹ️ Sem dados (esperado) |
-| `v_category_spending_mtd` | ⚠️ 0 linhas (P1) |
-| `v_investment_summary` | ⚠️ 0 linhas (P2) |
-| `v_monthly_cashflow` | ⚠️ Expenses = R$ 0 (P1) |
-| `v_net_worth` | ⚠️ Patrimônio incorreto (P1+P2) |
+| `v_category_spending_mtd` | ✅ 9 categorias em maio/2026 |
+| `v_investment_summary` | ✅ reit 6 ativos · stock 28 ativos · R$ 193.557 |
+| `v_monthly_cashflow` | ✅ 8 meses com receitas e despesas corretas |
+| `v_net_worth` | ✅ Patrimônio total R$ 405.073,96 |
 
 ### Problemas identificados
 
 | ID | Severidade | Descrição |
 |----|:----------:|-----------|
-| **P1** | ✅ Corrigido | 183 despesas com `amount > 0` — corrigido em 2026-05-14 (182 rows updated). Views validadas. |
-| **P2** | 🟡 Moderado | `portfolio_positions` vazia — `v_investment_summary` = 0, `v_net_worth.investment_total` = 0. Resolver na Fase 4.9. |
+| **P1** | ✅ Corrigido | 182 expenses negadas em 2026-05-14. Views corretas. |
+| **P2** | ✅ Corrigido | `portfolio_positions` populada em 2026-05-14 (Fase 4.8.1). 34 posições, R$ 193.557. |
 | **P3** | 🟢 Leve | App2 não rastreado em `migration_source_map` (ON CONFLICT protege) |
 | **P4** | ⚪ Info | Um `import_batch` com `status='processing'` stale (não deletável) |
+
+### Fase 4.8.1 — Compute portfolio_positions (✅ Concluída)
+
+- Script: `migration/08_compute_portfolio_positions.py`
+- Portfolio criado: "Carteira Principal" (id=015ce5fc-...)
+- 34 posições inseridas via custo médio ponderado
+- 1 posição excluída (DIRR3 — preço médio negativo por histórico incompleto)
+- 34 ativos zerados não inseridos
+- `v_investment_summary`: 6 REITs + 28 ações = R$ 193.557,85
+- `v_net_worth.net_worth`: **R$ 405.073,96** (bancário R$ 211.516 + investimentos R$ 193.558)
 
 ### Pré-requisitos para Fase 4.9
 
 1. ~~Aplicar correção P1~~ ✅ Concluído em 2026-05-14
-2. Criar `compute_portfolio_positions.py` para popular `portfolio_positions` (P2)
-3. Conectar app (`MOCK_MODE = False`)
+2. ~~Computar portfolio_positions~~ ✅ Concluído em 2026-05-14 (Fase 4.8.1)
+3. **Conectar app (`MOCK_MODE = False`)** ← próximo passo
 
 ---
 
