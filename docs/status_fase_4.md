@@ -25,7 +25,7 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 | **4.3** | Scripts SQL não destrutivos | ✅ Concluída |
 | **4.4** | Revisão humana dos scripts | ✅ Concluída — scripts aprovados com ajustes |
 | **4.5** | Aplicação manual no Supabase | ✅ Concluída — 22 tabelas + RLS + role criados |
-| **4.6** | Scripts de migração ETL | ⏳ Próxima |
+| **4.6** | Scripts de migração ETL | ✅ Concluída — 8 scripts Python criados (dry_run por padrão) |
 | **4.7** | Migração controlada | ⏳ Pendente |
 | **4.8** | Validação dos dados | ⏳ Pendente |
 | **4.9** | Conexão do app ao banco | ⏳ Pendente |
@@ -336,6 +336,66 @@ não estiver configurado — zero regressão.
 
 ---
 
+## Fase 4.6 — Scripts de Migração Controlada (✅ Concluída em 2026-05-13)
+
+**8 scripts Python ETL criados em `migration/`. Nenhuma migração real executada — tudo em `dry_run=True`.**
+
+### Estrutura criada
+
+| Arquivo | Responsabilidade |
+|---------|----------------|
+| `migration/__init__.py` | Pacote Python |
+| `migration/00_config.py` | `MigrationConfig`, `make_engine()`, máscara de credenciais |
+| `migration/01_extract_dashboard_financeiro.py` | Inspeciona 14 tabelas App 1 + 22 tabelas canônicas (somente-leitura) |
+| `migration/02_extract_controle_financeiro.py` | Extrai App 3 (PostgreSQL): 5 tabelas; dry_run = só contagens |
+| `migration/03_extract_investimentos_sqlite.py` | Extrai App 2 (SQLite): 8 tabelas; analisa cobertura de mapeamento |
+| `migration/04_transform_to_canonical.py` | Renomeia colunas pt→en, padroniza datas ISO 8601, monetários NUMERIC(15,2) |
+| `migration/05_load_to_unified_supabase.py` | Carga com `ON CONFLICT DO NOTHING`, registra `import_batches` / `migration_source_map` / `import_logs` |
+| `migration/06_validate_migration.py` | 9 validações (contagens, somas, datas, duplicatas, user_id órfãos) |
+| `migration/07_report_migration.py` | Gera `docs/fase_4_6_relatorio_migracao_planejada.md` |
+| `migration/output/.gitkeep` | Pasta de saída (outputs gitignored) |
+
+### Princípios de segurança implementados
+
+| Princípio | Implementação |
+|-----------|---------------|
+| `dry_run=True` por padrão | Nenhum script altera dados sem `--no-dry-run` explícito |
+| Fontes somente-leitura | Scripts 01/02/03 nunca fazem INSERT/UPDATE/DELETE |
+| Idempotência | `migration_source_map` UNIQUE `(source, source_table, source_id)` + `ON CONFLICT DO NOTHING` |
+| Rastreabilidade | Todo registro migrado gera entrada em `import_batches`, `import_logs`, `migration_source_map` |
+| Credenciais mascaradas | `_mask()` exibe apenas os últimos 6 chars; `print_summary()` nunca imprime URLs completas |
+| Contagem regressiva de 5s | Script 05 exibe countdown antes de carga real (`--no-dry-run`) |
+
+### Mapeamentos implementados
+
+**App 3 → Canônico (pt-BR → inglês):**
+`transacoes→transactions`, `contas→accounts`, `categorias→categories`, `orcamentos→budgets`, `metas→financial_goals`
+
+**App 2 (SQLite) → Canônico:**
+`assets→assets`, `transactions→investment_transactions`, `incomes→dividends`, `xp_positions→portfolio_positions`, `institutions→financial_institutions`
+
+### Variáveis necessárias para migração real
+
+```ini
+SUPABASE_UNIFICADO_URL="postgresql://postgres.<project>:<senha>@<host>:5432/postgres"
+OWNER_USER_ID="<uuid-do-perfil-em-profiles>"
+SUPABASE_ORIGEM_CONTROLE_URL="postgresql://..."   # App 3 (somente leitura)
+SOURCE_DB_APP2="sqlite:///caminho/absoluto/investimentos.db"  # App 2
+```
+
+### Documentação gerada
+
+| Documento | Conteúdo |
+|-----------|---------|
+| `docs/fase_4_6_scripts_migracao_controlada.md` | Visão completa: fontes, mapeamentos, execução, riscos |
+| `docs/fase_4_6_relatorio_migracao_planejada.md` | Relatório de planejamento (estático — sem dados reais) |
+
+### `.gitignore` atualizado
+
+`migration/output/*.{csv,json,jsonl,parquet}` e `migration/output/transformed/*.{json,csv}` nunca são comitados.
+
+---
+
 ## Correção: Leitura de Secrets no Streamlit Cloud (2026-05-13)
 
 **Problema:** o app lia variáveis de ambiente apenas via `os.getenv()` (`.env` local).
@@ -364,9 +424,9 @@ No Streamlit Cloud (Settings > Secrets), as variáveis ficavam invisíveis → b
 
 ---
 
-## Próxima Subfase: 4.6 — Scripts de Migração ETL
+## Próxima Subfase: 4.7 — Migração Real dos Dados
 
-Antes de iniciar 4.6, o proprietário precisa:
+**Fase 4.6 concluída.** Antes de executar a migração real (Fase 4.7), o proprietário precisa:
 
 1. **Alterar a senha do banco** (comprometida durante esta sessão) — Supabase Dashboard → Settings → Database → Reset Password
 2. **Criar o registro de perfil** no banco:
@@ -387,7 +447,7 @@ Antes de iniciar 4.6, o proprietário precisa:
    MOCK_MODE="false"
    ```
 
-Após esses passos, a Fase 4.6 pode iniciar: scripts ETL para migrar dados do App 3 (Controle Financeiro) e do App 2 (SQLite).
+Após esses passos, a Fase 4.7 pode iniciar: executar `--no-dry-run` no pipeline de migração para gravar dados do App 3 (Controle Financeiro) e do App 2 (SQLite) no banco unificado.
 
 ---
 

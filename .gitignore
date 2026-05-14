@@ -216,3 +216,20 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Migração — outputs intermediários (dados reais nunca comitados)
+migration/output/*.csv
+migration/output/*.json
+migration/output/*.jsonl
+migration/output/*.parquet
+migration/output/transformed/*.json
+migration/output/transformed/*.csv
+
+# Bancos de dados locais (SQLite do App 2)
+*.db
+*.sqlite
+*.sqlite3
+
+# Variáveis locais extras
+.env.local
+.env.real
