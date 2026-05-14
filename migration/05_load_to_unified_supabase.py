@@ -341,15 +341,21 @@ def load_all(cfg) -> dict[str, Any]:  # noqa: ANN001
         "warnings": [],
     }
 
-    if not cfg.dest_url:
-        result["warnings"].append("SUPABASE_UNIFICADO_URL não configurado.")
-        print("  ❌ SUPABASE_UNIFICADO_URL ausente.")
-        return result
-
-    if not cfg.owner_id:
-        result["warnings"].append("OWNER_USER_ID não configurado.")
-        print("  ❌ OWNER_USER_ID ausente.")
-        return result
+    # Em dry_run, credenciais são opcionais — simulação não conecta ao banco
+    if not cfg.dry_run:
+        if not cfg.dest_url:
+            result["warnings"].append("SUPABASE_UNIFICADO_URL não configurado.")
+            print("  ❌ SUPABASE_UNIFICADO_URL ausente — necessário para carga real.")
+            return result
+        if not cfg.owner_id:
+            result["warnings"].append("OWNER_USER_ID não configurado.")
+            print("  ❌ OWNER_USER_ID ausente — necessário para carga real.")
+            return result
+    else:
+        if not cfg.dest_url:
+            print("  ℹ️  SUPABASE_UNIFICADO_URL ausente — ok em dry_run (sem conexão ao banco).")
+        if not cfg.owner_id:
+            print("  ℹ️  OWNER_USER_ID ausente — registros pessoais ficam sem user_id em dry_run.")
 
     # Carregar dados transformados
     transformed_dir = cfg.output_dir / "transformed"

@@ -78,7 +78,7 @@ def generate_report(output_dir: Path, cfg) -> str:  # noqa: ANN001
         "",
         f"**Gerado em:** {now}  ",
         f"**Modo:** {'🔵 dry_run (planejamento)' if dry_run_global else '🟠 execução real'}  ",
-        f"**MOCK_MODE:** true (app continua em modo mock)  ",
+        "**MOCK_MODE:** true (app continua em modo mock)  ",
         "",
         "---",
         "",
