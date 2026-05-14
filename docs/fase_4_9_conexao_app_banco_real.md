@@ -1,7 +1,8 @@
 # Fase 4.9 — Conexão do App ao Banco Real
 
 > Data: 2026-05-14  
-> Status: **✅ Concluído**
+> Validação em produção: **2026-05-14**  
+> Status: **✅ Concluído e validado em produção**
 
 ---
 
@@ -160,6 +161,56 @@ orcamento = gasto × 1,2   → pct_usado = 83,3% (visual limpo)
 
 ---
 
+## Validação em Produção — 2026-05-14
+
+**Ambiente:** Streamlit Cloud (app publicado)  
+**URL:** `https://dashboard-financeiro-unificado-btwf9tchiycm7fbof7sqvj.streamlit.app`  
+**Configuração:** `MOCK_MODE=false` + `DATABASE_URL` + `OWNER_USER_ID` em Streamlit Secrets
+
+### Resultado visual confirmado
+
+| Elemento | Resultado |
+|----------|-----------|
+| Badge | **✅ Dados reais** (verde) |
+| Período | **Mai 2026** |
+| Score | **70/100** |
+
+### KPIs validados na tela
+
+| KPI | Valor exibido |
+|-----|:-------------:|
+| Patrimônio Total | **R$ 405.073,96** |
+| Saldo Disponível | **R$ 211.516,11** |
+| Receitas do Mês | **R$ 27.672,42** |
+| Despesas do Mês | **R$ 13.925,40** |
+| Patrimônio Investido | **R$ 193.557,85** |
+| Rentabilidade Mês | **0,00%** *(cotações ausentes — esperado)* |
+| Economia do Mês | **R$ 13.747,02** |
+| Taxa de Poupança | **49,70%** |
+
+### Fallback mock — preservado ✅
+
+O mecanismo de fallback permanece intacto:
+- `MOCK_MODE=true` → badge amarelo "Modo mock" — sem acesso ao banco
+- `MOCK_MODE=false` + sem DB URL → badge vermelho "Fallback (mock)" — sem crash
+- `MOCK_MODE=false` + DB configurado → badge verde "Dados reais" — confirmado acima
+
+### Situação das páginas após Fase 4.9
+
+| Página | Estado | Próxima fase |
+|--------|:------:|-------------|
+| Dashboard Geral | ✅ **Dados reais** | — |
+| Controle Financeiro | 🟡 Em construção | Fase 5.x |
+| Carteira | 🟡 Em construção | **Fase 5.1** |
+| Proventos | 🟡 Em construção | Fase 5.2 |
+| Investimentos | 🟡 Em construção | Fase 5.x |
+| Metas, Alertas, demais | 🟡 Em construção | Fase 5.x |
+
+> **Nota — Página Carteira:** exibe atualmente dados placeholder.
+> Será conectada ao banco real (`portfolio_positions`) na **Fase 5.1**.
+
+---
+
 ## Testes Realizados
 
 ### 1. MOCK_MODE=true (comportamento preservado)
@@ -219,13 +270,14 @@ SUPABASE_UNIFICADO_URL = "postgresql://postgres.<project>:<senha>@<host>:6543/po
 
 ## Próximas Fases
 
-| Fase | Objetivo |
-|------|---------|
-| **4.9.1** | Revisar `ex_date` dos dividendos migrados para que `dividendos_ano` seja real |
-| **5.0** | Alimentar `asset_quotes` com cotações reais (B3/Yahoo Finance) → rentabilidade real |
-| **5.1** | Conectar página **Carteira** com dados reais de `portfolio_positions` |
-| **5.2** | Conectar página **Proventos** com `dividends` reais |
+| Fase | Objetivo | Prioridade |
+|------|---------|:----------:|
+| **4.9.1** | Revisar `ex_date` dos dividendos migrados → `dividendos_ano` real | Média |
+| **5.0** | Alimentar `asset_quotes` com cotações reais (B3/Yahoo Finance) → rentabilidade real | Alta |
+| **5.1** | Conectar página **Carteira** com dados reais de `portfolio_positions` | Alta |
+| **5.2** | Conectar página **Proventos** com `dividends` reais | Média |
+| **5.x** | Conectar demais páginas (Controle Financeiro, Metas, Alertas, Investimentos) | Baixa |
 
 ---
 
-*Gerado em: 2026-05-14 | Dashboard Financeiro Unificado — Fase 4.9*
+*Gerado em: 2026-05-14 | Validado em produção: 2026-05-14 | Dashboard Financeiro Unificado — Fase 4.9*

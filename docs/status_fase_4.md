@@ -4,7 +4,8 @@
 > Versão: v0.4.9
 > ruff: All checks passed!
 > Startup: HTTP 200 ✅
-> Atualizado em: 2026-05-14 — Fase 4.9 concluída: Visão Geral conectada ao banco real com fallback mock
+> Produção: ✅ Validado em 2026-05-14 — Badge "Dados reais" · R$ 405.073,96 · Score 70/100
+> Atualizado em: 2026-05-14 — Fase 4.9 validada em produção (Streamlit Cloud)
 
 ---
 
@@ -28,7 +29,7 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 | **4.6** | Scripts de migração ETL | ✅ Concluída — 8 scripts Python criados (dry_run por padrão) |
 | **4.7** | Migração controlada | ✅ Concluída — dry run com dados reais aprovado (0 erros, 3 fontes, 9/9 validações) |
 | **4.8** | Validação dos dados | ✅ Concluída — aprovado · P1 corrigido · pronto para Fase 4.9 |
-| **4.9** | Conexão do app ao banco | ✅ Concluída — Visão Geral conectada · fallback mock · indicador de fonte |
+| **4.9** | Conexão do app ao banco | ✅ Concluída e validada em produção — badge "Dados reais" · R$ 405.073,96 |
 
 **Documentação completa:**
 - `docs/fase_4_9_conexao_app_banco_real.md` — relatório completo da Fase 4.9
@@ -121,9 +122,10 @@ como banco unificado. O projeto **Controle Financeiro** é fonte temporária de 
 
 ---
 
-## Fase 4.9 — Conexão do App ao Banco Real (✅ Concluída)
+## Fase 4.9 — Conexão do App ao Banco Real (✅ Concluída e validada em produção)
 
-> Data: 2026-05-14
+> Data: 2026-05-14  
+> Validação em produção: 2026-05-14
 
 ### Escopo
 
@@ -198,6 +200,25 @@ mantendo fallback automático para mock em caso de falha.
 | Fallback `engine=None` → RuntimeError | ✅ propagada corretamente |
 | Fallback `owner_id=''` → RuntimeError | ✅ propagada corretamente |
 | `calcular_saude_score(50, 15, 0, 7, False)` | ✅ → 70 |
+
+### Validação visual em produção (Streamlit Cloud)
+
+> Data: 2026-05-14 · `MOCK_MODE=false` · `DATABASE_URL` em Streamlit Secrets
+
+| KPI | Valor validado |
+|-----|:-------------:|
+| Badge | ✅ **Dados reais** (verde) |
+| Patrimônio Total | R$ 405.073,96 |
+| Saldo Disponível | R$ 211.516,11 |
+| Receitas do Mês | R$ 27.672,42 |
+| Despesas do Mês | R$ 13.925,40 |
+| Patrimônio Investido | R$ 193.557,85 |
+| Economia do Mês | R$ 13.747,02 |
+| Taxa de Poupança | 49,70% |
+| Score de Saúde | 70/100 |
+
+**Fallback mock preservado:** `MOCK_MODE=true` continua funcionando sem acesso ao banco.  
+**Página Carteira:** em construção — será conectada ao banco real na **Fase 5.1**.
 
 ### Para ativar no Streamlit Cloud
 
