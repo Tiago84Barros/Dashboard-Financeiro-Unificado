@@ -1,6 +1,6 @@
 # Fase 4.6 — Relatório de Migração Planejada
 
-**Gerado em:** 2026-05-14 00:18 UTC  
+**Gerado em:** 2026-05-14 12:53 UTC  
 **Modo:** 🔵 dry_run (planejamento)  
 **MOCK_MODE:** true (app continua em modo mock)  
 
@@ -10,12 +10,12 @@
 
 | Métrica | Valor |
 |---------|------:|
-| Registros App 3 (Controle Financeiro) | 0 |
-| Registros App 2 (SQLite Investimentos) | 0 |
-| Registros transformados | 0 |
-| Registros inseridos (load) | 0 |
+| Registros App 3 (Controle Financeiro) | 251 |
+| Registros App 2 (SQLite Investimentos) | 2,155 |
+| Registros transformados | 3 |
+| Registros inseridos (load) | 3 |
 | Erros na carga | 0 |
-| Validações aprovadas | 0 |
+| Validações aprovadas | 9 |
 | Validações com falha | 0 |
 
 > ℹ️  **dry_run=True** — nenhum dado foi gravado. Os números acima
@@ -27,15 +27,32 @@
 
 ### 2.1 App 1 — Dashboard Financeiro (banco unificado)
 
-Banco canônico vazio — nenhum dado de App 4 existente.
+Tabelas canônicas com dados existentes no banco:
+
+| Tabela | Registros |
+|--------|----------:|
+| `profiles` | 1 |
+| `categories` | 23 |
+| `benchmarks` | 6 |
 
 ### 2.2 App 3 — Controle Financeiro (PostgreSQL/Supabase)
 
-> ⚠️  Extração do App 3 não executada ou sem dados.
+| Tabela (origem) | Registros | Tabela destino |
+|-----------------|----------:|----------------|
+| `transactions` | 251 | `transactions` |
 
 ### 2.3 App 2 — Dashboard Investimentos (SQLite)
 
-> ⚠️  Extração do App 2 não executada ou sem dados.
+| Tabela (origem) | Registros | Tabela destino |
+|-----------------|----------:|----------------|
+| `assets` | 82 | `assets` |
+| `institutions` | 7 | `financial_institutions` |
+| `accounts` | 1 | `accounts` |
+| `transactions` | 1,351 | `investment_transactions` |
+| `incomes` | 517 | `dividends` |
+| `xp_positions` | 197 | `portfolio_positions` |
+| `position_snapshots` | 0 | `portfolio_positions (snapshot)` |
+| `sync_log` | 0 | `import_logs` |
 
 ---
 
@@ -43,25 +60,17 @@ Banco canônico vazio — nenhum dado de App 4 existente.
 
 | Entidade canônica | Registros transformados |
 |-------------------|------------------------:|
-| `accounts` | 0 |
-| `categories` | 0 |
-| `transactions` | 0 |
-| `budgets` | 0 |
-| `financial_goals` | 0 |
+| `transactions` | 3 |
 | `assets` | 0 |
 | `investment_transactions` | 0 |
 | `dividends` | 0 |
-
-**Avisos de transformação (1):**
-
-- ⚠️  OWNER_USER_ID não configurado — registros pessoais não terão user_id.
 
 ---
 
 ## 4. Carga no Banco Unificado
 
 **dry_run:** True  
-**import_batch_id:** `dry_run_47fc2340`  
+**import_batch_id:** `dry_run_379920e5`  
 
 | Tabela | Inseridos | Ignorados | Erros |
 |--------|----------:|----------:|------:|
@@ -71,7 +80,7 @@ Banco canônico vazio — nenhum dado de App 4 existente.
 | `categories` | 0 | 0 | 0 |
 | `investment_transactions` | 0 | 0 | 0 |
 | `dividends` | 0 | 0 | 0 |
-| `transactions` | 0 | 0 | 0 |
+| `transactions` | 3 | 0 | 0 |
 | `budgets` | 0 | 0 | 0 |
 | `financial_goals` | 0 | 0 | 0 |
 
@@ -79,7 +88,17 @@ Banco canônico vazio — nenhum dado de App 4 existente.
 
 ## 5. Validação
 
-> ℹ️  Validação não executada ainda.
+| Validação | Status | Detalhe |
+|-----------|:------:|---------|
+| `V1_record_counts` | ✅ |  |
+| `V2_transaction_sums` | ✅ |  |
+| `V3_investment_sums` | ✅ |  |
+| `V4_date_ranges` | ✅ |  |
+| `V5_unmapped_categories` | ✅ |  |
+| `V6_assets_without_ticker` | ✅ |  |
+| `V7_duplicate_sources` | ✅ |  |
+| `V8_records_without_user_id` | ✅ |  |
+| `V9_import_log_coverage` | ✅ |  |
 
 ---
 
@@ -141,4 +160,4 @@ python -m migration.07_report_migration
 ---
 
 *Relatório gerado automaticamente por `migration/07_report_migration.py`.*  
-*2026-05-14 00:18 UTC*
+*2026-05-14 12:53 UTC*
