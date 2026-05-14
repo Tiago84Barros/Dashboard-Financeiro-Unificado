@@ -106,6 +106,8 @@ class MigrationConfig:
     app1_url: str = ""           # SOURCE_DB_APP1 (opcional — App 1 Dashboard)
     app2_path: str = ""          # SOURCE_DB_APP2 (sqlite:///path ou caminho)
     app3_url: str = ""           # SUPABASE_ORIGEM_CONTROLE_URL (App 3)
+    account_id_cc: str = ""      # ACCOUNT_ID_CC (Conta Corrente — criada em seed_accounts_app3.py)
+    account_id_c6: str = ""      # ACCOUNT_ID_C6 (Cartão C6 — criado em seed_accounts_app3.py)
 
     # ── Controle de execução ─────────────────────────────────────────────
     dry_run: bool = True         # NUNCA alterar para False sem confirmação humana
@@ -129,6 +131,8 @@ class MigrationConfig:
             app1_url=_env("SOURCE_DB_APP1"),
             app2_path=_env("SOURCE_DB_APP2"),
             app3_url=_env("SUPABASE_ORIGEM_CONTROLE_URL"),
+            account_id_cc=_env("ACCOUNT_ID_CC"),
+            account_id_c6=_env("ACCOUNT_ID_C6"),
             dry_run=dry_run,
         )
 
@@ -176,6 +180,7 @@ class MigrationConfig:
     # ---------------------------------------------------------------------------
     def print_summary(self) -> None:
         """Exibe resumo de configuração sem expor valores de credenciais."""
+        _ensure_utf8_stdout()
         separator = "=" * 50
         print(separator)
         print("  CONFIGURAÇÃO DE MIGRAÇÃO — Fase 4.7")

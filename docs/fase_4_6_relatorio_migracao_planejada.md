@@ -1,6 +1,6 @@
 # Fase 4.6 — Relatório de Migração Planejada
 
-**Gerado em:** 2026-05-14 12:53 UTC  
+**Gerado em:** 2026-05-14 13:46 UTC  
 **Modo:** 🔵 dry_run (planejamento)  
 **MOCK_MODE:** true (app continua em modo mock)  
 
@@ -32,7 +32,8 @@ Tabelas canônicas com dados existentes no banco:
 | Tabela | Registros |
 |--------|----------:|
 | `profiles` | 1 |
-| `categories` | 23 |
+| `accounts` | 2 |
+| `categories` | 38 |
 | `benchmarks` | 6 |
 
 ### 2.2 App 3 — Controle Financeiro (PostgreSQL/Supabase)
@@ -70,7 +71,7 @@ Tabelas canônicas com dados existentes no banco:
 ## 4. Carga no Banco Unificado
 
 **dry_run:** True  
-**import_batch_id:** `dry_run_379920e5`  
+**import_batch_id:** `dry_run_17e4168d`  
 
 | Tabela | Inseridos | Ignorados | Erros |
 |--------|----------:|----------:|------:|
@@ -160,4 +161,4 @@ python -m migration.07_report_migration
 ---
 
 *Relatório gerado automaticamente por `migration/07_report_migration.py`.*  
-*2026-05-14 12:53 UTC*
+*2026-05-14 13:46 UTC*

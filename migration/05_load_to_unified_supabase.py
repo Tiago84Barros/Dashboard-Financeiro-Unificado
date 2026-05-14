@@ -453,20 +453,22 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from migration.config import MigrationConfig, _ensure_utf8_stdout  # noqa: PLC0415
+
+    _ensure_utf8_stdout()
+
     if args.no_dry_run:
-        print("⚠️  MODO REAL ATIVADO — dados serão gravados no banco.")
+        print("MODO REAL ATIVADO — dados serao gravados no banco.")
         print("    Pressione Ctrl+C agora para cancelar.")
         print("    Continuando em 5 segundos...")
         import time  # noqa: PLC0415
         time.sleep(5)
 
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from migration.config import MigrationConfig  # noqa: PLC0415
-
     cfg = MigrationConfig.from_env(dry_run=not args.no_dry_run)
     cfg.print_summary()
 
-    print("\n📤 Iniciando carga no banco unificado...")
+    print("\nIniciando carga no banco unificado...")
     result = load_all(cfg)
     save_result(result, cfg)
 

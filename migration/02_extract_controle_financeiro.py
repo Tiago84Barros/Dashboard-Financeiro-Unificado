@@ -291,12 +291,13 @@ def main() -> int:
     args = parser.parse_args()
 
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from migration.config import MigrationConfig  # noqa: PLC0415
+    from migration.config import MigrationConfig, _ensure_utf8_stdout  # noqa: PLC0415
 
+    _ensure_utf8_stdout()
     cfg = MigrationConfig.from_env(dry_run=not args.no_dry_run)
     cfg.print_summary()
 
-    print("\n📥 Iniciando extração — App 3 (Controle Financeiro)...")
+    print("\nIniciando extracao — App 3 (Controle Financeiro)...")
     summary = extract(cfg)
     save_result(summary, cfg)
     print_report(summary)

@@ -339,8 +339,23 @@ def transform_financial_goals(records: list[dict], owner_id: str) -> tuple[list[
     return out, warnings
 
 
+def _resolve_account_id(payment_type: str | None, card_name: str | None) -> str | None:
+    """Mapeia payment_type + card_name → account_id (lido do ambiente em tempo de execução)."""
+    import os as _os  # noqa: PLC0415
+    account_id_cc = _os.environ.get("ACCOUNT_ID_CC", "")
+    account_id_c6 = _os.environ.get("ACCOUNT_ID_C6", "")
+    pt = (payment_type or "").strip().lower()
+    cn = (card_name or "").strip().lower()
+    if "crédit" in pt and "c6" in cn:
+        return account_id_c6 or None
+    # Conta, Pix, ou qualquer outro → Conta Corrente
+    return account_id_cc or None
+
+
 def transform_app3_transactions(
-    records: list[dict], owner_id: str
+    records: list[dict],
+    owner_id: str,
+    category_map: dict[str, str] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """
     Transforma transações do App 3 (schema real, colunas em inglês).
@@ -349,11 +364,31 @@ def transform_app3_transactions(
       date          → due_date
       type          → type (saida→expense, entrada→income, investimento→transfer)
       amount        → amount (Decimal)
-      category      → anexado à description se description vazia
+      category      → category_id (via category_map) + anexado à description
       installments  → installment_total
       user_id       → sobrescrito com owner_id
+      payment_type + card_name → account_id (via ACCOUNT_ID_CC / ACCOUNT_ID_C6 do .env)
+
+    Campos App3 removidos do output (não existem na tabela canônica):
+      category, payment_type, card_name, id (DB gera UUID)
     """
     out, warnings = [], []
+    cat_map = category_map or {}
+
+    import os as _os  # noqa: PLC0415
+    if not _os.environ.get("ACCOUNT_ID_CC"):
+        warnings.append(
+            "ACCOUNT_ID_CC nao configurado no .env — account_id ficara NULL nas transactions."
+        )
+
+    # Colunas canônicas permitidas em transactions
+    CANONICAL_COLS = {
+        "user_id", "account_id", "card_id", "category_id", "description",
+        "amount", "due_date", "payment_date", "type", "status", "recurring",
+        "installment_current", "installment_total", "installment_group",
+        "source", "_source_system", "_source_table", "_source_id",
+    }
+
     for r in records:
         # 1. Renomear colunas estruturais
         rec = _rename_cols(r, APP3_TRANSACTIONS_COL_MAP)
@@ -361,33 +396,48 @@ def transform_app3_transactions(
         # 2. Forçar user_id → owner
         rec["user_id"] = owner_id
 
-        # 3. Normalizar type (saida/entrada/investimento → canônico)
+        # 3. Resolver account_id a partir de payment_type + card_name
+        rec["account_id"] = _resolve_account_id(
+            rec.get("payment_type"), rec.get("card_name")
+        )
+
+        # 4. Normalizar type (saida/entrada/investimento → canônico)
         rec["type"] = _map_value(
             "transactions.type", rec.get("type"), warnings, str(rec.get("id", "?"))
         )
 
-        # 4. Normalizar amount
+        # 5. Normalizar amount
         rec["amount"] = _normalize_decimal(rec.get("amount"), 2)
 
-        # 5. Normalizar data
+        # 6. Normalizar data
         rec["due_date"] = _normalize_date(rec.get("due_date"))
 
-        # 6. description: combinar description + category se description vazia
+        # 7. description: combinar description + category se description vazia
         desc = str(rec.get("description") or "").strip()
-        cat = str(rec.get("category") or "").strip()
-        if not desc and cat:
-            rec["description"] = cat
-        elif desc and cat and cat.lower() != desc.lower():
-            rec["description"] = f"{desc} [{cat}]"
-        # else: description já tem valor, manter
+        cat_name = str(rec.get("category") or "").strip()
+        if not desc and cat_name:
+            rec["description"] = cat_name
+        elif desc and cat_name and cat_name.lower() != desc.lower():
+            rec["description"] = f"{desc} [{cat_name}]"
+        if not rec.get("description"):
+            rec["description"] = "Sem descrição"
 
-        # 7. Defaults canônicos
+        # 8. Resolver category_id pelo nome da categoria
+        rec["category_id"] = cat_map.get(cat_name.lower()) if cat_name else None
+        if cat_name and not rec["category_id"]:
+            warnings.append(
+                f"Categoria '{cat_name}' nao encontrada no banco — category_id sera NULL."
+            )
+
+        # 9. Defaults canônicos
         rec.setdefault("status", "settled")
         rec.setdefault("source", "import")
         rec.setdefault("recurring", False)
         rec["payment_date"] = _normalize_date(rec.get("payment_date"))
 
-        out.append(rec)
+        # 10. Remover campos que não pertencem à tabela canônica
+        clean = {k: v for k, v in rec.items() if k in CANONICAL_COLS}
+        out.append(clean)
     return out, warnings
 
 
@@ -464,6 +514,27 @@ def transform_all(cfg) -> dict[str, Any]:  # noqa: ANN001
 
     output_dir = cfg.output_dir
 
+    # ── Carregar mapa de categorias (name.lower() → id) do banco unificado ──
+    category_map: dict[str, str] = {}
+    if cfg.dest_url:
+        try:
+            from sqlalchemy import text as _text  # noqa: PLC0415
+            from migration.config import make_engine  # noqa: PLC0415
+            _cat_engine = make_engine(cfg.dest_url, source_label="categories_lookup", read_only_hint=True)
+            with _cat_engine.connect() as _conn:
+                rows = _conn.execute(
+                    _text("SELECT id, name FROM categories")
+                ).fetchall()
+                for row in rows:
+                    category_map[str(row[1]).strip().lower()] = str(row[0])
+            print(f"  Categorias carregadas do banco: {len(category_map)}")
+        except Exception as _e:  # noqa: BLE001
+            result["warnings"].append(f"Nao foi possivel carregar categorias do banco: {_e}")
+    else:
+        result["warnings"].append(
+            "SUPABASE_UNIFICADO_URL ausente — category_id sera NULL em todas as transactions."
+        )
+
     # ── App 3 (schema real auditado 2026-05-14: tabela 'transactions') ────
     src_file_app3 = output_dir / "02_app3_transactions.json"
     if src_file_app3.exists():
@@ -475,7 +546,9 @@ def transform_all(cfg) -> dict[str, Any]:  # noqa: ANN001
             # dry_run: usar apenas sample para preview
             records = data["sample"]
 
-        transformed, t_warnings = transform_app3_transactions(records, cfg.owner_id)
+        transformed, t_warnings = transform_app3_transactions(
+            records, cfg.owner_id, category_map=category_map
+        )
         result["entities"]["transactions"] = {
             "source": "app3/transactions",
             "count": len(transformed),
