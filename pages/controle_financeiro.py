@@ -1,35 +1,32 @@
 """
-pages/controle_financeiro.py
-Controle de receitas, despesas, categorias e orçamento mensal.
+pages/controle_financeiro.py  — v2 (layout original replicado)
 
-Seções:
-  1. Seletor de mês + KPIs
-  2. Orçamento por categoria + Últimas transações
-  3. Formulário para adicionar nova transação (expander)
+Layout replicado do app controlefinanceirotsb.streamlit.app:
+  Sidebar    — formulário de lançamento (Forma pgto / Categoria / Data /
+               Valor / Parcelas+Cartão / Descrição / Salvar)
+  Main area  — cabeçalho + badge data + seletor mês
+               4 cards CSS (Renda · Despesas · Saldo Líquido · Comprometimento)
+               Gráfico horizontal categorias | Gráfico histórico 6 meses
+               Tabela de lançamentos
 
-Origem: Tiago84Barros/Controle_Financeiro (App 3)
-Dados:  core/controle.get_controle() — mock → real (Fase 5.4)
+Dados: core/controle.get_controle() + core/investimentos.get_cashflow_mensal()
 """
 from datetime import date as _date
 
+import plotly.graph_objects as go
 import streamlit as st
 
 from core.controle import get_controle, get_opcoes_formulario, inserir_transacao
-from core.utils import fmt_moeda, fmt_percentual, delta_str
-from design.componentes import (
-    badge_status,
-    barra_progresso,
-    card_metrica,
-    container_pagina,
-    indicador_linha,
-    secao_titulo,
-)
+from core.investimentos import get_cashflow_mensal
+from core.utils import fmt_moeda, fmt_percentual
+from design.componentes import badge_status, container_pagina
 
-_MESES_PT_FULL = {
-    1: "Janeiro", 2: "Fevereiro", 3: "Março",    4: "Abril",
-    5: "Maio",    6: "Junho",     7: "Julho",     8: "Agosto",
-    9: "Setembro",10: "Outubro",  11: "Novembro", 12: "Dezembro",
-}
+# ── Paleta ────────────────────────────────────────────────────────────────────
+_COR_RECEITA  = "#00C896"
+_COR_DESPESA  = "#FC5C7D"
+_COR_SALDO    = "#4A9EFF"
+_COR_NEUTRO   = "#9CA3AF"
+
 _MESES_PT_CURTO = {
     1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr",
     5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
@@ -37,35 +34,244 @@ _MESES_PT_CURTO = {
 }
 
 
-def _opcoes_mes(n: int = 12) -> list[dict]:
-    """Gera os últimos N meses como opções de seleção."""
+# ══════════════════════════════════════════════════════════════════════════════
+# HELPERS — Cards CSS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _kpi_card(titulo: str, valor: str, descricao: str, cor_valor: str) -> str:
+    """Retorna HTML de um card KPI (sem comentários HTML)."""
+    return f"""
+<div style="background:#12151E;border:1px solid #1E2533;border-radius:10px;
+            padding:20px 18px 16px;height:100%;">
+    <div style="font-size:0.62rem;font-weight:800;text-transform:uppercase;
+                letter-spacing:0.14em;color:#718096;margin-bottom:10px;">
+        {titulo}
+    </div>
+    <div style="font-size:1.70rem;font-weight:800;color:{cor_valor};
+                letter-spacing:-0.02em;line-height:1;margin-bottom:8px;">
+        {valor}
+    </div>
+    <div style="font-size:0.73rem;color:#4A5568;line-height:1.35;">
+        {descricao}
+    </div>
+</div>"""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HELPERS — Gráficos
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fig_categorias(cats: list) -> go.Figure:
+    """Gráfico de barras horizontal — gastos por categoria."""
+    nomes  = [c["nome"]  for c in cats]
+    gastos = [c["gasto"] for c in cats]
+
+    fig = go.Figure(go.Bar(
+        x=gastos,
+        y=nomes,
+        orientation="h",
+        marker_color=_COR_DESPESA,
+        opacity=0.85,
+        hovertemplate="<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color="#9CA3AF",
+        margin={"t": 16, "b": 0, "l": 0, "r": 16},
+        height=320,
+        xaxis={
+            "showgrid":   True,
+            "gridcolor":  "#1E2533",
+            "tickformat": ",.0f",
+            "tickprefix": "R$ ",
+        },
+        yaxis={"showgrid": False, "autorange": "reversed"},
+    )
+    return fig
+
+
+def _fig_historico(historico: list) -> go.Figure:
+    """Gráfico de linhas — histórico 6 meses (Receitas × Despesas × Saldo)."""
+    h6 = historico[-6:] if len(historico) >= 6 else historico
+    meses    = [h["label"]    for h in h6]
+    receitas = [h["receitas"] for h in h6]
+    despesas = [h["despesas"] for h in h6]
+    saldos   = [h["saldo"]    for h in h6]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        name="Receitas",
+        x=meses, y=receitas,
+        mode="lines+markers",
+        line={"color": _COR_RECEITA, "width": 2.5},
+        marker={"size": 7},
+        hovertemplate="<b>Receitas %{x}</b><br>R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        name="Despesas",
+        x=meses, y=despesas,
+        mode="lines+markers",
+        line={"color": _COR_DESPESA, "width": 2.5},
+        marker={"size": 7},
+        hovertemplate="<b>Despesas %{x}</b><br>R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        name="Saldo",
+        x=meses, y=saldos,
+        mode="lines+markers",
+        line={"color": _COR_SALDO, "width": 2, "dash": "dot"},
+        marker={"size": 6},
+        hovertemplate="<b>Saldo %{x}</b><br>R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color="#9CA3AF",
+        legend={
+            "orientation": "h", "y": -0.20,
+            "font": {"size": 11},
+            "bgcolor": "rgba(0,0,0,0)",
+        },
+        margin={"t": 16, "b": 10, "l": 0, "r": 0},
+        height=320,
+        yaxis={
+            "showgrid":   True,
+            "gridcolor":  "#1E2533",
+            "tickformat": ",.0f",
+            "tickprefix": "R$ ",
+        },
+        xaxis={"showgrid": False},
+    )
+    return fig
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SIDEBAR — Formulário de lançamento
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _sidebar_form(ano: int, mes: int) -> None:
+    """Formulário lateral replicando o app original."""
+    st.sidebar.markdown(
+        '<div style="font-size:0.68rem;font-weight:800;text-transform:uppercase;'
+        'letter-spacing:0.12em;color:#4A9EFF;margin-bottom:12px;margin-top:8px;">'
+        'Novo Lançamento</div>',
+        unsafe_allow_html=True,
+    )
+
+    opcoes = get_opcoes_formulario()
+    cats   = opcoes.get("categorias", [])
+    contas = opcoes.get("contas", [])
+
+    # Tipo (Receita / Despesa) — determina cor e filtra categorias
+    tipo = st.sidebar.selectbox(
+        "Forma de pagamento",
+        ["expense", "income"],
+        format_func=lambda x: "Despesa" if x == "expense" else "Receita",
+        key="cf_sb_tipo",
+    )
+
+    cats_tipo  = [c for c in cats if c["tipo"] == tipo or c["tipo"] == "transfer"]
+    cat_nomes  = [c["nome"] for c in cats_tipo] or ["(sem categoria)"]
+    cat_ids    = [c["id"]   for c in cats_tipo] or [None]
+
+    cat_idx = st.sidebar.selectbox(
+        "Categoria",
+        range(len(cat_nomes)),
+        format_func=lambda i: cat_nomes[i],
+        key="cf_sb_cat",
+    )
+
+    data_tx = st.sidebar.date_input(
+        "Data",
+        value=_date(ano, mes, min(_date.today().day if ano == _date.today().year
+                                  and mes == _date.today().month else 1, 28)),
+        key="cf_sb_data",
+    )
+
+    valor = st.sidebar.number_input(
+        "Valor (R$)",
+        min_value=0.0,
+        step=0.01,
+        format="%.2f",
+        key="cf_sb_valor",
+    )
+
+    col_parc, col_cart = st.sidebar.columns(2)
+    with col_parc:
+        st.number_input("Parcelas", min_value=1, max_value=48, value=1, key="cf_sb_parc")
+    with col_cart:
+        st.text_input("Cartão", placeholder="Final", key="cf_sb_cart")
+
+    descricao = st.sidebar.text_area(
+        "Descrição (opcional)",
+        height=80,
+        key="cf_sb_desc",
+    )
+
+    st.sidebar.markdown("<br>", unsafe_allow_html=True)
+
+    if st.sidebar.button("Salvar lançamento", use_container_width=True, type="primary"):
+        if valor <= 0:
+            st.sidebar.error("Informe um valor maior que zero.")
+            return
+
+        cat_id   = cat_ids[cat_idx] if cat_ids[cat_idx] else None
+        conta_id = contas[0]["id"] if contas else None
+
+        if not conta_id:
+            st.sidebar.warning("Nenhuma conta configurada.")
+            return
+
+        desc_final = descricao.strip() if descricao.strip() else cat_nomes[cat_idx]
+
+        ok, msg = inserir_transacao(
+            descricao=desc_final,
+            valor=valor,
+            tipo=tipo,
+            data=data_tx,
+            categoria_id=cat_id,
+            conta_id=conta_id,
+        )
+        if ok:
+            st.sidebar.success("✅ Lançamento salvo!")
+            st.rerun()
+        else:
+            st.sidebar.error(f"Erro: {msg}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RENDER PRINCIPAL
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _opcoes_mes(n: int = 12) -> list:
     hoje = _date.today()
     result = []
     for i in range(n):
-        month = hoje.month - i
-        year  = hoje.year
-        while month <= 0:
-            month += 12
-            year  -= 1
-        result.append({
-            "label": f"{_MESES_PT_CURTO[month]} {year}",
-            "ano":   year,
-            "mes":   month,
-        })
+        m = hoje.month - i
+        y = hoje.year
+        while m <= 0:
+            m += 12
+            y -= 1
+        result.append({"label": f"{_MESES_PT_CURTO[m]}/{y}", "ano": y, "mes": m})
     return result
 
 
 def render() -> None:
-    container_pagina("Controle Financeiro", "Receitas, despesas e orçamento", "💰")
-
-    # ── Seletor de mês ────────────────────────────────────────────────────────
+    # ── Seletor de mês (antes de qualquer dado) ───────────────────────────────
     opcoes     = _opcoes_mes(12)
     labels_mes = [o["label"] for o in opcoes]
 
-    col_sel, *_ = st.columns([2, 5])
-    with col_sel:
+    # ── Header ────────────────────────────────────────────────────────────────
+    col_title, col_date = st.columns([3, 1])
+    with col_title:
+        st.markdown(
+            '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">💰 Controle Financeiro</h1>',
+            unsafe_allow_html=True,
+        )
+    with col_date:
         idx = st.selectbox(
-            "Mês de referência",
+            "Mês",
             range(len(labels_mes)),
             format_func=lambda i: labels_mes[i],
             key="cf_mes_idx",
@@ -75,227 +281,190 @@ def render() -> None:
     sel = opcoes[idx]
     d   = get_controle(sel["ano"], sel["mes"])
 
-    # ── Badges ────────────────────────────────────────────────────────────────
-    _fonte = d.get("data_source", "mock")
-    _badge_label, _badge_tipo = (
-        ("Dados reais",     "sucesso") if _fonte == "real" else
-        ("Fallback (mock)", "erro")    if _fonte == "mock_fallback" else
-        ("Modo mock",       "alerta")
+    # Subtítulo dinâmico
+    mes_num = sel["mes"]
+    ano_num = sel["ano"]
+    st.markdown(
+        f'<p style="color:#718096;font-size:0.90rem;margin-top:2px;margin-bottom:0;">'
+        f'Visão geral de <b style="color:#E2E8F0">{mes_num:02d}/{ano_num}</b> '
+        f'&nbsp;•&nbsp; acompanhe renda, despesas e saldo em tempo real</p>',
+        unsafe_allow_html=True,
     )
-    col_b1, col_b2, col_b3, *_ = st.columns([1, 1, 1, 4])
-    with col_b1:
-        badge_status(_badge_label, _badge_tipo)
-    with col_b2:
-        badge_status(d["mes_referencia"], "info")
-    with col_b3:
-        badge_status(f"{d['num_transacoes']} lançamentos", "neutro")
 
-    if d["num_transacoes"] == 0 and _fonte != "mock":
-        st.info(
-            f"**Nenhum lançamento encontrado em {d['mes_referencia']}.** "
-            "Adicione uma nova transação abaixo ou selecione outro mês.",
-            icon="📭",
+    # Badge data atual
+    _fonte = d.get("data_source", "mock")
+    col_b1, col_b2, *_ = st.columns([1, 1, 6])
+    with col_b1:
+        badge_status(
+            "Dados reais" if _fonte == "real" else
+            "Fallback (mock)" if _fonte == "mock_fallback" else "Modo mock",
+            "sucesso" if _fonte == "real" else
+            "erro"    if _fonte == "mock_fallback" else "alerta",
         )
+    with col_b2:
+        badge_status(f"Mês atual: {_date.today().strftime('%d/%m/%Y')}", "neutro")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Sidebar form ─────────────────────────────────────────────────────────
+    _sidebar_form(sel["ano"], sel["mes"])
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BLOCO 1 — 4 Cards KPI
+    # ══════════════════════════════════════════════════════════════════════════
+    receitas    = d["receitas"]
+    despesas    = d["despesas"]
+    saldo       = d["saldo_mes"]
+    comprometido = round(despesas / receitas * 100, 1) if receitas > 0 else 0.0
+    cor_saldo   = _COR_RECEITA if saldo >= 0 else _COR_DESPESA
+
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+    with c1:
+        st.markdown(_kpi_card(
+            "Renda do Mês",
+            fmt_moeda(receitas),
+            "Somatório de todas as entradas no período selecionado.",
+            _COR_RECEITA,
+        ), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_kpi_card(
+            "Despesas do Mês",
+            fmt_moeda(despesas),
+            "Somatório de todas as saídas no período.",
+            _COR_DESPESA,
+        ), unsafe_allow_html=True)
+    with c3:
+        st.markdown(_kpi_card(
+            "Saldo Líquido do Mês",
+            fmt_moeda(saldo),
+            f"{'Sobrou' if saldo >= 0 else 'Déficit'} dinheiro este mês. "
+            f"Transações: {d['num_transacoes']}",
+            cor_saldo,
+        ), unsafe_allow_html=True)
+    with c4:
+        cor_comp = (
+            _COR_RECEITA if comprometido < 60 else
+            "#F6C90E"    if comprometido < 80 else
+            _COR_DESPESA
+        )
+        st.markdown(_kpi_card(
+            "Renda Comprometida",
+            fmt_percentual(comprometido, sinal=False),
+            "Despesas em relação à renda do mês.",
+            cor_comp,
+        ), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # SEÇÃO 1 — KPIs
+    # BLOCO 2 — Gráficos
     # ══════════════════════════════════════════════════════════════════════════
-    c1, c2, c3, c4 = st.columns(4)
+    col_cat, col_hist = st.columns(2, gap="medium")
 
-    saldo_pos = d["saldo_mes"] >= 0
-
-    with c1:
-        card_metrica(
-            "Saldo do Mês",
-            fmt_moeda(d["saldo_mes"]),
-            positivo=saldo_pos,
-            ajuda="Receitas − Despesas do mês selecionado.",
+    with col_cat:
+        st.markdown(
+            '<div style="font-size:0.95rem;font-weight:700;color:#E2E8F0;margin-bottom:10px;">'
+            'Gastos por categoria (mês)</div>',
+            unsafe_allow_html=True,
         )
-    with c2:
-        card_metrica(
-            "Receitas",
-            fmt_moeda(d["receitas"]),
-            positivo=True if d["receitas"] > 0 else None,
-            ajuda="Total de entradas (type = income) no mês.",
-        )
-    with c3:
-        card_metrica(
-            "Despesas",
-            fmt_moeda(d["despesas"]),
-            positivo=False if d["despesas"] > 0 else None,
-            ajuda="Total de saídas (type = expense) no mês.",
-        )
-    with c4:
-        card_metrica(
-            "Taxa de Poupança",
-            fmt_percentual(d["taxa_poupanca_pct"], sinal=False),
-            positivo=d["taxa_poupanca_pct"] >= 30,
-            ajuda="(Receitas − Despesas) / Receitas × 100. Meta: ≥ 30%.",
-        )
-
-    st.divider()
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # SEÇÃO 2 — Orçamento + Transações
-    # ══════════════════════════════════════════════════════════════════════════
-    col_orc, col_tx = st.columns([1, 1])
-
-    # ── Orçamento por categoria ───────────────────────────────────────────────
-    with col_orc:
         cats = d["categorias"]
-        secao_titulo(
-            "Orçamento por Categoria",
-            "📂",
-            f"{len(cats)} categorias com gastos",
-        )
         if cats:
-            for cat in cats:
-                barra_progresso(
-                    cat["nome"],
-                    cat["gasto"],
-                    cat["orcamento"],
-                    fmt_valor=fmt_moeda(cat["gasto"]),
-                    fmt_total=fmt_moeda(cat["orcamento"]),
-                )
+            st.plotly_chart(
+                _fig_categorias(cats),
+                use_container_width=True,
+                config={"displayModeBar": False},
+            )
         else:
-            st.caption("Nenhuma despesa por categoria neste mês.")
+            st.caption("Sem despesas registradas neste mês.")
 
-    # ── Transações ────────────────────────────────────────────────────────────
-    with col_tx:
-        txs = d["transacoes"]
-        secao_titulo(
-            "Lançamentos",
-            "🧾",
-            f"{d['num_transacoes']} registro{'s' if d['num_transacoes'] != 1 else ''}",
+    with col_hist:
+        st.markdown(
+            '<div style="font-size:0.95rem;font-weight:700;color:#E2E8F0;margin-bottom:10px;">'
+            'Histórico de 6 meses (Receitas x Despesas x Saldo)</div>',
+            unsafe_allow_html=True,
+        )
+        historico = get_cashflow_mensal()
+        if historico:
+            st.plotly_chart(
+                _fig_historico(historico),
+                use_container_width=True,
+                config={"displayModeBar": False},
+            )
+        else:
+            st.caption("Histórico não disponível.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BLOCO 3 — Tabela de lançamentos
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown(
+        '<div style="font-size:0.95rem;font-weight:700;color:#E2E8F0;margin-bottom:10px;">'
+        f'Lançamentos — {d["mes_referencia"]} '
+        f'<span style="font-size:0.78rem;font-weight:400;color:#4A5568;">'
+        f'({d["num_transacoes"]} registro{"s" if d["num_transacoes"] != 1 else ""})</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    txs = d["transacoes"]
+
+    # Filtro rápido
+    col_f1, col_f2, *_ = st.columns([1, 1, 5])
+    with col_f1:
+        f_tipo = st.selectbox(
+            "Tipo",
+            ["Todos", "Receitas", "Despesas"],
+            key="cf_ftipo",
+            label_visibility="collapsed",
+        )
+    with col_f2:
+        f_busca = st.text_input(
+            "Buscar",
+            placeholder="Filtrar descrição...",
+            key="cf_busca",
+            label_visibility="collapsed",
         )
 
-        # Filtro rápido receita/despesa
-        col_ftipo, _ = st.columns([2, 3])
-        with col_ftipo:
-            f_tipo = st.selectbox(
-                "Tipo",
-                ["Todos", "Receitas", "Despesas"],
-                key="cf_ftipo",
-                label_visibility="collapsed",
+    if f_tipo == "Receitas":
+        txs = [t for t in txs if t["eh_receita"]]
+    elif f_tipo == "Despesas":
+        txs = [t for t in txs if not t["eh_receita"]]
+    if f_busca:
+        txs = [t for t in txs if f_busca.lower() in t["descricao"].lower()]
+
+    if txs:
+        # Cabeçalho da tabela
+        st.markdown(
+            '<div style="display:grid;grid-template-columns:70px 1fr 140px 120px 100px;'
+            'gap:8px;padding:6px 12px;background:#0E1117;border-radius:6px 6px 0 0;'
+            'font-size:0.68rem;font-weight:700;text-transform:uppercase;'
+            'letter-spacing:0.1em;color:#4A5568;margin-bottom:1px;">'
+            '<span>Data</span><span>Descrição</span>'
+            '<span style="text-align:center">Categoria</span>'
+            '<span style="text-align:right">Valor</span>'
+            '<span style="text-align:center">Conta</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        for tx in txs[:30]:
+            cor  = _COR_RECEITA if tx["eh_receita"] else _COR_DESPESA
+            st.markdown(
+                f'<div style="display:grid;grid-template-columns:70px 1fr 140px 120px 100px;'
+                f'gap:8px;padding:8px 12px;background:#12151E;border-bottom:1px solid #1E2533;'
+                f'font-size:0.82rem;align-items:center;">'
+                f'<span style="color:#718096">{tx["data_fmt"]}</span>'
+                f'<span style="color:#CBD5E0">{tx["descricao"][:35]}</span>'
+                f'<span style="text-align:center;background:#1E2533;border-radius:4px;'
+                f'padding:2px 6px;font-size:0.72rem;color:#9CA3AF">{tx["categoria"]}</span>'
+                f'<span style="text-align:right;font-weight:700;color:{cor}">{tx["valor_fmt"]}</span>'
+                f'<span style="text-align:center;font-size:0.75rem;color:#4A5568">{tx["conta"]}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
             )
 
-        txs_filtradas = txs
-        if f_tipo == "Receitas":
-            txs_filtradas = [t for t in txs if t["eh_receita"]]
-        elif f_tipo == "Despesas":
-            txs_filtradas = [t for t in txs if not t["eh_receita"]]
-
-        if txs_filtradas:
-            for tx in txs_filtradas[:15]:
-                cor = "#00C896" if tx["eh_receita"] else "#FC5C7D"
-                indicador_linha(
-                    f'{tx["data_fmt"]} · {tx["descricao"][:30]}',
-                    tx["valor_fmt"],
-                    cor_valor=cor,
-                    badge=tx["categoria"],
-                    tipo_badge="neutro",
-                )
-            if len(txs_filtradas) > 15:
-                st.caption(f"… e mais {len(txs_filtradas) - 15} lançamentos")
-        else:
-            st.caption("Nenhum lançamento com o filtro selecionado.")
-
-    st.divider()
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # SEÇÃO 3 — Adicionar transação
-    # ══════════════════════════════════════════════════════════════════════════
-    with st.expander("➕ Adicionar nova transação", expanded=False):
-        _form_nova_transacao(sel["ano"], sel["mes"])
-
-
-# ── Formulário de nova transação ──────────────────────────────────────────────
-
-def _form_nova_transacao(ano: int, mes: int) -> None:
-    """Formulário para inserção de nova transação via INSERT."""
-    opcoes = get_opcoes_formulario()
-    cats   = opcoes.get("categorias", [])
-    contas = opcoes.get("contas", [])
-
-    if not contas:
-        st.warning("Nenhuma conta cadastrada. Cadastre uma conta antes de adicionar transações.")
-        return
-
-    with st.form("form_nova_tx", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-
-        with col1:
-            tipo = st.selectbox(
-                "Tipo *",
-                ["expense", "income"],
-                format_func=lambda x: "Despesa" if x == "expense" else "Receita",
-            )
-            descricao = st.text_input("Descrição *", max_chars=255, placeholder="Ex: Supermercado")
-            valor = st.number_input(
-                "Valor (R$) *",
-                min_value=0.01,
-                step=0.01,
-                format="%.2f",
-                help="Digite o valor absoluto — o sinal é aplicado automaticamente pelo tipo.",
-            )
-
-        with col2:
-            # Filtra categorias pelo tipo selecionado
-            cats_tipo = [c for c in cats if c["tipo"] == tipo or c["tipo"] == "transfer"]
-            cat_nomes = [c["nome"] for c in cats_tipo]
-            cat_ids   = [c["id"]   for c in cats_tipo]
-
-            cat_idx = st.selectbox(
-                "Categoria",
-                range(len(cat_nomes)),
-                format_func=lambda i: cat_nomes[i] if cat_nomes else "—",
-            ) if cat_nomes else None
-
-            conta_nomes = [c["nome"] for c in contas]
-            conta_ids   = [c["id"]   for c in contas]
-            conta_idx = st.selectbox(
-                "Conta *",
-                range(len(conta_nomes)),
-                format_func=lambda i: conta_nomes[i],
-            )
-
-            data_tx = st.date_input(
-                "Data *",
-                value=_date(ano, mes, 1),
-                min_value=_date(ano, mes, 1),
-                max_value=_date(ano, mes, 28) if mes == 2 else _date(ano, mes, 30),
-            )
-
-        submitted = st.form_submit_button("💾 Salvar transação", use_container_width=True)
-
-        if submitted:
-            # Validações
-            erros = []
-            if not descricao or not descricao.strip():
-                erros.append("Descrição é obrigatória.")
-            if valor <= 0:
-                erros.append("Valor deve ser maior que zero.")
-            if not contas:
-                erros.append("Nenhuma conta disponível.")
-
-            if erros:
-                for e in erros:
-                    st.error(e)
-            else:
-                categoria_id = cat_ids[cat_idx] if cat_idx is not None and cat_ids else None
-                conta_id     = conta_ids[conta_idx]
-
-                ok, msg = inserir_transacao(
-                    descricao=descricao,
-                    valor=valor,
-                    tipo=tipo,
-                    data=data_tx,
-                    categoria_id=categoria_id,
-                    conta_id=conta_id,
-                )
-                if ok:
-                    st.success("✅ Transação adicionada com sucesso! Recarregue a página para ver.")
-                else:
-                    st.error(f"Erro ao salvar: {msg}")
+        if len(txs) > 30:
+            st.caption(f"Mostrando 30 de {len(txs)} lançamentos.")
+    else:
+        st.caption("Nenhum lançamento encontrado com os filtros aplicados.")
