@@ -242,12 +242,65 @@ Auditoria completa dos 3 apps originais realizada. 51 funcionalidades mapeadas.
 
 ---
 
+## Fase 5.1 (Revisão) — Controle Financeiro: Auditoria e Migração Fiel (✅ Concluída)
+
+> Data: 2026-05-14 | Estratégia: audit-first antes de codificar
+
+### Contexto
+
+Após concluir as Fases 5.1–5.10, foi realizada uma auditoria aprofundada do app original de Controle Financeiro (`Controle_Financeiro-main 2.1`) para garantir que TODAS as funcionalidades fossem preservadas no unificado.
+
+### Resultado da auditoria
+
+| Item | Resultado |
+|------|-----------|
+| Funcionalidades originais mapeadas | 42 |
+| Preservadas (✅) | 12 (29%) |
+| Parcialmente preservadas (🟡) | 7 (17%) |
+| Ausentes → implementadas (🔴→✅) | 23 (55%) |
+| Funcionalidades novas preservadas (➕) | 9 |
+
+### Documentação criada
+
+| Arquivo | Conteúdo |
+|---------|---------|
+| `docs/fase_5_1_controle_financeiro_inventario.md` | Inventário completo: sidebar form, Dashboard, Análises, Tabelas, Cartão — elemento a elemento |
+| `docs/fase_5_1_controle_financeiro_matriz_preservacao.md` | Matriz ✅/🟡/🔴/➕ com plano de implementação por sprint |
+
+### Implementações realizadas em `controle_financeiro.py` v4
+
+| Componente | O que foi adicionado |
+|-----------|---------------------|
+| Sidebar form | Categorias preset por tipo (3 listas), `payment_type` condicional (só saída), campo "Outra" categoria |
+| Dashboard | Tabela categorias com % da renda; seção "Últimos Lançamentos" com `data_editor` + UPDATE |
+| Análises | YOY grouped bar chart; Patrimônio Investido dual-axis; tabelas resumo |
+| Tabelas | Radio tipo (top-level), filtros Ano/Mês/Dia, 3 metrics (total filtrado/ano/mês) |
+| Cartão | Bar chart laranja `#FFA500`, tabela participação; banner schema gap documentado |
+
+### Novas funções em `core/controle.py`
+
+| Função | Descrição |
+|--------|-----------|
+| `atualizar_transacao()` | UPDATE em `transactions` — para modo edição |
+| `get_historico_anual()` | Todos os anos agrupados por tipo — para YOY e Patrimônio |
+| `get_transacoes_filtradas()` | Filtro completo por tipo/cat/ano/mês/dia/texto — para tab Tabelas |
+
+### Gaps adiados (dependem de schema)
+
+| Gap | Motivo | Fase |
+|-----|--------|------|
+| `expand_installments()` + KPIs de fatura | `payment_type`, `card_name`, `installments` ausentes no schema | Fase 6.x |
+| Seção "Dívidas no cartão" ativas/concluídas | Idem | Fase 6.x |
+| Gastos com pagamento de cartão (mensal) | Idem | Fase 6.x |
+
+---
+
 ## Estado final das páginas após Fase 5
 
 | Página | Estado | Observações |
 |--------|:------:|-------------|
 | Dashboard Geral | ✅ **Dados reais** | — |
-| Controle Financeiro | ✅ **Dados reais** | INSERT ativo, orçamento implícito quando budgets vazia |
+| Controle Financeiro | ✅ **v4 — Migração fiel** | v4: todas as 42 funcionalidades originais implementadas; gaps de schema documentados |
 | Investimentos | ✅ **Dados reais** | Cashflow real; rentabilidade 0% sem cotações |
 | Carteira | ✅ **Dados reais** | 34 posições reais; cotações pendentes de importação |
 | Proventos | ✅ **Dados reais** | 517 eventos; usa `payment_date` (bug `ex_date` contornado) |
@@ -308,6 +361,8 @@ Auditoria completa dos 3 apps originais realizada. 51 funcionalidades mapeadas.
 - `docs/fase_5_0_inventario_funcional_apps_originais.md`
 - `docs/fase_5_0_matriz_preservacao_funcional.md`
 - `docs/fase_5_0_plano_migracao_funcional.md`
+- `docs/fase_5_1_controle_financeiro_inventario.md`
+- `docs/fase_5_1_controle_financeiro_matriz_preservacao.md`
 - `docs/status_fase_4.md`
 
 ---
