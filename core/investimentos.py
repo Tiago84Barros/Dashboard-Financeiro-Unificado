@@ -565,21 +565,33 @@ def _evolucao_real() -> dict:
 
     cum_inv = 0.0
     cum_div = 0.0
-    snapshots = []
+    snapshots    = []
+    fluxo_mensal = []
     for mes in all_months:
-        cum_inv += tx_map.get(mes, 0.0)
+        delta    = tx_map.get(mes, 0.0)
+        cum_inv += delta
         cum_div += div_map.get(mes, 0.0)
         cum_mkt  = round(max(cum_inv, 0) * rentab_ratio, 2)
+        label    = f"{_MESES_PT_CF[mes.month]}/{str(mes.year)[-2:]}"
+        mes_str  = mes.strftime("%Y-%m")
         snapshots.append({
-            "label":               f"{_MESES_PT_CF[mes.month]}/{str(mes.year)[-2:]}",
-            "mes_str":             mes.strftime("%Y-%m"),
+            "label":               label,
+            "mes_str":             mes_str,
             "valor_investido":     round(cum_inv, 2),
             "valor_mercado":       cum_mkt,
             "valor_com_dividendos": round(cum_mkt + cum_div, 2),
         })
+        fluxo_mensal.append({
+            "label":   label,
+            "mes_str": mes_str,
+            "aporte":  round(delta, 2),
+            "ano":     mes.year,
+            "mes":     mes.month,
+        })
 
     return {
         "snapshots":        snapshots,
+        "fluxo_mensal":     fluxo_mensal,
         "total_investido":  round(cum_inv, 2),
         "total_mercado":    round(total_mkt_atual, 2),
         "total_dividendos": round(cum_div, 2),
@@ -593,25 +605,37 @@ def _evolucao_mock() -> dict:
 
     cum_inv = 0.0
     cum_div = 0.0
-    snapshots = []
+    snapshots    = []
+    fluxo_mensal = []
     for yr in range(start, hoje.year + 1):
         for mo in range(1, 13):
             if yr == hoje.year and mo > hoje.month:
                 break
             age_frac = ((yr - start) * 12 + mo) / (4 * 12)
-            cum_inv += 3_200.0 + (mo % 4) * 450.0
-            cum_div += 320.0   + (mo % 3) * 110.0
+            delta    = 3_200.0 + (mo % 4) * 450.0
+            cum_inv += delta
+            cum_div += 320.0 + (mo % 3) * 110.0
             cum_mkt  = round(cum_inv * (1.0 + 0.18 * age_frac), 2)
+            label    = f"{_MESES_PT_CF[mo]}/{str(yr)[-2:]}"
+            mes_str  = f"{yr}-{mo:02d}"
             snapshots.append({
-                "label":               f"{_MESES_PT_CF[mo]}/{str(yr)[-2:]}",
-                "mes_str":             f"{yr}-{mo:02d}",
+                "label":               label,
+                "mes_str":             mes_str,
                 "valor_investido":     round(cum_inv, 2),
                 "valor_mercado":       cum_mkt,
                 "valor_com_dividendos": round(cum_mkt + cum_div, 2),
             })
+            fluxo_mensal.append({
+                "label":   label,
+                "mes_str": mes_str,
+                "aporte":  round(delta, 2),
+                "ano":     yr,
+                "mes":     mo,
+            })
 
     return {
         "snapshots":        snapshots,
+        "fluxo_mensal":     fluxo_mensal,
         "total_investido":  round(cum_inv, 2),
         "total_mercado":    round(snapshots[-1]["valor_mercado"], 2) if snapshots else 0.0,
         "total_dividendos": round(cum_div, 2),

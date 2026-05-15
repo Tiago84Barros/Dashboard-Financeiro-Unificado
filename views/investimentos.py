@@ -470,6 +470,46 @@ def _fig_cashflow_hist(cashflow: list) -> go.Figure:
     return fig
 
 
+def _fig_aportes(fluxo: list, visao: str) -> go.Figure:
+    """Barras de aportes mensais (últimos 12) ou anuais (histórico completo)."""
+    if visao == "Mensal":
+        data   = fluxo[-12:]
+        labels = [d["label"]  for d in data]
+        vals   = [d["aporte"] for d in data]
+    else:
+        agg: dict[int, float] = {}
+        for d in fluxo:
+            agg[d["ano"]] = round(agg.get(d["ano"], 0.0) + d["aporte"], 2)
+        labels = [str(k) for k in sorted(agg)]
+        vals   = [agg[k] for k in sorted(agg)]
+
+    cores = [_COR_POSITIVO if v >= 0 else _COR_NEGATIVO for v in vals]
+    texts = [
+        f"R$ {v/1000:.1f}k" if abs(v) >= 1000 else f"R$ {v:.0f}"
+        for v in vals
+    ]
+
+    fig = go.Figure(go.Bar(
+        x=labels, y=vals,
+        marker_color=cores,
+        text=texts,
+        textposition="outside",
+        textfont={"size": 10, "color": "#E2E8F0"},
+        hovertemplate="<b>%{x}</b><br>Aporte líquido: R$ %{y:,.0f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 30, "b": 0, "l": 0, "r": 0},
+        height=300,
+        xaxis={"showgrid": False, "tickangle": -30 if visao == "Mensal" else 0},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533",
+               "tickformat": ",.0f", "tickprefix": "R$ "},
+        showlegend=False,
+    )
+    return fig
+
+
 def _fig_evolucao_patrimonial(snapshots: list) -> go.Figure:
     """Três linhas: Valor de Mercado, Com Dividendos, Valor Investido."""
     labels    = [s["label"]                for s in snapshots]
@@ -971,30 +1011,47 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
     else:
         st.caption("Sem histórico de proventos.")
 
-    # Tabela de evolução patrimonial
-    if snapshots:
+    # ── Aportes por Período ───────────────────────────────────────────────────
+    fluxo_mensal = evolucao.get("fluxo_mensal", [])
+    if fluxo_mensal:
         st.markdown("<br>", unsafe_allow_html=True)
-        _secao_titulo_orig("🧾", "Histórico Patrimonial Mensal")
-        df_ev = pd.DataFrame([{
-            "Mês":             s["label"],
-            "Investido":       s["valor_investido"],
-            "Mercado":         s["valor_mercado"],
-            "Com Dividendos":  s["valor_com_dividendos"],
-            "Resultado":       round(s["valor_mercado"] - s["valor_investido"], 2),
-        } for s in snapshots])
-        st.dataframe(
-            df_ev,
-            column_config={
-                "Mês":            st.column_config.TextColumn("Mês",           width="small"),
-                "Investido":      st.column_config.NumberColumn("Investido",    format="R$ %.2f"),
-                "Mercado":        st.column_config.NumberColumn("Mercado",      format="R$ %.2f"),
-                "Com Dividendos": st.column_config.NumberColumn("c/ Dividendos", format="R$ %.2f"),
-                "Resultado":      st.column_config.NumberColumn("Resultado",    format="R$ %.2f"),
-            },
-            hide_index=True,
+
+        col_ap_t, col_ap_v = st.columns([3, 1])
+        with col_ap_t:
+            _secao_titulo_orig(
+                "💰", "Aportes por Período",
+                "Valor líquido investido por mês (últimos 12) ou por ano (histórico)",
+            )
+        with col_ap_v:
+            st.markdown("<br>", unsafe_allow_html=True)
+            visao_ap = st.selectbox(
+                "Período",
+                ["Mensal", "Anual"],
+                key="hist_aportes_visao",
+                label_visibility="collapsed",
+            )
+
+        st.plotly_chart(
+            _fig_aportes(fluxo_mensal, visao_ap),
             use_container_width=True,
-            height=min(45 + len(snapshots) * 36, 480),
+            config={"displayModeBar": False},
         )
+
+        # Totalizador
+        if visao_ap == "Mensal":
+            dados_vis = fluxo_mensal[-12:]
+            total_vis = sum(d["aporte"] for d in dados_vis)
+            st.caption(
+                f"Total aportado nos últimos 12 meses: **{fmt_moeda(total_vis)}** "
+                f"· Valores negativos indicam meses com resgates líquidos."
+            )
+        else:
+            total_vis = sum(d["aporte"] for d in fluxo_mensal)
+            anos = sorted({d["ano"] for d in fluxo_mensal})
+            st.caption(
+                f"Total aportado ({anos[0]}–{anos[-1]}): **{fmt_moeda(total_vis)}** "
+                f"· {len(anos)} ano(s) de histórico."
+            )
 
 
 def _tab_carteira(carteira: dict) -> None:
