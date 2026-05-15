@@ -1054,9 +1054,99 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
             )
 
 
-def _tab_carteira(carteira: dict) -> None:
+def _header_classe(cls_info: dict, renda_cls: float) -> None:
+    cor  = cls_info.get("cor", "#718096")
+    n    = cls_info["num_ativos"]
+    vm   = cls_info["valor_mercado"]
+    ti   = cls_info["total_investido"]
+    pct  = cls_info["pct_carteira"]
+    resultado = vm + renda_cls - ti
+    rsc  = resultado / ti * 100 if ti > 0 else 0.0
+    cor_rsc = _COR_POSITIVO if rsc >= 0 else _COR_NEGATIVO
+    seta_rsc = "▲" if rsc >= 0 else "▼"
+    st.markdown(
+        f'<div style="border-left:4px solid {cor};padding:8px 16px;'
+        f'background:rgba(255,255,255,0.02);border-radius:0 8px 8px 0;'
+        f'margin:24px 0 14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">'
+        f'<span style="font-size:1.05rem;font-weight:800;color:#E2E8F0;">{cls_info["nome"]}</span>'
+        f'<span style="font-size:0.75rem;color:#718096;">'
+        f'{n} ativo{"s" if n != 1 else ""} · {fmt_moeda(vm)} · {pct:.1f}% da carteira · '
+        f'<span style="color:{cor_rsc};">Ret. s/ custo {seta_rsc} {abs(rsc):.2f}%</span>'
+        f'</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _card_ativo(pos: dict, renda: float) -> str:
+    cor      = pos["cor"]
+    rentab   = pos["rentab_pct"]
+    cor_r    = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
+    seta_r   = "▲" if rentab >= 0 else "▼"
+    cor_vm   = _COR_POSITIVO if pos["valor_mercado"] >= pos["total_investido"] else _COR_NEGATIVO
+    dot_cor  = _COR_POSITIVO if pos["preco_atual"] >= pos["preco_medio"] else _COR_NEGATIVO
+    ti       = pos["total_investido"]
+    rsc      = (pos["valor_mercado"] + renda - ti) / ti * 100 if ti > 0 else 0.0
+    cor_rsc  = _COR_POSITIVO if rsc >= 0 else _COR_NEGATIVO
+
+    dot = (f'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;'
+           f'background:{dot_cor};margin-left:3px;vertical-align:middle;"></span>')
+
+    metricas = [
+        ("Peso na carteira",  f"{pos['pct_carteira']:.2f}%",       "#CBD5E0"),
+        ("Quantidade",        f"{pos['quantidade']:,.0f}".replace(",", "."), "#CBD5E0"),
+        (f"Preço atual {dot}", fmt_moeda(pos["preco_atual"]),        "#CBD5E0"),
+        ("Preço médio",       fmt_moeda(pos["preco_medio"]),         "#CBD5E0"),
+        ("Custo investido",   fmt_moeda(ti),                         "#CBD5E0"),
+        ("Valor de mercado",  fmt_moeda(pos["valor_mercado"]),       cor_vm),
+        ("Resultado total",   f"{seta_r} {abs(rentab):.2f}%",       cor_r),
+        ("Renda recebida",    fmt_moeda(renda),                      _COR_ALERTA),
+        ("Retorno s/ custo",  f"{rsc:.2f}%",                        cor_rsc),
+    ]
+    rows_html = "".join(
+        f'<div style="display:flex;justify-content:space-between;padding:4px 0;'
+        f'border-bottom:1px solid #1A1F2E;font-size:0.76rem;">'
+        f'<span style="color:#718096;">{lbl}</span>'
+        f'<span style="color:{cv};font-weight:600;">{val}</span>'
+        f'</div>'
+        for lbl, val, cv in metricas
+    )
+    initials = pos["ticker"][:5]
+    nome_curto = pos["nome"][:22] if len(pos["nome"]) > 22 else pos["nome"]
+    return (
+        f'<div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;'
+        f'padding:16px;margin-bottom:6px;">'
+        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
+        f'<div style="width:40px;height:40px;border-radius:8px;background:{cor};flex-shrink:0;'
+        f'display:flex;align-items:center;justify-content:center;'
+        f'font-size:0.60rem;font-weight:800;color:#fff;">{initials}</div>'
+        f'<div style="overflow:hidden;">'
+        f'<div style="font-size:0.83rem;font-weight:800;color:#E2E8F0;'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{nome_curto}</div>'
+        f'<div style="font-size:0.68rem;color:#718096;">{pos["ticker"]}</div>'
+        f'</div></div>'
+        f'<span style="font-size:0.58rem;font-weight:700;padding:2px 7px;border-radius:4px;'
+        f'background:{cor}33;color:{cor};text-transform:uppercase;letter-spacing:0.08em;'
+        f'display:inline-block;margin-bottom:8px;">{pos["classe"]}</span>'
+        f'<div>{rows_html}</div>'
+        f'</div>'
+    )
+
+
+def _tab_carteira(carteira: dict, proventos: dict) -> None:
+    from collections import defaultdict as _dd
     posicoes   = carteira.get("posicoes", [])
     por_classe = carteira.get("por_classe", [])
+
+    # Renda recebida por ticker
+    renda_por_ticker: dict[str, float] = {
+        a["ticker"]: a["total"]
+        for a in proventos.get("por_ativo", [])
+    }
+    # Renda total por classe (para header)
+    renda_por_classe: dict[str, float] = _dd(float)
+    for p in posicoes:
+        renda_por_classe[p["classe"]] += renda_por_ticker.get(p["ticker"], 0.0)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1067,7 +1157,7 @@ def _tab_carteira(carteira: dict) -> None:
             icon="📊",
         )
 
-    # KPIs resumo
+    # ── KPIs resumo ──────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
         st.markdown(_kpi("Total Investido", fmt_moeda(carteira["total_investido"]),
@@ -1091,55 +1181,32 @@ def _tab_carteira(carteira: dict) -> None:
                          _COR_NEUTRO),
                     unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo_orig("💼", "Todas as Posições")
-
-    if posicoes:
-        # Filtro por classe
-        classes = ["Todas"] + sorted({p["classe"] for p in posicoes})
-        col_fc, *_ = st.columns([2, 5])
-        with col_fc:
-            f_cls = st.selectbox("Classe", classes,
-                                 key="inv_tab_cart_cls",
-                                 label_visibility="collapsed")
-
-        pos_f = posicoes if f_cls == "Todas" else [p for p in posicoes if p["classe"] == f_cls]
-
-        df = pd.DataFrame([{
-            "Ticker":    p["ticker"],
-            "Nome":      p["nome"][:28],
-            "Classe":    p["classe"],
-            "Qtd":       p["quantidade"],
-            "PM (R$)":   p["preco_medio"],
-            "Investido": p["total_investido"],
-            "Mercado":   p["valor_mercado"],
-            "Rent.%":    p["rentab_pct"],
-            "% Cart.":   p["pct_carteira"],
-        } for p in pos_f])
-
-        st.dataframe(
-            df,
-            column_config={
-                "Ticker":    st.column_config.TextColumn("Ticker",  width="small"),
-                "Nome":      st.column_config.TextColumn("Nome"),
-                "Classe":    st.column_config.TextColumn("Classe",  width="small"),
-                "Qtd":       st.column_config.NumberColumn("Qtd",   format="%.2f"),
-                "PM (R$)":   st.column_config.NumberColumn("PM",    format="R$ %.2f"),
-                "Investido": st.column_config.NumberColumn("Investido", format="R$ %.2f"),
-                "Mercado":   st.column_config.NumberColumn("Mercado",   format="R$ %.2f"),
-                "Rent.%":    st.column_config.NumberColumn("Rent.%",    format="%.2f%%"),
-                "% Cart.":   st.column_config.NumberColumn("% Cart.",   format="%.1f%%"),
-            },
-            hide_index=True,
-            use_container_width=True,
-            height=min(45 + len(pos_f) * 36, 500),
-        )
-        st.caption(
-            f"{len(pos_f)} posições · "
-            "Veja a página **Carteira** no menu para visão completa com proventos por ativo."
-        )
-    else:
+    if not posicoes:
         st.info("Nenhuma posição encontrada. Execute o ETL de posições.", icon="💼")
+        return
+
+    # ── Cards agrupados por classe ────────────────────────────────────────────
+    pos_por_classe: dict[str, list] = _dd(list)
+    for p in posicoes:
+        pos_por_classe[p["classe"]].append(p)
+
+    for cls_info in por_classe:
+        cls_nome   = cls_info["nome"]
+        cls_pos    = pos_por_classe.get(cls_nome, [])
+        if not cls_pos:
+            continue
+        renda_cls  = renda_por_classe.get(cls_nome, 0.0)
+        _header_classe(cls_info, renda_cls)
+
+        for i in range(0, len(cls_pos), 4):
+            chunk = cls_pos[i:i + 4]
+            cols  = st.columns(4, gap="small")
+            for j, pos in enumerate(chunk):
+                renda_p = renda_por_ticker.get(pos["ticker"], 0.0)
+                with cols[j]:
+                    st.markdown(_card_ativo(pos, renda_p), unsafe_allow_html=True)
+            if i + 4 < len(cls_pos):
+                st.markdown("<br>", unsafe_allow_html=True)
 
 
 def _tab_analise(carteira: dict, proventos: dict) -> None:
@@ -1313,7 +1380,7 @@ def render() -> None:
         _tab_historico(cashflow, proventos, evolucao)
 
     with tab3:
-        _tab_carteira(carteira)
+        _tab_carteira(carteira, proventos)
 
     with tab4:
         _tab_analise(carteira, proventos)
