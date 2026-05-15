@@ -30,17 +30,11 @@ verificar_autenticacao()
 
 # ── Mapeamento: label da sidebar → módulo em pages/ ──────────────────────────
 _ROTAS: dict[str, str] = {
-    "📊 Dashboard Geral":         "dashboard_geral",
-    "💰 Controle Financeiro":     "controle_financeiro",
-    "🎯 Metas":                   "metas",
-    "🔔 Alertas":                 "alertas",
-    "📈 Investimentos":           "investimentos",
-    "💼 Carteira":                "carteira",
-    "💵 Proventos":               "proventos",
-    "🏢 Empresas B3":             "empresas_b3",
-    "🌎 Empresas EUA":            "empresas_eua",
-    "🌐 Cenário Macroeconômico":  "macro",
-    "⚙️ Configurações":           "configuracoes",
+    "📊 Dashboard Geral":     "dashboard_geral",
+    "💰 Controle Financeiro": "controle_financeiro",
+    "🔔 Alertas":             "alertas",
+    "📈 Investimentos":       "investimentos",
+    "⚙️ Configurações":       "configuracoes",
 }
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -55,15 +49,11 @@ with st.sidebar:
 
     # Seção: Finanças
     st.markdown('<div class="nav-section">Finanças</div>', unsafe_allow_html=True)
-    opcoes_financas = ["💰 Controle Financeiro", "🎯 Metas", "🔔 Alertas"]
+    opcoes_financas = ["💰 Controle Financeiro", "🔔 Alertas"]
 
     # Seção: Investimentos
     st.markdown('<div class="nav-section">Investimentos</div>', unsafe_allow_html=True)
-    opcoes_invest = ["📈 Investimentos", "💼 Carteira", "💵 Proventos"]
-
-    # Seção: Mercado
-    st.markdown('<div class="nav-section">Mercado</div>', unsafe_allow_html=True)
-    opcoes_mercado = ["🏢 Empresas B3", "🌎 Empresas EUA", "🌐 Cenário Macroeconômico"]
+    opcoes_invest = ["📈 Investimentos"]
 
     # Seção: Sistema
     st.markdown('<div class="nav-section">Sistema</div>', unsafe_allow_html=True)
@@ -73,7 +63,6 @@ with st.sidebar:
         opcoes_visao
         + opcoes_financas
         + opcoes_invest
-        + opcoes_mercado
         + opcoes_sistema
     )
 
