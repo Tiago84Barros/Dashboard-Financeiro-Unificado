@@ -523,31 +523,31 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict) -> None:
         else:
             st.caption("Histórico não disponível.")
 
-    # ── Tabela resumo 6 meses ─────────────────────────────────────────────────
-    ultimos6 = historico[-6:] if len(historico) >= 6 else historico
-    if ultimos6:
-        import pandas as pd
-        rows_t = []
-        for h in ultimos6:
-            inv = fluxo_inv.get((h["ano"], h["mes"]), 0.0)
-            rows_t.append({
-                "Mês":           h["label"],
-                "Receitas":      h["receitas"],
-                "Despesas":      h["despesas"],
-                "Investimentos": inv,
-            })
-        df_hist = pd.DataFrame(rows_t)
-        st.dataframe(
-            df_hist,
-            column_config={
-                "Mês":           st.column_config.TextColumn("Mês",          width="small"),
-                "Receitas":      st.column_config.NumberColumn("Receitas",    format="R$ %.2f"),
-                "Despesas":      st.column_config.NumberColumn("Despesas",    format="R$ %.2f"),
-                "Investimentos": st.column_config.NumberColumn("Investimentos", format="R$ %.2f"),
-            },
-            hide_index=True,
-            use_container_width=True,
-        )
+        # ── Tabela resumo 6 meses ─────────────────────────────────────────────
+        ultimos6 = historico[-6:] if len(historico) >= 6 else historico
+        if ultimos6:
+            import pandas as pd
+            rows_t = []
+            for h in ultimos6:
+                inv = fluxo_inv.get((h["ano"], h["mes"]), 0.0)
+                rows_t.append({
+                    "Mês":           h["label"],
+                    "Receitas":      h["receitas"],
+                    "Despesas":      h["despesas"],
+                    "Investimentos": inv,
+                })
+            df_hist = pd.DataFrame(rows_t)
+            st.dataframe(
+                df_hist,
+                column_config={
+                    "Mês":           st.column_config.TextColumn("Mês",           width="small"),
+                    "Receitas":      st.column_config.NumberColumn("Receitas",     format="R$ %.2f"),
+                    "Despesas":      st.column_config.NumberColumn("Despesas",     format="R$ %.2f"),
+                    "Investimentos": st.column_config.NumberColumn("Investimentos", format="R$ %.2f"),
+                },
+                hide_index=True,
+                use_container_width=True,
+            )
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
