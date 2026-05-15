@@ -926,9 +926,24 @@ def _tab_tabelas(d: dict) -> None:
     total_desp     = sum(abs(t["valor"]) for t in txs_f if not t["eh_receita"])
 
     col_s1, col_s2, col_s3, *_ = st.columns([1, 1, 1, 3])
-    col_s1.metric("Total filtrado", fmt_moeda(total_filtrado))
-    col_s2.metric("Entradas", fmt_moeda(total_rec))
-    col_s3.metric("Saídas", fmt_moeda(total_desp))
+    with col_s1:
+        st.markdown(_kpi_card(
+            "Total Filtrado", fmt_moeda(total_filtrado),
+            f"{len(txs_f)} lançamento(s) selecionado(s)",
+            "#E2E8F0",
+        ), unsafe_allow_html=True)
+    with col_s2:
+        st.markdown(_kpi_card(
+            "Entradas", fmt_moeda(total_rec),
+            "Receitas no filtro aplicado",
+            _COR_RECEITA,
+        ), unsafe_allow_html=True)
+    with col_s3:
+        st.markdown(_kpi_card(
+            "Saídas", fmt_moeda(total_desp),
+            "Despesas no filtro aplicado",
+            _COR_DESPESA,
+        ), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
