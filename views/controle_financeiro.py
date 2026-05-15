@@ -1190,6 +1190,11 @@ def render() -> None:
             key="cf_mes_idx",
             label_visibility="collapsed",
         )
+        st.markdown(
+            f'<div style="text-align:right;font-size:0.72rem;color:#4A5568;margin-top:2px;">'
+            f'hoje: {_date.today().strftime("%d/%m/%Y")}</div>',
+            unsafe_allow_html=True,
+        )
 
     sel = opcoes[idx]
     d   = get_controle(sel["ano"], sel["mes"])
@@ -1203,18 +1208,14 @@ def render() -> None:
         unsafe_allow_html=True,
     )
 
-    # Badges
+    # Badge de fonte de dados
     _fonte = d.get("data_source", "mock")
-    col_b1, col_b2, *_ = st.columns([1, 1, 6])
-    with col_b1:
-        badge_status(
-            "Dados reais"     if _fonte == "real" else
-            "Fallback (mock)" if _fonte == "mock_fallback" else "Modo mock",
-            "sucesso" if _fonte == "real" else
-            "erro"    if _fonte == "mock_fallback" else "alerta",
-        )
-    with col_b2:
-        badge_status(f"Mês atual: {_date.today().strftime('%d/%m/%Y')}", "neutro")
+    badge_status(
+        "Dados reais"     if _fonte == "real" else
+        "Fallback (mock)" if _fonte == "mock_fallback" else "Modo mock",
+        "sucesso" if _fonte == "real" else
+        "erro"    if _fonte == "mock_fallback" else "alerta",
+    )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
