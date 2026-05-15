@@ -1262,7 +1262,7 @@ def render() -> None:
             '<div style="display:flex;align-items:center;gap:12px;">'
             '<span style="font-size:2rem">📈</span>'
             '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
-            'Dashboard</h1>'
+            'Investimentos</h1>'
             '</div>',
             unsafe_allow_html=True,
         )
