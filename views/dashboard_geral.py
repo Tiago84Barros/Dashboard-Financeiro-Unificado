@@ -386,70 +386,13 @@ def render() -> None:
     # ══════════════════════════════════════════════════════════════════════════
     _titulo_secao_css("💹", "Fluxo de Caixa & Despesas", "Histórico mensal e distribuição de gastos", _COR_FLUXO)
 
-    col_graf, col_desp = st.columns([3, 2], gap="medium")
-
-    with col_graf:
-        st.markdown(
-            '<div style="background:#12151E;border:1px solid #1E2533;'
-            'border-radius:12px;padding:16px 16px 8px">',
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(_fig_fluxo(hist), use_container_width=True, config={"displayModeBar": False})
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_desp:
-        st.markdown(
-            '<div style="background:#12151E;border:1px solid #1E2533;'
-            'border-radius:12px;padding:18px 16px;">',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f'<div style="font-size:0.68rem;font-weight:800;text-transform:uppercase;'
-            f'letter-spacing:0.12em;color:{_COR_NEGATIVO};margin-bottom:14px">'
-            f'💸 DESPESAS POR CATEGORIA</div>',
-            unsafe_allow_html=True,
-        )
-
-        if cats:
-            for cat in cats:
-                pct = cat.get("pct_usado", 0.0) or (
-                    cat["gasto"] / cat["orcamento"] * 100
-                    if cat.get("orcamento", 0) > 0 else 0.0
-                )
-                cor_pct = (
-                    _COR_NEGATIVO if pct >= 90 else
-                    _COR_ALERTA   if pct >= 70 else
-                    _COR_FLUXO
-                )
-                st.markdown(f"""
-                <div style="margin-bottom:10px">
-                    <div style="display:flex;justify-content:space-between;
-                                font-size:0.80rem;color:#CBD5E0;margin-bottom:4px">
-                        <span>{cat['nome']}</span>
-                        <span style="color:{cor_pct};font-weight:700">{pct:.0f}%</span>
-                    </div>
-                    <div style="background:#1E2533;border-radius:3px;height:5px;overflow:hidden">
-                        <div style="background:{cor_pct};width:{min(pct,100):.0f}%;
-                                    height:100%;border-radius:3px"></div>
-                    </div>
-                    <div style="font-size:0.72rem;color:#4A5568;margin-top:2px;text-align:right">
-                        {fmt_moeda(cat['gasto'])} / {fmt_moeda(cat['orcamento'])}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            # Maior gasto em destaque
-            st.markdown(
-                f'<div style="border-top:1px solid #1E2533;padding-top:10px;margin-top:4px;'
-                f'font-size:0.78rem;color:#4A5568">'
-                f'Maior gasto: <b style="color:#E2E8F0">{flx["maior_categoria"]}</b>'
-                f' · {fmt_moeda(flx["maior_categoria_valor"])}</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.caption("Sem despesas registradas neste mês.")
-
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="background:#12151E;border:1px solid #1E2533;'
+        'border-radius:12px;padding:16px 16px 8px">',
+        unsafe_allow_html=True,
+    )
+    st.plotly_chart(_fig_fluxo(hist), use_container_width=True, config={"displayModeBar": False})
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
