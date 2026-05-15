@@ -470,3 +470,149 @@ def _agregar_por_setor(posicoes: list) -> list:
         key=lambda x: x["valor_mercado"],
         reverse=True,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# API pública — evolução patrimonial histórica
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SQL_EVOLUCAO_TX = """
+    SELECT
+        DATE_TRUNC('month', transaction_date) AS mes,
+        SUM(CASE WHEN type = 'buy'  THEN  quantity * unit_price
+                 WHEN type = 'sell' THEN -(quantity * unit_price)
+                 ELSE 0
+        END) AS delta_investido
+    FROM investment_transactions
+    WHERE user_id = :uid
+    GROUP BY 1
+    ORDER BY 1
+"""
+
+_SQL_EVOLUCAO_DIV = """
+    SELECT
+        DATE_TRUNC('month', payment_date) AS mes,
+        SUM(total_amount) AS delta_dividendos
+    FROM dividends
+    WHERE user_id = :uid
+      AND payment_date IS NOT NULL
+    GROUP BY 1
+    ORDER BY 1
+"""
+
+_SQL_EVOLUCAO_RATIO = """
+    SELECT
+        COALESCE(SUM(pp.total_invested), 1) AS total_inv,
+        COALESCE(SUM(pp.quantity * COALESCE(aq.close, pp.average_price)), 1) AS total_mkt
+    FROM portfolio_positions pp
+    LEFT JOIN LATERAL (
+        SELECT close FROM asset_quotes WHERE asset_id = pp.asset_id
+        ORDER BY timestamp DESC LIMIT 1
+    ) aq ON true
+    WHERE pp.user_id = :uid
+"""
+
+
+@st.cache_data(ttl=300)
+def get_evolucao_patrimonial() -> dict:
+    """
+    Retorna série histórica mensal para o gráfico de Evolução Patrimonial.
+    Schema: {data_source, snapshots, total_investido, total_mercado, total_dividendos}
+    Cada snapshot: {label, mes_str, valor_investido, valor_mercado, valor_com_dividendos}
+    valor_mercado é estimado: cum_investido × (total_mercado_atual / total_investido_atual).
+    """
+    if settings.MOCK_MODE:
+        d = _evolucao_mock()
+        d["data_source"] = "mock"
+        return d
+    try:
+        d = _evolucao_real()
+        d["data_source"] = "real"
+        return d
+    except Exception as exc:
+        logger.warning("[investimentos] evolução falhou (%s) — mock.", exc)
+        d = _evolucao_mock()
+        d["data_source"] = "mock_fallback"
+        return d
+
+
+def _evolucao_real() -> dict:
+    from sqlalchemy import text
+    from core.database import get_engine
+
+    engine = get_engine()
+    if engine is None:
+        raise RuntimeError("Engine indisponível.")
+    owner = settings.OWNER_USER_ID
+    if not owner:
+        raise RuntimeError("OWNER_USER_ID não configurado.")
+
+    with engine.connect() as conn:
+        tx_rows   = conn.execute(text(_SQL_EVOLUCAO_TX),    {"uid": owner}).fetchall()
+        div_rows  = conn.execute(text(_SQL_EVOLUCAO_DIV),   {"uid": owner}).fetchall()
+        ratio_row = conn.execute(text(_SQL_EVOLUCAO_RATIO), {"uid": owner}).fetchone()
+
+    total_inv_atual = float(ratio_row.total_inv or 1)
+    total_mkt_atual = float(ratio_row.total_mkt or total_inv_atual)
+    rentab_ratio    = total_mkt_atual / total_inv_atual
+
+    tx_map  = {r.mes: float(r.delta_investido  or 0) for r in tx_rows}
+    div_map = {r.mes: float(r.delta_dividendos or 0) for r in div_rows}
+
+    all_months = sorted(set(tx_map) | set(div_map))
+    if not all_months:
+        raise RuntimeError("Sem transações de investimento.")
+
+    cum_inv = 0.0
+    cum_div = 0.0
+    snapshots = []
+    for mes in all_months:
+        cum_inv += tx_map.get(mes, 0.0)
+        cum_div += div_map.get(mes, 0.0)
+        cum_mkt  = round(max(cum_inv, 0) * rentab_ratio, 2)
+        snapshots.append({
+            "label":               f"{_MESES_PT_CF[mes.month]}/{str(mes.year)[-2:]}",
+            "mes_str":             mes.strftime("%Y-%m"),
+            "valor_investido":     round(cum_inv, 2),
+            "valor_mercado":       cum_mkt,
+            "valor_com_dividendos": round(cum_mkt + cum_div, 2),
+        })
+
+    return {
+        "snapshots":        snapshots,
+        "total_investido":  round(cum_inv, 2),
+        "total_mercado":    round(total_mkt_atual, 2),
+        "total_dividendos": round(cum_div, 2),
+    }
+
+
+def _evolucao_mock() -> dict:
+    from datetime import date as _date
+    hoje  = _date.today()
+    start = hoje.year - 4
+
+    cum_inv = 0.0
+    cum_div = 0.0
+    snapshots = []
+    for yr in range(start, hoje.year + 1):
+        for mo in range(1, 13):
+            if yr == hoje.year and mo > hoje.month:
+                break
+            age_frac = ((yr - start) * 12 + mo) / (4 * 12)
+            cum_inv += 3_200.0 + (mo % 4) * 450.0
+            cum_div += 320.0   + (mo % 3) * 110.0
+            cum_mkt  = round(cum_inv * (1.0 + 0.18 * age_frac), 2)
+            snapshots.append({
+                "label":               f"{_MESES_PT_CF[mo]}/{str(yr)[-2:]}",
+                "mes_str":             f"{yr}-{mo:02d}",
+                "valor_investido":     round(cum_inv, 2),
+                "valor_mercado":       cum_mkt,
+                "valor_com_dividendos": round(cum_mkt + cum_div, 2),
+            })
+
+    return {
+        "snapshots":        snapshots,
+        "total_investido":  round(cum_inv, 2),
+        "total_mercado":    round(snapshots[-1]["valor_mercado"], 2) if snapshots else 0.0,
+        "total_dividendos": round(cum_div, 2),
+    }

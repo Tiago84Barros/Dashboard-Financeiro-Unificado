@@ -20,7 +20,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from core.investimentos import get_carteira, get_cashflow_mensal
+from core.investimentos import get_carteira, get_cashflow_mensal, get_evolucao_patrimonial
 from core.proventos import get_proventos
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status
@@ -470,6 +470,51 @@ def _fig_cashflow_hist(cashflow: list) -> go.Figure:
     return fig
 
 
+def _fig_evolucao_patrimonial(snapshots: list) -> go.Figure:
+    """Três linhas: Valor de Mercado, Com Dividendos, Valor Investido."""
+    labels    = [s["label"]                for s in snapshots]
+    investido = [s["valor_investido"]      for s in snapshots]
+    mercado   = [s["valor_mercado"]        for s in snapshots]
+    com_div   = [s["valor_com_dividendos"] for s in snapshots]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=labels, y=com_div,
+        name="Com Dividendos",
+        mode="lines",
+        line={"color": _COR_ALERTA, "width": 2},
+        hovertemplate="<b>%{x}</b><br>c/ Dividendos: R$ %{y:,.0f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=labels, y=mercado,
+        name="Valor de Mercado",
+        mode="lines",
+        line={"color": _COR_POSITIVO, "width": 2.5},
+        fill="tozeroy",
+        fillcolor="rgba(0,200,150,0.06)",
+        hovertemplate="<b>%{x}</b><br>Mercado: R$ %{y:,.0f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=labels, y=investido,
+        name="Valor Investido",
+        mode="lines",
+        line={"color": _COR_NEUTRO, "width": 1.5, "dash": "dot"},
+        hovertemplate="<b>%{x}</b><br>Investido: R$ %{y:,.0f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        legend={"orientation": "h", "y": -0.15, "font": {"size": 11},
+                "bgcolor": "rgba(0,0,0,0)"},
+        margin={"t": 10, "b": 10, "l": 0, "r": 0},
+        height=380,
+        yaxis={"showgrid": True, "gridcolor": "#1E2533",
+               "tickformat": ",.0f", "tickprefix": "R$ "},
+        xaxis={"showgrid": False},
+    )
+    return fig
+
+
 def _fig_dependencias_macro(deps: list) -> go.Figure:
     """Gráfico de barras horizontais — exposição macro do portfólio."""
     fatores = [d["fator"]    for d in deps]
@@ -816,18 +861,47 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
         st.caption("Sem dados de alocação para calcular dependências macro.")
 
 
-def _tab_historico(cashflow: list, proventos: dict) -> None:
+def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if not cashflow:
-        st.info("Sem dados históricos de fluxo de caixa.", icon="📊")
-        return
+    snapshots = evolucao.get("snapshots", [])
 
-    # Gráfico Fluxo de Caixa
-    _secao_titulo_orig("📊", "Fluxo de Caixa", "Receitas, despesas e saldo — últimos 12 meses")
-    st.plotly_chart(_fig_cashflow_hist(cashflow),
-                    use_container_width=True,
-                    config={"displayModeBar": False})
+    # ── Evolução Patrimonial ──────────────────────────────────────────────────
+    _secao_titulo_orig(
+        "📈", "Evolução Patrimonial",
+        "Valor de Mercado e total com Dividendos acumulados — histórico completo",
+    )
+    if snapshots:
+        # KPI summary row
+        ck1, ck2, ck3 = st.columns(3, gap="small")
+        with ck1:
+            st.markdown(_kpi(
+                "Valor de Mercado Atual", fmt_moeda(evolucao["total_mercado"]),
+                "Estimativa baseada na rentabilidade atual", _COR_POSITIVO,
+            ), unsafe_allow_html=True)
+        with ck2:
+            st.markdown(_kpi(
+                "Total Com Dividendos",
+                fmt_moeda(evolucao["total_mercado"] + evolucao["total_dividendos"]),
+                "Mercado + proventos históricos acumulados", _COR_ALERTA,
+            ), unsafe_allow_html=True)
+        with ck3:
+            st.markdown(_kpi(
+                "Total Investido (custo)",
+                fmt_moeda(evolucao["total_investido"]),
+                "Custo histórico acumulado líquido (compras − vendas)", _COR_NEUTRO,
+            ), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.plotly_chart(_fig_evolucao_patrimonial(snapshots),
+                        use_container_width=True,
+                        config={"displayModeBar": False})
+        st.caption(
+            "Valor de Mercado estimado: custo acumulado × rentabilidade atual da carteira. "
+            "Com Dividendos = Mercado + proventos históricos recebidos."
+        )
+    else:
+        st.info("Sem dados históricos de transações para exibir.", icon="📈")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -897,28 +971,30 @@ def _tab_historico(cashflow: list, proventos: dict) -> None:
     else:
         st.caption("Sem histórico de proventos.")
 
-    # Tabela de fluxo de caixa
-    st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo_orig("🧾", "Tabela de Fluxo de Caixa")
-
-    df_cf = pd.DataFrame([{
-        "Mês":      c["label"],
-        "Receitas": c["receitas"],
-        "Despesas": c["despesas"],
-        "Saldo":    c["saldo"],
-    } for c in cashflow])
-
-    st.dataframe(
-        df_cf,
-        column_config={
-            "Mês":      st.column_config.TextColumn("Mês",      width="small"),
-            "Receitas": st.column_config.NumberColumn("Receitas", format="R$ %.2f"),
-            "Despesas": st.column_config.NumberColumn("Despesas", format="R$ %.2f"),
-            "Saldo":    st.column_config.NumberColumn("Saldo",    format="R$ %.2f"),
-        },
-        hide_index=True,
-        use_container_width=True,
-    )
+    # Tabela de evolução patrimonial
+    if snapshots:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo_orig("🧾", "Histórico Patrimonial Mensal")
+        df_ev = pd.DataFrame([{
+            "Mês":             s["label"],
+            "Investido":       s["valor_investido"],
+            "Mercado":         s["valor_mercado"],
+            "Com Dividendos":  s["valor_com_dividendos"],
+            "Resultado":       round(s["valor_mercado"] - s["valor_investido"], 2),
+        } for s in snapshots])
+        st.dataframe(
+            df_ev,
+            column_config={
+                "Mês":            st.column_config.TextColumn("Mês",           width="small"),
+                "Investido":      st.column_config.NumberColumn("Investido",    format="R$ %.2f"),
+                "Mercado":        st.column_config.NumberColumn("Mercado",      format="R$ %.2f"),
+                "Com Dividendos": st.column_config.NumberColumn("c/ Dividendos", format="R$ %.2f"),
+                "Resultado":      st.column_config.NumberColumn("Resultado",    format="R$ %.2f"),
+            },
+            hide_index=True,
+            use_container_width=True,
+            height=min(45 + len(snapshots) * 36, 480),
+        )
 
 
 def _tab_carteira(carteira: dict) -> None:
@@ -1120,6 +1196,7 @@ def render() -> None:
     carteira  = get_carteira()
     cashflow  = get_cashflow_mensal()
     proventos = get_proventos()
+    evolucao  = get_evolucao_patrimonial()
 
     # ── Header ────────────────────────────────────────────────────────────────
     col_title, col_date = st.columns([3, 1])
@@ -1176,7 +1253,7 @@ def render() -> None:
         _tab_dashboard(carteira, proventos, cashflow)
 
     with tab2:
-        _tab_historico(cashflow, proventos)
+        _tab_historico(cashflow, proventos, evolucao)
 
     with tab3:
         _tab_carteira(carteira)
