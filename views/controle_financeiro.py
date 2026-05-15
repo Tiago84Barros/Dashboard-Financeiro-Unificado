@@ -1031,7 +1031,7 @@ def _tab_cartao(d: dict) -> None:
     total_desp = sum(abs(t["valor"]) for t in despesas_tx)
     num_tx     = len(despesas_tx)
 
-    c1, c2, c3, *_ = st.columns([1, 1, 1, 3])
+    c1, c2, c3 = st.columns(3, gap="small")
     with c1:
         st.markdown(_kpi_card(
             "Total em Despesas",
