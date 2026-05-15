@@ -33,6 +33,30 @@ _COR_ALERTA   = "#F6C90E"
 _COR_NEUTRO   = "#9CA3AF"
 _COR_ROXO     = "#9B59B6"
 
+# ── Fatores macro e coeficientes por classe ───────────────────────────────────
+_MACRO_FATORES = [
+    "Brasil / Risco Fiscal",
+    "Selic / CDI / Juros",
+    "Bolsa Brasil",
+    "Câmbio / Dólar",
+    "Renda Variável EUA",
+    "Inflação / IPCA",
+]
+
+# Chaves em minúsculas (substring match contra cls["nome"].lower())
+# Valores: [brasil, selic, bolsa_br, cambio, rv_eua, ipca]
+_MACRO_COEF: dict[str, list] = {
+    "ações":      [0.90, 0.20, 0.85, 0.10, 0.10, 0.30],
+    "fii":        [0.85, 0.65, 0.25, 0.05, 0.05, 0.40],
+    "fundo imob": [0.85, 0.65, 0.25, 0.05, 0.05, 0.40],
+    "renda fixa": [0.60, 0.95, 0.05, 0.05, 0.05, 0.55],
+    "tesouro":    [0.55, 0.95, 0.03, 0.03, 0.03, 0.65],
+    "bdr":        [0.20, 0.10, 0.15, 0.80, 0.85, 0.10],
+    "etf":        [0.20, 0.10, 0.20, 0.75, 0.80, 0.10],
+    "cripto":     [0.20, 0.05, 0.15, 0.50, 0.60, 0.15],
+    "default":    [0.55, 0.35, 0.35, 0.25, 0.20, 0.30],
+}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — métricas e computed fields
@@ -167,9 +191,47 @@ def _acoes_sugeridas(carteira: dict, n_efetivo: float, dy: float) -> list:
     return sugestoes
 
 
+def _calc_dependencias_macro(por_classe: list) -> list:
+    """Retorna exposição estimada (%) a cada fator macro, ponderada pela alocação."""
+    if not por_classe:
+        return []
+
+    acumulado = [0.0] * len(_MACRO_FATORES)
+    for cls in por_classe:
+        nome_lower = cls["nome"].lower()
+        coefs = _MACRO_COEF["default"]
+        for key, vals in _MACRO_COEF.items():
+            if key != "default" and key in nome_lower:
+                coefs = vals
+                break
+        w = cls["pct_carteira"] / 100
+        for i, c in enumerate(coefs):
+            acumulado[i] += w * c * 100
+
+    return [
+        {"fator": f, "exposicao": round(acumulado[i], 1)}
+        for i, f in enumerate(_MACRO_FATORES)
+    ]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — Cards CSS (sem comentários HTML)
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _kpi_macro(titulo: str, valor: str, sub: str, cor: str) -> str:
+    """Card compacto para 7 colunas (macro)."""
+    return (
+        f'<div style="background:#12151E;border:1px solid #1E2533;'
+        f'border-radius:8px;padding:13px 11px 9px;height:100%;">'
+        f'<div style="font-size:0.54rem;font-weight:800;text-transform:uppercase;'
+        f'letter-spacing:0.11em;color:#4A5568;margin-bottom:5px;">{titulo}</div>'
+        f'<div style="font-size:1.15rem;font-weight:800;color:{cor};'
+        f'letter-spacing:-0.02em;line-height:1.1;margin-bottom:3px;'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{valor}</div>'
+        f'<div style="font-size:0.62rem;color:#4A5568;line-height:1.3;">{sub}</div>'
+        f'</div>'
+    )
+
 
 def _kpi(titulo: str, valor: str, sub: str, cor: str, tag: str = "") -> str:
     tag_html = (
@@ -408,6 +470,100 @@ def _fig_cashflow_hist(cashflow: list) -> go.Figure:
     return fig
 
 
+def _fig_dependencias_macro(deps: list) -> go.Figure:
+    """Gráfico de barras horizontais — exposição macro do portfólio."""
+    fatores = [d["fator"]    for d in deps]
+    valores = [d["exposicao"] for d in deps]
+    cores   = [
+        _COR_NEGATIVO if v >= 70 else
+        _COR_ALERTA   if v >= 50 else
+        _COR_INFO
+        for v in valores
+    ]
+
+    fig = go.Figure(go.Bar(
+        x=valores, y=fatores,
+        orientation="h",
+        marker_color=cores,
+        text=[f"{v:.1f}%" for v in valores],
+        textposition="outside",
+        textfont={"size": 11, "color": "#E2E8F0"},
+        hovertemplate="<b>%{y}</b><br>Exposição: %{x:.1f}%<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 10, "b": 10, "l": 0, "r": 70},
+        height=260,
+        xaxis={"showgrid": True, "gridcolor": "#1E2533",
+               "range": [0, 115], "ticksuffix": "%"},
+        yaxis={"showgrid": False, "automargin": True},
+        showlegend=False,
+    )
+    return fig
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HELPERS — Dados externos (BCB + yfinance, cache 30 min)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=1800)
+def _get_macro_dados() -> dict:
+    """Busca indicadores macro: BCB (SELIC, IPCA) + yfinance (câmbio, bolsas)."""
+    import requests  # já é dep do streamlit
+    import yfinance as yf
+
+    dados = {
+        "selic":     14.75,
+        "ipca_12m":  4.80,
+        "cdi_12m":   14.65,
+        "usdbrl":    5.75,
+        "ibovespa":  130000.0,
+        "sp500":     5500.0,
+        "ifix":      3200.0,
+    }
+
+    # BCB: Meta SELIC (série 4189)
+    try:
+        r = requests.get(
+            "https://api.bcb.gov.br/dados/serie/bcdata.sgs.4189/dados/ultimos/1?formato=json",
+            timeout=5,
+        )
+        if r.ok and r.json():
+            dados["selic"] = float(r.json()[0]["valor"].replace(",", "."))
+    except Exception:
+        pass
+
+    # BCB: IPCA acumulado 12M (série 13522)
+    try:
+        r = requests.get(
+            "https://api.bcb.gov.br/dados/serie/bcdata.sgs.13522/dados/ultimos/1?formato=json",
+            timeout=5,
+        )
+        if r.ok and r.json():
+            dados["ipca_12m"] = float(r.json()[0]["valor"].replace(",", "."))
+    except Exception:
+        pass
+
+    # CDI ≈ SELIC − 0,10 p.p.
+    dados["cdi_12m"] = round(dados["selic"] - 0.10, 2)
+
+    # yfinance: câmbio e bolsas
+    for sym, key in [
+        ("USDBRL=X", "usdbrl"),
+        ("^BVSP",    "ibovespa"),
+        ("^GSPC",    "sp500"),
+    ]:
+        try:
+            hist = yf.Ticker(sym).history(period="5d")
+            if not hist.empty:
+                dados[key] = round(float(hist["Close"].iloc[-1]), 2)
+        except Exception:
+            pass
+
+    return dados
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -574,6 +730,90 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
                             config={"displayModeBar": False})
     else:
         st.caption("Sem dados de alocação por classe.")
+
+    # ── Cenário Macroeconômico ─────────────────────────────────────────────────
+    _secao_titulo_orig(
+        "🌐", "Cenário Macroeconômico",
+        "Dados atualizados a cada 30 minutos",
+    )
+
+    macro = _get_macro_dados()
+    cm1, cm2, cm3, cm4, cm5, cm6, cm7 = st.columns(7, gap="small")
+    with cm1:
+        st.markdown(_kpi_macro("SELIC", f"{macro['selic']:.2f}%",
+                               "Meta SELIC a.a.", _COR_NEGATIVO),
+                    unsafe_allow_html=True)
+    with cm2:
+        st.markdown(_kpi_macro("IPCA 12M", f"{macro['ipca_12m']:.2f}%",
+                               "Acumulado 12 meses", _COR_ALERTA),
+                    unsafe_allow_html=True)
+    with cm3:
+        st.markdown(_kpi_macro("CDI 12M", f"{macro['cdi_12m']:.2f}%",
+                               "Taxa CDI anual", _COR_ALERTA),
+                    unsafe_allow_html=True)
+    with cm4:
+        st.markdown(_kpi_macro("USD / BRL", f"R$ {macro['usdbrl']:.4f}",
+                               "Câmbio atual", _COR_INFO),
+                    unsafe_allow_html=True)
+    with cm5:
+        ibov_k = macro["ibovespa"] / 1000
+        st.markdown(_kpi_macro("IBOVESPA", f"{ibov_k:,.1f}k",
+                               "Índice Bovespa (pts)", _COR_POSITIVO),
+                    unsafe_allow_html=True)
+    with cm6:
+        sp_k = macro["sp500"] / 1000
+        st.markdown(_kpi_macro("S&P 500", f"{sp_k:,.1f}k",
+                               "Índice S&P 500 (pts)", _COR_POSITIVO),
+                    unsafe_allow_html=True)
+    with cm7:
+        ifix_k = macro["ifix"] / 1000
+        st.markdown(_kpi_macro("IFIX", f"{ifix_k:,.3f}k",
+                               "Índice de FIIs", _COR_ROXO),
+                    unsafe_allow_html=True)
+
+    st.caption(
+        "Fontes: BCB API (SELIC, IPCA) · Yahoo Finance (câmbio, bolsas). "
+        "IFIX exibe valor de referência estático."
+    )
+
+    # ── Dependências Macro do Portfólio ────────────────────────────────────────
+    _secao_titulo_orig(
+        "📐", "Dependências Macro do Portfólio",
+        "Exposição estimada por fator macroeconômico — baseado na alocação por classe",
+    )
+
+    deps = _calc_dependencias_macro(por_classe)
+    if deps:
+        fator_max = max(deps, key=lambda d: d["exposicao"])
+        if fator_max["exposicao"] >= 60:
+            st.warning(
+                f"⚠️ Alta dependência em **{fator_max['fator']}** "
+                f"({fator_max['exposicao']:.1f}%) — considere diversificar para reduzir concentração.",
+            )
+
+        col_chart, col_leg = st.columns([2, 1], gap="medium")
+        with col_chart:
+            st.plotly_chart(_fig_dependencias_macro(deps),
+                            use_container_width=True,
+                            config={"displayModeBar": False})
+        with col_leg:
+            st.markdown(
+                '<div style="font-size:0.78rem;color:#718096;padding-top:16px;">'
+                '<b style="color:#CBD5E0;">Como interpretar</b><br><br>'
+                'Cada barra mostra quanto o portfólio pode ser afetado por um fator '
+                'macroeconômico, ponderado pela composição por classe de ativo.<br><br>'
+                f'<span style="color:{_COR_NEGATIVO};">■</span> ≥ 70% — alta exposição<br>'
+                f'<span style="color:{_COR_ALERTA};">■</span> 50–70% — moderada<br>'
+                f'<span style="color:{_COR_INFO};">■</span> &lt; 50% — controlada'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        st.caption(
+            "Exposição estimada por coeficientes fixos por classe. "
+            "Valores indicativos — não constituem recomendação de investimento."
+        )
+    else:
+        st.caption("Sem dados de alocação para calcular dependências macro.")
 
 
 def _tab_historico(cashflow: list, proventos: dict) -> None:
