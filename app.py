@@ -34,13 +34,14 @@ _ROTAS: dict[str, str] = {
     "💰 Controle Financeiro": "controle_financeiro",
     "🔔 Alertas":             "alertas",
     "📈 Investimentos":       "investimentos",
+    "🏢 Empresas B3":         "empresas_b3",
     "⚙️ Configurações":       "configuracoes",
 }
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📊 Dashboard Financeiro")
-    st.caption("v0.5.10 · Fase 5")
+    st.caption("v0.6.0 · App B3")
     st.divider()
 
     # Seção: Visão Geral
@@ -53,7 +54,7 @@ with st.sidebar:
 
     # Seção: Investimentos
     st.markdown('<div class="nav-section">Investimentos</div>', unsafe_allow_html=True)
-    opcoes_invest = ["📈 Investimentos", "🔔 Alertas"]
+    opcoes_invest = ["📈 Investimentos", "🔔 Alertas", "🏢 Empresas B3"]
 
     # Seção: Sistema
     st.markdown('<div class="nav-section">Sistema</div>', unsafe_allow_html=True)
