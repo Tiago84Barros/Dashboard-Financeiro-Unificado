@@ -14,7 +14,8 @@ Dashboard:
 
 Dados: core/investimentos + core/proventos
 """
-from datetime import date as _date
+import html as _html
+from datetime import date as _date, datetime as _datetime
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -24,6 +25,7 @@ from core.investimentos import get_carteira, get_cashflow_mensal, get_evolucao_p
 from core.proventos import get_proventos
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status
+import core.fundamentus as _fund
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
 _COR_POSITIVO = "#00C896"
@@ -37,6 +39,113 @@ _COR_ROXO     = "#9B59B6"
 _ICONES_B3_CDN = (
     "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones"
 )
+
+# ── CSS dos cards fundamentalistas (injetado uma vez por sessão) ──────────────
+_FUND_CSS = """
+<style>
+.fund-card {
+    background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+    border-radius:14px;padding:16px 18px;margin-bottom:10px;transition:border-color .2s;
+}
+.fund-card:hover { border-color:rgba(0,200,150,0.35); }
+.fund-header { display:flex;justify-content:space-between;align-items:flex-start;
+               margin-bottom:10px;gap:10px; }
+.fund-ticker { font-size:1.0rem;font-weight:700;color:#E2E8F0; }
+.fund-name   { font-size:0.71rem;color:#8b9ab0;margin-top:2px;max-width:200px; }
+.fund-price  { font-size:1.0rem;font-weight:700;color:#00C896;text-align:right; }
+.fund-chg-pos { font-size:0.70rem;color:#00C896;text-align:right; }
+.fund-chg-neg { font-size:0.70rem;color:#FC5C7D;text-align:right; }
+.fund-chg-neu { font-size:0.70rem;color:#9CA3AF;text-align:right; }
+.fund-row { display:flex;justify-content:space-between;align-items:center;
+            padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04); }
+.fund-row:last-child { border-bottom:none; }
+.fund-key     { font-size:0.67rem;color:#8b9ab0; }
+.fund-val     { font-size:0.77rem;font-weight:600;color:#E2E8F0; }
+.fund-val-pos { font-size:0.77rem;font-weight:600;color:#00C896; }
+.fund-val-neg { font-size:0.77rem;font-weight:600;color:#FC5C7D; }
+.fund-val-warn{ font-size:0.77rem;font-weight:600;color:#F6C90E; }
+.fund-sec { font-size:0.63rem;font-weight:700;color:#8b9ab0;text-transform:uppercase;
+            letter-spacing:.05em;padding:6px 0 2px;margin-top:4px;
+            border-top:1px solid rgba(255,255,255,0.06); }
+.f-chip { display:inline-block;font-size:0.69rem;font-weight:600;
+          padding:3px 10px;border-radius:20px;margin:2px 3px 2px 0; }
+.f-chip-green  { background:rgba(0,200,150,0.15);color:#00C896;border:1px solid rgba(0,200,150,0.3); }
+.f-chip-yellow { background:rgba(246,201,14,0.15);color:#F6C90E;border:1px solid rgba(246,201,14,0.3); }
+.f-chip-red    { background:rgba(252,92,125,0.15);color:#FC5C7D;border:1px solid rgba(252,92,125,0.3); }
+.f-chip-blue   { background:rgba(74,158,255,0.15);color:#4A9EFF;border:1px solid rgba(74,158,255,0.3); }
+.f-chip-purple { background:rgba(155,89,182,0.15);color:#9B59B6;border:1px solid rgba(155,89,182,0.3); }
+.alert-item { border-left:3px solid;padding:10px 14px;margin-bottom:9px;
+              border-radius:0 8px 8px 0;background:rgba(255,255,255,0.03);
+              font-size:0.83rem;color:#c8d4e0;line-height:1.45; }
+.alert-red    { border-color:#FC5C7D; }
+.alert-yellow { border-color:#F6C90E; }
+.alert-green  { border-color:#00C896; }
+.alert-blue   { border-color:#4A9EFF; }
+.alert-lbl { font-size:0.67rem;font-weight:700;text-transform:uppercase;
+             letter-spacing:.05em;margin-bottom:2px; }
+.lbl-risk { color:#FC5C7D; } .lbl-warn { color:#F6C90E; }
+.lbl-opp  { color:#00C896; } .lbl-info { color:#4A9EFF; }
+</style>
+"""
+
+# ── Helpers HTML para cards fundamentalistas ──────────────────────────────────
+
+def _f_br(v, d: int = 2) -> str:
+    try:
+        s = f"{float(v):,.{d}f}"
+        return s.replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "—"
+
+def _f_brs(v, d: int = 2) -> str:
+    return f"R$ {_f_br(v, d)}"
+
+def _f_big(v) -> str:
+    try:
+        v = float(v)
+        if abs(v) >= 1e9: return f"R$ {v/1e9:.2f}B"
+        if abs(v) >= 1e6: return f"R$ {v/1e6:.2f}M"
+        return _f_brs(v, 0)
+    except Exception:
+        return "—"
+
+def _f_chip(label: str, color: str = "blue") -> str:
+    return f'<span class="f-chip f-chip-{color}">{_html.escape(label)}</span>'
+
+def _f_row(key: str, val: str, cls: str = "fund-val") -> str:
+    return (f'<div class="fund-row"><span class="fund-key">{_html.escape(key)}</span>'
+            f'<span class="{cls}">{val}</span></div>')
+
+def _f_sec(title: str) -> str:
+    return f'<div class="fund-sec">{_html.escape(title)}</div>'
+
+def _f_color_pct(v, good_positive: bool = True) -> str:
+    if v is None: return "fund-val"
+    if good_positive:
+        return "fund-val-pos" if v > 0.1 else ("fund-val-neg" if v < -0.1 else "fund-val")
+    return "fund-val-neg" if v > 0.1 else ("fund-val-pos" if v < -0.1 else "fund-val")
+
+def _f_logo(ticker: str) -> str:
+    clean = ticker.removesuffix(".SA")
+    base  = clean[:-1] if clean.endswith("F") and len(clean) > 4 else clean
+    esc   = _html.escape(ticker)
+    tid   = ticker.replace(" ", "_")
+    url   = f"{_ICONES_B3_CDN}/{base}.png"
+    return (
+        f'<img src="{url}" '
+        f'style="width:36px;height:36px;border-radius:8px;object-fit:contain;'
+        f'background:rgba(255,255,255,0.08);padding:3px;flex-shrink:0;" '
+        f'onerror="this.style.display=\'none\';'
+        f'document.getElementById(\'ph_{tid}\').style.display=\'flex\';">'
+        f'<div id="ph_{tid}" style="display:none;width:36px;height:36px;border-radius:8px;'
+        f'background:rgba(0,200,150,0.2);align-items:center;justify-content:center;'
+        f'font-size:0.82rem;font-weight:700;color:#00C896;flex-shrink:0;">{_html.escape(esc[:3])}</div>'
+    )
+
+def _f_alert_html(cls: str, lbl_cls: str, label: str, msg: str) -> str:
+    return (f'<div class="alert-item alert-{cls}">'
+            f'<div class="alert-lbl lbl-{lbl_cls}">{_html.escape(label)}</div>'
+            f'{_html.escape(msg)}</div>')
 
 
 def _get_logos(tickers: tuple) -> dict:
@@ -1256,6 +1365,221 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
                 st.markdown("<br>", unsafe_allow_html=True)
 
 
+def _cls_to_type(classe: str) -> str:
+    c = classe.lower()
+    if "fii" in c or "fundo imob" in c: return "fii"
+    if "ação" in c or "ações" in c or "acoes" in c or "acao" in c: return "stock"
+    if "etf" in c: return "etf"
+    if "bdr" in c: return "bdr"
+    return "stock"
+
+
+def _stock_card_html(pos: dict, fd: dict, price_info: dict,
+                     alerts: list) -> str:
+    T = _fund.THR
+    ticker = pos["ticker"]
+    name   = (pos.get("nome") or ticker)[:45]
+    peso   = float(pos.get("pct_carteira", 0))
+    custo  = float(pos.get("total_investido", 0))
+    pm     = float(pos.get("preco_medio", 0))
+
+    preco   = fd.get("cotacao") or price_info.get("price")
+    chg     = price_info.get("change_pct", 0.0)
+    hist    = price_info.get("hist")
+    vm_mes  = _fund.var_mes(hist)
+    vm_12   = _fund.var_12m(hist)
+
+    pl = fd.get("pl");   pvp = fd.get("pvp")
+    psr = fd.get("psr"); p_ebit = fd.get("p_ebit")
+    ev_ebit = fd.get("ev_ebit"); ev_ebitda = fd.get("ev_ebitda")
+    roe = fd.get("roe"); roic = fd.get("roic")
+    ml = fd.get("marg_liq"); cresc_r = fd.get("cresc_rec_5a")
+    div_p = fd.get("div_brut_patrim"); div_liq = fd.get("div_liquida")
+    liq_c = fd.get("liq_corr"); patrim = fd.get("patrim_liq")
+    receita = fd.get("receita_liq"); lucro = fd.get("lucro_liq")
+    dy = fd.get("dy"); setor = fd.get("setor") or "—"
+    subsetor = fd.get("subsetor") or ""
+
+    chips = []
+    if pvp and pvp < 1.0:           chips.append(_f_chip("P/VP < 1", "green"))
+    if pl  and pl  < 10:            chips.append(_f_chip("P/L baixo", "green"))
+    if roe and roe > 20:            chips.append(_f_chip("ROE alto ▲", "green"))
+    if roic and roic > 15:          chips.append(_f_chip("ROIC alto ▲", "green"))
+    if ml  is not None and ml < 0:  chips.append(_f_chip("Prejuízo", "red"))
+    if div_p and div_p > T["stock_divida_alta"]: chips.append(_f_chip("Alavancagem ⚠", "red"))
+    if peso > T["stock_conc_max"]:  chips.append(_f_chip("Concentrada", "yellow"))
+    if any(a[0] == "red" for a in alerts): chips.append(_f_chip("Revisar", "red"))
+    if not chips:                   chips.append(_f_chip("Monitorando", "blue"))
+
+    price_str = f"R$ {_f_br(preco)}" if preco else "—"
+    if chg > 0.1:    chg_cls = "fund-chg-pos"; chg_str = f"▲ {chg:.2f}% hoje"
+    elif chg < -0.1: chg_cls = "fund-chg-neg"; chg_str = f"▼ {abs(chg):.2f}% hoje"
+    else:            chg_cls = "fund-chg-neu"; chg_str = f"{chg:.2f}% hoje"
+
+    R = _f_row; S = _f_sec
+    rows  = S("Posição")
+    rows += R("Peso na carteira", f"{peso:.1f}%")
+    rows += R("Custo investido", _f_brs(custo, 0))
+    if pm: rows += R("Preço médio", _f_brs(pm))
+
+    rows += S("Valuation  (Fundamentus)")
+    if pl:    rows += R("P/L", f"{pl:.1f}x",
+                  "fund-val-warn" if pl > T["stock_pl_alto"] else
+                  "fund-val-pos"  if pl < T["stock_pl_baixo"] else "fund-val")
+    if pvp:   rows += R("P/VP", f"{pvp:.2f}x",
+                  "fund-val-warn" if pvp > T["stock_pvp_alto"] else "fund-val")
+    if psr:   rows += R("PSR", f"{psr:.2f}x")
+    if p_ebit: rows += R("P/EBIT", f"{p_ebit:.2f}x")
+    if ev_ebitda: rows += R("EV/EBITDA", f"{ev_ebitda:.2f}x")
+    if ev_ebit:   rows += R("EV/EBIT", f"{ev_ebit:.2f}x")
+    if dy:    rows += R("Dividend Yield", f"{dy:.2f}%",
+                  "fund-val-warn" if dy > T["stock_dy_alto"] else "fund-val-pos")
+
+    rows += S("Rentabilidade  (Fundamentus)")
+    if roe:   rows += R("ROE", f"{roe:.1f}%", _f_color_pct(roe - T["stock_roe_baixo"]))
+    if roic:  rows += R("ROIC", f"{roic:.1f}%", _f_color_pct(roic - T["stock_roic_baixo"]))
+    if fd.get("marg_bruta") is not None: rows += R("Margem Bruta", f"{fd['marg_bruta']:.1f}%", _f_color_pct(fd["marg_bruta"]))
+    if ml is not None: rows += R("Margem Líq.", f"{ml:.1f}%",
+                  "fund-val-neg" if ml < 0 else ("fund-val-warn" if ml < 5 else "fund-val-pos"))
+    if cresc_r is not None: rows += R("Cresc. Receita 5a", f"{cresc_r:+.1f}%", _f_color_pct(cresc_r))
+
+    rows += S("Endividamento e Liquidez  (Fundamentus)")
+    if div_p: rows += R("Dív.Bruta/Patrim.", f"{div_p:.2f}x",
+                  "fund-val-neg" if div_p > T["stock_divida_alta"] else "fund-val")
+    if div_liq is not None: rows += R("Dívida Líquida", _f_big(div_liq),
+                  "fund-val-neg" if div_liq > 0 else "fund-val-pos")
+    if liq_c:  rows += R("Liq. Corrente", f"{liq_c:.2f}x",
+                  "fund-val-pos" if liq_c > 1 else "fund-val-neg")
+    if patrim: rows += R("Patrimônio Líq.", _f_big(patrim))
+
+    rows += S("Demonstrativos LTM  (Fundamentus)")
+    if receita: rows += R("Receita Líq.", _f_big(receita))
+    if lucro is not None: rows += R("Lucro Líq.", _f_big(lucro),
+                  "fund-val-pos" if lucro > 0 else "fund-val-neg")
+
+    rows += S("Preço e Variação  (yfinance)")
+    rows += R("Var. no Mês",   f"{vm_mes:+.1f}%" if vm_mes is not None else "—", _f_color_pct(vm_mes))
+    rows += R("Var. 12 Meses", f"{vm_12:+.1f}%"  if vm_12  is not None else "—", _f_color_pct(vm_12))
+    rows += R("Setor", setor)
+    if subsetor: rows += R("Subsetor", subsetor)
+
+    return (
+        f'<div class="fund-card">'
+        f'<div class="fund-header">'
+        f'  <div style="display:flex;gap:10px;align-items:flex-start;">'
+        f'    {_f_logo(ticker)}'
+        f'    <div><div class="fund-ticker">{_html.escape(ticker)}</div>'
+        f'    <div class="fund-name">{_html.escape(name)}</div></div>'
+        f'  </div>'
+        f'  <div><div class="fund-price">{price_str}</div>'
+        f'  <div class="{chg_cls}">{chg_str}</div></div>'
+        f'</div>'
+        f'<div style="margin-bottom:8px;">{"".join(chips)}</div>'
+        f'{rows}'
+        f'<p style="font-size:0.63rem;color:#3d4a5c;margin:7px 0 0;">'
+        f'Fundamentus · yfinance · {_datetime.now().strftime("%d/%m/%Y %H:%M")}</p>'
+        f'</div>'
+    )
+
+
+def _fii_card_html(pos: dict, fd: dict, price_info: dict,
+                   renda_recebida: float, alerts: list) -> str:
+    T = _fund.THR
+    ticker = pos["ticker"]
+    name   = (pos.get("nome") or ticker)[:45]
+    peso   = float(pos.get("pct_carteira", 0))
+    custo  = float(pos.get("total_investido", 0))
+    qty    = float(pos.get("quantidade", 0))
+
+    preco  = fd.get("cotacao") or price_info.get("price")
+    chg    = price_info.get("change_pct", 0.0)
+    hist   = price_info.get("hist")
+    vm_mes = _fund.var_mes(hist)
+    vm_12  = _fund.var_12m(hist)
+
+    pvp      = fd.get("pvp"); dy_f = fd.get("dy")
+    vac      = fd.get("vacancia_media") or fd.get("vacancia_fisica")
+    vac_fin  = fd.get("vacancia_financ")
+    qtd_im   = fd.get("qtd_imoveis"); qtd_cot = fd.get("qtd_cotistas")
+    vp_cota  = fd.get("vp_cota"); patrim = fd.get("patrim_liq")
+    ult_rend = fd.get("ult_rendimento"); data_rend = fd.get("data_rendimento") or ""
+    liq      = fd.get("liq_diaria")
+    seg_raw  = fd.get("segmento") or ""
+    fii_tipo = _fund.get_fii_tipo(ticker, seg_raw)
+    yoc = (renda_recebida / custo * 100) if (renda_recebida > 0 and custo > 0) else None
+
+    chips = []
+    if fii_tipo:                                     chips.append(_f_chip(fii_tipo, "purple"))
+    if pvp and pvp < T["fii_pvp_desconto"]:          chips.append(_f_chip("P/VP descontado", "green"))
+    if pvp and pvp > T["fii_pvp_premium"]:           chips.append(_f_chip("P/VP c/ prêmio", "yellow"))
+    if vac is not None and vac > T["fii_vacancia_alta"]: chips.append(_f_chip(f"Vacância {vac:.0f}%", "red"))
+    if vac == 0:                                     chips.append(_f_chip("100% ocupado ✓", "green"))
+    if dy_f and 8 <= dy_f <= 13:                     chips.append(_f_chip("DY saudável", "green"))
+    if dy_f and dy_f > T["fii_dy_alto"]:             chips.append(_f_chip("DY elevado ⚠", "yellow"))
+    if qtd_im is not None and qtd_im <= 3:           chips.append(_f_chip("Poucos imóveis ⚠", "yellow"))
+    if peso > T["fii_conc_max"]:                     chips.append(_f_chip("Concentrado", "yellow"))
+    if not chips:                                    chips.append(_f_chip("Monitorando", "blue"))
+
+    price_str = f"R$ {_f_br(preco)}" if preco else "—"
+    if chg > 0.1:    chg_cls = "fund-chg-pos"; chg_str = f"▲ {chg:.2f}% hoje"
+    elif chg < -0.1: chg_cls = "fund-chg-neg"; chg_str = f"▼ {abs(chg):.2f}% hoje"
+    else:            chg_cls = "fund-chg-neu"; chg_str = f"{chg:.2f}% hoje"
+
+    R = _f_row; S = _f_sec
+    rows  = S("Posição")
+    rows += R("Peso na carteira", f"{peso:.1f}%")
+    rows += R("Custo investido", _f_brs(custo, 0))
+    rows += R("Cotas", _f_br(qty, 0))
+
+    rows += S("Indicadores  (Fundamentus)")
+    if pvp:   rows += R("P/VP", f"{pvp:.2f}x",
+                  "fund-val-warn" if pvp > T["fii_pvp_premium"] else
+                  "fund-val-pos"  if pvp < T["fii_pvp_desconto"] else "fund-val")
+    if vp_cota: rows += R("VP/Cota", _f_brs(vp_cota))
+    if dy_f:  rows += R("Dividend Yield", f"{dy_f:.2f}%",
+                  "fund-val-warn" if dy_f > T["fii_dy_alto"] else "fund-val-pos")
+    if ult_rend:
+        lbl_rend = f"Últ. Rendimento{' (' + data_rend + ')' if data_rend else ''}"
+        rows += R(lbl_rend, _f_brs(ult_rend, 4))
+    if yoc:             rows += R("YoC (renda/custo)", f"{yoc:.1f}%", "fund-val-pos")
+    if renda_recebida > 0: rows += R("Renda recebida", _f_brs(renda_recebida, 0), "fund-val-pos")
+
+    rows += S("Ocupação e Diversificação  (Fundamentus)")
+    if fii_tipo: rows += R("Tipo de FII", fii_tipo, "fund-val-pos")
+    rows += R("Segmento", seg_raw or "—")
+    if vac is not None: rows += R("Vacância Média", f"{vac:.1f}%",
+                  "fund-val-neg" if vac > T["fii_vacancia_alta"] else
+                  "fund-val-pos" if vac == 0 else "fund-val-warn" if vac > 5 else "fund-val")
+    if vac_fin is not None: rows += R("Vacância Financeira", f"{vac_fin:.1f}%")
+    if qtd_im is not None:  rows += R("Nº de Imóveis", str(int(qtd_im)),
+                  "fund-val-warn" if qtd_im <= 3 else "fund-val")
+    if qtd_cot is not None: rows += R("Nº de Cotistas", _f_br(qtd_cot, 0))
+    if patrim:  rows += R("Patrimônio Líq.", _f_big(patrim))
+    if liq:     rows += R("Liq. Diária", _f_big(liq))
+
+    rows += S("Variação de Preço  (yfinance)")
+    rows += R("Var. no Mês",   f"{vm_mes:+.1f}%" if vm_mes is not None else "—", _f_color_pct(vm_mes))
+    rows += R("Var. 12 Meses", f"{vm_12:+.1f}%"  if vm_12  is not None else "—", _f_color_pct(vm_12))
+
+    return (
+        f'<div class="fund-card">'
+        f'<div class="fund-header">'
+        f'  <div style="display:flex;gap:10px;align-items:flex-start;">'
+        f'    {_f_logo(ticker)}'
+        f'    <div><div class="fund-ticker">{_html.escape(ticker)}</div>'
+        f'    <div class="fund-name">{_html.escape(name)}</div></div>'
+        f'  </div>'
+        f'  <div><div class="fund-price">{price_str}</div>'
+        f'  <div class="{chg_cls}">{chg_str}</div></div>'
+        f'</div>'
+        f'<div style="margin-bottom:8px;">{"".join(chips)}</div>'
+        f'{rows}'
+        f'<p style="font-size:0.63rem;color:#3d4a5c;margin:7px 0 0;">'
+        f'Fundamentus · yfinance · {_datetime.now().strftime("%d/%m/%Y %H:%M")}</p>'
+        f'</div>'
+    )
+
+
 def _fig_top15(posicoes: list) -> go.Figure:
     top = sorted(posicoes, key=lambda p: p["total_investido"], reverse=True)[:15]
     top = list(reversed(top))
@@ -1316,7 +1640,10 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     total_mkt = carteira["total_mercado"]
     rentab    = carteira["rentabilidade_total_pct"]
     renda_12m = proventos.get("total_ano", 0.0)
+    renda_por_ticker = {a["ticker"]: a["total"] for a in proventos.get("por_ativo", [])}
 
+    # Injeta CSS dos cards (idempotente — Streamlit de-dups <style>)
+    st.markdown(_FUND_CSS, unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Header ────────────────────────────────────────────────────────────────
@@ -1334,168 +1661,246 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Resumo do Portfólio ───────────────────────────────────────────────────
-    _secao_titulo_orig("📋", "Resumo do Portfólio")
+    # ── Sub-tabs ──────────────────────────────────────────────────────────────
+    ta, tb, tc, td = st.tabs([
+        "📋 Visão Geral", "📈 Ações", "🏢 FIIs", "🔔 Alertas",
+    ])
 
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    cor_r = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
-    seta_r = "▲" if rentab >= 0 else "▼"
-    with c1:
-        st.markdown(_kpi(
-            "Valor Total Investido", fmt_moeda(total_inv),
-            f"{carteira['num_ativos']} ativos na carteira", "#E2E8F0",
-        ), unsafe_allow_html=True)
-    with c2:
-        st.markdown(_kpi(
-            "Valor de Mercado", fmt_moeda(total_mkt),
-            "Ativos com cotação disponível", _COR_INFO,
-        ), unsafe_allow_html=True)
-    with c3:
-        st.markdown(_kpi(
-            "Rentabilidade Acumulada",
-            f"{seta_r} {abs(rentab):.1f}%",
-            "Mercado vs custo (ativos com cotação)", cor_r,
-        ), unsafe_allow_html=True)
-    with c4:
-        st.markdown(_kpi(
-            "Renda Total Recebida (12M)", fmt_moeda(renda_12m),
-            "Dividendos + JCP + Rendimentos", _COR_ALERTA,
-        ), unsafe_allow_html=True)
-
-    if por_classe:
+    # ══════════════════════════════════════════════════════════════════════════
+    # Visão Geral
+    # ══════════════════════════════════════════════════════════════════════════
+    with ta:
         st.markdown("<br>", unsafe_allow_html=True)
-        n_cls = min(len(por_classe), 6)
-        cols_cls = st.columns(n_cls, gap="small")
-        for i, cls in enumerate(por_classe[:n_cls]):
-            with cols_cls[i]:
-                st.markdown(_kpi_classe(cls), unsafe_allow_html=True)
+        _secao_titulo_orig("📋", "Resumo do Portfólio")
 
-    st.markdown("<br>", unsafe_allow_html=True)
+        c1, c2, c3, c4 = st.columns(4, gap="small")
+        cor_r = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
+        seta_r = "▲" if rentab >= 0 else "▼"
+        with c1:
+            st.markdown(_kpi("Valor Total Investido", fmt_moeda(total_inv),
+                             f"{carteira['num_ativos']} ativos na carteira", "#E2E8F0"),
+                        unsafe_allow_html=True)
+        with c2:
+            st.markdown(_kpi("Valor de Mercado", fmt_moeda(total_mkt),
+                             "Ativos com cotação disponível", _COR_INFO),
+                        unsafe_allow_html=True)
+        with c3:
+            st.markdown(_kpi("Rentabilidade Acumulada", f"{seta_r} {abs(rentab):.1f}%",
+                             "Mercado vs custo (ativos com cotação)", cor_r),
+                        unsafe_allow_html=True)
+        with c4:
+            st.markdown(_kpi("Renda Total Recebida (12M)", fmt_moeda(renda_12m),
+                             "Dividendos + JCP + Rendimentos", _COR_ALERTA),
+                        unsafe_allow_html=True)
 
-    # ── Distribuição + Top 15 ─────────────────────────────────────────────────
-    col_donut, col_top15 = st.columns([1, 1], gap="medium")
-
-    with col_donut:
-        _secao_titulo_orig("🥧", "Distribuição por Classe de Ativo")
         if por_classe:
-            st.plotly_chart(_fig_donut_classes(por_classe),
-                            use_container_width=True,
-                            config={"displayModeBar": False},
-                            key="analise_donut")
-        else:
-            st.caption("Sem dados de alocação.")
+            st.markdown("<br>", unsafe_allow_html=True)
+            n_cls = min(len(por_classe), 6)
+            cols_cls = st.columns(n_cls, gap="small")
+            for i, cls in enumerate(por_classe[:n_cls]):
+                with cols_cls[i]:
+                    st.markdown(_kpi_classe(cls), unsafe_allow_html=True)
 
-    with col_top15:
-        _secao_titulo_orig("🏆", "Top 15 Posições por Custo")
-        if posicoes:
-            st.plotly_chart(_fig_top15(posicoes),
-                            use_container_width=True,
-                            config={"displayModeBar": False},
-                            key="analise_top15")
-        else:
-            st.caption("Sem posições.")
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_donut, col_top15 = st.columns([1, 1], gap="medium")
+        with col_donut:
+            _secao_titulo_orig("🥧", "Distribuição por Classe de Ativo")
+            if por_classe:
+                st.plotly_chart(_fig_donut_classes(por_classe),
+                                use_container_width=True,
+                                config={"displayModeBar": False},
+                                key="analise_donut")
+            else:
+                st.caption("Sem dados de alocação.")
+        with col_top15:
+            _secao_titulo_orig("🏆", "Top 15 Posições por Custo")
+            if posicoes:
+                st.plotly_chart(_fig_top15(posicoes),
+                                use_container_width=True,
+                                config={"displayModeBar": False},
+                                key="analise_top15")
+            else:
+                st.caption("Sem posições.")
 
-    # ── Concentração por Classe e Setor ───────────────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo_orig("📊", "Concentração")
-
-    col_cls, col_set = st.columns(2, gap="medium")
-
-    with col_cls:
-        st.markdown(
-            '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-            'margin-bottom:10px;">Por Classe de Ativo</div>',
-            unsafe_allow_html=True,
-        )
-        for cls in por_classe:
-            barra_cor = (
-                _COR_NEGATIVO if cls["pct_carteira"] >= 50 else
-                _COR_ALERTA   if cls["pct_carteira"] >= 35 else
-                _COR_POSITIVO
-            )
-            w = min(cls["pct_carteira"], 100)
-            st.markdown(
-                f'<div style="margin-bottom:10px;">'
-                f'<div style="display:flex;justify-content:space-between;'
-                f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
-                f'<span style="display:flex;align-items:center;gap:6px;">'
-                f'<span style="width:8px;height:8px;border-radius:50%;'
-                f'background:{cls["cor"]};display:inline-block"></span>'
-                f'{cls["nome"]}</span>'
-                f'<span style="font-weight:700;color:{barra_cor}">'
-                f'{cls["pct_carteira"]:.1f}%</span>'
-                f'</div>'
-                f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
-                f'<div style="background:{cls["cor"]};width:{w:.0f}%;'
-                f'height:100%;border-radius:3px;"></div>'
-                f'</div>'
-                f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
-                f'margin-top:2px;">{fmt_moeda(cls["valor_mercado"])}'
-                f' · {cls["num_ativos"]} ativo{"s" if cls["num_ativos"] != 1 else ""}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-    with col_set:
-        st.markdown(
-            '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-            'margin-bottom:10px;">Por Setor</div>',
-            unsafe_allow_html=True,
-        )
-        if por_setor:
-            total_setor = sum(s["valor_mercado"] for s in por_setor) or 1
-            for s in por_setor[:8]:
-                pct_s = round(s["valor_mercado"] / total_setor * 100, 1)
-                w     = min(pct_s, 100)
-                barra_cor = (
-                    _COR_NEGATIVO if pct_s >= 40 else
-                    _COR_ALERTA   if pct_s >= 25 else
-                    _COR_INFO
-                )
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo_orig("📊", "Concentração")
+        col_cls, col_set = st.columns(2, gap="medium")
+        with col_cls:
+            st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                        'margin-bottom:10px;">Por Classe de Ativo</div>',
+                        unsafe_allow_html=True)
+            for cls in por_classe:
+                barra_cor = (_COR_NEGATIVO if cls["pct_carteira"] >= 50 else
+                             _COR_ALERTA   if cls["pct_carteira"] >= 35 else _COR_POSITIVO)
+                w = min(cls["pct_carteira"], 100)
                 st.markdown(
                     f'<div style="margin-bottom:10px;">'
                     f'<div style="display:flex;justify-content:space-between;'
                     f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
-                    f'<span>{s["nome"]}</span>'
-                    f'<span style="font-weight:700;color:{barra_cor}">{pct_s:.1f}%</span>'
-                    f'</div>'
+                    f'<span style="display:flex;align-items:center;gap:6px;">'
+                    f'<span style="width:8px;height:8px;border-radius:50%;'
+                    f'background:{cls["cor"]};display:inline-block"></span>'
+                    f'{cls["nome"]}</span>'
+                    f'<span style="font-weight:700;color:{barra_cor}">'
+                    f'{cls["pct_carteira"]:.1f}%</span></div>'
                     f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
-                    f'<div style="background:{barra_cor};width:{w:.0f}%;'
-                    f'height:100%;border-radius:3px;"></div>'
-                    f'</div>'
+                    f'<div style="background:{cls["cor"]};width:{w:.0f}%;'
+                    f'height:100%;border-radius:3px;"></div></div>'
                     f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
-                    f'margin-top:2px;">{fmt_moeda(s["valor_mercado"])}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+                    f'margin-top:2px;">{fmt_moeda(cls["valor_mercado"])}'
+                    f' · {cls["num_ativos"]} ativo{"s" if cls["num_ativos"] != 1 else ""}'
+                    f'</div></div>', unsafe_allow_html=True)
+        with col_set:
+            st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                        'margin-bottom:10px;">Por Setor</div>', unsafe_allow_html=True)
+            if por_setor:
+                total_setor = sum(s["valor_mercado"] for s in por_setor) or 1
+                for s in por_setor[:8]:
+                    pct_s = round(s["valor_mercado"] / total_setor * 100, 1)
+                    w = min(pct_s, 100)
+                    bc = (_COR_NEGATIVO if pct_s >= 40 else
+                          _COR_ALERTA   if pct_s >= 25 else _COR_INFO)
+                    st.markdown(
+                        f'<div style="margin-bottom:10px;">'
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
+                        f'<span>{s["nome"]}</span>'
+                        f'<span style="font-weight:700;color:{bc}">{pct_s:.1f}%</span></div>'
+                        f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
+                        f'<div style="background:{bc};width:{w:.0f}%;'
+                        f'height:100%;border-radius:3px;"></div></div>'
+                        f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
+                        f'margin-top:2px;">{fmt_moeda(s["valor_mercado"])}</div></div>',
+                        unsafe_allow_html=True)
+            else:
+                st.caption("Sem dados de setor.")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo_orig("💵", "Proventos por Ativo")
+        por_ativo = proventos.get("por_ativo", [])
+        if por_ativo:
+            df_prov = pd.DataFrame([{"Ticker": a["ticker"],
+                                     "Proventos": fmt_moeda(a["total"]),
+                                     "Eventos": a["num_eventos"],
+                                     "Último": a.get("ultimo_pagamento") or "—"}
+                                    for a in por_ativo[:20]])
+            st.dataframe(df_prov,
+                         column_config={
+                             "Ticker":    st.column_config.TextColumn("Ticker"),
+                             "Proventos": st.column_config.TextColumn("Proventos"),
+                             "Eventos":   st.column_config.NumberColumn("Eventos", format="%d"),
+                             "Último":    st.column_config.TextColumn("Último Pagamento"),
+                         },
+                         hide_index=True, use_container_width=True)
         else:
-            st.caption("Sem dados de setor.")
+            st.caption("Sem dados de proventos por ativo.")
 
-    # ── Proventos por Ativo ───────────────────────────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo_orig("💵", "Proventos por Ativo")
+    # ══════════════════════════════════════════════════════════════════════════
+    # Ações — cards fundamentalistas
+    # ══════════════════════════════════════════════════════════════════════════
+    with tb:
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    por_ativo = proventos.get("por_ativo", [])
-    if por_ativo:
-        df_prov = pd.DataFrame([{
-            "Ticker":   a["ticker"],
-            "Proventos": fmt_moeda(a["total"]),
-            "Eventos":  a["num_eventos"],
-            "Último":   a.get("ultimo_pagamento") or "—",
-        } for a in por_ativo[:20]])
-        st.dataframe(
-            df_prov,
-            column_config={
-                "Ticker":    st.column_config.TextColumn("Ticker"),
-                "Proventos": st.column_config.TextColumn("Proventos"),
-                "Eventos":   st.column_config.NumberColumn("Eventos", format="%d"),
-                "Último":    st.column_config.TextColumn("Último Pagamento"),
-            },
-            hide_index=True,
-            use_container_width=True,
-        )
-    else:
-        st.caption("Sem dados de proventos por ativo.")
+        def _base(t: str) -> str:
+            return t[:-1] if t.endswith("F") and len(t) > 4 else t
+
+        acoes = [p for p in posicoes
+                 if "ação" in p["classe"].lower() or "ações" in p["classe"].lower()
+                 or "acoes" in p["classe"].lower() or p["classe"].lower() == "ações br"]
+
+        if not acoes:
+            st.info("Sem posições de ações na carteira.", icon="📈")
+        else:
+            fund_tks = tuple({_base(p["ticker"]) for p in acoes})
+            price_tks = fund_tks  # yfinance usa mesmos tickers-base
+
+            with st.spinner(f"Buscando dados fundamentalistas para {len(fund_tks)} ações…"):
+                fd_all    = _fund.batch_stocks(fund_tks)
+                price_all = _fund.fetch_price_data(price_tks)
+
+            for i in range(0, len(acoes), 3):
+                chunk = acoes[i:i + 3]
+                cols  = st.columns(3, gap="small")
+                for j, pos in enumerate(chunk):
+                    base_t = _base(pos["ticker"])
+                    fd     = fd_all.get(base_t, {})
+                    pi     = price_all.get(base_t, {})
+                    alts   = _fund.alerts_stock(pos, fd)
+                    with cols[j]:
+                        st.markdown(_stock_card_html(pos, fd, pi, alts),
+                                    unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # FIIs — cards fundamentalistas
+    # ══════════════════════════════════════════════════════════════════════════
+    with tc:
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        fiis = [p for p in posicoes
+                if "fii" in p["classe"].lower() or "fundo imob" in p["classe"].lower()]
+
+        if not fiis:
+            st.info("Sem posições de FIIs na carteira.", icon="🏢")
+        else:
+            fii_tks = tuple(p["ticker"] for p in fiis)
+
+            with st.spinner(f"Buscando dados de {len(fii_tks)} FIIs…"):
+                fd_fiis   = _fund.batch_fiis(fii_tks)
+                price_fiis = _fund.fetch_price_data(fii_tks)
+
+            for i in range(0, len(fiis), 3):
+                chunk = fiis[i:i + 3]
+                cols  = st.columns(3, gap="small")
+                for j, pos in enumerate(chunk):
+                    t     = pos["ticker"]
+                    fd    = fd_fiis.get(t, {})
+                    pi    = price_fiis.get(t, {})
+                    renda = renda_por_ticker.get(t, 0.0)
+                    alts  = _fund.alerts_fii(pos, fd)
+                    with cols[j]:
+                        st.markdown(_fii_card_html(pos, fd, pi, renda, alts),
+                                    unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Alertas — consolidado ações + FIIs
+    # ══════════════════════════════════════════════════════════════════════════
+    with td:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.caption("Alertas gerados com base nos dados do Fundamentus. "
+                   "Carregue a aba Ações ou FIIs primeiro para atualizar os dados.")
+
+        # Coleta alertas dos dados já cacheados (sem refetch)
+        all_alerts: list[tuple] = []
+
+        def _base_td(t: str) -> str:
+            return t[:-1] if t.endswith("F") and len(t) > 4 else t
+
+        acoes_td = [p for p in posicoes
+                    if "ação" in p["classe"].lower() or "ações" in p["classe"].lower()
+                    or "acoes" in p["classe"].lower() or p["classe"].lower() == "ações br"]
+        for pos in acoes_td:
+            fd = _fund._scrape_stock(_base_td(pos["ticker"]))
+            for a in _fund.alerts_stock(pos, fd):
+                all_alerts.append(a)
+
+        fiis_td = [p for p in posicoes if "fii" in p["classe"].lower()]
+        for pos in fiis_td:
+            fd = _fund._scrape_fii(pos["ticker"])
+            for a in _fund.alerts_fii(pos, fd):
+                all_alerts.append(a)
+
+        if not all_alerts:
+            st.success("Nenhum alerta identificado — portfólio dentro dos parâmetros.", icon="✅")
+        else:
+            red    = [a for a in all_alerts if a[0] == "red"]
+            yellow = [a for a in all_alerts if a[0] == "yellow"]
+            green  = [a for a in all_alerts if a[0] == "green"]
+            blue   = [a for a in all_alerts if a[0] == "blue"]
+
+            for group in (red, yellow, green, blue):
+                for cls, lbl_cls, label, msg in group:
+                    st.markdown(_f_alert_html(cls, lbl_cls, label, msg),
+                                unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
