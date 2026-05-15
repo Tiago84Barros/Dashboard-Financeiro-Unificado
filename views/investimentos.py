@@ -428,8 +428,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
 
     cor_res = _COR_POSITIVO if resultado >= 0 else _COR_NEGATIVO
 
-    # ── 6 KPI cards ──────────────────────────────────────────────────────────
-    c1, c2, c3, c4, c5, c6 = st.columns(6, gap="small")
+    # ── Linha 1: 4 KPI cards ─────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
         st.markdown(_kpi(
             "Patrimônio Total", fmt_moeda(total),
@@ -455,6 +455,11 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
             f"{'+' if rentab_pct >= 0 else ''}{rentab_pct:.2f}%",
             cor_res,
         ), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Linha 2: 3 KPI cards ─────────────────────────────────────────────────
+    c5, c6, c7 = st.columns(3, gap="small")
     with c5:
         st.markdown(_kpi(
             "Renda Recebida (12M)", fmt_moeda(proventos["total_ano"]),
@@ -468,22 +473,13 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
             "Renda 12m / Patrimônio atual",
             _COR_ROXO,
         ), unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── Card Nº de Ativos ─────────────────────────────────────────────────────
-    st.markdown(
-        f'<div style="background:#12151E;border:1px solid #1E2533;'
-        f'border-radius:10px;padding:18px 20px;display:inline-block;min-width:160px;">'
-        f'<div style="font-size:0.60rem;font-weight:800;text-transform:uppercase;'
-        f'letter-spacing:0.13em;color:#4A5568;margin-bottom:6px;">Nº de Ativos</div>'
-        f'<div style="font-size:2.2rem;font-weight:800;color:#E2E8F0;line-height:1;">'
-        f'{carteira["num_ativos"]}</div>'
-        f'<div style="font-size:0.78rem;color:{_COR_POSITIVO};margin-top:4px;">'
-        f'N efetivo: {n_efetivo}</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+    with c7:
+        st.markdown(_kpi(
+            "Nº de Ativos",
+            str(carteira["num_ativos"]),
+            f"N efetivo: {n_efetivo}",
+            "#E2E8F0",
+        ), unsafe_allow_html=True)
 
     # ── Visão Geral ───────────────────────────────────────────────────────────
     _secao_titulo_orig("🗂️", "Visão Geral")
