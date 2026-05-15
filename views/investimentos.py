@@ -33,6 +33,33 @@ _COR_ALERTA   = "#F6C90E"
 _COR_NEUTRO   = "#9CA3AF"
 _COR_ROXO     = "#9B59B6"
 
+
+@st.cache_data(ttl=86400)
+def _get_logos(tickers: tuple) -> dict:
+    """Busca logo URLs via brapi.dev (batch). Cache 24h. Retorna {ticker: url}."""
+    import requests
+    if not tickers:
+        return {}
+    try:
+        symbols = ",".join(t for t in tickers if t)
+        r = requests.get(
+            f"https://brapi.dev/api/quote/{symbols}",
+            params={"fundamental": "false", "dividends": "false"},
+            timeout=10,
+        )
+        if not r.ok:
+            return {}
+        logos = {}
+        for item in r.json().get("results", []):
+            sym = item.get("symbol", "")
+            url = (item.get("logourl") or item.get("logo_url") or "").strip()
+            if sym and url.startswith("http"):
+                logos[sym] = url
+        return logos
+    except Exception:
+        return {}
+
+
 # ── Fatores macro e coeficientes por classe ───────────────────────────────────
 _MACRO_FATORES = [
     "Brasil / Risco Fiscal",
@@ -1078,7 +1105,7 @@ def _header_classe(cls_info: dict, renda_cls: float) -> None:
     )
 
 
-def _card_ativo(pos: dict, renda: float) -> str:
+def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     cor      = pos["cor"]
     rentab   = pos["rentab_pct"]
     cor_r    = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
@@ -1111,15 +1138,28 @@ def _card_ativo(pos: dict, renda: float) -> str:
         f'</div>'
         for lbl, val, cv in metricas
     )
-    initials = pos["ticker"][:5]
+    initials   = pos["ticker"][:5]
     nome_curto = pos["nome"][:22] if len(pos["nome"]) > 22 else pos["nome"]
+    if logo_url:
+        avatar_html = (
+            f'<div style="width:40px;height:40px;border-radius:8px;overflow:hidden;'
+            f'flex-shrink:0;background:#1E2533;display:flex;align-items:center;'
+            f'justify-content:center;">'
+            f'<img src="{logo_url}" style="width:36px;height:36px;object-fit:contain;" '
+            f'alt="{pos["ticker"]}">'
+            f'</div>'
+        )
+    else:
+        avatar_html = (
+            f'<div style="width:40px;height:40px;border-radius:8px;background:{cor};'
+            f'flex-shrink:0;display:flex;align-items:center;justify-content:center;'
+            f'font-size:0.60rem;font-weight:800;color:#fff;">{initials}</div>'
+        )
     return (
         f'<div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;'
         f'padding:16px;margin-bottom:6px;">'
         f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
-        f'<div style="width:40px;height:40px;border-radius:8px;background:{cor};flex-shrink:0;'
-        f'display:flex;align-items:center;justify-content:center;'
-        f'font-size:0.60rem;font-weight:800;color:#fff;">{initials}</div>'
+        f'{avatar_html}'
         f'<div style="overflow:hidden;">'
         f'<div style="font-size:0.83rem;font-weight:800;color:#E2E8F0;'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{nome_curto}</div>'
@@ -1185,6 +1225,10 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
         st.info("Nenhuma posição encontrada. Execute o ETL de posições.", icon="💼")
         return
 
+    # Busca logos em lote (cache 24h) — falha silenciosa
+    tickers_tuple = tuple(p["ticker"] for p in posicoes)
+    logos = _get_logos(tickers_tuple)
+
     # ── Cards agrupados por classe ────────────────────────────────────────────
     pos_por_classe: dict[str, list] = _dd(list)
     for p in posicoes:
@@ -1204,7 +1248,7 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
             for j, pos in enumerate(chunk):
                 renda_p = renda_por_ticker.get(pos["ticker"], 0.0)
                 with cols[j]:
-                    st.markdown(_card_ativo(pos, renda_p), unsafe_allow_html=True)
+                    st.markdown(_card_ativo(pos, renda_p, logos.get(pos["ticker"], "")), unsafe_allow_html=True)
             if i + 4 < len(cls_pos):
                 st.markdown("<br>", unsafe_allow_html=True)
 
