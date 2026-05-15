@@ -1,10 +1,10 @@
 # Dashboard Financeiro Unificado
 
-Plataforma financeira em **Python 3.9 + Streamlit** para controle financeiro, gestão de investimentos, análise de empresas e indicadores macroeconômicos, com suporte a IA via OpenAI.
+Plataforma financeira local em **Python + Streamlit** que unifica controle financeiro, gestão de investimentos, análise de empresas e indicadores macroeconômicos. Versão atual: **v0.5.10 — Fase 5 concluída**.
 
 ## Objetivo
 
-Centralizar em uma única plataforma local as funcionalidades hoje distribuídas em três projetos originais:
+Centralizar em uma única plataforma local as funcionalidades distribuídas em três projetos originais:
 
 - [`Tiago84Barros/Dashboard`](https://github.com/Tiago84Barros/Dashboard)
 - [`Tiago84Barros/Controle_Financeiro`](https://github.com/Tiago84Barros/Controle_Financeiro)
@@ -40,18 +40,28 @@ pip install -r requirements.txt
 ## Configuração
 
 ```bash
-# Copie o template de variáveis de ambiente
 copy .env.example .env        # Windows
 # cp .env.example .env        # Linux / macOS
 ```
 
-Edite `.env` e preencha pelo menos `DATABASE_URL` com a sua string de conexão PostgreSQL:
+Edite `.env` com a string de conexão do Supabase para ativar dados reais:
 
 ```env
-DATABASE_URL="postgresql://usuario:senha@host:5432/database"
+# Banco unificado (Supabase)
+SUPABASE_UNIFICADO_URL="postgresql://postgres:[senha]@[host]:5432/postgres"
+OWNER_USER_ID="uuid-do-usuario"
+
+# Senha de acesso ao app
+APP_PASSWORD="sua-senha"
+
+# OpenAI (opcional — módulo IA ainda não implementado)
+OPENAI_API_KEY=""
+
+# Modo mock: true = dados de demonstração, false = banco real
+MOCK_MODE=true
 ```
 
-> O app funciona **sem banco configurado** — exibe avisos na sidebar e opera em modo mock (`MOCK_MODE=true`).
+> O app funciona **sem banco configurado** (`MOCK_MODE=true`) — exibe dados de demonstração em todas as telas.
 
 ---
 
@@ -63,7 +73,7 @@ streamlit run app.py
 
 Acesse em: [http://localhost:8501](http://localhost:8501)
 
-> **Windows — caracteres especiais:** Se o terminal exibir `?` no lugar de acentos, defina antes de rodar:
+> **Windows — encoding:** Se o terminal exibir `?` no lugar de acentos:
 > ```bash
 > set PYTHONIOENCODING=utf-8
 > streamlit run app.py
@@ -71,15 +81,35 @@ Acesse em: [http://localhost:8501](http://localhost:8501)
 
 ---
 
-## Verificação de integridade
+## Telas disponíveis
 
-```bash
-# Checar sintaxe de todos os módulos
-python -m py_compile app.py
-python -m py_compile core/config.py core/database.py
-python -m py_compile pages/dashboard_geral.py pages/configuracoes.py
-# ... demais arquivos em pages/
-```
+### Implementadas e funcionais
+
+| Tela | Módulo | Dados reais |
+|------|--------|:-----------:|
+| Dashboard Geral | `pages/dashboard_geral.py` | ✅ |
+| Controle Financeiro | `pages/controle_financeiro.py` | ✅ — 251 transações, 38 categorias |
+| Metas | `pages/metas.py` | ✅ — CRUD completo, aporte sugerido |
+| Alertas | `pages/alertas.py` | ✅ — 6 regras automáticas |
+| Investimentos | `pages/investimentos.py` | ✅ — 1.351 transações, 4 tabs |
+| Carteira | `pages/carteira.py` | ✅ — 34 posições, donut por classe/setor |
+| Proventos | `pages/proventos.py` | ✅ — 517 eventos, filtros por ticker/tipo/ano |
+| Empresas B3 | `pages/empresas_b3.py` | ✅ — 82 ativos com filtros |
+| Configurações | `pages/configuracoes.py` | ✅ — banco, ETL, cotações yfinance, segurança |
+
+### Implementadas parcialmente
+
+| Tela | Módulo | O que funciona | O que está pendente |
+|------|--------|----------------|---------------------|
+| Empresas EUA | `pages/empresas_eua.py` | Filtra ativos USD do banco; tabela com cotação | P/L, EPS, market cap — Fase 7 |
+| Cenário Macroeconômico | `pages/macro.py` | Exibe referências SELIC/IPCA/câmbio; benchmarks do banco | Séries históricas via API BCB — Fase 7 |
+
+### Planejadas (ainda não existem)
+
+| Tela | Fase | Descrição |
+|------|:----:|-----------|
+| Cartão de Crédito | 6 | Faturas, lançamentos parcelados, limite disponível |
+| IR Estimado | 6 | Ganho de capital (ações/FII), DARF mensal |
 
 ---
 
@@ -87,45 +117,109 @@ python -m py_compile pages/dashboard_geral.py pages/configuracoes.py
 
 ```
 Dashboard-Financeiro-Unificado/
-├── app.py                  ← ponto de entrada, roteamento via sidebar
-├── requirements.txt        ← dependências com versões fixadas
-├── .env.example            ← template de variáveis de ambiente
+├── app.py                        ← ponto de entrada, roteamento via sidebar
+├── requirements.txt              ← dependências com versões fixadas
+├── .env.example                  ← template de variáveis de ambiente
 │
-├── core/                   ← lógica de infraestrutura
-│   ├── config.py           ← carrega .env, expõe Settings
-│   └── database.py         ← engine SQLAlchemy singleton
+├── core/                         ← lógica de negócio e infraestrutura
+│   ├── config.py                 ← carrega .env, expõe Settings (MOCK_MODE, OWNER_USER_ID, ...)
+│   ├── database.py               ← engine SQLAlchemy singleton (@st.cache_resource)
+│   ├── auth.py                   ← gate de senha SHA-256
+│   ├── utils.py                  ← formatadores (moeda, %, data)
+│   ├── financeiro.py             ← KPIs financeiros gerais
+│   ├── mock_data.py              ← dados de demonstração (schema completo)
+│   ├── investimentos.py          ← carteira, cashflow — LATERAL JOIN cotações
+│   ├── proventos.py              ← dividendos, JCP, rendimentos FII
+│   ├── controle.py               ← transações, orçamento, categorias
+│   ├── metas.py                  ← metas financeiras CRUD
+│   ├── alertas.py                ← 6 regras de alertas automáticas
+│   └── empresas.py               ← ativos B3 e EUA
 │
-├── pages/                  ← módulos de cada tela
+├── pages/                        ← módulo de cada tela (cada um expõe render())
 │   ├── dashboard_geral.py
 │   ├── controle_financeiro.py
+│   ├── metas.py
+│   ├── alertas.py
 │   ├── investimentos.py
 │   ├── carteira.py
 │   ├── proventos.py
 │   ├── empresas_b3.py
 │   ├── empresas_eua.py
 │   ├── macro.py
-│   └── configuracoes.py    ← único módulo funcional: exibe status do banco
+│   └── configuracoes.py
 │
-├── design/                 ← tema visual e componentes (Fase 2)
-├── etl/                    ← importação de dados (Fase 6)
-└── docs/                   ← documentação técnica gerada
+├── design/                       ← tema dark e componentes reutilizáveis
+│   ├── tema.py
+│   └── componentes.py
+│
+├── etl/                          ← importação de dados (CSV → Supabase)
+│   ├── importacao.py
+│   └── schema_setup.py
+│
+├── migration/                    ← scripts de migração dos 3 repos originais
+│   ├── 00_config.py ... 08_compute_portfolio_positions.py
+│   └── backup/                   ← snapshots JSON do banco
+│
+├── supabase_unificado/           ← DDL e políticas RLS do banco
+│   └── schema/
+│       ├── 001_core_tables.sql
+│       ├── 002_financial_tables.sql
+│       ├── 003_investment_tables.sql
+│       ├── 004_import_migration_tables.sql
+│       ├── 005_indexes.sql
+│       ├── 006_rls_policies.sql
+│       ├── 007_views.sql
+│       └── 008_seed_reference_data.sql
+│
+└── docs/                         ← documentação técnica gerada
+    ├── plano_fases_implementacao.md
+    ├── status_fase_5.md          ← registro completo da Fase 5
+    └── status_atual_implementacao.md
 ```
 
 ---
 
-## Telas disponíveis
+## MOCK_MODE=true vs MOCK_MODE=false
 
-| Tela | Status |
-|------|--------|
-| Dashboard Geral | Stub — aguarda Fase 3 |
-| Controle Financeiro | Stub — aguarda Fase 6 |
-| Investimentos | Stub — aguarda Fase 5 |
-| Carteira | Stub — aguarda Fase 5 |
-| Proventos | Stub — aguarda Fase 5 |
-| Empresas B3 | Stub — aguarda Fase 9 |
-| Empresas EUA | Stub — aguarda Fase 9 |
-| Cenário Macroeconômico | Stub — aguarda Fase 9 |
-| **Configurações** | **Funcional** — exibe status do banco |
+| Aspecto | `MOCK_MODE=true` (padrão) | `MOCK_MODE=false` |
+|---------|--------------------------|-------------------|
+| Banco necessário | Não | Sim — Supabase configurado |
+| Dados exibidos | Dados de demonstração estáticos em `core/mock_data.py` | Dados reais do banco PostgreSQL |
+| `SUPABASE_UNIFICADO_URL` | Ignorada | Obrigatória |
+| `OWNER_USER_ID` | Ignorado | Obrigatório |
+| `APP_PASSWORD` | Opcional | Recomendado |
+| Rentabilidade em Carteira | Valores fictícios | Calculada sobre posições reais; 0% se `asset_quotes` vazia |
+| Proventos | 24 eventos mockados | Todos os eventos reais do banco |
+| Alertas | Baseados em dados mockados | Baseados em dados reais |
+| Metas | Mock se `financial_goals` vazia | Dados reais se tabela populada |
+| Cotações (yfinance) | Não usadas | Importadas via Configurações → aba Cotações |
+
+> Use `MOCK_MODE=true` para explorar o app sem banco. Use `MOCK_MODE=false` para trabalhar com dados reais.
+
+---
+
+## Variáveis de ambiente obrigatórias para dados reais
+
+| Variável | Obrigatória | Descrição |
+|----------|:-----------:|-----------|
+| `SUPABASE_UNIFICADO_URL` | ✅ | String de conexão PostgreSQL do Supabase |
+| `OWNER_USER_ID` | ✅ | UUID do usuário — usado como filtro em todas as queries |
+| `APP_PASSWORD` | Recomendado | Se não definido, o app abre sem senha (modo dev) |
+| `MOCK_MODE` | — | `false` para ativar banco real; padrão `true` |
+| `OPENAI_API_KEY` | Opcional | Necessário apenas quando o módulo de IA (Fase 8) for implementado |
+
+---
+
+## Ativar dados reais (MOCK_MODE=false)
+
+1. Criar projeto no Supabase (plano free é suficiente)
+2. Executar os SQLs em `supabase_unificado/schema/` em ordem (`001` → `009`)
+3. Configurar `.env` com `SUPABASE_UNIFICADO_URL`, `OWNER_USER_ID` e `APP_PASSWORD`
+4. Definir `MOCK_MODE=false`
+5. Executar a migração: `python migration/05_load_to_unified_supabase.py`
+6. Importar cotações: Configurações → aba Cotações → Atualizar Cotações
+
+> Checklist detalhado: [`docs/status_atual_implementacao.md`](docs/status_atual_implementacao.md)
 
 ---
 
@@ -134,22 +228,24 @@ Dashboard-Financeiro-Unificado/
 | Componente | Versão |
 |-----------|--------|
 | Python | 3.9+ |
-| Streamlit | ≥1.39.0, <2.0 |
-| Pandas | ≥2.2.0, <3.0 |
-| Plotly | ≥5.24.0, <6.0 |
-| SQLAlchemy | ≥2.0.0, <3.0 |
-| psycopg2-binary | ≥2.9.0, <3.0 |
-| python-dotenv | ≥1.0.0, <2.0 |
-| OpenAI | ≥1.63.0, <2.0 |
-| yfinance | ≥0.2.26, <0.3 |
-| requests | ≥2.32.0, <3.0 |
+| Streamlit | >=1.39.0, <2.0 |
+| Pandas | >=2.2.0, <3.0 |
+| Plotly | >=5.24.0, <6.0 |
+| SQLAlchemy | >=2.0.0, <3.0 |
+| psycopg2-binary | >=2.9.0, <3.0 |
+| python-dotenv | >=1.0.0, <2.0 |
+| yfinance | >=0.2.26, <0.3 |
+| OpenAI | >=1.63.0, <2.0 |
+| requests | >=2.32.0, <3.0 |
 
 ---
 
 ## Status
 
-**Fase 1 concluída** (2026-05-13): fundação implementada — roteamento real, infraestrutura (`core/config.py`, `core/database.py`), todos os 9 módulos com stubs funcionais, versões fixadas.
+**Fase 5 concluída — v0.5.10** (2026-05-14)
 
-Próximo passo: **Fase 2 — Estrutura Visual** (tema dark, componentes reutilizáveis, formatadores).
+11 telas com dados reais ou mock, 6 módulos `core/`, 1.351 transações de investimento + 517 proventos migrados, cotações via yfinance, 6 regras de alertas automáticas.
+
+Próximo passo: **Fase 6 — Schema cartão + IR estimado**.
 
 > Planejamento completo: [`docs/plano_fases_implementacao.md`](docs/plano_fases_implementacao.md)

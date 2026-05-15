@@ -302,20 +302,32 @@ def _agregar_por_ativo(eventos: list, total: float) -> list:
         t = e["ticker"]
         if t not in buckets:
             buckets[t] = {
-                "ticker":     t,
-                "nome":       e["nome"],
-                "classe":     e["classe"],
-                "cor":        e["cor"],
-                "total":      0.0,
-                "num_eventos": 0,
+                "ticker":          t,
+                "nome":            e["nome"],
+                "classe":          e["classe"],
+                "cor":             e["cor"],
+                "total":           0.0,
+                "num_eventos":     0,
+                "ultimo_pagamento": None,
             }
         buckets[t]["total"]      += e["total_amount"]
         buckets[t]["num_eventos"] += 1
+        pd = e.get("payment_date")
+        if pd and (buckets[t]["ultimo_pagamento"] is None or pd > buckets[t]["ultimo_pagamento"]):
+            buckets[t]["ultimo_pagamento"] = pd
 
     base = total or 1.0
     return sorted(
         [
-            {**b, "total": round(b["total"], 2), "pct": round(b["total"] / base * 100, 1)}
+            {
+                **b,
+                "total": round(b["total"], 2),
+                "pct":   round(b["total"] / base * 100, 1),
+                "ultimo_pagamento": (
+                    b["ultimo_pagamento"].strftime("%d/%m/%Y")
+                    if b["ultimo_pagamento"] else None
+                ),
+            }
             for b in buckets.values()
         ],
         key=lambda x: x["total"],

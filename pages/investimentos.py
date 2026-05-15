@@ -859,7 +859,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             "Ticker":       a["ticker"],
             "Proventos":    a["total"],
             "Eventos":      a["num_eventos"],
-            "Último":       a["ultimo_pagamento"] or "—",
+            "Último":       a.get("ultimo_pagamento") or "—",
         } for a in por_ativo[:20]])
         st.dataframe(
             df_prov,
