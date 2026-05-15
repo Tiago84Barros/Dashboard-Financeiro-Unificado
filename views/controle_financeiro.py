@@ -34,7 +34,7 @@ from core.controle import (
     atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
     get_gastos_cartao_mensal,
 )
-from core.investimentos import get_cashflow_mensal
+from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, barra_progresso
 
@@ -433,7 +433,7 @@ def _sidebar_render(ano: int, mes: int) -> None:
 # TAB 1 — Dashboard
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _tab_dashboard(d: dict, historico: list) -> None:
+def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict) -> None:
     receitas     = d["receitas"]
     despesas     = d["despesas"]
     saldo        = d["saldo_mes"]
@@ -522,6 +522,32 @@ def _tab_dashboard(d: dict, historico: list) -> None:
                             config={"displayModeBar": False})
         else:
             st.caption("Histórico não disponível.")
+
+    # ── Tabela resumo 6 meses ─────────────────────────────────────────────────
+    ultimos6 = historico[-6:] if len(historico) >= 6 else historico
+    if ultimos6:
+        import pandas as pd
+        rows_t = []
+        for h in ultimos6:
+            inv = fluxo_inv.get((h["ano"], h["mes"]), 0.0)
+            rows_t.append({
+                "Mês":           h["label"],
+                "Receitas":      h["receitas"],
+                "Despesas":      h["despesas"],
+                "Investimentos": inv,
+            })
+        df_hist = pd.DataFrame(rows_t)
+        st.dataframe(
+            df_hist,
+            column_config={
+                "Mês":           st.column_config.TextColumn("Mês",          width="small"),
+                "Receitas":      st.column_config.NumberColumn("Receitas",    format="R$ %.2f"),
+                "Despesas":      st.column_config.NumberColumn("Despesas",    format="R$ %.2f"),
+                "Investimentos": st.column_config.NumberColumn("Investimentos", format="R$ %.2f"),
+            },
+            hide_index=True,
+            use_container_width=True,
+        )
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
@@ -1225,6 +1251,8 @@ def render() -> None:
     # ── Dados compartilhados entre tabs ──────────────────────────────────────
     historico    = get_cashflow_mensal()
     hist_anual   = get_historico_anual()
+    evolucao     = get_evolucao_patrimonial()
+    fluxo_inv    = {(f["ano"], f["mes"]): f["aporte"] for f in evolucao.get("fluxo_mensal", [])}
 
     # Gastos com Pagamento de Cartão — agrupados por ano → {ano_str: [items]}
     _ano_ref = sel["ano"]
@@ -1244,7 +1272,7 @@ def render() -> None:
     ])
 
     with tab1:
-        _tab_dashboard(d, historico)
+        _tab_dashboard(d, historico, fluxo_inv)
 
     with tab2:
         _tab_analises(d, historico, hist_anual, gastos_cartao)
