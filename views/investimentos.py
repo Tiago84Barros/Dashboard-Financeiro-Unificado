@@ -34,30 +34,24 @@ _COR_NEUTRO   = "#9CA3AF"
 _COR_ROXO     = "#9B59B6"
 
 
-@st.cache_data(ttl=86400)
+_ICONES_B3_CDN = (
+    "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones"
+)
+
+
 def _get_logos(tickers: tuple) -> dict:
-    """Busca logo URLs via brapi.dev (batch). Cache 24h. Retorna {ticker: url}."""
-    import requests
-    if not tickers:
-        return {}
-    try:
-        symbols = ",".join(t for t in tickers if t)
-        r = requests.get(
-            f"https://brapi.dev/api/quote/{symbols}",
-            params={"fundamental": "false", "dividends": "false"},
-            timeout=10,
-        )
-        if not r.ok:
-            return {}
-        logos = {}
-        for item in r.json().get("results", []):
-            sym = item.get("symbol", "")
-            url = (item.get("logourl") or item.get("logo_url") or "").strip()
-            if sym and url.startswith("http"):
-                logos[sym] = url
-        return logos
-    except Exception:
-        return {}
+    """Constrói URLs de logo via CDN icones-b3 (GitHub público, sem auth).
+    Tickers fracionários (PETR3F) mapeados para o ticker-base (PETR3).
+    Logos inexistentes são tratados pelo onerror no img tag.
+    """
+    logos: dict[str, str] = {}
+    for t in tickers:
+        if not t:
+            continue
+        clean = t.removesuffix(".SA")
+        base  = clean[:-1] if clean.endswith("F") and len(clean) > 4 else clean
+        logos[t] = f"{_ICONES_B3_CDN}/{base}.png"
+    return logos
 
 
 # ── Fatores macro e coeficientes por classe ───────────────────────────────────
@@ -1140,21 +1134,22 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     )
     initials   = pos["ticker"][:5]
     nome_curto = pos["nome"][:22] if len(pos["nome"]) > 22 else pos["nome"]
-    if logo_url:
-        avatar_html = (
-            f'<div style="width:40px;height:40px;border-radius:8px;overflow:hidden;'
-            f'flex-shrink:0;background:#1E2533;display:flex;align-items:center;'
-            f'justify-content:center;">'
-            f'<img src="{logo_url}" style="width:36px;height:36px;object-fit:contain;" '
-            f'alt="{pos["ticker"]}">'
-            f'</div>'
-        )
-    else:
-        avatar_html = (
-            f'<div style="width:40px;height:40px;border-radius:8px;background:{cor};'
-            f'flex-shrink:0;display:flex;align-items:center;justify-content:center;'
-            f'font-size:0.60rem;font-weight:800;color:#fff;">{initials}</div>'
-        )
+    # Avatar: iniciais como fundo; logo sobreposta via position:absolute.
+    # onerror oculta o <img> se o CDN retornar 404 → iniciais ficam visíveis.
+    img_tag = (
+        f'<img src="{logo_url}" '
+        f'style="position:absolute;top:0;left:0;width:40px;height:40px;'
+        f'border-radius:8px;object-fit:contain;background:#1E2533;" '
+        f'onerror="this.style.display=\'none\'" '
+        f'alt="{pos["ticker"]}">'
+    ) if logo_url else ""
+    avatar_html = (
+        f'<div style="width:40px;height:40px;border-radius:8px;position:relative;'
+        f'flex-shrink:0;background:{cor};display:flex;align-items:center;'
+        f'justify-content:center;font-size:0.60rem;font-weight:800;color:#fff;">'
+        f'{initials}{img_tag}'
+        f'</div>'
+    )
     return (
         f'<div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;'
         f'padding:16px;margin-bottom:6px;">'
