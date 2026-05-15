@@ -724,22 +724,6 @@ def _tab_analises(d: dict, historico: list, hist_anual: dict, gastos_cartao: dic
         else:
             st.caption("Sem dados de orçamento.")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── Orçamento por categoria (barras de progresso) ─────────────────────────
-    _secao_titulo("🎯", "Orçamento por categoria")
-    if cats:
-        for cat in cats:
-            barra_progresso(
-                cat["nome"],
-                cat["gasto"],
-                cat["orcamento"],
-                fmt_valor=fmt_moeda(cat["gasto"]),
-                fmt_total=fmt_moeda(cat["orcamento"]),
-            )
-    else:
-        st.caption("Nenhuma despesa por categoria neste mês.")
-
     # ── Taxa de Poupança Histórica ─────────────────────────────────────────────
     if historico:
         st.markdown("<br>", unsafe_allow_html=True)
