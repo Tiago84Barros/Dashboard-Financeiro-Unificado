@@ -26,6 +26,7 @@ from core.proventos import get_proventos
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status
 import core.fundamentus as _fund
+import core.data_reconciliacao as _recon
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
 _COR_POSITIVO = "#00C896"
@@ -1912,7 +1913,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             price_tks = fund_tks  # yfinance usa mesmos tickers-base
 
             with st.spinner(f"Buscando dados fundamentalistas para {len(fund_tks)} ações…"):
-                fd_all    = _fund.batch_stocks(fund_tks)
+                # DB primário + Fundamentus validação/fallback (batch sem Status Invest)
+                fd_all    = _recon.batch_fund_fmt(fund_tks)
                 price_all = _fund.fetch_price_data(price_tks)
 
             for i in range(0, len(acoes), 3):
@@ -1976,7 +1978,10 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     if "ação" in p["classe"].lower() or "ações" in p["classe"].lower()
                     or "acoes" in p["classe"].lower() or p["classe"].lower() == "ações br"]
         for pos in acoes_td:
-            fd = _fund._scrape_stock(_base_td(pos["ticker"]))
+            # DB primário + Fundamentus fallback (escala Fundamentus para alerts_stock)
+            fd = _recon.get_multiplos_fund_fmt(_base_td(pos["ticker"]))
+            if not fd:
+                fd = _fund._scrape_stock(_base_td(pos["ticker"]))
             for a in _fund.alerts_stock(pos, fd):
                 all_alerts.append(a)
 

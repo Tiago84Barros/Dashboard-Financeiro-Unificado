@@ -23,6 +23,7 @@ import streamlit as st
 import yfinance as yf
 
 import core.b3_db as _db
+import core.data_reconciliacao as _recon
 from core.config import settings
 from core.utils import fmt_moeda
 
@@ -309,7 +310,12 @@ def _ind_card(label: str, valor: str, sub: str, cor: str) -> str:
     )
 
 
-def _build_indicators(mult: pd.Series) -> list[tuple]:
+def _build_indicators(mult: pd.Series, fontes: dict | None = None) -> list[tuple]:
+    """
+    Monta lista de indicadores para exibição em cards.
+    mult: pd.Series na escala do BD (decimais para campos %).
+    fontes: dict opcional com metadados de fonte (_fontes do reconciliacao).
+    """
     def _g(key: str):
         if mult.empty: return None
         kn = key.lower().replace(" ", "").replace("_", "").replace(".", "")
@@ -322,33 +328,48 @@ def _build_indicators(mult: pd.Series) -> list[tuple]:
                     continue
         return None
 
-    def _add(inds, lbl, v, sub, pct=True, inv=False, fmt_fn=None):
+    def _g_pct(key: str):
+        """Retorna valor % em escala display (×100 — BD armazena decimal)."""
+        v = _g(key)
+        return v * 100.0 if v is not None else None
+
+    def _badge(db_key: str) -> str:
+        if not fontes:
+            return ""
+        src = fontes.get(db_key, "")
+        return {"db_sobrescrito": " ⚠️", "web": " 🌐"}.get(src, "")
+
+    def _add(inds, lbl, v, sub, pct=True, inv=False, fmt_fn=None, db_key: str = ""):
+        badge = _badge(db_key)
+        lbl_b = lbl + badge
         if v is None:
             val, cor = "—", _COR_NEU
         else:
             val = fmt_fn(v) if fmt_fn else (_fp(v) if pct else f"{v:.2f}")
             cor = _cor_val(v, invert=inv)
-        inds.append((lbl, val, sub, cor))
+        inds.append((lbl_b, val, sub, cor))
 
     inds: list[tuple] = []
-    _add(inds, "Margem Líquida",     _g("Margem_Liquida"),         "% Lucro/Receita")
-    _add(inds, "Margem Operacional", _g("Margem_Operacional"),      "% EBIT/Receita")
-    _add(inds, "ROE",                _g("ROE"),                     "Retorno s/ PL")
-    _add(inds, "ROA",                _g("ROA"),                     "Retorno s/ Ativos")
-    _add(inds, "ROIC",               _g("ROIC"),                    "Retorno s/ Capital")
-    _add(inds, "Dividend Yield",     _g("DY"),                      "Dividendos/Preço")
+    _add(inds, "Margem Líquida",     _g_pct("Margem_Liquida"),         "% Lucro/Receita",      db_key="Margem_Liquida")
+    _add(inds, "Margem Operacional", _g_pct("Margem_Operacional"),      "% EBIT/Receita",       db_key="Margem_Operacional")
+    _add(inds, "ROE",                _g_pct("ROE"),                     "Retorno s/ PL",        db_key="ROE")
+    _add(inds, "ROA",                _g_pct("ROA"),                     "Retorno s/ Ativos",    db_key="ROA")
+    _add(inds, "ROIC",               _g_pct("ROIC"),                    "Retorno s/ Capital",   db_key="ROIC")
+    _add(inds, "Dividend Yield",     _g_pct("DY"),                      "Dividendos/Preço",     db_key="DY")
     _add(inds, "P/VP",
-         _g("P_VP") or _g("PVP"),
-         "Preço/Val. Patrimonial", pct=False, fmt_fn=lambda v: f"{v:.2f}x")
-    _add(inds, "Payout",             _g("Payout"),                  "% Lucro distribuído")
+         _g("P/VP") or _g("PVP"),
+         "Preço/Val. Patrimonial", pct=False, fmt_fn=lambda v: f"{v:.2f}x", db_key="P/VP")
+    _add(inds, "Payout",             _g_pct("Payout"),                  "% Lucro distribuído",  db_key="Payout")
     _add(inds, "P/L",
-         _g("P_L") or _g("PL"),
-         "Preço/Lucro", pct=False, fmt_fn=lambda v: f"{v:.1f}x")
-    _add(inds, "Endividamento",      _g("Endividamento_Total"),     "Dív. Total/PL",    inv=True)
-    _add(inds, "Alavancagem Fin.",   _g("Alavancagem_Financeira"),  "Ativos/PL",        inv=True)
+         _g("P/L") or _g("PL"),
+         "Preço/Lucro", pct=False, fmt_fn=lambda v: f"{v:.1f}x",   db_key="P/L")
+    _add(inds, "Endividamento",      _g("Endividamento_Total"),          "Dív. Total/PL",
+         pct=False, fmt_fn=lambda v: f"{v:.2f}x", inv=True,              db_key="Endividamento_Total")
+    _add(inds, "Alavancagem Fin.",   _g("Alavancagem_Financeira"),       "Ativos/PL",
+         pct=False, fmt_fn=lambda v: f"{v:.2f}x", inv=True)
     _add(inds, "Liquidez Corrente",
          _g("Liquidez_Corrente"),
-         "Ativo Circ/Passivo Circ", pct=False, fmt_fn=lambda v: f"{v:.2f}x")
+         "Ativo Circ/Passivo Circ", pct=False, fmt_fn=lambda v: f"{v:.2f}x", db_key="Liquidez_Corrente")
     return inds
 
 
@@ -411,10 +432,31 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Dados do banco ────────────────────────────────────────────────────────
+    # ── Dados do banco + reconciliação ───────────────────────────────────────
     with st.spinner(f"Carregando dados de {tk}…"):
-        df_fin = _db.load_demonstracoes(tk)
-        mult   = _db.load_multiplos(tk)
+        df_fin        = _db.load_demonstracoes(tk)
+        recon         = _recon.get_multiplos_reconciliados(tk)
+        mult          = _recon.reconciliacao_to_series(recon)
+        fontes_recon  = recon.get("_fontes", {})
+        alertas_recon = recon.get("_alertas", [])
+
+    # Mostra alertas de discrepância (se houver) — expansível
+    if alertas_recon:
+        with st.expander(
+            f"⚠️ {len(alertas_recon)} discrepância(s) detectada(s) entre BD e fontes web",
+            expanded=False,
+        ):
+            st.caption(
+                "O banco de dados divergiu das fontes web (Fundamentus / Status Invest) "
+                "nos indicadores abaixo. Os valores das fontes web foram usados como verdade."
+            )
+            for a in alertas_recon:
+                st.markdown(f"- {a}")
+
+    # Legenda de fontes — só exibida se houver mix de fontes
+    fontes_set = set(fontes_recon.values()) - {"sem_dados"}
+    if len(fontes_set) > 1 or "web" in fontes_set or "db_sobrescrito" in fontes_set:
+        st.caption("🗄️ BD  · 🌐 Web (sem dado no BD)  · ⚠️ Web sobrescreveu BD (discrepância)")
 
     sem_banco = df_fin.empty and mult.empty
     if sem_banco:
@@ -526,7 +568,10 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         'margin-bottom:8px;">🔢 Múltiplos Fundamentalistas</div>',
         unsafe_allow_html=True,
     )
-    indicadores = _build_indicators(mult if not sem_banco else pd.Series(dtype=object))
+    indicadores = _build_indicators(
+        mult if not sem_banco else pd.Series(dtype=object),
+        fontes=fontes_recon if not sem_banco else None,
+    )
     if any(v != "—" for _, v, _, _ in indicadores):
         for i in range(0, len(indicadores), 4):
             chunk = indicadores[i:i+4]
@@ -1237,7 +1282,8 @@ def _chamar_openai(prompt_sistema: str, prompt_usuario: str,
 
 def _resumo_financeiro(ticker: str) -> str:
     """Monta um resumo textual dos dados financeiros de uma empresa para enviar à IA."""
-    mult = _db.load_multiplos(ticker)
+    recon  = _recon.get_multiplos_reconciliados(ticker)
+    mult   = _recon.reconciliacao_to_series(recon)
     df_dre = _db.load_demonstracoes(ticker)
 
     linhas: list[str] = [f"=== {ticker} ==="]
