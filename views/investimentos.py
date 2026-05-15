@@ -768,7 +768,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
         if cashflow:
             st.plotly_chart(_fig_evolucao(cashflow, total),
                             use_container_width=True,
-                            config={"displayModeBar": False})
+                            config={"displayModeBar": False},
+                            key="dash_evolucao")
             st.caption("Evolução estimada com base no fluxo de caixa mensal acumulado.")
         else:
             st.caption("Sem dados de fluxo de caixa.")
@@ -786,7 +787,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
         )
         st.plotly_chart(_fig_radar(carteira, n_efetivo, pct_ext),
                         use_container_width=True,
-                        config={"displayModeBar": False})
+                        config={"displayModeBar": False},
+                        key="dash_radar")
         st.caption("0 = mínimo · 10 = máximo para cada dimensão")
 
     with col_acoes:
@@ -824,7 +826,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
             )
             st.plotly_chart(_fig_donut_classes(por_classe),
                             use_container_width=True,
-                            config={"displayModeBar": False})
+                            config={"displayModeBar": False},
+                            key="dash_donut")
         with col_barras:
             st.markdown(
                 '<div style="font-size:0.83rem;color:#9CA3AF;'
@@ -833,7 +836,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
             )
             st.plotly_chart(_fig_barras_classes(por_classe),
                             use_container_width=True,
-                            config={"displayModeBar": False})
+                            config={"displayModeBar": False},
+                            key="dash_barras_classes")
     else:
         st.caption("Sem dados de alocação por classe.")
 
@@ -901,7 +905,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
         with col_chart:
             st.plotly_chart(_fig_dependencias_macro(deps),
                             use_container_width=True,
-                            config={"displayModeBar": False})
+                            config={"displayModeBar": False},
+                            key="dash_macro_deps")
         with col_leg:
             st.markdown(
                 '<div style="font-size:0.78rem;color:#718096;padding-top:16px;">'
@@ -956,7 +961,8 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
         st.markdown("<br>", unsafe_allow_html=True)
         st.plotly_chart(_fig_evolucao_patrimonial(snapshots),
                         use_container_width=True,
-                        config={"displayModeBar": False})
+                        config={"displayModeBar": False},
+                        key="hist_evolucao_patrimonial")
         st.caption(
             "Valor de Mercado estimado: custo acumulado × rentabilidade atual da carteira. "
             "Com Dividendos = Mercado + proventos históricos recebidos."
@@ -1011,7 +1017,8 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
             showlegend=False,
         )
         st.plotly_chart(fig_prov, use_container_width=True,
-                        config={"displayModeBar": False})
+                        config={"displayModeBar": False},
+                        key="hist_proventos_bar")
 
         # Totalizador por ano abaixo do gráfico (sempre visível)
         if visao_prov == "Anual":
@@ -1056,6 +1063,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
             _fig_aportes(fluxo_mensal, visao_ap),
             use_container_width=True,
             config={"displayModeBar": False},
+            key="hist_aportes",
         )
 
         # Totalizador
@@ -1372,7 +1380,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         if por_classe:
             st.plotly_chart(_fig_donut_classes(por_classe),
                             use_container_width=True,
-                            config={"displayModeBar": False})
+                            config={"displayModeBar": False},
+                            key="analise_donut")
         else:
             st.caption("Sem dados de alocação.")
 
@@ -1381,7 +1390,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         if posicoes:
             st.plotly_chart(_fig_top15(posicoes),
                             use_container_width=True,
-                            config={"displayModeBar": False})
+                            config={"displayModeBar": False},
+                            key="analise_top15")
         else:
             st.caption("Sem posições.")
 
