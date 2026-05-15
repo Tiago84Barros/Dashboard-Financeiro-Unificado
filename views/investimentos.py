@@ -1248,14 +1248,146 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
                 st.markdown("<br>", unsafe_allow_html=True)
 
 
+def _fig_top15(posicoes: list) -> go.Figure:
+    top = sorted(posicoes, key=lambda p: p["total_investido"], reverse=True)[:15]
+    top = list(reversed(top))
+    nomes = [p["nome"][:24] if len(p["nome"]) > 24 else p["nome"] for p in top]
+    vals  = [p["total_investido"] for p in top]
+    cores = [p["cor"] for p in top]
+    texts = [f"R$ {v/1000:.1f}k" if v >= 1000 else fmt_moeda(v) for v in vals]
+
+    fig = go.Figure(go.Bar(
+        y=nomes, x=vals,
+        orientation="h",
+        marker_color=cores,
+        text=texts,
+        textposition="outside",
+        textfont={"size": 10, "color": "#E2E8F0"},
+        hovertemplate="<b>%{y}</b><br>Custo: R$ %{x:,.0f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 10, "b": 10, "l": 0, "r": 60},
+        height=420,
+        xaxis={"showgrid": True, "gridcolor": "#1E2533",
+               "tickformat": ",.0f", "tickprefix": "R$ "},
+        yaxis={"showgrid": False, "automargin": True, "tickfont": {"size": 10}},
+        showlegend=False,
+    )
+    return fig
+
+
+def _kpi_classe(cls: dict) -> str:
+    """Card compacto de classe de ativo para a linha de resumo."""
+    cor  = cls["cor"]
+    val  = f"{cls['pct_carteira']:.1f}%"
+    sub  = (
+        f"{cls['num_ativos']} ativo{'s' if cls['num_ativos'] != 1 else ''}"
+        f" · R$ {cls['valor_mercado']/1000:.0f}k"
+    )
+    return (
+        f'<div style="background:#12151E;border:1px solid #1E2533;'
+        f'border-radius:10px;padding:14px 12px 10px;height:100%;">'
+        f'<div style="font-size:0.55rem;font-weight:800;text-transform:uppercase;'
+        f'letter-spacing:0.13em;color:#4A5568;margin-bottom:6px;">% {cls["nome"]}</div>'
+        f'<div style="font-size:1.50rem;font-weight:800;color:{cor};'
+        f'letter-spacing:-0.02em;line-height:1.1;margin-bottom:4px;">{val}</div>'
+        f'<div style="font-size:0.68rem;color:#4A5568;">{sub}</div>'
+        f'</div>'
+    )
+
+
 def _tab_analise(carteira: dict, proventos: dict) -> None:
     posicoes   = carteira.get("posicoes", [])
     por_classe = carteira.get("por_classe", [])
     por_setor  = carteira.get("por_setor",  [])
     n_efetivo  = _calc_n_efetivo(posicoes)
 
+    total_inv = carteira["total_investido"]
+    total_mkt = carteira["total_mercado"]
+    rentab    = carteira["rentabilidade_total_pct"]
+    renda_12m = proventos.get("total_ano", 0.0)
+
     st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo_orig("📊", "Análise de Concentração")
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
+        '<span style="font-size:2rem">🔍</span>'
+        '<h2 style="font-size:1.80rem;font-weight:800;color:#E2E8F0;margin:0;">'
+        'Análise do Portfólio</h2>'
+        '</div>'
+        '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
+        '📌 Indicadores quantitativos para apoio à tomada de decisão. '
+        '<b style="color:#CBD5E0;">Não constitui recomendação de investimento.</b> '
+        'Avalie sempre o contexto macro, a qualidade da gestão e seu perfil de risco.'
+        '</p>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Resumo do Portfólio ───────────────────────────────────────────────────
+    _secao_titulo_orig("📋", "Resumo do Portfólio")
+
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+    cor_r = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
+    seta_r = "▲" if rentab >= 0 else "▼"
+    with c1:
+        st.markdown(_kpi(
+            "Valor Total Investido", fmt_moeda(total_inv),
+            f"{carteira['num_ativos']} ativos na carteira", "#E2E8F0",
+        ), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_kpi(
+            "Valor de Mercado", fmt_moeda(total_mkt),
+            "Ativos com cotação disponível", _COR_INFO,
+        ), unsafe_allow_html=True)
+    with c3:
+        st.markdown(_kpi(
+            "Rentabilidade Acumulada",
+            f"{seta_r} {abs(rentab):.1f}%",
+            "Mercado vs custo (ativos com cotação)", cor_r,
+        ), unsafe_allow_html=True)
+    with c4:
+        st.markdown(_kpi(
+            "Renda Total Recebida (12M)", fmt_moeda(renda_12m),
+            "Dividendos + JCP + Rendimentos", _COR_ALERTA,
+        ), unsafe_allow_html=True)
+
+    if por_classe:
+        st.markdown("<br>", unsafe_allow_html=True)
+        n_cls = min(len(por_classe), 6)
+        cols_cls = st.columns(n_cls, gap="small")
+        for i, cls in enumerate(por_classe[:n_cls]):
+            with cols_cls[i]:
+                st.markdown(_kpi_classe(cls), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Distribuição + Top 15 ─────────────────────────────────────────────────
+    col_donut, col_top15 = st.columns([1, 1], gap="medium")
+
+    with col_donut:
+        _secao_titulo_orig("🥧", "Distribuição por Classe de Ativo")
+        if por_classe:
+            st.plotly_chart(_fig_donut_classes(por_classe),
+                            use_container_width=True,
+                            config={"displayModeBar": False})
+        else:
+            st.caption("Sem dados de alocação.")
+
+    with col_top15:
+        _secao_titulo_orig("🏆", "Top 15 Posições por Custo")
+        if posicoes:
+            st.plotly_chart(_fig_top15(posicoes),
+                            use_container_width=True,
+                            config={"displayModeBar": False})
+        else:
+            st.caption("Sem posições.")
+
+    # ── Concentração por Classe e Setor ───────────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    _secao_titulo_orig("📊", "Concentração")
 
     col_cls, col_set = st.columns(2, gap="medium")
 
@@ -1305,7 +1437,11 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             for s in por_setor[:8]:
                 pct_s = round(s["valor_mercado"] / total_setor * 100, 1)
                 w     = min(pct_s, 100)
-                barra_cor = _COR_NEGATIVO if pct_s >= 40 else _COR_ALERTA if pct_s >= 25 else _COR_INFO
+                barra_cor = (
+                    _COR_NEGATIVO if pct_s >= 40 else
+                    _COR_ALERTA   if pct_s >= 25 else
+                    _COR_INFO
+                )
                 st.markdown(
                     f'<div style="margin-bottom:10px;">'
                     f'<div style="display:flex;justify-content:space-between;'
@@ -1325,23 +1461,24 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         else:
             st.caption("Sem dados de setor.")
 
+    # ── Proventos por Ativo ───────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo_orig("💵", "Proventos por Ativo")
 
     por_ativo = proventos.get("por_ativo", [])
     if por_ativo:
         df_prov = pd.DataFrame([{
-            "Ticker":       a["ticker"],
-            "Proventos":    a["total"],
-            "Eventos":      a["num_eventos"],
-            "Último":       a.get("ultimo_pagamento") or "—",
+            "Ticker":   a["ticker"],
+            "Proventos": fmt_moeda(a["total"]),
+            "Eventos":  a["num_eventos"],
+            "Último":   a.get("ultimo_pagamento") or "—",
         } for a in por_ativo[:20]])
         st.dataframe(
             df_prov,
             column_config={
                 "Ticker":    st.column_config.TextColumn("Ticker"),
-                "Proventos": st.column_config.NumberColumn("Proventos", format="R$ %.2f"),
-                "Eventos":   st.column_config.NumberColumn("Eventos",   format="%d"),
+                "Proventos": st.column_config.TextColumn("Proventos"),
+                "Eventos":   st.column_config.NumberColumn("Eventos", format="%d"),
                 "Último":    st.column_config.TextColumn("Último Pagamento"),
             },
             hide_index=True,
