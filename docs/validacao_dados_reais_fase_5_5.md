@@ -226,8 +226,8 @@ A tabela `financial_goals` está **vazia** (0 registros para o usuário).
 | Etapa | Descrição |
 |-------|-----------|
 | 6.1 | DDL `010_cards_schema.sql` — tabelas `cards`, `card_bills`, `card_transactions` |
-| 6.2 | Implementar `core/cartao.py` + `pages/cartao.py` |
-| 6.3 | Implementar `core/ir.py` + `pages/ir.py` (ganho de capital, DARF) |
+| 6.2 | Implementar `core/cartao.py` + `views/cartao.py` |
+| 6.3 | Implementar `core/ir.py` + `views/ir.py` (ganho de capital, DARF) |
 | 6.4 | Adicionar rotas em `app.py` |
 
 ---

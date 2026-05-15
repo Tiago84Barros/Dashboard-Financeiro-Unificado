@@ -95,7 +95,7 @@ modulo_nome = _ROTAS.get(menu)
 
 if modulo_nome:
     try:
-        modulo = importlib.import_module(f"pages.{modulo_nome}")
+        modulo = importlib.import_module(f"views.{modulo_nome}")
         modulo.render()
     except Exception as exc:
         mensagem_erro(

@@ -217,8 +217,8 @@ Siga esta sequência para ativar dados reais sem quebrar o app.
 
 | Verificação | Resultado |
 |------------|:---------:|
-| 11 rotas em `app.py` com `pages/X.py` correspondente | ✅ |
-| 11 arquivos `pages/X.py` com função `render()` | ✅ |
+| 11 rotas em `app.py` com `views/X.py` correspondente | ✅ |
+| 11 arquivos `views/X.py` com função `render()` | ✅ |
 | 16 módulos (`core/`, `design/`, `etl/`) sem erros de sintaxe | ✅ |
 | `py_compile` em todos os módulos | ✅ 0 erros |
 | Nenhuma credencial hardcoded | ✅ |
@@ -256,17 +256,17 @@ Siga esta sequência para ativar dados reais sem quebrar o app.
 |-------|-----------|-------------|
 | 6.1 | Criar DDL `supabase_unificado/schema/010_cards_schema.sql` | Nenhuma (só precisa de revisão humana antes de executar) |
 | 6.2 | Implementar `core/cartao.py` | DDL executado |
-| 6.3 | Implementar `pages/cartao.py` | `core/cartao.py` |
+| 6.3 | Implementar `views/cartao.py` | `core/cartao.py` |
 | 6.4 | Implementar `core/ir.py` (ganho de capital, DARF) | `investment_transactions` com campo `type = 'sell'` |
-| 6.5 | Implementar `pages/ir.py` | `core/ir.py` |
+| 6.5 | Implementar `views/ir.py` | `core/ir.py` |
 | 6.6 | Adicionar rotas em `app.py` | Ambas as páginas implementadas |
 
 ### Fase 7 — Fundamentalistas + Macro
 
 | Etapa | Descrição |
 |-------|-----------|
-| 7.1 | Completar `pages/empresas_eua.py` com P/L, EPS, market cap via `yfinance.Ticker.info` |
-| 7.2 | Completar `pages/macro.py` com séries históricas via API BCB (`api.bcb.gov.br`) ou yfinance |
+| 7.1 | Completar `views/empresas_eua.py` com P/L, EPS, market cap via `yfinance.Ticker.info` |
+| 7.2 | Completar `views/macro.py` com séries históricas via API BCB (`api.bcb.gov.br`) ou yfinance |
 | 7.3 | Popular tabela `multiplos` com dados de fundamentalistas B3 |
 
 ### Backlog técnico (não blocante)

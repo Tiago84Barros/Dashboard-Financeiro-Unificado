@@ -87,22 +87,22 @@ Acesse em: [http://localhost:8501](http://localhost:8501)
 
 | Tela | Módulo | Dados reais |
 |------|--------|:-----------:|
-| Dashboard Geral | `pages/dashboard_geral.py` | ✅ |
-| Controle Financeiro | `pages/controle_financeiro.py` | ✅ — 251 transações, 38 categorias |
-| Metas | `pages/metas.py` | ✅ — CRUD completo, aporte sugerido |
-| Alertas | `pages/alertas.py` | ✅ — 6 regras automáticas |
-| Investimentos | `pages/investimentos.py` | ✅ — 1.351 transações, 4 tabs |
-| Carteira | `pages/carteira.py` | ✅ — 34 posições, donut por classe/setor |
-| Proventos | `pages/proventos.py` | ✅ — 517 eventos, filtros por ticker/tipo/ano |
-| Empresas B3 | `pages/empresas_b3.py` | ✅ — 82 ativos com filtros |
-| Configurações | `pages/configuracoes.py` | ✅ — banco, ETL, cotações yfinance, segurança |
+| Dashboard Geral | `views/dashboard_geral.py` | ✅ |
+| Controle Financeiro | `views/controle_financeiro.py` | ✅ — 251 transações, 38 categorias |
+| Metas | `views/metas.py` | ✅ — CRUD completo, aporte sugerido |
+| Alertas | `views/alertas.py` | ✅ — 6 regras automáticas |
+| Investimentos | `views/investimentos.py` | ✅ — 1.351 transações, 4 tabs |
+| Carteira | `views/carteira.py` | ✅ — 34 posições, donut por classe/setor |
+| Proventos | `views/proventos.py` | ✅ — 517 eventos, filtros por ticker/tipo/ano |
+| Empresas B3 | `views/empresas_b3.py` | ✅ — 82 ativos com filtros |
+| Configurações | `views/configuracoes.py` | ✅ — banco, ETL, cotações yfinance, segurança |
 
 ### Implementadas parcialmente
 
 | Tela | Módulo | O que funciona | O que está pendente |
 |------|--------|----------------|---------------------|
-| Empresas EUA | `pages/empresas_eua.py` | Filtra ativos USD do banco; tabela com cotação | P/L, EPS, market cap — Fase 7 |
-| Cenário Macroeconômico | `pages/macro.py` | Exibe referências SELIC/IPCA/câmbio; benchmarks do banco | Séries históricas via API BCB — Fase 7 |
+| Empresas EUA | `views/empresas_eua.py` | Filtra ativos USD do banco; tabela com cotação | P/L, EPS, market cap — Fase 7 |
+| Cenário Macroeconômico | `views/macro.py` | Exibe referências SELIC/IPCA/câmbio; benchmarks do banco | Séries históricas via API BCB — Fase 7 |
 
 ### Planejadas (ainda não existem)
 
@@ -135,7 +135,7 @@ Dashboard-Financeiro-Unificado/
 │   ├── alertas.py                ← 6 regras de alertas automáticas
 │   └── empresas.py               ← ativos B3 e EUA
 │
-├── pages/                        ← módulo de cada tela (cada um expõe render())
+├── views/                        ← módulo de cada tela (cada um expõe render())
 │   ├── dashboard_geral.py
 │   ├── controle_financeiro.py
 │   ├── metas.py
