@@ -49,11 +49,11 @@ with st.sidebar:
 
     # Seção: Finanças
     st.markdown('<div class="nav-section">Finanças</div>', unsafe_allow_html=True)
-    opcoes_financas = ["💰 Controle Financeiro", "🔔 Alertas"]
+    opcoes_financas = ["💰 Controle Financeiro"]
 
     # Seção: Investimentos
     st.markdown('<div class="nav-section">Investimentos</div>', unsafe_allow_html=True)
-    opcoes_invest = ["📈 Investimentos"]
+    opcoes_invest = ["📈 Investimentos", "🔔 Alertas"]
 
     # Seção: Sistema
     st.markdown('<div class="nav-section">Sistema</div>', unsafe_allow_html=True)
