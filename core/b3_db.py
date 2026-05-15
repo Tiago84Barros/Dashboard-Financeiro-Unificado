@@ -141,3 +141,85 @@ def load_multiplos(ticker: str) -> pd.Series:
     if df.empty:
         return pd.Series(dtype=object)
     return df.iloc[0]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_multiplos_todos() -> pd.DataFrame:
+    """Retorna o múltiplo mais recente de TODOS os tickers (para ranking e avançada)."""
+    df = _q("""
+        SELECT DISTINCT ON ("Ticker")
+               "Ticker", data,
+               "P/L", "P/VP", "DY", "ROE", "ROA", "ROIC",
+               "Margem_Liquida", "Margem_Operacional",
+               "Endividamento_Total", "Liquidez_Corrente",
+               "EV_EBIT", "P_FCO", "Payout"
+        FROM public.multiplos
+        WHERE "Ticker" IS NOT NULL
+        ORDER BY "Ticker", data DESC
+    """)
+    if df.empty:
+        return df
+    df["Ticker"] = (
+        df["Ticker"].astype(str)
+        .str.replace(".SA", "", regex=False)
+        .str.strip().str.upper()
+    )
+    for c in [col for col in df.columns if col not in ("Ticker", "data")]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_multiplos_historico(ticker: str) -> pd.DataFrame:
+    """Retorna todo o histórico de múltiplos para um ticker (ordem crescente)."""
+    tk  = ticker.strip().upper().replace(".SA", "")
+    tks = f"{tk}.SA"
+    df  = _q(
+        """
+        SELECT *
+        FROM public.multiplos
+        WHERE "Ticker" = :tk OR "Ticker" = :tks
+        ORDER BY data ASC
+        """,
+        {"tk": tk, "tks": tks},
+    )
+    if df.empty:
+        return df
+    data_col = next((c for c in df.columns if c.lower() == "data"), None)
+    if data_col:
+        df[data_col] = pd.to_datetime(df[data_col], errors="coerce")
+        df = df.dropna(subset=[data_col]).sort_values(data_col)
+        if data_col != "Data":
+            df = df.rename(columns={data_col: "Data"})
+    return df
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_portfolio_snapshot() -> tuple[dict, pd.DataFrame]:
+    """Retorna o snapshot mais recente (header + items).
+    Retorna ({}, DataFrame vazio) se a tabela não existir."""
+    snap = _q("""
+        SELECT id, plan_hash, selic_ref, created_at
+        FROM public.portfolio_snapshots
+        ORDER BY created_at DESC
+        LIMIT 1
+    """)
+    if snap.empty:
+        return {}, pd.DataFrame()
+    header = snap.iloc[0].to_dict()
+    items = _q(
+        """
+        SELECT ticker, weight, segmento
+        FROM public.portfolio_snapshot_items
+        WHERE snapshot_id = :sid
+        ORDER BY weight DESC
+        """,
+        {"sid": header["id"]},
+    )
+    if not items.empty:
+        items["ticker"] = (
+            items["ticker"].astype(str)
+            .str.replace(".SA", "", regex=False)
+            .str.strip().str.upper()
+        )
+    return header, items

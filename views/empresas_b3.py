@@ -11,6 +11,10 @@ Logos:           thefintz/icones-b3 CDN (público, sem auth)
 """
 from __future__ import annotations
 
+import html as _html
+import json
+import re
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -19,6 +23,7 @@ import streamlit as st
 import yfinance as yf
 
 import core.b3_db as _db
+from core.config import settings
 from core.utils import fmt_moeda
 
 # ── Constantes ────────────────────────────────────────────────────────────────
@@ -64,6 +69,28 @@ _CSS = """
                   letter-spacing:.06em;margin-bottom:4px; }
 .div-card-value { font-size:26px;font-weight:900;line-height:1.1; }
 .div-card-sub   { font-size:11px;opacity:.5;margin-top:3px; }
+/* Avançada */
+.av-filter-chip {
+    display:inline-block;background:#1A1F2E;border:1px solid #2D3748;
+    border-radius:20px;padding:4px 12px;font-size:0.72rem;color:#CBD5E0;
+    margin:2px;cursor:pointer;transition:all .15s;
+}
+.rank-bar-wrap { background:#1E2533;border-radius:6px;height:8px;overflow:hidden;margin-top:4px; }
+.rank-bar-fill { height:8px;border-radius:6px; }
+/* Portfólio */
+.score-badge {
+    display:inline-flex;align-items:center;justify-content:center;
+    width:44px;height:44px;border-radius:50%;font-size:0.85rem;font-weight:800;
+    flex-shrink:0;
+}
+/* IA */
+.ia-block {
+    background:#0F1117;border:1px solid #1E2533;border-radius:12px;
+    padding:16px 18px;margin-bottom:12px;
+}
+.ia-block-title { font-size:0.68rem;font-weight:800;text-transform:uppercase;
+                  letter-spacing:.1em;color:#4A5568;margin-bottom:8px; }
+.ia-block-body  { font-size:0.82rem;color:#CBD5E0;line-height:1.6; }
 </style>
 """
 
@@ -721,6 +748,732 @@ def _tab_dividendos() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — ANÁLISE AVANÇADA
+# ══════════════════════════════════════════════════════════════════════════════
+
+_INDS_DISP = {
+    "P/L":               ("P/L", False),    # (coluna_db, menor_é_melhor)
+    "P/VP":              ("P/VP", False),
+    "DY (%)":            ("DY", True),
+    "ROE (%)":           ("ROE", True),
+    "ROIC (%)":          ("ROIC", True),
+    "Margem Líq (%)":    ("Margem_Liquida", True),
+    "Margem Op (%)":     ("Margem_Operacional", True),
+    "EV/EBIT":           ("EV_EBIT", False),
+    "P/FCO":             ("P_FCO", False),
+    "Liq. Corrente":     ("Liquidez_Corrente", True),
+    "Endividamento":     ("Endividamento_Total", False),
+}
+
+
+def _tab_avancada(df_set: pd.DataFrame) -> None:
+    st.markdown("### 📊 Análise Avançada")
+    st.caption("Filtre por setor e compare múltiplos fundamentalistas entre empresas.")
+
+    if df_set.empty:
+        st.info("Banco de dados não configurado — configure `SUPABASE_DB_URL` no `.env`.")
+        return
+
+    # ── Filtros ────────────────────────────────────────────────────────────────
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        setores = ["Todos"] + sorted(df_set["SETOR"].dropna().unique().tolist())
+        setor_sel = st.selectbox("Setor", setores, key="av_setor")
+    df_f = df_set if setor_sel == "Todos" else df_set[df_set["SETOR"] == setor_sel]
+    with c2:
+        subs = ["Todos"] + sorted(df_f["SUBSETOR"].dropna().unique().tolist())
+        sub_sel = st.selectbox("Subsetor", subs, key="av_sub")
+    df_f = df_f if sub_sel == "Todos" else df_f[df_f["SUBSETOR"] == sub_sel]
+    with c3:
+        segs = ["Todos"] + sorted(df_f["SEGMENTO"].dropna().unique().tolist())
+        seg_sel = st.selectbox("Segmento", segs, key="av_seg")
+    df_f = df_f if seg_sel == "Todos" else df_f[df_f["SEGMENTO"] == seg_sel]
+
+    tickers_filtrados = df_f["ticker"].str.upper().str.replace(".SA","",regex=False).unique().tolist()
+    st.caption(f"{len(tickers_filtrados)} empresas no filtro selecionado.")
+
+    # ── Carregar múltiplos ─────────────────────────────────────────────────────
+    with st.spinner("Carregando múltiplos…"):
+        mult_todos = _db.load_multiplos_todos()
+
+    if mult_todos.empty:
+        st.warning("Tabela `multiplos` não encontrada no banco.")
+        return
+
+    mult = mult_todos[mult_todos["Ticker"].isin(tickers_filtrados)].copy()
+    # join com nome da empresa
+    nome_map = df_f.set_index("ticker")["nome_empresa"].to_dict()
+    mult["Empresa"] = mult["Ticker"].map(nome_map).fillna(mult["Ticker"])
+
+    if mult.empty:
+        st.info("Nenhum dado de múltiplos para o filtro selecionado.")
+        return
+
+    st.divider()
+
+    # ── Tabela de ranking ──────────────────────────────────────────────────────
+    st.markdown("#### 📋 Tabela Comparativa")
+    ind_disp_label = st.selectbox(
+        "Ordenar por", list(_INDS_DISP.keys()), index=3, key="av_ord"
+    )
+    col_ord, ord_asc = _INDS_DISP[ind_disp_label]
+
+    cols_tabela = ["Ticker", "Empresa", "P/L", "P/VP", "DY", "ROE",
+                   "ROIC", "Margem_Liquida", "EV_EBIT", "Liquidez_Corrente"]
+    cols_exist = [c for c in cols_tabela if c in mult.columns]
+    tbl = mult[cols_exist].copy()
+    if col_ord in tbl.columns:
+        tbl = tbl.sort_values(col_ord, ascending=ord_asc, na_position="last")
+
+    tbl_show = tbl.rename(columns={
+        "DY": "DY%", "ROE": "ROE%", "ROIC": "ROIC%",
+        "Margem_Liquida": "Marg.Liq%", "EV_EBIT": "EV/EBIT",
+        "Liquidez_Corrente": "Liq.Corr",
+    })
+    pct_cols = [c for c in ["DY%","ROE%","ROIC%","Marg.Liq%"] if c in tbl_show.columns]
+    for c in pct_cols:
+        tbl_show[c] = tbl_show[c] * 100  # converte para %
+    st.dataframe(
+        tbl_show.set_index("Ticker").style
+            .format({c: "{:.1f}%" for c in pct_cols}, na_rep="—")
+            .format({c: "{:.1f}x" for c in ["P/L","P/VP","EV/EBIT","Liq.Corr"]
+                     if c in tbl_show.columns}, na_rep="—")
+            .background_gradient(subset=pct_cols, cmap="RdYlGn",
+                                  vmin=0, vmax=30)
+            .background_gradient(subset=[c for c in ["P/L","P/VP"] if c in tbl_show.columns],
+                                  cmap="RdYlGn_r", vmin=0, vmax=30),
+        use_container_width=True,
+        height=420,
+    )
+
+    st.divider()
+
+    # ── Gráfico de barras — ranking por indicador ──────────────────────────────
+    st.markdown("#### 📊 Ranking por Indicador")
+    ca, cb = st.columns([2, 1])
+    with ca:
+        ind_bar = st.selectbox("Indicador", list(_INDS_DISP.keys()), index=3, key="av_bar")
+    with cb:
+        top_n = st.number_input("Top N empresas", min_value=5, max_value=50,
+                                value=20, step=5, key="av_topn")
+
+    col_bar, asc_bar = _INDS_DISP[ind_bar]
+    if col_bar in mult.columns:
+        bar_df = mult[["Ticker", "Empresa", col_bar]].dropna().copy()
+        bar_df = bar_df.sort_values(col_bar, ascending=asc_bar).head(int(top_n))
+        pct_bar = "%" if ind_bar in ("DY (%)","ROE (%)","ROIC (%)","Margem Líq (%)","Margem Op (%)") else ""
+        if pct_bar:
+            bar_df[col_bar] = bar_df[col_bar] * 100
+        fig = px.bar(
+            bar_df, x="Ticker", y=col_bar, text=col_bar,
+            color=col_bar,
+            color_continuous_scale=["#FC5C7D","#F6C90E","#00C896"] if not asc_bar
+                                  else ["#00C896","#F6C90E","#FC5C7D"],
+            labels={col_bar: ind_bar},
+            height=380,
+        )
+        fig.update_traces(
+            texttemplate=f"%{{text:.1f}}{pct_bar}",
+            textposition="outside",
+        )
+        fig.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font_color="#9CA3AF", coloraxis_showscale=False,
+            margin={"t": 20, "b": 40, "l": 0, "r": 0},
+            xaxis={"showgrid": False},
+            yaxis={"showgrid": True, "gridcolor": "#1E2533"},
+        )
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False},
+                        key="av_bar_fig")
+
+    st.divider()
+
+    # ── Scatter — cruzamento de dois indicadores ───────────────────────────────
+    st.markdown("#### 🔵 Análise de Dispersão")
+    sc1, sc2, sc3 = st.columns(3)
+    with sc1:
+        eixo_x = st.selectbox("Eixo X", list(_INDS_DISP.keys()), index=0, key="av_sx")
+    with sc2:
+        eixo_y = st.selectbox("Eixo Y", list(_INDS_DISP.keys()), index=2, key="av_sy")
+    with sc3:
+        eixo_s = st.selectbox("Tamanho", list(_INDS_DISP.keys()), index=3, key="av_ss")
+
+    col_x = _INDS_DISP[eixo_x][0]
+    col_y = _INDS_DISP[eixo_y][0]
+    col_s = _INDS_DISP[eixo_s][0]
+    cols_sc = [c for c in [col_x, col_y, col_s, "Ticker", "Empresa"] if c in mult.columns]
+    sc_df = mult[cols_sc].dropna(subset=[c for c in [col_x, col_y] if c in cols_sc]).copy()
+
+    if len(sc_df) > 1:
+        # Linhas de mediana
+        med_x = sc_df[col_x].median() if col_x in sc_df else None
+        med_y = sc_df[col_y].median() if col_y in sc_df else None
+
+        # converter pct
+        for c_label, c_col in [(eixo_x, col_x), (eixo_y, col_y)]:
+            if "%" in c_label and c_col in sc_df.columns:
+                sc_df[c_col] = sc_df[c_col] * 100
+        if col_s in sc_df.columns and "%" in eixo_s:
+            sc_df[col_s] = sc_df[col_s].abs() * 100
+
+        size_col = col_s if col_s in sc_df.columns else None
+        fig_sc = px.scatter(
+            sc_df, x=col_x, y=col_y,
+            size=size_col if size_col else None,
+            text="Ticker",
+            labels={col_x: eixo_x, col_y: eixo_y},
+            color_discrete_sequence=[_COR_INF],
+            height=440,
+        )
+        fig_sc.update_traces(textposition="top center", textfont_size=9)
+        if med_x is not None:
+            pct_x = 100 if "%" in eixo_x else 1
+            fig_sc.add_vline(x=med_x * pct_x, line_dash="dash",
+                             line_color="#4A5568", annotation_text="Mediana X")
+        if med_y is not None:
+            pct_y = 100 if "%" in eixo_y else 1
+            fig_sc.add_hline(y=med_y * pct_y, line_dash="dash",
+                             line_color="#4A5568", annotation_text="Mediana Y")
+        fig_sc.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font_color="#9CA3AF",
+            margin={"t": 20, "b": 40, "l": 0, "r": 0},
+            xaxis={"showgrid": True, "gridcolor": "#1E2533"},
+            yaxis={"showgrid": True, "gridcolor": "#1E2533"},
+        )
+        st.plotly_chart(fig_sc, use_container_width=True,
+                        config={"displayModeBar": False}, key="av_scatter")
+    else:
+        st.info("Dados insuficientes para dispersão com o filtro atual.")
+
+    st.divider()
+
+    # ── Histórico de múltiplos — empresa única ─────────────────────────────────
+    st.markdown("#### 📈 Evolução Histórica de Múltiplos")
+    col_tk, col_ind = st.columns(2)
+    with col_tk:
+        tk_hist = st.selectbox(
+            "Empresa", sorted(mult["Ticker"].dropna().tolist()), key="av_hist_tk"
+        )
+    with col_ind:
+        ind_hist = st.multiselect(
+            "Indicadores", list(_INDS_DISP.keys()),
+            default=["ROE (%)", "ROIC (%)"],
+            key="av_hist_ind",
+        )
+
+    if tk_hist and ind_hist:
+        with st.spinner(f"Carregando histórico {tk_hist}…"):
+            h_df = _db.load_multiplos_historico(tk_hist)
+        if h_df.empty:
+            st.info("Sem histórico disponível para este ticker.")
+        else:
+            fig_h = go.Figure()
+            for lbl in ind_hist:
+                c_h, _ = _INDS_DISP[lbl]
+                if c_h in h_df.columns:
+                    vals = pd.to_numeric(h_df[c_h], errors="coerce")
+                    if "%" in lbl:
+                        vals = vals * 100
+                    fig_h.add_trace(go.Scatter(
+                        x=h_df["Data"], y=vals,
+                        name=lbl, mode="lines+markers",
+                        line={"width": 2},
+                    ))
+            fig_h.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#9CA3AF", height=340, legend={"orientation": "h"},
+                margin={"t": 20, "b": 20, "l": 0, "r": 0},
+                xaxis={"showgrid": False},
+                yaxis={"showgrid": True, "gridcolor": "#1E2533"},
+            )
+            st.plotly_chart(fig_h, use_container_width=True,
+                            config={"displayModeBar": False}, key="av_hist_fig")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — RANKING & PORTFÓLIO
+# ══════════════════════════════════════════════════════════════════════════════
+
+_SCORE_PESOS = {
+    "ROE":              (0.25, True),    # (peso, maior_é_melhor)
+    "ROIC":             (0.25, True),
+    "DY":               (0.20, True),
+    "Margem_Liquida":   (0.15, True),
+    "Margem_Operacional": (0.10, True),
+    "Endividamento_Total": (0.05, False),  # menor é melhor
+}
+
+
+def _calcular_score(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula score composto 0-100 por percentil rank ponderado."""
+    out = df.copy()
+    total_rank = pd.Series(0.0, index=df.index)
+    total_peso = 0.0
+    for col, (peso, maior_melhor) in _SCORE_PESOS.items():
+        if col not in df.columns:
+            continue
+        s = pd.to_numeric(df[col], errors="coerce")
+        valid = s.notna()
+        if valid.sum() < 2:
+            continue
+        pct = s.rank(pct=True, na_option="keep")
+        if not maior_melhor:
+            pct = 1 - pct
+        total_rank += pct.fillna(0.0) * peso
+        total_peso += peso
+    if total_peso > 0:
+        out["Score"] = (total_rank / total_peso) * 100
+    else:
+        out["Score"] = np.nan
+    return out
+
+
+def _tab_portfolio(df_set: pd.DataFrame) -> None:
+    st.markdown("### 🏆 Ranking & Portfólio")
+    st.caption(
+        "Score composto baseado em ROE, ROIC, DY, Margens e Endividamento. "
+        "**Não constitui recomendação de investimento.**"
+    )
+
+    if df_set.empty:
+        st.info("Banco de dados não configurado.")
+        return
+
+    with st.spinner("Carregando múltiplos…"):
+        mult_todos = _db.load_multiplos_todos()
+
+    if mult_todos.empty:
+        st.warning("Tabela `multiplos` não encontrada no banco.")
+        return
+
+    # ── Filtros ────────────────────────────────────────────────────────────────
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        setores = ["Todos"] + sorted(df_set["SETOR"].dropna().unique().tolist())
+        setor_sel = st.selectbox("Filtrar por Setor", setores, key="pf_setor")
+    with c2:
+        top_n = st.number_input("Top N por setor", 3, 20, 5, key="pf_topn")
+
+    df_f2 = df_set if setor_sel == "Todos" else df_set[df_set["SETOR"] == setor_sel]
+    tks_filtrados = df_f2["ticker"].str.upper().str.replace(".SA","",regex=False).tolist()
+
+    mult = mult_todos[mult_todos["Ticker"].isin(tks_filtrados)].copy()
+    if mult.empty:
+        st.info("Sem dados para o filtro selecionado.")
+        return
+
+    nome_map  = df_f2.set_index("ticker")["nome_empresa"].to_dict()
+    setor_map = df_f2.set_index("ticker")["SETOR"].to_dict()
+    mult["Empresa"] = mult["Ticker"].map(nome_map).fillna(mult["Ticker"])
+    mult["Setor"]   = mult["Ticker"].map(setor_map).fillna("—")
+
+    # ── Calcular score ─────────────────────────────────────────────────────────
+    mult = _calcular_score(mult)
+    mult_sorted = mult.sort_values("Score", ascending=False, na_position="last")
+
+    # ── KPIs gerais ────────────────────────────────────────────────────────────
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Empresas analisadas", len(mult_sorted))
+    k2.metric("Score médio", f"{mult_sorted['Score'].mean():.1f}" if not mult_sorted.empty else "—")
+    k3.metric(
+        "Maior DY médio",
+        f"{mult_sorted['DY'].mean()*100:.1f}%" if "DY" in mult_sorted.columns else "—"
+    )
+    k4.metric(
+        "ROE médio",
+        f"{mult_sorted['ROE'].mean()*100:.1f}%" if "ROE" in mult_sorted.columns else "—"
+    )
+    st.divider()
+
+    # ── Tabela de ranking global ───────────────────────────────────────────────
+    st.markdown("#### 🥇 Ranking Global")
+    top_global = mult_sorted.head(int(top_n * 3) if setor_sel == "Todos" else int(top_n * 5))
+
+    disp_cols = ["Ticker", "Empresa", "Setor", "Score"]
+    pct_extra = []
+    for c in ["DY", "ROE", "ROIC", "Margem_Liquida"]:
+        if c in top_global.columns:
+            top_global[c] = pd.to_numeric(top_global[c], errors="coerce") * 100
+            disp_cols.append(c)
+            pct_extra.append(c)
+    fmt_map = {c: "{:.1f}%" for c in pct_extra}
+    fmt_map["Score"] = "{:.1f}"
+
+    st.dataframe(
+        top_global[disp_cols].reset_index(drop=True).style
+            .format(fmt_map, na_rep="—")
+            .bar(subset=["Score"], color=["#FC5C7D", "#00C896"], vmin=0, vmax=100),
+        use_container_width=True,
+        height=380,
+    )
+
+    st.divider()
+
+    # ── Top por setor ──────────────────────────────────────────────────────────
+    st.markdown("#### 🏅 Melhores por Setor")
+    setores_presentes = mult_sorted["Setor"].dropna().unique().tolist()
+    setores_presentes = [s for s in setores_presentes if s != "—"]
+
+    cols_setor = st.columns(min(3, max(1, len(setores_presentes))))
+    for i, setor in enumerate(setores_presentes):
+        col_idx = i % len(cols_setor)
+        top_s = mult_sorted[mult_sorted["Setor"] == setor].head(int(top_n))
+        with cols_setor[col_idx]:
+            st.markdown(
+                f'<div class="b3-sector-hdr">{_html.escape(setor)}</div>',
+                unsafe_allow_html=True,
+            )
+            for _, row in top_s.iterrows():
+                score = row.get("Score", 0)
+                cor = _COR_POS if score >= 60 else (_COR_ALT if score >= 40 else _COR_NEG)
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:10px;'
+                    f'margin-bottom:8px;padding:8px;background:#12151E;'
+                    f'border-radius:8px;border:1px solid #1E2533;">'
+                    f'<img src="{_logo_url(row["Ticker"])}" width="28" height="28" '
+                    f'style="border-radius:6px;background:rgba(255,255,255,.06);" '
+                    f'onerror="this.style.display=\'none\'">'
+                    f'<div style="flex:1;min-width:0;">'
+                    f'<div style="font-size:0.82rem;font-weight:800;color:#E2E8F0;">'
+                    f'{_html.escape(str(row["Ticker"]))}</div>'
+                    f'<div style="font-size:0.66rem;color:#718096;overflow:hidden;'
+                    f'text-overflow:ellipsis;white-space:nowrap;">'
+                    f'{_html.escape(str(row["Empresa"]))}</div>'
+                    f'</div>'
+                    f'<span style="font-size:0.78rem;font-weight:800;color:{cor};">'
+                    f'{score:.0f}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+    st.divider()
+
+    # ── Distribuição de score ──────────────────────────────────────────────────
+    st.markdown("#### 📊 Distribuição de Score por Setor")
+    if not mult_sorted.empty and "Score" in mult_sorted.columns:
+        fig_box = px.box(
+            mult_sorted.dropna(subset=["Score", "Setor"]),
+            x="Setor", y="Score", color="Setor",
+            points="outliers",
+            height=380,
+            color_discrete_sequence=px.colors.qualitative.Set2,
+        )
+        fig_box.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font_color="#9CA3AF", showlegend=False,
+            margin={"t": 20, "b": 60, "l": 0, "r": 0},
+            xaxis={"showgrid": False, "tickangle": -30},
+            yaxis={"showgrid": True, "gridcolor": "#1E2533"},
+        )
+        st.plotly_chart(fig_box, use_container_width=True,
+                        config={"displayModeBar": False}, key="pf_box")
+
+    st.divider()
+
+    # ── Alocação sugerida (pie) ────────────────────────────────────────────────
+    st.markdown("#### 🥧 Alocação Sugerida — Top Empresas")
+    st.caption(
+        "Distribuição baseada no score. Selecione quantas empresas incluir:"
+    )
+    top_pie = st.slider("Número de empresas", 5, min(30, len(mult_sorted)), 10,
+                        key="pf_pie")
+    top_alloc = mult_sorted.head(int(top_pie))[["Ticker", "Score", "Setor"]].copy()
+    top_alloc["Score"] = top_alloc["Score"].clip(lower=1)
+    total_score = top_alloc["Score"].sum()
+    top_alloc["Peso%"] = (top_alloc["Score"] / total_score * 100).round(1)
+
+    ca2, cb2 = st.columns([1, 1])
+    with ca2:
+        fig_pie = px.pie(
+            top_alloc, values="Peso%", names="Ticker",
+            color_discrete_sequence=px.colors.qualitative.Set3,
+            height=340,
+        )
+        fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+        fig_pie.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", font_color="#9CA3AF",
+            margin={"t": 20, "b": 0, "l": 0, "r": 0},
+            showlegend=False,
+        )
+        st.plotly_chart(fig_pie, use_container_width=True,
+                        config={"displayModeBar": False}, key="pf_pie_fig")
+    with cb2:
+        st.dataframe(
+            top_alloc[["Ticker", "Setor", "Peso%"]].reset_index(drop=True),
+            use_container_width=True, height=340,
+        )
+
+    # ── Salvar seleção para aba IA ─────────────────────────────────────────────
+    if st.button("💾 Usar esta seleção na Análise IA", key="pf_salvar"):
+        st.session_state["b3_portfolio_tickers"] = top_alloc["Ticker"].tolist()
+        st.success(
+            f"✅ {len(top_alloc)} tickers salvos. "
+            "Vá para a aba **🤖 Análise IA** para analisar."
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 6 — ANÁLISE COM IA
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _chamar_openai(prompt_sistema: str, prompt_usuario: str,
+                   modelo: str = "gpt-4o-mini") -> str:
+    """Chama OpenAI e retorna o texto de resposta. Lança exceção em caso de erro."""
+    from openai import OpenAI  # lazy import
+    client = OpenAI(api_key=settings.openai_api_key)
+    resp = client.chat.completions.create(
+        model=modelo,
+        messages=[
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user",   "content": prompt_usuario},
+        ],
+        temperature=0.3,
+        max_tokens=2000,
+        response_format={"type": "json_object"},
+    )
+    return resp.choices[0].message.content or ""
+
+
+def _resumo_financeiro(ticker: str) -> str:
+    """Monta um resumo textual dos dados financeiros de uma empresa para enviar à IA."""
+    mult = _db.load_multiplos(ticker)
+    df_dre = _db.load_demonstracoes(ticker)
+
+    linhas: list[str] = [f"=== {ticker} ==="]
+
+    if not mult.empty:
+        def _m(k): return f"{float(mult[k])*100:.1f}%" if k in mult.index and pd.notna(mult[k]) else "N/D"
+        def _mx(k): return f"{float(mult[k]):.2f}x" if k in mult.index and pd.notna(mult[k]) else "N/D"
+        linhas += [
+            f"DY: {_m('DY')}  |  ROE: {_m('ROE')}  |  ROIC: {_m('ROIC')}",
+            f"P/L: {_mx('P/L')}  |  P/VP: {_mx('P/VP')}  |  EV/EBIT: {_mx('EV_EBIT')}",
+            f"Margem Líquida: {_m('Margem_Liquida')}  |  Margem Op: {_m('Margem_Operacional')}",
+            f"Endividamento: {_m('Endividamento_Total')}  |  Liq. Corrente: {_mx('Liquidez_Corrente')}",
+        ]
+    else:
+        linhas.append("Múltiplos: sem dados")
+
+    if not df_dre.empty:
+        ult = df_dre.iloc[-1]
+        cagr_rec  = _cagr(df_dre, "Receita_Liquida")
+        cagr_luc  = _cagr(df_dre, "Lucro_Liquido")
+        cagr_ebit = _cagr(df_dre, "EBIT")
+        linhas.append(f"Anos de histórico: {len(df_dre)}")
+        if cagr_rec  is not None: linhas.append(f"CAGR Receita: {cagr_rec*100:.1f}%a.a.")
+        if cagr_luc  is not None: linhas.append(f"CAGR Lucro: {cagr_luc*100:.1f}%a.a.")
+        if cagr_ebit is not None: linhas.append(f"CAGR EBIT: {cagr_ebit*100:.1f}%a.a.")
+    else:
+        linhas.append("DRE: sem dados")
+
+    return "\n".join(linhas)
+
+
+_PROMPT_SYS_ANALISE = """
+Você é um analista de ações brasileiro especializado em análise fundamentalista de empresas B3.
+Analise os dados financeiros fornecidos e retorne um JSON com exatamente estas chaves:
+{
+  "resumo": "Parágrafo curto com visão geral da empresa baseada nos números",
+  "pontos_fortes": ["lista de até 3 pontos positivos com base nos dados"],
+  "riscos": ["lista de até 3 riscos ou fragilidades identificadas"],
+  "valuation": "Breve comentário sobre se parece cara, justa ou barata pelos múltiplos",
+  "qualidade_negocio": "Nota qualitativa: Excelente / Boa / Regular / Fraca — justificada",
+  "monitorar": ["lista de até 2 indicadores para acompanhar"]
+}
+Baseie-se APENAS nos dados fornecidos. Não invente informações. Seja objetivo e conciso.
+""".strip()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _analise_ia_cached(ticker: str, modelo: str) -> str:
+    resumo = _resumo_financeiro(ticker)
+    return _chamar_openai(
+        _PROMPT_SYS_ANALISE,
+        f"Analise a seguinte empresa B3:\n\n{resumo}",
+        modelo=modelo,
+    )
+
+
+def _tab_ia(df_set: pd.DataFrame) -> None:
+    st.markdown("### 🤖 Análise com Inteligência Artificial")
+
+    tem_openai = bool(settings.openai_api_key)
+
+    if not tem_openai:
+        st.warning(
+            "**OpenAI API Key não configurada.** "
+            "Para usar esta aba, adicione `OPENAI_API_KEY` ao `.env` "
+            "ou aos secrets do Streamlit Cloud."
+        )
+        with st.expander("Como configurar"):
+            st.code("OPENAI_API_KEY=sk-...", language="bash")
+            st.caption(
+                "Acesse [platform.openai.com](https://platform.openai.com/api-keys) "
+                "para obter a chave."
+            )
+        return
+
+    st.caption(
+        "A IA analisa os múltiplos e histórico de DRE de cada empresa. "
+        "**Não constitui recomendação de investimento.**"
+    )
+
+    # ── Seleção de tickers ─────────────────────────────────────────────────────
+    tickers_pre = st.session_state.get("b3_portfolio_tickers", [])
+    if df_set.empty:
+        todas_tickers: list[str] = []
+    else:
+        todas_tickers = sorted(
+            df_set["ticker"].str.upper().str.replace(".SA","",regex=False).tolist()
+        )
+
+    col_tk2, col_mod = st.columns([3, 1])
+    with col_tk2:
+        tickers_sel = st.multiselect(
+            "Selecione as empresas para analisar",
+            options=todas_tickers,
+            default=[t for t in tickers_pre if t in todas_tickers][:10],
+            max_selections=10,
+            key="ia_tickers",
+        )
+    with col_mod:
+        modelo = st.selectbox(
+            "Modelo",
+            ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo"],
+            index=0,
+            key="ia_modelo",
+        )
+
+    if not tickers_sel:
+        st.info(
+            "Selecione empresas acima ou use a aba **🏆 Ranking & Portfólio** "
+            "para salvar uma seleção automática."
+        )
+        return
+
+    if st.button(f"🔍 Analisar {len(tickers_sel)} empresa(s)", type="primary",
+                 key="ia_analisar"):
+        st.session_state["ia_resultados"] = {}
+        erros: list[str] = []
+
+        prog = st.progress(0, text="Iniciando análise…")
+        for i, tk in enumerate(tickers_sel):
+            prog.progress((i + 1) / len(tickers_sel), text=f"Analisando {tk}…")
+            try:
+                resultado_json = _analise_ia_cached(tk, modelo)
+                st.session_state["ia_resultados"][tk] = json.loads(resultado_json)
+            except Exception as exc:
+                erros.append(f"{tk}: {exc}")
+                st.session_state["ia_resultados"][tk] = {"_erro": str(exc)}
+        prog.empty()
+        if erros:
+            st.warning(f"Erros em {len(erros)} empresa(s): " + " | ".join(erros))
+
+    # ── Exibir resultados ──────────────────────────────────────────────────────
+    resultados: dict = st.session_state.get("ia_resultados", {})
+    if not resultados:
+        return
+
+    _QUAL_COR = {
+        "Excelente": _COR_POS, "Boa": _COR_INF,
+        "Regular": _COR_ALT,   "Fraca": _COR_NEG,
+    }
+
+    for tk in [t for t in tickers_sel if t in resultados]:
+        res = resultados[tk]
+        if "_erro" in res:
+            with st.expander(f"❌ {tk} — erro"):
+                st.error(res["_erro"])
+            continue
+
+        qual = str(res.get("qualidade_negocio", ""))
+        qual_cor = next(
+            (_QUAL_COR[k] for k in _QUAL_COR if k in qual), _COR_NEU
+        )
+        qual_curta = next((k for k in _QUAL_COR if k in qual), qual[:10])
+
+        with st.expander(f"📈 {tk} — {qual_curta}", expanded=(len(tickers_sel) == 1)):
+            hdr1, hdr2 = st.columns([3, 1])
+            with hdr1:
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
+                    f'<img src="{_logo_url(tk)}" width="36" height="36" '
+                    f'style="border-radius:8px;background:rgba(255,255,255,.06);" '
+                    f'onerror="this.style.display=\'none\'">'
+                    f'<span style="font-size:1.2rem;font-weight:800;color:#E2E8F0;">{tk}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            with hdr2:
+                st.markdown(
+                    f'<div style="text-align:center;padding:8px;background:#12151E;'
+                    f'border-radius:8px;border:2px solid {qual_cor};">'
+                    f'<div style="font-size:0.60rem;color:#4A5568;text-transform:uppercase;">Qualidade</div>'
+                    f'<div style="font-size:0.90rem;font-weight:800;color:{qual_cor};">{qual_curta}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+            # Resumo
+            if "resumo" in res:
+                st.markdown(
+                    f'<div class="ia-block">'
+                    f'<div class="ia-block-title">📋 Resumo</div>'
+                    f'<div class="ia-block-body">{_html.escape(res["resumo"])}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+            # Valuation
+            if "valuation" in res:
+                st.markdown(
+                    f'<div class="ia-block">'
+                    f'<div class="ia-block-title">💰 Valuation</div>'
+                    f'<div class="ia-block-body">{_html.escape(res["valuation"])}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+            c_pos, c_neg = st.columns(2)
+            with c_pos:
+                if res.get("pontos_fortes"):
+                    st.markdown(
+                        f'<div class="ia-block" style="border-left:3px solid {_COR_POS};">'
+                        f'<div class="ia-block-title">✅ Pontos Fortes</div>'
+                        + "".join(
+                            f'<div class="ia-block-body" style="margin-bottom:4px;">• {_html.escape(p)}</div>'
+                            for p in res["pontos_fortes"]
+                        )
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+            with c_neg:
+                if res.get("riscos"):
+                    st.markdown(
+                        f'<div class="ia-block" style="border-left:3px solid {_COR_NEG};">'
+                        f'<div class="ia-block-title">⚠️ Riscos</div>'
+                        + "".join(
+                            f'<div class="ia-block-body" style="margin-bottom:4px;">• {_html.escape(p)}</div>'
+                            for p in res["riscos"]
+                        )
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+            if res.get("monitorar"):
+                st.markdown(
+                    f'<div class="ia-block">'
+                    f'<div class="ia-block-title">👁️ Monitorar</div>'
+                    + "".join(
+                        f'<div class="ia-block-body" style="margin-bottom:4px;">📌 {_html.escape(m)}</div>'
+                        for m in res["monitorar"]
+                    )
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -750,10 +1503,13 @@ def render() -> None:
             "Aba Dividendos funciona sem banco."
         )
 
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🏢 Empresas por Setor",
         "🔍 Análise de Empresa",
         "💵 Dividendos",
+        "📊 Análise Avançada",
+        "🏆 Ranking & Portfólio",
+        "🤖 Análise IA",
     ])
 
     with tab1:
@@ -766,3 +1522,15 @@ def render() -> None:
 
     with tab3:
         _tab_dividendos()
+
+    with tab4:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _tab_avancada(df_set)
+
+    with tab5:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _tab_portfolio(df_set)
+
+    with tab6:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _tab_ia(df_set)
