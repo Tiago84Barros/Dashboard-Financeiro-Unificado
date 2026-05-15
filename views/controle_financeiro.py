@@ -84,8 +84,9 @@ def _kpi_card(titulo: str, valor: str, descricao: str, cor: str) -> str:
         f'border-radius:10px;padding:20px 18px 16px;height:100%;">'
         f'<div style="font-size:0.62rem;font-weight:800;text-transform:uppercase;'
         f'letter-spacing:0.14em;color:#718096;margin-bottom:10px;">{titulo}</div>'
-        f'<div style="font-size:1.70rem;font-weight:800;color:{cor};'
-        f'letter-spacing:-0.02em;line-height:1;margin-bottom:8px;">{valor}</div>'
+        f'<div style="font-size:clamp(1.10rem,2.2vw,1.70rem);font-weight:800;color:{cor};'
+        f'letter-spacing:-0.02em;line-height:1.1;margin-bottom:8px;'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{valor}</div>'
         f'<div style="font-size:0.73rem;color:#4A5568;line-height:1.35;">{descricao}</div>'
         f'</div>'
     )
@@ -925,7 +926,7 @@ def _tab_tabelas(d: dict) -> None:
     total_rec      = sum(t["valor"] for t in txs_f if t["eh_receita"])
     total_desp     = sum(abs(t["valor"]) for t in txs_f if not t["eh_receita"])
 
-    col_s1, col_s2, col_s3, *_ = st.columns([1, 1, 1, 3])
+    col_s1, col_s2, col_s3 = st.columns(3, gap="small")
     with col_s1:
         st.markdown(_kpi_card(
             "Total Filtrado", fmt_moeda(total_filtrado),
