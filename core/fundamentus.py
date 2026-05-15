@@ -76,7 +76,7 @@ def _parse_fundamentus_html(content: bytes) -> dict[str, str]:
         from bs4 import BeautifulSoup
     except ImportError:
         return {}
-    soup = BeautifulSoup(content, "lxml")
+    soup = BeautifulSoup(content, "html.parser")
     data: dict[str, str] = {}
     for table in soup.find_all("table"):
         for row in table.find_all("tr"):
@@ -215,7 +215,7 @@ def _scrape_fii_lista() -> dict[str, dict]:
         resp = requests.get(url, headers=_FUND_HEADERS, timeout=20)
         if resp.status_code != 200:
             return {}
-        soup = BeautifulSoup(resp.content, "lxml")
+        soup = BeautifulSoup(resp.content, "html.parser")
         table = soup.find("table", id="tabelaResultado")
         if not table:
             tables = soup.find_all("table")
