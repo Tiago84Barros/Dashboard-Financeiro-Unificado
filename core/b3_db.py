@@ -223,3 +223,112 @@ def load_portfolio_snapshot() -> tuple[dict, pd.DataFrame]:
             .str.strip().str.upper()
         )
     return header, items
+
+
+# ── Batch loaders (Análise Avançada) ─────────────────────────────────────────
+
+def _safe_in_clause(tickers: tuple[str, ...]) -> tuple[list[str], str] | None:
+    """Constrói cláusula IN segura com tickers sanitizados (apenas alnum + dígito)."""
+    tks_clean = [t.strip().upper().replace(".SA", "") for t in tickers]
+    tks_sa    = [f"{t}.SA" for t in tks_clean]
+    all_tks   = [t for t in tks_clean + tks_sa
+                 if t.replace(".", "").replace("3", "3").replace("4", "4").isalnum()
+                 or all(c.isalnum() for c in t.replace(".", ""))]
+    if not all_tks:
+        return None
+    placeholders = ", ".join(f"'{t}'" for t in all_tks)
+    return tks_clean, placeholders
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame]:
+    """Retorna histórico de múltiplos para múltiplos tickers em uma query."""
+    if not tickers:
+        return {}
+    parsed = _safe_in_clause(tickers)
+    if parsed is None:
+        return {}
+    tks_clean, placeholders = parsed
+    df = _q(f"""
+        SELECT *
+        FROM public.multiplos
+        WHERE "Ticker" IN ({placeholders})
+        ORDER BY "Ticker", data ASC
+    """)
+    if df.empty:
+        return {}
+    data_col = next((c for c in df.columns if c.lower() == "data"), None)
+    if data_col:
+        df[data_col] = pd.to_datetime(df[data_col], errors="coerce")
+        df = df.dropna(subset=[data_col]).sort_values(["Ticker", data_col])
+        if data_col != "Data":
+            df = df.rename(columns={data_col: "Data"})
+    df["Ticker"] = (
+        df["Ticker"].astype(str)
+        .str.replace(".SA", "", regex=False)
+        .str.strip().str.upper()
+    )
+    result: dict[str, pd.DataFrame] = {}
+    for tk in tks_clean:
+        sub = df[df["Ticker"] == tk].copy().reset_index(drop=True)
+        if not sub.empty:
+            result[tk] = sub
+    return result
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame]:
+    """Retorna demonstrações financeiras para múltiplos tickers em uma query."""
+    if not tickers:
+        return {}
+    parsed = _safe_in_clause(tickers)
+    if parsed is None:
+        return {}
+    tks_clean, placeholders = parsed
+    df = _q(f"""
+        SELECT *
+        FROM public."Demonstracoes_Financeiras"
+        WHERE "Ticker" IN ({placeholders})
+        ORDER BY "Ticker", data ASC
+    """)
+    if df.empty:
+        return {}
+    data_col = next((c for c in df.columns if c.lower() == "data"), None)
+    if data_col:
+        df[data_col] = pd.to_datetime(df[data_col], errors="coerce")
+        df = df.dropna(subset=[data_col]).sort_values(["Ticker", data_col])
+        if data_col != "Data":
+            df = df.rename(columns={data_col: "Data"})
+    df["Ticker"] = (
+        df["Ticker"].astype(str)
+        .str.replace(".SA", "", regex=False)
+        .str.strip().str.upper()
+    )
+    result: dict[str, pd.DataFrame] = {}
+    for tk in tks_clean:
+        sub = df[df["Ticker"] == tk].copy().reset_index(drop=True)
+        if not sub.empty:
+            result[tk] = sub
+    return result
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_historico_anos() -> dict[str, int]:
+    """Retorna número de anos distintos de histórico DRE por ticker."""
+    df = _q("""
+        SELECT "Ticker",
+               COUNT(DISTINCT EXTRACT(YEAR FROM data))::int AS anos
+        FROM public."Demonstracoes_Financeiras"
+        WHERE "Ticker" IS NOT NULL AND data IS NOT NULL
+        GROUP BY "Ticker"
+    """)
+    if df.empty:
+        return {}
+    result: dict[str, int] = {}
+    for _, row in df.iterrows():
+        tk = str(row["Ticker"]).replace(".SA", "").strip().upper()
+        try:
+            result[tk] = int(row["anos"])
+        except Exception:
+            pass
+    return result

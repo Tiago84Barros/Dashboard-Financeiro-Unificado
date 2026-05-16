@@ -66,6 +66,11 @@ _CSS = """
                 letter-spacing:.09em;color:#4A5568;margin-bottom:4px; }
 .b3-ind-value { font-size:1.35rem;font-weight:800;line-height:1.1; }
 .b3-ind-sub   { font-size:0.66rem;color:#4A5568;margin-top:3px; }
+.b3-score-badge { display:inline-block;padding:2px 8px;border-radius:12px;
+                  font-size:0.72rem;font-weight:700; }
+.b3-score-high  { background:rgba(0,200,150,.15);color:#00C896; }
+.b3-score-mid   { background:rgba(246,201,14,.15);color:#F6C90E; }
+.b3-score-low   { background:rgba(252,92,125,.15);color:#FC5C7D; }
 </style>
 """
 
@@ -290,6 +295,41 @@ def _yf_precos(ticker: str) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd.DataFrame:
+    """
+    Preços mensais de fechamento para múltiplos tickers via yfinance.
+    Retorna DataFrame com DatetimeIndex e colunas = tickers sem .SA.
+    """
+    if not tickers:
+        return pd.DataFrame()
+    tks_sa = [f"{t.strip().upper().replace('.SA', '')}.SA" for t in tickers]
+    try:
+        if len(tks_sa) == 1:
+            raw = yf.download(tks_sa[0], period=period, interval="1mo",
+                              auto_adjust=True, progress=False)
+            if raw is None or raw.empty:
+                return pd.DataFrame()
+            tk_clean = tks_sa[0].replace(".SA", "").upper()
+            close = pd.DataFrame({tk_clean: raw["Close"]})
+        else:
+            raw = yf.download(tks_sa, period=period, interval="1mo",
+                              auto_adjust=True, progress=False)
+            if raw is None or raw.empty:
+                return pd.DataFrame()
+            close = (
+                raw["Close"].copy()
+                if isinstance(raw.columns, pd.MultiIndex)
+                else raw.copy()
+            )
+        if hasattr(close.index, "tz") and close.index.tz is not None:
+            close.index = close.index.tz_localize(None)
+        close.columns = [str(c).replace(".SA", "").strip().upper() for c in close.columns]
+        return close.dropna(how="all")
+    except Exception:
+        return pd.DataFrame()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — Empresas por Setor
 # ══════════════════════════════════════════════════════════════════════════════
@@ -344,6 +384,114 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
                         st.session_state["b3_ticker_sel"] = tk
                         st.session_state["b3_active_tab"] = 1
                         st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Scoring e backtesting (Análise Avançada)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_universo(df_mult: pd.DataFrame, tickers_universo: list[str],
+                    pesos: dict[str, float]) -> pd.DataFrame:
+    """
+    Calcula score percentil composto (0–100) por empresa no universo.
+    Retorna DataFrame com colunas 'score' e 'ranking', ordenado por score desc.
+    """
+    if df_mult.empty or not tickers_universo:
+        return pd.DataFrame({"Ticker": tickers_universo, "score": 0.0, "ranking": 0})
+
+    df = df_mult[df_mult["Ticker"].isin(tickers_universo)].copy()
+    if df.empty:
+        return pd.DataFrame({"Ticker": tickers_universo, "score": 0.0, "ranking": 0})
+
+    total_peso = sum(pesos.values()) or 1.0
+
+    # (coluna_db, invert) — invert=True: menor é melhor
+    _campos: dict[str, tuple[str, bool]] = {
+        "ROE":           ("ROE",                False),
+        "ROIC":          ("ROIC",               False),
+        "Margem_Liquida":("Margem_Liquida",      False),
+        "DY":            ("DY",                  False),
+        "Endividamento": ("Endividamento_Total",  True),
+        "Liquidez":      ("Liquidez_Corrente",   False),
+    }
+
+    score = pd.Series(0.0, index=df.index)
+    for campo, (col, invert) in _campos.items():
+        peso = pesos.get(campo, 0)
+        if peso == 0 or col not in df.columns:
+            continue
+        s = pd.to_numeric(df[col], errors="coerce")
+        if s.notna().sum() < 2:
+            continue
+        pct = s.rank(pct=True, ascending=not invert, na_option="keep") * 100
+        score += pct.fillna(50.0) * (peso / total_peso)
+
+    df["score"]   = score.round(1)
+    df["ranking"] = df["score"].rank(ascending=False, method="min").astype(int)
+    return df.sort_values("score", ascending=False).reset_index(drop=True)
+
+
+def _simular_backtest(
+    df_precos: pd.DataFrame,
+    tickers_top: list[str],
+    tickers_all: list[str],
+    aporte: float,
+    data_inicio: pd.Timestamp,
+    taxa_selic_aa: float,
+) -> pd.DataFrame:
+    """
+    Simula aportes mensais fixos em três estratégias.
+    Retorna DataFrame [Data, Estratégia, Benchmark, Tesouro Selic].
+    """
+    if df_precos.empty or not tickers_all:
+        return pd.DataFrame()
+
+    df = df_precos[df_precos.index >= data_inicio].copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    taxa_mensal    = (1 + taxa_selic_aa) ** (1 / 12) - 1
+    tks_est_valid  = [tk for tk in tickers_top if tk in df.columns]
+    tks_all_valid  = [tk for tk in tickers_all if tk in df.columns]
+
+    cotas_est   = {tk: 0.0 for tk in tks_est_valid}
+    cotas_bench = {tk: 0.0 for tk in tks_all_valid}
+    selic       = 0.0
+    rows: list[dict] = []
+
+    for dt, row in df.iterrows():
+        selic = selic * (1 + taxa_mensal) + aporte
+
+        # Estratégia: distribui entre top-N com preço válido naquele mês
+        est_disp = [tk for tk in tks_est_valid
+                    if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
+        if est_disp:
+            por_tk = aporte / len(est_disp)
+            for tk in est_disp:
+                cotas_est[tk] += por_tk / float(row[tk])
+
+        # Benchmark: distribui entre todos com preço válido
+        all_disp = [tk for tk in tks_all_valid
+                    if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
+        if all_disp:
+            por_tk = aporte / len(all_disp)
+            for tk in all_disp:
+                cotas_bench[tk] += por_tk / float(row[tk])
+
+        val_est = sum(
+            cotas_est[tk] * float(row[tk])
+            for tk in tks_est_valid
+            if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0
+        )
+        val_bench = sum(
+            cotas_bench[tk] * float(row[tk])
+            for tk in tks_all_valid
+            if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0
+        )
+        rows.append({"Data": dt, "Estratégia": val_est,
+                     "Benchmark": val_bench, "Tesouro Selic": selic})
+
+    return pd.DataFrame(rows)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -824,6 +972,337 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — Análise Avançada
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _tab_avancada(df_set: pd.DataFrame) -> None:
+    if df_set.empty:
+        st.warning("Banco não configurado. Configure `SUPABASE_DB_URL_B3`.")
+        return
+
+    # Dados base
+    with st.spinner("Carregando múltiplos e histórico…"):
+        df_mult_todos = _db.load_multiplos_todos()
+        anos_hist     = _db.load_historico_anos()
+
+    # ── FILTROS ──────────────────────────────────────────────────────────────
+    _sec_hdr("⚙️ Filtros do Universo")
+    fc1, fc2, fc3, fc4 = st.columns(4)
+
+    setores  = ["Todos"] + sorted(s for s in df_set["SETOR"].unique() if s)
+    sel_set  = fc1.selectbox("Setor",    setores,  key="b3_av_setor")
+
+    df_s     = df_set if sel_set == "Todos" else df_set[df_set["SETOR"] == sel_set]
+    subs     = ["Todos"] + sorted(s for s in df_s["SUBSETOR"].unique() if s)
+    sel_sub  = fc2.selectbox("Subsetor", subs,     key="b3_av_sub")
+
+    df_ss    = df_s if sel_sub == "Todos" else df_s[df_s["SUBSETOR"] == sel_sub]
+    segs     = ["Todos"] + sorted(s for s in df_ss["SEGMENTO"].unique() if s)
+    sel_seg  = fc3.selectbox("Segmento", segs,     key="b3_av_seg")
+
+    perfis   = ["Todas", "Crescimento (<10 anos de histórico)", "Estabelecida (≥10 anos)"]
+    sel_perf = fc4.selectbox("Perfil",   perfis,   key="b3_av_perf")
+
+    with st.expander("⚖️ Pesos do Scoring (normalizados internamente)"):
+        sp1, sp2, sp3 = st.columns(3)
+        sp4, sp5, sp6 = st.columns(3)
+        p_roe  = sp1.slider("ROE",            0, 50, 25, key="b3_av_proe")
+        p_roic = sp2.slider("ROIC",           0, 50, 20, key="b3_av_proic")
+        p_marg = sp3.slider("Margem Líquida", 0, 50, 15, key="b3_av_pmarg")
+        p_dy   = sp4.slider("DY",             0, 30, 10, key="b3_av_pdy")
+        p_div  = sp5.slider("Endividamento",  0, 30, 20, key="b3_av_pdiv")
+        p_liq  = sp6.slider("Liquidez",       0, 30, 10, key="b3_av_pliq")
+
+    pesos = {
+        "ROE": p_roe, "ROIC": p_roic, "Margem_Liquida": p_marg,
+        "DY": p_dy, "Endividamento": p_div, "Liquidez": p_liq,
+    }
+
+    # Aplicar filtros
+    df_filt  = df_ss if sel_seg == "Todos" else df_ss[df_ss["SEGMENTO"] == sel_seg]
+    tks_uni  = df_filt["ticker"].tolist()
+
+    if anos_hist:
+        if "Crescimento" in sel_perf:
+            tks_uni = [tk for tk in tks_uni if anos_hist.get(tk, 99) < 10]
+        elif "Estabelecida" in sel_perf:
+            tks_uni = [tk for tk in tks_uni if anos_hist.get(tk, 0) >= 10]
+
+    _MAX_UNI = 40
+    if len(tks_uni) > _MAX_UNI:
+        st.info(
+            f"Universo com **{len(tks_uni)}** empresas — limitado a {_MAX_UNI} "
+            "para performance. Refine os filtros para resultados mais precisos."
+        )
+        tks_uni = tks_uni[:_MAX_UNI]
+
+    if not tks_uni:
+        st.info("Nenhuma empresa encontrada com os filtros selecionados.")
+        return
+
+    # Scoring
+    df_scored = _score_universo(df_mult_todos, tks_uni, pesos)
+    tk_info   = {row["ticker"]: row for _, row in df_filt.iterrows()}
+    tks_com_score = set(df_scored["Ticker"].tolist()) if not df_scored.empty else set()
+    tks_sem_mult  = [tk for tk in tks_uni if tk not in tks_com_score]
+
+    # ── CARDS DO UNIVERSO ────────────────────────────────────────────────────
+    _sec_hdr(f"🏢 Universo Filtrado — {len(tks_uni)} empresa(s)")
+    show_tks = (df_scored["Ticker"].tolist() if not df_scored.empty else []) + tks_sem_mult
+
+    for i in range(0, min(len(show_tks), 20), 4):
+        cols_c = st.columns(4, gap="small")
+        for j, tk in enumerate(show_tks[i:i+4]):
+            info  = tk_info.get(tk, {})
+            nome  = str(info.get("nome_empresa", tk) or tk)[:28]
+            anos  = anos_hist.get(tk, "?")
+            rank_row = df_scored[df_scored["Ticker"] == tk] if not df_scored.empty else pd.DataFrame()
+            score    = float(rank_row["score"].iloc[0])   if not rank_row.empty else 0.0
+            rank     = int(rank_row["ranking"].iloc[0])   if not rank_row.empty else "—"
+            badge_cls = (
+                "b3-score-high" if score >= 70 else
+                "b3-score-mid"  if score >= 40 else
+                "b3-score-low"
+            )
+            with cols_c[j]:
+                st.markdown(
+                    f'<div class="b3-card">'
+                    f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+                    f'<img src="{_logo_url(tk)}" class="b3-card-logo"'
+                    f'     onerror="this.style.display=\'none\'">'
+                    f'<div style="flex:1;overflow:hidden;">'
+                    f'<div class="b3-card-ticker">#{rank} {tk}</div>'
+                    f'<div class="b3-card-nome">{nome}</div>'
+                    f'</div></div>'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<span class="b3-score-badge {badge_cls}">Score {score:.0f}</span>'
+                    f'<span class="b3-card-tag">{anos} anos DRE</span>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── BACKTESTING ──────────────────────────────────────────────────────────
+    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    _sec_hdr("📈 Simulação de Patrimônio — Aportes Mensais")
+
+    bk1, bk2, bk3, bk4 = st.columns(4)
+    aporte   = bk1.number_input(
+        "Aporte mensal (R$)", 100.0, 50000.0, 1000.0, 100.0, key="b3_av_aporte"
+    )
+    top_n    = bk2.selectbox("Top-N Estratégia", [1, 3, 5, 10], index=1, key="b3_av_topn")
+    per_opts = {"1 ano": "1y", "3 anos": "3y", "5 anos": "5y", "10 anos": "10y"}
+    sel_per  = bk3.selectbox("Período", list(per_opts.keys()), index=2, key="b3_av_per")
+    taxa_sel = bk4.number_input(
+        "Taxa Selic a.a. (%)", 0.0, 50.0, 10.75, 0.25, key="b3_av_selic"
+    )
+
+    if st.button("▶ Simular Backtest", type="primary", key="b3_av_btn_simular"):
+        period_code = per_opts[sel_per]
+        tks_tuple   = tuple(sorted(tks_uni))
+        tickers_top = (
+            df_scored["Ticker"].head(min(top_n, len(df_scored))).tolist()
+            if not df_scored.empty else tks_uni[:top_n]
+        )
+        anos_map    = {"1y": 1, "3y": 3, "5y": 5, "10y": 10}
+        data_inicio = pd.Timestamp.now() - pd.DateOffset(years=anos_map[period_code])
+
+        with st.spinner("Baixando preços mensais… (pode levar alguns segundos)"):
+            df_prec_m = _batch_yf_precos_mensais(tks_tuple, period=period_code)
+
+        df_bt = _simular_backtest(
+            df_prec_m, tickers_top, tks_uni,
+            float(aporte), data_inicio, float(taxa_sel) / 100.0,
+        )
+        st.session_state["b3_av_bt_df"]    = df_bt
+        st.session_state["b3_av_bt_top"]   = tickers_top
+        st.session_state["b3_av_bt_aport"] = float(aporte)
+
+    df_bt    = st.session_state.get("b3_av_bt_df",    pd.DataFrame())
+    tks_top  = st.session_state.get("b3_av_bt_top",   [])
+    aport_bt = st.session_state.get("b3_av_bt_aport", 0.0)
+
+    if not df_bt.empty:
+        colunas_bt = [c for c in ("Estratégia", "Benchmark", "Tesouro Selic")
+                      if c in df_bt.columns]
+        melt_bt = df_bt.melt("Data", value_vars=colunas_bt,
+                              var_name="Carteira", value_name="Patrimônio (R$)")
+        fig_bt = px.line(
+            melt_bt, x="Data", y="Patrimônio (R$)", color="Carteira",
+            color_discrete_map={
+                "Estratégia":    _COR_POS,
+                "Benchmark":     _COR_NEU,
+                "Tesouro Selic": _COR_ALT,
+            },
+        )
+        fig_bt.update_traces(line_width=2.0)
+        fig_bt.update_layout(**_plot_layout(380))
+        st.plotly_chart(fig_bt, use_container_width=True,
+                        config={"displayModeBar": False}, key="b3_av_bt_chart")
+
+        # KPI patrimônio final
+        _sec_hdr("💰 Patrimônio Final")
+        ultima      = df_bt.iloc[-1]
+        total_aport = aport_bt * len(df_bt) if aport_bt > 0 else 1.0
+
+        kpi_bt = st.columns(3, gap="small")
+        for idx, (nome_c, cor_c) in enumerate([
+            ("Estratégia", _COR_POS),
+            ("Benchmark",  _COR_NEU),
+            ("Tesouro Selic", _COR_ALT),
+        ]):
+            v       = float(ultima.get(nome_c, 0) or 0)
+            ret_pct = (v / total_aport - 1) * 100 if total_aport > 0 else 0
+            with kpi_bt[idx]:
+                st.markdown(
+                    _ind_card(
+                        nome_c, _fv(v),
+                        f"Retorno: {ret_pct:+.1f}% · Aportado: {_fv(total_aport)}",
+                        cor_c,
+                    ),
+                    unsafe_allow_html=True,
+                )
+        if tks_top:
+            st.caption(f"Estratégia composta por: **{', '.join(tks_top)}**")
+    else:
+        st.caption("Configure os parâmetros acima e clique **▶ Simular Backtest**.")
+
+    # ── COMPARAÇÃO DE MÚLTIPLOS ───────────────────────────────────────────────
+    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    _sec_hdr("📊 Comparação de Múltiplos Históricos")
+
+    cm1, cm2 = st.columns([3, 2])
+    sels_emp_m = cm1.multiselect(
+        "Empresas",
+        tks_uni,
+        default=tks_uni[:min(5, len(tks_uni))],
+        key="b3_av_emp_mult",
+    )
+    mult_ind_opts = [
+        "P/L", "P/VP", "ROE", "ROIC", "DY", "EV_EBIT",
+        "Margem_Liquida", "Margem_Operacional", "Payout",
+        "Endividamento_Total", "Liquidez_Corrente",
+    ]
+    sel_ind_m = cm2.selectbox("Indicador", mult_ind_opts, key="b3_av_ind_m")
+
+    if st.button("📈 Comparar Múltiplos", key="b3_av_btn_mult") and sels_emp_m:
+        with st.spinner("Carregando histórico de múltiplos…"):
+            batch_mh = _db.load_multiplos_historico_batch(tuple(sorted(sels_emp_m)))
+        st.session_state["b3_av_mh_batch"] = batch_mh
+        st.session_state["b3_av_mh_ind"]   = sel_ind_m
+
+    batch_mh   = st.session_state.get("b3_av_mh_batch", {})
+    ind_m_show = st.session_state.get("b3_av_mh_ind",   sel_ind_m)
+
+    if batch_mh:
+        rows_mh: list[pd.DataFrame] = []
+        is_pct_m = ind_m_show in _MAX_DECIMAL_PCT
+        for tk_mh, df_mh in batch_mh.items():
+            if "Data" not in df_mh.columns or ind_m_show not in df_mh.columns:
+                continue
+            tmp = df_mh[["Data", ind_m_show]].copy()
+            tmp[ind_m_show] = pd.to_numeric(tmp[ind_m_show], errors="coerce")
+            if is_pct_m:
+                th = _MAX_DECIMAL_PCT.get(ind_m_show, 2.0)
+                tmp[ind_m_show] = tmp[ind_m_show].apply(
+                    lambda v: v if (pd.isna(v) or abs(v) > th) else v * 100.0
+                )
+            tmp = tmp.rename(columns={ind_m_show: "Valor"})
+            tmp["Empresa"] = tk_mh
+            rows_mh.append(tmp)
+
+        if rows_mh:
+            df_comp_m = pd.concat(rows_mh, ignore_index=True)
+            y_lbl = (
+                f"{ind_m_show.replace('_', ' ')} (%)"
+                if is_pct_m else
+                f"{ind_m_show.replace('_', ' ')} (×)"
+            )
+            fig_cm = px.line(
+                df_comp_m, x="Data", y="Valor", color="Empresa", markers=True,
+                labels={"Valor": y_lbl},
+                color_discrete_sequence=[
+                    _COR_POS, _COR_INF, _COR_ALT, _COR_NEG,
+                    "#9B59B6", "#E67E22", "#1ABC9C", _COR_NEU],
+            )
+            fig_cm.update_layout(**_plot_layout(380))
+            fig_cm.update_layout(yaxis_title=y_lbl)
+            st.plotly_chart(fig_cm, use_container_width=True,
+                            config={"displayModeBar": False}, key="b3_av_mh_chart")
+        else:
+            st.caption("Indicador não disponível para as empresas selecionadas.")
+    else:
+        st.caption("Selecione empresas e indicador acima e clique **📈 Comparar Múltiplos**.")
+
+    # ── COMPARAÇÃO DE DRE ────────────────────────────────────────────────────
+    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    _sec_hdr("📋 Comparação de Demonstrações Financeiras")
+
+    _dre_labels = {
+        "Receita_Liquida":   "Receita Líquida",
+        "EBIT":              "EBIT",
+        "Lucro_Liquido":     "Lucro Líquido",
+        "Patrimonio_Liquido":"Patrimônio Líquido",
+        "Divida_Liquida":    "Dívida Líquida",
+        "Divida_Total":      "Dívida Total",
+        "Ativo_Total":       "Ativo Total",
+        "Dividendos":        "Dividendos",
+    }
+    _lbl2col_dre = {v: k for k, v in _dre_labels.items()}
+
+    cd1, cd2 = st.columns([2, 3])
+    sel_dre_lbl = cd1.selectbox(
+        "Item da DRE", list(_dre_labels.values()), key="b3_av_dre_item"
+    )
+    sels_emp_d = cd2.multiselect(
+        "Empresas",
+        tks_uni,
+        default=tks_uni[:min(5, len(tks_uni))],
+        key="b3_av_emp_dre",
+    )
+
+    if st.button("📋 Comparar DRE", key="b3_av_btn_dre") and sels_emp_d:
+        dre_col_sel = _lbl2col_dre.get(sel_dre_lbl, "Receita_Liquida")
+        with st.spinner("Carregando demonstrações financeiras…"):
+            batch_dre = _db.load_demonstracoes_batch(tuple(sorted(sels_emp_d)))
+        st.session_state["b3_av_dre_batch"] = batch_dre
+        st.session_state["b3_av_dre_col"]   = dre_col_sel
+        st.session_state["b3_av_dre_lbl"]   = sel_dre_lbl
+
+    batch_dre = st.session_state.get("b3_av_dre_batch", {})
+    dre_col_s = st.session_state.get("b3_av_dre_col",   "Receita_Liquida")
+    dre_lbl_s = st.session_state.get("b3_av_dre_lbl",   "Receita Líquida")
+
+    if batch_dre:
+        rows_d: list[pd.DataFrame] = []
+        for tk_d, df_d in batch_dre.items():
+            if "Data" not in df_d.columns or dre_col_s not in df_d.columns:
+                continue
+            tmp = df_d[["Data", dre_col_s]].copy()
+            tmp[dre_col_s] = pd.to_numeric(tmp[dre_col_s], errors="coerce")
+            tmp["Ano"]     = tmp["Data"].dt.year.astype(str)
+            tmp["Empresa"] = tk_d
+            rows_d.append(tmp)
+
+        if rows_d:
+            df_comp_d = pd.concat(rows_d, ignore_index=True)
+            fig_cd = px.bar(
+                df_comp_d, x="Ano", y=dre_col_s, color="Empresa",
+                barmode="group",
+                labels={dre_col_s: f"{dre_lbl_s} (R$)"},
+                color_discrete_sequence=[
+                    _COR_POS, _COR_INF, _COR_ALT, _COR_NEG,
+                    "#9B59B6", "#E67E22", "#1ABC9C", _COR_NEU],
+            )
+            fig_cd.update_layout(**_plot_layout(400))
+            st.plotly_chart(fig_cd, use_container_width=True,
+                            config={"displayModeBar": False}, key="b3_av_dre_chart")
+        else:
+            st.caption("Item de DRE não disponível para as empresas selecionadas.")
+    else:
+        st.caption("Selecione empresas e item da DRE acima e clique **📋 Comparar DRE**.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -854,7 +1333,7 @@ def render() -> None:
 
     active = st.session_state.get("b3_active_tab", 0)
 
-    col_t1, col_t2, _ = st.columns([2, 2, 6])
+    col_t1, col_t2, col_t3, _ = st.columns([2, 2, 2.5, 3.5])
     with col_t1:
         if st.button("🏢 Empresas por Setor", use_container_width=True,
                      type="primary" if active == 0 else "secondary",
@@ -867,11 +1346,19 @@ def render() -> None:
                      key="b3_tab1"):
             st.session_state["b3_active_tab"] = 1
             st.rerun()
+    with col_t3:
+        if st.button("🔬 Análise Avançada", use_container_width=True,
+                     type="primary" if active == 2 else "secondary",
+                     key="b3_tab2"):
+            st.session_state["b3_active_tab"] = 2
+            st.rerun()
 
     st.markdown("<hr style='margin:4px 0 16px;border-color:#1E2533;'>",
                 unsafe_allow_html=True)
 
     if active == 0:
         _tab_empresas(df_set)
-    else:
+    elif active == 1:
         _tab_analise(df_set)
+    else:
+        _tab_avancada(df_set)
