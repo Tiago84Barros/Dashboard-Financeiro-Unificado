@@ -169,8 +169,8 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
     if busca.strip():
         tk = busca.strip().upper().replace(".SA", "")
         st.session_state["b3_ticker_sel"] = tk
-        st.info(f"Ticker **{tk}** selecionado. Vá para a aba **🔍 Análise de Empresa**.")
-        return
+        st.session_state["b3_active_tab"] = 1
+        st.rerun()
 
     if df_set.empty:
         st.warning(
@@ -210,6 +210,7 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
                     if st.button("Analisar", key=f"b3_btn_{tk}_{i}_{j}",
                                  use_container_width=True):
                         st.session_state["b3_ticker_sel"] = tk
+                        st.session_state["b3_active_tab"] = 1
                         st.rerun()
 
 
@@ -529,15 +530,26 @@ def render() -> None:
             "no `.env` ou nos secrets do Streamlit Cloud."
         )
 
-    tab1, tab2 = st.tabs([
-        "🏢 Empresas por Setor",
-        "🔍 Análise de Empresa",
-    ])
+    active = st.session_state.get("b3_active_tab", 0)
 
-    with tab1:
-        st.markdown("<br>", unsafe_allow_html=True)
+    col_t1, col_t2, _ = st.columns([2, 2, 6])
+    with col_t1:
+        if st.button("🏢 Empresas por Setor", use_container_width=True,
+                     type="primary" if active == 0 else "secondary",
+                     key="b3_tab0"):
+            st.session_state["b3_active_tab"] = 0
+            st.rerun()
+    with col_t2:
+        if st.button("🔍 Análise de Empresa", use_container_width=True,
+                     type="primary" if active == 1 else "secondary",
+                     key="b3_tab1"):
+            st.session_state["b3_active_tab"] = 1
+            st.rerun()
+
+    st.markdown("<hr style='margin:4px 0 16px;border-color:#1E2533;'>",
+                unsafe_allow_html=True)
+
+    if active == 0:
         _tab_empresas(df_set)
-
-    with tab2:
-        st.markdown("<br>", unsafe_allow_html=True)
+    else:
         _tab_analise(df_set)
