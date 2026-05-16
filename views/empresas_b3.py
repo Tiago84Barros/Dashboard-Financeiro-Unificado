@@ -20,6 +20,19 @@ import core.data_reconciliacao as _recon
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 _CDN = "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones"
+
+# Limites máximos razoáveis em escala decimal para cada campo %.
+# Se o valor do BD exceder o limite, assume-se que foi armazenado em escala raw %
+# (ex: 7.13 em vez de 0.0713) e o valor é usado sem multiplicar por 100.
+_MAX_DECIMAL_PCT: dict[str, float] = {
+    "Margem_Liquida":     1.0,   # margens reais: -100% a +100%
+    "Margem_Operacional": 1.0,
+    "DY":                 1.0,   # yield > 100% é impossível
+    "ROA":                1.0,   # ROA > 100% é praticamente impossível
+    "ROE":                5.0,   # bancos podem ter ROE > 100%
+    "ROIC":               3.0,
+    "Payout":             5.0,   # pode superar 100% em anos de distribuição especial
+}
 _COR_POS = "#00C896"
 _COR_NEG = "#FC5C7D"
 _COR_ALT = "#F6C90E"
@@ -347,9 +360,15 @@ def _build_indicators(mult: pd.Series, fontes: dict | None = None) -> list[tuple
         return None
 
     def _g_pct(key: str):
-        """Retorna valor % em escala display (×100 — BD armazena decimal)."""
+        """Retorna valor % em escala display (×100 — BD armazena decimal).
+        Se |v| excede o limite razoável para o campo, assume raw % e não multiplica."""
         v = _g(key)
-        return v * 100.0 if v is not None else None
+        if v is None:
+            return None
+        threshold = _MAX_DECIMAL_PCT.get(key, 2.0)
+        if abs(v) > threshold:
+            return v   # BD armazenou em raw % — não duplicar a escala
+        return v * 100.0
 
     def _badge(db_key: str) -> str:
         if not fontes:
