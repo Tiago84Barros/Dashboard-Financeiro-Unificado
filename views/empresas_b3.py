@@ -387,14 +387,169 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Scoring e backtesting (Análise Avançada)
+# Scoring e backtesting — Motor v2 (alinhado com App 1)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _score_universo(df_mult: pd.DataFrame, tickers_universo: list[str],
-                    pesos: dict[str, float]) -> pd.DataFrame:
+# {indicador: (peso_relativo, melhor_alto)}
+_PESOS_SETOR: dict[str, dict[str, tuple[float, bool]]] = {
+    "financeiro": {
+        "ROE": (30, True), "Margem_Liquida": (20, True), "DY": (20, True),
+        "P/VP": (10, False), "Liquidez_Corrente": (10, True), "Endividamento_Total": (10, False),
+    },
+    "tecnologia": {
+        "ROIC": (30, True), "Margem_Liquida": (25, True), "Margem_Operacional": (20, True),
+        "ROE": (15, True), "EV_EBIT": (10, False),
+    },
+    "energia": {
+        "DY": (30, True), "ROE": (20, True), "Margem_Operacional": (20, True),
+        "Endividamento_Total": (15, False), "P/VP": (15, False),
+    },
+    "industrial": {
+        "ROIC": (25, True), "Margem_Operacional": (25, True), "ROE": (20, True),
+        "EV_EBIT": (15, False), "Liquidez_Corrente": (15, True),
+    },
+    "consumo ciclico": {
+        "ROE": (25, True), "Margem_Liquida": (25, True), "ROIC": (20, True),
+        "P/L": (15, False), "Endividamento_Total": (15, False),
+    },
+    "consumo nao ciclico": {
+        "DY": (25, True), "ROE": (25, True), "Margem_Liquida": (20, True),
+        "Payout": (15, True), "Endividamento_Total": (15, False),
+    },
+    "materiais basicos": {
+        "ROIC": (25, True), "Margem_Operacional": (25, True), "EV_EBIT": (20, False),
+        "DY": (15, True), "Endividamento_Total": (15, False),
+    },
+    "petroleo": {
+        "DY": (30, True), "Margem_Operacional": (25, True), "ROE": (20, True),
+        "Endividamento_Total": (15, False), "P/VP": (10, False),
+    },
+    "saude": {
+        "ROIC": (25, True), "Margem_Liquida": (25, True), "ROE": (20, True),
+        "EV_EBIT": (15, False), "Liquidez_Corrente": (15, True),
+    },
+    "utilidade publica": {
+        "DY": (35, True), "ROE": (20, True), "Endividamento_Total": (20, False),
+        "Margem_Operacional": (15, True), "P/VP": (10, False),
+    },
+}
+
+_PESOS_GENERICO: dict[str, tuple[float, bool]] = {
+    "ROE": (25, True), "ROIC": (20, True), "Margem_Liquida": (15, True),
+    "DY": (10, True), "Endividamento_Total": (20, False), "Liquidez_Corrente": (10, True),
+}
+
+# Indicadores usados na tela comparativa: (coluna_db, label_display)
+_COLS_COMP: list[tuple[str, str]] = [
+    ("ROE", "ROE"), ("ROIC", "ROIC"),
+    ("Margem_Liquida", "Margem Líq."), ("Margem_Operacional", "Margem Op."),
+    ("DY", "DY"), ("P/L", "P/L"), ("P/VP", "P/VP"),
+    ("EV_EBIT", "EV/EBIT"), ("Endividamento_Total", "Endiv."),
+    ("Liquidez_Corrente", "Liquidez"),
+]
+_INV_LABELS: set[str] = {"Endiv.", "P/L", "P/VP", "EV/EBIT"}
+
+
+def _norm_pesos(conf: dict[str, tuple[float, bool]]) -> dict[str, tuple[float, bool]]:
+    total = sum(v[0] for v in conf.values()) or 1.0
+    return {k: (v[0] / total, v[1]) for k, v in conf.items()}
+
+
+def _get_pesos_setor(setor: str,
+                     pesos_usuario: dict[str, float] | None = None
+                     ) -> dict[str, tuple[float, bool]]:
+    if pesos_usuario:
+        conf: dict[str, tuple[float, bool]] = {}
+        for k, v in pesos_usuario.items():
+            if float(v) <= 0:
+                continue
+            melhor_alto = k not in ("P/L", "P/VP", "EV_EBIT", "P_FCO") and \
+                          "endiv" not in k.lower()
+            conf[k] = (float(v), melhor_alto)
+        return _norm_pesos(conf) if conf else _norm_pesos(_PESOS_GENERICO)
+
+    s_lower = (setor or "").lower()
+    for key, conf in _PESOS_SETOR.items():
+        if key in s_lower or any(part in s_lower for part in key.split()):
+            return _norm_pesos(conf)
+    return _norm_pesos(_PESOS_GENERICO)
+
+
+def _winsorize_series(s: pd.Series, p_low: float = 0.05, p_high: float = 0.95) -> pd.Series:
+    lo = s.quantile(p_low)
+    hi = s.quantile(p_high)
+    return s.clip(lower=lo, upper=hi)
+
+
+def _percentile_score(s: pd.Series, melhor_alto: bool = True) -> pd.Series:
+    result = pd.Series(0.5, index=s.index, dtype=float)
+    valid  = s.notna()
+    if valid.sum() >= 2:
+        result[valid] = s[valid].rank(pct=True, ascending=melhor_alto)
+    return result
+
+
+def _resolve_group_col_df(df: pd.DataFrame, prefer: str = "SEGMENTO",
+                           min_n: int = 3) -> str:
+    for col in [prefer, "SUBSETOR", "SETOR"]:
+        if col in df.columns:
+            if df.groupby(col).size().median() >= min_n:
+                return col
+    for col in [prefer, "SUBSETOR", "SETOR"]:
+        if col in df.columns:
+            return col
+    return prefer
+
+
+def _select_n_heuristica(scores_desc: list[float], eps: float = 0.35) -> int:
+    if len(scores_desc) < 2:
+        return 1
+    gap12 = scores_desc[0] - scores_desc[1]
+    gap23 = scores_desc[1] - scores_desc[2] if len(scores_desc) >= 3 else 1.0
+    if gap12 <= eps and gap23 <= eps:
+        return 3
+    if gap12 <= eps:
+        return 2
+    return 1
+
+
+def _weights_from_scores(tickers: list[str], score_map: dict[str, float],
+                          gamma: float = 0.90) -> dict[str, float]:
+    scores = [score_map.get(tk, 0.0) for tk in tickers]
+    mn  = min(scores)
+    eps = 1e-6
+    raw = [(max(s - mn, 0) + eps) ** gamma for s in scores]
+    tot = sum(raw) or 1.0
+    return {tk: r / tot for tk, r in zip(tickers, raw)}
+
+
+def _apply_cap_soft(weights: dict[str, float],
+                    cap: float = 0.25, soft: float = 0.05) -> dict[str, float]:
+    w = {tk: v + (v - soft) * 0.5 if v > soft else v for tk, v in weights.items()}
+    over = {tk: v - cap for tk, v in w.items() if v > cap}
+    for tk in over:
+        w[tk] = cap
+    if over:
+        surplus = sum(over.values())
+        under   = [tk for tk in w if w[tk] < cap]
+        if under:
+            add = surplus / len(under)
+            for tk in under:
+                w[tk] = min(w[tk] + add, cap)
+    tot = sum(w.values()) or 1.0
+    return {tk: v / tot for tk, v in w.items()}
+
+
+def _score_universo(
+    df_mult: pd.DataFrame,
+    tickers_universo: list[str],
+    pesos: dict[str, tuple[float, bool]],
+    df_hist_batch: dict[str, pd.DataFrame] | None = None,
+    group_col_prefer: str = "SEGMENTO",
+) -> pd.DataFrame:
     """
-    Calcula score percentil composto (0–100) por empresa no universo.
-    Retorna DataFrame com colunas 'score' e 'ranking', ordenado por score desc.
+    Score v2: winsorize → percentil intra-grupo → penalidade instabilidade (CV).
+    pesos: {indicador: (peso_normalizado, melhor_alto)}
     """
     if df_mult.empty or not tickers_universo:
         return pd.DataFrame({"Ticker": tickers_universo, "score": 0.0, "ranking": 0})
@@ -403,74 +558,222 @@ def _score_universo(df_mult: pd.DataFrame, tickers_universo: list[str],
     if df.empty:
         return pd.DataFrame({"Ticker": tickers_universo, "score": 0.0, "ranking": 0})
 
-    total_peso = sum(pesos.values()) or 1.0
-
-    # (coluna_db, invert) — invert=True: menor é melhor
-    _campos: dict[str, tuple[str, bool]] = {
-        "ROE":           ("ROE",                False),
-        "ROIC":          ("ROIC",               False),
-        "Margem_Liquida":("Margem_Liquida",      False),
-        "DY":            ("DY",                  False),
-        "Endividamento": ("Endividamento_Total",  True),
-        "Liquidez":      ("Liquidez_Corrente",   False),
-    }
-
+    group_col = _resolve_group_col_df(df, prefer=group_col_prefer)
     score = pd.Series(0.0, index=df.index)
-    for campo, (col, invert) in _campos.items():
-        peso = pesos.get(campo, 0)
-        if peso == 0 or col not in df.columns:
+
+    for col, (peso, melhor_alto) in pesos.items():
+        if col not in df.columns or peso == 0:
             continue
         s = pd.to_numeric(df[col], errors="coerce")
         if s.notna().sum() < 2:
             continue
-        pct = s.rank(pct=True, ascending=not invert, na_option="keep") * 100
-        score += pct.fillna(50.0) * (peso / total_peso)
+        s_win = _winsorize_series(s.dropna()).reindex(s.index)
 
-    df["score"]   = score.round(1)
+        if group_col in df.columns:
+            pct = pd.Series(np.nan, index=df.index, dtype=float)
+            for _, idx in df.groupby(group_col).groups.items():
+                g_s = s_win.loc[idx]
+                if g_s.notna().sum() >= 2:
+                    pct.loc[idx] = _percentile_score(g_s, melhor_alto)
+                else:
+                    pct.loc[idx] = _percentile_score(s_win, melhor_alto).loc[idx]
+        else:
+            pct = _percentile_score(s_win, melhor_alto)
+
+        score += pct.fillna(0.5) * peso * 100.0
+
+    df["score_raw"] = score
+
+    # Penalidade de instabilidade via Coeficiente de Variação histórico
+    if df_hist_batch:
+        cv_pen = pd.Series(0.0, index=df.index)
+        cands  = [c for c in ("ROE", "ROIC", "Margem_Liquida", "Margem_Operacional")
+                  if c in df.columns]
+        for i, row in df.iterrows():
+            tk   = row["Ticker"]
+            df_h = df_hist_batch.get(tk)
+            if df_h is None or df_h.empty:
+                continue
+            pen = 0.0
+            for c in cands:
+                if c not in df_h.columns:
+                    continue
+                sh = pd.to_numeric(df_h[c], errors="coerce").dropna()
+                if len(sh) < 3 or abs(sh.mean()) < 1e-9:
+                    continue
+                cv = sh.std() / abs(sh.mean())
+                pen += (cv / (cv + 1)) ** 1.5 * 0.25 * 0.60
+            cv_pen[i] = min(pen / max(len(cands), 1), 0.25)
+        df["score_raw"] *= (1.0 - cv_pen)
+
+    df["score"]   = df["score_raw"].round(1)
     df["ranking"] = df["score"].rank(ascending=False, method="min").astype(int)
     return df.sort_values("score", ascending=False).reset_index(drop=True)
 
 
+def _score_historico_ano(
+    df_hist_batch: dict[str, pd.DataFrame],
+    tickers: list[str],
+    ano_ref: int,
+    pesos: dict[str, tuple[float, bool]],
+    tk_grupos: dict[str, dict] | None = None,
+    lag: int = 1,
+) -> dict[str, float]:
+    """
+    Monta snapshot cross-sectional com dados até ano_ref − lag, depois pontua.
+    Elimina look-ahead bias: score do ano N usa apenas dados até N−1.
+    Retorna {ticker: score}.
+    """
+    ano_cutoff = ano_ref - lag
+    rows = []
+    for tk in tickers:
+        df_h = df_hist_batch.get(tk)
+        if df_h is None or df_h.empty or "Data" not in df_h.columns:
+            continue
+        df_h = df_h.copy()
+        df_h["_ano"] = pd.to_datetime(df_h["Data"], errors="coerce").dt.year
+        validos = df_h[df_h["_ano"] <= ano_cutoff]
+        if validos.empty:
+            continue
+        row = validos.sort_values("_ano").iloc[-1].to_dict()
+        row["Ticker"] = tk
+        if tk_grupos:
+            row.update(tk_grupos.get(tk) or {})
+        rows.append(row)
+
+    if not rows:
+        return {}
+
+    df_snap = pd.DataFrame(rows)
+    df_sc   = _score_universo(df_snap, tickers, pesos)
+    if df_sc.empty or "score" not in df_sc.columns:
+        return {}
+    return dict(zip(df_sc["Ticker"], df_sc["score"]))
+
+
+def _apply_decay_penalty(
+    score_map: dict[str, float],
+    anos_lideranca: dict[str, int],
+    desconto_aa: float = 0.07,
+    cap: float = 0.30,
+) -> dict[str, float]:
+    """Desconta scores de líderes consecutivos — força rotação de carteira."""
+    return {
+        tk: s * (1.0 - min(anos_lideranca.get(tk, 0) * desconto_aa, cap))
+        for tk, s in score_map.items()
+    }
+
+
 def _simular_backtest(
     df_precos: pd.DataFrame,
-    tickers_top: list[str],
+    df_scored: pd.DataFrame,
+    df_hist_batch: dict[str, pd.DataFrame],
     tickers_all: list[str],
     aporte: float,
     data_inicio: pd.Timestamp,
     taxa_selic_aa: float,
-) -> pd.DataFrame:
+    pesos: dict[str, tuple[float, bool]],
+    tk_grupos: dict[str, dict] | None,
+    top_n_max: int = 5,
+    usar_gamma: bool = True,
+) -> tuple[pd.DataFrame, list[str], int]:
     """
-    Simula aportes mensais fixos em três estratégias.
-    Retorna DataFrame [Data, Estratégia, Benchmark, Tesouro Selic].
+    Simula aportes mensais com rebalanceamento anual e publication lag = 1.
+    Score do ano N é calculado com dados até N−1 (sem look-ahead bias).
+    Retorna (df_resultado, tickers_top_último_ano, n_efetivo_último_ano).
     """
     if df_precos.empty or not tickers_all:
-        return pd.DataFrame()
+        return pd.DataFrame(), [], 0
 
     df = df_precos[df_precos.index >= data_inicio].copy()
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), [], 0
 
-    taxa_mensal    = (1 + taxa_selic_aa) ** (1 / 12) - 1
-    tks_est_valid  = [tk for tk in tickers_top if tk in df.columns]
-    tks_all_valid  = [tk for tk in tickers_all if tk in df.columns]
+    taxa_mensal   = (1 + taxa_selic_aa) ** (1 / 12) - 1
+    tks_all_valid = [tk for tk in tickers_all if tk in df.columns]
 
-    cotas_est   = {tk: 0.0 for tk in tks_est_valid}
+    # Fallback snapshot scores (caso histórico insuficiente)
+    snap_scores = (
+        dict(zip(df_scored["Ticker"], df_scored["score"]))
+        if not df_scored.empty else {}
+    )
+
+    # Estado do backtest
+    anos_lideranca: dict[str, int] = {}
+    pesos_est: dict[str, float]    = {}
+    tks_est_valid: list[str]       = []
+    tickers_top_final: list[str]   = []
+    n_efetivo_final: int           = 0
+    ultimo_ano_rebal: int          = -1
+
+    cotas_est   = {tk: 0.0 for tk in tks_all_valid}
     cotas_bench = {tk: 0.0 for tk in tks_all_valid}
     selic       = 0.0
     rows: list[dict] = []
 
     for dt, row in df.iterrows():
+        ano = dt.year
         selic = selic * (1 + taxa_mensal) + aporte
 
-        # Estratégia: distribui entre top-N com preço válido naquele mês
+        # ── Rebalanceamento anual com publication lag ──────────────────────
+        if ano != ultimo_ano_rebal:
+            ultimo_ano_rebal = ano
+
+            # Calcula scores com dados até ano − 1
+            score_map = _score_historico_ano(
+                df_hist_batch, tks_all_valid, ano, pesos, tk_grupos, lag=1
+            )
+            if not score_map:
+                score_map = snap_scores  # fallback snapshot
+
+            # Penalidade de liderança consecutiva
+            score_map = _apply_decay_penalty(score_map, anos_lideranca)
+
+            # Ordenar e selecionar top-N
+            ranked = sorted(
+                [(tk, s) for tk, s in score_map.items() if tk in df.columns],
+                key=lambda x: x[1], reverse=True
+            )[:top_n_max]
+            tks_ranked_yr = [tk for tk, _ in ranked]
+            scores_yr     = [s  for _, s  in ranked]
+
+            n_yr = (
+                _select_n_heuristica(scores_yr)
+                if usar_gamma and len(tks_ranked_yr) >= 2
+                else min(len(tks_ranked_yr), top_n_max)
+            )
+            tickers_yr = tks_ranked_yr[:n_yr]
+
+            if usar_gamma and len(tickers_yr) >= 2:
+                pesos_est = _apply_cap_soft(
+                    _weights_from_scores(tickers_yr, score_map)
+                )
+            else:
+                pesos_est = (
+                    {tk: 1.0 / len(tickers_yr) for tk in tickers_yr}
+                    if tickers_yr else {}
+                )
+            tks_est_valid = list(pesos_est.keys())
+
+            # Atualiza contagem de anos consecutivos no topo
+            lids = set(tickers_yr)
+            for tk in list(anos_lideranca):
+                if tk not in lids:
+                    del anos_lideranca[tk]
+            for tk in lids:
+                anos_lideranca[tk] = anos_lideranca.get(tk, 0) + 1
+
+            tickers_top_final = tickers_yr
+            n_efetivo_final   = n_yr
+
+        # ── Aportes mensais ────────────────────────────────────────────────
         est_disp = [tk for tk in tks_est_valid
                     if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
         if est_disp:
-            por_tk = aporte / len(est_disp)
+            total_w = sum(pesos_est.get(tk, 0.0) for tk in est_disp) or 1.0
             for tk in est_disp:
-                cotas_est[tk] += por_tk / float(row[tk])
+                cotas_est[tk] += aporte * pesos_est.get(tk, 0.0) / total_w / float(row[tk])
 
-        # Benchmark: distribui entre todos com preço válido
         all_disp = [tk for tk in tks_all_valid
                     if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
         if all_disp:
@@ -480,8 +783,8 @@ def _simular_backtest(
 
         val_est = sum(
             cotas_est[tk] * float(row[tk])
-            for tk in tks_est_valid
-            if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0
+            for tk in tks_all_valid
+            if tk in cotas_est and pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0
         )
         val_bench = sum(
             cotas_bench[tk] * float(row[tk])
@@ -491,7 +794,7 @@ def _simular_backtest(
         rows.append({"Data": dt, "Estratégia": val_est,
                      "Benchmark": val_bench, "Tesouro Selic": selic})
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows), tickers_top_final, n_efetivo_final
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1003,19 +1306,30 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     perfis   = ["Todas", "Crescimento (<10 anos de histórico)", "Estabelecida (≥10 anos)"]
     sel_perf = fc4.selectbox("Perfil",   perfis,   key="b3_av_perf")
 
-    with st.expander("⚖️ Pesos do Scoring (normalizados internamente)"):
+    with st.expander("⚖️ Pesos do Scoring"):
+        usar_pesos_setor = st.checkbox(
+            "Usar pesos calibrados por setor (recomendado)",
+            value=True, key="b3_av_use_setor_w",
+        )
         sp1, sp2, sp3 = st.columns(3)
         sp4, sp5, sp6 = st.columns(3)
-        p_roe  = sp1.slider("ROE",            0, 50, 25, key="b3_av_proe")
-        p_roic = sp2.slider("ROIC",           0, 50, 20, key="b3_av_proic")
-        p_marg = sp3.slider("Margem Líquida", 0, 50, 15, key="b3_av_pmarg")
-        p_dy   = sp4.slider("DY",             0, 30, 10, key="b3_av_pdy")
-        p_div  = sp5.slider("Endividamento",  0, 30, 20, key="b3_av_pdiv")
-        p_liq  = sp6.slider("Liquidez",       0, 30, 10, key="b3_av_pliq")
+        p_roe  = sp1.slider("ROE",            0, 50, 25, key="b3_av_proe",
+                             disabled=usar_pesos_setor)
+        p_roic = sp2.slider("ROIC",           0, 50, 20, key="b3_av_proic",
+                             disabled=usar_pesos_setor)
+        p_marg = sp3.slider("Margem Líquida", 0, 50, 15, key="b3_av_pmarg",
+                             disabled=usar_pesos_setor)
+        p_dy   = sp4.slider("DY",             0, 30, 10, key="b3_av_pdy",
+                             disabled=usar_pesos_setor)
+        p_div  = sp5.slider("Endividamento",  0, 30, 20, key="b3_av_pdiv",
+                             disabled=usar_pesos_setor)
+        p_liq  = sp6.slider("Liquidez",       0, 30, 10, key="b3_av_pliq",
+                             disabled=usar_pesos_setor)
 
-    pesos = {
-        "ROE": p_roe, "ROIC": p_roic, "Margem_Liquida": p_marg,
-        "DY": p_dy, "Endividamento": p_div, "Liquidez": p_liq,
+    pesos_usuario_raw: dict[str, float] | None = None if usar_pesos_setor else {
+        "ROE": float(p_roe), "ROIC": float(p_roic), "Margem_Liquida": float(p_marg),
+        "DY": float(p_dy), "Endividamento_Total": float(p_div),
+        "Liquidez_Corrente": float(p_liq),
     }
 
     # Aplicar filtros
@@ -1040,9 +1354,43 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.info("Nenhuma empresa encontrada com os filtros selecionados.")
         return
 
-    # Scoring
-    df_scored = _score_universo(df_mult_todos, tks_uni, pesos)
-    tk_info   = {row["ticker"]: row for _, row in df_filt.iterrows()}
+    # Enriquecer df_mult com colunas de agrupamento vindas de df_set
+    df_mult_enrich = df_mult_todos.copy()
+    _gcols = [c for c in ("SETOR", "SUBSETOR", "SEGMENTO") if c in df_set.columns]
+    _tk2g: dict[str, dict] = {}
+    if _gcols:
+        _tk2g = df_set.set_index("ticker")[_gcols].to_dict("index")
+        for gc in _gcols:
+            if gc not in df_mult_enrich.columns:
+                df_mult_enrich[gc] = df_mult_enrich["Ticker"].map(
+                    lambda t, g=gc: (_tk2g.get(t) or {}).get(g)
+                )
+    # Dicionário de grupos por ticker — passado ao backtest para scoring intra-grupo
+    tk_grupos = {tk: _tk2g.get(tk, {}) for tk in tks_uni}
+
+    # Carregar histórico para penalidade de instabilidade
+    with st.spinner("Calculando scoring v2…"):
+        hist_batch = _db.load_multiplos_historico_batch(tuple(sorted(tks_uni)))
+
+    # Pesos por setor ou manuais
+    setor_prevalente = (
+        df_filt["SETOR"].value_counts().idxmax()
+        if "SETOR" in df_filt.columns and not df_filt.empty else ""
+    )
+    pesos_v2 = _get_pesos_setor(setor_prevalente, pesos_usuario_raw)
+
+    # Scoring v2 — coluna de grupo: mais granular que o filtro atual
+    group_prefer = (
+        "SUBSETOR" if sel_seg != "Todos" else
+        "SEGMENTO" if sel_sub != "Todos" else
+        "SEGMENTO"
+    )
+    df_scored = _score_universo(
+        df_mult_enrich, tks_uni, pesos_v2,
+        df_hist_batch=hist_batch,
+        group_col_prefer=group_prefer,
+    )
+    tk_info       = {row["ticker"]: row for _, row in df_filt.iterrows()}
     tks_com_score = set(df_scored["Ticker"].tolist()) if not df_scored.empty else set()
     tks_sem_mult  = [tk for tk in tks_uni if tk not in tks_com_score]
 
@@ -1099,27 +1447,30 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     if st.button("▶ Simular Backtest", type="primary", key="b3_av_btn_simular"):
         period_code = per_opts[sel_per]
         tks_tuple   = tuple(sorted(tks_uni))
-        tickers_top = (
-            df_scored["Ticker"].head(min(top_n, len(df_scored))).tolist()
-            if not df_scored.empty else tks_uni[:top_n]
-        )
+        usar_gamma  = len(tks_uni) >= 5
         anos_map    = {"1y": 1, "3y": 3, "5y": 5, "10y": 10}
         data_inicio = pd.Timestamp.now() - pd.DateOffset(years=anos_map[period_code])
 
         with st.spinner("Baixando preços mensais… (pode levar alguns segundos)"):
             df_prec_m = _batch_yf_precos_mensais(tks_tuple, period=period_code)
 
-        df_bt = _simular_backtest(
-            df_prec_m, tickers_top, tks_uni,
+        df_bt, tickers_top, n_efetivo = _simular_backtest(
+            df_prec_m, df_scored, hist_batch, tks_uni,
             float(aporte), data_inicio, float(taxa_sel) / 100.0,
+            pesos_v2, tk_grupos,
+            top_n_max=int(top_n), usar_gamma=usar_gamma,
         )
         st.session_state["b3_av_bt_df"]    = df_bt
         st.session_state["b3_av_bt_top"]   = tickers_top
         st.session_state["b3_av_bt_aport"] = float(aporte)
+        st.session_state["b3_av_bt_n"]     = n_efetivo
+        st.session_state["b3_av_bt_gamma"] = usar_gamma
 
-    df_bt    = st.session_state.get("b3_av_bt_df",    pd.DataFrame())
-    tks_top  = st.session_state.get("b3_av_bt_top",   [])
-    aport_bt = st.session_state.get("b3_av_bt_aport", 0.0)
+    df_bt      = st.session_state.get("b3_av_bt_df",    pd.DataFrame())
+    tks_top    = st.session_state.get("b3_av_bt_top",   [])
+    aport_bt   = st.session_state.get("b3_av_bt_aport", 0.0)
+    n_efetivo  = st.session_state.get("b3_av_bt_n",     0)
+    bt_gamma   = st.session_state.get("b3_av_bt_gamma", False)
 
     if not df_bt.empty:
         colunas_bt = [c for c in ("Estratégia", "Benchmark", "Tesouro Selic")
@@ -1162,7 +1513,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     unsafe_allow_html=True,
                 )
         if tks_top:
-            st.caption(f"Estratégia composta por: **{', '.join(tks_top)}**")
+            modo = "Calibrado (γ-weighted)" if bt_gamma else "Padrão (equal-weight)"
+            st.caption(
+                f"Modo: **{modo}** · N selecionado: **{n_efetivo}** · "
+                f"Estratégia: **{', '.join(tks_top)}**"
+            )
     else:
         st.caption("Configure os parâmetros acima e clique **▶ Simular Backtest**.")
 
@@ -1300,6 +1655,153 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             st.caption("Item de DRE não disponível para as empresas selecionadas.")
     else:
         st.caption("Selecione empresas e item da DRE acima e clique **📋 Comparar DRE**.")
+
+    # ── QUADRO COMPARATIVO ───────────────────────────────────────────────────
+    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    _sec_hdr("📊 Quadro Comparativo — Indicadores por Empresa")
+    st.caption("Verde = top 25% · Vermelho = bottom 25% (considerando direção do indicador).")
+
+    if not df_mult_todos.empty and tks_uni:
+        df_qc = df_mult_todos[df_mult_todos["Ticker"].isin(tks_uni)].copy()
+        cols_disp = [(c, lbl) for c, lbl in _COLS_COMP if c in df_qc.columns]
+        if cols_disp:
+            rows_qc = []
+            for _, r in df_qc.iterrows():
+                row_d: dict = {"Empresa": r["Ticker"]}
+                for c, lbl in cols_disp:
+                    row_d[lbl] = pd.to_numeric(r.get(c), errors="coerce")
+                rows_qc.append(row_d)
+            df_tbl = pd.DataFrame(rows_qc).set_index("Empresa")
+
+            def _style_col(col: pd.Series) -> list[str]:
+                is_inv = col.name in _INV_LABELS
+                q25    = col.quantile(0.25)
+                q75    = col.quantile(0.75)
+                styles = []
+                for v in col:
+                    if pd.isna(v):
+                        styles.append("")
+                    elif (v >= q75 and not is_inv) or (v <= q25 and is_inv):
+                        styles.append("background-color:rgba(0,200,150,.15);color:#00C896")
+                    elif (v <= q25 and not is_inv) or (v >= q75 and is_inv):
+                        styles.append("background-color:rgba(252,92,125,.15);color:#FC5C7D")
+                    else:
+                        styles.append("")
+                return styles
+
+            styled = df_tbl.style.apply(_style_col, axis=0).format(
+                {lbl: "{:.2f}" for _, lbl in cols_disp}, na_rep="—"
+            )
+            st.dataframe(styled, use_container_width=True,
+                         height=min(420, 50 + 35 * len(df_tbl)))
+        else:
+            st.caption("Nenhum indicador disponível para o universo selecionado.")
+    else:
+        st.caption("Sem dados para o universo selecionado.")
+
+    # ── SCATTER PLOT — 2 INDICADORES ─────────────────────────────────────────
+    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    _sec_hdr("🔭 Scatter Plot — Correlação entre Indicadores")
+    st.caption("Linhas pontilhadas = mediana. Cores por score v2.")
+
+    _sc_opts = [c for c, _ in _COLS_COMP
+                if not df_mult_todos.empty and c in df_mult_todos.columns]
+    if len(_sc_opts) >= 2:
+        sc1, sc2 = st.columns(2)
+        ind_x = sc1.selectbox("Eixo X", _sc_opts, index=0, key="b3_av_scx")
+        ind_y = sc2.selectbox("Eixo Y", _sc_opts, index=min(1, len(_sc_opts) - 1),
+                              key="b3_av_scy")
+
+        if st.button("🔭 Gerar Scatter", key="b3_av_btn_scatter"):
+            df_sc = df_mult_todos[df_mult_todos["Ticker"].isin(tks_uni)].copy()
+            if ind_x in df_sc.columns and ind_y in df_sc.columns:
+                df_sc[ind_x] = pd.to_numeric(df_sc[ind_x], errors="coerce")
+                df_sc[ind_y] = pd.to_numeric(df_sc[ind_y], errors="coerce")
+                df_sc[ind_x] = _winsorize_series(df_sc[ind_x].dropna()).reindex(df_sc.index)
+                df_sc[ind_y] = _winsorize_series(df_sc[ind_y].dropna()).reindex(df_sc.index)
+                df_sc = df_sc.dropna(subset=[ind_x, ind_y])
+                if not df_scored.empty:
+                    df_sc = df_sc.merge(df_scored[["Ticker", "score"]], on="Ticker", how="left")
+                st.session_state["b3_av_sc_data"] = df_sc
+                st.session_state["b3_av_sc_xy"]   = (ind_x, ind_y)
+
+        sc_data = st.session_state.get("b3_av_sc_data", pd.DataFrame())
+        sc_xy   = st.session_state.get("b3_av_sc_xy",   (ind_x, ind_y))
+        if not sc_data.empty and sc_xy[0] in sc_data.columns and sc_xy[1] in sc_data.columns:
+            med_x = sc_data[sc_xy[0]].median()
+            med_y = sc_data[sc_xy[1]].median()
+            color_arg = "score" if "score" in sc_data.columns else None
+            color_kw  = ({"color_continuous_scale": [[0, _COR_NEG], [0.5, _COR_ALT],
+                                                      [1, _COR_POS]]}
+                         if color_arg else {})
+            fig_sc = px.scatter(
+                sc_data, x=sc_xy[0], y=sc_xy[1], text="Ticker",
+                color=color_arg, **color_kw,
+                labels={sc_xy[0]: sc_xy[0].replace("_", " "),
+                        sc_xy[1]: sc_xy[1].replace("_", " ")},
+            )
+            fig_sc.add_vline(x=med_x, line_dash="dot", line_color="#4A5568")
+            fig_sc.add_hline(y=med_y, line_dash="dot", line_color="#4A5568")
+            fig_sc.update_traces(textposition="top center", textfont_size=9)
+            fig_sc.update_layout(**_plot_layout(440))
+            st.plotly_chart(fig_sc, use_container_width=True,
+                            config={"displayModeBar": False}, key="b3_av_sc_chart")
+        else:
+            st.caption("Clique **🔭 Gerar Scatter** para plotar.")
+    else:
+        st.caption("Indicadores insuficientes para scatter.")
+
+    # ── FCO / LUCRO — QUALIDADE DO RESULTADO ─────────────────────────────────
+    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    _sec_hdr("💵 FCO / Lucro Líquido — Qualidade do Resultado")
+    st.caption(
+        "Ratio > 1: caixa operacional supera o lucro contábil (sinal de qualidade). "
+        "Ratio < 0.5: lucro pode não estar se convertendo em caixa."
+    )
+
+    if st.button("💵 Calcular FCO/Lucro", key="b3_av_btn_fco"):
+        with st.spinner("Carregando demonstrações…"):
+            batch_fco = _db.load_demonstracoes_batch(tuple(sorted(tks_uni)))
+        fco_rows: list[dict] = []
+        for tk_f, df_f in batch_fco.items():
+            fco_col = next((c for c in ("FCO", "Fluxo_Caixa_Operacional")
+                            if c in df_f.columns), None)
+            ll_col  = next((c for c in ("Lucro_Liquido",) if c in df_f.columns), None)
+            if not fco_col or not ll_col or df_f.empty:
+                continue
+            last = df_f.sort_values("Data").iloc[-1] if "Data" in df_f.columns else df_f.iloc[-1]
+            fco  = pd.to_numeric(last.get(fco_col), errors="coerce")
+            ll   = pd.to_numeric(last.get(ll_col),  errors="coerce")
+            if pd.notna(fco) and pd.notna(ll) and abs(ll) > 1e-6:
+                fco_rows.append({"Empresa": tk_f, "FCO": fco, "Lucro": ll,
+                                  "FCO/Lucro": fco / ll})
+        st.session_state["b3_av_fco_rows"] = fco_rows
+
+    fco_data = st.session_state.get("b3_av_fco_rows", [])
+    if fco_data:
+        df_fco = pd.DataFrame(fco_data).sort_values("FCO/Lucro", ascending=False)
+        fig_fco = px.bar(
+            df_fco, x="Empresa", y="FCO/Lucro",
+            color="FCO/Lucro",
+            color_continuous_scale=[[0, _COR_NEG], [0.33, _COR_ALT], [0.67, _COR_POS],
+                                     [1, _COR_POS]],
+            labels={"FCO/Lucro": "FCO / Lucro Líq."},
+        )
+        fig_fco.add_hline(y=1.0, line_dash="dot", line_color="#4A5568",
+                          annotation_text="FCO = Lucro", annotation_position="top right")
+        fig_fco.update_layout(**_plot_layout(360))
+        st.plotly_chart(fig_fco, use_container_width=True,
+                        config={"displayModeBar": False}, key="b3_av_fco_chart")
+
+        # Mini-tabela com os valores
+        df_fco_disp = df_fco[["Empresa", "FCO", "Lucro", "FCO/Lucro"]].copy()
+        df_fco_disp["FCO"]      = df_fco_disp["FCO"].map(_fv)
+        df_fco_disp["Lucro"]    = df_fco_disp["Lucro"].map(_fv)
+        df_fco_disp["FCO/Lucro"] = df_fco_disp["FCO/Lucro"].map(lambda v: f"{v:.2f}x")
+        st.dataframe(df_fco_disp.set_index("Empresa"), use_container_width=True,
+                     height=min(300, 50 + 35 * len(df_fco_disp)))
+    else:
+        st.caption("Clique **💵 Calcular FCO/Lucro** para gerar o gráfico.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
