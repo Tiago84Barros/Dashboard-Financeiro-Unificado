@@ -748,6 +748,52 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             st.plotly_chart(fig_fc, use_container_width=True,
                             config={"displayModeBar": False}, key=f"b3_fco_{tk}")
 
+        # Estrutura de Capital e Dívida
+        _cap_map = [
+            ("Caixa",             ["Caixa", "Caixa_Equivalentes", "Disponibilidades"], False),
+            ("Dívida CP",         ["Divida_CP", "Divida_Curto_Prazo"],                  True),
+            ("Dívida LP",         ["Divida_LP", "Divida_Longo_Prazo"],                  True),
+            ("Dívida Total",      ["Divida_Total"],                                      True),
+            ("Dívida Líquida",    ["Divida_Liquida"],                                    True),
+            ("Patrimônio Líquido",["Patrimonio_Liquido"],                                False),
+        ]
+        # resolve qual coluna usar para cada item
+        _cap_disp = []
+        for lbl, candidatos_c, inv in _cap_map:
+            col_found = next((c for c in candidatos_c if c in df_fin.columns), None)
+            if col_found:
+                _cap_disp.append((lbl, col_found, inv))
+
+        if _cap_disp:
+            _sec_hdr("🏛️ Estrutura de Capital e Dívida")
+            kpi_c = st.columns(len(_cap_disp), gap="small")
+            for idx, (lbl, col_c, inv) in enumerate(_cap_disp):
+                v = _last_val(df_fin, col_c)
+                with kpi_c[idx]:
+                    st.markdown(
+                        _ind_card(lbl, _fv(v), "Último período disponível",
+                                  _cor_val(v, invert=inv) if v is not None else _COR_NEU),
+                        unsafe_allow_html=True,
+                    )
+            # Gráfico histórico: Caixa, Dívida CP, Dívida LP
+            _chart_cap_cols = [c for lbl, c, _ in _cap_disp
+                               if any(k in c for k in ("Caixa", "Divida_CP", "Divida_LP",
+                                                        "Disponib", "Curto", "Longo"))]
+            if _chart_cap_cols and "Data" in df_fin.columns:
+                plot_cap = df_fin[["Data"] + _chart_cap_cols].copy()
+                for c in _chart_cap_cols:
+                    plot_cap[c] = pd.to_numeric(plot_cap[c], errors="coerce")
+                lbl_map = {c: lbl for lbl, c, _ in _cap_disp}
+                melt_cap = plot_cap.melt("Data", value_vars=_chart_cap_cols,
+                                          var_name="Item", value_name="Valor (R$)")
+                melt_cap["Item"] = melt_cap["Item"].map(lbl_map)
+                fig_cap = px.bar(melt_cap, x="Data", y="Valor (R$)", color="Item",
+                                  barmode="group",
+                                  color_discrete_sequence=[_COR_POS, _COR_ALT, _COR_NEG])
+                fig_cap.update_layout(**_plot_layout(300))
+                st.plotly_chart(fig_cap, use_container_width=True,
+                                config={"displayModeBar": False}, key=f"b3_cap_{tk}")
+
     elif df_precos.empty:
         st.warning("Dados financeiros não encontrados. Configure `SUPABASE_DB_URL_B3`.",
                    icon="⚠️")
