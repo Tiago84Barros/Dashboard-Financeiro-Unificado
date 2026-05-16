@@ -432,6 +432,14 @@ _PESOS_SETOR: dict[str, dict[str, tuple[float, bool]]] = {
         "DY": (35, True), "ROE": (20, True), "Endividamento_Total": (20, False),
         "Margem_Operacional": (15, True), "P/VP": (10, False),
     },
+    "comunicacoes": {
+        "ROE": (25, True), "Margem_Operacional": (25, True), "ROIC": (20, True),
+        "EV_EBIT": (15, False), "Endividamento_Total": (15, False),
+    },
+    "bens industriais": {
+        "ROIC": (30, True), "Margem_Operacional": (25, True), "ROE": (20, True),
+        "Liquidez_Corrente": (15, True), "EV_EBIT": (10, False),
+    },
 }
 
 _PESOS_GENERICO: dict[str, tuple[float, bool]] = {
@@ -540,6 +548,42 @@ def _apply_cap_soft(weights: dict[str, float],
     return {tk: v / tot for tk, v in w.items()}
 
 
+def _apply_crowding_penalty(
+    df: pd.DataFrame,
+    group_col: str,
+    pvp_col: str = "P/VP",
+    n_buckets: int = 5,
+    max_pen: float = 0.10,
+) -> pd.Series:
+    """
+    Penaliza empresas no bucket de P/VP mais congestionado dentro do grupo.
+    Empresas em múltiplos muito populares recebem desconto de até max_pen=10%.
+    """
+    penalty = pd.Series(0.0, index=df.index)
+    if pvp_col not in df.columns or group_col not in df.columns:
+        return penalty
+
+    uniform_share = 1.0 / n_buckets
+    for _, idx in df.groupby(group_col).groups.items():
+        g = pd.to_numeric(df.loc[idx, pvp_col], errors="coerce").dropna()
+        if len(g) < n_buckets:
+            continue
+        try:
+            buckets    = pd.qcut(g, q=n_buckets, duplicates="drop")
+        except Exception:
+            continue
+        counts        = buckets.value_counts()
+        crowded_label = counts.idxmax()
+        crowd_frac    = counts.max() / len(g)
+        if crowd_frac <= uniform_share:
+            continue
+        pen = min((crowd_frac - uniform_share) * max_pen * n_buckets, max_pen)
+        in_crowd = buckets[buckets == crowded_label].index
+        penalty.loc[in_crowd] = pen
+
+    return penalty
+
+
 def _score_universo(
     df_mult: pd.DataFrame,
     tickers_universo: list[str],
@@ -606,9 +650,32 @@ def _score_universo(
             cv_pen[i] = min(pen / max(len(cands), 1), 0.25)
         df["score_raw"] *= (1.0 - cv_pen)
 
+    # Penalidade de crowding — desconta empresas no bucket de P/VP mais populoso do grupo
+    crow_pen = _apply_crowding_penalty(df, group_col)
+    df["score_raw"] *= (1.0 - crow_pen)
+
     df["score"]   = df["score_raw"].round(1)
     df["ranking"] = df["score"].rank(ascending=False, method="min").astype(int)
     return df.sort_values("score", ascending=False).reset_index(drop=True)
+
+
+_DY_MAX_DECIMAL = 1.0   # DY > 100% em escala decimal = dado contaminado
+_DY_MAX_RAW_PCT = 50.0  # DY > 50% em escala raw % = dado contaminado
+
+
+def _sanitize_dy(row: dict) -> dict:
+    """Zera DY obviamente contaminado (ex-dividendo total ou erro de escala)."""
+    dy = row.get("DY")
+    if dy is None:
+        return row
+    try:
+        v = float(dy)
+        if v > _DY_MAX_RAW_PCT or (v < 1.0 and v > _DY_MAX_DECIMAL):
+            row = dict(row)
+            row["DY"] = None
+    except (TypeError, ValueError):
+        pass
+    return row
 
 
 def _score_historico_ano(
@@ -637,6 +704,7 @@ def _score_historico_ano(
             continue
         row = validos.sort_values("_ano").iloc[-1].to_dict()
         row["Ticker"] = tk
+        row = _sanitize_dy(row)
         if tk_grupos:
             row.update(tk_grupos.get(tk) or {})
         rows.append(row)
