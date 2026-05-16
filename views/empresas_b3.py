@@ -487,48 +487,6 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             fontes_recon[field] = "yfinance"
     mult = pd.Series(mult_dict) if mult_dict else mult
 
-    # Mostra alertas de discrepância (se houver) — expansível
-    if alertas_recon:
-        with st.expander(
-            f"⚠️ {len(alertas_recon)} discrepância(s) detectada(s) entre BD e fontes web",
-            expanded=False,
-        ):
-            st.caption(
-                "O banco de dados divergiu das fontes web (Fundamentus / Status Invest) "
-                "nos indicadores abaixo. Os valores das fontes web foram usados como verdade."
-            )
-            for a in alertas_recon:
-                st.markdown(f"- {a}")
-
-    # Legenda de fontes — só exibida se houver mix de fontes
-    fontes_set = set(fontes_recon.values()) - {"sem_dados"}
-    if len(fontes_set) > 1 or fontes_set & {"web", "db_sobrescrito", "yfinance"}:
-        st.caption("🗄️ BD  · 📈 yfinance  · 🌐 Web (Fundamentus/SI)  · ⚠️ Web sobrescreveu BD")
-
-    # ── Diagnóstico de fontes (expansível) ───────────────────────────────────
-    _EMOJI_FONTE = {"db": "🗄️", "web": "🌐", "yfinance": "📈",
-                    "db_sobrescrito": "⚠️", "sem_dados": "❌"}
-    with st.expander("🔍 Diagnóstico de fontes de dados", expanded=False):
-        st.caption("Mostra a origem de cada indicador nesta consulta.")
-        contagem = {}
-        for src in fontes_recon.values():
-            contagem[src] = contagem.get(src, 0) + 1
-        resumo = "  |  ".join(
-            f"{_EMOJI_FONTE.get(s,'?')} **{s}**: {n}"
-            for s, n in sorted(contagem.items())
-        )
-        st.markdown(resumo)
-        rows = sorted(fontes_recon.items())
-        col_a, col_b = st.columns(2)
-        for i, (campo, fonte) in enumerate(rows):
-            valor = mult_dict.get(campo)
-            val_str = f"{valor:.4g}" if isinstance(valor, float) else str(valor or "—")
-            linha = f"{_EMOJI_FONTE.get(fonte,'?')} `{campo}` = {val_str}"
-            (col_a if i % 2 == 0 else col_b).caption(linha)
-        st.divider()
-        st.caption(f"**yfinance direto:** {yf_divs_mult or 'nenhum campo retornado'}")
-        st.caption(f"**Histórico dividendos (yf):** "
-                   f"{'disponível (' + str(len(df_yf_divs)) + ' anos)' if not df_yf_divs.empty else 'indisponível'}")
 
     sem_banco = df_fin.empty and mult.empty
     if sem_banco:
