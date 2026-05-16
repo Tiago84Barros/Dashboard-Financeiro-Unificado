@@ -162,20 +162,6 @@ def _preco_atual(ticker: str) -> float | None:
 # yfinance helpers — dividendos e fundamentals
 # ══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=600, show_spinner=False)
-def _yf_info(ticker: str) -> dict:
-    """Retorna yf.Ticker.info; tenta sufixo .SA e sem sufixo."""
-    tk = ticker.strip().upper().replace(".SA", "")
-    for var in [f"{tk}.SA", tk]:
-        try:
-            info = yf.Ticker(var).info
-            if info and isinstance(info, dict) and info.get("quoteType"):
-                return info
-        except Exception:
-            pass
-    return {}
-
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def _yf_dividendos_anuais(ticker: str) -> pd.DataFrame:
     """Retorna DataFrame [Data, Dividendos] com totais anuais via yfinance."""
@@ -193,6 +179,83 @@ def _yf_dividendos_anuais(ticker: str) -> pd.DataFrame:
         except Exception:
             pass
     return pd.DataFrame()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _yf_multiplos_dividendos(ticker: str) -> dict[str, float]:
+    """
+    Retorna DY e Payout via yfinance com múltiplos caminhos de fallback.
+    DY em escala decimal (0.05 = 5%), compatível com escala BD.
+    """
+    tk = ticker.strip().upper().replace(".SA", "")
+    resultado: dict[str, float] = {}
+
+    for var in [f"{tk}.SA", tk]:
+        try:
+            ytk  = yf.Ticker(var)
+            info = ytk.info or {}
+
+            # ── DY: 3 caminhos em ordem de confiabilidade ──────────────────
+            dy: float | None = None
+
+            # Caminho 1: campo direto do info
+            for key in ("dividendYield", "trailingAnnualDividendYield"):
+                raw = info.get(key)
+                if raw is not None:
+                    try:
+                        v = float(raw)
+                        if np.isfinite(v) and v >= 0:
+                            dy = v
+                            break
+                    except (TypeError, ValueError):
+                        pass
+
+            # Caminho 2: trailingAnnualDividendRate / preço atual
+            if dy is None:
+                rate  = info.get("trailingAnnualDividendRate")
+                price = info.get("currentPrice") or info.get("regularMarketPrice")
+                if rate and price:
+                    try:
+                        r, p = float(rate), float(price)
+                        if np.isfinite(r) and np.isfinite(p) and p > 0 and r > 0:
+                            dy = r / p
+                    except (TypeError, ValueError):
+                        pass
+
+            # Caminho 3: somar últimos 12 meses de dividendos históricos / preço
+            if dy is None:
+                try:
+                    divs = ytk.dividends
+                    if divs is not None and not divs.empty:
+                        last12 = float(divs.last("365D").sum())
+                        price  = info.get("currentPrice") or info.get("regularMarketPrice")
+                        if price and last12 > 0:
+                            p = float(price)
+                            if np.isfinite(p) and p > 0:
+                                dy = last12 / p
+                except Exception:
+                    pass
+
+            if dy is not None:
+                resultado["DY"] = dy
+
+            # ── Payout ─────────────────────────────────────────────────────
+            raw_po = info.get("payoutRatio")
+            if raw_po is not None:
+                try:
+                    v = float(raw_po)
+                    if np.isfinite(v) and 0 <= v <= 2:   # até 200% é razoável
+                        resultado["Payout"] = v
+                except (TypeError, ValueError):
+                    pass
+
+            if resultado:
+                break  # encontrou dados, não precisa tentar sem .SA
+
+        except Exception:
+            continue
+
+    return resultado
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -394,25 +457,15 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         mult          = _recon.reconciliacao_to_series(recon)
         fontes_recon  = dict(recon.get("_fontes", {}))
         alertas_recon = recon.get("_alertas", [])
-        yf_data       = _yf_info(tk)
+        yf_divs_mult  = _yf_multiplos_dividendos(tk)
         df_yf_divs    = _yf_dividendos_anuais(tk)
 
-    # Patch: preenche campos de dividendos ausentes com yfinance
+    # Patch: preenche DY e Payout ausentes com yfinance (escala decimal, igual ao BD)
     mult_dict = mult.to_dict() if not mult.empty else {}
-    _yf_map = {
-        "DY":     lambda d: d.get("dividendYield") or d.get("trailingAnnualDividendYield"),
-        "Payout": lambda d: d.get("payoutRatio"),
-    }
-    for field, getter in _yf_map.items():
-        if mult_dict.get(field) is None and yf_data:
-            v = getter(yf_data)
-            try:
-                fv = float(v)
-                if fv == fv and 0 <= fv < 100:  # sanity: não é NaN e está em escala decimal
-                    mult_dict[field] = fv
-                    fontes_recon[field] = "yfinance"
-            except (TypeError, ValueError):
-                pass
+    for field, val in yf_divs_mult.items():
+        if mult_dict.get(field) is None:
+            mult_dict[field] = val
+            fontes_recon[field] = "yfinance"
     mult = pd.Series(mult_dict) if mult_dict else mult
 
     # Mostra alertas de discrepância (se houver) — expansível
