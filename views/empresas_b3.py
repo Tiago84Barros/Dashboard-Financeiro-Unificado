@@ -397,20 +397,23 @@ _PESOS_SETOR: dict[str, dict[str, tuple[float, bool]]] = {
         "P/VP": (10, False), "Liquidez_Corrente": (10, True), "Endividamento_Total": (10, False),
     },
     "tecnologia": {
-        "ROIC": (30, True), "Margem_Liquida": (25, True), "Margem_Operacional": (20, True),
-        "ROE": (15, True), "EV_EBIT": (10, False),
+        "ROIC": (22, True), "Margem_Liquida": (18, True), "Margem_Operacional": (15, True),
+        "ROE": (12, True), "EV_EBIT": (8, False),
+        "ROE_slope_log": (13, True), "ROIC_slope_log": (12, True),
     },
     "energia": {
         "DY": (30, True), "ROE": (20, True), "Margem_Operacional": (20, True),
         "Endividamento_Total": (15, False), "P/VP": (15, False),
     },
     "industrial": {
-        "ROIC": (25, True), "Margem_Operacional": (25, True), "ROE": (20, True),
-        "EV_EBIT": (15, False), "Liquidez_Corrente": (15, True),
+        "ROIC": (18, True), "Margem_Operacional": (18, True), "ROE": (14, True),
+        "EV_EBIT": (10, False), "Liquidez_Corrente": (10, True),
+        "ROE_slope_log": (15, True), "Margem_Operacional_slope_log": (15, True),
     },
     "consumo ciclico": {
-        "ROE": (25, True), "Margem_Liquida": (25, True), "ROIC": (20, True),
-        "P/L": (15, False), "Endividamento_Total": (15, False),
+        "ROE": (18, True), "Margem_Liquida": (18, True), "ROIC": (14, True),
+        "P/L": (10, False), "Endividamento_Total": (10, False),
+        "ROE_slope_log": (15, True), "Margem_Liquida_slope_log": (15, True),
     },
     "consumo nao ciclico": {
         "DY": (25, True), "ROE": (25, True), "Margem_Liquida": (20, True),
@@ -456,6 +459,54 @@ _COLS_COMP: list[tuple[str, str]] = [
     ("Liquidez_Corrente", "Liquidez"),
 ]
 _INV_LABELS: set[str] = {"Endiv.", "P/L", "P/VP", "EV/EBIT"}
+
+_SLOPE_COLS: tuple[str, ...] = (
+    "ROE", "ROIC", "Margem_Liquida", "Margem_Operacional",
+)
+
+
+def _compute_slope_log(s: pd.Series) -> float | None:
+    """Slope da regressão log-linear — proxy de crescimento anualizado do indicador."""
+    s = pd.to_numeric(s, errors="coerce").dropna()
+    s = s[s > 0]
+    if len(s) < 3:
+        return None
+    x = np.arange(len(s), dtype=float)
+    try:
+        slope, _ = np.polyfit(x, np.log(s.values), 1)
+        return float(slope) if np.isfinite(slope) else None
+    except Exception:
+        return None
+
+
+def _enrich_com_slopes(
+    df_mult: pd.DataFrame,
+    hist_batch: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """
+    Acrescenta colunas {col}_slope_log ao df_mult calculadas do histórico.
+    Colunas ausentes são silenciosamente ignoradas pelo scoring.
+    """
+    if not hist_batch or df_mult.empty:
+        return df_mult
+    slope_data: dict[str, dict[str, float]] = {}
+    for tk, df_h in hist_batch.items():
+        if df_h.empty:
+            continue
+        row: dict[str, float] = {}
+        for c in _SLOPE_COLS:
+            if c not in df_h.columns:
+                continue
+            v = _compute_slope_log(df_h[c])
+            if v is not None:
+                row[f"{c}_slope_log"] = v
+        if row:
+            slope_data[tk] = row
+    if not slope_data:
+        return df_mult
+    df_sl = pd.DataFrame.from_dict(slope_data, orient="index")
+    df_sl.index.name = "Ticker"
+    return df_mult.merge(df_sl.reset_index(), on="Ticker", how="left")
 
 
 def _norm_pesos(conf: dict[str, tuple[float, bool]]) -> dict[str, tuple[float, bool]]:
@@ -659,6 +710,79 @@ def _score_universo(
     return df.sort_values("score", ascending=False).reset_index(drop=True)
 
 
+_GAMMA_GRID = (0.50, 0.75, 1.00, 1.25)
+_CAP_GRID   = (0.20, 0.25, 0.30)
+_SOFT_GRID  = (0.03, 0.05, 0.08)
+_GAMMA_DEF, _CAP_DEF, _SOFT_DEF = 0.90, 0.25, 0.05
+_CAL_SHRINK = 0.40   # shrinkage 40 % em direção ao default
+
+
+def _calibrate_gamma_cap_soft(
+    df_precos: pd.DataFrame,
+    df_scored: pd.DataFrame,
+    tickers_all: list[str],
+    taxa_selic_aa: float,
+    aporte: float = 1000.0,
+    window_months: int = 36,
+) -> tuple[float, float, float]:
+    """
+    Grid search 36 combinações (4γ × 3cap × 3soft) em janela de window_months.
+    Objetivo: CAGR − 0.60×vol + 0.40×|MDD|.
+    Aplica shrinkage 40 % em direção aos defaults (γ=0.90, cap=0.25, soft=0.05).
+    Usa scores estáticos (rápido) — sem rebalanceamento anual durante a calibração.
+    """
+    if df_precos.empty or len(df_precos) < 6 or df_scored.empty:
+        return _GAMMA_DEF, _CAP_DEF, _SOFT_DEF
+
+    df_w     = df_precos.iloc[-window_months:].copy()
+    score_map = dict(zip(df_scored["Ticker"], df_scored["score"]))
+    tks_cand  = [tk for tk in df_scored["Ticker"].tolist()[:5] if tk in df_w.columns]
+    if not tks_cand:
+        return _GAMMA_DEF, _CAP_DEF, _SOFT_DEF
+
+    best_obj  = -np.inf
+    best_pars = (_GAMMA_DEF, _CAP_DEF, _SOFT_DEF)
+
+    for gamma in _GAMMA_GRID:
+        for cap in _CAP_GRID:
+            for soft in _SOFT_GRID:
+                w     = _apply_cap_soft(_weights_from_scores(tks_cand, score_map, gamma), cap, soft)
+                cotas = {tk: 0.0 for tk in tks_cand}
+                vals: list[float] = []
+
+                for _, row in df_w.iterrows():
+                    disp = [tk for tk in tks_cand
+                            if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
+                    if disp:
+                        tw = sum(w.get(tk, 0.0) for tk in disp) or 1.0
+                        for tk in disp:
+                            cotas[tk] += aporte * w.get(tk, 0.0) / tw / float(row[tk])
+                    vals.append(sum(
+                        cotas[tk] * float(row[tk])
+                        for tk in tks_cand
+                        if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0
+                    ))
+
+                if len(vals) < 6 or vals[0] == 0:
+                    continue
+                s_vals = pd.Series(vals)
+                rets   = s_vals.pct_change().dropna()
+                n_yr   = len(vals) / 12
+                cagr   = (vals[-1] / vals[0]) ** (1 / max(n_yr, 0.1)) - 1
+                vol    = float(rets.std()) * (12 ** 0.5)
+                cum    = (1 + rets).cumprod()
+                mdd    = float(abs(((cum - cum.cummax()) / cum.cummax()).min()))
+                obj    = cagr - 0.60 * vol + 0.40 * mdd
+                if obj > best_obj:
+                    best_obj  = obj
+                    best_pars = (gamma, cap, soft)
+
+    g = best_pars[0] * (1 - _CAL_SHRINK) + _GAMMA_DEF * _CAL_SHRINK
+    c = best_pars[1] * (1 - _CAL_SHRINK) + _CAP_DEF   * _CAL_SHRINK
+    s = best_pars[2] * (1 - _CAL_SHRINK) + _SOFT_DEF  * _CAL_SHRINK
+    return round(g, 3), round(c, 3), round(s, 3)
+
+
 _DY_MAX_DECIMAL = 1.0   # DY > 100% em escala decimal = dado contaminado
 _DY_MAX_RAW_PCT = 50.0  # DY > 50% em escala raw % = dado contaminado
 
@@ -744,10 +868,15 @@ def _simular_backtest(
     tk_grupos: dict[str, dict] | None,
     top_n_max: int = 5,
     usar_gamma: bool = True,
+    gamma: float = _GAMMA_DEF,
+    cap: float = _CAP_DEF,
+    soft: float = _SOFT_DEF,
+    selic_por_ano: dict[int, float] | None = None,
 ) -> tuple[pd.DataFrame, list[str], int]:
     """
     Simula aportes mensais com rebalanceamento anual e publication lag = 1.
     Score do ano N é calculado com dados até N−1 (sem look-ahead bias).
+    selic_por_ano: taxa Selic real por ano (da tabela macro); fallback = taxa_selic_aa.
     Retorna (df_resultado, tickers_top_último_ano, n_efetivo_último_ano).
     """
     if df_precos.empty or not tickers_all:
@@ -757,7 +886,6 @@ def _simular_backtest(
     if df.empty:
         return pd.DataFrame(), [], 0
 
-    taxa_mensal   = (1 + taxa_selic_aa) ** (1 / 12) - 1
     tks_all_valid = [tk for tk in tickers_all if tk in df.columns]
 
     # Fallback snapshot scores (caso histórico insuficiente)
@@ -776,12 +904,15 @@ def _simular_backtest(
 
     cotas_est   = {tk: 0.0 for tk in tks_all_valid}
     cotas_bench = {tk: 0.0 for tk in tks_all_valid}
-    selic       = 0.0
+    selic_acum  = 0.0
     rows: list[dict] = []
 
     for dt, row in df.iterrows():
         ano = dt.year
-        selic = selic * (1 + taxa_mensal) + aporte
+        # Selic anual: macro quando disponível, fallback ao parâmetro do usuário
+        selic_aa_ano  = (selic_por_ano or {}).get(ano, taxa_selic_aa)
+        taxa_mensal   = (1 + selic_aa_ano) ** (1 / 12) - 1
+        selic_acum    = selic_acum * (1 + taxa_mensal) + aporte
 
         # ── Rebalanceamento anual com publication lag ──────────────────────
         if ano != ultimo_ano_rebal:
@@ -814,7 +945,7 @@ def _simular_backtest(
 
             if usar_gamma and len(tickers_yr) >= 2:
                 pesos_est = _apply_cap_soft(
-                    _weights_from_scores(tickers_yr, score_map)
+                    _weights_from_scores(tickers_yr, score_map, gamma), cap, soft
                 )
             else:
                 pesos_est = (
@@ -860,7 +991,7 @@ def _simular_backtest(
             if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0
         )
         rows.append({"Data": dt, "Estratégia": val_est,
-                     "Benchmark": val_bench, "Tesouro Selic": selic})
+                     "Benchmark": val_bench, "Tesouro Selic": selic_acum})
 
     return pd.DataFrame(rows), tickers_top_final, n_efetivo_final
 
@@ -1436,9 +1567,13 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     # Dicionário de grupos por ticker — passado ao backtest para scoring intra-grupo
     tk_grupos = {tk: _tk2g.get(tk, {}) for tk in tks_uni}
 
-    # Carregar histórico para penalidade de instabilidade
+    # Carregar histórico para penalidade de instabilidade + slope_log
     with st.spinner("Calculando scoring v2…"):
         hist_batch = _db.load_multiplos_historico_batch(tuple(sorted(tks_uni)))
+        selic_macro = _db.load_selic_macro()
+
+    # Enriquecer com slope_log antes do scoring
+    df_mult_enrich = _enrich_com_slopes(df_mult_enrich, hist_batch)
 
     # Pesos por setor ou manuais
     setor_prevalente = (
@@ -1508,9 +1643,45 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     top_n    = bk2.selectbox("Top-N Estratégia", [1, 3, 5, 10], index=1, key="b3_av_topn")
     per_opts = {"1 ano": "1y", "3 anos": "3y", "5 anos": "5y", "10 anos": "10y"}
     sel_per  = bk3.selectbox("Período", list(per_opts.keys()), index=2, key="b3_av_per")
-    taxa_sel = bk4.number_input(
-        "Taxa Selic a.a. (%)", 0.0, 50.0, 10.75, 0.25, key="b3_av_selic"
+
+    # Selic: usa média da tabela macro como default quando disponível
+    _selic_macro_media = (
+        float(np.mean(list(selic_macro.values()))) * 100
+        if selic_macro else 10.75
     )
+    taxa_sel = bk4.number_input(
+        "Taxa Selic a.a. (%) — fallback",
+        0.0, 50.0, round(_selic_macro_media, 2), 0.25, key="b3_av_selic",
+        help="Quando a tabela macro do App 1 está disponível, cada ano usa a taxa real. "
+             "Este valor é usado como fallback para anos sem cobertura.",
+    )
+
+    # Auto-calibração γ / cap / soft
+    with st.expander("🔧 Auto-calibração de parâmetros (γ, cap, soft)"):
+        st.caption(
+            "Testa 36 combinações (4γ × 3cap × 3soft) nos últimos 36 meses de preços. "
+            "Objetivo: CAGR − 0.60×vol + 0.40×MDD. Shrinkage 40 % ao default."
+        )
+        if st.button("⚙️ Calibrar agora", key="b3_av_btn_cal"):
+            with st.spinner("Calibrando parâmetros…"):
+                per_cal    = per_opts.get(sel_per, "3y")
+                tks_cal    = tuple(sorted(tks_uni))
+                df_prec_cal = _batch_yf_precos_mensais(tks_cal, period=per_cal)
+                g_cal, c_cal, s_cal = _calibrate_gamma_cap_soft(
+                    df_prec_cal, df_scored, tks_uni,
+                    float(taxa_sel) / 100.0, float(aporte),
+                )
+            st.session_state["b3_av_gamma"] = g_cal
+            st.session_state["b3_av_cap"]   = c_cal
+            st.session_state["b3_av_soft"]  = s_cal
+            st.success(f"γ={g_cal:.3f}  cap={c_cal:.3f}  soft={s_cal:.3f}")
+
+        _g_cur = st.session_state.get("b3_av_gamma", _GAMMA_DEF)
+        _c_cur = st.session_state.get("b3_av_cap",   _CAP_DEF)
+        _s_cur = st.session_state.get("b3_av_soft",  _SOFT_DEF)
+        st.caption(
+            f"Parâmetros ativos: **γ={_g_cur:.3f}** · **cap={_c_cur:.3f}** · **soft={_s_cur:.3f}**"
+        )
 
     if st.button("▶ Simular Backtest", type="primary", key="b3_av_btn_simular"):
         period_code = per_opts[sel_per]
@@ -1527,6 +1698,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             float(aporte), data_inicio, float(taxa_sel) / 100.0,
             pesos_v2, tk_grupos,
             top_n_max=int(top_n), usar_gamma=usar_gamma,
+            gamma=st.session_state.get("b3_av_gamma", _GAMMA_DEF),
+            cap=st.session_state.get("b3_av_cap",   _CAP_DEF),
+            soft=st.session_state.get("b3_av_soft",  _SOFT_DEF),
+            selic_por_ano=selic_macro or None,
         )
         st.session_state["b3_av_bt_df"]    = df_bt
         st.session_state["b3_av_bt_top"]   = tickers_top

@@ -332,3 +332,27 @@ def load_historico_anos() -> dict[str, int]:
         except Exception:
             pass
     return result
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_selic_macro() -> dict[int, float]:
+    """
+    Retorna {ano: selic_decimal} da tabela public.macro do App 1.
+    Retorna {} se a tabela não existir ou estiver vazia.
+    Selic em escala decimal (0.1275 = 12.75% a.a.).
+    """
+    df = _q("""
+        SELECT ano, selic
+        FROM public.macro
+        WHERE selic IS NOT NULL
+        ORDER BY ano
+    """)
+    if df.empty:
+        return {}
+    result: dict[int, float] = {}
+    for _, row in df.iterrows():
+        try:
+            result[int(row["ano"])] = float(row["selic"])
+        except Exception:
+            pass
+    return result
