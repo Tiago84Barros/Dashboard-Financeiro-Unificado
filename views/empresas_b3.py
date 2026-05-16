@@ -486,6 +486,31 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     if len(fontes_set) > 1 or fontes_set & {"web", "db_sobrescrito", "yfinance"}:
         st.caption("🗄️ BD  · 📈 yfinance  · 🌐 Web (Fundamentus/SI)  · ⚠️ Web sobrescreveu BD")
 
+    # ── Diagnóstico de fontes (expansível) ───────────────────────────────────
+    _EMOJI_FONTE = {"db": "🗄️", "web": "🌐", "yfinance": "📈",
+                    "db_sobrescrito": "⚠️", "sem_dados": "❌"}
+    with st.expander("🔍 Diagnóstico de fontes de dados", expanded=False):
+        st.caption("Mostra a origem de cada indicador nesta consulta.")
+        contagem = {}
+        for src in fontes_recon.values():
+            contagem[src] = contagem.get(src, 0) + 1
+        resumo = "  |  ".join(
+            f"{_EMOJI_FONTE.get(s,'?')} **{s}**: {n}"
+            for s, n in sorted(contagem.items())
+        )
+        st.markdown(resumo)
+        rows = sorted(fontes_recon.items())
+        col_a, col_b = st.columns(2)
+        for i, (campo, fonte) in enumerate(rows):
+            valor = mult_dict.get(campo)
+            val_str = f"{valor:.4g}" if isinstance(valor, float) else str(valor or "—")
+            linha = f"{_EMOJI_FONTE.get(fonte,'?')} `{campo}` = {val_str}"
+            (col_a if i % 2 == 0 else col_b).caption(linha)
+        st.divider()
+        st.caption(f"**yfinance direto:** {yf_divs_mult or 'nenhum campo retornado'}")
+        st.caption(f"**Histórico dividendos (yf):** "
+                   f"{'disponível (' + str(len(df_yf_divs)) + ' anos)' if not df_yf_divs.empty else 'indisponível'}")
+
     sem_banco = df_fin.empty and mult.empty
     if sem_banco:
         st.warning(
