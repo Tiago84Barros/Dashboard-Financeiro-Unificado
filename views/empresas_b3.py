@@ -271,6 +271,25 @@ def _yf_multiplos_dividendos(ticker: str) -> dict[str, float]:
     return resultado
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _yf_precos(ticker: str) -> pd.DataFrame:
+    """Retorna histórico de preços ajustados via yfinance — colunas [Data, Preco]."""
+    tk = ticker.strip().upper().replace(".SA", "")
+    for var in [f"{tk}.SA", tk]:
+        try:
+            hist = yf.Ticker(var).history(period="max", auto_adjust=True)
+            if hist is not None and not hist.empty:
+                if hasattr(hist.index, "tz") and hist.index.tz is not None:
+                    hist.index = hist.index.tz_localize(None)
+                df = hist[["Close"]].reset_index()
+                df.columns = ["Data", "Preco"]
+                df["Data"] = pd.to_datetime(df["Data"])
+                return df
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — Empresas por Setor
 # ══════════════════════════════════════════════════════════════════════════════
@@ -341,11 +360,11 @@ def _ind_card(label: str, valor: str, sub: str, cor: str) -> str:
     )
 
 
-def _build_indicators(mult: pd.Series, fontes: dict | None = None) -> list[tuple]:
+def _build_indicators(mult: pd.Series, fontes: dict | None = None,
+                      grupo: str = "todos") -> list[tuple]:
     """
     Monta lista de indicadores para exibição em cards.
-    mult: pd.Series na escala do BD (decimais para campos %).
-    fontes: dict opcional com metadados de fonte (_fontes do reconciliacao).
+    grupo: 'rentabilidade' | 'valuation' | 'estrutura' | 'todos'
     """
     def _g(key: str):
         if mult.empty: return None
@@ -387,30 +406,77 @@ def _build_indicators(mult: pd.Series, fontes: dict | None = None) -> list[tuple
         inds.append((lbl_b, val, sub, cor))
 
     inds: list[tuple] = []
-    _add(inds, "Margem Líquida",     _g_pct("Margem_Liquida"),         "% Lucro/Receita",      db_key="Margem_Liquida")
-    _add(inds, "Margem Operacional", _g_pct("Margem_Operacional"),      "% EBIT/Receita",       db_key="Margem_Operacional")
-    _add(inds, "ROE",                _g_pct("ROE"),                     "Retorno s/ PL",        db_key="ROE")
-    _add(inds, "ROA",                _g_pct("ROA"),                     "Retorno s/ Ativos",    db_key="ROA")
-    _add(inds, "ROIC",               _g_pct("ROIC"),                    "Retorno s/ Capital",   db_key="ROIC")
-    _add(inds, "Dividend Yield",     _g_pct("DY"),                      "Dividendos/Preço",     db_key="DY")
-    _add(inds, "P/VP",
-         _g("P/VP") or _g("PVP"),
-         "Preço/Val. Patrimonial", pct=False, fmt_fn=lambda v: f"{v:.2f}x", db_key="P/VP")
-    _add(inds, "Payout",             _g_pct("Payout"),                  "% Lucro distribuído",  db_key="Payout")
-    _add(inds, "P/L",
-         _g("P/L") or _g("PL"),
-         "Preço/Lucro", pct=False, fmt_fn=lambda v: f"{v:.1f}x",   db_key="P/L")
-    _add(inds, "Endividamento",      _g("Endividamento_Total"),          "Dív. Total/PL",
-         pct=False, fmt_fn=lambda v: f"{v:.2f}x", inv=True,              db_key="Endividamento_Total")
-    _add(inds, "Alavancagem Fin.",   _g("Alavancagem_Financeira"),       "Ativos/PL",
-         pct=False, fmt_fn=lambda v: f"{v:.2f}x", inv=True)
-    _add(inds, "Liquidez Corrente",
-         _g("Liquidez_Corrente"),
-         "Ativo Circ/Passivo Circ", pct=False, fmt_fn=lambda v: f"{v:.2f}x", db_key="Liquidez_Corrente")
+    r = grupo
+
+    if r in ("rentabilidade", "todos"):
+        _add(inds, "Margem Líquida",     _g_pct("Margem_Liquida"),    "% Lucro/Receita",    db_key="Margem_Liquida")
+        _add(inds, "Margem Operacional", _g_pct("Margem_Operacional"), "% EBIT/Receita",     db_key="Margem_Operacional")
+        _add(inds, "ROE",                _g_pct("ROE"),                "Retorno s/ PL",      db_key="ROE")
+        _add(inds, "ROA",                _g_pct("ROA"),                "Retorno s/ Ativos",  db_key="ROA")
+        _add(inds, "ROIC",               _g_pct("ROIC"),               "Retorno s/ Capital", db_key="ROIC")
+        _add(inds, "Dividend Yield",     _g_pct("DY"),                 "Dividendos/Preço",   db_key="DY")
+
+    if r in ("valuation", "todos"):
+        _add(inds, "P/VP",
+             _g("P/VP") or _g("PVP"),
+             "Preço/Val. Patrimonial", pct=False, fmt_fn=lambda v: f"{v:.2f}x", db_key="P/VP")
+        _add(inds, "P/L",
+             _g("P/L") or _g("PL"),
+             "Preço/Lucro", pct=False, fmt_fn=lambda v: f"{v:.1f}x", db_key="P/L")
+        _add(inds, "EV/EBIT",
+             _g("EV_EBIT") or _g("EV/EBIT"),
+             "Valor Empresa/EBIT", pct=False, fmt_fn=lambda v: f"{v:.1f}x", db_key="EV_EBIT")
+        _add(inds, "P/FCO",
+             _g("P_FCO") or _g("P/FCO"),
+             "Preço/Fluxo de Caixa", pct=False, fmt_fn=lambda v: f"{v:.1f}x", db_key="P_FCO")
+        _add(inds, "Payout",             _g_pct("Payout"),             "% Lucro distribuído", db_key="Payout")
+
+    if r in ("estrutura", "todos"):
+        _add(inds, "Endividamento",
+             _g("Endividamento_Total"),
+             "Dív. Total/PL", pct=False, fmt_fn=lambda v: f"{v:.2f}x", inv=True,
+             db_key="Endividamento_Total")
+        _add(inds, "Alavancagem Fin.", _g("Alavancagem_Financeira"),
+             "Ativos/PL", pct=False, fmt_fn=lambda v: f"{v:.2f}x", inv=True)
+        _add(inds, "Liquidez Corrente",
+             _g("Liquidez_Corrente"),
+             "Ativo Circ/Passivo Circ", pct=False, fmt_fn=lambda v: f"{v:.2f}x",
+             db_key="Liquidez_Corrente")
+
     return inds
 
 
+def _plot_layout(height: int = 340) -> dict:
+    return dict(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEU, height=height,
+        margin={"t": 10, "b": 10, "l": 0, "r": 0},
+        legend={"orientation": "h", "y": -0.18,
+                "bgcolor": "rgba(0,0,0,0)", "font": {"size": 11}},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533"},
+        xaxis={"showgrid": False},
+    )
+
+
+def _sec_hdr(titulo: str) -> None:
+    st.markdown(
+        f'<div style="font-size:0.75rem;font-weight:700;color:#E2E8F0;'
+        f'margin:18px 0 8px;">{titulo}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_cards(indicadores: list[tuple], n_cols: int = 4) -> None:
+    for i in range(0, len(indicadores), n_cols):
+        chunk = indicadores[i:i+n_cols]
+        cols = st.columns(n_cols, gap="small")
+        for j, (lbl, val, sub, cor) in enumerate(chunk):
+            with cols[j]:
+                st.markdown(_ind_card(lbl, val, sub, cor), unsafe_allow_html=True)
+
+
 def _tab_analise(df_set: pd.DataFrame) -> None:
+    # ── Input ─────────────────────────────────────────────────────────────────
     default_tk = st.session_state.get("b3_ticker_sel", "")
     col_inp, col_btn = st.columns([4, 1])
     with col_inp:
@@ -434,12 +500,12 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         return
 
     # ── Header ────────────────────────────────────────────────────────────────
-    preco     = _preco_atual(tk)
-    info_row  = (df_set[df_set["ticker"] == tk].iloc[0]
-                 if not df_set.empty and tk in df_set["ticker"].values else None)
-    nome_emp  = info_row["nome_empresa"] if info_row is not None else tk
-    setor     = info_row["SETOR"]    if info_row is not None else "—"
-    subsetor  = info_row["SUBSETOR"] if info_row is not None else "—"
+    preco    = _preco_atual(tk)
+    info_row = (df_set[df_set["ticker"] == tk].iloc[0]
+                if not df_set.empty and tk in df_set["ticker"].values else None)
+    nome_emp = info_row["nome_empresa"] if info_row is not None else tk
+    setor    = info_row["SETOR"]    if info_row is not None else "—"
+    subsetor = info_row["SUBSETOR"] if info_row is not None else "—"
 
     col_logo, col_info, col_preco = st.columns([1, 5, 2])
     with col_logo:
@@ -469,17 +535,18 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Dados do banco + reconciliação + yfinance ────────────────────────────
+    # ── Carregamento de dados ─────────────────────────────────────────────────
     with st.spinner(f"Carregando dados de {tk}…"):
-        df_fin        = _db.load_demonstracoes(tk)
-        recon         = _recon.get_multiplos_reconciliados(tk)
-        mult          = _recon.reconciliacao_to_series(recon)
-        fontes_recon  = dict(recon.get("_fontes", {}))
-        alertas_recon = recon.get("_alertas", [])
-        yf_divs_mult  = _yf_multiplos_dividendos(tk)
-        df_yf_divs    = _yf_dividendos_anuais(tk)
+        df_fin       = _db.load_demonstracoes(tk)
+        df_mult_hist = _db.load_multiplos_historico(tk)
+        recon        = _recon.get_multiplos_reconciliados(tk)
+        mult         = _recon.reconciliacao_to_series(recon)
+        fontes_recon = dict(recon.get("_fontes", {}))
+        yf_divs_mult = _yf_multiplos_dividendos(tk)
+        df_yf_divs   = _yf_dividendos_anuais(tk)
+        df_precos    = _yf_precos(tk)
 
-    # Patch: preenche DY e Payout ausentes com yfinance (escala decimal, igual ao BD)
+    # Patch DY / Payout ausentes com yfinance
     mult_dict = mult.to_dict() if not mult.empty else {}
     for field, val in yf_divs_mult.items():
         if mult_dict.get(field) is None:
@@ -487,21 +554,65 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             fontes_recon[field] = "yfinance"
     mult = pd.Series(mult_dict) if mult_dict else mult
 
-
     sem_banco = df_fin.empty and mult.empty
-    if sem_banco:
-        st.warning(
-            "Dados financeiros não encontrados. "
-            "Configure `SUPABASE_DB_URL_B3` no `.env` para acessar DRE e múltiplos.",
-            icon="⚠️",
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SEÇÃO 1 — Preço da Ação
+    # ══════════════════════════════════════════════════════════════════════════
+    if not df_precos.empty:
+        _sec_hdr("📉 Preço da Ação")
+
+        periodos = {"1A": 365, "3A": 1095, "5A": 1825, "Máx": None}
+        sel_per = st.radio("Período", list(periodos.keys()),
+                           index=3, horizontal=True, key=f"b3_per_{tk}")
+        dias = periodos[sel_per]
+        df_p = df_precos.copy()
+        if dias:
+            cutoff = df_p["Data"].max() - pd.Timedelta(days=dias)
+            df_p = df_p[df_p["Data"] >= cutoff]
+
+        fig_preco = px.line(df_p, x="Data", y="Preco",
+                            color_discrete_sequence=[_COR_INF])
+        fig_preco.update_traces(line_width=1.5)
+        fig_preco.update_layout(**_plot_layout(280))
+        fig_preco.update_layout(showlegend=False,
+                                yaxis_title="Preço (R$)", xaxis_title="")
+        st.plotly_chart(fig_preco, use_container_width=True,
+                        config={"displayModeBar": False}, key=f"b3_preco_{tk}_{sel_per}")
+
+        # Retorno anual
+        _sec_hdr("📊 Retorno Anual do Preço")
+        tmp = df_precos.copy()
+        tmp["Ano"] = tmp["Data"].dt.year
+        yr   = tmp.groupby("Ano")["Preco"].last()
+        ret  = (yr.pct_change().dropna() * 100).reset_index()
+        ret.columns = ["Ano", "Retorno"]
+        ret["Ano"]      = ret["Ano"].astype(str)
+        ret["Positivo"] = ret["Retorno"] >= 0
+        ret["Texto"]    = ret["Retorno"].map(lambda v: f"{v:+.2f}%")
+        ret_sorted = ret.sort_values("Ano")
+
+        fig_ret = px.bar(
+            ret_sorted, x="Retorno", y="Ano", orientation="h",
+            color="Positivo",
+            color_discrete_map={True: _COR_POS, False: _COR_NEG},
+            text="Texto",
         )
-    else:
-        # ── CAGR cards ────────────────────────────────────────────────────────
-        st.markdown(
-            '<div style="font-size:0.75rem;font-weight:700;color:#E2E8F0;'
-            'margin-bottom:8px;">📈 Crescimento Médio Anual (CAGR)</div>',
-            unsafe_allow_html=True,
+        fig_ret.update_traces(textposition="outside", textfont_size=10)
+        fig_ret.update_layout(**_plot_layout(max(250, len(ret_sorted) * 28)))
+        fig_ret.update_layout(
+            showlegend=False, xaxis_title="Retorno anual (%)", yaxis_title="Ano",
+            xaxis={"showgrid": True, "gridcolor": "#1E2533", "zeroline": True,
+                   "zerolinecolor": "#4A5568"},
         )
+        st.plotly_chart(fig_ret, use_container_width=True,
+                        config={"displayModeBar": False}, key=f"b3_ret_{tk}")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SEÇÃO 2 — Crescimento e DRE (requer BD)
+    # ══════════════════════════════════════════════════════════════════════════
+    if not sem_banco:
+        _sec_hdr("📈 Crescimento Médio Anual (CAGR)")
         c1, c2, c3, c4 = st.columns(4, gap="small")
         for col, lbl, field in [
             (c1, "Receita Líquida", "Receita_Liquida"),
@@ -520,100 +631,150 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                     unsafe_allow_html=True,
                 )
 
-        st.markdown("<br>", unsafe_allow_html=True)
+        if not df_fin.empty:
+            _sec_hdr("📋 Último Exercício Disponível")
+            r1, r2, r3, r4 = st.columns(4, gap="small")
+            for col, lbl, field, inv in [
+                (r1, "Receita Líquida", "Receita_Liquida", False),
+                (r2, "EBIT",           "EBIT",            False),
+                (r3, "Lucro Líquido",  "Lucro_Liquido",   False),
+                (r4, "Dívida Líquida", "Divida_Liquida",  True),
+            ]:
+                v = _last_val(df_fin, field)
+                with col:
+                    st.markdown(
+                        _ind_card(lbl, _fv(v), "Último registro no banco",
+                                  _cor_val(v, invert=inv) if v is not None else _COR_NEU),
+                        unsafe_allow_html=True,
+                    )
 
-        # ── Valores recentes ──────────────────────────────────────────────────
-        st.markdown(
-            '<div style="font-size:0.75rem;font-weight:700;color:#E2E8F0;'
-            'margin-bottom:8px;">📋 Último Exercício Disponível</div>',
-            unsafe_allow_html=True,
-        )
-        r1, r2, r3, r4 = st.columns(4, gap="small")
-        for col, lbl, field, inv in [
-            (r1, "Receita Líquida",  "Receita_Liquida",  False),
-            (r2, "EBIT",             "EBIT",             False),
-            (r3, "Lucro Líquido",    "Lucro_Liquido",    False),
-            (r4, "Dívida Líquida",   "Divida_Liquida",   True),
-        ]:
-            v = _last_val(df_fin, field)
-            with col:
-                st.markdown(
-                    _ind_card(lbl, _fv(v), "Último registro no banco",
-                              _cor_val(v, invert=inv) if v is not None else _COR_NEU),
-                    unsafe_allow_html=True,
-                )
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # ── Gráfico DRE histórico ─────────────────────────────────────────────
+        # Gráfico DRE histórico
         if not df_fin.empty and "Data" in df_fin.columns:
-            st.markdown(
-                '<div style="font-size:0.75rem;font-weight:700;color:#E2E8F0;'
-                'margin-bottom:8px;">📊 Demonstrações Financeiras — Histórico</div>',
-                unsafe_allow_html=True,
-            )
-            candidatos = [
+            _sec_hdr("📊 Demonstrações Financeiras — Histórico")
+            cands_dre = [
                 ("Receita_Liquida", "Receita Líquida"), ("EBIT", "EBIT"),
-                ("Lucro_Liquido", "Lucro Líquido"),
-                ("Patrimonio_Liquido", "Patrimônio Líquido"),
+                ("Lucro_Liquido", "Lucro Líquido"), ("Patrimonio_Liquido", "Patrimônio Líquido"),
                 ("Divida_Liquida", "Dívida Líquida"), ("Divida_Total", "Dívida Total"),
                 ("Ativo_Total", "Ativo Total"), ("Dividendos", "Dividendos"),
             ]
-            disp = [(c, l) for c, l in candidatos if c in df_fin.columns]
-            if disp:
-                opcoes = [l for _, l in disp]
+            disp_dre = [(c, l) for c, l in cands_dre if c in df_fin.columns]
+            if disp_dre:
+                opcoes = [l for _, l in disp_dre]
                 deflt  = [x for x in ("Receita Líquida", "Lucro Líquido") if x in opcoes]
-                sel    = st.multiselect("Indicadores", opcoes,
-                                        default=deflt or opcoes[:2],
+                sel    = st.multiselect("Indicadores", opcoes, default=deflt or opcoes[:2],
                                         key=f"b3_dre_sel_{tk}")
                 if sel:
-                    lbl2col = {l: c for c, l in disp}
+                    lbl2col  = {l: c for c, l in disp_dre}
                     cols_sel = [lbl2col[l] for l in sel if l in lbl2col]
-                    plot = df_fin[["Data"] + cols_sel].copy()
+                    plot     = df_fin[["Data"] + cols_sel].copy()
                     for c in cols_sel:
                         plot[c] = pd.to_numeric(plot[c], errors="coerce")
                     melt = plot.melt("Data", value_vars=cols_sel,
-                                    var_name="Indicador", value_name="Valor")
-                    melt["Indicador"] = melt["Indicador"].map({c: l for c, l in disp})
-                    fig = px.line(melt, x="Data", y="Valor", color="Indicador",
-                                  markers=True,
+                                     var_name="Indicador", value_name="Valor")
+                    melt["Indicador"] = melt["Indicador"].map({c: l for c, l in disp_dre})
+                    fig = px.line(melt, x="Data", y="Valor", color="Indicador", markers=True,
                                   color_discrete_sequence=[
                                       _COR_POS, _COR_INF, _COR_ALT, _COR_NEG,
-                                      "#9B59B6", "#E67E22", _COR_NEU,
-                                  ])
-                    fig.update_layout(
-                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                        font_color=_COR_NEU, height=340,
-                        margin={"t": 10, "b": 10, "l": 0, "r": 0},
-                        legend={"orientation": "h", "y": -0.18,
-                                "bgcolor": "rgba(0,0,0,0)", "font": {"size": 11}},
-                        yaxis={"showgrid": True, "gridcolor": "#1E2533"},
-                        xaxis={"showgrid": False},
-                    )
+                                      "#9B59B6", "#E67E22", _COR_NEU])
+                    fig.update_layout(**_plot_layout(340))
                     st.plotly_chart(fig, use_container_width=True,
-                                    config={"displayModeBar": False},
-                                    key=f"b3_dre_chart_{tk}")
+                                    config={"displayModeBar": False}, key=f"b3_dre_{tk}")
 
-    # ── Múltiplos ─────────────────────────────────────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(
-        '<div style="font-size:0.75rem;font-weight:700;color:#E2E8F0;'
-        'margin-bottom:8px;">🔢 Múltiplos Fundamentalistas</div>',
-        unsafe_allow_html=True,
-    )
-    indicadores = _build_indicators(
-        mult if not sem_banco else pd.Series(dtype=object),
-        fontes=fontes_recon if not sem_banco else None,
-    )
-    if any(v != "—" for _, v, _, _ in indicadores):
-        for i in range(0, len(indicadores), 4):
-            chunk = indicadores[i:i+4]
-            cols  = st.columns(4, gap="small")
-            for j, (lbl, val, sub, cor) in enumerate(chunk):
-                with cols[j]:
-                    st.markdown(_ind_card(lbl, val, sub, cor), unsafe_allow_html=True)
+        # Histórico de Múltiplos (%) via tabela multiplos
+        if not df_mult_hist.empty and "Data" in df_mult_hist.columns:
+            _sec_hdr("📊 Gráfico de Múltiplos — Histórico")
+            pct_cols = [c for c in ("Margem_Liquida", "Margem_Operacional",
+                                     "ROE", "ROA", "ROIC", "DY", "Payout")
+                        if c in df_mult_hist.columns]
+            if pct_cols:
+                opcoes_m = [c.replace("_", " ") for c in pct_cols]
+                deflt_m  = opcoes_m[:2]
+                sel_m    = st.multiselect("Indicadores (%)", opcoes_m, default=deflt_m,
+                                          key=f"b3_mult_sel_{tk}")
+                if sel_m:
+                    m2col = {c.replace("_", " "): c for c in pct_cols}
+                    sel_cols = [m2col[s] for s in sel_m if s in m2col]
+                    pm = df_mult_hist[["Data"] + sel_cols].copy()
+                    for c in sel_cols:
+                        pm[c] = pd.to_numeric(pm[c], errors="coerce")
+                        # Normaliza para display % (mesma lógica _g_pct)
+                        th = _MAX_DECIMAL_PCT.get(c, 2.0)
+                        pm[c] = pm[c].apply(
+                            lambda v: v if (v != v or abs(v) > th) else v * 100.0)
+                    melt_m = pm.melt("Data", value_vars=sel_cols,
+                                      var_name="Indicador", value_name="Valor (%)")
+                    melt_m["Indicador"] = melt_m["Indicador"].str.replace("_", " ")
+                    fig_m = px.bar(melt_m, x="Data", y="Valor (%)", color="Indicador",
+                                   barmode="group",
+                                   color_discrete_sequence=[
+                                       _COR_POS, _COR_INF, _COR_ALT, _COR_NEG,
+                                       "#9B59B6", "#E67E22"])
+                    fig_m.update_layout(**_plot_layout(300))
+                    st.plotly_chart(fig_m, use_container_width=True,
+                                    config={"displayModeBar": False}, key=f"b3_mhist_{tk}")
+
+        # Fluxo de Caixa (condicional)
+        fco_cols = [c for c in ("FCO", "FCI", "FCF", "Fluxo_Caixa_Operacional",
+                                 "Fluxo_Caixa_Investimento", "Fluxo_Caixa_Livre")
+                    if c in df_fin.columns]
+        if fco_cols:
+            _sec_hdr("💰 Fluxo de Caixa")
+            labels_fco = {
+                "FCO": "FCO (Operacional)", "FCI": "FCI (Investimento)",
+                "FCF": "FCF (Livre)",
+                "Fluxo_Caixa_Operacional": "FCO (Operacional)",
+                "Fluxo_Caixa_Investimento": "FCI (Investimento)",
+                "Fluxo_Caixa_Livre": "FCF (Livre)",
+            }
+            kpi_cols = st.columns(len(fco_cols), gap="small")
+            for idx, fc in enumerate(fco_cols):
+                v = _last_val(df_fin, fc)
+                lbl = labels_fco.get(fc, fc)
+                with kpi_cols[idx]:
+                    st.markdown(
+                        _ind_card(lbl, _fv(v), "Fonte: BD",
+                                  _cor_val(v) if v is not None else _COR_NEU),
+                        unsafe_allow_html=True,
+                    )
+            plot_fc = df_fin[["Data"] + fco_cols].copy()
+            for c in fco_cols:
+                plot_fc[c] = pd.to_numeric(plot_fc[c], errors="coerce")
+            melt_fc = plot_fc.melt("Data", value_vars=fco_cols,
+                                    var_name="Fluxo", value_name="Valor")
+            melt_fc["Fluxo"] = melt_fc["Fluxo"].map(labels_fco)
+            fig_fc = px.bar(melt_fc, x="Data", y="Valor", color="Fluxo", barmode="group",
+                             color_discrete_sequence=[_COR_POS, _COR_NEG, _COR_INF])
+            fig_fc.update_layout(**_plot_layout(300))
+            st.plotly_chart(fig_fc, use_container_width=True,
+                            config={"displayModeBar": False}, key=f"b3_fco_{tk}")
+
+    elif df_precos.empty:
+        st.warning("Dados financeiros não encontrados. Configure `SUPABASE_DB_URL_B3`.",
+                   icon="⚠️")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SEÇÃO 3 — Múltiplos Fundamentalistas (agrupados)
+    # ══════════════════════════════════════════════════════════════════════════
+    _sec_hdr("📐 Rentabilidade")
+    inds_rent = _build_indicators(mult, fontes=fontes_recon, grupo="rentabilidade")
+    if any(v != "—" for _, v, _, _ in inds_rent):
+        _render_cards(inds_rent, n_cols=3)
     else:
-        st.caption("Múltiplos não disponíveis — configure `SUPABASE_DB_URL_B3`.")
+        st.caption("Dados de rentabilidade não disponíveis.")
+
+    _sec_hdr("💹 Valuation")
+    inds_val = _build_indicators(mult, fontes=fontes_recon, grupo="valuation")
+    if any(v != "—" for _, v, _, _ in inds_val):
+        _render_cards(inds_val, n_cols=4)
+    else:
+        st.caption("Dados de valuation não disponíveis.")
+
+    _sec_hdr("🏗️ Estrutura de Capital")
+    inds_est = _build_indicators(mult, fontes=fontes_recon, grupo="estrutura")
+    if any(v != "—" for _, v, _, _ in inds_est):
+        _render_cards(inds_est, n_cols=3)
+    else:
+        st.caption("Dados de estrutura não disponíveis.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
