@@ -159,6 +159,43 @@ def _preco_atual(ticker: str) -> float | None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# yfinance helpers — dividendos e fundamentals
+# ══════════════════════════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _yf_info(ticker: str) -> dict:
+    """Retorna yf.Ticker.info; tenta sufixo .SA e sem sufixo."""
+    tk = ticker.strip().upper().replace(".SA", "")
+    for var in [f"{tk}.SA", tk]:
+        try:
+            info = yf.Ticker(var).info
+            if info and isinstance(info, dict) and info.get("quoteType"):
+                return info
+        except Exception:
+            pass
+    return {}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _yf_dividendos_anuais(ticker: str) -> pd.DataFrame:
+    """Retorna DataFrame [Data, Dividendos] com totais anuais via yfinance."""
+    tk = ticker.strip().upper().replace(".SA", "")
+    for var in [f"{tk}.SA", tk]:
+        try:
+            divs = yf.Ticker(var).dividends
+            if divs is not None and not divs.empty:
+                if hasattr(divs.index, "tz") and divs.index.tz is not None:
+                    divs.index = divs.index.tz_localize(None)
+                anuais = divs.resample("YE").sum()
+                anuais = anuais[anuais > 0]
+                if not anuais.empty:
+                    return pd.DataFrame({"Data": anuais.index, "Dividendos": anuais.values})
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — Empresas por Setor
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -255,7 +292,7 @@ def _build_indicators(mult: pd.Series, fontes: dict | None = None) -> list[tuple
         if not fontes:
             return ""
         src = fontes.get(db_key, "")
-        return {"db_sobrescrito": " ⚠️", "web": " 🌐"}.get(src, "")
+        return {"db_sobrescrito": " ⚠️", "web": " 🌐", "yfinance": " 📈"}.get(src, "")
 
     def _add(inds, lbl, v, sub, pct=True, inv=False, fmt_fn=None, db_key: str = ""):
         badge = _badge(db_key)
@@ -350,13 +387,33 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Dados do banco + reconciliação ───────────────────────────────────────
+    # ── Dados do banco + reconciliação + yfinance ────────────────────────────
     with st.spinner(f"Carregando dados de {tk}…"):
         df_fin        = _db.load_demonstracoes(tk)
         recon         = _recon.get_multiplos_reconciliados(tk)
         mult          = _recon.reconciliacao_to_series(recon)
-        fontes_recon  = recon.get("_fontes", {})
+        fontes_recon  = dict(recon.get("_fontes", {}))
         alertas_recon = recon.get("_alertas", [])
+        yf_data       = _yf_info(tk)
+        df_yf_divs    = _yf_dividendos_anuais(tk)
+
+    # Patch: preenche campos de dividendos ausentes com yfinance
+    mult_dict = mult.to_dict() if not mult.empty else {}
+    _yf_map = {
+        "DY":     lambda d: d.get("dividendYield") or d.get("trailingAnnualDividendYield"),
+        "Payout": lambda d: d.get("payoutRatio"),
+    }
+    for field, getter in _yf_map.items():
+        if mult_dict.get(field) is None and yf_data:
+            v = getter(yf_data)
+            try:
+                fv = float(v)
+                if fv == fv and 0 <= fv < 100:  # sanity: não é NaN e está em escala decimal
+                    mult_dict[field] = fv
+                    fontes_recon[field] = "yfinance"
+            except (TypeError, ValueError):
+                pass
+    mult = pd.Series(mult_dict) if mult_dict else mult
 
     # Mostra alertas de discrepância (se houver) — expansível
     if alertas_recon:
@@ -373,8 +430,8 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 
     # Legenda de fontes — só exibida se houver mix de fontes
     fontes_set = set(fontes_recon.values()) - {"sem_dados"}
-    if len(fontes_set) > 1 or "web" in fontes_set or "db_sobrescrito" in fontes_set:
-        st.caption("🗄️ BD  · 🌐 Web (sem dado no BD)  · ⚠️ Web sobrescreveu BD (discrepância)")
+    if len(fontes_set) > 1 or fontes_set & {"web", "db_sobrescrito", "yfinance"}:
+        st.caption("🗄️ BD  · 📈 yfinance  · 🌐 Web (Fundamentus/SI)  · ⚠️ Web sobrescreveu BD")
 
     sem_banco = df_fin.empty and mult.empty
     if sem_banco:
@@ -397,7 +454,10 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             (c3, "Lucro Líquido",   "Lucro_Liquido"),
             (c4, "Dividendos",      "Dividendos"),
         ]:
-            g = _cagr(df_fin, field)
+            df_src = df_fin
+            if field == "Dividendos" and (df_fin.empty or "Dividendos" not in df_fin.columns):
+                df_src = df_yf_divs
+            g = _cagr(df_src, field)
             with col:
                 st.markdown(
                     _ind_card(lbl, _fg(g), "Regressão log histórico",
