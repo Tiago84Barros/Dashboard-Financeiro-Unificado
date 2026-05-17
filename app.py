@@ -32,11 +32,7 @@ verificar_autenticacao()
 _ROTAS: dict[str, str] = {
     "📊 Dashboard Geral":     "dashboard_geral",
     "💰 Controle Financeiro": "controle_financeiro",
-    "🎯 Metas":               "metas",
     "📈 Investimentos":       "investimentos",
-    "💼 Carteira":            "carteira",
-    "💎 Proventos":           "proventos",
-    "🔔 Alertas":             "alertas",
     "🏢 Empresas B3":         "empresas_b3",
     "⚙️ Configurações":       "configuracoes",
 }
@@ -53,11 +49,11 @@ with st.sidebar:
 
     # Seção: Finanças
     st.markdown('<div class="nav-section">Finanças</div>', unsafe_allow_html=True)
-    opcoes_financas = ["💰 Controle Financeiro", "🎯 Metas"]
+    opcoes_financas = ["💰 Controle Financeiro"]
 
     # Seção: Investimentos
     st.markdown('<div class="nav-section">Investimentos</div>', unsafe_allow_html=True)
-    opcoes_invest = ["📈 Investimentos", "💼 Carteira", "💎 Proventos", "🔔 Alertas", "🏢 Empresas B3"]
+    opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3"]
 
     # Seção: Sistema
     st.markdown('<div class="nav-section">Sistema</div>', unsafe_allow_html=True)
