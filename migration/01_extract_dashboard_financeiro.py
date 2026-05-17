@@ -14,7 +14,7 @@ Tabelas conhecidas do App 1 (auditoria Fase 4.1):
   Demonstracoes_Financeiras, Demonstracoes_Financeiras_TRI,
   cvm_to_ticker, docs_corporativos, docs_corporativos_chunks,
   info_economica, info_economica_mensal, multiplos, multiplos_TRI,
-  patch6_runs, portfolio_snapshot_analysis, portfolio_snapshot_items,
+  macro, patch6_runs, portfolio_snapshot_analysis, portfolio_snapshot_items,
   portfolio_snapshots, setores
 
 Regras:
@@ -48,6 +48,7 @@ APP1_KNOWN_TABLES: list[str] = [
     "docs_corporativos_chunks",
     "info_economica",
     "info_economica_mensal",
+    "macro",
     "multiplos",
     "multiplos_TRI",
     "patch6_runs",

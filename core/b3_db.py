@@ -339,7 +339,7 @@ def load_selic_macro() -> dict[int, float]:
     """
     Retorna {ano: selic_decimal} da tabela public.macro do App 1.
     Retorna {} se a tabela não existir ou estiver vazia.
-    Selic em escala decimal (0.1275 = 12.75% a.a.).
+    Aceita Selic em escala decimal (0.1275) ou percentual (12.75).
     """
     df = _q("""
         SELECT ano, selic
@@ -352,7 +352,12 @@ def load_selic_macro() -> dict[int, float]:
     result: dict[int, float] = {}
     for _, row in df.iterrows():
         try:
-            result[int(row["ano"])] = float(row["selic"])
+            ano = int(row["ano"])
+            selic = float(row["selic"])
+            if abs(selic) > 1:
+                selic = selic / 100.0
+            if 0 <= selic <= 1:
+                result[ano] = selic
         except Exception:
             pass
     return result
