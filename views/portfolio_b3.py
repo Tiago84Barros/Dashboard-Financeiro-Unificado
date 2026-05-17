@@ -473,29 +473,296 @@ def _render_paineis_app1(
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-    with st.expander("🧩 Patch 5 — Desempenho das Empresas", expanded=False):
-        if df_precos_all.empty:
-            st.info("Preços indisponíveis para o painel de desempenho.")
-        else:
-            cols = [p["tk"] for p in proximos_uniq if p["tk"] in df_precos_all.columns]
-            if not cols:
-                st.info("Nenhuma empresa selecionada encontrada na matriz de preços.")
-            else:
-                prec = df_precos_all[cols].dropna(how="all").ffill()
-                ret_12m = {}
-                vol_12m = {}
-                janela = prec.tail(12)
-                for tk in cols:
-                    s = pd.to_numeric(janela[tk], errors="coerce").dropna()
-                    if len(s) >= 2 and float(s.iloc[0]) > 0:
-                        ret_12m[tk] = (float(s.iloc[-1]) / float(s.iloc[0]) - 1) * 100
-                        vol_12m[tk] = s.pct_change().dropna().std() * np.sqrt(12) * 100
-                perf = pd.DataFrame({
-                    "Ticker": list(ret_12m.keys()),
-                    "Retorno 12m (%)": [round(v, 1) for v in ret_12m.values()],
-                    "Volatilidade 12m (%)": [round(vol_12m.get(k, np.nan), 1) for k in ret_12m],
-                })
-                st.dataframe(perf, use_container_width=True, hide_index=True)
+    with st.expander("🧩 Patch 5 — Qualidade das Empresas", expanded=False):
+        _render_patch5_qualidade(proximos_uniq, df_precos_all)
+
+
+def _finite(v: object) -> bool:
+    try:
+        return v is not None and np.isfinite(float(v))
+    except Exception:
+        return False
+
+
+def _fmt_pct(v: object, signed: bool = False) -> str:
+    if not _finite(v):
+        return "-"
+    val = float(v) * 100.0
+    return f"{val:+.2f}%" if signed else f"{val:.2f}%"
+
+
+def _fmt_growth(v: object) -> str:
+    if not _finite(v):
+        return "-"
+    return f"{float(v) * 100.0:+.2f}%"
+
+
+def _fmt_ratio(v: object) -> str:
+    if not _finite(v):
+        return "-"
+    return f"{float(v):.2f}x"
+
+
+def _ratio_to_fraction(s: pd.Series, col: str) -> pd.Series:
+    vals = pd.to_numeric(s, errors="coerce").dropna()
+    if vals.empty:
+        return vals
+    if col.upper() in {"ROIC", "ROE", "ROA", "DY", "PAYOUT"}:
+        med = float(vals.abs().median())
+        if np.isfinite(med) and med > 1.0:
+            vals = vals / 100.0
+    return vals
+
+
+def _mean_last_years(df: pd.DataFrame, col: str, years: int = 5) -> float:
+    if df is None or df.empty or col not in df.columns:
+        return np.nan
+    d = df.copy()
+    if "Data" in d.columns:
+        d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
+        d = d.dropna(subset=["Data"]).sort_values("Data")
+        d["Ano"] = d["Data"].dt.year
+        vals = _ratio_to_fraction(d[col], col)
+        d = d.loc[vals.index].copy()
+        d[col] = vals
+        by_year = d.groupby("Ano")[col].mean().dropna().tail(years)
+        return float(by_year.mean()) if not by_year.empty else np.nan
+    vals = _ratio_to_fraction(d[col], col).tail(years)
+    return float(vals.mean()) if not vals.empty else np.nan
+
+
+def _annual_series(df: pd.DataFrame, col: str) -> pd.Series:
+    if df is None or df.empty or "Data" not in df.columns or col not in df.columns:
+        return pd.Series(dtype=float)
+    d = df[["Data", col]].copy()
+    d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
+    d[col] = pd.to_numeric(d[col], errors="coerce")
+    d = d.dropna(subset=["Data", col])
+    if d.empty:
+        return pd.Series(dtype=float)
+    d["Ano"] = d["Data"].dt.year
+    return d.groupby("Ano")[col].sum().dropna().sort_index()
+
+
+def _growth_from_annual(s: pd.Series) -> float:
+    vals = pd.to_numeric(s, errors="coerce").dropna()
+    vals = vals[vals > 0].tail(6)
+    if len(vals) < 3:
+        return np.nan
+    x = np.arange(len(vals), dtype=float)
+    y = np.log(vals.astype(float).to_numpy())
+    slope = float(np.polyfit(x, y, 1)[0])
+    return float(np.exp(slope) - 1.0)
+
+
+def _latest_debt_ratio(df: pd.DataFrame) -> tuple[float, str]:
+    if df is None or df.empty or "Data" not in df.columns or "Divida_Liquida" not in df.columns:
+        return np.nan, "Dívida Líq./EBITDA"
+    denom = "EBITDA" if "EBITDA" in df.columns else ("EBIT" if "EBIT" in df.columns else "")
+    if not denom:
+        return np.nan, "Dívida Líq./EBITDA"
+    d = df[["Data", "Divida_Liquida", denom]].copy()
+    d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
+    d["Divida_Liquida"] = pd.to_numeric(d["Divida_Liquida"], errors="coerce")
+    d[denom] = pd.to_numeric(d[denom], errors="coerce")
+    d = d.dropna().sort_values("Data")
+    if d.empty or float(d[denom].iloc[-1]) == 0:
+        return np.nan, "Dívida Líq./EBITDA"
+    label = "Dívida Líq./EBITDA" if denom == "EBITDA" else "Dívida Líq./EBIT"
+    return float(d["Divida_Liquida"].iloc[-1] / d[denom].iloc[-1]), label
+
+
+def _price_metrics(precos: pd.DataFrame, ticker: str) -> dict[str, float]:
+    if precos is None or precos.empty or ticker not in precos.columns:
+        return {"ret_12m": np.nan, "price_growth_5y": np.nan, "vol_12m": np.nan, "max_drop_5y": np.nan}
+    s = pd.to_numeric(precos[ticker], errors="coerce").dropna()
+    if s.empty:
+        return {"ret_12m": np.nan, "price_growth_5y": np.nan, "vol_12m": np.nan, "max_drop_5y": np.nan}
+    s.index = pd.to_datetime(s.index, errors="coerce")
+    s = s[~s.index.isna()].sort_index()
+    if len(s) < 2:
+        return {"ret_12m": np.nan, "price_growth_5y": np.nan, "vol_12m": np.nan, "max_drop_5y": np.nan}
+
+    ret_12m = np.nan
+    janela_12 = s.tail(12)
+    if len(janela_12) >= 2 and float(janela_12.iloc[0]) > 0:
+        ret_12m = float(janela_12.iloc[-1] / janela_12.iloc[0] - 1.0)
+
+    rets = s.pct_change().dropna().tail(12)
+    vol_12m = float(rets.std() * np.sqrt(12)) if len(rets) >= 3 else np.nan
+
+    janela_5 = s.tail(60)
+    price_growth_5y = np.nan
+    if len(janela_5) >= 24:
+        vals = janela_5[janela_5 > 0]
+        x = np.arange(len(vals), dtype=float)
+        if len(vals) >= 24:
+            slope = float(np.polyfit(x, np.log(vals.astype(float).to_numpy()), 1)[0])
+            price_growth_5y = float(np.exp(slope * 12.0) - 1.0)
+
+    max_drop_5y = np.nan
+    if len(janela_5) >= 2:
+        peak = janela_5.cummax()
+        dd = janela_5 / peak - 1.0
+        max_drop_5y = float(dd.min())
+
+    return {
+        "ret_12m": ret_12m,
+        "price_growth_5y": price_growth_5y,
+        "vol_12m": vol_12m,
+        "max_drop_5y": max_drop_5y,
+    }
+
+
+def _quality_card(label: str, value: str, note: str, cls: str) -> str:
+    return (
+        f'<div class="cf-card {cls}">'
+        f'<div class="cf-card-label">{label}</div>'
+        f'<div class="cf-card-value">{value}</div>'
+        f'<div class="cf-card-extra">{note}</div>'
+        f'</div>'
+    )
+
+
+def _pos_class(v: object) -> str:
+    if not _finite(v):
+        return "cf-card-ratio"
+    return "cf-card-good" if float(v) >= 0 else "cf-card-bad"
+
+
+def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFrame) -> None:
+    if not proximos_uniq:
+        st.info("Sem líderes finais para exibir no Patch 5.")
+        return
+
+    st.markdown(
+        """
+        <style>
+        .cf-header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin:4px 0 22px;}
+        .cf-title{font-size:2rem;font-weight:900;line-height:1.1;margin:0;color:#F8FAFC;}
+        .cf-subtitle{font-size:.88rem;color:#C4CBD5;margin:10px 0 0;}
+        .cf-pill{border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);border-radius:999px;padding:8px 14px;color:#D6DCE6;font-size:.78rem;font-weight:700;white-space:nowrap;}
+        .cf-rank{font-size:.86rem;color:#D6DCE6;margin:20px 0 2px;}
+        .cf-name{font-size:1.35rem;font-weight:900;color:#F8FAFC;margin-bottom:10px;}
+        .cf-card{border-radius:18px;padding:18px 20px;min-height:122px;margin-bottom:12px;border:1px solid rgba(255,255,255,.13);box-shadow:0 0 0 1px rgba(255,255,255,.04) inset;background:rgba(255,255,255,.045);}
+        .cf-card-label{font-size:.70rem;letter-spacing:.12em;text-transform:uppercase;color:#D1D5DB;font-weight:800;margin-bottom:12px;}
+        .cf-card-value{font-size:1.75rem;line-height:1;font-weight:900;color:#FFFFFF;margin-bottom:10px;}
+        .cf-card-extra{font-size:.78rem;color:#D1D5DB;line-height:1.35;}
+        .cf-card-income{background:rgba(37,99,235,.15);border-color:rgba(59,130,246,.35);}
+        .cf-card-yield{background:rgba(180,113,18,.18);border-color:rgba(245,158,11,.35);}
+        .cf-card-good{background:rgba(16,185,129,.15);border-color:rgba(34,197,94,.35);}
+        .cf-card-bad{background:rgba(239,68,68,.13);border-color:rgba(248,113,113,.32);}
+        .cf-card-ratio{background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.24);}
+        @media(max-width:700px){.cf-header{display:block}.cf-pill{display:inline-block;margin-top:12px}.cf-title{font-size:1.55rem}.cf-card-value{font-size:1.45rem}}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tickers = list(dict.fromkeys([str(p.get("tk", "")).strip().upper() for p in proximos_uniq if p.get("tk")]))
+    nomes = {str(p.get("tk", "")).strip().upper(): p.get("nome") or p.get("tk") for p in proximos_uniq}
+    if not tickers:
+        st.info("Patch 5 indisponível: tickers inválidos.")
+        return
+
+    with st.spinner("Carregando indicadores do Patch 5..."):
+        mult_batch = _db.load_multiplos_historico_batch(tuple(tickers))
+        dre_batch = _db.load_demonstracoes_batch(tuple(tickers))
+
+    st.markdown(
+        """
+        <div class="cf-header">
+          <div>
+            <div class="cf-title">🏢 Patch 5 • Qualidade das Empresas</div>
+            <div class="cf-subtitle">Indicadores a partir do <strong>Supabase</strong> (financeiros e múltiplos) com fallback para <strong>yfinance</strong> (preços).</div>
+          </div>
+          <div><span class="cf-pill">Janela: 5 anos (quando houver)</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    rows: list[dict] = []
+    for tk in tickers:
+        df_mult = mult_batch.get(tk, pd.DataFrame())
+        df_fin = dre_batch.get(tk, pd.DataFrame())
+        pm = _price_metrics(df_precos_all, tk)
+
+        roic = _mean_last_years(df_mult, "ROIC")
+        dy = _mean_last_years(df_mult, "DY")
+        rec_growth = _growth_from_annual(_annual_series(df_fin, "Receita_Liquida"))
+        lucro_growth = _growth_from_annual(_annual_series(df_fin, "Lucro_Liquido"))
+        div_growth = _growth_from_annual(_annual_series(df_fin, "Dividendos"))
+        debt_ratio, debt_label = _latest_debt_ratio(df_fin)
+
+        rows.append({
+            "ticker": tk,
+            "nome": nomes.get(tk, tk),
+            "roic": roic,
+            "dy": dy,
+            "div_growth": div_growth,
+            "debt_ratio": debt_ratio,
+            "debt_label": debt_label,
+            "rec_growth": rec_growth,
+            "lucro_growth": lucro_growth,
+            **pm,
+        })
+
+    dfm = pd.DataFrame(rows)
+    if dfm.empty:
+        st.info("Sem dados suficientes para exibir o Patch 5.")
+        return
+
+    def _pct_rank(col: str, invert: bool = False) -> pd.Series:
+        pct = pd.to_numeric(dfm[col], errors="coerce").rank(pct=True)
+        return 1.0 - pct if invert else pct
+
+    dfm["_ord"] = (
+        _pct_rank("roic") * .18
+        + _pct_rank("dy") * .14
+        + _pct_rank("div_growth") * .10
+        + _pct_rank("rec_growth") * .12
+        + _pct_rank("lucro_growth") * .12
+        + _pct_rank("ret_12m") * .10
+        + _pct_rank("price_growth_5y") * .08
+        + _pct_rank("debt_ratio", invert=True) * .10
+        + _pct_rank("vol_12m", invert=True) * .08
+        + _pct_rank("max_drop_5y") * .08
+    ).fillna(-1.0)
+    dfm = dfm.sort_values(["_ord", "ticker"], ascending=[False, True]).reset_index(drop=True)
+
+    for idx, row in dfm.iterrows():
+        rank = idx + 1
+        medal = "🥇" if rank == 1 else ("🥈" if rank == 2 else ("🥉" if rank == 3 else "🏅"))
+        st.markdown(
+            f'<div class="cf-rank">{medal} <strong>#{rank}</strong></div>'
+            f'<div class="cf-name">{row["ticker"]} — {row["nome"]}</div>',
+            unsafe_allow_html=True,
+        )
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(_quality_card("ROIC médio (5a)", _fmt_pct(row["roic"]), "Eficiência do capital (média 5 anos).", "cf-card-income"), unsafe_allow_html=True)
+        c2.markdown(_quality_card("DY médio (5a)", _fmt_pct(row["dy"]), "Dividend Yield médio (múltiplos do banco).", "cf-card-yield"), unsafe_allow_html=True)
+        c3.markdown(_quality_card("Cresc. anual dividendos (5a)", _fmt_growth(row["div_growth"]), "Taxa anualizada implícita da tendência robusta dos dividendos.", _pos_class(row["div_growth"])), unsafe_allow_html=True)
+        c4.markdown(_quality_card(str(row["debt_label"]), _fmt_ratio(row["debt_ratio"]), "Último disponível no Supabase.", "cf-card-ratio"), unsafe_allow_html=True)
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(_quality_card("Cresc. anual receita (5a)", _fmt_growth(row["rec_growth"]), "Taxa anualizada implícita da tendência robusta da receita.", _pos_class(row["rec_growth"])), unsafe_allow_html=True)
+        c2.markdown(_quality_card("Cresc. anual lucro (5a)", _fmt_growth(row["lucro_growth"]), "Taxa anualizada implícita da tendência robusta do lucro.", _pos_class(row["lucro_growth"])), unsafe_allow_html=True)
+        c3.markdown(_quality_card("Valorização do preço (12m)", _fmt_pct(row["ret_12m"], signed=True), "Retorno do preço em ~12 meses.", _pos_class(row["ret_12m"])), unsafe_allow_html=True)
+        c4.markdown(_quality_card("Cresc. anual preço (5a)", _fmt_growth(row["price_growth_5y"]), "Taxa anualizada implícita da tendência robusta do preço.", _pos_class(row["price_growth_5y"])), unsafe_allow_html=True)
+
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(_quality_card("Volatilidade (12m, a.a.)", _fmt_pct(row["vol_12m"]), "Desvio padrão anualizado do preço.", "cf-card-ratio"), unsafe_allow_html=True)
+        c2.markdown(_quality_card("Máxima queda (5a)", _fmt_pct(row["max_drop_5y"], signed=True), "Pior queda do preço no período.", "cf-card-ratio"), unsafe_allow_html=True)
+        c3.markdown(_quality_card("Fonte", "DB + YF", "Supabase (primário) + yfinance (fallback).", "cf-card-ratio"), unsafe_allow_html=True)
+
+        st.markdown("<hr style='border:0;border-top:1px solid rgba(255,255,255,.08);margin: 8px 0 18px;'>", unsafe_allow_html=True)
+
+    st.caption(
+        "Notas: crescimento usa inclinação log-linear anualizada quando há dados suficientes. "
+        "Preço, volatilidade e máxima queda usam a matriz de preços baixada para a criação do portfólio."
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
