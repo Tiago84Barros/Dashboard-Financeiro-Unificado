@@ -15,6 +15,7 @@ Tabelas usadas (schema public do Supabase do App 1):
 from __future__ import annotations
 
 import os
+import math
 from functools import lru_cache
 
 import pandas as pd
@@ -360,4 +361,45 @@ def load_selic_macro() -> dict[int, float]:
                 result[ano] = selic
         except Exception:
             pass
+    return result
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_macro_history() -> dict[int, dict[str, float]]:
+    """
+    Retorna indicadores macro anuais da public.macro.
+    Usado como ajuste contextual do scoring; retorna {} se a tabela/colunas
+    ainda nao estiverem disponiveis.
+    """
+    df = _q("""
+        SELECT ano, selic, ipca, cambio, balanca_comercial, icc, icc_delta,
+               pib, divida_publica, juros_real_ex_ante
+        FROM public.macro
+        ORDER BY ano
+    """)
+    if df.empty:
+        return {}
+
+    numeric_cols = [c for c in df.columns if c != "ano"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "selic" in df.columns:
+        df["selic"] = df["selic"].where(df["selic"].abs() <= 1, df["selic"] / 100.0)
+
+    result: dict[int, dict[str, float]] = {}
+    for _, row in df.iterrows():
+        try:
+            ano = int(row["ano"])
+        except Exception:
+            continue
+        vals: dict[str, float] = {}
+        for col in numeric_cols:
+            try:
+                value = float(row[col])
+            except Exception:
+                continue
+            if pd.notna(value) and math.isfinite(value):
+                vals[col] = value
+        if vals:
+            result[ano] = vals
     return result

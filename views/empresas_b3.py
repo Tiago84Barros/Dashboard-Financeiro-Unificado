@@ -765,12 +765,95 @@ def _apply_crowding_penalty(
     return penalty
 
 
+def _macro_for_year(
+    macro_by_year: dict[int, dict[str, float]] | None,
+    ano_ref: int | None = None,
+) -> dict[str, float]:
+    """Seleciona o regime macro disponivel sem olhar anos futuros no backtest."""
+    if not macro_by_year:
+        return {}
+    years = sorted(int(y) for y in macro_by_year)
+    if not years:
+        return {}
+    if ano_ref is None:
+        return macro_by_year.get(years[-1], {}) or {}
+    eligible = [y for y in years if y <= int(ano_ref)]
+    if not eligible:
+        return {}
+    return macro_by_year.get(eligible[-1], {}) or {}
+
+
+def _quality_rank(df: pd.DataFrame, col: str, high_good: bool = True) -> pd.Series:
+    """Rank de qualidade 0..1 para ajustes contextuais pequenos."""
+    if col not in df.columns:
+        return pd.Series(0.5, index=df.index, dtype=float)
+    s = pd.to_numeric(df[col], errors="coerce")
+    if s.notna().sum() < 2:
+        return pd.Series(0.5, index=df.index, dtype=float)
+    return _percentile_score(_winsorize_series(s.dropna()).reindex(s.index), high_good).fillna(0.5)
+
+
+def _macro_score_adjustment(
+    df: pd.DataFrame,
+    macro_context: dict[str, float] | None,
+    max_abs: float = 0.05,
+) -> pd.Series:
+    """
+    Ajuste pequeno por regime macro. Ele interage com caracteristicas da empresa
+    (divida, liquidez, margens e crescimento), evitando que macro vire fator
+    dominante igual para todo o segmento.
+    """
+    adj = pd.Series(0.0, index=df.index, dtype=float)
+    if df.empty or not macro_context:
+        return adj
+
+    selic = macro_context.get("selic")
+    real = macro_context.get("juros_real_ex_ante")
+    ipca = macro_context.get("ipca")
+    icc_delta = macro_context.get("icc_delta")
+
+    debt_quality = _quality_rank(df, "Endividamento_Total", high_good=False)
+    liq_quality = _quality_rank(df, "Liquidez_Corrente", high_good=True)
+    margin_cols = [c for c in ("Margem_Operacional", "Margem_Liquida") if c in df.columns]
+    margin_quality = (
+        pd.concat([_quality_rank(df, c, True) for c in margin_cols], axis=1).mean(axis=1)
+        if margin_cols else pd.Series(0.5, index=df.index, dtype=float)
+    )
+    growth_cols = [c for c in ("Receita_slope_log", "Lucro_slope_log", "ROE_slope_log", "ROIC_slope_log") if c in df.columns]
+    growth_quality = (
+        pd.concat([_quality_rank(df, c, True) for c in growth_cols], axis=1).mean(axis=1)
+        if growth_cols else pd.Series(0.5, index=df.index, dtype=float)
+    )
+
+    high_rates = False
+    if real is not None and pd.notna(real):
+        high_rates = float(real) >= 5.0
+    if selic is not None and pd.notna(selic):
+        high_rates = high_rates or float(selic) >= 0.12
+    if high_rates:
+        adj += 0.030 * (debt_quality - 0.5)
+        adj += 0.018 * (liq_quality - 0.5)
+
+    if ipca is not None and pd.notna(ipca) and float(ipca) >= 4.5:
+        adj += 0.022 * (margin_quality - 0.5)
+
+    if icc_delta is not None and pd.notna(icc_delta):
+        if float(icc_delta) < 0:
+            adj += 0.014 * (margin_quality - 0.5)
+            adj += 0.014 * (debt_quality - 0.5)
+        elif float(icc_delta) > 0:
+            adj += 0.016 * (growth_quality - 0.5)
+
+    return adj.clip(lower=-max_abs, upper=max_abs)
+
+
 def _score_universo(
     df_mult: pd.DataFrame,
     tickers_universo: list[str],
     pesos: dict[str, tuple[float, bool]],
     df_hist_batch: dict[str, pd.DataFrame] | None = None,
     group_col_prefer: str = "SEGMENTO",
+    macro_context: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """
     Score v2: winsorize → percentil intra-grupo → penalidade instabilidade (CV).
@@ -835,6 +918,10 @@ def _score_universo(
     # Penalidade de crowding — desconta empresas no bucket de P/VP mais populoso do grupo
     crow_pen = _apply_crowding_penalty(df, group_col)
     df["score_raw"] *= (1.0 - crow_pen)
+
+    macro_adj = _macro_score_adjustment(df, macro_context)
+    df["macro_adj"] = macro_adj
+    df["score_raw"] *= (1.0 + macro_adj)
 
     df["score"]   = df["score_raw"].round(1)
     df["ranking"] = df["score"].rank(ascending=False, method="min").astype(int)
@@ -940,6 +1027,7 @@ def _score_historico_ano(
     pesos: dict[str, tuple[float, bool]],
     tk_grupos: dict[str, dict] | None = None,
     lag: int = 1,
+    macro_by_year: dict[int, dict[str, float]] | None = None,
 ) -> dict[str, float]:
     """
     Monta snapshot cross-sectional com dados até ano_ref − lag, depois pontua.
@@ -968,7 +1056,10 @@ def _score_historico_ano(
         return {}
 
     df_snap = pd.DataFrame(rows)
-    df_sc   = _score_universo(df_snap, tickers, pesos)
+    df_sc   = _score_universo(
+        df_snap, tickers, pesos,
+        macro_context=_macro_for_year(macro_by_year, ano_cutoff),
+    )
     if df_sc.empty or "score" not in df_sc.columns:
         return {}
     return dict(zip(df_sc["Ticker"], df_sc["score"]))
@@ -1003,6 +1094,7 @@ def _simular_backtest(
     cap: float = _CAP_DEF,
     soft: float = _SOFT_DEF,
     selic_por_ano: dict[int, float] | None = None,
+    macro_by_year: dict[int, dict[str, float]] | None = None,
 ) -> tuple[pd.DataFrame, list[str], int]:
     """
     Simula aportes mensais com rebalanceamento anual e publication lag = 1.
@@ -1051,7 +1143,8 @@ def _simular_backtest(
 
             # Calcula scores com dados até ano − 1
             score_map = _score_historico_ano(
-                df_hist_batch, tks_all_valid, ano, pesos, tk_grupos, lag=1
+                df_hist_batch, tks_all_valid, ano, pesos, tk_grupos, lag=1,
+                macro_by_year=macro_by_year,
             )
             if not score_map:
                 score_map = snap_scores  # fallback snapshot
@@ -1708,6 +1801,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     with st.spinner("Calculando scoring v2…"):
         hist_batch = _db.load_multiplos_historico_batch(tuple(sorted(tks_uni)))
         selic_macro = _db.load_selic_macro()
+        macro_history = _db.load_macro_history()
 
     # Enriquecer com slope_log antes do scoring
     df_mult_enrich = _enrich_com_slopes(df_mult_enrich, hist_batch)
@@ -1730,6 +1824,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         df_mult_enrich, tks_uni, pesos_v2,
         df_hist_batch=hist_batch,
         group_col_prefer=group_prefer,
+        macro_context=_macro_for_year(macro_history),
     )
     tk_info       = {row["ticker"]: row for _, row in df_filt.iterrows()}
     tks_com_score = set(df_scored["Ticker"].tolist()) if not df_scored.empty else set()
@@ -1849,6 +1944,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             cap=st.session_state.get("b3_av_cap",   _CAP_DEF),
             soft=st.session_state.get("b3_av_soft",  _SOFT_DEF),
             selic_por_ano=selic_macro or None,
+            macro_by_year=macro_history or None,
         )
         st.session_state["b3_av_bt_df"]    = df_bt
         st.session_state["b3_av_bt_top"]   = tickers_top

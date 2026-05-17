@@ -164,6 +164,7 @@ def _processar_segmento(
     segmento: str,
     taxa_selic_aa: float,
     selic_macro: dict[int, float],
+    macro_history: dict[int, dict[str, float]],
     aporte: float,
     ano_inicio: int,
     gamma: float,
@@ -191,7 +192,10 @@ def _processar_segmento(
     lideres_rows: list[dict]               = []
 
     for ano in range(ano_inicio, ano_atual):
-        score_map = _score_historico_ano(hist_batch, tickers, ano, pesos, tk_grupos, lag=1)
+        score_map = _score_historico_ano(
+            hist_batch, tickers, ano, pesos, tk_grupos, lag=1,
+            macro_by_year=macro_history or None,
+        )
         if not score_map:
             continue
         score_map = _apply_decay_penalty(score_map, anos_lideranca)
@@ -233,7 +237,10 @@ def _processar_segmento(
         return None
 
     # Score para o próximo ano (dados até ano_atual - 1)
-    score_proximo = _score_historico_ano(hist_batch, tickers, ano_atual, pesos, tk_grupos, lag=1)
+    score_proximo = _score_historico_ano(
+        hist_batch, tickers, ano_atual, pesos, tk_grupos, lag=1,
+        macro_by_year=macro_history or None,
+    )
     if not score_proximo:
         return None
     ano_ref_score = ano_atual - 1
@@ -874,6 +881,7 @@ def render(show_header: bool = True) -> None:
     with st.spinner("Carregando dados do banco…"):
         df_set        = _db.load_setores()
         selic_macro   = _db.load_selic_macro()
+        macro_history = _db.load_macro_history()
         anos_hist     = _db.load_historico_anos()
         df_mult_todos = _db.load_multiplos_todos()
 
@@ -930,7 +938,7 @@ def render(show_header: bool = True) -> None:
                 res = _processar_segmento(
                     tickers_seg, hist_batch, df_precos_all,
                     str(setor), str(subsetor), str(segmento),
-                    taxa_selic_aa, selic_macro, float(aporte),
+                    taxa_selic_aa, selic_macro, macro_history, float(aporte),
                     int(ano_inicio), gamma, cap, soft,
                 )
                 if res:
