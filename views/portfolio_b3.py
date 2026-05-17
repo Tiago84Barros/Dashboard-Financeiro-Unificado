@@ -1,8 +1,8 @@
 """
 views/portfolio_b3.py — Criação de Portfólio B3
 Roda o engine de scoring v2 em todos os segmentos, identifica líderes
-históricos por ano (publication lag = 1), simula backtest por segmento
-e monta o portfólio sugerido para o próximo ano.
+históricos por ano (publication lag = 1), reconstrói o desempenho histórico
+por segmento e monta uma carteira sugerida com empresas reais da B3.
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def _simular_seg_backtest(
     selic_macro: dict[int, float],
 ) -> tuple[float, float, float]:
     """
-    Simula portfólio por segmento usando líderes identificados por ano.
+    Reconstrói a carteira por segmento usando líderes identificados por ano.
     Retorna (valor_estrategia, valor_selic, valor_ew).
     """
     if df_prec_seg.empty:
@@ -206,7 +206,7 @@ def _processar_segmento(
     else:
         pesos_prox = {}
 
-    # Backtest
+    # Reconstrução histórica
     tks_disp = [tk for tk in tickers if tk in df_precos_all.columns]
     val_est = val_selic = val_ew = 0.0
     if tks_disp and not df_precos_all.empty:
@@ -296,7 +296,7 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
         res["participacao"].items(), key=lambda x: x[1], reverse=True
     )
     if not participantes:
-        st.caption("Sem dados suficientes para simulação.")
+        st.caption("Sem dados suficientes para reconstrução histórica.")
         return
 
     ano_atual = pd.Timestamp.now().year
@@ -335,18 +335,25 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render() -> None:
+def render(show_header: bool = True) -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
 
+    if show_header:
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">'
+            '<span style="font-size:2rem">🚀</span>'
+            '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
+            'Criação de Portfólio B3</h1>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
     st.markdown(
-        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">'
-        '<span style="font-size:2rem">🚀</span>'
-        '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
-        'Criação de Portfólio B3</h1>'
-        '</div>'
         '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
-        'Engine v2 · Scoring com publication lag = 1 · Backtest por segmento. '
-        '<b style="color:#CBD5E0;">Não constitui recomendação de investimento.</b>'
+        'Ferramenta quantitativa para identificar empresas reais, diversificadas '
+        'por segmento, que historicamente venceram Tesouro Selic e o Equal-Weight '
+        'do próprio segmento. Usa scoring com publication lag = 1, reconstrução '
+        'histórica e líderes para aplicação prática no próximo ciclo.'
         '</p>',
         unsafe_allow_html=True,
     )
@@ -374,7 +381,7 @@ def render() -> None:
         pa1, pa2, pa3 = st.columns(3)
         aporte       = pa1.number_input("Aporte mensal (R$)", 100.0, 50000.0, 1000.0, 100.0,
                                          key="pb3_aporte")
-        ano_inicio   = pa2.number_input("Ano início simulação", 2010, 2022, _ANO_INICIO_DEFAULT, 1,
+        ano_inicio   = pa2.number_input("Ano início da reconstrução", 2010, 2022, _ANO_INICIO_DEFAULT, 1,
                                          key="pb3_ano_ini")
         mostrar_audit = pa3.checkbox("Mostrar auditoria dos segmentos", value=True,
                                       key="pb3_audit")
@@ -619,7 +626,7 @@ def render() -> None:
     st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
                 unsafe_allow_html=True)
     _sec_hdr(f"📈 Desempenho parcial das selecionadas (ano atual: {ano_atual})")
-    st.caption("Simulação de aportes mensais de R$1.000 desde janeiro do ano atual.")
+    st.caption("Acompanhamento de aportes mensais de R$1.000 desde janeiro do ano atual.")
 
     if proximos_uniq:
         tks_prox = tuple(sorted({p["tk"] for p in proximos_uniq}))

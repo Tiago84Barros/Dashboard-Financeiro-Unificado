@@ -624,6 +624,8 @@ def _apply_crowding_penalty(
         except Exception:
             continue
         counts        = buckets.value_counts()
+        if counts.empty:
+            continue
         crowded_label = counts.idxmax()
         crowd_frac    = counts.max() / len(g)
         if crowd_frac <= uniform_share:
@@ -1576,10 +1578,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     df_mult_enrich = _enrich_com_slopes(df_mult_enrich, hist_batch)
 
     # Pesos por setor ou manuais
-    setor_prevalente = (
-        df_filt["SETOR"].value_counts().idxmax()
-        if "SETOR" in df_filt.columns and not df_filt.empty else ""
+    setor_counts = (
+        df_filt["SETOR"].dropna().astype(str).str.strip().value_counts()
+        if "SETOR" in df_filt.columns and not df_filt.empty else pd.Series(dtype=int)
     )
+    setor_prevalente = str(setor_counts.idxmax()) if not setor_counts.empty else ""
     pesos_v2 = _get_pesos_setor(setor_prevalente, pesos_usuario_raw)
 
     # Scoring v2 — coluna de grupo: mais granular que o filtro atual
@@ -2061,8 +2064,8 @@ def render() -> None:
         'Empresas B3</h1>'
         '</div>'
         '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
-        'Análise fundamentalista de empresas listadas na B3. '
-        '<b style="color:#CBD5E0;">Não constitui recomendação de investimento.</b>'
+        'Análise fundamentalista de empresas listadas na B3 e construção '
+        'quantitativa de portfólios aplicáveis com dados reais.'
         '</p>',
         unsafe_allow_html=True,
     )
@@ -2078,7 +2081,7 @@ def render() -> None:
 
     active = st.session_state.get("b3_active_tab", 0)
 
-    col_t1, col_t2, col_t3, _ = st.columns([2, 2, 2.5, 3.5])
+    col_t1, col_t2, col_t3, col_t4, _ = st.columns([2, 2, 2.5, 2.5, 1])
     with col_t1:
         if st.button("🏢 Empresas por Setor", use_container_width=True,
                      type="primary" if active == 0 else "secondary",
@@ -2097,6 +2100,12 @@ def render() -> None:
                      key="b3_tab2"):
             st.session_state["b3_active_tab"] = 2
             st.rerun()
+    with col_t4:
+        if st.button("🚀 Criação de Portfólio", use_container_width=True,
+                     type="primary" if active == 3 else "secondary",
+                     key="b3_tab3"):
+            st.session_state["b3_active_tab"] = 3
+            st.rerun()
 
     st.markdown("<hr style='margin:4px 0 16px;border-color:#1E2533;'>",
                 unsafe_allow_html=True)
@@ -2105,5 +2114,9 @@ def render() -> None:
         _tab_empresas(df_set)
     elif active == 1:
         _tab_analise(df_set)
-    else:
+    elif active == 2:
         _tab_avancada(df_set)
+    else:
+        from views import portfolio_b3
+
+        portfolio_b3.render(show_header=False)
