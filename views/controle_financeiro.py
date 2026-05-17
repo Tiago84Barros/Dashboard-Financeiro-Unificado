@@ -119,18 +119,20 @@ def _fig_cat_horizontal(cats: list) -> go.Figure:
     return fig
 
 
-def _fig_historico(historico: list) -> go.Figure:
+def _fig_historico(historico: list, fluxo_inv: dict | None = None) -> go.Figure:
     h6 = historico[-6:] if len(historico) >= 6 else historico
-    meses    = [h["label"]    for h in h6]
-    receitas = [h["receitas"] for h in h6]
-    despesas = [h["despesas"] for h in h6]
-    saldos   = [h["saldo"]    for h in h6]
+    meses         = [h["label"]    for h in h6]
+    receitas      = [h["receitas"] for h in h6]
+    despesas      = [h["despesas"] for h in h6]
+    investimentos = [
+        (fluxo_inv or {}).get((h["ano"], h["mes"]), 0.0) for h in h6
+    ]
 
     fig = go.Figure()
     for nome, vals, cor, dash in [
-        ("Receitas", receitas, _COR_RECEITA, "solid"),
-        ("Despesas", despesas, _COR_DESPESA, "solid"),
-        ("Saldo",    saldos,   _COR_INVEST,  "dot"),
+        ("Receitas",      receitas,      _COR_RECEITA, "solid"),
+        ("Despesas",      despesas,      _COR_DESPESA, "solid"),
+        ("Investimentos", investimentos, _COR_INVEST,  "solid"),
     ]:
         fig.add_trace(go.Scatter(
             name=nome, x=meses, y=vals, mode="lines+markers",
@@ -517,7 +519,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict) -> None:
     with col_hist:
         _secao_titulo("📈", "Histórico de 6 meses (Receitas × Despesas × Saldo)")
         if historico:
-            st.plotly_chart(_fig_historico(historico),
+            st.plotly_chart(_fig_historico(historico, fluxo_inv),
                             use_container_width=True,
                             config={"displayModeBar": False})
         else:

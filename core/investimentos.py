@@ -373,7 +373,7 @@ _MESES_PT_CF = {
 _SQL_CASHFLOW = """
     SELECT month_year, total_income, total_expenses_abs, net_cashflow
     FROM   v_monthly_cashflow
-    WHERE  user_id = :uid::uuid
+    WHERE  user_id = :uid
     ORDER  BY month_year DESC
     LIMIT  12
 """
