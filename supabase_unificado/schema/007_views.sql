@@ -195,7 +195,8 @@ COMMENT ON VIEW v_investment_summary IS
 -- ────────────────────────────────────────────────────────────
 -- VIEW 6: v_net_worth
 -- Patrimônio líquido total por usuário.
--- bank_balance    = SUM de current_balance de contas ativas
+-- bank_balance    = SUM de current_balance de contas ativas NÃO credit_card
+--                   (cartão de crédito é gasto futuro, não saldo em conta)
 -- investment_total = SUM de current_market_value de todas as classes
 -- net_worth       = bank_balance + investment_total
 -- ────────────────────────────────────────────────────────────
@@ -207,6 +208,7 @@ WITH bank AS (
         SUM(current_balance) AS bank_balance
     FROM v_account_balance
     WHERE active = TRUE
+      AND account_type != 'credit_card'
     GROUP BY user_id
 ),
 investments AS (
