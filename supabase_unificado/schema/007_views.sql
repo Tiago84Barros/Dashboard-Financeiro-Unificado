@@ -67,16 +67,18 @@ COMMENT ON VIEW v_account_balance IS
 
 CREATE OR REPLACE VIEW v_monthly_cashflow AS
 SELECT
-    user_id,
-    DATE_TRUNC('month', due_date)::DATE             AS month_year,
-    SUM(CASE WHEN amount > 0 THEN amount  ELSE 0 END) AS total_income,
-    SUM(CASE WHEN amount < 0 THEN amount  ELSE 0 END) AS total_expenses,
-    ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)) AS total_expenses_abs,
-    SUM(amount)                                     AS net_cashflow
-FROM transactions
-WHERE status = 'settled'
-  AND type   IN ('income', 'expense')
-GROUP BY user_id, DATE_TRUNC('month', due_date)::DATE;
+    t.user_id,
+    DATE_TRUNC('month', t.due_date)::DATE               AS month_year,
+    SUM(CASE WHEN t.amount > 0 THEN t.amount  ELSE 0 END) AS total_income,
+    SUM(CASE WHEN t.amount < 0 THEN t.amount  ELSE 0 END) AS total_expenses,
+    ABS(SUM(CASE WHEN t.amount < 0 THEN t.amount ELSE 0 END)) AS total_expenses_abs,
+    SUM(t.amount)                                       AS net_cashflow
+FROM transactions t
+LEFT JOIN accounts a ON a.id = t.account_id
+WHERE t.status = 'settled'
+  AND t.type   IN ('income', 'expense')
+  AND COALESCE(a.type, '') != 'credit_card'
+GROUP BY t.user_id, DATE_TRUNC('month', t.due_date)::DATE;
 
 COMMENT ON VIEW v_monthly_cashflow IS
     'Receitas, despesas e saldo líquido por mês (due_date). '

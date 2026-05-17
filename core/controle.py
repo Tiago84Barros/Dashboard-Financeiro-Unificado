@@ -98,8 +98,9 @@ _SQL_TRANSACOES = """
         t.type,
         t.status,
         t.recurring,
-        COALESCE(c.name, 'Sem categoria') AS category_name,
-        COALESCE(ac.name, 'Sem conta')    AS account_name
+        COALESCE(c.name, 'Sem categoria')  AS category_name,
+        COALESCE(ac.name, 'Sem conta')     AS account_name,
+        COALESCE(ac.type, '')              AS account_type
     FROM   transactions t
     LEFT JOIN categories c  ON c.id  = t.category_id
     LEFT JOIN accounts   ac ON ac.id = t.account_id
@@ -571,19 +572,26 @@ def _controle_real(ano: int, mes: int) -> dict:
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
 
-    # KPIs
+    def _is_cc(r) -> bool:
+        """Compra no cartão de crédito: não é despesa do mês (será paga na fatura)."""
+        return getattr(r, "account_type", "") == "credit_card"
+
+    # KPIs — cartão de crédito excluído das despesas (igual ao app isolado)
     receitas = sum(_f(r.amount) for r in tx_rows if r.type == "income")
-    despesas = sum(abs(_f(r.amount)) for r in tx_rows if r.type == "expense")
+    despesas = sum(
+        abs(_f(r.amount)) for r in tx_rows
+        if r.type == "expense" and not _is_cc(r)
+    )
     saldo    = round(receitas - despesas, 2)
     taxa     = round(saldo / receitas * 100, 1) if receitas > 0 else 0.0
 
     # Orçamentos mapeados
     budget_map: dict[str, float] = {r.category_name: _f(r.amount_limit) for r in budget_rows}
 
-    # Categorias de despesa
+    # Categorias de despesa — idem, sem compras de cartão de crédito
     cat_gastos: dict[str, float] = {}
     for r in tx_rows:
-        if r.type == "expense":
+        if r.type == "expense" and not _is_cc(r):
             cat = r.category_name
             cat_gastos[cat] = cat_gastos.get(cat, 0.0) + abs(_f(r.amount))
 
