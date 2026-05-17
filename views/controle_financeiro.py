@@ -32,7 +32,7 @@ import streamlit as st
 from core.controle import (
     get_controle, get_opcoes_formulario, inserir_transacao,
     atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
-    get_gastos_cartao_mensal,
+    get_gastos_cartao_mensal, get_gastos_categoria_anual,
 )
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
@@ -694,6 +694,34 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
 # TAB 2 — Análises
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _fig_barras_categoria_anual(cats: list) -> go.Figure:
+    """Barras horizontais de gastos anuais por categoria (ordem decrescente)."""
+    cats_ord = sorted(cats, key=lambda c: c["gasto"], reverse=True)
+    nomes  = [c["nome"]  for c in cats_ord]
+    gastos = [c["gasto"] for c in cats_ord]
+    total  = sum(gastos) or 1
+    pcts   = [round(g / total * 100, 1) for g in gastos]
+    cores  = _CORES_CAT[:len(cats_ord)]
+    fig = go.Figure(go.Bar(
+        x=gastos, y=nomes, orientation="h",
+        marker_color=cores, opacity=0.88,
+        hovertemplate=(
+            "<b>%{y}</b><br>R$ %{x:,.2f}"
+            "<br>%{customdata:.1f}% do total<extra></extra>"
+        ),
+        customdata=pcts,
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 10, "b": 10, "l": 0, "r": 10}, height=max(240, len(cats_ord) * 28),
+        xaxis={"showgrid": True, "gridcolor": "#1E2533",
+               "tickformat": ",.0f", "tickprefix": "R$ "},
+        yaxis={"showgrid": False, "autorange": "reversed"},
+    )
+    return fig
+
+
 def _tab_analises(
     d: dict, historico: list, hist_anual: dict,
     gastos_cartao: dict, investido_mes: float = 0.0,
@@ -744,23 +772,40 @@ def _tab_analises(
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Distribuição + Orçamento ───────────────────────────────────────────────
-    col_pizza, col_orc = st.columns(2, gap="medium")
-    with col_pizza:
-        _secao_titulo("🍕", "Distribuição de despesas")
-        if cats:
-            st.plotly_chart(_fig_pizza_cats(cats), use_container_width=True,
+    # ── Distribuição de despesas anual ────────────────────────────────────────
+    _secao_titulo("🍕", "Distribuição de despesas por categoria (anual)")
+    anos_disp = hist_anual.get("anos", [_date.today().year])
+    _ano_dist = st.selectbox(
+        "Ano de referência",
+        sorted(anos_disp, reverse=True),
+        key="cf_dist_ano_sel",
+    )
+    cats_anuais = get_gastos_categoria_anual(_ano_dist)
+    if cats_anuais:
+        col_pizza, col_barras = st.columns(2, gap="medium")
+        with col_pizza:
+            _pizza_cats = [{"nome": c["nome"], "gasto": c["gasto"],
+                            "orcamento": 0.0, "pct_usado": 0.0, "tipo_badge": ""}
+                           for c in cats_anuais]
+            st.plotly_chart(_fig_pizza_cats(_pizza_cats), use_container_width=True,
                             config={"displayModeBar": False})
-        else:
-            st.caption("Sem despesas.")
+        with col_barras:
+            st.plotly_chart(_fig_barras_categoria_anual(cats_anuais),
+                            use_container_width=True, config={"displayModeBar": False})
 
-    with col_orc:
-        _secao_titulo("📊", "Orçamento vs Realizado")
-        if cats:
-            st.plotly_chart(_fig_orcamento(cats), use_container_width=True,
-                            config={"displayModeBar": False})
-        else:
-            st.caption("Sem dados de orçamento.")
+        import pandas as pd
+        total_anual = sum(c["gasto"] for c in cats_anuais)
+        rows_dist = [
+            {
+                "Categoria": c["nome"],
+                "Gasto (R$)": f"R$ {c['gasto']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "% do total": f"{c['gasto'] / total_anual * 100:.1f}%",
+            }
+            for c in cats_anuais
+        ]
+        st.dataframe(pd.DataFrame(rows_dist), use_container_width=True, hide_index=True)
+    else:
+        st.caption(f"Sem despesas registradas em {_ano_dist}.")
 
     # ── Taxa de Poupança Histórica ─────────────────────────────────────────────
     if historico:

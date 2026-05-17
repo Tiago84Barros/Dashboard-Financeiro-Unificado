@@ -198,6 +198,22 @@ _SQL_GASTOS_CARTAO_MENSAL = """
     ORDER  BY ano, mes
 """
 
+_SQL_GASTOS_CATEGORIA_ANUAL = """
+    SELECT
+        COALESCE(c.name, 'Sem categoria')  AS category_name,
+        ABS(SUM(t.amount))                 AS total_spent
+    FROM   transactions t
+    LEFT JOIN accounts   a ON a.id = t.account_id
+    LEFT JOIN categories c ON c.id = t.category_id
+    WHERE  t.user_id = :uid
+      AND  EXTRACT(YEAR FROM t.due_date)::int = :ano
+      AND  t.type IN ('expense', 'saida')
+      AND  t.amount < 0
+      AND  COALESCE(a.type, '') != 'credit_card'
+    GROUP  BY c.name
+    ORDER  BY total_spent DESC
+"""
+
 _SQL_TRANSACOES_FILTRADAS = """
     SELECT
         t.id::text,
@@ -403,6 +419,54 @@ def get_historico_anual() -> dict:
         d = _historico_anual_mock()
         d["data_source"] = "mock_fallback"
         return d
+
+
+@st.cache_data(ttl=300)
+def get_gastos_categoria_anual(ano: int) -> list:
+    """
+    Retorna lista de {nome, gasto} com despesas por categoria no ano informado.
+    Exclui compras de cartão de crédito (account_type='credit_card').
+    TTL=5min — dados históricos mudam pouco.
+    """
+    _mock = [
+        {"nome": "Moradia",       "gasto": 15_000.00},
+        {"nome": "Alimentação",   "gasto":  9_600.00},
+        {"nome": "Transporte",    "gasto":  4_800.00},
+        {"nome": "Saúde",         "gasto":  2_400.00},
+        {"nome": "Lazer",         "gasto":  3_200.00},
+        {"nome": "Assinaturas",   "gasto":  1_500.00},
+        {"nome": "Educação",      "gasto":  2_000.00},
+    ]
+
+    if settings.MOCK_MODE:
+        return _mock
+
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            raise RuntimeError("Engine indisponível.")
+
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            raise RuntimeError("OWNER_USER_ID não configurado.")
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(_SQL_GASTOS_CATEGORIA_ANUAL), {"uid": owner, "ano": ano}
+            ).fetchall()
+
+        return [{"nome": r.category_name, "gasto": round(float(r.total_spent), 2)}
+                for r in rows]
+
+    except Exception as exc:
+        logger.warning(
+            "[controle] get_gastos_categoria_anual(%s) falhou (%s) — usando mock.",
+            ano, type(exc).__name__,
+        )
+        return _mock
 
 
 @st.cache_data(ttl=60)
