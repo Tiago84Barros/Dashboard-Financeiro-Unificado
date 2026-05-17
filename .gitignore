@@ -236,3 +236,6 @@ migration/backup/
 # Variáveis locais extras
 .env.local
 .env.real
+
+# Local audit outputs with real financial data
+artifacts/
