@@ -1020,6 +1020,74 @@ def _sanitize_dy(row: dict) -> dict:
     return row
 
 
+def _fco_lucro_rows(batch_fco: dict[str, pd.DataFrame]) -> tuple[list[dict], dict[str, int]]:
+    """Calcula FCO/Lucro usando FCO direto ou fallback FCO = FCF - FCI."""
+    rows: list[dict] = []
+    audit = {
+        "tickers": len(batch_fco),
+        "sem_colunas": 0,
+        "sem_linha_valida": 0,
+        "fallback_fcf_fci": 0,
+    }
+    fco_candidates = ("FCO", "Fluxo_Caixa_Operacional", "Caixa_Operacional")
+    fcf_candidates = ("FCF", "Fluxo_Caixa_Livre")
+    fci_candidates = ("FCI", "Fluxo_Caixa_Investimento")
+    lucro_candidates = ("Lucro_Liquido", "Lucro Líquido", "LucroLiquido")
+
+    for tk_f, df_f in batch_fco.items():
+        if df_f is None or df_f.empty:
+            audit["sem_linha_valida"] += 1
+            continue
+
+        fco_col = next((c for c in fco_candidates if c in df_f.columns), None)
+        fcf_col = next((c for c in fcf_candidates if c in df_f.columns), None)
+        fci_col = next((c for c in fci_candidates if c in df_f.columns), None)
+        ll_col = next((c for c in lucro_candidates if c in df_f.columns), None)
+        if not ll_col or (not fco_col and not (fcf_col and fci_col)):
+            audit["sem_colunas"] += 1
+            continue
+
+        df_calc = df_f.copy()
+        if "Data" in df_calc.columns:
+            df_calc = df_calc.sort_values("Data")
+        df_calc["_lucro"] = pd.to_numeric(df_calc[ll_col], errors="coerce")
+        if fco_col:
+            df_calc["_fco"] = pd.to_numeric(df_calc[fco_col], errors="coerce")
+            fonte = fco_col
+        else:
+            fcf = pd.to_numeric(df_calc[fcf_col], errors="coerce")
+            fci = pd.to_numeric(df_calc[fci_col], errors="coerce")
+            df_calc["_fco"] = fcf - fci
+            fonte = f"{fcf_col} - {fci_col}"
+
+        valid = df_calc[df_calc["_fco"].notna() & df_calc["_lucro"].notna() & (df_calc["_lucro"].abs() > 1e-6)]
+        if valid.empty:
+            audit["sem_linha_valida"] += 1
+            continue
+
+        last = valid.iloc[-1]
+        if not fco_col:
+            audit["fallback_fcf_fci"] += 1
+        data_val = last.get("Data")
+        ano = ""
+        try:
+            ano = int(pd.to_datetime(data_val).year)
+        except Exception:
+            pass
+        fco = float(last["_fco"])
+        lucro = float(last["_lucro"])
+        rows.append({
+            "Empresa": tk_f,
+            "Ano": ano,
+            "FCO": fco,
+            "Lucro": lucro,
+            "FCO/Lucro": fco / lucro,
+            "Fonte": fonte,
+        })
+
+    return rows, audit
+
+
 def _score_historico_ano(
     df_hist_batch: dict[str, pd.DataFrame],
     tickers: list[str],
@@ -2248,20 +2316,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     if st.button("💵 Calcular FCO/Lucro", key="b3_av_btn_fco"):
         with st.spinner("Carregando demonstrações…"):
             batch_fco = _db.load_demonstracoes_batch(tuple(sorted(tks_uni)))
-        fco_rows: list[dict] = []
-        for tk_f, df_f in batch_fco.items():
-            fco_col = next((c for c in ("FCO", "Fluxo_Caixa_Operacional")
-                            if c in df_f.columns), None)
-            ll_col  = next((c for c in ("Lucro_Liquido",) if c in df_f.columns), None)
-            if not fco_col or not ll_col or df_f.empty:
-                continue
-            last = df_f.sort_values("Data").iloc[-1] if "Data" in df_f.columns else df_f.iloc[-1]
-            fco  = pd.to_numeric(last.get(fco_col), errors="coerce")
-            ll   = pd.to_numeric(last.get(ll_col),  errors="coerce")
-            if pd.notna(fco) and pd.notna(ll) and abs(ll) > 1e-6:
-                fco_rows.append({"Empresa": tk_f, "FCO": fco, "Lucro": ll,
-                                  "FCO/Lucro": fco / ll})
+        fco_rows, fco_audit = _fco_lucro_rows(batch_fco)
         st.session_state["b3_av_fco_rows"] = fco_rows
+        st.session_state["b3_av_fco_audit"] = fco_audit
+        st.session_state["b3_av_fco_ran"] = True
 
     fco_data = st.session_state.get("b3_av_fco_rows", [])
     if fco_data:
@@ -2280,12 +2338,18 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                         config={"displayModeBar": False}, key="b3_av_fco_chart")
 
         # Mini-tabela com os valores
-        df_fco_disp = df_fco[["Empresa", "FCO", "Lucro", "FCO/Lucro"]].copy()
+        df_fco_disp = df_fco[["Empresa", "Ano", "FCO", "Lucro", "FCO/Lucro", "Fonte"]].copy()
         df_fco_disp["FCO"]      = df_fco_disp["FCO"].map(_fv)
         df_fco_disp["Lucro"]    = df_fco_disp["Lucro"].map(_fv)
         df_fco_disp["FCO/Lucro"] = df_fco_disp["FCO/Lucro"].map(lambda v: f"{v:.2f}x")
         st.dataframe(df_fco_disp.set_index("Empresa"), use_container_width=True,
                      height=min(300, 50 + 35 * len(df_fco_disp)))
+        audit = st.session_state.get("b3_av_fco_audit", {})
+        if audit.get("fallback_fcf_fci", 0):
+            st.caption(
+                f"FCO calculado por FCF - FCI em {audit['fallback_fcf_fci']} empresa(s), "
+                "pois o App4 ainda não possui coluna FCO direta na tabela histórica."
+            )
     else:
         st.caption("Clique **💵 Calcular FCO/Lucro** para gerar o gráfico.")
 
