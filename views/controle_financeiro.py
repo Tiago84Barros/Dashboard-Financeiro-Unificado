@@ -433,17 +433,24 @@ def _sidebar_render(ano: int, mes: int) -> None:
 # TAB 1 — Dashboard
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict) -> None:
+def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
+                   investido_mes: float = 0.0) -> None:
     receitas     = d["receitas"]
     despesas     = d["despesas"]
-    saldo        = d["saldo_mes"]
-    comprometido = round(despesas / receitas * 100, 1) if receitas > 0 else 0.0
+    # Saldo = receitas - despesas - investimentos (alinhado com isolado)
+    saldo        = round(receitas - despesas - investido_mes, 2)
+    # Comprometida = (despesas + investimentos) / receitas (alinhado com isolado)
+    comprometido = round((despesas + investido_mes) / receitas * 100, 1) if receitas > 0 else 0.0
     cor_saldo    = _COR_RECEITA if saldo >= 0 else _COR_DESPESA
     cor_comp     = (
         _COR_RECEITA if comprometido < 60 else
         "#F6C90E"    if comprometido < 80 else
         _COR_DESPESA
     )
+
+    desc_saldo = f"{'Sobrou' if saldo >= 0 else 'Déficit'} dinheiro este mês."
+    if investido_mes > 0:
+        desc_saldo += f" Investido no mês: {fmt_moeda(investido_mes)}"
 
     # 4 KPI cards
     c1, c2, c3, c4 = st.columns(4, gap="small")
@@ -462,14 +469,14 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict) -> None:
     with c3:
         st.markdown(_kpi_card(
             "Saldo Líquido do Mês", fmt_moeda(saldo),
-            f"{'Sobrou' if saldo >= 0 else 'Déficit'} dinheiro este mês.",
+            desc_saldo,
             cor_saldo,
         ), unsafe_allow_html=True)
     with c4:
         st.markdown(_kpi_card(
             "Renda Comprometida",
             fmt_percentual(comprometido, sinal=False),
-            "Despesas em relação à renda do mês.",
+            "Considera despesas + investimentos em relação à renda do mês.",
             cor_comp,
         ), unsafe_allow_html=True)
 
@@ -1254,6 +1261,13 @@ def render() -> None:
     evolucao     = get_evolucao_patrimonial()
     fluxo_inv    = {(f["ano"], f["mes"]): f["aporte"] for f in evolucao.get("fluxo_mensal", [])}
 
+    # Investido no mês selecionado (de transfers para categorias de investimento)
+    investido_mes = next(
+        (h["investimentos"] for h in historico
+         if h["ano"] == sel["ano"] and h["mes"] == sel["mes"]),
+        0.0,
+    )
+
     # Gastos com Pagamento de Cartão — agrupados por ano → {ano_str: [items]}
     _ano_ref = sel["ano"]
     _anos_hist = hist_anual.get("anos", [_ano_ref])
@@ -1272,7 +1286,7 @@ def render() -> None:
     ])
 
     with tab1:
-        _tab_dashboard(d, historico, fluxo_inv)
+        _tab_dashboard(d, historico, fluxo_inv, investido_mes)
 
     with tab2:
         _tab_analises(d, historico, hist_anual, gastos_cartao)
