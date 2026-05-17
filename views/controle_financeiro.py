@@ -694,14 +694,18 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
 # TAB 2 — Análises
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _tab_analises(d: dict, historico: list, hist_anual: dict, gastos_cartao: dict) -> None:
+def _tab_analises(
+    d: dict, historico: list, hist_anual: dict,
+    gastos_cartao: dict, investido_mes: float = 0.0,
+) -> None:
     receitas = d["receitas"]
     despesas = d["despesas"]
-    saldo    = d["saldo_mes"]
     cats     = d["categorias"]
 
-    # ── Métricas de análise ────────────────────────────────────────────────────
-    taxa_poupanca = d.get("taxa_poupanca_pct", 0.0)
+    # saldo e taxa de poupança subtraem investimentos (igual ao isolado)
+    saldo         = round(receitas - despesas - investido_mes, 2)
+    taxa_poupanca = round((receitas - despesas - investido_mes) / receitas * 100, 1) \
+                    if receitas > 0 else 0.0
     maior_cat     = cats[0] if cats else None
 
     col_m1, col_m2, col_m3, col_m4 = st.columns(4, gap="small")
@@ -734,7 +738,7 @@ def _tab_analises(d: dict, historico: list, hist_anual: dict, gastos_cartao: dic
         st.markdown(_kpi_card(
             "Saldo Acumulado",
             fmt_moeda(saldo),
-            "Receitas − Despesas no período selecionado.",
+            "Receitas − Despesas − Investimentos no período selecionado.",
             _COR_RECEITA if saldo >= 0 else _COR_DESPESA,
         ), unsafe_allow_html=True)
 
@@ -764,7 +768,11 @@ def _tab_analises(d: dict, historico: list, hist_anual: dict, gastos_cartao: dic
         _secao_titulo("💹", "Taxa de Poupança Mensal (12 meses)")
         meses_labels = [h["label"] for h in historico]
         taxas = [
-            round(h["saldo"] / h["receitas"] * 100, 1)
+            round(
+                (h["receitas"] - h["despesas"] - h.get("investimentos", 0.0))
+                / h["receitas"] * 100,
+                1,
+            )
             if h["receitas"] > 0 else 0.0
             for h in historico
         ]
@@ -1289,7 +1297,7 @@ def render() -> None:
         _tab_dashboard(d, historico, fluxo_inv, investido_mes)
 
     with tab2:
-        _tab_analises(d, historico, hist_anual, gastos_cartao)
+        _tab_analises(d, historico, hist_anual, gastos_cartao, investido_mes)
 
     with tab3:
         _tab_tabelas(d)

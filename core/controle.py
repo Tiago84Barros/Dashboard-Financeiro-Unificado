@@ -155,15 +155,34 @@ _SQL_UPDATE_TX = """
 
 _SQL_HISTORICO_ANUAL = """
     SELECT
-        EXTRACT(YEAR FROM due_date)::int   AS ano,
-        type,
-        SUM(amount)                        AS total
-    FROM   transactions
-    WHERE  user_id = :uid
-      AND  type    IN ('income', 'expense', 'investment',
-                       'entrada', 'saida', 'investimento')
-    GROUP  BY ano, type
-    ORDER  BY ano, type
+        EXTRACT(YEAR FROM t.due_date)::int AS ano,
+        CASE
+            WHEN t.type IN ('income', 'entrada')                    THEN 'income'
+            WHEN t.type IN ('investment', 'investimento')           THEN 'investment'
+            WHEN t.type = 'transfer'
+                 AND c.name IN (
+                     'Renda Fixa','Renda Variavel','Renda Variável',
+                     'Exterior','Aporte em Investimento'
+                 )                                                  THEN 'investment'
+            ELSE 'expense'
+        END                                AS bucket,
+        SUM(t.amount)                      AS total
+    FROM   transactions t
+    LEFT JOIN accounts   a ON a.id = t.account_id
+    LEFT JOIN categories c ON c.id = t.category_id
+    WHERE  t.user_id = :uid
+      AND (
+            t.type IN ('income', 'entrada', 'investment', 'investimento')
+            OR (t.type IN ('expense', 'saida')
+                AND COALESCE(a.type, '') != 'credit_card')
+            OR (t.type = 'transfer'
+                AND c.name IN (
+                    'Renda Fixa','Renda Variavel','Renda Variável',
+                    'Exterior','Aporte em Investimento'
+                ))
+      )
+    GROUP  BY ano, bucket
+    ORDER  BY ano, bucket
 """
 
 _SQL_GASTOS_CARTAO_MENSAL = """
@@ -712,21 +731,17 @@ def _historico_anual_real() -> dict:
     with engine.connect() as conn:
         rows = conn.execute(text(_SQL_HISTORICO_ANUAL), {"uid": owner}).fetchall()
 
-    _INCOME_TYPES = {"income", "entrada"}
-    _EXPENSE_TYPES = {"expense", "saida"}
-    _INVEST_TYPES  = {"investment", "investimento"}
-
     por_ano: dict[int, dict] = {}
     for r in rows:
         a = int(r.ano)
         if a not in por_ano:
             por_ano[a] = {"receitas": 0.0, "despesas": 0.0, "investimentos": 0.0}
-        tp = (r.type or "").lower()
-        if tp in _INCOME_TYPES:
+        bucket = (r.bucket or "").lower()
+        if bucket == "income":
             por_ano[a]["receitas"] += float(r.total)
-        elif tp in _EXPENSE_TYPES:
+        elif bucket == "expense":
             por_ano[a]["despesas"] += abs(float(r.total))
-        elif tp in _INVEST_TYPES:
+        elif bucket == "investment":
             por_ano[a]["investimentos"] += abs(float(r.total))
 
     for a in por_ano:
