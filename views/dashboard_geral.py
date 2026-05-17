@@ -1,219 +1,56 @@
 """
-pages/dashboard_geral.py  — v2 (redesign visual Fase 5)
-Visão Geral consolidada: 3 domínios separados em cards CSS.
+views/dashboard_geral.py  — v3
+Visão Geral consolidada: dados reais do DB, 3 domínios.
 
 Layout:
-  Linha 1 — 3 cards CSS (Patrimônio · Fluxo do Mês · Investimentos)
-  Linha 2 — Gráfico Cashflow histórico  +  Despesas por categoria
-  Linha 3 — Alocação de investimentos   +  Alertas & Próximos Passos
-
-Design:
-  Cada card usa HTML/CSS puro para controle total do visual.
-  Sem st.metric() solto — tudo agrupado em containers temáticos.
-  Cores de domínio: azul (patrimônio), verde (fluxo), roxo (investimentos).
+  Row 1 — 3 cards: Patrimônio & Saúde · Fluxo Real do Mês · Investimentos
+  Row 2 — Histórico 6 meses (Receitas × Despesas × Investimentos)
+  Row 3 — Distribuição de despesas (ano) | Comparativo Ano a Ano
 """
-import streamlit as st
+from datetime import date as _date
+
 import plotly.graph_objects as go
+import streamlit as st
 
+from core.controle import get_gastos_categoria_anual, get_historico_anual
 from core.financeiro import get_visao_geral
+from core.investimentos import get_cashflow_mensal
 from core.utils import fmt_moeda, fmt_percentual
-from design.componentes import (
-    badge_status,
-    barra_progresso,
-    card_alerta_resumo,
-    card_proximo_passo,
-    container_pagina,
-    indicador_linha,
-    secao_titulo,
-)
+from design.componentes import badge_status, container_pagina
 
-# ── Paleta de cores de domínio ────────────────────────────────────────────────
-_COR_PATRIMONIO  = "#4A9EFF"   # azul
-_COR_FLUXO       = "#00C896"   # verde
-_COR_INVEST      = "#9B59B6"   # roxo
-_COR_ALERTA      = "#F6C90E"   # âmbar
-_COR_NEGATIVO    = "#FC5C7D"   # vermelho
+# ── Paleta ────────────────────────────────────────────────────────────────────
+_COR_PATRIMONIO = "#4A9EFF"
+_COR_FLUXO      = "#00C896"
+_COR_INVEST     = "#9B59B6"
+_COR_ALERTA     = "#F6C90E"
+_COR_NEGATIVO   = "#FC5C7D"
+_COR_NEUTRO     = "#9CA3AF"
+
+_CORES_CAT = [
+    "#00C896", "#4A9EFF", "#9B59B6", "#F6C90E", "#FC5C7D",
+    "#FF9F43", "#54A0FF", "#5F27CD", "#01CBC6", "#FF6B81",
+]
+
+_MESES_PT = {
+    1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr",
+    5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
+    9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
+}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — Cards CSS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _cor_score(score: int) -> str:
-    if score >= 80: return "#00C896"
-    if score >= 60: return "#4A9EFF"
-    if score >= 40: return "#F6C90E"
-    return "#FC5C7D"
+def _cor_score(s: int) -> str:
+    return "#00C896" if s >= 80 else "#4A9EFF" if s >= 60 else "#F6C90E" if s >= 40 else "#FC5C7D"
 
 
-def _label_score(score: int) -> str:
-    if score >= 80: return "Ótimo"
-    if score >= 60: return "Bom"
-    if score >= 40: return "Atenção"
-    return "Crítico"
+def _label_score(s: int) -> str:
+    return "Ótimo" if s >= 80 else "Bom" if s >= 60 else "Atenção" if s >= 40 else "Crítico"
 
 
-def _card_patrimonio(pat: dict, flx: dict) -> None:
-    """Card azul — Patrimônio Total, Saldo, Investido, Score de saúde."""
-    score = pat["saude_score"]
-    cor_s = _cor_score(score)
-    label_s = _label_score(score)
-    score_w = min(score, 100)
-
-    st.markdown(f"""
-    <div style="background:#12151E;border:1px solid #1E2533;border-top:3px solid {_COR_PATRIMONIO};
-                border-radius:12px;padding:22px 20px 18px;height:100%;min-height:260px;">
-        <div style="font-size:0.65rem;font-weight:800;text-transform:uppercase;
-                    letter-spacing:0.14em;color:{_COR_PATRIMONIO};margin-bottom:14px;">
-            💰 Patrimônio &amp; Saúde
-        </div>
-        <div style="font-size:0.78rem;color:#718096;margin-bottom:3px">Patrimônio Total</div>
-        <div style="font-size:1.85rem;font-weight:800;color:#E2E8F0;
-                    letter-spacing:-0.02em;margin-bottom:14px;line-height:1">
-            {fmt_moeda(pat["total"])}
-        </div>
-        <div style="display:flex;justify-content:space-between;
-                    align-items:center;margin-bottom:8px;">
-            <span style="font-size:0.80rem;color:#9CA3AF">💳 Saldo bancário</span>
-            <span style="font-size:0.93rem;font-weight:700;color:#E2E8F0">
-                {fmt_moeda(pat["saldo_bancario"])}
-            </span>
-        </div>
-        <div style="display:flex;justify-content:space-between;
-                    align-items:center;margin-bottom:14px;">
-            <span style="font-size:0.80rem;color:#9CA3AF">📈 Patrimônio investido</span>
-            <span style="font-size:0.93rem;font-weight:700;color:{_COR_INVEST}">
-                {fmt_moeda(pat["investido"])}
-            </span>
-        </div>
-        <div style="border-top:1px solid #1E2533;margin-bottom:14px"></div>
-        <div style="display:flex;justify-content:space-between;
-                    align-items:center;margin-bottom:6px;">
-            <span style="font-size:0.78rem;color:#718096">Saúde Financeira</span>
-            <span style="font-size:0.90rem;font-weight:800;color:{cor_s}">
-                {score}/100 &nbsp;
-                <span style="font-size:0.72rem;font-weight:600">{label_s}</span>
-            </span>
-        </div>
-        <div style="background:#1E2533;border-radius:4px;height:6px;overflow:hidden">
-            <div style="background:{cor_s};width:{score_w}%;height:100%;
-                        border-radius:4px;transition:width 0.4s"></div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def _card_fluxo(flx: dict) -> None:
-    """Card verde — Receitas, Despesas, Economia, Taxa de Poupança."""
-    taxa = flx["taxa_poupanca_pct"]
-    # barra: meta = 30%, mostra proporção até 100%
-    taxa_w = min(taxa / 30.0 * 100, 100)
-    cor_taxa = _COR_FLUXO if taxa >= 30 else (_COR_ALERTA if taxa >= 15 else _COR_NEGATIVO)
-
-    saldo = flx["economia"]
-    cor_saldo = _COR_FLUXO if saldo >= 0 else _COR_NEGATIVO
-
-    st.markdown(f"""
-    <div style="background:#12151E;border:1px solid #1E2533;border-top:3px solid {_COR_FLUXO};
-                border-radius:12px;padding:22px 20px 18px;height:100%;min-height:260px;">
-        <div style="font-size:0.65rem;font-weight:800;text-transform:uppercase;
-                    letter-spacing:0.14em;color:{_COR_FLUXO};margin-bottom:14px;">
-            📊 Fluxo do Mês
-        </div>
-        <div style="display:flex;justify-content:space-between;
-                    align-items:center;margin-bottom:8px;">
-            <span style="font-size:0.80rem;color:#9CA3AF">↑ Receitas</span>
-            <span style="font-size:0.93rem;font-weight:700;color:{_COR_FLUXO}">
-                {fmt_moeda(flx["receitas"])}
-            </span>
-        </div>
-        <div style="display:flex;justify-content:space-between;
-                    align-items:center;margin-bottom:14px;">
-            <span style="font-size:0.80rem;color:#9CA3AF">↓ Despesas</span>
-            <span style="font-size:0.93rem;font-weight:700;color:{_COR_NEGATIVO}">
-                {fmt_moeda(flx["despesas"])}
-            </span>
-        </div>
-        <div style="border-top:1px solid #1E2533;margin-bottom:12px"></div>
-        <div style="font-size:0.78rem;color:#718096;margin-bottom:3px">Economia do mês</div>
-        <div style="font-size:1.50rem;font-weight:800;color:{cor_saldo};
-                    margin-bottom:14px;line-height:1">
-            {fmt_moeda(saldo)}
-        </div>
-        <div style="display:flex;justify-content:space-between;
-                    align-items:center;margin-bottom:5px;">
-            <span style="font-size:0.78rem;color:#718096">Taxa de poupança</span>
-            <span style="font-size:0.88rem;font-weight:700;color:{cor_taxa}">
-                {fmt_percentual(taxa, sinal=False)} <span style="font-size:0.70rem;color:#4A5568">/ meta 30%</span>
-            </span>
-        </div>
-        <div style="background:#1E2533;border-radius:4px;height:6px;overflow:hidden">
-            <div style="background:{cor_taxa};width:{taxa_w:.0f}%;height:100%;
-                        border-radius:4px;transition:width 0.4s"></div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def _card_investimentos(pat: dict, port: dict, flx: dict) -> None:
-    """Card roxo — Patrimônio Investido, Rentabilidade, Dividendos, Reserva."""
-    reserva = flx["meses_reserva"]
-    cor_reserva = _COR_FLUXO if reserva >= 6 else (_COR_ALERTA if reserva >= 3 else _COR_NEGATIVO)
-    reserva_w = min(reserva / 6.0 * 100, 100)
-
-    rent = port["rentabilidade_mes_pct"]
-    cor_rent = _COR_FLUXO if rent > 0 else (_COR_NEGATIVO if rent < 0 else "#9CA3AF")
-    rent_str = fmt_percentual(rent) if rent != 0 else "0,00%"
-
-    st.markdown(f"""
-    <div style="background:#12151E;border:1px solid #1E2533;border-top:3px solid {_COR_INVEST};
-                border-radius:12px;padding:22px 20px 18px;height:100%;min-height:260px;">
-        <div style="font-size:0.65rem;font-weight:800;text-transform:uppercase;
-                    letter-spacing:0.14em;color:{_COR_INVEST};margin-bottom:14px;">
-            📈 Investimentos
-        </div>
-        <div style="font-size:0.78rem;color:#718096;margin-bottom:3px">Patrimônio Investido</div>
-        <div style="font-size:1.85rem;font-weight:800;color:{_COR_INVEST};
-                    letter-spacing:-0.02em;margin-bottom:14px;line-height:1">
-            {fmt_moeda(pat["investido"])}
-        </div>
-        <div style="display:flex;justify-content:space-between;
-                    align-items:center;margin-bottom:8px;">
-            <span style="font-size:0.80rem;color:#9CA3AF">Rentabilidade mês</span>
-            <span style="font-size:0.93rem;font-weight:700;color:{cor_rent}">{rent_str}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;
-                    align-items:center;margin-bottom:8px;">
-            <span style="font-size:0.80rem;color:#9CA3AF">💵 Dividendos mês</span>
-            <span style="font-size:0.93rem;font-weight:700;color:#E2E8F0">
-                {fmt_moeda(port["dividendos_mes"])}
-            </span>
-        </div>
-        <div style="display:flex;justify-content:space-between;
-                    align-items:center;margin-bottom:14px;">
-            <span style="font-size:0.80rem;color:#9CA3AF">Ativos na carteira</span>
-            <span style="font-size:0.93rem;font-weight:700;color:#E2E8F0">
-                {port["num_ativos"]}
-            </span>
-        </div>
-        <div style="border-top:1px solid #1E2533;margin-bottom:12px"></div>
-        <div style="display:flex;justify-content:space-between;
-                    align-items:center;margin-bottom:5px;">
-            <span style="font-size:0.78rem;color:#718096">🛡️ Reserva de emergência</span>
-            <span style="font-size:0.88rem;font-weight:700;color:{cor_reserva}">
-                {reserva:.1f}x <span style="font-size:0.70rem;color:#4A5568">/ meta 6x</span>
-            </span>
-        </div>
-        <div style="background:#1E2533;border-radius:4px;height:6px;overflow:hidden">
-            <div style="background:{cor_reserva};width:{reserva_w:.0f}%;height:100%;
-                        border-radius:4px;transition:width 0.4s"></div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def _titulo_secao_css(icone: str, titulo: str, subtitulo: str, cor: str) -> None:
-    """Título de seção com barra lateral colorida."""
+def _titulo_secao(icone: str, titulo: str, subtitulo: str, cor: str) -> None:
     st.markdown(f"""
     <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;margin-top:8px;">
         <div style="width:3px;min-height:36px;background:{cor};
@@ -228,92 +65,209 @@ def _titulo_secao_css(icone: str, titulo: str, subtitulo: str, cor: str) -> None
     """, unsafe_allow_html=True)
 
 
+def _linha_kv(label: str, valor: str, cor_val: str = "#E2E8F0") -> str:
+    return f"""
+    <div style="display:flex;justify-content:space-between;align-items:center;
+                padding:5px 0;border-bottom:1px solid #1A1F2E;">
+        <span style="font-size:0.80rem;color:#9CA3AF">{label}</span>
+        <span style="font-size:0.88rem;font-weight:700;color:{cor_val}">{valor}</span>
+    </div>"""
+
+
+def _barra(pct: float, cor: str) -> str:
+    w = min(pct, 100)
+    return f"""
+    <div style="background:#1E2533;border-radius:4px;height:5px;overflow:hidden;margin-top:4px">
+        <div style="background:{cor};width:{w:.0f}%;height:100%;border-radius:4px"></div>
+    </div>"""
+
+
+def _card(borda_cor: str, corpo_html: str) -> None:
+    st.markdown(f"""
+    <div style="background:#12151E;border:1px solid #1E2533;border-top:3px solid {borda_cor};
+                border-radius:12px;padding:22px 20px 18px;min-height:280px;">
+        {corpo_html}
+    </div>""", unsafe_allow_html=True)
+
+
+def _label_card(texto: str, cor: str) -> str:
+    return (f'<div style="font-size:0.65rem;font-weight:800;text-transform:uppercase;'
+            f'letter-spacing:0.14em;color:{cor};margin-bottom:14px">{texto}</div>')
+
+
+def _titulo_valor(label: str, valor: str, cor: str = "#E2E8F0") -> str:
+    return (f'<div style="font-size:0.78rem;color:#718096;margin-bottom:2px">{label}</div>'
+            f'<div style="font-size:1.75rem;font-weight:800;color:{cor};'
+            f'letter-spacing:-0.02em;margin-bottom:14px;line-height:1">{valor}</div>')
+
+
+def _divisor() -> str:
+    return '<div style="border-top:1px solid #1E2533;margin:12px 0"></div>'
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-# HELPERS — Gráficos
+# CARDS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _fig_fluxo(historico: list) -> go.Figure:
-    meses    = [h["mes"] for h in historico]
-    receitas = [h["receitas"] for h in historico]
-    despesas = [h["despesas"] for h in historico]
-    economias = [h["economia"] for h in historico]
+def _card_patrimonio(pat: dict) -> None:
+    score   = pat["saude_score"]
+    cor_s   = _cor_score(score)
+    label_s = _label_score(score)
+    corpo = (
+        _label_card("💰 Patrimônio & Saúde", _COR_PATRIMONIO)
+        + _titulo_valor("Patrimônio Total", fmt_moeda(pat["total"]))
+        + _linha_kv("💳 Saldo bancário",     fmt_moeda(pat["saldo_bancario"]))
+        + _linha_kv("📈 Patrimônio investido", fmt_moeda(pat["investido"]), _COR_INVEST)
+        + _divisor()
+        + f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">'
+        + f'<span style="font-size:0.78rem;color:#718096">Saúde Financeira</span>'
+        + f'<span style="font-size:0.90rem;font-weight:800;color:{cor_s}">'
+        + f'{score}/100 &nbsp;<span style="font-size:0.72rem">{label_s}</span></span></div>'
+        + _barra(score, cor_s)
+    )
+    _card(_COR_PATRIMONIO, corpo)
+
+
+def _card_fluxo(receitas: float, despesas: float, investimentos: float) -> None:
+    saldo     = receitas - despesas - investimentos
+    taxa      = round(saldo / receitas * 100, 1) if receitas > 0 else 0.0
+    cor_saldo = _COR_FLUXO if saldo >= 0 else _COR_NEGATIVO
+    cor_taxa  = _COR_FLUXO if taxa >= 30 else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO
+    taxa_w    = min(taxa / 30.0 * 100, 100)
+
+    corpo = (
+        _label_card("📊 Fluxo Real do Mês", _COR_FLUXO)
+        + _linha_kv("↑ Receitas",     fmt_moeda(receitas),     _COR_FLUXO)
+        + _linha_kv("↓ Despesas",     fmt_moeda(despesas),     _COR_NEGATIVO)
+        + _linha_kv("📈 Investido",   fmt_moeda(investimentos), _COR_INVEST)
+        + _divisor()
+        + _titulo_valor("Saldo do mês (líquido)", fmt_moeda(saldo), cor_saldo)
+        + f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+        + f'<span style="font-size:0.78rem;color:#718096">Taxa de poupança</span>'
+        + f'<span style="font-size:0.88rem;font-weight:700;color:{cor_taxa}">'
+        + f'{fmt_percentual(taxa, sinal=False)} '
+        + f'<span style="font-size:0.70rem;color:#4A5568">/ meta 30%</span></span></div>'
+        + _barra(taxa_w, cor_taxa)
+    )
+    _card(_COR_FLUXO, corpo)
+
+
+def _card_investimentos(pat: dict, classes: list, aportado_ano: float) -> None:
+    total_inv = pat["investido"]
+    n_classes = len(classes)
+
+    linhas = ""
+    for c in classes[:4]:
+        cor_r = _COR_FLUXO if c["rentab_mes_pct"] >= 0 else _COR_NEGATIVO
+        rent_str = f'+{c["rentab_mes_pct"]:.1f}%' if c["rentab_mes_pct"] > 0 else f'{c["rentab_mes_pct"]:.1f}%'
+        linhas += _linha_kv(
+            f'<span style="display:inline-flex;align-items:center;gap:6px;">'
+            f'<span style="width:7px;height:7px;border-radius:50%;background:{c["cor"]};'
+            f'display:inline-block"></span>{c["nome"]}'
+            f'<span style="font-size:0.72rem;color:#4A5568">{c["pct_carteira"]:.1f}%</span></span>',
+            fmt_moeda(c["valor"]),
+        )
+
+    corpo = (
+        _label_card("📈 Investimentos", _COR_INVEST)
+        + _titulo_valor("Patrimônio Investido", fmt_moeda(total_inv), _COR_INVEST)
+        + linhas
+        + _divisor()
+        + _linha_kv("Aportado em 2026", fmt_moeda(aportado_ano), _COR_FLUXO)
+        + _linha_kv("Classes de ativos", str(n_classes))
+    )
+    _card(_COR_INVEST, corpo)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GRÁFICOS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fig_historico(hist: list) -> go.Figure:
+    """Barras Receitas+Despesas + linha Investimentos (últimos 6 meses)."""
+    labels = [f"{_MESES_PT[h['mes']]}/{str(h['ano'])[2:]}" for h in hist]
+    rec    = [h["receitas"]      for h in hist]
+    desp   = [h["despesas"]      for h in hist]
+    inv    = [h.get("investimentos", 0.0) for h in hist]
 
     fig = go.Figure()
-
     fig.add_trace(go.Bar(
-        name="Receitas",
-        x=meses, y=receitas,
-        marker_color=_COR_FLUXO,
-        opacity=0.85,
+        name="Receitas", x=labels, y=rec, marker_color=_COR_FLUXO, opacity=0.85,
         hovertemplate="<b>Receitas %{x}</b><br>R$ %{y:,.2f}<extra></extra>",
     ))
     fig.add_trace(go.Bar(
-        name="Despesas",
-        x=meses, y=despesas,
-        marker_color=_COR_NEGATIVO,
-        opacity=0.85,
+        name="Despesas", x=labels, y=desp, marker_color=_COR_NEGATIVO, opacity=0.85,
         hovertemplate="<b>Despesas %{x}</b><br>R$ %{y:,.2f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
-        name="Economia",
-        x=meses, y=economias,
-        mode="lines+markers",
-        line={"color": _COR_PATRIMONIO, "width": 2.5},
-        marker={"size": 7, "color": _COR_PATRIMONIO},
-        hovertemplate="<b>Economia %{x}</b><br>R$ %{y:,.2f}<extra></extra>",
+        name="Investimentos", x=labels, y=inv, mode="lines+markers",
+        line={"color": _COR_INVEST, "width": 2.5},
+        marker={"size": 7, "color": _COR_INVEST},
+        hovertemplate="<b>Investido %{x}</b><br>R$ %{y:,.2f}<extra></extra>",
         yaxis="y2",
     ))
-
     fig.update_layout(
         barmode="group",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font_color="#9CA3AF",
-        legend={
-            "orientation": "h", "y": -0.18,
-            "font": {"size": 11},
-            "bgcolor": "rgba(0,0,0,0)",
-        },
-        margin={"t": 10, "b": 10, "l": 0, "r": 0},
-        height=280,
-        yaxis={
-            "gridcolor":  "#1E2533",
-            "tickformat": ",.0f",
-            "tickprefix": "R$ ",
-            "showgrid":   True,
-        },
-        yaxis2={
-            "overlaying": "y",
-            "side":       "right",
-            "showgrid":   False,
-            "tickformat": ",.0f",
-            "tickprefix": "R$ ",
-        },
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        legend={"orientation": "h", "y": -0.20, "font": {"size": 11},
+                "bgcolor": "rgba(0,0,0,0)"},
+        margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=290,
+        yaxis={"gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ ",
+               "showgrid": True},
+        yaxis2={"overlaying": "y", "side": "right", "showgrid": False,
+                "tickformat": ",.0f", "tickprefix": "R$ "},
         xaxis={"showgrid": False},
     )
     return fig
 
 
-def _fig_classes(classes: list) -> go.Figure:
-    nomes = [c["nome"] for c in classes]
-    vals  = [c["valor"] for c in classes]
-    cores = [c["cor"] for c in classes]
-
+def _fig_donut_cats(cats: list) -> go.Figure:
+    nomes  = [c["nome"]  for c in cats[:8]]
+    gastos = [c["gasto"] for c in cats[:8]]
+    cores  = _CORES_CAT[:len(nomes)]
     fig = go.Figure(go.Pie(
-        labels=nomes,
-        values=vals,
-        hole=0.58,
+        labels=nomes, values=gastos, hole=0.55,
         marker={"colors": cores, "line": {"color": "#0E1117", "width": 2}},
-        textinfo="percent",
-        textfont={"size": 11},
+        textinfo="percent", textfont={"size": 10},
         hovertemplate="<b>%{label}</b><br>R$ %{value:,.2f}<br>%{percent}<extra></extra>",
     ))
     fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        font_color="#9CA3AF",
-        showlegend=False,
-        margin={"t": 8, "b": 8, "l": 0, "r": 0},
-        height=220,
+        paper_bgcolor="rgba(0,0,0,0)", font_color=_COR_NEUTRO,
+        showlegend=True,
+        legend={"orientation": "v", "font": {"size": 10},
+                "bgcolor": "rgba(0,0,0,0)", "x": 1.0},
+        margin={"t": 8, "b": 8, "l": 0, "r": 0}, height=240,
+    )
+    return fig
+
+
+def _fig_yoy(por_ano: dict, anos: list) -> go.Figure:
+    rec  = [por_ano[a]["receitas"]      for a in anos]
+    desp = [por_ano[a]["despesas"]      for a in anos]
+    inv  = [por_ano[a].get("investimentos", 0.0) for a in anos]
+    anos_str = [str(a) for a in anos]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name="Receitas",      x=anos_str, y=rec,
+                         marker_color=_COR_FLUXO,    opacity=0.85,
+                         hovertemplate="R$ %{y:,.2f}<extra></extra>"))
+    fig.add_trace(go.Bar(name="Despesas",      x=anos_str, y=desp,
+                         marker_color=_COR_NEGATIVO, opacity=0.85,
+                         hovertemplate="R$ %{y:,.2f}<extra></extra>"))
+    fig.add_trace(go.Bar(name="Investimentos", x=anos_str, y=inv,
+                         marker_color=_COR_INVEST,   opacity=0.85,
+                         hovertemplate="R$ %{y:,.2f}<extra></extra>"))
+    fig.update_layout(
+        barmode="group",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        legend={"orientation": "h", "y": -0.20, "font": {"size": 11},
+                "bgcolor": "rgba(0,0,0,0)"},
+        margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=260,
+        yaxis={"gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ ",
+               "showgrid": True},
+        xaxis={"showgrid": False},
     )
     return fig
 
@@ -323,183 +277,161 @@ def _fig_classes(classes: list) -> go.Figure:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render() -> None:
+    # ── Dados ─────────────────────────────────────────────────────────────────
     try:
         d = get_visao_geral()
     except NotImplementedError as exc:
-        st.error(
-            f"**Banco de dados não configurado.** {exc}\n\n"
-            "Configure `SUPABASE_UNIFICADO_URL` no `.env` local ou em "
-            "**Streamlit Secrets** (Settings > Secrets)."
-        )
+        st.error(f"**Banco não configurado.** {exc}")
         return
 
-    pat  = d["patrimonio"]
-    flx  = d["fluxo_mes"]
-    hist = d["historico_mensal"]
-    cats = d["categorias_despesa"]
-    port = d["portfolio"]
-    cls  = d["classes_ativo"]
+    hoje          = _date.today()
+    hist_cashflow = get_cashflow_mensal()        # list[{ano, mes, receitas, despesas, investimentos}]
+    hist_anual    = get_historico_anual()         # {anos, por_ano}
+    ano_atual     = hoje.year
+    cats_ano      = get_gastos_categoria_anual(ano_atual)
 
-    # ── Cabeçalho ─────────────────────────────────────────────────────────────
-    container_pagina(
-        "Dashboard Geral",
-        f"Visão consolidada · {d['mes_referencia']}",
-        "📊",
+    # Mês atual no cashflow
+    cur = next(
+        (h for h in hist_cashflow if h["ano"] == hoje.year and h["mes"] == hoje.month),
+        None,
     )
+    receitas_mes      = cur["receitas"]                if cur else d["fluxo_mes"]["receitas"]
+    despesas_mes      = cur["despesas"]                if cur else d["fluxo_mes"]["despesas"]
+    investimentos_mes = cur.get("investimentos", 0.0)  if cur else 0.0
 
-    # ── Badges de status ──────────────────────────────────────────────────────
-    _fonte = d.get("data_source", "mock")
-    _badge_label, _badge_tipo = (
-        ("Dados reais",     "sucesso") if _fonte == "real" else
-        ("Fallback (mock)", "erro")    if _fonte == "mock_fallback" else
+    # Últimos 6 meses em ordem cronológica
+    hist6 = sorted(hist_cashflow, key=lambda h: (h["ano"], h["mes"]))[-6:]
+
+    pat     = d["patrimonio"]
+    classes = d["classes_ativo"]
+
+    # Aportado no ano corrente (do histórico anual)
+    por_ano       = hist_anual.get("por_ano", {})
+    aportado_ano  = por_ano.get(ano_atual, {}).get("investimentos", 0.0)
+
+    # ── Fonte de dados ─────────────────────────────────────────────────────────
+    fonte = d.get("data_source", "mock")
+    badge_label, badge_tipo = (
+        ("Dados reais",     "sucesso") if fonte == "real" else
+        ("Fallback (mock)", "erro")    if fonte == "mock_fallback" else
         ("Modo mock",       "alerta")
     )
+    mes_ref = f"{_MESES_PT[hoje.month]} {hoje.year}"
+
+    # ── Cabeçalho ──────────────────────────────────────────────────────────────
+    container_pagina("Dashboard Geral", f"Visão consolidada · {mes_ref}", "📊")
+
     col_b1, col_b2, col_b3, *_ = st.columns([1, 1, 1, 4])
     with col_b1:
-        badge_status(_badge_label, _badge_tipo)
+        badge_status(badge_label, badge_tipo)
     with col_b2:
-        badge_status(d["mes_referencia"], "info")
+        badge_status(mes_ref, "info")
     with col_b3:
-        cor_s = "sucesso" if pat["saude_score"] >= 60 else "alerta" if pat["saude_score"] >= 40 else "erro"
-        badge_status(f"Score {pat['saude_score']}/100", cor_s)
+        cor_s_badge = "sucesso" if pat["saude_score"] >= 60 else "alerta" if pat["saude_score"] >= 40 else "erro"
+        badge_status(f"Score {pat['saude_score']}/100", cor_s_badge)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 1 — 3 Cards CSS de domínio
+    # BLOCO 1 — 3 Cards
     # ══════════════════════════════════════════════════════════════════════════
     col1, col2, col3 = st.columns(3, gap="medium")
-
     with col1:
-        _card_patrimonio(pat, flx)
-
+        _card_patrimonio(pat)
     with col2:
-        _card_fluxo(flx)
-
+        _card_fluxo(receitas_mes, despesas_mes, investimentos_mes)
     with col3:
-        _card_investimentos(pat, port, flx)
+        _card_investimentos(pat, classes, aportado_ano)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 2 — Cashflow histórico + Despesas por categoria
+    # BLOCO 2 — Histórico 6 meses
     # ══════════════════════════════════════════════════════════════════════════
-    _titulo_secao_css("💹", "Fluxo de Caixa & Despesas", "Histórico mensal e distribuição de gastos", _COR_FLUXO)
-
+    _titulo_secao(
+        "💹", "Histórico mensal (6 meses)",
+        "Receitas · Despesas · Investimentos por mês", _COR_FLUXO,
+    )
     st.markdown(
         '<div style="background:#12151E;border:1px solid #1E2533;'
         'border-radius:12px;padding:16px 16px 8px">',
         unsafe_allow_html=True,
     )
-    st.plotly_chart(_fig_fluxo(hist), use_container_width=True, config={"displayModeBar": False})
-    st.markdown('</div>', unsafe_allow_html=True)
+    if hist6:
+        st.plotly_chart(_fig_historico(hist6), use_container_width=True,
+                        config={"displayModeBar": False})
+    else:
+        st.caption("Sem histórico disponível.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 3 — Alocação de investimentos + Alertas & Próximos Passos
+    # BLOCO 3 — Distribuição de despesas | Comparativo Ano a Ano
     # ══════════════════════════════════════════════════════════════════════════
-    _titulo_secao_css("📈", "Alocação & Estratégia", "Como seu capital está distribuído e o que fazer", _COR_INVEST)
+    col_cats, col_yoy = st.columns(2, gap="medium")
 
-    col_aloc, col_acao = st.columns([1, 1], gap="medium")
-
-    # ── Alocação ──────────────────────────────────────────────────────────────
-    with col_aloc:
+    with col_cats:
+        _titulo_secao(
+            "🍕", f"Despesas por categoria ({ano_atual})",
+            "Compras de cartão excluídas", _COR_NEGATIVO,
+        )
         st.markdown(
             '<div style="background:#12151E;border:1px solid #1E2533;'
-            'border-radius:12px;padding:18px 16px;">',
+            'border-radius:12px;padding:16px">',
             unsafe_allow_html=True,
         )
-        st.markdown(
-            f'<div style="font-size:0.68rem;font-weight:800;text-transform:uppercase;'
-            f'letter-spacing:0.12em;color:{_COR_INVEST};margin-bottom:4px">'
-            f'🏷️ DISTRIBUIÇÃO POR CLASSE</div>',
-            unsafe_allow_html=True,
-        )
-
-        if cls:
-            st.plotly_chart(_fig_classes(cls), use_container_width=True, config={"displayModeBar": False})
-
-            # Tabela de classes
-            for classe in cls:
-                cor_r = _COR_FLUXO if classe["rentab_mes_pct"] >= 0 else _COR_NEGATIVO
-                st.markdown(f"""
-                <div style="display:flex;justify-content:space-between;align-items:center;
-                            padding:6px 0;border-bottom:1px solid #1A1F2E;">
-                    <div style="display:flex;align-items:center;gap:8px">
-                        <div style="width:8px;height:8px;border-radius:50%;
-                                    background:{classe['cor']};flex-shrink:0"></div>
-                        <span style="font-size:0.82rem;color:#CBD5E0">{classe['nome']}</span>
-                    </div>
-                    <div style="text-align:right">
-                        <span style="font-size:0.82rem;font-weight:700;color:#E2E8F0">
-                            {classe['pct_carteira']:.1f}%
-                        </span>
-                        <span style="font-size:0.75rem;color:{cor_r};margin-left:8px">
-                            {fmt_percentual(classe['rentab_mes_pct'])}
-                        </span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            # Maior concentração
-            maior = cls[0] if cls else None
-            if maior and maior["pct_carteira"] > 25:
+        if cats_ano:
+            st.plotly_chart(_fig_donut_cats(cats_ano), use_container_width=True,
+                            config={"displayModeBar": False})
+            total_cats = sum(c["gasto"] for c in cats_ano)
+            for c in cats_ano[:5]:
+                pct = c["gasto"] / total_cats * 100 if total_cats else 0
                 st.markdown(
-                    f'<div style="margin-top:10px;padding:8px 10px;'
-                    f'background:rgba(246,201,14,0.08);border-left:3px solid {_COR_ALERTA};'
-                    f'border-radius:0 6px 6px 0;font-size:0.78rem;color:#9CA3AF">'
-                    f'⚠️ <b style="color:{_COR_ALERTA}">{maior["nome"]}</b> representa '
-                    f'{maior["pct_carteira"]:.1f}% da carteira.</div>',
+                    f'<div style="display:flex;justify-content:space-between;'
+                    f'align-items:center;padding:4px 0;border-bottom:1px solid #1A1F2E;">'
+                    f'<span style="font-size:0.79rem;color:#CBD5E0">{c["nome"]}</span>'
+                    f'<span style="font-size:0.79rem;font-weight:600;color:#E2E8F0">'
+                    f'{fmt_moeda(c["gasto"])} '
+                    f'<span style="color:#4A5568;font-size:0.70rem">{pct:.1f}%</span>'
+                    f'</span></div>',
+                    unsafe_allow_html=True,
+                )
+            if len(cats_ano) > 5:
+                restante = sum(c["gasto"] for c in cats_ano[5:])
+                st.markdown(
+                    f'<div style="font-size:0.75rem;color:#4A5568;margin-top:6px">'
+                    f'+ {len(cats_ano)-5} outras categorias · {fmt_moeda(restante)}</div>',
                     unsafe_allow_html=True,
                 )
         else:
-            st.caption("Sem dados de alocação disponíveis.")
+            st.caption(f"Sem despesas registradas em {ano_atual}.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ── Alertas + Próximos Passos ─────────────────────────────────────────────
-    with col_acao:
-        # Alertas
+    with col_yoy:
+        anos = hist_anual.get("anos", [])
+        _titulo_secao(
+            "📅", "Comparativo Ano a Ano",
+            "Receitas · Investimentos · Despesas acumuladas", _COR_PATRIMONIO,
+        )
         st.markdown(
             '<div style="background:#12151E;border:1px solid #1E2533;'
-            'border-radius:12px;padding:18px 16px;margin-bottom:12px">',
+            'border-radius:12px;padding:16px">',
             unsafe_allow_html=True,
         )
-        st.markdown(
-            f'<div style="font-size:0.68rem;font-weight:800;text-transform:uppercase;'
-            f'letter-spacing:0.12em;color:{_COR_ALERTA};margin-bottom:12px">'
-            f'🔔 ALERTAS DO MÊS</div>',
-            unsafe_allow_html=True,
-        )
-        for alerta in d["alertas"]:
-            card_alerta_resumo(
-                tipo=alerta["tipo"],
-                icone=alerta["icone"],
-                titulo=alerta["titulo"],
-                descricao=alerta["descricao"],
-                modulo=alerta.get("modulo", ""),
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # Próximos Passos
-        st.markdown(
-            '<div style="background:#12151E;border:1px solid #1E2533;'
-            'border-radius:12px;padding:18px 16px;">',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f'<div style="font-size:0.68rem;font-weight:800;text-transform:uppercase;'
-            f'letter-spacing:0.12em;color:{_COR_PATRIMONIO};margin-bottom:12px">'
-            f'🎯 PRÓXIMOS PASSOS</div>',
-            unsafe_allow_html=True,
-        )
-        for passo in d["proximos_passos"]:
-            card_proximo_passo(
-                numero=passo["numero"],
-                titulo=passo["titulo"],
-                descricao=passo["descricao"],
-                urgencia=passo["urgencia"],
-                modulo=passo.get("modulo", ""),
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
+        if len(anos) >= 1:
+            st.plotly_chart(_fig_yoy(por_ano, anos), use_container_width=True,
+                            config={"displayModeBar": False})
+            import pandas as pd
+            rows = []
+            for a in anos:
+                rows.append({
+                    "Ano":           str(a),
+                    "Receitas":      f"R$ {por_ano[a]['receitas']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                    "Investimentos": f"R$ {por_ano[a].get('investimentos',0.0):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                    "Despesas":      f"R$ {por_ano[a]['despesas']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        else:
+            st.caption("Sem histórico anual disponível.")
+        st.markdown("</div>", unsafe_allow_html=True)
