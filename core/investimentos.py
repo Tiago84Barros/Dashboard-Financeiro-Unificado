@@ -378,6 +378,25 @@ _SQL_CASHFLOW = """
     LIMIT  12
 """
 
+_SQL_INVEST_MENSAL = """
+    SELECT
+        DATE_TRUNC('month', t.due_date)::DATE AS month_year,
+        SUM(ABS(t.amount))                    AS total_inv
+    FROM transactions t
+    JOIN categories c ON c.id = t.category_id
+    WHERE t.user_id = :uid
+      AND t.status  = 'settled'
+      AND (
+          t.type = 'investment'
+          OR (t.type = 'transfer'
+              AND c.name IN (
+                  'Renda Fixa', 'Renda Variavel', 'Renda Variável',
+                  'Exterior', 'Aporte em Investimento'
+              ))
+      )
+    GROUP BY DATE_TRUNC('month', t.due_date)::DATE
+"""
+
 
 @st.cache_data(ttl=300)
 def get_cashflow_mensal() -> list:
@@ -405,16 +424,17 @@ def _cashflow_mock() -> list:
         while m <= 0:
             m += 12
             y -= 1
-        # Simula variação realista de cashflow
-        receitas = 8_500.0 + (i % 3) * 250.0
-        despesas = 3_400.0 + (i % 5) * 280.0
+        receitas      = 8_500.0 + (i % 3) * 250.0
+        despesas      = 3_400.0 + (i % 5) * 280.0
+        investimentos = 5_000.0 + (i % 4) * 500.0
         result.append({
-            "label":    f"{_MESES_PT_CF[m]}/{str(y)[-2:]}",
-            "ano":      y,
-            "mes":      m,
-            "receitas": round(receitas, 2),
-            "despesas": round(despesas, 2),
-            "saldo":    round(receitas - despesas, 2),
+            "label":         f"{_MESES_PT_CF[m]}/{str(y)[-2:]}",
+            "ano":           y,
+            "mes":           m,
+            "receitas":      round(receitas, 2),
+            "despesas":      round(despesas, 2),
+            "saldo":         round(receitas - despesas, 2),
+            "investimentos": round(investimentos, 2),
         })
     return result
 
@@ -432,18 +452,25 @@ def _cashflow_real() -> list:
         raise RuntimeError("OWNER_USER_ID não configurado.")
 
     with engine.connect() as conn:
-        rows = conn.execute(text(_SQL_CASHFLOW), {"uid": owner}).fetchall()
+        rows     = conn.execute(text(_SQL_CASHFLOW),        {"uid": owner}).fetchall()
+        inv_rows = conn.execute(text(_SQL_INVEST_MENSAL),   {"uid": owner}).fetchall()
+
+    from datetime import date as _date
+    inv_by_month: dict[_date, float] = {
+        r.month_year: float(r.total_inv or 0) for r in inv_rows
+    }
 
     result = []
-    for r in reversed(rows):   # reversed → cronológico (mais antigo primeiro)
-        my = r.month_year
+    for r in reversed(rows):
+        my  = r.month_year
         result.append({
-            "label":    f"{_MESES_PT_CF[my.month]}/{str(my.year)[-2:]}",
-            "ano":      my.year,
-            "mes":      my.month,
-            "receitas": float(r.total_income or 0),
-            "despesas": float(r.total_expenses_abs or 0),
-            "saldo":    float(r.net_cashflow or 0),
+            "label":         f"{_MESES_PT_CF[my.month]}/{str(my.year)[-2:]}",
+            "ano":           my.year,
+            "mes":           my.month,
+            "receitas":      float(r.total_income or 0),
+            "despesas":      float(r.total_expenses_abs or 0),
+            "saldo":         float(r.net_cashflow or 0),
+            "investimentos": round(inv_by_month.get(my, 0.0), 2),
         })
     return result
 

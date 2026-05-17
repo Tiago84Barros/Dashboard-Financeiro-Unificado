@@ -124,9 +124,7 @@ def _fig_historico(historico: list, fluxo_inv: dict | None = None) -> go.Figure:
     meses         = [h["label"]    for h in h6]
     receitas      = [h["receitas"] for h in h6]
     despesas      = [h["despesas"] for h in h6]
-    investimentos = [
-        (fluxo_inv or {}).get((h["ano"], h["mes"]), 0.0) for h in h6
-    ]
+    investimentos = [h.get("investimentos", 0.0) for h in h6]
 
     fig = go.Figure()
     for nome, vals, cor, dash in [
@@ -517,7 +515,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict) -> None:
             st.caption("Sem despesas registradas neste mês.")
 
     with col_hist:
-        _secao_titulo("📈", "Histórico de 6 meses (Receitas × Despesas × Saldo)")
+        _secao_titulo("📈", "Histórico de 6 meses (Receitas × Despesas × Investimentos)")
         if historico:
             st.plotly_chart(_fig_historico(historico, fluxo_inv),
                             use_container_width=True,
@@ -531,7 +529,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict) -> None:
             import pandas as pd
             rows_t = []
             for h in ultimos6:
-                inv = fluxo_inv.get((h["ano"], h["mes"]), 0.0)
+                inv = h.get("investimentos", 0.0)
                 rows_t.append({
                     "Mês":           h["label"],
                     "Receitas":      fmt_moeda(h["receitas"]),
