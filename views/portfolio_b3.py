@@ -73,13 +73,13 @@ def _simular_seg_backtest(
     aporte: float,
     taxa_selic_aa: float,
     selic_macro: dict[int, float],
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, dict[str, float]]:
     """
     Reconstrói a carteira por segmento usando líderes identificados por ano.
     Retorna (valor_estrategia, valor_selic, valor_ew).
     """
     if df_prec_seg.empty:
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, {}
 
     all_tks = list(df_prec_seg.columns)
     cotas_est: dict[str, float] = {tk: 0.0 for tk in all_tks}
@@ -120,7 +120,37 @@ def _simular_seg_backtest(
         )
 
     last_row = df_prec_seg.iloc[-1]
-    return _val(cotas_est, last_row), selic_acum, _val(cotas_ew, last_row)
+    contrib_est = {
+        tk: cotas_est[tk] * float(last_row[tk])
+        for tk in all_tks
+        if tk in cotas_est and pd.notna(last_row.get(tk)) and float(last_row.get(tk, 0) or 0) > 0
+    }
+    return _val(cotas_est, last_row), selic_acum, _val(cotas_ew, last_row), contrib_est
+
+
+def _rank_ticker(score_map: dict[str, float], ticker: str) -> int | None:
+    ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
+    for idx, (tk, _) in enumerate(ranked, start=1):
+        if tk == ticker:
+            return idx
+    return None
+
+
+def _pode_incluir_maior_participacao(
+    ticker: str,
+    ultimo_lid: dict[str, int],
+    score_proximo: dict[str, float],
+    ano_ref: int,
+    max_anos_lid: int,
+) -> tuple[bool, str, int | None, int | None]:
+    """Replica a regra do app1: maior participacao precisa ter recencia ou rank atual forte."""
+    ultimo = ultimo_lid.get(ticker)
+    rank_atual = _rank_ticker(score_proximo, ticker)
+    if ultimo is not None and (ano_ref - int(ultimo)) <= int(max_anos_lid):
+        return True, "Maior participacao com lideranca recente", ultimo, rank_atual
+    if rank_atual is not None and rank_atual <= 3:
+        return True, "Maior participacao ainda bem ranqueada no score atual", ultimo, rank_atual
+    return False, "Maior participacao descartada por lideranca antiga/baixo rank atual", ultimo, rank_atual
 
 
 def _processar_segmento(
@@ -155,6 +185,8 @@ def _processar_segmento(
     lids_por_ano: dict[int, list[str]]    = {}
     pesos_por_ano: dict[int, dict[str, float]] = {}
     anos_com_score: list[int]              = []
+    score_rows: list[dict]                 = []
+    lideres_rows: list[dict]               = []
 
     for ano in range(ano_inicio, ano_atual):
         score_map = _score_historico_ano(hist_batch, tickers, ano, pesos, tk_grupos, lag=1)
@@ -162,6 +194,11 @@ def _processar_segmento(
             continue
         score_map = _apply_decay_penalty(score_map, anos_lideranca)
         anos_com_score.append(ano)
+        for tk, score in score_map.items():
+            score_rows.append({
+                "Ano": ano, "ticker": tk, "Score_Ajustado": float(score),
+                "SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento,
+            })
 
         ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
         scores_desc = [s for _, s in ranked[:3]]
@@ -169,6 +206,11 @@ def _processar_segmento(
         lids = [tk for tk, _ in ranked[:n] if tk in tickers]
 
         lids_por_ano[ano] = lids
+        for tk in lids:
+            lideres_rows.append({
+                "Ano": ano, "ticker": tk,
+                "SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento,
+            })
         if lids and len(lids) >= 2:
             w = _apply_cap_soft(_weights_from_scores(lids, score_map, gamma), cap, soft)
         elif lids:
@@ -192,6 +234,7 @@ def _processar_segmento(
     score_proximo = _score_historico_ano(hist_batch, tickers, ano_atual, pesos, tk_grupos, lag=1)
     if not score_proximo:
         return None
+    ano_ref_score = ano_atual - 1
 
     # Líderes para próximo ano
     ranked_prox = sorted(score_proximo.items(), key=lambda x: x[1], reverse=True)
@@ -209,9 +252,10 @@ def _processar_segmento(
     # Reconstrução histórica
     tks_disp = [tk for tk in tickers if tk in df_precos_all.columns]
     val_est = val_selic = val_ew = 0.0
+    contrib_est: dict[str, float] = {}
     if tks_disp and not df_precos_all.empty:
         df_prec_seg = df_precos_all[tks_disp].dropna(how="all")
-        val_est, val_selic, val_ew = _simular_seg_backtest(
+        val_est, val_selic, val_ew, contrib_est = _simular_seg_backtest(
             df_prec_seg, lids_por_ano, pesos_por_ano,
             aporte, taxa_selic_aa, selic_macro,
         )
@@ -234,8 +278,13 @@ def _processar_segmento(
         "participacao": participacao,
         "ultimo_lid": ultimo_lid,
         "score_proximo": score_proximo,
+        "ano_ref_score": ano_ref_score,
         "lids_prox": lids_prox,
         "pesos_prox": pesos_prox,
+        "contrib_est": contrib_est,
+        "ticker_maior_part": max(contrib_est, key=contrib_est.get) if contrib_est else None,
+        "score_rows": score_rows,
+        "lideres_rows": lideres_rows,
         "val_est": val_est,
         "val_selic": val_selic,
         "val_ew": val_ew,
@@ -331,6 +380,124 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
     st.markdown("<hr style='margin:16px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
 
 
+def _render_paineis_app1(
+    resultados: list[dict],
+    proximos_uniq: list[dict],
+    df_precos_all: pd.DataFrame,
+) -> None:
+    """Paineis leves inspirados nos patches do app1, sem dependencias extras."""
+    if not proximos_uniq:
+        return
+
+    score_global = pd.DataFrame([row for r in resultados for row in r.get("score_rows", [])])
+    lideres_global = pd.DataFrame([row for r in resultados for row in r.get("lideres_rows", [])])
+    selecionados = {p["tk"] for p in proximos_uniq}
+
+    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.caption("Teste incremental: painéis analíticos equivalentes aos patches do app1.")
+
+    with st.expander("🧩 Patch 1 — Régua de Convicção", expanded=False):
+        if score_global.empty:
+            st.info("Régua de convicção indisponível para esta execução.")
+        else:
+            ultimo_ano = int(pd.to_numeric(score_global["Ano"], errors="coerce").max())
+            df_ano = score_global[
+                (score_global["Ano"] == ultimo_ano)
+                & (score_global["ticker"].isin(selecionados))
+            ].copy()
+            if df_ano.empty:
+                st.info("Nenhum ticker selecionado encontrado no score mais recente.")
+            else:
+                smin = float(df_ano["Score_Ajustado"].min())
+                smax = float(df_ano["Score_Ajustado"].max())
+                df_ano["Convicção"] = (
+                    (df_ano["Score_Ajustado"] - smin) / ((smax - smin) + 1e-9) * 100
+                )
+                df_ano = df_ano.sort_values("Score_Ajustado", ascending=False)
+                fig = px.bar(
+                    df_ano, x="ticker", y="Convicção", color="Convicção",
+                    color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"],
+                    hover_data=["SETOR", "SEGMENTO", "Score_Ajustado"],
+                )
+                fig.update_layout(**_plot_layout(320))
+                fig.update_layout(coloraxis_showscale=False)
+                st.plotly_chart(fig, use_container_width=True,
+                                config={"displayModeBar": False}, key="pb3_patch1")
+
+    with st.expander("🧩 Patch 2 — Dominância", expanded=False):
+        if lideres_global.empty:
+            st.info("Mapa de dominância indisponível para esta execução.")
+        else:
+            dom = (
+                lideres_global[lideres_global["ticker"].isin(selecionados)]
+                .groupby(["ticker", "SETOR", "SEGMENTO"], dropna=False)["Ano"]
+                .agg(["count", lambda s: ", ".join(map(str, sorted(set(s.astype(int)))))]).reset_index()
+            )
+            dom.columns = ["Ticker", "Setor", "Segmento", "Anos como líder", "Anos"]
+            dom = dom.sort_values("Anos como líder", ascending=False)
+            st.dataframe(dom, use_container_width=True, hide_index=True)
+
+    with st.expander("🧩 Patch 3 — Diversificação e Concentração", expanded=False):
+        df_sel = pd.DataFrame(proximos_uniq)
+        if df_sel.empty:
+            st.info("Diversificação indisponível.")
+        else:
+            c1, c2 = st.columns(2)
+            by_setor = df_sel["setor"].value_counts().reset_index()
+            by_setor.columns = ["Setor", "Empresas"]
+            fig_setor = px.bar(by_setor, x="Setor", y="Empresas", color="Setor")
+            fig_setor.update_layout(**_plot_layout(320))
+            fig_setor.update_layout(showlegend=False)
+            c1.plotly_chart(fig_setor, use_container_width=True,
+                            config={"displayModeBar": False}, key="pb3_patch3_setor")
+
+            by_seg = df_sel["segmento"].value_counts().head(12).reset_index()
+            by_seg.columns = ["Segmento", "Empresas"]
+            fig_seg = px.bar(by_seg, x="Empresas", y="Segmento", orientation="h",
+                             color="Empresas", color_continuous_scale="Teal")
+            fig_seg.update_layout(**_plot_layout(320))
+            fig_seg.update_layout(coloraxis_showscale=False)
+            c2.plotly_chart(fig_seg, use_container_width=True,
+                            config={"displayModeBar": False}, key="pb3_patch3_seg")
+
+    with st.expander("🧩 Patch 4 — Benchmark do Segmento", expanded=False):
+        rows = []
+        for p in proximos_uniq:
+            rows.append({
+                "Ticker": p["tk"],
+                "Setor": p.get("setor"),
+                "Segmento": p.get("segmento"),
+                "Rank score": p.get("rank_score"),
+                "Alpha Selic (%)": round(float(p.get("alpha_selic", 0.0)), 1),
+                "Alpha Equal-Weight (%)": round(float(p.get("alpha_ew", 0.0)), 1),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    with st.expander("🧩 Patch 5 — Desempenho das Empresas", expanded=False):
+        if df_precos_all.empty:
+            st.info("Preços indisponíveis para o painel de desempenho.")
+        else:
+            cols = [p["tk"] for p in proximos_uniq if p["tk"] in df_precos_all.columns]
+            if not cols:
+                st.info("Nenhuma empresa selecionada encontrada na matriz de preços.")
+            else:
+                prec = df_precos_all[cols].dropna(how="all").ffill()
+                ret_12m = {}
+                vol_12m = {}
+                janela = prec.tail(12)
+                for tk in cols:
+                    s = pd.to_numeric(janela[tk], errors="coerce").dropna()
+                    if len(s) >= 2 and float(s.iloc[0]) > 0:
+                        ret_12m[tk] = (float(s.iloc[-1]) / float(s.iloc[0]) - 1) * 100
+                        vol_12m[tk] = s.pct_change().dropna().std() * np.sqrt(12) * 100
+                perf = pd.DataFrame({
+                    "Ticker": list(ret_12m.keys()),
+                    "Retorno 12m (%)": [round(v, 1) for v in ret_12m.values()],
+                    "Volatilidade 12m (%)": [round(vol_12m.get(k, np.nan), 1) for k in ret_12m],
+                })
+                st.dataframe(perf, use_container_width=True, hide_index=True)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
@@ -378,13 +545,15 @@ def render(show_header: bool = True) -> None:
             "Máx. anos desde última liderança", 1, 20, 5, 1,
             key="pb3_max_anos",
         )
-        pa1, pa2, pa3 = st.columns(3)
+        pa1, pa2, pa3, pa4 = st.columns(4)
         aporte       = pa1.number_input("Aporte mensal (R$)", 100.0, 50000.0, 1000.0, 100.0,
                                          key="pb3_aporte")
         ano_inicio   = pa2.number_input("Ano início da reconstrução", 2010, 2022, _ANO_INICIO_DEFAULT, 1,
                                          key="pb3_ano_ini")
         mostrar_audit = pa3.checkbox("Mostrar auditoria dos segmentos", value=True,
                                       key="pb3_audit")
+        min_anos_dre = pa4.number_input("Histórico DRE mínimo", 4, 20, 10, 1,
+                                        key="pb3_min_anos_dre")
 
     usar_ew_como_criterio = uso_ew == "Critério de seleção"
 
@@ -394,6 +563,7 @@ def render(show_header: bool = True) -> None:
     with st.spinner("Carregando dados do banco…"):
         df_set        = _db.load_setores()
         selic_macro   = _db.load_selic_macro()
+        anos_hist     = _db.load_historico_anos()
         df_mult_todos = _db.load_multiplos_todos()
 
     if df_set.empty:
@@ -443,7 +613,7 @@ def render(show_header: bool = True) -> None:
         for i, ((setor, subsetor, segmento), grupo) in enumerate(grupos):
             tickers_seg = [
                 tk for tk in grupo["ticker"].tolist()
-                if tk in hist_batch
+                if tk in hist_batch and (not anos_hist or anos_hist.get(tk, 0) >= int(min_anos_dre))
             ]
             if tickers_seg:
                 res = _processar_segmento(
@@ -460,9 +630,11 @@ def render(show_header: bool = True) -> None:
         prog.empty()
         st.session_state["pb3_resultados"] = resultados
         st.session_state["pb3_df_set"]     = df_set
+        st.session_state["pb3_precos_all"] = df_precos_all
 
     resultados = st.session_state.get("pb3_resultados", [])
     df_set     = st.session_state.get("pb3_df_set", df_set)
+    df_precos_all = st.session_state.get("pb3_precos_all", pd.DataFrame())
 
     if not resultados:
         st.warning("Nenhum segmento retornou dados suficientes.")
@@ -540,35 +712,64 @@ def render(show_header: bool = True) -> None:
     proximos: list[dict] = []
     for res in aprovados:
         score_prox = res["score_proximo"]
-        lids       = res["lids_prox"]
         pesos_p    = res["pesos_prox"]
         part_hist  = res["participacao"]
+        ano_ref    = int(res.get("ano_ref_score", ano_atual - 1))
+        ranked_prox = sorted(score_prox.items(), key=lambda x: x[1], reverse=True)
+        if not ranked_prox:
+            continue
 
-        for tk in lids:
+        ticker_lider = ranked_prox[0][0]
+        ticker_maior = res.get("ticker_maior_part")
+        selecionados = [ticker_lider]
+        maior_info: tuple[bool, str, int | None, int | None] | None = None
+
+        if ticker_maior and ticker_maior != ticker_lider:
+            maior_info = _pode_incluir_maior_participacao(
+                str(ticker_maior), res.get("ultimo_lid", {}), score_prox,
+                ano_ref, int(max_anos_lid),
+            )
+            if maior_info[0]:
+                selecionados.append(str(ticker_maior))
+
+        for tk in selecionados:
             score = score_prox.get(tk, 0.0)
             peso  = pesos_p.get(tk, 0.0)
             motivos = []
-            if score == max(score_prox.values()):
-                motivos.append(f"Líder no Score ({ano_atual - 1})")
+            if tk == ticker_lider:
+                motivos.append(f"Líder no Score ({ano_ref})")
             maior_part = max(part_hist, key=part_hist.get) if part_hist else None
-            if maior_part == tk:
-                motivos.append("Maior participação no segmento")
+            if ticker_maior == tk:
+                if maior_info and maior_info[1]:
+                    motivos.append(maior_info[1])
+                else:
+                    motivos.append("Maior participação no segmento")
             nome_row = df_set[df_set["ticker"] == tk]
             nome = nome_row["nome_empresa"].iloc[0][:24] if not nome_row.empty else tk
             proximos.append({
                 "tk": tk, "nome": nome, "score": score, "peso": peso,
                 "motivos": motivos,
                 "setor": res["setor"],
+                "subsetor": res["subsetor"],
                 "segmento": res["segmento"],
+                "alpha_selic": _margem_pct(res["val_est"], res["val_selic"]),
+                "alpha_ew": _margem_pct(res["val_est"], res["val_ew"]),
+                "rank_score": _rank_ticker(score_prox, tk),
+                "ano_lider": ano_ref if tk == ticker_lider else res.get("ultimo_lid", {}).get(tk),
             })
 
-    # Remove duplicatas (mesmo ticker em múltiplos segmentos)
-    vistos: set[str] = set()
-    proximos_uniq: list[dict] = []
+    # Remove duplicatas (mesmo ticker em múltiplos segmentos), preservando motivos.
+    mapa_prox: dict[str, dict] = {}
     for p in sorted(proximos, key=lambda x: x["score"], reverse=True):
-        if p["tk"] not in vistos:
-            proximos_uniq.append(p)
-            vistos.add(p["tk"])
+        tk = p["tk"]
+        if tk not in mapa_prox:
+            mapa_prox[tk] = p
+            continue
+        cur = mapa_prox[tk]
+        cur["motivos"] = list(dict.fromkeys((cur.get("motivos") or []) + (p.get("motivos") or [])))
+        if float(p.get("score", 0.0)) > float(cur.get("score", 0.0)):
+            cur.update({k: v for k, v in p.items() if k != "motivos"})
+    proximos_uniq = sorted(mapa_prox.values(), key=lambda x: x["score"], reverse=True)
 
     if proximos_uniq:
         for i in range(0, len(proximos_uniq), 3):
@@ -616,6 +817,8 @@ def render(show_header: bool = True) -> None:
         fig_pie.update_layout(showlegend=False)
         st.plotly_chart(fig_pie, use_container_width=True,
                         config={"displayModeBar": False}, key="pb3_pie")
+
+    _render_paineis_app1(resultados, proximos_uniq, df_precos_all)
 
     # ── DESEMPENHO PARCIAL ANO ATUAL ─────────────────────────────────────────
     if proximos_uniq and "pb3_precos_all" not in st.session_state:
