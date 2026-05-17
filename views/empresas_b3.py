@@ -464,6 +464,40 @@ _SLOPE_COLS: tuple[str, ...] = (
     "ROE", "ROIC", "Margem_Liquida", "Margem_Operacional",
 )
 
+_FUND_FALLBACK_MAP: dict[str, str] = {
+    "pl": "P/L",
+    "pvp": "P/VP",
+    "dy": "DY",
+    "roe": "ROE",
+    "roic": "ROIC",
+    "marg_liq": "Margem_Liquida",
+    "marg_ebit": "Margem_Operacional",
+    "ev_ebit": "EV_EBIT",
+    "liq_corr": "Liquidez_Corrente",
+    "div_brut_patrim": "Endividamento_Total",
+}
+
+_PCT_SCORE_FIELDS: set[str] = {
+    "DY", "ROE", "ROIC", "ROA", "Margem_Liquida",
+    "Margem_Operacional", "Payout",
+}
+
+_SCORE_RANGES: dict[str, tuple[float | None, float | None]] = {
+    "DY": (0.000001, 0.50),
+    "ROE": (-3.0, 5.0),
+    "ROIC": (-2.0, 3.0),
+    "ROA": (-1.0, 1.5),
+    "Margem_Liquida": (-2.0, 2.0),
+    "Margem_Operacional": (-2.0, 2.0),
+    "Payout": (-2.0, 5.0),
+    "P/L": (0.01, 200.0),
+    "P/VP": (0.01, 50.0),
+    "EV_EBIT": (0.01, 200.0),
+    "P_FCO": (0.01, 200.0),
+    "Endividamento_Total": (0.0, 20.0),
+    "Liquidez_Corrente": (0.0, 20.0),
+}
+
 
 def _compute_slope_log(s: pd.Series) -> float | None:
     """Slope da regressão log-linear — proxy de crescimento anualizado do indicador."""
@@ -507,6 +541,100 @@ def _enrich_com_slopes(
     df_sl = pd.DataFrame.from_dict(slope_data, orient="index")
     df_sl.index.name = "Ticker"
     return df_mult.merge(df_sl.reset_index(), on="Ticker", how="left")
+
+
+def _score_value_usable(field: str, value: object) -> bool:
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return False
+    if not np.isfinite(x):
+        return False
+    lo, hi = _SCORE_RANGES.get(field, (None, None))
+    if lo is not None and x < lo:
+        return False
+    if hi is not None and x > hi:
+        return False
+    return True
+
+
+def _clean_score_inputs(df: pd.DataFrame, cols: list[str] | tuple[str, ...] | None = None) -> pd.DataFrame:
+    if df.empty:
+        return df
+    out = df.copy()
+    target_cols = cols or [c for c in _SCORE_RANGES if c in out.columns]
+    for col in target_cols:
+        if col not in out.columns:
+            continue
+        vals = pd.to_numeric(out[col], errors="coerce")
+        out[col] = vals.where(vals.map(lambda v, c=col: _score_value_usable(c, v)))
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fundamentus_fallback_canonico(tickers: tuple[str, ...]) -> dict[str, dict[str, float]]:
+    fund_fmt = _recon.batch_fund_fmt(tuple(sorted(set(tickers))))
+    out: dict[str, dict[str, float]] = {}
+    for tk, raw in fund_fmt.items():
+        vals: dict[str, float] = {}
+        for fund_key, db_key in _FUND_FALLBACK_MAP.items():
+            v = raw.get(fund_key)
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(x):
+                continue
+            vals[db_key] = x / 100.0 if db_key in _PCT_SCORE_FIELDS else x
+        if vals:
+            out[str(tk).upper().replace(".SA", "")] = vals
+    return out
+
+
+def _enrich_multiplos_fallback_web(
+    df_mult: pd.DataFrame,
+    tickers: list[str],
+    cols: list[str] | tuple[str, ...],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Substitui ausentes/outliers do snapshot por Fundamentus em lote.
+    Retorna o DataFrame enriquecido e uma auditoria resumida por ticker/campo.
+    """
+    if df_mult.empty or not tickers:
+        return df_mult, pd.DataFrame()
+
+    out = df_mult.copy()
+    out["Ticker"] = out["Ticker"].astype(str).str.replace(".SA", "", regex=False).str.upper()
+    web = _fundamentus_fallback_canonico(tuple(tickers))
+    audit_rows: list[dict] = []
+
+    for tk in tickers:
+        vals = web.get(str(tk).upper().replace(".SA", ""), {})
+        if not vals:
+            continue
+        idx = out.index[out["Ticker"] == tk]
+        if len(idx) == 0:
+            continue
+        i = idx[0]
+        for col in cols:
+            if col not in out.columns or col not in vals:
+                continue
+            old = out.at[i, col]
+            new = vals.get(col)
+            if not _score_value_usable(col, new):
+                continue
+            if not _score_value_usable(col, old):
+                out.at[i, col] = float(new)
+                audit_rows.append({
+                    "Ticker": tk,
+                    "Indicador": col,
+                    "Antes": old,
+                    "Depois": float(new),
+                    "Fonte": "Fundamentus",
+                })
+
+    out = _clean_score_inputs(out, cols)
+    return out, pd.DataFrame(audit_rows)
 
 
 def _norm_pesos(conf: dict[str, tuple[float, bool]]) -> dict[str, tuple[float, bool]]:
@@ -654,6 +782,7 @@ def _score_universo(
     df = df_mult[df_mult["Ticker"].isin(tickers_universo)].copy()
     if df.empty:
         return pd.DataFrame({"Ticker": tickers_universo, "score": 0.0, "ranking": 0})
+    df = _clean_score_inputs(df, list(pesos.keys()))
 
     group_col = _resolve_group_col_df(df, prefer=group_col_prefer)
     score = pd.Series(0.0, index=df.index)
@@ -1569,6 +1698,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     # Dicionário de grupos por ticker — passado ao backtest para scoring intra-grupo
     tk_grupos = {tk: _tk2g.get(tk, {}) for tk in tks_uni}
 
+    cols_av = sorted(set([c for c, _ in _COLS_COMP] + list(_SCORE_RANGES.keys())))
+    with st.spinner("Reconciliando vazios/outliers com Fundamentus..."):
+        df_mult_enrich, audit_fallback = _enrich_multiplos_fallback_web(
+            df_mult_enrich, tks_uni, cols_av
+        )
+
     # Carregar histórico para penalidade de instabilidade + slope_log
     with st.spinner("Calculando scoring v2…"):
         hist_batch = _db.load_multiplos_historico_batch(tuple(sorted(tks_uni)))
@@ -1599,6 +1734,15 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     tk_info       = {row["ticker"]: row for _, row in df_filt.iterrows()}
     tks_com_score = set(df_scored["Ticker"].tolist()) if not df_scored.empty else set()
     tks_sem_mult  = [tk for tk in tks_uni if tk not in tks_com_score]
+
+    if not audit_fallback.empty:
+        with st.expander("Auditoria dos dados usados no scoring"):
+            st.caption(
+                "Valores vazios, zerados indevidamente ou fora de faixas razoáveis "
+                "foram substituídos antes do cálculo do score."
+            )
+            st.dataframe(audit_fallback, use_container_width=True,
+                         height=min(260, 45 + 32 * len(audit_fallback)))
 
     # ── CARDS DO UNIVERSO ────────────────────────────────────────────────────
     _sec_hdr(f"🏢 Universo Filtrado — {len(tks_uni)} empresa(s)")
@@ -1907,8 +2051,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     _sec_hdr("📊 Quadro Comparativo — Indicadores por Empresa")
     st.caption("Verde = top 25% · Vermelho = bottom 25% (considerando direção do indicador).")
 
-    if not df_mult_todos.empty and tks_uni:
-        df_qc = df_mult_todos[df_mult_todos["Ticker"].isin(tks_uni)].copy()
+    if not df_mult_enrich.empty and tks_uni:
+        df_qc = df_mult_enrich[df_mult_enrich["Ticker"].isin(tks_uni)].copy()
         cols_disp = [(c, lbl) for c, lbl in _COLS_COMP if c in df_qc.columns]
         if cols_disp:
             rows_qc = []
@@ -1951,7 +2095,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     st.caption("Linhas pontilhadas = mediana. Cores por score v2.")
 
     _sc_opts = [c for c, _ in _COLS_COMP
-                if not df_mult_todos.empty and c in df_mult_todos.columns]
+                if not df_mult_enrich.empty and c in df_mult_enrich.columns]
     if len(_sc_opts) >= 2:
         sc1, sc2 = st.columns(2)
         ind_x = sc1.selectbox("Eixo X", _sc_opts, index=0, key="b3_av_scx")
@@ -1959,7 +2103,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                               key="b3_av_scy")
 
         if st.button("🔭 Gerar Scatter", key="b3_av_btn_scatter"):
-            df_sc = df_mult_todos[df_mult_todos["Ticker"].isin(tks_uni)].copy()
+            df_sc = df_mult_enrich[df_mult_enrich["Ticker"].isin(tks_uni)].copy()
             if ind_x in df_sc.columns and ind_y in df_sc.columns:
                 df_sc[ind_x] = pd.to_numeric(df_sc[ind_x], errors="coerce")
                 df_sc[ind_y] = pd.to_numeric(df_sc[ind_y], errors="coerce")
