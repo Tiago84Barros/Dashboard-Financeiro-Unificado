@@ -26,6 +26,8 @@ from views.empresas_b3 import (
     _score_historico_ano,
     _select_n_heuristica,
     _weights_from_scores,
+    _yf_dividendos_anuais,
+    _yf_multiplos_dividendos,
 )
 
 # ── CSS incremental ───────────────────────────────────────────────────────────
@@ -514,6 +516,14 @@ def _ratio_to_fraction(s: pd.Series, col: str) -> pd.Series:
     return vals
 
 
+def _valid_dy(v: object) -> bool:
+    try:
+        x = float(v)
+        return np.isfinite(x) and 0 < x <= 0.50
+    except Exception:
+        return False
+
+
 def _mean_last_years(df: pd.DataFrame, col: str, years: int = 5) -> float:
     if df is None or df.empty or col not in df.columns:
         return np.nan
@@ -542,6 +552,14 @@ def _annual_series(df: pd.DataFrame, col: str) -> pd.Series:
         return pd.Series(dtype=float)
     d["Ano"] = d["Data"].dt.year
     return d.groupby("Ano")[col].sum().dropna().sort_index()
+
+
+def _first_annual_series(df: pd.DataFrame, cols: tuple[str, ...]) -> pd.Series:
+    for col in cols:
+        s = _annual_series(df, col)
+        if not s.empty:
+            return s
+    return pd.Series(dtype=float)
 
 
 def _growth_from_annual(s: pd.Series) -> float:
@@ -692,8 +710,32 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
         dy = _mean_last_years(df_mult, "DY")
         rec_growth = _growth_from_annual(_annual_series(df_fin, "Receita_Liquida"))
         lucro_growth = _growth_from_annual(_annual_series(df_fin, "Lucro_Liquido"))
-        div_growth = _growth_from_annual(_annual_series(df_fin, "Dividendos"))
+        div_growth = _growth_from_annual(_first_annual_series(
+            df_fin,
+            (
+                "Dividendos", "Dividendos_Pagos", "Dividendos_e_JCP",
+                "JCP", "Proventos", "Dividendos_Distribuidos",
+            ),
+        ))
         debt_ratio, debt_label = _latest_debt_ratio(df_fin)
+        fonte_dividendos = "DB"
+
+        if not _valid_dy(dy):
+            yf_divs = _yf_multiplos_dividendos(tk)
+            dy_yf = yf_divs.get("DY")
+            if _valid_dy(dy_yf):
+                dy = float(dy_yf)
+                fonte_dividendos = "YF"
+            else:
+                dy = np.nan
+
+        if not _finite(div_growth):
+            df_div_yf = _yf_dividendos_anuais(tk)
+            if not df_div_yf.empty:
+                div_growth_yf = _growth_from_annual(_annual_series(df_div_yf, "Dividendos"))
+                if _finite(div_growth_yf):
+                    div_growth = div_growth_yf
+                    fonte_dividendos = "YF" if fonte_dividendos == "DB" else fonte_dividendos
 
         rows.append({
             "ticker": tk,
@@ -701,6 +743,7 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
             "roic": roic,
             "dy": dy,
             "div_growth": div_growth,
+            "fonte_dividendos": fonte_dividendos,
             "debt_ratio": debt_ratio,
             "debt_label": debt_label,
             "rec_growth": rec_growth,
@@ -742,8 +785,9 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
 
         c1, c2, c3, c4 = st.columns(4)
         c1.markdown(_quality_card("ROIC médio (5a)", _fmt_pct(row["roic"]), "Eficiência do capital (média 5 anos).", "cf-card-income"), unsafe_allow_html=True)
-        c2.markdown(_quality_card("DY médio (5a)", _fmt_pct(row["dy"]), "Dividend Yield médio (múltiplos do banco).", "cf-card-yield"), unsafe_allow_html=True)
-        c3.markdown(_quality_card("Cresc. anual dividendos (5a)", _fmt_growth(row["div_growth"]), "Taxa anualizada implícita da tendência robusta dos dividendos.", _pos_class(row["div_growth"])), unsafe_allow_html=True)
+        fonte_div = str(row.get("fonte_dividendos") or "DB")
+        c2.markdown(_quality_card("DY médio (5a)", _fmt_pct(row["dy"]), f"Dividend Yield médio. Fonte: {fonte_div}.", "cf-card-yield"), unsafe_allow_html=True)
+        c3.markdown(_quality_card("Cresc. anual dividendos (5a)", _fmt_growth(row["div_growth"]), f"Tendência robusta dos dividendos. Fonte: {fonte_div}.", _pos_class(row["div_growth"])), unsafe_allow_html=True)
         c4.markdown(_quality_card(str(row["debt_label"]), _fmt_ratio(row["debt_ratio"]), "Último disponível no Supabase.", "cf-card-ratio"), unsafe_allow_html=True)
 
         c1, c2, c3, c4 = st.columns(4)
