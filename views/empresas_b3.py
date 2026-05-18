@@ -71,6 +71,23 @@ _CSS = """
 .b3-score-high  { background:rgba(0,200,150,.15);color:#00C896; }
 .b3-score-mid   { background:rgba(246,201,14,.15);color:#F6C90E; }
 .b3-score-low   { background:rgba(252,92,125,.15);color:#FC5C7D; }
+/* Score de Entrada */
+.b3-entrada-aprovada   { background:rgba(0,200,150,.12);border:1px solid rgba(0,200,150,.30);
+                          color:#00C896;border-radius:6px;padding:3px 10px;
+                          font-size:0.72rem;font-weight:800; }
+.b3-entrada-observacao { background:rgba(246,201,14,.12);border:1px solid rgba(246,201,14,.30);
+                          color:#F6C90E;border-radius:6px;padding:3px 10px;
+                          font-size:0.72rem;font-weight:800; }
+.b3-entrada-excluida   { background:rgba(252,92,125,.12);border:1px solid rgba(252,92,125,.30);
+                          color:#FC5C7D;border-radius:6px;padding:3px 10px;
+                          font-size:0.72rem;font-weight:800; }
+.b3-engine-row { display:flex;align-items:center;gap:6px;margin-bottom:4px;
+                 font-size:0.74rem; }
+.b3-engine-bar-bg { flex:1;background:#1E2533;border-radius:4px;height:6px;overflow:hidden; }
+.b3-engine-bar-fill { height:100%;border-radius:4px;transition:width .3s; }
+.b3-fator-pos { color:#00C896;font-size:0.68rem;font-weight:700; }
+.b3-fator-neg { color:#FC5C7D;font-size:0.68rem;font-weight:700; }
+.b3-fator-neu { color:#718096;font-size:0.68rem; }
 </style>
 """
 
@@ -926,6 +943,285 @@ def _score_universo(
     df["score"]   = df["score_raw"].round(1)
     df["ranking"] = df["score"].rank(ascending=False, method="min").astype(int)
     return df.sort_values("score", ascending=False).reset_index(drop=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CAMADAS AVANÇADAS — Score de Entrada
+# Evolução do score_base (v2) sem substituí-lo.
+# Fórmula:
+#   score_entrada = score_base*0.60 + q_bonus*0.20 + c_bonus*0.10 + cq_bonus*0.10
+#                   − risk_penalty
+#   clamped [0, 100]
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _quality_engine(df: pd.DataFrame) -> pd.Series:
+    """
+    Quality Engine: avalia indicadores complementares ao score_base.
+    Usa P_FCO, ROA e coerência Payout — indicadores ausentes ou pouco ponderados
+    nos perfis setoriais existentes.
+    Retorna série 0-100 (50 = neutro quando sem dados).
+    """
+    idx = df.index
+    parts: list[pd.Series] = []
+    weights: list[float] = []
+
+    # P_FCO — preço / fluxo de caixa operacional; menor = empresa mais barata em caixa
+    if "P_FCO" in df.columns:
+        pfco = pd.to_numeric(df["P_FCO"], errors="coerce")
+        valid = pfco.notna() & (pfco > 0)
+        if valid.sum() >= 2:
+            pfco_w = _winsorize_series(pfco[valid]).reindex(pfco.index)
+            pct = _percentile_score(pfco_w, melhor_alto=False) * 100.0
+            parts.append(pct.fillna(50.0))
+            weights.append(0.45)
+
+    # ROA — retorno sobre ativos; complementa ROE sem confundir alavancagem
+    if "ROA" in df.columns:
+        roa = pd.to_numeric(df["ROA"], errors="coerce")
+        if roa.notna().sum() >= 2:
+            roa_w = _winsorize_series(roa.dropna()).reindex(roa.index)
+            pct = _percentile_score(roa_w, melhor_alto=True) * 100.0
+            parts.append(pct.fillna(50.0))
+            weights.append(0.35)
+
+    # Payout saudável: entre 5% e 100% do lucro distribuído = sinal de maturidade
+    if "Payout" in df.columns:
+        payout = pd.to_numeric(df["Payout"], errors="coerce")
+        ps = pd.Series(50.0, index=idx)
+        ps[payout.between(0.05, 1.00)] = 75.0   # distribuição saudável
+        ps[payout > 1.00]              = 30.0   # distribuindo mais do que lucra
+        ps[payout <= 0.0]              = 40.0   # sem distribuição
+        parts.append(ps)
+        weights.append(0.20)
+
+    if not parts:
+        return pd.Series(50.0, index=idx)
+
+    total_w = sum(weights)
+    result = sum(p * w for p, w in zip(parts, weights)) / total_w
+    return result.clip(0, 100).round(1)
+
+
+def _risk_engine(df: pd.DataFrame) -> pd.Series:
+    """
+    Risk Engine: penalizações por sinais fundamentalistas graves.
+    Impede que red flags sejam mascarados por pontos fortes isolados.
+    Retorna série 0-20 (pontos subtraídos do score_entrada).
+    """
+    idx = df.index
+    penalty = pd.Series(0.0, index=idx)
+
+    # ROE negativo = empresa destruindo valor
+    if "ROE" in df.columns:
+        roe = pd.to_numeric(df["ROE"], errors="coerce")
+        penalty[roe < 0] += 6.0
+
+    # Endividamento muito alto (> 6×): risco de insolvência
+    if "Endividamento_Total" in df.columns:
+        debt = pd.to_numeric(df["Endividamento_Total"], errors="coerce")
+        penalty[(debt > 6)  & debt.notna()] += 5.0
+        penalty[(debt > 10) & debt.notna()] += 4.0   # extra para dívida extrema
+
+    # Margem Líquida negativa = operação não rentável
+    if "Margem_Liquida" in df.columns:
+        ml = pd.to_numeric(df["Margem_Liquida"], errors="coerce")
+        penalty[ml < 0] += 4.0
+
+    # Liquidez Corrente muito baixa = risco de inadimplência de curto prazo
+    if "Liquidez_Corrente" in df.columns:
+        liq = pd.to_numeric(df["Liquidez_Corrente"], errors="coerce")
+        penalty[(liq < 0.5) & liq.notna()] += 3.0
+
+    # P/VP > 15: avaliação especulativa extrema
+    if "P/VP" in df.columns:
+        pvp = pd.to_numeric(df["P/VP"], errors="coerce")
+        penalty[(pvp > 15) & pvp.notna()] += 2.0
+
+    return penalty.clip(0, 20).round(1)
+
+
+def _consistency_engine(df: pd.DataFrame,
+                         anos_hist: dict[str, int] | None = None) -> pd.Series:
+    """
+    Consistency Engine: bônus baseado em crescimento histórico consistente.
+    Usa slope_log (já calculados no df) e anos de dados — sem duplicar penalidade
+    de CV (já aplicada no score_base).
+    Retorna série 0-100 (50 = neutro).
+    """
+    idx = df.index
+    parts: list[pd.Series] = []
+    weights: list[float] = []
+
+    slope_map = [
+        ("ROE_slope_log",              0.28, True),
+        ("ROIC_slope_log",             0.24, True),
+        ("Margem_Liquida_slope_log",   0.20, True),
+        ("Receita_slope_log",          0.16, True),
+        ("Margem_Operacional_slope_log", 0.12, True),
+    ]
+    for col, w, alta in slope_map:
+        if col not in df.columns:
+            continue
+        sl = pd.to_numeric(df[col], errors="coerce")
+        if sl.notna().sum() < 2:
+            continue
+        pct = _percentile_score(_winsorize_series(sl.dropna()).reindex(sl.index), alta) * 100.0
+        parts.append(pct.fillna(50.0))
+        weights.append(w)
+
+    # Anos de histórico disponível: quanto mais dados, mais confiança
+    if anos_hist and "Ticker" in df.columns:
+        anos_s = df["Ticker"].map(lambda t: anos_hist.get(t, 0)).astype(float)
+        anos_norm = (anos_s.clip(0, 15) / 15.0) * 100.0
+        parts.append(anos_norm)
+        weights.append(0.22)
+
+    if not parts:
+        return pd.Series(50.0, index=idx)
+
+    # Re-normaliza pesos para somar 1
+    total_w = sum(weights)
+    result = sum(p * w for p, w in zip(parts, weights)) / total_w
+    return result.clip(0, 100).round(1)
+
+
+def _cash_quality_engine(df: pd.DataFrame) -> pd.Series:
+    """
+    Cash Quality Engine: diferencia lucro contábil de geração real de caixa.
+    Usa P_FCO como proxy primário; coerência ROIC×MargemOp como secundário.
+    Retorna série 0-100 (50 = neutro quando sem dados).
+    """
+    idx = df.index
+    parts: list[pd.Series] = []
+    weights: list[float] = []
+
+    # P_FCO: empresas baratas em relação ao caixa gerado têm maior qualidade
+    if "P_FCO" in df.columns:
+        pfco = pd.to_numeric(df["P_FCO"], errors="coerce")
+        valid = pfco.notna() & (pfco > 0) & (pfco < 200)
+        if valid.sum() >= 2:
+            pfco_w = _winsorize_series(pfco[valid]).reindex(pfco.index)
+            pct = _percentile_score(pfco_w, melhor_alto=False) * 100.0
+            parts.append(pct.fillna(50.0))
+            weights.append(0.60)
+
+    # Coerência ROIC × Margem Operacional:
+    # quando ambos são positivos e ROIC não é muito > MargemOp, lucro é real
+    if "ROIC" in df.columns and "Margem_Operacional" in df.columns:
+        roic = pd.to_numeric(df["ROIC"], errors="coerce")
+        mop  = pd.to_numeric(df["Margem_Operacional"], errors="coerce")
+        cq   = pd.Series(50.0, index=idx)
+        cq[(roic > 0) & (mop > 0) & (roic < mop * 5)]          = 72.0  # coerente
+        cq[(roic > 0) & (mop > 0) & (roic >= mop * 5)]         = 38.0  # ROIC suspeitamente alto
+        cq[(roic < 0) | (mop < 0)]                              = 25.0  # operação não rentável
+        parts.append(cq)
+        weights.append(0.40)
+
+    if not parts:
+        return pd.Series(50.0, index=idx)
+
+    total_w = sum(weights)
+    result = sum(p * w for p, w in zip(parts, weights)) / total_w
+    return result.clip(0, 100).round(1)
+
+
+def _explicar_score_entrada(row: pd.Series) -> list[tuple[str, str, str]]:
+    """
+    Gera lista de (fator, valor_fmt, sinal) para exibição na UI.
+    sinal ∈ {"positivo", "negativo", "neutro"}
+    """
+    fatores: list[tuple[str, str, str]] = []
+
+    sb = float(row.get("score_base", 0))
+    fatores.append(("Score Base (v2)", f"{sb:.0f}/100", "neutro"))
+
+    # Quality Engine
+    qb = float(row.get("q_bonus", 50))
+    if qb >= 65:
+        fatores.append(("Quality Engine",       f"▲ {qb:.0f}", "positivo"))
+    elif qb <= 35:
+        fatores.append(("Quality Engine",       f"▼ {qb:.0f}", "negativo"))
+
+    # Consistency Engine
+    cb = float(row.get("c_bonus", 50))
+    if cb >= 65:
+        fatores.append(("Crescimento Consistente", f"▲ {cb:.0f}", "positivo"))
+    elif cb <= 35:
+        fatores.append(("Histórico Fraco",          f"▼ {cb:.0f}", "negativo"))
+
+    # Cash Quality
+    cqb = float(row.get("cq_bonus", 50))
+    if cqb >= 65:
+        fatores.append(("Geração de Caixa",       f"▲ {cqb:.0f}", "positivo"))
+    elif cqb <= 35:
+        fatores.append(("Qualidade de Caixa Baixa", f"▼ {cqb:.0f}", "negativo"))
+
+    # Risk penalties
+    rp = float(row.get("r_penalty", 0))
+    if rp > 0:
+        if pd.notna(row.get("ROE")) and float(row.get("ROE", 0)) < 0:
+            fatores.append(("ROE Negativo", f"−{rp:.0f} pts", "negativo"))
+        if pd.notna(row.get("Endividamento_Total")) and float(row.get("Endividamento_Total", 0)) > 6:
+            fatores.append(("Endividamento Alto",     f"−{rp:.0f} pts", "negativo"))
+        if pd.notna(row.get("Margem_Liquida")) and float(row.get("Margem_Liquida", 0)) < 0:
+            fatores.append(("Margem Líquida Negativa", f"−{rp:.0f} pts", "negativo"))
+        if pd.notna(row.get("Liquidez_Corrente")) and float(row.get("Liquidez_Corrente", 0)) < 0.5:
+            fatores.append(("Liquidez Baixa",         f"−{rp:.0f} pts", "negativo"))
+        if not any(s == "negativo" for _, _, s in fatores[1:]):
+            fatores.append(("Risco Identificado",     f"−{rp:.0f} pts", "negativo"))
+
+    return fatores
+
+
+def _compute_score_entrada(
+    df_scored: pd.DataFrame,
+    anos_hist: dict[str, int] | None = None,
+) -> pd.DataFrame:
+    """
+    Orquestra as 4 novas camadas sobre o score_base existente.
+
+    score_entrada = score_base * 0.60
+                  + q_bonus   * 0.20
+                  + c_bonus   * 0.10
+                  + cq_bonus  * 0.10
+                  − risk_penalty
+    [0, 100]
+
+    status_entrada:
+      Aprovada   → score_entrada ≥ 60 e risk_penalty < 10
+      Observação → 30 ≤ score_entrada < 60 e risk_penalty < 10
+      Excluída   → score_entrada < 30 ou risk_penalty ≥ 10
+    """
+    if df_scored.empty:
+        return df_scored.copy()
+
+    df = df_scored.copy()
+    df["score_base"] = df["score"]                    # preserva o score original
+
+    df["q_bonus"]    = _quality_engine(df)
+    df["r_penalty"]  = _risk_engine(df)
+    df["c_bonus"]    = _consistency_engine(df, anos_hist)
+    df["cq_bonus"]   = _cash_quality_engine(df)
+
+    df["score_entrada"] = (
+        df["score_base"] * 0.60
+        + df["q_bonus"]  * 0.20
+        + df["c_bonus"]  * 0.10
+        + df["cq_bonus"] * 0.10
+        - df["r_penalty"]
+    ).clip(0, 100).round(1)
+
+    def _status(row: pd.Series) -> str:
+        se, rp = float(row["score_entrada"]), float(row["r_penalty"])
+        if rp >= 10 or se < 30:
+            return "Excluída"
+        if se >= 60:
+            return "Aprovada"
+        return "Observação"
+
+    df["status_entrada"] = df.apply(_status, axis=1)
+    df["explicacao"]     = df.apply(_explicar_score_entrada, axis=1)
+    return df
 
 
 _GAMMA_GRID = (0.50, 0.75, 1.00, 1.25)
@@ -1941,6 +2237,157 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     f'</div></div>',
                     unsafe_allow_html=True,
                 )
+
+    # ── SCORE DE ENTRADA — COMPOSIÇÃO AVANÇADA ──────────────────────────────
+    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    _sec_hdr("🎯 Score de Entrada — Composição Avançada")
+
+    if not df_scored.empty:
+        df_entrada = _compute_score_entrada(df_scored, anos_hist)
+
+        # ── KPI de distribuição de status ────────────────────────────────────
+        n_aprov = int((df_entrada["status_entrada"] == "Aprovada").sum())
+        n_obs   = int((df_entrada["status_entrada"] == "Observação").sum())
+        n_excl  = int((df_entrada["status_entrada"] == "Excluída").sum())
+        avg_se  = float(df_entrada["score_entrada"].mean())
+
+        ke1, ke2, ke3, ke4 = st.columns(4, gap="small")
+        for col, val, label, cor, css_cls in [
+            (ke1, n_aprov, "Aprovadas",   "#00C896", "b3-entrada-aprovada"),
+            (ke2, n_obs,   "Observação",  "#F6C90E", "b3-entrada-observacao"),
+            (ke3, n_excl,  "Excluídas",   "#FC5C7D", "b3-entrada-excluida"),
+            (ke4, None,    "Score Médio", "#4A9EFF", None),
+        ]:
+            display = f"{avg_se:.1f}" if val is None else str(val)
+            col.markdown(
+                f'<div style="background:#12151E;border:1px solid #1E2533;'
+                f'border-radius:10px;padding:14px 16px;">'
+                f'<div style="font-size:0.58rem;font-weight:800;text-transform:uppercase;'
+                f'letter-spacing:.12em;color:#4A5568;margin-bottom:6px;">{label}</div>'
+                f'<div style="font-size:1.55rem;font-weight:800;color:{cor};'
+                f'line-height:1.1;">{display}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Breakdown completo (tabela) ───────────────────────────────────────
+        with st.expander("📊 Breakdown completo — todas as empresas", expanded=False):
+            st.caption(
+                "**Score de Entrada** = Score Base × 0,60 + Quality × 0,20 "
+                "+ Consistência × 0,10 + Caixa × 0,10 − Penalidade Risco  ·  [0–100]"
+            )
+            cols_show = ["Ticker", "score_base", "q_bonus", "c_bonus", "cq_bonus",
+                         "r_penalty", "score_entrada", "status_entrada"]
+            cols_exist = [c for c in cols_show if c in df_entrada.columns]
+            df_tbl = df_entrada[cols_exist].copy()
+            df_tbl.columns = [
+                c.replace("score_base",    "Base (v2)")
+                 .replace("q_bonus",       "Quality")
+                 .replace("c_bonus",       "Consistência")
+                 .replace("cq_bonus",      "Caixa")
+                 .replace("r_penalty",     "Penalidade")
+                 .replace("score_entrada", "Score Entrada")
+                 .replace("status_entrada","Status")
+                for c in df_tbl.columns
+            ]
+            st.dataframe(
+                df_tbl.sort_values("Score Entrada", ascending=False),
+                use_container_width=True,
+                hide_index=True,
+                height=min(480, 60 + 35 * len(df_tbl)),
+                column_config={
+                    "Ticker":       st.column_config.TextColumn("Ticker",       width="small"),
+                    "Base (v2)":    st.column_config.NumberColumn("Base (v2)",  format="%.1f"),
+                    "Quality":      st.column_config.NumberColumn("Quality",    format="%.1f"),
+                    "Consistência": st.column_config.NumberColumn("Consistência", format="%.1f"),
+                    "Caixa":        st.column_config.NumberColumn("Caixa",      format="%.1f"),
+                    "Penalidade":   st.column_config.NumberColumn("Penalidade", format="%.1f"),
+                    "Score Entrada": st.column_config.ProgressColumn(
+                        "Score Entrada", min_value=0, max_value=100, format="%.1f"
+                    ),
+                    "Status": st.column_config.TextColumn("Status", width="medium"),
+                },
+            )
+
+        # ── Cards por empresa com explicação ─────────────────────────────────
+        _sec_hdr("🔍 Detalhamento por Empresa")
+        df_ent_sorted = df_entrada.sort_values("score_entrada", ascending=False)
+
+        for i in range(0, min(len(df_ent_sorted), 20), 3):
+            cols_e = st.columns(3, gap="small")
+            for j, (_, row) in enumerate(df_ent_sorted.iloc[i:i+3].iterrows()):
+                tk   = row["Ticker"]
+                se   = float(row["score_entrada"])
+                sb   = float(row["score_base"])
+                stat = str(row["status_entrada"])
+                rp   = float(row.get("r_penalty", 0))
+                fatores: list[tuple[str, str, str]] = row.get("explicacao", [])
+
+                css_stat = (
+                    "b3-entrada-aprovada"   if stat == "Aprovada"   else
+                    "b3-entrada-observacao" if stat == "Observação"  else
+                    "b3-entrada-excluida"
+                )
+                engine_rows = ""
+                for lbl, engine_col, cor_fill in [
+                    ("Quality",      "q_bonus",  "#4A9EFF"),
+                    ("Consistência", "c_bonus",  "#00C896"),
+                    ("Caixa",        "cq_bonus", "#A855F7"),
+                ]:
+                    val_e = float(row.get(engine_col, 50))
+                    engine_rows += (
+                        f'<div class="b3-engine-row">'
+                        f'<span style="width:74px;color:#718096;font-size:0.66rem;">{lbl}</span>'
+                        f'<div class="b3-engine-bar-bg">'
+                        f'<div class="b3-engine-bar-fill" style="width:{val_e:.0f}%;'
+                        f'background:{cor_fill};opacity:0.75;"></div></div>'
+                        f'<span style="width:26px;text-align:right;color:#CBD5E0;'
+                        f'font-size:0.66rem;">{val_e:.0f}</span>'
+                        f'</div>'
+                    )
+
+                fatores_html = ""
+                for fator, valor, sinal in fatores[:4]:
+                    css_f = f"b3-fator-{sinal}"
+                    fatores_html += (
+                        f'<span class="b3-score-badge" style="'
+                        f'background:rgba(30,37,51,1);border:1px solid #2D3748;'
+                        f'margin:2px 2px 0 0;font-size:0.60rem;">'
+                        f'<span class="{css_f}">{valor}</span>'
+                        f' <span style="color:#4A5568;">{fator}</span>'
+                        f'</span>'
+                    )
+
+                pen_html = (
+                    f'<div style="font-size:0.64rem;color:#FC5C7D;margin-top:4px;">'
+                    f'⚠ Penalidade: −{rp:.0f} pts</div>'
+                    if rp > 0 else ""
+                )
+
+                with cols_e[j]:
+                    st.markdown(
+                        f'<div class="b3-card" style="border-color:'
+                        f'{"rgba(0,200,150,.30)" if stat=="Aprovada" else "rgba(246,201,14,.20)" if stat=="Observação" else "rgba(252,92,125,.20)"}'
+                        f';">'
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'align-items:flex-start;margin-bottom:8px;">'
+                        f'<div>'
+                        f'<div style="font-size:0.90rem;font-weight:800;color:#E2E8F0;">{tk}</div>'
+                        f'<div style="font-size:0.62rem;color:#4A5568;margin-top:1px;">'
+                        f'Base: {sb:.0f}  →  Entrada: <b style="color:#E2E8F0;">{se:.0f}</b></div>'
+                        f'</div>'
+                        f'<span class="{css_stat}">{stat}</span>'
+                        f'</div>'
+                        f'{engine_rows}'
+                        f'<div style="margin-top:6px;line-height:1.6;">{fatores_html}</div>'
+                        f'{pen_html}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+    else:
+        st.caption("Score de Entrada disponível após cálculo do Score v2.")
 
     # ── BACKTESTING ──────────────────────────────────────────────────────────
     st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
