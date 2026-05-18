@@ -1511,12 +1511,18 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             media_abs = pares["|Correlacao|"].mean()
             max_pair = pares.iloc[0]
             baixa_pct = (pares["|Correlacao|"] < 0.40).mean() * 100
+            if media_abs < 0.30:
+                _corr_label, _corr_cor = "Boa", _COR_POSITIVO
+            elif media_abs < 0.50:
+                _corr_label, _corr_cor = "Razoável", _COR_ALERTA
+            else:
+                _corr_label, _corr_cor = "Ruim", _COR_NEGATIVO
             ck1, ck2, ck3 = st.columns(3, gap="small")
             with ck1:
                 st.markdown(_kpi_macro(
                     "Correlação média",
                     f"{media_abs:.2f}",
-                    "Média absoluta dos pares", _COR_INFO,
+                    f"Diversificação {_corr_label.lower()} · média absoluta dos pares", _corr_cor,
                 ), unsafe_allow_html=True)
             with ck2:
                 cor_max = _COR_NEGATIVO if max_pair["|Correlacao|"] >= 0.70 else _COR_ALERTA
