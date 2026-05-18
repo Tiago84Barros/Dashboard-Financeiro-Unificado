@@ -173,7 +173,6 @@ _MACRO_FATORES = [
     "Renda Variável EUA",
     "Inflação / IPCA",
 ]
-
 # Chaves em minúsculas (substring match contra cls["nome"].lower())
 # Valores: [brasil, selic, bolsa_br, cambio, rv_eua, ipca]
 _MACRO_COEF: dict[str, list] = {
@@ -359,6 +358,48 @@ def _macro_coefs_for_class(classe: str) -> list:
     return _MACRO_COEF["default"]
 
 
+def _is_rf_ou_tesouro(classe: str) -> bool:
+    nome_lower = (classe or "").lower()
+    return any(k in nome_lower for k in ("tesouro", "renda fixa", "fundo rf", "fundo renda fixa"))
+
+
+def _label_tesouro_codigo(ticker: str) -> str | None:
+    codigo = (ticker or "").upper().strip()
+    if not codigo:
+        return None
+    ano = "".join(ch for ch in codigo if ch.isdigit())
+    ano = ano[-4:] if len(ano) >= 4 else ""
+    if codigo.startswith("TSELIC"):
+        return f"Tesouro Selic {ano}".strip()
+    if codigo.startswith("TIPCA"):
+        return f"Tesouro IPCA+ {ano}".strip()
+    if codigo.startswith("TPRE"):
+        return f"Tesouro Prefixado {ano}".strip()
+    if codigo.startswith("TEDUCA"):
+        return f"Tesouro Educa+ {ano}".strip()
+    return None
+
+
+def _asset_display_label(pos: dict) -> str:
+    ticker = str(pos.get("ticker") or "").upper().strip()
+    nome = str(pos.get("nome") or "").strip()
+    classe = str(pos.get("classe") or "")
+    if "tesouro" in classe.lower():
+        return _label_tesouro_codigo(ticker) or nome or ticker
+    if _is_rf_ou_tesouro(classe):
+        if nome and nome.upper() != ticker:
+            return nome
+        return ticker
+    return ticker or nome
+
+
+def _short_asset_label(label: str, max_len: int = 48) -> str:
+    texto = " ".join(str(label or "").split())
+    if len(texto) <= max_len:
+        return texto
+    return texto[:max_len - 1].rstrip() + "..."
+
+
 def _calc_dependencias_macro_ativos(posicoes: list) -> pd.DataFrame:
     """Exposicao macro por ativo, ponderada pelo peso real na carteira."""
     rows = []
@@ -367,8 +408,12 @@ def _calc_dependencias_macro_ativos(posicoes: list) -> pd.DataFrame:
         if peso_pct <= 0:
             continue
         coefs = _macro_coefs_for_class(str(pos.get("classe") or ""))
+        ativo_label = _asset_display_label(pos)
         row = {
             "Ticker": pos.get("ticker"),
+            "Ativo": ativo_label,
+            "Rotulo": _short_asset_label(ativo_label),
+            "Nome": pos.get("nome"),
             "Classe": pos.get("classe"),
             "Peso (%)": round(peso_pct, 2),
             "Valor": float(pos.get("valor_mercado") or 0),
@@ -987,17 +1032,19 @@ def _fig_macro_ativos(df_macro: pd.DataFrame, fator: str) -> go.Figure:
 
     fig = go.Figure(go.Bar(
         x=valores,
-        y=df["Ticker"],
+        y=df["Rotulo"] if "Rotulo" in df.columns else df["Ativo"],
         orientation="h",
         marker_color=cores,
         text=[f"{v:.1f} p.p." for v in valores],
         textposition="outside",
         textfont={"size": 11, "color": "#E2E8F0"},
-        customdata=df[["Classe", "Peso (%)"]].to_numpy(),
+        customdata=df[["Ativo", "Ticker", "Classe", "Peso (%)"]].to_numpy(),
         hovertemplate=(
             "<b>%{y}</b><br>"
-            "Classe: %{customdata[0]}<br>"
-            "Peso: %{customdata[1]:.2f}%<br>"
+            "Ativo: %{customdata[0]}<br>"
+            "Ticker: %{customdata[1]}<br>"
+            "Classe: %{customdata[2]}<br>"
+            "Peso: %{customdata[3]:.2f}%<br>"
             f"Contrib. {fator}: " + "%{x:.2f} p.p.<extra></extra>"
         ),
     ))
@@ -1402,8 +1449,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
     if not df_macro_ativos.empty:
         st.markdown("<br>", unsafe_allow_html=True)
         _secao_titulo_orig(
-            "ðŸ§­", "Ativos expostos aos fatores macro",
-            "Mostra quais posiÃ§Ãµes mais contribuem para cada dependÃªncia macroeconÃ´mica",
+            "\U0001F9ED", "Ativos expostos aos fatores macro",
+            "Mostra quais posições mais contribuem para cada dependência macroeconômica",
         )
 
         fator_padrao = 0
@@ -1429,7 +1476,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             )
         with col_exp_table:
             df_rank = (
-                df_macro_ativos[["Ticker", "Classe", "Peso (%)", fator_sel, "Valor"]]
+                df_macro_ativos[["Ativo", "Ticker", "Classe", "Peso (%)", fator_sel, "Valor"]]
                 .sort_values(fator_sel, ascending=False)
                 .head(12)
                 .rename(columns={fator_sel: "Contrib. (p.p.)"})
@@ -1445,14 +1492,14 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                 },
             )
         st.caption(
-            "A contribuicao usa o peso real do ativo multiplicado pelo coeficiente macro "
-            "da sua classe. Assim, o usuario enxerga quais ativos puxam cada fator."
+            "A contribuição usa o peso real do ativo multiplicado pelo coeficiente macro "
+            "da sua classe. Assim, o usuário enxerga quais ativos puxam cada fator."
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo_orig(
-        "ðŸ§¬", "CorrelaÃ§Ã£o entre ativos",
-        "Retornos mensais dos ativos negociÃ¡veis para medir a forÃ§a da diversificaÃ§Ã£o",
+        "\U0001F9EC", "Correlação entre ativos",
+        "Retornos dos ativos negociáveis para medir a força da diversificação",
     )
     corr_data = _build_corr_data(posicoes)
     corr = corr_data.get("corr", pd.DataFrame())
@@ -1517,19 +1564,18 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             st.caption(
                 "Fora da matriz: " + ", ".join(pulados[:12]) +
                 ("..." if len(pulados) > 12 else "") +
-                ". Normalmente sao Tesouro, renda fixa ou ativos sem serie mensal no Yahoo Finance."
+                ". Normalmente são Tesouro, renda fixa ou ativos sem série de preços comparável."
             )
         st.caption(
-            "Correlação calculada com retornos dos preços disponiveis: yfinance quando instalado, "
-            "asset_quotes diario como fallback e snapshots historicos quando necessario. "
-            "Quanto menor a correlação absoluta entre os ativos, maior tende a ser a diversificação estatistica."
+            "Correlação calculada com retornos dos preços disponíveis: yfinance quando instalado, "
+            "asset_quotes diário como fallback e snapshots históricos quando necessário. "
+            "Quanto menor a correlação absoluta entre os ativos, maior tende a ser a diversificação estatística."
         )
     else:
         st.caption(
-            "Nao ha series mensais suficientes para montar a matriz de correlacao. "
-            "Ativos de renda fixa e Tesouro entram na diversificacao por classe, mas nao possuem preco diario comparavel."
+            "Não há séries suficientes para montar a matriz de correlação. "
+            "Ativos de renda fixa e Tesouro entram na diversificação por classe, mas não possuem preço diário comparável."
         )
-
 
 def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
