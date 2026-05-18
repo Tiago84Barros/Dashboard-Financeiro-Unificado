@@ -1093,8 +1093,9 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
                         config={"displayModeBar": False},
                         key="hist_evolucao_patrimonial")
         st.caption(
-            "Valor de Mercado estimado: custo acumulado × rentabilidade atual da carteira. "
-            "Com Dividendos = Mercado + proventos históricos recebidos."
+            "Snapshots XP (relatórios mensais). "
+            "Último ponto inclui posições internacionais (Nomad) consolidadas. "
+            "Com Dividendos = Mercado + proventos históricos acumulados."
         )
     else:
         st.info("Sem dados históricos de transações para exibir.", icon="📈")

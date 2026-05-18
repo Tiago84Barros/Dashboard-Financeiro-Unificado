@@ -681,14 +681,45 @@ _SQL_EVOLUCAO_RATIO = """
 """
 
 _SQL_EVOLUCAO_SNAPSHOTS = """
+    WITH xp_snaps AS (
+        SELECT
+            report_date,
+            SUM(market_value)              AS vm,
+            SUM(COALESCE(invested_value, 0)) AS vi
+        FROM portfolio_position_snapshots
+        WHERE user_id = :uid AND source_system = 'app2'
+        GROUP BY report_date
+    ),
+    other_latest AS (
+        SELECT
+            SUM(market_value)              AS vm,
+            SUM(COALESCE(invested_value, 0)) AS vi
+        FROM portfolio_position_snapshots
+        WHERE user_id = :uid
+          AND source_system != 'app2'
+          AND report_date = (
+              SELECT MAX(report_date)
+              FROM portfolio_position_snapshots
+              WHERE user_id = :uid AND source_system != 'app2'
+          )
+    ),
+    latest_xp_date AS (
+        SELECT MAX(report_date) AS d FROM xp_snaps
+    )
     SELECT
-        report_date AS mes,
-        SUM(market_value) AS valor_mercado,
-        SUM(COALESCE(invested_value, 0)) AS valor_investido_snapshot
-    FROM portfolio_position_snapshots
-    WHERE user_id = :uid
-    GROUP BY report_date
-    ORDER BY report_date
+        x.report_date AS mes,
+        x.vm + CASE WHEN x.report_date = l.d
+                    THEN COALESCE(o.vm, 0)
+                    ELSE 0
+               END AS valor_mercado,
+        x.vi + CASE WHEN x.report_date = l.d
+                    THEN COALESCE(o.vi, 0)
+                    ELSE 0
+               END AS valor_investido_snapshot
+    FROM xp_snaps x
+    CROSS JOIN (SELECT COALESCE(vm, 0) AS vm, COALESCE(vi, 0) AS vi FROM other_latest) o
+    CROSS JOIN latest_xp_date l
+    ORDER BY x.report_date
 """
 
 
@@ -698,7 +729,12 @@ def get_evolucao_patrimonial() -> dict:
     Retorna série histórica mensal para o gráfico de Evolução Patrimonial.
     Schema: {data_source, snapshots, total_investido, total_mercado, total_dividendos}
     Cada snapshot: {label, mes_str, valor_investido, valor_mercado, valor_com_dividendos}
-    valor_mercado é estimado: cum_investido × (total_mercado_atual / total_investido_atual).
+
+    Quando portfolio_position_snapshots existir (caminho preferencial):
+      - Usa snapshots XP (source_system='app2') como série histórica.
+      - Para o snapshot mais recente, soma automaticamente os valores
+        de outras fontes (Nomad etc.) ao invés de criar pontos separados.
+    Fallback: investment_transactions + ratio de rentabilidade atual.
     """
     if settings.MOCK_MODE:
         d = _evolucao_mock()
