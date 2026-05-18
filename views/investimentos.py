@@ -351,6 +351,248 @@ def _calc_dependencias_macro(por_classe: list) -> list:
     ]
 
 
+def _macro_coefs_for_class(classe: str) -> list:
+    nome_lower = (classe or "").lower()
+    for key, vals in _MACRO_COEF.items():
+        if key != "default" and key in nome_lower:
+            return vals
+    return _MACRO_COEF["default"]
+
+
+def _calc_dependencias_macro_ativos(posicoes: list) -> pd.DataFrame:
+    """Exposicao macro por ativo, ponderada pelo peso real na carteira."""
+    rows = []
+    for pos in posicoes:
+        peso_pct = float(pos.get("pct_carteira") or 0)
+        if peso_pct <= 0:
+            continue
+        coefs = _macro_coefs_for_class(str(pos.get("classe") or ""))
+        row = {
+            "Ticker": pos.get("ticker"),
+            "Classe": pos.get("classe"),
+            "Peso (%)": round(peso_pct, 2),
+            "Valor": float(pos.get("valor_mercado") or 0),
+        }
+        for fator, coef in zip(_MACRO_FATORES, coefs):
+            row[fator] = round(peso_pct * float(coef), 2)
+        row["Exposicao Total"] = round(sum(row[f] for f in _MACRO_FATORES), 2)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _yf_symbol_for_pos(pos: dict) -> str | None:
+    ticker = str(pos.get("ticker") or "").upper().strip()
+    if not ticker:
+        return None
+    classe = str(pos.get("classe") or "").lower()
+    pais = str(pos.get("pais") or "BR").upper().strip()
+    if "tesouro" in classe or "renda fixa" in classe or "fundo rf" in classe:
+        return None
+    if pais not in ("", "BR"):
+        return ticker
+    if ticker.endswith("F") and len(ticker) > 4:
+        ticker = ticker[:-1]
+    if any(k in classe for k in ("aÃ§", "aç", "fii", "etf")):
+        return f"{ticker}.SA"
+    return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_corr_precos_db(symbol_map: tuple[tuple[str, str], ...], period: str = "2y") -> dict:
+    """Fallback: usa asset_quotes/snapshots do banco quando yfinance nao esta disponivel."""
+    tickers = [tk for tk, _ in symbol_map]
+    if len(tickers) < 2:
+        return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
+
+    try:
+        from sqlalchemy import bindparam, text
+        from core.config import settings
+        from core.database import get_engine
+    except Exception:
+        return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
+
+    engine = get_engine()
+    owner = getattr(settings, "OWNER_USER_ID", None)
+    if engine is None or not owner:
+        return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
+
+    quote_frame = pd.DataFrame()
+    frames = []
+    with engine.connect() as conn:
+        try:
+            q_quotes = text("""
+                SELECT a.ticker, aq.timestamp::date AS data, aq.close AS preco
+                FROM asset_quotes aq
+                JOIN assets a ON a.id = aq.asset_id
+                WHERE a.ticker IN :tickers
+                  AND aq.close IS NOT NULL
+                  AND aq.timestamp >= CURRENT_DATE - INTERVAL '3 years'
+                ORDER BY aq.timestamp
+            """).bindparams(bindparam("tickers", expanding=True))
+            rows = conn.execute(q_quotes, {"tickers": tickers}).mappings().all()
+            if rows:
+                quote_frame = pd.DataFrame(rows)
+        except Exception:
+            pass
+
+        if not quote_frame.empty:
+            dfq = quote_frame.copy()
+            dfq["data"] = pd.to_datetime(dfq["data"], errors="coerce")
+            dfq["preco"] = pd.to_numeric(dfq["preco"], errors="coerce")
+            dfq = dfq.dropna(subset=["data", "ticker", "preco"])
+            daily = (
+                dfq.sort_values("data")
+                .drop_duplicates(["data", "ticker"], keep="last")
+                .pivot(index="data", columns="ticker", values="preco")
+                .sort_index()
+                .dropna(axis=1, thresh=12)
+            )
+            daily_returns = daily.pct_change(fill_method=None).dropna(how="all").dropna(axis=1, thresh=10)
+            if daily_returns.shape[1] >= 2:
+                corr = daily_returns.corr(min_periods=10).dropna(how="all").dropna(axis=1, how="all").round(3)
+                if corr.shape[1] >= 2:
+                    return {"corr": corr, "returns": daily_returns, "symbols_ok": list(corr.columns)}
+
+        try:
+            q_snap = text("""
+                SELECT
+                    a.ticker,
+                    pps.report_date::date AS data,
+                    COALESCE(
+                        NULLIF(pps.market_price, 0),
+                        NULLIF(pps.market_value, 0) / NULLIF(pps.quantity, 0)
+                    ) AS preco
+                FROM portfolio_position_snapshots pps
+                JOIN assets a ON a.id = pps.asset_id
+                WHERE pps.user_id = :uid
+                  AND a.ticker IN :tickers
+                  AND pps.report_date >= CURRENT_DATE - INTERVAL '5 years'
+                  AND COALESCE(
+                        NULLIF(pps.market_price, 0),
+                        NULLIF(pps.market_value, 0) / NULLIF(pps.quantity, 0)
+                  ) IS NOT NULL
+                ORDER BY pps.report_date
+            """).bindparams(bindparam("tickers", expanding=True))
+            rows = conn.execute(q_snap, {"uid": owner, "tickers": tickers}).mappings().all()
+            if rows:
+                frames.append(pd.DataFrame(rows))
+        except Exception:
+            pass
+
+    if not frames:
+        return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
+
+    df = pd.concat(frames, ignore_index=True)
+    df["data"] = pd.to_datetime(df["data"], errors="coerce")
+    df["preco"] = pd.to_numeric(df["preco"], errors="coerce")
+    df = df.dropna(subset=["data", "ticker", "preco"])
+    if df.empty:
+        return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
+
+    close = (
+        df.sort_values("data")
+        .drop_duplicates(["data", "ticker"], keep="last")
+        .pivot(index="data", columns="ticker", values="preco")
+        .sort_index()
+    )
+    close = close.resample("ME").last().dropna(axis=1, thresh=7)
+    returns = close.pct_change(fill_method=None).replace([float("inf"), float("-inf")], pd.NA).dropna(how="all")
+    returns = returns.dropna(axis=1, thresh=6)
+    if returns.shape[1] < 2:
+        return {"corr": pd.DataFrame(), "returns": returns, "symbols_ok": list(returns.columns)}
+    corr = returns.corr(min_periods=6).dropna(how="all").dropna(axis=1, how="all").round(3)
+    return {"corr": corr, "returns": returns, "symbols_ok": list(corr.columns)}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_corr_precos(symbol_map: tuple[tuple[str, str], ...], period: str = "2y") -> dict:
+    """Baixa precos e retorna correlacao de retornos mensais para ativos negociaveis."""
+    if len(symbol_map) < 2:
+        return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
+    try:
+        import yfinance as yf
+    except Exception:
+        return _load_corr_precos_db(symbol_map, period)
+
+    tickers = [sym for _, sym in symbol_map]
+    symbol_to_ticker = {sym: tk for tk, sym in symbol_map}
+
+    def _close_from_download(raw_data: pd.DataFrame) -> pd.DataFrame:
+        if raw_data is None or raw_data.empty:
+            return pd.DataFrame()
+        if isinstance(raw_data.columns, pd.MultiIndex):
+            if "Close" in raw_data.columns.get_level_values(0):
+                close_data = raw_data["Close"]
+            elif "Adj Close" in raw_data.columns.get_level_values(0):
+                close_data = raw_data["Adj Close"]
+            else:
+                close_data = raw_data.xs(raw_data.columns.get_level_values(0)[0], axis=1, level=0)
+        else:
+            close_data = raw_data[["Close"]] if "Close" in raw_data.columns else raw_data
+            if len(tickers) == 1:
+                close_data.columns = tickers
+        return close_data.rename(columns=symbol_to_ticker)
+
+    try:
+        raw = yf.download(tickers, period=period, interval="1d", auto_adjust=True,
+                          progress=False, threads=True)
+    except Exception:
+        return _load_corr_precos_db(symbol_map, period)
+
+    close = _close_from_download(raw)
+    if close.empty or close.dropna(axis=1, thresh=30).shape[1] < 2:
+        series = {}
+        for ticker, symbol in symbol_map:
+            try:
+                hist = yf.download(symbol, period=period, interval="1d", auto_adjust=True,
+                                   progress=False, threads=False)
+                item_close = _close_from_download(hist)
+                if not item_close.empty:
+                    series[ticker] = item_close.iloc[:, 0]
+            except Exception:
+                continue
+        close = pd.DataFrame(series)
+
+    close = close.dropna(axis=1, thresh=30)
+    if close.shape[1] < 2:
+        return _load_corr_precos_db(symbol_map, period)
+
+    close = close.resample("ME").last().dropna(how="all")
+    returns = close.pct_change(fill_method=None).replace([float("inf"), float("-inf")], pd.NA).dropna(how="all")
+    returns = returns.dropna(axis=1, thresh=6)
+    if returns.shape[1] < 2:
+        db_data = _load_corr_precos_db(symbol_map, period)
+        return db_data if not db_data.get("corr", pd.DataFrame()).empty else {
+            "corr": pd.DataFrame(), "returns": returns, "symbols_ok": list(returns.columns)
+        }
+    corr = returns.corr(min_periods=6).dropna(how="all").dropna(axis=1, how="all").round(3)
+    if corr.shape[1] < 2:
+        db_data = _load_corr_precos_db(symbol_map, period)
+        return db_data if not db_data.get("corr", pd.DataFrame()).empty else {
+            "corr": corr, "returns": returns, "symbols_ok": list(corr.columns)
+        }
+    return {"corr": corr, "returns": returns, "symbols_ok": list(corr.columns)}
+
+
+def _build_corr_data(posicoes: list) -> dict:
+    symbol_map = []
+    seen = set()
+    skipped = []
+    for pos in sorted(posicoes, key=lambda p: float(p.get("valor_mercado") or 0), reverse=True):
+        tk = str(pos.get("ticker") or "").upper().strip()
+        sym = _yf_symbol_for_pos(pos)
+        if sym:
+            if tk not in seen:
+                symbol_map.append((tk, sym))
+                seen.add(tk)
+        elif tk:
+            skipped.append(tk)
+    data = _load_corr_precos(tuple(symbol_map[:28]))
+    data["skipped"] = skipped
+    data["requested"] = [tk for tk, _ in symbol_map[:28]]
+    return data
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — Cards CSS (sem comentários HTML)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -729,6 +971,106 @@ def _fig_dependencias_macro(deps: list) -> go.Figure:
 # HELPERS — Dados externos (BCB + yfinance, cache 30 min)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _fig_macro_ativos(df_macro: pd.DataFrame, fator: str) -> go.Figure:
+    """Mostra quais ativos mais contribuem para um fator macro."""
+    if df_macro.empty or fator not in df_macro.columns:
+        return go.Figure()
+
+    df = df_macro.sort_values(fator, ascending=False).head(12).iloc[::-1]
+    valores = df[fator].tolist()
+    cores = [
+        _COR_NEGATIVO if v >= 10 else
+        _COR_ALERTA if v >= 5 else
+        _COR_INFO
+        for v in valores
+    ]
+
+    fig = go.Figure(go.Bar(
+        x=valores,
+        y=df["Ticker"],
+        orientation="h",
+        marker_color=cores,
+        text=[f"{v:.1f} p.p." for v in valores],
+        textposition="outside",
+        textfont={"size": 11, "color": "#E2E8F0"},
+        customdata=df[["Classe", "Peso (%)"]].to_numpy(),
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Classe: %{customdata[0]}<br>"
+            "Peso: %{customdata[1]:.2f}%<br>"
+            f"Contrib. {fator}: " + "%{x:.2f} p.p.<extra></extra>"
+        ),
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 10, "b": 10, "l": 0, "r": 90},
+        height=max(320, 26 * len(df) + 90),
+        xaxis={"showgrid": True, "gridcolor": "#1E2533", "ticksuffix": " p.p."},
+        yaxis={"showgrid": False, "automargin": True},
+        showlegend=False,
+    )
+    return fig
+
+
+def _fig_corr_heatmap(corr: pd.DataFrame) -> go.Figure:
+    """Mapa de calor da correlacao entre retornos mensais."""
+    if corr.empty:
+        return go.Figure()
+
+    fig = go.Figure(go.Heatmap(
+        z=corr.values,
+        x=corr.columns,
+        y=corr.index,
+        zmin=-1,
+        zmax=1,
+        colorscale=[
+            [0.00, "#2563EB"],
+            [0.35, "#0F172A"],
+            [0.50, "#1E293B"],
+            [0.65, "#FACC15"],
+            [1.00, "#F43F5E"],
+        ],
+        colorbar={"title": "corr."},
+        text=corr.round(2).astype(str).values,
+        texttemplate="%{text}",
+        textfont={"size": 10, "color": "#F8FAFC"},
+        hovertemplate="<b>%{y} x %{x}</b><br>Correlacao: %{z:.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 10, "b": 70, "l": 0, "r": 0},
+        height=max(430, 24 * len(corr.columns) + 180),
+        xaxis={"tickangle": -45, "automargin": True},
+        yaxis={"automargin": True},
+    )
+    return fig
+
+
+def _corr_pairs(corr: pd.DataFrame) -> pd.DataFrame:
+    """Lista pares de ativos por intensidade de correlacao."""
+    if corr.empty:
+        return pd.DataFrame()
+
+    rows = []
+    cols = list(corr.columns)
+    for i, ativo_a in enumerate(cols):
+        for ativo_b in cols[i + 1:]:
+            val = corr.loc[ativo_a, ativo_b]
+            if pd.isna(val):
+                continue
+            abs_val = abs(float(val))
+            leitura = "Alta" if abs_val >= 0.70 else "Moderada" if abs_val >= 0.40 else "Baixa"
+            rows.append({
+                "Par": f"{ativo_a} x {ativo_b}",
+                "Correlacao": round(float(val), 2),
+                "|Correlacao|": round(abs_val, 2),
+                "Leitura": leitura,
+            })
+    return pd.DataFrame(rows).sort_values("|Correlacao|", ascending=False)
+
+
 @st.cache_data(ttl=1800)
 def _get_macro_dados() -> dict:
     """Busca indicadores macro: BCB (SELIC, IPCA) + yfinance (câmbio, bolsas)."""
@@ -1054,6 +1396,139 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         )
     else:
         st.caption("Sem dados de alocação para calcular dependências macro.")
+
+
+    df_macro_ativos = _calc_dependencias_macro_ativos(posicoes)
+    if not df_macro_ativos.empty:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo_orig(
+            "ðŸ§­", "Ativos expostos aos fatores macro",
+            "Mostra quais posiÃ§Ãµes mais contribuem para cada dependÃªncia macroeconÃ´mica",
+        )
+
+        fator_padrao = 0
+        if deps:
+            fator_nome = max(deps, key=lambda d: d["exposicao"])["fator"]
+            if fator_nome in _MACRO_FATORES:
+                fator_padrao = _MACRO_FATORES.index(fator_nome)
+
+        fator_sel = st.selectbox(
+            "Fator macro",
+            _MACRO_FATORES,
+            index=fator_padrao,
+            key="dash_macro_fator_ativo",
+        )
+
+        col_exp_chart, col_exp_table = st.columns([2, 1], gap="medium")
+        with col_exp_chart:
+            st.plotly_chart(
+                _fig_macro_ativos(df_macro_ativos, fator_sel),
+                use_container_width=True,
+                config={"displayModeBar": False},
+                key="dash_macro_ativos",
+            )
+        with col_exp_table:
+            df_rank = (
+                df_macro_ativos[["Ticker", "Classe", "Peso (%)", fator_sel, "Valor"]]
+                .sort_values(fator_sel, ascending=False)
+                .head(12)
+                .rename(columns={fator_sel: "Contrib. (p.p.)"})
+            )
+            st.dataframe(
+                df_rank,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Peso (%)": st.column_config.NumberColumn(format="%.2f%%"),
+                    "Contrib. (p.p.)": st.column_config.NumberColumn(format="%.2f"),
+                    "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
+                },
+            )
+        st.caption(
+            "A contribuicao usa o peso real do ativo multiplicado pelo coeficiente macro "
+            "da sua classe. Assim, o usuario enxerga quais ativos puxam cada fator."
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _secao_titulo_orig(
+        "ðŸ§¬", "CorrelaÃ§Ã£o entre ativos",
+        "Retornos mensais dos ativos negociÃ¡veis para medir a forÃ§a da diversificaÃ§Ã£o",
+    )
+    corr_data = _build_corr_data(posicoes)
+    corr = corr_data.get("corr", pd.DataFrame())
+    if not corr.empty:
+        pares = _corr_pairs(corr)
+        if not pares.empty:
+            media_abs = pares["|Correlacao|"].mean()
+            max_pair = pares.iloc[0]
+            baixa_pct = (pares["|Correlacao|"] < 0.40).mean() * 100
+            ck1, ck2, ck3 = st.columns(3, gap="small")
+            with ck1:
+                st.markdown(_kpi_macro(
+                    "Correlação média",
+                    f"{media_abs:.2f}",
+                    "Média absoluta dos pares", _COR_INFO,
+                ), unsafe_allow_html=True)
+            with ck2:
+                cor_max = _COR_NEGATIVO if max_pair["|Correlacao|"] >= 0.70 else _COR_ALERTA
+                st.markdown(_kpi_macro(
+                    "Maior par",
+                    f"{max_pair['|Correlacao|']:.2f}",
+                    max_pair["Par"], cor_max,
+                ), unsafe_allow_html=True)
+            with ck3:
+                cor_baixa = _COR_POSITIVO if baixa_pct >= 60 else _COR_ALERTA
+                st.markdown(_kpi_macro(
+                    "Pares baixa corr.",
+                    f"{baixa_pct:.0f}%",
+                    "|corr| abaixo de 0.40", cor_baixa,
+                ), unsafe_allow_html=True)
+
+        col_heat, col_pairs = st.columns([2, 1], gap="medium")
+        with col_heat:
+            st.plotly_chart(
+                _fig_corr_heatmap(corr),
+                use_container_width=True,
+                config={"displayModeBar": False},
+                key="dash_corr_heatmap",
+            )
+        with col_pairs:
+            if not pares.empty:
+                st.markdown("**Pares mais correlacionados**")
+                st.dataframe(
+                    pares[["Par", "Correlacao", "Leitura"]].head(10),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Correlacao": st.column_config.NumberColumn(format="%.2f"),
+                    },
+                )
+                st.markdown("**Pares com menor correlação**")
+                st.dataframe(
+                    pares.sort_values("|Correlacao|")[["Par", "Correlacao", "Leitura"]].head(8),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Correlacao": st.column_config.NumberColumn(format="%.2f"),
+                    },
+                )
+        pulados = corr_data.get("skipped", [])
+        if pulados:
+            st.caption(
+                "Fora da matriz: " + ", ".join(pulados[:12]) +
+                ("..." if len(pulados) > 12 else "") +
+                ". Normalmente sao Tesouro, renda fixa ou ativos sem serie mensal no Yahoo Finance."
+            )
+        st.caption(
+            "Correlação calculada com retornos dos preços disponiveis: yfinance quando instalado, "
+            "asset_quotes diario como fallback e snapshots historicos quando necessario. "
+            "Quanto menor a correlação absoluta entre os ativos, maior tende a ser a diversificação estatistica."
+        )
+    else:
+        st.caption(
+            "Nao ha series mensais suficientes para montar a matriz de correlacao. "
+            "Ativos de renda fixa e Tesouro entram na diversificacao por classe, mas nao possuem preco diario comparavel."
+        )
 
 
 def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
