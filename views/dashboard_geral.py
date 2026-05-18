@@ -14,7 +14,7 @@ import streamlit as st
 
 from core.controle import get_gastos_categoria_anual, get_historico_anual
 from core.financeiro import get_visao_geral
-from core.investimentos import get_cashflow_mensal
+from core.investimentos import get_carteira, get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
 
@@ -180,6 +180,194 @@ def _card_investimentos(pat: dict, classes: list, aportado_ano: float) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# HELPERS — Portfolio
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _is_exterior_position(pos: dict) -> bool:
+    pais = str(pos.get("pais") or pos.get("country") or "BR").upper()
+    moeda = str(pos.get("moeda") or "BRL").upper()
+    return pais not in ("", "BR") or moeda != "BRL"
+
+
+def _split_br_ext(posicoes: list) -> tuple[float, float]:
+    br = sum(float(p.get("valor_mercado") or 0) for p in posicoes if not _is_exterior_position(p))
+    ext = sum(float(p.get("valor_mercado") or 0) for p in posicoes if _is_exterior_position(p))
+    return round(br, 2), round(ext, 2)
+
+
+def _n_efetivo(posicoes: list) -> float:
+    if not posicoes:
+        return 0.0
+    hhi = sum((float(p.get("pct_carteira") or 0) / 100) ** 2 for p in posicoes)
+    return round(1 / hhi, 1) if hhi > 0 else 0.0
+
+
+def _fig_donut_classes(classes: list) -> go.Figure:
+    nomes = [c["nome"] for c in classes]
+    valores = [c["valor"] for c in classes]
+    cores = [c.get("cor", _CORES_CAT[i % len(_CORES_CAT)]) for i, c in enumerate(classes)]
+    fig = go.Figure(go.Pie(
+        labels=nomes, values=valores, hole=0.58,
+        marker={"colors": cores, "line": {"color": "#0E1117", "width": 2}},
+        textinfo="percent",
+        textfont={"size": 11},
+        hovertemplate="<b>%{label}</b><br>R$ %{value:,.2f}<br>%{percent}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", font_color=_COR_NEUTRO,
+        showlegend=True,
+        legend={"orientation": "v", "font": {"size": 10}, "bgcolor": "rgba(0,0,0,0)", "x": 1.02},
+        margin={"t": 6, "b": 6, "l": 0, "r": 0}, height=285,
+    )
+    return fig
+
+
+def _fig_br_exterior(br: float, ext: float) -> go.Figure:
+    labels = ["Brasil", "Exterior"]
+    valores = [br, ext]
+    fig = go.Figure(go.Bar(
+        x=labels, y=valores,
+        marker_color=[_COR_FLUXO, _COR_PATRIMONIO],
+        text=[fmt_moeda(v) for v in valores],
+        textposition="outside",
+        hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 8, "b": 8, "l": 0, "r": 0}, height=250,
+        yaxis={"gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
+        xaxis={"showgrid": False},
+        showlegend=False,
+    )
+    return fig
+
+
+def _fig_top_posicoes(posicoes: list) -> go.Figure:
+    top = sorted(posicoes, key=lambda p: float(p.get("valor_mercado") or 0), reverse=True)[:10]
+    top = list(reversed(top))
+    labels = [p["ticker"] for p in top]
+    valores = [float(p.get("valor_mercado") or 0) for p in top]
+    pct = [float(p.get("pct_carteira") or 0) for p in top]
+    cores = [p.get("cor", _COR_INVEST) for p in top]
+    fig = go.Figure(go.Bar(
+        x=valores, y=labels, orientation="h",
+        marker_color=cores,
+        text=[f"{v:.1f}%" for v in pct],
+        textposition="outside",
+        hovertemplate="<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 8, "b": 8, "l": 0, "r": 0}, height=285,
+        xaxis={"gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
+        yaxis={"showgrid": False},
+        showlegend=False,
+    )
+    return fig
+
+
+def _fig_evolucao_investimentos(evolucao: dict) -> go.Figure:
+    snapshots = evolucao.get("snapshots", []) if isinstance(evolucao, dict) else []
+    labels = [s.get("label") for s in snapshots]
+    mercado = [s.get("valor_mercado", 0.0) for s in snapshots]
+    investido = [s.get("valor_investido", 0.0) for s in snapshots]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=labels, y=mercado, name="Valor de mercado",
+        mode="lines+markers", fill="tozeroy",
+        line={"color": _COR_FLUXO, "width": 3},
+        marker={"size": 7},
+        hovertemplate="<b>%{x}</b><br>Mercado: R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=labels, y=investido, name="Valor investido",
+        mode="lines+markers",
+        line={"color": _COR_INVEST, "width": 2, "dash": "dot"},
+        marker={"size": 6},
+        hovertemplate="<b>%{x}</b><br>Investido: R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        legend={"orientation": "h", "y": -0.18, "font": {"size": 11}, "bgcolor": "rgba(0,0,0,0)"},
+        margin={"t": 8, "b": 8, "l": 0, "r": 0}, height=285,
+        yaxis={"gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
+        xaxis={"showgrid": False},
+    )
+    return fig
+
+
+def _mini_metric(label: str, valor: str, detalhe: str, cor: str) -> str:
+    return f"""
+    <div style="background:#12151E;border:1px solid #1E2533;border-left:3px solid {cor};
+                border-radius:10px;padding:14px 14px;min-height:96px;">
+        <div style="font-size:0.66rem;text-transform:uppercase;letter-spacing:0.13em;
+                    color:#718096;font-weight:800;margin-bottom:8px">{label}</div>
+        <div style="font-size:1.35rem;font-weight:850;color:{cor};line-height:1">{valor}</div>
+        <div style="font-size:0.76rem;color:#9CA3AF;margin-top:8px">{detalhe}</div>
+    </div>
+    """
+
+
+def _secao_raio_x_portfolio(carteira: dict, evolucao: dict, classes: list) -> None:
+    posicoes = carteira.get("posicoes", [])
+    if not posicoes:
+        return
+
+    total = float(carteira.get("total_mercado") or 0)
+    br, ext = _split_br_ext(posicoes)
+    pct_ext = (ext / total * 100) if total else 0.0
+    n_eff = _n_efetivo(posicoes)
+    top1 = max(posicoes, key=lambda p: float(p.get("pct_carteira") or 0))
+    top5 = sum(float(p.get("pct_carteira") or 0) for p in sorted(
+        posicoes, key=lambda p: float(p.get("pct_carteira") or 0), reverse=True
+    )[:5])
+    rentab = float(carteira.get("rentabilidade_total_pct") or 0)
+
+    _titulo_secao(
+        "📌", "Raio X do portfólio investido",
+        "Alocação, diversificação, concentração e evolução do patrimônio", _COR_INVEST,
+    )
+
+    m1, m2, m3, m4 = st.columns(4, gap="small")
+    with m1:
+        st.markdown(_mini_metric("Rentabilidade", f"{rentab:+.2f}%", "Sobre o custo consolidado", _COR_FLUXO if rentab >= 0 else _COR_NEGATIVO), unsafe_allow_html=True)
+    with m2:
+        st.markdown(_mini_metric("Exterior", f"{pct_ext:.1f}%", f"{fmt_moeda(ext)} em ativos globais", _COR_PATRIMONIO), unsafe_allow_html=True)
+    with m3:
+        st.markdown(_mini_metric("N efetivo", f"{n_eff:.1f}", "Ativos equivalentes por diversificação", _COR_ALERTA if n_eff < 10 else _COR_FLUXO), unsafe_allow_html=True)
+    with m4:
+        st.markdown(_mini_metric("Top 5", f"{top5:.1f}%", f"Maior posição: {top1['ticker']} ({top1['pct_carteira']:.1f}%)", _COR_NEGATIVO if top5 > 50 else _COR_FLUXO), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    c1, c2 = st.columns([1.05, 0.95], gap="medium")
+    with c1:
+        st.markdown('<div style="font-weight:800;color:#E2E8F0;margin-bottom:8px">Alocação por classe</div>', unsafe_allow_html=True)
+        st.plotly_chart(_fig_donut_classes(classes), use_container_width=True, config={"displayModeBar": False})
+    with c2:
+        st.markdown('<div style="font-weight:800;color:#E2E8F0;margin-bottom:8px">Brasil vs exterior</div>', unsafe_allow_html=True)
+        st.plotly_chart(_fig_br_exterior(br, ext), use_container_width=True, config={"displayModeBar": False})
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    c3, c4 = st.columns(2, gap="medium")
+    with c3:
+        st.markdown('<div style="font-weight:800;color:#E2E8F0;margin-bottom:8px">Maiores posições</div>', unsafe_allow_html=True)
+        st.plotly_chart(_fig_top_posicoes(posicoes), use_container_width=True, config={"displayModeBar": False})
+    with c4:
+        st.markdown('<div style="font-weight:800;color:#E2E8F0;margin-bottom:8px">Evolução dos investimentos</div>', unsafe_allow_html=True)
+        if evolucao.get("snapshots"):
+            st.plotly_chart(_fig_evolucao_investimentos(evolucao), use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.caption("Sem snapshots patrimoniais suficientes.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GRÁFICOS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -287,6 +475,8 @@ def render() -> None:
     hoje          = _date.today()
     hist_cashflow = get_cashflow_mensal()        # list[{ano, mes, receitas, despesas, investimentos}]
     hist_anual    = get_historico_anual()         # {anos, por_ano}
+    carteira      = get_carteira()
+    evolucao_inv  = get_evolucao_patrimonial()
     ano_atual     = hoje.year
     cats_ano      = get_gastos_categoria_anual(ano_atual)
 
@@ -344,7 +534,12 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 2 — Histórico 6 meses
+    # BLOCO 2 — Raio X do portfólio investido
+    # ══════════════════════════════════════════════════════════════════════════
+    _secao_raio_x_portfolio(carteira, evolucao_inv, classes)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BLOCO 3 — Histórico 6 meses
     # ══════════════════════════════════════════════════════════════════════════
     _titulo_secao(
         "💹", "Histórico mensal (6 meses)",
@@ -365,7 +560,7 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 3 — Distribuição de despesas | Comparativo Ano a Ano
+    # BLOCO 4 — Distribuição de despesas | Comparativo Ano a Ano
     # ══════════════════════════════════════════════════════════════════════════
     col_cats, col_yoy = st.columns(2, gap="medium")
 
