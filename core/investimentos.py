@@ -62,9 +62,15 @@ logger = logging.getLogger(__name__)
 # ── Mapeamentos de classe de ativo ────────────────────────────────────────────
 _CLASS_LABEL: dict[str, str] = {
     "reit":         "FII",
+    "fii":          "FII",
     "stock":        "Ações BR",
     "fixed_income": "Renda Fixa",
+    "renda_fixa":   "Renda Fixa",
+    "tesouro":      "Tesouro Direto",
+    "fundo_rf":     "Fundo RF",
     "etf":          "ETF",
+    "etf_br":       "ETF Brasil",
+    "etf_intl":     "ETF Internacional",
     "bdr":          "BDR",
     "crypto":       "Cripto",
     "other":        "Outros",
@@ -72,9 +78,15 @@ _CLASS_LABEL: dict[str, str] = {
 
 _CLASS_COR: dict[str, str] = {
     "reit":         "#9B59B6",
+    "fii":          "#E04BA0",
     "stock":        "#00C896",
     "fixed_income": "#4A9EFF",
+    "renda_fixa":   "#A855F7",
+    "tesouro":      "#2ECC71",
+    "fundo_rf":     "#7C3AED",
     "etf":          "#F6C90E",
+    "etf_br":       "#F5A623",
+    "etf_intl":     "#62C8B8",
     "bdr":          "#FC5C7D",
     "crypto":       "#FF6B35",
     "other":        "#718096",
@@ -224,6 +236,35 @@ _SQL_POSICOES = """
     ORDER  BY pp.total_invested DESC
 """
 
+_SQL_POSICOES_SNAPSHOT = """
+    WITH latest_source AS (
+        SELECT source_system, source_table, MAX(report_date) AS report_date
+        FROM portfolio_position_snapshots
+        WHERE user_id = :uid
+        GROUP BY source_system, source_table
+    )
+    SELECT
+        pps.quantity,
+        pps.market_price,
+        pps.market_value,
+        pps.invested_value,
+        pps.asset_type,
+        pps.asset_name,
+        pps.currency,
+        pps.country,
+        a.ticker,
+        a.class AS asset_class,
+        a.sector
+    FROM portfolio_position_snapshots pps
+    JOIN latest_source ls
+      ON ls.source_system = pps.source_system
+     AND ls.source_table = pps.source_table
+     AND ls.report_date = pps.report_date
+    JOIN assets a ON a.id = pps.asset_id
+    WHERE pps.user_id = :uid
+    ORDER BY pps.market_value DESC
+"""
+
 
 def _carteira_real() -> dict:
     """
@@ -253,6 +294,18 @@ def _carteira_real() -> dict:
         raise RuntimeError("OWNER_USER_ID não configurado — filtro de usuário inativo.")
 
     with engine.connect() as conn:
+        has_snapshots = bool(conn.execute(text("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = 'portfolio_position_snapshots'
+            )
+        """)).scalar())
+        if has_snapshots:
+            rows = conn.execute(text(_SQL_POSICOES_SNAPSHOT), {"uid": owner}).fetchall()
+            if rows:
+                return _montar_carteira_snapshot(rows)
         rows = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
 
     if not rows:
@@ -319,6 +372,94 @@ def _carteira_real() -> dict:
         "por_classe":              _agregar_por_classe(posicoes),
         "por_setor":               _agregar_por_setor(posicoes),
         # data_source injetado pelo caller
+    }
+
+
+def _base_ticker(ticker: str) -> str:
+    t = (ticker or "").upper().strip()
+    if t.endswith("11F"):
+        return t[:-1]
+    if t.endswith("F") and len(t) > 4:
+        return t[:-1]
+    return t
+
+
+def _class_key_from_snapshot(raw_type: str | None, ticker: str, country: str | None) -> str:
+    raw = (raw_type or "").strip().lower()
+    t = (ticker or "").upper().strip()
+    c = (country or "BR").upper().strip()
+    if c not in ("", "BR"):
+        return "etf_intl" if raw == "etf" else raw or "other"
+    if raw == "tesouro":
+        return "tesouro"
+    if raw in {"renda_fixa", "fixed_income"}:
+        if t.startswith(("CDB", "LCI", "LCA", "CRI", "CRA")):
+            return "renda_fixa"
+        return "fundo_rf"
+    if raw == "fii":
+        return "fii"
+    if raw == "etf":
+        return "etf_br"
+    return raw or "other"
+
+
+def _montar_carteira_snapshot(rows: list) -> dict:
+    """Monta a carteira real a partir do ultimo snapshot XP, como o app isolado."""
+    total_investido = 0.0
+    total_mercado = 0.0
+    posicoes = []
+
+    for r in rows:
+        qty = float(r.quantity or 0)
+        vm = float(r.market_value or 0)
+        if qty <= 0 or vm <= 0:
+            continue
+
+        ticker = _base_ticker(r.ticker)
+        classe_raw = _class_key_from_snapshot(r.asset_type, ticker, r.country)
+        # O relatorio XP e a fonte mais fiel para classes sem transacao granular
+        # no App4 (Tesouro, CDBs, fundos). Quando nao informa custo, usa mercado.
+        ti = float(r.invested_value or 0) or vm
+        preco_atual = float(r.market_price or 0) or (vm / qty if qty > 0 else 0.0)
+        preco_medio = ti / qty if qty > 0 else 0.0
+        rentab = round((vm - ti) / ti * 100, 2) if ti > 0 else 0.0
+
+        total_investido += ti
+        total_mercado += vm
+        posicoes.append({
+            "ticker":          ticker,
+            "nome":            r.asset_name or ticker,
+            "classe":          _CLASS_LABEL.get(classe_raw, classe_raw.title()),
+            "setor":           _SETOR_LABEL.get(r.sector or "other", (r.sector or "other").title()),
+            "moeda":           r.currency or "BRL",
+            "pais":            r.country or "BR",
+            "quantidade":      qty,
+            "preco_medio":     round(preco_medio, 6),
+            "total_investido": round(ti, 2),
+            "preco_atual":     round(preco_atual, 6),
+            "valor_mercado":   round(vm, 2),
+            "rentab_pct":      rentab,
+            "pct_carteira":    0.0,
+            "cor":             _CLASS_COR.get(classe_raw, "#718096"),
+        })
+
+    base = total_mercado if total_mercado > 0 else total_investido
+    for p in posicoes:
+        p["pct_carteira"] = round(p["valor_mercado"] / base * 100, 2) if base > 0 else 0.0
+
+    rentabilidade_total = round(
+        (total_mercado - total_investido) / total_investido * 100, 2
+    ) if total_investido > 0 else 0.0
+
+    return {
+        "total_investido":         round(total_investido, 2),
+        "total_mercado":           round(total_mercado, 2),
+        "rentabilidade_total_pct": rentabilidade_total,
+        "num_ativos":              len(posicoes),
+        "cotacoes_disponiveis":    True,
+        "posicoes":                posicoes,
+        "por_classe":              _agregar_por_classe(posicoes),
+        "por_setor":               _agregar_por_setor(posicoes),
     }
 
 
@@ -539,6 +680,17 @@ _SQL_EVOLUCAO_RATIO = """
     WHERE pp.user_id = :uid
 """
 
+_SQL_EVOLUCAO_SNAPSHOTS = """
+    SELECT
+        report_date AS mes,
+        SUM(market_value) AS valor_mercado,
+        SUM(COALESCE(invested_value, 0)) AS valor_investido_snapshot
+    FROM portfolio_position_snapshots
+    WHERE user_id = :uid
+    GROUP BY report_date
+    ORDER BY report_date
+"""
+
 
 @st.cache_data(ttl=300)
 def get_evolucao_patrimonial() -> dict:
@@ -575,6 +727,19 @@ def _evolucao_real() -> dict:
         raise RuntimeError("OWNER_USER_ID não configurado.")
 
     with engine.connect() as conn:
+        has_snapshots = bool(conn.execute(text("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = 'portfolio_position_snapshots'
+            )
+        """)).scalar())
+        if has_snapshots:
+            snap_rows = conn.execute(text(_SQL_EVOLUCAO_SNAPSHOTS), {"uid": owner}).fetchall()
+            if snap_rows:
+                div_rows = conn.execute(text(_SQL_EVOLUCAO_DIV), {"uid": owner}).fetchall()
+                return _montar_evolucao_snapshot(snap_rows, div_rows)
         tx_rows   = conn.execute(text(_SQL_EVOLUCAO_TX),    {"uid": owner}).fetchall()
         div_rows  = conn.execute(text(_SQL_EVOLUCAO_DIV),   {"uid": owner}).fetchall()
         ratio_row = conn.execute(text(_SQL_EVOLUCAO_RATIO), {"uid": owner}).fetchone()
@@ -621,6 +786,48 @@ def _evolucao_real() -> dict:
         "fluxo_mensal":     fluxo_mensal,
         "total_investido":  round(cum_inv, 2),
         "total_mercado":    round(total_mkt_atual, 2),
+        "total_dividendos": round(cum_div, 2),
+    }
+
+
+def _montar_evolucao_snapshot(snap_rows: list, div_rows: list) -> dict:
+    div_map = {r.mes: float(r.delta_dividendos or 0) for r in div_rows}
+    snapshots = []
+    fluxo_mensal = []
+    cum_div = 0.0
+    prev_value = None
+
+    for r in snap_rows:
+        mes = r.mes
+        vm = float(r.valor_mercado or 0)
+        cum_div += sum(
+            total for data, total in div_map.items()
+            if data.year == mes.year and data.month == mes.month
+        )
+        label = f"{_MESES_PT_CF[mes.month]}/{str(mes.year)[-2:]}"
+        mes_str = mes.strftime("%Y-%m")
+        snapshots.append({
+            "label":               label,
+            "mes_str":             mes_str,
+            "valor_investido":     round(float(r.valor_investido_snapshot or 0), 2),
+            "valor_mercado":       round(vm, 2),
+            "valor_com_dividendos": round(vm + cum_div, 2),
+        })
+        fluxo_mensal.append({
+            "label":   label,
+            "mes_str": mes_str,
+            "aporte":  round(vm - prev_value, 2) if prev_value is not None else round(vm, 2),
+            "ano":     mes.year,
+            "mes":     mes.month,
+        })
+        prev_value = vm
+
+    latest = snapshots[-1] if snapshots else {}
+    return {
+        "snapshots":        snapshots,
+        "fluxo_mensal":     fluxo_mensal,
+        "total_investido":  latest.get("valor_investido", 0.0),
+        "total_mercado":    latest.get("valor_mercado", 0.0),
         "total_dividendos": round(cum_div, 2),
     }
 

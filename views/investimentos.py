@@ -201,10 +201,16 @@ def _calc_n_efetivo(posicoes: list) -> float:
     return round(1 / hhi, 1) if hhi > 0 else 0.0
 
 
+def _is_exterior_position(pos: dict) -> bool:
+    pais = str(pos.get("pais") or pos.get("country") or "BR").upper()
+    moeda = str(pos.get("moeda") or "BRL").upper()
+    return pais not in ("", "BR") or moeda != "BRL"
+
+
 def _split_br_ext(posicoes: list) -> tuple:
-    """Retorna (valor_br, valor_ext) separados por moeda."""
-    br  = sum(p["valor_mercado"] for p in posicoes if p.get("moeda", "BRL") == "BRL")
-    ext = sum(p["valor_mercado"] for p in posicoes if p.get("moeda", "BRL") != "BRL")
+    """Retorna (valor_br, valor_ext), respeitando pais e moeda original."""
+    br = sum(p["valor_mercado"] for p in posicoes if not _is_exterior_position(p))
+    ext = sum(p["valor_mercado"] for p in posicoes if _is_exterior_position(p))
     return round(br, 2), round(ext, 2)
 
 
@@ -727,7 +733,10 @@ def _fig_dependencias_macro(deps: list) -> go.Figure:
 def _get_macro_dados() -> dict:
     """Busca indicadores macro: BCB (SELIC, IPCA) + yfinance (câmbio, bolsas)."""
     import requests  # já é dep do streamlit
-    import yfinance as yf
+    try:
+        import yfinance as yf
+    except Exception:
+        yf = None
 
     dados = {
         "selic":     14.75,
@@ -770,6 +779,8 @@ def _get_macro_dados() -> dict:
         ("^BVSP",    "ibovespa"),
         ("^GSPC",    "sp500"),
     ]:
+        if yf is None:
+            break
         try:
             hist = yf.Ticker(sym).history(period="5d")
             if not hist.empty:
@@ -784,7 +795,7 @@ def _get_macro_dados() -> dict:
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
+def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: dict) -> None:
     posicoes   = carteira.get("posicoes", [])
     por_classe = carteira.get("por_classe", [])
 
@@ -796,7 +807,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
     rentab_pct  = carteira["rentabilidade_total_pct"]
     pct_br      = round(br  / total * 100, 2) if total > 0 else 0
     pct_ext     = round(ext / total * 100, 2) if total > 0 else 0
-    dy          = round(proventos["total_ano"] / total * 100, 2) if total > 0 else 0
+    renda_12m   = proventos.get("total_12m", proventos.get("total_ano", 0.0))
+    dy          = round(renda_12m / total * 100, 2) if total > 0 else 0
 
     cor_res = _COR_POSITIVO if resultado >= 0 else _COR_NEGATIVO
 
@@ -834,7 +846,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
     c5, c6, c7 = st.columns(3, gap="small")
     with c5:
         st.markdown(_kpi(
-            "Renda Recebida (12M)", fmt_moeda(proventos["total_ano"]),
+            "Renda Recebida (12M)", fmt_moeda(renda_12m),
             "Proventos dos últimos 12 meses",
             _COR_ALERTA,
         ), unsafe_allow_html=True)
@@ -875,7 +887,14 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list) -> None:
             'margin-bottom:10px;">📐 Evolução Patrimonial</div>',
             unsafe_allow_html=True,
         )
-        if cashflow:
+        snapshots = evolucao.get("snapshots", []) if isinstance(evolucao, dict) else []
+        if snapshots:
+            st.plotly_chart(_fig_evolucao_patrimonial(snapshots),
+                            use_container_width=True,
+                            config={"displayModeBar": False},
+                            key="dash_evolucao_snapshot")
+            st.caption("Evolucao baseada nos snapshots importados do App2.")
+        elif cashflow:
             st.plotly_chart(_fig_evolucao(cashflow, total),
                             use_container_width=True,
                             config={"displayModeBar": False},
@@ -1640,7 +1659,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     total_inv = carteira["total_investido"]
     total_mkt = carteira["total_mercado"]
     rentab    = carteira["rentabilidade_total_pct"]
-    renda_12m = proventos.get("total_ano", 0.0)
+    renda_12m = proventos.get("total_12m", proventos.get("total_ano", 0.0))
     renda_por_ticker = {a["ticker"]: a["total"] for a in proventos.get("por_ativo", [])}
 
     # Injeta CSS dos cards (idempotente — Streamlit de-dups <style>)
@@ -2016,6 +2035,13 @@ def render() -> None:
     evolucao  = get_evolucao_patrimonial()
 
     # ── Header ────────────────────────────────────────────────────────────────
+    _fonte = carteira.get("data_source", "mock")
+    _fonte_label = (
+        "Dados reais" if _fonte == "real"
+        else "Fallback (mock)" if _fonte == "mock_fallback"
+        else "Modo mock"
+    )
+
     col_title, col_date = st.columns([3, 1])
     with col_title:
         st.markdown(
@@ -2033,13 +2059,12 @@ def render() -> None:
             f'letter-spacing:0.1em;color:#4A5568;">Última Atualização</div>'
             f'<div style="font-size:1.00rem;font-weight:700;color:{_COR_POSITIVO};">'
             f'{_date.today().strftime("%d/%m/%Y")}</div>'
-            f'<div style="font-size:0.70rem;color:#4A5568;">Modo mock</div>'
+            f'<div style="font-size:0.70rem;color:#4A5568;">{_fonte_label}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
 
     # Badges
-    _fonte = carteira.get("data_source", "mock")
     col_b1, col_b2, col_b3, *_ = st.columns([1, 1, 1, 4])
     with col_b1:
         badge_status(
@@ -2067,7 +2092,7 @@ def render() -> None:
     ])
 
     with tab1:
-        _tab_dashboard(carteira, proventos, cashflow)
+        _tab_dashboard(carteira, proventos, cashflow, evolucao)
 
     with tab2:
         _tab_historico(cashflow, proventos, evolucao)

@@ -224,6 +224,21 @@ def _visao_geral_real() -> dict:
             {"uid": owner},
         ).fetchone()
 
+    carteira_migrada = None
+    proventos_migrados = None
+    try:
+        from core.investimentos import get_carteira
+        from core.proventos import get_proventos
+
+        carteira_migrada = get_carteira()
+        proventos_migrados = get_proventos()
+    except Exception as exc:
+        logger.warning("[financeiro] Carteira migrada indisponivel no dashboard geral: %s", exc)
+
+    if carteira_migrada and carteira_migrada.get("data_source") == "real":
+        investment_total = float(carteira_migrada.get("total_mercado") or investment_total)
+        net_worth_total = bank_balance + investment_total
+
     # ── Helpers ───────────────────────────────────────────────────────────
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
@@ -325,31 +340,48 @@ def _visao_geral_real() -> dict:
     )
 
     # ── Classes de ativos ─────────────────────────────────────────────────
-    total_val_all = sum(_f(r.current_market_value) for r in inv_rows)
     classes_ativo = []
-    for r in inv_rows:
-        cls_val  = _f(r.current_market_value)
-        cls_pct  = (cls_val / total_val_all * 100) if total_val_all > 0 else 0.0
-        classes_ativo.append(
-            {
-                "nome":           _CLASS_LABEL.get(r.asset_class, r.asset_class.title()),
-                "valor":          cls_val,
-                "pct_carteira":   round(cls_pct, 1),
-                "rentab_mes_pct": _f(r.return_pct),
-                "cor":            _CLASS_COR.get(r.asset_class, "#718096"),
-            }
-        )
-
-    num_ativos = sum(r.asset_count for r in inv_rows) if inv_rows else 0
+    if carteira_migrada and carteira_migrada.get("data_source") == "real":
+        for c in carteira_migrada.get("por_classe", []):
+            classes_ativo.append({
+                "nome":           c["nome"],
+                "valor":          _f(c.get("valor_mercado")),
+                "pct_carteira":   _f(c.get("pct_carteira")),
+                "rentab_mes_pct": _f(c.get("rentab_pct")),
+                "cor":            c.get("cor", "#718096"),
+            })
+        num_ativos = int(carteira_migrada.get("num_ativos") or 0)
+    else:
+        total_val_all = sum(_f(r.current_market_value) for r in inv_rows)
+        for r in inv_rows:
+            cls_val  = _f(r.current_market_value)
+            cls_pct  = (cls_val / total_val_all * 100) if total_val_all > 0 else 0.0
+            classes_ativo.append(
+                {
+                    "nome":           _CLASS_LABEL.get(r.asset_class, r.asset_class.title()),
+                    "valor":          cls_val,
+                    "pct_carteira":   round(cls_pct, 1),
+                    "rentab_mes_pct": _f(r.return_pct),
+                    "cor":            _CLASS_COR.get(r.asset_class, "#718096"),
+                }
+            )
+        num_ativos = sum(r.asset_count for r in inv_rows) if inv_rows else 0
     maior_cls  = classes_ativo[0] if classes_ativo else {"nome": "—", "pct_carteira": 0.0}
 
     # ── Portfolio ─────────────────────────────────────────────────────────
     dividendos_mes = _f(div_row.div_mes) if div_row else 0.0
     dividendos_ano = _f(div_row.div_ano) if div_row else 0.0
+    if proventos_migrados and proventos_migrados.get("data_source") == "real":
+        dividendos_ano = _f(proventos_migrados.get("total_12m", dividendos_ano))
+    rentab_invest = (
+        _f(carteira_migrada.get("rentabilidade_total_pct"))
+        if carteira_migrada and carteira_migrada.get("data_source") == "real"
+        else 0.0
+    )
 
     portfolio = {
-        "rentabilidade_mes_pct":          0.0,    # sem asset_quotes preenchido
-        "rentabilidade_ano_pct":          0.0,
+        "rentabilidade_mes_pct":          rentab_invest,
+        "rentabilidade_ano_pct":          rentab_invest,
         "rentabilidade_mes_anterior_pct": 0.0,
         "dividendos_mes":                 dividendos_mes,
         "dividendos_ano":                 dividendos_ano,

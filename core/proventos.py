@@ -33,6 +33,7 @@ Schema do dict retornado por get_proventos():
 import logging
 from collections import defaultdict
 from datetime import date as _date
+from datetime import timedelta as _timedelta
 
 import streamlit as st
 
@@ -245,6 +246,7 @@ def _proventos_real() -> dict:
 
 def _montar_dict(eventos: list, hoje: _date) -> dict:
     """Monta o dict de proventos a partir de uma lista de eventos normalizados."""
+    inicio_12m = hoje - _timedelta(days=365)
     total_mes     = sum(
         e["total_amount"] for e in eventos
         if e["payment_date"] and
@@ -255,12 +257,17 @@ def _montar_dict(eventos: list, hoje: _date) -> dict:
         e["total_amount"] for e in eventos
         if e["payment_date"] and e["payment_date"].year == hoje.year
     )
+    total_12m     = sum(
+        e["total_amount"] for e in eventos
+        if e["payment_date"] and inicio_12m <= e["payment_date"] <= hoje
+    )
     total_hist    = sum(e["total_amount"] for e in eventos)
     ativos_set    = {e["ticker"] for e in eventos}
 
     return {
         "total_mes":       round(total_mes, 2),
         "total_ano":       round(total_ano, 2),
+        "total_12m":       round(total_12m, 2),
         "total_historico": round(total_hist, 2),
         "num_ativos":      len(ativos_set),
         "num_eventos":     len(eventos),
