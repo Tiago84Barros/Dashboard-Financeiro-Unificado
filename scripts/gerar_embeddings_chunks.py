@@ -113,8 +113,8 @@ def _count_pending(conn, tickers: list[str] | None) -> int:
     return int(conn.execute(text(sql), params).scalar() or 0)
 
 
-def _fetch_pending(conn, tickers: list[str] | None, batch: int, offset: int) -> list[tuple[int, str]]:
-    """Retorna lista de (id, chunk_text) sem embedding."""
+def _fetch_pending(conn, tickers: list[str] | None, batch: int, last_id: int) -> list[tuple[int, str]]:
+    """Retorna lista de (id, chunk_text) sem embedding, paginando por id > last_id."""
     if tickers:
         ph  = ", ".join(f":tk{i}" for i in range(len(tickers)))
         where_tk = f"AND UPPER(ticker) IN ({ph})"
@@ -123,16 +123,17 @@ def _fetch_pending(conn, tickers: list[str] | None, batch: int, offset: int) -> 
         where_tk = ""
         params   = {}
 
-    params["lim"]    = batch
-    params["offset"] = offset
+    params["lim"]     = batch
+    params["last_id"] = last_id
 
     sql = f"""
         SELECT id, chunk_text
         FROM public.docs_corporativos_chunks
         WHERE embedding IS NULL
+          AND id > :last_id
           {where_tk}
         ORDER BY id
-        LIMIT :lim OFFSET :offset
+        LIMIT :lim
     """
     rows = conn.execute(text(sql), params).fetchall()
     return [(int(r[0]), r[1] or "") for r in rows]
@@ -228,13 +229,13 @@ def run(args: argparse.Namespace) -> None:
 
         processed = 0
         errors    = 0
-        offset    = 0
+        last_id   = 0
 
         while processed < total_pending:
             remaining = total_pending - processed
             fetch_n   = min(batch, remaining)
 
-            rows = _fetch_pending(conn, tickers, fetch_n, offset)
+            rows = _fetch_pending(conn, tickers, fetch_n, last_id)
             if not rows:
                 break
 
@@ -244,7 +245,7 @@ def run(args: argparse.Namespace) -> None:
             # Filtra textos vazios (sem embedding possível)
             valid = [(i, t) for i, t in zip(ids, texts) if t.strip()]
             if not valid:
-                offset    += len(rows)
+                last_id    = ids[-1]
                 processed += len(rows)
                 continue
 
@@ -260,7 +261,7 @@ def run(args: argparse.Namespace) -> None:
             if embeddings is None:
                 logger.error("Falha permanente no lote — pulando %d chunks.", len(valid_texts))
                 errors    += len(valid_texts)
-                offset    += len(rows)
+                last_id    = ids[-1]
                 processed += len(rows)
                 continue
 
@@ -273,8 +274,8 @@ def run(args: argparse.Namespace) -> None:
             else:
                 logger.info("  → [DRY-RUN] %d embeddings gerados (não salvos).", len(pairs))
 
+            last_id    = ids[-1]
             processed += len(rows)
-            offset    += len(rows)
 
             # Pequena pausa para não sobrecarregar a API
             if processed < total_pending:
