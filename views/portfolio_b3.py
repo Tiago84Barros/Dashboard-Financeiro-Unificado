@@ -19,6 +19,7 @@ from views.empresas_b3 import (
     _GAMMA_DEF, _CAP_DEF, _SOFT_DEF,
     _COR_POS, _COR_NEG, _COR_ALT, _COR_INF, _COR_NEU,
     _apply_cap_soft, _apply_decay_penalty,
+    _batch_yf_dividendos_mensais,
     _batch_yf_precos_mensais,
     _enrich_com_slopes,
     _fv, _fp, _logo_url,
@@ -63,6 +64,34 @@ _CSS = """
 """
 
 _ANO_INICIO_DEFAULT = 2013
+_DIV_POR_ACAO_MAX   = 20.0  # teto sanitizador: valores acima são provavelmente totais contábeis
+
+
+def _div_mes_sanitizado(
+    s: pd.Series | None,
+    ano: int,
+    mes: int,
+    ticker: str,
+    px_ref: float | None = None,
+) -> float:
+    """
+    Retorna dividendo mensal por ação (R$/ação) com sanitização idêntica ao App1.
+    Zera se: série vazia, valor > _DIV_POR_ACAO_MAX, ou > 50% do preço de referência.
+    """
+    if s is None or s.empty:
+        return 0.0
+    try:
+        val = float(s[(s.index.year == ano) & (s.index.month == mes)].sum())
+    except Exception:
+        return 0.0
+    if not np.isfinite(val) or val <= 0:
+        return 0.0
+    if val > _DIV_POR_ACAO_MAX:
+        return 0.0
+    if px_ref is not None and np.isfinite(px_ref) and px_ref > 0:
+        if val > 0.5 * px_ref:
+            return 0.0
+    return val
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -76,9 +105,11 @@ def _simular_seg_backtest(
     aporte: float,
     taxa_selic_aa: float,
     selic_macro: dict[int, float],
+    dividendos: dict[str, pd.Series] | None = None,
 ) -> tuple[float, float, float, dict[str, float]]:
     """
     Reconstrói a carteira por segmento usando líderes identificados por ano.
+    Reinveste dividendos mensais por ação (App1-compatible) quando dividendos != None.
     Retorna (valor_estrategia, valor_selic, valor_ew).
     """
     if df_prec_seg.empty:
@@ -93,6 +124,7 @@ def _simular_seg_backtest(
 
     for dt, row in df_prec_seg.iterrows():
         ano = dt.year
+        mes = dt.month
         selic_aa_ano = selic_macro.get(ano, taxa_selic_aa)
         taxa_m = (1 + selic_aa_ano) ** (1 / 12) - 1
         selic_acum = selic_acum * (1 + taxa_m) + aporte
@@ -101,6 +133,19 @@ def _simular_seg_backtest(
             ultimo_ano = ano
             lids = lids_por_ano.get(ano, [])
             pesos_est = pesos_por_ano.get(ano, {tk: 1.0 / len(lids) for tk in lids} if lids else {})
+
+        # Reinvestimento de dividendos — idêntico ao App1
+        if dividendos:
+            for tk in all_tks:
+                px_tk = float(row.get(tk, 0) or 0)
+                if px_tk <= 0:
+                    continue
+                div = _div_mes_sanitizado(dividendos.get(tk), ano, mes, tk, px_tk)
+                if div > 0:
+                    if cotas_est[tk] > 0:
+                        cotas_est[tk] += div * cotas_est[tk] / px_tk
+                    if cotas_ew[tk] > 0:
+                        cotas_ew[tk] += div * cotas_ew[tk] / px_tk
 
         # Estratégia
         est_disp = [tk for tk in pesos_est if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
@@ -171,6 +216,7 @@ def _processar_segmento(
     gamma: float,
     cap: float,
     soft: float,
+    dividendos: dict[str, pd.Series] | None = None,
 ) -> dict | None:
     """
     Roda o engine de scoring ano-a-ano para um segmento.
@@ -268,6 +314,7 @@ def _processar_segmento(
         val_est, val_selic, val_ew, contrib_est = _simular_seg_backtest(
             df_prec_seg, lids_por_ano, pesos_por_ano,
             aporte, taxa_selic_aa, selic_macro,
+            dividendos=dividendos,
         )
 
     total_lids = sum(len(v) for v in liderancas_hist.values())
@@ -921,6 +968,9 @@ def render(show_header: bool = True) -> None:
         with st.spinner("Baixando preços mensais (pode demorar)…"):
             df_precos_all = _batch_yf_precos_mensais(all_tickers, period="10y")
 
+        with st.spinner("Baixando dividendos históricos (pode demorar na primeira execução)…"):
+            div_batch = _batch_yf_dividendos_mensais(all_tickers, period="10y")
+
         # Gamma/cap/soft calibrados (se existirem) ou defaults
         gamma = st.session_state.get("b3_av_gamma", _GAMMA_DEF)
         cap   = st.session_state.get("b3_av_cap",   _CAP_DEF)
@@ -941,6 +991,7 @@ def render(show_header: bool = True) -> None:
                     str(setor), str(subsetor), str(segmento),
                     taxa_selic_aa, selic_macro, macro_history, float(aporte),
                     int(ano_inicio), gamma, cap, soft,
+                    dividendos=div_batch,
                 )
                 if res:
                     resultados.append(res)
@@ -951,6 +1002,7 @@ def render(show_header: bool = True) -> None:
         st.session_state["pb3_resultados"] = resultados
         st.session_state["pb3_df_set"]     = df_set
         st.session_state["pb3_precos_all"] = df_precos_all
+        st.session_state["pb3_div_batch"]  = div_batch
 
     resultados = st.session_state.get("pb3_resultados", [])
     df_set     = st.session_state.get("pb3_df_set", df_set)

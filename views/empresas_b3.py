@@ -347,6 +347,34 @@ def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _batch_yf_dividendos_mensais(tickers: tuple[str, ...], period: str = "10y") -> dict[str, pd.Series]:
+    """
+    Dividendos mensais por ação para múltiplos tickers via yfinance.
+    Retorna dict {ticker_sem_SA: pd.Series(DatetimeIndex mensal, float R$/ação)}.
+    Múltiplos pagamentos no mesmo mês são somados.
+    """
+    resultado: dict[str, pd.Series] = {}
+    if not tickers:
+        return resultado
+    for tk in tickers:
+        tk_clean = tk.strip().upper().replace(".SA", "")
+        for var in [f"{tk_clean}.SA", tk_clean]:
+            try:
+                divs = yf.Ticker(var).dividends
+                if divs is not None and not divs.empty:
+                    if hasattr(divs.index, "tz") and divs.index.tz is not None:
+                        divs.index = divs.index.tz_localize(None)
+                    mensais = divs.resample("ME").sum()
+                    mensais = mensais[mensais > 0]
+                    if not mensais.empty:
+                        resultado[tk_clean] = mensais
+                        break
+            except Exception:
+                pass
+    return resultado
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — Empresas por Setor
 # ══════════════════════════════════════════════════════════════════════════════
