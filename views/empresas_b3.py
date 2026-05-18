@@ -435,6 +435,36 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
 # Scoring e backtesting — Motor v2 (alinhado com App 1)
 # ══════════════════════════════════════════════════════════════════════════════
 
+_DIV_POR_ACAO_MAX = 20.0  # teto sanitizador: acima disso é provavelmente total contábil
+
+
+def _div_mes_sanitizado(
+    s: "pd.Series | None",
+    ano: int,
+    mes: int,
+    ticker: str,
+    px_ref: float | None = None,
+) -> float:
+    """
+    Dividendo mensal por ação (R$/ação) com sanitização idêntica ao App1.
+    Zera se: série vazia, valor > _DIV_POR_ACAO_MAX, ou > 50% do preço de referência.
+    """
+    if s is None or s.empty:
+        return 0.0
+    try:
+        val = float(s[(s.index.year == ano) & (s.index.month == mes)].sum())
+    except Exception:
+        return 0.0
+    if not np.isfinite(val) or val <= 0:
+        return 0.0
+    if val > _DIV_POR_ACAO_MAX:
+        return 0.0
+    if px_ref is not None and np.isfinite(px_ref) and px_ref > 0:
+        if val > 0.5 * px_ref:
+            return 0.0
+    return val
+
+
 # {indicador: (peso_relativo, melhor_alto)}
 _PESOS_SETOR: dict[str, dict[str, tuple[float, bool]]] = {
     "financeiro": {
@@ -1487,11 +1517,13 @@ def _simular_backtest(
     soft: float = _SOFT_DEF,
     selic_por_ano: dict[int, float] | None = None,
     macro_by_year: dict[int, dict[str, float]] | None = None,
+    dividendos: dict[str, "pd.Series"] | None = None,
 ) -> tuple[pd.DataFrame, list[str], int]:
     """
     Simula aportes mensais com rebalanceamento anual e publication lag = 1.
     Score do ano N é calculado com dados até N−1 (sem look-ahead bias).
     selic_por_ano: taxa Selic real por ano (da tabela macro); fallback = taxa_selic_aa.
+    dividendos: dict {ticker: pd.Series mensal R$/ação} para reinvestimento (App1-compatible).
     Retorna (df_resultado, tickers_top_último_ano, n_efetivo_último_ano).
     """
     if df_precos.empty or not tickers_all:
@@ -1580,6 +1612,20 @@ def _simular_backtest(
 
             tickers_top_final = tickers_yr
             n_efetivo_final   = n_yr
+
+        # ── Reinvestimento de dividendos — idêntico ao App1 ───────────────
+        if dividendos:
+            mes = dt.month
+            for tk in tks_all_valid:
+                px_tk = float(row.get(tk, 0) or 0)
+                if px_tk <= 0:
+                    continue
+                div = _div_mes_sanitizado(dividendos.get(tk), ano, mes, tk, px_tk)
+                if div > 0:
+                    if cotas_est[tk] > 0:
+                        cotas_est[tk] += div * cotas_est[tk] / px_tk
+                    if cotas_bench[tk] > 0:
+                        cotas_bench[tk] += div * cotas_bench[tk] / px_tk
 
         # ── Aportes mensais ────────────────────────────────────────────────
         est_disp = [tk for tk in tks_est_valid
@@ -2478,6 +2524,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         with st.spinner("Baixando preços mensais… (pode levar alguns segundos)"):
             df_prec_m = _batch_yf_precos_mensais(tks_tuple, period=period_code)
 
+        with st.spinner("Baixando dividendos históricos (pode demorar na primeira execução)…"):
+            div_batch_av = _batch_yf_dividendos_mensais(tks_tuple, period=period_code)
+
         df_bt, tickers_top, n_efetivo = _simular_backtest(
             df_prec_m, df_scored, hist_batch, tks_uni,
             float(aporte), data_inicio, float(taxa_sel) / 100.0,
@@ -2488,6 +2537,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             soft=st.session_state.get("b3_av_soft",  _SOFT_DEF),
             selic_por_ano=selic_macro or None,
             macro_by_year=macro_history or None,
+            dividendos=div_batch_av,
         )
         st.session_state["b3_av_bt_df"]    = df_bt
         st.session_state["b3_av_bt_top"]   = tickers_top

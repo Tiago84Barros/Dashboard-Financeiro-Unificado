@@ -21,6 +21,7 @@ from views.empresas_b3 import (
     _apply_cap_soft, _apply_decay_penalty,
     _batch_yf_dividendos_mensais,
     _batch_yf_precos_mensais,
+    _div_mes_sanitizado,
     _enrich_com_slopes,
     _fv, _fp, _logo_url,
     _get_pesos_setor,
@@ -64,34 +65,6 @@ _CSS = """
 """
 
 _ANO_INICIO_DEFAULT = 2013
-_DIV_POR_ACAO_MAX   = 20.0  # teto sanitizador: valores acima são provavelmente totais contábeis
-
-
-def _div_mes_sanitizado(
-    s: pd.Series | None,
-    ano: int,
-    mes: int,
-    ticker: str,
-    px_ref: float | None = None,
-) -> float:
-    """
-    Retorna dividendo mensal por ação (R$/ação) com sanitização idêntica ao App1.
-    Zera se: série vazia, valor > _DIV_POR_ACAO_MAX, ou > 50% do preço de referência.
-    """
-    if s is None or s.empty:
-        return 0.0
-    try:
-        val = float(s[(s.index.year == ano) & (s.index.month == mes)].sum())
-    except Exception:
-        return 0.0
-    if not np.isfinite(val) or val <= 0:
-        return 0.0
-    if val > _DIV_POR_ACAO_MAX:
-        return 0.0
-    if px_ref is not None and np.isfinite(px_ref) and px_ref > 0:
-        if val > 0.5 * px_ref:
-            return 0.0
-    return val
 
 
 # ══════════════════════════════════════════════════════════════════════════════
