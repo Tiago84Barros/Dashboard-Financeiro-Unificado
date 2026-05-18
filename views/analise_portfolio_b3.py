@@ -269,7 +269,11 @@ def _render_macro(macro_hist: dict) -> None:
         return f"{sign} R$ {abs(d):.2f} vs {ano_ant}", d > 0
 
     def _pib_fmt_and_diff() -> tuple[str, str, bool | None]:
-        """PIB: taxa de crescimento (≤100) ou valor absoluto (>100)."""
+        """
+        PIB — BCB série 4380 armazena em R$ milhões correntes (acumulado trimestral).
+        Multiplicamos por 1e6 para obter o valor real antes de formatar.
+        Se o valor corrente for < 60% do anterior, assume ano incompleto e omite delta.
+        """
         vc = cur.get("pib")
         va = ant.get("pib")
         try:
@@ -280,7 +284,7 @@ def _render_macro(macro_hist: dict) -> None:
             return "—", "—", None
 
         if abs(vc_f) <= 100:
-            # Taxa de crescimento
+            # Taxa de crescimento decimal/percentual (fallback para dados legados)
             display = _fmt_rate(vc_f)
             try:
                 va_f = float(va)
@@ -294,19 +298,22 @@ def _render_macro(macro_hist: dict) -> None:
                 pass
             return display, "—", None
 
-        # Valor absoluto do PIB nominal
-        if abs(vc_f) >= 1e12:
-            display = f"R$ {vc_f / 1e12:.1f}T"
-        elif abs(vc_f) >= 1e9:
-            display = f"R$ {vc_f / 1e9:.0f}B"
-        elif abs(vc_f) >= 1e6:
-            display = f"R$ {vc_f / 1e6:.0f}M"
+        # Converte de R$ milhões → R$ (valor real)
+        actual = vc_f * 1_000_000
+        if actual >= 1e12:
+            display = f"R$ {actual / 1e12:.1f}T"
+        elif actual >= 1e9:
+            display = f"R$ {actual / 1e9:.0f}B"
         else:
-            display = f"R$ {vc_f:,.0f}"
+            display = f"R$ {actual:,.0f}"
+
         try:
             va_f = float(va)
-            if np.isfinite(va_f) and va_f != 0:
-                pct = (vc_f - va_f) / abs(va_f) * 100.0
+            if np.isfinite(va_f) and va_f > 0:
+                # Ano incompleto: valor corrente < 60% do ano anterior → omite delta
+                if vc_f < va_f * 0.60:
+                    return display, "ano em curso", None
+                pct = (vc_f - va_f) / va_f * 100.0
                 sign = "▲" if pct > 0 else ("▼" if pct < 0 else "=")
                 return display, f"{sign} {abs(pct):.1f}% vs {ano_ant}", pct > 0
         except Exception:
