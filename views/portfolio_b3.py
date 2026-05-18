@@ -12,6 +12,7 @@ import plotly.express as px
 import streamlit as st
 
 import core.b3_db as _db
+from core.b3_portfolio_model import save_b3_portfolio_model
 
 # ── Importa engine compartilhado de empresas_b3 ───────────────────────────────
 from views.empresas_b3 import (
@@ -1113,6 +1114,52 @@ def render(show_header: bool = True) -> None:
                     )
     else:
         st.info("Nenhum líder identificado com os parâmetros atuais.")
+
+    if proximos_uniq:
+        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                    unsafe_allow_html=True)
+        _sec_hdr("💾 Salvar como portfólio padrão")
+        st.caption(
+            "Ao salvar, esta carteira passa a ser o modelo B3 ativo do usuário "
+            "e aparece resumida no Dashboard Geral."
+        )
+        params_modelo = {
+            "ano_compra": ano_atual,
+            "thr_selic": float(thr_selic),
+            "thr_ew": float(thr_ew),
+            "uso_equal_weight": uso_ew,
+            "max_anos_lideranca": int(max_anos_lid),
+            "aporte_mensal_simulado": float(aporte),
+            "ano_inicio_backtest": int(ano_inicio),
+            "min_anos_dre": int(min_anos_dre),
+            "segmentos_analisados": len(resultados),
+            "segmentos_aprovados": len(aprovados),
+        }
+        metrics_modelo = {
+            "num_empresas": len(proximos_uniq),
+            "alpha_selic_medio": float(np.mean([p.get("alpha_selic", 0.0) for p in proximos_uniq])),
+            "alpha_ew_medio": float(np.mean([p.get("alpha_ew", 0.0) for p in proximos_uniq])),
+            "score_medio": float(np.mean([p.get("score", 0.0) for p in proximos_uniq])),
+        }
+        c_save, c_info = st.columns([1, 3], gap="medium")
+        with c_save:
+            if st.button("Salvar portfólio padrão", type="primary", key="pb3_save_model"):
+                try:
+                    model_id = save_b3_portfolio_model(
+                        proximos_uniq,
+                        params=params_modelo,
+                        metrics=metrics_modelo,
+                        name=f"Portfolio B3 Modelo {ano_atual}",
+                    )
+                    st.success(f"Portfólio padrão salvo no banco. ID: {model_id[:8]}")
+                except Exception as exc:
+                    st.error(f"Não foi possível salvar o portfólio padrão: {exc}")
+        with c_info:
+            st.info(
+                f"{len(proximos_uniq)} empresas selecionadas · "
+                f"{len(aprovados)} segmentos aprovados · "
+                f"score médio {metrics_modelo['score_medio']:.2f}"
+            )
 
     # ── DISTRIBUIÇÃO SETORIAL ────────────────────────────────────────────────
     if proximos_uniq:

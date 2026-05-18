@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core.controle import get_gastos_categoria_anual, get_historico_anual
+from core.b3_portfolio_model import load_active_b3_portfolio_model
 from core.financeiro import get_visao_geral
 from core.investimentos import get_carteira, get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
@@ -405,6 +406,79 @@ def _secao_raio_x_portfolio(carteira: dict, evolucao: dict, classes: list) -> No
     st.markdown("<br>", unsafe_allow_html=True)
 
 
+def _secao_portfolio_modelo_b3(modelo: dict) -> None:
+    items = modelo.get("items") or []
+    if not items:
+        return
+
+    metrics = modelo.get("metrics_json") or {}
+    ano = modelo.get("ano_compra") or "próximo ciclo"
+    setores: dict[str, float] = {}
+    for item in items:
+        setor = item.get("setor") or "Sem setor"
+        setores[setor] = setores.get(setor, 0.0) + float(item.get("weight") or 0)
+    top_setor = max(setores.items(), key=lambda x: x[1]) if setores else ("Sem setor", 0.0)
+    top_items = items[:8]
+    tickers = ", ".join(i["ticker"] for i in top_items)
+    criado = modelo.get("created_at")
+    criado_txt = criado.strftime("%d/%m/%Y") if hasattr(criado, "strftime") else ""
+
+    _titulo_secao(
+        "🎯", "Portfólio B3 padrão",
+        "Carteira modelo criada na seção Empresas B3 e definida pelo usuário", _COR_PATRIMONIO,
+    )
+
+    m1, m2, m3, m4 = st.columns(4, gap="small")
+    with m1:
+        st.markdown(_mini_metric("Empresas", str(len(items)), f"Para compra em {ano}", _COR_PATRIMONIO), unsafe_allow_html=True)
+    with m2:
+        st.markdown(_mini_metric("Score médio", f"{float(metrics.get('score_medio') or 0):.2f}", "Média das selecionadas", _COR_FLUXO), unsafe_allow_html=True)
+    with m3:
+        st.markdown(_mini_metric("Setor líder", f"{top_setor[1] * 100:.1f}%", str(top_setor[0])[:34], _COR_ALERTA), unsafe_allow_html=True)
+    with m4:
+        st.markdown(_mini_metric("Criado", criado_txt or "Ativo", "Modelo salvo no banco", _COR_INVEST), unsafe_allow_html=True)
+
+    c1, c2 = st.columns([1.2, 0.8], gap="medium")
+    with c1:
+        st.markdown(
+            f"""
+            <div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;
+                        padding:16px 18px;">
+                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
+                            color:#4A9EFF;font-weight:800;margin-bottom:10px;">Empresas selecionadas</div>
+                <div style="font-size:1.05rem;font-weight:850;color:#E2E8F0;line-height:1.55;">
+                    {tickers}
+                </div>
+                <div style="font-size:0.76rem;color:#9CA3AF;margin-top:10px;">
+                    Substitui versões anteriores e vira a referência padrão de investimento B3.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with c2:
+        rows = ""
+        for item in top_items[:5]:
+            rows += _linha_kv(
+                f"{item['ticker']} · {str(item.get('nome') or '')[:18]}",
+                f"{float(item.get('weight') or 0) * 100:.1f}%",
+                _COR_FLUXO,
+            )
+        st.markdown(
+            f"""
+            <div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;
+                        padding:16px 18px;">
+                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
+                            color:#00C896;font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>
+                {rows}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # GRÁFICOS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -515,6 +589,7 @@ def render() -> None:
     hist_anual    = get_historico_anual()         # {anos, por_ano}
     carteira      = get_carteira()
     evolucao_inv  = get_evolucao_patrimonial()
+    modelo_b3     = load_active_b3_portfolio_model()
     ano_atual     = hoje.year
     cats_ano      = get_gastos_categoria_anual(ano_atual)
 
@@ -572,12 +647,17 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 2 — Raio X do portfólio investido
+    # BLOCO 2 — Portfólio B3 modelo salvo pelo usuário
+    # ══════════════════════════════════════════════════════════════════════════
+    _secao_portfolio_modelo_b3(modelo_b3)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BLOCO 3 — Raio X do portfólio investido
     # ══════════════════════════════════════════════════════════════════════════
     _secao_raio_x_portfolio(carteira, evolucao_inv, classes)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 3 — Histórico 6 meses
+    # BLOCO 4 — Histórico 6 meses
     # ══════════════════════════════════════════════════════════════════════════
     _titulo_secao(
         "💹", "Histórico mensal (6 meses)",
@@ -598,7 +678,7 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 4 — Distribuição de despesas | Comparativo Ano a Ano
+    # BLOCO 5 — Distribuição de despesas | Comparativo Ano a Ano
     # ══════════════════════════════════════════════════════════════════════════
     col_cats, col_yoy = st.columns(2, gap="medium")
 
