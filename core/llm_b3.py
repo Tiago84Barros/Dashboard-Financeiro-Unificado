@@ -194,11 +194,15 @@ SCORE QUANTITATIVO (0-100): {score:.1f} | ALPHA vs SELIC (histórico): {alpha_se
 === CENÁRIO MACROECONÔMICO ===
 {macro}
 
+=== DOCUMENTOS CORPORATIVOS CVM/IPE (trechos relevantes) ===
+{rag_context}
+
 === CONTEXTO DO PORTFÓLIO ===
 {portfolio_ctx}
 
-Com base nos dados acima, no seu conhecimento sobre esta empresa, setor e macroeconomia brasileira, \
-gere uma análise estruturada em JSON com EXATAMENTE este schema (sem campos extras, sem texto fora do JSON):
+Com base nos dados acima, nos documentos CVM quando disponíveis, e no seu conhecimento sobre esta \
+empresa, setor e macroeconomia brasileira, gere uma análise estruturada em JSON com EXATAMENTE \
+este schema (sem campos extras, sem texto fora do JSON):
 
 {{
   "perspectiva": "forte" | "moderada" | "fraca",
@@ -267,6 +271,7 @@ def analisar_empresa(
     df_fin: pd.DataFrame,
     macro_hist: dict,
     portfolio_ctx: str,
+    rag_context: str = "",
     model: str = _MODEL_DEFAULT,
 ) -> dict:
     """Chama LLM e retorna dict com análise individual da empresa."""
@@ -276,6 +281,7 @@ def analisar_empresa(
         multiplos=_fmt_multiplos(df_mult),
         dre=_fmt_dre(df_fin),
         macro=_fmt_macro(macro_hist),
+        rag_context=rag_context or "  Nenhum documento CVM disponível para este ativo.",
         portfolio_ctx=portfolio_ctx,
     )
     raw = _call_llm(prompt, model=model)

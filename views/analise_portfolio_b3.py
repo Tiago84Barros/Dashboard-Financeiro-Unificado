@@ -20,6 +20,11 @@ from core.llm_b3 import (
     llm_disponivel,
     redistribuir_pesos,
 )
+from core.rag_b3 import (
+    format_rag_context,
+    get_cobertura_docs,
+    retrieve_chunks,
+)
 from views.empresas_b3 import _logo_url, _sec_hdr
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -502,15 +507,28 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
             )
 
         # Métricas numéricas
-        cols_m = st.columns(3)
+        cols_m = st.columns(4)
         cols_m[0].metric("Score qualitativo", f"{an.get('score_qualitativo', '—')}/100")
         cols_m[1].metric("Confiança", f"{an.get('confianca', '—')}/100")
         alloc_sug = an.get("alocacao_sugerida_pct")
         cols_m[2].metric("Alocação sugerida", f"{alloc_sug:.1f}%" if alloc_sug is not None else "—")
+        n_docs = it.get("n_docs", 0)
+        cols_m[3].metric("Docs CVM", f"{n_docs:,}" if n_docs else "—",
+                          help="Chunks de documentos IPE/ENET usados no RAG")
 
         just = an.get("justificativa_alocacao", "")
         if just:
             st.caption(just)
+
+        # RAG stats
+        rag_stats = it.get("rag_stats", {})
+        if rag_stats and rag_stats.get("total_hits", 0) > 0:
+            mode_lbl = {"semantic": "semântico", "temporal_fallback": "temporal"}.get(
+                rag_stats.get("mode", ""), rag_stats.get("mode", ""))
+            st.caption(
+                f"📄 RAG {mode_lbl}: {rag_stats['total_hits']} chunks recuperados "
+                f"(últimos {rag_stats.get('months_back', 36)} meses)"
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -539,6 +557,7 @@ def _executar_analise(
     mode: str,
     mult_batch: dict,
     dre_batch: dict,
+    cobertura_docs: dict[str, int] | None = None,
 ) -> dict:
     """Roda análise individual de cada empresa + análise consolidada + redistribuição."""
 
@@ -548,22 +567,38 @@ def _executar_analise(
         f"Score quantitativo médio: {float(np.mean([it.get('score',50) for it in items])):.1f}. "
         f"Modo de redistribuição: {mode}."
     )
+    n_com_docs = sum(1 for it in items if (cobertura_docs or {}).get(it["ticker"], 0) > 0)
 
     items_analisados: list[dict] = []
     prog = st.progress(0, text="Analisando empresas via LLM…")
 
     for idx, it in enumerate(items):
-        tk       = it["ticker"]
+        tk        = it["ticker"]
         nome_     = it.get("nome") or tk
         setor_    = it.get("setor") or "N/D"
         seg_      = it.get("segmento") or "N/D"
         peso_pct_ = float(it.get("weight") or 0) * 100.0
         score_    = float(it.get("score") or 50)
         alpha_    = float(it.get("alpha_selic") or 0) * 100.0
+        n_docs    = (cobertura_docs or {}).get(tk, 0)
 
         df_mult = mult_batch.get(tk, pd.DataFrame())
         df_fin  = dre_batch.get(tk, pd.DataFrame())
 
+        # ── RAG: recupera chunks CVM para este ticker ─────────────────────────
+        rag_ctx = ""
+        rag_stats: dict = {}
+        if n_docs > 0:
+            prog.progress((idx + 1) / len(items),
+                          text=f"Buscando docs CVM para {tk}…")
+            try:
+                chunks, rag_stats = retrieve_chunks(tk, top_k_total=60, months_back=36)
+                rag_ctx = format_rag_context(chunks)
+            except Exception as exc_rag:
+                rag_ctx = ""
+                rag_stats = {"mode": "error", "error": str(exc_rag)}
+
+        prog.progress((idx + 1) / len(items), text=f"LLM: {tk}…")
         try:
             analise = analisar_empresa(
                 ticker=tk, nome=nome_, setor=setor_, segmento=seg_,
@@ -571,6 +606,7 @@ def _executar_analise(
                 df_mult=df_mult, df_fin=df_fin,
                 macro_hist=macro_hist,
                 portfolio_ctx=portfolio_ctx,
+                rag_context=rag_ctx,
             )
         except Exception as exc:
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -578,12 +614,14 @@ def _executar_analise(
             analise = _fallback_empresa(tk, peso_pct_)
 
         items_analisados.append({
-            "ticker":    tk,
-            "nome":      nome_,
-            "peso_pct":  peso_pct_,
-            "score":     score_,
+            "ticker":     tk,
+            "nome":       nome_,
+            "peso_pct":   peso_pct_,
+            "score":      score_,
             "alpha_selic": alpha_,
-            "analise":   analise,
+            "analise":    analise,
+            "n_docs":     n_docs,
+            "rag_stats":  rag_stats,
         })
         prog.progress((idx + 1) / len(items), text=f"Analisado: {tk}")
 
@@ -629,8 +667,8 @@ def render(show_header: bool = True) -> None:
     st.markdown(
         '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
         'Análise qualitativa institucional do portfólio modelo salvo, combinando '
-        'dados quantitativos, cenário macro e interpretação LLM baseada em '
-        'repertório analítico de casas especializadas (XP, BTG, Itaú BBA).'
+        'dados quantitativos, cenário macro, documentos CVM/IPE e interpretação LLM '
+        'baseada em repertório analítico de casas especializadas (XP, BTG, Itaú BBA).'
         '</p>',
         unsafe_allow_html=True,
     )
@@ -648,16 +686,37 @@ def render(show_header: bool = True) -> None:
         return
 
     items = model["items"]
+    tickers_tuple = tuple(sorted(it["ticker"] for it in items))
 
-    # ── Carrega macro ─────────────────────────────────────────────────────────
-    with st.spinner("Carregando dados macroeconômicos…"):
-        macro_hist = _db.load_macro_history()
+    # ── Carrega macro + cobertura CVM ─────────────────────────────────────────
+    with st.spinner("Carregando dados…"):
+        macro_hist     = _db.load_macro_history()
+        cobertura_docs = get_cobertura_docs(tickers_tuple)
+
+    n_com_docs = sum(1 for v in cobertura_docs.values() if v > 0)
+    total_chunks = sum(cobertura_docs.values())
 
     # ── Portfólio salvo + macro sempre visíveis ───────────────────────────────
     state = st.session_state.get("apb3_state", {})
     pesos_exib = state.get("pesos_novos") if state else None
 
     _render_portfolio_salvo(model, pesos_exib)
+
+    # Cobertura RAG
+    if n_com_docs > 0:
+        st.markdown(
+            f'<div style="font-size:.76rem;color:#34D399;margin:-8px 0 12px;">'
+            f'📄 {n_com_docs}/{len(items)} empresas com documentos CVM '
+            f'({total_chunks:,} chunks) — RAG ativo</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="font-size:.76rem;color:#718096;margin:-8px 0 12px;">'
+            '📄 Sem documentos CVM — análise somente com dados quantitativos</div>',
+            unsafe_allow_html=True,
+        )
+
     st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
     _render_macro(macro_hist)
     st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
@@ -700,12 +759,14 @@ def render(show_header: bool = True) -> None:
 
     # ── Executa análise ───────────────────────────────────────────────────────
     if rodar:
-        tickers = tuple(sorted(it["ticker"] for it in items))
         with st.spinner("Carregando múltiplos e DRE do banco…"):
-            mult_batch = _db.load_multiplos_historico_batch(tickers)
-            dre_batch  = _db.load_demonstracoes_batch(tickers)
+            mult_batch = _db.load_multiplos_historico_batch(tickers_tuple)
+            dre_batch  = _db.load_demonstracoes_batch(tickers_tuple)
 
-        result = _executar_analise(items, macro_hist, mode, mult_batch, dre_batch)
+        result = _executar_analise(
+            items, macro_hist, mode, mult_batch, dre_batch,
+            cobertura_docs=cobertura_docs,
+        )
         st.session_state["apb3_state"] = result
         st.rerun()
 
