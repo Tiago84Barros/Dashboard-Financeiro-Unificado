@@ -198,6 +198,41 @@ _SQL_GASTOS_CARTAO_MENSAL = """
     ORDER  BY ano, mes
 """
 
+_SQL_HISTORICO_CC_MENSAL = """
+    SELECT
+        EXTRACT(YEAR  FROM t.due_date)::int AS ano,
+        EXTRACT(MONTH FROM t.due_date)::int AS mes,
+        SUM(ABS(t.amount))                  AS total
+    FROM   transactions t
+    LEFT JOIN accounts a ON a.id = t.account_id
+    WHERE  t.user_id = :uid
+      AND  t.type IN ('expense', 'saida')
+      AND  COALESCE(a.type, '') = 'credit_card'
+    GROUP  BY ano, mes
+    ORDER  BY ano, mes
+"""
+
+_SQL_DIVIDAS_CC = """
+    SELECT
+        t.installment_group                                    AS grupo,
+        COALESCE(ac.name, 'Sem cartão')                        AS cartao,
+        COALESCE(c.name,  'Sem categoria')                     AS categoria,
+        MIN(t.due_date)                                         AS data_compra,
+        SUM(ABS(t.amount))                                      AS total_compra,
+        MAX(t.installment_total)                                AS total_parcelas,
+        SUM(CASE WHEN t.status = 'settled' THEN 1 ELSE 0 END)::int AS parcelas_pagas,
+        MAX(t.description)                                      AS descricao
+    FROM   transactions t
+    LEFT JOIN accounts   ac ON ac.id = t.account_id
+    LEFT JOIN categories c  ON c.id  = t.category_id
+    WHERE  t.user_id = :uid
+      AND  COALESCE(ac.type, '') = 'credit_card'
+      AND  t.installment_group IS NOT NULL
+      AND  t.installment_total > 1
+    GROUP  BY t.installment_group, ac.name, c.name
+    ORDER  BY MIN(t.due_date) DESC
+"""
+
 _SQL_GASTOS_CATEGORIA_ANUAL = """
     SELECT
         COALESCE(c.name, 'Sem categoria')  AS category_name,
@@ -551,6 +586,108 @@ def _gastos_cartao_real(ano: int) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# HISTÓRICO CC + DÍVIDAS — API pública
+# ─────────────────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300)
+def get_historico_cc_mensal() -> list:
+    """
+    Retorna uso mensal das contas de cartão de crédito (account_type='credit_card').
+    Cada item: {"ano", "mes", "label", "total"}
+    """
+    if settings.MOCK_MODE:
+        ano = _date.today().year
+        return [
+            {"ano": ano, "mes": m, "label": _MESES_PT[m], "total": round(v, 2)}
+            for m, v in sorted(_MOCK_HIST_CC.items())
+        ]
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            raise RuntimeError("Engine indisponível.")
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            raise RuntimeError("OWNER_USER_ID não configurado.")
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(_SQL_HISTORICO_CC_MENSAL), {"uid": owner}
+            ).fetchall()
+
+        return [
+            {
+                "ano":   int(r.ano),
+                "mes":   int(r.mes),
+                "label": _MESES_PT[int(r.mes)],
+                "total": round(float(r.total), 2),
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        logger.warning("[controle] get_historico_cc_mensal falhou (%s) — usando mock.", type(exc).__name__)
+        ano = _date.today().year
+        return [
+            {"ano": ano, "mes": m, "label": _MESES_PT[m], "total": round(v, 2)}
+            for m, v in sorted(_MOCK_HIST_CC.items())
+        ]
+
+
+@st.cache_data(ttl=60)
+def get_dividas_cc() -> list:
+    """
+    Retorna parcelamentos agrupados por installment_group (account_type='credit_card').
+    Cada item: {grupo, cartao, categoria, data_compra, total_compra,
+                total_parcelas, parcelas_pagas, parcelas_restantes, is_ativa, descricao}
+    """
+    def _enrich(d: dict) -> dict:
+        tp = d["total_parcelas"]
+        pp = d["parcelas_pagas"]
+        return {**d, "parcelas_restantes": tp - pp, "is_ativa": pp < tp}
+
+    if settings.MOCK_MODE:
+        return [_enrich(d) for d in _MOCK_DIVIDAS]
+
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            raise RuntimeError("Engine indisponível.")
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            raise RuntimeError("OWNER_USER_ID não configurado.")
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(_SQL_DIVIDAS_CC), {"uid": owner}
+            ).fetchall()
+
+        result = []
+        for r in rows:
+            tp = int(r.total_parcelas) if r.total_parcelas else 1
+            pp = int(r.parcelas_pagas) if r.parcelas_pagas else 0
+            result.append(_enrich({
+                "grupo":          str(r.grupo),
+                "cartao":         r.cartao,
+                "categoria":      r.categoria,
+                "data_compra":    r.data_compra,
+                "total_compra":   round(float(r.total_compra), 2),
+                "total_parcelas": tp,
+                "parcelas_pagas": pp,
+                "descricao":      r.descricao or "",
+            }))
+        return result
+
+    except Exception as exc:
+        logger.warning("[controle] get_dividas_cc falhou (%s) — usando mock.", type(exc).__name__)
+        return [_enrich(d) for d in _MOCK_DIVIDAS]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MOCK
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -762,6 +899,31 @@ _MOCK_GASTOS_CARTAO = {
     1: 11_416.54, 2: 10_158.53, 3: 6_867.12,
     4: 11_266.55, 5: 3_025.57,
 }
+
+# Mock histórico mensal de compras no cartão de crédito
+_MOCK_HIST_CC = {
+    1: 7_800.00, 2: 4_280.00, 3: 4_000.00,
+    4: 1_200.00, 5: 1_100.00,
+}
+
+# Mock de parcelamentos (dívidas no cartão)
+_MOCK_DIVIDAS: list[dict] = [
+    {
+        "grupo": "mock-g1", "cartao": "Cartão C6", "categoria": "Outros",
+        "data_compra": _date(2026, 5, 14), "total_compra": 5_600.00,
+        "total_parcelas": 10, "parcelas_pagas": 0, "descricao": "Compra parcelada",
+    },
+    {
+        "grupo": "mock-g2", "cartao": "Cartão C6", "categoria": "Outros",
+        "data_compra": _date(2025, 12, 8), "total_compra": 3_952.35,
+        "total_parcelas": 5, "parcelas_pagas": 5, "descricao": "Passagem da r...",
+    },
+    {
+        "grupo": "mock-g3", "cartao": "Cartão C6", "categoria": "Outros",
+        "data_compra": _date(2025, 11, 8), "total_compra": 2_349.00,
+        "total_parcelas": 2, "parcelas_pagas": 2, "descricao": "Tablet",
+    },
+]
 
 
 def _historico_anual_mock() -> dict:

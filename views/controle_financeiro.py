@@ -33,6 +33,7 @@ from core.controle import (
     get_controle, get_opcoes_formulario, inserir_transacao,
     atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
     get_gastos_cartao_mensal, get_gastos_categoria_anual,
+    get_historico_cc_mensal, get_dividas_cc,
 )
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
@@ -292,6 +293,22 @@ def _sidebar_render(ano: int, mes: int) -> None:
         unsafe_allow_html=True,
     )
     st.sidebar.caption(f"Mês de referência: **{_MESES_PT[mes]}/{ano}**")
+
+    st.sidebar.divider()
+
+    # ── Configurações do cartão ───────────────────────────────────────────────
+    st.sidebar.markdown(
+        '<div style="font-size:0.68rem;font-weight:800;text-transform:uppercase;'
+        'letter-spacing:0.12em;color:#9CA3AF;margin-bottom:8px;">'
+        'Configurações do cartão</div>',
+        unsafe_allow_html=True,
+    )
+    st.sidebar.slider(
+        "Dia de vencimento da fatura",
+        min_value=1, max_value=31, value=5, step=1,
+        help="Dia do mês em que a fatura vence.",
+        key="cf_vencimento_dia",
+    )
 
     st.sidebar.divider()
 
@@ -1089,143 +1106,276 @@ def _tab_tabelas(d: dict) -> None:
 # TAB 4 — Cartão de Crédito
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _render_dividas_table(items: list, show_descricao: bool = False) -> None:
+    if not items:
+        st.caption("Nenhuma dívida encontrada.")
+        return
+    if show_descricao:
+        grid = "90px 90px 100px 110px 70px 1fr"
+        header = (
+            "<span>Cartão</span><span>Categoria</span><span>Data compra</span>"
+            '<span style="text-align:right">Total</span>'
+            '<span style="text-align:right">Pagas</span>'
+            "<span>Descrição</span>"
+        )
+    else:
+        grid = "90px 90px 100px 110px 70px 70px"
+        header = (
+            "<span>Cartão</span><span>Categoria</span><span>Data compra</span>"
+            '<span style="text-align:right">Total</span>'
+            '<span style="text-align:right">Pagas</span>'
+            '<span style="text-align:right">Restantes</span>'
+        )
+    st.markdown(
+        f'<div style="display:grid;grid-template-columns:{grid};'
+        f'gap:4px;padding:5px 8px;background:#0E1117;border-radius:4px 4px 0 0;'
+        f'font-size:0.58rem;font-weight:700;text-transform:uppercase;'
+        f'letter-spacing:0.08em;color:#4A5568;">{header}</div>',
+        unsafe_allow_html=True,
+    )
+    for item in items:
+        data_str = item["data_compra"].strftime("%d/%m/%Y") if item["data_compra"] else "—"
+        pr = item["parcelas_restantes"]
+        if show_descricao:
+            extra = f'<span style="color:#718096;font-size:0.70rem">{(item["descricao"] or "—")[:22]}</span>'
+        else:
+            cor_pr = _COR_DESPESA if pr > 0 else _COR_RECEITA
+            extra = f'<span style="text-align:right;font-weight:700;color:{cor_pr}">{pr}</span>'
+        st.markdown(
+            f'<div style="display:grid;grid-template-columns:{grid};'
+            f'gap:4px;padding:6px 8px;background:#12151E;'
+            f'border-bottom:1px solid #1A1F2E;font-size:0.76rem;align-items:center;">'
+            f'<span style="color:#CBD5E0">{item["cartao"]}</span>'
+            f'<span style="color:#CBD5E0">{item["categoria"]}</span>'
+            f'<span style="color:#718096">{data_str}</span>'
+            f'<span style="text-align:right;font-weight:700;color:{_COR_DESPESA}">'
+            f'{fmt_moeda(item["total_compra"])}</span>'
+            f'<span style="text-align:right;color:#718096">{item["parcelas_pagas"]}</span>'
+            f'{extra}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+
 def _tab_cartao(d: dict) -> None:
     txs = d["transacoes"]
 
-    # Somente transações de contas com account_type='credit_card'
-    despesas_tx = [
+    # Apenas transações de contas de cartão de crédito (account_type='credit_card')
+    despesas_cc = [
         t for t in txs
         if not t["eh_receita"] and t.get("account_type") == "credit_card"
     ]
 
-    if not despesas_tx:
-        st.caption("Nenhum lançamento de cartão de crédito registrado neste mês.")
-        return
+    # ── KPIs do mês ──────────────────────────────────────────────────────────
+    if despesas_cc:
+        total_cc = sum(abs(t["valor"]) for t in despesas_cc)
+        num_cc   = len(despesas_cc)
+        maior_cc = max(despesas_cc, key=lambda t: abs(t["valor"]))
 
-    # KPIs — usando dados do mês atual
-    total_desp = sum(abs(t["valor"]) for t in despesas_tx)
-    num_tx     = len(despesas_tx)
+        c1, c2, c3 = st.columns(3, gap="small")
+        with c1:
+            st.markdown(_kpi_card(
+                "Total no Cartão", fmt_moeda(total_cc),
+                f"{num_cc} lançamento{'s' if num_cc != 1 else ''}",
+                _COR_DESPESA,
+            ), unsafe_allow_html=True)
+        with c2:
+            st.markdown(_kpi_card(
+                "Ticket Médio", fmt_moeda(total_cc / num_cc),
+                "Média por transação do mês.", _COR_NEUTRO,
+            ), unsafe_allow_html=True)
+        with c3:
+            st.markdown(_kpi_card(
+                "Maior Lançamento", fmt_moeda(abs(maior_cc["valor"])),
+                maior_cc["descricao"][:30], "#F6C90E",
+            ), unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns(3, gap="small")
-    with c1:
-        st.markdown(_kpi_card(
-            "Total no Cartão",
-            fmt_moeda(total_desp),
-            f"{num_tx} lançamento{'s' if num_tx != 1 else ''}",
-            _COR_DESPESA,
-        ), unsafe_allow_html=True)
-    with c2:
-        media = total_desp / num_tx if num_tx > 0 else 0
-        st.markdown(_kpi_card(
-            "Ticket Médio",
-            fmt_moeda(media),
-            "Média por transação do mês.",
-            _COR_NEUTRO,
-        ), unsafe_allow_html=True)
-    with c3:
-        maior = max(despesas_tx, key=lambda t: abs(t["valor"]))
-        st.markdown(_kpi_card(
-            "Maior Lançamento",
-            fmt_moeda(abs(maior["valor"])),
-            maior["descricao"][:30],
-            "#F6C90E",
-        ), unsafe_allow_html=True)
+    # ── Histórico anual de uso do cartão ─────────────────────────────────────
+    _secao_titulo("📅", "Histórico anual de uso do cartão (por vencimento)")
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    hist_cc  = get_historico_cc_mensal()
+    anos_cc  = sorted({h["ano"] for h in hist_cc}, reverse=True)
+    ano_hist = st.selectbox(
+        "Ano de referência", anos_cc if anos_cc else [_date.today().year],
+        key="cc_ano_hist",
+    )
+    totais_por_mes = {h["mes"]: h["total"] for h in hist_cc if h["ano"] == ano_hist}
+    meses_labels   = [_MESES_PT[m] for m in range(1, 13)]
+    vals_hist      = [totais_por_mes.get(m, 0.0) for m in range(1, 13)]
 
-    # ── Gastos por categoria ────────────────────────────────────────────────
-    _secao_titulo("📊", "Despesas por categoria")
-
-    agg: dict[str, float] = defaultdict(float)
-    for t in despesas_tx:
-        agg[t["categoria"]] += abs(t["valor"])
-
-    agg_sorted = sorted(agg.items(), key=lambda x: x[1], reverse=True)
-    total_geral = sum(v for _, v in agg_sorted)
-
-    # Bar chart (estilo do original: laranja)
-    cat_nomes_bar = [c for c, _ in agg_sorted]
-    cat_vals_bar  = [v for _, v in agg_sorted]
-    cat_pcts_bar  = [v / total_geral * 100 if total_geral > 0 else 0 for v in cat_vals_bar]
-
-    fig_cat = go.Figure(go.Bar(
-        x=cat_nomes_bar, y=cat_vals_bar,
-        marker_color="#FFA500",
-        hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<br>%{customdata:.1f}%<extra></extra>",
-        customdata=cat_pcts_bar,
+    fig_hist = go.Figure(go.Scatter(
+        x=meses_labels, y=vals_hist, mode="lines+markers",
+        line={"color": "#4A9EFF", "width": 2.5},
+        marker={"size": 7},
+        fill="tozeroy", fillcolor="rgba(74,158,255,0.08)",
+        hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
     ))
-    fig_cat.update_layout(
+    fig_hist.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font_color=_COR_NEUTRO,
-        margin={"t": 10, "b": 0, "l": 0, "r": 0}, height=260,
-        xaxis={"showgrid": False, "tickangle": -30},
-        yaxis={"showgrid": True, "gridcolor": "#1E2533",
-               "tickformat": ",.0f", "tickprefix": "R$ "},
+        margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=300,
+        xaxis={"showgrid": False, "title": {"text": "Mês", "font": {"size": 10}}},
+        yaxis={
+            "showgrid": True, "gridcolor": "#1E2533",
+            "tickformat": ",.0f", "tickprefix": "R$ ",
+            "title": {"text": "Valor (R$)", "font": {"size": 10}},
+        },
     )
-    st.plotly_chart(fig_cat, use_container_width=True, config={"displayModeBar": False})
-
-    # Tabela de participação
-    st.markdown(
-        '<div style="display:grid;grid-template-columns:1fr 120px 80px;'
-        'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
-        'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
-        'letter-spacing:0.1em;color:#4A5568;">'
-        '<span>Categoria</span>'
-        '<span style="text-align:right">Total (R$)</span>'
-        '<span style="text-align:right">% do total</span>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-    for i, (cat, valor) in enumerate(agg_sorted):
-        pct = valor / total_geral * 100 if total_geral > 0 else 0
-        cor = _CORES_CAT[i % len(_CORES_CAT)]
-        st.markdown(
-            f'<div style="display:grid;grid-template-columns:1fr 120px 80px;'
-            f'gap:4px;padding:6px 10px;background:#12151E;'
-            f'border-bottom:1px solid #1A1F2E;font-size:0.81rem;align-items:center;">'
-            f'<div style="display:flex;align-items:center;gap:8px;">'
-            f'<div style="width:8px;height:8px;border-radius:50%;background:{cor};flex-shrink:0"></div>'
-            f'<span style="color:#CBD5E0">{cat}</span>'
-            f'</div>'
-            f'<span style="text-align:right;font-weight:700;color:{_COR_DESPESA}">'
-            f'{fmt_moeda(valor)}</span>'
-            f'<span style="text-align:right;color:#718096">{pct:.1f}%</span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
+    st.plotly_chart(fig_hist, use_container_width=True, config={"displayModeBar": False})
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Lista de lançamentos ──────────────────────────────────────────────────
-    _secao_titulo("📋", "Lançamentos do mês")
+    # ── Categorias + lançamentos do mês ──────────────────────────────────────
+    if despesas_cc:
+        _secao_titulo("📊", "Despesas por categoria")
 
-    st.markdown(
-        '<div style="display:grid;grid-template-columns:80px 1fr 150px 120px;'
-        'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
-        'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
-        'letter-spacing:0.1em;color:#4A5568;">'
-        '<span>Data</span><span>Descrição</span>'
-        '<span style="text-align:center">Categoria</span>'
-        '<span style="text-align:right">Valor</span>'
-        '</div>',
-        unsafe_allow_html=True,
+        agg: dict[str, float] = defaultdict(float)
+        for t in despesas_cc:
+            agg[t["categoria"]] += abs(t["valor"])
+        agg_sorted  = sorted(agg.items(), key=lambda x: x[1], reverse=True)
+        total_agg   = sum(v for _, v in agg_sorted)
+
+        st.markdown(
+            '<div style="display:grid;grid-template-columns:1fr 120px 80px;'
+            'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
+            'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
+            'letter-spacing:0.1em;color:#4A5568;">'
+            '<span>Categoria</span>'
+            '<span style="text-align:right">Total (R$)</span>'
+            '<span style="text-align:right">% do total</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        for i, (cat, valor) in enumerate(agg_sorted):
+            pct = valor / total_agg * 100 if total_agg > 0 else 0
+            cor = _CORES_CAT[i % len(_CORES_CAT)]
+            st.markdown(
+                f'<div style="display:grid;grid-template-columns:1fr 120px 80px;'
+                f'gap:4px;padding:6px 10px;background:#12151E;'
+                f'border-bottom:1px solid #1A1F2E;font-size:0.81rem;align-items:center;">'
+                f'<div style="display:flex;align-items:center;gap:8px;">'
+                f'<div style="width:8px;height:8px;border-radius:50%;background:{cor};flex-shrink:0"></div>'
+                f'<span style="color:#CBD5E0">{cat}</span>'
+                f'</div>'
+                f'<span style="text-align:right;font-weight:700;color:{_COR_DESPESA}">'
+                f'{fmt_moeda(valor)}</span>'
+                f'<span style="text-align:right;color:#718096">{pct:.1f}%</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo("📋", "Lançamentos do mês")
+        st.markdown(
+            '<div style="display:grid;grid-template-columns:80px 1fr 150px 120px;'
+            'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
+            'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
+            'letter-spacing:0.1em;color:#4A5568;">'
+            '<span>Data</span><span>Descrição</span>'
+            '<span style="text-align:center">Categoria</span>'
+            '<span style="text-align:right">Valor</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        for tx in despesas_cc[:50]:
+            st.markdown(
+                f'<div style="display:grid;grid-template-columns:80px 1fr 150px 120px;'
+                f'gap:4px;padding:6px 10px;background:#12151E;'
+                f'border-bottom:1px solid #1A1F2E;font-size:0.81rem;align-items:center;">'
+                f'<span style="color:#718096">{tx["data_fmt"]}</span>'
+                f'<span style="color:#CBD5E0">{tx["descricao"][:38]}</span>'
+                f'<span style="text-align:center;background:#1E2533;border-radius:4px;'
+                f'padding:2px 5px;font-size:0.70rem;color:{_COR_NEUTRO}">{tx["categoria"]}</span>'
+                f'<span style="text-align:right;font-weight:700;color:{_COR_DESPESA}">'
+                f'{tx["valor_fmt"]}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.caption("Nenhum lançamento de cartão de crédito neste mês.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
+
+    # ── Dívidas no cartão ─────────────────────────────────────────────────────
+    _secao_titulo("💳", "Dívidas no cartão")
+
+    dividas = get_dividas_cc()
+
+    if not dividas:
+        st.caption("Nenhum parcelamento registrado.")
+        return
+
+    cartoes_disp  = sorted({dv["cartao"]    for dv in dividas})
+    cats_div_disp = sorted({dv["categoria"] for dv in dividas})
+    anos_div_disp = sorted(
+        {dv["data_compra"].year for dv in dividas if dv["data_compra"]},
+        reverse=True,
     )
 
-    for tx in despesas_tx[:50]:
+    with st.form("form_filtros_dividas"):
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        with col_f1:
+            f_cartao = st.selectbox("Cartão",        ["Todos"] + cartoes_disp,  key="cc_f_cartao")
+        with col_f2:
+            f_cat    = st.selectbox("Categoria",     ["Todas"] + cats_div_disp, key="cc_f_cat")
+        with col_f3:
+            f_ano    = st.selectbox(
+                "Ano da compra",
+                ["Todos"] + [str(a) for a in anos_div_disp],
+                key="cc_f_ano",
+            )
+        with col_f4:
+            f_status = st.selectbox("Status", ["Todos", "Ativas", "Concluídas"], key="cc_f_status")
+        f_busca = st.text_input(
+            "Buscar na descrição",
+            placeholder="Ex: mercado, passagem, viagem...",
+            key="cc_f_busca",
+        )
+        st.form_submit_button("Aplicar filtros")
+
+    # Aplica filtros em memória
+    div_f = dividas
+    if f_cartao != "Todos":
+        div_f = [dv for dv in div_f if dv["cartao"] == f_cartao]
+    if f_cat != "Todas":
+        div_f = [dv for dv in div_f if dv["categoria"] == f_cat]
+    if f_ano != "Todos":
+        div_f = [dv for dv in div_f if dv["data_compra"] and dv["data_compra"].year == int(f_ano)]
+    if f_status == "Ativas":
+        div_f = [dv for dv in div_f if dv["is_ativa"]]
+    elif f_status == "Concluídas":
+        div_f = [dv for dv in div_f if not dv["is_ativa"]]
+    if f_busca:
+        bl = f_busca.lower()
+        div_f = [dv for dv in div_f if bl in (dv["descricao"] or "").lower()]
+
+    ativas     = [dv for dv in div_f if dv["is_ativa"]]
+    concluidas = [dv for dv in div_f if not dv["is_ativa"]]
+
+    col_at, col_conc = st.columns(2, gap="medium")
+
+    with col_at:
         st.markdown(
-            f'<div style="display:grid;grid-template-columns:80px 1fr 150px 120px;'
-            f'gap:4px;padding:6px 10px;background:#12151E;'
-            f'border-bottom:1px solid #1A1F2E;'
-            f'font-size:0.81rem;align-items:center;">'
-            f'<span style="color:#718096">{tx["data_fmt"]}</span>'
-            f'<span style="color:#CBD5E0">{tx["descricao"][:38]}</span>'
-            f'<span style="text-align:center;background:#1E2533;border-radius:4px;'
-            f'padding:2px 5px;font-size:0.70rem;color:{_COR_NEUTRO}">{tx["categoria"]}</span>'
-            f'<span style="text-align:right;font-weight:700;color:{_COR_DESPESA}">'
-            f'{tx["valor_fmt"]}</span>'
+            f'<div style="font-size:0.88rem;font-weight:700;color:#E2E8F0;margin-bottom:8px;">'
+            f'Dívidas ativas (consolidadas) '
+            f'<span style="color:{_COR_DESPESA};font-size:0.75rem">({len(ativas)})</span>'
             f'</div>',
             unsafe_allow_html=True,
         )
+        st.checkbox("Habilitar edição das dívidas ativas", key="cc_edit_ativas")
+        _render_dividas_table(ativas, show_descricao=False)
+
+    with col_conc:
+        st.markdown(
+            f'<div style="font-size:0.88rem;font-weight:700;color:#E2E8F0;margin-bottom:8px;">'
+            f'Dívidas concluídas (compras 100% quitadas) '
+            f'<span style="color:{_COR_RECEITA};font-size:0.75rem">({len(concluidas)})</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        st.checkbox("Habilitar edição das dívidas concluídas", key="cc_edit_conc")
+        _render_dividas_table(concluidas, show_descricao=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
