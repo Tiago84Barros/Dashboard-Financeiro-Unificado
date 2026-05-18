@@ -31,6 +31,7 @@ from views.empresas_b3 import (
     _weights_from_scores,
     _yf_dividendos_anuais,
     _yf_multiplos_dividendos,
+    _yf_trailing12m_divs,
 )
 
 # ── CSS incremental ───────────────────────────────────────────────────────────
@@ -735,7 +736,6 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
         pm = _price_metrics(df_precos_all, tk)
 
         roic = _mean_last_years(df_mult, "ROIC")
-        dy = _mean_last_years(df_mult, "DY")
         rec_growth = _growth_from_annual(_annual_series(df_fin, "Receita_Liquida"))
         lucro_growth = _growth_from_annual(_annual_series(df_fin, "Lucro_Liquido"))
         div_growth = _growth_from_annual(_first_annual_series(
@@ -746,16 +746,45 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
             ),
         ))
         debt_ratio, debt_label = _latest_debt_ratio(df_fin)
-        fonte_dividendos = "DB"
 
+        # ── DY com 4 níveis de fallback ───────────────────────────────────
+        dy = np.nan
+        dy_label = "DY médio (5a)"
+        fonte_dividendos = "—"
+
+        # 1. Média 5 anos do banco de dados
+        dy_db = _mean_last_years(df_mult, "DY")
+        if _valid_dy(dy_db):
+            dy, fonte_dividendos, dy_label = float(dy_db), "DB (média 5a)", "DY médio (5a)"
+
+        # 2. yfinance .info (DY direto ou trailingAnnualDividendYield)
         if not _valid_dy(dy):
-            yf_divs = _yf_multiplos_dividendos(tk)
-            dy_yf = yf_divs.get("DY")
+            dy_yf = _yf_multiplos_dividendos(tk).get("DY")
             if _valid_dy(dy_yf):
-                dy = float(dy_yf)
-                fonte_dividendos = "YF"
-            else:
-                dy = np.nan
+                dy, fonte_dividendos, dy_label = float(dy_yf), "YF", "DY trailing (12m)"
+
+        # 3. Calcular: soma trailing-12m / último preço disponível
+        if not _valid_dy(dy):
+            tk_up = tk.strip().upper().replace(".SA", "")
+            trail12 = _yf_trailing12m_divs(tk)
+            if trail12 > 0:
+                px_last = np.nan
+                if not df_precos_all.empty and tk_up in df_precos_all.columns:
+                    s_px = df_precos_all[tk_up].dropna()
+                    if not s_px.empty:
+                        px_last = float(s_px.iloc[-1])
+                if np.isfinite(px_last) and px_last > 0:
+                    dy_calc = trail12 / px_last
+                    if _valid_dy(dy_calc):
+                        dy, fonte_dividendos, dy_label = dy_calc, "YF (calculado)", "DY trailing (12m)"
+
+        # 4. Último valor pontual do banco (sem média)
+        if not _valid_dy(dy) and df_mult is not None and not df_mult.empty and "DY" in df_mult.columns:
+            vals_dy = _ratio_to_fraction(pd.to_numeric(df_mult["DY"], errors="coerce").dropna(), "DY")
+            if not vals_dy.empty:
+                last_dy = float(vals_dy.iloc[-1])
+                if _valid_dy(last_dy):
+                    dy, fonte_dividendos, dy_label = last_dy, "DB (último)", "DY (último disp.)"
 
         if not _finite(div_growth):
             df_div_yf = _yf_dividendos_anuais(tk)
@@ -763,13 +792,15 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
                 div_growth_yf = _growth_from_annual(_annual_series(df_div_yf, "Dividendos"))
                 if _finite(div_growth_yf):
                     div_growth = div_growth_yf
-                    fonte_dividendos = "YF" if fonte_dividendos == "DB" else fonte_dividendos
+                    if fonte_dividendos == "—":
+                        fonte_dividendos = "YF"
 
         rows.append({
             "ticker": tk,
             "nome": nomes.get(tk, tk),
             "roic": roic,
             "dy": dy,
+            "dy_label": dy_label,
             "div_growth": div_growth,
             "fonte_dividendos": fonte_dividendos,
             "debt_ratio": debt_ratio,
@@ -813,8 +844,9 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
 
         c1, c2, c3, c4 = st.columns(4)
         c1.markdown(_quality_card("ROIC médio (5a)", _fmt_pct(row["roic"]), "Eficiência do capital (média 5 anos).", "cf-card-income"), unsafe_allow_html=True)
-        fonte_div = str(row.get("fonte_dividendos") or "DB")
-        c2.markdown(_quality_card("DY médio (5a)", _fmt_pct(row["dy"]), f"Dividend Yield médio. Fonte: {fonte_div}.", "cf-card-yield"), unsafe_allow_html=True)
+        fonte_div = str(row.get("fonte_dividendos") or "—")
+        dy_lbl    = str(row.get("dy_label") or "DY médio (5a)")
+        c2.markdown(_quality_card(dy_lbl, _fmt_pct(row["dy"]), f"Dividend Yield. Fonte: {fonte_div}.", "cf-card-yield"), unsafe_allow_html=True)
         c3.markdown(_quality_card("Cresc. anual dividendos (5a)", _fmt_growth(row["div_growth"]), f"Tendência robusta dos dividendos. Fonte: {fonte_div}.", _pos_class(row["div_growth"])), unsafe_allow_html=True)
         c4.markdown(_quality_card(str(row["debt_label"]), _fmt_ratio(row["debt_ratio"]), "Último disponível no Supabase.", "cf-card-ratio"), unsafe_allow_html=True)
 

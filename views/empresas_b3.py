@@ -348,6 +348,36 @@ def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _yf_trailing12m_divs(ticker: str) -> float:
+    """
+    Soma de dividendos por ação pagos nos últimos 12 meses via yfinance (R$/ação).
+    Fallback: soma do último ano disponível no histórico.
+    Evita .last() depreciado no pandas 2.x — usa filtro explícito por data.
+    """
+    tk_clean = ticker.strip().upper().replace(".SA", "")
+    for var in [f"{tk_clean}.SA", tk_clean]:
+        try:
+            divs = yf.Ticker(var).dividends
+            if divs is None or divs.empty:
+                continue
+            if hasattr(divs.index, "tz") and divs.index.tz is not None:
+                divs.index = divs.index.tz_localize(None)
+            divs.index = pd.to_datetime(divs.index)
+            cutoff = pd.Timestamp.now() - pd.Timedelta(days=365)
+            trail = float(divs[divs.index >= cutoff].sum())
+            if trail > 0:
+                return trail
+            # fallback: último ano com dados
+            last_yr = int(divs.index.year.max())
+            total_yr = float(divs[divs.index.year == last_yr].sum())
+            if total_yr > 0:
+                return total_yr
+        except Exception:
+            pass
+    return 0.0
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def _batch_yf_dividendos_mensais(tickers: tuple[str, ...], period: str = "10y") -> dict[str, pd.Series]:
     """
     Dividendos mensais por ação para múltiplos tickers via yfinance.
