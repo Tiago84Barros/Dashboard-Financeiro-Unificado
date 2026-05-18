@@ -428,13 +428,15 @@ def _render_alocacao(items_analisados: list[dict], pesos_novos: dict[str, float]
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
-    tk   = it.get("ticker", "")
-    an   = it.get("analise", {})
+    tk    = it.get("ticker", "")
+    an    = it.get("analise", {})
     persp = an.get("perspectiva", "moderada")
     w_new = pesos_novos.get(tk, float(it.get("peso_pct", 0.0)) / 100.0)
 
-    badge = _persp_badge(persp)
-    with st.expander(f"{tk}  —  {an.get('acao_sugerida','?').upper()}  •  {w_new*100:.1f}%  {badge}", expanded=False):
+    persp_icon = {"forte": "🟢", "moderada": "🟡", "fraca": "🔴"}.get(persp, "⚪")
+    persp_txt  = persp.upper()
+    acao_txt   = an.get("acao_sugerida", "?").upper()
+    with st.expander(f"{persp_icon} {tk}  —  {acao_txt}  •  {w_new*100:.1f}%  [{persp_txt}]", expanded=False):
         # Resumo
         resumo = an.get("resumo", "")
         if resumo:
