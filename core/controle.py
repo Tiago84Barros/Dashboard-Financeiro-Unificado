@@ -695,20 +695,21 @@ def _controle_real(ano: int, mes: int) -> dict:
         eh_receita = val > 0
         data = r.due_date
         transacoes.append({
-            "id":         r.id,
-            "descricao":  r.description,
-            "valor":      val,
-            "valor_fmt":  (
+            "id":           r.id,
+            "descricao":    r.description,
+            "valor":        val,
+            "valor_fmt":    (
                 f"{'+ ' if eh_receita else '- '}R$ {abs(val):,.2f}"
                 .replace(",", "X").replace(".", ",").replace("X", ".")
             ),
-            "data":       data,
-            "data_fmt":   data.strftime("%d/%m") if data else "—",
-            "tipo":       r.type,
-            "status":     r.status,
-            "categoria":  r.category_name,
-            "conta":      r.account_name,
-            "eh_receita": eh_receita,
+            "data":         data,
+            "data_fmt":     data.strftime("%d/%m") if data else "—",
+            "tipo":         r.type,
+            "status":       r.status,
+            "categoria":    r.category_name,
+            "conta":        r.account_name,
+            "account_type": getattr(r, "account_type", ""),
+            "eh_receita":   eh_receita,
         })
 
     return {

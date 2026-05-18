@@ -1092,25 +1092,14 @@ def _tab_tabelas(d: dict) -> None:
 def _tab_cartao(d: dict) -> None:
     txs = d["transacoes"]
 
-    # Filtra despesas (em dados reais filtraria por payment_type = 'Cartão de crédito')
-    # O campo payment_type não existe no schema unificado atual — mostra todas as despesas
-    despesas_tx = [t for t in txs if not t["eh_receita"]]
-
-    st.markdown(
-        '<div style="background:rgba(74,158,255,0.06);'
-        'border:1px solid rgba(74,158,255,0.2);'
-        'border-left:3px solid #4A9EFF;'
-        'border-radius:0 8px 8px 0;'
-        'padding:10px 14px;font-size:0.82rem;color:#9CA3AF;margin-bottom:16px;">'
-        'ℹ️ Exibe todas as despesas do mês. '
-        'O campo <b>forma de pagamento</b> não é armazenado no schema atual do banco unificado. '
-        'Quando disponível, será possível filtrar por '
-        '<b>Cartão de crédito</b> e calcular faturas e dívidas de parcelas com precisão.</div>',
-        unsafe_allow_html=True,
-    )
+    # Somente transações de contas com account_type='credit_card'
+    despesas_tx = [
+        t for t in txs
+        if not t["eh_receita"] and t.get("account_type") == "credit_card"
+    ]
 
     if not despesas_tx:
-        st.caption("Nenhuma despesa registrada neste mês.")
+        st.caption("Nenhum lançamento de cartão de crédito registrado neste mês.")
         return
 
     # KPIs — usando dados do mês atual
@@ -1120,7 +1109,7 @@ def _tab_cartao(d: dict) -> None:
     c1, c2, c3 = st.columns(3, gap="small")
     with c1:
         st.markdown(_kpi_card(
-            "Total em Despesas",
+            "Total no Cartão",
             fmt_moeda(total_desp),
             f"{num_tx} lançamento{'s' if num_tx != 1 else ''}",
             _COR_DESPESA,
