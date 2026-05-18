@@ -1481,6 +1481,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                 .head(12)
                 .rename(columns={fator_sel: "Contrib. (p.p.)"})
             )
+            df_rank = df_rank.copy()
+            df_rank["Valor"] = df_rank["Valor"].apply(fmt_moeda)
             st.dataframe(
                 df_rank,
                 use_container_width=True,
@@ -1488,7 +1490,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                 column_config={
                     "Peso (%)": st.column_config.NumberColumn(format="%.2f%%"),
                     "Contrib. (p.p.)": st.column_config.NumberColumn(format="%.2f"),
-                    "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Valor": st.column_config.TextColumn(),
                 },
             )
         st.caption(
