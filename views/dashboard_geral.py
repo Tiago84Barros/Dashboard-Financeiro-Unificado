@@ -84,8 +84,10 @@ def _barra(pct: float, cor: str) -> str:
 
 def _card(borda_cor: str, corpo_html: str) -> None:
     st.markdown(f"""
-    <div style="background:#12151E;border:1px solid #1E2533;border-top:3px solid {borda_cor};
-                border-radius:12px;padding:22px 20px 18px;min-height:280px;">
+    <div style="background:linear-gradient(160deg,rgba(20,24,38,0.97) 0%,rgba(14,17,26,1) 100%);
+                border:1px solid rgba(255,255,255,0.07);border-top:4px solid {borda_cor};
+                border-radius:14px;padding:22px 20px 18px;min-height:280px;
+                box-shadow:0 4px 24px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.04);">
         {corpo_html}
     </div>""", unsafe_allow_html=True)
 
@@ -227,17 +229,22 @@ def _fig_br_exterior(br: float, ext: float) -> go.Figure:
     valores = [br, ext]
     fig = go.Figure(go.Bar(
         x=labels, y=valores,
-        marker_color=[_COR_FLUXO, _COR_PATRIMONIO],
+        marker={
+            "color": [_COR_FLUXO, _COR_PATRIMONIO],
+            "opacity": 0.9,
+            "line": {"color": ["#00FFBB", "#7BC8FF"], "width": 1.5},
+        },
         text=[fmt_moeda(v) for v in valores],
         textposition="outside",
+        textfont={"size": 12, "color": ["#00C896", "#4A9EFF"]},
         hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font_color=_COR_NEUTRO,
-        margin={"t": 8, "b": 8, "l": 0, "r": 0}, height=250,
+        margin={"t": 30, "b": 8, "l": 0, "r": 0}, height=250,
         yaxis={"gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
-        xaxis={"showgrid": False},
+        xaxis={"showgrid": False, "tickfont": {"size": 13, "color": "#E2E8F0"}},
         showlegend=False,
     )
     return fig
@@ -270,30 +277,36 @@ def _fig_top_posicoes(posicoes: list) -> go.Figure:
 
 def _fig_evolucao_investimentos(evolucao: dict) -> go.Figure:
     snapshots = evolucao.get("snapshots", []) if isinstance(evolucao, dict) else []
-    labels = [s.get("label") for s in snapshots]
-    mercado = [s.get("valor_mercado", 0.0) for s in snapshots]
+    labels    = [s.get("label") for s in snapshots]
+    mercado   = [s.get("valor_mercado", 0.0)   for s in snapshots]
     investido = [s.get("valor_investido", 0.0) for s in snapshots]
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=labels, y=mercado, name="Valor de mercado",
         mode="lines+markers", fill="tozeroy",
         line={"color": _COR_FLUXO, "width": 3},
-        marker={"size": 7},
+        fillcolor="rgba(0,200,150,0.10)",
+        marker={"size": 8, "color": _COR_FLUXO,
+                "line": {"color": "#00FFBB", "width": 1.5}},
         hovertemplate="<b>%{x}</b><br>Mercado: R$ %{y:,.2f}<extra></extra>",
     ))
-    fig.add_trace(go.Scatter(
-        x=labels, y=investido, name="Valor investido",
-        mode="lines+markers",
-        line={"color": _COR_INVEST, "width": 2, "dash": "dot"},
-        marker={"size": 6},
-        hovertemplate="<b>%{x}</b><br>Investido: R$ %{y:,.2f}<extra></extra>",
-    ))
+    investido_vis = [v for v in investido if v > 0]
+    if investido_vis:
+        fig.add_trace(go.Scatter(
+            x=labels, y=investido, name="Custo histórico",
+            mode="lines+markers",
+            line={"color": _COR_INVEST, "width": 2, "dash": "dot"},
+            marker={"size": 6, "color": _COR_INVEST},
+            hovertemplate="<b>%{x}</b><br>Investido: R$ %{y:,.2f}<extra></extra>",
+        ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font_color=_COR_NEUTRO,
-        legend={"orientation": "h", "y": -0.18, "font": {"size": 11}, "bgcolor": "rgba(0,0,0,0)"},
+        legend={"orientation": "h", "y": -0.20, "font": {"size": 11},
+                "bgcolor": "rgba(0,0,0,0)"},
         margin={"t": 8, "b": 8, "l": 0, "r": 0}, height=285,
-        yaxis={"gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
+        yaxis={"gridcolor": "rgba(30,37,51,0.8)", "tickformat": ",.0f",
+               "tickprefix": "R$ "},
         xaxis={"showgrid": False},
     )
     return fig
@@ -301,14 +314,35 @@ def _fig_evolucao_investimentos(evolucao: dict) -> go.Figure:
 
 def _mini_metric(label: str, valor: str, detalhe: str, cor: str) -> str:
     return f"""
-    <div style="background:#12151E;border:1px solid #1E2533;border-left:3px solid {cor};
-                border-radius:10px;padding:14px 14px;min-height:96px;">
-        <div style="font-size:0.66rem;text-transform:uppercase;letter-spacing:0.13em;
-                    color:#718096;font-weight:800;margin-bottom:8px">{label}</div>
-        <div style="font-size:1.35rem;font-weight:850;color:{cor};line-height:1">{valor}</div>
-        <div style="font-size:0.76rem;color:#9CA3AF;margin-top:8px">{detalhe}</div>
+    <div style="background:linear-gradient(135deg,rgba(18,21,30,0.95) 0%,rgba(20,25,45,0.9) 100%);
+                border:1px solid rgba(255,255,255,0.06);border-left:4px solid {cor};
+                border-radius:12px;padding:16px 16px;min-height:100px;
+                box-shadow:0 2px 12px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,255,255,0.03);">
+        <div style="font-size:0.64rem;text-transform:uppercase;letter-spacing:0.14em;
+                    color:{cor};font-weight:800;margin-bottom:10px;opacity:0.85">{label}</div>
+        <div style="font-size:1.45rem;font-weight:900;color:{cor};line-height:1;
+                    text-shadow:0 0 18px {cor}55">{valor}</div>
+        <div style="font-size:0.74rem;color:#6B7280;margin-top:9px;line-height:1.3">{detalhe}</div>
     </div>
     """
+
+
+def _grafico_container_open(icone: str, titulo: str, cor: str) -> None:
+    st.markdown(f"""
+    <div style="background:linear-gradient(180deg,rgba(22,26,40,0.95) 0%,rgba(14,17,26,0.98) 100%);
+                border:1px solid rgba(255,255,255,0.07);border-top:3px solid {cor};
+                border-radius:14px;padding:18px 18px 4px;
+                box-shadow:0 4px 20px rgba(0,0,0,0.4);">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <span style="font-size:1rem">{icone}</span>
+            <span style="font-size:0.72rem;font-weight:800;text-transform:uppercase;
+                         letter-spacing:0.12em;color:{cor}">{titulo}</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+
+def _grafico_container_close() -> None:
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _secao_raio_x_portfolio(carteira: dict, evolucao: dict, classes: list) -> None:
@@ -345,24 +379,28 @@ def _secao_raio_x_portfolio(carteira: dict, evolucao: dict, classes: list) -> No
 
     c1, c2 = st.columns([1.05, 0.95], gap="medium")
     with c1:
-        st.markdown('<div style="font-weight:800;color:#E2E8F0;margin-bottom:8px">Alocação por classe</div>', unsafe_allow_html=True)
+        _grafico_container_open("🥧", "Alocação por classe", _COR_INVEST)
         st.plotly_chart(_fig_donut_classes(classes), use_container_width=True, config={"displayModeBar": False})
+        _grafico_container_close()
     with c2:
-        st.markdown('<div style="font-weight:800;color:#E2E8F0;margin-bottom:8px">Brasil vs exterior</div>', unsafe_allow_html=True)
+        _grafico_container_open("🌎", "Brasil vs Exterior", _COR_PATRIMONIO)
         st.plotly_chart(_fig_br_exterior(br, ext), use_container_width=True, config={"displayModeBar": False})
+        _grafico_container_close()
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     c3, c4 = st.columns(2, gap="medium")
     with c3:
-        st.markdown('<div style="font-weight:800;color:#E2E8F0;margin-bottom:8px">Maiores posições</div>', unsafe_allow_html=True)
+        _grafico_container_open("🏆", "Maiores posições", _COR_ALERTA)
         st.plotly_chart(_fig_top_posicoes(posicoes), use_container_width=True, config={"displayModeBar": False})
+        _grafico_container_close()
     with c4:
-        st.markdown('<div style="font-weight:800;color:#E2E8F0;margin-bottom:8px">Evolução dos investimentos</div>', unsafe_allow_html=True)
+        _grafico_container_open("📈", "Evolução dos investimentos", _COR_FLUXO)
         if evolucao.get("snapshots"):
             st.plotly_chart(_fig_evolucao_investimentos(evolucao), use_container_width=True, config={"displayModeBar": False})
         else:
             st.caption("Sem snapshots patrimoniais suficientes.")
+        _grafico_container_close()
 
     st.markdown("<br>", unsafe_allow_html=True)
 
