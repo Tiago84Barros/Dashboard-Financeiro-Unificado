@@ -27,8 +27,8 @@ _COR_NEGATIVO   = "#FC5C7D"
 _COR_NEUTRO     = "#9CA3AF"
 
 _CORES_CAT = [
-    "#00C896", "#4A9EFF", "#9B59B6", "#F6C90E", "#FC5C7D",
-    "#FF9F43", "#54A0FF", "#5F27CD", "#01CBC6", "#FF6B81",
+    "#4C9BE8", "#E84C9B", "#F5A623", "#2ECC71", "#A855F7",
+    "#7C3AED", "#63cab7", "#E8C94C", "#4CE8D8", "#E8714C",
 ]
 
 _MESES_PT = {

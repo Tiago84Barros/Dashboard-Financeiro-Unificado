@@ -66,11 +66,19 @@ _CLASS_LABEL: dict[str, str] = {
 }
 
 _CLASS_COR: dict[str, str] = {
-    "reit":         "#9B59B6",
-    "stock":        "#00C896",
-    "fixed_income": "#4A9EFF",
-    "etf":          "#F6C90E",
-    "other":        "#718096",
+    "reit":         "#E84C9B",
+    "fii":          "#E84C9B",
+    "stock":        "#4C9BE8",
+    "fixed_income": "#A855F7",
+    "renda_fixa":   "#A855F7",
+    "tesouro":      "#2ECC71",
+    "fundo_rf":     "#7C3AED",
+    "etf":          "#F5A623",
+    "etf_br":       "#F5A623",
+    "etf_intl":     "#63cab7",
+    "bdr":          "#4C9BE8",
+    "crypto":       "#FF6B35",
+    "other":        "#8b9ab0",
 }
 
 # ── Mock: eventos representativos ─────────────────────────────────────────────
