@@ -217,6 +217,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Editor temp files (Claude Code, VS Code, etc.)
+*.tmp.*
+
 # Migração — outputs intermediários (dados reais nunca comitados)
 migration/output/*.csv
 migration/output/*.json
