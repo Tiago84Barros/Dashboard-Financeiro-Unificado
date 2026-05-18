@@ -264,7 +264,7 @@ def _render_macro(macro_hist: dict) -> None:
         return f"{sign} R$ {abs(d):.2f} vs {ano_ant}", d > 0
 
     def _pib_fmt_and_diff() -> tuple[str, str, bool | None]:
-        """PIB pode ser taxa de crescimento ou valor absoluto do PIB."""
+        """PIB: taxa de crescimento (≤100) ou valor absoluto (>100)."""
         vc = cur.get("pib")
         va = ant.get("pib")
         try:
@@ -273,18 +273,37 @@ def _render_macro(macro_hist: dict) -> None:
             return "—", "—", None
         if not np.isfinite(vc_f):
             return "—", "—", None
-        # Se valor absoluto > 100 → provavelmente PIB em unidade monetária, não taxa
-        if abs(vc_f) > 100:
-            return "N/D", "dados absolutos", None
-        display = _fmt_rate(vc_f)
+
+        if abs(vc_f) <= 100:
+            # Taxa de crescimento
+            display = _fmt_rate(vc_f)
+            try:
+                va_f = float(va)
+                if np.isfinite(va_f) and abs(va_f) <= 100:
+                    d = vc_f - va_f
+                    mult = 100.0 if abs(vc_f) <= 1.0 else 1.0
+                    d_pp = d * mult
+                    sign = "▲" if d > 0 else ("▼" if d < 0 else "=")
+                    return display, f"{sign} {abs(d_pp):.2f}pp vs {ano_ant}", d > 0
+            except Exception:
+                pass
+            return display, "—", None
+
+        # Valor absoluto do PIB nominal
+        if abs(vc_f) >= 1e12:
+            display = f"R$ {vc_f / 1e12:.1f}T"
+        elif abs(vc_f) >= 1e9:
+            display = f"R$ {vc_f / 1e9:.0f}B"
+        elif abs(vc_f) >= 1e6:
+            display = f"R$ {vc_f / 1e6:.0f}M"
+        else:
+            display = f"R$ {vc_f:,.0f}"
         try:
             va_f = float(va)
-            if np.isfinite(va_f) and abs(va_f) <= 100:
-                d = vc_f - va_f
-                mult = 100.0 if abs(vc_f) <= 1.0 else 1.0
-                d_pp = d * mult
-                sign = "▲" if d > 0 else ("▼" if d < 0 else "=")
-                return display, f"{sign} {abs(d_pp):.2f}pp vs {ano_ant}", d > 0
+            if np.isfinite(va_f) and va_f != 0:
+                pct = (vc_f - va_f) / abs(va_f) * 100.0
+                sign = "▲" if pct > 0 else ("▼" if pct < 0 else "=")
+                return display, f"{sign} {abs(pct):.1f}% vs {ano_ant}", pct > 0
         except Exception:
             pass
         return display, "—", None
