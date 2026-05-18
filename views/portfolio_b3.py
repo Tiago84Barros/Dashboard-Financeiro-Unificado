@@ -18,6 +18,7 @@ from core.b3_portfolio_model import save_b3_portfolio_model
 from views.empresas_b3 import (
     _GAMMA_DEF, _CAP_DEF, _SOFT_DEF,
     _COR_POS, _COR_NEG, _COR_ALT, _COR_INF, _COR_NEU,
+    _DIV_POR_ACAO_MAX,
     _apply_cap_soft, _apply_decay_penalty,
     _batch_yf_dividendos_mensais,
     _batch_yf_precos_mensais,
@@ -747,38 +748,66 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
         ))
         debt_ratio, debt_label = _latest_debt_ratio(df_fin)
 
-        # ── DY com 4 níveis de fallback ───────────────────────────────────
+        # ── DY: prioridade 5 anos; fallback 12 meses ─────────────────────
         dy = np.nan
         dy_label = "DY médio (5a)"
         fonte_dividendos = "—"
+        tk_up = tk.strip().upper().replace(".SA", "")
 
-        # 1. Média 5 anos do banco de dados
+        # 1. Média 5 anos — banco de dados
         dy_db = _mean_last_years(df_mult, "DY")
         if _valid_dy(dy_db):
             dy, fonte_dividendos, dy_label = float(dy_db), "DB (média 5a)", "DY médio (5a)"
 
-        # 2. yfinance .info (DY direto ou trailingAnnualDividendYield)
+        # 2. Média até 5 anos calculada via yfinance
+        #    dividendos anuais (yf) / preço de final de ano (matriz de preços)
+        if not _valid_dy(dy):
+            df_divs_yf = _yf_dividendos_anuais(tk)
+            if not df_divs_yf.empty and not df_precos_all.empty and tk_up in df_precos_all.columns:
+                dy_anos: list[float] = []
+                for _, dr in df_divs_yf.tail(5).iterrows():
+                    try:
+                        ano_div  = int(pd.Timestamp(dr["Data"]).year)
+                        div_anual = float(dr["Dividendos"])
+                    except Exception:
+                        continue
+                    if div_anual <= 0 or div_anual > _DIV_POR_ACAO_MAX * 12:
+                        continue
+                    mask = df_precos_all.index.year == ano_div
+                    px_s = df_precos_all.loc[mask, tk_up].dropna()
+                    if px_s.empty:
+                        continue
+                    px = float(px_s.iloc[-1])
+                    if px > 0:
+                        dy_a = div_anual / px
+                        if 0 < dy_a <= 1.0:
+                            dy_anos.append(dy_a)
+                if dy_anos:
+                    n = len(dy_anos)
+                    dy = float(np.mean(dy_anos))
+                    fonte_dividendos = f"YF (média {n}a)"
+                    dy_label = f"DY médio ({n}a)"
+
+        # 3. yfinance .info (trailing 12m — menos preciso)
         if not _valid_dy(dy):
             dy_yf = _yf_multiplos_dividendos(tk).get("DY")
             if _valid_dy(dy_yf):
-                dy, fonte_dividendos, dy_label = float(dy_yf), "YF", "DY trailing (12m)"
+                dy, fonte_dividendos, dy_label = float(dy_yf), "YF .info", "DY trailing (12m)"
 
-        # 3. Calcular: soma trailing-12m / último preço disponível
+        # 4. Trailing 12m calculado: soma dividendos / último preço
         if not _valid_dy(dy):
-            tk_up = tk.strip().upper().replace(".SA", "")
             trail12 = _yf_trailing12m_divs(tk)
             if trail12 > 0:
                 px_last = np.nan
-                if not df_precos_all.empty and tk_up in df_precos_all.columns:
-                    s_px = df_precos_all[tk_up].dropna()
-                    if not s_px.empty:
-                        px_last = float(s_px.iloc[-1])
+                s_px = df_precos_all[tk_up].dropna() if (not df_precos_all.empty and tk_up in df_precos_all.columns) else pd.Series(dtype=float)
+                if not s_px.empty:
+                    px_last = float(s_px.iloc[-1])
                 if np.isfinite(px_last) and px_last > 0:
                     dy_calc = trail12 / px_last
                     if _valid_dy(dy_calc):
                         dy, fonte_dividendos, dy_label = dy_calc, "YF (calculado)", "DY trailing (12m)"
 
-        # 4. Último valor pontual do banco (sem média)
+        # 5. Último valor pontual do banco (sem média)
         if not _valid_dy(dy) and df_mult is not None and not df_mult.empty and "DY" in df_mult.columns:
             vals_dy = _ratio_to_fraction(pd.to_numeric(df_mult["DY"], errors="coerce").dropna(), "DY")
             if not vals_dy.empty:
