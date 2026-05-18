@@ -184,7 +184,7 @@ def _render_portfolio_salvo(model: dict, pesos_novos: dict[str, float] | None) -
         _kpi_card("Ano-base", str(ano), "ciclo de referência"),
         _kpi_card(
             "Alpha vs Selic",
-            f"{alpha_m*100:+.1f}%",
+            f"{alpha_m:+.1f}%",
             "média histórica do portfólio",
             mod_alpha,
         ),
@@ -228,26 +228,77 @@ def _render_macro(macro_hist: dict) -> None:
     cur = macro_hist[ano_cur]
     ant = macro_hist.get(ano_ant, {}) if ano_ant else {}
 
-    def _diff(key: str) -> tuple[str, bool | None]:
+    def _fmt_rate(val: float) -> str:
+        """Formata taxa: se decimal (≤1) multiplica ×100, se já % usa direto."""
+        if abs(val) <= 1.0:
+            return f"{val * 100:.2f}%"
+        return f"{val:.2f}%"
+
+    def _rate_diff(key: str) -> tuple[str, bool | None]:
+        """Delta para taxas: pp = diff×100 se decimal, diff direto se já em %."""
         vc = cur.get(key)
         va = ant.get(key)
-        if vc is None or not np.isfinite(float(vc)):
+        try:
+            vc, va = float(vc), float(va)
+        except Exception:
             return "—", None
-        if va is None or not np.isfinite(float(va)):
+        if not (np.isfinite(vc) and np.isfinite(va)):
             return "—", None
-        d = float(vc) - float(va)
+        d = vc - va
+        mult = 100.0 if abs(vc) <= 1.0 else 1.0
+        d_pp = d * mult
         sign = "▲" if d > 0 else ("▼" if d < 0 else "=")
-        return f"{sign} {abs(d)*100:.2f}pp vs {ano_ant}", d > 0
+        return f"{sign} {abs(d_pp):.2f}pp vs {ano_ant}", d > 0
 
-    selic_val   = f"{cur.get('selic',0)*100:.2f}%" if cur.get("selic") is not None else "—"
-    ipca_val    = f"{cur.get('ipca',0)*100:.2f}%" if cur.get("ipca") is not None else "—"
-    cambio_val  = f"R$ {cur['cambio']:.2f}" if cur.get("cambio") is not None else "—"
-    pib_val     = f"{cur.get('pib',0)*100:.1f}%" if cur.get("pib") is not None else "—"
+    def _cambio_diff() -> tuple[str, bool | None]:
+        vc = cur.get("cambio")
+        va = ant.get("cambio")
+        try:
+            vc, va = float(vc), float(va)
+        except Exception:
+            return "—", None
+        if not (np.isfinite(vc) and np.isfinite(va)):
+            return "—", None
+        d = vc - va
+        sign = "▲" if d > 0 else ("▼" if d < 0 else "=")
+        return f"{sign} R$ {abs(d):.2f} vs {ano_ant}", d > 0
 
-    selic_delta, selic_up   = _diff("selic")
-    ipca_delta, ipca_up     = _diff("ipca")
-    cambio_delta, cambio_up = _diff("cambio")
-    pib_delta, pib_up       = _diff("pib")
+    def _pib_fmt_and_diff() -> tuple[str, str, bool | None]:
+        """PIB pode ser taxa de crescimento ou valor absoluto do PIB."""
+        vc = cur.get("pib")
+        va = ant.get("pib")
+        try:
+            vc_f = float(vc)
+        except Exception:
+            return "—", "—", None
+        if not np.isfinite(vc_f):
+            return "—", "—", None
+        # Se valor absoluto > 100 → provavelmente PIB em unidade monetária, não taxa
+        if abs(vc_f) > 100:
+            return "N/D", "dados absolutos", None
+        display = _fmt_rate(vc_f)
+        try:
+            va_f = float(va)
+            if np.isfinite(va_f) and abs(va_f) <= 100:
+                d = vc_f - va_f
+                mult = 100.0 if abs(vc_f) <= 1.0 else 1.0
+                d_pp = d * mult
+                sign = "▲" if d > 0 else ("▼" if d < 0 else "=")
+                return display, f"{sign} {abs(d_pp):.2f}pp vs {ano_ant}", d > 0
+        except Exception:
+            pass
+        return display, "—", None
+
+    selic_v  = cur.get("selic")
+    ipca_v   = cur.get("ipca")
+    selic_val  = _fmt_rate(float(selic_v))  if selic_v  is not None else "—"
+    ipca_val   = _fmt_rate(float(ipca_v))   if ipca_v   is not None else "—"
+    cambio_val = f"R$ {cur['cambio']:.2f}"  if cur.get("cambio") is not None else "—"
+    pib_val, pib_delta, pib_up = _pib_fmt_and_diff()
+
+    selic_delta, selic_up   = _rate_diff("selic")
+    ipca_delta,  ipca_up    = _rate_diff("ipca")
+    cambio_delta, cambio_up = _cambio_diff()
 
     st.markdown(
         f'<div class="apb3-section-title">🌐 Cenário Macroeconômico — {ano_cur}</div>',
@@ -255,10 +306,10 @@ def _render_macro(macro_hist: dict) -> None:
     )
 
     macro_html = "".join([
-        _macro_card("Selic a.a.", selic_val, selic_delta, not selic_up if selic_up is not None else None),
-        _macro_card("IPCA", ipca_val, ipca_delta, not ipca_up if ipca_up is not None else None),
-        _macro_card("USD / BRL", cambio_val, cambio_delta, not cambio_up if cambio_up is not None else None),
-        _macro_card("PIB", pib_val, pib_delta, pib_up),
+        _macro_card("Selic a.a.", selic_val,  selic_delta,  not selic_up  if selic_up  is not None else None),
+        _macro_card("IPCA",       ipca_val,   ipca_delta,   not ipca_up   if ipca_up   is not None else None),
+        _macro_card("USD / BRL",  cambio_val, cambio_delta, not cambio_up if cambio_up is not None else None),
+        _macro_card("PIB",        pib_val,    pib_delta,    pib_up),
     ])
     st.markdown(f'<div class="apb3-macro-row">{macro_html}</div>', unsafe_allow_html=True)
 
