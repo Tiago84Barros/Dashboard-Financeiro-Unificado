@@ -385,6 +385,42 @@ def _fallback_empresa(ticker: str, peso_pct: float) -> dict:
     }
 
 
+def chat_com_portfolio(
+    context: str,
+    history: list[dict],
+    user_message: str,
+    model: str = _MODEL_DEFAULT,
+) -> str:
+    """
+    Responde perguntas sobre o portfólio usando o contexto pré-compilado da análise.
+    history: lista de {"role": "user"|"assistant", "content": str}
+    """
+    client = _get_openai_client()
+    if client is None:
+        raise RuntimeError("OPENAI_API_KEY não configurada.")
+
+    system = (
+        "Você é um analista de investimentos especializado no mercado brasileiro (B3). "
+        "Responda APENAS com base no contexto do portfólio fornecido abaixo e no seu "
+        "conhecimento sobre o mercado brasileiro. Seja direto, objetivo e evite redundâncias. "
+        "Quando não houver informação suficiente no contexto, diga claramente.\n\n"
+        f"=== CONTEXTO DO PORTFÓLIO ===\n{context}"
+    )
+
+    messages = [{"role": "system", "content": system}]
+    # Inclui histórico (máx 10 turnos para não estourar contexto)
+    for msg in history[-10:]:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": user_message})
+
+    resp = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0.3,
+    )
+    return resp.choices[0].message.content
+
+
 def _fallback_portfolio() -> dict:
     return {
         "qualidade_carteira": "media",

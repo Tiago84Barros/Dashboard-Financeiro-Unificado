@@ -17,6 +17,7 @@ from core.b3_portfolio_model import load_active_b3_portfolio_model
 from core.llm_b3 import (
     analisar_empresa,
     analisar_portfolio,
+    chat_com_portfolio,
     llm_disponivel,
     redistribuir_pesos,
 )
@@ -655,6 +656,119 @@ def _executar_analise(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Chat contextual sobre o portfólio
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_chat_context(state: dict, macro_hist: dict) -> str:
+    """Compila contexto compacto da análise para injetar no chat (~2-3k tokens)."""
+    items_an    = state.get("items_analisados", [])
+    port_an     = state.get("port_analise", {})
+    pesos_novos = state.get("pesos_novos", {})
+
+    lines: list[str] = []
+
+    # Resumo consolidado
+    lines.append("PORTFÓLIO ANALISADO:")
+    lines.append(f"  Qualidade: {port_an.get('qualidade_carteira','N/D')} | "
+                 f"Perspectiva 12m: {port_an.get('perspectiva_12m','N/D')} | "
+                 f"Score médio: {port_an.get('score_medio','N/D')}")
+    resumo_exec = port_an.get("resumo_executivo", "")
+    if resumo_exec:
+        lines.append(f"  Resumo: {resumo_exec[:400]}")
+    relatorio = port_an.get("relatorio_estrategico", "")
+    if relatorio:
+        lines.append(f"  Estratégia: {relatorio[:400]}")
+
+    # Por empresa
+    lines.append("\nEMPRESAS:")
+    for it in sorted(items_an, key=lambda x: -pesos_novos.get(x.get("ticker", ""), 0)):
+        tk   = it.get("ticker", "")
+        an   = it.get("analise", {})
+        w_new = pesos_novos.get(tk, 0) * 100
+        lines.append(
+            f"  {tk} ({it.get('nome','')}) | peso sugerido={w_new:.1f}% | "
+            f"perspectiva={an.get('perspectiva','N/D')} | ação={an.get('acao_sugerida','N/D')} | "
+            f"score_quali={an.get('score_qualitativo','N/D')} | confiança={an.get('confianca','N/D')}%"
+        )
+        resumo = an.get("resumo", "")
+        if resumo:
+            lines.append(f"    Tese: {resumo[:250]}")
+        alerta = an.get("alerta_principal", "")
+        if alerta:
+            lines.append(f"    Alerta: {alerta}")
+        riscos = an.get("riscos", [])
+        if riscos:
+            lines.append(f"    Riscos: {'; '.join(riscos[:3])}")
+        cats = an.get("catalisadores", [])
+        if cats:
+            lines.append(f"    Catalisadores: {'; '.join(cats[:2])}")
+
+    # Macro
+    anos = sorted(macro_hist.keys(), reverse=True)[:2]
+    if anos:
+        lines.append("\nMACROECONOMIA:")
+        for ano in sorted(anos):
+            d = macro_hist[ano]
+            parts = []
+            if "selic" in d:
+                parts.append(f"Selic={d['selic']*100:.2f}%")
+            if "ipca" in d:
+                parts.append(f"IPCA={d['ipca']*100:.2f}%")
+            if "cambio" in d:
+                parts.append(f"USD/BRL={d['cambio']:.2f}")
+            if parts:
+                lines.append(f"  {ano}: {', '.join(parts)}")
+
+    return "\n".join(lines)
+
+
+def _render_chat(state: dict, macro_hist: dict) -> None:
+    """Seção de chat contextual após a análise."""
+    st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
+    st.markdown('<div class="apb3-section-title">💬 Tire Dúvidas sobre o Portfólio</div>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<p style="font-size:0.78rem;color:#9CA3AF;margin-bottom:16px;">'
+        'Pergunte sobre qualquer aspecto da análise — empresas específicas, riscos, '
+        'alocação, macro ou estratégia. O LLM responde com base nos dados analisados.</p>',
+        unsafe_allow_html=True,
+    )
+
+    # Botão de limpar histórico
+    col_chat_hdr, col_chat_clr = st.columns([5, 1])
+    with col_chat_clr:
+        if st.button("🗑️ Limpar chat", key="apb3_chat_clear", use_container_width=True):
+            st.session_state.pop("apb3_chat_history", None)
+            st.rerun()
+
+    history: list[dict] = st.session_state.get("apb3_chat_history", [])
+
+    # Exibe histórico
+    for msg in history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # Input
+    user_input = st.chat_input("Pergunte sobre o portfólio…", key="apb3_chat_input")
+    if user_input:
+        history.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        context = _build_chat_context(state, macro_hist)
+        with st.chat_message("assistant"):
+            with st.spinner("Analisando…"):
+                try:
+                    resposta = chat_com_portfolio(context, history[:-1], user_input)
+                except Exception as exc:
+                    resposta = f"Erro ao consultar LLM: {exc}"
+            st.markdown(resposta)
+
+        history.append({"role": "assistant", "content": resposta})
+        st.session_state["apb3_chat_history"] = history
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -800,3 +914,5 @@ def render(show_header: bool = True) -> None:
 
     st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
     _render_conclusao(port_an)
+
+    _render_chat(state, macro_hist)
