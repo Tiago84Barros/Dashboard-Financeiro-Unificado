@@ -5,6 +5,7 @@ Grava e consulta logs de execução nas tabelas administrativas do pipeline.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -14,6 +15,15 @@ logger = logging.getLogger(__name__)
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _sanitize(msg: str | None) -> str | None:
+    """Remove connection strings e credenciais de mensagens de erro."""
+    if not msg:
+        return msg
+    msg = re.sub(r"postgresql\+?\w*://[^\s\"']+", "postgresql://***", msg)
+    msg = re.sub(r"sqlite:///[^\s\"']+", "sqlite:///***", msg)
+    return msg[:500]
 
 
 def log_start(
@@ -81,10 +91,30 @@ def log_finish(
             """), {
                 "fa": finished, "st": status,
                 "ri": records_inserted, "ru": records_updated, "rf": records_failed,
-                "em": error_message, "es": exec_secs, "id": log_id,
+                "em": _sanitize(error_message), "es": exec_secs, "id": log_id,
             })
     except Exception as exc:
         logger.warning("log_finish falhou: %s", exc)
+
+
+def log_skipped(table_name: str, source_name: str, job_name: str) -> None:
+    """Registra job pulado (frequência não atingida) em data_update_logs."""
+    from data_pipeline.utils.db_utils import get_pipeline_engine, table_exists
+    engine = get_pipeline_engine()
+    if engine is None or not table_exists("data_update_logs"):
+        return
+    now = _now()
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO data_update_logs
+                    (table_name, source_name, job_name, started_at, finished_at, status,
+                     records_inserted, records_updated, records_failed, execution_time_seconds)
+                VALUES
+                    (:tn, :sn, :jn, :now, :now, 'skipped', 0, 0, 0, 0)
+            """), {"tn": table_name, "sn": source_name, "jn": job_name, "now": now})
+    except Exception as exc:
+        logger.warning("log_skipped falhou: %s", exc)
 
 
 def update_freshness(
@@ -108,8 +138,12 @@ def update_freshness(
 
     now = _now()
     last_success = now if status == "success" else None
-    fresh_label = freshness_label(now if status == "success" else None, frequency)
-    next_upd = next_expected_update(now if status == "success" else None, frequency)
+    fresh_label = freshness_label(last_success, frequency, status=status)
+    next_upd = next_expected_update(last_success, frequency)
+
+    if job_name is None:
+        logger.warning("update_freshness: job_name ausente para %s/%s — pulando", table_name, source_name)
+        return
 
     try:
         with engine.begin() as conn:
@@ -126,13 +160,13 @@ def update_freshness(
                      :neu, :fs,
                      :ri, :ru, :rf,
                      :em, :now)
-                ON CONFLICT (table_name) DO UPDATE SET
+                ON CONFLICT (job_name) DO UPDATE SET
+                    table_name            = EXCLUDED.table_name,
                     source_name           = EXCLUDED.source_name,
-                    job_name              = EXCLUDED.job_name,
                     last_success_at       = COALESCE(EXCLUDED.last_success_at, data_freshness_status.last_success_at),
                     last_attempt_at       = EXCLUDED.last_attempt_at,
                     last_status           = EXCLUDED.last_status,
-                    next_expected_update  = EXCLUDED.next_expected_update,
+                    next_expected_update  = COALESCE(EXCLUDED.next_expected_update, data_freshness_status.next_expected_update),
                     freshness_status      = EXCLUDED.freshness_status,
                     last_records_inserted = EXCLUDED.last_records_inserted,
                     last_records_updated  = EXCLUDED.last_records_updated,
@@ -144,7 +178,7 @@ def update_freshness(
                 "lsa": last_success, "la": now, "ls": status,
                 "neu": next_upd, "fs": fresh_label,
                 "ri": records_inserted, "ru": records_updated, "rf": records_failed,
-                "em": error_message, "now": now,
+                "em": _sanitize(error_message), "now": now,
             })
     except Exception as exc:
         logger.warning("update_freshness falhou: %s", exc)

@@ -64,8 +64,14 @@ def should_run_job(registry_item: dict, force: bool = False) -> bool:
     return (now - last_success) >= delta
 
 
-def freshness_label(last_success_at: datetime | None, frequency: str) -> str:
-    """Retorna 'updated', 'attention', 'outdated' ou 'never_updated'."""
+def freshness_label(
+    last_success_at: datetime | None,
+    frequency: str,
+    status: str | None = None,
+) -> str:
+    """Retorna 'updated', 'attention', 'outdated', 'never_updated' ou 'error'."""
+    if status in ("failed", "error"):
+        return "error"
     if last_success_at is None:
         return "never_updated"
 

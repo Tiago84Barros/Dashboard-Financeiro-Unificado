@@ -130,7 +130,7 @@ def seed_registry() -> int:
                     VALUES
                         (:table_name, :source_name, :job_name, :update_type,
                          :frequency, :priority, :is_active, :description)
-                    ON CONFLICT DO NOTHING
+                    ON CONFLICT (job_name) DO NOTHING
                 """), item)
                 inserted += 1
         return inserted

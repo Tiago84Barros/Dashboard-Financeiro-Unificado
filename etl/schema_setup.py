@@ -178,7 +178,7 @@ _DDL: list[tuple[str, str]] = [
             id          BIGSERIAL PRIMARY KEY,
             table_name  TEXT NOT NULL,
             source_name TEXT NOT NULL,
-            job_name    TEXT,
+            job_name    TEXT UNIQUE,
             update_type TEXT NOT NULL DEFAULT 'incremental',
             frequency   TEXT NOT NULL DEFAULT 'diario',
             priority    INTEGER DEFAULT 1,
@@ -207,20 +207,21 @@ _DDL: list[tuple[str, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_dul_started_at
             ON data_update_logs(started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_dul_job_name
+            ON data_update_logs(job_name, started_at DESC);
     """),
 
     ("data_freshness_status", """
         CREATE TABLE IF NOT EXISTS data_freshness_status (
             id                    BIGSERIAL PRIMARY KEY,
-            table_name            TEXT UNIQUE NOT NULL,
+            table_name            TEXT NOT NULL,
             source_name           TEXT NOT NULL,
-            job_name              TEXT,
+            job_name              TEXT UNIQUE NOT NULL,
             last_success_at       TIMESTAMPTZ,
             last_attempt_at       TIMESTAMPTZ,
             last_status           TEXT,
             next_expected_update  TIMESTAMPTZ,
             freshness_status      TEXT DEFAULT 'never_updated',
-            total_records         INTEGER DEFAULT 0,
             last_records_inserted INTEGER DEFAULT 0,
             last_records_updated  INTEGER DEFAULT 0,
             last_records_failed   INTEGER DEFAULT 0,

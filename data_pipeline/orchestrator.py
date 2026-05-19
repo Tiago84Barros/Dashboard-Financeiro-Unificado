@@ -156,6 +156,8 @@ def run_updates(
         if not should_run_job(item, force=force):
             skipped += 1
             logger.info("Pulando %s (frequência não atingida)", job_name)
+            from data_pipeline.utils.logging_utils import log_skipped
+            log_skipped(item.get("table_name", ""), item.get("source_name", ""), job_name)
             continue
 
         logger.info("Executando job: %s", job_name)
