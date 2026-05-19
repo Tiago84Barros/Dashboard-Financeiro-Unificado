@@ -99,7 +99,8 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
                 auto_adjust=True, actions=False,
             )
             if hist.empty:
-                result["records_failed"] += 1
+                # Sem dados não é erro — ativo pode estar deslistado ou sem negociação recente
+                logger.debug("update_b3_quotes: sem dados para %s", ticker_yf)
                 continue
 
             # yfinance >= 0.2.x retorna MultiIndex ('Close', 'TICKER') para
@@ -125,8 +126,6 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
                 with engine.begin() as conn:
                     conn.execute(_SQL_UPSERT, records)
                 result["records_inserted"] += len(records)
-            else:
-                result["records_failed"] += 1
 
             time.sleep(0.3)  # respeita rate limit do yfinance
 

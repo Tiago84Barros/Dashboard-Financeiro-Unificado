@@ -84,11 +84,22 @@ def _fetch_sgs_series(name: str, code: int, start: date, end: date) -> pd.DataFr
     cursor = start
     while cursor <= end:
         chunk_end = min(_add_years(cursor, 8), end)
-        response = requests.get(
-            _sgs_url(code, cursor, chunk_end),
-            headers={"User-Agent": "MacroSeed/1.0"},
-            timeout=45,
-        )
+        response = None
+        for attempt in range(3):
+            try:
+                response = requests.get(
+                    _sgs_url(code, cursor, chunk_end),
+                    headers={"User-Agent": "MacroSeed/1.0"},
+                    timeout=45,
+                )
+                if response.status_code < 500:
+                    break
+            except requests.exceptions.RequestException:
+                pass
+            time.sleep(5 * (attempt + 1))
+        if response is None or response.status_code >= 500:
+            cursor = chunk_end + timedelta(days=1)
+            continue
         if response.status_code == 404 and "Value(s) not found" in (response.text or ""):
             cursor = chunk_end + timedelta(days=1)
             continue
