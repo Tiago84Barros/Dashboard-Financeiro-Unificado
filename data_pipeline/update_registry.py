@@ -114,16 +114,10 @@ def seed_registry() -> int:
     if engine is None or not table_exists("data_update_registry"):
         return 0
     try:
-        with engine.connect() as conn:
-            count = conn.execute(
-                text("SELECT COUNT(*) FROM data_update_registry")
-            ).scalar() or 0
-        if count > 0:
-            return 0
         inserted = 0
         with engine.begin() as conn:
             for item in _DEFAULT_REGISTRY:
-                conn.execute(text("""
+                result = conn.execute(text("""
                     INSERT INTO data_update_registry
                         (table_name, source_name, job_name, update_type,
                          frequency, priority, is_active, description)
@@ -134,7 +128,7 @@ def seed_registry() -> int:
                         description = EXCLUDED.description,
                         source_name = EXCLUDED.source_name
                 """), item)
-                inserted += 1
+                inserted += result.rowcount
         return inserted
     except Exception as exc:
         logger.warning("seed_registry falhou: %s", exc)
