@@ -2,13 +2,14 @@
 etl/schema_setup.py
 Inicialização segura do schema do banco de dados.
 
-Cria as 10 tabelas definidas em modelagem_inicial.md usando CREATE TABLE IF NOT EXISTS.
+Cria as 13 tabelas definidas em modelagem_inicial.md usando CREATE TABLE IF NOT EXISTS.
 Seguro para executar múltiplas vezes — nunca sobrescreve dados existentes.
 Respeita a ordem das dependências de chave estrangeira.
 
 Tabelas (em ordem de criação):
   usuarios → contas → categorias → transacoes → orcamentos → metas
   ativos → operacoes → proventos → cotacoes
+  [pipeline] data_update_registry → data_update_logs → data_freshness_status
 
 Uso:
     from etl.schema_setup import criar_schema, verificar_schema
@@ -169,6 +170,63 @@ _DDL: list[tuple[str, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_cotacoes_ativo_timestamp
             ON cotacoes(ativo_id, timestamp DESC);
+    """),
+
+    # ── Tabelas administrativas do pipeline de dados ──────────────────────────
+    ("data_update_registry", """
+        CREATE TABLE IF NOT EXISTS data_update_registry (
+            id          BIGSERIAL PRIMARY KEY,
+            table_name  TEXT NOT NULL,
+            source_name TEXT NOT NULL,
+            job_name    TEXT,
+            update_type TEXT NOT NULL DEFAULT 'incremental',
+            frequency   TEXT NOT NULL DEFAULT 'diario',
+            priority    INTEGER DEFAULT 1,
+            is_active   BOOLEAN DEFAULT TRUE,
+            description TEXT,
+            created_at  TIMESTAMPTZ DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ DEFAULT NOW()
+        );
+    """),
+
+    ("data_update_logs", """
+        CREATE TABLE IF NOT EXISTS data_update_logs (
+            id                      BIGSERIAL PRIMARY KEY,
+            table_name              TEXT NOT NULL,
+            source_name             TEXT NOT NULL,
+            job_name                TEXT,
+            started_at              TIMESTAMPTZ,
+            finished_at             TIMESTAMPTZ,
+            status                  TEXT,
+            records_inserted        INTEGER DEFAULT 0,
+            records_updated         INTEGER DEFAULT 0,
+            records_failed          INTEGER DEFAULT 0,
+            error_message           TEXT,
+            execution_time_seconds  REAL,
+            created_at              TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_dul_started_at
+            ON data_update_logs(started_at DESC);
+    """),
+
+    ("data_freshness_status", """
+        CREATE TABLE IF NOT EXISTS data_freshness_status (
+            id                    BIGSERIAL PRIMARY KEY,
+            table_name            TEXT UNIQUE NOT NULL,
+            source_name           TEXT NOT NULL,
+            job_name              TEXT,
+            last_success_at       TIMESTAMPTZ,
+            last_attempt_at       TIMESTAMPTZ,
+            last_status           TEXT,
+            next_expected_update  TIMESTAMPTZ,
+            freshness_status      TEXT DEFAULT 'never_updated',
+            total_records         INTEGER DEFAULT 0,
+            last_records_inserted INTEGER DEFAULT 0,
+            last_records_updated  INTEGER DEFAULT 0,
+            last_records_failed   INTEGER DEFAULT 0,
+            last_error_message    TEXT,
+            updated_at            TIMESTAMPTZ DEFAULT NOW()
+        );
     """),
 ]
 

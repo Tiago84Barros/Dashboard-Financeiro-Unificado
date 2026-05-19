@@ -191,6 +191,9 @@ def _render_importacao() -> None:
         )
         return
 
+    _render_central_atualizacao()
+    st.divider()
+
     sub_csv, sub_postgres = st.tabs(["📄 CSV / Excel", "🔗 Banco de Origem"])
 
     with sub_csv:
@@ -198,6 +201,183 @@ def _render_importacao() -> None:
 
     with sub_postgres:
         _render_import_postgres()
+
+
+def _render_central_atualizacao() -> None:
+    """Central de Atualização Autônoma de Dados — painel principal."""
+    secao_titulo("Central de Atualização de Dados", "🔄", "Atualização autônoma das fontes de dados")
+
+    from data_pipeline.utils.db_utils import table_exists, ensure_pipeline_tables
+
+    admin_ok = (
+        table_exists("data_update_registry")
+        and table_exists("data_update_logs")
+        and table_exists("data_freshness_status")
+    )
+
+    if not admin_ok:
+        st.warning(
+            "As tabelas administrativas do pipeline ainda não existem. "
+            "Clique em **Criar tabelas admin** para inicializar.",
+            icon="⚠️",
+        )
+        if st.button("Criar tabelas admin", type="primary"):
+            with st.spinner("Criando tabelas..."):
+                res = ensure_pipeline_tables()
+            if res["ok"]:
+                st.success(f"Criadas: {', '.join(res['criadas']) or 'nenhuma nova'}")
+                st.rerun()
+            else:
+                for e in res["erros"]:
+                    st.error(e)
+        return
+
+    # ── KPIs de status ────────────────────────────────────────────────────────
+    from data_pipeline.orchestrator import get_update_status, get_last_global_update
+    from data_pipeline.utils.date_utils import fmt_datetime_br
+
+    status_list = get_update_status()
+    ultima = get_last_global_update()
+
+    total   = len(status_list)
+    updated = sum(1 for s in status_list if s.get("freshness_status") == "updated")
+    outdated = sum(1 for s in status_list if s.get("freshness_status") in ("outdated", "error", "never_updated"))
+    attention = sum(1 for s in status_list if s.get("freshness_status") == "attention")
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Fontes Monitoradas", total)
+    with c2:
+        st.metric("Atualizadas", updated, delta=None)
+    with c3:
+        st.metric("Atenção", attention,
+                  delta=f"+{attention}" if attention else None,
+                  delta_color="inverse")
+    with c4:
+        st.metric("Desatualizadas", outdated,
+                  delta=f"+{outdated}" if outdated else None,
+                  delta_color="inverse")
+
+    if ultima:
+        st.caption(f"Última atualização global com sucesso: {fmt_datetime_br(ultima)}")
+
+    st.markdown("---")
+
+    # ── Tabela de status por fonte ────────────────────────────────────────────
+    _FRESHNESS_LABELS = {
+        "updated":       "✅ Atualizado",
+        "attention":     "🟡 Atenção",
+        "outdated":      "🔴 Desatualizado",
+        "never_updated": "⚪ Nunca atualizado",
+        "error":         "❌ Erro",
+    }
+
+    if status_list:
+        dados = []
+        for s in status_list:
+            label = _FRESHNESS_LABELS.get(s.get("freshness_status", ""), s.get("freshness_status", "—"))
+            dados.append({
+                "Fonte":     s.get("source_name", "—"),
+                "Tabela":    s.get("table_name", "—"),
+                "Status":    label,
+                "Última OK": fmt_datetime_br(s.get("last_success_at")) if s.get("last_success_at") else "—",
+                "Próxima":   fmt_datetime_br(s.get("next_expected_update")) if s.get("next_expected_update") else "—",
+                "Inseridos": s.get("last_records_inserted", 0),
+                "Falhas":    s.get("last_records_failed", 0),
+            })
+        st.dataframe(pd.DataFrame(dados), use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhuma fonte registrada ainda. Clique em **Atualizar tudo** para inicializar.", icon="ℹ️")
+
+    st.markdown("---")
+
+    # ── Painel de execução ────────────────────────────────────────────────────
+    from data_pipeline.update_registry import get_registry, seed_registry
+    seed_registry()
+    registry = get_registry(active_only=True)
+
+    col_all, col_force = st.columns([2, 2])
+    with col_all:
+        if st.button("🔄 Atualizar tudo", type="primary", use_container_width=True):
+            _executar_pipeline(update_group="all", force=False)
+    with col_force:
+        if st.button("⚡ Forçar atualização completa", type="secondary", use_container_width=True,
+                     help="Ignora controle de frequência e roda todos os jobs agora"):
+            _executar_pipeline(update_group="all", force=True)
+
+    if registry:
+        st.markdown("**Executar job individual:**")
+        cols = st.columns(min(len(registry), 3))
+        for i, item in enumerate(registry):
+            with cols[i % 3]:
+                label = item.get("source_name", item.get("job_name", "?"))
+                if st.button(f"▶ {label}", use_container_width=True, key=f"_run_{item['job_name']}"):
+                    _executar_pipeline(update_group=item["job_name"], force=True)
+
+    # ── Logs recentes ─────────────────────────────────────────────────────────
+    with st.expander("📋 Logs recentes de execução"):
+        from data_pipeline.orchestrator import get_recent_update_logs
+        logs = get_recent_update_logs(limit=30)
+        if logs:
+            log_dados = []
+            for lg in logs:
+                duracao = f"{lg.get('execution_time_seconds', 0):.1f}s" if lg.get("execution_time_seconds") else "—"
+                log_dados.append({
+                    "Início":    fmt_datetime_br(lg.get("started_at")) if lg.get("started_at") else "—",
+                    "Job":       lg.get("job_name", "—"),
+                    "Status":    lg.get("status", "—"),
+                    "Inseridos": lg.get("records_inserted", 0),
+                    "Falhas":    lg.get("records_failed", 0),
+                    "Duração":   duracao,
+                    "Erro":      (lg.get("error_message") or "")[:60],
+                })
+            st.dataframe(pd.DataFrame(log_dados), use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum log registrado.")
+
+
+def _executar_pipeline(update_group: str = "all", force: bool = False) -> None:
+    """Chama o orchestrator e exibe resultado no Streamlit."""
+    from data_pipeline.orchestrator import run_updates
+
+    grupo_label = "todos os jobs" if update_group == "all" else update_group
+    with st.spinner(f"Executando {grupo_label}..."):
+        resultado = run_updates(update_group=update_group, force=force)
+
+    status = resultado.get("status", "?")
+    total  = resultado.get("total_jobs", 0)
+    ok     = resultado.get("success_count", 0)
+    falhou = resultado.get("failed_count", 0)
+    skip   = resultado.get("skipped_count", 0)
+
+    if status == "success":
+        st.success(f"✅ {ok}/{total} job(s) concluídos com sucesso. Pulados: {skip}.")
+    elif status == "partial_success":
+        st.warning(f"🟡 Parcial: {ok} OK · {falhou} com falha · {skip} pulados.")
+    elif status == "error":
+        st.error(resultado.get("error", "Erro desconhecido."))
+        return
+    else:
+        st.error(f"❌ {falhou}/{total} job(s) falharam.")
+
+    # Detalha resultados individuais
+    results = resultado.get("results", [])
+    if results:
+        with st.expander("Ver detalhes por job"):
+            for r in results:
+                s = r.get("status", "?")
+                icone = {"success": "✅", "partial_success": "🟡", "skipped": "⚪", "failed": "❌"}.get(s, "?")
+                st.markdown(
+                    f"{icone} **{r.get('source_name', r.get('job_name', '?'))}** — "
+                    f"{r.get('records_inserted', 0)} inseridos · "
+                    f"{r.get('records_failed', 0)} falhas · "
+                    f"{r.get('execution_time_seconds', 0):.1f}s"
+                )
+                if r.get("error_message"):
+                    st.caption(f"Erro: {r['error_message'][:120]}")
+
+    if status in ("success", "partial_success"):
+        st.rerun()
 
 
 def _render_import_csv() -> None:

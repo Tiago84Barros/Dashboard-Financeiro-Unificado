@@ -79,6 +79,33 @@ with st.sidebar:
         for aviso in avisos:
             st.caption(f"⚠️ {aviso}")
 
+    # Banner discreto de status do pipeline (só aparece se houver fontes desatualizadas)
+    _render_sidebar_pipeline_status()
+
+
+def _render_sidebar_pipeline_status() -> None:
+    """Banner compacto na sidebar — mostra alerta apenas se dados estiverem desatualizados."""
+    try:
+        from data_pipeline.utils.db_utils import table_exists
+        if not table_exists("data_freshness_status"):
+            return
+        from data_pipeline.orchestrator import get_outdated_sources
+        outdated = get_outdated_sources()
+        if not outdated:
+            return
+        st.divider()
+        nomes = [s.get("source_name", "?") for s in outdated[:3]]
+        label = f"{len(outdated)} fonte(s) desatualizada(s)"
+        st.warning(f"🔴 {label}", icon=None)
+        for n in nomes:
+            st.caption(f"  · {n}")
+        if len(outdated) > 3:
+            st.caption(f"  · e mais {len(outdated) - 3}…")
+        st.caption("Atualize em ⚙️ Configurações › Importação de Dados")
+    except Exception:
+        pass  # Banner é opcional — nunca quebra o app
+
+
 # ── Roteamento ────────────────────────────────────────────────────────────────
 modulo_nome = _ROTAS.get(menu)
 
