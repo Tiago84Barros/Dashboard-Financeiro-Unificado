@@ -18,10 +18,14 @@ Uso:
 """
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text
 
 from core.database import get_engine
+
+logger = logging.getLogger(__name__)
 
 # ── DDL — espelha modelagem_inicial.md ───────────────────────────────────────
 # Cada DDL é idempotente (IF NOT EXISTS). Índices também.
@@ -295,6 +299,9 @@ def criar_schema() -> dict[str, object]:
 
     estado_depois = verificar_schema()
 
+    # Migrações incrementais — idempotentes, falhas não bloqueiam
+    _apply_migrations(engine, erros)
+
     criadas    = [t for t in TABELAS_ESPERADAS if not estado_antes[t] and estado_depois[t]]
     ja_existiam = [t for t in TABELAS_ESPERADAS if estado_antes[t]]
 
@@ -304,3 +311,61 @@ def criar_schema() -> dict[str, object]:
         "ja_existiam": ja_existiam,
         "erros":       erros,
     }
+
+
+def _apply_migrations(engine, erros: list) -> None:
+    """
+    Migrações de schema incremental — cada uma é idempotente.
+    Bancos criados antes da v0.8 tinham UNIQUE em table_name;
+    aqui migramos para UNIQUE em job_name.
+    """
+    _MIGRATIONS = [
+        # v0.8 — data_freshness_status: troca UNIQUE(table_name) por UNIQUE(job_name)
+        """
+        DO $$ BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'data_freshness_status_table_name_key'
+            ) THEN
+                ALTER TABLE data_freshness_status
+                    DROP CONSTRAINT data_freshness_status_table_name_key;
+            END IF;
+        END $$
+        """,
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'data_freshness_status_job_name_key'
+            ) THEN
+                ALTER TABLE data_freshness_status
+                    ADD CONSTRAINT data_freshness_status_job_name_key UNIQUE (job_name);
+            END IF;
+        END $$
+        """,
+        # v0.8 — data_update_registry: garante UNIQUE(job_name)
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'data_update_registry_job_name_key'
+            ) THEN
+                ALTER TABLE data_update_registry
+                    ADD CONSTRAINT data_update_registry_job_name_key UNIQUE (job_name);
+            END IF;
+        END $$
+        """,
+    ]
+    try:
+        with engine.begin() as conn:
+            for mig in _MIGRATIONS:
+                stmt = mig.strip()
+                if not stmt:
+                    continue
+                try:
+                    conn.execute(text(stmt))
+                except Exception as exc:
+                    # Migrações são best-effort: SQLite e ambientes sem DO $$ falham silenciosamente
+                    logger.debug("Migração não aplicada (não crítico): %s", exc)
+    except Exception as exc:
+        logger.warning("_apply_migrations: %s", exc)

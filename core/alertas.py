@@ -44,8 +44,8 @@ _ALERTAS_MOCK = [
         "tipo":      "alerta",
         "icone":     "📈",
         "titulo":    "Cotações de ativos não atualizadas",
-        "descricao": "A tabela `asset_quotes` está vazia. Acesse Configurações > Cotações "
-                     "para atualizar via yfinance. Rentabilidade exibida como 0%.",
+        "descricao": "A tabela `asset_quotes` está vazia. Acesse Configurações > "
+                     "Atualização de Dados para atualizar via yfinance. Rentabilidade exibida como 0%.",
         "modulo":    "Configurações",
         "data":      "Configuração",
     },
@@ -243,7 +243,7 @@ def _alertas_real() -> list:
                     "icone":     "📊",
                     "titulo":    "Cotações de ativos não atualizadas",
                     "descricao": "A tabela `asset_quotes` está vazia. Acesse "
-                                 "Configurações > Cotações para atualizar via yfinance. "
+                                 "Configurações > Atualização de Dados para atualizar via yfinance. "
                                  "Sem cotações, a rentabilidade é exibida como 0%.",
                     "modulo":    "Configurações",
                     "data":      "Configuração",

@@ -145,6 +145,26 @@ def update_freshness(
         logger.warning("update_freshness: job_name ausente para %s/%s — pulando", table_name, source_name)
         return
 
+    # Para jobs pulados: só atualiza last_attempt_at e last_status, preserva tudo mais
+    if status == "skipped":
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO data_freshness_status
+                        (table_name, source_name, job_name,
+                         last_attempt_at, last_status,
+                         freshness_status, updated_at)
+                    VALUES
+                        (:tn, :sn, :jn, :la, 'skipped', 'never_updated', :now)
+                    ON CONFLICT (job_name) DO UPDATE SET
+                        last_attempt_at = EXCLUDED.last_attempt_at,
+                        last_status     = EXCLUDED.last_status,
+                        updated_at      = EXCLUDED.updated_at
+                """), {"tn": table_name, "sn": source_name, "jn": job_name, "la": now, "now": now})
+        except Exception as exc:
+            logger.warning("update_freshness(skipped) falhou: %s", exc)
+        return
+
     try:
         with engine.begin() as conn:
             conn.execute(text("""

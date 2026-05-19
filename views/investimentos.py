@@ -274,7 +274,7 @@ def _estado_carteira(carteira: dict, n_efetivo: float, pct_ext: float) -> list:
     else:
         analise.append({"tipo": "info",
                         "titulo": "INFO",
-                        "texto": "Rentabilidade em 0% — importe cotações em Configurações > Cotações."})
+                        "texto": "Rentabilidade em 0% — importe cotações em Configurações > Atualização de Dados."})
 
     return analise
 
@@ -297,7 +297,7 @@ def _acoes_sugeridas(carteira: dict, n_efetivo: float, dy: float) -> list:
             "cor":   _COR_ALERTA,
             "tag":   "⚡",
             "titulo": "Importe cotações para calcular rentabilidade real",
-            "texto":  "Acesse Configurações > Cotações e execute a atualização via yfinance.",
+            "texto":  "Acesse Configurações > Atualização de Dados e execute a atualização.",
         })
 
     if n_efetivo < 10:
@@ -1854,8 +1854,8 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
 
     if not carteira["cotacoes_disponiveis"]:
         st.info(
-            "**Cotações não disponíveis** — importe cotações em "
-            "**Configurações > Cotações** para ver rentabilidade real.",
+            "**Cotações não disponíveis** — acesse **Configurações > Atualização de Dados** "
+            "para baixar cotações via yfinance.",
             icon="📊",
         )
 
