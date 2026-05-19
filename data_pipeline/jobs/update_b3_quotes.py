@@ -51,26 +51,41 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
         result["error_message"] = "Banco não conectado"
         return result
 
+    _SQL_LIST_DESATUALIZADO = text("""
+        SELECT a.id::text AS id, a.ticker, a.currency
+        FROM   assets a
+        WHERE  (a.ativo IS NULL OR a.ativo = TRUE)
+          AND  NOT EXISTS (
+            SELECT 1 FROM asset_quotes aq
+            WHERE  aq.asset_id = a.id
+              AND  aq.timestamp >= NOW() - INTERVAL '2 days'
+        )
+        ORDER BY a.ticker
+    """)
+    _SQL_LIST_DESATUALIZADO_FALLBACK = text("""
+        SELECT a.id::text AS id, a.ticker, a.currency
+        FROM   assets a
+        WHERE  NOT EXISTS (
+            SELECT 1 FROM asset_quotes aq
+            WHERE  aq.asset_id = a.id
+              AND  aq.timestamp >= NOW() - INTERVAL '2 days'
+        )
+        ORDER BY a.ticker
+    """)
+    _SQL_LIST_ALL        = text("SELECT id::text AS id, ticker, currency FROM assets WHERE ativo IS NULL OR ativo = TRUE ORDER BY ticker")
+    _SQL_LIST_ALL_FALLBACK = text("SELECT id::text AS id, ticker, currency FROM assets ORDER BY ticker")
+
     try:
         with engine.connect() as conn:
-            if apenas_desatualizados:
-                rows = conn.execute(text("""
-                    SELECT a.id::text AS id, a.ticker, a.currency
-                    FROM   assets a
-                    WHERE  (a.ativo IS NULL OR a.ativo = TRUE)
-                      AND  NOT EXISTS (
-                        SELECT 1 FROM asset_quotes aq
-                        WHERE  aq.asset_id = a.id
-                          AND  aq.timestamp >= NOW() - INTERVAL '2 days'
-                    )
-                    ORDER BY a.ticker
-                """)).fetchall()
-            else:
-                rows = conn.execute(text("""
-                    SELECT id::text AS id, ticker, currency FROM assets
-                    WHERE  ativo IS NULL OR ativo = TRUE
-                    ORDER BY ticker
-                """)).fetchall()
+            try:
+                rows = conn.execute(
+                    _SQL_LIST_DESATUALIZADO if apenas_desatualizados else _SQL_LIST_ALL
+                ).fetchall()
+            except Exception:
+                # Coluna 'ativo' ainda não existe — usa query sem o filtro
+                rows = conn.execute(
+                    _SQL_LIST_DESATUALIZADO_FALLBACK if apenas_desatualizados else _SQL_LIST_ALL_FALLBACK
+                ).fetchall()
     except Exception as exc:
         result["status"] = "failed"
         result["error_message"] = f"Erro ao listar ativos: {exc}"
