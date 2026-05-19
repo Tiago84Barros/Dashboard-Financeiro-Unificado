@@ -92,17 +92,18 @@ def _render_atualizacao() -> None:
                     st.error(e)
         return
 
-    from data_pipeline.orchestrator import get_update_status, get_last_global_update
+    from data_pipeline.orchestrator import get_last_global_update
     from data_pipeline.update_registry import seed_registry, get_registry
     from data_pipeline.utils.date_utils import fmt_datetime_br
 
     seed_registry()
-    status_list = get_update_status()
+    # get_registry JOIN já traz freshness + description + frequency em uma única query
+    registry_list = get_registry(active_only=True)
     ultima = get_last_global_update()
 
     # ── Resumo compacto ────────────────────────────────────────────────────────
-    ok_count  = sum(1 for s in status_list if s.get("freshness_status") == "updated")
-    bad_count = sum(1 for s in status_list if s.get("freshness_status") in
+    ok_count  = sum(1 for s in registry_list if s.get("freshness_status") == "updated")
+    bad_count = sum(1 for s in registry_list if s.get("freshness_status") in
                     ("outdated", "error", "never_updated", "attention"))
 
     col_a, col_b, col_c = st.columns(3)
@@ -151,20 +152,23 @@ def _render_atualizacao() -> None:
     st.divider()
 
     # ── Tabela de fontes ───────────────────────────────────────────────────────
-    if status_list:
+    _FREQ_LABEL = {"diario": "Diária", "semanal": "Semanal", "mensal": "Mensal", "trimestral": "Trimestral"}
+
+    if registry_list:
         dados = []
-        for s in status_list:
-            fs = s.get("freshness_status", "never_updated")
+        for s in registry_list:
+            fs   = s.get("freshness_status", "never_updated")
             icon = _FRESHNESS_ICON.get(fs, "?")
-            label = _FRESHNESS_LABEL.get(fs, fs)
-            erro = (s.get("last_error_message") or "")[:80]
+            lbl  = _FRESHNESS_LABEL.get(fs, fs)
+            err  = (s.get("last_error_message") or "")[:80]
             dados.append({
-                "Fonte":          s.get("source_name", "—"),
-                "Status":         f"{icon} {label}",
-                "Última OK":      fmt_datetime_br(s.get("last_success_at")),
-                "Próxima":        fmt_datetime_br(s.get("next_expected_update")),
-                "Registros":      s.get("last_records_inserted", 0),
-                "Erro":           erro,
+                "Fonte":            s.get("source_name", "—"),
+                "O que atualiza":   s.get("description", "—"),
+                "Frequência":       _FREQ_LABEL.get(s.get("frequency", ""), s.get("frequency", "—")),
+                "Status":           f"{icon} {lbl}",
+                "Última OK":        fmt_datetime_br(s.get("last_success_at")),
+                "Registros":        s.get("last_records_inserted", 0),
+                "Erro":             err,
             })
         st.dataframe(pd.DataFrame(dados), use_container_width=True, hide_index=True)
     else:
