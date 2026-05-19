@@ -41,7 +41,7 @@ _DEFAULT_REGISTRY: list[dict] = [
         "frequency":    "mensal",
         "priority":     3,
         "is_active":    True,
-        "description":  "Indicadores macro consolidados importados do App 1",
+        "description":  "Indicadores macroeconômicos consolidados: SELIC, IPCA, câmbio, PIB, balança comercial, ICC e dívida pública",
     },
     {
         "table_name":   "docs_corporativos_chunks",
@@ -130,7 +130,9 @@ def seed_registry() -> int:
                     VALUES
                         (:table_name, :source_name, :job_name, :update_type,
                          :frequency, :priority, :is_active, :description)
-                    ON CONFLICT (job_name) DO NOTHING
+                    ON CONFLICT (job_name) DO UPDATE SET
+                        description = EXCLUDED.description,
+                        source_name = EXCLUDED.source_name
                 """), item)
                 inserted += 1
         return inserted
