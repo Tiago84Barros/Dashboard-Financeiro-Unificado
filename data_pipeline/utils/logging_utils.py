@@ -137,7 +137,7 @@ def update_freshness(
         return
 
     now = _now()
-    last_success = now if status == "success" else None
+    last_success = now if status in ("success", "partial_success") else None
     fresh_label = freshness_label(last_success, frequency, status=status)
     next_upd = next_expected_update(last_success, frequency)
 

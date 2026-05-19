@@ -161,15 +161,28 @@ def _render_atualizacao() -> None:
             icon = _FRESHNESS_ICON.get(fs, "?")
             lbl  = _FRESHNESS_LABEL.get(fs, fs)
             err  = (s.get("last_error_message") or "")[:80]
+            desc = s.get("description", "—")
             dados.append({
-                "O que atualiza":   s.get("description", "—"),
+                "O que atualiza":   desc[:60] + "…" if len(desc) > 60 else desc,
                 "Frequência":       _FREQ_LABEL.get(s.get("frequency", ""), s.get("frequency", "—")),
                 "Status":           f"{icon} {lbl}",
                 "Última OK":        fmt_datetime_br(s.get("last_success_at")),
                 "Registros":        s.get("last_records_inserted", 0),
                 "Erro":             err,
             })
-        st.dataframe(pd.DataFrame(dados), use_container_width=True, hide_index=True)
+        st.dataframe(
+            pd.DataFrame(dados),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "O que atualiza": st.column_config.TextColumn(width="large"),
+                "Frequência":     st.column_config.TextColumn(width="small"),
+                "Status":         st.column_config.TextColumn(width="medium"),
+                "Última OK":      st.column_config.TextColumn(width="medium"),
+                "Registros":      st.column_config.NumberColumn(width="small"),
+                "Erro":           st.column_config.TextColumn(width="medium"),
+            },
+        )
     else:
         st.info(
             "Nenhuma fonte registrada ainda. Clique em **Atualizar tudo** para inicializar.",

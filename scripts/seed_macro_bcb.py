@@ -96,7 +96,11 @@ def _fetch_sgs_series(name: str, code: int, start: date, end: date) -> pd.DataFr
         if not response.text.strip():
             cursor = chunk_end + timedelta(days=1)
             continue
-        chunk = response.json()
+        try:
+            chunk = response.json()
+        except ValueError:
+            cursor = chunk_end + timedelta(days=1)
+            continue
         if isinstance(chunk, list):
             raw.extend(chunk)
         cursor = chunk_end + timedelta(days=1)
