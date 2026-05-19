@@ -1,0 +1,50 @@
+name: Pipeline de Dados
+
+on:
+  schedule:
+    # Executa todo dia às 07:00 horário de Brasília (10:00 UTC)
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+    # Permite disparo manual pela aba Actions do GitHub
+    inputs:
+      force:
+        description: "Forçar atualização (ignorar controle de frequência)"
+        type: boolean
+        default: false
+
+jobs:
+  update:
+    name: Atualizar fontes de dados
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
+      SOURCE_DB_APP1:         ${{ secrets.SOURCE_DB_APP1 }}
+      OWNER_USER_ID:          ${{ secrets.OWNER_USER_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-pipeline.txt
+
+      - name: Instalar dependências
+        run: pip install -r requirements-pipeline.txt
+
+      - name: Executar pipeline
+        run: |
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            python run_data_updates.py --all --force
+          else
+            python run_data_updates.py --all
+          fi
+
+      - name: Resumo do resultado
+        if: always()
+        run: python run_data_updates.py --status
