@@ -102,6 +102,11 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
                 result["records_failed"] += 1
                 continue
 
+            # yfinance >= 0.2.x retorna MultiIndex ('Close', 'TICKER') para
+            # download de ticker único — achata para colunas simples
+            if isinstance(hist.columns, __import__("pandas").MultiIndex):
+                hist.columns = hist.columns.get_level_values(0)
+
             records = []
             for ts, row_data in hist.iterrows():
                 close_val = float(row_data.get("Close", 0) or 0)

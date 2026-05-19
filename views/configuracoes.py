@@ -117,6 +117,20 @@ def _render_atualizacao() -> None:
 
     st.markdown("")
 
+    # ── O que cada fonte atualiza ──────────────────────────────────────────────
+    with st.expander("ℹ️ O que é atualizado ao clicar em 'Atualizar tudo'?"):
+        st.markdown("""
+| Fonte | O que é atualizado | Origem |
+|---|---|---|
+| **B3 / Yahoo Finance** | Cotações históricas de ações e FIIs (tabela `asset_quotes`) | Yahoo Finance via yfinance |
+| **BCB / SGS** | Indicadores macroeconômicos: SELIC, IPCA, CDI, câmbio, desemprego (tabela `macro`) | Banco Central do Brasil — API SGS |
+| **App 1 / Supabase B3** | Importa dados macroeconômicos do banco legado do App 1 para o banco unificado | Banco de dados do App 1 (B3 Dashboard) |
+| **CVM / IPE** | Documentos corporativos (fatos relevantes, ITR, DFP) e seus chunks de texto para busca semântica | App 1 — módulo CVM/IPE |
+
+> Os dados de **transações**, **operações** e **proventos** não são atualizados automaticamente —
+> eles vêm de importação manual (aba **Banco & Importação**) ou lançamento direto no app.
+        """)
+
     # ── Botões de execução ─────────────────────────────────────────────────────
     col_run, col_force = st.columns([1, 1])
     with col_run:
@@ -233,8 +247,7 @@ def _executar_pipeline(update_group: str, force: bool) -> None:
                 if r.get("error_message"):
                     st.caption(f"Erro: {r['error_message'][:120]}")
 
-    if status in ("success", "partial_success"):
-        st.rerun()
+    st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
