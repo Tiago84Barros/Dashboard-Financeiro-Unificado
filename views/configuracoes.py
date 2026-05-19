@@ -162,7 +162,6 @@ def _render_atualizacao() -> None:
             lbl  = _FRESHNESS_LABEL.get(fs, fs)
             err  = (s.get("last_error_message") or "")[:80]
             dados.append({
-                "Fonte":            s.get("source_name", "—"),
                 "O que atualiza":   s.get("description", "—"),
                 "Frequência":       _FREQ_LABEL.get(s.get("frequency", ""), s.get("frequency", "—")),
                 "Status":           f"{icon} {lbl}",
