@@ -35,7 +35,7 @@ _DEFAULT_REGISTRY: list[dict] = [
     },
     {
         "table_name":   "macro",
-        "source_name":  "App1 / Supabase B3",
+        "source_name":  "Macro / Histórico B3",
         "job_name":     "update_macro",
         "update_type":  "incremental",
         "frequency":    "mensal",

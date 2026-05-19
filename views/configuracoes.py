@@ -121,14 +121,14 @@ def _render_atualizacao() -> None:
     # ── O que cada fonte atualiza ──────────────────────────────────────────────
     with st.expander("ℹ️ O que é atualizado ao clicar em 'Atualizar tudo'?"):
         st.markdown("""
-| Fonte | O que é atualizado | Origem |
-|---|---|---|
-| **B3 / Yahoo Finance** | Cotações históricas de ações e FIIs (tabela `asset_quotes`) | Yahoo Finance via yfinance |
-| **BCB / SGS** | Indicadores macroeconômicos: SELIC, IPCA, CDI, câmbio, desemprego (tabela `macro`) | Banco Central do Brasil — API SGS |
-| **App 1 / Supabase B3** | Importa dados macroeconômicos do banco legado do App 1 para o banco unificado | Banco de dados do App 1 (B3 Dashboard) |
-| **CVM / IPE** | Documentos corporativos (fatos relevantes, ITR, DFP) e seus chunks de texto para busca semântica | App 1 — módulo CVM/IPE |
+| O que é atualizado | Frequência |
+|---|---|
+| **Cotações** — preços históricos de ações e FIIs | Diária |
+| **Indicadores macroeconômicos** — SELIC, IPCA, câmbio, PIB, balança comercial, ICC e dívida pública | Diária |
+| **Macro consolidado** — série histórica anual dos mesmos indicadores | Mensal |
+| **Documentos corporativos** — fatos relevantes, resultados trimestrais e atas de empresas listadas | Semanal |
 
-> Os dados de **transações**, **operações** e **proventos** não são atualizados automaticamente —
+> Transações, operações e proventos **não** são atualizados automaticamente —
 > eles vêm de importação manual (aba **Banco & Importação**) ou lançamento direto no app.
         """)
 
