@@ -355,6 +355,27 @@ def _apply_migrations(engine, erros: list) -> None:
             END IF;
         END $$
         """,
+        # v0.9 — assets/ativos: adiciona coluna ativo para marcar ativos deslistados
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'assets' AND column_name = 'ativo'
+            ) THEN
+                ALTER TABLE assets ADD COLUMN ativo BOOLEAN DEFAULT TRUE;
+            END IF;
+        END $$
+        """,
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'ativos' AND column_name = 'ativo'
+            ) THEN
+                ALTER TABLE ativos ADD COLUMN ativo BOOLEAN DEFAULT TRUE;
+            END IF;
+        END $$
+        """,
     ]
     try:
         with engine.begin() as conn:

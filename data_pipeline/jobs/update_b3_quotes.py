@@ -57,7 +57,8 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
                 rows = conn.execute(text("""
                     SELECT a.id::text AS id, a.ticker, a.currency
                     FROM   assets a
-                    WHERE  NOT EXISTS (
+                    WHERE  (a.ativo IS NULL OR a.ativo = TRUE)
+                      AND  NOT EXISTS (
                         SELECT 1 FROM asset_quotes aq
                         WHERE  aq.asset_id = a.id
                           AND  aq.timestamp >= NOW() - INTERVAL '2 days'
@@ -65,9 +66,11 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
                     ORDER BY a.ticker
                 """)).fetchall()
             else:
-                rows = conn.execute(text(
-                    "SELECT id::text AS id, ticker, currency FROM assets ORDER BY ticker"
-                )).fetchall()
+                rows = conn.execute(text("""
+                    SELECT id::text AS id, ticker, currency FROM assets
+                    WHERE  ativo IS NULL OR ativo = TRUE
+                    ORDER BY ticker
+                """)).fetchall()
     except Exception as exc:
         result["status"] = "failed"
         result["error_message"] = f"Erro ao listar ativos: {exc}"
@@ -99,8 +102,13 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
                 auto_adjust=True, actions=False,
             )
             if hist.empty:
-                # Sem dados não é erro — ativo pode estar deslistado ou sem negociação recente
-                logger.debug("update_b3_quotes: sem dados para %s", ticker_yf)
+                # Sem dados = ativo deslistado ou inexistente — marca como inativo
+                logger.info("update_b3_quotes: sem dados para %s — marcando como inativo", ticker_yf)
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("UPDATE assets SET ativo = FALSE WHERE id = :id"),
+                        {"id": r.id},
+                    )
                 continue
 
             # yfinance >= 0.2.x retorna MultiIndex ('Close', 'TICKER') para
