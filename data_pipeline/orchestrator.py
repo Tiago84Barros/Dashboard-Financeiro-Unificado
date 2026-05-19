@@ -31,12 +31,13 @@ logger = logging.getLogger(__name__)
 
 # Mapeamento job_name → módulo Python
 _JOB_MAP: dict[str, str] = {
-    "update_b3_quotes":    "data_pipeline.jobs.update_b3_quotes",
-    "update_bcb":          "data_pipeline.jobs.update_bcb",
-    "update_macro":        "data_pipeline.jobs.update_macro",
-    "update_cvm":          "data_pipeline.jobs.update_cvm",
-    "update_dividendos":   "data_pipeline.jobs.update_dividendos",
-    "update_empresas_eua": "data_pipeline.jobs.update_empresas_eua",
+    "update_b3_quotes":       "data_pipeline.jobs.update_b3_quotes",
+    "update_bcb":             "data_pipeline.jobs.update_bcb",
+    "update_macro":           "data_pipeline.jobs.update_macro",
+    "update_cvm":             "data_pipeline.jobs.update_cvm",
+    "update_b3_fundamentals": "data_pipeline.jobs.update_b3_fundamentals",
+    "update_dividendos":      "data_pipeline.jobs.update_dividendos",
+    "update_empresas_eua":    "data_pipeline.jobs.update_empresas_eua",
 }
 
 
