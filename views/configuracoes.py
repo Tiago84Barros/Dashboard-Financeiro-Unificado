@@ -69,13 +69,13 @@ def _update_summary_card_html(label: str, value: str, detail: str = "", tone: st
     }
     accent, bg, border = colors.get(tone, colors["neutral"])
     detail_html = f'<div class="upd-card-detail">{detail}</div>' if detail else ""
-    return f"""
-        <div class="upd-card" style="--accent:{accent};--bg:{bg};--border:{border};">
-            <div class="upd-card-label">{label}</div>
-            <div class="upd-card-value">{value}</div>
-            {detail_html}
-        </div>
-        """
+    return (
+        f'<div class="upd-card" style="--accent:{accent};--bg:{bg};--border:{border};">'
+        f'<div class="upd-card-label">{label}</div>'
+        f'<div class="upd-card-value">{value}</div>'
+        f"{detail_html}"
+        "</div>"
+    )
 
 
 def _render_atualizacao() -> None:
