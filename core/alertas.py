@@ -150,6 +150,56 @@ def _alertas_real() -> list:
     alertas: list = []
     hoje = _date.today()
 
+    try:
+        from core.database import get_database_storage_status
+
+        storage = get_database_storage_status()
+        if storage.get("ok"):
+            pct = float(storage.get("pct_used", 0.0))
+            used_mb = float(storage.get("used_mb", 0.0))
+            limit_mb = float(storage.get("limit_mb", 0.0))
+            remaining_mb = float(storage.get("remaining_mb", 0.0))
+
+            if pct >= 90:
+                alertas.append({
+                    "tipo": "erro",
+                    "icone": "🚨",
+                    "titulo": "Supabase quase no limite de armazenamento",
+                    "descricao": (
+                        f"Uso atual: {used_mb:.1f} MB de {limit_mb:.0f} MB "
+                        f"({pct:.1f}%). Restam {remaining_mb:.1f} MB. "
+                        "Evite novas cargas grandes antes de limpar, arquivar ou ampliar o plano."
+                    ),
+                    "modulo": "Configurações",
+                    "data": "Banco de dados",
+                })
+            elif pct >= 80:
+                alertas.append({
+                    "tipo": "alerta",
+                    "icone": "⚠️",
+                    "titulo": "Supabase em uso crítico",
+                    "descricao": (
+                        f"Uso atual: {used_mb:.1f} MB de {limit_mb:.0f} MB "
+                        f"({pct:.1f}%). Restam {remaining_mb:.1f} MB."
+                    ),
+                    "modulo": "Configurações",
+                    "data": "Banco de dados",
+                })
+            elif pct >= 60:
+                alertas.append({
+                    "tipo": "alerta",
+                    "icone": "📦",
+                    "titulo": "Supabase com uso elevado",
+                    "descricao": (
+                        f"Uso atual: {used_mb:.1f} MB de {limit_mb:.0f} MB "
+                        f"({pct:.1f}%). Acompanhe em Configurações > Banco & Importação."
+                    ),
+                    "modulo": "Configurações",
+                    "data": "Banco de dados",
+                })
+    except Exception as e:
+        logger.debug("[alertas] armazenamento Supabase falhou: %s", e)
+
     with engine.connect() as conn:
 
         # ── R1: Orçamentos próximos/estourados ────────────────────────────────

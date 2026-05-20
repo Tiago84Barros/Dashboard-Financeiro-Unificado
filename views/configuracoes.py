@@ -15,7 +15,7 @@ import streamlit as st
 
 from core.auth import encerrar_sessao, esta_autenticado
 from core.config import settings
-from core.database import get_db_status
+from core.database import get_database_storage_status, get_db_status
 from design.componentes import container_pagina
 
 
@@ -376,6 +376,9 @@ def _render_banco() -> None:
     st.divider()
 
     # ── Schema ─────────────────────────────────────────────────────────────────
+    _render_storage_health()
+    st.divider()
+
     from etl.schema_setup import TABELAS_ESPERADAS, verificar_schema
 
     with st.spinner("Verificando schema…"):
@@ -414,6 +417,63 @@ def _render_banco() -> None:
             _render_import_postgres()
         else:
             st.warning("Banco não conectado.")
+
+
+def _render_storage_health() -> None:
+    storage = get_database_storage_status()
+
+    st.subheader("Uso do Supabase")
+    st.caption(
+        "Monitoramento preventivo do tamanho do banco. O limite padrão é 500 MB, "
+        "ajustável por `SUPABASE_DB_LIMIT_MB`."
+    )
+
+    if not storage.get("ok"):
+        st.warning(
+            "Não foi possível medir o uso atual do banco. "
+            "Verifique a conexão e as permissões de leitura do PostgreSQL."
+        )
+        return
+
+    status = storage.get("status", "unknown")
+    used_mb = float(storage.get("used_mb", 0.0))
+    limit_mb = float(storage.get("limit_mb", 0.0))
+    remaining_mb = float(storage.get("remaining_mb", 0.0))
+    pct_used = float(storage.get("pct_used", 0.0))
+
+    if status == "danger":
+        st.error(storage.get("message"))
+    elif status in {"critical", "attention"}:
+        st.warning(storage.get("message"))
+    else:
+        st.success(storage.get("message"))
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Uso atual", f"{used_mb:.1f} MB")
+    col2.metric("Limite monitorado", f"{limit_mb:.0f} MB")
+    col3.metric("Espaço livre", f"{remaining_mb:.1f} MB")
+
+    st.progress(
+        min(max(pct_used / 100, 0.0), 1.0),
+        text=f"{pct_used:.1f}% da cota monitorada",
+    )
+
+    top_tables = storage.get("top_tables") or []
+    if top_tables:
+        with st.expander("Maiores tabelas do banco"):
+            df = pd.DataFrame(top_tables).rename(
+                columns={
+                    "table_name": "Tabela",
+                    "total_mb": "Tamanho (MB)",
+                    "total_bytes": "Bytes",
+                }
+            )
+            df["Tamanho (MB)"] = df["Tamanho (MB)"].map(lambda value: f"{float(value):.2f}")
+            st.dataframe(
+                df[["Tabela", "Tamanho (MB)", "Bytes"]],
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 def _executar_criar_schema() -> None:
