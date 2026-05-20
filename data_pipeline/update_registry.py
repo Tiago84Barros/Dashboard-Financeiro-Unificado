@@ -100,8 +100,11 @@ def get_registry(active_only: bool = False) -> list[dict]:
                     r.id, r.table_name, r.source_name, r.job_name,
                     r.update_type, r.frequency, r.priority, r.is_active, r.description,
                     f.last_success_at, f.last_attempt_at, f.last_status,
-                    f.next_expected_update, f.freshness_status,
-                    f.last_records_inserted, f.last_records_updated, f.last_records_failed,
+                    f.next_expected_update,
+                    COALESCE(f.freshness_status, 'never_updated') AS freshness_status,
+                    COALESCE(f.last_records_inserted, 0) AS last_records_inserted,
+                    COALESCE(f.last_records_updated, 0) AS last_records_updated,
+                    COALESCE(f.last_records_failed, 0) AS last_records_failed,
                     f.last_error_message
                 FROM data_update_registry r
                 LEFT JOIN data_freshness_status f ON f.job_name = r.job_name
@@ -135,8 +138,14 @@ def seed_registry() -> int:
                         (:table_name, :source_name, :job_name, :update_type,
                          :frequency, :priority, :is_active, :description)
                     ON CONFLICT (job_name) DO UPDATE SET
+                        table_name = EXCLUDED.table_name,
                         description = EXCLUDED.description,
-                        source_name = EXCLUDED.source_name
+                        source_name = EXCLUDED.source_name,
+                        update_type = EXCLUDED.update_type,
+                        frequency = EXCLUDED.frequency,
+                        priority = EXCLUDED.priority,
+                        is_active = EXCLUDED.is_active,
+                        updated_at = NOW()
                 """), item)
                 inserted += result.rowcount
         return inserted

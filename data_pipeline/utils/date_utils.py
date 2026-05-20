@@ -5,6 +5,9 @@ Utilitários de data e frequência para o pipeline.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+_BRASILIA_TZ = ZoneInfo("America/Sao_Paulo")
 
 # Mapeia frequência textual → timedelta
 _FREQ_MAP: dict[str, timedelta] = {
@@ -104,4 +107,7 @@ def fmt_datetime_br(dt: datetime | None) -> str:
             dt = datetime.fromisoformat(dt)
         except ValueError:
             return dt
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone(_BRASILIA_TZ)
     return dt.strftime("%d/%m/%Y %H:%M")

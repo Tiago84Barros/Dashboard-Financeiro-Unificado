@@ -1,91 +1,168 @@
 """
 data_pipeline/jobs/update_b3_quotes.py
-Atualiza cotações de ativos (B3 e internacionais) via yfinance.
+Atualiza cotacoes de ativos B3 e internacionais via yfinance.
 
-Reutiliza a lógica de views/configuracoes.py._executar_update_cotacoes()
-mas de forma headless (sem Streamlit).
+O job precisa ser tolerante a bancos em fases diferentes de migracao:
+alguns usam currency, outros moeda; alguns ja possuem ativo/active, outros nao.
 """
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 logger = logging.getLogger(__name__)
 
-TABLE_NAME  = "asset_quotes"
+TABLE_NAME = "asset_quotes"
 SOURCE_NAME = "B3/Yahoo Finance"
-JOB_NAME    = "update_b3_quotes"
+JOB_NAME = "update_b3_quotes"
+_B3_REGULAR_SUFFIXES = ("3", "4", "5", "6", "11", "34", "35", "39")
+_NON_MARKET_CLASSES = {"fixed_income", "renda_fixa", "tesouro_direto", "tesouro", "cash"}
+
+
+def _safe_table_names(inspector) -> set[str]:
+    names: set[str] = set()
+    try:
+        names.update(inspector.get_table_names(schema="public") or [])
+    except Exception:
+        pass
+    try:
+        names.update(inspector.get_table_names() or [])
+    except Exception:
+        pass
+    return names
+
+
+def _safe_columns(inspector, table_name: str) -> set[str]:
+    try:
+        return {c["name"] for c in inspector.get_columns(table_name, schema="public")}
+    except Exception:
+        return {c["name"] for c in inspector.get_columns(table_name)}
+
+
+def _ensure_assets_active_column(conn, inspector) -> set[str]:
+    asset_cols = _safe_columns(inspector, "assets")
+    if "ativo" in asset_cols or "active" in asset_cols:
+        return asset_cols
+    try:
+        from sqlalchemy import text
+
+        conn.execute(text("ALTER TABLE assets ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE"))
+        conn.commit()
+        if hasattr(inspector, "clear_cache"):
+            inspector.clear_cache()
+        return _safe_columns(inspector, "assets")
+    except Exception as exc:
+        logger.info("update_b3_quotes: nao foi possivel adicionar coluna ativo em assets: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return asset_cols
+
+
+def _list_assets_to_update(conn, inspector_factory, apenas_desatualizados: bool):
+    from sqlalchemy import text
+
+    inspector = inspector_factory(conn)
+    tables = _safe_table_names(inspector)
+    if "assets" not in tables:
+        raise RuntimeError("Tabela assets nao encontrada")
+    if "asset_quotes" not in tables:
+        raise RuntimeError("Tabela asset_quotes nao encontrada")
+
+    asset_cols = _ensure_assets_active_column(conn, inspector)
+    if not {"id", "ticker"}.issubset(asset_cols):
+        raise RuntimeError("Tabela assets sem colunas obrigatorias id/ticker")
+
+    currency_expr = "a.currency AS currency" if "currency" in asset_cols else (
+        "a.moeda AS currency" if "moeda" in asset_cols else "'BRL' AS currency"
+    )
+    class_expr = 'a."class" AS asset_class' if "class" in asset_cols else (
+        "a.classe AS asset_class" if "classe" in asset_cols else "NULL AS asset_class"
+    )
+    active_col = "ativo" if "ativo" in asset_cols else ("active" if "active" in asset_cols else None)
+    active_filter = f"(a.{active_col} IS NULL OR a.{active_col} = TRUE)" if active_col else "TRUE"
+    stale_filter = """
+      AND NOT EXISTS (
+        SELECT 1 FROM asset_quotes aq
+        WHERE aq.asset_id = a.id
+          AND aq.timestamp >= NOW() - INTERVAL '2 days'
+      )
+    """ if apenas_desatualizados else ""
+
+    rows = conn.execute(text(f"""
+        SELECT CAST(a.id AS TEXT) AS id, a.ticker, {currency_expr}, {class_expr}
+        FROM assets a
+        WHERE {active_filter}
+        {stale_filter}
+        ORDER BY a.ticker
+    """)).fetchall()
+    return [r for r in rows if _is_quote_eligible(r)], active_col
+
+
+def _is_quote_eligible(row) -> bool:
+    ticker = str(getattr(row, "ticker", "") or "").strip().upper()
+    currency = str(getattr(row, "currency", "") or "BRL").strip().upper()
+    asset_class = str(getattr(row, "asset_class", "") or "").strip().lower()
+
+    if not ticker or " " in ticker or asset_class in _NON_MARKET_CLASSES:
+        return False
+
+    if currency == "BRL":
+        if not re.fullmatch(r"[A-Z]{4}[0-9]{1,2}", ticker):
+            return False
+        return ticker.endswith(_B3_REGULAR_SUFFIXES)
+
+    return re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}", ticker) is not None
+
+
+def _download_history(yf, ticker_yf: str, periodo: str):
+    return yf.download(
+        ticker_yf,
+        period=periodo,
+        progress=False,
+        auto_adjust=True,
+        actions=False,
+    )
 
 
 def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
     """
-    Baixa cotações via yfinance e faz UPSERT em asset_quotes.
+    Baixa cotacoes via yfinance e faz UPSERT em asset_quotes.
 
-    apenas_desatualizados=True: só atualiza ativos cuja última cotação
-    tem mais de 1 dia de diferença do dia atual.
+    apenas_desatualizados=True atualiza somente ativos sem cotacao recente.
     """
     result = {
-        "status":           "success",
-        "table_name":       TABLE_NAME,
-        "source_name":      SOURCE_NAME,
-        "job_name":         JOB_NAME,
+        "status": "success",
+        "table_name": TABLE_NAME,
+        "source_name": SOURCE_NAME,
+        "job_name": JOB_NAME,
         "records_inserted": 0,
-        "records_updated":  0,
-        "records_failed":   0,
-        "error_message":    None,
+        "records_updated": 0,
+        "records_failed": 0,
+        "error_message": None,
     }
 
     try:
         import yfinance as yf
     except ImportError:
         result["status"] = "failed"
-        result["error_message"] = "yfinance não instalado"
+        result["error_message"] = "yfinance nao instalado"
         return result
 
     from data_pipeline.utils.db_utils import get_pipeline_engine
-    from sqlalchemy import text
+    from sqlalchemy import inspect as sa_inspect, text
 
     engine = get_pipeline_engine()
     if engine is None:
         result["status"] = "failed"
-        result["error_message"] = "Banco não conectado"
+        result["error_message"] = "Banco nao conectado"
         return result
-
-    _SQL_LIST_DESATUALIZADO = text("""
-        SELECT a.id::text AS id, a.ticker, a.currency
-        FROM   assets a
-        WHERE  (a.ativo IS NULL OR a.ativo = TRUE)
-          AND  NOT EXISTS (
-            SELECT 1 FROM asset_quotes aq
-            WHERE  aq.asset_id = a.id
-              AND  aq.timestamp >= NOW() - INTERVAL '2 days'
-        )
-        ORDER BY a.ticker
-    """)
-    _SQL_LIST_DESATUALIZADO_FALLBACK = text("""
-        SELECT a.id::text AS id, a.ticker, a.currency
-        FROM   assets a
-        WHERE  NOT EXISTS (
-            SELECT 1 FROM asset_quotes aq
-            WHERE  aq.asset_id = a.id
-              AND  aq.timestamp >= NOW() - INTERVAL '2 days'
-        )
-        ORDER BY a.ticker
-    """)
-    _SQL_LIST_ALL        = text("SELECT id::text AS id, ticker, currency FROM assets WHERE ativo IS NULL OR ativo = TRUE ORDER BY ticker")
-    _SQL_LIST_ALL_FALLBACK = text("SELECT id::text AS id, ticker, currency FROM assets ORDER BY ticker")
 
     try:
         with engine.connect() as conn:
-            try:
-                rows = conn.execute(
-                    _SQL_LIST_DESATUALIZADO if apenas_desatualizados else _SQL_LIST_ALL
-                ).fetchall()
-            except Exception:
-                # Coluna 'ativo' ainda não existe — usa query sem o filtro
-                rows = conn.execute(
-                    _SQL_LIST_DESATUALIZADO_FALLBACK if apenas_desatualizados else _SQL_LIST_ALL_FALLBACK
-                ).fetchall()
+            rows, active_col = _list_assets_to_update(conn, sa_inspect, apenas_desatualizados)
     except Exception as exc:
         result["status"] = "failed"
         result["error_message"] = f"Erro ao listar ativos: {exc}"
@@ -96,7 +173,7 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
         result["status"] = "skipped"
         return result
 
-    _SQL_UPSERT = text("""
+    sql_upsert = text("""
         INSERT INTO asset_quotes
             (asset_id, timestamp, open, high, low, close, volume)
         VALUES
@@ -110,24 +187,25 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
     """)
 
     for r in rows:
-        ticker_yf = f"{r.ticker}.SA" if (r.currency or "BRL") == "BRL" else r.ticker
+        currency = getattr(r, "currency", None) or "BRL"
+        ticker_yf = f"{r.ticker}.SA" if currency == "BRL" else r.ticker
         try:
-            hist = yf.download(
-                ticker_yf, period=periodo, progress=False,
-                auto_adjust=True, actions=False,
-            )
+            hist = _download_history(yf, ticker_yf, periodo)
             if hist.empty:
-                # Sem dados = ativo deslistado ou inexistente — marca como inativo
-                logger.info("update_b3_quotes: sem dados para %s — marcando como inativo", ticker_yf)
-                with engine.begin() as conn:
-                    conn.execute(
-                        text("UPDATE assets SET ativo = FALSE WHERE id = :id"),
-                        {"id": r.id},
-                    )
+                # Ativos pouco liquidos podem ficar sem negocio em 5 dias.
+                # Antes de marcar como inativo, valida em uma janela maior.
+                hist = _download_history(yf, ticker_yf, "1y")
+
+            if hist.empty:
+                logger.info("update_b3_quotes: sem dados para %s", ticker_yf)
+                if active_col:
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text(f"UPDATE assets SET {active_col} = FALSE WHERE id = :id"),
+                            {"id": r.id},
+                        )
                 continue
 
-            # yfinance >= 0.2.x retorna MultiIndex ('Close', 'TICKER') para
-            # download de ticker único — achata para colunas simples
             if isinstance(hist.columns, __import__("pandas").MultiIndex):
                 hist.columns = hist.columns.get_level_values(0)
 
@@ -137,20 +215,20 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
                 if close_val > 0:
                     records.append({
                         "asset_id": r.id,
-                        "ts":       ts.to_pydatetime(),
-                        "open":     float(row_data.get("Open",   0) or 0) or None,
-                        "high":     float(row_data.get("High",   0) or 0) or None,
-                        "low":      float(row_data.get("Low",    0) or 0) or None,
-                        "close":    close_val,
-                        "volume":   float(row_data.get("Volume", 0) or 0) or None,
+                        "ts": ts.to_pydatetime(),
+                        "open": float(row_data.get("Open", 0) or 0) or None,
+                        "high": float(row_data.get("High", 0) or 0) or None,
+                        "low": float(row_data.get("Low", 0) or 0) or None,
+                        "close": close_val,
+                        "volume": float(row_data.get("Volume", 0) or 0) or None,
                     })
 
             if records:
                 with engine.begin() as conn:
-                    conn.execute(_SQL_UPSERT, records)
+                    conn.execute(sql_upsert, records)
                 result["records_inserted"] += len(records)
 
-            time.sleep(0.3)  # respeita rate limit do yfinance
+            time.sleep(0.3)
 
         except Exception as exc:
             logger.warning("update_b3_quotes: erro em %s: %s", ticker_yf, exc)

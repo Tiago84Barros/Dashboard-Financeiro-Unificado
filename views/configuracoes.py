@@ -48,6 +48,7 @@ _FRESHNESS_ICON = {
     "outdated":      "🔴",
     "never_updated": "⚪",
     "error":         "❌",
+    "skipped":       "⚪",
 }
 _FRESHNESS_LABEL = {
     "updated":       "Atualizado",
@@ -55,7 +56,26 @@ _FRESHNESS_LABEL = {
     "outdated":      "Desatualizado",
     "never_updated": "Nunca atualizado",
     "error":         "Erro",
+    "skipped":       "Ignorado",
 }
+
+
+def _update_summary_card_html(label: str, value: str, detail: str = "", tone: str = "neutral") -> str:
+    colors = {
+        "ok": ("#00D09C", "rgba(0,208,156,.12)", "rgba(0,208,156,.35)"),
+        "warn": ("#FFB020", "rgba(255,176,32,.12)", "rgba(255,176,32,.35)"),
+        "info": ("#4DA3FF", "rgba(77,163,255,.12)", "rgba(77,163,255,.35)"),
+        "neutral": ("#E5E7EB", "rgba(148,163,184,.10)", "rgba(148,163,184,.25)"),
+    }
+    accent, bg, border = colors.get(tone, colors["neutral"])
+    detail_html = f'<div class="upd-card-detail">{detail}</div>' if detail else ""
+    return f"""
+        <div class="upd-card" style="--accent:{accent};--bg:{bg};--border:{border};">
+            <div class="upd-card-label">{label}</div>
+            <div class="upd-card-value">{value}</div>
+            {detail_html}
+        </div>
+        """
 
 
 def _render_atualizacao() -> None:
@@ -101,20 +121,67 @@ def _render_atualizacao() -> None:
     registry_list = get_registry(active_only=True)
     ultima = get_last_global_update()
 
-    # ── Resumo compacto ────────────────────────────────────────────────────────
-    ok_count  = sum(1 for s in registry_list if s.get("freshness_status") == "updated")
-    bad_count = sum(1 for s in registry_list if s.get("freshness_status") in
-                    ("outdated", "error", "never_updated", "attention"))
+    st.markdown(
+        """
+        <style>
+        .upd-card-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 18px;
+            margin: 4px 0 28px 0;
+        }
+        .upd-card {
+            min-height: 142px;
+            padding: 20px 22px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: linear-gradient(145deg, var(--bg), rgba(17,24,39,.72));
+            box-shadow: 0 14px 30px rgba(0,0,0,.18);
+        }
+        .upd-card-label {
+            color: #A8B3C7;
+            font-size: .78rem;
+            font-weight: 800;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }
+        .upd-card-value {
+            margin-top: 12px;
+            color: var(--accent);
+            font-size: 2.15rem;
+            line-height: 1.05;
+            font-weight: 900;
+        }
+        .upd-card-detail {
+            margin-top: 12px;
+            color: #CBD5E1;
+            font-size: .9rem;
+            line-height: 1.35;
+        }
+        @media (max-width: 900px) {
+            .upd-card-grid { grid-template-columns: 1fr; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        st.metric("Fontes OK", ok_count)
-    with col_b:
-        st.metric("Precisam atualizar", bad_count,
-                  delta=f"+{bad_count}" if bad_count else None,
-                  delta_color="inverse")
-    with col_c:
-        st.metric("Última atualização", fmt_datetime_br(ultima) if ultima else "Nunca")
+    # ── Resumo compacto ────────────────────────────────────────────────────────
+    ok_count  = sum(1 for s in registry_list if (s.get("freshness_status") or "never_updated") == "updated")
+    bad_count = sum(1 for s in registry_list if (s.get("freshness_status") or "never_updated") in
+                    ("outdated", "error", "never_updated", "attention"))
+    total_count = len(registry_list)
+    ultima_fmt = fmt_datetime_br(ultima) if ultima else "Nunca"
+    detalhe_bad = "Tudo em dia" if bad_count == 0 else f"{bad_count} fonte(s) exigem atenção"
+
+    st.markdown(
+        '<div class="upd-card-grid">'
+        + _update_summary_card_html("Fontes OK", str(ok_count), f"{total_count} fontes ativas monitoradas", "ok")
+        + _update_summary_card_html("Precisam atualizar", str(bad_count), detalhe_bad, "warn" if bad_count else "ok")
+        + _update_summary_card_html("Última atualização (BRT)", ultima_fmt, "Horário de Brasília", "info")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
     st.markdown("")
 
@@ -157,17 +224,22 @@ def _render_atualizacao() -> None:
     if registry_list:
         dados = []
         for s in registry_list:
-            fs   = s.get("freshness_status", "never_updated")
+            fs   = s.get("freshness_status") or "never_updated"
             icon = _FRESHNESS_ICON.get(fs, "?")
             lbl  = _FRESHNESS_LABEL.get(fs, fs)
             err  = (s.get("last_error_message") or "")[:80]
-            desc = s.get("description", "—")
+            desc = s.get("description") or "—"
+            freq = s.get("frequency") or "—"
+            try:
+                registros = int(s.get("last_records_inserted") or 0)
+            except (TypeError, ValueError):
+                registros = 0
             dados.append({
                 "O que atualiza":   desc[:60] + "…" if len(desc) > 60 else desc,
-                "Frequência":       _FREQ_LABEL.get(s.get("frequency", ""), s.get("frequency", "—")),
+                "Frequência":       _FREQ_LABEL.get(freq, freq),
                 "Status":           f"{icon} {lbl}",
                 "Última OK":        fmt_datetime_br(s.get("last_success_at")),
-                "Registros":        s.get("last_records_inserted", 0),
+                "Registros":        registros,
                 "Erro":             err,
             })
         st.dataframe(
@@ -214,8 +286,8 @@ def _render_atualizacao() -> None:
                     "Início":  fmt_datetime_br(lg.get("started_at")),
                     "Job":     lg.get("job_name", "—"),
                     "Status":  f"{_STATUS_ICON.get(s, '?')} {s}",
-                    "Inserts": lg.get("records_inserted", 0),
-                    "Falhas":  lg.get("records_failed", 0),
+                    "Inserts": int(lg.get("records_inserted") or 0),
+                    "Falhas":  int(lg.get("records_failed") or 0),
                     "Tempo":   f"{lg.get('execution_time_seconds', 0):.1f}s"
                                if lg.get("execution_time_seconds") else "—",
                     "Erro":    (lg.get("error_message") or "")[:60],

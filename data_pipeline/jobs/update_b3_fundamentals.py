@@ -117,6 +117,8 @@ def run() -> dict:
             if present:
                 cols_by_table[tbl] = table_columns(conn, tbl)
 
+    first_errors: list[str] = []
+
     for tk in tickers:
         try:
             # ── Dados anuais via yfinance ──────────────────────────────────────
@@ -185,12 +187,17 @@ def run() -> dict:
         except Exception as exc:
             logger.warning("update_b3_fundamentals: erro em %s: %s", tk, exc)
             result["records_failed"] += 1
+            if len(first_errors) < 5:
+                first_errors.append(f"{tk}: {type(exc).__name__}: {exc}")
 
     if result["records_failed"] > 0 and result["records_inserted"] == 0 and result["records_updated"] == 0:
         result["status"] = "failed"
-        result["error_message"] = f"{result['records_failed']} tickers falharam"
+        detalhe = " | ".join(first_errors)
+        result["error_message"] = f"{result['records_failed']} tickers falharam" + (f" — {detalhe}" if detalhe else "")
     elif result["records_failed"] > 0:
         result["status"] = "partial_success"
+        if first_errors:
+            result["error_message"] = "Falhas parciais: " + " | ".join(first_errors)
 
     return result
 

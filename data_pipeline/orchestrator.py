@@ -86,12 +86,26 @@ def _run_job(job_name: str, registry_item: dict) -> dict:
                          error_message=str(exc), frequency=frequency)
         return base
 
-    # Normaliza resultado do job
-    result.setdefault("status", "success")
-    result.setdefault("records_inserted", 0)
-    result.setdefault("records_updated", 0)
-    result.setdefault("records_failed", 0)
-    result.setdefault("error_message", None)
+    # Normaliza resultado do job. A UI e os logs esperam tipos previsiveis,
+    # mesmo quando um job novo retorna campos nulos ou formato inesperado.
+    if not isinstance(result, dict):
+        result = {
+            "status": "failed",
+            "error_message": f"Retorno invalido do job {job_name}: {type(result).__name__}",
+        }
+    result["status"] = result.get("status") or "success"
+    if result["status"] not in {"success", "partial_success", "skipped", "failed"}:
+        result["status"] = "failed"
+        result["error_message"] = result.get("error_message") or "Status de job invalido"
+    result["table_name"] = result.get("table_name") or table_name
+    result["source_name"] = result.get("source_name") or source_name
+    result["job_name"] = result.get("job_name") or job_name
+    for key in ("records_inserted", "records_updated", "records_failed"):
+        try:
+            result[key] = int(result.get(key) or 0)
+        except (TypeError, ValueError):
+            result[key] = 0
+    result["error_message"] = result.get("error_message") or None
 
     finished = datetime.now(tz=timezone.utc)
     result["execution_time_seconds"] = (finished - started_at).total_seconds()
@@ -170,7 +184,7 @@ def run_updates(
         results.append(result)
 
     finished_at = datetime.now(tz=timezone.utc)
-    success_count = sum(1 for r in results if r.get("status") == "success")
+    success_count = sum(1 for r in results if r.get("status") in ("success", "partial_success"))
     failed_count  = sum(1 for r in results if r.get("status") == "failed")
 
     overall = "success" if failed_count == 0 else ("partial_success" if success_count > 0 else "failed")
