@@ -63,6 +63,9 @@ def should_run_job(registry_item: dict, force: bool = False) -> bool:
         last_success = last_success.replace(tzinfo=timezone.utc)
 
     now = datetime.now(tz=timezone.utc)
+    if frequency.lower() == "diario":
+        return last_success.astimezone(_BRASILIA_TZ).date() < now.astimezone(_BRASILIA_TZ).date()
+
     delta = frequency_to_timedelta(frequency)
     return (now - last_success) >= delta
 

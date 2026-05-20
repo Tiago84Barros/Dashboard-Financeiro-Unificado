@@ -157,6 +157,8 @@ def update_freshness(
                     VALUES
                         (:tn, :sn, :jn, :la, 'skipped', 'never_updated', :now)
                     ON CONFLICT (job_name) DO UPDATE SET
+                        table_name      = EXCLUDED.table_name,
+                        source_name     = EXCLUDED.source_name,
                         last_attempt_at = EXCLUDED.last_attempt_at,
                         last_status     = EXCLUDED.last_status,
                         updated_at      = EXCLUDED.updated_at
