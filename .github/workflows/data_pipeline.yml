@@ -50,10 +50,26 @@ jobs:
 
       - name: Validar configuração do Supabase
         run: |
-          if [ -z "${SUPABASE_UNIFICADO_URL}${DATABASE_URL}${SUPABASE_DB_URL}" ]; then
+          DB_URL="${SUPABASE_UNIFICADO_URL:-${DATABASE_URL:-${SUPABASE_DB_URL}}}"
+          if [ -z "$DB_URL" ]; then
             echo "ERRO: configure SUPABASE_UNIFICADO_URL em Settings > Secrets and variables > Actions."
             exit 1
           fi
+          case "$DB_URL" in
+            postgresql://*|postgres://*)
+              echo "URL PostgreSQL do Supabase encontrada."
+              ;;
+            http://*|https://*)
+              echo "ERRO: o Secret parece ser a URL pública do projeto Supabase."
+              echo "Use a connection string do banco PostgreSQL, iniciando com postgresql:// ou postgres://."
+              exit 1
+              ;;
+            *)
+              echo "ERRO: SUPABASE_UNIFICADO_URL não está em formato SQLAlchemy/PostgreSQL válido."
+              echo "O valor deve iniciar com postgresql:// ou postgres://."
+              exit 1
+              ;;
+          esac
 
       - name: Inicializar tabelas do pipeline
         run: |
