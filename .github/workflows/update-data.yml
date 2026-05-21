@@ -1,0 +1,95 @@
+name: Atualizar banco Supabase
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Forçar atualização ignorando frequência"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      source:
+        description: "Job específico ou all"
+        required: false
+        default: "all"
+        type: string
+  schedule:
+    # Executa todos os dias às 08:00 UTC, 05:00 em Brasília.
+    - cron: "0 8 * * *"
+
+permissions:
+  contents: read
+
+env:
+  APP_ENV: production
+  MOCK_MODE: "false"
+  PYTHONUNBUFFERED: "1"
+  SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+  OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+jobs:
+  update-data:
+    name: Executar pipeline de dados
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validar segredo do Supabase
+        run: |
+          if [ -z "${SUPABASE_UNIFICADO_URL}${DATABASE_URL}${SUPABASE_DB_URL}" ]; then
+            echo "ERRO: configure SUPABASE_UNIFICADO_URL nos GitHub Actions Secrets do repositório."
+            exit 1
+          fi
+
+      - name: Inicializar tabelas do pipeline se necessário
+        run: |
+          python - <<'PY'
+          from data_pipeline.utils.db_utils import ensure_pipeline_tables
+          result = ensure_pipeline_tables()
+          print(result)
+          if not result.get("ok"):
+              raise SystemExit(1)
+          PY
+
+      - name: Executar atualização automática
+        run: |
+          SOURCE="${{ github.event.inputs.source || 'all' }}"
+          FORCE="${{ github.event.inputs.force || 'false' }}"
+
+          CMD="python run_data_updates.py --json"
+          if [ "$SOURCE" = "all" ] || [ -z "$SOURCE" ]; then
+            CMD="$CMD --all"
+          else
+            CMD="$CMD --source $SOURCE"
+          fi
+          if [ "$FORCE" = "true" ]; then
+            CMD="$CMD --force"
+          fi
+
+          echo "Executando: $CMD"
+          $CMD
+
+      - name: Mostrar status final
+        if: always()
+        run: |
+          python run_data_updates.py --status --json || true
