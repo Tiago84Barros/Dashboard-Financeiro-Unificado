@@ -17,8 +17,9 @@ on:
         default: "all"
         type: string
   schedule:
-    # Executa todos os dias às 08:00 UTC, 05:00 em Brasília.
-    - cron: "0 8 * * *"
+    # TEMPORÁRIO PARA TESTE: executa a cada 5 minutos.
+    # Depois de validar no app, voltar para "0 8 * * *".
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: read
