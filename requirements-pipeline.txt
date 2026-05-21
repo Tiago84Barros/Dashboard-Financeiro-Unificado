@@ -1,5 +1,6 @@
 # Dependências mínimas para o pipeline headless (GitHub Actions / CLI)
-# Não inclui Streamlit nem pacotes de UI.
+# Streamlit é necessário porque core.database usa st.cache_resource/st.cache_data.
+streamlit>=1.39.0,<2.0.0
 sqlalchemy>=2.0.0,<3.0.0
 psycopg2-binary>=2.9.0,<3.0.0
 python-dotenv>=1.0.0,<2.0.0
