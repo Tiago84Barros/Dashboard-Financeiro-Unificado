@@ -2,8 +2,8 @@ name: Pipeline de Dados
 
 on:
   schedule:
-    # Executa todo dia às 07:00 horário de Brasília (10:00 UTC).
-    - cron: "0 10 * * *"
+    # Executa todo dia às 18:30 horário de Brasília (21:30 UTC).
+    - cron: "30 21 * * *"
   workflow_dispatch:
     # Permite disparo manual pela aba Actions do GitHub
     inputs:
