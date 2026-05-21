@@ -2,9 +2,8 @@ name: Pipeline de Dados
 
 on:
   schedule:
-    # TEMPORÁRIO PARA TESTE: executa a cada 5 minutos.
-    # Depois de validar no app, voltar para "0 10 * * *".
-    - cron: "*/5 * * * *"
+    # Executa todo dia às 07:00 horário de Brasília (10:00 UTC).
+    - cron: "0 10 * * *"
   workflow_dispatch:
     # Permite disparo manual pela aba Actions do GitHub
     inputs:
