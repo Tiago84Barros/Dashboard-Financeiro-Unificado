@@ -376,6 +376,43 @@ def _apply_migrations(engine, erros: list) -> None:
             END IF;
         END $$
         """,
+        # v1.0 — investment_transactions/dividends: external_id para idempotência
+        # de importações manuais (B3 Negociação, B3 Movimentação, XP, Nomad).
+        # Coluna NULL-permissive: registros antigos seguem sem external_id.
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'investment_transactions'
+                  AND column_name = 'external_id'
+            ) THEN
+                ALTER TABLE investment_transactions ADD COLUMN external_id VARCHAR(64);
+            END IF;
+        END $$
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            ux_investment_transactions_external_id
+            ON investment_transactions(external_id)
+            WHERE external_id IS NOT NULL
+        """,
+        """
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'dividends'
+                  AND column_name = 'external_id'
+            ) THEN
+                ALTER TABLE dividends ADD COLUMN external_id VARCHAR(64);
+            END IF;
+        END $$
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            ux_dividends_external_id
+            ON dividends(external_id)
+            WHERE external_id IS NOT NULL
+        """,
     ]
     try:
         with engine.begin() as conn:

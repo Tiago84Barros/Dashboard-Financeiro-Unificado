@@ -219,7 +219,10 @@ def _render_atualizacao() -> None:
     st.divider()
 
     # ── Tabela de fontes ───────────────────────────────────────────────────────
-    _FREQ_LABEL = {"diario": "Diária", "semanal": "Semanal", "mensal": "Mensal", "trimestral": "Trimestral"}
+    _FREQ_LABEL = {
+        "diario": "Diária", "semanal": "Semanal", "mensal": "Mensal",
+        "trimestral": "Trimestral", "manual": "Manual",
+    }
 
     if registry_list:
         dados = []
@@ -263,10 +266,13 @@ def _render_atualizacao() -> None:
 
     # ── Executar job individual ────────────────────────────────────────────────
     registry = get_registry(active_only=True)
-    if registry:
+    # Importações manuais (frequency='manual') não rodam pelo orquestrador.
+    # Filtramos do expander de execução individual para não exibir botão inerte.
+    runnable = [it for it in registry if (it.get("frequency") or "").lower() != "manual"]
+    if runnable:
         with st.expander("▶ Executar fonte individualmente"):
-            cols = st.columns(min(len(registry), 3))
-            for i, item in enumerate(registry):
+            cols = st.columns(min(len(runnable), 3))
+            for i, item in enumerate(runnable):
                 with cols[i % 3]:
                     nome = item.get("source_name", item.get("job_name", "?"))
                     if st.button(nome, use_container_width=True, key=f"_run_{item['job_name']}"):
@@ -417,6 +423,18 @@ def _render_banco() -> None:
             _render_import_postgres()
         else:
             st.warning("Banco não conectado.")
+
+    # ── Importações de Investimentos (separado das financeiras acima) ─────────
+    st.divider()
+    st.markdown("### 📈 Importar dados de investimentos")
+    st.caption(
+        "Importação manual a partir de arquivos exportados pelo próprio "
+        "investidor. Não realiza scraping nem login automático em corretora."
+    )
+    if settings.has_database:
+        _render_import_investimentos()
+    else:
+        st.warning("Banco não conectado.")
 
 
 def _render_storage_health() -> None:
@@ -728,6 +746,211 @@ def _render_import_generica(url_fonte: str) -> None:
             with st.expander("Erros"):
                 for e in res.erros:
                     st.code(e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Importação de Investimentos (B3 Negociação, B3 Movimentação, XP, Nomad)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
+    {
+        "key":         "b3_neg",
+        "label":       "B3 — Negociação (.xlsx)",
+        "help":        "investidor.b3.com.br → Extratos e Informativos → Negociação",
+        "file_types":  "xlsx",
+        "parser_attr": "parse_b3_negociacao",
+        "job_name":    "import_b3_negociacao",
+        "table_name":  "investment_transactions",
+        "source_name": "B3 — Negociação (manual)",
+    },
+    {
+        "key":         "b3_mov",
+        "label":       "B3 — Movimentação (.xlsx)",
+        "help":        "investidor.b3.com.br → Extratos e Informativos → Movimentação",
+        "file_types":  "xlsx",
+        "parser_attr": "parse_b3_movimentacao",
+        "job_name":    "import_b3_movimentacao",
+        "table_name":  "dividends, investment_transactions",
+        "source_name": "B3 — Movimentação (manual)",
+    },
+    {
+        "key":         "xp_csl",
+        "label":       "XP — Relatório Consolidado (.xlsx)",
+        "help":        "Exportado pela XP no portal do investidor.",
+        "file_types":  "xlsx",
+        "parser_attr": "parse_xp_consolidado",
+        "job_name":    "import_xp_consolidado",
+        "table_name":  "portfolio_position_snapshots",
+        "source_name": "XP — Consolidado (manual)",
+    },
+    {
+        "key":         "nomad",
+        "label":       "Nomad — Notas (.pdf)",
+        "help":        "PDFs de negociação exportados pela Nomad.",
+        "file_types":  "pdf",
+        "parser_attr": "parse_nomad_pdf",
+        "job_name":    "import_nomad_pdf",
+        "table_name":  "investment_transactions",
+        "source_name": "Nomad — Notas PDF (manual)",
+    },
+]
+
+
+def _render_import_investimentos() -> None:
+    """Seção de importação manual de investimentos (B3, XP, Nomad)."""
+    st.info(
+        "🔒 A importação usa apenas arquivos exportados. O app **não solicita "
+        "senha** da B3, XP, Nomad ou banco.",
+        icon="🔒",
+    )
+
+    for cfg in _INVESTIMENTO_UPLOADS:
+        _render_import_block(cfg)
+        st.markdown("")  # respiro entre blocos
+
+
+def _render_import_block(cfg: dict[str, str]) -> None:
+    """Bloco de upload + ação + resultado para uma única fonte."""
+    with st.container(border=True):
+        st.markdown(f"**{cfg['label']}**")
+        st.caption(cfg["help"])
+
+        col_up, col_btn = st.columns([3, 1])
+        with col_up:
+            uploaded = st.file_uploader(
+                "Arquivo",
+                type=[cfg["file_types"]],
+                key=f"_inv_upl_{cfg['key']}",
+                label_visibility="collapsed",
+            )
+        with col_btn:
+            run = st.button(
+                "Importar",
+                type="primary",
+                use_container_width=True,
+                key=f"_inv_btn_{cfg['key']}",
+                disabled=uploaded is None,
+            )
+
+        result_key = f"_inv_result_{cfg['key']}"
+        if run and uploaded is not None:
+            with st.spinner(f"Importando {cfg['label']}…"):
+                st.session_state[result_key] = _executar_importacao_investimento(
+                    cfg, uploaded.getvalue()
+                )
+
+        if st.session_state.get(result_key):
+            _render_import_result(st.session_state[result_key])
+
+
+def _executar_importacao_investimento(cfg: dict[str, str], file_bytes: bytes) -> dict:
+    """
+    Roda o parser correspondente e registra o resultado no painel de
+    atualização (data_update_logs + data_freshness_status).
+    """
+    from datetime import datetime, timezone
+
+    from core.database import get_engine
+    from data_pipeline.importers.investments import (
+        parse_b3_negociacao, parse_b3_movimentacao,
+        parse_xp_consolidado, parse_nomad_pdf,
+    )
+    from data_pipeline.utils.logging_utils import (
+        log_finish, log_start, update_freshness,
+    )
+
+    parsers = {
+        "parse_b3_negociacao":   parse_b3_negociacao,
+        "parse_b3_movimentacao": parse_b3_movimentacao,
+        "parse_xp_consolidado":  parse_xp_consolidado,
+        "parse_nomad_pdf":       parse_nomad_pdf,
+    }
+    parser = parsers[cfg["parser_attr"]]
+
+    engine = get_engine()
+    if engine is None:
+        return {
+            "status": "failed",
+            "source": cfg["job_name"],
+            "records_imported": 0,
+            "transactions_imported": 0,
+            "incomes_imported": 0,
+            "positions_imported": 0,
+            "duplicates_skipped": 0,
+            "rows_skipped": 0,
+            "errors": ["Banco não configurado."],
+        }
+
+    started = datetime.now(tz=timezone.utc)
+    log_id = log_start(cfg["table_name"], cfg["source_name"], cfg["job_name"])
+
+    try:
+        summary = parser(file_bytes, engine)
+    except Exception as exc:  # noqa: BLE001
+        summary = {
+            "status": "failed",
+            "source": cfg["job_name"],
+            "records_imported": 0,
+            "transactions_imported": 0,
+            "incomes_imported": 0,
+            "positions_imported": 0,
+            "duplicates_skipped": 0,
+            "rows_skipped": 0,
+            "errors": [f"Erro na importação: {type(exc).__name__}"],
+        }
+
+    log_finish(
+        log_id,
+        status=summary.get("status", "failed"),
+        records_inserted=int(summary.get("records_imported", 0)),
+        records_updated=0,
+        records_failed=int(summary.get("rows_skipped", 0)),
+        error_message=("; ".join(summary.get("errors", [])[:3]) or None),
+        started_at=started,
+    )
+    update_freshness(
+        cfg["table_name"], cfg["source_name"], cfg["job_name"],
+        status=summary.get("status", "failed"),
+        records_inserted=int(summary.get("records_imported", 0)),
+        records_updated=0,
+        records_failed=int(summary.get("rows_skipped", 0)),
+        error_message=("; ".join(summary.get("errors", [])[:3]) or None),
+        frequency="manual",
+    )
+
+    summary["_executed_at_local"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    return summary
+
+
+def _render_import_result(summary: dict) -> None:
+    """Renderiza o resumo de uma importação concluída."""
+    st.markdown("")
+    status = summary.get("status", "failed")
+    src = summary.get("source", "?")
+    if status == "success":
+        st.success(f"✅ Importação concluída — {summary.get('records_imported', 0)} registros novos.")
+    elif status == "partial_success":
+        st.warning(f"🟡 Importação parcial — alguns registros falharam.")
+    elif status == "skipped":
+        st.info("⚪ Importação não executada nesta rodada.")
+    else:
+        st.error(f"❌ Falha na importação de {src}.")
+
+    cols = st.columns(4)
+    cols[0].metric("Operações", int(summary.get("transactions_imported", 0)))
+    cols[1].metric("Proventos", int(summary.get("incomes_imported", 0)))
+    cols[2].metric("Duplicados", int(summary.get("duplicates_skipped", 0)))
+    cols[3].metric("Ignorados", int(summary.get("rows_skipped", 0)))
+
+    st.caption(f"Executado em {summary.get('_executed_at_local', '—')}")
+
+    errors = summary.get("errors") or []
+    if errors:
+        with st.expander(f"Detalhes técnicos ({len(errors)})"):
+            for err in errors[:50]:
+                st.code(err)
+            if len(errors) > 50:
+                st.caption(f"… e mais {len(errors) - 50} mensagens.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

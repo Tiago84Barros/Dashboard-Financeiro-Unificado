@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 _BRASILIA_TZ = ZoneInfo("America/Sao_Paulo")
 
 # Mapeia frequência textual → timedelta
+# 'manual' tem timedelta gigante: jobs marcados como manual nunca atingem o
+# corte natural e ficam fora do pipeline automático (run_data_updates --all).
 _FREQ_MAP: dict[str, timedelta] = {
     "tempo_real":  timedelta(minutes=5),
     "horario":     timedelta(hours=1),
@@ -20,6 +22,7 @@ _FREQ_MAP: dict[str, timedelta] = {
     "trimestral":  timedelta(days=90),
     "semestral":   timedelta(days=180),
     "anual":       timedelta(days=365),
+    "manual":      timedelta(days=36500),  # 100 anos — efetivamente "nunca"
 }
 
 
@@ -41,13 +44,19 @@ def should_run_job(registry_item: dict, force: bool = False) -> bool:
     """
     Decide se um job deve ser executado com base na frequência e última atualização.
     force=True sempre retorna True para jobs ativos.
+
+    Jobs com frequency='manual' NUNCA rodam pelo orquestrador automático —
+    são acionados apenas via UI (Configurações > Banco & Importacao).
     """
     if not registry_item.get("is_active", True):
         return False
+
+    frequency = (registry_item.get("frequency") or "diario").lower()
+    if frequency == "manual":
+        return False
+
     if force:
         return True
-
-    frequency = registry_item.get("frequency", "diario")
     last_success: datetime | None = registry_item.get("last_success_at")
 
     if last_success is None:

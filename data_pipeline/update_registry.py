@@ -83,6 +83,51 @@ _DEFAULT_REGISTRY: list[dict] = [
         "is_active":    False,
         "description":  "Demonstrações financeiras de empresas EUA (implementação pendente)",
     },
+    # ── Importações manuais de investimentos ─────────────────────────────────
+    # frequency='manual' garante que NUNCA são executadas pelo
+    # orquestrador automático (run_data_updates --all / GitHub Actions).
+    # Cada importação é disparada pela UI (Configurações > Banco & Importação)
+    # e grava aqui apenas o log de execução, para histórico/visibilidade.
+    {
+        "table_name":   "investment_transactions",
+        "source_name":  "B3 — Negociação (manual)",
+        "job_name":     "import_b3_negociacao",
+        "update_type":  "manual",
+        "frequency":    "manual",
+        "priority":     20,
+        "is_active":    True,
+        "description":  "Importação manual de operações de compra/venda exportadas da B3 (Área do Investidor → Negociação)",
+    },
+    {
+        "table_name":   "dividends, investment_transactions",
+        "source_name":  "B3 — Movimentação (manual)",
+        "job_name":     "import_b3_movimentacao",
+        "update_type":  "manual",
+        "frequency":    "manual",
+        "priority":     21,
+        "is_active":    True,
+        "description":  "Importação manual de proventos e eventos exportados da B3 (Área do Investidor → Movimentação)",
+    },
+    {
+        "table_name":   "portfolio_position_snapshots",
+        "source_name":  "XP — Consolidado (manual)",
+        "job_name":     "import_xp_consolidado",
+        "update_type":  "manual",
+        "frequency":    "manual",
+        "priority":     22,
+        "is_active":    False,
+        "description":  "Importação manual do relatório consolidado XP — estrutura preparada, parser em planejamento",
+    },
+    {
+        "table_name":   "investment_transactions",
+        "source_name":  "Nomad — Notas PDF (manual)",
+        "job_name":     "import_nomad_pdf",
+        "update_type":  "manual",
+        "frequency":    "manual",
+        "priority":     23,
+        "is_active":    False,
+        "description":  "Importação manual de notas Nomad em PDF — estrutura preparada, parser em planejamento",
+    },
 ]
 
 
