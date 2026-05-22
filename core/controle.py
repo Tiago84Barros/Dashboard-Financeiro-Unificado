@@ -146,11 +146,11 @@ _SQL_INSERT_TX = """
 _SQL_UPDATE_TX = """
     UPDATE transactions
     SET    description = :description,
-           category_id = :category_id,
+           category_id = CAST(:category_id AS uuid),
            amount      = :amount,
            due_date    = :due_date
-    WHERE  id       = :tx_id::uuid
-      AND  user_id  = :uid::uuid
+    WHERE  id       = CAST(:tx_id AS uuid)
+      AND  user_id  = CAST(:uid AS uuid)
 """
 
 _SQL_HISTORICO_ANUAL = """
@@ -319,6 +319,21 @@ def get_opcoes_formulario() -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # API pública — escrita
 # ─────────────────────────────────────────────────────────────────────────────
+def _clear_controle_caches() -> None:
+    """Invalida caches afetados por inserções ou edições financeiras."""
+    for cached_name in (
+        "get_controle",
+        "get_transacoes_filtradas",
+        "get_historico_anual",
+        "get_gastos_categoria_anual",
+        "get_gastos_cartao_mensal",
+        "get_historico_cc_mensal",
+        "get_dividas_cc",
+    ):
+        cached_fn = globals().get(cached_name)
+        if hasattr(cached_fn, "clear"):
+            cached_fn.clear()
+
 
 def inserir_transacao(
     descricao: str,
@@ -375,8 +390,8 @@ def inserir_transacao(
                 },
             )
 
-        # Invalida cache do mês inserido para forçar reload
-        get_controle.clear()
+        # Invalida caches para forçar reload nas abas afetadas.
+        _clear_controle_caches()
         return True, ""
 
     except Exception as exc:
@@ -423,7 +438,7 @@ def atualizar_transacao(
                 },
             )
 
-        get_controle.clear()
+        _clear_controle_caches()
         return True, ""
 
     except Exception as exc:
