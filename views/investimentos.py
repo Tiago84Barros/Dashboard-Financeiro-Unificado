@@ -1774,22 +1774,32 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     cor_vm   = _COR_POSITIVO if pos["valor_mercado"] >= pos["total_investido"] else _COR_NEGATIVO
     dot_cor  = _COR_POSITIVO if pos["preco_atual"] >= pos["preco_medio"] else _COR_NEGATIVO
     ti       = pos["total_investido"]
-    rsc      = (pos["valor_mercado"] + renda - ti) / ti * 100 if ti > 0 else 0.0
+    custo_fonte = pos.get("custo_fonte", "snapshot")
+    custo_ausente = custo_fonte == "mercado_fallback"
+    rsc      = (pos["valor_mercado"] + renda - ti) / ti * 100 if ti > 0 and not custo_ausente else 0.0
     cor_rsc  = _COR_POSITIVO if rsc >= 0 else _COR_NEGATIVO
 
     dot = (f'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;'
            f'background:{dot_cor};margin-left:3px;vertical-align:middle;"></span>')
+
+    custo_label = "Custo estimado" if custo_fonte == "preco_medio_estimado" else "Custo investido"
+    custo_val = "Não informado" if custo_ausente else fmt_moeda(ti)
+    resultado_val = "—" if custo_ausente else f"{seta_r} {abs(rentab):.2f}%"
+    retorno_val = "—" if custo_ausente else f"{rsc:.2f}%"
+    resultado_cor = "#718096" if custo_ausente else cor_r
+    retorno_cor = "#718096" if custo_ausente else cor_rsc
+    mercado_cor = "#CBD5E0" if custo_ausente else cor_vm
 
     metricas = [
         ("Peso na carteira",  f"{pos['pct_carteira']:.2f}%",       "#CBD5E0"),
         ("Quantidade",        f"{pos['quantidade']:,.0f}".replace(",", "."), "#CBD5E0"),
         (f"Preço atual {dot}", fmt_moeda(pos["preco_atual"]),        "#CBD5E0"),
         ("Preço médio",       fmt_moeda(pos["preco_medio"]),         "#CBD5E0"),
-        ("Custo investido",   fmt_moeda(ti),                         "#CBD5E0"),
-        ("Valor de mercado",  fmt_moeda(pos["valor_mercado"]),       cor_vm),
-        ("Resultado total",   f"{seta_r} {abs(rentab):.2f}%",       cor_r),
+        (custo_label,          custo_val,                            "#CBD5E0"),
+        ("Valor de mercado",  fmt_moeda(pos["valor_mercado"]),       mercado_cor),
+        ("Resultado total",   resultado_val,                         resultado_cor),
         ("Renda recebida",    fmt_moeda(renda),                      _COR_ALERTA),
-        ("Retorno s/ custo",  f"{rsc:.2f}%",                        cor_rsc),
+        ("Retorno s/ custo",  retorno_val,                           retorno_cor),
     ]
     rows_html = "".join(
         f'<div style="display:flex;justify-content:space-between;padding:4px 0;'

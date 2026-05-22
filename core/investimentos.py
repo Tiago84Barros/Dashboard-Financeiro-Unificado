@@ -256,12 +256,26 @@ _SQL_POSICOES_SNAPSHOT = """
         FROM portfolio_position_snapshots
         WHERE user_id = :uid
         GROUP BY source_system, source_table
+    ),
+    pp_base AS (
+        SELECT
+            REGEXP_REPLACE(a.ticker, 'F$', '') AS base_ticker,
+            SUM(pp.quantity) AS pp_quantity,
+            SUM(pp.total_invested) AS pp_total_invested,
+            SUM(pp.total_invested) / NULLIF(SUM(pp.quantity), 0) AS pp_average_price
+        FROM portfolio_positions pp
+        JOIN assets a ON a.id = pp.asset_id
+        WHERE pp.user_id = :uid
+        GROUP BY REGEXP_REPLACE(a.ticker, 'F$', '')
     )
     SELECT
         pps.quantity,
         pps.market_price,
         pps.market_value,
         pps.invested_value,
+        pp_base.pp_quantity,
+        pp_base.pp_total_invested,
+        pp_base.pp_average_price,
         pps.asset_type,
         pps.asset_name,
         pps.currency,
@@ -275,6 +289,8 @@ _SQL_POSICOES_SNAPSHOT = """
      AND ls.source_table = pps.source_table
      AND ls.report_date = pps.report_date
     JOIN assets a ON a.id = pps.asset_id
+    LEFT JOIN pp_base
+      ON pp_base.base_ticker = REGEXP_REPLACE(a.ticker, 'F$', '')
     WHERE pps.user_id = :uid
     ORDER BY pps.market_value DESC
 """
@@ -443,8 +459,22 @@ def _montar_carteira_snapshot(rows: list) -> dict:
         ticker = _base_ticker(r.ticker)
         classe_raw = _class_key_from_snapshot(r.asset_type, ticker, r.country)
         # O relatorio XP e a fonte mais fiel para classes sem transacao granular
-        # no App4 (Tesouro, CDBs, fundos). Quando nao informa custo, usa mercado.
-        ti = float(r.invested_value or 0) or vm
+        # no App4 (Tesouro, CDBs, fundos). Para acoes/ETFs, alguns snapshots
+        # nao trazem custo; nesse caso, reaproveita o preco medio calculado em
+        # portfolio_positions, normalizando tickers fracionarios como BBAS3F.
+        pp_avg = float(getattr(r, "pp_average_price", 0) or 0)
+        if r.invested_value is not None and float(r.invested_value or 0) > 0:
+            ti = float(r.invested_value or 0)
+            custo_estimado = False
+            custo_fonte = "snapshot"
+        elif pp_avg > 0:
+            ti = pp_avg * qty
+            custo_estimado = True
+            custo_fonte = "preco_medio_estimado"
+        else:
+            ti = vm
+            custo_estimado = True
+            custo_fonte = "mercado_fallback"
         preco_atual = float(r.market_price or 0) or (vm / qty if qty > 0 else 0.0)
         preco_medio = ti / qty if qty > 0 else 0.0
         rentab = round((vm - ti) / ti * 100, 2) if ti > 0 else 0.0
@@ -461,6 +491,8 @@ def _montar_carteira_snapshot(rows: list) -> dict:
             "quantidade":      qty,
             "preco_medio":     round(preco_medio, 6),
             "total_investido": round(ti, 2),
+            "custo_estimado":  custo_estimado,
+            "custo_fonte":     custo_fonte,
             "preco_atual":     round(preco_atual, 6),
             "valor_mercado":   round(vm, 2),
             "rentab_pct":      rentab,
