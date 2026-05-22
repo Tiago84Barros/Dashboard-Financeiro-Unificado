@@ -44,6 +44,13 @@ def parse_xp_consolidado(file_bytes: bytes, engine) -> dict[str, Any]:
     return parse(file_bytes, engine)
 
 
-def parse_nomad_pdf(file_bytes: bytes, engine) -> dict[str, Any]:
+def parse_nomad_pdf(
+    files: "list[tuple[str, bytes]] | bytes", engine,
+) -> dict[str, Any]:
+    """
+    Nomad aceita tanto um único PDF (bytes) quanto vários ao mesmo tempo
+    (list[(filename, bytes)]). A normalização fica dentro do módulo
+    nomad_pdf.parse().
+    """
     from .nomad_pdf import parse
-    return parse(file_bytes, engine)
+    return parse(files, engine)

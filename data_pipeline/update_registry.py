@@ -125,8 +125,8 @@ _DEFAULT_REGISTRY: list[dict] = [
         "update_type":  "manual",
         "frequency":    "manual",
         "priority":     23,
-        "is_active":    False,
-        "description":  "Importação manual de notas Nomad em PDF — estrutura preparada, parser em planejamento",
+        "is_active":    True,
+        "description":  "Importação manual de notas Nomad em PDF (Apex Clearing / DriveWealth) — aceita múltiplos arquivos por lote",
     },
 ]
 

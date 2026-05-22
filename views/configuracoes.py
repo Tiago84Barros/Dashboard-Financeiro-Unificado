@@ -810,12 +810,15 @@ _INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
     {
         "key":         "nomad",
         "label":       "Nomad — Notas (.pdf)",
-        "help":        "PDFs de negociação exportados pela Nomad.",
+        "help":        "PDFs de negociação exportados pela Nomad. Aceita "
+                       "vários arquivos de uma vez — todos são importados no "
+                       "mesmo lote, com resumo consolidado.",
         "file_types":  "pdf",
         "parser_attr": "parse_nomad_pdf",
         "job_name":    "import_nomad_pdf",
         "table_name":  "investment_transactions",
         "source_name": "Nomad — Notas PDF (manual)",
+        "multi_file":  True,
     },
 ]
 
@@ -833,8 +836,10 @@ def _render_import_investimentos() -> None:
         st.markdown("")  # respiro entre blocos
 
 
-def _render_import_block(cfg: dict[str, str]) -> None:
+def _render_import_block(cfg: dict) -> None:
     """Bloco de upload + ação + resultado para uma única fonte."""
+    multi = bool(cfg.get("multi_file"))
+
     with st.container(border=True):
         st.markdown(f"**{cfg['label']}**")
         st.caption(cfg["help"])
@@ -842,35 +847,58 @@ def _render_import_block(cfg: dict[str, str]) -> None:
         col_up, col_btn = st.columns([3, 1])
         with col_up:
             uploaded = st.file_uploader(
-                "Arquivo",
+                "Arquivo(s)" if multi else "Arquivo",
                 type=[cfg["file_types"]],
                 key=f"_inv_upl_{cfg['key']}",
                 label_visibility="collapsed",
+                accept_multiple_files=multi,
             )
+        # Quando multi_file, `uploaded` é list (pode ser vazia) ou None
+        if multi:
+            has_files = bool(uploaded)
+            n_files = len(uploaded) if uploaded else 0
+        else:
+            has_files = uploaded is not None
+            n_files = 1 if uploaded is not None else 0
+
         with col_btn:
+            btn_label = "Importar" if n_files <= 1 else f"Importar {n_files} arquivos"
             run = st.button(
-                "Importar",
+                btn_label,
                 type="primary",
                 use_container_width=True,
                 key=f"_inv_btn_{cfg['key']}",
-                disabled=uploaded is None,
+                disabled=not has_files,
             )
 
         result_key = f"_inv_result_{cfg['key']}"
-        if run and uploaded is not None:
-            with st.spinner(f"Importando {cfg['label']}…"):
+        if run and has_files:
+            if multi:
+                payload = [(f.name, f.getvalue()) for f in uploaded]
+                spinner_msg = (
+                    f"Importando {n_files} arquivos da Nomad…"
+                    if n_files > 1 else f"Importando {cfg['label']}…"
+                )
+            else:
+                payload = uploaded.getvalue()
+                spinner_msg = f"Importando {cfg['label']}…"
+
+            with st.spinner(spinner_msg):
                 st.session_state[result_key] = _executar_importacao_investimento(
-                    cfg, uploaded.getvalue()
+                    cfg, payload
                 )
 
         if st.session_state.get(result_key):
             _render_import_result(st.session_state[result_key])
 
 
-def _executar_importacao_investimento(cfg: dict[str, str], file_bytes: bytes) -> dict:
+def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     """
     Roda o parser correspondente e registra o resultado no painel de
     atualização (data_update_logs + data_freshness_status).
+
+    `payload` é bytes (upload único) ou list[(filename, bytes)] (Nomad
+    multi-arquivo). O parser correspondente sabe normalizar.
     """
     from datetime import datetime, timezone
 
@@ -909,7 +937,7 @@ def _executar_importacao_investimento(cfg: dict[str, str], file_bytes: bytes) ->
     log_id = log_start(cfg["table_name"], cfg["source_name"], cfg["job_name"])
 
     try:
-        summary = parser(file_bytes, engine)
+        summary = parser(payload, engine)
     except Exception as exc:  # noqa: BLE001
         summary = {
             "status": "failed",

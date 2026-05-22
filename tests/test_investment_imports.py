@@ -208,6 +208,63 @@ def test_safe_error_limita_tamanho():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Nomad — helpers de parsing USD
+# ─────────────────────────────────────────────────────────────────────────────
+
+from data_pipeline.importers.investments.nomad_pdf import (  # noqa: E402
+    _to_float_usd, _parse_iso_date, _parse_us_date,
+    _is_apex, _is_drivewealth,
+)
+
+
+def test_nomad_to_float_usd_decimal_americano():
+    assert _to_float_usd("1,234.56") == 1234.56
+
+
+def test_nomad_to_float_usd_decimal_europeu():
+    assert _to_float_usd("1.234,56") == 1234.56
+
+
+def test_nomad_to_float_usd_com_dollar():
+    assert _to_float_usd("$420.50") == 420.50
+
+
+def test_nomad_to_float_usd_negativo_parenteses():
+    assert _to_float_usd("(123.45)") == -123.45
+
+
+def test_nomad_to_float_usd_vazio():
+    assert _to_float_usd("") == 0.0
+    assert _to_float_usd("-") == 0.0
+    assert _to_float_usd(None) == 0.0
+
+
+def test_nomad_parse_iso_date():
+    assert _parse_iso_date("2025-03-15") == date(2025, 3, 15)
+    assert _parse_iso_date("invalido") is None
+
+
+def test_nomad_parse_us_date():
+    assert _parse_us_date("3/15/2025") == date(2025, 3, 15)
+    assert _parse_us_date("03/15/2025") == date(2025, 3, 15)
+    assert _parse_us_date("2025-03-15") is None
+
+
+def test_nomad_is_apex_reconhece_apex():
+    text = "2025-03-15 2025-03-17  You bought SPY\n2025-03-15 2025-03-17 SPY ..."
+    assert _is_apex(text) is True
+
+
+def test_nomad_is_apex_descarta_outros():
+    assert _is_apex("Algum texto qualquer") is False
+
+
+def test_nomad_is_drivewealth_reconhece():
+    text = "DriveWealth Securities ... Principal Amount $123.45"
+    assert _is_drivewealth(text) is True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Runner standalone (sem pytest)
 # ─────────────────────────────────────────────────────────────────────────────
 
