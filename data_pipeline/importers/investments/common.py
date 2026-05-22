@@ -40,6 +40,8 @@ def make_summary(source: str) -> dict[str, Any]:
         "positions_imported": 0,
         "duplicates_skipped": 0,
         "rows_skipped": 0,
+        "files_skipped": 0,        # arquivos pulados intencionalmente (não-erro)
+        "files_skipped_notes": [],  # mensagens amigáveis (1 por arquivo)
         "errors": [],
         "started_at": datetime.now(tz=timezone.utc).isoformat(),
         "finished_at": None,

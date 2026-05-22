@@ -144,6 +144,30 @@ def _is_drivewealth(text: str) -> bool:
     return "Principal Amount" in text and "DriveWealth" in text
 
 
+def _is_monthly_statement(text: str, filename: str = "") -> bool:
+    """
+    Identifica PDFs de extrato mensal (Apex Monthly Statement / Nomad).
+    Esses arquivos consolidam o que as notas de negociação individuais já
+    trazem — operações já são capturadas pelas notas, então pular é seguro.
+    """
+    fn = filename.lower()
+    if "monthly_statement" in fn or "monthly-statement" in fn:
+        return True
+    lower = text.lower()
+    monthly_markers = (
+        "monthly statement",
+        "account statement",
+        "statement period",
+        "beginning balance",
+        "ending balance",
+        "extrato mensal",
+        "período do extrato",
+        "periodo do extrato",
+    )
+    hits = sum(1 for m in monthly_markers if m in lower)
+    return hits >= 2
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Parsers de cada formato — devolvem lista de trades canônicos
 # ─────────────────────────────────────────────────────────────────────────────
@@ -323,6 +347,16 @@ def parse(files: list[tuple[str, bytes]] | bytes, engine: Engine) -> dict[str, A
         except Exception as exc:  # noqa: BLE001
             summary["errors"].append(
                 f"[{filename}] Erro ao ler PDF: {safe_error(exc)}"
+            )
+            continue
+
+        # Extratos mensais consolidam o que as notas individuais ja trazem —
+        # nao sao "formato desconhecido", apenas redundantes. Pular sem erro.
+        if _is_monthly_statement(text, filename):
+            summary["files_skipped"] += 1
+            summary["files_skipped_notes"].append(
+                f"[{filename}] Extrato mensal: operacoes ja vem das notas "
+                f"individuais — arquivo pulado intencionalmente."
             )
             continue
 

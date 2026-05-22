@@ -996,6 +996,20 @@ def _render_import_result(summary: dict) -> None:
 
     st.caption(f"Executado em {summary.get('_executed_at_local', '—')}")
 
+    files_skipped = int(summary.get("files_skipped", 0))
+    if files_skipped:
+        notes = summary.get("files_skipped_notes") or []
+        st.info(
+            f"ℹ️ {files_skipped} arquivo(s) ignorado(s) intencionalmente — "
+            "extratos mensais consolidam o que as notas individuais já trazem."
+        )
+        if notes:
+            with st.expander(f"Arquivos ignorados ({files_skipped})"):
+                for note in notes[:50]:
+                    st.caption(note)
+                if len(notes) > 50:
+                    st.caption(f"… e mais {len(notes) - 50} arquivos.")
+
     errors = summary.get("errors") or []
     if errors:
         with st.expander(f"Detalhes técnicos ({len(errors)})"):

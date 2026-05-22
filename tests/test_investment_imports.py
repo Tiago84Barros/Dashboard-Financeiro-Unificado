@@ -213,7 +213,7 @@ def test_safe_error_limita_tamanho():
 
 from data_pipeline.importers.investments.nomad_pdf import (  # noqa: E402
     _to_float_usd, _parse_iso_date, _parse_us_date,
-    _is_apex, _is_drivewealth,
+    _is_apex, _is_drivewealth, _is_monthly_statement,
 )
 
 
@@ -262,6 +262,21 @@ def test_nomad_is_apex_descarta_outros():
 def test_nomad_is_drivewealth_reconhece():
     text = "DriveWealth Securities ... Principal Amount $123.45"
     assert _is_drivewealth(text) is True
+
+
+def test_nomad_is_monthly_statement_por_filename():
+    assert _is_monthly_statement("", "investments_uuid_monthly_statement_2025103102_pdf.pdf") is True
+    assert _is_monthly_statement("", "monthly-statement-jan-2026.pdf") is True
+
+
+def test_nomad_is_monthly_statement_por_conteudo():
+    text = "ACCOUNT STATEMENT\nStatement Period: 10/01/2025 - 10/31/2025\nBeginning Balance: $1,000"
+    assert _is_monthly_statement(text, "nota.pdf") is True
+
+
+def test_nomad_is_monthly_statement_descarta_notas_negociacao():
+    text = "You bought 100 shares of SPY at $420.50"
+    assert _is_monthly_statement(text, "trade_confirmation.pdf") is False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
