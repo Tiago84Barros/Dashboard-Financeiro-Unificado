@@ -835,6 +835,57 @@ def _render_import_investimentos() -> None:
         _render_import_block(cfg)
         st.markdown("")  # respiro entre blocos
 
+    # Botão para recalcular posições manualmente — útil quando o usuário
+    # adicionou transações por outro caminho (CSV, banco origem, edição direta)
+    # e quer ver a Carteira atualizada.
+    st.markdown("")
+    with st.container(border=True):
+        col_txt, col_btn = st.columns([3, 1])
+        with col_txt:
+            st.markdown("**📊 Recalcular carteira agora**")
+            st.caption(
+                "Recomputa `portfolio_positions` a partir de todas as "
+                "`investment_transactions` (custo médio ponderado). "
+                "É chamado automaticamente após cada importação, mas você "
+                "pode forçar manualmente."
+            )
+        with col_btn:
+            recompute_clicked = st.button(
+                "Recalcular",
+                type="secondary",
+                use_container_width=True,
+                key="_inv_recompute_btn",
+                disabled=not settings.OWNER_USER_ID,
+            )
+
+        if recompute_clicked:
+            from core.database import get_engine
+            from data_pipeline.importers.investments.positions import (
+                recompute_for_user,
+            )
+            engine = get_engine()
+            if engine is None:
+                st.error("Banco não configurado.")
+            else:
+                with st.spinner("Recalculando carteira…"):
+                    rec = recompute_for_user(engine, settings.OWNER_USER_ID)
+                st.session_state["_inv_recompute_result"] = rec
+
+        rec = st.session_state.get("_inv_recompute_result")
+        if rec:
+            if rec.get("ok"):
+                st.success(
+                    f"✅ {rec.get('positions_upserted', 0)} posicoes "
+                    f"recalculadas a partir de "
+                    f"{rec.get('transactions_loaded', 0)} operacoes."
+                )
+                if rec.get("alerts"):
+                    with st.expander("Alertas"):
+                        for msg in rec["alerts"]:
+                            st.caption(msg)
+            else:
+                st.error(f"Falha: {rec.get('error', 'erro desconhecido')}")
+
 
 def _render_import_block(cfg: dict) -> None:
     """Bloco de upload + ação + resultado para uma única fonte."""
@@ -970,6 +1021,17 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
         frequency="manual",
     )
 
+    # Recalcula portfolio_positions automaticamente se gravamos novas
+    # operacoes — assim a Carteira reflete imediatamente o que foi importado.
+    if (
+        summary.get("status") in ("success", "partial_success")
+        and int(summary.get("transactions_imported", 0)) > 0
+        and settings.OWNER_USER_ID
+    ):
+        from data_pipeline.importers.investments.positions import recompute_for_user
+        recompute_summary = recompute_for_user(engine, settings.OWNER_USER_ID)
+        summary["_positions_recompute"] = recompute_summary
+
     summary["_executed_at_local"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     return summary
 
@@ -1009,6 +1071,23 @@ def _render_import_result(summary: dict) -> None:
                     st.caption(note)
                 if len(notes) > 50:
                     st.caption(f"… e mais {len(notes) - 50} arquivos.")
+
+    rec = summary.get("_positions_recompute")
+    if rec:
+        if rec.get("ok"):
+            st.caption(
+                f"📊 Carteira atualizada: {rec.get('positions_upserted', 0)} "
+                f"posicoes recalculadas a partir de "
+                f"{rec.get('transactions_loaded', 0)} operacoes."
+            )
+            if rec.get("alerts"):
+                with st.expander("Alertas no calculo da carteira"):
+                    for msg in rec["alerts"]:
+                        st.caption(msg)
+        else:
+            st.warning(
+                f"📊 Recalculo da carteira falhou: {rec.get('error', 'erro desconhecido')}"
+            )
 
     errors = summary.get("errors") or []
     if errors:
