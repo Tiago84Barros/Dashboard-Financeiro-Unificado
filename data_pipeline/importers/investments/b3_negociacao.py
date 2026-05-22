@@ -79,31 +79,38 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
         )
         return finalize_summary(summary)
 
-    with engine.begin() as conn:
-        try:
-            account_id = get_or_create_b3_account(conn, user_id)
-        except Exception as exc:
-            summary["status"] = "failed"
-            summary["errors"].append(
-                f"Falha ao preparar conta B3: {safe_error(exc)}"
-            )
-            return finalize_summary(summary)
-
-        for i, row in enumerate(sheet.iter_rows(values_only=True)):
-            if i == 0:
-                continue
+    # Estratégia transacional:
+    #   - 1 conexão.
+    #   - Transação externa abre/commita ao final (setup da conta B3).
+    #   - Cada linha do XLSX em SAVEPOINT proprio: se uma linha falhar,
+    #     apenas o seu savepoint é rolled-back e o lote continua.
+    # Sem isso, a primeira linha que erra aborta toda a transação e todas
+    # as linhas seguintes falham com "current transaction is aborted".
+    with engine.connect() as conn:
+        with conn.begin():
             try:
-                _process_row(conn, row, user_id=user_id, summary=summary,
-                             row_number=i + 1, account_label="B3")
-            except Exception as exc:  # noqa: BLE001
+                account_id = get_or_create_b3_account(conn, user_id)
+            except Exception as exc:
+                summary["status"] = "failed"
                 summary["errors"].append(
-                    f"Linha {i + 1}: {safe_error(exc)}"
+                    f"Falha ao preparar conta B3: {safe_error(exc)}"
                 )
+                return finalize_summary(summary)
 
-    # account_id não é gravado em investment_transactions (não há FK direta).
-    # Mantemos a conta criada apenas para consistência operacional com o
-    # módulo de relatórios.
-    _ = account_id  # noqa: F841 — variável intencional para futura extensão
+            for i, row in enumerate(sheet.iter_rows(values_only=True)):
+                if i == 0:
+                    continue
+                try:
+                    with conn.begin_nested():
+                        _process_row(conn, row, user_id=user_id,
+                                     summary=summary, row_number=i + 1,
+                                     account_label="B3")
+                except Exception as exc:  # noqa: BLE001
+                    summary["errors"].append(
+                        f"Linha {i + 1}: {safe_error(exc)}"
+                    )
+
+    _ = account_id  # noqa: F841 — reservado para extensão futura
 
     return finalize_summary(summary)
 

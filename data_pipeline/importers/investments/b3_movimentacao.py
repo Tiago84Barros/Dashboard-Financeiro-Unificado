@@ -84,28 +84,32 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
         )
         return finalize_summary(summary)
 
-    with engine.begin() as conn:
-        try:
-            account_id = get_or_create_b3_account(conn, user_id)
-        except Exception as exc:
-            summary["status"] = "failed"
-            summary["errors"].append(
-                f"Falha ao preparar conta B3: {safe_error(exc)}"
-            )
-            return finalize_summary(summary)
-
-        for i, row in enumerate(sheet.iter_rows(values_only=True)):
-            if i == 0:
-                continue
+    # Cada linha em SAVEPOINT proprio (ver b3_negociacao.py para detalhes
+    # da estrategia transacional).
+    with engine.connect() as conn:
+        with conn.begin():
             try:
-                _process_row(conn, row, user_id=user_id, summary=summary,
-                             row_number=i + 1)
-            except Exception as exc:  # noqa: BLE001
+                account_id = get_or_create_b3_account(conn, user_id)
+            except Exception as exc:
+                summary["status"] = "failed"
                 summary["errors"].append(
-                    f"Linha {i + 1}: {safe_error(exc)}"
+                    f"Falha ao preparar conta B3: {safe_error(exc)}"
                 )
+                return finalize_summary(summary)
 
-    _ = account_id  # noqa: F841 — reservado para futura ligação direta
+            for i, row in enumerate(sheet.iter_rows(values_only=True)):
+                if i == 0:
+                    continue
+                try:
+                    with conn.begin_nested():
+                        _process_row(conn, row, user_id=user_id,
+                                     summary=summary, row_number=i + 1)
+                except Exception as exc:  # noqa: BLE001
+                    summary["errors"].append(
+                        f"Linha {i + 1}: {safe_error(exc)}"
+                    )
+
+    _ = account_id  # noqa: F841 — reservado para extensão futura
 
     return finalize_summary(summary)
 

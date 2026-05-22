@@ -444,6 +444,9 @@ def insert_investment_transaction(
     """
     if tx_type not in ("buy", "sell"):
         raise ValueError(f"tx_type invalido: {tx_type}")
+    # ON CONFLICT precisa repetir o predicado do indice parcial
+    # ux_investment_transactions_external_id (WHERE external_id IS NOT NULL),
+    # senao o Postgres lanca InvalidColumnReference.
     row = conn.execute(
         text("""
             INSERT INTO investment_transactions
@@ -452,7 +455,7 @@ def insert_investment_transaction(
             VALUES
                 (:uid, :aid, :type, :qty, :price, :fees,
                  :tdate, :broker, :ext)
-            ON CONFLICT (external_id) DO NOTHING
+            ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
             RETURNING id
         """),
         {
@@ -488,6 +491,8 @@ def insert_dividend(
     """
     if div_type not in ("dividend", "jcp", "reit_income", "amortization", "other"):
         raise ValueError(f"div_type invalido: {div_type}")
+    # ON CONFLICT precisa repetir o predicado do indice parcial
+    # ux_dividends_external_id (WHERE external_id IS NOT NULL).
     row = conn.execute(
         text("""
             INSERT INTO dividends
@@ -495,7 +500,7 @@ def insert_dividend(
                  total_amount, ex_date, payment_date, external_id)
             VALUES
                 (:uid, :aid, :type, :apu, :qty, :total, :exd, :pd, :ext)
-            ON CONFLICT (external_id) DO NOTHING
+            ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
             RETURNING id
         """),
         {
