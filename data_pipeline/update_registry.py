@@ -24,6 +24,16 @@ _DEFAULT_REGISTRY: list[dict] = [
         "description":  "Cotações históricas de ativos B3 e internacionais via yfinance",
     },
     {
+        "table_name":   "asset_quotes",
+        "source_name":  "FX USD/BRL",
+        "job_name":     "update_fx_rates",
+        "update_type":  "incremental",
+        "frequency":    "diario",
+        "priority":     1,
+        "is_active":    True,
+        "description":  "Cotação diária USD/BRL (USDBRL=X via yfinance, fallback awesomeapi). Usada para converter posições USD em BRL na Carteira.",
+    },
+    {
         "table_name":   "macro",
         "source_name":  "Banco Central do Brasil (BCB/SGS)",
         "job_name":     "update_bcb",

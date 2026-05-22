@@ -211,7 +211,12 @@ def _carteira_mock() -> dict:
 # REAL — queries nas tabelas do Supabase
 # ─────────────────────────────────────────────────────────────────────────────
 
-# SQL isolado para facilitar manutenção e testes
+# SQL isolado para facilitar manutenção e testes.
+# fx.close traz a cotação USD/BRL mais recente do ativo sintético USDBRL
+# populado por `data_pipeline/jobs/update_fx_rates.py`. Quando o ativo
+# da posição é em USD, a camada Python multiplica os valores por essa
+# cotação. Quando o ativo USDBRL ainda não existe (banco novo), o LEFT JOIN
+# devolve NULL e o Python usa rate=1.0 (sem conversão).
 _SQL_POSICOES = """
     SELECT
         pp.quantity,
@@ -222,7 +227,8 @@ _SQL_POSICOES = """
         a.class         AS asset_class,
         a.sector,
         a.currency,
-        aq.close        AS current_price
+        aq.close        AS current_price,
+        fx.close        AS usd_brl_rate
     FROM   portfolio_positions pp
     JOIN   assets a ON a.id = pp.asset_id
     LEFT JOIN LATERAL (
@@ -232,6 +238,14 @@ _SQL_POSICOES = """
         ORDER  BY timestamp DESC
         LIMIT  1
     ) aq ON true
+    LEFT JOIN LATERAL (
+        SELECT aq2.close
+        FROM   asset_quotes aq2
+        JOIN   assets a2 ON a2.id = aq2.asset_id
+        WHERE  a2.ticker = 'USDBRL'
+        ORDER  BY aq2.timestamp DESC
+        LIMIT  1
+    ) fx ON true
     WHERE  pp.user_id = :uid
     ORDER  BY pp.total_invested DESC
 """
@@ -328,6 +342,17 @@ def _carteira_real() -> dict:
         pm     = _f(r.average_price)
         ti     = _f(r.total_invested)
         preco_atual = _f(r.current_price) if r.current_price is not None else pm
+
+        # Conversão USD → BRL para posições internacionais (Nomad, BDR USD).
+        # fx_rate vem do ativo sintético USDBRL (LATERAL JOIN no SQL acima).
+        # Sem cotação USD/BRL no banco ainda, mantém rate=1.0 e exibe em USD.
+        ccy = (r.currency or "BRL").upper()
+        fx_rate = _f(getattr(r, "usd_brl_rate", None)) or 1.0
+        if ccy == "USD" and fx_rate > 0:
+            preco_atual *= fx_rate
+            pm *= fx_rate
+            ti *= fx_rate
+
         vm     = round(qty * preco_atual, 2)
         rentab = round((vm - ti) / ti * 100, 2) if ti > 0 else 0.0
 
@@ -342,7 +367,7 @@ def _carteira_real() -> dict:
             "nome":            r.asset_name,
             "classe":          _CLASS_LABEL.get(classe_raw, classe_raw.title()),
             "setor":           _SETOR_LABEL.get(setor_raw, setor_raw.title()),
-            "moeda":           r.currency or "BRL",
+            "moeda":           ccy,
             "quantidade":      qty,
             "preco_medio":     pm,
             "total_investido": ti,
