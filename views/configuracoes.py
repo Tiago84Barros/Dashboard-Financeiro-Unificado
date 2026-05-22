@@ -21,6 +21,8 @@ from design.componentes import container_pagina
 
 def render() -> None:
     container_pagina("Configurações", "Status do sistema e atualização de dados", "⚙️")
+    # CSS dos cards é injetado uma vez por render — ambas as abas usam.
+    st.markdown(_CARD_CSS, unsafe_allow_html=True)
 
     tab_dados, tab_banco, tab_seg = st.tabs([
         "🔄 Atualização de Dados",
@@ -58,6 +60,49 @@ _FRESHNESS_LABEL = {
     "error":         "Erro",
     "skipped":       "Ignorado",
 }
+
+
+_CARD_CSS = """
+<style>
+.upd-card-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin: 4px 0 28px 0;
+}
+.upd-card {
+    min-height: 142px;
+    padding: 20px 22px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: linear-gradient(145deg, var(--bg), rgba(17,24,39,.72));
+    box-shadow: 0 14px 30px rgba(0,0,0,.18);
+}
+.upd-card-label {
+    color: #A8B3C7;
+    font-size: .78rem;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+.upd-card-value {
+    margin-top: 12px;
+    color: var(--accent);
+    font-size: 2.15rem;
+    line-height: 1.05;
+    font-weight: 900;
+}
+.upd-card-detail {
+    margin-top: 12px;
+    color: #CBD5E1;
+    font-size: .9rem;
+    line-height: 1.35;
+}
+@media (max-width: 900px) {
+    .upd-card-grid { grid-template-columns: 1fr; }
+}
+</style>
+"""
 
 
 def _update_summary_card_html(label: str, value: str, detail: str = "", tone: str = "neutral") -> str:
@@ -120,51 +165,6 @@ def _render_atualizacao() -> None:
     # get_registry JOIN já traz freshness + description + frequency em uma única query
     registry_list = get_registry(active_only=True)
     ultima = get_last_global_update()
-
-    st.markdown(
-        """
-        <style>
-        .upd-card-grid {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 18px;
-            margin: 4px 0 28px 0;
-        }
-        .upd-card {
-            min-height: 142px;
-            padding: 20px 22px;
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            background: linear-gradient(145deg, var(--bg), rgba(17,24,39,.72));
-            box-shadow: 0 14px 30px rgba(0,0,0,.18);
-        }
-        .upd-card-label {
-            color: #A8B3C7;
-            font-size: .78rem;
-            font-weight: 800;
-            letter-spacing: .08em;
-            text-transform: uppercase;
-        }
-        .upd-card-value {
-            margin-top: 12px;
-            color: var(--accent);
-            font-size: 2.15rem;
-            line-height: 1.05;
-            font-weight: 900;
-        }
-        .upd-card-detail {
-            margin-top: 12px;
-            color: #CBD5E1;
-            font-size: .9rem;
-            line-height: 1.35;
-        }
-        @media (max-width: 900px) {
-            .upd-card-grid { grid-template-columns: 1fr; }
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
 
     # ── Resumo compacto ────────────────────────────────────────────────────────
     ok_count  = sum(1 for s in registry_list if (s.get("freshness_status") or "never_updated") == "updated")
@@ -466,10 +466,34 @@ def _render_storage_health() -> None:
     else:
         st.success(storage.get("message"))
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Uso atual", f"{used_mb:.1f} MB")
-    col2.metric("Limite monitorado", f"{limit_mb:.0f} MB")
-    col3.metric("Espaço livre", f"{remaining_mb:.1f} MB")
+    # Tons dos cards conforme o status de uso. "Uso atual" e "Espaço livre"
+    # acompanham o nível de risco; "Limite monitorado" é sempre informacional.
+    if status == "danger":
+        tone_uso, tone_livre = "warn", "warn"
+    elif status in {"critical", "attention"}:
+        tone_uso, tone_livre = "warn", "warn"
+    else:
+        tone_uso, tone_livre = "ok", "ok"
+
+    detalhe_uso = f"{pct_used:.1f}% da cota monitorada"
+    detalhe_limite = (
+        "Plano Free do Supabase — ajustável por `SUPABASE_DB_LIMIT_MB`"
+    )
+    if remaining_mb < 50:
+        detalhe_livre = "Margem apertada — planejar limpeza ou upgrade"
+    elif remaining_mb < 150:
+        detalhe_livre = "Margem confortável, mas vale acompanhar"
+    else:
+        detalhe_livre = "Margem ampla para novos dados"
+
+    st.markdown(
+        '<div class="upd-card-grid">'
+        + _update_summary_card_html("Uso atual", f"{used_mb:.1f} MB", detalhe_uso, tone_uso)
+        + _update_summary_card_html("Limite monitorado", f"{limit_mb:.0f} MB", detalhe_limite, "info")
+        + _update_summary_card_html("Espaço livre", f"{remaining_mb:.1f} MB", detalhe_livre, tone_livre)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
     st.progress(
         min(max(pct_used / 100, 0.0), 1.0),
