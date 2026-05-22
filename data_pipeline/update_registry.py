@@ -109,14 +109,14 @@ _DEFAULT_REGISTRY: list[dict] = [
         "description":  "Importação manual de proventos e eventos exportados da B3 (Área do Investidor → Movimentação)",
     },
     {
-        "table_name":   "portfolio_position_snapshots",
+        "table_name":   "portfolio_position_snapshots, dividends",
         "source_name":  "XP — Consolidado (manual)",
         "job_name":     "import_xp_consolidado",
         "update_type":  "manual",
         "frequency":    "manual",
         "priority":     22,
-        "is_active":    False,
-        "description":  "Importação manual do relatório consolidado XP — estrutura preparada, parser em planejamento",
+        "is_active":    True,
+        "description":  "Importação manual do Relatório Consolidado XP (mensal ou anual) — snapshot de posições + proventos recebidos",
     },
     {
         "table_name":   "investment_transactions",

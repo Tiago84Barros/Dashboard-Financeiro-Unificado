@@ -39,9 +39,15 @@ def parse_b3_movimentacao(file_bytes: bytes, engine) -> dict[str, Any]:
     return parse(file_bytes, engine)
 
 
-def parse_xp_consolidado(file_bytes: bytes, engine) -> dict[str, Any]:
+def parse_xp_consolidado(
+    payload: "bytes | tuple[str, bytes]", engine,
+) -> dict[str, Any]:
+    """
+    XP aceita bytes diretos OU (filename, bytes). O filename é usado para
+    inferir a `report_date` do snapshot ("mensal-2026-janeiro" → 31/01/2026).
+    """
     from .xp_consolidado import parse
-    return parse(file_bytes, engine)
+    return parse(payload, engine)
 
 
 def parse_nomad_pdf(

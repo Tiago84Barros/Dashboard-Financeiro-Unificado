@@ -280,6 +280,52 @@ def test_nomad_is_monthly_statement_descarta_notas_negociacao():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# XP Consolidado — helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+from data_pipeline.importers.investments.xp_consolidado import (  # noqa: E402
+    _parse_report_date, _extract_ticker_name, _tesouro_ticker, _is_fundo_rf,
+    _map_asset_type,
+)
+
+
+def test_xp_report_date_mensal():
+    assert _parse_report_date("relatorio-consolidado-mensal-2026-janeiro.xlsx") == date(2026, 1, 31)
+    assert _parse_report_date("relatorio-consolidado-mensal-2025-fevereiro.xlsx") == date(2025, 2, 28)
+
+
+def test_xp_report_date_anual():
+    assert _parse_report_date("relatorio-consolidado-anual-2025.xlsx") == date(2025, 12, 31)
+
+
+def test_xp_extract_ticker_com_nome():
+    assert _extract_ticker_name("BBAS3 - BCO BRASIL S.A.") == ("BBAS3", "BCO BRASIL S.A.")
+
+
+def test_xp_tesouro_ticker_ipca():
+    ticker, _ = _tesouro_ticker("Tesouro IPCA+ 2029", "15/05/2029")
+    assert ticker == "TIPCA2029"
+
+
+def test_xp_tesouro_ticker_selic():
+    ticker, _ = _tesouro_ticker("Tesouro Selic 2026", "01/03/2026")
+    assert ticker == "TSELIC2026"
+
+
+def test_xp_is_fundo_rf():
+    assert _is_fundo_rf("FIC RF") is True
+    assert _is_fundo_rf("FII") is False
+
+
+def test_xp_map_asset_type():
+    assert _map_asset_type("fii") == "reit"
+    assert _map_asset_type("etf") == "etf"
+    assert _map_asset_type("tesouro") == "fixed_income"
+    assert _map_asset_type("renda_fixa") == "fixed_income"
+    assert _map_asset_type("desconhecido") == "other"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Runner standalone (sem pytest)
 # ─────────────────────────────────────────────────────────────────────────────
 

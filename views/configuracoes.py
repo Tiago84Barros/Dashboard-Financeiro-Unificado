@@ -800,12 +800,14 @@ _INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
     {
         "key":         "xp_csl",
         "label":       "XP — Relatório Consolidado (.xlsx)",
-        "help":        "Exportado pela XP no portal do investidor.",
+        "help":        "Relatório consolidado mensal ou anual exportado pela "
+                       "XP. Cria um snapshot da carteira na data do relatório.",
         "file_types":  "xlsx",
         "parser_attr": "parse_xp_consolidado",
         "job_name":    "import_xp_consolidado",
         "table_name":  "portfolio_position_snapshots",
         "source_name": "XP — Consolidado (manual)",
+        "needs_filename": True,
     },
     {
         "key":         "nomad",
@@ -930,6 +932,10 @@ def _render_import_block(cfg: dict) -> None:
                     f"Importando {n_files} arquivos da Nomad…"
                     if n_files > 1 else f"Importando {cfg['label']}…"
                 )
+            elif cfg.get("needs_filename"):
+                # Parser usa o nome do arquivo (XP: infere report_date)
+                payload = (uploaded.name, uploaded.getvalue())
+                spinner_msg = f"Importando {cfg['label']}…"
             else:
                 payload = uploaded.getvalue()
                 spinner_msg = f"Importando {cfg['label']}…"
@@ -1050,13 +1056,28 @@ def _render_import_result(summary: dict) -> None:
     else:
         st.error(f"❌ Falha na importação de {src}.")
 
-    cols = st.columns(4)
-    cols[0].metric("Operações", int(summary.get("transactions_imported", 0)))
-    cols[1].metric("Proventos", int(summary.get("incomes_imported", 0)))
-    cols[2].metric("Duplicados", int(summary.get("duplicates_skipped", 0)))
-    cols[3].metric("Ignorados", int(summary.get("rows_skipped", 0)))
+    # XP traz posições (snapshots); B3/Nomad trazem operações.
+    positions = int(summary.get("positions_imported", 0))
+    if positions > 0:
+        cols = st.columns(4)
+        cols[0].metric("Posições", positions)
+        cols[1].metric("Proventos", int(summary.get("incomes_imported", 0)))
+        cols[2].metric("Duplicados", int(summary.get("duplicates_skipped", 0)))
+        cols[3].metric("Ignorados", int(summary.get("rows_skipped", 0)))
+    else:
+        cols = st.columns(4)
+        cols[0].metric("Operações", int(summary.get("transactions_imported", 0)))
+        cols[1].metric("Proventos", int(summary.get("incomes_imported", 0)))
+        cols[2].metric("Duplicados", int(summary.get("duplicates_skipped", 0)))
+        cols[3].metric("Ignorados", int(summary.get("rows_skipped", 0)))
 
-    st.caption(f"Executado em {summary.get('_executed_at_local', '—')}")
+    extras = []
+    if summary.get("_report_date"):
+        extras.append(f"Data do snapshot: {summary['_report_date']}")
+    if summary.get("_institution"):
+        extras.append(f"Instituição: {summary['_institution']}")
+    extras.append(f"Executado em {summary.get('_executed_at_local', '—')}")
+    st.caption(" · ".join(extras))
 
     files_skipped = int(summary.get("files_skipped", 0))
     if files_skipped:
