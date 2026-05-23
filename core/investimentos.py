@@ -826,37 +826,12 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
          AND xp.source_table  = pps.source_table
         WHERE pps.user_id = :uid
         GROUP BY pps.report_date
-    ),
-    other_latest AS (
-        SELECT
-            SUM(market_value)              AS vm,
-            SUM(COALESCE(invested_value, 0)) AS vi
-        FROM portfolio_position_snapshots
-        WHERE user_id = :uid
-          AND source_table NOT IN ('xp_consolidado', 'xp_positions')
-          AND report_date = (
-              SELECT MAX(report_date)
-              FROM portfolio_position_snapshots
-              WHERE user_id = :uid
-                AND source_table NOT IN ('xp_consolidado', 'xp_positions')
-          )
-    ),
-    latest_xp_date AS (
-        SELECT MAX(report_date) AS d FROM xp_snaps
     )
     SELECT
         x.report_date AS mes,
-        x.vm + CASE WHEN x.report_date = l.d
-                    THEN COALESCE(o.vm, 0)
-                    ELSE 0
-               END AS valor_mercado,
-        x.vi + CASE WHEN x.report_date = l.d
-                    THEN COALESCE(o.vi, 0)
-                    ELSE 0
-               END AS valor_investido_snapshot
+        x.vm AS valor_mercado,
+        x.vi AS valor_investido_snapshot
     FROM xp_snaps x
-    CROSS JOIN (SELECT COALESCE(vm, 0) AS vm, COALESCE(vi, 0) AS vi FROM other_latest) o
-    CROSS JOIN latest_xp_date l
     ORDER BY x.report_date
 """
 
@@ -913,7 +888,9 @@ def _evolucao_real() -> dict:
             snap_rows = conn.execute(text(_SQL_EVOLUCAO_SNAPSHOTS), {"uid": owner}).fetchall()
             if snap_rows:
                 div_rows = conn.execute(text(_SQL_EVOLUCAO_DIV), {"uid": owner}).fetchall()
-                return _montar_evolucao_snapshot(snap_rows, div_rows)
+                current_rows = conn.execute(text(_SQL_POSICOES_SNAPSHOT), {"uid": owner}).fetchall()
+                current_totals = _montar_carteira_snapshot(current_rows) if current_rows else None
+                return _montar_evolucao_snapshot(snap_rows, div_rows, current_totals)
         tx_rows   = conn.execute(text(_SQL_EVOLUCAO_TX),    {"uid": owner}).fetchall()
         div_rows  = conn.execute(text(_SQL_EVOLUCAO_DIV),   {"uid": owner}).fetchall()
         ratio_row = conn.execute(text(_SQL_EVOLUCAO_RATIO), {"uid": owner}).fetchone()
@@ -964,7 +941,7 @@ def _evolucao_real() -> dict:
     }
 
 
-def _montar_evolucao_snapshot(snap_rows: list, div_rows: list) -> dict:
+def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: dict | None = None) -> dict:
     div_map = {r.mes: float(r.delta_dividendos or 0) for r in div_rows}
     snapshots = []
     fluxo_mensal = []
@@ -995,6 +972,36 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list) -> dict:
             "mes":     mes.month,
         })
         prev_value = vm
+
+    if current_totals:
+        from datetime import date as _date
+
+        hoje = _date.today()
+        current_month = _date(hoje.year, hoje.month, 1)
+        label = f"{_MESES_PT_CF[current_month.month]}/{str(current_month.year)[-2:]}"
+        mes_str = current_month.strftime("%Y-%m")
+        current_vm = round(float(current_totals.get("total_mercado") or 0), 2)
+        current_vi = round(float(current_totals.get("total_investido") or 0), 2)
+        current_snapshot = {
+            "label":               label,
+            "mes_str":             mes_str,
+            "valor_investido":     current_vi,
+            "valor_mercado":       current_vm,
+            "valor_com_dividendos": round(current_vm + cum_div, 2),
+        }
+        current_flux = {
+            "label":   label,
+            "mes_str": mes_str,
+            "aporte":  round(current_vm - prev_value, 2) if prev_value is not None else current_vm,
+            "ano":     current_month.year,
+            "mes":     current_month.month,
+        }
+        if snapshots and snapshots[-1]["mes_str"] == mes_str:
+            snapshots[-1] = current_snapshot
+            fluxo_mensal[-1] = current_flux
+        else:
+            snapshots.append(current_snapshot)
+            fluxo_mensal.append(current_flux)
 
     latest = snapshots[-1] if snapshots else {}
     return {

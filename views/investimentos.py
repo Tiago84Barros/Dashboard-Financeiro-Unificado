@@ -1906,7 +1906,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
         with ck1:
             st.markdown(_kpi(
                 "Valor de Mercado Atual", fmt_moeda(evolucao["total_mercado"]),
-                "Estimativa baseada na rentabilidade atual", _COR_POSITIVO,
+                "Carteira consolidada atual", _COR_POSITIVO,
             ), unsafe_allow_html=True)
         with ck2:
             st.markdown(_kpi(
@@ -1918,7 +1918,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
             st.markdown(_kpi(
                 "Total Investido (custo)",
                 fmt_moeda(evolucao["total_investido"]),
-                "Custo histórico acumulado líquido (compras − vendas)", _COR_NEUTRO,
+                "Custo consolidado da carteira atual", _COR_NEUTRO,
             ), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -1928,7 +1928,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
                         key="hist_evolucao_patrimonial")
         st.caption(
             "Snapshots XP (relatórios mensais). "
-            "Último ponto inclui posições internacionais (Nomad) consolidadas. "
+            "Ponto atual inclui posições internacionais (Nomad) consolidadas. "
             "Com Dividendos = Mercado + proventos históricos acumulados."
         )
     else:
