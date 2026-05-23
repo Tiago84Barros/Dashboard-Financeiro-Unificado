@@ -507,16 +507,90 @@ def _insert_snapshot(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def parse(
-    file_input: bytes | tuple[str, bytes],
+    file_input: bytes | tuple[str, bytes] | list[tuple[str, bytes]],
+    engine: Engine,
+) -> dict[str, Any]:
+    """
+    Processa um OU vários relatórios consolidados da XP (multi-arquivo).
+
+    `file_input` pode ser:
+      - bytes simples (filename inferido como 'xp.xlsx')
+      - (filename, bytes)
+      - list[(filename, bytes)] — caso "múltiplos arquivos de uma vez".
+
+    Quando recebe lista, processa cada arquivo individualmente e agrega
+    contadores num único summary. Erros em um arquivo não abortam os
+    outros — ficam registrados em summary["errors"].
+    """
+    # Normaliza entrada para lista de (filename, bytes)
+    if isinstance(file_input, (bytes, bytearray)):
+        items = [("xp.xlsx", bytes(file_input))]
+    elif isinstance(file_input, tuple) and len(file_input) == 2:
+        items = [(str(file_input[0]), bytes(file_input[1]))]
+    elif isinstance(file_input, list):
+        items = [(str(name), bytes(data)) for name, data in file_input]
+    else:
+        summary = make_summary(SOURCE)
+        summary["status"] = "failed"
+        summary["errors"].append(
+            f"Tipo de entrada invalido: {type(file_input).__name__}"
+        )
+        return finalize_summary(summary)
+
+    if not items:
+        summary = make_summary(SOURCE)
+        summary["errors"].append("Nenhum arquivo recebido.")
+        return finalize_summary(summary)
+
+    # Caso single: delega direto (preserva semântica original)
+    if len(items) == 1:
+        return _parse_single(items[0], engine)
+
+    # Caso multi: itera e agrega contadores
+    agg = make_summary(SOURCE)
+    files_summaries: list[str] = []
+    for item in items:
+        try:
+            s = _parse_single(item, engine)
+        except Exception as exc:  # noqa: BLE001
+            agg["errors"].append(f"{item[0]}: {safe_error(exc)}")
+            files_summaries.append(f"{item[0]}: FAILED")
+            continue
+        for key in (
+            "transactions_imported", "incomes_imported", "positions_imported",
+            "duplicates_skipped", "rows_skipped", "files_skipped",
+        ):
+            agg[key] = int(agg.get(key, 0)) + int(s.get(key, 0))
+        if s.get("errors"):
+            for e in s["errors"]:
+                agg["errors"].append(f"{item[0]}: {e}")
+        if s.get("files_skipped_notes"):
+            agg.setdefault("files_skipped_notes", []).extend(
+                s["files_skipped_notes"]
+            )
+        files_summaries.append(
+            f"{item[0]}: {s.get('status', '?')} "
+            f"(tx={s.get('transactions_imported', 0)}, "
+            f"inc={s.get('incomes_imported', 0)}, "
+            f"pos={s.get('positions_imported', 0)})"
+        )
+
+    # Anota no campo de notas pra UI mostrar resumo por arquivo
+    agg.setdefault("files_skipped_notes", []).insert(
+        0, f"Processados {len(items)} arquivos: " + " | ".join(files_summaries)
+    )
+    return finalize_summary(agg)
+
+
+def _parse_single(
+    file_input: tuple[str, bytes],
     engine: Engine,
 ) -> dict[str, Any]:
     """
     Processa um único relatório consolidado da XP.
 
-    `file_input` pode ser:
-      - bytes simples (filename inferido como 'xp.xlsx')
-      - (filename, bytes) — preferido, pois a data do snapshot e inferida
-        do nome do arquivo.
+    `file_input` é (filename, bytes). A data do snapshot é inferida
+    do nome do arquivo.
     """
     summary = make_summary(SOURCE)
     user_id = settings.OWNER_USER_ID
@@ -525,12 +599,8 @@ def parse(
         summary["errors"].append("OWNER_USER_ID nao configurado.")
         return finalize_summary(summary)
 
-    if isinstance(file_input, (bytes, bytearray)):
-        filename = "xp.xlsx"
-        file_bytes = bytes(file_input)
-    else:
-        filename, file_bytes = file_input
-        file_bytes = bytes(file_bytes)
+    filename, file_bytes = file_input
+    file_bytes = bytes(file_bytes)
 
     ensure_external_id_columns(engine)
 

@@ -800,14 +800,16 @@ _INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
     {
         "key":         "xp_csl",
         "label":       "XP — Relatório Consolidado (.xlsx)",
-        "help":        "Relatório consolidado mensal ou anual exportado pela "
-                       "XP. Cria um snapshot da carteira na data do relatório.",
+        "help":        "Relatórios consolidados mensais ou anuais exportados pela "
+                       "XP. Aceita vários arquivos de uma vez — cada um cria um "
+                       "snapshot da carteira na data inferida do nome do arquivo.",
         "file_types":  "xlsx",
         "parser_attr": "parse_xp_consolidado",
         "job_name":    "import_xp_consolidado",
         "table_name":  "portfolio_position_snapshots",
         "source_name": "XP — Consolidado (manual)",
         "needs_filename": True,
+        "multi_file":  True,
     },
     {
         "key":         "nomad",
