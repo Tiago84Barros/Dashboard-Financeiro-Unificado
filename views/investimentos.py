@@ -1929,6 +1929,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
         st.caption(
             "Snapshots XP (relatórios mensais). "
             "Ponto atual inclui posições internacionais (Nomad) consolidadas. "
+            "Empréstimos de ativos são desconsiderados para manter comparação com a carteira investida. "
             "Com Dividendos = Mercado + proventos históricos acumulados."
         )
     else:
@@ -2083,6 +2084,10 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     custo_ausente = custo_fonte == "mercado_fallback"
     rsc      = (pos["valor_mercado"] + renda - ti) / ti * 100 if ti > 0 and not custo_ausente else 0.0
     cor_rsc  = _COR_POSITIVO if rsc >= 0 else _COR_NEGATIVO
+    # Yield on Cost (YoC) — dividend yield personalizado: renda dos ultimos
+    # 12 meses dividida pelo custo total investido pelo usuario. Mostra
+    # melhor o retorno real de proventos do que o DY de mercado.
+    yoc      = renda / ti * 100 if ti > 0 and not custo_ausente else 0.0
 
     dot = (f'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;'
            f'background:{dot_cor};margin-left:3px;vertical-align:middle;"></span>')
@@ -2091,8 +2096,10 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     custo_val = "Não informado" if custo_ausente else fmt_moeda(ti)
     resultado_val = "—" if custo_ausente else f"{seta_r} {abs(rentab):.2f}%"
     retorno_val = "—" if custo_ausente else f"{rsc:.2f}%"
+    yoc_val = "—" if custo_ausente or renda <= 0 else f"{yoc:.2f}%"
     resultado_cor = "#718096" if custo_ausente else cor_r
     retorno_cor = "#718096" if custo_ausente else cor_rsc
+    yoc_cor = "#718096" if (custo_ausente or renda <= 0) else _COR_ROXO
     mercado_cor = "#CBD5E0" if custo_ausente else cor_vm
 
     metricas = [
@@ -2104,6 +2111,7 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
         ("Valor de mercado",  fmt_moeda(pos["valor_mercado"]),       mercado_cor),
         ("Resultado total",   resultado_val,                         resultado_cor),
         ("Renda recebida",    fmt_moeda(renda),                      _COR_ALERTA),
+        ("Yield s/ custo",    yoc_val,                               yoc_cor),
         ("Retorno s/ custo",  retorno_val,                           retorno_cor),
     ]
     rows_html = "".join(

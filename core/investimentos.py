@@ -255,6 +255,7 @@ _SQL_POSICOES_SNAPSHOT = """
         SELECT source_system, source_table, MAX(report_date) AS report_date
         FROM portfolio_position_snapshots
         WHERE user_id = :uid
+          AND COALESCE(is_loaned, false) = false
         GROUP BY source_system, source_table
     ),
     pp_base AS (
@@ -292,6 +293,7 @@ _SQL_POSICOES_SNAPSHOT = """
     LEFT JOIN pp_base
       ON pp_base.base_ticker = REGEXP_REPLACE(a.ticker, 'F$', '')
     WHERE pps.user_id = :uid
+      AND COALESCE(pps.is_loaned, false) = false
     ORDER BY pps.market_value DESC
 """
 
@@ -452,6 +454,7 @@ def _montar_carteira_snapshot(rows: list) -> dict:
 
       1. Agrupa rows do SQL por base_ticker (BBAS3 + BBAS3F → BBAS3)
       2. Soma quantidade e market_value de todos os snapshots do base_ticker
+         desconsiderando emprestimos de ativos (filtrados no SQL).
       3. Para o CUSTO: usa pp_total_invested + pp_quantity da CTE pp_base
          (fonte unica e consistente — investment_transactions agregadas).
          Se pp_base nao tiver o ticker (Tesouro, CDB), cai no
@@ -504,7 +507,7 @@ def _montar_carteira_snapshot(rows: list) -> dict:
         if pp_ti > 0 and pp_qty > 0:
             # pp_base agregado da B3 negociacao — fonte mais confiavel
             ti          = pp_ti
-            qty         = pp_qty
+            qty         = qty_snap
             preco_medio = pp_avg if pp_avg > 0 else (ti / qty)
             custo_fonte = "b3_negociacao"
         elif vi_snap > 0:
@@ -520,12 +523,11 @@ def _montar_carteira_snapshot(rows: list) -> dict:
             preco_medio = ti / qty if qty > 0 else 0.0
             custo_fonte = "mercado_fallback"
 
-        # ── PRECO DE MERCADO: derivar do agregado para evitar divergencia
-        # quando pp_qty != qty_snap (ex: BBAS3 com lote padrao nao migrado)
+        # ── PRECO/VALOR DE MERCADO: o snapshot da B3/XP e a fonte canonica
+        # para posicao atual. Recalcular com pp_qty pode reintroduzir ativos
+        # emprestados ou diferencas de lote que a B3 exibe separadamente.
         preco_atual = (vm / qty_snap) if qty_snap > 0 else 0.0
-
-        # ── VALOR DE MERCADO consistente com qty escolhida
-        vm_calc = round(qty * preco_atual, 2) if preco_atual > 0 else round(vm, 2)
+        vm_calc = round(vm, 2)
 
         rentab = round((vm_calc - ti) / ti * 100, 2) if ti > 0 else 0.0
         custo_estimado = custo_fonte != "b3_negociacao"
@@ -771,12 +773,27 @@ _SQL_EVOLUCAO_TX = """
 """
 
 _SQL_EVOLUCAO_DIV = """
+    WITH dedup AS (
+        SELECT
+            d.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY d.asset_id, d.payment_date, d.type, ROUND(d.total_amount::numeric, 2)
+                ORDER BY CASE
+                    WHEN d.external_id LIKE 'b3mov-%' THEN 0
+                    WHEN d.external_id LIKE 'xpcsl-%' THEN 1
+                    ELSE 2
+                END,
+                d.id
+            ) AS rn
+        FROM dividends d
+        WHERE d.user_id = :uid
+          AND d.payment_date IS NOT NULL
+    )
     SELECT
         DATE_TRUNC('month', payment_date) AS mes,
         SUM(total_amount) AS delta_dividendos
-    FROM dividends
-    WHERE user_id = :uid
-      AND payment_date IS NOT NULL
+    FROM dedup
+    WHERE rn = 1
     GROUP BY 1
     ORDER BY 1
 """
@@ -807,6 +824,7 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
         FROM portfolio_position_snapshots
         WHERE user_id = :uid
           AND source_table IN ('xp_consolidado', 'xp_positions')
+          AND COALESCE(is_loaned, false) = false
         ORDER BY report_date,
                  CASE source_table
                      WHEN 'xp_consolidado' THEN 0
@@ -825,6 +843,7 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
          AND xp.source_system = pps.source_system
          AND xp.source_table  = pps.source_table
         WHERE pps.user_id = :uid
+          AND COALESCE(pps.is_loaned, false) = false
         GROUP BY pps.report_date
     )
     SELECT

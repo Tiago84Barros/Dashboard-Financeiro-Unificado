@@ -116,6 +116,21 @@ _MOCK_EVENTOS_RAW: list[tuple] = [
 
 # ── SQL ───────────────────────────────────────────────────────────────────────
 _SQL_PROVENTOS = """
+    WITH dedup AS (
+        SELECT
+            d.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY d.asset_id, d.payment_date, d.type, ROUND(d.total_amount::numeric, 2)
+                ORDER BY CASE
+                    WHEN d.external_id LIKE 'b3mov-%' THEN 0
+                    WHEN d.external_id LIKE 'xpcsl-%' THEN 1
+                    ELSE 2
+                END,
+                d.id
+            ) AS rn
+        FROM dividends d
+        WHERE d.user_id = :uid
+    )
     SELECT
         d.id::text,
         d.type,
@@ -127,9 +142,9 @@ _SQL_PROVENTOS = """
         a.ticker,
         a.name      AS asset_name,
         a.class     AS asset_class
-    FROM   dividends d
+    FROM   dedup d
     JOIN   assets a ON a.id = d.asset_id
-    WHERE  d.user_id = :uid
+    WHERE  d.rn = 1
     ORDER  BY d.payment_date DESC
 """
 
