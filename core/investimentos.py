@@ -794,14 +794,38 @@ _SQL_EVOLUCAO_RATIO = """
 """
 
 _SQL_EVOLUCAO_SNAPSHOTS = """
-    WITH xp_snaps AS (
-        SELECT
-            report_date,
-            SUM(market_value)              AS vm,
-            SUM(COALESCE(invested_value, 0)) AS vi
+    -- Serie temporal de patrimonio baseada nos snapshots XP.
+    -- Aceita tanto a fonte antiga (source_table='xp_positions', migracao
+    -- via migrate_app2_investimentos.py) quanto a nova
+    -- (source_table='xp_consolidado', upload manual em Configuracoes).
+    -- DISTINCT ON garante uma linha por report_date mesmo se ambas as
+    -- fontes existirem (prioriza xp_consolidado > xp_positions).
+    -- Atualizado 2026-05-23 — antes era hardcoded source_system='app2'.
+    WITH xp_pref AS (
+        SELECT DISTINCT ON (report_date)
+            report_date, source_system, source_table
         FROM portfolio_position_snapshots
-        WHERE user_id = :uid AND source_system = 'app2'
-        GROUP BY report_date
+        WHERE user_id = :uid
+          AND source_table IN ('xp_consolidado', 'xp_positions')
+        ORDER BY report_date,
+                 CASE source_table
+                     WHEN 'xp_consolidado' THEN 0
+                     WHEN 'xp_positions'   THEN 1
+                     ELSE 2
+                 END
+    ),
+    xp_snaps AS (
+        SELECT
+            pps.report_date,
+            SUM(pps.market_value)              AS vm,
+            SUM(COALESCE(pps.invested_value, 0)) AS vi
+        FROM portfolio_position_snapshots pps
+        JOIN xp_pref xp
+          ON xp.report_date  = pps.report_date
+         AND xp.source_system = pps.source_system
+         AND xp.source_table  = pps.source_table
+        WHERE pps.user_id = :uid
+        GROUP BY pps.report_date
     ),
     other_latest AS (
         SELECT
@@ -809,11 +833,12 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
             SUM(COALESCE(invested_value, 0)) AS vi
         FROM portfolio_position_snapshots
         WHERE user_id = :uid
-          AND source_system != 'app2'
+          AND source_table NOT IN ('xp_consolidado', 'xp_positions')
           AND report_date = (
               SELECT MAX(report_date)
               FROM portfolio_position_snapshots
-              WHERE user_id = :uid AND source_system != 'app2'
+              WHERE user_id = :uid
+                AND source_table NOT IN ('xp_consolidado', 'xp_positions')
           )
     ),
     latest_xp_date AS (
