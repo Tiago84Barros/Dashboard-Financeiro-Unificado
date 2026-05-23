@@ -163,13 +163,17 @@ def classify_ticker(ticker: str) -> str:
 # Movimentos da B3-Movimentação que entram em `investment_transactions`.
 # IMPORTANTE: "compra"/"venda" puras NÃO entram aqui — são canônicas do
 # arquivo Negociação e ficam em _SKIP_TYPES_B3 para evitar duplicidade.
+#
+# Atualizado 2026-05-23: bonificação/desdobro/fração/leilão/transferência
+# foram movidas para _SKIP_TYPES_B3. Esses eventos mudam a quantidade do
+# ativo SEM contrapartida financeira (preço=0) — quando importados como
+# buy/sell zeram o gross_cost do algoritmo de preço médio e produzem PM
+# inválido (ex: PSSA3 caiu para R$ 3,44 em vez de R$ 27,46). O tratamento
+# correto desses eventos exige rebase do gross_cost (não suportado hoje);
+# até lá, ignoramos e o gráfico de qty fica fiel ao arquivo Negociação.
+#
+# Mantidos: "aplicação" e "resgate antecipado" (CDB, fundos RF, Tesouro).
 _TX_MAP_B3 = {
-    "transferência_credito":                 "buy",
-    "transferência_debito":                  "sell",
-    "bonificação em ativos":                 "buy",
-    "desdobro":                              "buy",
-    "fração em ativos":                      "buy",
-    "leilão de fração":                      "sell",
     "aplicação":                             "buy",
     "resgate antecipado":                    "sell",
 }
@@ -193,6 +197,7 @@ _INCOME_MAP_B3 = {
 # Movimentos ignorados (já cobertos por outro arquivo ou irrelevantes).
 # "compra"/"venda" do arquivo Movimentação são duplicatas do arquivo
 # Negociação, então ficam aqui.
+# Bonificação/desdobro/fração/leilão/transferência: vide nota em _TX_MAP_B3.
 _SKIP_TYPES_B3 = {
     "compra",
     "venda",
@@ -200,6 +205,11 @@ _SKIP_TYPES_B3 = {
     "atualização",
     "transf. sem financeiro",
     "transferência - liquidação",
+    "transferência",
+    "bonificação em ativos",
+    "desdobro",
+    "fração em ativos",
+    "leilão de fração",
 }
 
 
