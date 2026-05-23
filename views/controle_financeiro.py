@@ -633,7 +633,9 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
 
         opcoes    = get_opcoes_formulario()
         cats_db   = opcoes.get("categorias", [])
+        contas_db = opcoes.get("contas", [])
         cat_nomes = [c["nome"] for c in cats_db]
+        conta_nomes = [c["nome"] for c in contas_db]
 
         # Prepara DataFrame para edição
         import pandas as pd
@@ -658,8 +660,14 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                 key="editor_lancamentos",
                 column_config={
                     "ID":      st.column_config.TextColumn("ID", disabled=True),
-                    "Tipo":    st.column_config.TextColumn("Tipo", disabled=True),
-                    "Conta":   st.column_config.TextColumn("Conta", disabled=True),
+                    "Tipo": st.column_config.SelectboxColumn(
+                        "Tipo",
+                        options=["entrada", "saída"],
+                    ),
+                    "Conta": st.column_config.SelectboxColumn(
+                        "Conta",
+                        options=conta_nomes if conta_nomes else ["Sem conta"],
+                    ),
                     "Categoria": st.column_config.SelectboxColumn(
                         "Categoria",
                         options=cat_nomes if cat_nomes else ["Sem categoria"],
@@ -681,6 +689,8 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                 campos_mudaram = (
                     row["Descrição"] != orig["Descrição"]
                     or row["Categoria"] != orig["Categoria"]
+                    or row["Tipo"] != orig["Tipo"]
+                    or row["Conta"] != orig["Conta"]
                     or abs(row["Valor"] - orig["Valor"]) > 0.001
                     or row_data != orig_data
                 )
@@ -688,14 +698,20 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                     # Resolve category_id
                     cat_m = next((c for c in cats_db if c["nome"] == row["Categoria"]), None)
                     cat_id = cat_m["id"] if cat_m else None
-                    # Mantém sinal original
-                    sinal = 1.0 if txs[i]["eh_receita"] else -1.0
+                    conta_m = next((c for c in contas_db if c["nome"] == row["Conta"]), None)
+                    if not conta_m:
+                        erros.append(f"ID {row['ID']}: conta inválida ou não encontrada.")
+                        continue
+                    tipo_tx = "income" if row["Tipo"] == "entrada" else "expense"
+                    sinal = 1.0 if tipo_tx == "income" else -1.0
                     ok, msg = atualizar_transacao(
                         tx_id=str(row["ID"]),
                         descricao=str(row["Descrição"]),
                         valor=sinal * abs(float(row["Valor"])),
                         data=row_data,
                         categoria_id=cat_id,
+                        conta_id=conta_m["id"],
+                        tipo=tipo_tx,
                     )
                     if ok:
                         ok_count += 1

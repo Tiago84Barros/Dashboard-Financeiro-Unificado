@@ -147,8 +147,10 @@ _SQL_UPDATE_TX = """
     UPDATE transactions
     SET    description = :description,
            category_id = CAST(:category_id AS uuid),
+           account_id  = CAST(:account_id AS uuid),
            amount      = :amount,
-           due_date    = :due_date
+           due_date    = :due_date,
+           type        = :type
     WHERE  id       = CAST(:tx_id AS uuid)
       AND  user_id  = CAST(:uid AS uuid)
 """
@@ -405,6 +407,8 @@ def atualizar_transacao(
     valor: float,
     data: _date,
     categoria_id: Optional[str],
+    conta_id: str,
+    tipo: str,
 ) -> tuple[bool, str]:
     """
     Atualiza campos editáveis de uma transação existente.
@@ -433,8 +437,10 @@ def atualizar_transacao(
                     "uid":         owner,
                     "description": descricao.strip(),
                     "category_id": categoria_id,
+                    "account_id":  conta_id,
                     "amount":      valor,
                     "due_date":    data,
+                    "type":        tipo,
                 },
             )
 
