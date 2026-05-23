@@ -174,35 +174,43 @@ def _upsert(
     portfolio_id: str,
     user_id: str,
 ) -> int:
-    upserted = 0
-    for pos in positions:
-        if pos["quantity"] <= 0:
-            continue
-        conn.execute(
-            text("""
-                INSERT INTO portfolio_positions
-                    (id, user_id, portfolio_id, asset_id,
-                     quantity, average_price, total_invested)
-                VALUES
-                    (:id, :uid, :pid, :aid, :qty, :ap, :ti)
-                ON CONFLICT (portfolio_id, asset_id) DO UPDATE SET
-                    quantity       = EXCLUDED.quantity,
-                    average_price  = EXCLUDED.average_price,
-                    total_invested = EXCLUDED.total_invested,
-                    updated_at     = NOW()
-            """),
-            {
-                "id":  str(uuid.uuid4()),
-                "uid": user_id,
-                "pid": portfolio_id,
-                "aid": pos["asset_id"],
-                "qty": str(pos["quantity"]),
-                "ap":  str(pos["average_price"]),
-                "ti":  str(pos["total_invested"]),
-            },
-        )
-        upserted += 1
-    return upserted
+    """UPSERT em lote via executemany do psycopg2.
+
+    Otimização (2026-05-22): antes fazia 1 INSERT por posição. Em prod
+    (Streamlit Cloud US ↔ Supabase sa-east-1) cada round-trip leva ~200ms,
+    então 50 posições viravam ~10s. Com executemany, vai pra ~1 round-trip.
+    """
+    rows = [
+        {
+            "id":  str(uuid.uuid4()),
+            "uid": user_id,
+            "pid": portfolio_id,
+            "aid": pos["asset_id"],
+            "qty": str(pos["quantity"]),
+            "ap":  str(pos["average_price"]),
+            "ti":  str(pos["total_invested"]),
+        }
+        for pos in positions
+        if pos["quantity"] > 0
+    ]
+    if not rows:
+        return 0
+    conn.execute(
+        text("""
+            INSERT INTO portfolio_positions
+                (id, user_id, portfolio_id, asset_id,
+                 quantity, average_price, total_invested)
+            VALUES
+                (:id, :uid, :pid, :aid, :qty, :ap, :ti)
+            ON CONFLICT (portfolio_id, asset_id) DO UPDATE SET
+                quantity       = EXCLUDED.quantity,
+                average_price  = EXCLUDED.average_price,
+                total_invested = EXCLUDED.total_invested,
+                updated_at     = NOW()
+        """),
+        rows,
+    )
+    return len(rows)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
