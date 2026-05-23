@@ -2535,8 +2535,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     )
 
     # ── Sub-tabs ──────────────────────────────────────────────────────────────
-    ta, tb, tc, td = st.tabs([
-        "📋 Visão Geral", "📈 Ações", "🏢 FIIs", "🔔 Alertas",
+    ta, tb, tc, te, td = st.tabs([
+        "📋 Visão Geral", "📈 Ações", "🏢 FIIs", "🌎 Exterior", "🔔 Alertas",
     ])
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -2831,6 +2831,115 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     with cols[j]:
                         st.markdown(_fii_card_html(pos, fd, pi, renda, alts),
                                     unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Exterior — ativos fora do Brasil (Nomad: SPY, IEFA, etc.)
+    # ══════════════════════════════════════════════════════════════════════════
+    with te:
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        ext_pos = [p for p in posicoes if _is_exterior_position(p)]
+
+        if not ext_pos:
+            st.info(
+                "Sem posições no exterior na carteira. "
+                "Importe um PDF Nomad em Configurações para adicionar ativos internacionais.",
+                icon="🌎",
+            )
+        else:
+            # ── KPIs consolidados ─────────────────────────────────────────────
+            total_ext_brl = sum(p["valor_mercado"] for p in ext_pos)
+            total_ext_inv = sum(p["total_investido"] for p in ext_pos)
+            pct_ext_carteira = (
+                total_ext_brl / total_mkt * 100 if total_mkt > 0 else 0.0
+            )
+            rentab_ext = (
+                (total_ext_brl - total_ext_inv) / total_ext_inv * 100
+                if total_ext_inv > 0 else 0.0
+            )
+            renda_ext = sum(
+                renda_por_ticker.get(p["ticker"], 0.0) for p in ext_pos
+            )
+            yoc_ext = renda_ext / total_ext_inv * 100 if total_ext_inv > 0 else 0.0
+            cor_rent_ext = _COR_POSITIVO if rentab_ext >= 0 else _COR_NEGATIVO
+            seta_ext = "▲" if rentab_ext >= 0 else "▼"
+
+            _secao_titulo_orig(
+                "🌎", "Investimentos no Exterior",
+                f"{len(ext_pos)} ativos · {pct_ext_carteira:.1f}% da carteira total"
+            )
+
+            c1, c2, c3, c4 = st.columns(4, gap="small")
+            with c1:
+                st.markdown(_kpi(
+                    "Valor de Mercado", fmt_moeda(total_ext_brl),
+                    f"{len(ext_pos)} ativos internacionais",
+                    "#E2E8F0",
+                ), unsafe_allow_html=True)
+            with c2:
+                st.markdown(_kpi(
+                    "Custo Investido", fmt_moeda(total_ext_inv),
+                    "Custo histórico em BRL",
+                    _COR_INFO,
+                ), unsafe_allow_html=True)
+            with c3:
+                st.markdown(_kpi(
+                    "Rentabilidade",
+                    f"{seta_ext} {abs(rentab_ext):.2f}%",
+                    "Mercado − Custo / Custo",
+                    cor_rent_ext,
+                ), unsafe_allow_html=True)
+            with c4:
+                st.markdown(_kpi(
+                    "Exposição Cambial",
+                    f"{pct_ext_carteira:.1f}%",
+                    "Do patrimônio total em moeda estrangeira",
+                    _COR_ROXO,
+                ), unsafe_allow_html=True)
+
+            # ── Aviso de câmbio + renda recebida ──────────────────────────────
+            st.markdown("<br>", unsafe_allow_html=True)
+            c5, c6 = st.columns(2, gap="small")
+            with c5:
+                st.markdown(_kpi(
+                    "Renda Recebida (12M)", fmt_moeda(renda_ext),
+                    "Dividendos/distribuições convertidos para BRL",
+                    _COR_ALERTA,
+                ), unsafe_allow_html=True)
+            with c6:
+                st.markdown(_kpi(
+                    "Yield sobre Custo",
+                    f"{yoc_ext:.2f}%",
+                    "Renda 12M / Custo investido",
+                    _COR_ROXO,
+                ), unsafe_allow_html=True)
+
+            # ── Cards individuais (usa o mesmo _card_ativo da Carteira) ───────
+            st.markdown("<br>", unsafe_allow_html=True)
+            _secao_titulo_orig("💼", "Posições")
+
+            # Logos via icones-b3 não cobrem tickers internacionais.
+            # Mantém vazio — _card_ativo cai no fallback "iniciais".
+            logos_ext: dict[str, str] = {}
+
+            for i in range(0, len(ext_pos), 3):
+                chunk = ext_pos[i:i + 3]
+                cols  = st.columns(3, gap="small")
+                for j, pos in enumerate(chunk):
+                    renda_p = renda_por_ticker.get(pos["ticker"], 0.0)
+                    with cols[j]:
+                        st.markdown(
+                            _card_ativo(pos, renda_p, logos_ext.get(pos["ticker"], "")),
+                            unsafe_allow_html=True,
+                        )
+
+            # ── Nota sobre fonte de dados ─────────────────────────────────────
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.caption(
+                "💡 Posições exterior vêm do PDF Nomad consolidado. "
+                "Valores em BRL são convertidos usando USD/BRL do dia do snapshot. "
+                "Cotações diárias via yfinance."
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Alertas — consolidado ações + FIIs
