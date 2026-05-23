@@ -650,35 +650,39 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
             })
         df_edit = pd.DataFrame(rows_edit)
 
-        edited = st.data_editor(
-            df_edit,
-            num_rows="fixed",
-            hide_index=True,
-            key="editor_lancamentos",
-            column_config={
-                "ID":      st.column_config.TextColumn("ID", disabled=True),
-                "Tipo":    st.column_config.TextColumn("Tipo", disabled=True),
-                "Conta":   st.column_config.TextColumn("Conta", disabled=True),
-                "Categoria": st.column_config.SelectboxColumn(
-                    "Categoria",
-                    options=cat_nomes if cat_nomes else ["Sem categoria"],
-                ),
-                "Data":    st.column_config.DateColumn("Data"),
-                "Valor":   st.column_config.NumberColumn("Valor (R$)", format="%.2f", step=0.01),
-                "Descrição": st.column_config.TextColumn("Descrição"),
-            },
-        )
+        with st.form("form_editor_lancamentos", clear_on_submit=False):
+            edited = st.data_editor(
+                df_edit,
+                num_rows="fixed",
+                hide_index=True,
+                key="editor_lancamentos",
+                column_config={
+                    "ID":      st.column_config.TextColumn("ID", disabled=True),
+                    "Tipo":    st.column_config.TextColumn("Tipo", disabled=True),
+                    "Conta":   st.column_config.TextColumn("Conta", disabled=True),
+                    "Categoria": st.column_config.SelectboxColumn(
+                        "Categoria",
+                        options=cat_nomes if cat_nomes else ["Sem categoria"],
+                    ),
+                    "Data":    st.column_config.DateColumn("Data"),
+                    "Valor":   st.column_config.NumberColumn("Valor (R$)", format="%.2f", step=0.01),
+                    "Descrição": st.column_config.TextColumn("Descrição"),
+                },
+            )
+            salvar_edicoes = st.form_submit_button("Salvar alterações", type="primary")
 
-        if st.button("Salvar alterações", key="btn_salvar_edicoes"):
+        if salvar_edicoes:
             erros = []
             ok_count = 0
             for i, row in edited.iterrows():
                 orig = df_edit.iloc[i]
+                row_data = pd.to_datetime(row["Data"]).date() if pd.notna(row["Data"]) else None
+                orig_data = pd.to_datetime(orig["Data"]).date() if pd.notna(orig["Data"]) else None
                 campos_mudaram = (
                     row["Descrição"] != orig["Descrição"]
                     or row["Categoria"] != orig["Categoria"]
                     or abs(row["Valor"] - orig["Valor"]) > 0.001
-                    or row["Data"] != orig["Data"]
+                    or row_data != orig_data
                 )
                 if campos_mudaram:
                     # Resolve category_id
@@ -690,7 +694,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                         tx_id=str(row["ID"]),
                         descricao=str(row["Descrição"]),
                         valor=sinal * abs(float(row["Valor"])),
-                        data=row["Data"],
+                        data=row_data,
                         categoria_id=cat_id,
                     )
                     if ok:
