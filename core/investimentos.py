@@ -530,8 +530,18 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         pp_ti    = float(getattr(primary, "pp_total_invested", 0) or 0)
         pp_avg   = float(getattr(primary, "pp_average_price", 0) or 0)
 
+        # ── Ativos em USD (Nomad): snapshot ja vem convertido em BRL pelo
+        # importer com cambio do dia. pp_base (investment_transactions) guarda
+        # em USD, sem conversao — usar pp_base resultaria em valores 5x menores.
+        # Decisao: para ccy=USD, snapshot e a fonte canonica do custo.
+        ccy = str(primary.currency or "BRL").upper()
+        if ccy == "USD" and vi_snap > 0:
+            qty         = qty_snap
+            ti          = vi_snap
+            preco_medio = ti / qty if qty > 0 else 0.0
+            custo_fonte = "snapshot"
         # ── CUSTO: prioridade pp_base (mesma fonte: qty + ti consistentes)
-        if pp_ti > 0 and pp_qty > 0:
+        elif pp_ti > 0 and pp_qty > 0:
             # pp_base agregado da B3 negociacao — fonte mais confiavel
             qty         = qty_snap
             preco_medio = pp_avg if pp_avg > 0 else (pp_ti / pp_qty)
