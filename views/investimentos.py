@@ -2845,7 +2845,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             st.info("Sem títulos do Tesouro Direto na carteira.", icon="🏦")
         else:
             from datetime import date as _date_today
-            ano_atual = _date_today().today().year
+            ano_atual = _date_today.today().year
 
             def _tesouro_meta(ticker: str) -> dict:
                 """Extrai (tipo, ano_venc, label) do ticker (TSELIC2031, TIPCA2032 etc.)."""
