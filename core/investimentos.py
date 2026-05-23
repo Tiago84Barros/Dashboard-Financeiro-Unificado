@@ -445,64 +445,120 @@ def _class_key_from_snapshot(raw_type: str | None, ticker: str, country: str | N
 
 
 def _montar_carteira_snapshot(rows: list) -> dict:
-    """Monta a carteira real a partir do ultimo snapshot XP, como o app isolado."""
-    total_investido = 0.0
-    total_mercado = 0.0
-    posicoes = []
+    """Monta a carteira real a partir do ultimo snapshot XP + custo da B3.
 
+    Estrategia de unificacao (corrige bug 2026-05-22 onde card misturava
+    qty do snapshot XP com PM agregado da B3, gerando custos inconsistentes):
+
+      1. Agrupa rows do SQL por base_ticker (BBAS3 + BBAS3F → BBAS3)
+      2. Soma quantidade e market_value de todos os snapshots do base_ticker
+      3. Para o CUSTO: usa pp_total_invested + pp_quantity da CTE pp_base
+         (fonte unica e consistente — investment_transactions agregadas).
+         Se pp_base nao tiver o ticker (Tesouro, CDB), cai no
+         invested_value do snapshot, e em ultimo caso no market_value.
+    """
+    # ── 1. Agrupa rows por base_ticker
+    grupos: dict[str, dict] = {}
     for r in rows:
         qty = float(r.quantity or 0)
         vm = float(r.market_value or 0)
         if qty <= 0 or vm <= 0:
             continue
 
-        ticker = _base_ticker(r.ticker)
-        classe_raw = _class_key_from_snapshot(r.asset_type, ticker, r.country)
-        # O relatorio XP e a fonte mais fiel para classes sem transacao granular
-        # no App4 (Tesouro, CDBs, fundos). Para acoes/ETFs, alguns snapshots
-        # nao trazem custo; nesse caso, reaproveita o preco medio calculado em
-        # portfolio_positions, normalizando tickers fracionarios como BBAS3F.
-        pp_avg = float(getattr(r, "pp_average_price", 0) or 0)
-        if r.invested_value is not None and float(r.invested_value or 0) > 0:
-            ti = float(r.invested_value or 0)
-            custo_estimado = False
+        base = _base_ticker(r.ticker)
+        if base not in grupos:
+            grupos[base] = {
+                "ticker":         base,
+                "rows":           [],
+                "qty_snap_sum":   0.0,
+                "vm_sum":         0.0,
+                "vi_snap_sum":    0.0,
+                "preco_mkt_pond": 0.0,
+            }
+        g = grupos[base]
+        g["rows"].append(r)
+        g["qty_snap_sum"] += qty
+        g["vm_sum"]       += vm
+        g["vi_snap_sum"]  += float(r.invested_value or 0)
+
+    # ── 2. Para cada base_ticker, calcula campos consolidados
+    total_investido = 0.0
+    total_mercado = 0.0
+    posicoes = []
+
+    for base, g in grupos.items():
+        # Representante: prefere row sem 'F' (lote padrao) para metadados
+        primary = next((r for r in g["rows"] if not (r.ticker or "").upper().endswith("F")), g["rows"][0])
+
+        qty_snap = g["qty_snap_sum"]
+        vm       = g["vm_sum"]
+        vi_snap  = g["vi_snap_sum"]
+
+        # pp_base ja vem agregado por base_ticker no SQL — todas as rows do
+        # mesmo grupo trarao o MESMO valor de pp_quantity/pp_total_invested.
+        pp_qty   = float(getattr(primary, "pp_quantity", 0) or 0)
+        pp_ti    = float(getattr(primary, "pp_total_invested", 0) or 0)
+        pp_avg   = float(getattr(primary, "pp_average_price", 0) or 0)
+
+        # ── CUSTO: prioridade pp_base (mesma fonte: qty + ti consistentes)
+        if pp_ti > 0 and pp_qty > 0:
+            # pp_base agregado da B3 negociacao — fonte mais confiavel
+            ti          = pp_ti
+            qty         = pp_qty
+            preco_medio = pp_avg if pp_avg > 0 else (ti / qty)
+            custo_fonte = "b3_negociacao"
+        elif vi_snap > 0:
+            # Snapshot da corretora reportou invested_value (raro)
+            ti          = vi_snap
+            qty         = qty_snap
+            preco_medio = ti / qty if qty > 0 else 0.0
             custo_fonte = "snapshot"
-        elif pp_avg > 0:
-            ti = pp_avg * qty
-            custo_estimado = True
-            custo_fonte = "preco_medio_estimado"
         else:
-            ti = vm
-            custo_estimado = True
+            # Sem custo conhecido — usa market_value como estimativa
+            ti          = vm
+            qty         = qty_snap
+            preco_medio = ti / qty if qty > 0 else 0.0
             custo_fonte = "mercado_fallback"
-        preco_atual = float(r.market_price or 0) or (vm / qty if qty > 0 else 0.0)
-        preco_medio = ti / qty if qty > 0 else 0.0
-        rentab = round((vm - ti) / ti * 100, 2) if ti > 0 else 0.0
+
+        # ── PRECO DE MERCADO: derivar do agregado para evitar divergencia
+        # quando pp_qty != qty_snap (ex: BBAS3 com lote padrao nao migrado)
+        preco_atual = (vm / qty_snap) if qty_snap > 0 else 0.0
+
+        # ── VALOR DE MERCADO consistente com qty escolhida
+        vm_calc = round(qty * preco_atual, 2) if preco_atual > 0 else round(vm, 2)
+
+        rentab = round((vm_calc - ti) / ti * 100, 2) if ti > 0 else 0.0
+        custo_estimado = custo_fonte != "b3_negociacao"
+
+        classe_raw = _class_key_from_snapshot(primary.asset_type, base, primary.country)
 
         total_investido += ti
-        total_mercado += vm
+        total_mercado   += vm_calc
         posicoes.append({
-            "ticker":          ticker,
-            "nome":            r.asset_name or ticker,
+            "ticker":          base,
+            "nome":            primary.asset_name or base,
             "classe":          _CLASS_LABEL.get(classe_raw, classe_raw.title()),
-            "setor":           _SETOR_LABEL.get(r.sector or "other", (r.sector or "other").title()),
-            "moeda":           r.currency or "BRL",
-            "pais":            r.country or "BR",
+            "setor":           _SETOR_LABEL.get(primary.sector or "other", (primary.sector or "other").title()),
+            "moeda":           primary.currency or "BRL",
+            "pais":            primary.country or "BR",
             "quantidade":      qty,
             "preco_medio":     round(preco_medio, 6),
             "total_investido": round(ti, 2),
             "custo_estimado":  custo_estimado,
             "custo_fonte":     custo_fonte,
             "preco_atual":     round(preco_atual, 6),
-            "valor_mercado":   round(vm, 2),
+            "valor_mercado":   vm_calc,
             "rentab_pct":      rentab,
             "pct_carteira":    0.0,
             "cor":             _CLASS_COR.get(classe_raw, "#718096"),
         })
 
-    base = total_mercado if total_mercado > 0 else total_investido
+    # Ordena por valor de mercado DESC (mantém UX original)
+    posicoes.sort(key=lambda p: p["valor_mercado"], reverse=True)
+
+    base_total = total_mercado if total_mercado > 0 else total_investido
     for p in posicoes:
-        p["pct_carteira"] = round(p["valor_mercado"] / base * 100, 2) if base > 0 else 0.0
+        p["pct_carteira"] = round(p["valor_mercado"] / base_total * 100, 2) if base_total > 0 else 0.0
 
     rentabilidade_total = round(
         (total_mercado - total_investido) / total_investido * 100, 2

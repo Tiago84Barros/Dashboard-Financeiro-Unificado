@@ -521,6 +521,175 @@ def insert_dividend(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Helpers BATCH (otimização — substitui 1 query/linha por 1 batch query)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Motivação (2026-05-22):
+#   O fluxo antigo fazia 3-4 round-trips ao Supabase por linha do XLSX:
+#     get_or_create_asset (SELECT + maybe INSERT)
+#     insert_xxx          (INSERT com ON CONFLICT)
+#     SAVEPOINT begin/release
+#   Com Streamlit Cloud (US) ↔ Supabase sa-east-1 (~200ms latência), um XLSX
+#   de 500 linhas levava 5-10 minutos.
+#
+#   Estes helpers fazem o trabalho em ~5 queries totais por arquivo,
+#   independente do número de linhas.
+#
+
+def batch_get_or_create_assets(
+    conn: Connection,
+    items: list[tuple[str, str, str]],
+    currency: str = "BRL",
+) -> dict[str, str]:
+    """
+    Recebe lista de (ticker, name, asset_class) e retorna {ticker_upper: uuid}.
+
+    Estratégia:
+      1) SELECT batch dos tickers existentes → mapa parcial
+      2) Para os ausentes: INSERT ... VALUES (...), (...), ... ON CONFLICT
+         (ticker) DO UPDATE SET name=EXCLUDED.name RETURNING ticker, id
+      3) Mescla os dois mapas e retorna
+
+    Custo: 2 round-trips (SELECT + INSERT), independente de quantos tickers.
+    """
+    if not items:
+        return {}
+
+    # Normaliza e deduplica por ticker (preferindo o primeiro name encontrado)
+    seen: dict[str, tuple[str, str]] = {}
+    for ticker, name, cls in items:
+        t = (ticker or "").strip().upper()
+        if not t:
+            continue
+        if t not in seen:
+            seen[t] = (name or t, cls or classify_ticker(t))
+    tickers = list(seen.keys())
+    if not tickers:
+        return {}
+
+    # 1) SELECT existentes
+    existing = conn.execute(
+        text("SELECT ticker, id FROM assets WHERE ticker = ANY(:tks)"),
+        {"tks": tickers},
+    ).fetchall()
+    result: dict[str, str] = {row.ticker: str(row.id) for row in existing}
+
+    # 2) INSERT dos ausentes em uma única statement
+    missing = [t for t in tickers if t not in result]
+    if missing:
+        values_sql = ", ".join(
+            f"(:t{i}, :n{i}, :c{i}, :ccy)" for i in range(len(missing))
+        )
+        params: dict[str, Any] = {"ccy": currency}
+        for i, t in enumerate(missing):
+            name, cls = seen[t]
+            params[f"t{i}"] = t
+            params[f"n{i}"] = name[:200]
+            params[f"c{i}"] = cls
+        rows = conn.execute(
+            text(f"""
+                INSERT INTO assets (ticker, name, class, currency)
+                VALUES {values_sql}
+                ON CONFLICT (ticker) DO UPDATE SET name = EXCLUDED.name
+                RETURNING ticker, id
+            """),
+            params,
+        ).fetchall()
+        for row in rows:
+            result[row.ticker] = str(row.id)
+
+    return result
+
+
+def batch_filter_existing_external_ids(
+    conn: Connection,
+    table: str,
+    external_ids: list[str],
+) -> set[str]:
+    """
+    Retorna o subconjunto de external_ids que já existem em `table`.
+
+    Use para filtrar linhas a inserir antes do batch INSERT (evita
+    duplicar trabalho mesmo com ON CONFLICT DO NOTHING).
+    """
+    if table not in ("investment_transactions", "dividends"):
+        raise ValueError(f"table invalida: {table}")
+    if not external_ids:
+        return set()
+    rows = conn.execute(
+        text(f"SELECT external_id FROM {table} WHERE external_id = ANY(:ids)"),
+        {"ids": external_ids},
+    ).fetchall()
+    return {row.external_id for row in rows}
+
+
+def batch_insert_investment_transactions(
+    conn: Connection,
+    rows: list[dict[str, Any]],
+) -> int:
+    """
+    Insere lista de transações em uma única statement com ON CONFLICT
+    DO NOTHING. Retorna o número de linhas efetivamente inseridas.
+
+    Cada item de `rows` precisa ter as chaves:
+      user_id, asset_id, type, quantity, unit_price, fees,
+      transaction_date, broker, external_id
+
+    NB: Usa executemany() do psycopg2 internamente (via SQLAlchemy),
+    que enviá um único pacote ao servidor. Bem mais rápido que loop
+    com begin_nested por linha.
+    """
+    if not rows:
+        return 0
+    # Pre-valida tx_type pra evitar erro em meio do batch
+    for r in rows:
+        if r["type"] not in ("buy", "sell"):
+            raise ValueError(f"tx_type invalido: {r['type']!r}")
+    stmt = text("""
+        INSERT INTO investment_transactions
+            (user_id, asset_id, type, quantity, unit_price, fees,
+             transaction_date, broker, external_id)
+        VALUES
+            (:user_id, :asset_id, :type, :quantity, :unit_price, :fees,
+             :transaction_date, :broker, :external_id)
+        ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
+    """)
+    result = conn.execute(stmt, rows)
+    return result.rowcount if result.rowcount is not None else len(rows)
+
+
+def batch_insert_dividends(
+    conn: Connection,
+    rows: list[dict[str, Any]],
+) -> int:
+    """
+    Insere lista de dividendos em uma única statement. Mesma semântica que
+    batch_insert_investment_transactions.
+
+    Cada item de `rows` precisa ter as chaves:
+      user_id, asset_id, type, amount_per_unit, quantity,
+      total_amount, ex_date, payment_date, external_id
+    """
+    if not rows:
+        return 0
+    valid_types = {"dividend", "jcp", "reit_income", "amortization", "other"}
+    for r in rows:
+        if r["type"] not in valid_types:
+            raise ValueError(f"div_type invalido: {r['type']!r}")
+    stmt = text("""
+        INSERT INTO dividends
+            (user_id, asset_id, type, amount_per_unit, quantity,
+             total_amount, ex_date, payment_date, external_id)
+        VALUES
+            (:user_id, :asset_id, :type, :amount_per_unit, :quantity,
+             :total_amount, :ex_date, :payment_date, :external_id)
+        ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
+    """)
+    result = conn.execute(stmt, rows)
+    return result.rowcount if result.rowcount is not None else len(rows)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Sanitização para logs e erros
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -4,33 +4,47 @@ migration/08_compute_portfolio_positions.py
 Computa portfolio_positions a partir de investment_transactions.
 
 Fase 4.8.1 — Cálculo de posições de investimento
+Atualizado (2026-05-22): algoritmo portado do App 2 portfolio_service._costs_from_transactions
+para tratar corretamente transferências, ciclos de venda total + recompra e ajuste de custo na
+venda parcial. Antes desta versão, BBAS3/PSSA3/ROMI3 etc. produziam posições negativas/zeradas
+ou PMs inflados porque transfer_in/out e ciclos não eram considerados.
 
-Lógica de cálculo (custo médio ponderado — método brasileiro padrão):
-  Para cada ativo, processa as transações em ordem cronológica:
+Lógica de cálculo (custo médio ponderado — método B3/App 2):
+  Para cada asset_id, processa as transações ordenadas por
+  (transaction_date, type_priority, created_at), onde:
+    type_priority = {"buy":0, "split":0, "transfer_in":1, "transfer_out":1, "sell":2}
 
   buy:
-    new_avg = (qty_atual * avg_price + qty * unit_price + fees) / (qty_atual + qty)
-    qty_atual += qty
+    Se qty_atual <= 0.001 (posição zerada): reset gross_cost=0, qty=0 (novo ciclo).
+    gross_cost += qty * unit_price + fees
+    qty        += qty
+    avg_price   = gross_cost / qty
 
   sell:
-    qty_atual -= qty
-    avg_price inalterado (reduz quantidade, mantém custo médio)
-    if qty_atual < 0: ERRO — venda sem cobertura (flag de alerta)
+    Se qty_atual > 0:
+      avg = gross_cost / qty_atual
+      sold_qty = min(qty_vendida, qty_atual)
+      gross_cost -= avg * sold_qty   ← reduz custo proporcional (preserva PM)
+    qty -= qty_vendida
+    Floor em 0 (sem qty/cost negativos).
 
-  Posição final (somente qty_atual > 0):
-    quantity      = qty_atual
-    average_price = avg_price ponderado acumulado
-    total_invested = quantity * average_price
+  split:
+    qty += qty   (apenas adiciona quantidade, sem alterar gross_cost)
+
+  transfer_in / transfer_out:
+    IGNORADOS — apenas movimentam entre contas, não afetam custo/quantidade líquida.
 
 Etapas:
   1. Criar (ou reusar) portfolio "Carteira Principal" em portfolios
   2. Calcular posições por ativo em memória (Python)
-  3. UPSERT em portfolio_positions — ON CONFLICT (portfolio_id, asset_id) DO UPDATE
-  4. Relatório: posições inseridas, zeradas ignoradas, alertas
+  3. UPSERT em portfolio_positions:
+       - qty > 0 → linha ativa
+       - qty = 0 (assets que tinham linha antes mas zeraram) → marca qty=0 (não deleta)
+  4. Relatório: posições ativas, zeradas marcadas, alertas
 
 Idempotência:
   - ON CONFLICT (portfolio_id, asset_id) DO UPDATE → re-execução é segura
-  - Posições zeradas (qty<=0) NÃO são inseridas (não há exclusão de dados)
+  - Posições zeradas (qty=0) são UPSERTADAS para sobrescrever valores antigos
   - Portfólio criado com ON CONFLICT DO NOTHING
 
 Regras respeitadas:
@@ -59,33 +73,70 @@ sys.path.insert(0, str(PROJECT_ROOT))
 PORTFOLIO_NAME = "Carteira Principal"
 PORTFOLIO_TYPE = "stock"          # tipo genérico — engloba ações + FIIs
 
+# Tipos de transação reconhecidos (portado de App 2 portfolio_service.py)
+_BUY_TYPES   = {"buy"}
+_SELL_TYPES  = {"sell"}
+_SPLIT_TYPES = {"split"}
+# Transferências entre contas (transfer_in/out) são IGNORADAS — não alteram
+# custo ou quantidade líquida, apenas movimentam entre instituições.
+_IGNORED_TYPES = {"transfer_in", "transfer_out"}
+
+# Prioridade para ordenar transações de mesma data: buy/split antes de transfer,
+# venda por último. Garante que reset de ciclo (zero-reset) só dispara após
+# vendas, não antes de compras do mesmo dia.
+_TYPE_PRIORITY: dict[str, int] = {
+    "buy": 0, "split": 0,
+    "transfer_in": 1, "transfer_out": 1,
+    "sell": 2,
+}
+
+# Threshold para considerar uma posição zerada (lida com ruído de Decimal)
+_ZERO_QTY_EPSILON = Decimal("0.001")
+
 
 # ---------------------------------------------------------------------------
-# Cálculo de posições em memória (custo médio ponderado)
+# Cálculo de posições em memória (custo médio ponderado, método App 2)
 # ---------------------------------------------------------------------------
 
-def compute_positions(transactions: list[dict]) -> tuple[list[dict], list[dict]]:
+def compute_positions(transactions: list[dict]) -> tuple[list[dict], set, list[dict]]:
     """
-    Recebe lista de investment_transactions ordenadas por data (ASC) e
-    calcula as posições finais usando custo médio ponderado.
+    Recebe lista de investment_transactions e calcula as posições finais.
+
+    Implementa o algoritmo do App 2 (portfolio_service._costs_from_transactions):
+      - Ordena por (transaction_date, type_priority, created_at)
+      - buy/split adicionam quantidade (e custo, no buy)
+      - sell reduz gross_cost proporcional (avg × sold_qty), preservando PM
+      - transfer_in/out são ignorados (apenas movimento entre contas)
+      - Zero-reset: quando qty cai a 0 após venda total, próxima compra
+        inicia novo ciclo de custo
 
     Retorna:
-        positions  — lista de posições finais (qty > 0)
-        alerts     — lista de alertas (qty negativa, etc.)
+        positions      — lista de posições com qty > 0 (a inserir/atualizar)
+        zeroed_assets  — set de asset_ids que tinham transações mas terminaram
+                         com qty=0 (a marcar qty=0 em portfolio_positions)
+        alerts         — lista de alertas (qty negativa por dados incompletos,
+                         tipos desconhecidos)
     """
-    # Estado por asset_id: {asset_id: {qty, avg_price, total_cost, ticker}}
+    # Estado por asset_id
     state: dict[str, dict] = defaultdict(lambda: {
-        "qty": Decimal("0"),
-        "avg_price": Decimal("0"),
-        "total_cost": Decimal("0"),
-        "user_id": None,
-        "asset_id": None,
-        "ticker": "",
+        "qty":        Decimal("0"),
+        "gross_cost": Decimal("0"),
+        "user_id":    None,
+        "asset_id":   None,
+        "ticker":     "",
     })
 
     alerts: list[dict] = []
 
-    for tx in transactions:
+    # Ordenação multi-critério: data ASC, type_priority ASC, created_at ASC
+    def _sort_key(tx):
+        return (
+            tx["transaction_date"],
+            _TYPE_PRIORITY.get(str(tx["type"]).lower(), 1),
+            tx.get("created_at") or 0,
+        )
+
+    for tx in sorted(transactions, key=_sort_key):
         asset_id = str(tx["asset_id"])
         tx_type  = str(tx["type"]).lower()
         qty      = Decimal(str(tx["quantity"]))
@@ -100,29 +151,43 @@ def compute_positions(transactions: list[dict]) -> tuple[list[dict], list[dict]]
         s["user_id"]  = user_id
         s["ticker"]   = ticker
 
-        if tx_type == "buy":
-            # Custo total desta compra (incluindo taxas)
-            buy_cost = qty * price + fees
-            # Novo custo médio ponderado
-            new_qty  = s["qty"] + qty
-            if new_qty > 0:
-                s["avg_price"] = (s["qty"] * s["avg_price"] + buy_cost) / new_qty
-            s["qty"]        = new_qty
-            s["total_cost"] = s["qty"] * s["avg_price"]
+        if tx_type in _BUY_TYPES:
+            # Zero-reset: se posição estava zerada (venda total anterior),
+            # esta compra inicia novo ciclo de custo
+            if s["qty"] <= _ZERO_QTY_EPSILON:
+                s["qty"]        = Decimal("0")
+                s["gross_cost"] = Decimal("0")
+            s["qty"]        += qty
+            s["gross_cost"] += qty * price + fees
 
-        elif tx_type == "sell":
-            new_qty = s["qty"] - qty
-            if new_qty < Decimal("-0.0001"):
+        elif tx_type in _SELL_TYPES:
+            # Sell reduz gross_cost proporcional (PM preservado)
+            if s["qty"] > 0 and qty > 0:
+                avg = s["gross_cost"] / s["qty"]
+                sold_qty = min(qty, s["qty"])
+                s["gross_cost"] -= avg * sold_qty
+            s["qty"] -= qty
+            # Floor em 0 (sem qty/cost negativos)
+            if s["qty"] < 0:
+                # Sinaliza histórico incompleto mas continua sem propagar negativo
                 alerts.append({
                     "asset_id": asset_id,
                     "ticker":   ticker,
                     "date":     str(date),
                     "type":     "quantidade_negativa",
-                    "detail":   f"qty antes={s['qty']:.4f}  venda={qty:.4f}  resultado={new_qty:.4f}",
+                    "detail":   f"venda excedeu posicao em {abs(s['qty']):.4f} (historico incompleto)",
                 })
-                # Continua mesmo com negativo (dados históricos podem ter gaps)
-            s["qty"]        = new_qty
-            s["total_cost"] = s["qty"] * s["avg_price"]
+                s["qty"] = Decimal("0")
+            if s["gross_cost"] < 0:
+                s["gross_cost"] = Decimal("0")
+
+        elif tx_type in _SPLIT_TYPES:
+            # Split: apenas adiciona quantidade, sem alterar custo
+            s["qty"] += qty
+
+        elif tx_type in _IGNORED_TYPES:
+            # transfer_in/out: ignorados intencionalmente (movem entre contas)
+            continue
 
         else:
             alerts.append({
@@ -133,35 +198,25 @@ def compute_positions(transactions: list[dict]) -> tuple[list[dict], list[dict]]
                 "detail":   f"type='{tx_type}' ignorado",
             })
 
-    # Posições finais — somente qty > 0 E average_price > 0
+    # Posições finais
     positions: list[dict] = []
+    zeroed_assets: set[str] = set()
+
     for asset_id, s in state.items():
-        qty = s["qty"]
-        avg = s["avg_price"]
+        qty   = s["qty"]
+        gross = s["gross_cost"]
 
-        if qty <= Decimal("0.0001"):
-            continue  # ativo zerado ou vendido — não inserir
-
-        if avg <= Decimal("0"):
-            # Preço médio inválido causado por qty negativa durante o cálculo.
-            # Registrar como alerta e pular.
-            alerts.append({
-                "asset_id": asset_id,
-                "ticker":   s["ticker"],
-                "date":     "final",
-                "type":     "preco_medio_invalido",
-                "detail":   (
-                    f"qty={float(qty):.4f}  avg_price={float(avg):.6f}  "
-                    "— ativo com historico incompleto (vendas sem cobertura). "
-                    "Nao inserido em portfolio_positions."
-                ),
-            })
+        if qty <= _ZERO_QTY_EPSILON or gross <= 0:
+            # Posição zerada — marca para upsert qty=0 (sobrescreve linha antiga)
+            zeroed_assets.add(asset_id)
             continue
+
+        avg = gross / qty
 
         # Arredondar para precisão adequada
         q  = qty.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
         ap = avg.quantize(Decimal("0.000001"),   rounding=ROUND_HALF_UP)
-        ti = (q * ap).quantize(Decimal("0.01"),  rounding=ROUND_HALF_UP)
+        ti = gross.quantize(Decimal("0.01"),     rounding=ROUND_HALF_UP)
         positions.append({
             "asset_id":       asset_id,
             "user_id":        s["user_id"],
@@ -171,7 +226,7 @@ def compute_positions(transactions: list[dict]) -> tuple[list[dict], list[dict]]
             "total_invested": ti,
         })
 
-    return positions, alerts
+    return positions, zeroed_assets, alerts
 
 
 # ---------------------------------------------------------------------------
@@ -213,16 +268,16 @@ def ensure_portfolio(conn, text, apply: bool, owner_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def load_transactions(conn, text, owner_id: str) -> list[dict]:
-    """Carrega investment_transactions ordenadas por data ASC."""
+    """Carrega investment_transactions com created_at para ordenação estável."""
     rows = conn.execute(text("""
         SELECT
             it.id, it.user_id, it.asset_id, it.type,
             it.quantity, it.unit_price, it.fees, it.transaction_date,
+            it.created_at,
             a.ticker
         FROM investment_transactions it
         JOIN assets a ON a.id = it.asset_id
         WHERE it.user_id = :uid
-        ORDER BY it.transaction_date ASC, it.created_at ASC
     """), {"uid": owner_id}).fetchall()
 
     return [
@@ -235,7 +290,8 @@ def load_transactions(conn, text, owner_id: str) -> list[dict]:
             "unit_price":       r[5],
             "fees":             r[6] or 0,
             "transaction_date": r[7],
-            "ticker":           r[8],
+            "created_at":       r[8],
+            "ticker":           r[9],
         }
         for r in rows
     ]
@@ -248,20 +304,24 @@ def load_transactions(conn, text, owner_id: str) -> list[dict]:
 def upsert_positions(
     conn, text, apply: bool,
     positions: list[dict],
+    zeroed_assets: set,
     portfolio_id: str,
     owner_id: str,
 ) -> tuple[int, int]:
     """
     Insere ou atualiza posições em portfolio_positions.
-    Retorna (inserted_or_updated, skipped).
+
+    - Posições ativas (qty>0): UPSERT com valores calculados
+    - Posições zeradas (asset com transações mas qty=0 ao final): UPSERT
+      sobrescrevendo linhas antigas com qty=0/pm=0/ti=0, marcando o ativo
+      como vendido sem deletar a linha (preserva histórico).
+
+    Retorna (upserted_ativos, upserted_zerados).
     """
-    upserted, skipped = 0, 0
+    upserted_ativos, upserted_zerados = 0, 0
 
+    # 1) Posições ativas
     for pos in positions:
-        if pos["quantity"] <= 0:
-            skipped += 1
-            continue
-
         row = {
             "id":             str(uuid.uuid4()),
             "user_id":        owner_id,
@@ -281,7 +341,7 @@ def upsert_positions(
         )
 
         if not apply:
-            upserted += 1
+            upserted_ativos += 1
             continue
 
         conn.execute(text("""
@@ -295,9 +355,42 @@ def upsert_positions(
                 total_invested = EXCLUDED.total_invested,
                 updated_at     = now()
         """), row)
-        upserted += 1
+        upserted_ativos += 1
 
-    return upserted, skipped
+    # 2) Posições zeradas (apenas as que JÁ EXISTEM em portfolio_positions —
+    #    não cria linha nova só pra dizer qty=0).
+    for asset_id in sorted(zeroed_assets):
+        existing = conn.execute(text("""
+            SELECT 1 FROM portfolio_positions
+            WHERE portfolio_id = :pid AND asset_id = :aid
+        """), {"pid": portfolio_id, "aid": asset_id}).fetchone()
+        if not existing:
+            continue  # nunca foi posição, nada a zerar
+
+        ticker = conn.execute(text(
+            "SELECT ticker FROM assets WHERE id = :aid"
+        ), {"aid": asset_id}).scalar() or asset_id[:8]
+
+        print(
+            f"  {'[dry-0]' if not apply else '  =0=  '} "
+            f"{ticker:<14} qty=0  (asset com hist mas posicao zerada — sobrescreve linha antiga)"
+        )
+
+        if not apply:
+            upserted_zerados += 1
+            continue
+
+        conn.execute(text("""
+            UPDATE portfolio_positions
+            SET quantity       = 0,
+                average_price  = 0,
+                total_invested = 0,
+                updated_at     = now()
+            WHERE portfolio_id = :pid AND asset_id = :aid
+        """), {"pid": portfolio_id, "aid": asset_id})
+        upserted_zerados += 1
+
+    return upserted_ativos, upserted_zerados
 
 
 # ---------------------------------------------------------------------------
@@ -386,10 +479,13 @@ def run(apply: bool) -> int:
     print(sep)
 
     print()
-    print("  Logica de calculo (custo medio ponderado — metodo BR):")
-    print("    buy : new_avg = (qty*avg + compra_qty*price + fees) / (qty + compra_qty)")
-    print("    sell: qty_atual -= sell_qty  |  avg_price inalterado")
-    print("    final: somente ativos com qty > 0 sao inseridos")
+    print("  Logica de calculo (portado de App 2 portfolio_service):")
+    print("    buy : zero-reset se qty<=0; gross_cost += qty*price + fees")
+    print("    sell: gross_cost -= avg * sold_qty  (PM preservado)")
+    print("    split: qty += qty (sem alterar custo)")
+    print("    transfer_in/out: IGNORADOS")
+    print("    ordering: (date, type_priority, created_at) onde priority buy<transfer<sell")
+    print("    final: qty>0 -> upsert ativo; qty=0 com hist -> upsert zera linha antiga")
     print()
 
     engine = make_engine(cfg.dest_url, source_label="compute_positions", read_only_hint=False)
@@ -406,20 +502,14 @@ def run(apply: bool) -> int:
         transactions = load_transactions(conn, text, cfg.owner_id)
         print(f"  {len(transactions)} transacoes carregadas")
 
-        positions, alerts = compute_positions(transactions)
+        positions, zeroed_assets, alerts = compute_positions(transactions)
 
-        print(f"  {len(positions)} posicoes validas (qty > 0 e preco_medio > 0)")
-
-        # Ativos zerados
-        all_assets = set(tx["asset_id"] for tx in transactions)
-        active_assets = {p["asset_id"] for p in positions}
-        zeroed = all_assets - active_assets
-        print(f"  {len(zeroed)} ativos nao inseridos (zerados ou preco invalido)")
+        print(f"  {len(positions)} posicoes ativas (qty > 0)")
+        print(f"  {len(zeroed_assets)} ativos com qty=0 ao final (vendas totais ou hist incompleto)")
 
         # Separar alertas por tipo
         neg_qty_alerts = [a for a in alerts if a["type"] == "quantidade_negativa"]
-        inv_price_alerts = [a for a in alerts if a["type"] == "preco_medio_invalido"]
-        other_alerts = [a for a in alerts if a["type"] not in ("quantidade_negativa", "preco_medio_invalido")]
+        other_alerts = [a for a in alerts if a["type"] != "quantidade_negativa"]
 
         if neg_qty_alerts:
             # Resumir por ticker em vez de listar todos
@@ -429,12 +519,7 @@ def run(apply: bool) -> int:
             print(f"  {len(neg_qty_alerts)} alertas de qty_negativa em {len(neg_by_ticker)} ativos:")
             for ticker, cnt in sorted(neg_by_ticker.items()):
                 print(f"    {ticker:<14} {cnt:>3} ocorrencias")
-            print(f"  Causa: vendas sem compras cobrindo (historico incompleto de transferencias)")
-
-        if inv_price_alerts:
-            print(f"  {len(inv_price_alerts)} posicoes com preco_medio invalido (NAO inseridas):")
-            for a in inv_price_alerts:
-                print(f"    INVALIDO {a['ticker']:<14} {a['detail']}")
+            print(f"  Causa: vendas excedem posicao (historico incompleto)")
 
         if other_alerts:
             for a in other_alerts:
@@ -446,11 +531,11 @@ def run(apply: bool) -> int:
 
         # ── 3. UPSERT posições ───────────────────────────────────────────
         print("STEP 3 — upsert portfolio_positions")
-        upserted, skipped = upsert_positions(
-            conn, text, apply, positions, portfolio_id, cfg.owner_id
+        upserted_ativos, upserted_zerados = upsert_positions(
+            conn, text, apply, positions, zeroed_assets, portfolio_id, cfg.owner_id
         )
         print()
-        print(f"  upserted={upserted}  skipped={skipped}")
+        print(f"  upserted_ativos={upserted_ativos}  upserted_zerados={upserted_zerados}")
         print()
 
         # ── 4. Validação ─────────────────────────────────────────────────
@@ -462,14 +547,13 @@ def run(apply: bool) -> int:
     print(sep)
     print("  RESUMO")
     print(sep)
-    inv_price_count = sum(1 for a in alerts if a["type"] == "preco_medio_invalido")
-    neg_qty_count   = sum(1 for a in alerts if a["type"] == "quantidade_negativa")
-    print(f"  transacoes processadas    : {len(transactions)}")
-    print(f"  posicoes validas (qty>0,pm>0): {len(positions)}")
-    print(f"  posicoes invalidas (pm<=0): {inv_price_count}")
-    print(f"  ativos zerados (nao insert): {len(zeroed) - inv_price_count}")
-    print(f"  alertas qty_negativa      : {neg_qty_count}")
-    print(f"  upserted                  : {upserted}")
+    neg_qty_count = sum(1 for a in alerts if a["type"] == "quantidade_negativa")
+    print(f"  transacoes processadas         : {len(transactions)}")
+    print(f"  posicoes ativas (qty>0)        : {len(positions)}")
+    print(f"  ativos zerados (qty=0 final)   : {len(zeroed_assets)}")
+    print(f"  alertas qty_negativa           : {neg_qty_count}")
+    print(f"  upserted ativos                : {upserted_ativos}")
+    print(f"  upserted zerados (sobrescreve) : {upserted_zerados}")
     if not apply:
         print()
         print("  Para executar de verdade:")
