@@ -931,7 +931,7 @@ def _render_import_block(cfg: dict) -> None:
             if multi:
                 payload = [(f.name, f.getvalue()) for f in uploaded]
                 spinner_msg = (
-                    f"Importando {n_files} arquivos da Nomad…"
+                    f"Importando {n_files} arquivos — {cfg['label']}…"
                     if n_files > 1 else f"Importando {cfg['label']}…"
                 )
             elif cfg.get("needs_filename"):
