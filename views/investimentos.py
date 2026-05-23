@@ -1184,6 +1184,230 @@ def _get_macro_dados() -> dict:
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Desempenho Histórico — Top 10 ações (linhas com retorno % normalizado)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Períodos suportados no selectbox + janela de dados a carregar
+_PERFORMANCE_PERIODS: dict[str, dict] = {
+    "3M":  {"days":   95, "yf": "3mo",  "label": "3 meses"},
+    "6M":  {"days":  190, "yf": "6mo",  "label": "6 meses"},
+    "12M": {"days":  370, "yf": "1y",   "label": "12 meses"},
+    "24M": {"days":  740, "yf": "2y",   "label": "24 meses"},
+    "YTD": {"days": None, "yf": "ytd",  "label": "YTD (no ano)"},
+    "5Y":  {"days": 1850, "yf": "5y",   "label": "5 anos"},
+}
+
+# Paleta para até 10 séries (cores distintas, contraste com fundo escuro)
+_PERF_PALETTE = [
+    "#4A9EFF", "#00C896", "#F6C90E", "#9B59B6", "#FC5C7D",
+    "#FF6B35", "#48BB78", "#ED8936", "#38B2AC", "#E94560",
+]
+
+
+def _select_top_n_acoes(posicoes: list, n: int = 10) -> list[dict]:
+    """Top N posições por valor_mercado, filtrando apenas ações negociáveis
+    com cotação diária (classe stock/ETF, exclui FII / RF / Tesouro / Cripto).
+
+    Retorna lista [{ticker, nome, valor_mercado, classe}, ...] já ordenada.
+    """
+    candidatas = []
+    for p in posicoes:
+        classe = str(p.get("classe") or "").lower()
+        ticker = str(p.get("ticker") or "").upper().strip()
+        if not ticker:
+            continue
+        # Filtra só ações negociáveis (exclui Tesouro, CDB, fundos RF, etc.)
+        if any(k in classe for k in ("tesouro", "renda fixa", "fundo rf", "cripto")):
+            continue
+        candidatas.append({
+            "ticker":        ticker,
+            "nome":          p.get("nome") or ticker,
+            "valor_mercado": float(p.get("valor_mercado") or 0),
+            "classe":        p.get("classe"),
+            "pais":          p.get("pais") or "BR",
+        })
+    candidatas.sort(key=lambda x: x["valor_mercado"], reverse=True)
+    return candidatas[:n]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_performance_history(
+    symbol_map: tuple[tuple[str, str], ...],
+    period_key: str = "12M",
+) -> "pd.DataFrame":
+    """Carrega preços de fechamento históricos (Close) para os tickers.
+
+    `symbol_map` é tupla de (ticker_local, yf_symbol). Tenta yfinance
+    primeiro; em caso de falha, usa asset_quotes do banco.
+    Retorna DataFrame com index=DatetimeIndex, columns=ticker_local, values=preço.
+    """
+    if not symbol_map:
+        return pd.DataFrame()
+
+    period_cfg = _PERFORMANCE_PERIODS.get(period_key, _PERFORMANCE_PERIODS["12M"])
+    tickers_local = [tk for tk, _ in symbol_map]
+    symbol_to_ticker = {sym: tk for tk, sym in symbol_map}
+
+    # 1) Tenta yfinance (1 chamada batch)
+    try:
+        import yfinance as yf
+        raw = yf.download(
+            [sym for _, sym in symbol_map],
+            period=period_cfg["yf"],
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+        if raw is not None and not raw.empty:
+            if isinstance(raw.columns, pd.MultiIndex):
+                level0 = raw.columns.get_level_values(0)
+                if "Close" in level0:
+                    close = raw["Close"]
+                elif "Adj Close" in level0:
+                    close = raw["Adj Close"]
+                else:
+                    close = raw.xs(level0[0], axis=1, level=0)
+            else:
+                close = raw[["Close"]] if "Close" in raw.columns else raw
+                if len(symbol_map) == 1:
+                    close.columns = [symbol_map[0][1]]
+            close = close.rename(columns=symbol_to_ticker)
+            close = close.dropna(axis=1, how="all").sort_index()
+            if not close.empty and close.shape[1] >= 1:
+                return close
+    except Exception:
+        pass  # cai no fallback
+
+    # 2) Fallback: asset_quotes
+    try:
+        from sqlalchemy import bindparam, text
+        from core.config import settings
+        from core.database import get_engine
+        engine = get_engine()
+        if engine is None or not tickers_local:
+            return pd.DataFrame()
+        days = period_cfg["days"] or 365  # YTD aproxima 1y
+        with engine.connect() as conn:
+            q = text("""
+                SELECT a.ticker, aq.timestamp::date AS data, aq.close AS preco
+                FROM asset_quotes aq
+                JOIN assets a ON a.id = aq.asset_id
+                WHERE a.ticker IN :tickers
+                  AND aq.close IS NOT NULL
+                  AND aq.timestamp >= CURRENT_DATE - (:days || ' days')::INTERVAL
+                ORDER BY aq.timestamp
+            """).bindparams(bindparam("tickers", expanding=True))
+            rows = conn.execute(q, {"tickers": tickers_local, "days": str(days)}).mappings().all()
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame(rows)
+        df["data"] = pd.to_datetime(df["data"], errors="coerce")
+        df["preco"] = pd.to_numeric(df["preco"], errors="coerce")
+        df = df.dropna(subset=["data", "ticker", "preco"])
+        if df.empty:
+            return pd.DataFrame()
+        pivot = (
+            df.sort_values("data")
+            .drop_duplicates(["data", "ticker"], keep="last")
+            .pivot(index="data", columns="ticker", values="preco")
+            .sort_index()
+        )
+        return pivot
+    except Exception:
+        return pd.DataFrame()
+
+
+def _fig_performance_historico(
+    prices: "pd.DataFrame",
+    name_map: dict[str, str],
+    period_label: str,
+) -> go.Figure:
+    """Plota retorno % normalizado: primeira observação = 0%."""
+    if prices.empty or prices.shape[1] == 0:
+        return go.Figure()
+
+    # Para YTD, filtra do início do ano corrente
+    if period_label.startswith("YTD"):
+        from datetime import date as _d
+        start = pd.Timestamp(_d.today().year, 1, 1)
+        prices = prices.loc[prices.index >= start]
+        if prices.empty:
+            return go.Figure()
+
+    # Normaliza: cada coluna vira (preço / primeiro_preço_válido - 1) * 100
+    norm = prices.copy()
+    for col in norm.columns:
+        first_valid_idx = norm[col].first_valid_index()
+        if first_valid_idx is None:
+            continue
+        base = norm.loc[first_valid_idx, col]
+        if base and base != 0:
+            norm[col] = (norm[col] / base - 1) * 100
+
+    # Ordena tickers pelo retorno final (maior primeiro) — colore Top primeiro
+    final_returns = {
+        col: float(norm[col].dropna().iloc[-1])
+        for col in norm.columns
+        if not norm[col].dropna().empty
+    }
+    ordered_tickers = sorted(final_returns, key=final_returns.get, reverse=True)
+
+    fig = go.Figure()
+    for i, ticker in enumerate(ordered_tickers):
+        serie = norm[ticker].dropna()
+        if serie.empty:
+            continue
+        cor = _PERF_PALETTE[i % len(_PERF_PALETTE)]
+        nome_curto = (name_map.get(ticker) or ticker)[:30]
+        final_ret = final_returns[ticker]
+        signo = "+" if final_ret >= 0 else ""
+        legend_lbl = f"{ticker} ({signo}{final_ret:.1f}%)"
+        fig.add_trace(go.Scatter(
+            x=serie.index,
+            y=serie.values,
+            mode="lines",
+            name=legend_lbl,
+            line={"color": cor, "width": 1.8},
+            customdata=[[nome_curto, ticker]] * len(serie),
+            hovertemplate=(
+                "<b>%{customdata[1]}</b> · %{customdata[0]}<br>"
+                "%{x|%d/%m/%Y}: %{y:+.2f}%<extra></extra>"
+            ),
+        ))
+
+    # Linha zero (baseline) para referência visual
+    fig.add_hline(
+        y=0, line_dash="dot", line_color="#4A5568", line_width=1, opacity=0.7,
+    )
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        legend={
+            "orientation": "v",
+            "x": 1.02, "y": 1.0,
+            "font": {"size": 10},
+            "bgcolor": "rgba(0,0,0,0)",
+        },
+        margin={"t": 10, "b": 10, "l": 0, "r": 0},
+        height=420,
+        xaxis={
+            "showgrid": True, "gridcolor": "#1E2533",
+            "title": None,
+        },
+        yaxis={
+            "showgrid": True, "gridcolor": "#1E2533",
+            "ticksuffix": "%", "title": "Retorno desde início do período",
+            "tickfont": {"size": 10},
+        },
+        hovermode="x unified",
+    )
+    return fig
+
+
 def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: dict) -> None:
     posicoes   = carteira.get("posicoes", [])
     por_classe = carteira.get("por_classe", [])
@@ -1358,6 +1582,87 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                             key="dash_barras_classes")
     else:
         st.caption("Sem dados de alocação por classe.")
+
+    # ── Desempenho Histórico (Top 10 Ações) ───────────────────────────────────
+    _secao_titulo_orig(
+        "📈", "Desempenho Histórico das Ações",
+        "Retorno % das 10 maiores posições, normalizado pelo primeiro dia do período",
+    )
+
+    top10 = _select_top_n_acoes(posicoes, n=10)
+
+    if not top10:
+        st.caption(
+            "Sem ações negociáveis na carteira (FII / Tesouro / RF excluídos). "
+            "Importe a Negociação B3 ou Relatório XP em Configurações."
+        )
+    else:
+        col_periodo, col_info = st.columns([1, 4])
+        with col_periodo:
+            periodo_key = st.selectbox(
+                "Período",
+                list(_PERFORMANCE_PERIODS.keys()),
+                index=2,  # 12M default
+                key="dash_perf_periodo",
+                label_visibility="collapsed",
+                format_func=lambda k: _PERFORMANCE_PERIODS[k]["label"],
+            )
+        with col_info:
+            tickers_str = ", ".join(p["ticker"] for p in top10)
+            st.caption(
+                f"Top {len(top10)} ações por valor de mercado: {tickers_str}"
+            )
+
+        # Monta symbol_map: ticker local → símbolo yfinance
+        # (BR: APPEND .SA, normaliza fracionário; Exterior: ticker puro)
+        symbol_map: list[tuple[str, str]] = []
+        for p in top10:
+            t = p["ticker"]
+            pais = str(p.get("pais") or "BR").upper()
+            # Remove sufixo F de fracionário (BBAS3F → BBAS3)
+            base = t[:-1] if t.endswith("F") and len(t) > 4 else t
+            if pais in ("", "BR"):
+                symbol_map.append((t, f"{base}.SA"))
+            else:
+                symbol_map.append((t, base))
+        name_map = {p["ticker"]: p["nome"] for p in top10}
+
+        with st.spinner("Carregando cotações históricas..."):
+            prices = _load_performance_history(
+                tuple(symbol_map), period_key=periodo_key,
+            )
+
+        if prices is None or prices.empty:
+            st.warning(
+                "Sem cotações disponíveis pra estes tickers no período. "
+                "Verifique conexão com yfinance ou popule a tabela `asset_quotes`."
+            )
+        else:
+            fig_perf = _fig_performance_historico(
+                prices, name_map, _PERFORMANCE_PERIODS[periodo_key]["label"],
+            )
+            st.plotly_chart(
+                fig_perf,
+                use_container_width=True,
+                config={"displayModeBar": False},
+                key=f"dash_perf_{periodo_key}",
+            )
+            # Sumário compacto: ticker que mais subiu/caiu
+            try:
+                returns_summary = {}
+                for col in prices.columns:
+                    s = prices[col].dropna()
+                    if len(s) >= 2:
+                        returns_summary[col] = (s.iloc[-1] / s.iloc[0] - 1) * 100
+                if returns_summary:
+                    top_up = max(returns_summary, key=returns_summary.get)
+                    top_dn = min(returns_summary, key=returns_summary.get)
+                    st.caption(
+                        f"🏆 Melhor: **{top_up}** ({returns_summary[top_up]:+.2f}%) · "
+                        f"📉 Pior: **{top_dn}** ({returns_summary[top_dn]:+.2f}%)"
+                    )
+            except Exception:
+                pass
 
     # ── Cenário Macroeconômico ─────────────────────────────────────────────────
     _secao_titulo_orig(
