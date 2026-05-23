@@ -438,6 +438,10 @@ def _class_key_from_snapshot(raw_type: str | None, ticker: str, country: str | N
     if raw == "tesouro":
         return "tesouro"
     if raw in {"renda_fixa", "fixed_income"}:
+        # Tesouro Direto via XP vem como fixed_income — detecta por ticker.
+        # Cobre TSELIC*, TIPCA*, TPRE*, TEDUCA* (XP) + LFT/LTN/NTN* (legado).
+        if t.startswith(("TSELIC", "TIPCA", "TPRE", "TEDUCA", "LFT", "LTN", "NTN", "TESOURO")):
+            return "tesouro"
         if t.startswith(("CDB", "LCI", "LCA", "CRI", "CRA")):
             return "renda_fixa"
         return "fundo_rf"
@@ -482,7 +486,13 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
     for r in rows:
         qty = float(r.quantity or 0)
         vm = float(r.market_value or 0)
-        if qty <= 0 or vm <= 0:
+        # Filtra posicoes vazias. Excecao: Tesouro/RF que a XP reporta com
+        # qty=0 (arredondamento) mas vm > 0 — esses sao posicoes reais com
+        # valor de cota inteiro (ex: TSELIC2028 R$ 5.483 mas qty=0).
+        asset_type_low = str(getattr(r, "asset_type", "") or "").lower()
+        if vm <= 0:
+            continue
+        if qty <= 0 and asset_type_low not in ("fixed_income", "tesouro", "renda_fixa"):
             continue
 
         base = _base_ticker(r.ticker)
