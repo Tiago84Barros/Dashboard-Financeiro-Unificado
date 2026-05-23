@@ -255,7 +255,6 @@ _SQL_POSICOES_SNAPSHOT = """
         SELECT source_system, source_table, MAX(report_date) AS report_date
         FROM portfolio_position_snapshots
         WHERE user_id = :uid
-          AND COALESCE(is_loaned, false) = false
         GROUP BY source_system, source_table
     ),
     pp_base AS (
@@ -263,7 +262,8 @@ _SQL_POSICOES_SNAPSHOT = """
             REGEXP_REPLACE(a.ticker, 'F$', '') AS base_ticker,
             SUM(pp.quantity) AS pp_quantity,
             SUM(pp.total_invested) AS pp_total_invested,
-            SUM(pp.total_invested) / NULLIF(SUM(pp.quantity), 0) AS pp_average_price
+            SUM(CASE WHEN pp.total_invested > 0 THEN pp.quantity ELSE 0 END) AS pp_cost_quantity,
+            SUM(pp.total_invested) / NULLIF(SUM(CASE WHEN pp.total_invested > 0 THEN pp.quantity ELSE 0 END), 0) AS pp_average_price
         FROM portfolio_positions pp
         JOIN assets a ON a.id = pp.asset_id
         WHERE pp.user_id = :uid
@@ -276,7 +276,9 @@ _SQL_POSICOES_SNAPSHOT = """
         pps.invested_value,
         pp_base.pp_quantity,
         pp_base.pp_total_invested,
+        pp_base.pp_cost_quantity,
         pp_base.pp_average_price,
+        pps.is_loaned,
         pps.asset_type,
         pps.asset_name,
         pps.currency,
@@ -293,7 +295,6 @@ _SQL_POSICOES_SNAPSHOT = """
     LEFT JOIN pp_base
       ON pp_base.base_ticker = REGEXP_REPLACE(a.ticker, 'F$', '')
     WHERE pps.user_id = :uid
-      AND COALESCE(pps.is_loaned, false) = false
     ORDER BY pps.market_value DESC
 """
 
@@ -337,7 +338,8 @@ def _carteira_real() -> dict:
         if has_snapshots:
             rows = conn.execute(text(_SQL_POSICOES_SNAPSHOT), {"uid": owner}).fetchall()
             if rows:
-                return _montar_carteira_snapshot(rows)
+                tx_costs = _calcular_custos_transacoes(conn, owner)
+                return _montar_carteira_snapshot(rows, tx_costs)
         rows = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
 
     if not rows:
@@ -446,7 +448,22 @@ def _class_key_from_snapshot(raw_type: str | None, ticker: str, country: str | N
     return raw or "other"
 
 
-def _montar_carteira_snapshot(rows: list) -> dict:
+def _calcular_custos_transacoes(conn, owner_id: str) -> dict[str, dict]:
+    """Calcula qty/ti/pm por base_ticker direto de investment_transactions.
+
+    Retorna {base_ticker: {qty, ti, pm}} — usado pelo _montar_carteira_snapshot
+    para detectar venda parcial (qty_snap < tx_qty) e ajustar o custo da
+    posicao atual mantendo o PM historico.
+
+    Hoje os dados consistentes ja estao em portfolio_positions (via pp_base
+    no SQL), entao retornamos {} — a logica de venda parcial usa pp_qty/pp_ti
+    direto. Funcao mantida pra extensibilidade futura (ex: usar transactions
+    para FIFO em vez de avg ponderado).
+    """
+    return {}
+
+
+def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
     """Monta a carteira real a partir do ultimo snapshot XP + custo da B3.
 
     Estrategia de unificacao (corrige bug 2026-05-22 onde card misturava
@@ -506,10 +523,26 @@ def _montar_carteira_snapshot(rows: list) -> dict:
         # ── CUSTO: prioridade pp_base (mesma fonte: qty + ti consistentes)
         if pp_ti > 0 and pp_qty > 0:
             # pp_base agregado da B3 negociacao — fonte mais confiavel
-            ti          = pp_ti
             qty         = qty_snap
-            preco_medio = pp_avg if pp_avg > 0 else (ti / qty)
-            custo_fonte = "b3_negociacao"
+            preco_medio = pp_avg if pp_avg > 0 else (pp_ti / pp_qty)
+            # Reconcilia qty_snap (corretora, valor atual) com pp_qty
+            # (historico de transacoes B3). 3 cenarios:
+            #  A) qty_snap == pp_qty (1% tolerancia): tudo casa, usa pp_ti
+            #  B) qty_snap < pp_qty: venda parcial (DEXP3 17 sh, comprou 293)
+            #     mantem PM, recalcula ti = PM * qty atual (evita custo inflado)
+            #  C) qty_snap > pp_qty: historico incompleto (MBRF3 38 sh, B3
+            #     so importou 6) — usa PM como referencia mas ti subestimado
+            #     ou superestimado (sinaliza com custo_fonte=preco_medio_estimado)
+            qty_diff_pct = abs(qty_snap - pp_qty) / pp_qty if pp_qty > 0 else 1.0
+            if qty_diff_pct <= 0.01:
+                ti = pp_ti
+                custo_fonte = "b3_negociacao"
+            elif qty_snap < pp_qty:
+                ti = preco_medio * qty_snap
+                custo_fonte = "b3_negociacao"
+            else:
+                ti = preco_medio * qty_snap
+                custo_fonte = "preco_medio_estimado"
         elif vi_snap > 0:
             # Snapshot da corretora reportou invested_value (raro)
             ti          = vi_snap
