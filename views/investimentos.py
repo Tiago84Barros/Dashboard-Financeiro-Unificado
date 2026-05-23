@@ -2535,8 +2535,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     )
 
     # ── Sub-tabs ──────────────────────────────────────────────────────────────
-    ta, tb, tc, te, td = st.tabs([
-        "📋 Visão Geral", "📈 Ações", "🏢 FIIs", "🌎 Exterior", "🔔 Alertas",
+    ta, tb, tc, tt, te, td = st.tabs([
+        "📋 Visão Geral", "📈 Ações", "🏢 FIIs",
+        "🏦 Tesouro", "🌎 Exterior", "🔔 Alertas",
     ])
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -2831,6 +2832,210 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     with cols[j]:
                         st.markdown(_fii_card_html(pos, fd, pi, renda, alts),
                                     unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Tesouro Direto — analise de marcacao a mercado
+    # ══════════════════════════════════════════════════════════════════════════
+    with tt:
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        tesouros = [p for p in posicoes if "tesouro" in p["classe"].lower()]
+
+        if not tesouros:
+            st.info("Sem títulos do Tesouro Direto na carteira.", icon="🏦")
+        else:
+            from datetime import date as _date_today
+            ano_atual = _date_today().today().year
+
+            def _tesouro_meta(ticker: str) -> dict:
+                """Extrai (tipo, ano_venc, label) do ticker (TSELIC2031, TIPCA2032 etc.)."""
+                t = (ticker or "").upper().strip()
+                ano = "".join(c for c in t if c.isdigit())[-4:]
+                ano_int = int(ano) if ano.isdigit() and len(ano) == 4 else None
+                if t.startswith("TSELIC"):
+                    tipo, label = "Selic",     "Tesouro Selic"
+                elif t.startswith("TIPCA"):
+                    tipo, label = "IPCA+",     "Tesouro IPCA+"
+                elif t.startswith("TPRE"):
+                    tipo, label = "Prefixado", "Tesouro Prefixado"
+                elif t.startswith("TEDUCA"):
+                    tipo, label = "Educa+",    "Tesouro Educa+"
+                else:
+                    tipo, label = "Outro",     "Tesouro"
+                return {"tipo": tipo, "ano": ano_int, "label": label}
+
+            def _recomendacao(tipo: str, ganho_pct: float, anos: int | None) -> dict:
+                """Determina recomendacao de venda baseada na marcacao a mercado."""
+                # Selic: pouca sensibilidade a juros — MtM neutro sempre
+                if tipo == "Selic":
+                    return {
+                        "icone":   "⚪",
+                        "label":   "NEUTRO (Selic)",
+                        "cor":     _COR_NEUTRO,
+                        "msg":     "Tesouro Selic acompanha a SELIC diária — MtM tem volatilidade mínima. "
+                                   "Não há ganho relevante em antecipar venda; mantém na curva.",
+                    }
+                # Prefixados/IPCA/Educa: sensiveis. Ganho MtM > 15% = excelente venda
+                if ganho_pct >= 15:
+                    horizonte = (
+                        f" Com vencimento em {anos} ano(s) ainda à frente, "
+                        "consolidar o ganho agora trava a rentabilidade."
+                        if anos and anos > 2 else ""
+                    )
+                    return {
+                        "icone":   "🟢",
+                        "label":   "EXCELENTE PARA VENDA",
+                        "cor":     _COR_POSITIVO,
+                        "msg":     f"Ganho MtM acima de 15% indica que taxas de mercado caíram "
+                                   f"significativamente desde a compra.{horizonte}",
+                    }
+                if ganho_pct >= 8:
+                    return {
+                        "icone":   "🟢",
+                        "label":   "BOM MOMENTO",
+                        "cor":     _COR_POSITIVO,
+                        "msg":     "Ganho MtM relevante. Avalie realizar se precisa de liquidez "
+                                   "ou se há outras alocações mais atrativas.",
+                    }
+                if ganho_pct >= 0:
+                    return {
+                        "icone":   "🟡",
+                        "label":   "NEUTRO",
+                        "cor":     _COR_ALERTA,
+                        "msg":     "MtM positivo modesto. Acumulação normal — manter até "
+                                   "estratégia mudar ou ganho ficar atrativo.",
+                    }
+                return {
+                    "icone":   "🔴",
+                    "label":   "SEGURAR",
+                    "cor":     _COR_NEGATIVO,
+                    "msg":     "MtM negativo. Vender agora realizaria perda — segure até "
+                               "o vencimento ou até o mercado reverter (queda de juros).",
+                }
+
+            # KPIs consolidados
+            total_mv_ts = sum(p["valor_mercado"] for p in tesouros)
+            total_vi_ts = sum(p["total_investido"] for p in tesouros)
+            ganho_mtm   = total_mv_ts - total_vi_ts
+            rentab_med  = ganho_mtm / total_vi_ts * 100 if total_vi_ts > 0 else 0.0
+            cor_ganho   = _COR_POSITIVO if ganho_mtm >= 0 else _COR_NEGATIVO
+
+            _secao_titulo_orig(
+                "🏦", "Tesouro Direto — Marcação a Mercado",
+                f"{len(tesouros)} títulos · ganho MtM total {fmt_moeda(ganho_mtm)} ({rentab_med:+.2f}%)"
+            )
+
+            c1, c2, c3, c4 = st.columns(4, gap="small")
+            with c1:
+                st.markdown(_kpi(
+                    "Valor de Mercado", fmt_moeda(total_mv_ts),
+                    f"{len(tesouros)} títulos em carteira",
+                    "#E2E8F0",
+                ), unsafe_allow_html=True)
+            with c2:
+                st.markdown(_kpi(
+                    "Custo Investido", fmt_moeda(total_vi_ts),
+                    "Valor de compra acumulado",
+                    _COR_INFO,
+                ), unsafe_allow_html=True)
+            with c3:
+                st.markdown(_kpi(
+                    "Ganho MtM Total",
+                    f"{'+' if ganho_mtm >= 0 else ''}{fmt_moeda(ganho_mtm)}",
+                    "Diferença Mercado − Custo (não tributada)",
+                    cor_ganho,
+                ), unsafe_allow_html=True)
+            with c4:
+                st.markdown(_kpi(
+                    "Rentabilidade Acumulada",
+                    f"{rentab_med:+.2f}%",
+                    "Sobre o custo investido",
+                    cor_ganho,
+                ), unsafe_allow_html=True)
+
+            # Tabela com analise por titulo
+            st.markdown("<br>", unsafe_allow_html=True)
+            _secao_titulo_orig("📊", "Análise por Título")
+
+            # Ordena por ganho MtM% desc (oportunidades primeiro)
+            tesouros_ord = sorted(
+                tesouros,
+                key=lambda p: ((p["valor_mercado"] - p["total_investido"]) / p["total_investido"] * 100
+                               if p["total_investido"] > 0 else 0),
+                reverse=True,
+            )
+
+            for p in tesouros_ord:
+                meta = _tesouro_meta(p["ticker"])
+                mv   = float(p["valor_mercado"])
+                vi   = float(p["total_investido"])
+                ganho_abs = mv - vi
+                ganho_pct = (ganho_abs / vi * 100) if vi > 0 else 0.0
+                anos_venc = (meta["ano"] - ano_atual) if meta["ano"] else None
+                rec  = _recomendacao(meta["tipo"], ganho_pct, anos_venc)
+
+                # Vencimento e prazo
+                if anos_venc is not None:
+                    if anos_venc > 0:
+                        prazo_str = f"Vencimento {meta['ano']} ({anos_venc} ano{'s' if anos_venc != 1 else ''} a frente)"
+                    elif anos_venc == 0:
+                        prazo_str = f"Vencimento {meta['ano']} (este ano!)"
+                    else:
+                        prazo_str = f"Vencido em {meta['ano']}"
+                else:
+                    prazo_str = "Vencimento não identificado"
+
+                # Card individual
+                st.markdown(
+                    f'<div style="background:#12151E;border:1px solid #1E2533;'
+                    f'border-left:4px solid {rec["cor"]};border-radius:10px;'
+                    f'padding:16px 18px;margin-bottom:12px;">'
+                    # Header
+                    f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">'
+                    f'  <div>'
+                    f'    <div style="font-size:1.05rem;font-weight:800;color:#E2E8F0;">'
+                    f'      {meta["label"]} {meta["ano"] or ""}'
+                    f'    </div>'
+                    f'    <div style="font-size:0.72rem;color:#9CA3AF;margin-top:2px;">'
+                    f'      {p["ticker"]} · {prazo_str}'
+                    f'    </div>'
+                    f'  </div>'
+                    f'  <div style="text-align:right;">'
+                    f'    <div style="font-size:0.65rem;font-weight:800;color:{rec["cor"]};'
+                    f'      text-transform:uppercase;letter-spacing:0.06em;">'
+                    f'      {rec["icone"]} {rec["label"]}'
+                    f'    </div>'
+                    f'    <div style="font-size:1.15rem;font-weight:800;color:{rec["cor"]};margin-top:4px;">'
+                    f'      {"+" if ganho_pct >= 0 else ""}{ganho_pct:.2f}%'
+                    f'    </div>'
+                    f'  </div>'
+                    f'</div>'
+                    # Grid 4 colunas
+                    f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;'
+                    f'  padding:8px 0;border-top:1px solid #1E2533;margin-bottom:8px;">'
+                    f'  <div><div style="font-size:0.65rem;color:#718096;">CUSTO</div>'
+                    f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{fmt_moeda(vi)}</div></div>'
+                    f'  <div><div style="font-size:0.65rem;color:#718096;">MERCADO</div>'
+                    f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{fmt_moeda(mv)}</div></div>'
+                    f'  <div><div style="font-size:0.65rem;color:#718096;">GANHO R$</div>'
+                    f'    <div style="font-size:0.85rem;font-weight:700;color:{rec["cor"]};">{"+" if ganho_abs >= 0 else ""}{fmt_moeda(ganho_abs)}</div></div>'
+                    f'  <div><div style="font-size:0.65rem;color:#718096;">% NA CARTEIRA</div>'
+                    f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{p["pct_carteira"]:.2f}%</div></div>'
+                    f'</div>'
+                    # Recomendacao
+                    f'<div style="font-size:0.80rem;color:#9CA3AF;line-height:1.5;">'
+                    f'  <strong style="color:{rec["cor"]};">Análise:</strong> {rec["msg"]}'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+            st.caption(
+                "💡 A marcação a mercado (MtM) precifica diariamente cada título conforme as taxas atuais. "
+                "Ganho MtM positivo em prefixados/IPCA+ indica queda de juros desde a compra — bom para venda antecipada. "
+                "Tesouro Selic não tem volatilidade significativa de MtM. "
+                "Esta análise não considera Imposto de Renda na venda (IR regressivo: 22.5% a 15%)."
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Exterior — ativos fora do Brasil (Nomad: SPY, IEFA, etc.)
