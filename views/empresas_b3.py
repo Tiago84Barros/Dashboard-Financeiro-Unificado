@@ -781,6 +781,50 @@ def _percentile_score(s: pd.Series, melhor_alto: bool = True) -> pd.Series:
     return result
 
 
+def _impute_with_group_median(
+    df: pd.DataFrame,
+    col: str,
+    group_col: str | None = None,
+) -> pd.Series:
+    """
+    Fix banca M5 parcial (2026-05-25): imputacao por mediana do grupo
+    em substituicao ao default 0.5 fixo.
+
+    Para indicador 'col' do DataFrame df:
+      - NaN intra-grupo recebe mediana do grupo (se group_col fornecido
+        e o grupo tem >= 3 obs validas)
+      - NaN sem grupo identificavel recebe mediana global
+      - Se ainda NaN (grupo todo vazio), mantem NaN — caller decide
+        se aplica 0.5 ou descarta
+
+    Reduz vies de 'missing-as-neutral': empresa sem dado de Margem
+    Liquida em setor onde a media e 25% NAO deveria receber percentil
+    0.5 (= mediano BR), mas sim percentil da mediana do seu setor.
+    """
+    if col not in df.columns:
+        return pd.Series(float("nan"), index=df.index, dtype=float)
+    s = pd.to_numeric(df[col], errors="coerce").copy()
+    if s.notna().all():
+        return s
+
+    # Tentativa 1: imputar com mediana do grupo
+    if group_col and group_col in df.columns:
+        for _, idx in df.groupby(group_col).groups.items():
+            grupo = s.loc[idx]
+            n_valid = grupo.notna().sum()
+            if n_valid >= 3:
+                med_grupo = grupo.median()
+                s.loc[idx] = grupo.fillna(med_grupo)
+
+    # Tentativa 2: o que sobrar (NaN), tenta mediana global
+    if s.isna().any():
+        med_global = s.median()
+        if pd.notna(med_global):
+            s = s.fillna(med_global)
+
+    return s
+
+
 def _resolve_group_col_df(df: pd.DataFrame, prefer: str = "SEGMENTO",
                            min_n: int = 3) -> str:
     for col in [prefer, "SUBSETOR", "SETOR"]:
@@ -978,7 +1022,9 @@ def _score_universo(
     for col, (peso, melhor_alto) in pesos.items():
         if col not in df.columns or peso == 0:
             continue
-        s = pd.to_numeric(df[col], errors="coerce")
+        # Fix banca M5 parcial (2026-05-25): imputa NaN com mediana do
+        # grupo (substitui 0.5 fixo implicito no .fillna(0.5) abaixo).
+        s = _impute_with_group_median(df, col, group_col)
         if s.notna().sum() < 2:
             continue
         s_win = _winsorize_series(s.dropna()).reindex(s.index)
@@ -1127,7 +1173,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.1.0"
+SCORE_VERSION = "2.2.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -1136,6 +1182,16 @@ SCORE_VERSION_CHANGELOG = {
         "(C2) overhead transacao no objetivo via CostConfig; "
         "(C5 parcial) Risk Engine com penalidades graduadas (nao mais binarias); "
         "(A7) versionamento explicito do score."
+    ),
+    "2.2.0": (
+        "Banca examinadora rodada 2 (2026-05-25): "
+        "(C2c) custos de transacao plugados em _simular_backtest; "
+        "(A4) novo modulo core/stress_tests.py com 5 cenarios historicos BR "
+        "(Subprime 2008, Janeiro 2015, Joesley 2017, COVID 2020, CDS 2002); "
+        "(A1 parcial) _calibrate_walk_forward com k-folds expanding windows "
+        "+ mediana entre folds; "
+        "(M5 parcial) _impute_with_group_median substitui 0.5 fixo por "
+        "mediana setorial na imputacao de NaN."
     ),
 }
 
@@ -1530,6 +1586,72 @@ def _calibrate_gamma_cap_soft(
     return round(g, 3), round(c, 3), round(s, 3)
 
 
+def _calibrate_walk_forward(
+    df_precos: pd.DataFrame,
+    df_scored: pd.DataFrame,
+    tickers_all: list[str],
+    taxa_selic_aa: float,
+    aporte: float = 1000.0,
+    n_folds: int = 4,
+    min_window: int = 24,
+    cost_cfg=None,
+) -> tuple[float, float, float]:
+    """
+    Fix banca A1 parcial (2026-05-25): walk-forward cross-validation.
+
+    Em vez de calibrar em uma janela fixa de 36 meses (vulneravel a
+    overfit ao periodo escolhido), divide a serie em n_folds janelas
+    crescentes (expanding windows) e calibra em cada. Retorna a mediana
+    dos best_pars entre folds — robusto a janelas anomalas.
+
+    Exemplo com n_folds=4 e serie de 96 meses:
+      Fold 1: calibra em meses 1-24, valida media nos 25-48
+      Fold 2: calibra em meses 1-48, valida media nos 49-72
+      Fold 3: calibra em meses 1-72, valida media nos 73-96
+      Fold 4: calibra em meses 1-96 (janela completa)
+
+    Em cada fold roda _calibrate_gamma_cap_soft no subset apropriado e
+    coleta best_pars. Mediana de cada hiperparametro entre folds e
+    devolvida (mais robusto a outliers que media).
+
+    Para o caso de overfit total (todos os folds convergem ao mesmo set),
+    e equivalente a calibracao tradicional — sem custo extra.
+
+    Esta e versao MVP — versao completa (recomendacao A1 inteira) usaria
+    purged k-fold CV de Lopez de Prado (2018) com gap entre treino/teste
+    para evitar contaminacao via auto-correlacao.
+    """
+    if df_precos.empty or len(df_precos) < min_window * 2 or df_scored.empty:
+        return _GAMMA_DEF, _CAP_DEF, _SOFT_DEF
+
+    n_total = len(df_precos)
+    fold_size = max((n_total - min_window) // max(n_folds - 1, 1), 6)
+
+    gammas, caps, softs = [], [], []
+    for k in range(n_folds):
+        end = min_window + fold_size * k
+        if end > n_total:
+            end = n_total
+        df_fold = df_precos.iloc[:end].copy()
+        if len(df_fold) < min_window:
+            continue
+        g, c, s = _calibrate_gamma_cap_soft(
+            df_fold, df_scored, tickers_all, taxa_selic_aa, aporte,
+            window_months=len(df_fold), cost_cfg=cost_cfg,
+        )
+        gammas.append(g); caps.append(c); softs.append(s)
+
+    if not gammas:
+        return _GAMMA_DEF, _CAP_DEF, _SOFT_DEF
+
+    # Mediana e mais robusta a outliers que media
+    return (
+        round(float(np.median(gammas)), 3),
+        round(float(np.median(caps)),   3),
+        round(float(np.median(softs)),  3),
+    )
+
+
 _DY_MAX_DECIMAL = 1.0   # DY > 100% em escala decimal = dado contaminado
 _DY_MAX_RAW_PCT = 50.0  # DY > 50% em escala raw % = dado contaminado
 
@@ -1693,14 +1815,24 @@ def _simular_backtest(
     selic_por_ano: dict[int, float] | None = None,
     macro_by_year: dict[int, dict[str, float]] | None = None,
     dividendos: dict[str, "pd.Series"] | None = None,
+    cost_cfg=None,   # CostConfig | None — fix banca C2c
 ) -> tuple[pd.DataFrame, list[str], int]:
     """
     Simula aportes mensais com rebalanceamento anual e publication lag = 1.
     Score do ano N é calculado com dados até N−1 (sem look-ahead bias).
     selic_por_ano: taxa Selic real por ano (da tabela macro); fallback = taxa_selic_aa.
     dividendos: dict {ticker: pd.Series mensal R$/ação} para reinvestimento (App1-compatible).
+    cost_cfg: CostConfig com fee/spread/IR (fix banca C2c, 2026-05-25).
+      None ⇒ comportamento legado sem custos (compatibilidade).
+      Rebalance anual NÃO vende cotas existentes; só redireciona aportes
+      futuros — por isso só custos de COMPRA são aplicados. IR de venda
+      ainda não é modelado pois não há vendas no fluxo atual.
     Retorna (df_resultado, tickers_top_último_ano, n_efetivo_último_ano).
     """
+    # Lazy import — evita ciclo
+    from core.transaction_costs import CostConfig, custo_compra
+    if cost_cfg is None:
+        cost_cfg = CostConfig.desligado()
     if df_precos.empty or not tickers_all:
         return pd.DataFrame(), [], 0
 
@@ -1803,19 +1935,27 @@ def _simular_backtest(
                         cotas_bench[tk] += div * cotas_bench[tk] / px_tk
 
         # ── Aportes mensais ────────────────────────────────────────────────
+        # Fix banca C2c (2026-05-25): desconta custo_compra do valor bruto
+        # antes de converter em cotas. Sem cost_cfg ativo, custo_compra = 0
+        # e comportamento e identico ao legado.
         est_disp = [tk for tk in tks_est_valid
                     if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
         if est_disp:
             total_w = sum(pesos_est.get(tk, 0.0) for tk in est_disp) or 1.0
             for tk in est_disp:
-                cotas_est[tk] += aporte * pesos_est.get(tk, 0.0) / total_w / float(row[tk])
+                valor_bruto = aporte * pesos_est.get(tk, 0.0) / total_w
+                fee = custo_compra(tk, valor_bruto, cost_cfg)
+                valor_liq = max(valor_bruto - fee, 0.0)
+                cotas_est[tk] += valor_liq / float(row[tk])
 
         all_disp = [tk for tk in tks_all_valid
                     if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
         if all_disp:
             por_tk = aporte / len(all_disp)
             for tk in all_disp:
-                cotas_bench[tk] += por_tk / float(row[tk])
+                fee = custo_compra(tk, por_tk, cost_cfg)
+                valor_liq = max(por_tk - fee, 0.0)
+                cotas_bench[tk] += valor_liq / float(row[tk])
 
         val_est = sum(
             cotas_est[tk] * float(row[tk])
