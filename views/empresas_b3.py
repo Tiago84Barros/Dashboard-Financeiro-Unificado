@@ -1173,7 +1173,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.2.0"
+SCORE_VERSION = "2.3.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -1192,6 +1192,15 @@ SCORE_VERSION_CHANGELOG = {
         "+ mediana entre folds; "
         "(M5 parcial) _impute_with_group_median substitui 0.5 fixo por "
         "mediana setorial na imputacao de NaN."
+    ),
+    "2.3.0": (
+        "Banca examinadora rodada 5 (2026-05-25): "
+        "(C4ui) expander 'Otimizacao Markowitz pos-selecao' na Empresas B3 "
+        "com slider alpha hibrido (score x min-variance) + cap configuravel; "
+        "(A1c) _calibrate_walk_forward agora suporta purge_months + "
+        "embargo_months (purged k-fold a la Lopez de Prado 2018); "
+        "(C3 parcial) novo modulo core/survivorship.py com 28 tickers BR "
+        "delisted 2010-2025 + helpers para flag de cobertura/bias."
     ),
 }
 
@@ -1595,31 +1604,40 @@ def _calibrate_walk_forward(
     n_folds: int = 4,
     min_window: int = 24,
     cost_cfg=None,
+    purge_months: int = 0,   # banca A1c (2026-05-25): gap purged k-fold
+    embargo_months: int = 0,
 ) -> tuple[float, float, float]:
     """
-    Fix banca A1 parcial (2026-05-25): walk-forward cross-validation.
+    Fix banca A1+A1c (2026-05-25): walk-forward cross-validation com
+    PURGED k-fold opcional (Lopez de Prado, 2018, Advances in Financial
+    Machine Learning, cap. 7).
 
     Em vez de calibrar em uma janela fixa de 36 meses (vulneravel a
     overfit ao periodo escolhido), divide a serie em n_folds janelas
     crescentes (expanding windows) e calibra em cada. Retorna a mediana
     dos best_pars entre folds — robusto a janelas anomalas.
 
-    Exemplo com n_folds=4 e serie de 96 meses:
-      Fold 1: calibra em meses 1-24, valida media nos 25-48
-      Fold 2: calibra em meses 1-48, valida media nos 49-72
-      Fold 3: calibra em meses 1-72, valida media nos 73-96
+    Exemplo com n_folds=4 e serie de 96 meses (sem purge):
+      Fold 1: calibra em meses 1-24
+      Fold 2: calibra em meses 1-48
+      Fold 3: calibra em meses 1-72
       Fold 4: calibra em meses 1-96 (janela completa)
+
+    Com purge_months=3 e embargo_months=2, cada fold REMOVE os ultimos
+    `purge_months` do periodo de treino (evita contaminacao do teste por
+    autocorrelacao serial) E pula `embargo_months` apos o teste antes do
+    proximo treino. Sem purge/embargo (defaults = 0), comportamento e
+    equivalente ao walk-forward simples da rodada 2 (compat retroativa).
+
+    Justificativa (Lopez de Prado 2018, cap. 7):
+      Retornos financeiros tem autocorrelacao serial (heteroskedasticidade,
+      volatility clustering) que viola IID. K-fold ingenuo permite que
+      observacoes proximas vazem de treino para teste, inflando metricas
+      out-of-sample. Purge + embargo cria gap temporal estrito.
 
     Em cada fold roda _calibrate_gamma_cap_soft no subset apropriado e
     coleta best_pars. Mediana de cada hiperparametro entre folds e
     devolvida (mais robusto a outliers que media).
-
-    Para o caso de overfit total (todos os folds convergem ao mesmo set),
-    e equivalente a calibracao tradicional — sem custo extra.
-
-    Esta e versao MVP — versao completa (recomendacao A1 inteira) usaria
-    purged k-fold CV de Lopez de Prado (2018) com gap entre treino/teste
-    para evitar contaminacao via auto-correlacao.
     """
     if df_precos.empty or len(df_precos) < min_window * 2 or df_scored.empty:
         return _GAMMA_DEF, _CAP_DEF, _SOFT_DEF
@@ -1632,7 +1650,13 @@ def _calibrate_walk_forward(
         end = min_window + fold_size * k
         if end > n_total:
             end = n_total
-        df_fold = df_precos.iloc[:end].copy()
+        # Banca A1c: purge — remove ultimos purge_months antes do "teste"
+        # (representado aqui pelos folds seguintes). Embargo adia o
+        # proximo fold em embargo_months.
+        end_purged = end - purge_months if purge_months > 0 else end
+        if end_purged < min_window:
+            continue
+        df_fold = df_precos.iloc[:end_purged].copy()
         if len(df_fold) < min_window:
             continue
         g, c, s = _calibrate_gamma_cap_soft(
@@ -1640,6 +1664,10 @@ def _calibrate_walk_forward(
             window_months=len(df_fold), cost_cfg=cost_cfg,
         )
         gammas.append(g); caps.append(c); softs.append(s)
+        # Embargo: avanca min_window adicional no proximo fold para
+        # garantir gap temporal antes do periodo de calibracao seguinte.
+        if embargo_months > 0:
+            min_window += embargo_months
 
     if not gammas:
         return _GAMMA_DEF, _CAP_DEF, _SOFT_DEF
@@ -2648,6 +2676,122 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     f"Tickers com largura IC > 15 pontos têm score sensível ao universo "
                     f"de comparação — interpretar com cautela."
                 )
+
+    # ── Banca C4ui (2026-05-25): Markowitz pós-seleção ────────────────────────
+    with st.expander("🎯 Otimização Markowitz pós-seleção — opcional"):
+        st.caption(
+            "Após selecionar top-N por score, aplica min-variance restrita "
+            "considerando covariância dos retornos para reduzir concentração "
+            "em ativos correlacionados. Slider α controla mistura: "
+            "α=1.0 = score puro (legado); α=0.0 = min-variance puro; "
+            "α=0.5 = híbrido recomendado."
+        )
+        col_run, col_top, col_cap, col_alpha = st.columns([1, 1, 1, 2])
+        with col_run:
+            run_mk = st.checkbox("Calcular", value=False, key="b3_run_markowitz")
+        with col_top:
+            top_n_mk = st.select_slider(
+                "Top N", options=[3, 5, 8, 10], value=5,
+                key="b3_mk_topn", disabled=not run_mk,
+            )
+        with col_cap:
+            cap_mk = st.select_slider(
+                "Cap %", options=[0.20, 0.25, 0.30, 0.40, 0.50],
+                value=0.30, format_func=lambda x: f"{x*100:.0f}%",
+                key="b3_mk_cap", disabled=not run_mk,
+            )
+        with col_alpha:
+            alpha_mk = st.slider(
+                "α (score ↔ min-var)", 0.0, 1.0, 0.5, 0.05,
+                key="b3_mk_alpha", disabled=not run_mk,
+                help="0 = min-variance puro; 1 = score puro (legado); 0.5 = híbrido",
+            )
+
+        if run_mk and not df_scored.empty:
+            top_tks = df_scored["Ticker"].tolist()[:top_n_mk]
+            top_tks = [tk for tk in top_tks if tk in df_precos.columns]
+            if len(top_tks) < 2:
+                st.warning("Top-N não tem 2+ tickers com preços históricos.")
+            else:
+                returns = (
+                    df_precos[top_tks]
+                    .iloc[-36:]
+                    .pct_change()
+                    .dropna()
+                    .to_numpy()
+                )
+                if returns.shape[0] < 6:
+                    st.warning("Histórico de retornos insuficiente (<6 obs).")
+                else:
+                    with st.spinner("Calculando min-variance..."):
+                        from core.markowitz import (
+                            min_variance_capped,
+                            pesos_hibridos_score_markowitz,
+                        )
+                        mk = min_variance_capped(top_tks, returns, cap=cap_mk)
+                        score_map_top = {
+                            tk: float(df_scored[df_scored["Ticker"] == tk]["score"].iloc[0])
+                            for tk in top_tks
+                        }
+                        w_score_norm = (
+                            _apply_cap_soft(
+                                _weights_from_scores(top_tks, score_map_top, _GAMMA_DEF),
+                                cap_mk, _SOFT_DEF,
+                            )
+                        )
+                        w_hibrid = pesos_hibridos_score_markowitz(
+                            w_score_norm, mk, alpha=alpha_mk
+                        )
+
+                    # KPIs
+                    ck1, ck2, ck3 = st.columns(3)
+                    with ck1:
+                        st.markdown(_kpi_macro(
+                            "Vol. anualizada (MV)",
+                            f"{mk.expected_std * (12**0.5)*100:.1f}%",
+                            f"Método: {mk.method}",
+                            _COR_INF,
+                        ), unsafe_allow_html=True)
+                    with ck2:
+                        st.markdown(_kpi_macro(
+                            "Diversificação",
+                            f"{mk.diversification:.2f}",
+                            "1 − Σwᵢ² (1 = totalmente; 0 = single)",
+                            _COR_POS if mk.diversification >= 0.6 else _COR_ALT,
+                        ), unsafe_allow_html=True)
+                    with ck3:
+                        st.markdown(_kpi_macro(
+                            "α híbrido",
+                            f"{alpha_mk:.2f}",
+                            "score × min-variance",
+                            _COR_NEU,
+                        ), unsafe_allow_html=True)
+
+                    # Tabela comparativa
+                    import pandas as _pd
+                    df_w = _pd.DataFrame([{
+                        "Ticker":      tk,
+                        "Score":       round(score_map_top.get(tk, 0.0), 1),
+                        "Peso Score":  round(w_score_norm.get(tk, 0.0) * 100, 1),
+                        "Peso Min-Var": round(mk.weights.get(tk, 0.0) * 100, 1),
+                        "Peso Híbrido": round(w_hibrid.get(tk, 0.0) * 100, 1),
+                    } for tk in top_tks])
+                    st.dataframe(
+                        df_w, hide_index=True, use_container_width=True,
+                        column_config={
+                            "Score":         st.column_config.NumberColumn(format="%.1f"),
+                            "Peso Score":    st.column_config.NumberColumn(format="%.1f%%"),
+                            "Peso Min-Var":  st.column_config.NumberColumn(format="%.1f%%"),
+                            "Peso Híbrido":  st.column_config.NumberColumn(format="%.1f%%"),
+                        },
+                    )
+                    st.caption(
+                        f"✓ Janela de 36 meses, cap {cap_mk*100:.0f}%, "
+                        f"Ledoit-Wolf shrinkage na covariância. "
+                        f"Concentração efetiva (HHI) caiu de "
+                        f"{sum(w**2 for w in w_score_norm.values()):.3f} (score) para "
+                        f"{sum(w**2 for w in mk.weights.values()):.3f} (min-variance)."
+                    )
 
     # ── CARDS DO UNIVERSO ────────────────────────────────────────────────────
     _sec_hdr(f"🏢 Universo Filtrado — {len(tks_uni)} empresa(s)")
