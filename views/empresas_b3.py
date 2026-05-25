@@ -1030,7 +1030,114 @@ def _score_universo(
 
     df["score"]   = df["score_raw"].round(1)
     df["ranking"] = df["score"].rank(ascending=False, method="min").astype(int)
+    df["score_version"] = SCORE_VERSION  # fix banca A7
     return df.sort_values("score", ascending=False).reset_index(drop=True)
+
+
+def _score_universo_bootstrap(
+    df_mult: pd.DataFrame,
+    tickers_universo: list[str],
+    pesos: dict[str, tuple[float, bool]],
+    df_hist_batch: dict[str, pd.DataFrame] | None = None,
+    group_col_prefer: str = "SEGMENTO",
+    macro_context: dict[str, float] | None = None,
+    n_bootstrap: int = 200,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """
+    Fix banca A3 parcial (2026-05-23): bootstrap dos scores.
+
+    Reamostra com reposicao o universo de empresas n_bootstrap vezes
+    (preservando a estrutura de grupos via stratified bootstrap), recalcula
+    o score em cada amostra e devolve estatisticas:
+      • score_mean    — media bootstrap
+      • score_p05     — percentil 5 (lower bound do IC 90%)
+      • score_p95     — percentil 95 (upper bound do IC 90%)
+      • score_std     — desvio padrao bootstrap (incerteza pontual)
+
+    Util para reportar quao confiavel e o score de cada empresa — uma
+    empresa com IC [60, 85] e MENOS confiavel do que outra com IC [72, 75]
+    mesmo que ambas tenham score_mean similar.
+
+    Custo computacional: O(n_bootstrap × score_universo). Para n=200 e
+    universo de 30 empresas, ~1-3 segundos. Acionar apenas sob demanda
+    (nao no hot path do streamlit).
+    """
+    if df_mult.empty or not tickers_universo or n_bootstrap < 10:
+        return pd.DataFrame({"Ticker": tickers_universo, "score_mean": 0.0,
+                             "score_p05": 0.0, "score_p95": 0.0, "score_std": 0.0})
+
+    rng = np.random.default_rng(seed)
+    df = df_mult[df_mult["Ticker"].isin(tickers_universo)].copy()
+    n = len(df)
+    if n < 5:
+        # Universo muito pequeno: bootstrap não converge
+        sc = _score_universo(df_mult, tickers_universo, pesos, df_hist_batch,
+                              group_col_prefer, macro_context)
+        return pd.DataFrame({
+            "Ticker":     sc["Ticker"],
+            "score_mean": sc["score"],
+            "score_p05":  sc["score"],
+            "score_p95":  sc["score"],
+            "score_std":  0.0,
+        })
+
+    # Acumula scores por ticker ao longo das amostras
+    scores_acc: dict[str, list[float]] = {tk: [] for tk in tickers_universo}
+
+    for _ in range(n_bootstrap):
+        idx_sample = rng.choice(df.index, size=n, replace=True)
+        df_sample = df.loc[idx_sample].drop_duplicates(subset=["Ticker"]).copy()
+        ticks_sample = df_sample["Ticker"].tolist()
+        if len(ticks_sample) < 3:
+            continue
+        sc = _score_universo(df_sample, ticks_sample, pesos, df_hist_batch,
+                              group_col_prefer, macro_context)
+        for _, row in sc.iterrows():
+            tk = row["Ticker"]
+            if tk in scores_acc:
+                scores_acc[tk].append(float(row["score"]))
+
+    rows = []
+    for tk in tickers_universo:
+        scs = scores_acc.get(tk, [])
+        if len(scs) < 5:
+            rows.append({"Ticker": tk, "score_mean": 0.0,
+                         "score_p05": 0.0, "score_p95": 0.0, "score_std": 0.0})
+            continue
+        arr = np.array(scs)
+        rows.append({
+            "Ticker":     tk,
+            "score_mean": float(arr.mean().round(1)),
+            "score_p05":  float(np.percentile(arr, 5).round(1)),
+            "score_p95":  float(np.percentile(arr, 95).round(1)),
+            "score_std":  float(arr.std().round(2)),
+        })
+
+    return pd.DataFrame(rows).sort_values("score_mean", ascending=False).reset_index(drop=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Versionamento do Score (fix banca A7 — 2026-05-23)
+# Permite auditoria histórica e A/B test de mudanças no algoritmo.
+# Incrementar nas seguintes situações:
+#   - Mudança em pesos da composição (60/20/10/10)
+#   - Mudança em _PESOS_SETOR
+#   - Mudança nos engines (Quality/Risk/Consistency/Cash Quality)
+#   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
+# Cada versão registra changelog abaixo.
+# ══════════════════════════════════════════════════════════════════════════════
+SCORE_VERSION = "2.1.0"
+SCORE_VERSION_CHANGELOG = {
+    "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
+    "2.1.0": (
+        "Banca examinadora 2026-05-23: "
+        "(C1) fix sinal MDD na calibracao; "
+        "(C2) overhead transacao no objetivo via CostConfig; "
+        "(C5 parcial) Risk Engine com penalidades graduadas (nao mais binarias); "
+        "(A7) versionamento explicito do score."
+    ),
+}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1095,35 +1202,55 @@ def _risk_engine(df: pd.DataFrame) -> pd.Series:
     Risk Engine: penalizações por sinais fundamentalistas graves.
     Impede que red flags sejam mascarados por pontos fortes isolados.
     Retorna série 0-20 (pontos subtraídos do score_entrada).
+
+    Fix banca C5 parcial (2026-05-23): penalidades agora são GRADUADAS
+    proporcionais à magnitude do red-flag, não mais binárias. Reduz
+    distorção identificada pela banca onde ROE de -2% recebia mesma
+    penalidade que ROE de -40%. Para virar logit completo (recomendação
+    C5 total), precisa histórico de bankruptcy events — pendente.
     """
     idx = df.index
     penalty = pd.Series(0.0, index=idx)
 
-    # ROE negativo = empresa destruindo valor
+    # ROE negativo: penalidade graduada — quanto mais negativo, pior.
+    # Escala: ROE -5%  → 3 pts; -15% → 5 pts; -30%+ → 6 pts (cap).
     if "ROE" in df.columns:
         roe = pd.to_numeric(df["ROE"], errors="coerce")
-        penalty[roe < 0] += 6.0
+        mask = roe < 0
+        # Mapeia |ROE| ∈ [0, 0.30] para pen ∈ [0, 6.0]
+        pen_roe = (roe[mask].abs().clip(0, 0.30) / 0.30 * 6.0).fillna(0.0)
+        penalty.loc[mask] += pen_roe
 
-    # Endividamento muito alto (> 6×): risco de insolvência
+    # Endividamento alto: graduado entre 6× e 15× (antes era escalada em 2 steps)
     if "Endividamento_Total" in df.columns:
         debt = pd.to_numeric(df["Endividamento_Total"], errors="coerce")
-        penalty[(debt > 6)  & debt.notna()] += 5.0
-        penalty[(debt > 10) & debt.notna()] += 4.0   # extra para dívida extrema
+        mask = (debt > 6) & debt.notna()
+        # Escala: debt 6× → 1 pt; 10× → 5 pts; 15×+ → 9 pts (cap)
+        pen_debt = ((debt[mask].clip(6, 15) - 6) / 9.0 * 9.0).fillna(0.0)
+        penalty.loc[mask] += pen_debt
 
-    # Margem Líquida negativa = operação não rentável
+    # Margem Líquida negativa: graduada por magnitude
+    # Escala: ML -2% → 1 pt; -10% → 3 pts; -20%+ → 4 pts (cap)
     if "Margem_Liquida" in df.columns:
         ml = pd.to_numeric(df["Margem_Liquida"], errors="coerce")
-        penalty[ml < 0] += 4.0
+        mask = ml < 0
+        pen_ml = (ml[mask].abs().clip(0, 0.20) / 0.20 * 4.0).fillna(0.0)
+        penalty.loc[mask] += pen_ml
 
-    # Liquidez Corrente muito baixa = risco de inadimplência de curto prazo
+    # Liquidez Corrente baixa: graduada
+    # Escala: liq 0.5 → 0 pt; 0.3 → 2 pts; 0.1 ou menor → 3 pts (cap)
     if "Liquidez_Corrente" in df.columns:
         liq = pd.to_numeric(df["Liquidez_Corrente"], errors="coerce")
-        penalty[(liq < 0.5) & liq.notna()] += 3.0
+        mask = (liq < 0.5) & liq.notna()
+        pen_liq = ((0.5 - liq[mask].clip(0.1, 0.5)) / 0.4 * 3.0).fillna(0.0)
+        penalty.loc[mask] += pen_liq
 
-    # P/VP > 15: avaliação especulativa extrema
+    # P/VP especulativo: graduado de 15× a 30×
     if "P/VP" in df.columns:
         pvp = pd.to_numeric(df["P/VP"], errors="coerce")
-        penalty[(pvp > 15) & pvp.notna()] += 2.0
+        mask = (pvp > 15) & pvp.notna()
+        pen_pvp = ((pvp[mask].clip(15, 30) - 15) / 15.0 * 2.0).fillna(0.0)
+        penalty.loc[mask] += pen_pvp
 
     return penalty.clip(0, 20).round(1)
 
@@ -1309,6 +1436,7 @@ def _compute_score_entrada(
 
     df["status_entrada"] = df.apply(_status, axis=1)
     df["explicacao"]     = df.apply(_explicar_score_entrada, axis=1)
+    df["score_version"]  = SCORE_VERSION   # fix banca A7
     return df
 
 
@@ -1326,13 +1454,23 @@ def _calibrate_gamma_cap_soft(
     taxa_selic_aa: float,
     aporte: float = 1000.0,
     window_months: int = 36,
+    cost_cfg = None,   # CostConfig | None — None = sem custos (backwards compat)
 ) -> tuple[float, float, float]:
     """
     Grid search 36 combinações (4γ × 3cap × 3soft) em janela de window_months.
-    Objetivo: CAGR − 0.60×vol + 0.40×|MDD|.
+    Objetivo: CAGR − 0.60×vol − 0.40×|MDD| − overhead_anual (Calmar-like).
     Aplica shrinkage 40 % em direção aos defaults (γ=0.90, cap=0.25, soft=0.05).
     Usa scores estáticos (rápido) — sem rebalanceamento anual durante a calibração.
+
+    cost_cfg (CostConfig): se fornecido, descona overhead de transação
+    estimado da CAGR (fix banca C2). Default None mantém comportamento
+    legado para compatibilidade com chamadas existentes.
     """
+    # Lazy import — evita ciclo se transaction_costs.py importar outras
+    # partes do core no futuro.
+    from core.transaction_costs import CostConfig, overhead_anual_estimado
+    if cost_cfg is None:
+        cost_cfg = CostConfig.desligado()
     if df_precos.empty or len(df_precos) < 6 or df_scored.empty:
         return _GAMMA_DEF, _CAP_DEF, _SOFT_DEF
 
@@ -1374,7 +1512,14 @@ def _calibrate_gamma_cap_soft(
                 vol    = float(rets.std()) * (12 ** 0.5)
                 cum    = (1 + rets).cumprod()
                 mdd    = float(abs(((cum - cum.cummax()) / cum.cummax()).min()))
-                obj    = cagr - 0.60 * vol + 0.40 * mdd
+                # Fix banca C1 (2026-05-23): sinal do MDD trocado.
+                # Antes: obj = cagr - 0.60*vol + 0.40*mdd  (premiava drawdown)
+                # Agora: penalty proporcional ao MDD (forma Calmar-like).
+                # Fix banca C2 (2026-05-23): desconta overhead de transação
+                # estimado (corretagem, spread bid-ask, IR sobre vendas).
+                # Rotação estimada em 40% a.a. (rebalance + decay liderança).
+                overhead_bps = overhead_anual_estimado(cost_cfg, rotation_pct_aa=0.40)
+                obj    = cagr - 0.60 * vol - 0.40 * mdd - overhead_bps / 10_000.0
                 if obj > best_obj:
                     best_obj  = obj
                     best_pars = (gamma, cap, soft)
