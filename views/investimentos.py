@@ -2767,6 +2767,95 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         else:
             st.caption("Sem dados de proventos por ativo.")
 
+        # ── Banca A2ui (2026-05-25): Brinson attribution ──────────────────────
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo_orig(
+            "🧬", "Decomposição de Retorno (Brinson)",
+            "Separa retorno ativo entre alocação setorial e seleção de ativos "
+            "vs benchmark IBOV.",
+        )
+        try:
+            from core.attribution import attribution_brinson, attribution_summary
+        except Exception as exc:
+            st.caption(f"Módulo attribution indisponível: {exc}")
+        else:
+            res_attr = attribution_brinson(posicoes)
+            sumr = attribution_summary(res_attr)
+
+            ca1, ca2, ca3, ca4 = st.columns(4, gap="small")
+            ae_pct = sumr["allocation"] * 100
+            se_pct = sumr["selection"] * 100
+            ie_pct = sumr["interaction"] * 100
+            tot_pct = sumr["total_active_return"] * 100
+            with ca1:
+                st.markdown(_kpi(
+                    "Alocação Setorial",
+                    f"{ae_pct:+.2f}%",
+                    "Over/under-weight setores",
+                    _COR_POSITIVO if ae_pct >= 0 else _COR_NEGATIVO,
+                ), unsafe_allow_html=True)
+            with ca2:
+                st.markdown(_kpi(
+                    "Seleção de Ativos",
+                    f"{se_pct:+.2f}%",
+                    "Escolha intra-setor",
+                    _COR_POSITIVO if se_pct >= 0 else _COR_NEGATIVO,
+                ), unsafe_allow_html=True)
+            with ca3:
+                st.markdown(_kpi(
+                    "Interação",
+                    f"{ie_pct:+.2f}%",
+                    "Termo cruzado AE × SE",
+                    _COR_INFO,
+                ), unsafe_allow_html=True)
+            with ca4:
+                st.markdown(_kpi(
+                    "Active Return",
+                    f"{tot_pct:+.2f}%",
+                    "Total vs IBOV benchmark",
+                    _COR_POSITIVO if tot_pct >= 0 else _COR_NEGATIVO,
+                ), unsafe_allow_html=True)
+
+            # Tabela detalhada apenas para setores presentes na carteira
+            with_alloc = [r for r in res_attr
+                          if r.peso_portfolio > 0.001 or r.peso_benchmark > 0.001]
+            df_attr = pd.DataFrame([{
+                "Setor":      r.setor,
+                "W Port (%)": r.peso_portfolio * 100,
+                "W Bench (%)": r.peso_benchmark * 100,
+                "R Port (%)": r.retorno_portfolio * 100,
+                "R Bench (%)": r.retorno_benchmark * 100,
+                "Alocação (%)":  r.allocation_effect * 100,
+                "Seleção (%)":   r.selection_effect * 100,
+                "Total (%)":     r.total_effect * 100,
+            } for r in with_alloc])
+            st.markdown(
+                '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                'margin:14px 0 8px;">Decomposição por setor</div>',
+                unsafe_allow_html=True,
+            )
+            st.dataframe(
+                df_attr, hide_index=True, use_container_width=True,
+                column_config={
+                    "W Port (%)":   st.column_config.NumberColumn(format="%.1f%%"),
+                    "W Bench (%)":  st.column_config.NumberColumn(format="%.1f%%"),
+                    "R Port (%)":   st.column_config.NumberColumn(format="%.1f%%"),
+                    "R Bench (%)":  st.column_config.NumberColumn(format="%.1f%%"),
+                    "Alocação (%)": st.column_config.NumberColumn(format="%+.2f%%"),
+                    "Seleção (%)":  st.column_config.NumberColumn(format="%+.2f%%"),
+                    "Total (%)":    st.column_config.NumberColumn(format="%+.2f%%"),
+                },
+            )
+            with st.expander("ℹ️ Como interpretar Brinson"):
+                st.markdown(
+                    "- **Alocação Setorial** positiva: você sobrepondera setores que renderam mais que a média.<br/>"
+                    "- **Seleção de Ativos** positiva: dentro de cada setor, escolheu ativos melhores que a média setorial.<br/>"
+                    "- **Active Return** = soma dos 3 efeitos = seu retorno vs IBOV.<br/>"
+                    "- Benchmark IBOV usado é aproximação 2020-2025; em produção plugar com composição oficial via b3.com.br/indices.<br/>"
+                    "- Referência: Brinson, Hood & Beebower (1986), <i>Financial Analysts Journal</i>.",
+                    unsafe_allow_html=True,
+                )
+
     # ══════════════════════════════════════════════════════════════════════════
     # Ações — cards fundamentalistas
     # ══════════════════════════════════════════════════════════════════════════
