@@ -2592,6 +2592,63 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             st.dataframe(audit_fallback, use_container_width=True,
                          height=min(260, 45 + 32 * len(audit_fallback)))
 
+    # ── Banca A3ui (2026-05-25): Bootstrap CI dos scores ──────────────────────
+    # Lazy: so calcula quando usuario marca o checkbox dentro do expander.
+    with st.expander("📊 Análise de incerteza (bootstrap) — opcional, lento"):
+        st.caption(
+            "Reamostra o universo de empresas N vezes e calcula percentis 5 e 95 "
+            "do score. IC 90% largo = score sensível a inclusão/exclusão de pares; "
+            "IC estreito = score robusto."
+        )
+        col_btn, col_n = st.columns([1, 1])
+        with col_btn:
+            run_bs = st.checkbox(
+                "Calcular IC dos scores", value=False, key="b3_run_bootstrap"
+            )
+        with col_n:
+            n_bs = st.select_slider(
+                "Reamostragens",
+                options=[50, 100, 200, 500],
+                value=200, key="b3_n_bootstrap",
+                disabled=not run_bs,
+            )
+
+        if run_bs and not df_scored.empty:
+            with st.spinner(f"Bootstrap em {n_bs} reamostragens..."):
+                df_bs = _score_universo_bootstrap(
+                    df_mult_enrich, tks_uni, pesos_v2,
+                    df_hist_batch=hist_batch,
+                    group_col_prefer=group_prefer,
+                    macro_context=_macro_for_year(macro_history),
+                    n_bootstrap=n_bs,
+                )
+            if not df_bs.empty:
+                df_bs["IC 90%"] = df_bs.apply(
+                    lambda r: f"[{r['score_p05']:.0f} ; {r['score_p95']:.0f}]", axis=1
+                )
+                df_bs["Largura IC"] = (df_bs["score_p95"] - df_bs["score_p05"]).round(1)
+                df_bs_show = df_bs[["Ticker", "score_mean", "IC 90%",
+                                      "Largura IC", "score_std"]].rename(columns={
+                    "score_mean": "Score Médio",
+                    "score_std":  "Desvio",
+                })
+                st.dataframe(
+                    df_bs_show,
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "Score Médio": st.column_config.NumberColumn(format="%.1f"),
+                        "Largura IC":  st.column_config.NumberColumn(
+                            format="%.1f",
+                            help="< 5 = score robusto; > 15 = alta incerteza"),
+                        "Desvio":      st.column_config.NumberColumn(format="%.2f"),
+                    },
+                )
+                st.caption(
+                    f"✓ Calculado em {n_bs} reamostragens estratificadas. "
+                    f"Tickers com largura IC > 15 pontos têm score sensível ao universo "
+                    f"de comparação — interpretar com cautela."
+                )
+
     # ── CARDS DO UNIVERSO ────────────────────────────────────────────────────
     _sec_hdr(f"🏢 Universo Filtrado — {len(tks_uni)} empresa(s)")
     show_tks = (df_scored["Ticker"].tolist() if not df_scored.empty else []) + tks_sem_mult

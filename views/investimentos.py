@@ -2535,9 +2535,10 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     )
 
     # ── Sub-tabs ──────────────────────────────────────────────────────────────
-    ta, tb, tc, tt, te, td = st.tabs([
+    # Banca A4ui (2026-05-25): nova sub-tab "🌪️ Stress" com cenarios historicos.
+    ta, tb, tc, tt, te, td, ts = st.tabs([
         "📋 Visão Geral", "📈 Ações", "🏢 FIIs",
-        "🏦 Tesouro", "🌎 Exterior", "🔔 Alertas",
+        "🏦 Tesouro", "🌎 Exterior", "🔔 Alertas", "🌪️ Stress",
     ])
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -3189,6 +3190,96 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 for cls, lbl_cls, label, msg in group:
                     st.markdown(_f_alert_html(cls, lbl_cls, label, msg),
                                 unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Stress Tests — banca A4ui (2026-05-25)
+    # ══════════════════════════════════════════════════════════════════════════
+    with ts:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo_orig(
+            "🌪️", "Stress Tests Históricos",
+            "Estimativa de perda do portfólio em cenários adversos passados — "
+            "calibrado em dados B3/BCB.",
+        )
+
+        try:
+            from core.stress_tests import aplicar_todos_cenarios, cenario_pior_caso
+        except Exception as exc:
+            st.error(f"Módulo de stress tests indisponível: {exc}")
+        else:
+            if not posicoes:
+                st.info("Sem posições na carteira para simular cenários.", icon="ℹ️")
+            else:
+                resultados = aplicar_todos_cenarios(posicoes)
+                pior = cenario_pior_caso(posicoes)
+
+                # KPIs resumo
+                cs1, cs2, cs3 = st.columns(3, gap="small")
+                with cs1:
+                    st.markdown(_kpi(
+                        "Pior Cenário",
+                        pior.get("cenario", "—"),
+                        pior.get("data_ref", ""),
+                        _COR_NEGATIVO,
+                    ), unsafe_allow_html=True)
+                with cs2:
+                    perda_pct = pior.get("perda_pct", 0.0) * 100
+                    st.markdown(_kpi(
+                        "Perda Estimada",
+                        f"{perda_pct:.1f}%",
+                        fmt_moeda(pior.get("perda_absoluta", 0.0)),
+                        _COR_NEGATIVO,
+                    ), unsafe_allow_html=True)
+                with cs3:
+                    rec_m = pior.get("tempo_recuperacao_meses", 0)
+                    st.markdown(_kpi(
+                        "Tempo de Recuperação",
+                        f"{rec_m} meses",
+                        "Mediana histórica do evento",
+                        _COR_ALERTA,
+                    ), unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                    'margin-bottom:10px;">📉 Impacto por cenário histórico</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Tabela detalhada
+                df_stress = pd.DataFrame([{
+                    "Cenário":           r["cenario"],
+                    "Período":           r["data_ref"],
+                    "Valor pré":         r["total_pre"],
+                    "Valor pós":         r["total_pos"],
+                    "Perda %":           r["perda_pct"] * 100,
+                    "Perda R$":          r["perda_absoluta"],
+                    "Recuperação (m)":   r["tempo_recuperacao_meses"],
+                } for r in resultados])
+                st.dataframe(
+                    df_stress,
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "Valor pré":  st.column_config.NumberColumn(format="R$ %.0f"),
+                        "Valor pós":  st.column_config.NumberColumn(format="R$ %.0f"),
+                        "Perda %":    st.column_config.NumberColumn(format="%.1f%%"),
+                        "Perda R$":   st.column_config.NumberColumn(format="R$ %.0f"),
+                        "Recuperação (m)": st.column_config.NumberColumn(format="%d meses"),
+                    },
+                )
+
+                with st.expander("ℹ️ Como interpretar"):
+                    st.markdown(
+                        "- **Perda %** é a queda estimada do valor de mercado total "
+                        "da carteira atual se o cenário se repetir hoje.<br/>"
+                        "- **Recuperação** é a mediana histórica de tempo para o "
+                        "portfólio voltar ao valor pré-choque (Ibovespa como proxy).<br/>"
+                        "- Choques aplicados por classe (Ações BR / FII / ETF / Tesouro / "
+                        "Renda Fixa). Posições em USD ganham proteção parcial do câmbio.<br/>"
+                        "- Modelo simplificado — não considera correlações tail "
+                        "(usar copulas para análise rigorosa, recomendação M2 da banca).",
+                        unsafe_allow_html=True,
+                    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
