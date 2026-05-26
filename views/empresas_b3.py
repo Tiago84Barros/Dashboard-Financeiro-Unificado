@@ -1173,7 +1173,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.5.0"
+SCORE_VERSION = "2.6.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -1232,6 +1232,17 @@ SCORE_VERSION_CHANGELOG = {
         "equilibrio com views do usuario (absolute ou relative) com "
         "confidence configuravel; covariancia Idzorek 2005; helpers "
         "posterior_returns, posterior_covariance, bl_combined_optimization."
+    ),
+    "2.6.0": (
+        "Banca examinadora rodada 8 (2026-05-26): "
+        "(M4ui) expander 'Atribuicao Shapley do score' na Empresas B3 com "
+        "waterfall chart plotly mostrando contribuicao exata de cada engine "
+        "por ticker selecionavel — substitui explainability qualitativa por "
+        "decomposicao quantitativa rigorosa; "
+        "(M3ui) expander 'Black-Litterman — incorporar suas views' na "
+        "Empresas B3 com form para inserir views absolute/relative + "
+        "confidence + tau, tabela comparativa prior vs posterior; integra "
+        "core/black_litterman.py via bl_combined_optimization."
     ),
 }
 
@@ -2850,6 +2861,197 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                         f"{sum(w**2 for w in w_score_norm.values()):.3f} (score) para "
                         f"{sum(w**2 for w in mk.weights.values()):.3f} (min-variance)."
                     )
+
+    # ── Banca M4ui (2026-05-25): Waterfall Shapley dos engines ────────────────
+    with st.expander("🧬 Atribuição Shapley do score — explainability"):
+        st.caption(
+            "Decomposição quantitativa exata (Lundberg-Lee 2017) do "
+            "score_entrada em contribuições por engine. Substitui explicação "
+            "qualitativa por valores em pontos exatos: 'Score Base contribuiu "
+            "+18 pts, Quality +5 pts, Risk -12 pts'."
+        )
+        if df_scored.empty:
+            st.info("Sem empresas scoradas para analisar.")
+        else:
+            # Aplica Shapley nos top 10
+            from views.empresas_b3 import _compute_score_entrada
+            from core.shapley_xai import (
+                compute_shapley_engines, explain_score_entrada_shapley,
+            )
+            df_se = _compute_score_entrada(df_scored.copy(),
+                                            anos_hist=anos_hist or {})
+            top_tks = df_se["Ticker"].tolist()[:10]
+            ticker_sel = st.selectbox(
+                "Ticker para análise Shapley",
+                top_tks, key="b3_shap_ticker",
+            )
+            row_sel = df_se[df_se["Ticker"] == ticker_sel].iloc[0].to_dict()
+            phis = compute_shapley_engines(row_sel)
+            explic = explain_score_entrada_shapley(row_sel)
+
+            # Waterfall plotly
+            import plotly.graph_objects as go
+            labels = ["Baseline (50)"] + [lbl for lbl, _, _ in explic] + ["Score Final"]
+            values = [50.0] + [v for _, v, _ in explic] + [0.0]
+            measures = ["absolute"] + ["relative"] * len(explic) + ["total"]
+            colors_map = {
+                "positivo": "#00C896",
+                "negativo": "#FC5C7D",
+                "neutro":   "#9CA3AF",
+            }
+            text_arr = [""] + [f"{v:+.1f}" for _, v, _ in explic] + [f"{50.0 + sum(phis.values()):.1f}"]
+
+            fig = go.Figure(go.Waterfall(
+                name="Shapley",
+                orientation="v",
+                measure=measures,
+                x=labels,
+                y=values,
+                text=text_arr,
+                textposition="outside",
+                connector={"line": {"color": "#4A5568"}},
+                decreasing={"marker": {"color": "#FC5C7D"}},
+                increasing={"marker": {"color": "#00C896"}},
+                totals={"marker": {"color": "#4A9EFF"}},
+            ))
+            fig.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#CBD5E0",
+                showlegend=False,
+                yaxis={"title": "Score (0-100)", "range": [0, 100]},
+                margin={"t": 30, "b": 0, "l": 0, "r": 0},
+                height=350,
+            )
+            st.plotly_chart(fig, use_container_width=True,
+                            config={"displayModeBar": False},
+                            key=f"shap_water_{ticker_sel}")
+
+            # Tabela com phi exato
+            import pandas as _pd
+            df_phi = _pd.DataFrame([
+                {"Engine": lbl, "φ (Shapley)": v,
+                 "Sinal": ("▲" if sn == "positivo"
+                           else "▼" if sn == "negativo" else "—")}
+                for lbl, v, sn in explic
+            ])
+            st.dataframe(df_phi, hide_index=True, use_container_width=True,
+                         column_config={"φ (Shapley)": st.column_config.NumberColumn(format="%+.2f pts")})
+            st.caption(
+                f"Σ φ = {sum(phis.values()):+.2f} pts (baseline 50, "
+                f"score final {50 + sum(phis.values()):.1f}). "
+                f"Atribuição satisfaz axiomas Lundberg-Lee 2017 "
+                f"(efficiency, symmetry, dummy, additivity)."
+            )
+
+    # ── Banca M3ui (2026-05-25): Black-Litterman views ────────────────────────
+    with st.expander("🔮 Black-Litterman — incorporar suas views"):
+        st.caption(
+            "Combine prior de equilíbrio (CAPM/IBOV) com SUAS views sobre "
+            "retornos esperados via formalismo Bayesiano. Cada view tem "
+            "confidence em (0, 1]: alta = sobrepõe ao prior; baixa = "
+            "prior domina. Views: absoluta ('PETR3 vai render X%') ou "
+            "relativa ('PETR3 vai render X pp acima de VALE3')."
+        )
+        if df_scored.empty or len(df_scored) < 2:
+            st.info("Precisa ao menos 2 empresas scoradas para usar BL.")
+        else:
+            top_bl = df_scored["Ticker"].tolist()[:8]
+            top_bl = [tk for tk in top_bl if tk in df_precos.columns]
+            if len(top_bl) < 2:
+                st.warning("Top empresas sem séries históricas suficientes.")
+            else:
+                col_run, col_prior, col_tau = st.columns([1, 1, 1])
+                with col_run:
+                    run_bl = st.checkbox("Aplicar BL", value=False,
+                                          key="b3_bl_run")
+                with col_prior:
+                    prior_pct = st.number_input(
+                        "Prior CAPM (%)", 0.0, 50.0, 10.0, 0.5,
+                        key="b3_bl_prior", disabled=not run_bl,
+                        help="Retorno de equilíbrio assumido para todos os ativos",
+                    )
+                with col_tau:
+                    tau_bl = st.select_slider(
+                        "τ (incerteza prior)",
+                        options=[0.025, 0.05, 0.10],
+                        value=0.025, key="b3_bl_tau",
+                        disabled=not run_bl,
+                    )
+
+                st.markdown("**Adicionar views:**")
+                v_col1, v_col2, v_col3, v_col4 = st.columns([1, 2, 1, 1])
+                with v_col1:
+                    v_type = st.selectbox("Tipo", ["absolute", "relative"],
+                                           key="b3_bl_v_type",
+                                           disabled=not run_bl)
+                with v_col2:
+                    if v_type == "absolute":
+                        v_tk = st.selectbox("Ticker", top_bl,
+                                             key="b3_bl_v_tk",
+                                             disabled=not run_bl)
+                        v_tickers = [v_tk]
+                        v_weights = [1.0]
+                    else:
+                        c_tk1, c_tk2 = st.columns(2)
+                        with c_tk1:
+                            tk1 = st.selectbox("Maior", top_bl,
+                                                key="b3_bl_v_tk1",
+                                                disabled=not run_bl)
+                        with c_tk2:
+                            tk2 = st.selectbox("Menor", [t for t in top_bl
+                                                          if t != tk1],
+                                                key="b3_bl_v_tk2",
+                                                disabled=not run_bl)
+                        v_tickers = [tk1, tk2]
+                        v_weights = [1.0, -1.0]
+                with v_col3:
+                    v_ret = st.number_input(
+                        "Retorno (%)" if v_type == "absolute" else "Spread (pp)",
+                        -50.0, 100.0, 15.0, 0.5, key="b3_bl_v_ret",
+                        disabled=not run_bl,
+                    )
+                with v_col4:
+                    v_conf = st.slider("Confiança", 0.1, 1.0, 0.6, 0.05,
+                                        key="b3_bl_v_conf",
+                                        disabled=not run_bl)
+
+                if run_bl:
+                    import numpy as _np
+                    from core.black_litterman import BLView, bl_combined_optimization
+
+                    view = BLView(
+                        view_type=v_type, tickers=v_tickers, weights=v_weights,
+                        expected_return=v_ret / 100.0, confidence=v_conf,
+                    )
+                    rets_hist = (df_precos[top_bl].iloc[-36:].pct_change()
+                                  .dropna().to_numpy())
+                    if len(rets_hist) < 6:
+                        st.warning("Histórico < 6 retornos — janela insuficiente.")
+                    else:
+                        prior = _np.full(len(top_bl), prior_pct / 100.0)
+                        bl = bl_combined_optimization(top_bl, prior, rets_hist,
+                                                       [view], tau=tau_bl)
+                        # Tabela prior vs posterior
+                        df_bl = _pd.DataFrame([{
+                            "Ticker":     tk,
+                            "Prior (%)":  prior[i] * 100,
+                            "Posterior (%)": bl["expected_returns"][i] * 100,
+                            "Δ (pp)":     (bl["expected_returns"][i] - prior[i]) * 100,
+                        } for i, tk in enumerate(top_bl)])
+                        st.dataframe(df_bl, hide_index=True,
+                                      use_container_width=True,
+                                      column_config={
+                            "Prior (%)":     st.column_config.NumberColumn(format="%.2f%%"),
+                            "Posterior (%)": st.column_config.NumberColumn(format="%.2f%%"),
+                            "Δ (pp)":        st.column_config.NumberColumn(format="%+.2f"),
+                        })
+                        st.caption(
+                            f"View aplicada: tipo `{v_type}` | "
+                            f"confidence={v_conf:.2f} | τ={tau_bl}. "
+                            f"Maior shift vs prior: "
+                            f"{bl['shift_max']*100:.2f}pp."
+                        )
 
     # ── CARDS DO UNIVERSO ────────────────────────────────────────────────────
     _sec_hdr(f"🏢 Universo Filtrado — {len(tks_uni)} empresa(s)")
