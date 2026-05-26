@@ -1173,7 +1173,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.3.0"
+SCORE_VERSION = "2.4.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -1201,6 +1201,20 @@ SCORE_VERSION_CHANGELOG = {
         "embargo_months (purged k-fold a la Lopez de Prado 2018); "
         "(C3 parcial) novo modulo core/survivorship.py com 28 tickers BR "
         "delisted 2010-2025 + helpers para flag de cobertura/bias."
+    ),
+    "2.4.0": (
+        "Banca examinadora rodada 6 (2026-05-25): "
+        "(C4cov) _simular_backtest aceita use_markowitz + markowitz_alpha + "
+        "markowitz_lookback_m — pesos do rebalance anual combinam score com "
+        "min-variance restrita (covariancia historica via Ledoit-Wolf); "
+        "(A6 MVP) novo modulo core/cross_source.py com compare_indicators, "
+        "batch_validate e consensus_value para detectar divergencia entre "
+        "fontes fundamentalistas (severidades ok/warn/critical, threshold "
+        "configuravel por indicador); "
+        "(M2 MVP) novo modulo core/correlations.py com ewma_correlation_matrix, "
+        "ewma_volatility e correlation_regime_score — proxy de DCC-GARCH "
+        "via EWMA com halflife configuravel (default 60 dias uteis), "
+        "captura time-varying correlations sem overhead de otimizacao ML."
     ),
 }
 
@@ -1843,7 +1857,10 @@ def _simular_backtest(
     selic_por_ano: dict[int, float] | None = None,
     macro_by_year: dict[int, dict[str, float]] | None = None,
     dividendos: dict[str, "pd.Series"] | None = None,
-    cost_cfg=None,   # CostConfig | None — fix banca C2c
+    cost_cfg=None,             # CostConfig | None — fix banca C2c
+    use_markowitz: bool = False,   # fix banca C4cov
+    markowitz_alpha: float = 0.50, # peso score vs min-variance (0..1)
+    markowitz_lookback_m: int = 36,
 ) -> tuple[pd.DataFrame, list[str], int]:
     """
     Simula aportes mensais com rebalanceamento anual e publication lag = 1.
@@ -1930,6 +1947,30 @@ def _simular_backtest(
                 pesos_est = _apply_cap_soft(
                     _weights_from_scores(tickers_yr, score_map, gamma), cap, soft
                 )
+                # Fix banca C4cov (2026-05-25): combina pesos do score com
+                # min-variance restrita usando covariancia historica dos
+                # ultimos `markowitz_lookback_m` meses. Reduz concentracao
+                # em ativos correlacionados (ex: BBAS+ITUB+SANB ambos bancos).
+                if use_markowitz and len(tickers_yr) >= 2:
+                    try:
+                        from core.markowitz import (
+                            min_variance_capped, pesos_hibridos_score_markowitz,
+                        )
+                        # Janela de retornos ANTES da data atual (lag=0 ok pq
+                        # rebalanceia no inicio do ano e usa dados ate dt-1)
+                        df_lookback = df.loc[df.index < dt].tail(markowitz_lookback_m)
+                        cols_disp = [tk for tk in tickers_yr if tk in df_lookback.columns]
+                        if len(cols_disp) >= 2 and len(df_lookback) >= 6:
+                            rets = df_lookback[cols_disp].pct_change().dropna()
+                            if len(rets) >= 4:
+                                mk = min_variance_capped(
+                                    cols_disp, rets.to_numpy(), cap=cap,
+                                )
+                                pesos_est = pesos_hibridos_score_markowitz(
+                                    pesos_est, mk, alpha=markowitz_alpha,
+                                )
+                    except Exception:
+                        pass  # fallback silencioso para gamma-tilt puro
             else:
                 pesos_est = (
                     {tk: 1.0 / len(tickers_yr) for tk in tickers_yr}
