@@ -1173,7 +1173,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.4.0"
+SCORE_VERSION = "2.5.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -1215,6 +1215,23 @@ SCORE_VERSION_CHANGELOG = {
         "ewma_volatility e correlation_regime_score — proxy de DCC-GARCH "
         "via EWMA com halflife configuravel (default 60 dias uteis), "
         "captura time-varying correlations sem overhead de otimizacao ML."
+    ),
+    "2.5.0": (
+        "Banca examinadora rodada 7 (2026-05-25): "
+        "(M4) novo modulo core/shapley_xai.py — atribuicao quantitativa "
+        "exata via Shapley values dos 5 engines (score_base, q_bonus, "
+        "c_bonus, cq_bonus, r_penalty); enumeracao completa de 32 coalicoes "
+        "(2^5), satisfaz axiomas de Lundberg & Lee 2017 (efficiency, "
+        "symmetry, dummy, additivity); "
+        "(C3c parcial) core/survivorship_ingestion.py — carregamento de "
+        "JSON/CSV em data_imports/delisted/ para EXTENDER a lista curada "
+        "sem editar core/survivorship.py; stubs de scrape B3/CVM com "
+        "graceful failure (anti-bot impede scraping ingenuo); "
+        "(M3 MVP) novo modulo core/black_litterman.py — formalismo "
+        "Bayesiano de Black-Litterman 1991/92 para combinar prior de "
+        "equilibrio com views do usuario (absolute ou relative) com "
+        "confidence configuravel; covariancia Idzorek 2005; helpers "
+        "posterior_returns, posterior_covariance, bl_combined_optimization."
     ),
 }
 
