@@ -11,7 +11,6 @@ from __future__ import annotations
 import html
 from dataclasses import dataclass
 
-import pandas as pd
 import streamlit as st
 
 from design.componentes import container_pagina
@@ -120,6 +119,103 @@ _CSS = """
     color: #AEB8C8;
     line-height: 1.5;
     font-size: .80rem;
+}
+.doc-indicator-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(315px, 1fr));
+    gap: 14px;
+    margin-top: 14px;
+}
+.doc-indicator-card {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #28354A;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0)),
+        #101722;
+    border-radius: 10px;
+    padding: 16px 17px 15px;
+    min-height: 270px;
+}
+.doc-indicator-card::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--accent, #00C896);
+}
+.doc-indicator-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.doc-indicator-name {
+    color: #F7FAFC;
+    font-size: 1.08rem;
+    font-weight: 900;
+    line-height: 1.15;
+}
+.doc-indicator-group {
+    color: var(--accent, #00C896);
+    border: 1px solid color-mix(in srgb, var(--accent, #00C896) 42%, transparent);
+    background: color-mix(in srgb, var(--accent, #00C896) 13%, transparent);
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: .64rem;
+    font-weight: 850;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    white-space: nowrap;
+}
+.doc-field {
+    border-top: 1px solid rgba(148,163,184,.14);
+    padding-top: 9px;
+    margin-top: 9px;
+}
+.doc-field-label {
+    color: #718096;
+    font-size: .63rem;
+    font-weight: 850;
+    text-transform: uppercase;
+    letter-spacing: .10em;
+    margin-bottom: 3px;
+}
+.doc-field-text {
+    color: #C6D0DF;
+    font-size: .80rem;
+    line-height: 1.48;
+}
+.doc-author-note {
+    color: #D7DEE9;
+    font-size: .78rem;
+    line-height: 1.5;
+    padding: 10px 11px;
+    border-radius: 8px;
+    background: rgba(246,201,14,.07);
+    border: 1px solid rgba(246,201,14,.18);
+    margin-top: 10px;
+}
+.doc-statement-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+}
+.doc-statement-card {
+    border: 1px solid #263247;
+    background: #0F1622;
+    border-radius: 10px;
+    padding: 15px 16px;
+}
+.doc-statement-title {
+    color: #E2E8F0;
+    font-weight: 900;
+    font-size: .96rem;
+    margin-bottom: 9px;
 }
 .doc-mini-title {
     color: #E2E8F0;
@@ -880,6 +976,15 @@ AUTORES = [
 ]
 
 
+_GROUP_ACCENTS = {
+    "Rentabilidade": "#00C896",
+    "Margens": "#4A9EFF",
+    "Dividendos": "#F6C90E",
+    "Valuation": "#B084F5",
+    "Solvencia": "#FC5C7D",
+}
+
+
 def _set_selected(flow_key: str, node_id: str) -> None:
     st.session_state[f"doc_selected_{flow_key}"] = node_id
 
@@ -960,8 +1065,7 @@ def _render_indicadores() -> None:
     )
 
     st.markdown('<div class="doc-mini-title">Indicadores usados no score e nas analises</div>', unsafe_allow_html=True)
-    df_ind = pd.DataFrame(INDICADORES)
-    grupos = ["Todos"] + sorted(df_ind["Grupo"].unique().tolist())
+    grupos = ["Todos"] + sorted({item["Grupo"] for item in INDICADORES})
     grupo = st.radio(
         "Grupo",
         grupos,
@@ -970,30 +1074,63 @@ def _render_indicadores() -> None:
         label_visibility="collapsed",
         key="doc_indicadores_grupo",
     )
-    if grupo != "Todos":
-        df_ind = df_ind[df_ind["Grupo"] == grupo]
+    indicadores = [
+        item for item in INDICADORES
+        if grupo == "Todos" or item["Grupo"] == grupo
+    ]
 
-    st.dataframe(
-        df_ind,
-        use_container_width=True,
-        hide_index=True,
-        height=min(640, 74 + 42 * len(df_ind)),
-        column_config={
-            "Grupo": st.column_config.TextColumn(width="small"),
-            "Indicador": st.column_config.TextColumn(width="small"),
-            "O que mede": st.column_config.TextColumn(width="medium"),
-            "Importancia": st.column_config.TextColumn(width="medium"),
-            "Leitura": st.column_config.TextColumn(width="medium"),
-            "Autores": st.column_config.TextColumn(width="large"),
-        },
+    indicador_cards = []
+    for item in indicadores:
+        accent = _GROUP_ACCENTS.get(item["Grupo"], "#00C896")
+        indicador_cards.append(
+            f'<div class="doc-indicator-card" style="--accent:{accent};">'
+            '<div class="doc-indicator-top">'
+            f'<div class="doc-indicator-name">{html.escape(item["Indicador"])}</div>'
+            f'<div class="doc-indicator-group">{html.escape(item["Grupo"])}</div>'
+            '</div>'
+            '<div class="doc-field">'
+            '<div class="doc-field-label">O que mede</div>'
+            f'<div class="doc-field-text">{html.escape(item["O que mede"])}</div>'
+            '</div>'
+            '<div class="doc-field">'
+            '<div class="doc-field-label">Importancia na analise</div>'
+            f'<div class="doc-field-text">{html.escape(item["Importancia"])}</div>'
+            '</div>'
+            '<div class="doc-field">'
+            '<div class="doc-field-label">Como interpretar</div>'
+            f'<div class="doc-field-text">{html.escape(item["Leitura"])}</div>'
+            '</div>'
+            f'<div class="doc-author-note">{html.escape(item["Autores"])}</div>'
+            '</div>'
+        )
+    st.markdown(
+        f'<div class="doc-indicator-grid">{"".join(indicador_cards)}</div>',
+        unsafe_allow_html=True,
     )
 
     st.markdown('<div class="doc-mini-title">Demonstracoes financeiras e bases auxiliares</div>', unsafe_allow_html=True)
-    st.dataframe(
-        pd.DataFrame(DEMONSTRACOES),
-        use_container_width=True,
-        hide_index=True,
-        height=260,
+    demonstracao_cards = []
+    for item in DEMONSTRACOES:
+        demonstracao_cards.append(
+            '<div class="doc-statement-card">'
+            f'<div class="doc-statement-title">{html.escape(item["Demonstracao"])}</div>'
+            '<div class="doc-field">'
+            '<div class="doc-field-label">Componentes</div>'
+            f'<div class="doc-field-text">{html.escape(item["Componentes"])}</div>'
+            '</div>'
+            '<div class="doc-field">'
+            '<div class="doc-field-label">Importancia</div>'
+            f'<div class="doc-field-text">{html.escape(item["Importancia"])}</div>'
+            '</div>'
+            '<div class="doc-field">'
+            '<div class="doc-field-label">Cuidados</div>'
+            f'<div class="doc-field-text">{html.escape(item["Cuidados"])}</div>'
+            '</div>'
+            '</div>'
+        )
+    st.markdown(
+        f'<div class="doc-statement-grid">{"".join(demonstracao_cards)}</div>',
+        unsafe_allow_html=True,
     )
 
     cards = []
