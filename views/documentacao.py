@@ -217,6 +217,78 @@ _CSS = """
     font-size: .96rem;
     margin-bottom: 9px;
 }
+.doc-av-shell {
+    border: 1px solid #263247;
+    background: #0F1622;
+    border-radius: 10px;
+    padding: 16px;
+}
+.doc-av-flow-title {
+    color: #E2E8F0;
+    font-size: .82rem;
+    font-weight: 850;
+    text-transform: uppercase;
+    letter-spacing: .10em;
+    margin-bottom: 12px;
+}
+.doc-av-arrow {
+    color: #6B7A90;
+    text-align: center;
+    font-size: 1.35rem;
+    font-weight: 900;
+    margin: -2px 0 2px;
+}
+.doc-av-detail {
+    border: 1px solid #2B3A51;
+    background:
+        linear-gradient(180deg, rgba(0,200,150,.07), rgba(74,158,255,.03)),
+        #0B1019;
+    border-radius: 10px;
+    padding: 18px 20px;
+}
+.doc-av-detail.score-final {
+    border-color: rgba(0,200,150,.55);
+    box-shadow: 0 0 0 1px rgba(0,200,150,.13), 0 0 34px rgba(0,200,150,.08);
+}
+.doc-av-kicker {
+    color: #00C896;
+    font-size: .68rem;
+    font-weight: 900;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+}
+.doc-av-title {
+    color: #F7FAFC;
+    font-size: 1.38rem;
+    font-weight: 950;
+    margin-bottom: 8px;
+}
+.doc-av-section {
+    border-top: 1px solid rgba(148,163,184,.14);
+    padding-top: 10px;
+    margin-top: 10px;
+}
+.doc-av-label {
+    color: #718096;
+    font-size: .65rem;
+    font-weight: 900;
+    letter-spacing: .10em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+.doc-av-text {
+    color: #C9D3E2;
+    font-size: .86rem;
+    line-height: 1.56;
+}
+.doc-av-impact {
+    border: 1px solid rgba(74,158,255,.22);
+    background: rgba(74,158,255,.07);
+    border-radius: 9px;
+    padding: 11px 12px;
+    margin-top: 11px;
+}
 .doc-mini-title {
     color: #E2E8F0;
     font-weight: 850;
@@ -434,6 +506,222 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
             "A tela existe para que o usuario consiga discordar do modelo com informacao, nao apenas aceitar um numero.",
         ),
     },
+)
+
+
+ETAPAS_ANALISE_AVANCADA = {
+    "entrada_dados": {
+        "titulo": "Entrada dos dados",
+        "objetivo": "Reunir as bases que alimentam a análise avançada antes de qualquer cálculo de score.",
+        "dados": "Cadastro de empresas B3, tickers, setores, subsetores, segmentos, múltiplos, DRE, preços históricos e variáveis macroeconômicas.",
+        "formula": "Base de análise = empresas elegíveis + indicadores financeiros + preços + macro",
+        "exemplo": "Tickers carregados: 420\nTickers com setor definido: 410\nTickers com histórico mínimo: 280\n\nUniverso inicial analisável = 280 empresas",
+        "interpretacao": "A etapa define o universo disponível para comparação. Empresas sem dados mínimos podem ficar fora da análise quantitativa.",
+        "impacto": "Quanto melhor a cobertura dos dados, mais confiável tende a ser a comparação entre empresas.",
+        "limitacao": "Dados ausentes, atrasados ou inconsistentes reduzem a cobertura e podem deixar empresas relevantes fora do cálculo.",
+    },
+    "setores_segmentos": {
+        "titulo": "Setores e segmentos",
+        "objetivo": "Agrupar empresas em conjuntos comparáveis antes de normalizar indicadores.",
+        "dados": "SETOR, SUBSETOR, SEGMENTO, ticker e nome da empresa, vindos da base setorial do App4.",
+        "formula": "Grupo comparável = setor -> subsetor -> segmento\n\nComparação preferencial: segmento\nFallback: subsetor ou setor quando o grupo é pequeno",
+        "exemplo": "Empresa A: Utilidade Pública > Energia Elétrica > Distribuição\n\nEla deve ser comparada com distribuidoras de energia, não com bancos ou varejistas.",
+        "interpretacao": "Empresas de modelos econômicos parecidos são avaliadas lado a lado, preservando diferenças estruturais entre setores.",
+        "impacto": "Define quais pares entram nos percentis, nas medianas e nas ponderações do score.",
+        "limitacao": "Classificações setoriais muito amplas ou incorretas podem distorcer a comparação.",
+    },
+    "multiplos_historicos": {
+        "titulo": "Múltiplos históricos",
+        "objetivo": "Trazer o histórico anual de indicadores fundamentalistas usados na análise quantitativa.",
+        "dados": "ROE, ROIC, ROA, margens, DY, P/L, P/VP, EV/EBIT, P/FCO, endividamento, liquidez e payout.",
+        "formula": "Snapshot anual do indicador = último valor disponível até o ano de referência permitido pelo lag de publicação",
+        "exemplo": "Ano de compra: 2024\nLag de publicação: 1 ano\n\nIndicadores usados no score de 2024: dados disponíveis até 2023",
+        "interpretacao": "O modelo tenta simular uma decisão realista, usando somente informações que estariam disponíveis no momento da análise.",
+        "impacto": "Fornece a matéria-prima para normalização, percentis, pesos e cálculo do score final.",
+        "limitacao": "Múltiplos podem sofrer distorções por lucro não recorrente, mudança contábil, eventos extraordinários ou erro de escala.",
+    },
+    "dre_macro": {
+        "titulo": "DRE e dados macroeconômicos",
+        "objetivo": "Complementar múltiplos com fundamentos operacionais e contexto econômico.",
+        "dados": "Receita líquida, EBITDA, EBIT, lucro líquido, dívida, caixa, Selic, IPCA, câmbio e PIB.",
+        "formula": "Leitura fundamental = desempenho operacional + estrutura financeira + ambiente macro",
+        "exemplo": "Receita cresce 8%\nLucro cresce 2%\nSelic sobe de 10% para 13%\n\nInterpretação: crescimento existe, mas margem e custo financeiro precisam ser observados.",
+        "interpretacao": "A DRE mostra a qualidade da operação; a macro ajuda a entender juros, inflação, câmbio e ciclo econômico.",
+        "impacto": "Afeta leituras de crescimento, rentabilidade, risco financeiro e sensibilidade macro do score.",
+        "limitacao": "Macro ajuda a contextualizar, mas não deve substituir a análise específica da empresa.",
+    },
+    "limpeza_saneamento": {
+        "titulo": "Limpeza e saneamento",
+        "objetivo": "Proteger o modelo contra dados nulos, inconsistentes, contaminados ou extremos.",
+        "dados": "Todos os indicadores numéricos usados no score, com validação de faixas aceitáveis por indicador.",
+        "formula": """Se indicador = nulo ou inconsistente:
+    excluir do cálculo daquele período
+ou
+    substituir pela mediana setorial, quando aplicável
+
+Se indicador estiver fora da faixa aceitável:
+    tratar como ausente ou limitar pela regra de saneamento""",
+        "exemplo": """Empresa X possui DY = 180%
+Faixa aceitável para DY = até 50%
+
+Resultado:
+DY é tratado como inconsistente e não entra no cálculo daquele período.""",
+        "interpretacao": "A etapa protege o modelo contra distorções provocadas por dados incompletos ou fora do padrão.",
+        "impacto": "Reduz pontuações artificiais e evita que erros de base virem vantagem ou punição indevida.",
+        "limitacao": "Substituir pela mediana setorial preserva cobertura, mas pode suavizar diferenças reais entre empresas.",
+    },
+    "tendencias_historicas": {
+        "titulo": "Tendências históricas",
+        "objetivo": "Medir se indicadores de qualidade estão melhorando ou piorando ao longo do tempo.",
+        "dados": "Séries históricas de ROE, ROIC, margem líquida e margem operacional.",
+        "formula": "Variação percentual = ((Valor atual - Valor anterior) / Valor anterior) × 100",
+        "exemplo": """ROE 2023 = 12%
+ROE 2024 = 15%
+
+Variação = ((15 - 12) / 12) × 100
+Variação = 25%""",
+        "interpretacao": "A empresa apresentou melhora histórica no indicador analisado.",
+        "impacto": "Tendências positivas podem reforçar a qualidade do score; tendências negativas reduzem confiança na nota atual.",
+        "limitacao": "Uma melhora curta pode ser cíclica ou não recorrente. A tendência deve ser lida junto com DRE e setor.",
+    },
+    "pesos_setor": {
+        "titulo": "Pesos por setor",
+        "objetivo": "Aplicar pesos diferentes para indicadores conforme a natureza econômica de cada setor.",
+        "dados": "Indicadores normalizados e matriz de pesos setoriais do App4.",
+        "formula": "Score parcial = Indicador normalizado × Peso do indicador",
+        "exemplo": """Margem líquida normalizada = 80
+Peso da margem líquida = 20%
+
+Contribuição no score = 80 × 0,20 = 16 pontos""",
+        "interpretacao": "O indicador contribuiu com 16 pontos para o score final da empresa.",
+        "impacto": "Setores diferentes dão importância diferente a rentabilidade, dividendos, endividamento, margens e valuation.",
+        "limitacao": "Pesos são uma escolha de modelo. Eles organizam a análise, mas não capturam todas as particularidades de uma empresa.",
+    },
+    "percentis_pares": {
+        "titulo": "Percentis entre pares",
+        "objetivo": "Converter indicadores em posição relativa dentro de um grupo comparável.",
+        "dados": "Indicadores normalizados das empresas do mesmo setor, subsetor ou segmento.",
+        "formula": "Percentil = posição relativa da empresa dentro do grupo comparável",
+        "exemplo": """Empresa analisada está melhor que 92 empresas
+dentro de um grupo de 100 empresas do mesmo setor.
+
+Percentil = 92""",
+        "interpretacao": "A empresa está melhor que aproximadamente 92% dos pares comparáveis naquele indicador.",
+        "impacto": "Transforma indicadores com escalas diferentes em uma régua comum de 0 a 100.",
+        "limitacao": "A comparação deve ocorrer dentro do setor, subsetor ou segmento, e não contra todas as empresas da bolsa.",
+    },
+    "ajustes_risco": {
+        "titulo": "Ajustes de risco",
+        "objetivo": "Reduzir o score quando há sinais de risco financeiro, instabilidade ou dado frágil.",
+        "dados": "Endividamento, liquidez, volatilidade histórica dos indicadores, qualidade dos dados e sensibilidade macro.",
+        "formula": "Score ajustado = Score bruto - Penalidade de risco",
+        "exemplo": """Score bruto = 82
+Penalidade por alto endividamento = 7
+
+Score ajustado = 82 - 7 = 75""",
+        "interpretacao": "Mesmo com bons indicadores operacionais, a empresa perde pontuação por apresentar risco financeiro maior.",
+        "impacto": "Evita que empresas aparentemente baratas ou rentáveis recebam nota alta sem considerar fragilidade.",
+        "limitacao": "Penalidades simplificam riscos complexos. Governança, litígios e riscos qualitativos podem não aparecer totalmente.",
+    },
+    "score_final": {
+        "titulo": "Score final",
+        "objetivo": "Consolidar indicadores tratados em uma nota comparável.",
+        "dados": "Rentabilidade, crescimento, endividamento, eficiência, valuation, pesos setoriais e penalidades de risco.",
+        "formula": "Score final = ∑(Indicador normalizado × Peso) - Penalidades",
+        "exemplo": """Rentabilidade: 85 × 30% = 25,5
+Crescimento: 70 × 20% = 14,0
+Endividamento: 60 × 20% = 12,0
+Eficiência: 75 × 15% = 11,25
+Valuation: 65 × 15% = 9,75
+
+Score bruto = 72,5
+Penalidade de risco = 5
+
+Score final = 72,5 - 5
+Score final = 67,5""",
+        "interpretacao": "A empresa recebeu score final de 67,5 em uma escala comparativa. Isso indica posição intermediária/positiva dentro do universo analisado, mas não deve ser lido isoladamente como recomendação de compra.",
+        "impacto": "Define a posição relativa da empresa dentro do modelo e orienta rankings, backtests e leituras de entrada.",
+        "limitacao": "O score não substitui análise fundamentalista, leitura qualitativa, avaliação de preço, liquidez, governança e contexto macroeconômico.",
+    },
+    "backtest_mensal": {
+        "titulo": "Backtest mensal",
+        "objetivo": "Verificar como empresas selecionadas pelo score teriam se comportado historicamente.",
+        "dados": "Preços mensais, dividendos quando disponíveis, score histórico com publication lag e benchmarks como Selic/equal-weight.",
+        "formula": "Retorno mensal = ((Preço final - Preço inicial) / Preço inicial) × 100",
+        "exemplo": """Preço inicial = R$ 20,00
+Preço final = R$ 22,00
+
+Retorno mensal = ((22 - 20) / 20) × 100
+Retorno mensal = 10%""",
+        "interpretacao": "O backtest verifica se empresas com scores mais altos apresentaram desempenho superior ao longo do tempo analisado.",
+        "impacto": "Ajuda a avaliar se o score tem utilidade prática ou apenas organiza dados retrospectivos.",
+        "limitacao": "Backtest não garante resultado futuro e pode sofrer com survivorship bias, custos, liquidez e mudanças estruturais.",
+    },
+    "calibracao": {
+        "titulo": "Calibração do modelo",
+        "objetivo": "Ajustar parâmetros para equilibrar retorno, risco, concentração e robustez.",
+        "dados": "Resultados de backtest, volatilidade, drawdown, custos estimados, limites de peso e parâmetros gamma/cap/soft.",
+        "formula": "Objetivo simplificado = CAGR - penalidade de volatilidade - penalidade de drawdown - custos",
+        "exemplo": """CAGR = 18%
+Penalidade de volatilidade = 5%
+Penalidade de drawdown = 4%
+Custos estimados = 1%
+
+Objetivo = 18 - 5 - 4 - 1 = 8""",
+        "interpretacao": "O melhor parâmetro não é necessariamente o que mais rendeu, mas o que melhor equilibrou retorno e risco.",
+        "impacto": "Define pesos finais, limite de concentração e intensidade com que scores maiores recebem mais alocação.",
+        "limitacao": "Calibrar demais pode gerar overfitting. O modelo usa shrinkage e walk-forward para reduzir esse risco.",
+    },
+    "score_entrada": {
+        "titulo": "Score de entrada",
+        "objetivo": "Transformar o score e os ajustes em uma régua interpretativa para priorizar análise.",
+        "dados": "Score final, qualidade, valuation, risco, cenário macro e composição avançada.",
+        "formula": """Score final >= 80: entrada forte
+Score final entre 65 e 79: entrada moderada
+Score final entre 50 e 64: observação
+Score final < 50: evitar ou aguardar melhora""",
+        "exemplo": """Score final = 67,5
+
+Classificação:
+67,5 está entre 65 e 79
+Entrada moderada""",
+        "interpretacao": "Essa classificação organiza prioridades de análise, mas não representa recomendação automática de compra.",
+        "impacto": "Ajuda o usuário a separar oportunidades mais fortes, casos de observação e empresas que exigem cautela.",
+        "limitacao": "A régua depende de dados quantitativos e deve ser combinada com liquidez, governança, preço atual e tese qualitativa.",
+    },
+    "leitura_final": {
+        "titulo": "Leitura final / sugestões",
+        "objetivo": "Converter o resultado técnico em uma explicação prática para o usuário.",
+        "dados": "Score final, score de entrada, ranking, alertas, backtest, dados financeiros e contexto macro.",
+        "formula": "Sugestão de leitura = score + risco + contexto + validação histórica + julgamento qualitativo",
+        "exemplo": """Score final = 67,5
+Entrada = moderada
+Backtest = positivo
+Risco = endividamento acima da média
+
+Leitura: boa candidata para estudo, mas exige atenção ao balanço.""",
+        "interpretacao": "A etapa final não compra nem vende automaticamente; ela organiza evidências para uma análise mais consciente.",
+        "impacto": "Melhora a transparência do modelo e ajuda o usuário a entender por que uma empresa aparece como prioridade.",
+        "limitacao": "Sugestões são apoio analítico. Decisão final exige análise própria, perfil de risco e objetivos do investidor.",
+    },
+}
+
+
+ORDEM_ANALISE_AVANCADA = (
+    ("entrada_dados", "Entrada dos dados"),
+    ("setores_segmentos", "Setores e segmentos"),
+    ("multiplos_historicos", "Múltiplos históricos"),
+    ("dre_macro", "DRE e dados macroeconômicos"),
+    ("limpeza_saneamento", "Limpeza e saneamento"),
+    ("tendencias_historicas", "Tendências históricas"),
+    ("pesos_setor", "Pesos por setor"),
+    ("percentis_pares", "Percentis entre pares"),
+    ("ajustes_risco", "Ajustes de risco"),
+    ("score_final", "Score final"),
+    ("backtest_mensal", "Backtest mensal"),
+    ("calibracao", "Calibração do modelo"),
+    ("score_entrada", "Score de entrada"),
+    ("leitura_final", "Leitura final / sugestões"),
 )
 
 
@@ -1049,6 +1337,100 @@ def _render_node_detail(node: FlowNode) -> None:
     )
 
 
+def _render_av_field(label: str, text: str) -> None:
+    st.markdown(
+        f"""
+        <div class="doc-av-section">
+            <div class="doc-av-label">{html.escape(label)}</div>
+            <div class="doc-av-text">{html.escape(text)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _select_etapa_analise_avancada(key: str) -> None:
+    st.session_state["etapa_analise_avancada"] = key
+
+
+def render_fluxograma_analise_avancada() -> None:
+    st.markdown(
+        """
+        <div class="doc-intro">
+            <div class="doc-intro-title">Fluxograma Interativo da Análise Avançada</div>
+            <div class="doc-intro-text">
+                Siga a sequência real do App4: entrada de dados, agrupamento por pares,
+                saneamento, normalização, pesos, ajustes, score, backtest e leitura final.
+                Cada bloco é clicável e atualiza o painel explicativo ao lado.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if "etapa_analise_avancada" not in st.session_state:
+        st.session_state["etapa_analise_avancada"] = "score_final"
+
+    col_fluxo, col_detalhe = st.columns([1.05, 1.45], gap="large")
+
+    with col_fluxo:
+        st.markdown(
+            '<div class="doc-av-shell"><div class="doc-av-flow-title">Sequência do modelo</div>',
+            unsafe_allow_html=True,
+        )
+        for i, (key, label) in enumerate(ORDEM_ANALISE_AVANCADA):
+            selected = st.session_state["etapa_analise_avancada"] == key
+            is_score = key == "score_final"
+            button_label = f"★ {label}" if is_score else label
+            st.button(
+                button_label,
+                key=f"btn_fluxo_av_{key}",
+                use_container_width=True,
+                type="primary" if selected or is_score else "secondary",
+                on_click=_select_etapa_analise_avancada,
+                args=(key,),
+            )
+            if i < len(ORDEM_ANALISE_AVANCADA) - 1:
+                st.markdown('<div class="doc-av-arrow">↓</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    etapa_key = st.session_state["etapa_analise_avancada"]
+    etapa = ETAPAS_ANALISE_AVANCADA[etapa_key]
+    detail_class = "doc-av-detail score-final" if etapa_key == "score_final" else "doc-av-detail"
+
+    with col_detalhe:
+        st.markdown(
+            f"""
+            <div class="{detail_class}">
+                <div class="doc-av-kicker">Etapa selecionada</div>
+                <div class="doc-av-title">{html.escape(etapa["titulo"])}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        _render_av_field("Objetivo", etapa["objetivo"])
+        _render_av_field("Dados utilizados", etapa["dados"])
+
+        st.markdown('<div class="doc-av-section"><div class="doc-av-label">Fórmula matemática ou regra de cálculo</div></div>', unsafe_allow_html=True)
+        st.code(etapa["formula"], language="text")
+
+        st.markdown('<div class="doc-av-section"><div class="doc-av-label">Exemplo numérico simplificado</div></div>', unsafe_allow_html=True)
+        st.code(etapa["exemplo"], language="text")
+
+        _render_av_field("Interpretação", etapa["interpretacao"])
+        st.markdown(
+            f"""
+            <div class="doc-av-impact">
+                <div class="doc-av-label">Impacto no score</div>
+                <div class="doc-av-text">{html.escape(etapa["impacto"])}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.warning(etapa["limitacao"])
+
+
 def _render_indicadores() -> None:
     st.markdown(
         """
@@ -1168,7 +1550,7 @@ def render() -> None:
     tabs = st.tabs(tab_labels)
 
     with tabs[0]:
-        _render_flow(FLOW_ANALISE_AVANCADA)
+        render_fluxograma_analise_avancada()
     with tabs[1]:
         _render_flow(FLOW_SIMULADOR)
     with tabs[2]:
