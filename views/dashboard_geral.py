@@ -205,6 +205,55 @@ def _n_efetivo(posicoes: list) -> float:
     return round(1 / hhi, 1) if hhi > 0 else 0.0
 
 
+def _label_tesouro_codigo(ticker: str) -> str | None:
+    codigo = (ticker or "").upper().strip()
+    if not codigo:
+        return None
+    ano = "".join(ch for ch in codigo if ch.isdigit())
+    ano = ano[-4:] if len(ano) >= 4 else ""
+    if codigo.startswith("TSELIC"):
+        return f"Tesouro Selic {ano}".strip()
+    if codigo.startswith("TIPCA"):
+        return f"Tesouro IPCA+ {ano}".strip()
+    if codigo.startswith("TPRE"):
+        return f"Tesouro Prefixado {ano}".strip()
+    if codigo.startswith("TEDUCA"):
+        return f"Tesouro Educa+ {ano}".strip()
+    return None
+
+
+def _is_rf_ou_tesouro(classe: str) -> bool:
+    nome_lower = (classe or "").lower()
+    return any(
+        k in nome_lower
+        for k in ("tesouro", "renda fixa", "fundo rf", "fundo renda fixa")
+    )
+
+
+def _short_asset_label(label: str, max_len: int = 30) -> str:
+    texto = " ".join(str(label or "").split())
+    if len(texto) <= max_len:
+        return texto
+    return texto[:max_len - 1].rstrip() + "…"
+
+
+def _portfolio_position_label(pos: dict) -> str:
+    ticker = str(pos.get("ticker") or "").upper().strip()
+    nome = str(pos.get("nome") or "").strip()
+    classe = str(pos.get("classe") or "")
+
+    if "tesouro" in classe.lower():
+        return _label_tesouro_codigo(ticker) or nome or ticker
+
+    if _is_rf_ou_tesouro(classe):
+        if nome and nome.upper() != ticker:
+            return nome
+        if ticker and not ticker[:1].isalpha():
+            return f"{classe} {ticker}".strip()
+
+    return ticker or nome
+
+
 def _fig_donut_classes(classes: list) -> go.Figure:
     nomes = [c["nome"] for c in classes]
     valores = [c["valor"] for c in classes]
@@ -254,23 +303,40 @@ def _fig_br_exterior(br: float, ext: float) -> go.Figure:
 def _fig_top_posicoes(posicoes: list) -> go.Figure:
     top = sorted(posicoes, key=lambda p: float(p.get("valor_mercado") or 0), reverse=True)[:10]
     top = list(reversed(top))
-    labels = [p["ticker"] for p in top]
+    labels = [_short_asset_label(_portfolio_position_label(p)) for p in top]
     valores = [float(p.get("valor_mercado") or 0) for p in top]
     pct = [float(p.get("pct_carteira") or 0) for p in top]
     cores = [p.get("cor", _COR_INVEST) for p in top]
+    customdata = [
+        [
+            str(p.get("ticker") or ""),
+            str(p.get("nome") or ""),
+            str(p.get("classe") or ""),
+            float(p.get("pct_carteira") or 0),
+        ]
+        for p in top
+    ]
     fig = go.Figure(go.Bar(
         x=valores, y=labels, orientation="h",
         marker_color=cores,
         text=[f"{v:.1f}%" for v in pct],
         textposition="outside",
-        hovertemplate="<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>",
+        customdata=customdata,
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Ticker/código: %{customdata[0]}<br>"
+            "Nome: %{customdata[1]}<br>"
+            "Classe: %{customdata[2]}<br>"
+            "Participação: %{customdata[3]:.1f}%<br>"
+            "Valor: R$ %{x:,.2f}<extra></extra>"
+        ),
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font_color=_COR_NEUTRO,
         margin={"t": 8, "b": 8, "l": 0, "r": 0}, height=285,
         xaxis={"gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
-        yaxis={"showgrid": False},
+        yaxis={"showgrid": False, "automargin": True, "tickfont": {"size": 11}},
         showlegend=False,
     )
     return fig
@@ -374,7 +440,8 @@ def _secao_raio_x_portfolio(carteira: dict, evolucao: dict, classes: list) -> No
     with m3:
         st.markdown(_mini_metric("N efetivo", f"{n_eff:.1f}", "Ativos equivalentes por diversificação", _COR_ALERTA if n_eff < 10 else _COR_FLUXO), unsafe_allow_html=True)
     with m4:
-        st.markdown(_mini_metric("Top 5", f"{top5:.1f}%", f"Maior posição: {top1['ticker']} ({top1['pct_carteira']:.1f}%)", _COR_NEGATIVO if top5 > 50 else _COR_FLUXO), unsafe_allow_html=True)
+        top1_label = _short_asset_label(_portfolio_position_label(top1), 24)
+        st.markdown(_mini_metric("Top 5", f"{top5:.1f}%", f"Maior posição: {top1_label} ({top1['pct_carteira']:.1f}%)", _COR_NEGATIVO if top5 > 50 else _COR_FLUXO), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
