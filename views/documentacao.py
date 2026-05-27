@@ -1277,44 +1277,211 @@ def _set_selected(flow_key: str, node_id: str) -> None:
     st.session_state[f"doc_selected_{flow_key}"] = node_id
 
 
+def _flow_sequence(flow: FlowSpec) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (node_id, flow.nodes[node_id].title)
+        for _, node_ids in flow.rows
+        for node_id in node_ids
+    )
+
+
+_FLOW_DETAIL_OVERRIDES = {
+    "aportes_sp": {
+        "formula": "Capital novo do mes = aporte mensal configurado\nCotas compradas = aporte mensal / preco do ativo",
+        "exemplo": "Aporte mensal = R$ 1.000\nPreco do ativo = R$ 25\nCotas compradas = 1.000 / 25 = 40 cotas",
+        "interpretacao": "O simulador reproduz acumulacao recorrente, aproximando a experiencia de quem investe todo mes.",
+    },
+    "selic_sp": {
+        "formula": "Valor acumulado = valor anterior x (1 + taxa Selic mensal) + aporte do mes",
+        "exemplo": "Valor anterior = R$ 10.000\nSelic mensal = 0,80%\nAporte = R$ 1.000\nValor = 10.000 x 1,008 + 1.000 = R$ 11.080",
+        "interpretacao": "A estrategia de acoes precisa superar uma alternativa simples de renda fixa para justificar o risco.",
+    },
+    "montante_sp": {
+        "formula": "Montante final = soma(cotas do ativo x preco final do ativo) + caixa residual",
+        "exemplo": "Ativo A: 100 cotas x R$ 30 = R$ 3.000\nAtivo B: 80 cotas x R$ 25 = R$ 2.000\nMontante final = R$ 5.000",
+        "interpretacao": "O montante mostra o patrimonio acumulado da carteira ao fim da simulacao.",
+    },
+    "margem_sp": {
+        "formula": "Margem vs benchmark = ((montante da estrategia - montante benchmark) / montante benchmark) x 100",
+        "exemplo": "Estrategia = R$ 120.000\nSelic = R$ 100.000\nMargem = ((120.000 - 100.000) / 100.000) x 100 = 20%",
+        "interpretacao": "A margem indica quanto a estrategia adicionou ou perdeu em relacao a uma alternativa comparavel.",
+    },
+    "backtest_cp": {
+        "formula": "Retorno acumulado = ((valor final - total aportado) / total aportado) x 100",
+        "exemplo": "Total aportado = R$ 60.000\nValor final = R$ 78.000\nRetorno acumulado = ((78.000 - 60.000) / 60.000) x 100 = 30%",
+        "interpretacao": "O backtest traduz a selecao dos lideres em uma trilha historica de patrimonio.",
+    },
+    "comparacao_cp": {
+        "formula": "Alpha = retorno da estrategia - retorno do benchmark",
+        "exemplo": "Retorno da estrategia = 18%\nRetorno Selic = 11%\nAlpha = 18% - 11% = 7 p.p.",
+        "interpretacao": "A comparacao mostra se a carteira criada gerou retorno adicional depois de considerar alternativas simples.",
+    },
+    "aprovacao_cp": {
+        "formula": "Segmento aprovado se margem minima, recencia e criterios de benchmark forem atendidos",
+        "exemplo": "Margem minima exigida = 5 p.p.\nMargem observada = 8 p.p.\nUltima lideranca recente = sim\nResultado: segmento aprovado",
+        "interpretacao": "A aprovacao impede que um segmento entre na carteira apenas por um resultado isolado.",
+    },
+    "pesos_cp": {
+        "formula": "Peso do ativo = score relativo do ativo / soma dos scores selecionados",
+        "exemplo": "Empresa A score 80, Empresa B score 70\nPeso A = 80 / (80 + 70) = 53,3%",
+        "interpretacao": "Empresas mais fortes recebem mais peso, mas a carteira ainda respeita limites de concentracao.",
+    },
+    "items_ap": {
+        "formula": "Participacao do ativo = valor de mercado do ativo / valor total do portfolio",
+        "exemplo": "Valor do ativo = R$ 12.000\nPortfolio total = R$ 100.000\nParticipacao = 12.000 / 100.000 = 12%",
+        "interpretacao": "A participacao mostra o tamanho real de cada tese dentro da carteira salva.",
+    },
+    "pesos_ap": {
+        "formula": "Score combinado = (score quantitativo x 60%) + (score qualitativo x 40%)",
+        "exemplo": "Score quanti = 80\nScore quali = 70\nScore combinado = 80 x 0,60 + 70 x 0,40 = 76",
+        "interpretacao": "A redistribuicao combina dados historicos com leitura qualitativa para sugerir novos pesos.",
+    },
+    "snapshot_ai": {
+        "formula": "Valor de mercado = quantidade consolidada x cotacao atual",
+        "exemplo": "Quantidade = 300\nCotacao atual = R$ 18\nValor de mercado = 300 x 18 = R$ 5.400",
+        "interpretacao": "O snapshot transforma operacoes dispersas em uma posicao unica e auditavel.",
+    },
+    "classes_ai": {
+        "formula": "Peso da classe = valor da classe / valor total da carteira",
+        "exemplo": "Acoes BR = R$ 45.000\nCarteira total = R$ 150.000\nPeso = 45.000 / 150.000 = 30%",
+        "interpretacao": "A leitura por classe revela a arquitetura da carteira antes da analise por ativo.",
+    },
+    "rentabilidade_ai": {
+        "formula": "Rentabilidade = ((valor atual + proventos - custo total) / custo total) x 100",
+        "exemplo": "Valor atual = R$ 11.000\nProventos = R$ 500\nCusto = R$ 10.000\nRentabilidade = ((11.000 + 500 - 10.000) / 10.000) x 100 = 15%",
+        "interpretacao": "A rentabilidade considera ganho de capital e renda recebida quando os dados estao disponiveis.",
+    },
+    "risco_ai": {
+        "formula": "Concentracao Top 5 = soma dos pesos dos 5 maiores ativos",
+        "exemplo": "Pesos dos 5 maiores = 18% + 14% + 10% + 8% + 6%\nConcentracao Top 5 = 56%",
+        "interpretacao": "Quanto maior a concentracao, maior a dependencia de poucas posicoes.",
+    },
+    "stress_ai": {
+        "formula": "Perda estimada = valor atual da carteira x choque do cenario",
+        "exemplo": "Carteira = R$ 200.000\nChoque = -18%\nPerda estimada = 200.000 x 18% = R$ 36.000",
+        "interpretacao": "O stress test ajuda a medir se a carteira e compativel com o risco que o usuario suporta.",
+    },
+}
+
+
+def _generic_flow_detail(flow: FlowSpec, node: FlowNode) -> dict[str, str]:
+    dados = "\n".join(f"- {item}" for item in node.contains)
+    formula = (
+        "Saida da etapa = dados validados + regra da etapa + passagem para a proxima camada\n"
+        f"Camada atual = {node.layer}"
+    )
+    exemplo = (
+        f"Etapa: {node.title}\n"
+        f"Entrada: informacoes da camada {node.layer}\n"
+        f"Processamento: {node.summary}\n"
+        "Saida: dado organizado para a proxima etapa do fluxo."
+    )
+    detail = {
+        "titulo": node.title,
+        "objetivo": node.summary,
+        "dados": dados or "Dados consolidados da etapa anterior.",
+        "formula": formula,
+        "exemplo": exemplo,
+        "interpretacao": node.why,
+        "impacto": (
+            "Define a qualidade da informacao que avanca no fluxo e influencia a confiabilidade "
+            "das conclusoes seguintes."
+        ),
+        "limitacao": (
+            "Esta etapa deve ser lida dentro do contexto do fluxo completo. Dados incompletos, "
+            "defasados ou muito concentrados podem distorcer a conclusao."
+        ),
+    }
+    detail.update(_FLOW_DETAIL_OVERRIDES.get(node.id, {}))
+    if flow.key == "simulador_portfolio":
+        detail["impacto"] = "Afeta o patrimonio simulado, a comparacao com benchmarks e a aprovacao historica da estrategia."
+    elif flow.key == "criacao_portfolio":
+        detail["impacto"] = "Afeta a selecao dos lideres, a distribuicao de pesos e a carteira modelo que sera salva."
+    elif flow.key == "analise_portfolio":
+        detail["impacto"] = "Afeta a leitura qualitativa, a redistribuicao sugerida e o relatorio final do portfolio."
+    elif flow.key == "analise_investimentos":
+        detail["impacto"] = "Afeta os KPIs, os graficos, os alertas e a interpretacao da carteira atual."
+    return detail
+
+
+def _select_fluxograma_documentacao(flow_key: str, node_id: str) -> None:
+    st.session_state[f"doc_fluxograma_{flow_key}"] = node_id
+
+
 def _render_flow(flow: FlowSpec) -> None:
     st.markdown(
         f"""
         <div class="doc-intro">
             <div class="doc-intro-title">{html.escape(flow.title)}</div>
-            <div class="doc-intro-text">{html.escape(flow.subtitle)}</div>
+            <div class="doc-intro-text">
+                {html.escape(flow.subtitle)}
+                Cada bloco e clicavel e atualiza o painel explicativo com objetivo, dados,
+                regra de calculo, exemplo, interpretacao e cuidados de leitura.
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    selected_key = f"doc_selected_{flow.key}"
+    sequence = _flow_sequence(flow)
+    selected_key = f"doc_fluxograma_{flow.key}"
     if selected_key not in st.session_state:
         st.session_state[selected_key] = flow.default
 
-    left, right = st.columns([1.45, 1], gap="large")
-    with left:
-        st.markdown('<div class="doc-flow-shell">', unsafe_allow_html=True)
-        for idx, (label, node_ids) in enumerate(flow.rows):
-            st.markdown(f'<div class="doc-row-label">{html.escape(label)}</div>', unsafe_allow_html=True)
-            cols = st.columns(len(node_ids), gap="small")
-            for col, node_id in zip(cols, node_ids):
-                node = flow.nodes[node_id]
-                with col:
-                    st.button(
-                        node.title,
-                        key=f"doc_{flow.key}_{node_id}",
-                        use_container_width=True,
-                        on_click=_set_selected,
-                        args=(flow.key, node_id),
-                    )
-            if idx < len(flow.rows) - 1:
-                st.markdown('<div class="doc-arrow">v</div>', unsafe_allow_html=True)
+    col_fluxo, col_detalhe = st.columns([1.05, 1.45], gap="large")
+    with col_fluxo:
+        st.markdown(
+            '<div class="doc-av-shell"><div class="doc-av-flow-title">Sequencia do fluxo</div>',
+            unsafe_allow_html=True,
+        )
+        for idx, (node_id, label) in enumerate(sequence):
+            node = flow.nodes[node_id]
+            selected = st.session_state[selected_key] == node_id
+            button_label = f"{node.layer}: {label}"
+            st.button(
+                button_label,
+                key=f"doc_fluxo_{flow.key}_{node_id}",
+                use_container_width=True,
+                type="primary" if selected else "secondary",
+                on_click=_select_fluxograma_documentacao,
+                args=(flow.key, node_id),
+            )
+            if idx < len(sequence) - 1:
+                st.markdown('<div class="doc-av-arrow">↓</div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
     node = flow.nodes.get(st.session_state[selected_key], flow.nodes[flow.default])
-    with right:
-        _render_node_detail(node)
+    etapa = _generic_flow_detail(flow, node)
+    with col_detalhe:
+        st.markdown(
+            f"""
+            <div class="doc-av-detail">
+                <div class="doc-av-kicker">Etapa selecionada</div>
+                <div class="doc-av-title">{html.escape(etapa["titulo"])}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        _render_av_field("Objetivo", etapa["objetivo"])
+        _render_av_field("Dados utilizados", etapa["dados"])
+
+        st.markdown('<div class="doc-av-section"><div class="doc-av-label">Formula matematica ou regra de calculo</div></div>', unsafe_allow_html=True)
+        st.code(etapa["formula"], language="text")
+
+        st.markdown('<div class="doc-av-section"><div class="doc-av-label">Exemplo numerico simplificado</div></div>', unsafe_allow_html=True)
+        st.code(etapa["exemplo"], language="text")
+
+        _render_av_field("Interpretacao", etapa["interpretacao"])
+        st.markdown(
+            f"""
+            <div class="doc-av-impact">
+                <div class="doc-av-label">Impacto no fluxo</div>
+                <div class="doc-av-text">{html.escape(etapa["impacto"])}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.warning(etapa["limitacao"])
         if flow.notes:
             for note in flow.notes:
                 st.caption(note)
