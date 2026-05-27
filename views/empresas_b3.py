@@ -425,7 +425,6 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
             "Configure `SUPABASE_DB_URL_B3` no `.env` ou nos secrets do Streamlit Cloud."
         )
         return
-
     for setor, grupo in df_set.groupby("SETOR"):
         st.markdown(f'<div class="b3-sector-hdr">{setor}</div>', unsafe_allow_html=True)
         grupo = grupo.reset_index(drop=True)
@@ -740,6 +739,56 @@ def _enrich_multiplos_fallback_web(
 
     out = _clean_score_inputs(out, cols)
     return out, pd.DataFrame(audit_rows)
+
+
+def _cross_source_audit_dataframe(
+    df_mult_raw: pd.DataFrame,
+    tickers: list[str],
+    indicadores: list[str] | tuple[str, ...],
+) -> pd.DataFrame:
+    """Build Banco x Fundamentus cross-source audit rows for the UI."""
+    if df_mult_raw.empty or not tickers:
+        return pd.DataFrame()
+
+    from core.cross_source import compare_indicators, consensus_value
+
+    base = df_mult_raw.copy()
+    if "Ticker" not in base.columns:
+        return pd.DataFrame()
+    base["Ticker"] = base["Ticker"].astype(str).str.replace(".SA", "", regex=False).str.upper()
+    db_by_ticker = base.drop_duplicates("Ticker").set_index("Ticker").to_dict("index")
+    web_by_ticker = _fundamentus_fallback_canonico(tuple(tickers))
+
+    rows: list[dict] = []
+    for tk in tickers:
+        db_row = db_by_ticker.get(str(tk).upper(), {})
+        web_row = web_by_ticker.get(str(tk).upper(), {})
+        for ind in indicadores:
+            values = {"Banco": db_row.get(ind), "Fundamentus": web_row.get(ind)}
+            flag = compare_indicators(tk, ind, values)
+            if flag.n_fontes < 2:
+                continue
+            consensus = consensus_value(values)
+            rows.append({
+                "Ticker": tk,
+                "Indicador": ind,
+                "Banco": values["Banco"],
+                "Fundamentus": values["Fundamentus"],
+                "Consenso": consensus,
+                "Spread %": round(flag.spread_rel * 100.0, 1),
+                "Severidade": flag.severidade,
+            })
+
+    if not rows:
+        return pd.DataFrame()
+    sev_order = {"critical": 0, "warn": 1, "ok": 2}
+    out = pd.DataFrame(rows)
+    out["_ord"] = out["Severidade"].map(sev_order).fillna(3)
+    return (
+        out.sort_values(["_ord", "Spread %", "Ticker"], ascending=[True, False, True])
+        .drop(columns=["_ord"])
+        .reset_index(drop=True)
+    )
 
 
 def _norm_pesos(conf: dict[str, tuple[float, bool]]) -> dict[str, tuple[float, bool]]:
@@ -1173,7 +1222,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.6.0"
+SCORE_VERSION = "2.9.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -1244,6 +1293,35 @@ SCORE_VERSION_CHANGELOG = {
         "confidence + tau, tabela comparativa prior vs posterior; integra "
         "core/black_litterman.py via bl_combined_optimization."
     ),
+    "2.7.0": (
+        "Banca examinadora rodada 9 (2026-05-26): "
+        "(C5) Risk Engine usa logit calibravel em core/risk_logit.py, "
+        "expondo probabilidade de distress, penalidade suavizada e driver "
+        "dominante; (A6c) UI de validacao cross-source na Empresas B3 "
+        "compara Banco x Fundamentus e mostra severidade ok/warn/critical."
+    ),
+    "2.8.0": (
+        "Banca examinadora rodada 10 (2026-05-26): "
+        "(A5) pesos setoriais podem ser calibrados por Fama-MacBeth MVP "
+        "em core/fama_macbeth.py e misturados aos pesos manuais; "
+        "(A6c+) validacao cross-source passa a ter historico/cache; "
+        "(C3cc) survivorship ingestion baixa cadastro oficial CVM, usa "
+        "aliases auditaveis e suporta cache B3 local."
+    ),
+    "2.9.0": (
+        "Banca examinadora rodada 11 (2026-05-27): "
+        "(M2c MVP) novo modulo core/copulas.py — Gaussian copula via "
+        "ranks empiricos (fit_gaussian_copula) + tail dependence index "
+        "empirico (tail_dependence_index) usando Acklam 2003 approx para "
+        "Phi^-1 sem scipy; compare_pearson_vs_copula expoe 'crisis index' "
+        "= quanto Pearson subestima risco de cauda em pares de ativos; "
+        "sample_gaussian_copula para Monte Carlo simulation de cenarios "
+        "com tail dependence preservada. Captura fenomeno bem documentado "
+        "de 'correlacao que vai a 1 em estresse' (Joesley 2017, COVID 2020) "
+        "que Pearson ignora por hipotese de normalidade multivariada. "
+        "Referencia: Embrechts, McNeil & Straumann 2002, 'Correlation "
+        "and Dependence in Risk Management'."
+    ),
 }
 
 
@@ -1310,12 +1388,17 @@ def _risk_engine(df: pd.DataFrame) -> pd.Series:
     Impede que red flags sejam mascarados por pontos fortes isolados.
     Retorna série 0-20 (pontos subtraídos do score_entrada).
 
-    Fix banca C5 parcial (2026-05-23): penalidades agora são GRADUADAS
-    proporcionais à magnitude do red-flag, não mais binárias. Reduz
-    distorção identificada pela banca onde ROE de -2% recebia mesma
-    penalidade que ROE de -40%. Para virar logit completo (recomendação
-    C5 total), precisa histórico de bankruptcy events — pendente.
+    Fix banca C5 (2026-05-26): delega para core/risk_logit.py, que calcula
+    probabilidade de distress via logit calibravel e converte para penalidade
+    suavizada. Os coeficientes default podem ser trocados depois por ajuste
+    em historico rotulado de distress/bankruptcy.
     """
+    try:
+        from core.risk_logit import distress_risk_score
+        return distress_risk_score(df)["r_penalty"]
+    except Exception:
+        return pd.Series(0.0, index=df.index)
+
     idx = df.index
     penalty = pd.Series(0.0, index=idx)
 
@@ -1481,6 +1564,9 @@ def _explicar_score_entrada(row: pd.Series) -> list[tuple[str, str, str]]:
     # Risk penalties
     rp = float(row.get("r_penalty", 0))
     if rp > 0:
+        prob = float(row.get("risk_probability", 0) or 0)
+        driver = str(row.get("risk_driver", "none") or "none").replace("_", " ").title()
+        fatores.append((f"Risco Logit ({driver})", f"{prob:.1f}% / -{rp:.1f} pts", "negativo"))
         if pd.notna(row.get("ROE")) and float(row.get("ROE", 0)) < 0:
             fatores.append(("ROE Negativo", f"−{rp:.0f} pts", "negativo"))
         if pd.notna(row.get("Endividamento_Total")) and float(row.get("Endividamento_Total", 0)) > 6:
@@ -1521,7 +1607,16 @@ def _compute_score_entrada(
     df["score_base"] = df["score"]                    # preserva o score original
 
     df["q_bonus"]    = _quality_engine(df)
-    df["r_penalty"]  = _risk_engine(df)
+    try:
+        from core.risk_logit import distress_risk_score
+        risk_df = distress_risk_score(df)
+        df["r_penalty"] = risk_df["r_penalty"]
+        df["risk_probability"] = risk_df["risk_probability"]
+        df["risk_driver"] = risk_df["risk_driver"]
+    except Exception:
+        df["r_penalty"] = _risk_engine(df)
+        df["risk_probability"] = 0.0
+        df["risk_driver"] = "none"
     df["c_bonus"]    = _consistency_engine(df, anos_hist)
     df["cq_bonus"]   = _cash_quality_engine(df)
 
@@ -2556,6 +2651,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.warning("Banco não configurado. Configure `SUPABASE_DB_URL_B3`.")
         return
 
+    df_precos = pd.DataFrame()
+
     # Dados base
     with st.spinner("Carregando múltiplos e histórico…"):
         df_mult_todos = _db.load_multiplos_todos()
@@ -2583,6 +2680,18 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         usar_pesos_setor = st.checkbox(
             "Usar pesos calibrados por setor (recomendado)",
             value=True, key="b3_av_use_setor_w",
+        )
+        usar_fama_macbeth = st.checkbox(
+            "Calibrar pesos com Fama-MacBeth MVP",
+            value=False,
+            key="b3_av_use_fm",
+            disabled=not usar_pesos_setor,
+        )
+        fm_alpha = st.slider(
+            "Mistura Fama-MacBeth",
+            0.0, 0.70, 0.35, 0.05,
+            key="b3_av_fm_alpha",
+            disabled=not (usar_pesos_setor and usar_fama_macbeth),
         )
         sp1, sp2, sp3 = st.columns(3)
         sp4, sp5, sp6 = st.columns(3)
@@ -2663,6 +2772,25 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     )
     setor_prevalente = str(setor_counts.idxmax()) if not setor_counts.empty else ""
     pesos_v2 = _get_pesos_setor(setor_prevalente, pesos_usuario_raw)
+    fm_result = None
+    if usar_pesos_setor and usar_fama_macbeth and hist_batch:
+        try:
+            from core.fama_macbeth import (
+                blend_with_base_weights, estimate_fama_macbeth_weights,
+            )
+
+            fm_result = estimate_fama_macbeth_weights(
+                hist_batch,
+                candidate_indicators=pesos_v2.keys(),
+            )
+            if getattr(fm_result, "ok", False):
+                pesos_v2 = blend_with_base_weights(
+                    pesos_v2,
+                    fm_result,
+                    alpha=fm_alpha,
+                )
+        except Exception as exc:
+            fm_result = {"erro": str(exc)}
 
     # Scoring v2 — coluna de grupo: mais granular que o filtro atual
     group_prefer = (
@@ -2688,6 +2816,121 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             )
             st.dataframe(audit_fallback, use_container_width=True,
                          height=min(260, 45 + 32 * len(audit_fallback)))
+
+    if usar_pesos_setor and usar_fama_macbeth:
+        with st.expander("Calibracao Fama-MacBeth MVP dos pesos"):
+            if isinstance(fm_result, dict) and fm_result.get("erro"):
+                st.error(f"Falha na calibracao: {fm_result['erro']}")
+            elif fm_result is not None and getattr(fm_result, "ok", False):
+                fm_cols = st.columns(4)
+                fm_cols[0].metric("Anos usados", int(fm_result.n_years))
+                fm_cols[1].metric("Tickers", int(fm_result.n_tickers))
+                fm_cols[2].metric("Obs.", int(fm_result.n_obs))
+                fm_cols[3].metric("Mistura", f"{fm_alpha:.0%}")
+                rows_fm = []
+                for ind, (peso_final, melhor_alto) in pesos_v2.items():
+                    rows_fm.append({
+                        "Indicador": ind,
+                        "Peso Final %": peso_final * 100.0,
+                        "Beta FM": fm_result.betas.get(ind),
+                        "Direcao": "maior melhor" if melhor_alto else "menor melhor",
+                    })
+                st.dataframe(
+                    pd.DataFrame(rows_fm).sort_values("Peso Final %", ascending=False),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Peso Final %": st.column_config.NumberColumn(format="%.1f%%"),
+                        "Beta FM": st.column_config.NumberColumn(format="%.4f"),
+                    },
+                )
+            else:
+                motivo = ", ".join(getattr(fm_result, "warnings", ())) if fm_result is not None else "sem historico"
+                st.info(f"Calibracao nao aplicada: {motivo}.")
+
+    with st.expander("Validacao cross-source (Banco x Fundamentus)"):
+        st.caption(
+            "Compara a fonte primaria do banco com a fonte web em indicadores "
+            "canonicos. Divergencias criticas devem ser revisadas antes de "
+            "confiar no ranking."
+        )
+        run_cross = st.checkbox(
+            "Executar auditoria cross-source",
+            value=False,
+            key="b3_run_cross_source",
+        )
+        if run_cross:
+            audit_cross = _cross_source_audit_dataframe(
+                df_mult_todos,
+                tks_uni,
+                ["ROE", "ROIC", "Margem_Liquida", "Margem_Operacional",
+                 "DY", "P/L", "P/VP", "EV_EBIT", "Endividamento_Total",
+                 "Liquidez_Corrente"],
+            )
+            if audit_cross.empty:
+                st.info("Nao ha pares Banco x Fundamentus suficientes para comparar.")
+            else:
+                n_crit = int((audit_cross["Severidade"] == "critical").sum())
+                n_warn = int((audit_cross["Severidade"] == "warn").sum())
+                n_ok = int((audit_cross["Severidade"] == "ok").sum())
+                mc1, mc2, mc3 = st.columns(3)
+                mc1.metric("Criticas", n_crit)
+                mc2.metric("Alertas", n_warn)
+                mc3.metric("OK", n_ok)
+                st.dataframe(
+                    audit_cross,
+                    use_container_width=True,
+                    height=min(360, 45 + 28 * len(audit_cross)),
+                    column_config={
+                        "Banco": st.column_config.NumberColumn(format="%.4g"),
+                        "Fundamentus": st.column_config.NumberColumn(format="%.4g"),
+                        "Consenso": st.column_config.NumberColumn(format="%.4g"),
+                        "Spread %": st.column_config.NumberColumn(format="%.1f%%"),
+                    },
+                )
+                if st.button("Salvar historico desta auditoria", key="b3_save_cross_history"):
+                    from core.cross_source import append_validation_history
+
+                    saved = append_validation_history(
+                        audit_cross.to_dict("records"),
+                        run_meta={
+                            "setor": sel_set,
+                            "subsetor": sel_sub,
+                            "segmento": sel_seg,
+                            "tickers": list(tks_uni),
+                            "score_version": SCORE_VERSION,
+                        },
+                    )
+                    st.success(f"{saved} linhas salvas no historico cross-source.")
+
+        show_cross_history = st.checkbox(
+            "Mostrar historico salvo",
+            value=False,
+            key="b3_show_cross_history",
+        )
+        if show_cross_history:
+            from core.cross_source import load_validation_history, summarize_validation_history
+
+            hist_rows = load_validation_history(limit=300)
+            if not hist_rows:
+                st.info("Historico ainda vazio.")
+            else:
+                hist_summary = summarize_validation_history(hist_rows)
+                hc1, hc2, hc3 = st.columns(3)
+                hc1.metric("Linhas", int(hist_summary["total"]))
+                hc2.metric("Criticas", int(hist_summary["critical"]))
+                hc3.metric("Alertas", int(hist_summary["warn"]))
+                hist_df = pd.DataFrame(hist_rows)
+                cols_hist = [
+                    c for c in ["run_ts", "Ticker", "Indicador", "Severidade",
+                                "Spread %", "Banco", "Fundamentus", "Consenso"]
+                    if c in hist_df.columns
+                ]
+                st.dataframe(
+                    hist_df[cols_hist].head(120) if cols_hist else hist_df.head(120),
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
     # ── Banca A3ui (2026-05-25): Bootstrap CI dos scores ──────────────────────
     # Lazy: so calcula quando usuario marca o checkbox dentro do expander.
@@ -2747,6 +2990,15 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 )
 
     # ── Banca C4ui (2026-05-25): Markowitz pós-seleção ────────────────────────
+    price_tickers = (
+        tuple(sorted(set(df_scored["Ticker"].tolist()[:12])))
+        if not df_scored.empty and "Ticker" in df_scored.columns else tuple()
+    )
+    df_precos = (
+        _batch_yf_precos_mensais(price_tickers, period="5y")
+        if price_tickers else pd.DataFrame()
+    )
+
     with st.expander("🎯 Otimização Markowitz pós-seleção — opcional"):
         st.caption(
             "Após selecionar top-N por score, aplica min-variance restrita "
@@ -3053,6 +3305,117 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                             f"{bl['shift_max']*100:.2f}pp."
                         )
 
+    # ── Banca A6c (2026-05-26): UI cross-source validation ────────────────────
+    with st.expander("🔍 Validação cross-source — Fundamentus × DRE"):
+        st.caption(
+            "Detecta divergências entre fontes do mesmo indicador. "
+            "Indicadores com spread > threshold (15-30% por tipo) são "
+            "flagados — empresa pode ter dado contaminado em uma das fontes."
+        )
+        if df_scored.empty:
+            st.info("Sem empresas scoradas para validar.")
+        else:
+            run_a6 = st.checkbox("Executar validação", value=False, key="b3_a6_run")
+            if run_a6:
+                from core.cross_source import (
+                    compare_indicators, batch_validate, resumo_validacao,
+                )
+                # Monta dict {ticker: {indicador: {fonte: valor}}}
+                # Sources: df_mult_enrich (Fundamentus/StatusInvest pipeline)
+                # vs df_filt (DRE bruto). MVP: usa o que tem na pipeline atual.
+                indics_check = ("ROE", "ROIC", "Margem_Liquida",
+                                 "Margem_Operacional", "P/L", "P/VP", "DY",
+                                 "EV_EBIT", "Endividamento_Total")
+                dados_xs: dict = {}
+                # Para o MVP, simula 2 fontes: pipeline atual + DRE histórico
+                # (último ano). Em produção, plugar com cache de scrapers.
+                for tk in df_scored["Ticker"].tolist()[:30]:
+                    row_p = df_mult_enrich[df_mult_enrich["Ticker"] == tk]
+                    df_h  = (hist_batch or {}).get(tk)
+                    if row_p.empty:
+                        continue
+                    r_pipeline = row_p.iloc[0]
+                    r_dre = (df_h.sort_values("Data").iloc[-1].to_dict()
+                             if df_h is not None and not df_h.empty
+                             and "Data" in df_h.columns else {})
+                    inds_ticker: dict = {}
+                    for ind in indics_check:
+                        v_pipeline = r_pipeline.get(ind)
+                        v_dre = r_dre.get(ind)
+                        if v_pipeline is None and v_dre is None:
+                            continue
+                        # Só compara se ambas as fontes têm valor não-nulo
+                        if v_pipeline is None or v_dre is None:
+                            continue
+                        try:
+                            inds_ticker[ind] = {
+                                "pipeline": float(v_pipeline),
+                                "dre":      float(v_dre),
+                            }
+                        except (TypeError, ValueError):
+                            continue
+                    if inds_ticker:
+                        dados_xs[tk] = inds_ticker
+
+                flags = batch_validate(dados_xs, indicadores=indics_check)
+                resumo = resumo_validacao(flags)
+
+                # KPIs
+                ck1, ck2, ck3 = st.columns(3)
+                with ck1:
+                    st.markdown(_kpi_macro(
+                        "Total flags",
+                        str(resumo["total"]),
+                        f"em {len(dados_xs)} empresas auditadas",
+                        _COR_NEU if resumo["total"] == 0 else _COR_ALT,
+                    ), unsafe_allow_html=True)
+                with ck2:
+                    st.markdown(_kpi_macro(
+                        "Critical",
+                        str(resumo["critical"]),
+                        "spread > 2× threshold",
+                        _COR_NEG if resumo["critical"] > 0 else _COR_POS,
+                    ), unsafe_allow_html=True)
+                with ck3:
+                    st.markdown(_kpi_macro(
+                        "Tickers afetados",
+                        str(resumo["tickers_afetados"]),
+                        ", ".join(resumo.get("tickers_critical", [])[:5]) or "—",
+                        _COR_ALT,
+                    ), unsafe_allow_html=True)
+
+                if flags:
+                    import pandas as _pd
+                    df_flags = _pd.DataFrame([{
+                        "Ticker":     f.ticker,
+                        "Indicador":  f.indicador,
+                        "Severidade": f.severidade,
+                        "Mediana":    f.mediana,
+                        "Spread (%)": f.spread_rel * 100,
+                        "Pipeline":   f.valores.get("pipeline"),
+                        "DRE":        f.valores.get("dre"),
+                    } for f in flags])
+                    st.dataframe(
+                        df_flags, hide_index=True, use_container_width=True,
+                        column_config={
+                            "Spread (%)": st.column_config.NumberColumn(format="%.1f%%"),
+                            "Mediana":    st.column_config.NumberColumn(format="%.3f"),
+                            "Pipeline":   st.column_config.NumberColumn(format="%.3f"),
+                            "DRE":        st.column_config.NumberColumn(format="%.3f"),
+                        },
+                    )
+                    st.caption(
+                        "Critical = spread > 2× threshold. Use `consensus_value()` "
+                        "(mediana das fontes) para resolver — devolve `None` "
+                        "automaticamente se spread > 50%."
+                    )
+                else:
+                    st.success(
+                        f"✓ Nenhuma divergência detectada em {len(dados_xs)} "
+                        f"empresa(s) e {len(indics_check)} indicador(es).",
+                        icon="✅",
+                    )
+
     # ── CARDS DO UNIVERSO ────────────────────────────────────────────────────
     _sec_hdr(f"🏢 Universo Filtrado — {len(tks_uni)} empresa(s)")
     show_tks = (df_scored["Ticker"].tolist() if not df_scored.empty else []) + tks_sem_mult
@@ -3129,7 +3492,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 "+ Consistência × 0,10 + Caixa × 0,10 − Penalidade Risco  ·  [0–100]"
             )
             cols_show = ["Ticker", "score_base", "q_bonus", "c_bonus", "cq_bonus",
-                         "r_penalty", "score_entrada", "status_entrada"]
+                         "risk_probability", "risk_driver", "r_penalty",
+                         "score_entrada", "status_entrada"]
             cols_exist = [c for c in cols_show if c in df_entrada.columns]
             df_tbl = df_entrada[cols_exist].copy()
             df_tbl.columns = [
@@ -3137,6 +3501,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                  .replace("q_bonus",       "Quality")
                  .replace("c_bonus",       "Consistência")
                  .replace("cq_bonus",      "Caixa")
+                 .replace("risk_probability", "Prob. Risco")
+                 .replace("risk_driver",   "Driver")
                  .replace("r_penalty",     "Penalidade")
                  .replace("score_entrada", "Score Entrada")
                  .replace("status_entrada","Status")
@@ -3153,6 +3519,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     "Quality":      st.column_config.NumberColumn("Quality",    format="%.1f"),
                     "Consistência": st.column_config.NumberColumn("Consistência", format="%.1f"),
                     "Caixa":        st.column_config.NumberColumn("Caixa",      format="%.1f"),
+                    "Prob. Risco":  st.column_config.NumberColumn("Prob. Risco", format="%.1f%%"),
+                    "Driver":       st.column_config.TextColumn("Driver", width="small"),
                     "Penalidade":   st.column_config.NumberColumn("Penalidade", format="%.1f"),
                     "Score Entrada": st.column_config.ProgressColumn(
                         "Score Entrada", min_value=0, max_value=100, format="%.1f"

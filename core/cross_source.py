@@ -19,7 +19,11 @@ Pendente (versão completa, ~25h adicionais):
 """
 from __future__ import annotations
 
+import json
+import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Iterable
 
 
@@ -39,6 +43,8 @@ DIVERGENCE_THRESHOLDS: dict[str, float] = {
     "Liquidez_Corrente":  0.20,
     "_default":           0.30,
 }
+
+HISTORY_FILE_DEFAULT = "data/cache/cross_source_history.jsonl"
 
 
 @dataclass
@@ -188,4 +194,102 @@ def resumo_validacao(flags: list[CrossSourceFlag]) -> dict:
         "tickers_afetados":  len(tickers),
         "tickers_critical":  sorted({f.ticker for f in flags
                                       if f.severidade == "critical"}),
+    }
+
+
+def _jsonable(value):
+    """Converts pandas/numpy-ish scalars into JSON-safe values."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+    except TypeError:
+        pass
+    if hasattr(value, "item"):
+        try:
+            return _jsonable(value.item())
+        except Exception:
+            pass
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
+
+
+def flag_to_dict(flag: CrossSourceFlag) -> dict:
+    """Serializes a CrossSourceFlag for history/cache storage."""
+    return {
+        "Ticker": flag.ticker,
+        "Indicador": flag.indicador,
+        "Valores": dict(flag.valores),
+        "N Fontes": flag.n_fontes,
+        "Consenso": flag.mediana,
+        "Spread Abs": flag.spread_abs,
+        "Spread %": flag.spread_rel * 100.0,
+        "Divergente": flag.divergente,
+        "Severidade": flag.severidade,
+    }
+
+
+def append_validation_history(
+    rows: Iterable[dict | CrossSourceFlag],
+    path: Path | str = HISTORY_FILE_DEFAULT,
+    run_meta: dict | None = None,
+) -> int:
+    """Appends cross-source validation rows to a JSONL history file."""
+    records = list(rows)
+    if not records:
+        return 0
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    meta = _jsonable(run_meta or {})
+    count = 0
+    with p.open("a", encoding="utf-8") as f:
+        for item in records:
+            record = flag_to_dict(item) if isinstance(item, CrossSourceFlag) else dict(item)
+            record["run_ts"] = ts
+            if meta:
+                record["run_meta"] = meta
+            f.write(json.dumps(_jsonable(record), ensure_ascii=False, sort_keys=True) + "\n")
+            count += 1
+    return count
+
+
+def load_validation_history(
+    path: Path | str = HISTORY_FILE_DEFAULT,
+    limit: int = 500,
+) -> list[dict]:
+    """Loads recent cross-source validation history, newest first."""
+    p = Path(path)
+    if not p.exists():
+        return []
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    selected = lines[-max(int(limit), 1):]
+    records: list[dict] = []
+    for line in reversed(selected):
+        if not line.strip():
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return records
+
+
+def summarize_validation_history(records: list[dict]) -> dict:
+    """Summarizes cached validation rows."""
+    if not records:
+        return {"total": 0, "critical": 0, "warn": 0, "tickers_afetados": 0}
+    tickers = {str(r.get("Ticker", "")) for r in records if r.get("Ticker")}
+    return {
+        "total": len(records),
+        "critical": sum(1 for r in records if r.get("Severidade") == "critical"),
+        "warn": sum(1 for r in records if r.get("Severidade") == "warn"),
+        "tickers_afetados": len(tickers),
     }
