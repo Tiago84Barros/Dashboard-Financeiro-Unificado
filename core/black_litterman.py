@@ -230,3 +230,139 @@ def bl_combined_optimization(
         "views_aplicadas":  len(views),
         "shift_max":        shift,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# M3+ (2026-05-27): Integração BL → Markowitz solver
+# ──────────────────────────────────────────────────────────────────────────
+
+def _project_capped_simplex(w_target: np.ndarray, cap: float) -> np.ndarray:
+    """Projeta vetor w_target no simplex restrito {w >= 0, sum(w)=1, w_i <= cap}.
+
+    Algoritmo iterativo robusto:
+      1. Clipa em [0, cap]
+      2. Identifica tickers "lockados" no cap
+      3. Redistribui o restante (1 - soma_lockados) proporcionalmente
+         aos pesos originais dos tickers livres (incluindo zeros, com
+         fallback para uniforme se todos forem zero)
+      4. Repete enquanto algum free estourar cap (raro com bons inputs)
+
+    Se cap * N < 1, retorna uniforme cap*N (impossível atingir 100%
+    com restrição — todos vão pro cap).
+    """
+    n = len(w_target)
+    if cap * n < 0.999:
+        # Impossível somar 1 respeitando o cap → tudo no cap (sum < 1)
+        # Renormaliza para forçar sum=1, mas isso viola cap. Aceita.
+        out = np.full(n, cap)
+        return out / out.sum()
+
+    w = np.clip(w_target, 0.0, None)
+    if w.sum() <= 1e-12:
+        w = np.full(n, 1.0 / n)
+
+    for _ in range(50):  # convergência típica em 2-3 iters
+        # Locked = at cap
+        locked_mask = w >= cap - 1e-12
+        if not locked_mask.any():
+            # Sem locked, basta normalizar
+            return w / w.sum()
+        w[locked_mask] = cap
+        remaining = 1.0 - cap * locked_mask.sum()
+        free_mask = ~locked_mask
+        if not free_mask.any():
+            # Todos lockados — soma <= cap*n; força sum=1 violando cap
+            return w / w.sum()
+        if remaining <= 1e-12:
+            # Nada para distribuir; zera frees
+            w[free_mask] = 0.0
+            return w / w.sum() if w.sum() > 0 else w
+        # Distribui proporcional aos w_target originais dos frees
+        target_free = w_target[free_mask]
+        target_free = np.clip(target_free, 0.0, None)
+        if target_free.sum() <= 1e-12:
+            w[free_mask] = remaining / free_mask.sum()
+        else:
+            w[free_mask] = target_free / target_free.sum() * remaining
+        # Verifica se algum free estourou cap
+        if (w[free_mask] > cap + 1e-12).any():
+            continue  # próxima iteração lockará mais
+        return w
+    # Fallback: renormaliza
+    return w / w.sum() if w.sum() > 0 else np.full(n, 1.0 / n)
+
+
+def apply_bl_to_markowitz(
+    tickers:        list[str],
+    prior_returns:  np.ndarray,
+    returns:        np.ndarray,
+    views:          list[BLView],
+    tau:            float = 0.025,
+    cap:            float = 0.30,
+    risk_aversion:  float = 2.5,
+    periods_per_year: int = 252,
+) -> dict:
+    """Fecha o ciclo BL → Markowitz: posterior_returns + cov_BL → pesos
+    mean-variance restritos.
+
+    Estratégia (Litterman 1992, equação fundamental):
+
+        w_optimal = (δ × Σ_BL)^(-1) × E[R_BL]
+
+    Com normalização para Σw=1 e restrição 0 ≤ w_i ≤ cap aplicada via
+    projeção sobre o simplex restrito (algoritmo iterativo locking +
+    redistribuição proporcional), evitando dependência de cvxpy externo.
+
+    Args:
+      tickers:       lista N ordenada
+      prior_returns: π vetor N (RETORNOS ANUAIS esperados a priori)
+      returns:       matriz (T, N) histórico DE RETORNOS DIÁRIOS para Σ amostral
+      views:         lista BLView (também em escala anual)
+      tau:           incerteza prior (0.025 default)
+      cap:           limite por ativo (0.30 = 30%)
+      risk_aversion: δ — parâmetro CARA (2.5 típico equity premium ~6%)
+      periods_per_year: 252 (diário) / 12 (mensal). Σ é anualizada antes
+                        do solver para que E[R] e Σ estejam consistentes.
+
+    Returns:
+      {
+        'weights':           {ticker: peso},
+        'expected_returns':  posterior E[R] anualizado,
+        'covariance':        Σ_BL anualizada,
+        'expected_portfolio_return': w'·E[R_BL] anualizado,
+        'expected_portfolio_vol':    sqrt(w'·Σ_BL·w) anualizada,
+        'sharpe_implicit':   E[R_p] / σ_p (ambos anualizados),
+        'views_aplicadas':   K,
+        'shift_max':         maior |posterior - prior| em pp,
+      }
+    """
+    bl = bl_combined_optimization(tickers, prior_returns, returns, views, tau)
+    e_post = bl["expected_returns"]
+    # Anualiza covariância para ficar consistente com E[R] anuais
+    s_post = bl["covariance"] * float(periods_per_year)
+
+    # Mean-variance unrestricted: w_opt ∝ Σ^(-1) × E[R]
+    try:
+        sigma_inv = np.linalg.pinv(s_post)
+    except np.linalg.LinAlgError:
+        sigma_inv = np.linalg.pinv(s_post + 1e-6 * np.eye(s_post.shape[0]))
+
+    w_raw = sigma_inv @ e_post / max(float(risk_aversion), 1e-6)
+    # Forçar não-negativo + projetar no simplex restrito
+    w = _project_capped_simplex(np.clip(w_raw, 0.0, None), cap)
+
+    weights_dict = {tk: float(w[i]) for i, tk in enumerate(tickers)}
+    port_return = float(w @ e_post)
+    port_vol = float(np.sqrt(max(w @ s_post @ w, 0.0)))
+    sharpe = port_return / port_vol if port_vol > 1e-9 else 0.0
+
+    return {
+        "weights":                    weights_dict,
+        "expected_returns":           e_post,
+        "covariance":                 s_post,
+        "expected_portfolio_return":  port_return,
+        "expected_portfolio_vol":     port_vol,
+        "sharpe_implicit":            sharpe,
+        "views_aplicadas":            bl["views_aplicadas"],
+        "shift_max":                  bl["shift_max"],
+    }

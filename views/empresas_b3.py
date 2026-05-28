@@ -1222,7 +1222,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.9.0"
+SCORE_VERSION = "2.10.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -1321,6 +1321,29 @@ SCORE_VERSION_CHANGELOG = {
         "que Pearson ignora por hipotese de normalidade multivariada. "
         "Referencia: Embrechts, McNeil & Straumann 2002, 'Correlation "
         "and Dependence in Risk Management'."
+    ),
+    "2.10.0": (
+        "Banca examinadora rodada 12 (2026-05-27): "
+        "(A5+) rolling 5y window em core/fama_macbeth.py — "
+        "estimate_fama_macbeth_rolling com janelas expanding de "
+        "window_years (default 5y, step 1y) + agregacao por mediana entre "
+        "janelas; FamaMacbethRollingResult expoe weight_dispersion "
+        "(IQR/std) por indicador para detectar estabilidade temporal; "
+        "as_static_result() para compatibilidade com blend_with_base_weights; "
+        "(M3+) novo apply_bl_to_markowitz em core/black_litterman.py — "
+        "fecha o ciclo Bayesiano: posterior_returns + covariance anualizada "
+        "alimentam mean-variance solver com projecao no simplex restrito "
+        "via locking + redistribuicao proporcional (sem cvxpy); novo "
+        "_project_capped_simplex robusto a cap nao-respeitado; "
+        "anualizacao de Sigma via periods_per_year para Sharpe realista "
+        "(antes daria 17.24 com cov diaria, agora 1.07 com cov anual); "
+        "(C3cc+) novo modulo core/survivorship_prices.py — reconstrucao "
+        "de precos historicos pos-delisting via SurvivorshipPriceConfig "
+        "(strategies: linear_decay, step_drop, recovery_opa); "
+        "RECOVERY_BY_MOTIVO calibrado em Altman & Hotchkiss 2006 "
+        "(falencia=0%, RJ=15-20%, OPA=+20%); augment_prices_with_delisted "
+        "adiciona colunas reconstruidas ao df_precos preservando obs reais; "
+        "summary_reconstruction para auditoria pre-backtest."
     ),
 }
 

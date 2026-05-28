@@ -277,3 +277,203 @@ def blend_with_base_weights(
         direction = fm_high if key in fm_result.betas else base_high
         blended[key] = (weight, direction)
     return normalize_weights(blended)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# A5+ (2026-05-27): Rolling 5y window calibration
+# ──────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class FamaMacbethRollingResult:
+    """Resultado da estimação rolling de Fama-MacBeth.
+
+    Cada janela de `window_years` anos consecutivos gera um conjunto
+    de pesos. Agregamos via mediana (robusta a janelas anômalas tipo
+    2020 COVID) e reportamos dispersão (IQR e std) por indicador.
+    """
+    weights:          dict[str, tuple[float, bool]]  # mediana entre janelas
+    weights_per_window: list[dict[str, tuple[float, bool]]]
+    betas_per_window:   list[dict[str, float]]
+    window_years:     int
+    n_windows:        int
+    year_ranges:      list[tuple[int, int]]
+    weight_dispersion: dict[str, dict[str, float]]   # {indicador: {std, iqr}}
+    warnings:         tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.weights) and self.n_windows > 0
+
+    def as_static_result(self) -> FamaMacbethResult:
+        """Compatibilidade: devolve FamaMacbethResult para uso em
+        blend_with_base_weights (caller não precisa saber que é rolling)."""
+        # Beta médio entre janelas para preservar sinal
+        if not self.betas_per_window:
+            return _empty_result("rolling_sem_betas")
+        all_betas: dict[str, list[float]] = {}
+        for bp in self.betas_per_window:
+            for k, v in bp.items():
+                all_betas.setdefault(k, []).append(v)
+        beta_agg = {k: float(np.median(v)) for k, v in all_betas.items()}
+        return FamaMacbethResult(
+            weights=self.weights, betas=beta_agg,
+            n_years=self.window_years * self.n_windows,
+            n_tickers=0, n_obs=0,
+            proxy_name=f"forward_fundamental_proxy_rolling_{self.window_years}y",
+            warnings=self.warnings,
+        )
+
+
+def _aggregate_window_weights(
+    weights_list: list[dict[str, tuple[float, bool]]],
+) -> tuple[dict[str, tuple[float, bool]], dict[str, dict[str, float]]]:
+    """Mediana dos pesos entre janelas + dispersão (std, IQR) por indicador."""
+    if not weights_list:
+        return {}, {}
+    # Coleta peso de cada indicador em todas as janelas (0 quando ausente)
+    keys = set()
+    for w in weights_list:
+        keys.update(w.keys())
+    by_indicator: dict[str, list[float]] = {k: [] for k in keys}
+    direction_votes: dict[str, list[bool]] = {k: [] for k in keys}
+    for w in weights_list:
+        for k in keys:
+            tpl = w.get(k, (0.0, True))
+            by_indicator[k].append(float(tpl[0]))
+            direction_votes[k].append(bool(tpl[1]))
+    # Mediana de peso + direção majoritária
+    median_w: dict[str, tuple[float, bool]] = {}
+    dispersion: dict[str, dict[str, float]] = {}
+    for k, vals in by_indicator.items():
+        arr = np.array(vals, dtype=float)
+        med = float(np.median(arr))
+        if med <= 1e-9:
+            continue
+        # Direção majoritária entre janelas com peso > 0
+        positive_dirs = [d for d, v in zip(direction_votes[k], vals) if v > 0]
+        higher = bool(sum(positive_dirs) >= len(positive_dirs) / 2.0)
+        median_w[k] = (med, higher)
+        q25, q75 = np.percentile(arr, [25, 75])
+        dispersion[k] = {
+            "median": med,
+            "std":    float(np.std(arr, ddof=0)),
+            "iqr":    float(q75 - q25),
+            "min":    float(arr.min()),
+            "max":    float(arr.max()),
+        }
+    # Renormaliza para somar 1
+    total = sum(v[0] for v in median_w.values()) or 1.0
+    median_w = {k: (v[0] / total, v[1]) for k, v in median_w.items()}
+    return median_w, dispersion
+
+
+def estimate_fama_macbeth_rolling(
+    hist_batch: dict[str, pd.DataFrame],
+    candidate_indicators: Iterable[str] | None = None,
+    window_years: int = 5,
+    step_years: int = 1,
+    min_obs_per_year: int = 8,
+) -> FamaMacbethRollingResult:
+    """Calibra pesos via janelas rolantes de `window_years` anos.
+
+    Em vez de uma única estimativa (que sobre-ajusta ao período disponível),
+    desliza janelas de 5y com step=1y e agrega via mediana. Reduz overfit
+    a períodos anômalos (2008, 2015, 2020) e expõe estabilidade temporal
+    dos coeficientes via dispersão (IQR/std).
+
+    Args:
+      hist_batch:    {ticker: DataFrame com Data + indicadores}
+      candidate_indicators: subconjunto de DEFAULT_CANDIDATES (ou None = todos)
+      window_years:  largura da janela (default 5y, padrão academia)
+      step_years:    passo entre janelas (default 1y → janelas sobrepostas)
+      min_obs_per_year: obs mínimas no cross-section anual
+
+    Returns:
+      FamaMacbethRollingResult com mediana, dispersão e ranges de cada janela.
+
+    Para uso no scoring, chamar `.as_static_result()` para obter um
+    FamaMacbethResult compatível com `blend_with_base_weights`.
+    """
+    candidates = [
+        c for c in (candidate_indicators or DEFAULT_CANDIDATES)
+        if c in DEFAULT_CANDIDATES
+    ]
+    if not candidates:
+        return FamaMacbethRollingResult(
+            weights={}, weights_per_window=[], betas_per_window=[],
+            window_years=window_years, n_windows=0, year_ranges=[],
+            weight_dispersion={}, warnings=("sem_indicadores_candidatos",),
+        )
+
+    needed = set(candidates) | set(FORWARD_PROXY_CONFIG)
+    panel_full = _annual_snapshots(hist_batch, needed)
+    if panel_full.empty:
+        return FamaMacbethRollingResult(
+            weights={}, weights_per_window=[], betas_per_window=[],
+            window_years=window_years, n_windows=0, year_ranges=[],
+            weight_dispersion={}, warnings=("sem_painel_historico",),
+        )
+
+    panel_full = panel_full.sort_values(["Ticker", "year"]).reset_index(drop=True)
+    years_avail = sorted(panel_full["year"].unique())
+    if len(years_avail) < window_years + 1:
+        # Não tem histórico suficiente para nem 1 janela completa
+        return FamaMacbethRollingResult(
+            weights={}, weights_per_window=[], betas_per_window=[],
+            window_years=window_years, n_windows=0, year_ranges=[],
+            weight_dispersion={},
+            warnings=(f"hist_insuficiente_{len(years_avail)}y",),
+        )
+
+    windows: list[tuple[int, int]] = []
+    for i in range(0, len(years_avail) - window_years + 1, step_years):
+        yr_start = years_avail[i]
+        yr_end = years_avail[i + window_years - 1]
+        windows.append((yr_start, yr_end))
+
+    weights_per_window: list[dict[str, tuple[float, bool]]] = []
+    betas_per_window: list[dict[str, float]] = []
+    successful_ranges: list[tuple[int, int]] = []
+
+    for (yr_start, yr_end) in windows:
+        # Filtra hist_batch para a janela
+        win_hist = {}
+        for tk, df in hist_batch.items():
+            if df is None or df.empty or "Data" not in df.columns:
+                continue
+            tmp = df.copy()
+            tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce")
+            tmp = tmp.dropna(subset=["Data"])
+            mask = (tmp["Data"].dt.year >= yr_start) & (tmp["Data"].dt.year <= yr_end)
+            sub = tmp[mask]
+            if not sub.empty:
+                win_hist[tk] = sub
+
+        res = estimate_fama_macbeth_weights(
+            win_hist, candidate_indicators=candidates,
+            min_years=max(1, window_years - 2),
+            min_obs_per_year=min_obs_per_year,
+        )
+        if res.ok:
+            weights_per_window.append(res.weights)
+            betas_per_window.append(res.betas)
+            successful_ranges.append((yr_start, yr_end))
+
+    if not weights_per_window:
+        return FamaMacbethRollingResult(
+            weights={}, weights_per_window=[], betas_per_window=[],
+            window_years=window_years, n_windows=0, year_ranges=[],
+            weight_dispersion={}, warnings=("nenhuma_janela_convergiu",),
+        )
+
+    median_weights, dispersion = _aggregate_window_weights(weights_per_window)
+
+    return FamaMacbethRollingResult(
+        weights=median_weights,
+        weights_per_window=weights_per_window,
+        betas_per_window=betas_per_window,
+        window_years=window_years,
+        n_windows=len(weights_per_window),
+        year_ranges=successful_ranges,
+        weight_dispersion=dispersion,
+    )
