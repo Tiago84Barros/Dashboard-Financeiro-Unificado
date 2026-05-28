@@ -3337,6 +3337,65 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                             f"{bl['shift_max']*100:.2f}pp."
                         )
 
+                        # ── Banca M3++ (2026-05-28): pesos ótimos BL→Markowitz ──
+                        st.markdown("**Pesos ótimos (BL → Markowitz):**")
+                        col_cap_bl, col_ra_bl = st.columns(2)
+                        with col_cap_bl:
+                            cap_bl = st.select_slider(
+                                "Cap por ativo",
+                                options=[0.20, 0.25, 0.30, 0.40, 0.50],
+                                value=0.40,
+                                format_func=lambda x: f"{x*100:.0f}%",
+                                key="b3_bl_cap",
+                            )
+                        with col_ra_bl:
+                            ra_bl = st.select_slider(
+                                "Aversão a risco (δ)",
+                                options=[1.0, 2.5, 5.0, 8.0],
+                                value=2.5, key="b3_bl_ra",
+                            )
+                        from core.black_litterman import apply_bl_to_markowitz
+                        opt = apply_bl_to_markowitz(
+                            top_bl, prior, rets_hist, [view],
+                            tau=tau_bl, cap=cap_bl, risk_aversion=ra_bl,
+                            periods_per_year=252,
+                        )
+                        df_w = _pd.DataFrame([{
+                            "Ticker": tk,
+                            "Peso (%)": opt["weights"][tk] * 100,
+                        } for tk in top_bl]).sort_values("Peso (%)", ascending=False)
+                        kc1, kc2, kc3 = st.columns(3)
+                        with kc1:
+                            st.markdown(_kpi_macro(
+                                "Retorno esperado",
+                                f"{opt['expected_portfolio_return']*100:+.1f}%",
+                                "anualizado (E[R_p])", _COR_POS,
+                            ), unsafe_allow_html=True)
+                        with kc2:
+                            st.markdown(_kpi_macro(
+                                "Volatilidade",
+                                f"{opt['expected_portfolio_vol']*100:.1f}%",
+                                "anualizada (σ_p)", _COR_INF,
+                            ), unsafe_allow_html=True)
+                        with kc3:
+                            st.markdown(_kpi_macro(
+                                "Sharpe implícito",
+                                f"{opt['sharpe_implicit']:.2f}",
+                                "E[R_p] / σ_p", _COR_NEU,
+                            ), unsafe_allow_html=True)
+                        st.dataframe(
+                            df_w, hide_index=True, use_container_width=True,
+                            column_config={
+                                "Peso (%)": st.column_config.NumberColumn(format="%.1f%%"),
+                            },
+                        )
+                        st.caption(
+                            f"Mean-variance com posterior BL + covariância 36m "
+                            f"anualizada. Cap {cap_bl*100:.0f}% respeitado "
+                            f"(max {max(opt['weights'].values())*100:.1f}%). "
+                            f"δ={ra_bl} controla agressividade do tilt vs prior."
+                        )
+
     # ── Banca A6c (2026-05-26): UI cross-source validation ────────────────────
     with st.expander("🔍 Validação cross-source — Fundamentus × DRE"):
         st.caption(
