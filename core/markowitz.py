@@ -214,6 +214,111 @@ def min_variance_capped(
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Min-variance com covariância pré-computada (ex.: Fama-French estruturada)
+# ──────────────────────────────────────────────────────────────────────────
+
+def min_variance_with_cov(
+    tickers:    list[str],
+    cov_matrix: np.ndarray,
+    cap:        float = 0.30,
+) -> MarkowitzResult:
+    """
+    Min-variance restrita usando covariância pré-computada (M1 banca).
+
+    Idêntica a min_variance_capped mas recebe Σ diretamente, permitindo
+    usar a covariância estruturada do modelo Fama-French (Σ = BΣ_FB' + D)
+    em vez de estimá-la via Ledoit-Wolf a partir dos retornos amostral.
+
+    Problema:
+        min   w'Σw
+        s.a.  Σw = 1
+              0 ≤ w_i ≤ cap
+
+    Args:
+      tickers:    lista K de tickers (deve coincidir com ordem de cov_matrix)
+      cov_matrix: array K×K, covariância estruturada FF ou qualquer outra
+      cap:        peso máximo por ativo (0.30 = 30%)
+
+    Returns:
+      MarkowitzResult com pesos otimizados e method="cvxpy_ff" ou "numerical_ff".
+    """
+    K = len(tickers)
+    cov = np.asarray(cov_matrix, dtype=float)
+    if K == 0 or cov.size == 0:
+        return MarkowitzResult(
+            weights={}, expected_variance=0.0, expected_std=0.0,
+            diversification=0.0, converged=False, method="fallback_equal",
+        )
+    if K == 1:
+        var = float(cov[0, 0]) if cov.size > 0 else 0.0
+        return MarkowitzResult(
+            weights={tickers[0]: 1.0},
+            expected_variance=var,
+            expected_std=float(np.sqrt(max(var, 0))),
+            diversification=0.0, converged=True, method="single_asset",
+        )
+
+    # Regularização mínima para garantir PSD
+    cov = cov + 1e-8 * np.eye(K)
+
+    try:
+        import cvxpy as cp
+        w = cp.Variable(K)
+        prob = cp.Problem(
+            cp.Minimize(cp.quad_form(w, cp.psd_wrap(cov))),
+            [cp.sum(w) == 1, w >= 0, w <= cap],
+        )
+        prob.solve()
+        if prob.status == "optimal" and w.value is not None:
+            w_arr = np.clip(np.array(w.value).flatten(), 0, cap)
+            w_arr = w_arr / w_arr.sum() if w_arr.sum() > 0 else np.ones(K) / K
+            var = float(w_arr @ cov @ w_arr)
+            return MarkowitzResult(
+                weights={t: float(w_arr[i]) for i, t in enumerate(tickers)},
+                expected_variance=var,
+                expected_std=float(np.sqrt(max(var, 0))),
+                diversification=float(1.0 - (w_arr ** 2).sum()),
+                converged=True, method="cvxpy_ff",
+            )
+    except Exception:
+        pass
+
+    # Fallback analítico
+    try:
+        ones = np.ones(K)
+        inv  = np.linalg.pinv(cov)
+        w    = (inv @ ones) / (ones @ inv @ ones)
+        w    = np.clip(w, 0.0, cap)
+        for _ in range(20):
+            if np.maximum(w - cap, 0).sum() < 1e-9:
+                break
+            w = np.clip(w, 0.0, cap)
+            w += (1.0 - w.sum()) / max((w < cap).sum(), 1) * (w < cap)
+            w = np.clip(w, 0.0, cap)
+        s = w.sum()
+        w = w / s if s > 0 else np.ones(K) / K
+        var = float(w @ cov @ w)
+        return MarkowitzResult(
+            weights={t: float(w[i]) for i, t in enumerate(tickers)},
+            expected_variance=var,
+            expected_std=float(np.sqrt(max(var, 0))),
+            diversification=float(1.0 - (w ** 2).sum()),
+            converged=True, method="numerical_ff",
+        )
+    except Exception:
+        w_eq = min(1.0 / K, cap)
+        w = np.full(K, w_eq) / (K * w_eq)
+        var = float(w @ cov @ w)
+        return MarkowitzResult(
+            weights={t: float(w[i]) for i, t in enumerate(tickers)},
+            expected_variance=var,
+            expected_std=float(np.sqrt(max(var, 0))),
+            diversification=float(1.0 - (w ** 2).sum()),
+            converged=False, method="fallback_equal",
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Helper: pesos híbridos score × min-variance
 # ──────────────────────────────────────────────────────────────────────────
 

@@ -1068,6 +1068,20 @@ def _score_universo(
     group_col = _resolve_group_col_df(df, prefer=group_col_prefer)
     score = pd.Series(0.0, index=df.index)
 
+    # M5 completo (banca 2026-05-23): MICE sobre o DataFrame inteiro antes do
+    # loop — usa correlações entre indicadores para imputar NaN com mais precisão
+    # que a mediana de grupo. _impute_with_group_median abaixo serve de fallback
+    # residual para qualquer NaN que sobrar após MICE.
+    try:
+        from core.mice_imputer import mice_impute_panel
+        df = mice_impute_panel(
+            df,
+            indicator_cols=list(pesos.keys()),
+            group_col=group_col,
+        )
+    except Exception:
+        pass
+
     for col, (peso, melhor_alto) in pesos.items():
         if col not in df.columns or peso == 0:
             continue
@@ -1222,7 +1236,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.11.0"
+SCORE_VERSION = "2.12.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -3039,7 +3053,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "α=1.0 = score puro (legado); α=0.0 = min-variance puro; "
             "α=0.5 = híbrido recomendado."
         )
-        col_run, col_top, col_cap, col_alpha = st.columns([1, 1, 1, 2])
+        col_run, col_top, col_cap, col_alpha, col_ff = st.columns([1, 1, 1, 2, 1])
         with col_run:
             run_mk = st.checkbox("Calcular", value=False, key="b3_run_markowitz")
         with col_top:
@@ -3059,6 +3073,13 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 key="b3_mk_alpha", disabled=not run_mk,
                 help="0 = min-variance puro; 1 = score puro (legado); 0.5 = híbrido",
             )
+        with col_ff:
+            use_ff = st.checkbox(
+                "Fama-French Σ", value=False, key="b3_mk_use_ff",
+                disabled=not run_mk,
+                help="M1 banca: usa covariância estruturada FF (Σ=BΣ_FB'+D) "
+                     "em vez de Ledoit-Wolf amostral. Requer ≥12 meses de preços.",
+            )
 
         if run_mk and not df_scored.empty:
             top_tks = df_scored["Ticker"].tolist()[:top_n_mk]
@@ -3076,12 +3097,50 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 if returns.shape[0] < 6:
                     st.warning("Histórico de retornos insuficiente (<6 obs).")
                 else:
-                    with st.spinner("Calculando min-variance..."):
+                    spinner_msg = (
+                        "Calculando min-variance (Fama-French Σ)..."
+                        if use_ff else "Calculando min-variance..."
+                    )
+                    with st.spinner(spinner_msg):
                         from core.markowitz import (
                             min_variance_capped,
+                            min_variance_with_cov,
                             pesos_hibridos_score_markowitz,
                         )
-                        mk = min_variance_capped(top_tks, returns, cap=cap_mk)
+                        mk = None
+                        if use_ff:
+                            try:
+                                from core.ff_risk_model import (
+                                    build_ff_risk_model,
+                                    build_br_factors_etf,
+                                    ticker_monthly_returns_from_price_df,
+                                )
+                                tk_rets = ticker_monthly_returns_from_price_df(
+                                    df_precos, top_tks
+                                )
+                                factors = build_br_factors_etf(n_months=36)
+                                ff_model = build_ff_risk_model(
+                                    top_tks, tk_rets, factors
+                                )
+                                cov_ff, cov_tks = ff_model.covariance_matrix()
+                                # Reordena para coincidir com top_tks
+                                idx_map = [cov_tks.index(t) for t in top_tks if t in cov_tks]
+                                ordered_tks = [cov_tks[i] for i in idx_map]
+                                cov_sub = cov_ff[np.ix_(idx_map, idx_map)]
+                                mk = min_variance_with_cov(ordered_tks, cov_sub, cap=cap_mk)
+                                st.caption(
+                                    f"Modelo FF: {ff_model.n_obs} obs, "
+                                    f"fatores {ff_model.warnings or 'OK'}"
+                                    if ff_model.warnings else
+                                    f"Modelo FF: {ff_model.n_obs} obs · fatores MKT/SMB/HML"
+                                )
+                            except Exception as _ff_err:
+                                st.warning(
+                                    f"FF indisponível ({_ff_err}); usando Ledoit-Wolf."
+                                )
+                                mk = None
+                        if mk is None:
+                            mk = min_variance_capped(top_tks, returns, cap=cap_mk)
                         score_map_top = {
                             tk: float(df_scored[df_scored["Ticker"] == tk]["score"].iloc[0])
                             for tk in top_tks
@@ -3138,9 +3197,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                             "Peso Híbrido":  st.column_config.NumberColumn(format="%.1f%%"),
                         },
                     )
+                    _cov_label = (
+                        "Fama-French Σ estruturada (M1 banca)"
+                        if use_ff and mk.method in ("cvxpy_ff", "numerical_ff")
+                        else "Ledoit-Wolf shrinkage"
+                    )
                     st.caption(
                         f"✓ Janela de 36 meses, cap {cap_mk*100:.0f}%, "
-                        f"Ledoit-Wolf shrinkage na covariância. "
+                        f"covariância: {_cov_label}. "
                         f"Concentração efetiva (HHI) caiu de "
                         f"{sum(w**2 for w in w_score_norm.values()):.3f} (score) para "
                         f"{sum(w**2 for w in mk.weights.values()):.3f} (min-variance)."
