@@ -1236,7 +1236,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.12.0"
+SCORE_VERSION = "2.13.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -3053,7 +3053,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "α=1.0 = score puro (legado); α=0.0 = min-variance puro; "
             "α=0.5 = híbrido recomendado."
         )
-        col_run, col_top, col_cap, col_alpha, col_ff = st.columns([1, 1, 1, 2, 1])
+        col_run, col_top, col_cap, col_alpha, col_cov = st.columns([1, 1, 1, 2, 1])
         with col_run:
             run_mk = st.checkbox("Calcular", value=False, key="b3_run_markowitz")
         with col_top:
@@ -3073,12 +3073,19 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 key="b3_mk_alpha", disabled=not run_mk,
                 help="0 = min-variance puro; 1 = score puro (legado); 0.5 = híbrido",
             )
-        with col_ff:
-            use_ff = st.checkbox(
-                "Fama-French Σ", value=False, key="b3_mk_use_ff",
+        with col_cov:
+            cov_method = st.selectbox(
+                "Covariância Σ",
+                ["Ledoit-Wolf", "Fama-French", "DCC-GARCH"],
+                index=0,
+                key="b3_mk_cov_method",
                 disabled=not run_mk,
-                help="M1 banca: usa covariância estruturada FF (Σ=BΣ_FB'+D) "
-                     "em vez de Ledoit-Wolf amostral. Requer ≥12 meses de preços.",
+                help=(
+                    "Ledoit-Wolf: shrinkage amostral (padrão). "
+                    "Fama-French: Σ estruturada fatorial M1 banca (Σ=BΣ_FB'+D). "
+                    "DCC-GARCH: covariância condicional dinâmica M2 banca (Engle 2002) "
+                    "— captura correlações que variam no tempo e sobem em crises."
+                ),
             )
 
         if run_mk and not df_scored.empty:
@@ -3097,18 +3104,19 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 if returns.shape[0] < 6:
                     st.warning("Histórico de retornos insuficiente (<6 obs).")
                 else:
-                    spinner_msg = (
-                        "Calculando min-variance (Fama-French Σ)..."
-                        if use_ff else "Calculando min-variance..."
-                    )
-                    with st.spinner(spinner_msg):
+                    _spinner_labels = {
+                        "Fama-French": "Calculando min-variance (Fama-French Σ)...",
+                        "DCC-GARCH":   "Calculando min-variance (DCC-GARCH Σ)...",
+                    }
+                    with st.spinner(_spinner_labels.get(cov_method, "Calculando min-variance...")):
                         from core.markowitz import (
                             min_variance_capped,
                             min_variance_with_cov,
                             pesos_hibridos_score_markowitz,
                         )
                         mk = None
-                        if use_ff:
+
+                        if cov_method == "Fama-French":
                             try:
                                 from core.ff_risk_model import (
                                     build_ff_risk_model,
@@ -3123,22 +3131,43 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                                     top_tks, tk_rets, factors
                                 )
                                 cov_ff, cov_tks = ff_model.covariance_matrix()
-                                # Reordena para coincidir com top_tks
                                 idx_map = [cov_tks.index(t) for t in top_tks if t in cov_tks]
                                 ordered_tks = [cov_tks[i] for i in idx_map]
                                 cov_sub = cov_ff[np.ix_(idx_map, idx_map)]
                                 mk = min_variance_with_cov(ordered_tks, cov_sub, cap=cap_mk)
                                 st.caption(
-                                    f"Modelo FF: {ff_model.n_obs} obs, "
-                                    f"fatores {ff_model.warnings or 'OK'}"
-                                    if ff_model.warnings else
                                     f"Modelo FF: {ff_model.n_obs} obs · fatores MKT/SMB/HML"
+                                    + (f" · avisos: {ff_model.warnings}" if ff_model.warnings else "")
                                 )
                             except Exception as _ff_err:
-                                st.warning(
-                                    f"FF indisponível ({_ff_err}); usando Ledoit-Wolf."
-                                )
-                                mk = None
+                                st.warning(f"Fama-French indisponível ({_ff_err}); usando Ledoit-Wolf.")
+
+                        elif cov_method == "DCC-GARCH":
+                            try:
+                                from core.dcc_garch import fit_dcc_garch
+                                import pandas as _pd_dcc
+                                if returns.shape[0] < 12:
+                                    st.warning("DCC-GARCH requer ≥ 12 observações; usando Ledoit-Wolf.")
+                                else:
+                                    returns_df = _pd_dcc.DataFrame(returns, columns=top_tks)
+                                    dcc = fit_dcc_garch(returns_df)
+                                    R_t = dcc.correlations[-1]          # K×K correlação condicional atual
+                                    vols = dcc.volatilities[-1]          # K volatilidades condicionais atuais
+                                    D = np.diag(vols)
+                                    cov_dcc = D @ R_t @ D                # Σ_T condicional
+                                    mk = min_variance_with_cov(
+                                        list(dcc.tickers), cov_dcc, cap=cap_mk
+                                    )
+                                    from core.dcc_garch import dcc_regime_score, result_summary
+                                    summ = result_summary(dcc)
+                                    st.caption(
+                                        f"DCC-GARCH: α={dcc.alpha:.3f}, β={dcc.beta:.3f} · "
+                                        f"ρ̄ atual={summ['avg_corr_latest']:.3f} · "
+                                        f"regime score={summ['regime_score']:.2f}"
+                                    )
+                            except Exception as _dcc_err:
+                                st.warning(f"DCC-GARCH indisponível ({_dcc_err}); usando Ledoit-Wolf.")
+
                         if mk is None:
                             mk = min_variance_capped(top_tks, returns, cap=cap_mk)
                         score_map_top = {
@@ -3197,11 +3226,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                             "Peso Híbrido":  st.column_config.NumberColumn(format="%.1f%%"),
                         },
                     )
-                    _cov_label = (
-                        "Fama-French Σ estruturada (M1 banca)"
-                        if use_ff and mk.method in ("cvxpy_ff", "numerical_ff")
-                        else "Ledoit-Wolf shrinkage"
-                    )
+                    _cov_label = {
+                        "Fama-French": "Fama-French Σ estruturada (M1 banca)",
+                        "DCC-GARCH":   "DCC-GARCH Σ condicional (M2 banca)",
+                    }.get(cov_method, "Ledoit-Wolf shrinkage")
                     st.caption(
                         f"✓ Janela de 36 meses, cap {cap_mk*100:.0f}%, "
                         f"covariância: {_cov_label}. "
