@@ -1222,7 +1222,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.10.0"
+SCORE_VERSION = "2.11.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -1344,6 +1344,15 @@ SCORE_VERSION_CHANGELOG = {
         "(falencia=0%, RJ=15-20%, OPA=+20%); augment_prices_with_delisted "
         "adiciona colunas reconstruidas ao df_precos preservando obs reais; "
         "summary_reconstruction para auditoria pre-backtest."
+    ),
+    "2.11.0": (
+        "Banca examinadora rodada 13 (2026-05-27): "
+        "(M3++) UI integrada do apply_bl_to_markowitz no expander "
+        "Black-Litterman da Empresas B3 — alem da tabela prior vs "
+        "posterior, agora mostra pesos otimos (BL -> mean-variance) com "
+        "sliders de cap e aversao a risco (delta); KPIs de retorno "
+        "esperado, volatilidade anualizada e Sharpe implicito do "
+        "portfolio resultante; tabela de pesos ordenada por peso."
     ),
 }
 
