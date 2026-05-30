@@ -1274,7 +1274,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.15.0"
+SCORE_VERSION = "2.16.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -2735,6 +2735,15 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.warning("Banco não configurado. Configure `SUPABASE_DB_URL_B3`.")
         return
 
+    st.info(
+        "⚠️ **Ferramenta de análise educacional — não é recomendação de "
+        "investimento.** Os scores, backtests e preços-justos exibidos são "
+        "estimativas quantitativas baseadas em dados históricos e premissas "
+        "do modelo. Rentabilidade passada não garante resultado futuro. "
+        "Esta ferramenta não constitui consultoria de valores mobiliários "
+        "(CVM). Decisões de alocação são de responsabilidade do investidor."
+    )
+
     df_precos = pd.DataFrame()
 
     # Ano-base do score: SEMPRE o último ano COMPLETO (anterior ao corrente).
@@ -3313,6 +3322,72 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                         f"{sum(w**2 for w in w_score_norm.values()):.3f} (score) para "
                         f"{sum(w**2 for w in mk.weights.values()):.3f} (min-variance)."
                     )
+
+    # ── Preço justo + sustentabilidade de dividendos ─────────────────────────
+    with st.expander("💰 Preço justo e sustentabilidade de dividendos"):
+        st.caption(
+            "Responde ao que o ranking relativo não responde: **a ação está "
+            "cara ou barata em termos absolutos?** e **o dividendo é "
+            "sustentável?** "
+            "**MS Graham** = margem de segurança via lucro/patrimônio "
+            "(√(22.5/(P/L·P/VP))−1). **MS Bazin** = margem via dividendos "
+            "(DY/yield-alvo−1). **Sustentabilidade** = payout + cobertura por "
+            "Fluxo de Caixa Operacional (FCO)."
+        )
+        if df_scored.empty:
+            st.info("Sem empresas scoradas para analisar.")
+        else:
+            _bazin_alvo = st.slider(
+                "Yield-alvo Bazin (%)", 4.0, 12.0, 6.0, 0.5,
+                key="b3_av_bazin_alvo",
+                help="Yield desejado para o método Bazin. Padrão 6%. "
+                     "Quanto maior o alvo, mais exigente a margem de segurança.",
+            ) / 100.0
+            try:
+                from core.valuation import valuation_table
+                _val_df = valuation_table(df_scored, bazin_yield_alvo=_bazin_alvo)
+                # Junta o score para contexto e ordena
+                _val_df = _val_df.merge(
+                    df_scored[["Ticker", "score"]], on="Ticker", how="left"
+                ).rename(columns={"score": "Score"})
+                _val_df = _val_df.sort_values("Score", ascending=False)
+                _val_cols = [
+                    "Ticker", "Score", "MS Graham (%)", "MS Bazin (%)",
+                    "Veredito Preço", "Sustentab. Dividendo", "Score Sust.", "Motivo",
+                ]
+                st.dataframe(
+                    _val_df[_val_cols], hide_index=True, use_container_width=True,
+                    column_config={
+                        "Score":          st.column_config.NumberColumn(format="%.1f"),
+                        "MS Graham (%)":  st.column_config.NumberColumn(format="%.1f%%",
+                            help="Margem de segurança Graham. >0 = abaixo do valor justo"),
+                        "MS Bazin (%)":   st.column_config.NumberColumn(format="%.1f%%",
+                            help="Margem de segurança Bazin. >0 = DY supera o yield-alvo"),
+                        "Score Sust.":    st.column_config.ProgressColumn(
+                            format="%.0f", min_value=0, max_value=100,
+                            help="Sustentabilidade do dividendo (0-100)"),
+                    },
+                )
+                _n_desc = _val_df["Veredito Preço"].str.contains("Desconto", na=False).sum()
+                _n_caro = _val_df["Veredito Preço"].str.contains("Caro", na=False).sum()
+                _n_sust = _val_df["Sustentab. Dividendo"].str.contains("Sustentável", na=False).sum()
+                _v1, _v2, _v3 = st.columns(3)
+                with _v1:
+                    st.metric("🟢 Com desconto", f"{_n_desc} cias",
+                              help="Graham/Bazin indicam preço abaixo do justo")
+                with _v2:
+                    st.metric("🔴 Caras", f"{_n_caro} cias",
+                              help="Negociando acima do valor justo estimado")
+                with _v3:
+                    st.metric("💧 Dividendo sustentável", f"{_n_sust} cias",
+                              help="Payout saudável + FCO positivo")
+                st.caption(
+                    "⚠️ Graham assume P/L e P/VP positivos (empresa lucrativa com "
+                    "patrimônio positivo) — empresas fora disso aparecem sem MS Graham. "
+                    "Valores extremos de DY/Payout podem indicar evento não recorrente."
+                )
+            except Exception as _val_err:
+                st.warning(f"Valuation indisponível: {_val_err}")
 
     # ── Resiliência histórica + saúde financeira ─────────────────────────────
     with st.expander("🛡️ Resiliência histórica e saúde financeira — sensibilidade Brasil"):
@@ -3993,7 +4068,23 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             f"Parâmetros ativos: **γ={_g_cur:.3f}** · **cap={_c_cur:.3f}** · **soft={_s_cur:.3f}**"
         )
 
+    # Custos de transação: ATIVOS por default (backtest realista PF Brasil).
+    # Desmarcar mostra o backtest "ideal" (sem corretagem/spread/IR) — útil só
+    # para comparação teórica, NÃO para expectativa de retorno real.
+    aplicar_custos = st.checkbox(
+        "Descontar custos de transação (corretagem, spread, IR) — recomendado",
+        value=True, key="b3_av_custos",
+        help="Ativado: backtest realista para PF no Brasil (spread bid-ask, "
+             "IR 15% sobre lucro acima da isenção mensal de R$ 20k). "
+             "Desativado: backtest 'ideal' sem custos — superestima o retorno.",
+    )
+
     if st.button("▶ Simular Backtest", type="primary", key="b3_av_btn_simular"):
+        from core.transaction_costs import CostConfig
+        _cost_cfg = (
+            CostConfig.brasil_pf_default() if aplicar_custos
+            else CostConfig.desligado()
+        )
         period_code = per_opts[sel_per]
         tks_tuple   = tuple(sorted(tks_uni))
         usar_gamma  = len(tks_uni) >= 5
@@ -4017,8 +4108,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             selic_por_ano=selic_macro or None,
             macro_by_year=macro_history or None,
             dividendos=div_batch_av,
+            cost_cfg=_cost_cfg,
         )
         st.session_state["b3_av_bt_df"]    = df_bt
+        st.session_state["b3_av_bt_custos"] = aplicar_custos
         st.session_state["b3_av_bt_top"]   = tickers_top
         st.session_state["b3_av_bt_aport"] = float(aporte)
         st.session_state["b3_av_bt_n"]     = n_efetivo
@@ -4047,6 +4140,19 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         fig_bt.update_layout(**_plot_layout(380))
         st.plotly_chart(fig_bt, use_container_width=True,
                         config={"displayModeBar": False}, key="b3_av_bt_chart")
+
+        _custos_on = st.session_state.get("b3_av_bt_custos", True)
+        if _custos_on:
+            st.caption(
+                "✅ Backtest com **custos de transação descontados** "
+                "(corretagem, spread bid-ask e IR 15% sobre lucro acima da "
+                "isenção mensal) — estimativa realista para PF no Brasil."
+            )
+        else:
+            st.caption(
+                "⚠️ Backtest **sem custos** (ideal/teórico) — superestima o "
+                "retorno real. Marque a opção de custos para projeção realista."
+            )
 
         # KPI patrimônio final
         _sec_hdr("💰 Patrimônio Final")
