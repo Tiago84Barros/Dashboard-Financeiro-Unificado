@@ -145,9 +145,23 @@ def load_multiplos(ticker: str) -> pd.Series:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_multiplos_todos() -> pd.DataFrame:
-    """Retorna o múltiplo mais recente de TODOS os tickers (para ranking e avançada)."""
-    df = _q("""
+def load_multiplos_todos(ano_ref_max: int | None = None) -> pd.DataFrame:
+    """Retorna o múltiplo mais recente de TODOS os tickers (para ranking e avançada).
+
+    Args:
+      ano_ref_max: se informado, considera apenas linhas cujo ano de `data`
+        seja ≤ ano_ref_max. Usado para garantir que o score se baseie no
+        último ano COMPLETO (ano anterior) e nunca em dado parcial do ano
+        corrente — conforme a metodologia "score do ano anterior decide o
+        ano atual". Tickers sem nenhuma linha ≤ ano_ref_max são omitidos
+        (não há ano-base completo para decidir).
+    """
+    where_ano = ""
+    params: dict = {}
+    if ano_ref_max is not None:
+        where_ano = "AND EXTRACT(YEAR FROM data) <= :ano_max"
+        params["ano_max"] = int(ano_ref_max)
+    df = _q(f"""
         SELECT DISTINCT ON ("Ticker")
                "Ticker", data,
                "P/L", "P/VP", "DY", "ROE", "ROA", "ROIC",
@@ -156,8 +170,9 @@ def load_multiplos_todos() -> pd.DataFrame:
                "EV_EBIT", "P_FCO", "Payout"
         FROM public.multiplos
         WHERE "Ticker" IS NOT NULL
+        {where_ano}
         ORDER BY "Ticker", data DESC
-    """)
+    """, params)
     if df.empty:
         return df
     df["Ticker"] = (
@@ -250,6 +265,11 @@ def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.Dat
     if parsed is None:
         return {}
     tks_clean, placeholders = parsed
+    if len(tks_clean) > 80:
+        result: dict[str, pd.DataFrame] = {}
+        for i in range(0, len(tks_clean), 80):
+            result.update(load_multiplos_historico_batch(tuple(tks_clean[i:i + 80])))
+        return result
     df = _q(f"""
         SELECT *
         FROM public.multiplos

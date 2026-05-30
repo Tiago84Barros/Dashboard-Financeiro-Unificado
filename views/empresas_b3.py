@@ -1274,7 +1274,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.14.0"
+SCORE_VERSION = "2.15.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -2737,10 +2737,31 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
     df_precos = pd.DataFrame()
 
+    # Ano-base do score: SEMPRE o último ano COMPLETO (anterior ao corrente).
+    # A decisão do ano atual usa os fundamentos consolidados do ano anterior,
+    # evitando dado parcial do ano em curso (metodologia do usuário).
+    import datetime as _dt_ref
+    _ano_corrente = _dt_ref.date.today().year
+    _ano_base     = _ano_corrente - 1
+
     # Dados base
     with st.spinner("Carregando múltiplos e histórico…"):
-        df_mult_todos = _db.load_multiplos_todos()
+        df_mult_todos = _db.load_multiplos_todos(ano_ref_max=_ano_base)
         anos_hist     = _db.load_historico_anos()
+
+    # Ano de referência efetivo dos dados carregados (pode ser < _ano_base se
+    # a ingestão do ano anterior ainda não ocorreu para parte do universo).
+    _ano_dados = None
+    if not df_mult_todos.empty and "data" in df_mult_todos.columns:
+        _datas = pd.to_datetime(df_mult_todos["data"], errors="coerce").dropna()
+        if not _datas.empty:
+            _ano_dados = int(_datas.dt.year.max())
+    _ano_label = _ano_dados if _ano_dados is not None else _ano_base
+    st.caption(
+        f"📅 **Ano-base do score: {_ano_label}** — a seleção do ano atual "
+        f"({_ano_corrente}) usa os fundamentos consolidados do ano anterior. "
+        "Dados parciais do ano corrente são ignorados por metodologia."
+    )
 
     # ── FILTROS ──────────────────────────────────────────────────────────────
     _sec_hdr("⚙️ Filtros do Universo")
@@ -2807,6 +2828,23 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             tks_uni = [tk for tk in tks_uni if anos_hist.get(tk, 99) < 10]
         elif "Estabelecida" in sel_perf:
             tks_uni = [tk for tk in tks_uni if anos_hist.get(tk, 0) >= 10]
+
+    # Exclui empresas descontinuadas na B3 — não são investíveis hoje e não
+    # devem entrar na análise/criação de portfólio (blocklist defensiva sobre
+    # a lista de `setores`, que deveria conter apenas ativas).
+    try:
+        from core.survivorship import tickers_delisted_set
+        _delisted = tickers_delisted_set()
+        _antes_del = len(tks_uni)
+        tks_uni = [tk for tk in tks_uni if tk not in _delisted]
+        _n_removidas = _antes_del - len(tks_uni)
+        if _n_removidas:
+            st.caption(
+                f"🚫 {_n_removidas} empresa(s) descontinuada(s) da B3 "
+                "excluída(s) da análise (não investíveis atualmente)."
+            )
+    except Exception:
+        pass
 
     _MAX_UNI = 40
     if len(tks_uni) > _MAX_UNI:

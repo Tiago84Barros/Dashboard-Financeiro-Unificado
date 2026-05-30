@@ -103,6 +103,17 @@ DELISTED_BR_2010_2025 = [d for d in DELISTED_BR_2010_2025
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────
 
+def tickers_delisted_set() -> set[str]:
+    """Retorna o set de TODOS os tickers descontinuados da B3 (lista curada).
+
+    Usado como blocklist defensiva na análise atual: empresas que não fazem
+    mais parte da B3 não devem entrar na seleção/criação de portfólio, pois
+    não são investíveis hoje. Complementa o filtro natural da tabela `setores`
+    (que deveria conter apenas empresas ativas).
+    """
+    return {d.ticker for d in DELISTED_BR_2010_2025}
+
+
 def universo_vivo_em(data_ref: date) -> set[str]:
     """Retorna set de tickers DELISTED que estavam VIVOS em data_ref.
 
