@@ -1129,6 +1129,44 @@ def _score_universo(
             cv_pen[i] = min(pen / max(len(cands), 1), 0.25)
         df["score_raw"] *= (1.0 - cv_pen)
 
+    # ── Ajustes de resiliência histórica + saúde financeira ──────────────
+    # A: bônus para empresa temporariamente abaixo da própria média histórica
+    #    mas acima da mediana setorial — sinal de oportunidade, não fraqueza.
+    # B: penalidade de risco de sobrevivência (balanço frágil).
+    # C: bônus de valuation abaixo do próprio histórico sem deterioração de
+    #    fundamentais — margem de segurança à la Graham, adaptada ao Brasil.
+    try:
+        from core.resilience_score import (
+            historical_reversion_adj,
+            financial_health_penalty,
+            valuation_history_adj,
+        )
+        _scale = float(df["score_raw"].mean()) or 1.0
+
+        if df_hist_batch:
+            # A — reversão à média histórica
+            _hist_bonus = historical_reversion_adj(df, df_hist_batch, group_col)
+            df["score_raw"] += _hist_bonus * _scale
+            df["hist_bonus"] = (_hist_bonus * 100).round(1)
+
+            # C — desconto de valuation vs histórico próprio
+            _val_bonus = valuation_history_adj(df, df_hist_batch)
+            df["score_raw"] += _val_bonus * _scale
+            df["val_hist_bonus"] = (_val_bonus * 100).round(1)
+        else:
+            df["hist_bonus"]     = 0.0
+            df["val_hist_bonus"] = 0.0
+
+        # B — saúde financeira (independe de histórico)
+        _health_pen = financial_health_penalty(df)
+        df["score_raw"]     *= (1.0 - _health_pen)
+        df["health_penalty"] = (_health_pen * 100).round(1)
+
+    except Exception:
+        df.setdefault("hist_bonus",     0.0)
+        df.setdefault("val_hist_bonus", 0.0)
+        df.setdefault("health_penalty", 0.0)
+
     # Penalidade de crowding — desconta empresas no bucket de P/VP mais populoso do grupo
     crow_pen = _apply_crowding_penalty(df, group_col)
     df["score_raw"] *= (1.0 - crow_pen)
@@ -1236,7 +1274,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.13.0"
+SCORE_VERSION = "2.14.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -3237,6 +3275,82 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                         f"{sum(w**2 for w in w_score_norm.values()):.3f} (score) para "
                         f"{sum(w**2 for w in mk.weights.values()):.3f} (min-variance)."
                     )
+
+    # ── Resiliência histórica + saúde financeira ─────────────────────────────
+    with st.expander("🛡️ Resiliência histórica e saúde financeira — sensibilidade Brasil"):
+        st.caption(
+            "Três ajustes que capturam empresas de qualidade temporariamente "
+            "deprimidas por fatores macro/políticos — problema estrutural em "
+            "mercados emergentes. "
+            "**A** Bônus de reversão: empresa abaixo da própria média histórica "
+            "mas acima da mediana setorial → sinal de oportunidade. "
+            "**B** Penalidade de balanço: endividamento crítico + margens negativas "
+            "→ risco de sobrevivência (separado do score de qualidade). "
+            "**C** Bônus de valuation: P/VP ou EV/EBIT abaixo do próprio histórico "
+            "sem deterioração de fundamentais → margem de segurança implícita."
+        )
+        if df_scored.empty:
+            st.info("Sem empresas scoradas para analisar.")
+        else:
+            _res_cols_exist = all(
+                c in df_scored.columns
+                for c in ("hist_bonus", "health_penalty", "val_hist_bonus")
+            )
+            if _res_cols_exist:
+                _res_df = df_scored[[
+                    "Ticker", "score", "hist_bonus", "val_hist_bonus",
+                    "health_penalty",
+                ]].copy()
+                _res_df["ajuste_liquido"] = (
+                    _res_df["hist_bonus"] + _res_df["val_hist_bonus"]
+                    - _res_df["health_penalty"]
+                ).round(1)
+                _res_df["saude"] = _res_df["health_penalty"].apply(
+                    lambda p: "🔴 Risco" if p >= 20 else ("🟡 Alerta" if p >= 8 else "🟢 Saudável")
+                )
+                _res_df = _res_df.rename(columns={
+                    "score":          "Score",
+                    "hist_bonus":     "Bônus Hist. (%)",
+                    "val_hist_bonus": "Bônus Valuation (%)",
+                    "health_penalty": "Penalidade Balanço (%)",
+                    "ajuste_liquido": "Ajuste Líquido (%)",
+                    "saude":          "Saúde",
+                })
+                st.dataframe(
+                    _res_df, hide_index=True, use_container_width=True,
+                    column_config={
+                        "Score":                  st.column_config.NumberColumn(format="%.1f"),
+                        "Bônus Hist. (%)":        st.column_config.NumberColumn(format="%.1f%%",
+                            help="A: empresa abaixo da própria média histórica + acima da mediana setorial"),
+                        "Bônus Valuation (%)":    st.column_config.NumberColumn(format="%.1f%%",
+                            help="C: P/VP ou EV/EBIT abaixo do próprio histórico sem colapso de fundamentais"),
+                        "Penalidade Balanço (%)": st.column_config.NumberColumn(format="%.1f%%",
+                            help="B: risco de sobrevivência (alavancagem crítica + margem negativa)"),
+                        "Ajuste Líquido (%)":     st.column_config.NumberColumn(format="%.1f%%",
+                            help="Impacto total dos três ajustes no score (positivo = beneficiou)"),
+                    },
+                )
+                # KPIs de resumo
+                _n_risk    = (_res_df["Penalidade Balanço (%)"] >= 20).sum()
+                _n_alert   = ((_res_df["Penalidade Balanço (%)"] >= 8) &
+                              (_res_df["Penalidade Balanço (%)"] < 20)).sum()
+                _n_bonus   = (_res_df["Ajuste Líquido (%)"] > 0).sum()
+                _kr1, _kr2, _kr3 = st.columns(3)
+                with _kr1:
+                    st.metric("🔴 Risco de balanço", f"{_n_risk} cias",
+                              help="Penalidade ≥ 20% — endividamento crítico + margem negativa")
+                with _kr2:
+                    st.metric("🟡 Em alerta", f"{_n_alert} cias",
+                              help="Penalidade 8–20% — balanço frágil mas não crítico")
+                with _kr3:
+                    st.metric("📈 Com bônus líquido", f"{_n_bonus} cias",
+                              help="Empresas que se beneficiaram dos ajustes A ou C")
+            else:
+                st.info(
+                    "Ajustes de resiliência não disponíveis — é necessário "
+                    "histórico por ticker (df_hist_batch) para calcular A e C. "
+                    "O ajuste B (saúde financeira) sempre é aplicado ao score."
+                )
 
     # ── Banca M4ui (2026-05-25): Waterfall Shapley dos engines ────────────────
     with st.expander("🧬 Atribuição Shapley do score — explainability"):
