@@ -347,6 +347,121 @@ def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def _batch_yf_liquidez(tickers: tuple[str, ...]) -> dict[str, float]:
+    """
+    Liquidez média diária negociada (R$/dia) dos últimos ~3 meses via yfinance.
+
+    Calcula a MEDIANA de (Close × Volume) por pregão — robusta a dias atípicos.
+    Liquidez muda lentamente, então cache de 24h é suficiente.
+
+    Returns:
+      {ticker_sem_sa: liquidez_mediana_diaria_rs}
+    """
+    if not tickers:
+        return {}
+    tks_sa = [f"{t.strip().upper().replace('.SA', '')}.SA" for t in tickers]
+    out: dict[str, float] = {}
+    try:
+        if len(tks_sa) == 1:
+            raw = yf.download(tks_sa[0], period="3mo", interval="1d",
+                              auto_adjust=True, progress=False)
+            if raw is None or raw.empty:
+                return {}
+            tk = tks_sa[0].replace(".SA", "").upper()
+            fin = (raw["Close"] * raw["Volume"]).dropna()
+            if not fin.empty:
+                out[tk] = float(fin.median())
+        else:
+            raw = yf.download(tks_sa, period="3mo", interval="1d",
+                              auto_adjust=True, progress=False)
+            if raw is None or raw.empty:
+                return {}
+            if isinstance(raw.columns, pd.MultiIndex):
+                close = raw["Close"]
+                vol   = raw["Volume"]
+                fin   = (close * vol)
+                for col in fin.columns:
+                    s = fin[col].dropna()
+                    tk = str(col).replace(".SA", "").strip().upper()
+                    if not s.empty:
+                        out[tk] = float(s.median())
+    except Exception:
+        return out
+    return out
+
+
+def _prerank_tickers(df_mult: pd.DataFrame, tickers: list[str]) -> list[str]:
+    """
+    Ordena tickers por um proxy fundamental barato (sem histórico/slopes).
+
+    Usado para escolher QUAIS empresas manter quando o universo excede o
+    teto — em vez de truncar por ordem alfabética/de aparição, mantém as
+    de melhores fundamentos disponíveis. Composto: percentis de ROE, ROIC,
+    DY, Margem_Liquida (alto=bom) e Endividamento_Total (baixo=bom).
+
+    Tickers ausentes em df_mult vão para o fim (preservados).
+    """
+    cols_hi = ("ROE", "ROIC", "DY", "Margem_Liquida")
+    sub = df_mult[df_mult["Ticker"].isin(tickers)].copy()
+    if sub.empty:
+        return list(tickers)
+    score = pd.Series(0.0, index=sub.index)
+    usados = 0
+    for c in cols_hi:
+        if c not in sub.columns:
+            continue
+        v = pd.to_numeric(sub[c], errors="coerce")
+        if v.notna().sum() < 2:
+            continue
+        score += v.rank(pct=True).fillna(0.5)
+        usados += 1
+    if "Endividamento_Total" in sub.columns:
+        v = pd.to_numeric(sub["Endividamento_Total"], errors="coerce")
+        if v.notna().sum() >= 2:
+            score += (1.0 - v.rank(pct=True).fillna(0.5))
+            usados += 1
+    if usados == 0:
+        return list(tickers)
+    sub["_prerank"] = score
+    ordered = sub.sort_values("_prerank", ascending=False)["Ticker"].tolist()
+    missing = [t for t in tickers if t not in set(ordered)]
+    return ordered + missing
+
+
+def _aplicar_diversificacao_setorial(
+    tickers_ranked: list[str],
+    group_map:      dict[str, str],
+    top_n:          int,
+    max_por_setor:  int,
+) -> list[str]:
+    """
+    Seleciona top-N respeitando teto de ações por setor.
+
+    Percorre os tickers já ordenados (melhor→pior); inclui enquanto o setor
+    não estourou o teto. Se o teto impedir atingir top_n (ex.: poucos setores),
+    completa com os excedentes melhor-ranqueados para não devolver carteira
+    menor que o solicitado.
+    """
+    if max_por_setor <= 0:
+        return tickers_ranked[:top_n]
+    sel: list[str] = []
+    overflow: list[str] = []
+    cont: dict[str, int] = {}
+    for tk in tickers_ranked:
+        setor = group_map.get(tk) or "—"
+        if cont.get(setor, 0) < max_por_setor:
+            sel.append(tk)
+            cont[setor] = cont.get(setor, 0) + 1
+        else:
+            overflow.append(tk)
+        if len(sel) >= top_n:
+            break
+    if len(sel) < top_n:
+        sel += overflow[: top_n - len(sel)]
+    return sel[:top_n]
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _yf_trailing12m_divs(ticker: str) -> float:
     """
@@ -1274,7 +1389,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.16.0"
+SCORE_VERSION = "2.17.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -2790,6 +2905,22 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     perfis   = ["Todas", "Crescimento (<10 anos de histórico)", "Estabelecida (≥10 anos)"]
     sel_perf = fc4.selectbox("Perfil",   perfis,   key="b3_av_perf")
 
+    liq_opts = {
+        "Sem filtro":        0.0,
+        "≥ R$ 500 mil/dia":  500_000.0,
+        "≥ R$ 1 milhão/dia": 1_000_000.0,
+        "≥ R$ 5 milhões/dia": 5_000_000.0,
+        "≥ R$ 10 milhões/dia": 10_000_000.0,
+    }
+    sel_liq = fc1.selectbox(
+        "Liquidez mínima (negociação)", list(liq_opts.keys()),
+        index=2, key="b3_av_liq_min",
+        help="Exclui ações com baixo volume diário negociado, onde o spread "
+             "encarece a entrada/saída. Baseado na mediana de Close×Volume "
+             "dos últimos ~3 meses (yfinance).",
+    )
+    liq_min_rs = liq_opts[sel_liq]
+
     with st.expander("⚖️ Pesos do Scoring"):
         usar_pesos_setor = st.checkbox(
             "Usar pesos calibrados por setor (recomendado)",
@@ -2855,17 +2986,40 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     except Exception:
         pass
 
-    _MAX_UNI = 40
-    if len(tks_uni) > _MAX_UNI:
-        st.info(
-            f"Universo com **{len(tks_uni)}** empresas — limitado a {_MAX_UNI} "
-            "para performance. Refine os filtros para resultados mais precisos."
-        )
-        tks_uni = tks_uni[:_MAX_UNI]
+    # Filtro de liquidez de negociação — exclui ações ilíquidas onde o spread
+    # encarece a operação (proteção ao investidor iniciante).
+    if liq_min_rs > 0 and tks_uni:
+        with st.spinner("Verificando liquidez de negociação…"):
+            liq_map = _batch_yf_liquidez(tuple(sorted(tks_uni)))
+        if liq_map:
+            _antes_liq = len(tks_uni)
+            # Mantém tickers sem dado de liquidez (não penaliza por falha de API)
+            tks_uni = [
+                tk for tk in tks_uni
+                if liq_map.get(tk) is None or liq_map.get(tk, 0) >= liq_min_rs
+            ]
+            _n_iliq = _antes_liq - len(tks_uni)
+            if _n_iliq:
+                st.caption(
+                    f"💧 {_n_iliq} ação(ões) abaixo de {sel_liq.replace('≥ ', '')} "
+                    "excluída(s) por baixa liquidez."
+                )
 
     if not tks_uni:
         st.info("Nenhuma empresa encontrada com os filtros selecionados.")
         return
+
+    # Teto de universo para performance. Quando excede, mantém as de MELHORES
+    # fundamentos (pré-ranking barato), não as primeiras por ordem de aparição.
+    _MAX_UNI = 40
+    if len(tks_uni) > _MAX_UNI:
+        tks_uni = _prerank_tickers(df_mult_todos, tks_uni)[:_MAX_UNI]
+        st.info(
+            f"Universo limitado a {_MAX_UNI} empresas (de {len(df_filt)}+ "
+            "filtradas) — mantidas as de melhores fundamentos por pré-ranking "
+            "(ROE/ROIC/DY/Margem/Endividamento). Refine os filtros para "
+            "análise mais focada."
+        )
 
     # Enriquecer df_mult com colunas de agrupamento vindas de df_set
     df_mult_enrich = df_mult_todos.copy()
@@ -3173,9 +3327,36 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 ),
             )
 
+        cdiv1, cdiv2 = st.columns([1, 3])
+        with cdiv1:
+            diversificar = st.checkbox(
+                "Diversificar por setor", value=True, key="b3_mk_diversif",
+                disabled=not run_mk,
+                help="Limita quantas ações do mesmo setor entram na carteira, "
+                     "evitando concentração (ex.: top-N só de bancos).",
+            )
+        with cdiv2:
+            max_por_setor = st.select_slider(
+                "Máx. por setor", options=[1, 2, 3, 4], value=2,
+                key="b3_mk_maxsetor", disabled=not (run_mk and diversificar),
+            )
+
         if run_mk and not df_scored.empty:
-            top_tks = df_scored["Ticker"].tolist()[:top_n_mk]
-            top_tks = [tk for tk in top_tks if tk in df_precos.columns]
+            # Ranking completo (melhor→pior) com preço disponível
+            _ranked = [
+                tk for tk in df_scored["Ticker"].tolist()
+                if tk in df_precos.columns
+            ]
+            if diversificar:
+                _setor_map = {
+                    tk: (tk_grupos.get(tk, {}) or {}).get("SETOR") or "—"
+                    for tk in _ranked
+                }
+                top_tks = _aplicar_diversificacao_setorial(
+                    _ranked, _setor_map, top_n=top_n_mk, max_por_setor=max_por_setor,
+                )
+            else:
+                top_tks = _ranked[:top_n_mk]
             if len(top_tks) < 2:
                 st.warning("Top-N não tem 2+ tickers com preços históricos.")
             else:
