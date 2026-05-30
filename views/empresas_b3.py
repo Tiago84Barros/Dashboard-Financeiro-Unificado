@@ -1389,7 +1389,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.17.0"
+SCORE_VERSION = "2.18.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -4643,6 +4643,52 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             )
     else:
         st.caption("Clique **💵 Calcular FCO/Lucro** para gerar o gráfico.")
+
+    # ── Metodologia e referências científicas ────────────────────────────────
+    _render_metodologia()
+
+
+def _render_metodologia() -> None:
+    """Seção final: técnicas aplicadas e os autores/estudos que as fundamentam."""
+    try:
+        from core import metodologia as _met
+    except Exception:
+        return
+
+    _sec_hdr("🔬 Metodologia e referências científicas")
+    st.caption(
+        f"As empresas deste portfólio não são fruto de opinião: passam por "
+        f"**{_met.total_metodos()} análises quantitativas** encadeadas, cada uma "
+        "fundamentada em literatura acadêmica consolidada de finanças. "
+        "Abaixo, o que cada etapa faz e o estudo que a embasa — para você "
+        "confiar no porquê de cada ticker selecionado."
+    )
+
+    with st.expander("📚 Ver todas as análises aplicadas e suas referências", expanded=False):
+        for etapa, metodos in _met.catalogo_por_etapa().items():
+            st.markdown(f"#### {etapa}")
+            linhas = [
+                f"- **{m.nome}** — {m.o_que_faz}  \n"
+                f"  <span style='color:#94A3B8;font-size:0.85em'>📖 {m.referencia}</span>"
+                for m in metodos
+            ]
+            st.markdown("\n".join(linhas), unsafe_allow_html=True)
+            st.markdown("")
+
+        st.divider()
+        st.markdown("#### 📑 Referências bibliográficas")
+        st.caption(
+            "Estudos e autores que fundamentam as técnicas acima "
+            "(ordem alfabética):"
+        )
+        refs = "\n".join(f"{i}. {r}" for i, r in enumerate(_met.referencias_ordenadas(), 1))
+        st.markdown(refs)
+
+        st.info(
+            "⚠️ A robustez metodológica reforça a qualidade da triagem, mas "
+            "não elimina o risco de mercado. Use como apoio à decisão, não "
+            "como recomendação automática."
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
