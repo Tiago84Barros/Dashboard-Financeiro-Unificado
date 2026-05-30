@@ -12,6 +12,7 @@ import plotly.express as px
 import streamlit as st
 
 import core.b3_db as _db
+import core.data_reconciliacao as _recon
 from core.b3_portfolio_model import save_b3_portfolio_model
 
 # ── Importa engine compartilhado de empresas_b3 ───────────────────────────────
@@ -27,6 +28,8 @@ from views.empresas_b3 import (
     _fv, _fp, _logo_url,
     _get_pesos_setor,
     _plot_layout, _sec_hdr,
+    _compute_score_entrada,
+    _score_universo,
     _score_historico_ano,
     _select_n_heuristica,
     _weights_from_scores,
@@ -67,6 +70,106 @@ _CSS = """
 """
 
 _ANO_INICIO_DEFAULT = 2013
+
+
+def _overlay_current_reconciled_row(
+    hist_batch: dict[str, pd.DataFrame],
+    df_mult_recon: pd.DataFrame,
+) -> dict[str, pd.DataFrame]:
+    """Atualiza a ultima linha historica com o snapshot reconciliado atual."""
+    if not hist_batch or df_mult_recon.empty or "Ticker" not in df_mult_recon.columns:
+        return hist_batch
+    fields = [c for c in _recon.CANONICAL_MULTIPLOS_FIELDS if c in df_mult_recon.columns]
+    by_ticker = df_mult_recon.drop_duplicates("Ticker").set_index("Ticker")
+    out: dict[str, pd.DataFrame] = {}
+    for tk, df_h in hist_batch.items():
+        tk_clean = str(tk).upper().replace(".SA", "")
+        if df_h is None or df_h.empty or tk_clean not in by_ticker.index:
+            out[tk_clean] = df_h
+            continue
+        df = df_h.copy()
+        if "Data" not in df.columns:
+            out[tk_clean] = df
+            continue
+        datas = pd.to_datetime(df["Data"], errors="coerce")
+        idx = datas.idxmax() if datas.notna().any() else df.index[-1]
+        rec = by_ticker.loc[tk_clean]
+        for field in fields:
+            val = rec.get(field)
+            if pd.notna(val):
+                df.at[idx, field] = float(val)
+        out[tk_clean] = df
+    return out
+
+
+def _build_entry_guard(
+    df_mult_recon: pd.DataFrame,
+    df_set: pd.DataFrame,
+    hist_batch: dict[str, pd.DataFrame],
+    anos_hist: dict[str, int] | None,
+) -> tuple[dict[str, dict], pd.DataFrame]:
+    """Calcula score_entrada atual por segmento para bloquear recomendacoes fracas."""
+    if df_mult_recon.empty or df_set.empty or "Ticker" not in df_mult_recon.columns:
+        return {}, pd.DataFrame()
+
+    grupos_cols = ["ticker", "SETOR", "SUBSETOR", "SEGMENTO"]
+    base = df_mult_recon.merge(
+        df_set[grupos_cols].rename(columns={"ticker": "Ticker"}),
+        on="Ticker",
+        how="left",
+    )
+    frames: list[pd.DataFrame] = []
+    for (setor, _subsetor, _segmento), grupo in base.groupby(["SETOR", "SUBSETOR", "SEGMENTO"], dropna=False):
+        tks = [str(t).upper().replace(".SA", "") for t in grupo["Ticker"].dropna().tolist()]
+        if not tks:
+            continue
+        scored = _score_universo(
+            grupo.copy(),
+            tks,
+            _get_pesos_setor(str(setor)),
+            df_hist_batch=hist_batch,
+            group_col_prefer="SEGMENTO",
+        )
+        if scored.empty:
+            continue
+        entrada = _compute_score_entrada(scored, anos_hist)
+        if not entrada.empty:
+            frames.append(entrada)
+
+    if not frames:
+        return {}, pd.DataFrame()
+
+    df_entry = pd.concat(frames, ignore_index=True)
+    guard: dict[str, dict] = {}
+    for _, row in df_entry.iterrows():
+        tk = str(row.get("Ticker", "")).upper().replace(".SA", "")
+        if not tk:
+            continue
+        guard[tk] = {
+            "score_entrada": float(row.get("score_entrada", 0.0) or 0.0),
+            "status_entrada": str(row.get("status_entrada", "")),
+            "risk_penalty": float(row.get("r_penalty", 0.0) or 0.0),
+        }
+    return guard, df_entry
+
+
+def _render_data_quality_box(summary: dict, audit: pd.DataFrame, hist_audit: pd.DataFrame) -> None:
+    if not summary:
+        return
+    with st.expander("Qualidade dos fundamentos usados pela carteira", expanded=False):
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Tickers", int(summary.get("tickers", 0)))
+        c2.metric("Celulas invalidas", int(summary.get("celulas_invalidas", 0)))
+        c3.metric("Correcoes web", int(summary.get("correcoes_web", 0)))
+        c4.metric("Historico saneado", int(hist_audit["Ocorrencias"].sum()) if not hist_audit.empty else 0)
+        zeros = summary.get("campos_zero_suspeito") or []
+        if zeros:
+            st.warning("Campos tratados como ausentes por excesso de zeros: " + ", ".join(zeros))
+        if not audit.empty:
+            st.dataframe(audit.head(80), use_container_width=True, height=260)
+        if not hist_audit.empty:
+            st.caption("Outliers removidos do historico usado no backtest")
+            st.dataframe(hist_audit.head(80), use_container_width=True, height=220)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -954,6 +1057,11 @@ def render(show_header: bool = True) -> None:
                                       key="pb3_audit")
         min_anos_dre = pa4.number_input("Histórico DRE mínimo", 4, 20, 10, 1,
                                         key="pb3_min_anos_dre")
+        usar_status_recon = st.checkbox(
+            "Cruzar Status Invest no saneamento atual",
+            value=False,
+            key="pb3_status_recon",
+        )
 
     usar_ew_como_criterio = uso_ew == "Critério de seleção"
 
@@ -988,16 +1096,21 @@ def render(show_header: bool = True) -> None:
         with st.spinner("Carregando histórico de múltiplos de todos os tickers…"):
             hist_batch_raw = _db.load_multiplos_historico_batch(all_tickers)
 
-        # Enriquece com slope_log por ticker
-        # (reconstrói df temporário para enriquecer e desmonta de volta)
-        if df_mult_todos.empty:
-            hist_batch = hist_batch_raw
-        else:
-            df_enrich = _enrich_com_slopes(df_mult_todos, hist_batch_raw)
-            # não precisamos do df_enrich aqui; o slope_log é calculado dentro de
-            # _score_historico_ano via hist_batch — o enriquecimento no snapshot
-            # é feito separadamente em _tab_avancada
-            hist_batch = hist_batch_raw
+        with st.spinner("Saneando fundamentos com ranges, outliers e fallback web..."):
+            df_mult_recon, audit_recon, quality_summary = _recon.batch_multiplos_reconciliados(
+                all_tickers,
+                df_base=df_mult_todos,
+                include_status=bool(usar_status_recon),
+            )
+            zero_invalid = set(quality_summary.get("campos_zero_suspeito", []))
+            hist_clean, hist_audit = _recon.clean_multiplos_history_batch(
+                hist_batch_raw,
+                zero_invalid_fields=zero_invalid,
+            )
+            hist_batch = _overlay_current_reconciled_row(hist_clean, df_mult_recon)
+            entry_guard, df_entry_guard = _build_entry_guard(
+                df_mult_recon, df_set, hist_batch, anos_hist
+            )
 
         with st.spinner("Baixando preços mensais (pode demorar)…"):
             df_precos_all = _batch_yf_precos_mensais(all_tickers, period="10y")
@@ -1037,14 +1150,25 @@ def render(show_header: bool = True) -> None:
         st.session_state["pb3_df_set"]     = df_set
         st.session_state["pb3_precos_all"] = df_precos_all
         st.session_state["pb3_div_batch"]  = div_batch
+        st.session_state["pb3_quality_summary"] = quality_summary
+        st.session_state["pb3_quality_audit"]   = audit_recon
+        st.session_state["pb3_hist_audit"]      = hist_audit
+        st.session_state["pb3_entry_guard"]     = entry_guard
+        st.session_state["pb3_entry_guard_df"]  = df_entry_guard
 
     resultados = st.session_state.get("pb3_resultados", [])
     df_set     = st.session_state.get("pb3_df_set", df_set)
     df_precos_all = st.session_state.get("pb3_precos_all", pd.DataFrame())
+    quality_summary = st.session_state.get("pb3_quality_summary", {})
+    quality_audit = st.session_state.get("pb3_quality_audit", pd.DataFrame())
+    hist_audit = st.session_state.get("pb3_hist_audit", pd.DataFrame())
+    entry_guard = st.session_state.get("pb3_entry_guard", {})
 
     if not resultados:
         st.warning("Nenhum segmento retornou dados suficientes.")
         return
+
+    _render_data_quality_box(quality_summary, quality_audit, hist_audit)
 
     # ── FILTROS DE APROVAÇÃO ──────────────────────────────────────────────────
     ano_atual = pd.Timestamp.now().year
@@ -1141,7 +1265,18 @@ def render(show_header: bool = True) -> None:
         for tk in selecionados:
             score = score_prox.get(tk, 0.0)
             peso  = pesos_p.get(tk, 0.0)
+            entry = entry_guard.get(str(tk).upper().replace(".SA", ""), {}) if isinstance(entry_guard, dict) else {}
+            has_entry = bool(entry)
+            status_entrada = str(entry.get("status_entrada", ""))
+            score_entrada = float(entry.get("score_entrada", 0.0) or 0.0)
+            if float(peso or 0.0) <= 0.0:
+                continue
+            status_norm = status_entrada.lower()
+            if has_entry and (status_norm.startswith("exclu") or score_entrada < 30.0):
+                continue
             motivos = []
+            if has_entry and status_norm.startswith("observ"):
+                motivos.append(f"Score Entrada em observacao ({score_entrada:.1f})")
             if tk == ticker_lider:
                 motivos.append(f"Líder no Score ({ano_ref})")
             maior_part = max(part_hist, key=part_hist.get) if part_hist else None
@@ -1154,6 +1289,8 @@ def render(show_header: bool = True) -> None:
             nome = nome_row["nome_empresa"].iloc[0][:24] if not nome_row.empty else tk
             proximos.append({
                 "tk": tk, "nome": nome, "score": score, "peso": peso,
+                "score_entrada": score_entrada,
+                "status_entrada": status_entrada,
                 "motivos": motivos,
                 "setor": res["setor"],
                 "subsetor": res["subsetor"],
@@ -1220,12 +1357,16 @@ def render(show_header: bool = True) -> None:
             "min_anos_dre": int(min_anos_dre),
             "segmentos_analisados": len(resultados),
             "segmentos_aprovados": len(aprovados),
+            "fundamentos_corrigidos_web": int(quality_summary.get("correcoes_web", 0) or 0),
+            "fundamentos_invalidos": int(quality_summary.get("celulas_invalidas", 0) or 0),
+            "status_invest_reconciliacao": bool(quality_summary.get("usa_status_invest", False)),
         }
         metrics_modelo = {
             "num_empresas": len(proximos_uniq),
             "alpha_selic_medio": float(np.mean([p.get("alpha_selic", 0.0) for p in proximos_uniq])),
             "alpha_ew_medio": float(np.mean([p.get("alpha_ew", 0.0) for p in proximos_uniq])),
             "score_medio": float(np.mean([p.get("score", 0.0) for p in proximos_uniq])),
+            "score_entrada_medio": float(np.mean([p.get("score_entrada", 0.0) for p in proximos_uniq])),
         }
         c_save, c_info = st.columns([1, 3], gap="medium")
         with c_save:
@@ -1342,3 +1483,57 @@ def render(show_header: bool = True) -> None:
             st.caption("Não foi possível baixar preços para as empresas selecionadas.")
     else:
         st.caption("Nenhuma empresa selecionada para mostrar desempenho.")
+
+    # ── Metodologia e referências científicas ────────────────────────────────
+    _render_metodologia_portfolio()
+
+
+def _render_metodologia_portfolio() -> None:
+    """Análises aplicadas para chegar às empresas do portfólio + referências.
+
+    Lista apenas as técnicas efetivamente usadas por ESTA aba (engine
+    PORTFOLIO), reforçando a credibilidade da seleção sem alegar métodos de
+    outras abas.
+    """
+    try:
+        from core import metodologia as _met
+    except Exception:
+        return
+
+    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                unsafe_allow_html=True)
+    _sec_hdr("🔬 Como chegamos a estas empresas — metodologia e referências")
+    st.caption(
+        f"A carteira sugerida não é fruto de opinião: resulta de "
+        f"**{_met.total_metodos(_met.ENG_PF)} análises quantitativas** encadeadas, "
+        "cada uma fundamentada em literatura acadêmica consolidada de finanças. "
+        "Abaixo, o que cada etapa faz e o estudo que a embasa — para você confiar "
+        "no porquê de cada ticker selecionado."
+    )
+
+    with st.expander("📚 Ver as análises aplicadas e suas referências científicas",
+                     expanded=False):
+        for etapa, metodos in _met.catalogo_por_etapa(_met.ENG_PF).items():
+            st.markdown(f"#### {etapa}")
+            linhas = [
+                f"- **{m.nome}** — {m.o_que_faz}  \n"
+                f"  <span style='color:#94A3B8;font-size:0.85em'>📖 {m.referencia}</span>"
+                for m in metodos
+            ]
+            st.markdown("\n".join(linhas), unsafe_allow_html=True)
+            st.markdown("")
+
+        st.divider()
+        st.markdown("#### 📑 Referências bibliográficas")
+        st.caption("Estudos e autores que fundamentam as técnicas acima "
+                   "(ordem alfabética):")
+        refs = "\n".join(
+            f"{i}. {r}" for i, r in enumerate(_met.referencias_ordenadas(_met.ENG_PF), 1)
+        )
+        st.markdown(refs)
+
+        st.info(
+            "⚠️ A robustez metodológica reforça a qualidade da triagem, mas não "
+            "elimina o risco de mercado. Use como apoio à decisão, não como "
+            "recomendação automática."
+        )

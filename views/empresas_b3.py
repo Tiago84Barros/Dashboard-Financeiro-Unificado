@@ -1389,7 +1389,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.18.0"
+SCORE_VERSION = "2.19.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -4658,14 +4658,14 @@ def _render_metodologia() -> None:
     _sec_hdr("🔬 Metodologia e referências científicas")
     st.caption(
         f"As empresas deste portfólio não são fruto de opinião: passam por "
-        f"**{_met.total_metodos()} análises quantitativas** encadeadas, cada uma "
-        "fundamentada em literatura acadêmica consolidada de finanças. "
+        f"**{_met.total_metodos(_met.ENG_AV)} análises quantitativas** encadeadas, "
+        "cada uma fundamentada em literatura acadêmica consolidada de finanças. "
         "Abaixo, o que cada etapa faz e o estudo que a embasa — para você "
         "confiar no porquê de cada ticker selecionado."
     )
 
     with st.expander("📚 Ver todas as análises aplicadas e suas referências", expanded=False):
-        for etapa, metodos in _met.catalogo_por_etapa().items():
+        for etapa, metodos in _met.catalogo_por_etapa(_met.ENG_AV).items():
             st.markdown(f"#### {etapa}")
             linhas = [
                 f"- **{m.nome}** — {m.o_que_faz}  \n"
@@ -4681,7 +4681,9 @@ def _render_metodologia() -> None:
             "Estudos e autores que fundamentam as técnicas acima "
             "(ordem alfabética):"
         )
-        refs = "\n".join(f"{i}. {r}" for i, r in enumerate(_met.referencias_ordenadas(), 1))
+        refs = "\n".join(
+            f"{i}. {r}" for i, r in enumerate(_met.referencias_ordenadas(_met.ENG_AV), 1)
+        )
         st.markdown(refs)
 
         st.info(
