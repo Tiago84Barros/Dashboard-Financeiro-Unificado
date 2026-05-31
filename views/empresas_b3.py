@@ -1389,7 +1389,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.19.0"
+SCORE_VERSION = "2.20.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -2845,6 +2845,62 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 # TAB 3 — Análise Avançada
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _render_calibracao_segmento(calib) -> None:
+    """Painel da calibração ótima automática do segmento (aba Análise Avançada)."""
+    from core.segment_calibration import pesos_rows, criterios_rows
+
+    alvo = (f"segmento **{calib.segmento}**" if calib.segmento and calib.segmento != "Todos"
+            else f"setor **{calib.setor}**")
+    with st.expander(
+        f"🎯 Calibração ótima automática · {calib.arquetipo_label}", expanded=True
+    ):
+        st.caption(
+            f"O App4 carregou automaticamente a calibração ótima para o {alvo}, "
+            f"classificado como **{calib.arquetipo_label}**. {calib.descricao} "
+            "Você pode aceitar esta calibração (recomendado) ou testar ajustes "
+            "manuais no expander **⚖️ Pesos do Scoring**."
+        )
+
+        b1, b2, b3, b4 = st.columns(4)
+        _trad_debt = {"ignorar": "não se aplica", "tolerante": "tolerante",
+                      "normal": "padrão", "rigoroso": "rigoroso"}
+        b1.metric("Tratamento de dívida", _trad_debt.get(calib.debt_treatment, "—"))
+        b2.metric("Dividendos", calib.dy_relevancia.capitalize())
+        b3.metric("Foco de valuation", calib.valuation_foco.capitalize())
+        b4.metric("Liquidez corrente",
+                  "relevante" if calib.liquidez_relevante else "não se aplica")
+
+        st.markdown("**✅ Pesos dos indicadores — aplicados ao score**")
+        st.dataframe(
+            pd.DataFrame(pesos_rows(calib)),
+            hide_index=True, use_container_width=True,
+            column_config={"Peso %": st.column_config.NumberColumn(format="%.1f%%")},
+        )
+
+        st.markdown("**📋 Critérios do segmento — perfil recomendado**")
+        st.dataframe(
+            pd.DataFrame(criterios_rows(calib)),
+            hide_index=True, use_container_width=True,
+        )
+
+        ap = calib.aprovacao
+        lr = calib.limites_risco
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Score de entrada mín.", f"{ap['score_entrada_min']:.0f}")
+        c2.metric("Penalidade de risco máx.", f"{ap['risk_penalty_max']:.0f}")
+        c3.metric("Teto de endividamento",
+                  f"{lr['endividamento_teto']:.2f}" if lr.get("endividamento_teto") else "N/A")
+        c4.metric("Winsorização",
+                  f"{calib.winsor[0]*100:.0f}–{calib.winsor[1]*100:.0f}%")
+
+        st.caption(
+            "ℹ️ Os **pesos** acima são aplicados diretamente ao ranking deste "
+            "segmento. Os **critérios, limites de risco e winsorização** compõem "
+            "o perfil recomendado do segmento (normalização: "
+            f"{calib.normalizacao.lower()}). Fonte: {calib.fonte}."
+        )
+
+
 def _tab_avancada(df_set: pd.DataFrame) -> None:
     if df_set.empty:
         st.warning("Banco não configurado. Configure `SUPABASE_DB_URL_B3`.")
@@ -2940,6 +2996,16 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         usar_pesos_setor = st.checkbox(
             "Usar pesos calibrados por setor (recomendado)",
             value=True, key="b3_av_use_setor_w",
+        )
+        usar_auto_calib = st.checkbox(
+            "Calibração automática ótima por segmento (recomendado)",
+            value=True, key="b3_av_use_autocalib",
+            disabled=not usar_pesos_setor,
+            help="Carrega automaticamente a calibração ótima do segmento "
+                 "selecionado (arquétipo financeiro + distribuição real): "
+                 "ajusta pesos, tratamento de dívida/liquidez/dividendos e "
+                 "critérios ao tipo de negócio. Desmarque para usar os pesos "
+                 "genéricos do setor.",
         )
         usar_fama_macbeth = st.checkbox(
             "Calibrar pesos com Fama-MacBeth MVP",
@@ -3071,7 +3137,32 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         if "SETOR" in df_filt.columns and not df_filt.empty else pd.Series(dtype=int)
     )
     setor_prevalente = str(setor_counts.idxmax()) if not setor_counts.empty else ""
-    pesos_v2 = _get_pesos_setor(setor_prevalente, pesos_usuario_raw)
+
+    # Calibração ótima automática por segmento (laboratório de calibração).
+    # Pesos manuais > calibração automática > pesos genéricos do setor.
+    seg_calib = None
+    if pesos_usuario_raw is not None:
+        pesos_v2 = _get_pesos_setor(setor_prevalente, pesos_usuario_raw)
+    elif usar_auto_calib:
+        try:
+            from core.segment_calibration import build_segment_calibration
+            _base_pesos = _get_pesos_setor(setor_prevalente)
+            _df_seg = df_mult_enrich[df_mult_enrich["Ticker"].isin(tks_uni)]
+            seg_calib = build_segment_calibration(
+                setor_prevalente,
+                sel_seg if sel_seg != "Todos" else "",
+                _base_pesos,
+                df_segment=_df_seg,
+            )
+            pesos_v2 = seg_calib.pesos
+        except Exception:
+            pesos_v2 = _get_pesos_setor(setor_prevalente)
+    else:
+        pesos_v2 = _get_pesos_setor(setor_prevalente)
+
+    if seg_calib is not None:
+        _render_calibracao_segmento(seg_calib)
+
     fm_result = None
     if usar_pesos_setor and usar_fama_macbeth and hist_batch:
         try:
