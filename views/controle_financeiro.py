@@ -73,7 +73,7 @@ _CAT_SAIDA = [
     "Educação", "Restaurante", "Financiamento", "Outros",
 ]
 _CAT_INVESTIMENTO = [
-    "Renda Fixa", "Renda Variável", "Exterior", "Reserva de Despesa", "Outra",
+    "Renda Fixa", "Renda Variável", "Exterior", "Reserva de Despesa", "Outros",
 ]
 
 _CORES_CAT = [
@@ -363,9 +363,9 @@ def _sidebar_render(ano: int, mes: int) -> None:
 
         # Categorias pré-definidas por tipo (mais opções do DB como fallback)
         if t_type == "entrada":
-            cat_preset = _CAT_ENTRADA + ["Outra"]
+            cat_preset = _CAT_ENTRADA
         elif t_type == "saida":
-            cat_preset = _CAT_SAIDA + ["Outra"]
+            cat_preset = _CAT_SAIDA
         else:
             cat_preset = _CAT_INVESTIMENTO
 
@@ -376,12 +376,6 @@ def _sidebar_render(ano: int, mes: int) -> None:
             key="cf_sb_cat",
         )
         cat_escolhida = cat_preset[cat_idx]
-
-        # Campo livre para "Outra"
-        if cat_escolhida == "Outra":
-            cat_livre = st.text_input("Categoria personalizada", key="cf_sb_cat_livre")
-        else:
-            cat_livre = ""
 
         data_tx = st.date_input(
             "Data",
@@ -411,7 +405,7 @@ def _sidebar_render(ano: int, mes: int) -> None:
             st.sidebar.error("Informe um valor maior que zero.")
             return
 
-        categoria_final = cat_livre.strip() if cat_escolhida == "Outra" else cat_escolhida
+        categoria_final = cat_escolhida
         if not categoria_final:
             st.sidebar.error("Informe a categoria.")
             return

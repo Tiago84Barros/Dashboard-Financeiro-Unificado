@@ -9,6 +9,8 @@ from core.controle import (
     _SQL_TRANSACOES_CARTAO,
 )
 from views.controle_financeiro import (
+    _CAT_ENTRADA,
+    _CAT_INVESTIMENTO,
     _CAT_SAIDA,
     _FORMAS_PGTO_SAIDA,
     _card_rows_dataframe,
@@ -91,6 +93,15 @@ def test_manual_sidebar_allows_only_account_payment_flow():
     assert not any("cart" in item.lower() for item in _FORMAS_PGTO_SAIDA)
     assert not any("pix" in item.lower() for item in _FORMAS_PGTO_SAIDA)
     assert not any("dinheiro" in item.lower() for item in _FORMAS_PGTO_SAIDA)
+
+
+def test_manual_sidebar_uses_only_outros_not_outra_category():
+    manual_categories = _CAT_ENTRADA + _CAT_SAIDA + _CAT_INVESTIMENTO
+    assert "Outros" in _CAT_ENTRADA
+    assert "Outros" in _CAT_SAIDA
+    assert "Outros" in _CAT_INVESTIMENTO
+    assert "Outra" not in manual_categories
+    assert not any(item.strip().casefold() == "outra" for item in manual_categories)
 
 
 def test_manual_sidebar_blocks_card_related_free_text():
