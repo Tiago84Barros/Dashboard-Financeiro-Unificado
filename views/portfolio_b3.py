@@ -1020,10 +1020,13 @@ def render(show_header: bool = True) -> None:
 
     st.markdown(
         '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
-        'Ferramenta quantitativa para identificar empresas reais, diversificadas '
-        'por segmento, que historicamente venceram Tesouro Selic e o Equal-Weight '
-        'do próprio segmento. Usa scoring com publication lag = 1, reconstrução '
-        'histórica e líderes para aplicação prática no próximo ciclo.'
+        '<strong style="color:#CBD5E1;">Etapa 2 de 3 · Aplicação em escala.</strong> '
+        'Roda a metodologia validada na aba <strong>Análise Avançada</strong> em '
+        '<strong>todos os segmentos</strong> da B3 de uma vez, identifica as empresas '
+        'vencedoras de cada segmento e consolida uma carteira inicial multissetorial. '
+        'Usa scoring com publication lag = 1, reconstrução histórica e comparação vs '
+        'Tesouro Selic e Equal-Weight do próprio segmento. A carteira salva aqui segue '
+        'para a aba <strong>Avaliação de Portfólio</strong>, que a julga como conjunto.'
         '</p>',
         unsafe_allow_html=True,
     )

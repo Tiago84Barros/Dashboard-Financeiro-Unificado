@@ -780,16 +780,20 @@ def render(show_header: bool = True) -> None:
             '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">'
             '<span style="font-size:2rem">🧠</span>'
             '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
-            'Análise de Portfólio B3</h1>'
+            'Avaliação de Portfólio B3</h1>'
             '</div>',
             unsafe_allow_html=True,
         )
 
     st.markdown(
         '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
-        'Análise qualitativa institucional do portfólio modelo salvo, combinando '
-        'dados quantitativos, cenário macro, documentos CVM/IPE e interpretação LLM '
-        'baseada em repertório analítico de casas especializadas (XP, BTG, Itaú BBA).'
+        '<strong style="color:#CBD5E1;">Etapa 3 de 3 · Avaliação do conjunto.</strong> '
+        'Julga a carteira criada na aba <strong>Criação de Portfólio</strong> como um '
+        'todo — diversificação, concentração por ativo e por setor, exposição a risco, '
+        'dividendos e crescimento consolidados, qualidade média e adequação ao objetivo. '
+        'Combina dados quantitativos, cenário macro, documentos CVM/IPE e interpretação '
+        'LLM baseada em repertório de casas especializadas (XP, BTG, Itaú BBA). '
+        'Responde: <em>esse conjunto forma uma carteira coerente, diversificada e defensável?</em>'
         '</p>',
         unsafe_allow_html=True,
     )

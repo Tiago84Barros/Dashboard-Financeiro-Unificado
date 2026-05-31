@@ -2850,6 +2850,21 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.warning("Banco não configurado. Configure `SUPABASE_DB_URL_B3`.")
         return
 
+    st.markdown(
+        '<div style="background:rgba(56,189,248,.06);border-left:3px solid #38BDF8;'
+        'border-radius:6px;padding:12px 16px;margin-bottom:12px;font-size:0.84rem;'
+        'color:#CBD5E1;">'
+        '<strong>🔬 Etapa 1 de 3 · Banco de testes por segmento.</strong> '
+        'Escolha <strong>um segmento</strong> e valide de perto como cada filtro, '
+        'indicador, cálculo e score se comporta dentro dele — identifique outliers, '
+        'confira a matemática e calibre a metodologia <em>antes</em> de aplicá-la em '
+        'escala. As etapas seguintes são <strong>Criação de Portfólio</strong> '
+        '(aplica em todos os segmentos) e <strong>Avaliação de Portfólio</strong> '
+        '(julga a carteira como conjunto).'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
     st.info(
         "⚠️ **Ferramenta de análise educacional — não é recomendação de "
         "investimento.** Os scores, backtests e preços-justos exibidos são "
@@ -4657,11 +4672,12 @@ def _render_metodologia() -> None:
 
     _sec_hdr("🔬 Metodologia e referências científicas")
     st.caption(
-        f"As empresas deste portfólio não são fruto de opinião: passam por "
-        f"**{_met.total_metodos(_met.ENG_AV)} análises quantitativas** encadeadas, "
-        "cada uma fundamentada em literatura acadêmica consolidada de finanças. "
-        "Abaixo, o que cada etapa faz e o estudo que a embasa — para você "
-        "confiar no porquê de cada ticker selecionado."
+        f"Este é o banco de testes por segmento: as empresas aprovadas aqui passam "
+        f"por **{_met.total_metodos(_met.ENG_AV)} análises quantitativas** "
+        "encadeadas, cada uma fundamentada em literatura acadêmica consolidada de "
+        "finanças. Abaixo, o que cada etapa faz e o estudo que a embasa — para você "
+        "validar se o modelo está classificando corretamente este segmento antes de "
+        "aplicá-lo em escala na aba Criação de Portfólio."
     )
 
     with st.expander("📚 Ver todas as análises aplicadas e suas referências", expanded=False):
@@ -4750,7 +4766,7 @@ def render() -> None:
             st.session_state["b3_active_tab"] = 3
             st.rerun()
     with col_t5:
-        if st.button("🧠 Análise de Portfólio", use_container_width=True,
+        if st.button("🧠 Avaliação de Portfólio", use_container_width=True,
                      type="primary" if active == 4 else "secondary",
                      key="b3_tab4"):
             st.session_state["b3_active_tab"] = 4
