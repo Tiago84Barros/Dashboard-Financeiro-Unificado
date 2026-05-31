@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 import core.b3_db as _db
+import core.data_reconciliacao as _recon
 from core.b3_portfolio_model import load_active_b3_portfolio_model
 from core.llm_b3 import (
     analisar_empresa,
@@ -714,10 +715,15 @@ def _portfolio_fundamentals(tickers_tuple: tuple[str, ...]) -> dict[str, dict]:
                  "EV_EBIT", "Payout", "P_FCO")
     try:
         df_all = _db.load_multiplos_todos()
-        if not df_all.empty and "Ticker" in df_all.columns:
-            df_all = df_all.copy()
-            df_all["_TK"] = df_all["Ticker"].astype(str).str.upper().str.replace(".SA", "", regex=False)
-            idx = df_all.set_index("_TK")
+        df_recon, _, _ = _recon.batch_multiplos_reconciliados(
+            tickers_tuple,
+            df_base=df_all,
+            include_status=False,
+        )
+        if not df_recon.empty and "Ticker" in df_recon.columns:
+            df_recon = df_recon.copy()
+            df_recon["_TK"] = df_recon["Ticker"].astype(str).str.upper().str.replace(".SA", "", regex=False)
+            idx = df_recon.set_index("_TK")
             for tk in tickers_tuple:
                 if tk in idx.index:
                     row = idx.loc[tk]
@@ -837,6 +843,32 @@ def _build_chat_context(model: dict, state: dict, macro_hist: dict,
     lines.append(f"  Nome: {nome_mod}" + (f" | Ano de compra: {ano_compra}" if ano_compra else ""))
     lines.append(f"  Nº de empresas: {len(items)}")
     # Composição setorial
+    metrics = model.get("metrics_json") or {}
+    params = model.get("params_json") or {}
+    for obj_name, obj in (("metrics", metrics), ("params", params)):
+        if isinstance(obj, str):
+            try:
+                parsed = json.loads(obj)
+                if obj_name == "metrics":
+                    metrics = parsed
+                else:
+                    params = parsed
+            except Exception:
+                pass
+    if metrics:
+        met_parts = []
+        for k in ("alpha_selic_medio", "alpha_ew_medio", "score_medio", "score_entrada_medio"):
+            if k in metrics and metrics.get(k) is not None:
+                met_parts.append(f"{k}={metrics.get(k)}")
+        if met_parts:
+            lines.append("  Metricas salvas da Criacao de Portfolio: " + " | ".join(met_parts))
+    if params:
+        par_parts = []
+        for k in ("segmentos_analisados", "segmentos_aprovados", "min_anos_dre", "status_invest_reconciliacao"):
+            if k in params and params.get(k) is not None:
+                par_parts.append(f"{k}={params.get(k)}")
+        if par_parts:
+            lines.append("  Parametros/resultados da Criacao de Portfolio: " + " | ".join(par_parts))
     segs: dict[str, float] = {}
     for it in items:
         seg = str(it.get("segmento") or it.get("setor") or "—")

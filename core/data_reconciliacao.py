@@ -415,6 +415,7 @@ def batch_multiplos_reconciliados(
         return pd.DataFrame(), pd.DataFrame(), {}
 
     base = df_base.copy() if df_base is not None else _db.load_multiplos_todos()
+    zero_suspect_source = base.copy()
     if base.empty or "Ticker" not in base.columns:
         base = pd.DataFrame({"Ticker": list(tks)})
     else:
@@ -424,7 +425,7 @@ def batch_multiplos_reconciliados(
         if faltantes:
             base = pd.concat([base, pd.DataFrame({"Ticker": faltantes})], ignore_index=True)
 
-    zero_suspect = infer_zero_as_missing_fields(base)
+    zero_suspect = infer_zero_as_missing_fields(zero_suspect_source)
 
     fund_all = fund_data if fund_data is not None else _fund.batch_stocks(tks)
     si_all: dict[str, dict[str, Any]] = status_data or {}
