@@ -14,6 +14,7 @@ from views.controle_financeiro import (
     _prepare_category_analysis,
     _prepare_category_limit_analysis,
     _prepare_future_invoice_projection,
+    _prepare_installment_analysis,
     _prepare_merchant_analysis,
     _prepare_recurring_analysis,
     _summary_credit_card,
@@ -214,3 +215,23 @@ def test_credit_card_category_limits_and_future_projection():
     assert compras["Folga/Excesso"] == -100
     assert list(projection["Mes"]) == ["Jun/2026", "Jul/2026"]
     assert list(projection["Valor projetado"]) == [500, 500]
+
+
+def test_credit_card_installment_analysis_hides_internal_group_id():
+    df = _card_rows_dataframe([
+        _cc_tx(1, "NOTEBOOK | Compra 15/05/2026 | Cartao 3083 | Parcela 3/5", 500, date(2026, 5, 10), date(2026, 5, 15), "Compras", 3, 5),
+    ])
+
+    installment_df = _prepare_installment_analysis(df)
+
+    assert "installment_group" not in installment_df.columns
+    assert list(installment_df.columns) == [
+        "Estabelecimento",
+        "Categoria",
+        "Final",
+        "Parcela atual",
+        "Total parcelas",
+        "Valor no mes",
+        "Restantes",
+        "Pendente estimado",
+    ]

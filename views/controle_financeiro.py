@@ -2208,7 +2208,7 @@ def _prepare_installment_analysis(df: pd.DataFrame) -> pd.DataFrame:
         "valor_mes": "Valor no mes",
         "restantes": "Restantes",
         "pendente": "Pendente estimado",
-    })
+    }).drop(columns=["installment_group"], errors="ignore")
 
 
 def _prepare_non_consumption(df: pd.DataFrame) -> pd.DataFrame:
