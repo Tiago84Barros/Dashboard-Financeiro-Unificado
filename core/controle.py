@@ -345,6 +345,7 @@ _SQL_HISTORICO_CC_MENSAL = """
     WHERE  t.user_id = :uid
       AND  t.type IN ('expense', 'saida')
       AND  COALESCE(a.type, '') = 'credit_card'
+      AND  COALESCE(t.source, '') = 'csv'
     GROUP  BY ano, mes
     ORDER  BY ano, mes
 """
@@ -370,6 +371,7 @@ _SQL_TRANSACOES_CARTAO = """
     LEFT JOIN categories c  ON c.id  = t.category_id
     WHERE  t.user_id = :uid
       AND  COALESCE(ac.type, '') = 'credit_card'
+      AND  COALESCE(t.source, '') = 'csv'
     ORDER  BY t.due_date DESC, COALESCE(t.payment_date, t.due_date) DESC, t.created_at DESC
 """
 
@@ -388,6 +390,7 @@ _SQL_DIVIDAS_CC = """
     LEFT JOIN categories c  ON c.id  = t.category_id
     WHERE  t.user_id = :uid
       AND  COALESCE(ac.type, '') = 'credit_card'
+      AND  COALESCE(t.source, '') = 'csv'
       AND  t.installment_group IS NOT NULL
       AND  t.installment_total > 1
     GROUP  BY t.installment_group, ac.name, c.name
@@ -828,6 +831,7 @@ def importar_fatura_cartao_csv(file_bytes: bytes, vencimento: _date, account_id:
                 WHERE t.user_id = CAST(:uid AS uuid)
                   AND t.account_id = CAST(:account_id AS uuid)
                   AND t.due_date = :due_date
+                  AND COALESCE(t.source, '') = 'csv'
             """),
             {"uid": owner, "account_id": account_id, "due_date": vencimento},
         ).fetchall()
@@ -1185,11 +1189,7 @@ def get_historico_cc_mensal() -> list:
     Cada item: {"ano", "mes", "label", "total"}
     """
     if settings.MOCK_MODE:
-        ano = _date.today().year
-        return [
-            {"ano": ano, "mes": m, "label": _MESES_PT[m], "total": round(v, 2)}
-            for m, v in sorted(_MOCK_HIST_CC.items())
-        ]
+        return []
     try:
         from sqlalchemy import text
         from core.database import get_engine
@@ -1216,54 +1216,15 @@ def get_historico_cc_mensal() -> list:
             for r in rows
         ]
     except Exception as exc:
-        logger.warning("[controle] get_historico_cc_mensal falhou (%s) — usando mock.", type(exc).__name__)
-        ano = _date.today().year
-        return [
-            {"ano": ano, "mes": m, "label": _MESES_PT[m], "total": round(v, 2)}
-            for m, v in sorted(_MOCK_HIST_CC.items())
-        ]
+        logger.warning("[controle] get_historico_cc_mensal falhou (%s).", type(exc).__name__)
+        return []
 
 
 @st.cache_data(ttl=60)
 def get_transacoes_cartao_credito() -> list:
     """Retorna lancamentos de contas de cartao com metadados de fatura e parcela."""
     if settings.MOCK_MODE:
-        ano = _date.today().year
-        mock_rows = [
-            ("Supermercado Modelo | Compra 05/05/2026 | Cartao 3083 | Parcela Unica", -320.40, "expense", _date(ano, 5, 10), _date(ano, 5, 5), "Mercado", "Cartao Mock", 1, 1, None),
-            ("Streaming Premium | Compra 06/05/2026 | Cartao 3083 | Parcela Unica", -59.90, "expense", _date(ano, 5, 10), _date(ano, 5, 6), "Assinaturas", "Cartao Mock", 1, 1, None),
-            ("Notebook | Compra 15/04/2026 | Cartao 3083 | Parcela 2/10", -560.00, "expense", _date(ano, 5, 10), _date(ano, 4, 15), "Compras", "Cartao Mock", 2, 10, "mock-parcelado-1"),
-            ("Pag Fatura Boleto | Compra 09/05/2026 | Cartao 3083 | Parcela Unica", 145.86, "transfer", _date(ano, 5, 10), _date(ano, 5, 9), "Pagamento de Cartao", "Cartao Mock", 1, 1, None),
-            ("Estorno Tarifa | Compra 10/05/2026 | Cartao 3083 | Parcela Unica", 98.00, "transfer", _date(ano, 5, 10), _date(ano, 5, 10), "Creditos e Estornos", "Cartao Mock", 1, 1, None),
-        ]
-        return [
-            {
-                "id": f"mock-cc-{i}",
-                "descricao": desc,
-                "valor": float(valor),
-                "valor_fmt": format_transaction_amount(float(valor), canonical_transaction_type(tipo, cat, valor)),
-                "data": venc,
-                "data_fmt": venc.strftime("%d/%m/%Y"),
-                "tipo": tipo,
-                "tipo_fluxo": canonical_transaction_type(tipo, cat, valor),
-                "tipo_label": transaction_type_label(canonical_transaction_type(tipo, cat, valor)),
-                "status": "settled",
-                "source": "mock",
-                "categoria": cat,
-                "conta": conta,
-                "account_type": "credit_card",
-                "payment_date": compra,
-                "data_compra": compra,
-                "installment_current": inst_atual,
-                "installment_total": inst_total,
-                "installment_group": grupo,
-                "eh_receita": False,
-                "eh_despesa": tipo == "expense",
-                "eh_investimento": False,
-            }
-            for i, (desc, valor, tipo, venc, compra, cat, conta, inst_atual, inst_total, grupo)
-            in enumerate(mock_rows, start=1)
-        ]
+        return []
 
     try:
         from sqlalchemy import text
@@ -1328,7 +1289,7 @@ def get_dividas_cc() -> list:
         return {**d, "parcelas_restantes": tp - pp, "is_ativa": pp < tp}
 
     if settings.MOCK_MODE:
-        return [_enrich(d) for d in _MOCK_DIVIDAS]
+        return []
 
     try:
         from sqlalchemy import text
@@ -1363,8 +1324,8 @@ def get_dividas_cc() -> list:
         return result
 
     except Exception as exc:
-        logger.warning("[controle] get_dividas_cc falhou (%s) — usando mock.", type(exc).__name__)
-        return [_enrich(d) for d in _MOCK_DIVIDAS]
+        logger.warning("[controle] get_dividas_cc falhou (%s).", type(exc).__name__)
+        return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────

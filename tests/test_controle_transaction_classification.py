@@ -4,11 +4,15 @@ from core.controle import (
     canonical_transaction_type,
     parse_fatura_cartao_csv,
     _filtrar_transacoes,
+    _SQL_DIVIDAS_CC,
+    _SQL_HISTORICO_CC_MENSAL,
+    _SQL_TRANSACOES_CARTAO,
 )
 from views.controle_financeiro import (
     _CAT_SAIDA,
     _FORMAS_PGTO_SAIDA,
     _card_rows_dataframe,
+    _is_credit_card_invoice_source,
     _is_manual_card_related_text,
     _normalize_merchant_name,
     _prepare_category_analysis,
@@ -30,6 +34,7 @@ def _cc_tx(
     categoria: str = "Compras",
     parcela_atual: int = 1,
     total_parcelas: int = 1,
+    source: str = "csv",
 ) -> dict:
     return {
         "id": str(idx),
@@ -39,7 +44,7 @@ def _cc_tx(
         "tipo": "expense",
         "tipo_fluxo": "expense",
         "status": "settled",
-        "source": "csv",
+        "source": source,
         "categoria": categoria,
         "conta": "Cartao Teste",
         "account_type": "credit_card",
@@ -94,6 +99,22 @@ def test_manual_sidebar_blocks_card_related_free_text():
     assert _is_manual_card_related_text("compras do cartão")
     assert not _is_manual_card_related_text("Mercado")
     assert not _is_manual_card_related_text("Renda Fixa")
+
+
+def test_credit_card_tab_accepts_only_csv_invoice_source():
+    assert _is_credit_card_invoice_source("csv")
+    assert _is_credit_card_invoice_source(" CSV ")
+    assert not _is_credit_card_invoice_source("manual")
+    assert not _is_credit_card_invoice_source("csv_migration")
+    assert not _is_credit_card_invoice_source("import")
+    assert not _is_credit_card_invoice_source("mock")
+
+
+def test_credit_card_sql_queries_are_limited_to_csv_imports():
+    expected = "COALESCE(t.source, '') = 'csv'"
+    assert expected in _SQL_TRANSACOES_CARTAO
+    assert expected in _SQL_HISTORICO_CC_MENSAL
+    assert expected in _SQL_DIVIDAS_CC
 
 
 def test_parse_credit_card_invoice_csv_model():
@@ -235,3 +256,15 @@ def test_credit_card_installment_analysis_hides_internal_group_id():
         "Restantes",
         "Pendente estimado",
     ]
+
+
+def test_credit_card_dataframe_discards_manual_migration_and_mock_rows():
+    df = _card_rows_dataframe([
+        _cc_tx(1, "SMILES CLUB SMILES | Compra 05/02/2026 | Cartao 3083 | Parcela 3/12", 37.8, date(2026, 5, 10), date(2026, 2, 5), "Marketing Direto", 3, 12),
+        _cc_tx(2, "Material do Toldo para substituicao na area Gourmet (5x)", 5600, date(2026, 5, 14), date(2026, 5, 14), "Outros", source="csv_migration"),
+        _cc_tx(3, "Compra manual antiga", 90, date(2026, 5, 10), date(2026, 5, 5), "Compras", source="manual"),
+        _cc_tx(4, "Exemplo mock", 50, date(2026, 5, 10), date(2026, 5, 5), "Compras", source="mock"),
+    ])
+
+    assert list(df["estabelecimento"]) == ["SMILES CLUB SMILES"]
+    assert "Toldo" not in " ".join(df["descricao"].tolist())

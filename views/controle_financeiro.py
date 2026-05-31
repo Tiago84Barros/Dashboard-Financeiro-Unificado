@@ -61,6 +61,7 @@ _MESES_NOMES = {v: k for k, v in _MESES_PT.items()}
 _FORMAS_PGTO_SAIDA = ["Conta"]
 _FORMAS_PGTO_TODOS = ["Conta"]
 _MANUAL_CARD_TERMS = ("cartao", "credito", "fatura")
+_CC_IMPORTED_SOURCES = {"csv"}
 
 # Categorias pré-definidas por tipo (igual ao app original)
 _CAT_ENTRADA = [
@@ -100,6 +101,10 @@ def _is_manual_card_related_text(value: object) -> bool:
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = text.encode("ascii", "ignore").decode("ascii").casefold()
     return any(term in text for term in _MANUAL_CARD_TERMS)
+
+
+def _is_credit_card_invoice_source(value: object) -> bool:
+    return str(value or "").strip().casefold() in _CC_IMPORTED_SOURCES
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1318,6 +1323,7 @@ def _tab_cartao_legacy(d: dict) -> None:
     despesas_cc = [
         t for t in txs
         if t.get("tipo_fluxo") == "expense" and t.get("account_type") == "credit_card"
+        and _is_credit_card_invoice_source(t.get("source"))
     ]
 
     _render_importador_fatura_cartao()
@@ -1733,6 +1739,8 @@ def _card_rows_dataframe(transacoes: list[dict]) -> pd.DataFrame:
     rows = []
     for tx in transacoes or []:
         if tx.get("account_type") != "credit_card":
+            continue
+        if not _is_credit_card_invoice_source(tx.get("source")):
             continue
 
         due_ts = _to_timestamp(tx.get("data") or tx.get("due_date"))
@@ -2543,8 +2551,6 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     )
 
     all_cc_txs = get_transacoes_cartao_credito()
-    if not all_cc_txs:
-        all_cc_txs = [t for t in d.get("transacoes", []) if t.get("account_type") == "credit_card"]
     df_all = _card_rows_dataframe(all_cc_txs)
 
     if not df_all.empty:
