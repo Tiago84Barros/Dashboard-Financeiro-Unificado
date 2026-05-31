@@ -25,6 +25,7 @@ Dados: core/controle + core/investimentos.get_cashflow_mensal()
 """
 from datetime import date as _date, timedelta
 from collections import defaultdict
+import re
 
 import plotly.graph_objects as go
 import streamlit as st
@@ -34,6 +35,8 @@ from core.controle import (
     atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
     get_gastos_cartao_mensal, get_gastos_categoria_anual,
     get_historico_cc_mensal, get_dividas_cc,
+    get_contas_cartao_credito, parse_fatura_cartao_csv,
+    importar_fatura_cartao_csv,
 )
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
@@ -1204,6 +1207,123 @@ def _render_dividas_table(items: list, show_descricao: bool = False) -> None:
         )
 
 
+def _infer_due_date_from_filename(filename: str | None) -> _date:
+    if filename:
+        match = re.search(r"(20\d{2})[-_](\d{2})[-_](\d{2})", filename)
+        if match:
+            y, m, d = map(int, match.groups())
+            try:
+                return _date(y, m, d)
+            except ValueError:
+                pass
+    today = _date.today()
+    day = int(st.session_state.get("cf_vencimento_dia", 5) or 5)
+    return _date(today.year, today.month, min(day, 28))
+
+
+def _render_importador_fatura_cartao() -> None:
+    _secao_titulo("📥", "Importar fatura CSV")
+
+    contas = get_contas_cartao_credito()
+    uploaded = st.file_uploader(
+        "Arquivo CSV",
+        type=["csv"],
+        key="cc_invoice_upload",
+        help="Modelo com Data de Compra, Nome no Cartão, Final do Cartão, Categoria, Descrição, Parcela e valores.",
+    )
+
+    col_due, col_account = st.columns([1, 2], gap="small")
+    with col_due:
+        due_date = st.date_input(
+            "Vencimento da fatura",
+            value=_infer_due_date_from_filename(uploaded.name if uploaded else None),
+            format="DD/MM/YYYY",
+            key="cc_invoice_due_date",
+        )
+    with col_account:
+        if contas:
+            account_idx = st.selectbox(
+                "Conta do cartão",
+                range(len(contas)),
+                format_func=lambda i: contas[i]["nome"],
+                key="cc_invoice_account",
+            )
+            account_id = contas[account_idx]["id"]
+        else:
+            st.warning("Cadastre uma conta do tipo cartão de crédito antes de importar.")
+            account_id = None
+
+    if uploaded is None:
+        st.caption("Selecione uma fatura em CSV para visualizar a prévia.")
+        return
+
+    file_bytes = uploaded.getvalue()
+    parsed = parse_fatura_cartao_csv(file_bytes, due_date)
+
+    if parsed.get("errors"):
+        for err in parsed["errors"][:5]:
+            st.error(err)
+        if len(parsed["errors"]) > 5:
+            st.caption(f"+ {len(parsed['errors']) - 5} erro(s) adicionais.")
+
+    rows = parsed.get("rows", [])
+    if not rows:
+        st.caption("Nenhuma linha válida encontrada na fatura.")
+        return
+
+    summary = parsed.get("summary", {})
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+    with c1:
+        st.markdown(_kpi_card("Compras", fmt_moeda(summary.get("total_purchases", 0.0)), f"{len(rows)} linha(s)", _COR_DESPESA), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_kpi_card("Créditos", fmt_moeda(summary.get("total_credits", 0.0)), "Estornos e pagamentos", _COR_RECEITA), unsafe_allow_html=True)
+    with c3:
+        st.markdown(_kpi_card("Total líquido", fmt_moeda(summary.get("net_total", 0.0)), "Compras menos créditos", _COR_NEUTRO), unsafe_allow_html=True)
+    with c4:
+        st.markdown(_kpi_card("Cartões", str(len(summary.get("cards", []))), ", ".join(summary.get("cards", []))[:42] or "—", _COR_INVEST), unsafe_allow_html=True)
+
+    import pandas as pd
+
+    preview = pd.DataFrame([
+        {
+            "Compra": r["purchase_date"].strftime("%d/%m/%Y"),
+            "Vencimento": r["due_date"].strftime("%d/%m/%Y"),
+            "Final": r["card_final"],
+            "Categoria": r["category"],
+            "Descrição": r["description_raw"],
+            "Parcela": r["installment_label"],
+            "Tipo": "despesa" if r["type"] == "expense" else "crédito",
+            "Valor (R$)": r["value_brl"],
+        }
+        for r in rows
+    ])
+    st.dataframe(
+        preview,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
+        },
+    )
+
+    importar = st.button(
+        "Importar fatura",
+        type="primary",
+        disabled=(not account_id or not rows or bool(parsed.get("errors"))),
+        use_container_width=True,
+        key="cc_invoice_import_btn",
+    )
+    if importar:
+        result = importar_fatura_cartao_csv(file_bytes, due_date, account_id)
+        if result.get("ok"):
+            st.success(result.get("message", "Fatura importada."))
+            st.rerun()
+        else:
+            st.error(result.get("message", "Falha ao importar fatura."))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+
 def _tab_cartao(d: dict) -> None:
     txs = d["transacoes"]
 
@@ -1212,6 +1332,8 @@ def _tab_cartao(d: dict) -> None:
         t for t in txs
         if t.get("tipo_fluxo") == "expense" and t.get("account_type") == "credit_card"
     ]
+
+    _render_importador_fatura_cartao()
 
     # ── KPIs do mês ──────────────────────────────────────────────────────────
     if despesas_cc:

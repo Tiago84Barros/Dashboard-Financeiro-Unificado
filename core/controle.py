@@ -47,6 +47,10 @@ Schema da list retornada por get_transacoes_filtradas():
   extra: ano, mes, dia (ints)
 """
 import logging
+import io
+import re
+import uuid
+from collections import Counter
 from datetime import date as _date
 from typing import Optional
 import unicodedata
@@ -230,6 +234,15 @@ _SQL_CONTAS = """
     ORDER  BY name
 """
 
+_SQL_CONTAS_CARTAO = """
+    SELECT id::text, name
+    FROM   accounts
+    WHERE  user_id = :uid
+      AND  type = 'credit_card'
+      AND  active = TRUE
+    ORDER  BY name
+"""
+
 _SQL_INSERT_TX = """
     INSERT INTO transactions
         (user_id, account_id, category_id, description, amount,
@@ -237,6 +250,18 @@ _SQL_INSERT_TX = """
     VALUES
         (:uid, :account_id, :category_id, :description, :amount,
          :due_date, :type, 'settled', 'manual')
+"""
+
+_SQL_INSERT_INVOICE_TX = """
+    INSERT INTO transactions
+        (user_id, account_id, category_id, description, amount,
+         due_date, payment_date, type, status, source,
+         installment_current, installment_total, installment_group)
+    VALUES
+        (:uid, :account_id, :category_id, :description, :amount,
+         :due_date, :payment_date, :type, 'settled', 'csv',
+         :installment_current, :installment_total,
+         CAST(:installment_group AS uuid))
 """
 
 _SQL_UPDATE_TX = """
@@ -416,6 +441,32 @@ def get_opcoes_formulario() -> dict:
         return _opcoes_mock()
 
 
+@st.cache_data(ttl=300)
+def get_contas_cartao_credito() -> list[dict]:
+    """Retorna contas do tipo cartão de crédito disponíveis para importação."""
+    if settings.MOCK_MODE:
+        return [{"id": "cc-mock", "nome": "Cartão de Crédito"}]
+
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            raise RuntimeError("Engine indisponível.")
+
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            raise RuntimeError("OWNER_USER_ID não configurado.")
+
+        with engine.connect() as conn:
+            rows = conn.execute(text(_SQL_CONTAS_CARTAO), {"uid": owner}).fetchall()
+        return [{"id": r.id, "nome": r.name} for r in rows]
+    except Exception as exc:
+        logger.warning("[controle] Falha ao carregar contas de cartão: %s", exc)
+        return []
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # API pública — escrita
 # ─────────────────────────────────────────────────────────────────────────────
@@ -433,6 +484,379 @@ def _clear_controle_caches() -> None:
         cached_fn = globals().get(cached_name)
         if hasattr(cached_fn, "clear"):
             cached_fn.clear()
+    try:
+        from core.investimentos import get_cashflow_mensal
+
+        if hasattr(get_cashflow_mensal, "clear"):
+            get_cashflow_mensal.clear()
+    except Exception:
+        pass
+
+
+_FATURA_COLUNAS_OBRIGATORIAS = [
+    "Data de Compra",
+    "Nome no Cartão",
+    "Final do Cartão",
+    "Categoria",
+    "Descrição",
+    "Parcela",
+    "Valor (em US$)",
+    "Cotação (em R$)",
+    "Valor (em R$)",
+]
+
+
+def _parse_money(value: object) -> float:
+    if value is None:
+        return 0.0
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none"}:
+        return 0.0
+    text = text.replace("R$", "").replace("US$", "").replace(" ", "")
+    if "," in text and "." in text:
+        text = text.replace(".", "").replace(",", ".")
+    elif "," in text:
+        text = text.replace(",", ".")
+    try:
+        return round(float(text), 2)
+    except ValueError:
+        return 0.0
+
+
+def _parse_installment(value: object) -> tuple[int, int, str]:
+    raw = str(value or "").strip()
+    norm = _norm_text(raw)
+    if not raw or norm in {"unica", "unico", "1", "1 1"}:
+        return 1, 1, raw or "Única"
+    match = re.search(r"(\d+)\s*/\s*(\d+)", raw)
+    if not match:
+        return 1, 1, raw
+    current = max(1, int(match.group(1)))
+    total = max(current, int(match.group(2)))
+    return current, total, raw
+
+
+def _invoice_category(raw_category: object, description: object, value_brl: float) -> str:
+    raw = str(raw_category or "").strip()
+    desc_norm = _norm_text(description)
+    if raw and raw != "-":
+        return raw
+    if "pag fatura" in desc_norm or "pagamento fatura" in desc_norm:
+        return "Pagamento de Cartão"
+    if "anuidade" in desc_norm:
+        return "Anuidade"
+    if value_brl < 0 or "estorno" in desc_norm:
+        return "Créditos e Estornos"
+    return "Compras"
+
+
+def _invoice_tx_type(value_brl: float, description: object) -> str:
+    desc_norm = _norm_text(description)
+    if value_brl < 0 or "estorno" in desc_norm or "pag fatura" in desc_norm:
+        return "transfer"
+    return "expense"
+
+
+def _invoice_description(description: object, purchase_date: _date, card_final: object, parcel_label: str) -> str:
+    desc = " ".join(str(description or "Sem descrição").split())
+    final = str(card_final or "").strip()
+    parts = [desc, f"Compra {purchase_date.strftime('%d/%m/%Y')}"]
+    if final:
+        parts.append(f"Cartão {final}")
+    if parcel_label:
+        parts.append(f"Parcela {parcel_label}")
+    return " | ".join(parts)[:255]
+
+
+def _invoice_group_uuid(card_final: object, description: object, purchase_date: _date, installment_total: int) -> str | None:
+    if installment_total <= 1:
+        return None
+    key = "|".join([
+        "app4-card-invoice",
+        _norm_text(card_final),
+        _norm_text(description),
+        purchase_date.isoformat(),
+        str(installment_total),
+    ])
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
+
+
+def _read_invoice_csv(file_bytes: bytes):
+    import pandas as pd
+
+    last_exc: Exception | None = None
+    for encoding in ("utf-8-sig", "utf-8", "latin1", "cp1252"):
+        try:
+            df = pd.read_csv(io.BytesIO(file_bytes), sep=";", dtype=str, encoding=encoding)
+            df.columns = [str(c).strip() for c in df.columns]
+            return df
+        except Exception as exc:
+            last_exc = exc
+    raise ValueError(f"Não foi possível ler o CSV da fatura: {last_exc}")
+
+
+def parse_fatura_cartao_csv(file_bytes: bytes, vencimento: _date) -> dict:
+    """
+    Lê o CSV da fatura e retorna linhas normalizadas sem gravar no banco.
+
+    A data de compra fica em payment_date; due_date representa o vencimento da fatura,
+    que é o eixo usado pela aba Cartão de Crédito.
+    """
+    import pandas as pd
+
+    df = _read_invoice_csv(file_bytes)
+    missing = [c for c in _FATURA_COLUNAS_OBRIGATORIAS if c not in df.columns]
+    if missing:
+        return {
+            "ok": False,
+            "errors": [f"Colunas obrigatórias ausentes: {', '.join(missing)}"],
+            "rows": [],
+            "summary": {},
+        }
+
+    rows: list[dict] = []
+    errors: list[str] = []
+
+    for idx, raw in df.iterrows():
+        line_no = int(idx) + 2
+        try:
+            purchase_ts = pd.to_datetime(
+                raw["Data de Compra"],
+                dayfirst=True,
+                errors="raise",
+            )
+            purchase_date = purchase_ts.date()
+        except Exception:
+            errors.append(f"Linha {line_no}: data de compra inválida.")
+            continue
+
+        value_brl = _parse_money(raw["Valor (em R$)"])
+        value_usd = _parse_money(raw["Valor (em US$)"])
+        fx_brl = _parse_money(raw["Cotação (em R$)"])
+        inst_current, inst_total, inst_label = _parse_installment(raw["Parcela"])
+        category = _invoice_category(raw["Categoria"], raw["Descrição"], value_brl)
+        tx_type = _invoice_tx_type(value_brl, raw["Descrição"])
+        amount = -abs(value_brl) if tx_type == "expense" else abs(value_brl)
+        description = _invoice_description(
+            raw["Descrição"],
+            purchase_date,
+            raw["Final do Cartão"],
+            inst_label,
+        )
+
+        rows.append({
+            "line_no": line_no,
+            "purchase_date": purchase_date,
+            "due_date": vencimento,
+            "cardholder": str(raw["Nome no Cartão"] or "").strip(),
+            "card_final": str(raw["Final do Cartão"] or "").strip(),
+            "raw_category": str(raw["Categoria"] or "").strip(),
+            "category": category,
+            "description_raw": str(raw["Descrição"] or "").strip(),
+            "description": description,
+            "installment_label": inst_label,
+            "installment_current": inst_current,
+            "installment_total": inst_total,
+            "value_usd": value_usd,
+            "fx_brl": fx_brl,
+            "value_brl": value_brl,
+            "amount": amount,
+            "type": tx_type,
+            "installment_group": _invoice_group_uuid(
+                raw["Final do Cartão"],
+                raw["Descrição"],
+                purchase_date,
+                inst_total,
+            ),
+        })
+
+    total_purchases = round(sum(r["value_brl"] for r in rows if r["value_brl"] > 0), 2)
+    total_credits = round(abs(sum(r["value_brl"] for r in rows if r["value_brl"] < 0)), 2)
+    summary = {
+        "rows": len(rows),
+        "errors": len(errors),
+        "due_date": vencimento,
+        "total_purchases": total_purchases,
+        "total_credits": total_credits,
+        "net_total": round(sum(r["value_brl"] for r in rows), 2),
+        "cards": sorted({r["card_final"] for r in rows if r["card_final"]}),
+        "installments": sum(1 for r in rows if r["installment_total"] > 1),
+    }
+
+    return {"ok": len(rows) > 0 and not errors, "errors": errors, "rows": rows, "summary": summary}
+
+
+def _category_type_for_invoice_row(row: dict) -> str:
+    if row["type"] == "expense":
+        return "expense"
+    return "transfer"
+
+
+def _get_or_create_category(conn, owner: str, name: str, cat_type: str) -> str | None:
+    from sqlalchemy import text
+
+    clean = (name or "Outros").strip() or "Outros"
+    row = conn.execute(
+        text("""
+            SELECT id::text
+            FROM categories
+            WHERE LOWER(name) = LOWER(:name)
+              AND (user_id = :uid OR user_id IS NULL)
+            ORDER BY CASE WHEN user_id = :uid THEN 0 ELSE 1 END
+            LIMIT 1
+        """),
+        {"name": clean, "uid": owner},
+    ).fetchone()
+    if row:
+        return row.id
+
+    created = conn.execute(
+        text("""
+            INSERT INTO categories (user_id, name, type)
+            VALUES (:uid, :name, :type)
+            RETURNING id::text
+        """),
+        {"uid": owner, "name": clean[:100], "type": cat_type},
+    ).fetchone()
+    return created.id if created else None
+
+
+def _invoice_fingerprint(row: dict, account_id: str) -> tuple:
+    return (
+        account_id,
+        row["due_date"].isoformat(),
+        row["purchase_date"].isoformat(),
+        round(float(row["amount"]), 2),
+        _norm_text(row["description"]),
+        _norm_text(row["category"]),
+        int(row["installment_current"]),
+        int(row["installment_total"]),
+    )
+
+
+def importar_fatura_cartao_csv(file_bytes: bytes, vencimento: _date, account_id: str) -> dict:
+    """Importa a fatura para `transactions`, com deduplicação idempotente por contagem."""
+    if settings.MOCK_MODE:
+        return {"ok": False, "message": "Modo mock ativo — importação não executada."}
+
+    parsed = parse_fatura_cartao_csv(file_bytes, vencimento)
+    if parsed.get("errors"):
+        return {"ok": False, "message": "; ".join(parsed["errors"][:5])}
+    if not parsed["rows"]:
+        return {"ok": False, "message": "; ".join(parsed.get("errors") or ["Fatura sem linhas válidas."])}
+
+    from sqlalchemy import text
+    from core.database import get_engine
+
+    engine = get_engine()
+    if engine is None:
+        return {"ok": False, "message": "Banco não configurado."}
+
+    owner = settings.OWNER_USER_ID
+    if not owner:
+        return {"ok": False, "message": "OWNER_USER_ID não configurado."}
+
+    rows = parsed["rows"]
+    inserted = 0
+    skipped = 0
+
+    with engine.begin() as conn:
+        account = conn.execute(
+            text("""
+                SELECT id::text, name, type
+                FROM accounts
+                WHERE id = CAST(:account_id AS uuid)
+                  AND user_id = CAST(:uid AS uuid)
+                LIMIT 1
+            """),
+            {"account_id": account_id, "uid": owner},
+        ).fetchone()
+        if not account:
+            return {"ok": False, "message": "Conta de cartão não encontrada."}
+        if account.type != "credit_card":
+            return {"ok": False, "message": "A conta selecionada não é do tipo cartão de crédito."}
+
+        existing_rows = conn.execute(
+            text("""
+                SELECT
+                    t.description,
+                    t.amount,
+                    t.due_date,
+                    t.payment_date,
+                    COALESCE(c.name, 'Sem categoria') AS category_name,
+                    COALESCE(t.installment_current, 1) AS installment_current,
+                    COALESCE(t.installment_total, 1) AS installment_total
+                FROM transactions t
+                LEFT JOIN categories c ON c.id = t.category_id
+                WHERE t.user_id = CAST(:uid AS uuid)
+                  AND t.account_id = CAST(:account_id AS uuid)
+                  AND t.due_date = :due_date
+            """),
+            {"uid": owner, "account_id": account_id, "due_date": vencimento},
+        ).fetchall()
+
+        existing = Counter()
+        for item in existing_rows:
+            purchase_date = item.payment_date or item.due_date
+            existing[(
+                account_id,
+                item.due_date.isoformat(),
+                purchase_date.isoformat(),
+                round(float(item.amount or 0), 2),
+                _norm_text(item.description),
+                _norm_text(item.category_name),
+                int(item.installment_current or 1),
+                int(item.installment_total or 1),
+            )] += 1
+
+        seen = Counter()
+        category_cache: dict[tuple[str, str], str | None] = {}
+
+        for row in rows:
+            fp = _invoice_fingerprint(row, account_id)
+            seen[fp] += 1
+            if seen[fp] <= existing.get(fp, 0):
+                skipped += 1
+                continue
+
+            cat_key = (_norm_text(row["category"]), _category_type_for_invoice_row(row))
+            category_id = category_cache.get(cat_key)
+            if cat_key not in category_cache:
+                category_id = _get_or_create_category(
+                    conn,
+                    owner,
+                    row["category"],
+                    _category_type_for_invoice_row(row),
+                )
+                category_cache[cat_key] = category_id
+
+            conn.execute(
+                text(_SQL_INSERT_INVOICE_TX),
+                {
+                    "uid": owner,
+                    "account_id": account_id,
+                    "category_id": category_id,
+                    "description": row["description"],
+                    "amount": row["amount"],
+                    "due_date": row["due_date"],
+                    "payment_date": row["purchase_date"],
+                    "type": row["type"],
+                    "installment_current": row["installment_current"],
+                    "installment_total": row["installment_total"],
+                    "installment_group": row["installment_group"],
+                },
+            )
+            inserted += 1
+
+    _clear_controle_caches()
+    summary = dict(parsed["summary"])
+    summary.update({"inserted": inserted, "skipped": skipped})
+    return {
+        "ok": True,
+        "message": f"{inserted} lançamento(s) importado(s); {skipped} duplicado(s) ignorado(s).",
+        "summary": summary,
+        "errors": parsed.get("errors", []),
+    }
 
 
 def inserir_transacao(

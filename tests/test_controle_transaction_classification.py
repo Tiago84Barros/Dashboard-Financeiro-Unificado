@@ -1,4 +1,10 @@
-from core.controle import canonical_transaction_type, _filtrar_transacoes
+from datetime import date
+
+from core.controle import (
+    canonical_transaction_type,
+    parse_fatura_cartao_csv,
+    _filtrar_transacoes,
+)
 
 
 def test_investment_categories_override_positive_flow_type():
@@ -28,3 +34,34 @@ def test_table_filters_use_canonical_type_not_amount_sign():
     assert [t["descricao"] for t in receitas] == ["Salario"]
     assert [t["descricao"] for t in despesas] == ["Mercado"]
     assert [t["descricao"] for t in investimentos] == ["Nomad"]
+
+
+def test_parse_credit_card_invoice_csv_model():
+    csv_text = """Data de Compra;Nome no Cartão;Final do Cartão;Categoria;Descrição;Parcela;Valor (em US$);Cotação (em R$);Valor (em R$)
+05/02/2026;TIAGO BARROS;3083;Marketing Direto;SMILES CLUB SMILES;3/12;0;0;37.80
+06/04/2026;TIAGO BARROS;3083;-;Pag Fatura Boleto;Única;0;0;-145.86
+28/04/2026;TIAGO BARROS;3083;-;Estorno Tarifa;Única;0;0;-98.00
+"""
+    parsed = parse_fatura_cartao_csv(csv_text.encode("utf-8"), date(2026, 5, 10))
+
+    assert parsed["ok"] is True
+    assert parsed["summary"]["rows"] == 3
+    assert parsed["summary"]["total_purchases"] == 37.80
+    assert parsed["summary"]["total_credits"] == 243.86
+    assert parsed["summary"]["net_total"] == -206.06
+
+    purchase, payment, refund = parsed["rows"]
+    assert purchase["due_date"] == date(2026, 5, 10)
+    assert purchase["purchase_date"] == date(2026, 2, 5)
+    assert purchase["type"] == "expense"
+    assert purchase["amount"] == -37.80
+    assert purchase["installment_current"] == 3
+    assert purchase["installment_total"] == 12
+    assert purchase["installment_group"]
+
+    assert payment["type"] == "transfer"
+    assert payment["category"] == "Pagamento de Cartão"
+    assert payment["amount"] == 145.86
+
+    assert refund["type"] == "transfer"
+    assert refund["category"] == "Créditos e Estornos"
