@@ -49,6 +49,7 @@ Schema da list retornada por get_transacoes_filtradas():
 import logging
 from datetime import date as _date
 from typing import Optional
+import unicodedata
 
 import streamlit as st
 
@@ -61,6 +62,101 @@ _MESES_PT = {
     5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
     9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
 }
+
+_INVESTMENT_CATEGORY_KEYS = frozenset({
+    "investimento",
+    "investimentos",
+    "aporte investimento",
+    "aporte em investimento",
+    "renda fixa",
+    "renda variavel",
+    "exterior",
+    "reserva de despesa",
+    "tesouro direto",
+    "acoes",
+    "acao",
+    "fiis",
+    "fii",
+    "fundos imobiliarios",
+    "fundo imobiliario",
+    "cripto",
+    "criptoativos",
+    "criptomoedas",
+})
+
+_INVESTMENT_CATEGORY_SQL = (
+    "'Investimento','Investimentos','Aporte em Investimento',"
+    "'Renda Fixa','Renda Variavel','Renda Variável','Exterior',"
+    "'Reserva de Despesa','Tesouro Direto','Ações','Acoes','FIIs','FII',"
+    "'Fundos Imobiliários','Fundos Imobiliarios','Cripto','Criptoativos','Criptomoedas'"
+)
+
+
+def _norm_text(value: object) -> str:
+    """Normaliza texto de categoria/tipo para comparação robusta."""
+    if value is None:
+        return ""
+    text = unicodedata.normalize("NFKD", str(value))
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = text.replace("_", " ").replace("-", " ").strip().casefold()
+    return " ".join(text.split())
+
+
+def is_investment_category(category: object) -> bool:
+    """Retorna True para categorias financeiras que representam aporte/investimento."""
+    norm = _norm_text(category)
+    if not norm:
+        return False
+    return norm in _INVESTMENT_CATEGORY_KEYS or (
+        "invest" in norm and "dividendo" not in norm
+    )
+
+
+def canonical_transaction_type(
+    tipo: object,
+    categoria: object = "",
+    amount: object = None,
+) -> str:
+    """
+    Classifica uma transação de forma canônica.
+
+    Compatível com dados antigos (`entrada`/`saida`), novos (`income`/`expense`)
+    e lançamentos de investimento salvos como `transfer` com categoria financeira.
+    """
+    raw = _norm_text(tipo)
+
+    if raw in {"investment", "investimento", "investimentos"} or is_investment_category(categoria):
+        return "investment"
+    if raw in {"income", "entrada", "receita", "receitas"}:
+        return "income"
+    if raw in {"expense", "saida", "despesa", "despesas"}:
+        return "expense"
+    if raw in {"transfer", "transferencia", "transferencias"}:
+        return "transfer"
+
+    if amount is not None:
+        try:
+            return "income" if float(amount) >= 0 else "expense"
+        except (TypeError, ValueError):
+            pass
+    return "expense"
+
+
+def transaction_type_label(tipo_fluxo: str) -> str:
+    return {
+        "income": "entrada",
+        "expense": "saída",
+        "investment": "investimento",
+        "transfer": "transferência",
+    }.get(tipo_fluxo, "saída")
+
+
+def format_transaction_amount(valor: float, tipo_fluxo: str) -> str:
+    prefix = "+ " if tipo_fluxo == "income" else "- " if tipo_fluxo == "expense" else ""
+    return (
+        f"{prefix}R$ {abs(float(valor or 0)):,.2f}"
+        .replace(",", "X").replace(".", ",").replace("X", ".")
+    )
 
 # ── Mock ──────────────────────────────────────────────────────────────────────
 _MOCK_CATS = [
@@ -155,12 +251,13 @@ _SQL_UPDATE_TX = """
       AND  user_id  = CAST(:uid AS uuid)
 """
 
-_SQL_HISTORICO_ANUAL = """
+_SQL_HISTORICO_ANUAL = f"""
     SELECT
         EXTRACT(YEAR FROM t.due_date)::int AS ano,
         CASE
+            WHEN t.type IN ('investment', 'investimento')
+                 OR c.name IN ({_INVESTMENT_CATEGORY_SQL})          THEN 'investment'
             WHEN t.type IN ('income', 'entrada')                    THEN 'income'
-            WHEN t.type IN ('investment', 'investimento')           THEN 'investment'
             WHEN t.type = 'transfer'
                  AND c.name IN (
                      'Renda Fixa','Renda Variavel','Renda Variável',
@@ -175,6 +272,7 @@ _SQL_HISTORICO_ANUAL = """
     WHERE  t.user_id = :uid
       AND (
             t.type IN ('income', 'entrada', 'investment', 'investimento')
+            OR c.name IN ({_INVESTMENT_CATEGORY_SQL})
             OR (t.type IN ('expense', 'saida')
                 AND COALESCE(a.type, '') != 'credit_card')
             OR (t.type = 'transfer'
@@ -714,8 +812,14 @@ def get_dividas_cc() -> list:
 
 def _controle_mock(ano: int, mes: int) -> dict:
     mes_ref = f"{_MESES_PT[mes]} {ano}"
-    receitas = sum(v for _, v, t, *_ in _MOCK_TRANS if t == "income")
-    despesas = sum(abs(v) for _, v, t, *_ in _MOCK_TRANS if t == "expense")
+    receitas = sum(
+        v for desc, v, t, _data, cat, _conta in _MOCK_TRANS
+        if canonical_transaction_type(t, cat, v) == "income"
+    )
+    despesas = sum(
+        abs(v) for desc, v, t, _data, cat, _conta in _MOCK_TRANS
+        if canonical_transaction_type(t, cat, v) == "expense"
+    )
     saldo    = receitas - despesas
     taxa     = round(saldo / receitas * 100, 1) if receitas > 0 else 0.0
 
@@ -733,19 +837,23 @@ def _controle_mock(ano: int, mes: int) -> dict:
     trans = []
     for i, (desc, val, tipo, data_str, cat, conta) in enumerate(_MOCK_TRANS):
         data = _date.fromisoformat(data_str)
-        eh_receita = val > 0
+        tipo_fluxo = canonical_transaction_type(tipo, cat, val)
         trans.append({
             "id":          str(i + 1),
             "descricao":   desc,
             "valor":       val,
-            "valor_fmt":   f"{'+ ' if eh_receita else '- '}R$ {abs(val):,.2f}".replace(",", ".").replace(".", ",", 1),
+            "valor_fmt":   format_transaction_amount(val, tipo_fluxo),
             "data":        data,
             "data_fmt":    data.strftime("%d/%m"),
             "tipo":        tipo,
+            "tipo_fluxo":   tipo_fluxo,
+            "tipo_label":   transaction_type_label(tipo_fluxo),
             "status":      "settled",
             "categoria":   cat,
             "conta":       conta,
-            "eh_receita":  eh_receita,
+            "eh_receita":  tipo_fluxo == "income",
+            "eh_despesa":  tipo_fluxo == "expense",
+            "eh_investimento": tipo_fluxo == "investment",
         })
 
     return {
@@ -818,10 +926,14 @@ def _controle_real(ano: int, mes: int) -> dict:
         return getattr(r, "account_type", "") == "credit_card"
 
     # KPIs — cartão de crédito excluído das despesas (igual ao app isolado)
-    receitas = sum(_f(r.amount) for r in tx_rows if r.type == "income")
+    receitas = sum(
+        _f(r.amount) for r in tx_rows
+        if canonical_transaction_type(r.type, r.category_name, r.amount) == "income"
+    )
     despesas = sum(
         abs(_f(r.amount)) for r in tx_rows
-        if r.type == "expense" and not _is_cc(r)
+        if canonical_transaction_type(r.type, r.category_name, r.amount) == "expense"
+        and not _is_cc(r)
     )
     saldo    = round(receitas - despesas, 2)
     taxa     = round(saldo / receitas * 100, 1) if receitas > 0 else 0.0
@@ -832,7 +944,7 @@ def _controle_real(ano: int, mes: int) -> dict:
     # Categorias de despesa — idem, sem compras de cartão de crédito
     cat_gastos: dict[str, float] = {}
     for r in tx_rows:
-        if r.type == "expense" and not _is_cc(r):
+        if canonical_transaction_type(r.type, r.category_name, r.amount) == "expense" and not _is_cc(r):
             cat = r.category_name
             cat_gastos[cat] = cat_gastos.get(cat, 0.0) + abs(_f(r.amount))
 
@@ -850,24 +962,25 @@ def _controle_real(ano: int, mes: int) -> dict:
     transacoes = []
     for r in tx_rows:
         val = _f(r.amount)
-        eh_receita = val > 0
+        tipo_fluxo = canonical_transaction_type(r.type, r.category_name, val)
         data = r.due_date
         transacoes.append({
             "id":           r.id,
             "descricao":    r.description,
             "valor":        val,
-            "valor_fmt":    (
-                f"{'+ ' if eh_receita else '- '}R$ {abs(val):,.2f}"
-                .replace(",", "X").replace(".", ",").replace("X", ".")
-            ),
+            "valor_fmt":    format_transaction_amount(val, tipo_fluxo),
             "data":         data,
             "data_fmt":     data.strftime("%d/%m") if data else "—",
             "tipo":         r.type,
+            "tipo_fluxo":    tipo_fluxo,
+            "tipo_label":    transaction_type_label(tipo_fluxo),
             "status":       r.status,
             "categoria":    r.category_name,
             "conta":        r.account_name,
             "account_type": getattr(r, "account_type", ""),
-            "eh_receita":   eh_receita,
+            "eh_receita":   tipo_fluxo == "income",
+            "eh_despesa":   tipo_fluxo == "expense",
+            "eh_investimento": tipo_fluxo == "investment",
         })
 
     return {
@@ -1031,22 +1144,23 @@ def _transacoes_mock_filtradas(
     raw = []
     for i, (desc, val, tp, data_str, cat, conta) in enumerate(_MOCK_TRANS):
         data = _dt.fromisoformat(data_str)
-        eh_r = val > 0
+        tipo_fluxo = canonical_transaction_type(tp, cat, val)
         raw.append({
             "id": str(i + 1),
             "descricao": desc,
             "valor": val,
-            "valor_fmt": (
-                f"{'+ ' if eh_r else '- '}R$ {abs(val):,.2f}"
-                .replace(",", "X").replace(".", ",").replace("X", ".")
-            ),
+            "valor_fmt": format_transaction_amount(val, tipo_fluxo),
             "data": data,
             "data_fmt": data.strftime("%d/%m/%Y"),
             "tipo": tp,
+            "tipo_fluxo": tipo_fluxo,
+            "tipo_label": transaction_type_label(tipo_fluxo),
             "status": "settled",
             "categoria": cat,
             "conta": conta,
-            "eh_receita": eh_r,
+            "eh_receita": tipo_fluxo == "income",
+            "eh_despesa": tipo_fluxo == "expense",
+            "eh_investimento": tipo_fluxo == "investment",
             "ano": data.year,
             "mes": data.month,
             "dia": data.day,
@@ -1080,23 +1194,24 @@ def _transacoes_real_filtradas(
     txs = []
     for r in rows:
         val = float(r.amount) if r.amount is not None else 0.0
-        eh_r = val > 0
+        tipo_fluxo = canonical_transaction_type(r.type, r.category_name, val)
         data = r.due_date
         txs.append({
             "id": r.id,
             "descricao": r.description,
             "valor": val,
-            "valor_fmt": (
-                f"{'+ ' if eh_r else '- '}R$ {abs(val):,.2f}"
-                .replace(",", "X").replace(".", ",").replace("X", ".")
-            ),
+            "valor_fmt": format_transaction_amount(val, tipo_fluxo),
             "data": data,
             "data_fmt": data.strftime("%d/%m/%Y") if data else "—",
             "tipo": r.type,
+            "tipo_fluxo": tipo_fluxo,
+            "tipo_label": transaction_type_label(tipo_fluxo),
             "status": r.status,
             "categoria": r.category_name,
             "conta": r.account_name,
-            "eh_receita": eh_r,
+            "eh_receita": tipo_fluxo == "income",
+            "eh_despesa": tipo_fluxo == "expense",
+            "eh_investimento": tipo_fluxo == "investment",
             "ano": int(r.ano) if r.ano else None,
             "mes": int(r.mes) if r.mes else None,
             "dia": int(r.dia) if r.dia else None,
@@ -1113,9 +1228,11 @@ def _filtrar_transacoes(
     out = txs
 
     if tipo == "Receitas":
-        out = [t for t in out if t["eh_receita"]]
+        out = [t for t in out if t.get("tipo_fluxo") == "income"]
     elif tipo == "Despesas":
-        out = [t for t in out if not t["eh_receita"]]
+        out = [t for t in out if t.get("tipo_fluxo") == "expense"]
+    elif tipo == "Investimentos":
+        out = [t for t in out if t.get("tipo_fluxo") == "investment"]
 
     if categoria and categoria != "Todas":
         out = [t for t in out if t["categoria"] == categoria]

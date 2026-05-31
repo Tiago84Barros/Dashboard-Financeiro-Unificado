@@ -679,31 +679,48 @@ _MESES_PT_CF = {
     9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
 }
 
-_SQL_CASHFLOW = """
-    SELECT month_year, total_income, total_expenses_abs, net_cashflow
-    FROM   v_monthly_cashflow
-    WHERE  user_id = :uid
-    ORDER  BY month_year DESC
-    LIMIT  12
-"""
+_INVESTMENT_CATEGORY_SQL = (
+    "'Investimento','Investimentos','Aporte em Investimento',"
+    "'Renda Fixa','Renda Variavel','Renda Variável','Exterior',"
+    "'Reserva de Despesa','Tesouro Direto','Ações','Acoes','FIIs','FII',"
+    "'Fundos Imobiliários','Fundos Imobiliarios','Cripto','Criptoativos','Criptomoedas'"
+)
 
-_SQL_INVEST_MENSAL = """
+# Consulta própria para não herdar a v_monthly_cashflow, que classifica por sinal.
+_SQL_CASHFLOW = f"""
     SELECT
         DATE_TRUNC('month', t.due_date)::DATE AS month_year,
-        SUM(ABS(t.amount))                    AS total_inv
+        SUM(CASE
+            WHEN t.type IN ('income', 'entrada')
+                 AND COALESCE(c.name, '') NOT IN ({_INVESTMENT_CATEGORY_SQL})
+                THEN t.amount
+            ELSE 0
+        END)                                  AS total_income,
+        SUM(CASE
+            WHEN t.type IN ('expense', 'saida')
+                 AND COALESCE(a.type, '') != 'credit_card'
+                 AND COALESCE(c.name, '') NOT IN ({_INVESTMENT_CATEGORY_SQL})
+                THEN ABS(t.amount)
+            ELSE 0
+        END)                                  AS total_expenses_abs,
+        SUM(CASE
+            WHEN t.type IN ('investment', 'investimento')
+                 OR COALESCE(c.name, '') IN ({_INVESTMENT_CATEGORY_SQL})
+                THEN ABS(t.amount)
+            ELSE 0
+        END)                                  AS total_investments
     FROM transactions t
-    JOIN categories c ON c.id = t.category_id
+    LEFT JOIN categories c ON c.id = t.category_id
+    LEFT JOIN accounts a ON a.id = t.account_id
     WHERE t.user_id = :uid
       AND t.status  = 'settled'
       AND (
-          t.type = 'investment'
-          OR (t.type = 'transfer'
-              AND c.name IN (
-                  'Renda Fixa', 'Renda Variavel', 'Renda Variável',
-                  'Exterior', 'Aporte em Investimento'
-              ))
+          t.type IN ('income', 'entrada', 'expense', 'saida', 'investment', 'investimento', 'transfer')
+          OR COALESCE(c.name, '') IN ({_INVESTMENT_CATEGORY_SQL})
       )
     GROUP BY DATE_TRUNC('month', t.due_date)::DATE
+    ORDER BY month_year DESC
+    LIMIT 12
 """
 
 
@@ -761,25 +778,22 @@ def _cashflow_real() -> list:
         raise RuntimeError("OWNER_USER_ID não configurado.")
 
     with engine.connect() as conn:
-        rows     = conn.execute(text(_SQL_CASHFLOW),        {"uid": owner}).fetchall()
-        inv_rows = conn.execute(text(_SQL_INVEST_MENSAL),   {"uid": owner}).fetchall()
-
-    from datetime import date as _date
-    inv_by_month: dict[_date, float] = {
-        r.month_year: float(r.total_inv or 0) for r in inv_rows
-    }
+        rows = conn.execute(text(_SQL_CASHFLOW), {"uid": owner}).fetchall()
 
     result = []
     for r in reversed(rows):
         my  = r.month_year
+        receitas = float(r.total_income or 0)
+        despesas = float(r.total_expenses_abs or 0)
+        investimentos = float(r.total_investments or 0)
         result.append({
             "label":         f"{_MESES_PT_CF[my.month]}/{str(my.year)[-2:]}",
             "ano":           my.year,
             "mes":           my.month,
-            "receitas":      float(r.total_income or 0),
-            "despesas":      float(r.total_expenses_abs or 0),
-            "saldo":         float(r.net_cashflow or 0),
-            "investimentos": round(inv_by_month.get(my, 0.0), 2),
+            "receitas":      round(receitas, 2),
+            "despesas":      round(despesas, 2),
+            "saldo":         round(receitas - despesas, 2),
+            "investimentos": round(investimentos, 2),
         })
     return result
 

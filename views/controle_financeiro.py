@@ -75,6 +75,21 @@ _CORES_CAT = [
 ]
 
 
+def _tipo_tx_label(tx: dict) -> str:
+    return tx.get("tipo_label") or ("entrada" if tx.get("eh_receita") else "saída")
+
+
+def _cor_tx(tx: dict) -> str:
+    tipo = tx.get("tipo_fluxo")
+    if tipo == "income":
+        return _COR_RECEITA
+    if tipo == "investment":
+        return _COR_INVEST
+    if tipo == "transfer":
+        return _COR_NEUTRO
+    return _COR_DESPESA
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — Cards e gráficos
 # ══════════════════════════════════════════════════════════════════════════════
@@ -603,8 +618,8 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
             unsafe_allow_html=True,
         )
         for tx in txs[:30]:
-            cor  = _COR_RECEITA if tx["eh_receita"] else _COR_DESPESA
-            tipo_label = "entrada" if tx["eh_receita"] else "saída"
+            cor = _cor_tx(tx)
+            tipo_label = _tipo_tx_label(tx)
             st.markdown(
                 f'<div style="display:grid;'
                 f'grid-template-columns:80px 1fr 150px 80px 130px 100px;'
@@ -643,7 +658,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
         for tx in txs[:30]:
             rows_edit.append({
                 "ID":        tx["id"],
-                "Tipo":      "entrada" if tx["eh_receita"] else "saída",
+                "Tipo":      _tipo_tx_label(tx),
                 "Categoria": tx["categoria"],
                 "Data":      tx["data"],
                 "Valor":     abs(tx["valor"]),
@@ -662,7 +677,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                     "ID":      st.column_config.TextColumn("ID", disabled=True),
                     "Tipo": st.column_config.SelectboxColumn(
                         "Tipo",
-                        options=["entrada", "saída"],
+                        options=["entrada", "saída", "investimento", "transferência"],
                     ),
                     "Conta": st.column_config.SelectboxColumn(
                         "Conta",
@@ -702,8 +717,13 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                     if not conta_m:
                         erros.append(f"ID {row['ID']}: conta inválida ou não encontrada.")
                         continue
-                    tipo_tx = "income" if row["Tipo"] == "entrada" else "expense"
-                    sinal = 1.0 if tipo_tx == "income" else -1.0
+                    tipo_tx = {
+                        "entrada": "income",
+                        "saída": "expense",
+                        "investimento": "investment",
+                        "transferência": "transfer",
+                    }.get(row["Tipo"], "expense")
+                    sinal = 1.0 if tipo_tx in ("income", "transfer") else -1.0
                     ok, msg = atualizar_transacao(
                         tx_id=str(row["ID"]),
                         descricao=str(row["Descrição"]),
@@ -992,7 +1012,7 @@ def _tab_tabelas(d: dict) -> None:
     # 1) Tipo — radio fora do form (igual ao original)
     aba = st.radio(
         "Tipo de lançamento",
-        ["Todos", "Receitas", "Despesas"],
+        ["Todos", "Receitas", "Despesas", "Investimentos"],
         horizontal=True,
         key="tab_tipo_radio",
     )
@@ -1046,10 +1066,11 @@ def _tab_tabelas(d: dict) -> None:
 
     # ── Resumo (igual ao original) ─────────────────────────────────────────────
     total_filtrado = sum(abs(t["valor"]) for t in txs_f)
-    total_rec      = sum(t["valor"] for t in txs_f if t["eh_receita"])
-    total_desp     = sum(abs(t["valor"]) for t in txs_f if not t["eh_receita"])
+    total_rec      = sum(abs(t["valor"]) for t in txs_f if t.get("tipo_fluxo") == "income")
+    total_desp     = sum(abs(t["valor"]) for t in txs_f if t.get("tipo_fluxo") == "expense")
+    total_inv      = sum(abs(t["valor"]) for t in txs_f if t.get("tipo_fluxo") == "investment")
 
-    col_s1, col_s2, col_s3 = st.columns(3, gap="small")
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4, gap="small")
     with col_s1:
         st.markdown(_kpi_card(
             "Total Filtrado", fmt_moeda(total_filtrado),
@@ -1067,6 +1088,12 @@ def _tab_tabelas(d: dict) -> None:
             "Saídas", fmt_moeda(total_desp),
             "Despesas no filtro aplicado",
             _COR_DESPESA,
+        ), unsafe_allow_html=True)
+    with col_s4:
+        st.markdown(_kpi_card(
+            "Investimentos", fmt_moeda(total_inv),
+            "Aportes no filtro aplicado",
+            _COR_INVEST,
         ), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1092,8 +1119,8 @@ def _tab_tabelas(d: dict) -> None:
     )
 
     for tx in txs_f[:200]:
-        cor  = _COR_RECEITA if tx["eh_receita"] else _COR_DESPESA
-        tipo_label = "entrada" if tx["eh_receita"] else "saída"
+        cor = _cor_tx(tx)
+        tipo_label = _tipo_tx_label(tx)
         st.markdown(
             f'<div style="display:grid;'
             f'grid-template-columns:90px 1fr 150px 80px 130px 80px;'
@@ -1183,7 +1210,7 @@ def _tab_cartao(d: dict) -> None:
     # Apenas transações de contas de cartão de crédito (account_type='credit_card')
     despesas_cc = [
         t for t in txs
-        if not t["eh_receita"] and t.get("account_type") == "credit_card"
+        if t.get("tipo_fluxo") == "expense" and t.get("account_type") == "credit_card"
     ]
 
     # ── KPIs do mês ──────────────────────────────────────────────────────────
