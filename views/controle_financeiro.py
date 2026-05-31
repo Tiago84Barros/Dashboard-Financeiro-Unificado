@@ -1557,6 +1557,31 @@ def _tab_cartao_legacy(d: dict) -> None:
 _CC_FEE_TERMS = ("anuidade", "iof", "juros", "multa", "tarifa", "encargo")
 _CC_PAYMENT_TERMS = ("pag fatura", "pagamento fatura", "pagamento de cartao", "boleto fatura")
 _CC_REFUND_TERMS = ("estorno", "credito", "creditos", "reembolso", "cashback")
+_CC_MERCHANT_PREFIXES = {
+    "ec", "ecommerce", "mp", "mercadopago", "pag", "pagseguro", "ifd", "paypal",
+    "br", "www", "loja", "compra", "debito", "credito",
+}
+_CC_MERCHANT_SUFFIXES = {
+    "sa", "s", "a", "ltda", "me", "epp", "eireli", "brasil", "br",
+}
+_CC_CATEGORY_LIMIT_PCTS = {
+    "supermercado": 0.35,
+    "mercado": 0.35,
+    "mercearia": 0.35,
+    "padaria": 0.35,
+    "alimentacao": 0.30,
+    "restaurante": 0.18,
+    "lazer": 0.15,
+    "assinatura": 0.10,
+    "transporte": 0.18,
+    "combustivel": 0.18,
+    "saude": 0.20,
+    "farmacia": 0.15,
+    "compras": 0.22,
+    "varejo": 0.22,
+    "viagem": 0.20,
+    "hospedagem": 0.20,
+}
 
 
 def _norm_ui_text(value: object) -> str:
@@ -1594,6 +1619,38 @@ def _clean_card_description(description: object) -> str:
     return desc or "Sem descricao"
 
 
+def _normalize_merchant_name(description: object) -> str:
+    merchant = _clean_card_description(description)
+    text = _norm_ui_text(merchant)
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    tokens = [t for t in text.split() if t]
+
+    while tokens and tokens[0] in _CC_MERCHANT_PREFIXES:
+        tokens.pop(0)
+    while tokens and (tokens[-1] in _CC_MERCHANT_SUFFIXES or tokens[-1].isdigit()):
+        tokens.pop()
+
+    cleaned = []
+    for token in tokens:
+        if token.isdigit() or (len(token) <= 1 and token not in {"i"}):
+            continue
+        cleaned.append(token)
+
+    if len(cleaned) >= 4 and cleaned[-1] in {"loja", "site", "app"}:
+        cleaned = cleaned[:-1]
+    return " ".join(cleaned[:6]) or _norm_ui_text(merchant) or "sem descricao"
+
+
+def _best_merchant_label(values: pd.Series) -> str:
+    clean = [str(v or "").strip() for v in values if str(v or "").strip()]
+    if not clean:
+        return "Sem descricao"
+    counts = pd.Series(clean).value_counts()
+    top_count = counts.iloc[0]
+    candidates = [idx for idx, value in counts.items() if value == top_count]
+    return sorted(candidates, key=lambda s: (-len(s), s))[0]
+
+
 def _classify_card_movement(tx: dict) -> str:
     tipo_fluxo = tx.get("tipo_fluxo")
     text = _norm_ui_text(f"{tx.get('categoria', '')} {tx.get('descricao', '')}")
@@ -1620,6 +1677,74 @@ def _movement_invoice_value(movement: str, amount: float) -> float:
     return float(amount or 0.0)
 
 
+def _annotate_card_recurrence(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["recorrencia_qtd"] = 0
+    df["recorrencia_meses"] = 0
+    df["recorrencia_valor_medio"] = 0.0
+    df["recorrencia_cv"] = 0.0
+    df["recorrencia_status"] = "-"
+    df["possivel_recorrente"] = False
+
+    compras = df[(df["tipo_lancamento"] == "compra") & (df["estabelecimento_norm"] != "sem descricao")].copy()
+    if compras.empty:
+        return df
+
+    stats = (
+        compras.groupby("estabelecimento_norm", as_index=False)
+        .agg(
+            recorrencia_qtd=("id", "count"),
+            recorrencia_meses=("ano_mes", "nunique"),
+            recorrencia_valor_medio=("valor_fatura", "mean"),
+            recorrencia_valor_std=("valor_fatura", "std"),
+            categoria_ref=("categoria", lambda s: s.mode().iloc[0] if not s.mode().empty else s.iloc[0]),
+        )
+    )
+    stats["recorrencia_valor_std"] = stats["recorrencia_valor_std"].fillna(0.0)
+    stats["recorrencia_cv"] = (
+        stats["recorrencia_valor_std"] / stats["recorrencia_valor_medio"].replace(0, pd.NA)
+    ).fillna(0.0)
+
+    def _status(row: pd.Series) -> str:
+        cat_norm = _norm_ui_text(row["categoria_ref"])
+        is_subscription = any(term in cat_norm for term in ("assinatura", "streaming", "recorrente"))
+        stable_value = float(row["recorrencia_cv"]) <= 0.25
+        if int(row["recorrencia_meses"]) >= 3 or (int(row["recorrencia_meses"]) >= 2 and stable_value):
+            return "recorrente"
+        if int(row["recorrencia_qtd"]) >= 3 and stable_value:
+            return "recorrente"
+        if int(row["recorrencia_meses"]) >= 2 or (is_subscription and int(row["recorrencia_qtd"]) >= 1):
+            return "possivel"
+        return "-"
+
+    stats["recorrencia_status"] = stats.apply(_status, axis=1)
+    stats["possivel_recorrente"] = stats["recorrencia_status"].isin(["recorrente", "possivel"])
+
+    merged = df.merge(
+        stats[[
+            "estabelecimento_norm", "recorrencia_qtd", "recorrencia_meses",
+            "recorrencia_valor_medio", "recorrencia_cv", "recorrencia_status",
+            "possivel_recorrente",
+        ]],
+        on="estabelecimento_norm",
+        how="left",
+        suffixes=("", "_calc"),
+    )
+    merged["recorrencia_qtd"] = merged["recorrencia_qtd_calc"].fillna(merged["recorrencia_qtd"]).astype(int)
+    merged["recorrencia_meses"] = merged["recorrencia_meses_calc"].fillna(merged["recorrencia_meses"]).astype(int)
+    merged["recorrencia_valor_medio"] = merged["recorrencia_valor_medio_calc"].fillna(merged["recorrencia_valor_medio"]).astype(float)
+    merged["recorrencia_cv"] = merged["recorrencia_cv_calc"].fillna(merged["recorrencia_cv"]).astype(float)
+    merged["recorrencia_status"] = merged["recorrencia_status_calc"].fillna(merged["recorrencia_status"])
+    merged["possivel_recorrente"] = merged["possivel_recorrente_calc"].where(
+        merged["possivel_recorrente_calc"].notna(),
+        merged["possivel_recorrente"],
+    ).astype(bool)
+    return merged.drop(columns=[
+        "recorrencia_qtd_calc", "recorrencia_meses_calc", "recorrencia_valor_medio_calc",
+        "recorrencia_cv_calc", "recorrencia_status_calc", "possivel_recorrente_calc",
+    ])
+
+
 def _card_rows_dataframe(transacoes: list[dict]) -> pd.DataFrame:
     rows = []
     for tx in transacoes or []:
@@ -1638,6 +1763,7 @@ def _card_rows_dataframe(transacoes: list[dict]) -> pd.DataFrame:
         inst_total = int(tx.get("installment_total") or 1)
         desc = str(tx.get("descricao") or "")
         estabelecimento = _clean_card_description(desc)
+        estabelecimento_norm = _normalize_merchant_name(desc)
 
         rows.append({
             "id": tx.get("id"),
@@ -1648,7 +1774,9 @@ def _card_rows_dataframe(transacoes: list[dict]) -> pd.DataFrame:
             "ano_mes": due_ts.strftime("%Y-%m") if not pd.isna(due_ts) else "-",
             "mes_label": f"{_MESES_PT[int(due_ts.month)]}/{int(due_ts.year)}" if not pd.isna(due_ts) else "-",
             "descricao": desc,
+            "estabelecimento_raw": estabelecimento,
             "estabelecimento": estabelecimento,
+            "estabelecimento_norm": estabelecimento_norm,
             "categoria": tx.get("categoria") or "Sem categoria",
             "conta": tx.get("conta") or "Sem cartao",
             "final_cartao": _extract_card_final(desc),
@@ -1670,10 +1798,8 @@ def _card_rows_dataframe(transacoes: list[dict]) -> pd.DataFrame:
     if df.empty:
         return df
 
-    merchant_counts = df[df["tipo_lancamento"] == "compra"]["estabelecimento"].value_counts()
-    df["possivel_recorrente"] = df["estabelecimento"].map(merchant_counts).fillna(0).astype(int) > 1
     df["valor_pendente_estimado"] = df["valor_fatura"].clip(lower=0) * df["parcelas_restantes"]
-    return df
+    return _annotate_card_recurrence(df)
 
 
 def _invoice_upload_summary(rows: list[dict]) -> dict:
@@ -1923,15 +2049,21 @@ def _prepare_category_analysis(df: pd.DataFrame) -> pd.DataFrame:
 def _prepare_merchant_analysis(df: pd.DataFrame) -> pd.DataFrame:
     compras = df[df["tipo_lancamento"] == "compra"]
     if compras.empty:
-        return pd.DataFrame(columns=["Estabelecimento", "Categoria principal", "Total (R$)", "Transacoes", "Maior compra", "% compras"])
+        return pd.DataFrame(columns=[
+            "Estabelecimento", "Categoria principal", "Total (R$)", "Transacoes",
+            "Maior compra", "% compras", "Recorrencia", "Meses recorrentes",
+        ])
     total = compras["valor_fatura"].sum() or 1.0
     out = (
-        compras.groupby("estabelecimento", as_index=False)
+        compras.groupby("estabelecimento_norm", as_index=False)
         .agg(
+            estabelecimento=("estabelecimento", _best_merchant_label),
             categoria=("categoria", lambda s: s.mode().iloc[0] if not s.mode().empty else s.iloc[0]),
             total=("valor_fatura", "sum"),
             transacoes=("id", "count"),
             maior=("valor_fatura", "max"),
+            recorrencia=("recorrencia_status", lambda s: "recorrente" if "recorrente" in set(s) else "possivel" if "possivel" in set(s) else "-"),
+            meses_recorrentes=("recorrencia_meses", "max"),
         )
         .sort_values("total", ascending=False)
     )
@@ -1942,8 +2074,124 @@ def _prepare_merchant_analysis(df: pd.DataFrame) -> pd.DataFrame:
         "total": "Total (R$)",
         "transacoes": "Transacoes",
         "maior": "Maior compra",
+        "recorrencia": "Recorrencia",
+        "meses_recorrentes": "Meses recorrentes",
         "pct": "% compras",
-    })
+    })[[
+        "Estabelecimento", "Categoria principal", "Total (R$)", "Transacoes",
+        "Maior compra", "% compras", "Recorrencia", "Meses recorrentes",
+    ]]
+
+
+def _prepare_recurring_analysis(df: pd.DataFrame) -> pd.DataFrame:
+    base = df[(df["tipo_lancamento"] == "compra") & (df["possivel_recorrente"])].copy()
+    if base.empty:
+        return pd.DataFrame(columns=[
+            "Estabelecimento", "Categoria principal", "Recorrencia",
+            "Meses", "Transacoes", "Valor medio", "Total (R$)",
+        ])
+    out = (
+        base.groupby("estabelecimento_norm", as_index=False)
+        .agg(
+            estabelecimento=("estabelecimento", _best_merchant_label),
+            categoria=("categoria", lambda s: s.mode().iloc[0] if not s.mode().empty else s.iloc[0]),
+            recorrencia=("recorrencia_status", lambda s: "recorrente" if "recorrente" in set(s) else "possivel"),
+            meses=("recorrencia_meses", "max"),
+            transacoes=("id", "count"),
+            valor_medio=("valor_fatura", "mean"),
+            total=("valor_fatura", "sum"),
+        )
+    )
+    out["_ordem"] = out["recorrencia"].map({"recorrente": 0, "possivel": 1}).fillna(2)
+    out = out.sort_values(["_ordem", "total"], ascending=[True, False]).drop(columns=["_ordem"])
+    return out.rename(columns={
+        "estabelecimento": "Estabelecimento",
+        "categoria": "Categoria principal",
+        "recorrencia": "Recorrencia",
+        "meses": "Meses",
+        "transacoes": "Transacoes",
+        "valor_medio": "Valor medio",
+        "total": "Total (R$)",
+    })[[
+        "Estabelecimento", "Categoria principal", "Recorrencia",
+        "Meses", "Transacoes", "Valor medio", "Total (R$)",
+    ]]
+
+
+def _category_limit_key(category: object) -> str:
+    return _norm_ui_text(category) or "sem categoria"
+
+
+def _default_category_limit(category: object, total_purchases: float) -> float:
+    norm = _category_limit_key(category)
+    pct = next((v for k, v in _CC_CATEGORY_LIMIT_PCTS.items() if k in norm), 0.20)
+    return round(max(100.0, float(total_purchases or 0.0) * pct), 2)
+
+
+def _prepare_category_limit_analysis(
+    cat_df: pd.DataFrame,
+    limit_overrides: dict[str, float] | None = None,
+) -> pd.DataFrame:
+    if cat_df.empty:
+        return pd.DataFrame(columns=[
+            "Categoria", "Gasto atual", "Limite mensal", "Uso %", "Folga/Excesso", "Status",
+        ])
+    limit_overrides = limit_overrides or {}
+    total_purchases = float(cat_df["Total (R$)"].sum())
+    rows = []
+    for _, row in cat_df.iterrows():
+        category = row["Categoria"]
+        spent = float(row["Total (R$)"] or 0.0)
+        key = _category_limit_key(category)
+        limit = float(limit_overrides.get(key, _default_category_limit(category, total_purchases)))
+        usage = spent / limit * 100 if limit > 0 else 0.0
+        diff = limit - spent
+        rows.append({
+            "Categoria": category,
+            "Gasto atual": round(spent, 2),
+            "Limite mensal": round(limit, 2),
+            "Uso %": round(usage, 1),
+            "Folga/Excesso": round(diff, 2),
+            "Status": "excedido" if diff < 0 else "alerta" if usage >= 85 else "ok",
+        })
+    out = pd.DataFrame(rows)
+    severity = {"excedido": 0, "alerta": 1, "ok": 2}
+    out["_ordem"] = out["Status"].map(severity).fillna(3)
+    return out.sort_values(["_ordem", "Uso %"], ascending=[True, False]).drop(columns=["_ordem"])
+
+
+def _prepare_future_invoice_projection(df: pd.DataFrame, months: int = 6) -> pd.DataFrame:
+    parcelas = df[
+        (df["tipo_lancamento"] == "compra")
+        & (df["is_parcelada"])
+        & (df["parcelas_restantes"] > 0)
+    ].copy()
+    if parcelas.empty:
+        return pd.DataFrame(columns=["Mes", "Valor projetado", "Parcelas futuras"])
+
+    rows = []
+    for _, row in parcelas.iterrows():
+        due = row["data_vencimento"]
+        if pd.isna(due):
+            continue
+        remaining = min(int(row["parcelas_restantes"]), int(months))
+        for offset in range(1, remaining + 1):
+            future = due + pd.DateOffset(months=offset)
+            rows.append({
+                "ano_mes": future.strftime("%Y-%m"),
+                "Mes": f"{_MESES_PT[int(future.month)]}/{int(future.year)}",
+                "Valor projetado": float(row["valor_fatura"]),
+                "Parcelas futuras": 1,
+            })
+    if not rows:
+        return pd.DataFrame(columns=["Mes", "Valor projetado", "Parcelas futuras"])
+    return (
+        pd.DataFrame(rows)
+        .groupby(["ano_mes", "Mes"], as_index=False)
+        .agg({"Valor projetado": "sum", "Parcelas futuras": "sum"})
+        .sort_values("ano_mes")
+        [["Mes", "Valor projetado", "Parcelas futuras"]]
+    )
 
 
 def _prepare_installment_analysis(df: pd.DataFrame) -> pd.DataFrame:
@@ -2122,6 +2370,63 @@ def _fig_monthly_evolution(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _fig_category_limits(limit_df: pd.DataFrame) -> go.Figure:
+    chart = limit_df.head(10).sort_values("Gasto atual", ascending=True)
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=chart["Limite mensal"],
+        y=chart["Categoria"],
+        orientation="h",
+        name="Limite",
+        marker_color="#2D3748",
+        hovertemplate="<b>%{y}</b><br>Limite: R$ %{x:,.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        x=chart["Gasto atual"],
+        y=chart["Categoria"],
+        orientation="h",
+        name="Gasto atual",
+        marker_color=[
+            _COR_DESPESA if s == "excedido" else "#F6C90E" if s == "alerta" else _COR_RECEITA
+            for s in chart["Status"]
+        ],
+        hovertemplate="<b>%{y}</b><br>Gasto: R$ %{x:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        barmode="overlay",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 8, "b": 8, "l": 0, "r": 8},
+        height=max(280, len(chart) * 36),
+        legend={"orientation": "h", "y": -0.12},
+        xaxis={"showgrid": True, "gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
+        yaxis={"showgrid": False},
+    )
+    return fig
+
+
+def _fig_future_projection(projection_df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure(go.Bar(
+        x=projection_df["Mes"],
+        y=projection_df["Valor projetado"],
+        marker_color=_COR_INVEST,
+        opacity=0.88,
+        customdata=projection_df["Parcelas futuras"],
+        hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<br>%{customdata} parcela(s)<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 8, "b": 8, "l": 0, "r": 8},
+        height=280,
+        xaxis={"showgrid": False},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
+    )
+    return fig
+
+
 def _fig_non_consumption(df: pd.DataFrame) -> go.Figure:
     base = df[df["tipo_lancamento"].isin(["tarifa", "estorno", "pagamento", "ajuste"])]
     agg = (
@@ -2167,7 +2472,42 @@ def _render_money_dataframe(df: pd.DataFrame, money_cols: list[str], pct_cols: l
     st.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
 
 
-def _render_credit_card_insights(df: pd.DataFrame) -> None:
+def _render_category_limits(cat_df: pd.DataFrame) -> pd.DataFrame:
+    state = st.session_state.setdefault("cc_category_limits", {})
+    base_limits = _prepare_category_limit_analysis(cat_df, state)
+    if base_limits.empty:
+        st.caption("Sem compras reais para calcular limites por categoria.")
+        return base_limits
+
+    with st.expander("Ajustar limites mensais por categoria", expanded=False):
+        editable = base_limits[["Categoria", "Limite mensal"]].copy()
+        edited = st.data_editor(
+            editable,
+            hide_index=True,
+            use_container_width=True,
+            key="cc_category_limit_editor",
+            column_config={
+                "Categoria": st.column_config.TextColumn("Categoria", disabled=True),
+                "Limite mensal": st.column_config.NumberColumn("Limite mensal", format="R$ %.2f", min_value=0.0, step=50.0),
+            },
+        )
+        for _, row in edited.iterrows():
+            state[_category_limit_key(row["Categoria"])] = float(row["Limite mensal"] or 0.0)
+
+    limit_df = _prepare_category_limit_analysis(cat_df, state)
+    col_chart, col_table = st.columns([1, 1.15], gap="medium")
+    with col_chart:
+        st.plotly_chart(_fig_category_limits(limit_df), use_container_width=True, config={"displayModeBar": False})
+    with col_table:
+        _render_money_dataframe(limit_df, ["Gasto atual", "Limite mensal", "Folga/Excesso"], ["Uso %"])
+    return limit_df
+
+
+def _render_credit_card_insights(
+    df: pd.DataFrame,
+    limit_df: pd.DataFrame | None = None,
+    projection_df: pd.DataFrame | None = None,
+) -> None:
     if df.empty:
         st.info("Nao ha lancamentos no filtro atual para gerar insights.")
         return
@@ -2184,15 +2524,19 @@ def _render_credit_card_insights(df: pd.DataFrame) -> None:
         share = s["parceladas_total"] / s["total_compras"] * 100
         insights.append(("warning", f"Compras parceladas representam {share:.1f}% das compras reais do filtro."))
 
-    recorrentes = (
-        df[(df["tipo_lancamento"] == "compra") & (df["possivel_recorrente"])]
-        .groupby("estabelecimento", as_index=False)
-        .agg(qtd=("id", "count"), total=("valor_fatura", "sum"))
-        .sort_values("total", ascending=False)
-    )
+    if limit_df is not None and not limit_df.empty:
+        exceeded = limit_df[limit_df["Status"] == "excedido"].sort_values("Folga/Excesso")
+        if not exceeded.empty:
+            top = exceeded.iloc[0]
+            insights.append(("warning", f"A categoria {_safe(top['Categoria'])} excedeu o limite em {fmt_moeda(abs(top['Folga/Excesso']))}."))
+    if projection_df is not None and not projection_df.empty:
+        peak = projection_df.sort_values("Valor projetado", ascending=False).iloc[0]
+        insights.append(("info", f"Parcelas ja contratadas projetam {fmt_moeda(peak['Valor projetado'])} para {peak['Mes']}."))
+
+    recorrentes = _prepare_recurring_analysis(df)
     if not recorrentes.empty:
         top = recorrentes.iloc[0]
-        insights.append(("info", f"Possivel gasto recorrente: {_safe(top['estabelecimento'])} aparece {int(top['qtd'])} vez(es), somando {fmt_moeda(top['total'])}."))
+        insights.append(("info", f"Gasto recorrente detectado: {_safe(top['Estabelecimento'])} aparece em {int(top['Meses'])} mes(es), somando {fmt_moeda(top['Total (R$)'])}."))
     if not insights:
         insights.append(("success", "Nenhum alerta relevante no filtro atual. A fatura esta bem segmentada entre consumo, ajustes e parcelas."))
 
@@ -2269,8 +2613,12 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     _secao_titulo("Categorias", "Analise por categoria")
     if cat_df.empty:
         st.caption("Sem compras reais para analisar por categoria.")
+        limit_df = pd.DataFrame()
     else:
         _render_money_dataframe(cat_df, ["Total (R$)", "Ticket medio"], ["% compras"])
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo("Limites", "Limites por categoria do cartao")
+        limit_df = _render_category_limits(cat_df)
 
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo("Estabelecimentos", "Analise por estabelecimento")
@@ -2278,10 +2626,15 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
         st.caption("Sem compras reais para analisar por estabelecimento.")
     else:
         _render_money_dataframe(merchant_df.head(20), ["Total (R$)", "Maior compra"], ["% compras"])
+        recurring_df = _prepare_recurring_analysis(df)
+        if not recurring_df.empty:
+            st.markdown("**Possiveis gastos recorrentes**")
+            _render_money_dataframe(recurring_df.head(12), ["Valor medio", "Total (R$)"])
 
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo("Parcelas", "Compras parceladas")
     installment_df = _prepare_installment_analysis(df)
+    projection_df = _prepare_future_invoice_projection(df)
     if installment_df.empty:
         st.caption("Nenhuma compra parcelada no filtro atual.")
     else:
@@ -2290,6 +2643,15 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
             st.plotly_chart(_fig_horizontal_bar(installment_df, "Estabelecimento", "Pendente estimado", _COR_INVEST, height=320), use_container_width=True, config={"displayModeBar": False})
         with col_parc_table:
             _render_money_dataframe(installment_df.head(12), ["Valor no mes", "Pendente estimado"])
+        st.markdown("**Projecao de faturas futuras pelas parcelas restantes**")
+        if projection_df.empty:
+            st.caption("Nao ha parcelas futuras a projetar no filtro atual.")
+        else:
+            col_proj_chart, col_proj_table = st.columns([1, 1], gap="medium")
+            with col_proj_chart:
+                st.plotly_chart(_fig_future_projection(projection_df), use_container_width=True, config={"displayModeBar": False})
+            with col_proj_table:
+                _render_money_dataframe(projection_df, ["Valor projetado"])
 
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo("Ajustes", "Tarifas, estornos e pagamentos")
@@ -2318,9 +2680,10 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
         detail["Compra"] = detail["data_compra"].dt.strftime("%d/%m/%Y")
         detail["Tipo"] = detail["tipo_lancamento"].str.title()
         detail["Valor fatura"] = detail["valor_fatura"]
+        detail["Recorrencia"] = detail["recorrencia_status"].str.title()
         cols = [
             "Vencimento", "Compra", "final_cartao", "Tipo", "estabelecimento",
-            "categoria", "installment_label", "Valor fatura", "source",
+            "categoria", "installment_label", "Recorrencia", "Valor fatura", "source",
         ]
         display = detail[cols].rename(columns={
             "final_cartao": "Final",
@@ -2333,7 +2696,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo("Insights", "Insights automaticos")
-    _render_credit_card_insights(df)
+    _render_credit_card_insights(df, limit_df, projection_df)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -5,7 +5,46 @@ from core.controle import (
     parse_fatura_cartao_csv,
     _filtrar_transacoes,
 )
-from views.controle_financeiro import _card_rows_dataframe, _summary_credit_card
+from views.controle_financeiro import (
+    _card_rows_dataframe,
+    _normalize_merchant_name,
+    _prepare_category_analysis,
+    _prepare_category_limit_analysis,
+    _prepare_future_invoice_projection,
+    _prepare_merchant_analysis,
+    _prepare_recurring_analysis,
+    _summary_credit_card,
+)
+
+
+def _cc_tx(
+    idx: int,
+    descricao: str,
+    valor: float,
+    vencimento: date,
+    compra: date,
+    categoria: str = "Compras",
+    parcela_atual: int = 1,
+    total_parcelas: int = 1,
+) -> dict:
+    return {
+        "id": str(idx),
+        "descricao": descricao,
+        "valor": -abs(valor),
+        "data": vencimento,
+        "tipo": "expense",
+        "tipo_fluxo": "expense",
+        "status": "settled",
+        "source": "csv",
+        "categoria": categoria,
+        "conta": "Cartao Teste",
+        "account_type": "credit_card",
+        "payment_date": compra,
+        "data_compra": compra,
+        "installment_current": parcela_atual,
+        "installment_total": total_parcelas,
+        "installment_group": f"grupo-{idx}" if total_parcelas > 1 else None,
+    }
 
 
 def test_investment_categories_override_positive_flow_type():
@@ -105,3 +144,54 @@ def test_credit_card_invoice_analytics_separates_consumption_adjustments_and_fee
     assert summary["pagamentos"] == 145.86
     assert summary["estornos"] == 98.00
     assert summary["total_liquido"] == -108.06
+
+
+def test_credit_card_merchant_normalization_groups_noisy_names():
+    assert _normalize_merchant_name("EC *FORMOSA SUPERM E MAGAZ 123") == _normalize_merchant_name("FORMOSA SUPERM E MAGAZ")
+
+    df = _card_rows_dataframe([
+        _cc_tx(1, "EC *FORMOSA SUPERM E MAGAZ 123 | Compra 05/05/2026 | Cartao 3083 | Parcela Unica", 120, date(2026, 5, 10), date(2026, 5, 5), "Mercado"),
+        _cc_tx(2, "FORMOSA SUPERM E MAGAZ | Compra 07/05/2026 | Cartao 3083 | Parcela Unica", 80, date(2026, 5, 10), date(2026, 5, 7), "Mercado"),
+    ])
+
+    merchants = _prepare_merchant_analysis(df)
+
+    assert len(merchants) == 1
+    assert merchants.iloc[0]["Transacoes"] == 2
+    assert merchants.iloc[0]["Total (R$)"] == 200
+
+
+def test_credit_card_recurrence_requires_more_than_same_month_duplicates():
+    same_month = _card_rows_dataframe([
+        _cc_tx(1, "FORMOSA SUPERM E MAGAZ | Compra 05/05/2026 | Cartao 3083 | Parcela Unica", 120, date(2026, 5, 10), date(2026, 5, 5), "Mercado"),
+        _cc_tx(2, "FORMOSA SUPERM E MAGAZ | Compra 07/05/2026 | Cartao 3083 | Parcela Unica", 80, date(2026, 5, 10), date(2026, 5, 7), "Mercado"),
+    ])
+    assert _prepare_recurring_analysis(same_month).empty
+
+    recurring = _card_rows_dataframe([
+        _cc_tx(1, "STREAMING PREMIUM | Compra 05/03/2026 | Cartao 3083 | Parcela Unica", 59.9, date(2026, 3, 10), date(2026, 3, 5), "Assinaturas"),
+        _cc_tx(2, "STREAMING PREMIUM | Compra 05/04/2026 | Cartao 3083 | Parcela Unica", 59.9, date(2026, 4, 10), date(2026, 4, 5), "Assinaturas"),
+        _cc_tx(3, "STREAMING PREMIUM | Compra 05/05/2026 | Cartao 3083 | Parcela Unica", 59.9, date(2026, 5, 10), date(2026, 5, 5), "Assinaturas"),
+    ])
+
+    rec = _prepare_recurring_analysis(recurring)
+
+    assert len(rec) == 1
+    assert rec.iloc[0]["Recorrencia"] == "recorrente"
+    assert rec.iloc[0]["Meses"] == 3
+
+
+def test_credit_card_category_limits_and_future_projection():
+    df = _card_rows_dataframe([
+        _cc_tx(1, "NOTEBOOK | Compra 15/05/2026 | Cartao 3083 | Parcela 3/5", 500, date(2026, 5, 10), date(2026, 5, 15), "Compras", 3, 5),
+        _cc_tx(2, "MERCADO LOCAL | Compra 16/05/2026 | Cartao 3083 | Parcela Unica", 300, date(2026, 5, 10), date(2026, 5, 16), "Mercado"),
+    ])
+    cat_df = _prepare_category_analysis(df)
+    limits = _prepare_category_limit_analysis(cat_df, {"compras": 400, "mercado": 500})
+    projection = _prepare_future_invoice_projection(df)
+
+    compras = limits[limits["Categoria"] == "Compras"].iloc[0]
+    assert compras["Status"] == "excedido"
+    assert compras["Folga/Excesso"] == -100
+    assert list(projection["Mes"]) == ["Jun/2026", "Jul/2026"]
+    assert list(projection["Valor projetado"]) == [500, 500]
