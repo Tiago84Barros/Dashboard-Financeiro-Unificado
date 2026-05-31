@@ -2,10 +2,9 @@
 pages/controle_financeiro.py  — v4 (preservação fiel do app original)
 
 Replica FIELMENTE as 4 seções do app original controlefinanceirotsb.streamlit.app:
-  Sidebar  — Filtros (mês de referência) + Novo Lançamento completo
-               (Tipo: entrada|saída|investimento, Forma pgto condicional,
-                Categoria com presets por tipo, Data, Valor, Parcelas,
-                Cartão, Descrição, Salvar)
+  Sidebar  — Filtros (mês de referência) + Novo Lançamento de conta
+               (Tipo: entrada|saída|investimento, Categoria, Data, Valor,
+                Descrição, Salvar)
   Tabs     — Dashboard | Análises | Tabelas | Cartão de Crédito
 
 Adições do app unificado preservadas (não existiam no original):
@@ -59,8 +58,9 @@ _MESES_PT = {
 
 _MESES_NOMES = {v: k for k, v in _MESES_PT.items()}
 
-_FORMAS_PGTO_SAIDA = ["Conta", "Cartão de crédito", "Dinheiro", "Pix"]
-_FORMAS_PGTO_TODOS = ["Conta", "Cartão de crédito", "Débito", "Dinheiro", "PIX", "TED / DOC", "Boleto", "Outro"]
+_FORMAS_PGTO_SAIDA = ["Conta"]
+_FORMAS_PGTO_TODOS = ["Conta"]
+_MANUAL_CARD_TERMS = ("cartao", "credito", "fatura")
 
 # Categorias pré-definidas por tipo (igual ao app original)
 _CAT_ENTRADA = [
@@ -69,7 +69,7 @@ _CAT_ENTRADA = [
 _CAT_SAIDA = [
     "Mercado", "Compras", "Condomínio", "Luz", "Internet", "Transporte",
     "Combustível", "Saúde", "Despesas Domésticas", "Lazer", "Assinaturas",
-    "Educação", "Restaurante", "Financiamento", "Pagamento de Cartão", "Outros",
+    "Educação", "Restaurante", "Financiamento", "Outros",
 ]
 _CAT_INVESTIMENTO = [
     "Renda Fixa", "Renda Variável", "Exterior", "Reserva de Despesa", "Outra",
@@ -94,6 +94,12 @@ def _cor_tx(tx: dict) -> str:
     if tipo == "transfer":
         return _COR_NEUTRO
     return _COR_DESPESA
+
+
+def _is_manual_card_related_text(value: object) -> bool:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = text.encode("ascii", "ignore").decode("ascii").casefold()
+    return any(term in text for term in _MANUAL_CARD_TERMS)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -317,22 +323,6 @@ def _sidebar_render(ano: int, mes: int) -> None:
 
     st.sidebar.divider()
 
-    # ── Configurações do cartão ───────────────────────────────────────────────
-    st.sidebar.markdown(
-        '<div style="font-size:0.68rem;font-weight:800;text-transform:uppercase;'
-        'letter-spacing:0.12em;color:#9CA3AF;margin-bottom:8px;">'
-        'Configurações do cartão</div>',
-        unsafe_allow_html=True,
-    )
-    st.sidebar.slider(
-        "Dia de vencimento da fatura",
-        min_value=1, max_value=31, value=5, step=1,
-        help="Dia do mês em que a fatura vence.",
-        key="cf_vencimento_dia",
-    )
-
-    st.sidebar.divider()
-
     # ── Novo lançamento ───────────────────────────────────────────────────────
     st.sidebar.markdown(
         '<div style="font-size:0.68rem;font-weight:800;text-transform:uppercase;'
@@ -352,17 +342,16 @@ def _sidebar_render(ano: int, mes: int) -> None:
 
     st.sidebar.markdown("<hr style='margin-top:0;margin-bottom:10px;opacity:0.25;'>", unsafe_allow_html=True)
 
-    # 2) Forma de pagamento (só para saída — igual ao original)
-    if t_type == "saida":
-        forma = st.sidebar.selectbox(
-            "Forma de pagamento",
-            _FORMAS_PGTO_SAIDA,
-            key="cf_sb_forma",
-        )
-        show_card = (forma == "Cartão de crédito")
-    else:
-        forma = "Conta"
-        show_card = False
+    # 2) Forma de pagamento fixa: lançamentos manuais são sempre de conta.
+    if st.session_state.get("cf_sb_forma") != "Conta":
+        st.session_state["cf_sb_forma"] = "Conta"
+    st.sidebar.selectbox(
+        "Forma de pagamento",
+        _FORMAS_PGTO_SAIDA,
+        key="cf_sb_forma",
+        disabled=True,
+        help="Compras de cartão de crédito entram somente pelo upload da fatura CSV.",
+    )
 
     # 3) FORMULÁRIO (limpa após salvar)
     with st.sidebar.form("form_nova_tx", clear_on_submit=True):
@@ -406,17 +395,6 @@ def _sidebar_render(ano: int, mes: int) -> None:
             key="cf_sb_valor",
         )
 
-        # Campos de cartão (só para saída + Cartão de crédito)
-        if show_card:
-            col_parc, col_cart = st.columns(2)
-            with col_parc:
-                parcelas = st.number_input("Parcelas", min_value=1, max_value=48, value=1,
-                                           key="cf_sb_parc")
-            with col_cart:
-                nome_cartao = st.text_input("Cartão", placeholder="Final 4 díg.", key="cf_sb_cart")
-        else:
-            parcelas, nome_cartao = 1, ""
-
         descricao = st.text_area(
             "Descrição (opcional)", height=60, key="cf_sb_desc",
         )
@@ -432,13 +410,19 @@ def _sidebar_render(ano: int, mes: int) -> None:
         if not categoria_final:
             st.sidebar.error("Informe a categoria.")
             return
+        if _is_manual_card_related_text(categoria_final) or _is_manual_card_related_text(descricao):
+            st.sidebar.error("Cartão de crédito deve ser lançado somente por upload da fatura CSV.")
+            return
 
         # Resolve conta
         opcoes  = get_opcoes_formulario()
-        contas  = opcoes.get("contas", [])
+        contas  = [
+            c for c in opcoes.get("contas", [])
+            if c.get("tipo") != "credit_card" and c.get("type") != "credit_card"
+        ]
         conta_id = contas[0]["id"] if contas else None
         if not conta_id:
-            st.sidebar.warning("Nenhuma conta configurada.")
+            st.sidebar.warning("Nenhuma conta de movimentação configurada.")
             return
 
         # Resolve category_id (busca pelo nome no DB; None se não encontrar)

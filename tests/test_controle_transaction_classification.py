@@ -6,7 +6,10 @@ from core.controle import (
     _filtrar_transacoes,
 )
 from views.controle_financeiro import (
+    _CAT_SAIDA,
+    _FORMAS_PGTO_SAIDA,
     _card_rows_dataframe,
+    _is_manual_card_related_text,
     _normalize_merchant_name,
     _prepare_category_analysis,
     _prepare_category_limit_analysis,
@@ -74,6 +77,22 @@ def test_table_filters_use_canonical_type_not_amount_sign():
     assert [t["descricao"] for t in receitas] == ["Salario"]
     assert [t["descricao"] for t in despesas] == ["Mercado"]
     assert [t["descricao"] for t in investimentos] == ["Nomad"]
+
+
+def test_manual_sidebar_allows_only_account_payment_flow():
+    assert _FORMAS_PGTO_SAIDA == ["Conta"]
+    assert "Pagamento de Cartão" not in _CAT_SAIDA
+    assert not any("cart" in item.lower() for item in _FORMAS_PGTO_SAIDA)
+    assert not any("pix" in item.lower() for item in _FORMAS_PGTO_SAIDA)
+    assert not any("dinheiro" in item.lower() for item in _FORMAS_PGTO_SAIDA)
+
+
+def test_manual_sidebar_blocks_card_related_free_text():
+    assert _is_manual_card_related_text("Pagamento de Cartão")
+    assert _is_manual_card_related_text("credito da fatura")
+    assert _is_manual_card_related_text("compras do cartão")
+    assert not _is_manual_card_related_text("Mercado")
+    assert not _is_manual_card_related_text("Renda Fixa")
 
 
 def test_parse_credit_card_invoice_csv_model():

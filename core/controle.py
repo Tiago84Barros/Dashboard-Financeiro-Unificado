@@ -232,10 +232,18 @@ _SQL_CATEGORIAS = """
 """
 
 _SQL_CONTAS = """
-    SELECT id::text, name
+    SELECT id::text, name, type
     FROM   accounts
     WHERE  user_id = :uid
     ORDER  BY name
+"""
+
+_SQL_ACCOUNT_FOR_MANUAL_INSERT = """
+    SELECT id::text, COALESCE(type, '') AS type
+    FROM   accounts
+    WHERE  id = CAST(:account_id AS uuid)
+      AND  user_id = CAST(:uid AS uuid)
+    LIMIT 1
 """
 
 _SQL_CONTAS_CARTAO = """
@@ -930,6 +938,15 @@ def inserir_transacao(
         amount = abs(valor) if tipo == "income" else -abs(valor)
 
         with engine.begin() as conn:
+            account = conn.execute(
+                text(_SQL_ACCOUNT_FOR_MANUAL_INSERT),
+                {"account_id": conta_id, "uid": owner},
+            ).fetchone()
+            if not account:
+                return False, "Conta nÃ£o encontrada."
+            if account.type == "credit_card":
+                return False, "Compras de cartÃ£o de crÃ©dito devem ser importadas pela fatura CSV."
+
             conn.execute(
                 text(_SQL_INSERT_TX),
                 {
@@ -1421,7 +1438,7 @@ def _opcoes_mock() -> dict:
                 "Lazer", "Assinaturas", "Educação", "Outros",
             ])
         ] + [{"id": "0", "nome": "Salário", "tipo": "income"}],
-        "contas": [{"id": "1", "nome": "Conta Corrente"}],
+        "contas": [{"id": "1", "nome": "Conta Corrente", "tipo": "checking"}],
     }
 
 
@@ -1564,7 +1581,7 @@ def _opcoes_real() -> dict:
 
     return {
         "categorias": [{"id": r.id, "nome": r.name, "tipo": r.type} for r in cat_rows],
-        "contas":     [{"id": r.id, "nome": r.name}                  for r in cont_rows],
+        "contas":     [{"id": r.id, "nome": r.name, "tipo": r.type}   for r in cont_rows],
     }
 
 
