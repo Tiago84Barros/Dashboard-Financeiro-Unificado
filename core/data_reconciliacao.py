@@ -76,6 +76,31 @@ _RATIO_FIELDS: frozenset[str] = frozenset({
 _THRESH_RATIO = 0.30   # 30 % relativo
 _THRESH_PCT   = 0.05   # 5 p.p. em escala decimal
 
+# Ranges canonicos usados antes de qualquer score/backfill. Eles sao
+# intencionalmente conservadores: valores fora daqui viram "sem dado" ate uma
+# fonte externa valida confirmar outra coisa.
+VALID_RANGES: dict[str, tuple[float | None, float | None]] = {
+    "DY": (0.000001, 0.50),
+    "ROE": (-3.0, 5.0),
+    "ROA": (-1.0, 1.5),
+    "ROIC": (-2.0, 3.0),
+    "Margem_Liquida": (-2.0, 2.0),
+    "Margem_Operacional": (-2.0, 2.0),
+    "Payout": (-2.0, 5.0),
+    "P/L": (0.01, 200.0),
+    "P/VP": (0.01, 50.0),
+    "EV_EBIT": (0.01, 200.0),
+    "P_FCO": (0.01, 200.0),
+    "Endividamento_Total": (0.0, 20.0),
+    "Liquidez_Corrente": (0.0, 20.0),
+}
+
+CANONICAL_MULTIPLOS_FIELDS: tuple[str, ...] = tuple(VALID_RANGES.keys())
+_ZERO_ALWAYS_INVALID: frozenset[str] = frozenset({"DY"})
+_ZERO_SUSPECT_MIN_ROWS = 20
+_ZERO_SUSPECT_RATE = 0.80
+_ZERO_SUSPECT_POS_RATE = 0.05
+
 
 # ── Helpers internos ──────────────────────────────────────────────────────────
 
@@ -109,6 +134,119 @@ def _web_avg(*values: float | None) -> float | None:
     """Média simples dos valores não-nulos."""
     vals = [v for v in values if v is not None]
     return sum(vals) / len(vals) if vals else None
+
+
+def is_usable_value(
+    field: str,
+    value: Any,
+    zero_invalid_fields: set[str] | frozenset[str] | None = None,
+) -> bool:
+    """True quando o valor pode entrar em score/backfill sem distorcer ranking."""
+    x = _to_float(value)
+    if x is None:
+        return False
+    zero_invalid = set(_ZERO_ALWAYS_INVALID)
+    if zero_invalid_fields:
+        zero_invalid.update(zero_invalid_fields)
+    if field in zero_invalid and abs(x) <= 1e-12:
+        return False
+    lo, hi = VALID_RANGES.get(field, (None, None))
+    if lo is not None and x < lo:
+        return False
+    if hi is not None and x > hi:
+        return False
+    return True
+
+
+def infer_zero_as_missing_fields(
+    df: pd.DataFrame,
+    fields: tuple[str, ...] | list[str] | None = None,
+) -> set[str]:
+    """
+    Detecta colunas provavelmente importadas como zero no lugar de missing.
+
+    Zero pode ser real em um ticker, mas quase nunca e real para o universo
+    inteiro em campos como DY/Payout.
+    """
+    if df.empty:
+        return set()
+    out: set[str] = set()
+    for field in fields or CANONICAL_MULTIPLOS_FIELDS:
+        if field not in df.columns:
+            continue
+        s = pd.to_numeric(df[field], errors="coerce").dropna()
+        if len(s) < _ZERO_SUSPECT_MIN_ROWS:
+            continue
+        zero_rate = (s.abs() <= 1e-12).mean()
+        pos_rate = (s > 1e-12).mean()
+        if zero_rate >= _ZERO_SUSPECT_RATE and pos_rate <= _ZERO_SUSPECT_POS_RATE:
+            out.add(field)
+    return out
+
+
+def clean_multiplos_frame(
+    df: pd.DataFrame,
+    zero_invalid_fields: set[str] | frozenset[str] | None = None,
+) -> pd.DataFrame:
+    """Remove nulos mascarados e outliers de multiplos sem alterar demais colunas."""
+    if df.empty:
+        return df.copy()
+    out = df.copy()
+    for field in CANONICAL_MULTIPLOS_FIELDS:
+        if field not in out.columns:
+            continue
+        vals = pd.to_numeric(out[field], errors="coerce")
+        out[field] = vals.where(
+            vals.map(lambda v, f=field: is_usable_value(f, v, zero_invalid_fields))
+        )
+    return out
+
+
+def data_quality_summary(
+    df_raw: pd.DataFrame,
+    df_clean: pd.DataFrame,
+    zero_invalid_fields: set[str] | frozenset[str] | None = None,
+) -> dict[str, Any]:
+    """Resumo pequeno para UI/auditoria da carteira."""
+    fields = [c for c in CANONICAL_MULTIPLOS_FIELDS if c in df_raw.columns]
+    invalid_cells = 0
+    total_cells = 0
+    invalid_by_field: dict[str, int] = {}
+    for field in fields:
+        raw = pd.to_numeric(df_raw[field], errors="coerce")
+        total_cells += int(raw.notna().sum())
+        invalid = raw.notna() & ~raw.map(lambda v, f=field: is_usable_value(f, v, zero_invalid_fields))
+        count = int(invalid.sum())
+        invalid_cells += count
+        if count:
+            invalid_by_field[field] = count
+    return {
+        "tickers": int(df_raw["Ticker"].nunique()) if "Ticker" in df_raw.columns else int(len(df_raw)),
+        "campos_monitorados": len(fields),
+        "celulas_invalidas": invalid_cells,
+        "celulas_monitoradas": total_cells,
+        "campos_zero_suspeito": sorted(zero_invalid_fields or []),
+        "invalidos_por_campo": invalid_by_field,
+        "celulas_validas_apos_limpeza": int(df_clean[fields].notna().sum().sum()) if fields else 0,
+    }
+
+
+def _fund_to_db_values(raw: dict[str, Any]) -> dict[str, float | None]:
+    return {
+        db_key: _norm_fund(db_key, _to_float(raw.get(fk)))
+        for fk, db_key in _FUND_TO_DB.items()
+    }
+
+
+def _valid_web_values(
+    field: str,
+    *values: float | None,
+    zero_invalid_fields: set[str] | frozenset[str] | None = None,
+) -> list[float]:
+    return [
+        float(v) for v in values
+        if is_usable_value(field, v, zero_invalid_fields)
+    ]
 
 
 def _diff_str(db_field: str, db_val: float, web_val: float) -> str:
@@ -183,10 +321,12 @@ def get_multiplos_reconciliados(ticker: str) -> dict[str, Any]:
         db_val   = _to_float(db_row.get(field))
         fund_val = fund.get(field)
         si_val   = si.get(field)
+        db_ok = is_usable_value(field, db_val)
+        web_vals = _valid_web_values(field, fund_val, si_val)
+        web_avg = _web_avg(*web_vals)
 
         # Caso 1: BD tem valor
-        if db_val is not None:
-            web_avg = _web_avg(fund_val, si_val)
+        if db_ok:
             if web_avg is not None and _is_discrepant(field, db_val, web_avg):
                 result[field]  = web_avg
                 fontes[field]  = "db_sobrescrito"
@@ -200,13 +340,19 @@ def get_multiplos_reconciliados(ticker: str) -> dict[str, Any]:
 
         # Caso 2: BD sem valor, web tem
         else:
-            web_avg = _web_avg(fund_val, si_val)
             if web_avg is not None:
                 result[field] = web_avg
                 fontes[field] = "web"
+                if db_val is not None:
+                    alertas.append(
+                        f"**{field}**: BD invalido={db_val:.4g} | Webâ‰ˆ{web_avg:.4g} "
+                        "-> fonte web"
+                    )
             else:
                 result[field] = None
                 fontes[field] = "sem_dados"
+                if db_val is not None:
+                    alertas.append(f"**{field}**: BD invalido={db_val:.4g} -> sem dado")
 
     result["_fontes"]  = fontes
     result["_alertas"] = alertas
@@ -220,6 +366,166 @@ def get_multiplos_reconciliados(ticker: str) -> dict[str, Any]:
 
 
 # ── Batch: sem Status Invest (mais rápido para carteiras) ─────────────────────
+
+def _clean_ticker(ticker: str) -> str:
+    return str(ticker).strip().upper().replace(".SA", "")
+
+
+def _web_source_label(fund_ok: bool, si_ok: bool) -> str:
+    if fund_ok and si_ok:
+        return "Fundamentus+StatusInvest"
+    if si_ok:
+        return "StatusInvest"
+    if fund_ok:
+        return "Fundamentus"
+    return "web"
+
+
+def _status_batch(tickers: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    from core import status_invest as _si
+
+    def _fetch(tk: str) -> tuple[str, dict[str, Any]]:
+        try:
+            return tk, _si.fetch_stock_si(tk)
+        except Exception:
+            return tk, {}
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        return dict(ex.map(_fetch, tickers))
+
+
+def batch_multiplos_reconciliados(
+    tickers: tuple[str, ...] | list[str],
+    df_base: pd.DataFrame | None = None,
+    include_status: bool = False,
+    fund_data: dict[str, dict[str, Any]] | None = None,
+    status_data: dict[str, dict[str, Any]] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """
+    Reconciliacao em lote para carteiras/rankings.
+
+    Usa BD como base, corrige nulos/outliers com Fundamentus e, quando pedido,
+    Status Invest. Retorna (dataframe_final, auditoria, resumo).
+    """
+    from core import b3_db as _db
+    from core import fundamentus as _fund
+
+    tks = tuple(dict.fromkeys(_clean_ticker(t) for t in tickers if _clean_ticker(t)))
+    if not tks:
+        return pd.DataFrame(), pd.DataFrame(), {}
+
+    base = df_base.copy() if df_base is not None else _db.load_multiplos_todos()
+    if base.empty or "Ticker" not in base.columns:
+        base = pd.DataFrame({"Ticker": list(tks)})
+    else:
+        base["Ticker"] = base["Ticker"].astype(str).map(_clean_ticker)
+        base = base[base["Ticker"].isin(tks)].drop_duplicates("Ticker", keep="first")
+        faltantes = [tk for tk in tks if tk not in set(base["Ticker"])]
+        if faltantes:
+            base = pd.concat([base, pd.DataFrame({"Ticker": faltantes})], ignore_index=True)
+
+    zero_suspect = infer_zero_as_missing_fields(base)
+
+    fund_all = fund_data if fund_data is not None else _fund.batch_stocks(tks)
+    si_all: dict[str, dict[str, Any]] = status_data or {}
+    if include_status and status_data is None:
+        si_all = _status_batch(tks)
+
+    fields = list(CANONICAL_MULTIPLOS_FIELDS)
+    rows: list[dict[str, Any]] = []
+    audit_rows: list[dict[str, Any]] = []
+
+    for _, row in base.iterrows():
+        tk = _clean_ticker(row.get("Ticker", ""))
+        if not tk:
+            continue
+        out = row.to_dict()
+        out["Ticker"] = tk
+        fund = _fund_to_db_values(fund_all.get(tk, {}) or {})
+        si = {
+            k: _to_float(v)
+            for k, v in (si_all.get(tk, {}) or {}).items()
+            if k not in ("_fontes", "_alertas")
+        }
+
+        for field in fields:
+            db_val = _to_float(row.get(field))
+            db_ok = is_usable_value(field, db_val, zero_suspect)
+            fund_ok = is_usable_value(field, fund.get(field), zero_suspect)
+            si_ok = is_usable_value(field, si.get(field), zero_suspect)
+            web_vals = _valid_web_values(
+                field, fund.get(field), si.get(field), zero_invalid_fields=zero_suspect
+            )
+            web_avg = _web_avg(*web_vals)
+            source = "db"
+            action = "mantido"
+
+            if db_ok:
+                final = float(db_val)
+                if web_avg is not None and _is_discrepant(field, float(db_val), web_avg):
+                    final = float(web_avg)
+                    source = _web_source_label(fund_ok, si_ok)
+                    action = "db_sobrescrito"
+            elif web_avg is not None:
+                final = float(web_avg)
+                source = _web_source_label(fund_ok, si_ok)
+                action = "web_preencheu" if db_val is None else "web_corrigiu"
+            else:
+                final = float("nan")
+                source = "sem_dados"
+                action = "sem_dados" if db_val is None else "invalidado"
+
+            out[field] = final
+            if action != "mantido":
+                audit_rows.append({
+                    "Ticker": tk,
+                    "Indicador": field,
+                    "Antes": db_val,
+                    "Depois": final,
+                    "Fonte": source,
+                    "Acao": action,
+                })
+
+        rows.append(out)
+
+    reconciled = pd.DataFrame(rows)
+    cleaned = clean_multiplos_frame(reconciled, zero_suspect)
+    audit = pd.DataFrame(audit_rows)
+    summary = data_quality_summary(base, cleaned, zero_suspect)
+    summary["correcoes_web"] = int(len(audit[audit["Acao"].isin(["web_preencheu", "web_corrigiu", "db_sobrescrito"])]) if not audit.empty else 0)
+    summary["celulas_invalidadas"] = int(len(audit[audit["Acao"].eq("invalidado")]) if not audit.empty else 0)
+    summary["usa_status_invest"] = bool(include_status or status_data is not None)
+    return cleaned, audit, summary
+
+
+def clean_multiplos_history_batch(
+    hist_batch: dict[str, pd.DataFrame],
+    zero_invalid_fields: set[str] | frozenset[str] | None = None,
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+    """Aplica os mesmos ranges aos historicos usados no backtest."""
+    cleaned: dict[str, pd.DataFrame] = {}
+    audit_rows: list[dict[str, Any]] = []
+    for tk, df in (hist_batch or {}).items():
+        if df is None or df.empty:
+            continue
+        before = df.copy()
+        after = clean_multiplos_frame(before, zero_invalid_fields)
+        for field in CANONICAL_MULTIPLOS_FIELDS:
+            if field not in before.columns:
+                continue
+            raw = pd.to_numeric(before[field], errors="coerce")
+            new = pd.to_numeric(after[field], errors="coerce")
+            invalid = raw.notna() & new.isna()
+            if invalid.any():
+                audit_rows.append({
+                    "Ticker": _clean_ticker(tk),
+                    "Indicador": field,
+                    "Ocorrencias": int(invalid.sum()),
+                    "Acao": "historico_invalidado",
+                })
+        cleaned[_clean_ticker(tk)] = after
+    return cleaned, pd.DataFrame(audit_rows)
+
 
 def batch_fund_fmt(tickers: tuple[str, ...]) -> dict[str, dict]:
     """
@@ -274,15 +580,17 @@ def batch_fund_fmt(tickers: tuple[str, ...]) -> dict[str, dict]:
             fund_val_raw = _to_float(fd_base.get(fk))
             # Normaliza Fundamentus para escala BD (para poder comparar)
             fund_val_db  = _norm_fund(db_key, fund_val_raw)
+            db_ok = is_usable_value(db_key, db_val_db)
+            fund_ok = is_usable_value(db_key, fund_val_db)
 
-            if db_val_db is not None and fund_val_db is not None:
+            if db_ok and fund_ok:
                 if not _is_discrepant(db_key, db_val_db, fund_val_db):
                     # Sem discrepância: BD validado → converte BD → Fundamentus fmt
                     fd_merged[fk] = (
                         db_val_db * 100.0 if db_key in _PCT_FIELDS else db_val_db
                     )
                 # Com discrepância: mantém Fundamentus (já está em fd_merged)
-            elif db_val_db is not None and fund_val_raw is None:
+            elif db_ok and not fund_ok:
                 # Apenas BD tem dado → converte para Fundamentus fmt
                 fd_merged[fk] = (
                     db_val_db * 100.0 if db_key in _PCT_FIELDS else db_val_db
