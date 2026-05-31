@@ -8,6 +8,8 @@ análise institucional via OpenAI + redistribuição de pesos quanti-quali.
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -659,82 +661,283 @@ def _executar_analise(
 # Chat contextual sobre o portfólio
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_chat_context(state: dict, macro_hist: dict) -> str:
-    """Compila contexto compacto da análise para injetar no chat (~2-3k tokens)."""
-    items_an    = state.get("items_analisados", [])
-    port_an     = state.get("port_analise", {})
-    pesos_novos = state.get("pesos_novos", {})
+# Classificação de formatação dos indicadores
+_IND_PCT   = ("DY", "ROE", "ROA", "ROIC", "Margem_Liquida", "Margem_Operacional",
+              "Payout", "cresc_receita", "cresc_lucro")
+_IND_RATIO = ("P/L", "P/VP", "EV_EBIT", "Liquidez_Corrente", "Endividamento_Total", "P_FCO")
+_IND_LABEL = {
+    "DY": "Dividend Yield", "P/L": "P/L", "P/VP": "P/VP", "ROE": "ROE", "ROA": "ROA",
+    "ROIC": "ROIC", "Margem_Liquida": "Margem líquida", "Margem_Operacional": "Margem op.",
+    "Endividamento_Total": "Dív/Patrim.", "Liquidez_Corrente": "Liquidez corrente",
+    "EV_EBIT": "EV/EBIT", "Payout": "Payout", "P_FCO": "P/FCO",
+    "cresc_receita": "Cresc. receita (a.a.)", "cresc_lucro": "Cresc. lucro (a.a.)",
+}
 
+
+def _fmt_ind(key: str, v) -> str:
+    """Formata um indicador conforme seu tipo (% ou múltiplo)."""
+    if v is None or (isinstance(v, float) and not np.isfinite(v)) or pd.isna(v):
+        return "N/D"
+    v = float(v)
+    if key in _IND_PCT:
+        return f"{v*100:.1f}%" if abs(v) <= 2.0 else f"{v:.1f}%"
+    return f"{v:.2f}x"
+
+
+def _dre_series(dfd: pd.DataFrame, col: str) -> pd.Series:
+    if dfd is None or dfd.empty or col not in dfd.columns:
+        return pd.Series(dtype=float)
+    d = dfd.copy()
+    if "Data" in d.columns:
+        d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
+        d = d.dropna(subset=["Data"]).sort_values("Data")
+    return pd.to_numeric(d[col], errors="coerce")
+
+
+def _growth_log(series: pd.Series) -> float | None:
+    vals = pd.to_numeric(series, errors="coerce").dropna()
+    vals = vals[vals > 0].tail(6)
+    if len(vals) < 3:
+        return None
+    x = np.arange(len(vals), dtype=float)
+    y = np.log(vals.astype(float).to_numpy())
+    slope = float(np.polyfit(x, y, 1)[0])
+    return float(np.exp(slope) - 1.0)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _portfolio_fundamentals(tickers_tuple: tuple[str, ...]) -> dict[str, dict]:
+    """Fundamentos por ticker: múltiplos atuais (banco) + crescimento (DRE)."""
+    fund: dict[str, dict] = {}
+    mult_cols = ("DY", "P/L", "P/VP", "ROE", "ROA", "ROIC", "Margem_Liquida",
+                 "Margem_Operacional", "Endividamento_Total", "Liquidez_Corrente",
+                 "EV_EBIT", "Payout", "P_FCO")
+    try:
+        df_all = _db.load_multiplos_todos()
+        if not df_all.empty and "Ticker" in df_all.columns:
+            df_all = df_all.copy()
+            df_all["_TK"] = df_all["Ticker"].astype(str).str.upper().str.replace(".SA", "", regex=False)
+            idx = df_all.set_index("_TK")
+            for tk in tickers_tuple:
+                if tk in idx.index:
+                    row = idx.loc[tk]
+                    if isinstance(row, pd.DataFrame):
+                        row = row.iloc[0]
+                    fund[tk] = {
+                        c: (float(row[c]) if c in idx.columns and pd.notna(row.get(c)) else None)
+                        for c in mult_cols
+                    }
+    except Exception:
+        pass
+    # Crescimento de receita/lucro a partir da DRE
+    try:
+        dre = _db.load_demonstracoes_batch(tickers_tuple)
+        for tk, dfd in (dre or {}).items():
+            tku = str(tk).upper().replace(".SA", "")
+            fund.setdefault(tku, {})
+            fund[tku]["cresc_receita"] = _growth_log(_dre_series(dfd, "Receita_Liquida"))
+            fund[tku]["cresc_lucro"]   = _growth_log(_dre_series(dfd, "Lucro_Liquido"))
+    except Exception:
+        pass
+    return fund
+
+
+def _weights_from_model(model: dict) -> dict[str, float]:
+    raw = {
+        str(it.get("ticker", "")).upper().replace(".SA", ""): float(it.get("weight") or 0)
+        for it in model.get("items", [])
+    }
+    tot = sum(raw.values()) or 1.0
+    return {k: v / tot for k, v in raw.items()}
+
+
+def _consolidated_metrics(fund: dict[str, dict], weights: dict[str, float]) -> dict[str, dict]:
+    """Médias ponderada (por peso) e simples de cada indicador da carteira."""
+    keys = ("DY", "P/L", "P/VP", "ROE", "ROIC", "Margem_Liquida",
+            "Endividamento_Total", "Payout", "Liquidez_Corrente",
+            "cresc_receita", "cresc_lucro")
+    consol: dict[str, dict] = {}
+    for k in keys:
+        acc = wsum = 0.0
+        vals: list[float] = []
+        for tk, f in fund.items():
+            v = f.get(k)
+            if v is None or (isinstance(v, float) and not np.isfinite(v)):
+                continue
+            vals.append(v)
+            w = weights.get(tk, 0.0)
+            if w > 0:
+                acc += v * w
+                wsum += w
+        if vals:
+            consol[k] = {
+                "ponderada": (acc / wsum) if wsum > 0 else None,
+                "simples": sum(vals) / len(vals),
+                "n": len(vals),
+            }
+    return consol
+
+
+def _parse_motivos(it: dict) -> list[str]:
+    raw = it.get("motivos_json") or it.get("motivos")
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    try:
+        parsed = json.loads(raw)
+        return [str(x) for x in parsed] if isinstance(parsed, list) else [str(parsed)]
+    except Exception:
+        return [str(raw)]
+
+
+def _rag_for_question(user_input: str, model: dict, cobertura_docs: dict) -> str:
+    """Recupera trechos de documentos CVM/IPE relevantes para a pergunta."""
+    items = model.get("items", [])
+    port_tks = [str(it.get("ticker", "")).upper().replace(".SA", "") for it in items]
+    n_docs = sum(1 for v in cobertura_docs.values() if v > 0)
+    cov = (f"Documentos CVM/IPE indexados: {n_docs}/{len(port_tks)} empresas, "
+           f"{sum(cobertura_docs.values()):,} trechos no total.")
+    if n_docs == 0:
+        return cov + " (Nenhum documento corporativo indexado para esta carteira.)"
+
+    up = (user_input or "").upper()
+    mencionados = [tk for tk in port_tks if tk and tk in up]
+    com_docs = [tk for tk in port_tks if cobertura_docs.get(tk, 0) > 0]
+    alvo = [tk for tk in (mencionados or com_docs) if cobertura_docs.get(tk, 0) > 0][:3]
+
+    cache = st.session_state.setdefault("apb3_rag_cache", {})
+    chunks: list[dict] = []
+    for tk in alvo:
+        if tk not in cache:
+            try:
+                c, _ = retrieve_chunks(tk, top_k_total=12, per_topic_k=3)
+                cache[tk] = c or []
+            except Exception:
+                cache[tk] = []
+        chunks.extend(cache[tk])
+
+    if chunks:
+        return cov + "\n" + format_rag_context(chunks, max_chars=4000)
+    return cov + " (Documentos disponíveis, mas sem trechos recuperados para as empresas consultadas.)"
+
+
+def _build_chat_context(model: dict, state: dict, macro_hist: dict,
+                        fund: dict, consol: dict, weights: dict,
+                        cobertura_docs: dict, rag_ctx: str) -> str:
+    """Compila contexto REAL e completo do portfólio para o chat."""
+    items = model.get("items", [])
+    by_w = sorted(items, key=lambda it: -float(it.get("weight") or 0))
     lines: list[str] = []
 
-    # Resumo consolidado
-    lines.append("PORTFÓLIO ANALISADO:")
-    lines.append(f"  Qualidade: {port_an.get('qualidade_carteira','N/D')} | "
-                 f"Perspectiva 12m: {port_an.get('perspectiva_12m','N/D')} | "
-                 f"Score médio: {port_an.get('score_medio','N/D')}")
-    resumo_exec = port_an.get("resumo_executivo", "")
-    if resumo_exec:
-        lines.append(f"  Resumo: {resumo_exec[:400]}")
-    relatorio = port_an.get("relatorio_estrategico", "")
-    if relatorio:
-        lines.append(f"  Estratégia: {relatorio[:400]}")
+    # 1 — Identificação da carteira
+    lines.append("PORTFÓLIO ATUALMENTE AVALIADO:")
+    nome_mod = model.get("name") or "Carteira modelo B3"
+    ano_compra = model.get("ano_compra")
+    lines.append(f"  Nome: {nome_mod}" + (f" | Ano de compra: {ano_compra}" if ano_compra else ""))
+    lines.append(f"  Nº de empresas: {len(items)}")
+    # Composição setorial
+    segs: dict[str, float] = {}
+    for it in items:
+        seg = str(it.get("segmento") or it.get("setor") or "—")
+        segs[seg] = segs.get(seg, 0.0) + weights.get(str(it.get("ticker","")).upper().replace(".SA",""), 0.0)
+    comp = ", ".join(f"{s}={w*100:.0f}%" for s, w in sorted(segs.items(), key=lambda x: -x[1]))
+    lines.append(f"  Composição por segmento: {comp}")
 
-    # Por empresa
-    lines.append("\nEMPRESAS:")
-    for it in sorted(items_an, key=lambda x: -pesos_novos.get(x.get("ticker", ""), 0)):
-        tk   = it.get("ticker", "")
-        an   = it.get("analise", {})
-        w_new = pesos_novos.get(tk, 0) * 100
-        lines.append(
-            f"  {tk} ({it.get('nome','')}) | peso sugerido={w_new:.1f}% | "
-            f"perspectiva={an.get('perspectiva','N/D')} | ação={an.get('acao_sugerida','N/D')} | "
-            f"score_quali={an.get('score_qualitativo','N/D')} | confiança={an.get('confianca','N/D')}%"
+    # 2 — Indicadores consolidados
+    lines.append("\nINDICADORES CONSOLIDADOS DA CARTEIRA (ponderado por peso | média simples | nº empresas com dado):")
+    for k, agg in consol.items():
+        pond = _fmt_ind(k, agg.get("ponderada"))
+        simp = _fmt_ind(k, agg.get("simples"))
+        lines.append(f"  {_IND_LABEL.get(k,k)}: ponderada={pond} | simples={simp} | n={agg.get('n')}")
+    if not consol:
+        lines.append("  (Sem múltiplos suficientes no banco para consolidar.)")
+    lines.append("  Obs.: valor de mercado não consta na base (apenas múltiplos e DRE).")
+
+    # 3 — Dados por empresa (banco + carteira)
+    lines.append("\nEMPRESAS DA CARTEIRA (dados do banco + scores da Criação de Portfólio):")
+    for it in by_w:
+        tk = str(it.get("ticker", "")).upper().replace(".SA", "")
+        w  = weights.get(tk, 0.0) * 100
+        f  = fund.get(tk, {})
+        meta = [f"peso={w:.1f}%"]
+        if it.get("segmento"): meta.append(f"segmento={it['segmento']}")
+        if it.get("score") is not None: meta.append(f"score={float(it['score']):.1f}")
+        if it.get("alpha_selic") is not None: meta.append(f"alphaSelic={float(it['alpha_selic']):+.1f}%")
+        if it.get("ano_lider"): meta.append(f"líder_em={it['ano_lider']}")
+        lines.append(f"  {tk} ({it.get('nome','')}) | " + " | ".join(meta))
+        inds = " | ".join(
+            f"{_IND_LABEL.get(c,c)}={_fmt_ind(c, f.get(c))}"
+            for c in ("DY", "P/L", "P/VP", "ROE", "ROIC", "Margem_Liquida",
+                      "Endividamento_Total", "Payout", "Liquidez_Corrente",
+                      "cresc_receita", "cresc_lucro")
+            if f.get(c) is not None
         )
-        resumo = an.get("resumo", "")
-        if resumo:
-            lines.append(f"    Tese: {resumo[:250]}")
-        alerta = an.get("alerta_principal", "")
-        if alerta:
-            lines.append(f"    Alerta: {alerta}")
-        riscos = an.get("riscos", [])
-        if riscos:
-            lines.append(f"    Riscos: {'; '.join(riscos[:3])}")
-        cats = an.get("catalisadores", [])
-        if cats:
-            lines.append(f"    Catalisadores: {'; '.join(cats[:2])}")
+        if inds:
+            lines.append(f"    Fundamentos: {inds}")
+        motivos = _parse_motivos(it)
+        if motivos:
+            lines.append(f"    Justificativa de aprovação: {'; '.join(motivos[:4])}")
 
-    # Macro
-    anos = sorted(macro_hist.keys(), reverse=True)[:2]
+    # 4 — Documentos / relatórios
+    lines.append("\nDOCUMENTOS E RELATÓRIOS (CVM/IPE):")
+    lines.append("  " + (rag_ctx or "Sem documentos.").replace("\n", "\n  "))
+
+    # 5 — Análise qualitativa (se já executada)
+    if state:
+        port_an = state.get("port_analise", {})
+        items_an = state.get("items_analisados", [])
+        pesos_novos = state.get("pesos_novos", {})
+        lines.append("\nANÁLISE QUALITATIVA (LLM) JÁ EXECUTADA:")
+        lines.append(f"  Qualidade: {port_an.get('qualidade_carteira','N/D')} | "
+                     f"Perspectiva 12m: {port_an.get('perspectiva_12m','N/D')} | "
+                     f"Score médio: {port_an.get('score_medio','N/D')}")
+        if port_an.get("resumo_executivo"):
+            lines.append(f"  Resumo: {port_an['resumo_executivo'][:400]}")
+        for it in sorted(items_an, key=lambda x: -pesos_novos.get(x.get("ticker", ""), 0))[:30]:
+            an = it.get("analise", {})
+            tk = it.get("ticker", "")
+            extra = []
+            if an.get("perspectiva"): extra.append(f"perspectiva={an['perspectiva']}")
+            if an.get("acao_sugerida"): extra.append(f"ação={an['acao_sugerida']}")
+            if an.get("resumo"): extra.append(f"tese={an['resumo'][:160]}")
+            if extra:
+                lines.append(f"  {tk}: " + " | ".join(extra))
+    else:
+        lines.append("\nANÁLISE QUALITATIVA (LLM): ainda não executada nesta sessão "
+                     "(o usuário pode rodá-la no botão 'Executar Análise LLM'). "
+                     "Os dados quantitativos acima já permitem responder a maioria das perguntas.")
+
+    # 6 — Macro
+    anos = sorted(macro_hist.keys(), reverse=True)[:2] if macro_hist else []
     if anos:
         lines.append("\nMACROECONOMIA:")
         for ano in sorted(anos):
             d = macro_hist[ano]
             parts = []
-            if "selic" in d:
-                parts.append(f"Selic={d['selic']*100:.2f}%")
-            if "ipca" in d:
-                parts.append(f"IPCA={d['ipca']*100:.2f}%")
-            if "cambio" in d:
-                parts.append(f"USD/BRL={d['cambio']:.2f}")
+            if "selic" in d:  parts.append(f"Selic={d['selic']*100:.2f}%")
+            if "ipca" in d:   parts.append(f"IPCA={d['ipca']*100:.2f}%")
+            if "cambio" in d: parts.append(f"USD/BRL={d['cambio']:.2f}")
             if parts:
                 lines.append(f"  {ano}: {', '.join(parts)}")
 
     return "\n".join(lines)
 
 
-def _render_chat(state: dict, macro_hist: dict) -> None:
-    """Seção de chat contextual após a análise."""
+def _render_chat(model: dict, state: dict, macro_hist: dict,
+                 tickers_tuple: tuple[str, ...], cobertura_docs: dict) -> None:
+    """Chat contextual — responde com dados reais da carteira (sempre disponível)."""
     st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
     st.markdown('<div class="apb3-section-title">💬 Tire Dúvidas sobre o Portfólio</div>',
                 unsafe_allow_html=True)
     st.markdown(
         '<p style="font-size:0.78rem;color:#9CA3AF;margin-bottom:16px;">'
-        'Pergunte sobre qualquer aspecto da análise — empresas específicas, riscos, '
-        'alocação, macro ou estratégia. O LLM responde com base nos dados analisados.</p>',
+        'Pergunte sobre indicadores (DY, P/L, ROE…), médias da carteira, empresas '
+        'específicas, documentos CVM ou estratégia. A IA consulta a carteira, o banco '
+        'de dados e os documentos antes de responder.</p>',
         unsafe_allow_html=True,
     )
 
-    # Botão de limpar histórico
     col_chat_hdr, col_chat_clr = st.columns([5, 1])
     with col_chat_clr:
         if st.button("🗑️ Limpar chat", key="apb3_chat_clear", use_container_width=True):
@@ -742,23 +945,27 @@ def _render_chat(state: dict, macro_hist: dict) -> None:
             st.rerun()
 
     history: list[dict] = st.session_state.get("apb3_chat_history", [])
-
-    # Exibe histórico
     for msg in history:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Input
     user_input = st.chat_input("Pergunte sobre o portfólio…", key="apb3_chat_input")
     if user_input:
         history.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        context = _build_chat_context(state, macro_hist)
         with st.chat_message("assistant"):
-            with st.spinner("Analisando…"):
+            with st.spinner("Consultando carteira, banco e documentos…"):
                 try:
+                    weights = _weights_from_model(model)
+                    fund    = _portfolio_fundamentals(tickers_tuple)
+                    consol  = _consolidated_metrics(fund, weights)
+                    rag_ctx = _rag_for_question(user_input, model, cobertura_docs)
+                    context = _build_chat_context(
+                        model, state, macro_hist, fund, consol, weights,
+                        cobertura_docs, rag_ctx,
+                    )
                     resposta = chat_com_portfolio(context, history[:-1], user_input)
                 except Exception as exc:
                     resposta = f"Erro ao consultar LLM: {exc}"
@@ -895,28 +1102,33 @@ def render(show_header: bool = True) -> None:
         st.session_state["apb3_state"] = result
         st.rerun()
 
-    # ── Exibe resultados ──────────────────────────────────────────────────────
-    if not state:
-        st.info("Configure o modo acima e clique **🚀 Executar Análise LLM** para iniciar.", icon="ℹ️")
-        return
+    # ── Exibe resultados (se a análise qualitativa já foi executada) ──────────
+    if state:
+        items_an    = state["items_analisados"]
+        port_an     = state["port_analise"]
+        pesos_novos = state["pesos_novos"]
 
-    items_an    = state["items_analisados"]
-    port_an     = state["port_analise"]
-    pesos_novos = state["pesos_novos"]
+        st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
+        _render_relatorio_consolidado(port_an)
 
-    st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
-    _render_relatorio_consolidado(port_an)
+        st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
+        _render_alocacao(items_an, pesos_novos)
 
-    st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
-    _render_alocacao(items_an, pesos_novos)
+        st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
+        st.markdown('<div class="apb3-section-title">🏢 Relatórios por Empresa</div>',
+                    unsafe_allow_html=True)
+        for it in sorted(items_an, key=lambda x: -pesos_novos.get(x.get("ticker",""), 0)):
+            _render_empresa_expander(it, pesos_novos)
 
-    st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
-    st.markdown('<div class="apb3-section-title">🏢 Relatórios por Empresa</div>',
-                unsafe_allow_html=True)
-    for it in sorted(items_an, key=lambda x: -pesos_novos.get(x.get("ticker",""), 0)):
-        _render_empresa_expander(it, pesos_novos)
+        st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
+        _render_conclusao(port_an)
+    else:
+        st.info(
+            "Configure o modo acima e clique **🚀 Executar Análise LLM** para o "
+            "relatório qualitativo completo. O chat abaixo já responde com os dados "
+            "quantitativos reais da carteira (indicadores, fundamentos e documentos).",
+            icon="ℹ️",
+        )
 
-    st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
-    _render_conclusao(port_an)
-
-    _render_chat(state, macro_hist)
+    # Chat sempre disponível — usa dados reais da carteira mesmo sem análise qualitativa
+    _render_chat(model, state, macro_hist, tickers_tuple, cobertura_docs)
