@@ -25,8 +25,11 @@ Dados: core/controle + core/investimentos.get_cashflow_mensal()
 """
 from datetime import date as _date, timedelta
 from collections import defaultdict
+import html
 import re
+import unicodedata
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -34,7 +37,7 @@ from core.controle import (
     get_controle, get_opcoes_formulario, inserir_transacao,
     atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
     get_gastos_cartao_mensal, get_gastos_categoria_anual,
-    get_historico_cc_mensal, get_dividas_cc,
+    get_historico_cc_mensal, get_dividas_cc, get_transacoes_cartao_credito,
     get_contas_cartao_credito, parse_fatura_cartao_csv,
     importar_fatura_cartao_csv,
 )
@@ -1221,7 +1224,7 @@ def _infer_due_date_from_filename(filename: str | None) -> _date:
     return _date(today.year, today.month, min(day, 28))
 
 
-def _render_importador_fatura_cartao() -> None:
+def _render_importador_fatura_cartao_legacy() -> None:
     _secao_titulo("📥", "Importar fatura CSV")
 
     contas = get_contas_cartao_credito()
@@ -1324,7 +1327,7 @@ def _render_importador_fatura_cartao() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
 
-def _tab_cartao(d: dict) -> None:
+def _tab_cartao_legacy(d: dict) -> None:
     txs = d["transacoes"]
 
     # Apenas transações de contas de cartão de crédito (account_type='credit_card')
@@ -1548,6 +1551,792 @@ def _tab_cartao(d: dict) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TAB 4 - NOVO PAINEL ANALITICO DO CARTAO
+# ══════════════════════════════════════════════════════════════════════════════
+
+_CC_FEE_TERMS = ("anuidade", "iof", "juros", "multa", "tarifa", "encargo")
+_CC_PAYMENT_TERMS = ("pag fatura", "pagamento fatura", "pagamento de cartao", "boleto fatura")
+_CC_REFUND_TERMS = ("estorno", "credito", "creditos", "reembolso", "cashback")
+
+
+def _norm_ui_text(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = text.replace("_", " ").replace("-", " ").strip().casefold()
+    return " ".join(text.split())
+
+
+def _safe(value: object) -> str:
+    return html.escape(str(value if value is not None else "-"))
+
+
+def _to_timestamp(value: object) -> object:
+    if value is None or value == "":
+        return pd.NaT
+    try:
+        return pd.to_datetime(value)
+    except Exception:
+        return pd.NaT
+
+
+def _extract_card_final(description: object) -> str:
+    desc = str(description or "")
+    match = re.search(r"Cart\S*\s+(\d{4})", desc, flags=re.IGNORECASE)
+    return match.group(1) if match else "Nao informado"
+
+
+def _clean_card_description(description: object) -> str:
+    desc = str(description or "").strip()
+    if " | Compra " in desc:
+        desc = desc.split(" | Compra ", 1)[0].strip()
+    desc = re.sub(r"\s*\|\s*Cart\S*\s+\d{4}.*$", "", desc, flags=re.IGNORECASE).strip()
+    desc = re.sub(r"\s*\|\s*Parcela\s+.*$", "", desc, flags=re.IGNORECASE).strip()
+    return desc or "Sem descricao"
+
+
+def _classify_card_movement(tx: dict) -> str:
+    tipo_fluxo = tx.get("tipo_fluxo")
+    text = _norm_ui_text(f"{tx.get('categoria', '')} {tx.get('descricao', '')}")
+
+    if tipo_fluxo == "expense":
+        if any(term in text for term in _CC_FEE_TERMS):
+            return "tarifa"
+        return "compra"
+    if any(term in text for term in _CC_PAYMENT_TERMS):
+        return "pagamento"
+    if any(term in text for term in _CC_REFUND_TERMS):
+        return "estorno"
+    if tipo_fluxo == "transfer":
+        return "ajuste"
+    return "ajuste"
+
+
+def _movement_invoice_value(movement: str, amount: float) -> float:
+    value = abs(float(amount or 0.0))
+    if movement in {"compra", "tarifa"}:
+        return value
+    if movement in {"pagamento", "estorno", "ajuste"}:
+        return -value
+    return float(amount or 0.0)
+
+
+def _card_rows_dataframe(transacoes: list[dict]) -> pd.DataFrame:
+    rows = []
+    for tx in transacoes or []:
+        if tx.get("account_type") != "credit_card":
+            continue
+
+        due_ts = _to_timestamp(tx.get("data") or tx.get("due_date"))
+        purchase_ts = _to_timestamp(tx.get("data_compra") or tx.get("payment_date") or tx.get("data"))
+        if pd.isna(purchase_ts):
+            purchase_ts = due_ts
+
+        movement = _classify_card_movement(tx)
+        amount = float(tx.get("valor") or 0.0)
+        invoice_value = _movement_invoice_value(movement, amount)
+        inst_current = int(tx.get("installment_current") or 1)
+        inst_total = int(tx.get("installment_total") or 1)
+        desc = str(tx.get("descricao") or "")
+        estabelecimento = _clean_card_description(desc)
+
+        rows.append({
+            "id": tx.get("id"),
+            "data_vencimento": due_ts,
+            "data_compra": purchase_ts,
+            "ano_vencimento": int(due_ts.year) if not pd.isna(due_ts) else None,
+            "mes_vencimento": int(due_ts.month) if not pd.isna(due_ts) else None,
+            "ano_mes": due_ts.strftime("%Y-%m") if not pd.isna(due_ts) else "-",
+            "mes_label": f"{_MESES_PT[int(due_ts.month)]}/{int(due_ts.year)}" if not pd.isna(due_ts) else "-",
+            "descricao": desc,
+            "estabelecimento": estabelecimento,
+            "categoria": tx.get("categoria") or "Sem categoria",
+            "conta": tx.get("conta") or "Sem cartao",
+            "final_cartao": _extract_card_final(desc),
+            "tipo_lancamento": movement,
+            "valor_original": amount,
+            "valor_abs": abs(amount),
+            "valor_fatura": round(invoice_value, 2),
+            "installment_current": inst_current,
+            "installment_total": inst_total,
+            "installment_label": f"{inst_current}/{inst_total}" if inst_total > 1 else "Unica",
+            "installment_group": tx.get("installment_group") or tx.get("id"),
+            "is_parcelada": inst_total > 1,
+            "parcelas_restantes": max(inst_total - inst_current, 0),
+            "source": tx.get("source") or "manual",
+            "status": tx.get("status") or "-",
+        })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    merchant_counts = df[df["tipo_lancamento"] == "compra"]["estabelecimento"].value_counts()
+    df["possivel_recorrente"] = df["estabelecimento"].map(merchant_counts).fillna(0).astype(int) > 1
+    df["valor_pendente_estimado"] = df["valor_fatura"].clip(lower=0) * df["parcelas_restantes"]
+    return df
+
+
+def _invoice_upload_summary(rows: list[dict]) -> dict:
+    bruto = sum(abs(float(r.get("value_brl") or 0.0)) for r in rows)
+    compras = 0.0
+    tarifas = 0.0
+    creditos = 0.0
+    for row in rows:
+        value = float(row.get("value_brl") or 0.0)
+        text = _norm_ui_text(f"{row.get('category', '')} {row.get('description_raw', '')}")
+        if value < 0:
+            creditos += abs(value)
+        elif any(term in text for term in _CC_FEE_TERMS):
+            tarifas += value
+        else:
+            compras += value
+    return {
+        "total_bruto": round(bruto, 2),
+        "compras_reais": round(compras, 2),
+        "tarifas": round(tarifas, 2),
+        "creditos": round(creditos, 2),
+        "net_total": round(compras + tarifas - creditos, 2),
+    }
+
+
+def _render_importador_fatura_cartao() -> None:
+    last_result = st.session_state.get("cc_invoice_import_result")
+    last_ok = bool(last_result and last_result.get("ok"))
+    if last_ok:
+        summary = last_result.get("summary", {})
+        st.success(
+            f"Fatura importada: {int(summary.get('inserted', 0))} novo(s) lancamento(s), "
+            f"{int(summary.get('skipped', 0))} duplicado(s) ignorado(s)."
+        )
+    elif last_result:
+        st.error(last_result.get("message", "Falha ao importar fatura."))
+
+    with st.expander("Importar nova fatura", expanded=not last_ok):
+        contas = get_contas_cartao_credito()
+        uploaded = st.file_uploader(
+            "Arquivo CSV da fatura",
+            type=["csv"],
+            key="cc_invoice_upload",
+            help="Modelo com Data de Compra, Nome no Cartao, Final do Cartao, Categoria, Descricao, Parcela e valores.",
+        )
+
+        col_due, col_account = st.columns([1, 2], gap="small")
+        with col_due:
+            due_date = st.date_input(
+                "Vencimento da fatura",
+                value=_infer_due_date_from_filename(uploaded.name if uploaded else None),
+                format="DD/MM/YYYY",
+                key="cc_invoice_due_date",
+            )
+        with col_account:
+            if contas:
+                account_idx = st.selectbox(
+                    "Conta do cartao",
+                    range(len(contas)),
+                    format_func=lambda i: contas[i]["nome"],
+                    key="cc_invoice_account",
+                )
+                account_id = contas[account_idx]["id"]
+            else:
+                st.warning("Cadastre uma conta do tipo cartao de credito antes de importar.")
+                account_id = None
+
+        if uploaded is None:
+            st.caption("Selecione uma fatura em CSV para visualizar a previa e importar.")
+            return
+
+        file_bytes = uploaded.getvalue()
+        parsed = parse_fatura_cartao_csv(file_bytes, due_date)
+        rows = parsed.get("rows", [])
+        upload_summary = _invoice_upload_summary(rows)
+
+        if parsed.get("errors"):
+            for err in parsed["errors"][:5]:
+                st.error(err)
+            if len(parsed["errors"]) > 5:
+                st.caption(f"+ {len(parsed['errors']) - 5} erro(s) adicionais.")
+
+        if not rows:
+            st.caption("Nenhuma linha valida encontrada na fatura.")
+            return
+
+        c1, c2, c3, c4 = st.columns(4, gap="small")
+        with c1:
+            st.markdown(_kpi_card("Arquivo", _safe(uploaded.name[:24]), f"{len(rows)} lancamento(s) validos", _COR_NEUTRO), unsafe_allow_html=True)
+        with c2:
+            st.markdown(_kpi_card("Total bruto", fmt_moeda(upload_summary["total_bruto"]), "Soma absoluta da fatura.", _COR_DESPESA), unsafe_allow_html=True)
+        with c3:
+            st.markdown(_kpi_card("Compras reais", fmt_moeda(upload_summary["compras_reais"]), "Exclui pagamentos, estornos e tarifas.", _COR_DESPESA), unsafe_allow_html=True)
+        with c4:
+            st.markdown(_kpi_card("Liquido", fmt_moeda(upload_summary["net_total"]), "Compras + tarifas - creditos.", _COR_NEUTRO), unsafe_allow_html=True)
+
+        c5, c6, c7, c8 = st.columns(4, gap="small")
+        with c5:
+            st.markdown(_kpi_card("Tarifas", fmt_moeda(upload_summary["tarifas"]), "Anuidade, IOF, juros, multa e encargos.", "#F6C90E"), unsafe_allow_html=True)
+        with c6:
+            st.markdown(_kpi_card("Pagamentos/estornos", fmt_moeda(upload_summary["creditos"]), "Lancamentos negativos da fatura.", _COR_RECEITA), unsafe_allow_html=True)
+        with c7:
+            st.markdown(_kpi_card("Parceladas", str(sum(1 for r in rows if r.get("installment_total", 1) > 1)), "Compras com parcela maior que 1.", _COR_INVEST), unsafe_allow_html=True)
+        with c8:
+            cards = sorted({str(r.get("card_final")) for r in rows if r.get("card_final")})
+            st.markdown(_kpi_card("Cartoes", str(len(cards)), ", ".join(cards)[:42] or "-", _COR_INVEST), unsafe_allow_html=True)
+
+        preview = pd.DataFrame([
+            {
+                "Compra": r["purchase_date"].strftime("%d/%m/%Y"),
+                "Vencimento": r["due_date"].strftime("%d/%m/%Y"),
+                "Final": r["card_final"],
+                "Categoria": r["category"],
+                "Descricao": r["description_raw"],
+                "Parcela": r["installment_label"],
+                "Tipo": "despesa" if r["type"] == "expense" else "credito",
+                "Valor (R$)": r["value_brl"],
+            }
+            for r in rows[:80]
+        ])
+        st.dataframe(
+            preview,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
+            },
+        )
+        if len(rows) > 80:
+            st.caption(f"Exibindo 80 de {len(rows)} linhas da previa.")
+
+        importar = st.button(
+            "Importar fatura",
+            type="primary",
+            disabled=(not account_id or not rows or bool(parsed.get("errors"))),
+            use_container_width=True,
+            key="cc_invoice_import_btn",
+        )
+        if importar:
+            result = importar_fatura_cartao_csv(file_bytes, due_date, account_id)
+            result["file_name"] = uploaded.name
+            st.session_state["cc_invoice_import_result"] = result
+            if result.get("ok"):
+                st.rerun()
+            st.error(result.get("message", "Falha ao importar fatura."))
+
+
+def _render_card_filters(df: pd.DataFrame, selected_year: int, selected_month: int) -> dict:
+    years = sorted([int(y) for y in df["ano_vencimento"].dropna().unique()], reverse=True)
+    year_options: list[object] = ["Todos"] + years
+    default_year = selected_year if selected_year in years else (years[0] if years else "Todos")
+
+    if default_year == "Todos":
+        available_months = sorted(int(m) for m in df["mes_vencimento"].dropna().unique())
+    else:
+        available_months = sorted(
+            int(m) for m in df.loc[df["ano_vencimento"] == int(default_year), "mes_vencimento"].dropna().unique()
+        )
+    default_month = selected_month if selected_month in available_months else (available_months[-1] if available_months else selected_month)
+    month_labels = {f"{m:02d} - {_MESES_PT[m]}": m for m in range(1, 13)}
+    month_options = ["Todos"] + list(month_labels.keys())
+    default_month_label = next((label for label, month in month_labels.items() if month == default_month), "Todos")
+
+    card_options = ["Todos"] + sorted(v for v in df["final_cartao"].dropna().unique() if v)
+    cat_options = ["Todas"] + sorted(v for v in df["categoria"].dropna().unique() if v)
+    type_options = ["Todos", "compra", "tarifa", "estorno", "pagamento", "ajuste"]
+
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+    with c1:
+        year = st.selectbox("Ano", year_options, index=year_options.index(default_year), key="cc_filter_year")
+    with c2:
+        month = st.selectbox(
+            "Mes de referencia",
+            month_options,
+            index=month_options.index(default_month_label) if default_month_label in month_options else 0,
+            key="cc_filter_month",
+        )
+    with c3:
+        card = st.selectbox("Final do cartao", card_options, key="cc_filter_card")
+    with c4:
+        category = st.selectbox("Categoria", cat_options, key="cc_filter_category")
+
+    c5, c6, c7, c8 = st.columns([1.2, 1.8, 1.2, 1.3], gap="small")
+    with c5:
+        movement = st.selectbox("Tipo de lancamento", type_options, key="cc_filter_type")
+    with c6:
+        search = st.text_input("Buscar por descricao", placeholder="Ex: mercado, smiles, anuidade...", key="cc_filter_search")
+    with c7:
+        only_installments = st.checkbox("Apenas parceladas", key="cc_filter_installments")
+    with c8:
+        min_value = st.number_input("Valor minimo", min_value=0.0, value=0.0, step=50.0, key="cc_filter_min_value")
+
+    return {
+        "year": year,
+        "month": month_labels.get(month),
+        "card": card,
+        "category": category,
+        "movement": movement,
+        "search": search,
+        "only_installments": only_installments,
+        "min_value": float(min_value or 0.0),
+    }
+
+
+def _apply_card_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
+    out = df.copy()
+    if filters["year"] != "Todos":
+        out = out[out["ano_vencimento"] == int(filters["year"])]
+    if filters["month"]:
+        out = out[out["mes_vencimento"] == int(filters["month"])]
+    if filters["card"] != "Todos":
+        out = out[out["final_cartao"] == filters["card"]]
+    if filters["category"] != "Todas":
+        out = out[out["categoria"] == filters["category"]]
+    if filters["movement"] != "Todos":
+        out = out[out["tipo_lancamento"] == filters["movement"]]
+    if filters["search"]:
+        needle = _norm_ui_text(filters["search"])
+        out = out[out["descricao"].map(_norm_ui_text).str.contains(needle, na=False, regex=False)]
+    if filters["only_installments"]:
+        out = out[out["is_parcelada"]]
+    if filters["min_value"] > 0:
+        out = out[out["valor_abs"] >= filters["min_value"]]
+    return out
+
+
+def _prepare_category_analysis(df: pd.DataFrame) -> pd.DataFrame:
+    compras = df[df["tipo_lancamento"] == "compra"]
+    if compras.empty:
+        return pd.DataFrame(columns=["Categoria", "Total (R$)", "Transacoes", "Ticket medio", "% compras"])
+    total = compras["valor_fatura"].sum() or 1.0
+    out = (
+        compras.groupby("categoria", as_index=False)
+        .agg(total=("valor_fatura", "sum"), transacoes=("id", "count"), ticket=("valor_fatura", "mean"))
+        .sort_values("total", ascending=False)
+    )
+    out["pct"] = out["total"] / total * 100
+    return out.rename(columns={
+        "categoria": "Categoria",
+        "total": "Total (R$)",
+        "transacoes": "Transacoes",
+        "ticket": "Ticket medio",
+        "pct": "% compras",
+    })
+
+
+def _prepare_merchant_analysis(df: pd.DataFrame) -> pd.DataFrame:
+    compras = df[df["tipo_lancamento"] == "compra"]
+    if compras.empty:
+        return pd.DataFrame(columns=["Estabelecimento", "Categoria principal", "Total (R$)", "Transacoes", "Maior compra", "% compras"])
+    total = compras["valor_fatura"].sum() or 1.0
+    out = (
+        compras.groupby("estabelecimento", as_index=False)
+        .agg(
+            categoria=("categoria", lambda s: s.mode().iloc[0] if not s.mode().empty else s.iloc[0]),
+            total=("valor_fatura", "sum"),
+            transacoes=("id", "count"),
+            maior=("valor_fatura", "max"),
+        )
+        .sort_values("total", ascending=False)
+    )
+    out["pct"] = out["total"] / total * 100
+    return out.rename(columns={
+        "estabelecimento": "Estabelecimento",
+        "categoria": "Categoria principal",
+        "total": "Total (R$)",
+        "transacoes": "Transacoes",
+        "maior": "Maior compra",
+        "pct": "% compras",
+    })
+
+
+def _prepare_installment_analysis(df: pd.DataFrame) -> pd.DataFrame:
+    parcelas = df[(df["tipo_lancamento"] == "compra") & (df["is_parcelada"])].copy()
+    if parcelas.empty:
+        return pd.DataFrame(columns=[
+            "Estabelecimento", "Categoria", "Final", "Parcela atual",
+            "Total parcelas", "Valor no mes", "Restantes", "Pendente estimado",
+        ])
+    out = (
+        parcelas.groupby("installment_group", as_index=False)
+        .agg(
+            estabelecimento=("estabelecimento", "first"),
+            categoria=("categoria", "first"),
+            final=("final_cartao", "first"),
+            parcela_atual=("installment_current", "max"),
+            total_parcelas=("installment_total", "max"),
+            valor_mes=("valor_fatura", "sum"),
+            restantes=("parcelas_restantes", "max"),
+            pendente=("valor_pendente_estimado", "sum"),
+        )
+        .sort_values("pendente", ascending=False)
+    )
+    return out.rename(columns={
+        "estabelecimento": "Estabelecimento",
+        "categoria": "Categoria",
+        "final": "Final",
+        "parcela_atual": "Parcela atual",
+        "total_parcelas": "Total parcelas",
+        "valor_mes": "Valor no mes",
+        "restantes": "Restantes",
+        "pendente": "Pendente estimado",
+    })
+
+
+def _prepare_non_consumption(df: pd.DataFrame) -> pd.DataFrame:
+    base = df[df["tipo_lancamento"].isin(["tarifa", "estorno", "pagamento", "ajuste"])].copy()
+    if base.empty:
+        return pd.DataFrame(columns=["Data", "Tipo", "Descricao", "Categoria", "Valor (R$)"])
+    base["Data"] = base["data_compra"].dt.strftime("%d/%m/%Y")
+    base["Tipo"] = base["tipo_lancamento"].str.title()
+    base["Descricao"] = base["estabelecimento"]
+    base["Categoria"] = base["categoria"]
+    base["Valor (R$)"] = base["valor_abs"]
+    return base[["Data", "Tipo", "Descricao", "Categoria", "Valor (R$)"]].sort_values("Valor (R$)", ascending=False)
+
+
+def _summary_credit_card(df: pd.DataFrame) -> dict:
+    compras = df[df["tipo_lancamento"] == "compra"]
+    tarifas = df[df["tipo_lancamento"] == "tarifa"]
+    estornos = df[df["tipo_lancamento"] == "estorno"]
+    pagamentos = df[df["tipo_lancamento"] == "pagamento"]
+    parceladas = compras[compras["is_parcelada"]]
+
+    maior = compras.sort_values("valor_fatura", ascending=False).head(1)
+    cat = _prepare_category_analysis(df).head(1)
+    return {
+        "total_compras": round(float(compras["valor_fatura"].sum()), 2),
+        "total_liquido": round(float(df["valor_fatura"].sum()), 2),
+        "ticket_medio": round(float(compras["valor_fatura"].mean()), 2) if not compras.empty else 0.0,
+        "maior_valor": round(float(maior["valor_fatura"].iloc[0]), 2) if not maior.empty else 0.0,
+        "maior_desc": str(maior["estabelecimento"].iloc[0]) if not maior.empty else "-",
+        "parceladas_total": round(float(parceladas["valor_fatura"].sum()), 2),
+        "parceladas_qtd": int(len(parceladas)),
+        "tarifas": round(float(tarifas["valor_fatura"].sum()), 2),
+        "estornos": round(float(estornos["valor_abs"].sum()), 2),
+        "pagamentos": round(float(pagamentos["valor_abs"].sum()), 2),
+        "categoria_dominante": str(cat["Categoria"].iloc[0]) if not cat.empty else "-",
+        "categoria_pct": round(float(cat["% compras"].iloc[0]), 1) if not cat.empty else 0.0,
+        "compras_qtd": int(len(compras)),
+    }
+
+
+def _render_summary_cards(df: pd.DataFrame) -> None:
+    s = _summary_credit_card(df)
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+    with c1:
+        st.markdown(_kpi_card("Total de compras reais", fmt_moeda(s["total_compras"]), f"{s['compras_qtd']} compra(s) no filtro.", _COR_DESPESA), unsafe_allow_html=True)
+    with c2:
+        color = _COR_DESPESA if s["total_liquido"] >= 0 else _COR_RECEITA
+        st.markdown(_kpi_card("Total liquido da fatura", fmt_moeda(s["total_liquido"]), "Compras + tarifas - estornos - pagamentos.", color), unsafe_allow_html=True)
+    with c3:
+        st.markdown(_kpi_card("Ticket medio", fmt_moeda(s["ticket_medio"]), "Exclui pagamentos, estornos e tarifas.", _COR_NEUTRO), unsafe_allow_html=True)
+    with c4:
+        st.markdown(_kpi_card("Maior compra", fmt_moeda(s["maior_valor"]), _safe(s["maior_desc"][:42]), "#F6C90E"), unsafe_allow_html=True)
+
+    c5, c6, c7, c8 = st.columns(4, gap="small")
+    with c5:
+        st.markdown(_kpi_card("Compras parceladas", fmt_moeda(s["parceladas_total"]), f"{s['parceladas_qtd']} lancamento(s) parcelado(s).", _COR_INVEST), unsafe_allow_html=True)
+    with c6:
+        st.markdown(_kpi_card("Tarifas e encargos", fmt_moeda(s["tarifas"]), "Anuidade, IOF, juros, multa e tarifas.", "#F6C90E"), unsafe_allow_html=True)
+    with c7:
+        st.markdown(_kpi_card("Estornos", fmt_moeda(s["estornos"]), "Creditos abatidos na fatura.", _COR_RECEITA), unsafe_allow_html=True)
+    with c8:
+        st.markdown(_kpi_card("Categoria dominante", _safe(s["categoria_dominante"][:24]), f"{s['categoria_pct']:.1f}% das compras reais.", _COR_NEUTRO), unsafe_allow_html=True)
+
+
+def _fig_donut_categoria(cat_df: pd.DataFrame) -> go.Figure:
+    chart = cat_df[["Categoria", "Total (R$)", "% compras"]].copy()
+    if len(chart) > 7:
+        top = chart.head(6)
+        other = pd.DataFrame([{
+            "Categoria": "Outros",
+            "Total (R$)": chart.iloc[6:]["Total (R$)"].sum(),
+            "% compras": chart.iloc[6:]["% compras"].sum(),
+        }])
+        chart = pd.concat([top, other], ignore_index=True)
+    fig = go.Figure(go.Pie(
+        labels=chart["Categoria"],
+        values=chart["Total (R$)"],
+        hole=0.62,
+        marker={"colors": _CORES_CAT[:len(chart)]},
+        textinfo="percent",
+        hovertemplate="<b>%{label}</b><br>R$ %{value:,.2f}<br>%{percent}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 8, "b": 8, "l": 8, "r": 8},
+        height=330,
+        showlegend=True,
+        legend={"orientation": "h", "y": -0.08},
+    )
+    return fig
+
+
+def _fig_horizontal_bar(df: pd.DataFrame, label_col: str, value_col: str, color: str, height: int = 330) -> go.Figure:
+    chart = df.head(10).sort_values(value_col, ascending=True)
+    fig = go.Figure(go.Bar(
+        x=chart[value_col],
+        y=chart[label_col],
+        orientation="h",
+        marker_color=color,
+        opacity=0.88,
+        hovertemplate="<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 8, "b": 8, "l": 0, "r": 8},
+        height=height,
+        xaxis={"showgrid": True, "gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
+        yaxis={"showgrid": False},
+    )
+    return fig
+
+
+def _fig_monthly_evolution(df: pd.DataFrame) -> go.Figure:
+    compras = df[df["tipo_lancamento"] == "compra"]
+    monthly = (
+        compras.groupby(["ano_mes", "mes_label"], as_index=False)
+        .agg(total=("valor_fatura", "sum"))
+        .sort_values("ano_mes")
+    )
+    fig = go.Figure(go.Scatter(
+        x=monthly["mes_label"],
+        y=monthly["total"],
+        mode="lines+markers",
+        line={"color": _COR_INVEST, "width": 2.8},
+        marker={"size": 8},
+        fill="tozeroy",
+        fillcolor="rgba(74,158,255,0.10)",
+        hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 8, "b": 8, "l": 0, "r": 8},
+        height=320,
+        xaxis={"showgrid": False},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
+    )
+    return fig
+
+
+def _fig_non_consumption(df: pd.DataFrame) -> go.Figure:
+    base = df[df["tipo_lancamento"].isin(["tarifa", "estorno", "pagamento", "ajuste"])]
+    agg = (
+        base.groupby("tipo_lancamento", as_index=False)
+        .agg(total=("valor_abs", "sum"))
+        .sort_values("total", ascending=True)
+    )
+    colors = {
+        "tarifa": "#F6C90E",
+        "estorno": _COR_RECEITA,
+        "pagamento": _COR_NEUTRO,
+        "ajuste": _COR_INVEST,
+    }
+    fig = go.Figure(go.Bar(
+        x=agg["total"],
+        y=agg["tipo_lancamento"].str.title(),
+        orientation="h",
+        marker_color=[colors.get(v, _COR_NEUTRO) for v in agg["tipo_lancamento"]],
+        hovertemplate="<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        margin={"t": 8, "b": 8, "l": 0, "r": 8},
+        height=260,
+        xaxis={"showgrid": True, "gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
+        yaxis={"showgrid": False},
+    )
+    return fig
+
+
+def _render_money_dataframe(df: pd.DataFrame, money_cols: list[str], pct_cols: list[str] | None = None) -> None:
+    pct_cols = pct_cols or []
+    column_config = {
+        col: st.column_config.NumberColumn(col, format="R$ %.2f")
+        for col in money_cols
+        if col in df.columns
+    }
+    for col in pct_cols:
+        if col in df.columns:
+            column_config[col] = st.column_config.NumberColumn(col, format="%.1f%%")
+    st.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
+
+
+def _render_credit_card_insights(df: pd.DataFrame) -> None:
+    if df.empty:
+        st.info("Nao ha lancamentos no filtro atual para gerar insights.")
+        return
+
+    s = _summary_credit_card(df)
+    insights = []
+    if s["total_compras"] <= 0 and s["total_liquido"] < 0:
+        insights.append(("info", "O filtro atual mostra mais abatimentos/pagamentos do que consumo real."))
+    if s["categoria_pct"] >= 40:
+        insights.append(("warning", f"A categoria {_safe(s['categoria_dominante'])} concentra {s['categoria_pct']:.1f}% das compras reais."))
+    if s["tarifas"] > 0:
+        insights.append(("warning", f"Foram identificados {fmt_moeda(s['tarifas'])} em tarifas/encargos. Vale conferir anuidade, IOF ou juros."))
+    if s["total_compras"] > 0 and s["parceladas_total"] / s["total_compras"] >= 0.30:
+        share = s["parceladas_total"] / s["total_compras"] * 100
+        insights.append(("warning", f"Compras parceladas representam {share:.1f}% das compras reais do filtro."))
+
+    recorrentes = (
+        df[(df["tipo_lancamento"] == "compra") & (df["possivel_recorrente"])]
+        .groupby("estabelecimento", as_index=False)
+        .agg(qtd=("id", "count"), total=("valor_fatura", "sum"))
+        .sort_values("total", ascending=False)
+    )
+    if not recorrentes.empty:
+        top = recorrentes.iloc[0]
+        insights.append(("info", f"Possivel gasto recorrente: {_safe(top['estabelecimento'])} aparece {int(top['qtd'])} vez(es), somando {fmt_moeda(top['total'])}."))
+    if not insights:
+        insights.append(("success", "Nenhum alerta relevante no filtro atual. A fatura esta bem segmentada entre consumo, ajustes e parcelas."))
+
+    for level, message in insights[:5]:
+        if level == "warning":
+            st.warning(message)
+        elif level == "success":
+            st.success(message)
+        else:
+            st.info(message)
+
+
+def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
+    st.markdown(
+        '<h2 style="font-size:1.45rem;font-weight:800;color:#E2E8F0;margin-bottom:0;">'
+        'Cartao de Credito</h2>'
+        '<p style="color:#718096;font-size:0.86rem;margin-top:4px;">'
+        'Controle mensal da fatura, categorias de consumo, parcelas, estornos e tarifas.</p>',
+        unsafe_allow_html=True,
+    )
+
+    all_cc_txs = get_transacoes_cartao_credito()
+    if not all_cc_txs:
+        all_cc_txs = [t for t in d.get("transacoes", []) if t.get("account_type") == "credit_card"]
+    df_all = _card_rows_dataframe(all_cc_txs)
+
+    if not df_all.empty:
+        _secao_titulo("Filtros", "Cabecalho e filtros")
+        filters = _render_card_filters(df_all, selected_year, selected_month)
+        df = _apply_card_filters(df_all, filters)
+    else:
+        df = df_all
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _render_importador_fatura_cartao()
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if df_all.empty:
+        st.info("Importe uma fatura CSV para visualizar os indicadores e graficos do cartao.")
+        return
+    if df.empty:
+        st.warning("Nenhum lancamento encontrado para os filtros selecionados.")
+        return
+
+    _secao_titulo("Resumo", "Resumo executivo da fatura")
+    _render_summary_cards(df)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    cat_df = _prepare_category_analysis(df)
+    merchant_df = _prepare_merchant_analysis(df)
+
+    _secao_titulo("Graficos", "Graficos principais")
+    col_cat, col_top = st.columns(2, gap="medium")
+    with col_cat:
+        st.markdown("**Distribuicao dos gastos por categoria**")
+        if cat_df.empty:
+            st.caption("Sem compras reais no filtro atual.")
+        else:
+            st.plotly_chart(_fig_donut_categoria(cat_df), use_container_width=True, config={"displayModeBar": False})
+    with col_top:
+        st.markdown("**Categorias que mais pesaram na fatura**")
+        if cat_df.empty:
+            st.caption("Sem categorias de consumo para exibir.")
+        else:
+            st.plotly_chart(_fig_horizontal_bar(cat_df, "Categoria", "Total (R$)", _COR_DESPESA), use_container_width=True, config={"displayModeBar": False})
+
+    st.markdown("**Maiores gastos por estabelecimento**")
+    if merchant_df.empty:
+        st.caption("Sem estabelecimentos de compra para exibir.")
+    else:
+        st.plotly_chart(_fig_horizontal_bar(merchant_df, "Estabelecimento", "Total (R$)", _COR_INVEST, height=360), use_container_width=True, config={"displayModeBar": False})
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _secao_titulo("Categorias", "Analise por categoria")
+    if cat_df.empty:
+        st.caption("Sem compras reais para analisar por categoria.")
+    else:
+        _render_money_dataframe(cat_df, ["Total (R$)", "Ticket medio"], ["% compras"])
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _secao_titulo("Estabelecimentos", "Analise por estabelecimento")
+    if merchant_df.empty:
+        st.caption("Sem compras reais para analisar por estabelecimento.")
+    else:
+        _render_money_dataframe(merchant_df.head(20), ["Total (R$)", "Maior compra"], ["% compras"])
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _secao_titulo("Parcelas", "Compras parceladas")
+    installment_df = _prepare_installment_analysis(df)
+    if installment_df.empty:
+        st.caption("Nenhuma compra parcelada no filtro atual.")
+    else:
+        col_parc_chart, col_parc_table = st.columns([1, 1.25], gap="medium")
+        with col_parc_chart:
+            st.plotly_chart(_fig_horizontal_bar(installment_df, "Estabelecimento", "Pendente estimado", _COR_INVEST, height=320), use_container_width=True, config={"displayModeBar": False})
+        with col_parc_table:
+            _render_money_dataframe(installment_df.head(12), ["Valor no mes", "Pendente estimado"])
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _secao_titulo("Ajustes", "Tarifas, estornos e pagamentos")
+    non_df = _prepare_non_consumption(df)
+    if non_df.empty:
+        st.caption("Nenhuma tarifa, estorno, pagamento ou ajuste no filtro atual.")
+    else:
+        col_non_chart, col_non_table = st.columns([1, 1.35], gap="medium")
+        with col_non_chart:
+            st.plotly_chart(_fig_non_consumption(df), use_container_width=True, config={"displayModeBar": False})
+        with col_non_table:
+            _render_money_dataframe(non_df.head(20), ["Valor (R$)"])
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _secao_titulo("Evolucao", "Evolucao mensal dos gastos no cartao")
+    monthly_points = df[df["tipo_lancamento"] == "compra"]["ano_mes"].nunique()
+    if monthly_points < 2:
+        st.caption("Ainda nao ha meses suficientes para comparar a evolucao.")
+    else:
+        st.plotly_chart(_fig_monthly_evolution(df), use_container_width=True, config={"displayModeBar": False})
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("Tabela detalhada de lancamentos", expanded=False):
+        detail = df.sort_values(["data_vencimento", "data_compra"], ascending=[False, False]).copy()
+        detail["Vencimento"] = detail["data_vencimento"].dt.strftime("%d/%m/%Y")
+        detail["Compra"] = detail["data_compra"].dt.strftime("%d/%m/%Y")
+        detail["Tipo"] = detail["tipo_lancamento"].str.title()
+        detail["Valor fatura"] = detail["valor_fatura"]
+        cols = [
+            "Vencimento", "Compra", "final_cartao", "Tipo", "estabelecimento",
+            "categoria", "installment_label", "Valor fatura", "source",
+        ]
+        display = detail[cols].rename(columns={
+            "final_cartao": "Final",
+            "estabelecimento": "Descricao",
+            "categoria": "Categoria",
+            "installment_label": "Parcela",
+            "source": "Origem",
+        })
+        _render_money_dataframe(display, ["Valor fatura"])
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _secao_titulo("Insights", "Insights automaticos")
+    _render_credit_card_insights(df)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1656,4 +2445,4 @@ def render() -> None:
         _tab_tabelas(d)
 
     with tab4:
-        _tab_cartao(d)
+        _tab_cartao(d, sel["ano"], sel["mes"])

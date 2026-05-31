@@ -197,7 +197,11 @@ _SQL_TRANSACOES = """
         t.payment_date,
         t.type,
         t.status,
+        t.source,
         t.recurring,
+        COALESCE(t.installment_current, 1) AS installment_current,
+        COALESCE(t.installment_total, 1)   AS installment_total,
+        t.installment_group::text          AS installment_group,
         COALESCE(c.name, 'Sem categoria')  AS category_name,
         COALESCE(ac.name, 'Sem conta')     AS account_name,
         COALESCE(ac.type, '')              AS account_type
@@ -335,6 +339,30 @@ _SQL_HISTORICO_CC_MENSAL = """
       AND  COALESCE(a.type, '') = 'credit_card'
     GROUP  BY ano, mes
     ORDER  BY ano, mes
+"""
+
+_SQL_TRANSACOES_CARTAO = """
+    SELECT
+        t.id::text,
+        t.description,
+        t.amount,
+        t.due_date,
+        t.payment_date,
+        t.type,
+        t.status,
+        t.source,
+        COALESCE(t.installment_current, 1) AS installment_current,
+        COALESCE(t.installment_total, 1)   AS installment_total,
+        t.installment_group::text          AS installment_group,
+        COALESCE(c.name, 'Sem categoria')  AS category_name,
+        COALESCE(ac.name, 'Sem conta')     AS account_name,
+        COALESCE(ac.type, '')              AS account_type
+    FROM   transactions t
+    LEFT JOIN accounts   ac ON ac.id = t.account_id
+    LEFT JOIN categories c  ON c.id  = t.category_id
+    WHERE  t.user_id = :uid
+      AND  COALESCE(ac.type, '') = 'credit_card'
+    ORDER  BY t.due_date DESC, COALESCE(t.payment_date, t.due_date) DESC, t.created_at DESC
 """
 
 _SQL_DIVIDAS_CC = """
@@ -479,6 +507,7 @@ def _clear_controle_caches() -> None:
         "get_gastos_categoria_anual",
         "get_gastos_cartao_mensal",
         "get_historico_cc_mensal",
+        "get_transacoes_cartao_credito",
         "get_dividas_cc",
     ):
         cached_fn = globals().get(cached_name)
@@ -1179,6 +1208,97 @@ def get_historico_cc_mensal() -> list:
 
 
 @st.cache_data(ttl=60)
+def get_transacoes_cartao_credito() -> list:
+    """Retorna lancamentos de contas de cartao com metadados de fatura e parcela."""
+    if settings.MOCK_MODE:
+        ano = _date.today().year
+        mock_rows = [
+            ("Supermercado Modelo | Compra 05/05/2026 | Cartao 3083 | Parcela Unica", -320.40, "expense", _date(ano, 5, 10), _date(ano, 5, 5), "Mercado", "Cartao Mock", 1, 1, None),
+            ("Streaming Premium | Compra 06/05/2026 | Cartao 3083 | Parcela Unica", -59.90, "expense", _date(ano, 5, 10), _date(ano, 5, 6), "Assinaturas", "Cartao Mock", 1, 1, None),
+            ("Notebook | Compra 15/04/2026 | Cartao 3083 | Parcela 2/10", -560.00, "expense", _date(ano, 5, 10), _date(ano, 4, 15), "Compras", "Cartao Mock", 2, 10, "mock-parcelado-1"),
+            ("Pag Fatura Boleto | Compra 09/05/2026 | Cartao 3083 | Parcela Unica", 145.86, "transfer", _date(ano, 5, 10), _date(ano, 5, 9), "Pagamento de Cartao", "Cartao Mock", 1, 1, None),
+            ("Estorno Tarifa | Compra 10/05/2026 | Cartao 3083 | Parcela Unica", 98.00, "transfer", _date(ano, 5, 10), _date(ano, 5, 10), "Creditos e Estornos", "Cartao Mock", 1, 1, None),
+        ]
+        return [
+            {
+                "id": f"mock-cc-{i}",
+                "descricao": desc,
+                "valor": float(valor),
+                "valor_fmt": format_transaction_amount(float(valor), canonical_transaction_type(tipo, cat, valor)),
+                "data": venc,
+                "data_fmt": venc.strftime("%d/%m/%Y"),
+                "tipo": tipo,
+                "tipo_fluxo": canonical_transaction_type(tipo, cat, valor),
+                "tipo_label": transaction_type_label(canonical_transaction_type(tipo, cat, valor)),
+                "status": "settled",
+                "source": "mock",
+                "categoria": cat,
+                "conta": conta,
+                "account_type": "credit_card",
+                "payment_date": compra,
+                "data_compra": compra,
+                "installment_current": inst_atual,
+                "installment_total": inst_total,
+                "installment_group": grupo,
+                "eh_receita": False,
+                "eh_despesa": tipo == "expense",
+                "eh_investimento": False,
+            }
+            for i, (desc, valor, tipo, venc, compra, cat, conta, inst_atual, inst_total, grupo)
+            in enumerate(mock_rows, start=1)
+        ]
+
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            raise RuntimeError("Engine indisponivel.")
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            raise RuntimeError("OWNER_USER_ID nao configurado.")
+
+        with engine.connect() as conn:
+            rows = conn.execute(text(_SQL_TRANSACOES_CARTAO), {"uid": owner}).fetchall()
+
+        txs = []
+        for r in rows:
+            val = float(r.amount) if r.amount is not None else 0.0
+            tipo_fluxo = canonical_transaction_type(r.type, r.category_name, val)
+            data = r.due_date
+            compra = getattr(r, "payment_date", None) or data
+            txs.append({
+                "id": r.id,
+                "descricao": r.description,
+                "valor": val,
+                "valor_fmt": format_transaction_amount(val, tipo_fluxo),
+                "data": data,
+                "data_fmt": data.strftime("%d/%m/%Y") if data else "-",
+                "tipo": r.type,
+                "tipo_fluxo": tipo_fluxo,
+                "tipo_label": transaction_type_label(tipo_fluxo),
+                "status": r.status,
+                "source": getattr(r, "source", None) or "manual",
+                "categoria": r.category_name,
+                "conta": r.account_name,
+                "account_type": getattr(r, "account_type", ""),
+                "payment_date": getattr(r, "payment_date", None),
+                "data_compra": compra,
+                "installment_current": int(getattr(r, "installment_current", 1) or 1),
+                "installment_total": int(getattr(r, "installment_total", 1) or 1),
+                "installment_group": getattr(r, "installment_group", None),
+                "eh_receita": tipo_fluxo == "income",
+                "eh_despesa": tipo_fluxo == "expense",
+                "eh_investimento": tipo_fluxo == "investment",
+            })
+        return txs
+    except Exception as exc:
+        logger.warning("[controle] get_transacoes_cartao_credito falhou (%s).", type(exc).__name__)
+        return []
+
+
+@st.cache_data(ttl=60)
 def get_dividas_cc() -> list:
     """
     Retorna parcelamentos agrupados por installment_group (account_type='credit_card').
@@ -1399,9 +1519,15 @@ def _controle_real(ano: int, mes: int) -> dict:
             "tipo_fluxo":    tipo_fluxo,
             "tipo_label":    transaction_type_label(tipo_fluxo),
             "status":       r.status,
+            "source":       getattr(r, "source", None) or "manual",
             "categoria":    r.category_name,
             "conta":        r.account_name,
             "account_type": getattr(r, "account_type", ""),
+            "payment_date": getattr(r, "payment_date", None),
+            "data_compra":  getattr(r, "payment_date", None) or data,
+            "installment_current": int(getattr(r, "installment_current", 1) or 1),
+            "installment_total": int(getattr(r, "installment_total", 1) or 1),
+            "installment_group": getattr(r, "installment_group", None),
             "eh_receita":   tipo_fluxo == "income",
             "eh_despesa":   tipo_fluxo == "expense",
             "eh_investimento": tipo_fluxo == "investment",
