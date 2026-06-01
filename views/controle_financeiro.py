@@ -70,7 +70,7 @@ _CAT_ENTRADA = [
 _CAT_SAIDA = [
     "Mercado", "Compras", "Condomínio", "Luz", "Internet", "Transporte",
     "Combustível", "Saúde", "Despesas Domésticas", "Lazer", "Assinaturas",
-    "Educação", "Restaurante", "Financiamento", "Outros",
+    "Educação", "Restaurante", "Financiamento", "Pagamento de Cartão", "Outros",
 ]
 _CAT_INVESTIMENTO = [
     "Renda Fixa", "Renda Variável", "Exterior", "Reserva de Despesa", "Outros",
@@ -771,7 +771,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                 hide_index=True,
                 key="editor_lancamentos",
                 column_config={
-                    "ID":      st.column_config.TextColumn("ID", disabled=True),
+                    "ID":      None,   # oculto na edição (preservado para o save)
                     "Tipo": st.column_config.SelectboxColumn(
                         "Tipo",
                         options=["entrada", "saída", "investimento", "transferência"],
