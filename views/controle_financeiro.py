@@ -454,112 +454,8 @@ def _sidebar_render(ano: int, mes: int) -> None:
 # TAB 1 — Dashboard
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _secao_reserva(historico: list, ano: int | None, mes: int | None) -> None:
-    """Reserva de Fluxo de Caixa — colchão de liquidez (derivada automática)."""
-    from core.cash_reserve import (
-        compute_reserve_flow, reserve_summary, serie_from_cashflow,
-    )
-
-    serie = serie_from_cashflow(historico)
-    if serie.empty:
-        return
-
-    saldo_ini = float(st.session_state.get("cf_reserva_ini", 0.0))
-    df_flow = compute_reserve_flow(serie, saldo_inicial=saldo_ini)
-    mes_atual = f"{ano:04d}-{mes:02d}" if ano and mes else None
-    s = reserve_summary(df_flow, mes_atual)
-
-    _secao_titulo("🛟", "Reserva de Fluxo de Caixa (colchão de liquidez)")
-    st.markdown(
-        '<p style="font-size:0.78rem;color:#718096;margin:-4px 0 12px;">'
-        'Excedente de meses bons separado para cobrir meses ruins — sem resgatar '
-        'investimentos de longo prazo. Camada lógica derivada do seu fluxo: todo '
-        'superávit entra na reserva; déficits são cobertos por ela.'
-        '</p>',
-        unsafe_allow_html=True,
-    )
-
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    with c1:
-        st.markdown(_kpi_card(
-            "Saldo da Reserva", fmt_moeda(s.saldo_atual),
-            "Colchão acumulado disponível para cobrir déficits futuros.",
-            _COR_INVEST,
-        ), unsafe_allow_html=True)
-    with c2:
-        st.markdown(_kpi_card(
-            "Aporte no Mês", fmt_moeda(s.aporte_mes),
-            "Excedente do mês destinado à reserva.",
-            _COR_RECEITA,
-        ), unsafe_allow_html=True)
-    with c3:
-        st.markdown(_kpi_card(
-            "Resgate no Mês", fmt_moeda(s.resgate_mes),
-            "Valor sacado da reserva para cobrir o déficit do mês.",
-            _COR_DESPESA,
-        ), unsafe_allow_html=True)
-    with c4:
-        cor_st = (
-            _COR_RECEITA if s.status_mes in ("Superávit", "Coberto pela reserva")
-            else _COR_DESPESA if s.status_mes == "Déficit real"
-            else _COR_NEUTRO
-        )
-        st.markdown(_kpi_card(
-            "Status do Mês", s.status_mes,
-            "Situação do fluxo do mês após o uso da reserva.",
-            cor_st,
-        ), unsafe_allow_html=True)
-
-    if s.status_mes == "Coberto pela reserva":
-        st.success(
-            f"✅ Mês operacionalmente negativo (resultado {fmt_moeda(s.resultado_mes)}), "
-            f"mas financeiramente saudável: o déficit foi coberto pela reserva "
-            f"({fmt_moeda(s.resgate_mes)})."
-        )
-    elif s.status_mes == "Déficit real":
-        st.warning(
-            f"⚠️ Déficit real de {fmt_moeda(s.deficit_real_mes)} — a reserva cobriu "
-            f"{fmt_moeda(s.resgate_mes)}, mas não foi suficiente para todo o déficit."
-        )
-    elif s.status_mes == "Superávit":
-        st.info(
-            f"➕ Mês superavitário — {fmt_moeda(s.aporte_mes)} destinados à reserva."
-        )
-
-    chart_df = df_flow[["mes", "saldo_reserva"]].copy()
-    st.area_chart(chart_df, x="mes", y="saldo_reserva", height=220)
-
-    with st.expander("⚙️ Saldo inicial + histórico da reserva"):
-        novo = st.number_input(
-            "Colchão inicial antes do histórico (R$)",
-            value=saldo_ini, step=100.0, key="cf_reserva_ini_input",
-            help="Reserva que você já tinha antes do primeiro mês exibido. "
-                 "Mantido apenas nesta sessão.",
-        )
-        if st.button("Aplicar saldo inicial", key="cf_reserva_apply"):
-            st.session_state["cf_reserva_ini"] = float(novo)
-            st.rerun()
-        st.caption(
-            "Modelo derivado automático: todo excedente entra na reserva e os "
-            "déficits são cobertos por ela. Não é renda, despesa nem aporte "
-            "patrimonial — é uma conta lógica de transição."
-        )
-        hist = df_flow.rename(columns={
-            "mes": "Mês",
-            "resultado_operacional": "Resultado oper.",
-            "aporte_reserva": "Aporte",
-            "resgate_reserva": "Resgate",
-            "saldo_reserva": "Saldo reserva",
-            "deficit_real": "Déficit real",
-            "status": "Status",
-        })[["Mês", "Resultado oper.", "Aporte", "Resgate", "Saldo reserva",
-            "Déficit real", "Status"]]
-        st.dataframe(hist.iloc[::-1], hide_index=True, use_container_width=True)
-
-
 def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
-                   investido_mes: float = 0.0,
-                   ano: int | None = None, mes: int | None = None) -> None:
+                   investido_mes: float = 0.0) -> None:
     receitas     = d["receitas"]
     despesas     = d["despesas"]
     # Saldo = receitas - despesas - investimentos (alinhado com isolado)
@@ -604,10 +500,6 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
             "Considera despesas + investimentos em relação à renda do mês.",
             cor_comp,
         ), unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    _secao_reserva(historico, ano, mes)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2891,7 +2783,7 @@ def render() -> None:
     ])
 
     with tab1:
-        _tab_dashboard(d, historico, fluxo_inv, investido_mes, sel["ano"], sel["mes"])
+        _tab_dashboard(d, historico, fluxo_inv, investido_mes)
 
     with tab2:
         _tab_analises(d, historico, hist_anual, gastos_cartao, investido_mes)
