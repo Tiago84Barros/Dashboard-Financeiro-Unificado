@@ -39,7 +39,7 @@ _ROTAS: dict[str, str] = {
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📊 Dashboard Financeiro")
-    st.caption("v0.8.1 · Reconciliação")
+    st.caption("v0.9.0 · Reserva de Fluxo de Caixa")
     st.divider()
 
     st.markdown('<div class="nav-section">Visão Geral</div>', unsafe_allow_html=True)
