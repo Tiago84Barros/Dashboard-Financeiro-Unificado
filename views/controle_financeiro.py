@@ -1091,6 +1091,7 @@ def _tab_tabelas(d: dict) -> None:
 
     if not txs_f:
         st.caption("Nenhum lançamento com os filtros aplicados.")
+        _render_bank_statement_section(f_ano, f_mes)
         return
 
     # ── Tabela ────────────────────────────────────────────────────────────────
@@ -1138,6 +1139,146 @@ def _tab_tabelas(d: dict) -> None:
         st.caption(f"Exibindo 200 de {len(txs_f)} registros.")
     else:
         st.caption(f"{len(txs_f)} lançamento(s) encontrado(s).")
+
+    _render_bank_statement_section(f_ano, f_mes)
+
+
+def _fmt_date_ui(value: object) -> str:
+    return value.strftime("%d/%m/%Y") if hasattr(value, "strftime") else "-"
+
+
+def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
+    """Fila operacional dos extratos bancarios importados, sem upload nesta aba."""
+    try:
+        from core.bank_statement_import import (
+            confirm_bank_statement_movement,
+            get_bank_statement_accounts,
+            get_bank_statement_categories,
+            get_bank_statement_review_rows,
+        )
+    except Exception as exc:
+        st.caption(f"Extratos bancarios indisponiveis: {exc}")
+        return
+
+    st.divider()
+    _secao_titulo("🏦", "Extratos bancários importados")
+    st.caption("O upload fica em Configurações > Extratos Bancários. Aqui entram conferência, filtros e confirmação.")
+
+    col_s, col_b, col_d, col_c = st.columns(4, gap="small")
+    with col_s:
+        status = st.selectbox(
+            "Status do extrato",
+            ["Todos", "pendente", "sugerida", "confirmada"],
+            key="bank_tx_status_filter",
+        )
+
+    rows = get_bank_statement_review_rows(status=status, ano=ano, mes=mes, limit=400)
+    bancos = sorted({str(row.get("banco") or "") for row in rows if row.get("banco")})
+    directions = sorted({str(row.get("direcao") or "") for row in rows if row.get("direcao")})
+    categories_in_rows = sorted({
+        str(row.get("categoria_confirmada_nome") or row.get("categoria_nome") or row.get("categoria_sugerida_texto") or "Pendente")
+        for row in rows
+    })
+
+    with col_b:
+        bank_filter = st.selectbox("Banco", ["Todos"] + bancos, key="bank_tx_bank_filter")
+    with col_d:
+        direction_filter = st.selectbox("Direção", ["Todos"] + directions, key="bank_tx_direction_filter")
+    with col_c:
+        category_filter = st.selectbox("Categoria", ["Todas"] + categories_in_rows, key="bank_tx_category_filter")
+
+    filtered = []
+    for row in rows:
+        category_label = str(row.get("categoria_confirmada_nome") or row.get("categoria_nome") or row.get("categoria_sugerida_texto") or "Pendente")
+        if bank_filter != "Todos" and row.get("banco") != bank_filter:
+            continue
+        if direction_filter != "Todos" and row.get("direcao") != direction_filter:
+            continue
+        if category_filter != "Todas" and category_label != category_filter:
+            continue
+        filtered.append(row)
+
+    if not filtered:
+        st.caption("Nenhuma movimentação bancária importada para os filtros atuais.")
+        return
+
+    df = pd.DataFrame([
+        {
+            "Data": _fmt_date_ui(row.get("data_movimento")),
+            "Banco": row.get("banco"),
+            "Descrição": row.get("descricao_original"),
+            "Direção": row.get("direcao"),
+            "Categoria": row.get("categoria_confirmada_nome") or row.get("categoria_nome") or row.get("categoria_sugerida_texto") or "Pendente",
+            "Status": row.get("status_classificacao"),
+            "Valor (R$)": row.get("valor"),
+        }
+        for row in filtered
+    ])
+    st.dataframe(
+        df,
+        hide_index=True,
+        use_container_width=True,
+        column_config={"Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")},
+    )
+
+    editable = [row for row in filtered if row.get("status_classificacao") in {"pendente", "sugerida"}]
+    if not editable:
+        st.caption("Todos os lançamentos desse filtro já estão confirmados.")
+        return
+
+    categories = get_bank_statement_categories()
+    accounts = get_bank_statement_accounts()
+    if not categories or not accounts:
+        st.warning("Categorias ou contas indisponíveis para revisar extratos.")
+        return
+
+    with st.expander("Revisar e confirmar classificação"):
+        selected_idx = st.selectbox(
+            "Lançamento",
+            range(len(editable)),
+            format_func=lambda idx: (
+                f"{_fmt_date_ui(editable[idx].get('data_movimento'))} · "
+                f"{fmt_moeda(editable[idx].get('valor') or 0.0)} · "
+                f"{str(editable[idx].get('descricao_original') or '')[:72]}"
+            ),
+            key="bank_tx_review_selected",
+        )
+        selected = editable[selected_idx]
+        category_idx = st.selectbox(
+            "Categoria real",
+            range(len(categories)),
+            format_func=lambda idx: f"{categories[idx]['nome']} ({categories[idx]['tipo']})",
+            key="bank_tx_review_category",
+        )
+        default_account_idx = next(
+            (idx for idx, account in enumerate(accounts) if str(account.get("id")) == str(selected.get("account_id"))),
+            0,
+        )
+        account_idx = st.selectbox(
+            "Conta",
+            range(len(accounts)),
+            index=default_account_idx,
+            format_func=lambda idx: accounts[idx]["nome"],
+            key="bank_tx_review_account",
+        )
+        save_rule = st.checkbox("Salvar regra para próximas importações", value=True, key="bank_tx_review_save_rule")
+        keyword = st.text_input(
+            "Palavra-chave",
+            value=str(selected.get("descricao_original") or "")[:80],
+            key="bank_tx_review_keyword",
+        )
+        if st.button("Confirmar lançamento importado", type="primary", use_container_width=True, key="bank_tx_review_confirm"):
+            ok, msg = confirm_bank_statement_movement(
+                selected["id"],
+                categories[category_idx]["id"],
+                account_id=accounts[account_idx]["id"],
+                save_rule=save_rule,
+                palavra_chave=keyword,
+            )
+            if ok:
+                st.success("Classificação confirmada.")
+                st.rerun()
+            st.error(msg or "Falha ao confirmar classificação.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
