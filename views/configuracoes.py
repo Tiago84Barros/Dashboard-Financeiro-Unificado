@@ -1,9 +1,10 @@
 """
 views/configuracoes.py
-Configurações do sistema — 3 abas focadas no que o usuário realmente usa.
+Configurações do sistema — abas focadas no que o usuário realmente usa.
 
   🔄 Atualização  — status das fontes de dados e execução de jobs
   🗄️ Banco        — conexão, schema e importação de dados históricos
+  💳 Fatura       — upload/importação de fatura de cartão de crédito
   🔒 Segurança    — sessão e autenticação
 """
 from __future__ import annotations
@@ -17,6 +18,7 @@ from core.auth import encerrar_sessao, esta_autenticado
 from core.config import settings
 from core.database import get_database_storage_status, get_db_status
 from design.componentes import container_pagina
+from views.credit_card_invoice_upload import render_upload_fatura_cartao
 
 
 def render() -> None:
@@ -24,9 +26,10 @@ def render() -> None:
     # CSS dos cards é injetado uma vez por render — ambas as abas usam.
     st.markdown(_CARD_CSS, unsafe_allow_html=True)
 
-    tab_dados, tab_banco, tab_seg = st.tabs([
+    tab_dados, tab_banco, tab_fatura_cartao, tab_seg = st.tabs([
         "🔄 Atualização de Dados",
         "🗄️ Banco & Importação",
+        "💳 Fatura do Cartão",
         "🔒 Segurança",
     ])
 
@@ -35,6 +38,9 @@ def render() -> None:
 
     with tab_banco:
         _render_banco()
+
+    with tab_fatura_cartao:
+        render_upload_fatura_cartao()
 
     with tab_seg:
         _render_seguranca()

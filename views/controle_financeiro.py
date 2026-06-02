@@ -23,7 +23,6 @@ Novas funcionalidades implementadas na Fase 5.1:
 Dados: core/controle + core/investimentos.get_cashflow_mensal()
 """
 from datetime import date as _date, timedelta
-from collections import defaultdict
 import html
 import re
 import unicodedata
@@ -36,9 +35,7 @@ from core.controle import (
     get_controle, get_opcoes_formulario, inserir_transacao,
     atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
     get_gastos_cartao_mensal, get_gastos_categoria_anual,
-    get_historico_cc_mensal, get_dividas_cc, get_transacoes_cartao_credito,
-    get_contas_cartao_credito, parse_fatura_cartao_csv,
-    importar_fatura_cartao_csv,
+    get_transacoes_cartao_credito,
 )
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
@@ -61,14 +58,6 @@ _MESES_NOMES = {v: k for k, v in _MESES_PT.items()}
 _FORMAS_PGTO_SAIDA = ["Conta"]
 _FORMAS_PGTO_TODOS = ["Conta"]
 _MANUAL_CARD_TERMS = ("cartao", "credito", "fatura")
-# Pagamento de fatura é fluxo de caixa do mês corrente (saída de conta), NÃO uma
-# compra no cartão. Esses termos liberam o lançamento manual mesmo contendo
-# "cartao"/"fatura" — só a COMPRA no cartão é que precisa vir por upload do CSV.
-_MANUAL_CARD_PAYMENT_TERMS = (
-    "pagamento de cartao", "pagamento cartao", "pagamento de fatura",
-    "pagamento fatura", "pag fatura", "pag. fatura", "fatura do cartao",
-    "quitacao fatura", "boleto fatura",
-)
 _CC_IMPORTED_SOURCES = {"csv"}
 
 # Categorias pré-definidas por tipo (igual ao app original)
@@ -78,7 +67,7 @@ _CAT_ENTRADA = [
 _CAT_SAIDA = [
     "Mercado", "Compras", "Condomínio", "Luz", "Internet", "Transporte",
     "Combustível", "Saúde", "Despesas Domésticas", "Lazer", "Assinaturas",
-    "Educação", "Restaurante", "Financiamento", "Pagamento de Cartão", "Outros",
+    "Educação", "Restaurante", "Financiamento", "Outros",
 ]
 _CAT_INVESTIMENTO = [
     "Renda Fixa", "Renda Variável", "Exterior", "Reserva de Despesa", "Outros",
@@ -110,27 +99,8 @@ def _norm_ascii(value: object) -> str:
     return text.encode("ascii", "ignore").decode("ascii").casefold()
 
 
-def _is_card_payment_text(value: object) -> bool:
-    """True para PAGAMENTO de fatura — saída de caixa legítima do mês.
-
-    Reconhece termos diretos ("pag fatura", "pagamento de cartão"…) e também a
-    combinação "pagamento" + "fatura"/"cartão" em qualquer ordem, tolerando
-    artigos no meio (ex.: "pagamento DA fatura").
-    """
-    text = _norm_ascii(value)
-    if any(term in text for term in _MANUAL_CARD_PAYMENT_TERMS):
-        return True
-    tem_pagamento = "pagamento" in text or "pag " in text or "quitacao" in text
-    return tem_pagamento and ("fatura" in text or "cartao" in text)
-
-
 def _is_manual_card_related_text(value: object) -> bool:
-    """True para COMPRA no cartão lançada manualmente (deve vir por CSV).
-
-    Pagamento de fatura é exceção: é fluxo de caixa do mês, não compra futura.
-    """
-    if _is_card_payment_text(value):
-        return False
+    """True para texto relacionado a cartao/fatura no lancamento manual."""
     text = _norm_ascii(value)
     return any(term in text for term in _MANUAL_CARD_TERMS)
 
@@ -441,20 +411,8 @@ def _sidebar_render(ano: int, mes: int) -> None:
         if not categoria_final:
             st.sidebar.error("Informe a categoria.")
             return
-        # Pagamento de fatura é saída de caixa do mês (lançamento manual válido).
-        # Só bloqueamos COMPRA no cartão lançada manualmente.
-        eh_pagamento_fatura = (
-            _is_card_payment_text(categoria_final) or _is_card_payment_text(descricao)
-        )
-        if not eh_pagamento_fatura and (
-            _is_manual_card_related_text(categoria_final)
-            or _is_manual_card_related_text(descricao)
-        ):
-            st.sidebar.error(
-                "Compras no cartão devem ser lançadas por upload da fatura CSV. "
-                "Para registrar o **pagamento da fatura** (saída de caixa do mês), "
-                "use a categoria 'Pagamento de Cartão'."
-            )
+        if _is_manual_card_related_text(categoria_final) or _is_manual_card_related_text(descricao):
+            st.sidebar.error("Cartão de crédito deve ser lançado somente por upload da fatura CSV.")
             return
 
         # Resolve conta
@@ -1186,398 +1144,6 @@ def _tab_tabelas(d: dict) -> None:
 # TAB 4 — Cartão de Crédito
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _render_dividas_table(items: list, show_descricao: bool = False) -> None:
-    if not items:
-        st.caption("Nenhuma dívida encontrada.")
-        return
-    if show_descricao:
-        grid = "90px 90px 100px 110px 70px 1fr"
-        header = (
-            "<span>Cartão</span><span>Categoria</span><span>Data compra</span>"
-            '<span style="text-align:right">Total</span>'
-            '<span style="text-align:right">Pagas</span>'
-            "<span>Descrição</span>"
-        )
-    else:
-        grid = "90px 90px 100px 110px 70px 70px"
-        header = (
-            "<span>Cartão</span><span>Categoria</span><span>Data compra</span>"
-            '<span style="text-align:right">Total</span>'
-            '<span style="text-align:right">Pagas</span>'
-            '<span style="text-align:right">Restantes</span>'
-        )
-    st.markdown(
-        f'<div style="display:grid;grid-template-columns:{grid};'
-        f'gap:4px;padding:5px 8px;background:#0E1117;border-radius:4px 4px 0 0;'
-        f'font-size:0.58rem;font-weight:700;text-transform:uppercase;'
-        f'letter-spacing:0.08em;color:#4A5568;">{header}</div>',
-        unsafe_allow_html=True,
-    )
-    for item in items:
-        data_str = item["data_compra"].strftime("%d/%m/%Y") if item["data_compra"] else "—"
-        pr = item["parcelas_restantes"]
-        if show_descricao:
-            extra = f'<span style="color:#718096;font-size:0.70rem">{(item["descricao"] or "—")[:22]}</span>'
-        else:
-            cor_pr = _COR_DESPESA if pr > 0 else _COR_RECEITA
-            extra = f'<span style="text-align:right;font-weight:700;color:{cor_pr}">{pr}</span>'
-        st.markdown(
-            f'<div style="display:grid;grid-template-columns:{grid};'
-            f'gap:4px;padding:6px 8px;background:#12151E;'
-            f'border-bottom:1px solid #1A1F2E;font-size:0.76rem;align-items:center;">'
-            f'<span style="color:#CBD5E0">{item["cartao"]}</span>'
-            f'<span style="color:#CBD5E0">{item["categoria"]}</span>'
-            f'<span style="color:#718096">{data_str}</span>'
-            f'<span style="text-align:right;font-weight:700;color:{_COR_DESPESA}">'
-            f'{fmt_moeda(item["total_compra"])}</span>'
-            f'<span style="text-align:right;color:#718096">{item["parcelas_pagas"]}</span>'
-            f'{extra}'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-
-def _infer_due_date_from_filename(filename: str | None) -> _date:
-    if filename:
-        match = re.search(r"(20\d{2})[-_](\d{2})[-_](\d{2})", filename)
-        if match:
-            y, m, d = map(int, match.groups())
-            try:
-                return _date(y, m, d)
-            except ValueError:
-                pass
-    today = _date.today()
-    day = int(st.session_state.get("cf_vencimento_dia", 5) or 5)
-    return _date(today.year, today.month, min(day, 28))
-
-
-def _render_importador_fatura_cartao_legacy() -> None:
-    _secao_titulo("📥", "Importar fatura CSV")
-
-    contas = get_contas_cartao_credito()
-    uploaded = st.file_uploader(
-        "Arquivo CSV",
-        type=["csv"],
-        key="cc_invoice_upload",
-        help="Modelo com Data de Compra, Nome no Cartão, Final do Cartão, Categoria, Descrição, Parcela e valores.",
-    )
-
-    col_due, col_account = st.columns([1, 2], gap="small")
-    with col_due:
-        due_date = st.date_input(
-            "Vencimento da fatura",
-            value=_infer_due_date_from_filename(uploaded.name if uploaded else None),
-            format="DD/MM/YYYY",
-            key="cc_invoice_due_date",
-        )
-    with col_account:
-        if contas:
-            account_idx = st.selectbox(
-                "Conta do cartão",
-                range(len(contas)),
-                format_func=lambda i: contas[i]["nome"],
-                key="cc_invoice_account",
-            )
-            account_id = contas[account_idx]["id"]
-        else:
-            st.warning("Cadastre uma conta do tipo cartão de crédito antes de importar.")
-            account_id = None
-
-    if uploaded is None:
-        st.caption("Selecione uma fatura em CSV para visualizar a prévia.")
-        return
-
-    file_bytes = uploaded.getvalue()
-    parsed = parse_fatura_cartao_csv(file_bytes, due_date)
-
-    if parsed.get("errors"):
-        for err in parsed["errors"][:5]:
-            st.error(err)
-        if len(parsed["errors"]) > 5:
-            st.caption(f"+ {len(parsed['errors']) - 5} erro(s) adicionais.")
-
-    rows = parsed.get("rows", [])
-    if not rows:
-        st.caption("Nenhuma linha válida encontrada na fatura.")
-        return
-
-    summary = parsed.get("summary", {})
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    with c1:
-        st.markdown(_kpi_card("Compras", fmt_moeda(summary.get("total_purchases", 0.0)), f"{len(rows)} linha(s)", _COR_DESPESA), unsafe_allow_html=True)
-    with c2:
-        st.markdown(_kpi_card("Créditos", fmt_moeda(summary.get("total_credits", 0.0)), "Estornos e pagamentos", _COR_RECEITA), unsafe_allow_html=True)
-    with c3:
-        st.markdown(_kpi_card("Total líquido", fmt_moeda(summary.get("net_total", 0.0)), "Compras menos créditos", _COR_NEUTRO), unsafe_allow_html=True)
-    with c4:
-        st.markdown(_kpi_card("Cartões", str(len(summary.get("cards", []))), ", ".join(summary.get("cards", []))[:42] or "—", _COR_INVEST), unsafe_allow_html=True)
-
-    import pandas as pd
-
-    preview = pd.DataFrame([
-        {
-            "Compra": r["purchase_date"].strftime("%d/%m/%Y"),
-            "Vencimento": r["due_date"].strftime("%d/%m/%Y"),
-            "Final": r["card_final"],
-            "Categoria": r["category"],
-            "Descrição": r["description_raw"],
-            "Parcela": r["installment_label"],
-            "Tipo": "despesa" if r["type"] == "expense" else "crédito",
-            "Valor (R$)": r["value_brl"],
-        }
-        for r in rows
-    ])
-    st.dataframe(
-        preview,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
-        },
-    )
-
-    importar = st.button(
-        "Importar fatura",
-        type="primary",
-        disabled=(not account_id or not rows or bool(parsed.get("errors"))),
-        use_container_width=True,
-        key="cc_invoice_import_btn",
-    )
-    if importar:
-        result = importar_fatura_cartao_csv(file_bytes, due_date, account_id)
-        if result.get("ok"):
-            st.success(result.get("message", "Fatura importada."))
-            st.rerun()
-        else:
-            st.error(result.get("message", "Falha ao importar fatura."))
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-
-def _tab_cartao_legacy(d: dict) -> None:
-    txs = d["transacoes"]
-
-    # Apenas transações de contas de cartão de crédito (account_type='credit_card')
-    despesas_cc = [
-        t for t in txs
-        if t.get("tipo_fluxo") == "expense" and t.get("account_type") == "credit_card"
-        and _is_credit_card_invoice_source(t.get("source"))
-    ]
-
-    _render_importador_fatura_cartao()
-
-    # ── KPIs do mês ──────────────────────────────────────────────────────────
-    if despesas_cc:
-        total_cc = sum(abs(t["valor"]) for t in despesas_cc)
-        num_cc   = len(despesas_cc)
-        maior_cc = max(despesas_cc, key=lambda t: abs(t["valor"]))
-
-        c1, c2, c3 = st.columns(3, gap="small")
-        with c1:
-            st.markdown(_kpi_card(
-                "Total no Cartão", fmt_moeda(total_cc),
-                f"{num_cc} lançamento{'s' if num_cc != 1 else ''}",
-                _COR_DESPESA,
-            ), unsafe_allow_html=True)
-        with c2:
-            st.markdown(_kpi_card(
-                "Ticket Médio", fmt_moeda(total_cc / num_cc),
-                "Média por transação do mês.", _COR_NEUTRO,
-            ), unsafe_allow_html=True)
-        with c3:
-            st.markdown(_kpi_card(
-                "Maior Lançamento", fmt_moeda(abs(maior_cc["valor"])),
-                maior_cc["descricao"][:30], "#F6C90E",
-            ), unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── Histórico anual de uso do cartão ─────────────────────────────────────
-    _secao_titulo("📅", "Histórico anual de uso do cartão (por vencimento)")
-
-    hist_cc  = get_historico_cc_mensal()
-    anos_cc  = sorted({h["ano"] for h in hist_cc}, reverse=True)
-    ano_hist = st.selectbox(
-        "Ano de referência", anos_cc if anos_cc else [_date.today().year],
-        key="cc_ano_hist",
-    )
-    totais_por_mes = {h["mes"]: h["total"] for h in hist_cc if h["ano"] == ano_hist}
-    meses_labels   = [_MESES_PT[m] for m in range(1, 13)]
-    vals_hist      = [totais_por_mes.get(m, 0.0) for m in range(1, 13)]
-
-    fig_hist = go.Figure(go.Scatter(
-        x=meses_labels, y=vals_hist, mode="lines+markers",
-        line={"color": "#4A9EFF", "width": 2.5},
-        marker={"size": 7},
-        fill="tozeroy", fillcolor="rgba(74,158,255,0.08)",
-        hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
-    ))
-    fig_hist.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font_color=_COR_NEUTRO,
-        margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=300,
-        xaxis={"showgrid": False, "title": {"text": "Mês", "font": {"size": 10}}},
-        yaxis={
-            "showgrid": True, "gridcolor": "#1E2533",
-            "tickformat": ",.0f", "tickprefix": "R$ ",
-            "title": {"text": "Valor (R$)", "font": {"size": 10}},
-        },
-    )
-    st.plotly_chart(fig_hist, use_container_width=True, config={"displayModeBar": False})
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── Categorias + lançamentos do mês ──────────────────────────────────────
-    if despesas_cc:
-        _secao_titulo("📊", "Despesas por categoria")
-
-        agg: dict[str, float] = defaultdict(float)
-        for t in despesas_cc:
-            agg[t["categoria"]] += abs(t["valor"])
-        agg_sorted  = sorted(agg.items(), key=lambda x: x[1], reverse=True)
-        total_agg   = sum(v for _, v in agg_sorted)
-
-        st.markdown(
-            '<div style="display:grid;grid-template-columns:1fr 120px 80px;'
-            'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
-            'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
-            'letter-spacing:0.1em;color:#4A5568;">'
-            '<span>Categoria</span>'
-            '<span style="text-align:right">Total (R$)</span>'
-            '<span style="text-align:right">% do total</span>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-        for i, (cat, valor) in enumerate(agg_sorted):
-            pct = valor / total_agg * 100 if total_agg > 0 else 0
-            cor = _CORES_CAT[i % len(_CORES_CAT)]
-            st.markdown(
-                f'<div style="display:grid;grid-template-columns:1fr 120px 80px;'
-                f'gap:4px;padding:6px 10px;background:#12151E;'
-                f'border-bottom:1px solid #1A1F2E;font-size:0.81rem;align-items:center;">'
-                f'<div style="display:flex;align-items:center;gap:8px;">'
-                f'<div style="width:8px;height:8px;border-radius:50%;background:{cor};flex-shrink:0"></div>'
-                f'<span style="color:#CBD5E0">{cat}</span>'
-                f'</div>'
-                f'<span style="text-align:right;font-weight:700;color:{_COR_DESPESA}">'
-                f'{fmt_moeda(valor)}</span>'
-                f'<span style="text-align:right;color:#718096">{pct:.1f}%</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        _secao_titulo("📋", "Lançamentos do mês")
-        st.markdown(
-            '<div style="display:grid;grid-template-columns:80px 1fr 150px 120px;'
-            'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
-            'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
-            'letter-spacing:0.1em;color:#4A5568;">'
-            '<span>Data</span><span>Descrição</span>'
-            '<span style="text-align:center">Categoria</span>'
-            '<span style="text-align:right">Valor</span>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-        for tx in despesas_cc[:50]:
-            st.markdown(
-                f'<div style="display:grid;grid-template-columns:80px 1fr 150px 120px;'
-                f'gap:4px;padding:6px 10px;background:#12151E;'
-                f'border-bottom:1px solid #1A1F2E;font-size:0.81rem;align-items:center;">'
-                f'<span style="color:#718096">{tx["data_fmt"]}</span>'
-                f'<span style="color:#CBD5E0">{tx["descricao"][:38]}</span>'
-                f'<span style="text-align:center;background:#1E2533;border-radius:4px;'
-                f'padding:2px 5px;font-size:0.70rem;color:{_COR_NEUTRO}">{tx["categoria"]}</span>'
-                f'<span style="text-align:right;font-weight:700;color:{_COR_DESPESA}">'
-                f'{tx["valor_fmt"]}</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-    else:
-        st.caption("Nenhum lançamento de cartão de crédito neste mês.")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
-
-    # ── Dívidas no cartão ─────────────────────────────────────────────────────
-    _secao_titulo("💳", "Dívidas no cartão")
-
-    dividas = get_dividas_cc()
-
-    if not dividas:
-        st.caption("Nenhum parcelamento registrado.")
-        return
-
-    cartoes_disp  = sorted({dv["cartao"]    for dv in dividas})
-    cats_div_disp = sorted({dv["categoria"] for dv in dividas})
-    anos_div_disp = sorted(
-        {dv["data_compra"].year for dv in dividas if dv["data_compra"]},
-        reverse=True,
-    )
-
-    with st.form("form_filtros_dividas"):
-        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-        with col_f1:
-            f_cartao = st.selectbox("Cartão",        ["Todos"] + cartoes_disp,  key="cc_f_cartao")
-        with col_f2:
-            f_cat    = st.selectbox("Categoria",     ["Todas"] + cats_div_disp, key="cc_f_cat")
-        with col_f3:
-            f_ano    = st.selectbox(
-                "Ano da compra",
-                ["Todos"] + [str(a) for a in anos_div_disp],
-                key="cc_f_ano",
-            )
-        with col_f4:
-            f_status = st.selectbox("Status", ["Todos", "Ativas", "Concluídas"], key="cc_f_status")
-        f_busca = st.text_input(
-            "Buscar na descrição",
-            placeholder="Ex: mercado, passagem, viagem...",
-            key="cc_f_busca",
-        )
-        st.form_submit_button("Aplicar filtros")
-
-    # Aplica filtros em memória
-    div_f = dividas
-    if f_cartao != "Todos":
-        div_f = [dv for dv in div_f if dv["cartao"] == f_cartao]
-    if f_cat != "Todas":
-        div_f = [dv for dv in div_f if dv["categoria"] == f_cat]
-    if f_ano != "Todos":
-        div_f = [dv for dv in div_f if dv["data_compra"] and dv["data_compra"].year == int(f_ano)]
-    if f_status == "Ativas":
-        div_f = [dv for dv in div_f if dv["is_ativa"]]
-    elif f_status == "Concluídas":
-        div_f = [dv for dv in div_f if not dv["is_ativa"]]
-    if f_busca:
-        bl = f_busca.lower()
-        div_f = [dv for dv in div_f if bl in (dv["descricao"] or "").lower()]
-
-    ativas     = [dv for dv in div_f if dv["is_ativa"]]
-    concluidas = [dv for dv in div_f if not dv["is_ativa"]]
-
-    col_at, col_conc = st.columns(2, gap="medium")
-
-    with col_at:
-        st.markdown(
-            f'<div style="font-size:0.88rem;font-weight:700;color:#E2E8F0;margin-bottom:8px;">'
-            f'Dívidas ativas (consolidadas) '
-            f'<span style="color:{_COR_DESPESA};font-size:0.75rem">({len(ativas)})</span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        st.checkbox("Habilitar edição das dívidas ativas", key="cc_edit_ativas")
-        _render_dividas_table(ativas, show_descricao=False)
-
-    with col_conc:
-        st.markdown(
-            f'<div style="font-size:0.88rem;font-weight:700;color:#E2E8F0;margin-bottom:8px;">'
-            f'Dívidas concluídas (compras 100% quitadas) '
-            f'<span style="color:{_COR_RECEITA};font-size:0.75rem">({len(concluidas)})</span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        st.checkbox("Habilitar edição das dívidas concluídas", key="cc_edit_conc")
-        _render_dividas_table(concluidas, show_descricao=True)
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4 - NOVO PAINEL ANALITICO DO CARTAO
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1830,151 +1396,6 @@ def _card_rows_dataframe(transacoes: list[dict]) -> pd.DataFrame:
 
     df["valor_pendente_estimado"] = df["valor_fatura"].clip(lower=0) * df["parcelas_restantes"]
     return _annotate_card_recurrence(df)
-
-
-def _invoice_upload_summary(rows: list[dict]) -> dict:
-    bruto = sum(abs(float(r.get("value_brl") or 0.0)) for r in rows)
-    compras = 0.0
-    tarifas = 0.0
-    creditos = 0.0
-    for row in rows:
-        value = float(row.get("value_brl") or 0.0)
-        text = _norm_ui_text(f"{row.get('category', '')} {row.get('description_raw', '')}")
-        if value < 0:
-            creditos += abs(value)
-        elif any(term in text for term in _CC_FEE_TERMS):
-            tarifas += value
-        else:
-            compras += value
-    return {
-        "total_bruto": round(bruto, 2),
-        "compras_reais": round(compras, 2),
-        "tarifas": round(tarifas, 2),
-        "creditos": round(creditos, 2),
-        "net_total": round(compras + tarifas - creditos, 2),
-    }
-
-
-def _render_importador_fatura_cartao() -> None:
-    last_result = st.session_state.get("cc_invoice_import_result")
-    last_ok = bool(last_result and last_result.get("ok"))
-    if last_ok:
-        summary = last_result.get("summary", {})
-        st.success(
-            f"Fatura importada: {int(summary.get('inserted', 0))} novo(s) lancamento(s), "
-            f"{int(summary.get('skipped', 0))} duplicado(s) ignorado(s)."
-        )
-    elif last_result:
-        st.error(last_result.get("message", "Falha ao importar fatura."))
-
-    with st.expander("Importar nova fatura", expanded=not last_ok):
-        contas = get_contas_cartao_credito()
-        uploaded = st.file_uploader(
-            "Arquivo CSV da fatura",
-            type=["csv"],
-            key="cc_invoice_upload",
-            help="Modelo com Data de Compra, Nome no Cartao, Final do Cartao, Categoria, Descricao, Parcela e valores.",
-        )
-
-        col_due, col_account = st.columns([1, 2], gap="small")
-        with col_due:
-            due_date = st.date_input(
-                "Vencimento da fatura",
-                value=_infer_due_date_from_filename(uploaded.name if uploaded else None),
-                format="DD/MM/YYYY",
-                key="cc_invoice_due_date",
-            )
-        with col_account:
-            if contas:
-                account_idx = st.selectbox(
-                    "Conta do cartao",
-                    range(len(contas)),
-                    format_func=lambda i: contas[i]["nome"],
-                    key="cc_invoice_account",
-                )
-                account_id = contas[account_idx]["id"]
-            else:
-                st.warning("Cadastre uma conta do tipo cartao de credito antes de importar.")
-                account_id = None
-
-        if uploaded is None:
-            st.caption("Selecione uma fatura em CSV para visualizar a previa e importar.")
-            return
-
-        file_bytes = uploaded.getvalue()
-        parsed = parse_fatura_cartao_csv(file_bytes, due_date)
-        rows = parsed.get("rows", [])
-        upload_summary = _invoice_upload_summary(rows)
-
-        if parsed.get("errors"):
-            for err in parsed["errors"][:5]:
-                st.error(err)
-            if len(parsed["errors"]) > 5:
-                st.caption(f"+ {len(parsed['errors']) - 5} erro(s) adicionais.")
-
-        if not rows:
-            st.caption("Nenhuma linha valida encontrada na fatura.")
-            return
-
-        c1, c2, c3, c4 = st.columns(4, gap="small")
-        with c1:
-            st.markdown(_kpi_card("Arquivo", _safe(uploaded.name[:24]), f"{len(rows)} lancamento(s) validos", _COR_NEUTRO), unsafe_allow_html=True)
-        with c2:
-            st.markdown(_kpi_card("Total bruto", fmt_moeda(upload_summary["total_bruto"]), "Soma absoluta da fatura.", _COR_DESPESA), unsafe_allow_html=True)
-        with c3:
-            st.markdown(_kpi_card("Compras reais", fmt_moeda(upload_summary["compras_reais"]), "Exclui pagamentos, estornos e tarifas.", _COR_DESPESA), unsafe_allow_html=True)
-        with c4:
-            st.markdown(_kpi_card("Liquido", fmt_moeda(upload_summary["net_total"]), "Compras + tarifas - creditos.", _COR_NEUTRO), unsafe_allow_html=True)
-
-        c5, c6, c7, c8 = st.columns(4, gap="small")
-        with c5:
-            st.markdown(_kpi_card("Tarifas", fmt_moeda(upload_summary["tarifas"]), "Anuidade, IOF, juros, multa e encargos.", "#F6C90E"), unsafe_allow_html=True)
-        with c6:
-            st.markdown(_kpi_card("Pagamentos/estornos", fmt_moeda(upload_summary["creditos"]), "Lancamentos negativos da fatura.", _COR_RECEITA), unsafe_allow_html=True)
-        with c7:
-            st.markdown(_kpi_card("Parceladas", str(sum(1 for r in rows if r.get("installment_total", 1) > 1)), "Compras com parcela maior que 1.", _COR_INVEST), unsafe_allow_html=True)
-        with c8:
-            cards = sorted({str(r.get("card_final")) for r in rows if r.get("card_final")})
-            st.markdown(_kpi_card("Cartoes", str(len(cards)), ", ".join(cards)[:42] or "-", _COR_INVEST), unsafe_allow_html=True)
-
-        preview = pd.DataFrame([
-            {
-                "Compra": r["purchase_date"].strftime("%d/%m/%Y"),
-                "Vencimento": r["due_date"].strftime("%d/%m/%Y"),
-                "Final": r["card_final"],
-                "Categoria": r["category"],
-                "Descricao": r["description_raw"],
-                "Parcela": r["installment_label"],
-                "Tipo": "despesa" if r["type"] == "expense" else "credito",
-                "Valor (R$)": r["value_brl"],
-            }
-            for r in rows[:80]
-        ])
-        st.dataframe(
-            preview,
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
-            },
-        )
-        if len(rows) > 80:
-            st.caption(f"Exibindo 80 de {len(rows)} linhas da previa.")
-
-        importar = st.button(
-            "Importar fatura",
-            type="primary",
-            disabled=(not account_id or not rows or bool(parsed.get("errors"))),
-            use_container_width=True,
-            key="cc_invoice_import_btn",
-        )
-        if importar:
-            result = importar_fatura_cartao_csv(file_bytes, due_date, account_id)
-            result["file_name"] = uploaded.name
-            st.session_state["cc_invoice_import_result"] = result
-            if result.get("ok"):
-                st.rerun()
-            st.error(result.get("message", "Falha ao importar fatura."))
 
 
 def _render_card_filters(df: pd.DataFrame, selected_year: int, selected_month: int) -> dict:
@@ -2591,20 +2012,14 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     all_cc_txs = get_transacoes_cartao_credito()
     df_all = _card_rows_dataframe(all_cc_txs)
 
-    if not df_all.empty:
-        _secao_titulo("Filtros", "Cabecalho e filtros")
-        filters = _render_card_filters(df_all, selected_year, selected_month)
-        df = _apply_card_filters(df_all, filters)
-    else:
-        df = df_all
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    _render_importador_fatura_cartao()
-    st.markdown("<br>", unsafe_allow_html=True)
-
     if df_all.empty:
-        st.info("Importe uma fatura CSV para visualizar os indicadores e graficos do cartao.")
+        st.info("Importe uma fatura em Configurações > Fatura do Cartão para visualizar os indicadores e graficos do cartao.")
         return
+
+    _secao_titulo("Filtros", "Cabecalho e filtros")
+    filters = _render_card_filters(df_all, selected_year, selected_month)
+    df = _apply_card_filters(df_all, filters)
+
     if df.empty:
         st.warning("Nenhum lancamento encontrado para os filtros selecionados.")
         return
