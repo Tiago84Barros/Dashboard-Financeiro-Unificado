@@ -61,6 +61,14 @@ _MESES_NOMES = {v: k for k, v in _MESES_PT.items()}
 _FORMAS_PGTO_SAIDA = ["Conta"]
 _FORMAS_PGTO_TODOS = ["Conta"]
 _MANUAL_CARD_TERMS = ("cartao", "credito", "fatura")
+# Pagamento de fatura é fluxo de caixa do mês corrente (saída de conta), NÃO uma
+# compra no cartão. Esses termos liberam o lançamento manual mesmo contendo
+# "cartao"/"fatura" — só a COMPRA no cartão é que precisa vir por upload do CSV.
+_MANUAL_CARD_PAYMENT_TERMS = (
+    "pagamento de cartao", "pagamento cartao", "pagamento de fatura",
+    "pagamento fatura", "pag fatura", "pag. fatura", "fatura do cartao",
+    "quitacao fatura", "boleto fatura",
+)
 _CC_IMPORTED_SOURCES = {"csv"}
 
 # Categorias pré-definidas por tipo (igual ao app original)
@@ -97,9 +105,33 @@ def _cor_tx(tx: dict) -> str:
     return _COR_DESPESA
 
 
-def _is_manual_card_related_text(value: object) -> bool:
+def _norm_ascii(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
-    text = text.encode("ascii", "ignore").decode("ascii").casefold()
+    return text.encode("ascii", "ignore").decode("ascii").casefold()
+
+
+def _is_card_payment_text(value: object) -> bool:
+    """True para PAGAMENTO de fatura — saída de caixa legítima do mês.
+
+    Reconhece termos diretos ("pag fatura", "pagamento de cartão"…) e também a
+    combinação "pagamento" + "fatura"/"cartão" em qualquer ordem, tolerando
+    artigos no meio (ex.: "pagamento DA fatura").
+    """
+    text = _norm_ascii(value)
+    if any(term in text for term in _MANUAL_CARD_PAYMENT_TERMS):
+        return True
+    tem_pagamento = "pagamento" in text or "pag " in text or "quitacao" in text
+    return tem_pagamento and ("fatura" in text or "cartao" in text)
+
+
+def _is_manual_card_related_text(value: object) -> bool:
+    """True para COMPRA no cartão lançada manualmente (deve vir por CSV).
+
+    Pagamento de fatura é exceção: é fluxo de caixa do mês, não compra futura.
+    """
+    if _is_card_payment_text(value):
+        return False
+    text = _norm_ascii(value)
     return any(term in text for term in _MANUAL_CARD_TERMS)
 
 
@@ -409,8 +441,20 @@ def _sidebar_render(ano: int, mes: int) -> None:
         if not categoria_final:
             st.sidebar.error("Informe a categoria.")
             return
-        if _is_manual_card_related_text(categoria_final) or _is_manual_card_related_text(descricao):
-            st.sidebar.error("Cartão de crédito deve ser lançado somente por upload da fatura CSV.")
+        # Pagamento de fatura é saída de caixa do mês (lançamento manual válido).
+        # Só bloqueamos COMPRA no cartão lançada manualmente.
+        eh_pagamento_fatura = (
+            _is_card_payment_text(categoria_final) or _is_card_payment_text(descricao)
+        )
+        if not eh_pagamento_fatura and (
+            _is_manual_card_related_text(categoria_final)
+            or _is_manual_card_related_text(descricao)
+        ):
+            st.sidebar.error(
+                "Compras no cartão devem ser lançadas por upload da fatura CSV. "
+                "Para registrar o **pagamento da fatura** (saída de caixa do mês), "
+                "use a categoria 'Pagamento de Cartão'."
+            )
             return
 
         # Resolve conta
