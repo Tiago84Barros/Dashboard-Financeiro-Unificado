@@ -6,6 +6,7 @@ from core.bank_statement_import import (
     classify_bank_movement,
     classify_bank_movements,
     parse_c6_bank_text,
+    _is_bank_statement_account_type,
     _transaction_type_for,
 )
 
@@ -124,3 +125,11 @@ def test_saved_rule_has_priority_over_automatic_rule():
     assert classified["categoria_id"] == "cat-transporte"
     assert classified["status_classificacao"] == "confirmada"
     assert classified["classificacao_motivo"] == "Regra salva pelo usuario"
+
+
+def test_bank_statement_hidden_account_ignores_investment_portfolios():
+    assert _is_bank_statement_account_type("checking")
+    assert _is_bank_statement_account_type("savings")
+    assert _is_bank_statement_account_type("digital_wallet")
+    assert not _is_bank_statement_account_type("investment")
+    assert not _is_bank_statement_account_type("credit_card")

@@ -28,6 +28,7 @@ BANK_STATEMENT_SOURCE = "import"
 BANK_STATEMENT_KIND = "bank_statement_pdf"
 SUPPORTED_BANKS = ("C6 Bank",)
 VALOR_ALTO_FINANCIAMENTO = 1000.0
+_BANK_STATEMENT_ACCOUNT_TYPES = ("checking", "savings", "digital_wallet")
 
 _DATE_RE = re.compile(r"\b(\d{2}/\d{2}/\d{4})\b")
 _MONEY_RE = re.compile(
@@ -614,6 +615,52 @@ def _maybe_owner_id() -> str | None:
     return str(settings.OWNER_USER_ID) if settings.OWNER_USER_ID else None
 
 
+def _is_bank_statement_account_type(value: object) -> bool:
+    normalized = str(value or "").strip().casefold().replace("-", "_").replace(" ", "_")
+    return normalized in set(_BANK_STATEMENT_ACCOUNT_TYPES)
+
+
+def _resolve_bank_statement_account(conn, owner: str, account_id: str | None = None):
+    if account_id:
+        account = conn.execute(
+            text(
+                """
+                SELECT id::text, name, type
+                FROM accounts
+                WHERE id = CAST(:account_id AS uuid)
+                  AND user_id = CAST(:uid AS uuid)
+                  AND active = TRUE
+                LIMIT 1
+                """
+            ),
+            {"account_id": account_id, "uid": owner},
+        ).fetchone()
+        if account and _is_bank_statement_account_type(getattr(account, "type", "")):
+            return account
+
+    return conn.execute(
+        text(
+            """
+            SELECT id::text, name, type
+            FROM accounts
+            WHERE user_id = CAST(:uid AS uuid)
+              AND active = TRUE
+              AND type IN ('checking', 'savings', 'digital_wallet')
+            ORDER BY
+                CASE type
+                    WHEN 'checking' THEN 0
+                    WHEN 'digital_wallet' THEN 1
+                    WHEN 'savings' THEN 2
+                    ELSE 9
+                END,
+                name
+            LIMIT 1
+            """
+        ),
+        {"uid": owner},
+    ).fetchone()
+
+
 def _fetch_categories(conn, owner: str) -> list[dict]:
     rows = conn.execute(
         text(
@@ -675,8 +722,15 @@ def get_bank_statement_accounts() -> list[dict]:
                 FROM accounts
                 WHERE user_id = CAST(:uid AS uuid)
                   AND active = TRUE
-                  AND COALESCE(type, '') != 'credit_card'
-                ORDER BY name
+                  AND type IN ('checking', 'savings', 'digital_wallet')
+                ORDER BY
+                    CASE type
+                        WHEN 'checking' THEN 0
+                        WHEN 'digital_wallet' THEN 1
+                        WHEN 'savings' THEN 2
+                        ELSE 9
+                    END,
+                    name
                 """
             ),
             {"uid": owner},
@@ -772,7 +826,12 @@ def _insert_transaction(conn, owner: str, row: dict, account_id: str, category: 
     return tx_row.id if tx_row else None
 
 
-def import_bank_statement_pdf(file_bytes: bytes, file_name: str, account_id: str, banco: str = "C6 Bank") -> dict:
+def import_bank_statement_pdf(
+    file_bytes: bytes,
+    file_name: str,
+    account_id: str | None = None,
+    banco: str = "C6 Bank",
+) -> dict:
     if settings.MOCK_MODE:
         return {"ok": False, "message": "Modo mock ativo; importacao nao executada."}
 
@@ -794,22 +853,16 @@ def import_bank_statement_pdf(file_bytes: bytes, file_name: str, account_id: str
 
     with engine.begin() as conn:
         _ensure_tables(conn)
-        account = conn.execute(
-            text(
-                """
-                SELECT id::text, name, type
-                FROM accounts
-                WHERE id = CAST(:account_id AS uuid)
-                  AND user_id = CAST(:uid AS uuid)
-                LIMIT 1
-                """
-            ),
-            {"account_id": account_id, "uid": owner},
-        ).fetchone()
+        account = _resolve_bank_statement_account(conn, owner, account_id)
         if not account:
-            return {"ok": False, "message": "Conta bancaria nao encontrada."}
-        if getattr(account, "type", "") == "credit_card":
-            return {"ok": False, "message": "Extratos bancarios devem ser importados em conta, nao cartao."}
+            return {
+                "ok": False,
+                "message": (
+                    "Nenhuma conta tecnica de movimentacao foi encontrada para publicar no Controle Financeiro. "
+                    "Use uma conta do tipo checking, savings ou digital_wallet."
+                ),
+            }
+        account_id = account.id
 
         categories = _fetch_categories(conn, owner)
         rules = _fetch_rules(conn, owner, banco)
@@ -1014,26 +1067,14 @@ def confirm_bank_statement_movement(
         if not category:
             return False, "Categoria inexistente ou indisponivel para o usuario."
 
-        final_account_id = account_id or str(movement.account_id or "")
-        if not final_account_id:
-            return False, "Selecione uma conta para publicar o movimento."
-
-        account = conn.execute(
-            text(
-                """
-                SELECT id::text, name, type
-                FROM accounts
-                WHERE id = CAST(:account_id AS uuid)
-                  AND user_id = CAST(:uid AS uuid)
-                LIMIT 1
-                """
-            ),
-            {"account_id": final_account_id, "uid": owner},
-        ).fetchone()
+        preferred_account_id = account_id or str(movement.account_id or "")
+        account = _resolve_bank_statement_account(conn, owner, preferred_account_id or None)
         if not account:
-            return False, "Conta nao encontrada."
-        if getattr(account, "type", "") == "credit_card":
-            return False, "Use uma conta bancaria, nao uma conta de cartao."
+            return False, (
+                "Nenhuma conta tecnica de movimentacao foi encontrada para publicar no Controle Financeiro. "
+                "Use uma conta do tipo checking, savings ou digital_wallet."
+            )
+        final_account_id = account.id
 
         row = {
             "descricao_original": movement.descricao_original,

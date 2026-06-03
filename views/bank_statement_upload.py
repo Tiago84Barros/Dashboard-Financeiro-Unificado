@@ -14,7 +14,6 @@ import streamlit as st
 from core.bank_statement_import import (
     SUPPORTED_BANKS,
     confirm_bank_statement_movement,
-    get_bank_statement_accounts,
     get_bank_statement_categories,
     get_bank_statement_review_rows,
     import_bank_statement_pdf,
@@ -138,7 +137,6 @@ def _render_upload() -> None:
         else:
             st.error(last_result.get("message", "Falha ao importar extrato."))
 
-    accounts = get_bank_statement_accounts()
     banco = st.selectbox("Banco", SUPPORTED_BANKS, key="bank_statement_bank")
     uploaded = st.file_uploader(
         "Arquivo PDF do extrato",
@@ -146,18 +144,6 @@ def _render_upload() -> None:
         key="bank_statement_pdf_upload",
         help="Extrato bancario em PDF. No momento, o parser foi calibrado para C6 Bank.",
     )
-
-    if accounts:
-        account_index = st.selectbox(
-            "Conta bancaria de destino",
-            range(len(accounts)),
-            format_func=lambda idx: accounts[idx]["nome"],
-            key="bank_statement_account",
-        )
-        account_id = accounts[account_index]["id"]
-    else:
-        st.warning("Cadastre uma conta bancaria antes de importar extratos.")
-        account_id = None
 
     if uploaded is None:
         st.caption("Selecione um PDF para visualizar a previa antes de gravar.")
@@ -188,10 +174,10 @@ def _render_upload() -> None:
         "Importar extrato",
         type="primary",
         use_container_width=True,
-        disabled=(not account_id or not rows or settings.MOCK_MODE),
+        disabled=(not rows or settings.MOCK_MODE),
         key="bank_statement_import_btn",
     ):
-        result = import_bank_statement_pdf(file_bytes, uploaded.name, account_id, banco=banco)
+        result = import_bank_statement_pdf(file_bytes, uploaded.name, banco=banco)
         st.session_state["bank_statement_import_result"] = result
         if result.get("ok"):
             st.rerun()
@@ -261,9 +247,8 @@ def _render_review_queue() -> None:
     )
 
     categories = get_bank_statement_categories()
-    accounts = get_bank_statement_accounts()
-    if not categories or not accounts:
-        st.warning("Categorias ou contas indisponiveis para confirmacao.")
+    if not categories:
+        st.warning("Categorias indisponiveis para confirmacao.")
         return
 
     editable_rows = [row for row in rows if row.get("status_classificacao") in {"pendente", "sugerida"}]
@@ -285,17 +270,6 @@ def _render_review_queue() -> None:
         format_func=lambda idx: _category_label(categories[idx]),
         key="bank_statement_review_category",
     )
-    suggested_account_idx = next(
-        (idx for idx, account in enumerate(accounts) if str(account.get("id")) == str(selected.get("account_id"))),
-        0,
-    )
-    account_idx = st.selectbox(
-        "Conta",
-        range(len(accounts)),
-        index=suggested_account_idx,
-        format_func=lambda idx: accounts[idx]["nome"],
-        key="bank_statement_review_account",
-    )
     col_rule, col_keyword = st.columns([1, 2], gap="small")
     with col_rule:
         save_rule = st.checkbox("Salvar regra", value=True, key="bank_statement_save_rule")
@@ -310,7 +284,6 @@ def _render_review_queue() -> None:
         ok, msg = confirm_bank_statement_movement(
             selected["id"],
             categories[category_idx]["id"],
-            account_id=accounts[account_idx]["id"],
             save_rule=save_rule,
             palavra_chave=keyword,
         )

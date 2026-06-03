@@ -1152,7 +1152,6 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
     try:
         from core.bank_statement_import import (
             confirm_bank_statement_movement,
-            get_bank_statement_accounts,
             get_bank_statement_categories,
             get_bank_statement_review_rows,
         )
@@ -1227,9 +1226,8 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
         return
 
     categories = get_bank_statement_categories()
-    accounts = get_bank_statement_accounts()
-    if not categories or not accounts:
-        st.warning("Categorias ou contas indisponíveis para revisar extratos.")
+    if not categories:
+        st.warning("Categorias indisponíveis para revisar extratos.")
         return
 
     with st.expander("Revisar e confirmar classificação"):
@@ -1250,17 +1248,6 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
             format_func=lambda idx: f"{categories[idx]['nome']} ({categories[idx]['tipo']})",
             key="bank_tx_review_category",
         )
-        default_account_idx = next(
-            (idx for idx, account in enumerate(accounts) if str(account.get("id")) == str(selected.get("account_id"))),
-            0,
-        )
-        account_idx = st.selectbox(
-            "Conta",
-            range(len(accounts)),
-            index=default_account_idx,
-            format_func=lambda idx: accounts[idx]["nome"],
-            key="bank_tx_review_account",
-        )
         save_rule = st.checkbox("Salvar regra para próximas importações", value=True, key="bank_tx_review_save_rule")
         keyword = st.text_input(
             "Palavra-chave",
@@ -1271,7 +1258,6 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
             ok, msg = confirm_bank_statement_movement(
                 selected["id"],
                 categories[category_idx]["id"],
-                account_id=accounts[account_idx]["id"],
                 save_rule=save_rule,
                 palavra_chave=keyword,
             )
