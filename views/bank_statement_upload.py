@@ -123,6 +123,38 @@ def _preview_dataframe(rows: list[dict]) -> pd.DataFrame:
     )
 
 
+def _render_diagnostics(parsed: dict) -> None:
+    """Diagnostico de depuracao quando nenhum movimento foi identificado."""
+    extract = parsed.get("diagnostics") or {}
+    parse = parsed.get("parse_diagnostics") or {}
+    if not extract and not parse:
+        return
+    with st.expander("Diagnostico da leitura do PDF", expanded=True):
+        cols = st.columns(4, gap="small")
+        cols[0].metric("Paginas", extract.get("n_pages", "-"))
+        cols[1].metric("Caracteres", parse.get("n_chars", extract.get("n_chars", 0)))
+        cols[2].metric("Linhas candidatas", parse.get("n_linhas_candidatas", 0))
+        cols[3].metric("Movimentos validos", parse.get("n_movimentos_validos", 0))
+
+        engine = extract.get("engine")
+        if engine:
+            st.caption(f"Motor de extracao usado: {engine}.")
+        if extract.get("scanned"):
+            st.warning(
+                "O PDF parece ser escaneado/imagem (texto pesquisavel quase nulo)."
+            )
+        motivos = parse.get("motivos_descarte") or {}
+        if motivos:
+            st.caption("Motivos de descarte das linhas:")
+            st.dataframe(
+                pd.DataFrame(
+                    [{"Motivo": k, "Ocorrencias": v} for k, v in motivos.items()]
+                ),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+
 def _render_upload() -> None:
     st.subheader("Upload de Extrato Bancario")
     st.caption("Importe PDFs de movimentacoes bancarias. O padrao inicial suportado e C6 Bank.")
@@ -157,6 +189,7 @@ def _render_upload() -> None:
         st.error(err)
     rows = parsed.get("rows", [])
     if not rows:
+        _render_diagnostics(parsed)
         return
 
     _summary_cards(parsed.get("summary", {}), uploaded.name)

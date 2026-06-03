@@ -30,11 +30,23 @@ SUPPORTED_BANKS = ("C6 Bank",)
 VALOR_ALTO_FINANCIAMENTO = 1000.0
 _BANK_STATEMENT_ACCOUNT_TYPES = ("checking", "savings", "digital_wallet")
 
-_DATE_RE = re.compile(r"\b(\d{2}/\d{2}/\d{4})\b")
+# Flag de depuracao do importador de extrato. Quando True, registra no logger
+# (nivel INFO) diagnosticos da extracao/parsing. Nunca expoe dados sensiveis
+# de forma permanente em producao.
+DEBUG_IMPORT_EXTRATO = False
+
+# Datas: aceita dd/mm/yyyy, dd/mm/yy e dd/mm (ano inferido do extrato).
+_DATE_FULL_RE = re.compile(r"\b(\d{2}/\d{2}/\d{4})\b")
+_DATE_ANY_RE = re.compile(r"\b(\d{2}/\d{2}(?:/\d{2,4})?)\b")
+# Compatibilidade: codigo legado usa _DATE_RE (datas completas).
+_DATE_RE = _DATE_FULL_RE
+# Valores BRL: opcional R$, sinal, milhar com ponto, decimal com virgula.
 _MONEY_RE = re.compile(
     r"(?:[-+]\s*)?(?:R\$\s*)?(?:[-+]\s*)?"
     r"(?:\d{1,3}(?:\.\d{3})*,\d{2}|\d+(?:[,.]\d{2}))"
 )
+# Indicador de debito/credito ao lado do valor (ex.: "1.200,00 D" / "500,00 C").
+_DC_FLAG_RE = re.compile(r"(\d[\d.,]*\d|\d)\s*([DC])\b")
 
 DDL_SQL = [
     """
@@ -133,11 +145,30 @@ def _norm(value: object) -> str:
     return " ".join(text_value.split())
 
 
-def _parse_date(value: str) -> date | None:
-    try:
-        return datetime.strptime(value, "%d/%m/%Y").date()
-    except (TypeError, ValueError):
+def _parse_date(value: str, ano_referencia: int | None = None) -> date | None:
+    raw = str(value or "").strip()
+    for fmt in ("%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except (TypeError, ValueError):
+            continue
+    # Data sem ano (dd/mm): usa o ano de referencia do extrato (ou o atual).
+    m = re.fullmatch(r"(\d{2})/(\d{2})", raw)
+    if m:
+        try:
+            ano = ano_referencia or date.today().year
+            return date(ano, int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            return None
+    return None
+
+
+def _infer_statement_year(text_value: str) -> int | None:
+    """Ano predominante de datas completas no extrato (para datas dd/mm)."""
+    anos = [int(m.split("/")[-1]) for m in _DATE_FULL_RE.findall(text_value or "")]
+    if not anos:
         return None
+    return max(set(anos), key=anos.count)
 
 
 def _parse_money(value: object) -> float:
@@ -232,35 +263,84 @@ def _clean_statement_description(line: str, amount_span: tuple[int, int]) -> str
     left = line[: amount_span[0]]
     right = line[amount_span[1] :]
     text_value = f"{left} {right}"
-    text_value = _DATE_RE.sub(" ", text_value)
+    text_value = _DATE_ANY_RE.sub(" ", text_value)
+    # Remove indicador D/C isolado e "R$" residuais.
+    text_value = re.sub(r"\b([DC])\b", " ", text_value)
+    text_value = text_value.replace("R$", " ")
     return " ".join(text_value.replace("|", " ").split())
 
 
-def _parse_c6_line(line: str, banco: str, origem_arquivo: str | None) -> dict | None:
+# Linhas que nunca sao movimentacao (cabecalho, saldo, rodape).
+_IGNORE_LINE_TERMS = (
+    "saldo do dia", "saldo anterior", "saldo inicial", "saldo final",
+    "saldo em conta", "saldo disponivel", "extrato", "periodo",
+    "data lancamento", "data descricao", "documento valor",
+    "agencia conta", "central de atendimento", "ouvidoria",
+    "pagina", "demonstrativo", "total de creditos", "total de debitos",
+)
+
+
+def _is_ignorable_line(clean: str) -> bool:
+    norm = _norm(clean)
+    return any(term in norm for term in _IGNORE_LINE_TERMS)
+
+
+def _parse_c6_line(
+    line: str,
+    banco: str,
+    origem_arquivo: str | None,
+    ano_referencia: int | None = None,
+    reject_reasons: dict | None = None,
+) -> dict | None:
+    def _reject(reason: str) -> None:
+        if reject_reasons is not None:
+            reject_reasons[reason] = reject_reasons.get(reason, 0) + 1
+
     clean = " ".join(str(line or "").split())
-    if not clean or not _DATE_RE.search(clean):
+    if not clean:
+        return None
+    if _is_ignorable_line(clean):
+        _reject("linha de cabecalho/saldo/rodape")
+        return None
+    if not _DATE_ANY_RE.search(clean):
+        _reject("sem data reconhecida")
         return None
 
-    dates = [_parse_date(value) for value in _DATE_RE.findall(clean)]
+    dates = [_parse_date(value, ano_referencia) for value in _DATE_ANY_RE.findall(clean)]
     dates = [value for value in dates if value is not None]
     if not dates:
+        _reject("data invalida")
         return None
 
     money_matches = list(_MONEY_RE.finditer(clean))
     if not money_matches:
+        _reject("sem valor monetario")
         return None
     amount_match = money_matches[-1]
     raw_amount = _parse_money(amount_match.group(0))
     if raw_amount == 0 and "0,00" not in amount_match.group(0):
+        _reject("valor zero/invalido")
         return None
+
+    # Indicador D/C do C6 (ex.: "1.200,00 D") sobrepoe o sinal textual.
+    dc_match = _DC_FLAG_RE.search(clean[amount_match.start():])
+    dc_flag = dc_match.group(2).upper() if dc_match else None
 
     description = _clean_statement_description(clean, amount_match.span())
     if len(_norm(description)) < 3:
+        _reject("descricao muito curta")
         return None
 
     bank_type = _infer_bank_type(description, raw_amount)
-    amount = _normalize_signed_amount(bank_type, description, raw_amount)
-    direction = _direction_for(bank_type, description, amount)
+    if dc_flag == "D":
+        amount = -abs(raw_amount)
+        direction = "saida"
+    elif dc_flag == "C":
+        amount = abs(raw_amount)
+        direction = "entrada"
+    else:
+        amount = _normalize_signed_amount(bank_type, description, raw_amount)
+        direction = _direction_for(bank_type, description, amount)
 
     row = {
         "banco": banco,
@@ -290,7 +370,7 @@ def _merge_wrapped_lines(text_value: str) -> list[str]:
     merged: list[str] = []
     buffer = ""
     for line in lines:
-        starts_with_date = bool(_DATE_RE.search(line))
+        starts_with_date = bool(_DATE_ANY_RE.search(line))
         has_money = bool(_MONEY_RE.search(line))
         if starts_with_date and has_money:
             if buffer:
@@ -316,40 +396,186 @@ def parse_c6_bank_text(text_value: str, file_name: str | None = None) -> dict:
     rows: list[dict] = []
     seen_hashes: set[str] = set()
     errors: list[str] = []
+    reject_reasons: dict[str, int] = {}
 
-    for line in _merge_wrapped_lines(text_value):
-        row = _parse_c6_line(line, "C6 Bank", file_name)
+    ano_ref = _infer_statement_year(text_value)
+    candidate_lines = _merge_wrapped_lines(text_value)
+
+    for line in candidate_lines:
+        row = _parse_c6_line(
+            line, "C6 Bank", file_name,
+            ano_referencia=ano_ref, reject_reasons=reject_reasons,
+        )
         if not row:
             continue
         if row["hash_lancamento"] in seen_hashes:
+            reject_reasons["duplicada"] = reject_reasons.get("duplicada", 0) + 1
             continue
         seen_hashes.add(row["hash_lancamento"])
         rows.append(row)
 
+    n_chars = len((text_value or "").strip())
     if not rows:
-        errors.append("Nenhuma movimentacao bancaria foi identificada no PDF.")
+        if n_chars < 20:
+            errors.append(
+                "O PDF nao retornou texto extraivel. Verifique se ele nao esta "
+                "escaneado, protegido ou em formato de imagem."
+            )
+        elif candidate_lines:
+            errors.append(
+                f"Foram lidas {len(candidate_lines)} linha(s) do PDF, mas nenhuma "
+                "passou nas regras de identificacao de movimentacoes. Verifique se "
+                "o banco selecionado corresponde ao modelo do extrato enviado."
+            )
+        else:
+            errors.append(
+                "O PDF foi lido, mas nenhuma linha compativel com movimentacao "
+                "bancaria foi encontrada."
+            )
+
+    diagnostics = {
+        "ano_referencia": ano_ref,
+        "n_chars": n_chars,
+        "n_linhas_candidatas": len(candidate_lines),
+        "n_movimentos_validos": len(rows),
+        "motivos_descarte": reject_reasons,
+    }
+    if DEBUG_IMPORT_EXTRATO:
+        logger.info("[extrato] parse %s", diagnostics)
+
     return {
         "ok": bool(rows) and not errors,
         "bank": "C6 Bank",
         "rows": rows,
         "errors": errors,
         "summary": summarize_bank_movements(rows, "C6 Bank"),
+        "parse_diagnostics": diagnostics,
     }
 
 
-def _extract_pdf_text(file_bytes: bytes) -> str:
-    try:
-        import pdfplumber
-    except ImportError as exc:
-        raise RuntimeError("Dependencia pdfplumber nao instalada.") from exc
+def _clean_extracted_text(text_value: str) -> str:
+    """Remove caracteres invisiveis e normaliza espacos preservando quebras."""
+    if not text_value:
+        return ""
+    # Remove zero-width / BOM / soft hyphen e normaliza NBSP -> espaco.
+    for ch in ("​", "‌", "‍", "﻿", "­"):
+        text_value = text_value.replace(ch, "")
+    text_value = text_value.replace(" ", " ").replace("\t", " ")
+    return text_value
 
+
+def _extract_with_pdfplumber(file_bytes: bytes) -> tuple[str, int]:
+    import pdfplumber
+
+    parts: list[str] = []
+    n_pages = 0
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        return "\n".join(page.extract_text() or "" for page in pdf.pages)
+        n_pages = len(pdf.pages)
+        for page in pdf.pages:
+            txt = page.extract_text() or ""
+            if not txt:
+                # Layout em colunas: tenta extracao baseada em palavras com
+                # tolerancia maior, que costuma recuperar linhas que o
+                # extract_text padrao perde.
+                try:
+                    txt = page.extract_text(x_tolerance=1.5, y_tolerance=3.0) or ""
+                except Exception:
+                    txt = ""
+            if txt:
+                parts.append(txt)
+    return "\n".join(parts), n_pages
+
+
+def _extract_with_pypdf(file_bytes: bytes) -> tuple[str, int]:
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        try:
+            from PyPDF2 import PdfReader  # type: ignore
+        except ImportError:
+            return "", 0
+    reader = PdfReader(io.BytesIO(file_bytes))
+    parts = [(page.extract_text() or "") for page in reader.pages]
+    return "\n".join(parts), len(reader.pages)
+
+
+def extract_bank_statement_text(file_bytes: bytes) -> dict:
+    """Extrai texto do PDF com fallback entre bibliotecas.
+
+    Retorna dict com: text, n_pages, engine, n_chars, scanned (bool/None) e
+    qualquer erro de leitura. Nao levanta excecao para PDF sem texto — sinaliza
+    via 'scanned'/'n_chars' para o chamador exibir mensagem adequada.
+    """
+    diag: dict[str, Any] = {
+        "text": "", "n_pages": 0, "engine": None,
+        "n_chars": 0, "scanned": None, "read_error": None,
+    }
+
+    best_text = ""
+    best_engine = None
+    best_pages = 0
+    for engine_name, fn in (("pdfplumber", _extract_with_pdfplumber), ("pypdf", _extract_with_pypdf)):
+        try:
+            txt, n_pages = fn(file_bytes)
+        except ImportError as exc:
+            diag["read_error"] = f"{engine_name}: {exc}"
+            continue
+        except Exception as exc:  # PDF corrompido/protegido por uma das libs
+            diag["read_error"] = f"{engine_name}: {exc}"
+            continue
+        txt = _clean_extracted_text(txt)
+        if len(txt.strip()) > len(best_text.strip()):
+            best_text, best_engine, best_pages = txt, engine_name, n_pages
+        # Texto suficiente para parsear: nao precisa do fallback.
+        if len(best_text.strip()) >= 40:
+            break
+
+    diag.update(
+        text=best_text,
+        engine=best_engine,
+        n_pages=best_pages,
+        n_chars=len(best_text.strip()),
+        scanned=(best_pages > 0 and len(best_text.strip()) < 20),
+    )
+    if DEBUG_IMPORT_EXTRATO:
+        logger.info(
+            "[extrato] engine=%s paginas=%s chars=%s scanned=%s",
+            diag["engine"], diag["n_pages"], diag["n_chars"], diag["scanned"],
+        )
+    return diag
+
+
+def _extract_pdf_text(file_bytes: bytes) -> str:
+    """Compatibilidade: retorna apenas o texto extraido."""
+    return extract_bank_statement_text(file_bytes).get("text", "")
 
 
 def parse_c6_bank_pdf(file_bytes: bytes, file_name: str | None = None) -> dict:
-    text_value = _extract_pdf_text(file_bytes)
-    return parse_c6_bank_text(text_value, file_name=file_name)
+    diag = extract_bank_statement_text(file_bytes)
+    text_value = diag.get("text") or ""
+
+    # PDF sem texto pesquisavel (escaneado / protegido / imagem).
+    if diag.get("n_chars", 0) < 20:
+        if diag.get("read_error"):
+            msg = (
+                "Nao foi possivel ler o PDF "
+                f"({diag['read_error']}). Verifique se o arquivo nao esta "
+                "protegido ou corrompido."
+            )
+        else:
+            msg = (
+                "O PDF nao retornou texto extraivel. Verifique se ele nao esta "
+                "escaneado, protegido ou em formato de imagem."
+            )
+        return {
+            "ok": False, "bank": "C6 Bank", "rows": [], "errors": [msg],
+            "summary": summarize_bank_movements([], "C6 Bank"),
+            "diagnostics": diag,
+        }
+
+    parsed = parse_c6_bank_text(text_value, file_name=file_name)
+    parsed["diagnostics"] = {k: v for k, v in diag.items() if k != "text"}
+    return parsed
 
 
 def summarize_bank_movements(rows: list[dict], bank: str = "C6 Bank") -> dict:
