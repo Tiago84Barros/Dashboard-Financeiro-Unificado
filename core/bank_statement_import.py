@@ -438,6 +438,25 @@ def _is_boleto_or_pagamento(row: dict) -> bool:
     return "boleto" in text_value or "pagamento" in text_value
 
 
+def _find_other_category(categories: list[dict], direction: str) -> dict | None:
+    if direction == "entrada":
+        return _find_category(
+            categories,
+            ["Outros", "Outros Rendimentos", "Rendimentos", "Receita", "Entrada"],
+            ("income",),
+        )
+    return _find_category(
+        categories,
+        ["Outros", "Outras Despesas", "Outros Gastos", "Saida", "Despesas"],
+        ("expense",),
+    )
+
+
+def _other_classification(row: dict, categories: list[dict], confidence: float, reason: str) -> dict:
+    category = _find_other_category(categories, row.get("direcao") or "saida")
+    return _classification_payload(row, category, "Outros", "sugerida", confidence, reason)
+
+
 def _classification_payload(
     row: dict,
     category: dict | None,
@@ -545,11 +564,23 @@ def classify_bank_movement(
         )
         return _classification_payload(row, category, "Financiamento", "sugerida", 0.93, "Regra explicita: financiamento")
 
+    if "resgate de cdb" in desc:
+        return _other_classification(row, categories, 0.90, "Regra definida: resgate CDB como entrada em Outros")
+
+    if "secretaria do tesouro nacional" in desc or "tesouro nacional" in desc:
+        return _other_classification(row, categories, 0.88, "Regra definida: Tesouro Nacional como saida em Outros")
+
+    if "debito de cartao" in desc or "debito de cartao" in _norm(row.get("tipo_original_banco")):
+        category = _find_category(
+            categories,
+            ["Pagamento de Cartao", "Pagamento de Fatura", "Cartao de Credito", "Cartao"],
+            ("expense", "transfer"),
+        )
+        return _classification_payload(row, category, "Pagamento de Cartao", "sugerida", 0.90, "Regra definida: debito de cartao")
+
     auto_rules: list[tuple[tuple[str, ...], list[str], tuple[str, ...], str, float]] = [
-        (("resgate de cdb",), ["Resgate de Investimento", "Investimentos", "Renda Fixa"], ("transfer", "income"), "Resgate de Investimento", 0.92),
         (("tim celular",), ["Telefone / Internet", "Assinaturas", "Moradia"], ("expense",), "Telefone / Internet", 0.86),
         (("equatorial",), ["Luz", "Energia", "Moradia", "Casa", "Contas fixas"], ("expense",), "Luz", 0.86),
-        (("secretaria do tesouro nacional", "tesouro nacional"), ["Impostos e Taxas", "Impostos", "Tributos", "Taxas"], ("expense",), "Impostos e Taxas", 0.88),
         (("posto", "pana vip", "para vip", "pit stop", "abastece"), ["Combustivel", "Transporte", "Carro", "Veiculo"], ("expense",), "Combustivel", 0.84),
         (("ifood",), ["Alimentacao", "Restaurante", "Delivery", "Lanche"], ("expense",), "Alimentacao", 0.84),
         (("drogaria", "farmacia"), ["Saude", "Farmacia", "Medicamentos"], ("expense",), "Saude", 0.86),
@@ -560,19 +591,7 @@ def classify_bank_movement(
             category = _find_category(categories, aliases, preferred_types)
             return _classification_payload(row, category, suggested, "sugerida", confidence, "Regra automatica por palavra-chave")
 
-    if "debito de cartao" in desc or "debito de cartao" in _norm(row.get("tipo_original_banco")):
-        category = _find_category(categories, ["Debito de Cartao", "Compra no Cartao"], ("expense", "transfer"))
-        return _classification_payload(row, category, "Debito de Cartao", "sugerida", 0.78, "Regra automatica: debito de cartao")
-
-    return {
-        **row,
-        "categoria_id": None,
-        "categoria_nome": None,
-        "categoria_sugerida_texto": row.get("categoria_sugerida_texto") or "Pendente",
-        "status_classificacao": "pendente",
-        "confianca_classificacao": 0.0,
-        "classificacao_motivo": "Sem regra segura",
-    }
+    return _other_classification(row, categories, 0.65, "Fallback por direcao: Outros")
 
 
 def classify_bank_movements(rows: list[dict], categories: list[dict], saved_rules: list[dict] | None = None) -> list[dict]:
@@ -712,6 +731,8 @@ def _transaction_type_for(row: dict, category: dict | None = None) -> str:
     cat_type = _category_type(category or {})
     cat_norm = _norm(cat_name)
     suggested = _norm(row.get("categoria_sugerida_texto"))
+    if any(term in suggested for term in ("pagamento de cartao", "debito de cartao")):
+        return "expense"
     if cat_type == "transfer" or any(term in cat_norm for term in ("investimento", "transferencia")):
         return "transfer"
     if "investimento" in suggested or "resgate" in suggested:

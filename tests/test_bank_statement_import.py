@@ -6,6 +6,7 @@ from core.bank_statement_import import (
     classify_bank_movement,
     classify_bank_movements,
     parse_c6_bank_text,
+    _transaction_type_for,
 )
 
 
@@ -18,7 +19,9 @@ def _categories():
         {"id": "cat-alimentacao", "nome": "Alimentacao", "tipo": "expense"},
         {"id": "cat-impostos", "nome": "Impostos e Taxas", "tipo": "expense"},
         {"id": "cat-telefone", "nome": "Telefone / Internet", "tipo": "expense"},
-        {"id": "cat-resgate", "nome": "Resgate de Investimento", "tipo": "transfer"},
+        {"id": "cat-outros-entrada", "nome": "Outros Rendimentos", "tipo": "income"},
+        {"id": "cat-outros-saida", "nome": "Outras Despesas", "tipo": "expense"},
+        {"id": "cat-pagamento-cartao", "nome": "Pagamento de Fatura", "tipo": "transfer"},
     ]
 
 
@@ -69,7 +72,7 @@ def test_explicit_classification_rules_use_existing_category_ids():
     assert financing["categoria_sugerida_texto"] == "Financiamento"
 
 
-def test_automatic_rules_and_pending_behaviour():
+def test_automatic_rules_and_default_other_behaviour():
     parsed = parse_c6_bank_text(
         """
         05/05/2026 RESGATE DE CDB R$ 1.000,00
@@ -77,19 +80,28 @@ def test_automatic_rules_and_pending_behaviour():
         07/05/2026 Pagamento EQUATORIAL R$ -220,00
         08/05/2026 Pagamento SECRETARIA DO TESOURO NACIONAL R$ -110,00
         09/05/2026 Saida PIX Pix enviado para FULANO R$ -80,00
+        10/05/2026 Entrada PIX Pix recebido de ADELAIDE DO SOCORRO R$ 200,00
+        11/05/2026 Debito de Cartao Compra debito de cartao R$ -120,00
         """,
         file_name="c6.pdf",
     )
 
     classified = classify_bank_movements(parsed["rows"], _categories())
 
-    assert classified[0]["categoria_id"] == "cat-resgate"
-    assert classified[0]["categoria_sugerida_texto"] == "Resgate de Investimento"
+    assert classified[0]["categoria_id"] == "cat-outros-entrada"
+    assert classified[0]["categoria_sugerida_texto"] == "Outros"
+    assert classified[0]["status_classificacao"] == "sugerida"
     assert classified[1]["categoria_id"] == "cat-telefone"
     assert classified[2]["categoria_id"] == "cat-moradia"
-    assert classified[3]["categoria_id"] == "cat-impostos"
-    assert classified[4]["categoria_id"] is None
-    assert classified[4]["status_classificacao"] == "pendente"
+    assert classified[3]["categoria_id"] == "cat-outros-saida"
+    assert classified[3]["categoria_sugerida_texto"] == "Outros"
+    assert classified[4]["categoria_id"] == "cat-outros-saida"
+    assert classified[4]["status_classificacao"] == "sugerida"
+    assert classified[5]["categoria_id"] == "cat-outros-entrada"
+    assert classified[5]["categoria_sugerida_texto"] == "Outros"
+    assert classified[6]["categoria_id"] == "cat-pagamento-cartao"
+    assert classified[6]["categoria_sugerida_texto"] == "Pagamento de Cartao"
+    assert _transaction_type_for(classified[6], {"nome": "Pagamento de Fatura", "tipo": "transfer"}) == "expense"
 
 
 def test_saved_rule_has_priority_over_automatic_rule():
