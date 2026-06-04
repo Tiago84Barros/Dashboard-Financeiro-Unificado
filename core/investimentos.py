@@ -686,15 +686,23 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         pp_avg   = float(getattr(primary, "pp_average_price", 0) or 0)
 
         # ── Ativos em USD (Nomad): snapshot ja vem convertido em BRL pelo
-        # importer com cambio do dia. pp_base (investment_transactions) guarda
-        # em USD, sem conversao — usar pp_base resultaria em valores 5x menores.
-        # Decisao: para ccy=USD, snapshot e a fonte canonica do custo.
+        # importer com cambio do dia. pp_base guarda em USD (sem conversao).
+        # Se pp_qty > qty_snap (novas compras Nomad apos o snapshot), escala
+        # os valores BRL do snapshot proporcionalmente para refletir a posicao atual.
         ccy = str(primary.currency or "BRL").upper()
         if ccy == "USD" and vi_snap > 0:
-            qty         = qty_snap
-            ti          = vi_snap
+            if pp_qty > qty_snap * 1.005 and qty_snap > 0:
+                # Novas cotas Nomad apos snapshot → escala BRL proporcionalmente
+                scale   = pp_qty / qty_snap
+                qty     = pp_qty
+                ti      = vi_snap * scale
+                vm      = g["vm_sum"] * scale
+                custo_fonte = "nomad_scaled"
+            else:
+                qty     = qty_snap
+                ti      = vi_snap
+                custo_fonte = "snapshot"
             preco_medio = ti / qty if qty > 0 else 0.0
-            custo_fonte = "snapshot"
         # ── CUSTO: prioridade pp_base (mesma fonte: qty + ti consistentes)
         elif pp_ti > 0 and pp_qty > 0:
             # pp_base agregado da B3 negociacao — fonte mais confiavel
@@ -731,10 +739,8 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
             preco_medio = ti / qty if qty > 0 else 0.0
             custo_fonte = "mercado_fallback"
 
-        # ── PRECO/VALOR DE MERCADO: o snapshot da B3/XP e a fonte canonica
-        # para posicao atual. Recalcular com pp_qty pode reintroduzir ativos
-        # emprestados ou diferencas de lote que a B3 exibe separadamente.
-        preco_atual = (vm / qty_snap) if qty_snap > 0 else 0.0
+        # ── PRECO/VALOR DE MERCADO: usa qty (pode ser pp_qty p/ USD scaled)
+        preco_atual = (vm / qty) if qty > 0 else 0.0
         vm_calc = round(vm, 2)
 
         rentab = round((vm_calc - ti) / ti * 100, 2) if ti > 0 else 0.0
