@@ -916,6 +916,8 @@ def _render_import_investimentos() -> None:
                 with st.spinner("Recalculando carteira…"):
                     rec = recompute_for_user(engine, settings.OWNER_USER_ID)
                 st.session_state["_inv_recompute_result"] = rec
+                if rec.get("ok"):
+                    st.cache_data.clear()
 
         rec = st.session_state.get("_inv_recompute_result")
         if rec:
@@ -988,6 +990,9 @@ def _render_import_block(cfg: dict) -> None:
                 st.session_state[result_key] = _executar_importacao_investimento(
                     cfg, payload
                 )
+            result = st.session_state[result_key]
+            if result.get("status") in ("success", "partial_success"):
+                st.cache_data.clear()
 
         if st.session_state.get(result_key):
             _render_import_result(st.session_state[result_key])
