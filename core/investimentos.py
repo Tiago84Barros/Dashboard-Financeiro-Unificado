@@ -330,6 +330,7 @@ _SQL_POSICOES_EXTRAS_FORA_SNAPSHOT = """
     ) fx ON true
     WHERE  pp.user_id = :uid
       AND  pp.quantity > 0.000001
+      AND  a.currency = 'USD'
       AND  pp.asset_id NOT IN (
                SELECT DISTINCT pps.asset_id
                FROM   portfolio_position_snapshots pps
@@ -339,14 +340,39 @@ _SQL_POSICOES_EXTRAS_FORA_SNAPSHOT = """
 """
 
 
-def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
-    """Acrescenta posições fora do snapshot XP (ex: Nomad ETFs) ao dict de carteira.
+_USD_BRL_FALLBACK = 5.05  # usado quando asset_quotes não tem USDBRL
 
-    Os valores de USD são convertidos para BRL usando a taxa fx do banco ou
-    o average_price já em USD × fx_rate. Recalcula totais e pct_carteira no final.
+
+def _get_usd_brl_live() -> float:
+    """Tenta buscar USD/BRL via yfinance. Fallback para constante se falhar."""
+    try:
+        import yfinance as yf
+        df = yf.download("USDBRL=X", period="3d", interval="1d",
+                         auto_adjust=True, progress=False)
+        if not df.empty:
+            return float(df["Close"].dropna().iloc[-1])
+    except Exception:
+        pass
+    return _USD_BRL_FALLBACK
+
+
+def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
+    """Acrescenta posições USD fora do snapshot XP (ETFs Nomad) ao dict de carteira.
+
+    Somente ativos com currency='USD' chegam aqui (filtro no SQL).
+    Converte USD→BRL usando: taxa do asset_quotes (USDBRL) ou yfinance como fallback.
+    Recalcula totais e pct_carteira ao final.
     """
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
+
+    if not extra_rows:
+        return
+
+    # Taxa fx: pega do primeiro row que tiver; fallback yfinance
+    fx_rate = _f(extra_rows[0].usd_brl_rate) if extra_rows else 0.0
+    if fx_rate < 2.0:  # valor inválido ou ausente
+        fx_rate = _get_usd_brl_live()
 
     tickers_existentes = {p["ticker"].upper() for p in carteira.get("posicoes", [])}
     novas: list[dict] = []
@@ -357,30 +383,27 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
             continue
 
         qty     = _f(r.quantity)
-        pm_raw  = _f(r.average_price)
-        ti_raw  = _f(r.total_invested)
+        pm_raw  = _f(r.average_price)   # em USD
+        ti_raw  = _f(r.total_invested)  # em USD
         if qty <= 0:
             continue
 
-        ccy      = (r.currency or "BRL").upper()
-        fx_rate  = _f(r.usd_brl_rate) or 1.0
-        pr_raw   = _f(r.current_price) if r.current_price is not None else pm_raw
+        ccy = (r.currency or "USD").upper()
 
-        if ccy == "USD" and fx_rate > 1.0:
-            pm      = pm_raw * fx_rate
-            ti      = ti_raw * fx_rate
-            pr_atual = pr_raw * fx_rate
-        else:
-            pm      = pm_raw
-            ti      = ti_raw
-            pr_atual = pr_raw
+        # Preço atual: cotação do banco (USD) ou fallback para pm_raw
+        pr_raw = _f(r.current_price) if r.current_price is not None else pm_raw
+
+        # Converte tudo para BRL
+        pm       = pm_raw  * fx_rate
+        ti       = ti_raw  * fx_rate
+        pr_atual = pr_raw  * fx_rate
 
         if ti <= 0:
             ti = pm * qty
 
         vm      = round(qty * pr_atual, 2)
         rentab  = round((vm - ti) / ti * 100, 2) if ti > 0 else 0.0
-        classe_raw = "etf_intl" if ccy == "USD" else (r.asset_class or "other")
+        classe_raw = "etf_intl"
 
         novas.append({
             "ticker":          ticker,
