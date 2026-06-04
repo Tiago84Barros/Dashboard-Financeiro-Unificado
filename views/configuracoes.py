@@ -934,34 +934,6 @@ def _render_import_investimentos() -> None:
             else:
                 st.error(f"Falha: {rec.get('error', 'erro desconhecido')}")
 
-    # ── Diagnóstico temporário: posições USD em portfolio_positions ────────────
-    if st.button("🔍 Diagnóstico: ver posições USD no banco", key="_diag_usd"):
-        from core.database import get_engine
-        from sqlalchemy import text as _text
-        _engine = get_engine()
-        if _engine is None:
-            st.error("Banco não configurado.")
-        else:
-            with _engine.connect() as _conn:
-                _rows = _conn.execute(_text("""
-                    SELECT a.ticker, a.currency, pp.quantity, pp.average_price,
-                           pp.total_invested,
-                           (SELECT COUNT(*) FROM portfolio_position_snapshots pps
-                            WHERE pps.asset_id = pp.asset_id
-                              AND pps.user_id = :uid) AS in_snapshot
-                    FROM portfolio_positions pp
-                    JOIN assets a ON a.id = pp.asset_id
-                    WHERE pp.user_id = :uid
-                    ORDER BY a.currency DESC, pp.total_invested DESC
-                """), {"uid": settings.OWNER_USER_ID}).fetchall()
-            if _rows:
-                import pandas as _pd
-                _df = _pd.DataFrame([dict(r._mapping) for r in _rows])
-                st.dataframe(_df, use_container_width=True)
-                st.caption(f"Total: {len(_rows)} posições em portfolio_positions. "
-                           "'in_snapshot' > 0 = excluído do cálculo EXTERIOR.")
-            else:
-                st.warning("portfolio_positions está vazia para este usuário.")
 
 
 def _render_import_block(cfg: dict) -> None:
