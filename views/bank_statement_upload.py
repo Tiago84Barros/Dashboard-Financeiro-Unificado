@@ -1,7 +1,7 @@
 """
-UI de upload e revisao de extratos bancarios em PDF.
+UI de upload e revisão de extratos bancários em PDF.
 
-O upload fica em Configuracoes; os movimentos classificados sao publicados em
+O upload fica em Configurações; os movimentos classificados são publicados em
 transactions e passam a aparecer no Controle Financeiro.
 """
 from __future__ import annotations
@@ -80,7 +80,7 @@ def _summary_cards(summary: dict, file_name: str | None = None) -> None:
     with c3:
         st.markdown(
             _kpi_card(
-                "Saidas",
+                "Saídas",
                 fmt_moeda(summary.get("total_saidas", 0.0)),
                 f"{int(summary.get('saidas', 0))} movimento(s)",
                 _COR_DESPESA,
@@ -101,7 +101,7 @@ def _summary_cards(summary: dict, file_name: str | None = None) -> None:
     start = summary.get("periodo_inicio")
     end = summary.get("periodo_fim")
     if start and end:
-        st.caption(f"Periodo identificado: {_fmt_date(start)} a {_fmt_date(end)}.")
+        st.caption(f"Período identificado: {_fmt_date(start)} a {_fmt_date(end)}.")
 
 
 def _preview_dataframe(rows: list[dict]) -> pd.DataFrame:
@@ -111,11 +111,11 @@ def _preview_dataframe(rows: list[dict]) -> pd.DataFrame:
                 "Data": _fmt_date(row.get("data_movimento")),
                 "Banco": row.get("banco") or "-",
                 "Tipo banco": row.get("tipo_original_banco") or "-",
-                "Descricao": row.get("descricao_original") or "-",
-                "Direcao": row.get("direcao") or "-",
+                "Descrição": row.get("descricao_original") or "-",
+                "Direção": row.get("direcao") or "-",
                 "Categoria sugerida": row.get("categoria_nome") or row.get("categoria_sugerida_texto") or "Pendente",
                 "Status": row.get("status_classificacao") or "pendente",
-                "Confianca": row.get("confianca_classificacao") or 0.0,
+                "Confiança": row.get("confianca_classificacao") or 0.0,
                 "Valor (R$)": row.get("valor") or 0.0,
             }
             for row in rows
@@ -129,7 +129,7 @@ def _render_diagnostics(parsed: dict) -> None:
     parse = parsed.get("parse_diagnostics") or {}
     if not extract and not parse:
         return
-    with st.expander("Diagnostico da leitura do PDF", expanded=True):
+    with st.expander("Diagnóstico da leitura do PDF", expanded=True):
         cols = st.columns(4, gap="small")
         cols[0].metric("Paginas", extract.get("n_pages", "-"))
         cols[1].metric("Caracteres", parse.get("n_chars", extract.get("n_chars", 0)))
@@ -138,7 +138,7 @@ def _render_diagnostics(parsed: dict) -> None:
 
         engine = extract.get("engine")
         if engine:
-            st.caption(f"Motor de extracao usado: {engine}.")
+            st.caption(f"Motor de extração usado: {engine}.")
         if extract.get("scanned"):
             st.warning(
                 "O PDF parece ser escaneado/imagem (texto pesquisavel quase nulo)."
@@ -156,11 +156,11 @@ def _render_diagnostics(parsed: dict) -> None:
 
 
 def _render_upload() -> None:
-    st.subheader("Upload de Extrato Bancario")
-    st.caption("Importe PDFs de movimentacoes bancarias. O padrao inicial suportado e C6 Bank.")
+    st.subheader("Upload de Extrato Bancário")
+    st.caption("Importe PDFs de movimentações bancárias. O padrão inicial suportado é C6 Bank.")
 
     if settings.MOCK_MODE:
-        st.warning("Modo mock ativo: a previa funciona, mas a gravacao no Supabase fica desabilitada.")
+        st.warning("Modo mock ativo: a prévia funciona, mas a gravação no Supabase fica desabilitada.")
 
     last_result = st.session_state.get("bank_statement_import_result")
     if last_result:
@@ -174,11 +174,11 @@ def _render_upload() -> None:
         "Arquivo PDF do extrato",
         type=["pdf"],
         key="bank_statement_pdf_upload",
-        help="Extrato bancario em PDF. No momento, o parser foi calibrado para C6 Bank.",
+        help="Extrato bancário em PDF. No momento, o parser foi calibrado para C6 Bank.",
     )
 
     if uploaded is None:
-        st.caption("Selecione um PDF para visualizar a previa antes de gravar.")
+        st.caption("Selecione um PDF para visualizar a prévia antes de gravar.")
         return
 
     file_bytes = uploaded.getvalue()
@@ -199,7 +199,7 @@ def _render_upload() -> None:
         use_container_width=True,
         column_config={
             "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
-            "Confianca": st.column_config.NumberColumn("Confianca", format="%.2f"),
+            "Confiança": st.column_config.NumberColumn("Confiança", format="%.2f"),
         },
     )
 
@@ -229,8 +229,8 @@ def _category_label(category: dict) -> str:
 
 
 def _render_review_queue() -> None:
-    st.markdown("### Revisao de movimentacoes importadas")
-    st.caption("Corrija categorias pendentes ou confirme sugestoes usando apenas categorias ja existentes no App4.")
+    st.markdown("### Revisão de movimentações importadas")
+    st.caption("Corrija categorias pendentes ou confirme sugestões usando apenas categorias já existentes no App4.")
 
     c1, c2, c3 = st.columns([1, 1, 1], gap="small")
     with c1:
@@ -243,7 +243,7 @@ def _render_review_queue() -> None:
         year_filter = st.number_input("Ano", min_value=2020, max_value=2100, value=2026, step=1, key="bank_statement_review_year")
     with c3:
         month_filter = st.selectbox(
-            "Mes",
+            "Mês",
             ["Todos"] + list(range(1, 13)),
             key="bank_statement_review_month",
         )
@@ -255,7 +255,7 @@ def _render_review_queue() -> None:
         limit=300,
     )
     if not rows:
-        st.caption("Nenhuma movimentacao encontrada para os filtros atuais.")
+        st.caption("Nenhuma movimentação encontrada para os filtros atuais.")
         return
 
     df = pd.DataFrame(
@@ -263,8 +263,8 @@ def _render_review_queue() -> None:
             {
                 "Data": _fmt_date(row.get("data_movimento")),
                 "Banco": row.get("banco"),
-                "Descricao": row.get("descricao_original"),
-                "Direcao": row.get("direcao"),
+                "Descrição": row.get("descricao_original"),
+                "Direção": row.get("direcao"),
                 "Categoria": row.get("categoria_confirmada_nome") or row.get("categoria_nome") or row.get("categoria_sugerida_texto") or "Pendente",
                 "Status": row.get("status_classificacao"),
                 "Valor (R$)": row.get("valor"),
@@ -281,12 +281,12 @@ def _render_review_queue() -> None:
 
     categories = get_bank_statement_categories()
     if not categories:
-        st.warning("Categorias indisponiveis para confirmacao.")
+        st.warning("Categorias indisponíveis para confirmação.")
         return
 
     editable_rows = [row for row in rows if row.get("status_classificacao") in {"pendente", "sugerida"}]
     if not editable_rows:
-        st.caption("Nao ha movimentos pendentes ou sugeridos para confirmar neste filtro.")
+        st.caption("Não há movimentos pendentes ou sugeridos para confirmar neste filtro.")
         return
 
     selected_idx = st.selectbox(
@@ -313,7 +313,7 @@ def _render_review_queue() -> None:
             key="bank_statement_rule_keyword",
         )
 
-    if st.button("Confirmar classificacao", type="primary", use_container_width=True, key="bank_statement_confirm_btn"):
+    if st.button("Confirmar classificação", type="primary", use_container_width=True, key="bank_statement_confirm_btn"):
         ok, msg = confirm_bank_statement_movement(
             selected["id"],
             categories[category_idx]["id"],
@@ -321,9 +321,9 @@ def _render_review_queue() -> None:
             palavra_chave=keyword,
         )
         if ok:
-            st.success("Classificacao confirmada e publicada no Controle Financeiro.")
+            st.success("Classificação confirmada e publicada no Controle Financeiro.")
             st.rerun()
-        st.error(msg or "Falha ao confirmar classificacao.")
+        st.error(msg or "Falha ao confirmar classificação.")
 
 
 def render_upload_extrato_bancario() -> None:

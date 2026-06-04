@@ -1,8 +1,8 @@
 """
-UI isolada para upload/importacao de fatura de cartao de credito.
+UI isolada para upload/importação de fatura de cartão de crédito.
 
-Mantem a logica de negocio em core.controle e renderiza apenas o fluxo de
-arquivo CSV usado pela secao Configuracoes.
+Mantém a lógica de negócio em core.controle e renderiza apenas o fluxo de
+arquivo CSV usado pela seção Configurações.
 """
 from __future__ import annotations
 
@@ -97,15 +97,15 @@ def _invoice_upload_summary(rows: list[dict]) -> dict:
 
 def render_upload_fatura_cartao() -> None:
     """Renderiza o fluxo exclusivo de importacao da fatura do cartao."""
-    st.subheader("Upload de Fatura do Cartao")
-    st.caption("Importe a fatura CSV. Depois, acompanhe os dados em Controle Financeiro > Cartao de Credito.")
+    st.subheader("Upload de Fatura do Cartão")
+    st.caption("Importe a fatura CSV. Depois, acompanhe os dados em Controle Financeiro > Cartão de Crédito.")
 
     last_result = st.session_state.get("cc_invoice_import_result")
     last_ok = bool(last_result and last_result.get("ok"))
     if last_ok:
         summary = last_result.get("summary", {})
         st.success(
-            f"Fatura importada: {int(summary.get('inserted', 0))} novo(s) lancamento(s), "
+            f"Fatura importada: {int(summary.get('inserted', 0))} novo(s) lançamento(s), "
             f"{int(summary.get('skipped', 0))} duplicado(s) ignorado(s)."
         )
     elif last_result:
@@ -116,7 +116,7 @@ def render_upload_fatura_cartao() -> None:
         "Arquivo CSV da fatura",
         type=["csv"],
         key="settings_cc_invoice_upload",
-        help="Modelo com Data de Compra, Nome no Cartao, Final do Cartao, Categoria, Descricao, Parcela e valores.",
+        help="Modelo com Data de Compra, Nome no Cartão, Final do Cartão, Categoria, Descrição, Parcela e valores.",
     )
 
     col_due, col_account = st.columns([1, 2], gap="small")
@@ -130,18 +130,18 @@ def render_upload_fatura_cartao() -> None:
     with col_account:
         if contas:
             account_idx = st.selectbox(
-                "Conta do cartao",
+                "Conta do cartão",
                 range(len(contas)),
                 format_func=lambda i: contas[i]["nome"],
                 key="settings_cc_invoice_account",
             )
             account_id = contas[account_idx]["id"]
         else:
-            st.warning("Cadastre uma conta do tipo cartao de credito antes de importar.")
+            st.warning("Cadastre uma conta do tipo cartão de crédito antes de importar.")
             account_id = None
 
     if uploaded is None:
-        st.caption("Selecione uma fatura CSV para visualizar a previa e importar.")
+        st.caption("Selecione uma fatura CSV para visualizar a prévia e importar.")
         return
 
     file_bytes = uploaded.getvalue()
@@ -156,24 +156,24 @@ def render_upload_fatura_cartao() -> None:
             st.caption(f"+ {len(parsed['errors']) - 5} erro(s) adicionais.")
 
     if not rows:
-        st.caption("Nenhuma linha valida encontrada na fatura.")
+        st.caption("Nenhuma linha válida encontrada na fatura.")
         return
 
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
-        st.markdown(_kpi_card("Arquivo", _safe(uploaded.name[:24]), f"{len(rows)} lancamento(s) validos", _COR_NEUTRO), unsafe_allow_html=True)
+        st.markdown(_kpi_card("Arquivo", _safe(uploaded.name[:24]), f"{len(rows)} lançamento(s) válidos", _COR_NEUTRO), unsafe_allow_html=True)
     with c2:
         st.markdown(_kpi_card("Total bruto", fmt_moeda(upload_summary["total_bruto"]), "Soma absoluta da fatura.", _COR_DESPESA), unsafe_allow_html=True)
     with c3:
         st.markdown(_kpi_card("Compras reais", fmt_moeda(upload_summary["compras_reais"]), "Exclui pagamentos, estornos e tarifas.", _COR_DESPESA), unsafe_allow_html=True)
     with c4:
-        st.markdown(_kpi_card("Liquido", fmt_moeda(upload_summary["net_total"]), "Compras + tarifas - creditos.", _COR_NEUTRO), unsafe_allow_html=True)
+        st.markdown(_kpi_card("Líquido", fmt_moeda(upload_summary["net_total"]), "Compras + tarifas - créditos.", _COR_NEUTRO), unsafe_allow_html=True)
 
     c5, c6, c7, c8 = st.columns(4, gap="small")
     with c5:
         st.markdown(_kpi_card("Tarifas", fmt_moeda(upload_summary["tarifas"]), "Anuidade, IOF, juros, multa e encargos.", "#F6C90E"), unsafe_allow_html=True)
     with c6:
-        st.markdown(_kpi_card("Pagamentos/estornos", fmt_moeda(upload_summary["creditos"]), "Lancamentos negativos da fatura.", _COR_RECEITA), unsafe_allow_html=True)
+        st.markdown(_kpi_card("Pagamentos/estornos", fmt_moeda(upload_summary["creditos"]), "Lançamentos negativos da fatura.", _COR_RECEITA), unsafe_allow_html=True)
     with c7:
         st.markdown(_kpi_card("Parceladas", str(sum(1 for r in rows if r.get("installment_total", 1) > 1)), "Compras com parcela maior que 1.", _COR_INVEST), unsafe_allow_html=True)
     with c8:
@@ -186,9 +186,9 @@ def render_upload_fatura_cartao() -> None:
             "Vencimento": r["due_date"].strftime("%d/%m/%Y"),
             "Final": r["card_final"],
             "Categoria": r["category"],
-            "Descricao": r["description_raw"],
+            "Descrição": r["description_raw"],
             "Parcela": r["installment_label"],
-            "Tipo": "despesa" if r["type"] == "expense" else "credito",
+            "Tipo": "despesa" if r["type"] == "expense" else "crédito",
             "Valor (R$)": r["value_brl"],
         }
         for r in rows[:80]
@@ -202,7 +202,7 @@ def render_upload_fatura_cartao() -> None:
         },
     )
     if len(rows) > 80:
-        st.caption(f"Exibindo 80 de {len(rows)} linhas da previa.")
+        st.caption(f"Exibindo 80 de {len(rows)} linhas da prévia.")
 
     importar = st.button(
         "Importar fatura",

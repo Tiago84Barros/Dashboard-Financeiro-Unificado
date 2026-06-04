@@ -1,11 +1,11 @@
 """
 views/configuracoes.py
-Configurações do sistema — abas focadas no que o usuário realmente usa.
+Configurações do sistema — quatro abas organizadas por finalidade.
 
-  🔄 Atualização  — status das fontes de dados e execução de jobs
-  🗄️ Banco        — conexão, schema e importação de dados históricos
-  💳 Fatura       — upload/importação de fatura de cartão de crédito
-  🔒 Segurança    — sessão e autenticação
+  💳 Atualizar Controle Financeiro — fatura do cartão + extratos bancários
+  🔄 Atualizar Dados Financeiros   — CVM, YFinance, Banco Central, macro (Empresas B3)
+  🗄️ Informações do BD             — conexão, schema, diagnóstico e importação técnica
+  🔒 Segurança                     — sessão e autenticação
 """
 from __future__ import annotations
 
@@ -24,16 +24,18 @@ from views.credit_card_invoice_upload import render_upload_fatura_cartao
 
 def render() -> None:
     container_pagina("Configurações", "Status do sistema e atualização de dados", "⚙️")
-    # CSS dos cards é injetado uma vez por render — ambas as abas usam.
+    # CSS dos cards é injetado uma vez por render — todas as abas usam.
     st.markdown(_CARD_CSS, unsafe_allow_html=True)
 
-    tab_dados, tab_banco, tab_fatura_cartao, tab_extratos_bancarios, tab_seg = st.tabs([
-        "🔄 Atualização de Dados",
-        "🗄️ Banco & Importação",
-        "💳 Fatura do Cartão",
-        "🏦 Extratos Bancários",
+    tab_controle, tab_dados, tab_banco, tab_seg = st.tabs([
+        "💳 Atualizar Controle Financeiro",
+        "🔄 Atualizar Dados Financeiros",
+        "🗄️ Informações do BD",
         "🔒 Segurança",
     ])
+
+    with tab_controle:
+        _render_controle_financeiro()
 
     with tab_dados:
         _render_atualizacao()
@@ -41,18 +43,35 @@ def render() -> None:
     with tab_banco:
         _render_banco()
 
-    with tab_fatura_cartao:
-        render_upload_fatura_cartao()
-
-    with tab_extratos_bancarios:
-        render_upload_extrato_bancario()
-
     with tab_seg:
         _render_seguranca()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Tab 1 — Atualização de Dados
+# Tab 1 — Atualizar Controle Financeiro
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _render_controle_financeiro() -> None:
+    """Agrupa as importações usadas pela seção Controle Financeiro."""
+    st.subheader("Fatura do Cartão de Crédito")
+    st.caption(
+        "Importe a fatura do cartão de crédito. "
+        "Os dados processados aparecem na seção **Controle Financeiro → Cartão de Crédito**."
+    )
+    render_upload_fatura_cartao()
+
+    st.divider()
+
+    st.subheader("Extratos Bancários")
+    st.caption(
+        "Importe extratos bancários. "
+        "As movimentações processadas aparecem na seção **Controle Financeiro**."
+    )
+    render_upload_extrato_bancario()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tab 2 — Atualizar Dados Financeiros
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _FRESHNESS_ICON = {
@@ -207,7 +226,7 @@ def _render_atualizacao() -> None:
 | **Documentos corporativos** — fatos relevantes, resultados trimestrais e atas de empresas listadas | Semanal |
 
 > Transações, operações e proventos **não** são atualizados automaticamente —
-> eles vêm de importação manual (aba **Banco & Importação**) ou lançamento direto no app.
+> eles vêm de importação manual (aba **Atualizar Controle Financeiro**) ou lançamento direto no app.
         """)
 
     # ── Botões de execução ─────────────────────────────────────────────────────
@@ -356,7 +375,7 @@ def _executar_pipeline(update_group: str, force: bool) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Tab 2 — Banco & Importação
+# Tab 3 — Informações do BD
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _render_banco() -> None:
@@ -890,9 +909,9 @@ def _render_import_investimentos() -> None:
         if rec:
             if rec.get("ok"):
                 st.success(
-                    f"✅ {rec.get('positions_upserted', 0)} posicoes "
+                    f"✅ {rec.get('positions_upserted', 0)} posições "
                     f"recalculadas a partir de "
-                    f"{rec.get('transactions_loaded', 0)} operacoes."
+                    f"{rec.get('transactions_loaded', 0)} operações."
                 )
                 if rec.get("alerts"):
                     with st.expander("Alertas"):
@@ -1111,16 +1130,16 @@ def _render_import_result(summary: dict) -> None:
         if rec.get("ok"):
             st.caption(
                 f"📊 Carteira atualizada: {rec.get('positions_upserted', 0)} "
-                f"posicoes recalculadas a partir de "
-                f"{rec.get('transactions_loaded', 0)} operacoes."
+                f"posições recalculadas a partir de "
+                f"{rec.get('transactions_loaded', 0)} operações."
             )
             if rec.get("alerts"):
-                with st.expander("Alertas no calculo da carteira"):
+                with st.expander("Alertas no cálculo da carteira"):
                     for msg in rec["alerts"]:
                         st.caption(msg)
         else:
             st.warning(
-                f"📊 Recalculo da carteira falhou: {rec.get('error', 'erro desconhecido')}"
+                f"📊 Recálculo da carteira falhou: {rec.get('error', 'erro desconhecido')}"
             )
 
     errors = summary.get("errors") or []
@@ -1133,7 +1152,7 @@ def _render_import_result(summary: dict) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Tab 3 — Segurança
+# Tab 4 — Segurança
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _render_seguranca() -> None:
