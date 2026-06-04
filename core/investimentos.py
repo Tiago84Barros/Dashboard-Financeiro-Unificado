@@ -299,6 +299,130 @@ _SQL_POSICOES_SNAPSHOT = """
 """
 
 
+_SQL_POSICOES_EXTRAS_FORA_SNAPSHOT = """
+    SELECT
+        pp.quantity,
+        pp.average_price,
+        pp.total_invested,
+        a.ticker,
+        a.name          AS asset_name,
+        a.class         AS asset_class,
+        a.sector,
+        a.currency,
+        aq.close        AS current_price,
+        fx.close        AS usd_brl_rate
+    FROM   portfolio_positions pp
+    JOIN   assets a ON a.id = pp.asset_id
+    LEFT JOIN LATERAL (
+        SELECT close
+        FROM   asset_quotes
+        WHERE  asset_id = pp.asset_id
+        ORDER  BY timestamp DESC
+        LIMIT  1
+    ) aq ON true
+    LEFT JOIN LATERAL (
+        SELECT aq2.close
+        FROM   asset_quotes aq2
+        JOIN   assets a2 ON a2.id = aq2.asset_id
+        WHERE  a2.ticker = 'USDBRL'
+        ORDER  BY aq2.timestamp DESC
+        LIMIT  1
+    ) fx ON true
+    WHERE  pp.user_id = :uid
+      AND  pp.quantity > 0.000001
+      AND  pp.asset_id NOT IN (
+               SELECT DISTINCT pps.asset_id
+               FROM   portfolio_position_snapshots pps
+               WHERE  pps.user_id = :uid
+           )
+    ORDER  BY pp.total_invested DESC
+"""
+
+
+def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
+    """Acrescenta posições fora do snapshot XP (ex: Nomad ETFs) ao dict de carteira.
+
+    Os valores de USD são convertidos para BRL usando a taxa fx do banco ou
+    o average_price já em USD × fx_rate. Recalcula totais e pct_carteira no final.
+    """
+    def _f(v) -> float:
+        return float(v) if v is not None else 0.0
+
+    tickers_existentes = {p["ticker"].upper() for p in carteira.get("posicoes", [])}
+    novas: list[dict] = []
+
+    for r in extra_rows:
+        ticker = (r.ticker or "").upper().strip()
+        if not ticker or ticker in tickers_existentes:
+            continue
+
+        qty     = _f(r.quantity)
+        pm_raw  = _f(r.average_price)
+        ti_raw  = _f(r.total_invested)
+        if qty <= 0:
+            continue
+
+        ccy      = (r.currency or "BRL").upper()
+        fx_rate  = _f(r.usd_brl_rate) or 1.0
+        pr_raw   = _f(r.current_price) if r.current_price is not None else pm_raw
+
+        if ccy == "USD" and fx_rate > 1.0:
+            pm      = pm_raw * fx_rate
+            ti      = ti_raw * fx_rate
+            pr_atual = pr_raw * fx_rate
+        else:
+            pm      = pm_raw
+            ti      = ti_raw
+            pr_atual = pr_raw
+
+        if ti <= 0:
+            ti = pm * qty
+
+        vm      = round(qty * pr_atual, 2)
+        rentab  = round((vm - ti) / ti * 100, 2) if ti > 0 else 0.0
+        classe_raw = "etf_intl" if ccy == "USD" else (r.asset_class or "other")
+
+        novas.append({
+            "ticker":          ticker,
+            "nome":            r.asset_name or ticker,
+            "classe":          _CLASS_LABEL.get(classe_raw, "ETF Internacional"),
+            "setor":           _SETOR_LABEL.get(r.sector or "other", r.sector or "ETF Internacional"),
+            "moeda":           ccy,
+            "pais":            "US" if ccy == "USD" else "BR",
+            "quantidade":      qty,
+            "preco_medio":     round(pm, 6),
+            "total_investido": round(ti, 2),
+            "custo_estimado":  True,
+            "custo_fonte":     "portfolio_positions",
+            "preco_atual":     round(pr_atual, 6),
+            "valor_mercado":   vm,
+            "rentab_pct":      rentab,
+            "pct_carteira":    0.0,
+            "cor":             _CLASS_COR.get(classe_raw, "#4A9EFF"),
+        })
+
+    if not novas:
+        return
+
+    carteira["posicoes"].extend(novas)
+    carteira["posicoes"].sort(key=lambda p: p["valor_mercado"], reverse=True)
+
+    ti_total = sum(p["total_investido"] for p in carteira["posicoes"])
+    vm_total = sum(p["valor_mercado"]   for p in carteira["posicoes"])
+    base     = vm_total if vm_total > 0 else ti_total
+    for p in carteira["posicoes"]:
+        p["pct_carteira"] = round(p["valor_mercado"] / base * 100, 2) if base > 0 else 0.0
+
+    carteira["total_investido"]         = round(ti_total, 2)
+    carteira["total_mercado"]           = round(vm_total, 2)
+    carteira["num_ativos"]              = len(carteira["posicoes"])
+    carteira["rentabilidade_total_pct"] = round(
+        (vm_total - ti_total) / ti_total * 100, 2
+    ) if ti_total > 0 else 0.0
+    carteira["por_classe"] = _agregar_por_classe(carteira["posicoes"])
+    carteira["por_setor"]  = _agregar_por_setor(carteira["posicoes"])
+
+
 def _carteira_real() -> dict:
     """
     Consulta portfolio_positions + assets + asset_quotes (LATERAL) e monta o dict.
@@ -339,7 +463,15 @@ def _carteira_real() -> dict:
             rows = conn.execute(text(_SQL_POSICOES_SNAPSHOT), {"uid": owner}).fetchall()
             if rows:
                 tx_costs = _calcular_custos_transacoes(conn, owner)
-                return _montar_carteira_snapshot(rows, tx_costs)
+                carteira = _montar_carteira_snapshot(rows, tx_costs)
+                # Adiciona posições que existem em portfolio_positions mas NÃO
+                # no snapshot XP (ex: ETFs Nomad — SPY, IEFA — importados via PDF).
+                extra_rows = conn.execute(
+                    text(_SQL_POSICOES_EXTRAS_FORA_SNAPSHOT), {"uid": owner}
+                ).fetchall()
+                if extra_rows:
+                    _adicionar_extras_ao_snapshot(carteira, extra_rows)
+                return carteira
         rows = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
 
     if not rows:
