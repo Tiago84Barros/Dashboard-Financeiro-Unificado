@@ -13,6 +13,7 @@ import hashlib
 import io
 import logging
 import re
+import threading
 import unicodedata
 from datetime import date, datetime
 from typing import Any
@@ -105,8 +106,28 @@ DDL_SQL = [
     CREATE INDEX IF NOT EXISTS idx_bank_statement_rules_user_bank
     ON bank_statement_classification_rules (user_id, banco)
     """,
-    "ALTER TABLE bank_statement_movements ENABLE ROW LEVEL SECURITY",
-    "ALTER TABLE bank_statement_classification_rules ENABLE ROW LEVEL SECURITY",
+    """
+    DO $$ BEGIN
+        IF NOT (
+            SELECT relrowsecurity FROM pg_class
+            WHERE relname = 'bank_statement_movements'
+              AND relnamespace = 'public'::regnamespace
+        ) THEN
+            ALTER TABLE bank_statement_movements ENABLE ROW LEVEL SECURITY;
+        END IF;
+    END; $$
+    """,
+    """
+    DO $$ BEGIN
+        IF NOT (
+            SELECT relrowsecurity FROM pg_class
+            WHERE relname = 'bank_statement_classification_rules'
+              AND relnamespace = 'public'::regnamespace
+        ) THEN
+            ALTER TABLE bank_statement_classification_rules ENABLE ROW LEVEL SECURITY;
+        END IF;
+    END; $$
+    """,
     """
     DO $$ BEGIN
         IF NOT EXISTS (
@@ -825,9 +846,23 @@ def classify_bank_movements(rows: list[dict], categories: list[dict], saved_rule
     return [classify_bank_movement(row, categories, saved_rules or []) for row in rows]
 
 
+# Garante que o DDL rode apenas uma vez por processo (evita deadlock por
+# ALTER TABLE ENABLE ROW LEVEL SECURITY executado em paralelo por múltiplas
+# sessões Streamlit que compartilham o mesmo worker).
+_schema_initialized: bool = False
+_schema_init_lock = threading.Lock()
+
+
 def _ensure_tables(conn) -> None:
-    for ddl in DDL_SQL:
-        conn.execute(text(ddl))
+    global _schema_initialized
+    if _schema_initialized:
+        return
+    with _schema_init_lock:
+        if _schema_initialized:
+            return
+        for ddl in DDL_SQL:
+            conn.execute(text(ddl))
+        _schema_initialized = True
 
 
 def _owner_id() -> str:

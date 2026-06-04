@@ -1,10 +1,11 @@
 """
 views/configuracoes.py
-Configurações do sistema — quatro abas organizadas por finalidade.
+Configurações do sistema — cinco abas organizadas por finalidade.
 
   💳 Atualizar Controle Financeiro — fatura do cartão + extratos bancários
+  📈 Atualizar Investimentos       — importações B3, XP, Nomad
   🔄 Atualizar Dados Financeiros   — CVM, YFinance, Banco Central, macro (Empresas B3)
-  🗄️ Informações do BD             — conexão, schema, diagnóstico e importação técnica
+  🗄️ Informações do BD             — conexão, schema e diagnóstico técnico
   🔒 Segurança                     — sessão e autenticação
 """
 from __future__ import annotations
@@ -27,8 +28,9 @@ def render() -> None:
     # CSS dos cards é injetado uma vez por render — todas as abas usam.
     st.markdown(_CARD_CSS, unsafe_allow_html=True)
 
-    tab_controle, tab_dados, tab_banco, tab_seg = st.tabs([
+    tab_controle, tab_invest, tab_dados, tab_banco, tab_seg = st.tabs([
         "💳 Atualizar Controle Financeiro",
+        "📈 Atualizar Investimentos",
         "🔄 Atualizar Dados Financeiros",
         "🗄️ Informações do BD",
         "🔒 Segurança",
@@ -36,6 +38,9 @@ def render() -> None:
 
     with tab_controle:
         _render_controle_financeiro()
+
+    with tab_invest:
+        _render_investimentos()
 
     with tab_dados:
         _render_atualizacao()
@@ -71,7 +76,23 @@ def _render_controle_financeiro() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Tab 2 — Atualizar Dados Financeiros
+# Tab 2 — Atualizar Investimentos
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _render_investimentos() -> None:
+    """Importações manuais de investimentos: B3, XP e Nomad."""
+    st.caption(
+        "Importe arquivos exportados pela B3, XP ou Nomad. "
+        "Os dados processados aparecem na seção **Investimentos**."
+    )
+    if settings.has_database:
+        _render_import_investimentos()
+    else:
+        st.warning("Banco não conectado. Configure `SUPABASE_UNIFICADO_URL` para habilitar as importações.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tab 3 — Atualizar Dados Financeiros
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _FRESHNESS_ICON = {
@@ -454,17 +475,8 @@ def _render_banco() -> None:
         else:
             st.warning("Banco não conectado.")
 
-    # ── Importações de Investimentos (separado das financeiras acima) ─────────
-    st.divider()
-    st.markdown("### 📈 Importar dados de investimentos")
-    st.caption(
-        "Importação manual a partir de arquivos exportados pelo próprio "
-        "investidor. Não realiza scraping nem login automático em corretora."
-    )
-    if settings.has_database:
-        _render_import_investimentos()
-    else:
-        st.warning("Banco não conectado.")
+    # As importações de investimentos (B3, XP, Nomad) ficam na aba
+    # "Atualizar Investimentos" — não são exibidas aqui.
 
 
 def _render_storage_health() -> None:
