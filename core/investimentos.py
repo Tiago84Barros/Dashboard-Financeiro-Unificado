@@ -285,7 +285,10 @@ _SQL_POSICOES_SNAPSHOT = """
         pps.country,
         a.ticker,
         a.class AS asset_class,
-        a.sector
+        a.sector,
+        aq_live.close        AS live_price,
+        aq_live.timestamp    AS live_timestamp,
+        fx.close             AS usd_brl_rate
     FROM portfolio_position_snapshots pps
     JOIN latest_source ls
       ON ls.source_system = pps.source_system
@@ -294,6 +297,21 @@ _SQL_POSICOES_SNAPSHOT = """
     JOIN assets a ON a.id = pps.asset_id
     LEFT JOIN pp_base
       ON pp_base.base_ticker = REGEXP_REPLACE(a.ticker, 'F$', '')
+    LEFT JOIN LATERAL (
+        SELECT close, timestamp
+        FROM   asset_quotes
+        WHERE  asset_id = pps.asset_id
+        ORDER  BY timestamp DESC
+        LIMIT  1
+    ) aq_live ON true
+    LEFT JOIN LATERAL (
+        SELECT aq2.close
+        FROM   asset_quotes aq2
+        JOIN   assets a2 ON a2.id = aq2.asset_id
+        WHERE  a2.ticker = 'USDBRL'
+        ORDER  BY aq2.timestamp DESC
+        LIMIT  1
+    ) fx ON true
     WHERE pps.user_id = :uid
     ORDER BY pps.market_value DESC
 """
@@ -537,37 +555,44 @@ def _carteira_real() -> dict:
         total_investido += ti
         total_mercado   += vm
 
+        cotacao_fonte = "live" if r.current_price is not None else "snapshot"
         posicoes.append({
-            "ticker":          r.ticker,
-            "nome":            r.asset_name,
-            "classe":          _CLASS_LABEL.get(classe_raw, classe_raw.title()),
-            "setor":           _SETOR_LABEL.get(setor_raw, setor_raw.title()),
-            "moeda":           ccy,
-            "quantidade":      qty,
-            "preco_medio":     pm,
-            "total_investido": ti,
-            "preco_atual":     preco_atual,
-            "valor_mercado":   vm,
-            "rentab_pct":      rentab,
-            "pct_carteira":    0.0,    # calculado abaixo (requer total_mercado final)
-            "cor":             _CLASS_COR.get(classe_raw, "#718096"),
+            "ticker":            r.ticker,
+            "nome":              r.asset_name,
+            "classe":            _CLASS_LABEL.get(classe_raw, classe_raw.title()),
+            "setor":             _SETOR_LABEL.get(setor_raw, setor_raw.title()),
+            "moeda":             ccy,
+            "quantidade":        qty,
+            "preco_medio":       pm,
+            "total_investido":   ti,
+            "cotacao_fonte":     cotacao_fonte,
+            "preco_atual":       preco_atual,
+            "valor_mercado":     vm,
+            "diferenca_reais":   round(vm - ti, 2),
+            "rentab_pct":        rentab,
+            "pct_carteira":      0.0,
+            "cor":               _CLASS_COR.get(classe_raw, "#718096"),
         })
 
     # Preenche pct_carteira com base no total_mercado consolidado
     base = total_mercado if total_mercado > 0 else total_investido
+    n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
     for p in posicoes:
         p["pct_carteira"] = round(p["valor_mercado"] / base * 100, 2) if base > 0 else 0.0
 
+    diferenca_total = round(total_mercado - total_investido, 2)
     rentabilidade_total = round(
-        (total_mercado - total_investido) / total_investido * 100, 2
+        diferenca_total / total_investido * 100, 2
     ) if total_investido > 0 else 0.0
 
     return {
         "total_investido":         round(total_investido, 2),
         "total_mercado":           round(total_mercado, 2),
+        "diferenca_reais":         diferenca_total,
         "rentabilidade_total_pct": rentabilidade_total,
         "num_ativos":              len(posicoes),
         "cotacoes_disponiveis":    cotacoes_disponiveis,
+        "n_cotacoes_live":         n_live,
         "posicoes":                posicoes,
         "por_classe":              _agregar_por_classe(posicoes),
         "por_setor":               _agregar_por_setor(posicoes),
@@ -659,12 +684,23 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
                 "vm_sum":         0.0,
                 "vi_snap_sum":    0.0,
                 "preco_mkt_pond": 0.0,
+                "live_price":     None,   # preço mais recente de asset_quotes
+                "live_ts":        None,   # timestamp do preço live
+                "usd_brl_rate":   None,   # taxa USD/BRL (apenas para USD assets)
             }
         g = grupos[base]
         g["rows"].append(r)
         g["qty_snap_sum"] += qty
         g["vm_sum"]       += vm
         g["vi_snap_sum"]  += float(r.invested_value or 0)
+        # Captura preço live do primeiro row com cotação disponível
+        lp = getattr(r, "live_price", None)
+        if lp is not None and g["live_price"] is None:
+            g["live_price"] = float(lp)
+            g["live_ts"]    = getattr(r, "live_timestamp", None)
+        fx = getattr(r, "usd_brl_rate", None)
+        if fx is not None and g["usd_brl_rate"] is None:
+            g["usd_brl_rate"] = float(fx)
 
     # ── 2. Para cada base_ticker, calcula campos consolidados
     total_investido = 0.0
@@ -739,9 +775,27 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
             preco_medio = ti / qty if qty > 0 else 0.0
             custo_fonte = "mercado_fallback"
 
-        # ── PRECO/VALOR DE MERCADO: usa qty (pode ser pp_qty p/ USD scaled)
-        preco_atual = (vm / qty) if qty > 0 else 0.0
-        vm_calc = round(vm, 2)
+        # ── PRECO/VALOR DE MERCADO: preferência para cotação live de asset_quotes.
+        # Para ativos de renda fixa / tesouro não há cotação diária — mantém
+        # snapshot como fallback.  Para ações, ETFs e FIIs, usa o preço mais
+        # recente disponível (yfinance via pipeline) para refletir o valor atual.
+        live_price   = g.get("live_price")
+        usd_brl_live = g.get("usd_brl_rate") or 1.0
+        is_rf = asset_type_low in ("fixed_income", "tesouro", "renda_fixa", "fundo_rf")
+
+        if live_price and not is_rf:
+            ccy_snap = str(primary.currency or "BRL").upper()
+            if ccy_snap == "USD":
+                preco_atual = live_price * usd_brl_live
+            else:
+                preco_atual = live_price
+            vm_calc = round(qty * preco_atual, 2)
+            cotacao_fonte = "live"
+        else:
+            # Fallback: preço implícito do snapshot
+            preco_atual = (vm / qty) if qty > 0 else 0.0
+            vm_calc = round(vm, 2)
+            cotacao_fonte = "snapshot"
 
         rentab = round((vm_calc - ti) / ti * 100, 2) if ti > 0 else 0.0
         custo_estimado = custo_fonte != "b3_negociacao"
@@ -759,33 +813,39 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
             "pais":            primary.country or "BR",
             "quantidade":      qty,
             "preco_medio":     round(preco_medio, 6),
-            "total_investido": round(ti, 2),
-            "custo_estimado":  custo_estimado,
-            "custo_fonte":     custo_fonte,
-            "preco_atual":     round(preco_atual, 6),
-            "valor_mercado":   vm_calc,
-            "rentab_pct":      rentab,
-            "pct_carteira":    0.0,
-            "cor":             _CLASS_COR.get(classe_raw, "#718096"),
+            "total_investido":    round(ti, 2),
+            "custo_estimado":     custo_estimado,
+            "custo_fonte":        custo_fonte,
+            "cotacao_fonte":      cotacao_fonte,  # "live" | "snapshot"
+            "preco_atual":        round(preco_atual, 6),
+            "valor_mercado":      vm_calc,
+            "diferenca_reais":    round(vm_calc - ti, 2),
+            "rentab_pct":         rentab,
+            "pct_carteira":       0.0,
+            "cor":                _CLASS_COR.get(classe_raw, "#718096"),
         })
 
     # Ordena por valor de mercado DESC (mantém UX original)
     posicoes.sort(key=lambda p: p["valor_mercado"], reverse=True)
 
     base_total = total_mercado if total_mercado > 0 else total_investido
+    n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
     for p in posicoes:
         p["pct_carteira"] = round(p["valor_mercado"] / base_total * 100, 2) if base_total > 0 else 0.0
 
+    diferenca_total = round(total_mercado - total_investido, 2)
     rentabilidade_total = round(
-        (total_mercado - total_investido) / total_investido * 100, 2
+        diferenca_total / total_investido * 100, 2
     ) if total_investido > 0 else 0.0
 
     return {
         "total_investido":         round(total_investido, 2),
         "total_mercado":           round(total_mercado, 2),
+        "diferenca_reais":         diferenca_total,
         "rentabilidade_total_pct": rentabilidade_total,
         "num_ativos":              len(posicoes),
-        "cotacoes_disponiveis":    True,
+        "cotacoes_disponiveis":    n_live > 0,
+        "n_cotacoes_live":         n_live,
         "posicoes":                posicoes,
         "por_classe":              _agregar_por_classe(posicoes),
         "por_setor":               _agregar_por_setor(posicoes),

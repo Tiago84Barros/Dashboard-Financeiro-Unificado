@@ -2102,17 +2102,28 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     yoc_cor = "#718096" if (custo_ausente or renda <= 0) else _COR_ROXO
     mercado_cor = "#CBD5E0" if custo_ausente else cor_vm
 
+    # Indicador da fonte da cotação: 🟢 live (asset_quotes) | 🟡 snapshot (XP)
+    cotacao_fonte = pos.get("cotacao_fonte", "snapshot")
+    fonte_icon    = "🟢" if cotacao_fonte == "live" else "🟡"
+    fonte_label   = "mercado" if cotacao_fonte == "live" else "snapshot XP"
+
+    diferenca_r   = pos.get("diferenca_reais", round(pos["valor_mercado"] - ti, 2))
+    dif_sign      = "+" if diferenca_r >= 0 else ""
+    dif_cor       = _COR_POSITIVO if diferenca_r >= 0 else _COR_NEGATIVO
+    dif_val       = "—" if custo_ausente else f"{dif_sign}{fmt_moeda(diferenca_r)}"
+
     metricas = [
-        ("Peso na carteira",  f"{pos['pct_carteira']:.2f}%",       "#CBD5E0"),
-        ("Quantidade",        f"{pos['quantidade']:,.0f}".replace(",", "."), "#CBD5E0"),
-        (f"Preço atual {dot}", fmt_moeda(pos["preco_atual"]),        "#CBD5E0"),
-        ("Preço médio",       fmt_moeda(pos["preco_medio"]),         "#CBD5E0"),
-        (custo_label,          custo_val,                            "#CBD5E0"),
-        ("Valor de mercado",  fmt_moeda(pos["valor_mercado"]),       mercado_cor),
-        ("Resultado total",   resultado_val,                         resultado_cor),
-        ("Renda recebida",    fmt_moeda(renda),                      _COR_ALERTA),
-        ("Yield s/ custo",    yoc_val,                               yoc_cor),
-        ("Retorno s/ custo",  retorno_val,                           retorno_cor),
+        ("Peso na carteira",              f"{pos['pct_carteira']:.2f}%",             "#CBD5E0"),
+        ("Quantidade",                    f"{pos['quantidade']:,.6f}".rstrip("0").rstrip(".") if "." in f"{pos['quantidade']:.6f}" else f"{pos['quantidade']:,.0f}".replace(",", "."), "#CBD5E0"),
+        (f"{fonte_icon} Cotação ({fonte_label}) {dot}", fmt_moeda(pos["preco_atual"]), "#CBD5E0"),
+        ("Preço médio (custo)",           fmt_moeda(pos["preco_medio"]),               "#CBD5E0"),
+        (custo_label,                     custo_val,                                   "#CBD5E0"),
+        ("Valor de mercado atual",        fmt_moeda(pos["valor_mercado"]),              mercado_cor),
+        ("Valoriz./Desvalorização (R$)",  dif_val,                                     dif_cor),
+        ("Resultado (%)",                 resultado_val,                                resultado_cor),
+        ("Renda recebida",                fmt_moeda(renda),                             _COR_ALERTA),
+        ("Yield s/ custo",                yoc_val,                                      yoc_cor),
+        ("Retorno s/ custo (c/ renda)",   retorno_val,                                  retorno_cor),
     ]
     rows_html = "".join(
         f'<div style="display:flex;justify-content:space-between;padding:4px 0;'
@@ -2183,22 +2194,31 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
         )
 
     # ── KPIs resumo ──────────────────────────────────────────────────────────
+    dif_total = carteira.get("diferenca_reais", round(carteira["total_mercado"] - carteira["total_investido"], 2))
+    dif_cor_k = _COR_POSITIVO if dif_total >= 0 else _COR_NEGATIVO
+    dif_sign  = "+" if dif_total >= 0 else ""
+    rent      = carteira["rentabilidade_total_pct"]
+    n_live    = carteira.get("n_cotacoes_live", 0)
+    n_total   = carteira.get("num_ativos", 0)
+    cotacao_sub = (f"{n_live}/{n_total} cotações ao vivo" if n_live else
+                   "Cotações do snapshot XP")
+
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
-        st.markdown(_kpi("Total Investido", fmt_moeda(carteira["total_investido"]),
-                         "Custo histórico acumulado.", "#E2E8F0"),
+        st.markdown(_kpi("Custo / Investido", fmt_moeda(carteira["total_investido"]),
+                         "Custo histórico total aportado.", "#E2E8F0"),
                     unsafe_allow_html=True)
     with c2:
-        st.markdown(_kpi("Valor de Mercado", fmt_moeda(carteira["total_mercado"]),
-                         "Valor atual da carteira.", _COR_INFO),
+        st.markdown(_kpi("Valor de Mercado Atual", fmt_moeda(carteira["total_mercado"]),
+                         cotacao_sub, _COR_INFO),
                     unsafe_allow_html=True)
     with c3:
-        rent = carteira["rentabilidade_total_pct"]
-        st.markdown(_kpi("Rentabilidade Total",
-                         fmt_percentual(rent),
-                         "(Mercado − Custo) / Custo.",
-                         _COR_POSITIVO if rent >= 0 else _COR_NEGATIVO),
-                    unsafe_allow_html=True)
+        st.markdown(_kpi(
+            "Valoriz./Desvalorização",
+            f"{dif_sign}{fmt_moeda(dif_total)}",
+            f"Mercado − Custo · {'+' if rent >= 0 else ''}{rent:.2f}%",
+            dif_cor_k,
+        ), unsafe_allow_html=True)
     with c4:
         st.markdown(_kpi("Ativos na Carteira",
                          str(carteira["num_ativos"]),
@@ -3421,9 +3441,11 @@ def render() -> None:
             "erro"    if _fonte == "mock_fallback" else "alerta",
         )
     with col_b2:
+        _n_live  = carteira.get("n_cotacoes_live", 0)
+        _n_tot   = carteira.get("num_ativos", 0)
         badge_status(
-            "Cotações OK" if carteira["cotacoes_disponiveis"] else "Sem cotações",
-            "sucesso" if carteira["cotacoes_disponiveis"] else "alerta",
+            f"Cotações live {_n_live}/{_n_tot}" if _n_live else "Cotações snapshot",
+            "sucesso" if _n_live else "alerta",
         )
     with col_b3:
         badge_status(f"{proventos['num_eventos']} proventos", "neutro")
