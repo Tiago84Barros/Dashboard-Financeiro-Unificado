@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from core.controle import (
+    corrigir_classificacao_pagamentos_fatura,
     get_contas_cartao_credito,
     importar_fatura_cartao_csv,
     parse_fatura_cartao_csv,
@@ -204,13 +205,34 @@ def render_upload_fatura_cartao() -> None:
     if len(rows) > 80:
         st.caption(f"Exibindo 80 de {len(rows)} linhas da prévia.")
 
-    importar = st.button(
-        "Importar fatura",
-        type="primary",
-        disabled=(not account_id or not rows or bool(parsed.get("errors"))),
-        use_container_width=True,
-        key="settings_cc_invoice_import_btn",
-    )
+    col_imp, col_fix = st.columns([3, 1], gap="small")
+    with col_imp:
+        importar = st.button(
+            "Importar fatura",
+            type="primary",
+            disabled=(not account_id or not rows or bool(parsed.get("errors"))),
+            use_container_width=True,
+            key="settings_cc_invoice_import_btn",
+        )
+    with col_fix:
+        fix_btn = st.button(
+            "🔧 Corrigir pagamentos",
+            disabled=not account_id,
+            use_container_width=True,
+            key="settings_cc_fix_payments_btn",
+            help="Reclassifica 'Inclusão de Pagamento' e 'Pag Fatura Boleto' "
+                 "que foram importados incorretamente como estornos.",
+        )
+
+    if fix_btn and account_id:
+        with st.spinner("Corrigindo classificação dos pagamentos..."):
+            n = corrigir_classificacao_pagamentos_fatura(account_id)
+        if n:
+            st.success(f"✅ {n} pagamento(s) de fatura reclassificado(s) corretamente.")
+            st.cache_data.clear()
+        else:
+            st.info("Nenhum lançamento incorreto encontrado — dados já estão corretos.")
+
     if importar:
         result = importar_fatura_cartao_csv(file_bytes, due_date, account_id)
         result["file_name"] = uploaded.name

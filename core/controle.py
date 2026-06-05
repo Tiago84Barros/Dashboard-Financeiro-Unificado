@@ -787,6 +787,86 @@ def _invoice_fingerprint(row: dict, account_id: str) -> tuple:
     )
 
 
+_PAYMENT_TERMS_NORM = (
+    "pag fatura", "pagamento fatura",
+    "inclusao de pagamento", "inclusão de pagamento",
+    "debito em conta", "pagto debito",
+)
+
+
+def corrigir_classificacao_pagamentos_fatura(account_id: str) -> int:
+    """
+    Corrige registros CSV de cartão de crédito que foram importados com a
+    categoria 'Créditos e Estornos' mas na verdade são pagamentos da fatura
+    ('Inclusão de Pagamento', 'Pag Fatura Boleto', etc.).
+
+    Atualiza a categoria para 'Pagamento de Cartão' e o tipo para 'transfer'.
+    Retorna o número de registros corrigidos.
+    """
+    from sqlalchemy import text as _t
+    from core.database import get_engine
+
+    engine = get_engine()
+    if engine is None:
+        return 0
+    owner = settings.OWNER_USER_ID
+    if not owner:
+        return 0
+
+    # Monta condição OR para todos os termos de pagamento
+    conditions = " OR ".join(
+        f"LOWER(t.description) LIKE '%{term}%'" for term in _PAYMENT_TERMS_NORM
+    )
+
+    try:
+        with engine.begin() as conn:
+            # 1. Garante que a categoria 'Pagamento de Cartão' existe
+            pay_cat = conn.execute(_t("""
+                SELECT id::text FROM categories
+                WHERE user_id = CAST(:uid AS uuid)
+                  AND LOWER(name) = 'pagamento de cartão'
+                LIMIT 1
+            """), {"uid": owner}).fetchone()
+
+            if not pay_cat:
+                pay_cat = conn.execute(_t("""
+                    INSERT INTO categories (user_id, name, type)
+                    VALUES (CAST(:uid AS uuid), 'Pagamento de Cartão', 'expense')
+                    RETURNING id::text
+                """), {"uid": owner}).fetchone()
+
+            if not pay_cat:
+                return 0
+
+            pay_cat_id = pay_cat[0]
+
+            # 2. Atualiza registros: pagamentos de fatura classificados como estorno
+            result = conn.execute(_t(f"""
+                UPDATE transactions t
+                SET category_id = CAST(:cat_id AS uuid),
+                    type = 'transfer'
+                FROM categories c
+                WHERE t.account_id = CAST(:account_id AS uuid)
+                  AND t.user_id    = CAST(:uid AS uuid)
+                  AND t.source     = 'csv'
+                  AND t.amount     < 0
+                  AND c.id         = t.category_id
+                  AND LOWER(c.name) IN ('créditos e estornos', 'creditos e estornos')
+                  AND ({conditions})
+            """), {
+                "uid": owner,
+                "account_id": account_id,
+                "cat_id": pay_cat_id,
+            })
+            updated = result.rowcount if hasattr(result, "rowcount") else 0
+        if updated:
+            _clear_controle_caches()
+        return updated
+    except Exception as exc:
+        logger.warning("[controle] corrigir_classificacao_pagamentos_fatura: %s", exc)
+        return 0
+
+
 def importar_fatura_cartao_csv(file_bytes: bytes, vencimento: _date, account_id: str) -> dict:
     """Importa a fatura para `transactions`, com deduplicação idempotente por contagem."""
     if settings.MOCK_MODE:
@@ -812,6 +892,9 @@ def importar_fatura_cartao_csv(file_bytes: bytes, vencimento: _date, account_id:
     rows = parsed["rows"]
     inserted = 0
     skipped = 0
+
+    # Corrige registros anteriores classificados incorretamente como estornos
+    corrigir_classificacao_pagamentos_fatura(account_id)
 
     with engine.begin() as conn:
         account = conn.execute(
