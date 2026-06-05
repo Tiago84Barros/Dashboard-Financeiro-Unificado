@@ -867,6 +867,57 @@ def corrigir_classificacao_pagamentos_fatura(account_id: str) -> int:
         return 0
 
 
+def limpar_transacoes_cartao(account_id: str, due_date: _date | None = None) -> int:
+    """
+    Remove os lançamentos CSV do cartão de crédito informado.
+
+    - Se due_date for fornecido, apaga somente os registros da fatura
+      com aquele vencimento.
+    - Se due_date for None, apaga TODOS os registros CSV do cartão.
+
+    Retorna o número de registros apagados.
+    """
+    from sqlalchemy import text as _t
+    from core.database import get_engine
+
+    engine = get_engine()
+    if engine is None:
+        return 0
+    owner = settings.OWNER_USER_ID
+    if not owner:
+        return 0
+
+    date_filter = "AND due_date = :due_date" if due_date else ""
+    params: dict = {"uid": owner, "account_id": account_id}
+    if due_date:
+        params["due_date"] = due_date
+
+    try:
+        with engine.begin() as conn:
+            count_row = conn.execute(_t(f"""
+                SELECT COUNT(*) AS n FROM transactions
+                WHERE account_id = CAST(:account_id AS uuid)
+                  AND user_id    = CAST(:uid AS uuid)
+                  AND source     = 'csv'
+                  {date_filter}
+            """), params).fetchone()
+            total = int(count_row.n) if count_row else 0
+            if total == 0:
+                return 0
+            conn.execute(_t(f"""
+                DELETE FROM transactions
+                WHERE account_id = CAST(:account_id AS uuid)
+                  AND user_id    = CAST(:uid AS uuid)
+                  AND source     = 'csv'
+                  {date_filter}
+            """), params)
+        _clear_controle_caches()
+        return total
+    except Exception as exc:
+        logger.warning("[controle] limpar_transacoes_cartao: %s", exc)
+        return 0
+
+
 def importar_fatura_cartao_csv(file_bytes: bytes, vencimento: _date, account_id: str) -> dict:
     """Importa a fatura para `transactions`, com deduplicação idempotente por contagem."""
     if settings.MOCK_MODE:

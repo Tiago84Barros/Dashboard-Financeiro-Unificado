@@ -18,6 +18,7 @@ from core.controle import (
     corrigir_classificacao_pagamentos_fatura,
     get_contas_cartao_credito,
     importar_fatura_cartao_csv,
+    limpar_transacoes_cartao,
     parse_fatura_cartao_csv,
 )
 from core.utils import fmt_moeda
@@ -228,7 +229,7 @@ def render_upload_fatura_cartao() -> None:
     if len(rows) > 80:
         st.caption(f"Exibindo 80 de {len(rows)} linhas da prévia.")
 
-    col_imp, col_fix = st.columns([3, 1], gap="small")
+    col_imp, col_fix, col_del = st.columns([3, 1, 1], gap="small")
     with col_imp:
         importar = st.button(
             "Importar fatura",
@@ -246,6 +247,45 @@ def render_upload_fatura_cartao() -> None:
             help="Reclassifica 'Inclusão de Pagamento' e 'Pag Fatura Boleto' "
                  "que foram importados incorretamente como estornos.",
         )
+    with col_del:
+        del_btn = st.button(
+            "🗑️ Limpar fatura",
+            disabled=not account_id,
+            use_container_width=True,
+            key="settings_cc_clear_btn",
+            help="Apaga os lançamentos CSV desta fatura (vencimento selecionado) "
+                 "para reimportação limpa.",
+        )
+
+    # ── Confirmação antes de limpar ──────────────────────────────────────────
+    if del_btn and account_id:
+        st.session_state["cc_confirm_clear"] = True
+
+    if st.session_state.get("cc_confirm_clear"):
+        st.warning(
+            f"⚠️ Isso apagará **todos** os lançamentos CSV da fatura "
+            f"com vencimento **{due_date.strftime('%d/%m/%Y')}** do cartão selecionado. "
+            "Após apagar, reimporte o CSV para recriar os dados corretamente."
+        )
+        c_yes, c_no = st.columns(2)
+        with c_yes:
+            if st.button("✅ Confirmar limpeza", key="cc_confirm_yes", use_container_width=True):
+                with st.spinner("Apagando lançamentos..."):
+                    deleted = limpar_transacoes_cartao(account_id, due_date)
+                st.session_state["cc_confirm_clear"] = False
+                st.cache_data.clear()
+                if deleted:
+                    st.success(
+                        f"✅ {deleted} lançamento(s) apagado(s). "
+                        "Agora clique em **Importar fatura** para reimportar."
+                    )
+                else:
+                    st.info("Nenhum lançamento encontrado para esta fatura.")
+                st.rerun()
+        with c_no:
+            if st.button("❌ Cancelar", key="cc_confirm_no", use_container_width=True):
+                st.session_state["cc_confirm_clear"] = False
+                st.rerun()
 
     if fix_btn and account_id:
         with st.spinner("Corrigindo classificação dos pagamentos..."):
