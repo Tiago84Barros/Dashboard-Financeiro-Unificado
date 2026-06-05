@@ -18,6 +18,7 @@ from views.controle_financeiro import (
     _is_manual_card_related_text,
     _normalize_merchant_name,
     _prepare_category_analysis,
+    _prepare_annual_card_totals,
     _prepare_category_limit_analysis,
     _prepare_future_invoice_projection,
     _prepare_installment_analysis,
@@ -196,6 +197,22 @@ def test_credit_card_invoice_analytics_separates_consumption_adjustments_and_fee
     assert summary["pagamentos"] == 145.86
     assert summary["estornos"] == 98.00
     assert summary["total_liquido"] == -108.06
+
+
+def test_credit_card_annual_totals_keep_tariff_only_years():
+    df = _card_rows_dataframe([
+        _cc_tx(1, "COMPRA MERCADO | Compra 05/05/2025 | Cartao 3083 | Parcela Unica", 200, date(2025, 5, 10), date(2025, 5, 5), "Mercado"),
+        _cc_tx(2, "ANUIDADE DIFERENCIADA | Compra 05/06/2026 | Cartao 3083 | Parcela Unica", 90, date(2026, 6, 10), date(2026, 6, 5), "Tarifas"),
+    ])
+    df.loc[df["descricao"].str.contains("ANUIDADE"), "tipo_lancamento"] = "tarifa"
+
+    annual = _prepare_annual_card_totals(df)
+
+    assert list(annual["Ano"]) == [2026, 2025]
+    row_2026 = annual[annual["Ano"] == 2026].iloc[0]
+    assert row_2026["Compras reais (R$)"] == 0
+    assert row_2026["Tarifas (R$)"] == 90
+    assert row_2026["Total (R$)"] == 90
 
 
 def test_credit_card_merchant_normalization_groups_noisy_names():

@@ -1843,6 +1843,27 @@ def _summary_credit_card(df: pd.DataFrame) -> dict:
     }
 
 
+def _prepare_annual_card_totals(df: pd.DataFrame) -> pd.DataFrame:
+    cols = ["Ano", "Compras reais (R$)", "Tarifas (R$)", "Total (R$)"]
+    base = df[df["tipo_lancamento"].isin(["compra", "tarifa"])].dropna(subset=["ano_vencimento"]).copy()
+    if base.empty:
+        return pd.DataFrame(columns=cols)
+
+    annual = (
+        base.groupby(["ano_vencimento", "tipo_lancamento"])["valor_fatura"]
+        .sum()
+        .unstack(fill_value=0.0)
+        .reset_index()
+        .rename(columns={"ano_vencimento": "Ano", "compra": "Compras reais (R$)", "tarifa": "Tarifas (R$)"})
+    )
+    for col in ["Compras reais (R$)", "Tarifas (R$)"]:
+        if col not in annual.columns:
+            annual[col] = 0.0
+    annual["Total (R$)"] = annual["Compras reais (R$)"] + annual["Tarifas (R$)"]
+    annual["Ano"] = annual["Ano"].astype(int)
+    return annual[cols].sort_values("Ano", ascending=False).reset_index(drop=True)
+
+
 def _render_summary_cards(df: pd.DataFrame) -> None:
     s = _summary_credit_card(df)
     c1, c2, c3, c4 = st.columns(4, gap="small")
@@ -2073,11 +2094,7 @@ def _render_category_limits(cat_df: pd.DataFrame) -> pd.DataFrame:
             state[_category_limit_key(row["Categoria"])] = float(row["Limite mensal"] or 0.0)
 
     limit_df = _prepare_category_limit_analysis(cat_df, state)
-    col_chart, col_table = st.columns([1, 1.15], gap="medium")
-    with col_chart:
-        st.plotly_chart(_fig_category_limits(limit_df), use_container_width=True, config={"displayModeBar": False})
-    with col_table:
-        _render_money_dataframe(limit_df, ["Gasto atual", "Limite mensal", "Folga/Excesso"], ["Uso %"])
+    _render_money_dataframe(limit_df, ["Gasto atual", "Limite mensal", "Folga/Excesso"], ["Uso %"])
     return limit_df
 
 
@@ -2151,6 +2168,73 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
         st.warning("Nenhum lancamento encontrado para os filtros selecionados.")
         return
 
+    _secao_titulo("Totais", "Totais anuais e mensais")
+
+    annual_filters = filters.copy()
+    annual_filters["year"] = "Todos"
+    annual_filters["month"] = None
+    df_anual = _apply_card_filters(df_all, annual_filters)
+    anual = _prepare_annual_card_totals(df_anual)
+
+    df_mes_compras = df[df["tipo_lancamento"] == "compra"]
+    df_mes_tarifas = df[df["tipo_lancamento"] == "tarifa"]
+    compras_mes = float(df_mes_compras["valor_fatura"].sum())
+    tarifas_mes = float(df_mes_tarifas["valor_fatura"].sum())
+    total_mes = compras_mes + tarifas_mes
+    ticket_medio = compras_mes / len(df_mes_compras) if len(df_mes_compras) > 0 else 0.0
+    n_transacoes = len(df_mes_compras)
+
+    mes_num = filters.get("month")
+    ano_fil = filters.get("year", "")
+    if mes_num:
+        mes_nome = _MESES_PT.get(int(mes_num), str(mes_num))
+        label_mes = f"{mes_nome}/{str(ano_fil)[-2:]}" if ano_fil != "Todos" else mes_nome
+    else:
+        label_mes = str(ano_fil) if ano_fil != "Todos" else "Todos os meses"
+
+    col_anual, col_mensal = st.columns([1.4, 1], gap="large")
+
+    with col_anual:
+        st.markdown("##### 📅 Total por ano")
+        if anual.empty:
+            st.caption("Sem dados anuais.")
+        else:
+            _render_money_dataframe(
+                anual,
+                ["Compras reais (R$)", "Tarifas (R$)", "Total (R$)"],
+            )
+
+    with col_mensal:
+        st.markdown(f"##### 🗓️ Período filtrado — {label_mes}")
+        st.markdown(
+            f"""
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">
+  <div style="background:#111827;border:1px solid #1F2937;border-radius:8px;padding:12px 14px;">
+    <div style="font-size:0.68rem;font-weight:800;letter-spacing:.10em;color:#7890B2;text-transform:uppercase;">Compras reais</div>
+    <div style="font-size:1.18rem;font-weight:900;color:#FC5C7D;margin-top:6px;">{fmt_moeda(compras_mes)}</div>
+    <div style="font-size:0.72rem;color:#52607A;margin-top:4px;">{n_transacoes} transações</div>
+  </div>
+  <div style="background:#111827;border:1px solid #1F2937;border-radius:8px;padding:12px 14px;">
+    <div style="font-size:0.68rem;font-weight:800;letter-spacing:.10em;color:#7890B2;text-transform:uppercase;">Ticket médio</div>
+    <div style="font-size:1.18rem;font-weight:900;color:#E2E8F0;margin-top:6px;">{fmt_moeda(ticket_medio)}</div>
+    <div style="font-size:0.72rem;color:#52607A;margin-top:4px;">por compra</div>
+  </div>
+  <div style="background:#111827;border:1px solid #1F2937;border-radius:8px;padding:12px 14px;">
+    <div style="font-size:0.68rem;font-weight:800;letter-spacing:.10em;color:#7890B2;text-transform:uppercase;">Tarifas</div>
+    <div style="font-size:1.18rem;font-weight:900;color:#F6C90E;margin-top:6px;">{fmt_moeda(tarifas_mes)}</div>
+    <div style="font-size:0.72rem;color:#52607A;margin-top:4px;">anuidade, IOF, encargos</div>
+  </div>
+  <div style="background:#111827;border:1px solid #1F2937;border-radius:8px;padding:12px 14px;">
+    <div style="font-size:0.68rem;font-weight:800;letter-spacing:.10em;color:#7890B2;text-transform:uppercase;">Total do mês</div>
+    <div style="font-size:1.18rem;font-weight:900;color:#FC5C7D;margin-top:6px;">{fmt_moeda(total_mes)}</div>
+    <div style="font-size:0.72rem;color:#52607A;margin-top:4px;">compras + tarifas</div>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo("Resumo", "Resumo executivo da fatura")
     _render_summary_cards(df)
     st.markdown("<br>", unsafe_allow_html=True)
