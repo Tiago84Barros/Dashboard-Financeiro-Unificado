@@ -1285,26 +1285,6 @@ _CC_MERCHANT_PREFIXES = {
 _CC_MERCHANT_SUFFIXES = {
     "sa", "s", "a", "ltda", "me", "epp", "eireli", "brasil", "br",
 }
-_CC_CATEGORY_LIMIT_PCTS = {
-    "supermercado": 0.35,
-    "mercado": 0.35,
-    "mercearia": 0.35,
-    "padaria": 0.35,
-    "alimentacao": 0.30,
-    "restaurante": 0.18,
-    "lazer": 0.15,
-    "assinatura": 0.10,
-    "transporte": 0.18,
-    "combustivel": 0.18,
-    "saude": 0.20,
-    "farmacia": 0.15,
-    "compras": 0.22,
-    "varejo": 0.22,
-    "viagem": 0.20,
-    "hospedagem": 0.20,
-}
-
-
 def _norm_ui_text(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = text.encode("ascii", "ignore").decode("ascii")
@@ -1696,48 +1676,6 @@ def _prepare_recurring_analysis(df: pd.DataFrame) -> pd.DataFrame:
     ]]
 
 
-def _category_limit_key(category: object) -> str:
-    return _norm_ui_text(category) or "sem categoria"
-
-
-def _default_category_limit(category: object, total_purchases: float) -> float:
-    norm = _category_limit_key(category)
-    pct = next((v for k, v in _CC_CATEGORY_LIMIT_PCTS.items() if k in norm), 0.20)
-    return round(max(100.0, float(total_purchases or 0.0) * pct), 2)
-
-
-def _prepare_category_limit_analysis(
-    cat_df: pd.DataFrame,
-    limit_overrides: dict[str, float] | None = None,
-) -> pd.DataFrame:
-    if cat_df.empty:
-        return pd.DataFrame(columns=[
-            "Categoria", "Gasto atual", "Limite mensal", "Uso %", "Folga/Excesso", "Status",
-        ])
-    limit_overrides = limit_overrides or {}
-    total_purchases = float(cat_df["Total (R$)"].sum())
-    rows = []
-    for _, row in cat_df.iterrows():
-        category = row["Categoria"]
-        spent = float(row["Total (R$)"] or 0.0)
-        key = _category_limit_key(category)
-        limit = float(limit_overrides.get(key, _default_category_limit(category, total_purchases)))
-        usage = spent / limit * 100 if limit > 0 else 0.0
-        diff = limit - spent
-        rows.append({
-            "Categoria": category,
-            "Gasto atual": round(spent, 2),
-            "Limite mensal": round(limit, 2),
-            "Uso %": round(usage, 1),
-            "Folga/Excesso": round(diff, 2),
-            "Status": "excedido" if diff < 0 else "alerta" if usage >= 85 else "ok",
-        })
-    out = pd.DataFrame(rows)
-    severity = {"excedido": 0, "alerta": 1, "ok": 2}
-    out["_ordem"] = out["Status"].map(severity).fillna(3)
-    return out.sort_values(["_ordem", "Uso %"], ascending=[True, False]).drop(columns=["_ordem"])
-
-
 def _prepare_future_invoice_projection(df: pd.DataFrame, months: int = 6) -> pd.DataFrame:
     parcelas = df[
         (df["tipo_lancamento"] == "compra")
@@ -1969,42 +1907,6 @@ def _fig_monthly_evolution(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def _fig_category_limits(limit_df: pd.DataFrame) -> go.Figure:
-    chart = limit_df.head(10).sort_values("Gasto atual", ascending=True)
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=chart["Limite mensal"],
-        y=chart["Categoria"],
-        orientation="h",
-        name="Limite",
-        marker_color="#2D3748",
-        hovertemplate="<b>%{y}</b><br>Limite: R$ %{x:,.2f}<extra></extra>",
-    ))
-    fig.add_trace(go.Bar(
-        x=chart["Gasto atual"],
-        y=chart["Categoria"],
-        orientation="h",
-        name="Gasto atual",
-        marker_color=[
-            _COR_DESPESA if s == "excedido" else "#F6C90E" if s == "alerta" else _COR_RECEITA
-            for s in chart["Status"]
-        ],
-        hovertemplate="<b>%{y}</b><br>Gasto: R$ %{x:,.2f}<extra></extra>",
-    ))
-    fig.update_layout(
-        barmode="overlay",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font_color=_COR_NEUTRO,
-        margin={"t": 8, "b": 8, "l": 0, "r": 8},
-        height=max(280, len(chart) * 36),
-        legend={"orientation": "h", "y": -0.12},
-        xaxis={"showgrid": True, "gridcolor": "#1E2533", "tickformat": ",.0f", "tickprefix": "R$ "},
-        yaxis={"showgrid": False},
-    )
-    return fig
-
-
 def _fig_future_projection(projection_df: pd.DataFrame) -> go.Figure:
     fig = go.Figure(go.Bar(
         x=projection_df["Mes"],
@@ -2071,36 +1973,8 @@ def _render_money_dataframe(df: pd.DataFrame, money_cols: list[str], pct_cols: l
     st.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
 
 
-def _render_category_limits(cat_df: pd.DataFrame) -> pd.DataFrame:
-    state = st.session_state.setdefault("cc_category_limits", {})
-    base_limits = _prepare_category_limit_analysis(cat_df, state)
-    if base_limits.empty:
-        st.caption("Sem compras reais para calcular limites por categoria.")
-        return base_limits
-
-    with st.expander("Ajustar limites mensais por categoria", expanded=False):
-        editable = base_limits[["Categoria", "Limite mensal"]].copy()
-        edited = st.data_editor(
-            editable,
-            hide_index=True,
-            use_container_width=True,
-            key="cc_category_limit_editor",
-            column_config={
-                "Categoria": st.column_config.TextColumn("Categoria", disabled=True),
-                "Limite mensal": st.column_config.NumberColumn("Limite mensal", format="R$ %.2f", min_value=0.0, step=50.0),
-            },
-        )
-        for _, row in edited.iterrows():
-            state[_category_limit_key(row["Categoria"])] = float(row["Limite mensal"] or 0.0)
-
-    limit_df = _prepare_category_limit_analysis(cat_df, state)
-    _render_money_dataframe(limit_df, ["Gasto atual", "Limite mensal", "Folga/Excesso"], ["Uso %"])
-    return limit_df
-
-
 def _render_credit_card_insights(
     df: pd.DataFrame,
-    limit_df: pd.DataFrame | None = None,
     projection_df: pd.DataFrame | None = None,
 ) -> None:
     if df.empty:
@@ -2119,11 +1993,6 @@ def _render_credit_card_insights(
         share = s["parceladas_total"] / s["total_compras"] * 100
         insights.append(("warning", f"Compras parceladas representam {share:.1f}% das compras reais do filtro."))
 
-    if limit_df is not None and not limit_df.empty:
-        exceeded = limit_df[limit_df["Status"] == "excedido"].sort_values("Folga/Excesso")
-        if not exceeded.empty:
-            top = exceeded.iloc[0]
-            insights.append(("warning", f"A categoria {_safe(top['Categoria'])} excedeu o limite em {fmt_moeda(abs(top['Folga/Excesso']))}."))
     if projection_df is not None and not projection_df.empty:
         peak = projection_df.sort_values("Valor projetado", ascending=False).iloc[0]
         insights.append(("info", f"Parcelas ja contratadas projetam {fmt_moeda(peak['Valor projetado'])} para {peak['Mes']}."))
@@ -2264,14 +2133,6 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
         st.plotly_chart(_fig_horizontal_bar(merchant_df, "Estabelecimento", "Total (R$)", _COR_INVEST, height=360), use_container_width=True, config={"displayModeBar": False})
 
     st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo("Limites", "Limites por categoria do cartao")
-    if cat_df.empty:
-        st.caption("Sem compras reais para analisar por categoria.")
-        limit_df = pd.DataFrame()
-    else:
-        limit_df = _render_category_limits(cat_df)
-
-    st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo("Parcelas", "Compras parceladas")
     installment_df = _prepare_installment_analysis(df)
     projection_df = _prepare_future_invoice_projection(df)
@@ -2336,7 +2197,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo("Insights", "Insights automaticos")
-    _render_credit_card_insights(df, limit_df, projection_df)
+    _render_credit_card_insights(df, projection_df)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

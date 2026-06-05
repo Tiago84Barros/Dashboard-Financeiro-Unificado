@@ -19,7 +19,6 @@ from views.controle_financeiro import (
     _normalize_merchant_name,
     _prepare_category_analysis,
     _prepare_annual_card_totals,
-    _prepare_category_limit_analysis,
     _prepare_future_invoice_projection,
     _prepare_installment_analysis,
     _prepare_merchant_analysis,
@@ -250,18 +249,13 @@ def test_credit_card_recurrence_requires_more_than_same_month_duplicates():
     assert rec.iloc[0]["Meses"] == 3
 
 
-def test_credit_card_category_limits_and_future_projection():
+def test_credit_card_future_projection():
     df = _card_rows_dataframe([
         _cc_tx(1, "NOTEBOOK | Compra 15/05/2026 | Cartao 3083 | Parcela 3/5", 500, date(2026, 5, 10), date(2026, 5, 15), "Compras", 3, 5),
         _cc_tx(2, "MERCADO LOCAL | Compra 16/05/2026 | Cartao 3083 | Parcela Unica", 300, date(2026, 5, 10), date(2026, 5, 16), "Mercado"),
     ])
-    cat_df = _prepare_category_analysis(df)
-    limits = _prepare_category_limit_analysis(cat_df, {"compras": 400, "mercado": 500})
     projection = _prepare_future_invoice_projection(df)
 
-    compras = limits[limits["Categoria"] == "Compras"].iloc[0]
-    assert compras["Status"] == "excedido"
-    assert compras["Folga/Excesso"] == -100
     assert list(projection["Mes"]) == ["Jun/2026", "Jul/2026"]
     assert list(projection["Valor projetado"]) == [500, 500]
 
