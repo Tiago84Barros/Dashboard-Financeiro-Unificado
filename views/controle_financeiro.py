@@ -2180,26 +2180,12 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
         st.plotly_chart(_fig_horizontal_bar(merchant_df, "Estabelecimento", "Total (R$)", _COR_INVEST, height=360), use_container_width=True, config={"displayModeBar": False})
 
     st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo("Categorias", "Analise por categoria")
+    _secao_titulo("Limites", "Limites por categoria do cartao")
     if cat_df.empty:
         st.caption("Sem compras reais para analisar por categoria.")
         limit_df = pd.DataFrame()
     else:
-        _render_money_dataframe(cat_df, ["Total (R$)", "Ticket medio"], ["% compras"])
-        st.markdown("<br>", unsafe_allow_html=True)
-        _secao_titulo("Limites", "Limites por categoria do cartao")
         limit_df = _render_category_limits(cat_df)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo("Estabelecimentos", "Analise por estabelecimento")
-    if merchant_df.empty:
-        st.caption("Sem compras reais para analisar por estabelecimento.")
-    else:
-        _render_money_dataframe(merchant_df.head(20), ["Total (R$)", "Maior compra"], ["% compras"])
-        recurring_df = _prepare_recurring_analysis(df)
-        if not recurring_df.empty:
-            st.markdown("**Possiveis gastos recorrentes**")
-            _render_money_dataframe(recurring_df.head(12), ["Valor medio", "Total (R$)"])
 
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo("Parcelas", "Compras parceladas")
