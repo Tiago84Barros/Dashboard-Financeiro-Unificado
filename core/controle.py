@@ -813,18 +813,25 @@ def corrigir_classificacao_pagamentos_fatura(account_id: str) -> int:
     if not owner:
         return 0
 
-    # Monta condição OR para todos os termos de pagamento
+    # Condição OR para todos os termos de pagamento (sem acentos — busca em lower)
     conditions = " OR ".join(
-        f"LOWER(t.description) LIKE '%{term}%'" for term in _PAYMENT_TERMS_NORM
+        f"LOWER(unaccent_simple(t.description)) LIKE '%{term}%'"
+        for term in _PAYMENT_TERMS_NORM
+    )
+    # Fallback sem unaccent (caso extensão não exista)
+    conditions_plain = " OR ".join(
+        f"LOWER(t.description) LIKE '%{term}%'"
+        for term in _PAYMENT_TERMS_NORM
     )
 
     try:
         with engine.begin() as conn:
             # 1. Garante que a categoria 'Pagamento de Cartão' existe
+            #    Usa ILIKE para tolerar variações de acento no banco
             pay_cat = conn.execute(_t("""
                 SELECT id::text FROM categories
                 WHERE user_id = CAST(:uid AS uuid)
-                  AND LOWER(name) = 'pagamento de cartão'
+                  AND name ILIKE 'Pagamento de Cart%o'
                 LIMIT 1
             """), {"uid": owner}).fetchone()
 
@@ -832,6 +839,7 @@ def corrigir_classificacao_pagamentos_fatura(account_id: str) -> int:
                 pay_cat = conn.execute(_t("""
                     INSERT INTO categories (user_id, name, type)
                     VALUES (CAST(:uid AS uuid), 'Pagamento de Cartão', 'expense')
+                    ON CONFLICT DO NOTHING
                     RETURNING id::text
                 """), {"uid": owner}).fetchone()
 
@@ -840,19 +848,19 @@ def corrigir_classificacao_pagamentos_fatura(account_id: str) -> int:
 
             pay_cat_id = pay_cat[0]
 
-            # 2. Atualiza registros: pagamentos de fatura classificados como estorno
+            # 2. Atualiza registros: transações CSV negativas cujo description
+            #    contém termos de pagamento — sem filtrar por nome de categoria
+            #    (evita problema de encoding de acento na comparação SQL).
             result = conn.execute(_t(f"""
-                UPDATE transactions t
+                UPDATE transactions
                 SET category_id = CAST(:cat_id AS uuid),
                     type = 'transfer'
-                FROM categories c
-                WHERE t.account_id = CAST(:account_id AS uuid)
-                  AND t.user_id    = CAST(:uid AS uuid)
-                  AND t.source     = 'csv'
-                  AND t.amount     < 0
-                  AND c.id         = t.category_id
-                  AND LOWER(c.name) IN ('créditos e estornos', 'creditos e estornos')
-                  AND ({conditions})
+                WHERE account_id = CAST(:account_id AS uuid)
+                  AND user_id    = CAST(:uid AS uuid)
+                  AND source     = 'csv'
+                  AND amount     < 0
+                  AND category_id != CAST(:cat_id AS uuid)
+                  AND ({conditions_plain})
             """), {
                 "uid": owner,
                 "account_id": account_id,

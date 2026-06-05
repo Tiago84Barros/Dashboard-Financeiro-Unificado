@@ -73,17 +73,35 @@ def _infer_due_date_from_filename(filename: str | None) -> date:
     return date(today.year, today.month, min(today.day, 28))
 
 
+_PAYMENT_TERMS_PREVIEW = (
+    "pag fatura", "pagamento fatura",
+    "inclusao de pagamento", "inclusao  de pagamento",
+    "debito em conta", "pagto debito",
+)
+
+
 def _invoice_upload_summary(rows: list[dict]) -> dict:
     bruto = sum(abs(float(r.get("value_brl") or 0.0)) for r in rows)
     compras = 0.0
     tarifas = 0.0
-    creditos = 0.0
+    estornos = 0.0   # créditos reais (devolução de compra)
+    pagamentos = 0.0  # pagamentos de fatura
     for row in rows:
         value = float(row.get("value_brl") or 0.0)
-        text = _norm_text(f"{row.get('category', '')} {row.get('description_raw', '')}")
+        cat_norm = _norm_text(row.get("category", ""))
+        desc_norm = _norm_text(row.get("description_raw", ""))
+        combined = f"{cat_norm} {desc_norm}"
         if value < 0:
-            creditos += abs(value)
-        elif any(term in text for term in _CC_FEE_TERMS):
+            # Verifica se é pagamento de fatura ou estorno real
+            is_payment = (
+                "pagamento de cartao" in cat_norm
+                or any(t in desc_norm for t in _PAYMENT_TERMS_PREVIEW)
+            )
+            if is_payment:
+                pagamentos += abs(value)
+            else:
+                estornos += abs(value)
+        elif any(term in combined for term in _CC_FEE_TERMS):
             tarifas += value
         else:
             compras += value
@@ -91,8 +109,10 @@ def _invoice_upload_summary(rows: list[dict]) -> dict:
         "total_bruto": round(bruto, 2),
         "compras_reais": round(compras, 2),
         "tarifas": round(tarifas, 2),
-        "creditos": round(creditos, 2),
-        "net_total": round(compras + tarifas - creditos, 2),
+        "pagamentos": round(pagamentos, 2),
+        "estornos": round(estornos, 2),
+        "creditos": round(pagamentos + estornos, 2),  # compatibilidade
+        "net_total": round(compras + tarifas - estornos - pagamentos, 2),
     }
 
 
@@ -174,7 +194,10 @@ def render_upload_fatura_cartao() -> None:
     with c5:
         st.markdown(_kpi_card("Tarifas", fmt_moeda(upload_summary["tarifas"]), "Anuidade, IOF, juros, multa e encargos.", "#F6C90E"), unsafe_allow_html=True)
     with c6:
-        st.markdown(_kpi_card("Pagamentos/estornos", fmt_moeda(upload_summary["creditos"]), "Lançamentos negativos da fatura.", _COR_RECEITA), unsafe_allow_html=True)
+        pag_val = upload_summary.get("pagamentos", 0.0)
+        est_val = upload_summary.get("estornos", 0.0)
+        subtitle = f"Pagamentos: {fmt_moeda(pag_val)} | Estornos: {fmt_moeda(est_val)}"
+        st.markdown(_kpi_card("Pagamentos + Estornos", fmt_moeda(pag_val + est_val), subtitle, _COR_RECEITA), unsafe_allow_html=True)
     with c7:
         st.markdown(_kpi_card("Parceladas", str(sum(1 for r in rows if r.get("installment_total", 1) > 1)), "Compras com parcela maior que 1.", _COR_INVEST), unsafe_allow_html=True)
     with c8:
