@@ -291,35 +291,37 @@ _SQL_UPDATE_TX = """
 _SQL_HISTORICO_ANUAL = f"""
     SELECT
         EXTRACT(YEAR FROM t.due_date)::int AS ano,
-        CASE
+        SUM(CASE
+            WHEN t.type IN ('income', 'entrada')
+                 AND COALESCE(c.name, '') NOT IN ({_INVESTMENT_CATEGORY_SQL})
+                THEN t.amount
+            ELSE 0
+        END)                               AS total_income,
+        SUM(CASE
+            WHEN t.type IN ('expense', 'saida')
+                 AND COALESCE(a.type, '') != 'credit_card'
+                 AND COALESCE(c.name, '') NOT IN ({_INVESTMENT_CATEGORY_SQL})
+                THEN ABS(t.amount)
+            ELSE 0
+        END)                               AS total_expenses_abs,
+        SUM(CASE
             WHEN t.type IN ('investment', 'investimento')
-                 OR c.name IN ({_INVESTMENT_CATEGORY_SQL})          THEN 'investment'
-            WHEN t.type IN ('income', 'entrada')                    THEN 'income'
-            WHEN t.type = 'transfer'
-                 AND c.name IN (
-                     'Renda Fixa','Renda Variavel','Renda Variável',
-                     'Exterior','Aporte em Investimento'
-                 )                                                  THEN 'investment'
-            ELSE 'expense'
-        END                                AS bucket,
-        SUM(t.amount)                      AS total
+                 OR COALESCE(c.name, '') IN ({_INVESTMENT_CATEGORY_SQL})
+                THEN ABS(t.amount)
+            ELSE 0
+        END)                               AS total_investments
     FROM   transactions t
     LEFT JOIN accounts   a ON a.id = t.account_id
     LEFT JOIN categories c ON c.id = t.category_id
     WHERE  t.user_id = :uid
-      AND (
-            t.type IN ('income', 'entrada', 'investment', 'investimento')
-            OR c.name IN ({_INVESTMENT_CATEGORY_SQL})
-            OR (t.type IN ('expense', 'saida')
-                AND COALESCE(a.type, '') != 'credit_card')
-            OR (t.type = 'transfer'
-                AND c.name IN (
-                    'Renda Fixa','Renda Variavel','Renda Variável',
-                    'Exterior','Aporte em Investimento'
-                ))
-      )
-    GROUP  BY ano, bucket
-    ORDER  BY ano, bucket
+      AND  t.status  = 'settled'
+      AND  (
+               t.type IN ('income', 'entrada', 'expense', 'saida',
+                          'investment', 'investimento', 'transfer')
+               OR COALESCE(c.name, '') IN ({_INVESTMENT_CATEGORY_SQL})
+           )
+    GROUP  BY EXTRACT(YEAR FROM t.due_date)::int
+    ORDER  BY ano
 """
 
 _SQL_GASTOS_CARTAO_MENSAL = """
@@ -1623,15 +1625,11 @@ def _historico_anual_real() -> dict:
     por_ano: dict[int, dict] = {}
     for r in rows:
         a = int(r.ano)
-        if a not in por_ano:
-            por_ano[a] = {"receitas": 0.0, "despesas": 0.0, "investimentos": 0.0}
-        bucket = (r.bucket or "").lower()
-        if bucket == "income":
-            por_ano[a]["receitas"] += float(r.total)
-        elif bucket == "expense":
-            por_ano[a]["despesas"] += abs(float(r.total))
-        elif bucket == "investment":
-            por_ano[a]["investimentos"] += abs(float(r.total))
+        por_ano[a] = {
+            "receitas":      round(float(r.total_income        or 0), 2),
+            "despesas":      round(float(r.total_expenses_abs  or 0), 2),
+            "investimentos": round(float(r.total_investments   or 0), 2),
+        }
 
     for a in por_ano:
         por_ano[a]["saldo"] = round(
