@@ -583,10 +583,15 @@ def _invoice_category(raw_category: object, description: object, value_brl: floa
     desc_norm = _norm_text(description)
     if raw and raw != "-":
         return raw
-    if "pag fatura" in desc_norm or "pagamento fatura" in desc_norm:
+    # Pagamentos da fatura (Inclusão de Pagamento, Pag Fatura Boleto, débito em conta)
+    if any(p in desc_norm for p in (
+        "pag fatura", "pagamento fatura", "inclusao de pagamento",
+        "inclusão de pagamento", "debito em conta", "pagto debito",
+    )):
         return "Pagamento de Cartão"
     if "anuidade" in desc_norm:
         return "Anuidade"
+    # Apenas valores negativos que NÃO são pagamentos são estornos reais
     if value_brl < 0 or "estorno" in desc_norm:
         return "Créditos e Estornos"
     return "Compras"
@@ -594,7 +599,13 @@ def _invoice_category(raw_category: object, description: object, value_brl: floa
 
 def _invoice_tx_type(value_brl: float, description: object) -> str:
     desc_norm = _norm_text(description)
-    if value_brl < 0 or "estorno" in desc_norm or "pag fatura" in desc_norm:
+    # Pagamentos da fatura → transfer
+    if any(p in desc_norm for p in (
+        "pag fatura", "pagamento fatura", "inclusao de pagamento",
+        "inclusão de pagamento", "debito em conta", "pagto debito",
+    )):
+        return "transfer"
+    if value_brl < 0 or "estorno" in desc_norm:
         return "transfer"
     return "expense"
 
