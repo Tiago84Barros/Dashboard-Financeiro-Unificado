@@ -814,62 +814,54 @@ def corrigir_classificacao_pagamentos_fatura(account_id: str) -> int:
         return 0
 
     # Condição OR para todos os termos de pagamento (sem acentos — busca em lower)
-    conditions = " OR ".join(
-        f"LOWER(unaccent_simple(t.description)) LIKE '%{term}%'"
-        for term in _PAYMENT_TERMS_NORM
-    )
-    # Fallback sem unaccent (caso extensão não exista)
     conditions_plain = " OR ".join(
-        f"LOWER(t.description) LIKE '%{term}%'"
+        f"LOWER(description) LIKE '%{term}%'"
         for term in _PAYMENT_TERMS_NORM
     )
 
     try:
         with engine.begin() as conn:
-            # 1. Garante que a categoria 'Pagamento de Cartão' existe
-            #    Usa ILIKE para tolerar variações de acento no banco
-            pay_cat = conn.execute(_t("""
-                SELECT id::text FROM categories
-                WHERE user_id = CAST(:uid AS uuid)
-                  AND name ILIKE 'Pagamento de Cart%o'
-                LIMIT 1
-            """), {"uid": owner}).fetchone()
-
-            if not pay_cat:
-                pay_cat = conn.execute(_t("""
-                    INSERT INTO categories (user_id, name, type)
-                    VALUES (CAST(:uid AS uuid), 'Pagamento de Cartão', 'expense')
-                    ON CONFLICT DO NOTHING
-                    RETURNING id::text
-                """), {"uid": owner}).fetchone()
-
-            if not pay_cat:
+            # 1. Usa _get_or_create_category — mesma função confiável do importer
+            pay_cat_id = _get_or_create_category(
+                conn, owner, "Pagamento de Cartão", "expense"
+            )
+            if not pay_cat_id:
+                logger.warning("[corrigir] não conseguiu obter categoria 'Pagamento de Cartão'")
                 return 0
 
-            pay_cat_id = pay_cat[0]
-
-            # 2. Atualiza registros: transações CSV negativas cujo description
-            #    contém termos de pagamento — sem filtrar por nome de categoria
-            #    (evita problema de encoding de acento na comparação SQL).
-            result = conn.execute(_t(f"""
-                UPDATE transactions
-                SET category_id = CAST(:cat_id AS uuid),
-                    type = 'transfer'
+            # 2. Conta quantos registros vão ser corrigidos (para retorno confiável)
+            count_row = conn.execute(_t(f"""
+                SELECT COUNT(*) AS n
+                FROM transactions
                 WHERE account_id = CAST(:account_id AS uuid)
                   AND user_id    = CAST(:uid AS uuid)
                   AND source     = 'csv'
                   AND amount     < 0
-                  AND category_id != CAST(:cat_id AS uuid)
+                  AND (category_id IS NULL
+                       OR category_id != CAST(:cat_id AS uuid))
                   AND ({conditions_plain})
-            """), {
-                "uid": owner,
-                "account_id": account_id,
-                "cat_id": pay_cat_id,
-            })
-            updated = result.rowcount if hasattr(result, "rowcount") else 0
-        if updated:
-            _clear_controle_caches()
-        return updated
+            """), {"uid": owner, "account_id": account_id, "cat_id": pay_cat_id}).fetchone()
+
+            to_fix = int(count_row.n) if count_row else 0
+            if to_fix == 0:
+                return 0
+
+            # 3. Atualiza registros
+            conn.execute(_t(f"""
+                UPDATE transactions
+                SET category_id = CAST(:cat_id AS uuid),
+                    type        = 'transfer'
+                WHERE account_id = CAST(:account_id AS uuid)
+                  AND user_id    = CAST(:uid AS uuid)
+                  AND source     = 'csv'
+                  AND amount     < 0
+                  AND (category_id IS NULL
+                       OR category_id != CAST(:cat_id AS uuid))
+                  AND ({conditions_plain})
+            """), {"uid": owner, "account_id": account_id, "cat_id": pay_cat_id})
+
+        _clear_controle_caches()
+        return to_fix
     except Exception as exc:
         logger.warning("[controle] corrigir_classificacao_pagamentos_fatura: %s", exc)
         return 0
