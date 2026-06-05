@@ -1617,72 +1617,21 @@ def _historico_anual_real() -> dict:
     if not owner:
         raise RuntimeError("OWNER_USER_ID não configurado.")
 
-    por_ano: dict[int, dict] = {}
-
     with engine.connect() as conn:
-        # ── 1. Lançamentos do controle financeiro (transactions) ──────────────
         rows = conn.execute(text(_SQL_HISTORICO_ANUAL), {"uid": owner}).fetchall()
-        for r in rows:
-            a = int(r.ano)
-            if a not in por_ano:
-                por_ano[a] = {"receitas": 0.0, "despesas": 0.0, "investimentos": 0.0}
-            bucket = (r.bucket or "").lower()
-            if bucket == "income":
-                por_ano[a]["receitas"] += float(r.total)
-            elif bucket == "expense":
-                por_ano[a]["despesas"] += abs(float(r.total))
-            elif bucket == "investment":
-                por_ano[a]["investimentos"] += abs(float(r.total))
 
-        # ── 2. Aportes e vendas da corretora (investment_transactions) ────────
-        # Inclui B3, XP e Nomad (PDFs). Para ativos USD, converte para BRL
-        # usando a última cotação USDBRL disponível em asset_quotes.
-        _usd_brl = 5.05  # fallback
-        try:
-            fx_row = conn.execute(text("""
-                SELECT aq.close
-                FROM   asset_quotes aq
-                JOIN   assets a ON a.id = aq.asset_id
-                WHERE  a.ticker = 'USDBRL'
-                ORDER  BY aq.timestamp DESC
-                LIMIT  1
-            """)).fetchone()
-            if fx_row and fx_row[0]:
-                _usd_brl = float(fx_row[0])
-        except Exception:
-            pass
-
-        inv_rows = conn.execute(text("""
-            SELECT
-                EXTRACT(YEAR FROM it.transaction_date)::int AS ano,
-                a.currency,
-                SUM(
-                    CASE
-                        WHEN it.type = 'buy'
-                             THEN  it.quantity * it.unit_price + COALESCE(it.fees, 0)
-                        WHEN it.type = 'sell'
-                             THEN -(it.quantity * it.unit_price - COALESCE(it.fees, 0))
-                        ELSE 0
-                    END
-                ) AS total_orig
-            FROM investment_transactions it
-            JOIN assets a ON a.id = it.asset_id
-            WHERE it.user_id = :uid
-            GROUP BY ano, a.currency
-            ORDER BY ano
-        """), {"uid": owner}).fetchall()
-
-    for r in inv_rows:
+    por_ano: dict[int, dict] = {}
+    for r in rows:
         a = int(r.ano)
         if a not in por_ano:
             por_ano[a] = {"receitas": 0.0, "despesas": 0.0, "investimentos": 0.0}
-        orig = float(r.total_orig or 0)
-        ccy  = (r.currency or "BRL").upper()
-        brl  = orig * _usd_brl if ccy == "USD" else orig
-        if brl > 0:
-            por_ano[a]["investimentos"] += brl
-        # Vendas (brl < 0) não são subtraídas do total investido —
-        # representam saída do portfólio, não redução de aporte histórico.
+        bucket = (r.bucket or "").lower()
+        if bucket == "income":
+            por_ano[a]["receitas"] += float(r.total)
+        elif bucket == "expense":
+            por_ano[a]["despesas"] += abs(float(r.total))
+        elif bucket == "investment":
+            por_ano[a]["investimentos"] += abs(float(r.total))
 
     for a in por_ano:
         por_ano[a]["saldo"] = round(
