@@ -11,7 +11,7 @@ Adições do app unificado preservadas (não existiam no original):
   - Pizza de despesas na aba Análises
   - Orçamento vs Realizado (overlay)
   - Barras de progresso por categoria
-  - Taxa de poupança mensal histórica
+  - (Taxa de poupança mensal histórica removida)
 
 Novas funcionalidades implementadas na Fase 5.1:
   - Dashboard: seção "Últimos Lançamentos" com modo leitura + edição
@@ -34,7 +34,7 @@ import streamlit as st
 from core.controle import (
     get_controle, get_opcoes_formulario, inserir_transacao,
     atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
-    get_gastos_cartao_mensal, get_gastos_categoria_anual,
+    get_gastos_cartao_fatura_mensal, get_gastos_categoria_anual,
     get_transacoes_cartao_credito,
 )
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
@@ -854,44 +854,6 @@ def _tab_analises(
         st.dataframe(pd.DataFrame(rows_dist), use_container_width=True, hide_index=True)
     else:
         st.caption(f"Sem despesas registradas em {_ano_dist}.")
-
-    # ── Taxa de Poupança Histórica ─────────────────────────────────────────────
-    if historico:
-        st.markdown("<br>", unsafe_allow_html=True)
-        _secao_titulo("💹", "Taxa de Poupança Mensal (12 meses)")
-        meses_labels = [h["label"] for h in historico]
-        taxas = [
-            round(
-                (h["receitas"] - h["despesas"] - h.get("investimentos", 0.0))
-                / h["receitas"] * 100,
-                1,
-            )
-            if h["receitas"] > 0 else 0.0
-            for h in historico
-        ]
-        cores_taxa = [
-            _COR_RECEITA if t >= 30 else "#F6C90E" if t >= 15 else _COR_DESPESA
-            for t in taxas
-        ]
-        fig_taxa = go.Figure(go.Bar(
-            x=meses_labels, y=taxas, marker_color=cores_taxa,
-            hovertemplate="<b>%{x}</b><br>Taxa: %{y:.1f}%<extra></extra>",
-        ))
-        fig_taxa.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font_color=_COR_NEUTRO,
-            margin={"t": 10, "b": 0, "l": 0, "r": 0}, height=220,
-            xaxis={"showgrid": False},
-            yaxis={"showgrid": True, "gridcolor": "#1E2533",
-                   "tickformat": ".0f", "ticksuffix": "%"},
-            shapes=[{
-                "type": "line", "x0": -0.5, "x1": len(meses_labels) - 0.5,
-                "y0": 30, "y1": 30,
-                "line": {"color": _COR_RECEITA, "width": 1.5, "dash": "dot"},
-            }],
-        )
-        st.plotly_chart(fig_taxa, use_container_width=True, config={"displayModeBar": False})
-        st.caption("Linha pontilhada verde = meta 30%")
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
@@ -2282,12 +2244,12 @@ def render() -> None:
         0.0,
     )
 
-    # Gastos com Pagamento de Cartão — agrupados por ano → {ano_str: [items]}
+    # Gastos de cartão — fonte única: faturas importadas via CSV (account_type='credit_card', source='csv')
     _ano_ref = sel["ano"]
     _anos_hist = hist_anual.get("anos", [_ano_ref])
     gastos_cartao: dict = {"todos": []}
     for _a in _anos_hist:
-        _dados_a = get_gastos_cartao_mensal(_a)
+        _dados_a = get_gastos_cartao_fatura_mensal(_a)
         gastos_cartao[str(_a)] = _dados_a
         gastos_cartao["todos"].extend(_dados_a)
 

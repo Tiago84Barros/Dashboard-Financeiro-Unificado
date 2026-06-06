@@ -1325,6 +1325,45 @@ def _gastos_cartao_real(ano: int) -> list:
     ]
 
 
+@st.cache_data(ttl=300)
+def get_gastos_cartao_fatura_mensal(ano: int) -> list:
+    """
+    Retorna gastos mensais de faturas de cartão importadas via CSV para o ano dado.
+    Fonte única de verdade: transactions com account_type='credit_card' e source='csv'.
+    Cada item: {"mes": int, "label": str, "total": float}
+    """
+    if settings.MOCK_MODE:
+        return []
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            raise RuntimeError("Engine indisponível.")
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            raise RuntimeError("OWNER_USER_ID não configurado.")
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(_SQL_HISTORICO_CC_MENSAL), {"uid": owner}
+            ).fetchall()
+
+        return [
+            {
+                "mes":   int(r.mes),
+                "label": f"{int(r.mes):02d}/{int(r.ano)}",
+                "total": round(float(r.total), 2),
+            }
+            for r in rows
+            if int(r.ano) == ano
+        ]
+    except Exception as exc:
+        logger.warning("[controle] get_gastos_cartao_fatura_mensal falhou (%s).", type(exc).__name__)
+        return []
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HISTÓRICO CC + DÍVIDAS — API pública
 # ─────────────────────────────────────────────────────────────────────────────
