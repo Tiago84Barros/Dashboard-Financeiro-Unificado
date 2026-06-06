@@ -18,7 +18,7 @@ from views.controle_financeiro import (
     _is_manual_card_related_text,
     _normalize_merchant_name,
     _prepare_category_analysis,
-    _prepare_category_limit_analysis,
+    _prepare_annual_card_totals,
     _prepare_future_invoice_projection,
     _prepare_installment_analysis,
     _prepare_merchant_analysis,
@@ -198,6 +198,22 @@ def test_credit_card_invoice_analytics_separates_consumption_adjustments_and_fee
     assert summary["total_liquido"] == -108.06
 
 
+def test_credit_card_annual_totals_keep_tariff_only_years():
+    df = _card_rows_dataframe([
+        _cc_tx(1, "COMPRA MERCADO | Compra 05/05/2025 | Cartao 3083 | Parcela Unica", 200, date(2025, 5, 10), date(2025, 5, 5), "Mercado"),
+        _cc_tx(2, "ANUIDADE DIFERENCIADA | Compra 05/06/2026 | Cartao 3083 | Parcela Unica", 90, date(2026, 6, 10), date(2026, 6, 5), "Tarifas"),
+    ])
+    df.loc[df["descricao"].str.contains("ANUIDADE"), "tipo_lancamento"] = "tarifa"
+
+    annual = _prepare_annual_card_totals(df)
+
+    assert list(annual["Ano"]) == [2026, 2025]
+    row_2026 = annual[annual["Ano"] == 2026].iloc[0]
+    assert row_2026["Compras reais (R$)"] == 0
+    assert row_2026["Tarifas (R$)"] == 90
+    assert row_2026["Total (R$)"] == 90
+
+
 def test_credit_card_merchant_normalization_groups_noisy_names():
     assert _normalize_merchant_name("EC *FORMOSA SUPERM E MAGAZ 123") == _normalize_merchant_name("FORMOSA SUPERM E MAGAZ")
 
@@ -233,18 +249,13 @@ def test_credit_card_recurrence_requires_more_than_same_month_duplicates():
     assert rec.iloc[0]["Meses"] == 3
 
 
-def test_credit_card_category_limits_and_future_projection():
+def test_credit_card_future_projection():
     df = _card_rows_dataframe([
         _cc_tx(1, "NOTEBOOK | Compra 15/05/2026 | Cartao 3083 | Parcela 3/5", 500, date(2026, 5, 10), date(2026, 5, 15), "Compras", 3, 5),
         _cc_tx(2, "MERCADO LOCAL | Compra 16/05/2026 | Cartao 3083 | Parcela Unica", 300, date(2026, 5, 10), date(2026, 5, 16), "Mercado"),
     ])
-    cat_df = _prepare_category_analysis(df)
-    limits = _prepare_category_limit_analysis(cat_df, {"compras": 400, "mercado": 500})
     projection = _prepare_future_invoice_projection(df)
 
-    compras = limits[limits["Categoria"] == "Compras"].iloc[0]
-    assert compras["Status"] == "excedido"
-    assert compras["Folga/Excesso"] == -100
     assert list(projection["Mes"]) == ["Jun/2026", "Jul/2026"]
     assert list(projection["Valor projetado"]) == [500, 500]
 
