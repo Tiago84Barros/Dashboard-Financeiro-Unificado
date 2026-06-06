@@ -34,7 +34,7 @@ import streamlit as st
 from core.controle import (
     get_controle, get_opcoes_formulario, inserir_transacao,
     atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
-    get_gastos_cartao_fatura_mensal, get_gastos_categoria_anual,
+    get_gastos_cartao_mensal, get_gastos_categoria_anual,
     get_transacoes_cartao_credito,
 )
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
@@ -2244,12 +2244,12 @@ def render() -> None:
         0.0,
     )
 
-    # Gastos de cartão — fonte única: faturas importadas via CSV (account_type='credit_card', source='csv')
+    # Gastos com Pagamento de Cartão — agrupados por ano → {ano_str: [items]}
     _ano_ref = sel["ano"]
     _anos_hist = hist_anual.get("anos", [_ano_ref])
     gastos_cartao: dict = {"todos": []}
     for _a in _anos_hist:
-        _dados_a = get_gastos_cartao_fatura_mensal(_a)
+        _dados_a = get_gastos_cartao_mensal(_a)
         gastos_cartao[str(_a)] = _dados_a
         gastos_cartao["todos"].extend(_dados_a)
 
