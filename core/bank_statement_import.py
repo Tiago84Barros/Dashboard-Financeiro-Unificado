@@ -303,6 +303,11 @@ _IGNORE_LINE_TERMS = (
 
 def _is_ignorable_line(clean: str) -> bool:
     norm = _norm(clean)
+    # Cabecalho de resumo do mes (ex.: "Janeiro 2025 (...) Entradas: R$ ...
+    # Saidas: R$ ..."): traz "entradas" e "saidas" juntos, o que nunca ocorre
+    # numa linha de movimentacao real. Ignora para nao virar transacao falsa.
+    if "entradas" in norm and "saidas" in norm:
+        return True
     return any(term in norm for term in _IGNORE_LINE_TERMS)
 
 
@@ -529,12 +534,13 @@ def extract_bank_statement_text(file_bytes: bytes) -> dict:
     """
     diag: dict[str, Any] = {
         "text": "", "n_pages": 0, "engine": None,
-        "n_chars": 0, "scanned": None, "read_error": None,
+        "n_chars": 0, "scanned": None, "read_error": None, "ocr_used": False,
     }
 
     best_text = ""
     best_engine = None
     best_pages = 0
+    seen_pages = 0
     for engine_name, fn in (("pdfplumber", _extract_with_pdfplumber), ("pypdf", _extract_with_pypdf)):
         try:
             txt, n_pages = fn(file_bytes)
@@ -544,6 +550,7 @@ def extract_bank_statement_text(file_bytes: bytes) -> dict:
         except Exception as exc:  # PDF corrompido/protegido por uma das libs
             diag["read_error"] = f"{engine_name}: {exc}"
             continue
+        seen_pages = max(seen_pages, n_pages)
         txt = _clean_extracted_text(txt)
         if len(txt.strip()) > len(best_text.strip()):
             best_text, best_engine, best_pages = txt, engine_name, n_pages
@@ -551,12 +558,29 @@ def extract_bank_statement_text(file_bytes: bytes) -> dict:
         if len(best_text.strip()) >= 40:
             break
 
+    # Fallback de OCR: PDF sem texto pesquisavel (escaneado / "Print to PDF" /
+    # imagem). Recupera o texto rasterizado quando as libs de OCR existem.
+    if len(best_text.strip()) < 20 and seen_pages > 0:
+        try:
+            from core.c6_ocr import ocr_extract_text
+
+            ocr_text, ocr_pages = ocr_extract_text(file_bytes)
+        except Exception as exc:
+            diag["read_error"] = f"ocr: {exc}"
+            ocr_text, ocr_pages = "", 0
+        ocr_text = _clean_extracted_text(ocr_text)
+        if len(ocr_text.strip()) > len(best_text.strip()):
+            best_text = ocr_text
+            best_engine = "ocr-rapidocr"
+            best_pages = ocr_pages or seen_pages
+            diag["ocr_used"] = True
+
     diag.update(
         text=best_text,
         engine=best_engine,
-        n_pages=best_pages,
+        n_pages=best_pages or seen_pages,
         n_chars=len(best_text.strip()),
-        scanned=(best_pages > 0 and len(best_text.strip()) < 20),
+        scanned=((best_pages or seen_pages) > 0 and len(best_text.strip()) < 20),
     )
     if DEBUG_IMPORT_EXTRATO:
         logger.info(

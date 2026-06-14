@@ -46,6 +46,18 @@ def test_parse_c6_text_extracts_dates_values_direction_and_hash():
     assert parsed["rows"][0]["hash_lancamento"] == build_bank_statement_hash(parsed["rows"][0])
 
 
+def test_month_summary_header_is_not_parsed_as_movement():
+    # Linha de resumo do mes (Entradas/Saidas juntos) nao pode virar transacao.
+    text = """
+    Janeiro 2025 (01/01/2025 - 31/01/2025) Entradas: R$ 44.963,96 Saidas: R$ 46.263,84
+    01/01/2025 Saida PIX Pix enviado para FULANO R$ -50,00
+    """
+    parsed = parse_c6_bank_text(text, file_name="c6.pdf")
+
+    assert parsed["summary"]["rows"] == 1
+    assert parsed["rows"][0]["valor"] == -50.00
+
+
 def test_explicit_classification_rules_use_existing_category_ids():
     parsed = parse_c6_bank_text(
         """
