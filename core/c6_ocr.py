@@ -121,7 +121,9 @@ def ocr_extract_text(file_bytes: bytes) -> tuple[str, int]:
         import pytesseract
 
         lang = _resolve_lang()
-        config = "--psm 6"
+        # psm 4 (coluna única de texto) + oem 1 (LSTM) deram o menor erro neste
+        # extrato — medido por reconciliação contra os totais mensais impressos.
+        config = "--psm 4 --oem 1"
         pdf = pdfium.PdfDocument(io.BytesIO(file_bytes))
         n_pages = len(pdf)
         page_texts: list[str] = []
