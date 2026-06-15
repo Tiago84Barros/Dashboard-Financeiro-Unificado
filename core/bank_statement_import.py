@@ -571,7 +571,7 @@ def extract_bank_statement_text(file_bytes: bytes) -> dict:
         ocr_text = _clean_extracted_text(ocr_text)
         if len(ocr_text.strip()) > len(best_text.strip()):
             best_text = ocr_text
-            best_engine = "ocr-rapidocr"
+            best_engine = "ocr-tesseract"
             best_pages = ocr_pages or seen_pages
             diag["ocr_used"] = True
 
