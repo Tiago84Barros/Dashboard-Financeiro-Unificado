@@ -184,6 +184,29 @@ def test_pagamento_de_fatura_cartao_goes_to_card_category():
     assert classified[1]["categoria_id"] == "cat-pagamento-cartao"
 
 
+def test_transferencia_para_corretora_vira_investimento():
+    cats = _categories_extra() + [
+        {"id": "cat-rf", "nome": "Renda Fixa", "tipo": "transfer"},
+        {"id": "cat-exterior", "nome": "Exterior", "tipo": "transfer"},
+    ]
+    parsed = parse_c6_bank_text(
+        """
+        10/05/2026 Saida PIX Pix enviado para RICO INVESTIMENTOS CTVM R$ -5.000,00
+        11/05/2026 Saida PIX Pix enviado para NOMAD R$ -3.000,00
+        12/05/2026 Saida PIX Pix enviado para FREDERICO SOUZA R$ -100,00
+        """,
+        file_name="c6.pdf",
+    )
+    classified = classify_bank_movements(parsed["rows"], cats)
+
+    assert classified[0]["categoria_id"] == "cat-rf"
+    assert classified[0]["categoria_sugerida_texto"] == "Renda Fixa"
+    assert classified[1]["categoria_id"] == "cat-exterior"
+    assert classified[1]["categoria_sugerida_texto"] == "Exterior"
+    # "Frederico" contem "rico" como substring, mas nao como palavra -> nao e RF
+    assert classified[2]["categoria_sugerida_texto"] != "Renda Fixa"
+
+
 def test_saved_rule_has_priority_over_automatic_rule():
     row = parse_c6_bank_text(
         "10/05/2026 Pagamento IFOOD RESTAURANTE R$ -55,00",

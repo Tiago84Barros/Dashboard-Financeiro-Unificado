@@ -834,6 +834,30 @@ def classify_bank_movement(
                     "Regra explicita: destinatario do Pix",
                 )
 
+        # Transferencias para corretoras = investimento. Usa palavra inteira
+        # (evita falso-positivo, ex.: "Frederico" contem "rico").
+        desc_tokens = set(desc.split())
+        if "rico" in desc_tokens:
+            category = _find_category(
+                categories,
+                ["Renda Fixa", "Renda Fixa (CDB)", "Renda Fixa CDB", "Investimentos", "Investimento"],
+                ("transfer", "expense", "income"),
+            )
+            return _classification_payload(
+                row, category, "Renda Fixa", "sugerida", 0.95,
+                "Regra explicita: transferencia para Rico (investimento RF)",
+            )
+        if "nomad" in desc_tokens:
+            category = _find_category(
+                categories,
+                ["Exterior", "Investimentos no Exterior", "Internacional", "Investimentos", "Investimento"],
+                ("transfer", "expense", "income"),
+            )
+            return _classification_payload(
+                row, category, "Exterior", "sugerida", 0.95,
+                "Regra explicita: transferencia para Nomad (investimento Exterior)",
+            )
+
     if _is_boleto_or_pagamento(row) and any(
         term in desc for term in ("euroville", "euro ville", "salinas resort", "salinas", "resort")
     ):
