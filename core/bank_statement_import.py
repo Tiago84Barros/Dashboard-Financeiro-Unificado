@@ -798,13 +798,41 @@ def classify_bank_movement(
     desc = row.get("descricao_normalizada") or _norm(row.get("descricao_original"))
     abs_value = abs(float(row.get("valor") or 0.0))
 
-    if "pix recebido de tiago da silva barros" in desc:
+    # Salario: somente Pix recebido do Santander acima de R$ 10.000,00.
+    if (
+        "santander" in desc
+        and row.get("direcao") == "entrada"
+        and abs_value > 10000.0
+    ):
         category = _find_category(
             categories,
             ["Salario", "Renda principal", "Remuneracao", "Receita fixa", "Receita", "Entrada"],
             ("income",),
         )
-        return _classification_payload(row, category, "Salario", "sugerida", 0.98, "Regra explicita: salario")
+        return _classification_payload(
+            row, category, "Salario", "sugerida", 0.98,
+            "Regra explicita: salario (Santander > R$ 10.000,00)",
+        )
+
+    # Regras por destinatario de Pix enviado (definidas pelo usuario).
+    if row.get("direcao") == "saida":
+        destinatario_rules = (
+            (("luciana",), ["Saude"], "Saude"),
+            (("laredo", "bruno de almeida laredo"), ["Educacao"], "Educacao"),
+            (("moisaniel",), ["Internet"], "Internet"),
+            (
+                ("gizeli",),
+                ["Despesas domesticas", "Despesas Domesticas", "Despesas com a casa", "Casa"],
+                "Despesas domesticas",
+            ),
+        )
+        for keywords, aliases, suggested in destinatario_rules:
+            if any(keyword in desc for keyword in keywords):
+                category = _find_category(categories, aliases, ("expense",))
+                return _classification_payload(
+                    row, category, suggested, "sugerida", 0.95,
+                    "Regra explicita: destinatario do Pix",
+                )
 
     if _is_boleto_or_pagamento(row) and any(
         term in desc for term in ("euroville", "euro ville", "salinas resort", "salinas", "resort")
@@ -1241,6 +1269,138 @@ def import_bank_statement_pdf(
         ),
         "summary": summary,
         "rows": rows,
+    }
+
+
+def import_bank_statement_rows(
+    rows: list[dict],
+    file_name: str,
+    banco: str = "C6 Bank",
+) -> dict:
+    """Grava movimentos JA classificados/editados (vindos da prévia editável),
+    sem reparsear o PDF nem reclassificar. Recalcula a descrição normalizada e
+    o hash a partir dos valores atuais para manter a idempotência."""
+    if settings.MOCK_MODE:
+        return {"ok": False, "message": "Modo mock ativo; importacao nao executada."}
+
+    engine = get_engine()
+    if engine is None:
+        return {"ok": False, "message": "Banco nao configurado."}
+    if not rows:
+        return {"ok": False, "message": "Nada para importar."}
+
+    owner = _owner_id()
+    inserted = skipped = published = pending = 0
+
+    with engine.begin() as conn:
+        _ensure_tables(conn)
+        account = _resolve_bank_statement_account(conn, owner, None)
+        if not account:
+            return {
+                "ok": False,
+                "message": (
+                    "Nenhuma conta tecnica de movimentacao foi encontrada para publicar no Controle Financeiro. "
+                    "Use uma conta do tipo checking, savings ou digital_wallet."
+                ),
+            }
+        account_id = account.id
+        categories = _fetch_categories(conn, owner)
+        category_by_id = {str(category["id"]): category for category in categories}
+
+        prepared: list[dict] = []
+        for raw in rows:
+            row = {**raw}
+            row["descricao_normalizada"] = _norm(row.get("descricao_original"))
+            row["valor"] = round(float(row.get("valor") or 0.0), 2)
+            row["hash_lancamento"] = build_bank_statement_hash(row)
+            prepared.append(row)
+
+            params = {
+                "uid": owner,
+                "account_id": account_id,
+                "banco": row.get("banco") or banco,
+                "conta": getattr(account, "name", None),
+                "data_movimento": row.get("data_movimento"),
+                "data_lancamento": row.get("data_lancamento"),
+                "tipo_original_banco": row.get("tipo_original_banco"),
+                "descricao_original": row.get("descricao_original"),
+                "descricao_normalizada": row.get("descricao_normalizada"),
+                "valor": row["valor"],
+                "direcao": row.get("direcao"),
+                "categoria_id": row.get("categoria_id"),
+                "subcategoria_id": row.get("subcategoria_id"),
+                "categoria_sugerida_texto": row.get("categoria_sugerida_texto"),
+                "subcategoria_sugerida_texto": row.get("subcategoria_sugerida_texto"),
+                "confianca_classificacao": row.get("confianca_classificacao"),
+                "status_classificacao": row.get("status_classificacao") or "pendente",
+                "origem_arquivo": file_name,
+                "hash_lancamento": row["hash_lancamento"],
+            }
+            inserted_row = conn.execute(
+                text(
+                    """
+                    INSERT INTO bank_statement_movements (
+                        user_id, account_id, banco, conta, data_movimento, data_lancamento,
+                        tipo_original_banco, descricao_original, descricao_normalizada, valor,
+                        direcao, categoria_id, subcategoria_id, categoria_sugerida_texto,
+                        subcategoria_sugerida_texto, confianca_classificacao,
+                        status_classificacao, origem_arquivo, hash_lancamento
+                    )
+                    VALUES (
+                        CAST(:uid AS uuid), CAST(:account_id AS uuid), :banco, :conta,
+                        :data_movimento, :data_lancamento, :tipo_original_banco,
+                        :descricao_original, :descricao_normalizada, :valor, :direcao,
+                        CAST(:categoria_id AS uuid), CAST(:subcategoria_id AS uuid),
+                        :categoria_sugerida_texto, :subcategoria_sugerida_texto,
+                        :confianca_classificacao, :status_classificacao,
+                        :origem_arquivo, :hash_lancamento
+                    )
+                    ON CONFLICT (user_id, hash_lancamento) DO NOTHING
+                    RETURNING id::text
+                    """
+                ),
+                params,
+            ).fetchone()
+            if not inserted_row:
+                skipped += 1
+                continue
+
+            inserted += 1
+            if row.get("categoria_id"):
+                category = category_by_id.get(str(row.get("categoria_id")))
+                tx_id = _insert_transaction(conn, owner, row, account_id, category)
+                if tx_id:
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE bank_statement_movements
+                            SET transaction_id = CAST(:tx_id AS uuid), updated_at = NOW()
+                            WHERE id = CAST(:movement_id AS uuid)
+                            """
+                        ),
+                        {"tx_id": tx_id, "movement_id": inserted_row.id},
+                    )
+                    published += 1
+            else:
+                pending += 1
+
+    try:
+        from core.controle import _clear_controle_caches
+
+        _clear_controle_caches()
+    except Exception:
+        logger.debug("Nao foi possivel limpar caches do controle financeiro.", exc_info=True)
+
+    summary = summarize_bank_movements(prepared, banco)
+    summary.update({"inserted": inserted, "skipped": skipped, "published": published, "pending": pending})
+    return {
+        "ok": True,
+        "message": (
+            f"{inserted} movimento(s) importado(s); {published} publicado(s) no Controle Financeiro; "
+            f"{pending} pendente(s); {skipped} duplicado(s) ignorado(s)."
+        ),
+        "summary": summary,
+        "rows": prepared,
     }
 
 

@@ -61,7 +61,7 @@ def test_month_summary_header_is_not_parsed_as_movement():
 def test_explicit_classification_rules_use_existing_category_ids():
     parsed = parse_c6_bank_text(
         """
-        01/05/2026 Entrada PIX Pix recebido de TIAGO DA SILVA BARROS R$ 10.000,00
+        01/05/2026 Entrada PIX Pix recebido de SANTANDER S.A. R$ 12.000,00
         02/05/2026 Boleto EUROVILLE SALINAS RESORT R$ -650,00
         03/05/2026 Pagamento RESERVA DO LAGO R$ -1.500,00
         """,
@@ -115,6 +115,52 @@ def test_automatic_rules_and_default_other_behaviour():
     assert classified[6]["categoria_id"] == "cat-pagamento-cartao"
     assert classified[6]["categoria_sugerida_texto"] == "Pagamento de Cartao"
     assert _transaction_type_for(classified[6], {"nome": "Pagamento de Fatura", "tipo": "transfer"}) == "expense"
+
+
+def _categories_extra():
+    return _categories() + [
+        {"id": "cat-educacao", "nome": "Educacao", "tipo": "expense"},
+        {"id": "cat-internet", "nome": "Internet", "tipo": "expense"},
+        {"id": "cat-domesticas", "nome": "Despesas domesticas", "tipo": "expense"},
+    ]
+
+
+def test_destinatario_rules_categorize_by_pix_recipient():
+    parsed = parse_c6_bank_text(
+        """
+        01/05/2026 Saida PIX Pix enviado para LUCIANA DA SILVA BARROS R$ -650,00
+        02/05/2026 Saida PIX Pix enviado para Bruno de Almeida Laredo R$ -390,00
+        03/05/2026 Saida PIX Pix enviado para MOISANIEL SILVA RAMOS R$ -185,00
+        04/05/2026 Saida PIX Pix enviado para Gizeli da Costa Feio R$ -273,60
+        """,
+        file_name="c6.pdf",
+    )
+    classified = classify_bank_movements(parsed["rows"], _categories_extra())
+
+    assert classified[0]["categoria_id"] == "cat-saude"
+    assert classified[1]["categoria_id"] == "cat-educacao"
+    assert classified[2]["categoria_id"] == "cat-internet"
+    assert classified[3]["categoria_id"] == "cat-domesticas"
+
+
+def test_salario_only_for_santander_above_10k():
+    parsed = parse_c6_bank_text(
+        """
+        05/05/2026 Entrada PIX Pix recebido de SANTANDER S.A. R$ 12.000,00
+        06/05/2026 Entrada PIX Pix recebido de SANTANDER S.A. R$ 5.000,00
+        07/05/2026 Entrada PIX Pix recebido de TIAGO DA SILVA BARROS R$ 18.000,00
+        """,
+        file_name="c6.pdf",
+    )
+    classified = classify_bank_movements(parsed["rows"], _categories_extra())
+
+    # Santander acima de 10k -> Salario
+    assert classified[0]["categoria_id"] == "cat-salario"
+    assert classified[0]["categoria_sugerida_texto"] == "Salario"
+    # Santander abaixo de 10k -> nao e salario
+    assert classified[1]["categoria_sugerida_texto"] != "Salario"
+    # Tiago (regra antiga removida) -> nao e mais salario
+    assert classified[2]["categoria_sugerida_texto"] != "Salario"
 
 
 def test_saved_rule_has_priority_over_automatic_rule():

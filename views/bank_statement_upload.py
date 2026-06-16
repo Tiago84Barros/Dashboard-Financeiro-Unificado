@@ -16,7 +16,7 @@ from core.bank_statement_import import (
     confirm_bank_statement_movement,
     get_bank_statement_categories,
     get_bank_statement_review_rows,
-    import_bank_statement_pdf,
+    import_bank_statement_rows,
     preview_bank_statement_pdf,
 )
 from core.config import settings
@@ -193,14 +193,44 @@ def _render_upload() -> None:
         return
 
     _summary_cards(parsed.get("summary", {}), uploaded.name)
-    st.dataframe(
-        _preview_dataframe(rows),
+
+    categories = get_bank_statement_categories()
+    cat_by_name = {c["nome"]: c for c in categories}
+    category_options = ["Pendente"] + list(cat_by_name.keys())
+
+    def _row_category(row: dict) -> str:
+        name = row.get("categoria_nome") or row.get("categoria_sugerida_texto")
+        return name if name in cat_by_name else "Pendente"
+
+    edit_df = pd.DataFrame(
+        [
+            {
+                "Data": _fmt_date(row.get("data_movimento")),
+                "Tipo banco": row.get("tipo_original_banco") or "-",
+                "Descrição": row.get("descricao_original") or "",
+                "Direção": row.get("direcao") or "saida",
+                "Categoria": _row_category(row),
+                "Valor (R$)": float(row.get("valor") or 0.0),
+            }
+            for row in rows
+        ]
+    )
+
+    st.caption("Revise antes de salvar — você pode editar Descrição, Direção, Valor e Categoria.")
+    edited = st.data_editor(
+        edit_df,
         hide_index=True,
         use_container_width=True,
+        num_rows="fixed",
         column_config={
-            "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
-            "Confiança": st.column_config.NumberColumn("Confiança", format="%.2f"),
+            "Data": st.column_config.TextColumn("Data", disabled=True),
+            "Tipo banco": st.column_config.TextColumn("Tipo banco", disabled=True),
+            "Descrição": st.column_config.TextColumn("Descrição", width="large"),
+            "Direção": st.column_config.SelectboxColumn("Direção", options=["entrada", "saida"], required=True),
+            "Categoria": st.column_config.SelectboxColumn("Categoria", options=category_options, required=True),
+            "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f", step=0.01),
         },
+        key="bank_statement_editor",
     )
 
     if st.button(
@@ -210,7 +240,28 @@ def _render_upload() -> None:
         disabled=(not rows or settings.MOCK_MODE),
         key="bank_statement_import_btn",
     ):
-        result = import_bank_statement_pdf(file_bytes, uploaded.name, banco=banco)
+        final_rows: list[dict] = []
+        for idx, base in enumerate(rows):
+            e = edited.iloc[idx]
+            row = {**base}
+            row["descricao_original"] = str(e["Descrição"] or "")[:500]
+            row["direcao"] = str(e["Direção"] or base.get("direcao") or "saida")
+            row["valor"] = round(float(e["Valor (R$)"] or 0.0), 2)
+            cat = cat_by_name.get(str(e["Categoria"] or "Pendente"))
+            if cat:
+                row["categoria_id"] = cat["id"]
+                row["categoria_nome"] = cat["nome"]
+                row["categoria_sugerida_texto"] = cat["nome"]
+                row["status_classificacao"] = "confirmada"
+                row["confianca_classificacao"] = 1.0
+            else:
+                row["categoria_id"] = None
+                row["categoria_sugerida_texto"] = None
+                row["status_classificacao"] = "pendente"
+                row["confianca_classificacao"] = 0.0
+            final_rows.append(row)
+
+        result = import_bank_statement_rows(final_rows, uploaded.name, banco=banco)
         st.session_state["bank_statement_import_result"] = result
         if result.get("ok"):
             st.rerun()
