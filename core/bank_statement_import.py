@@ -798,11 +798,11 @@ def classify_bank_movement(
     desc = row.get("descricao_normalizada") or _norm(row.get("descricao_original"))
     abs_value = abs(float(row.get("valor") or 0.0))
 
-    # Salario: somente Pix recebido do Santander acima de R$ 10.000,00.
+    # Salario: Pix recebido do Santander ou do Tiago acima de R$ 10.000,00.
     if (
-        "santander" in desc
-        and row.get("direcao") == "entrada"
+        row.get("direcao") == "entrada"
         and abs_value > 10000.0
+        and ("santander" in desc or "tiago" in desc)
     ):
         category = _find_category(
             categories,
@@ -811,7 +811,7 @@ def classify_bank_movement(
         )
         return _classification_payload(
             row, category, "Salario", "sugerida", 0.98,
-            "Regra explicita: salario (Santander > R$ 10.000,00)",
+            "Regra explicita: salario (Santander/Tiago > R$ 10.000,00)",
         )
 
     # Regras por destinatario de Pix enviado (definidas pelo usuario).

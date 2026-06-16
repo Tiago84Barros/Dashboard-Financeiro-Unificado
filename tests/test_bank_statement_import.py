@@ -143,12 +143,14 @@ def test_destinatario_rules_categorize_by_pix_recipient():
     assert classified[3]["categoria_id"] == "cat-domesticas"
 
 
-def test_salario_only_for_santander_above_10k():
+def test_salario_for_santander_or_tiago_above_10k():
     parsed = parse_c6_bank_text(
         """
         05/05/2026 Entrada PIX Pix recebido de SANTANDER S.A. R$ 12.000,00
         06/05/2026 Entrada PIX Pix recebido de SANTANDER S.A. R$ 5.000,00
         07/05/2026 Entrada PIX Pix recebido de TIAGO DA SILVA BARROS R$ 18.000,00
+        08/05/2026 Entrada PIX Pix recebido de TIAGO DA SILVA BARROS R$ 8.000,00
+        09/05/2026 Entrada PIX Pix recebido de FULANO DE TAL R$ 15.000,00
         """,
         file_name="c6.pdf",
     )
@@ -159,8 +161,12 @@ def test_salario_only_for_santander_above_10k():
     assert classified[0]["categoria_sugerida_texto"] == "Salario"
     # Santander abaixo de 10k -> nao e salario
     assert classified[1]["categoria_sugerida_texto"] != "Salario"
-    # Tiago (regra antiga removida) -> nao e mais salario
-    assert classified[2]["categoria_sugerida_texto"] != "Salario"
+    # Tiago acima de 10k -> Salario
+    assert classified[2]["categoria_id"] == "cat-salario"
+    # Tiago abaixo de 10k -> nao e salario
+    assert classified[3]["categoria_sugerida_texto"] != "Salario"
+    # Terceiro acima de 10k mas nao Santander/Tiago -> nao e salario
+    assert classified[4]["categoria_sugerida_texto"] != "Salario"
 
 
 def test_saved_rule_has_priority_over_automatic_rule():
