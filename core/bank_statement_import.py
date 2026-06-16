@@ -870,6 +870,20 @@ def classify_bank_movement(
     if "secretaria do tesouro nacional" in desc or "tesouro nacional" in desc:
         return _other_classification(row, categories, 0.88, "Regra definida: Tesouro Nacional como saida em Outros")
 
+    # Pagamento de fatura/cartao (ex.: "PGTO FAT CARTAO C6", "pagamento de fatura").
+    pagamento_cartao_keywords = (
+        "pgto fat cartao", "pgto fatura", "pagamento de fatura", "pagamento fatura",
+        "pag fatura", "fatura cartao", "fatura do cartao", "fatura c6",
+        "pagamento de cartao", "pagamento cartao", "cartao de credito",
+    )
+    if any(k in desc for k in pagamento_cartao_keywords):
+        category = _find_category(
+            categories,
+            ["Pagamento de Cartao", "Pagamento de Fatura", "Cartao de Credito", "Cartao"],
+            ("expense", "transfer"),
+        )
+        return _classification_payload(row, category, "Pagamento de Cartao", "sugerida", 0.92, "Regra definida: pagamento de cartao/fatura")
+
     if "debito de cartao" in desc or "debito de cartao" in _norm(row.get("tipo_original_banco")):
         category = _find_category(
             categories,

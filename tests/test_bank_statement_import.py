@@ -169,6 +169,21 @@ def test_salario_for_santander_or_tiago_above_10k():
     assert classified[4]["categoria_sugerida_texto"] != "Salario"
 
 
+def test_pagamento_de_fatura_cartao_goes_to_card_category():
+    parsed = parse_c6_bank_text(
+        """
+        20/05/2026 Pagamento PGTO FAT CARTAO C6 R$ -10.153,06
+        21/05/2026 Pagamento Pagamento de fatura cartao R$ -1.200,00
+        """,
+        file_name="c6.pdf",
+    )
+    classified = classify_bank_movements(parsed["rows"], _categories_extra())
+
+    assert classified[0]["categoria_id"] == "cat-pagamento-cartao"
+    assert classified[0]["categoria_sugerida_texto"] == "Pagamento de Cartao"
+    assert classified[1]["categoria_id"] == "cat-pagamento-cartao"
+
+
 def test_saved_rule_has_priority_over_automatic_rule():
     row = parse_c6_bank_text(
         "10/05/2026 Pagamento IFOOD RESTAURANTE R$ -55,00",
