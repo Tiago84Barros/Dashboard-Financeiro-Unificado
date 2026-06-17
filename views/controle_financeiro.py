@@ -860,6 +860,12 @@ def _tab_analises(
 
     # ── Comparativo Ano a Ano (YOY) — do app original ─────────────────────────
     _secao_titulo("📅", "Comparativo Ano a Ano")
+    if hist_anual.get("data_source") == "real_error":
+        st.warning(
+            "Não foi possível carregar o histórico real do banco — os dados de "
+            "demonstração foram desativados para não exibir valores fictícios.\n\n"
+            f"Detalhe técnico: {hist_anual.get('error', 'erro desconhecido')}"
+        )
     anos     = hist_anual.get("anos", [])
     por_ano  = hist_anual.get("por_ano", {})
 

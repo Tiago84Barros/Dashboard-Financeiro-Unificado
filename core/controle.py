@@ -1189,12 +1189,14 @@ def get_historico_anual() -> dict:
         d["data_source"] = "real"
         return d
     except Exception as exc:
+        # Em modo real NAO caímos no mock: números financeiros fictícios
+        # mascarariam o problema (ex.: "histórico de 2024" que não existe).
+        # Devolve vazio e sinaliza o erro real para a UI exibir.
         logger.warning(
-            "[controle] get_historico_anual falhou (%s) — usando mock.", type(exc).__name__
+            "[controle] get_historico_anual falhou — sem fallback mock em modo real.",
+            exc_info=True,
         )
-        d = _historico_anual_mock()
-        d["data_source"] = "mock_fallback"
-        return d
+        return {"anos": [], "por_ano": {}, "data_source": "real_error", "error": str(exc)}
 
 
 @st.cache_data(ttl=300)
@@ -1237,12 +1239,12 @@ def get_gastos_categoria_anual(ano: int) -> list:
         return [{"nome": r.category_name, "gasto": round(float(r.total_spent), 2)}
                 for r in rows]
 
-    except Exception as exc:
+    except Exception:
         logger.warning(
-            "[controle] get_gastos_categoria_anual(%s) falhou (%s) — usando mock.",
-            ano, type(exc).__name__,
+            "[controle] get_gastos_categoria_anual(%s) falhou — sem fallback mock.",
+            ano, exc_info=True,
         )
-        return _mock
+        return []
 
 
 @st.cache_data(ttl=60)
@@ -1282,9 +1284,9 @@ def get_gastos_cartao_mensal(ano: int) -> list:
         return _gastos_cartao_mock(ano)
     try:
         return _gastos_cartao_real(ano)
-    except Exception as exc:
-        logger.warning("[controle] get_gastos_cartao_mensal falhou (%s) — usando mock.", type(exc).__name__)
-        return _gastos_cartao_mock(ano)
+    except Exception:
+        logger.warning("[controle] get_gastos_cartao_mensal falhou — sem fallback mock.", exc_info=True)
+        return []
 
 
 def _gastos_cartao_mock(ano: int) -> list:
