@@ -207,6 +207,20 @@ def test_pix_para_adelaide_acima_de_3k_vira_financiamento():
     assert classified[2]["categoria_sugerida_texto"] != "Financiamento"
 
 
+def test_pagamento_costa_marques_vira_financiamento():
+    cats = _categories_extra() + [
+        {"id": "cat-financiamento", "nome": "Financiamento", "tipo": "expense"},
+    ]
+    parsed = parse_c6_bank_text(
+        "03/06/2026 Pagamento COSTA MARQUES CONSTRUTORA E INCORPORADORA R$ -1.611,81",
+        file_name="c6.pdf",
+    )
+    classified = classify_bank_movements(parsed["rows"], cats)
+
+    assert classified[0]["categoria_id"] == "cat-financiamento"
+    assert classified[0]["categoria_sugerida_texto"] == "Financiamento"
+
+
 def test_transferencia_para_corretora_vira_investimento():
     cats = _categories_extra() + [
         {"id": "cat-rf", "nome": "Renda Fixa", "tipo": "transfer"},
