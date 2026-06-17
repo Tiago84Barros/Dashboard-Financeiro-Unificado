@@ -1224,6 +1224,93 @@ def _fmt_date_ui(value: object) -> str:
     return value.strftime("%d/%m/%Y") if hasattr(value, "strftime") else "-"
 
 
+def _editor_extratos(rows: list, categories: list) -> None:
+    """Editor in-place dos movimentos de extrato importados.
+    Permite editar Descrição, Direção, Valor e Categoria e grava via
+    update_bank_statement_movement (sincroniza a transação publicada)."""
+    from core.bank_statement_import import update_bank_statement_movement
+
+    cat_by_name = {c["nome"]: c for c in categories}
+    options = ["Pendente"] + list(cat_by_name.keys())
+
+    def _cat_label(r: dict) -> str:
+        name = (
+            r.get("categoria_confirmada_nome")
+            or r.get("categoria_nome")
+            or r.get("categoria_sugerida_texto")
+        )
+        return name if name in cat_by_name else "Pendente"
+
+    df = pd.DataFrame([
+        {
+            "ID": row.get("id"),
+            "Data": _fmt_date_ui(row.get("data_movimento")),
+            "Banco": row.get("banco") or "-",
+            "Descrição": row.get("descricao_original") or "",
+            "Direção": row.get("direcao") or "saida",
+            "Categoria": _cat_label(row),
+            "Status": row.get("status_classificacao") or "pendente",
+            "Valor (R$)": float(row.get("valor") or 0.0),
+        }
+        for row in rows
+    ])
+
+    with st.form("form_editor_extratos", clear_on_submit=False):
+        edited = st.data_editor(
+            df,
+            num_rows="fixed",
+            hide_index=True,
+            use_container_width=True,
+            key="editor_extratos",
+            column_config={
+                "ID": None,
+                "Data":   st.column_config.TextColumn("Data", disabled=True),
+                "Banco":  st.column_config.TextColumn("Banco", disabled=True),
+                "Status": st.column_config.TextColumn("Status", disabled=True),
+                "Descrição": st.column_config.TextColumn("Descrição", width="large"),
+                "Direção": st.column_config.SelectboxColumn("Direção", options=["entrada", "saida"], required=True),
+                "Categoria": st.column_config.SelectboxColumn("Categoria", options=options, required=True),
+                "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f", step=0.01),
+            },
+        )
+        salvar = st.form_submit_button("Salvar alterações dos extratos", type="primary")
+
+    if not salvar:
+        return
+
+    erros, ok_count = [], 0
+    for i, row in edited.iterrows():
+        orig = df.iloc[i]
+        mudou = (
+            row["Descrição"] != orig["Descrição"]
+            or row["Direção"] != orig["Direção"]
+            or row["Categoria"] != orig["Categoria"]
+            or abs(float(row["Valor (R$)"]) - float(orig["Valor (R$)"])) > 0.001
+        )
+        if not mudou:
+            continue
+        cat = cat_by_name.get(str(row["Categoria"]))
+        ok, msg = update_bank_statement_movement(
+            movement_id=str(row["ID"]),
+            category_id=cat["id"] if cat else None,
+            descricao=str(row["Descrição"]),
+            valor=float(row["Valor (R$)"]),
+            direcao=str(row["Direção"]),
+        )
+        if ok:
+            ok_count += 1
+        else:
+            erros.append(f"ID {row['ID']}: {msg}")
+
+    if ok_count > 0:
+        st.success(f"✅ {ok_count} movimento(s) de extrato atualizado(s).")
+        st.rerun()
+    for e in erros:
+        st.error(e)
+    if ok_count == 0 and not erros:
+        st.info("Nenhuma alteração detectada.")
+
+
 def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
     """Fila operacional dos extratos bancarios importados, sem upload nesta aba."""
     try:
@@ -1276,6 +1363,24 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
 
     if not filtered:
         st.caption("Nenhuma movimentação bancária importada para os filtros atuais.")
+        return
+
+    # ── Edição in-place dos extratos importados ───────────────────────────────
+    edit_extratos = st.checkbox(
+        "✏️ Habilitar edição dos extratos",
+        key="bank_tx_edit_mode",
+        help="Edite Descrição, Direção, Valor e Categoria dos lançamentos importados.",
+    )
+    if edit_extratos:
+        cats_edit = get_bank_statement_categories()
+        if not cats_edit:
+            st.warning("Categorias indisponíveis para editar extratos.")
+            return
+        st.info(
+            "Edite os campos e clique **Salvar alterações dos extratos**. "
+            "Definir uma categoria confirma o lançamento e publica/atualiza no Controle Financeiro."
+        )
+        _editor_extratos(filtered, cats_edit)
         return
 
     df = pd.DataFrame([

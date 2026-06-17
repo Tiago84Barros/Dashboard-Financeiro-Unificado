@@ -1652,3 +1652,175 @@ def confirm_bank_statement_movement(
     except Exception:
         logger.debug("Nao foi possivel limpar caches do controle financeiro.", exc_info=True)
     return True, ""
+
+
+def update_bank_statement_movement(
+    movement_id: str,
+    category_id: str | None = None,
+    descricao: str | None = None,
+    valor: float | None = None,
+    direcao: str | None = None,
+    account_id: str | None = None,
+) -> tuple[bool, str]:
+    """Edita um movimento de extrato importado (descricao, direcao, valor e/ou
+    categoria) e mantem a transacao publicada em sincronia.
+
+    - Com categoria: confirma o movimento e publica/atualiza a transacao.
+    - Sem categoria: mantem 'pendente'; se ja houver transacao vinculada,
+      atualiza descricao/valor/tipo dela.
+    """
+    if settings.MOCK_MODE:
+        return False, "Modo mock ativo; edicao nao executada."
+    engine = get_engine()
+    if engine is None:
+        return False, "Banco nao configurado."
+    owner = _owner_id()
+
+    try:
+        with engine.begin() as conn:
+            _ensure_tables(conn)
+            mv = conn.execute(
+                text(
+                    """
+                    SELECT * FROM bank_statement_movements
+                    WHERE id = CAST(:id AS uuid) AND user_id = CAST(:uid AS uuid)
+                    LIMIT 1
+                    """
+                ),
+                {"id": movement_id, "uid": owner},
+            ).fetchone()
+            if not mv:
+                return False, "Movimento nao encontrado."
+
+            new_desc = (descricao if descricao is not None else mv.descricao_original) or ""
+            new_dir = (direcao or mv.direcao or "saida")
+            base_val = valor if valor is not None else float(mv.valor or 0.0)
+            magnitude = abs(float(base_val or 0.0))
+            signed = round(magnitude if new_dir == "entrada" else -magnitude, 2)
+
+            category = None
+            if category_id:
+                category = conn.execute(
+                    text(
+                        """
+                        SELECT id::text, name, type FROM categories
+                        WHERE id = CAST(:cid AS uuid)
+                          AND (user_id = CAST(:uid AS uuid) OR user_id IS NULL)
+                        LIMIT 1
+                        """
+                    ),
+                    {"cid": category_id, "uid": owner},
+                ).fetchone()
+                if not category:
+                    return False, "Categoria inexistente ou indisponivel."
+
+            account = _resolve_bank_statement_account(
+                conn, owner, account_id or str(mv.account_id or "") or None
+            )
+            account_final = account.id if account else mv.account_id
+
+            conn.execute(
+                text(
+                    """
+                    UPDATE bank_statement_movements
+                    SET descricao_original = :desc,
+                        descricao_normalizada = :descn,
+                        valor = :valor,
+                        direcao = :dir,
+                        categoria_id = CAST(:cid AS uuid),
+                        categoria_confirmada_id = CAST(:ccid AS uuid),
+                        categoria_sugerida_texto = :cnome,
+                        status_classificacao = :status,
+                        confianca_classificacao = :conf,
+                        account_id = CAST(:acc AS uuid),
+                        updated_at = NOW()
+                    WHERE id = CAST(:id AS uuid) AND user_id = CAST(:uid AS uuid)
+                    """
+                ),
+                {
+                    "desc": new_desc[:500],
+                    "descn": _norm(new_desc),
+                    "valor": signed,
+                    "dir": new_dir,
+                    "cid": category.id if category else None,
+                    "ccid": category.id if category else None,
+                    "cnome": category.name if category else mv.categoria_sugerida_texto,
+                    "status": "confirmada" if category else "pendente",
+                    "conf": 1.0 if category else 0.0,
+                    "acc": account_final,
+                    "id": movement_id,
+                    "uid": owner,
+                },
+            )
+
+            row = {
+                "descricao_original": new_desc,
+                "valor": signed,
+                "data_movimento": mv.data_movimento,
+                "data_lancamento": mv.data_lancamento,
+                "direcao": new_dir,
+                "categoria_id": category.id if category else None,
+                "categoria_sugerida_texto": category.name if category else None,
+            }
+            category_dict = (
+                {"id": category.id, "nome": category.name, "tipo": category.type}
+                if category else None
+            )
+
+            if mv.transaction_id:
+                if category:
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE transactions
+                            SET description = :d, amount = :a, type = :t,
+                                category_id = CAST(:cid AS uuid),
+                                account_id = CAST(:acc AS uuid)
+                            WHERE id = CAST(:tx AS uuid) AND user_id = CAST(:uid AS uuid)
+                            """
+                        ),
+                        {
+                            "d": new_desc[:255], "a": signed,
+                            "t": _transaction_type_for(row, category_dict),
+                            "cid": category.id, "acc": account_final,
+                            "tx": str(mv.transaction_id), "uid": owner,
+                        },
+                    )
+                else:
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE transactions
+                            SET description = :d, amount = :a, type = :t
+                            WHERE id = CAST(:tx AS uuid) AND user_id = CAST(:uid AS uuid)
+                            """
+                        ),
+                        {
+                            "d": new_desc[:255], "a": signed,
+                            "t": _transaction_type_for(row, None),
+                            "tx": str(mv.transaction_id), "uid": owner,
+                        },
+                    )
+            elif category:
+                tx_id = _insert_transaction(conn, owner, row, account_final, category_dict)
+                if tx_id:
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE bank_statement_movements
+                            SET transaction_id = CAST(:tx AS uuid), updated_at = NOW()
+                            WHERE id = CAST(:id AS uuid)
+                            """
+                        ),
+                        {"tx": tx_id, "id": movement_id},
+                    )
+    except Exception as exc:
+        return False, f"Erro ao editar movimento: {exc}"
+
+    try:
+        from core.controle import _clear_controle_caches
+
+        _clear_controle_caches()
+    except Exception:
+        logger.debug("Nao foi possivel limpar caches do controle financeiro.", exc_info=True)
+    return True, ""
