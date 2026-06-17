@@ -955,6 +955,106 @@ def _tab_analises(
 # TAB 3 — Tabelas
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _editor_lancamentos(txs: list, form_key: str, editor_key: str, limit: int = 200) -> None:
+    """Editor in-place de lançamentos: data_editor + gravação via atualizar_transacao.
+    Grava apenas as linhas alteradas. Mesmo padrão dos Últimos Lançamentos."""
+    opcoes      = get_opcoes_formulario()
+    cats_db     = opcoes.get("categorias", [])
+    contas_db   = opcoes.get("contas", [])
+    cat_nomes   = [c["nome"] for c in cats_db]
+    conta_nomes = [c["nome"] for c in contas_db]
+
+    rows_edit = [
+        {
+            "ID":        tx["id"],
+            "Tipo":      _tipo_tx_label(tx),
+            "Categoria": tx["categoria"],
+            "Data":      tx["data"],
+            "Valor":     abs(tx["valor"]),
+            "Descrição": tx["descricao"],
+            "Conta":     tx["conta"],
+        }
+        for tx in txs[:limit]
+    ]
+    df_edit = pd.DataFrame(rows_edit)
+
+    with st.form(form_key, clear_on_submit=False):
+        edited = st.data_editor(
+            df_edit,
+            num_rows="fixed",
+            hide_index=True,
+            use_container_width=True,
+            key=editor_key,
+            column_config={
+                "ID": None,
+                "Tipo": st.column_config.SelectboxColumn(
+                    "Tipo", options=["entrada", "saída", "investimento", "transferência"],
+                ),
+                "Conta": st.column_config.SelectboxColumn(
+                    "Conta", options=conta_nomes if conta_nomes else ["Sem conta"],
+                ),
+                "Categoria": st.column_config.SelectboxColumn(
+                    "Categoria", options=cat_nomes if cat_nomes else ["Sem categoria"],
+                ),
+                "Data":  st.column_config.DateColumn("Data"),
+                "Valor": st.column_config.NumberColumn("Valor (R$)", format="%.2f", step=0.01),
+                "Descrição": st.column_config.TextColumn("Descrição"),
+            },
+        )
+        salvar = st.form_submit_button("Salvar alterações", type="primary")
+
+    if not salvar:
+        return
+
+    erros, ok_count = [], 0
+    for i, row in edited.iterrows():
+        orig = df_edit.iloc[i]
+        row_data  = pd.to_datetime(row["Data"]).date() if pd.notna(row["Data"]) else None
+        orig_data = pd.to_datetime(orig["Data"]).date() if pd.notna(orig["Data"]) else None
+        campos_mudaram = (
+            row["Descrição"] != orig["Descrição"]
+            or row["Categoria"] != orig["Categoria"]
+            or row["Tipo"] != orig["Tipo"]
+            or row["Conta"] != orig["Conta"]
+            or abs(row["Valor"] - orig["Valor"]) > 0.001
+            or row_data != orig_data
+        )
+        if not campos_mudaram:
+            continue
+        cat_m   = next((c for c in cats_db if c["nome"] == row["Categoria"]), None)
+        cat_id  = cat_m["id"] if cat_m else None
+        conta_m = next((c for c in contas_db if c["nome"] == row["Conta"]), None)
+        if not conta_m:
+            erros.append(f"ID {row['ID']}: conta inválida ou não encontrada.")
+            continue
+        tipo_tx = {
+            "entrada": "income", "saída": "expense",
+            "investimento": "investment", "transferência": "transfer",
+        }.get(row["Tipo"], "expense")
+        sinal = 1.0 if tipo_tx in ("income", "transfer") else -1.0
+        ok, msg = atualizar_transacao(
+            tx_id=str(row["ID"]),
+            descricao=str(row["Descrição"]),
+            valor=sinal * abs(float(row["Valor"])),
+            data=row_data,
+            categoria_id=cat_id,
+            conta_id=conta_m["id"],
+            tipo=tipo_tx,
+        )
+        if ok:
+            ok_count += 1
+        else:
+            erros.append(f"ID {row['ID']}: {msg}")
+
+    if ok_count > 0:
+        st.success(f"✅ {ok_count} lançamento(s) atualizado(s).")
+        st.rerun()
+    for e in erros:
+        st.error(e)
+    if ok_count == 0 and not erros:
+        st.info("Nenhuma alteração detectada.")
+
+
 def _tab_tabelas(d: dict) -> None:
     """
     Consulta de lançamentos com filtros completos (Tipo, Categoria, Ano, Mês, Dia, Texto).
@@ -1053,6 +1153,21 @@ def _tab_tabelas(d: dict) -> None:
 
     if not txs_f:
         st.caption("Nenhum lançamento com os filtros aplicados.")
+        _render_bank_statement_section(f_ano, f_mes)
+        return
+
+    # ── Edição in-place das linhas filtradas ──────────────────────────────────
+    edit_mode = st.checkbox(
+        "✏️ Habilitar edição das linhas filtradas",
+        key="tab_edit_mode",
+        help="Edite Tipo, Categoria, Data, Valor, Descrição e Conta dos lançamentos filtrados.",
+    )
+    if edit_mode:
+        st.info(
+            "Edite os campos desejados e clique **Salvar alterações**. "
+            "A edição opera sobre o resultado filtrado (até 200 linhas)."
+        )
+        _editor_lancamentos(txs_f, form_key="form_editor_tabelas", editor_key="editor_tabelas", limit=200)
         _render_bank_statement_section(f_ano, f_mes)
         return
 
