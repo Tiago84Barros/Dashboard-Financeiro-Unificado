@@ -184,6 +184,29 @@ def test_pagamento_de_fatura_cartao_goes_to_card_category():
     assert classified[1]["categoria_id"] == "cat-pagamento-cartao"
 
 
+def test_pix_para_adelaide_acima_de_3k_vira_financiamento():
+    cats = _categories_extra() + [
+        {"id": "cat-financiamento", "nome": "Financiamento", "tipo": "expense"},
+    ]
+    parsed = parse_c6_bank_text(
+        """
+        10/05/2026 Saida PIX Pix enviado para ADELAIDE DO SOCORRO GOMES VIANA R$ -4.780,00
+        11/05/2026 Saida PIX Pix enviado para ADELAIDE DO SOCORRO GOMES VIANA R$ -500,00
+        12/05/2026 Entrada PIX Pix recebido de ADELAIDE DO SOCORRO GOMES VIANA R$ 9.000,00
+        """,
+        file_name="c6.pdf",
+    )
+    classified = classify_bank_movements(parsed["rows"], cats)
+
+    # Acima de 3k (saida) -> Financiamento
+    assert classified[0]["categoria_id"] == "cat-financiamento"
+    assert classified[0]["categoria_sugerida_texto"] == "Financiamento"
+    # Abaixo de 3k -> nao e financiamento
+    assert classified[1]["categoria_sugerida_texto"] != "Financiamento"
+    # Pix recebido de Adelaide (entrada) -> nao e financiamento
+    assert classified[2]["categoria_sugerida_texto"] != "Financiamento"
+
+
 def test_transferencia_para_corretora_vira_investimento():
     cats = _categories_extra() + [
         {"id": "cat-rf", "nome": "Renda Fixa", "tipo": "transfer"},

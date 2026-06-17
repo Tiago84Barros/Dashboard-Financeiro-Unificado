@@ -816,6 +816,18 @@ def classify_bank_movement(
 
     # Regras por destinatario de Pix enviado (definidas pelo usuario).
     if row.get("direcao") == "saida":
+        # Pix enviado para Adelaide acima de R$ 3.000,00 -> Financiamento.
+        if "adelaide" in desc and abs_value > 3000.0:
+            category = _find_category(
+                categories,
+                ["Financiamento", "Emprestimos e Financiamentos", "Dividas", "Imovel", "Moradia", "Casa", "Investimentos"],
+                ("expense", "transfer", "income"),
+            )
+            return _classification_payload(
+                row, category, "Financiamento", "sugerida", 0.95,
+                "Regra explicita: Pix para Adelaide > R$ 3.000,00 (financiamento)",
+            )
+
         destinatario_rules = (
             (("luciana",), ["Saude"], "Saude"),
             (("laredo", "bruno de almeida laredo"), ["Educacao"], "Educacao"),
