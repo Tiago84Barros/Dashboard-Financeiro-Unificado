@@ -22,8 +22,11 @@ from core.llm_b3 import (
     analisar_portfolio,
     chat_com_portfolio,
     llm_disponivel,
+    parse_chart_directives,
     redistribuir_pesos,
 )
+from core.llm_context_b3 import build_llm_context_for_portfolio_chat
+from core.portfolio_chat_charts import render_charts_from_directives
 from core.rag_b3 import (
     format_rag_context,
     get_cobertura_docs,
@@ -964,9 +967,10 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
                 unsafe_allow_html=True)
     st.markdown(
         '<p style="font-size:0.78rem;color:#9CA3AF;margin-bottom:16px;">'
-        'Pergunte sobre indicadores (DY, P/L, ROE…), médias da carteira, empresas '
-        'específicas, documentos CVM ou estratégia. A IA consulta a carteira, o banco '
-        'de dados e os documentos antes de responder.</p>',
+        'Pergunte sobre indicadores (DY, P/L, ROE…), médias da carteira, comparações '
+        'com empresas <strong>fora</strong> da carteira, setores, ranking de múltiplos, '
+        'a lógica da seleção, documentos CVM ou estratégia. A IA consulta a carteira, o '
+        'universo B3 inteiro, os setores e os documentos — e gera gráficos quando ajudam.</p>',
         unsafe_allow_html=True,
     )
 
@@ -988,20 +992,39 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("Consultando carteira, banco e documentos…"):
+            chart_directives: list[dict] = []
+            chart_meta: dict = {}
+            with st.spinner("Consultando carteira, banco, setores e documentos…"):
                 try:
                     weights = _weights_from_model(model)
                     fund    = _portfolio_fundamentals(tickers_tuple)
                     consol  = _consolidated_metrics(fund, weights)
                     rag_ctx = _rag_for_question(user_input, model, cobertura_docs)
-                    context = _build_chat_context(
+                    base_context = _build_chat_context(
                         model, state, macro_hist, fund, consol, weights,
                         cobertura_docs, rag_ctx,
                     )
-                    resposta = chat_com_portfolio(context, history[:-1], user_input)
+                    # Camada ampla: enriquece com universo B3, setores, fundamentos
+                    # externos e Criação de Portfólio conforme a intenção da pergunta.
+                    context, chart_meta = build_llm_context_for_portfolio_chat(
+                        user_question=user_input,
+                        base_context=base_context,
+                        model=model,
+                        weights=weights,
+                        macro_hist=macro_hist,
+                        portfolio_tickers=[it.get("ticker", "") for it in model.get("items", [])],
+                        cobertura_docs=cobertura_docs,
+                    )
+                    resposta_raw = chat_com_portfolio(context, history[:-1], user_input)
+                    resposta, chart_directives = parse_chart_directives(resposta_raw)
                 except Exception as exc:
                     resposta = f"Erro ao consultar LLM: {exc}"
             st.markdown(resposta)
+            if chart_directives:
+                try:
+                    render_charts_from_directives(chart_directives, chart_meta)
+                except Exception as exc:
+                    st.caption(f"⚠️ Não foi possível gerar os gráficos solicitados: {exc}")
 
         history.append({"role": "assistant", "content": resposta})
         st.session_state["apb3_chat_history"] = history

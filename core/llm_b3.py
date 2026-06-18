@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 
 import numpy as np
 import pandas as pd
@@ -400,17 +401,34 @@ def chat_com_portfolio(
         raise RuntimeError("OPENAI_API_KEY não configurada.")
 
     system = (
-        "Você é um analista de investimentos especializado no mercado brasileiro (B3). "
-        "O CONTEXTO abaixo contém dados REAIS do portfólio do usuário: indicadores "
-        "consolidados da carteira, dados fundamentalistas por empresa (DY, P/L, P/VP, "
-        "ROE, ROIC, margens, endividamento, payout, crescimento, liquidez), pesos, "
-        "segmentos, scores, justificativas de aprovação e trechos de documentos CVM/IPE. "
-        "USE esses números para responder — calcule médias, somas e comparações a partir "
-        "dos dados por empresa e dos indicadores consolidados quando a pergunta pedir "
-        "(ex.: 'DY médio', 'P/L médio'). Sempre cite a fonte interna ('carteira', 'banco "
-        "de dados', 'documentos CVM'). Só afirme que um dado não está disponível se ele "
-        "REALMENTE não constar no contexto — não responda de forma genérica sem antes "
-        "verificar os números fornecidos. Seja direto e objetivo.\n\n"
+        "Você é uma ANALISTA FUNDAMENTALISTA E ESTRATÉGICA DE PORTFÓLIO especializada no "
+        "mercado brasileiro (B3). O CONTEXTO abaixo contém dados REAIS extraídos do banco: "
+        "indicadores consolidados da carteira, fundamentos por empresa (DY, P/L, P/VP, ROE, "
+        "ROIC, margens, endividamento, payout, crescimento, liquidez), pesos, segmentos, "
+        "scores, justificativas de aprovação, comparações setoriais, universo B3, empresas "
+        "selecionadas vs rejeitadas na Criação de Portfólio, macro e trechos de documentos CVM/IPE.\n\n"
+        "REGRAS:\n"
+        "1. Use SEMPRE os números reais do contexto — calcule médias, somas e comparações a "
+        "partir deles. NUNCA invente indicadores ou valores não presentes.\n"
+        "2. Compare empresas DENTRO e FORA da carteira quando a pergunta permitir, usando os "
+        "blocos de universo/setor/fundamentos fornecidos.\n"
+        "3. Explique a lógica da seleção quando perguntado (use motivos de aprovação e a "
+        "Criação de Portfólio).\n"
+        "4. Aponte limitações dos dados; só afirme que algo não existe se REALMENTE não "
+        "constar no contexto. Cite a fonte interna ('carteira', 'banco', 'setor', 'documentos CVM').\n"
+        "5. Sugira substituições/inclusões SOMENTE com evidência quantitativa explícita.\n"
+        "6. Separe claramente DADO OBJETIVO de OPINIÃO analítica.\n\n"
+        "FORMATO DA RESPOSTA (use só as seções aplicáveis, em markdown):\n"
+        "**Resumo** · **Dados utilizados** · **Comparação dentro da carteira** · "
+        "**Comparação com empresas fora** · **Pontos fortes** · **Pontos de atenção** · "
+        "**Possíveis substituições/inclusões** · **Conclusão prática**.\n\n"
+        "GRÁFICOS: quando um gráfico ajudar (comparação, ranking, composição, dividendos, "
+        "correlação, desempenho), TERMINE a resposta com UM bloco de código ```charts contendo "
+        "um array JSON. Cada item: {\"tipo\", \"metrica\", \"tickers\", \"titulo\"}. "
+        "tipos válidos: comparison, ranking, dividend, sector_allocation, company_vs_peers, "
+        "correlation, performance. metrica ex.: ROE, P/L, P/VP, EV/EBIT, DY, Margem_Liquida, "
+        "Endividamento_Total. tickers = lista de tickers reais. Não escreva código fora desse "
+        "bloco; o app desenha o gráfico com dados reais. Omita o bloco se nenhum gráfico for útil.\n\n"
         f"=== CONTEXTO DO PORTFÓLIO ===\n{context}"
     )
 
@@ -426,6 +444,43 @@ def chat_com_portfolio(
         temperature=0.3,
     )
     return resp.choices[0].message.content
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Diretivas de gráfico emitidas pela LLM (parsing seguro — nunca executa código)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CHARTS_BLOCK_RE = re.compile(r"```charts\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+def parse_chart_directives(resposta: str) -> tuple[str, list[dict]]:
+    """
+    Extrai um bloco ```charts <json>``` da resposta da LLM, retornando
+    (texto_limpo_sem_o_bloco, lista_de_diretivas). Apenas faz json.loads — nunca
+    executa código. Se não houver bloco válido, retorna (resposta, []).
+    """
+    if not resposta:
+        return "", []
+    m = _CHARTS_BLOCK_RE.search(resposta)
+    if not m:
+        return resposta, []
+
+    raw = m.group(1).strip()
+    if raw.lower().startswith("json"):
+        raw = raw[4:].strip()
+    directives: list[dict] = []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+        if isinstance(parsed, list):
+            directives = [d for d in parsed if isinstance(d, dict)]
+    except Exception as exc:
+        logger.warning("parse_chart_directives: JSON inválido — ignorado: %s", exc)
+        directives = []
+
+    texto_limpo = (resposta[:m.start()] + resposta[m.end():]).strip()
+    return texto_limpo, directives
 
 
 def _fallback_portfolio() -> dict:
