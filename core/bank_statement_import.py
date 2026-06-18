@@ -914,6 +914,19 @@ def classify_bank_movement(
     if "secretaria do tesouro nacional" in desc or "tesouro nacional" in desc:
         return _other_classification(row, categories, 0.88, "Regra definida: Tesouro Nacional como saida em Outros")
 
+    # Posto/combustivel: vence o "Debito de Cartao" generico (ex.: compra no
+    # debito "Debito de Cartao POSTO...") e o abastecimento em geral.
+    # "posto" so no inicio de palavra para nao casar "imposto".
+    if re.search(r"(?<![a-z])posto", desc) or any(
+        k in desc for k in ("pana vip", "para vip", "pit stop", "abastece")
+    ):
+        category = _find_category(
+            categories, ["Combustivel", "Transporte", "Carro", "Veiculo"], ("expense",)
+        )
+        return _classification_payload(
+            row, category, "Combustivel", "sugerida", 0.86, "Regra definida: posto (combustivel)"
+        )
+
     # Pagamento de fatura/cartao (ex.: "PGTO FAT CARTAO C6", "pagamento de fatura").
     pagamento_cartao_keywords = (
         "pgto fat cartao", "pgto fatura", "pagamento de fatura", "pagamento fatura",
@@ -939,7 +952,6 @@ def classify_bank_movement(
     auto_rules: list[tuple[tuple[str, ...], list[str], tuple[str, ...], str, float]] = [
         (("tim celular",), ["Telefone / Internet", "Assinaturas", "Moradia"], ("expense",), "Telefone / Internet", 0.86),
         (("equatorial",), ["Luz", "Energia", "Moradia", "Casa", "Contas fixas"], ("expense",), "Luz", 0.86),
-        (("posto", "pana vip", "para vip", "pit stop", "abastece"), ["Combustivel", "Transporte", "Carro", "Veiculo"], ("expense",), "Combustivel", 0.84),
         (("ifood",), ["Alimentacao", "Restaurante", "Delivery", "Lanche"], ("expense",), "Alimentacao", 0.84),
         (("drogaria", "farmacia"), ["Saude", "Farmacia", "Medicamentos"], ("expense",), "Saude", 0.86),
         (("estacionamento",), ["Transporte", "Estacionamento", "Carro", "Veiculo"], ("expense",), "Transporte", 0.83),

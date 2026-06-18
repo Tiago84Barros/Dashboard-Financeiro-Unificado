@@ -244,6 +244,28 @@ def test_transferencia_para_corretora_vira_investimento():
     assert classified[2]["categoria_sugerida_texto"] != "Renda Fixa"
 
 
+def test_debito_posto_vira_combustivel_e_nao_pagamento_cartao():
+    cats = _categories_extra() + [
+        {"id": "cat-combustivel", "nome": "Combustivel", "tipo": "expense"},
+    ]
+    parsed = parse_c6_bank_text(
+        """
+        29/03/2026 Debito de Cartao POSTOQUATROBELEMBRA R$ -100,00
+        11/06/2026 Debito de Cartao POSTO VYDIA BELEM BRA R$ -100,00
+        15/06/2026 Pagamento IMPOSTO IPVA DETRAN R$ -800,00
+        """,
+        file_name="c6.pdf",
+    )
+    classified = classify_bank_movements(parsed["rows"], cats)
+
+    # Débito em posto -> Combustível (vence o "Pagamento de Cartão")
+    assert classified[0]["categoria_id"] == "cat-combustivel"
+    assert classified[0]["categoria_sugerida_texto"] == "Combustivel"
+    assert classified[1]["categoria_sugerida_texto"] == "Combustivel"
+    # "Imposto" contém "posto" como substring, mas não deve virar Combustível
+    assert classified[2]["categoria_sugerida_texto"] != "Combustivel"
+
+
 def test_saved_rule_has_priority_over_automatic_rule():
     row = parse_c6_bank_text(
         "10/05/2026 Pagamento IFOOD RESTAURANTE R$ -55,00",
