@@ -79,24 +79,13 @@ _THRESH_PCT   = 0.05   # 5 p.p. em escala decimal
 # Ranges canonicos usados antes de qualquer score/backfill. Eles sao
 # intencionalmente conservadores: valores fora daqui viram "sem dado" ate uma
 # fonte externa valida confirmar outra coisa.
-VALID_RANGES: dict[str, tuple[float | None, float | None]] = {
-    "DY": (0.000001, 0.50),
-    "ROE": (-3.0, 5.0),
-    "ROA": (-1.0, 1.5),
-    "ROIC": (-2.0, 3.0),
-    "Margem_Liquida": (-2.0, 2.0),
-    "Margem_Operacional": (-2.0, 2.0),
-    "Payout": (-2.0, 5.0),
-    "P/L": (0.01, 200.0),
-    "P/VP": (0.01, 50.0),
-    "EV_EBIT": (0.01, 200.0),
-    "P_FCO": (0.01, 200.0),
-    "Endividamento_Total": (0.0, 20.0),
-    "Liquidez_Corrente": (0.0, 20.0),
-}
-
-CANONICAL_MULTIPLOS_FIELDS: tuple[str, ...] = tuple(VALID_RANGES.keys())
-_ZERO_ALWAYS_INVALID: frozenset[str] = frozenset({"DY"})
+# Fonte unica da verdade: core/data_quality.py (evita duplicacao/divergencia que
+# antes deixava margens de +-200% passarem).
+from core.data_quality import (
+    CANONICAL_RANGES as VALID_RANGES,
+    CANONICAL_MULTIPLOS_FIELDS,
+    ZERO_INVALID_FIELDS as _ZERO_ALWAYS_INVALID,
+)
 _ZERO_SUSPECT_MIN_ROWS = 20
 _ZERO_SUSPECT_RATE = 0.80
 _ZERO_SUSPECT_POS_RATE = 0.05

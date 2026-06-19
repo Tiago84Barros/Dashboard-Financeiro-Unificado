@@ -22,6 +22,7 @@ import pandas as pd
 import streamlit as st
 
 import core.b3_db as _db
+import core.data_quality as _dq
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,10 @@ def _universe_with_sector() -> pd.DataFrame:
         return pd.DataFrame()
     if mult is None or mult.empty:
         return pd.DataFrame()
+    # Limpeza pela fonte única (data_quality): outliers (ex.: margem 190%) e
+    # zeros-faltantes (ex.: DY=0) viram NaN → não poluem fundamentos nem medianas
+    # setoriais e aparecem como N/D em vez de números errados.
+    mult = _dq.clean_multiples_frame(mult)
     if setores is not None and not setores.empty:
         sec = setores[["ticker", "SETOR", "SEGMENTO"]].rename(columns={"ticker": "Ticker"})
         mult = mult.merge(sec, on="Ticker", how="left")

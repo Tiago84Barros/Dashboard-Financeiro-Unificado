@@ -16,6 +16,7 @@ import streamlit as st
 import yfinance as yf
 
 import core.b3_db as _db
+import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 
 # ── Constantes ────────────────────────────────────────────────────────────────
@@ -130,6 +131,21 @@ def _fg(v) -> str:
 def _logo_url(ticker: str) -> str:
     tk = ticker.strip().upper().replace(".SA", "")
     return f"{_CDN}/{tk}.png"
+
+
+def _kpi_macro(titulo: str, valor: str, sub: str, cor: str) -> str:
+    """Card compacto de KPI (mesmo visual de views/investimentos._kpi_macro)."""
+    return (
+        f'<div style="background:#12151E;border:1px solid #1E2533;'
+        f'border-radius:8px;padding:13px 11px 9px;height:100%;">'
+        f'<div style="font-size:0.54rem;font-weight:800;text-transform:uppercase;'
+        f'letter-spacing:0.11em;color:#4A5568;margin-bottom:5px;">{titulo}</div>'
+        f'<div style="font-size:1.15rem;font-weight:800;color:{cor};'
+        f'letter-spacing:-0.02em;line-height:1.1;margin-bottom:3px;'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{valor}</div>'
+        f'<div style="font-size:0.62rem;color:#4A5568;line-height:1.3;">{sub}</div>'
+        f'</div>'
+    )
 
 
 def _cor_val(v, invert: bool = False) -> str:
@@ -701,21 +717,9 @@ _PCT_SCORE_FIELDS: set[str] = {
     "Margem_Operacional", "Payout",
 }
 
-_SCORE_RANGES: dict[str, tuple[float | None, float | None]] = {
-    "DY": (0.000001, 0.50),
-    "ROE": (-3.0, 5.0),
-    "ROIC": (-2.0, 3.0),
-    "ROA": (-1.0, 1.5),
-    "Margem_Liquida": (-2.0, 2.0),
-    "Margem_Operacional": (-2.0, 2.0),
-    "Payout": (-2.0, 5.0),
-    "P/L": (0.01, 200.0),
-    "P/VP": (0.01, 50.0),
-    "EV_EBIT": (0.01, 200.0),
-    "P_FCO": (0.01, 200.0),
-    "Endividamento_Total": (0.0, 20.0),
-    "Liquidez_Corrente": (0.0, 20.0),
-}
+# Fonte unica da verdade das faixas: core/data_quality.py (margens apertadas
+# para [-100%, +100%], o que captura outliers como UGPA3=190%).
+_SCORE_RANGES = _dq.CANONICAL_RANGES
 
 
 def _compute_slope_log(s: pd.Series) -> float | None:
@@ -3130,6 +3134,19 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
     # Enriquecer com slope_log antes do scoring
     df_mult_enrich = _enrich_com_slopes(df_mult_enrich, hist_batch)
+
+    # ── Transparência + saneamento de dados (qualidade antes do ranking) ──────
+    try:
+        from views.data_quality_panel import render_quality_report, render_healing_panel
+        with st.expander("🩺 Qualidade & saneamento dos dados (antes do ranking)",
+                         expanded=False):
+            _df_qa = df_mult_enrich[df_mult_enrich["Ticker"].isin(tks_uni)] \
+                if "Ticker" in df_mult_enrich.columns else df_mult_enrich
+            render_quality_report(_df_qa, key_prefix="av_dq")
+            st.markdown("---")
+            render_healing_panel(list(tks_uni), key_prefix="av_heal")
+    except Exception as _exc_qa:  # nunca quebra a aba
+        st.caption(f"Painel de qualidade indisponível: {_exc_qa}")
 
     # Pesos por setor ou manuais
     setor_counts = (

@@ -1173,6 +1173,20 @@ def render(show_header: bool = True) -> None:
 
     _render_data_quality_box(quality_summary, quality_audit, hist_audit)
 
+    # ── Saneamento persistente (cruza Fundamentus/Status Invest e grava no banco) ──
+    try:
+        from views.data_quality_panel import render_healing_panel
+        _heal_tks = sorted({
+            str(t).upper().replace(".SA", "")
+            for r in resultados for t in (r.get("tickers") or [])
+        })
+        if _heal_tks:
+            with st.expander("🩺 Sanear dados (Fundamentus + Status Invest → banco)",
+                             expanded=False):
+                render_healing_panel(_heal_tks, key_prefix="pb3_heal")
+    except Exception as _exc_heal:  # nunca quebra a aba
+        st.caption(f"Saneamento de dados indisponível: {_exc_heal}")
+
     # ── FILTROS DE APROVAÇÃO ──────────────────────────────────────────────────
     ano_atual = pd.Timestamp.now().year
 
