@@ -33,6 +33,7 @@ _ROTAS: dict[str, str] = {
     "📈 Investimentos":       "investimentos",
     "🏢 Empresas B3":         "empresas_b3",
     "📚 Documentação":        "documentacao",
+    "🩺 Saúde dos Dados":      "admin_data_health",
     "⚙️ Configurações":       "configuracoes",
 }
 
@@ -52,7 +53,7 @@ with st.sidebar:
     opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3"]
 
     st.markdown('<div class="nav-section">Sistema</div>', unsafe_allow_html=True)
-    opcoes_sistema = ["📚 Documentação", "⚙️ Configurações"]
+    opcoes_sistema = ["📚 Documentação", "🩺 Saúde dos Dados", "⚙️ Configurações"]
 
     menu = st.radio(
         "Navegação",

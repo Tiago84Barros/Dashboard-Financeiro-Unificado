@@ -187,21 +187,30 @@ def _collect_sources(tickers: tuple[str, ...]) -> dict[str, dict[str, dict[str, 
 # Preview (dry-run) e Apply (gravação)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def preview_healing(tickers: list[str] | tuple[str, ...]) -> pd.DataFrame:
+def collect_and_resolve(
+    tickers: list[str] | tuple[str, ...],
+) -> dict[str, list[FieldResolution]]:
     """
-    Dry-run: para cada ticker/campo, mostra fontes e a ação proposta.
-    NÃO grava nada. Colunas: Ticker, Indicador, Banco, Fundamentus, StatusInvest,
-    Novo, Fonte, Acao, NFontes, Motivo.
+    Coleta as fontes (banco + Fundamentus + Status Invest) UMA vez e resolve
+    TODOS os campos por ticker. Base comum para preview, gravação e score —
+    evita raspar a web mais de uma vez por execução.
     """
     tks = tuple(dict.fromkeys(str(t).upper().replace(".SA", "") for t in (tickers or []) if t))
     if not tks:
-        return pd.DataFrame()
+        return {}
     sources = _collect_sources(tks)
+    return {tk: resolve_ticker(sources.get(tk, {})) for tk in tks}
+
+
+def resolutions_to_preview_df(
+    resolutions_by_ticker: dict[str, list[FieldResolution]],
+    include_kept: bool = False,
+) -> pd.DataFrame:
+    """Converte resoluções em DataFrame de preview. Por padrão omite 'mantido'."""
     rows: list[dict] = []
-    for tk in tks:
-        for r in resolve_ticker(sources.get(tk, {})):
-            # só interessa o que muda ou precisa revisão
-            if r.acao in ("mantido",):
+    for tk, resolutions in (resolutions_by_ticker or {}).items():
+        for r in resolutions:
+            if not include_kept and r.acao == "mantido":
                 continue
             rows.append({
                 "Ticker": tk, "Indicador": r.field,
@@ -210,6 +219,15 @@ def preview_healing(tickers: list[str] | tuple[str, ...]) -> pd.DataFrame:
                 "NFontes": r.n_fontes, "Motivo": r.motivo,
             })
     return pd.DataFrame(rows)
+
+
+def preview_healing(tickers: list[str] | tuple[str, ...]) -> pd.DataFrame:
+    """
+    Dry-run: para cada ticker/campo, mostra fontes e a ação proposta.
+    NÃO grava nada. Colunas: Ticker, Indicador, Banco, Fundamentus, StatusInvest,
+    Novo, Fonte, Acao, NFontes, Motivo.
+    """
+    return resolutions_to_preview_df(collect_and_resolve(tickers))
 
 
 def _ensure_aux_tables(conn) -> None:

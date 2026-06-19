@@ -93,6 +93,19 @@ _DEFAULT_REGISTRY: list[dict] = [
         "is_active":    False,
         "description":  "Demonstrações financeiras de empresas EUA (implementação pendente)",
     },
+    {
+        "table_name":   "multiplos, data_quality_scores, data_quality_reports",
+        "source_name":  "Data Quality (Banco x Fundamentus x Status Invest)",
+        "job_name":     "audit_and_heal",
+        "update_type":  "incremental",
+        "frequency":    "diario",
+        "priority":     10,
+        "is_active":    True,
+        "description":  "Auditoria e saneamento incremental: audita N empresas/execução, "
+                        "compara com Fundamentus/Status Invest (>=2 fontes), corrige o banco "
+                        "(backup+auditoria), calcula score de confiabilidade e gera relatório. "
+                        "Gravação controlada por AUDIT_HEAL_APPLY (default dry-run).",
+    },
     # ── Importações manuais de investimentos ─────────────────────────────────
     # frequency='manual' garante que NUNCA são executadas pelo
     # orquestrador automático (run_data_updates --all / GitHub Actions).

@@ -30,6 +30,10 @@ jobs:
       SUPABASE_DB_URL:        ${{ secrets.SUPABASE_DB_URL }}
       SOURCE_DB_APP1:         ${{ secrets.SOURCE_DB_APP1 }}
       OWNER_USER_ID:          ${{ secrets.OWNER_USER_ID }}
+      # Auditoria & saneamento: "false" = dry-run (apenas propõe + relatório).
+      # Defina o Secret/variable AUDIT_HEAL_APPLY como "true" para gravar correções.
+      AUDIT_HEAL_APPLY:       ${{ vars.AUDIT_HEAL_APPLY || 'false' }}
+      AUDIT_HEAL_BATCH:       ${{ vars.AUDIT_HEAL_BATCH || '50' }}
 
     steps:
       - name: Checkout
@@ -91,3 +95,12 @@ jobs:
       - name: Resumo do resultado
         if: always()
         run: python run_data_updates.py --status --json || true
+
+      - name: Publicar relatórios de qualidade (auditoria/saneamento)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-quality-reports
+          path: artifacts/quality/
+          if-no-files-found: ignore
+          retention-days: 90
