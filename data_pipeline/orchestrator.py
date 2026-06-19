@@ -35,6 +35,7 @@ _JOB_MAP: dict[str, str] = {
     "update_bcb":             "data_pipeline.jobs.update_bcb",
     "update_macro":           "data_pipeline.jobs.update_macro",
     "update_cvm":             "data_pipeline.jobs.update_cvm",
+    "update_cvm_ipe":         "data_pipeline.jobs.update_cvm_ipe",
     "update_b3_fundamentals": "data_pipeline.jobs.update_b3_fundamentals",
     "update_dividendos":      "data_pipeline.jobs.update_dividendos",
     "update_empresas_eua":    "data_pipeline.jobs.update_empresas_eua",
