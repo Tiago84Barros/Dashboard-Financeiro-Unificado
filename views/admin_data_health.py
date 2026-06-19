@@ -12,6 +12,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from data_pipeline.utils.date_utils import fmt_datetime_br  # UTC → Brasília
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -233,10 +235,10 @@ def render(show_header: bool = True) -> None:
     cards2 = "".join([
         _kpi("🔧 Correções (total)", _fmt_int(correcoes_total), "valores saneados no banco"),
         _kpi("📈 Correções (7 dias)", _fmt_int(correcoes_7d), "saneamentos recentes"),
-        _kpi("🕒 Última auditoria", str(ultima_auditoria)[:16] if ultima_auditoria else "—",
-             "execução do ciclo audit_and_heal"),
-        _kpi("🔄 Última sincronização", str(ultima_sync)[:16] if ultima_sync else "—",
-             "qualquer fonte do pipeline"),
+        _kpi("🕒 Última auditoria", fmt_datetime_br(ultima_auditoria) if ultima_auditoria else "—",
+             "horário de Brasília · ciclo audit_and_heal"),
+        _kpi("🔄 Última sincronização", fmt_datetime_br(ultima_sync) if ultima_sync else "—",
+             "horário de Brasília · pipeline"),
     ])
     st.markdown(f'<div class="dh-grid">{cards2}</div>', unsafe_allow_html=True)
 
@@ -293,6 +295,8 @@ def render(show_header: bool = True) -> None:
                 FROM data_quality_reports ORDER BY id DESC LIMIT 12
             """)
             if not rep.empty:
+                if "Execução" in rep.columns:
+                    rep["Execução"] = rep["Execução"].map(fmt_datetime_br)
                 st.dataframe(rep, use_container_width=True, hide_index=True)
             else:
                 st.caption("Nenhum relatório registrado ainda.")
@@ -341,7 +345,11 @@ def render(show_header: bool = True) -> None:
             ren = {"source_name": "Fonte", "freshness_status": "Status",
                    "last_success_at": "Última OK", "next_expected_update": "Próxima"}
             cols = [c for c in ren if c in dfx.columns]
-            st.dataframe(dfx[cols].rename(columns=ren), use_container_width=True, hide_index=True)
+            tbl = dfx[cols].rename(columns=ren)
+            for c in ("Última OK", "Próxima"):
+                if c in tbl.columns:
+                    tbl[c] = tbl[c].map(lambda v: fmt_datetime_br(v) if pd.notna(v) else "—")
+            st.dataframe(tbl, use_container_width=True, hide_index=True)
         else:
             st.caption("Sem registro de fontes ainda.")
     except Exception:
