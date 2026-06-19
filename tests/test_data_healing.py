@@ -37,6 +37,27 @@ def test_divergence_unresolved_when_only_one_web_disagrees():
     assert r.acao == "divergencia_nao_resolvida"
 
 
+def test_sources_relatively_close_agree_not_identical():
+    # ROE: banco ausente; Fundamentus 20% e Status Invest 21,5% NÃO são iguais,
+    # mas relativamente próximos (≤15%) → preenche com a média.
+    r = h.resolve_field("ROE", bd=None, fundamentus=0.20, status_invest=0.215)
+    assert r.acao == "preenchido"
+    assert abs(r.novo - 0.2075) < 1e-6
+
+
+def test_sources_far_apart_do_not_agree():
+    # DY 3% vs 7%: relativamente distantes → não corrobora → revisão (não grava).
+    r = h.resolve_field("DY", bd=None, fundamentus=0.03, status_invest=0.07)
+    assert r.novo is None
+    assert r.acao == "divergencia_nao_resolvida"
+
+
+def test_bank_kept_when_close_to_web():
+    # Banco 18% e web 19% (próximos) → mantém banco, sem corrigir à toa.
+    r = h.resolve_field("ROE", bd=0.18, fundamentus=0.19, status_invest=None)
+    assert r.acao == "mantido"
+
+
 def test_resolve_ticker_and_proposals_only():
     sources = {
         "banco": {"Margem_Liquida": 1.904, "ROE": 0.18, "DY": 0.0},

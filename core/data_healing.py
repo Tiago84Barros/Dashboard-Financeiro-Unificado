@@ -34,10 +34,14 @@ logger = logging.getLogger(__name__)
 # Campos saneáveis (mesmos da fonte única)
 HEAL_FIELDS: tuple[str, ...] = _dq.CANONICAL_MULTIPLOS_FIELDS
 
-# Limiares de concordância entre fontes (relativo p/ ratio, absoluto p/ %)
+# Concordância entre fontes: valores precisam ser apenas RELATIVAMENTE PRÓXIMOS,
+# não idênticos. Usa tolerância RELATIVA (X% de diferença entre os dois) com um
+# piso ABSOLUTO para não acusar desacordo em valores muito pequenos (perto de 0),
+# onde uma diferença relativa fica artificialmente grande.
 _PCT_FIELDS = _dq.PCT_FIELDS
-_AGREE_PCT = 0.05      # 5 p.p. (escala decimal)
-_AGREE_RATIO = 0.20    # 20% relativo
+_REL_TOL = 0.15            # 15% de diferença relativa é considerado "concordante"
+_ABS_FLOOR_PCT = 0.005     # piso de 0,5 p.p. para campos % (escala decimal)
+_ABS_FLOOR_RATIO = 0.10    # piso para múltiplos pequenos (P/L, P/VP, …)
 
 _BACKUP_TABLE = "multiplos_healing_backup"
 _AUDIT_TABLE = "data_healing_audit"
@@ -61,12 +65,16 @@ class FieldResolution:
 
 
 def _agree(field: str, a: float, b: float) -> bool:
-    """True se dois valores do mesmo indicador concordam dentro do limiar."""
-    if field in _PCT_FIELDS:
-        return abs(a - b) <= _AGREE_PCT
-    if abs(a) < 1e-9:
-        return abs(b) < 1e-9 or abs(b) <= 0.01
-    return abs(a - b) / abs(a) <= _AGREE_RATIO
+    """
+    True se dois valores do mesmo indicador são RELATIVAMENTE PRÓXIMOS — não
+    precisam ser iguais. Concordam quando a diferença entre eles fica dentro de
+    _REL_TOL (15%) do maior valor, OU dentro de um piso absoluto (para valores
+    perto de zero). Ex.: ROE 18% vs 19,5% concordam; DY 3% vs 7% não.
+    """
+    diff = abs(a - b)
+    scale = max(abs(a), abs(b))
+    floor = _ABS_FLOOR_PCT if field in _PCT_FIELDS else _ABS_FLOOR_RATIO
+    return diff <= max(floor, _REL_TOL * scale)
 
 
 def _valid(field: str, v: Any) -> float | None:
