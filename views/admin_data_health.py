@@ -282,6 +282,60 @@ def render(show_header: bool = True) -> None:
             icon="ℹ️",
         )
 
+    # ── Extração CVM (gotejamento) ────────────────────────────────────────────
+    st.markdown('<div class="dh-section">📄 Extração de documentos CVM (gotejamento)</div>',
+                unsafe_allow_html=True)
+    if _table_exists("docs_corporativos"):
+        ext = _df("""
+            SELECT
+                COUNT(*) FILTER (WHERE extraction_version = 'ipe_meta_v1')              AS pendentes,
+                COUNT(*) FILTER (WHERE extraction_version = 'fulltext_v1')              AS extraidos,
+                COUNT(*) FILTER (WHERE extraction_version = 'ipe_meta_v1_nofulltext')   AS sem_texto,
+                COUNT(*)                                                                AS total
+            FROM public.docs_corporativos
+        """)
+        if not ext.empty:
+            pend = int(ext.iloc[0]["pendentes"] or 0)
+            done = int(ext.iloc[0]["extraidos"] or 0)
+            noft = int(ext.iloc[0]["sem_texto"] or 0)
+            total_docs_cvm = int(ext.iloc[0]["total"] or 0)
+            try:
+                import os as _os
+                drip = max(1, int(_os.getenv("CVM_FULLTEXT_MAX", "12")))
+            except Exception:
+                drip = 12
+            dias = (pend + drip - 1) // drip if pend else 0
+            processados_nativos = done + noft + pend
+            prog = (done / processados_nativos) if processados_nativos else 1.0
+
+            cards_ext = "".join([
+                _kpi("📚 Docs CVM (total)", _fmt_int(total_docs_cvm), "no banco unificado"),
+                _kpi("✅ Texto extraído", _fmt_int(done), "coletor nativo (gotejamento)",
+                     accent="pos" if done else ""),
+                _kpi("⏳ Pendentes", _fmt_int(pend),
+                     f"~{dias} dia(s) p/ drenar ({drip}/dia)",
+                     accent="warn" if pend else ""),
+                _kpi("🚫 Sem texto útil", _fmt_int(noft), "marcados, não reprocessam"),
+            ])
+            st.markdown(f'<div class="dh-grid">{cards_ext}</div>', unsafe_allow_html=True)
+            if processados_nativos:
+                st.markdown(
+                    f'<div class="dh-bar"><div class="dh-bar-seg" '
+                    f'style="width:{prog*100:.1f}%;background:linear-gradient(90deg,#5B8DEF,#34D399);">'
+                    f'</div></div>'
+                    f'<div class="dh-legend"><span>{_fmt_int(done)} extraídos</span>'
+                    f'<span>{_fmt_int(pend)} pendentes</span>'
+                    f'<span>{_fmt_int(noft)} sem texto</span></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.caption("Nenhum documento descoberto pelo coletor nativo ainda "
+                           "(os históricos do app1 já vêm com texto).")
+        else:
+            st.caption("Sem dados de extração.")
+    else:
+        st.caption("Tabela docs_corporativos indisponível.")
+
     # ── Detalhes ──────────────────────────────────────────────────────────────
     col_a, col_b = st.columns(2)
 
