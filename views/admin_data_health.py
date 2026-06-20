@@ -308,6 +308,11 @@ def render(show_header: bool = True) -> None:
             processados_nativos = done + noft + pend
             prog = (done / processados_nativos) if processados_nativos else 1.0
 
+            ult_extracao = _scalar(
+                "SELECT MAX(created_at) FROM docs_corporativos_chunks "
+                "WHERE chunking_version = 'fulltext_v1'"
+            )
+
             cards_ext = "".join([
                 _kpi("📚 Docs CVM (total)", _fmt_int(total_docs_cvm), "no banco unificado"),
                 _kpi("✅ Texto extraído", _fmt_int(done), "coletor nativo (gotejamento)",
@@ -316,6 +321,9 @@ def render(show_header: bool = True) -> None:
                      f"~{dias} dia(s) p/ drenar ({drip}/dia)",
                      accent="warn" if pend else ""),
                 _kpi("🚫 Sem texto útil", _fmt_int(noft), "marcados, não reprocessam"),
+                _kpi("🕒 Última extração",
+                     fmt_datetime_br(ult_extracao) if ult_extracao else "—",
+                     "horário de Brasília · full-text"),
             ])
             st.markdown(f'<div class="dh-grid">{cards_ext}</div>', unsafe_allow_html=True)
             if processados_nativos:
