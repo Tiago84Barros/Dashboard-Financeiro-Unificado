@@ -82,6 +82,18 @@ _DEFAULT_REGISTRY: list[dict] = [
                         "sem depender do App1.",
     },
     {
+        "table_name":   "docs_corporativos, docs_corporativos_chunks",
+        "source_name":  "CVM ENET (texto completo)",
+        "job_name":     "update_cvm_fulltext",
+        "update_type":  "incremental",
+        "frequency":    "diario",
+        "priority":     5,
+        "is_active":    True,
+        "description":  "Extração de texto completo dos documentos CVM em GOTEJAMENTO: poucos "
+                        "docs por execução, com atraso aleatório, backoff e disjuntor anti-bloqueio. "
+                        "Ajustável por env (CVM_FULLTEXT_MAX/DELAY/MAX_BLOCKS/ENABLE).",
+    },
+    {
         "table_name":   "Demonstracoes_Financeiras, multiplos",
         "source_name":  "B3 / yfinance + Fundamentus",
         "job_name":     "update_b3_fundamentals",

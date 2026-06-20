@@ -72,3 +72,32 @@ def test_chunk_text():
 def test_sha256_deterministic():
     assert ipe.sha256("a", "b") == ipe.sha256("a", "b")
     assert ipe.sha256("a", "b") != ipe.sha256("a", "c")
+
+
+# ── extração de texto completo ────────────────────────────────────────────────
+
+def test_extract_text_empty():
+    assert ipe.extract_text(b"") == ""
+
+
+def test_extract_text_html():
+    html = b"<html><body><h1>Fato Relevante</h1><p>A empresa comunica algo.</p>" \
+           b"<script>ignore()</script></body></html>"
+    txt = ipe.extract_text(html)
+    assert "Fato Relevante" in txt and "comunica algo" in txt
+    assert "ignore" not in txt  # script removido
+
+
+def test_extract_text_zip_with_html():
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("doc.html", "<html><body>Resultado trimestral lucro de 100</body></html>")
+    txt = ipe.extract_text(buf.getvalue())
+    assert "Resultado trimestral" in txt
+
+
+def test_rate_limited_classification():
+    assert ipe.is_rate_limited(ipe.RateLimited("HTTP 429")) is True
+    assert ipe.is_rate_limited(ipe.DocFetchError("HTTP 404")) is False
+    assert ipe.is_rate_limited(ValueError("x")) is False

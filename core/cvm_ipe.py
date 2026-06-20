@@ -182,6 +182,112 @@ def chunk_text(text: str, size: int = 1200, overlap: int = 150) -> list[str]:
     return chunks
 
 
+# ── Extração de texto completo (PDF / HTML / ZIP) ─────────────────────────────
+
+class DocFetchError(Exception):
+    """Falha ao baixar um documento do ENET."""
+
+
+class RateLimited(DocFetchError):
+    """Servidor sinalizou bloqueio/limite (HTTP 429/503) — aciona disjuntor."""
+
+
+def is_rate_limited(exc: Exception) -> bool:
+    return isinstance(exc, RateLimited)
+
+
+def _clean_text(t: str) -> str:
+    import re
+    t = re.sub(r"[ \t ]+", " ", t or "")
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
+def _pdf_text(content: bytes) -> str:
+    try:
+        import io as _io
+        import pdfplumber
+        out = []
+        with pdfplumber.open(_io.BytesIO(content)) as pdf:
+            for page in pdf.pages[:60]:  # teto de páginas por documento
+                out.append(page.extract_text() or "")
+        return _clean_text("\n".join(out))
+    except Exception as exc:
+        logger.warning("pdf extract falhou: %s", exc)
+        return ""
+
+
+def _html_text(content: bytes) -> str:
+    try:
+        from bs4 import BeautifulSoup
+        for enc in ("utf-8", "latin-1"):
+            try:
+                html = content.decode(enc)
+                break
+            except UnicodeDecodeError:
+                html = None
+        if html is None:
+            return ""
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        return _clean_text(soup.get_text(" "))
+    except Exception as exc:
+        logger.warning("html extract falhou: %s", exc)
+        return ""
+
+
+def _zip_text(content: bytes) -> str:
+    try:
+        import io as _io
+        import zipfile
+        parts = []
+        with zipfile.ZipFile(_io.BytesIO(content)) as zf:
+            for name in zf.namelist()[:20]:
+                low = name.lower()
+                try:
+                    data = zf.read(name)
+                except Exception:
+                    continue
+                if low.endswith(".pdf") or data[:4] == b"%PDF":
+                    parts.append(_pdf_text(data))
+                elif low.endswith((".htm", ".html", ".txt", ".xml")):
+                    parts.append(_html_text(data))
+        return _clean_text("\n".join(p for p in parts if p))
+    except Exception as exc:
+        logger.warning("zip extract falhou: %s", exc)
+        return ""
+
+
+def extract_text(content: bytes) -> str:
+    """Extrai texto de um documento (detecta PDF, ZIP ou HTML)."""
+    if not content:
+        return ""
+    if content[:4] == b"%PDF":
+        return _pdf_text(content)
+    if content[:2] == b"PK":
+        return _zip_text(content)
+    return _html_text(content)
+
+
+def fetch_document(url: str, timeout: int = 45) -> bytes:
+    """
+    Baixa um documento do ENET. Levanta RateLimited em 429/503 (para o disjuntor)
+    e DocFetchError em outras falhas. Nunca retorna vazio silenciosamente.
+    """
+    import requests
+    try:
+        resp = requests.get(url, timeout=timeout,
+                            headers={"User-Agent": "DashboardFinanceiro/1.0 (+data-quality)"})
+    except Exception as exc:
+        raise DocFetchError(str(exc)) from exc
+    if resp.status_code in (429, 503):
+        raise RateLimited(f"HTTP {resp.status_code}")
+    if resp.status_code != 200 or not resp.content:
+        raise DocFetchError(f"HTTP {resp.status_code}")
+    return resp.content
+
+
 # ── IO (rede) ─────────────────────────────────────────────────────────────────
 
 def fetch_ipe_csv(year: int, timeout: int = 60) -> bytes | None:
