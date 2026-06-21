@@ -28,19 +28,21 @@ def compute_field_score(
 ) -> float:
     """
     Retorna 0–100. Determinístico.
-      • fontes concordantes: 0→0.30, 1→0.60, 2→0.90, ≥3→1.00
+      • fontes concordantes: 0→0.35, 1→0.65, 2→0.95 (alta), ≥3→1.00
+        (2 fontes concordantes já indicam alta confiança; o teto real é 3 —
+        banco + Fundamentus + Status Invest — e vários indicadores só têm 2.)
       • idade: decai até 0.40 em ~3 anos
-      • consistência: 1/(1+cv) limitado a [0.50, 1.00]
+      • consistência: 1/(1+cv) limitado a [0.50, 1.00]; sem histórico → 0.95
       • validações aprovadas: bônus até +5%
       • divergências: −5% cada, até −40%
     """
-    src = {0: 0.30, 1: 0.60, 2: 0.90}.get(int(max(0, n_sources_agree)), 1.00)
+    src = {0: 0.35, 1: 0.65, 2: 0.95}.get(int(max(0, n_sources_agree)), 1.00)
 
     age = float(age_days or 0.0)
     age_factor = _clamp(1.0 - age / (365.0 * 3.0), 0.40, 1.0)
 
     if hist_cv is None:
-        consist = 0.85  # sem histórico → neutro-alto
+        consist = 0.95  # sem histórico → neutro-alto (não penaliza ausência de CV)
     else:
         consist = _clamp(1.0 / (1.0 + abs(float(hist_cv))), 0.50, 1.0)
 

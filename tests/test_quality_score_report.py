@@ -32,6 +32,18 @@ def test_score_bounded():
     assert 0.0 <= score.compute_field_score(0, age_days=99999, hist_cv=99, n_divergences=99) <= 100.0
 
 
+def test_two_concordant_sources_reach_high_confidence():
+    # 2 fontes concordantes, sem histórico → deve cair na faixa "Alto" (≥90),
+    # mesmo sem CV histórico (campos como P_FCO/ROA/Payout têm no máx. 2 fontes).
+    s = score.compute_field_score(2, age_days=0, hist_cv=None, n_validations=1)
+    assert s >= 90.0
+
+
+def test_single_source_is_not_high():
+    # 1 fonte só não deve ser alta confiança.
+    assert score.compute_field_score(1, age_days=0, hist_cv=None) < 70.0
+
+
 # ── sanitizer (política) ───────────────────────────────────────────────────────
 
 def test_sanitizer_maps_actions():
