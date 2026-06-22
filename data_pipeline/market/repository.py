@@ -92,10 +92,17 @@ def schema_exists(conn) -> bool:
 
 def _row_key(table: str, row: dict):
     """Chave natural da linha (para dedup intra-lote). dividends usa event_date
-    derivado = COALESCE(payment_date, ex_date), pois é coluna GERADA."""
+    derivado = COALESCE(payment_date, ex_date) e amount ARREDONDADO à escala da
+    coluna NUMERIC(18,6) — senão dois floats que arredondam ao mesmo valor viram
+    a mesma chave no banco mas escapam do dedup, quebrando o ON CONFLICT."""
     if table == "dividends":
+        amt = row.get("amount")
+        try:
+            amt = round(float(amt), 6)
+        except (TypeError, ValueError):
+            amt = None
         return (row.get("ticker"), row.get("payment_date") or row.get("ex_date"),
-                row.get("type"), row.get("amount"))
+                row.get("type"), amt)
     key = _NATURAL_KEY.get(table)
     return tuple(row.get(c) for c in key) if key else None
 
@@ -128,22 +135,36 @@ def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
     conflict = _CONFLICT[table]
     action = f"DO UPDATE SET {setlist}" if setlist else "DO NOTHING"
 
-    values = [tuple(r.get(c) for c in cols) for r in rows]
+    vals = ", ".join(f":{c}" for c in cols)
+    single_sql = (f'INSERT INTO market.{table} ({collist}) VALUES ({vals}) '
+                  f'ON CONFLICT ({conflict}) {action}')
+
+    def _row_by_row():
+        for r in rows:
+            conn.execute(text(single_sql), r)
+
     try:
         from psycopg2.extras import execute_values
-    except ImportError:  # fallback portável (mais lento) só se a lib não existir
-        vals = ", ".join(f":{c}" for c in cols)
-        sql = (f'INSERT INTO market.{table} ({collist}) VALUES ({vals}) '
-               f'ON CONFLICT ({conflict}) {action}')
-        conn.execute(text(sql), rows)
+    except ImportError:  # lib ausente → linha-a-linha
+        _row_by_row()
         return len(rows)
-    sql = (f'INSERT INTO market.{table} ({collist}) VALUES %s '
-           f'ON CONFLICT ({conflict}) {action}')
-    cur = conn.connection.cursor()  # cursor DBAPI na mesma transação
+
+    batch_sql = (f'INSERT INTO market.{table} ({collist}) VALUES %s '
+                 f'ON CONFLICT ({conflict}) {action}')
+    values = [tuple(r.get(c) for c in cols) for r in rows]
+    sp = conn.begin_nested()  # SAVEPOINT: isola falha do lote
     try:
-        execute_values(cur, sql, values, page_size=page_size)
-    finally:
-        cur.close()
+        cur = conn.connection.cursor()
+        try:
+            execute_values(cur, batch_sql, values, page_size=page_size)
+        finally:
+            cur.close()
+        sp.commit()
+    except Exception as exc:  # rede de segurança: duplicata intra-lote imprevista
+        sp.rollback()
+        logger.warning("upsert %s: lote falhou (%s) — fallback linha-a-linha",
+                       table, str(exc)[:120])
+        _row_by_row()
     return len(rows)
 
 

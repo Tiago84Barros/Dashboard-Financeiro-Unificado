@@ -16,6 +16,17 @@ def test_dedup_dividends_by_event_date():
     assert len(out) == 2  # duplicata removida
 
 
+def test_dedup_dividends_rounds_amount_to_db_scale():
+    # dois amounts que arredondam ao mesmo NUMERIC(18,6) → mesma chave (caso BBDC3)
+    rows = [
+        {"ticker": "BBDC3", "payment_date": date(2025, 3, 10), "ex_date": None,
+         "amount": 0.1234561, "type": "JCP"},
+        {"ticker": "BBDC3", "payment_date": date(2025, 3, 10), "ex_date": None,
+         "amount": 0.1234562, "type": "JCP"},
+    ]
+    assert len(repo._dedup("dividends", rows)) == 1
+
+
 def test_dedup_statements_by_period():
     rows = [
         {"ticker": "X", "period": "annual", "year": 2025, "quarter": 0, "revenue": 1},
