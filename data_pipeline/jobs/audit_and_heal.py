@@ -25,7 +25,7 @@ from data_pipeline.quality import score as _score
 logger = logging.getLogger(__name__)
 
 JOB_NAME = "audit_and_heal"
-_FONTES = ["Banco", "Fundamentus", "StatusInvest"]
+_FONTES = ["Banco", "Fundamentus", "StatusInvest", "brapi"]
 
 
 # ── Núcleo PURO (testável) ────────────────────────────────────────────────────

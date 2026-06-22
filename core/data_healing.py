@@ -62,6 +62,7 @@ class FieldResolution:
     acao: str                   # 'mantido'|'corrigido'|'preenchido'|'sem_corroboracao'|'divergencia_nao_resolvida'|'sem_dado'
     n_fontes: int
     motivo: str
+    brapi: float | None = None  # 3ª fonte web (opcional)
 
 
 def _agree(field: str, a: float, b: float) -> bool:
@@ -81,31 +82,55 @@ def _valid(field: str, v: Any) -> float | None:
     return _dq.clean_value(field, v)
 
 
+def _web_consensus(field: str, pairs: list[tuple[str, float]]) -> tuple[float, list[str]] | None:
+    """
+    Maior cluster de fontes web RELATIVAMENTE PRÓXIMAS entre si (≥2).
+    Retorna (média do cluster, [nomes das fontes]) ou None.
+    `pairs`: lista de (nome_fonte, valor) já validados.
+    """
+    vals = [(n, v) for n, v in pairs if v is not None]
+    if len(vals) < 2:
+        return None
+    best: list[tuple[str, float]] | None = None
+    for _, anchor in vals:
+        cluster = [(n, v) for n, v in vals if _agree(field, anchor, v)]
+        if len(cluster) >= 2 and (best is None or len(cluster) > len(best)):
+            best = cluster
+    if not best:
+        return None
+    media = float(sum(v for _, v in best) / len(best))
+    return media, [n for n, _ in best]
+
+
 def resolve_field(
     field: str,
     bd: Any,
     fundamentus: Any,
     status_invest: Any,
+    brapi: Any = None,
 ) -> FieldResolution:
     """
-    Decide o valor saneado de um campo a partir das 3 fontes.
+    Decide o valor saneado de um campo cruzando banco + até 3 fontes web
+    (Fundamentus, Status Invest, brapi.dev).
 
     Regra:
       • Coleta apenas valores VÁLIDOS (faixa coerente; 0 em DY = inválido).
       • Exige ≥2 fontes válidas para QUALQUER gravação (corroboração).
       • Banco válido e concordando com ≥1 web → mantém banco.
-      • Banco inválido/ausente OU divergente → só sobrescreve se as DUAS fontes
-        web (Fundamentus E Status Invest) forem válidas e concordarem entre si;
-        usa a mediana delas. Caso contrário, não grava e marca para revisão.
+      • Banco inválido/ausente OU divergente → só sobrescreve se ≥2 fontes web
+        concordarem entre si (relativamente próximas); usa a média do cluster.
+        Caso contrário, não grava e marca para revisão.
     """
     bd_v = _valid(field, bd)
     fu_v = _valid(field, fundamentus)
     si_v = _valid(field, status_invest)
-    web = [v for v in (fu_v, si_v) if v is not None]
-    n_valid = sum(v is not None for v in (bd_v, fu_v, si_v))
+    br_v = _valid(field, brapi)
+    web_pairs = [("Fundamentus", fu_v), ("StatusInvest", si_v), ("brapi", br_v)]
+    web = [v for _, v in web_pairs if v is not None]
+    n_valid = sum(v is not None for v in (bd_v, fu_v, si_v, br_v))
 
     def _res(novo, fonte, acao, motivo):
-        return FieldResolution(field, bd_v, fu_v, si_v, novo, fonte, acao, n_valid, motivo)
+        return FieldResolution(field, bd_v, fu_v, si_v, novo, fonte, acao, n_valid, motivo, brapi=br_v)
 
     # Sem corroboração possível (<2 fontes válidas) → nunca grava
     if n_valid < 2:
@@ -120,19 +145,20 @@ def resolve_field(
         if any(_agree(field, bd_v, w) for w in web):
             return _res(None, "banco", "mantido",
                         "Banco corroborado por fonte web (sem divergência).")
-        # Banco diverge das web → precisa das DUAS web concordando p/ sobrescrever
-        if fu_v is not None and si_v is not None and _agree(field, fu_v, si_v):
-            novo = float((fu_v + si_v) / 2.0)
-            return _res(novo, "Fundamentus+StatusInvest", "corrigido",
-                        "Banco divergente; Fundamentus e Status Invest concordam → sobrescreve.")
+        cons = _web_consensus(field, web_pairs)
+        if cons is not None:
+            novo, fontes = cons
+            return _res(novo, "+".join(fontes), "corrigido",
+                        f"Banco divergente; {', '.join(fontes)} concordam → sobrescreve.")
         return _res(None, "banco", "divergencia_nao_resolvida",
                     "Banco diverge de web, mas web não corrobora (≥2 concordantes). Revisar.")
 
-    # Banco ausente/inválido: preenche se as duas web concordam
-    if fu_v is not None and si_v is not None and _agree(field, fu_v, si_v):
-        novo = float((fu_v + si_v) / 2.0)
-        return _res(novo, "Fundamentus+StatusInvest", "preenchido",
-                    "Banco ausente/ inválido; Fundamentus e Status Invest concordam → preenche.")
+    # Banco ausente/inválido: preenche se ≥2 web concordam
+    cons = _web_consensus(field, web_pairs)
+    if cons is not None:
+        novo, fontes = cons
+        return _res(novo, "+".join(fontes), "preenchido",
+                    f"Banco ausente/inválido; {', '.join(fontes)} concordam → preenche.")
     return _res(None, "web", "divergencia_nao_resolvida",
                 "Banco ausente e web sem corroboração suficiente. Revisar.")
 
@@ -142,13 +168,14 @@ def resolve_ticker(
     fields: tuple[str, ...] = HEAL_FIELDS,
 ) -> list[FieldResolution]:
     """
-    sources = {'banco': {...}, 'fundamentus': {...}, 'status_invest': {...}}
+    sources = {'banco':{...}, 'fundamentus':{...}, 'status_invest':{...}, 'brapi':{...}}
     (todos em escala BD: % em decimal). Retorna uma resolução por campo.
     """
     bd = sources.get("banco", {}) or {}
     fu = sources.get("fundamentus", {}) or {}
     si = sources.get("status_invest", {}) or {}
-    return [resolve_field(f, bd.get(f), fu.get(f), si.get(f)) for f in fields]
+    br = sources.get("brapi", {}) or {}
+    return [resolve_field(f, bd.get(f), fu.get(f), si.get(f), br.get(f)) for f in fields]
 
 
 def proposals_only(resolutions: list[FieldResolution]) -> list[FieldResolution]:
@@ -166,6 +193,10 @@ def _collect_sources(tickers: tuple[str, ...]) -> dict[str, dict[str, dict[str, 
     from core import data_reconciliacao as _recon
     from core import fundamentus as _fund
     from core import status_invest as _si
+    try:
+        from core import brapi as _brapi
+    except Exception:
+        _brapi = None
 
     out: dict[str, dict[str, dict[str, Any]]] = {}
     # Banco em lote
@@ -187,7 +218,17 @@ def _collect_sources(tickers: tuple[str, ...]) -> dict[str, dict[str, dict[str, 
                      if k not in ("_fontes", "_alertas")}
         except Exception:
             si_db = {}
-        out[tkc] = {"banco": bd_by.get(tkc, {}), "fundamentus": fu_db, "status_invest": si_db}
+        # brapi.dev: 3ª fonte web (P/L + DY trailing). Falha/sem token → {}.
+        br_db: dict[str, Any] = {}
+        if _brapi is not None:
+            try:
+                q = _brapi.fetch_quote(tkc, range_="1y", interval="1mo")
+                if q:
+                    br_db = _brapi.current_fundamentals(q)
+            except Exception:
+                br_db = {}
+        out[tkc] = {"banco": bd_by.get(tkc, {}), "fundamentus": fu_db,
+                    "status_invest": si_db, "brapi": br_db}
     return out
 
 
@@ -223,6 +264,7 @@ def resolutions_to_preview_df(
             rows.append({
                 "Ticker": tk, "Indicador": r.field,
                 "Banco": r.bd, "Fundamentus": r.fundamentus, "StatusInvest": r.status_invest,
+                "Brapi": r.brapi,
                 "Novo": r.novo, "Fonte": r.fonte, "Acao": r.acao,
                 "NFontes": r.n_fontes, "Motivo": r.motivo,
             })

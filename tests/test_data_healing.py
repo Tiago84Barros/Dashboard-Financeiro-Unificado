@@ -58,6 +58,29 @@ def test_bank_kept_when_close_to_web():
     assert r.acao == "mantido"
 
 
+def test_brapi_as_third_source_corroborates_fill():
+    # Banco DY=0 (inválido); Fundamentus ausente; Status Invest e brapi concordam → preenche
+    r = h.resolve_field("DY", bd=0.0, fundamentus=None, status_invest=0.069, brapi=0.070)
+    assert r.acao == "preenchido"
+    assert abs(r.novo - 0.0695) < 1e-6
+    assert "StatusInvest" in r.fonte and "brapi" in r.fonte
+    assert r.n_fontes == 2
+
+
+def test_brapi_breaks_tie_when_two_web_agree_against_bank():
+    # Banco P/L divergente; Fundamentus e brapi concordam (Status ausente) → corrige
+    r = h.resolve_field("P/L", bd=6.0, fundamentus=12.0, status_invest=None, brapi=12.5)
+    assert r.acao == "corrigido"
+    assert "brapi" in r.fonte
+
+
+def test_brapi_alone_is_single_source_no_write():
+    # Só brapi válido (banco e demais ausentes) → 1 fonte → não grava
+    r = h.resolve_field("ROE", bd=None, fundamentus=None, status_invest=None, brapi=0.20)
+    assert r.novo is None
+    assert r.acao == "sem_dado"
+
+
 def test_resolve_ticker_and_proposals_only():
     sources = {
         "banco": {"Margem_Liquida": 1.904, "ROE": 0.18, "DY": 0.0},
