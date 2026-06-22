@@ -90,19 +90,36 @@ def schema_exists(conn) -> bool:
     )).scalar())
 
 
-def _upsert(conn, table: str, rows: list[dict]) -> int:
+def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
+    """
+    UPSERT em LOTE via psycopg2.execute_values (centenas de linhas por statement,
+    na mesma transação do SQLAlchemy). Bem mais rápido que executemany linha-a-linha.
+    Fallback para executemany se execute_values não estiver disponível.
+    """
     if not rows:
         return 0
     cols = list(rows[0].keys())
     collist = ", ".join(f'"{c}"' for c in cols)
-    vals = ", ".join(f":{c}" for c in cols)
     upd = _UPDATE_COLS[table]
     setlist = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in upd if c in cols)
     conflict = _CONFLICT[table]
     action = f"DO UPDATE SET {setlist}" if setlist else "DO NOTHING"
-    sql = (f'INSERT INTO market.{table} ({collist}) VALUES ({vals}) '
-           f'ON CONFLICT ({conflict}) {action}')
-    conn.execute(text(sql), rows)
+
+    values = [tuple(r.get(c) for c in cols) for r in rows]
+    try:
+        from psycopg2.extras import execute_values
+        sql = (f'INSERT INTO market.{table} ({collist}) VALUES %s '
+               f'ON CONFLICT ({conflict}) {action}')
+        cur = conn.connection.cursor()  # cursor DBAPI na mesma transação
+        try:
+            execute_values(cur, sql, values, page_size=page_size)
+        finally:
+            cur.close()
+    except Exception:  # fallback portável (mais lento)
+        vals = ", ".join(f":{c}" for c in cols)
+        sql = (f'INSERT INTO market.{table} ({collist}) VALUES ({vals}) '
+               f'ON CONFLICT ({conflict}) {action}')
+        conn.execute(text(sql), rows)
     return len(rows)
 
 
