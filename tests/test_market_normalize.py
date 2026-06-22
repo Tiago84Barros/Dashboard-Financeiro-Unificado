@@ -75,6 +75,22 @@ def test_balance_and_cashflow():
     assert cf["free_cash_flow"] == 150.0   # 200 + (-50)
 
 
+def test_balance_b3_real_shape():
+    # forma real da BRAPI p/ B3: equity vem em 'shareholdersEquity' (não
+    # 'stockholdersEquity'); sem totalDebt/netDebt → soma empréstimos e deriva net.
+    q = {"symbol": "PETR4", "balanceSheetHistory": [{
+        "endDate": "2025-12-31", "totalAssets": 1223.0, "totalLiab": 805.0,
+        "totalStockholderEquity": None, "shareholdersEquity": 417.0,
+        "cash": 35.0, "totalDebt": None, "shortLongTermDebt": None, "netDebt": None,
+        "loansAndFinancing": 67.0, "longTermLoansAndFinancing": 317.0,
+        "debentures": 0, "longTermDebentures": 0,
+    }]}
+    b = nz.balance_rows(q)[0]
+    assert b["equity"] == 417.0
+    assert b["gross_debt"] == 384.0          # 67 + 317 (+ debêntures 0)
+    assert b["net_debt"] == 384.0 - 35.0     # gross_debt - cash
+
+
 def test_dividend_rows():
     d = nz.dividend_rows(_Q)[0]
     assert d["amount"] == 3.0 and d["type"] == "JCP"

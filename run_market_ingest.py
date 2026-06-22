@@ -37,7 +37,8 @@ log = logging.getLogger("market_ingest")
 def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão BRAPI Pro -> Supabase (market.*)")
     p.add_argument("command",
-                   choices=["validate", "cadastro", "bootstrap", "daily", "annual", "reprocess"])
+                   choices=["validate", "cadastro", "bootstrap", "daily", "annual",
+                            "reprocess", "renormalize"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
     p.add_argument("--source", default=None, choices=["setores", "ticker_cvm", "brapi"])
@@ -93,6 +94,8 @@ def main() -> int:
         prog = ingest.daily(tickers, args.source or "setores", args.limit)
     elif args.command == "annual":
         prog = ingest.annual(tickers, args.source or "setores", args.limit)
+    elif args.command == "renormalize":
+        prog = ingest.renormalize(tickers, args.limit)
     else:
         prog = ingest.reprocess_metrics(tickers, args.limit)
 

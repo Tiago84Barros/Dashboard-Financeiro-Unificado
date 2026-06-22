@@ -421,13 +421,81 @@ def validate(tickers: list[str], persist: bool = True) -> dict:
 
 # ── Reprocessamento de indicadores (sem rede) ─────────────────────────────────
 
+def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> dict:
+    """
+    Reaplica o normalizador atual aos payloads brutos JÁ salvos em
+    market.brapi_raw_payloads (SEM rede) e regrava market.*. Use após corrigir
+    nz.normalize_all para backfill sem novas chamadas à BRAPI.
+    """
+    import json
+    engine = _engine()
+    prog = _new_progress()
+    if engine is None:
+        return {**prog, "erros": -1}
+    with engine.connect() as conn:
+        if not repo.schema_exists(conn):
+            return {**prog, "erros": -1}
+        cvm_map = repo.load_cvm_to_ticker(conn)
+        q = ("SELECT DISTINCT ON (ticker) ticker, payload_json FROM market.brapi_raw_payloads "
+             "WHERE endpoint='quote' AND request_status='success' AND payload_json IS NOT NULL")
+        params: dict = {}
+        if tickers:
+            q += " AND ticker = ANY(:tks)"
+            params["tks"] = [t.upper().replace(".SA", "") for t in tickers]
+        q += " ORDER BY ticker, id DESC"
+        rows = conn.execute(text(q), params).fetchall()
+    if limit:
+        rows = rows[:limit]
+
+    for tk, payload in rows:
+        try:
+            p = json.loads(payload) if isinstance(payload, str) else payload
+            quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
+            if not quote:
+                continue
+            data = nz.normalize_all(quote)
+            cod = cvm_map.get(tk)
+            with engine.begin() as conn:
+                comp = data["companies"]
+                if comp and cod is not None:
+                    comp[0]["codigo_cvm"] = cod
+                    repo.upsert(conn, "companies", comp)
+                    prog["empresas"] += 1
+                ast = data["assets"]
+                if ast:
+                    ast[0]["company_id"] = repo.company_id_by_codigo(conn, cod) if cod is not None else None
+                    repo.upsert(conn, "assets", ast)
+                prog["precos"] += repo.upsert(conn, "historical_prices", data["historical_prices"])
+                for t in ("income_statements", "balance_sheets", "cash_flow_statements"):
+                    prog["demonstracoes"] += repo.upsert(conn, t, data[t])
+                prog["dividendos"] += repo.upsert(conn, "dividends", data["dividends"])
+                prog["indicadores"] += repo.upsert(conn, "calculated_metrics", data["calculated_metrics"])
+            prog["tickers"] += 1
+        except Exception as exc:
+            logger.warning("renormalize %s: %s", tk, exc)
+            prog["erros"] += 1
+    logger.info("market/renormalize: %s", prog)
+    return prog
+
+
+def _latest_annual(conn, table: str, cols: str, tk: str):
+    row = conn.execute(text(
+        f"SELECT {cols} FROM market.{table} WHERE ticker=:t AND period='annual' "
+        f"ORDER BY year DESC LIMIT 1"), {"t": tk}).fetchone()
+    return row
+
+
 def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None) -> dict:
     """
-    Recalcula indicadores derivados a partir de market.* (sem rede).
-    Implementado: DY anual (dividendos do ano ÷ preço de fim de ano) e DY spot
-    (12m ÷ último preço). Estende-se facilmente para P/VP, EV/EBITDA, etc.
+    Recalcula indicadores derivados a partir de market.* (SEM rede):
+      • snapshot completo (period='ttm'): Margem_Liquida/Operacional, ROE, ROA,
+        ROIC, Endividamento_Total, P/L, P/VP, EV_EBIT, P_FCO, DY, Payout;
+      • DY anual (period='annual') por dividendos/preço de fim de ano.
+    Roda sobre as empresas já em market.assets (cresce com o bootstrap).
     """
     import core.data_quality as dq
+    from datetime import datetime, timezone
+    from data_pipeline.market import metrics as mx
     engine = _engine()
     prog = _new_progress()
     if engine is None:
@@ -441,40 +509,66 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
             if limit:
                 tickers = tickers[:limit]
 
+    ref = datetime.now(timezone.utc).date()
     for tk in tickers:
         try:
             with engine.begin() as conn:
+                inc = _latest_annual(conn, "income_statements", "revenue, ebit, ebitda, net_income", tk)
+                bal = _latest_annual(conn, "balance_sheets",
+                                     "total_assets, equity, cash, gross_debt, net_debt", tk)
+                cf = _latest_annual(conn, "cash_flow_statements", "operating_cash_flow", tk)
+                mc = conn.execute(text(
+                    "SELECT metric_value FROM market.calculated_metrics "
+                    "WHERE ticker=:t AND metric_name='marketCap' ORDER BY year DESC LIMIT 1"),
+                    {"t": tk}).scalar()
+                eps = conn.execute(text(
+                    "SELECT metric_value FROM market.calculated_metrics "
+                    "WHERE ticker=:t AND metric_name='LPA' ORDER BY year DESC LIMIT 1"),
+                    {"t": tk}).scalar()
+                last_price = conn.execute(text(
+                    "SELECT COALESCE(adjusted_close, close) FROM market.historical_prices "
+                    "WHERE ticker=:t AND COALESCE(adjusted_close, close) IS NOT NULL "
+                    "ORDER BY date DESC LIMIT 1"), {"t": tk}).scalar()
                 divs = conn.execute(text(
-                    "SELECT event_date, amount FROM market.dividends WHERE ticker=:t"), {"t": tk}).fetchall()
-                prices = conn.execute(text(
+                    "SELECT event_date, amount FROM market.dividends WHERE ticker=:t"),
+                    {"t": tk}).fetchall()
+
+                # dividendos POR AÇÃO nos últimos 366 dias (base p/ DY e Payout)
+                div_ps_ttm = sum(float(a) for d, a in divs
+                                 if d is not None and a is not None and 0 <= (ref - d).days <= 366)
+                f = {
+                    "revenue": inc[0] if inc else None, "ebit": inc[1] if inc else None,
+                    "ebitda": inc[2] if inc else None, "net_income": inc[3] if inc else None,
+                    "total_assets": bal[0] if bal else None, "equity": bal[1] if bal else None,
+                    "cash": bal[2] if bal else None, "gross_debt": bal[3] if bal else None,
+                    "net_debt": bal[4] if bal else None,
+                    "fco": cf[0] if cf else None, "market_cap": mc,
+                    "div_ttm": div_ps_ttm or None, "price": last_price, "eps": eps,
+                }
+                rows_out = mx.to_metric_rows(tk, mx.compute_snapshot(f))
+
+                # DY anual (histórico)
+                year_end, div_year = {}, {}
+                for d, px in conn.execute(text(
                     "SELECT date, COALESCE(adjusted_close, close) FROM market.historical_prices "
                     "WHERE ticker=:t AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY date"),
-                    {"t": tk}).fetchall()
-                if not divs or not prices:
-                    continue
-                year_end = {}
-                for d, px in prices:
+                        {"t": tk}).fetchall():
                     if d is not None and px:
                         year_end[d.year] = float(px)
-                div_year: dict[int, float] = {}
                 for d, amt in divs:
                     if d is not None and amt:
                         div_year[d.year] = div_year.get(d.year, 0.0) + float(amt)
-                metric_rows = []
                 for y, total in div_year.items():
                     px = year_end.get(y)
-                    if px and px > 0:
-                        dy = total / px
-                        if dq.is_valid_value("DY", dy):
-                            metric_rows.append({
-                                "ticker": tk, "period": "annual", "year": y, "quarter": 0,
-                                "metric_name": "DY", "metric_value": dy,
-                                "calculation_method": "dividends/year_end_price",
-                                "source": "market.dividends+historical_prices",
-                                "confidence_score": 90.0,
-                            })
-                if metric_rows:
-                    prog["indicadores"] += repo.upsert(conn, "calculated_metrics", metric_rows)
+                    if px and px > 0 and dq.is_valid_value("DY", total / px):
+                        rows_out.append({
+                            "ticker": tk, "period": "annual", "year": y, "quarter": 0,
+                            "metric_name": "DY", "metric_value": total / px,
+                            "calculation_method": "dividends/year_end_price",
+                            "source": "market.dividends+historical_prices", "confidence_score": 90.0,
+                        })
+                if rows_out:
+                    prog["indicadores"] += repo.upsert(conn, "calculated_metrics", rows_out)
                     prog["tickers"] += 1
         except Exception as exc:
             logger.warning("reprocess %s: %s", tk, exc)

@@ -163,18 +163,31 @@ def balance_rows(quote: dict) -> list[dict]:
         if not pyq:
             continue
         year, quarter = pyq
+        cash = _first(it, ("cash", "cashAndCashEquivalents",
+                           "cashCashEquivalentsAndShortTermInvestments"))
+        # dívida bruta: campos diretos quando existem; senão soma dos componentes
+        # de empréstimos/debêntures/arrendamento (padrão CVM da brapi p/ B3).
+        gross_debt = _first(it, ("totalDebt", "shortLongTermDebt", "shortLongTermDebtTotal"))
+        if gross_debt is None:
+            parts = [_first(it, (k,)) for k in (
+                "loansAndFinancing", "longTermLoansAndFinancing",
+                "debentures", "longTermDebentures",
+                "leaseFinancing", "longTermLeaseFinancing")]
+            parts = [p for p in parts if p is not None]
+            gross_debt = sum(parts) if parts else None
+        net_debt = _first(it, ("netDebt",))
+        if net_debt is None and gross_debt is not None and cash is not None:
+            net_debt = gross_debt - cash
         out.append({
             "ticker": tk, "period": "annual" if annual else "quarterly",
             "year": year, "quarter": quarter,
             "total_assets": _first(it, ("totalAssets",)),
             "total_liabilities": _first(it, ("totalLiab", "totalLiabilities",
                                              "totalLiabilitiesNetMinorityInterest")),
-            "equity": _first(it, ("totalStockholderEquity", "stockholdersEquity",
+            "equity": _first(it, ("totalStockholderEquity", "shareholdersEquity",
+                                  "stockholdersEquity", "controllerShareholdersEquity",
                                   "totalEquityGrossMinorityInterest")),
-            "cash": _first(it, ("cash", "cashAndCashEquivalents",
-                                "cashCashEquivalentsAndShortTermInvestments")),
-            "gross_debt": _first(it, ("totalDebt", "shortLongTermDebtTotal")),
-            "net_debt": _first(it, ("netDebt",)),
+            "cash": cash, "gross_debt": gross_debt, "net_debt": net_debt,
         })
     return out
 
