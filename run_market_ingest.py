@@ -40,8 +40,9 @@ def main() -> int:
                    choices=["validate", "cadastro", "bootstrap", "daily", "annual", "reprocess"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
-    p.add_argument("--source", default="setores", choices=["setores", "brapi"])
-    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--source", default=None, choices=["setores", "ticker_cvm", "brapi"])
+    p.add_argument("--limit", type=int, default=None,
+                   help="bootstrap: tamanho do lote por execução (default 50)")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
@@ -87,11 +88,11 @@ def main() -> int:
         return 0 if not rep.get("erro") else 1
 
     if args.command == "bootstrap":
-        prog = ingest.bootstrap(tickers, args.source, args.limit)
+        prog = ingest.bootstrap(tickers, args.source or "ticker_cvm", args.limit or 50)
     elif args.command == "daily":
-        prog = ingest.daily(tickers, args.source, args.limit)
+        prog = ingest.daily(tickers, args.source or "setores", args.limit)
     elif args.command == "annual":
-        prog = ingest.annual(tickers, args.source, args.limit)
+        prog = ingest.annual(tickers, args.source or "setores", args.limit)
     else:
         prog = ingest.reprocess_metrics(tickers, args.limit)
 
@@ -103,6 +104,9 @@ def main() -> int:
              "indicadores=%d erros=%d (tickers=%d)",
              prog["empresas"], prog["precos"], prog["demonstracoes"], prog["dividendos"],
              prog["indicadores"], prog["erros"], prog["tickers"])
+    if "restantes" in prog:
+        log.info("Bootstrap — universo=%s | processados agora=%s | RESTANTES=%s",
+                 prog.get("universo"), prog["tickers"], prog["restantes"])
     if args.json:
         print(json.dumps(prog, indent=2, default=str))
     return 0

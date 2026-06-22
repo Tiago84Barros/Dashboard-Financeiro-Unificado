@@ -1,0 +1,77 @@
+name: Bootstrap BRAPI (retomável)
+
+# Baixa 16 anos de histórico da BRAPI Pro para market.* em LOTES retomáveis.
+# Cada execução processa `batch` empresas pendentes (carteira primeiro) e marca
+# o estado em market.bootstrap_state. Re-execute (ou deixe o agendamento diário
+# drenar) até RESTANTES=0. Quando não há pendentes, o run é um no-op rápido.
+on:
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: "Empresas por execução (lote)"
+        type: string
+        default: "80"
+      source:
+        description: "Universo"
+        type: choice
+        options: ["ticker_cvm", "setores", "brapi"]
+        default: "ticker_cvm"
+  schedule:
+    - cron: "0 6 * * *"   # 03:00 BRT — drena o universo aos poucos
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootstrap-brapi
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Bootstrap BRAPI (lote)
+    runs-on: ubuntu-latest
+    timeout-minutes: 50   # ~31s/ticker → ~90/lote cabe com folga
+    env:
+      APP_ENV: production
+      PYTHONUNBUFFERED: "1"
+      SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
+      DATABASE_URL:           ${{ secrets.DATABASE_URL }}
+      SUPABASE_DB_URL:        ${{ secrets.SUPABASE_DB_URL }}
+      OWNER_USER_ID:          ${{ secrets.OWNER_USER_ID }}
+      BRAPI_TOKEN:            ${{ secrets.BRAPI_TOKEN }}
+      MARKET_DELAY:           "1.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-pipeline.txt
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-pipeline.txt
+      - name: Confirmar token (sem expor)
+        run: |
+          python - <<'PY'
+          import core.brapi as b
+          assert b._token(), "BRAPI_TOKEN ausente"
+          print("BRAPI_TOKEN ok | len:", len(b._token()))
+          PY
+      - name: Garantir schema market.* (013, idempotente)
+        run: |
+          python - <<'PY'
+          from data_pipeline.utils.db_utils import get_pipeline_engine
+          eng = get_pipeline_engine()
+          raw = eng.raw_connection()
+          try:
+              raw.cursor().execute(open("supabase_unificado/schema/013_market_brapi_schema.sql", encoding="utf-8").read()); raw.commit()
+              print("schema market.* ok")
+          finally:
+              raw.close()
+          PY
+      - name: Bootstrap (lote retomável)
+        run: |
+          BATCH="${{ github.event.inputs.batch || '80' }}"
+          SRC="${{ github.event.inputs.source || 'ticker_cvm' }}"
+          python run_market_ingest.py bootstrap --source "$SRC" --limit "$BATCH" --json

@@ -45,6 +45,11 @@ def _universe(engine, source: str = "setores", limit: int | None = None) -> list
         except Exception as exc:
             logger.warning("fetch_list falhou: %s", exc)
             tks = []
+    elif source == "ticker_cvm":
+        with engine.connect() as c:
+            rows = c.execute(text(
+                "SELECT ticker FROM market.ticker_cvm ORDER BY ticker")).fetchall()
+        tks = [str(r[0]).upper().replace(".SA", "") for r in rows if r[0]]
     else:
         with engine.connect() as c:
             rows = c.execute(text(
@@ -52,6 +57,45 @@ def _universe(engine, source: str = "setores", limit: int | None = None) -> list
             )).fetchall()
         tks = [str(r[0]).upper().replace(".SA", "") for r in rows if r[0]]
     return tks[:limit] if limit else tks
+
+
+# ── Estado do bootstrap (retomada por ticker) ────────────────────────────────
+
+def _ensure_bootstrap_state(conn) -> None:
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS market.bootstrap_state (
+            ticker TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'ok',
+            error  TEXT,
+            done_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+
+
+def _bootstrap_done(conn) -> set[str]:
+    rows = conn.execute(text(
+        "SELECT ticker FROM market.bootstrap_state WHERE status='ok'")).fetchall()
+    return {str(r[0]).upper() for r in rows}
+
+
+def _carteira_tickers(conn) -> set[str]:
+    try:
+        rows = conn.execute(text(
+            "SELECT DISTINCT ticker FROM public.b3_portfolio_model_items")).fetchall()
+        return {str(r[0]).upper().replace(".SA", "") for r in rows if r[0]}
+    except Exception:
+        return set()
+
+
+def _mark_bootstrap(engine, ticker: str, status: str, error: str | None = None) -> None:
+    with engine.begin() as conn:
+        _ensure_bootstrap_state(conn)
+        conn.execute(text("""
+            INSERT INTO market.bootstrap_state (ticker, status, error, done_at)
+            VALUES (:t, :s, :e, NOW())
+            ON CONFLICT (ticker) DO UPDATE SET status=EXCLUDED.status,
+                error=EXCLUDED.error, done_at=NOW()
+        """), {"t": ticker, "s": status, "e": (str(error)[:500] if error else None)})
 
 
 def _new_progress() -> dict:
@@ -148,14 +192,55 @@ def _run(engine, tickers: list[str], *, range_: str, full: bool,
 
 # ── Comandos ──────────────────────────────────────────────────────────────────
 
-def bootstrap(tickers: list[str] | None = None, source: str = "setores",
-              limit: int | None = None) -> dict:
-    """Baixa 16 anos de histórico (range=max + módulos completos)."""
+def bootstrap(tickers: list[str] | None = None, source: str = "ticker_cvm",
+              batch: int = 50) -> dict:
+    """
+    Baixa 16 anos de histórico (range=max + módulos), RETOMÁVEL por ticker.
+    Processa até `batch` empresas pendentes por execução (carteira primeiro),
+    marca o estado em market.bootstrap_state e reporta quantas faltam. Re-execute
+    (ou agende) até `restantes`=0. Circuito anti-bloqueio e throttle inclusos.
+    """
     engine = _engine()
+    prog = _new_progress()
     if engine is None:
-        return {**_new_progress(), "erros": -1}
-    tks = tickers or _universe(engine, source, limit)
-    return _run(engine, tks, range_="max", full=True, batch_label="bootstrap")
+        return {**prog, "erros": -1, "restantes": None}
+    with engine.begin() as conn:
+        if not repo.schema_exists(conn):
+            return {**prog, "erros": -1, "restantes": None, "msg": "schema market.* ausente"}
+        _ensure_bootstrap_state(conn)
+
+    universe = [t.upper().replace(".SA", "") for t in tickers] if tickers \
+        else _universe(engine, source)
+    with engine.connect() as conn:
+        done = _bootstrap_done(conn)
+        carteira = _carteira_tickers(conn)
+        cvm_map = repo.load_cvm_to_ticker(conn)
+    pending = [t for t in universe if t not in done]
+    pending.sort(key=lambda t: (t not in carteira, t))  # carteira primeiro
+    lote = pending[:batch]
+
+    delay = float(os.getenv("MARKET_DELAY", "1.5"))
+    max_blocks = int(os.getenv("MARKET_MAX_BLOCKS", "3"))
+    blocks = 0
+    for i, tk in enumerate(lote):
+        try:
+            ingest_ticker(engine, tk, range_="max", full=True, cvm_map=cvm_map, prog=prog)
+            _mark_bootstrap(engine, tk, "ok")
+            blocks = 0
+        except Exception as exc:
+            _mark_bootstrap(engine, tk, "error", str(exc))
+            if brapi.is_rate_limited(exc):
+                blocks += 1
+                if blocks >= max_blocks:
+                    logger.warning("bootstrap: disjuntor (429) — encerrando run.")
+                    break
+        if i < len(lote) - 1:
+            sched.sleep_jittered(base=delay)
+
+    prog["restantes"] = max(0, len(set(universe) - done) - prog["tickers"])
+    prog["universo"] = len(universe)
+    logger.info("market/bootstrap: %s", prog)
+    return prog
 
 
 def daily(tickers: list[str] | None = None, source: str = "setores",
