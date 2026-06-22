@@ -94,6 +94,19 @@ _DEFAULT_REGISTRY: list[dict] = [
                         "Ajustável por env (CVM_FULLTEXT_MAX/DELAY/MAX_BLOCKS/ENABLE).",
     },
     {
+        "table_name":   "multiplos",
+        "source_name":  "brapi.dev (histórico DY)",
+        "job_name":     "update_brapi_history",
+        "update_type":  "incremental",
+        "frequency":    "diario",
+        "priority":     6,
+        "is_active":    True,
+        "description":  "Backfill histórico de DY anual via API brapi.dev (dividendos+preços), "
+                        "em gotejamento: preenche apenas lacunas (DY ausente/inválido), nunca "
+                        "sobrescreve dado válido, com backup+auditoria. Requer BRAPI_TOKEN para "
+                        "o universo completo. Ajustável por env (BRAPI_HISTORY_MAX/DELAY/ENABLE).",
+    },
+    {
         "table_name":   "Demonstracoes_Financeiras, multiplos",
         "source_name":  "B3 / yfinance + Fundamentus",
         "job_name":     "update_b3_fundamentals",

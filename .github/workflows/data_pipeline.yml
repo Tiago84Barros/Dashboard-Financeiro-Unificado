@@ -30,6 +30,8 @@ jobs:
       SUPABASE_DB_URL:        ${{ secrets.SUPABASE_DB_URL }}
       SOURCE_DB_APP1:         ${{ secrets.SOURCE_DB_APP1 }}
       OWNER_USER_ID:          ${{ secrets.OWNER_USER_ID }}
+      # Token da API brapi.dev (backfill histórico de DY). Free: 15k req/mês.
+      BRAPI_TOKEN:            ${{ secrets.BRAPI_TOKEN }}
       # Auditoria & saneamento: "false" = dry-run (apenas propõe + relatório).
       # Defina o Secret/variable AUDIT_HEAL_APPLY como "true" para gravar correções.
       AUDIT_HEAL_APPLY:       ${{ vars.AUDIT_HEAL_APPLY || 'false' }}
