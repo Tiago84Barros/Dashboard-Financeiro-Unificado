@@ -162,10 +162,10 @@ def disponivel() -> bool:
 
 def fetch_quote(ticker: str, range_: str = "max", interval: str = "1mo",
                 dividends: bool = True, fundamental: bool = True,
-                timeout: int = 30) -> dict | None:
+                modules: str | None = None, timeout: int = 45) -> dict | None:
     """
-    Busca a cotação+histórico+dividendos de um ticker. Retorna results[0] (dict)
-    ou None. Levanta BrapiRateLimited em 429.
+    Busca cotação+histórico+dividendos (+ módulos do Pro) de um ticker.
+    Retorna results[0] (dict) ou None. Levanta BrapiRateLimited em 429.
     """
     import requests
     tk = str(ticker).strip().upper().replace(".SA", "")
@@ -174,6 +174,8 @@ def fetch_quote(ticker: str, range_: str = "max", interval: str = "1mo",
         "dividends": "true" if dividends else "false",
         "fundamental": "true" if fundamental else "false",
     }
+    if modules:
+        params["modules"] = modules
     headers = {"User-Agent": "DashboardFinanceiro/1.0 (+data-quality)"}
     tok = _token()
     if tok:
@@ -193,3 +195,47 @@ def fetch_quote(ticker: str, range_: str = "max", interval: str = "1mo",
         raise BrapiError(f"json inválido: {exc}") from exc
     results = data.get("results") or []
     return results[0] if results else None
+
+
+# Módulos fundamentalistas do plano Pro (anuais + trimestrais).
+PRO_MODULES = (
+    "summaryProfile,defaultKeyStatistics,financialData,"
+    "incomeStatementHistory,incomeStatementHistoryQuarterly,"
+    "balanceSheetHistory,balanceSheetHistoryQuarterly,"
+    "cashflowHistory,cashflowHistoryQuarterly"
+)
+
+
+def fetch_quote_full(ticker: str, range_: str = "max", interval: str = "1mo",
+                     timeout: int = 60) -> dict | None:
+    """Cotação completa do Pro: histórico + dividendos + módulos fundamentalistas."""
+    return fetch_quote(ticker, range_=range_, interval=interval,
+                       dividends=True, fundamental=True, modules=PRO_MODULES, timeout=timeout)
+
+
+def fetch_list(timeout: int = 45) -> list[str]:
+    """Lista todos os tickers de ações (endpoint /api/quote/list). [] em falha."""
+    import requests
+    headers = {"User-Agent": "DashboardFinanceiro/1.0 (+data-quality)"}
+    tok = _token()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    try:
+        resp = requests.get("https://brapi.dev/api/quote/list", headers=headers, timeout=timeout)
+    except Exception as exc:
+        raise BrapiError(str(exc)) from exc
+    if resp.status_code == 429:
+        raise BrapiRateLimited("HTTP 429")
+    if resp.status_code != 200:
+        return []
+    try:
+        data = resp.json()
+    except Exception:
+        return []
+    out: list[str] = []
+    for it in (data.get("stocks") or []):
+        tk = (it.get("stock") if isinstance(it, dict) else str(it)) or ""
+        tk = str(tk).strip().upper().replace(".SA", "")
+        if tk:
+            out.append(tk)
+    return out
