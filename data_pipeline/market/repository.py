@@ -42,6 +42,48 @@ _CONFLICT = {
 }
 
 
+# chaves naturais por tabela (para checagem de duplicidade pós-upsert)
+_NATURAL_KEY = {
+    "companies": ("codigo_cvm",),
+    "assets": ("ticker",),
+    "historical_prices": ("ticker", "date"),
+    "income_statements": ("ticker", "period", "year", "quarter"),
+    "balance_sheets": ("ticker", "period", "year", "quarter"),
+    "cash_flow_statements": ("ticker", "period", "year", "quarter"),
+    "dividends": ("ticker", "event_date", "type", "amount"),
+    "macro_indicators": ("indicator", "date"),
+    "calculated_metrics": ("ticker", "period", "year", "quarter", "metric_name"),
+    "ticker_cvm": ("ticker",),
+}
+
+
+def market_table_stats(conn) -> dict:
+    """Contagem e duplicidade (count - count distinct da chave) por tabela market.*."""
+    out: dict[str, dict] = {}
+    for table in ("companies", "assets", "historical_prices", "income_statements",
+                  "balance_sheets", "cash_flow_statements", "dividends",
+                  "calculated_metrics", "macro_indicators", "ticker_cvm",
+                  "brapi_raw_payloads", "data_quality_logs"):
+        try:
+            total = conn.execute(text(f"SELECT count(*) FROM market.{table}")).scalar() or 0
+        except Exception:
+            out[table] = {"total": None, "duplicados": None}
+            continue
+        dups = None
+        key = _NATURAL_KEY.get(table)
+        if key:
+            kcols = ", ".join(f'"{c}"' for c in key)
+            try:
+                distinct = conn.execute(text(
+                    f"SELECT count(*) FROM (SELECT 1 FROM market.{table} GROUP BY {kcols}) s"
+                )).scalar() or 0
+                dups = int(total) - int(distinct)
+            except Exception:
+                dups = None
+        out[table] = {"total": int(total), "duplicados": dups}
+    return out
+
+
 def schema_exists(conn) -> bool:
     return bool(conn.execute(text(
         "SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name='market')"

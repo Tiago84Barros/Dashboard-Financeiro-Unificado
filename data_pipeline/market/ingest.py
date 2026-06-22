@@ -259,9 +259,11 @@ def validate(tickers: list[str], persist: bool = True) -> dict:
     - reporta presença de cada bloco e registra ausências em data_quality_logs.
     Retorna relatório estruturado (sem segredos).
     """
+    import time
+    t0 = time.time()
     engine = _engine()
     report: dict = {"brapi_token": _token_status(), "schema_market": False,
-                    "persistido": False, "tickers": {}}
+                    "persistido": False, "tickers": {}, "requisicoes_estimadas": 0}
     if engine is None:
         report["erro"] = "banco não conectado"
         return report
@@ -287,6 +289,7 @@ def validate(tickers: list[str], persist: bool = True) -> dict:
             report["tickers"][tk] = entry
             continue
 
+        report["requisicoes_estimadas"] += 1
         data = nz.normalize_all(quote)
         blocos = {
             "perfil": bool((data["companies"] or [{}])[0].get("sector")),
@@ -317,6 +320,17 @@ def validate(tickers: list[str], persist: bool = True) -> dict:
             except Exception as exc:
                 entry["erro"] = f"persistência: {exc}"[:200]
         report["tickers"][tk] = entry
+
+    # contagem/duplicidade por tabela + tempo
+    try:
+        with engine.connect() as conn:
+            report["contagem_tabelas"] = repo.market_table_stats(conn)
+    except Exception:
+        report["contagem_tabelas"] = {}
+    report["duplicidades"] = {t: s["duplicados"] for t, s in
+                              report.get("contagem_tabelas", {}).items()
+                              if s.get("duplicados")}
+    report["tempo_s"] = round(time.time() - t0, 1)
     return report
 
 

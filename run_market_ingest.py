@@ -66,6 +66,13 @@ def main() -> int:
                          b.get("dre", 0), b.get("bp", 0), b.get("dfc", 0),
                          b.get("dividendos", 0), b.get("indicadores", 0),
                          (f"| faltando: {', '.join(e['faltando'])}" if e.get("faltando") else ""))
+        log.info("Tempo: %ss | Requisições estimadas: %s",
+                 rep.get("tempo_s"), rep.get("requisicoes_estimadas"))
+        log.info("Contagem por tabela market.*:")
+        for t, s in (rep.get("contagem_tabelas") or {}).items():
+            log.info("    %-22s total=%s dup=%s", t, s.get("total"), s.get("duplicados"))
+        dups = rep.get("duplicidades") or {}
+        log.info("Duplicidades: %s", dups if dups else "nenhuma ✅")
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
         return 0
