@@ -90,14 +90,37 @@ def schema_exists(conn) -> bool:
     )).scalar())
 
 
+def _row_key(table: str, row: dict):
+    """Chave natural da linha (para dedup intra-lote). dividends usa event_date
+    derivado = COALESCE(payment_date, ex_date), pois é coluna GERADA."""
+    if table == "dividends":
+        return (row.get("ticker"), row.get("payment_date") or row.get("ex_date"),
+                row.get("type"), row.get("amount"))
+    key = _NATURAL_KEY.get(table)
+    return tuple(row.get(c) for c in key) if key else None
+
+
+def _dedup(table: str, rows: list[dict]) -> list[dict]:
+    """Remove duplicatas pela chave natural dentro do lote (último vence).
+    Evita o erro 'ON CONFLICT cannot affect row a second time' no execute_values."""
+    if table not in _NATURAL_KEY and table != "dividends":
+        return rows
+    seen: dict = {}
+    for r in rows:
+        seen[_row_key(table, r)] = r
+    return list(seen.values())
+
+
 def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
     """
     UPSERT em LOTE via psycopg2.execute_values (centenas de linhas por statement,
-    na mesma transação do SQLAlchemy). Bem mais rápido que executemany linha-a-linha.
-    Fallback para executemany se execute_values não estiver disponível.
+    na mesma transação do SQLAlchemy). Deduplica por chave natural antes (chaves
+    repetidas no mesmo lote quebram ON CONFLICT). Fallback só se execute_values
+    não existir (ImportError) — erros de SQL reais propagam.
     """
     if not rows:
         return 0
+    rows = _dedup(table, rows)
     cols = list(rows[0].keys())
     collist = ", ".join(f'"{c}"' for c in cols)
     upd = _UPDATE_COLS[table]
@@ -108,18 +131,19 @@ def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
     values = [tuple(r.get(c) for c in cols) for r in rows]
     try:
         from psycopg2.extras import execute_values
-        sql = (f'INSERT INTO market.{table} ({collist}) VALUES %s '
-               f'ON CONFLICT ({conflict}) {action}')
-        cur = conn.connection.cursor()  # cursor DBAPI na mesma transação
-        try:
-            execute_values(cur, sql, values, page_size=page_size)
-        finally:
-            cur.close()
-    except Exception:  # fallback portável (mais lento)
+    except ImportError:  # fallback portável (mais lento) só se a lib não existir
         vals = ", ".join(f":{c}" for c in cols)
         sql = (f'INSERT INTO market.{table} ({collist}) VALUES ({vals}) '
                f'ON CONFLICT ({conflict}) {action}')
         conn.execute(text(sql), rows)
+        return len(rows)
+    sql = (f'INSERT INTO market.{table} ({collist}) VALUES %s '
+           f'ON CONFLICT ({conflict}) {action}')
+    cur = conn.connection.cursor()  # cursor DBAPI na mesma transação
+    try:
+        execute_values(cur, sql, values, page_size=page_size)
+    finally:
+        cur.close()
     return len(rows)
 
 
