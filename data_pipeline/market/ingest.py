@@ -178,6 +178,86 @@ def annual(tickers: list[str] | None = None, source: str = "setores",
     return _run(engine, tks, range_="1y", full=True, batch_label="annual")
 
 
+# ── Validação controlada (sem bootstrap) ─────────────────────────────────────
+
+def _token_status() -> str:
+    """Status do token SEM expor o valor."""
+    tok = brapi._token()
+    if not tok:
+        return "ausente (modo free — só PETR4, VALE3, ITUB4, MGLU3)"
+    return f"presente (len={len(tok)}, ••••{tok[-2:] if len(tok) >= 2 else ''})"
+
+
+def validate(tickers: list[str], persist: bool = True) -> dict:
+    """
+    Validação controlada de poucos tickers. NÃO faz bootstrap.
+    - confirma carregamento do token (mascarado);
+    - testa conexão e busca cada ticker (módulos completos);
+    - persiste (raw + market.*) quando o schema existe e persist=True;
+    - reporta presença de cada bloco e registra ausências em data_quality_logs.
+    Retorna relatório estruturado (sem segredos).
+    """
+    engine = _engine()
+    report: dict = {"brapi_token": _token_status(), "schema_market": False,
+                    "persistido": False, "tickers": {}}
+    if engine is None:
+        report["erro"] = "banco não conectado"
+        return report
+
+    with engine.connect() as conn:
+        schema_ok = repo.schema_exists(conn)
+        cvm_map = repo.load_cvm_to_ticker(conn) if schema_ok else {}
+    report["schema_market"] = schema_ok
+    do_persist = persist and schema_ok
+
+    for tk in tickers:
+        tk = tk.upper().replace(".SA", "")
+        entry: dict = {"erro": None}
+        try:
+            quote = sched.with_backoff(lambda t=tk: brapi.fetch_quote_full(t),
+                                       retries=3, base=4.0, on_block=brapi.is_rate_limited)
+        except Exception as exc:
+            entry["erro"] = ("rate_limited" if brapi.is_rate_limited(exc) else f"erro: {exc}")[:200]
+            report["tickers"][tk] = entry
+            continue
+        if not quote:
+            entry["erro"] = "sem retorno (ticker free? requer token Pro?)"
+            report["tickers"][tk] = entry
+            continue
+
+        data = nz.normalize_all(quote)
+        blocos = {
+            "perfil": bool((data["companies"] or [{}])[0].get("sector")),
+            "cotacao": bool((quote or {}).get("regularMarketPrice")),
+            "historico": len(data["historical_prices"]),
+            "dre": len(data["income_statements"]),
+            "bp": len(data["balance_sheets"]),
+            "dfc": len(data["cash_flow_statements"]),
+            "dividendos": len(data["dividends"]),
+            "indicadores": len(data["calculated_metrics"]),
+        }
+        entry["blocos"] = blocos
+        entry["faltando"] = [k for k, v in blocos.items() if not v]
+
+        if do_persist:
+            try:
+                prog = _new_progress()
+                ingest_ticker(engine, tk, range_="max", full=True, cvm_map=cvm_map, prog=prog)
+                entry["persistido"] = True
+                report["persistido"] = True
+                # registra ausências relevantes
+                with engine.begin() as conn:
+                    for bloco in ("dre", "bp", "dfc", "dividendos"):
+                        if not blocos[bloco]:
+                            repo.log_quality(conn, ticker=tk, table_name=f"market/{bloco}",
+                                             issue_type="missing", severity="warn",
+                                             new_value=f"{bloco} ausente no payload BRAPI")
+            except Exception as exc:
+                entry["erro"] = f"persistência: {exc}"[:200]
+        report["tickers"][tk] = entry
+    return report
+
+
 # ── Reprocessamento de indicadores (sem rede) ─────────────────────────────────
 
 def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None) -> dict:

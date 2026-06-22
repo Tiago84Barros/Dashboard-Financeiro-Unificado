@@ -36,7 +36,7 @@ log = logging.getLogger("market_ingest")
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão BRAPI Pro -> Supabase (market.*)")
-    p.add_argument("command", choices=["bootstrap", "daily", "annual", "reprocess"])
+    p.add_argument("command", choices=["validate", "bootstrap", "daily", "annual", "reprocess"])
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
     p.add_argument("--source", default="setores", choices=["setores", "brapi"])
     p.add_argument("--limit", type=int, default=None)
@@ -48,6 +48,25 @@ def main() -> int:
     tickers = [t.upper().replace(".SA", "") for t in args.tickers] if args.tickers else None
     log.info("Comando=%s  source=%s  limit=%s  tickers=%s",
              args.command, args.source, args.limit, tickers or "(universo)")
+
+    if args.command == "validate":
+        rep = ingest.validate(tickers or ["PETR4", "ITUB4", "WEGE3"])
+        log.info("BRAPI token: %s", rep.get("brapi_token"))
+        log.info("schema market.*: %s | persistido: %s",
+                 rep.get("schema_market"), rep.get("persistido"))
+        for tk, e in rep.get("tickers", {}).items():
+            if e.get("erro"):
+                log.warning("  %s: ERRO %s", tk, e["erro"])
+            else:
+                b = e.get("blocos", {})
+                log.info("  %s: perfil=%s cotação=%s histórico=%d DRE=%d BP=%d DFC=%d div=%d ind=%d %s",
+                         tk, b.get("perfil"), b.get("cotacao"), b.get("historico", 0),
+                         b.get("dre", 0), b.get("bp", 0), b.get("dfc", 0),
+                         b.get("dividendos", 0), b.get("indicadores", 0),
+                         (f"| faltando: {', '.join(e['faltando'])}" if e.get("faltando") else ""))
+        if args.json:
+            print(json.dumps(rep, indent=2, default=str))
+        return 0
 
     if args.command == "bootstrap":
         prog = ingest.bootstrap(tickers, args.source, args.limit)
