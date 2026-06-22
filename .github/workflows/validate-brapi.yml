@@ -16,9 +16,9 @@ permissions:
 
 jobs:
   validate:
-    name: Validar BRAPI (3 tickers)
+    name: Validar BRAPI (tickers)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 50   # ~80s/ticker (upsert remoto); 20 tickers ≈ 27 min
     env:
       APP_ENV: production
       PYTHONUNBUFFERED: "1"
