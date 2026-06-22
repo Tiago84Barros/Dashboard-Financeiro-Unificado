@@ -70,9 +70,10 @@ CREATE TABLE IF NOT EXISTS market.companies (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE market.companies IS 'Empresas/emissores. Upsert por codigo_cvm (preferencial) ou cnpj.';
--- UNIQUE parcial (permite múltiplos NULL):
-CREATE UNIQUE INDEX IF NOT EXISTS uq_companies_codigo_cvm ON market.companies (codigo_cvm) WHERE codigo_cvm IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_companies_cnpj       ON market.companies (cnpj)       WHERE cnpj IS NOT NULL;
+-- UNIQUE cheio (NULLs são distintos no Postgres → múltiplos NULL permitidos;
+-- e ON CONFLICT (col) casa com índice não-parcial — necessário p/ o upsert).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_companies_codigo_cvm ON market.companies (codigo_cvm);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_companies_cnpj       ON market.companies (cnpj);
 DROP TRIGGER IF EXISTS trg_companies_updated ON market.companies;
 CREATE TRIGGER trg_companies_updated BEFORE UPDATE ON market.companies
     FOR EACH ROW EXECUTE FUNCTION market.set_updated_at();
@@ -288,6 +289,18 @@ COMMENT ON TABLE market.data_quality_logs IS 'Log append-only de qualidade/corre
 CREATE INDEX IF NOT EXISTS idx_dqlog_ticker   ON market.data_quality_logs (ticker);
 CREATE INDEX IF NOT EXISTS idx_dqlog_table    ON market.data_quality_logs (table_name, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dqlog_severity ON market.data_quality_logs (severity, created_at DESC);
+
+-- ── 12. ticker_cvm ──────────────────────────────────────────
+-- Mapa ticker -> codigo_cvm (muitos tickers por empresa, ex.: PETR3/PETR4).
+-- Origem: cadastro oficial CVM (cad_cia_aberta + FCA). Substitui o legado
+-- public.cvm_to_ticker (que tinha UNIQUE em CVM, 1 ticker por empresa).
+CREATE TABLE IF NOT EXISTS market.ticker_cvm (
+    ticker      TEXT        PRIMARY KEY,
+    codigo_cvm  INTEGER     NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE market.ticker_cvm IS 'Mapa ticker->codigo_cvm (CVM cad+FCA). Upsert por ticker.';
+CREATE INDEX IF NOT EXISTS idx_ticker_cvm_cod ON market.ticker_cvm (codigo_cvm);
 
 -- ============================================================
 -- FIM 013. Próximo: 014_legacy_isolation.sql (marca o legado em public).

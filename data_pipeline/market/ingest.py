@@ -178,6 +178,68 @@ def annual(tickers: list[str] | None = None, source: str = "setores",
     return _run(engine, tks, range_="1y", full=True, batch_label="annual")
 
 
+# ── Cadastro CVM: completa ticker->codigo_cvm e market.companies ──────────────
+
+def cadastro(apply: bool = True, years: list[int] | None = None) -> dict:
+    """
+    Completa o mapa ticker->codigo_cvm (public.cvm_to_ticker) e popula
+    market.companies a partir do cadastro oficial da CVM (cad + FCA).
+    apply=False = dry-run (só conta). Idempotente.
+    """
+    import core.cvm_cadastro as cad
+    from datetime import datetime, timezone
+    engine = _engine()
+    rep = {"tickers_no_mapa": 0, "novos_cvm_to_ticker": 0, "companies_upsert": 0,
+           "apply": apply, "erro": None}
+    if engine is None:
+        rep["erro"] = "banco não conectado"
+        return rep
+
+    cad_bytes = cad.fetch_cad()
+    if not cad_bytes:
+        rep["erro"] = "falha ao baixar cad_cia_aberta"
+        return rep
+    cad_map = cad.parse_cad(cad_bytes)
+
+    now_year = datetime.now(timezone.utc).year
+    years = years or [now_year, now_year - 1, now_year - 2]
+    fca_all: list[dict] = []
+    for y in years:
+        b = cad.fetch_fca_valmob(y)
+        if b:
+            fca_all.extend(cad.parse_fca_valmob(b))
+
+    ticker_to_cod, companies = cad.build_map(cad_map, fca_all)
+    rep["tickers_no_mapa"] = len(ticker_to_cod)
+
+    if not apply:
+        rep["companies_calculadas"] = len(companies)
+        return rep
+
+    with engine.begin() as conn:
+        if not repo.schema_exists(conn):
+            rep["erro"] = "schema market.* ausente (rode 013)"
+            return rep
+        # tabela do mapa (muitos tickers por empresa) — idempotente
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS market.ticker_cvm (
+                ticker TEXT PRIMARY KEY, codigo_cvm INTEGER NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())
+        """))
+        # garante índice único CHEIO em codigo_cvm (troca o parcial legado, se houver)
+        conn.execute(text("DROP INDEX IF EXISTS market.uq_companies_codigo_cvm"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_companies_codigo_cvm "
+                          "ON market.companies (codigo_cvm)"))
+        # 1) mapa ticker->codigo_cvm (upsert por ticker)
+        map_rows = [{"ticker": tk, "codigo_cvm": cod} for tk, cod in ticker_to_cod.items()]
+        rep["novos_cvm_to_ticker"] = repo.upsert(conn, "ticker_cvm", map_rows)
+        # 2) empresas (upsert por codigo_cvm)
+        if companies:
+            rep["companies_upsert"] = repo.upsert(conn, "companies", list(companies.values()))
+    logger.info("market/cadastro: %s", rep)
+    return rep
+
+
 # ── Validação controlada (sem bootstrap) ─────────────────────────────────────
 
 def _token_status() -> str:

@@ -26,8 +26,10 @@ _UPDATE_COLS = {
     "dividends": ("source",),
     "macro_indicators": ("value", "source"),
     "calculated_metrics": ("metric_value", "calculation_method", "source", "confidence_score"),
+    "ticker_cvm": ("codigo_cvm",),
 }
 _CONFLICT = {
+    "ticker_cvm": "ticker",
     "companies": "codigo_cvm",
     "assets": "ticker",
     "historical_prices": "ticker, date",
@@ -105,11 +107,18 @@ def load_cvm_to_ticker(conn) -> dict[str, int]:
     para maximizar a cobertura de empresas.
     """
     out: dict[str, int] = {}
-    try:
-        rows = conn.execute(text('SELECT "Ticker", "CVM" FROM public.cvm_to_ticker')).fetchall()
+    try:  # fonte primária: market.ticker_cvm (CVM cad+FCA, muitos tickers/empresa)
+        rows = conn.execute(text("SELECT ticker, codigo_cvm FROM market.ticker_cvm")).fetchall()
         for t, c in rows:
             if t and c is not None:
                 out[str(t).upper().replace(".SA", "")] = int(c)
+    except Exception:
+        pass
+    try:  # legado (não sobrescreve o primário)
+        rows = conn.execute(text('SELECT "Ticker", "CVM" FROM public.cvm_to_ticker')).fetchall()
+        for t, c in rows:
+            if t and c is not None:
+                out.setdefault(str(t).upper().replace(".SA", ""), int(c))
     except Exception as exc:
         logger.warning("load_cvm_to_ticker (cvm_to_ticker): %s", exc)
     try:

@@ -36,7 +36,9 @@ log = logging.getLogger("market_ingest")
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão BRAPI Pro -> Supabase (market.*)")
-    p.add_argument("command", choices=["validate", "bootstrap", "daily", "annual", "reprocess"])
+    p.add_argument("command",
+                   choices=["validate", "cadastro", "bootstrap", "daily", "annual", "reprocess"])
+    p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
     p.add_argument("--source", default="setores", choices=["setores", "brapi"])
     p.add_argument("--limit", type=int, default=None)
@@ -67,6 +69,15 @@ def main() -> int:
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
         return 0
+
+    if args.command == "cadastro":
+        rep = ingest.cadastro(apply=not args.dry_run)
+        log.info("Cadastro CVM — tickers no mapa=%s novos cvm_to_ticker=%s companies=%s %s",
+                 rep.get("tickers_no_mapa"), rep.get("novos_cvm_to_ticker"),
+                 rep.get("companies_upsert"), f"ERRO: {rep['erro']}" if rep.get("erro") else "")
+        if args.json:
+            print(json.dumps(rep, indent=2, default=str))
+        return 0 if not rep.get("erro") else 1
 
     if args.command == "bootstrap":
         prog = ingest.bootstrap(tickers, args.source, args.limit)
