@@ -99,9 +99,26 @@ def company_id_by_codigo(conn, codigo_cvm: int) -> int | None:
 
 
 def load_cvm_to_ticker(conn) -> dict[str, int]:
-    """Mapa ticker->codigo_cvm a partir da tabela existente public.cvm_to_ticker."""
+    """
+    Mapa ticker->codigo_cvm. Fonte primária: public.cvm_to_ticker (colunas
+    "Ticker"/"CVM"); reforçado por public.docs_corporativos (codigo_cvm,ticker)
+    para maximizar a cobertura de empresas.
+    """
+    out: dict[str, int] = {}
     try:
-        rows = conn.execute(text("SELECT ticker, codigo_cvm FROM public.cvm_to_ticker")).fetchall()
-        return {str(t).upper().replace(".SA", ""): int(c) for t, c in rows if t and c is not None}
+        rows = conn.execute(text('SELECT "Ticker", "CVM" FROM public.cvm_to_ticker')).fetchall()
+        for t, c in rows:
+            if t and c is not None:
+                out[str(t).upper().replace(".SA", "")] = int(c)
+    except Exception as exc:
+        logger.warning("load_cvm_to_ticker (cvm_to_ticker): %s", exc)
+    try:
+        rows = conn.execute(text(
+            "SELECT DISTINCT ticker, codigo_cvm FROM public.docs_corporativos "
+            "WHERE codigo_cvm IS NOT NULL AND ticker IS NOT NULL"
+        )).fetchall()
+        for t, c in rows:
+            out.setdefault(str(t).upper().replace(".SA", ""), int(c))
     except Exception:
-        return {}
+        pass
+    return out
