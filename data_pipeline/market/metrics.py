@@ -72,12 +72,31 @@ def compute_snapshot(f: dict) -> dict[str, tuple[float, str]]:
     return out
 
 
+# Múltiplos de valuation por ANO derivados de ações em circulação ATUAIS
+# (não temos ações históricas) — aproximação válida em janelas curtas; recebem
+# confiança menor. Fundamentais (margens/ROE/ROA/ROIC/Endiv/Liquidez) e DY são
+# exatos das demonstrações/preço e mantêm confiança cheia.
+ANNUAL_APPROX = frozenset({"P/L", "P/VP", "EV_EBIT", "P_FCO", "Payout"})
+
+
 def to_metric_rows(ticker: str, snapshot: dict[str, tuple[float, str]],
-                   confidence: float = 85.0) -> list[dict]:
-    """Converte o snapshot em linhas para market.calculated_metrics (period='ttm')."""
-    return [{
-        "ticker": ticker, "period": "ttm", "year": 0, "quarter": 0,
-        "metric_name": name, "metric_value": val,
-        "calculation_method": method, "source": "market.compute",
-        "confidence_score": confidence,
-    } for name, (val, method) in snapshot.items()]
+                   confidence: float = 85.0, *, period: str = "ttm", year: int = 0,
+                   low_conf: frozenset[str] | set[str] | None = None,
+                   low_conf_value: float = 60.0) -> list[dict]:
+    """
+    Converte o snapshot em linhas para market.calculated_metrics.
+    low_conf: métricas que recebem confiança reduzida (ex.: valuation anual via
+    ações atuais aproximadas). O método ganha o sufixo '~aprox' p/ rastreio.
+    """
+    low_conf = low_conf or frozenset()
+    rows = []
+    for name, (val, method) in snapshot.items():
+        approx = name in low_conf
+        rows.append({
+            "ticker": ticker, "period": period, "year": year, "quarter": 0,
+            "metric_name": name, "metric_value": val,
+            "calculation_method": (method + " ~aprox" if approx else method),
+            "source": "market.compute",
+            "confidence_score": low_conf_value if approx else confidence,
+        })
+    return rows

@@ -124,8 +124,9 @@ def _multiplos_long(ticker: str | None = None) -> pd.DataFrame:
     """, params)
 
 
-def _attach_data(wide: pd.DataFrame) -> pd.DataFrame:
-    """Adiciona coluna `data` (31/12 do ano de referência) e remove `year`."""
+def _attach_data(wide: pd.DataFrame, col: str = "data") -> pd.DataFrame:
+    """Adiciona coluna de data (31/12 do ano de referência) e remove `year`.
+    `col`='data' (load_multiplos_todos) ou 'Data' (load_multiplos_historico)."""
     def _to_date(y):
         try:
             y = int(y)
@@ -133,7 +134,7 @@ def _attach_data(wide: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             return pd.NaT
     wide = wide.copy()
-    wide["data"] = wide["year"].map(_to_date)
+    wide[col] = wide["year"].map(_to_date)
     return wide.drop(columns=["year"])
 
 
@@ -164,6 +165,47 @@ def load_multiplos(ticker: str) -> pd.Series:
         return pd.Series(dtype=object)
     wide["Ticker"] = _norm_ticker(wide["Ticker"])
     return _attach_data(wide).iloc[0]
+
+
+def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
+    return _q(f"""
+        SELECT ticker AS "Ticker", year, metric_name, metric_value
+        FROM market.calculated_metrics
+        WHERE period = 'annual' AND {where_sql}
+    """, params)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_multiplos_historico(ticker: str) -> pd.DataFrame:
+    """Histórico anual de múltiplos (1 linha por ano), colunas iguais ao legado."""
+    tk = ticker.strip().upper().replace(".SA", "")
+    long_df = _annual_long("ticker = :tk", {"tk": tk})
+    if long_df.empty:
+        return pd.DataFrame()
+    wide = _pivot_metrics(long_df)
+    wide["Ticker"] = _norm_ticker(wide["Ticker"])
+    out = _attach_data(wide, "Data").sort_values("Data").reset_index(drop=True)
+    return out[["Ticker", "Data", *_MULT_COLS]]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame]:
+    """Histórico anual de múltiplos p/ vários tickers (dict ticker->DataFrame)."""
+    if not tickers:
+        return {}
+    tks = [t.strip().upper().replace(".SA", "") for t in tickers]
+    long_df = _annual_long("ticker = ANY(:tks)", {"tks": tks})
+    if long_df.empty:
+        return {}
+    wide = _pivot_metrics(long_df)
+    wide["Ticker"] = _norm_ticker(wide["Ticker"])
+    out = _attach_data(wide, "Data").sort_values(["Ticker", "Data"])
+    result: dict[str, pd.DataFrame] = {}
+    for tk in tks:
+        sub = out[out["Ticker"] == tk].copy().reset_index(drop=True)
+        if not sub.empty:
+            result[tk] = sub[["Ticker", "Data", *_MULT_COLS]]
+    return result
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

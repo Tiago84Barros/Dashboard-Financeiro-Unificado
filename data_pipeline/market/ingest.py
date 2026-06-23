@@ -489,11 +489,13 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
     """
     Recalcula indicadores derivados a partir de market.* (SEM rede):
       • snapshot completo (period='ttm'): Margem_Liquida/Operacional, ROE, ROA,
-        ROIC, Endividamento_Total, P/L, P/VP, EV_EBIT, P_FCO, DY, Payout;
-      • DY anual (period='annual') por dividendos/preço de fim de ano.
+        ROIC, Endividamento_Total, Liquidez_Corrente, P/L, P/VP, EV_EBIT, P_FCO,
+        DY, Payout;
+      • histórico anual (period='annual', um conjunto por ano): fundamentais e DY
+        exatos; valuation (P/L, P/VP, EV_EBIT, P_FCO, Payout) aproximado via ações
+        atuais (confiança menor).
     Roda sobre as empresas já em market.assets (cresce com o bootstrap).
     """
-    import core.data_quality as dq
     from datetime import datetime, timezone
     from data_pipeline.market import metrics as mx
     engine = _engine()
@@ -550,7 +552,23 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 }
                 rows_out = mx.to_metric_rows(tk, mx.compute_snapshot(f))
 
-                # DY anual (histórico)
+                # ── Histórico anual (period='annual', um conjunto por ano) ──
+                # Fundamentais (margens, ROE, ROA, ROIC, Endiv, Liquidez) e DY são
+                # exatos das demonstrações/preço. Valuation (P/L, P/VP, EV_EBIT,
+                # P_FCO, Payout) usa ações ATUAIS como aproximação (sem ações
+                # históricas) → confiança menor via ANNUAL_APPROX.
+                shares = (float(mc) / float(last_price)) if (mc and last_price) else None
+
+                def _by_year(table: str, cols: str) -> dict:
+                    return {int(r[0]): r[1:] for r in conn.execute(text(
+                        f"SELECT year, {cols} FROM market.{table} "
+                        f"WHERE ticker=:t AND period='annual'"), {"t": tk}).fetchall()}
+                inc_y = _by_year("income_statements", "revenue, ebit, ebitda, net_income")
+                bal_y = _by_year("balance_sheets",
+                                 "total_assets, equity, cash, gross_debt, net_debt, "
+                                 "current_assets, current_liabilities")
+                cf_y = _by_year("cash_flow_statements", "operating_cash_flow")
+
                 year_end, div_year = {}, {}
                 for d, px in conn.execute(text(
                     "SELECT date, COALESCE(adjusted_close, close) FROM market.historical_prices "
@@ -561,15 +579,28 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 for d, amt in divs:
                     if d is not None and amt:
                         div_year[d.year] = div_year.get(d.year, 0.0) + float(amt)
-                for y, total in div_year.items():
-                    px = year_end.get(y)
-                    if px and px > 0 and dq.is_valid_value("DY", total / px):
-                        rows_out.append({
-                            "ticker": tk, "period": "annual", "year": y, "quarter": 0,
-                            "metric_name": "DY", "metric_value": total / px,
-                            "calculation_method": "dividends/year_end_price",
-                            "source": "market.dividends+historical_prices", "confidence_score": 90.0,
-                        })
+
+                for y in sorted(set(inc_y) | set(bal_y) | set(cf_y) | set(div_year)):
+                    i, b, cfy = inc_y.get(y), bal_y.get(y), cf_y.get(y)
+                    px, dps = year_end.get(y), div_year.get(y)
+                    ni = i[3] if i else None
+                    f_y = {
+                        "revenue": i[0] if i else None, "ebit": i[1] if i else None,
+                        "ebitda": i[2] if i else None, "net_income": ni,
+                        "total_assets": b[0] if b else None, "equity": b[1] if b else None,
+                        "cash": b[2] if b else None, "gross_debt": b[3] if b else None,
+                        "net_debt": b[4] if b else None,
+                        "current_assets": b[5] if b else None,
+                        "current_liabilities": b[6] if b else None,
+                        "fco": cfy[0] if cfy else None,
+                        "market_cap": (px * shares) if (px and shares) else None,
+                        "price": px,
+                        "eps": (float(ni) / shares) if (ni is not None and shares) else None,
+                        "div_ttm": dps,
+                    }
+                    rows_out += mx.to_metric_rows(tk, mx.compute_snapshot(f_y),
+                                                  period="annual", year=y,
+                                                  low_conf=mx.ANNUAL_APPROX)
                 if rows_out:
                     prog["indicadores"] += repo.upsert(conn, "calculated_metrics", rows_out)
                     prog["tickers"] += 1

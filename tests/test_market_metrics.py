@@ -49,3 +49,16 @@ def test_to_metric_rows_shape():
     assert all(r["source"] == "market.compute" for r in rows)
     names = {r["metric_name"] for r in rows}
     assert {"ROE", "P/L", "Margem_Liquida"} <= names
+
+
+def test_to_metric_rows_annual_low_conf():
+    rows = mx.to_metric_rows("PETR4", mx.compute_snapshot(_F),
+                             period="annual", year=2024, low_conf=mx.ANNUAL_APPROX)
+    by = {r["metric_name"]: r for r in rows}
+    assert all(r["period"] == "annual" and r["year"] == 2024 for r in rows)
+    # valuation aproximado: confiança menor + sufixo ~aprox no método
+    assert by["P/L"]["confidence_score"] == 60.0
+    assert by["P/L"]["calculation_method"].endswith("~aprox")
+    # fundamentais exatos: confiança cheia, sem sufixo
+    assert by["ROE"]["confidence_score"] == 85.0
+    assert "~aprox" not in by["ROE"]["calculation_method"]

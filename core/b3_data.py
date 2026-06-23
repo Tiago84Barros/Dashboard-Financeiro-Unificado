@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 _VALID = ("legacy", "market", "compare")
 # Loaders com implementação backed por market.* (paridade de colunas).
 _MARKET_SUPPORTED = {"load_setores", "load_multiplos_todos",
-                     "load_multiplos", "load_historico_anos"}
+                     "load_multiplos", "load_historico_anos",
+                     "load_multiplos_historico", "load_multiplos_historico_batch"}
 
 
 def read_source() -> str:
@@ -158,11 +159,11 @@ def load_demonstracoes_batch(*a, **k):
 
 
 def load_multiplos_historico(*a, **k):
-    return _legacy.load_multiplos_historico(*a, **k)
+    return _dispatch("load_multiplos_historico", *a, **k)
 
 
 def load_multiplos_historico_batch(*a, **k):
-    return _legacy.load_multiplos_historico_batch(*a, **k)
+    return _dispatch("load_multiplos_historico_batch", *a, **k)
 
 
 def load_portfolio_snapshot(*a, **k):
