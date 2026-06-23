@@ -3,7 +3,7 @@ views/empresas_b3.py  — Dashboard Fundamentalista B3
   Tab 1 — Empresas por Setor   (listagem por setor + logos)
   Tab 2 — Análise de Empresa   (drilldown: crescimento, DRE, múltiplos)
 
-Banco de dados:  core.b3_db  →  SUPABASE_DB_URL_B3 (ou DATABASE_URL como fallback)
+Banco de dados:  core.b3_data (facade c/ MARKET_READ_SOURCE) → b3_db legado ou market.*
 Preços:          yfinance     (sem dependência de DB)
 Logos:           thefintz/icones-b3 CDN (público, sem auth)
 """
@@ -15,7 +15,7 @@ import plotly.express as px
 import streamlit as st
 import yfinance as yf
 
-import core.b3_db as _db
+import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 

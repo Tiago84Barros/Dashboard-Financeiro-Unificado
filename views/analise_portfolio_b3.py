@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-import core.b3_db as _db
+import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.data_reconciliacao as _recon
 from core.b3_portfolio_model import load_active_b3_portfolio_model
 from core.llm_b3 import (

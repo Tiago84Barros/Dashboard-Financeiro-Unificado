@@ -17,7 +17,7 @@ import logging
 import pandas as pd
 import streamlit as st
 
-import core.b3_db as _db
+import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 
 logger = logging.getLogger(__name__)
 
