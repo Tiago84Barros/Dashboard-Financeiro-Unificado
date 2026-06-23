@@ -38,7 +38,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão BRAPI Pro -> Supabase (market.*)")
     p.add_argument("command",
                    choices=["validate", "cadastro", "bootstrap", "daily", "annual",
-                            "reprocess", "renormalize"])
+                            "reprocess", "renormalize", "parity"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
     p.add_argument("--source", default=None, choices=["setores", "ticker_cvm", "brapi"])
@@ -87,6 +87,46 @@ def main() -> int:
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
         return 0 if not rep.get("erro") else 1
+
+    if args.command == "parity":
+        from data_pipeline.market import parity
+        save = "artifacts/quality/parity_market_vs_legacy.json"
+        try:
+            import os as _os
+            _os.makedirs("artifacts/quality", exist_ok=True)
+        except Exception:
+            save = None
+        rep = parity.run_parity(save_path=save)
+        mv, st_ = rep["multiplos"], rep["setores"]
+        cov = mv["coverage"]
+        log.info("PARIDADE legado×market")
+        log.info("  multiplos — legado=%s market=%s comuns=%s (só_legado=%s só_market=%s)",
+                 cov["legacy"], cov["market"], cov["common"],
+                 cov["only_legacy"], cov["only_market"])
+        ov = mv.get("overall", {})
+        log.info("  concordância geral: %s (%s/%s comparações)",
+                 ov.get("agree_rate"), ov.get("agree"), ov.get("compared"))
+        log.info("  por métrica (concord. | comparados | mediana rel | p90 rel):")
+        for m, s in mv["metrics"].items():
+            flag = ""
+            if s.get("legacy_constant"):
+                flag = f"  ⚠ legado CONSTANTE={s.get('legacy_constant_value')} (placeholder)"
+            elif s.get("legacy_zero_rate") and s["legacy_zero_rate"] >= 0.5:
+                flag = f"  ⚠ legado zero em {int(s['legacy_zero_rate']*100)}% (bug)"
+            if s.get("compared"):
+                log.info("    %-20s %s | n=%s | med=%s | p90=%s%s",
+                         m, s.get("agree_rate"), s["compared"],
+                         s.get("median_rel_diff"), s.get("p90_rel_diff"), flag)
+            else:
+                log.info("    %-20s sem comparação (%s)%s", m,
+                         s.get("motivo") or f"missing_market={s.get('missing_market')}", flag)
+        log.info("  setores — comuns=%s | divergências de SETOR=%s",
+                 st_["common"], st_["setor_mismatch"])
+        if save:
+            log.info("  relatório salvo em %s", save)
+        if args.json:
+            print(json.dumps(rep, indent=2, default=str, ensure_ascii=False))
+        return 0
 
     if args.command == "bootstrap":
         prog = ingest.bootstrap(tickers, args.source or "ticker_cvm", args.limit or 50)
