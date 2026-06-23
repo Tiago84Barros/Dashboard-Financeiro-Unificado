@@ -84,11 +84,15 @@ def test_balance_b3_real_shape():
         "cash": 35.0, "totalDebt": None, "shortLongTermDebt": None, "netDebt": None,
         "loansAndFinancing": 67.0, "longTermLoansAndFinancing": 317.0,
         "debentures": 0, "longTermDebentures": 0,
+        "totalCurrentAssets": 140.0, "totalCurrentLiabilities": None,
+        "currentLiabilities": 198.0,
     }]}
     b = nz.balance_rows(q)[0]
     assert b["equity"] == 417.0
     assert b["gross_debt"] == 384.0          # 67 + 317 (+ debêntures 0)
     assert b["net_debt"] == 384.0 - 35.0     # gross_debt - cash
+    assert b["current_assets"] == 140.0
+    assert b["current_liabilities"] == 198.0  # fallback p/ currentLiabilities
 
 
 def test_dividend_rows():

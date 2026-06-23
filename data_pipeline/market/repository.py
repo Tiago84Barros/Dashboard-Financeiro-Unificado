@@ -20,7 +20,7 @@ _UPDATE_COLS = {
     "historical_prices": ("open", "high", "low", "close", "adjusted_close", "volume"),
     "income_statements": ("revenue", "gross_profit", "ebit", "ebitda", "net_income"),
     "balance_sheets": ("total_assets", "total_liabilities", "equity", "cash",
-                       "gross_debt", "net_debt"),
+                       "gross_debt", "net_debt", "current_assets", "current_liabilities"),
     "cash_flow_statements": ("operating_cash_flow", "investing_cash_flow",
                              "financing_cash_flow", "capex", "free_cash_flow"),
     "dividends": ("source",),

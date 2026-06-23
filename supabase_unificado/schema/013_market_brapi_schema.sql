@@ -162,12 +162,18 @@ CREATE TABLE IF NOT EXISTS market.balance_sheets (
     cash              NUMERIC(20,2),
     gross_debt        NUMERIC(20,2),
     net_debt          NUMERIC(20,2),
+    current_assets    NUMERIC(20,2),
+    current_liabilities NUMERIC(20,2),
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_balance UNIQUE (ticker, period, year, quarter),
     CONSTRAINT fk_balance_asset FOREIGN KEY (ticker) REFERENCES market.assets(ticker)
         ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
 );
+-- Idempotente p/ bancos já criados antes destas colunas (ativo/passivo circulante
+-- → Liquidez_Corrente). PostgreSQL suporta ADD COLUMN IF NOT EXISTS.
+ALTER TABLE market.balance_sheets ADD COLUMN IF NOT EXISTS current_assets      NUMERIC(20,2);
+ALTER TABLE market.balance_sheets ADD COLUMN IF NOT EXISTS current_liabilities NUMERIC(20,2);
 COMMENT ON TABLE market.balance_sheets IS 'Balanço patrimonial. Upsert por (ticker,period,year,quarter).';
 CREATE INDEX IF NOT EXISTS idx_balance_ticker_year ON market.balance_sheets (ticker, year);
 DROP TRIGGER IF EXISTS trg_balance_updated ON market.balance_sheets;

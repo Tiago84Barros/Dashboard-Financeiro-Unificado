@@ -7,6 +7,7 @@ _F = {
     "gross_debt": 500.0, "net_debt": 400.0, "fco": 250.0,
     "market_cap": 2000.0,
     "div_ttm": 3.0, "price": 100.0, "eps": 10.0,  # base POR AÇÃO p/ DY e Payout
+    "current_assets": 600.0, "current_liabilities": 400.0,  # Liquidez = 1.5
 }
 
 
@@ -18,6 +19,7 @@ def test_compute_snapshot_core_ratios():
     assert abs(s["ROA"] - 0.10) < 1e-6                 # 200/2000
     assert abs(s["ROIC"] - 300 / 1400) < 1e-6          # 300/(1000+500-100)
     assert abs(s["Endividamento_Total"] - 0.50) < 1e-6 # 500/1000
+    assert abs(s["Liquidez_Corrente"] - 1.50) < 1e-6   # 600/400
     assert abs(s["P/L"] - 10.0) < 1e-6                 # 2000/200
     assert abs(s["P/VP"] - 2.0) < 1e-6                 # 2000/1000
     assert abs(s["EV_EBIT"] - 8.0) < 1e-6              # (2000+400)/300

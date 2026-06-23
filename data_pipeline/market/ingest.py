@@ -515,7 +515,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
             with engine.begin() as conn:
                 inc = _latest_annual(conn, "income_statements", "revenue, ebit, ebitda, net_income", tk)
                 bal = _latest_annual(conn, "balance_sheets",
-                                     "total_assets, equity, cash, gross_debt, net_debt", tk)
+                                     "total_assets, equity, cash, gross_debt, net_debt, "
+                                     "current_assets, current_liabilities", tk)
                 cf = _latest_annual(conn, "cash_flow_statements", "operating_cash_flow", tk)
                 mc = conn.execute(text(
                     "SELECT metric_value FROM market.calculated_metrics "
@@ -542,6 +543,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     "total_assets": bal[0] if bal else None, "equity": bal[1] if bal else None,
                     "cash": bal[2] if bal else None, "gross_debt": bal[3] if bal else None,
                     "net_debt": bal[4] if bal else None,
+                    "current_assets": bal[5] if bal else None,
+                    "current_liabilities": bal[6] if bal else None,
                     "fco": cf[0] if cf else None, "market_cap": mc,
                     "div_ttm": div_ps_ttm or None, "price": last_price, "eps": eps,
                 }

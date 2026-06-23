@@ -39,6 +39,7 @@ def compute_snapshot(f: dict) -> dict[str, tuple[float, str]]:
     gd  = f.get("gross_debt"); nd = f.get("net_debt"); fco = f.get("fco")
     mc  = f.get("market_cap")
     div_ps = f.get("div_ttm"); price = f.get("price"); eps = f.get("eps")
+    ca  = f.get("current_assets"); cl = f.get("current_liabilities")
 
     inv_capital = None
     if all(_dq.to_float(x) is not None for x in (eq, gd)):
@@ -54,6 +55,7 @@ def compute_snapshot(f: dict) -> dict[str, tuple[float, str]]:
         "ROA":                 (_safe_div(ni, ta),   "net_income/total_assets"),
         "ROIC":                (_safe_div(ebit, inv_capital), "ebit/(equity+gross_debt-cash)"),
         "Endividamento_Total": (_safe_div(gd, eq),   "gross_debt/equity"),
+        "Liquidez_Corrente":   (_safe_div(ca, cl),   "current_assets/current_liabilities"),
         "P/L":                 (_safe_div(mc, ni),   "market_cap/net_income"),
         "P/VP":                (_safe_div(mc, eq),   "market_cap/equity"),
         "EV_EBIT":             (_safe_div(ev, ebit), "(market_cap+net_debt)/ebit"),

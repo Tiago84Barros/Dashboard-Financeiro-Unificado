@@ -188,6 +188,10 @@ def balance_rows(quote: dict) -> list[dict]:
                                   "stockholdersEquity", "controllerShareholdersEquity",
                                   "totalEquityGrossMinorityInterest")),
             "cash": cash, "gross_debt": gross_debt, "net_debt": net_debt,
+            # ativo/passivo circulante p/ Liquidez_Corrente (PC: total* costuma vir
+            # nulo na B3 → fallback p/ currentLiabilities).
+            "current_assets": _first(it, ("totalCurrentAssets", "currentAssets")),
+            "current_liabilities": _first(it, ("totalCurrentLiabilities", "currentLiabilities")),
         })
     return out
 
