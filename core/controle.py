@@ -333,7 +333,7 @@ _SQL_GASTOS_CARTAO_MENSAL = """
     LEFT JOIN categories c ON c.id = t.category_id
     WHERE  t.user_id = :uid
       AND  c.name    = 'Pagamento de Cartão'
-      AND  COALESCE(t.source, 'manual') != 'csv'
+      AND  (t.source IS NULL OR t.source = 'manual')
     GROUP  BY ano, mes
     ORDER  BY ano, mes
 """

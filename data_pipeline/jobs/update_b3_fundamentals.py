@@ -24,7 +24,7 @@ TABLE_DEMO      = '"Demonstracoes_Financeiras"'
 TABLE_DEMO_TRI  = '"Demonstracoes_Financeiras_TRI"'
 TABLE_MULT      = "multiplos"
 TABLE_MULT_TRI  = '"multiplos_TRI"'
-SOURCE_NAME     = "B3 / yfinance + Fundamentus"
+SOURCE_NAME     = "B3 / yfinance + Fundamentus + Status Invest"
 JOB_NAME        = "update_b3_fundamentals"
 
 

@@ -242,3 +242,6 @@ migration/backup/
 
 # Local audit outputs with real financial data
 artifacts/
+
+# Saídas de teste locais (lixo)
+_testout.txt
