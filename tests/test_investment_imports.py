@@ -148,11 +148,14 @@ def test_classify_movement_rendimento():
 
 
 def test_classify_movement_bonificacao():
-    assert classify_movement("Bonificação em Ativos", "Credito") == ("transaction", "buy")
+    # Desde 2026-05-23: bonificação/desdobro mudam a quantidade SEM contrapartida
+    # financeira (preço=0). Importá-los como buy/sell zera o gross_cost e corrompe
+    # o preço médio (ex.: PSSA3 caía p/ R$3,44). Tratamento correto = ignorar.
+    assert classify_movement("Bonificação em Ativos", "Credito") == ("skip", "")
 
 
 def test_classify_movement_desdobro():
-    assert classify_movement("Desdobro", "Credito") == ("transaction", "buy")
+    assert classify_movement("Desdobro", "Credito") == ("skip", "")
 
 
 def test_classify_movement_compra_e_venda_sao_skipadas():
