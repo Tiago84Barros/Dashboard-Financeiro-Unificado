@@ -44,6 +44,40 @@ def read_source() -> str:
     return val if val in _VALID else "legacy"
 
 
+def _min_coverage() -> float:
+    """Cobertura mínima (market/legado) p/ ativar 'market'. Default 0.90."""
+    try:
+        v = float(os.getenv("MARKET_READ_MIN_COVERAGE", "0.90"))
+        return min(max(v, 0.0), 1.0)
+    except (TypeError, ValueError):
+        return 0.90
+
+
+def market_coverage() -> dict:
+    """
+    Razão de cobertura market/legado (tickers em load_multiplos_todos).
+    Cacheado (reaproveita o cache dos loaders). Usado como porteiro do cutover:
+    enquanto o bootstrap não cobrir o universo, 'market' não distorce o ranking
+    misturando dados corrigidos (market) com placeholders do legado.
+    """
+    try:
+        nl = int(_legacy.load_multiplos_todos()["Ticker"].nunique())
+        nm = int(_market.load_multiplos_todos()["Ticker"].nunique())
+    except Exception as exc:
+        logger.warning("market_coverage: %s", exc)
+        return {"legacy": 0, "market": 0, "ratio": 0.0, "ready": False, "min": _min_coverage()}
+    ratio = (nm / nl) if nl else 0.0
+    return {"legacy": nl, "market": nm, "ratio": round(ratio, 4),
+            "ready": ratio >= _min_coverage(), "min": _min_coverage()}
+
+
+def _market_ready() -> bool:
+    """True se a cobertura do market.* atinge o limiar (porteiro do cutover)."""
+    if os.getenv("MARKET_READ_FORCE", "").strip().lower() in ("1", "true", "yes"):
+        return True  # override explícito p/ testes/rollout manual
+    return market_coverage()["ready"]
+
+
 def _row_count(obj) -> int | None:
     try:
         return int(len(obj))
@@ -75,6 +109,12 @@ def _dispatch(name: str, *args, **kwargs):
         return legacy_fn(*args, **kwargs)
     market_fn = getattr(_market, name)
     if src == "market":
+        # porteiro do cutover: só serve market quando a cobertura é suficiente,
+        # senão fica no legado (evita ranking misto corrigido×placeholder).
+        if not _market_ready():
+            logger.info("market %s adiado: cobertura %.0f%% < %.0f%% — usando legado",
+                        name, market_coverage()["ratio"] * 100, _min_coverage() * 100)
+            return legacy_fn(*args, **kwargs)
         try:
             return market_fn(*args, **kwargs)
         except Exception as exc:

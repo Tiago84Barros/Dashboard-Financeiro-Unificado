@@ -253,6 +253,32 @@ def render(show_header: bool = True) -> None:
         unsafe_allow_html=True,
     )
 
+    # ── Migração market.* (cutover BRAPI Pro) ─────────────────────────────────
+    try:
+        import core.b3_data as _facade
+        mcov = _facade.market_coverage()
+        src = _facade.read_source()
+        ratio_pct = mcov["ratio"] * 100.0
+        min_pct = mcov["min"] * 100.0
+        ready = mcov["ready"]
+        cor = "#34D399" if ready else "#FBBF24"
+        st.markdown('<div class="dh-section">🚦 Migração de leitura para market.* (BRAPI Pro)</div>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="dh-bar"><div class="dh-bar-seg" style="width:{min(100.0, ratio_pct):.1f}%;'
+            f'background:{cor};"></div></div>'
+            f'<div class="dh-legend">'
+            f'<span>cobertura market: {_fmt_int(mcov["market"])}/{_fmt_int(mcov["legacy"])} '
+            f'({ratio_pct:.0f}%)</span>'
+            f'<span>limiar p/ cutover: {min_pct:.0f}%</span>'
+            f'<span>origem ativa: <b>{src}</b></span>'
+            f'<span>{"✅ pronto p/ market" if ready else "⏳ servindo legado até atingir o limiar"}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
+
     # ── Distribuição de confiabilidade ────────────────────────────────────────
     if has_scores and sum(bands.values()) > 0:
         total_b = sum(bands.values())

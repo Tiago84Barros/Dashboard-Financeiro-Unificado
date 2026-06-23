@@ -64,6 +64,7 @@ def test_dispatch_legacy_default(monkeypatch):
 def test_dispatch_market_for_supported(monkeypatch):
     _fakes(monkeypatch)
     monkeypatch.setenv("MARKET_READ_SOURCE", "market")
+    monkeypatch.setenv("MARKET_READ_FORCE", "1")  # ignora porteiro de cobertura
     assert facade.load_setores() == "MARKET_SET"
     assert facade.load_multiplos_todos() == "MARKET_MT"
 
@@ -89,4 +90,58 @@ def test_dispatch_market_failure_falls_back(monkeypatch):
         raise RuntimeError("market down")
     facade._market.load_setores = boom
     monkeypatch.setenv("MARKET_READ_SOURCE", "market")
+    monkeypatch.setenv("MARKET_READ_FORCE", "1")  # ignora porteiro de cobertura
     assert facade.load_setores() == "LEGACY_SET"
+
+
+# ── porteiro de cobertura (cutover Fase 3) ────────────────────────────────────
+
+def _coverage_fakes(monkeypatch, n_legacy, n_market):
+    def _df(n):
+        return pd.DataFrame({"Ticker": [f"T{i}" for i in range(n)]})
+    legacy = types.SimpleNamespace(
+        load_setores=lambda *a, **k: "LEGACY_SET",
+        load_multiplos_todos=lambda *a, **k: _df(n_legacy))
+    market = types.SimpleNamespace(
+        load_setores=lambda *a, **k: "MARKET_SET",
+        load_multiplos_todos=lambda *a, **k: _df(n_market))
+    monkeypatch.setattr(facade, "_legacy", legacy)
+    monkeypatch.setattr(facade, "_market", market)
+
+
+def test_market_coverage_ratio(monkeypatch):
+    _coverage_fakes(monkeypatch, 100, 82)
+    monkeypatch.delenv("MARKET_READ_MIN_COVERAGE", raising=False)
+    cov = facade.market_coverage()
+    assert cov["legacy"] == 100 and cov["market"] == 82
+    assert cov["ratio"] == 0.82 and cov["ready"] is False  # 82% < 90%
+
+
+def test_gate_blocks_market_when_coverage_low(monkeypatch):
+    _coverage_fakes(monkeypatch, 100, 50)
+    monkeypatch.setenv("MARKET_READ_SOURCE", "market")
+    monkeypatch.delenv("MARKET_READ_FORCE", raising=False)
+    # cobertura 50% < 90% -> porteiro mantém no legado
+    assert facade.load_setores() == "LEGACY_SET"
+
+
+def test_gate_allows_market_when_coverage_high(monkeypatch):
+    _coverage_fakes(monkeypatch, 100, 96)
+    monkeypatch.setenv("MARKET_READ_SOURCE", "market")
+    monkeypatch.delenv("MARKET_READ_FORCE", raising=False)
+    assert facade.load_setores() == "MARKET_SET"  # 96% >= 90%
+
+
+def test_gate_force_override(monkeypatch):
+    _coverage_fakes(monkeypatch, 100, 10)
+    monkeypatch.setenv("MARKET_READ_SOURCE", "market")
+    monkeypatch.setenv("MARKET_READ_FORCE", "1")  # ignora cobertura baixa
+    assert facade.load_setores() == "MARKET_SET"
+
+
+def test_gate_custom_threshold(monkeypatch):
+    _coverage_fakes(monkeypatch, 100, 82)
+    monkeypatch.setenv("MARKET_READ_SOURCE", "market")
+    monkeypatch.setenv("MARKET_READ_MIN_COVERAGE", "0.80")  # baixa o limiar
+    monkeypatch.delenv("MARKET_READ_FORCE", raising=False)
+    assert facade.load_setores() == "MARKET_SET"  # 82% >= 80%
