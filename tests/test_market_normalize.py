@@ -67,6 +67,21 @@ def test_income_rows_annual_and_quarterly():
     assert q["year"] == 2025 and q["quarter"] == 3 and q["net_income"] == 25.0
 
 
+def test_income_eps_scale_and_fallback():
+    # basicEarningsPerCommonShare vem em milireais (LPA*1000) -> /1000
+    q = {"symbol": "PETR4", "incomeStatementHistory": [
+        {"endDate": "2025-12-31", "netIncome": 100.0, "basicEarningsPerCommonShare": 8540}]}
+    assert abs(nz.income_rows(q)[0]["eps"] - 8.54) < 1e-9
+    # sem o campo escalado, cai p/ earningsPerShare (já em reais)
+    q2 = {"symbol": "X", "incomeStatementHistory": [
+        {"endDate": "2025-12-31", "netIncome": 10.0, "earningsPerShare": 1.25}]}
+    assert nz.income_rows(q2)[0]["eps"] == 1.25
+    # zero/ausente -> None (ex.: VALE reporta beps=0)
+    q3 = {"symbol": "VALE3", "incomeStatementHistory": [
+        {"endDate": "2025-12-31", "netIncome": 50.0, "basicEarningsPerCommonShare": 0}]}
+    assert nz.income_rows(q3)[0]["eps"] is None
+
+
 def test_balance_and_cashflow():
     b = nz.balance_rows(_Q)[0]
     assert b["total_assets"] == 1000.0 and b["equity"] == 400.0 and b["gross_debt"] == 300.0

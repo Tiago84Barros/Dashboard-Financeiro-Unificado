@@ -136,12 +136,16 @@ CREATE TABLE IF NOT EXISTS market.income_statements (
     ebit         NUMERIC(20,2),
     ebitda       NUMERIC(20,2),
     net_income   NUMERIC(20,2),
+    eps          NUMERIC(20,6),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_income UNIQUE (ticker, period, year, quarter),
     CONSTRAINT fk_income_asset FOREIGN KEY (ticker) REFERENCES market.assets(ticker)
         ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
 );
+-- Idempotente p/ bancos já criados: LPA por ano (basicEarningsPerCommonShare/1000),
+-- usado p/ derivar ações históricas e tornar o valuation anual exato.
+ALTER TABLE market.income_statements ADD COLUMN IF NOT EXISTS eps NUMERIC(20,6);
 COMMENT ON TABLE market.income_statements IS 'DRE. Upsert por (ticker,period,year,quarter); quarter=0 => anual.';
 CREATE INDEX IF NOT EXISTS idx_income_ticker_year ON market.income_statements (ticker, year);
 DROP TRIGGER IF EXISTS trg_income_updated ON market.income_statements;

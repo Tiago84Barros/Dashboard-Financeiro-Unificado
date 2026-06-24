@@ -555,15 +555,15 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 # ── Histórico anual (period='annual', um conjunto por ano) ──
                 # Fundamentais (margens, ROE, ROA, ROIC, Endiv, Liquidez) e DY são
                 # exatos das demonstrações/preço. Valuation (P/L, P/VP, EV_EBIT,
-                # P_FCO, Payout) usa ações ATUAIS como aproximação (sem ações
-                # históricas) → confiança menor via ANNUAL_APPROX.
+                # P_FCO, Payout): EXATO quando há LPA do ano (ações = NI/LPA, com
+                # guarda); senão APROXIMADO via ações atuais → confiança menor.
                 shares = (float(mc) / float(last_price)) if (mc and last_price) else None
 
                 def _by_year(table: str, cols: str) -> dict:
                     return {int(r[0]): r[1:] for r in conn.execute(text(
                         f"SELECT year, {cols} FROM market.{table} "
                         f"WHERE ticker=:t AND period='annual'"), {"t": tk}).fetchall()}
-                inc_y = _by_year("income_statements", "revenue, ebit, ebitda, net_income")
+                inc_y = _by_year("income_statements", "revenue, ebit, ebitda, net_income, eps")
                 bal_y = _by_year("balance_sheets",
                                  "total_assets, equity, cash, gross_debt, net_debt, "
                                  "current_assets, current_liabilities")
@@ -584,6 +584,16 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     i, b, cfy = inc_y.get(y), bal_y.get(y), cf_y.get(y)
                     px, dps = year_end.get(y), div_year.get(y)
                     ni = i[3] if i else None
+                    eps_y = i[4] if i else None
+                    # ações do ano: NI/LPA (exato) com guarda 0,2–5× das atuais;
+                    # senão usa ações atuais (aproximação).
+                    shares_y, exact = shares, False
+                    if eps_y and ni:
+                        cand = float(ni) / float(eps_y)
+                        if cand > 0 and (not shares or 0.2 <= cand / shares <= 5.0):
+                            shares_y, exact = cand, True
+                    eps_use = (float(eps_y) if exact and eps_y
+                               else (float(ni) / shares_y if (ni is not None and shares_y) else None))
                     f_y = {
                         "revenue": i[0] if i else None, "ebit": i[1] if i else None,
                         "ebitda": i[2] if i else None, "net_income": ni,
@@ -593,14 +603,12 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                         "current_assets": b[5] if b else None,
                         "current_liabilities": b[6] if b else None,
                         "fco": cfy[0] if cfy else None,
-                        "market_cap": (px * shares) if (px and shares) else None,
-                        "price": px,
-                        "eps": (float(ni) / shares) if (ni is not None and shares) else None,
-                        "div_ttm": dps,
+                        "market_cap": (px * shares_y) if (px and shares_y) else None,
+                        "price": px, "eps": eps_use, "div_ttm": dps,
                     }
                     rows_out += mx.to_metric_rows(tk, mx.compute_snapshot(f_y),
                                                   period="annual", year=y,
-                                                  low_conf=mx.ANNUAL_APPROX)
+                                                  low_conf=None if exact else mx.ANNUAL_APPROX)
                 if rows_out:
                     prog["indicadores"] += repo.upsert(conn, "calculated_metrics", rows_out)
                     prog["tickers"] += 1

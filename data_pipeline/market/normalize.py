@@ -151,8 +151,21 @@ def income_rows(quote: dict) -> list[dict]:
             "ebit": _first(it, ("ebit", "operatingIncome")),
             "ebitda": _first(it, ("ebitda", "normalizedEBITDA")),
             "net_income": _first(it, ("netIncome", "netIncomeCommonStockholders")),
+            "eps": _eps(it),
         })
     return out
+
+
+def _eps(it: dict):
+    """
+    LPA do ano. A BRAPI B3 reporta basicEarningsPerCommonShare em milireais
+    (LPA×1000: PETR4 8540 => 8,54); divide por 1000. Fallbacks p/ campos já em
+    reais. 0/None => None (algumas empresas, ex. VALE, não reportam).
+    """
+    scaled = _first(it, ("basicEarningsPerCommonShare", "dilutedEarningsPerCommonShare"))
+    if scaled:
+        return scaled / 1000.0
+    return _first(it, ("earningsPerShare", "basicEarningsPerShare", "dilutedEarningsPerShare")) or None
 
 
 def balance_rows(quote: dict) -> list[dict]:

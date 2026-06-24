@@ -18,7 +18,7 @@ _UPDATE_COLS = {
                   "description", "logo_url", "codigo_cvm"),
     "assets": ("company_id", "asset_type", "exchange", "currency", "is_active"),
     "historical_prices": ("open", "high", "low", "close", "adjusted_close", "volume"),
-    "income_statements": ("revenue", "gross_profit", "ebit", "ebitda", "net_income"),
+    "income_statements": ("revenue", "gross_profit", "ebit", "ebitda", "net_income", "eps"),
     "balance_sheets": ("total_assets", "total_liabilities", "equity", "cash",
                        "gross_debt", "net_debt", "current_assets", "current_liabilities"),
     "cash_flow_statements": ("operating_cash_flow", "investing_cash_flow",
