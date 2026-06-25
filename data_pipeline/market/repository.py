@@ -27,6 +27,7 @@ _UPDATE_COLS = {
     "macro_indicators": ("value", "source"),
     "calculated_metrics": ("metric_value", "calculation_method", "source", "confidence_score"),
     "ticker_cvm": ("codigo_cvm",),
+    "fiis": ("name", "segmento", "price", "pvp", "dy_12m", "liquidez_diaria", "score"),
 }
 _CONFLICT = {
     "ticker_cvm": "ticker",
@@ -39,6 +40,7 @@ _CONFLICT = {
     "dividends": "ticker, event_date, type, amount",
     "macro_indicators": "indicator, date",
     "calculated_metrics": "ticker, period, year, quarter, metric_name",
+    "fiis": "ticker",
 }
 
 
@@ -54,6 +56,7 @@ _NATURAL_KEY = {
     "macro_indicators": ("indicator", "date"),
     "calculated_metrics": ("ticker", "period", "year", "quarter", "metric_name"),
     "ticker_cvm": ("ticker",),
+    "fiis": ("ticker",),
 }
 
 

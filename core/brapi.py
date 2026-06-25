@@ -239,3 +239,39 @@ def fetch_list(timeout: int = 45) -> list[str]:
         if tk:
             out.append(tk)
     return out
+
+
+def fetch_fund_list(timeout: int = 45) -> list[str]:
+    """
+    Lista candidatos a FII (endpoint /api/quote/list?type=fund), ordenados por
+    volume desc (mais líquidos primeiro). Inclui ETFs — a classificação FII×ETF
+    é feita depois pelo setor do ativo (data_pipeline.market.fii.is_fii).
+    """
+    import requests
+    headers = {"User-Agent": "DashboardFinanceiro/1.0 (+data-quality)"}
+    tok = _token()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    params = {"type": "fund", "sortBy": "volume", "sortOrder": "desc"}
+    if tok:
+        params["token"] = tok
+    try:
+        resp = requests.get("https://brapi.dev/api/quote/list",
+                            params=params, headers=headers, timeout=timeout)
+    except Exception as exc:
+        raise BrapiError(str(exc)) from exc
+    if resp.status_code == 429:
+        raise BrapiRateLimited("HTTP 429")
+    if resp.status_code != 200:
+        return []
+    try:
+        data = resp.json()
+    except Exception:
+        return []
+    out: list[str] = []
+    for it in (data.get("stocks") or []):
+        tk = (it.get("stock") if isinstance(it, dict) else str(it)) or ""
+        tk = str(tk).strip().upper().replace(".SA", "")
+        if tk:
+            out.append(tk)
+    return out

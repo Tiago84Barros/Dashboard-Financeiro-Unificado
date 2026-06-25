@@ -1,0 +1,143 @@
+"""
+data_pipeline/market/fii_ingest.py
+Ingestão de FIIs (BRAPI Pro) -> market.fiis.
+
+Fluxo: lista de fundos (type=fund, por volume) -> para cada, busca cotação +
+rendimentos + perfil -> filtra ETF pelo setor (fii.is_fii) -> computa métricas
+(DY 12m, P/VP, liquidez) -> rankeia -> upsert em market.fiis. Salva o payload
+bruto p/ permitir re-ranking sem rede (reprocess).
+"""
+from __future__ import annotations
+
+import logging
+import os
+from datetime import datetime, timezone
+
+from sqlalchemy import text
+
+import core.brapi as brapi
+from data_pipeline.market import fii as fz
+from data_pipeline.market import repository as repo
+from data_pipeline.quality import scheduler as sched
+
+logger = logging.getLogger(__name__)
+
+
+def _engine():
+    from data_pipeline.utils.db_utils import get_pipeline_engine
+    return get_pipeline_engine()
+
+
+def _schema_ready(conn) -> bool:
+    return bool(conn.execute(text(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema='market' AND table_name='fiis')")).scalar())
+
+
+def _row(m: dict) -> dict:
+    return {"ticker": m["ticker"], "name": m.get("name"), "segmento": m.get("segmento"),
+            "price": m.get("price"), "pvp": m.get("pvp"), "dy_12m": m.get("dy_12m"),
+            "liquidez_diaria": m.get("liquidez_diaria"), "score": m.get("score")}
+
+
+def ingest(limit: int | None = None, tickers: list[str] | None = None,
+           weights: dict | None = None) -> dict:
+    """Coleta FIIs (rede), classifica/computa/rankeia e grava em market.fiis."""
+    engine = _engine()
+    prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0, "gravados": 0}
+    if engine is None:
+        return {**prog, "erros": -1}
+    with engine.connect() as conn:
+        if not _schema_ready(conn):
+            logger.error("market.fiis ausente — rode 015_market_fiis.sql.")
+            return {**prog, "erros": -1}
+
+    if tickers:
+        universe = [t.upper().replace(".SA", "") for t in tickers]
+    else:
+        try:
+            universe = [t for t in brapi.fetch_fund_list() if t.endswith("11")]
+        except Exception as exc:
+            logger.error("fetch_fund_list: %s", exc)
+            return {**prog, "erros": -1}
+    if limit:
+        universe = universe[:limit]
+    prog["candidatos"] = len(universe)
+
+    ref = datetime.now(timezone.utc).date()
+    delay = float(os.getenv("MARKET_DELAY", "1.0"))
+    metrics: list[dict] = []
+    for i, tk in enumerate(universe):
+        try:
+            quote = sched.with_backoff(
+                lambda: brapi.fetch_quote_full(tk),
+                retries=3, base=float(os.getenv("MARKET_BACKOFF", "4.0")),
+                on_block=brapi.is_rate_limited)
+            if not quote:
+                prog["erros"] += 1
+            else:
+                with engine.begin() as conn:
+                    repo.save_raw_payload(conn, tk, "quote", quote, status="success")
+                m = fz.compute_fii(quote, ref)
+                if m is None:
+                    prog["etfs_ignorados"] += 1
+                else:
+                    metrics.append(m)
+                    prog["fiis"] += 1
+        except Exception as exc:
+            logger.warning("fii %s: %s", tk, exc)
+            prog["erros"] += 1
+        if i < len(universe) - 1:
+            sched.sleep_jittered(base=delay)
+
+    if metrics:
+        ranked = fz.rank_fiis(metrics, weights=weights)
+        # rankeados (elegíveis) levam score; os filtrados gravam sem score (score=None)
+        ranked_by = {r["ticker"]: r for r in ranked}
+        rows = [_row(ranked_by.get(m["ticker"], m)) for m in metrics]
+        with engine.begin() as conn:
+            prog["gravados"] = repo.upsert(conn, "fiis", rows)
+    logger.info("market/fii ingest: %s", prog)
+    return prog
+
+
+def reprocess(weights: dict | None = None) -> dict:
+    """Re-rankeia a partir dos payloads brutos já salvos (SEM rede)."""
+    import json
+    engine = _engine()
+    prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0, "gravados": 0}
+    if engine is None:
+        return {**prog, "erros": -1}
+    with engine.connect() as conn:
+        if not _schema_ready(conn):
+            return {**prog, "erros": -1}
+        rows = conn.execute(text(
+            "SELECT DISTINCT ON (ticker) ticker, payload_json FROM market.brapi_raw_payloads "
+            "WHERE endpoint='quote' AND request_status='success' AND payload_json IS NOT NULL "
+            "ORDER BY ticker, id DESC")).fetchall()
+    ref = datetime.now(timezone.utc).date()
+    metrics: list[dict] = []
+    for tk, payload in rows:
+        try:
+            p = json.loads(payload) if isinstance(payload, str) else payload
+            quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
+            if not quote:
+                continue
+            prog["candidatos"] += 1
+            m = fz.compute_fii(quote, ref)
+            if m is None:
+                prog["etfs_ignorados"] += 1
+            else:
+                metrics.append(m)
+                prog["fiis"] += 1
+        except Exception as exc:
+            logger.warning("fii reprocess %s: %s", tk, exc)
+            prog["erros"] += 1
+    if metrics:
+        ranked = fz.rank_fiis(metrics, weights=weights)
+        ranked_by = {r["ticker"]: r for r in ranked}
+        out = [_row(ranked_by.get(m["ticker"], m)) for m in metrics]
+        with engine.begin() as conn:
+            prog["gravados"] = repo.upsert(conn, "fiis", out)
+    logger.info("market/fii reprocess: %s", prog)
+    return prog

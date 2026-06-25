@@ -209,6 +209,35 @@ def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.Dat
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def load_fiis(segmento: str | None = None) -> pd.DataFrame:
+    """Ranking de FIIs de market.fiis (score desc). Filtro opcional por segmento."""
+    where, params = "", {}
+    if segmento:
+        where = "WHERE segmento = :seg"
+        params["seg"] = segmento
+    df = _q(f"""
+        SELECT ticker AS "Ticker", name AS "Nome", segmento AS "Segmento",
+               price AS "Preço", pvp AS "P/VP", dy_12m AS "DY_12m",
+               liquidez_diaria AS "Liquidez_Diaria", score AS "Score", updated_at
+        FROM market.fiis {where}
+        ORDER BY score DESC NULLS LAST, ticker
+    """, params)
+    if df.empty:
+        return df
+    df["Ticker"] = _norm_ticker(df["Ticker"])
+    for c in ("Preço", "P/VP", "DY_12m", "Liquidez_Diaria", "Score"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_fii_segmentos() -> list[str]:
+    """Segmentos distintos disponíveis em market.fiis (para filtros na tela)."""
+    df = _q("SELECT DISTINCT segmento FROM market.fiis WHERE segmento IS NOT NULL ORDER BY 1")
+    return [str(s) for s in df["segmento"].tolist()] if not df.empty else []
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_historico_anos() -> dict[str, int]:
     """{ticker: nº de anos de demonstração anual} a partir de market.income_statements."""
     df = _q("""
