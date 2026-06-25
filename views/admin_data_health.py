@@ -279,6 +279,67 @@ def render(show_header: bool = True) -> None:
     except Exception:
         pass
 
+    # ── Qualidade do market.* (BRAPI Pro) — futura fonte única ────────────────
+    # Monitora a fonte nova: cobertura/universo, completude das métricas-chave,
+    # anomalias logadas pelo pipeline e frescor. Substitui, no cutover, o healing
+    # por scraping (Fundamentus/Status Invest) — aqui não se corrige cruzando
+    # sites; confia-se na fonte, valida-se faixa e monitora-se o que falta.
+    try:
+        import core.market_health as _mh
+        mh = _mh.market_health_summary()
+        if mh.get("schema_ok"):
+            u = mh["universo"]
+            st.markdown('<div class="dh-section">🧬 Qualidade do market.* (BRAPI Pro)'
+                        ' <span style="font-size:.7rem;color:#6B7689;font-weight:600">'
+                        '· futura fonte única</span></div>', unsafe_allow_html=True)
+            cards_m = "".join([
+                _kpi("🏢 Empresas (CVM)", _fmt_int(u["companies"]), "cadastro market.companies"),
+                _kpi("📈 Ativos", _fmt_int(u["assets"]), "tickers em market.assets"),
+                _kpi("📸 Snapshot ttm", _fmt_int(u["ttm_tickers"]), "empresas com indicadores atuais"),
+                _kpi("📚 Histórico anual", _fmt_int(u["annual_tickers"]), "empresas com DRE por ano"),
+            ])
+            st.markdown(f'<div class="dh-grid">{cards_m}</div>', unsafe_allow_html=True)
+
+            # Completude das métricas-chave (impacto no ranking)
+            st.markdown('<div class="dh-section" style="font-size:.92rem">📋 Completude das '
+                        'métricas-chave (snapshot ttm)</div>', unsafe_allow_html=True)
+            comp_html = ""
+            for r in mh["completude"]:
+                pct = r["pct"]
+                col = "#34D399" if pct >= 90 else "#FBBF24" if pct >= 60 else "#F87171"
+                comp_html += (
+                    f'<div style="display:flex;align-items:center;gap:10px;margin:4px 0;'
+                    f'font-size:.74rem;color:#9CA3AF">'
+                    f'<span style="width:150px">{r["campo"]}</span>'
+                    f'<div class="dh-bar" style="flex:1"><div class="dh-bar-seg" '
+                    f'style="width:{pct:.0f}%;background:{col}"></div></div>'
+                    f'<span style="width:110px;text-align:right">'
+                    f'{_fmt_int(r["preenchidos"])}/{_fmt_int(r["total"])} ({pct:.0f}%)</span></div>')
+            st.markdown(comp_html, unsafe_allow_html=True)
+
+            q = mh["qualidade"]
+            sev_txt = " · ".join(f"{s}: {_fmt_int(n)}" for s, n in q.get("por_severidade", [])) or "—"
+            fr = mh["frescor"]
+            cards_q = "".join([
+                _kpi("🚨 Anomalias logadas", _fmt_int(q["total"]),
+                     f"market.data_quality_logs · {sev_txt}",
+                     accent=("warn" if q["total"] else "pos")),
+                _kpi("🧱 Bootstrap concluído", _fmt_int(fr["bootstrap_ok"]),
+                     "tickers processados (market.bootstrap_state)"),
+                _kpi("🕒 Último cálculo", fmt_datetime_br(fr["ultimo_calc"]) if fr.get("ultimo_calc") else "—",
+                     "horário de Brasília · reprocess"),
+            ])
+            st.markdown(f'<div class="dh-grid">{cards_q}</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="dh-note">As métricas com completude &lt;100% são lacunas reais da '
+                'fonte (ex.: bancos sem lucro líquido padronizado, empresas sem LPA) — '
+                'monitoradas, não "curadas" por scraping. Esta seção substituirá a auditoria '
+                'legada (Fundamentus/Status Invest) quando o cutover for ativado.</div>',
+                unsafe_allow_html=True,
+            )
+    except Exception:
+        pass
+
     # ── Distribuição de confiabilidade ────────────────────────────────────────
     if has_scores and sum(bands.values()) > 0:
         total_b = sum(bands.values())
