@@ -34,7 +34,7 @@ import streamlit as st
 from core.controle import (
     get_controle, get_opcoes_formulario, inserir_transacao,
     atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
-    get_gastos_cartao_fatura_mensal,
+    get_gastos_cartao_mensal,
     get_gastos_categoria_anual,
     get_transacoes_cartao_credito,
 )
@@ -893,8 +893,8 @@ def _tab_analises(
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Gastos no cartão de crédito (mensal) — uso real da fatura CSV ─────────
-    _secao_titulo("💳", "Gastos no cartão de crédito (mensal)")
+    # ── Gastos com pagamento de cartão (mensal) — lançamentos manuais ─────────
+    _secao_titulo("💳", "Gastos com pagamento de cartão (mensal)")
     # anos disponíveis = anos que têm dados de cartão; fallback = anos do YOY
     _anos_cartao = sorted(
         {str(a) for a in anos if gastos_cartao.get(str(a))},
@@ -923,7 +923,7 @@ def _tab_analises(
             xaxis={"showgrid": False, "title": {"text": "Mês", "font": {"size": 10}}},
             yaxis={"showgrid": True, "gridcolor": "#1E2533",
                    "tickformat": ",.0f", "tickprefix": "R$ ",
-                   "title": {"text": "Gasto no cartão (R$)", "font": {"size": 10}}},
+                   "title": {"text": "Total relacionado a cartão (R$)", "font": {"size": 10}}},
         )
         st.plotly_chart(fig_cartao, use_container_width=True, config={"displayModeBar": False})
 
@@ -932,7 +932,7 @@ def _tab_analises(
                      for item in dados_cartao]
         st.dataframe(pd.DataFrame(rows_cart), use_container_width=True, hide_index=False)
     else:
-        st.caption(f"Sem faturas de cartão importadas para {_ano_sel_str}. Importe em Configurações > Fatura do Cartão.")
+        st.caption(f"Sem lançamentos de 'Pagamento de Cartão' para {_ano_sel_str}.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2404,12 +2404,12 @@ def render() -> None:
         0.0,
     )
 
-    # Gastos no cartão (uso real da fatura CSV) — agrupados por ano → {ano_str: [items]}
+    # Gastos com Pagamento de Cartão (apenas lançamentos manuais) — {ano_str: [items]}
     _ano_ref = sel["ano"]
     _anos_hist = hist_anual.get("anos", [_ano_ref])
     gastos_cartao: dict = {"todos": []}
     for _a in _anos_hist:
-        _dados_a = get_gastos_cartao_fatura_mensal(_a)
+        _dados_a = get_gastos_cartao_mensal(_a)
         gastos_cartao[str(_a)] = _dados_a
         gastos_cartao["todos"].extend(_dados_a)
 
