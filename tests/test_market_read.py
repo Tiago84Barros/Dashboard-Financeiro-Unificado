@@ -145,3 +145,33 @@ def test_gate_custom_threshold(monkeypatch):
     monkeypatch.setenv("MARKET_READ_MIN_COVERAGE", "0.80")  # baixa o limiar
     monkeypatch.delenv("MARKET_READ_FORCE", raising=False)
     assert facade.load_setores() == "MARKET_SET"  # 82% >= 80%
+
+
+# ── market_active(): desliga reparos das telas só quando market serve de fato ──
+
+def test_market_active_false_in_legacy(monkeypatch):
+    _coverage_fakes(monkeypatch, 100, 100)
+    monkeypatch.setenv("MARKET_READ_SOURCE", "legacy")
+    monkeypatch.setenv("MARKET_READ_FORCE", "1")
+    assert facade.market_active() is False  # flag legado -> reparos ativos
+
+
+def test_market_active_false_when_coverage_low(monkeypatch):
+    _coverage_fakes(monkeypatch, 100, 50)
+    monkeypatch.setenv("MARKET_READ_SOURCE", "market")
+    monkeypatch.delenv("MARKET_READ_FORCE", raising=False)
+    assert facade.market_active() is False  # flag market mas cobertura 50% < 90%
+
+
+def test_market_active_false_in_compare(monkeypatch):
+    _coverage_fakes(monkeypatch, 100, 100)
+    monkeypatch.setenv("MARKET_READ_SOURCE", "compare")
+    monkeypatch.setenv("MARKET_READ_FORCE", "1")
+    assert facade.market_active() is False  # compare mostra legado -> reparos ativos
+
+
+def test_market_active_true_when_market_and_ready(monkeypatch):
+    _coverage_fakes(monkeypatch, 100, 96)
+    monkeypatch.setenv("MARKET_READ_SOURCE", "market")
+    monkeypatch.delenv("MARKET_READ_FORCE", raising=False)
+    assert facade.market_active() is True  # market + 96% >= 90%

@@ -79,6 +79,17 @@ def _market_ready() -> bool:
     return market_coverage()["ready"]
 
 
+def market_active() -> bool:
+    """
+    True quando a leitura está EFETIVAMENTE vindo do market.* (flag='market' E
+    cobertura suficiente). As telas usam isto p/ desligar reparos defensivos
+    (imputação MICE/mediana, patch via Fundamentus) quando a fonte já é limpa:
+    com dado bom, nulo = ausente (rank neutro), não algo a reconstruir.
+    Em 'legacy' e 'compare' (UI mostra legado) retorna False → reparos ativos.
+    """
+    return read_source() == "market" and _market_ready()
+
+
 def _row_count(obj) -> int | None:
     try:
         return int(len(obj))

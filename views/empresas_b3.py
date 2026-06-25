@@ -1191,22 +1191,27 @@ def _score_universo(
     # loop — usa correlações entre indicadores para imputar NaN com mais precisão
     # que a mediana de grupo. _impute_with_group_median abaixo serve de fallback
     # residual para qualquer NaN que sobrar após MICE.
-    try:
-        from core.mice_imputer import mice_impute_panel
-        df = mice_impute_panel(
-            df,
-            indicator_cols=list(pesos.keys()),
-            group_col=group_col,
-        )
-    except Exception:
-        pass
+    # Cutover: com fonte limpa (market.*) NÃO se imputa — nulo vira rank neutro
+    # (ausente = "não sei"), não valor reconstruído. Só repara no legado.
+    if not _db.market_active():
+        try:
+            from core.mice_imputer import mice_impute_panel
+            df = mice_impute_panel(
+                df,
+                indicator_cols=list(pesos.keys()),
+                group_col=group_col,
+            )
+        except Exception:
+            pass
 
     for col, (peso, melhor_alto) in pesos.items():
         if col not in df.columns or peso == 0:
             continue
         # Fix banca M5 parcial (2026-05-25): imputa NaN com mediana do
         # grupo (substitui 0.5 fixo implicito no .fillna(0.5) abaixo).
-        s = _impute_with_group_median(df, col, group_col)
+        # Cutover: no market (dado limpo) não imputa — NaN segue p/ rank neutro.
+        s = (pd.to_numeric(df[col], errors="coerce") if _db.market_active()
+             else _impute_with_group_median(df, col, group_col))
         if s.notna().sum() < 2:
             continue
         s_win = _winsorize_series(s.dropna()).reindex(s.index)
@@ -3121,10 +3126,15 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     tk_grupos = {tk: _tk2g.get(tk, {}) for tk in tks_uni}
 
     cols_av = sorted(set([c for c, _ in _COLS_COMP] + list(_SCORE_RANGES.keys())))
-    with st.spinner("Reconciliando vazios/outliers com Fundamentus..."):
-        df_mult_enrich, audit_fallback = _enrich_multiplos_fallback_web(
-            df_mult_enrich, tks_uni, cols_av
-        )
+    # Cutover: o patch por scraping (Fundamentus) só faz sentido sobre o legado;
+    # com market.* (fonte limpa) não se reconcilia por web — vazio fica vazio.
+    if _db.market_active():
+        audit_fallback = pd.DataFrame()
+    else:
+        with st.spinner("Reconciliando vazios/outliers com Fundamentus..."):
+            df_mult_enrich, audit_fallback = _enrich_multiplos_fallback_web(
+                df_mult_enrich, tks_uni, cols_av
+            )
 
     # Carregar histórico para penalidade de instabilidade + slope_log
     with st.spinner("Calculando scoring v2…"):
