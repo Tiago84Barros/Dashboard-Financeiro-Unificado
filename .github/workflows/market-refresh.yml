@@ -1,0 +1,77 @@
+name: Market refresh (BRAPI Pro)
+
+# Mantém o market.* fresco APÓS o bootstrap: refresh diário leve (preços +
+# dividendos + indicadores spot) e refresh anual semanal (demonstrações
+# completas). Opera só sobre os tickers JÁ carregados (--source market), sem
+# gastar cota com pendentes (esses ficam no bootstrap-brapi.yml).
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "O que rodar"
+        type: choice
+        options: ["daily", "annual", "both"]
+        default: "daily"
+  schedule:
+    - cron: "0 9 * * *"    # diário 06:00 BRT — daily (após o bootstrap das 03:00)
+    - cron: "0 8 * * 6"    # sábado 05:00 BRT — annual (demonstrações)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: market-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Market refresh
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      APP_ENV: production
+      PYTHONUNBUFFERED: "1"
+      SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
+      DATABASE_URL:           ${{ secrets.DATABASE_URL }}
+      SUPABASE_DB_URL:        ${{ secrets.SUPABASE_DB_URL }}
+      OWNER_USER_ID:          ${{ secrets.OWNER_USER_ID }}
+      BRAPI_TOKEN:            ${{ secrets.BRAPI_TOKEN }}
+      MARKET_DELAY:           "1.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-pipeline.txt
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-pipeline.txt
+      - name: Confirmar token (sem expor)
+        run: |
+          python - <<'PY'
+          import core.brapi as b
+          assert b._token(), "BRAPI_TOKEN ausente"
+          print("BRAPI_TOKEN ok | len:", len(b._token()))
+          PY
+      # Decide o modo: schedule de sábado 08:00 UTC => annual; demais => daily.
+      # workflow_dispatch usa o input 'mode'.
+      - name: Definir modo
+        id: mode
+        run: |
+          M="${{ github.event.inputs.mode }}"
+          if [ -z "$M" ]; then
+            if [ "${{ github.event.schedule }}" = "0 8 * * 6" ]; then M="annual"; else M="daily"; fi
+          fi
+          echo "mode=$M" >> "$GITHUB_OUTPUT"
+          echo "Modo: $M"
+      - name: Daily (preços + dividendos + spot)
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py daily --source market --json
+      - name: Annual (demonstrações)
+        if: steps.mode.outputs.mode == 'annual' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py annual --source market --json
+      - name: Reprocessar indicadores (sem rede)
+        if: always()
+        run: python run_market_ingest.py reprocess --json

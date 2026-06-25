@@ -41,7 +41,8 @@ def main() -> int:
                             "reprocess", "renormalize", "parity"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
-    p.add_argument("--source", default=None, choices=["setores", "ticker_cvm", "brapi"])
+    p.add_argument("--source", default=None,
+                   choices=["setores", "ticker_cvm", "brapi", "market"])
     p.add_argument("--limit", type=int, default=None,
                    help="bootstrap: tamanho do lote por execução (default 50)")
     p.add_argument("--json", action="store_true")

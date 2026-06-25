@@ -50,6 +50,13 @@ def _universe(engine, source: str = "setores", limit: int | None = None) -> list
             rows = c.execute(text(
                 "SELECT ticker FROM market.ticker_cvm ORDER BY ticker")).fetchall()
         tks = [str(r[0]).upper().replace(".SA", "") for r in rows if r[0]]
+    elif source == "market":
+        # apenas o que JÁ está carregado — universo do refresh diário/anual,
+        # evita gastar cota com tickers ainda não bootstrapados.
+        with engine.connect() as c:
+            rows = c.execute(text(
+                "SELECT ticker FROM market.assets ORDER BY ticker")).fetchall()
+        tks = [str(r[0]).upper().replace(".SA", "") for r in rows if r[0]]
     else:
         with engine.connect() as c:
             rows = c.execute(text(

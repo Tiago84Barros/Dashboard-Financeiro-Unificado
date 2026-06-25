@@ -19,6 +19,10 @@ Fundamentus/Status Invest em `public.*`) para a fonte nova (BRAPI Pro em
   NÃO faz patch via Fundamentus — nulo vira rank neutro. Winsorização e percentil
   permanecem (são método de ranking, não reparo).
 - Painel `core/market_health.py` (qualidade do market.*) já na página.
+- **Frescor do market.* já agendado** (`market-refresh.yml`): `daily` (preços/
+  dividendos/spot, 06:00 BRT) e `annual` (demonstrações, sábado) sobre
+  `--source market` (só tickers já carregados) + reprocess. Não depende do
+  cutover; mantém a fonte nova viva desde já.
 
 ## Passos do cutover (PR único, ao atingir 90%)
 
