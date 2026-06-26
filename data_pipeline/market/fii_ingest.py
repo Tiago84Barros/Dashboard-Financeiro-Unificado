@@ -35,9 +35,10 @@ def _schema_ready(conn) -> bool:
 
 
 def _row(m: dict) -> dict:
-    return {"ticker": m["ticker"], "name": m.get("name"), "segmento": m.get("segmento"),
-            "price": m.get("price"), "pvp": m.get("pvp"), "dy_12m": m.get("dy_12m"),
-            "liquidez_diaria": m.get("liquidez_diaria"), "score": m.get("score")}
+    return {"ticker": m["ticker"], "cnpj": m.get("cnpj"), "name": m.get("name"),
+            "segmento": m.get("segmento"), "price": m.get("price"), "pvp": m.get("pvp"),
+            "dy_12m": m.get("dy_12m"), "liquidez_diaria": m.get("liquidez_diaria"),
+            "score": m.get("score")}
 
 
 def ingest(limit: int | None = None, tickers: list[str] | None = None,
@@ -98,6 +99,55 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
         with engine.begin() as conn:
             prog["gravados"] = repo.upsert(conn, "fiis", rows)
     logger.info("market/fii ingest: %s", prog)
+    return prog
+
+
+def enrich_cvm(year: int | None = None) -> dict:
+    """
+    Enriquece market.fiis com o Informe Mensal de FIIs da CVM (join por CNPJ):
+    segmento real, tipo (tijolo/papel/fof/híbrido), patrimônio, VPA, nº cotistas
+    e composição de ativos. Requer que o ingest da brapi já tenha gravado o CNPJ.
+    """
+    import core.cvm_fii as cvm
+    from datetime import datetime, timezone
+    engine = _engine()
+    prog = {"ano": year, "fiis_no_banco": 0, "casados": 0, "gravados": 0, "erros": 0}
+    if engine is None:
+        return {**prog, "erros": -1}
+    year = year or datetime.now(timezone.utc).year
+    data = cvm.fetch_informe(year)
+    used_year = year
+    if not data:
+        data, used_year = cvm.fetch_informe(year - 1), year - 1
+    if not data:
+        prog["erros"] = -1
+        return prog
+    prog["ano"] = used_year
+    by_cnpj = cvm.parse_informe(data, used_year)
+    # tickers do banco com CNPJ
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT ticker, cnpj FROM market.fiis WHERE cnpj IS NOT NULL")).fetchall()
+    prog["fiis_no_banco"] = len(rows)
+    out = []
+    for ticker, cnpj in rows:
+        rec = by_cnpj.get(cvm.only_digits(cnpj))
+        if not rec:
+            continue
+        prog["casados"] += 1
+        out.append({
+            "ticker": ticker, "isin": rec.get("isin"), "segmento_cvm": rec.get("segmento"),
+            "tipo": rec.get("tipo"), "tipo_gestao": rec.get("tipo_gestao"),
+            "patrimonio_liquido": rec.get("patrimonio_liquido"), "vpa": rec.get("vpa"),
+            "num_cotistas": int(rec["num_cotistas"]) if rec.get("num_cotistas") else None,
+            "pct_imoveis": rec.get("pct_imoveis"), "pct_papel": rec.get("pct_papel"),
+            "pct_caixa": rec.get("pct_caixa"), "pct_fundos": rec.get("pct_fundos"),
+            "cvm_ref_date": rec.get("ref_date"),
+        })
+    if out:
+        with engine.begin() as conn:
+            prog["gravados"] = repo.upsert(conn, "fiis", out)
+    logger.info("market/fii enrich_cvm: %s", prog)
     return prog
 
 

@@ -78,3 +78,6 @@ jobs:
       - name: FIIs (ranking — universo type=fund, filtra ETF por setor)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis --json
+      - name: FIIs — enriquecimento CVM (segmento/tipo/VPA/cotistas via CNPJ)
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-cvm --json

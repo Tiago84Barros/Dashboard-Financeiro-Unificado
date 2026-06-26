@@ -86,8 +86,11 @@ def compute_fii(quote: dict, ref_date: _dt.date) -> dict | None:
     price = _f(quote.get("regularMarketPrice"))
     dks = (quote or {}).get("defaultKeyStatistics") or {}
     divs = ((quote or {}).get("dividendsData") or {}).get("cashDividends") or []
+    import re as _re
+    cnpj = _re.sub(r"\D", "", str((quote.get("summaryProfile") or {}).get("cnpj") or "")) or None
     return {
         "ticker": tk,
+        "cnpj": cnpj,
         "name": str(quote.get("longName") or quote.get("shortName") or tk)[:200],
         "segmento": segmento(quote),
         "price": price,

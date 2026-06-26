@@ -27,7 +27,10 @@ _UPDATE_COLS = {
     "macro_indicators": ("value", "source"),
     "calculated_metrics": ("metric_value", "calculation_method", "source", "confidence_score"),
     "ticker_cvm": ("codigo_cvm",),
-    "fiis": ("name", "segmento", "price", "pvp", "dy_12m", "liquidez_diaria", "score"),
+    "fiis": ("name", "segmento", "price", "pvp", "dy_12m", "liquidez_diaria", "score",
+             "cnpj", "isin", "segmento_cvm", "tipo", "tipo_gestao", "patrimonio_liquido",
+             "vpa", "num_cotistas", "pct_imoveis", "pct_papel", "pct_caixa", "pct_fundos",
+             "cvm_ref_date"),
 }
 _CONFLICT = {
     "ticker_cvm": "ticker",

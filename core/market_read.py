@@ -216,25 +216,34 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
         where = "WHERE segmento = :seg"
         params["seg"] = segmento
     df = _q(f"""
-        SELECT ticker AS "Ticker", name AS "Nome", segmento AS "Segmento",
+        SELECT ticker AS "Ticker", name AS "Nome",
+               COALESCE(segmento_cvm, segmento) AS "Segmento", tipo AS "Tipo",
                price AS "Preço", pvp AS "P/VP", dy_12m AS "DY_12m",
-               liquidez_diaria AS "Liquidez_Diaria", score AS "Score", updated_at
+               liquidez_diaria AS "Liquidez_Diaria",
+               patrimonio_liquido AS "Patrimonio", vpa AS "VPA",
+               num_cotistas AS "Cotistas", tipo_gestao AS "Gestao",
+               pct_imoveis AS "Pct_Imoveis", pct_papel AS "Pct_Papel",
+               pct_caixa AS "Pct_Caixa", pct_fundos AS "Pct_Fundos",
+               score AS "Score", updated_at
         FROM market.fiis {where}
         ORDER BY score DESC NULLS LAST, ticker
     """, params)
     if df.empty:
         return df
     df["Ticker"] = _norm_ticker(df["Ticker"])
-    for c in ("Preço", "P/VP", "DY_12m", "Liquidez_Diaria", "Score"):
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+    for c in ("Preço", "P/VP", "DY_12m", "Liquidez_Diaria", "Patrimonio", "VPA",
+              "Cotistas", "Pct_Imoveis", "Pct_Papel", "Pct_Caixa", "Pct_Fundos", "Score"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_fii_segmentos() -> list[str]:
     """Segmentos distintos disponíveis em market.fiis (para filtros na tela)."""
-    df = _q("SELECT DISTINCT segmento FROM market.fiis WHERE segmento IS NOT NULL ORDER BY 1")
-    return [str(s) for s in df["segmento"].tolist()] if not df.empty else []
+    df = _q("SELECT DISTINCT COALESCE(segmento_cvm, segmento) AS seg FROM market.fiis "
+            "WHERE COALESCE(segmento_cvm, segmento) IS NOT NULL ORDER BY 1")
+    return [str(s) for s in df["seg"].tolist()] if not df.empty else []
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
