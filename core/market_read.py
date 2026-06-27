@@ -167,6 +167,73 @@ def load_multiplos(ticker: str) -> pd.Series:
     return _attach_data(wide).iloc[0]
 
 
+# market.* (EN) -> colunas que as telas esperam (PT do legado)
+_DEMO_SQL = """
+    SELECT i.ticker AS "Ticker", i.year AS _year,
+           i.revenue    AS "Receita_Liquida", i.ebit AS "EBIT",
+           i.ebitda     AS "EBITDA", i.net_income AS "Lucro_Liquido", i.eps AS "LPA",
+           b.equity     AS "Patrimonio_Liquido", b.net_debt AS "Divida_Liquida",
+           b.gross_debt AS "Divida_Total", b.total_assets AS "Ativo_Total", b.cash AS "Caixa",
+           c.operating_cash_flow AS "FCO", c.investing_cash_flow AS "FCI",
+           c.free_cash_flow AS "FCF"
+    FROM market.income_statements i
+    LEFT JOIN market.balance_sheets b
+        ON b.ticker=i.ticker AND b.period=i.period AND b.year=i.year AND b.quarter=i.quarter
+    LEFT JOIN market.cash_flow_statements c
+        ON c.ticker=i.ticker AND c.period=i.period AND c.year=i.year AND c.quarter=i.quarter
+    WHERE i.period='annual' AND {where}
+    ORDER BY i.ticker, i.year
+"""
+
+
+def _demo_finalize(df: pd.DataFrame) -> pd.DataFrame:
+    """Adiciona Data (31/12), dividendos/ano e tipa numéricos."""
+    if df.empty:
+        return df
+    df = df.copy()
+    df["Ticker"] = _norm_ticker(df["Ticker"])
+    df["Data"] = df["_year"].map(
+        lambda y: pd.Timestamp(_dt.date(int(y), 12, 31)) if pd.notna(y) else pd.NaT)
+    num = ["Receita_Liquida", "EBIT", "EBITDA", "Lucro_Liquido", "LPA",
+           "Patrimonio_Liquido", "Divida_Liquida", "Divida_Total", "Ativo_Total",
+           "Caixa", "FCO", "FCI", "FCF"]
+    for c in num:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df.drop(columns=["_year"])
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_demonstracoes(ticker: str) -> pd.DataFrame:
+    """Demonstrações anuais (market.*) com colunas PT iguais ao legado."""
+    tk = ticker.strip().upper().replace(".SA", "")
+    df = _demo_finalize(_q(_DEMO_SQL.format(where="i.ticker = :t"), {"t": tk}))
+    if df.empty:
+        return df
+    divs = _q("SELECT EXTRACT(YEAR FROM event_date)::int AS y, SUM(amount) AS d "
+              "FROM market.dividends WHERE ticker=:t AND event_date IS NOT NULL GROUP BY 1",
+              {"t": tk})
+    dmap = {int(r.y): float(r.d) for r in divs.itertuples()} if not divs.empty else {}
+    df["Dividendos"] = df["Data"].dt.year.map(dmap)
+    return df.sort_values("Data").reset_index(drop=True)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame]:
+    """Demonstrações anuais p/ vários tickers (dict ticker->DataFrame)."""
+    if not tickers:
+        return {}
+    tks = [t.strip().upper().replace(".SA", "") for t in tickers]
+    df = _demo_finalize(_q(_DEMO_SQL.format(where="i.ticker = ANY(:tks)"), {"tks": tks}))
+    if df.empty:
+        return {}
+    out: dict[str, pd.DataFrame] = {}
+    for tk in tks:
+        sub = df[df["Ticker"] == tk].copy().reset_index(drop=True)
+        if not sub.empty:
+            out[tk] = sub.sort_values("Data").reset_index(drop=True)
+    return out
+
+
 def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
     return _q(f"""
         SELECT ticker AS "Ticker", year, metric_name, metric_value

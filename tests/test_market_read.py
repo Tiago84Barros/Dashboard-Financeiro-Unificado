@@ -35,7 +35,7 @@ def _fakes(monkeypatch):
     legacy = types.SimpleNamespace(
         load_setores=lambda *a, **k: "LEGACY_SET",
         load_multiplos_todos=lambda *a, **k: "LEGACY_MT",
-        load_demonstracoes=lambda *a, **k: "LEGACY_DEM",
+        load_macro_history=lambda *a, **k: "LEGACY_MACRO",
     )
     market = types.SimpleNamespace(
         load_setores=lambda *a, **k: "MARKET_SET",
@@ -72,8 +72,9 @@ def test_dispatch_market_for_supported(monkeypatch):
 def test_dispatch_unsupported_always_legacy(monkeypatch):
     _fakes(monkeypatch)
     monkeypatch.setenv("MARKET_READ_SOURCE", "market")
-    # demonstrações não têm paridade em market.* -> sempre legado
-    assert facade.load_demonstracoes() == "LEGACY_DEM"
+    monkeypatch.setenv("MARKET_READ_FORCE", "1")
+    # macro não tem paridade em market.* -> sempre legado
+    assert facade.load_macro_history() == "LEGACY_MACRO"
 
 
 def test_dispatch_compare_returns_legacy(monkeypatch):

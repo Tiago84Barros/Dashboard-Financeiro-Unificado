@@ -29,7 +29,8 @@ _VALID = ("legacy", "market", "compare")
 # Loaders com implementação backed por market.* (paridade de colunas).
 _MARKET_SUPPORTED = {"load_setores", "load_multiplos_todos",
                      "load_multiplos", "load_historico_anos",
-                     "load_multiplos_historico", "load_multiplos_historico_batch"}
+                     "load_multiplos_historico", "load_multiplos_historico_batch",
+                     "load_demonstracoes", "load_demonstracoes_batch"}
 
 
 def read_source() -> str:
@@ -162,11 +163,11 @@ def load_historico_anos(*a, **k):
 # ── Loaders sem paridade em market.* — sempre legado ──────────────────────────
 
 def load_demonstracoes(*a, **k):
-    return _legacy.load_demonstracoes(*a, **k)
+    return _dispatch("load_demonstracoes", *a, **k)
 
 
 def load_demonstracoes_batch(*a, **k):
-    return _legacy.load_demonstracoes_batch(*a, **k)
+    return _dispatch("load_demonstracoes_batch", *a, **k)
 
 
 def load_multiplos_historico(*a, **k):

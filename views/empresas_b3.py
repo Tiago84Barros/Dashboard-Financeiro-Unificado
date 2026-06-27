@@ -2566,9 +2566,15 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     with st.spinner(f"Carregando dados de {tk}…"):
         df_fin       = _db.load_demonstracoes(tk)
         df_mult_hist = _db.load_multiplos_historico(tk)
-        recon        = _recon.get_multiplos_reconciliados(tk)
-        mult         = _recon.reconciliacao_to_series(recon)
-        fontes_recon = dict(recon.get("_fontes", {}))
+        if _db.market_active():
+            # snapshot limpo do market.* (sem reconciliação por scraping)
+            mult = _db.load_multiplos(tk)
+            fontes_recon = {k: "market" for k in getattr(mult, "index", [])
+                            if k not in ("Ticker", "data")}
+        else:
+            recon = _recon.get_multiplos_reconciliados(tk)
+            mult = _recon.reconciliacao_to_series(recon)
+            fontes_recon = dict(recon.get("_fontes", {}))
         yf_divs_mult = _yf_multiplos_dividendos(tk)
         df_yf_divs   = _yf_dividendos_anuais(tk)
         df_precos    = _yf_precos(tk)
