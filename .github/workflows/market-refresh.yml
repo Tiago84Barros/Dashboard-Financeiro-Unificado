@@ -81,6 +81,9 @@ jobs:
       - name: FIIs — enriquecimento CVM (segmento/tipo/VPA/cotistas via CNPJ)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis-cvm --json
+      - name: FIIs — séries históricas (preços + rendimentos p/ backtest)
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-series --json
       - name: Setores — taxonomia B3 (public.setores + mapa aprendido CVM->B3)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py setores --json

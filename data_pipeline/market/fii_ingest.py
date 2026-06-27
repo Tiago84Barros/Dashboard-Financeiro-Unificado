@@ -102,6 +102,51 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
     return prog
 
 
+def backfill_series() -> dict:
+    """
+    Persiste as SÉRIES históricas dos FIIs (preços + rendimentos) em
+    market.historical_prices / market.dividends, a partir dos payloads brutos já
+    salvos (SEM rede). Cria as linhas em market.assets (asset_type='fii') —
+    pré-requisito do backtest da carteira. Idempotente.
+    """
+    import json
+    from data_pipeline.market import normalize as nz
+    engine = _engine()
+    prog = {"fiis": 0, "precos": 0, "dividendos": 0, "erros": 0}
+    if engine is None:
+        return {**prog, "erros": -1}
+    with engine.connect() as conn:
+        if not _schema_ready(conn):
+            return {**prog, "erros": -1}
+        fiis = [r[0] for r in conn.execute(text("SELECT ticker FROM market.fiis")).fetchall()]
+    for tk in fiis:
+        try:
+            with engine.begin() as conn:
+                row = conn.execute(text(
+                    "SELECT payload_json FROM market.brapi_raw_payloads WHERE ticker=:t "
+                    "AND endpoint='quote' AND request_status='success' "
+                    "ORDER BY id DESC LIMIT 1"), {"t": tk}).fetchone()
+                if not row:
+                    continue
+                p = row[0]
+                p = json.loads(p) if isinstance(p, str) else p
+                quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
+                if not quote:
+                    continue
+                # asset FII (company_id nulo; FK das séries aponta p/ assets.ticker)
+                repo.upsert(conn, "assets", [{
+                    "ticker": tk, "company_id": None, "asset_type": "fii",
+                    "exchange": "B3", "currency": "BRL", "is_active": True}])
+                prog["precos"] += repo.upsert(conn, "historical_prices", nz.price_rows(quote))
+                prog["dividendos"] += repo.upsert(conn, "dividends", nz.dividend_rows(quote))
+                prog["fiis"] += 1
+        except Exception as exc:
+            logger.warning("fii backfill_series %s: %s", tk, exc)
+            prog["erros"] += 1
+    logger.info("market/fii backfill_series: %s", prog)
+    return prog
+
+
 def enrich_cvm(year: int | None = None) -> dict:
     """
     Enriquece market.fiis com o Informe Mensal de FIIs da CVM (join por CNPJ):

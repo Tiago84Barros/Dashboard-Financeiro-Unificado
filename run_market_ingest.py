@@ -39,7 +39,7 @@ def main() -> int:
     p.add_argument("command",
                    choices=["validate", "cadastro", "bootstrap", "daily", "annual",
                             "reprocess", "renormalize", "parity", "fiis",
-                            "fiis-reprocess", "fiis-cvm", "setores"])
+                            "fiis-reprocess", "fiis-cvm", "fiis-series", "setores"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
     p.add_argument("--source", default=None,
@@ -99,13 +99,17 @@ def main() -> int:
             print(json.dumps(rep, indent=2, default=str))
         return 0 if rep.get("erros", 0) != -1 else 1
 
-    if args.command in ("fiis", "fiis-reprocess", "fiis-cvm"):
+    if args.command in ("fiis", "fiis-reprocess", "fiis-cvm", "fiis-series"):
         from data_pipeline.market import fii_ingest
         if args.command == "fiis-cvm":
             rep = fii_ingest.enrich_cvm()
             log.info("FIIs CVM — ano=%s no_banco=%s casados=%s gravados=%s erros=%s",
                      rep.get("ano"), rep.get("fiis_no_banco"), rep.get("casados"),
                      rep.get("gravados"), rep.get("erros"))
+        elif args.command == "fiis-series":
+            rep = fii_ingest.backfill_series()
+            log.info("FIIs séries — fiis=%s precos=%s dividendos=%s erros=%s",
+                     rep.get("fiis"), rep.get("precos"), rep.get("dividendos"), rep.get("erros"))
         else:
             rep = (fii_ingest.reprocess() if args.command == "fiis-reprocess"
                    else fii_ingest.ingest(limit=args.limit, tickers=tickers))
