@@ -95,8 +95,17 @@ def load_setores() -> pd.DataFrame:
                COALESCE(NULLIF(s."SEGMENTO", ''), NULLIF(c.segment, ''))   AS "SEGMENTO"
         FROM market.assets a
         LEFT JOIN market.companies c ON c.id = a.company_id
-        LEFT JOIN public.setores s
-               ON UPPER(REPLACE(s.ticker, '.SA', '')) = a.ticker
+        -- taxonomia B3: casa por ticker exato; senão pela RAIZ de 4 letras
+        -- (PN/Unit herdam o setor do ON: BBDC4->BBDC3, ITUB4->ITUB3).
+        LEFT JOIN LATERAL (
+            SELECT s2."SETOR", s2."SUBSETOR", s2."SEGMENTO", s2.nome_empresa
+            FROM public.setores s2
+            WHERE s2."SETOR" IS NOT NULL
+              AND (UPPER(REPLACE(s2.ticker, '.SA', '')) = a.ticker
+                   OR LEFT(UPPER(REPLACE(s2.ticker, '.SA', '')), 4) = LEFT(a.ticker, 4))
+            ORDER BY (UPPER(REPLACE(s2.ticker, '.SA', '')) = a.ticker) DESC
+            LIMIT 1
+        ) s ON TRUE
         WHERE a.ticker IS NOT NULL
         ORDER BY "SETOR" NULLS LAST, a.ticker
     """)
