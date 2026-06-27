@@ -2740,10 +2740,12 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                     st.plotly_chart(fig_m, use_container_width=True,
                                     config={"displayModeBar": False}, key=f"b3_mhist_{tk}")
 
-        # Fluxo de Caixa (condicional)
+        # Fluxo de Caixa (condicional) — exige df não-vazio e coluna 'Data'
+        # (df vazio traz as colunas FC + 'data' minúscula sem renomear → quebraria
+        # o select df_fin[["Data"] + fco_cols] abaixo).
         fco_cols = [c for c in ("FCO", "FCI", "FCF", "Fluxo_Caixa_Operacional",
                                  "Fluxo_Caixa_Investimento", "Fluxo_Caixa_Livre")
-                    if c in df_fin.columns]
+                    if c in df_fin.columns] if (not df_fin.empty and "Data" in df_fin.columns) else []
         if fco_cols:
             _sec_hdr("💰 Fluxo de Caixa")
             labels_fco = {
