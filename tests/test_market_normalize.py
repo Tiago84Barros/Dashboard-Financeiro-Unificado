@@ -14,8 +14,10 @@ _Q = {
     "marketCap": 5.0e11, "priceEarnings": 5.0, "earningsPerShare": 8.0,
     "summaryProfile": {"sector": "Energy", "industry": "Oil & Gas",
                        "website": "https://petrobras.com.br", "longBusinessSummary": "Petróleo."},
-    "defaultKeyStatistics": {"priceToBook": 1.4, "enterpriseToEbitda": 3.1, "trailingEps": 8.0},
-    "financialData": {"returnOnEquity": 0.24, "profitMargins": 0.21},
+    "defaultKeyStatistics": {"priceToBook": 1.4, "enterpriseToEbitda": 3.1, "trailingEps": 8.0,
+                             "dividendYield": 0.069},
+    "financialData": {"returnOnEquity": 0.24, "profitMargins": 0.21,
+                      "returnOnAssets": 0.09, "operatingMargins": 0.29},
     "historicalDataPrice": [
         {"date": _ts(2024, 12, 30), "open": 30.0, "high": 31.0, "low": 29.5, "close": 30.5,
          "adjustedClose": 30.0, "volume": 1000},
@@ -120,6 +122,9 @@ def test_metric_rows():
     by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(_Q)}
     assert by["P/L"] == 5.0 and by["P/VP"] == 1.4 and by["EV/EBITDA"] == 3.1
     assert by["ROE"] == 0.24 and by["marketCap"] == 5.0e11
+    # trailing da brapi (consenso) — usado p/ corrigir distorção do último ano
+    assert by["ROA"] == 0.09 and by["Margem_Operacional"] == 0.29
+    assert by["DY"] == 0.069
 
 
 def test_normalize_all_keys():

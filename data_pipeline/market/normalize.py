@@ -270,7 +270,12 @@ def metric_rows(quote: dict) -> list[dict]:
         "marketCap": _first(quote, ("marketCap",)),
         "LPA": _first(quote, ("earningsPerShare",)) or _first(dks, ("trailingEps",)),
         "ROE": _first(fin, ("returnOnEquity",)),
+        "ROA": _first(fin, ("returnOnAssets",)),
         "Margem_Liquida": _first(fin, ("profitMargins",)),
+        "Margem_Operacional": _first(fin, ("operatingMargins",)),
+        # DY trailing da própria brapi (consenso) — evita over-count da janela
+        # de dividendos somada (ex.: SAPR3 cluster de JCP em junho).
+        "DY": _first(dks, ("dividendYield", "yield")),
     }
     rows: list[dict] = []
     for name, val in cand.items():

@@ -589,6 +589,7 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
     """
     from datetime import datetime, timezone
     from data_pipeline.market import metrics as mx
+    import core.data_quality as dq
     engine = _engine()
     prog = _new_progress()
     if engine is None:
@@ -641,7 +642,24 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     "fco": cf[0] if cf else None, "market_cap": mc,
                     "div_ttm": div_ps_ttm or None, "price": last_price, "eps": eps,
                 }
-                rows_out = mx.to_metric_rows(tk, mx.compute_snapshot(f))
+                snap = mx.compute_snapshot(f)
+                # Prefere o TRAILING da brapi (consenso, alinhado a Fundamentus/SI)
+                # onde disponível — evita distorção do último ANO (não-recorrentes:
+                # ex. SAPR3 2025) e o over-count do DY somado por janela.
+                spot = {r[0]: float(r[1]) for r in conn.execute(text(
+                    "SELECT metric_name, metric_value FROM market.calculated_metrics "
+                    "WHERE ticker=:t AND period='spot'"), {"t": tk}).fetchall()}
+                for k in ("P/L", "P/VP", "ROE", "ROA", "Margem_Liquida",
+                          "Margem_Operacional", "DY"):
+                    v = spot.get(k)
+                    if v is not None and dq.is_valid_value(k, v):
+                        snap[k] = (round(v, 8), "brapi_trailing")
+                # Payout coerente com o trailing: dividendos/lucro = DY * P/L
+                if "DY" in snap and "P/L" in snap:
+                    pay = snap["DY"][0] * snap["P/L"][0]
+                    if dq.is_valid_value("Payout", pay):
+                        snap["Payout"] = (round(pay, 8), "DY*P/L (brapi_trailing)")
+                rows_out = mx.to_metric_rows(tk, snap)
 
                 # ── Histórico anual (period='annual', um conjunto por ano) ──
                 # Fundamentais (margens, ROE, ROA, ROIC, Endiv, Liquidez) e DY são
