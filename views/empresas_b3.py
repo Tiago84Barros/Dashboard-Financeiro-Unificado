@@ -2575,11 +2575,12 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             recon = _recon.get_multiplos_reconciliados(tk)
             mult = _recon.reconciliacao_to_series(recon)
             fontes_recon = dict(recon.get("_fontes", {}))
-        yf_divs_mult = _yf_multiplos_dividendos(tk)
+        # DY/Payout via yfinance só como patch do legado; no market o snapshot já traz.
+        yf_divs_mult = {} if _db.market_active() else _yf_multiplos_dividendos(tk)
         df_yf_divs   = _yf_dividendos_anuais(tk)
         df_precos    = _yf_precos(tk)
 
-    # Patch DY / Payout ausentes com yfinance
+    # Patch DY / Payout ausentes com yfinance (apenas no legado)
     mult_dict = mult.to_dict() if not mult.empty else {}
     for field, val in yf_divs_mult.items():
         if mult_dict.get(field) is None:
@@ -3280,11 +3281,16 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "canonicos. Divergencias criticas devem ser revisadas antes de "
             "confiar no ranking."
         )
-        run_cross = st.checkbox(
-            "Executar auditoria cross-source",
-            value=False,
-            key="b3_run_cross_source",
-        )
+        if _db.market_active():
+            st.caption("Auditoria cross-source (Fundamentus) desativada: fonte única "
+                       "brapi (market.*). A qualidade é monitorada em Saúde dos Dados.")
+            run_cross = False
+        else:
+            run_cross = st.checkbox(
+                "Executar auditoria cross-source",
+                value=False,
+                key="b3_run_cross_source",
+            )
         if run_cross:
             audit_cross = _cross_source_audit_dataframe(
                 df_mult_todos,
@@ -4044,11 +4050,16 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "Indicadores com spread > threshold (15-30% por tipo) são "
             "flagados — empresa pode ter dado contaminado em uma das fontes."
         )
-        if df_scored.empty:
+        if _db.market_active():
+            st.caption("Desativada: fonte única brapi (market.*) — não há scraping "
+                       "Fundamentus/Status Invest para cruzar.")
+            run_a6 = False
+        elif df_scored.empty:
             st.info("Sem empresas scoradas para validar.")
+            run_a6 = False
         else:
             run_a6 = st.checkbox("Executar validação", value=False, key="b3_a6_run")
-            if run_a6:
+        if run_a6:
                 from core.cross_source import (
                     compare_indicators, batch_validate, resumo_validacao,
                 )
