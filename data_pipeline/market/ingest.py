@@ -628,37 +628,79 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     "SELECT event_date, amount FROM market.dividends WHERE ticker=:t"),
                     {"t": tk}).fetchall()
 
-                # dividendos POR AÇÃO nos últimos 366 dias (base p/ DY e Payout)
+                # dividendos POR AÇÃO nos últimos 366 dias (fallback p/ DY)
                 div_ps_ttm = sum(float(a) for d, a in divs
                                  if d is not None and a is not None and 0 <= (ref - d).days <= 366)
-                f = {
-                    "revenue": inc[0] if inc else None, "ebit": inc[1] if inc else None,
-                    "ebitda": inc[2] if inc else None, "net_income": inc[3] if inc else None,
-                    "total_assets": bal[0] if bal else None, "equity": bal[1] if bal else None,
-                    "cash": bal[2] if bal else None, "gross_debt": bal[3] if bal else None,
-                    "net_debt": bal[4] if bal else None,
-                    "current_assets": bal[5] if bal else None,
-                    "current_liabilities": bal[6] if bal else None,
-                    "fco": cf[0] if cf else None, "market_cap": mc,
-                    "div_ttm": div_ps_ttm or None, "price": last_price, "eps": eps,
-                }
+
+                # ── Base do snapshot: TTM REAL (soma dos 4 últimos trimestres) ──
+                # Metodologia de consenso (Fundamentus/SI): fluxos (receita/EBIT/
+                # lucro/FCO) somam 4 trimestres; estoques (balanço) usam o trimestre
+                # mais recente. Sem 4 trimestres completos → cai p/ o último anual.
+                q_inc = conn.execute(text(
+                    "SELECT revenue, ebit, ebitda, net_income FROM market.income_statements "
+                    "WHERE ticker=:t AND period='quarterly' ORDER BY year DESC, quarter DESC LIMIT 4"),
+                    {"t": tk}).fetchall()
+                q_cf = conn.execute(text(
+                    "SELECT operating_cash_flow FROM market.cash_flow_statements "
+                    "WHERE ticker=:t AND period='quarterly' ORDER BY year DESC, quarter DESC LIMIT 4"),
+                    {"t": tk}).fetchall()
+                q_bal = conn.execute(text(
+                    "SELECT total_assets, equity, cash, gross_debt, net_debt, "
+                    "current_assets, current_liabilities FROM market.balance_sheets "
+                    "WHERE ticker=:t AND period='quarterly' ORDER BY year DESC, quarter DESC LIMIT 1"),
+                    {"t": tk}).fetchone()
+
+                def _sum4(rows, i):
+                    vals = [r[i] for r in rows if r[i] is not None]
+                    return float(sum(vals)) if len(rows) == 4 and len(vals) == 4 else None
+
+                ttm_ni = _sum4(q_inc, 3)
+                from_q = ttm_ni is not None and q_bal is not None
+                if from_q:
+                    base_method = "ttm_4q"
+                    f = {
+                        "revenue": _sum4(q_inc, 0), "ebit": _sum4(q_inc, 1),
+                        "ebitda": _sum4(q_inc, 2), "net_income": ttm_ni,
+                        "total_assets": q_bal[0], "equity": q_bal[1], "cash": q_bal[2],
+                        "gross_debt": q_bal[3], "net_debt": q_bal[4],
+                        "current_assets": q_bal[5], "current_liabilities": q_bal[6],
+                        "fco": _sum4(q_cf, 0), "market_cap": mc,
+                        "div_ttm": div_ps_ttm or None, "price": last_price, "eps": eps,
+                    }
+                else:
+                    base_method = "annual"
+                    f = {
+                        "revenue": inc[0] if inc else None, "ebit": inc[1] if inc else None,
+                        "ebitda": inc[2] if inc else None, "net_income": inc[3] if inc else None,
+                        "total_assets": bal[0] if bal else None, "equity": bal[1] if bal else None,
+                        "cash": bal[2] if bal else None, "gross_debt": bal[3] if bal else None,
+                        "net_debt": bal[4] if bal else None,
+                        "current_assets": bal[5] if bal else None,
+                        "current_liabilities": bal[6] if bal else None,
+                        "fco": cf[0] if cf else None, "market_cap": mc,
+                        "div_ttm": div_ps_ttm or None, "price": last_price, "eps": eps,
+                    }
                 snap = mx.compute_snapshot(f)
-                # Prefere o TRAILING da brapi (consenso, alinhado a Fundamentus/SI)
-                # onde disponível — evita distorção do último ANO (não-recorrentes:
-                # ex. SAPR3 2025) e o over-count do DY somado por janela.
+
+                # brapi spot: no caminho ANUAL sobrescreve (anual distorce por
+                # não-recorrentes); no TTM real só PREENCHE o que faltar. DY sempre
+                # do trailing da brapi (evita over-count da janela de dividendos).
                 spot = {r[0]: float(r[1]) for r in conn.execute(text(
                     "SELECT metric_name, metric_value FROM market.calculated_metrics "
                     "WHERE ticker=:t AND period='spot'"), {"t": tk}).fetchall()}
-                for k in ("P/L", "P/VP", "ROE", "ROA", "Margem_Liquida",
-                          "Margem_Operacional", "DY"):
+                for k in ("P/L", "P/VP", "ROE", "ROA", "Margem_Liquida", "Margem_Operacional"):
                     v = spot.get(k)
-                    if v is not None and dq.is_valid_value(k, v):
+                    if v is None or not dq.is_valid_value(k, v):
+                        continue
+                    if base_method == "annual" or k not in snap:
                         snap[k] = (round(v, 8), "brapi_trailing")
-                # Payout coerente com o trailing: dividendos/lucro = DY * P/L
+                dyv = spot.get("DY")
+                if dyv is not None and dq.is_valid_value("DY", dyv):
+                    snap["DY"] = (round(dyv, 8), "brapi_trailing")
                 if "DY" in snap and "P/L" in snap:
                     pay = snap["DY"][0] * snap["P/L"][0]
                     if dq.is_valid_value("Payout", pay):
-                        snap["Payout"] = (round(pay, 8), "DY*P/L (brapi_trailing)")
+                        snap["Payout"] = (round(pay, 8), "DY*P/L")
                 rows_out = mx.to_metric_rows(tk, snap)
 
                 # ── Histórico anual (period='annual', um conjunto por ano) ──
