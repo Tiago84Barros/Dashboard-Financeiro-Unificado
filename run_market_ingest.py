@@ -39,7 +39,7 @@ def main() -> int:
     p.add_argument("command",
                    choices=["validate", "cadastro", "bootstrap", "daily", "annual",
                             "reprocess", "renormalize", "parity", "fiis",
-                            "fiis-reprocess", "fiis-cvm"])
+                            "fiis-reprocess", "fiis-cvm", "setores-cvm"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
     p.add_argument("--source", default=None,
@@ -89,6 +89,14 @@ def main() -> int:
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
         return 0 if not rep.get("erro") else 1
+
+    if args.command == "setores-cvm":
+        rep = ingest.enrich_setores_cvm()
+        log.info("Setores CVM — empresas no cad=%s companies atualizadas=%s erros=%s",
+                 rep.get("cad_empresas"), rep.get("companies_atualizadas"), rep.get("erros"))
+        if args.json:
+            print(json.dumps(rep, indent=2, default=str))
+        return 0 if rep.get("erros", 0) != -1 else 1
 
     if args.command in ("fiis", "fiis-reprocess", "fiis-cvm"):
         from data_pipeline.market import fii_ingest

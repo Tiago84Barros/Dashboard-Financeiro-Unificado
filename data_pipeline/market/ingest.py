@@ -428,6 +428,35 @@ def validate(tickers: list[str], persist: bool = True) -> dict:
 
 # ── Reprocessamento de indicadores (sem rede) ─────────────────────────────────
 
+def enrich_setores_cvm() -> dict:
+    """
+    Preenche market.companies.sector com o SETOR_ATIV da CVM (cad_cia_aberta) —
+    fonte completa e atual, por CD_CVM. Como é por EMPRESA, todos os tickers
+    (ON/PN/Unit) herdam o mesmo setor. Completa a taxonomia das empresas novas
+    que não estão no public.setores. (1 nível; Subsetor/Segmento ficam a cargo
+    do public.setores quando disponível — ver core.market_read.load_setores.)
+    """
+    import core.cvm_cadastro as cad
+    engine = _engine()
+    prog = {"cad_empresas": 0, "companies_atualizadas": 0, "erros": 0}
+    if engine is None:
+        return {**prog, "erros": -1}
+    raw = cad.fetch_cad()
+    if not raw:
+        return {**prog, "erros": -1}
+    cd2sector = {v["codigo_cvm"]: v["sector"]
+                 for v in cad.parse_cad(raw).values() if v.get("sector")}
+    prog["cad_empresas"] = len(cd2sector)
+    with engine.begin() as conn:
+        for cd, setor in cd2sector.items():
+            res = conn.execute(text(
+                "UPDATE market.companies SET sector = :s WHERE codigo_cvm = :c"),
+                {"s": setor, "c": int(cd)})
+            prog["companies_atualizadas"] += res.rowcount or 0
+    logger.info("market/enrich_setores_cvm: %s", prog)
+    return prog
+
+
 def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> dict:
     """
     Reaplica o normalizador atual aos payloads brutos JÁ salvos em
