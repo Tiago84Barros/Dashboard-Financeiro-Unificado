@@ -428,32 +428,87 @@ def validate(tickers: list[str], persist: bool = True) -> dict:
 
 # ── Reprocessamento de indicadores (sem rede) ─────────────────────────────────
 
-def enrich_setores_cvm() -> dict:
+def enrich_setores() -> dict:
     """
-    Preenche market.companies.sector com o SETOR_ATIV da CVM (cad_cia_aberta) —
-    fonte completa e atual, por CD_CVM. Como é por EMPRESA, todos os tickers
-    (ON/PN/Unit) herdam o mesmo setor. Completa a taxonomia das empresas novas
-    que não estão no public.setores. (1 nível; Subsetor/Segmento ficam a cargo
-    do public.setores quando disponível — ver core.market_read.load_setores.)
+    Resolve a taxonomia setorial de cada empresa em vocabulário B3 consistente,
+    self-contained (busca o cad da CVM, aprende e aplica numa passada):
+      1. cad_cia_aberta -> CD_CVM -> SETOR_ATIV (CVM, completo e atual);
+      2. APRENDE o mapa CVM -> B3 (Setor/Subsetor/Segmento) das empresas que têm
+         AMBAS (CVM + public.setores), POR NÍVEL com pureza (>=70%): setor CVM
+         heterogêneo (ex.: "Transporte e Logística") só propaga o nível em que os
+         pares concordam (evita rotular Rumo como "Linhas Aéreas");
+      3. APLICA em market.companies p/ TODAS as empresas com setor CVM — mapeadas
+         recebem o trio B3; sem mapa recebem o setor CVM cru (1 nível). Subsetor/
+         Segmento são SEMPRE reescritos (apaga resíduo do brapi). Por empresa
+         (codigo_cvm) => ON/PN/Unit herdam. public.setores continua autoritativo
+         por ticker no load_setores.
     """
+    import pandas as pd
     import core.cvm_cadastro as cad
     engine = _engine()
-    prog = {"cad_empresas": 0, "companies_atualizadas": 0, "erros": 0}
+    prog = {"cad": 0, "mapa": 0, "empresas": 0, "mapeadas": 0, "cvm_raw": 0, "erros": 0}
     if engine is None:
         return {**prog, "erros": -1}
     raw = cad.fetch_cad()
     if not raw:
         return {**prog, "erros": -1}
-    cd2sector = {v["codigo_cvm"]: v["sector"]
-                 for v in cad.parse_cad(raw).values() if v.get("sector")}
-    prog["cad_empresas"] = len(cd2sector)
+    cd2cvm = {int(v["codigo_cvm"]): v["sector"]
+              for v in cad.parse_cad(raw).values() if v.get("sector")}
+    prog["cad"] = len(cd2cvm)
+
+    with engine.connect() as conn:
+        df = pd.read_sql_query(text("""
+            SELECT DISTINCT c.codigo_cvm, a.ticker,
+                   s."SETOR" AS b3_setor, s."SUBSETOR" AS b3_sub, s."SEGMENTO" AS b3_seg
+            FROM market.companies c
+            JOIN market.assets a ON a.company_id = c.id
+            LEFT JOIN LATERAL (
+                SELECT s2."SETOR", s2."SUBSETOR", s2."SEGMENTO" FROM public.setores s2
+                WHERE s2."SETOR" IS NOT NULL
+                  AND (UPPER(REPLACE(s2.ticker,'.SA',''))=a.ticker
+                       OR LEFT(UPPER(REPLACE(s2.ticker,'.SA','')),4)=LEFT(a.ticker,4))
+                ORDER BY (UPPER(REPLACE(s2.ticker,'.SA',''))=a.ticker) DESC LIMIT 1
+            ) s ON TRUE
+            WHERE c.codigo_cvm IS NOT NULL
+        """), conn)
+    df["cvm"] = df["codigo_cvm"].map(lambda x: cd2cvm.get(int(x)) if pd.notna(x) else None)
+
+    THRESH = 0.70
+    train = df[df["b3_setor"].notna() & df["cvm"].notna()]
+    mapa: dict = {}
+    for cvm, g in train.groupby("cvm"):
+        n = len(g)
+        sc = g["b3_setor"].value_counts()
+        if sc.iloc[0] / n < THRESH:
+            continue
+        setor = sc.idxmax()
+        gs = g[g["b3_setor"] == setor]
+        sub = seg = ""
+        subc = gs["b3_sub"].value_counts()
+        if len(subc) and len(gs) >= 2 and subc.iloc[0] / len(gs) >= THRESH:
+            sub = subc.idxmax()
+            gsub = gs[gs["b3_sub"] == sub]
+            segc = gsub["b3_seg"].value_counts()
+            if len(segc) and len(gsub) >= 3 and segc.iloc[0] / len(gsub) >= THRESH:
+                seg = segc.idxmax()
+        mapa[str(cvm)] = (setor, sub or "", seg or "")
+    prog["mapa"] = len(mapa)
+
     with engine.begin() as conn:
-        for cd, setor in cd2sector.items():
+        for cd, cvm in cd2cvm.items():
+            trio = mapa.get(str(cvm))
+            if trio:
+                setor, sub, seg = trio
+                prog["mapeadas"] += 1
+            else:
+                setor, sub, seg = cvm, "", ""
+                prog["cvm_raw"] += 1
             res = conn.execute(text(
-                "UPDATE market.companies SET sector = :s WHERE codigo_cvm = :c"),
-                {"s": setor, "c": int(cd)})
-            prog["companies_atualizadas"] += res.rowcount or 0
-    logger.info("market/enrich_setores_cvm: %s", prog)
+                "UPDATE market.companies SET sector=:s, subsector=:su, segment=:se "
+                "WHERE codigo_cvm=:c"),
+                {"s": setor, "su": sub, "se": seg, "c": int(cd)})
+            prog["empresas"] += res.rowcount or 0
+    logger.info("market/enrich_setores: %s", prog)
     return prog
 
 
