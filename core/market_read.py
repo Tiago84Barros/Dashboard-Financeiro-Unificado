@@ -80,17 +80,25 @@ def _pivot_metrics(long_df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_setores() -> pd.DataFrame:
-    """ticker, nome_empresa, SETOR, SUBSETOR, SEGMENTO (de market.assets+companies)."""
+    """
+    ticker, nome_empresa, SETOR, SUBSETOR, SEGMENTO.
+    Universo/nomes vêm do market.* (assets+companies); a TAXONOMIA B3
+    (Setor/Subsetor/Segmento) vem de public.setores — a brapi não traz a
+    classificação B3 de forma consistente. public.setores é dado de
+    referência (como cvm_to_ticker), não os fundamentos legados.
+    """
     df = _q("""
         SELECT a.ticker,
-               COALESCE(c.name, a.ticker) AS nome_empresa,
-               c.sector    AS "SETOR",
-               c.subsector AS "SUBSETOR",
-               c.segment   AS "SEGMENTO"
+               COALESCE(c.name, s.nome_empresa, a.ticker) AS nome_empresa,
+               COALESCE(NULLIF(s."SETOR", ''),    NULLIF(c.sector, ''))    AS "SETOR",
+               COALESCE(NULLIF(s."SUBSETOR", ''), NULLIF(c.subsector, '')) AS "SUBSETOR",
+               COALESCE(NULLIF(s."SEGMENTO", ''), NULLIF(c.segment, ''))   AS "SEGMENTO"
         FROM market.assets a
         LEFT JOIN market.companies c ON c.id = a.company_id
+        LEFT JOIN public.setores s
+               ON UPPER(REPLACE(s.ticker, '.SA', '')) = a.ticker
         WHERE a.ticker IS NOT NULL
-        ORDER BY c.sector NULLS LAST, a.ticker
+        ORDER BY "SETOR" NULLS LAST, a.ticker
     """)
     if df.empty:
         return df
