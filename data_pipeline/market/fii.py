@@ -159,3 +159,111 @@ def rank_fiis(rows: list[dict], *, weights: dict | None = None,
                     "pct_liq": parts["liquidez_diaria"]})
     out.sort(key=lambda r: r["score"], reverse=True)
     return out
+
+
+# ── Carteira-modelo (diversificada) ───────────────────────────────────────────
+
+def _cap_weights(w: list[float], cap: float) -> list[float]:
+    """Limita cada peso a `cap`, redistribuindo o excedente proporcionalmente aos
+    demais; renormaliza no fim."""
+    w = list(w)
+    for _ in range(20):
+        over = [i for i, x in enumerate(w) if x > cap + 1e-12]
+        if not over:
+            break
+        excess = sum(w[i] - cap for i in over)
+        for i in over:
+            w[i] = cap
+        free = [i for i in range(len(w)) if i not in over]
+        fsum = sum(w[i] for i in free)
+        if fsum <= 0:
+            break
+        for i in free:
+            w[i] += excess * w[i] / fsum
+    s = sum(w)
+    return [x / s for x in w] if s else w
+
+
+def build_portfolio(rows: list[dict], *, n_max: int = 10, max_weight: float = 0.20,
+                    max_tipo_frac: float = 0.50, liq_min: float = 200_000.0) -> list[dict]:
+    """
+    Monta a carteira-modelo a partir do ranking (rows já ordenadas por score):
+    seleciona os melhores com DIVERSIFICAÇÃO por tipo (no máx. max_tipo_frac do
+    nº de FIIs por tipo), pesa proporcional ao score com teto max_weight por FII.
+    """
+    elig = [r for r in rows if r.get("score") is not None
+            and (r.get("liquidez_diaria") or 0) >= liq_min]
+    cap_tipo = max(1, int(round(n_max * max_tipo_frac)))
+    sel, tipo_count = [], {}
+    for r in elig:
+        if len(sel) >= n_max:
+            break
+        tp = r.get("tipo") or "?"
+        if tipo_count.get(tp, 0) >= cap_tipo:
+            continue
+        sel.append(r)
+        tipo_count[tp] = tipo_count.get(tp, 0) + 1
+    if not sel:
+        return []
+    scores = [max(float(r["score"]), 1e-9) for r in sel]
+    tot = sum(scores)
+    w = _cap_weights([s / tot for s in scores], max_weight)
+    return [{"ticker": r["ticker"], "peso": round(wi, 4), "score": r["score"],
+             "tipo": r.get("tipo"), "segmento": r.get("segmento"),
+             "dy_12m": r.get("dy_12m"), "pvp": r.get("pvp")}
+            for r, wi in zip(sel, w)]
+
+
+# ── Backtest (retorno total: preço + proventos reinvestidos) ──────────────────
+
+def backtest(weights: dict, price_hist: dict, div_hist: dict | None = None):
+    """
+    Retorno total (preço + proventos reinvestidos), buy-and-hold com pesos fixos.
+    weights: {ticker: peso}; price_hist: {ticker: [(date, close)]};
+    div_hist: {ticker: [(date, amount)]}. Retorna (serie, metricas):
+      serie  = DataFrame [Data, Carteira] (índice base 100);
+      metricas = {retorno_total, cagr, anos, n_ativos}.
+    """
+    import pandas as pd
+    div_hist = div_hist or {}
+    tr_cols = {}
+    for tk in weights:
+        ph = price_hist.get(tk) or []
+        if len(ph) < 2:
+            continue
+        p = pd.DataFrame(ph, columns=["Data", "close"]).dropna()
+        p["Data"] = pd.to_datetime(p["Data"])
+        p = p.sort_values("Data").set_index("Data")["close"]
+        p = pd.to_numeric(p, errors="coerce").dropna()
+        # mensal: preço de fim de mês (ffill p/ meses sem pregão na amostra) +
+        # proventos somados no mês (alinha por mês, não por data exata).
+        p_m = p.resample("ME").last().ffill()
+        dd = pd.DataFrame(div_hist.get(tk) or [], columns=["Data", "amount"])
+        if not dd.empty:
+            dd["Data"] = pd.to_datetime(dd["Data"])
+            d_m = (pd.to_numeric(dd.set_index("Data")["amount"], errors="coerce")
+                   .resample("ME").sum().reindex(p_m.index).fillna(0.0))
+        else:
+            d_m = pd.Series(0.0, index=p_m.index)
+        tr = ((p_m + d_m) / p_m.shift(1)).fillna(1.0).cumprod()
+        if tr.iloc[0]:
+            tr_cols[tk] = tr / tr.iloc[0]
+    if not tr_cols:
+        return pd.DataFrame(columns=["Data", "Carteira"]), {
+            "retorno_total": None, "cagr": None, "anos": 0, "n_ativos": 0}
+    mat = pd.DataFrame(tr_cols).ffill().dropna()
+    if mat.empty:
+        return pd.DataFrame(columns=["Data", "Carteira"]), {
+            "retorno_total": None, "cagr": None, "anos": 0, "n_ativos": 0}
+    pesos = {tk: weights[tk] for tk in mat.columns}
+    wsum = sum(pesos.values()) or 1.0
+    carteira = sum(mat[tk] * (pesos[tk] / wsum) for tk in mat.columns)
+    # rebase p/ 100 no início da JANELA COMUM (todos os ativos presentes)
+    carteira = carteira / carteira.iloc[0] * 100.0
+    serie = carteira.rename("Carteira").reset_index()
+    anos = (serie["Data"].iloc[-1] - serie["Data"].iloc[0]).days / 365.25 if len(serie) > 1 else 0
+    ret = (carteira.iloc[-1] / 100.0) - 1.0
+    cagr = ((1 + ret) ** (1 / anos) - 1) if anos > 0.5 else None
+    return serie, {"retorno_total": round(ret, 4),
+                   "cagr": round(cagr, 4) if cagr is not None else None,
+                   "anos": round(anos, 1), "n_ativos": len(mat.columns)}

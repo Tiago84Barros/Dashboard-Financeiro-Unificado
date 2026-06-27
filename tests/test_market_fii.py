@@ -44,6 +44,36 @@ def test_compute_fii_none_para_etf():
     assert m["ticker"] == "HGLG11" and m["pvp"] == 0.95 and m["segmento"] == "Logística"
 
 
+def test_build_portfolio_diversifica_e_pesa():
+    rows = [  # já "rankeadas" (score desc)
+        {"ticker": "A1", "score": 90, "tipo": "tijolo", "liquidez_diaria": 1e6, "dy_12m": .1, "pvp": .9},
+        {"ticker": "A2", "score": 85, "tipo": "tijolo", "liquidez_diaria": 1e6, "dy_12m": .1, "pvp": .9},
+        {"ticker": "A3", "score": 80, "tipo": "tijolo", "liquidez_diaria": 1e6, "dy_12m": .1, "pvp": .9},
+        {"ticker": "P1", "score": 70, "tipo": "papel", "liquidez_diaria": 1e6, "dy_12m": .12, "pvp": .95},
+        {"ticker": "IL", "score": 95, "tipo": "papel", "liquidez_diaria": 1000, "dy_12m": .1, "pvp": .9},  # ilíquido
+    ]
+    p = fii.build_portfolio(rows, n_max=4, max_weight=0.40, max_tipo_frac=0.50, liq_min=200_000)
+    tks = [x["ticker"] for x in p]
+    assert "IL" not in tks                       # ilíquido fora
+    assert tks.count("A1") == 1
+    # diversificação: máx 50% de 4 = 2 por tipo -> só 2 tijolo (A1,A2), depois papel
+    tipos = [x["tipo"] for x in p]
+    assert tipos.count("tijolo") <= 2 and "papel" in tipos
+    assert abs(sum(x["peso"] for x in p) - 1.0) < 5e-3   # pesos somam ~1 (arred. 4 casas)
+    assert all(x["peso"] <= 0.40 + 1e-9 for x in p)      # teto respeitado
+
+
+def test_backtest_retorno_total():
+    import datetime as dt
+    # 1 ativo, preço sobe 100->110 em 1 ano + 1 provento 5 -> retorno ~ (110+5)/100-1
+    price = {"X": [(dt.date(2025, 1, 31), 100.0), (dt.date(2025, 6, 30), 105.0),
+                   (dt.date(2026, 1, 31), 110.0)]}
+    divs = {"X": [(dt.date(2025, 7, 15), 5.0)]}
+    serie, met = fii.backtest({"X": 1.0}, price, divs)
+    assert not serie.empty and met["n_ativos"] == 1
+    assert met["retorno_total"] > 0.14            # ~15% (preço + provento)
+
+
 def test_rank_filtra_e_ordena():
     rows = [
         {"ticker": "BOM", "price": 100, "dy_12m": 0.12, "pvp": 0.90, "liquidez_diaria": 1e6},

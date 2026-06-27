@@ -323,6 +323,25 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def load_fii_series(tickers: tuple[str, ...]) -> dict:
+    """Séries históricas dos FIIs p/ backtest: {'precos': {tk:[(date,close)]},
+    'dividendos': {tk:[(date,amount)]}}."""
+    if not tickers:
+        return {"precos": {}, "dividendos": {}}
+    tks = [t.strip().upper().replace(".SA", "") for t in tickers]
+    px = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c "
+            "FROM market.historical_prices WHERE ticker = ANY(:t) "
+            "AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY ticker, date",
+            {"t": tks})
+    dv = _q("SELECT ticker, event_date, amount FROM market.dividends "
+            "WHERE ticker = ANY(:t) AND event_date IS NOT NULL ORDER BY ticker, event_date",
+            {"t": tks})
+    ph = {tk: list(zip(g["date"], g["c"])) for tk, g in px.groupby("ticker")} if not px.empty else {}
+    dh = {tk: list(zip(g["event_date"], g["amount"])) for tk, g in dv.groupby("ticker")} if not dv.empty else {}
+    return {"precos": ph, "dividendos": dh}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_fii_segmentos() -> list[str]:
     """Segmentos distintos disponíveis em market.fiis (para filtros na tela)."""
     df = _q("SELECT DISTINCT COALESCE(segmento_cvm, segmento) AS seg FROM market.fiis "
