@@ -607,7 +607,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
     for tk in tickers:
         try:
             with engine.begin() as conn:
-                inc = _latest_annual(conn, "income_statements", "revenue, ebit, ebitda, net_income", tk)
+                inc = _latest_annual(conn, "income_statements",
+                                     "revenue, ebit, ebitda, net_income, eps", tk)
                 bal = _latest_annual(conn, "balance_sheets",
                                      "total_assets, equity, cash, gross_debt, net_debt, "
                                      "current_assets, current_liabilities", tk)
@@ -624,6 +625,15 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     "SELECT COALESCE(adjusted_close, close) FROM market.historical_prices "
                     "WHERE ticker=:t AND COALESCE(adjusted_close, close) IS NOT NULL "
                     "ORDER BY date DESC LIMIT 1"), {"t": tk}).scalar()
+                # market cap: brapi quando disponível; senão deriva = preço × ações,
+                # com ações = lucro anual / LPA anual (mesma empresa, ON/PN herdam).
+                if (mc is None or float(mc) <= 0) and last_price and inc and inc[3] and inc[4]:
+                    try:
+                        shares_d = float(inc[3]) / float(inc[4])
+                        if shares_d > 0:
+                            mc = float(last_price) * shares_d
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        pass
                 divs = conn.execute(text(
                     "SELECT event_date, amount FROM market.dividends WHERE ticker=:t"),
                     {"t": tk}).fetchall()
