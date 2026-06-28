@@ -1020,7 +1020,8 @@ def _select_n_heuristica(scores_desc: list[float], eps: float = 0.35) -> int:
 def _weights_from_scores(tickers: list[str], score_map: dict[str, float],
                           gamma: float = 0.90) -> dict[str, float]:
     scores = [score_map.get(tk, 0.0) for tk in tickers]
-    mn  = min(scores)
+    scores = [float(s) if (s is not None and np.isfinite(s)) else 0.0 for s in scores]
+    mn  = min(scores) if scores else 0.0
     eps = 1e-6
     raw = [(max(s - mn, 0) + eps) ** gamma for s in scores]
     tot = sum(raw) or 1.0
@@ -2154,7 +2155,11 @@ def _score_historico_ano(
     )
     if df_sc.empty or "score" not in df_sc.columns:
         return {}
-    return dict(zip(df_sc["Ticker"], df_sc["score"]))
+    # descarta scores não-finitos (NaN/inf): empresa sem score computável naquele
+    # ano não entra no ranking — evita poluir pesos/backtest com NaN (alpha NaN).
+    sc = pd.to_numeric(df_sc["score"], errors="coerce")
+    return {tk: float(s) for tk, s in zip(df_sc["Ticker"], sc)
+            if pd.notna(s) and np.isfinite(s)}
 
 
 def _apply_decay_penalty(

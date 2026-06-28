@@ -434,7 +434,8 @@ def _processar_segmento(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _margem_pct(val: float, ref: float) -> float:
-    if ref <= 0:
+    # NaN/inf em val/ref (NaN não satisfaz ref<=0) propagaria p/ alpha_selic_medio
+    if not (np.isfinite(val) and np.isfinite(ref)) or ref <= 0:
         return 0.0
     return (val / ref - 1) * 100
 
