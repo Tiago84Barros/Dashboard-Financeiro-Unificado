@@ -70,9 +70,31 @@ DDL_SQL = [
 ]
 
 
+def _clean_nan(obj: Any) -> Any:
+    """Converte NaN/Infinity (float ou numpy) em None — JSON/Postgres não os aceitam."""
+    import math
+    import numbers
+    if isinstance(obj, dict):
+        return {k: _clean_nan(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_clean_nan(v) for v in obj]
+    if isinstance(obj, bool):          # bool é subtipo de int — preservar
+        return obj
+    if isinstance(obj, numbers.Integral):   # int / np.int* — preservar como int
+        return int(obj)
+    if isinstance(obj, numbers.Real):        # float / np.float* — sanear não-finitos
+        try:
+            f = float(obj)
+        except (TypeError, ValueError):
+            return None
+        return f if math.isfinite(f) else None
+    return obj
+
+
 def _safe_json(value: Any, default: Any) -> str:
     try:
-        return json.dumps(value if value is not None else default, ensure_ascii=False, default=str)
+        cleaned = _clean_nan(value if value is not None else default)
+        return json.dumps(cleaned, ensure_ascii=False, allow_nan=False, default=str)
     except Exception:
         return json.dumps(default, ensure_ascii=False)
 
