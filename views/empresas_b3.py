@@ -18,6 +18,7 @@ import yfinance as yf
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.data_quality as _dq
 import core.data_reconciliacao as _recon
+import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 _CDN = "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones"
@@ -329,13 +330,39 @@ def _yf_precos(ticker: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _period_to_years(period: str) -> int | None:
+    """'10y'->10, '5y'->5, '1y'->1; None se não reconhecer (sem corte)."""
+    try:
+        p = str(period).strip().lower()
+        if p.endswith("y"):
+            return int(p[:-1])
+    except Exception:
+        pass
+    return None
+
+
 def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd.DataFrame:
     """
-    Preços mensais de fechamento para múltiplos tickers via yfinance.
-    Retorna DataFrame com DatetimeIndex e colunas = tickers sem .SA.
+    Preços mensais de fechamento AJUSTADOS (retorno total) p/ múltiplos tickers.
+
+    market-first: lê de market.historical_prices (sem rede) quando o market.*
+    está ativo; senão cai no yfinance (auto_adjust=True). Retorna DataFrame com
+    DatetimeIndex mensal e colunas = tickers sem .SA.
     """
     if not tickers:
         return pd.DataFrame()
+    # Fonte primária: banco (market.*) — adjusted_close, sem rede.
+    if _db.market_active():
+        try:
+            df_db = _mr.load_precos_mensais(tuple(tickers))
+            if not df_db.empty:
+                anos = _period_to_years(period)
+                if anos and df_db.index.notna().any():
+                    corte = df_db.index.max() - pd.DateOffset(years=anos)
+                    df_db = df_db[df_db.index >= corte]
+                return df_db
+        except Exception:
+            pass  # fallback yfinance
     tks_sa = [f"{t.strip().upper().replace('.SA', '')}.SA" for t in tickers]
     try:
         if len(tks_sa) == 1:
@@ -509,31 +536,9 @@ def _yf_trailing12m_divs(ticker: str) -> float:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _batch_yf_dividendos_mensais(tickers: tuple[str, ...], period: str = "10y") -> dict[str, pd.Series]:
-    """
-    Dividendos mensais por ação para múltiplos tickers via yfinance.
-    Retorna dict {ticker_sem_SA: pd.Series(DatetimeIndex mensal, float R$/ação)}.
-    Múltiplos pagamentos no mesmo mês são somados.
-    """
-    resultado: dict[str, pd.Series] = {}
-    if not tickers:
-        return resultado
-    for tk in tickers:
-        tk_clean = tk.strip().upper().replace(".SA", "")
-        for var in [f"{tk_clean}.SA", tk_clean]:
-            try:
-                divs = yf.Ticker(var).dividends
-                if divs is not None and not divs.empty:
-                    if hasattr(divs.index, "tz") and divs.index.tz is not None:
-                        divs.index = divs.index.tz_localize(None)
-                    mensais = divs.resample("ME").sum()
-                    mensais = mensais[mensais > 0]
-                    if not mensais.empty:
-                        resultado[tk_clean] = mensais
-                        break
-            except Exception:
-                pass
-    return resultado
+# Nota: o backtest deixou de baixar/reinvestir dividendos mensais — o preço
+# (adjusted_close, retorno total) já embute proventos. A antiga
+# _batch_yf_dividendos_mensais foi removida por dupla contagem.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4429,12 +4434,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         anos_map    = {"1y": 1, "3y": 3, "5y": 5, "10y": 10}
         data_inicio = pd.Timestamp.now() - pd.DateOffset(years=anos_map[period_code])
 
-        with st.spinner("Baixando preços mensais… (pode levar alguns segundos)"):
+        with st.spinner("Carregando preços mensais ajustados…"):
             df_prec_m = _batch_yf_precos_mensais(tks_tuple, period=period_code)
 
-        with st.spinner("Baixando dividendos históricos (pode demorar na primeira execução)…"):
-            div_batch_av = _batch_yf_dividendos_mensais(tks_tuple, period=period_code)
-
+        # adjusted_close já é RETORNO TOTAL (proventos+splits reinvestidos) → NÃO
+        # reinvestir dividendos de novo (evita dupla contagem). Por isso dividendos=None.
         df_bt, tickers_top, n_efetivo = _simular_backtest(
             df_prec_m, df_scored, hist_batch, tks_uni,
             float(aporte), data_inicio, float(taxa_sel) / 100.0,
@@ -4445,7 +4449,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             soft=st.session_state.get("b3_av_soft",  _SOFT_DEF),
             selic_por_ano=selic_macro or None,
             macro_by_year=macro_history or None,
-            dividendos=div_batch_av,
+            dividendos=None,
             cost_cfg=_cost_cfg,
         )
         st.session_state["b3_av_bt_df"]    = df_bt

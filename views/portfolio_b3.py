@@ -21,7 +21,6 @@ from views.empresas_b3 import (
     _COR_POS, _COR_NEG, _COR_ALT, _COR_INF, _COR_NEU,
     _DIV_POR_ACAO_MAX,
     _apply_cap_soft, _apply_decay_penalty,
-    _batch_yf_dividendos_mensais,
     _batch_yf_precos_mensais,
     _div_mes_sanitizado,
     _enrich_com_slopes,
@@ -1116,11 +1115,8 @@ def render(show_header: bool = True) -> None:
                 df_mult_recon, df_set, hist_batch, anos_hist
             )
 
-        with st.spinner("Baixando preços mensais (pode demorar)…"):
+        with st.spinner("Carregando preços mensais ajustados…"):
             df_precos_all = _batch_yf_precos_mensais(all_tickers, period="10y")
-
-        with st.spinner("Baixando dividendos históricos (pode demorar na primeira execução)…"):
-            div_batch = _batch_yf_dividendos_mensais(all_tickers, period="10y")
 
         # Gamma/cap/soft calibrados (se existirem) ou defaults
         gamma = st.session_state.get("b3_av_gamma", _GAMMA_DEF)
@@ -1137,12 +1133,13 @@ def render(show_header: bool = True) -> None:
                 if tk in hist_batch and (not anos_hist or anos_hist.get(tk, 0) >= int(min_anos_dre))
             ]
             if tickers_seg:
+                # adjusted_close já é retorno total → dividendos=None (sem dupla contagem)
                 res = _processar_segmento(
                     tickers_seg, hist_batch, df_precos_all,
                     str(setor), str(subsetor), str(segmento),
                     taxa_selic_aa, selic_macro, macro_history, float(aporte),
                     int(ano_inicio), gamma, cap, soft,
-                    dividendos=div_batch,
+                    dividendos=None,
                 )
                 if res:
                     resultados.append(res)
@@ -1153,7 +1150,6 @@ def render(show_header: bool = True) -> None:
         st.session_state["pb3_resultados"] = resultados
         st.session_state["pb3_df_set"]     = df_set
         st.session_state["pb3_precos_all"] = df_precos_all
-        st.session_state["pb3_div_batch"]  = div_batch
         st.session_state["pb3_quality_summary"] = quality_summary
         st.session_state["pb3_quality_audit"]   = audit_recon
         st.session_state["pb3_hist_audit"]      = hist_audit

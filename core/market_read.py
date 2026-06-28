@@ -342,6 +342,33 @@ def load_fii_series(tickers: tuple[str, ...]) -> dict:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
+    """
+    Preços MENSAIS (último pregão do mês) AJUSTADOS por proventos+splits
+    (adjusted_close = retorno total), a partir de market.historical_prices.
+
+    Espelha a saída de views._batch_yf_precos_mensais: DataFrame com
+    DatetimeIndex mensal × colunas = tickers (sem .SA). Substitui o download
+    do yfinance no backtest do portfólio B3.
+    """
+    if not tickers:
+        return pd.DataFrame()
+    tks = [t.strip().upper().replace(".SA", "") for t in tickers]
+    df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c "
+            "FROM market.historical_prices WHERE ticker = ANY(:t) "
+            "AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY ticker, date",
+            {"t": tks})
+    if df.empty:
+        return pd.DataFrame()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"])
+    wide = df.pivot_table(index="date", columns="ticker", values="c", aggfunc="last")
+    mensal = wide.resample("ME").last()          # último preço válido de cada mês
+    mensal.columns = [str(c).strip().upper() for c in mensal.columns]
+    return mensal.dropna(how="all")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_fii_segmentos() -> list[str]:
     """Segmentos distintos disponíveis em market.fiis (para filtros na tela)."""
     df = _q("SELECT DISTINCT COALESCE(segmento_cvm, segmento) AS seg FROM market.fiis "

@@ -846,15 +846,17 @@ FLOW_SIMULADOR = FlowSpec(
     nodes={
         "precos_sp": _node(
             "precos_sp", "Precos mensais", "Preparacao",
-            "Baixa fechamentos mensais dos tickers elegiveis para calcular cotas e patrimonio.",
-            ("_batch_yf_precos_mensais()", "Colunas por ticker", "Ultimo preco valido"),
-            "Preco e a ponte entre score teorico e retorno realmente simulado.",
+            "Le fechamentos mensais AJUSTADOS (retorno total) do banco market.* "
+            "(market.historical_prices); cai no yfinance so se o market.* nao estiver ativo.",
+            ("_batch_yf_precos_mensais()", "Colunas por ticker", "adjusted_close (retorno total)"),
+            "Preco ajustado e a ponte entre score teorico e retorno realmente simulado.",
         ),
         "dividendos_sp": _node(
             "dividendos_sp", "Dividendos", "Preparacao",
-            "Busca dividendos mensais por acao e ignora valores contaminados ou absurdos.",
-            ("_batch_yf_dividendos_mensais()", "Sanitizacao por preco de referencia", "Reinvestimento"),
-            "Dividendos mudam bastante a comparacao historica no Brasil, principalmente em bancos, utilities e energia.",
+            "Nao ha passo separado de dividendos: o preco ajustado (adjusted_close) ja "
+            "embute proventos e splits reinvestidos, evitando dupla contagem.",
+            ("adjusted_close", "Proventos ja embutidos", "Sem reinvestimento duplicado"),
+            "Reinvestir dividendos por cima do preco ajustado contaria os proventos duas vezes.",
         ),
         "aportes_sp": _node(
             "aportes_sp", "Aporte mensal", "Preparacao",
