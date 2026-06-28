@@ -235,18 +235,37 @@ def cashflow_rows(quote: dict) -> list[dict]:
 
 # ── Dividendos ────────────────────────────────────────────────────────────────
 
+def _sane_payment_date(pay, ex):
+    """
+    Anula payment_date claramente impossível para o event_date gerado
+    (COALESCE(payment_date, ex_date)) não herdar lixo da brapi: ano além do
+    próximo ano (placeholder 9999 ou futuros 2028 quando estamos em 2026).
+    Datas de pagamento atrasadas no passado (JCP a pagar) são legítimas e ficam
+    intactas; o ex_date assume o event_date quando o payment é anulado.
+    """
+    if pay is None:
+        return None
+    try:
+        if pay.year > datetime.now(timezone.utc).year + 1:
+            return None
+    except Exception:
+        return None
+    return pay
+
+
 def dividend_rows(quote: dict) -> list[dict]:
     tk = _ticker(quote)
     out: list[dict] = []
     items = ((quote or {}).get("dividendsData") or {}).get("cashDividends") or []
     for it in items:
         amount = _f(it.get("rate"))
-        if amount is None:
+        if amount is None or amount <= 0:      # 0/negativo não é provento útil
             continue
+        ex = _as_date(it.get("lastDatePrior") or it.get("approvedOn"))
         out.append({
             "ticker": tk,
-            "payment_date": _as_date(it.get("paymentDate")),
-            "ex_date": _as_date(it.get("lastDatePrior") or it.get("approvedOn")),
+            "payment_date": _sane_payment_date(_as_date(it.get("paymentDate")), ex),
+            "ex_date": ex,
             "amount": amount,
             "type": str(it.get("label") or "DIVIDENDO")[:40],
             "source": "brapi.dev",

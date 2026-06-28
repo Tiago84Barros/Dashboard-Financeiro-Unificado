@@ -118,6 +118,27 @@ def test_dividend_rows():
     assert d["payment_date"] == date(2025, 6, 20)
 
 
+def test_dividend_rows_saneamento():
+    # regressão: pular amount<=0 e anular payment_date impossível (9999/futuro
+    # distante) p/ o event_date gerado (COALESCE(payment_date, ex_date)) cair no ex.
+    from datetime import datetime, timezone
+    ano_fut = datetime.now(timezone.utc).year + 3
+    q = {"symbol": "TST3", "dividendsData": {"cashDividends": [
+        {"rate": 1.5, "paymentDate": "2026-08-20", "lastDatePrior": "2026-07-10"},   # ok
+        {"rate": 0.0, "paymentDate": "2026-08-20", "lastDatePrior": "2026-07-10"},   # zero -> fora
+        {"rate": -1, "paymentDate": "2026-08-20", "lastDatePrior": "2026-07-10"},    # negativo -> fora
+        {"rate": 2.0, "paymentDate": "9999-12-31", "lastDatePrior": "2025-12-30"},   # 9999 -> payment None
+        {"rate": 0.5, "paymentDate": f"{ano_fut}-12-31", "lastDatePrior": "2025-12-18"},  # futuro -> payment None
+    ]}}
+    rows = nz.dividend_rows(q)
+    assert len(rows) == 3                                  # zero e negativo eliminados
+    assert all(r["amount"] > 0 for r in rows)
+    nove = next(r for r in rows if r["amount"] == 2.0)
+    assert nove["payment_date"] is None and nove["ex_date"] == date(2025, 12, 30)
+    fut = next(r for r in rows if r["amount"] == 0.5)
+    assert fut["payment_date"] is None                    # event_date cairá no ex_date
+
+
 def test_metric_rows():
     by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(_Q)}
     assert by["P/L"] == 5.0 and by["P/VP"] == 1.4 and by["EV/EBITDA"] == 3.1
