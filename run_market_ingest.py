@@ -39,7 +39,8 @@ def main() -> int:
     p.add_argument("command",
                    choices=["validate", "cadastro", "bootstrap", "daily", "annual",
                             "reprocess", "renormalize", "parity", "fiis",
-                            "fiis-reprocess", "fiis-cvm", "fiis-series", "setores"])
+                            "fiis-reprocess", "fiis-cvm", "fiis-series",
+                            "benchmark", "setores"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
     p.add_argument("--source", default=None,
@@ -99,7 +100,7 @@ def main() -> int:
             print(json.dumps(rep, indent=2, default=str))
         return 0 if rep.get("erros", 0) != -1 else 1
 
-    if args.command in ("fiis", "fiis-reprocess", "fiis-cvm", "fiis-series"):
+    if args.command in ("fiis", "fiis-reprocess", "fiis-cvm", "fiis-series", "benchmark"):
         from data_pipeline.market import fii_ingest
         if args.command == "fiis-cvm":
             rep = fii_ingest.enrich_cvm()
@@ -110,6 +111,10 @@ def main() -> int:
             rep = fii_ingest.backfill_series()
             log.info("FIIs séries — fiis=%s precos=%s dividendos=%s erros=%s",
                      rep.get("fiis"), rep.get("precos"), rep.get("dividendos"), rep.get("erros"))
+        elif args.command == "benchmark":
+            rep = fii_ingest.ingest_benchmark("XFIX11")  # proxy do IFIX (ETF)
+            log.info("Benchmark %s — precos=%s erros=%s",
+                     rep.get("ticker"), rep.get("precos"), rep.get("erros"))
         else:
             rep = (fii_ingest.reprocess() if args.command == "fiis-reprocess"
                    else fii_ingest.ingest(limit=args.limit, tickers=tickers))

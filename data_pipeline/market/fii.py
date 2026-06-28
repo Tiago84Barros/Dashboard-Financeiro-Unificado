@@ -216,13 +216,16 @@ def build_portfolio(rows: list[dict], *, n_max: int = 10, max_weight: float = 0.
 
 # ── Backtest (retorno total: preço + proventos reinvestidos) ──────────────────
 
-def backtest(weights: dict, price_hist: dict, div_hist: dict | None = None):
+def backtest(weights: dict, price_hist: dict, div_hist: dict | None = None,
+             benchmark: list | None = None, benchmark_nome: str = "IFIX"):
     """
     Retorno total (preço + proventos reinvestidos), buy-and-hold com pesos fixos.
     weights: {ticker: peso}; price_hist: {ticker: [(date, close)]};
-    div_hist: {ticker: [(date, amount)]}. Retorna (serie, metricas):
-      serie  = DataFrame [Data, Carteira] (índice base 100);
-      metricas = {retorno_total, cagr, anos, n_ativos}.
+    div_hist: {ticker: [(date, amount)]}; benchmark: [(date, valor)] (índice de
+    retorno total, ex.: IFIX) — sobreposto na MESMA janela, base 100.
+    Retorna (serie, metricas):
+      serie  = DataFrame [Data, Carteira, (benchmark_nome)] (índice base 100);
+      metricas = {retorno_total, cagr, anos, n_ativos, bench_retorno}.
     """
     import pandas as pd
     div_hist = div_hist or {}
@@ -260,10 +263,26 @@ def backtest(weights: dict, price_hist: dict, div_hist: dict | None = None):
     carteira = sum(mat[tk] * (pesos[tk] / wsum) for tk in mat.columns)
     # rebase p/ 100 no início da JANELA COMUM (todos os ativos presentes)
     carteira = carteira / carteira.iloc[0] * 100.0
-    serie = carteira.rename("Carteira").reset_index()
+    out = carteira.rename("Carteira").to_frame()
+
+    # benchmark (índice de retorno total, ex.: IFIX): alinha à janela e base 100
+    bench_ret = None
+    if benchmark:
+        bdf = pd.DataFrame(benchmark, columns=["Data", "v"]).dropna()
+        if not bdf.empty:
+            bdf["Data"] = pd.to_datetime(bdf["Data"])
+            bser = (pd.to_numeric(bdf.set_index("Data")["v"], errors="coerce")
+                    .resample("ME").last().ffill().reindex(out.index).ffill())
+            if bser.notna().any() and bser.dropna().iloc[0]:
+                bser = bser / bser.dropna().iloc[0] * 100.0
+                out[benchmark_nome] = bser
+                bench_ret = round(bser.iloc[-1] / 100.0 - 1.0, 4)
+
+    serie = out.reset_index()
     anos = (serie["Data"].iloc[-1] - serie["Data"].iloc[0]).days / 365.25 if len(serie) > 1 else 0
     ret = (carteira.iloc[-1] / 100.0) - 1.0
     cagr = ((1 + ret) ** (1 / anos) - 1) if anos > 0.5 else None
     return serie, {"retorno_total": round(ret, 4),
                    "cagr": round(cagr, 4) if cagr is not None else None,
-                   "anos": round(anos, 1), "n_ativos": len(mat.columns)}
+                   "anos": round(anos, 1), "n_ativos": len(mat.columns),
+                   "bench_retorno": bench_ret}

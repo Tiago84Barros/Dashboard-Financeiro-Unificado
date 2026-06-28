@@ -149,17 +149,26 @@ def _tab_backtest() -> None:
         return
     st.caption("Retorno total (preço + proventos reinvestidos), buy-and-hold com "
                "os pesos da carteira-modelo, mensal.")
+    bench_nome = "IFIX (XFIX11)"   # a brapi não tem histórico do IFIX puro; XFIX11 (ETF) o replica
     series = _mr.load_fii_series(tuple(sorted(weights)))
+    bench = _mr.load_fii_series(("XFIX11",)).get("precos", {}).get("XFIX11")
     # adjusted_close já é RETORNO TOTAL (ajustado por proventos+splits) → não
-    # somar dividendos de novo (evita dupla contagem).
-    serie, met = _fz.backtest(weights, series.get("precos", {}), {})
+    # somar dividendos de novo (evita dupla contagem). XFIX11 é retorno total.
+    serie, met = _fz.backtest(weights, series.get("precos", {}), {},
+                              benchmark=bench, benchmark_nome=bench_nome)
     if serie.empty:
         st.warning("Sem série histórica suficiente para o backtest.")
         return
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Retorno total", f"{met['retorno_total']*100:.1f}%" if met["retorno_total"] is not None else "—")
-    k2.metric("CAGR", f"{met['cagr']*100:.1f}%" if met["cagr"] is not None else "—")
-    k3.metric("Período", f"{met['anos']} anos · {met['n_ativos']} ativos")
-    st.line_chart(serie.set_index("Data")["Carteira"])
-    st.caption("Índice base 100 no início. Retorno total reinveste os proventos "
-               "mensais. Não considera custos/impostos. Ferramenta educacional.")
+    bret = met.get("bench_retorno")
+    alpha = (met["retorno_total"] - bret) if (met["retorno_total"] is not None and bret is not None) else None
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Carteira (total)", f"{met['retorno_total']*100:.1f}%" if met["retorno_total"] is not None else "—",
+              f"CAGR {met['cagr']*100:.1f}%" if met["cagr"] is not None else None)
+    k2.metric("IFIX (benchmark)", f"{bret*100:.1f}%" if bret is not None else "—")
+    k3.metric("Alfa vs IFIX", f"{alpha*100:+.1f} p.p." if alpha is not None else "—")
+    k4.metric("Período", f"{met['anos']} anos · {met['n_ativos']} ativos")
+    cols = [c for c in ("Carteira", bench_nome) if c in serie.columns]
+    st.line_chart(serie.set_index("Data")[cols])
+    st.caption("Índice base 100 no início da janela comum. Retorno total (cota + "
+               "proventos); o benchmark é o IFIX replicado pelo ETF XFIX11 (retorno "
+               "total de FIIs). Sem custos/impostos. Ferramenta educacional.")

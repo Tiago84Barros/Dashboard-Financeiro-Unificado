@@ -84,6 +84,9 @@ jobs:
       - name: FIIs — séries históricas (preços + rendimentos p/ backtest)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis-series --json
+      - name: Benchmark FIIs (IFIX via ETF XFIX11 p/ backtest)
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py benchmark --json
       - name: Setores — taxonomia B3 (public.setores + mapa aprendido CVM->B3)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py setores --json

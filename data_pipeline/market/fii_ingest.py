@@ -102,6 +102,41 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
     return prog
 
 
+def ingest_benchmark(ticker: str = "XFIX11") -> dict:
+    """
+    Persiste o histórico do benchmark de FIIs em market.historical_prices.
+
+    A brapi NÃO serve histórico do índice IFIX puro (símbolo "IFIX" devolve só a
+    cotação spot). Usamos o ETF **XFIX11** (Trend ETF IFIX Fundo de Índice), que
+    replica o IFIX e tem `adjustedClose` (retorno total) com ~69 meses de série —
+    proxy correto do IFIX para comparar com a carteira no backtest.
+    """
+    from data_pipeline.market import normalize as nz
+    engine = _engine()
+    prog = {"ticker": ticker, "precos": 0, "erros": 0}
+    if engine is None:
+        return {**prog, "erros": -1}
+    try:
+        quote = brapi.fetch_quote(ticker, range_="max", interval="1mo",
+                                  dividends=False, fundamental=False)
+    except Exception as exc:
+        logger.warning("ingest_benchmark %s: %s", ticker, exc)
+        return {**prog, "erros": -1}
+    if not quote:
+        return {**prog, "erros": -1}
+    with engine.begin() as conn:
+        if not _schema_ready(conn):
+            return {**prog, "erros": -1}
+        repo.save_raw_payload(conn, ticker, "quote", quote, status="success")
+        # asset_type 'other' (o CHECK não tem 'index'); benchmark é lido por ticker.
+        repo.upsert(conn, "assets", [{
+            "ticker": ticker, "company_id": None, "asset_type": "other",
+            "exchange": "B3", "currency": "BRL", "is_active": True}])
+        prog["precos"] = repo.upsert(conn, "historical_prices", nz.price_rows(quote))
+    logger.info("market/ingest_benchmark: %s", prog)
+    return prog
+
+
 def backfill_series() -> dict:
     """
     Persiste as SÉRIES históricas dos FIIs (preços + rendimentos) em
