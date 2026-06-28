@@ -535,7 +535,6 @@ def _yf_trailing12m_divs(ticker: str) -> float:
     return 0.0
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 # Nota: o backtest deixou de baixar/reinvestir dividendos mensais — o preço
 # (adjusted_close, retorno total) já embute proventos. A antiga
 # _batch_yf_dividendos_mensais foi removida por dupla contagem.
