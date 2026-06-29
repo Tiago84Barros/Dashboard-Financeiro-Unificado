@@ -23,6 +23,7 @@ from core.llm_b3 import (
     chat_com_portfolio,
     llm_disponivel,
     parse_chart_directives,
+    provedores_disponiveis,
     redistribuir_pesos,
 )
 from core.llm_context_b3 import build_llm_context_for_portfolio_chat
@@ -584,6 +585,7 @@ def _executar_analise(
     n_com_docs = sum(1 for it in items if (cobertura_docs or {}).get(it["ticker"], 0) > 0)
 
     items_analisados: list[dict] = []
+    erros: list[str] = []          # erros de LLM capturados — exibidos após o rerun
     prog = st.progress(0, text="Analisando empresas via LLM…")
 
     for idx, it in enumerate(items):
@@ -624,8 +626,15 @@ def _executar_analise(
             )
         except Exception as exc:
             st.warning(f"{tk}: erro LLM — {exc}")
+            erros.append(f"{tk}: {exc}")
             from core.llm_b3 import _fallback_empresa
             analise = _fallback_empresa(tk, peso_pct_)
+        else:
+            # analisar_empresa não levanta exceção quando _parse_json cai no
+            # fallback silenciosamente — detecta esse caso para reportar a falha.
+            if "(erro de parsing)" in str(analise.get("resumo", "")):
+                erros.append(f"{tk}: resposta da LLM não pôde ser interpretada "
+                             "(JSON inválido).")
 
         items_analisados.append({
             "ticker":     tk,
@@ -645,8 +654,13 @@ def _executar_analise(
     with st.spinner("Gerando relatório consolidado do portfólio…"):
         try:
             port_analise = analisar_portfolio(items_analisados, macro_hist)
+            if port_analise.get("resumo_executivo") == "Relatório indisponível.":
+                # _parse_json caiu no fallback (resposta da LLM não era JSON válido).
+                erros.append("Relatório consolidado: resposta da LLM não pôde ser "
+                             "interpretada (JSON inválido).")
         except Exception as exc:
             st.warning(f"Análise de portfólio falhou: {exc}")
+            erros.append(f"Relatório consolidado: {exc}")
             from core.llm_b3 import _fallback_portfolio
             port_analise = _fallback_portfolio()
 
@@ -658,6 +672,7 @@ def _executar_analise(
         "port_analise":     port_analise,
         "pesos_novos":      pesos_novos,
         "mode":             mode,
+        "erros":            erros,
     }
 
 
@@ -1114,11 +1129,17 @@ def render(show_header: bool = True) -> None:
 
     if not llm_disponivel():
         st.warning(
-            "OpenAI API Key não configurada. "
-            "Adicione `OPENAI_API_KEY` no `.env` ou nos Streamlit Secrets para ativar a análise LLM.",
+            "Nenhum provedor LLM configurado. Adicione `OPENAI_API_KEY` e/ou "
+            "`GEMINI_API_KEY` no `.env` ou nos Streamlit Secrets para ativar a análise LLM.",
             icon="⚠️",
         )
         return
+
+    _provs = provedores_disponiveis()
+    if _provs:
+        _lbl = {"openai": "OpenAI", "gemini": "Gemini"}
+        _txt = " → ".join(_lbl.get(p, p) for p in _provs)
+        st.caption(f"🤖 Provedores LLM ativos (com fallback automático): **{_txt}**")
 
     col_mode, col_btn, col_reset = st.columns([2, 2, 1])
     with col_mode:
@@ -1162,6 +1183,21 @@ def render(show_header: bool = True) -> None:
         items_an    = state["items_analisados"]
         port_an     = state["port_analise"]
         pesos_novos = state["pesos_novos"]
+        erros       = state.get("erros", [])
+
+        # Erros de LLM persistem no state e reaparecem após o rerun — sem isso o
+        # relatório saía em branco ("Relatório indisponível.") sem explicar a causa.
+        if erros:
+            with st.expander(f"⚠️ {len(erros)} falha(s) na análise LLM — relatório pode estar incompleto",
+                             expanded=True):
+                for e in erros:
+                    st.markdown(f"- {e}")
+                st.caption(
+                    "Causas comuns: cota/limite atingido em **todos** os provedores "
+                    "(OpenAI e Gemini), chave sem acesso ao modelo, ou timeout. "
+                    "Configure `GEMINI_API_KEY` como fallback, verifique chave/cota e "
+                    "clique novamente em **Executar Análise LLM**."
+                )
 
         st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
         _render_relatorio_consolidado(port_an)

@@ -65,6 +65,15 @@ class Settings:
     AI_TIMEOUT_S: int = int(_get_secret("AI_TIMEOUT_S", "45"))
     AI_MAX_RETRIES: int = int(_get_secret("AI_MAX_RETRIES", "2"))
 
+    # ── Gemini (provedor de fallback) ─────────────────────────────────────────
+    # Usado automaticamente quando a OpenAI falha (ex.: cota 429). Acessado via
+    # endpoint compatível com a API da OpenAI, então reaproveita o mesmo SDK.
+    # Aceita GEMINI_API_KEY ou GOOGLE_API_KEY.
+    GEMINI_API_KEY: str = _get_secret("GEMINI_API_KEY") or _get_secret("GOOGLE_API_KEY")
+    GEMINI_MODEL: str = _get_secret("GEMINI_MODEL", "gemini-2.0-flash")
+    GEMINI_BASE_URL: str = _get_secret(
+        "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+
     # ── Ambiente ──────────────────────────────────────────────────────────────
     APP_ENV: str = _get_secret("APP_ENV", "development")
     MOCK_MODE: bool = _get_secret("MOCK_MODE", "true").lower() == "true"
@@ -122,6 +131,15 @@ class Settings:
     @property
     def has_openai(self) -> bool:
         return bool(self.OPENAI_API_KEY)
+
+    @property
+    def has_gemini(self) -> bool:
+        return bool(self.GEMINI_API_KEY)
+
+    @property
+    def has_llm(self) -> bool:
+        """True se houver ao menos um provedor LLM configurado (OpenAI ou Gemini)."""
+        return bool(self.OPENAI_API_KEY or self.GEMINI_API_KEY)
 
     @property
     def has_owner(self) -> bool:

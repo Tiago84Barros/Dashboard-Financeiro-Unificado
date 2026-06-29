@@ -20,12 +20,18 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 _MODEL_DEFAULT = "gpt-4o-mini"
+_GEMINI_MODEL_DEFAULT = "gemini-2.0-flash"
+_GEMINI_BASE_URL_DEFAULT = "https://generativelanguage.googleapis.com/v1beta/openai/"
 _TEMPERATURE   = 0.2
 _TIMEOUT       = 90
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Cliente OpenAI (resource-cached — uma instância por sessão)
+# Provedores LLM (resource-cached) — OpenAI primário, Gemini como fallback.
+#
+# Gemini é acessado pelo endpoint compatível com a API da OpenAI, então o MESMO
+# SDK (openai) atende os dois — basta trocar api_key/base_url/modelo. Quando a
+# OpenAI falha (ex.: cota 429), a cadeia tenta o Gemini automaticamente.
 # ─────────────────────────────────────────────────────────────────────────────
 
 @st.cache_resource
@@ -42,20 +48,106 @@ def _get_openai_client():
         return None
 
 
+@st.cache_resource
+def _get_gemini_client():
+    try:
+        from openai import OpenAI
+        from core.config import settings
+        key = (getattr(settings, "GEMINI_API_KEY", None)
+               or os.environ.get("GEMINI_API_KEY", "")
+               or os.environ.get("GOOGLE_API_KEY", ""))
+        if not key:
+            return None
+        base = getattr(settings, "GEMINI_BASE_URL", None) or _GEMINI_BASE_URL_DEFAULT
+        return OpenAI(api_key=key, base_url=base, timeout=_TIMEOUT)
+    except Exception as exc:
+        logger.warning("Gemini client init falhou: %s", exc)
+        return None
+
+
+def _gemini_model() -> str:
+    try:
+        from core.config import settings
+        return getattr(settings, "GEMINI_MODEL", None) or _GEMINI_MODEL_DEFAULT
+    except Exception:
+        return _GEMINI_MODEL_DEFAULT
+
+
+def _provider_chain(primary_model: str | None = None) -> list[tuple]:
+    """
+    Lista de (nome, client, modelo) na ordem de preferência: OpenAI → Gemini.
+    Inclui apenas os provedores com chave configurada.
+    """
+    chain: list[tuple] = []
+    oc = _get_openai_client()
+    if oc is not None:
+        chain.append(("openai", oc, primary_model or _MODEL_DEFAULT))
+    gc = _get_gemini_client()
+    if gc is not None:
+        chain.append(("gemini", gc, _gemini_model()))
+    return chain
+
+
 def llm_disponivel() -> bool:
-    return _get_openai_client() is not None
+    return bool(_provider_chain())
+
+
+def provedores_disponiveis() -> list[str]:
+    """Nomes dos provedores LLM ativos (para exibição na UI)."""
+    return [nome for nome, _c, _m in _provider_chain()]
+
+
+def _chat_complete(
+    messages: list[dict],
+    temperature: float = _TEMPERATURE,
+    json_mode: bool = False,
+    primary_model: str | None = None,
+) -> str:
+    """
+    Executa um chat completion com fallback entre provedores. Tenta OpenAI e,
+    se falhar (cota/erro), tenta o Gemini. `json_mode` pede resposta JSON estrita
+    (degrada para chamada simples se o provedor não suportar response_format).
+    Levanta RuntimeError só se TODOS os provedores falharem.
+    """
+    chain = _provider_chain(primary_model)
+    if not chain:
+        raise RuntimeError(
+            "Nenhum provedor LLM configurado — defina OPENAI_API_KEY e/ou "
+            "GEMINI_API_KEY no .env / Streamlit Secrets."
+        )
+    erros: list[str] = []
+    for nome, client, modelo in chain:
+        try:
+            if json_mode:
+                try:
+                    resp = client.chat.completions.create(
+                        model=modelo, messages=messages, temperature=temperature,
+                        response_format={"type": "json_object"},
+                    )
+                    return resp.choices[0].message.content
+                except Exception as exc_json:
+                    logger.warning("JSON mode falhou em %s (%s) — tentando sem response_format.",
+                                   nome, exc_json)
+            resp = client.chat.completions.create(
+                model=modelo, messages=messages, temperature=temperature,
+            )
+            if nome != "openai":
+                logger.info("LLM respondido pelo provedor de fallback: %s (%s)", nome, modelo)
+            return resp.choices[0].message.content
+        except Exception as exc:
+            erros.append(f"{nome}({modelo}): {exc}")
+            logger.warning("Provedor LLM %s falhou: %s", nome, exc)
+            continue
+    raise RuntimeError("Todos os provedores LLM falharam — " + " | ".join(erros))
 
 
 def _call_llm(prompt: str, model: str = _MODEL_DEFAULT) -> str:
-    client = _get_openai_client()
-    if client is None:
-        raise RuntimeError("OPENAI_API_KEY não configurada em .env / Streamlit Secrets.")
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=_TEMPERATURE,
+    # Os prompts de análise pedem JSON estrito; json_mode garante resposta
+    # parseável e evita o fallback silencioso de parsing.
+    return _chat_complete(
+        [{"role": "user", "content": prompt}],
+        temperature=_TEMPERATURE, json_mode=True, primary_model=model,
     )
-    return resp.choices[0].message.content
 
 
 def _parse_json(raw: str, fallback: dict) -> dict:
@@ -195,11 +287,17 @@ SCORE QUANTITATIVO (0-100): {score:.1f} | ALPHA vs SELIC (histórico): {alpha_se
 === CENÁRIO MACROECONÔMICO ===
 {macro}
 
-=== DOCUMENTOS CORPORATIVOS CVM/IPE (trechos relevantes) ===
+=== DOCUMENTOS CORPORATIVOS CVM/IPE (trechos relevantes, em ordem cronológica) ===
 {rag_context}
 
 === CONTEXTO DO PORTFÓLIO ===
 {portfolio_ctx}
+
+Os trechos CVM/IPE vêm com a data no cabeçalho [AAAA-MM-DD | tipo | título] e estão em ordem \
+cronológica. Quando houver documentos: (1) leia os fatos na sequência temporal, encadeando o que \
+mudou ao longo do tempo (guidance, CAPEX, dividendos, emissões de dívida, aquisições, decisões \
+judiciais); (2) identifique a TENDÊNCIA que essa evolução sugere; (3) ancore 'resumo', 'catalisadores', \
+'riscos' e 'tese_final' em fatos datados reais (cite a data/assunto), nunca em suposições genéricas.
 
 Com base nos dados acima, nos documentos CVM quando disponíveis, e no seu conhecimento sobre esta \
 empresa, setor e macroeconomia brasileira, gere uma análise estruturada em JSON com EXATAMENTE \
@@ -396,10 +494,6 @@ def chat_com_portfolio(
     Responde perguntas sobre o portfólio usando o contexto pré-compilado da análise.
     history: lista de {"role": "user"|"assistant", "content": str}
     """
-    client = _get_openai_client()
-    if client is None:
-        raise RuntimeError("OPENAI_API_KEY não configurada.")
-
     system = (
         "Você é uma ANALISTA FUNDAMENTALISTA E ESTRATÉGICA DE PORTFÓLIO especializada no "
         "mercado brasileiro (B3). O CONTEXTO abaixo contém dados REAIS extraídos do banco: "
@@ -417,7 +511,12 @@ def chat_com_portfolio(
         "4. Aponte limitações dos dados; só afirme que algo não existe se REALMENTE não "
         "constar no contexto. Cite a fonte interna ('carteira', 'banco', 'setor', 'documentos CVM').\n"
         "5. Sugira substituições/inclusões SOMENTE com evidência quantitativa explícita.\n"
-        "6. Separe claramente DADO OBJETIVO de OPINIÃO analítica.\n\n"
+        "6. Separe claramente DADO OBJETIVO de OPINIÃO analítica.\n"
+        "7. DOCUMENTOS CVM/IPE: os trechos vêm com data no cabeçalho [AAAA-MM-DD | tipo | título] "
+        "e em ordem cronológica. Ao analisar uma empresa (esteja ela DENTRO ou FORA da carteira), "
+        "encadeie os fatos na linha do tempo, mostre como guidance/CAPEX/dividendos/dívida/aquisições "
+        "evoluíram e conclua com a TENDÊNCIA e o que esperar — sempre citando as datas dos fatos. "
+        "Se não houver documentos para o ticker citado, diga isso e use fundamentos + setor.\n\n"
         "FORMATO DA RESPOSTA (use só as seções aplicáveis, em markdown):\n"
         "**Resumo** · **Dados utilizados** · **Comparação dentro da carteira** · "
         "**Comparação com empresas fora** · **Pontos fortes** · **Pontos de atenção** · "
@@ -438,12 +537,8 @@ def chat_com_portfolio(
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_message})
 
-    resp = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=0.3,
-    )
-    return resp.choices[0].message.content
+    # Chat livre (markdown), sem JSON mode. Usa a cadeia OpenAI → Gemini.
+    return _chat_complete(messages, temperature=0.3, json_mode=False, primary_model=model)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
