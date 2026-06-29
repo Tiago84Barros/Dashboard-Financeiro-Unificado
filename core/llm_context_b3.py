@@ -403,6 +403,16 @@ def build_llm_context_for_portfolio_chat(
         if block:
             parts += ["", block]
 
+    # Documentos CVM/IPE SOB DEMANDA para qualquer ticker citado na pergunta
+    # (dentro OU fora da carteira). Aplica os mesmos critérios do RAG (limpeza de
+    # rodapé/disclaimer + ordem temporal), permitindo análise de ativos fora do
+    # portfólio diretamente no chat. O base_context já traz o RAG da carteira;
+    # aqui garantimos cobertura para os ativos externos consultados.
+    if q_tickers:
+        docs_block = get_chunks_context(user_question, q_tickers, cobertura_docs)
+        if docs_block:
+            parts += ["", docs_block]
+
     if "creation" in intent or "compare_outside" in intent:
         parts += ["", get_creation_context(model)]
 
