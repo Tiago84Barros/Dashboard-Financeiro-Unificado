@@ -596,7 +596,17 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
     if df_set.empty:
         st.info("Nenhuma ação encontrada na lista de setores.")
         return
-    for setor, grupo in df_set.groupby("SETOR"):
+    # Ordena setor → subsetor → segmento → ticker (alfabético, case-insensitive).
+    # Assim os setores saem em ordem alfabética e, dentro de cada setor, as
+    # empresas ficam agrupadas por subsetor e segmento antes do ticker.
+    _ord_cols = [c for c in ("SETOR", "SUBSETOR", "SEGMENTO", "ticker")
+                 if c in df_set.columns]
+    df_set = df_set.sort_values(
+        by=_ord_cols,
+        key=lambda s: s.astype(str).str.upper(),
+        kind="stable",
+    ).reset_index(drop=True)
+    for setor, grupo in df_set.groupby("SETOR", sort=False):
         st.markdown(f'<div class="b3-sector-hdr">{setor}</div>', unsafe_allow_html=True)
         grupo = grupo.reset_index(drop=True)
         for i in range(0, len(grupo), 4):
@@ -604,8 +614,10 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
             for j, (_, row) in enumerate(grupo.iloc[i:i+4].iterrows()):
                 tk   = row["ticker"]
                 nome = (row["nome_empresa"] or tk)[:28]
-                sub  = row.get("SUBSETOR", "") or ""
-                seg  = row.get("SEGMENTO",  "") or ""
+                sub  = (row.get("SUBSETOR", "") or "").strip()
+                seg  = (row.get("SEGMENTO",  "") or "").strip()
+                # Subsetor · Segmento (omite partes vazias e o "·" sobrando).
+                tag  = " · ".join(p for p in (sub, seg) if p) or "—"
                 logo = _logo_url(tk)
                 with cols[j]:
                     st.markdown(
@@ -618,9 +630,7 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
                         f'      <div class="b3-card-nome">{nome}</div>'
                         f'    </div>'
                         f'  </div>'
-                        f'  <div class="b3-card-tag">{sub}'
-                        f'    {(" · " + seg) if seg else ""}'
-                        f'  </div>'
+                        f'  <div class="b3-card-tag">{tag}</div>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
