@@ -9,6 +9,8 @@ Logos:           thefintz/icones-b3 CDN (público, sem auth)
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -544,6 +546,35 @@ def _yf_trailing12m_divs(ticker: str) -> float:
 # TAB 1 — Empresas por Setor
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _eh_acao(ticker: str, nome: str = "") -> bool:
+    """
+    True só para AÇÕES (ON/PN/units de empresas); filtra FIIs, ETFs, BDRs e
+    subscrições do card. Critério por sufixo do ticker B3:
+      3/4/5/6/7/8 → ON/PN/PNA/PNB/PNC/PND (ação);
+      11          → unit: ação só se tiver nome real (senão é FII/ETF);
+      demais (34/35/32, 3511, 211, 12…) → BDR/subscrição/outro → não-ação.
+    """
+    m = re.search(r"(\d+)$", str(ticker).strip().upper())
+    if not m:
+        return False
+    num = m.group(1)
+    if num in {"3", "4", "5", "6", "7", "8"}:
+        return True
+    if num == "11":
+        n = str(nome or "").strip()
+        return n != "" and n.upper() != str(ticker).strip().upper()
+    return False
+
+
+def _so_acoes(df_set: pd.DataFrame) -> pd.DataFrame:
+    """Mantém só ações no card de Empresas B3 (remove FIIs/ETFs/BDRs)."""
+    if df_set.empty or "ticker" not in df_set.columns:
+        return df_set
+    mask = df_set.apply(
+        lambda r: _eh_acao(r["ticker"], r.get("nome_empresa", "")), axis=1)
+    return df_set[mask].reset_index(drop=True)
+
+
 def _tab_empresas(df_set: pd.DataFrame) -> None:
     busca = st.text_input("🔍 Buscar ticker (ex.: PETR4)", key="b3_busca",
                           placeholder="Digite e pressione Enter")
@@ -559,6 +590,11 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
             "Tabela `setores` não encontrada no banco configurado. "
             "Configure `SUPABASE_DB_URL_B3` no `.env` ou nos secrets do Streamlit Cloud."
         )
+        return
+    # Card mostra só AÇÕES — remove FIIs, ETFs, BDRs e subscrições.
+    df_set = _so_acoes(df_set)
+    if df_set.empty:
+        st.info("Nenhuma ação encontrada na lista de setores.")
         return
     for setor, grupo in df_set.groupby("SETOR"):
         st.markdown(f'<div class="b3-sector-hdr">{setor}</div>', unsafe_allow_html=True)
