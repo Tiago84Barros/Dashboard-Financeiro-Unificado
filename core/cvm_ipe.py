@@ -26,23 +26,35 @@ logger = logging.getLogger(__name__)
 IPE_BASE = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS"
 SOURCE_NAME = "CVM/IPE"
 
-# Categorias IPE relevantes (match por substring, case-insensitive) — foco em
-# informação sensível a preço. Configurável pelo job.
+# Categorias IPE relevantes (match por substring, case-insensitive) — foco
+# ESTRITO em informação sensível a preço e fundamento. Categorias de alto volume
+# e baixo valor analítico (posições art.11 "Valores Mobiliários negociados e
+# detidos", Assembleia, Reunião da Administração, Calendário, Estatuto, Regimentos
+# e Políticas de governança) ficam DE FORA para não afogar o sinal no RAG —
+# decisões materiais dessas reuniões reaparecem como Fato Relevante/Comunicado.
+# Configurável pelo job via parâmetro `categorias`.
 RELEVANT_CATEGORIES = (
+    # Eventos materiais / sensíveis a preço
     "fato relevante",
     "comunicado ao mercado",
+    # Resultados e dados financeiros
     "dados econômico-financeiros",
     "dados economico-financeiros",
     "press-release",
     "press release",
+    # Remuneração ao acionista (proventos)
     "aviso aos acionistas",
-    "assembleia",
-    "calendário de eventos",
-    "calendario de eventos",
-    "reunião da administração",
-    "reuniao da administracao",
-    "política de",
-    "politica de",
+    "proventos",                       # "Relatório Proventos"
+    # Estrutura de capital / dívida
+    "oferta de distribuição",
+    "oferta de distribuicao",
+    "debêntures",                      # "Escrituras e aditamentos de debêntures"
+    "debentures",
+    # Eventos críticos / controle
+    "recuperação judicial",
+    "recuperacao judicial",
+    "oferta pública de aç",            # OPA — "OPA - Edital de Oferta Pública de Ações"
+    "oferta publica de aç",
 )
 
 _HEADER = "User-Agent: Mozilla/5.0 (compatible; DashboardFinanceiro/1.0)"
