@@ -127,6 +127,16 @@ def _signal_rank(tipo_doc: str, titulo: str = "") -> int:
     return 1
 
 
+def _is_meta_stub(texto: str) -> bool:
+    """
+    True se o chunk é só um resumo de METADADOS (extração ipe_meta_v1: "Empresa:
+    … | Categoria: … | Assunto: … | Data: …"), sem o texto real do documento.
+    Esses stubs não trazem números e devem perder para chunks de texto completo.
+    """
+    t = (texto or "").lstrip()
+    return t.startswith("Empresa:") and "| Categoria:" in t
+
+
 def _clean_chunk_text(texto: str) -> str:
     """Remove o rodapé cosmético (site, e-mail, telefone, endereço, marca PÚBLICA)."""
     t = texto or ""
@@ -423,6 +433,80 @@ def _search_semantic(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Âncoras determinísticas — garante os marcos operacionais mais recentes
+#
+# A busca semântica decide POR DISTÂNCIA quais chunks entram; um Fato Relevante
+# de CAPEX/guidance pode ficar de fora se não estiver perto de nenhum tópico.
+# Esta busca traz, INDEPENDENTE do score, os documentos mais recentes de alto
+# sinal (Fato Relevante, Resultados, e títulos com CAPEX/guidance/produção/
+# dividendos), para que os números-âncora sempre cheguem à LLM.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _search_anchor_recent(conn: Any, ticker: str, lim: int, months_back: int) -> list[dict]:
+    where_date = ""
+    if months_back > 0:
+        where_date = """
+            AND (
+                c.document_date IS NULL
+                OR c.document_date >= (CURRENT_DATE - (:months_back || ' months')::interval)
+            )
+        """
+    sql = f"""
+        SELECT
+            c.chunk_text,
+            COALESCE(c.document_date, d.document_date, d.data)::text   AS data_doc,
+            COALESCE(NULLIF(d.tipo, ''), NULLIF(d.categoria, ''),
+                     NULLIF(c.categoria, ''), '')                      AS tipo_doc,
+            COALESCE(d.titulo, '')                                     AS titulo
+        FROM public.docs_corporativos_chunks c
+        JOIN public.docs_corporativos d ON d.id = c.doc_id
+        WHERE LEFT(UPPER(c.ticker), 4) = :root
+          -- Só texto completo: o LIMIT por recência não pode ser consumido pelos
+          -- stubs de metadados (extraction_version 'ipe_meta_v1') do backfill.
+          AND COALESCE(d.extraction_version, '') <> 'ipe_meta_v1'
+          AND LOWER(COALESCE(d.tipo, '') || ' ' || COALESCE(d.categoria, '') || ' '
+                    || COALESCE(d.titulo, ''))
+              ~ 'fato relevante|econ[oô]mico-financ|guidance|capex|produ[çc][aã]o|dividend|provento|resultado'
+          {where_date}
+        ORDER BY COALESCE(c.document_date, d.document_date, d.data) DESC NULLS LAST,
+                 c.chunk_index ASC
+        LIMIT :lim
+    """
+    params: dict = {"root": _ticker_root(ticker), "lim": lim}
+    if months_back > 0:
+        params["months_back"] = months_back
+    try:
+        rows = conn.execute(text(sql), params).fetchall()
+    except Exception as exc:
+        logger.debug("RAG: busca âncora falhou para %s: %s", ticker, exc)
+        return []
+    out: list[dict] = []
+    for r in rows:
+        texto = _clean_chunk_text(r[0] or "")
+        # Âncora só vale para texto REAL — stub de metadados não traz números.
+        if _is_meta_stub(texto) or not _chunk_is_relevant(texto):
+            continue
+        out.append({"chunk_text": texto, "data_doc": r[1], "tipo_doc": r[2],
+                    "titulo": r[3], "dist": None})
+    return out
+
+
+def _merge_dedup(primary: list[dict], secondary: list[dict], cap: int) -> list[dict]:
+    """Une mantendo `primary` (âncoras) à frente; dedup por prefixo do texto."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for h in (*primary, *secondary):
+        key = (h.get("chunk_text") or "")[:200]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(h)
+        if len(out) >= cap:
+            break
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Recuperação principal
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -458,6 +542,10 @@ def retrieve_chunks(
                 stats["mode"] = "no_table"
                 return [], stats
 
+            # Âncoras determinísticas: marcos operacionais recentes de alto sinal,
+            # mesclados em qualquer modo para nunca ficarem de fora por score.
+            anchors = _search_anchor_recent(conn, tk, max(8, top_k_total // 5), months_back)
+
             use_semantic = _has_embeddings(tk)
 
             if use_semantic:
@@ -485,15 +573,18 @@ def retrieve_chunks(
                             seen.add(key)
                             dedup.append(h)
                     dedup.sort(key=lambda x: float(x.get("dist") or 1e9))
-                    final = dedup[:top_k_total]
+                    final = _merge_dedup(anchors, dedup, top_k_total + len(anchors))
                     stats["mode"] = "semantic"
                     stats["total_hits"] = len(final)
+                    stats["anchors"] = len(anchors)
                     return final, stats
 
             # Temporal (padrão quando sem embeddings, ou fallback)
-            final = _search_temporal(conn, tk, top_k_total, months_back)
+            temporal = _search_temporal(conn, tk, top_k_total, months_back)
+            final = _merge_dedup(anchors, temporal, top_k_total + len(anchors))
             stats["mode"] = "temporal"
             stats["total_hits"] = len(final)
+            stats["anchors"] = len(anchors)
             return final, stats
 
     except Exception as exc:
@@ -520,11 +611,15 @@ def format_rag_context(chunks: list[dict], max_chars: int = 12000) -> str:
     if not chunks:
         return "  Nenhum documento CVM disponível para este ativo."
 
-    # Reordena por prioridade de sinal (estável: mantém o ranking original no empate).
-    chunks = [c for _, c in sorted(
-        enumerate(chunks),
-        key=lambda t: (-_signal_rank(t[1].get("tipo_doc", ""), t[1].get("titulo", "")), t[0]),
-    )]
+    # Reordena a SELEÇÃO: texto completo antes de stubs de metadados; depois por
+    # sinal (Fato Relevante/Resultados primeiro); recência/relevância no empate.
+    def _sel_key(t):
+        idx, ch = t
+        substantivo = 0 if _is_meta_stub(ch.get("chunk_text", "")) else 1
+        return (-substantivo,
+                -_signal_rank(ch.get("tipo_doc", ""), ch.get("titulo", "")),
+                idx)
+    chunks = [c for _, c in sorted(enumerate(chunks), key=_sel_key)]
 
     selecionados: list[dict] = []
     total = 0
