@@ -52,6 +52,10 @@ def ipe_csv_url(year: int) -> str:
     return f"{IPE_BASE}/ipe_cia_aberta_{int(year)}.csv"
 
 
+def ipe_zip_url(year: int) -> str:
+    return f"{IPE_BASE}/ipe_cia_aberta_{int(year)}.zip"
+
+
 def _to_int(v) -> int | None:
     try:
         return int(str(v).strip())
@@ -291,15 +295,41 @@ def fetch_document(url: str, timeout: int = 45) -> bytes:
 # ── IO (rede) ─────────────────────────────────────────────────────────────────
 
 def fetch_ipe_csv(year: int, timeout: int = 60) -> bytes | None:
-    """Baixa o CSV anual do IPE. Retorna None em falha (sem levantar)."""
+    """
+    Baixa o dataset anual do IPE e retorna os BYTES do CSV. Retorna None em falha.
+
+    A CVM passou a distribuir o arquivo como .zip (contendo o .csv); o .csv direto
+    agora dá 404. Tenta o .zip primeiro (extrai o CSV interno) e cai no .csv legado
+    como reserva, mantendo compatibilidade caso a CVM volte ao formato antigo.
+    """
+    import requests
+    headers = {"User-Agent": "DashboardFinanceiro/1.0 (+data-quality)"}
+
+    # 1) Formato atual: ZIP contendo o CSV.
     try:
-        import requests
-        url = ipe_csv_url(year)
-        resp = requests.get(url, timeout=timeout,
-                            headers={"User-Agent": "DashboardFinanceiro/1.0 (+data-quality)"})
+        resp = requests.get(ipe_zip_url(year), timeout=timeout, headers=headers)
+        if resp.status_code == 200 and resp.content:
+            import io as _io
+            import zipfile
+            try:
+                zf = zipfile.ZipFile(_io.BytesIO(resp.content))
+                name = next((n for n in zf.namelist() if n.lower().endswith(".csv")), None)
+                if name:
+                    return zf.read(name)
+                logger.warning("fetch_ipe_csv %s: zip sem .csv interno", year)
+            except zipfile.BadZipFile:
+                return resp.content  # servido como .zip mas já é o CSV cru
+        else:
+            logger.warning("fetch_ipe_csv zip %s: HTTP %s", year, resp.status_code)
+    except Exception as exc:
+        logger.warning("fetch_ipe_csv zip %s falhou: %s", year, exc)
+
+    # 2) Legado: CSV direto.
+    try:
+        resp = requests.get(ipe_csv_url(year), timeout=timeout, headers=headers)
         if resp.status_code == 200 and resp.content:
             return resp.content
-        logger.warning("fetch_ipe_csv %s: HTTP %s", year, resp.status_code)
+        logger.warning("fetch_ipe_csv csv %s: HTTP %s", year, resp.status_code)
     except Exception as exc:
-        logger.warning("fetch_ipe_csv %s falhou: %s", year, exc)
+        logger.warning("fetch_ipe_csv csv %s falhou: %s", year, exc)
     return None

@@ -30,17 +30,56 @@ _MAX_INSERT = 400  # teto de docs novos por execução
 
 
 def _codigo_to_ticker(conn) -> dict[int, str]:
+    """
+    Mapa codigo_cvm → ticker do UNIVERSO da B3.
+
+    Fonte primária: registro oficial `cvm_to_ticker` cruzado com `setores`
+    (universo do app). Antes este mapa era derivado de
+    `docs_corporativos.codigo_cvm`, mas essa coluna está 100% NULL — o mapa saía
+    vazio e o coletor pulava TODA execução (status="skipped"), nunca ingerindo
+    nada para empresas ainda sem documento (problema de bootstrap ovo-e-galinha).
+    O registro cobre ~263/266 tickers do universo, incluindo os que nunca foram
+    coletados. Complementa com qualquer codigo_cvm já presente em
+    docs_corporativos (retrocompatibilidade).
+    """
     from sqlalchemy import text
-    rows = conn.execute(text("""
-        SELECT DISTINCT codigo_cvm, ticker FROM public.docs_corporativos
-        WHERE codigo_cvm IS NOT NULL AND ticker IS NOT NULL
-    """)).fetchall()
     out: dict[int, str] = {}
-    for cod, tk in rows:
+
+    def _add(cod, tk, *, overwrite: bool) -> None:
         try:
-            out[int(cod)] = str(tk).upper().replace(".SA", "")
-        except Exception:
-            continue
+            ci = int(cod)
+        except (TypeError, ValueError):
+            return
+        tk = str(tk or "").upper().replace(".SA", "").strip()
+        if not tk:
+            return
+        if overwrite or ci not in out:
+            out[ci] = tk
+
+    # 1) Registro oficial ∩ universo (cobre empresas sem nenhum documento ainda).
+    try:
+        rows = conn.execute(text('''
+            SELECT DISTINCT c."CVM" AS cod, UPPER(s.ticker) AS ticker
+            FROM public.cvm_to_ticker c
+            JOIN public.setores s ON UPPER(s.ticker) = UPPER(c."Ticker")
+            WHERE c."CVM" IS NOT NULL
+        ''')).fetchall()
+        for cod, tk in rows:
+            _add(cod, tk, overwrite=True)
+    except Exception as exc:
+        logger.warning("update_cvm_ipe: cvm_to_ticker indisponível (%s)", exc)
+
+    # 2) Complemento: codigo_cvm já registrado em docs_corporativos (se houver).
+    try:
+        rows = conn.execute(text("""
+            SELECT DISTINCT codigo_cvm, ticker FROM public.docs_corporativos
+            WHERE codigo_cvm IS NOT NULL AND ticker IS NOT NULL
+        """)).fetchall()
+        for cod, tk in rows:
+            _add(cod, tk, overwrite=False)
+    except Exception:
+        pass
+
     return out
 
 
@@ -152,16 +191,20 @@ def run() -> dict:
                     if doc_id is None:
                         continue
                     inserted_docs += 1
-                    # chunk-resumo (RAG-visível)
+                    # chunk-resumo (RAG-visível). chunk_hash inclui a URL (única por
+                    # doc) p/ não colidir quando dois documentos têm metadados idênticos
+                    # — colisão antes derrubava a transação inteira. ON CONFLICT reforça.
                     conn.execute(text("""
                         INSERT INTO public.docs_corporativos_chunks
                           (doc_id, ticker, chunk_index, chunk_text, chunk_hash,
                            categoria, document_date, chunking_version, ingestion_run_id)
                         VALUES
                           (:doc_id, :tk, 0, :ct, :chash, :cat, :dt, 'ipe_meta_v1', :rid)
+                        ON CONFLICT (chunk_hash) DO NOTHING
                     """), {
                         "doc_id": doc_id, "tk": d["ticker"], "ct": meta,
-                        "chash": ipe.sha256("chunk", meta), "cat": (d.get("categoria") or "")[:300],
+                        "chash": ipe.sha256("chunk", d["url"], meta),
+                        "cat": (d.get("categoria") or "")[:300],
                         "dt": dt, "rid": run_id,
                     })
                     inserted_chunks += 1

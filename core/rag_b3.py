@@ -93,6 +93,19 @@ _SUBSTANCE_MARKERS = (
 _NUM_RE = re.compile(r"(r\$|us\$|\d+[.,]?\d*\s*%|\d+[.,]?\d*\s*(bilh|milh|boed|bpd|mil))", re.I)
 
 
+def _ticker_root(tk: str) -> str:
+    """
+    Raiz do emissor (4 letras, sem o dígito de classe). PETR3/PETR4/PETR11 → PETR.
+
+    Documentos CVM/IPE são arquivados por empresa (codigo_cvm), mas no banco ficam
+    sob UMA classe de ação (ex.: PETR3). A carteira pode ter outra classe da MESMA
+    empresa (ex.: PETR4). Casar pela raiz garante que qualquer classe encontre os
+    documentos do emissor. Na B3 o prefixo de 4 letras identifica o emissor, então
+    não há colisão entre empresas distintas.
+    """
+    return re.sub(r"\d+$", "", str(tk or "").strip().upper())[:4]
+
+
 def _clean_chunk_text(texto: str) -> str:
     """Remove o rodapé cosmético (site, e-mail, telefone, endereço, marca PÚBLICA)."""
     t = texto or ""
@@ -156,21 +169,23 @@ def get_cobertura_docs(tickers: tuple[str, ...]) -> dict[str, int]:
             if not exists:
                 return {tk: 0 for tk in tickers}
 
-            ph = ", ".join(f":tk{i}" for i in range(len(tickers)))
-            params = {f"tk{i}": tk.upper() for i, tk in enumerate(tickers)}
+            # Conta por raiz do emissor (PETR3/PETR4 → PETR) para que qualquer
+            # classe enxergue os documentos da empresa.
+            roots = {tk: _ticker_root(tk) for tk in tickers}
+            uniq = sorted(set(roots.values()))
+            ph = ", ".join(f":r{i}" for i in range(len(uniq)))
+            params = {f"r{i}": r for i, r in enumerate(uniq)}
             rows = conn.execute(
                 text(f"""
-                    SELECT UPPER(ticker), COUNT(*) AS n
+                    SELECT LEFT(UPPER(ticker), 4) AS root, COUNT(*) AS n
                     FROM public.docs_corporativos_chunks
-                    WHERE UPPER(ticker) IN ({ph})
-                    GROUP BY UPPER(ticker)
+                    WHERE LEFT(UPPER(ticker), 4) IN ({ph})
+                    GROUP BY LEFT(UPPER(ticker), 4)
                 """),
                 params,
             ).fetchall()
-            result = {tk: 0 for tk in tickers}
-            for row in rows:
-                result[row[0]] = int(row[1])
-            return result
+            by_root = {row[0]: int(row[1]) for row in rows}
+            return {tk: by_root.get(roots[tk], 0) for tk in tickers}
     except Exception as exc:
         logger.warning("RAG: get_cobertura_docs falhou: %s", exc)
         return {tk: 0 for tk in tickers}
@@ -189,9 +204,9 @@ def _has_embeddings(ticker: str) -> bool:
         with engine.connect() as conn:
             n = conn.execute(text("""
                 SELECT COUNT(*) FROM public.docs_corporativos_chunks
-                WHERE UPPER(ticker) = UPPER(:tk) AND embedding IS NOT NULL
+                WHERE LEFT(UPPER(ticker), 4) = :root AND embedding IS NOT NULL
                 LIMIT 1
-            """), {"tk": ticker}).scalar()
+            """), {"root": _ticker_root(ticker)}).scalar()
             return int(n or 0) > 0
     except Exception:
         return False
@@ -269,14 +284,14 @@ def _search_temporal(
             c.chunk_index
         FROM public.docs_corporativos_chunks c
         JOIN public.docs_corporativos d ON d.id = c.doc_id
-        WHERE UPPER(c.ticker) = UPPER(:ticker)
+        WHERE LEFT(UPPER(c.ticker), 4) = :root
           {where_date}
         ORDER BY
             COALESCE(c.document_date, d.document_date, d.data) DESC NULLS LAST,
             c.chunk_index ASC
         LIMIT :lim
     """
-    params: dict = {"ticker": ticker, "lim": top_k * 4}  # busca mais p/ filtrar+diversificar
+    params: dict = {"root": _ticker_root(ticker), "lim": top_k * 4}  # busca mais p/ filtrar+diversificar
     if months_back > 0:
         params["months_back"] = months_back
 
@@ -357,13 +372,13 @@ def _search_semantic(
             (c.embedding <-> (:emb)::vector)                           AS dist
         FROM public.docs_corporativos_chunks c
         JOIN public.docs_corporativos d ON d.id = c.doc_id
-        WHERE UPPER(c.ticker) = UPPER(:ticker)
+        WHERE LEFT(UPPER(c.ticker), 4) = :root
           AND c.embedding IS NOT NULL
           {where_date}
         ORDER BY (c.embedding <-> (:emb)::vector) ASC
         LIMIT :lim
     """
-    params: dict = {"emb": emb_literal, "ticker": ticker, "lim": lim}
+    params: dict = {"emb": emb_literal, "root": _ticker_root(ticker), "lim": lim}
     if months_back > 0:
         params["months_back"] = months_back
     try:
