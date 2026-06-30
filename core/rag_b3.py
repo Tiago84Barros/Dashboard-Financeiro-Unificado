@@ -106,6 +106,27 @@ def _ticker_root(tk: str) -> str:
     return re.sub(r"\d+$", "", str(tk or "").strip().upper())[:4]
 
 
+# Prioridade de SINAL por tipo de documento — para a análise "tendência da empresa",
+# Fato Relevante e Resultados (Dados Econômico-Financeiros/ITR/DFP/release) carregam
+# os números operacionais que dão credibilidade à narrativa e devem caber primeiro no
+# orçamento de contexto; comunicados/proventos/dívida vêm em seguida; assembleias e
+# governança preenchem o que sobrar.
+_SIGNAL_HIGH = ("fato relevante", "dados econ", "resultado", "release",
+                "itr", "dfp", "demonstra", "balanço", "balanco")
+_SIGNAL_MID = ("comunicado", "dividend", "provento", "juros sobre capital",
+               "debênt", "debent", "oferta", "recupera", "opa", "guidance", "capex")
+
+
+def _signal_rank(tipo_doc: str, titulo: str = "") -> int:
+    """3 = alto sinal (fato relevante/resultados), 2 = médio, 1 = baixo (assembleia/gov)."""
+    s = f"{tipo_doc} {titulo}".lower()
+    if any(k in s for k in _SIGNAL_HIGH):
+        return 3
+    if any(k in s for k in _SIGNAL_MID):
+        return 2
+    return 1
+
+
 def _clean_chunk_text(texto: str) -> str:
     """Remove o rodapé cosmético (site, e-mail, telefone, endereço, marca PÚBLICA)."""
     t = texto or ""
@@ -484,17 +505,26 @@ def retrieve_chunks(
 # Formatação do contexto para o prompt LLM
 # ─────────────────────────────────────────────────────────────────────────────
 
-def format_rag_context(chunks: list[dict], max_chars: int = 8000) -> str:
+def format_rag_context(chunks: list[dict], max_chars: int = 12000) -> str:
     """
     Formata chunks em string de contexto para injeção no prompt.
 
-    A seleção respeita o ranking de entrada (mais recentes/relevantes primeiro)
-    para caber no orçamento, mas a APRESENTAÇÃO é cronológica (mais antigo →
-    mais novo). Assim a LLM lê os acontecimentos em ordem temporal e consegue
-    construir a evolução dos fatos e a tendência da empresa.
+    SELEÇÃO (o que cabe no orçamento): prioriza por SINAL — Fato Relevante e
+    Resultados primeiro, depois comunicados/proventos/dívida, por fim assembleias
+    e governança; dentro do mesmo nível, preserva o ranking de entrada
+    (recência/relevância). Assim os números operacionais que dão credibilidade à
+    narrativa sobrevivem ao corte de contexto.
+    APRESENTAÇÃO: cronológica (mais antigo → mais novo), para a LLM ler a evolução
+    dos fatos e inferir a tendência.
     """
     if not chunks:
         return "  Nenhum documento CVM disponível para este ativo."
+
+    # Reordena por prioridade de sinal (estável: mantém o ranking original no empate).
+    chunks = [c for _, c in sorted(
+        enumerate(chunks),
+        key=lambda t: (-_signal_rank(t[1].get("tipo_doc", ""), t[1].get("titulo", "")), t[0]),
+    )]
 
     selecionados: list[dict] = []
     total = 0

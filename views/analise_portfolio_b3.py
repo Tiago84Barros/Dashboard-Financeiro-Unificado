@@ -634,8 +634,10 @@ def _executar_analise(
             prog.progress((idx + 1) / len(items),
                           text=f"Buscando docs CVM para {tk}…")
             try:
-                chunks, rag_stats = retrieve_chunks(tk, top_k_total=60, months_back=36)
-                rag_ctx = format_rag_context(chunks)
+                # Janela maior (48m) e mais candidatos: a priorização por sinal em
+                # format_rag_context garante Fato Relevante/Resultados no contexto.
+                chunks, rag_stats = retrieve_chunks(tk, top_k_total=90, months_back=48)
+                rag_ctx = format_rag_context(chunks, max_chars=12000)
             except Exception as exc_rag:
                 rag_ctx = ""
                 rag_stats = {"mode": "error", "error": str(exc_rag)}

@@ -348,13 +348,14 @@ def get_chunks_context(query: str, tickers: list[str], cobertura_docs: dict | No
     chunks: list[dict] = []
     for tk in alvo:
         try:
-            c, _ = retrieve_chunks(tk, top_k_total=10, per_topic_k=3)
+            c, _ = retrieve_chunks(tk, top_k_total=30, per_topic_k=3, months_back=48)
             chunks.extend(c or [])
         except Exception:
             continue
     if not chunks:
         return ""
-    return "DOCUMENTOS CVM/IPE (trechos):\n" + format_rag_context(chunks, max_chars=2500)
+    # format_rag_context prioriza Fato Relevante/Resultados e ordena cronologicamente.
+    return "DOCUMENTOS CVM/IPE (trechos):\n" + format_rag_context(chunks, max_chars=4500)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
