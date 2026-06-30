@@ -26,13 +26,12 @@ logger = logging.getLogger(__name__)
 IPE_BASE = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS"
 SOURCE_NAME = "CVM/IPE"
 
-# Categorias IPE relevantes (match por substring, case-insensitive) — foco
-# ESTRITO em informação sensível a preço e fundamento. Categorias de alto volume
-# e baixo valor analítico (posições art.11 "Valores Mobiliários negociados e
-# detidos", Assembleia, Reunião da Administração, Calendário, Estatuto, Regimentos
-# e Políticas de governança) ficam DE FORA para não afogar o sinal no RAG —
-# decisões materiais dessas reuniões reaparecem como Fato Relevante/Comunicado.
-# Configurável pelo job via parâmetro `categorias`.
+# Categorias IPE relevantes (match por substring, case-insensitive) — foco em
+# informação sensível a preço e fundamento. Ficam DE FORA (alto volume, baixo
+# valor narrativo): posições art.11 ("Valores Mobiliários negociados e detidos"),
+# Reunião da Administração, Calendário, Estatuto, Regimentos e Políticas de
+# governança. Assembleias (AGO/AGE) ENTRAM — aprovam dividendos, aumento de
+# capital, M&A e eleição da administração. Configurável pelo job via `categorias`.
 RELEVANT_CATEGORIES = (
     # Eventos materiais / sensíveis a preço
     "fato relevante",
@@ -45,6 +44,8 @@ RELEVANT_CATEGORIES = (
     # Remuneração ao acionista (proventos)
     "aviso aos acionistas",
     "proventos",                       # "Relatório Proventos"
+    # Assembleias — deliberações materiais (dividendos, capital, M&A, governança)
+    "assembleia",
     # Estrutura de capital / dívida
     "oferta de distribuição",
     "oferta de distribuicao",
