@@ -164,6 +164,15 @@ def _kpi_card(label: str, value: str, sub: str, modifier: str = "neu") -> str:
     )
 
 
+def _score_mod(v, hi: float, lo: float) -> str:
+    """Modificador de cor do card por faixa: >=hi pos, <lo neg, senão neu."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "neu"
+    return "pos" if v >= hi else ("neg" if v < lo else "neu")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Seção 1 — Portfólio Salvo
 # ─────────────────────────────────────────────────────────────────────────────
@@ -521,15 +530,32 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
                 unsafe_allow_html=True,
             )
 
-        # Métricas numéricas
-        cols_m = st.columns(4)
-        cols_m[0].metric("Score qualitativo", f"{an.get('score_qualitativo', '—')}/100")
-        cols_m[1].metric("Confiança", f"{an.get('confianca', '—')}/100")
+        # Métricas numéricas — cards estilizados (mesmo visual dos KPIs do relatório)
+        sc = an.get("score_qualitativo")
+        cf = an.get("confianca")
         alloc_sug = an.get("alocacao_sugerida_pct")
-        cols_m[2].metric("Alocação sugerida", f"{alloc_sug:.1f}%" if alloc_sug is not None else "—")
+        atual_pct = w_new * 100
         n_docs = it.get("n_docs", 0)
-        cols_m[3].metric("Docs CVM", f"{n_docs:,}" if n_docs else "—",
-                          help="Chunks de documentos IPE/ENET usados no RAG")
+
+        sc_val = f"{sc}/100" if sc is not None else "—"
+        cf_val = f"{cf}/100" if cf is not None else "—"
+        if alloc_sug is None:
+            alloc_mod, alloc_val, alloc_sub = "neu", "—", "peso sugerido pela LLM"
+        else:
+            delta = alloc_sug - atual_pct
+            alloc_mod = "pos" if delta > 0.1 else ("neg" if delta < -0.1 else "neu")
+            alloc_val = f"{alloc_sug:.1f}%"
+            alloc_sub = f"atual {atual_pct:.1f}% · {'+' if delta >= 0 else ''}{delta:.1f} p.p."
+
+        cards_m = "".join([
+            _kpi_card("Score qualitativo", sc_val, "nota LLM 0–100", _score_mod(sc, 60, 40)),
+            _kpi_card("Confiança", cf_val, "convicção da análise", _score_mod(cf, 70, 50)),
+            _kpi_card("Alocação sugerida", alloc_val, alloc_sub, alloc_mod),
+            _kpi_card("Docs CVM", f"{n_docs:,}" if n_docs else "—",
+                      "chunks IPE/ENET no RAG" if n_docs else "sem documentos",
+                      "pos" if n_docs else "neu"),
+        ])
+        st.markdown(f'<div class="apb3-kpi-row">{cards_m}</div>', unsafe_allow_html=True)
 
         just = an.get("justificativa_alocacao", "")
         if just:
