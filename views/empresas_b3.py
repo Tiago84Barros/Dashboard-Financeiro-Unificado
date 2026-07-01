@@ -597,17 +597,25 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
         st.info("Nenhuma ação encontrada na lista de setores.")
         return
     # Ordena setor → subsetor → segmento → ticker (alfabético, case-insensitive).
-    # Assim os setores saem em ordem alfabética e, dentro de cada setor, as
-    # empresas ficam agrupadas por subsetor e segmento antes do ticker.
-    _ord_cols = [c for c in ("SETOR", "SUBSETOR", "SEGMENTO", "ticker")
-                 if c in df_set.columns]
-    df_set = df_set.sort_values(
-        by=_ord_cols,
-        key=lambda s: s.astype(str).str.upper(),
-        kind="stable",
-    ).reset_index(drop=True)
+    # Empresas SEM classificação setorial B3 (comuns no universo market.*) vão para
+    # o FIM, sob um cabeçalho próprio — senão o grupo de setor vazio ordena antes de
+    # "A" e a paleta inteira parece não agrupada.
+    _empty = pd.Series([""] * len(df_set), index=df_set.index)
+    def _ku(name: str) -> pd.Series:
+        return df_set[name].astype(str).str.upper() if name in df_set.columns else _empty
+    _setor_up = _ku("SETOR")
+    df_set = df_set.assign(
+        _k_setor=_setor_up.where(_setor_up.str.strip() != "", "￿"),  # vazio → fim
+        _k_sub=_ku("SUBSETOR"),
+        _k_seg=_ku("SEGMENTO"),
+        _k_tk=_ku("ticker"),
+    ).sort_values(
+        by=["_k_setor", "_k_sub", "_k_seg", "_k_tk"], kind="stable",
+    ).drop(columns=["_k_setor", "_k_sub", "_k_seg", "_k_tk"]).reset_index(drop=True)
     for setor, grupo in df_set.groupby("SETOR", sort=False):
-        st.markdown(f'<div class="b3-sector-hdr">{setor}</div>', unsafe_allow_html=True)
+        hdr = setor.strip() if isinstance(setor, str) and setor.strip() \
+            else "Sem classificação setorial B3"
+        st.markdown(f'<div class="b3-sector-hdr">{hdr}</div>', unsafe_allow_html=True)
         grupo = grupo.reset_index(drop=True)
         for i in range(0, len(grupo), 4):
             cols = st.columns(4, gap="small")
