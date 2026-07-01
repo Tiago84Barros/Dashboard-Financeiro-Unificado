@@ -231,6 +231,130 @@ def enrich_cvm(year: int | None = None) -> dict:
     return prog
 
 
+def backfill_metrics_monthly(years: int = 3) -> dict:
+    """
+    Série MENSAL de fundamentos do FII (VPA/PL/cotistas/DY/composição) a partir do
+    Informe Mensal da CVM dos últimos `years` anos -> market.fii_metrics_monthly.
+    Casa por CNPJ com market.fiis (só grava tickers conhecidos). VPA mensal + preço
+    bruto (market.historical_prices) dão o P/VP histórico na leitura. Idempotente.
+    """
+    import core.cvm_fii as cvm
+    from datetime import datetime, timezone
+    engine = _engine()
+    prog = {"anos": [], "fiis_no_banco": 0, "linhas": 0, "gravados": 0, "erros": 0}
+    if engine is None:
+        return {**prog, "erros": -1}
+    with engine.connect() as conn:
+        if not _schema_ready(conn):
+            return {**prog, "erros": -1}
+        rows = conn.execute(text(
+            "SELECT ticker, cnpj FROM market.fiis WHERE cnpj IS NOT NULL")).fetchall()
+    tickers_by_cnpj: dict[str, str] = {cvm.only_digits(c): t for t, c in rows}
+    prog["fiis_no_banco"] = len(tickers_by_cnpj)
+    if not tickers_by_cnpj:
+        return prog
+
+    cur_year = datetime.now(timezone.utc).year
+    out: list[dict] = []
+    for year in range(cur_year, cur_year - max(1, years), -1):
+        data = cvm.fetch_informe(year)
+        if not data:
+            continue
+        prog["anos"].append(year)
+        by_cnpj = cvm.parse_informe_monthly(data, year)
+        for cnpj, series in by_cnpj.items():
+            tk = tickers_by_cnpj.get(cnpj)
+            if not tk:
+                continue
+            for rec in series:
+                out.append({"ticker": tk, **rec})
+    prog["linhas"] = len(out)
+    if out:
+        with engine.begin() as conn:
+            prog["gravados"] = repo.upsert(conn, "fii_metrics_monthly", out)
+    logger.info("market/fii backfill_metrics_monthly: %s", prog)
+    return prog
+
+
+def enrich_vacancia() -> dict:
+    """
+    Recalcula a vacância do fundo a partir dos imóveis já coletados
+    (market.fii_imoveis), ponderada pela área, e grava em market.fiis.vacancia.
+    SEM rede — rode após `fiis-imoveis`. Útil para refrescar o agregado.
+    """
+    from datetime import datetime, timezone
+    engine = _engine()
+    prog = {"fiis_com_imoveis": 0, "com_vacancia": 0, "gravados": 0, "erros": 0}
+    if engine is None:
+        return {**prog, "erros": -1}
+    with engine.connect() as conn:
+        if not _schema_ready(conn):
+            return {**prog, "erros": -1}
+        rows = conn.execute(text("""
+            SELECT ticker,
+                   CASE WHEN SUM(area_m2) FILTER (WHERE vacancia IS NOT NULL) > 0
+                        THEN SUM(vacancia * area_m2) FILTER (WHERE vacancia IS NOT NULL AND area_m2 > 0)
+                             / NULLIF(SUM(area_m2) FILTER (WHERE vacancia IS NOT NULL AND area_m2 > 0), 0)
+                        ELSE AVG(vacancia) END AS vac
+            FROM market.fii_imoveis GROUP BY ticker
+        """)).fetchall()
+    prog["fiis_com_imoveis"] = len(rows)
+    ref = datetime.now(timezone.utc).date().isoformat()
+    out = [{"ticker": tk, "vacancia": round(float(vac), 4), "vacancia_ref_date": ref}
+           for tk, vac in rows if vac is not None]
+    prog["com_vacancia"] = len(out)
+    if out:
+        with engine.begin() as conn:
+            prog["gravados"] = repo.upsert(conn, "fiis", out)
+    logger.info("market/fii enrich_vacancia: %s", prog)
+    return prog
+
+
+def ingest_imoveis() -> dict:
+    """
+    Carteira de imóveis (scraping Status Invest) p/ FIIs de tijolo/híbrido ->
+    market.fii_imoveis. Grava num_imoveis e a vacância do fundo (média ponderada
+    pela área) em market.fiis. Best-effort: cobertura varia por fundo.
+    """
+    import core.fii_imoveis as fim
+    from datetime import datetime, timezone
+    engine = _engine()
+    prog = {"fiis": 0, "com_imoveis": 0, "imoveis": 0, "gravados": 0, "erros": 0}
+    if engine is None:
+        return {**prog, "erros": -1}
+    with engine.connect() as conn:
+        if not _schema_ready(conn):
+            return {**prog, "erros": -1}
+        rows = conn.execute(text(
+            "SELECT ticker FROM market.fiis "
+            "WHERE tipo IN ('tijolo', 'hibrido')")).fetchall()
+    tickers = [r[0] for r in rows]
+    prog["fiis"] = len(tickers)
+    ref = datetime.now(timezone.utc).date().isoformat()
+    delay = float(os.getenv("MARKET_DELAY", "1.0"))
+    for i, tk in enumerate(tickers):
+        try:
+            imoveis = fim.fetch_fii_imoveis(tk)
+            if imoveis:
+                vac = fim.vacancia_media(imoveis)
+                with engine.begin() as conn:
+                    rows_db = [{"ticker": tk, **im} for im in imoveis]
+                    prog["gravados"] += repo.upsert(conn, "fii_imoveis", rows_db)
+                    fii_upd = {"ticker": tk, "num_imoveis": len(imoveis)}
+                    if vac is not None:
+                        fii_upd.update(vacancia=vac, vacancia_ref_date=ref)
+                    repo.upsert(conn, "fiis", [fii_upd])
+                prog["com_imoveis"] += 1
+                prog["imoveis"] += len(imoveis)
+        except Exception as exc:
+            logger.warning("imoveis %s: %s", tk, exc)
+            prog["erros"] += 1
+        if i < len(tickers) - 1:
+            sched.sleep_jittered(base=delay)
+    logger.info("market/fii ingest_imoveis: %s", prog)
+    return prog
+
+
 def reprocess(weights: dict | None = None) -> dict:
     """Re-rankeia a partir dos payloads brutos já salvos (SEM rede)."""
     import json

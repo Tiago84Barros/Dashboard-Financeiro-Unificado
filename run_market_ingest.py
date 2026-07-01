@@ -40,6 +40,7 @@ def main() -> int:
                    choices=["validate", "cadastro", "bootstrap", "daily", "annual",
                             "reprocess", "renormalize", "parity", "fiis",
                             "fiis-reprocess", "fiis-cvm", "fiis-series",
+                            "fiis-metrics", "fiis-vacancia", "fiis-imoveis",
                             "benchmark", "setores"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
@@ -100,12 +101,28 @@ def main() -> int:
             print(json.dumps(rep, indent=2, default=str))
         return 0 if rep.get("erros", 0) != -1 else 1
 
-    if args.command in ("fiis", "fiis-reprocess", "fiis-cvm", "fiis-series", "benchmark"):
+    if args.command in ("fiis", "fiis-reprocess", "fiis-cvm", "fiis-series",
+                        "fiis-metrics", "fiis-vacancia", "fiis-imoveis", "benchmark"):
         from data_pipeline.market import fii_ingest
         if args.command == "fiis-cvm":
             rep = fii_ingest.enrich_cvm()
             log.info("FIIs CVM — ano=%s no_banco=%s casados=%s gravados=%s erros=%s",
                      rep.get("ano"), rep.get("fiis_no_banco"), rep.get("casados"),
+                     rep.get("gravados"), rep.get("erros"))
+        elif args.command == "fiis-metrics":
+            rep = fii_ingest.backfill_metrics_monthly()
+            log.info("FIIs métricas mensais — anos=%s no_banco=%s linhas=%s gravados=%s erros=%s",
+                     rep.get("anos"), rep.get("fiis_no_banco"), rep.get("linhas"),
+                     rep.get("gravados"), rep.get("erros"))
+        elif args.command == "fiis-vacancia":
+            rep = fii_ingest.enrich_vacancia()
+            log.info("FIIs vacância — com_imoveis=%s com_vacancia=%s gravados=%s erros=%s",
+                     rep.get("fiis_com_imoveis"), rep.get("com_vacancia"),
+                     rep.get("gravados"), rep.get("erros"))
+        elif args.command == "fiis-imoveis":
+            rep = fii_ingest.ingest_imoveis()
+            log.info("FIIs imóveis — fiis=%s com_imoveis=%s imoveis=%s gravados=%s erros=%s",
+                     rep.get("fiis"), rep.get("com_imoveis"), rep.get("imoveis"),
                      rep.get("gravados"), rep.get("erros"))
         elif args.command == "fiis-series":
             rep = fii_ingest.backfill_series()
