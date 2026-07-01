@@ -60,6 +60,15 @@ _CSS = """
     background:rgba(0,200,150,.14);border:1px solid rgba(0,200,150,.32);
     border-radius:999px;padding:2px 9px;
 }
+/* Grupo "Sem classificação" — neutro (cinza), não parece um setor real */
+.b3-sector-hdr-none {
+    color:#9CA3AF;
+    background:linear-gradient(90deg,rgba(148,163,184,.12),rgba(148,163,184,.02));
+    border-left-color:#5A6678;
+}
+.b3-sector-hdr-none .b3-sector-count {
+    color:#9CA3AF;background:rgba(148,163,184,.12);border-color:rgba(148,163,184,.30);
+}
 .b3-card {
     background:#12151E;border:1px solid #1E2533;border-radius:12px;
     padding:14px 14px 10px;height:100%;transition:border-color .2s;
@@ -622,12 +631,13 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
         by=["_k_setor", "_k_sub", "_k_seg", "_k_tk"], kind="stable",
     ).drop(columns=["_k_setor", "_k_sub", "_k_seg", "_k_tk"]).reset_index(drop=True)
     for setor, grupo in df_set.groupby("SETOR", sort=False):
-        hdr = setor.strip() if isinstance(setor, str) and setor.strip() \
-            else "Sem classificação setorial B3"
+        classificado = isinstance(setor, str) and setor.strip()
+        hdr = setor.strip() if classificado else "Sem classificação setorial B3"
+        cls = "b3-sector-hdr" if classificado else "b3-sector-hdr b3-sector-hdr-none"
         n_emp = len(grupo)
         rotulo = "empresa" if n_emp == 1 else "empresas"
         st.markdown(
-            f'<div class="b3-sector-hdr">{hdr}'
+            f'<div class="{cls}">{hdr}'
             f'<span class="b3-sector-count">{n_emp} {rotulo}</span></div>',
             unsafe_allow_html=True,
         )
