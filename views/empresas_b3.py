@@ -48,9 +48,17 @@ _COR_NEU = "#9CA3AF"
 _CSS = """
 <style>
 .b3-sector-hdr {
-    font-size:0.60rem;font-weight:800;text-transform:uppercase;
-    letter-spacing:.12em;color:#4A5568;border-bottom:1px solid #1E2533;
-    padding-bottom:6px;margin:18px 0 10px;
+    font-size:0.92rem;font-weight:800;text-transform:uppercase;
+    letter-spacing:.10em;color:#E8FBF4;
+    background:linear-gradient(90deg,rgba(0,200,150,.18),rgba(0,200,150,.02));
+    border-left:4px solid #00C896;border-radius:0 8px 8px 0;
+    padding:10px 14px;margin:30px 0 14px;
+    display:flex;align-items:center;gap:10px;
+}
+.b3-sector-count {
+    font-size:0.66rem;font-weight:700;color:#00C896;letter-spacing:.04em;
+    background:rgba(0,200,150,.14);border:1px solid rgba(0,200,150,.32);
+    border-radius:999px;padding:2px 9px;
 }
 .b3-card {
     background:#12151E;border:1px solid #1E2533;border-radius:12px;
@@ -616,7 +624,13 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
     for setor, grupo in df_set.groupby("SETOR", sort=False):
         hdr = setor.strip() if isinstance(setor, str) and setor.strip() \
             else "Sem classificação setorial B3"
-        st.markdown(f'<div class="b3-sector-hdr">{hdr}</div>', unsafe_allow_html=True)
+        n_emp = len(grupo)
+        rotulo = "empresa" if n_emp == 1 else "empresas"
+        st.markdown(
+            f'<div class="b3-sector-hdr">{hdr}'
+            f'<span class="b3-sector-count">{n_emp} {rotulo}</span></div>',
+            unsafe_allow_html=True,
+        )
         grupo = grupo.reset_index(drop=True)
         for i in range(0, len(grupo), 4):
             cols = st.columns(4, gap="small")
