@@ -50,6 +50,30 @@ def test_detect_intent_selection_logic():
     assert "creation" in ctxmod.detect_intent("Por que essas ações foram escolhidas?")
 
 
+# ── gráficos de preço/DRE (novos tipos) ───────────────────────────────────────
+
+def test_chart_registry_tem_financials_e_performance():
+    for t in ("financials", "dre", "receita_lucro", "performance", "desempenho"):
+        assert t in charts.CHART_REGISTRY
+
+
+def test_parse_directiva_financials():
+    _, directives = llm.parse_chart_directives(
+        'Veja o histórico.\n```charts\n'
+        '[{"tipo":"financials","tickers":["EUCA4"],"titulo":"Receita x Lucro"}]\n```'
+    )
+    assert directives == [
+        {"tipo": "financials", "tickers": ["EUCA4"], "titulo": "Receita x Lucro"}
+    ]
+
+
+def test_schema_menciona_preco_e_dre_disponiveis():
+    schema = ctxmod.get_available_database_schema()
+    assert "historical_prices" in schema
+    # não deve mais afirmar indisponibilidade de séries de preço
+    assert "performance" in schema and "financials" in schema
+
+
 # ── orquestrador ──────────────────────────────────────────────────────────────
 
 def test_build_context_always_includes_schema_and_base():

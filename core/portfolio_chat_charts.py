@@ -18,6 +18,7 @@ import pandas as pd
 import streamlit as st
 
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
+import core.market_read as _mr  # séries do market.* (preços mensais ajustados)
 
 logger = logging.getLogger(__name__)
 
@@ -273,29 +274,54 @@ def _session_price_df() -> pd.DataFrame:
     return df if isinstance(df, pd.DataFrame) and not df.empty else pd.DataFrame()
 
 
-def render_correlation_chart(tickers=None, price_df: pd.DataFrame | None = None,
-                             title: str | None = None, key: str | None = None) -> bool:
-    """Heatmap de correlação dos retornos diários (usa preços da sessão)."""
-    import plotly.express as px
-
-    px_df = price_df if isinstance(price_df, pd.DataFrame) and not price_df.empty else _session_price_df()
-    if px_df.empty:
-        st.caption("⚠️ Sem séries de preço carregadas — correlação indisponível. "
-                   "Rode a Criação de Portfólio para popular os preços.")
-        return False
-
+def _pivot_price_df(px_df: pd.DataFrame) -> pd.DataFrame:
+    """Normaliza um DF de preços (longo ticker/date/close OU wide) para wide."""
+    if px_df is None or px_df.empty:
+        return pd.DataFrame()
     work = px_df.copy()
-    # tenta pivotar formato longo (ticker/date/close) ou usar wide direto
     cols_lower = {c.lower(): c for c in work.columns}
     tcol = next((cols_lower[k] for k in ("ticker", "papel", "symbol") if k in cols_lower), None)
     dcol = next((cols_lower[k] for k in ("date", "data") if k in cols_lower), None)
-    pcol = next((cols_lower[k] for k in ("close", "fechamento", "preco", "adj_close", "price") if k in cols_lower), None)
+    pcol = next((cols_lower[k] for k in ("close", "fechamento", "preco", "adj_close", "price")
+                 if k in cols_lower), None)
     if tcol and dcol and pcol:
         work[tcol] = work[tcol].astype(str).str.upper().str.replace(".SA", "", regex=False)
         wide = work.pivot_table(index=dcol, columns=tcol, values=pcol, aggfunc="last")
     else:
         wide = work.select_dtypes(include="number")
         wide.columns = [str(c).upper().replace(".SA", "") for c in wide.columns]
+    return wide
+
+
+def _precos_wide(tickers, price_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    """
+    Preços mensais em formato wide (índice=data, colunas=tickers). Fonte:
+    market.* (histórico completo, sem depender da Criação de Portfólio); só cai
+    na sessão/price_df se o banco não tiver a série pedida.
+    """
+    tks = _clean_tickers(tickers)
+    if tks:
+        try:
+            db = _mr.load_precos_mensais(tuple(tks))
+            if isinstance(db, pd.DataFrame) and not db.empty:
+                db.columns = [str(c).upper() for c in db.columns]
+                if any(t in db.columns for t in tks):
+                    return db
+        except Exception as exc:  # pragma: no cover - rede/banco
+            logger.warning("charts: load_precos_mensais falhou: %s", exc)
+    fonte = price_df if isinstance(price_df, pd.DataFrame) and not price_df.empty else _session_price_df()
+    return _pivot_price_df(fonte)
+
+
+def render_correlation_chart(tickers=None, price_df: pd.DataFrame | None = None,
+                             title: str | None = None, key: str | None = None) -> bool:
+    """Heatmap de correlação dos retornos diários (usa preços da sessão)."""
+    import plotly.express as px
+
+    wide = _precos_wide(tickers, price_df)
+    if wide.empty:
+        st.caption("⚠️ Sem séries de preço no banco — correlação indisponível.")
+        return False
 
     tks = _clean_tickers(tickers)
     if tks:
@@ -324,22 +350,10 @@ def render_performance_chart(tickers, price_df: pd.DataFrame | None = None,
     """Desempenho histórico normalizado (base 100) — usa preços da sessão."""
     import plotly.graph_objects as go
 
-    px_df = price_df if isinstance(price_df, pd.DataFrame) and not price_df.empty else _session_price_df()
-    if px_df.empty:
-        st.caption("⚠️ Sem séries de preço carregadas — desempenho histórico indisponível.")
+    wide = _precos_wide(tickers, price_df)
+    if wide.empty:
+        st.caption("⚠️ Sem séries de preço no banco — desempenho histórico indisponível.")
         return False
-
-    work = px_df.copy()
-    cols_lower = {c.lower(): c for c in work.columns}
-    tcol = next((cols_lower[k] for k in ("ticker", "papel", "symbol") if k in cols_lower), None)
-    dcol = next((cols_lower[k] for k in ("date", "data") if k in cols_lower), None)
-    pcol = next((cols_lower[k] for k in ("close", "fechamento", "preco", "adj_close", "price") if k in cols_lower), None)
-    if tcol and dcol and pcol:
-        work[tcol] = work[tcol].astype(str).str.upper().str.replace(".SA", "", regex=False)
-        wide = work.pivot_table(index=dcol, columns=tcol, values=pcol, aggfunc="last")
-    else:
-        wide = work.select_dtypes(include="number")
-        wide.columns = [str(c).upper().replace(".SA", "") for c in wide.columns]
 
     tks = _clean_tickers(tickers)
     if tks:
@@ -362,6 +376,53 @@ def render_performance_chart(tickers, price_df: pd.DataFrame | None = None,
     return True
 
 
+def render_financials_chart(tickers, title: str | None = None, key: str | None = None) -> bool:
+    """
+    Receita Líquida × Lucro Líquido histórico (DRE anual) — barras por ano, em
+    R$ milhões, a partir de market.income_statements (load_demonstracoes).
+    """
+    import plotly.graph_objects as go
+
+    tks = _clean_tickers(tickers)
+    if not tks:
+        st.caption("⚠️ Sem ticker para o gráfico de receita × lucro.")
+        return False
+    tk = tks[0]  # um ativo por gráfico de DRE
+    try:
+        dfd = _db.load_demonstracoes(tk)
+    except Exception as exc:  # pragma: no cover - rede/banco
+        logger.warning("charts: load_demonstracoes(%s) falhou: %s", tk, exc)
+        dfd = pd.DataFrame()
+    if dfd is None or dfd.empty or "Data" not in dfd.columns:
+        st.caption(f"⚠️ Sem DRE no banco para {tk}.")
+        return False
+
+    d = dfd.copy()
+    d["Ano"] = pd.to_datetime(d["Data"], errors="coerce").dt.year
+    d = d.dropna(subset=["Ano"]).sort_values("Ano")
+    rec = pd.to_numeric(d.get("Receita_Liquida"), errors="coerce")
+    luc = pd.to_numeric(d.get("Lucro_Liquido"), errors="coerce")
+    if rec.dropna().empty and luc.dropna().empty:
+        st.caption(f"⚠️ Sem receita/lucro líquido no banco para {tk}.")
+        return False
+
+    anos = d["Ano"].astype(int)
+    fig = go.Figure()
+    if not rec.dropna().empty:
+        fig.add_bar(name="Receita líquida", x=anos, y=rec / 1e6, marker_color=_PEER,
+                    text=(rec / 1e6).map(lambda v: f"{v:,.0f}" if pd.notna(v) else ""),
+                    textposition="outside", cliponaxis=False)
+    if not luc.dropna().empty:
+        fig.add_bar(name="Lucro líquido", x=anos, y=luc / 1e6, marker_color=_ACCENT,
+                    text=(luc / 1e6).map(lambda v: f"{v:,.0f}" if pd.notna(v) else ""),
+                    textposition="outside", cliponaxis=False)
+    fig.update_layout(barmode="group",
+                      title=title or f"{tk} — Receita × Lucro líquido (R$ milhões)")
+    fig.update_yaxes(title="R$ milhões")
+    _fig_to_streamlit(fig, key=key)
+    return True
+
+
 # ── Whitelist / dispatcher ────────────────────────────────────────────────────
 
 CHART_REGISTRY = {
@@ -372,6 +433,7 @@ CHART_REGISTRY = {
     "company_vs_peers", "empresa_vs_pares", "vs_pares",
     "correlation", "correlacao", "correlação",
     "performance", "desempenho",
+    "financials", "dre", "receita_lucro", "receita_x_lucro", "receita", "lucro",
 }
 
 
@@ -420,6 +482,9 @@ def render_charts_from_directives(directives, meta: dict | None = None) -> int:
                 ok = render_correlation_chart(tickers or port_tks, title=titulo, key=ckey)
             elif tipo in ("performance", "desempenho"):
                 ok = render_performance_chart(tickers or port_tks, title=titulo, key=ckey)
+            elif tipo in ("financials", "dre", "receita_lucro", "receita_x_lucro",
+                          "receita", "lucro"):
+                ok = render_financials_chart(tickers or port_tks, title=titulo, key=ckey)
             drawn += 1 if ok else 0
         except Exception as exc:  # isola falha por gráfico
             logger.warning("charts: falha ao renderizar diretiva %s: %s", d, exc)

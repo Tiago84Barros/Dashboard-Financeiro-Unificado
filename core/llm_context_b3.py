@@ -134,8 +134,11 @@ def get_available_database_schema() -> str:
         "segmento, motivos de aprovação) e parâmetros/segmentos da Criação de Portfólio.\n"
         "  - Criação de Portfólio (sessão): segmentos analisados, empresas consideradas, "
         "aprovadas e rejeitadas, quando disponíveis.\n"
-        "OBS.: valor de mercado e séries de preço nem sempre estão na base; só afirme "
-        "indisponibilidade se o dado realmente não constar nos recortes abaixo."
+        "  - historical_prices: séries de preço mensais AJUSTADAS (retorno total) por ticker "
+        "— disponíveis para gráfico de desempenho ('performance').\n"
+        "OBS.: séries de PREÇO e a DRE histórica (receita/lucro por ano) ESTÃO no banco para "
+        "praticamente todos os tickers — para gráficos de preço/desempenho e de receita×lucro, "
+        "EMITA a diretiva de gráfico ('performance' / 'financials'); NÃO afirme indisponibilidade."
     )
 
 
@@ -239,6 +242,45 @@ def get_company_fundamentals_context(tickers: list[str], max_n: int = 15) -> str
         inds = " | ".join(f"{_LABEL.get(c, c)}={_fmt_val(c, row.get(c))}" for c in cols)
         lines.append(f"  {row['Ticker']} [{setor}]: {inds}")
     return _cap("\n".join(lines), _CAP_FUND)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DRE histórica (receita / lucro / EBITDA por ano) de tickers citados
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_dre_history_context(tickers: list[str], max_n: int = 3, anos: int = 6) -> str:
+    """Série anual de Receita_Liquida / Lucro_Liquido / EBITDA dos tickers citados."""
+    tks = list(dict.fromkeys(_norm_tk(t) for t in (tickers or []) if t))[:max_n]
+    if not tks:
+        return ""
+    def _mi(v):
+        try:
+            f = float(v)
+            return f"{f/1e6:,.0f}" if np.isfinite(f) else "N/D"
+        except (TypeError, ValueError):
+            return "N/D"
+    lines: list[str] = []
+    for tk in tks:
+        try:
+            d = _db.load_demonstracoes(tk)
+        except Exception:
+            d = pd.DataFrame()
+        if d is None or d.empty or "Data" not in d.columns:
+            continue
+        d = d.copy()
+        d["_ano"] = pd.to_datetime(d["Data"], errors="coerce").dt.year
+        d = d.dropna(subset=["_ano"]).sort_values("_ano").tail(anos)
+        if d.empty:
+            continue
+        anos_txt = ", ".join(
+            f"{int(r['_ano'])}: Rec={_mi(r.get('Receita_Liquida'))} "
+            f"LL={_mi(r.get('Lucro_Liquido'))}"
+            + (f" EBITDA={_mi(r.get('EBITDA'))}" if pd.notna(r.get('EBITDA')) else "")
+            for _, r in d.iterrows())
+        lines.append(f"  {tk} (R$ mi): {anos_txt}")
+    if not lines:
+        return ""
+    return "DRE HISTÓRICA (banco — Receita/Lucro líquido por ano, R$ milhões):\n" + "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -403,6 +445,19 @@ def build_llm_context_for_portfolio_chat(
         block = get_company_fundamentals_context(fund_tks)
         if block:
             parts += ["", block]
+
+    # DRE histórica (receita/lucro por ano) dos tickers citados — habilita análise
+    # de tendência e o gráfico 'financials'. Também cobre a carteira quando a
+    # pergunta é sobre receita/lucro/crescimento sem citar ticker.
+    q_low = (user_question or "").lower()
+    dre_tks = list(q_tickers)
+    if not dre_tks and any(t in q_low for t in ("receita", "lucro", "dre", "faturamento",
+                                                "resultado", "crescimento")):
+        dre_tks = port_tks
+    if dre_tks:
+        dre_block = get_dre_history_context(dre_tks)
+        if dre_block:
+            parts += ["", dre_block]
 
     # Documentos CVM/IPE SOB DEMANDA para qualquer ticker citado na pergunta
     # (dentro OU fora da carteira). Aplica os mesmos critérios do RAG (limpeza de
