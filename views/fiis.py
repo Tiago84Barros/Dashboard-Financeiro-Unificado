@@ -31,10 +31,17 @@ _TIPO_OUTROS = ("🏦", "Outros", "#9CA3AF")
 
 _CSS = """
 <style>
-.fii-hdr { display:flex;align-items:center;gap:8px;font-size:0.72rem;font-weight:800;
-           text-transform:uppercase;letter-spacing:.10em;color:#CBD5E0;
-           border-bottom:1px solid #1E2533;padding-bottom:6px;margin:20px 0 12px; }
-.fii-hdr .cnt { color:#4A5568;font-weight:700; }
+.fii-hdr { display:flex;align-items:baseline;gap:10px;font-size:1.25rem;font-weight:800;
+           text-transform:uppercase;letter-spacing:.04em;color:#E2E8F0;
+           border-bottom:2px solid #1E2533;padding-bottom:8px;margin:24px 0 14px; }
+.fii-hdr .cnt { font-size:0.74rem;color:#4A5568;font-weight:700;letter-spacing:.06em; }
+/* KPIs do topo (cards CSS) */
+.fii-kpi { background:#12151E;border:1px solid #1E2533;border-radius:10px;
+           padding:12px 15px;margin-bottom:6px;border-left:3px solid #00C896; }
+.fii-kpi .lbl { font-size:0.62rem;font-weight:700;text-transform:uppercase;
+                letter-spacing:.08em;color:#4A5568;margin-bottom:5px; }
+.fii-kpi .val { font-size:1.6rem;font-weight:800;line-height:1.05;color:#E2E8F0; }
+.fii-kpi .sub { font-size:0.68rem;font-weight:700;margin-top:4px; }
 .fii-card { background:#12151E;border:1px solid #1E2533;border-radius:12px;
             padding:12px 14px 10px;height:100%;transition:border-color .2s; }
 .fii-card:hover { border-color:rgba(0,200,150,.35); }
@@ -127,6 +134,14 @@ def _fii_card_html(row: pd.Series) -> str:
     )
 
 
+def _kpi_html(label: str, value, sub: str | None = None,
+              sub_color: str = "#00C896", accent: str = "#00C896") -> str:
+    """Card CSS de KPI (rótulo, valor grande e sub opcional)."""
+    sub_html = f'<div class="sub" style="color:{sub_color};">{sub}</div>' if sub else ""
+    return (f'<div class="fii-kpi" style="border-left-color:{accent};">'
+            f'<div class="lbl">{label}</div><div class="val">{value}</div>{sub_html}</div>')
+
+
 def _render_grupo(tipo_key: str, grupo: pd.DataFrame) -> None:
     """Cabeçalho do tipo + grade de cards (4 por linha), com botão Analisar."""
     emoji, label, color = _TIPO_META.get(tipo_key, _TIPO_OUTROS)
@@ -169,11 +184,16 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
     view = view[(view["DY_12m"].fillna(0) * 100 >= dy_min) & (view["P/VP"].fillna(99) <= pvp_max)]
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("FIIs no ranking", len(view))
+    k1.markdown(_kpi_html("FIIs no ranking", len(view), accent="#4A9EFF"),
+                unsafe_allow_html=True)
     if not view.empty:
-        k2.metric("🏆 Top", f"{view.iloc[0]['Ticker']}", f"{view.iloc[0]['Score']:.0f} pts")
-        k3.metric("DY 12m mediano", f"{view['DY_12m'].median()*100:.1f}%")
-        k4.metric("P/VP mediano", f"{view['P/VP'].median():.2f}")
+        top = view.iloc[0]
+        k2.markdown(_kpi_html("🏆 Top", top["Ticker"], f"↑ {top['Score']:.0f} pts",
+                              accent="#F6C90E"), unsafe_allow_html=True)
+        k3.markdown(_kpi_html("DY 12m mediano", f"{view['DY_12m'].median()*100:.1f}%"),
+                    unsafe_allow_html=True)
+        k4.markdown(_kpi_html("P/VP mediano", f"{view['P/VP'].median():.2f}",
+                              accent="#B084F6"), unsafe_allow_html=True)
 
     if view.empty:
         st.warning("Nenhum FII atende aos filtros.")
