@@ -50,29 +50,35 @@ def card_metrica(
     delta: str = None,
     positivo: bool = None,
     ajuda: str = None,
+    accent: str = None,
 ) -> None:
     """
-    Card de KPI baseado em st.metric com tema aplicado via CSS.
+    Card de KPI em CSS (não usa st.metric) — visual coeso com o restante do app.
 
     Args:
         titulo:   Rótulo do indicador (ex: "Patrimônio Total")
         valor:    Valor já formatado (ex: "R$ 87.450,00")
         delta:    Variação formatada (ex: "+5,2%") ou None para omitir
-        positivo: True → verde, False → vermelho, None → neutro
-        ajuda:    Tooltip de ajuda (aparece no ícone ?)
+        positivo: True → verde, False → vermelho, None → neutro (cor do delta)
+        ajuda:    Tooltip de ajuda (via atributo title do card)
+        accent:   Cor da borda-esquerda; default deriva de `positivo` (neutro=azul)
     """
-    delta_color = "off"
-    if positivo is True:
-        delta_color = "normal"
-    elif positivo is False:
-        delta_color = "inverse"
-
-    st.metric(
-        label=titulo,
-        value=valor,
-        delta=delta,
-        delta_color=delta_color,
-        help=ajuda,
+    cor_delta = "#00C896" if positivo is True else "#FC5C7D" if positivo is False else "#9CA3AF"
+    accent = accent or ("#00C896" if positivo is True
+                        else "#FC5C7D" if positivo is False else "#4A9EFF")
+    delta_html = (f'<div style="font-size:0.72rem;font-weight:700;color:{cor_delta};'
+                  f'margin-top:4px">{delta}</div>') if delta else ""
+    ajuda_attr = f' title="{ajuda}"' if ajuda else ""
+    st.markdown(
+        f'<div{ajuda_attr} style="background:#12151E;border:1px solid #1E2533;'
+        f'border-left:3px solid {accent};border-radius:10px;padding:12px 15px;'
+        f'margin-bottom:6px;">'
+        f'<div style="font-size:0.62rem;font-weight:700;text-transform:uppercase;'
+        f'letter-spacing:.08em;color:#4A5568;margin-bottom:5px">{titulo}</div>'
+        f'<div style="font-size:1.5rem;font-weight:800;line-height:1.05;'
+        f'color:#E2E8F0;word-break:break-word">{valor}</div>'
+        f'{delta_html}</div>',
+        unsafe_allow_html=True,
     )
 
 

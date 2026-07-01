@@ -21,6 +21,7 @@ import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default
 import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
+from design.componentes import card_metrica  # KPIs em cards CSS (visual coeso)
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 _CDN = "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones"
@@ -2945,11 +2946,15 @@ def _render_calibracao_segmento(calib) -> None:
         b1, b2, b3, b4 = st.columns(4)
         _trad_debt = {"ignorar": "não se aplica", "tolerante": "tolerante",
                       "normal": "padrão", "rigoroso": "rigoroso"}
-        b1.metric("Tratamento de dívida", _trad_debt.get(calib.debt_treatment, "—"))
-        b2.metric("Dividendos", calib.dy_relevancia.capitalize())
-        b3.metric("Foco de valuation", calib.valuation_foco.capitalize())
-        b4.metric("Liquidez corrente",
-                  "relevante" if calib.liquidez_relevante else "não se aplica")
+        with b1:
+            card_metrica("Tratamento de dívida", _trad_debt.get(calib.debt_treatment, "—"))
+        with b2:
+            card_metrica("Dividendos", calib.dy_relevancia.capitalize())
+        with b3:
+            card_metrica("Foco de valuation", calib.valuation_foco.capitalize())
+        with b4:
+            card_metrica("Liquidez corrente",
+                         "relevante" if calib.liquidez_relevante else "não se aplica")
 
         st.markdown("**✅ Pesos dos indicadores — aplicados ao score**")
         st.dataframe(
@@ -2967,12 +2972,19 @@ def _render_calibracao_segmento(calib) -> None:
         ap = calib.aprovacao
         lr = calib.limites_risco
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Score de entrada mín.", f"{ap['score_entrada_min']:.0f}")
-        c2.metric("Penalidade de risco máx.", f"{ap['risk_penalty_max']:.0f}")
-        c3.metric("Teto de endividamento",
-                  f"{lr['endividamento_teto']:.2f}" if lr.get("endividamento_teto") else "N/A")
-        c4.metric("Winsorização",
-                  f"{calib.winsor[0]*100:.0f}–{calib.winsor[1]*100:.0f}%")
+        with c1:
+            card_metrica("Score de entrada mín.", f"{ap['score_entrada_min']:.0f}",
+                         accent="#00C896")
+        with c2:
+            card_metrica("Penalidade de risco máx.", f"{ap['risk_penalty_max']:.0f}",
+                         accent="#FC5C7D")
+        with c3:
+            card_metrica("Teto de endividamento",
+                         f"{lr['endividamento_teto']:.2f}" if lr.get("endividamento_teto") else "N/A",
+                         accent="#F6C90E")
+        with c4:
+            card_metrica("Winsorização",
+                         f"{calib.winsor[0]*100:.0f}–{calib.winsor[1]*100:.0f}%", accent="#4A9EFF")
 
         st.caption(
             "ℹ️ Os **pesos** acima são aplicados diretamente ao ranking deste "
@@ -3313,10 +3325,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 st.error(f"Falha na calibracao: {fm_result['erro']}")
             elif fm_result is not None and getattr(fm_result, "ok", False):
                 fm_cols = st.columns(4)
-                fm_cols[0].metric("Anos usados", int(fm_result.n_years))
-                fm_cols[1].metric("Tickers", int(fm_result.n_tickers))
-                fm_cols[2].metric("Obs.", int(fm_result.n_obs))
-                fm_cols[3].metric("Mistura", f"{fm_alpha:.0%}")
+                with fm_cols[0]:
+                    card_metrica("Anos usados", int(fm_result.n_years), accent="#4A9EFF")
+                with fm_cols[1]:
+                    card_metrica("Tickers", int(fm_result.n_tickers), accent="#4A9EFF")
+                with fm_cols[2]:
+                    card_metrica("Obs.", int(fm_result.n_obs), accent="#4A9EFF")
+                with fm_cols[3]:
+                    card_metrica("Mistura", f"{fm_alpha:.0%}", accent="#B084F6")
                 rows_fm = []
                 for ind, (peso_final, melhor_alto) in pesos_v2.items():
                     rows_fm.append({
@@ -3369,9 +3385,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 n_warn = int((audit_cross["Severidade"] == "warn").sum())
                 n_ok = int((audit_cross["Severidade"] == "ok").sum())
                 mc1, mc2, mc3 = st.columns(3)
-                mc1.metric("Criticas", n_crit)
-                mc2.metric("Alertas", n_warn)
-                mc3.metric("OK", n_ok)
+                with mc1:
+                    card_metrica("Críticas", n_crit, accent="#FC5C7D")
+                with mc2:
+                    card_metrica("Alertas", n_warn, accent="#F6C90E")
+                with mc3:
+                    card_metrica("OK", n_ok, accent="#00C896")
                 st.dataframe(
                     audit_cross,
                     use_container_width=True,
@@ -3412,9 +3431,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             else:
                 hist_summary = summarize_validation_history(hist_rows)
                 hc1, hc2, hc3 = st.columns(3)
-                hc1.metric("Linhas", int(hist_summary["total"]))
-                hc2.metric("Criticas", int(hist_summary["critical"]))
-                hc3.metric("Alertas", int(hist_summary["warn"]))
+                with hc1:
+                    card_metrica("Linhas", int(hist_summary["total"]), accent="#4A9EFF")
+                with hc2:
+                    card_metrica("Críticas", int(hist_summary["critical"]), accent="#FC5C7D")
+                with hc3:
+                    card_metrica("Alertas", int(hist_summary["warn"]), accent="#F6C90E")
                 hist_df = pd.DataFrame(hist_rows)
                 cols_hist = [
                     c for c in ["run_ts", "Ticker", "Indicador", "Severidade",
@@ -3764,14 +3786,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 _n_sust = _val_df["Sustentab. Dividendo"].str.contains("Sustentável", na=False).sum()
                 _v1, _v2, _v3 = st.columns(3)
                 with _v1:
-                    st.metric("🟢 Com desconto", f"{_n_desc} cias",
-                              help="Graham/Bazin indicam preço abaixo do justo")
+                    card_metrica("🟢 Com desconto", f"{_n_desc} cias", accent="#00C896",
+                                 ajuda="Graham/Bazin indicam preço abaixo do justo")
                 with _v2:
-                    st.metric("🔴 Caras", f"{_n_caro} cias",
-                              help="Negociando acima do valor justo estimado")
+                    card_metrica("🔴 Caras", f"{_n_caro} cias", accent="#FC5C7D",
+                                 ajuda="Negociando acima do valor justo estimado")
                 with _v3:
-                    st.metric("💧 Dividendo sustentável", f"{_n_sust} cias",
-                              help="Payout saudável + FCO positivo")
+                    card_metrica("💧 Dividendo sustentável", f"{_n_sust} cias", accent="#4A9EFF",
+                                 ajuda="Payout saudável + FCO positivo")
                 st.caption(
                     "⚠️ Graham assume P/L e P/VP positivos (empresa lucrativa com "
                     "patrimônio positivo) — empresas fora disso aparecem sem MS Graham. "
@@ -3841,14 +3863,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 _n_bonus   = (_res_df["Ajuste Líquido (%)"] > 0).sum()
                 _kr1, _kr2, _kr3 = st.columns(3)
                 with _kr1:
-                    st.metric("🔴 Risco de balanço", f"{_n_risk} cias",
-                              help="Penalidade ≥ 20% — endividamento crítico + margem negativa")
+                    card_metrica("🔴 Risco de balanço", f"{_n_risk} cias", accent="#FC5C7D",
+                                 ajuda="Penalidade ≥ 20% — endividamento crítico + margem negativa")
                 with _kr2:
-                    st.metric("🟡 Em alerta", f"{_n_alert} cias",
-                              help="Penalidade 8–20% — balanço frágil mas não crítico")
+                    card_metrica("🟡 Em alerta", f"{_n_alert} cias", accent="#F6C90E",
+                                 ajuda="Penalidade 8–20% — balanço frágil mas não crítico")
                 with _kr3:
-                    st.metric("📈 Com bônus líquido", f"{_n_bonus} cias",
-                              help="Empresas que se beneficiaram dos ajustes A ou C")
+                    card_metrica("📈 Com bônus líquido", f"{_n_bonus} cias", accent="#00C896",
+                                 ajuda="Empresas que se beneficiaram dos ajustes A ou C")
             else:
                 st.info(
                     "Ajustes de resiliência não disponíveis — é necessário "

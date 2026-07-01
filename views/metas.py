@@ -113,10 +113,10 @@ def render() -> None:
                 )
 
             with col_aporte:
-                st.metric(
+                card_metrica(
                     "Aporte sugerido",
                     fmt_moeda(meta["aporte"]) if meta["aporte"] > 0 else "—",
-                    help="Valor mensal necessário para atingir a meta no prazo.",
+                    ajuda="Valor mensal necessário para atingir a meta no prazo.",
                 )
                 faltando = max(0.0, meta["alvo"] - meta["atual"])
                 if faltando > 0:

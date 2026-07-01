@@ -16,6 +16,7 @@ import streamlit as st
 
 import core.data_quality as _dq
 import core.data_healing as _heal
+from design.componentes import card_metrica
 
 
 def render_quality_report(df: pd.DataFrame, key_prefix: str = "dq") -> dict:
@@ -30,10 +31,14 @@ def render_quality_report(df: pd.DataFrame, key_prefix: str = "dq") -> dict:
     sem_setor = rep.get("sem_setor", [])
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Outliers", len(out))
-    c2.metric("Incompletas", len(insuf))
-    c3.metric("Duplicados", len(dup))
-    c4.metric("Sem setor", len(sem_setor))
+    with c1:
+        card_metrica("Outliers", len(out), accent="#F6C90E")
+    with c2:
+        card_metrica("Incompletas", len(insuf), accent="#FC5C7D")
+    with c3:
+        card_metrica("Duplicados", len(dup), accent="#F6C90E")
+    with c4:
+        card_metrica("Sem setor", len(sem_setor), accent="#9CA3AF")
 
     if insuf:
         st.warning(
