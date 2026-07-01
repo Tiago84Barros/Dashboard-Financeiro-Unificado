@@ -268,24 +268,33 @@ def _tab_busca(df: pd.DataFrame) -> None:
     if tags:
         st.caption(" · ".join(str(t) for t in tags))
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Preço", _fmt_money(d.get("Preço")))
-    k2.metric("P/VP", f"{d.get('P/VP'):.2f}" if pd.notna(d.get("P/VP")) else "—")
-    k3.metric("DY 12m", _fmt_pct(d.get("DY_12m")))
-    k4.metric("VPA", _fmt_money(d.get("VPA")))
-    k5, k6, k7, k8 = st.columns(4)
     pl = d.get("Patrimonio")
-    k5.metric("Patrimônio", _fmt_money(pl / 1e9, 2) + " bi" if pd.notna(pl) else "—")
-    k6.metric("Cotistas", f"{int(d['Cotistas']):,}".replace(",", ".")
-              if pd.notna(d.get("Cotistas")) else "—")
+    cot = (f"{int(d['Cotistas']):,}".replace(",", ".")
+           if pd.notna(d.get("Cotistas")) else "—")
     vac = d.get("Vacancia")
     if tipo in _TIPOS_TIJOLO:
-        k7.metric("Vacância", _fmt_pct(vac),
-                  help="Vacância média (Status Invest). " +
-                       (f"Coleta: {d.get('Vacancia_Ref')}" if d.get("Vacancia_Ref") else ""))
+        ref = d.get("Vacancia_Ref")
+        vac_val = _fmt_pct(vac)
+        vac_sub = f"Status Invest{' · ' + str(ref) if ref else ''}"
     else:
-        k7.metric("Vacância", "n/a", help="Vacância não se aplica a FIIs de papel/FoF.")
-    k8.metric("Liquidez/dia", _fmt_money(d.get("Liquidez_Diaria"), 0))
+        vac_val, vac_sub = "n/a", "não se aplica (papel/FoF)"
+
+    r1 = st.columns(4)
+    r1[0].markdown(_kpi_html("Preço", _fmt_money(d.get("Preço"))), unsafe_allow_html=True)
+    r1[1].markdown(_kpi_html("P/VP", f"{d.get('P/VP'):.2f}" if pd.notna(d.get("P/VP")) else "—",
+                             accent="#B084F6"), unsafe_allow_html=True)
+    r1[2].markdown(_kpi_html("DY 12m", _fmt_pct(d.get("DY_12m")), accent="#00C896"),
+                   unsafe_allow_html=True)
+    r1[3].markdown(_kpi_html("VPA", _fmt_money(d.get("VPA")), accent="#4A9EFF"),
+                   unsafe_allow_html=True)
+    r2 = st.columns(4)
+    r2[0].markdown(_kpi_html("Patrimônio", _fmt_money(pl / 1e9, 2) + " bi" if pd.notna(pl) else "—"),
+                   unsafe_allow_html=True)
+    r2[1].markdown(_kpi_html("Cotistas", cot, accent="#4A9EFF"), unsafe_allow_html=True)
+    r2[2].markdown(_kpi_html("Vacância", vac_val, sub=vac_sub, sub_color="#4A5568",
+                             accent="#F6C90E"), unsafe_allow_html=True)
+    r2[3].markdown(_kpi_html("Liquidez/dia", _fmt_money(d.get("Liquidez_Diaria"), 0)),
+                   unsafe_allow_html=True)
 
     st.divider()
 
