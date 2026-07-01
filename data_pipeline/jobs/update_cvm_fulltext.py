@@ -54,7 +54,7 @@ def _select_pending(conn, limit: int):
         SELECT d.id, d.ticker, d.url, d.categoria, d.document_date
         FROM public.docs_corporativos d
         LEFT JOIN (SELECT DISTINCT ticker FROM public.b3_portfolio_model_items) c
-               ON c.ticker = d.ticker
+               ON LEFT(UPPER(c.ticker), 4) = LEFT(UPPER(d.ticker), 4)
         WHERE d.extraction_version = :pend AND d.url IS NOT NULL
         ORDER BY
             (c.ticker IS NOT NULL) DESC,
