@@ -30,7 +30,12 @@ _UPDATE_COLS = {
     "fiis": ("name", "segmento", "price", "pvp", "dy_12m", "liquidez_diaria", "score",
              "cnpj", "isin", "segmento_cvm", "tipo", "tipo_gestao", "patrimonio_liquido",
              "vpa", "num_cotistas", "pct_imoveis", "pct_papel", "pct_caixa", "pct_fundos",
-             "cvm_ref_date"),
+             "cvm_ref_date", "vacancia", "vacancia_ref_date", "num_imoveis"),
+    "fii_metrics_monthly": ("vpa", "patrimonio_liquido", "num_cotistas",
+                            "dy_patrimonial_mes", "pct_imoveis", "pct_papel",
+                            "pct_caixa", "pct_fundos"),
+    "fii_imoveis": ("area_m2", "vacancia", "cidade", "uf", "regiao",
+                    "segmento_imovel", "pct_receita", "fonte"),
 }
 _CONFLICT = {
     "ticker_cvm": "ticker",
@@ -44,6 +49,8 @@ _CONFLICT = {
     "macro_indicators": "indicator, date",
     "calculated_metrics": "ticker, period, year, quarter, metric_name",
     "fiis": "ticker",
+    "fii_metrics_monthly": "ticker, ref_month",
+    "fii_imoveis": "ticker, nome_imovel",
 }
 
 
@@ -60,6 +67,8 @@ _NATURAL_KEY = {
     "calculated_metrics": ("ticker", "period", "year", "quarter", "metric_name"),
     "ticker_cvm": ("ticker",),
     "fiis": ("ticker",),
+    "fii_metrics_monthly": ("ticker", "ref_month"),
+    "fii_imoveis": ("ticker", "nome_imovel"),
 }
 
 

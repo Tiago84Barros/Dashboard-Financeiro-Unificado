@@ -70,6 +70,16 @@ def _latest_per_cnpj(df, cnpj_col="CNPJ_Fundo_Classe", date_col="Data_Referencia
     return {only_digits(r[cnpj_col]): r.to_dict() for _, r in d.iterrows()}
 
 
+def _by_cnpj_month(df, cnpj_col="CNPJ_Fundo_Classe", date_col="Data_Referencia"):
+    """Indexa por (cnpj_digits, Data_Referencia) -> linha (dict). Para a série mensal."""
+    if df is None or df.empty:
+        return {}
+    out: dict[tuple, dict] = {}
+    for _, r in df.iterrows():
+        out[(only_digits(r[cnpj_col]), _s(r.get(date_col)))] = r.to_dict()
+    return out
+
+
 def _composition(row) -> dict:
     """Percentuais de imóveis/papel/fundos/caixa sobre o ativo total."""
     def soma(cols):
@@ -127,6 +137,50 @@ def parse_informe(zip_bytes: bytes, year: int) -> dict[str, dict]:
         }
         rec["tipo"] = classify_tipo(composition)
         out[cnpj] = rec
+    return out
+
+
+def _ref_month(data_referencia: str) -> str | None:
+    """Normaliza Data_Referencia ('YYYY-MM-DD'/'YYYY-MM') p/ 1º dia do mês 'YYYY-MM-01'."""
+    s = _s(data_referencia)
+    if len(s) >= 7 and s[4] == "-" and s[:4].isdigit() and s[5:7].isdigit():
+        return f"{s[:7]}-01"
+    return None
+
+
+def parse_informe_monthly(zip_bytes: bytes, year: int) -> dict[str, list[dict]]:
+    """
+    bytes do zip -> {cnpj_digits: [ {ref_month, vpa, patrimonio_liquido, num_cotistas,
+    dy_patrimonial_mes, pct_imoveis, pct_papel, pct_caixa, pct_fundos}, ... ]}.
+
+    Diferente de parse_informe (que pega só o mês mais recente), mantém TODAS as
+    Data_Referencia disponíveis no ano -> série mensal (P/VP e VPA históricos).
+    Junta complemento (VPA/PL/cotistas/DY) com ativo_passivo (composição) por
+    (cnpj, mês). Ordena por ref_month asc.
+    """
+    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    comp = _by_cnpj_month(_read_csv(zf, f"inf_mensal_fii_complemento_{year}.csv"))
+    ativo = _by_cnpj_month(_read_csv(zf, f"inf_mensal_fii_ativo_passivo_{year}.csv"))
+
+    out: dict[str, list[dict]] = {}
+    for (cnpj, ref), c in comp.items():
+        ref_month = _ref_month(ref)
+        if not ref_month:
+            continue
+        a = ativo.get((cnpj, ref))
+        composition = _composition(a) if a else {
+            "pct_imoveis": None, "pct_papel": None, "pct_caixa": None, "pct_fundos": None}
+        rec = {
+            "ref_month": ref_month,
+            "patrimonio_liquido": _num((c or {}).get("Patrimonio_Liquido")),
+            "vpa": _num((c or {}).get("Valor_Patrimonial_Cotas")),
+            "num_cotistas": _num((c or {}).get("Total_Numero_Cotistas")),
+            "dy_patrimonial_mes": _num((c or {}).get("Percentual_Dividend_Yield_Mes")),
+            **composition,
+        }
+        out.setdefault(cnpj, []).append(rec)
+    for cnpj in out:
+        out[cnpj].sort(key=lambda r: r["ref_month"])
     return out
 
 

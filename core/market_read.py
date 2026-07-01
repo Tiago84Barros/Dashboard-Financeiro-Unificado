@@ -342,6 +342,91 @@ def load_fii_series(tickers: tuple[str, ...]) -> dict:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def load_fii_one(ticker: str) -> pd.Series:
+    """Linha única de market.fiis (detalhe do FII), incluindo vacância e nº de imóveis."""
+    tk = ticker.strip().upper().replace(".SA", "")
+    df = _q("""
+        SELECT ticker AS "Ticker", name AS "Nome",
+               COALESCE(segmento_cvm, segmento) AS "Segmento", tipo AS "Tipo",
+               price AS "Preço", pvp AS "P/VP", dy_12m AS "DY_12m",
+               liquidez_diaria AS "Liquidez_Diaria",
+               patrimonio_liquido AS "Patrimonio", vpa AS "VPA",
+               num_cotistas AS "Cotistas", tipo_gestao AS "Gestao",
+               pct_imoveis AS "Pct_Imoveis", pct_papel AS "Pct_Papel",
+               pct_caixa AS "Pct_Caixa", pct_fundos AS "Pct_Fundos",
+               vacancia AS "Vacancia", vacancia_ref_date AS "Vacancia_Ref",
+               num_imoveis AS "Num_Imoveis", score AS "Score", updated_at
+        FROM market.fiis WHERE ticker = :tk
+    """, {"tk": tk})
+    if df.empty:
+        return pd.Series(dtype=object)
+    df["Ticker"] = _norm_ticker(df["Ticker"])
+    for c in ("Preço", "P/VP", "DY_12m", "Liquidez_Diaria", "Patrimonio", "VPA",
+              "Cotistas", "Pct_Imoveis", "Pct_Papel", "Pct_Caixa", "Pct_Fundos",
+              "Vacancia", "Num_Imoveis", "Score"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df.iloc[0]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_fii_metrics_mensal(ticker: str) -> pd.DataFrame:
+    """
+    Série MENSAL de fundamentos do FII (market.fii_metrics_monthly) + P/VP histórico
+    = preço de fechamento BRUTO de fim de mês (market.historical_prices.close) ÷ VPA.
+    Colunas: Data, VPA, P/VP, Patrimonio, Cotistas, DY_Patrimonial, Pct_*.
+    """
+    tk = ticker.strip().upper().replace(".SA", "")
+    met = _q("""
+        SELECT ref_month AS "Data", vpa AS "VPA",
+               patrimonio_liquido AS "Patrimonio", num_cotistas AS "Cotistas",
+               dy_patrimonial_mes AS "DY_Patrimonial",
+               pct_imoveis AS "Pct_Imoveis", pct_papel AS "Pct_Papel",
+               pct_caixa AS "Pct_Caixa", pct_fundos AS "Pct_Fundos"
+        FROM market.fii_metrics_monthly WHERE ticker = :tk ORDER BY ref_month
+    """, {"tk": tk})
+    if met.empty:
+        return pd.DataFrame()
+    met["Data"] = pd.to_datetime(met["Data"], errors="coerce")
+    for c in ("VPA", "Patrimonio", "Cotistas", "DY_Patrimonial",
+              "Pct_Imoveis", "Pct_Papel", "Pct_Caixa", "Pct_Fundos"):
+        met[c] = pd.to_numeric(met[c], errors="coerce")
+    # preço bruto (NÃO ajustado) de fim de mês → P/VP histórico = preço ÷ VPA
+    px = _q("SELECT date, close FROM market.historical_prices "
+            "WHERE ticker = :tk AND close IS NOT NULL ORDER BY date", {"tk": tk})
+    met["P/VP"] = pd.NA
+    if not px.empty:
+        px["date"] = pd.to_datetime(px["date"], errors="coerce")
+        px = px.dropna(subset=["date"])
+        px_m = (pd.to_numeric(px.set_index("date")["close"], errors="coerce")
+                .resample("ME").last())
+        # casa cada ref_month (1º dia) ao fechamento bruto do mesmo mês
+        close_by_month = {ts.to_period("M"): v for ts, v in px_m.items()}
+        met["_close"] = met["Data"].dt.to_period("M").map(close_by_month)
+        met["P/VP"] = (met["_close"] / met["VPA"]).where(met["VPA"] > 0)
+        met = met.drop(columns=["_close"])
+    return met.dropna(subset=["Data"]).reset_index(drop=True)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_fii_imoveis(ticker: str) -> pd.DataFrame:
+    """Imóveis do FII (market.fii_imoveis): nome, área, cidade/UF, região, vacância."""
+    tk = ticker.strip().upper().replace(".SA", "")
+    df = _q("""
+        SELECT nome_imovel AS "Imóvel", area_m2 AS "Área_m2", vacancia AS "Vacância",
+               cidade AS "Cidade", uf AS "UF", regiao AS "Região",
+               segmento_imovel AS "Segmento", pct_receita AS "Pct_Receita", fonte AS "Fonte"
+        FROM market.fii_imoveis WHERE ticker = :tk
+        ORDER BY regiao NULLS LAST, area_m2 DESC NULLS LAST
+    """, {"tk": tk})
+    if df.empty:
+        return df
+    for c in ("Área_m2", "Vacância", "Pct_Receita"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     """
     Preços MENSAIS (último pregão do mês) AJUSTADOS por proventos+splits
