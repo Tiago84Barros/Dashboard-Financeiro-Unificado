@@ -348,13 +348,15 @@ def _tab_busca(df: pd.DataFrame) -> None:
         return
     imoveis = _mr.load_fii_imoveis(tk)
     n = d.get("Num_Imoveis")
+    n_val = int(n) if pd.notna(n) else (len(imoveis) if not imoveis.empty else 0)
+    regioes = imoveis["Região"].dropna().nunique() if not imoveis.empty else 0
+    area_tot = (f"{imoveis['Área_m2'].sum():,.0f}".replace(",", ".")
+                if (not imoveis.empty and imoveis["Área_m2"].notna().any()) else "—")
     cols = st.columns(3)
-    cols[0].metric("Nº de imóveis", int(n) if pd.notna(n) else (len(imoveis) or "—"))
+    cols[0].markdown(_kpi_html("Nº de imóveis", n_val, accent="#00C896"), unsafe_allow_html=True)
+    cols[1].markdown(_kpi_html("Regiões", regioes or "—", accent="#B084F6"), unsafe_allow_html=True)
+    cols[2].markdown(_kpi_html("Área total (m²)", area_tot, accent="#4A9EFF"), unsafe_allow_html=True)
     if not imoveis.empty:
-        regioes = imoveis["Região"].dropna().nunique()
-        cols[1].metric("Regiões", regioes or "—")
-        if imoveis["Área_m2"].notna().any():
-            cols[2].metric("Área total (m²)", f"{imoveis['Área_m2'].sum():,.0f}".replace(",", "."))
         st.dataframe(imoveis, use_container_width=True, hide_index=True, column_config={
             "Imóvel": st.column_config.TextColumn("Imóvel", width="medium"),
             "Área_m2": st.column_config.NumberColumn("Área (m²)", format="%.0f"),
