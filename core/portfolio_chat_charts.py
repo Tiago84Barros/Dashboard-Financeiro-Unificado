@@ -437,6 +437,57 @@ CHART_REGISTRY = {
 }
 
 
+def infer_chart_directives(question: str, tickers=None,
+                           peers_map: dict | None = None) -> list[dict]:
+    """
+    Fallback determinístico: quando a pergunta claramente pede um gráfico e a LLM
+    NÃO emitiu diretiva (só descreveu), sintetiza a diretiva apropriada. Cobre
+    receita×lucro, desempenho de preço, correlação, dividendos e comparação com
+    concorrentes (usa peers_map do contexto).
+    """
+    q = (question or "").lower()
+    tks = _clean_tickers(tickers)
+    peers_map = peers_map or {}
+
+    quer_grafico = any(w in q for w in ("gráfic", "grafic", "mostre", "plote", "plot",
+                                        "curva", "visualiz", "desenh", "relação do gráfico",
+                                        "relacao do grafico"))
+    tem_receita = "receita" in q or "faturamento" in q
+    tem_lucro   = "lucro" in q
+    tem_desemp  = any(w in q for w in ("desempenh", "cotaç", "cotac", "preç", "prec",
+                                       "performance"))
+    tem_corr    = "correlaç" in q or "correlac" in q
+    tem_div     = "dividend" in q
+    tem_conc    = any(w in q for w in ("concorrent", "competidor", "rival", "pares",
+                                       "peer", " vs "))
+
+    # comparação do ticker com seus concorrentes de segmento
+    if tem_conc and tks:
+        base = tks[0]
+        peers = [p for p in (peers_map.get(base) or []) if p != base][:3]
+        if peers:
+            metric = "ROE"
+            for m, k in (("P/VP", "p/vp"), ("P/L", "p/l"), ("DY", "dividend"),
+                         ("Margem_Liquida", "margem"), ("ROE", "roe")):
+                if k in q:
+                    metric = m
+                    break
+            return [{"tipo": "comparison", "metrica": metric, "tickers": [base] + peers,
+                     "titulo": f"{base} vs concorrentes — {metric}"}]
+
+    if not (quer_grafico or tem_desemp or tem_corr):
+        return []
+    if tem_receita and tem_lucro and tks:
+        return [{"tipo": "financials", "tickers": tks[:1]}]
+    if tem_desemp and tks:
+        return [{"tipo": "performance", "tickers": tks}]
+    if tem_corr and tks:
+        return [{"tipo": "correlation", "tickers": tks}]
+    if tem_div and tks:
+        return [{"tipo": "dividend", "tickers": tks}]
+    return []
+
+
 def render_charts_from_directives(directives, meta: dict | None = None) -> int:
     """
     Renderiza os gráficos pedidos pela LLM. Cada diretiva é validada contra a

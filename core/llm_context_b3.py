@@ -107,6 +107,11 @@ def detect_intent(user_question: str) -> set[str]:
                             "criacao", "aprovad", "motivo", "lógica", "logica", "racional")):
         blocks.add("creation")
 
+    if any(t in q for t in ("concorrent", "concorrência", "concorrencia", "competidor",
+                            "competir", "rival", "pares", "peer", "mesmo segmento",
+                            "mesmo setor", "mesma indústria", "mesma industria", "vs ")):
+        blocks.add("peers")
+
     if any(t in q for t in ("universo", "todas as empresas", "toda a b3", "mercado", "ibov")):
         blocks.add("universe")
 
@@ -242,6 +247,103 @@ def get_company_fundamentals_context(tickers: list[str], max_n: int = 15) -> str
         inds = " | ".join(f"{_LABEL.get(c, c)}={_fmt_val(c, row.get(c))}" for c in cols)
         lines.append(f"  {row['Ticker']} [{setor}]: {inds}")
     return _cap("\n".join(lines), _CAP_FUND)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pares / concorrentes (mesmo segmento) de tickers citados
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_segment_peers(ticker: str, max_peers: int = 10) -> tuple[list[str], str]:
+    """
+    Retorna (peers, nivel) — empresas do MESMO SEGMENTO do ticker; se houver
+    menos de 3, expande p/ SUBSETOR e depois SETOR. Ordena por receita (maiores
+    primeiro) quando a DRE estiver disponível. `peers` exclui o próprio ticker.
+    """
+    tk = _norm_tk(ticker)
+    try:
+        setores = _db.load_setores()
+    except Exception:
+        setores = pd.DataFrame()
+    if setores is None or setores.empty or "ticker" not in setores.columns:
+        return [], ""
+    srow = setores[setores["ticker"] == tk]
+    if srow.empty:
+        return [], ""
+    seg = str(srow["SEGMENTO"].iloc[0] or "")
+    sub = str(srow["SUBSETOR"].iloc[0] or "")
+    setor = str(srow["SETOR"].iloc[0] or "")
+
+    raiz = tk[:4]  # radical p/ excluir outras classes da MESMA empresa (EUCA3 de EUCA4)
+
+    def _peers(col, val):
+        if not val:
+            return []
+        pool = setores[setores[col] == val]
+        return [t for t in dict.fromkeys(pool["ticker"].tolist())
+                if t and t != tk and t[:4] != raiz]
+
+    peers, nivel = _peers("SEGMENTO", seg), f"segmento {seg}"
+    if len(peers) < 3 and sub:
+        peers, nivel = _peers("SUBSETOR", sub), f"subsetor {sub}"
+    if not peers and setor:
+        peers, nivel = _peers("SETOR", setor), f"setor {setor}"
+    if not peers:
+        return [], nivel
+
+    # ordena por receita líquida (tamanho) quando houver DRE
+    rec: dict[str, float] = {}
+    try:
+        dres = _db.load_demonstracoes_batch(tuple([tk] + peers))
+        for p, d in (dres or {}).items():
+            if isinstance(d, pd.DataFrame) and not d.empty and \
+               "Receita_Liquida" in d.columns and "Data" in d.columns:
+                s = pd.to_numeric(d.sort_values("Data")["Receita_Liquida"],
+                                  errors="coerce").dropna()
+                if not s.empty:
+                    rec[p] = float(s.iloc[-1])
+    except Exception:
+        pass
+    peers.sort(key=lambda p: rec.get(p, -1.0), reverse=True)
+    return peers[:max_peers], nivel
+
+
+def get_peers_context(tickers: list[str], max_tickers: int = 2) -> tuple[str, dict]:
+    """
+    Lista os concorrentes (mesmo segmento) dos tickers citados, com nome, receita
+    (tamanho) e múltiplos-chave. Retorna (texto, peers_map) — peers_map alimenta
+    o gráfico de comparação de pares.
+    """
+    tks = list(dict.fromkeys(_norm_tk(t) for t in (tickers or []) if t))[:max_tickers]
+    if not tks:
+        return "", {}
+    try:
+        setores = _db.load_setores()
+    except Exception:
+        setores = pd.DataFrame()
+    nomes = dict(zip(setores["ticker"], setores["nome_empresa"])) if not setores.empty else {}
+    dfm = _universe_with_sector()
+
+    lines: list[str] = []
+    peers_map: dict[str, list[str]] = {}
+    for tk in tks:
+        peers, nivel = compute_segment_peers(tk)
+        if not peers:
+            continue
+        peers_map[tk] = peers
+        lines.append(f"CONCORRENTES DE {tk} ({nivel} — maiores por receita primeiro):")
+        for p in peers:
+            nm = str(nomes.get(p, "") or "")[:26]
+            m = ""
+            if not dfm.empty and "Ticker" in dfm.columns:
+                mrow = dfm[dfm["Ticker"] == p]
+                if not mrow.empty:
+                    m = " | " + " ".join(
+                        f"{_LABEL.get(c, c)}={_fmt_val(c, mrow[c].iloc[0])}"
+                        for c in ("P/L", "ROE", "Margem_Liquida") if c in mrow.columns)
+            lines.append(f"  {p} [{nm}]{m}")
+    if not lines:
+        return "", {}
+    return _cap("\n".join(lines), _CAP_SECTOR), peers_map
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -459,6 +561,14 @@ def build_llm_context_for_portfolio_chat(
         if dre_block:
             parts += ["", dre_block]
 
+    # Concorrentes (mesmo segmento) dos tickers citados — identifica pares p/ a LLM
+    # e alimenta o gráfico de comparação; sem isso ela não sabe quem são os rivais.
+    peers_map: dict[str, list[str]] = {}
+    if "peers" in intent and q_tickers:
+        peers_block, peers_map = get_peers_context(q_tickers)
+        if peers_block:
+            parts += ["", peers_block]
+
     # Documentos CVM/IPE SOB DEMANDA para qualquer ticker citado na pergunta
     # (dentro OU fora da carteira). Aplica os mesmos critérios do RAG (limpeza de
     # rodapé/disclaimer + ordem temporal), permitindo análise de ativos fora do
@@ -481,5 +591,6 @@ def build_llm_context_for_portfolio_chat(
         "mentioned_tickers": q_tickers,
         "external_tickers": externos,
         "intent": sorted(intent),
+        "peers": peers_map,
     }
     return context, meta

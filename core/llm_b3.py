@@ -532,7 +532,12 @@ def chat_com_portfolio(
         "desempenho ou de receita/lucro, EMITA a diretiva correspondente em vez de dizer que não "
         "há dados. metrica ex.: ROE, P/L, P/VP, EV/EBIT, DY, Margem_Liquida, Endividamento_Total. "
         "tickers = lista de tickers reais. Não escreva código fora desse bloco; o app desenha o "
-        "gráfico com dados reais. Omita o bloco se nenhum gráfico for útil.\n\n"
+        "gráfico com dados reais. Omita o bloco se nenhum gráfico for útil.\n"
+        "OBRIGATÓRIO: se o usuário PEDIR um gráfico, você DEVE terminar com o bloco ```charts "
+        "correspondente — NUNCA responda apenas 'vou criar o gráfico' sem emitir o bloco. Para "
+        "concorrentes/pares, use os tickers do bloco 'CONCORRENTES DE ...' do contexto (tipo "
+        "'comparison' com o ativo + os concorrentes); nunca diga que não conhece os concorrentes "
+        "se esse bloco estiver presente.\n\n"
         f"=== CONTEXTO DO PORTFÓLIO ===\n{context}"
     )
 

@@ -74,6 +74,36 @@ def test_schema_menciona_preco_e_dre_disponiveis():
     assert "performance" in schema and "financials" in schema
 
 
+def test_detect_intent_concorrentes():
+    assert "peers" in ctxmod.detect_intent("Quais os 3 maiores concorrentes da EUCA4?")
+    assert "peers" in ctxmod.detect_intent("Compare WEGE3 vs seus pares")
+
+
+# ── fallback determinístico de gráficos ───────────────────────────────────────
+
+def test_infer_directives_receita_lucro():
+    d = charts.infer_chart_directives(
+        "Me dê um gráfico da relação receita x lucro líquido da EUCA4", ["EUCA4"], {})
+    assert d == [{"tipo": "financials", "tickers": ["EUCA4"]}]
+
+
+def test_infer_directives_desempenho_preco():
+    d = charts.infer_chart_directives("Mostre o gráfico de desempenho dos preços dela", ["EUCA4"])
+    assert d and d[0]["tipo"] == "performance" and d[0]["tickers"] == ["EUCA4"]
+
+
+def test_infer_directives_concorrentes_usa_peers_map():
+    d = charts.infer_chart_directives(
+        "gráfico entre as 3 empresas mais concorrentes do segmento da EUCA4",
+        ["EUCA4"], {"EUCA4": ["SUZB3", "KLBN11", "DXCO3", "RANI3"]})
+    assert d and d[0]["tipo"] == "comparison"
+    assert d[0]["tickers"] == ["EUCA4", "SUZB3", "KLBN11", "DXCO3"]   # base + top 3
+
+
+def test_infer_directives_sem_pedido_de_grafico():
+    assert charts.infer_chart_directives("Qual o ROE da EUCA4?", ["EUCA4"], {}) == []
+
+
 # ── orquestrador ──────────────────────────────────────────────────────────────
 
 def test_build_context_always_includes_schema_and_base():

@@ -27,7 +27,7 @@ from core.llm_b3 import (
     redistribuir_pesos,
 )
 from core.llm_context_b3 import build_llm_context_for_portfolio_chat
-from core.portfolio_chat_charts import render_charts_from_directives
+from core.portfolio_chat_charts import infer_chart_directives, render_charts_from_directives
 from core.rag_b3 import (
     format_rag_context,
     get_cobertura_docs,
@@ -1060,6 +1060,14 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
                     )
                     resposta_raw = chat_com_portfolio(context, history[:-1], user_input)
                     resposta, chart_directives = parse_chart_directives(resposta_raw)
+                    # Fallback: a LLM às vezes descreve o gráfico sem emitir a
+                    # diretiva. Se pediram um gráfico e nenhuma veio, inferimos.
+                    if not chart_directives:
+                        chart_directives = infer_chart_directives(
+                            user_input,
+                            chart_meta.get("mentioned_tickers"),
+                            chart_meta.get("peers"),
+                        )
                 except Exception as exc:
                     resposta = f"Erro ao consultar LLM: {exc}"
             st.markdown(resposta)
