@@ -18,7 +18,7 @@ import streamlit as st
 from core.auth import encerrar_sessao, esta_autenticado
 from core.config import settings
 from core.database import get_database_storage_status, get_db_status
-from design.componentes import container_pagina
+from design.componentes import container_pagina, card_metrica
 from views.bank_statement_upload import render_upload_extrato_bancario
 from views.credit_card_invoice_upload import render_upload_fatura_cartao
 
@@ -1110,16 +1110,24 @@ def _render_import_result(summary: dict) -> None:
     positions = int(summary.get("positions_imported", 0))
     if positions > 0:
         cols = st.columns(4)
-        cols[0].metric("Posições", positions)
-        cols[1].metric("Proventos", int(summary.get("incomes_imported", 0)))
-        cols[2].metric("Duplicados", int(summary.get("duplicates_skipped", 0)))
-        cols[3].metric("Ignorados", int(summary.get("rows_skipped", 0)))
+        with cols[0]:
+            card_metrica("Posições", positions, accent="#00C896")
+        with cols[1]:
+            card_metrica("Proventos", int(summary.get("incomes_imported", 0)), accent="#4A9EFF")
+        with cols[2]:
+            card_metrica("Duplicados", int(summary.get("duplicates_skipped", 0)), accent="#F6C90E")
+        with cols[3]:
+            card_metrica("Ignorados", int(summary.get("rows_skipped", 0)), accent="#9CA3AF")
     else:
         cols = st.columns(4)
-        cols[0].metric("Operações", int(summary.get("transactions_imported", 0)))
-        cols[1].metric("Proventos", int(summary.get("incomes_imported", 0)))
-        cols[2].metric("Duplicados", int(summary.get("duplicates_skipped", 0)))
-        cols[3].metric("Ignorados", int(summary.get("rows_skipped", 0)))
+        with cols[0]:
+            card_metrica("Operações", int(summary.get("transactions_imported", 0)), accent="#00C896")
+        with cols[1]:
+            card_metrica("Proventos", int(summary.get("incomes_imported", 0)), accent="#4A9EFF")
+        with cols[2]:
+            card_metrica("Duplicados", int(summary.get("duplicates_skipped", 0)), accent="#F6C90E")
+        with cols[3]:
+            card_metrica("Ignorados", int(summary.get("rows_skipped", 0)), accent="#9CA3AF")
 
     extras = []
     if summary.get("_report_date"):

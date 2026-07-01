@@ -14,6 +14,7 @@ import streamlit as st
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.data_reconciliacao as _recon
 from core.b3_portfolio_model import save_b3_portfolio_model
+from design.componentes import card_metrica
 
 # ── Importa engine compartilhado de empresas_b3 ───────────────────────────────
 from views.empresas_b3 import (
@@ -157,10 +158,17 @@ def _render_data_quality_box(summary: dict, audit: pd.DataFrame, hist_audit: pd.
         return
     with st.expander("Qualidade dos fundamentos usados pela carteira", expanded=False):
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Tickers", int(summary.get("tickers", 0)))
-        c2.metric("Celulas invalidas", int(summary.get("celulas_invalidas", 0)))
-        c3.metric("Correcoes web", int(summary.get("correcoes_web", 0)))
-        c4.metric("Historico saneado", int(hist_audit["Ocorrencias"].sum()) if not hist_audit.empty else 0)
+        with c1:
+            card_metrica("Tickers", int(summary.get("tickers", 0)), accent="#4A9EFF")
+        with c2:
+            card_metrica("Células inválidas", int(summary.get("celulas_invalidas", 0)),
+                         accent="#FC5C7D")
+        with c3:
+            card_metrica("Correções web", int(summary.get("correcoes_web", 0)), accent="#F6C90E")
+        with c4:
+            card_metrica("Histórico saneado",
+                         int(hist_audit["Ocorrencias"].sum()) if not hist_audit.empty else 0,
+                         accent="#00C896")
         zeros = summary.get("campos_zero_suspeito") or []
         if zeros:
             st.warning("Campos tratados como ausentes por excesso de zeros: " + ", ".join(zeros))

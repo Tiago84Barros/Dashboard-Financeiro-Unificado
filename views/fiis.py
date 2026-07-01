@@ -398,9 +398,11 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
     dy_w = sum((p["dy_12m"] or 0) * p["peso"] for p in port)
     pvp_w = sum((p["pvp"] or 0) * p["peso"] for p in port)
     k1, k2, k3 = st.columns(3)
-    k1.metric("Ativos", len(port))
-    k2.metric("DY 12m (ponderado)", f"{dy_w*100:.1f}%")
-    k3.metric("P/VP (ponderado)", f"{pvp_w:.2f}")
+    k1.markdown(_kpi_html("Ativos", len(port), accent="#4A9EFF"), unsafe_allow_html=True)
+    k2.markdown(_kpi_html("DY 12m (ponderado)", f"{dy_w*100:.1f}%", accent="#00C896"),
+                unsafe_allow_html=True)
+    k3.markdown(_kpi_html("P/VP (ponderado)", f"{pvp_w:.2f}", accent="#B084F6"),
+                unsafe_allow_html=True)
 
     cc1, cc2 = st.columns([2, 1])
     with cc1:
@@ -443,12 +445,18 @@ def _tab_backtest() -> None:
         return
     bret = met.get("bench_retorno")
     alpha = (met["retorno_total"] - bret) if (met["retorno_total"] is not None and bret is not None) else None
+    cart_val = f"{met['retorno_total']*100:.1f}%" if met["retorno_total"] is not None else "—"
+    cart_sub = f"CAGR {met['cagr']*100:.1f}%" if met["cagr"] is not None else None
+    alfa_val = f"{alpha*100:+.1f} p.p." if alpha is not None else "—"
+    alfa_accent = "#00C896" if (alpha or 0) >= 0 else "#FC5C7D"
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Carteira (total)", f"{met['retorno_total']*100:.1f}%" if met["retorno_total"] is not None else "—",
-              f"CAGR {met['cagr']*100:.1f}%" if met["cagr"] is not None else None)
-    k2.metric("IFIX (benchmark)", f"{bret*100:.1f}%" if bret is not None else "—")
-    k3.metric("Alfa vs IFIX", f"{alpha*100:+.1f} p.p." if alpha is not None else "—")
-    k4.metric("Período", f"{met['anos']} anos · {met['n_ativos']} ativos")
+    k1.markdown(_kpi_html("Carteira (total)", cart_val, cart_sub, accent="#00C896"),
+                unsafe_allow_html=True)
+    k2.markdown(_kpi_html("IFIX (benchmark)", f"{bret*100:.1f}%" if bret is not None else "—",
+                          accent="#9CA3AF"), unsafe_allow_html=True)
+    k3.markdown(_kpi_html("Alfa vs IFIX", alfa_val, accent=alfa_accent), unsafe_allow_html=True)
+    k4.markdown(_kpi_html("Período", f"{met['anos']} anos · {met['n_ativos']} ativos",
+                          accent="#4A9EFF"), unsafe_allow_html=True)
     cols = [c for c in ("Carteira", bench_nome) if c in serie.columns]
     st.line_chart(serie.set_index("Data")[cols])
     st.caption("Índice base 100 no início da janela comum. Retorno total (cota + "

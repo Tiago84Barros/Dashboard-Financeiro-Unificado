@@ -21,6 +21,7 @@ from core.bank_statement_import import (
 )
 from core.config import settings
 from core.utils import fmt_moeda
+from design.componentes import card_metrica
 
 
 _COR_RECEITA = "#00C896"
@@ -131,10 +132,17 @@ def _render_diagnostics(parsed: dict) -> None:
         return
     with st.expander("Diagnóstico da leitura do PDF", expanded=True):
         cols = st.columns(4, gap="small")
-        cols[0].metric("Paginas", extract.get("n_pages", "-"))
-        cols[1].metric("Caracteres", parse.get("n_chars", extract.get("n_chars", 0)))
-        cols[2].metric("Linhas candidatas", parse.get("n_linhas_candidatas", 0))
-        cols[3].metric("Movimentos validos", parse.get("n_movimentos_validos", 0))
+        with cols[0]:
+            card_metrica("Páginas", extract.get("n_pages", "-"), accent="#4A9EFF")
+        with cols[1]:
+            card_metrica("Caracteres", parse.get("n_chars", extract.get("n_chars", 0)),
+                         accent="#4A9EFF")
+        with cols[2]:
+            card_metrica("Linhas candidatas", parse.get("n_linhas_candidatas", 0),
+                         accent="#F6C90E")
+        with cols[3]:
+            card_metrica("Movimentos válidos", parse.get("n_movimentos_validos", 0),
+                         accent="#00C896")
 
         engine = extract.get("engine")
         if engine:
