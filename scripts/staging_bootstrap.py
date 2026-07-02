@@ -23,7 +23,10 @@ import os
 import sys
 
 import pandas as pd
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+
+load_dotenv()  # carrega .env (SUPABASE_DB_URL); não sobrescreve vars já no shell
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("staging_bootstrap")

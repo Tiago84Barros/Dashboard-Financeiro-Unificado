@@ -31,7 +31,10 @@ from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+
+load_dotenv()  # carrega .env (SUPABASE_DB_URL); não sobrescreve vars já no shell
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
