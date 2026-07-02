@@ -221,8 +221,20 @@ def _clean_text(t: str) -> str:
 
 
 def _pdf_text(content: bytes) -> str:
+    import io as _io
+    # 1) pypdf — rápido (2–5x vs pdfplumber) e qualidade equivalente para PDFs de
+    #    texto (Fato Relevante, resultados). É o extrator primário.
     try:
-        import io as _io
+        import pypdf
+        reader = pypdf.PdfReader(_io.BytesIO(content))
+        txt = "\n".join((p.extract_text() or "") for p in reader.pages[:60])
+        if len(txt.strip()) >= 200:
+            return _clean_text(txt)
+    except Exception as exc:
+        logger.debug("pypdf falhou (%s) — tentando pdfplumber", exc)
+    # 2) pdfplumber — reserva (melhor em layouts complexos/tabelas ou PDFs que o
+    #    pypdf não lê).
+    try:
         import pdfplumber
         out = []
         with pdfplumber.open(_io.BytesIO(content)) as pdf:
