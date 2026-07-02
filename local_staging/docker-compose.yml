@@ -1,0 +1,28 @@
+# Banco de STAGING local para a ingestão pesada de documentos CVM/IPE.
+# Postgres 16 + pgvector (mesmo Postgres do Supabase → mesmo SQL, zero reescrita).
+# O corpus completo é processado aqui (sem limite de tamanho); só o subconjunto
+# curado é publicado no Supabase por scripts/sync_docs_to_supabase.py.
+#
+#   docker compose up -d          # sobe o banco (porta 5433)
+#   docker compose down           # para (mantém os dados no volume)
+#   docker compose down -v        # para e APAGA os dados
+services:
+  staging_db:
+    image: pgvector/pgvector:pg16
+    container_name: dfin_staging_db
+    environment:
+      POSTGRES_DB: staging
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"          # local:container — 5433 evita colisão com Postgres local
+    volumes:
+      - staging_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d staging"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  staging_pgdata:
