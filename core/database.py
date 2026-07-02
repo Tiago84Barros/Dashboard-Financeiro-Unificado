@@ -31,20 +31,14 @@ def get_engine():
         return None
 
     is_sqlite = url.startswith("sqlite")
+    is_local = "localhost" in url or "127.0.0.1" in url
     kwargs: dict = {"pool_pre_ping": True}
     if not is_sqlite:
-        # sslmode=require: obrigatório para Supabase no Streamlit Cloud.
-        # connect_timeout: evita que o app trave se o DB não responder.
-        kwargs.update(
-            {
-                "pool_size": 3,
-                "max_overflow": 2,
-                "connect_args": {
-                    "connect_timeout": 10,
-                    "sslmode": "require",
-                },
-            }
-        )
+        # sslmode=require p/ Supabase; local (staging Docker) não tem SSL.
+        connect_args: dict = {"connect_timeout": 10}
+        if not is_local:
+            connect_args["sslmode"] = "require"
+        kwargs.update({"pool_size": 3, "max_overflow": 2, "connect_args": connect_args})
     return create_engine(url, **kwargs)
 
 

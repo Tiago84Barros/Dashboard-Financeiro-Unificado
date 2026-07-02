@@ -78,19 +78,23 @@ def run() -> dict:
         return result
 
     try:
-        from sqlalchemy import text
-        from data_pipeline.utils.db_utils import get_pipeline_engine
+        from sqlalchemy import create_engine, text
+        from core.b3_db import _resolve_url
         import core.cvm_ipe as ipe
     except Exception as exc:
         result["status"] = "failed"
         result["error_message"] = f"import: {exc}"[:500]
         return result
 
-    engine = get_pipeline_engine()
-    if engine is None:
+    # Mesmo resolvedor dos demais coletores B3 (SUPABASE_DB_URL_B3 → _URL → db_url),
+    # p/ um único env redirecionar tudo para o staging local. SSL só p/ Supabase.
+    url = _resolve_url()
+    if not url:
         result["status"] = "failed"
         result["error_message"] = "Banco não conectado"
         return result
+    _ssl = {} if ("localhost" in url or "127.0.0.1" in url) else {"sslmode": "require"}
+    engine = create_engine(url, connect_args={"connect_timeout": 15, **_ssl})
 
     max_docs = _cfg_int("CVM_FULLTEXT_MAX", 12)
     delay = float(os.getenv("CVM_FULLTEXT_DELAY", "3.0"))

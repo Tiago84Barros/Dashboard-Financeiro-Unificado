@@ -49,13 +49,13 @@ def _engine():
     if not url:
         return None
     is_sqlite = url.startswith("sqlite")
+    is_local = "localhost" in url or "127.0.0.1" in url
     kw: dict = {"pool_pre_ping": True}
     if not is_sqlite:
-        kw.update({
-            "pool_size": 2,
-            "max_overflow": 2,
-            "connect_args": {"connect_timeout": 10, "sslmode": "require"},
-        })
+        connect_args: dict = {"connect_timeout": 10}
+        if not is_local:  # Supabase exige SSL; staging local (Docker) não tem.
+            connect_args["sslmode"] = "require"
+        kw.update({"pool_size": 2, "max_overflow": 2, "connect_args": connect_args})
     try:
         return create_engine(url, **kw)
     except Exception:

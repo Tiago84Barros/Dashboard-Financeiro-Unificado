@@ -226,7 +226,8 @@ def main() -> int:
         _dry_run_report(src_eng, doc_ids)
         return 0
 
-    dst_eng = create_engine(dst_url, connect_args={"connect_timeout": 20, "sslmode": "require"})
+    _ssl = {} if ("localhost" in dst_url or "127.0.0.1" in dst_url) else {"sslmode": "require"}
+    dst_eng = create_engine(dst_url, connect_args={"connect_timeout": 20, **_ssl})
     _apply(src_eng, dst_eng, doc_ids, tickers)
     return 0
 

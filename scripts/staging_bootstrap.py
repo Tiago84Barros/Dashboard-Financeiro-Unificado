@@ -114,12 +114,19 @@ def main() -> int:
     logger.info("   ok (pgvector, market, docs_corporativos + chunks).")
 
     logger.info("2) copiando tabelas de referência do Supabase…")
+    import json
     for schema, tbl in _REF_TABLES:
         try:
             df = pd.read_sql_query(text(f'SELECT * FROM {schema}."{tbl}"'), src)
         except Exception as exc:
             logger.warning("   %s.%s: pulada (%s)", schema, tbl, str(exc)[:80])
             continue
+        # Colunas JSON/JSONB voltam como dict/list — psycopg2 não adapta; vira texto.
+        for col in df.columns:
+            if df[col].dtype == object:
+                df[col] = df[col].map(
+                    lambda v: json.dumps(v, ensure_ascii=False)
+                    if isinstance(v, (dict, list)) else v)
         if schema == "market":
             with dst.begin() as conn:
                 conn.execute(text("CREATE SCHEMA IF NOT EXISTS market"))

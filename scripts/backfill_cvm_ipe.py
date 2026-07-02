@@ -99,7 +99,8 @@ def run(years: list[int], per_ticker: int, apply: bool, clean_previous: bool) ->
     if not url:
         logger.error("Banco não configurado (SUPABASE_DB_URL_B3 / SUPABASE_DB_URL).")
         return 1
-    eng = create_engine(url, connect_args={"connect_timeout": 20, "sslmode": "require"})
+    _ssl = {} if ("localhost" in url or "127.0.0.1" in url) else {"sslmode": "require"}
+    eng = create_engine(url, connect_args={"connect_timeout": 20, **_ssl})
 
     with eng.connect() as conn:
         cod_map = _codigo_to_ticker(conn)
