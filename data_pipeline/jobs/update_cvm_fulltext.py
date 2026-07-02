@@ -162,14 +162,17 @@ def run() -> dict:
                             "cat": (categoria or "")[:300], "dt": doc_date,
                             "ver": _DONE_VERSION, "rid": run_id,
                         })
+                    # NÃO grava o texto no doc-pai: ele já está fatiado em
+                    # docs_corporativos_chunks (o que o RAG lê). Duplicar em
+                    # raw_text/texto só inflava o banco (raw_text é NOT NULL → '').
                     conn.execute(text("""
                         UPDATE public.docs_corporativos
-                        SET raw_text = :rt, texto = :rt, content_hash = :chash,
+                        SET raw_text = '', texto = '', content_hash = :chash,
                             extraction_version = :ver, chunking_version = :ver,
                             ingestion_run_id = :rid
                         WHERE id = :id
                     """), {
-                        "rt": texto[:200000], "chash": ipe.sha256(texto),
+                        "chash": ipe.sha256(texto),
                         "ver": _DONE_VERSION, "rid": run_id, "id": doc_id,
                     })
                     extraidos += 1
