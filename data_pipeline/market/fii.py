@@ -300,6 +300,18 @@ def risk_curve(returns, weights: dict) -> list[dict]:
     return out
 
 
+def mean_correlation(corr) -> float | None:
+    """Média das correlações par-a-par (fora da diagonal) de uma matriz de correlação.
+    Baixa = carteira bem diversificada; alta = fundos andam juntos. None se < 2 ativos."""
+    m = getattr(corr, "values", None)
+    if m is None or getattr(m, "shape", (0,))[0] < 2:
+        return None
+    n = m.shape[0]
+    vals = [m[i][j] for i in range(n) for j in range(n)
+            if i != j and m[i][j] == m[i][j]]   # ignora NaN
+    return round(sum(vals) / len(vals), 3) if vals else None
+
+
 # ── Backtest (retorno total: preço + proventos reinvestidos) ──────────────────
 
 def backtest(weights: dict, price_hist: dict, div_hist: dict | None = None,

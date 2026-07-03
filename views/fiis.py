@@ -633,6 +633,31 @@ def _carteira_qualidade() -> None:
         st.caption("Sem histórico suficiente entre os fundos selecionados para traçar a "
                    "curva (alguns são recentes demais).")
 
+    # ── Correlação entre os FIIs ──────────────────────────────────────────────
+    order = [t for t in pf.sort_values(["tipo", "peso"], ascending=[True, False])["ticker"]
+             if t in getattr(rets, "columns", [])]
+    if len(order) >= 2 and not rets.empty:
+        corr = rets[order].corr()             # pares completos (tolera históricos distintos)
+        if corr.notna().to_numpy().sum() > len(order):   # há correlações fora da diagonal
+            avg_c = _fz.mean_correlation(corr)
+            st.markdown("#### 🔗 Correlação entre os FIIs")
+            st.caption(
+                "Correlação dos retornos mensais. **Verde = baixa** correlação (bom "
+                "diversificador — oscila diferente); **vermelho = alta** (andam juntos). "
+                + (f"Correlação média da carteira: **{avg_c:.2f}** "
+                   "(quanto menor, mais diversificada). " if avg_c is not None else "")
+                + "Fundos agrupados por tipo — blocos vermelhos entre fundos do mesmo tipo "
+                  "são esperados; procure pares verdes para descorrelacionar.")
+            import plotly.express as px
+            fig = px.imshow(corr, text_auto=".2f", zmin=-1, zmax=1, aspect="auto",
+                            color_continuous_scale="RdYlGn_r")
+            fig.update_layout(height=max(320, 34 * len(order)),
+                              margin=dict(l=0, r=0, t=6, b=0),
+                              paper_bgcolor="rgba(0,0,0,0)", font_color="#CBD5E0",
+                              coloraxis_colorbar=dict(title="corr"))
+            fig.update_xaxes(side="bottom", tickangle=-45)
+            st.plotly_chart(fig, use_container_width=True)
+
     st.session_state["fii_port"] = weights
 
 

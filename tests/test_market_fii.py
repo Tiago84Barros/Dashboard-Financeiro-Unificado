@@ -142,3 +142,13 @@ def test_risk_curve_diminui_com_diversificacao():
     assert [c["n"] for c in curve] == [1, 2]
     assert curve[0]["vol"] > 0
     assert curve[1]["vol"] < curve[0]["vol"]     # diversificar reduziu o risco
+
+
+def test_mean_correlation():
+    import pandas as pd
+    corr = pd.DataFrame([[1.0, 0.5, 0.2],
+                         [0.5, 1.0, 0.8],
+                         [0.2, 0.8, 1.0]], columns=list("ABC"), index=list("ABC"))
+    # off-diagonal: 0.5, 0.2, 0.5, 0.8, 0.2, 0.8 -> média = 0.5
+    assert fii.mean_correlation(corr) == 0.5
+    assert fii.mean_correlation(pd.DataFrame([[1.0]])) is None
