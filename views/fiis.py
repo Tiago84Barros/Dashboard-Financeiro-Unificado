@@ -142,6 +142,20 @@ def _kpi_html(label: str, value, sub: str | None = None,
             f'<div class="lbl">{label}</div><div class="val">{value}</div>{sub_html}</div>')
 
 
+def _comp_tipo_chart(pf: pd.DataFrame) -> None:
+    """Barras horizontais da composição por tipo, rotuladas em PERCENTUAL."""
+    import plotly.express as px
+    comp = (pf.groupby("tipo")["peso"].sum() * 100).sort_values(ascending=True)
+    fig = px.bar(x=comp.values, y=comp.index, orientation="h",
+                 text=[f"{v:.0f}%" for v in comp.values])
+    fig.update_traces(textposition="outside", marker_color="#4A9EFF", cliponaxis=False)
+    fig.update_layout(height=200, margin=dict(l=0, r=28, t=4, b=0),
+                      xaxis=dict(visible=False, range=[0, max(float(comp.max()) * 1.18, 1)]),
+                      yaxis_title=None, plot_bgcolor="rgba(0,0,0,0)",
+                      paper_bgcolor="rgba(0,0,0,0)", font_color="#CBD5E0")
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def _render_grupo(tipo_key: str, grupo: pd.DataFrame) -> None:
     """Cabeçalho do tipo + grade de cards (4 por linha), com botão Analisar."""
     emoji, label, color = _TIPO_META.get(tipo_key, _TIPO_OUTROS)
@@ -427,9 +441,8 @@ def _carteira_score(ranked: pd.DataFrame) -> None:
             "score": st.column_config.NumberColumn("Score", format="%.0f"),
         })
     with cc2:
-        comp = pf.groupby("tipo")["peso"].sum().sort_values(ascending=False)
-        st.caption("Composição por tipo")
-        st.bar_chart(comp)
+        st.caption("Composição por tipo (%)")
+        _comp_tipo_chart(pf)
 
     # guarda p/ o backtest
     st.session_state["fii_port"] = {p["ticker"]: p["peso"] for p in port}
@@ -569,9 +582,8 @@ def _carteira_qualidade() -> None:
                                                      format="%.0f"),
         })
     with cc2:
-        comp = pf.groupby("tipo")["peso"].sum().sort_values(ascending=False)
-        st.caption("Composição por tipo (descorrelação)")
-        st.bar_chart(comp)
+        st.caption("Composição por tipo (%) · descorrelação")
+        _comp_tipo_chart(pf)
         if n_tipos == 1:
             st.caption("⚠️ Só um tipo — reduza o 'Máx. por tipo' ou relaxe um critério "
                        "para incluir papel/FoF.")
