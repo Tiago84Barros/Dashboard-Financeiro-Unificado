@@ -184,8 +184,11 @@ def fetch_quote(ticker: str, range_: str = "max", interval: str = "1mo",
         resp = requests.get(f"{API_BASE}/{tk}", params=params, headers=headers, timeout=timeout)
     except Exception as exc:
         raise BrapiError(str(exc)) from exc
-    if resp.status_code == 429:
-        raise BrapiRateLimited("HTTP 429")
+    # 429 (rate limit) e 401/403 (throttling transitório do plano Pro, visto em
+    # cargas grandes) são RETENTÁVEIS → sobem como BrapiRateLimited p/ o backoff
+    # retentar em vez de descartar o ativo (senão FIIs válidos somem do universo).
+    if resp.status_code in (429, 401, 403):
+        raise BrapiRateLimited(f"HTTP {resp.status_code}")
     if resp.status_code != 200:
         logger.warning("brapi %s: HTTP %s", tk, resp.status_code)
         return None

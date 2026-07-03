@@ -71,3 +71,28 @@ def test_current_fundamentals():
 def test_rate_limited_classification():
     assert brapi.is_rate_limited(brapi.BrapiRateLimited("429")) is True
     assert brapi.is_rate_limited(brapi.BrapiError("500")) is False
+
+
+class _FakeResp:
+    def __init__(self, status):
+        self.status_code = status
+
+    def json(self):
+        return {"results": []}
+
+
+def test_fetch_quote_401_403_retentavel(monkeypatch):
+    """401/403 (throttling do Pro) sobem como BrapiRateLimited p/ o backoff retentar."""
+    import pytest
+    import requests
+    for status in (401, 403, 429):
+        monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResp(status))
+        with pytest.raises(brapi.BrapiRateLimited):
+            brapi.fetch_quote("HGLG11")
+
+
+def test_fetch_quote_500_retorna_none(monkeypatch):
+    """Erros não-retentáveis (ex.: 500) continuam devolvendo None (sem exceção)."""
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResp(500))
+    assert brapi.fetch_quote("HGLG11") is None
