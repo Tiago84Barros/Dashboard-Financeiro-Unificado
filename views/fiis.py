@@ -617,33 +617,81 @@ def _carteira_qualidade() -> None:
                "liquidez 10% · desconto P/VP 5%. Papel/FoF entram para descorrelacionar "
                "(critérios multi-* valem só p/ tijolo/híbrido).")
 
-    # ── Diversificação: risco × nº de fundos ──────────────────────────────────
+    # ── Carteira vs mercado + risco × nº de fundos ────────────────────────────
     precos = _mr.load_precos_mensais(tuple(sorted(weights)))
     rets = precos.pct_change() if not precos.empty else pd.DataFrame()
-    curve = _fz.risk_curve(rets, weights) if not rets.empty else []
+    port_cols = [t for t in weights if t in getattr(rets, "columns", [])]
+    common = rets[port_cols].dropna() if port_cols else pd.DataFrame()
+    mkt = _mr.load_mercado_retorno_mensal()
+
+    def _ann(series):
+        s = series.dropna()
+        if len(s) < 6:
+            return None
+        anos = len(s) / 12.0
+        cum = float((1 + s).prod() - 1)
+        return (1 + cum) ** (1 / anos) - 1 if anos > 0.5 else None
+
+    def _vol(series):
+        s = series.dropna()
+        return float(s.std(ddof=0) * (12 ** 0.5)) if len(s) >= 6 else None
+
+    ifix_vol = None
+    if len(common) >= 6:
+        win = common.index
+        ifix_vol = _vol(mkt["IFIX"].reindex(win)) if not mkt.empty else None
+        tot = sum(weights[t] for t in port_cols) or 1.0
+        port_ret = sum(common[t] * (weights[t] / tot) for t in port_cols)
+        ann_port = _ann(port_ret)
+        ann_ifix = _ann(mkt["IFIX"].reindex(win)) if not mkt.empty else None
+        ann_uni = _ann(mkt["Universo"].reindex(win)) if not mkt.empty else None
+        alpha = (ann_port - ann_ifix) if (ann_port is not None and ann_ifix is not None) else None
+        st.markdown("#### 📊 Carteira vs mercado")
+        vc = st.columns(4)
+        vc[0].markdown(_kpi_html("Sua carteira", f"{ann_port*100:.1f}%" if ann_port is not None else "—",
+                                 accent="#00C896", sub=f"a.a. · {len(common)} meses",
+                                 sub_color="#4A5568"), unsafe_allow_html=True)
+        vc[1].markdown(_kpi_html("IFIX", f"{ann_ifix*100:.1f}%" if ann_ifix is not None else "—",
+                                 accent="#9CA3AF", sub="índice de FIIs", sub_color="#4A5568"),
+                       unsafe_allow_html=True)
+        vc[2].markdown(_kpi_html("Mercado (mediana)", f"{ann_uni*100:.1f}%" if ann_uni is not None else "—",
+                                 accent="#9CA3AF", sub="universo de FIIs", sub_color="#4A5568"),
+                       unsafe_allow_html=True)
+        vc[3].markdown(_kpi_html("vs IFIX", f"{alpha*100:+.1f} p.p." if alpha is not None else "—",
+                                 accent="#00C896" if (alpha or 0) >= 0 else "#FC5C7D",
+                                 sub="retorno acima/abaixo", sub_color="#4A5568"),
+                       unsafe_allow_html=True)
+        st.caption("Retorno total (cota + proventos) anualizado, todos na mesma janela comum. "
+                   "'vs IFIX' positivo = a carteira **bateu** o índice de FIIs.")
+
     st.markdown("#### 📉 Risco × nº de fundos")
+    curve = _fz.risk_curve(rets, weights) if not rets.empty else []
     if len(curve) >= 2:
         cdf = pd.DataFrame(curve)
         cdf["Volatilidade anual (%)"] = cdf["vol"] * 100
         import plotly.express as px
         fig = px.line(cdf, x="n", y="Volatilidade anual (%)", markers=True)
         fig.update_traces(line_color="#00C896", marker_color="#00C896")
-        fig.update_layout(height=280, margin=dict(l=0, r=10, t=6, b=0),
+        if ifix_vol is not None:
+            fig.add_hline(y=ifix_vol * 100, line_dash="dash", line_color="#FC5C7D",
+                          annotation_text=f"Vol. do mercado (IFIX) {ifix_vol*100:.1f}%",
+                          annotation_position="top right", annotation_font_color="#FC5C7D")
+        fig.update_layout(height=300, margin=dict(l=0, r=10, t=6, b=0),
                           xaxis=dict(title="Nº de fundos na carteira", dtick=1,
                                      tickmode="linear", gridcolor="#1E2533"),
                           yaxis=dict(title="Volatilidade anual (%)", gridcolor="#1E2533"),
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           font_color="#CBD5E0")
         _meses_win = int(cdf["meses"].iloc[0]) if "meses" in cdf else 0
-        st.caption(f"Volatilidade da carteira ao adicionar fundos (por peso), na **mesma "
-                   f"janela comum de {_meses_win} meses** para todos os pontos (limitada pelo "
-                   f"fundo mais novo) — isola o efeito da diversificação. Onde a curva "
-                   f"**achata**, incluir mais FIIs quase não reduz risco (nº ideal). "
-                   f"Nº efetivo atual: **{n_ef:.1f}** de {len(port)}.")
+        st.caption(f"Volatilidade da carteira ao adicionar fundos (por peso), na mesma janela "
+                   f"comum de {_meses_win} meses. A tracejada é a **volatilidade do mercado "
+                   f"(IFIX)** — sua curva tende a ela conforme diversifica: **poucos FIIs = "
+                   f"acima da linha** (risco específico extra, aposta concentrada); **fundos "
+                   f"suficientes = na linha** (você replica o risco do mercado). Nº efetivo: "
+                   f"**{n_ef:.1f}** de {len(port)}.")
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.caption("Sem histórico suficiente entre os fundos selecionados para traçar a "
-                   "curva (alguns são recentes demais).")
+        st.caption("Sem histórico suficiente entre os fundos selecionados para traçar a curva.")
 
     # ── Correlação entre os FIIs ──────────────────────────────────────────────
     order = [t for t in pf.sort_values(["tipo", "peso"], ascending=[True, False])["ticker"]
