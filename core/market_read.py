@@ -483,6 +483,30 @@ def load_fii_quality() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def load_mercado_retorno_mensal() -> pd.DataFrame:
+    """
+    Retornos MENSAIS (retorno total, adjusted_close) de referência de mercado:
+      IFIX     — proxy pelo ETF XFIX11;
+      Universo — mediana mensal dos retornos de TODOS os FIIs (mercado equal-weight).
+    DataFrame indexado por data (fim de mês) com colunas 'IFIX' e 'Universo'.
+    """
+    px = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c "
+            "FROM market.historical_prices "
+            "WHERE (ticker IN (SELECT ticker FROM market.fiis) OR ticker = 'XFIX11') "
+            "AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY ticker, date")
+    if px.empty:
+        return pd.DataFrame()
+    px["date"] = pd.to_datetime(px["date"], errors="coerce")
+    px = px.dropna(subset=["date"])
+    wide = px.pivot_table(index="date", columns="ticker", values="c",
+                          aggfunc="last").resample("ME").last()
+    rets = wide.pct_change(fill_method=None)
+    ifix = rets["XFIX11"] if "XFIX11" in rets.columns else pd.Series(index=rets.index, dtype=float)
+    uni = rets.drop(columns=["XFIX11"], errors="ignore").median(axis=1)
+    return pd.DataFrame({"IFIX": ifix, "Universo": uni}).dropna(how="all")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     """
     Preços MENSAIS (último pregão do mês) AJUSTADOS por proventos+splits
