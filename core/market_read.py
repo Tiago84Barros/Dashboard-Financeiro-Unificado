@@ -427,6 +427,60 @@ def load_fii_imoveis(ticker: str) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def load_fii_quality() -> pd.DataFrame:
+    """
+    Sinais de qualidade por FII para a carteira-modelo por critérios:
+      DY_12m, P/VP, Liquidez_Diaria, Tipo, Segmento, Num_Imoveis,
+      N_Regioes (imóveis em regiões distintas), N_UFs, Multi_Setorial,
+      CAGR e Max_Drawdown (da série de retorno total).
+    """
+    from data_pipeline.market import fii as _fz
+    base = _q("""
+        SELECT ticker AS "Ticker", name AS "Nome", tipo AS "Tipo",
+               COALESCE(segmento_cvm, segmento) AS "Segmento",
+               dy_12m AS "DY_12m", pvp AS "P/VP", liquidez_diaria AS "Liquidez_Diaria",
+               num_imoveis AS "Num_Imoveis", vacancia AS "Vacancia", score AS "Score"
+        FROM market.fiis
+    """)
+    if base.empty:
+        return pd.DataFrame()
+    base["Ticker"] = _norm_ticker(base["Ticker"])
+    for c in ("DY_12m", "P/VP", "Liquidez_Diaria", "Num_Imoveis", "Vacancia", "Score"):
+        base[c] = pd.to_numeric(base[c], errors="coerce")
+    # multi-setorial: fundo diversificado por classificação (Multicategoria/híbrido)
+    seg = base["Segmento"].fillna("").str.lower()
+    base["Multi_Setorial"] = seg.str.contains("multi") | (base["Tipo"] == "hibrido")
+
+    # regiões/UFs distintas por fundo (a partir dos imóveis)
+    reg = _q("SELECT ticker, COUNT(DISTINCT regiao) AS nreg, COUNT(DISTINCT uf) AS nuf "
+             "FROM market.fii_imoveis GROUP BY ticker")
+    if not reg.empty:
+        reg["ticker"] = _norm_ticker(reg["ticker"])
+        m = {r.ticker: (int(r.nreg or 0), int(r.nuf or 0)) for r in reg.itertuples()}
+        base["N_Regioes"] = base["Ticker"].map(lambda t: m.get(t, (0, 0))[0])
+        base["N_UFs"] = base["Ticker"].map(lambda t: m.get(t, (0, 0))[1])
+    else:
+        base["N_Regioes"] = 0
+        base["N_UFs"] = 0
+
+    # CAGR + drawdown da série de retorno total (adjusted_close mensal)
+    px = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c "
+            "FROM market.historical_prices "
+            "WHERE ticker IN (SELECT ticker FROM market.fiis) "
+            "AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY ticker, date")
+    cagr_map, dd_map = {}, {}
+    if not px.empty:
+        px["ticker"] = _norm_ticker(px["ticker"])
+        for tk, g in px.groupby("ticker"):
+            met = _fz.price_metrics(list(zip(g["date"], g["c"])))
+            cagr_map[tk] = met["cagr"]
+            dd_map[tk] = met["max_drawdown"]
+    base["CAGR"] = base["Ticker"].map(cagr_map)
+    base["Max_Drawdown"] = base["Ticker"].map(dd_map)
+    return base
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     """
     Preços MENSAIS (último pregão do mês) AJUSTADOS por proventos+splits

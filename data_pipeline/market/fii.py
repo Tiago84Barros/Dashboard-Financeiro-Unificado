@@ -161,6 +161,31 @@ def rank_fiis(rows: list[dict], *, weights: dict | None = None,
     return out
 
 
+# ── Métricas de série (crescimento da cota + drawdown) ────────────────────────
+
+def price_metrics(prices: list) -> dict:
+    """
+    A partir de uma série [(date, close)] (retorno total, adjusted_close):
+      cagr          — crescimento anualizado da cota (None se janela < ~6m);
+      max_drawdown  — pior queda pico→vale (negativo, ex.: -0.32 = -32%);
+      anos          — janela em anos.
+    Puro e testável (sem rede/banco).
+    """
+    import pandas as pd
+    if not prices or len(prices) < 6:
+        return {"cagr": None, "max_drawdown": None, "anos": 0.0}
+    s = pd.Series({pd.to_datetime(d): float(c) for d, c in prices if c is not None})
+    s = s[s > 0].sort_index()
+    if len(s) < 6:
+        return {"cagr": None, "max_drawdown": None, "anos": 0.0}
+    anos = (s.index[-1] - s.index[0]).days / 365.25
+    total = s.iloc[-1] / s.iloc[0] - 1.0
+    cagr = ((1 + total) ** (1 / anos) - 1) if anos > 0.5 else None
+    dd = float((s / s.cummax() - 1.0).min())          # pior queda (negativo)
+    return {"cagr": round(cagr, 4) if cagr is not None else None,
+            "max_drawdown": round(dd, 4), "anos": round(anos, 1)}
+
+
 # ── Carteira-modelo (diversificada) ───────────────────────────────────────────
 
 def _cap_weights(w: list[float], cap: float) -> list[float]:

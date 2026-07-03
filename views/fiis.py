@@ -376,6 +376,17 @@ def _tab_busca(df: pd.DataFrame) -> None:
 # ── Tab 3: Carteira-modelo ────────────────────────────────────────────────────
 
 def _tab_carteira(ranked: pd.DataFrame) -> None:
+    modo = st.radio("Método de seleção",
+                    ["🎯 Qualidade diversificada", "📊 Score padrão (DY·P/VP·liquidez)"],
+                    horizontal=True, key="fii_cart_modo")
+    st.divider()
+    if modo.startswith("🎯"):
+        _carteira_qualidade()
+    else:
+        _carteira_score(ranked)
+
+
+def _carteira_score(ranked: pd.DataFrame) -> None:
     st.caption("Carteira diversificada a partir do ranking: pesos por score, com "
                "teto por FII e limite por tipo (evita concentração em um só segmento).")
     c1, c2, c3 = st.columns(3)
@@ -421,6 +432,125 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
         st.bar_chart(comp)
 
     # guarda p/ o backtest
+    st.session_state["fii_port"] = {p["ticker"]: p["peso"] for p in port}
+
+
+def _carteira_qualidade() -> None:
+    st.caption("Seleção por **qualidade**: FIIs diversificados (multi-região, "
+               "multi-inquilino, multi-setorial), líquidos, bons dividendos e bom "
+               "crescimento/baixo drawdown. O P/VP entra como desconto, mas com peso "
+               "pequeno (não é a métrica principal). A carteira é diversificada por tipo.")
+    q = _mr.load_fii_quality()
+    if q.empty:
+        st.info("Sem dados de FIIs. Rode a ingestão (`fiis`, `fiis-cvm`, `fiis-series`, "
+                "`fiis-metrics`, `fiis-imoveis`).")
+        return
+
+    c1, c2, c3 = st.columns(3)
+    liq_min = c1.slider("Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, 0.5) * 1e6
+    dd_max = c2.slider("Drawdown máx. tolerado (%)", 10, 60, 35, 5,
+                       help="Descarta FIIs cuja pior queda pico→vale foi maior que isso.")
+    dy_min = c3.slider("DY 12m mín. (%)", 0.0, 20.0, 8.0, 0.5)
+    c4, c5, c6 = st.columns(3)
+    n_max = c4.slider("Nº de FIIs", 4, 20, 10, 1)
+    max_w = c5.slider("Máx. por FII (%)", 5, 40, 20, 5) / 100.0
+    max_tp = c6.slider("Máx. por tipo (%)", 20, 100, 40, 10) / 100.0
+    st.markdown("**Critérios de diversificação** (desmarque para relaxar se sobrarem poucos FIIs)")
+    g1, g2, g3, g4 = st.columns(4)
+    exig_pvp = g1.checkbox("P/VP < 1", value=True)
+    exig_reg = g2.checkbox("Multi-região (≥2)", value=True)
+    exig_inq = g3.checkbox("Multi-inquilino (≥8 imóveis)", value=True)
+    exig_set = g4.checkbox("Multi-setorial", value=True)
+
+    # ── filtros duros ─────────────────────────────────────────────────────────
+    f = q.copy()
+    f = f[f["Liquidez_Diaria"].fillna(0) >= liq_min]
+    f = f[f["DY_12m"].fillna(0) * 100 >= dy_min]
+    f = f[f["Max_Drawdown"].fillna(0.0) >= -(dd_max / 100.0)]
+    if exig_pvp:
+        f = f[f["P/VP"].fillna(9) < 1.0]
+    if exig_reg:
+        f = f[f["N_Regioes"].fillna(0) >= 2]
+    if exig_inq:
+        f = f[f["Num_Imoveis"].fillna(0) >= 8]
+    if exig_set:
+        f = f[f["Multi_Setorial"]]
+
+    st.caption(f"**{len(f)}** FIIs atendem aos critérios (de {len(q)} no universo).")
+    if f.empty:
+        st.warning("Nenhum FII passou. Relaxe algum critério (ex.: desmarque um dos "
+                   "'multi-', reduza o DY mín. ou aumente o drawdown tolerado).")
+        st.session_state.pop("fii_port", None)
+        return
+
+    # ── score de qualidade (DY domina; P/VP é minoritário) ────────────────────
+    def _rk(s, higher=True):
+        r = s.rank(pct=True)
+        r = r.fillna(r.median() if r.notna().any() else 0.5)
+        return r if higher else (1.0 - r)
+
+    div = (0.4 * (f["N_Regioes"].fillna(0).clip(upper=5) / 5.0)
+           + 0.3 * (f["Num_Imoveis"].fillna(0).clip(upper=40) / 40.0)
+           + 0.3 * f["Multi_Setorial"].astype(float))
+    cresc = 0.6 * _rk(f["CAGR"]) + 0.4 * _rk(f["Max_Drawdown"])  # CAGR↑ e drawdown menos negativo↑
+    score = 100.0 * (0.35 * _rk(f["DY_12m"])      # bons dividendos (principal)
+                     + 0.25 * cresc               # crescimento / baixo drawdown
+                     + 0.25 * div                 # diversificação (multi-*)
+                     + 0.10 * _rk(f["Liquidez_Diaria"])
+                     + 0.05 * _rk(f["P/VP"], higher=False))  # desconto P/VP (menor peso)
+    f = f.assign(Qualidade=score)
+
+    rows = [{"ticker": r["Ticker"], "score": r["Qualidade"], "tipo": r["Tipo"],
+             "liquidez_diaria": r["Liquidez_Diaria"], "dy_12m": r["DY_12m"],
+             "pvp": r["P/VP"], "segmento": r["Segmento"]}
+            for _, r in f.iterrows()]
+    port = _fz.build_portfolio(rows, n_max=n_max, max_weight=max_w,
+                               max_tipo_frac=max_tp, liq_min=liq_min)
+    if not port:
+        st.warning("Sem FIIs elegíveis após a diversificação por tipo. Relaxe os critérios.")
+        st.session_state.pop("fii_port", None)
+        return
+
+    pf = pd.DataFrame(port).merge(
+        f[["Ticker", "CAGR", "Max_Drawdown", "N_Regioes", "Num_Imoveis"]],
+        left_on="ticker", right_on="Ticker", how="left")
+
+    dy_w = sum((p["dy_12m"] or 0) * p["peso"] for p in port)
+    pvp_w = sum((p["pvp"] or 0) * p["peso"] for p in port)
+    dd_w = float((pf["Max_Drawdown"].fillna(0) * pf["peso"]).sum())
+    k1, k2, k3, k4 = st.columns(4)
+    k1.markdown(_kpi_html("Ativos", len(port), accent="#4A9EFF"), unsafe_allow_html=True)
+    k2.markdown(_kpi_html("DY 12m (ponderado)", f"{dy_w*100:.1f}%", accent="#00C896"),
+                unsafe_allow_html=True)
+    k3.markdown(_kpi_html("Drawdown médio", f"{dd_w*100:.0f}%", accent="#F6C90E"),
+                unsafe_allow_html=True)
+    k4.markdown(_kpi_html("P/VP (ponderado)", f"{pvp_w:.2f}", accent="#B084F6"),
+                unsafe_allow_html=True)
+
+    cc1, cc2 = st.columns([2.4, 1])
+    with cc1:
+        show = pf[["ticker", "peso", "tipo", "segmento", "dy_12m", "pvp",
+                   "CAGR", "Max_Drawdown", "N_Regioes", "Num_Imoveis", "score"]]
+        st.dataframe(show, use_container_width=True, hide_index=True, column_config={
+            "ticker": "Ticker",
+            "peso": st.column_config.NumberColumn("Peso", format="percent"),
+            "tipo": "Tipo", "segmento": "Segmento",
+            "dy_12m": st.column_config.NumberColumn("DY 12m", format="percent"),
+            "pvp": st.column_config.NumberColumn("P/VP", format="%.2f"),
+            "CAGR": st.column_config.NumberColumn("Cresc. a.a.", format="percent"),
+            "Max_Drawdown": st.column_config.NumberColumn("Pior queda", format="percent"),
+            "N_Regioes": st.column_config.NumberColumn("Regiões", format="%d"),
+            "Num_Imoveis": st.column_config.NumberColumn("Imóveis", format="%d"),
+            "score": st.column_config.ProgressColumn("Qualidade", min_value=0, max_value=100,
+                                                     format="%.0f"),
+        })
+    with cc2:
+        comp = pf.groupby("tipo")["peso"].sum().sort_values(ascending=False)
+        st.caption("Composição por tipo")
+        st.bar_chart(comp)
+
+    st.caption("Peso da qualidade: DY 35% · crescimento/drawdown 25% · diversificação "
+               "(multi-região/inquilino/setorial) 25% · liquidez 10% · desconto P/VP 5%.")
     st.session_state["fii_port"] = {p["ticker"]: p["peso"] for p in port}
 
 

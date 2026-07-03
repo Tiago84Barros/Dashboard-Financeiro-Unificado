@@ -86,3 +86,22 @@ def test_rank_filtra_e_ordena():
     assert "ILIQ" not in tks and "ABSURDO" not in tks   # filtrados
     assert out[0]["ticker"] == "BOM"                    # melhor DY+P/VP
     assert all(0 <= r["score"] <= 100 for r in out)
+
+
+def test_price_metrics_cagr_drawdown():
+    # 25 pontos ~mensais: 100 → pico 110 → vale 80 → recupera até 121 (~2 anos).
+    vals = [100, 104, 108, 110, 100, 90, 80,
+            85, 90, 95, 100, 105, 110, 113, 116, 119, 121,
+            121, 121, 121, 121, 121, 121, 121, 121]
+    prices = [(dt.date(2023, 1, 1) + dt.timedelta(days=30 * i), v)
+              for i, v in enumerate(vals)]
+    m = fii.price_metrics(prices)
+    assert m["max_drawdown"] == round(80 / 110 - 1, 4)   # pico 110 → vale 80 = -0.2727
+    assert m["cagr"] is not None and 0.05 < m["cagr"] < 0.15
+    assert m["anos"] >= 1.5
+
+
+def test_price_metrics_curta_ou_vazia():
+    assert fii.price_metrics([]) == {"cagr": None, "max_drawdown": None, "anos": 0.0}
+    poucos = [(dt.date(2024, 1, 1), 100), (dt.date(2024, 2, 1), 101)]
+    assert fii.price_metrics(poucos)["cagr"] is None
