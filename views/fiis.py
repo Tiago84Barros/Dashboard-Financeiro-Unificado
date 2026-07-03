@@ -564,12 +564,17 @@ def _carteira_qualidade() -> None:
                              accent="#00C896"), unsafe_allow_html=True)
     r1[2].markdown(_kpi_html("P/VP (ponderado)", f"{pvp_w:.2f}", accent="#B084F6"),
                    unsafe_allow_html=True)
-    r2 = st.columns(3)
+    weights = {p["ticker"]: p["peso"] for p in port}
+    n_ef = _fz.effective_n(weights)
+    r2 = st.columns(4)
     r2[0].markdown(_kpi_html("Ativos", f"{len(port)} · {n_tipos} tipos", accent="#4A9EFF"),
                    unsafe_allow_html=True)
-    r2[1].markdown(_kpi_html("Drawdown médio", f"{dd_w*100:.0f}%", accent="#F6C90E"),
+    r2[1].markdown(_kpi_html("Nº efetivo", f"{n_ef:.1f}" if n_ef else "—", accent="#B084F6",
+                             sub="diversificação real (1/Σpeso²)", sub_color="#4A5568"),
                    unsafe_allow_html=True)
-    r2[2].markdown(_kpi_html("Liquidez mín.", f"R$ {liq_min_port/1e6:.1f} mi/dia",
+    r2[2].markdown(_kpi_html("Drawdown médio", f"{dd_w*100:.0f}%", accent="#F6C90E"),
+                   unsafe_allow_html=True)
+    r2[3].markdown(_kpi_html("Liquidez mín.", f"R$ {liq_min_port/1e6:.1f} mi/dia",
                              accent="#4A9EFF", sub="menor liquidez da carteira",
                              sub_color="#4A5568"), unsafe_allow_html=True)
 
@@ -601,7 +606,34 @@ def _carteira_qualidade() -> None:
     st.caption("Peso da qualidade: DY 35% · crescimento/drawdown 25% · diversificação 25% · "
                "liquidez 10% · desconto P/VP 5%. Papel/FoF entram para descorrelacionar "
                "(critérios multi-* valem só p/ tijolo/híbrido).")
-    st.session_state["fii_port"] = {p["ticker"]: p["peso"] for p in port}
+
+    # ── Diversificação: risco × nº de fundos ──────────────────────────────────
+    precos = _mr.load_precos_mensais(tuple(sorted(weights)))
+    rets = precos.pct_change() if not precos.empty else pd.DataFrame()
+    curve = _fz.risk_curve(rets, weights) if not rets.empty else []
+    st.markdown("#### 📉 Risco × nº de fundos")
+    if len(curve) >= 2:
+        cdf = pd.DataFrame(curve)
+        cdf["Volatilidade anual (%)"] = cdf["vol"] * 100
+        import plotly.express as px
+        fig = px.line(cdf, x="n", y="Volatilidade anual (%)", markers=True)
+        fig.update_traces(line_color="#00C896", marker_color="#00C896")
+        fig.update_layout(height=280, margin=dict(l=0, r=10, t=6, b=0),
+                          xaxis=dict(title="Nº de fundos na carteira", dtick=1,
+                                     tickmode="linear", gridcolor="#1E2533"),
+                          yaxis=dict(title="Volatilidade anual (%)", gridcolor="#1E2533"),
+                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                          font_color="#CBD5E0")
+        st.caption(f"Volatilidade da carteira ao adicionar fundos (por peso), na janela "
+                   f"histórica disponível de cada subconjunto. Onde a curva **achata**, "
+                   f"incluir mais FIIs quase não reduz risco — é o indício do nº ideal. "
+                   f"Nº efetivo atual: **{n_ef:.1f}** de {len(port)}.")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.caption("Sem histórico suficiente entre os fundos selecionados para traçar a "
+                   "curva (alguns são recentes demais).")
+
+    st.session_state["fii_port"] = weights
 
 
 # ── Tab 4: Backtest ───────────────────────────────────────────────────────────
