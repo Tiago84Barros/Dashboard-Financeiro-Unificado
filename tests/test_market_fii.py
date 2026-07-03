@@ -33,9 +33,10 @@ def test_dy_12m_janela_e_preco():
 
 
 def test_liquidez_mediana():
+    # 1000, 3000 -> mediana (média dos 2) = 2000 MENSAL -> /21 pregões = diário
     liq = fii.liquidez_diaria([{"close": 10, "volume": 100},
-                               {"close": 10, "volume": 300}])  # 1000, 3000 -> média 2000
-    assert liq == 2000.0
+                               {"close": 10, "volume": 300}])
+    assert liq == 2000.0 / fii._PREGOES_MES
 
 
 def test_compute_fii_none_para_etf():
@@ -88,8 +89,20 @@ def test_rank_filtra_e_ordena():
     assert all(0 <= r["score"] <= 100 for r in out)
 
 
-def test_price_metrics_cagr_drawdown():
-    # 25 pontos ~mensais: 100 → pico 110 → vale 80 → recupera até 121 (~2 anos).
+def test_price_metrics_regressao_recupera_taxa():
+    # série log-linear exata a 10% a.a. → o slope da regressão recupera 10%.
+    import math
+    rate = math.log(1.10)
+    prices = [(dt.date(2022, 1, 1) + dt.timedelta(days=30 * i),
+               100 * math.exp(rate * (30 * i / 365.25))) for i in range(37)]
+    m = fii.price_metrics(prices)
+    assert abs(m["cagr"] - 0.10) < 1e-4          # regressão robusta recupera a taxa
+    assert m["max_drawdown"] == 0.0              # monotônica crescente
+    assert m["meses"] == 37
+
+
+def test_price_metrics_drawdown():
+    # 25 pontos ~mensais: 100 → pico 110 → vale 80 → recupera até 121.
     vals = [100, 104, 108, 110, 100, 90, 80,
             85, 90, 95, 100, 105, 110, 113, 116, 119, 121,
             121, 121, 121, 121, 121, 121, 121, 121]
@@ -97,12 +110,13 @@ def test_price_metrics_cagr_drawdown():
               for i, v in enumerate(vals)]
     m = fii.price_metrics(prices)
     assert m["max_drawdown"] == round(80 / 110 - 1, 4)   # pico 110 → vale 80 = -0.2727
-    assert m["cagr"] is not None and 0.05 < m["cagr"] < 0.15
-    assert m["anos"] >= 1.5
+    assert m["cagr"] is not None
+    assert m["meses"] == len(vals)
 
 
 def test_price_metrics_curta_ou_vazia():
-    assert fii.price_metrics([]) == {"cagr": None, "max_drawdown": None, "anos": 0.0}
+    assert fii.price_metrics([]) == {"cagr": None, "max_drawdown": None,
+                                     "anos": 0.0, "meses": 0}
     poucos = [(dt.date(2024, 1, 1), 100), (dt.date(2024, 2, 1), 101)]
     assert fii.price_metrics(poucos)["cagr"] is None
 

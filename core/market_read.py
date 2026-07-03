@@ -468,15 +468,17 @@ def load_fii_quality() -> pd.DataFrame:
             "FROM market.historical_prices "
             "WHERE ticker IN (SELECT ticker FROM market.fiis) "
             "AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY ticker, date")
-    cagr_map, dd_map = {}, {}
+    cagr_map, dd_map, mes_map = {}, {}, {}
     if not px.empty:
         px["ticker"] = _norm_ticker(px["ticker"])
         for tk, g in px.groupby("ticker"):
             met = _fz.price_metrics(list(zip(g["date"], g["c"])))
             cagr_map[tk] = met["cagr"]
             dd_map[tk] = met["max_drawdown"]
+            mes_map[tk] = met.get("meses")
     base["CAGR"] = base["Ticker"].map(cagr_map)
     base["Max_Drawdown"] = base["Ticker"].map(dd_map)
+    base["Hist_Meses"] = base["Ticker"].map(mes_map)
     return base
 
 
