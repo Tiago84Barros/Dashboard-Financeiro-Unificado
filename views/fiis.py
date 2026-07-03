@@ -436,10 +436,11 @@ def _carteira_score(ranked: pd.DataFrame) -> None:
 
 
 def _carteira_qualidade() -> None:
-    st.caption("Seleção por **qualidade**: FIIs diversificados (multi-região, "
-               "multi-inquilino, multi-setorial), líquidos, bons dividendos e bom "
-               "crescimento/baixo drawdown. O P/VP entra como desconto, mas com peso "
-               "pequeno (não é a métrica principal). A carteira é diversificada por tipo.")
+    st.caption("Seleção por **qualidade**: tijolos diversificados (multi-região, "
+               "multi-inquilino, multi-setorial) + **papel e FoF para descorrelacionar** "
+               "(oscilam por juros/CDI-IPCA, não pelo ciclo imobiliário). Líquidos, bons "
+               "dividendos e bom crescimento/baixo drawdown. P/VP entra como desconto, mas "
+               "com peso pequeno. Teto por tipo evita concentração em um só.")
     q = _mr.load_fii_quality()
     if q.empty:
         st.info("Sem dados de FIIs. Rode a ingestão (`fiis`, `fiis-cvm`, `fiis-series`, "
@@ -451,10 +452,13 @@ def _carteira_qualidade() -> None:
     dd_max = c2.slider("Drawdown máx. tolerado (%)", 10, 60, 35, 5,
                        help="Descarta FIIs cuja pior queda pico→vale foi maior que isso.")
     dy_min = c3.slider("DY 12m mín. (%)", 0.0, 20.0, 8.0, 0.5)
-    c4, c5, c6 = st.columns(3)
+    c4, c5, c6, c7 = st.columns(4)
     n_max = c4.slider("Nº de FIIs", 4, 20, 10, 1)
     max_w = c5.slider("Máx. por FII (%)", 5, 40, 20, 5) / 100.0
     max_tp = c6.slider("Máx. por tipo (%)", 20, 100, 40, 10) / 100.0
+    min_tp = c7.slider("Mín. por tipo", 0, 3, 1, 1,
+                       help="Garante ao menos N FIIs de cada tipo presente — força o mix "
+                            "(tijolo + papel + FoF descorrelacionados).")
     st.markdown("**Critérios de diversificação** (desmarque para relaxar se sobrarem poucos FIIs)")
     g1, g2, g3, g4 = st.columns(4)
     exig_pvp = g1.checkbox("P/VP < 1", value=True)
@@ -464,17 +468,25 @@ def _carteira_qualidade() -> None:
 
     # ── filtros duros ─────────────────────────────────────────────────────────
     f = q.copy()
+    f = f[f["Tipo"].isin(["tijolo", "hibrido", "papel", "fof"])]   # exige tipo definido
     f = f[f["Liquidez_Diaria"].fillna(0) >= liq_min]
     f = f[f["DY_12m"].fillna(0) * 100 >= dy_min]
     f = f[f["Max_Drawdown"].fillna(0.0) >= -(dd_max / 100.0)]
     if exig_pvp:
         f = f[f["P/VP"].fillna(9) < 1.0]
+    # Os critérios "multi-*" (região/inquilino/setorial) SÓ se aplicam a FIIs de
+    # tijolo/híbrido (que têm imóveis). Papel e FoF passam direto — eles entram de
+    # propósito para DESCORRELACIONAR a carteira (papel segue juros/CDI-IPCA, não o
+    # ciclo imobiliário do tijolo).
+    brick = f["Tipo"].isin(["tijolo", "hibrido"])
+    keep = pd.Series(True, index=f.index)
     if exig_reg:
-        f = f[f["N_Regioes"].fillna(0) >= 2]
+        keep &= (~brick) | (f["N_Regioes"].fillna(0) >= 2)
     if exig_inq:
-        f = f[f["Num_Imoveis"].fillna(0) >= 8]
+        keep &= (~brick) | (f["Num_Imoveis"].fillna(0) >= 8)
     if exig_set:
-        f = f[f["Multi_Setorial"]]
+        keep &= (~brick) | (f["Multi_Setorial"])
+    f = f[keep]
 
     st.caption(f"**{len(f)}** FIIs atendem aos critérios (de {len(q)} no universo).")
     if f.empty:
@@ -489,9 +501,13 @@ def _carteira_qualidade() -> None:
         r = r.fillna(r.median() if r.notna().any() else 0.5)
         return r if higher else (1.0 - r)
 
-    div = (0.4 * (f["N_Regioes"].fillna(0).clip(upper=5) / 5.0)
-           + 0.3 * (f["Num_Imoveis"].fillna(0).clip(upper=40) / 40.0)
-           + 0.3 * f["Multi_Setorial"].astype(float))
+    # diversificação: tijolo/híbrido pela carteira de imóveis; papel/FoF por base
+    # (FoF é multi-ativo por natureza; papel diversifica por CRIs/indexadores).
+    div_brick = (0.4 * (f["N_Regioes"].fillna(0).clip(upper=5) / 5.0)
+                 + 0.3 * (f["Num_Imoveis"].fillna(0).clip(upper=40) / 40.0)
+                 + 0.3 * f["Multi_Setorial"].astype(float))
+    div = div_brick.where(f["Tipo"].isin(["tijolo", "hibrido"]),
+                          f["Tipo"].map({"fof": 0.70, "papel": 0.55}).fillna(0.5))
     cresc = 0.6 * _rk(f["CAGR"]) + 0.4 * _rk(f["Max_Drawdown"])  # CAGR↑ e drawdown menos negativo↑
     score = 100.0 * (0.35 * _rk(f["DY_12m"])      # bons dividendos (principal)
                      + 0.25 * cresc               # crescimento / baixo drawdown
@@ -505,36 +521,44 @@ def _carteira_qualidade() -> None:
              "pvp": r["P/VP"], "segmento": r["Segmento"]}
             for _, r in f.iterrows()]
     port = _fz.build_portfolio(rows, n_max=n_max, max_weight=max_w,
-                               max_tipo_frac=max_tp, liq_min=liq_min)
+                               max_tipo_frac=max_tp, liq_min=liq_min, min_por_tipo=min_tp)
     if not port:
         st.warning("Sem FIIs elegíveis após a diversificação por tipo. Relaxe os critérios.")
         st.session_state.pop("fii_port", None)
         return
 
     pf = pd.DataFrame(port).merge(
-        f[["Ticker", "CAGR", "Max_Drawdown", "N_Regioes", "Num_Imoveis"]],
+        f[["Ticker", "Liquidez_Diaria", "CAGR", "Max_Drawdown", "N_Regioes", "Num_Imoveis"]],
         left_on="ticker", right_on="Ticker", how="left")
 
     dy_w = sum((p["dy_12m"] or 0) * p["peso"] for p in port)
     pvp_w = sum((p["pvp"] or 0) * p["peso"] for p in port)
     dd_w = float((pf["Max_Drawdown"].fillna(0) * pf["peso"]).sum())
-    k1, k2, k3, k4 = st.columns(4)
-    k1.markdown(_kpi_html("Ativos", len(port), accent="#4A9EFF"), unsafe_allow_html=True)
-    k2.markdown(_kpi_html("DY 12m (ponderado)", f"{dy_w*100:.1f}%", accent="#00C896"),
-                unsafe_allow_html=True)
-    k3.markdown(_kpi_html("Drawdown médio", f"{dd_w*100:.0f}%", accent="#F6C90E"),
-                unsafe_allow_html=True)
-    k4.markdown(_kpi_html("P/VP (ponderado)", f"{pvp_w:.2f}", accent="#B084F6"),
-                unsafe_allow_html=True)
+    liq_min_port = float(pf["Liquidez_Diaria"].min())   # elo mais fraco de liquidez
+    n_tipos = pf["tipo"].nunique()
+    k = st.columns(5)
+    k[0].markdown(_kpi_html("Ativos", f"{len(port)} · {n_tipos} tipos", accent="#4A9EFF"),
+                  unsafe_allow_html=True)
+    k[1].markdown(_kpi_html("DY 12m (ponderado)", f"{dy_w*100:.1f}%", accent="#00C896"),
+                  unsafe_allow_html=True)
+    k[2].markdown(_kpi_html("Drawdown médio", f"{dd_w*100:.0f}%", accent="#F6C90E"),
+                  unsafe_allow_html=True)
+    k[3].markdown(_kpi_html("P/VP (ponderado)", f"{pvp_w:.2f}", accent="#B084F6"),
+                  unsafe_allow_html=True)
+    k[4].markdown(_kpi_html("Liquidez mín.", f"R$ {liq_min_port/1e6:.1f} mi/dia",
+                            accent="#4A9EFF",
+                            sub="menor liquidez da carteira", sub_color="#4A5568"),
+                  unsafe_allow_html=True)
 
-    cc1, cc2 = st.columns([2.4, 1])
+    cc1, cc2 = st.columns([2.6, 1])
     with cc1:
-        show = pf[["ticker", "peso", "tipo", "segmento", "dy_12m", "pvp",
+        show = pf[["ticker", "peso", "tipo", "segmento", "Liquidez_Diaria", "dy_12m", "pvp",
                    "CAGR", "Max_Drawdown", "N_Regioes", "Num_Imoveis", "score"]]
         st.dataframe(show, use_container_width=True, hide_index=True, column_config={
             "ticker": "Ticker",
             "peso": st.column_config.NumberColumn("Peso", format="percent"),
             "tipo": "Tipo", "segmento": "Segmento",
+            "Liquidez_Diaria": st.column_config.NumberColumn("Liquidez/dia", format="R$ %.0f"),
             "dy_12m": st.column_config.NumberColumn("DY 12m", format="percent"),
             "pvp": st.column_config.NumberColumn("P/VP", format="%.2f"),
             "CAGR": st.column_config.NumberColumn("Cresc. a.a.", format="percent"),
@@ -546,11 +570,15 @@ def _carteira_qualidade() -> None:
         })
     with cc2:
         comp = pf.groupby("tipo")["peso"].sum().sort_values(ascending=False)
-        st.caption("Composição por tipo")
+        st.caption("Composição por tipo (descorrelação)")
         st.bar_chart(comp)
+        if n_tipos == 1:
+            st.caption("⚠️ Só um tipo — reduza o 'Máx. por tipo' ou relaxe um critério "
+                       "para incluir papel/FoF.")
 
-    st.caption("Peso da qualidade: DY 35% · crescimento/drawdown 25% · diversificação "
-               "(multi-região/inquilino/setorial) 25% · liquidez 10% · desconto P/VP 5%.")
+    st.caption("Peso da qualidade: DY 35% · crescimento/drawdown 25% · diversificação 25% · "
+               "liquidez 10% · desconto P/VP 5%. Papel/FoF entram para descorrelacionar "
+               "(critérios multi-* valem só p/ tijolo/híbrido).")
     st.session_state["fii_port"] = {p["ticker"]: p["peso"] for p in port}
 
 
