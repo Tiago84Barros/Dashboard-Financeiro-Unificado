@@ -549,19 +549,29 @@ def _carteira_qualidade() -> None:
     dd_w = float((pf["Max_Drawdown"].fillna(0) * pf["peso"]).sum())
     liq_min_port = float(pf["Liquidez_Diaria"].min())   # elo mais fraco de liquidez
     n_tipos = pf["tipo"].nunique()
-    k = st.columns(5)
-    k[0].markdown(_kpi_html("Ativos", f"{len(port)} · {n_tipos} tipos", accent="#4A9EFF"),
-                  unsafe_allow_html=True)
-    k[1].markdown(_kpi_html("DY 12m (ponderado)", f"{dy_w*100:.1f}%", accent="#00C896"),
-                  unsafe_allow_html=True)
-    k[2].markdown(_kpi_html("Drawdown médio", f"{dd_w*100:.0f}%", accent="#F6C90E"),
-                  unsafe_allow_html=True)
-    k[3].markdown(_kpi_html("P/VP (ponderado)", f"{pvp_w:.2f}", accent="#B084F6"),
-                  unsafe_allow_html=True)
-    k[4].markdown(_kpi_html("Liquidez mín.", f"R$ {liq_min_port/1e6:.1f} mi/dia",
-                            accent="#4A9EFF",
-                            sub="menor liquidez da carteira", sub_color="#4A5568"),
-                  unsafe_allow_html=True)
+    # rentabilidade anual TOTAL (cota + proventos) = CAGR ponderado (renormaliza
+    # sobre os fundos com histórico suficiente).
+    _cm = pf["CAGR"].notna()
+    cagr_w = (float((pf.loc[_cm, "CAGR"] * pf.loc[_cm, "peso"]).sum() / pf.loc[_cm, "peso"].sum())
+              if _cm.any() else None)
+
+    r1 = st.columns(3)
+    r1[0].markdown(_kpi_html("Rent. anual (total)",
+                             f"{cagr_w*100:.1f}%" if cagr_w is not None else "—",
+                             accent="#00C896", sub="cota + proventos, média a.a.",
+                             sub_color="#4A5568"), unsafe_allow_html=True)
+    r1[1].markdown(_kpi_html("Rent. dividendos (DY 12m)", f"{dy_w*100:.1f}%",
+                             accent="#00C896"), unsafe_allow_html=True)
+    r1[2].markdown(_kpi_html("P/VP (ponderado)", f"{pvp_w:.2f}", accent="#B084F6"),
+                   unsafe_allow_html=True)
+    r2 = st.columns(3)
+    r2[0].markdown(_kpi_html("Ativos", f"{len(port)} · {n_tipos} tipos", accent="#4A9EFF"),
+                   unsafe_allow_html=True)
+    r2[1].markdown(_kpi_html("Drawdown médio", f"{dd_w*100:.0f}%", accent="#F6C90E"),
+                   unsafe_allow_html=True)
+    r2[2].markdown(_kpi_html("Liquidez mín.", f"R$ {liq_min_port/1e6:.1f} mi/dia",
+                             accent="#4A9EFF", sub="menor liquidez da carteira",
+                             sub_color="#4A5568"), unsafe_allow_html=True)
 
     cc1, cc2 = st.columns([2.6, 1])
     with cc1:
