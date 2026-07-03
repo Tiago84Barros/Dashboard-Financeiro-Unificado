@@ -460,11 +460,14 @@ def _carteira_qualidade() -> None:
                 "`fiis-metrics`, `fiis-imoveis`).")
         return
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4b = st.columns(4)
     liq_min = c1.slider("Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, 0.5) * 1e6
     dd_max = c2.slider("Drawdown máx. tolerado (%)", 10, 60, 35, 5,
                        help="Descarta FIIs cuja pior queda pico→vale foi maior que isso.")
     dy_min = c3.slider("DY 12m mín. (%)", 0.0, 20.0, 8.0, 0.5)
+    hist_min = c4b.slider("Histórico mín. (meses)", 0, 60, 24, 6,
+                          help="Exige track record mínimo — dá credibilidade a Cresc./Pior "
+                               "queda. Fundos com amostra menor que isso são descartados.")
     c4, c5, c6, c7 = st.columns(4)
     n_max = c4.slider("Nº de FIIs", 4, 20, 10, 1)
     max_w = c5.slider("Máx. por FII (%)", 5, 40, 20, 5) / 100.0
@@ -485,6 +488,7 @@ def _carteira_qualidade() -> None:
     f = f[f["Liquidez_Diaria"].fillna(0) >= liq_min]
     f = f[f["DY_12m"].fillna(0) * 100 >= dy_min]
     f = f[f["Max_Drawdown"].fillna(0.0) >= -(dd_max / 100.0)]
+    f = f[f["Hist_Meses"].fillna(0) >= hist_min]       # track record mínimo (credibilidade)
     if exig_pvp:
         f = f[f["P/VP"].fillna(9) < 1.0]
     # Os critérios "multi-*" (região/inquilino/setorial) SÓ se aplicam a FIIs de
