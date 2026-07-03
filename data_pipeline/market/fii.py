@@ -210,26 +210,48 @@ def _cap_weights(w: list[float], cap: float) -> list[float]:
 
 
 def build_portfolio(rows: list[dict], *, n_max: int = 10, max_weight: float = 0.20,
-                    max_tipo_frac: float = 0.50, liq_min: float = 200_000.0) -> list[dict]:
+                    max_tipo_frac: float = 0.50, liq_min: float = 200_000.0,
+                    min_por_tipo: int = 0) -> list[dict]:
     """
-    Monta a carteira-modelo a partir do ranking (rows já ordenadas por score):
-    seleciona os melhores com DIVERSIFICAÇÃO por tipo (no máx. max_tipo_frac do
-    nº de FIIs por tipo), pesa proporcional ao score com teto max_weight por FII.
+    Monta a carteira-modelo diversificada por tipo: teto de max_tipo_frac do nº de
+    FIIs por tipo e, opcionalmente, um PISO de `min_por_tipo` FIIs de cada tipo
+    presente (garante mix — ex.: tijolo + papel + FoF descorrelacionados). Pesa
+    proporcional ao score com teto max_weight por FII.
     """
     elig = [r for r in rows if r.get("score") is not None
             and (r.get("liquidez_diaria") or 0) >= liq_min]
+    elig.sort(key=lambda r: float(r["score"]), reverse=True)   # melhores primeiro
     cap_tipo = max(1, int(round(n_max * max_tipo_frac)))
-    sel, tipo_count = [], {}
+    sel, tipo_count, chosen = [], {}, set()
+
+    def _take(r):
+        sel.append(r)
+        chosen.add(id(r))
+        tp = r.get("tipo") or "?"
+        tipo_count[tp] = tipo_count.get(tp, 0) + 1
+
+    # 1) piso por tipo: os melhores de cada tipo presente entram primeiro
+    if min_por_tipo > 0:
+        by_tipo: dict = {}
+        for r in elig:
+            by_tipo.setdefault(r.get("tipo") or "?", []).append(r)
+        for lst in by_tipo.values():
+            for r in lst[:min_por_tipo]:
+                if len(sel) < n_max and id(r) not in chosen:
+                    _take(r)
+    # 2) completa por score, respeitando o teto por tipo
     for r in elig:
         if len(sel) >= n_max:
             break
+        if id(r) in chosen:
+            continue
         tp = r.get("tipo") or "?"
         if tipo_count.get(tp, 0) >= cap_tipo:
             continue
-        sel.append(r)
-        tipo_count[tp] = tipo_count.get(tp, 0) + 1
+        _take(r)
     if not sel:
         return []
+    sel.sort(key=lambda r: float(r["score"]), reverse=True)
     scores = [max(float(r["score"]), 1e-9) for r in sel]
     tot = sum(scores)
     w = _cap_weights([s / tot for s in scores], max_weight)
