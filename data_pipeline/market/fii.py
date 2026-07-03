@@ -13,6 +13,10 @@ import datetime as _dt
 
 FII_SECTOR = "Fundos Imobiliários"
 
+# A série da brapi p/ FII é MENSAL → volume das barras é mensal. Divide-se por
+# ~21 pregões/mês p/ estimar o volume financeiro DIÁRIO negociado.
+_PREGOES_MES = 21.0
+
 
 def _f(v):
     try:
@@ -58,7 +62,11 @@ def dy_12m(cash_dividends: list, price: float, ref_date: _dt.date) -> float | No
 
 
 def liquidez_diaria(historical: list, n: int = 60) -> float | None:
-    """Mediana de (close × volume) dos últimos n pregões — R$/dia negociados."""
+    """
+    Volume financeiro DIÁRIO típico (R$/dia). Mediana de (close × volume) dos
+    últimos n meses ÷ pregões/mês — a série da brapi p/ FII é MENSAL, então o
+    volume das barras é mensal e precisa ser convertido para diário.
+    """
     vals = []
     for it in (historical or []):
         c, v = _f(it.get("close")), _f(it.get("volume"))
@@ -68,7 +76,8 @@ def liquidez_diaria(historical: list, n: int = 60) -> float | None:
         return None
     vals = sorted(vals[-n:])
     m = len(vals) // 2
-    return vals[m] if len(vals) % 2 else (vals[m - 1] + vals[m]) / 2.0
+    med = vals[m] if len(vals) % 2 else (vals[m - 1] + vals[m]) / 2.0
+    return med / _PREGOES_MES
 
 
 def segmento(quote: dict) -> str:
@@ -166,24 +175,32 @@ def rank_fiis(rows: list[dict], *, weights: dict | None = None,
 def price_metrics(prices: list) -> dict:
     """
     A partir de uma série [(date, close)] (retorno total, adjusted_close):
-      cagr          — crescimento anualizado da cota (None se janela < ~6m);
+      cagr          — crescimento anualizado pela INCLINAÇÃO da regressão linear de
+                      ln(preço) no tempo. Usa TODOS os pontos → robusto a extremos
+                      não representativos (o CAGR ponta-a-ponta pode distorcer se o
+                      1º/último ponto forem atípicos);
       max_drawdown  — pior queda pico→vale (negativo, ex.: -0.32 = -32%);
-      anos          — janela em anos.
+      anos          — janela em anos;  meses — nº de observações (transparência).
     Puro e testável (sem rede/banco).
     """
+    import numpy as np
     import pandas as pd
     if not prices or len(prices) < 6:
-        return {"cagr": None, "max_drawdown": None, "anos": 0.0}
+        return {"cagr": None, "max_drawdown": None, "anos": 0.0, "meses": 0}
     s = pd.Series({pd.to_datetime(d): float(c) for d, c in prices if c is not None})
     s = s[s > 0].sort_index()
     if len(s) < 6:
-        return {"cagr": None, "max_drawdown": None, "anos": 0.0}
-    anos = (s.index[-1] - s.index[0]).days / 365.25
-    total = s.iloc[-1] / s.iloc[0] - 1.0
-    cagr = ((1 + total) ** (1 / anos) - 1) if anos > 0.5 else None
+        return {"cagr": None, "max_drawdown": None, "anos": 0.0, "meses": int(len(s))}
+    t = np.array([(d - s.index[0]).days / 365.25 for d in s.index])   # tempo em anos
+    anos = float(t[-1])
+    cagr = None
+    if anos > 0.5:
+        # slope da regressão ln(preço) ~ tempo (por ano); crescimento = e^slope − 1
+        slope = float(np.polyfit(t, np.log(s.to_numpy()), 1)[0])
+        cagr = float(np.exp(slope) - 1.0)
     dd = float((s / s.cummax() - 1.0).min())          # pior queda (negativo)
     return {"cagr": round(cagr, 4) if cagr is not None else None,
-            "max_drawdown": round(dd, 4), "anos": round(anos, 1)}
+            "max_drawdown": round(dd, 4), "anos": round(anos, 1), "meses": int(len(s))}
 
 
 # ── Carteira-modelo (diversificada) ───────────────────────────────────────────

@@ -541,7 +541,8 @@ def _carteira_qualidade() -> None:
         return
 
     pf = pd.DataFrame(port).merge(
-        f[["Ticker", "Liquidez_Diaria", "CAGR", "Max_Drawdown", "N_Regioes", "Num_Imoveis"]],
+        f[["Ticker", "Liquidez_Diaria", "CAGR", "Max_Drawdown", "Hist_Meses",
+           "N_Regioes", "Num_Imoveis"]],
         left_on="ticker", right_on="Ticker", how="left")
 
     dy_w = sum((p["dy_12m"] or 0) * p["peso"] for p in port)
@@ -581,7 +582,7 @@ def _carteira_qualidade() -> None:
     cc1, cc2 = st.columns([2.6, 1])
     with cc1:
         show = pf[["ticker", "peso", "tipo", "segmento", "Liquidez_Diaria", "dy_12m", "pvp",
-                   "CAGR", "Max_Drawdown", "N_Regioes", "Num_Imoveis", "score"]]
+                   "CAGR", "Max_Drawdown", "Hist_Meses", "N_Regioes", "Num_Imoveis", "score"]]
         st.dataframe(show, use_container_width=True, hide_index=True, column_config={
             "ticker": "Ticker",
             "peso": st.column_config.NumberColumn("Peso", format="percent"),
@@ -589,8 +590,13 @@ def _carteira_qualidade() -> None:
             "Liquidez_Diaria": st.column_config.NumberColumn("Liquidez/dia", format="R$ %.0f"),
             "dy_12m": st.column_config.NumberColumn("DY 12m", format="percent"),
             "pvp": st.column_config.NumberColumn("P/VP", format="%.2f"),
-            "CAGR": st.column_config.NumberColumn("Cresc. a.a.", format="percent"),
+            "CAGR": st.column_config.NumberColumn("Cresc. a.a.", format="percent",
+                help="Crescimento anualizado pela regressão linear de ln(preço) — usa todo "
+                     "o histórico, robusto a pontas atípicas."),
             "Max_Drawdown": st.column_config.NumberColumn("Pior queda", format="percent"),
+            "Hist_Meses": st.column_config.NumberColumn("Hist. (m)", format="%d",
+                help="Meses de histórico que embasam Cresc./Pior queda — quanto mais, "
+                     "mais confiável o dado."),
             "N_Regioes": st.column_config.NumberColumn("Regiões", format="%d"),
             "Num_Imoveis": st.column_config.NumberColumn("Imóveis", format="%d"),
             "score": st.column_config.ProgressColumn("Qualidade", min_value=0, max_value=100,
