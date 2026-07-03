@@ -220,30 +220,46 @@ def _clean_text(t: str) -> str:
     return t.strip()
 
 
-def _pdf_text(content: bytes) -> str:
+def _pdf_text(content: bytes, page_cap: int = 40, time_budget: float = 10.0) -> str:
     import io as _io
+    import time as _time
     # 1) pypdf — rápido (2–5x vs pdfplumber) e qualidade equivalente para PDFs de
-    #    texto (Fato Relevante, resultados). É o extrator primário.
+    #    texto (Fato Relevante, resultados). Extrator primário, com teto de páginas
+    #    E DE TEMPO: PDFs-imagem (escaneados) mastigam ~1s/página e retornam nada;
+    #    o corte evita que travem a extração.
+    pypdf_ran = False
     try:
         import pypdf
         reader = pypdf.PdfReader(_io.BytesIO(content))
-        txt = "\n".join((p.extract_text() or "") for p in reader.pages[:60])
-        if len(txt.strip()) >= 200:
-            return _clean_text(txt)
+        parts, t0 = [], _time.time()
+        for i, page in enumerate(reader.pages):
+            if i >= page_cap or (_time.time() - t0) > time_budget:
+                break
+            try:
+                parts.append(page.extract_text() or "")
+            except Exception:
+                break
+        pypdf_ran = True
+        txt = "\n".join(parts)
+        # pypdf funcionou: devolve o que achou (mesmo pouco). Não cai no pdfplumber
+        # para PDF-imagem — só duplicaria o custo sem achar texto.
+        return _clean_text(txt)
     except Exception as exc:
         logger.debug("pypdf falhou (%s) — tentando pdfplumber", exc)
-    # 2) pdfplumber — reserva (melhor em layouts complexos/tabelas ou PDFs que o
-    #    pypdf não lê).
-    try:
-        import pdfplumber
-        out = []
-        with pdfplumber.open(_io.BytesIO(content)) as pdf:
-            for page in pdf.pages[:60]:  # teto de páginas por documento
-                out.append(page.extract_text() or "")
-        return _clean_text("\n".join(out))
-    except Exception as exc:
-        logger.warning("pdf extract falhou: %s", exc)
-        return ""
+    # 2) pdfplumber — reserva SÓ quando o pypdf falhou (exceção), também com teto.
+    if not pypdf_ran:
+        try:
+            import pdfplumber
+            parts, t0 = [], _time.time()
+            with pdfplumber.open(_io.BytesIO(content)) as pdf:
+                for i, page in enumerate(pdf.pages):
+                    if i >= page_cap or (_time.time() - t0) > time_budget:
+                        break
+                    parts.append(page.extract_text() or "")
+            return _clean_text("\n".join(parts))
+        except Exception as exc:
+            logger.warning("pdf extract falhou: %s", exc)
+    return ""
 
 
 def _html_text(content: bytes) -> str:

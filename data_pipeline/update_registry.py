@@ -75,11 +75,12 @@ _DEFAULT_REGISTRY: list[dict] = [
         "update_type":  "incremental",
         "frequency":    "semanal",
         "priority":     4,
-        "is_active":    True,
-        "description":  "Coletor nativo (app4): baixa o dataset IPE da CVM (dados.cvm.gov.br), "
-                        "descobre novos fatos relevantes/comunicados/resultados das empresas do "
-                        "universo e grava metadados + chunk em docs_corporativos. Fonte primária, "
-                        "sem depender do App1.",
+        "is_active":    False,
+        "description":  "[Movido para staging LOCAL] Coletor nativo do dataset IPE da CVM. "
+                        "A ingestão de documentos passou a rodar num Postgres local (sem limite) "
+                        "e só o subconjunto curado é publicado no Supabase por "
+                        "scripts/sync_docs_to_supabase.py — evita inflar o banco na nuvem. "
+                        "Ver local_staging/README.md.",
     },
     {
         "table_name":   "docs_corporativos, docs_corporativos_chunks",
@@ -88,10 +89,10 @@ _DEFAULT_REGISTRY: list[dict] = [
         "update_type":  "incremental",
         "frequency":    "diario",
         "priority":     5,
-        "is_active":    True,
-        "description":  "Extração de texto completo dos documentos CVM em GOTEJAMENTO: poucos "
-                        "docs por execução, com atraso aleatório, backoff e disjuntor anti-bloqueio. "
-                        "Ajustável por env (CVM_FULLTEXT_MAX/DELAY/MAX_BLOCKS/ENABLE).",
+        "is_active":    False,
+        "description":  "[Movido para staging LOCAL] Extração de texto completo dos documentos "
+                        "CVM. Roda localmente sobre o corpus completo; só o curado sobe ao "
+                        "Supabase (scripts/sync_docs_to_supabase.py). Ver local_staging/README.md.",
     },
     {
         "table_name":   "multiplos",
@@ -143,11 +144,11 @@ _DEFAULT_REGISTRY: list[dict] = [
         "update_type":  "incremental",
         "frequency":    "diario",
         "priority":     10,
-        "is_active":    True,
-        "description":  "Auditoria e saneamento incremental: audita N empresas/execução, "
-                        "compara com Fundamentus/Status Invest (>=2 fontes), corrige o banco "
-                        "(backup+auditoria), calcula score de confiabilidade e gera relatório. "
-                        "Gravação controlada por AUDIT_HEAL_APPLY (default dry-run).",
+        "is_active":    False,
+        "description":  "[Descontinuado] Saneamento por scraping cruzado (Fundamentus/Status "
+                        "Invest) sobre a tabela legada `multiplos`. Com MARKET_READ_SOURCE=market, "
+                        "o app lê fundamentos do market.* (validação por faixa) — este healing "
+                        "não é mais a fonte de leitura. Mantido inativo para não gastar CI à toa.",
     },
     # ── Importações manuais de investimentos ─────────────────────────────────
     # frequency='manual' garante que NUNCA são executadas pelo
