@@ -156,6 +156,7 @@ def test_risk_curve_diminui_com_diversificacao():
     assert [c["n"] for c in curve] == [1, 2]
     assert curve[0]["vol"] > 0
     assert curve[1]["vol"] < curve[0]["vol"]     # diversificar reduziu o risco
+    assert curve[0]["meses"] == curve[1]["meses"]   # janela comum fixa em todos os pontos
 
 
 def test_mean_correlation():

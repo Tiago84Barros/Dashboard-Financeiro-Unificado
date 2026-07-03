@@ -634,9 +634,11 @@ def _carteira_qualidade() -> None:
                           yaxis=dict(title="Volatilidade anual (%)", gridcolor="#1E2533"),
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                           font_color="#CBD5E0")
-        st.caption(f"Volatilidade da carteira ao adicionar fundos (por peso), na janela "
-                   f"histórica disponível de cada subconjunto. Onde a curva **achata**, "
-                   f"incluir mais FIIs quase não reduz risco — é o indício do nº ideal. "
+        _meses_win = int(cdf["meses"].iloc[0]) if "meses" in cdf else 0
+        st.caption(f"Volatilidade da carteira ao adicionar fundos (por peso), na **mesma "
+                   f"janela comum de {_meses_win} meses** para todos os pontos (limitada pelo "
+                   f"fundo mais novo) — isola o efeito da diversificação. Onde a curva "
+                   f"**achata**, incluir mais FIIs quase não reduz risco (nº ideal). "
                    f"Nº efetivo atual: **{n_ef:.1f}** de {len(port)}.")
         st.plotly_chart(fig, use_container_width=True)
     else:

@@ -295,25 +295,30 @@ def effective_n(weights) -> float | None:
 def risk_curve(returns, weights: dict) -> list[dict]:
     """
     Curva risco × nº de fundos: adiciona fundos por peso desc, renormaliza e mede
-    a volatilidade ANUALIZADA (std mensal × √12) da carteira parcial. Mostra onde
-    a diversificação para de reduzir risco (a curva achata).
+    a volatilidade ANUALIZADA (std mensal × √12) da carteira parcial. Onde a curva
+    achata, incluir mais FIIs quase não reduz risco (nº ideal).
 
-    returns: DataFrame (linhas=meses, colunas=tickers) de retornos mensais;
-    weights: {ticker: peso}. Retorna [{n, vol}] com n=1..N.
+    Usa UMA janela comum a TODOS os fundos selecionados (mesmo período em todos os
+    pontos) → curva comparável, isolando o efeito puro da diversificação (limitada
+    pela janela do fundo mais novo). returns: DataFrame (meses × tickers) de retornos;
+    weights: {ticker: peso}. Retorna [{n, vol, meses}] com n=1..N.
     """
     cols = list(getattr(returns, "columns", []))
     order = [t for t in sorted(weights, key=lambda t: -weights[t]) if t in cols]
+    if len(order) < 2:
+        return []
+    common = returns[order].dropna(how="any")   # janela comum a TODOS (período fixo)
+    if len(common) < 3:
+        return []
+    meses = int(len(common))
     out: list[dict] = []
     for k in range(1, len(order) + 1):
         sub = order[:k]
-        r = returns[sub].dropna(how="any")     # janela comum DESSE subconjunto
-        if len(r) < 3:
-            continue
         tot = sum(weights[t] for t in sub) or 1.0
         w = [weights[t] / tot for t in sub]
-        port = sum(r[t] * wi for t, wi in zip(sub, w))
+        port = sum(common[t] * wi for t, wi in zip(sub, w))
         vol = float(port.std(ddof=0) * (12 ** 0.5))
-        out.append({"n": k, "vol": round(vol, 4), "meses": int(len(r))})
+        out.append({"n": k, "vol": round(vol, 4), "meses": meses})
     return out
 
 
