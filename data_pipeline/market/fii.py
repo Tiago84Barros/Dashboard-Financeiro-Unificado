@@ -261,6 +261,45 @@ def build_portfolio(rows: list[dict], *, n_max: int = 10, max_weight: float = 0.
             for r, wi in zip(sel, w)]
 
 
+# ── Diversificação (nº efetivo + curva risco × nº de fundos) ──────────────────
+
+def effective_n(weights) -> float | None:
+    """
+    Número EFETIVO de fundos = 1 / Σ(pesoᵢ²) (inverso do índice HHI). Mede a
+    diversificação real: 10 fundos com um pesando 40% dão N_ef bem < 10. None se
+    não houver pesos. Puro/testável.
+    """
+    vals = list(weights.values()) if isinstance(weights, dict) else list(weights)
+    ws = [float(w) for w in vals if w is not None]
+    s = sum(w * w for w in ws)
+    return round(1.0 / s, 2) if s > 0 else None
+
+
+def risk_curve(returns, weights: dict) -> list[dict]:
+    """
+    Curva risco × nº de fundos: adiciona fundos por peso desc, renormaliza e mede
+    a volatilidade ANUALIZADA (std mensal × √12) da carteira parcial. Mostra onde
+    a diversificação para de reduzir risco (a curva achata).
+
+    returns: DataFrame (linhas=meses, colunas=tickers) de retornos mensais;
+    weights: {ticker: peso}. Retorna [{n, vol}] com n=1..N.
+    """
+    cols = list(getattr(returns, "columns", []))
+    order = [t for t in sorted(weights, key=lambda t: -weights[t]) if t in cols]
+    out: list[dict] = []
+    for k in range(1, len(order) + 1):
+        sub = order[:k]
+        r = returns[sub].dropna(how="any")     # janela comum DESSE subconjunto
+        if len(r) < 3:
+            continue
+        tot = sum(weights[t] for t in sub) or 1.0
+        w = [weights[t] / tot for t in sub]
+        port = sum(r[t] * wi for t, wi in zip(sub, w))
+        vol = float(port.std(ddof=0) * (12 ** 0.5))
+        out.append({"n": k, "vol": round(vol, 4), "meses": int(len(r))})
+    return out
+
+
 # ── Backtest (retorno total: preço + proventos reinvestidos) ──────────────────
 
 def backtest(weights: dict, price_hist: dict, div_hist: dict | None = None,

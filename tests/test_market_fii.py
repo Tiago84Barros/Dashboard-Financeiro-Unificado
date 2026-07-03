@@ -123,3 +123,22 @@ def test_build_portfolio_min_por_tipo_forca_mix():
     assert {"tijolo", "fof", "papel"}.issubset(tipos1)
     assert sum(p["tipo"] == "tijolo" for p in port1) >= 1
     assert abs(sum(p["peso"] for p in port1) - 1.0) < 1e-6
+
+
+def test_effective_n():
+    assert fii.effective_n({"a": 0.5, "b": 0.5}) == 2.0
+    assert fii.effective_n({"a": 1.0}) == 1.0
+    assert fii.effective_n({"a": 0.4, "b": 0.4, "c": 0.2}) == round(1 / 0.36, 2)
+    assert fii.effective_n({}) is None
+
+
+def test_risk_curve_diminui_com_diversificacao():
+    import pandas as pd
+    # A e B perfeitamente anticorrelacionados → 50/50 zera a volatilidade.
+    a = [0.1, -0.1] * 6
+    b = [-0.1, 0.1] * 6
+    rets = pd.DataFrame({"A": a, "B": b})
+    curve = fii.risk_curve(rets, {"A": 0.5, "B": 0.5})
+    assert [c["n"] for c in curve] == [1, 2]
+    assert curve[0]["vol"] > 0
+    assert curve[1]["vol"] < curve[0]["vol"]     # diversificar reduziu o risco
