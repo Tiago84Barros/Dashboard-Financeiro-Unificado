@@ -993,6 +993,15 @@ def _cross_source_audit_dataframe(
     )
 
 
+def _sem_acentos(texto: str) -> str:
+    """Remove acentos (NFD) p/ matching robusto de nomes de setor B3."""
+    import unicodedata
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
 def _norm_pesos(conf: dict[str, tuple[float, bool]]) -> dict[str, tuple[float, bool]]:
     total = sum(v[0] for v in conf.values()) or 1.0
     return {k: (v[0] / total, v[1]) for k, v in conf.items()}
@@ -1011,10 +1020,16 @@ def _get_pesos_setor(setor: str,
             conf[k] = (float(v), melhor_alto)
         return _norm_pesos(conf) if conf else _norm_pesos(_PESOS_GENERICO)
 
-    s_lower = (setor or "").lower()
-    for key, conf in _PESOS_SETOR.items():
-        if key in s_lower or any(part in s_lower for part in key.split()):
-            return _norm_pesos(conf)
+    # Fix auditoria 2026-07: matching determinístico. O matching antigo por
+    # palavra solta mandava "Consumo não Cíclico" para o perfil CÍCLICO
+    # (palavra "consumo") e "Saúde"/"Comunicações" para o genérico (acentos
+    # não normalizados). Agora: normaliza acentos dos dois lados e exige a
+    # chave COMPLETA como substring, testando da mais longa para a mais
+    # curta ("consumo nao ciclico" antes de "consumo ciclico").
+    s_norm = _sem_acentos((setor or "").lower())
+    for key in sorted(_PESOS_SETOR, key=len, reverse=True):
+        if key in s_norm:
+            return _norm_pesos(_PESOS_SETOR[key])
     return _norm_pesos(_PESOS_GENERICO)
 
 
@@ -1482,7 +1497,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.20.0"
+SCORE_VERSION = "2.21.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -1613,6 +1628,39 @@ SCORE_VERSION_CHANGELOG = {
         "sliders de cap e aversao a risco (delta); KPIs de retorno "
         "esperado, volatilidade anualizada e Sharpe implicito do "
         "portfolio resultante; tabela de pesos ordenada por peso."
+    ),
+    "2.21.0": (
+        "Auditoria cruzada 2026-07-04 (Codex + Claude): "
+        "(P1) _get_pesos_setor com normalizacao de acentos e matching "
+        "deterministico chave-completa/mais-longa-primeiro — 'Consumo nao "
+        "Ciclico' recebia pesos do perfil CICLICO e 'Saude'/'Comunicacoes' "
+        "caiam no generico; "
+        "(P2) fonte market ponto-no-tempo: load_multiplos_todos(ano_ref_max) "
+        "passa a servir metricas do exercicio ANUAL fechado (antes: snapshot "
+        "TTM de hoje rotulado com o ano do ultimo balanco); historico anual "
+        "limitado ao ultimo ano COM demonstracao publicada; "
+        "(P3) gate de completude >= 60%% ponderada no ranking, com lista "
+        "visivel de excluidas (antes: ausente virava 0,5 neutro sem limite); "
+        "(P4) backtest sem fallback para scores de hoje (era look-ahead) — "
+        "inicio da serie cortado no 1o ano com score historico, aviso na UI; "
+        "(P5) calibracao gamma/cap/soft via walk-forward purged (Lopez de "
+        "Prado) com custos — a versao in-sample foi aposentada da UI; "
+        "(P6) captions honestas: custos descontados sao SO de compra (IR de "
+        "venda nao e modelado — nao ha vendas), aviso quantificado de vies "
+        "de sobrevivencia no resultado; "
+        "(P7) Black-Litterman: fix anualizacao 252->12 (vol exibida estava "
+        "~4,6x inflada), prior rotulado como uniforme (nao CAPM); "
+        "(P8) core/markowitz: Ledoit-Wolf real (intensidade fechada LW2004, "
+        "decresce com T) + solver exato SLSQP (scipy em requirements) — "
+        "projecao heuristica agora se declara converged=False; "
+        "(P9) alpha_selic sem dupla escala na Avaliacao de Portfolio (LLM "
+        "recebia 1250%% em vez de 12,5%%); "
+        "(P10) Criacao de Portfolio: precos cortados por ano_inicio (Selic/EW "
+        "nao recebem mais aportes antes da estrategia existir), overlay do "
+        "snapshot atual restrito ao entry guard (backtest usa historico puro) "
+        "e reconciliacao web desativada quando market ativo; "
+        "(P11) dividendos (R$/acao) fora do grafico de DRE absoluta — "
+        "grafico proprio com unidade correta."
     ),
 }
 
@@ -2306,11 +2354,27 @@ def _simular_backtest(
 
     tks_all_valid = [tk for tk in tickers_all if tk in df.columns]
 
-    # Fallback snapshot scores (caso histórico insuficiente)
-    snap_scores = (
-        dict(zip(df_scored["Ticker"], df_scored["score"]))
-        if not df_scored.empty else {}
-    )
+    # Fix auditoria 2026-07: o fallback antigo usava scores de HOJE
+    # (df_scored) quando faltava histórico do ano — look-ahead direto (o
+    # ranking atual "escolhia" empresas no passado). Agora a simulação
+    # COMEÇA no primeiro ano com score histórico disponível (dados até
+    # N−1) e o corte vale p/ estratégia, benchmark e Selic (janela justa).
+    # Anos pulados vão em df_resultado.attrs["anos_sem_score"] p/ a UI.
+    anos_serie = sorted({d.year for d in df.index})
+    primeiro_ano_valido = None
+    for _ano_scan in anos_serie:
+        if _score_historico_ano(df_hist_batch, tks_all_valid, _ano_scan,
+                                pesos, tk_grupos, lag=1,
+                                macro_by_year=macro_by_year):
+            primeiro_ano_valido = _ano_scan
+            break
+    if primeiro_ano_valido is None:
+        return pd.DataFrame(), [], 0
+    anos_sem_score = [a for a in anos_serie if a < primeiro_ano_valido]
+    if anos_sem_score:
+        df = df[df.index.year >= primeiro_ano_valido]
+        if df.empty:
+            return pd.DataFrame(), [], 0
 
     # Estado do backtest
     anos_lideranca: dict[str, int] = {}
@@ -2341,72 +2405,74 @@ def _simular_backtest(
                 df_hist_batch, tks_all_valid, ano, pesos, tk_grupos, lag=1,
                 macro_by_year=macro_by_year,
             )
-            if not score_map:
-                score_map = snap_scores  # fallback snapshot
+            # Fix auditoria 2026-07: sem fallback p/ scores de HOJE (era
+            # look-ahead). Gap de histórico no meio da série ⇒ mantém a
+            # carteira vigente sem rebalance neste ano (o início da série
+            # já foi cortado no pré-scan acima).
+            if score_map:
+                # Penalidade de liderança consecutiva
+                score_map = _apply_decay_penalty(score_map, anos_lideranca)
 
-            # Penalidade de liderança consecutiva
-            score_map = _apply_decay_penalty(score_map, anos_lideranca)
+                # Ordenar e selecionar top-N
+                ranked = sorted(
+                    [(tk, s) for tk, s in score_map.items() if tk in df.columns],
+                    key=lambda x: x[1], reverse=True
+                )[:top_n_max]
+                tks_ranked_yr = [tk for tk, _ in ranked]
+                scores_yr     = [s  for _, s  in ranked]
 
-            # Ordenar e selecionar top-N
-            ranked = sorted(
-                [(tk, s) for tk, s in score_map.items() if tk in df.columns],
-                key=lambda x: x[1], reverse=True
-            )[:top_n_max]
-            tks_ranked_yr = [tk for tk, _ in ranked]
-            scores_yr     = [s  for _, s  in ranked]
-
-            n_yr = (
-                _select_n_heuristica(scores_yr)
-                if usar_gamma and len(tks_ranked_yr) >= 2
-                else min(len(tks_ranked_yr), top_n_max)
-            )
-            tickers_yr = tks_ranked_yr[:n_yr]
-
-            if usar_gamma and len(tickers_yr) >= 2:
-                pesos_est = _apply_cap_soft(
-                    _weights_from_scores(tickers_yr, score_map, gamma), cap, soft
+                n_yr = (
+                    _select_n_heuristica(scores_yr)
+                    if usar_gamma and len(tks_ranked_yr) >= 2
+                    else min(len(tks_ranked_yr), top_n_max)
                 )
-                # Fix banca C4cov (2026-05-25): combina pesos do score com
-                # min-variance restrita usando covariancia historica dos
-                # ultimos `markowitz_lookback_m` meses. Reduz concentracao
-                # em ativos correlacionados (ex: BBAS+ITUB+SANB ambos bancos).
-                if use_markowitz and len(tickers_yr) >= 2:
-                    try:
-                        from core.markowitz import (
-                            min_variance_capped, pesos_hibridos_score_markowitz,
-                        )
-                        # Janela de retornos ANTES da data atual (lag=0 ok pq
-                        # rebalanceia no inicio do ano e usa dados ate dt-1)
-                        df_lookback = df.loc[df.index < dt].tail(markowitz_lookback_m)
-                        cols_disp = [tk for tk in tickers_yr if tk in df_lookback.columns]
-                        if len(cols_disp) >= 2 and len(df_lookback) >= 6:
-                            rets = df_lookback[cols_disp].pct_change().dropna()
-                            if len(rets) >= 4:
-                                mk = min_variance_capped(
-                                    cols_disp, rets.to_numpy(), cap=cap,
-                                )
-                                pesos_est = pesos_hibridos_score_markowitz(
-                                    pesos_est, mk, alpha=markowitz_alpha,
-                                )
-                    except Exception:
-                        pass  # fallback silencioso para gamma-tilt puro
-            else:
-                pesos_est = (
-                    {tk: 1.0 / len(tickers_yr) for tk in tickers_yr}
-                    if tickers_yr else {}
-                )
-            tks_est_valid = list(pesos_est.keys())
+                tickers_yr = tks_ranked_yr[:n_yr]
 
-            # Atualiza contagem de anos consecutivos no topo
-            lids = set(tickers_yr)
-            for tk in list(anos_lideranca):
-                if tk not in lids:
-                    del anos_lideranca[tk]
-            for tk in lids:
-                anos_lideranca[tk] = anos_lideranca.get(tk, 0) + 1
+                if usar_gamma and len(tickers_yr) >= 2:
+                    pesos_est = _apply_cap_soft(
+                        _weights_from_scores(tickers_yr, score_map, gamma), cap, soft
+                    )
+                    # Fix banca C4cov (2026-05-25): combina pesos do score com
+                    # min-variance restrita usando covariancia historica dos
+                    # ultimos `markowitz_lookback_m` meses. Reduz concentracao
+                    # em ativos correlacionados (ex: BBAS+ITUB+SANB ambos bancos).
+                    if use_markowitz and len(tickers_yr) >= 2:
+                        try:
+                            from core.markowitz import (
+                                min_variance_capped, pesos_hibridos_score_markowitz,
+                            )
+                            # Janela de retornos ANTES da data atual (lag=0 ok pq
+                            # rebalanceia no inicio do ano e usa dados ate dt-1)
+                            df_lookback = df.loc[df.index < dt].tail(markowitz_lookback_m)
+                            cols_disp = [tk for tk in tickers_yr if tk in df_lookback.columns]
+                            if len(cols_disp) >= 2 and len(df_lookback) >= 6:
+                                rets = df_lookback[cols_disp].pct_change().dropna()
+                                if len(rets) >= 4:
+                                    mk = min_variance_capped(
+                                        cols_disp, rets.to_numpy(), cap=cap,
+                                    )
+                                    pesos_est = pesos_hibridos_score_markowitz(
+                                        pesos_est, mk, alpha=markowitz_alpha,
+                                    )
+                        except Exception:
+                            pass  # fallback silencioso para gamma-tilt puro
+                else:
+                    pesos_est = (
+                        {tk: 1.0 / len(tickers_yr) for tk in tickers_yr}
+                        if tickers_yr else {}
+                    )
+                tks_est_valid = list(pesos_est.keys())
 
-            tickers_top_final = tickers_yr
-            n_efetivo_final   = n_yr
+                # Atualiza contagem de anos consecutivos no topo
+                lids = set(tickers_yr)
+                for tk in list(anos_lideranca):
+                    if tk not in lids:
+                        del anos_lideranca[tk]
+                for tk in lids:
+                    anos_lideranca[tk] = anos_lideranca.get(tk, 0) + 1
+
+                tickers_top_final = tickers_yr
+                n_efetivo_final   = n_yr
 
         # ── Reinvestimento de dividendos — idêntico ao App1 ───────────────
         if dividendos:
@@ -2458,7 +2524,11 @@ def _simular_backtest(
         rows.append({"Data": dt, "Estratégia": val_est,
                      "Benchmark": val_bench, "Tesouro Selic": selic_acum})
 
-    return pd.DataFrame(rows), tickers_top_final, n_efetivo_final
+    df_resultado = pd.DataFrame(rows)
+    if anos_sem_score:
+        # metadado p/ a UI informar o corte do início da série (sem look-ahead)
+        df_resultado.attrs["anos_sem_score"] = anos_sem_score
+    return df_resultado, tickers_top_final, n_efetivo_final
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2773,11 +2843,15 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         # Gráfico DRE histórico
         if not df_fin.empty and "Data" in df_fin.columns:
             _sec_hdr("📊 Demonstrações Financeiras — Histórico")
+            # Fix auditoria 2026-07: "Dividendos" saiu deste gráfico — a coluna
+            # é soma anual POR AÇÃO (R$/ação: market.dividends.rate e backfill
+            # yfinance), unidade incompatível com Receita/EBIT/Lucro (R$ totais);
+            # no mesmo eixo a linha ficava achatada em ~0. Ganhou gráfico próprio.
             cands_dre = [
                 ("Receita_Liquida", "Receita Líquida"), ("EBIT", "EBIT"),
                 ("Lucro_Liquido", "Lucro Líquido"), ("Patrimonio_Liquido", "Patrimônio Líquido"),
                 ("Divida_Liquida", "Dívida Líquida"), ("Divida_Total", "Dívida Total"),
-                ("Ativo_Total", "Ativo Total"), ("Dividendos", "Dividendos"),
+                ("Ativo_Total", "Ativo Total"),
             ]
             disp_dre = [(c, l) for c, l in cands_dre if c in df_fin.columns]
             if disp_dre:
@@ -2799,8 +2873,25 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                                       _COR_POS, _COR_INF, _COR_ALT, _COR_NEG,
                                       "#9B59B6", "#E67E22", _COR_NEU])
                     fig.update_layout(**_plot_layout(340))
+                    fig.update_yaxes(title="R$ (valores absolutos)")
                     st.plotly_chart(fig, use_container_width=True,
                                     config={"displayModeBar": False}, key=f"b3_dre_{tk}")
+
+            # Dividendos em gráfico próprio, com a unidade correta (R$/ação)
+            if "Dividendos" in df_fin.columns:
+                _div_plot = df_fin[["Data", "Dividendos"]].copy()
+                _div_plot["Dividendos"] = pd.to_numeric(
+                    _div_plot["Dividendos"], errors="coerce")
+                _div_plot = _div_plot.dropna()
+                if not _div_plot.empty:
+                    _sec_hdr("💰 Dividendos por ação")
+                    fig_dv = px.bar(_div_plot, x="Data", y="Dividendos",
+                                    color_discrete_sequence=[_COR_ALT])
+                    fig_dv.update_layout(**_plot_layout(240))
+                    fig_dv.update_yaxes(title="R$/ação (soma anual)")
+                    st.plotly_chart(fig_dv, use_container_width=True,
+                                    config={"displayModeBar": False},
+                                    key=f"b3_dre_divps_{tk}")
 
         # Histórico de Múltiplos (%) via tabela multiplos
         if not df_mult_hist.empty and "Data" in df_mult_hist.columns:
@@ -3069,10 +3160,22 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         if not _datas.empty:
             _ano_dados = int(_datas.dt.year.max())
     _ano_label = _ano_dados if _ano_dados is not None else _ano_base
+    _fonte_pit = ""
+    try:
+        if _db.market_active():
+            # Fix auditoria 2026-07: com fonte market, load_multiplos_todos
+            # (ano_ref_max) agora serve métricas do exercício ANUAL fechado
+            # — antes servia o snapshot TTM de hoje rotulado com o ano do
+            # último balanço, contradizendo a frase abaixo.
+            _fonte_pit = (" Fonte market.*: métricas do exercício anual "
+                          "fechado (ponto-no-tempo, não TTM).")
+    except Exception:
+        pass
     st.caption(
         f"📅 **Ano-base do score: {_ano_label}** — a seleção do ano atual "
         f"({_ano_corrente}) usa os fundamentos consolidados do ano anterior. "
         "Dados parciais do ano corrente são ignorados por metodologia."
+        + _fonte_pit
     )
 
     # ── FILTROS ──────────────────────────────────────────────────────────────
@@ -3318,6 +3421,44 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         except Exception as exc:
             fm_result = {"erro": str(exc)}
 
+    # ── Gate de completude mínima (fix auditoria 2026-07) ───────────────────
+    # Antes, empresa com quase nenhum indicador disponível era ranqueada
+    # mesmo assim (ausente vira percentil neutro 0,5) e podia ocupar boa
+    # posição sem dados que a sustentem. Agora: completude ponderada pelos
+    # pesos do score (ignorando slopes, que medem tendência) precisa ser
+    # ≥ 60%; excluídas aparecem em lista visível abaixo do ranking.
+    _COMPLETUDE_MIN = 0.60
+    _inds_comp = [c for c in pesos_v2
+                  if c in df_mult_enrich.columns and not c.endswith("_slope_log")]
+    excluidas_dados: list[dict] = []
+    if _inds_comp and not df_mult_enrich.empty and tks_uni:
+        _w_tot = sum(pesos_v2[c][0] for c in _inds_comp) or 1.0
+        _comp_map: dict[str, float] = {}
+        for _tk_c in tks_uni:
+            _sub_c = df_mult_enrich[df_mult_enrich["Ticker"] == _tk_c]
+            if _sub_c.empty:
+                _comp_map[_tk_c] = 0.0
+                continue
+            _row_c = _sub_c.iloc[-1]
+            _comp_map[_tk_c] = sum(
+                pesos_v2[c][0] for c in _inds_comp if pd.notna(_row_c.get(c))
+            ) / _w_tot
+        excluidas_dados = sorted(
+            [{"Ticker": t, "Completude (%)": round(_comp_map.get(t, 0.0) * 100)}
+             for t in tks_uni if _comp_map.get(t, 0.0) < _COMPLETUDE_MIN],
+            key=lambda d: d["Completude (%)"],
+        )
+        _excl_comp = {d["Ticker"] for d in excluidas_dados}
+        if _excl_comp:
+            tks_uni = [t for t in tks_uni if t not in _excl_comp]
+    if not tks_uni:
+        st.warning(
+            "Nenhuma empresa do filtro atende à completude mínima de dados "
+            f"({_COMPLETUDE_MIN:.0%} dos indicadores do score). Ranking não "
+            "gerado — ranquear sem dados criaria posições sem sustentação."
+        )
+        return
+
     # Scoring v2 — coluna de grupo: mais granular que o filtro atual
     group_prefer = (
         "SUBSETOR" if sel_seg != "Todos" else
@@ -3330,6 +3471,22 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         group_col_prefer=group_prefer,
         macro_context=_macro_for_year(macro_history),
     )
+    if excluidas_dados:
+        st.caption(
+            f"🧪 **{len(excluidas_dados)} empresa(s) fora do ranking por dados "
+            f"insuficientes** (completude ponderada < {_COMPLETUDE_MIN:.0%} dos "
+            "indicadores do score). Detalhe no expander abaixo."
+        )
+        with st.expander("Empresas excluídas por completude de dados"):
+            st.caption(
+                "Ranquear com indicador ausente atribui percentil neutro 0,5 — "
+                "aceitável para UMA lacuna pontual, enganoso quando a maioria "
+                "dos indicadores falta. Estas empresas voltam ao ranking "
+                "quando a ingestão cobrir seus fundamentos."
+            )
+            st.dataframe(pd.DataFrame(excluidas_dados),
+                         use_container_width=True, hide_index=True,
+                         height=min(300, 45 + 32 * len(excluidas_dados)))
     tk_info       = {row["ticker"]: row for _, row in df_filt.iterrows()}
     tks_com_score = set(df_scored["Ticker"].tolist()) if not df_scored.empty else set()
     tks_sem_mult  = [tk for tk in tks_uni if tk not in tks_com_score]
@@ -3576,10 +3733,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 key="b3_mk_cov_method",
                 disabled=not run_mk,
                 help=(
-                    "Ledoit-Wolf: shrinkage amostral (padrão). "
+                    "Ledoit-Wolf: shrinkage com intensidade em forma fechada "
+                    "(LW 2004; decresce com mais observações). "
                     "Fama-French: Σ estruturada fatorial M1 banca (Σ=BΣ_FB'+D). "
                     "DCC-GARCH: covariância condicional dinâmica M2 banca (Engle 2002) "
-                    "— captura correlações que variam no tempo e sobem em crises."
+                    "— atenção: com ~36 obs mensais os parâmetros são pouco "
+                    "identificados (grid search); use como indicação, não medida."
                 ),
             )
 
@@ -3987,11 +4146,16 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     # ── Banca M3ui (2026-05-25): Black-Litterman views ────────────────────────
     with st.expander("🔮 Black-Litterman — incorporar suas views"):
         st.caption(
-            "Combine prior de equilíbrio (CAPM/IBOV) com SUAS views sobre "
-            "retornos esperados via formalismo Bayesiano. Cada view tem "
-            "confidence em (0, 1]: alta = sobrepõe ao prior; baixa = "
-            "prior domina. Views: absoluta ('PETR3 vai render X%') ou "
-            "relativa ('PETR3 vai render X pp acima de VALE3')."
+            "Combine um prior UNIFORME (o mesmo retorno esperado para todos "
+            "os ativos, definido por você abaixo) com SUAS views via "
+            "formalismo Bayesiano. Nota de honestidade (auditoria 2026-07): "
+            "a reverse optimization dos pesos de mercado (prior de "
+            "equilíbrio CAPM/IBOV) ainda NÃO está implementada — sem "
+            "estrutura cross-sectional no prior, o posterior reflete apenas "
+            "a mecânica da sua view. Cada view tem confidence em (0, 1]: "
+            "alta = sobrepõe ao prior; baixa = prior domina. Views: "
+            "absoluta ('PETR3 vai render X%') ou relativa ('PETR3 vai "
+            "render X pp acima de VALE3')."
         )
         if df_scored.empty or len(df_scored) < 2:
             st.info("Precisa ao menos 2 empresas scoradas para usar BL.")
@@ -4007,9 +4171,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                                           key="b3_bl_run")
                 with col_prior:
                     prior_pct = st.number_input(
-                        "Prior CAPM (%)", 0.0, 50.0, 10.0, 0.5,
+                        "Prior uniforme (% a.a.)", 0.0, 50.0, 10.0, 0.5,
                         key="b3_bl_prior", disabled=not run_bl,
-                        help="Retorno de equilíbrio assumido para todos os ativos",
+                        help="Retorno esperado assumido IGUAL para todos os "
+                             "ativos (não é o prior de equilíbrio CAPM — "
+                             "reverse optimization pendente).",
                     )
                 with col_tau:
                     tau_bl = st.select_slider(
@@ -4111,10 +4277,15 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                                 value=2.5, key="b3_bl_ra",
                             )
                         from core.black_litterman import apply_bl_to_markowitz
+                        # Fix auditoria 2026-07: rets_hist são retornos
+                        # MENSAIS (_batch_yf_precos_mensais, interval=1mo);
+                        # periods_per_year=252 anualizava como se fossem
+                        # diários e inflava a vol exibida ~4,6x (√21) e
+                        # deflacionava o Sharpe na mesma proporção.
                         opt = apply_bl_to_markowitz(
                             top_bl, prior, rets_hist, [view],
                             tau=tau_bl, cap=cap_bl, risk_aversion=ra_bl,
-                            periods_per_year=252,
+                            periods_per_year=12,
                         )
                         df_w = _pd.DataFrame([{
                             "Ticker": tk,
@@ -4483,20 +4654,31 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
              "Este valor é usado como fallback para anos sem cobertura.",
     )
 
-    # Auto-calibração γ / cap / soft
+    # Auto-calibração γ / cap / soft — walk-forward purged (auditoria 2026-07:
+    # antes usava grid search numa janela única in-sample, o MESMO período
+    # depois exibido no backtest, e sem custos; a versão walk-forward existia
+    # mas nunca era chamada pela UI).
     with st.expander("🔧 Auto-calibração de parâmetros (γ, cap, soft)"):
         st.caption(
-            "Testa 36 combinações (4γ × 3cap × 3soft) nos últimos 36 meses de preços. "
-            "Objetivo: CAGR − 0.60×vol + 0.40×MDD. Shrinkage 40 % ao default."
+            "Walk-forward purged (López de Prado, 2018): calibra em janelas "
+            "expanding com purge de 3m + embargo de 2m e usa a MEDIANA entre "
+            "folds — evita otimizar no mesmo período exibido no backtest. "
+            "Custos de transação são descontados na calibração. Shrinkage "
+            "40% em direção aos defaults. Requer ≥ 36 meses de preços "
+            "(períodos menores mantêm os defaults)."
         )
         if st.button("⚙️ Calibrar agora", key="b3_av_btn_cal"):
-            with st.spinner("Calibrando parâmetros…"):
+            from core.transaction_costs import CostConfig as _CalCost
+            with st.spinner("Calibrando parâmetros (walk-forward purged)…"):
                 per_cal    = per_opts.get(sel_per, "3y")
                 tks_cal    = tuple(sorted(tks_uni))
                 df_prec_cal = _batch_yf_precos_mensais(tks_cal, period=per_cal)
-                g_cal, c_cal, s_cal = _calibrate_gamma_cap_soft(
+                g_cal, c_cal, s_cal = _calibrate_walk_forward(
                     df_prec_cal, df_scored, tks_uni,
                     float(taxa_sel) / 100.0, float(aporte),
+                    n_folds=4, min_window=18,
+                    purge_months=3, embargo_months=2,
+                    cost_cfg=_CalCost.brasil_pf_default(),
                 )
             st.session_state["b3_av_gamma"] = g_cal
             st.session_state["b3_av_cap"]   = c_cal
@@ -4514,10 +4696,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     # Desmarcar mostra o backtest "ideal" (sem corretagem/spread/IR) — útil só
     # para comparação teórica, NÃO para expectativa de retorno real.
     aplicar_custos = st.checkbox(
-        "Descontar custos de transação (corretagem, spread, IR) — recomendado",
+        "Descontar custos de compra (corretagem + meia-spread) — recomendado",
         value=True, key="b3_av_custos",
-        help="Ativado: backtest realista para PF no Brasil (spread bid-ask, "
-             "IR 15% sobre lucro acima da isenção mensal de R$ 20k). "
+        help="Ativado: desconta o custo de COMPRA de cada aporte (meia-spread "
+             "bid-ask + corretagem). O rebalance anual desta simulação NÃO "
+             "vende cotas — apenas redireciona os aportes novos —, portanto "
+             "IR de venda não é gerado nem descontado aqui. "
              "Desativado: backtest 'ideal' sem custos — superestima o retorno.",
     )
 
@@ -4584,15 +4768,50 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
         _custos_on = st.session_state.get("b3_av_bt_custos", True)
         if _custos_on:
+            # Fix auditoria 2026-07: a caption antiga afirmava descontar
+            # "IR 15%", mas nenhum imposto era (ou é) cobrado — o rebalance
+            # não vende cotas, então não há fato gerador na simulação.
             st.caption(
-                "✅ Backtest com **custos de transação descontados** "
-                "(corretagem, spread bid-ask e IR 15% sobre lucro acima da "
-                "isenção mensal) — estimativa realista para PF no Brasil."
+                "✅ Backtest com **custos de compra descontados** (meia-spread "
+                "bid-ask + corretagem em cada aporte, na estratégia E no "
+                "benchmark). O rebalance anual não vende posições — só "
+                "redireciona aportes futuros —, logo **IR de venda não é "
+                "modelado**. Numa carteira real com vendas, IR e custos de "
+                "venda reduziriam o resultado."
             )
         else:
             st.caption(
                 "⚠️ Backtest **sem custos** (ideal/teórico) — superestima o "
                 "retorno real. Marque a opção de custos para projeção realista."
+            )
+
+        # Auditoria 2026-07: transparência dos dois vieses estruturais da
+        # simulação — sobrevivência (universo só de listadas hoje) e corte
+        # de início por indisponibilidade de score histórico.
+        try:
+            from core.survivorship import flag_survivorship_universe
+            _dt_ini_bt = pd.to_datetime(df_bt["Data"].iloc[0]).date()
+            _sv = flag_survivorship_universe(list(tks_uni), data_ref=_dt_ini_bt)
+            if _sv["n_delisted"] > 0:
+                st.caption(
+                    f"⚠️ **Viés de sobrevivência:** o universo simulado só contém "
+                    f"empresas listadas hoje — {_sv['n_delisted']} empresa(s) da "
+                    f"lista curada de deslistadas estavam vivas em "
+                    f"{_dt_ini_bt.year} e não entram na simulação (cobertura ≈ "
+                    f"{_sv['cobertura_estimada']*100:.0f}%). As curvas tendem a "
+                    f"SUPERESTIMAR o retorno em ≈ {_sv['vies_estimado_bps']:.0f} "
+                    f"bps/ano (Brown et al., 1992)."
+                )
+        except Exception:
+            pass
+        _anos_ss = df_bt.attrs.get("anos_sem_score") or []
+        if _anos_ss:
+            st.caption(
+                f"ℹ️ **Início efetivo da simulação ajustado:** {len(_anos_ss)} "
+                f"ano(s) sem histórico contábil suficiente para score "
+                f"({', '.join(str(a) for a in _anos_ss)}) foram excluídos de "
+                "TODAS as séries (estratégia, benchmark e Selic) — sem "
+                "fallback para scores atuais, sem look-ahead."
             )
 
         # KPI patrimônio final

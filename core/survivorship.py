@@ -138,6 +138,13 @@ def flag_survivorship_universe(
     """
     Marca um universo de tickers com info de sobrevivência.
 
+    data_ref é a data de INÍCIO do período analisado (ex.: início do
+    backtest). Faltantes = empresas que estavam vivas em data_ref mas foram
+    deslistadas depois — elas existiam no universo investível da época e
+    não aparecem num universo composto só por sobreviventes. Com o default
+    data_ref = hoje o resultado é 0 por construção (nada foi deslistado
+    "depois de hoje"); passe sempre o início do período para medir o viés.
+
     Retorna dict:
       total_atual:         N tickers vivos hoje no universo de entrada
       delisted_no_periodo: list[DelistedTicker] que faltam (caso data_ref no passado)
@@ -149,7 +156,7 @@ def flag_survivorship_universe(
         data_ref = _d.today()
 
     faltantes = [d for d in DELISTED_BR_2010_2025
-                 if d.data_delisting > data_ref - (data_ref - data_ref)  # ja deslistadas após data_ref
+                 if d.data_delisting > data_ref  # vivas em data_ref, deslistadas depois
                  and d.ticker not in tickers_atuais]
     n_atual = len(tickers_atuais)
     n_faltantes = len(faltantes)

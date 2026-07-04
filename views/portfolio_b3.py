@@ -396,6 +396,11 @@ def _processar_segmento(
     contrib_est: dict[str, float] = {}
     if tks_disp and not df_precos_all.empty:
         df_prec_seg = df_precos_all[tks_disp].dropna(how="all")
+        # Fix auditoria 2026-07: corta a série pelo ano_inicio. Sem o corte,
+        # Selic e equal-weight recebiam aportes desde o início da janela de
+        # preços (10 anos) enquanto a estratégia só começa em ano_inicio —
+        # margens distorcidas e segmentos reprovados indevidamente.
+        df_prec_seg = df_prec_seg[df_prec_seg.index.year >= int(ano_inicio)]
         val_est, val_selic, val_ew, contrib_est = _simular_seg_backtest(
             df_prec_seg, lids_por_ano, pesos_por_ano,
             aporte, taxa_selic_aa, selic_macro,
@@ -1108,19 +1113,36 @@ def render(show_header: bool = True) -> None:
             hist_batch_raw = _db.load_multiplos_historico_batch(all_tickers)
 
         with st.spinner("Saneando fundamentos com ranges, outliers e fallback web..."):
+            # Política única de fontes (fix auditoria 2026-07): com market.*
+            # ativo a fonte é limpa — web (Fundamentus/Status Invest) NÃO
+            # sobrescreve o banco; passar fund_data={} faz a reconciliação
+            # virar apenas saneamento por ranges (nulo fica nulo), alinhado
+            # à regra da Análise Avançada ("vazio fica vazio").
+            _mkt_ativo = False
+            try:
+                _mkt_ativo = bool(_db.market_active())
+            except Exception:
+                pass
             df_mult_recon, audit_recon, quality_summary = _recon.batch_multiplos_reconciliados(
                 all_tickers,
                 df_base=df_mult_todos,
-                include_status=bool(usar_status_recon),
+                include_status=bool(usar_status_recon) and not _mkt_ativo,
+                fund_data={} if _mkt_ativo else None,
             )
             zero_invalid = set(quality_summary.get("campos_zero_suspeito", []))
             hist_clean, hist_audit = _recon.clean_multiplos_history_batch(
                 hist_batch_raw,
                 zero_invalid_fields=zero_invalid,
             )
-            hist_batch = _overlay_current_reconciled_row(hist_clean, df_mult_recon)
+            # Fix auditoria 2026-07: o overlay do snapshot ATUAL sobre a
+            # última linha histórica vale só para o ENTRY GUARD (decisão de
+            # hoje). O backtest usa o histórico limpo SEM overlay — antes,
+            # tickers com histórico desatualizado recebiam dados de hoje em
+            # anos alcançáveis pelos cutoffs (look-ahead).
+            hist_batch_guard = _overlay_current_reconciled_row(hist_clean, df_mult_recon)
+            hist_batch = hist_clean
             entry_guard, df_entry_guard = _build_entry_guard(
-                df_mult_recon, df_set, hist_batch, anos_hist
+                df_mult_recon, df_set, hist_batch_guard, anos_hist
             )
 
         with st.spinner("Carregando preços mensais ajustados…"):

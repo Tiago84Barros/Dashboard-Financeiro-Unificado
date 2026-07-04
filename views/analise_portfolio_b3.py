@@ -602,9 +602,12 @@ def _executar_analise(
 ) -> dict:
     """Roda análise individual de cada empresa + análise consolidada + redistribuição."""
 
+    # Fix auditoria 2026-07: alpha_selic já é gravado em PONTOS PERCENTUAIS
+    # pela Criação de Portfólio (_margem_pct multiplica por 100); o ×100
+    # extra aqui mandava "1.250%" para a LLM e distorcia a análise.
     portfolio_ctx = (
         f"Portfólio com {len(items)} empresas. "
-        f"Alpha médio vs Selic: {float(np.mean([it.get('alpha_selic',0) for it in items]))*100:.1f}%. "
+        f"Alpha médio vs Selic: {float(np.mean([it.get('alpha_selic',0) for it in items])):.1f}%. "
         f"Score quantitativo médio: {float(np.mean([it.get('score',50) for it in items])):.1f}. "
         f"Modo de redistribuição: {mode}."
     )
@@ -621,7 +624,8 @@ def _executar_analise(
         seg_      = it.get("segmento") or "N/D"
         peso_pct_ = float(it.get("weight") or 0) * 100.0
         score_    = float(it.get("score") or 50)
-        alpha_    = float(it.get("alpha_selic") or 0) * 100.0
+        # alpha_selic já vem em pontos percentuais (fix auditoria 2026-07)
+        alpha_    = float(it.get("alpha_selic") or 0)
         n_docs    = (cobertura_docs or {}).get(tk, 0)
 
         df_mult = mult_batch.get(tk, pd.DataFrame())
