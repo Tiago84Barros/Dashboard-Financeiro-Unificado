@@ -447,6 +447,24 @@ def _carteira_score(ranked: pd.DataFrame) -> None:
     # guarda p/ o backtest
     st.session_state["fii_port"] = {p["ticker"]: p["peso"] for p in port}
 
+    # ── Salvar como carteira-modelo (aparece no Dashboard Geral) ──────────────
+    st.markdown("---")
+    cs1, cs2 = st.columns([3, 1])
+    with cs1:
+        st.caption("Salve esta seleção como sua **carteira-modelo de FIIs** — ela passa "
+                   "a aparecer no Dashboard Geral, ao lado da carteira de ações.")
+    with cs2:
+        if st.button("💾 Salvar carteira-modelo", use_container_width=True,
+                     type="primary", key="fii_save_model"):
+            try:
+                from core.fii_portfolio_model import save_fii_portfolio_model
+                params = {"n_max": n_max, "max_weight": max_w, "max_tipo_frac": max_tp}
+                metrics = {"dy_ponderado": dy_w, "pvp_ponderado": pvp_w, "n_ativos": len(port)}
+                save_fii_portfolio_model(port, params, metrics)
+                st.success("Carteira-modelo de FIIs salva! Já aparece no Dashboard Geral.")
+            except Exception as exc:
+                st.error(f"Não foi possível salvar: {exc}")
+
 
 def _carteira_qualidade() -> None:
     st.caption("Seleção por **qualidade**: tijolos diversificados (multi-região, "

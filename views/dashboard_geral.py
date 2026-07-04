@@ -551,38 +551,51 @@ def _secao_portfolio_modelo_b3(modelo: dict) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
 
-def _fiis_carteira_modelo() -> list[dict]:
+def _fiis_carteira_modelo() -> tuple[list[dict], bool]:
     """
-    Recomputa a carteira-modelo de FIIs (mesma lógica da página Seleção de FIIs):
-    ranking por score (DY 12m · P/VP · liquidez) → diversificação por tipo.
-    Retorna [] se não houver FIIs no banco ou em qualquer falha (defensivo).
+    Carteira-modelo de FIIs para o dashboard. Prioriza o modelo SALVO pelo usuário
+    (Seleção de FIIs → 'Salvar carteira-modelo'); se não houver, recomputa a
+    sugestão automática (ranking DY·P/VP·liquidez → diversificação por tipo).
+    Retorna (items, salvo_pelo_usuario). [] se não houver FIIs / em qualquer falha.
     """
+    # 1) Modelo salvo pelo usuário (a carteira que ele configurou).
+    try:
+        from core.fii_portfolio_model import load_active_fii_portfolio_model
+        saved = load_active_fii_portfolio_model()
+        if saved and saved.get("items"):
+            return saved["items"], True
+    except Exception:
+        pass
+    # 2) Fallback: recomputa a sugestão automática.
     try:
         import core.market_read as _mr
         from data_pipeline.market import fii as _fz
         df = _mr.load_fiis()
     except Exception:
-        return []
+        return [], False
     if df is None or df.empty or "Score" not in df.columns:
-        return []
+        return [], False
     ranked = df[df["Score"].notna()].sort_values("Score", ascending=False)
     if ranked.empty:
-        return []
+        return [], False
     rows = [{"ticker": r["Ticker"], "score": r["Score"], "tipo": r.get("Tipo"),
              "liquidez_diaria": r.get("Liquidez_Diaria"), "dy_12m": r.get("DY_12m"),
              "pvp": r.get("P/VP"), "segmento": r.get("Segmento")}
             for _, r in ranked.iterrows()]
     try:
-        return _fz.build_portfolio(rows, n_max=_FIIS_N_MAX, max_weight=_FIIS_MAX_W,
+        port = _fz.build_portfolio(rows, n_max=_FIIS_N_MAX, max_weight=_FIIS_MAX_W,
                                    max_tipo_frac=_FIIS_MAX_TIPO) or []
     except Exception:
-        return []
+        port = []
+    return port, False
 
 
 def _secao_fiis_sugeridos() -> None:
-    port = _fiis_carteira_modelo()
+    port, salvo = _fiis_carteira_modelo()
     if not port:
         return
+    subtitulo = ("Carteira-modelo de FIIs definida por você na Seleção de FIIs" if salvo
+                 else "Sugestão automática — salve a sua em Seleção de FIIs para fixá-la")
 
     dy_w = sum((p.get("dy_12m") or 0) * p["peso"] for p in port)
     pvp_w = sum((p.get("pvp") or 0) * p["peso"] for p in port)
@@ -592,10 +605,7 @@ def _secao_fiis_sugeridos() -> None:
         tipos[tp] = tipos.get(tp, 0.0) + p["peso"]
     tipo_top = max(tipos.items(), key=lambda x: x[1]) if tipos else ("—", 0.0)
 
-    _titulo_secao(
-        "🏬", "Fundos Imobiliários sugeridos",
-        "Carteira-modelo diversificada de FIIs — ranking DY · P/VP · liquidez", _COR_INVEST,
-    )
+    _titulo_secao("🏬", "Fundos Imobiliários sugeridos", subtitulo, _COR_INVEST)
 
     m1, m2, m3, m4 = st.columns(4, gap="small")
     with m1:
