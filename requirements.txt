@@ -16,6 +16,9 @@ matplotlib>=3.8.0,<4.0.0
 pdfplumber>=0.11.0,<1.0.0
 pypdf>=4.0.0,<6.0.0  # extrator primário (rápido) de texto CVM
 openpyxl>=3.1.0,<4.0.0
+# Solver exato (SLSQP) do min-variance restrito em core/markowitz.py.
+# Sem scipy o módulo caía em heurística de projeção rotulada como ótima.
+scipy>=1.11.0,<2.0.0
 
 # OCR de extratos C6 em PDF só-imagem (fallback quando não há texto pesquisável).
 # Tesseract via pytesseract — leve; o binário e o idioma vêm do packages.txt

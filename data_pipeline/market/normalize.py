@@ -90,15 +90,42 @@ def company_row(quote: dict) -> dict | None:
     }
 
 
+def _infer_asset_type(tk: str, quote: dict) -> str:
+    """Classifica o tipo de ativo a partir do payload + sufixo do ticker.
+
+    Fix auditoria 2026-07: antes era gravado 'stock' fixo para todo payload
+    (inclusive units e BDRs), sobrescrevendo classificações corretas no
+    upsert. Ordem: perfil do payload (FII/ETF) → sufixo numérico do ticker.
+    """
+    sector = str(((quote or {}).get("summaryProfile") or {}).get("sector") or "")
+    if sector.strip().lower() == "fundos imobiliários":
+        return "fii"
+    name = str((quote or {}).get("longName") or (quote or {}).get("shortName") or "")
+    digits = "".join(ch for ch in tk if ch.isdigit())
+    if digits in ("31", "32", "33", "34", "35", "36", "39"):
+        return "bdr"
+    if digits == "11":
+        low = name.lower()
+        if "etf" in low or "índice" in low or "indice" in low or "ishares" in low or "it now" in low:
+            return "etf"
+        if "fii" in low or "fdo inv imob" in low or "imob" in low:
+            return "fii"
+        return "unit"
+    return "stock"
+
+
 def asset_row(quote: dict) -> dict | None:
     tk = _ticker(quote)
     if not tk:
         return None
     return {
         "ticker": tk,
-        "asset_type": "stock",
+        "asset_type": _infer_asset_type(tk, quote),
         "exchange": "B3",
         "currency": str(quote.get("currency") or "BRL"),
+        # is_active continua sem fonte confiável no payload da brapi (ativo
+        # delistado simplesmente some da API); mantido True por design —
+        # a exclusão de deslistados é feita via core/survivorship.py.
         "is_active": True,
     }
 

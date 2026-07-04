@@ -316,7 +316,10 @@ def apply_bl_to_markowitz(
     Args:
       tickers:       lista N ordenada
       prior_returns: π vetor N (RETORNOS ANUAIS esperados a priori)
-      returns:       matriz (T, N) histórico DE RETORNOS DIÁRIOS para Σ amostral
+      returns:       matriz (T, N) de retornos históricos para Σ amostral —
+                     a FREQUÊNCIA deve casar com periods_per_year (diário→252,
+                     mensal→12; auditoria 2026-07: mensal com 252 inflava a
+                     vol anualizada ~4,6x)
       views:         lista BLView (também em escala anual)
       tau:           incerteza prior (0.025 default)
       cap:           limite por ativo (0.30 = 30%)

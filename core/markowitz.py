@@ -39,47 +39,58 @@ def ledoit_wolf_shrinkage(
     target: str = "diagonal",
 ) -> tuple[np.ndarray, float]:
     """
-    Estima matriz de covariância com Ledoit-Wolf shrinkage.
+    Estima matriz de covariância com shrinkage de Ledoit-Wolf.
 
-    Σ_shrink = (1-α) Σ_sample + α F
+    Σ_shrink = (1-α) S + α F,  α ∈ [0, 1]
 
-    onde α ∈ [0, 1] é o coeficiente de shrinkage estimado em
-    Ledoit & Wolf (2003) e F é uma matriz target (default: diagonal
-    da Σ_sample com correlações zeradas — assume independência fora
-    da diagonal como prior).
+    A intensidade α usa a forma fechada do estimador well-conditioned de
+    Ledoit & Wolf (2004, J. Multivariate Analysis 88): α* = b²/d², onde
+    b² estima o erro de amostragem de S (decresce ~1/T: mais observações
+    ⇒ menos shrinkage) e d² é a distância de S ao alvo F. Para
+    target="identity" F = m·I (fórmula original LW04); para
+    target="diagonal" F = diag(S) — mesma intensidade b²/d² recalculada
+    contra o alvo estruturado, receita de Schäfer & Strimmer (2005).
 
-    Reduz erro de estimação em janelas pequenas (N < 100 observações
-    com K > 20 ativos), problema clássico de Markowitz com covariância
-    amostral pura.
+    Correção da auditoria 2026-07: a versão anterior usava uma heurística
+    ad hoc (var off-diagonal / var total) que não dependia de T e era
+    exibida na UI como "Ledoit-Wolf" sem sê-lo.
 
     Args:
       returns: array (T × K) de retornos
-      target:  "diagonal" (zera correlações) ou "identity" (matriz unit)
+      target:  "diagonal" (preserva variâncias, encolhe correlações) ou
+               "identity" (LW 2004 original)
 
     Returns:
-      (Σ_shrink, α): matriz K×K e coeficiente de shrinkage usado
+      (Σ_shrink, α): matriz K×K (convenção amostral ddof=1) e α usado
     """
+    returns = np.asarray(returns, dtype=float)
     T, K = returns.shape
     if T < 2 or K < 2:
-        return np.eye(K), 1.0
+        return np.eye(max(K, 1)), 1.0
 
-    sample_cov = np.cov(returns, rowvar=False, ddof=1)
+    X = returns - returns.mean(axis=0, keepdims=True)
+    S = (X.T @ X) / T                      # MLE (ddof=0) — convenção das fórmulas LW
 
     if target == "diagonal":
-        F = np.diag(np.diag(sample_cov))
-    else:  # identity (scaled)
-        avg_var = np.mean(np.diag(sample_cov))
-        F = avg_var * np.eye(K)
+        F = np.diag(np.diag(S))
+    else:  # identity escalada: F = m·I com m = variância média
+        F = (np.trace(S) / K) * np.eye(K)
 
-    # Estimador simplificado de α (Ledoit-Wolf 2004, eq. 6)
-    # Versão completa requer estimar pi, rho, gamma — aqui usamos
-    # heurística baseada na razão entre off-diagonal variance e total.
-    off_diag_var = (sample_cov - F).flatten().var()
-    total_var    = sample_cov.flatten().var() or 1.0
-    alpha = np.clip(off_diag_var / total_var, 0.0, 1.0)
+    # d² = ||S − F||²_F / K   (quanto a amostra difere do alvo)
+    d2 = float(((S - F) ** 2).sum()) / K
+    # b̄² = (1/T²) Σ_t ||x_t x_tᵀ − S||²_F / K   (erro de estimação de S)
+    b2_bar = 0.0
+    for t in range(T):
+        xt = X[t][:, None]
+        b2_bar += float(((xt @ xt.T - S) ** 2).sum())
+    b2_bar /= (T ** 2) * K
+    b2 = min(b2_bar, d2)
 
-    sigma_shrink = (1 - alpha) * sample_cov + alpha * F
-    return sigma_shrink, float(alpha)
+    alpha = 0.0 if d2 <= 0 else float(np.clip(b2 / d2, 0.0, 1.0))
+    sigma_shrink = (1 - alpha) * S + alpha * F
+    # Reescala MLE → amostral (ddof=1), convenção do restante do módulo
+    sigma_shrink *= T / max(T - 1, 1)
+    return sigma_shrink, alpha
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -88,13 +99,95 @@ def ledoit_wolf_shrinkage(
 
 @dataclass
 class MarkowitzResult:
-    """Resultado da otimização min-variance restrita."""
+    """Resultado da otimização min-variance restrita.
+
+    method:
+      "cvxpy" / "cvxpy_ff"          — QP exato via cvxpy (se instalado)
+      "slsqp" / "slsqp_ff"          — QP exato via scipy SLSQP
+      "heuristic_projection[_ff]"   — projeção clip+redistribuição da solução
+                                      irrestrita; NÃO é o ótimo do problema
+                                      restrito (converged=False por honestidade)
+      "fallback_equal"              — equal weight (último recurso)
+    """
     weights:           dict[str, float]
     expected_variance: float
     expected_std:      float
     diversification:   float    # 1 = totalmente diversificado, 0 = single asset
     converged:         bool
-    method:            str      # "cvxpy" | "numerical" | "fallback_equal"
+    method:            str
+
+
+def _solve_qp_min_variance(cov: np.ndarray, cap: float) -> tuple[np.ndarray, str, bool]:
+    """Resolve  min w'Σw  s.a.  Σw = 1, 0 ≤ w ≤ cap.
+
+    Cadeia de solvers: cvxpy (se instalado) → scipy SLSQP (em
+    requirements.txt) → projeção heurística clip+redistribuição, que NÃO
+    é o ótimo do problema restrito e por isso retorna converged=False.
+    Retorna (w, method, converged).
+    """
+    K = cov.shape[0]
+    cap_eff = cap if K * cap >= 1.0 else 1.0 / K   # garante viabilidade Σw=1
+
+    # 1) cvxpy — QP exato (opcional; não está em requirements.txt)
+    try:
+        import cvxpy as cp
+        w = cp.Variable(K)
+        prob = cp.Problem(
+            cp.Minimize(cp.quad_form(w, cp.psd_wrap(cov))),
+            [cp.sum(w) == 1, w >= 0, w <= cap_eff],
+        )
+        prob.solve()
+        if prob.status == "optimal" and w.value is not None:
+            w_arr = np.clip(np.asarray(w.value).flatten(), 0.0, cap_eff)
+            s = w_arr.sum()
+            if s > 0:
+                return w_arr / s, "cvxpy", True
+    except Exception:
+        pass
+
+    # 2) scipy SLSQP — QP exato (fix auditoria 2026-07: antes daqui o código
+    #    caía direto na projeção heurística e a reportava como convergida)
+    try:
+        from scipy.optimize import minimize as _sp_minimize
+        x0 = np.full(K, 1.0 / K)
+        res = _sp_minimize(
+            lambda w_: float(w_ @ cov @ w_),
+            x0,
+            jac=lambda w_: 2.0 * (cov @ w_),
+            method="SLSQP",
+            bounds=[(0.0, cap_eff)] * K,
+            constraints=[{"type": "eq",
+                          "fun": lambda w_: float(w_.sum() - 1.0),
+                          "jac": lambda w_: np.ones(K)}],
+            options={"maxiter": 300, "ftol": 1e-12},
+        )
+        if res.success and res.x is not None:
+            w_arr = np.clip(np.asarray(res.x, dtype=float), 0.0, cap_eff)
+            s = w_arr.sum()
+            if s > 0:
+                return w_arr / s, "slsqp", True
+    except Exception:
+        pass
+
+    # 3) Projeção heurística da solução irrestrita — não-ótima (honestidade:
+    #    converged=False; a UI exibe o método efetivamente usado)
+    ones = np.ones(K)
+    inv = np.linalg.pinv(cov + 1e-8 * np.eye(K))
+    w = (inv @ ones) / (ones @ inv @ ones)
+    w = np.clip(w, 0.0, cap_eff)
+    w = w / w.sum() if w.sum() > 0 else np.ones(K) / K
+    for _ in range(20):
+        if np.maximum(w - cap_eff, 0).sum() < 1e-9:
+            break
+        w = np.clip(w, 0.0, cap_eff)
+        slack = 1.0 - w.sum()
+        below = w < cap_eff
+        n_below = below.sum() or 1
+        w[below] += slack / n_below
+        w = np.clip(w, 0.0, cap_eff)
+    s = w.sum()
+    w = w / s if s > 0 else np.ones(K) / K
+    return w, "heuristic_projection", False
 
 
 def min_variance_capped(
@@ -140,63 +233,16 @@ def min_variance_capped(
     else:
         cov = np.cov(returns, rowvar=False, ddof=1)
 
-    # Tenta cvxpy primeiro (solução exata)
+    # Cadeia de solvers: cvxpy → SLSQP → projeção heurística (não-ótima)
     try:
-        import cvxpy as cp
-        w = cp.Variable(K)
-        prob = cp.Problem(
-            cp.Minimize(cp.quad_form(w, cp.psd_wrap(cov))),
-            [cp.sum(w) == 1, w >= 0, w <= cap],
-        )
-        prob.solve()
-        if prob.status == "optimal" and w.value is not None:
-            w_arr = np.array(w.value).flatten()
-            w_arr = np.clip(w_arr, 0, cap)
-            w_arr = w_arr / w_arr.sum() if w_arr.sum() > 0 else np.ones(K) / K
-            var = float(w_arr @ cov @ w_arr)
-            div = 1.0 - (w_arr ** 2).sum()  # 1 - HHI
-            return MarkowitzResult(
-                weights={t: float(w_arr[i]) for i, t in enumerate(tickers)},
-                expected_variance=var,
-                expected_std=float(np.sqrt(max(var, 0))),
-                diversification=float(div),
-                converged=True, method="cvxpy",
-            )
-    except Exception:
-        pass  # fallback numérico
-
-    # Fallback: solução analítica unconstrained + projeção
-    # w_unc = Σ⁻¹ 1 / (1' Σ⁻¹ 1)  (mínima variância sem restrições)
-    try:
-        ones = np.ones(K)
-        inv = np.linalg.pinv(cov + 1e-8 * np.eye(K))
-        w = (inv @ ones) / (ones @ inv @ ones)
-        # Projeta para [0, cap]
-        w = np.clip(w, 0.0, cap)
-        # Renormaliza
-        if w.sum() <= 0:
-            w = np.ones(K) / K
-        else:
-            w = w / w.sum()
-        # Itera projeção (caso algum exceda cap após normalização)
-        for _ in range(20):
-            excess = np.maximum(w - cap, 0).sum()
-            if excess < 1e-9:
-                break
-            w = np.clip(w, 0.0, cap)
-            slack = (1.0 - w.sum())
-            below = w < cap
-            n_below = below.sum() or 1
-            w[below] += slack / n_below
-            w = np.clip(w, 0.0, cap)
-        var = float(w @ cov @ w)
-        div = 1.0 - (w ** 2).sum()
+        w_arr, method, converged = _solve_qp_min_variance(cov, cap)
+        var = float(w_arr @ cov @ w_arr)
         return MarkowitzResult(
-            weights={t: float(w[i]) for i, t in enumerate(tickers)},
+            weights={t: float(w_arr[i]) for i, t in enumerate(tickers)},
             expected_variance=var,
             expected_std=float(np.sqrt(max(var, 0))),
-            diversification=float(div),
-            converged=True, method="numerical",
+            diversification=float(1.0 - (w_arr ** 2).sum()),
+            converged=converged, method=method,
         )
     except Exception:
         # Último recurso: equal weight respeitando cap
@@ -261,49 +307,16 @@ def min_variance_with_cov(
     # Regularização mínima para garantir PSD
     cov = cov + 1e-8 * np.eye(K)
 
+    # Cadeia de solvers: cvxpy → SLSQP → projeção heurística (não-ótima)
     try:
-        import cvxpy as cp
-        w = cp.Variable(K)
-        prob = cp.Problem(
-            cp.Minimize(cp.quad_form(w, cp.psd_wrap(cov))),
-            [cp.sum(w) == 1, w >= 0, w <= cap],
-        )
-        prob.solve()
-        if prob.status == "optimal" and w.value is not None:
-            w_arr = np.clip(np.array(w.value).flatten(), 0, cap)
-            w_arr = w_arr / w_arr.sum() if w_arr.sum() > 0 else np.ones(K) / K
-            var = float(w_arr @ cov @ w_arr)
-            return MarkowitzResult(
-                weights={t: float(w_arr[i]) for i, t in enumerate(tickers)},
-                expected_variance=var,
-                expected_std=float(np.sqrt(max(var, 0))),
-                diversification=float(1.0 - (w_arr ** 2).sum()),
-                converged=True, method="cvxpy_ff",
-            )
-    except Exception:
-        pass
-
-    # Fallback analítico
-    try:
-        ones = np.ones(K)
-        inv  = np.linalg.pinv(cov)
-        w    = (inv @ ones) / (ones @ inv @ ones)
-        w    = np.clip(w, 0.0, cap)
-        for _ in range(20):
-            if np.maximum(w - cap, 0).sum() < 1e-9:
-                break
-            w = np.clip(w, 0.0, cap)
-            w += (1.0 - w.sum()) / max((w < cap).sum(), 1) * (w < cap)
-            w = np.clip(w, 0.0, cap)
-        s = w.sum()
-        w = w / s if s > 0 else np.ones(K) / K
-        var = float(w @ cov @ w)
+        w_arr, method, converged = _solve_qp_min_variance(cov, cap)
+        var = float(w_arr @ cov @ w_arr)
         return MarkowitzResult(
-            weights={t: float(w[i]) for i, t in enumerate(tickers)},
+            weights={t: float(w_arr[i]) for i, t in enumerate(tickers)},
             expected_variance=var,
             expected_std=float(np.sqrt(max(var, 0))),
-            diversification=float(1.0 - (w ** 2).sum()),
-            converged=True, method="numerical_ff",
+            diversification=float(1.0 - (w_arr ** 2).sum()),
+            converged=converged, method=method + "_ff",
         )
     except Exception:
         w_eq = min(1.0 / K, cap)

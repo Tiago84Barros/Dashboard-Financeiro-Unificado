@@ -155,16 +155,53 @@ def _attach_data(wide: pd.DataFrame, col: str = "data") -> pd.DataFrame:
     return wide.drop(columns=["year"])
 
 
+def _annual_upto_long(ano_ref_max: int) -> pd.DataFrame:
+    """Métricas do último exercício ANUAL fechado ≤ ano_ref_max, por ticker.
+
+    Fix auditoria 2026-07 (ponto-no-tempo): antes, o snapshot TTM calculado
+    HOJE era rotulado com o ano do último balanço anual e passava pelo filtro
+    de ano-base — métricas de 2026 apareciam como dados de 2025, contrariando
+    a promessa "dados parciais do ano corrente são ignorados". Com
+    ano_ref_max, agora servimos as métricas ANUAIS do exercício-base real.
+    O JOIN com income_statements exige DRE anual publicada: ticker sem
+    demonstração não tem exercício-base e sai do ranking (em vez de entrar
+    com dados de hoje disfarçados de ano anterior).
+    """
+    return _q("""
+        WITH stmt AS (
+            SELECT ticker, MAX(year) AS ymax
+            FROM market.income_statements
+            WHERE period = 'annual'
+            GROUP BY ticker
+        ),
+        ly AS (
+            SELECT cm.ticker, MAX(cm.year) AS y
+            FROM market.calculated_metrics cm
+            JOIN stmt s ON s.ticker = cm.ticker
+            WHERE cm.period = 'annual' AND cm.year > 0
+              AND cm.year <= LEAST(CAST(:amax AS int), s.ymax)
+            GROUP BY cm.ticker
+        )
+        SELECT cm.ticker AS "Ticker", cm.year AS year,
+               cm.metric_name, cm.metric_value
+        FROM market.calculated_metrics cm
+        JOIN ly ON ly.ticker = cm.ticker AND ly.y = cm.year
+        WHERE cm.period = 'annual'
+    """, {"amax": int(ano_ref_max)})
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_multiplos_todos(ano_ref_max: int | None = None) -> pd.DataFrame:
-    """Múltiplo mais recente (snapshot ttm) de TODOS os tickers — ranking/avançada."""
-    long_df = _multiplos_long()
+    """Múltiplos de TODOS os tickers — ranking/avançada.
+
+    ano_ref_max=None  → snapshot TTM atual (visões "hoje", ex.: carteira).
+    ano_ref_max=YYYY  → métricas do último exercício ANUAL ≤ YYYY
+                        (ponto-no-tempo; fix auditoria 2026-07).
+    """
+    long_df = (_annual_upto_long(int(ano_ref_max))
+               if ano_ref_max is not None else _multiplos_long())
     if long_df.empty:
         return pd.DataFrame()
-    if ano_ref_max is not None:
-        long_df = long_df[long_df["year"] <= int(ano_ref_max)]
-        if long_df.empty:
-            return pd.DataFrame()
     wide = _pivot_metrics(long_df)
     wide["Ticker"] = _norm_ticker(wide["Ticker"])
     out = _attach_data(wide)
@@ -252,10 +289,23 @@ def load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame
 
 
 def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
+    # Fix auditoria 2026-07 (ponto-no-tempo): linhas 'annual' criadas apenas
+    # por dividendos do ano corrente (sem DRE anual publicada) continham DY
+    # parcial calculado com o preço de HOJE e viravam a última linha do
+    # histórico usado pelo backtest. Limita cada ticker ao último ano COM
+    # demonstração anual publicada.
     return _q(f"""
-        SELECT ticker AS "Ticker", year, metric_name, metric_value
-        FROM market.calculated_metrics
-        WHERE period = 'annual' AND {where_sql}
+        WITH stmt AS (
+            SELECT ticker, MAX(year) AS ymax
+            FROM market.income_statements
+            WHERE period = 'annual'
+            GROUP BY ticker
+        )
+        SELECT cm.ticker AS "Ticker", cm.year AS year,
+               cm.metric_name, cm.metric_value
+        FROM market.calculated_metrics cm
+        JOIN stmt s ON s.ticker = cm.ticker
+        WHERE cm.period = 'annual' AND cm.year <= s.ymax AND {where_sql}
     """, params)
 
 
@@ -263,7 +313,7 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
 def load_multiplos_historico(ticker: str) -> pd.DataFrame:
     """Histórico anual de múltiplos (1 linha por ano), colunas iguais ao legado."""
     tk = ticker.strip().upper().replace(".SA", "")
-    long_df = _annual_long("ticker = :tk", {"tk": tk})
+    long_df = _annual_long("cm.ticker = :tk", {"tk": tk})
     if long_df.empty:
         return pd.DataFrame()
     wide = _pivot_metrics(long_df)
@@ -278,7 +328,7 @@ def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.Dat
     if not tickers:
         return {}
     tks = [t.strip().upper().replace(".SA", "") for t in tickers]
-    long_df = _annual_long("ticker = ANY(:tks)", {"tks": tks})
+    long_df = _annual_long("cm.ticker = ANY(:tks)", {"tks": tks})
     if long_df.empty:
         return {}
     wide = _pivot_metrics(long_df)

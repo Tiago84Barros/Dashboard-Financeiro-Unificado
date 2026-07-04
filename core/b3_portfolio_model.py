@@ -67,6 +67,50 @@ DDL_SQL = [
     CREATE INDEX IF NOT EXISTS idx_b3_portfolio_model_items_model_weight
     ON b3_portfolio_model_items (model_id, weight DESC)
     """,
+    # Auditoria 2026-07: RLS (protege acesso via Supabase API/anon key; a
+    # conexao do app, role postgres, bypassa) + no maximo 1 modelo ativo
+    # por usuario. Espelha supabase_unificado/schema/018_rls_portfolio_models.sql.
+    "ALTER TABLE b3_portfolio_models ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE b3_portfolio_model_items ENABLE ROW LEVEL SECURITY",
+    """
+    DO $$ BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname='public'
+              AND tablename='b3_portfolio_models'
+              AND policyname='b3_portfolio_models_owner_all'
+        ) THEN
+            CREATE POLICY b3_portfolio_models_owner_all ON b3_portfolio_models
+                USING (user_id = auth.uid())
+                WITH CHECK (user_id = auth.uid());
+        END IF;
+    END; $$
+    """,
+    """
+    DO $$ BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname='public'
+              AND tablename='b3_portfolio_model_items'
+              AND policyname='b3_portfolio_model_items_owner_all'
+        ) THEN
+            CREATE POLICY b3_portfolio_model_items_owner_all ON b3_portfolio_model_items
+                USING (EXISTS (
+                    SELECT 1 FROM b3_portfolio_models m
+                    WHERE m.id = model_id AND m.user_id = auth.uid()
+                ))
+                WITH CHECK (EXISTS (
+                    SELECT 1 FROM b3_portfolio_models m
+                    WHERE m.id = model_id AND m.user_id = auth.uid()
+                ));
+        END IF;
+    END; $$
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_b3_portfolio_models_active_per_user
+    ON b3_portfolio_models (user_id)
+    WHERE status = 'active'
+    """,
 ]
 
 

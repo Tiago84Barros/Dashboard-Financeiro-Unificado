@@ -741,7 +741,11 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     if d is not None and amt:
                         div_year[d.year] = div_year.get(d.year, 0.0) + float(amt)
 
-                for y in sorted(set(inc_y) | set(bal_y) | set(cf_y) | set(div_year)):
+                # Fix auditoria 2026-07 (ponto-no-tempo): itera apenas anos
+                # com DEMONSTRAÇÃO publicada. Antes, set(div_year) criava
+                # linha 'annual' para o ano corrente só com dividendos
+                # parciais + preço de hoje (DY distorcido no histórico).
+                for y in sorted(set(inc_y) | set(bal_y) | set(cf_y)):
                     i, b, cfy = inc_y.get(y), bal_y.get(y), cf_y.get(y)
                     px, dps = year_end.get(y), div_year.get(y)
                     ni = i[3] if i else None
