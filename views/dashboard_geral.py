@@ -19,6 +19,11 @@ from core.investimentos import get_carteira, get_cashflow_mensal, get_evolucao_p
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
 
+# Carteira-modelo de FIIs — recomputada com a mesma lógica da página Seleção de FIIs.
+_FIIS_N_MAX = 10          # nº de FIIs na carteira-modelo (default da página)
+_FIIS_MAX_W = 0.20        # teto por FII
+_FIIS_MAX_TIPO = 0.50     # teto por tipo (tijolo/papel/fof/híbrido)
+
 # ── Paleta ────────────────────────────────────────────────────────────────────
 _COR_PATRIMONIO = "#4A9EFF"
 _COR_FLUXO      = "#00C896"
@@ -546,6 +551,101 @@ def _secao_portfolio_modelo_b3(modelo: dict) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
 
+def _fiis_carteira_modelo() -> list[dict]:
+    """
+    Recomputa a carteira-modelo de FIIs (mesma lógica da página Seleção de FIIs):
+    ranking por score (DY 12m · P/VP · liquidez) → diversificação por tipo.
+    Retorna [] se não houver FIIs no banco ou em qualquer falha (defensivo).
+    """
+    try:
+        import core.market_read as _mr
+        from data_pipeline.market import fii as _fz
+        df = _mr.load_fiis()
+    except Exception:
+        return []
+    if df is None or df.empty or "Score" not in df.columns:
+        return []
+    ranked = df[df["Score"].notna()].sort_values("Score", ascending=False)
+    if ranked.empty:
+        return []
+    rows = [{"ticker": r["Ticker"], "score": r["Score"], "tipo": r.get("Tipo"),
+             "liquidez_diaria": r.get("Liquidez_Diaria"), "dy_12m": r.get("DY_12m"),
+             "pvp": r.get("P/VP"), "segmento": r.get("Segmento")}
+            for _, r in ranked.iterrows()]
+    try:
+        return _fz.build_portfolio(rows, n_max=_FIIS_N_MAX, max_weight=_FIIS_MAX_W,
+                                   max_tipo_frac=_FIIS_MAX_TIPO) or []
+    except Exception:
+        return []
+
+
+def _secao_fiis_sugeridos() -> None:
+    port = _fiis_carteira_modelo()
+    if not port:
+        return
+
+    dy_w = sum((p.get("dy_12m") or 0) * p["peso"] for p in port)
+    pvp_w = sum((p.get("pvp") or 0) * p["peso"] for p in port)
+    tipos: dict[str, float] = {}
+    for p in port:
+        tp = (p.get("tipo") or "—")
+        tipos[tp] = tipos.get(tp, 0.0) + p["peso"]
+    tipo_top = max(tipos.items(), key=lambda x: x[1]) if tipos else ("—", 0.0)
+
+    _titulo_secao(
+        "🏬", "Fundos Imobiliários sugeridos",
+        "Carteira-modelo diversificada de FIIs — ranking DY · P/VP · liquidez", _COR_INVEST,
+    )
+
+    m1, m2, m3, m4 = st.columns(4, gap="small")
+    with m1:
+        st.markdown(_mini_metric("FIIs", str(len(port)), "Carteira-modelo diversificada", _COR_PATRIMONIO), unsafe_allow_html=True)
+    with m2:
+        st.markdown(_mini_metric("DY 12m", f"{dy_w * 100:.1f}%", "Yield ponderado", _COR_FLUXO), unsafe_allow_html=True)
+    with m3:
+        st.markdown(_mini_metric("P/VP", f"{pvp_w:.2f}", "Preço/valor patrim. ponderado", _COR_ALERTA), unsafe_allow_html=True)
+    with m4:
+        st.markdown(_mini_metric("Tipo líder", f"{tipo_top[1] * 100:.0f}%", str(tipo_top[0]).capitalize(), _COR_INVEST), unsafe_allow_html=True)
+
+    tickers = ", ".join(p["ticker"] for p in port)
+    c1, c2 = st.columns([1.2, 0.8], gap="medium")
+    with c1:
+        st.markdown(
+            f"""
+            <div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;
+                        padding:16px 18px;">
+                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
+                            color:#4A9EFF;font-weight:800;margin-bottom:10px;">FIIs selecionados</div>
+                <div style="font-size:1.05rem;font-weight:850;color:#E2E8F0;line-height:1.55;">
+                    {tickers}
+                </div>
+                <div style="font-size:0.76rem;color:#9CA3AF;margin-top:10px;">
+                    Diversificada por tipo (tijolo · papel · fof · híbrido), com teto por FII e por tipo.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with c2:
+        rows_html = ""
+        for p in port[:5]:
+            seg = str(p.get("segmento") or p.get("tipo") or "")[:18]
+            rows_html += _linha_kv(f"{p['ticker']} · {seg}", f"{p['peso'] * 100:.1f}%", _COR_FLUXO)
+        st.markdown(
+            f"""
+            <div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;
+                        padding:16px 18px;">
+                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
+                            color:#00C896;font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>
+                {rows_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # GRÁFICOS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -714,9 +814,10 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 2 — Portfólio B3 modelo salvo pelo usuário
+    # BLOCO 2 — Portfólio B3 modelo salvo pelo usuário + FIIs sugeridos
     # ══════════════════════════════════════════════════════════════════════════
     _secao_portfolio_modelo_b3(modelo_b3)
+    _secao_fiis_sugeridos()
 
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 3 — Raio X do portfólio investido
