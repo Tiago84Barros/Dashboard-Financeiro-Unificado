@@ -40,6 +40,12 @@ def test_classify_tipo():
     assert cf.classify_tipo({"pct_imoveis": 0.1, "pct_papel": 0.85, "pct_fundos": 0.0}) == "papel"
     assert cf.classify_tipo({"pct_imoveis": 0.1, "pct_papel": 0.1, "pct_fundos": 0.7}) == "fof"
     assert cf.classify_tipo({"pct_imoveis": 0.4, "pct_papel": 0.4, "pct_fundos": 0.1}) == "hibrido"
+    assert cf.classify_tipo(
+        {"pct_imoveis": None, "pct_papel": None, "pct_fundos": None}
+    ) is None
+    assert cf.classify_tipo(
+        {"pct_imoveis": 0.0, "pct_papel": 0.0, "pct_fundos": 0.0}
+    ) is None
 
 
 def test_ref_month():
@@ -84,6 +90,8 @@ def test_parse_informe_monthly():
     assert jan["vpa"] == 100.50
     assert fev["vpa"] == 101.00
     assert jan["num_cotistas"] == 5000
+    assert jan["dy_patrimonial_mes"] == 0.008
+    assert fev["dy_patrimonial_mes"] == 0.0075
     # composição muda mês a mês (imóveis 900 -> 800)
     assert jan["pct_imoveis"] == 0.9
     assert fev["pct_imoveis"] == 0.8
