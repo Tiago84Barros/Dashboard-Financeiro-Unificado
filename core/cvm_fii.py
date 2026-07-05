@@ -56,6 +56,14 @@ def _num(v):
         return None
 
 
+def _bounded_percent_ratio(v, low: float = 0.0, high: float = 0.20):
+    """Converte percentual CVM (0,80 = 0,8%) para razão decimal e valida."""
+    value = _num(v)
+    if value is not None:
+        value /= 100.0
+    return value if value is not None and low <= value <= high else None
+
+
 def _read_csv(zf: zipfile.ZipFile, name: str):
     import pandas as pd
     with zf.open(name) as f:
@@ -92,9 +100,14 @@ def _composition(row) -> dict:
             "pct_caixa": round(caixa / total, 4), "pct_fundos": round(fundos / total, 4)}
 
 
-def classify_tipo(comp: dict) -> str:
+def classify_tipo(comp: dict) -> str | None:
     """tijolo | papel | fof | hibrido a partir da composição de ativos."""
+    if not comp or all(comp.get(key) is None
+                       for key in ("pct_imoveis", "pct_papel", "pct_fundos")):
+        return None
     im, pa, fu = comp.get("pct_imoveis") or 0, comp.get("pct_papel") or 0, comp.get("pct_fundos") or 0
+    if im + pa + fu <= 0:
+        return None
     if max(im, pa, fu) < 0.5:
         return "hibrido"
     if im >= pa and im >= fu:
@@ -132,7 +145,9 @@ def parse_informe(zip_bytes: bytes, year: int) -> dict[str, dict]:
             "patrimonio_liquido": _num((c or {}).get("Patrimonio_Liquido")),
             "vpa": _num((c or {}).get("Valor_Patrimonial_Cotas")),
             "num_cotistas": _num((c or {}).get("Total_Numero_Cotistas")),
-            "dy_patrimonial_mes": _num((c or {}).get("Percentual_Dividend_Yield_Mes")),
+            "dy_patrimonial_mes": _bounded_percent_ratio(
+                (c or {}).get("Percentual_Dividend_Yield_Mes")
+            ),
             **composition,
         }
         rec["tipo"] = classify_tipo(composition)
@@ -175,7 +190,9 @@ def parse_informe_monthly(zip_bytes: bytes, year: int) -> dict[str, list[dict]]:
             "patrimonio_liquido": _num((c or {}).get("Patrimonio_Liquido")),
             "vpa": _num((c or {}).get("Valor_Patrimonial_Cotas")),
             "num_cotistas": _num((c or {}).get("Total_Numero_Cotistas")),
-            "dy_patrimonial_mes": _num((c or {}).get("Percentual_Dividend_Yield_Mes")),
+            "dy_patrimonial_mes": _bounded_percent_ratio(
+                (c or {}).get("Percentual_Dividend_Yield_Mes")
+            ),
             **composition,
         }
         out.setdefault(cnpj, []).append(rec)

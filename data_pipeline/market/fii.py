@@ -10,6 +10,7 @@ FII de ETF (ambos vêm como type='fund' na lista da BRAPI).
 from __future__ import annotations
 
 import datetime as _dt
+import math
 
 FII_SECTOR = "Fundos Imobiliários"
 
@@ -119,41 +120,61 @@ def _percentile(values: list[float], higher_better: bool) -> dict[int, float]:
     order = sorted(idx, key=lambda i: values[i], reverse=not higher_better)
     out: dict[int, float] = {}
     n = len(order)
-    for rank, i in enumerate(order):
-        out[i] = 1.0 if n == 1 else rank / (n - 1)
+    start = 0
+    while start < n:
+        end = start + 1
+        value = values[order[start]]
+        while end < n and values[order[end]] == value:
+            end += 1
+        average_rank = (start + end - 1) / 2.0
+        percentile = 1.0 if n == 1 else average_rank / (n - 1)
+        for pos in range(start, end):
+            out[order[pos]] = percentile
+        start = end
     return out
 
 
 # pesos default do score "bons FIIs" (somam 1.0)
 DEFAULT_WEIGHTS = {"dy_12m": 0.45, "pvp": 0.30, "liquidez_diaria": 0.25}
+SCORE_VERSION = "3.0.0"
 
 
 def rank_fiis(rows: list[dict], *, weights: dict | None = None,
-              pvp_max: float | None = 1.30, liq_min: float | None = 200_000.0,
-              dy_max: float = 0.30) -> list[dict]:
+              pvp_min: float | None = 0.55, pvp_max: float | None = 1.30,
+              pvp_target: float = 0.90, liq_min: float | None = 200_000.0,
+              dy_min: float = 0.0, dy_max: float = 0.20) -> list[dict]:
     """
-    Filtra e rankeia FIIs. DY↑ e liquidez↑ (maior melhor), P/VP↓ (menor melhor).
-    Filtros: P/VP<=pvp_max, liquidez>=liq_min, DY<=dy_max (descarta DY absurdo).
-    Retorna lista ordenada por score desc, com 'score' (0..100) e percentis.
+    Filtra e ranqueia FIIs com dados completos. DY e liquidez maiores pontuam
+    melhor; no P/VP, pontua a proximidade do alvo para não premiar descontos
+    extremos. Retorna score 0..100, percentis e a versão da metodologia.
     """
     weights = weights or DEFAULT_WEIGHTS
     elig = []
     for r in rows:
-        if r is None or r.get("price") is None:
+        if r is None:
             continue
-        dy, pvp, liq = r.get("dy_12m"), r.get("pvp"), r.get("liquidez_diaria")
-        if dy is not None and dy > dy_max:
+        price = _f(r.get("price"))
+        dy = _f(r.get("dy_12m"))
+        pvp = _f(r.get("pvp"))
+        liq = _f(r.get("liquidez_diaria"))
+        if not price or price <= 0 or dy is None or pvp is None or liq is None:
             continue
-        if pvp_max is not None and (pvp is None or pvp > pvp_max):
+        if dy <= dy_min or dy > dy_max:
             continue
-        if liq_min is not None and (liq is None or liq < liq_min):
+        if pvp <= 0 or (pvp_min is not None and pvp < pvp_min):
             continue
-        elig.append(r)
+        if pvp_max is not None and pvp > pvp_max:
+            continue
+        if liq <= 0 or (liq_min is not None and liq < liq_min):
+            continue
+        elig.append({**r, "price": price, "dy_12m": dy, "pvp": pvp,
+                     "liquidez_diaria": liq})
     if not elig:
         return []
 
     pct_dy = _percentile([r.get("dy_12m") for r in elig], higher_better=True)
-    pct_pvp = _percentile([r.get("pvp") for r in elig], higher_better=False)
+    pvp_distance = [abs(math.log(r["pvp"] / pvp_target)) for r in elig]
+    pct_pvp = _percentile(pvp_distance, higher_better=False)
     pct_liq = _percentile([r.get("liquidez_diaria") for r in elig], higher_better=True)
 
     out = []
@@ -164,6 +185,7 @@ def rank_fiis(rows: list[dict], *, weights: dict | None = None,
         den = sum(weights[k] for k, v in parts.items() if v is not None)
         score = (num / den) if den else 0.0
         out.append({**r, "score": round(score * 100, 1),
+                    "score_version": SCORE_VERSION,
                     "pct_dy": parts["dy_12m"], "pct_pvp": parts["pvp"],
                     "pct_liq": parts["liquidez_diaria"]})
     out.sort(key=lambda r: r["score"], reverse=True)
@@ -205,77 +227,191 @@ def price_metrics(prices: list) -> dict:
 
 # ── Carteira-modelo (diversificada) ───────────────────────────────────────────
 
-def _cap_weights(w: list[float], cap: float) -> list[float]:
-    """Limita cada peso a `cap`, redistribuindo o excedente proporcionalmente aos
-    demais; renormaliza no fim."""
-    w = list(w)
-    for _ in range(20):
-        over = [i for i, x in enumerate(w) if x > cap + 1e-12]
-        if not over:
+def _constrained_weights(scores: list[float], tipos: list[str], *,
+                         max_weight: float, max_tipo_frac: float) -> list[float]:
+    """Aloca pelos scores respeitando simultaneamente tetos por ativo e por tipo."""
+    n = len(scores)
+    if n * max_weight < 1.0 - 1e-10:
+        raise ValueError(
+            f"Configuração inviável: {n} ativos × {max_weight:.0%} "
+            "não permite somar 100%."
+        )
+    tipo_capacidade = {
+        tp: sum(max_weight for t in tipos if t == tp) for tp in set(tipos)
+    }
+    if sum(min(max_tipo_frac, cap) for cap in tipo_capacidade.values()) < 1.0 - 1e-10:
+        raise ValueError(
+            "Configuração inviável: os tetos por ativo e por tipo não permitem "
+            "alocar 100%."
+        )
+
+    desired = [max(float(s), 1e-12) for s in scores]
+    weights = [0.0] * n
+    remaining = 1.0
+    active = set(range(n))
+
+    for _ in range(n * 3 + 3):
+        if remaining <= 1e-10:
             break
-        excess = sum(w[i] - cap for i in over)
-        for i in over:
-            w[i] = cap
-        free = [i for i in range(len(w)) if i not in over]
-        fsum = sum(w[i] for i in free)
-        if fsum <= 0:
+        active = {
+            i for i in active
+            if max_weight - weights[i] > 1e-10
+            and max_tipo_frac - sum(
+                weights[j] for j, tp in enumerate(tipos) if tp == tipos[i]
+            ) > 1e-10
+        }
+        if not active:
             break
-        for i in free:
-            w[i] += excess * w[i] / fsum
-    s = sum(w)
-    return [x / s for x in w] if s else w
+        desired_sum = sum(desired[i] for i in active)
+        proposal = {i: remaining * desired[i] / desired_sum for i in active}
+        ratios = [1.0]
+        for i in active:
+            if proposal[i] > 0:
+                ratios.append((max_weight - weights[i]) / proposal[i])
+        for tp in {tipos[i] for i in active}:
+            group_proposal = sum(proposal[i] for i in active if tipos[i] == tp)
+            group_used = sum(
+                weights[i] for i, item_tipo in enumerate(tipos) if item_tipo == tp
+            )
+            if group_proposal > 0:
+                ratios.append((max_tipo_frac - group_used) / group_proposal)
+        alpha = max(0.0, min(ratios))
+        allocated = 0.0
+        for i in active:
+            increment = alpha * proposal[i]
+            weights[i] += increment
+            allocated += increment
+        remaining -= allocated
+        if alpha >= 1.0 - 1e-12:
+            break
+
+    if remaining > 1e-8:
+        raise ValueError(
+            "Não foi possível fechar os pesos sem violar os limites definidos."
+        )
+    return weights
 
 
 def build_portfolio(rows: list[dict], *, n_max: int = 10, max_weight: float = 0.20,
                     max_tipo_frac: float = 0.50, liq_min: float = 200_000.0,
                     min_por_tipo: int = 0) -> list[dict]:
     """
-    Monta a carteira-modelo diversificada por tipo: teto de max_tipo_frac do nº de
-    FIIs por tipo e, opcionalmente, um PISO de `min_por_tipo` FIIs de cada tipo
-    presente (garante mix — ex.: tijolo + papel + FoF descorrelacionados). Pesa
-    proporcional ao score com teto max_weight por FII.
+    Monta a carteira-modelo com teto de peso por ativo e por tipo. Configurações
+    sem solução matemática geram ValueError, em vez de pesos silenciosamente
+    normalizados acima dos limites.
     """
+    if n_max < 1 or not 0 < max_weight <= 1 or not 0 < max_tipo_frac <= 1:
+        raise ValueError("n_max e limites de peso devem ser positivos e válidos.")
+    if min_por_tipo < 0:
+        raise ValueError("min_por_tipo não pode ser negativo.")
+
+    valid_types = {"tijolo", "papel", "fof", "hibrido"}
     elig = [r for r in rows if r.get("score") is not None
+            and r.get("tipo") in valid_types
             and (r.get("liquidez_diaria") or 0) >= liq_min]
     elig.sort(key=lambda r: float(r["score"]), reverse=True)   # melhores primeiro
-    cap_tipo = max(1, int(round(n_max * max_tipo_frac)))
-    sel, tipo_count, chosen = [], {}, set()
+    sel, chosen = [], set()
 
     def _take(r):
         sel.append(r)
         chosen.add(id(r))
-        tp = r.get("tipo") or "?"
-        tipo_count[tp] = tipo_count.get(tp, 0) + 1
 
-    # 1) piso por tipo: os melhores de cada tipo presente entram primeiro
+    by_tipo: dict[str, list[dict]] = {}
+    for r in elig:
+        by_tipo.setdefault(r.get("tipo") or "?", []).append(r)
+    if not by_tipo:
+        return []
+    required_types = math.ceil(1.0 / max_tipo_frac - 1e-12)
+    if len(by_tipo) < required_types:
+        raise ValueError(
+            f"O teto de {max_tipo_frac:.0%} por tipo exige ao menos "
+            f"{required_types} tipos elegíveis; há {len(by_tipo)}."
+        )
+
+    # 1) piso explícito por tipo
     if min_por_tipo > 0:
-        by_tipo: dict = {}
-        for r in elig:
-            by_tipo.setdefault(r.get("tipo") or "?", []).append(r)
+        if len(by_tipo) * min_por_tipo > n_max:
+            raise ValueError(
+                "O número máximo de ativos é menor que o piso solicitado por tipo."
+            )
         for lst in by_tipo.values():
             for r in lst[:min_por_tipo]:
                 if len(sel) < n_max and id(r) not in chosen:
                     _take(r)
-    # 2) completa por score, respeitando o teto por tipo
+
+    # 2) garante tipos suficientes para que o teto agregado seja factível
+    selected_types = {r.get("tipo") or "?" for r in sel}
+    type_order = sorted(
+        by_tipo, key=lambda tp: float(by_tipo[tp][0]["score"]), reverse=True
+    )
+    for tp in type_order:
+        if len(selected_types) >= required_types or len(sel) >= n_max:
+            break
+        if tp not in selected_types:
+            _take(by_tipo[tp][0])
+            selected_types.add(tp)
+
+    # 3) completa por score; o alocador controla o teto de peso por tipo
     for r in elig:
         if len(sel) >= n_max:
             break
         if id(r) in chosen:
             continue
-        tp = r.get("tipo") or "?"
-        if tipo_count.get(tp, 0) >= cap_tipo:
-            continue
         _take(r)
     if not sel:
         return []
+
+    # Se a seleção por score ainda não oferece capacidade suficiente sob os
+    # tetos, troca o ativo redundante de menor score por outro tipo útil.
+    def _selection_capacity(items: list[dict]) -> float:
+        counts: dict[str, int] = {}
+        for item in items:
+            tp = str(item.get("tipo") or "?")
+            counts[tp] = counts.get(tp, 0) + 1
+        return sum(min(max_tipo_frac, count * max_weight)
+                   for count in counts.values())
+
+    while _selection_capacity(sel) < 1.0 - 1e-10:
+        outside = [r for r in elig if id(r) not in chosen]
+        best_swap = None
+        best_gain = 0.0
+        for candidate in outside:
+            for current in sorted(sel, key=lambda r: float(r["score"])):
+                trial = [r for r in sel if id(r) != id(current)] + [candidate]
+                gain = _selection_capacity(trial) - _selection_capacity(sel)
+                if gain > best_gain + 1e-12:
+                    best_gain = gain
+                    best_swap = (current, candidate)
+        if best_swap is None:
+            break
+        current, candidate = best_swap
+        sel = [r for r in sel if id(r) != id(current)]
+        chosen.remove(id(current))
+        chosen.add(id(candidate))
+        sel.append(candidate)
+
     sel.sort(key=lambda r: float(r["score"]), reverse=True)
     scores = [max(float(r["score"]), 1e-9) for r in sel]
-    tot = sum(scores)
-    w = _cap_weights([s / tot for s in scores], max_weight)
-    return [{"ticker": r["ticker"], "peso": round(wi, 4), "score": r["score"],
+    tipos = [str(r.get("tipo") or "?") for r in sel]
+    weights = _constrained_weights(
+        scores, tipos, max_weight=max_weight, max_tipo_frac=max_tipo_frac
+    )
+    rounded = [round(weight, 8) for weight in weights]
+    residue = round(1.0 - sum(rounded), 8)
+    if residue:
+        for i in sorted(range(len(rounded)), key=lambda j: scores[j], reverse=True):
+            group_weight = sum(
+                rounded[j] for j, tp in enumerate(tipos) if tp == tipos[i]
+            )
+            if (rounded[i] + residue <= max_weight + 1e-9
+                    and group_weight + residue <= max_tipo_frac + 1e-9
+                    and rounded[i] + residue >= 0):
+                rounded[i] += residue
+                break
+    return [{"ticker": r["ticker"], "peso": wi, "score": r["score"],
              "tipo": r.get("tipo"), "segmento": r.get("segmento"),
              "dy_12m": r.get("dy_12m"), "pvp": r.get("pvp")}
-            for r, wi in zip(sel, w)]
+            for r, wi in zip(sel, rounded)]
 
 
 # ── Diversificação (nº efetivo + curva risco × nº de fundos) ──────────────────
@@ -392,15 +528,19 @@ def backtest(weights: dict, price_hist: dict, div_hist: dict | None = None,
         if not bdf.empty:
             bdf["Data"] = pd.to_datetime(bdf["Data"])
             bser = (pd.to_numeric(bdf.set_index("Data")["v"], errors="coerce")
-                    .resample("ME").last().ffill().reindex(out.index).ffill())
-            if bser.notna().any() and bser.dropna().iloc[0]:
-                bser = bser / bser.dropna().iloc[0] * 100.0
-                out[benchmark_nome] = bser
-                bench_ret = round(bser.iloc[-1] / 100.0 - 1.0, 4)
+                    .resample("ME").last().ffill())
+            common = pd.concat(
+                [out["Carteira"], bser.rename(benchmark_nome)], axis=1
+            ).dropna()
+            if not common.empty and common.iloc[0].ne(0).all():
+                out = common / common.iloc[0] * 100.0
+                bench_ret = round(
+                    out[benchmark_nome].iloc[-1] / 100.0 - 1.0, 4
+                )
 
     serie = out.reset_index()
     anos = (serie["Data"].iloc[-1] - serie["Data"].iloc[0]).days / 365.25 if len(serie) > 1 else 0
-    ret = (carteira.iloc[-1] / 100.0) - 1.0
+    ret = (out["Carteira"].iloc[-1] / 100.0) - 1.0
     cagr = ((1 + ret) ** (1 / anos) - 1) if anos > 0.5 else None
     return serie, {"retorno_total": round(ret, 4),
                    "cagr": round(cagr, 4) if cagr is not None else None,

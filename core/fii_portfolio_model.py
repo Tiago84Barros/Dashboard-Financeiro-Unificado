@@ -7,6 +7,8 @@ que o Dashboard Geral mostre EXATAMENTE os FIIs e pesos que o usuário definiu.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 
 import streamlit as st
@@ -15,7 +17,7 @@ from sqlalchemy import text
 from core.config import settings
 from core.database import get_engine
 # Reaproveita os helpers já testados do modelo B3 (mesma semântica).
-from core.b3_portfolio_model import _owner_id, _plan_hash, _safe_json, _normalize_weight
+from core.b3_portfolio_model import _owner_id, _safe_json, _normalize_weight
 
 
 DDL_SQL = [
@@ -43,7 +45,7 @@ DDL_SQL = [
         nome       VARCHAR(200),
         tipo       TEXT,
         segmento   TEXT,
-        weight     NUMERIC(12,8),
+        weight     NUMERIC(12,8) NOT NULL CHECK (weight >= 0 AND weight <= 1),
         dy_12m     NUMERIC(18,8),
         pvp        NUMERIC(18,8),
         score      NUMERIC(18,8),
@@ -59,6 +61,10 @@ DDL_SQL = [
     """
     CREATE INDEX IF NOT EXISTS idx_fii_portfolio_model_items_model_weight
     ON fii_portfolio_model_items (model_id, weight DESC)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_fii_portfolio_models_one_active
+    ON fii_portfolio_models (user_id) WHERE status = 'active'
     """,
 ]
 
@@ -77,6 +83,27 @@ def _num(v):
         return None
 
 
+def _fii_plan_hash(items: list[dict], params: dict,
+                   weights: dict[str, float]) -> str:
+    """Identifica a composição real, incluindo pesos e versão metodológica."""
+    payload = {
+        "items": sorted(
+            (
+                str(item.get("ticker") or item.get("tk") or "").upper(),
+                round(weights.get(
+                    str(item.get("ticker") or item.get("tk") or "").upper(), 0.0
+                ), 8),
+                _num(item.get("score")),
+            )
+            for item in items
+            if item.get("ticker") or item.get("tk")
+        ),
+        "params": params,
+    }
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
 def save_fii_portfolio_model(
     items: list[dict],
     params: dict,
@@ -93,7 +120,7 @@ def save_fii_portfolio_model(
 
     owner = _owner_id()
     weights = _normalize_weight(items)          # aceita 'peso'/'weight' + 'ticker'/'tk'
-    plan_hash = _plan_hash(items, params)
+    plan_hash = _fii_plan_hash(items, params, weights)
     model_id = str(uuid.uuid4())
 
     with engine.begin() as conn:
