@@ -18,7 +18,7 @@ from design.componentes import card_metrica
 
 # ── Importa engine compartilhado de empresas_b3 ───────────────────────────────
 from views.empresas_b3 import (
-    _GAMMA_DEF, _CAP_DEF, _SOFT_DEF,
+    _GAMMA_DEF, _CAP_DEF, _SOFT_DEF, _REBAL_MONTH,
     _COR_POS, _COR_NEG, _COR_ALT, _COR_INF, _COR_NEU,
     _DIV_POR_ACAO_MAX,
     _apply_cap_soft, _apply_decay_penalty,
@@ -214,10 +214,19 @@ def _simular_seg_backtest(
         taxa_m = (1 + selic_aa_ano) ** (1 / 12) - 1
         selic_acum = selic_acum * (1 + taxa_m) + aporte
 
-        if ano != ultimo_ano:
+        # Rebalance realista (auditoria 2026-07): líderes do ano N assumem a
+        # partir de ABRIL (FY N−1 publicado até 31/03). Jan–mar mantêm a
+        # carteira do ano anterior.
+        if ano != ultimo_ano and mes >= _REBAL_MONTH:
             ultimo_ano = ano
             lids = lids_por_ano.get(ano, [])
-            pesos_est = pesos_por_ano.get(ano, {tk: 1.0 / len(lids) for tk in lids} if lids else {})
+            if lids:
+                pesos_est = pesos_por_ano.get(
+                    ano, {tk: 1.0 / len(lids) for tk in lids})
+            # sem líderes p/ o ano (ex.: ano corrente, fora do loop de
+            # scoring): mantém a carteira vigente — antes a estratégia
+            # parava de aportar enquanto Selic/EW seguiam (viés contra a
+            # estratégia no ano corrente).
 
         # Reinvestimento de dividendos — idêntico ao App1
         if dividendos:
@@ -400,7 +409,13 @@ def _processar_segmento(
         # Selic e equal-weight recebiam aportes desde o início da janela de
         # preços (10 anos) enquanto a estratégia só começa em ano_inicio —
         # margens distorcidas e segmentos reprovados indevidamente.
-        df_prec_seg = df_prec_seg[df_prec_seg.index.year >= int(ano_inicio)]
+        # Início em ABRIL do ano_inicio: mesma regra de publicação dos
+        # balanços aplicada a TODAS as séries (janela justa).
+        df_prec_seg = df_prec_seg[
+            (df_prec_seg.index.year > int(ano_inicio)) |
+            ((df_prec_seg.index.year == int(ano_inicio)) &
+             (df_prec_seg.index.month >= _REBAL_MONTH))
+        ]
         val_est, val_selic, val_ew, contrib_est = _simular_seg_backtest(
             df_prec_seg, lids_por_ano, pesos_por_ano,
             aporte, taxa_selic_aa, selic_macro,

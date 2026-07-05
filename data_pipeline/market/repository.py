@@ -18,11 +18,17 @@ _UPDATE_COLS = {
                   "description", "logo_url", "codigo_cvm"),
     "assets": ("company_id", "asset_type", "exchange", "currency", "is_active"),
     "historical_prices": ("open", "high", "low", "close", "adjusted_close", "volume"),
-    "income_statements": ("revenue", "gross_profit", "ebit", "ebitda", "net_income", "eps"),
+    # point-in-time (019): period_end_date/raw_payload_id ATUALIZAM no conflito;
+    # first_seen_at NUNCA entra aqui nem nas linhas — o DEFAULT NOW() preenche
+    # no primeiro INSERT e re-ingestões não apagam o histórico de disponibilidade.
+    "income_statements": ("revenue", "gross_profit", "ebit", "ebitda", "net_income", "eps",
+                          "period_end_date", "raw_payload_id"),
     "balance_sheets": ("total_assets", "total_liabilities", "equity", "cash",
-                       "gross_debt", "net_debt", "current_assets", "current_liabilities"),
+                       "gross_debt", "net_debt", "current_assets", "current_liabilities",
+                       "period_end_date", "raw_payload_id"),
     "cash_flow_statements": ("operating_cash_flow", "investing_cash_flow",
-                             "financing_cash_flow", "capex", "free_cash_flow"),
+                             "financing_cash_flow", "capex", "free_cash_flow",
+                             "period_end_date", "raw_payload_id"),
     "dividends": ("source",),
     "macro_indicators": ("value", "source"),
     "calculated_metrics": ("metric_value", "calculation_method", "source", "confidence_score"),
@@ -133,6 +139,39 @@ def _dedup(table: str, rows: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
+# cache de colunas existentes por tabela (1 consulta por processo) — permite
+# que o código novo rode contra banco SEM a migração 019 aplicada: colunas
+# ausentes no banco são simplesmente omitidas do INSERT em vez de quebrá-lo.
+_DB_COLS_CACHE: dict[str, set[str]] = {}
+
+
+def reset_db_cols_cache() -> None:
+    """Invalida o cache de colunas — chamar no início de cada run do
+    pipeline: a migração 019 pode ter sido aplicada com o processo vivo."""
+    _DB_COLS_CACHE.clear()
+
+
+def _db_cols(conn, table: str) -> set[str]:
+    cached = _DB_COLS_CACHE.get(table)
+    if cached is not None:
+        return cached
+    try:
+        res = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='market' AND table_name=:t"), {"t": table}).fetchall()
+        cols = {r[0] for r in res}
+    except Exception as exc:
+        # Fix revisão 2026-07: NÃO cachear falha transitória — set() vazio
+        # ficava para sempre e desativava o filtro exatamente no cenário
+        # (banco sem a migração 019) para o qual ele existe. Sem cache,
+        # a próxima chamada re-tenta a introspecção.
+        logger.warning("_db_cols %s: introspecção falhou (%s) — sem filtro "
+                       "nesta chamada, retry na próxima", table, str(exc)[:120])
+        return set()
+    _DB_COLS_CACHE[table] = cols
+    return cols
+
+
 def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
     """
     UPSERT em LOTE via psycopg2.execute_values (centenas de linhas por statement,
@@ -144,6 +183,15 @@ def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
         return 0
     rows = _dedup(table, rows)
     cols = list(rows[0].keys())
+    db_cols = _db_cols(conn, table)
+    if db_cols:
+        ausentes = [c for c in cols if c not in db_cols]
+        if ausentes:
+            logger.info("upsert %s: colunas %s ausentes no banco (migração "
+                        "pendente?) — omitidas do INSERT", table, ausentes)
+            cols = [c for c in cols if c in db_cols]
+            if not cols:
+                return 0
     collist = ", ".join(f'"{c}"' for c in cols)
     upd = _UPDATE_COLS[table]
     setlist = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in upd if c in cols)
@@ -190,14 +238,20 @@ def upsert(conn, table: str, rows: list[dict]) -> int:
     return _upsert(conn, table, rows)
 
 
-def save_raw_payload(conn, ticker, endpoint, payload, status="success", error=None) -> None:
-    conn.execute(text("""
+def save_raw_payload(conn, ticker, endpoint, payload, status="success", error=None) -> int | None:
+    """Salva o payload bruto e retorna o id (proveniência p/ raw_payload_id)."""
+    res = conn.execute(text("""
         INSERT INTO market.brapi_raw_payloads
           (ticker, endpoint, payload_json, source, request_status, error_message)
         VALUES (:tk, :ep, CAST(:pl AS jsonb), 'brapi.dev', :st, :err)
+        RETURNING id
     """), {"tk": ticker, "ep": endpoint,
            "pl": json.dumps(payload, ensure_ascii=False, default=str) if payload is not None else None,
            "st": status, "err": (str(error)[:500] if error else None)})
+    try:
+        return int(res.scalar())
+    except Exception:
+        return None
 
 
 def log_quality(conn, *, ticker=None, table_name, field_name=None, issue_type,

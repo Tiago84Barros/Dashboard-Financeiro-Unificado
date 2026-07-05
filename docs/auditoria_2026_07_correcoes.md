@@ -39,18 +39,55 @@ CONFIRMADO/REFUTADO contra o código antes de corrigir. SCORE_VERSION 2.20.0 →
   ~4,6× inflada) e prior rotulado como uniforme (reverse optimization CAPM
   segue pendente e agora declarada como tal na UI).
 
-## Pendências conhecidas (não resolvidas nesta rodada)
+## Rodada 2 (2026-07-04, score v2.22.0) — pendências 1-4 atacadas
 
-1. **Point-in-time completo no banco**: `period_end_date`, `published_at`/
-   `available_at`, versão de publicação (restatements) e `raw_payload_id` nos
-   dados normalizados — exige mudança de schema + re-ingestão.
-2. **Rebalance com vendas reais** (+ IR 15% e custo de venda) como modo
-   opcional do backtest.
-3. **Benchmark IBOV real** no backtest (hoje o benchmark é equal-weight do
-   próprio universo filtrado — comparação interna, não "bater o mercado").
-4. **Validação preditiva do score** (rank-IC score × retorno futuro) — não
-   existe teste de poder preditivo no repositório.
-5. **Split do `views/empresas_b3.py`** (~5.100 linhas) em view / scoring /
-   backtest / providers, conforme CLAUDE.md.
+1. **Point-in-time no banco — PARCIALMENTE RESOLVIDO.** Migração
+   `019_point_in_time.sql`: `period_end_date`, `first_seen_at` (proxy de
+   available_at — quando a linha entrou no NOSSO banco; nunca sobrescrito em
+   re-ingestão) e `raw_payload_id` (proveniência) nas 3 tabelas de
+   demonstrações; ETL preenche tudo e tolera banco sem a migração (colunas
+   ausentes são omitidas do INSERT). AINDA PENDENTE: `published_at` real da
+   CVM e versionamento de republicações (restatements) — exige fonte CVM.
+2. **Rebalance com vendas — RESOLVIDO.** Modo opcional no backtest da
+   Análise Avançada: `_executar_rebalance_vendas` vende excedentes (custo de
+   venda + IR 15% sobre lucro realizado, isenção PF R$ 20k/mês) e recompra
+   déficits; custo médio rastreado; IR/custos exibidos na UI.
+3. **Benchmark IBOV real — RESOLVIDO.** Linha "IBOV (aportes)" no backtest:
+   mesmo fluxo de aportes aplicado ao ^BVSP.
+4. **Validação preditiva do score — RESOLVIDO.** `_rank_ic_por_ano` (rank-IC
+   Spearman por ano, score lag=1 × retorno do ano, spread top−bottom tercil)
+   com expander próprio e interpretação honesta (limiares Grinold & Kahn;
+   aviso de que universo de sobreviventes superestima o IC).
+   Extra da rodada: **rebalance anual movido de janeiro para ABRIL**
+   (`_REBAL_MONTH=4`) no backtest da Avançada E no da Criação de Portfólio —
+   balanços FY N−1 são publicados até 31/03; janeiro antecipava 2-4 meses de
+   informação contábil (apontado pelas duas auditorias).
+
+### Revisão adversarial da rodada 2 (achados incorporados)
+
+A própria rodada 2 passou por revisão multi-agente; achados confirmados e
+corrigidos antes do merge:
+- **IR do modo com vendas**: `custo_venda` aplicava a isenção de R$ 20k
+  pro-rata e por operação; a IN RFB 1.585/2015 é BINÁRIA (vendas do mês >
+  20k ⇒ todo o ganho líquido tributável) com compensação de prejuízos no
+  mês. Agora o IR é apurado no nível do mês em `_executar_rebalance_vendas`.
+  Viés documentado na UI: a série ajustada embute dividendos (isentos) na
+  base ⇒ IR simulado tende a SUPERestimar (conservador).
+- **Caixa destruído**: rebalance sem nenhum destino com preço no mês agora
+  aborta as vendas (antes o caixa sumia da série).
+- **Dividendo reinvestido** entra na base de custo do IR (custo médio).
+- **Linha IBOV** paga a mesma fricção de compra quando custos estão ativos.
+- **Rank-IC**: janela pós-publicação (fim de março/N → fim de março/N+1),
+  ano parcial excluído, guarda de IC NaN, metadados do cálculo exibidos.
+- **ETL**: `renormalize` agora preserva/corrige `raw_payload_id` (antes o
+  backfill zerava a proveniência via ON CONFLICT); cache de colunas não é
+  mais envenenado por falha transitória e é resetado a cada run.
+
+## Pendências remanescentes
+
+5. **Split do `views/empresas_b3.py`** (~5.300 linhas) em view / scoring /
+   backtest / providers, conforme CLAUDE.md (recomendado fazer com modelo
+   padrão — refatoração mecânica coberta por testes).
 6. **Taxonomia setorial** ausente em parte do universo market e vínculo
    asset→company incompleto (backfill de `company_id`).
+7. **published_at real (CVM) + vintage/restatements** (complemento do item 1).

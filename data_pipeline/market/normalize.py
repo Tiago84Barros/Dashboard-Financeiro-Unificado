@@ -59,14 +59,14 @@ def _ticker(quote: dict) -> str:
     return str((quote or {}).get("symbol") or "").strip().upper().replace(".SA", "")
 
 
-def _period_year_quarter(end, annual: bool) -> tuple[int, int] | None:
+def _end_year_quarter(end, annual: bool):
+    """(period_end_date, year, quarter) a partir do endDate; None se inválido."""
     d = _as_date(end)
     if d is None:
         return None
     if annual:
-        return d.year, 0
-    q = (d.month - 1) // 3 + 1
-    return d.year, q
+        return d, d.year, 0
+    return d, d.year, (d.month - 1) // 3 + 1
 
 
 # ── Cadastro ──────────────────────────────────────────────────────────────────
@@ -166,13 +166,16 @@ def income_rows(quote: dict) -> list[dict]:
     tk = _ticker(quote)
     out: list[dict] = []
     for it, annual in _statement_items(quote, "incomeStatementHistory", "incomeStatementHistoryQuarterly"):
-        pyq = _period_year_quarter(it.get("endDate") or it.get("date"), annual)
-        if not pyq:
+        peq = _end_year_quarter(it.get("endDate") or it.get("date"), annual)
+        if not peq:
             continue
-        year, quarter = pyq
+        period_end, year, quarter = peq
         out.append({
             "ticker": tk, "period": "annual" if annual else "quarterly",
             "year": year, "quarter": quarter,
+            # point-in-time (migração 019): fim do exercício + proveniência
+            # (raw_payload_id preenchido pelo ingest ao salvar o payload)
+            "period_end_date": period_end, "raw_payload_id": None,
             "revenue": _first(it, ("totalRevenue", "revenue", "operatingRevenue")),
             "gross_profit": _first(it, ("grossProfit",)),
             "ebit": _first(it, ("ebit", "operatingIncome")),
@@ -199,10 +202,10 @@ def balance_rows(quote: dict) -> list[dict]:
     tk = _ticker(quote)
     out: list[dict] = []
     for it, annual in _statement_items(quote, "balanceSheetHistory", "balanceSheetHistoryQuarterly"):
-        pyq = _period_year_quarter(it.get("endDate") or it.get("date"), annual)
-        if not pyq:
+        peq = _end_year_quarter(it.get("endDate") or it.get("date"), annual)
+        if not peq:
             continue
-        year, quarter = pyq
+        period_end, year, quarter = peq
         cash = _first(it, ("cash", "cashAndCashEquivalents",
                            "cashCashEquivalentsAndShortTermInvestments"))
         # dívida bruta: campos diretos quando existem; senão soma dos componentes
@@ -221,6 +224,9 @@ def balance_rows(quote: dict) -> list[dict]:
         out.append({
             "ticker": tk, "period": "annual" if annual else "quarterly",
             "year": year, "quarter": quarter,
+            # point-in-time (migração 019): fim do exercício + proveniência
+            # (raw_payload_id preenchido pelo ingest ao salvar o payload)
+            "period_end_date": period_end, "raw_payload_id": None,
             "total_assets": _first(it, ("totalAssets",)),
             "total_liabilities": _first(it, ("totalLiab", "totalLiabilities",
                                              "totalLiabilitiesNetMinorityInterest")),
@@ -240,10 +246,10 @@ def cashflow_rows(quote: dict) -> list[dict]:
     tk = _ticker(quote)
     out: list[dict] = []
     for it, annual in _statement_items(quote, "cashflowHistory", "cashflowHistoryQuarterly"):
-        pyq = _period_year_quarter(it.get("endDate") or it.get("date"), annual)
-        if not pyq:
+        peq = _end_year_quarter(it.get("endDate") or it.get("date"), annual)
+        if not peq:
             continue
-        year, quarter = pyq
+        period_end, year, quarter = peq
         fco = _first(it, ("totalCashFromOperatingActivities", "operatingCashFlow"))
         capex = _first(it, ("capitalExpenditures", "capitalExpenditure"))
         fcf = _first(it, ("freeCashFlow",))
@@ -252,6 +258,9 @@ def cashflow_rows(quote: dict) -> list[dict]:
         out.append({
             "ticker": tk, "period": "annual" if annual else "quarterly",
             "year": year, "quarter": quarter,
+            # point-in-time (migração 019): fim do exercício + proveniência
+            # (raw_payload_id preenchido pelo ingest ao salvar o payload)
+            "period_end_date": period_end, "raw_payload_id": None,
             "operating_cash_flow": fco,
             "investing_cash_flow": _first(it, ("totalCashflowsFromInvestingActivities", "investingCashFlow")),
             "financing_cash_flow": _first(it, ("totalCashFromFinancingActivities", "financingCashFlow")),

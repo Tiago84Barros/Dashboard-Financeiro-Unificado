@@ -136,7 +136,12 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
 
     data = nz.normalize_all(quote)
     with engine.begin() as conn:
-        repo.save_raw_payload(conn, tk, "quote", quote, status="success")
+        # point-in-time (019): id do payload bruto vira proveniência das
+        # linhas de demonstrações (raw_payload_id)
+        pid = repo.save_raw_payload(conn, tk, "quote", quote, status="success")
+        for _t_pit in ("income_statements", "balance_sheets", "cash_flow_statements"):
+            for _r_pit in data.get(_t_pit) or []:
+                _r_pit["raw_payload_id"] = pid
         # empresa (enriquece codigo_cvm pelo mapa CVM)
         comp = data["companies"]
         cod = cvm_map.get(tk)
@@ -167,6 +172,7 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
 
 def _run(engine, tickers: list[str], *, range_: str, full: bool,
          batch_label: str, delay: float | None = None) -> dict:
+    repo.reset_db_cols_cache()  # migração pode ter sido aplicada com processo vivo
     prog = _new_progress()
     delay = float(os.getenv("MARKET_DELAY", "1.5")) if delay is None else delay
     max_blocks = int(os.getenv("MARKET_MAX_BLOCKS", "3"))
@@ -523,11 +529,15 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
     prog = _new_progress()
     if engine is None:
         return {**prog, "erros": -1}
+    repo.reset_db_cols_cache()  # migração pode ter sido aplicada com processo vivo
     with engine.connect() as conn:
         if not repo.schema_exists(conn):
             return {**prog, "erros": -1}
         cvm_map = repo.load_cvm_to_ticker(conn)
-        q = ("SELECT DISTINCT ON (ticker) ticker, payload_json FROM market.brapi_raw_payloads "
+        # inclui o id do payload: proveniência das linhas re-normalizadas
+        # (fix revisão 2026-07: sem isso o upsert sobrescrevia raw_payload_id
+        # existente com NULL em todo backfill — o ON CONFLICT atualiza a coluna)
+        q = ("SELECT DISTINCT ON (ticker) ticker, id, payload_json FROM market.brapi_raw_payloads "
              "WHERE endpoint='quote' AND request_status='success' AND payload_json IS NOT NULL")
         params: dict = {}
         if tickers:
@@ -538,13 +548,16 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
     if limit:
         rows = rows[:limit]
 
-    for tk, payload in rows:
+    for tk, pid, payload in rows:
         try:
             p = json.loads(payload) if isinstance(payload, str) else payload
             quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
             if not quote:
                 continue
             data = nz.normalize_all(quote)
+            for _t_pit in ("income_statements", "balance_sheets", "cash_flow_statements"):
+                for _r_pit in data.get(_t_pit) or []:
+                    _r_pit["raw_payload_id"] = pid
             cod = cvm_map.get(tk)
             with engine.begin() as conn:
                 comp = data["companies"]
