@@ -361,6 +361,26 @@ def _period_to_years(period: str) -> int | None:
     return None
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def _yf_ibov_mensal(period: str = "5y") -> pd.Series:
+    """Fechamento mensal do IBOV (^BVSP) — benchmark de mercado real do
+    backtest (auditoria 2026-07: o 'Benchmark' equal-weight é interno ao
+    universo filtrado; sem o índice, 'bater o benchmark' não significava
+    bater o mercado)."""
+    try:
+        raw = yf.download("^BVSP", period=period, interval="1mo",
+                          auto_adjust=True, progress=False)
+        if raw is None or raw.empty:
+            return pd.Series(dtype=float)
+        close = raw["Close"]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        close.index = pd.to_datetime(close.index)
+        return close.dropna()
+    except Exception:
+        return pd.Series(dtype=float)
+
+
 def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd.DataFrame:
     """
     Preços mensais de fechamento AJUSTADOS (retorno total) p/ múltiplos tickers.
@@ -1497,7 +1517,7 @@ def _score_universo_bootstrap(
 #   - Mudança na ordem ou nos multiplicadores (CV, crowding, macro)
 # Cada versão registra changelog abaixo.
 # ══════════════════════════════════════════════════════════════════════════════
-SCORE_VERSION = "2.21.0"
+SCORE_VERSION = "2.22.0"
 SCORE_VERSION_CHANGELOG = {
     "2.0.0": "Score base com percentil intra-grupo + 4 engines secundarios.",
     "2.1.0": (
@@ -1661,6 +1681,39 @@ SCORE_VERSION_CHANGELOG = {
         "e reconciliacao web desativada quando market ativo; "
         "(P11) dividendos (R$/acao) fora do grafico de DRE absoluta — "
         "grafico proprio com unidade correta."
+    ),
+    "2.22.0": (
+        "Auditoria cruzada 2026-07-04, rodada 2 (pendencias 1-4): "
+        "(Q1) rebalance anual do backtest movido de JANEIRO para ABRIL "
+        "(_REBAL_MONTH=4) — balancos FY N-1 sao publicados ate 31/03 (CVM); "
+        "janeiro antecipava 2-4 meses de informacao contabil; mesmo ajuste "
+        "no backtest por segmento da Criacao de Portfolio; "
+        "(Q2) novo modo 'rebalance com vendas' em _simular_backtest: "
+        "_executar_rebalance_vendas vende excedentes com custo de venda + "
+        "IR 15%% sobre lucro realizado (isencao PF R$ 20k/mes, "
+        "core/transaction_costs.custo_venda, que nunca tinha call site) e "
+        "recompra deficits; custo medio por ticker rastreado; IR pago e "
+        "custos exibidos na UI; "
+        "(Q3) benchmark de MERCADO real: linha 'IBOV (aportes)' no backtest "
+        "(mesmo fluxo de aportes aplicado ao ^BVSP) — o 'Benchmark' "
+        "equal-weight e interno ao universo filtrado; "
+        "(Q4) validacao preditiva do score: _rank_ic_por_ano calcula "
+        "rank-IC (Spearman) do score (lag=1) vs retorno do ano seguinte, "
+        "por ano, com spread top-bottom tercil — expander proprio na "
+        "Analise Avancada com interpretacao honesta (Grinold & Kahn); "
+        "(Q5) ETL point-in-time (migracao 019): period_end_date, "
+        "first_seen_at (proxy de available_at; nunca sobrescrito em "
+        "re-ingestao) e raw_payload_id (proveniencia) nas demonstracoes; "
+        "(Q6) revisao adversarial da propria rodada: IR apurado por MES "
+        "com isencao BINARIA de 20k + compensacao de prejuizos intra-mes "
+        "(IN RFB 1.585/2015 — o custo_venda pro-rata subestimava IR), "
+        "guarda contra caixa destruido sem destino com preco, dividendo "
+        "reinvestido entra na base de custo do IR, linha IBOV paga a mesma "
+        "friccao de compra, rank-IC com janela pos-publicacao "
+        "(marco/N -> marco/N+1; ano parcial excluido; guarda de IC NaN; "
+        "metadados do calculo exibidos), renormalize preserva/corrige "
+        "proveniencia (antes zerava raw_payload_id) e cache de colunas sem "
+        "envenenamento por falha transitoria + reset por run."
     ),
 }
 
@@ -1987,6 +2040,10 @@ _CAP_GRID   = (0.20, 0.25, 0.30)
 _SOFT_GRID  = (0.03, 0.05, 0.08)
 _GAMMA_DEF, _CAP_DEF, _SOFT_DEF = 0.90, 0.25, 0.05
 _CAL_SHRINK = 0.40   # shrinkage 40 % em direção ao default
+# Mês do rebalance anual do backtest (auditoria 2026-07): balanços FY N−1
+# são publicados até 31/03 (CVM) — rebalancear em JANEIRO antecipava 2-4
+# meses de informação contábil. Abril é o primeiro mês realista.
+_REBAL_MONTH = 4
 
 
 def _calibrate_gamma_cap_soft(
@@ -2306,6 +2363,104 @@ def _apply_decay_penalty(
     }
 
 
+def _executar_rebalance_vendas(
+    cotas: dict[str, float],
+    custo_total: dict[str, float],
+    pesos_alvo: dict[str, float],
+    precos: dict[str, float],
+    cost_cfg,
+) -> tuple[float, float, float]:
+    """Realinha `cotas` aos pesos-alvo VENDENDO excedentes e comprando déficits.
+
+    Modo "rebalance com vendas" do backtest (auditoria 2026-07): vende o que
+    excede o peso-alvo e usa o caixa líquido p/ comprar os subalocados.
+    Preço médio por ticker mantido em `custo_total` (custo de aquisição
+    acumulado) p/ apurar o lucro tributável.
+
+    IR apurado NO NÍVEL DO MÊS (fix revisão 2026-07, IN RFB 1.585/2015):
+      • isenção BINÁRIA — se as vendas do mês excedem R$ 20k, TODO o ganho
+        líquido do mês é tributável (não apenas a fração excedente);
+      • prejuízos do mesmo mês compensam (soma algébrica dos lucros);
+      • sem carry-forward de prejuízo entre rebalances (simplificação
+        conservadora contra a estratégia).
+    Nota de viés documentada: a série de preços é AJUSTADA (retorno total),
+    então o "lucro" tributado embute dividendos — que são isentos no
+    Brasil; o IR simulado tende a ser SUPERestimado (conservador).
+
+    Muta `cotas` e `custo_total` in place.
+    Retorna (ir_pago, custos_venda, custos_compra).
+    """
+    from core.transaction_costs import custo_compra, custo_venda
+
+    val = {tk: cotas.get(tk, 0.0) * px for tk, px in precos.items()
+           if cotas.get(tk, 0.0) > 0 and px > 0}
+    v_total = sum(val.values())
+    if v_total <= 0:
+        return 0.0, 0.0, 0.0
+    # Guarda (fix revisão 2026-07): sem nenhum destino com preço no mês,
+    # NÃO vende — antes o caixa das vendas era destruído (patrimônio sumia).
+    if not any(precos.get(tk, 0.0) > 0 and w > 0 for tk, w in pesos_alvo.items()):
+        return 0.0, 0.0, 0.0
+
+    vendas_mes = lucro_mes = fee_v_tot = fee_c_tot = caixa = 0.0
+
+    # 1) vende excedentes (posições fora da nova carteira têm alvo 0);
+    #    aqui só custos de EXECUÇÃO — o IR é apurado depois, no mês.
+    for tk, v_tk in val.items():
+        alvo = pesos_alvo.get(tk, 0.0) * v_total
+        if v_tk <= alvo + 1e-9:
+            continue
+        px = precos[tk]
+        q = cotas[tk]
+        sell_val = v_tk - alvo
+        q_sell = min(sell_val / px, q)
+        avg = custo_total.get(tk, 0.0) / q if q > 0 else px
+        fee, _ = custo_venda(tk, sell_val, 0.0, 0.0, cost_cfg)  # só spread/corretagem
+        vendas_mes += sell_val
+        lucro_mes  += (px - avg) * q_sell        # soma ALGÉBRICA (prejuízo compensa)
+        fee_v_tot  += fee
+        caixa += max(sell_val - fee, 0.0)
+        cotas[tk] = q - q_sell
+        custo_total[tk] = max(custo_total.get(tk, 0.0) - avg * q_sell, 0.0)
+
+    # 2) IR mensal — isenção binária + compensação intra-mês (RFB 1.585/2015)
+    ir_tot = 0.0
+    if (getattr(cost_cfg, "ativo", False)
+            and vendas_mes > getattr(cost_cfg, "isencao_mes", 20_000.0)
+            and lucro_mes > 0):
+        ir_tot = lucro_mes * getattr(cost_cfg, "ir_rate", 0.15)
+        caixa = max(caixa - ir_tot, 0.0)
+
+    if caixa <= 0:
+        return ir_tot, fee_v_tot, fee_c_tot
+
+    # 3) compra os subalocados proporcionalmente ao déficit
+    deficits = {}
+    for tk, w in pesos_alvo.items():
+        px = precos.get(tk)
+        if not px or px <= 0 or w <= 0:
+            continue
+        v_tk = cotas.get(tk, 0.0) * px
+        alvo = w * v_total
+        if alvo > v_tk + 1e-9:
+            deficits[tk] = alvo - v_tk
+    if not deficits:
+        # sem déficit (caso raro): redistribui o caixa proporcional aos pesos
+        deficits = {tk: w for tk, w in pesos_alvo.items()
+                    if precos.get(tk) and precos[tk] > 0 and w > 0}
+    tot_def = sum(deficits.values())
+    if tot_def <= 0:
+        return ir_tot, fee_v_tot, fee_c_tot
+    for tk, d in deficits.items():
+        gasto = caixa * d / tot_def
+        fee_c = custo_compra(tk, gasto, cost_cfg)
+        liq = max(gasto - fee_c, 0.0)
+        cotas[tk] = cotas.get(tk, 0.0) + liq / precos[tk]
+        custo_total[tk] = custo_total.get(tk, 0.0) + gasto
+        fee_c_tot += fee_c
+    return ir_tot, fee_v_tot, fee_c_tot
+
+
 def _simular_backtest(
     df_precos: pd.DataFrame,
     df_scored: pd.DataFrame,
@@ -2328,17 +2483,25 @@ def _simular_backtest(
     use_markowitz: bool = False,   # fix banca C4cov
     markowitz_alpha: float = 0.50, # peso score vs min-variance (0..1)
     markowitz_lookback_m: int = 36,
+    rebal_month: int = _REBAL_MONTH,     # auditoria 2026-07: abril (FY N−1 publicado)
+    rebalance_com_vendas: bool = False,  # True: vende excedentes (custos venda + IR)
 ) -> tuple[pd.DataFrame, list[str], int]:
     """
     Simula aportes mensais com rebalanceamento anual e publication lag = 1.
     Score do ano N é calculado com dados até N−1 (sem look-ahead bias).
+    O rebalance dispara no primeiro mês >= rebal_month (default ABRIL —
+    balanços FY N−1 publicados até 31/03; auditoria 2026-07: janeiro
+    antecipava 2-4 meses de informação contábil).
     selic_por_ano: taxa Selic real por ano (da tabela macro); fallback = taxa_selic_aa.
     dividendos: dict {ticker: pd.Series mensal R$/ação} para reinvestimento (App1-compatible).
     cost_cfg: CostConfig com fee/spread/IR (fix banca C2c, 2026-05-25).
       None ⇒ comportamento legado sem custos (compatibilidade).
-      Rebalance anual NÃO vende cotas existentes; só redireciona aportes
-      futuros — por isso só custos de COMPRA são aplicados. IR de venda
-      ainda não é modelado pois não há vendas no fluxo atual.
+    rebalance_com_vendas:
+      False (legado) ⇒ rebalance NÃO vende cotas; só redireciona aportes
+        futuros — apenas custos de COMPRA; IR de venda não se aplica.
+      True ⇒ realinha a carteira aos novos pesos vendendo excedentes:
+        custos de venda + IR 15% (isenção PF R$ 20k/mês) via
+        _executar_rebalance_vendas; totais em attrs (ir_pago, custos_rebal).
     Retorna (df_resultado, tickers_top_último_ano, n_efetivo_último_ano).
     """
     # Lazy import — evita ciclo
@@ -2371,10 +2534,14 @@ def _simular_backtest(
     if primeiro_ano_valido is None:
         return pd.DataFrame(), [], 0
     anos_sem_score = [a for a in anos_serie if a < primeiro_ano_valido]
-    if anos_sem_score:
-        df = df[df.index.year >= primeiro_ano_valido]
-        if df.empty:
-            return pd.DataFrame(), [], 0
+    # Início efetivo: primeiro mês >= rebal_month do primeiro ano com score —
+    # a estratégia só pode agir quando os balanços do exercício-base já foram
+    # publicados, e o corte vale p/ todas as séries (janela justa).
+    df = df[(df.index.year > primeiro_ano_valido) |
+            ((df.index.year == primeiro_ano_valido) &
+             (df.index.month >= rebal_month))]
+    if df.empty:
+        return pd.DataFrame(), [], 0
 
     # Estado do backtest
     anos_lideranca: dict[str, int] = {}
@@ -2388,6 +2555,10 @@ def _simular_backtest(
     cotas_bench = {tk: 0.0 for tk in tks_all_valid}
     selic_acum  = 0.0
     rows: list[dict] = []
+    # custo de aquisição acumulado por ticker (base p/ IR no modo com vendas)
+    custo_total_est: dict[str, float] = {tk: 0.0 for tk in tks_all_valid}
+    total_ir_pago      = 0.0
+    total_custos_rebal = 0.0
 
     for dt, row in df.iterrows():
         ano = dt.year
@@ -2397,7 +2568,9 @@ def _simular_backtest(
         selic_acum    = selic_acum * (1 + taxa_mensal) + aporte
 
         # ── Rebalanceamento anual com publication lag ──────────────────────
-        if ano != ultimo_ano_rebal:
+        # Dispara no primeiro mês >= rebal_month do ano (abril: FY N−1 já
+        # publicado). Jan-mar mantêm a carteira do ano anterior.
+        if ano != ultimo_ano_rebal and dt.month >= rebal_month:
             ultimo_ano_rebal = ano
 
             # Calcula scores com dados até ano − 1
@@ -2463,6 +2636,20 @@ def _simular_backtest(
                     )
                 tks_est_valid = list(pesos_est.keys())
 
+                # Modo com vendas: realinha a carteira EXISTENTE aos novos
+                # pesos (vende excedentes c/ custos+IR, recompra déficits).
+                if rebalance_com_vendas:
+                    precos_now = {
+                        tk: float(row.get(tk) or 0) for tk in tks_all_valid
+                        if pd.notna(row.get(tk)) and float(row.get(tk) or 0) > 0
+                    }
+                    _ir_x, _fv_x, _fc_x = _executar_rebalance_vendas(
+                        cotas_est, custo_total_est, pesos_est,
+                        precos_now, cost_cfg,
+                    )
+                    total_ir_pago      += _ir_x
+                    total_custos_rebal += _fv_x + _fc_x
+
                 # Atualiza contagem de anos consecutivos no topo
                 lids = set(tickers_yr)
                 for tk in list(anos_lideranca):
@@ -2484,7 +2671,12 @@ def _simular_backtest(
                 div = _div_mes_sanitizado(dividendos.get(tk), ano, mes, tk, px_tk)
                 if div > 0:
                     if cotas_est[tk] > 0:
-                        cotas_est[tk] += div * cotas_est[tk] / px_tk
+                        _val_div = div * cotas_est[tk]
+                        cotas_est[tk] += _val_div / px_tk
+                        # base de custo p/ IR (fix revisão 2026-07): dividendo
+                        # reinvestido é compra a mercado — sem isso o custo
+                        # médio caía e o IR do modo com vendas inflava.
+                        custo_total_est[tk] = custo_total_est.get(tk, 0.0) + _val_div
                     if cotas_bench[tk] > 0:
                         cotas_bench[tk] += div * cotas_bench[tk] / px_tk
 
@@ -2501,6 +2693,7 @@ def _simular_backtest(
                 fee = custo_compra(tk, valor_bruto, cost_cfg)
                 valor_liq = max(valor_bruto - fee, 0.0)
                 cotas_est[tk] += valor_liq / float(row[tk])
+                custo_total_est[tk] = custo_total_est.get(tk, 0.0) + valor_bruto
 
         all_disp = [tk for tk in tks_all_valid
                     if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
@@ -2528,7 +2721,83 @@ def _simular_backtest(
     if anos_sem_score:
         # metadado p/ a UI informar o corte do início da série (sem look-ahead)
         df_resultado.attrs["anos_sem_score"] = anos_sem_score
+    df_resultado.attrs["rebal_month"]  = int(rebal_month)
+    df_resultado.attrs["com_vendas"]   = bool(rebalance_com_vendas)
+    df_resultado.attrs["ir_pago"]      = round(float(total_ir_pago), 2)
+    df_resultado.attrs["custos_rebal"] = round(float(total_custos_rebal), 2)
     return df_resultado, tickers_top_final, n_efetivo_final
+
+
+def _rank_ic_por_ano(
+    df_precos: pd.DataFrame,
+    df_hist_batch: dict[str, pd.DataFrame],
+    tickers: list[str],
+    pesos: dict[str, tuple[float, bool]],
+    tk_grupos: dict[str, dict] | None = None,
+    macro_by_year: dict[int, dict[str, float]] | None = None,
+    min_n: int = 5,
+) -> pd.DataFrame:
+    """Validação preditiva do score: rank-IC (Spearman) por ano.
+
+    Para cada ano N: score com dados até N−1 (mesmo motor do backtest,
+    lag=1) × retorno da JANELA PÓS-PUBLICAÇÃO — do fim de março/N ao fim
+    de março/N+1 (fix revisão 2026-07: medir jan–dez/N seria look-ahead,
+    pois o balanço FY N−1 só é público até 31/03; mesma regra do
+    rebalance em abril). Anos sem a janela completa (ex.: ano corrente)
+    ficam de fora — evita retornos parciais contaminando as médias.
+    Também calcula o spread top-tercil − bottom-tercil. IC
+    consistentemente > 0 é a evidência mínima de que o ranking
+    discrimina retornos — a ausência deste teste era a pendência #4 da
+    auditoria 2026-07.
+    """
+    if df_precos.empty or not tickers:
+        return pd.DataFrame()
+    tks = [t for t in tickers if t in df_precos.columns]
+    if not tks:
+        return pd.DataFrame()
+    rebal_m = _REBAL_MONTH
+    out: list[dict] = []
+    for ano in sorted({d.year for d in df_precos.index}):
+        # base: último preço até março/N; fim: último preço até março/N+1
+        jan0 = df_precos[(df_precos.index.year == ano) &
+                         (df_precos.index.month < rebal_m)]
+        jan1 = df_precos[(df_precos.index.year == ano + 1) &
+                         (df_precos.index.month < rebal_m)]
+        if jan0.empty or jan1.empty:
+            continue
+        score_map = _score_historico_ano(
+            df_hist_batch, tks, ano, pesos, tk_grupos, lag=1,
+            macro_by_year=macro_by_year,
+        )
+        if len(score_map) < min_n:
+            continue
+        rets: dict[str, float] = {}
+        for tk in score_map:
+            if tk not in df_precos.columns:
+                continue
+            p0 = jan0[tk].dropna()
+            p1 = jan1[tk].dropna()
+            if not p0.empty and not p1.empty and float(p0.iloc[-1]) > 0:
+                rets[tk] = float(p1.iloc[-1]) / float(p0.iloc[-1]) - 1.0
+        comuns = [tk for tk in score_map if tk in rets]
+        if len(comuns) < min_n:
+            continue
+        s = pd.Series({tk: float(score_map[tk]) for tk in comuns})
+        r = pd.Series({tk: rets[tk] for tk in comuns})
+        ic = float(s.rank().corr(r.rank()))   # Spearman = Pearson dos ranks
+        if not np.isfinite(ic):
+            continue  # scores/retornos constantes → IC indefinido
+        k = max(len(comuns) // 3, 1)
+        ordem = s.sort_values(ascending=False).index
+        top_m = float(r[ordem[:k]].mean())
+        bot_m = float(r[ordem[-k:]].mean())
+        out.append({
+            "Ano": ano, "N": len(comuns), "Rank-IC": round(ic, 3),
+            "Top tercil (%)": round(top_m * 100, 1),
+            "Bottom tercil (%)": round(bot_m * 100, 1),
+            "Spread (pp)": round((top_m - bot_m) * 100, 1),
+        })
+    return pd.DataFrame(out)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4699,11 +4968,25 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         "Descontar custos de compra (corretagem + meia-spread) — recomendado",
         value=True, key="b3_av_custos",
         help="Ativado: desconta o custo de COMPRA de cada aporte (meia-spread "
-             "bid-ask + corretagem). O rebalance anual desta simulação NÃO "
-             "vende cotas — apenas redireciona os aportes novos —, portanto "
-             "IR de venda não é gerado nem descontado aqui. "
+             "bid-ask + corretagem). No modo 'sem vendas' o rebalance apenas "
+             "redireciona os aportes novos (IR de venda não se aplica); no "
+             "modo 'com vendas' há também custos de venda e IR 15%. "
              "Desativado: backtest 'ideal' sem custos — superestima o retorno.",
     )
+
+    # Modo de rebalance (auditoria 2026-07): o rebalance acontece em ABRIL —
+    # balanços FY N−1 são publicados até 31/03 (CVM); janeiro antecipava
+    # 2-4 meses de informação contábil.
+    modo_rebal = st.radio(
+        "Modo de rebalanceamento anual (abril)",
+        ["Sem vendas — redireciona apenas os aportes novos (legado)",
+         "Com vendas — realinha pesos vendendo excedentes (custos de venda + IR 15%)"],
+        index=0, key="b3_av_modo_rebal",
+        help="No modo com vendas, o IR de 15% incide sobre o lucro realizado "
+             "nas vendas do rebalance, respeitando a isenção mensal PF de "
+             "R$ 20 mil em vendas (IN RFB 1.585/2015).",
+    )
+    _com_vendas = modo_rebal.startswith("Com vendas")
 
     if st.button("▶ Simular Backtest", type="primary", key="b3_av_btn_simular"):
         from core.transaction_costs import CostConfig
@@ -4734,7 +5017,38 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             macro_by_year=macro_history or None,
             dividendos=None,
             cost_cfg=_cost_cfg,
+            rebalance_com_vendas=_com_vendas,
         )
+
+        # Benchmark de MERCADO real (auditoria 2026-07): mesmo fluxo de
+        # aportes aplicado ao IBOV — o "Benchmark" equal-weight é interno
+        # ao universo filtrado e não representa "bater o mercado".
+        ibov_px = _yf_ibov_mensal(period_code)
+        if not df_bt.empty and not ibov_px.empty:
+            _px_map = {(d.year, d.month): float(v)
+                       for d, v in ibov_px.items() if pd.notna(v) and v > 0}
+            # aporte de mês sem preço não some: fica em caixa pendente e é
+            # investido no próximo mês com cotação disponível
+            _cotas_i, _pend_i, _last_px = 0.0, 0.0, None
+            _serie_i: list[float] = []
+            for _d in pd.to_datetime(df_bt["Data"]):
+                _px = _px_map.get((_d.year, _d.month))
+                _pend_i += float(aporte)
+                if _px:
+                    # mesma fricção de compra dos demais (fix revisão 2026-07:
+                    # sem isto o IBOV comprava a preço cheio e ganhava
+                    # vantagem estrutural quando custos estavam ativados);
+                    # proxy: spread de large cap (ETF de índice é líquido).
+                    _fee_i = 0.0
+                    if _cost_cfg.ativo:
+                        _fee_i = (_cost_cfg.corretagem_fixa +
+                                  _pend_i * (_cost_cfg.spread_bps_large / 2.0 / 10_000.0))
+                    _cotas_i += max(_pend_i - _fee_i, 0.0) / _px
+                    _pend_i = 0.0
+                    _last_px = _px
+                _serie_i.append(_cotas_i * (_px or _last_px or 0.0) + _pend_i)
+            df_bt["IBOV (aportes)"] = _serie_i
+
         st.session_state["b3_av_bt_df"]    = df_bt
         st.session_state["b3_av_bt_custos"] = aplicar_custos
         st.session_state["b3_av_bt_top"]   = tickers_top
@@ -4749,16 +5063,18 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     bt_gamma   = st.session_state.get("b3_av_bt_gamma", False)
 
     if not df_bt.empty:
-        colunas_bt = [c for c in ("Estratégia", "Benchmark", "Tesouro Selic")
+        colunas_bt = [c for c in ("Estratégia", "Benchmark", "IBOV (aportes)",
+                                  "Tesouro Selic")
                       if c in df_bt.columns]
         melt_bt = df_bt.melt("Data", value_vars=colunas_bt,
                               var_name="Carteira", value_name="Patrimônio (R$)")
         fig_bt = px.line(
             melt_bt, x="Data", y="Patrimônio (R$)", color="Carteira",
             color_discrete_map={
-                "Estratégia":    _COR_POS,
-                "Benchmark":     _COR_NEU,
-                "Tesouro Selic": _COR_ALT,
+                "Estratégia":       _COR_POS,
+                "Benchmark":        _COR_NEU,
+                "IBOV (aportes)":   "#E67E22",
+                "Tesouro Selic":    _COR_ALT,
             },
         )
         fig_bt.update_traces(line_width=2.0)
@@ -4766,24 +5082,44 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.plotly_chart(fig_bt, use_container_width=True,
                         config={"displayModeBar": False}, key="b3_av_bt_chart")
 
-        _custos_on = st.session_state.get("b3_av_bt_custos", True)
-        if _custos_on:
-            # Fix auditoria 2026-07: a caption antiga afirmava descontar
-            # "IR 15%", mas nenhum imposto era (ou é) cobrado — o rebalance
-            # não vende cotas, então não há fato gerador na simulação.
+        _custos_on     = st.session_state.get("b3_av_bt_custos", True)
+        _bt_com_vendas = bool(df_bt.attrs.get("com_vendas"))
+        if _custos_on and _bt_com_vendas:
+            st.caption(
+                "✅ Backtest com **rebalance com vendas**: custos de compra em "
+                "cada aporte + custos de venda e **IR 15% sobre o ganho "
+                "líquido MENSAL** nos rebalances (isenção binária de R$ 20 "
+                "mil/mês em vendas + compensação de prejuízos do mês, IN RFB "
+                f"1.585/2015). IR pago na simulação: "
+                f"**R$ {float(df_bt.attrs.get('ir_pago', 0.0)):,.2f}** · "
+                f"custos de rebalance: "
+                f"**R$ {float(df_bt.attrs.get('custos_rebal', 0.0)):,.2f}**. "
+                "Nota: a série de preços é ajustada (inclui dividendos, que "
+                "são isentos), então o IR simulado tende a ser "
+                "SUPERestimado — viés conservador contra a estratégia."
+            )
+        elif _custos_on:
             st.caption(
                 "✅ Backtest com **custos de compra descontados** (meia-spread "
                 "bid-ask + corretagem em cada aporte, na estratégia E no "
-                "benchmark). O rebalance anual não vende posições — só "
-                "redireciona aportes futuros —, logo **IR de venda não é "
-                "modelado**. Numa carteira real com vendas, IR e custos de "
-                "venda reduziriam o resultado."
+                "benchmark). Neste modo o rebalance anual não vende posições — "
+                "só redireciona aportes futuros —, logo **IR de venda não é "
+                "modelado**. Use o modo 'com vendas' para simular IR e custos "
+                "de venda."
             )
         else:
             st.caption(
                 "⚠️ Backtest **sem custos** (ideal/teórico) — superestima o "
                 "retorno real. Marque a opção de custos para projeção realista."
             )
+        st.caption(
+            "📅 **Rebalance anual em abril** — os balanços do exercício "
+            "anterior são publicados até 31/03 (CVM); rebalancear em janeiro "
+            "anteciparia informação ainda não pública (auditoria 2026-07). "
+            "Linha **IBOV (aportes)**: o mesmo fluxo de aportes aplicado ao "
+            "índice — benchmark de mercado real; o 'Benchmark' equal-weight "
+            "é interno ao universo filtrado."
+        )
 
         # Auditoria 2026-07: transparência dos dois vieses estruturais da
         # simulação — sobrevivência (universo só de listadas hoje) e corte
@@ -4819,12 +5155,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         ultima      = df_bt.iloc[-1]
         total_aport = aport_bt * len(df_bt) if aport_bt > 0 else 1.0
 
-        kpi_bt = st.columns(3, gap="small")
-        for idx, (nome_c, cor_c) in enumerate([
-            ("Estratégia", _COR_POS),
-            ("Benchmark",  _COR_NEU),
-            ("Tesouro Selic", _COR_ALT),
-        ]):
+        _kpi_series = [("Estratégia", _COR_POS), ("Benchmark", _COR_NEU)]
+        if "IBOV (aportes)" in df_bt.columns:
+            _kpi_series.append(("IBOV (aportes)", "#E67E22"))
+        _kpi_series.append(("Tesouro Selic", _COR_ALT))
+        kpi_bt = st.columns(len(_kpi_series), gap="small")
+        for idx, (nome_c, cor_c) in enumerate(_kpi_series):
             v       = float(ultima.get(nome_c, 0) or 0)
             ret_pct = (v / total_aport - 1) * 100 if total_aport > 0 else 0
             with kpi_bt[idx]:
@@ -4844,6 +5180,69 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             )
     else:
         st.caption("Configure os parâmetros acima e clique **▶ Simular Backtest**.")
+
+    # ── VALIDAÇÃO PREDITIVA DO SCORE (auditoria 2026-07, pendência #4) ───────
+    with st.expander("🔬 Validação preditiva do score — Rank-IC por ano"):
+        st.caption(
+            "Mede se o score REALMENTE discrimina retornos: para cada ano N, "
+            "correlaciona o RANKING do score (dados até N−1, mesmo motor do "
+            "backtest) com o RANKING dos retornos da janela pós-publicação — "
+            "fim de março/N a fim de março/N+1, quando o balanço FY N−1 já é "
+            "público (Spearman). Referências práticas (Grinold & Kahn): "
+            "|IC| < 0,03 ≈ nulo; 0,03–0,08 fraco; > 0,08 relevante. Amostras "
+            "pequenas tornam o IC instável — leia como indício, não como "
+            "prova; e o universo de sobreviventes tende a SUPERESTIMAR o IC."
+        )
+        if st.button("Calcular Rank-IC", key="b3_av_btn_ic"):
+            with st.spinner("Calculando IC por ano…"):
+                _prec_ic = _batch_yf_precos_mensais(
+                    tuple(sorted(tks_uni)), period=per_opts.get(sel_per, "5y"))
+                st.session_state["b3_av_ic_df"] = _rank_ic_por_ano(
+                    _prec_ic, hist_batch, tks_uni, pesos_v2,
+                    tk_grupos, macro_history or None,
+                )
+                # registra com que parâmetros o IC foi calculado (evita
+                # leitura de resultado obsoleto após mudar filtros)
+                st.session_state["b3_av_ic_meta"] = (
+                    f"{len(tks_uni)} empresas · período "
+                    f"{sel_per} · pesos de "
+                    f"{len(pesos_v2)} indicadores"
+                )
+        df_ic = st.session_state.get("b3_av_ic_df", pd.DataFrame())
+        _ic_meta = st.session_state.get("b3_av_ic_meta")
+        if _ic_meta and not df_ic.empty:
+            st.caption(f"🧾 Calculado sobre: {_ic_meta}. Se você mudou "
+                       "filtros/período depois, recalcule.")
+        if not df_ic.empty:
+            _ic_med     = float(df_ic["Rank-IC"].mean())
+            _ic_pct_pos = float((df_ic["Rank-IC"] > 0).mean()) * 100
+            _spread_med = float(df_ic["Spread (pp)"].mean())
+            icc1, icc2, icc3 = st.columns(3)
+            with icc1:
+                card_metrica("IC médio (Spearman)", f"{_ic_med:+.3f}",
+                             accent=_COR_POS if _ic_med > 0 else _COR_NEG)
+            with icc2:
+                card_metrica("Anos com IC > 0", f"{_ic_pct_pos:.0f}%",
+                             accent="#4A9EFF")
+            with icc3:
+                card_metrica("Spread top−bottom (pp)", f"{_spread_med:+.1f}",
+                             accent=_COR_POS if _spread_med > 0 else _COR_NEG)
+            st.dataframe(df_ic, hide_index=True, use_container_width=True,
+                         height=min(300, 45 + 35 * len(df_ic)))
+            if _ic_med <= 0.0:
+                st.warning(
+                    "IC médio ≤ 0 nesta janela/universo: o score NÃO demonstrou "
+                    "poder preditivo de retorno aqui. Use-o como filtro de "
+                    "qualidade/red-flags, não como expectativa de alfa."
+                )
+            else:
+                st.caption(
+                    "IC > 0 é condição necessária, não suficiente: verifique a "
+                    "consistência entre os anos antes de concluir que há sinal."
+                )
+        elif "b3_av_ic_df" in st.session_state:
+            st.info("Sem anos com dados suficientes para calcular o IC neste "
+                    "universo/período (mín. 5 empresas com score e retorno).")
 
     # ── COMPARAÇÃO DE MÚLTIPLOS ───────────────────────────────────────────────
     st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
