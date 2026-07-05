@@ -9,6 +9,7 @@ bruto p/ permitir re-ranking sem rede (reprocess).
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -34,25 +35,87 @@ def _schema_ready(conn) -> bool:
         "WHERE table_schema='market' AND table_name='fiis')")).scalar())
 
 
-def _row(m: dict) -> dict:
-    return {"ticker": m["ticker"], "cnpj": m.get("cnpj"), "name": m.get("name"),
-            "segmento": m.get("segmento"), "price": m.get("price"), "pvp": m.get("pvp"),
-            "dy_12m": m.get("dy_12m"), "liquidez_diaria": m.get("liquidez_diaria"),
-            "score": m.get("score")}
+def _score_metadata_ready(conn) -> bool:
+    return bool(conn.execute(text(
+        "SELECT COUNT(*) = 3 FROM information_schema.columns "
+        "WHERE table_schema='market' AND table_name='fiis' "
+        "AND column_name IN ('score_version','score_calculated_at','metrics_fetched_at')"
+    )).scalar())
+
+
+def _row(m: dict, *, include_score: bool = True, metadata_ready: bool = False,
+         calculated_at=None) -> dict:
+    price = m.get("price")
+    pvp = m.get("pvp")
+    dy = m.get("dy_12m")
+    price = price if price is not None and price > 0 else None
+    pvp = pvp if pvp is not None and pvp > 0 else None
+    dy = dy if dy is not None and 0 <= dy <= 1 else None
+    row = {"ticker": m["ticker"], "cnpj": m.get("cnpj"), "name": m.get("name"),
+           "segmento": m.get("segmento"), "price": price, "pvp": pvp,
+           "dy_12m": dy, "liquidez_diaria": m.get("liquidez_diaria")}
+    if include_score:
+        row["score"] = m.get("score")
+        if metadata_ready:
+            row["score_version"] = fz.SCORE_VERSION
+            row["score_calculated_at"] = calculated_at
+    if metadata_ready:
+        row["metrics_fetched_at"] = calculated_at
+    return row
+
+
+def _extract_quote(payload) -> dict | None:
+    p = json.loads(payload) if isinstance(payload, str) else payload
+    if not isinstance(p, dict):
+        return None
+    quote = (p.get("results") or [p])[0]
+    return quote if isinstance(quote, dict) else None
+
+
+def _latest_fii_payloads(conn) -> list[tuple[str, dict]]:
+    """Último payload realmente completo de FII, ignorando cotações genéricas."""
+    rows = conn.execute(text(
+        "SELECT ticker, payload_json FROM market.brapi_raw_payloads "
+        "WHERE endpoint IN ('quote_fii_full', 'quote') "
+        "AND request_status='success' AND payload_json IS NOT NULL "
+        "ORDER BY ticker, "
+        "CASE WHEN endpoint='quote_fii_full' THEN 0 ELSE 1 END, id DESC"
+    )).fetchall()
+    selected: list[tuple[str, dict]] = []
+    seen: set[str] = set()
+    for ticker, payload in rows:
+        if ticker in seen:
+            continue
+        try:
+            quote = _extract_quote(payload)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if quote and fz.is_fii(quote):
+            selected.append((ticker, quote))
+            seen.add(ticker)
+    return selected
+
+
+def _ranking_coverage_ok(found: int, expected: int) -> bool:
+    minimum = float(os.getenv("FII_RANK_MIN_COVERAGE", "0.85"))
+    return expected > 0 and found / expected >= minimum
 
 
 def ingest(limit: int | None = None, tickers: list[str] | None = None,
            weights: dict | None = None) -> dict:
     """Coleta FIIs (rede), classifica/computa/rankeia e grava em market.fiis."""
     engine = _engine()
-    prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0, "gravados": 0}
+    prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0,
+            "gravados": 0, "ranking_aplicado": False, "cobertura": 0.0}
     if engine is None:
         return {**prog, "erros": -1}
     with engine.connect() as conn:
         if not _schema_ready(conn):
             logger.error("market.fiis ausente — rode 015_market_fiis.sql.")
             return {**prog, "erros": -1}
+        metadata_ready = _score_metadata_ready(conn)
 
+    full_run = not tickers and limit is None
     if tickers:
         universe = [t.upper().replace(".SA", "") for t in tickers]
     else:
@@ -78,7 +141,9 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
                 prog["erros"] += 1
             else:
                 with engine.begin() as conn:
-                    repo.save_raw_payload(conn, tk, "quote", quote, status="success")
+                    repo.save_raw_payload(
+                        conn, tk, "quote_fii_full", quote, status="success"
+                    )
                 m = fz.compute_fii(quote, ref)
                 if m is None:
                     prog["etfs_ignorados"] += 1
@@ -92,12 +157,34 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
             sched.sleep_jittered(base=delay)
 
     if metrics:
-        ranked = fz.rank_fiis(metrics, weights=weights)
-        # rankeados (elegíveis) levam score; os filtrados gravam sem score (score=None)
-        ranked_by = {r["ticker"]: r for r in ranked}
-        rows = [_row(ranked_by.get(m["ticker"], m)) for m in metrics]
+        calculated_at = datetime.now(timezone.utc)
+        successful = prog["fiis"] + prog["etfs_ignorados"]
+        prog["cobertura"] = round(successful / max(len(universe), 1), 4)
+        apply_ranking = full_run and _ranking_coverage_ok(successful, len(universe))
+        ranked_by = {}
+        if apply_ranking:
+            ranked_by = {
+                r["ticker"]: r for r in fz.rank_fiis(metrics, weights=weights)
+            }
+            prog["ranking_aplicado"] = True
+        rows = [
+            _row(
+                ranked_by.get(m["ticker"], m),
+                include_score=apply_ranking,
+                metadata_ready=metadata_ready,
+                calculated_at=calculated_at,
+            )
+            for m in metrics
+        ]
         with engine.begin() as conn:
             prog["gravados"] = repo.upsert(conn, "fiis", rows)
+            if not apply_ranking:
+                repo.log_quality(
+                    conn, table_name="fiis", field_name="score",
+                    issue_type="ranking_preservado_cobertura_insuficiente",
+                    old_value=f"{successful}/{len(universe)}",
+                    severity="warning", source="brapi.dev",
+                )
     logger.info("market/fii ingest: %s", prog)
     return prog
 
@@ -144,7 +231,6 @@ def backfill_series() -> dict:
     salvos (SEM rede). Cria as linhas em market.assets (asset_type='fii') —
     pré-requisito do backtest da carteira. Idempotente.
     """
-    import json
     from data_pipeline.market import normalize as nz
     engine = _engine()
     prog = {"fiis": 0, "precos": 0, "dividendos": 0, "erros": 0}
@@ -154,20 +240,13 @@ def backfill_series() -> dict:
         if not _schema_ready(conn):
             return {**prog, "erros": -1}
         fiis = [r[0] for r in conn.execute(text("SELECT ticker FROM market.fiis")).fetchall()]
+        payloads = dict(_latest_fii_payloads(conn))
     for tk in fiis:
         try:
+            quote = payloads.get(tk)
+            if not quote:
+                continue
             with engine.begin() as conn:
-                row = conn.execute(text(
-                    "SELECT payload_json FROM market.brapi_raw_payloads WHERE ticker=:t "
-                    "AND endpoint='quote' AND request_status='success' "
-                    "ORDER BY id DESC LIMIT 1"), {"t": tk}).fetchone()
-                if not row:
-                    continue
-                p = row[0]
-                p = json.loads(p) if isinstance(p, str) else p
-                quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
-                if not quote:
-                    continue
                 # asset FII (company_id nulo; FK das séries aponta p/ assets.ticker)
                 repo.upsert(conn, "assets", [{
                     "ticker": tk, "company_id": None, "asset_type": "fii",
@@ -191,19 +270,24 @@ def enrich_cvm(year: int | None = None) -> dict:
     import core.cvm_fii as cvm
     from datetime import datetime, timezone
     engine = _engine()
-    prog = {"ano": year, "fiis_no_banco": 0, "casados": 0, "gravados": 0, "erros": 0}
+    prog = {"ano": year, "anos_consultados": [], "fiis_no_banco": 0,
+            "casados": 0, "gravados": 0, "erros": 0}
     if engine is None:
         return {**prog, "erros": -1}
     year = year or datetime.now(timezone.utc).year
-    data = cvm.fetch_informe(year)
-    used_year = year
-    if not data:
-        data, used_year = cvm.fetch_informe(year - 1), year - 1
-    if not data:
+    # Une o ano anterior ao atual. O arquivo do ano corrente pode existir ainda
+    # sem conter todos os fundos; registros mais novos sobrescrevem os antigos.
+    by_cnpj: dict[str, dict] = {}
+    for candidate_year in (year - 1, year):
+        data = cvm.fetch_informe(candidate_year)
+        if not data:
+            continue
+        prog["anos_consultados"].append(candidate_year)
+        by_cnpj.update(cvm.parse_informe(data, candidate_year))
+    if not by_cnpj:
         prog["erros"] = -1
         return prog
-    prog["ano"] = used_year
-    by_cnpj = cvm.parse_informe(data, used_year)
+    prog["ano"] = max(prog["anos_consultados"])
     # tickers do banco com CNPJ
     with engine.connect() as conn:
         rows = conn.execute(text(
@@ -357,26 +441,21 @@ def ingest_imoveis() -> dict:
 
 def reprocess(weights: dict | None = None) -> dict:
     """Re-rankeia a partir dos payloads brutos já salvos (SEM rede)."""
-    import json
     engine = _engine()
-    prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0, "gravados": 0}
+    prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0,
+            "gravados": 0, "ranking_aplicado": False, "cobertura": 0.0}
     if engine is None:
         return {**prog, "erros": -1}
     with engine.connect() as conn:
         if not _schema_ready(conn):
             return {**prog, "erros": -1}
-        rows = conn.execute(text(
-            "SELECT DISTINCT ON (ticker) ticker, payload_json FROM market.brapi_raw_payloads "
-            "WHERE endpoint='quote' AND request_status='success' AND payload_json IS NOT NULL "
-            "ORDER BY ticker, id DESC")).fetchall()
+        metadata_ready = _score_metadata_ready(conn)
+        expected = int(conn.execute(text("SELECT COUNT(*) FROM market.fiis")).scalar() or 0)
+        rows = _latest_fii_payloads(conn)
     ref = datetime.now(timezone.utc).date()
     metrics: list[dict] = []
-    for tk, payload in rows:
+    for tk, quote in rows:
         try:
-            p = json.loads(payload) if isinstance(payload, str) else payload
-            quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
-            if not quote:
-                continue
             prog["candidatos"] += 1
             m = fz.compute_fii(quote, ref)
             if m is None:
@@ -388,10 +467,29 @@ def reprocess(weights: dict | None = None) -> dict:
             logger.warning("fii reprocess %s: %s", tk, exc)
             prog["erros"] += 1
     if metrics:
-        ranked = fz.rank_fiis(metrics, weights=weights)
-        ranked_by = {r["ticker"]: r for r in ranked}
-        out = [_row(ranked_by.get(m["ticker"], m)) for m in metrics]
+        calculated_at = datetime.now(timezone.utc)
+        prog["cobertura"] = round(len(metrics) / max(expected, 1), 4)
+        apply_ranking = _ranking_coverage_ok(len(metrics), expected)
+        ranked_by = (
+            {r["ticker"]: r for r in fz.rank_fiis(metrics, weights=weights)}
+            if apply_ranking else {}
+        )
+        prog["ranking_aplicado"] = apply_ranking
+        out = [
+            _row(
+                ranked_by.get(m["ticker"], m), include_score=apply_ranking,
+                metadata_ready=metadata_ready, calculated_at=calculated_at,
+            )
+            for m in metrics
+        ]
         with engine.begin() as conn:
             prog["gravados"] = repo.upsert(conn, "fiis", out)
+            if not apply_ranking:
+                repo.log_quality(
+                    conn, table_name="fiis", field_name="score",
+                    issue_type="reprocessamento_incompleto_score_preservado",
+                    old_value=f"{len(metrics)}/{expected}", severity="error",
+                    source="brapi_raw_payloads",
+                )
     logger.info("market/fii reprocess: %s", prog)
     return prog

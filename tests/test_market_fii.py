@@ -1,6 +1,7 @@
 import datetime as dt
 
 import data_pipeline.market.fii as fii
+import data_pipeline.market.fii_ingest as fii_ingest
 
 _REF = dt.date(2026, 6, 25)
 
@@ -45,21 +46,35 @@ def test_compute_fii_none_para_etf():
     assert m["ticker"] == "HGLG11" and m["pvp"] == 0.95 and m["segmento"] == "Logística"
 
 
+def test_ingest_sanitiza_snapshot_sem_apagar_score_em_coleta_parcial():
+    metric = {
+        "ticker": "X11", "price": -1, "pvp": -0.5, "dy_12m": 25.0,
+        "liquidez_diaria": 1e6, "score": 99,
+    }
+    partial = fii_ingest._row(metric, include_score=False)
+    assert partial["price"] is None and partial["pvp"] is None
+    assert partial["dy_12m"] is None
+    assert "score" not in partial
+
+
 def test_build_portfolio_diversifica_e_pesa():
     rows = [  # já "rankeadas" (score desc)
         {"ticker": "A1", "score": 90, "tipo": "tijolo", "liquidez_diaria": 1e6, "dy_12m": .1, "pvp": .9},
         {"ticker": "A2", "score": 85, "tipo": "tijolo", "liquidez_diaria": 1e6, "dy_12m": .1, "pvp": .9},
         {"ticker": "A3", "score": 80, "tipo": "tijolo", "liquidez_diaria": 1e6, "dy_12m": .1, "pvp": .9},
         {"ticker": "P1", "score": 70, "tipo": "papel", "liquidez_diaria": 1e6, "dy_12m": .12, "pvp": .95},
+        {"ticker": "P2", "score": 65, "tipo": "papel", "liquidez_diaria": 1e6, "dy_12m": .11, "pvp": .92},
         {"ticker": "IL", "score": 95, "tipo": "papel", "liquidez_diaria": 1000, "dy_12m": .1, "pvp": .9},  # ilíquido
     ]
     p = fii.build_portfolio(rows, n_max=4, max_weight=0.40, max_tipo_frac=0.50, liq_min=200_000)
     tks = [x["ticker"] for x in p]
     assert "IL" not in tks                       # ilíquido fora
     assert tks.count("A1") == 1
-    # diversificação: máx 50% de 4 = 2 por tipo -> só 2 tijolo (A1,A2), depois papel
-    tipos = [x["tipo"] for x in p]
-    assert tipos.count("tijolo") <= 2 and "papel" in tipos
+    # diversificação: o peso agregado de cada tipo fica limitado a 50%
+    pesos_tipo = {}
+    for item in p:
+        pesos_tipo[item["tipo"]] = pesos_tipo.get(item["tipo"], 0) + item["peso"]
+    assert all(peso <= 0.50 + 1e-9 for peso in pesos_tipo.values())
     assert abs(sum(x["peso"] for x in p) - 1.0) < 5e-3   # pesos somam ~1 (arred. 4 casas)
     assert all(x["peso"] <= 0.40 + 1e-9 for x in p)      # teto respeitado
 
@@ -87,6 +102,55 @@ def test_rank_filtra_e_ordena():
     assert "ILIQ" not in tks and "ABSURDO" not in tks   # filtrados
     assert out[0]["ticker"] == "BOM"                    # melhor DY+P/VP
     assert all(0 <= r["score"] <= 100 for r in out)
+
+
+def test_rank_exige_dados_completos_e_nao_premia_pvp_extremo():
+    rows = [
+        {"ticker": "SAUDAVEL", "price": 100, "dy_12m": .10, "pvp": .90,
+         "liquidez_diaria": 1e6},
+        {"ticker": "SEM_DY", "price": 100, "dy_12m": None, "pvp": .90,
+         "liquidez_diaria": 1e6},
+        {"ticker": "DISTRESS", "price": 100, "dy_12m": .19, "pvp": .20,
+         "liquidez_diaria": 1e6},
+    ]
+    out = fii.rank_fiis(rows)
+    assert [r["ticker"] for r in out] == ["SAUDAVEL"]
+    assert out[0]["score_version"] == fii.SCORE_VERSION
+
+
+def test_percentile_empates_recebem_mesmo_valor():
+    pct = fii._percentile([10.0, 10.0, 20.0], higher_better=True)
+    assert pct[0] == pct[1]
+    assert pct[2] > pct[0]
+
+
+def test_build_portfolio_rejeita_teto_inviavel():
+    rows = [
+        {"ticker": f"F{i}", "score": 90 - i, "tipo": "papel",
+         "liquidez_diaria": 1e6} for i in range(4)
+    ] + [{"ticker": "T1", "score": 70, "tipo": "tijolo",
+          "liquidez_diaria": 1e6}]
+    import pytest
+    with pytest.raises(ValueError, match="não permite|exige"):
+        fii.build_portfolio(rows, n_max=4, max_weight=.20, max_tipo_frac=.50)
+
+
+def test_build_portfolio_limita_peso_agregado_por_tipo():
+    rows = [
+        {"ticker": f"P{i}", "score": 100 - i, "tipo": "papel",
+         "liquidez_diaria": 1e6} for i in range(6)
+    ] + [
+        {"ticker": f"T{i}", "score": 70 - i, "tipo": "tijolo",
+         "liquidez_diaria": 1e6} for i in range(4)
+    ]
+    port = fii.build_portfolio(
+        rows, n_max=8, max_weight=.25, max_tipo_frac=.60
+    )
+    by_type = {}
+    for item in port:
+        by_type[item["tipo"]] = by_type.get(item["tipo"], 0) + item["peso"]
+    assert abs(sum(item["peso"] for item in port) - 1) < 1e-8
+    assert all(weight <= .60 + 1e-8 for weight in by_type.values())
 
 
 def test_price_metrics_regressao_recupera_taxa():
@@ -167,3 +231,22 @@ def test_mean_correlation():
     # off-diagonal: 0.5, 0.2, 0.5, 0.8, 0.2, 0.8 -> média = 0.5
     assert fii.mean_correlation(corr) == 0.5
     assert fii.mean_correlation(pd.DataFrame([[1.0]])) is None
+
+
+def test_backtest_alinha_inicio_ao_benchmark():
+    price = {
+        "X": [
+            (dt.date(2024, 1, 31), 100),
+            (dt.date(2024, 7, 31), 110),
+            (dt.date(2025, 1, 31), 120),
+        ]
+    }
+    benchmark = [
+        (dt.date(2024, 7, 31), 100),
+        (dt.date(2025, 1, 31), 105),
+    ]
+    serie, metrics = fii.backtest({"X": 1.0}, price, benchmark=benchmark)
+    assert serie["Data"].min() == dt.datetime(2024, 7, 31)
+    assert serie.iloc[0]["Carteira"] == 100
+    assert serie.iloc[0]["IFIX"] == 100
+    assert metrics["retorno_total"] < .20

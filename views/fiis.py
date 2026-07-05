@@ -12,6 +12,9 @@ Fonte nativa do market.* (BRAPI Pro + CVM Informe Mensal). FII não tem DRE/ROE.
 """
 from __future__ import annotations
 
+import math
+from html import escape
+
 import pandas as pd
 import streamlit as st
 
@@ -62,7 +65,7 @@ _CSS = """
 </style>
 """
 
-_TABS = ["📊 Ranking", "🔎 Busca de ativo", "🧺 Carteira-modelo", "📈 Backtest"]
+_TABS = ["📊 Ranking", "🔎 Busca de ativo", "🧺 Carteira-modelo", "📈 Retrospectiva"]
 
 
 def render(show_header: bool = True) -> None:
@@ -77,7 +80,20 @@ def render(show_header: bool = True) -> None:
         st.info("Ainda não há FIIs no banco. Rode `python run_market_ingest.py fiis` "
                 "(+ `fiis-cvm`, `fiis-series`) para popular.")
         return
-    ranked = df[df["Score"].notna()].sort_values("Score", ascending=False).reset_index(drop=True)
+    # Recalcula na leitura para não misturar versões de score após ingestões parciais.
+    score_input = [
+        {
+            "ticker": r["Ticker"], "price": r["Preço"], "dy_12m": r["DY_12m"],
+            "pvp": r["P/VP"], "liquidez_diaria": r["Liquidez_Diaria"],
+        }
+        for _, r in df.iterrows()
+    ]
+    score_map = {r["ticker"]: r["score"] for r in _fz.rank_fiis(score_input)}
+    df = df.copy()
+    df["Score"] = df["Ticker"].map(score_map)
+    ranked = df[df["Score"].notna()].sort_values(
+        "Score", ascending=False
+    ).reset_index(drop=True)
 
     # Abas por botão (permitem trocar de aba programaticamente — ex.: card → Busca).
     active = st.session_state.get("fii_active_tab", 0)
@@ -109,9 +125,9 @@ def _score_cls(score) -> str:
 
 
 def _fii_card_html(row: pd.Series) -> str:
-    tk = row["Ticker"]
-    nome = str(row.get("Nome") or tk)[:34]
-    seg = str(row.get("Segmento") or "—")[:30]
+    tk = escape(str(row["Ticker"]))
+    nome = escape(str(row.get("Nome") or tk)[:34], quote=True)
+    seg = escape(str(row.get("Segmento") or "—")[:30])
     score = row.get("Score")
     dy, pvp, preco = row.get("DY_12m"), row.get("P/VP"), row.get("Preço")
     _, _, color = _TIPO_META.get(str(row.get("Tipo") or "").lower(), _TIPO_OUTROS)
@@ -137,7 +153,11 @@ def _fii_card_html(row: pd.Series) -> str:
 def _kpi_html(label: str, value, sub: str | None = None,
               sub_color: str = "#00C896", accent: str = "#00C896") -> str:
     """Card CSS de KPI (rótulo, valor grande e sub opcional)."""
-    sub_html = f'<div class="sub" style="color:{sub_color};">{sub}</div>' if sub else ""
+    label, value = escape(str(label)), escape(str(value))
+    sub_html = (
+        f'<div class="sub" style="color:{sub_color};">{escape(str(sub))}</div>'
+        if sub else ""
+    )
     return (f'<div class="fii-kpi" style="border-left-color:{accent};">'
             f'<div class="lbl">{label}</div><div class="val">{value}</div>{sub_html}</div>')
 
@@ -236,8 +256,10 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
                 "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
             })
     ts = df["updated_at"].max() if "updated_at" in df.columns else None
-    st.caption(f"Score = DY 12m (45%) + P/VP invertido (30%) + liquidez (25%). "
-               f"{fora} fora do ranking (P/VP>1,30 · liquidez<R$200k/dia · DY>30%). "
+    st.caption(f"Score v{_fz.SCORE_VERSION} = DY 12m (45%) + proximidade do P/VP a 0,90 "
+               f"(30%) + liquidez (25%). {fora} fora do ranking por dado ausente ou "
+               f"faixa de plausibilidade (DY 0–20% · P/VP 0,55–1,30 · "
+               f"liquidez ≥ R$ 200 mil/dia). "
                f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}.")
 
 
@@ -400,6 +422,25 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
         _carteira_score(ranked)
 
 
+def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
+                           *, key: str) -> None:
+    """Oferece a mesma persistência para qualquer método de seleção."""
+    st.markdown("---")
+    cs1, cs2 = st.columns([3, 1])
+    with cs1:
+        st.caption("Salve esta seleção como sua **carteira-modelo de FIIs**. "
+                   "O Dashboard Geral passará a usar exatamente estes ativos e pesos.")
+    with cs2:
+        if st.button("💾 Salvar carteira-modelo", use_container_width=True,
+                     type="primary", key=key):
+            try:
+                from core.fii_portfolio_model import save_fii_portfolio_model
+                save_fii_portfolio_model(port, params, metrics)
+                st.success("Carteira-modelo de FIIs salva e disponível no Dashboard Geral.")
+            except Exception as exc:
+                st.error(f"Não foi possível salvar: {exc}")
+
+
 def _carteira_score(ranked: pd.DataFrame) -> None:
     st.caption("Carteira diversificada a partir do ranking: pesos por score, com "
                "teto por FII e limite por tipo (evita concentração em um só segmento).")
@@ -412,7 +453,14 @@ def _carteira_score(ranked: pd.DataFrame) -> None:
              "liquidez_diaria": r["Liquidez_Diaria"], "dy_12m": r["DY_12m"],
              "pvp": r["P/VP"], "segmento": r["Segmento"]}
             for _, r in ranked.iterrows()]
-    port = _fz.build_portfolio(rows, n_max=n_max, max_weight=max_w, max_tipo_frac=max_tp)
+    try:
+        port = _fz.build_portfolio(
+            rows, n_max=n_max, max_weight=max_w, max_tipo_frac=max_tp
+        )
+    except ValueError as exc:
+        st.warning(str(exc))
+        st.session_state.pop("fii_port", None)
+        return
     if not port:
         st.warning("Sem FIIs elegíveis para a carteira.")
         st.session_state.pop("fii_port", None)
@@ -447,36 +495,38 @@ def _carteira_score(ranked: pd.DataFrame) -> None:
     # guarda p/ o backtest
     st.session_state["fii_port"] = {p["ticker"]: p["peso"] for p in port}
 
-    # ── Salvar como carteira-modelo (aparece no Dashboard Geral) ──────────────
-    st.markdown("---")
-    cs1, cs2 = st.columns([3, 1])
-    with cs1:
-        st.caption("Salve esta seleção como sua **carteira-modelo de FIIs** — ela passa "
-                   "a aparecer no Dashboard Geral, ao lado da carteira de ações.")
-    with cs2:
-        if st.button("💾 Salvar carteira-modelo", use_container_width=True,
-                     type="primary", key="fii_save_model"):
-            try:
-                from core.fii_portfolio_model import save_fii_portfolio_model
-                params = {"n_max": n_max, "max_weight": max_w, "max_tipo_frac": max_tp}
-                metrics = {"dy_ponderado": dy_w, "pvp_ponderado": pvp_w, "n_ativos": len(port)}
-                save_fii_portfolio_model(port, params, metrics)
-                st.success("Carteira-modelo de FIIs salva! Já aparece no Dashboard Geral.")
-            except Exception as exc:
-                st.error(f"Não foi possível salvar: {exc}")
+    _render_save_portfolio(
+        port,
+        {
+            "metodo": "score_padrao", "score_version": _fz.SCORE_VERSION,
+            "n_max": n_max, "max_weight": max_w, "max_tipo_frac": max_tp,
+        },
+        {"dy_ponderado": dy_w, "pvp_ponderado": pvp_w, "n_ativos": len(port)},
+        key="fii_save_model_score",
+    )
 
 
 def _carteira_qualidade() -> None:
-    st.caption("Seleção por **qualidade**: tijolos diversificados (multi-região, "
-               "multi-inquilino, multi-setorial) + **papel e FoF para descorrelacionar** "
-               "(oscilam por juros/CDI-IPCA, não pelo ciclo imobiliário). Líquidos, bons "
-               "dividendos e bom crescimento/baixo drawdown. P/VP entra como desconto, mas "
-               "com peso pequeno. Teto por tipo evita concentração em um só.")
+    st.caption("Triagem multifator retrospectiva: renda, trajetória da cota, liquidez e "
+               "proxies de diversificação. Papel e FoF ampliam o mix de exposições, mas "
+               "não há garantia de descorrelação. Os retornos históricos são usados para "
+               "diagnóstico — não constituem validação fora da amostra.")
     q = _mr.load_fii_quality()
     if q.empty:
         st.info("Sem dados de FIIs. Rode a ingestão (`fiis`, `fiis-cvm`, `fiis-series`, "
                 "`fiis-metrics`, `fiis-imoveis`).")
         return
+    bricks_all = q[q["Tipo"].isin(["tijolo", "hibrido"])]
+    if not bricks_all.empty:
+        property_coverage = float(bricks_all["Num_Imoveis"].fillna(0).gt(0).mean())
+        region_coverage = float(bricks_all["N_Regioes"].fillna(0).gt(0).mean())
+        if min(property_coverage, region_coverage) < 0.80:
+            st.warning(
+                "Cobertura patrimonial incompleta: "
+                f"{property_coverage:.0%} dos FIIs de tijolo/híbridos têm imóveis "
+                f"identificados e {region_coverage:.0%} têm região identificada. "
+                "Filtros patrimoniais podem excluir fundos por ausência de dado."
+            )
 
     c1, c2, c3, c4b = st.columns(4)
     liq_min = c1.slider("Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, 0.5) * 1e6
@@ -497,22 +547,22 @@ def _carteira_qualidade() -> None:
     g1, g2, g3, g4 = st.columns(4)
     exig_pvp = g1.checkbox("P/VP < 1", value=True)
     exig_reg = g2.checkbox("Multi-região (≥2)", value=True)
-    exig_inq = g3.checkbox("Multi-inquilino (≥8 imóveis)", value=True)
-    exig_set = g4.checkbox("Multi-setorial", value=True)
+    exig_inq = g3.checkbox("Mín. de 8 imóveis", value=True)
+    exig_set = g4.checkbox("Multicategoria/híbrido", value=True)
 
     # ── filtros duros ─────────────────────────────────────────────────────────
     f = q.copy()
     f = f[f["Tipo"].isin(["tijolo", "hibrido", "papel", "fof"])]   # exige tipo definido
     f = f[f["Liquidez_Diaria"].fillna(0) >= liq_min]
-    f = f[f["DY_12m"].fillna(0) * 100 >= dy_min]
+    f = f[f["DY_12m"].between(max(dy_min / 100.0, 1e-12), 0.20, inclusive="both")]
+    f = f[f["P/VP"].between(0.55, 1.30, inclusive="both")]
     f = f[f["Max_Drawdown"].fillna(0.0) >= -(dd_max / 100.0)]
     f = f[f["Hist_Meses"].fillna(0) >= hist_min]       # track record mínimo (credibilidade)
     if exig_pvp:
         f = f[f["P/VP"].fillna(9) < 1.0]
-    # Os critérios "multi-*" (região/inquilino/setorial) SÓ se aplicam a FIIs de
-    # tijolo/híbrido (que têm imóveis). Papel e FoF passam direto — eles entram de
-    # propósito para DESCORRELACIONAR a carteira (papel segue juros/CDI-IPCA, não o
-    # ciclo imobiliário do tijolo).
+    # Os critérios patrimoniais só se aplicam a tijolo/híbrido. Número de imóveis
+    # não mede inquilinos e a classificação multicategoria não prova diversificação
+    # econômica; por isso a interface os apresenta explicitamente como proxies.
     brick = f["Tipo"].isin(["tijolo", "hibrido"])
     keep = pd.Series(True, index=f.index)
     if exig_reg:
@@ -536,27 +586,36 @@ def _carteira_qualidade() -> None:
         r = r.fillna(r.median() if r.notna().any() else 0.5)
         return r if higher else (1.0 - r)
 
-    # diversificação: tijolo/híbrido pela carteira de imóveis; papel/FoF por base
-    # (FoF é multi-ativo por natureza; papel diversifica por CRIs/indexadores).
+    # Diversificação observável para tijolo/híbrido. Sem decomposição de carteira
+    # de CRIs/cotas, papel e FoF recebem valor neutro — não um bônus arbitrário.
     div_brick = (0.4 * (f["N_Regioes"].fillna(0).clip(upper=5) / 5.0)
                  + 0.3 * (f["Num_Imoveis"].fillna(0).clip(upper=40) / 40.0)
                  + 0.3 * f["Multi_Setorial"].astype(float))
-    div = div_brick.where(f["Tipo"].isin(["tijolo", "hibrido"]),
-                          f["Tipo"].map({"fof": 0.70, "papel": 0.55}).fillna(0.5))
+    div = div_brick.where(f["Tipo"].isin(["tijolo", "hibrido"]), 0.5)
     cresc = 0.6 * _rk(f["CAGR"]) + 0.4 * _rk(f["Max_Drawdown"])  # CAGR↑ e drawdown menos negativo↑
+    pvp_distance = f["P/VP"].map(
+        lambda value: abs(math.log(value / 0.90)) if value and value > 0 else None
+    )
     score = 100.0 * (0.35 * _rk(f["DY_12m"])      # bons dividendos (principal)
                      + 0.25 * cresc               # crescimento / baixo drawdown
                      + 0.25 * div                 # diversificação (multi-*)
                      + 0.10 * _rk(f["Liquidez_Diaria"])
-                     + 0.05 * _rk(f["P/VP"], higher=False))  # desconto P/VP (menor peso)
+                     + 0.05 * _rk(pvp_distance, higher=False))
     f = f.assign(Qualidade=score)
 
     rows = [{"ticker": r["Ticker"], "score": r["Qualidade"], "tipo": r["Tipo"],
              "liquidez_diaria": r["Liquidez_Diaria"], "dy_12m": r["DY_12m"],
              "pvp": r["P/VP"], "segmento": r["Segmento"]}
             for _, r in f.iterrows()]
-    port = _fz.build_portfolio(rows, n_max=n_max, max_weight=max_w,
-                               max_tipo_frac=max_tp, liq_min=liq_min, min_por_tipo=min_tp)
+    try:
+        port = _fz.build_portfolio(
+            rows, n_max=n_max, max_weight=max_w, max_tipo_frac=max_tp,
+            liq_min=liq_min, min_por_tipo=min_tp,
+        )
+    except ValueError as exc:
+        st.warning(str(exc))
+        st.session_state.pop("fii_port", None)
+        return
     if not port:
         st.warning("Sem FIIs elegíveis após a diversificação por tipo. Relaxe os critérios.")
         st.session_state.pop("fii_port", None)
@@ -579,9 +638,9 @@ def _carteira_qualidade() -> None:
               if _cm.any() else None)
 
     r1 = st.columns(3)
-    r1[0].markdown(_kpi_html("Rent. anual (total)",
+    r1[0].markdown(_kpi_html("CAGR médio dos fundos",
                              f"{cagr_w*100:.1f}%" if cagr_w is not None else "—",
-                             accent="#00C896", sub="cota + proventos, média a.a.",
+                             accent="#00C896", sub="média ponderada; não é CAGR da carteira",
                              sub_color="#4A5568"), unsafe_allow_html=True)
     r1[1].markdown(_kpi_html("Rent. dividendos (DY 12m)", f"{dy_w*100:.1f}%",
                              accent="#00C896"), unsafe_allow_html=True)
@@ -595,7 +654,8 @@ def _carteira_qualidade() -> None:
     r2[1].markdown(_kpi_html("Nº efetivo", f"{n_ef:.1f}" if n_ef else "—", accent="#B084F6",
                              sub="diversificação real (1/Σpeso²)", sub_color="#4A5568"),
                    unsafe_allow_html=True)
-    r2[2].markdown(_kpi_html("Drawdown médio", f"{dd_w*100:.0f}%", accent="#F6C90E"),
+    r2[2].markdown(_kpi_html("Drawdown médio dos fundos", f"{dd_w*100:.0f}%",
+                             accent="#F6C90E"),
                    unsafe_allow_html=True)
     r2[3].markdown(_kpi_html("Liquidez mín.", f"R$ {liq_min_port/1e6:.1f} mi/dia",
                              accent="#4A9EFF", sub="menor liquidez da carteira",
@@ -631,13 +691,32 @@ def _carteira_qualidade() -> None:
             st.caption("⚠️ Só um tipo — reduza o 'Máx. por tipo' ou relaxe um critério "
                        "para incluir papel/FoF.")
 
-    st.caption("Peso da qualidade: DY 35% · crescimento/drawdown 25% · diversificação 25% · "
-               "liquidez 10% · desconto P/VP 5%. Papel/FoF entram para descorrelacionar "
-               "(critérios multi-* valem só p/ tijolo/híbrido).")
+    st.caption("Peso da qualidade: DY 35% · trajetória histórica 25% · proxies de "
+               "diversificação 25% · liquidez 10% · proximidade do P/VP a 0,90 5%. "
+               "Para papel/FoF, sem decomposição dos lastros, a diversidade é neutra.")
+    st.session_state["fii_port"] = weights
+    _render_save_portfolio(
+        port,
+        {
+            "metodo": "qualidade_retrospectiva", "score_version": _fz.SCORE_VERSION,
+            "n_max": n_max, "max_weight": max_w, "max_tipo_frac": max_tp,
+            "min_por_tipo": min_tp, "liquidez_min": liq_min,
+            "dy_min": dy_min / 100.0, "drawdown_max": dd_max / 100.0,
+            "historico_min_meses": hist_min, "pvp_abaixo_1": exig_pvp,
+            "min_2_regioes": exig_reg, "min_8_imoveis": exig_inq,
+            "multicategoria_hibrido": exig_set,
+        },
+        {
+            "dy_ponderado": dy_w, "pvp_ponderado": pvp_w,
+            "cagr_medio_fundos": cagr_w, "drawdown_medio_fundos": dd_w,
+            "n_ativos": len(port), "numero_efetivo": n_ef,
+        },
+        key="fii_save_model_quality",
+    )
 
     # ── Carteira vs mercado + risco × nº de fundos ────────────────────────────
     precos = _mr.load_precos_mensais(tuple(sorted(weights)))
-    rets = precos.pct_change() if not precos.empty else pd.DataFrame()
+    rets = precos.pct_change(fill_method=None) if not precos.empty else pd.DataFrame()
     port_cols = [t for t in weights if t in getattr(rets, "columns", [])]
     common = rets[port_cols].dropna() if port_cols else pd.DataFrame()
     mkt = _mr.load_mercado_retorno_mensal()
@@ -656,18 +735,21 @@ def _carteira_qualidade() -> None:
 
     ifix_vol = None
     if len(common) >= 6:
-        win = common.index
-        ifix_vol = _vol(mkt["IFIX"].reindex(win)) if not mkt.empty else None
         tot = sum(weights[t] for t in port_cols) or 1.0
         port_ret = sum(common[t] * (weights[t] / tot) for t in port_cols)
-        ann_port = _ann(port_ret)
-        ann_ifix = _ann(mkt["IFIX"].reindex(win)) if not mkt.empty else None
-        ann_uni = _ann(mkt["Universo"].reindex(win)) if not mkt.empty else None
+        comparison = port_ret.rename("Carteira").to_frame()
+        if not mkt.empty:
+            comparison = comparison.join(mkt[["IFIX", "Universo"]], how="inner")
+        comparison = comparison.dropna(how="any")
+        ann_port = _ann(comparison["Carteira"]) if not comparison.empty else None
+        ann_ifix = _ann(comparison["IFIX"]) if "IFIX" in comparison else None
+        ann_uni = _ann(comparison["Universo"]) if "Universo" in comparison else None
+        ifix_vol = _vol(comparison["IFIX"]) if "IFIX" in comparison else None
         alpha = (ann_port - ann_ifix) if (ann_port is not None and ann_ifix is not None) else None
         st.markdown("#### 📊 Carteira vs mercado")
         vc = st.columns(4)
         vc[0].markdown(_kpi_html("Sua carteira", f"{ann_port*100:.1f}%" if ann_port is not None else "—",
-                                 accent="#00C896", sub=f"a.a. · {len(common)} meses",
+                                 accent="#00C896", sub=f"a.a. · {len(comparison)} meses",
                                  sub_color="#4A5568"), unsafe_allow_html=True)
         vc[1].markdown(_kpi_html("IFIX", f"{ann_ifix*100:.1f}%" if ann_ifix is not None else "—",
                                  accent="#9CA3AF", sub="índice de FIIs", sub_color="#4A5568"),
@@ -679,8 +761,9 @@ def _carteira_qualidade() -> None:
                                  accent="#00C896" if (alpha or 0) >= 0 else "#FC5C7D",
                                  sub="retorno acima/abaixo", sub_color="#4A5568"),
                        unsafe_allow_html=True)
-        st.caption("Retorno total (cota + proventos) anualizado, todos na mesma janela comum. "
-                   "'vs IFIX' positivo = a carteira **bateu** o índice de FIIs.")
+        st.caption("Comparação retrospectiva das posições atuais, com todas as séries na "
+                   "mesma janela. A seleção usa parte desse próprio histórico; portanto, "
+                   "o resultado é diagnóstico in-sample e não evidência preditiva.")
 
     st.markdown("#### 📉 Risco × nº de fundos")
     curve = _fz.risk_curve(rets, weights) if not rets.empty else []
@@ -746,8 +829,9 @@ def _tab_backtest() -> None:
     if not weights:
         st.info("Monte a carteira na aba **Carteira-modelo** primeiro.")
         return
-    st.caption("Retorno total (preço + proventos reinvestidos), buy-and-hold com "
-               "os pesos da carteira-modelo, mensal.")
+    st.caption("Retrospectiva buy-and-hold das posições e pesos atuais. Há viés de "
+               "sobrevivência e de seleção: não é um backtest point-in-time nem uma "
+               "validação fora da amostra.")
     bench_nome = "IFIX (XFIX11)"   # a brapi não tem histórico do IFIX puro; XFIX11 (ETF) o replica
     series = _mr.load_fii_series(tuple(sorted(weights)))
     bench = _mr.load_fii_series(("XFIX11",)).get("precos", {}).get("XFIX11")
@@ -774,6 +858,6 @@ def _tab_backtest() -> None:
                           accent="#4A9EFF"), unsafe_allow_html=True)
     cols = [c for c in ("Carteira", bench_nome) if c in serie.columns]
     st.line_chart(serie.set_index("Data")[cols])
-    st.caption("Índice base 100 no início da janela comum. Retorno total (cota + "
-               "proventos); o benchmark é o IFIX replicado pelo ETF XFIX11 (retorno "
-               "total de FIIs). Sem custos/impostos. Ferramenta educacional.")
+    st.caption("Índice base 100 na mesma janela efetivamente disponível para carteira e "
+               "XFIX11. Retorno total ajustado, sem custos ou impostos. O resultado mostra "
+               "como a carteira atual teria se comportado; não reproduz decisões históricas.")

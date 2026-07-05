@@ -573,15 +573,27 @@ def _fiis_carteira_modelo() -> tuple[list[dict], bool]:
         df = _mr.load_fiis()
     except Exception:
         return [], False
-    if df is None or df.empty or "Score" not in df.columns:
+    if df is None or df.empty:
         return [], False
-    ranked = df[df["Score"].notna()].sort_values("Score", ascending=False)
-    if ranked.empty:
+    score_input = [
+        {
+            "ticker": r["Ticker"], "price": r["Preço"], "dy_12m": r["DY_12m"],
+            "pvp": r["P/VP"], "liquidez_diaria": r["Liquidez_Diaria"],
+        }
+        for _, r in df.iterrows()
+    ]
+    ranked_rows = _fz.rank_fiis(score_input)
+    if not ranked_rows:
         return [], False
-    rows = [{"ticker": r["Ticker"], "score": r["Score"], "tipo": r.get("Tipo"),
-             "liquidez_diaria": r.get("Liquidez_Diaria"), "dy_12m": r.get("DY_12m"),
-             "pvp": r.get("P/VP"), "segmento": r.get("Segmento")}
-            for _, r in ranked.iterrows()]
+    metadata = {r["Ticker"]: r for _, r in df.iterrows()}
+    rows = [
+        {
+            **r,
+            "tipo": metadata[r["ticker"]].get("Tipo"),
+            "segmento": metadata[r["ticker"]].get("Segmento"),
+        }
+        for r in ranked_rows if r["ticker"] in metadata
+    ]
     try:
         port = _fz.build_portfolio(rows, n_max=_FIIS_N_MAX, max_weight=_FIIS_MAX_W,
                                    max_tipo_frac=_FIIS_MAX_TIPO) or []
@@ -595,7 +607,7 @@ def _secao_fiis_sugeridos() -> None:
     if not port:
         return
     subtitulo = ("Carteira-modelo de FIIs definida por você na Seleção de FIIs" if salvo
-                 else "Sugestão automática — salve a sua em Seleção de FIIs para fixá-la")
+                 else "Triagem quantitativa automática — salve uma composição para fixá-la")
 
     dy_w = sum((p.get("dy_12m") or 0) * p["peso"] for p in port)
     pvp_w = sum((p.get("pvp") or 0) * p["peso"] for p in port)
@@ -605,7 +617,7 @@ def _secao_fiis_sugeridos() -> None:
         tipos[tp] = tipos.get(tp, 0.0) + p["peso"]
     tipo_top = max(tipos.items(), key=lambda x: x[1]) if tipos else ("—", 0.0)
 
-    _titulo_secao("🏬", "Fundos Imobiliários sugeridos", subtitulo, _COR_INVEST)
+    _titulo_secao("🏬", "Carteira-modelo de Fundos Imobiliários", subtitulo, _COR_INVEST)
 
     m1, m2, m3, m4 = st.columns(4, gap="small")
     with m1:
