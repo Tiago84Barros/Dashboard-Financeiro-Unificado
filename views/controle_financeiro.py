@@ -916,6 +916,18 @@ def _tab_analises(
     dados_cartao = gastos_cartao.get(_ano_sel_str, [])
     if dados_cartao:
         import pandas as pd
+        # Densifica o eixo: mostra todos os meses do ano (jan → dez, ou jan → mês
+        # atual no ano corrente) com R$ 0 onde não houve lançamento manual, dando
+        # continuidade visual sem puxar dados do CSV (fluxo futuro).
+        _por_mes = {int(item["mes"]): float(item["total"]) for item in dados_cartao}
+        _ano_int = int(_ano_sel_str)
+        _mes_fim = (_date.today().month
+                    if _ano_int == _date.today().year else 12)
+        _mes_fim = max(_mes_fim, max(_por_mes) if _por_mes else 1)
+        dados_cartao = [
+            {"mes": m, "label": f"{m:02d}/{_ano_int}", "total": round(_por_mes.get(m, 0.0), 2)}
+            for m in range(1, _mes_fim + 1)
+        ]
         labels = [item["label"] for item in dados_cartao]
         totais = [item["total"] for item in dados_cartao]
 
