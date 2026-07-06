@@ -460,6 +460,7 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
                 "Publication lag = 1",
                 "Aportes mensais",
                 "Comparacao contra Selic e carteira equal-weight",
+                "Rank-IC: score vs retorno do ano seguinte",
                 "Reinvestimento de dividendos quando disponivel",
             ),
             "Um ranking so tem valor se ele sobreviver minimamente ao passado sem vazamento de informacao futura.",
@@ -779,9 +780,11 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ),
         "variacao_cp": _node(
             "variacao_cp", "Variaveis do segmento", "Motor",
-            "Seleciona indicadores relevantes e calcula score ano a ano com lag de publicacao.",
-            ("Pesos do setor", "Snapshot anual ate N-1", "Indicadores saneados"),
-            "Garante que o modelo de compra em um ano so use dados que ja existiam.",
+            "Seleciona indicadores relevantes e calcula score ano a ano com lag de "
+            "publicacao, respeitando a data em que cada dado ficou disponivel (point-in-time).",
+            ("Pesos do setor", "Snapshot ate N-1", "AvailableAt (vintages) <= abril do ano", "Indicadores saneados"),
+            "Garante que o modelo de compra em um ano so use dados que ja existiam "
+            "naquela data — sem look-ahead bias.",
         ),
         "score_cp": _node(
             "score_cp", "Score e pesos", "Motor",
@@ -803,15 +806,22 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ),
         "comparacao_cp": _node(
             "comparacao_cp", "Comparacao", "Simulacao",
-            "Compara o patrimonio final da estrategia com Tesouro Selic e equal-weight do proprio segmento.",
-            ("Valor estrategia", "Valor Selic", "Valor equal-weight", "Margens percentuais"),
-            "Uma empresa lider precisa provar valor contra alternativas simples.",
+            "Compara o patrimonio da estrategia com Tesouro Selic e equal-weight do proprio "
+            "segmento — tanto no historico cheio quanto no holdout final de ~24 meses, que e a base da aprovacao.",
+            ("Valor estrategia", "Valor Selic", "Valor equal-weight", "Margens no historico", "Margens no holdout OOS ~24m"),
+            "Uma empresa lider precisa provar valor contra alternativas simples — e, sobretudo, "
+            "fora da janela usada para desenvolver a estrategia.",
         ),
         "aprovacao_cp": _node(
             "aprovacao_cp", "Aprovacao do segmento", "Simulacao",
-            "Filtra segmentos por margem minima, recencia de lideranca e criterio opcional contra equal-weight.",
-            ("Margem minima vs Selic", "Uso do equal-weight", "Maximo de anos desde ultima lideranca"),
-            "So entram no portfolio segmentos com evidencia historica e lideranca ainda relevante.",
+            "Aprova o segmento por rigor estatistico no holdout out-of-sample de ~24 meses — "
+            "nao apenas por margem alta no historico que desenhou a estrategia.",
+            ("FDR Benjamini-Hochberg (q <= 10%)", "Rank-IC >= 2 anos positivo",
+             "p-value OOS unilateral", "Margem vs Selic no holdout (piso economico leve, default 10%)",
+             "Uso do equal-weight opcional", "Recencia de lideranca"),
+            "So entram segmentos com evidencia preditiva (Rank-IC), significancia estatistica "
+            "com controle de falsos positivos (FDR) e desempenho fora da amostra — nao um numero "
+            "bonito no historico cheio.",
         ),
         "pesos_cp": _node(
             "pesos_cp", "Montagem do portfolio", "Portfolio",
