@@ -38,9 +38,14 @@ _UPDATE_COLS = {
              "vpa", "num_cotistas", "pct_imoveis", "pct_papel", "pct_caixa", "pct_fundos",
              "cvm_ref_date", "vacancia", "vacancia_ref_date", "num_imoveis",
              "score_version", "score_calculated_at", "metrics_fetched_at"),
+    # snapshot mensal de score+inputs (migração 020, auditoria FII 2026-07):
+    # as colunas de score só atualizam quando presentes na linha — o backfill
+    # CVM e o snapshot de score preservam as colunas um do outro.
     "fii_metrics_monthly": ("vpa", "patrimonio_liquido", "num_cotistas",
                             "dy_patrimonial_mes", "pct_imoveis", "pct_papel",
-                            "pct_caixa", "pct_fundos"),
+                            "pct_caixa", "pct_fundos",
+                            "score", "score_version", "price", "dy_12m",
+                            "pvp", "liquidez_diaria"),
     "fii_imoveis": ("area_m2", "vacancia", "cidade", "uf", "regiao",
                     "segmento_imovel", "pct_receita", "fonte"),
 }

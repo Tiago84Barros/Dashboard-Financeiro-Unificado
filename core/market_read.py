@@ -358,7 +358,8 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
                num_cotistas AS "Cotistas", tipo_gestao AS "Gestao",
                pct_imoveis AS "Pct_Imoveis", pct_papel AS "Pct_Papel",
                pct_caixa AS "Pct_Caixa", pct_fundos AS "Pct_Fundos",
-               score AS "Score", updated_at
+               score AS "Score", updated_at,
+               cvm_ref_date, vacancia_ref_date
         FROM market.fiis {where}
         ORDER BY score DESC NULLS LAST, ticker
     """, params)

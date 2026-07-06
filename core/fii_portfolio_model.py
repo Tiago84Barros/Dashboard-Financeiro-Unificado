@@ -66,6 +66,46 @@ DDL_SQL = [
     CREATE UNIQUE INDEX IF NOT EXISTS uq_fii_portfolio_models_one_active
     ON fii_portfolio_models (user_id) WHERE status = 'active'
     """,
+    # Auditoria FII 2026-07: RLS no DDL de runtime — antes as tabelas criadas
+    # aqui nasciam SEM RLS (a proteção só vinha se a 018_fiis_hardening fosse
+    # executada). Espelha as policies da 018 (mesmos nomes, idempotente).
+    # A conexão do app (role postgres) bypassa; protege acesso via anon key.
+    "ALTER TABLE fii_portfolio_models ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE fii_portfolio_model_items ENABLE ROW LEVEL SECURITY",
+    """
+    DO $$ BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname='public'
+              AND tablename='fii_portfolio_models'
+              AND policyname='fii_models_owner_all'
+        ) THEN
+            CREATE POLICY fii_models_owner_all ON fii_portfolio_models
+                USING (user_id = auth.uid())
+                WITH CHECK (user_id = auth.uid());
+        END IF;
+    END; $$
+    """,
+    """
+    DO $$ BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname='public'
+              AND tablename='fii_portfolio_model_items'
+              AND policyname='fii_model_items_owner_all'
+        ) THEN
+            CREATE POLICY fii_model_items_owner_all ON fii_portfolio_model_items
+                USING (EXISTS (
+                    SELECT 1 FROM fii_portfolio_models m
+                    WHERE m.id = model_id AND m.user_id = auth.uid()
+                ))
+                WITH CHECK (EXISTS (
+                    SELECT 1 FROM fii_portfolio_models m
+                    WHERE m.id = model_id AND m.user_id = auth.uid()
+                ));
+        END IF;
+    END; $$
+    """,
 ]
 
 

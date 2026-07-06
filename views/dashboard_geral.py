@@ -565,7 +565,14 @@ def _fiis_carteira_modelo() -> tuple[list[dict], bool]:
         if saved and saved.get("items"):
             return saved["items"], True
     except Exception:
-        pass
+        # Fix auditoria FII 2026-07: o fallback era SILENCIOSO — em erro de
+        # banco o usuário via uma carteira recalculada achando que era a
+        # salva. Agora o desvio é avisado.
+        st.warning(
+            "⚠️ Falha ao carregar a carteira-modelo de FIIs **salva** — "
+            "exibindo sugestão **recalculada** com dados atuais, que pode "
+            "diferir da que você salvou. Verifique a conexão com o banco."
+        )
     # 2) Fallback: recomputa a sugestão automática.
     try:
         import core.market_read as _mr
@@ -578,7 +585,9 @@ def _fiis_carteira_modelo() -> tuple[list[dict], bool]:
     score_input = [
         {
             "ticker": r["Ticker"], "price": r["Preço"], "dy_12m": r["DY_12m"],
-            "pvp": r["P/VP"], "liquidez_diaria": r["Liquidez_Diaria"],
+            # P/VP efetivo com VPA CVM — consistente com a Seleção de FIIs
+            "pvp": _fz.pvp_efetivo(r["Preço"], r.get("VPA"), r["P/VP"]),
+            "liquidez_diaria": r["Liquidez_Diaria"],
         }
         for _, r in df.iterrows()
     ]

@@ -105,6 +105,7 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
            weights: dict | None = None) -> dict:
     """Coleta FIIs (rede), classifica/computa/rankeia e grava em market.fiis."""
     engine = _engine()
+    repo.reset_db_cols_cache()  # migração 020 pode ter sido aplicada com processo vivo
     prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0,
             "gravados": 0, "ranking_aplicado": False, "cobertura": 0.0}
     if engine is None:
@@ -114,6 +115,10 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
             logger.error("market.fiis ausente — rode 015_market_fiis.sql.")
             return {**prog, "erros": -1}
         metadata_ready = _score_metadata_ready(conn)
+        # VPA do último enrich_cvm (roda DEPOIS de `fiis` no cron) — no run
+        # diário, é o VPA de ontem: correto (VPA é mensal). 1º run: vazio →
+        # pvp_efetivo cai no priceToBook da brapi.
+        vpa_map = _vpa_map(conn)
 
     full_run = not tickers and limit is None
     if tickers:
@@ -157,6 +162,16 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
             sched.sleep_jittered(base=delay)
 
     if metrics:
+        # P/VP efetivo (fix auditoria FII 2026-07): preço ÷ VPA CVM quando
+        # disponível (VPA do último enrich_cvm) — fonte oficial em vez do
+        # priceToBook da brapi. O valor derivado é gravado em market.fiis.pvp;
+        # o priceToBook bruto permanece recuperável nos payloads.
+        metrics = [
+            {**m, "pvp": fz.pvp_efetivo(m.get("price"),
+                                        vpa_map.get(m["ticker"]),
+                                        m.get("pvp"))}
+            for m in metrics
+        ]
         calculated_at = datetime.now(timezone.utc)
         successful = prog["fiis"] + prog["etfs_ignorados"]
         prog["cobertura"] = round(successful / max(len(universe), 1), 4)
@@ -185,8 +200,45 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
                     old_value=f"{successful}/{len(universe)}",
                     severity="warning", source="brapi.dev",
                 )
+            prog["snapshot_mensal"] = _snapshot_score_mensal(
+                conn, ranked_by, ref) if apply_ranking else 0
     logger.info("market/fii ingest: %s", prog)
     return prog
+
+
+def _vpa_map(conn) -> dict[str, float]:
+    """VPA CVM por ticker — p/ P/VP efetivo no ranking (auditoria FII 2026-07)."""
+    try:
+        return {str(t).upper(): float(v) for t, v in conn.execute(text(
+            "SELECT ticker, vpa FROM market.fiis "
+            "WHERE vpa IS NOT NULL AND vpa > 0")).fetchall()}
+    except Exception as exc:
+        logger.warning("_vpa_map: %s — ranking segue com priceToBook brapi", exc)
+        return {}
+
+
+def _snapshot_score_mensal(conn, ranked_by: dict, ref) -> int:
+    """Snapshot mensal point-in-time do score e seus inputs (migração 020).
+
+    Grava score/price/dy_12m/pvp/liquidez em market.fii_metrics_monthly
+    (chave ticker+ref_month; runs no mesmo mês sobrescrevem — 'último
+    cálculo do mês'). Sem isso a metodologia FII nunca poderá ser validada
+    (rank-IC exige inputs históricos). Colunas CVM da mesma linha são
+    preservadas (o upsert só atualiza as colunas presentes).
+    """
+    if not ranked_by:
+        return 0
+    if "score" not in repo._db_cols(conn, "fii_metrics_monthly"):
+        logger.info("snapshot mensal de score pulado — migração 020 pendente")
+        return 0
+    ref_month = ref.replace(day=1)
+    snap = [{
+        "ticker": r["ticker"], "ref_month": ref_month,
+        "score": r.get("score"), "score_version": r.get("score_version"),
+        "price": r.get("price"), "dy_12m": r.get("dy_12m"),
+        "pvp": r.get("pvp"), "liquidez_diaria": r.get("liquidez_diaria"),
+    } for r in ranked_by.values()]
+    return repo.upsert(conn, "fii_metrics_monthly", snap)
 
 
 def ingest_benchmark(ticker: str = "XFIX11") -> dict:
@@ -442,6 +494,7 @@ def ingest_imoveis() -> dict:
 def reprocess(weights: dict | None = None) -> dict:
     """Re-rankeia a partir dos payloads brutos já salvos (SEM rede)."""
     engine = _engine()
+    repo.reset_db_cols_cache()  # migração 020 pode ter sido aplicada com processo vivo
     prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0,
             "gravados": 0, "ranking_aplicado": False, "cobertura": 0.0}
     if engine is None:
@@ -452,6 +505,7 @@ def reprocess(weights: dict | None = None) -> dict:
         metadata_ready = _score_metadata_ready(conn)
         expected = int(conn.execute(text("SELECT COUNT(*) FROM market.fiis")).scalar() or 0)
         rows = _latest_fii_payloads(conn)
+        vpa_map = _vpa_map(conn)
     ref = datetime.now(timezone.utc).date()
     metrics: list[dict] = []
     for tk, quote in rows:
@@ -467,6 +521,13 @@ def reprocess(weights: dict | None = None) -> dict:
             logger.warning("fii reprocess %s: %s", tk, exc)
             prog["erros"] += 1
     if metrics:
+        # P/VP efetivo com VPA CVM — mesmo tratamento do ingest (auditoria FII)
+        metrics = [
+            {**m, "pvp": fz.pvp_efetivo(m.get("price"),
+                                        vpa_map.get(m["ticker"]),
+                                        m.get("pvp"))}
+            for m in metrics
+        ]
         calculated_at = datetime.now(timezone.utc)
         prog["cobertura"] = round(len(metrics) / max(expected, 1), 4)
         apply_ranking = _ranking_coverage_ok(len(metrics), expected)

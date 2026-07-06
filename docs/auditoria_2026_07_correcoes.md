@@ -83,6 +83,36 @@ corrigidos antes do merge:
   backfill zerava a proveniência via ON CONFLICT); cache de colunas não é
   mais envenenado por falha transitória e é resetado a cada run.
 
+## Auditoria da Seleção de FII (2026-07-05, score FII 3.0.0 → 3.1.0)
+
+Auditoria própria (3 agentes de mapeamento + crítica/verificação manual —
+agentes de crítica caíram por limite de sessão). Veredito: seção mais
+honesta e mais bem desenhada que a Empresas B3 pré-auditoria (exclusão de
+dado incompleto, P/VP por proximidade de alvo, captions verdadeiras sobre
+in-sample/sobrevivência), mas com defeitos de INSUMO. Corrigidos:
+
+1. **DY ex-amortizações** — `dy_12m` somava amortização de capital como
+   renda (peso 45% do score); agora exclui por label ("amort"), item sem
+   label conta como rendimento.
+2. **P/VP efetivo** — score/exibição usavam `priceToBook` da brapi enquanto
+   a aba Busca usava VPA CVM; novo `pvp_efetivo` (preço ÷ VPA CVM quando
+   disponível) aplicado na view, no Dashboard e no ETL (ingest/reprocess).
+3. **Snapshot mensal point-in-time do score** — migração
+   `020_fii_score_snapshot.sql` estende `fii_metrics_monthly` com
+   score/inputs; ETL grava a cada run com ranking (guarda p/ banco sem a
+   migração); habilita rank-IC de FIIs no futuro.
+4. **Liquidez em janela de 6 meses** — era mediana de 5 ANOS (fundo com
+   liquidez seca passava o gate de R$ 200k/dia por anos).
+5. **RLS no DDL de runtime** de `fii_portfolio_models`/`_items` (espelha a
+   018) + **defasagem visível** (informe CVM mm/aaaa e data de coleta da
+   vacância na aba Carteira) + **fallback do Dashboard avisa** quando exibe
+   carteira recalculada em vez da salva.
+
+Registrado (não corrigido nesta rodada): método "qualidade retrospectiva"
+segue selecionando por CAGR/drawdown de sobreviventes (declarado na UI);
+vacância segue via scraping fora do cron; `vacancia_ref_date` segue sendo
+data de coleta; backtest FII segue buy-and-hold in-sample (declarado).
+
 ## Pendências remanescentes
 
 5. **Split do `views/empresas_b3.py`** (~5.300 linhas) em view / scoring /

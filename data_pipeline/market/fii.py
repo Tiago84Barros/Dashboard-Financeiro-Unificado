@@ -49,12 +49,21 @@ def is_fii(quote: dict) -> bool:
 
 
 def dy_12m(cash_dividends: list, price: float, ref_date: _dt.date) -> float | None:
-    """Dividend yield 12m = soma dos rendimentos pagos nos últimos 366 dias ÷ preço."""
+    """Dividend yield 12m = soma dos RENDIMENTOS pagos nos últimos 366 dias ÷ preço.
+
+    Fix auditoria FII 2026-07: AMORTIZAÇÕES de capital são EXCLUÍDAS — são
+    devolução de principal (reduzem o VP), não renda; somá-las inflava o DY
+    de fundos em desinvestimento, que subiam no ranking (DY pesa 45%).
+    Item sem label é tratado como rendimento (não pune payload incompleto).
+    """
     p = _f(price)
     if not p or p <= 0 or not cash_dividends:
         return None
     total = 0.0
     for it in cash_dividends:
+        lbl = str(it.get("label") or "").lower()
+        if "amort" in lbl:      # "Amortização"/"AMORTIZACAO"/variações
+            continue
         d = _as_date(it.get("paymentDate") or it.get("lastDatePrior"))
         r = _f(it.get("rate"))
         if d is not None and r is not None and 0 <= (ref_date - d).days <= 366:
@@ -62,11 +71,14 @@ def dy_12m(cash_dividends: list, price: float, ref_date: _dt.date) -> float | No
     return (total / p) if total > 0 else None
 
 
-def liquidez_diaria(historical: list, n: int = 60) -> float | None:
+def liquidez_diaria(historical: list, n: int = 6) -> float | None:
     """
     Volume financeiro DIÁRIO típico (R$/dia). Mediana de (close × volume) dos
     últimos n meses ÷ pregões/mês — a série da brapi p/ FII é MENSAL, então o
     volume das barras é mensal e precisa ser convertido para diário.
+
+    Fix auditoria FII 2026-07: n caiu de 60 (mediana de 5 ANOS — fundo com
+    liquidez recém-seca passava o gate de R$ 200k/dia por anos) para 6 meses.
     """
     vals = []
     for it in (historical or []):
@@ -79,6 +91,19 @@ def liquidez_diaria(historical: list, n: int = 60) -> float | None:
     m = len(vals) // 2
     med = vals[m] if len(vals) % 2 else (vals[m - 1] + vals[m]) / 2.0
     return med / _PREGOES_MES
+
+
+def pvp_efetivo(price, vpa, pvp_brapi) -> float | None:
+    """P/VP preferindo o VPA oficial (Informe Mensal CVM): preço ÷ VPA quando
+    ambos válidos; senão o priceToBook da brapi.
+
+    Fix auditoria FII 2026-07: o score usava só a brapi enquanto a aba de
+    detalhe mostrava P/VP com VPA CVM — fontes divergentes na mesma tela.
+    """
+    p, v = _f(price), _f(vpa)
+    if p and p > 0 and v and v > 0:
+        return p / v
+    return _f(pvp_brapi)
 
 
 def segmento(quote: dict) -> str:
@@ -136,7 +161,10 @@ def _percentile(values: list[float], higher_better: bool) -> dict[int, float]:
 
 # pesos default do score "bons FIIs" (somam 1.0)
 DEFAULT_WEIGHTS = {"dy_12m": 0.45, "pvp": 0.30, "liquidez_diaria": 0.25}
-SCORE_VERSION = "3.0.0"
+# 3.1.0 (auditoria FII 2026-07): DY exclui amortizações de capital; P/VP
+# efetivo usa VPA CVM quando disponível; liquidez com janela de 6 meses
+# (era 5 anos). Pesos e filtros inalterados.
+SCORE_VERSION = "3.1.0"
 
 
 def rank_fiis(rows: list[dict], *, weights: dict | None = None,
