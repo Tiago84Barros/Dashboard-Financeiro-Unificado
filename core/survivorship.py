@@ -54,11 +54,7 @@ DELISTED_BR_2010_2025: list[DelistedTicker] = [
     DelistedTicker("LLXL3",  "LLX Logística (Eike)",         date(2014,  9, 26), "fusao",               4.50),
 
     # Construção / infraestrutura
-    DelistedTicker("OIBR3",  "Oi (ON)",                       date(2024,  7, 24), "rj_homologada",       0.20),
-    DelistedTicker("OIBR4",  "Oi (PN)",                       date(2024,  7, 24), "rj_homologada",       0.18),
-    DelistedTicker("PDGR3",  "PDG Realty",                    date(2017,  7, 27), "rj_homologada",       0.30),
     DelistedTicker("ECPR4",  "Encorpar",                      date(2019, 12,  3), "fechamento_capital",  3.50),
-    DelistedTicker("VIVR3",  "Viver Incorporadora",           date(2021,  4, 22), "rj_homologada",       0.60),
     DelistedTicker("INEP3",  "Inepar",                        date(2017,  4, 28), "falencia",            0.10),
     DelistedTicker("INEP4",  "Inepar PN",                     date(2017,  4, 28), "falencia",            0.10),
 
@@ -71,7 +67,6 @@ DELISTED_BR_2010_2025: list[DelistedTicker] = [
     DelistedTicker("RIPI4",  "Refinaria de Manguinhos",       date(2014,  5, 14), "fechamento_capital",  2.80),
 
     # Energia/utilities
-    DelistedTicker("LIGT3",  "Light",                         date(2024,  9, 17), "rj_homologada",       4.40),
     DelistedTicker("ELPL4",  "Eletropaulo",                   date(2018,  6, 29), "opa",                45.22),  # OPA Enel
     DelistedTicker("AESL3",  "AES Tietê (antiga)",            date(2020, 12, 23), "fusao",              13.50),
     DelistedTicker("CGAS3",  "Comgás ON",                     date(2017,  5,  4), "fechamento_capital", 45.00),
@@ -79,7 +74,6 @@ DELISTED_BR_2010_2025: list[DelistedTicker] = [
 
     # Bancos / financeiro
     DelistedTicker("BICB4",  "BIC Banco",                     date(2016,  3, 31), "opa",                 8.00),  # ICBC
-    DelistedTicker("PINE4",  "Banco Pine",                    date(2020,  9, 28), "fechamento_capital",  3.20),
 
     # Saúde / educação
     DelistedTicker("ESTC3",  "Estácio Participações",         date(2017,  4, 17), "fusao",              22.00),  # YDUQS
@@ -162,16 +156,16 @@ def flag_survivorship_universe(
     n_faltantes = len(faltantes)
     cobertura = n_atual / max(n_atual + n_faltantes, 1)
 
-    # Heurística Brown-Goetzmann-Ibbotson-Ross (1992):
-    # bias ~ 80-200 bps/ano, escala com fração de faltantes
-    bias_bps = round((1 - cobertura) * 200, 0)
-
     return {
         "total_atual":           n_atual,
         "delisted_no_periodo":   faltantes,
         "n_delisted":            n_faltantes,
-        "cobertura_estimada":    round(cobertura, 3),
-        "vies_estimado_bps":     bias_bps,
+        # Cobertura apenas em relação à lista curada, não ao universo B3
+        # histórico completo. Não converter em estimativa pontual de viés.
+        "cobertura_lista_curada": round(cobertura, 3),
+        "cobertura_estimada":    None,
+        "vies_estimado_bps":     None,
+        "universo_completo":     False,
     }
 
 

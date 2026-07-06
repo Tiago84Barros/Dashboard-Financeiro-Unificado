@@ -635,8 +635,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     "WHERE ticker=:t AND metric_name='LPA' ORDER BY year DESC LIMIT 1"),
                     {"t": tk}).scalar()
                 last_price = conn.execute(text(
-                    "SELECT COALESCE(adjusted_close, close) FROM market.historical_prices "
-                    "WHERE ticker=:t AND COALESCE(adjusted_close, close) IS NOT NULL "
+                    "SELECT close FROM market.historical_prices "
+                    "WHERE ticker=:t AND close IS NOT NULL "
                     "ORDER BY date DESC LIMIT 1"), {"t": tk}).scalar()
                 # market cap: brapi quando disponível; senão deriva = preço × ações,
                 # com ações = lucro anual / LPA anual (mesma empresa, ON/PN herdam).
@@ -660,15 +660,17 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 # lucro/FCO) somam 4 trimestres; estoques (balanço) usam o trimestre
                 # mais recente. Sem 4 trimestres completos → cai p/ o último anual.
                 q_inc = conn.execute(text(
-                    "SELECT revenue, ebit, ebitda, net_income FROM market.income_statements "
+                    "SELECT year, quarter, revenue, ebit, ebitda, net_income "
+                    "FROM market.income_statements "
                     "WHERE ticker=:t AND period='quarterly' ORDER BY year DESC, quarter DESC LIMIT 4"),
                     {"t": tk}).fetchall()
                 q_cf = conn.execute(text(
-                    "SELECT operating_cash_flow FROM market.cash_flow_statements "
+                    "SELECT year, quarter, operating_cash_flow "
+                    "FROM market.cash_flow_statements "
                     "WHERE ticker=:t AND period='quarterly' ORDER BY year DESC, quarter DESC LIMIT 4"),
                     {"t": tk}).fetchall()
                 q_bal = conn.execute(text(
-                    "SELECT total_assets, equity, cash, gross_debt, net_debt, "
+                    "SELECT year, quarter, total_assets, equity, cash, gross_debt, net_debt, "
                     "current_assets, current_liabilities FROM market.balance_sheets "
                     "WHERE ticker=:t AND period='quarterly' ORDER BY year DESC, quarter DESC LIMIT 1"),
                     {"t": tk}).fetchone()
@@ -677,17 +679,33 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     vals = [r[i] for r in rows if r[i] is not None]
                     return float(sum(vals)) if len(rows) == 4 and len(vals) == 4 else None
 
-                ttm_ni = _sum4(q_inc, 3)
-                from_q = ttm_ni is not None and q_bal is not None
+                def _quarter_keys(rows):
+                    return [(int(r[0]), int(r[1])) for r in rows]
+
+                def _four_consecutive(rows):
+                    if len(rows) != 4:
+                        return False
+                    serial = [int(y) * 4 + int(q) for y, q in _quarter_keys(rows)]
+                    return all(serial[i] - serial[i + 1] == 1 for i in range(3))
+
+                inc_keys = _quarter_keys(q_inc)
+                cf_keys = _quarter_keys(q_cf)
+                aligned_balance = (
+                    q_bal is not None and inc_keys
+                    and (int(q_bal[0]), int(q_bal[1])) == inc_keys[0]
+                )
+                aligned_cf = cf_keys == inc_keys
+                ttm_ni = _sum4(q_inc, 5) if _four_consecutive(q_inc) else None
+                from_q = ttm_ni is not None and aligned_balance
                 if from_q:
                     base_method = "ttm_4q"
                     f = {
-                        "revenue": _sum4(q_inc, 0), "ebit": _sum4(q_inc, 1),
-                        "ebitda": _sum4(q_inc, 2), "net_income": ttm_ni,
-                        "total_assets": q_bal[0], "equity": q_bal[1], "cash": q_bal[2],
-                        "gross_debt": q_bal[3], "net_debt": q_bal[4],
-                        "current_assets": q_bal[5], "current_liabilities": q_bal[6],
-                        "fco": _sum4(q_cf, 0), "market_cap": mc,
+                        "revenue": _sum4(q_inc, 2), "ebit": _sum4(q_inc, 3),
+                        "ebitda": _sum4(q_inc, 4), "net_income": ttm_ni,
+                        "total_assets": q_bal[2], "equity": q_bal[3], "cash": q_bal[4],
+                        "gross_debt": q_bal[5], "net_debt": q_bal[6],
+                        "current_assets": q_bal[7], "current_liabilities": q_bal[8],
+                        "fco": _sum4(q_cf, 2) if aligned_cf else None, "market_cap": mc,
                         "div_ttm": div_ps_ttm or None, "price": last_price, "eps": eps,
                     }
                 else:
@@ -745,8 +763,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
 
                 year_end, div_year = {}, {}
                 for d, px in conn.execute(text(
-                    "SELECT date, COALESCE(adjusted_close, close) FROM market.historical_prices "
-                    "WHERE ticker=:t AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY date"),
+                    "SELECT date, close FROM market.historical_prices "
+                    "WHERE ticker=:t AND close IS NOT NULL ORDER BY date"),
                         {"t": tk}).fetchall():
                     if d is not None and px:
                         year_end[d.year] = float(px)
@@ -765,13 +783,12 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     eps_y = i[4] if i else None
                     # ações do ano: NI/LPA (exato) com guarda 0,2–5× das atuais;
                     # senão usa ações atuais (aproximação).
-                    shares_y, exact = shares, False
+                    shares_y, exact = None, False
                     if eps_y and ni:
                         cand = float(ni) / float(eps_y)
                         if cand > 0 and (not shares or 0.2 <= cand / shares <= 5.0):
                             shares_y, exact = cand, True
-                    eps_use = (float(eps_y) if exact and eps_y
-                               else (float(ni) / shares_y if (ni is not None and shares_y) else None))
+                    eps_use = float(eps_y) if exact and eps_y else None
                     f_y = {
                         "revenue": i[0] if i else None, "ebit": i[1] if i else None,
                         "ebitda": i[2] if i else None, "net_income": ni,
@@ -788,6 +805,7 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                                                   period="annual", year=y,
                                                   low_conf=None if exact else mx.ANNUAL_APPROX)
                 if rows_out:
+                    repo.append_metric_vintages(conn, rows_out)
                     prog["indicadores"] += repo.upsert(conn, "calculated_metrics", rows_out)
                     prog["tickers"] += 1
         except Exception as exc:

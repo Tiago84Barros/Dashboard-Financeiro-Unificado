@@ -1126,6 +1126,12 @@ def render(show_header: bool = True) -> None:
             icon="ℹ️",
         )
         return
+    if model.get("is_stale"):
+        st.error(
+            "O portfólio salvo usa uma versão antiga da metodologia. Recalcule "
+            "e salve uma nova carteira na aba Criação de Portfólio antes da análise."
+        )
+        return
 
     items = model["items"]
     tickers_tuple = tuple(sorted(it["ticker"] for it in items))

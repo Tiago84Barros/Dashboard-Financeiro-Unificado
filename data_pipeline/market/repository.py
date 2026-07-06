@@ -195,7 +195,22 @@ def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
                 return 0
     collist = ", ".join(f'"{c}"' for c in cols)
     upd = _UPDATE_COLS[table]
-    setlist = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in upd if c in cols)
+    assignments = []
+    for c in upd:
+        if c not in cols:
+            continue
+        if table == "assets" and c == "asset_type":
+            # Não rebaixa uma classificação forte já confirmada por pipelines
+            # especializados (FII/ETF/BDR) para inferências fracas de quote.
+            assignments.append(
+                '"asset_type" = CASE '
+                "WHEN market.assets.asset_type IN ('fii','etf','bdr') "
+                " AND EXCLUDED.asset_type IN ('stock','unit','other') "
+                "THEN market.assets.asset_type ELSE EXCLUDED.asset_type END"
+            )
+        else:
+            assignments.append(f'"{c}" = EXCLUDED."{c}"')
+    setlist = ", ".join(assignments)
     conflict = _CONFLICT[table]
     action = f"DO UPDATE SET {setlist}" if setlist else "DO NOTHING"
 
@@ -237,6 +252,86 @@ def upsert(conn, table: str, rows: list[dict]) -> int:
     if table not in _CONFLICT:
         raise ValueError(f"tabela desconhecida: {table}")
     return _upsert(conn, table, rows)
+
+
+def append_metric_vintages(conn, rows: list[dict]) -> int:
+    """Acrescenta versões imutáveis quando uma métrica efetivamente muda.
+
+    Bancos sem a migration 021 continuam operando, mas retornam zero. Para
+    demonstrações anuais, ``available_at`` usa o maior ``first_seen_at`` das
+    três demonstrações do exercício; isso é um proxy conservador da data em
+    que o conjunto necessário ao cálculo estava disponível.
+    """
+    if not rows:
+        return 0
+    exists = conn.execute(text("""
+        SELECT to_regclass('market.calculated_metric_vintages') IS NOT NULL
+    """)).scalar()
+    if not exists:
+        return 0
+
+    inserted = 0
+    availability_cache: dict[tuple[str, str, int], tuple[object, str]] = {}
+    for row in _dedup("calculated_metrics", rows):
+        ticker = str(row.get("ticker") or "")
+        period = str(row.get("period") or "")
+        year = int(row.get("year") or 0)
+        key = (ticker, period, year)
+        if key not in availability_cache:
+            if period == "annual" and year > 0:
+                available = conn.execute(text("""
+                    SELECT MAX(first_seen_at)
+                    FROM (
+                        SELECT first_seen_at FROM market.income_statements
+                         WHERE ticker=:t AND period='annual' AND year=:y
+                        UNION ALL
+                        SELECT first_seen_at FROM market.balance_sheets
+                         WHERE ticker=:t AND period='annual' AND year=:y
+                        UNION ALL
+                        SELECT first_seen_at FROM market.cash_flow_statements
+                         WHERE ticker=:t AND period='annual' AND year=:y
+                    ) s
+                """), {"t": ticker, "y": year}).scalar()
+                availability_cache[key] = (
+                    available,
+                    "first_seen_proxy" if available is not None else "migration_baseline",
+                )
+            else:
+                availability_cache[key] = (None, "migration_baseline")
+        available_at, quality = availability_cache[key]
+
+        result = conn.execute(text("""
+            INSERT INTO market.calculated_metric_vintages (
+                ticker, period, year, quarter, metric_name, metric_value,
+                calculation_method, source, confidence_score,
+                available_at, availability_quality
+            )
+            SELECT :ticker, :period, :year, :quarter, :metric_name, :metric_value,
+                   :calculation_method, :source, :confidence_score,
+                   COALESCE(:available_at, NOW()), :availability_quality
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM (
+                    SELECT metric_value, calculation_method, confidence_score
+                    FROM market.calculated_metric_vintages
+                    WHERE ticker=:ticker AND period=:period
+                      AND year=:year AND quarter=:quarter
+                      AND metric_name=:metric_name
+                    ORDER BY recorded_at DESC, id DESC
+                    LIMIT 1
+                ) v
+                WHERE v.metric_value IS NOT DISTINCT FROM :metric_value
+                  AND v.calculation_method IS NOT DISTINCT FROM :calculation_method
+                  AND v.confidence_score IS NOT DISTINCT FROM :confidence_score
+            )
+        """), {
+            **row,
+            "quarter": int(row.get("quarter") or 0),
+            "available_at": available_at,
+            "availability_quality": quality,
+        })
+        inserted += max(int(result.rowcount or 0), 0)
+    return inserted
 
 
 def save_raw_payload(conn, ticker, endpoint, payload, status="success", error=None) -> int | None:

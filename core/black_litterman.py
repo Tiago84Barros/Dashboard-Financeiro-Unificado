@@ -239,57 +239,16 @@ def bl_combined_optimization(
 def _project_capped_simplex(w_target: np.ndarray, cap: float) -> np.ndarray:
     """Projeta vetor w_target no simplex restrito {w >= 0, sum(w)=1, w_i <= cap}.
 
-    Algoritmo iterativo robusto:
-      1. Clipa em [0, cap]
-      2. Identifica tickers "lockados" no cap
-      3. Redistribui o restante (1 - soma_lockados) proporcionalmente
-         aos pesos originais dos tickers livres (incluindo zeros, com
-         fallback para uniforme se todos forem zero)
-      4. Repete enquanto algum free estourar cap (raro com bons inputs)
-
-    Se cap * N < 1, retorna uniforme cap*N (impossível atingir 100%
-    com restrição — todos vão pro cap).
+    Usa a mesma projeção auditável das demais carteiras. Se ``cap * N < 1``,
+    lança erro explícito em vez de renormalizar e violar o cap.
     """
-    n = len(w_target)
-    if cap * n < 0.999:
-        # Impossível somar 1 respeitando o cap → tudo no cap (sum < 1)
-        # Renormaliza para forçar sum=1, mas isso viola cap. Aceita.
-        out = np.full(n, cap)
-        return out / out.sum()
+    from core.portfolio_constraints import project_capped_simplex
 
-    w = np.clip(w_target, 0.0, None)
-    if w.sum() <= 1e-12:
-        w = np.full(n, 1.0 / n)
-
-    for _ in range(50):  # convergência típica em 2-3 iters
-        # Locked = at cap
-        locked_mask = w >= cap - 1e-12
-        if not locked_mask.any():
-            # Sem locked, basta normalizar
-            return w / w.sum()
-        w[locked_mask] = cap
-        remaining = 1.0 - cap * locked_mask.sum()
-        free_mask = ~locked_mask
-        if not free_mask.any():
-            # Todos lockados — soma <= cap*n; força sum=1 violando cap
-            return w / w.sum()
-        if remaining <= 1e-12:
-            # Nada para distribuir; zera frees
-            w[free_mask] = 0.0
-            return w / w.sum() if w.sum() > 0 else w
-        # Distribui proporcional aos w_target originais dos frees
-        target_free = w_target[free_mask]
-        target_free = np.clip(target_free, 0.0, None)
-        if target_free.sum() <= 1e-12:
-            w[free_mask] = remaining / free_mask.sum()
-        else:
-            w[free_mask] = target_free / target_free.sum() * remaining
-        # Verifica se algum free estourou cap
-        if (w[free_mask] > cap + 1e-12).any():
-            continue  # próxima iteração lockará mais
-        return w
-    # Fallback: renormaliza
-    return w / w.sum() if w.sum() > 0 else np.full(n, 1.0 / n)
+    projected = project_capped_simplex(
+        {str(i): float(value) for i, value in enumerate(w_target)},
+        cap,
+    )
+    return np.asarray([projected[str(i)] for i in range(len(w_target))])
 
 
 def apply_bl_to_markowitz(
