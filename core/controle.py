@@ -332,9 +332,14 @@ _SQL_GASTOS_CARTAO_MENSAL = """
         SUM(ABS(t.amount))                   AS total
     FROM   transactions t
     LEFT JOIN categories c ON c.id = t.category_id
+    LEFT JOIN accounts   a ON a.id = t.account_id
     WHERE  t.user_id = :uid
       AND  c.name    = 'Pagamento de Cartão'
-      AND  (t.source IS NULL OR t.source = 'manual')
+      -- Fluxo de caixa: pagamentos que SAÍRAM da conta (lançamento manual OU
+      -- extrato bancário source='import'). Exclui apenas a fatura CSV do cartão
+      -- (account_type='credit_card' + source='csv'), que é fluxo FUTURO e vive só
+      -- na aba Cartão de Crédito. As duas naturezas não se misturam.
+      AND  NOT (COALESCE(a.type, '') = 'credit_card' AND COALESCE(t.source, '') = 'csv')
     GROUP  BY ano, mes
     ORDER  BY ano, mes
 """

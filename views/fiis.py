@@ -80,6 +80,15 @@ def render(show_header: bool = True) -> None:
         st.info("Ainda não há FIIs no banco. Rode `python run_market_ingest.py fiis` "
                 "(+ `fiis-cvm`, `fiis-series`) para popular.")
         return
+    df = df.copy()
+    # P/VP efetivo (fix auditoria FII 2026-07): preço ÷ VPA CVM quando
+    # disponível — a MESMA fonte da aba Busca; senão o priceToBook da brapi.
+    # Score e exibição passam a usar o mesmo número.
+    if "VPA" in df.columns:
+        df["P/VP"] = [
+            _fz.pvp_efetivo(p, v, b)
+            for p, v, b in zip(df["Preço"], df["VPA"], df["P/VP"])
+        ]
     # Recalcula na leitura para não misturar versões de score após ingestões parciais.
     score_input = [
         {
@@ -89,7 +98,6 @@ def render(show_header: bool = True) -> None:
         for _, r in df.iterrows()
     ]
     score_map = {r["ticker"]: r["score"] for r in _fz.rank_fiis(score_input)}
-    df = df.copy()
     df["Score"] = df["Ticker"].map(score_map)
     ranked = df[df["Score"].notna()].sort_values(
         "Score", ascending=False
@@ -256,8 +264,10 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
                 "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
             })
     ts = df["updated_at"].max() if "updated_at" in df.columns else None
-    st.caption(f"Score v{_fz.SCORE_VERSION} = DY 12m (45%) + proximidade do P/VP a 0,90 "
-               f"(30%) + liquidez (25%). {fora} fora do ranking por dado ausente ou "
+    st.caption(f"Score v{_fz.SCORE_VERSION} = DY 12m **ex-amortizações** (45%) + "
+               f"proximidade do P/VP a 0,90 (30%) + liquidez **6 meses** (25%). "
+               f"P/VP = preço ÷ VPA CVM quando disponível (senão brapi). "
+               f"{fora} fora do ranking por dado ausente ou "
                f"faixa de plausibilidade (DY 0–20% · P/VP 0,55–1,30 · "
                f"liquidez ≥ R$ 200 mil/dia). "
                f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}.")
@@ -412,6 +422,24 @@ def _tab_busca(df: pd.DataFrame) -> None:
 # ── Tab 3: Carteira-modelo ────────────────────────────────────────────────────
 
 def _tab_carteira(ranked: pd.DataFrame) -> None:
+    # Transparência de defasagem (fix auditoria FII 2026-07): a decisão usa
+    # dados CVM do último informe publicado e vacância de scraping — o
+    # usuário precisa ver de QUANDO são antes de montar a carteira.
+    _avisos = []
+    if "cvm_ref_date" in ranked.columns:
+        _ref_cvm = pd.to_datetime(ranked["cvm_ref_date"], errors="coerce").max()
+        if pd.notna(_ref_cvm):
+            _avisos.append(f"dados CVM (VPA/PL/composição) do informe de "
+                           f"**{_ref_cvm.strftime('%m/%Y')}**")
+    if "vacancia_ref_date" in ranked.columns:
+        _ref_vac = pd.to_datetime(ranked["vacancia_ref_date"], errors="coerce").max()
+        if pd.notna(_ref_vac):
+            _avisos.append(f"vacância coletada por scraping em "
+                           f"**{_ref_vac.strftime('%d/%m/%Y')}** (data da coleta, "
+                           "não do dado)")
+    if _avisos:
+        st.caption("📅 Defasagem das fontes: " + " · ".join(_avisos) +
+                   ". Preço/DY/liquidez vêm da última ingestão brapi.")
     modo = st.radio("Método de seleção",
                     ["🎯 Qualidade diversificada", "📊 Score padrão (DY·P/VP·liquidez)"],
                     horizontal=True, key="fii_cart_modo")

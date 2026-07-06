@@ -59,6 +59,9 @@ _MESES_NOMES = {v: k for k, v in _MESES_PT.items()}
 _FORMAS_PGTO_SAIDA = ["Conta"]
 _FORMAS_PGTO_TODOS = ["Conta"]
 _MANUAL_CARD_TERMS = ("cartao", "credito", "fatura")
+# Categoria de transferência permitida no lançamento manual (pagamento mensal da
+# fatura a partir da conta) — não é consumo de cartão, então é isenta do bloqueio.
+_MANUAL_CARD_ALLOWED = {"pagamento de cartao"}
 _CC_IMPORTED_SOURCES = {"csv"}
 
 # Categorias pré-definidas por tipo (igual ao app original)
@@ -68,7 +71,7 @@ _CAT_ENTRADA = [
 _CAT_SAIDA = [
     "Mercado", "Compras", "Condomínio", "Luz", "Internet", "Transporte",
     "Combustível", "Saúde", "Despesas Domésticas", "Lazer", "Assinaturas",
-    "Educação", "Restaurante", "Financiamento", "Outros",
+    "Educação", "Restaurante", "Financiamento", "Pagamento de Cartão", "Outros",
 ]
 _CAT_INVESTIMENTO = [
     "Renda Fixa", "Renda Variável", "Exterior", "Reserva de Despesa", "Outros",
@@ -101,8 +104,14 @@ def _norm_ascii(value: object) -> str:
 
 
 def _is_manual_card_related_text(value: object) -> bool:
-    """True para texto relacionado a cartao/fatura no lancamento manual."""
+    """True para texto relacionado a cartao/fatura no lancamento manual.
+
+    A categoria de pagamento mensal da fatura ("Pagamento de Cartão") é permitida:
+    representa a transferência da conta que quita a fatura, não o consumo do cartão.
+    """
     text = _norm_ascii(value)
+    if text in _MANUAL_CARD_ALLOWED:
+        return False
     return any(term in text for term in _MANUAL_CARD_TERMS)
 
 
@@ -416,13 +425,18 @@ def _sidebar_render(ano: int, mes: int) -> None:
             st.sidebar.error("Cartão de crédito deve ser lançado somente por upload da fatura CSV.")
             return
 
-        # Resolve conta
+        # Resolve conta de movimentação (fluxo de caixa). Exclui cartão e prioriza
+        # a conta corrente (checking): sem isso, cai na 1ª conta em ordem alfabética
+        # — que pode ser uma conta de investimento (ex.: "B3 - Carteira Consolidada")
+        # e não tem nada a ver com o fluxo de caixa manual.
         opcoes  = get_opcoes_formulario()
-        contas  = [
-            c for c in opcoes.get("contas", [])
-            if c.get("tipo") != "credit_card" and c.get("type") != "credit_card"
-        ]
-        conta_id = contas[0]["id"] if contas else None
+        def _tipo_conta(c: dict) -> str:
+            return (c.get("tipo") or c.get("type") or "").strip().lower()
+        contas   = [c for c in opcoes.get("contas", []) if _tipo_conta(c) != "credit_card"]
+        conta_id = next(
+            (c["id"] for c in contas if _tipo_conta(c) == "checking"),
+            contas[0]["id"] if contas else None,
+        )
         if not conta_id:
             st.sidebar.warning("Nenhuma conta de movimentação configurada.")
             return
@@ -907,6 +921,18 @@ def _tab_analises(
     dados_cartao = gastos_cartao.get(_ano_sel_str, [])
     if dados_cartao:
         import pandas as pd
+        # Densifica o eixo: mostra todos os meses do ano (jan → dez, ou jan → mês
+        # atual no ano corrente) com R$ 0 onde não houve lançamento manual, dando
+        # continuidade visual sem puxar dados do CSV (fluxo futuro).
+        _por_mes = {int(item["mes"]): float(item["total"]) for item in dados_cartao}
+        _ano_int = int(_ano_sel_str)
+        _mes_fim = (_date.today().month
+                    if _ano_int == _date.today().year else 12)
+        _mes_fim = max(_mes_fim, max(_por_mes) if _por_mes else 1)
+        dados_cartao = [
+            {"mes": m, "label": f"{m:02d}/{_ano_int}", "total": round(_por_mes.get(m, 0.0), 2)}
+            for m in range(1, _mes_fim + 1)
+        ]
         labels = [item["label"] for item in dados_cartao]
         totais = [item["total"] for item in dados_cartao]
 

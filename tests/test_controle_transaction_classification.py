@@ -93,7 +93,8 @@ def test_table_filters_use_canonical_type_not_amount_sign():
 
 def test_manual_sidebar_allows_only_account_payment_flow():
     assert _FORMAS_PGTO_SAIDA == ["Conta"]
-    assert "Pagamento de Cartão" not in _CAT_SAIDA
+    # "Pagamento de Cartão" é permitida: quitação mensal da fatura via conta.
+    assert "Pagamento de Cartão" in _CAT_SAIDA
     assert not any("cart" in item.lower() for item in _FORMAS_PGTO_SAIDA)
     assert not any("pix" in item.lower() for item in _FORMAS_PGTO_SAIDA)
     assert not any("dinheiro" in item.lower() for item in _FORMAS_PGTO_SAIDA)
@@ -109,7 +110,8 @@ def test_manual_sidebar_uses_only_outros_not_outra_category():
 
 
 def test_manual_sidebar_blocks_card_related_free_text():
-    assert _is_manual_card_related_text("Pagamento de Cartão")
+    # "Pagamento de Cartão" (quitação da fatura) é permitida; consumo é bloqueado.
+    assert not _is_manual_card_related_text("Pagamento de Cartão")
     assert _is_manual_card_related_text("credito da fatura")
     assert _is_manual_card_related_text("compras do cartão")
     assert not _is_manual_card_related_text("Mercado")
