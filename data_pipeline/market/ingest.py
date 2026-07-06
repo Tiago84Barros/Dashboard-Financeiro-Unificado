@@ -161,6 +161,7 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
             dem += repo.upsert(conn, t, data[t])
         prog["demonstracoes"] += dem
         prog["dividendos"] += repo.upsert(conn, "dividends", data["dividends"])
+        repo.append_metric_vintages(conn, data["calculated_metrics"])
         prog["indicadores"] += repo.upsert(conn, "calculated_metrics", data["calculated_metrics"])
         # qualidade: sinaliza ausências relevantes
         if full and dem == 0:
@@ -573,6 +574,7 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
                 for t in ("income_statements", "balance_sheets", "cash_flow_statements"):
                     prog["demonstracoes"] += repo.upsert(conn, t, data[t])
                 prog["dividendos"] += repo.upsert(conn, "dividends", data["dividends"])
+                repo.append_metric_vintages(conn, data["calculated_metrics"])
                 prog["indicadores"] += repo.upsert(conn, "calculated_metrics", data["calculated_metrics"])
             prog["tickers"] += 1
         except Exception as exc:
@@ -806,7 +808,10 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                                                   low_conf=None if exact else mx.ANNUAL_APPROX)
                 if rows_out:
                     repo.append_metric_vintages(conn, rows_out)
-                    prog["indicadores"] += repo.upsert(conn, "calculated_metrics", rows_out)
+                    removed = repo.replace_metric_snapshot(conn, tk, rows_out)
+                    if removed:
+                        logger.info("reprocess %s: %s métricas obsoletas removidas", tk, removed)
+                    prog["indicadores"] += len(rows_out)
                     prog["tickers"] += 1
         except Exception as exc:
             logger.warning("reprocess %s: %s", tk, exc)

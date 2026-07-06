@@ -1,8 +1,8 @@
 # README — Execução dos Scripts SQL
 
 **Banco:** Dashboard Financeiro Unificado (Supabase — schema `public`)
-**Fase:** 4.3 — Scripts SQL não destrutivos
-**Data:** 2026-05-13
+**Fase:** Schema operacional completo
+**Atualizado:** 2026-07-06
 
 ---
 
@@ -20,8 +20,24 @@ Execute os arquivos **exatamente nesta sequência** no SQL Editor do Supabase:
 | 6 | `006_rls_policies.sql` | Segurança Row Level Security | Role `app4_reader`, 15 tabelas com RLS, 17 policies |
 | 7 | `007_views.sql` | Views analíticas | 6 views: `v_account_balance`, `v_monthly_cashflow`, `v_category_spending_mtd`, `v_budget_usage_mtd`, `v_investment_summary`, `v_net_worth` |
 | 8 | `008_seed_reference_data.sql` | Dados iniciais | 5 benchmarks, 23 categorias do sistema |
+| 9 | `009_schema_amendments.sql` | Ajustes do schema base | Colunas e constraints incrementais |
+| 10 | `010_portfolio_position_snapshots.sql` | Snapshots de carteira | Histórico de posições |
+| 11 | `011_b3_portfolio_models.sql` | Carteira modelo B3 | Modelos e itens |
+| 12 | `012_bank_statement_imports.sql` | Importação bancária | Auditoria de lotes |
+| 13 | `013_market_brapi_schema.sql` | Schema de mercado | `market.*` |
+| 14 | `014_legacy_isolation.sql` | Isolamento legado | Compatibilidade |
+| 15 | `015_market_fiis.sql` | FIIs | Ranking e métricas |
+| 16 | `016_fiis_cvm.sql` | Dados CVM de FIIs | Identificação e patrimônio |
+| 17 | `017_fiis_detalhe.sql` | Detalhes dos FIIs | Imóveis e métricas mensais |
+| 18A | `018_fiis_hardening.sql` | Restrições de FIIs | Integridade e RLS |
+| 18B | `018_rls_portfolio_models.sql` | RLS das carteiras B3 | Policies e unicidade |
+| 19 | `019_point_in_time.sql` | Proveniência contábil | `first_seen_at` e payload |
+| 20 | `020_b3_portfolio_hardening.sql` | Restrições da carteira B3 | Pesos e versão |
+| 21 | `021_market_metric_vintages.sql` | Vintages imutáveis | Histórico das métricas |
+| 22 | `022_market_pit_cutover.sql` | Corte temporal PIT | Quarentena do baseline |
 
-> **Regra:** Cada arquivo depende do anterior. Nunca pule etapas.
+> **Regra:** execute exatamente na ordem acima. Os dois arquivos 018 são
+> obrigatórios; a letra A/B apenas desambigua a ordem documental.
 
 ---
 
@@ -80,7 +96,7 @@ Antes de executar qualquer script, confirme:
 
 ## 5. Checklist Pós-execução
 
-Após executar todos os 8 arquivos, verifique:
+Após executar todos os scripts até 022, verifique:
 
 - [ ] **22 tabelas criadas** — Table Editor deve listar:
   - `profiles`, `financial_institutions`, `accounts`, `cards`, `categories`, `transactions`, `budgets`, `financial_goals`, `debts`, `assets`, `portfolios`, `portfolio_positions`, `investment_transactions`, `dividends`, `asset_quotes`, `benchmarks`, `benchmark_quotes`, `alerts`, `user_settings`, `import_batches`, `import_logs`, `migration_source_map`

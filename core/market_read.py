@@ -140,8 +140,14 @@ def _multiplos_long(ticker: str | None = None) -> pd.DataFrame:
         SELECT cm.ticker AS "Ticker", COALESCE(ly.y, 0) AS year,
                cm.metric_name, cm.metric_value
         FROM market.calculated_metrics cm
+        JOIN market.assets a ON a.ticker=cm.ticker
+          AND a.asset_type IN ('stock','unit')
+          AND a.is_active IS TRUE
+          AND a.company_id IS NOT NULL
         LEFT JOIN ly ON ly.ticker = cm.ticker
-        WHERE cm.period = 'ttm' {where_tk}
+        WHERE cm.period = 'ttm'
+          AND (cm.confidence_score IS NULL OR cm.confidence_score >= 80)
+          {where_tk}
     """, params)
 
 
@@ -181,16 +187,26 @@ def _annual_upto_long(ano_ref_max: int) -> pd.DataFrame:
         ly AS (
             SELECT cm.ticker, MAX(cm.year) AS y
             FROM market.calculated_metrics cm
+            JOIN market.assets a ON a.ticker=cm.ticker
+              AND a.asset_type IN ('stock','unit')
+              AND a.is_active IS TRUE
+              AND a.company_id IS NOT NULL
             JOIN stmt s ON s.ticker = cm.ticker
             WHERE cm.period = 'annual' AND cm.year > 0
+              AND (cm.confidence_score IS NULL OR cm.confidence_score >= 80)
               AND cm.year <= LEAST(CAST(:amax AS int), s.ymax)
             GROUP BY cm.ticker
         )
         SELECT cm.ticker AS "Ticker", cm.year AS year,
                cm.metric_name, cm.metric_value
         FROM market.calculated_metrics cm
+        JOIN market.assets a ON a.ticker=cm.ticker
+          AND a.asset_type IN ('stock','unit')
+          AND a.is_active IS TRUE
+          AND a.company_id IS NOT NULL
         JOIN ly ON ly.ticker = cm.ticker AND ly.y = cm.year
         WHERE cm.period = 'annual'
+          AND (cm.confidence_score IS NULL OR cm.confidence_score >= 80)
     """, {"amax": int(ano_ref_max)})
 
 
@@ -309,6 +325,8 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
                        available_at, availability_quality
                 FROM market.calculated_metric_vintages
                 WHERE period = 'annual'
+                  AND availability_quality <> 'migration_baseline'
+                  AND (confidence_score IS NULL OR confidence_score >= 80)
                 ORDER BY ticker, year, quarter, metric_name, recorded_at ASC
             ),
             stmt AS (
@@ -321,6 +339,9 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
                    cm.metric_name, cm.metric_value,
                    cm.available_at, cm.availability_quality
             FROM first_vintage cm
+            JOIN market.assets a ON a.ticker=cm.ticker
+              AND a.asset_type IN ('stock','unit')
+              AND a.company_id IS NOT NULL
             JOIN stmt s ON s.ticker = cm.ticker
             WHERE cm.year <= s.ymax AND {where_sql}
         """, params)
@@ -334,8 +355,14 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
         SELECT cm.ticker AS "Ticker", cm.year AS year,
                cm.metric_name, cm.metric_value
         FROM market.calculated_metrics cm
+        JOIN market.assets a ON a.ticker=cm.ticker
+          AND a.asset_type IN ('stock','unit')
+          AND a.company_id IS NOT NULL
         JOIN stmt s ON s.ticker = cm.ticker
-        WHERE cm.period = 'annual' AND cm.year <= s.ymax AND {where_sql}
+        WHERE cm.period = 'annual'
+          AND cm.year <= s.ymax
+          AND (cm.confidence_score IS NULL OR cm.confidence_score >= 80)
+          AND {where_sql}
     """, params)
 
 

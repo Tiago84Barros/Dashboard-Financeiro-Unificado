@@ -12,6 +12,7 @@ from views.empresas_b3 import (
     _aplicar_diversificacao_setorial,
     _apply_cap_soft,
     _score_historico_ano,
+    _simular_backtest,
 )
 
 
@@ -48,9 +49,15 @@ def test_walk_forward_tem_holdouts_separados_e_pesos_viaveis():
         index=idx,
         columns=list("ABCDE"),
     )
+    score_history = {
+        pd.Timestamp(year, 4, 1): {
+            "A": 90 - (year % 3), "B": 80, "C": 70, "D": 60, "E": 50,
+        }
+        for year in range(2018, 2025)
+    }
     params, diagnostics = purged_walk_forward_calibration(
         prices,
-        {"A": 90, "B": 80, "C": 70, "D": 60, "E": 50},
+        score_history,
         list("ABCDE"),
         gamma_grid=(0.5, 1.0),
         cap_grid=(0.20, 0.25),
@@ -62,6 +69,8 @@ def test_walk_forward_tem_holdouts_separados_e_pesos_viaveis():
         embargo_months=2,
     )
     assert diagnostics["folds"] >= 2
+    assert diagnostics["development_folds"] >= 1
+    assert "final_audit_objective" in diagnostics
     assert diagnostics["purge_months"] == 3
     assert diagnostics["embargo_months"] == 2
     assert len(params) == 3
@@ -131,3 +140,47 @@ def test_inferencia_ticker_11_nao_chama_fundo_de_unit():
         "DESCON11",
         {"longName": "Ativo sem classificação confiável"},
     ) == "other"
+
+
+def test_backtest_preserva_aporte_sem_cotacao_como_caixa():
+    tickers = ["AAAA3", "BBBB3", "CCCC3", "DDDD3", "EEEE3"]
+    index = pd.to_datetime(["2022-04-30", "2022-05-31", "2022-06-30"])
+    prices = pd.DataFrame(
+        [[10.0] * 5, [np.nan] * 5, [10.0] * 5],
+        index=index,
+        columns=tickers,
+    )
+    history = {
+        ticker: pd.DataFrame([{
+            "Ticker": ticker,
+            "Data": pd.Timestamp("2021-12-31"),
+            "ROE": 0.10 + idx * 0.01,
+        }])
+        for idx, ticker in enumerate(tickers)
+    }
+    result, _, _ = _simular_backtest(
+        prices,
+        pd.DataFrame(),
+        history,
+        tickers,
+        aporte=1000.0,
+        data_inicio=pd.Timestamp("2022-01-01"),
+        taxa_selic_aa=0.0,
+        pesos={"ROE": (1.0, True)},
+        tk_grupos={ticker: {} for ticker in tickers},
+        top_n_max=5,
+        usar_gamma=True,
+        cap=0.25,
+    )
+    assert result.iloc[1]["Estratégia"] == pytest.approx(2000.0)
+    assert result.iloc[-1]["Estratégia"] == pytest.approx(3000.0)
+    assert result.iloc[-1]["Benchmark"] == pytest.approx(3000.0)
+    assert result.iloc[-1]["Tesouro Selic"] == pytest.approx(3000.0)
+
+
+def test_benjamini_hochberg_monotono_e_conservador():
+    from views.portfolio_b3 import _benjamini_hochberg
+
+    adjusted = _benjamini_hochberg([0.001, 0.02, 0.20, 0.90])
+    assert adjusted[0] <= adjusted[1] <= adjusted[2] <= adjusted[3]
+    assert all(q >= p for p, q in zip([0.001, 0.02, 0.20, 0.90], adjusted))

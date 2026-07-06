@@ -44,6 +44,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import inspect as sa_inspect
 
 from core.database import get_engine
+from core.import_guard import (
+    acquire_transaction_import_lock,
+    import_payload_digest,
+)
 
 # Tabelas permitidas como destino (evita injeção via nomes de tabela)
 _TABELAS_VALIDAS = {
@@ -161,6 +165,7 @@ class ImportadorCSV:
                 res.erros.append(f"Linha {idx}: {exc}")
                 res.total_ignorados += 1
 
+        _assign_deterministic_ids("transacoes", registros)
         if not dry_run and registros:
             _inserir_em_lote(
                 engine=engine,
@@ -231,6 +236,7 @@ class ImportadorCSV:
                 res.erros.append(f"Linha {idx}: {exc}")
                 res.total_ignorados += 1
 
+        _assign_deterministic_ids("operacoes", registros)
         if not dry_run and registros:
             _inserir_em_lote(
                 engine=engine,
@@ -303,6 +309,7 @@ class ImportadorCSV:
                 res.erros.append(f"Linha {idx}: {exc}")
                 res.total_ignorados += 1
 
+        _assign_deterministic_ids("proventos", registros)
         if not dry_run and registros:
             _inserir_em_lote(
                 engine=engine,
@@ -465,6 +472,13 @@ class ImportadorPostgres:
                  for dest, src in mapeamento.items()}
                 for linha in linhas
             ]
+            colunas_destino_db = {
+                column["name"]
+                for column in sa_inspect(engine_destino).get_columns(tabela_destino)
+            }
+            if "id" in colunas_destino_db and "id" not in cols_destino:
+                _assign_deterministic_ids(tabela_destino, registros)
+                cols_destino = ["id", *cols_destino]
 
             _inserir_em_lote(
                 engine=engine_destino,
@@ -566,6 +580,27 @@ def _parse_data(valor: object) -> Optional[date]:
         return None
 
 
+def _assign_deterministic_ids(tabela: str, registros: list[dict]) -> None:
+    """
+    Gera UUIDs estáveis a partir do conteúdo lógico da linha.
+
+    O contador preserva ocorrências realmente repetidas dentro do mesmo
+    arquivo, enquanto uma reimportação do mesmo conjunto recria os mesmos IDs.
+    """
+    occurrences: dict[str, int] = {}
+    for registro in registros:
+        logical = {key: value for key, value in registro.items() if key != "id"}
+        row_digest = import_payload_digest(tabela, logical)
+        occurrences[row_digest] = occurrences.get(row_digest, 0) + 1
+        occurrence = occurrences[row_digest]
+        registro["id"] = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"app4-generic-import|{tabela}|{row_digest}|{occurrence}",
+            )
+        )
+
+
 def _resolver_ativos_em_lote(
     engine,
     tickers: list[str],
@@ -597,16 +632,17 @@ def _resolver_ativos_em_lote(
         # Cria os que não existem
         ausentes = [t for t in tickers_upper if t not in mapa]
         for ticker in ausentes:
-            novo_id = str(uuid.uuid4())
-            conn.execute(
+            created = conn.execute(
                 text("""
-                    INSERT INTO ativos (id, ticker, nome, classe)
-                    VALUES (:id, :ticker, :nome, 'indefinida')
-                    ON CONFLICT (ticker) DO NOTHING
+                    INSERT INTO ativos (ticker, nome, classe)
+                    VALUES (:ticker, :nome, 'indefinida')
+                    ON CONFLICT (ticker) DO UPDATE SET nome = EXCLUDED.nome
+                    RETURNING id
                 """),
-                {"id": novo_id, "ticker": ticker, "nome": ticker},
-            )
-            mapa[ticker] = novo_id
+                {"ticker": ticker, "nome": ticker},
+            ).fetchone()
+            if created:
+                mapa[ticker] = str(created.id)
 
     return mapa
 
@@ -631,7 +667,15 @@ def _inserir_em_lote(
 
     try:
         with engine.begin() as conn:
-            conn.execute(
+            acquire_transaction_import_lock(
+                conn,
+                f"generic-table-{tabela}",
+                [
+                    {key: value for key, value in registro.items() if key != "id"}
+                    for registro in registros
+                ],
+            )
+            result = conn.execute(
                 text(f"""
                     INSERT INTO "{tabela}" ({cols_sql})
                     VALUES ({vals_sql})
@@ -639,6 +683,10 @@ def _inserir_em_lote(
                 """),
                 registros,
             )
-        resultado.total_inseridos = len(registros)
+        inserted = result.rowcount
+        if inserted is None or inserted < 0:
+            inserted = len(registros)
+        resultado.total_inseridos = int(inserted)
+        resultado.total_ignorados += max(len(registros) - int(inserted), 0)
     except SQLAlchemyError as exc:
         resultado.erros.append(f"Erro ao inserir em {tabela}: {exc}")

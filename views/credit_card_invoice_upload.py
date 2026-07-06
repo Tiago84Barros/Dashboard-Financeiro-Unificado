@@ -141,6 +141,17 @@ def render_upload_fatura_cartao() -> None:
         help="Modelo com Data de Compra, Nome no Cartão, Final do Cartão, Categoria, Descrição, Parcela e valores.",
     )
 
+    # O date_input já existe antes do upload e, por causa da chave persistente,
+    # o Streamlit não reaplica seu argumento `value` quando o arquivo muda.
+    # Sincroniza explicitamente uma nova fatura com a data presente no nome.
+    if uploaded is not None:
+        previous_file = st.session_state.get("settings_cc_invoice_due_date_file")
+        if uploaded.name != previous_file:
+            st.session_state["settings_cc_invoice_due_date"] = (
+                _infer_due_date_from_filename(uploaded.name)
+            )
+            st.session_state["settings_cc_invoice_due_date_file"] = uploaded.name
+
     col_due, col_account = st.columns([1, 2], gap="small")
     with col_due:
         due_date = st.date_input(

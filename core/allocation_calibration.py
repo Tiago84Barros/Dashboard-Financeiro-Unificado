@@ -1,11 +1,12 @@
-"""Calibração temporal dos parâmetros de alocação.
+"""Nested walk-forward para parâmetros de transformação score → pesos.
 
-O score cross-sectional é tratado como entrada. Os parâmetros de transformação
-do score em pesos são escolhidos apenas pelo desempenho agregado em blocos
-futuros, separados do histórico anterior por um gap temporal.
+Cada fold escolhe os hiperparâmetros somente no histórico anterior e mede a
+escolha no bloco futuro. O último bloco é reservado como auditoria final e não
+participa da escolha dos parâmetros devolvidos.
 """
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping
 
 import numpy as np
@@ -15,6 +16,9 @@ from core.portfolio_constraints import (
     InfeasiblePortfolioConstraint,
     project_capped_simplex,
 )
+
+
+Params = tuple[float, float, float]
 
 
 def _score_weights(
@@ -36,16 +40,67 @@ def _score_weights(
     return project_capped_simplex(tilted, cap)
 
 
-def _holdout_objective(
+def _normalized_schedule(
+    score_history: Mapping[object, Mapping[str, float]],
+) -> list[tuple[pd.Timestamp, Mapping[str, float]]]:
+    schedule = []
+    for date, scores in score_history.items():
+        ts = pd.Timestamp(date)
+        if ts.tzinfo is not None:
+            ts = ts.tz_convert(None)
+        schedule.append((ts, scores))
+    return sorted(schedule, key=lambda item: item[0])
+
+
+def _dynamic_objective(
     prices_with_anchor: pd.DataFrame,
-    weights: Mapping[str, float],
+    score_history: Mapping[object, Mapping[str, float]],
+    params: Params,
+    cost_cfg=None,
 ) -> float | None:
-    """Objetivo somente no holdout; a primeira linha serve apenas de âncora."""
-    if len(prices_with_anchor) < 3:
+    """Objetivo time-weighted com scores conhecidos em cada data."""
+    if len(prices_with_anchor) < 3 or not score_history:
         return None
-    returns = prices_with_anchor[list(weights)].pct_change(fill_method=None).iloc[1:]
+    schedule = _normalized_schedule(score_history)
+    returns = prices_with_anchor.pct_change(fill_method=None).iloc[1:]
     portfolio_returns: list[float] = []
-    for _, row in returns.iterrows():
+
+    schedule_idx = -1
+    weights: dict[str, float] = {}
+    rebalance_cost = 0.0
+    for date, row in returns.iterrows():
+        date_ts = pd.Timestamp(date)
+        if date_ts.tzinfo is not None:
+            date_ts = date_ts.tz_convert(None)
+        while (
+            schedule_idx + 1 < len(schedule)
+            and schedule[schedule_idx + 1][0] <= date_ts
+        ):
+            schedule_idx += 1
+            score_map = schedule[schedule_idx][1]
+            eligible = [
+                ticker for ticker in prices_with_anchor.columns
+                if ticker in score_map and np.isfinite(float(score_map[ticker]))
+            ]
+            try:
+                new_weights = _score_weights(eligible, score_map, *params)
+                if cost_cfg is not None and getattr(cost_cfg, "ativo", False):
+                    from core.transaction_costs import is_large_cap
+                    all_tickers = set(weights) | set(new_weights)
+                    rebalance_cost = sum(
+                        abs(new_weights.get(ticker, 0.0) - weights.get(ticker, 0.0))
+                        * (
+                            cost_cfg.spread_bps_large
+                            if is_large_cap(ticker) else cost_cfg.spread_bps_small
+                        )
+                        / 2.0 / 10_000.0
+                        for ticker in all_tickers
+                    )
+                weights = new_weights
+            except (InfeasiblePortfolioConstraint, ValueError):
+                weights = {}
+        if not weights:
+            continue
         available = [
             ticker for ticker in weights
             if pd.notna(row.get(ticker)) and np.isfinite(float(row[ticker]))
@@ -55,10 +110,12 @@ def _holdout_objective(
         total_weight = sum(float(weights[t]) for t in available)
         portfolio_returns.append(
             sum(float(row[t]) * float(weights[t]) for t in available) / total_weight
+            - rebalance_cost
         )
-    if len(portfolio_returns) < 2:
-        return None
+        rebalance_cost = 0.0
 
+    if len(portfolio_returns) < 3:
+        return None
     series = pd.Series(portfolio_returns, dtype=float).clip(lower=-0.999999)
     growth = float((1.0 + series).prod())
     annual_return = growth ** (12.0 / len(series)) - 1.0
@@ -70,44 +127,34 @@ def _holdout_objective(
 
 def purged_walk_forward_calibration(
     prices: pd.DataFrame,
-    score_map: Mapping[str, float],
+    score_history: Mapping[object, Mapping[str, float]],
     tickers: Iterable[str],
     *,
     gamma_grid: Iterable[float],
     cap_grid: Iterable[float],
     soft_grid: Iterable[float],
-    defaults: tuple[float, float, float],
+    defaults: Params,
     n_folds: int = 4,
     min_train_months: int = 24,
     purge_months: int = 3,
     embargo_months: int = 2,
     shrinkage: float = 0.40,
-) -> tuple[tuple[float, float, float], dict]:
-    """Seleciona parâmetros pelo desempenho exclusivamente fora da amostra.
-
-    Cada fold usa:
-
-    ``histórico anterior | purge | holdout futuro | embargo``
-
-    O holdout nunca é incluído no cálculo do objetivo daquele fold. O próximo
-    fold pode incorporá-lo ao histórico anterior, como em walk-forward real.
-    """
+    cost_cfg=None,
+) -> tuple[Params, dict]:
+    """Nested walk-forward com último fold intocado para auditoria."""
     defaults = tuple(float(v) for v in defaults)
-    if prices.empty:
-        return defaults, {"folds": 0, "reason": "empty_prices"}
+    if prices.empty or not score_history:
+        return defaults, {"folds": 0, "reason": "missing_prices_or_score_history"}
 
-    candidates = [
-        str(t) for t in tickers
-        if str(t) in prices.columns and str(t) in score_map
-    ][:5]
+    candidates = [str(t) for t in tickers if str(t) in prices.columns]
     if len(candidates) < 2:
         return defaults, {"folds": 0, "reason": "insufficient_assets"}
-
     clean = prices[candidates].sort_index().copy()
+
     n_total = len(clean)
     gap = max(int(purge_months), 0)
     embargo = max(int(embargo_months), 0)
-    min_train = max(int(min_train_months), 6)
+    min_train = max(int(min_train_months), 12)
     available = n_total - min_train - gap
     if available < 6:
         return defaults, {"folds": 0, "reason": "insufficient_history"}
@@ -124,55 +171,73 @@ def purged_walk_forward_calibration(
         train_end = test_end + embargo
         if train_end + gap + 3 > n_total:
             break
+    if len(folds) < 2:
+        return defaults, {"folds": len(folds), "reason": "need_two_nested_folds"}
 
-    if not folds:
-        return defaults, {"folds": 0, "reason": "no_valid_fold"}
+    grid: list[Params] = [
+        (float(g), float(c), float(s))
+        for g in gamma_grid for c in cap_grid for s in soft_grid
+    ]
+    fold_results: list[dict] = []
+    for train_end, test_start, test_end in folds:
+        train_slice = clean.iloc[:train_end]
+        inner_scores: dict[Params, float] = {}
+        for params in grid:
+            objective = _dynamic_objective(
+                train_slice, score_history, params, cost_cfg=cost_cfg
+            )
+            if objective is not None and np.isfinite(objective):
+                inner_scores[params] = float(objective)
+        if not inner_scores:
+            continue
+        selected = max(inner_scores, key=inner_scores.get)
+        anchor = max(test_start - 1, train_end)
+        outer_objective = _dynamic_objective(
+            clean.iloc[anchor:test_end],
+            score_history,
+            selected,
+            cost_cfg=cost_cfg,
+        )
+        fold_results.append({
+            "train_end": train_end,
+            "test_start": test_start,
+            "test_end": test_end,
+            "selected": selected,
+            "inner_objective": inner_scores[selected],
+            "outer_objective": outer_objective,
+        })
 
-    objectives: dict[tuple[float, float, float], list[float]] = {}
-    for gamma in gamma_grid:
-        for cap in cap_grid:
-            for soft in soft_grid:
-                params = (float(gamma), float(cap), float(soft))
-                try:
-                    weights = _score_weights(
-                        candidates, score_map, params[0], params[1], params[2]
-                    )
-                except InfeasiblePortfolioConstraint:
-                    continue
-                scores: list[float] = []
-                for train_end, test_start, test_end in folds:
-                    # A linha imediatamente anterior ao holdout é somente a
-                    # âncora para calcular o primeiro retorno do bloco futuro.
-                    anchor = max(test_start - 1, train_end)
-                    objective = _holdout_objective(
-                        clean.iloc[anchor:test_end],
-                        weights,
-                    )
-                    if objective is not None and np.isfinite(objective):
-                        scores.append(float(objective))
-                if scores:
-                    objectives[params] = scores
+    if len(fold_results) < 2:
+        return defaults, {"folds": len(fold_results), "reason": "insufficient_valid_folds"}
 
-    if not objectives:
-        return defaults, {"folds": len(folds), "reason": "no_feasible_candidate"}
-
-    best = max(
-        objectives,
+    # O último fold é auditoria final: não participa da escolha.
+    development = fold_results[:-1]
+    final_audit = fold_results[-1]
+    counts = Counter(result["selected"] for result in development)
+    winner = max(
+        counts,
         key=lambda params: (
-            float(np.median(objectives[params])),
-            -float(np.std(objectives[params])),
+            counts[params],
+            np.median([
+                result["inner_objective"]
+                for result in development if result["selected"] == params
+            ]),
         ),
     )
     final = tuple(
-        round(best[i] * (1.0 - shrinkage) + defaults[i] * shrinkage, 3)
+        round(winner[i] * (1.0 - shrinkage) + defaults[i] * shrinkage, 3)
         for i in range(3)
     )
     return final, {
-        "folds": len(folds),
+        "folds": len(fold_results),
+        "development_folds": len(development),
         "test_size_months": test_size,
         "purge_months": gap,
         "embargo_months": embargo,
-        "best_raw": best,
-        "median_oos_objective": float(np.median(objectives[best])),
+        "winner_raw": winner,
+        "final_audit_selected": final_audit["selected"],
+        "final_audit_objective": final_audit["outer_objective"],
+        "final_audit_start": str(clean.index[final_audit["test_start"]].date()),
         "assets": candidates,
+        "costs_enabled": bool(cost_cfg is not None and getattr(cost_cfg, "ativo", False)),
     }

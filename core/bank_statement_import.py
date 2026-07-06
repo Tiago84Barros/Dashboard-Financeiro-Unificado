@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from core.config import settings
 from core.database import get_engine
+from core.import_guard import acquire_transaction_import_lock
 
 logger = logging.getLogger(__name__)
 
@@ -1251,6 +1252,13 @@ def import_bank_statement_pdf(
         rules = _fetch_rules(conn, owner, banco)
         rows = classify_bank_movements(parsed["rows"], categories, rules)
         category_by_id = {str(category["id"]): category for category in categories}
+        acquire_transaction_import_lock(
+            conn,
+            "bank-statement",
+            owner,
+            banco,
+            sorted(row.get("hash_lancamento") for row in rows),
+        )
 
         for row in rows:
             params = {
@@ -1361,6 +1369,13 @@ def import_bank_statement_rows(
 
     owner = _owner_id()
     inserted = skipped = published = pending = 0
+    prepared: list[dict] = []
+    for raw in rows:
+        row = {**raw}
+        row["descricao_normalizada"] = _norm(row.get("descricao_original"))
+        row["valor"] = round(float(row.get("valor") or 0.0), 2)
+        row["hash_lancamento"] = build_bank_statement_hash(row)
+        prepared.append(row)
 
     with engine.begin() as conn:
         _ensure_tables(conn)
@@ -1376,15 +1391,15 @@ def import_bank_statement_rows(
         account_id = account.id
         categories = _fetch_categories(conn, owner)
         category_by_id = {str(category["id"]): category for category in categories}
+        acquire_transaction_import_lock(
+            conn,
+            "bank-statement",
+            owner,
+            banco,
+            sorted(row["hash_lancamento"] for row in prepared),
+        )
 
-        prepared: list[dict] = []
-        for raw in rows:
-            row = {**raw}
-            row["descricao_normalizada"] = _norm(row.get("descricao_original"))
-            row["valor"] = round(float(row.get("valor") or 0.0), 2)
-            row["hash_lancamento"] = build_bank_statement_hash(row)
-            prepared.append(row)
-
+        for row in prepared:
             params = {
                 "uid": owner,
                 "account_id": account_id,

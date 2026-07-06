@@ -1,7 +1,11 @@
+from contextlib import contextmanager
 from datetime import date
+from types import SimpleNamespace
 
+import core.controle as controle
 from core.controle import (
     canonical_transaction_type,
+    importar_fatura_cartao_csv,
     parse_fatura_cartao_csv,
     _filtrar_transacoes,
     _SQL_DIVIDAS_CC,
@@ -17,7 +21,6 @@ from views.controle_financeiro import (
     _is_credit_card_invoice_source,
     _is_manual_card_related_text,
     _normalize_merchant_name,
-    _prepare_category_analysis,
     _prepare_annual_card_totals,
     _prepare_future_invoice_projection,
     _prepare_installment_analysis,
@@ -25,6 +28,7 @@ from views.controle_financeiro import (
     _prepare_recurring_analysis,
     _summary_credit_card,
 )
+from views.credit_card_invoice_upload import _infer_due_date_from_filename
 
 
 def _cc_tx(
@@ -157,6 +161,91 @@ def test_parse_credit_card_invoice_csv_model():
 
     assert refund["type"] == "transfer"
     assert refund["category"] == "Créditos e Estornos"
+
+
+def test_credit_card_invoice_import_locks_before_checking_duplicates(monkeypatch):
+    events = []
+
+    class FakeResult:
+        def __init__(self, *, row=None, rows=None):
+            self._row = row
+            self._rows = rows or []
+
+        def fetchone(self):
+            return self._row
+
+        def fetchall(self):
+            return self._rows
+
+    class FakeConnection:
+        def execute(self, statement, params=None):
+            sql = str(statement)
+            if "pg_advisory_xact_lock" in sql:
+                lock_key = str((params or {}).get("lock_key", ""))
+                events.append(
+                    "category_lock"
+                    if "|category-upsert|" in lock_key
+                    else "lock"
+                )
+                return FakeResult()
+            if "FROM accounts" in sql:
+                events.append("account")
+                return FakeResult(
+                    row=SimpleNamespace(
+                        id="98019156-ac9c-412a-89dc-205b48781aa6",
+                        name="Cartão C6",
+                        type="credit_card",
+                    )
+                )
+            if "FROM transactions t" in sql:
+                events.append("dedup")
+                return FakeResult(rows=[])
+            if "FROM categories" in sql:
+                return FakeResult(
+                    row=SimpleNamespace(
+                        id="fa423719-aec7-4dce-9894-bc665f46df74"
+                    )
+                )
+            if "INSERT INTO transactions" in sql:
+                events.append("insert")
+                return FakeResult()
+            raise AssertionError(f"SQL inesperado no teste: {sql}")
+
+    class FakeEngine:
+        @contextmanager
+        def begin(self):
+            yield FakeConnection()
+
+    csv_text = """Data de Compra;Nome no Cartão;Final do Cartão;Categoria;Descrição;Parcela;Valor (em US$);Cotação (em R$);Valor (em R$)
+01/07/2026;TIAGO BARROS;9637;Elétrico;TIP HOME CENTER;Única;0;0;80.70
+"""
+    monkeypatch.setattr(controle.settings, "MOCK_MODE", False)
+    monkeypatch.setattr(
+        controle.settings,
+        "OWNER_USER_ID",
+        "ebc32071-d16a-4a8d-af39-bb770e8df8fd",
+    )
+    monkeypatch.setattr("core.database.get_engine", lambda: FakeEngine())
+    monkeypatch.setattr(
+        controle,
+        "corrigir_classificacao_pagamentos_fatura",
+        lambda _account_id: 0,
+    )
+    monkeypatch.setattr(controle, "_clear_controle_caches", lambda: None)
+
+    result = importar_fatura_cartao_csv(
+        csv_text.encode("utf-8"),
+        date(2026, 7, 4),
+        "98019156-ac9c-412a-89dc-205b48781aa6",
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["inserted"] == 1
+    assert events == ["lock", "account", "dedup", "category_lock", "insert"]
+
+
+def test_credit_card_invoice_due_date_is_inferred_from_filename():
+    assert _infer_due_date_from_filename("Fatura_2026-07-10.csv") == date(2026, 7, 10)
 
 
 def test_credit_card_invoice_analytics_separates_consumption_adjustments_and_fees():

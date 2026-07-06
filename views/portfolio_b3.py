@@ -195,6 +195,7 @@ def _simular_seg_backtest(
     selic_macro: dict[int, float],
     dividendos: dict[str, pd.Series] | None = None,
     cost_cfg=None,
+    details_out: dict | None = None,
 ) -> tuple[float, float, float, dict[str, float]]:
     """
     Reconstrói a carteira por segmento usando líderes identificados por ano.
@@ -214,6 +215,10 @@ def _simular_seg_backtest(
     ultimo_ano = -1
     pesos_est: dict[str, float] = {}
     last_prices: dict[str, float] = {}
+    caixa_est = 0.0
+    caixa_ew = 0.0
+    prev_est = prev_ew = prev_selic = None
+    monthly_returns: list[dict] = []
 
     for dt, row in df_prec_seg.iterrows():
         ano = dt.year
@@ -251,25 +256,47 @@ def _simular_seg_backtest(
 
         # Estratégia
         est_disp = [tk for tk in pesos_est if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
+        caixa_est += aporte
         if est_disp:
             tw = sum(pesos_est.get(tk, 0.0) for tk in est_disp) or 1.0
             for tk in est_disp:
-                gross = aporte * pesos_est.get(tk, 0.0) / tw
+                gross = caixa_est * pesos_est.get(tk, 0.0) / tw
                 net = max(gross - custo_compra(tk, gross, cost_cfg), 0.0)
                 cotas_est[tk] += net / float(row[tk])
+            caixa_est = 0.0
 
         # EW benchmark
         ew_disp = [tk for tk in all_tks if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
+        caixa_ew += aporte
         for tk in ew_disp:
             last_prices[tk] = float(row[tk])
         if ew_disp:
             for tk in ew_disp:
-                gross = aporte / len(ew_disp)
+                gross = caixa_ew / len(ew_disp)
                 net = max(gross - custo_compra(tk, gross, cost_cfg), 0.0)
                 cotas_ew[tk] += net / float(row[tk])
+            caixa_ew = 0.0
+
+        current_est = caixa_est + sum(
+            cotas_est[tk] * last_prices[tk]
+            for tk in all_tks if tk in last_prices
+        )
+        current_ew = caixa_ew + sum(
+            cotas_ew[tk] * last_prices[tk]
+            for tk in all_tks if tk in last_prices
+        )
+        if prev_est and prev_ew and prev_selic:
+            monthly_returns.append({
+                "Data": dt,
+                "strategy": (current_est - aporte) / prev_est - 1.0,
+                "selic": (selic_acum - aporte) / prev_selic - 1.0,
+                "equal_weight": (current_ew - aporte) / prev_ew - 1.0,
+            })
+        prev_est, prev_ew, prev_selic = current_est, current_ew, selic_acum
 
     def _val(cotas: dict[str, float]) -> float:
-        return sum(
+        cash = caixa_est if cotas is cotas_est else caixa_ew
+        return cash + sum(
             cotas[tk] * last_prices[tk]
             for tk in all_tks
             if tk in cotas and tk in last_prices
@@ -280,6 +307,10 @@ def _simular_seg_backtest(
         for tk in all_tks
         if tk in cotas_est and tk in last_prices
     }
+    if details_out is not None:
+        details_out["monthly_returns"] = monthly_returns
+        details_out["pending_cash_strategy"] = float(caixa_est)
+        details_out["pending_cash_equal_weight"] = float(caixa_ew)
     return _val(cotas_est), selic_acum, _val(cotas_ew), contrib_est
 
 
@@ -431,6 +462,10 @@ def _processar_segmento(
     tks_disp = [tk for tk in tickers if tk in df_precos_all.columns]
     val_est = val_selic = val_ew = 0.0
     val_est_oos = val_selic_oos = val_ew_oos = 0.0
+    p_value_oos = 1.0
+    n_months_oos = 0
+    rank_ic_mean = float("nan")
+    rank_ic_years = 0
     contrib_est: dict[str, float] = {}
     if tks_disp and not df_precos_all.empty:
         df_prec_seg = df_precos_all[tks_disp].dropna(how="all")
@@ -465,12 +500,66 @@ def _processar_segmento(
             )
         ]
         if len(df_validation) >= 18:
+            validation_details: dict = {}
             val_est_oos, val_selic_oos, val_ew_oos, _ = _simular_seg_backtest(
                 df_validation, lids_por_ano, pesos_por_ano,
                 aporte, taxa_selic_aa, selic_macro,
                 dividendos=dividendos,
                 cost_cfg=_segment_costs,
+                details_out=validation_details,
             )
+            monthly = pd.DataFrame(validation_details.get("monthly_returns") or [])
+            if len(monthly) >= 12:
+                excess = (
+                    pd.to_numeric(monthly["strategy"], errors="coerce")
+                    - pd.concat([
+                        pd.to_numeric(monthly["selic"], errors="coerce"),
+                        pd.to_numeric(monthly["equal_weight"], errors="coerce"),
+                    ], axis=1).max(axis=1)
+                ).replace([np.inf, -np.inf], np.nan).dropna()
+                n_months_oos = int(len(excess))
+                if len(excess) >= 12 and float(excess.std(ddof=1) or 0.0) > 0:
+                    from scipy.stats import ttest_1samp
+                    test = ttest_1samp(excess, popmean=0.0, alternative="greater")
+                    p_value_oos = (
+                        float(test.pvalue) if np.isfinite(test.pvalue) else 1.0
+                    )
+
+        # Evidência preditiva independente do patrimônio acumulado: score de
+        # abril/N versus retorno abril/N→março/N+1. Segmentos pequenos demais
+        # não recebem aprovação por ausência de poder estatístico.
+        score_frame = pd.DataFrame(score_rows)
+        ic_values: list[float] = []
+        if not score_frame.empty:
+            for year in sorted(score_frame["Ano"].unique()):
+                scores_year = score_frame[score_frame["Ano"] == year].set_index(
+                    "ticker"
+                )["Score_Ajustado"]
+                start_rows = df_prec_seg[
+                    (df_prec_seg.index.year == int(year))
+                    & (df_prec_seg.index.month >= _REBAL_MONTH)
+                ]
+                end_rows = df_prec_seg[
+                    (df_prec_seg.index.year == int(year) + 1)
+                    & (df_prec_seg.index.month < _REBAL_MONTH)
+                ]
+                if start_rows.empty or end_rows.empty:
+                    continue
+                returns_year = (
+                    end_rows.iloc[-1] / start_rows.iloc[0] - 1.0
+                ).replace([np.inf, -np.inf], np.nan)
+                aligned = pd.concat(
+                    [scores_year.rename("score"), returns_year.rename("return")],
+                    axis=1,
+                ).dropna()
+                if len(aligned) < 5:
+                    continue
+                ic = aligned["score"].corr(aligned["return"], method="spearman")
+                if pd.notna(ic) and np.isfinite(ic):
+                    ic_values.append(float(ic))
+        rank_ic_years = len(ic_values)
+        if ic_values:
+            rank_ic_mean = float(np.mean(ic_values))
 
     total_lids = sum(len(v) for v in liderancas_hist.values())
     participacao = {
@@ -503,6 +592,10 @@ def _processar_segmento(
         "val_est_oos": val_est_oos,
         "val_selic_oos": val_selic_oos,
         "val_ew_oos": val_ew_oos,
+        "p_value_oos": p_value_oos,
+        "n_months_oos": n_months_oos,
+        "rank_ic_mean": rank_ic_mean,
+        "rank_ic_years": rank_ic_years,
         "n_anos": len(anos_com_score),
         "ano_inicio": min(anos_com_score),
         "ano_fim": max(anos_com_score),
@@ -519,6 +612,24 @@ def _margem_pct(val: float, ref: float) -> float:
     if not (np.isfinite(val) and np.isfinite(ref)) or ref <= 0:
         return 0.0
     return (val / ref - 1) * 100
+
+
+def _benjamini_hochberg(p_values: list[float]) -> list[float]:
+    """Q-values BH para controlar falsos positivos entre segmentos."""
+    if not p_values:
+        return []
+    clean = np.asarray([
+        min(max(float(value), 0.0), 1.0) if np.isfinite(value) else 1.0
+        for value in p_values
+    ])
+    order = np.argsort(clean)
+    ranked = clean[order]
+    m = len(clean)
+    adjusted = ranked * m / np.arange(1, m + 1)
+    adjusted = np.minimum.accumulate(adjusted[::-1])[::-1].clip(0.0, 1.0)
+    out = np.empty(m, dtype=float)
+    out[order] = adjusted
+    return out.tolist()
 
 
 def _status_seg(val_est: float, val_selic: float, val_ew: float,
@@ -1289,8 +1400,23 @@ def render(show_header: bool = True) -> None:
     # ── FILTROS DE APROVAÇÃO ──────────────────────────────────────────────────
     ano_atual = pd.Timestamp.now().year
 
+    _q_values = _benjamini_hochberg([
+        float(result.get("p_value_oos", 1.0)) for result in resultados
+    ])
+    for result, q_value in zip(resultados, _q_values):
+        result["q_value_oos"] = q_value
+        result["fdr_pass"] = q_value <= 0.10
+
     def _aprovado(res: dict) -> bool:
         if res.get("val_est_oos", 0.0) <= 0:
+            return False
+        if not res.get("fdr_pass", False):
+            return False
+        if int(res.get("rank_ic_years", 0)) < 2:
+            return False
+        if not np.isfinite(float(res.get("rank_ic_mean", float("nan")))):
+            return False
+        if float(res.get("rank_ic_mean")) <= 0:
             return False
         m_selic = _margem_pct(res["val_est_oos"], res["val_selic_oos"])
         m_ew    = _margem_pct(res["val_est_oos"], res["val_ew_oos"])
@@ -1312,8 +1438,10 @@ def render(show_header: bool = True) -> None:
              f"{len(aprovados)} aprovados")
     st.caption(
         "A aprovação usa exclusivamente o holdout final de aproximadamente "
-        "24 meses, com custos de compra. Segmentos sem ao menos 18 meses de "
-        "validação ficam reprovados por dados insuficientes."
+        "24 meses, com custos de compra, e exige q-value ≤ 10% após correção "
+        "Benjamini-Hochberg entre todos os segmentos. Segmentos sem ao menos "
+        "12 retornos mensais úteis ficam reprovados por dados insuficientes."
+        " Também são exigidos pelo menos dois anos de Rank-IC e IC médio positivo."
     )
 
     rows_tbl: list[dict] = []
@@ -1325,10 +1453,22 @@ def render(show_header: bool = True) -> None:
             "Setor":     res["setor"],
             "Subsetor":  res["subsetor"],
             "Segmento":  res["segmento"],
-            "Status":    _status_seg(res["val_est_oos"], res["val_selic_oos"], res["val_ew_oos"],
-                                     thr_selic, thr_ew),
+            "Status": (
+                "✅ Aprovado"
+                if _aprovado(res)
+                else "❌ Reprovado (risco/evidência)"
+            ),
             "vs Selic OOS (%)": round(m_s, 1),
             "vs EW OOS (%)":    round(m_ew, 1),
+            "p-value OOS": round(float(res.get("p_value_oos", 1.0)), 4),
+            "q-value BH": round(float(res.get("q_value_oos", 1.0)), 4),
+            "Meses OOS": int(res.get("n_months_oos", 0)),
+            "Rank-IC médio": (
+                round(float(res["rank_ic_mean"]), 3)
+                if np.isfinite(float(res.get("rank_ic_mean", float("nan"))))
+                else None
+            ),
+            "Anos Rank-IC": int(res.get("rank_ic_years", 0)),
             "Patrimônio total": _fv(res["val_est"]),
             "Últ. liderança": ult or "—",
         })
@@ -1458,6 +1598,42 @@ def render(show_header: bool = True) -> None:
         cur["peso"] = combined_weight
         cur["motivos"] = combined_motivos
     proximos_uniq = sorted(mapa_prox.values(), key=lambda x: x["score"], reverse=True)
+    from core.portfolio_constraints import (
+        minimum_assets_for_cap,
+        project_capped_simplex,
+    )
+    _required_global = minimum_assets_for_cap(cap)
+    _portfolio_viavel = len(proximos_uniq) >= _required_global
+    if proximos_uniq and _portfolio_viavel:
+        _projected = project_capped_simplex(
+            {item["tk"]: float(item.get("peso") or 0.0) for item in proximos_uniq},
+            cap,
+        )
+        for item in proximos_uniq:
+            item["peso"] = _projected[item["tk"]]
+    elif proximos_uniq:
+        st.error(
+            f"Carteira não pode respeitar o cap global de {cap:.0%}: "
+            f"há {len(proximos_uniq)} ativo(s), mas são necessários ao menos "
+            f"{_required_global}. Os líderes são exibidos para auditoria, "
+            "porém o salvamento fica bloqueado."
+        )
+
+    _constraint_warnings = sorted({
+        warning
+        for result in resultados
+        for warning in (result.get("constraint_warnings") or [])
+    })
+    if _constraint_warnings:
+        with st.expander(
+            f"⚠️ Restrições inviáveis em {len(_constraint_warnings)} combinação(ões)",
+            expanded=False,
+        ):
+            st.caption(
+                "Esses casos usaram equal-weight apenas dentro do diagnóstico "
+                "do segmento. O cap é reaplicado à carteira global antes de salvar."
+            )
+            st.code("\n".join(_constraint_warnings[:100]))
 
     if proximos_uniq:
         for i in range(0, len(proximos_uniq), 3):
@@ -1499,6 +1675,9 @@ def render(show_header: bool = True) -> None:
             "score_version": SCORE_VERSION,
             "model_schema_version": MODEL_SCHEMA_VERSION,
             "allocation_policy": "equal_approved_segment_budget",
+            "global_cap": float(cap),
+            "segment_selection_fdr": 0.10,
+            "validation_policy": "holdout_24m_bh_fdr",
             "ano_compra": ano_atual,
             "thr_selic": float(thr_selic),
             "thr_ew": float(thr_ew),
@@ -1519,10 +1698,19 @@ def render(show_header: bool = True) -> None:
             "alpha_ew_medio": float(np.mean([p.get("alpha_ew", 0.0) for p in proximos_uniq])),
             "score_medio": float(np.mean([p.get("score", 0.0) for p in proximos_uniq])),
             "score_entrada_medio": float(np.mean([p.get("score_entrada", 0.0) for p in proximos_uniq])),
+            "q_value_max_aprovados": float(max(
+                (r.get("q_value_oos", 1.0) for r in aprovados),
+                default=1.0,
+            )),
         }
         c_save, c_info = st.columns([1, 3], gap="medium")
         with c_save:
-            if st.button("Salvar portfólio padrão", type="primary", key="pb3_save_model"):
+            if st.button(
+                "Salvar portfólio padrão",
+                type="primary",
+                key="pb3_save_model",
+                disabled=not _portfolio_viavel,
+            ):
                 try:
                     model_id = save_b3_portfolio_model(
                         proximos_uniq,

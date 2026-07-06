@@ -597,7 +597,12 @@ def _eh_acao(ticker: str, nome: str = "") -> bool:
       11          → unit: ação só se tiver nome real (senão é FII/ETF);
       demais (34/35/32, 3511, 211, 12…) → BDR/subscrição/outro → não-ação.
     """
-    m = re.search(r"(\d+)$", str(ticker).strip().upper())
+    ticker_norm = str(ticker).strip().upper().replace(".SA", "")
+    # Código padrão B3: raiz de quatro caracteres alfanuméricos + classe.
+    # Evita resíduos corrompidos do legado como "C3" e "K3".
+    if not re.fullmatch(r"[A-Z0-9]{4}\d{1,2}", ticker_norm):
+        return False
+    m = re.search(r"(\d+)$", ticker_norm)
     if not m:
         return False
     num = m.group(1)
@@ -1726,6 +1731,12 @@ SCORE_VERSION_CHANGELOG = {
         "temporal com holdouts, valuation por preço de fechamento, TTM com "
         "trimestres consecutivos e versionamento forte de carteiras."
     ),
+    "2.24.0": (
+        "Auditoria 2026-07-06: caixa pendente em meses sem cotação, nested "
+        "walk-forward com fold final intocado, cap global obrigatório, seleção "
+        "de segmentos com BH-FDR, quarentena de baselines PIT e substituição "
+        "atômica de métricas obsoletas."
+    ),
 }
 
 
@@ -2153,6 +2164,10 @@ def _calibrate_walk_forward(
     cost_cfg=None,
     purge_months: int = 0,   # banca A1c (2026-05-25): gap purged k-fold
     embargo_months: int = 0,
+    df_hist_batch: dict[str, pd.DataFrame] | None = None,
+    pesos: dict[str, tuple[float, bool]] | None = None,
+    tk_grupos: dict[str, dict] | None = None,
+    macro_by_year: dict[int, dict[str, float]] | None = None,
 ) -> tuple[float, float, float]:
     """
     Walk-forward temporal com blocos futuros realmente fora da amostra.
@@ -2164,14 +2179,27 @@ def _calibrate_walk_forward(
     separa o fim do teste do próximo fold. O sinal contábil continua sujeito à
     disponibilidade dos snapshots históricos; essa limitação é exibida na UI.
     """
-    if df_precos.empty or df_scored.empty or "Ticker" not in df_scored:
+    if df_precos.empty or not df_hist_batch or not pesos:
         return _GAMMA_DEF, _CAP_DEF, _SOFT_DEF
-    score_map = dict(zip(df_scored["Ticker"], df_scored["score"]))
+    score_history: dict[pd.Timestamp, dict[str, float]] = {}
+    years = sorted({int(date.year) for date in pd.to_datetime(df_precos.index)})
+    for year in years:
+        score_map = _score_historico_ano(
+            df_hist_batch,
+            tickers_all,
+            year,
+            pesos,
+            tk_grupos,
+            lag=1,
+            macro_by_year=macro_by_year,
+        )
+        if score_map:
+            score_history[pd.Timestamp(year, _REBAL_MONTH, 1)] = score_map
     from core.allocation_calibration import purged_walk_forward_calibration
 
     params, diagnostics = purged_walk_forward_calibration(
         df_precos,
-        score_map,
+        score_history,
         tickers_all,
         gamma_grid=_GAMMA_GRID,
         cap_grid=_CAP_GRID,
@@ -2182,6 +2210,7 @@ def _calibrate_walk_forward(
         purge_months=purge_months,
         embargo_months=embargo_months,
         shrinkage=_CAL_SHRINK,
+        cost_cfg=cost_cfg,
     )
     st.session_state["b3_av_calibration_diagnostics"] = diagnostics
     return params
@@ -2366,8 +2395,10 @@ def _executar_rebalance_vendas(
       • prejuízos são carregados entre rebalances via ``tax_state`` e
         compensam ganhos tributáveis posteriores.
     Nota de viés documentada: a série de preços é AJUSTADA (retorno total),
-    então o "lucro" tributado embute dividendos — que são isentos no
-    Brasil; o IR simulado tende a ser SUPERestimado (conservador).
+    então o "lucro" tributado embute distribuições que podem ter tratamento
+    fiscal distinto do ganho de capital. Desde 2026, dividendos também podem
+    integrar a tributação mínima de altas rendas. O IR exibido é aproximação,
+    não apuração fiscal individual.
 
     Muta `cotas` e `custo_total` in place.
     Retorna (ir_pago, custos_venda, custos_compra).
@@ -2551,6 +2582,8 @@ def _simular_backtest(
     restricoes_inviaveis: list[str] = []
     last_prices: dict[str, float] = {}
     tax_state: dict[str, float] = {"prejuizo_acumulado": 0.0}
+    caixa_est = 0.0
+    caixa_bench = 0.0
 
     for dt, row in df.iterrows():
         ano = dt.year
@@ -2691,32 +2724,36 @@ def _simular_backtest(
         # e comportamento e identico ao legado.
         est_disp = [tk for tk in tks_est_valid
                     if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
+        caixa_est += aporte
         if est_disp:
             total_w = sum(pesos_est.get(tk, 0.0) for tk in est_disp) or 1.0
             for tk in est_disp:
-                valor_bruto = aporte * pesos_est.get(tk, 0.0) / total_w
+                valor_bruto = caixa_est * pesos_est.get(tk, 0.0) / total_w
                 fee = custo_compra(tk, valor_bruto, cost_cfg)
                 valor_liq = max(valor_bruto - fee, 0.0)
                 cotas_est[tk] += valor_liq / float(row[tk])
                 custo_total_est[tk] = custo_total_est.get(tk, 0.0) + valor_bruto
+            caixa_est = 0.0
 
         all_disp = [tk for tk in tks_all_valid
                     if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
+        caixa_bench += aporte
         for tk in all_disp:
             last_prices[tk] = float(row[tk])
         if all_disp:
-            por_tk = aporte / len(all_disp)
+            por_tk = caixa_bench / len(all_disp)
             for tk in all_disp:
                 fee = custo_compra(tk, por_tk, cost_cfg)
                 valor_liq = max(por_tk - fee, 0.0)
                 cotas_bench[tk] += valor_liq / float(row[tk])
+            caixa_bench = 0.0
 
-        val_est = sum(
+        val_est = caixa_est + sum(
             cotas_est[tk] * last_prices[tk]
             for tk in tks_all_valid
             if tk in cotas_est and tk in last_prices
         )
-        val_bench = sum(
+        val_bench = caixa_bench + sum(
             cotas_bench[tk] * last_prices[tk]
             for tk in tks_all_valid
             if tk in last_prices
@@ -2736,6 +2773,8 @@ def _simular_backtest(
         float(tax_state.get("prejuizo_acumulado", 0.0)), 2
     )
     df_resultado.attrs["restricoes_inviaveis"] = sorted(set(restricoes_inviaveis))
+    df_resultado.attrs["caixa_pendente_estrategia"] = round(float(caixa_est), 2)
+    df_resultado.attrs["caixa_pendente_benchmark"] = round(float(caixa_bench), 2)
     return df_resultado, tickers_top_final, n_efetivo_final
 
 
@@ -3497,7 +3536,15 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         usar_pesos_setor = st.checkbox(
             "Usar pesos calibrados por setor (recomendado)",
             value=True, key="b3_av_use_setor_w",
+            disabled=sel_set == "Todos",
         )
+        if sel_set == "Todos":
+            usar_pesos_setor = False
+            st.caption(
+                "Com **Todos os setores**, o score usa pesos genéricos para "
+                "não aplicar o perfil de um setor aos demais. Selecione um "
+                "setor para habilitar pesos setoriais calibrados."
+            )
         usar_auto_calib = st.checkbox(
             "Calibração automática ótima por segmento (recomendado)",
             value=True, key="b3_av_use_autocalib",
@@ -4938,12 +4985,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     # mas nunca era chamada pela UI).
     with st.expander("🔧 Auto-calibração de parâmetros (γ, cap, soft)"):
         st.caption(
-            "Validação temporal: cada combinação é medida em blocos futuros "
-            "fora da amostra, com purge de 3m e embargo de 2m; a seleção usa "
-            "a mediana do objetivo nos holdouts e shrinkage de 40% para os "
-            "defaults. A validação cobre a transformação score→pesos. Como "
-            "scores históricos versionados ainda não existem para todo o "
-            "período, ela não prova a capacidade preditiva do sinal contábil."
+            "Nested walk-forward: cada fold escolhe γ/cap/soft somente no "
+            "histórico anterior, aplica purge de 3m + embargo de 2m e mede a "
+            "escolha no bloco futuro. O último fold fica intocado para "
+            "auditoria final e não escolhe os parâmetros. Custos de turnover "
+            "entram no objetivo. Na fonte legada, as datas contábeis anteriores "
+            "ao corte PIT continuam aproximadas e o resultado é rotulado assim."
         )
         if st.button("⚙️ Calibrar agora", key="b3_av_btn_cal"):
             from core.transaction_costs import CostConfig as _CalCost
@@ -4957,6 +5004,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     n_folds=4, min_window=18,
                     purge_months=3, embargo_months=2,
                     cost_cfg=_CalCost.brasil_pf_default(),
+                    df_hist_batch=hist_batch,
+                    pesos=pesos_v2,
+                    tk_grupos=tk_grupos,
+                    macro_by_year=macro_history or None,
                 )
             st.session_state["b3_av_gamma"] = g_cal
             st.session_state["b3_av_cap"]   = c_cal
@@ -4996,6 +5047,25 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
              "R$ 20 mil em vendas (IN RFB 1.585/2015).",
     )
     _com_vendas = modo_rebal.startswith("Com vendas")
+    _score_fingerprint = (
+        df_scored[[c for c in ("Ticker", "score", "score_version")
+                   if c in df_scored.columns]]
+        .sort_values("Ticker")
+        .round(8)
+        .to_dict("records")
+        if not df_scored.empty else []
+    )
+    _history_fingerprint = {
+        ticker: {
+            "last_data": str(pd.to_datetime(frame.get("Data"), errors="coerce").max()),
+            "last_available": str(
+                pd.to_datetime(frame.get("AvailableAt"), errors="coerce", utc=True).max()
+            ) if "AvailableAt" in frame else "",
+            "rows": len(frame),
+        }
+        for ticker, frame in (hist_batch or {}).items()
+        if frame is not None and not frame.empty
+    }
     _bt_signature = _stable_signature({
         "score_version": SCORE_VERSION,
         "tickers": sorted(tks_uni),
@@ -5009,6 +5079,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         "gamma": st.session_state.get("b3_av_gamma", _GAMMA_DEF),
         "cap": st.session_state.get("b3_av_cap", _CAP_DEF),
         "soft": st.session_state.get("b3_av_soft", _SOFT_DEF),
+        "score_data": _score_fingerprint,
+        "history_data": _history_fingerprint,
     })
 
     if st.button("▶ Simular Backtest", type="primary", key="b3_av_btn_simular"):
@@ -5121,9 +5193,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 f"**R$ {float(df_bt.attrs.get('ir_pago', 0.0)):,.2f}** · "
                 f"custos de rebalance: "
                 f"**R$ {float(df_bt.attrs.get('custos_rebal', 0.0)):,.2f}**. "
-                "Nota: a série de preços é ajustada (inclui dividendos, que "
-                "são isentos), então o IR simulado tende a ser "
-                "SUPERestimado — viés conservador contra a estratégia."
+                "Nota fiscal: a série ajustada mistura valorização e "
+                "distribuições. Desde 2026, dividendos podem integrar a "
+                "tributação mínima de altas rendas. O valor é uma estimativa "
+                "simplificada, não uma apuração fiscal individual."
             )
         elif _custos_on:
             st.caption(
@@ -5138,6 +5211,21 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             st.caption(
                 "⚠️ Backtest **sem custos** (ideal/teórico) — superestima o "
                 "retorno real. Marque a opção de custos para projeção realista."
+            )
+        _restricoes_bt = df_bt.attrs.get("restricoes_inviaveis") or []
+        if _restricoes_bt:
+            st.warning(
+                "Alguns anos não tinham ativos suficientes para o cap "
+                "solicitado. O backtest usou equal-weight nesses anos: "
+                + "; ".join(_restricoes_bt[:8])
+            )
+        _caixa_pendente = float(
+            df_bt.attrs.get("caixa_pendente_estrategia", 0.0) or 0.0
+        )
+        if _caixa_pendente > 0:
+            st.caption(
+                f"Caixa pendente por falta de cotação no fim da janela: "
+                f"**R$ {_caixa_pendente:,.2f}** — preservado no patrimônio."
             )
         st.caption(
             "📅 **Rebalance anual em abril** — os balanços do exercício "
@@ -5215,6 +5303,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "weights": pesos_v2,
             "period": sel_per,
             "groups": tk_grupos,
+            "score_data": _score_fingerprint,
+            "history_data": _history_fingerprint,
         })
         st.caption(
             "Mede se o score REALMENTE discrimina retornos: para cada ano N, "

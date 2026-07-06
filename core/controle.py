@@ -58,6 +58,7 @@ import unicodedata
 import streamlit as st
 
 from core.config import settings
+from core.import_guard import acquire_transaction_import_lock
 
 logger = logging.getLogger(__name__)
 
@@ -750,6 +751,9 @@ def _get_or_create_category(conn, owner: str, name: str, cat_type: str) -> str |
     from sqlalchemy import text
 
     clean = (name or "Outros").strip() or "Outros"
+    # Uma única trava por usuário evita que duas faturas concorrentes criem
+    # categorias homônimas antes de enxergarem o commit uma da outra.
+    acquire_transaction_import_lock(conn, "category-upsert", owner)
     row = conn.execute(
         text("""
             SELECT id::text
@@ -949,6 +953,18 @@ def importar_fatura_cartao_csv(file_bytes: bytes, vencimento: _date, account_id:
     corrigir_classificacao_pagamentos_fatura(account_id)
 
     with engine.begin() as conn:
+        # Serializa importações da mesma fatura. Sem este lock, dois cliques ou
+        # reruns concorrentes podem consultar a ausência das linhas ao mesmo
+        # tempo e inserir dois lotes completos antes de qualquer commit.
+        acquire_transaction_import_lock(
+            conn,
+            "credit-card-invoice",
+            owner,
+            account_id,
+            vencimento,
+            file_bytes,
+        )
+
         account = conn.execute(
             text("""
                 SELECT id::text, name, type
