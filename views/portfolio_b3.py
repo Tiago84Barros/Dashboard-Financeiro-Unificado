@@ -1231,12 +1231,19 @@ def render(show_header: bool = True) -> None:
     with st.expander("⚙️ Parâmetros", expanded=True):
         p1, p2, p3, p4 = st.columns(4)
         thr_selic   = p1.number_input(
-            "Margem mín. vs Tesouro Selic (%)", 0.0, 500.0, 10.0, 5.0,
-            key="pb3_thr_selic",
+            "Margem mín. vs Selic · holdout ~24m (%)", 0.0, 500.0, 10.0, 5.0,
+            key="pb3_thr_selic_oos24",
+            help="Margem exigida sobre a janela OUT-OF-SAMPLE de ~24 meses — "
+                 "não sobre o histórico inteiro. A seleção é dirigida pelas "
+                 "estatísticas (FDR q≤10% + Rank-IC + p-value); esta margem é "
+                 "só um piso econômico leve. Valores altos (ex.: 100%) viram uma "
+                 "barra quase impossível em 24 meses e anulam os testes.",
         )
         thr_ew      = p2.number_input(
-            "Margem mín. vs Equal-Weight (%)", 0.0, 300.0, 0.0, 5.0,
-            key="pb3_thr_ew",
+            "Margem mín. vs Equal-Weight · holdout ~24m (%)", 0.0, 300.0, 0.0, 5.0,
+            key="pb3_thr_ew_oos24",
+            help="Margem sobre o mesmo holdout de ~24 meses. Só entra na seleção "
+                 "quando 'Uso do Equal-Weight' = 'Critério de seleção'.",
         )
         uso_ew      = p3.selectbox(
             "Uso do Equal-Weight na seleção",
@@ -1260,6 +1267,14 @@ def render(show_header: bool = True) -> None:
             "Cruzar Status Invest no saneamento atual",
             value=False,
             key="pb3_status_recon",
+        )
+        st.caption(
+            "As margens acima são medidas sobre o **holdout out-of-sample de "
+            "~24 meses**, não sobre o histórico inteiro. Quem dirige a seleção é "
+            "o rigor estatístico (FDR q≤10% + Rank-IC ≥ 2 anos positivo + p-value "
+            "unilateral); a margem vs Selic é só um piso econômico leve (default "
+            "10%). Para ampliar a carteira, reduza a margem — nunca a régua "
+            "estatística."
         )
 
     usar_ew_como_criterio = uso_ew == "Critério de seleção"
