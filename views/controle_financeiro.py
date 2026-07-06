@@ -59,6 +59,9 @@ _MESES_NOMES = {v: k for k, v in _MESES_PT.items()}
 _FORMAS_PGTO_SAIDA = ["Conta"]
 _FORMAS_PGTO_TODOS = ["Conta"]
 _MANUAL_CARD_TERMS = ("cartao", "credito", "fatura")
+# Categoria de transferência permitida no lançamento manual (pagamento mensal da
+# fatura a partir da conta) — não é consumo de cartão, então é isenta do bloqueio.
+_MANUAL_CARD_ALLOWED = {"pagamento de cartao"}
 _CC_IMPORTED_SOURCES = {"csv"}
 
 # Categorias pré-definidas por tipo (igual ao app original)
@@ -68,7 +71,7 @@ _CAT_ENTRADA = [
 _CAT_SAIDA = [
     "Mercado", "Compras", "Condomínio", "Luz", "Internet", "Transporte",
     "Combustível", "Saúde", "Despesas Domésticas", "Lazer", "Assinaturas",
-    "Educação", "Restaurante", "Financiamento", "Outros",
+    "Educação", "Restaurante", "Financiamento", "Pagamento de Cartão", "Outros",
 ]
 _CAT_INVESTIMENTO = [
     "Renda Fixa", "Renda Variável", "Exterior", "Reserva de Despesa", "Outros",
@@ -101,8 +104,14 @@ def _norm_ascii(value: object) -> str:
 
 
 def _is_manual_card_related_text(value: object) -> bool:
-    """True para texto relacionado a cartao/fatura no lancamento manual."""
+    """True para texto relacionado a cartao/fatura no lancamento manual.
+
+    A categoria de pagamento mensal da fatura ("Pagamento de Cartão") é permitida:
+    representa a transferência da conta que quita a fatura, não o consumo do cartão.
+    """
     text = _norm_ascii(value)
+    if text in _MANUAL_CARD_ALLOWED:
+        return False
     return any(term in text for term in _MANUAL_CARD_TERMS)
 
 

@@ -333,6 +333,8 @@ _SQL_GASTOS_CARTAO_MENSAL = """
     LEFT JOIN categories c ON c.id = t.category_id
     WHERE  t.user_id = :uid
       AND  c.name    = 'Pagamento de Cartão'
+      -- Fluxo de caixa: SOMENTE lançamentos manuais. Faturas CSV (fluxo futuro)
+      -- pertencem exclusivamente à aba Cartão de Crédito e não se misturam aqui.
       AND  (t.source IS NULL OR t.source = 'manual')
     GROUP  BY ano, mes
     ORDER  BY ano, mes
