@@ -425,13 +425,18 @@ def _sidebar_render(ano: int, mes: int) -> None:
             st.sidebar.error("Cartão de crédito deve ser lançado somente por upload da fatura CSV.")
             return
 
-        # Resolve conta
+        # Resolve conta de movimentação (fluxo de caixa). Exclui cartão e prioriza
+        # a conta corrente (checking): sem isso, cai na 1ª conta em ordem alfabética
+        # — que pode ser uma conta de investimento (ex.: "B3 - Carteira Consolidada")
+        # e não tem nada a ver com o fluxo de caixa manual.
         opcoes  = get_opcoes_formulario()
-        contas  = [
-            c for c in opcoes.get("contas", [])
-            if c.get("tipo") != "credit_card" and c.get("type") != "credit_card"
-        ]
-        conta_id = contas[0]["id"] if contas else None
+        def _tipo_conta(c: dict) -> str:
+            return (c.get("tipo") or c.get("type") or "").strip().lower()
+        contas   = [c for c in opcoes.get("contas", []) if _tipo_conta(c) != "credit_card"]
+        conta_id = next(
+            (c["id"] for c in contas if _tipo_conta(c) == "checking"),
+            contas[0]["id"] if contas else None,
+        )
         if not conta_id:
             st.sidebar.warning("Nenhuma conta de movimentação configurada.")
             return
