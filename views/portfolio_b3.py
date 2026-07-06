@@ -491,14 +491,21 @@ def _processar_segmento(
         # Aprovação usa somente a janela final, não o mesmo histórico inteiro
         # usado para observar/desenvolver a estratégia. Início em abril e pelo
         # menos 18 meses úteis para evitar um holdout episódico.
-        validation_start_year = int(df_prec_seg.index.max().year) - 2
-        df_validation = df_prec_seg[
-            (df_prec_seg.index.year > validation_start_year)
-            | (
-                (df_prec_seg.index.year == validation_start_year)
-                & (df_prec_seg.index.month >= _REBAL_MONTH)
-            )
-        ]
+        # Segmentos cujos tickers não têm preços na janela ficam com df_prec_seg
+        # vazio (index.max() = NaT) — sem holdout OOS, mantém os defaults (não
+        # aprova). Sem este guard, int(NaT.year) quebra com "float NaN to integer".
+        _ultimo_dt = df_prec_seg.index.max()
+        if df_prec_seg.empty or pd.isna(_ultimo_dt):
+            df_validation = df_prec_seg.iloc[0:0]
+        else:
+            validation_start_year = int(_ultimo_dt.year) - 2
+            df_validation = df_prec_seg[
+                (df_prec_seg.index.year > validation_start_year)
+                | (
+                    (df_prec_seg.index.year == validation_start_year)
+                    & (df_prec_seg.index.month >= _REBAL_MONTH)
+                )
+            ]
         if len(df_validation) >= 18:
             validation_details: dict = {}
             val_est_oos, val_selic_oos, val_ew_oos, _ = _simular_seg_backtest(
