@@ -22,7 +22,7 @@ Abas processadas:
   Posição - Tesouro Direto → 'tesouro'
 
 A aba "Proventos Recebidos", quando presente, alimenta `dividends`
-(deduplica contra B3 Movimentacao via external_id).
+(deduplica contra B3 Movimentacao por ativo, data, tipo e valor).
 """
 from __future__ import annotations
 
@@ -689,19 +689,21 @@ def _parse_single(
                             f"{safe_error(exc)}"
                         )
 
-            # Aba "Proventos Recebidos" — IGNORADA (auditoria 2026-05-23).
-            # B3-Movimentacao tem cobertura mais ampla (2019-presente) e e
-            # fonte unica de dividendos. Processar aqui produzia 100% de
-            # duplicacao (29 grupos espelhados) porque os external_ids sao
-            # prefixados diferente (xpcsl-inc-* vs b3mov-*) e nao caem no
-            # ON CONFLICT DO NOTHING.
-            # Para reabilitar, primeiro implementar dedup por chave
-            # canonica (ticker+data+amount) em vez de external_id.
-            if "proventos recebidos" in sheet_map:
-                summary.setdefault("files_skipped_notes", []).append(
-                    f"[{filename}] aba 'Proventos Recebidos' ignorada — "
-                    "use B3-Movimentacao para proventos."
-                )
+            # Aba Proventos Recebidos → dividends. A camada comum de insert
+            # deduplica contra B3 Movimentação pela chave canônica, além do
+            # external_id específico da XP.
+            ws_prov = sheet_map.get("proventos recebidos")
+            if ws_prov:
+                try:
+                    _ensure_xp_account(conn, user_id)
+                except Exception as exc:  # noqa: BLE001
+                    summary["errors"].append(
+                        f"Falha ao preparar conta XP: {safe_error(exc)}"
+                    )
+                else:
+                    _parse_proventos(
+                        ws_prov, conn, user_id, summary, report_date,
+                    )
 
     summary["_report_date"] = report_date.isoformat()
     summary["_institution"] = institution

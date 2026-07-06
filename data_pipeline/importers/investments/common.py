@@ -500,18 +500,32 @@ def insert_dividend(
 ) -> str | None:
     """
     Insere um provento em `dividends`. Retorna o UUID ou None se duplicata.
+
+    A chave canônica evita duplicidade entre fontes diferentes (por exemplo,
+    B3 Movimentação e XP Consolidado), cujos external_ids têm prefixos
+    distintos para o mesmo pagamento.
     """
     if div_type not in ("dividend", "jcp", "reit_income", "amortization", "other"):
         raise ValueError(f"div_type invalido: {div_type}")
-    # ON CONFLICT precisa repetir o predicado do indice parcial
-    # ux_dividends_external_id (WHERE external_id IS NOT NULL).
+    # ON CONFLICT cobre reimportação da mesma fonte. O NOT EXISTS cobre o
+    # mesmo provento chegando por outra fonte.
     row = conn.execute(
         text("""
             INSERT INTO dividends
                 (user_id, asset_id, type, amount_per_unit, quantity,
                  total_amount, ex_date, payment_date, external_id)
-            VALUES
-                (:uid, :aid, :type, :apu, :qty, :total, :exd, :pd, :ext)
+            SELECT
+                :uid, :aid, :type, :apu, :qty, :total, :exd, :pd, :ext
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM dividends existing
+                WHERE existing.user_id = :uid
+                  AND existing.asset_id = :aid
+                  AND existing.payment_date = :pd
+                  AND existing.type = :type
+                  AND ROUND(CAST(existing.total_amount AS NUMERIC), 2)
+                      = ROUND(CAST(:total AS NUMERIC), 2)
+            )
             ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
             RETURNING id
         """),
@@ -673,8 +687,8 @@ def batch_insert_dividends(
     rows: list[dict[str, Any]],
 ) -> int:
     """
-    Insere lista de dividendos em uma única statement. Mesma semântica que
-    batch_insert_investment_transactions.
+    Insere lista de dividendos em uma única statement. Além do external_id,
+    deduplica pela chave canônica compartilhada entre B3 e XP.
 
     Cada item de `rows` precisa ter as chaves:
       user_id, asset_id, type, amount_per_unit, quantity,
@@ -690,9 +704,19 @@ def batch_insert_dividends(
         INSERT INTO dividends
             (user_id, asset_id, type, amount_per_unit, quantity,
              total_amount, ex_date, payment_date, external_id)
-        VALUES
-            (:user_id, :asset_id, :type, :amount_per_unit, :quantity,
-             :total_amount, :ex_date, :payment_date, :external_id)
+        SELECT
+            :user_id, :asset_id, :type, :amount_per_unit, :quantity,
+            :total_amount, :ex_date, :payment_date, :external_id
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM dividends existing
+            WHERE existing.user_id = :user_id
+              AND existing.asset_id = :asset_id
+              AND existing.payment_date = :payment_date
+              AND existing.type = :type
+              AND ROUND(CAST(existing.total_amount AS NUMERIC), 2)
+                  = ROUND(CAST(:total_amount AS NUMERIC), 2)
+        )
         ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
     """)
     result = conn.execute(stmt, rows)
