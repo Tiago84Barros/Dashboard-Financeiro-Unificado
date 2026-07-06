@@ -1017,6 +1017,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     from data_pipeline.utils.logging_utils import (
         log_finish, log_start, update_freshness,
     )
+    from core.import_guard import serialized_import
 
     parsers = {
         "parse_b3_negociacao":   parse_b3_negociacao,
@@ -1044,7 +1045,13 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     log_id = log_start(cfg["table_name"], cfg["source_name"], cfg["job_name"])
 
     try:
-        summary = parser(payload, engine)
+        with serialized_import(
+            engine,
+            f"settings-investment-{cfg['job_name']}",
+            settings.OWNER_USER_ID,
+            payload,
+        ):
+            summary = parser(payload, engine)
     except Exception as exc:  # noqa: BLE001
         summary = {
             "status": "failed",
@@ -1100,7 +1107,7 @@ def _render_import_result(summary: dict) -> None:
     if status == "success":
         st.success(f"✅ Importação concluída — {summary.get('records_imported', 0)} registros novos.")
     elif status == "partial_success":
-        st.warning(f"🟡 Importação parcial — alguns registros falharam.")
+        st.warning("🟡 Importação parcial — alguns registros falharam.")
     elif status == "skipped":
         st.info("⚪ Importação não executada nesta rodada.")
     else:

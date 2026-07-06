@@ -106,10 +106,27 @@ def _infer_asset_type(tk: str, quote: dict) -> str:
         return "bdr"
     if digits == "11":
         low = name.lower()
-        if "etf" in low or "índice" in low or "indice" in low or "ishares" in low or "it now" in low:
-            return "etf"
-        if "fii" in low or "fdo inv imob" in low or "imob" in low:
+        if (
+            "fii" in low or "fdo inv imob" in low
+            or "fundo investimento imobili" in low
+            or "fundo de investimento imobili" in low
+        ):
             return "fii"
+        if (
+            "etf" in low or "índice" in low or "indice" in low
+            or "ishares" in low or "it now" in low or low.startswith("investo ")
+            or "bovespa" in low or "ibovespa" in low
+        ):
+            return "etf"
+        if (
+            " unit " in f" {low} " or "ctf de deposito de acoes" in low
+            or "cons of" in low
+        ):
+            return "unit"
+        # O sufixo 11 sozinho não comprova unit. Sem evidência de companhia,
+        # mantém como other e o vínculo CVM/taxonomia decide a elegibilidade.
+        if not (quote or {}).get("summaryProfile"):
+            return "other"
         return "unit"
     return "stock"
 

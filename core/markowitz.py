@@ -125,8 +125,11 @@ def _solve_qp_min_variance(cov: np.ndarray, cap: float) -> tuple[np.ndarray, str
     é o ótimo do problema restrito e por isso retorna converged=False.
     Retorna (w, method, converged).
     """
+    from core.portfolio_constraints import validate_cap_feasibility
+
     K = cov.shape[0]
-    cap_eff = cap if K * cap >= 1.0 else 1.0 / K   # garante viabilidade Σw=1
+    validate_cap_feasibility(K, cap)
+    cap_eff = float(cap)
 
     # 1) cvxpy — QP exato (opcional; não está em requirements.txt)
     try:
@@ -174,19 +177,12 @@ def _solve_qp_min_variance(cov: np.ndarray, cap: float) -> tuple[np.ndarray, str
     ones = np.ones(K)
     inv = np.linalg.pinv(cov + 1e-8 * np.eye(K))
     w = (inv @ ones) / (ones @ inv @ ones)
-    w = np.clip(w, 0.0, cap_eff)
-    w = w / w.sum() if w.sum() > 0 else np.ones(K) / K
-    for _ in range(20):
-        if np.maximum(w - cap_eff, 0).sum() < 1e-9:
-            break
-        w = np.clip(w, 0.0, cap_eff)
-        slack = 1.0 - w.sum()
-        below = w < cap_eff
-        n_below = below.sum() or 1
-        w[below] += slack / n_below
-        w = np.clip(w, 0.0, cap_eff)
-    s = w.sum()
-    w = w / s if s > 0 else np.ones(K) / K
+    from core.portfolio_constraints import project_capped_simplex
+    projected = project_capped_simplex(
+        {str(i): float(value) for i, value in enumerate(w)},
+        cap_eff,
+    )
+    w = np.asarray([projected[str(i)] for i in range(K)])
     return w, "heuristic_projection", False
 
 
@@ -219,6 +215,8 @@ def min_variance_capped(
             weights={}, expected_variance=0.0, expected_std=0.0,
             diversification=0.0, converged=False, method="fallback_equal",
         )
+    from core.portfolio_constraints import validate_cap_feasibility
+    validate_cap_feasibility(K, cap)
     if K == 1:
         return MarkowitzResult(
             weights={tickers[0]: 1.0},
@@ -295,6 +293,8 @@ def min_variance_with_cov(
             weights={}, expected_variance=0.0, expected_std=0.0,
             diversification=0.0, converged=False, method="fallback_equal",
         )
+    from core.portfolio_constraints import validate_cap_feasibility
+    validate_cap_feasibility(K, cap)
     if K == 1:
         var = float(cov[0, 0]) if cov.size > 0 else 0.0
         return MarkowitzResult(
@@ -339,6 +339,7 @@ def pesos_hibridos_score_markowitz(
     score_weights: dict[str, float],
     markowitz_res: MarkowitzResult,
     alpha:         float = 0.50,
+    cap:           float | None = None,
 ) -> dict[str, float]:
     """
     Combina pesos do gamma-tilt (score-proportional) com pesos min-variance.
@@ -359,4 +360,8 @@ def pesos_hibridos_score_markowitz(
         w_mk = markowitz_res.weights.get(tk, 0.0)
         combined[tk] = alpha * w_sc + (1 - alpha) * w_mk
     total = sum(combined.values()) or 1.0
-    return {tk: w / total for tk, w in combined.items()}
+    normalized = {tk: w / total for tk, w in combined.items()}
+    if cap is None:
+        return normalized
+    from core.portfolio_constraints import project_capped_simplex
+    return project_capped_simplex(normalized, cap)

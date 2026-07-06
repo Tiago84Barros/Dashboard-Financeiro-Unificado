@@ -213,7 +213,9 @@ Dashboard-Financeiro-Unificado/
 ## Ativar dados reais (MOCK_MODE=false)
 
 1. Criar projeto no Supabase (plano free é suficiente)
-2. Executar os SQLs em `supabase_unificado/schema/` em ordem (`001` → `009`)
+2. Executar os SQLs na ordem explícita documentada em
+   `supabase_unificado/schema/README_EXECUCAO_SQL.md` (`001` → `022`;
+   existem dois scripts `018`, ambos obrigatórios)
 3. Configurar `.env` com `SUPABASE_UNIFICADO_URL`, `OWNER_USER_ID` e `APP_PASSWORD`
 4. Definir `MOCK_MODE=false`
 5. Executar a migração: `python migration/05_load_to_unified_supabase.py`

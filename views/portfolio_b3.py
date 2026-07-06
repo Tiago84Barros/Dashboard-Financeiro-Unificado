@@ -6,6 +6,7 @@ por segmento e monta uma carteira sugerida com empresas reais da B3.
 """
 from __future__ import annotations
 
+import html
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -14,6 +15,7 @@ import streamlit as st
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.data_reconciliacao as _recon
 from core.b3_portfolio_model import save_b3_portfolio_model
+from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
 from design.componentes import card_metrica
 
 # ── Importa engine compartilhado de empresas_b3 ───────────────────────────────
@@ -32,6 +34,7 @@ from views.empresas_b3 import (
     _score_universo,
     _score_historico_ano,
     _select_n_heuristica,
+    _so_acoes,
     _weights_from_scores,
     _yf_dividendos_anuais,
     _yf_multiplos_dividendos,
@@ -191,6 +194,8 @@ def _simular_seg_backtest(
     taxa_selic_aa: float,
     selic_macro: dict[int, float],
     dividendos: dict[str, pd.Series] | None = None,
+    cost_cfg=None,
+    details_out: dict | None = None,
 ) -> tuple[float, float, float, dict[str, float]]:
     """
     Reconstrói a carteira por segmento usando líderes identificados por ano.
@@ -199,6 +204,9 @@ def _simular_seg_backtest(
     """
     if df_prec_seg.empty:
         return 0.0, 0.0, 0.0, {}
+    from core.transaction_costs import CostConfig, custo_compra
+    if cost_cfg is None:
+        cost_cfg = CostConfig.desligado()
 
     all_tks = list(df_prec_seg.columns)
     cotas_est: dict[str, float] = {tk: 0.0 for tk in all_tks}
@@ -206,6 +214,11 @@ def _simular_seg_backtest(
     selic_acum = 0.0
     ultimo_ano = -1
     pesos_est: dict[str, float] = {}
+    last_prices: dict[str, float] = {}
+    caixa_est = 0.0
+    caixa_ew = 0.0
+    prev_est = prev_ew = prev_selic = None
+    monthly_returns: list[dict] = []
 
     for dt, row in df_prec_seg.iterrows():
         ano = dt.year
@@ -243,31 +256,62 @@ def _simular_seg_backtest(
 
         # Estratégia
         est_disp = [tk for tk in pesos_est if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
+        caixa_est += aporte
         if est_disp:
             tw = sum(pesos_est.get(tk, 0.0) for tk in est_disp) or 1.0
             for tk in est_disp:
-                cotas_est[tk] += aporte * pesos_est.get(tk, 0.0) / tw / float(row[tk])
+                gross = caixa_est * pesos_est.get(tk, 0.0) / tw
+                net = max(gross - custo_compra(tk, gross, cost_cfg), 0.0)
+                cotas_est[tk] += net / float(row[tk])
+            caixa_est = 0.0
 
         # EW benchmark
         ew_disp = [tk for tk in all_tks if pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0]
+        caixa_ew += aporte
+        for tk in ew_disp:
+            last_prices[tk] = float(row[tk])
         if ew_disp:
             for tk in ew_disp:
-                cotas_ew[tk] += aporte / len(ew_disp) / float(row[tk])
+                gross = caixa_ew / len(ew_disp)
+                net = max(gross - custo_compra(tk, gross, cost_cfg), 0.0)
+                cotas_ew[tk] += net / float(row[tk])
+            caixa_ew = 0.0
 
-    def _val(cotas: dict[str, float], row: pd.Series) -> float:
-        return sum(
-            cotas[tk] * float(row[tk])
+        current_est = caixa_est + sum(
+            cotas_est[tk] * last_prices[tk]
+            for tk in all_tks if tk in last_prices
+        )
+        current_ew = caixa_ew + sum(
+            cotas_ew[tk] * last_prices[tk]
+            for tk in all_tks if tk in last_prices
+        )
+        if prev_est and prev_ew and prev_selic:
+            monthly_returns.append({
+                "Data": dt,
+                "strategy": (current_est - aporte) / prev_est - 1.0,
+                "selic": (selic_acum - aporte) / prev_selic - 1.0,
+                "equal_weight": (current_ew - aporte) / prev_ew - 1.0,
+            })
+        prev_est, prev_ew, prev_selic = current_est, current_ew, selic_acum
+
+    def _val(cotas: dict[str, float]) -> float:
+        cash = caixa_est if cotas is cotas_est else caixa_ew
+        return cash + sum(
+            cotas[tk] * last_prices[tk]
             for tk in all_tks
-            if tk in cotas and pd.notna(row.get(tk)) and float(row.get(tk, 0) or 0) > 0
+            if tk in cotas and tk in last_prices
         )
 
-    last_row = df_prec_seg.iloc[-1]
     contrib_est = {
-        tk: cotas_est[tk] * float(last_row[tk])
+        tk: cotas_est[tk] * last_prices[tk]
         for tk in all_tks
-        if tk in cotas_est and pd.notna(last_row.get(tk)) and float(last_row.get(tk, 0) or 0) > 0
+        if tk in cotas_est and tk in last_prices
     }
-    return _val(cotas_est, last_row), selic_acum, _val(cotas_ew, last_row), contrib_est
+    if details_out is not None:
+        details_out["monthly_returns"] = monthly_returns
+        details_out["pending_cash_strategy"] = float(caixa_est)
+        details_out["pending_cash_equal_weight"] = float(caixa_ew)
+    return _val(cotas_est), selic_acum, _val(cotas_ew), contrib_est
 
 
 def _rank_ticker(score_map: dict[str, float], ticker: str) -> int | None:
@@ -331,6 +375,7 @@ def _processar_segmento(
     anos_com_score: list[int]              = []
     score_rows: list[dict]                 = []
     lideres_rows: list[dict]               = []
+    constraint_warnings: list[str]         = []
 
     for ano in range(ano_inicio, ano_atual):
         score_map = _score_historico_ano(
@@ -349,7 +394,9 @@ def _processar_segmento(
 
         ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
         scores_desc = [s for _, s in ranked[:3]]
+        from core.portfolio_constraints import minimum_assets_for_cap
         n = _select_n_heuristica(scores_desc) if len(ranked) >= 2 else 1
+        n = min(len(ranked), max(n, minimum_assets_for_cap(cap)))
         lids = [tk for tk, _ in ranked[:n] if tk in tickers]
 
         lids_por_ano[ano] = lids
@@ -359,7 +406,11 @@ def _processar_segmento(
                 "SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento,
             })
         if lids and len(lids) >= 2:
-            w = _apply_cap_soft(_weights_from_scores(lids, score_map, gamma), cap, soft)
+            try:
+                w = _apply_cap_soft(_weights_from_scores(lids, score_map, gamma), cap, soft)
+            except ValueError as exc:
+                w = {tk: 1.0 / len(lids) for tk in lids}
+                constraint_warnings.append(f"{ano}: {exc}")
         elif lids:
             w = {lids[0]: 1.0}
         else:
@@ -389,11 +440,19 @@ def _processar_segmento(
     # Líderes para próximo ano
     ranked_prox = sorted(score_proximo.items(), key=lambda x: x[1], reverse=True)
     scores_prox = [s for _, s in ranked_prox[:3]]
+    from core.portfolio_constraints import minimum_assets_for_cap
     n_prox      = _select_n_heuristica(scores_prox) if len(ranked_prox) >= 2 else 1
+    n_prox      = min(len(ranked_prox), max(n_prox, minimum_assets_for_cap(cap)))
     lids_prox   = [tk for tk, _ in ranked_prox[:n_prox] if tk in tickers]
 
     if lids_prox and len(lids_prox) >= 2:
-        pesos_prox = _apply_cap_soft(_weights_from_scores(lids_prox, score_proximo, gamma), cap, soft)
+        try:
+            pesos_prox = _apply_cap_soft(
+                _weights_from_scores(lids_prox, score_proximo, gamma), cap, soft
+            )
+        except ValueError as exc:
+            pesos_prox = {tk: 1.0 / len(lids_prox) for tk in lids_prox}
+            constraint_warnings.append(f"{ano_atual}: {exc}")
     elif lids_prox:
         pesos_prox = {lids_prox[0]: 1.0}
     else:
@@ -402,6 +461,11 @@ def _processar_segmento(
     # Reconstrução histórica
     tks_disp = [tk for tk in tickers if tk in df_precos_all.columns]
     val_est = val_selic = val_ew = 0.0
+    val_est_oos = val_selic_oos = val_ew_oos = 0.0
+    p_value_oos = 1.0
+    n_months_oos = 0
+    rank_ic_mean = float("nan")
+    rank_ic_years = 0
     contrib_est: dict[str, float] = {}
     if tks_disp and not df_precos_all.empty:
         df_prec_seg = df_precos_all[tks_disp].dropna(how="all")
@@ -416,11 +480,86 @@ def _processar_segmento(
             ((df_prec_seg.index.year == int(ano_inicio)) &
              (df_prec_seg.index.month >= _REBAL_MONTH))
         ]
+        from core.transaction_costs import CostConfig
+        _segment_costs = CostConfig.brasil_pf_default()
         val_est, val_selic, val_ew, contrib_est = _simular_seg_backtest(
             df_prec_seg, lids_por_ano, pesos_por_ano,
             aporte, taxa_selic_aa, selic_macro,
             dividendos=dividendos,
+            cost_cfg=_segment_costs,
         )
+        # Aprovação usa somente a janela final, não o mesmo histórico inteiro
+        # usado para observar/desenvolver a estratégia. Início em abril e pelo
+        # menos 18 meses úteis para evitar um holdout episódico.
+        validation_start_year = int(df_prec_seg.index.max().year) - 2
+        df_validation = df_prec_seg[
+            (df_prec_seg.index.year > validation_start_year)
+            | (
+                (df_prec_seg.index.year == validation_start_year)
+                & (df_prec_seg.index.month >= _REBAL_MONTH)
+            )
+        ]
+        if len(df_validation) >= 18:
+            validation_details: dict = {}
+            val_est_oos, val_selic_oos, val_ew_oos, _ = _simular_seg_backtest(
+                df_validation, lids_por_ano, pesos_por_ano,
+                aporte, taxa_selic_aa, selic_macro,
+                dividendos=dividendos,
+                cost_cfg=_segment_costs,
+                details_out=validation_details,
+            )
+            monthly = pd.DataFrame(validation_details.get("monthly_returns") or [])
+            if len(monthly) >= 12:
+                excess = (
+                    pd.to_numeric(monthly["strategy"], errors="coerce")
+                    - pd.concat([
+                        pd.to_numeric(monthly["selic"], errors="coerce"),
+                        pd.to_numeric(monthly["equal_weight"], errors="coerce"),
+                    ], axis=1).max(axis=1)
+                ).replace([np.inf, -np.inf], np.nan).dropna()
+                n_months_oos = int(len(excess))
+                if len(excess) >= 12 and float(excess.std(ddof=1) or 0.0) > 0:
+                    from scipy.stats import ttest_1samp
+                    test = ttest_1samp(excess, popmean=0.0, alternative="greater")
+                    p_value_oos = (
+                        float(test.pvalue) if np.isfinite(test.pvalue) else 1.0
+                    )
+
+        # Evidência preditiva independente do patrimônio acumulado: score de
+        # abril/N versus retorno abril/N→março/N+1. Segmentos pequenos demais
+        # não recebem aprovação por ausência de poder estatístico.
+        score_frame = pd.DataFrame(score_rows)
+        ic_values: list[float] = []
+        if not score_frame.empty:
+            for year in sorted(score_frame["Ano"].unique()):
+                scores_year = score_frame[score_frame["Ano"] == year].set_index(
+                    "ticker"
+                )["Score_Ajustado"]
+                start_rows = df_prec_seg[
+                    (df_prec_seg.index.year == int(year))
+                    & (df_prec_seg.index.month >= _REBAL_MONTH)
+                ]
+                end_rows = df_prec_seg[
+                    (df_prec_seg.index.year == int(year) + 1)
+                    & (df_prec_seg.index.month < _REBAL_MONTH)
+                ]
+                if start_rows.empty or end_rows.empty:
+                    continue
+                returns_year = (
+                    end_rows.iloc[-1] / start_rows.iloc[0] - 1.0
+                ).replace([np.inf, -np.inf], np.nan)
+                aligned = pd.concat(
+                    [scores_year.rename("score"), returns_year.rename("return")],
+                    axis=1,
+                ).dropna()
+                if len(aligned) < 5:
+                    continue
+                ic = aligned["score"].corr(aligned["return"], method="spearman")
+                if pd.notna(ic) and np.isfinite(ic):
+                    ic_values.append(float(ic))
+        rank_ic_years = len(ic_values)
+        if ic_values:
+            rank_ic_mean = float(np.mean(ic_values))
 
     total_lids = sum(len(v) for v in liderancas_hist.values())
     participacao = {
@@ -450,9 +589,17 @@ def _processar_segmento(
         "val_est": val_est,
         "val_selic": val_selic,
         "val_ew": val_ew,
+        "val_est_oos": val_est_oos,
+        "val_selic_oos": val_selic_oos,
+        "val_ew_oos": val_ew_oos,
+        "p_value_oos": p_value_oos,
+        "n_months_oos": n_months_oos,
+        "rank_ic_mean": rank_ic_mean,
+        "rank_ic_years": rank_ic_years,
         "n_anos": len(anos_com_score),
         "ano_inicio": min(anos_com_score),
         "ano_fim": max(anos_com_score),
+        "constraint_warnings": sorted(set(constraint_warnings)),
     }
 
 
@@ -465,6 +612,24 @@ def _margem_pct(val: float, ref: float) -> float:
     if not (np.isfinite(val) and np.isfinite(ref)) or ref <= 0:
         return 0.0
     return (val / ref - 1) * 100
+
+
+def _benjamini_hochberg(p_values: list[float]) -> list[float]:
+    """Q-values BH para controlar falsos positivos entre segmentos."""
+    if not p_values:
+        return []
+    clean = np.asarray([
+        min(max(float(value), 0.0), 1.0) if np.isfinite(value) else 1.0
+        for value in p_values
+    ])
+    order = np.argsort(clean)
+    ranked = clean[order]
+    m = len(clean)
+    adjusted = ranked * m / np.arange(1, m + 1)
+    adjusted = np.minimum.accumulate(adjusted[::-1])[::-1].clip(0.0, 1.0)
+    out = np.empty(m, dtype=float)
+    out[order] = adjusted
+    return out.tolist()
 
 
 def _status_seg(val_est: float, val_selic: float, val_ew: float,
@@ -483,12 +648,15 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
                     max_anos_lid: int) -> None:
     """Renderiza um bloco de resultado por segmento."""
     setor, sub, seg = res["setor"], res["subsetor"], res["segmento"]
+    setor_html, sub_html, seg_html = (
+        html.escape(str(setor)), html.escape(str(sub)), html.escape(str(seg))
+    )
     val_est, val_selic, val_ew = res["val_est"], res["val_selic"], res["val_ew"]
     m_selic = _margem_pct(val_est, val_selic)
     m_ew    = _margem_pct(val_est, val_ew)
 
     st.markdown(
-        f'<div class="pb3-seg-hdr">{setor} › {sub} › {seg}</div>'
+        f'<div class="pb3-seg-hdr">{setor_html} › {sub_html} › {seg_html}</div>'
         f'<div class="pb3-seg-sub">'
         f'{res["n_anos"]} anos analisados · {res["ano_inicio"]}–{res["ano_fim"]}'
         f'</div>',
@@ -1063,12 +1231,19 @@ def render(show_header: bool = True) -> None:
     with st.expander("⚙️ Parâmetros", expanded=True):
         p1, p2, p3, p4 = st.columns(4)
         thr_selic   = p1.number_input(
-            "Margem mín. vs Tesouro Selic (%)", 0.0, 500.0, 10.0, 5.0,
-            key="pb3_thr_selic",
+            "Margem mín. vs Selic · holdout ~24m (%)", 0.0, 500.0, 10.0, 5.0,
+            key="pb3_thr_selic_oos24",
+            help="Margem exigida sobre a janela OUT-OF-SAMPLE de ~24 meses — "
+                 "não sobre o histórico inteiro. A seleção é dirigida pelas "
+                 "estatísticas (FDR q≤10% + Rank-IC + p-value); esta margem é "
+                 "só um piso econômico leve. Valores altos (ex.: 100%) viram uma "
+                 "barra quase impossível em 24 meses e anulam os testes.",
         )
         thr_ew      = p2.number_input(
-            "Margem mín. vs Equal-Weight (%)", 0.0, 300.0, 0.0, 5.0,
-            key="pb3_thr_ew",
+            "Margem mín. vs Equal-Weight · holdout ~24m (%)", 0.0, 300.0, 0.0, 5.0,
+            key="pb3_thr_ew_oos24",
+            help="Margem sobre o mesmo holdout de ~24 meses. Só entra na seleção "
+                 "quando 'Uso do Equal-Weight' = 'Critério de seleção'.",
         )
         uso_ew      = p3.selectbox(
             "Uso do Equal-Weight na seleção",
@@ -1093,6 +1268,14 @@ def render(show_header: bool = True) -> None:
             value=False,
             key="pb3_status_recon",
         )
+        st.caption(
+            "As margens acima são medidas sobre o **holdout out-of-sample de "
+            "~24 meses**, não sobre o histórico inteiro. Quem dirige a seleção é "
+            "o rigor estatístico (FDR q≤10% + Rank-IC ≥ 2 anos positivo + p-value "
+            "unilateral); a margem vs Selic é só um piso econômico leve (default "
+            "10%). Para ampliar a carteira, reduza a margem — nunca a régua "
+            "estatística."
+        )
 
     usar_ew_como_criterio = uso_ew == "Critério de seleção"
 
@@ -1100,7 +1283,7 @@ def render(show_header: bool = True) -> None:
 
     # ── DADOS BASE ────────────────────────────────────────────────────────────
     with st.spinner("Carregando dados do banco…"):
-        df_set        = _db.load_setores()
+        df_set        = _so_acoes(_db.load_setores())
         selic_macro   = _db.load_selic_macro()
         macro_history = _db.load_macro_history()
         anos_hist     = _db.load_historico_anos()
@@ -1232,16 +1415,33 @@ def render(show_header: bool = True) -> None:
     # ── FILTROS DE APROVAÇÃO ──────────────────────────────────────────────────
     ano_atual = pd.Timestamp.now().year
 
+    _q_values = _benjamini_hochberg([
+        float(result.get("p_value_oos", 1.0)) for result in resultados
+    ])
+    for result, q_value in zip(resultados, _q_values):
+        result["q_value_oos"] = q_value
+        result["fdr_pass"] = q_value <= 0.10
+
     def _aprovado(res: dict) -> bool:
-        m_selic = _margem_pct(res["val_est"], res["val_selic"])
-        m_ew    = _margem_pct(res["val_est"], res["val_ew"])
+        if res.get("val_est_oos", 0.0) <= 0:
+            return False
+        if not res.get("fdr_pass", False):
+            return False
+        if int(res.get("rank_ic_years", 0)) < 2:
+            return False
+        if not np.isfinite(float(res.get("rank_ic_mean", float("nan")))):
+            return False
+        if float(res.get("rank_ic_mean")) <= 0:
+            return False
+        m_selic = _margem_pct(res["val_est_oos"], res["val_selic_oos"])
+        m_ew    = _margem_pct(res["val_est_oos"], res["val_ew_oos"])
         ultimo_lid_seg = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
         recente = (ano_atual - 1 - ultimo_lid_seg) <= max_anos_lid
         if not recente:
             return False
         if m_selic < thr_selic:
             return False
-        if usar_ew_como_criterio and res["val_ew"] > 0 and m_ew < thr_ew:
+        if usar_ew_como_criterio and res["val_ew_oos"] > 0 and m_ew < thr_ew:
             return False
         return True
 
@@ -1251,21 +1451,40 @@ def render(show_header: bool = True) -> None:
     # ── TABELA DE AUDITORIA ───────────────────────────────────────────────────
     _sec_hdr(f"📋 Auditoria de Segmentos — {len(resultados)} analisados · "
              f"{len(aprovados)} aprovados")
+    st.caption(
+        "A aprovação usa exclusivamente o holdout final de aproximadamente "
+        "24 meses, com custos de compra, e exige q-value ≤ 10% após correção "
+        "Benjamini-Hochberg entre todos os segmentos. Segmentos sem ao menos "
+        "12 retornos mensais úteis ficam reprovados por dados insuficientes."
+        " Também são exigidos pelo menos dois anos de Rank-IC e IC médio positivo."
+    )
 
     rows_tbl: list[dict] = []
     for res in resultados:
-        m_s  = _margem_pct(res["val_est"], res["val_selic"])
-        m_ew = _margem_pct(res["val_est"], res["val_ew"])
+        m_s  = _margem_pct(res["val_est_oos"], res["val_selic_oos"])
+        m_ew = _margem_pct(res["val_est_oos"], res["val_ew_oos"])
         ult  = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
         rows_tbl.append({
             "Setor":     res["setor"],
             "Subsetor":  res["subsetor"],
             "Segmento":  res["segmento"],
-            "Status":    _status_seg(res["val_est"], res["val_selic"], res["val_ew"],
-                                     thr_selic, thr_ew),
-            "vs Selic (%)":  round(m_s, 1),
-            "vs EW (%)":     round(m_ew, 1),
-            "Patrimônio":    _fv(res["val_est"]),
+            "Status": (
+                "✅ Aprovado"
+                if _aprovado(res)
+                else "❌ Reprovado (risco/evidência)"
+            ),
+            "vs Selic OOS (%)": round(m_s, 1),
+            "vs EW OOS (%)":    round(m_ew, 1),
+            "p-value OOS": round(float(res.get("p_value_oos", 1.0)), 4),
+            "q-value BH": round(float(res.get("q_value_oos", 1.0)), 4),
+            "Meses OOS": int(res.get("n_months_oos", 0)),
+            "Rank-IC médio": (
+                round(float(res["rank_ic_mean"]), 3)
+                if np.isfinite(float(res.get("rank_ic_mean", float("nan"))))
+                else None
+            ),
+            "Anos Rank-IC": int(res.get("rank_ic_years", 0)),
+            "Patrimônio total": _fv(res["val_est"]),
             "Últ. liderança": ult or "—",
         })
 
@@ -1354,13 +1573,30 @@ def render(show_header: bool = True) -> None:
                 "setor": res["setor"],
                 "subsetor": res["subsetor"],
                 "segmento": res["segmento"],
-                "alpha_selic": _margem_pct(res["val_est"], res["val_selic"]),
-                "alpha_ew": _margem_pct(res["val_est"], res["val_ew"]),
+                "alpha_selic": _margem_pct(res["val_est_oos"], res["val_selic_oos"]),
+                "alpha_ew": _margem_pct(res["val_est_oos"], res["val_ew_oos"]),
                 "rank_score": _rank_ticker(score_prox, tk),
                 "ano_lider": ano_ref if tk == ticker_lider else res.get("ultimo_lid", {}).get(tk),
             })
 
-    # Remove duplicatas (mesmo ticker em múltiplos segmentos), preservando motivos.
+    # Orçamento explícito: cada segmento aprovado recebe a mesma fração da
+    # carteira; dentro dele, os líderes selecionados dividem o orçamento pelos
+    # pesos do score. Pesos internos de segmentos distintos não são comparáveis.
+    _seg_groups: dict[tuple[str, str, str], list[dict]] = {}
+    for item in proximos:
+        key = (item["setor"], item["subsetor"], item["segmento"])
+        _seg_groups.setdefault(key, []).append(item)
+    _seg_budget = 1.0 / len(_seg_groups) if _seg_groups else 0.0
+    for group_items in _seg_groups.values():
+        local_total = sum(float(item.get("peso") or 0.0) for item in group_items)
+        for item in group_items:
+            item["peso"] = (
+                _seg_budget * float(item.get("peso") or 0.0) / local_total
+                if local_total > 0 else _seg_budget / len(group_items)
+            )
+
+    # Remove duplicatas (mesmo ticker em múltiplos segmentos), somando os
+    # orçamentos atribuídos e preservando a melhor ficha/motivos.
     mapa_prox: dict[str, dict] = {}
     for p in sorted(proximos, key=lambda x: x["score"], reverse=True):
         tk = p["tk"]
@@ -1368,27 +1604,71 @@ def render(show_header: bool = True) -> None:
             mapa_prox[tk] = p
             continue
         cur = mapa_prox[tk]
-        cur["motivos"] = list(dict.fromkeys((cur.get("motivos") or []) + (p.get("motivos") or [])))
+        combined_weight = float(cur.get("peso") or 0.0) + float(p.get("peso") or 0.0)
+        combined_motivos = list(dict.fromkeys(
+            (cur.get("motivos") or []) + (p.get("motivos") or [])
+        ))
         if float(p.get("score", 0.0)) > float(cur.get("score", 0.0)):
             cur.update({k: v for k, v in p.items() if k != "motivos"})
+        cur["peso"] = combined_weight
+        cur["motivos"] = combined_motivos
     proximos_uniq = sorted(mapa_prox.values(), key=lambda x: x["score"], reverse=True)
+    from core.portfolio_constraints import (
+        minimum_assets_for_cap,
+        project_capped_simplex,
+    )
+    _required_global = minimum_assets_for_cap(cap)
+    _portfolio_viavel = len(proximos_uniq) >= _required_global
+    if proximos_uniq and _portfolio_viavel:
+        _projected = project_capped_simplex(
+            {item["tk"]: float(item.get("peso") or 0.0) for item in proximos_uniq},
+            cap,
+        )
+        for item in proximos_uniq:
+            item["peso"] = _projected[item["tk"]]
+    elif proximos_uniq:
+        st.error(
+            f"Carteira não pode respeitar o cap global de {cap:.0%}: "
+            f"há {len(proximos_uniq)} ativo(s), mas são necessários ao menos "
+            f"{_required_global}. Os líderes são exibidos para auditoria, "
+            "porém o salvamento fica bloqueado."
+        )
+
+    _constraint_warnings = sorted({
+        warning
+        for result in resultados
+        for warning in (result.get("constraint_warnings") or [])
+    })
+    if _constraint_warnings:
+        with st.expander(
+            f"⚠️ Restrições inviáveis em {len(_constraint_warnings)} combinação(ões)",
+            expanded=False,
+        ):
+            st.caption(
+                "Esses casos usaram equal-weight apenas dentro do diagnóstico "
+                "do segmento. O cap é reaplicado à carteira global antes de salvar."
+            )
+            st.code("\n".join(_constraint_warnings[:100]))
 
     if proximos_uniq:
         for i in range(0, len(proximos_uniq), 3):
             cols_p = st.columns(3, gap="small")
             for j, item in enumerate(proximos_uniq[i:i+3]):
                 mot_html = "".join(
-                    f'<div class="pb3-lider-motivo">• {m}</div>'
+                    f'<div class="pb3-lider-motivo">• {html.escape(str(m))}</div>'
                     for m in item["motivos"]
                 ) or '<div class="pb3-lider-motivo">Líder do segmento</div>'
+                _tk_html = html.escape(str(item["tk"]))
+                _nome_html = html.escape(str(item["nome"]))
+                _logo_html = html.escape(str(_logo_url(item["tk"])), quote=True)
                 with cols_p[j]:
                     st.markdown(
                         f'<div class="pb3-lider-card">'
-                        f'<img src="{_logo_url(item["tk"])}" style="width:48px;height:48px;'
+                        f'<img src="{_logo_html}" style="width:48px;height:48px;'
                         f'border-radius:10px;object-fit:contain;background:rgba(255,255,255,.06);'
                         f'padding:5px;" onerror="this.style.display=\'none\'">'
-                        f'<div class="pb3-lider-ticker">({item["tk"]})</div>'
-                        f'<div class="pb3-emp-nome">{item["nome"]}</div>'
+                        f'<div class="pb3-lider-ticker">({_tk_html})</div>'
+                        f'<div class="pb3-emp-nome">{_nome_html}</div>'
                         f'{mot_html}'
                         f'<div class="pb3-lider-ano">Para compra em {ano_atual}</div>'
                         f'</div>',
@@ -1403,9 +1683,16 @@ def render(show_header: bool = True) -> None:
         _sec_hdr("💾 Salvar como portfólio padrão")
         st.caption(
             "Ao salvar, esta carteira passa a ser o modelo B3 ativo do usuário "
-            "e aparece resumida no Dashboard Geral."
+            "e aparece resumida no Dashboard Geral. Alocação: orçamento igual "
+            "entre segmentos aprovados; dentro de cada segmento, pesos do score."
         )
         params_modelo = {
+            "score_version": SCORE_VERSION,
+            "model_schema_version": MODEL_SCHEMA_VERSION,
+            "allocation_policy": "equal_approved_segment_budget",
+            "global_cap": float(cap),
+            "segment_selection_fdr": 0.10,
+            "validation_policy": "holdout_24m_bh_fdr",
             "ano_compra": ano_atual,
             "thr_selic": float(thr_selic),
             "thr_ew": float(thr_ew),
@@ -1426,10 +1713,19 @@ def render(show_header: bool = True) -> None:
             "alpha_ew_medio": float(np.mean([p.get("alpha_ew", 0.0) for p in proximos_uniq])),
             "score_medio": float(np.mean([p.get("score", 0.0) for p in proximos_uniq])),
             "score_entrada_medio": float(np.mean([p.get("score_entrada", 0.0) for p in proximos_uniq])),
+            "q_value_max_aprovados": float(max(
+                (r.get("q_value_oos", 1.0) for r in aprovados),
+                default=1.0,
+            )),
         }
         c_save, c_info = st.columns([1, 3], gap="medium")
         with c_save:
-            if st.button("Salvar portfólio padrão", type="primary", key="pb3_save_model"):
+            if st.button(
+                "Salvar portfólio padrão",
+                type="primary",
+                key="pb3_save_model",
+                disabled=not _portfolio_viavel,
+            ):
                 try:
                     model_id = save_b3_portfolio_model(
                         proximos_uniq,
@@ -1453,14 +1749,14 @@ def render(show_header: bool = True) -> None:
                     unsafe_allow_html=True)
         _sec_hdr("🍕 Distribuição Setorial do Portfólio Sugerido")
 
-        dist: dict[str, int] = {}
+        dist: dict[str, float] = {}
         for p in proximos_uniq:
-            dist[p["setor"]] = dist.get(p["setor"], 0) + 1
+            dist[p["setor"]] = dist.get(p["setor"], 0.0) + float(p.get("peso") or 0.0)
         df_dist = pd.DataFrame(
-            {"Setor": list(dist.keys()), "Empresas": list(dist.values())}
+            {"Setor": list(dist.keys()), "Peso": list(dist.values())}
         )
         fig_pie = px.pie(
-            df_dist, names="Setor", values="Empresas",
+            df_dist, names="Setor", values="Peso",
             color_discrete_sequence=px.colors.qualitative.Set3,
         )
         fig_pie.update_traces(textposition="inside", textinfo="percent+label",

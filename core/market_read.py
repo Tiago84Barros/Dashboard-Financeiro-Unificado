@@ -107,6 +107,10 @@ def load_setores() -> pd.DataFrame:
             LIMIT 1
         ) s ON TRUE
         WHERE a.ticker IS NOT NULL
+          AND a.asset_type IN ('stock', 'unit')
+          AND a.is_active IS TRUE
+          AND a.company_id IS NOT NULL
+          AND s."SETOR" IS NOT NULL
         ORDER BY "SETOR" NULLS LAST, a.ticker
     """)
     if df.empty:
@@ -136,8 +140,14 @@ def _multiplos_long(ticker: str | None = None) -> pd.DataFrame:
         SELECT cm.ticker AS "Ticker", COALESCE(ly.y, 0) AS year,
                cm.metric_name, cm.metric_value
         FROM market.calculated_metrics cm
+        JOIN market.assets a ON a.ticker=cm.ticker
+          AND a.asset_type IN ('stock','unit')
+          AND a.is_active IS TRUE
+          AND a.company_id IS NOT NULL
         LEFT JOIN ly ON ly.ticker = cm.ticker
-        WHERE cm.period = 'ttm' {where_tk}
+        WHERE cm.period = 'ttm'
+          AND (cm.confidence_score IS NULL OR cm.confidence_score >= 80)
+          {where_tk}
     """, params)
 
 
@@ -177,16 +187,26 @@ def _annual_upto_long(ano_ref_max: int) -> pd.DataFrame:
         ly AS (
             SELECT cm.ticker, MAX(cm.year) AS y
             FROM market.calculated_metrics cm
+            JOIN market.assets a ON a.ticker=cm.ticker
+              AND a.asset_type IN ('stock','unit')
+              AND a.is_active IS TRUE
+              AND a.company_id IS NOT NULL
             JOIN stmt s ON s.ticker = cm.ticker
             WHERE cm.period = 'annual' AND cm.year > 0
+              AND (cm.confidence_score IS NULL OR cm.confidence_score >= 80)
               AND cm.year <= LEAST(CAST(:amax AS int), s.ymax)
             GROUP BY cm.ticker
         )
         SELECT cm.ticker AS "Ticker", cm.year AS year,
                cm.metric_name, cm.metric_value
         FROM market.calculated_metrics cm
+        JOIN market.assets a ON a.ticker=cm.ticker
+          AND a.asset_type IN ('stock','unit')
+          AND a.is_active IS TRUE
+          AND a.company_id IS NOT NULL
         JOIN ly ON ly.ticker = cm.ticker AND ly.y = cm.year
         WHERE cm.period = 'annual'
+          AND (cm.confidence_score IS NULL OR cm.confidence_score >= 80)
     """, {"amax": int(ano_ref_max)})
 
 
@@ -294,6 +314,37 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
     # parcial calculado com o preço de HOJE e viravam a última linha do
     # histórico usado pelo backtest. Limita cada ticker ao último ano COM
     # demonstração anual publicada.
+    has_vintages = _q("""
+        SELECT to_regclass('market.calculated_metric_vintages') IS NOT NULL AS ok
+    """)
+    if not has_vintages.empty and bool(has_vintages.iloc[0]["ok"]):
+        return _q(f"""
+            WITH first_vintage AS (
+                SELECT DISTINCT ON (ticker, year, quarter, metric_name)
+                       ticker, year, quarter, metric_name, metric_value,
+                       available_at, availability_quality
+                FROM market.calculated_metric_vintages
+                WHERE period = 'annual'
+                  AND availability_quality <> 'migration_baseline'
+                  AND (confidence_score IS NULL OR confidence_score >= 80)
+                ORDER BY ticker, year, quarter, metric_name, recorded_at ASC
+            ),
+            stmt AS (
+                SELECT ticker, MAX(year) AS ymax
+                FROM market.income_statements
+                WHERE period = 'annual'
+                GROUP BY ticker
+            )
+            SELECT cm.ticker AS "Ticker", cm.year AS year,
+                   cm.metric_name, cm.metric_value,
+                   cm.available_at, cm.availability_quality
+            FROM first_vintage cm
+            JOIN market.assets a ON a.ticker=cm.ticker
+              AND a.asset_type IN ('stock','unit')
+              AND a.company_id IS NOT NULL
+            JOIN stmt s ON s.ticker = cm.ticker
+            WHERE cm.year <= s.ymax AND {where_sql}
+        """, params)
     return _q(f"""
         WITH stmt AS (
             SELECT ticker, MAX(year) AS ymax
@@ -304,8 +355,14 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
         SELECT cm.ticker AS "Ticker", cm.year AS year,
                cm.metric_name, cm.metric_value
         FROM market.calculated_metrics cm
+        JOIN market.assets a ON a.ticker=cm.ticker
+          AND a.asset_type IN ('stock','unit')
+          AND a.company_id IS NOT NULL
         JOIN stmt s ON s.ticker = cm.ticker
-        WHERE cm.period = 'annual' AND cm.year <= s.ymax AND {where_sql}
+        WHERE cm.period = 'annual'
+          AND cm.year <= s.ymax
+          AND (cm.confidence_score IS NULL OR cm.confidence_score >= 80)
+          AND {where_sql}
     """, params)
 
 
@@ -317,9 +374,18 @@ def load_multiplos_historico(ticker: str) -> pd.DataFrame:
     if long_df.empty:
         return pd.DataFrame()
     wide = _pivot_metrics(long_df)
+    if "available_at" in long_df:
+        availability = (
+            long_df.groupby(["Ticker", "year"], as_index=False)["available_at"].max()
+        )
+        wide = wide.merge(availability, on=["Ticker", "year"], how="left")
     wide["Ticker"] = _norm_ticker(wide["Ticker"])
     out = _attach_data(wide, "Data").sort_values("Data").reset_index(drop=True)
-    return out[["Ticker", "Data", *_MULT_COLS]]
+    cols = ["Ticker", "Data", *_MULT_COLS]
+    if "available_at" in out:
+        out = out.rename(columns={"available_at": "AvailableAt"})
+        cols.append("AvailableAt")
+    return out[cols]
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -332,13 +398,23 @@ def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.Dat
     if long_df.empty:
         return {}
     wide = _pivot_metrics(long_df)
+    if "available_at" in long_df:
+        availability = (
+            long_df.groupby(["Ticker", "year"], as_index=False)["available_at"].max()
+        )
+        wide = wide.merge(availability, on=["Ticker", "year"], how="left")
     wide["Ticker"] = _norm_ticker(wide["Ticker"])
     out = _attach_data(wide, "Data").sort_values(["Ticker", "Data"])
+    if "available_at" in out:
+        out = out.rename(columns={"available_at": "AvailableAt"})
     result: dict[str, pd.DataFrame] = {}
     for tk in tks:
         sub = out[out["Ticker"] == tk].copy().reset_index(drop=True)
         if not sub.empty:
-            result[tk] = sub[["Ticker", "Data", *_MULT_COLS]]
+            cols = ["Ticker", "Data", *_MULT_COLS]
+            if "AvailableAt" in sub:
+                cols.append("AvailableAt")
+            result[tk] = sub[cols]
     return result
 
 

@@ -27,6 +27,9 @@ def test_eh_acao_remove_bdr_e_subscricao():
     assert _eh_acao("ROXO35", "Nubank BDR") is False
     assert _eh_acao("BRGE12", "") is False
     assert _eh_acao("PETR1", "Petrobras") is False   # subscrição
+    assert _eh_acao("C3", "Ticker legado corrompido") is False
+    assert _eh_acao("K3", "Ticker legado corrompido") is False
+    assert _eh_acao("B3SA3", "B3 SA") is True
 
 
 def test_so_acoes_filtra_df():

@@ -18,6 +18,7 @@ from sqlalchemy import text
 
 from core.config import settings
 from core.database import get_engine
+from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
 
 
 DDL_SQL = [
@@ -144,8 +145,20 @@ def _safe_json(value: Any, default: Any) -> str:
 
 
 def _plan_hash(items: list[dict], params: dict) -> str:
+    normalized_items = []
+    for item in items:
+        ticker = str(item.get("tk") or item.get("ticker") or "").upper().strip()
+        if not ticker:
+            continue
+        normalized_items.append({
+            "ticker": ticker,
+            "weight": round(float(item.get("peso") or item.get("weight") or 0.0), 10),
+            "score": round(float(item.get("score") or 0.0), 8),
+            "setor": str(item.get("setor") or ""),
+            "segmento": str(item.get("segmento") or ""),
+        })
     payload = {
-        "tickers": sorted(str(i.get("tk") or i.get("ticker") or "").upper() for i in items),
+        "items": sorted(normalized_items, key=lambda item: item["ticker"]),
         "params": params,
     }
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
@@ -188,6 +201,9 @@ def save_b3_portfolio_model(
     if engine is None:
         raise RuntimeError("Banco unificado nao configurado.")
 
+    params = dict(params or {})
+    params.setdefault("score_version", SCORE_VERSION)
+    params.setdefault("model_schema_version", MODEL_SCHEMA_VERSION)
     owner = _owner_id()
     ano_compra = int(params.get("ano_compra") or date.today().year)
     weights = _normalize_weight(items)
@@ -321,4 +337,10 @@ def load_active_b3_portfolio_model() -> dict:
     model = dict(header)
     model["items"] = items
     model["num_items"] = len(items)
+    params = model.get("params_json") or {}
+    model["is_stale"] = (
+        params.get("score_version") != SCORE_VERSION
+        or int(params.get("model_schema_version") or 0) != MODEL_SCHEMA_VERSION
+    )
+    model["current_score_version"] = SCORE_VERSION
     return model

@@ -1,10 +1,10 @@
 """
-core/risk_logit.py -- distress risk model for the B3 score.
+core/risk_logit.py -- índice heurístico de risco financeiro para o score B3.
 
-This module turns the previous rule-based red flags into a proper logistic
-probability. The default coefficients are deliberately conservative and can be
-replaced later by fitted coefficients from a labelled bankruptcy/distress
-dataset without changing the UI contract.
+Os coeficientes padrão são definidos por regra de negócio, não ajustados em
+uma base rotulada de distress. A transformação logística produz um índice
+limitado em [0, 1], mas ele não deve ser interpretado como probabilidade
+empírica de falência até que o modelo seja calibrado e validado.
 """
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def predict_distress_probability(
     df: pd.DataFrame,
     model: RiskLogitModel = DEFAULT_MODEL,
 ) -> pd.Series:
-    """Return distress probability in [0, 1] for each row."""
+    """Retorna índice logístico heurístico em [0, 1] (não calibrado)."""
     features = distress_features(df)
     coefs: Mapping[str, float] = {
         "negative_roe": model.negative_roe,
@@ -111,4 +111,5 @@ def distress_risk_score(df: pd.DataFrame) -> pd.DataFrame:
         "risk_probability": (prob * 100.0).round(1),
         "r_penalty": penalty,
         "risk_driver": drivers,
+        "risk_model_calibrated": False,
     }, index=df.index)

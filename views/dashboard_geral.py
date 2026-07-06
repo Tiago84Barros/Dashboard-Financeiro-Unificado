@@ -499,6 +499,12 @@ def _secao_portfolio_modelo_b3(modelo: dict) -> None:
         "🎯", "Portfólio B3 padrão",
         "Carteira modelo criada na seção Empresas B3 e definida pelo usuário", _COR_PATRIMONIO,
     )
+    if modelo.get("is_stale"):
+        st.warning(
+            "Esta carteira foi criada com uma metodologia anterior e está "
+            "marcada como desatualizada. Recalcule-a em Empresas B3 antes de "
+            "usá-la como referência."
+        )
 
     m1, m2, m3, m4 = st.columns(4, gap="small")
     with m1:

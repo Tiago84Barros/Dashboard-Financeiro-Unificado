@@ -200,7 +200,22 @@ def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
                 return 0
     collist = ", ".join(f'"{c}"' for c in cols)
     upd = _UPDATE_COLS[table]
-    setlist = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in upd if c in cols)
+    assignments = []
+    for c in upd:
+        if c not in cols:
+            continue
+        if table == "assets" and c == "asset_type":
+            # Não rebaixa uma classificação forte já confirmada por pipelines
+            # especializados (FII/ETF/BDR) para inferências fracas de quote.
+            assignments.append(
+                '"asset_type" = CASE '
+                "WHEN market.assets.asset_type IN ('fii','etf','bdr') "
+                " AND EXCLUDED.asset_type IN ('stock','unit','other') "
+                "THEN market.assets.asset_type ELSE EXCLUDED.asset_type END"
+            )
+        else:
+            assignments.append(f'"{c}" = EXCLUDED."{c}"')
+    setlist = ", ".join(assignments)
     conflict = _CONFLICT[table]
     action = f"DO UPDATE SET {setlist}" if setlist else "DO NOTHING"
 
@@ -242,6 +257,152 @@ def upsert(conn, table: str, rows: list[dict]) -> int:
     if table not in _CONFLICT:
         raise ValueError(f"tabela desconhecida: {table}")
     return _upsert(conn, table, rows)
+
+
+def append_metric_vintages(conn, rows: list[dict]) -> int:
+    """Acrescenta versões imutáveis quando uma métrica efetivamente muda.
+
+    Bancos sem a migration 021 continuam operando, mas retornam zero. Para
+    demonstrações anuais, ``available_at`` usa o maior ``first_seen_at`` das
+    três demonstrações do exercício; isso é um proxy conservador da data em
+    que o conjunto necessário ao cálculo estava disponível.
+    """
+    if not rows:
+        return 0
+    exists = conn.execute(text("""
+        SELECT to_regclass('market.calculated_metric_vintages') IS NOT NULL
+    """)).scalar()
+    if not exists:
+        return 0
+
+    deduped = _dedup("calculated_metrics", rows)
+    tickers = sorted({str(row.get("ticker") or "") for row in deduped})
+    availability: dict[tuple[str, int], object] = {}
+    if tickers:
+        available_rows = conn.execute(text("""
+            SELECT ticker, year, MAX(first_seen_at) AS available_at
+            FROM (
+                SELECT ticker, year, first_seen_at FROM market.income_statements
+                 WHERE period='annual' AND ticker = ANY(:tickers)
+                UNION ALL
+                SELECT ticker, year, first_seen_at FROM market.balance_sheets
+                 WHERE period='annual' AND ticker = ANY(:tickers)
+                UNION ALL
+                SELECT ticker, year, first_seen_at FROM market.cash_flow_statements
+                 WHERE period='annual' AND ticker = ANY(:tickers)
+            ) s
+            GROUP BY ticker, year
+        """), {"tickers": tickers}).fetchall()
+        availability = {(str(t), int(y)): value for t, y, value in available_rows}
+
+    has_cutover = conn.execute(text("""
+        SELECT to_regclass('market.pipeline_cutovers') IS NOT NULL
+    """)).scalar()
+    cutoff = (
+        conn.execute(text("""
+            SELECT cutoff_at FROM market.pipeline_cutovers
+            WHERE name='point_in_time_v1'
+        """)).scalar()
+        if has_cutover else None
+    )
+    incoming = []
+    for row in deduped:
+        ticker = str(row.get("ticker") or "")
+        period = str(row.get("period") or "")
+        year = int(row.get("year") or 0)
+        available_at = availability.get((ticker, year)) if period == "annual" else None
+        quality = (
+            "first_seen_proxy"
+            if available_at is not None and cutoff is not None and available_at > cutoff
+            else "migration_baseline"
+        )
+        incoming.append({
+            **row,
+            "quarter": int(row.get("quarter") or 0),
+            "available_at": available_at.isoformat() if available_at else None,
+            "availability_quality": quality,
+        })
+
+    result = conn.execute(text("""
+        WITH incoming AS (
+            SELECT *
+            FROM jsonb_to_recordset(CAST(:payload AS jsonb)) AS i(
+                ticker text, period text, year int, quarter int,
+                metric_name text, metric_value numeric,
+                calculation_method text, source text, confidence_score numeric,
+                available_at timestamptz, availability_quality text
+            )
+        )
+        INSERT INTO market.calculated_metric_vintages (
+            ticker, period, year, quarter, metric_name, metric_value,
+            calculation_method, source, confidence_score,
+            available_at, availability_quality
+        )
+        SELECT i.ticker, i.period, i.year, i.quarter, i.metric_name,
+               i.metric_value, i.calculation_method, i.source,
+               i.confidence_score, COALESCE(i.available_at, NOW()),
+               i.availability_quality
+        FROM incoming i
+        LEFT JOIN LATERAL (
+            SELECT v.id, v.metric_value, v.calculation_method, v.confidence_score
+            FROM market.calculated_metric_vintages v
+            WHERE v.ticker=i.ticker AND v.period=i.period
+              AND v.year=i.year AND v.quarter=i.quarter
+              AND v.metric_name=i.metric_name
+            ORDER BY v.recorded_at DESC, v.id DESC
+            LIMIT 1
+        ) latest ON TRUE
+        WHERE latest.id IS NULL
+           OR latest.metric_value IS DISTINCT FROM i.metric_value
+           OR latest.calculation_method IS DISTINCT FROM i.calculation_method
+           OR latest.confidence_score IS DISTINCT FROM i.confidence_score
+    """), {
+        "payload": json.dumps(incoming, ensure_ascii=False, default=str),
+    })
+    return max(int(result.rowcount or 0), 0)
+
+
+def replace_metric_snapshot(
+    conn,
+    ticker: str,
+    rows: list[dict],
+    periods: tuple[str, ...] = ("ttm", "annual"),
+) -> int:
+    """Substitui atomicamente o snapshot calculado e remove métricas obsoletas.
+
+    UPSERT isolado não remove valores que deixaram de ser calculáveis. Isso
+    preservava valuations aproximados antigos mesmo depois de o ETL passar a
+    exigir ações históricas confiáveis.
+    """
+    filtered = [
+        row for row in rows
+        if str(row.get("period") or "") in periods
+    ]
+    keys = [{
+        "period": str(row.get("period") or ""),
+        "year": int(row.get("year") or 0),
+        "quarter": int(row.get("quarter") or 0),
+        "metric_name": str(row.get("metric_name") or ""),
+    } for row in filtered]
+    payload = json.dumps(keys, ensure_ascii=False)
+    result = conn.execute(text("""
+        DELETE FROM market.calculated_metrics cm
+        WHERE cm.ticker=:ticker
+          AND cm.period = ANY(:periods)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM jsonb_to_recordset(CAST(:keys AS jsonb))
+                   AS k(period text, year int, quarter int, metric_name text)
+              WHERE k.period=cm.period AND k.year=cm.year
+                AND k.quarter=cm.quarter AND k.metric_name=cm.metric_name
+          )
+    """), {
+        "ticker": str(ticker).upper(),
+        "periods": list(periods),
+        "keys": payload,
+    })
+    upsert(conn, "calculated_metrics", filtered)
+    return max(int(result.rowcount or 0), 0)
 
 
 def save_raw_payload(conn, ticker, endpoint, payload, status="success", error=None) -> int | None:

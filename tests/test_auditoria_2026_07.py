@@ -64,8 +64,10 @@ def test_flag_survivorship_passado_detecta_faltantes():
     from core.survivorship import flag_survivorship_universe
     res = flag_survivorship_universe(["PETR4", "VALE3"], data_ref=dt.date(2013, 1, 1))
     assert res["n_delisted"] > 0
-    assert res["cobertura_estimada"] < 1.0
-    assert res["vies_estimado_bps"] > 0
+    assert res["cobertura_lista_curada"] < 1.0
+    assert res["cobertura_estimada"] is None
+    assert res["vies_estimado_bps"] is None
+    assert res["universo_completo"] is False
 
 
 # ── Ledoit-Wolf real ─────────────────────────────────────────────────────────
@@ -117,13 +119,15 @@ def test_min_variance_solver_exato_e_restricoes():
     assert res.expected_variance <= float(w_eq @ cov @ w_eq) + 1e-12
 
 
-def test_min_variance_cap_infactivel_relaxado():
-    # K*cap < 1 tornava o problema infactível; agora o cap efetivo é 1/K
+def test_min_variance_cap_inviavel_falha_explicitamente():
+    # Não relaxa silenciosamente uma restrição que a UI promete respeitar.
     from core.markowitz import min_variance_capped
+    from core.portfolio_constraints import InfeasiblePortfolioConstraint
     rng = np.random.default_rng(3)
-    res = min_variance_capped(["A", "B"], rng.normal(0, 0.05, size=(40, 2)), cap=0.30)
-    w = np.array(list(res.weights.values()))
-    assert abs(w.sum() - 1.0) < 1e-6
+    with pytest.raises(InfeasiblePortfolioConstraint):
+        min_variance_capped(
+            ["A", "B"], rng.normal(0, 0.05, size=(40, 2)), cap=0.30
+        )
 
 
 # ── Black-Litterman: anualização coerente com a frequência ───────────────────
@@ -137,9 +141,9 @@ def test_bl_vol_escala_com_periods_per_year():
     view = BLView(view_type="absolute", tickers=["AAA"], weights=[1.0],
                   expected_return=0.15, confidence=0.6)
     opt12 = apply_bl_to_markowitz(tickers, prior, rets, [view],
-                                  periods_per_year=12)
+                                  cap=0.40, periods_per_year=12)
     opt252 = apply_bl_to_markowitz(tickers, prior, rets, [view],
-                                   periods_per_year=252)
+                                   cap=0.40, periods_per_year=252)
     ratio = opt252["expected_portfolio_vol"] / max(opt12["expected_portfolio_vol"], 1e-12)
     # 252/12 = 21 ⇒ vol √21 ≈ 4,58x — era exatamente a inflação exibida na UI
     assert ratio == pytest.approx(np.sqrt(252 / 12), rel=1e-6)
