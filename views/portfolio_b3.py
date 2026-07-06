@@ -1392,6 +1392,22 @@ def render(show_header: bool = True) -> None:
     hist_audit = st.session_state.get("pb3_hist_audit", pd.DataFrame())
     entry_guard = st.session_state.get("pb3_entry_guard", {})
 
+    # Resultados ficam em session_state e sobrevivem a deploys. Execuções feitas
+    # antes do overhaul (holdout OOS + FDR) não têm as chaves _oos e quebrariam o
+    # render. Detecta o schema antigo, descarta e pede novo "Rodar".
+    if resultados and any("val_est_oos" not in r for r in resultados):
+        for _k in (
+            "pb3_resultados", "pb3_df_set", "pb3_precos_all",
+            "pb3_quality_summary", "pb3_quality_audit", "pb3_hist_audit",
+            "pb3_entry_guard", "pb3_entry_guard_df",
+        ):
+            st.session_state.pop(_k, None)
+        st.info(
+            "A metodologia foi atualizada (holdout out-of-sample + FDR + Rank-IC). "
+            "Clique em **🚀 Rodar Criação de Portfólio** para recalcular com o novo modelo."
+        )
+        return
+
     if not resultados:
         st.warning("Nenhum segmento retornou dados suficientes.")
         return
@@ -1461,8 +1477,8 @@ def render(show_header: bool = True) -> None:
 
     rows_tbl: list[dict] = []
     for res in resultados:
-        m_s  = _margem_pct(res["val_est_oos"], res["val_selic_oos"])
-        m_ew = _margem_pct(res["val_est_oos"], res["val_ew_oos"])
+        m_s  = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_selic_oos", 0.0))
+        m_ew = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_ew_oos", 0.0))
         ult  = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
         rows_tbl.append({
             "Setor":     res["setor"],
@@ -1573,8 +1589,8 @@ def render(show_header: bool = True) -> None:
                 "setor": res["setor"],
                 "subsetor": res["subsetor"],
                 "segmento": res["segmento"],
-                "alpha_selic": _margem_pct(res["val_est_oos"], res["val_selic_oos"]),
-                "alpha_ew": _margem_pct(res["val_est_oos"], res["val_ew_oos"]),
+                "alpha_selic": _margem_pct(res.get("val_est_oos", 0.0), res.get("val_selic_oos", 0.0)),
+                "alpha_ew": _margem_pct(res.get("val_est_oos", 0.0), res.get("val_ew_oos", 0.0)),
                 "rank_score": _rank_ticker(score_prox, tk),
                 "ano_lider": ano_ref if tk == ticker_lider else res.get("ultimo_lid", {}).get(tk),
             })
