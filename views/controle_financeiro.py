@@ -600,9 +600,12 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
     # ── Últimos Lançamentos (igual ao original) ───────────────────────────────
     _secao_titulo("📋", "Últimos Lançamentos")
 
-    txs = d["transacoes"]
+    # Apenas lançamentos inseridos manualmente (source='manual'). Faturas do
+    # cartão (source='csv') e extrato bancário (source='import') não entram aqui —
+    # vivem nas suas próprias abas e não são fluxo de caixa manual do mês.
+    txs = [t for t in d["transacoes"] if (t.get("source") or "manual") == "manual"]
     if not txs:
-        st.caption("Nenhum lançamento cadastrado ainda.")
+        st.caption("Nenhum lançamento manual cadastrado ainda.")
         return
 
     edit_mode = st.checkbox("Habilitar edição dos lançamentos", key="dash_edit_mode")
