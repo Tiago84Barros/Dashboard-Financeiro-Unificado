@@ -517,12 +517,14 @@ def _processar_segmento(
             )
             monthly = pd.DataFrame(validation_details.get("monthly_returns") or [])
             if len(monthly) >= 12:
+                # Habilidade de SELEÇÃO: excesso da estratégia sobre o Equal-Weight
+                # do próprio segmento — NÃO sobre a Selic. Isso neutraliza o regime
+                # macro: se o cenário derrubou o segmento inteiro, o EW caiu junto,
+                # então só sobra o que a escolha dos líderes acrescentou. Bater a
+                # Selic é decisão de timing do investidor, não de habilidade.
                 excess = (
                     pd.to_numeric(monthly["strategy"], errors="coerce")
-                    - pd.concat([
-                        pd.to_numeric(monthly["selic"], errors="coerce"),
-                        pd.to_numeric(monthly["equal_weight"], errors="coerce"),
-                    ], axis=1).max(axis=1)
+                    - pd.to_numeric(monthly["equal_weight"], errors="coerce")
                 ).replace([np.inf, -np.inf], np.nan).dropna()
                 n_months_oos = int(len(excess))
                 if len(excess) >= 12 and float(excess.std(ddof=1) or 0.0) > 0:
@@ -1238,24 +1240,27 @@ def render(show_header: bool = True) -> None:
     with st.expander("⚙️ Parâmetros", expanded=True):
         p1, p2, p3, p4 = st.columns(4)
         thr_selic   = p1.number_input(
-            "Margem mín. vs Selic · holdout ~24m (%)", 0.0, 500.0, 10.0, 5.0,
-            key="pb3_thr_selic_oos24",
-            help="Margem exigida sobre a janela OUT-OF-SAMPLE de ~24 meses — "
-                 "não sobre o histórico inteiro. A seleção é dirigida pelas "
-                 "estatísticas (FDR q≤10% + Rank-IC + p-value); esta margem é "
-                 "só um piso econômico leve. Valores altos (ex.: 100%) viram uma "
-                 "barra quase impossível em 24 meses e anulam os testes.",
+            "Margem vs Selic · diagnóstico (%)", 0.0, 500.0, 0.0, 5.0,
+            key="pb3_thr_selic_diag",
+            help="APENAS diagnóstico/coloração — NÃO reprova mais. Bater a Selic "
+                 "é decisão de timing do investidor (estar em ações agora), não "
+                 "critério de qualidade. A aprovação é por habilidade de seleção.",
         )
         thr_ew      = p2.number_input(
             "Margem mín. vs Equal-Weight · holdout ~24m (%)", 0.0, 300.0, 0.0, 5.0,
             key="pb3_thr_ew_oos24",
-            help="Margem sobre o mesmo holdout de ~24 meses. Só entra na seleção "
-                 "quando 'Uso do Equal-Weight' = 'Critério de seleção'.",
+            help="Piso de MAGNITUDE do excesso vs Equal-Weight no holdout, "
+                 "aplicado só quando o modo ao lado = 'Exigir margem mínima'. A "
+                 "significância estatística vs EW já é sempre exigida.",
         )
         uso_ew      = p3.selectbox(
-            "Uso do Equal-Weight na seleção",
-            ["Apenas diagnóstico", "Critério de seleção"],
-            key="pb3_uso_ew",
+            "Piso de magnitude vs Equal-Weight",
+            ["Apenas significância (FDR)", "Exigir margem mínima"],
+            key="pb3_ew_floor_mode",
+            help="A aprovação SEMPRE exige significância estatística do excesso "
+                 "vs Equal-Weight (habilidade de seleção, neutra ao macro). Aqui "
+                 "você decide se, além disso, a margem vs EW precisa superar o "
+                 "piso ao lado.",
         )
         max_anos_lid = p4.number_input(
             "Máx. anos desde última liderança", 1, 20, 5, 1,
@@ -1276,15 +1281,19 @@ def render(show_header: bool = True) -> None:
             key="pb3_status_recon",
         )
         st.caption(
-            "As margens acima são medidas sobre o **holdout out-of-sample de "
-            "~24 meses**, não sobre o histórico inteiro. Quem dirige a seleção é "
-            "o rigor estatístico (FDR q≤10% + Rank-IC ≥ 2 anos positivo + p-value "
-            "unilateral); a margem vs Selic é só um piso econômico leve (default "
-            "10%). Para ampliar a carteira, reduza a margem — nunca a régua "
-            "estatística."
+            "**Como a aprovação funciona:** um segmento é aprovado quando prova "
+            "**habilidade de seleção** — bate o **Equal-Weight do próprio "
+            "segmento** com significância estatística (FDR q≤10% + p-value "
+            "unilateral) no holdout OOS de ~24 meses — **e** tem **Rank-IC ≥ 2 "
+            "anos positivo** (qualidade prevê retorno, no histórico inteiro). "
+            "Isso é **neutro ao macro**: se o cenário derrubou o segmento todo, o "
+            "Equal-Weight caiu junto, então só conta o que a escolha dos líderes "
+            "acrescentou — a resiliência das vencedoras. A **margem vs Selic** "
+            "virou **diagnóstico** (timing de estar em ações agora) e **não "
+            "reprova mais**."
         )
 
-    usar_ew_como_criterio = uso_ew == "Critério de seleção"
+    usar_ew_como_criterio = uso_ew == "Exigir margem mínima"
 
     rodar = st.button("🚀 Rodar Criação de Portfólio", type="primary", key="pb3_rodar")
 
@@ -1456,14 +1465,15 @@ def render(show_header: bool = True) -> None:
             return False
         if float(res.get("rank_ic_mean")) <= 0:
             return False
-        m_selic = _margem_pct(res["val_est_oos"], res["val_selic_oos"])
         m_ew    = _margem_pct(res["val_est_oos"], res["val_ew_oos"])
         ultimo_lid_seg = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
         recente = (ano_atual - 1 - ultimo_lid_seg) <= max_anos_lid
         if not recente:
             return False
-        if m_selic < thr_selic:
-            return False
+        # Piso econômico de HABILIDADE: bater o Equal-Weight do próprio segmento.
+        # A significância estatística (fdr_pass) já testa isso vs EW; este é o
+        # piso de magnitude opcional (thr_ew). A margem vs Selic NÃO reprova mais —
+        # é diagnóstico de timing (decisão do investidor), não de qualidade.
         if usar_ew_como_criterio and res["val_ew_oos"] > 0 and m_ew < thr_ew:
             return False
         return True
