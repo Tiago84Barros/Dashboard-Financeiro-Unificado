@@ -814,14 +814,16 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ),
         "aprovacao_cp": _node(
             "aprovacao_cp", "Aprovacao do segmento", "Simulacao",
-            "Aprova o segmento por rigor estatistico no holdout out-of-sample de ~24 meses — "
-            "nao apenas por margem alta no historico que desenhou a estrategia.",
-            ("FDR Benjamini-Hochberg (q <= 10%)", "Rank-IC >= 2 anos positivo",
-             "p-value OOS unilateral", "Margem vs Selic no holdout (piso economico leve, default 10%)",
-             "Uso do equal-weight opcional", "Recencia de lideranca"),
-            "So entram segmentos com evidencia preditiva (Rank-IC), significancia estatistica "
-            "com controle de falsos positivos (FDR) e desempenho fora da amostra — nao um numero "
-            "bonito no historico cheio.",
+            "Aprova por HABILIDADE DE SELECAO: bater o Equal-Weight do proprio "
+            "segmento com significancia estatistica no holdout OOS de ~24 meses. "
+            "Neutro ao macro — se o cenario derrubou o segmento todo, o EW caiu junto.",
+            ("Significancia vs Equal-Weight (p-value OOS + FDR q <= 10%)",
+             "Rank-IC >= 2 anos positivo (qualidade preve retorno)",
+             "Margem vs EW (piso de magnitude opcional)",
+             "Margem vs Selic = DIAGNOSTICO (nao reprova)", "Recencia de lideranca"),
+            "So entram segmentos cujos lideres superaram os pares (habilidade), com "
+            "evidencia preditiva (Rank-IC) e significancia fora da amostra. Bater a "
+            "Selic e decisao de timing do investidor, nao criterio de qualidade.",
         ),
         "pesos_cp": _node(
             "pesos_cp", "Montagem do portfolio", "Portfolio",
