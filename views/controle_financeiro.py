@@ -2442,22 +2442,24 @@ def render() -> None:
         gastos_cartao[str(_a)] = _dados_a
         gastos_cartao["todos"].extend(_dados_a)
 
-    # ── Sub-navegação via tabs ────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📊  Dashboard",
-        "📈  Análises",
-        "🧾  Tabelas",
-        "💳  Cartão de Crédito",
-    ])
+    # ── Sub-navegação (persistente entre reruns) ──────────────────────────────
+    # st.tabs não expõe `key` e perde a aba ativa quando um widget interno
+    # (ex.: filtro de categoria em Tabelas) dispara rerun — voltava sempre para
+    # Dashboard. O segmented_control guarda a seção em session_state e sobrevive.
+    _SECOES = ["📊  Dashboard", "📈  Análises", "🧾  Tabelas", "💳  Cartão de Crédito"]
+    secao = st.segmented_control(
+        "Seção",
+        _SECOES,
+        key="cf_secao_ativa",
+        default=_SECOES[0],
+        label_visibility="collapsed",
+    ) or _SECOES[0]
 
-    with tab1:
-        _tab_dashboard(d, historico, fluxo_inv, investido_mes)
-
-    with tab2:
+    if secao == _SECOES[1]:
         _tab_analises(d, historico, hist_anual, gastos_cartao, investido_mes)
-
-    with tab3:
+    elif secao == _SECOES[2]:
         _tab_tabelas(d)
-
-    with tab4:
+    elif secao == _SECOES[3]:
         _tab_cartao(d, sel["ano"], sel["mes"])
+    else:
+        _tab_dashboard(d, historico, fluxo_inv, investido_mes)
