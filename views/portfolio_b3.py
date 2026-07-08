@@ -677,7 +677,7 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
         if val_selic > 0:
             sub_val += f" ({m_selic:+.1f}% vs Tesouro Selic)"
         if val_ew > 0:
-            sub_val += f" · ({m_ew:+.1f}% vs Equal-Weight)"
+            sub_val += f" · ({m_ew:+.1f}% vs Pesos Iguais)"
         st.markdown(f'<div class="pb3-seg-val">{sub_val}</div>', unsafe_allow_html=True)
 
     # Cards das empresas que já lideraram
@@ -808,8 +808,8 @@ def _render_paineis_app1(
                 "Setor": p.get("setor"),
                 "Segmento": p.get("segmento"),
                 "Rank score": p.get("rank_score"),
-                "Alpha Selic (%)": round(float(p.get("alpha_selic", 0.0)), 1),
-                "Alpha Equal-Weight (%)": round(float(p.get("alpha_ew", 0.0)), 1),
+                "Alfa vs Selic (%)": round(float(p.get("alpha_selic", 0.0)), 1),
+                "Alfa vs Pesos Iguais (%)": round(float(p.get("alpha_ew", 0.0)), 1),
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
@@ -1229,8 +1229,9 @@ def render(show_header: bool = True) -> None:
         'Roda a metodologia validada na aba <strong>Análise Avançada</strong> em '
         '<strong>todos os segmentos</strong> da B3 de uma vez, identifica as empresas '
         'vencedoras de cada segmento e consolida uma carteira inicial multissetorial. '
-        'Usa scoring com publication lag = 1, reconstrução histórica e comparação vs '
-        'Tesouro Selic e Equal-Weight do próprio segmento. A carteira salva aqui segue '
+        'Usa pontuação (score) com defasagem de publicação = 1 ano, reconstrução '
+        'histórica e comparação vs Tesouro Selic e vs carteira de Pesos Iguais '
+        '(que distribui igualmente entre as empresas do segmento). A carteira salva aqui segue '
         'para a aba <strong>Avaliação de Portfólio</strong>, que a julga como conjunto.'
         '</p>',
         unsafe_allow_html=True,
@@ -1247,20 +1248,21 @@ def render(show_header: bool = True) -> None:
                  "critério de qualidade. A aprovação é por habilidade de seleção.",
         )
         thr_ew      = p2.number_input(
-            "Margem mín. vs Equal-Weight · holdout ~24m (%)", 0.0, 300.0, 0.0, 5.0,
+            "Margem mín. vs Pesos Iguais · validação ~24m (%)", 0.0, 300.0, 0.0, 5.0,
             key="pb3_thr_ew_oos24",
-            help="Piso de MAGNITUDE do excesso vs Equal-Weight no holdout, "
-                 "aplicado só quando o modo ao lado = 'Exigir margem mínima'. A "
-                 "significância estatística vs EW já é sempre exigida.",
+            help="Piso de MAGNITUDE do excesso sobre a carteira de Pesos Iguais na "
+                 "janela de validação (fora da amostra), aplicado só quando o modo "
+                 "ao lado = 'Exigir margem mínima'. A significância estatística vs "
+                 "Pesos Iguais já é sempre exigida.",
         )
         uso_ew      = p3.selectbox(
-            "Piso de magnitude vs Equal-Weight",
-            ["Apenas significância (FDR)", "Exigir margem mínima"],
-            key="pb3_ew_floor_mode",
+            "Piso de magnitude vs Pesos Iguais",
+            ["Apenas significância estatística", "Exigir margem mínima"],
+            key="pb3_ew_floor_mode2",
             help="A aprovação SEMPRE exige significância estatística do excesso "
-                 "vs Equal-Weight (habilidade de seleção, neutra ao macro). Aqui "
-                 "você decide se, além disso, a margem vs EW precisa superar o "
-                 "piso ao lado.",
+                 "sobre a carteira de Pesos Iguais (habilidade de seleção, neutra "
+                 "ao cenário macro). Aqui você decide se, além disso, a margem "
+                 "precisa superar o piso ao lado.",
         )
         max_anos_lid = p4.number_input(
             "Máx. anos desde última liderança", 1, 20, 5, 1,
@@ -1282,15 +1284,27 @@ def render(show_header: bool = True) -> None:
         )
         st.caption(
             "**Como a aprovação funciona:** um segmento é aprovado quando prova "
-            "**habilidade de seleção** — bate o **Equal-Weight do próprio "
-            "segmento** com significância estatística (FDR q≤10% + p-value "
-            "unilateral) no holdout OOS de ~24 meses — **e** tem **Rank-IC ≥ 2 "
-            "anos positivo** (qualidade prevê retorno, no histórico inteiro). "
-            "Isso é **neutro ao macro**: se o cenário derrubou o segmento todo, o "
-            "Equal-Weight caiu junto, então só conta o que a escolha dos líderes "
-            "acrescentou — a resiliência das vencedoras. A **margem vs Selic** "
-            "virou **diagnóstico** (timing de estar em ações agora) e **não "
-            "reprova mais**."
+            "**habilidade de seleção** — supera a carteira de **Pesos Iguais** do "
+            "próprio segmento com **significância estatística** (controle de "
+            "falsos positivos de Benjamini-Hochberg, com q ≤ 10%, + valor-p "
+            "unilateral) na **janela de validação fora da amostra** de ~24 meses — "
+            "**e** tem **poder preditivo** consistente (pelo menos 2 anos com o "
+            "indicador Rank-IC positivo: a pontuação de qualidade prevê o retorno, "
+            "no histórico inteiro). Isso é **neutro ao cenário macro**: se o "
+            "cenário derrubou o segmento todo, a carteira de Pesos Iguais caiu "
+            "junto, então só conta o que a escolha dos líderes acrescentou — a "
+            "resiliência das vencedoras. A **margem vs Selic** virou "
+            "**diagnóstico** (timing de estar em ações agora) e **não reprova mais**."
+        )
+        st.caption(
+            "📖 **Glossário:** *Pesos Iguais* = carteira que investe igualmente em "
+            "todas as empresas do segmento (referência sem escolha). *Fora da "
+            "amostra / janela de validação* = os ~24 meses finais, que o modelo não "
+            "usou para se montar. *Significância / valor-p* = chance do resultado "
+            "ser sorte (quanto menor, melhor). *Falsos positivos "
+            "(Benjamini-Hochberg)* = ajuste por testar dezenas de segmentos de uma "
+            "vez. *Poder preditivo (Rank-IC)* = o quanto a pontuação de qualidade "
+            "acertou o retorno futuro."
         )
 
     usar_ew_como_criterio = uso_ew == "Exigir margem mínima"
@@ -1419,7 +1433,8 @@ def render(show_header: bool = True) -> None:
         ):
             st.session_state.pop(_k, None)
         st.info(
-            "A metodologia foi atualizada (holdout out-of-sample + FDR + Rank-IC). "
+            "A metodologia foi atualizada (janela de validação fora da amostra + "
+            "controle de falsos positivos + poder preditivo Rank-IC). "
             "Clique em **🚀 Rodar Criação de Portfólio** para recalcular com o novo modelo."
         )
         return
@@ -1485,11 +1500,12 @@ def render(show_header: bool = True) -> None:
     _sec_hdr(f"📋 Auditoria de Segmentos — {len(resultados)} analisados · "
              f"{len(aprovados)} aprovados")
     st.caption(
-        "A aprovação usa exclusivamente o holdout final de aproximadamente "
-        "24 meses, com custos de compra, e exige q-value ≤ 10% após correção "
-        "Benjamini-Hochberg entre todos os segmentos. Segmentos sem ao menos "
-        "12 retornos mensais úteis ficam reprovados por dados insuficientes."
-        " Também são exigidos pelo menos dois anos de Rank-IC e IC médio positivo."
+        "A aprovação usa exclusivamente a janela de validação final (fora da "
+        "amostra) de aproximadamente 24 meses, com custos de compra, e exige "
+        "q-valor ≤ 10% após o controle de falsos positivos de Benjamini-Hochberg "
+        "entre todos os segmentos. Segmentos sem ao menos 12 retornos mensais "
+        "úteis ficam reprovados por dados insuficientes. Também são exigidos pelo "
+        "menos dois anos de poder preditivo (Rank-IC) e média positiva."
     )
 
     rows_tbl: list[dict] = []
@@ -1501,22 +1517,22 @@ def render(show_header: bool = True) -> None:
             "Setor":     res["setor"],
             "Subsetor":  res["subsetor"],
             "Segmento":  res["segmento"],
-            "Status": (
+            "Situação": (
                 "✅ Aprovado"
                 if _aprovado(res)
                 else "❌ Reprovado (risco/evidência)"
             ),
-            "vs Selic OOS (%)": round(m_s, 1),
-            "vs EW OOS (%)":    round(m_ew, 1),
-            "p-value OOS": round(float(res.get("p_value_oos", 1.0)), 4),
-            "q-value BH": round(float(res.get("q_value_oos", 1.0)), 4),
-            "Meses OOS": int(res.get("n_months_oos", 0)),
-            "Rank-IC médio": (
+            "vs Selic · validação (%)": round(m_s, 1),
+            "vs Pesos Iguais · validação (%)": round(m_ew, 1),
+            "valor-p (validação)": round(float(res.get("p_value_oos", 1.0)), 4),
+            "q-valor (falsos positivos)": round(float(res.get("q_value_oos", 1.0)), 4),
+            "Meses de validação": int(res.get("n_months_oos", 0)),
+            "Poder preditivo médio (Rank-IC)": (
                 round(float(res["rank_ic_mean"]), 3)
                 if np.isfinite(float(res.get("rank_ic_mean", float("nan"))))
                 else None
             ),
-            "Anos Rank-IC": int(res.get("rank_ic_years", 0)),
+            "Anos com poder preditivo": int(res.get("rank_ic_years", 0)),
             "Patrimônio total": _fv(res["val_est"]),
             "Últ. liderança": ult or "—",
         })
@@ -1529,7 +1545,7 @@ def render(show_header: bool = True) -> None:
         return "color: #FC5C7D"
 
     st.dataframe(
-        df_tbl.style.applymap(_cor_status, subset=["Status"]),
+        df_tbl.style.applymap(_cor_status, subset=["Situação"]),
         use_container_width=True,
         height=min(500, 60 + 35 * len(df_tbl)),
     )
@@ -1678,8 +1694,9 @@ def render(show_header: bool = True) -> None:
             expanded=False,
         ):
             st.caption(
-                "Esses casos usaram equal-weight apenas dentro do diagnóstico "
-                "do segmento. O cap é reaplicado à carteira global antes de salvar."
+                "Esses casos usaram a carteira de Pesos Iguais apenas dentro do "
+                "diagnóstico do segmento. O limite máximo por ativo é reaplicado à "
+                "carteira global antes de salvar."
             )
             st.code("\n".join(_constraint_warnings[:100]))
 
