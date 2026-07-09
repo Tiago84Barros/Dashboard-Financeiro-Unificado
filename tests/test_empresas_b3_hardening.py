@@ -184,3 +184,20 @@ def test_benjamini_hochberg_monotono_e_conservador():
     adjusted = _benjamini_hochberg([0.001, 0.02, 0.20, 0.90])
     assert adjusted[0] <= adjusted[1] <= adjusted[2] <= adjusted[3]
     assert all(q >= p for p, q in zip([0.001, 0.02, 0.20, 0.90], adjusted))
+
+
+def test_aplicar_cheapness_mistura_qualidade_e_preco():
+    from views.portfolio_b3 import _aplicar_cheapness
+
+    base = {"ROE": (0.6, True), "Margem_Liquida": (0.4, True)}
+    # peso 0 → não mexe (comportamento padrão)
+    assert _aplicar_cheapness(base, 0.0) == base
+
+    out = _aplicar_cheapness(base, 0.3)
+    qualidade = out["ROE"][0] + out["Margem_Liquida"][0]
+    cheapness = out["P/L"][0] + out["P/VP"][0] + out["EV_EBIT"][0]
+    assert abs(qualidade - 0.7) < 1e-9      # qualidade reduzida por (1-w)
+    assert abs(cheapness - 0.3) < 1e-9      # cheapness recebe w
+    assert abs((qualidade + cheapness) - 1.0) < 1e-9
+    # múltiplos de preço entram como "menor é melhor"
+    assert out["P/L"][1] is False and out["P/VP"][1] is False

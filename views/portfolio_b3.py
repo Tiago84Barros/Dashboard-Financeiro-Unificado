@@ -339,6 +339,38 @@ def _pode_incluir_maior_participacao(
     return False, "Maior participacao descartada por lideranca antiga/baixo rank atual", ultimo, rank_atual
 
 
+# Múltiplos de preço (menor = mais barato). Já existem nas vintages históricas.
+_CHEAPNESS_FACTORS: tuple[str, ...] = ("P/L", "P/VP", "EV_EBIT")
+
+
+def _aplicar_cheapness(
+    pesos: dict[str, tuple[float, bool]], w: float
+) -> dict[str, tuple[float, bool]]:
+    """Mistura fatores de barganha (preço baixo) ao score de qualidade.
+
+    w em [0,1]: reduz o peso da qualidade por (1-w) e adiciona os múltiplos de
+    preço (P/L, P/VP, EV/EBIT, menor=melhor) com peso total w, dividido entre
+    eles. Como os pesos de entrada somam 1, a saída também soma ~1. Fatores
+    ausentes nos dados são ignorados pelo motor de score (não quebram).
+    w=0 devolve os pesos originais (comportamento padrão: só qualidade).
+    """
+    try:
+        w = float(w)
+    except (TypeError, ValueError):
+        return pesos
+    if not (w > 0.0):
+        return pesos
+    w = min(w, 1.0)
+    out: dict[str, tuple[float, bool]] = {
+        k: (v[0] * (1.0 - w), v[1]) for k, v in pesos.items()
+    }
+    por_fator = w / len(_CHEAPNESS_FACTORS)
+    for f in _CHEAPNESS_FACTORS:
+        prev = out.get(f, (0.0, False))[0]
+        out[f] = (prev + por_fator, False)  # False = menor é melhor
+    return out
+
+
 def _processar_segmento(
     tickers: list[str],
     hist_batch: dict[str, pd.DataFrame],
@@ -355,6 +387,8 @@ def _processar_segmento(
     cap: float,
     soft: float,
     dividendos: dict[str, pd.Series] | None = None,
+    janela_val_anos: int = 2,
+    cheapness_weight: float = 0.0,
 ) -> dict | None:
     """
     Roda o engine de scoring ano-a-ano para um segmento.
@@ -363,7 +397,7 @@ def _processar_segmento(
     if len(tickers) < 1:
         return None
 
-    pesos = _get_pesos_setor(setor)
+    pesos = _aplicar_cheapness(_get_pesos_setor(setor), cheapness_weight)
     tk_grupos = {tk: {"SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento}
                  for tk in tickers}
 
@@ -498,7 +532,7 @@ def _processar_segmento(
         if df_prec_seg.empty or pd.isna(_ultimo_dt):
             df_validation = df_prec_seg.iloc[0:0]
         else:
-            validation_start_year = int(_ultimo_dt.year) - 2
+            validation_start_year = int(_ultimo_dt.year) - int(janela_val_anos)
             df_validation = df_prec_seg[
                 (df_prec_seg.index.year > validation_start_year)
                 | (
@@ -1277,6 +1311,31 @@ def render(show_header: bool = True) -> None:
                                       key="pb3_audit")
         min_anos_dre = pa4.number_input("Histórico DRE mínimo", 4, 20, 10, 1,
                                         key="pb3_min_anos_dre")
+        pb1, pb2, pb3, pb4 = st.columns(4)
+        _janela_label = pb1.selectbox(
+            "Janela de validação",
+            ["~24 meses", "~36 meses"],
+            key="pb3_janela_val",
+            help="Tamanho do holdout fora da amostra. 36 meses dá mais retornos "
+                 "mensais → mais poder estatístico, ao custo de menos 'recência'.",
+        )
+        janela_val_anos = 3 if "36" in _janela_label else 2
+        min_empresas_grupo = pb2.number_input(
+            "Mín. empresas por grupo", 1, 15, 5, 1,
+            key="pb3_min_empresas",
+            help="Segmentos com menos empresas elegíveis que este mínimo são "
+                 "agrupados no subsetor, para haver massa suficiente para medir o "
+                 "poder preditivo (Rank-IC). Use 1 para desativar o agrupamento.",
+        )
+        cheapness_pct = pb3.number_input(
+            "Peso de barganha no score (%)", 0, 50, 0, 5,
+            key="pb3_cheapness",
+            help="Mistura múltiplos de preço (P/L, P/VP, EV/EBIT: menor = melhor) "
+                 "ao score de qualidade. 0% = só qualidade (padrão). Ex.: 30% dá "
+                 "30% de peso a 'estar barato' e 70% à qualidade — captura a tese "
+                 "de comprar boas empresas na baixa.",
+        )
+        cheapness_weight = float(cheapness_pct) / 100.0
         usar_status_recon = st.checkbox(
             "Cruzar Status Invest no saneamento atual",
             value=False,
@@ -1287,7 +1346,8 @@ def render(show_header: bool = True) -> None:
             "**habilidade de seleção** — supera a carteira de **Pesos Iguais** do "
             "próprio segmento com **significância estatística** (controle de "
             "falsos positivos de Benjamini-Hochberg, com q ≤ 10%, + valor-p "
-            "unilateral) na **janela de validação fora da amostra** de ~24 meses — "
+            "unilateral) na **janela de validação fora da amostra** (o holdout "
+            "configurado acima) — "
             "**e** tem **poder preditivo** consistente (pelo menos 2 anos com o "
             "indicador Rank-IC positivo: a pontuação de qualidade prevê o retorno, "
             "no histórico inteiro). Isso é **neutro ao cenário macro**: se o "
@@ -1382,7 +1442,22 @@ def render(show_header: bool = True) -> None:
         soft  = st.session_state.get("b3_av_soft",  _SOFT_DEF)
 
         resultados: list[dict] = []
-        grupos = list(df_set.groupby(["SETOR", "SUBSETOR", "SEGMENTO"]))
+        # Fallback de granularidade: segmentos com poucas empresas ELEGÍVEIS
+        # (< min_empresas_grupo) são agrupados no subsetor, para haver massa para
+        # medir o poder preditivo (Rank-IC). min_empresas_grupo=1 desativa.
+        df_set = df_set.copy()
+        df_set["_elig"] = df_set["ticker"].map(
+            lambda tk: 1 if (tk in hist_batch and (not anos_hist or anos_hist.get(tk, 0) >= int(min_anos_dre))) else 0
+        )
+        if int(min_empresas_grupo) > 1:
+            _elig_por_seg = df_set.groupby(["SETOR", "SUBSETOR", "SEGMENTO"])["_elig"].transform("sum")
+            df_set["_SEG_EFF"] = df_set["SEGMENTO"].where(
+                _elig_por_seg >= int(min_empresas_grupo),
+                df_set["SUBSETOR"].astype(str) + " (agrupado)",
+            )
+        else:
+            df_set["_SEG_EFF"] = df_set["SEGMENTO"]
+        grupos = list(df_set.groupby(["SETOR", "SUBSETOR", "_SEG_EFF"]))
         prog = st.progress(0, text="Processando segmentos…")
 
         for i, ((setor, subsetor, segmento), grupo) in enumerate(grupos):
@@ -1398,6 +1473,8 @@ def render(show_header: bool = True) -> None:
                     taxa_selic_aa, selic_macro, macro_history, float(aporte),
                     int(ano_inicio), gamma, cap, soft,
                     dividendos=None,
+                    janela_val_anos=int(janela_val_anos),
+                    cheapness_weight=float(cheapness_weight),
                 )
                 if res:
                     resultados.append(res)
