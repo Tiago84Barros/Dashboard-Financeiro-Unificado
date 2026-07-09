@@ -1069,6 +1069,38 @@ def _get_pesos_setor(setor: str,
     return _norm_pesos(_PESOS_GENERICO)
 
 
+# Múltiplos de preço (menor = mais barato). Já existem nas vintages históricas.
+_CHEAPNESS_FACTORS: tuple[str, ...] = ("P/L", "P/VP", "EV_EBIT")
+
+
+def _aplicar_cheapness(
+    pesos: dict[str, tuple[float, bool]], w: float
+) -> dict[str, tuple[float, bool]]:
+    """Mistura fatores de barganha (preço baixo) ao score de qualidade.
+
+    w em [0,1]: reduz o peso da qualidade por (1-w) e adiciona os múltiplos de
+    preço (P/L, P/VP, EV/EBIT, menor=melhor) com peso total w, dividido entre
+    eles. Como os pesos de entrada somam 1, a saída também soma ~1. Fatores
+    ausentes nos dados são ignorados pelo motor de score (não quebram).
+    w=0 devolve os pesos originais (comportamento padrão: só qualidade).
+    """
+    try:
+        w = float(w)
+    except (TypeError, ValueError):
+        return pesos
+    if not (w > 0.0):
+        return pesos
+    w = min(w, 1.0)
+    out: dict[str, tuple[float, bool]] = {
+        k: (v[0] * (1.0 - w), v[1]) for k, v in pesos.items()
+    }
+    por_fator = w / len(_CHEAPNESS_FACTORS)
+    for f in _CHEAPNESS_FACTORS:
+        prev = out.get(f, (0.0, False))[0]
+        out[f] = (prev + por_fator, False)  # False = menor é melhor
+    return out
+
+
 def _winsorize_series(s: pd.Series, p_low: float = 0.05, p_high: float = 0.95) -> pd.Series:
     lo = s.quantile(p_low)
     hi = s.quantile(p_high)
@@ -3581,6 +3613,16 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                              disabled=usar_pesos_setor)
         p_liq  = sp6.slider("Liquidez",       0, 30, 10, key="b3_av_pliq",
                              disabled=usar_pesos_setor)
+        cheapness_pct_av = st.slider(
+            "Peso de barganha no score (%)",
+            0, 50, 0, 5,
+            key="b3_av_cheapness",
+            help="Mistura múltiplos de preço (P/L, P/VP, EV/EBIT: menor = melhor) "
+                 "ao score de qualidade. 0% = só qualidade (padrão). Ex.: 30% dá "
+                 "peso a 'estar barato' — captura a tese de comprar boas empresas "
+                 "na baixa. Vale tanto para pesos do setor quanto manuais.",
+        )
+    cheapness_weight_av = float(cheapness_pct_av) / 100.0
 
     pesos_usuario_raw: dict[str, float] | None = None if usar_pesos_setor else {
         "ROE": float(p_roe), "ROIC": float(p_roic), "Margem_Liquida": float(p_marg),
@@ -3773,6 +3815,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         "SEGMENTO" if sel_sub != "Todos" else
         "SEGMENTO"
     )
+    # Barganha (cheapness): mistura múltiplos de preço ao score de qualidade —
+    # mesma lógica da Criação de Portfólio. 0% preserva o comportamento atual.
+    pesos_v2 = _aplicar_cheapness(pesos_v2, cheapness_weight_av)
     df_scored = _score_universo(
         df_mult_enrich, tks_uni, pesos_v2,
         df_hist_batch=hist_batch,
@@ -5162,19 +5207,30 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         tks_top = []
 
     if not df_bt.empty:
-        colunas_bt = [c for c in ("Estratégia", "Benchmark", "IBOV (aportes)",
+        # Exibição: "Benchmark" (equal-weight interno) → "Pesos Iguais".
+        df_bt_disp = df_bt.rename(columns={"Benchmark": "Pesos Iguais"})
+        colunas_bt = [c for c in ("Estratégia", "Pesos Iguais", "IBOV (aportes)",
                                   "Tesouro Selic")
-                      if c in df_bt.columns]
-        melt_bt = df_bt.melt("Data", value_vars=colunas_bt,
+                      if c in df_bt_disp.columns]
+        melt_bt = df_bt_disp.melt("Data", value_vars=colunas_bt,
                               var_name="Carteira", value_name="Patrimônio (R$)")
         fig_bt = px.line(
             melt_bt, x="Data", y="Patrimônio (R$)", color="Carteira",
             color_discrete_map={
                 "Estratégia":       _COR_POS,
-                "Benchmark":        _COR_NEU,
+                "Pesos Iguais":     _COR_NEU,
                 "IBOV (aportes)":   "#E67E22",
                 "Tesouro Selic":    _COR_ALT,
             },
+        )
+        st.caption(
+            "🎯 **Como interpretar:** a linha **Pesos Iguais** (carteira que "
+            "compra todas as empresas do universo em partes iguais) é a "
+            "referência de **habilidade** — superá-la mostra que a *seleção* "
+            "agregou valor, e isso é **neutro ao cenário macro** (se o mercado "
+            "caiu, os Pesos Iguais caíram junto). A linha **Tesouro Selic** é "
+            "**diagnóstico de timing** (vale estar em ações agora?), não critério "
+            "de qualidade da seleção."
         )
         fig_bt.update_traces(line_width=2.0)
         fig_bt.update_layout(**_plot_layout(380))
@@ -5232,8 +5288,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "anterior são publicados até 31/03 (CVM); rebalancear em janeiro "
             "anteciparia informação ainda não pública (auditoria 2026-07). "
             "Linha **IBOV (aportes)**: o mesmo fluxo de aportes aplicado ao "
-            "índice — benchmark de mercado real; o 'Benchmark' equal-weight "
-            "é interno ao universo filtrado."
+            "índice — referência de mercado real; a linha **Pesos Iguais** "
+            "(carteira igualitária) é interna ao universo filtrado."
         )
 
         # Auditoria 2026-07: transparência dos dois vieses estruturais da
@@ -5296,7 +5352,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.caption("Configure os parâmetros acima e clique **▶ Simular Backtest**.")
 
     # ── VALIDAÇÃO PREDITIVA DO SCORE (auditoria 2026-07, pendência #4) ───────
-    with st.expander("🔬 Validação preditiva do score — Rank-IC por ano"):
+    with st.expander("🔬 Poder preditivo do score (Rank-IC) — por ano"):
         _ic_signature = _stable_signature({
             "score_version": SCORE_VERSION,
             "tickers": sorted(tks_uni),
@@ -5316,7 +5372,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "pequenas tornam o IC instável — leia como indício, não como "
             "prova; e o universo de sobreviventes tende a SUPERESTIMAR o IC."
         )
-        if st.button("Calcular Rank-IC", key="b3_av_btn_ic"):
+        if st.button("Calcular poder preditivo (Rank-IC)", key="b3_av_btn_ic"):
             with st.spinner("Calculando IC por ano…"):
                 _prec_ic = _batch_yf_precos_mensais(
                     tuple(sorted(tks_uni)), period=per_opts.get(sel_per, "5y"))

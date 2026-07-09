@@ -23,6 +23,7 @@ from views.empresas_b3 import (
     _GAMMA_DEF, _CAP_DEF, _SOFT_DEF, _REBAL_MONTH,
     _COR_POS, _COR_NEG, _COR_ALT, _COR_INF, _COR_NEU,
     _DIV_POR_ACAO_MAX,
+    _aplicar_cheapness,
     _apply_cap_soft, _apply_decay_penalty,
     _batch_yf_precos_mensais,
     _div_mes_sanitizado,
@@ -337,38 +338,6 @@ def _pode_incluir_maior_participacao(
     if rank_atual is not None and rank_atual <= 3:
         return True, "Maior participacao ainda bem ranqueada no score atual", ultimo, rank_atual
     return False, "Maior participacao descartada por lideranca antiga/baixo rank atual", ultimo, rank_atual
-
-
-# Múltiplos de preço (menor = mais barato). Já existem nas vintages históricas.
-_CHEAPNESS_FACTORS: tuple[str, ...] = ("P/L", "P/VP", "EV_EBIT")
-
-
-def _aplicar_cheapness(
-    pesos: dict[str, tuple[float, bool]], w: float
-) -> dict[str, tuple[float, bool]]:
-    """Mistura fatores de barganha (preço baixo) ao score de qualidade.
-
-    w em [0,1]: reduz o peso da qualidade por (1-w) e adiciona os múltiplos de
-    preço (P/L, P/VP, EV/EBIT, menor=melhor) com peso total w, dividido entre
-    eles. Como os pesos de entrada somam 1, a saída também soma ~1. Fatores
-    ausentes nos dados são ignorados pelo motor de score (não quebram).
-    w=0 devolve os pesos originais (comportamento padrão: só qualidade).
-    """
-    try:
-        w = float(w)
-    except (TypeError, ValueError):
-        return pesos
-    if not (w > 0.0):
-        return pesos
-    w = min(w, 1.0)
-    out: dict[str, tuple[float, bool]] = {
-        k: (v[0] * (1.0 - w), v[1]) for k, v in pesos.items()
-    }
-    por_fator = w / len(_CHEAPNESS_FACTORS)
-    for f in _CHEAPNESS_FACTORS:
-        prev = out.get(f, (0.0, False))[0]
-        out[f] = (prev + por_fator, False)  # False = menor é melhor
-    return out
 
 
 def _processar_segmento(
