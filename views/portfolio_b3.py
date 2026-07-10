@@ -358,6 +358,7 @@ def _processar_segmento(
     dividendos: dict[str, pd.Series] | None = None,
     janela_val_anos: int = 2,
     cheapness_weight: float = 0.0,
+    walk_forward: bool = False,
 ) -> dict | None:
     """
     Roda o engine de scoring ano-a-ano para um segmento.
@@ -471,6 +472,7 @@ def _processar_segmento(
     rank_ic_years = 0
     rank_ic_tstat = float("nan")
     p_value_ic = 1.0
+    wf_hit_rate = float("nan")
     contrib_est: dict[str, float] = {}
     if tks_disp and not df_precos_all.empty:
         df_prec_seg = df_precos_all[tks_disp].dropna(how="all")
@@ -502,6 +504,13 @@ def _processar_segmento(
         _ultimo_dt = df_prec_seg.index.max()
         if df_prec_seg.empty or pd.isna(_ultimo_dt):
             df_validation = df_prec_seg.iloc[0:0]
+        elif walk_forward:
+            # Walk-forward: a validação é o HISTÓRICO INTEIRO point-in-time. Como
+            # os líderes de cada ano usam só dados anteriores, os retornos ao longo
+            # de todo o período já são out-of-sample — e cobrem VÁRIOS regimes, não
+            # só os últimos 24m. Mais amplitude e robustez (menos dependente de uma
+            # janela recente atípica).
+            df_validation = df_prec_seg
         else:
             validation_start_year = int(_ultimo_dt.year) - int(janela_val_anos)
             df_validation = df_prec_seg[
@@ -538,6 +547,23 @@ def _processar_segmento(
                     p_value_oos = (
                         float(test.pvalue) if np.isfinite(test.pvalue) else 1.0
                     )
+                # Robustez multi-regime (walk-forward): em quantos ANOS a estratégia
+                # bateu os pares (retorno composto do ano vs Equal-Weight)? Mostra se
+                # a vantagem se repete em vários ciclos, nao so no agregado.
+                if walk_forward and "Data" in monthly.columns:
+                    _m = monthly.copy()
+                    _m["_ano"] = pd.to_datetime(_m["Data"], errors="coerce").dt.year
+                    _s = pd.to_numeric(_m["strategy"], errors="coerce")
+                    _e = pd.to_numeric(_m["equal_weight"], errors="coerce")
+                    _wins = _tot = 0
+                    for _yr, _idx in _m.groupby("_ano").groups.items():
+                        _rs = float((1.0 + _s.loc[_idx]).prod())
+                        _re = float((1.0 + _e.loc[_idx]).prod())
+                        if np.isfinite(_rs) and np.isfinite(_re):
+                            _tot += 1
+                            _wins += 1 if _rs > _re else 0
+                    if _tot > 0:
+                        wf_hit_rate = _wins / _tot
 
         # Evidência preditiva independente do patrimônio acumulado: score de
         # abril/N versus retorno abril/N→março/N+1. Segmentos pequenos demais
@@ -652,6 +678,7 @@ def _processar_segmento(
         "p_value_ic": p_value_ic,
         "roic_spread_mean": roic_spread_mean,
         "roic_hit_rate": roic_hit_rate,
+        "wf_hit_rate": wf_hit_rate,
         "n_anos": len(anos_com_score),
         "ano_inicio": min(anos_com_score),
         "ano_fim": max(anos_com_score),
@@ -1327,11 +1354,14 @@ def render(show_header: bool = True) -> None:
         pb1, pb2, pb3, pb4 = st.columns(4)
         _janela_label = pb1.selectbox(
             "Janela de validação",
-            ["~24 meses", "~36 meses"],
+            ["~24 meses", "~36 meses", "Walk-forward (todos os ciclos)"],
             key="pb3_janela_val",
-            help="Tamanho do holdout fora da amostra. 36 meses dá mais retornos "
-                 "mensais → mais poder estatístico, ao custo de menos 'recência'.",
+            help="Holdout fora da amostra. 24/36 meses = janela recente única. "
+                 "Walk-forward = testa o excesso vs pares em TODO o histórico "
+                 "point-in-time (vários regimes) — mais robusto, menos dependente "
+                 "de um período recente atípico. É o padrão das casas quant.",
         )
+        walk_forward = "Walk-forward" in _janela_label
         janela_val_anos = 3 if "36" in _janela_label else 2
         min_empresas_grupo = pb2.number_input(
             "Mín. empresas por grupo", 1, 15, 5, 1,
@@ -1519,6 +1549,7 @@ def render(show_header: bool = True) -> None:
                     dividendos=None,
                     janela_val_anos=int(janela_val_anos),
                     cheapness_weight=float(cheapness_weight),
+                    walk_forward=bool(walk_forward),
                 )
                 if res:
                     resultados.append(res)
@@ -1653,11 +1684,18 @@ def render(show_header: bool = True) -> None:
         "adversidade conjuntural."
         if exigir_resiliencia else ""
     )
+    _wf_txt = (
+        " **Validação: walk-forward.** As margens e o valor-p do retorno cobrem "
+        "TODO o histórico point-in-time (vários regimes), não só os últimos meses — "
+        "e a coluna 'Anos batendo pares' mostra em quantos anos a estratégia "
+        "superou o Equal-Weight."
+        if walk_forward else ""
+    )
     st.caption(
         _modo_txt + " Em ambos os modos exige-se pelo menos 2 anos de poder "
         "preditivo (Rank-IC) com média positiva, bater os Pesos Iguais do segmento "
         "e liderança recente. Segmentos sem retornos mensais úteis ficam reprovados "
-        "por dados insuficientes." + _resil_txt
+        "por dados insuficientes." + _resil_txt + _wf_txt
     )
 
     rows_tbl: list[dict] = []
@@ -1685,6 +1723,11 @@ def render(show_header: bool = True) -> None:
                 else None
             ),
             "valor-p do sinal (Rank-IC)": round(float(res.get("p_value_ic", 1.0)), 4),
+            "Anos batendo pares (%)": (
+                round(float(res["wf_hit_rate"]) * 100, 0)
+                if np.isfinite(float(res.get("wf_hit_rate", float("nan"))))
+                else None
+            ),
             "ROIC − Selic médio (p.p.)": (
                 round(float(res["roic_spread_mean"]) * 100, 1)
                 if np.isfinite(float(res.get("roic_spread_mean", float("nan"))))
