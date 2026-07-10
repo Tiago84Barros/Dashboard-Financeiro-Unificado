@@ -72,12 +72,14 @@ def _titulo_secao(icone: str, titulo: str, subtitulo: str, cor: str) -> None:
 
 
 def _linha_kv(label: str, valor: str, cor_val: str = "#E2E8F0") -> str:
-    return f"""
-    <div style="display:flex;justify-content:space-between;align-items:center;
-                padding:5px 0;border-bottom:1px solid #1A1F2E;">
-        <span style="font-size:0.80rem;color:#9CA3AF">{label}</span>
-        <span style="font-size:0.88rem;font-weight:700;color:{cor_val}">{valor}</span>
-    </div>"""
+    return (
+        '<div style="display:flex;justify-content:space-between;align-items:center;'
+        'gap:10px;padding:5px 0;border-bottom:1px solid #1A1F2E;">'
+        f'<span style="font-size:0.80rem;color:#9CA3AF;min-width:0;">{label}</span>'
+        f'<span style="font-size:0.88rem;font-weight:700;color:{cor_val};'
+        f'text-align:right;white-space:nowrap;">{valor}</span>'
+        '</div>'
+    )
 
 
 def _barra(pct: float, cor: str) -> str:
@@ -106,7 +108,7 @@ def _label_card(texto: str, cor: str) -> str:
 def _titulo_valor(label: str, valor: str, cor: str = "#E2E8F0") -> str:
     return (f'<div style="font-size:0.78rem;color:#718096;margin-bottom:2px">{label}</div>'
             f'<div style="font-size:1.75rem;font-weight:800;color:{cor};'
-            f'letter-spacing:-0.02em;margin-bottom:14px;line-height:1">{valor}</div>')
+            f'letter-spacing:0;margin-bottom:14px;line-height:1">{valor}</div>')
 
 
 def _divisor() -> str:
@@ -399,6 +401,196 @@ def _mini_metric(label: str, valor: str, detalhe: str, cor: str) -> str:
     """
 
 
+def _status_chip(texto: str, cor: str) -> str:
+    return (
+        f'<span style="display:inline-flex;align-items:center;border:1px solid {cor};'
+        f'background:{cor}1F;color:{cor};border-radius:999px;padding:3px 9px;'
+        f'font-size:0.70rem;font-weight:800;white-space:nowrap;flex-shrink:0;">{texto}</span>'
+    )
+
+
+def _modulo_card(
+    numero: str,
+    titulo: str,
+    resumo: str,
+    status: str,
+    status_cor: str,
+    linhas: list[tuple[str, str, str]],
+    cor: str,
+) -> str:
+    rows = "".join(_linha_kv(label, valor, valor_cor) for label, valor, valor_cor in linhas)
+    return (
+        '<div style="background:linear-gradient(180deg,rgba(18,21,30,0.98) 0%,rgba(14,17,26,0.98) 100%);'
+        f'border:1px solid rgba(255,255,255,0.07);border-left:4px solid {cor};'
+        'border-radius:12px;padding:18px 18px 16px;min-height:230px;'
+        'box-shadow:0 3px 16px rgba(0,0,0,0.32);">'
+        '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">'
+        '<div style="display:flex;gap:10px;align-items:center;min-width:0;">'
+        f'<div style="width:28px;height:28px;border-radius:8px;background:{cor}22;color:{cor};'
+        f'display:flex;align-items:center;justify-content:center;font-weight:900;'
+        f'font-size:0.85rem;border:1px solid {cor}55;flex-shrink:0;">{numero}</div>'
+        f'<div style="font-size:0.96rem;font-weight:850;color:#E2E8F0;line-height:1.2;min-width:0;">{titulo}</div>'
+        '</div>'
+        f'{_status_chip(status, status_cor)}'
+        '</div>'
+        f'<div style="font-size:0.78rem;color:#9CA3AF;line-height:1.42;margin:13px 0 12px;">{resumo}</div>'
+        f'{rows}'
+        '</div>'
+    )
+
+
+def _resumo_modelo_b3(modelo: dict) -> tuple[str, str, list[tuple[str, str, str]]]:
+    items = modelo.get("items") or []
+    if not items:
+        return (
+            "Sem carteira",
+            _COR_NEUTRO,
+            [
+                ("Empresas selecionadas", "0", _COR_NEUTRO),
+                ("Score médio", "N/D", _COR_NEUTRO),
+                ("Referência ativa", "Não salva", _COR_ALERTA),
+            ],
+        )
+
+    metrics = modelo.get("metrics_json") or {}
+    status = "Revisar" if modelo.get("is_stale") else "Ativa"
+    status_cor = _COR_ALERTA if modelo.get("is_stale") else _COR_FLUXO
+    ano = modelo.get("ano_compra") or "ciclo atual"
+    score_medio = float(metrics.get("score_medio") or 0)
+
+    return (
+        status,
+        status_cor,
+        [
+            ("Empresas selecionadas", str(len(items)), _COR_PATRIMONIO),
+            ("Score médio", f"{score_medio:.2f}", _COR_FLUXO),
+            ("Ano/ciclo de compra", str(ano), _COR_NEUTRO),
+        ],
+    )
+
+
+def _resumo_fiis(port: list[dict], salvo: bool) -> tuple[str, str, list[tuple[str, str, str]]]:
+    if not port:
+        return (
+            "Sem carteira",
+            _COR_NEUTRO,
+            [
+                ("FIIs selecionados", "0", _COR_NEUTRO),
+                ("DY 12m ponderado", "N/D", _COR_NEUTRO),
+                ("Origem", "Sem dados", _COR_ALERTA),
+            ],
+        )
+
+    dy_w = sum((p.get("dy_12m") or 0) * p["peso"] for p in port)
+    pvp_w = sum((p.get("pvp") or 0) * p["peso"] for p in port)
+    status = "Salva" if salvo else "Sugerida"
+    status_cor = _COR_FLUXO if salvo else _COR_ALERTA
+    return (
+        status,
+        status_cor,
+        [
+            ("FIIs selecionados", str(len(port)), _COR_PATRIMONIO),
+            ("DY 12m ponderado", f"{dy_w * 100:.1f}%", _COR_FLUXO),
+            ("P/VP ponderado", f"{pvp_w:.2f}", _COR_ALERTA),
+        ],
+    )
+
+
+def _secao_resumo_modulos(
+    receitas_mes: float,
+    despesas_mes: float,
+    investimentos_mes: float,
+    pat: dict,
+    classes: list,
+    aportado_ano: float,
+    carteira: dict,
+    modelo_b3: dict,
+    fiis_port: list[dict],
+    fiis_salvo: bool,
+) -> None:
+    saldo_mes = receitas_mes - despesas_mes - investimentos_mes
+    taxa_poupanca = (saldo_mes / receitas_mes * 100) if receitas_mes > 0 else 0.0
+    rentab = float(carteira.get("rentabilidade_total_pct") or 0)
+    b3_status, b3_status_cor, b3_linhas = _resumo_modelo_b3(modelo_b3)
+    fii_status, fii_status_cor, fii_linhas = _resumo_fiis(fiis_port, fiis_salvo)
+
+    _titulo_secao(
+        "🧭", "Resumo por área",
+        "Organização lógica do app: caixa primeiro, carteira depois, seleção por critérios em seguida",
+        _COR_PATRIMONIO,
+    )
+
+    col1, col2 = st.columns(2, gap="medium")
+    with col1:
+        st.markdown(
+            _modulo_card(
+                "1",
+                "Controle Financeiro",
+                "Fluxo do mês, despesas por categoria e comparação anual.",
+                "Mensal",
+                _COR_FLUXO if saldo_mes >= 0 else _COR_NEGATIVO,
+                [
+                    ("Receitas", fmt_moeda(receitas_mes), _COR_FLUXO),
+                    ("Despesas", fmt_moeda(despesas_mes), _COR_NEGATIVO),
+                    ("Saldo líquido", fmt_moeda(saldo_mes), _COR_FLUXO if saldo_mes >= 0 else _COR_NEGATIVO),
+                    ("Taxa de poupança", fmt_percentual(taxa_poupanca, sinal=False), _COR_ALERTA if taxa_poupanca < 30 else _COR_FLUXO),
+                ],
+                _COR_FLUXO,
+            ),
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            _modulo_card(
+                "2",
+                "Investimentos",
+                "Carteira consolidada, classes de ativos, concentração e evolução patrimonial.",
+                "Carteira",
+                _COR_INVEST,
+                [
+                    ("Patrimônio investido", fmt_moeda(pat["investido"]), _COR_INVEST),
+                    ("Aportado no ano", fmt_moeda(aportado_ano), _COR_FLUXO),
+                    ("Classes de ativos", str(len(classes)), _COR_NEUTRO),
+                    ("Rentabilidade", f"{rentab:+.2f}%", _COR_FLUXO if rentab >= 0 else _COR_NEGATIVO),
+                ],
+                _COR_INVEST,
+            ),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col3, col4 = st.columns(2, gap="medium")
+    with col3:
+        st.markdown(
+            _modulo_card(
+                "3",
+                "Empresas B3",
+                "Carteira modelo de ações brasileiras definida na análise de empresas.",
+                b3_status,
+                b3_status_cor,
+                b3_linhas,
+                _COR_PATRIMONIO,
+            ),
+            unsafe_allow_html=True,
+        )
+    with col4:
+        st.markdown(
+            _modulo_card(
+                "4",
+                "Seleção de FIIs",
+                "Carteira modelo de fundos imobiliários com diversificação por tipo.",
+                fii_status,
+                fii_status_cor,
+                fii_linhas,
+                _COR_ALERTA,
+            ),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+
 def _grafico_container_open(icone: str, titulo: str, cor: str) -> None:
     st.markdown(f"""
     <div style="background:linear-gradient(180deg,rgba(22,26,40,0.95) 0%,rgba(14,17,26,0.98) 100%);
@@ -617,8 +809,9 @@ def _fiis_carteira_modelo() -> tuple[list[dict], bool]:
     return port, False
 
 
-def _secao_fiis_sugeridos() -> None:
-    port, salvo = _fiis_carteira_modelo()
+def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -> None:
+    if port is None:
+        port, salvo = _fiis_carteira_modelo()
     if not port:
         return
     subtitulo = ("Carteira-modelo de FIIs definida por você na Seleção de FIIs" if salvo
@@ -838,11 +1031,20 @@ def render() -> None:
         badge_status(f"Score {pat['saude_score']}/100", cor_s_badge)
 
     st.markdown("<br>", unsafe_allow_html=True)
+    fiis_port, fiis_salvo = _fiis_carteira_modelo()
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 1 — 3 Cards
+    # BLOCO 1 — Visão executiva
     # ══════════════════════════════════════════════════════════════════════════
-    col1, col2 = st.columns(2, gap="medium")
+    _titulo_secao(
+        "⚡", "Visão executiva",
+        "Os três números que explicam o mês: patrimônio, caixa e carteira investida",
+        _COR_PATRIMONIO,
+    )
+
+    col0, col1, col2 = st.columns(3, gap="medium")
+    with col0:
+        _card_patrimonio(pat)
     with col1:
         _card_fluxo(receitas_mes, despesas_mes, investimentos_mes)
     with col2:
@@ -851,18 +1053,40 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 2 — Portfólio B3 modelo salvo pelo usuário + FIIs sugeridos
+    # BLOCO 2 — Mapa dos módulos do app
     # ══════════════════════════════════════════════════════════════════════════
-    _secao_portfolio_modelo_b3(modelo_b3)
-    _secao_fiis_sugeridos()
+    _secao_resumo_modulos(
+        receitas_mes,
+        despesas_mes,
+        investimentos_mes,
+        pat,
+        classes,
+        aportado_ano,
+        carteira,
+        modelo_b3,
+        fiis_port,
+        fiis_salvo,
+    )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 3 — Raio X do portfólio investido
+    # BLOCO 3 — Portfólio B3 modelo salvo pelo usuário + FIIs sugeridos
+    # ══════════════════════════════════════════════════════════════════════════
+    if modelo_b3.get("items") or fiis_port:
+        _titulo_secao(
+            "🎯", "Decisões de alocação",
+            "Modelos que conectam análise de empresas e seleção de FIIs à carteira",
+            _COR_ALERTA,
+        )
+        _secao_portfolio_modelo_b3(modelo_b3)
+        _secao_fiis_sugeridos(fiis_port, fiis_salvo)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BLOCO 4 — Raio X do portfólio investido
     # ══════════════════════════════════════════════════════════════════════════
     _secao_raio_x_portfolio(carteira, evolucao_inv, classes)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 4 — Histórico 6 meses
+    # BLOCO 5 — Histórico 6 meses
     # ══════════════════════════════════════════════════════════════════════════
     _titulo_secao(
         "💹", "Histórico mensal (6 meses)",
@@ -883,7 +1107,7 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 5 — Distribuição de despesas | Comparativo Ano a Ano
+    # BLOCO 6 — Distribuição de despesas | Comparativo Ano a Ano
     # ══════════════════════════════════════════════════════════════════════════
     col_cats, col_yoy = st.columns(2, gap="medium")
 
