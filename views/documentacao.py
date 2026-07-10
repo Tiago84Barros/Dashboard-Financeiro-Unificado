@@ -420,8 +420,9 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
                 "ROE mais relevante em bancos",
                 "DY e endividamento mais fortes em utilities",
                 "ROIC e margens mais importantes em negocios industriais",
+                "Peso de barganha opcional: P/L, P/VP, EV/EBIT (menor e melhor)",
             ),
-            "O mesmo indicador nao tem o mesmo significado em todos os setores; a ponderacao tenta respeitar a economia de cada negocio.",
+            "O mesmo indicador nao tem o mesmo significado em todos os setores; a ponderacao respeita a economia de cada negocio, e o peso de barganha permite misturar qualidade com preco (comprar boa empresa barata).",
         ),
         "percentis": _node(
             "percentis", "Percentis entre pares", "Score",
@@ -457,13 +458,13 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
             "backtest", "Backtest mensal", "Validacao",
             "Simula aportes mensais usando os scores disponiveis no periodo correto, sem usar dados futuros.",
             (
-                "Publication lag = 1",
-                "Aportes mensais",
-                "Comparacao contra Selic e carteira equal-weight",
-                "Rank-IC: score vs retorno do ano seguinte",
-                "Reinvestimento de dividendos quando disponivel",
+                "Publication lag = 1 (point-in-time)",
+                "Aportes mensais com custos",
+                "Pesos Iguais = referencia de habilidade (macro-neutra)",
+                "Selic = diagnostico de timing (nao criterio)",
+                "Rank-IC: score preve o retorno do ano seguinte",
             ),
-            "Um ranking so tem valor se ele sobreviver minimamente ao passado sem vazamento de informacao futura.",
+            "Bater os Pesos Iguais mostra habilidade de selecao mesmo em ciclo ruim (se o setor caiu, os pares cairam junto); a Selic e apenas referencia de timing, nao de qualidade.",
         ),
         "calibracao": _node(
             "calibracao", "Calibracao", "Validacao",
@@ -1116,12 +1117,127 @@ FLOW_INVESTIMENTOS = FlowSpec(
 )
 
 
+FLOW_CONTROLE_FINANCEIRO = FlowSpec(
+    key="controle_financeiro",
+    title="Controle financeiro",
+    subtitle=(
+        "Mostra como o app separa o dinheiro que ja entrou/saiu no mes (fluxo de "
+        "caixa) da fatura futura do cartao (fluxo a vencer) — duas naturezas que "
+        "nunca se misturam."
+    ),
+    rows=(
+        ("Entrada", ("lanc_manual", "extrato", "fatura_cc")),
+        ("Classificacao", ("conta", "categoria")),
+        ("Natureza do fluxo", ("fluxo_caixa", "fluxo_futuro")),
+        ("Visualizacao", ("abas", "graficos")),
+    ),
+    default="lanc_manual",
+    nodes={
+        "lanc_manual": _node(
+            "lanc_manual", "Lancamento manual", "Entrada",
+            "Barra lateral: voce registra entradas, saidas e investimentos do mes corrente.",
+            (
+                "Tipo: entrada / saida / investimento",
+                "Valor, data, categoria e descricao",
+                "Grava source='manual'",
+            ),
+            "E dinheiro que entra e sai no ato do lancamento — fluxo de caixa do presente.",
+        ),
+        "extrato": _node(
+            "extrato", "Importacao de extrato", "Entrada",
+            "Configuracoes > Extratos Bancarios: importa os movimentos reais da conta e classifica automaticamente.",
+            (
+                "Movimentos do banco (CSV/PDF)",
+                "Classificacao automatica por regras",
+                "Grava source='import'",
+            ),
+            "Dinheiro que JA saiu da conta tambem e fluxo de caixa, ainda que nao digitado a mao.",
+        ),
+        "fatura_cc": _node(
+            "fatura_cc", "Upload da fatura (cartao)", "Entrada",
+            "Aba Cartao de Credito: sobe a fatura CSV do cartao, com compras, parcelas e estornos.",
+            (
+                "Compras da fatura, parcelas, estornos",
+                "Conta do tipo credit_card",
+                "Grava source='csv'",
+            ),
+            "E dinheiro que ainda NAO saiu (fatura a vencer) — fluxo futuro, nao do mes corrente.",
+        ),
+        "conta": _node(
+            "conta", "Resolucao de conta", "Classificacao",
+            "O lancamento manual e gravado na Conta Corrente (checking), nunca em conta de investimento.",
+            (
+                "Prioriza type='checking'",
+                "Exclui contas de cartao de credito",
+                "Fallback seguro se nao houver checking",
+            ),
+            "Fluxo de caixa e movimentacao da conta corrente — nao aporte em investimento como B3/XP.",
+        ),
+        "categoria": _node(
+            "categoria", "Categorias", "Classificacao",
+            "Classifica cada lancamento; 'Pagamento de Cartao' representa a quitacao da fatura pela conta.",
+            (
+                "Entrada / saida / investimento",
+                "'Pagamento de Cartao' permitido no manual",
+                "Bloqueia consumo de cartao digitado a mao",
+            ),
+            "Separa a QUITACAO da fatura (fluxo de caixa) do CONSUMO do cartao (que vem so do CSV).",
+        ),
+        "fluxo_caixa": _node(
+            "fluxo_caixa", "Fluxo de caixa (presente)", "Natureza do fluxo",
+            "Reune lancamentos manuais + extrato: tudo que ja entrou ou saiu da conta no mes.",
+            (
+                "source 'manual' + 'import'",
+                "Dinheiro ja movimentado",
+                "Base do Dashboard e das Tabelas",
+            ),
+            "E a foto do dinheiro real do mes corrente — o que voce de fato tem.",
+        ),
+        "fluxo_futuro": _node(
+            "fluxo_futuro", "Cartao de credito (futuro)", "Natureza do fluxo",
+            "A fatura CSV vive isolada: dinheiro que ainda vai sair, com projecao e parcelas.",
+            (
+                "source 'csv' + conta credit_card",
+                "Fluxo a vencer (nao saiu ainda)",
+                "Exclusivo da aba Cartao de Credito",
+            ),
+            "Natureza diferente do fluxo de caixa — parecem iguais, mas nunca se misturam.",
+        ),
+        "abas": _node(
+            "abas", "Abas e filtros", "Visualizacao",
+            "Navegacao: Dashboard, Analises, Tabelas e Cartao de Credito, com filtros e edicao.",
+            (
+                "KPIs do mes (renda, despesa, saldo)",
+                "Filtros: categoria / ano / mes / dia",
+                "Tabela editavel dos lancamentos",
+            ),
+            "Consultar, filtrar e corrigir os lancamentos sem sair da tela.",
+        ),
+        "graficos": _node(
+            "graficos", "Graficos e analises", "Visualizacao",
+            "Gastos por categoria, historico de 6 meses e pagamento de cartao mensal (so fluxo de caixa).",
+            (
+                "Gastos por categoria (mes)",
+                "Historico Receitas x Despesas x Investimentos",
+                "Pagamento de cartao mensal (exclui fatura CSV)",
+            ),
+            "Analisar tendencias sem misturar fluxo de caixa com a fatura futura do cartao.",
+        ),
+    },
+    notes=(
+        "Regra de ouro: fluxo de caixa (manual + extrato) e cartao de credito "
+        "(fatura CSV) sao independentes e NUNCA se misturam.",
+    ),
+)
+
+
 FLOWS = (
     FLOW_ANALISE_AVANCADA,
     FLOW_SIMULADOR,
     FLOW_CRIACAO_PORTFOLIO,
     FLOW_ANALISE_PORTFOLIO,
     FLOW_INVESTIMENTOS,
+    FLOW_CONTROLE_FINANCEIRO,
 )
 
 
@@ -1721,6 +1837,7 @@ def render() -> None:
     )
 
     tab_labels = [
+        "Controle financeiro",
         "Análise avançada",
         "Simulador",
         "Criação de portfólio",
@@ -1731,14 +1848,16 @@ def render() -> None:
     tabs = st.tabs(tab_labels)
 
     with tabs[0]:
-        render_fluxograma_analise_avancada()
+        _render_flow(FLOW_CONTROLE_FINANCEIRO)
     with tabs[1]:
-        _render_flow(FLOW_SIMULADOR)
+        render_fluxograma_analise_avancada()
     with tabs[2]:
-        _render_flow(FLOW_CRIACAO_PORTFOLIO)
+        _render_flow(FLOW_SIMULADOR)
     with tabs[3]:
-        _render_flow(FLOW_ANALISE_PORTFOLIO)
+        _render_flow(FLOW_CRIACAO_PORTFOLIO)
     with tabs[4]:
-        _render_flow(FLOW_INVESTIMENTOS)
+        _render_flow(FLOW_ANALISE_PORTFOLIO)
     with tabs[5]:
+        _render_flow(FLOW_INVESTIMENTOS)
+    with tabs[6]:
         _render_indicadores()
