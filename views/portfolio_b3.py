@@ -359,6 +359,7 @@ def _processar_segmento(
     janela_val_anos: int = 2,
     cheapness_weight: float = 0.0,
     walk_forward: bool = False,
+    cap_adaptativo: bool = False,
 ) -> dict | None:
     """
     Roda o engine de scoring ano-a-ano para um segmento.
@@ -400,7 +401,10 @@ def _processar_segmento(
         scores_desc = [s for _, s in ranked[:3]]
         from core.portfolio_constraints import minimum_assets_for_cap
         n = _select_n_heuristica(scores_desc) if len(ranked) >= 2 else 1
-        n = min(len(ranked), max(n, minimum_assets_for_cap(cap)))
+        # Cap adaptativo (mercado B3, raso): não força um mínimo de ativos que o
+        # segmento não tem — relaxa o teto por ativo até ficar viável.
+        _min_n = 1 if cap_adaptativo else minimum_assets_for_cap(cap)
+        n = min(len(ranked), max(n, _min_n))
         lids = [tk for tk, _ in ranked[:n] if tk in tickers]
 
         lids_por_ano[ano] = lids
@@ -410,8 +414,9 @@ def _processar_segmento(
                 "SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento,
             })
         if lids and len(lids) >= 2:
+            _cap_ef = max(cap, 1.0 / len(lids)) if cap_adaptativo else cap
             try:
-                w = _apply_cap_soft(_weights_from_scores(lids, score_map, gamma), cap, soft)
+                w = _apply_cap_soft(_weights_from_scores(lids, score_map, gamma), _cap_ef, soft)
             except ValueError as exc:
                 w = {tk: 1.0 / len(lids) for tk in lids}
                 constraint_warnings.append(f"{ano}: {exc}")
@@ -446,13 +451,15 @@ def _processar_segmento(
     scores_prox = [s for _, s in ranked_prox[:3]]
     from core.portfolio_constraints import minimum_assets_for_cap
     n_prox      = _select_n_heuristica(scores_prox) if len(ranked_prox) >= 2 else 1
-    n_prox      = min(len(ranked_prox), max(n_prox, minimum_assets_for_cap(cap)))
+    _min_n_prox = 1 if cap_adaptativo else minimum_assets_for_cap(cap)
+    n_prox      = min(len(ranked_prox), max(n_prox, _min_n_prox))
     lids_prox   = [tk for tk, _ in ranked_prox[:n_prox] if tk in tickers]
 
     if lids_prox and len(lids_prox) >= 2:
+        _cap_ef_prox = max(cap, 1.0 / len(lids_prox)) if cap_adaptativo else cap
         try:
             pesos_prox = _apply_cap_soft(
-                _weights_from_scores(lids_prox, score_proximo, gamma), cap, soft
+                _weights_from_scores(lids_prox, score_proximo, gamma), _cap_ef_prox, soft
             )
         except ValueError as exc:
             pesos_prox = {tk: 1.0 / len(lids_prox) for tk in lids_prox}
@@ -1315,11 +1322,12 @@ def render(show_header: bool = True) -> None:
     with st.expander("⚙️ Parâmetros", expanded=True):
         p1, p2, p3, p4 = st.columns(4)
         thr_selic   = p1.number_input(
-            "Margem vs Selic · diagnóstico (%)", 0.0, 500.0, 0.0, 5.0,
-            key="pb3_thr_selic_diag",
-            help="APENAS diagnóstico/coloração — NÃO reprova mais. Bater a Selic "
-                 "é decisão de timing do investidor (estar em ações agora), não "
-                 "critério de qualidade. A aprovação é por habilidade de seleção.",
+            "Margem mín. vs Selic · histórico (%)", 0.0, 500.0, 0.0, 5.0,
+            key="pb3_thr_selic_hist",
+            help="No modo 'Econômico (Brasil)' esta é a RÉGUA de aprovação: a "
+                 "estratégia precisa bater a Selic por esta margem no histórico "
+                 "(0 = empatar; 20 = ganhar 20% do risco-livre). Nos modos "
+                 "estatísticos é apenas diagnóstico.",
         )
         thr_ew      = p2.number_input(
             "Margem mín. vs Pesos Iguais · validação ~24m (%)", 0.0, 300.0, 0.0, 5.0,
@@ -1381,15 +1389,21 @@ def render(show_header: bool = True) -> None:
         cheapness_weight = float(cheapness_pct) / 100.0
         _criterio = pb4.selectbox(
             "Critério de aprovação",
-            ["Sinal fundamental (Rank-IC)", "Retorno de 24m (FDR)"],
-            key="pb3_criterio_aprov",
-            help="Sinal fundamental (recomendado): exige significância do Rank-IC "
-                 "— o sinal de qualidade prevê o retorno, medido em muitos anos × "
-                 "nomes (macro-neutro, alto poder). Retorno de 24m: exige "
-                 "significância do retorno recente (FDR) — mais frágil, penaliza "
-                 "empresas boas que atravessaram um ciclo macro ruim.",
+            ["Econômico (Brasil)", "Sinal fundamental (Rank-IC)", "Retorno de 24m (FDR)"],
+            key="pb3_criterio_aprov2",
+            help="Econômico (Brasil) — RECOMENDADO p/ o mercado local: o gate é a "
+                 "margem vs Selic no histórico (critério econômico, robusto a "
+                 "amostra pequena); a estatística vira GUARDA-CORPO (só reprova "
+                 "sinal claramente anti-preditivo), não exige prova de "
+                 "significância. Sinal fundamental (Rank-IC): exige significância "
+                 "do sinal — precisa de amplitude, escassa na B3. Retorno de 24m "
+                 "(FDR): exige significância do retorno recente — o mais frágil aqui.",
         )
-        usar_gate_sinal = _criterio.startswith("Sinal")
+        criterio_modo = (
+            "economico" if _criterio.startswith("Econômico") else
+            "sinal" if _criterio.startswith("Sinal") else "retorno"
+        )
+        usar_gate_sinal = criterio_modo == "sinal"
         rc1, rc2 = st.columns([1, 2])
         exigir_resiliencia = rc1.checkbox(
             "Exigir resiliência (ROIC > risco-livre)",
@@ -1408,6 +1422,15 @@ def render(show_header: bool = True) -> None:
                  "acima do risco-livre. Exige também ROIC > Selic na maioria dos anos.",
         )
         thr_roic_spread = float(thr_roic_spread_pct) / 100.0
+        cap_adaptativo = st.checkbox(
+            "Cap adaptativo (relaxa o teto por ativo quando faltam nomes)",
+            value=True,
+            key="pb3_cap_adaptativo",
+            help="Mercado B3 é raso: muitos segmentos têm 2-3 empresas, e um cap "
+                 "de 25% exige 4. Ligado, o teto por ativo é relaxado até ficar "
+                 "viável (ex.: 2 nomes → até 50% cada), eliminando as 'restrições "
+                 "inviáveis'. Desligado, usa o cap fixo (padrão de mercado grande).",
+        )
         usar_status_recon = st.checkbox(
             "Cruzar Status Invest no saneamento atual",
             value=False,
@@ -1550,6 +1573,7 @@ def render(show_header: bool = True) -> None:
                     janela_val_anos=int(janela_val_anos),
                     cheapness_weight=float(cheapness_weight),
                     walk_forward=bool(walk_forward),
+                    cap_adaptativo=bool(cap_adaptativo),
                 )
                 if res:
                     resultados.append(res)
@@ -1622,36 +1646,52 @@ def render(show_header: bool = True) -> None:
         result["fdr_pass"] = q_value <= 0.10
 
     def _aprovado(res: dict) -> bool:
-        if res.get("val_est_oos", 0.0) <= 0:
-            return False
-        # Poder preditivo (Rank-IC) é exigido em ambos os modos.
-        if int(res.get("rank_ic_years", 0)) < 2:
-            return False
-        if not np.isfinite(float(res.get("rank_ic_mean", float("nan")))):
-            return False
-        if float(res.get("rank_ic_mean")) <= 0:
-            return False
-        # Gate estatístico — depende do critério escolhido:
-        if usar_gate_sinal:
-            # Trilha de amplitude (Grinold-Kahn): significância do SINAL (Rank-IC),
-            # macro-neutra e de alto poder. Menos frágil que o retorno de 24m.
-            if float(res.get("p_value_ic", 1.0)) >= 0.10:
-                return False
-        else:
-            # Clássico: significância do RETORNO de 24m + correção FDR.
-            if not res.get("fdr_pass", False):
-                return False
-        m_ew    = _margem_pct(res["val_est_oos"], res["val_ew_oos"])
         ultimo_lid_seg = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
         recente = (ano_atual - 1 - ultimo_lid_seg) <= max_anos_lid
+
+        if criterio_modo == "economico":
+            # ── MODO BRASIL: critério ECONÔMICO primário, estatística como
+            # guarda-corpo. Calibrado para mercado instável e pobre em dados,
+            # onde exigir significância estatística reprova quase tudo (amplitude
+            # escassa) e o quant perde a vantagem de "tempos normais" (Abis).
+            if res.get("val_est", 0.0) <= 0:
+                return False
+            # Primário: bater a Selic no HISTÓRICO cheio pela margem (thr_selic).
+            m_selic_full = _margem_pct(res.get("val_est", 0.0), res.get("val_selic", 0.0))
+            if m_selic_full < thr_selic:
+                return False
+            # Guarda-corpo estatístico: reprova só EVIDÊNCIA CONTRA — sinal
+            # claramente anti-preditivo. NÃO exige prova positiva de significância.
+            _ic = float(res.get("rank_ic_mean", float("nan")))
+            if np.isfinite(_ic) and _ic < -0.05:
+                return False
+        else:
+            # ── MODOS ESTATÍSTICOS: exigem poder preditivo POSITIVO + significância.
+            if res.get("val_est_oos", 0.0) <= 0:
+                return False
+            if int(res.get("rank_ic_years", 0)) < 2:
+                return False
+            if not np.isfinite(float(res.get("rank_ic_mean", float("nan")))):
+                return False
+            if float(res.get("rank_ic_mean")) <= 0:
+                return False
+            if usar_gate_sinal:
+                # Significância do SINAL (Rank-IC) — Grinold-Kahn, macro-neutra.
+                if float(res.get("p_value_ic", 1.0)) >= 0.10:
+                    return False
+            else:
+                # Significância do RETORNO de 24m + correção FDR.
+                if not res.get("fdr_pass", False):
+                    return False
+            # Consistência vs pares (Equal-Weight), piso opcional thr_ew.
+            m_ew = _margem_pct(res["val_est_oos"], res["val_ew_oos"])
+            if usar_ew_como_criterio and res["val_ew_oos"] > 0 and m_ew < thr_ew:
+                return False
+
         if not recente:
             return False
-        # Consistência econômica: bater o Equal-Weight do próprio segmento (piso
-        # opcional thr_ew). A margem vs Selic é só diagnóstico de timing.
-        if usar_ew_como_criterio and res["val_ew_oos"] > 0 and m_ew < thr_ew:
-            return False
-        # Trilha de resiliência estrutural (Damodaran, opcional): ROIC acima do
-        # risco-livre (custo de capital) na média E na maioria dos anos.
+        # Trilha de resiliência estrutural (Damodaran, opcional em qualquer modo):
+        # ROIC acima do risco-livre na média E na maioria dos anos.
         if exigir_resiliencia:
             _rs = float(res.get("roic_spread_mean", float("nan")))
             _hr = float(res.get("roic_hit_rate", float("nan")))
@@ -1667,16 +1707,28 @@ def render(show_header: bool = True) -> None:
     # ── TABELA DE AUDITORIA ───────────────────────────────────────────────────
     _sec_hdr(f"📋 Auditoria de Segmentos — {len(resultados)} analisados · "
              f"{len(aprovados)} aprovados")
-    _modo_txt = (
-        "**Critério: Sinal fundamental (Rank-IC).** A aprovação exige que o poder "
-        "preditivo (Rank-IC) seja estatisticamente significativo — **valor-p do "
-        "sinal ≤ 10%** — medido em muitos anos × nomes (macro-neutro, alto poder). "
-        "O valor-p do retorno de 24m vira **diagnóstico** e não reprova."
-        if usar_gate_sinal else
-        "**Critério: Retorno de 24m (FDR).** A aprovação exige **q-valor ≤ 10%** "
-        "após o controle de falsos positivos de Benjamini-Hochberg sobre o retorno "
-        "recente. Mais frágil: penaliza empresas boas num ciclo macro adverso."
-    )
+    if criterio_modo == "economico":
+        _modo_txt = (
+            "**Critério: Econômico (Brasil).** A aprovação é ECONÔMICA: a "
+            "estratégia precisa bater a Selic no histórico pela margem configurada "
+            "(robusto a amostra pequena, adequado a mercado instável). A estatística "
+            "vira **guarda-corpo** — só reprova sinal claramente anti-preditivo "
+            "(Rank-IC < −0,05); **não exige** prova de significância. As colunas "
+            "valor-p e Rank-IC ficam como **diagnóstico**."
+        )
+    elif usar_gate_sinal:
+        _modo_txt = (
+            "**Critério: Sinal fundamental (Rank-IC).** A aprovação exige que o poder "
+            "preditivo (Rank-IC) seja estatisticamente significativo — **valor-p do "
+            "sinal ≤ 10%** — medido em muitos anos × nomes (macro-neutro, alto poder). "
+            "O valor-p do retorno de 24m vira **diagnóstico** e não reprova."
+        )
+    else:
+        _modo_txt = (
+            "**Critério: Retorno de 24m (FDR).** A aprovação exige **q-valor ≤ 10%** "
+            "após o controle de falsos positivos de Benjamini-Hochberg sobre o retorno "
+            "recente. Mais frágil: penaliza empresas boas num ciclo macro adverso."
+        )
     _resil_txt = (
         " **+ Resiliência (Damodaran):** também exige ROIC das líderes acima da "
         "Selic (piso do custo de capital) — na média (spread mínimo configurado) e "
@@ -1691,12 +1743,15 @@ def render(show_header: bool = True) -> None:
         "superou o Equal-Weight."
         if walk_forward else ""
     )
-    st.caption(
-        _modo_txt + " Em ambos os modos exige-se pelo menos 2 anos de poder "
-        "preditivo (Rank-IC) com média positiva, bater os Pesos Iguais do segmento "
-        "e liderança recente. Segmentos sem retornos mensais úteis ficam reprovados "
-        "por dados insuficientes." + _resil_txt + _wf_txt
+    _comum_txt = (
+        " Todos os modos exigem liderança recente."
+        if criterio_modo == "economico" else
+        " Os modos estatísticos exigem ainda pelo menos 2 anos de poder preditivo "
+        "(Rank-IC) com média positiva, bater os Pesos Iguais do segmento e "
+        "liderança recente; segmentos sem retornos mensais úteis ficam reprovados "
+        "por dados insuficientes."
     )
+    st.caption(_modo_txt + _comum_txt + _resil_txt + _wf_txt)
 
     rows_tbl: list[dict] = []
     for res in resultados:
