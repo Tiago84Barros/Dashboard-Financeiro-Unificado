@@ -42,6 +42,37 @@ from views.empresas_b3 import (
     _yf_trailing12m_divs,
 )
 
+
+@st.cache_data(ttl=3600)
+def _load_market_caps() -> dict[str, float]:
+    """Valor de mercado ATUAL por ticker (proxy de liquidez/negociabilidade).
+
+    Lê o último marketCap de market.calculated_metric_vintages. Tickers sem
+    marketCap (deslistados / sem dado, ex.: EKTR3) ficam de fora do dicionário —
+    e portanto são excluídos por qualquer piso > 0.
+    """
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+        eng = get_engine()
+        if eng is None:
+            return {}
+        q = text("""
+            SELECT DISTINCT ON (ticker) ticker, (metric_value)::numeric AS v
+            FROM market.calculated_metric_vintages
+            WHERE metric_name = 'marketCap' AND metric_value IS NOT NULL
+            ORDER BY ticker, year DESC, available_at DESC
+        """)
+        with eng.connect() as c:
+            rows = c.execute(q).fetchall()
+        return {
+            str(r.ticker).upper().replace(".SA", "").strip(): float(r.v)
+            for r in rows if r.v is not None
+        }
+    except Exception:
+        return {}
+
+
 # ── CSS incremental ───────────────────────────────────────────────────────────
 _CSS = """
 <style>
@@ -1422,6 +1453,18 @@ def render(show_header: bool = True) -> None:
                  "acima do risco-livre. Exige também ROIC > Selic na maioria dos anos.",
         )
         thr_roic_spread = float(thr_roic_spread_pct) / 100.0
+        _liq_label = st.selectbox(
+            "Liquidez mínima (valor de mercado)",
+            ["Sem filtro", "≥ R$ 1 bi", "≥ R$ 2 bi", "≥ R$ 5 bi"],
+            index=1,
+            key="pb3_min_mcap",
+            help="Remove micro-caps e nomes sem valor de mercado "
+                 "(ilíquidos/deslistados, ex.: EKTR3). Evita coroar empresas boas "
+                 "no papel mas INTOCÁVEIS na prática (ex.: BALM3 ~R$ 210 mi). Usa o "
+                 "valor de mercado como proxy de negociabilidade.",
+        )
+        _MCAP_MAP = {"Sem filtro": 0.0, "≥ R$ 1 bi": 1e9, "≥ R$ 2 bi": 2e9, "≥ R$ 5 bi": 5e9}
+        min_mcap = _MCAP_MAP[_liq_label]
         cap_adaptativo = st.checkbox(
             "Cap adaptativo (relaxa o teto por ativo quando faltam nomes)",
             value=True,
@@ -1490,6 +1533,24 @@ def render(show_header: bool = True) -> None:
     if df_set.empty:
         st.warning("Banco não configurado. Configure `SUPABASE_DB_URL_B3`.")
         return
+
+    # Filtro de LIQUIDEZ (negociabilidade): remove micro-caps e nomes sem valor de
+    # mercado (deslistados/dado velho) ANTES de qualquer scoring — senão o modelo
+    # coroa empresas boas no papel mas intocáveis na prática (BALM3, CAMB3, EKTR3).
+    if min_mcap > 0:
+        _mcaps = _load_market_caps()
+        _n_antes = df_set["ticker"].nunique()
+        _keep = df_set["ticker"].map(
+            lambda t: _mcaps.get(str(t).upper().replace(".SA", "").strip(), 0.0) >= min_mcap
+        )
+        df_set = df_set[_keep].copy()
+        _n_removidos = _n_antes - df_set["ticker"].nunique()
+        if _n_removidos > 0:
+            st.caption(
+                f"🔒 Filtro de liquidez ({_liq_label}): {_n_removidos} empresa(s) "
+                "removida(s) por valor de mercado abaixo do piso ou ausente "
+                "(ilíquidas/deslistadas)."
+            )
 
     taxa_selic_aa = (
         float(np.mean(list(selic_macro.values()))) if selic_macro else 0.1075
