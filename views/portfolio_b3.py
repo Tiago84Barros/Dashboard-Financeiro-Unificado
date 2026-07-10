@@ -1436,21 +1436,34 @@ def render(show_header: bool = True) -> None:
             value=False,
             key="pb3_status_recon",
         )
-        st.caption(
-            "**Como a aprovação funciona:** um segmento é aprovado quando prova "
-            "**habilidade de seleção** — supera a carteira de **Pesos Iguais** do "
-            "próprio segmento com **significância estatística** (controle de "
-            "falsos positivos de Benjamini-Hochberg, com q ≤ 10%, + valor-p "
-            "unilateral) na **janela de validação fora da amostra** (o holdout "
-            "configurado acima) — "
-            "**e** tem **poder preditivo** consistente (pelo menos 2 anos com o "
-            "indicador Rank-IC positivo: a pontuação de qualidade prevê o retorno, "
-            "no histórico inteiro). Isso é **neutro ao cenário macro**: se o "
-            "cenário derrubou o segmento todo, a carteira de Pesos Iguais caiu "
-            "junto, então só conta o que a escolha dos líderes acrescentou — a "
-            "resiliência das vencedoras. A **margem vs Selic** virou "
-            "**diagnóstico** (timing de estar em ações agora) e **não reprova mais**."
-        )
+        if criterio_modo == "economico":
+            st.caption(
+                "**Como a aprovação funciona — modo Econômico (Brasil):** um "
+                "segmento é aprovado quando **bate o Tesouro Selic no histórico** "
+                "pela margem definida ao lado (critério **econômico**, robusto a "
+                "amostra pequena e a mercado instável — a evidência acadêmica "
+                "mostra que o discricionário/econômico vence nos ciclos adversos "
+                "que dominam a B3). A **estatística** vira **guarda-corpo**: só "
+                "**reprova** um segmento cujo sinal seja **claramente "
+                "anti-preditivo** (Rank-IC < −0,05); ela **NÃO exige** prova de "
+                "significância — que, na B3 (poucas empresas, história curta), "
+                "reprovaria quase tudo. As colunas de valor-p e Rank-IC ficam como "
+                "**diagnóstico**, não como portão."
+            )
+        else:
+            st.caption(
+                "**Como a aprovação funciona — modo estatístico:** um segmento é "
+                "aprovado quando prova **habilidade de seleção** — supera a "
+                "carteira de **Pesos Iguais** do próprio segmento com "
+                "**significância estatística** (Benjamini-Hochberg, q ≤ 10%, + "
+                "valor-p unilateral) na **janela de validação fora da amostra** — "
+                "**e** tem **poder preditivo** consistente (≥ 2 anos de Rank-IC "
+                "positivo). É **neutro ao cenário macro** (se o segmento todo caiu, "
+                "os Pesos Iguais caíram junto). A **margem vs Selic** é "
+                "**diagnóstico** e **não reprova**. *Obs.: exige amplitude "
+                "estatística que a B3 raramente tem — se aprovar pouco, use o modo "
+                "Econômico (Brasil).*"
+            )
         st.caption(
             "📖 **Glossário:** *Pesos Iguais* = carteira que investe igualmente em "
             "todas as empresas do segmento (referência sem escolha). *Fora da "
