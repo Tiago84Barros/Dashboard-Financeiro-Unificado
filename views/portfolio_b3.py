@@ -469,6 +469,8 @@ def _processar_segmento(
     n_months_oos = 0
     rank_ic_mean = float("nan")
     rank_ic_years = 0
+    rank_ic_tstat = float("nan")
+    p_value_ic = 1.0
     contrib_est: dict[str, float] = {}
     if tks_disp and not df_precos_all.empty:
         df_prec_seg = df_precos_all[tks_disp].dropna(how="all")
@@ -572,6 +574,20 @@ def _processar_segmento(
         rank_ic_years = len(ic_values)
         if ic_values:
             rank_ic_mean = float(np.mean(ic_values))
+            # Significância do SINAL (Rank-IC), não do retorno: t-test unilateral
+            # sobre os ICs anuais (H0: IC médio = 0). É macro-neutro e de alta
+            # amplitude (Grinold-Kahn) — muito mais robusto que o p-value do
+            # retorno de 24m. p_value_ic é a chance de o poder preditivo ser sorte.
+            if len(ic_values) >= 2:
+                _ic = np.asarray(ic_values, dtype=float)
+                _sd = float(_ic.std(ddof=1))
+                if _sd > 0:
+                    rank_ic_tstat = float(_ic.mean() / (_sd / np.sqrt(len(_ic))))
+                    from scipy.stats import t as _tdist
+                    p_value_ic = float(_tdist.sf(rank_ic_tstat, df=len(_ic) - 1))
+                elif _ic.mean() > 0:
+                    rank_ic_tstat = float("inf")
+                    p_value_ic = 0.0
 
     total_lids = sum(len(v) for v in liderancas_hist.values())
     participacao = {
@@ -608,6 +624,8 @@ def _processar_segmento(
         "n_months_oos": n_months_oos,
         "rank_ic_mean": rank_ic_mean,
         "rank_ic_years": rank_ic_years,
+        "rank_ic_tstat": rank_ic_tstat,
+        "p_value_ic": p_value_ic,
         "n_anos": len(anos_com_score),
         "ano_inicio": min(anos_com_score),
         "ano_fim": max(anos_com_score),
@@ -1305,6 +1323,17 @@ def render(show_header: bool = True) -> None:
                  "de comprar boas empresas na baixa.",
         )
         cheapness_weight = float(cheapness_pct) / 100.0
+        _criterio = pb4.selectbox(
+            "Critério de aprovação",
+            ["Sinal fundamental (Rank-IC)", "Retorno de 24m (FDR)"],
+            key="pb3_criterio_aprov",
+            help="Sinal fundamental (recomendado): exige significância do Rank-IC "
+                 "— o sinal de qualidade prevê o retorno, medido em muitos anos × "
+                 "nomes (macro-neutro, alto poder). Retorno de 24m: exige "
+                 "significância do retorno recente (FDR) — mais frágil, penaliza "
+                 "empresas boas que atravessaram um ciclo macro ruim.",
+        )
+        usar_gate_sinal = _criterio.startswith("Sinal")
         usar_status_recon = st.checkbox(
             "Cruzar Status Invest no saneamento atual",
             value=False,
@@ -1520,23 +1549,30 @@ def render(show_header: bool = True) -> None:
     def _aprovado(res: dict) -> bool:
         if res.get("val_est_oos", 0.0) <= 0:
             return False
-        if not res.get("fdr_pass", False):
-            return False
+        # Poder preditivo (Rank-IC) é exigido em ambos os modos.
         if int(res.get("rank_ic_years", 0)) < 2:
             return False
         if not np.isfinite(float(res.get("rank_ic_mean", float("nan")))):
             return False
         if float(res.get("rank_ic_mean")) <= 0:
             return False
+        # Gate estatístico — depende do critério escolhido:
+        if usar_gate_sinal:
+            # Trilha de amplitude (Grinold-Kahn): significância do SINAL (Rank-IC),
+            # macro-neutra e de alto poder. Menos frágil que o retorno de 24m.
+            if float(res.get("p_value_ic", 1.0)) >= 0.10:
+                return False
+        else:
+            # Clássico: significância do RETORNO de 24m + correção FDR.
+            if not res.get("fdr_pass", False):
+                return False
         m_ew    = _margem_pct(res["val_est_oos"], res["val_ew_oos"])
         ultimo_lid_seg = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
         recente = (ano_atual - 1 - ultimo_lid_seg) <= max_anos_lid
         if not recente:
             return False
-        # Piso econômico de HABILIDADE: bater o Equal-Weight do próprio segmento.
-        # A significância estatística (fdr_pass) já testa isso vs EW; este é o
-        # piso de magnitude opcional (thr_ew). A margem vs Selic NÃO reprova mais —
-        # é diagnóstico de timing (decisão do investidor), não de qualidade.
+        # Consistência econômica: bater o Equal-Weight do próprio segmento (piso
+        # opcional thr_ew). A margem vs Selic é só diagnóstico de timing.
         if usar_ew_como_criterio and res["val_ew_oos"] > 0 and m_ew < thr_ew:
             return False
         return True
@@ -1547,13 +1583,21 @@ def render(show_header: bool = True) -> None:
     # ── TABELA DE AUDITORIA ───────────────────────────────────────────────────
     _sec_hdr(f"📋 Auditoria de Segmentos — {len(resultados)} analisados · "
              f"{len(aprovados)} aprovados")
+    _modo_txt = (
+        "**Critério: Sinal fundamental (Rank-IC).** A aprovação exige que o poder "
+        "preditivo (Rank-IC) seja estatisticamente significativo — **valor-p do "
+        "sinal ≤ 10%** — medido em muitos anos × nomes (macro-neutro, alto poder). "
+        "O valor-p do retorno de 24m vira **diagnóstico** e não reprova."
+        if usar_gate_sinal else
+        "**Critério: Retorno de 24m (FDR).** A aprovação exige **q-valor ≤ 10%** "
+        "após o controle de falsos positivos de Benjamini-Hochberg sobre o retorno "
+        "recente. Mais frágil: penaliza empresas boas num ciclo macro adverso."
+    )
     st.caption(
-        "A aprovação usa exclusivamente a janela de validação final (fora da "
-        "amostra) de aproximadamente 24 meses, com custos de compra, e exige "
-        "q-valor ≤ 10% após o controle de falsos positivos de Benjamini-Hochberg "
-        "entre todos os segmentos. Segmentos sem ao menos 12 retornos mensais "
-        "úteis ficam reprovados por dados insuficientes. Também são exigidos pelo "
-        "menos dois anos de poder preditivo (Rank-IC) e média positiva."
+        _modo_txt + " Em ambos os modos exige-se pelo menos 2 anos de poder "
+        "preditivo (Rank-IC) com média positiva, bater os Pesos Iguais do segmento "
+        "e liderança recente. Segmentos sem retornos mensais úteis ficam reprovados "
+        "por dados insuficientes."
     )
 
     rows_tbl: list[dict] = []
@@ -1580,6 +1624,7 @@ def render(show_header: bool = True) -> None:
                 if np.isfinite(float(res.get("rank_ic_mean", float("nan"))))
                 else None
             ),
+            "valor-p do sinal (Rank-IC)": round(float(res.get("p_value_ic", 1.0)), 4),
             "Anos com poder preditivo": int(res.get("rank_ic_years", 0)),
             "Patrimônio total": _fv(res["val_est"]),
             "Últ. liderança": ult or "—",
