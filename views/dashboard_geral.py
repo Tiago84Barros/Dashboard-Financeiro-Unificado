@@ -3,7 +3,7 @@ views/dashboard_geral.py  — v3
 Visão Geral consolidada: dados reais do DB, 3 domínios.
 
 Layout:
-  Row 1 — 3 cards: Patrimônio & Saúde · Fluxo Real do Mês · Investimentos
+  Row 1 — 2 cards: Fluxo Real do Mês · Investimentos
   Row 2 — Histórico 6 meses (Receitas × Despesas × Investimentos)
   Row 3 — Distribuição de despesas (ano) | Comparativo Ano a Ano
 """
@@ -47,14 +47,6 @@ _MESES_PT = {
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — Cards CSS
 # ══════════════════════════════════════════════════════════════════════════════
-
-def _cor_score(s: int) -> str:
-    return "#00C896" if s >= 80 else "#4A9EFF" if s >= 60 else "#F6C90E" if s >= 40 else "#FC5C7D"
-
-
-def _label_score(s: int) -> str:
-    return "Ótimo" if s >= 80 else "Bom" if s >= 60 else "Atenção" if s >= 40 else "Crítico"
-
 
 def _titulo_secao(icone: str, titulo: str, subtitulo: str, cor: str) -> None:
     st.markdown(f"""
@@ -118,25 +110,6 @@ def _divisor() -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # CARDS
 # ══════════════════════════════════════════════════════════════════════════════
-
-def _card_patrimonio(pat: dict) -> None:
-    score   = pat["saude_score"]
-    cor_s   = _cor_score(score)
-    label_s = _label_score(score)
-    corpo = (
-        _label_card("💰 Patrimônio & Saúde", _COR_PATRIMONIO)
-        + _titulo_valor("Patrimônio Total", fmt_moeda(pat["total"]))
-        + _linha_kv("💳 Saldo bancário",     fmt_moeda(pat["saldo_bancario"]))
-        + _linha_kv("📈 Patrimônio investido", fmt_moeda(pat["investido"]), _COR_INVEST)
-        + _divisor()
-        + f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">'
-        + f'<span style="font-size:0.78rem;color:#718096">Saúde Financeira</span>'
-        + f'<span style="font-size:0.90rem;font-weight:800;color:{cor_s}">'
-        + f'{score}/100 &nbsp;<span style="font-size:0.72rem">{label_s}</span></span></div>'
-        + _barra(score, cor_s)
-    )
-    _card(_COR_PATRIMONIO, corpo)
-
 
 def _card_fluxo(receitas: float, despesas: float, investimentos: float) -> None:
     saldo     = receitas - despesas - investimentos
@@ -1021,14 +994,11 @@ def render() -> None:
     # ── Cabeçalho ──────────────────────────────────────────────────────────────
     container_pagina("Dashboard Geral", f"Visão consolidada · {mes_ref}", "📊")
 
-    col_b1, col_b2, col_b3, *_ = st.columns([1, 1, 1, 4])
+    col_b1, col_b2, *_ = st.columns([1, 1, 5])
     with col_b1:
         badge_status(badge_label, badge_tipo)
     with col_b2:
         badge_status(mes_ref, "info")
-    with col_b3:
-        cor_s_badge = "sucesso" if pat["saude_score"] >= 60 else "alerta" if pat["saude_score"] >= 40 else "erro"
-        badge_status(f"Score {pat['saude_score']}/100", cor_s_badge)
 
     st.markdown("<br>", unsafe_allow_html=True)
     fiis_port, fiis_salvo = _fiis_carteira_modelo()
@@ -1038,13 +1008,11 @@ def render() -> None:
     # ══════════════════════════════════════════════════════════════════════════
     _titulo_secao(
         "⚡", "Visão executiva",
-        "Os três números que explicam o mês: patrimônio, caixa e carteira investida",
+        "Resumo direto do caixa do mês e da carteira investida",
         _COR_PATRIMONIO,
     )
 
-    col0, col1, col2 = st.columns(3, gap="medium")
-    with col0:
-        _card_patrimonio(pat)
+    col1, col2 = st.columns(2, gap="medium")
     with col1:
         _card_fluxo(receitas_mes, despesas_mes, investimentos_mes)
     with col2:
