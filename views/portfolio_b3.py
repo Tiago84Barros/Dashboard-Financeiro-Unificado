@@ -600,6 +600,30 @@ def _processar_segmento(
         tk: max(anos) for tk, anos in liderancas_hist.items() if anos
     }
 
+    # Resiliência estrutural (Damodaran): a empresa gera ROIC acima do risco-livre
+    # (Selic = piso do custo de capital) de forma CONSISTENTE através dos ciclos?
+    # Mede o spread ROIC − Selic ano a ano nas empresas que lideraram o segmento.
+    # roic_spread_mean = média do spread; roic_hit_rate = fração de anos com ROIC>Selic.
+    roic_spread_mean = float("nan")
+    roic_hit_rate = float("nan")
+    _lideres_res = [tk for tk, anos in liderancas_hist.items() if anos] or list(tickers)
+    _spreads: list[float] = []
+    for tk in _lideres_res:
+        df_h = hist_batch.get(tk)
+        if df_h is None or df_h.empty or "ROIC" not in df_h.columns or "Data" not in df_h.columns:
+            continue
+        _yr = pd.to_datetime(df_h["Data"], errors="coerce").dt.year
+        _rc = pd.to_numeric(df_h["ROIC"], errors="coerce")
+        for _y, _r in zip(_yr, _rc):
+            if pd.notna(_y) and pd.notna(_r):
+                _sel = selic_macro.get(int(_y))
+                if _sel is not None and np.isfinite(_r):
+                    _spreads.append(float(_r) - float(_sel))
+    if _spreads:
+        _sp = np.asarray(_spreads, dtype=float)
+        roic_spread_mean = float(_sp.mean())
+        roic_hit_rate = float((_sp > 0).mean())
+
     return {
         "setor": setor, "subsetor": subsetor, "segmento": segmento,
         "tickers": tickers,
@@ -626,6 +650,8 @@ def _processar_segmento(
         "rank_ic_years": rank_ic_years,
         "rank_ic_tstat": rank_ic_tstat,
         "p_value_ic": p_value_ic,
+        "roic_spread_mean": roic_spread_mean,
+        "roic_hit_rate": roic_hit_rate,
         "n_anos": len(anos_com_score),
         "ano_inicio": min(anos_com_score),
         "ano_fim": max(anos_com_score),
@@ -1334,6 +1360,24 @@ def render(show_header: bool = True) -> None:
                  "empresas boas que atravessaram um ciclo macro ruim.",
         )
         usar_gate_sinal = _criterio.startswith("Sinal")
+        rc1, rc2 = st.columns([1, 2])
+        exigir_resiliencia = rc1.checkbox(
+            "Exigir resiliência (ROIC > risco-livre)",
+            value=False,
+            key="pb3_resiliencia",
+            help="Trilha de resiliência estrutural (Damodaran): além do sinal, "
+                 "exige que as líderes do segmento gerem ROIC acima da Selic "
+                 "(piso do custo de capital) de forma consistente através dos "
+                 "ciclos. Filtro ADICIONAL — reduz aprovações, aumenta convicção.",
+        )
+        thr_roic_spread_pct = rc2.number_input(
+            "Spread mín. ROIC − Selic (média, p.p.)", -20.0, 30.0, 0.0, 1.0,
+            key="pb3_roic_spread", disabled=not exigir_resiliencia,
+            help="Quanto o ROIC médio das líderes precisa superar a Selic, em "
+                 "pontos percentuais. 0 = apenas empatar; positivo = criar valor "
+                 "acima do risco-livre. Exige também ROIC > Selic na maioria dos anos.",
+        )
+        thr_roic_spread = float(thr_roic_spread_pct) / 100.0
         usar_status_recon = st.checkbox(
             "Cruzar Status Invest no saneamento atual",
             value=False,
@@ -1575,6 +1619,15 @@ def render(show_header: bool = True) -> None:
         # opcional thr_ew). A margem vs Selic é só diagnóstico de timing.
         if usar_ew_como_criterio and res["val_ew_oos"] > 0 and m_ew < thr_ew:
             return False
+        # Trilha de resiliência estrutural (Damodaran, opcional): ROIC acima do
+        # risco-livre (custo de capital) na média E na maioria dos anos.
+        if exigir_resiliencia:
+            _rs = float(res.get("roic_spread_mean", float("nan")))
+            _hr = float(res.get("roic_hit_rate", float("nan")))
+            if not np.isfinite(_rs) or _rs < thr_roic_spread:
+                return False
+            if np.isfinite(_hr) and _hr < 0.5:
+                return False
         return True
 
     aprovados  = [r for r in resultados if _aprovado(r)]
@@ -1593,11 +1646,18 @@ def render(show_header: bool = True) -> None:
         "após o controle de falsos positivos de Benjamini-Hochberg sobre o retorno "
         "recente. Mais frágil: penaliza empresas boas num ciclo macro adverso."
     )
+    _resil_txt = (
+        " **+ Resiliência (Damodaran):** também exige ROIC das líderes acima da "
+        "Selic (piso do custo de capital) — na média (spread mínimo configurado) e "
+        "em pelo menos metade dos anos — para separar deterioração real de "
+        "adversidade conjuntural."
+        if exigir_resiliencia else ""
+    )
     st.caption(
         _modo_txt + " Em ambos os modos exige-se pelo menos 2 anos de poder "
         "preditivo (Rank-IC) com média positiva, bater os Pesos Iguais do segmento "
         "e liderança recente. Segmentos sem retornos mensais úteis ficam reprovados "
-        "por dados insuficientes."
+        "por dados insuficientes." + _resil_txt
     )
 
     rows_tbl: list[dict] = []
@@ -1625,6 +1685,16 @@ def render(show_header: bool = True) -> None:
                 else None
             ),
             "valor-p do sinal (Rank-IC)": round(float(res.get("p_value_ic", 1.0)), 4),
+            "ROIC − Selic médio (p.p.)": (
+                round(float(res["roic_spread_mean"]) * 100, 1)
+                if np.isfinite(float(res.get("roic_spread_mean", float("nan"))))
+                else None
+            ),
+            "Anos ROIC > Selic (%)": (
+                round(float(res["roic_hit_rate"]) * 100, 0)
+                if np.isfinite(float(res.get("roic_hit_rate", float("nan"))))
+                else None
+            ),
             "Anos com poder preditivo": int(res.get("rank_ic_years", 0)),
             "Patrimônio total": _fv(res["val_est"]),
             "Últ. liderança": ult or "—",
