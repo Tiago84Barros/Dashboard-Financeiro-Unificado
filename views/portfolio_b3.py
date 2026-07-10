@@ -1363,6 +1363,13 @@ def render(show_header: bool = True) -> None:
         )
         return
 
+    # Gamma/cap/soft calibrados (ou defaults). Definidos FORA do `if rodar:`
+    # porque as seções de exibição (líderes do próximo ano) usam `cap`/`gamma`/
+    # `soft` a cada rerun, mesmo sem reprocessar — senão dá UnboundLocalError.
+    gamma = st.session_state.get("b3_av_gamma", _GAMMA_DEF)
+    cap   = st.session_state.get("b3_av_cap",   _CAP_DEF)
+    soft  = st.session_state.get("b3_av_soft",  _SOFT_DEF)
+
     if rodar:
         all_tickers = tuple(sorted(df_set["ticker"].unique()))
 
@@ -1404,11 +1411,6 @@ def render(show_header: bool = True) -> None:
 
         with st.spinner("Carregando preços mensais ajustados…"):
             df_precos_all = _batch_yf_precos_mensais(all_tickers, period="10y")
-
-        # Gamma/cap/soft calibrados (se existirem) ou defaults
-        gamma = st.session_state.get("b3_av_gamma", _GAMMA_DEF)
-        cap   = st.session_state.get("b3_av_cap",   _CAP_DEF)
-        soft  = st.session_state.get("b3_av_soft",  _SOFT_DEF)
 
         resultados: list[dict] = []
         # Fallback de granularidade: segmentos com poucas empresas ELEGÍVEIS
