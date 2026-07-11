@@ -228,12 +228,45 @@ def load_demonstracoes_batch(*a, **k):
     return _dispatch("load_demonstracoes_batch", *a, **k)
 
 
+# ── Histórico de múltiplos: SEMPRE prefere market.* (parar de usar legado) ────
+# O histórico legado (public.multiplos) tem UNIDADES MISTURADAS por ano (linhas
+# antigas em percent, novas em decimal) — irrecuperável por faixa. As vintages
+# de market.* são limpas e consistentes (decimal). Por isso a história ignora a
+# flag MARKET_READ_SOURCE e prefere sempre o market; o legado (já blindado por
+# clean_multiples_frame) entra apenas como fallback por ticker quando o market
+# não cobre. Não confundir com o snapshot/setores, que seguem o cutover normal.
+
 def load_multiplos_historico(*a, **k):
-    return _dispatch("load_multiplos_historico", *a, **k)
+    try:
+        m = _market.load_multiplos_historico(*a, **k)
+        if m is not None and not m.empty:
+            return m
+    except Exception as exc:
+        logger.warning("hist market falhou (%s) — fallback legado", exc)
+    return _legacy.load_multiplos_historico(*a, **k)
 
 
-def load_multiplos_historico_batch(*a, **k):
-    return _dispatch("load_multiplos_historico_batch", *a, **k)
+def _norm_tk(t: str) -> str:
+    return str(t).strip().upper().replace(".SA", "")
+
+
+def load_multiplos_historico_batch(tickers, *a, **k):
+    """Merge por ticker: market.* limpo onde houver, legado blindado no resto."""
+    out: dict = {}
+    try:
+        out = dict(_market.load_multiplos_historico_batch(tickers, *a, **k) or {})
+    except Exception as exc:
+        logger.warning("hist batch market falhou (%s) — fallback legado", exc)
+        out = {}
+    faltantes = tuple(t for t in tickers if _norm_tk(t) not in out)
+    if faltantes:
+        try:
+            leg = _legacy.load_multiplos_historico_batch(faltantes, *a, **k) or {}
+            for tk, df in leg.items():
+                out.setdefault(tk, df)
+        except Exception as exc:
+            logger.warning("hist batch legado falhou (%s)", exc)
+    return out
 
 
 def load_portfolio_snapshot(*a, **k):
