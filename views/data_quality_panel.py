@@ -15,7 +15,6 @@ import pandas as pd
 import streamlit as st
 
 import core.data_quality as _dq
-import core.data_healing as _heal
 from design.componentes import card_metrica
 
 
@@ -60,55 +59,15 @@ def render_quality_report(df: pd.DataFrame, key_prefix: str = "dq") -> dict:
 
 def render_healing_panel(tickers, key_prefix: str = "heal") -> None:
     """
-    Botão de saneamento persistente. Fluxo seguro: pré-visualizar (dry-run) →
-    revisar → aplicar (grava no banco com backup + auditoria).
+    DESCONTINUADO (2026-07). O saneamento manual gravava em public.multiplos
+    (Fundamentus/Status Invest), tabela legada DESATIVADA por injetar dados
+    financeiros contraditórios. Os fundamentos agora vêm exclusivamente do
+    market.* (brapi), fonte única — não há mais o que sanear por scraping.
+    Mantido como no-op informativo para não quebrar as telas que o chamam.
     """
-    tks = [str(t).upper().replace(".SA", "") for t in (tickers or []) if t]
-    if not tks:
-        return
-    st.markdown("##### 🩺 Saneamento de dados (cruza Fundamentus + Status Invest e grava no banco)")
     st.caption(
-        "Busca o dado faltante/divergente em ≥2 fontes; em divergência prioriza "
-        "Fundamentus/Status Invest. Pré-visualize antes de gravar."
+        "🩺 Saneamento manual descontinuado — os fundamentos vêm agora "
+        "exclusivamente do banco alimentado pela API da Brapi (market.*). "
+        "Valores ausentes são tratados como N/D (rank neutro), sem reconstrução "
+        "por fontes externas."
     )
-    prev_key = f"{key_prefix}_preview"
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        if st.button("🔎 Pré-visualizar saneamento", key=f"{key_prefix}_btn_prev",
-                     use_container_width=True):
-            with st.spinner("Consultando Fundamentus e Status Invest…"):
-                try:
-                    st.session_state[prev_key] = _heal.preview_healing(tks)
-                except Exception as exc:
-                    st.error(f"Falha ao pré-visualizar: {exc}")
-                    st.session_state[prev_key] = pd.DataFrame()
-
-    preview = st.session_state.get(prev_key)
-    if preview is None:
-        return
-    if preview.empty:
-        st.info("Nada a corrigir: dados já consistentes ou sem corroboração de ≥2 fontes.")
-        return
-
-    grav = preview[preview["Acao"].isin(["corrigido", "preenchido"])]
-    revisar = preview[~preview["Acao"].isin(["corrigido", "preenchido"])]
-    st.dataframe(preview, use_container_width=True, hide_index=True)
-    st.caption(f"{len(grav)} gravável(is) (≥2 fontes) · {len(revisar)} para revisão manual.")
-
-    if not grav.empty:
-        with col2:
-            confirm = st.checkbox("Confirmo gravar as correções no banco",
-                                  key=f"{key_prefix}_confirm")
-            if st.button("✅ Aplicar no banco (com backup + auditoria)",
-                         key=f"{key_prefix}_apply", type="primary",
-                         disabled=not confirm, use_container_width=True):
-                with st.spinner("Gravando correções (backup + auditoria)…"):
-                    out = _heal.apply_healing(preview)
-                if out.get("erro"):
-                    st.error(f"Erro ao gravar: {out['erro']}")
-                else:
-                    st.success(
-                        f"✅ {out.get('gravados', 0)} valor(es) corrigido(s) no banco "
-                        f"({out.get('backupados', 0)} backupados). Recarregue para ver atualizado."
-                    )
-                    st.session_state.pop(prev_key, None)

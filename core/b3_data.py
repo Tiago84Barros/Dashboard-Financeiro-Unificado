@@ -20,6 +20,8 @@ from __future__ import annotations
 import logging
 import os
 
+import pandas as pd
+
 import core.b3_db as _legacy
 import core.market_read as _market
 
@@ -134,14 +136,16 @@ def _set_market_degraded(flag: bool) -> None:
 
 def market_active() -> bool:
     """
-    True quando a leitura está EFETIVAMENTE vindo do market.* (flag='market' E
-    cobertura suficiente E sem fallback recente por erro). As telas usam isto
-    p/ desligar reparos defensivos (imputação MICE/mediana, patch via
-    Fundamentus) quando a fonte já é limpa: com dado bom, nulo = ausente
-    (rank neutro), não algo a reconstruir.
-    Em 'legacy' e 'compare' (UI mostra legado) retorna False → reparos ativos.
+    Cutover FINANCEIRO concluído (2026-07): os múltiplos, demonstrações e
+    histórico vêm EXCLUSIVAMENTE do market.* (brapi) — ver os loaders
+    financeiros abaixo, que ignoram MARKET_READ_SOURCE e não caem mais no
+    legado public.multiplos/"Demonstracoes_Financeiras" (desativados por
+    injetarem dados contraditórios). Logo os 'reparos defensivos' das telas
+    (imputação MICE/mediana, patch via Fundamentus, dividendos via yfinance)
+    ficam SEMPRE desligados: com fonte única e limpa, nulo = ausente (rank
+    neutro), nunca algo a reconstruir por fonte externa (não-brapi).
     """
-    return read_source() == "market" and _market_ready() and not _MARKET_DEGRADED
+    return True
 
 
 def _row_count(obj) -> int | None:
@@ -200,73 +204,55 @@ def _dispatch(name: str, *args, **kwargs):
     return legacy_res
 
 
-# ── Loaders backed por market.* (dispatch por flag) ───────────────────────────
-
+# setores: REFERÊNCIA (taxonomia B3), não-financeiro → segue o dispatch/flag.
 def load_setores(*a, **k):
     return _dispatch("load_setores", *a, **k)
 
 
+# ── Dados FINANCEIROS: fonte ÚNICA = market.* (brapi) ─────────────────────────
+# O legado public.multiplos / "Demonstracoes_Financeiras" foi DESATIVADO por
+# injetar valores financeiros contraditórios (unidades misturadas por ano,
+# dados defasados). Estes loaders IGNORAM MARKET_READ_SOURCE e NÃO caem no
+# legado: brapi é a fonte única da verdade. Em erro/ausência do market devolvem
+# vazio (nulo = ausente, rank neutro), NUNCA o legado. Snapshot de carteira,
+# selic e macro seguem no legado (outras tabelas, não são as desativadas).
+
+def _financeiro(name: str, vazio, *a, **k):
+    try:
+        res = getattr(_market, name)(*a, **k)
+        return res if res is not None else vazio
+    except Exception as exc:
+        logger.warning("market %s falhou (%s) — financeiro sem fallback legado",
+                       name, exc)
+        return vazio
+
+
 def load_multiplos_todos(*a, **k):
-    return _dispatch("load_multiplos_todos", *a, **k)
+    return _financeiro("load_multiplos_todos", pd.DataFrame(), *a, **k)
 
 
 def load_multiplos(*a, **k):
-    return _dispatch("load_multiplos", *a, **k)
+    return _financeiro("load_multiplos", pd.DataFrame(), *a, **k)
 
 
 def load_historico_anos(*a, **k):
-    return _dispatch("load_historico_anos", *a, **k)
+    return _financeiro("load_historico_anos", pd.DataFrame(), *a, **k)
 
-
-# ── Loaders sem paridade em market.* — sempre legado ──────────────────────────
 
 def load_demonstracoes(*a, **k):
-    return _dispatch("load_demonstracoes", *a, **k)
+    return _financeiro("load_demonstracoes", pd.DataFrame(), *a, **k)
 
 
 def load_demonstracoes_batch(*a, **k):
-    return _dispatch("load_demonstracoes_batch", *a, **k)
+    return _financeiro("load_demonstracoes_batch", {}, *a, **k)
 
-
-# ── Histórico de múltiplos: SEMPRE prefere market.* (parar de usar legado) ────
-# O histórico legado (public.multiplos) tem UNIDADES MISTURADAS por ano (linhas
-# antigas em percent, novas em decimal) — irrecuperável por faixa. As vintages
-# de market.* são limpas e consistentes (decimal). Por isso a história ignora a
-# flag MARKET_READ_SOURCE e prefere sempre o market; o legado (já blindado por
-# clean_multiples_frame) entra apenas como fallback por ticker quando o market
-# não cobre. Não confundir com o snapshot/setores, que seguem o cutover normal.
 
 def load_multiplos_historico(*a, **k):
-    try:
-        m = _market.load_multiplos_historico(*a, **k)
-        if m is not None and not m.empty:
-            return m
-    except Exception as exc:
-        logger.warning("hist market falhou (%s) — fallback legado", exc)
-    return _legacy.load_multiplos_historico(*a, **k)
+    return _financeiro("load_multiplos_historico", pd.DataFrame(), *a, **k)
 
 
-def _norm_tk(t: str) -> str:
-    return str(t).strip().upper().replace(".SA", "")
-
-
-def load_multiplos_historico_batch(tickers, *a, **k):
-    """Merge por ticker: market.* limpo onde houver, legado blindado no resto."""
-    out: dict = {}
-    try:
-        out = dict(_market.load_multiplos_historico_batch(tickers, *a, **k) or {})
-    except Exception as exc:
-        logger.warning("hist batch market falhou (%s) — fallback legado", exc)
-        out = {}
-    faltantes = tuple(t for t in tickers if _norm_tk(t) not in out)
-    if faltantes:
-        try:
-            leg = _legacy.load_multiplos_historico_batch(faltantes, *a, **k) or {}
-            for tk, df in leg.items():
-                out.setdefault(tk, df)
-        except Exception as exc:
-            logger.warning("hist batch legado falhou (%s)", exc)
-    return out
+def load_multiplos_historico_batch(*a, **k):
+    return _financeiro("load_multiplos_historico_batch", {}, *a, **k)
 
 
 def load_portfolio_snapshot(*a, **k):
