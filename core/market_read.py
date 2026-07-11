@@ -22,6 +22,8 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 
+from core.data_quality import clean_multiples_frame
+
 # Métricas do snapshot, na MESMA grafia das colunas do legado public.multiplos.
 # Liquidez_Corrente ainda não é computável a partir de market.* (gap conhecido):
 # entra como coluna vazia para preservar o shape de saída.
@@ -318,16 +320,27 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
         SELECT to_regclass('market.calculated_metric_vintages') IS NOT NULL AS ok
     """)
     if not has_vintages.empty and bool(has_vintages.iloc[0]["ok"]):
+        # Ponto-no-tempo: PREFERE vintages reais (não-baseline) quando existirem;
+        # cai no 'migration_baseline' (backfill limpo em decimal) só quando é a
+        # ÚNICA fonte — hoje 100% das vintages são baseline. Excluí-las deixava o
+        # histórico vazio e o app voltava ao public.multiplos legado (unidades
+        # misturadas/corrompidas). Para o baseline, o available_at é o carimbo da
+        # INGESTÃO (semana passada), não a disponibilidade histórica real; por
+        # isso é anulado (→ o scorer usa o corte fiscal, idêntico ao legado, que
+        # nunca teve AvailableAt) — preservando a integridade do walk-forward.
         return _q(f"""
             WITH first_vintage AS (
                 SELECT DISTINCT ON (ticker, year, quarter, metric_name)
                        ticker, year, quarter, metric_name, metric_value,
-                       available_at, availability_quality
+                       CASE WHEN availability_quality = 'migration_baseline'
+                            THEN NULL ELSE available_at END AS available_at,
+                       availability_quality
                 FROM market.calculated_metric_vintages
                 WHERE period = 'annual'
-                  AND availability_quality <> 'migration_baseline'
                   AND (confidence_score IS NULL OR confidence_score >= 80)
-                ORDER BY ticker, year, quarter, metric_name, recorded_at ASC
+                ORDER BY ticker, year, quarter, metric_name,
+                         (availability_quality = 'migration_baseline') ASC,
+                         recorded_at ASC
             ),
             stmt AS (
                 SELECT ticker, MAX(year) AS ymax
@@ -381,8 +394,11 @@ def load_multiplos_historico(ticker: str) -> pd.DataFrame:
         wide = wide.merge(availability, on=["Ticker", "year"], how="left")
     wide["Ticker"] = _norm_ticker(wide["Ticker"])
     out = _attach_data(wide, "Data").sort_values("Data").reset_index(drop=True)
+    out = clean_multiples_frame(out)  # belt: faixa-fora/outlier → NaN
     cols = ["Ticker", "Data", *_MULT_COLS]
-    if "available_at" in out:
+    # Mantém AvailableAt só se houver disponibilidade real (não-baseline); com
+    # baseline puro (available_at anulado) a coluna some → paridade com o legado.
+    if "available_at" in out and out["available_at"].notna().any():
         out = out.rename(columns={"available_at": "AvailableAt"})
         cols.append("AvailableAt")
     return out[cols]
@@ -405,14 +421,16 @@ def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.Dat
         wide = wide.merge(availability, on=["Ticker", "year"], how="left")
     wide["Ticker"] = _norm_ticker(wide["Ticker"])
     out = _attach_data(wide, "Data").sort_values(["Ticker", "Data"])
-    if "available_at" in out:
+    out = clean_multiples_frame(out)  # belt: faixa-fora/outlier → NaN
+    keep_av = "available_at" in out and out["available_at"].notna().any()
+    if keep_av:
         out = out.rename(columns={"available_at": "AvailableAt"})
     result: dict[str, pd.DataFrame] = {}
     for tk in tks:
         sub = out[out["Ticker"] == tk].copy().reset_index(drop=True)
         if not sub.empty:
             cols = ["Ticker", "Data", *_MULT_COLS]
-            if "AvailableAt" in sub:
+            if keep_av and "AvailableAt" in sub:
                 cols.append("AvailableAt")
             result[tk] = sub[cols]
     return result

@@ -22,6 +22,8 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
+from core.data_quality import clean_multiples_frame
+
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
@@ -207,7 +209,12 @@ def load_multiplos_historico(ticker: str) -> pd.DataFrame:
         df = df.dropna(subset=[data_col]).sort_values(data_col)
         if data_col != "Data":
             df = df.rename(columns={data_col: "Data"})
-    return df
+    # Blindagem: public.multiplos tem UNIDADES MISTURADAS por ano (linhas antigas
+    # em percent: ROIC 25.199 = 25%, ROE 27.5%; linhas novas em decimal 0.13).
+    # O modelo é decimal (0.15 = 15%), então as linhas percent são outliers fora
+    # de faixa. clean_multiples_frame vira faixa-fora → NaN (ausente, nunca 0),
+    # impedindo que os valores legados corrompidos envenenem score/médias.
+    return clean_multiples_frame(df)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -293,7 +300,8 @@ def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.Dat
     for tk in tks_clean:
         sub = df[df["Ticker"] == tk].copy().reset_index(drop=True)
         if not sub.empty:
-            result[tk] = sub
+            # Blindagem de unidade/outlier (ver load_multiplos_historico).
+            result[tk] = clean_multiples_frame(sub)
     return result
 
 
