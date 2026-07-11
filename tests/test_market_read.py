@@ -148,31 +148,31 @@ def test_gate_custom_threshold(monkeypatch):
     assert facade.load_setores() == "MARKET_SET"  # 82% >= 80%
 
 
-# ── market_active(): desliga reparos das telas só quando market serve de fato ──
+# ── Dados financeiros: fonte ÚNICA = market.* (legado desativado) ─────────────
 
-def test_market_active_false_in_legacy(monkeypatch):
-    _coverage_fakes(monkeypatch, 100, 100)
-    monkeypatch.setenv("MARKET_READ_SOURCE", "legacy")
-    monkeypatch.setenv("MARKET_READ_FORCE", "1")
-    assert facade.market_active() is False  # flag legado -> reparos ativos
-
-
-def test_market_active_false_when_coverage_low(monkeypatch):
-    _coverage_fakes(monkeypatch, 100, 50)
-    monkeypatch.setenv("MARKET_READ_SOURCE", "market")
+def test_financeiro_sempre_market_mesmo_em_legacy(monkeypatch):
+    _fakes(monkeypatch)
+    monkeypatch.setenv("MARKET_READ_SOURCE", "legacy")  # flag legado é IGNORADA
     monkeypatch.delenv("MARKET_READ_FORCE", raising=False)
-    assert facade.market_active() is False  # flag market mas cobertura 50% < 90%
+    assert facade.load_multiplos_todos() == "MARKET_MT"  # nunca "LEGACY_MT"
 
 
-def test_market_active_false_in_compare(monkeypatch):
-    _coverage_fakes(monkeypatch, 100, 100)
-    monkeypatch.setenv("MARKET_READ_SOURCE", "compare")
-    monkeypatch.setenv("MARKET_READ_FORCE", "1")
-    assert facade.market_active() is False  # compare mostra legado -> reparos ativos
+def test_financeiro_market_erro_retorna_vazio_nao_legado(monkeypatch):
+    _fakes(monkeypatch)
 
-
-def test_market_active_true_when_market_and_ready(monkeypatch):
-    _coverage_fakes(monkeypatch, 100, 96)
+    def boom(*a, **k):
+        raise RuntimeError("market down")
+    facade._market.load_multiplos_todos = boom
     monkeypatch.setenv("MARKET_READ_SOURCE", "market")
-    monkeypatch.delenv("MARKET_READ_FORCE", raising=False)
-    assert facade.market_active() is True  # market + 96% >= 90%
+    out = facade.load_multiplos_todos()
+    # vazio (nulo = ausente), JAMAIS cai no legado public.multiplos
+    assert hasattr(out, "empty") and out.empty
+
+
+# ── market_active(): cutover financeiro concluído → sempre True ────────────────
+
+def test_market_active_sempre_true(monkeypatch):
+    # Independe da flag/cobertura: financeiro vem só do market → reparos OFF.
+    for src in ("legacy", "market", "compare"):
+        monkeypatch.setenv("MARKET_READ_SOURCE", src)
+        assert facade.market_active() is True
