@@ -44,8 +44,15 @@ def _token() -> str:
     if tok:
         return tok
     try:
-        from core.config import settings
-        return str(getattr(settings, "BRAPI_TOKEN", "") or "").strip()
+        from core.config import settings  # importa config → load_dotenv() popula os.environ
+        v = str(getattr(settings, "BRAPI_TOKEN", "") or "").strip()
+        if v:
+            return v
+        # settings não declara BRAPI_TOKEN, mas o import acima carregou o .env:
+        # re-checa os.environ. Sem isto, processos que não importaram core.config
+        # antes (scripts, testes, jobs avulsos) chamavam a brapi ANÔNIMOS —
+        # 401/404 espúrios mesmo com token pago configurado no .env.
+        return os.getenv("BRAPI_TOKEN", "").strip()
     except Exception:
         return ""
 
