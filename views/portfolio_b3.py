@@ -1474,11 +1474,6 @@ def render(show_header: bool = True) -> None:
                  "viável (ex.: 2 nomes → até 50% cada), eliminando as 'restrições "
                  "inviáveis'. Desligado, usa o cap fixo (padrão de mercado grande).",
         )
-        usar_status_recon = st.checkbox(
-            "Cruzar Status Invest no saneamento atual",
-            value=False,
-            key="pb3_status_recon",
-        )
         if criterio_modo == "economico":
             st.caption(
                 "**Como a aprovação funciona — modo Econômico (Brasil):** um "
@@ -1587,10 +1582,13 @@ def render(show_header: bool = True) -> None:
                 _mkt_ativo = bool(_db.market_active())
             except Exception:
                 pass
+            # Scraping descontinuado (2026-07): fonte única = market.* (brapi).
+            # include_status=False e fund_data={} fazem a reconciliação virar só
+            # saneamento por faixas canônicas (nulo fica nulo).
             df_mult_recon, audit_recon, quality_summary = _recon.batch_multiplos_reconciliados(
                 all_tickers,
                 df_base=df_mult_todos,
-                include_status=bool(usar_status_recon) and not _mkt_ativo,
+                include_status=False,
                 fund_data={} if _mkt_ativo else None,
             )
             zero_invalid = set(quality_summary.get("campos_zero_suspeito", []))
@@ -1695,19 +1693,9 @@ def render(show_header: bool = True) -> None:
 
     _render_data_quality_box(quality_summary, quality_audit, hist_audit)
 
-    # ── Saneamento persistente (cruza Fundamentus/Status Invest e grava no banco) ──
-    try:
-        from views.data_quality_panel import render_healing_panel
-        _heal_tks = sorted({
-            str(t).upper().replace(".SA", "")
-            for r in resultados for t in (r.get("tickers") or [])
-        })
-        if _heal_tks:
-            with st.expander("🩺 Sanear dados (Fundamentus + Status Invest → banco)",
-                             expanded=False):
-                render_healing_panel(_heal_tks, key_prefix="pb3_heal")
-    except Exception as _exc_heal:  # nunca quebra a aba
-        st.caption(f"Saneamento de dados indisponível: {_exc_heal}")
+    # Saneamento por scraping (Fundamentus/Status Invest) DESCONTINUADO (2026-07):
+    # fundamentos vêm exclusivamente do market.* (brapi) — não há o que sanear
+    # por fonte externa; ausência = N/D (rank neutro). O expander foi removido.
 
     # ── FILTROS DE APROVAÇÃO ──────────────────────────────────────────────────
     ano_atual = pd.Timestamp.now().year
