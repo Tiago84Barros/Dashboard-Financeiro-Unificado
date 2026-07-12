@@ -2363,8 +2363,15 @@ def _score_historico_ano(
                 validos["AvailableAt"], errors="coerce", utc=True
             ).dt.tz_convert(None)
             decision_date = pd.Timestamp(ano_ref, _REBAL_MONTH, 1)
+            # NaT = linha do backfill (migration_baseline), cuja disponibilidade
+            # real é desconhecida — vale o CORTE FISCAL já aplicado acima, então
+            # ela PASSA. Só as vintages com carimbo real (first_seen_proxy)
+            # respeitam o ponto-no-tempo estrito. Exigir notna() aqui zerava o
+            # histórico inteiro assim que a 1ª vintage real aparecia no lote
+            # (a coluna vem para o batch todo) → "Nenhum segmento retornou
+            # dados suficientes" na Criação de Portfólio.
             validos = validos[
-                available_at.notna() & (available_at <= decision_date)
+                available_at.isna() | (available_at <= decision_date)
             ]
         if validos.empty:
             continue
