@@ -95,27 +95,34 @@ _DEFAULT_REGISTRY: list[dict] = [
                         "Supabase (scripts/sync_docs_to_supabase.py). Ver local_staging/README.md.",
     },
     {
+        # DESCONTINUADO (2026-07): escrevia na tabela legada public.multiplos,
+        # que foi DROPADA — DY/dividendos agora vêm da ingestão market.* (brapi,
+        # run_market_ingest daily/annual). Rodar este job só geraria erro.
         "table_name":   "multiplos",
         "source_name":  "brapi.dev (histórico DY)",
         "job_name":     "update_brapi_history",
         "update_type":  "incremental",
-        "frequency":    "diario",
+        "frequency":    "manual",
         "priority":     6,
-        "is_active":    True,
-        "description":  "Backfill histórico de DY anual via API brapi.dev (dividendos+preços), "
-                        "em gotejamento: preenche apenas lacunas (DY ausente/inválido), nunca "
-                        "sobrescreve dado válido, com backup+auditoria. Requer BRAPI_TOKEN para "
-                        "o universo completo. Ajustável por env (BRAPI_HISTORY_MAX/DELAY/ENABLE).",
+        "is_active":    False,
+        "description":  "[Descontinuado] Backfill de DY na tabela legada `multiplos`, DROPADA — "
+                        "dividendos/DY agora vêm da ingestão market.* (brapi).",
     },
     {
+        # DESCONTINUADO (2026-07): scraping (yfinance + Fundamentus) para as
+        # tabelas legadas public.multiplos / "Demonstracoes_Financeiras", ambas
+        # DROPADAS. Fonte única dos fundamentos: market.* (brapi). O job
+        # auto-limita via tables_present (viraria no-op), mas fica desativado
+        # para não gastar CI nem reintroduzir dado de scraping.
         "table_name":   "Demonstracoes_Financeiras, multiplos",
         "source_name":  "B3 / yfinance + Fundamentus",
         "job_name":     "update_b3_fundamentals",
         "update_type":  "incremental",
-        "frequency":    "semanal",
+        "frequency":    "manual",
         "priority":     5,
-        "is_active":    True,
-        "description":  "Demonstrações financeiras e múltiplos anuais e trimestrais de empresas B3 (DRE, balanço, fluxo de caixa, P/L, ROE, margens)",
+        "is_active":    False,
+        "description":  "[Descontinuado] Scraping de fundamentos p/ tabelas legadas DROPADAS; "
+                        "substituído pela ingestão market.* (run_market_ingest annual).",
     },
     {
         "table_name":   "proventos",
@@ -146,9 +153,9 @@ _DEFAULT_REGISTRY: list[dict] = [
         "priority":     10,
         "is_active":    False,
         "description":  "[Descontinuado] Saneamento por scraping cruzado (Fundamentus/Status "
-                        "Invest) sobre a tabela legada `multiplos`. Com MARKET_READ_SOURCE=market, "
-                        "o app lê fundamentos do market.* (validação por faixa) — este healing "
-                        "não é mais a fonte de leitura. Mantido inativo para não gastar CI à toa.",
+                        "Invest) sobre a tabela legada `multiplos`, que foi DROPADA (2026-07). "
+                        "Fundamentos vêm exclusivamente do market.* (brapi); não há mais o que "
+                        "sanear por scraping. Mantido inativo.",
     },
     # ── Importações manuais de investimentos ─────────────────────────────────
     # frequency='manual' garante que NUNCA são executadas pelo

@@ -14,8 +14,10 @@ on:
       source:
         description: "Universo"
         type: choice
-        options: ["ticker_cvm", "setores", "brapi"]
-        default: "ticker_cvm"
+        options: ["setores", "ticker_cvm", "brapi"]
+        # setores = universo do app (tickers-B3). ticker_cvm continha símbolos
+        # brapi divergentes (AXIA3/EMBJ3…) que criavam assets órfãos invisíveis.
+        default: "setores"
   schedule:
     - cron: "0 6 * * *"   # 03:00 BRT — drena o universo aos poucos
 
@@ -73,7 +75,7 @@ jobs:
       - name: Bootstrap (lote retomável)
         run: |
           BATCH="${{ github.event.inputs.batch || '80' }}"
-          SRC="${{ github.event.inputs.source || 'ticker_cvm' }}"
+          SRC="${{ github.event.inputs.source || 'setores' }}"
           python run_market_ingest.py bootstrap --source "$SRC" --limit "$BATCH" --json
       - name: Reprocessar indicadores (sem rede)
         if: always()
