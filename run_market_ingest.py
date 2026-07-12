@@ -183,7 +183,7 @@ def main() -> int:
         return 0
 
     if args.command == "bootstrap":
-        prog = ingest.bootstrap(tickers, args.source or "ticker_cvm", args.limit or 50)
+        prog = ingest.bootstrap(tickers, args.source or "setores", args.limit or 50)
     elif args.command == "daily":
         prog = ingest.daily(tickers, args.source or "setores", args.limit)
     elif args.command == "annual":
