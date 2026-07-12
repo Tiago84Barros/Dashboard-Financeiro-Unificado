@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 import core.brapi as brapi
+import pytest
 
 
 def _ts(y, m, d):
@@ -96,3 +97,54 @@ def test_fetch_quote_500_retorna_none(monkeypatch):
     import requests
     monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResp(500))
     assert brapi.fetch_quote("HGLG11") is None
+
+
+def test_fetch_fii_v2_validates_endpoint_and_batch(monkeypatch):
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"fiis": [{"symbol": "KNRI11"}]}
+
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: Response())
+    result = brapi.fetch_fii_v2("indicators", ["knri11"])
+    assert result["fiis"][0]["symbol"] == "KNRI11"
+    with pytest.raises(ValueError):
+        brapi.fetch_fii_v2("unknown", ["KNRI11"])
+    with pytest.raises(ValueError):
+        brapi.fetch_fii_v2("indicators", [f"F{i}11" for i in range(21)])
+
+
+def test_fii_v2_invalid_token_is_not_treated_as_rate_limit(monkeypatch):
+    class Response:
+        status_code = 401
+        headers = {}
+
+        @staticmethod
+        def json():
+            return {"error": True, "code": "INVALID_TOKEN"}
+
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: Response())
+    with pytest.raises(brapi.BrapiAuthError):
+        brapi.fetch_fii_v2("list", None)
+
+
+def test_fii_v2_pagination_merges_all_rows(monkeypatch):
+    class Response:
+        headers = {}
+        status_code = 200
+
+        def __init__(self, page):
+            self.page = page
+
+        def json(self):
+            return {"reports": [{"symbol": f"F{self.page}"}],
+                    "pagination": {"page": self.page, "totalPages": 2,
+                                   "hasNextPage": self.page < 2}}
+
+    monkeypatch.setattr(
+        "requests.get",
+        lambda *args, **kwargs: Response(int((kwargs.get("params") or {}).get("page", 1))))
+    response = brapi.fetch_fii_v2_all_pages("reports", "KNRI11")
+    assert [row["symbol"] for row in response.payload["reports"]] == ["F1", "F2"]

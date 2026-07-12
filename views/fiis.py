@@ -19,6 +19,9 @@ import pandas as pd
 import streamlit as st
 
 import core.market_read as _mr
+from core.fii_methodology import (MacroScenario, classify_macro_regime,
+                                 evaluate_publication_gate, score_fiis_by_type)
+from core.fii_portfolio_v4 import PortfolioPolicy, optimize_diligence_portfolio
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 
@@ -65,14 +68,14 @@ _CSS = """
 </style>
 """
 
-_TABS = ["📊 Ranking", "🔎 Busca de ativo", "🧺 Carteira-modelo", "📈 Retrospectiva"]
+_TABS = ["📊 Diligência", "🔎 Busca de ativo", "🧺 Carteira de diligência", "📈 Retrospectiva"]
 
 
 def render(show_header: bool = True) -> None:
     if show_header:
-        st.markdown("## 🏬 Seleção de FIIs")
-        st.caption("Ranking (cards por tipo) → busca por ativo → carteira → backtest. "
-                   "Dados BRAPI Pro + CVM (Informe Mensal de FIIs).")
+        st.markdown("## Seleção de FIIs — Lista de Diligência")
+        st.caption("Metodologia v4 específica por tipo. Enquanto a validação point-in-time "
+                   "não for aprovada, a saída não é recomendação definitiva nem Carteira Modelo.")
     st.markdown(_CSS, unsafe_allow_html=True)
 
     df = _mr.load_fiis()
@@ -89,16 +92,27 @@ def render(show_header: bool = True) -> None:
             _fz.pvp_efetivo(p, v, b)
             for p, v, b in zip(df["Preço"], df["VPA"], df["P/VP"])
         ]
-    # Recalcula na leitura para não misturar versões de score após ingestões parciais.
-    score_input = [
-        {
-            "ticker": r["Ticker"], "price": r["Preço"], "dy_12m": r["DY_12m"],
-            "pvp": r["P/VP"], "liquidez_diaria": r["Liquidez_Diaria"],
-        }
-        for _, r in df.iterrows()
-    ]
-    score_map = {r["ticker"]: r["score"] for r in _fz.rank_fiis(score_input)}
-    df["Score"] = df["Ticker"].map(score_map)
+    inputs = _mr.load_fii_methodology_inputs()
+    validation = _mr.load_fii_validation_status()
+    scored_v4 = score_fiis_by_type(
+        inputs.to_dict("records") if not inputs.empty else [],
+        validation_status="passed" if validation.get("status") == "passed" else "unvalidated",
+    )
+    score_map = {r["ticker"]: r for r in scored_v4}
+    df["Score"] = df["Ticker"].map(lambda ticker: (score_map.get(ticker) or {}).get("type_score"))
+    df["Confiança"] = df["Ticker"].map(lambda ticker: (score_map.get(ticker) or {}).get("confidence"))
+    df["Cobertura"] = df["Ticker"].map(lambda ticker: (score_map.get(ticker) or {}).get("coverage"))
+    df["Status_Publicação"] = df["Ticker"].map(
+        lambda ticker: (score_map.get(ticker) or {}).get("publication_status", "diligence_only"))
+    gate = evaluate_publication_gate(
+        scored_v4, expected_universe=len(df),
+        validation_status="passed" if validation.get("status") == "passed" else "unvalidated",
+    )
+    st.session_state["fii_publication_gate"] = gate
+    if gate.can_publish_recommendation:
+        st.success("Critérios de cobertura, confiança e validação atendidos.")
+    else:
+        st.warning("Publicação bloqueada: " + " · ".join(gate.reasons))
     ranked = df[df["Score"].notna()].sort_values(
         "Score", ascending=False
     ).reset_index(drop=True)
@@ -137,12 +151,14 @@ def _fii_card_html(row: pd.Series) -> str:
     nome = escape(str(row.get("Nome") or tk)[:34], quote=True)
     seg = escape(str(row.get("Segmento") or "—")[:30])
     score = row.get("Score")
-    dy, pvp, preco = row.get("DY_12m"), row.get("P/VP"), row.get("Preço")
+    dy, pvp = row.get("DY_12m"), row.get("P/VP")
+    confidence, coverage = row.get("Confiança"), row.get("Cobertura")
     _, _, color = _TIPO_META.get(str(row.get("Tipo") or "").lower(), _TIPO_OUTROS)
     sc_txt = f"{score:.0f}" if pd.notna(score) else "—"
     dy_txt = f"{dy*100:.1f}%" if pd.notna(dy) else "—"
     pvp_txt = f"{pvp:.2f}" if pd.notna(pvp) else "—"
-    pr_txt = f"R$ {preco:.2f}" if pd.notna(preco) else "—"
+    conf_txt = f"{confidence:.0%}" if pd.notna(confidence) else "—"
+    cov_txt = f"{coverage:.0%}" if pd.notna(coverage) else "—"
     return (
         f'<div class="fii-card" style="border-top:3px solid {color};">'
         f'  <div class="fii-top"><span class="fii-tk">{tk}</span>'
@@ -152,7 +168,8 @@ def _fii_card_html(row: pd.Series) -> str:
         f'  <div class="fii-mini">'
         f'    <div><span class="lbl">DY 12m</span><span class="val">{dy_txt}</span></div>'
         f'    <div><span class="lbl">P/VP</span><span class="val">{pvp_txt}</span></div>'
-        f'    <div><span class="lbl">Preço</span><span class="val">{pr_txt}</span></div>'
+        f'    <div><span class="lbl">Conf.</span><span class="val">{conf_txt}</span></div>'
+        f'    <div><span class="lbl">Cob.</span><span class="val">{cov_txt}</span></div>'
         f'  </div>'
         f'</div>'
     )
@@ -252,7 +269,8 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
             _render_grupo("__outros__", resto)
         with st.expander("📋 Ver como tabela"):
             show = view[["Ticker", "Nome", "Segmento", "Tipo", "Preço", "DY_12m",
-                         "P/VP", "VPA", "Liquidez_Diaria", "Cotistas", "Score"]]
+                         "P/VP", "VPA", "Liquidez_Diaria", "Cotistas", "Score",
+                         "Confiança", "Cobertura", "Status_Publicação"]]
             st.dataframe(show, use_container_width=True, hide_index=True, column_config={
                 "Nome": st.column_config.TextColumn("Nome", width="medium"),
                 "Preço": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
@@ -262,15 +280,16 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
                 "Liquidez_Diaria": st.column_config.NumberColumn("Liquidez/dia", format="R$ %.0f"),
                 "Cotistas": st.column_config.NumberColumn("Cotistas", format="%d"),
                 "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
+                "Confiança": st.column_config.ProgressColumn("Confiança", min_value=0, max_value=1, format="percent"),
+                "Cobertura": st.column_config.ProgressColumn("Cobertura", min_value=0, max_value=1, format="percent"),
+                "Status_Publicação": "Status",
             })
     ts = df["updated_at"].max() if "updated_at" in df.columns else None
-    st.caption(f"Score v{_fz.SCORE_VERSION} = DY 12m **ex-amortizações** (45%) + "
-               f"proximidade do P/VP a 0,90 (30%) + liquidez **6 meses** (25%). "
-               f"P/VP = preço ÷ VPA CVM quando disponível (senão brapi). "
-               f"{fora} fora do ranking por dado ausente ou "
-               f"faixa de plausibilidade (DY 0–20% · P/VP 0,55–1,30 · "
-               f"liquidez ≥ R$ 200 mil/dia). "
-               f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}.")
+    st.caption(f"Metodologia v4.0.0: comparação somente dentro de cada categoria; "
+               f"dados ausentes reduzem cobertura e confiança, sem imputação neutra. "
+               f"{fora} fundos ficaram sem score por tipo ausente/inválido. "
+               f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}. "
+               "As limitações e métricas críticas ausentes impedem o uso como recomendação.")
 
 
 # ── Tab 2: Busca de ativo (detalhe por FII) ───────────────────────────────────
@@ -440,14 +459,77 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
     if _avisos:
         st.caption("📅 Defasagem das fontes: " + " · ".join(_avisos) +
                    ". Preço/DY/liquidez vêm da última ingestão brapi.")
-    modo = st.radio("Método de seleção",
-                    ["🎯 Qualidade diversificada", "📊 Score padrão (DY·P/VP·liquidez)"],
-                    horizontal=True, key="fii_cart_modo")
-    st.divider()
-    if modo.startswith("🎯"):
-        _carteira_qualidade()
+    _carteira_v4()
+    with st.expander("Métodos legados — apenas comparação retrospectiva"):
+        modo = st.radio("Método legado",
+                        ["Qualidade retrospectiva", "Score DY·P/VP·liquidez"],
+                        horizontal=True, key="fii_cart_modo")
+        st.warning("Estes modelos não são publicáveis e permanecem apenas para comparação/auditoria.")
+        if modo.startswith("Qualidade"):
+            _carteira_qualidade()
+        else:
+            _carteira_score(ranked)
+
+
+def _carteira_v4() -> None:
+    st.subheader("Carteira de Diligência v4")
+    st.caption("Otimização de renda, qualidade, confiança e perdas em cenários; "
+               "bandas táticas variam por regime e o rebalanceamento é orientado por eventos.")
+    c1, c2, c3, c4 = st.columns(4)
+    selic = c1.number_input("Selic (%)", 0.0, 30.0, 15.0, .25)
+    ipca = c2.number_input("IPCA (%)", -2.0, 20.0, 4.5, .25)
+    delta = c3.number_input("Δ Selic 12m (p.p.)", -15.0, 15.0, 0.0, .25)
+    n_assets = c4.slider("Máx. de ativos", 8, 20, 12)
+    s1, s2 = st.columns(2)
+    vacancy_shock = s1.slider("Choque de vacância (%)", 0.0, 20.0, 8.0, 1.0) / 100
+    credit_event = s2.slider("Eventos de crédito (%)", 0.0, 10.0, 3.0, .5) / 100
+    scenario = MacroScenario(selic=selic, ipca=ipca, selic_change_12m=delta,
+                             vacancy_shock=vacancy_shock, credit_event_rate=credit_event)
+    st.caption(f"Regime classificado: **{classify_macro_regime(scenario)}**")
+
+    inputs = _mr.load_fii_methodology_inputs()
+    validation = _mr.load_fii_validation_status()
+    scored = score_fiis_by_type(inputs.to_dict("records") if not inputs.empty else [],
+                                validation_status="passed" if validation.get("status") == "passed" else "unvalidated")
+    result = optimize_diligence_portfolio(scored, scenario, policy=PortfolioPolicy(max_assets=n_assets))
+    if not result.get("items"):
+        st.error("Não foi possível construir uma carteira factível: " +
+                 " · ".join(result.get("blockers") or []))
+        return
+    if result.get("can_publish"):
+        st.success("Carteira apta à publicação segundo os gates vigentes.")
     else:
-        _carteira_score(ranked)
+        st.warning("Rascunho não publicável: " + " · ".join(result.get("blockers") or []))
+    items = result["items"]
+    show = pd.DataFrame([{
+        "Ticker": item["ticker"], "Tipo": item["tipo"], "Peso": item["weight"],
+        "Score": item["type_score"], "Confiança": item["confidence"],
+        "Cobertura": item["coverage"], "DY 12m": item.get("dy_12m"),
+        "Status": item["publication_status"],
+    } for item in items])
+    st.dataframe(show, use_container_width=True, hide_index=True, column_config={
+        "Peso": st.column_config.NumberColumn(format="percent"),
+        "Score": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.1f"),
+        "Confiança": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
+        "Cobertura": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
+        "DY 12m": st.column_config.NumberColumn(format="percent"),
+    })
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Renda esperada", f"{result['expected_yield']:.1%}")
+    k2.metric("Número efetivo", f"{result['effective_assets']:.1f}")
+    k3.metric("Dimensões sem cobertura", len(result.get("unresolved_dimensions") or []))
+    st.caption("Cenários estruturais (não são previsões): " + " · ".join(
+        f"{name} {value:+.1%}" for name, value in result["scenario_returns"].items()))
+    port = [{"ticker": item["ticker"], "peso": item["weight"], "tipo": item["tipo"],
+             "score": item["type_score"], "dy_12m": item.get("dy_12m"),
+             "pvp": item.get("pvp"), "segmento": item.get("sector")}
+            for item in items]
+    st.session_state["fii_port"] = {item["ticker"]: item["weight"] for item in items}
+    _render_save_portfolio(
+        port, {"metodo": "fii_v4", "regime": classify_macro_regime(scenario),
+               "scenario": scenario.__dict__, "policy": result.get("policy")},
+        {"expected_yield": result["expected_yield"], "effective_assets": result["effective_assets"],
+         "scenario_returns": result["scenario_returns"]}, key="fii_save_model_v4")
 
 
 def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
@@ -456,11 +538,14 @@ def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
     st.markdown("---")
     cs1, cs2 = st.columns([3, 1])
     with cs1:
-        st.caption("Salve esta seleção como sua **carteira-modelo de FIIs**. "
-                   "O Dashboard Geral passará a usar exatamente estes ativos e pesos.")
+        st.caption("A seleção só pode ser promovida a **Carteira Modelo** quando o gate "
+                   "de cobertura, consistência, atualização e validação estiver aprovado.")
     with cs2:
+        gate = st.session_state.get("fii_publication_gate")
+        can_publish = bool(gate and gate.can_publish_recommendation)
         if st.button("💾 Salvar carteira-modelo", use_container_width=True,
-                     type="primary", key=key):
+                     type="primary", key=key, disabled=not can_publish,
+                     help=None if can_publish else "Publicação bloqueada pela metodologia v4"):
             try:
                 from core.fii_portfolio_model import save_fii_portfolio_model
                 save_fii_portfolio_model(port, params, metrics)

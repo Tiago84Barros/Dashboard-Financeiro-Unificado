@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 
 from sqlalchemy import text
 
@@ -37,7 +38,8 @@ _UPDATE_COLS = {
              "cnpj", "isin", "segmento_cvm", "tipo", "tipo_gestao", "patrimonio_liquido",
              "vpa", "num_cotistas", "pct_imoveis", "pct_papel", "pct_caixa", "pct_fundos",
              "cvm_ref_date", "vacancia", "vacancia_ref_date", "num_imoveis",
-             "score_version", "score_calculated_at", "metrics_fetched_at"),
+             "score_version", "score_calculated_at", "metrics_fetched_at", "mandate",
+             "administrator_name", "administrator_cnpj"),
     # snapshot mensal de score+inputs (migração 020, auditoria FII 2026-07):
     # as colunas de score só atualizam quando presentes na linha — o backfill
     # CVM e o snapshot de score preservam as colunas um do outro.
@@ -48,6 +50,15 @@ _UPDATE_COLS = {
                             "pvp", "liquidez_diaria"),
     "fii_imoveis": ("area_m2", "vacancia", "cidade", "uf", "regiao",
                     "segmento_imovel", "pct_receita", "fonte"),
+    "fii_metric_observations": ("value_numeric", "value_text", "value_json",
+                                "source_url", "raw_payload_id", "quality_status",
+                                "metadata_json", "observed_at"),
+    "fii_exposures": ("exposure_weight", "raw_payload_id", "metadata_json"),
+    "fii_universe_history": ("active_status", "successor_ticker", "source", "metadata_json"),
+    "fii_score_snapshots": ("formula_version", "fii_type", "type_score", "confidence",
+                            "coverage", "components_json", "inputs_json",
+                            "missing_metrics_json", "publication_status",
+                            "publication_reasons_json", "validation_run_id"),
 }
 _CONFLICT = {
     "ticker_cvm": "ticker",
@@ -63,6 +74,10 @@ _CONFLICT = {
     "fiis": "ticker",
     "fii_metrics_monthly": "ticker, ref_month",
     "fii_imoveis": "ticker, nome_imovel",
+    "fii_metric_observations": "ticker, metric_name, reference_date, available_at, vintage, source",
+    "fii_exposures": "ticker, exposure_type, exposure_name, reference_date, available_at, vintage, source",
+    "fii_universe_history": "ticker, reference_date, available_at",
+    "fii_score_snapshots": "ticker, reference_date, available_at, methodology_version",
 }
 
 
@@ -81,6 +96,10 @@ _NATURAL_KEY = {
     "fiis": ("ticker",),
     "fii_metrics_monthly": ("ticker", "ref_month"),
     "fii_imoveis": ("ticker", "nome_imovel"),
+    "fii_metric_observations": ("ticker", "metric_name", "reference_date", "available_at", "vintage", "source"),
+    "fii_exposures": ("ticker", "exposure_type", "exposure_name", "reference_date", "available_at", "vintage", "source"),
+    "fii_universe_history": ("ticker", "reference_date", "available_at"),
+    "fii_score_snapshots": ("ticker", "reference_date", "available_at", "methodology_version"),
 }
 
 
@@ -405,20 +424,118 @@ def replace_metric_snapshot(
     return max(int(result.rowcount or 0), 0)
 
 
-def save_raw_payload(conn, ticker, endpoint, payload, status="success", error=None) -> int | None:
-    """Salva o payload bruto e retorna o id (proveniência p/ raw_payload_id)."""
+def save_raw_payload(conn, ticker, endpoint, payload, status="success", error=None, *,
+                     request_params: dict | None = None,
+                     response_headers: dict | None = None,
+                     http_status: int | None = None,
+                     collected_at=None,
+                     source_published_at=None,
+                     request_fingerprint: str | None = None) -> int | None:
+    """Persiste payload bruto de forma idempotente e retorna sua proveniência.
+
+    A mesma resposta para a mesma requisição reutiliza o id anterior. Uma
+    resposta diferente cria nova versão e aponta para a anterior por
+    ``supersedes_id``. Bancos sem a migration 024 usam o formato legado.
+    """
+    payload_text = (json.dumps(payload, ensure_ascii=False, default=str,
+                               sort_keys=True, separators=(",", ":"))
+                    if payload is not None else None)
+    params_text = json.dumps(request_params or {}, ensure_ascii=False, default=str,
+                             sort_keys=True, separators=(",", ":"))
+    semantic_payload = dict(payload) if isinstance(payload, dict) else payload
+    if isinstance(semantic_payload, dict):
+        semantic_payload.pop("requestedAt", None)
+        semantic_payload.pop("took", None)
+        pagination = semantic_payload.get("pagination")
+        if isinstance(pagination, dict):
+            semantic_payload["pagination"] = {
+                key: value for key, value in pagination.items()
+                if key not in {"fetchedPages"}
+            }
+    semantic_text = (json.dumps(semantic_payload, ensure_ascii=False, default=str,
+                                sort_keys=True, separators=(",", ":"))
+                     if semantic_payload is not None else None)
+    content_sha = hashlib.sha256(semantic_text.encode("utf-8")).hexdigest() if semantic_text else None
+    fingerprint = request_fingerprint or hashlib.sha256(
+        f"{endpoint}|{ticker or ''}|{params_text}".encode("utf-8")).hexdigest()
+    db_cols = _db_cols(conn, "brapi_raw_payloads")
+    if "content_sha256" not in db_cols:
+        res = conn.execute(text("""
+            INSERT INTO market.brapi_raw_payloads
+              (ticker, endpoint, payload_json, source, request_status, error_message)
+            VALUES (:tk, :ep, CAST(:pl AS jsonb), 'brapi.dev', :st, :err)
+            RETURNING id
+        """), {"tk": ticker, "ep": endpoint, "pl": payload_text,
+               "st": status, "err": (str(error)[:500] if error else None)})
+        value = res.scalar()
+        return int(value) if value is not None else None
+
+    if status == "success" and content_sha:
+        existing = conn.execute(text("""
+            SELECT id FROM market.brapi_raw_payloads
+            WHERE endpoint=:ep AND request_fingerprint=:fp
+              AND content_sha256=:sha AND request_status='success'
+            ORDER BY id DESC LIMIT 1
+        """), {"ep": endpoint, "fp": fingerprint, "sha": content_sha}).scalar()
+        if existing is not None:
+            return int(existing)
+    previous = conn.execute(text("""
+        SELECT id FROM market.brapi_raw_payloads
+        WHERE endpoint=:ep AND request_fingerprint=:fp AND request_status='success'
+        ORDER BY collected_at DESC NULLS LAST, id DESC LIMIT 1
+    """), {"ep": endpoint, "fp": fingerprint}).scalar()
     res = conn.execute(text("""
-        INSERT INTO market.brapi_raw_payloads
-          (ticker, endpoint, payload_json, source, request_status, error_message)
-        VALUES (:tk, :ep, CAST(:pl AS jsonb), 'brapi.dev', :st, :err)
+        INSERT INTO market.brapi_raw_payloads (
+          ticker, endpoint, payload_json, source, request_status, error_message,
+          request_fingerprint, request_params_json, response_headers_json,
+          content_sha256, http_status, source_published_at, collected_at,
+          supersedes_id, revision_detected
+        ) VALUES (
+          :tk, :ep, CAST(:pl AS jsonb), 'brapi.dev', :st, :err,
+          :fp, CAST(:params AS jsonb), CAST(:headers AS jsonb),
+          :sha, :http, :published, COALESCE(:collected, now()), :previous,
+          CASE WHEN :previous IS NULL THEN false ELSE true END
+        )
+        ON CONFLICT DO NOTHING
         RETURNING id
-    """), {"tk": ticker, "ep": endpoint,
-           "pl": json.dumps(payload, ensure_ascii=False, default=str) if payload is not None else None,
-           "st": status, "err": (str(error)[:500] if error else None)})
-    try:
-        return int(res.scalar())
-    except Exception:
-        return None
+    """), {
+        "tk": ticker, "ep": endpoint, "pl": payload_text, "st": status,
+        "err": (str(error)[:500] if error else None), "fp": fingerprint,
+        "params": params_text,
+        "headers": json.dumps(response_headers or {}, ensure_ascii=False, default=str),
+        "sha": content_sha, "http": http_status, "published": source_published_at,
+        "collected": collected_at, "previous": previous,
+    })
+    value = res.scalar()
+    if value is not None:
+        return int(value)
+    if content_sha:
+        value = conn.execute(text("""
+            SELECT id FROM market.brapi_raw_payloads
+            WHERE endpoint=:ep AND request_fingerprint=:fp AND content_sha256=:sha
+            ORDER BY id DESC LIMIT 1
+        """), {"ep": endpoint, "fp": fingerprint, "sha": content_sha}).scalar()
+    return int(value) if value is not None else None
+
+
+def record_lineage_for_raw_payload(conn, raw_payload_id: int | None) -> int:
+    """Liga o payload às métricas e exposições materializadas por ele."""
+    if raw_payload_id is None or not conn.execute(text(
+            "SELECT to_regclass('market.fii_lineage_edges') IS NOT NULL")).scalar():
+        return 0
+    result = conn.execute(text("""
+        INSERT INTO market.fii_lineage_edges
+            (parent_type, parent_id, child_type, child_id, relation)
+        SELECT 'brapi_raw_payload', CAST(:raw AS text), 'fii_metric_observation',
+               CAST(id AS text), 'normalized_into'
+        FROM market.fii_metric_observations WHERE raw_payload_id=:raw
+        UNION ALL
+        SELECT 'brapi_raw_payload', CAST(:raw AS text), 'fii_exposure',
+               CAST(id AS text), 'normalized_into'
+        FROM market.fii_exposures WHERE raw_payload_id=:raw
+        ON CONFLICT DO NOTHING
+    """), {"raw": int(raw_payload_id)})
+    return max(int(result.rowcount or 0), 0)
 
 
 def log_quality(conn, *, ticker=None, table_name, field_name=None, issue_type,

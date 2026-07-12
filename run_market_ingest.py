@@ -41,6 +41,7 @@ def main() -> int:
                             "reprocess", "renormalize", "parity", "fiis",
                             "fiis-reprocess", "fiis-cvm", "fiis-series",
                             "fiis-metrics", "fiis-vacancia", "fiis-imoveis",
+                            "fiis-v2", "fiis-v4", "fiis-v4-audit", "fiis-documents",
                             "benchmark", "setores"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
@@ -99,12 +100,36 @@ def main() -> int:
                  rep.get("mapeadas"), rep.get("cvm_raw"), rep.get("erros"))
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
+        if args.command == "fiis-documents":
+            return 0 if rep.get("failed", 0) != -1 else 1
         return 0 if rep.get("erros", 0) != -1 else 1
 
     if args.command in ("fiis", "fiis-reprocess", "fiis-cvm", "fiis-series",
-                        "fiis-metrics", "fiis-vacancia", "fiis-imoveis", "benchmark"):
+                        "fiis-metrics", "fiis-vacancia", "fiis-imoveis", "fiis-v2", "fiis-v4",
+                        "fiis-v4-audit", "fiis-documents", "benchmark"):
         from data_pipeline.market import fii_ingest
-        if args.command == "fiis-cvm":
+        if args.command == "fiis-documents":
+            from data_pipeline.market.fii_documents import process_pending_documents
+            rep = process_pending_documents(limit=args.limit or 25)
+            log.info("FIIs documentos — selecionados=%s baixados=%s extraídos=%s "
+                     "revisão=%s falhas=%s", rep.get("selected"), rep.get("downloaded"),
+                     rep.get("extracted"), rep.get("needs_review"), rep.get("failed"))
+        elif args.command == "fiis-v2":
+            rep = fii_ingest.ingest_v2_details(limit=args.limit, tickers=tickers)
+            log.info("FIIs Brapi v2 — fundos=%s req=%s métricas=%s exposições=%s "
+                     "imóveis=%s dividendos=%s erros=%s",
+                     rep.get("fundos"), rep.get("requisicoes"), rep.get("metricas"),
+                     rep.get("exposicoes"), rep.get("imoveis"), rep.get("dividendos"),
+                     rep.get("erros"))
+        elif args.command == "fiis-v4-audit":
+            rep = fii_ingest.audit_methodology_v4_data()
+            log.info("FIIs auditoria v4 — status=%s checks=%s bloqueios=%s",
+                     rep.get("status"), rep.get("checks"), rep.get("blockers"))
+        elif args.command == "fiis-v4":
+            rep = fii_ingest.snapshot_methodology_v4()
+            log.info("FIIs metodologia v4 — status=%s fundos=%s gravados=%s bloqueios=%s",
+                     rep.get("status"), rep.get("fundos"), rep.get("gravados"), rep.get("blockers"))
+        elif args.command == "fiis-cvm":
             rep = fii_ingest.enrich_cvm()
             log.info("FIIs CVM — ano=%s no_banco=%s casados=%s gravados=%s erros=%s",
                      rep.get("ano"), rep.get("fiis_no_banco"), rep.get("casados"),
@@ -138,6 +163,9 @@ def main() -> int:
             log.info("FIIs — candidatos=%s fiis=%s etfs_ignorados=%s gravados=%s erros=%s",
                      rep.get("candidatos"), rep.get("fiis"), rep.get("etfs_ignorados"),
                      rep.get("gravados"), rep.get("erros"))
+        if args.command not in ("fiis-v2", "fiis-v4", "fiis-v4-audit",
+                                "fiis-documents", "benchmark") and rep.get("erros", 0) != -1:
+            rep["metodologia_v4"] = fii_ingest.snapshot_methodology_v4()
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
         return 0 if rep.get("erros", 0) != -1 else 1

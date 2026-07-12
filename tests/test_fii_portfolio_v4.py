@@ -1,0 +1,41 @@
+from core.fii_methodology import MacroScenario
+from core.fii_portfolio_v4 import PortfolioPolicy, optimize_diligence_portfolio
+
+
+def _candidate(i: int, fii_type: str, complete: bool = True) -> dict:
+    row = {
+        "ticker": f"F{i:03d}11", "tipo": fii_type, "type_score": 80 - i,
+        "confidence": .9, "coverage": .95, "publication_status": "validated",
+        "dy_12m": .10, "liquidez_diaria": 3_000_000,
+        "manager": f"gestor-{i}", "sector": f"setor-{i}",
+    }
+    if fii_type in ("tijolo", "hibrido"):
+        row.update(tenants={f"locatario-{i}": 1.0}, regions={f"regiao-{i}": 1.0})
+    if fii_type in ("papel", "hibrido"):
+        row.update(debtors={f"devedor-{i}": 1.0}, issuers={f"emissor-{i}": 1.0},
+                   indexers={f"indexador-{i}": 1.0})
+    if not complete:
+        row.pop("manager")
+    return row
+
+
+def test_optimizer_respects_asset_limit_and_reports_scenarios():
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    result = optimize_diligence_portfolio(
+        rows, MacroScenario(selic=11, ipca=4, selic_change_12m=-2.5),
+        policy=PortfolioPolicy(max_assets=12, max_asset=.15),
+    )
+    assert result["items"]
+    assert max(item["weight"] for item in result["items"]) <= .15001
+    assert abs(sum(item["weight"] for item in result["items"]) - 1) < 1e-6
+    assert {"selic_alta", "vacancia", "credito"}.issubset(result["scenario_returns"])
+
+
+def test_missing_exposure_coverage_blocks_publication():
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    rows = [_candidate(i, fii_type, complete=i > 4) for i, fii_type in enumerate(types)]
+    result = optimize_diligence_portfolio(rows, MacroScenario(selic=12, ipca=5),
+                                          policy=PortfolioPolicy(max_assets=12))
+    assert not result["can_publish"]
+    assert "manager" in result.get("unresolved_dimensions", [])

@@ -439,23 +439,32 @@ def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.Dat
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_fiis(segmento: str | None = None) -> pd.DataFrame:
     """Ranking de FIIs de market.fiis (score desc). Filtro opcional por segmento."""
-    where, params = "", {}
+    conditions = ["u.active_status IN ('listed','active')",
+                  "f.ticker ~ '^[A-Z]{4}11$'", "f.price > 0"]
+    params = {}
     if segmento:
-        where = "WHERE segmento = :seg"
+        conditions.append("COALESCE(f.segmento_cvm, f.segmento) = :seg")
         params["seg"] = segmento
+    where = "WHERE " + " AND ".join(conditions)
     df = _q(f"""
-        SELECT ticker AS "Ticker", name AS "Nome",
-               COALESCE(segmento_cvm, segmento) AS "Segmento", tipo AS "Tipo",
-               price AS "Preço", pvp AS "P/VP", dy_12m AS "DY_12m",
-               liquidez_diaria AS "Liquidez_Diaria",
-               patrimonio_liquido AS "Patrimonio", vpa AS "VPA",
-               num_cotistas AS "Cotistas", tipo_gestao AS "Gestao",
-               pct_imoveis AS "Pct_Imoveis", pct_papel AS "Pct_Papel",
-               pct_caixa AS "Pct_Caixa", pct_fundos AS "Pct_Fundos",
-               score AS "Score", updated_at,
-               cvm_ref_date, vacancia_ref_date
-        FROM market.fiis {where}
-        ORDER BY score DESC NULLS LAST, ticker
+        WITH current_universe AS (
+            SELECT DISTINCT ON (ticker) ticker, active_status
+            FROM market.fii_universe_history
+            WHERE knowledge_at <= now()
+            ORDER BY ticker, knowledge_at DESC, reference_date DESC
+        )
+        SELECT f.ticker AS "Ticker", f.name AS "Nome",
+               COALESCE(f.segmento_cvm, f.segmento) AS "Segmento", f.tipo AS "Tipo",
+               f.price AS "Preço", f.pvp AS "P/VP", f.dy_12m AS "DY_12m",
+               f.liquidez_diaria AS "Liquidez_Diaria",
+               f.patrimonio_liquido AS "Patrimonio", f.vpa AS "VPA",
+               f.num_cotistas AS "Cotistas", f.tipo_gestao AS "Gestao",
+               f.pct_imoveis AS "Pct_Imoveis", f.pct_papel AS "Pct_Papel",
+               f.pct_caixa AS "Pct_Caixa", f.pct_fundos AS "Pct_Fundos",
+               f.score AS "Score", f.updated_at,
+               f.cvm_ref_date, f.vacancia_ref_date
+        FROM market.fiis f JOIN current_universe u USING (ticker) {where}
+        ORDER BY f.score DESC NULLS LAST, f.ticker
     """, params)
     if df.empty:
         return df
@@ -465,6 +474,106 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_fii_methodology_inputs() -> pd.DataFrame:
+    """Inputs v4 com a última observação disponível e metadados de proveniência."""
+    base = load_fiis().copy()
+    if base.empty:
+        return base
+    if "VPA" in base:
+        from data_pipeline.market import fii as _fz
+        base["P/VP"] = [_fz.pvp_efetivo(price, vpa, fallback)
+                        for price, vpa, fallback in zip(base["Preço"], base["VPA"], base["P/VP"])]
+    quality = load_fii_quality()
+    if not quality.empty and "Hist_Meses" in quality:
+        base = base.merge(quality[["Ticker", "Hist_Meses"]], on="Ticker", how="left")
+    observations = _q("""
+        SELECT DISTINCT ON (ticker, metric_name)
+               ticker, metric_name, value_numeric, value_text, value_json,
+               reference_date, available_at, knowledge_at, availability_quality,
+               vintage, source, quality_status
+        FROM market.fii_metric_observations
+        WHERE knowledge_at <= now()
+          AND quality_status IN ('observed','accepted')
+        ORDER BY ticker, metric_name, knowledge_at DESC, reference_date DESC, observed_at DESC
+    """)
+    exposures = _q("""
+        WITH latest_ref AS (
+            SELECT ticker, exposure_type, max(reference_date) AS reference_date
+            FROM market.fii_exposures WHERE knowledge_at <= now() GROUP BY 1,2
+        ), latest_at AS (
+            SELECT e.ticker, e.exposure_type, e.reference_date, max(e.available_at) AS available_at
+            FROM market.fii_exposures e JOIN latest_ref r USING (ticker, exposure_type, reference_date)
+            GROUP BY 1,2,3
+        )
+        SELECT e.ticker, e.exposure_type, e.exposure_name, e.exposure_weight,
+               e.reference_date, e.available_at, e.vintage, e.source
+        FROM market.fii_exposures e JOIN latest_at l
+          USING (ticker, exposure_type, reference_date, available_at)
+    """)
+    rows: list[dict] = []
+    for _, item in base.iterrows():
+        ticker = str(item["Ticker"])
+        row = {
+            "ticker": ticker, "name": item.get("Nome"), "tipo": item.get("Tipo"),
+            "sector": item.get("Segmento"), "dy_12m": item.get("DY_12m"),
+            "pvp": item.get("P/VP"), "liquidez_diaria": item.get("Liquidez_Diaria"),
+            "history_months": item.get("Hist_Meses"), "updated_at": item.get("updated_at"),
+            "metric_metadata": {
+                "dy_12m": {"available_at": str(item.get("updated_at")), "source": "brapi"},
+                "liquidez_diaria": {"available_at": str(item.get("updated_at")), "source": "brapi"},
+                "pvp": {"available_at": str(item.get("updated_at")), "source": "cvm_vpa+brapi_quote"},
+            },
+        }
+        if not observations.empty:
+            for obs in observations[observations["ticker"] == ticker].to_dict("records"):
+                value = obs.get("value_numeric")
+                if pd.isna(value):
+                    value = obs.get("value_text") if pd.notna(obs.get("value_text")) else obs.get("value_json")
+                row[str(obs["metric_name"])] = value
+                row["metric_metadata"][str(obs["metric_name"])] = {
+                    "reference_date": str(obs.get("reference_date")),
+                    "available_at": str(obs.get("available_at")),
+                    "knowledge_at": str(obs.get("knowledge_at")),
+                    "availability_quality": obs.get("availability_quality"),
+                    "vintage": obs.get("vintage"),
+                    "source": obs.get("source"),
+                    "source_quality": {
+                        "verified_publication": .95,
+                        "first_observed_proxy": .80,
+                        "retrospective_backfill": .55,
+                        "migration_baseline": .20,
+                    }.get(str(obs.get("availability_quality") or ""), .50),
+                }
+        if not exposures.empty:
+            exp = exposures[exposures["ticker"] == ticker]
+            for kind, group in exp.groupby("exposure_type"):
+                mapping = {str(r.exposure_name): float(r.exposure_weight) for r in group.itertuples()}
+                key = {"tenant": "tenants", "debtor": "debtors", "issuer": "issuers",
+                       "indexer": "indexers", "region": "regions"}.get(str(kind))
+                if key:
+                    row[key] = mapping
+                elif kind in ("manager", "sector") and mapping:
+                    row[str(kind)] = max(mapping, key=mapping.get)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_fii_validation_status(methodology_version: str = "4.0.0") -> dict:
+    df = _q("""
+        SELECT status, metrics_json, blockers_json, as_of_date, finished_at
+        FROM market.fii_validation_runs
+        WHERE methodology_version = :version
+        ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1
+    """, {"version": methodology_version})
+    if df.empty:
+        return {"status": "unvalidated", "blockers": ["nenhuma validação PIT persistida"]}
+    row = df.iloc[0].to_dict()
+    return {"status": row.get("status"), "metrics": row.get("metrics_json") or {},
+            "blockers": row.get("blockers_json") or [], "as_of_date": row.get("as_of_date")}
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

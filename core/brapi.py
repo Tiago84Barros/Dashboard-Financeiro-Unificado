@@ -19,12 +19,21 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://brapi.dev/api/quote"
+FII_API_BASE = "https://brapi.dev/api/v2/fii"
 SOURCE_NAME = "brapi.dev"
+
+FII_V2_ENDPOINTS = frozenset({
+    "list", "indicators", "indicators/history", "historical", "reports",
+    "properties", "properties/history", "portfolio", "portfolio/history",
+    "dividends", "financials", "annual-reports",
+})
 
 
 class BrapiError(Exception):
@@ -32,11 +41,43 @@ class BrapiError(Exception):
 
 
 class BrapiRateLimited(BrapiError):
-    """HTTP 429 — aciona disjuntor/backoff."""
+    """Falha transitória de limite ou autenticação do provedor."""
+
+    def __init__(self, message: str, *, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class BrapiAuthError(BrapiError):
+    """Token ausente, inválido, inativo ou sem permissão para o endpoint."""
 
 
 def is_rate_limited(exc: Exception) -> bool:
     return isinstance(exc, BrapiRateLimited)
+
+
+@dataclass(frozen=True)
+class FiiApiResponse:
+    """Resposta Brapi Pro com metadados suficientes para auditoria."""
+
+    payload: dict
+    endpoint: str
+    symbols: tuple[str, ...]
+    params: dict[str, Any]
+    status_code: int
+    headers: dict[str, str]
+    collected_at: datetime
+
+
+_AUDIT_HEADERS = ("etag", "last-modified", "date", "content-type", "content-length",
+                  "x-ratelimit-limit", "x-ratelimit-remaining", "retry-after")
+
+
+def _retry_after(headers) -> float | None:
+    try:
+        return max(float(headers.get("Retry-After")), 0.0)
+    except (TypeError, ValueError):
+        return None
 
 
 def _token() -> str:
@@ -221,6 +262,110 @@ def fetch_quote_full(ticker: str, range_: str = "max", interval: str = "1mo",
     """Cotação completa do Pro: histórico + dividendos + módulos fundamentalistas."""
     return fetch_quote(ticker, range_=range_, interval=interval,
                        dividends=True, fundamental=True, modules=PRO_MODULES, timeout=timeout)
+
+
+def fetch_fii_v2_response(endpoint: str,
+                          symbols: list[str] | tuple[str, ...] | str | None = None, *,
+                          params: dict | None = None, timeout: int = 60) -> FiiApiResponse:
+    """Consulta um endpoint dedicado e mantém metadados sem expor o token."""
+    import requests
+    endpoint = str(endpoint).strip("/")
+    if endpoint not in FII_V2_ENDPOINTS:
+        raise ValueError(f"endpoint FII v2 não permitido: {endpoint}")
+    if symbols is None:
+        clean = []
+    elif isinstance(symbols, str):
+        clean = [part.strip().upper().replace(".SA", "") for part in symbols.split(",")]
+    else:
+        clean = [str(part).strip().upper().replace(".SA", "") for part in symbols]
+    clean = list(dict.fromkeys(part for part in clean if part))
+    if endpoint != "list" and not clean:
+        raise ValueError("symbols deve conter entre 1 e 20 FIIs")
+    if len(clean) > 20:
+        raise ValueError("symbols deve conter no máximo 20 FIIs")
+    query = {**({"symbols": ",".join(clean)} if clean else {}), **(params or {})}
+    headers = {"User-Agent": "DashboardFinanceiro/1.0 (+fii-v4)"}
+    tok = _token()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    try:
+        response = requests.get(f"{FII_API_BASE}/{endpoint}", params=query,
+                                headers=headers, timeout=timeout)
+    except Exception as exc:
+        raise BrapiError(str(exc)) from exc
+    if response.status_code == 429:
+        raise BrapiRateLimited(f"HTTP {response.status_code}",
+                               retry_after=_retry_after(response.headers))
+    if response.status_code in (401, 403):
+        try:
+            error_code = str((response.json() or {}).get("code") or "")
+        except Exception:
+            error_code = ""
+        raise BrapiAuthError(f"HTTP {response.status_code} {error_code}".strip())
+    if response.status_code != 200:
+        raise BrapiError(f"FII v2 {endpoint}: HTTP {response.status_code}")
+    try:
+        payload = response.json()
+    except Exception as exc:
+        raise BrapiError(f"FII v2 {endpoint}: json inválido: {exc}") from exc
+    if not isinstance(payload, dict) or payload.get("error"):
+        raise BrapiError(f"FII v2 {endpoint}: resposta inválida")
+    response_headers = getattr(response, "headers", {}) or {}
+    audit_headers = {name: str(response_headers[name]) for name in _AUDIT_HEADERS
+                     if name in response_headers}
+    return FiiApiResponse(
+        payload=payload, endpoint=endpoint, symbols=tuple(clean), params=dict(query),
+        status_code=response.status_code, headers=audit_headers,
+        collected_at=datetime.now(timezone.utc),
+    )
+
+
+def fetch_fii_v2(endpoint: str,
+                 symbols: list[str] | tuple[str, ...] | str | None = None, *,
+                 params: dict | None = None, timeout: int = 60) -> dict:
+    """Compatibilidade: retorna somente o payload do endpoint dedicado."""
+    return fetch_fii_v2_response(endpoint, symbols, params=params, timeout=timeout).payload
+
+
+def fetch_fii_v2_all_pages(endpoint: str,
+                           symbols: list[str] | tuple[str, ...] | str | None = None, *,
+                           params: dict | None = None, timeout: int = 60,
+                           max_pages: int = 100) -> FiiApiResponse:
+    """Percorre a paginação e devolve um único envelope auditável."""
+    requested = {**(params or {})}
+    first = fetch_fii_v2_response(endpoint, symbols, params=requested, timeout=timeout)
+    pagination = first.payload.get("pagination") or {}
+    if not pagination.get("hasNextPage"):
+        return first
+    list_keys = [key for key, value in first.payload.items() if isinstance(value, list)]
+    if len(list_keys) != 1:
+        raise BrapiError(f"FII v2 {endpoint}: envelope paginado ambíguo")
+    data_key = list_keys[0]
+    merged = dict(first.payload)
+    merged[data_key] = list(first.payload.get(data_key) or [])
+    page = int(pagination.get("page") or requested.get("page") or 1)
+    total_pages = min(int(pagination.get("totalPages") or page), int(max_pages))
+    headers = dict(first.headers)
+    collected_at = first.collected_at
+    while page < total_pages:
+        page += 1
+        nxt = fetch_fii_v2_response(
+            endpoint, symbols, params={**requested, "page": page}, timeout=timeout)
+        merged[data_key].extend(nxt.payload.get(data_key) or [])
+        merged["pagination"] = nxt.payload.get("pagination") or merged.get("pagination")
+        headers.update(nxt.headers)
+        collected_at = max(collected_at, nxt.collected_at)
+        if not (nxt.payload.get("pagination") or {}).get("hasNextPage"):
+            break
+    merged["pagination"] = {**(merged.get("pagination") or {}),
+                            "fetchedPages": page, "mergedItems": len(merged[data_key])}
+    return FiiApiResponse(
+        payload=merged, endpoint=endpoint, symbols=first.symbols,
+        # Preserva tambem os parametros materializados pela primeira chamada
+        # (inclusive symbols), para que fingerprint e cache sejam por universo.
+        params={**first.params, **requested, "pages": f"1-{page}"}, status_code=200,
+        headers=headers, collected_at=collected_at,
+    )
 
 
 def fetch_list(timeout: int = 45) -> list[str]:
