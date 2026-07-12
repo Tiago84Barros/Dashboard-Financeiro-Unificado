@@ -204,9 +204,18 @@ def _dispatch(name: str, *args, **kwargs):
     return legacy_res
 
 
-# setores: REFERÊNCIA (taxonomia B3), não-financeiro → segue o dispatch/flag.
+# setores: taxonomia B3 (referência). PREFERE a versão market.*, que herda o
+# setor da ON para as PNs/units pela raiz de 4 letras (BBDC4->BBDC3) — o legado
+# public.setores só lista a ON, deixando ~100 classes PN SEM setor (Bradesco,
+# Cemig, Braskem…), o que degrada o scoring intra-setor. Legado como fallback.
 def load_setores(*a, **k):
-    return _dispatch("load_setores", *a, **k)
+    try:
+        m = _market.load_setores(*a, **k)
+        if m is not None and not getattr(m, "empty", False):
+            return m
+    except Exception as exc:
+        logger.warning("setores market falhou (%s) — fallback legado", exc)
+    return _legacy.load_setores(*a, **k)
 
 
 # ── Dados FINANCEIROS: fonte ÚNICA = market.* (brapi) ─────────────────────────
