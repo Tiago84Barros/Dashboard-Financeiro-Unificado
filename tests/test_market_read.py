@@ -55,10 +55,11 @@ def test_read_source_invalid_falls_back(monkeypatch):
     assert facade.read_source() == "legacy"
 
 
-def test_dispatch_legacy_default(monkeypatch):
+def test_setores_prefere_market_mesmo_em_legacy(monkeypatch):
+    # setores PREFERE market.* (herança de setor ON->PN) mesmo com flag=legacy.
     _fakes(monkeypatch)
     monkeypatch.setenv("MARKET_READ_SOURCE", "legacy")
-    assert facade.load_setores() == "LEGACY_SET"
+    assert facade.load_setores() == "MARKET_SET"
 
 
 def test_dispatch_market_for_supported(monkeypatch):
@@ -80,8 +81,9 @@ def test_dispatch_unsupported_always_legacy(monkeypatch):
 def test_dispatch_compare_returns_legacy(monkeypatch):
     _fakes(monkeypatch)
     monkeypatch.setenv("MARKET_READ_SOURCE", "compare")
-    # compare roda os dois mas retorna o legado (seguro p/ UI)
-    assert facade.load_setores() == "LEGACY_SET"
+    # mecanismo _dispatch (compare): roda os dois mas retorna o legado.
+    # (load_setores já não usa _dispatch — testa o mecanismo diretamente.)
+    assert facade._dispatch("load_setores") == "LEGACY_SET"
 
 
 def test_dispatch_market_failure_falls_back(monkeypatch):
@@ -122,8 +124,9 @@ def test_gate_blocks_market_when_coverage_low(monkeypatch):
     _coverage_fakes(monkeypatch, 100, 50)
     monkeypatch.setenv("MARKET_READ_SOURCE", "market")
     monkeypatch.delenv("MARKET_READ_FORCE", raising=False)
-    # cobertura 50% < 90% -> porteiro mantém no legado
-    assert facade.load_setores() == "LEGACY_SET"
+    # o porteiro (mecanismo _dispatch) mantém no legado quando cobertura < 90%.
+    # load_setores já não usa _dispatch, então testa o mecanismo diretamente.
+    assert facade._dispatch("load_setores") == "LEGACY_SET"
 
 
 def test_gate_allows_market_when_coverage_high(monkeypatch):
