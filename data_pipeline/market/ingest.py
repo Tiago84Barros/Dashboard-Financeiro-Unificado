@@ -110,6 +110,46 @@ def _new_progress() -> dict:
             "indicadores": 0, "erros": 0, "tickers": 0}
 
 
+def _ensure_ticker_alias(conn) -> None:
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS market.ticker_alias (
+            brapi_symbol TEXT PRIMARY KEY,
+            b3_ticker    TEXT NOT NULL,
+            codigo_cvm   INTEGER,
+            motivo       TEXT,
+            created_at   TIMESTAMPTZ DEFAULT NOW()
+        )
+    """))
+
+
+def _reconcile_ticker(data: dict, tk: str) -> str | None:
+    """
+    A brapi devolve, para parte das empresas, um símbolo DIVERGENTE do ticker de
+    negociação B3 requisitado — rebrand (Eletrobras ELET3 -> AXIA3, CCR CCRO3 ->
+    MOTV3), troca de classe (Azul AZUL4 -> AZUL3) ou erro da própria brapi
+    (Embraer EMBR3 -> EMBJ3). Como o app casa por ticker-B3 (public.setores),
+    gravar sob o símbolo da brapi cria um asset ÓRFÃO invisível.
+
+    Força o ticker de TODAS as linhas de fato para `tk` (o requisitado) e devolve
+    o símbolo divergente (para registrar em market.ticker_alias) ou None.
+    O company_id continua ancorado no CVM (cvm_map), então a identidade da
+    empresa é preservada independentemente do símbolo.
+    """
+    devolvido = None
+    ast = data.get("assets") or []
+    if ast:
+        sym = str(ast[0].get("ticker") or "").upper().replace(".SA", "")
+        if sym and sym != tk:
+            devolvido = sym
+    for key in ("assets", "historical_prices", "income_statements",
+                "balance_sheets", "cash_flow_statements", "dividends",
+                "calculated_metrics"):
+        for row in data.get(key) or []:
+            if "ticker" in row:
+                row["ticker"] = tk
+    return devolvido
+
+
 def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
                   cvm_map: dict[str, int], prog: dict) -> None:
     """Busca 1 ticker na brapi e grava tudo em market.* (1 transação)."""
@@ -135,10 +175,21 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
         return
 
     data = nz.normalize_all(quote)
+    # Reconciliação: grava sob o ticker-B3 requisitado, não o símbolo divergente
+    # que a brapi possa devolver (evita assets órfãos invisíveis no app).
+    alias_sym = _reconcile_ticker(data, tk)
     with engine.begin() as conn:
         # point-in-time (019): id do payload bruto vira proveniência das
         # linhas de demonstrações (raw_payload_id)
         pid = repo.save_raw_payload(conn, tk, "quote", quote, status="success")
+        if alias_sym:
+            _ensure_ticker_alias(conn)
+            conn.execute(text("""
+                INSERT INTO market.ticker_alias (brapi_symbol, b3_ticker, codigo_cvm, motivo)
+                VALUES (:s, :b, :c, 'auto-ingest: símbolo brapi divergente do ticker B3')
+                ON CONFLICT (brapi_symbol) DO UPDATE
+                    SET b3_ticker = EXCLUDED.b3_ticker, codigo_cvm = EXCLUDED.codigo_cvm
+            """), {"s": alias_sym, "b": tk, "c": cvm_map.get(tk)})
         for _t_pit in ("income_statements", "balance_sheets", "cash_flow_statements"):
             for _r_pit in data.get(_t_pit) or []:
                 _r_pit["raw_payload_id"] = pid
@@ -206,7 +257,7 @@ def _run(engine, tickers: list[str], *, range_: str, full: bool,
 
 # ── Comandos ──────────────────────────────────────────────────────────────────
 
-def bootstrap(tickers: list[str] | None = None, source: str = "ticker_cvm",
+def bootstrap(tickers: list[str] | None = None, source: str = "setores",
               batch: int = 50) -> dict:
     """
     Baixa 16 anos de histórico (range=max + módulos), RETOMÁVEL por ticker.
