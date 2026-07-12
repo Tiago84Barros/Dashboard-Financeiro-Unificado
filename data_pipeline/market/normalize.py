@@ -101,7 +101,14 @@ def _infer_asset_type(tk: str, quote: dict) -> str:
     if sector.strip().lower() == "fundos imobiliários":
         return "fii"
     name = str((quote or {}).get("longName") or (quote or {}).get("shortName") or "")
-    digits = "".join(ch for ch in tk if ch.isdigit())
+    # Sufixo numérico FINAL (a classe), não todos os dígitos do ticker: "B3SA3"
+    # tem o "3" da raiz (B3), e "".join(dígitos) daria "33" -> caía em BDR.
+    digits = ""
+    for ch in reversed(tk):
+        if ch.isdigit():
+            digits = ch + digits
+        else:
+            break
     if digits in ("31", "32", "33", "34", "35", "36", "39"):
         return "bdr"
     if digits == "11":
