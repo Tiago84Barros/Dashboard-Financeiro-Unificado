@@ -1,7 +1,8 @@
 import pandas as pd
 import pytest
 
-from views.fiis import _fii_specific_metrics_frame, _merge_portfolio_views
+from views.fiis import (_fii_specific_metrics_frame, _merge_portfolio_views,
+                        _portfolio_return_correlation, _quality_portfolio_view)
 
 
 def test_merge_portfolio_views_consolidates_rows_and_preserves_both_methods():
@@ -66,3 +67,35 @@ def test_specific_metrics_are_applied_only_to_the_appropriate_fii_type():
     assert result.loc["FOFS11", "Qtd. fundos"] == 3
     assert result.loc["FOFS11", "Divers. FoF"] == pytest.approx(.62)
     assert pd.isna(result.loc["FOFS11", "Qtd. papéis"])
+
+
+def test_quality_portfolio_view_removes_duplicate_ticker_key():
+    pf = pd.DataFrame([{
+        "ticker": "AAAA11", "Ticker": "AAAA11", "peso": 1.0, "tipo": "papel",
+        "segmento": "CRI", "Liquidez_Diaria": 2_000_000, "dy_12m": .12,
+        "pvp": .95, "CAGR": .05, "Max_Drawdown": -.20, "Hist_Meses": 30,
+        "N_Regioes": 0, "Num_Imoveis": 0, "score": 75,
+    }])
+
+    result = _quality_portfolio_view(pf)
+
+    assert result.columns.tolist().count("Ticker") == 1
+    assert result.loc[0, "Ticker"] == "AAAA11"
+    assert "Peso" in result and "Score" in result
+    assert "Peso complementar" not in result and "Score complementar" not in result
+
+
+def test_portfolio_correlation_requires_twelve_monthly_returns_per_fund():
+    dates = pd.date_range("2025-01-31", periods=14, freq="ME")
+    prices = pd.DataFrame({
+        "AAAA11": [100 + i for i in range(14)],
+        "BBBB11": [80 + 2 * i for i in range(14)],
+        "SHORT11": [None] * 10 + [50, 51, 52, 53],
+    }, index=dates)
+
+    returns, corr = _portfolio_return_correlation(
+        prices, ["AAAA11", "BBBB11", "SHORT11"], min_months=12)
+
+    assert not returns.empty
+    assert corr.columns.tolist() == ["AAAA11", "BBBB11"]
+    assert corr.loc["AAAA11", "BBBB11"] > .99
