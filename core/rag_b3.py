@@ -111,15 +111,28 @@ def _ticker_root(tk: str) -> str:
 # os números operacionais que dão credibilidade à narrativa e devem caber primeiro no
 # orçamento de contexto; comunicados/proventos/dívida vêm em seguida; assembleias e
 # governança preenchem o que sobrar.
-_SIGNAL_HIGH = ("fato relevante", "dados econ", "resultado", "release",
-                "itr", "dfp", "demonstra", "balanço", "balanco")
+_SIGNAL_HIGH = ("fato relevante", "dados econ", "resultado", "release")
 _SIGNAL_MID = ("comunicado", "dividend", "provento", "juros sobre capital",
-               "debênt", "debent", "oferta", "recupera", "opa", "guidance", "capex")
+               "debênt", "debent", "oferta", "recupera", "opa", "guidance", "capex",
+               "transcri", "teleconfer", "apresenta")
+# Dumps tabulares de demonstrações (ITR/DFP linha a linha, versão em inglês):
+# quase zero narrativa por caractere — e os NÚMEROS dessas tabelas já chegam ao
+# prompt estruturados via market.* (10 anos). Antes ranqueavam como sinal ALTO
+# ("itr"/"dfp"/"demonstra" na lista HIGH) e um único ITR de 46 chunks
+# monopolizava o orçamento de contexto (caso WEGE3), expulsando Release/Fato
+# Relevante/Transcrição — a causa direta dos relatórios genéricos.
+_SIGNAL_DUMP = ("demonstrações financeiras adicionais",
+                "demonstracoes financeiras adicionais",
+                "versão em inglês", "versao em ingles",
+                "informações trimestrais - itr", "informacoes trimestrais - itr")
 
 
 def _signal_rank(tipo_doc: str, titulo: str = "") -> int:
-    """3 = alto sinal (fato relevante/resultados), 2 = médio, 1 = baixo (assembleia/gov)."""
+    """3 = alto (fato relevante/resultados), 2 = médio, 1 = baixo (assembleia/gov),
+    0 = dump tabular de demonstrações (última prioridade)."""
     s = f"{tipo_doc} {titulo}".lower()
+    if any(k in s for k in _SIGNAL_DUMP):
+        return 0
     if any(k in s for k in _SIGNAL_HIGH):
         return 3
     if any(k in s for k in _SIGNAL_MID):
@@ -305,21 +318,31 @@ def _search_temporal(
     # ambas. Antes a query usava c.titulo (coluna inexistente) e falhava silenciosa
     # → retornava 0 chunks para TODOS os tickers. Agora pega tipo/categoria/título
     # do documento-pai e a data do chunk com fallback no pai.
+    # ROW_NUMBER por documento: sem esse teto NA RECUPERAÇÃO, um único arquivo
+    # longo (ITR 46 chunks + transcrição 74, caso WEGE3) consumia todo o LIMIT
+    # com os docs mais recentes e o Release de Resultados (mais antigo) nunca
+    # chegava ao formatador — que só escolhe entre o que foi recuperado.
     sql = f"""
-        SELECT
-            c.chunk_text,
-            COALESCE(c.document_date, d.document_date, d.data)::text   AS data_doc,
-            COALESCE(NULLIF(d.tipo, ''), NULLIF(d.categoria, ''),
-                     NULLIF(c.categoria, ''), '')                      AS tipo_doc,
-            COALESCE(d.titulo, '')                                     AS titulo,
-            c.chunk_index
-        FROM public.docs_corporativos_chunks c
-        JOIN public.docs_corporativos d ON d.id = c.doc_id
-        WHERE LEFT(UPPER(c.ticker), 4) = :root
-          {where_date}
-        ORDER BY
-            COALESCE(c.document_date, d.document_date, d.data) DESC NULLS LAST,
-            c.chunk_index ASC
+        SELECT chunk_text, data_doc, tipo_doc, titulo, chunk_index, doc_id
+        FROM (
+            SELECT
+                c.chunk_text,
+                COALESCE(c.document_date, d.document_date, d.data)::text   AS data_doc,
+                COALESCE(NULLIF(d.tipo, ''), NULLIF(d.categoria, ''),
+                         NULLIF(c.categoria, ''), '')                      AS tipo_doc,
+                COALESCE(d.titulo, '')                                     AS titulo,
+                c.chunk_index,
+                c.doc_id,
+                COALESCE(c.document_date, d.document_date, d.data)         AS _dt,
+                ROW_NUMBER() OVER (PARTITION BY c.doc_id
+                                   ORDER BY c.chunk_index ASC)             AS _rn
+            FROM public.docs_corporativos_chunks c
+            JOIN public.docs_corporativos d ON d.id = c.doc_id
+            WHERE LEFT(UPPER(c.ticker), 4) = :root
+              {where_date}
+        ) s
+        WHERE _rn <= 8
+        ORDER BY _dt DESC NULLS LAST, chunk_index ASC
         LIMIT :lim
     """
     params: dict = {"root": _ticker_root(ticker), "lim": top_k * 4}  # busca mais p/ filtrar+diversificar
@@ -346,6 +369,7 @@ def _search_temporal(
             "tipo_doc":   r[2],
             "titulo":     r[3],
             "dist":       None,
+            "doc_id":     r[5],
         })
 
     # Intercala por tipo para máxima diversidade
@@ -400,7 +424,8 @@ def _search_semantic(
             COALESCE(NULLIF(d.tipo, ''), NULLIF(d.categoria, ''),
                      NULLIF(c.categoria, ''), '')                      AS tipo_doc,
             COALESCE(d.titulo, '')                                     AS titulo,
-            (c.embedding <-> (:emb)::vector)                           AS dist
+            (c.embedding <-> (:emb)::vector)                           AS dist,
+            c.doc_id
         FROM public.docs_corporativos_chunks c
         JOIN public.docs_corporativos d ON d.id = c.doc_id
         WHERE LEFT(UPPER(c.ticker), 4) = :root
@@ -428,6 +453,7 @@ def _search_semantic(
             "tipo_doc":   r[2],
             "titulo":     r[3],
             "dist":       float(r[4]) if r[4] is not None else None,
+            "doc_id":     r[5],
         })
     return out
 
@@ -457,7 +483,8 @@ def _search_anchor_recent(conn: Any, ticker: str, lim: int, months_back: int) ->
             COALESCE(c.document_date, d.document_date, d.data)::text   AS data_doc,
             COALESCE(NULLIF(d.tipo, ''), NULLIF(d.categoria, ''),
                      NULLIF(c.categoria, ''), '')                      AS tipo_doc,
-            COALESCE(d.titulo, '')                                     AS titulo
+            COALESCE(d.titulo, '')                                     AS titulo,
+            c.doc_id
         FROM public.docs_corporativos_chunks c
         JOIN public.docs_corporativos d ON d.id = c.doc_id
         WHERE LEFT(UPPER(c.ticker), 4) = :root
@@ -487,7 +514,7 @@ def _search_anchor_recent(conn: Any, ticker: str, lim: int, months_back: int) ->
         if _is_meta_stub(texto) or not _chunk_is_relevant(texto):
             continue
         out.append({"chunk_text": texto, "data_doc": r[1], "tipo_doc": r[2],
-                    "titulo": r[3], "dist": None})
+                    "titulo": r[3], "dist": None, "doc_id": r[4]})
     return out
 
 
@@ -619,7 +646,8 @@ def _strip_boilerplate(texto: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", texto).strip()
 
 
-def format_rag_context(chunks: list[dict], max_chars: int = 12000) -> str:
+def format_rag_context(chunks: list[dict], max_chars: int = 12000,
+                       max_por_doc: int = 8) -> str:
     """
     Formata chunks em string de contexto para injeção no prompt.
 
@@ -628,6 +656,9 @@ def format_rag_context(chunks: list[dict], max_chars: int = 12000) -> str:
     e governança; dentro do mesmo nível, preserva o ranking de entrada
     (recência/relevância). Assim os números operacionais que dão credibilidade à
     narrativa sobrevivem ao corte de contexto.
+    DIVERSIDADE: no máximo `max_por_doc` chunks por documento — sem esse teto,
+    um único arquivo longo (ITR de 46 chunks, caso WEGE3) monopolizava o
+    orçamento e expulsava Release/Fato Relevante/Transcrição do contexto.
     APRESENTAÇÃO: cronológica (mais antigo → mais novo), para a LLM ler a evolução
     dos fatos e inferir a tendência.
     """
@@ -644,9 +675,33 @@ def format_rag_context(chunks: list[dict], max_chars: int = 12000) -> str:
                 idx)
     chunks = [c for _, c in sorted(enumerate(chunks), key=_sel_key)]
 
+    def _doc_key(ch):
+        return ch.get("doc_id") or (ch.get("data_doc"), ch.get("tipo_doc"),
+                                    ch.get("titulo"))
+
+    # ROUND-ROBIN entre documentos (1 chunk por doc por rodada): sem isso, os
+    # primeiros docs de alto sinal esgotavam o orçamento de chars sozinhos e um
+    # Release de Resultados igualmente rank-alto (mas depois na fila) ficava de
+    # fora — com orçamento típico de ~10 entradas, todo doc relevante precisa
+    # garantir presença ANTES de qualquer um aprofundar. Sort estável preserva
+    # (stub, sinal, recência) dentro da mesma rodada.
+    _wn: dict = defaultdict(int)
+    _anotados = []
+    for ch in chunks:
+        k = _doc_key(ch)
+        _anotados.append((_wn[k], _is_meta_stub(ch.get("chunk_text", "")), ch))
+        _wn[k] += 1
+    _anotados.sort(key=lambda t: (t[1], t[0]))
+    chunks = [ch for _, _, ch in _anotados]
+
     selecionados: list[dict] = []
     total = 0
+    usados_por_doc: dict = defaultdict(int)
     for ch in chunks:
+        doc_key = _doc_key(ch)
+        if usados_por_doc[doc_key] >= max(1, int(max_por_doc)):
+            continue
+        usados_por_doc[doc_key] += 1
         data   = ch.get("data_doc") or "—"
         tipo   = ch.get("tipo_doc") or "Documento"
         titulo = ch.get("titulo") or ""
