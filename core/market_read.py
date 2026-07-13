@@ -302,10 +302,22 @@ def load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame
     df = _demo_finalize(_q(_DEMO_SQL.format(where="i.ticker = ANY(:tks)"), {"tks": tks}))
     if df.empty:
         return {}
+    # Dividendos por ano (paridade com load_demonstracoes single) — os
+    # relatórios LLM usam a série p/ ancorar a política de proventos em números.
+    divs = _q("SELECT ticker, EXTRACT(YEAR FROM event_date)::int AS y, SUM(amount) AS d "
+              "FROM market.dividends WHERE ticker = ANY(:tks) AND event_date IS NOT NULL "
+              "GROUP BY 1, 2", {"tks": tks})
+    dmap: dict[tuple[str, int], float] = (
+        {(str(r.ticker).upper(), int(r.y)): float(r.d) for r in divs.itertuples()}
+        if not divs.empty else {}
+    )
     out: dict[str, pd.DataFrame] = {}
     for tk in tks:
         sub = df[df["Ticker"] == tk].copy().reset_index(drop=True)
         if not sub.empty:
+            sub["Dividendos"] = sub["Data"].dt.year.map(
+                lambda y, t=tk: dmap.get((t, int(y))) if pd.notna(y) else None
+            )
             out[tk] = sub.sort_values("Data").reset_index(drop=True)
     return out
 

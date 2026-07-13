@@ -646,6 +646,16 @@ def _executar_analise(
                 rag_ctx = ""
                 rag_stats = {"mode": "error", "error": str(exc_rag)}
 
+        # ── Pares do segmento: contexto comparativo (builder já existente) ────
+        # Sem pares o LLM não tem referência de "cara ou barata vs quem" e a
+        # tese degenera em generalidades setoriais.
+        peers_ctx = ""
+        try:
+            from core.llm_context_b3 import get_peers_context
+            peers_ctx, _peers_map = get_peers_context([tk], max_tickers=1)
+        except Exception:
+            peers_ctx = ""
+
         prog.progress((idx + 1) / len(items), text=f"LLM: {tk}…")
         try:
             analise = analisar_empresa(
@@ -655,6 +665,7 @@ def _executar_analise(
                 macro_hist=macro_hist,
                 portfolio_ctx=portfolio_ctx,
                 rag_context=rag_ctx,
+                peers_ctx=peers_ctx,
             )
         except Exception as exc:
             st.warning(f"{tk}: erro LLM — {exc}")

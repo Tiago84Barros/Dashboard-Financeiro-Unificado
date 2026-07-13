@@ -596,6 +596,29 @@ def retrieve_chunks(
 # Formatação do contexto para o prompt LLM
 # ─────────────────────────────────────────────────────────────────────────────
 
+_BOILERPLATE_RES = [
+    # Cabeçalho societário repetido em TODO documento CVM — zero informação para
+    # a análise e consome o orçamento de contexto (NIRE/CNPJ/código CVM/
+    # "Companhia Aberta"/definição entre parênteses).
+    re.compile(r"\bNIRE[:\s.]*[\d.\-/]+", re.IGNORECASE),
+    re.compile(r"\bCNPJ(?:/MF)?(?:\s*n[ºo°.]*)?[:\s.]*[\d./\-]+", re.IGNORECASE),
+    re.compile(r"\bC[ÓO]DIGO\s+CVM[:\s.]*[\d\-]+", re.IGNORECASE),
+    # registro CVM citado sem a palavra "código" ("CVM 14451", "CVM nº 2437")
+    re.compile(r"\bCVM\s*(?:n[ºo°.]{0,2})?\s*[\d][\d.\-]{2,7}\b", re.IGNORECASE),
+    re.compile(r"\bCOMPANHIA\s+ABERTA(?:\s+DE\s+CAPITAL\s+AUTORIZADO)?\b", re.IGNORECASE),
+    re.compile(r"[(\[]\s*[\"“]?Companhia[\"”]?\s*(?:ou\s+[\"“][^)\]\"”]{1,40}[\"”])?\s*[)\]]"),
+]
+
+
+def _strip_boilerplate(texto: str) -> str:
+    """Remove o cabeçalho jurídico repetitivo dos chunks CVM — mais FATO por
+    caractere dentro do orçamento do prompt. Conservador: só padrões
+    inequívocos; nunca toca no corpo informativo do documento."""
+    for rx in _BOILERPLATE_RES:
+        texto = rx.sub(" ", texto)
+    return re.sub(r"[ \t]{2,}", " ", texto).strip()
+
+
 def format_rag_context(chunks: list[dict], max_chars: int = 12000) -> str:
     """
     Formata chunks em string de contexto para injeção no prompt.
@@ -627,7 +650,7 @@ def format_rag_context(chunks: list[dict], max_chars: int = 12000) -> str:
         data   = ch.get("data_doc") or "—"
         tipo   = ch.get("tipo_doc") or "Documento"
         titulo = ch.get("titulo") or ""
-        texto  = (ch.get("chunk_text") or "").strip()
+        texto  = _strip_boilerplate((ch.get("chunk_text") or "").strip())
         if not texto:
             continue
         header = f"[{data} | {tipo}" + (f" | {titulo[:60]}" if titulo else "") + "]"
