@@ -66,6 +66,42 @@ _CSS = """
 .fii-sc-high { background:rgba(0,200,150,.15);color:#00C896; }
 .fii-sc-mid  { background:rgba(246,201,14,.15);color:#F6C90E; }
 .fii-sc-low  { background:rgba(252,92,125,.15);color:#FC5C7D; }
+.fii-info-card { background:linear-gradient(145deg,#12151E,#10131B);border:1px solid #1E2533;
+                 border-left:3px solid #4A9EFF;border-radius:12px;padding:13px 15px;
+                 margin:8px 0 12px;color:#A0AEC0;font-size:.78rem;line-height:1.5; }
+.fii-info-card .title { color:#E2E8F0;font-size:.66rem;font-weight:800;
+                        text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px; }
+.fii-scenario-grid { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;
+                     margin:5px 0 12px; }
+.fii-scenario { background:#12151E;border:1px solid #1E2533;border-radius:10px;
+                padding:10px 12px; }
+.fii-scenario .name { color:#718096;font-size:.61rem;font-weight:750;text-transform:uppercase;
+                      letter-spacing:.06em;white-space:nowrap; }
+.fii-scenario .impact { color:#E2E8F0;font-size:1.02rem;font-weight:850;margin-top:3px; }
+.fii-scenario.pos { border-top:2px solid #00C896; }
+.fii-scenario.pos .impact { color:#00C896; }
+.fii-scenario.neg { border-top:2px solid #FC5C7D; }
+.fii-scenario.neg .impact { color:#FC5C7D; }
+.fii-selection-card { background:linear-gradient(145deg,#12151E,#10131B);border:1px solid #1E2533;
+                      border-top:3px solid #00C896;border-radius:12px;margin:7px 0 10px;
+                      overflow:hidden; }
+.fii-selection-card summary { cursor:pointer;list-style:none;padding:13px 14px; }
+.fii-selection-card summary::-webkit-details-marker { display:none; }
+.fii-selection-card summary:hover { background:rgba(255,255,255,.018); }
+.fii-selection-head { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+.fii-selection-ticker { color:#E2E8F0;font-size:1rem;font-weight:850; }
+.fii-selection-rank { color:#00C896;background:rgba(0,200,150,.12);border-radius:12px;
+                      padding:3px 8px;font-size:.64rem;font-weight:800;white-space:nowrap; }
+.fii-selection-meta { color:#718096;font-size:.68rem;margin-top:3px; }
+.fii-selection-body { border-top:1px solid #1E2533;padding:11px 14px 13px;color:#A0AEC0;
+                      font-size:.74rem;line-height:1.45; }
+.fii-selection-body .section { color:#CBD5E0;font-size:.62rem;font-weight:800;
+                               text-transform:uppercase;letter-spacing:.07em;margin:8px 0 3px; }
+.fii-selection-body ul { margin:3px 0 6px;padding-left:18px; }
+.fii-selection-body li { margin-bottom:3px; }
+.fii-selection-caveat { background:rgba(246,201,14,.07);border:1px solid rgba(246,201,14,.18);
+                        border-radius:8px;padding:7px 9px;margin-top:7px;color:#D6C56E; }
+@media (max-width: 800px) { .fii-scenario-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 </style>
 """
 
@@ -186,6 +222,55 @@ def _kpi_html(label: str, value, sub: str | None = None,
     )
     return (f'<div class="fii-kpi" style="border-left-color:{accent};">'
             f'<div class="lbl">{label}</div><div class="val">{value}</div>{sub_html}</div>')
+
+
+def _info_card_html(title: str, body: str, *, accent: str = "#4A9EFF") -> str:
+    return (f'<div class="fii-info-card" style="border-left-color:{accent};">'
+            f'<div class="title">{escape(title)}</div>{escape(body)}</div>')
+
+
+def _scenario_cards_html(values: dict[str, float]) -> str:
+    cards = []
+    for name, value in values.items():
+        css = "pos" if float(value) >= 0 else "neg"
+        label = str(name).replace("_", " ").title()
+        cards.append(
+            f'<div class="fii-scenario {css}"><div class="name">{escape(label)}</div>'
+            f'<div class="impact">{float(value):+.1%}</div></div>'
+        )
+    return '<div class="fii-scenario-grid">' + "".join(cards) + "</div>"
+
+
+def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
+    ticker = escape(str(explanation.get("ticker") or "—"))
+    fii_type = str(explanation.get("tipo") or "").lower()
+    _, type_label, color = _TIPO_META.get(fii_type, _TIPO_OUTROS)
+    strengths = "".join(
+        f"<li>{escape(str(reason))}</li>" for reason in explanation.get("strengths") or []
+    ) or "<li>Sem destaque quantitativo adicional.</li>"
+    caveats = explanation.get("caveats") or []
+    caveat_html = ""
+    if caveats:
+        caveat_html = (
+            '<div class="section">Pontos que exigem diligência</div>'
+            '<div class="fii-selection-caveat">' + "<br>".join(
+                "• " + escape(str(caveat)) for caveat in caveats
+            ) + "</div>"
+        )
+    open_attr = " open" if expanded else ""
+    return (
+        f'<details class="fii-selection-card" style="border-top-color:{color};"{open_attr}>'
+        '<summary><div class="fii-selection-head">'
+        f'<span class="fii-selection-ticker">{ticker}</span>'
+        f'<span class="fii-selection-rank">#{int(explanation.get("rank") or 0)} de '
+        f'{int(explanation.get("peer_count") or 0)} · top {int(explanation.get("top_percent") or 0)}%</span>'
+        '</div>'
+        f'<div class="fii-selection-meta">{escape(type_label)} · peso '
+        f'{float(explanation.get("weight") or 0):.1%}</div></summary>'
+        '<div class="fii-selection-body"><div class="section">Destaques perante os pares</div>'
+        f'<ul>{strengths}</ul><div class="section">Papel na seleção</div>'
+        f'<div>{escape(str(explanation.get("role") or "—"))}</div>{caveat_html}</div></details>'
+    )
 
 
 def _comp_tipo_chart(pf: pd.DataFrame) -> None:
@@ -458,15 +543,21 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
                            f"**{_ref_vac.strftime('%d/%m/%Y')}** (data da coleta, "
                            "não do dado)")
     if _avisos:
-        st.caption("📅 Defasagem das fontes: " + " · ".join(_avisos) +
-                   ". Preço/DY/liquidez vêm da última ingestão brapi.")
+        st.markdown(_info_card_html(
+            "Defasagem das fontes",
+            " · ".join(item.replace("**", "") for item in _avisos) +
+            ". Preço, DY e liquidez vêm da última ingestão Brapi.",
+            accent="#F6C90E",
+        ), unsafe_allow_html=True)
     _carteira_v4()
     st.divider()
     st.subheader("Análises complementares preservadas")
-    st.caption(
-        "As visões anteriores continuam disponíveis integralmente para comparação, "
-        "retrospectiva e auditoria. Elas não substituem os gates da metodologia v4."
-    )
+    st.markdown(_info_card_html(
+        "Visões anteriores preservadas",
+        "As análises continuam disponíveis integralmente para comparação, retrospectiva "
+        "e auditoria. Elas não substituem os gates da metodologia v4.",
+        accent="#B084F6",
+    ), unsafe_allow_html=True)
     modo = st.radio(
         "Método de seleção complementar",
         ["🎯 Qualidade diversificada", "📊 Score padrão (DY·P/VP·liquidez)"],
@@ -480,8 +571,12 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
 
 def _carteira_v4() -> None:
     st.subheader("Carteira de Diligência v4")
-    st.caption("Otimização de renda, qualidade, confiança e perdas em cenários; "
-               "bandas táticas variam por regime e o rebalanceamento é orientado por eventos.")
+    st.markdown(_info_card_html(
+        "Como a carteira é construída",
+        "Otimização de renda, qualidade, confiança e perdas em cenários. As bandas táticas "
+        "variam por regime e o rebalanceamento é orientado por eventos.",
+        accent="#00C896",
+    ), unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     selic = c1.number_input("Selic (%)", 0.0, 30.0, 15.0, .25)
     ipca = c2.number_input("IPCA (%)", -2.0, 20.0, 4.5, .25)
@@ -492,7 +587,11 @@ def _carteira_v4() -> None:
     credit_event = s2.slider("Eventos de crédito (%)", 0.0, 10.0, 3.0, .5) / 100
     scenario = MacroScenario(selic=selic, ipca=ipca, selic_change_12m=delta,
                              vacancy_shock=vacancy_shock, credit_event_rate=credit_event)
-    st.caption(f"Regime classificado: **{classify_macro_regime(scenario)}**")
+    st.markdown(_info_card_html(
+        "Regime quantitativo",
+        classify_macro_regime(scenario).replace("_", " ").title(),
+        accent="#4A9EFF",
+    ), unsafe_allow_html=True)
 
     inputs = _mr.load_fii_methodology_inputs()
     validation = _mr.load_fii_validation_status()
@@ -531,19 +630,26 @@ def _carteira_v4() -> None:
     weighted_pvp = (sum(value * weight for value, weight in valid_pvp) / pvp_weight
                     if pvp_weight else None)
     k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Ativos selecionados", len(items))
-    k2.metric("Renda esperada", f"{result['expected_yield']:.1%}")
-    k3.metric("P/VP ponderado", f"{weighted_pvp:.2f}" if weighted_pvp is not None else "—")
-    k4.metric("Número efetivo", f"{result['effective_assets']:.1f}")
-    k5.metric("Dimensões sem cobertura", len(result.get("unresolved_dimensions") or []))
+    k1.markdown(_kpi_html("Ativos selecionados", len(items), accent="#4A9EFF"),
+                unsafe_allow_html=True)
+    k2.markdown(_kpi_html("Renda esperada", f"{result['expected_yield']:.1%}"),
+                unsafe_allow_html=True)
+    k3.markdown(_kpi_html("P/VP ponderado",
+                          f"{weighted_pvp:.2f}" if weighted_pvp is not None else "—",
+                          accent="#B084F6"), unsafe_allow_html=True)
+    k4.markdown(_kpi_html("Número efetivo", f"{result['effective_assets']:.1f}",
+                          accent="#F6C90E"), unsafe_allow_html=True)
+    k5.markdown(_kpi_html("Dimensões sem cobertura",
+                          len(result.get("unresolved_dimensions") or []),
+                          accent="#FC5C7D"), unsafe_allow_html=True)
     comp_left, comp_right = st.columns([2, 1])
     with comp_left:
-        st.caption("Cenários estruturais — sensibilidades, não previsões")
-        st.dataframe(pd.DataFrame([{
-            "Cenário": name.replace("_", " ").title(), "Impacto": value,
-        } for name, value in result["scenario_returns"].items()]),
-            use_container_width=True, hide_index=True,
-            column_config={"Impacto": st.column_config.NumberColumn(format="percent")})
+        st.markdown(_info_card_html(
+            "Cenários estruturais",
+            "Sensibilidades quantitativas para comparação; não representam previsões.",
+            accent="#4A9EFF",
+        ), unsafe_allow_html=True)
+        st.markdown(_scenario_cards_html(result["scenario_returns"]), unsafe_allow_html=True)
     with comp_right:
         st.caption("Composição por tipo (%)")
         _comp_tipo_chart(pd.DataFrame([
@@ -552,27 +658,18 @@ def _carteira_v4() -> None:
     regime = classify_macro_regime(scenario)
     explanations = build_selection_explanations(items, scored, regime=regime)
     st.markdown("#### Por que estes FIIs avançaram para a seleção")
-    st.caption(
+    st.markdown(_info_card_html(
+        "Critério de comparação",
         "Comparação exclusiva com fundos do mesmo tipo. A seleção combina score (45%), "
         "confiança (30%), renda (25%), diversificação e perdas nos cenários de estresse. "
-        "Os destaques abaixo são prioridades de diligência, não recomendações de compra."
-    )
+        "Os destaques são prioridades de diligência, não recomendações de compra.",
+        accent="#00C896",
+    ), unsafe_allow_html=True)
     explanation_cols = st.columns(2)
     for index, explanation in enumerate(explanations):
         with explanation_cols[index % 2]:
-            title = (f"{explanation['ticker']} · peso {explanation['weight']:.1%} · "
-                     f"#{explanation['rank']} de {explanation['peer_count']} "
-                     f"(top {explanation['top_percent']}%)")
-            with st.expander(title, expanded=index < 2):
-                st.markdown("**Destaques perante os pares**")
-                for reason in explanation["strengths"]:
-                    st.markdown(f"- {reason}")
-                st.markdown("**Papel na seleção**")
-                st.write(explanation["role"])
-                if explanation["caveats"]:
-                    st.markdown("**Pontos que ainda exigem diligência**")
-                    for caveat in explanation["caveats"]:
-                        st.markdown(f"- {caveat}")
+            st.markdown(_selection_card_html(explanation, expanded=index < 2),
+                        unsafe_allow_html=True)
     port = [{"ticker": item["ticker"], "peso": item["weight"], "tipo": item["tipo"],
              "score": item["type_score"], "dy_12m": item.get("dy_12m"),
              "pvp": item.get("pvp"), "segmento": item.get("sector")}
@@ -591,11 +688,13 @@ def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
     st.markdown("---")
     cs1, cs2 = st.columns([3, 1])
     with cs1:
-        st.caption(
-            "Salve esta seleção como sua **carteira-modelo de FIIs**; o Dashboard Geral "
-            "passará a usar exatamente estes ativos e pesos. A gravação só é liberada "
-            "quando os gates de cobertura, consistência, atualização e validação forem aprovados."
-        )
+        st.markdown(_info_card_html(
+            "Publicação da carteira-modelo",
+            "Ao salvar, o Dashboard Geral passa a usar exatamente estes ativos e pesos. "
+            "A gravação só é liberada quando os gates de cobertura, consistência, "
+            "atualização e validação forem aprovados.",
+            accent="#F6C90E",
+        ), unsafe_allow_html=True)
     with cs2:
         gate = st.session_state.get("fii_publication_gate")
         can_publish = bool(gate and gate.can_publish_recommendation)
