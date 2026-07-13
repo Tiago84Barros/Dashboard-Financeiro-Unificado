@@ -69,7 +69,7 @@ _CSS = """
 </style>
 """
 
-_TABS = ["📊 Diligência", "🔎 Busca de ativo", "🧺 Carteira de diligência", "📈 Retrospectiva"]
+_TABS = ["📊 Diligência", "🔎 Busca de ativo", "🧺 Carteira-modelo", "📈 Retrospectiva"]
 
 
 def render(show_header: bool = True) -> None:
@@ -461,15 +461,21 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
         st.caption("📅 Defasagem das fontes: " + " · ".join(_avisos) +
                    ". Preço/DY/liquidez vêm da última ingestão brapi.")
     _carteira_v4()
-    with st.expander("Métodos legados — apenas comparação retrospectiva"):
-        modo = st.radio("Método legado",
-                        ["Qualidade retrospectiva", "Score DY·P/VP·liquidez"],
-                        horizontal=True, key="fii_cart_modo")
-        st.warning("Estes modelos não são publicáveis e permanecem apenas para comparação/auditoria.")
-        if modo.startswith("Qualidade"):
-            _carteira_qualidade()
-        else:
-            _carteira_score(ranked)
+    st.divider()
+    st.subheader("Análises complementares preservadas")
+    st.caption(
+        "As visões anteriores continuam disponíveis integralmente para comparação, "
+        "retrospectiva e auditoria. Elas não substituem os gates da metodologia v4."
+    )
+    modo = st.radio(
+        "Método de seleção complementar",
+        ["🎯 Qualidade diversificada", "📊 Score padrão (DY·P/VP·liquidez)"],
+        horizontal=True, key="fii_cart_modo",
+    )
+    if modo.startswith("🎯"):
+        _carteira_qualidade()
+    else:
+        _carteira_score(ranked)
 
 
 def _carteira_v4() -> None:
@@ -503,9 +509,11 @@ def _carteira_v4() -> None:
         st.warning("Rascunho não publicável: " + " · ".join(result.get("blockers") or []))
     items = result["items"]
     show = pd.DataFrame([{
-        "Ticker": item["ticker"], "Tipo": item["tipo"], "Peso": item["weight"],
+        "Ticker": item["ticker"], "Tipo": item["tipo"],
+        "Segmento": item.get("sector"), "Peso": item["weight"],
         "Score": item["type_score"], "Confiança": item["confidence"],
         "Cobertura": item["coverage"], "DY 12m": item.get("dy_12m"),
+        "P/VP": item.get("pvp"), "Liquidez/dia": item.get("liquidez_diaria"),
         "Status": item["publication_status"],
     } for item in items])
     st.dataframe(show, use_container_width=True, hide_index=True, column_config={
@@ -514,7 +522,33 @@ def _carteira_v4() -> None:
         "Confiança": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
         "Cobertura": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
         "DY 12m": st.column_config.NumberColumn(format="percent"),
+        "P/VP": st.column_config.NumberColumn(format="%.2f"),
+        "Liquidez/dia": st.column_config.NumberColumn(format="R$ %.0f"),
     })
+    valid_pvp = [(float(item["pvp"]), float(item["weight"])) for item in items
+                 if item.get("pvp") is not None and pd.notna(item.get("pvp"))]
+    pvp_weight = sum(weight for _, weight in valid_pvp)
+    weighted_pvp = (sum(value * weight for value, weight in valid_pvp) / pvp_weight
+                    if pvp_weight else None)
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Ativos selecionados", len(items))
+    k2.metric("Renda esperada", f"{result['expected_yield']:.1%}")
+    k3.metric("P/VP ponderado", f"{weighted_pvp:.2f}" if weighted_pvp is not None else "—")
+    k4.metric("Número efetivo", f"{result['effective_assets']:.1f}")
+    k5.metric("Dimensões sem cobertura", len(result.get("unresolved_dimensions") or []))
+    comp_left, comp_right = st.columns([2, 1])
+    with comp_left:
+        st.caption("Cenários estruturais — sensibilidades, não previsões")
+        st.dataframe(pd.DataFrame([{
+            "Cenário": name.replace("_", " ").title(), "Impacto": value,
+        } for name, value in result["scenario_returns"].items()]),
+            use_container_width=True, hide_index=True,
+            column_config={"Impacto": st.column_config.NumberColumn(format="percent")})
+    with comp_right:
+        st.caption("Composição por tipo (%)")
+        _comp_tipo_chart(pd.DataFrame([
+            {"tipo": item["tipo"], "peso": item["weight"]} for item in items
+        ]))
     regime = classify_macro_regime(scenario)
     explanations = build_selection_explanations(items, scored, regime=regime)
     st.markdown("#### Por que estes FIIs avançaram para a seleção")
@@ -539,12 +573,6 @@ def _carteira_v4() -> None:
                     st.markdown("**Pontos que ainda exigem diligência**")
                     for caveat in explanation["caveats"]:
                         st.markdown(f"- {caveat}")
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Renda esperada", f"{result['expected_yield']:.1%}")
-    k2.metric("Número efetivo", f"{result['effective_assets']:.1f}")
-    k3.metric("Dimensões sem cobertura", len(result.get("unresolved_dimensions") or []))
-    st.caption("Cenários estruturais (não são previsões): " + " · ".join(
-        f"{name} {value:+.1%}" for name, value in result["scenario_returns"].items()))
     port = [{"ticker": item["ticker"], "peso": item["weight"], "tipo": item["tipo"],
              "score": item["type_score"], "dy_12m": item.get("dy_12m"),
              "pvp": item.get("pvp"), "segmento": item.get("sector")}
@@ -563,8 +591,11 @@ def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
     st.markdown("---")
     cs1, cs2 = st.columns([3, 1])
     with cs1:
-        st.caption("A seleção só pode ser promovida a **Carteira Modelo** quando o gate "
-                   "de cobertura, consistência, atualização e validação estiver aprovado.")
+        st.caption(
+            "Salve esta seleção como sua **carteira-modelo de FIIs**; o Dashboard Geral "
+            "passará a usar exatamente estes ativos e pesos. A gravação só é liberada "
+            "quando os gates de cobertura, consistência, atualização e validação forem aprovados."
+        )
     with cs2:
         gate = st.session_state.get("fii_publication_gate")
         can_publish = bool(gate and gate.can_publish_recommendation)
