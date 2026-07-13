@@ -500,7 +500,13 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
                         for price, vpa, fallback in zip(base["Preço"], base["VPA"], base["P/VP"])]
     quality = load_fii_quality()
     if not quality.empty and "Hist_Meses" in quality:
-        base = base.merge(quality[["Ticker", "Hist_Meses"]], on="Ticker", how="left")
+        enrichment_columns = [
+            column for column in (
+                "Ticker", "Hist_Meses", "Num_Imoveis", "Vacancia", "N_Regioes",
+                "N_UFs", "Property_Diversification",
+            ) if column in quality.columns
+        ]
+        base = base.merge(quality[enrichment_columns], on="Ticker", how="left")
     observations = _q("""
         SELECT DISTINCT ON (ticker, metric_name)
                ticker, metric_name, value_numeric, value_text, value_json,
@@ -533,6 +539,10 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
             "sector": item.get("Segmento"), "dy_12m": item.get("DY_12m"),
             "pvp": item.get("P/VP"), "liquidez_diaria": item.get("Liquidez_Diaria"),
             "history_months": item.get("Hist_Meses"), "updated_at": item.get("updated_at"),
+            "vacancia_fisica": item.get("Vacancia"),
+            "property_count": item.get("Num_Imoveis"),
+            "property_diversification": item.get("Property_Diversification"),
+            "region_count": item.get("N_Regioes"),
             "metric_metadata": {
                 "dy_12m": {"available_at": str(item.get("updated_at")), "source": "brapi"},
                 "liquidez_diaria": {"available_at": str(item.get("updated_at")), "source": "brapi"},
@@ -564,7 +574,8 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
             for kind, group in exp.groupby("exposure_type"):
                 mapping = {str(r.exposure_name): float(r.exposure_weight) for r in group.itertuples()}
                 key = {"tenant": "tenants", "debtor": "debtors", "issuer": "issuers",
-                       "indexer": "indexers", "region": "regions"}.get(str(kind))
+                       "indexer": "indexers", "region": "regions",
+                       "holding": "holdings"}.get(str(kind))
                 if key:
                     row[key] = mapping
                 elif kind in ("manager", "sector") and mapping:
@@ -717,17 +728,31 @@ def load_fii_quality() -> pd.DataFrame:
     seg = base["Segmento"].fillna("").str.lower()
     base["Multi_Setorial"] = seg.str.contains("multi") | (base["Tipo"] == "hibrido")
 
-    # regiões/UFs distintas por fundo (a partir dos imóveis)
-    reg = _q("SELECT ticker, COUNT(DISTINCT regiao) AS nreg, COUNT(DISTINCT uf) AS nuf "
-             "FROM market.fii_imoveis GROUP BY ticker")
-    if not reg.empty:
-        reg["ticker"] = _norm_ticker(reg["ticker"])
-        m = {r.ticker: (int(r.nreg or 0), int(r.nuf or 0)) for r in reg.itertuples()}
-        base["N_Regioes"] = base["Ticker"].map(lambda t: m.get(t, (0, 0))[0])
-        base["N_UFs"] = base["Ticker"].map(lambda t: m.get(t, (0, 0))[1])
+    # Regiões/UFs distintas e diversificação econômica dos imóveis. O índice
+    # 1-HHI só é calculado com ao menos 60% da receita identificada.
+    properties = _q("SELECT ticker, regiao, uf, pct_receita FROM market.fii_imoveis")
+    if not properties.empty:
+        properties["ticker"] = _norm_ticker(properties["ticker"])
+        properties["pct_receita"] = pd.to_numeric(properties["pct_receita"], errors="coerce")
+        region_map: dict[str, tuple[int, int]] = {}
+        property_diversification: dict[str, float] = {}
+        for ticker, group in properties.groupby("ticker"):
+            region_map[str(ticker)] = (
+                int(group["regiao"].dropna().nunique()),
+                int(group["uf"].dropna().nunique()),
+            )
+            weights = group.loc[group["pct_receita"].gt(0), "pct_receita"].astype(float)
+            coverage = float(weights.sum())
+            if coverage >= .60:
+                normalized = weights / coverage
+                property_diversification[str(ticker)] = float(1 - (normalized ** 2).sum())
+        base["N_Regioes"] = base["Ticker"].map(lambda t: region_map.get(t, (0, 0))[0])
+        base["N_UFs"] = base["Ticker"].map(lambda t: region_map.get(t, (0, 0))[1])
+        base["Property_Diversification"] = base["Ticker"].map(property_diversification)
     else:
         base["N_Regioes"] = 0
         base["N_UFs"] = 0
+        base["Property_Diversification"] = None
 
     # CAGR + drawdown da série de retorno total (adjusted_close mensal)
     px = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c "

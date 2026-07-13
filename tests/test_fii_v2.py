@@ -1,4 +1,5 @@
 from datetime import date
+import json
 
 import pytest
 
@@ -80,6 +81,23 @@ def test_portfolio_history_creates_retrospective_asset_class_exposures():
     assert weights == {"cri": .8, "cash": .2}
     assert all(row["availability_quality"] == "retrospective_backfill"
                for row in result["exposures"])
+
+
+def test_properties_create_revenue_weighted_property_diversification():
+    payload = {"requestedAt": REQUESTED, "fiis": [{
+        "symbol": "KNRI11", "referenceDate": "2026-06-30", "version": 1,
+        "properties": [
+            {"name": "Imóvel A", "revenueShare": .6, "address": "São Paulo SP"},
+            {"name": "Imóvel B", "revenueShare": .4, "address": "Curitiba PR"},
+        ],
+    }]}
+
+    result = fii_v2.normalize_properties(payload)
+    metrics = {row["metric_name"]: row for row in result["observations"]}
+
+    assert metrics["property_diversification"]["value_numeric"] == pytest.approx(.48)
+    metadata = json.loads(metrics["property_diversification"]["metadata_json"])
+    assert metadata["formula"] == "1-HHI"
 
 
 def test_annual_and_financial_reports_preserve_delivery_and_document_url():

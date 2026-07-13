@@ -53,6 +53,9 @@ def test_quarterly_derives_expiry_indexer_tenant_and_duration():
             "CNPJ_Fundo_Classe;Data_Referencia;Versao;CNPJ_Emissor;Emissao;Serie;Nome_Ativo;Data_Vencimento;Valor\n"
             + common + ";1;E1;S1;CRI A;2029-06-30;600\n"
             + common + ";2;E2;S2;CRI B;2030-06-30;400\n",
+        "inf_trimestral_fii_imovel_2026.csv":
+            "CNPJ_Fundo_Classe;Data_Referencia;Versao;Nome_Imovel;Percentual_Receitas_FII;Percentual_Vacancia\n"
+            + common + ";Imóvel A;0.6;0.05\n" + common + ";Imóvel B;0.4;0.10\n",
         "inf_trimestral_fii_imovel_renda_acabado_inquilino_2026.csv":
             "CNPJ_Fundo_Classe;Data_Referencia;Versao;Setor_Atuacao;Percentual_Receitas_FII\n"
             + common + ";Logística;0.7\n" + common + ";Varejo;0.3\n",
@@ -63,6 +66,7 @@ def test_quarterly_derives_expiry_indexer_tenant_and_duration():
     assert round(values["indexer_diversification"], 2) == .48
     assert values["tenant_concentration"] == .7
     assert values["duration_anos"] > 3
+    assert round(values["property_diversification"], 2) == .48
 
 
 def test_financials_maps_auditor_opinion_to_quality():

@@ -394,6 +394,10 @@ def parse_quarterly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
         for metric, value in (
             ("vacancia_fisica", vacancy_num / weight_total if weight_total else None),
             ("delinquency", delinquency_num / weight_total if weight_total else None),
+            ("property_diversification",
+             1 - sum((amount / sum(property_amounts.values())) ** 2
+                     for amount in property_amounts.values())
+             if property_amounts and sum(property_amounts.values()) >= .60 else None),
         ):
             _append(observations, _observation(context, metric, value, source=source,
                                                raw_payload_id=raw_payload_id,

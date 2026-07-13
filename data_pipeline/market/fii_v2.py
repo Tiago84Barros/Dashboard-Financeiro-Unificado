@@ -381,6 +381,7 @@ def normalize_properties(payload: dict, raw_payload_id: int | None = None) -> di
         delinquency_total = 0.0
         delinquency_weight = 0.0
         region_values: dict[str, float] = defaultdict(float)
+        property_values: dict[str, float] = defaultdict(float)
         for item in fund.get("properties") or []:
             name = str(item.get("name") or item.get("identifier") or "").strip()
             if not name:
@@ -391,6 +392,7 @@ def normalize_properties(payload: dict, raw_payload_id: int | None = None) -> di
             revenue_share = _num(item.get("revenueShare"))
             delinquency = _num(item.get("delinquencyRate"))
             if revenue_share is not None and revenue_share > 0:
+                property_values[name] += revenue_share
                 if uf:
                     region_values[_UF_REGION[uf]] += revenue_share
                 if delinquency is not None and 0 <= delinquency <= 1:
@@ -403,6 +405,17 @@ def normalize_properties(payload: dict, raw_payload_id: int | None = None) -> di
                 "segmento_imovel": item.get("propertyClass"),
                 "pct_receita": revenue_share, "fonte": SOURCE,
             })
+        property_total = sum(property_values.values())
+        if property_total >= .60:
+            property_weights = [value / property_total for value in property_values.values()]
+            observation = _observation(
+                ticker, "property_diversification",
+                1.0 - sum(weight * weight for weight in property_weights),
+                reference, available, raw_payload_id, endpoint="properties",
+                vintage=f"properties:{reference}:v{version}",
+                metadata={"formula": "1-HHI", "revenue_share_coverage": property_total})
+            if observation:
+                observations.append(observation)
         if delinquency_weight >= .60:
             observation = _observation(
                 ticker, "property_delinquency", delinquency_total / delinquency_weight,

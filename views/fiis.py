@@ -287,6 +287,105 @@ def _comp_tipo_chart(pf: pd.DataFrame) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _number_or_none(value):
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_number(*values):
+    for value in values:
+        number = _number_or_none(value)
+        if number is not None:
+            return number
+    return None
+
+
+def _exposure_diversification(exposures) -> float | None:
+    """Índice 1-HHI dos pesos divulgados; ausência não vira diversidade zero."""
+    if not isinstance(exposures, dict) or not exposures:
+        return None
+    weights = [_number_or_none(value) for value in exposures.values()]
+    weights = [value for value in weights if value is not None and value > 0]
+    total = sum(weights)
+    if not weights or total <= 0:
+        return None
+    return float(1 - sum((value / total) ** 2 for value in weights))
+
+
+def _fii_specific_metrics_frame(inputs: pd.DataFrame) -> pd.DataFrame:
+    """Métricas estruturais aplicáveis a cada tipo de FII para a tabela única."""
+    columns = [
+        "Ticker", "Qtd. ativos", "Vacância", "Imóveis", "Divers. imóveis",
+        "Regiões", "Divers. regiões", "Qtd. papéis", "Divers. papel",
+        "Qtd. fundos", "Divers. FoF",
+    ]
+    if inputs is None or inputs.empty:
+        return pd.DataFrame(columns=columns)
+    rows = []
+    for item in inputs.to_dict("records"):
+        fii_type = str(item.get("tipo") or "").lower()
+        is_brick = fii_type in {"tijolo", "hibrido"}
+        is_paper = fii_type in {"papel", "hibrido"}
+        is_fof = fii_type in {"fof", "hibrido"}
+        holdings = item.get("holdings") if isinstance(item.get("holdings"), dict) else {}
+        issuers = item.get("issuers") if isinstance(item.get("issuers"), dict) else {}
+        regions = item.get("regions") if isinstance(item.get("regions"), dict) else {}
+        property_count = _number_or_none(item.get("property_count"))
+        financial_count = _number_or_none(item.get("financial_asset_count"))
+        holding_count = len(holdings) if holdings else None
+        total_count = _number_or_none(item.get("portfolio_item_count"))
+        if total_count is None:
+            parts = [value for value in (property_count, financial_count, holding_count)
+                     if value is not None]
+            total_count = sum(parts) if parts else None
+        paper_diversification = _first_number(
+            item.get("debtor_diversification"), item.get("issuer_diversification"))
+        if paper_diversification is None:
+            paper_diversification = _exposure_diversification(issuers)
+        geographic_diversification = _number_or_none(item.get("geographic_diversification"))
+        if geographic_diversification is None:
+            geographic_diversification = _exposure_diversification(regions)
+        rows.append({
+            "Ticker": str(item.get("ticker") or ""),
+            "Qtd. ativos": total_count,
+            "Vacância": _number_or_none(item.get("vacancia_fisica")) if is_brick else None,
+            "Imóveis": property_count if is_brick and property_count and property_count > 0 else None,
+            "Divers. imóveis": (_number_or_none(item.get("property_diversification"))
+                                 if is_brick else None),
+            "Regiões": (_number_or_none(item.get("region_count"))
+                        if is_brick and _number_or_none(item.get("region_count")) else None),
+            "Divers. regiões": geographic_diversification if is_brick else None,
+            "Qtd. papéis": financial_count if is_paper and financial_count and financial_count > 0 else None,
+            "Divers. papel": paper_diversification if is_paper else None,
+            "Qtd. fundos": holding_count if is_fof else None,
+            "Divers. FoF": _exposure_diversification(holdings) if is_fof else None,
+        })
+    return pd.DataFrame(rows, columns=columns).drop_duplicates("Ticker", keep="last")
+
+
+def _enrich_portfolio_view(frame: pd.DataFrame, enrichment: pd.DataFrame | None) -> pd.DataFrame:
+    if frame is None or frame.empty or enrichment is None or enrichment.empty:
+        return frame
+    merged = frame.merge(enrichment, on="Ticker", how="left", suffixes=("", "__enrichment"))
+    for column in [name for name in merged.columns if name.endswith("__enrichment")]:
+        base = column.removesuffix("__enrichment")
+        if base in merged.columns:
+            merged[base] = merged[base].combine_first(merged[column])
+            merged = merged.drop(columns=column)
+        else:
+            merged = merged.rename(columns={column: base})
+    return merged
+
+
+def _portfolio_enrichment(primary_table=None) -> pd.DataFrame:
+    if primary_table and len(primary_table) > 2:
+        return primary_table[2]
+    return _fii_specific_metrics_frame(_mr.load_fii_methodology_inputs())
+
+
 def _merge_portfolio_views(primary: pd.DataFrame | None,
                            complementary: pd.DataFrame | None) -> pd.DataFrame:
     """Une as seleções v4 e complementar sem duplicar ativos ou métricas comuns."""
@@ -309,8 +408,10 @@ def _merge_portfolio_views(primary: pd.DataFrame | None,
     preferred = [
         "Ticker", "Tipo", "Segmento", "Peso v4", "Peso complementar",
         "Score v4", "Score complementar", "Confiança", "Cobertura", "DY 12m",
-        "P/VP", "Liquidez/dia", "Cresc. a.a.", "Pior queda", "Hist. (m)",
-        "Regiões", "Imóveis", "Status",
+        "P/VP", "Liquidez/dia", "Qtd. ativos", "Vacância", "Imóveis",
+        "Divers. imóveis", "Regiões", "Divers. regiões", "Qtd. papéis",
+        "Divers. papel", "Qtd. fundos", "Divers. FoF", "Cresc. a.a.",
+        "Pior queda", "Hist. (m)", "Status",
     ]
     ordered = [column for column in preferred if column in merged.columns]
     ordered.extend(column for column in merged.columns if column not in ordered)
@@ -338,6 +439,22 @@ def _render_portfolio_table(slot, primary: pd.DataFrame | None,
         "DY 12m": st.column_config.NumberColumn(format="percent"),
         "P/VP": st.column_config.NumberColumn(format="%.2f"),
         "Liquidez/dia": st.column_config.NumberColumn(format="R$ %.0f"),
+        "Qtd. ativos": st.column_config.NumberColumn(format="%d", help="Total de itens declarado na carteira do fundo."),
+        "Vacância": st.column_config.NumberColumn(format="percent", help="Vacância física; aplicável a tijolo e híbridos."),
+        "Imóveis": st.column_config.NumberColumn(format="%d"),
+        "Divers. imóveis": st.column_config.NumberColumn(
+            format="percent", help="1−HHI da participação na receita por imóvel; exige cobertura mínima de 60%."),
+        "Regiões": st.column_config.NumberColumn(format="%d"),
+        "Divers. regiões": st.column_config.NumberColumn(
+            format="percent", help="1−HHI da exposição regional divulgada."),
+        "Qtd. papéis": st.column_config.NumberColumn(
+            format="%d", help="Quantidade de ativos financeiros declarados; aplicável a papel e híbridos."),
+        "Divers. papel": st.column_config.NumberColumn(
+            format="percent", help="1−HHI por devedor ou emissor disponível; não presume que emissor seja devedor."),
+        "Qtd. fundos": st.column_config.NumberColumn(
+            format="%d", help="Quantidade de fundos investidos identificados no look-through."),
+        "Divers. FoF": st.column_config.NumberColumn(
+            format="percent", help="1−HHI dos pesos dos fundos investidos; aplicável a FoFs e híbridos."),
         "Cresc. a.a.": st.column_config.NumberColumn(format="percent"),
         "Pior queda": st.column_config.NumberColumn(format="percent"),
         "Hist. (m)": st.column_config.NumberColumn(format="%d"),
@@ -674,6 +791,8 @@ def _carteira_v4():
         "P/VP": item.get("pvp"), "Liquidez/dia": item.get("liquidez_diaria"),
         "Status": item["publication_status"],
     } for item in items])
+    specific_metrics = _fii_specific_metrics_frame(inputs)
+    show = _enrich_portfolio_view(show, specific_metrics)
     table_slot = st.empty()
     _render_portfolio_table(table_slot, show)
     valid_pvp = [(float(item["pvp"]), float(item["weight"])) for item in items
@@ -732,7 +851,7 @@ def _carteira_v4():
                "scenario": scenario.__dict__, "policy": result.get("policy")},
         {"expected_yield": result["expected_yield"], "effective_assets": result["effective_assets"],
          "scenario_returns": result["scenario_returns"]}, key="fii_save_model_v4")
-    return table_slot, show
+    return table_slot, show, specific_metrics
 
 
 def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
@@ -804,6 +923,8 @@ def _carteira_score(ranked: pd.DataFrame, primary_table=None) -> None:
         "score": "Score complementar",
     })[["Ticker", "Peso complementar", "Tipo", "Segmento", "DY 12m", "P/VP",
         "Score complementar"]]
+    complementary = _enrich_portfolio_view(
+        complementary, _portfolio_enrichment(primary_table))
     if primary_table:
         _render_portfolio_table(primary_table[0], primary_table[1], complementary)
     else:
@@ -987,6 +1108,8 @@ def _carteira_qualidade(primary_table=None) -> None:
     })[["Ticker", "Peso complementar", "Tipo", "Segmento", "Liquidez/dia", "DY 12m",
         "P/VP", "Cresc. a.a.", "Pior queda", "Hist. (m)", "Regiões", "Imóveis",
         "Score complementar"]]
+    complementary = _enrich_portfolio_view(
+        complementary, _portfolio_enrichment(primary_table))
     if primary_table:
         _render_portfolio_table(primary_table[0], primary_table[1], complementary)
     else:
@@ -997,7 +1120,8 @@ def _carteira_qualidade(primary_table=None) -> None:
 
     st.caption("Peso da qualidade: DY 35% · trajetória histórica 25% · proxies de "
                "diversificação 25% · liquidez 10% · proximidade do P/VP a 0,90 5%. "
-               "Para papel/FoF, sem decomposição dos lastros, a diversidade é neutra.")
+               "No score retrospectivo, papel/FoF ainda recebem diversidade neutra; "
+               "as decomposições PIT aparecem na tabela e no modelo v4.")
     st.session_state["fii_port"] = weights
     _render_save_portfolio(
         port,
