@@ -26,7 +26,7 @@ from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION, MacroSce
                                  classify_macro_regime, evaluate_publication_gate,
                                  score_fiis_by_type)
 from core.fii_portfolio_v4 import PortfolioPolicy, optimize_diligence_portfolio
-from core.fii_selection_explanations import build_selection_explanations
+from core.fii_selection_explanations import build_selection_reports
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 
@@ -103,9 +103,16 @@ _CSS = """
                                text-transform:uppercase;letter-spacing:.07em;margin:8px 0 3px; }
 .fii-selection-body ul { margin:3px 0 6px;padding-left:18px; }
 .fii-selection-body li { margin-bottom:3px; }
+.fii-selection-facts { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;
+                       margin:5px 0 9px; }
+.fii-selection-fact { background:#0E1118;border:1px solid #1A2130;border-radius:7px;
+                      padding:6px 8px;color:#CBD5E0;font-size:.68rem; }
+.fii-selection-evidence { color:#718096;border-top:1px dashed #253047;margin-top:9px;
+                          padding-top:7px;font-size:.64rem; }
 .fii-selection-caveat { background:rgba(246,201,14,.07);border:1px solid rgba(246,201,14,.18);
                         border-radius:8px;padding:7px 9px;margin-top:7px;color:#D6C56E; }
-@media (max-width: 800px) { .fii-scenario-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width: 800px) { .fii-scenario-grid,.fii-selection-facts {
+                            grid-template-columns:repeat(1,minmax(0,1fr)); } }
 </style>
 """
 
@@ -252,6 +259,19 @@ def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
     strengths = "".join(
         f"<li>{escape(str(reason))}</li>" for reason in explanation.get("strengths") or []
     ) or "<li>Sem destaque quantitativo adicional.</li>"
+    facts = "".join(
+        f'<div class="fii-selection-fact">{escape(str(fact))}</div>'
+        for fact in explanation.get("facts") or []
+    )
+    operating = "".join(
+        f"<li>{escape(str(item))}</li>" for item in explanation.get("operating") or []
+    )
+    structure = "".join(
+        f"<li>{escape(str(item))}</li>" for item in explanation.get("structure") or []
+    )
+    market = "".join(
+        f"<li>{escape(str(item))}</li>" for item in explanation.get("market") or []
+    )
     caveats = explanation.get("caveats") or []
     caveat_html = ""
     if caveats:
@@ -271,9 +291,21 @@ def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
         '</div>'
         f'<div class="fii-selection-meta">{escape(type_label)} · peso '
         f'{float(explanation.get("weight") or 0):.1%}</div></summary>'
-        '<div class="fii-selection-body"><div class="section">Destaques perante os pares</div>'
-        f'<ul>{strengths}</ul><div class="section">Papel na seleção</div>'
-        f'<div>{escape(str(explanation.get("role") or "—"))}</div>{caveat_html}</div></details>'
+        '<div class="fii-selection-body"><div class="section">Leitura objetiva</div>'
+        f'<div class="fii-selection-facts">{facts}</div>'
+        '<div class="section">Por que entrou · comparação com pares</div>'
+        f'<ul>{strengths}</ul>'
+        + (f'<div class="section">Qualidade e renda</div><ul>{operating}</ul>' if operating else '')
+        + (f'<div class="section">Estrutura específica do fundo</div><ul>{structure}</ul>' if structure else '')
+        + (f'<div class="section">Relação com o mercado brasileiro</div><ul>{market}</ul>' if market else '')
+        + '<div class="section">Papel na seleção</div>'
+        + f'<div>{escape(str(explanation.get("role") or "—"))}</div>{caveat_html}'
+        + f'<div class="fii-selection-evidence">Confiança '
+        f'{float(explanation.get("confidence") or 0):.0%} · cobertura '
+        f'{float(explanation.get("coverage") or 0):.0%} · referência mais recente '
+        f'{escape(str(explanation.get("data_reference") or "não informada"))} · correlações com '
+        f'{int(explanation.get("relationship_months") or 0)} meses coincidentes. '
+        'Dados ausentes não recebem valor estimado.</div></div></details>'
     )
 
 
@@ -1098,8 +1130,8 @@ def _carteira_integrada(preferences: dict):
         _comp_tipo_chart(pd.DataFrame([
             {"tipo": item["tipo"], "peso": item["weight"]} for item in items
         ]))
-    regime = classify_macro_regime(scenario)
-    explanations = build_selection_explanations(items, scored, regime=regime)
+    report_prices = _mr.load_precos_mensais(tuple(sorted(set(weights) | {"XFIX11", "BOVA11"})))
+    explanations = build_selection_reports(items, scored, scenario=scenario, prices=report_prices)
     st.markdown("#### Por que estes FIIs avançaram para a seleção")
     st.markdown(_info_card_html(
         "Critério de comparação",

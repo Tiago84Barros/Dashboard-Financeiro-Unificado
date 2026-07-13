@@ -53,10 +53,12 @@ Apenas a `anon_key` pode ser usada em código que roda fora do ambiente local.
 - Usar a `anon_key` como substituta da `service_role_key` para bypass de RLS
 - Commitar o valor real da `anon_key` em qualquer arquivo
 
-**Nota:**
-As queries do app usam conexão direta via SQLAlchemy (`DATABASE_URL`) com o role
-`app4_reader`. A `anon_key` é necessária apenas se futuras integrações usarem
-a API REST do Supabase diretamente.
+**Nota de arquitetura (auditada em 2026-07-13):**
+As queries do app usam conexão direta via SQLAlchemy (`DATABASE_URL`). O ambiente
+publicado ainda conecta como `postgres`; isso mantém o Streamlit/ETL operacional após
+o RLS, mas é uma dívida técnica de privilégio excessivo. O próximo passo recomendado é
+separar um role de leitura do app e um role de escrita do ETL, ambos com grants mínimos.
+A `anon_key` é necessária apenas se futuras integrações usarem a API REST diretamente.
 
 ---
 
@@ -79,12 +81,12 @@ habilitada e pelo menos uma policy de leitura ativa.
 | `operacoes` | `usuario_id` | SELECT WHERE usuario_id = auth.uid() |
 | `proventos` | `usuario_id` | SELECT WHERE usuario_id = auth.uid() |
 
-**Tabelas sem RLS (dados públicos de mercado):**
+**Dados de mercado e tabelas backend-only:**
 
-| Tabela | Justificativa |
-|--------|--------------|
-| `ativos` | Dados de mercado — ticker, nome, tipo de ativo — sem dado pessoal |
-| `cotacoes` | Preços históricos de mercado — sem dado pessoal |
+Mesmo dados públicos de mercado não precisam ficar expostos pela Data API. Desde as
+migrations `027` e `028`, todas as tabelas de `public` e `market` têm RLS. Objetos sem
+uso REST possuem policy restritiva `data_api_private_deny` e grants de `anon` e
+`authenticated` revogados. O schema `market` inteiro é privado para esses papéis.
 
 **Atenção:**
 O role `app4_reader` não usa `auth.uid()` (é uma conexão direta PostgreSQL).
@@ -278,10 +280,12 @@ explicação registrada no log) aos totais da origem.
 [ ] SERVICE_ROLE_KEY nunca usada em código que roda no Streamlit Cloud
 [ ] ANON_KEY nunca comittada com valor real
 [ ] .env está no .gitignore
+[ ] substituir a conexão `postgres` do app por roles mínimos separados para leitura/ETL
 [ ] app4_reader tem apenas SELECT (confirmar com \du no psql ou equivalente)
 [ ] app4_reader não tem BYPASSRLS
 [ ] Toda query do app inclui WHERE usuario_id = :owner_id
-[ ] RLS habilitada em todas as 8 tabelas de dados pessoais
+[ ] RLS habilitada em todas as tabelas de `public` e `market`
+[ ] tabelas backend-only sem grants para `anon`/`authenticated`
 [ ] Backup verificado antes de operação DDL ou DML destrutiva
 [ ] Log de migração criado e salvo em supabase_unificado/validation/
 [ ] Somatórios financeiros comparados origem × destino
