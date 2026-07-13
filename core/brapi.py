@@ -108,10 +108,35 @@ def _to_float(v):
 
 # ── Parsers puros ─────────────────────────────────────────────────────────────
 
+def dedup_cash_dividends(items: list[dict]) -> list[dict]:
+    """
+    Remove ecos de fonte secundária do cashDividends da brapi. Em empresas
+    multi-classe (CEBR5/6, BRSR5/6, UNIP5/6...) a brapi mescla no feed de CADA
+    classe as linhas de TODAS as classes vindas de uma fonte CSV secundária,
+    carimbadas com o ISIN do próprio ticker (assetIssued NÃO discrimina a
+    classe) e marcadas em remarks ('csv:payment_date_estimated',
+    'unconfirmed-by-third-party'). A mesma fonte também repete o evento
+    parcelado ou em escala errada. Regra: quando a mesma (data-ex, label) tem
+    entrada confirmada (remarks vazio), as não-confirmadas são eco e caem;
+    sem par confirmado, permanecem (não perde evento que só a CSV conhece).
+    """
+    def _key(it: dict):
+        raw = it.get("lastDatePrior") or it.get("approvedOn")
+        if not raw:
+            return None
+        return (str(raw)[:10], str(it.get("label") or "").strip().upper())
+
+    confirmadas = {k for k in (_key(it) for it in items
+                               if not str(it.get("remarks") or "").strip()) if k}
+    return [it for it in items
+            if not (str(it.get("remarks") or "").strip() and _key(it) in confirmadas)]
+
+
 def parse_cash_dividends(quote: dict) -> list[dict]:
     """Lista de {date: datetime, rate: float, label: str} ordenada por data."""
     out: list[dict] = []
-    items = ((quote or {}).get("dividendsData") or {}).get("cashDividends") or []
+    items = dedup_cash_dividends(
+        ((quote or {}).get("dividendsData") or {}).get("cashDividends") or [])
     for it in items:
         rate = _to_float(it.get("rate"))
         raw = it.get("paymentDate") or it.get("lastDatePrior") or it.get("approvedOn")

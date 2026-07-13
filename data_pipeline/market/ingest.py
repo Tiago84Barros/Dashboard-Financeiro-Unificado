@@ -788,8 +788,16 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                         continue
                     if base_method == "annual" or k not in snap:
                         snap[k] = (round(v, 8), "brapi_trailing")
+                # DY trailing da brapi, EXCETO quando excede muito a soma
+                # própria 12m: em multi-classe (CEBR5/6, BRSR5/6...) o consenso
+                # da brapi soma as classes e infla ~2x; a soma própria (pós
+                # dedup por classe no normalizador) é o valor defensável. No
+                # sentido inverso (própria >> brapi) mantém a brapi — é o caso
+                # do over-count por janela (ex.: SAPR3 cluster de JCP).
                 dyv = spot.get("DY")
-                if dyv is not None and dq.is_valid_value("DY", dyv):
+                own_dy = snap.get("DY", (None,))[0]
+                if dyv is not None and dq.is_valid_value("DY", dyv) and \
+                        not (own_dy and dyv > own_dy * 1.5):
                     snap["DY"] = (round(dyv, 8), "brapi_trailing")
                 if "DY" in snap and "P/L" in snap:
                     pay = snap["DY"][0] * snap["P/L"][0]

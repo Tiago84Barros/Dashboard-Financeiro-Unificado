@@ -316,7 +316,13 @@ def _sane_payment_date(pay, ex):
 def dividend_rows(quote: dict) -> list[dict]:
     tk = _ticker(quote)
     out: list[dict] = []
-    items = ((quote or {}).get("dividendsData") or {}).get("cashDividends") or []
+    # Dedup por classe/fonte: em multi-classe (CEBR5/6, BRSR5/6...) a brapi
+    # mescla no feed de cada classe as linhas de TODAS as classes (fonte CSV
+    # secundária, remarks não-vazio) — sem o dedup a soma 12m dobra e o DY
+    # infla ~2x (ver core.brapi.dedup_cash_dividends).
+    from core.brapi import dedup_cash_dividends
+    items = dedup_cash_dividends(
+        ((quote or {}).get("dividendsData") or {}).get("cashDividends") or [])
     for it in items:
         amount = _f(it.get("rate"))
         if amount is None or amount <= 0:      # 0/negativo não é provento útil
