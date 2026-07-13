@@ -287,6 +287,65 @@ def _comp_tipo_chart(pf: pd.DataFrame) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _merge_portfolio_views(primary: pd.DataFrame | None,
+                           complementary: pd.DataFrame | None) -> pd.DataFrame:
+    """Une as seleções v4 e complementar sem duplicar ativos ou métricas comuns."""
+    frames = [frame.copy() for frame in (primary, complementary)
+              if frame is not None and not frame.empty]
+    if not frames:
+        return pd.DataFrame()
+    merged = frames[0]
+    for extra in frames[1:]:
+        merged = merged.merge(extra, on="Ticker", how="outer", suffixes=("", "__extra"))
+        for column in list(merged.columns):
+            if not column.endswith("__extra"):
+                continue
+            base = column.removesuffix("__extra")
+            if base in merged.columns:
+                merged[base] = merged[base].combine_first(merged[column])
+                merged = merged.drop(columns=column)
+            else:
+                merged = merged.rename(columns={column: base})
+    preferred = [
+        "Ticker", "Tipo", "Segmento", "Peso v4", "Peso complementar",
+        "Score v4", "Score complementar", "Confiança", "Cobertura", "DY 12m",
+        "P/VP", "Liquidez/dia", "Cresc. a.a.", "Pior queda", "Hist. (m)",
+        "Regiões", "Imóveis", "Status",
+    ]
+    ordered = [column for column in preferred if column in merged.columns]
+    ordered.extend(column for column in merged.columns if column not in ordered)
+    sort_columns = [column for column in ("Peso v4", "Peso complementar")
+                    if column in merged.columns]
+    result = merged[ordered]
+    if sort_columns:
+        result = result.sort_values(by=sort_columns, ascending=False, na_position="last")
+    return result.reset_index(drop=True)
+
+
+def _render_portfolio_table(slot, primary: pd.DataFrame | None,
+                            complementary: pd.DataFrame | None = None) -> None:
+    show = _merge_portfolio_views(primary, complementary)
+    if show.empty:
+        return
+    slot.dataframe(show, use_container_width=True, hide_index=True, column_config={
+        "Peso v4": st.column_config.NumberColumn(format="percent"),
+        "Peso complementar": st.column_config.NumberColumn(format="percent"),
+        "Score v4": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.1f"),
+        "Score complementar": st.column_config.ProgressColumn(
+            min_value=0, max_value=100, format="%.1f"),
+        "Confiança": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
+        "Cobertura": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
+        "DY 12m": st.column_config.NumberColumn(format="percent"),
+        "P/VP": st.column_config.NumberColumn(format="%.2f"),
+        "Liquidez/dia": st.column_config.NumberColumn(format="R$ %.0f"),
+        "Cresc. a.a.": st.column_config.NumberColumn(format="percent"),
+        "Pior queda": st.column_config.NumberColumn(format="percent"),
+        "Hist. (m)": st.column_config.NumberColumn(format="%d"),
+        "Regiões": st.column_config.NumberColumn(format="%d"),
+        "Imóveis": st.column_config.NumberColumn(format="%d"),
+    })
+
+
 def _render_grupo(tipo_key: str, grupo: pd.DataFrame) -> None:
     """Cabeçalho do tipo + grade de cards (4 por linha), com botão Analisar."""
     emoji, label, color = _TIPO_META.get(tipo_key, _TIPO_OUTROS)
@@ -549,7 +608,7 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
             ". Preço, DY e liquidez vêm da última ingestão Brapi.",
             accent="#F6C90E",
         ), unsafe_allow_html=True)
-    _carteira_v4()
+    primary_table = _carteira_v4()
     st.divider()
     st.subheader("Análises complementares preservadas")
     st.markdown(_info_card_html(
@@ -564,12 +623,12 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
         horizontal=True, key="fii_cart_modo",
     )
     if modo.startswith("🎯"):
-        _carteira_qualidade()
+        _carteira_qualidade(primary_table)
     else:
-        _carteira_score(ranked)
+        _carteira_score(ranked, primary_table)
 
 
-def _carteira_v4() -> None:
+def _carteira_v4():
     st.subheader("Carteira de Diligência v4")
     st.markdown(_info_card_html(
         "Como a carteira é construída",
@@ -601,7 +660,7 @@ def _carteira_v4() -> None:
     if not result.get("items"):
         st.error("Não foi possível construir uma carteira factível: " +
                  " · ".join(result.get("blockers") or []))
-        return
+        return None
     if result.get("can_publish"):
         st.success("Carteira apta à publicação segundo os gates vigentes.")
     else:
@@ -609,21 +668,14 @@ def _carteira_v4() -> None:
     items = result["items"]
     show = pd.DataFrame([{
         "Ticker": item["ticker"], "Tipo": item["tipo"],
-        "Segmento": item.get("sector"), "Peso": item["weight"],
-        "Score": item["type_score"], "Confiança": item["confidence"],
+        "Segmento": item.get("sector"), "Peso v4": item["weight"],
+        "Score v4": item["type_score"], "Confiança": item["confidence"],
         "Cobertura": item["coverage"], "DY 12m": item.get("dy_12m"),
         "P/VP": item.get("pvp"), "Liquidez/dia": item.get("liquidez_diaria"),
         "Status": item["publication_status"],
     } for item in items])
-    st.dataframe(show, use_container_width=True, hide_index=True, column_config={
-        "Peso": st.column_config.NumberColumn(format="percent"),
-        "Score": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.1f"),
-        "Confiança": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
-        "Cobertura": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
-        "DY 12m": st.column_config.NumberColumn(format="percent"),
-        "P/VP": st.column_config.NumberColumn(format="%.2f"),
-        "Liquidez/dia": st.column_config.NumberColumn(format="R$ %.0f"),
-    })
+    table_slot = st.empty()
+    _render_portfolio_table(table_slot, show)
     valid_pvp = [(float(item["pvp"]), float(item["weight"])) for item in items
                  if item.get("pvp") is not None and pd.notna(item.get("pvp"))]
     pvp_weight = sum(weight for _, weight in valid_pvp)
@@ -680,6 +732,7 @@ def _carteira_v4() -> None:
                "scenario": scenario.__dict__, "policy": result.get("policy")},
         {"expected_yield": result["expected_yield"], "effective_assets": result["effective_assets"],
          "scenario_returns": result["scenario_returns"]}, key="fii_save_model_v4")
+    return table_slot, show
 
 
 def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
@@ -709,7 +762,7 @@ def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
                 st.error(f"Não foi possível salvar: {exc}")
 
 
-def _carteira_score(ranked: pd.DataFrame) -> None:
+def _carteira_score(ranked: pd.DataFrame, primary_table=None) -> None:
     st.caption("Carteira diversificada a partir do ranking: pesos por score, com "
                "teto por FII e limite por tipo (evita concentração em um só segmento).")
     c1, c2, c3 = st.columns(3)
@@ -745,20 +798,16 @@ def _carteira_score(ranked: pd.DataFrame) -> None:
     k3.markdown(_kpi_html("P/VP (ponderado)", f"{pvp_w:.2f}", accent="#B084F6"),
                 unsafe_allow_html=True)
 
-    cc1, cc2 = st.columns([2, 1])
-    with cc1:
-        show = pf[["ticker", "peso", "tipo", "segmento", "dy_12m", "pvp", "score"]]
-        st.dataframe(show, use_container_width=True, hide_index=True, column_config={
-            "ticker": "Ticker",
-            "peso": st.column_config.NumberColumn("Peso", format="percent"),
-            "tipo": "Tipo", "segmento": "Segmento",
-            "dy_12m": st.column_config.NumberColumn("DY 12m", format="percent"),
-            "pvp": st.column_config.NumberColumn("P/VP", format="%.2f"),
-            "score": st.column_config.NumberColumn("Score", format="%.0f"),
-        })
-    with cc2:
-        st.caption("Composição por tipo (%)")
-        _comp_tipo_chart(pf)
+    complementary = pf.rename(columns={
+        "ticker": "Ticker", "peso": "Peso complementar", "tipo": "Tipo",
+        "segmento": "Segmento", "dy_12m": "DY 12m", "pvp": "P/VP",
+        "score": "Score complementar",
+    })[["Ticker", "Peso complementar", "Tipo", "Segmento", "DY 12m", "P/VP",
+        "Score complementar"]]
+    if primary_table:
+        _render_portfolio_table(primary_table[0], primary_table[1], complementary)
+    else:
+        _render_portfolio_table(st.empty(), None, complementary)
 
     # guarda p/ o backtest
     st.session_state["fii_port"] = {p["ticker"]: p["peso"] for p in port}
@@ -774,7 +823,7 @@ def _carteira_score(ranked: pd.DataFrame) -> None:
     )
 
 
-def _carteira_qualidade() -> None:
+def _carteira_qualidade(primary_table=None) -> None:
     st.caption("Triagem multifator retrospectiva: renda, trajetória da cota, liquidez e "
                "proxies de diversificação. Papel e FoF ampliam o mix de exposições, mas "
                "não há garantia de descorrelação. Os retornos históricos são usados para "
@@ -929,35 +978,22 @@ def _carteira_qualidade() -> None:
                              accent="#4A9EFF", sub="menor liquidez da carteira",
                              sub_color="#4A5568"), unsafe_allow_html=True)
 
-    cc1, cc2 = st.columns([2.6, 1])
-    with cc1:
-        show = pf[["ticker", "peso", "tipo", "segmento", "Liquidez_Diaria", "dy_12m", "pvp",
-                   "CAGR", "Max_Drawdown", "Hist_Meses", "N_Regioes", "Num_Imoveis", "score"]]
-        st.dataframe(show, use_container_width=True, hide_index=True, column_config={
-            "ticker": "Ticker",
-            "peso": st.column_config.NumberColumn("Peso", format="percent"),
-            "tipo": "Tipo", "segmento": "Segmento",
-            "Liquidez_Diaria": st.column_config.NumberColumn("Liquidez/dia", format="R$ %.0f"),
-            "dy_12m": st.column_config.NumberColumn("DY 12m", format="percent"),
-            "pvp": st.column_config.NumberColumn("P/VP", format="%.2f"),
-            "CAGR": st.column_config.NumberColumn("Cresc. a.a.", format="percent",
-                help="Crescimento anualizado pela regressão linear de ln(preço) — usa todo "
-                     "o histórico, robusto a pontas atípicas."),
-            "Max_Drawdown": st.column_config.NumberColumn("Pior queda", format="percent"),
-            "Hist_Meses": st.column_config.NumberColumn("Hist. (m)", format="%d",
-                help="Meses de histórico que embasam Cresc./Pior queda — quanto mais, "
-                     "mais confiável o dado."),
-            "N_Regioes": st.column_config.NumberColumn("Regiões", format="%d"),
-            "Num_Imoveis": st.column_config.NumberColumn("Imóveis", format="%d"),
-            "score": st.column_config.ProgressColumn("Qualidade", min_value=0, max_value=100,
-                                                     format="%.0f"),
-        })
-    with cc2:
-        st.caption("Composição por tipo (%) · descorrelação")
-        _comp_tipo_chart(pf)
-        if n_tipos == 1:
-            st.caption("⚠️ Só um tipo — reduza o 'Máx. por tipo' ou relaxe um critério "
-                       "para incluir papel/FoF.")
+    complementary = pf.rename(columns={
+        "ticker": "Ticker", "peso": "Peso complementar", "tipo": "Tipo",
+        "segmento": "Segmento", "Liquidez_Diaria": "Liquidez/dia", "dy_12m": "DY 12m",
+        "pvp": "P/VP", "CAGR": "Cresc. a.a.", "Max_Drawdown": "Pior queda",
+        "Hist_Meses": "Hist. (m)", "N_Regioes": "Regiões", "Num_Imoveis": "Imóveis",
+        "score": "Score complementar",
+    })[["Ticker", "Peso complementar", "Tipo", "Segmento", "Liquidez/dia", "DY 12m",
+        "P/VP", "Cresc. a.a.", "Pior queda", "Hist. (m)", "Regiões", "Imóveis",
+        "Score complementar"]]
+    if primary_table:
+        _render_portfolio_table(primary_table[0], primary_table[1], complementary)
+    else:
+        _render_portfolio_table(st.empty(), None, complementary)
+    if n_tipos == 1:
+        st.caption("⚠️ Só um tipo — reduza o 'Máx. por tipo' ou relaxe um critério "
+                   "para incluir papel/FoF.")
 
     st.caption("Peso da qualidade: DY 35% · trajetória histórica 25% · proxies de "
                "diversificação 25% · liquidez 10% · proximidade do P/VP a 0,90 5%. "
