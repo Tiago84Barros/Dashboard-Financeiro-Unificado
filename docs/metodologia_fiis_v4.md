@@ -1,5 +1,8 @@
 # Metodologia FIIs v4 — renda, resiliência e rastreabilidade
 
+> Documento histórico. A interface atual utiliza a Metodologia Integrada v5,
+> descrita em `docs/metodologia_fiis_v5.md`.
+
 ## Estado do produto
 
 A seção **Seleção de FIIs** produz uma **Lista de Diligência**. A promoção para

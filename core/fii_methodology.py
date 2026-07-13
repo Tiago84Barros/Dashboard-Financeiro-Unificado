@@ -20,8 +20,8 @@ import math
 from typing import Any, Iterable
 
 
-METHODOLOGY_VERSION = "4.1.0"
-FORMULA_VERSION = "br-fii-income-resilience-4.1.0"
+METHODOLOGY_VERSION = "5.0.0"
+FORMULA_VERSION = "br-fii-integrated-income-resilience-5.0.0"
 VALID_TYPES = ("tijolo", "papel", "fof", "hibrido")
 
 
@@ -66,6 +66,10 @@ COMMON_METRICS = (
     MetricDefinition("income_recurrence", "income", .08, "higher", critical=True),
     MetricDefinition("pvp", "valuation", .10, "target", critical=True, max_age_days=45),
     MetricDefinition("liquidez_diaria", "liquidity", .10, "higher", critical=True, max_age_days=15),
+    # Sinais históricos antes usados em uma carteira concorrente agora entram
+    # uma única vez como estabilidade/risco. A validação PIT continua obrigatória.
+    MetricDefinition("total_return_trend", "stability", .04, "higher", critical=True),
+    MetricDefinition("max_drawdown", "stability", .04, "higher", critical=True),
     MetricDefinition("issuance_discipline", "governance", .007, "higher"),
     MetricDefinition("issuance_price_discipline", "governance", .007, "higher"),
     MetricDefinition("management_efficiency", "governance", .007, "higher"),
@@ -168,6 +172,13 @@ def methodology_manifest() -> dict[str, Any]:
         "common_metrics": [asdict(m) for m in COMMON_METRICS],
         "type_metrics": {key: [asdict(m) for m in value] for key, value in TYPE_METRICS.items()},
         "pvp_targets": PVP_TARGETS,
+        "integrated_pipeline": {
+            "eligibility_version": "5.0.0",
+            "stages": ("eligibility", "type_score", "data_confidence",
+                       "scenario_and_correlation_optimization"),
+            "correlation_min_months": 12,
+            "legacy_scores_combined": False,
+        },
         "confidence_formula": {
             "type": "weighted_geometric_mean",
             "weights": {"coverage": .45, "freshness": .15, "source_quality": .15,

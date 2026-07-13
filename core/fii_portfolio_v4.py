@@ -220,8 +220,55 @@ def _dimension_matrix(rows: list[dict], dimension: str) -> tuple[np.ndarray, lis
     return matrix, labels, coverage
 
 
+def _correlation_risk_matrix(
+    rows: list[dict], correlation_matrix: dict[str, dict[str, float]] | None,
+) -> tuple[np.ndarray | None, dict[str, float]]:
+    """Matriz PSD com fallback explícito apenas quando há pares observados."""
+    n = len(rows)
+    total_pairs = n * (n - 1) // 2
+    if n < 2 or not correlation_matrix:
+        return None, {"coverage": 0.0, "observed_pairs": 0, "total_pairs": total_pairs}
+    tickers = [str(row.get("ticker") or "") for row in rows]
+    observed: list[float] = []
+    pairs: dict[tuple[int, int], float] = {}
+    for i in range(n):
+        for j in range(i + 1, n):
+            left = (correlation_matrix.get(tickers[i]) or {}).get(tickers[j])
+            right = (correlation_matrix.get(tickers[j]) or {}).get(tickers[i])
+            values = [_num(value, np.nan) for value in (left, right)]
+            clean = [value for value in values if np.isfinite(value)]
+            if clean:
+                value = float(np.clip(np.mean(clean), -1.0, 1.0))
+                pairs[(i, j)] = value
+                observed.append(value)
+    if not observed:
+        return None, {"coverage": 0.0, "observed_pairs": 0, "total_pairs": total_pairs}
+
+    fallback = float(np.median(observed))
+    matrix = np.full((n, n), fallback, dtype=float)
+    np.fill_diagonal(matrix, 1.0)
+    for (i, j), value in pairs.items():
+        matrix[i, j] = matrix[j, i] = value
+
+    # Correlações par-a-par com históricos distintos podem não formar matriz
+    # semidefinida positiva. A projeção evita um termo de risco não convexo.
+    eigenvalues, eigenvectors = np.linalg.eigh((matrix + matrix.T) / 2.0)
+    matrix = eigenvectors @ np.diag(np.clip(eigenvalues, 1e-8, None)) @ eigenvectors.T
+    scale = np.sqrt(np.clip(np.diag(matrix), 1e-12, None))
+    matrix = matrix / np.outer(scale, scale)
+    np.fill_diagonal(matrix, 1.0)
+    return matrix, {
+        "coverage": len(observed) / total_pairs if total_pairs else 0.0,
+        "observed_pairs": len(observed),
+        "total_pairs": total_pairs,
+        "fallback_correlation": fallback,
+    }
+
+
 def optimize_diligence_portfolio(
     scored_rows: Iterable[dict], scenario: MacroScenario, *, policy: PortfolioPolicy | None = None,
+    correlation_matrix: dict[str, dict[str, float]] | None = None,
+    correlation_penalty: float = 0.0,
 ) -> dict[str, Any]:
     """Maximiza qualidade/confiança e penaliza perdas de cenários adversos."""
     policy = policy or PortfolioPolicy()
@@ -244,6 +291,7 @@ def optimize_diligence_portfolio(
         for r in rows
     ])
     utility = .45 * quality + .30 * confidence + .25 * np.clip(dy / .15, 0, 1) - .35 * adverse
+    correlation_risk, correlation_info = _correlation_risk_matrix(rows, correlation_matrix)
 
     constraints: list[dict] = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
     linear_ub: list[tuple[np.ndarray, float]] = []
@@ -281,7 +329,13 @@ def optimize_diligence_portfolio(
         scenario_values = [sum(weights[i] * type_scenario_return(str(rows[i].get("tipo")), s)
                                for i in range(n)) for s in SCENARIOS[1:]]
         tail_loss = -min(scenario_values)
-        return -float(weights @ utility) + .18 * concentration + .30 * max(tail_loss, 0)
+        correlation_risk_value = (
+            float(weights @ correlation_risk @ weights)
+            if correlation_risk is not None else 0.0
+        )
+        return (-float(weights @ utility) + .18 * concentration
+                + .30 * max(tail_loss, 0)
+                + max(float(correlation_penalty), 0.0) * correlation_risk_value)
 
     try:
         from scipy.optimize import linprog, minimize
@@ -328,6 +382,12 @@ def optimize_diligence_portfolio(
         "can_publish": not blockers, "blockers": blockers,
         "unresolved_dimensions": sorted(set(unresolved)), "dimension_coverage": dimension_info,
         "scenario_returns": scenario_returns,
+        "correlation_risk": (
+            round(float(weights @ correlation_risk @ weights), 6)
+            if correlation_risk is not None else None
+        ),
+        "correlation_info": correlation_info,
+        "correlation_penalty": max(float(correlation_penalty), 0.0),
         "expected_yield": round(sum(item["weight"] * (_num(item.get("dy_12m")) / (100 if _num(item.get("dy_12m")) > 1 else 1)) for item in items), 6),
         "effective_assets": round(1 / sum(item["weight"] ** 2 for item in items), 2),
         "macro_bands": bands, "policy": asdict(policy), "solver": str(result.message),

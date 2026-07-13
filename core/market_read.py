@@ -503,7 +503,8 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
         enrichment_columns = [
             column for column in (
                 "Ticker", "Hist_Meses", "Num_Imoveis", "Vacancia", "N_Regioes",
-                "N_UFs", "Property_Diversification",
+                "N_UFs", "Property_Diversification", "CAGR", "Max_Drawdown",
+                "Multi_Setorial",
             ) if column in quality.columns
         ]
         base = base.merge(quality[enrichment_columns], on="Ticker", how="left")
@@ -539,6 +540,9 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
             "sector": item.get("Segmento"), "dy_12m": item.get("DY_12m"),
             "pvp": item.get("P/VP"), "liquidez_diaria": item.get("Liquidez_Diaria"),
             "history_months": item.get("Hist_Meses"), "updated_at": item.get("updated_at"),
+            "total_return_trend": item.get("CAGR"),
+            "max_drawdown": item.get("Max_Drawdown"),
+            "multi_category": item.get("Multi_Setorial"),
             "vacancia_fisica": item.get("Vacancia"),
             "property_count": item.get("Num_Imoveis"),
             "property_diversification": item.get("Property_Diversification"),
@@ -547,6 +551,14 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
                 "dy_12m": {"available_at": str(item.get("updated_at")), "source": "brapi"},
                 "liquidez_diaria": {"available_at": str(item.get("updated_at")), "source": "brapi"},
                 "pvp": {"available_at": str(item.get("updated_at")), "source": "cvm_vpa+brapi_quote"},
+                "total_return_trend": {
+                    "available_at": str(item.get("updated_at")),
+                    "source": "brapi_adjusted_close",
+                },
+                "max_drawdown": {
+                    "available_at": str(item.get("updated_at")),
+                    "source": "brapi_adjusted_close",
+                },
             },
         }
         if not observations.empty:
@@ -585,7 +597,7 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def load_fii_validation_status(methodology_version: str = "4.1.0") -> dict:
+def load_fii_validation_status(methodology_version: str = "5.0.0") -> dict:
     df = _q("""
         SELECT status, metrics_json, blockers_json, as_of_date, finished_at
         FROM market.fii_validation_runs

@@ -19,8 +19,12 @@ import pandas as pd
 import streamlit as st
 
 import core.market_read as _mr
-from core.fii_methodology import (MacroScenario, classify_macro_regime,
-                                 evaluate_publication_gate, score_fiis_by_type)
+from core.fii_integrated_model import (INTEGRATED_MODEL_VERSION,
+                                       IntegratedEligibilityPolicy,
+                                       apply_integrated_eligibility)
+from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION, MacroScenario,
+                                 classify_macro_regime, evaluate_publication_gate,
+                                 score_fiis_by_type)
 from core.fii_portfolio_v4 import PortfolioPolicy, optimize_diligence_portfolio
 from core.fii_selection_explanations import build_selection_explanations
 from data_pipeline.market import fii as _fz
@@ -111,7 +115,7 @@ _TABS = ["📊 Diligência", "🔎 Busca de ativo", "🧺 Carteira-modelo", "�
 def render(show_header: bool = True) -> None:
     if show_header:
         st.markdown("## Seleção de FIIs — Lista de Diligência")
-        st.caption("Metodologia v4 específica por tipo. Enquanto a validação point-in-time "
+        st.caption("Metodologia Integrada v5 específica por tipo. Enquanto a validação point-in-time "
                    "não for aprovada, a saída não é recomendação definitiva nem Carteira Modelo.")
     st.markdown(_CSS, unsafe_allow_html=True)
 
@@ -130,7 +134,7 @@ def render(show_header: bool = True) -> None:
             for p, v, b in zip(df["Preço"], df["VPA"], df["P/VP"])
         ]
     inputs = _mr.load_fii_methodology_inputs()
-    validation = _mr.load_fii_validation_status()
+    validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
     scored_v4 = score_fiis_by_type(
         inputs.to_dict("records") if not inputs.empty else [],
         validation_status="passed" if validation.get("status") == "passed" else "unvalidated",
@@ -320,7 +324,7 @@ def _fii_specific_metrics_frame(inputs: pd.DataFrame) -> pd.DataFrame:
     columns = [
         "Ticker", "Qtd. ativos", "Vacância", "Imóveis", "Divers. imóveis",
         "Regiões", "Divers. regiões", "Qtd. papéis", "Divers. papel",
-        "Qtd. fundos", "Divers. FoF",
+        "Qtd. fundos", "Divers. FoF", "Cresc. a.a.", "Pior queda", "Hist. (m)",
     ]
     if inputs is None or inputs.empty:
         return pd.DataFrame(columns=columns)
@@ -362,6 +366,9 @@ def _fii_specific_metrics_frame(inputs: pd.DataFrame) -> pd.DataFrame:
             "Divers. papel": paper_diversification if is_paper else None,
             "Qtd. fundos": holding_count if is_fof else None,
             "Divers. FoF": _exposure_diversification(holdings) if is_fof else None,
+            "Cresc. a.a.": _number_or_none(item.get("total_return_trend")),
+            "Pior queda": _number_or_none(item.get("max_drawdown")),
+            "Hist. (m)": _number_or_none(item.get("history_months")),
         })
     return pd.DataFrame(rows, columns=columns).drop_duplicates("Ticker", keep="last")
 
@@ -380,8 +387,9 @@ def _enrich_portfolio_view(frame: pd.DataFrame, enrichment: pd.DataFrame | None)
     return merged
 
 
-def _portfolio_enrichment() -> pd.DataFrame:
-    return _fii_specific_metrics_frame(_mr.load_fii_methodology_inputs())
+def _portfolio_enrichment(inputs: pd.DataFrame | None = None) -> pd.DataFrame:
+    source = inputs if inputs is not None else _mr.load_fii_methodology_inputs()
+    return _fii_specific_metrics_frame(source)
 
 
 def _quality_portfolio_view(pf: pd.DataFrame) -> pd.DataFrame:
@@ -398,68 +406,72 @@ def _quality_portfolio_view(pf: pd.DataFrame) -> pd.DataFrame:
         "Score"]]
 
 
-def _v4_preference_controls() -> dict:
+def _integrated_preference_controls() -> dict:
+    """Controles globais da seleção integrada; todos afetam a mesma carteira."""
+    st.markdown("**Carteira e elegibilidade**")
     c1, c2, c3, c4 = st.columns(4)
-    selic = c1.number_input("Selic (%)", 0.0, 30.0, 15.0, .25, key="fii_pref_selic")
-    ipca = c2.number_input("IPCA (%)", -2.0, 20.0, 4.5, .25, key="fii_pref_ipca")
-    delta = c3.number_input("Δ Selic 12m (p.p.)", -15.0, 15.0, 0.0, .25,
-                            key="fii_pref_delta_selic")
-    n_assets = c4.slider("Máx. de ativos", 8, 20, 12, key="fii_pref_v4_assets")
+    n_assets = c1.slider("Nº máximo de FIIs", 8, 20, 12, key="fii_pref_integrated_assets")
+    max_asset = c2.slider("Máx. por FII (%)", 5, 25, 15, 1,
+                          key="fii_pref_integrated_max_asset") / 100
+    min_liquidity = c3.slider("Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, .5,
+                              key="fii_pref_integrated_liquidity") * 1e6
+    min_history = c4.slider("Histórico mín. (meses)", 0, 60, 24, 6,
+                            key="fii_pref_integrated_history")
+
+    c5, c6, c7, c8 = st.columns(4)
+    min_dy = c5.slider("DY 12m mín. (%)", 0.0, 20.0, 8.0, .5,
+                       key="fii_pref_integrated_dy") / 100
+    max_drawdown = c6.slider("Drawdown máx. tolerado (%)", 10, 60, 35, 5,
+                             key="fii_pref_integrated_drawdown") / 100
+    correlation_penalty = c7.slider(
+        "Penalização por correlação", 0.0, .30, .12, .02,
+        key="fii_pref_integrated_correlation",
+        help="Reduz pesos de combinações que historicamente oscilaram juntas.")
+    pvp_below_one = c8.checkbox("Exigir P/VP abaixo de 1", value=False,
+                                key="fii_pref_integrated_pvp")
+
+    st.markdown("**Cenário macroeconômico e estresse**")
+    m1, m2, m3 = st.columns(3)
+    selic = m1.number_input("Selic (%)", 0.0, 30.0, 15.0, .25,
+                            key="fii_pref_integrated_selic")
+    ipca = m2.number_input("IPCA (%)", -2.0, 20.0, 4.5, .25,
+                           key="fii_pref_integrated_ipca")
+    delta = m3.number_input("Δ Selic 12m (p.p.)", -15.0, 15.0, 0.0, .25,
+                            key="fii_pref_integrated_delta")
     s1, s2 = st.columns(2)
     vacancy_shock = s1.slider("Choque de vacância (%)", 0.0, 20.0, 8.0, 1.0,
-                              key="fii_pref_vacancy") / 100
+                              key="fii_pref_integrated_vacancy") / 100
     credit_event = s2.slider("Eventos de crédito (%)", 0.0, 10.0, 3.0, .5,
-                             key="fii_pref_credit") / 100
+                             key="fii_pref_integrated_credit") / 100
+
+    with st.expander("Filtros patrimoniais opcionais para Tijolo/Híbridos"):
+        g1, g2, g3 = st.columns(3)
+        require_regions = g1.checkbox("Ao menos 2 regiões", value=False,
+                                      key="fii_pref_integrated_regions")
+        require_properties = g2.checkbox("Ao menos 8 imóveis", value=False,
+                                         key="fii_pref_integrated_properties")
+        require_multicategory = g3.checkbox("Multicategoria/híbrido", value=False,
+                                            key="fii_pref_integrated_multicategory")
+        st.caption("Quando ativados, dados patrimoniais ausentes reprovam o fundo; não viram zero.")
+
     return {
         "scenario": MacroScenario(
             selic=selic, ipca=ipca, selic_change_12m=delta,
             vacancy_shock=vacancy_shock, credit_event_rate=credit_event,
         ),
-        "n_assets": n_assets,
-    }
-
-
-def _quality_preference_controls() -> dict:
-    c1, c2, c3, c4 = st.columns(4)
-    liq_min = c1.slider("Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, 0.5,
-                        key="fii_pref_liq") * 1e6
-    dd_max = c2.slider(
-        "Drawdown máx. tolerado (%)", 10, 60, 35, 5, key="fii_pref_drawdown",
-        help="Descarta FIIs cuja pior queda pico→vale foi maior que isso.")
-    dy_min = c3.slider("DY 12m mín. (%)", 0.0, 20.0, 8.0, 0.5, key="fii_pref_dy")
-    hist_min = c4.slider(
-        "Histórico mín. (meses)", 0, 60, 24, 6, key="fii_pref_history",
-        help="Exige track record mínimo para crescimento e pior queda.")
-    c5, c6, c7, c8 = st.columns(4)
-    n_max = c5.slider("Nº de FIIs", 4, 20, 10, 1, key="fii_pref_n")
-    max_w = c6.slider("Máx. por FII (%)", 5, 40, 20, 5, key="fii_pref_max_fii") / 100
-    max_tp = c7.slider("Máx. por tipo (%)", 20, 100, 40, 10,
-                       key="fii_pref_max_type") / 100
-    min_tp = c8.slider(
-        "Mín. por tipo", 0, 3, 1, 1, key="fii_pref_min_type",
-        help="Garante ao menos N FIIs de cada tipo presente.")
-    st.markdown("**Critérios patrimoniais para tijolo/híbridos**")
-    g1, g2, g3, g4 = st.columns(4)
-    return {
-        "liq_min": liq_min, "dd_max": dd_max, "dy_min": dy_min,
-        "hist_min": hist_min, "n_max": n_max, "max_w": max_w,
-        "max_tp": max_tp, "min_tp": min_tp,
-        "exig_pvp": g1.checkbox("P/VP < 1", value=True, key="fii_pref_pvp"),
-        "exig_reg": g2.checkbox("Multi-região (≥2)", value=True, key="fii_pref_region"),
-        "exig_inq": g3.checkbox("Mín. de 8 imóveis", value=True, key="fii_pref_properties"),
-        "exig_set": g4.checkbox("Multicategoria/híbrido", value=True,
-                                 key="fii_pref_multisector"),
-    }
-
-
-def _score_preference_controls() -> dict:
-    c1, c2, c3 = st.columns(3)
-    return {
-        "n_max": c1.slider("Nº de FIIs", 4, 20, 10, 1, key="fii_pref_score_n"),
-        "max_w": c2.slider("Máx. por FII (%)", 5, 40, 20, 5,
-                            key="fii_pref_score_max_fii") / 100,
-        "max_tp": c3.slider("Máx. por tipo (%)", 30, 100, 50, 10,
-                             key="fii_pref_score_max_type") / 100,
+        "portfolio_policy": PortfolioPolicy(
+            max_assets=n_assets, max_asset=max_asset,
+            min_daily_liquidity=min_liquidity,
+        ),
+        "eligibility_policy": IntegratedEligibilityPolicy(
+            min_daily_liquidity=min_liquidity, min_dy_12m=min_dy,
+            min_history_months=min_history, max_drawdown=max_drawdown,
+            require_pvp_below_one=pvp_below_one,
+            require_multi_region=require_regions,
+            require_min_properties=require_properties,
+            require_multicategory=require_multicategory,
+        ),
+        "correlation_penalty": correlation_penalty,
     }
 
 
@@ -511,6 +523,95 @@ def _render_portfolio_correlation(weights: dict[str, float],
     fig.update_xaxes(side="bottom", tickangle=-45)
     st.plotly_chart(fig, use_container_width=True, key="fii_selected_correlation")
     return returns
+
+
+def _render_portfolio_history_diagnostics(weights: dict[str, float],
+                                          returns: pd.DataFrame) -> None:
+    """Preserva comparação com o mercado e curva de diversificação histórica."""
+    port_cols = [ticker for ticker in weights if ticker in getattr(returns, "columns", [])]
+    common = returns[port_cols].dropna() if port_cols else pd.DataFrame()
+    market = _mr.load_mercado_retorno_mensal()
+
+    def annualized(series):
+        clean = series.dropna()
+        if len(clean) < 6:
+            return None
+        years = len(clean) / 12.0
+        cumulative = float((1 + clean).prod() - 1)
+        return (1 + cumulative) ** (1 / years) - 1 if years > .5 else None
+
+    def volatility(series):
+        clean = series.dropna()
+        return float(clean.std(ddof=0) * (12 ** .5)) if len(clean) >= 6 else None
+
+    ifix_volatility = None
+    if len(common) >= 6:
+        total = sum(weights[ticker] for ticker in port_cols) or 1.0
+        portfolio_return = sum(
+            common[ticker] * (weights[ticker] / total) for ticker in port_cols)
+        comparison = portfolio_return.rename("Carteira").to_frame()
+        if not market.empty:
+            comparison = comparison.join(market[["IFIX", "Universo"]], how="inner")
+        comparison = comparison.dropna(how="any")
+        portfolio_annual = annualized(comparison["Carteira"]) if not comparison.empty else None
+        ifix_annual = annualized(comparison["IFIX"]) if "IFIX" in comparison else None
+        universe_annual = annualized(comparison["Universo"]) if "Universo" in comparison else None
+        ifix_volatility = volatility(comparison["IFIX"]) if "IFIX" in comparison else None
+        alpha = (portfolio_annual - ifix_annual
+                 if portfolio_annual is not None and ifix_annual is not None else None)
+        st.markdown("#### Retrospectiva da seleção vs. mercado")
+        cards = st.columns(4)
+        cards[0].markdown(_kpi_html(
+            "Seleção atual", f"{portfolio_annual:.1%}" if portfolio_annual is not None else "—",
+            accent="#00C896", sub=f"a.a. · {len(comparison)} meses", sub_color="#4A5568"),
+            unsafe_allow_html=True)
+        cards[1].markdown(_kpi_html(
+            "IFIX", f"{ifix_annual:.1%}" if ifix_annual is not None else "—",
+            accent="#9CA3AF", sub="índice de FIIs", sub_color="#4A5568"),
+            unsafe_allow_html=True)
+        cards[2].markdown(_kpi_html(
+            "Mercado (mediana)", f"{universe_annual:.1%}" if universe_annual is not None else "—",
+            accent="#9CA3AF", sub="universo de FIIs", sub_color="#4A5568"),
+            unsafe_allow_html=True)
+        cards[3].markdown(_kpi_html(
+            "vs. IFIX", f"{alpha:+.1%}" if alpha is not None else "—",
+            accent="#00C896" if (alpha or 0) >= 0 else "#FC5C7D",
+            sub="retorno anualizado relativo", sub_color="#4A5568"),
+            unsafe_allow_html=True)
+        st.caption(
+            "Diagnóstico in-sample das posições atuais na mesma janela. Como estabilidade "
+            "histórica participa da seleção, este resultado não é evidência preditiva nem "
+            "substitui o backtest point-in-time.")
+
+    st.markdown("#### Risco × número de fundos")
+    curve = _fz.risk_curve(returns, weights) if not returns.empty else []
+    if len(curve) < 2:
+        st.caption("Sem histórico suficiente entre os fundos selecionados para traçar a curva.")
+        return
+    curve_frame = pd.DataFrame(curve)
+    curve_frame["Volatilidade anual (%)"] = curve_frame["vol"] * 100
+    import plotly.express as px
+    figure = px.line(curve_frame, x="n", y="Volatilidade anual (%)", markers=True)
+    figure.update_traces(line_color="#00C896", marker_color="#00C896")
+    if ifix_volatility is not None:
+        figure.add_hline(
+            y=ifix_volatility * 100, line_dash="dash", line_color="#FC5C7D",
+            annotation_text=f"Vol. IFIX {ifix_volatility:.1%}",
+            annotation_position="top right", annotation_font_color="#FC5C7D")
+    figure.update_layout(
+        height=300, margin=dict(l=0, r=10, t=6, b=0),
+        xaxis=dict(title="Nº de fundos na carteira", dtick=1, tickmode="linear",
+                   gridcolor="#1E2533"),
+        yaxis=dict(title="Volatilidade anual (%)", gridcolor="#1E2533"),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font_color="#CBD5E0")
+    months = int(curve_frame["meses"].iloc[0]) if "meses" in curve_frame else 0
+    effective = _fz.effective_n(weights)
+    st.caption(
+        f"Efeito incremental da diversificação na mesma janela comum de {months} meses. "
+        f"Número efetivo: {effective:.1f} de {len(weights)}." if effective else
+        f"Efeito incremental da diversificação na mesma janela comum de {months} meses.")
+    st.plotly_chart(figure, use_container_width=True, key="fii_integrated_risk_curve")
 
 
 def _merge_portfolio_views(primary: pd.DataFrame | None,
@@ -676,7 +777,7 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
                 "Status_Publicação": "Status",
             })
     ts = df["updated_at"].max() if "updated_at" in df.columns else None
-    st.caption(f"Metodologia v4.1.0: comparação somente dentro de cada categoria; "
+    st.caption(f"Metodologia Integrada {METHODOLOGY_VERSION}: comparação somente dentro de cada categoria; "
                f"dados ausentes reduzem cobertura e confiança, sem imputação neutra. "
                f"{fora} fundos ficaram sem score por tipo ausente/inválido. "
                f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}. "
@@ -834,24 +935,14 @@ def _tab_busca(df: pd.DataFrame) -> None:
 def _tab_carteira(ranked: pd.DataFrame) -> None:
     st.subheader("Preferências da seleção")
     st.markdown(_info_card_html(
-        "Ecossistema único",
-        "Escolha um método e ajuste os critérios. A seleção, os pesos, as médias do "
-        "portfólio e a correlação são recalculados pela mesma combinação.",
+        "Seleção Integrada de FIIs · v5",
+        "Um único motor combina elegibilidade histórica, score específico por tipo, "
+        "qualidade dos dados, cenário macroeconômico, concentração e correlação. "
+        "DY, P/VP e liquidez entram uma única vez, sem somar scores concorrentes.",
         accent="#00C896",
     ), unsafe_allow_html=True)
-    method = st.radio(
-        "Método de seleção",
-        ["🧭 Metodologia v4", "🎯 Qualidade diversificada",
-         "📊 Score padrão (DY·P/VP·liquidez)"],
-        index=1, horizontal=True, key="fii_selection_method_v2",
-    )
     with st.container(border=True):
-        if method.startswith("🧭"):
-            preferences = _v4_preference_controls()
-        elif method.startswith("🎯"):
-            preferences = _quality_preference_controls()
-        else:
-            preferences = _score_preference_controls()
+        preferences = _integrated_preference_controls()
 
     # Transparência de defasagem (fix auditoria FII 2026-07): a decisão usa
     # dados CVM do último informe publicado e vacância de scraping — o
@@ -875,24 +966,21 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
             ". Preço, DY e liquidez vêm da última ingestão Brapi.",
             accent="#F6C90E",
         ), unsafe_allow_html=True)
-    if method.startswith("🧭"):
-        _carteira_v4(preferences)
-    elif method.startswith("🎯"):
-        _carteira_qualidade(preferences)
-    else:
-        _carteira_score(ranked, preferences)
+    _carteira_integrada(preferences)
 
 
-def _carteira_v4(preferences: dict):
-    st.subheader("Resultado da seleção · Metodologia v4")
+def _carteira_integrada(preferences: dict):
+    st.subheader("Resultado da seleção · Metodologia Integrada v5")
     st.markdown(_info_card_html(
         "Como a carteira é construída",
-        "Otimização de renda, qualidade, confiança e perdas em cenários. As bandas táticas "
-        "variam por regime e o rebalanceamento é orientado por eventos.",
+        "Primeiro são aplicados filtros de elegibilidade. Depois, cada FII é comparado apenas "
+        "com fundos do mesmo tipo. Os pesos equilibram qualidade, confiança, renda, cenários, "
+        "concentração e correlação; o rebalanceamento continua orientado por eventos.",
         accent="#00C896",
     ), unsafe_allow_html=True)
     scenario = preferences["scenario"]
-    n_assets = int(preferences["n_assets"])
+    portfolio_policy = preferences["portfolio_policy"]
+    eligibility_policy = preferences["eligibility_policy"]
     st.markdown(_info_card_html(
         "Regime quantitativo",
         classify_macro_regime(scenario).replace("_", " ").title(),
@@ -900,10 +988,49 @@ def _carteira_v4(preferences: dict):
     ), unsafe_allow_html=True)
 
     inputs = _mr.load_fii_methodology_inputs()
-    validation = _mr.load_fii_validation_status()
-    scored = score_fiis_by_type(inputs.to_dict("records") if not inputs.empty else [],
-                                validation_status="passed" if validation.get("status") == "passed" else "unvalidated")
-    result = optimize_diligence_portfolio(scored, scenario, policy=PortfolioPolicy(max_assets=n_assets))
+    eligible_rows, eligibility = apply_integrated_eligibility(
+        inputs.to_dict("records") if not inputs.empty else [], eligibility_policy)
+    st.markdown(_info_card_html(
+        "Universo elegível",
+        f"{eligibility['eligible_count']} de {eligibility['universe_count']} FIIs passaram "
+        "pelos filtros escolhidos. Ausências em métricas exigidas reprovam o ativo; não recebem "
+        "nota neutra.",
+        accent="#4A9EFF" if eligible_rows else "#FC5C7D",
+    ), unsafe_allow_html=True)
+    if eligibility.get("exclusion_counts"):
+        with st.expander("Diagnóstico dos filtros de elegibilidade"):
+            exclusions = pd.DataFrame([
+                {"Motivo": reason, "FIIs excluídos": count}
+                for reason, count in eligibility["exclusion_counts"].items()
+            ])
+            st.dataframe(exclusions, hide_index=True, use_container_width=True)
+    if not eligible_rows:
+        st.error("Nenhum FII atende à combinação escolhida. Relaxe os filtros de elegibilidade.")
+        st.session_state.pop("fii_port", None)
+        return None
+
+    validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
+    validation_status = "passed" if validation.get("status") == "passed" else "unvalidated"
+    scored = score_fiis_by_type(eligible_rows, validation_status=validation_status)
+
+    # O universo de correlação replica o pool máximo do otimizador e evita
+    # consultar séries de centenas de fundos a cada alteração dos controles.
+    per_type = max(int(portfolio_policy.max_assets), 12)
+    correlation_candidates: list[str] = []
+    for fii_type in _TIPO_ORDER:
+        correlation_candidates.extend([
+            str(row["ticker"]) for row in scored if row.get("tipo") == fii_type
+        ][:per_type])
+    correlation_candidates = list(dict.fromkeys(correlation_candidates))
+    candidate_prices = _mr.load_precos_mensais(tuple(sorted(correlation_candidates)))
+    _, candidate_correlation = _portfolio_return_correlation(
+        candidate_prices, correlation_candidates, min_months=12)
+    result = optimize_diligence_portfolio(
+        scored, scenario, policy=portfolio_policy,
+        correlation_matrix=(candidate_correlation.to_dict()
+                            if not candidate_correlation.empty else None),
+        correlation_penalty=float(preferences["correlation_penalty"]),
+    )
     if not result.get("items"):
         st.error("Não foi possível construir uma carteira factível: " +
                  " · ".join(result.get("blockers") or []))
@@ -930,22 +1057,34 @@ def _carteira_v4(preferences: dict):
     pvp_weight = sum(weight for _, weight in valid_pvp)
     weighted_pvp = (sum(value * weight for value, weight in valid_pvp) / pvp_weight
                     if pvp_weight else None)
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.markdown(_kpi_html("Ativos selecionados", len(items), accent="#4A9EFF"),
+    average_confidence = sum(float(item["confidence"]) * float(item["weight"])
+                             for item in items)
+    k1, k2, k3 = st.columns(3)
+    k1.markdown(_kpi_html("Ativos selecionados", len(items),
+                          sub=f"{eligibility['eligible_count']} elegíveis",
+                          accent="#4A9EFF"),
                 unsafe_allow_html=True)
     k2.markdown(_kpi_html("Renda esperada", f"{result['expected_yield']:.1%}"),
                 unsafe_allow_html=True)
     k3.markdown(_kpi_html("P/VP ponderado",
                           f"{weighted_pvp:.2f}" if weighted_pvp is not None else "—",
                           accent="#B084F6"), unsafe_allow_html=True)
+    k4, k5, k6 = st.columns(3)
     k4.markdown(_kpi_html("Número efetivo", f"{result['effective_assets']:.1f}",
                           accent="#F6C90E"), unsafe_allow_html=True)
-    k5.markdown(_kpi_html("Dimensões sem cobertura",
-                          len(result.get("unresolved_dimensions") or []),
-                          accent="#FC5C7D"), unsafe_allow_html=True)
+    k5.markdown(_kpi_html("Confiança ponderada", f"{average_confidence:.0%}",
+                          accent="#00C896"), unsafe_allow_html=True)
+    corr_coverage = float((result.get("correlation_info") or {}).get("coverage") or 0)
+    k6.markdown(_kpi_html("Cobertura da correlação", f"{corr_coverage:.0%}",
+                          sub=f"{len(result.get('unresolved_dimensions') or [])} dimensões sem cobertura",
+                          accent="#FC5C7D" if corr_coverage < .80 else "#4A9EFF"),
+                unsafe_allow_html=True)
+    if result.get("unresolved_dimensions"):
+        st.caption("Dimensões de concentração ainda sem look-through suficiente: "
+                   + ", ".join(result["unresolved_dimensions"]) + ".")
     weights = {item["ticker"]: item["weight"] for item in items}
     fii_types = {item["ticker"]: item["tipo"] for item in items}
-    _render_portfolio_correlation(weights, fii_types)
+    returns = _render_portfolio_correlation(weights, fii_types)
     comp_left, comp_right = st.columns([2, 1])
     with comp_left:
         st.markdown(_info_card_html(
@@ -964,9 +1103,10 @@ def _carteira_v4(preferences: dict):
     st.markdown("#### Por que estes FIIs avançaram para a seleção")
     st.markdown(_info_card_html(
         "Critério de comparação",
-        "Comparação exclusiva com fundos do mesmo tipo. A seleção combina score (45%), "
-        "confiança (30%), renda (25%), diversificação e perdas nos cenários de estresse. "
-        "Os destaques são prioridades de diligência, não recomendações de compra.",
+        "Comparação exclusiva com fundos do mesmo tipo. O score já incorpora renda, P/VP, "
+        "liquidez, estabilidade histórica, governança e métricas próprias da categoria. "
+        "O otimizador combina score (45%), confiança (30%) e renda (25%), penalizando "
+        "concentração, estresse e correlação. Os destaques são prioridades de diligência.",
         accent="#00C896",
     ), unsafe_allow_html=True)
     explanation_cols = st.columns(2)
@@ -979,11 +1119,21 @@ def _carteira_v4(preferences: dict):
              "pvp": item.get("pvp"), "segmento": item.get("sector")}
             for item in items]
     st.session_state["fii_port"] = weights
+    _render_portfolio_history_diagnostics(weights, returns)
     _render_save_portfolio(
-        port, {"metodo": "fii_v4", "regime": classify_macro_regime(scenario),
-               "scenario": scenario.__dict__, "policy": result.get("policy")},
+        port, {"metodo": "fii_integrated_v5", "model_version": INTEGRATED_MODEL_VERSION,
+               "methodology_version": METHODOLOGY_VERSION,
+               "formula_version": FORMULA_VERSION,
+               "regime": classify_macro_regime(scenario),
+               "scenario": scenario.__dict__, "policy": result.get("policy"),
+               "eligibility": eligibility.get("policy"),
+               "correlation_penalty": result.get("correlation_penalty")},
         {"expected_yield": result["expected_yield"], "effective_assets": result["effective_assets"],
-         "scenario_returns": result["scenario_returns"]}, key="fii_save_model_v4")
+         "scenario_returns": result["scenario_returns"],
+         "correlation_risk": result.get("correlation_risk"),
+         "correlation_coverage": corr_coverage,
+         "average_confidence": average_confidence,
+         "eligible_count": eligibility["eligible_count"]}, key="fii_save_model_integrated_v5")
     return table_slot, show, specific_metrics
 
 
@@ -1005,7 +1155,7 @@ def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
         can_publish = bool(gate and gate.can_publish_recommendation)
         if st.button("💾 Salvar carteira-modelo", use_container_width=True,
                      type="primary", key=key, disabled=not can_publish,
-                     help=None if can_publish else "Publicação bloqueada pela metodologia v4"):
+                     help=None if can_publish else "Publicação bloqueada pela metodologia integrada"):
             try:
                 from core.fii_portfolio_model import save_fii_portfolio_model
                 save_fii_portfolio_model(port, params, metrics)

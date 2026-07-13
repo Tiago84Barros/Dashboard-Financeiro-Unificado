@@ -13,7 +13,7 @@ from typing import Any, Iterable
 COMPONENT_LABELS = {
     "income": "renda", "valuation": "valuation", "liquidity": "liquidez",
     "quality": "qualidade dos ativos/carteira", "risk": "controle de risco",
-    "governance": "governança e gestão",
+    "governance": "governança e gestão", "stability": "estabilidade histórica",
 }
 
 METRIC_LABELS = {

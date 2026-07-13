@@ -71,3 +71,24 @@ def test_candidate_reservation_diversifies_sector_when_band_exceeds_sector_cap()
     )
     assert result["items"]
     assert any(item["ticker"] == paper[2]["ticker"] for item in result["items"])
+
+
+def test_optimizer_uses_observed_correlation_with_explicit_coverage():
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    tickers = [row["ticker"] for row in rows]
+    correlation = {
+        ticker: {other: (1.0 if ticker == other else .35) for other in tickers}
+        for ticker in tickers
+    }
+
+    result = optimize_diligence_portfolio(
+        rows, MacroScenario(selic=12, ipca=5),
+        policy=PortfolioPolicy(max_assets=12),
+        correlation_matrix=correlation, correlation_penalty=.12,
+    )
+
+    assert result["items"]
+    assert result["correlation_risk"] is not None
+    assert result["correlation_info"]["coverage"] == 1.0
+    assert result["correlation_penalty"] == .12
