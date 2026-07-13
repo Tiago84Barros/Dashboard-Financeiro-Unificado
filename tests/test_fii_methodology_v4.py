@@ -33,7 +33,8 @@ def test_scores_are_versioned_and_missing_never_becomes_neutral():
     assert by_ticker["AAAA11"]["formula_version"] == FORMULA_VERSION
     assert "wault_anos" in by_ticker["BBBB11"]["missing_critical"]
     assert by_ticker["BBBB11"]["coverage"] < by_ticker["AAAA11"]["coverage"]
-    assert by_ticker["BBBB11"]["publication_status"] == "diligence_only"
+    assert by_ticker["BBBB11"]["critical_coverage"] < by_ticker["AAAA11"]["critical_coverage"]
+    assert by_ticker["BBBB11"]["data_readiness_status"] == "ready"
 
 
 def test_publication_gate_blocks_unvalidated_methodology():
@@ -41,6 +42,20 @@ def test_publication_gate_blocks_unvalidated_methodology():
                               validation_status="unvalidated")
     gate = evaluate_publication_gate(rows, expected_universe=1, validation_status="unvalidated")
     assert not gate.can_publish_recommendation
+    assert any("point-in-time" in reason for reason in gate.reasons)
+
+
+def test_data_readiness_is_independent_from_global_pit_validation():
+    row = _full_tijolo("AAAA11")
+    row.update({"governance_disclosure_quality": 1, "governance_integrity": 1,
+                "auditor_opinion_quality": 1})
+    rows = score_fiis_by_type([row], as_of=date(2026, 7, 12),
+                              validation_status="unvalidated")
+    assert rows[0]["data_readiness_status"] == "ready"
+    assert rows[0]["publication_status"] == "diligence_only"
+    gate = evaluate_publication_gate(rows, expected_universe=1,
+                                     validation_status="unvalidated")
+    assert gate.validated_fraction == 1
     assert any("point-in-time" in reason for reason in gate.reasons)
 
 

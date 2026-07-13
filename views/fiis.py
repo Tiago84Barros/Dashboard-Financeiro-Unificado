@@ -22,6 +22,7 @@ import core.market_read as _mr
 from core.fii_methodology import (MacroScenario, classify_macro_regime,
                                  evaluate_publication_gate, score_fiis_by_type)
 from core.fii_portfolio_v4 import PortfolioPolicy, optimize_diligence_portfolio
+from core.fii_selection_explanations import build_selection_explanations
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 
@@ -285,7 +286,7 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
                 "Status_Publicação": "Status",
             })
     ts = df["updated_at"].max() if "updated_at" in df.columns else None
-    st.caption(f"Metodologia v4.0.0: comparação somente dentro de cada categoria; "
+    st.caption(f"Metodologia v4.1.0: comparação somente dentro de cada categoria; "
                f"dados ausentes reduzem cobertura e confiança, sem imputação neutra. "
                f"{fora} fundos ficaram sem score por tipo ausente/inválido. "
                f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}. "
@@ -514,6 +515,30 @@ def _carteira_v4() -> None:
         "Cobertura": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
         "DY 12m": st.column_config.NumberColumn(format="percent"),
     })
+    regime = classify_macro_regime(scenario)
+    explanations = build_selection_explanations(items, scored, regime=regime)
+    st.markdown("#### Por que estes FIIs avançaram para a seleção")
+    st.caption(
+        "Comparação exclusiva com fundos do mesmo tipo. A seleção combina score (45%), "
+        "confiança (30%), renda (25%), diversificação e perdas nos cenários de estresse. "
+        "Os destaques abaixo são prioridades de diligência, não recomendações de compra."
+    )
+    explanation_cols = st.columns(2)
+    for index, explanation in enumerate(explanations):
+        with explanation_cols[index % 2]:
+            title = (f"{explanation['ticker']} · peso {explanation['weight']:.1%} · "
+                     f"#{explanation['rank']} de {explanation['peer_count']} "
+                     f"(top {explanation['top_percent']}%)")
+            with st.expander(title, expanded=index < 2):
+                st.markdown("**Destaques perante os pares**")
+                for reason in explanation["strengths"]:
+                    st.markdown(f"- {reason}")
+                st.markdown("**Papel na seleção**")
+                st.write(explanation["role"])
+                if explanation["caveats"]:
+                    st.markdown("**Pontos que ainda exigem diligência**")
+                    for caveat in explanation["caveats"]:
+                        st.markdown(f"- {caveat}")
     k1, k2, k3 = st.columns(3)
     k1.metric("Renda esperada", f"{result['expected_yield']:.1%}")
     k2.metric("Número efetivo", f"{result['effective_assets']:.1f}")

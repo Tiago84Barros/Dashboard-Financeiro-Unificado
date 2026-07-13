@@ -243,6 +243,7 @@ migration/backup/
 # Local audit outputs with real financial data
 artifacts/
 local_staging/fii_documents/
+local_staging/fii_cvm/
 
 # Saídas de teste locais (lixo)
 _testout.txt

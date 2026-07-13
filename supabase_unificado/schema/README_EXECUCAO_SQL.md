@@ -37,6 +37,8 @@ Execute os arquivos **exatamente nesta sequência** no SQL Editor do Supabase:
 | 22 | `022_market_pit_cutover.sql` | Corte temporal PIT | Quarentena do baseline |
 | 23 | `023_fii_methodology_v4.sql` | Metodologia FII v4 | Observações PIT, exposições, scores e validações |
 | 24 | `024_fii_pro_data_foundation.sql` | Fundação Brapi Pro | Releases, `knowledge_at`, qualidade, documentos e linhagem |
+| 25 | `025_fii_cvm_structured_coverage.sql` | Cobertura CVM estruturada | Prontidão dos dados e metodologia FII v4.1 |
+| 26 | `026_fii_observation_maintenance_indexes.sql` | Manutenção FII | Índices para vintages e substituição idempotente por fonte |
 
 > **Regra:** execute exatamente na ordem acima. Os dois arquivos 018 são
 > obrigatórios; a letra A/B apenas desambigua a ordem documental.
@@ -98,7 +100,7 @@ Antes de executar qualquer script, confirme:
 
 ## 5. Checklist Pós-execução
 
-Após executar todos os scripts até 024, verifique:
+Após executar todos os scripts até 026, verifique:
 
 - [ ] **22 tabelas criadas** — Table Editor deve listar:
   - `profiles`, `financial_institutions`, `accounts`, `cards`, `categories`, `transactions`, `budgets`, `financial_goals`, `debts`, `assets`, `portfolios`, `portfolio_positions`, `investment_transactions`, `dividends`, `asset_quotes`, `benchmarks`, `benchmark_quotes`, `alerts`, `user_settings`, `import_batches`, `import_logs`, `migration_source_map`

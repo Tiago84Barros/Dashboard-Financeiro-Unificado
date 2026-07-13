@@ -41,7 +41,7 @@ def main() -> int:
                             "reprocess", "renormalize", "parity", "fiis",
                             "fiis-reprocess", "fiis-cvm", "fiis-series",
                             "fiis-metrics", "fiis-vacancia", "fiis-imoveis",
-                            "fiis-v2", "fiis-v4", "fiis-v4-audit", "fiis-documents",
+                            "fiis-v2", "fiis-cvm-structured", "fiis-v4", "fiis-v4-audit", "fiis-documents",
                             "benchmark", "setores"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
@@ -49,6 +49,8 @@ def main() -> int:
                    choices=["setores", "ticker_cvm", "brapi", "market"])
     p.add_argument("--limit", type=int, default=None,
                    help="bootstrap: tamanho do lote por execução (default 50)")
+    p.add_argument("--years", type=int, default=5,
+                   help="fiis-cvm-structured: quantidade de anos, incluindo o atual")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
@@ -105,7 +107,8 @@ def main() -> int:
         return 0 if rep.get("erros", 0) != -1 else 1
 
     if args.command in ("fiis", "fiis-reprocess", "fiis-cvm", "fiis-series",
-                        "fiis-metrics", "fiis-vacancia", "fiis-imoveis", "fiis-v2", "fiis-v4",
+                        "fiis-metrics", "fiis-vacancia", "fiis-imoveis", "fiis-v2",
+                        "fiis-cvm-structured", "fiis-v4",
                         "fiis-v4-audit", "fiis-documents", "benchmark"):
         from data_pipeline.market import fii_ingest
         if args.command == "fiis-documents":
@@ -114,6 +117,12 @@ def main() -> int:
             log.info("FIIs documentos — selecionados=%s baixados=%s extraídos=%s "
                      "revisão=%s falhas=%s", rep.get("selected"), rep.get("downloaded"),
                      rep.get("extracted"), rep.get("needs_review"), rep.get("failed"))
+        elif args.command == "fiis-cvm-structured":
+            from data_pipeline.market.fii_cvm_structured import ingest_cvm_structured
+            rep = ingest_cvm_structured(years=args.years)
+            log.info("FIIs CVM estruturada — arquivos=%s métricas=%s exposições=%s "
+                     "documentos=%s erros=%s", rep.get("archives"), rep.get("observations"),
+                     rep.get("exposures"), rep.get("documents"), len(rep.get("errors") or []))
         elif args.command == "fiis-v2":
             rep = fii_ingest.ingest_v2_details(limit=args.limit, tickers=tickers)
             log.info("FIIs Brapi v2 — fundos=%s req=%s métricas=%s exposições=%s "
@@ -163,7 +172,7 @@ def main() -> int:
             log.info("FIIs — candidatos=%s fiis=%s etfs_ignorados=%s gravados=%s erros=%s",
                      rep.get("candidatos"), rep.get("fiis"), rep.get("etfs_ignorados"),
                      rep.get("gravados"), rep.get("erros"))
-        if args.command not in ("fiis-v2", "fiis-v4", "fiis-v4-audit",
+        if args.command not in ("fiis-v2", "fiis-cvm-structured", "fiis-v4", "fiis-v4-audit",
                                 "fiis-documents", "benchmark") and rep.get("erros", 0) != -1:
             rep["metodologia_v4"] = fii_ingest.snapshot_methodology_v4()
         if args.json:

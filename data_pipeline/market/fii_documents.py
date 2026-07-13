@@ -149,9 +149,18 @@ def process_pending_documents(limit: int = 25) -> dict:
                  "schema": SCHEMA_VERSION, "sha": _parser_hash()})
         docs = conn.execute(text("""
             SELECT d.* FROM market.fii_documents d
-            ORDER BY d.first_observed_at, d.id LIMIT :limit
+            WHERE d.current_version_id IS NULL OR NOT EXISTS (
+                SELECT 1 FROM market.fii_extraction_runs r
+                WHERE r.document_version_id=d.current_version_id
+                  AND r.parser_name=:name AND r.parser_version=:parser
+                  AND r.status IN ('passed','needs_review')
+            )
+            ORDER BY CASE WHEN d.document_type='RELAT GERENCIAL' THEN 0 ELSE 1 END,
+                     d.reference_date DESC NULLS LAST, d.id DESC
+            LIMIT :limit
             FOR UPDATE SKIP LOCKED
-        """), {"limit": max(int(limit), 1)}).mappings().all()
+        """), {"limit": max(int(limit), 1), "name": PARSER_NAME,
+                 "parser": PARSER_VERSION}).mappings().all()
     result["selected"] = len(docs)
     for doc in docs:
         try:

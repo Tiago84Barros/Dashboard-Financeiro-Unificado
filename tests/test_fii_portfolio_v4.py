@@ -39,3 +39,35 @@ def test_missing_exposure_coverage_blocks_publication():
                                           policy=PortfolioPolicy(max_assets=12))
     assert not result["can_publish"]
     assert "manager" in result.get("unresolved_dimensions", [])
+
+
+def test_optimizer_finds_feasible_seed_when_equal_weights_break_illiquid_cap():
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    for row in rows:
+        if row["tipo"] == "hibrido":
+            row["liquidez_diaria"] = 100_000
+    result = optimize_diligence_portfolio(
+        rows, MacroScenario(selic=12, ipca=5),
+        policy=PortfolioPolicy(max_assets=12, max_illiquid=.10),
+    )
+    assert result["items"]
+    illiquid_weight = sum(item["weight"] for item in result["items"]
+                           if item["liquidez_diaria"] < 1_000_000)
+    assert illiquid_weight <= .10001
+
+
+def test_candidate_reservation_diversifies_sector_when_band_exceeds_sector_cap():
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    paper = [row for row in rows if row["tipo"] == "papel"]
+    paper[0]["sector"] = "CRI"
+    paper[1]["sector"] = "CRI"
+    paper[2]["sector"] = "Agro"
+    paper[2]["type_score"] = 1
+    result = optimize_diligence_portfolio(
+        rows, MacroScenario(selic=15, ipca=4, selic_change_12m=1),
+        policy=PortfolioPolicy(max_assets=12, max_sector=.25),
+    )
+    assert result["items"]
+    assert any(item["ticker"] == paper[2]["ticker"] for item in result["items"])

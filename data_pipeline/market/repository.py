@@ -58,7 +58,8 @@ _UPDATE_COLS = {
     "fii_score_snapshots": ("formula_version", "fii_type", "type_score", "confidence",
                             "coverage", "components_json", "inputs_json",
                             "missing_metrics_json", "publication_status",
-                            "publication_reasons_json", "validation_run_id"),
+                            "publication_reasons_json", "validation_run_id",
+                            "data_readiness_status"),
 }
 _CONFLICT = {
     "ticker_cvm": "ticker",
@@ -430,7 +431,8 @@ def save_raw_payload(conn, ticker, endpoint, payload, status="success", error=No
                      http_status: int | None = None,
                      collected_at=None,
                      source_published_at=None,
-                     request_fingerprint: str | None = None) -> int | None:
+                     request_fingerprint: str | None = None,
+                     source: str = "brapi.dev") -> int | None:
     """Persiste payload bruto de forma idempotente e retorna sua proveniência.
 
     A mesma resposta para a mesma requisição reutiliza o id anterior. Uma
@@ -463,10 +465,11 @@ def save_raw_payload(conn, ticker, endpoint, payload, status="success", error=No
         res = conn.execute(text("""
             INSERT INTO market.brapi_raw_payloads
               (ticker, endpoint, payload_json, source, request_status, error_message)
-            VALUES (:tk, :ep, CAST(:pl AS jsonb), 'brapi.dev', :st, :err)
+            VALUES (:tk, :ep, CAST(:pl AS jsonb), :source, :st, :err)
             RETURNING id
         """), {"tk": ticker, "ep": endpoint, "pl": payload_text,
-               "st": status, "err": (str(error)[:500] if error else None)})
+        "st": status, "err": (str(error)[:500] if error else None),
+        "source": source})
         value = res.scalar()
         return int(value) if value is not None else None
 
@@ -491,7 +494,7 @@ def save_raw_payload(conn, ticker, endpoint, payload, status="success", error=No
           content_sha256, http_status, source_published_at, collected_at,
           supersedes_id, revision_detected
         ) VALUES (
-          :tk, :ep, CAST(:pl AS jsonb), 'brapi.dev', :st, :err,
+          :tk, :ep, CAST(:pl AS jsonb), :source, :st, :err,
           :fp, CAST(:params AS jsonb), CAST(:headers AS jsonb),
           :sha, :http, :published, COALESCE(:collected, now()), :previous,
           CASE WHEN :previous IS NULL THEN false ELSE true END
@@ -504,7 +507,7 @@ def save_raw_payload(conn, ticker, endpoint, payload, status="success", error=No
         "params": params_text,
         "headers": json.dumps(response_headers or {}, ensure_ascii=False, default=str),
         "sha": content_sha, "http": http_status, "published": source_published_at,
-        "collected": collected_at, "previous": previous,
+        "collected": collected_at, "previous": previous, "source": source,
     })
     value = res.scalar()
     if value is not None:
@@ -524,15 +527,20 @@ def record_lineage_for_raw_payload(conn, raw_payload_id: int | None) -> int:
             "SELECT to_regclass('market.fii_lineage_edges') IS NOT NULL")).scalar():
         return 0
     result = conn.execute(text("""
+        WITH raw AS (
+            SELECT CASE WHEN source='brapi.dev' THEN 'brapi_raw_payload'
+                        ELSE 'source_raw_payload' END AS parent_type
+            FROM market.brapi_raw_payloads WHERE id=:raw
+        )
         INSERT INTO market.fii_lineage_edges
             (parent_type, parent_id, child_type, child_id, relation)
-        SELECT 'brapi_raw_payload', CAST(:raw AS text), 'fii_metric_observation',
+        SELECT raw.parent_type, CAST(:raw AS text), 'fii_metric_observation',
                CAST(id AS text), 'normalized_into'
-        FROM market.fii_metric_observations WHERE raw_payload_id=:raw
+        FROM market.fii_metric_observations CROSS JOIN raw WHERE raw_payload_id=:raw
         UNION ALL
-        SELECT 'brapi_raw_payload', CAST(:raw AS text), 'fii_exposure',
+        SELECT raw.parent_type, CAST(:raw AS text), 'fii_exposure',
                CAST(id AS text), 'normalized_into'
-        FROM market.fii_exposures WHERE raw_payload_id=:raw
+        FROM market.fii_exposures CROSS JOIN raw WHERE raw_payload_id=:raw
         ON CONFLICT DO NOTHING
     """), {"raw": int(raw_payload_id)})
     return max(int(result.rowcount or 0), 0)

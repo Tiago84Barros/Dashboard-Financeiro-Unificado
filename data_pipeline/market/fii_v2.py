@@ -111,9 +111,10 @@ def _observation(ticker: str, metric: str, value: Any, reference_date: date,
     if number is not None:
         invalid = (
             metric in {"vacancia_fisica", "vacancia_financeira", "property_delinquency",
-                       "leverage", "holdings_overlap", "income_recurrence",
+                       "holdings_overlap", "income_recurrence",
                        "portfolio_income_recurrence", "ltv"} and not 0 <= number <= 1
-        ) or (metric in {"dy_12m", "dy_1m"} and not 0 <= number <= .60) or (
+        ) or (metric == "leverage" and number < 0) or (
+            metric in {"dy_12m", "dy_1m"} and not 0 <= number <= .60) or (
             metric == "pvp" and not 0 < number <= 10)
         if invalid:
             row["quality_status"] = "rejected"
@@ -254,6 +255,9 @@ def normalize_reports(payload: dict, raw_payload_id: int | None = None) -> list[
         assets = _num(item.get("totalAssets"))
         liabilities = _num(item.get("totalLiabilities"))
         leverage = liabilities / assets if assets and assets > 0 and liabilities is not None else None
+        liquid_assets = sum(_num(item.get(field)) or 0 for field in
+                            ("cash", "governmentBonds", "privateBonds", "fixedIncomeFunds"))
+        liquidity_ratio = liquid_assets / assets if assets and assets > 0 else None
         monthly_fee = _num(item.get("adminFeeRate"))
         annual_fee = monthly_fee * 12 if monthly_fee is not None and monthly_fee >= 0 else None
         fee_efficiency = max(0.0, 1.0 - annual_fee / .02) if annual_fee is not None else None
@@ -261,6 +265,10 @@ def normalize_reports(payload: dict, raw_payload_id: int | None = None) -> list[
             ("leverage", leverage, "totalLiabilities/totalAssets"),
             ("admin_fee_rate_annual", annual_fee, "adminFeeRate*12"),
             ("fee_efficiency", fee_efficiency, "max(0,1-adminFeeRate*12/0.02)"),
+            ("liquidity_ratio", liquidity_ratio,
+             "(cash+governmentBonds+privateBonds+fixedIncomeFunds)/totalAssets"),
+            ("rental_receivables", _num(item.get("rentalReceivables")), "reported"),
+            ("real_estate_obligations", _num(item.get("realEstateObligations")), "reported"),
         ):
             observation = _observation(ticker, metric, value, reference, available,
                                        raw_payload_id, endpoint="reports",
@@ -405,6 +413,15 @@ def normalize_properties(payload: dict, raw_payload_id: int | None = None) -> di
                 observations.append(observation)
         region_total = sum(region_values.values())
         if region_total >= .60:
+            region_weights = [value / region_total for value in region_values.values()]
+            observation = _observation(
+                ticker, "geographic_diversification",
+                1.0 - sum(weight * weight for weight in region_weights),
+                reference, available, raw_payload_id, endpoint="properties",
+                vintage=f"properties:{reference}:v{version}",
+                metadata={"formula": "1-HHI", "revenue_share_coverage": region_total})
+            if observation:
+                observations.append(observation)
             for region, value in region_values.items():
                 exposure = _exposure(
                     ticker=ticker, exposure_type="region", exposure_name=region,

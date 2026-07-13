@@ -48,6 +48,151 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
+                    policy: PortfolioPolicy, scenario: MacroScenario) -> list[dict]:
+    """Seleciona até ``max_assets`` candidatos por programação inteira-mista."""
+    per_type = max(policy.max_assets, 12)
+    pool: list[dict] = []
+    for fii_type in ("tijolo", "papel", "fof", "hibrido"):
+        pool.extend([row for row in ranked if str(row.get("tipo")) == fii_type][:per_type])
+    pool.extend(row for row in ranked if row not in pool)
+    pool = pool[:max(policy.max_assets * 6, 48)]
+    if not pool:
+        return []
+
+    n = len(pool)
+    quality = np.array([_num(row.get("type_score")) / 100 for row in pool])
+    confidence = np.array([_num(row.get("confidence")) for row in pool])
+    dy = np.array([_num(row.get("dy_12m")) for row in pool])
+    if np.nanmax(dy, initial=0) > 1:
+        dy = dy / 100
+    adverse = np.array([
+        np.mean([max(-type_scenario_return(str(row.get("tipo")), name), 0)
+                 for name in SCENARIOS[1:]]) for row in pool
+    ])
+    utility = .45 * quality + .30 * confidence + .25 * np.clip(dy / .15, 0, 1) - .35 * adverse
+
+    matrix_rows: list[np.ndarray] = []
+    lower_bounds: list[float] = []
+    upper_bounds: list[float] = []
+
+    def constraint(weights: np.ndarray, lower: float, upper: float) -> None:
+        matrix_rows.append(np.concatenate([weights, np.zeros(n)]))
+        lower_bounds.append(lower)
+        upper_bounds.append(upper)
+
+    constraint(np.ones(n), 1.0, 1.0)
+    for fii_type, (lower, upper) in bands.items():
+        mask = np.array([1.0 if str(row.get("tipo")) == fii_type else 0.0 for row in pool])
+        constraint(mask, lower, upper)
+    for dimension, limit_attr in LIMITS.items():
+        exposure, labels, coverage = _dimension_matrix(pool, dimension)
+        if coverage < policy.min_dimension_coverage:
+            continue
+        for column in range(len(labels)):
+            constraint(exposure[:, column], -np.inf, getattr(policy, limit_attr))
+    illiquid = np.array([
+        1.0 if _num(row.get("liquidez_diaria")) < policy.min_daily_liquidity else 0.0
+        for row in pool
+    ])
+    constraint(illiquid, -np.inf, policy.max_illiquid)
+
+    # Ligação peso_i <= teto_ativo * selecionado_i.
+    for index in range(n):
+        row = np.zeros(2 * n)
+        row[index] = 1.0
+        row[n + index] = -policy.max_asset
+        matrix_rows.append(row)
+        lower_bounds.append(-np.inf)
+        upper_bounds.append(0.0)
+    cardinality = np.concatenate([np.zeros(n), np.ones(n)])
+    matrix_rows.append(cardinality)
+    lower_bounds.append(-np.inf)
+    upper_bounds.append(float(policy.max_assets))
+
+    try:
+        from scipy.optimize import Bounds, LinearConstraint, milp
+        objective = np.concatenate([-utility, np.full(n, 1e-6)])
+        solution = milp(
+            c=objective,
+            integrality=np.concatenate([np.zeros(n), np.ones(n)]),
+            bounds=Bounds(np.zeros(2 * n),
+                          np.concatenate([np.full(n, policy.max_asset), np.ones(n)])),
+            constraints=LinearConstraint(
+                np.vstack(matrix_rows), np.array(lower_bounds), np.array(upper_bounds)),
+            options={"time_limit": 20},
+        )
+        if solution.success and solution.x is not None:
+            return [pool[index] for index, weight in enumerate(solution.x[:n]) if weight > 1e-8]
+    except Exception:
+        pass
+
+    # Fallback determinístico para ambientes sem solver MILP.
+    selected: list[dict] = []
+
+    def issuer_fit(row: dict) -> int:
+        issuers = row.get("issuers")
+        if not isinstance(issuers, dict) or not issuers:
+            return 1
+        maximum = max((_num(value) for value in issuers.values()), default=0.0)
+        return int(maximum * policy.max_asset <= policy.max_issuer + 1e-9)
+
+    def liquid(row: dict) -> int:
+        return int(_num(row.get("liquidez_diaria")) >= policy.min_daily_liquidity)
+
+    for fii_type in ("tijolo", "papel", "fof", "hibrido"):
+        candidates = [row for row in ranked if str(row.get("tipo")) == fii_type]
+        lower = bands[fii_type][0]
+        required = max(1, int(np.ceil(lower / policy.max_asset)))
+        sector_groups = max(1, int(np.ceil(lower / policy.max_sector)))
+        manager_groups = max(1, int(np.ceil(lower / policy.max_manager)))
+        chosen: list[dict] = []
+        sectors: set[str] = set()
+        managers: set[str] = set()
+        while len(chosen) < required:
+            available = [row for row in candidates if row not in chosen]
+            if not available:
+                break
+
+            def priority(row: dict) -> tuple[int, int, int, int, float, float]:
+                sector = str(row.get("sector") or "")
+                manager = str(row.get("manager") or "")
+                return (
+                    issuer_fit(row), liquid(row),
+                    int(bool(sector) and sector not in sectors
+                        and len(sectors) < sector_groups),
+                    int(bool(manager) and manager not in managers
+                        and len(managers) < manager_groups),
+                    _num(row.get("type_score")), _num(row.get("confidence")),
+                )
+
+            candidate = max(available, key=priority)
+            chosen.append(candidate)
+            if candidate.get("sector"):
+                sectors.add(str(candidate["sector"]))
+            if candidate.get("manager"):
+                managers.add(str(candidate["manager"]))
+        selected.extend(chosen)
+
+    selected_sectors = {str(row.get("sector")) for row in selected if row.get("sector")}
+    selected_managers = {str(row.get("manager")) for row in selected if row.get("manager")}
+    remaining = [row for row in ranked if row not in selected]
+    while len(selected) < policy.max_assets and remaining:
+        candidate = max(remaining, key=lambda row: (
+            issuer_fit(row), liquid(row),
+            int(bool(row.get("manager")) and str(row.get("manager")) not in selected_managers),
+            int(bool(row.get("sector")) and str(row.get("sector")) not in selected_sectors),
+            _num(row.get("type_score")), _num(row.get("confidence")),
+        ))
+        selected.append(candidate)
+        remaining.remove(candidate)
+        if candidate.get("sector"):
+            selected_sectors.add(str(candidate["sector"]))
+        if candidate.get("manager"):
+            selected_managers.add(str(candidate["manager"]))
+    return selected[:policy.max_assets]
+
+
 def _exposure(row: dict, dimension: str) -> dict[str, float]:
     plural = {"tenant": "tenants", "debtor": "debtors", "issuer": "issuers",
               "indexer": "indexers", "region": "regions"}.get(dimension)
@@ -83,13 +228,7 @@ def optimize_diligence_portfolio(
     bands = tactical_type_bands(scenario)
     ranked = sorted((dict(r) for r in scored_rows if _num(r.get("confidence")) > 0),
                     key=lambda r: (_num(r.get("type_score")), _num(r.get("confidence"))), reverse=True)
-    rows: list[dict] = []
-    # Reserva candidatos suficientes para cumprir a banda mínima com o teto por ativo.
-    for fii_type in ("tijolo", "papel", "fof", "hibrido"):
-        required = max(1, int(np.ceil(bands[fii_type][0] / policy.max_asset)))
-        rows.extend([row for row in ranked if str(row.get("tipo")) == fii_type][:required])
-    rows.extend(row for row in ranked if row not in rows)
-    rows = rows[:policy.max_assets]
+    rows = _candidate_pool(ranked, bands, policy, scenario)
     if not rows:
         return {"items": [], "status": "blocked", "can_publish": False,
                 "blockers": ["nenhum candidato com dados utilizáveis"]}
@@ -107,6 +246,7 @@ def optimize_diligence_portfolio(
     utility = .45 * quality + .30 * confidence + .25 * np.clip(dy / .15, 0, 1) - .35 * adverse
 
     constraints: list[dict] = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
+    linear_ub: list[tuple[np.ndarray, float]] = []
     unresolved: list[str] = []
     dimension_info: dict[str, dict] = {}
     for dimension, limit_attr in LIMITS.items():
@@ -119,6 +259,7 @@ def optimize_diligence_portfolio(
         for column in range(len(labels)):
             exposure = matrix[:, column].copy()
             constraints.append({"type": "ineq", "fun": lambda w, e=exposure, lim=limit: lim - float(w @ e)})
+            linear_ub.append((exposure, limit))
 
     for fii_type, (lower, upper) in bands.items():
         mask = np.array([1.0 if str(row.get("tipo")) == fii_type else 0.0 for row in rows])
@@ -129,9 +270,11 @@ def optimize_diligence_portfolio(
             {"type": "ineq", "fun": lambda w, m=mask, lo=lower: float(w @ m) - lo},
             {"type": "ineq", "fun": lambda w, m=mask, hi=upper: hi - float(w @ m)},
         ])
+        linear_ub.extend([(-mask, -lower), (mask, upper)])
 
     illiquid = np.array([1.0 if _num(r.get("liquidez_diaria")) < policy.min_daily_liquidity else 0.0 for r in rows])
     constraints.append({"type": "ineq", "fun": lambda w: policy.max_illiquid - float(w @ illiquid)})
+    linear_ub.append((illiquid, policy.max_illiquid))
 
     def objective(weights: np.ndarray) -> float:
         concentration = float(np.sum(weights ** 2))
@@ -141,8 +284,23 @@ def optimize_diligence_portfolio(
         return -float(weights @ utility) + .18 * concentration + .30 * max(tail_loss, 0)
 
     try:
-        from scipy.optimize import minimize
-        result = minimize(objective, np.full(n, 1 / n), method="SLSQP",
+        from scipy.optimize import linprog, minimize
+        # O ponto de pesos iguais frequentemente viola bandas ou o teto de
+        # iliquidez. Primeiro encontra-se uma solução linear factível; depois o
+        # SLSQP otimiza concentração e perdas de cauda a partir dela.
+        feasible = linprog(
+            c=-utility,
+            A_ub=np.vstack([row for row, _ in linear_ub]) if linear_ub else None,
+            b_ub=np.array([limit for _, limit in linear_ub]) if linear_ub else None,
+            A_eq=np.ones((1, n)), b_eq=np.array([1.0]),
+            bounds=[(0.0, policy.max_asset)] * n, method="highs",
+        )
+        if not feasible.success:
+            return {"items": [], "status": "blocked", "can_publish": False,
+                    "blockers": [f"restrições lineares inviáveis: {feasible.message}"],
+                    "unresolved_dimensions": sorted(set(unresolved)),
+                    "dimension_coverage": dimension_info, "policy": asdict(policy)}
+        result = minimize(objective, feasible.x, method="SLSQP",
                           bounds=[(0.0, policy.max_asset)] * n, constraints=constraints,
                           options={"maxiter": 1000, "ftol": 1e-10})
     except Exception as exc:  # pragma: no cover - ambiente sem scipy
@@ -156,7 +314,7 @@ def optimize_diligence_portfolio(
 
     weights = np.where(result.x >= .005, result.x, 0.0)
     weights = weights / weights.sum()
-    items = [{**rows[i], "weight": round(float(weights[i]), 6)} for i in range(n) if weights[i] > 0]
+    items = [{**rows[i], "weight": float(weights[i])} for i in range(n) if weights[i] > 0]
     scenario_returns = {s: round(sum(item["weight"] * type_scenario_return(str(item.get("tipo")), s)
                                      for item in items), 6) for s in SCENARIOS}
     validation_block = any(item.get("publication_status") != "validated" for item in items)

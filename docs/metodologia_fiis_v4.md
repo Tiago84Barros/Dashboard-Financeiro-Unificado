@@ -9,8 +9,8 @@ cobertura não é tratado como evidência forte.
 
 Versões atuais:
 
-- metodologia: `4.0.0`;
-- fórmula: `br-fii-income-resilience-4.0.0`;
+- metodologia: `4.1.0`;
+- fórmula: `br-fii-income-resilience-4.1.0`;
 - objetivo: renda recorrente, crescimento patrimonial sustentável e resiliência
   em diferentes regimes brasileiros.
 
@@ -33,8 +33,8 @@ confiança e, se crítico, bloqueia a publicação.
 
 ## Proveniência e qualidade
 
-As migrations `023_fii_methodology_v4.sql` e
-`024_fii_pro_data_foundation.sql` criam:
+As migrations `023_fii_methodology_v4.sql` a
+`026_fii_observation_maintenance_indexes.sql` criam e evoluem:
 
 - `fii_metric_observations`: valor, data de referência, `available_at`, vintage,
   fonte, URL, payload bruto, qualidade e metadados;
@@ -66,7 +66,8 @@ python run_market_ingest.py fiis-v4-audit --json
   `dividends`, além de `annual-reports` e `financials`. A integração preserva o envelope bruto, separa coleta por tipo e
   normaliza vacância, passivos, taxas, CRIs, emissores e holdings.
 - Brapi legada: preço, histórico longo, proventos e liquidez via `/api/quote/`.
-- CVM Informe Mensal: fonte regulatória para patrimônio e campos estruturados.
+- CVM Informe Mensal: fonte regulatória para patrimônio, passivos, alavancagem,
+  cotistas, liquidez e composição de ativos.
 - CVM Informe Trimestral: composição e informações periódicas, com histórico
   aberto e reapresentações semanais.
 - CVM documentos eventuais: fatos relevantes, regulamentos, relatórios
@@ -88,15 +89,19 @@ rebatizado como devedor sem evidência explícita.
 
 ### Estado operacional em 12/07/2026
 
-- migration 024 aplicada e verificada;
-- 97.961 observações e 13.373 exposições após o backfill Brapi Pro;
+- migrations 024, 025 e 026 aplicadas e verificadas;
+- 475.188 observações, 188.271 exposições e 19.378 documentos eventuais
+  encontrados após os backfills Brapi Pro e CVM estruturada;
+- 301.265 observações mensais, 58.002 trimestrais, 8.298 anuais, 5.816 de
+  demonstrações financeiras e 3.846 de documentos eventuais provenientes da CVM;
 - universo prospectivo, releases, linhagem, reconciliação e validation runs
   materializados;
 - zero duplicidade, data futura, referência impossível, soma inválida de
   exposição ou histórico rotulado indevidamente como PIT;
 - valores fora do domínio foram colocados em `rejected`, sem exclusão física;
-- 97 divergências Brapi×CVM foram preservadas e colocadas em quarentena, com
-  precedência da fonte regulatória para as métricas conflitantes;
+- zero conflito de reconciliação Brapi×CVM permanece aberto;
+- cobertura média de 57,89%, confiança média de 69,19% e 129 de 392 fundos
+  (32,91%) com dados suficientes segundo os gates individuais da versão 4.1;
 - a publicação permanece bloqueada exclusivamente pela ausência do backtest PIT
   walk-forward aprovado.
 
@@ -113,6 +118,14 @@ A otimização SLSQP combina score, confiança, renda e perdas estruturais. Há
 limites para ativo, gestor, setor, locatário, devedor, emissor, indexador,
 região e parcela ilíquida. Os limites look-through só são avaliados quando a
 dimensão tem cobertura mínima; abaixo disso a carteira fica **não publicável**.
+
+A formação do conjunto candidato usa programação inteira-mista para respeitar
+simultaneamente o número máximo de ativos, as bandas por tipo e os limites de
+concentração antes do refinamento dos pesos pelo SLSQP. Para cada fundo
+selecionado, a interface apresenta posição entre pares do mesmo tipo, componentes
+fortes, diferenças de score, confiança, cobertura e renda, além das métricas
+críticas ainda ausentes. Essas explicações justificam prioridade de diligência,
+não constituem recomendação automática de compra.
 
 As bandas de tijolo, papel, FoF e híbrido mudam nos regimes de juro real alto,
 queda de Selic, inflação alta e estresse. Os cenários de Selic, inflação,
@@ -140,13 +153,14 @@ são `diligence_only`.
 
 ## Implantação
 
-1. Aplicar, em ordem, as migrations pendentes até `024_fii_pro_data_foundation.sql`.
+1. Aplicar, em ordem, as migrations pendentes até `026_fii_observation_maintenance_indexes.sql`.
 2. Executar as coletas CVM/Brapi já existentes.
 3. Executar `python run_market_ingest.py fiis-v2 --json` para coletar os
    endpoints dedicados, derivar métricas e materializar snapshots.
-4. Executar `python run_market_ingest.py fiis-v4-audit --json`.
-5. Processar documentos públicos com `python run_market_ingest.py fiis-documents --json` e revisar evidências.
-6. Acumular/reconstruir vintages históricos e executar a validação PIT.
+4. Executar `python run_market_ingest.py fiis-cvm-structured --years 5 --json`.
+5. Executar `python run_market_ingest.py fiis-v4-audit --json`.
+6. Processar documentos públicos com `python run_market_ingest.py fiis-documents --json` e revisar evidências.
+7. Acumular/reconstruir vintages históricos e executar a validação PIT.
 
 Não se deve mudar manualmente o status da metodologia para `passed`; ele deve
 ser consequência de um `fii_validation_run` reproduzível e aprovado.

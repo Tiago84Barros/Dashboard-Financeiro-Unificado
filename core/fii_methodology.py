@@ -20,8 +20,8 @@ import math
 from typing import Any, Iterable
 
 
-METHODOLOGY_VERSION = "4.0.0"
-FORMULA_VERSION = "br-fii-income-resilience-4.0.0"
+METHODOLOGY_VERSION = "4.1.0"
+FORMULA_VERSION = "br-fii-income-resilience-4.1.0"
 VALID_TYPES = ("tijolo", "papel", "fof", "hibrido")
 
 
@@ -74,6 +74,9 @@ COMMON_METRICS = (
     MetricDefinition("mandate_adherence", "governance", .007, "higher", critical=True),
     MetricDefinition("cvm_event_quality", "governance", .005, "higher"),
     MetricDefinition("related_party_exposure", "governance", .003, "lower"),
+    MetricDefinition("governance_disclosure_quality", "governance", .006, "higher"),
+    MetricDefinition("governance_integrity", "governance", .006, "higher"),
+    MetricDefinition("auditor_opinion_quality", "governance", .008, "higher"),
 )
 
 
@@ -100,6 +103,7 @@ TYPE_METRICS: dict[str, tuple[MetricDefinition, ...]] = {
         MetricDefinition("delinquency", "risk", .06, "lower", critical=True),
         MetricDefinition("debtor_diversification", "quality", .05, "higher", critical=True),
         MetricDefinition("issuance_concentration", "risk", .05, "lower", critical=True),
+        MetricDefinition("issuer_diversification", "quality", .02, "higher"),
     ),
     "fof": (
         MetricDefinition("nav_discount", "valuation", .07, "higher", critical=True),
@@ -119,6 +123,7 @@ TYPE_METRICS: dict[str, tuple[MetricDefinition, ...]] = {
         MetricDefinition("rating_quality", "quality", .04, "higher"),
         MetricDefinition("delinquency", "risk", .04, "lower"),
         MetricDefinition("debtor_diversification", "quality", .04, "higher"),
+        MetricDefinition("issuer_diversification", "quality", .015, "higher"),
         MetricDefinition("holdings_overlap", "risk", .04, "lower"),
         MetricDefinition("holdings_quality", "quality", .04, "higher"),
         MetricDefinition("leverage", "risk", .04, "lower", critical=True),
@@ -163,6 +168,11 @@ def methodology_manifest() -> dict[str, Any]:
         "common_metrics": [asdict(m) for m in COMMON_METRICS],
         "type_metrics": {key: [asdict(m) for m in value] for key, value in TYPE_METRICS.items()},
         "pvp_targets": PVP_TARGETS,
+        "confidence_formula": {
+            "type": "weighted_geometric_mean",
+            "weights": {"coverage": .45, "freshness": .15, "source_quality": .15,
+                        "consistency": .15, "history": .10},
+        },
         "missing_data_policy": "missing_reduces_coverage_and_confidence; never_zero_or_neutral",
         "publication_policy": "diligence_only_until_point_in_time_validation_passes",
     }
@@ -278,8 +288,11 @@ def score_fiis_by_type(
             metric_scores[definition.key] = _rank_scores(transformed, higher=higher)
 
         total_weight = sum(definition.weight for definition in definitions)
+        total_critical_weight = sum(definition.weight for definition in definitions
+                                    if definition.critical)
         for index, row in enumerate(group):
             observed_weight = 0.0
+            observed_critical_weight = 0.0
             weighted_score = 0.0
             freshness_weighted = 0.0
             source_weighted = 0.0
@@ -298,6 +311,8 @@ def score_fiis_by_type(
                         missing_critical.append(definition.key)
                     continue
                 observed_weight += definition.weight
+                if definition.critical:
+                    observed_critical_weight += definition.weight
                 weighted_score += definition.weight * score
                 components_num[definition.component] = components_num.get(definition.component, 0.0) + definition.weight * score
                 components_den[definition.component] = components_den.get(definition.component, 0.0) + definition.weight
@@ -306,6 +321,8 @@ def score_fiis_by_type(
                 used_inputs[definition.key] = value
 
             coverage = observed_weight / total_weight if total_weight else 0.0
+            critical_coverage = (observed_critical_weight / total_critical_weight
+                                 if total_critical_weight else 0.0)
             raw_score = 100.0 * weighted_score / observed_weight if observed_weight else 0.0
             # A penalização evita que poucos indicadores produzam um falso 90/100.
             final_score = raw_score * (.55 + .45 * coverage)
@@ -314,13 +331,19 @@ def score_fiis_by_type(
             consistency = min(max(_number(row.get("data_consistency")) or .80, 0.0), 1.0)
             history_months = max(_number(row.get("history_months") or row.get("Hist_Meses")) or 0.0, 0.0)
             history_factor = min(history_months / 36.0, 1.0) if history_months else .50
-            confidence = coverage * freshness * source_quality * consistency * history_factor
+            dimensions = ((coverage, .45), (freshness, .15), (source_quality, .15),
+                          (consistency, .15), (history_factor, .10))
+            confidence = math.exp(sum(weight * math.log(max(value, .01))
+                                      for value, weight in dimensions))
 
-            reasons: list[str] = []
-            if missing_critical:
-                reasons.append("métricas críticas ausentes: " + ", ".join(sorted(missing_critical)))
+            data_reasons: list[str] = []
+            if critical_coverage < .70:
+                data_reasons.append(
+                    f"cobertura de métricas críticas {critical_coverage:.0%} abaixo de 70%")
             if confidence < min_confidence:
-                reasons.append(f"confiança {confidence:.0%} abaixo do mínimo {min_confidence:.0%}")
+                data_reasons.append(f"confiança {confidence:.0%} abaixo do mínimo {min_confidence:.0%}")
+            data_readiness_status = "ready" if not data_reasons else "insufficient"
+            reasons = list(data_reasons)
             if validation_status != "passed":
                 reasons.append("metodologia sem validação point-in-time aprovada")
             publication_status = "validated" if not reasons else "diligence_only"
@@ -336,11 +359,14 @@ def score_fiis_by_type(
                 "raw_score": round(raw_score, 2),
                 "confidence": round(confidence, 4),
                 "coverage": round(coverage, 4),
+                "critical_coverage": round(critical_coverage, 4),
                 "freshness_score": round(freshness, 4),
                 "source_quality": round(source_quality, 4),
                 "components": components,
                 "missing_metrics": tuple(sorted(missing)),
                 "missing_critical": tuple(sorted(missing_critical)),
+                "data_readiness_status": data_readiness_status,
+                "data_readiness_reasons": tuple(data_reasons),
                 "publication_status": publication_status,
                 "publication_reasons": tuple(reasons),
                 "score_inputs": used_inputs,
@@ -361,7 +387,7 @@ def evaluate_publication_gate(
 ) -> PublicationGate:
     rows = list(scored_rows)
     coverage = len(rows) / expected_universe if expected_universe > 0 else 0.0
-    validated = sum(row.get("publication_status") == "validated" for row in rows)
+    validated = sum(row.get("data_readiness_status") == "ready" for row in rows)
     validated_fraction = validated / len(rows) if rows else 0.0
     confidences = sorted(float(row.get("confidence") or 0.0) for row in rows)
     median = confidences[len(confidences) // 2] if confidences else 0.0
@@ -369,7 +395,7 @@ def evaluate_publication_gate(
     if coverage < min_universe_coverage:
         reasons.append(f"cobertura do universo {coverage:.0%} abaixo de {min_universe_coverage:.0%}")
     if validated_fraction < min_validated_fraction:
-        reasons.append(f"fundos validados {validated_fraction:.0%} abaixo de {min_validated_fraction:.0%}")
+        reasons.append(f"fundos com dados suficientes {validated_fraction:.0%} abaixo de {min_validated_fraction:.0%}")
     if median < min_median_confidence:
         reasons.append(f"confiança mediana {median:.0%} abaixo de {min_median_confidence:.0%}")
     if validation_status != "passed":

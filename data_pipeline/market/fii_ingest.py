@@ -161,6 +161,7 @@ def snapshot_methodology_v4() -> dict:
         "components_json": json.dumps(row["components"], ensure_ascii=False, default=str),
         "inputs_json": json.dumps(row["score_inputs"], ensure_ascii=False, default=str),
         "missing_metrics_json": json.dumps(row["missing_metrics"], ensure_ascii=False),
+        "data_readiness_status": row["data_readiness_status"],
         "publication_status": row["publication_status"],
         "publication_reasons_json": json.dumps(row["publication_reasons"], ensure_ascii=False),
     } for row in scored]
@@ -347,10 +348,11 @@ def audit_methodology_v4_data() -> dict:
                 "invalid_metric_ranges": """
                     SELECT count(*) FROM market.fii_metric_observations
                     WHERE quality_status <> 'rejected' AND (
-                       (metric_name IN ('vacancia_fisica','property_delinquency','leverage',
+                       (metric_name IN ('vacancia_fisica','property_delinquency',
                                            'holdings_overlap','income_recurrence',
                                            'portfolio_income_recurrence')
                            AND (value_numeric < 0 OR value_numeric > 1))
+                       OR (metric_name='leverage' AND value_numeric < 0)
                        OR (metric_name IN ('dy_12m','dy_1m')
                            AND (value_numeric < 0 OR value_numeric > 0.60))
                        OR (metric_name='pvp' AND (value_numeric <= 0 OR value_numeric > 10))
@@ -554,23 +556,41 @@ def _persist_document_discoveries(conn, documents: list[dict]) -> int:
     if not documents or not conn.execute(text(
             "SELECT to_regclass('market.fii_documents') IS NOT NULL")).scalar():
         return 0
-    inserted = 0
+    # Um arquivo EVENTUAL da CVM pode conter milhares de documentos. O upsert em
+    # lote preserva a idempotencia e evita um round-trip ao PostgreSQL por linha.
+    deduped: dict[tuple[str, str], dict] = {}
     for doc in documents:
-        result = conn.execute(text("""
-            INSERT INTO market.fii_documents (
-                ticker, document_type, natural_key, reference_date,
-                source_published_at, first_observed_at, source_url
-            ) VALUES (:ticker, :kind, :natural, :reference, :published, :observed, :url)
-            ON CONFLICT (document_type, natural_key) DO UPDATE SET
-                source_published_at=COALESCE(EXCLUDED.source_published_at,
-                                             market.fii_documents.source_published_at),
-                source_url=EXCLUDED.source_url
-        """), {"ticker": doc.get("ticker"), "kind": doc.get("document_type"),
-                 "natural": doc.get("natural_key"), "reference": doc.get("reference_date"),
-                 "published": doc.get("source_published_at"),
-                 "observed": doc.get("first_observed_at"), "url": doc.get("source_url")})
-        inserted += max(int(result.rowcount or 0), 0)
-    return inserted
+        kind = str(doc.get("document_type") or "EVENTUAL")[:80]
+        natural = str(doc.get("natural_key") or "").strip()
+        if not natural:
+            continue
+        deduped[(kind, natural)] = {
+            "ticker": doc.get("ticker"), "kind": kind, "natural_key": natural,
+            "reference_date": doc.get("reference_date"),
+            "published": doc.get("source_published_at"),
+            "observed": doc.get("first_observed_at"), "url": doc.get("source_url"),
+        }
+    if not deduped:
+        return 0
+    result = conn.execute(text("""
+        WITH incoming AS (
+            SELECT * FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS i(
+                ticker text, kind text, natural_key text, reference_date date,
+                published timestamptz, observed timestamptz, url text
+            )
+        )
+        INSERT INTO market.fii_documents (
+            ticker, document_type, natural_key, reference_date,
+            source_published_at, first_observed_at, source_url
+        )
+        SELECT ticker, kind, natural_key, reference_date, published, observed, url
+        FROM incoming
+        ON CONFLICT (document_type, natural_key) DO UPDATE SET
+            source_published_at=COALESCE(EXCLUDED.source_published_at,
+                                         market.fii_documents.source_published_at),
+            source_url=EXCLUDED.source_url
+    """), {"rows": json.dumps(list(deduped.values()), ensure_ascii=False, default=str)})
+    return max(int(result.rowcount or 0), 0)
 
 
 def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
