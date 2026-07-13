@@ -16,6 +16,7 @@ import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default
 import core.data_reconciliacao as _recon
 from core.b3_portfolio_model import save_b3_portfolio_model
 from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
+from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
 from design.componentes import card_metrica
 
 # ── Importa engine compartilhado de empresas_b3 ───────────────────────────────
@@ -344,6 +345,85 @@ def _simular_seg_backtest(
         details_out["pending_cash_strategy"] = float(caixa_est)
         details_out["pending_cash_equal_weight"] = float(caixa_ew)
     return _val(cotas_est), selic_acum, _val(cotas_ew), contrib_est
+
+
+def _quali_avaliar_cached(tk: str) -> dict:
+    """Parecer de seleção com cache de sessão (o LLM já tem cache diário)."""
+    cache = st.session_state.setdefault("pb3_quali_cache", {})
+    if tk not in cache:
+        try:
+            cache[tk] = avaliar_para_selecao(tk)
+        except Exception as exc:  # fail-open: falha de avaliação nunca veta
+            cache[tk] = {"classificacao": "aprovar_com_ressalvas",
+                         "motivo": f"avaliação indisponível ({exc})",
+                         "parecer": {}, "dossie": {}}
+    return cache[tk]
+
+
+def _entry_guard_exclui(entry_guard: dict, tk: str) -> bool:
+    """Mesma regra de exclusão do Score de Entrada usada na montagem da carteira."""
+    entry = (entry_guard.get(str(tk).upper().replace(".SA", ""), {})
+             if isinstance(entry_guard, dict) else {})
+    if not entry:
+        return False
+    status = str(entry.get("status_entrada", "")).lower()
+    score_e = float(entry.get("score_entrada", 0.0) or 0.0)
+    return status.startswith("exclu") or score_e < 30.0
+
+
+def _aplicar_gate_qualitativo(
+    selecionados: list[str],
+    ranked_prox: list[tuple[str, float]],
+    entry_guard: dict,
+    pesos_p: dict[str, float],
+    seg_label: str,
+    log: dict,
+    max_substitutos_avaliados: int = 2,
+) -> list[str]:
+    """
+    Veto qualitativo com substituição pelo próximo do ranking do segmento.
+
+    Roda DEPOIS do ranking estatístico e não altera score algum: um nome
+    vetado sai com motivo registrado e o próximo elegível do MESMO segmento
+    (na ordem do score) herda a vaga e o orçamento de peso. Veto é exceção
+    grave e documentada no parecer; falha de LLM nunca veta (fail-open).
+    """
+    finais: list[str] = []
+    for tk in selecionados:
+        aval = _quali_avaliar_cached(tk)
+        if aval["classificacao"] != "vetar":
+            if aval["classificacao"] == "aprovar_com_ressalvas" and aval.get("motivo"):
+                log["ressalvas"][tk] = str(aval["motivo"])
+            finais.append(tk)
+            continue
+        log["vetados"].append({"tk": tk, "segmento": seg_label,
+                               "motivo": str(aval.get("motivo", ""))})
+        substituto = None
+        avaliacoes = 0
+        for cand, _sc in ranked_prox:
+            cand = str(cand)
+            if cand in finais or cand in selecionados:
+                continue
+            if _entry_guard_exclui(entry_guard, cand):
+                continue
+            aval_c = _quali_avaliar_cached(cand)
+            avaliacoes += 1
+            if aval_c["classificacao"] != "vetar":
+                substituto = cand
+                if (aval_c["classificacao"] == "aprovar_com_ressalvas"
+                        and aval_c.get("motivo")):
+                    log["ressalvas"][cand] = str(aval_c["motivo"])
+                break
+            log["vetados"].append({"tk": cand, "segmento": seg_label,
+                                   "motivo": str(aval_c.get("motivo", ""))})
+            if avaliacoes >= max_substitutos_avaliados:
+                break
+        if substituto:
+            finais.append(substituto)
+            pesos_p[substituto] = pesos_p.get(substituto) or pesos_p.get(tk, 0.0)
+            log["substituicoes"].append({"entra": substituto, "sai": tk,
+                                         "segmento": seg_label})
+    return finais
 
 
 def _rank_ticker(score_map: dict[str, float], ticker: str) -> int | None:
@@ -1474,6 +1554,22 @@ def render(show_header: bool = True) -> None:
                  "viável (ex.: 2 nomes → até 50% cada), eliminando as 'restrições "
                  "inviáveis'. Desligado, usa o cap fixo (padrão de mercado grande).",
         )
+        _quali_ok = quali_gate_disponivel()
+        usar_gate_quali = st.checkbox(
+            "Parecer qualitativo (LLM) na seleção — veto com substituição",
+            value=_quali_ok,
+            disabled=not _quali_ok,
+            key="pb3_gate_quali",
+            help="Para cada líder estatística, monta um DOSSIÊ determinístico "
+                 "(fundamentos multi-ano, dividendo recorrente vs extraordinário, "
+                 "valuation calculado dos dados brutos, eventos societários CVM e "
+                 "red flags de qualidade de dados) e pede um parecer ao LLM. "
+                 "Veto = exceção grave e documentada: o nome sai e o PRÓXIMO do "
+                 "ranking DO MESMO segmento herda a vaga, com motivo registrado. "
+                 "Aplicado DEPOIS da estatística — nunca altera score, FDR ou "
+                 "Rank-IC; falha de LLM nunca veta (fail-open). Sem LLM "
+                 "configurado, fica desativado.",
+        )
         if criterio_modo == "economico":
             st.caption(
                 "**Como a aprovação funciona — modo Econômico (Brasil):** um "
@@ -1889,10 +1985,32 @@ def render(show_header: bool = True) -> None:
     _sec_hdr(f"📋 Empresas líderes para o próximo ano ({ano_atual})")
     st.caption(f"Apenas segmentos aprovados · Para compra em {ano_atual}")
 
+    # ── Gate qualitativo: pré-avalia as candidatas com barra de progresso ────
+    # (as avaliações são cacheadas — reruns e substitutos reaproveitam)
+    quali_log: dict = {"vetados": [], "substituicoes": [], "ressalvas": {}}
+    _gate_ativo = bool(st.session_state.get("pb3_gate_quali")) and quali_gate_disponivel()
+    if _gate_ativo and aprovados:
+        _pend: list[str] = []
+        for res in aprovados:
+            _rp = sorted(res["score_proximo"].items(), key=lambda x: x[1], reverse=True)
+            if _rp:
+                _pend.append(str(_rp[0][0]))
+                _tm = res.get("ticker_maior_part")
+                if _tm and str(_tm) != str(_rp[0][0]):
+                    _pend.append(str(_tm))
+        _pend = [t for t in dict.fromkeys(_pend)
+                 if t not in st.session_state.get("pb3_quali_cache", {})]
+        if _pend:
+            _pg = st.progress(0, text="Parecer qualitativo (LLM) das líderes…")
+            for _i, _tk in enumerate(_pend):
+                _pg.progress(_i / len(_pend), text=f"Parecer qualitativo: {_tk}…")
+                _quali_avaliar_cached(_tk)
+            _pg.empty()
+
     proximos: list[dict] = []
     for res in aprovados:
         score_prox = res["score_proximo"]
-        pesos_p    = res["pesos_prox"]
+        pesos_p    = dict(res["pesos_prox"])  # cópia: o gate pode realocar peso
         part_hist  = res["participacao"]
         ano_ref    = int(res.get("ano_ref_score", ano_atual - 1))
         ranked_prox = sorted(score_prox.items(), key=lambda x: x[1], reverse=True)
@@ -1911,6 +2029,12 @@ def render(show_header: bool = True) -> None:
             )
             if maior_info[0]:
                 selecionados.append(str(ticker_maior))
+
+        if _gate_ativo:
+            selecionados = _aplicar_gate_qualitativo(
+                selecionados, ranked_prox, entry_guard, pesos_p,
+                f"{res['setor']} › {res['segmento']}", quali_log,
+            )
 
         for tk in selecionados:
             score = score_prox.get(tk, 0.0)
@@ -1935,6 +2059,15 @@ def render(show_header: bool = True) -> None:
                     motivos.append(maior_info[1])
                 else:
                     motivos.append("Maior participação no segmento")
+            _aval_quali = (st.session_state.get("pb3_quali_cache", {}).get(tk)
+                           if _gate_ativo else None)
+            if _gate_ativo:
+                _sub_de = next((s["sai"] for s in quali_log["substituicoes"]
+                                if s["entra"] == tk), None)
+                if _sub_de:
+                    motivos.append(f"Entrou por veto qualitativo a {_sub_de}")
+                if tk in quali_log["ressalvas"]:
+                    motivos.append("Parecer LLM com ressalva")
             nome_row = df_set[df_set["ticker"] == tk]
             nome = nome_row["nome_empresa"].iloc[0][:24] if not nome_row.empty else tk
             proximos.append({
@@ -1949,6 +2082,9 @@ def render(show_header: bool = True) -> None:
                 "alpha_ew": _margem_pct(res.get("val_est_oos", 0.0), res.get("val_ew_oos", 0.0)),
                 "rank_score": _rank_ticker(score_prox, tk),
                 "ano_lider": ano_ref if tk == ticker_lider else res.get("ultimo_lid", {}).get(tk),
+                "quali": ({"classificacao": _aval_quali.get("classificacao"),
+                           "motivo": str(_aval_quali.get("motivo", ""))[:300]}
+                          if _aval_quali else None),
             })
 
     # Orçamento explícito: cada segmento aprovado recebe a mesma fração da
@@ -2050,6 +2186,36 @@ def render(show_header: bool = True) -> None:
     else:
         st.info("Nenhum líder identificado com os parâmetros atuais.")
 
+    # ── TRANSPARÊNCIA DO GATE QUALITATIVO ────────────────────────────────────
+    if _gate_ativo:
+        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                    unsafe_allow_html=True)
+        _sec_hdr("🧠 Gate qualitativo (parecer LLM) — vetos e substituições")
+        st.caption(
+            "Aplicado DEPOIS do ranking estatístico: o parecer lê o dossiê "
+            "determinístico (fundamentos, dividendos recorrente vs extraordinário, "
+            "eventos societários CVM e red flags de dados) e só veta exceção grave "
+            "documentada. O substituto é o próximo do ranking do MESMO segmento. "
+            "Nada aqui altera score, FDR ou Rank-IC; falha de LLM não veta."
+        )
+        if not (quali_log["vetados"] or quali_log["substituicoes"]
+                or quali_log["ressalvas"]):
+            st.markdown("✅ Nenhum veto ou ressalva — todas as líderes "
+                        "estatísticas passaram no parecer qualitativo.")
+        for v in quali_log["vetados"]:
+            st.markdown(f"❌ **{v['tk']}** ({v['segmento']}) — vetada: "
+                        f"{v['motivo'] or 'sem motivo declarado'}")
+        for s in quali_log["substituicoes"]:
+            st.markdown(f"🔁 **{s['entra']}** herda a vaga de **{s['sai']}** "
+                        f"({s['segmento']})")
+        if quali_log["ressalvas"]:
+            with st.expander(
+                f"⚠️ Aprovadas com ressalva ({len(quali_log['ressalvas'])})",
+                expanded=False,
+            ):
+                for _tk, _mot in quali_log["ressalvas"].items():
+                    st.markdown(f"• **{_tk}**: {_mot}")
+
     if proximos_uniq:
         st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
                     unsafe_allow_html=True)
@@ -2079,6 +2245,9 @@ def render(show_header: bool = True) -> None:
             "fundamentos_corrigidos_web": int(quality_summary.get("correcoes_web", 0) or 0),
             "fundamentos_invalidos": int(quality_summary.get("celulas_invalidas", 0) or 0),
             "status_invest_reconciliacao": bool(quality_summary.get("usa_status_invest", False)),
+            "qualitative_gate": bool(_gate_ativo),
+            "quali_vetados": quali_log["vetados"],
+            "quali_substituicoes": quali_log["substituicoes"],
         }
         metrics_modelo = {
             "num_empresas": len(proximos_uniq),

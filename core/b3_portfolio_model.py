@@ -251,6 +251,10 @@ def save_b3_portfolio_model(
                 "is_lider_score": "Lider" in " ".join(item.get("motivos") or []),
                 "params_hash": plan_hash,
             }
+            # Parecer do gate qualitativo (classificacao/motivo) — a Avaliacao
+            # de Portfolio exibe isso junto ao relatorio completo da empresa.
+            if item.get("quali"):
+                meta["quali"] = item["quali"]
             conn.execute(
                 text("""
                     INSERT INTO b3_portfolio_model_items (

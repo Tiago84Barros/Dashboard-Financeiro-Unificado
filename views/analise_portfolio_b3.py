@@ -17,8 +17,8 @@ import streamlit as st
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.data_reconciliacao as _recon
 from core.b3_portfolio_model import load_active_b3_portfolio_model
+from core.dossie_b3 import gerar_parecer_empresa
 from core.llm_b3 import (
-    analisar_empresa,
     analisar_portfolio,
     chat_com_portfolio,
     llm_disponivel,
@@ -485,13 +485,78 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
     persp_txt  = persp.upper()
     acao_txt   = an.get("acao_sugerida", "?").upper()
     with st.expander(f"{persp_icon} {tk}  —  {acao_txt}  •  {w_new*100:.1f}%  [{persp_txt}]", expanded=False):
-        # Resumo
+        # Classificação do parecer para seleção (mesmo critério do gate da
+        # Criação de Portfólio) — veto/ressalva aparecem antes de tudo.
+        quali_cls = an.get("classificacao_selecao")
+        if quali_cls == "vetar":
+            st.error(f"🚫 Parecer recomenda VETO: {an.get('motivo_selecao', '')}")
+        elif quali_cls == "aprovar_com_ressalvas" and an.get("motivo_selecao"):
+            st.caption(f"⚠️ Ressalva do parecer: {an['motivo_selecao']}")
+
+        # Síntese do parecer
         resumo = an.get("resumo", "")
         if resumo:
             st.markdown(
-                f'<div class="apb3-report-qual"><div class="apb3-report-label">Tese de Investimento</div>{resumo}</div>',
+                f'<div class="apb3-report-qual"><div class="apb3-report-label">Síntese do Parecer</div>{resumo}</div>',
                 unsafe_allow_html=True,
             )
+
+        # KPIs determinísticos do dossiê (calculados em código, não pela LLM)
+        d   = it.get("dossie") or {}
+        val = d.get("valuation") or {}
+        dv  = d.get("dividendos") or {}
+        sj  = d.get("sensibilidade_juros") or {}
+        if val or dv:
+            _preco = val.get("preco")
+            _ret   = val.get("ret_12m_pct")
+            _dy    = dv.get("dy_12m_pct")
+            _plc, _pvp = val.get("pl_calc"), val.get("pvp_calc")
+            _nd    = sj.get("div_liq_mi")
+            _pos   = {"caixa_liquido": "caixa líquido", "endividada": "endividada",
+                      "moderada": "alavancagem moderada"}.get(sj.get("posicao"), "—")
+            _preco_sub = str(val.get("data_preco") or "")
+            if _ret is not None:
+                _preco_sub += f" · 12m {_ret:+.1f}%"
+            cards_d = "".join([
+                _kpi_card("Preço",
+                          f"R$ {_preco:.2f}" if _preco is not None else "—",
+                          _preco_sub, "neu"),
+                _kpi_card("DY 12m recomputado",
+                          f"{_dy:.1f}%" if _dy is not None else "—",
+                          "proventos dedup ÷ preço", "pos" if (_dy or 0) >= 6 else "neu"),
+                _kpi_card("P/L · P/VP (calc)",
+                          f"{_plc if _plc is not None else '—'} · {_pvp if _pvp is not None else '—'}",
+                          f"ano-base {val.get('ano_base_valuation') or '—'}", "neu"),
+                _kpi_card("Dívida líquida",
+                          f"R$ {_nd:,.0f} mi" if _nd is not None else "—",
+                          _pos, "pos" if (_nd is not None and _nd < 0) else "neu"),
+            ])
+            st.markdown(f'<div class="apb3-kpi-row">{cards_d}</div>',
+                        unsafe_allow_html=True)
+
+        # Relatório completo por seções (formato do parecer institucional)
+        rel = an.get("relatorio") or {}
+        for k_sec, lbl in (
+            ("empresa_hoje", "O que a empresa é hoje"),
+            ("resultados", "Resultados"),
+            ("dividendos", "Dividendos — recorrente vs extraordinário"),
+            ("valuation", "Valuation"),
+            ("governanca_controlador", "Governança e controlador"),
+            ("qualidade_dados", "Qualidade dos dados"),
+        ):
+            txt = rel.get(k_sec)
+            if txt:
+                st.markdown(
+                    f'<div class="apb3-report-qual"><div class="apb3-report-label">{lbl}</div>{txt}</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # Red flags determinísticas do dossiê (verificadas em código)
+        flags = d.get("red_flags") or []
+        if flags:
+            st.markdown("**Red flags determinísticas (verificadas em código)**")
+            for f_ in flags:
+                st.markdown(f"🚩 {f_}")
 
         c1, c2 = st.columns(2)
         # Riscos
@@ -628,8 +693,9 @@ def _executar_analise(
         alpha_    = float(it.get("alpha_selic") or 0)
         n_docs    = (cobertura_docs or {}).get(tk, 0)
 
-        df_mult = mult_batch.get(tk, pd.DataFrame())
-        df_fin  = dre_batch.get(tk, pd.DataFrame())
+        # Fundamentos por empresa agora vêm do dossiê determinístico
+        # (core/dossie_b3) — mult_batch/dre_batch seguem na assinatura para os
+        # consolidados da tela e retrocompatibilidade do chamador.
 
         # ── RAG: recupera chunks CVM para este ticker ─────────────────────────
         rag_ctx = ""
@@ -657,15 +723,18 @@ def _executar_analise(
             peers_ctx = ""
 
         prog.progress((idx + 1) / len(items), text=f"LLM: {tk}…")
+        # Dossiê determinístico + parecer narrativo (core/dossie_b3): os números
+        # são calculados em código a partir do banco; a LLM só escreve o parecer.
+        dossie: dict = {}
         try:
-            analise = analisar_empresa(
-                ticker=tk, nome=nome_, setor=setor_, segmento=seg_,
-                peso_pct=peso_pct_, score=score_, alpha_selic=alpha_,
-                df_mult=df_mult, df_fin=df_fin,
-                macro_hist=macro_hist,
-                portfolio_ctx=portfolio_ctx,
-                rag_context=rag_ctx,
-                peers_ctx=peers_ctx,
+            _ctx_emp = (
+                f"{portfolio_ctx} Empresa avaliada: {nome_} | setor {setor_} / "
+                f"segmento {seg_}. Peso atual na carteira: {peso_pct_:.1f}% | "
+                f"score quantitativo {score_:.1f} | alpha vs Selic {alpha_:+.1f}%."
+            )
+            analise, dossie = gerar_parecer_empresa(
+                tk, rag_context=rag_ctx, peers_ctx=peers_ctx,
+                portfolio_ctx=_ctx_emp,
             )
         except Exception as exc:
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -673,11 +742,10 @@ def _executar_analise(
             from core.llm_b3 import _fallback_empresa
             analise = _fallback_empresa(tk, peso_pct_)
         else:
-            # analisar_empresa não levanta exceção quando _parse_json cai no
-            # fallback silenciosamente — detecta esse caso para reportar a falha.
-            if "(erro de parsing)" in str(analise.get("resumo", "")):
-                erros.append(f"{tk}: resposta da LLM não pôde ser interpretada "
-                             "(JSON inválido).")
+            # gerar_parecer_empresa nunca levanta exceção — o fallback neutro
+            # vem com confianca=0; detecta para reportar a falha na UI.
+            if int(analise.get("confianca") or 0) == 0 and not analise.get("relatorio"):
+                erros.append(f"{tk}: parecer não gerado — exibindo fallback neutro.")
 
         items_analisados.append({
             "ticker":     tk,
@@ -686,6 +754,7 @@ def _executar_analise(
             "score":      score_,
             "alpha_selic": alpha_,
             "analise":    analise,
+            "dossie":     dossie,
             "n_docs":     n_docs,
             "rag_stats":  rag_stats,
         })
