@@ -28,83 +28,21 @@ import json
 import os
 import sys
 from collections import defaultdict
-from decimal import Decimal, ROUND_HALF_UP
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text
 
-from core.brapi import dedup_cash_dividends
-from data_pipeline.market import normalize as nz
+from data_pipeline.market import integrity
 
-BATCH_PAYLOADS = 300
 BATCH_KEYS = 1000
 
-# extrai só o cashDividends no servidor (payload pode ser results[] ou quote)
-_Q_PAYLOADS = """
-    SELECT id, ticker,
-           COALESCE(payload_json#>'{results,0,dividendsData,cashDividends}',
-                    payload_json#>'{dividendsData,cashDividends}') AS cds,
-           COALESCE(payload_json#>>'{results,0,symbol}',
-                    payload_json->>'symbol') AS sym
-    FROM market.brapi_raw_payloads
-    WHERE endpoint='quote' AND request_status='success'
-      AND payload_json IS NOT NULL AND id > :last {tk_filter}
-    ORDER BY id LIMIT :lim
-"""
-
-_ALVO = """
-        SELECT (j->>0)       AS ticker,
-               (j->>1)::date AS event_date,
-               (j->>2)       AS type,
-               (j->>3)::numeric AS amount
-        FROM jsonb_array_elements(CAST(:keys AS jsonb)) j
-"""
-
-_SQL_DRY = f"""
-    SELECT d.ticker, d.event_date, d.type, d.amount
-    FROM market.dividends d
-    JOIN ({_ALVO}) a
-      ON d.ticker = a.ticker AND d.event_date = a.event_date
-     AND d.type = a.type AND abs(d.amount - a.amount) <= 0.0000005
-    WHERE d.source = 'brapi.dev'
-"""
-
-_SQL_DELETE = f"""
-    DELETE FROM market.dividends d
-    USING ({_ALVO}) a
-    WHERE d.source = 'brapi.dev'
-      AND d.ticker = a.ticker AND d.event_date = a.event_date
-      AND d.type = a.type AND abs(d.amount - a.amount) <= 0.0000005
-    RETURNING d.ticker, d.event_date, d.type, d.amount
-"""
-
-
-def derive_drop_keys(items: list[dict], tickers: set[str]) -> set[tuple]:
-    """Chaves (ticker, event_date, type, amount) que o normalizador ATUAL
-    descarta, na forma exata em que o normalizador ANTIGO as gravou."""
-    kept_ids = {id(x) for x in dedup_cash_dividends(items)}
-    keys: set[tuple] = set()
-    for it in items:
-        if id(it) in kept_ids:
-            continue
-        amount = nz._f(it.get("rate"))
-        if amount is None or amount <= 0:
-            continue                       # o antigo também pulava
-        ex = nz._as_date(it.get("lastDatePrior") or it.get("approvedOn"))
-        pay = nz._sane_payment_date(nz._as_date(it.get("paymentDate")), ex)
-        event = pay or ex
-        if event is None:
-            continue
-        typ = str(it.get("label") or "DIVIDENDO")[:40]
-        # NUMERIC(18,6) do Postgres arredonda half-up; round() do Python é
-        # banker's (1.6657445 -> 1.665744) e erraria a chave por 1e-6.
-        amt = str(Decimal(str(amount)).quantize(Decimal("0.000001"),
-                                                rounding=ROUND_HALF_UP))
-        for tk in tickers:
-            keys.add((tk, event.isoformat(), typ, amt))
-    return keys
+# núcleo compartilhado com a checagem recorrente (data_pipeline.market.integrity)
+_Q_PAYLOADS = integrity.Q_PAYLOADS
+_SQL_DRY = integrity.SQL_MATCH
+_SQL_DELETE = integrity.SQL_DELETE
+derive_drop_keys = integrity.dividend_drop_keys
 
 
 def main() -> int:
@@ -121,33 +59,14 @@ def main() -> int:
         print("ERRO: banco não configurado (DATABASE_URL/SUPABASE_UNIFICADO_URL).")
         return 1
 
-    tk_filter = ""
-    params_extra = {}
-    if args.tickers:
-        tk_filter = "AND ticker = ANY(:tks)"
-        params_extra["tks"] = [t.upper().replace(".SA", "") for t in args.tickers]
-
     # 1) varre TODOS os payloads quote e re-deriva as chaves a apagar
     all_keys: set[tuple] = set()
-    last, n_payloads = 0, 0
+    n_payloads = 0
     with engine.connect() as conn:
-        while True:
-            rows = conn.execute(
-                text(_Q_PAYLOADS.replace("{tk_filter}", tk_filter)),
-                {"last": last, "lim": BATCH_PAYLOADS, **params_extra}).fetchall()
-            if not rows:
-                break
-            for pid, tk, cds, sym in rows:
-                last = pid
-                n_payloads += 1
-                items = json.loads(cds) if isinstance(cds, str) else (cds or [])
-                if not items:
-                    continue
-                # ingest grava sob o ticker requisitado (payload.ticker); o
-                # renormalize histórico gravou sob o symbol da brapi — cobre os dois
-                tks = {t for t in (str(tk or "").upper().replace(".SA", ""),
-                                   str(sym or "").upper().replace(".SA", "")) if t}
-                all_keys |= derive_drop_keys(items, tks)
+        for _pid, tks, items in integrity.iter_payload_cash_dividends(
+                conn, args.tickers, latest_only=False):
+            n_payloads += 1
+            all_keys |= derive_drop_keys(items, tks)
     print(f"payloads varridos: {n_payloads}; chaves candidatas a DELETE: {len(all_keys)}")
 
     if not all_keys:

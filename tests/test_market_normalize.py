@@ -157,6 +157,25 @@ def test_dividend_rows_classe_mista():
     assert all(r["ticker"] == "CEBR5" for r in rows)
 
 
+def test_metric_rows_dy_spot_guard():
+    # DY spot (consenso brapi) some quando excede 1,5x a soma própria 12m
+    # pós-dedup — em multi-classe o consenso soma as classes e infla ~2x.
+    q = {"symbol": "CEBR5", "regularMarketPrice": 26.0,
+         "defaultKeyStatistics": {"dividendYield": 0.33},
+         "dividendsData": {"cashDividends": [
+             {"paymentDate": "2025-12-19T03:00:00.000Z",
+              "lastDatePrior": "2025-12-10T03:00:00.000Z",
+              "rate": 4.0, "label": "DIVIDENDO", "remarks": ""},
+         ]}}
+    # própria 12m = 4.0/26 ≈ 0.154; brapi 0.33 > 1.5x → descartado
+    by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(q)}
+    assert "DY" not in by
+    # consenso coerente (≤1,5x) é mantido
+    q["defaultKeyStatistics"]["dividendYield"] = 0.16
+    by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(q)}
+    assert by["DY"] == 0.16
+
+
 def test_metric_rows():
     by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(_Q)}
     assert by["P/L"] == 5.0 and by["P/VP"] == 1.4 and by["EV/EBITDA"] == 3.1

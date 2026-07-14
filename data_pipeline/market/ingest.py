@@ -251,6 +251,16 @@ def _run(engine, tickers: list[str], *, range_: str, full: bool,
                 logger.warning("%s: %s falhou: %s", batch_label, tk, exc)
         if i < len(tickers) - 1:
             sched.sleep_jittered(base=delay)
+    # Integridade pós-run: ecos de dividendos (classe/fonte CSV da brapi) que
+    # tenham escapado do dedup do normalizador viram warn no painel de
+    # qualidade em vez de corromper silenciosamente somas 12m e DY (caso CEB).
+    try:
+        from data_pipeline.market import integrity
+        eco = integrity.check_dividend_echoes(engine, tickers=tickers)
+        if eco.get("linhas_eco"):
+            prog["ecos_dividendos"] = eco["linhas_eco"]
+    except Exception as exc:
+        logger.warning("%s: checagem de ecos de dividendos falhou: %s", batch_label, exc)
     logger.info("market/%s: %s", batch_label, prog)
     return prog
 

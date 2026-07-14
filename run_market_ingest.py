@@ -38,7 +38,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão BRAPI Pro -> Supabase (market.*)")
     p.add_argument("command",
                    choices=["validate", "cadastro", "bootstrap", "daily", "annual",
-                            "reprocess", "renormalize", "parity", "fiis",
+                            "reprocess", "renormalize", "integrity", "parity", "fiis",
                             "fiis-reprocess", "fiis-cvm", "fiis-series",
                             "fiis-metrics", "fiis-vacancia", "fiis-imoveis",
                             "fiis-v2", "fiis-cvm-structured", "fiis-v4", "fiis-v4-audit", "fiis-documents",
@@ -218,6 +218,20 @@ def main() -> int:
         if args.json:
             print(json.dumps(rep, indent=2, default=str, ensure_ascii=False))
         return 0
+
+    if args.command == "integrity":
+        from data_pipeline.market import integrity
+        from data_pipeline.utils.db_utils import get_pipeline_engine
+        rep = integrity.check_dividend_echoes(get_pipeline_engine(), tickers)
+        log.info("Integridade dividendos — ecos=%d em %d ticker(s)%s",
+                 rep["linhas_eco"], len(rep["tickers"]),
+                 " ✅" if not rep["linhas_eco"] else
+                 " ⚠ rode scripts/fix_dividends_class_mix.py --apply")
+        for tk, n in sorted(rep["tickers"].items()):
+            log.warning("  %s: %d linha(s) de eco", tk, n)
+        if args.json:
+            print(json.dumps(rep, indent=2, default=str))
+        return 0 if not rep["linhas_eco"] else 1
 
     if args.command == "bootstrap":
         prog = ingest.bootstrap(tickers, args.source or "setores", args.limit or 50)
