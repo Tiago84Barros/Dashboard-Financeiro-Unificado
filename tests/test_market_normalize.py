@@ -139,6 +139,24 @@ def test_dividend_rows_saneamento():
     assert fut["payment_date"] is None                    # event_date cairá no ex_date
 
 
+def test_dividend_rows_classe_mista():
+    # regressão CEB (CEBR5/6): a brapi mescla no feed de cada classe o valor
+    # das OUTRAS classes via fonte CSV (remarks não-vazio, paymentDate estimado
+    # = ex, assetIssued com o ISIN do próprio ticker). Com par confirmado na
+    # mesma (data-ex, label), o eco cai; órfã da CSV permanece.
+    q = {"symbol": "CEBR5", "dividendsData": {"cashDividends": [
+        {"lastDatePrior": "2025-09-09", "paymentDate": "2025-09-17",
+         "rate": 1.665745, "label": "DIVIDENDO", "remarks": ""},
+        {"lastDatePrior": "2025-09-09", "paymentDate": "2025-09-09",
+         "rate": 1.832319, "label": "DIVIDENDO", "remarks": "csv:payment_date_estimated"},
+        {"lastDatePrior": "2020-05-05", "paymentDate": "2020-05-05",
+         "rate": 0.5, "label": "JCP", "remarks": "csv:payment_date_estimated"},
+    ]}}
+    rows = nz.dividend_rows(q)
+    assert sorted(r["amount"] for r in rows) == [0.5, 1.665745]
+    assert all(r["ticker"] == "CEBR5" for r in rows)
+
+
 def test_metric_rows():
     by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(_Q)}
     assert by["P/L"] == 5.0 and by["P/VP"] == 1.4 and by["EV/EBITDA"] == 3.1
