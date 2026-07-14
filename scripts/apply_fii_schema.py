@@ -1,0 +1,47 @@
+"""Aplica, de forma idempotente, as migrations necessárias à metodologia FII v6."""
+from __future__ import annotations
+
+from pathlib import Path
+
+from data_pipeline.utils.db_utils import get_pipeline_engine
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MIGRATIONS = (
+    ("033_fii_pit_validation_and_calibration.sql", "market.fii_pit_score_snapshots"),
+    ("034_fii_v6_covering_indexes.sql", "market.idx_fii_validation_methodology"),
+    ("035_fii_b3_archive_checkpoints.sql", "market.fii_b3_archive_loads"),
+)
+
+
+def apply() -> dict[str, list[str]]:
+    engine = get_pipeline_engine()
+    if engine is None:
+        raise RuntimeError("banco indisponível")
+    report: dict[str, list[str]] = {"applied": [], "skipped": []}
+    raw = engine.raw_connection()
+    try:
+        with raw.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_lock(hashtext(%s))", ("fii-schema-v6",))
+            for filename, marker in MIGRATIONS:
+                cursor.execute("SELECT to_regclass(%s)", (marker,))
+                if cursor.fetchone()[0] is not None:
+                    report["skipped"].append(filename)
+                    continue
+                sql = (ROOT / "supabase_unificado" / "schema" / filename).read_text(
+                    encoding="utf-8")
+                cursor.execute(sql)
+                raw.commit()
+                report["applied"].append(filename)
+            cursor.execute("SELECT pg_advisory_unlock(hashtext(%s))", ("fii-schema-v6",))
+            raw.commit()
+    except Exception:
+        raw.rollback()
+        raise
+    finally:
+        raw.close()
+    return report
+
+
+if __name__ == "__main__":
+    print(apply())
