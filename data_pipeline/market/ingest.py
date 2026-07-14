@@ -617,11 +617,24 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
             if not quote:
                 continue
             data = nz.normalize_all(quote)
+            # Reconciliação: grava sob o ticker-B3 da coluna do payload (o
+            # requisitado), não o símbolo divergente que a brapi possa devolver.
+            # Sem isto, um backfill recria os assets órfãos que o ingest evita
+            # (AXIA3 em vez de ELET3 etc. — ver market.ticker_alias, PR #45).
+            alias_sym = _reconcile_ticker(data, tk)
             for _t_pit in ("income_statements", "balance_sheets", "cash_flow_statements"):
                 for _r_pit in data.get(_t_pit) or []:
                     _r_pit["raw_payload_id"] = pid
             cod = cvm_map.get(tk)
             with engine.begin() as conn:
+                if alias_sym:
+                    _ensure_ticker_alias(conn)
+                    conn.execute(text("""
+                        INSERT INTO market.ticker_alias (brapi_symbol, b3_ticker, codigo_cvm, motivo)
+                        VALUES (:s, :b, :c, 'renormalize: símbolo brapi divergente do ticker B3')
+                        ON CONFLICT (brapi_symbol) DO UPDATE
+                            SET b3_ticker = EXCLUDED.b3_ticker, codigo_cvm = EXCLUDED.codigo_cvm
+                    """), {"s": alias_sym, "b": tk, "c": cod})
                 comp = data["companies"]
                 if comp and cod is not None:
                     comp[0]["codigo_cvm"] = cod
