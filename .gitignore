@@ -245,6 +245,8 @@ artifacts/
 local_staging/fii_documents/
 local_staging/fii_cvm/
 local_staging/fii_cvm_cri/
+local_staging/fii_cvm_registry/
+local_staging/fii_b3_cotahist/
 
 # Saídas de teste locais (lixo)
 _testout.txt

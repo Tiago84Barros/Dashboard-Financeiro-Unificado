@@ -532,6 +532,17 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
         FROM market.fii_exposures e JOIN latest_at l
           USING (ticker, exposure_type, reference_date, available_at)
     """)
+    calibrations = _q("""
+        SELECT metric_name,
+               sum(lower_bound * GREATEST(reviewed_count,1)) /
+                   NULLIF(sum(GREATEST(reviewed_count,1)),0) AS lower_bound,
+               sum(reviewed_count) AS reviewed_count
+        FROM market.fii_parser_calibrations
+        GROUP BY metric_name
+    """)
+    calibration_map = ({str(row.metric_name): float(row.lower_bound)
+                        for row in calibrations.itertuples()}
+                       if not calibrations.empty else {})
     rows: list[dict] = []
     for _, item in base.iterrows():
         ticker = str(item["Ticker"])
@@ -599,12 +610,16 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
                     row[key] = mapping
                 elif kind in ("manager", "sector") and mapping:
                     row[str(kind)] = max(mapping, key=mapping.get)
+        observed_calibrations = [calibration_map[key] for key in row
+                                 if key in calibration_map]
+        row["parser_calibration"] = (sum(observed_calibrations) / len(observed_calibrations)
+                                     if observed_calibrations else 1.0)
         rows.append(row)
     return pd.DataFrame(rows)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def load_fii_validation_status(methodology_version: str = "5.0.0") -> dict:
+def load_fii_validation_status(methodology_version: str = "6.0.0") -> dict:
     df = _q("""
         SELECT status, metrics_json, blockers_json, as_of_date, finished_at
         FROM market.fii_validation_runs

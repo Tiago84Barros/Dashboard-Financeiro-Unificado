@@ -22,8 +22,8 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 PARSER_NAME = "fii_public_report"
-PARSER_VERSION = "1.1.0"
-SCHEMA_VERSION = "fii-evidence-v2"
+PARSER_VERSION = "1.2.0"
+SCHEMA_VERSION = "fii-evidence-v3"
 
 _METRIC_PATTERNS = {
     "wault_anos": re.compile(r"\bWAULT\b[^\d]{0,40}(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:anos?|years?)", re.I),
@@ -32,10 +32,22 @@ _METRIC_PATTERNS = {
     "ltv": re.compile(r"\bLTV\b[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "duration_anos": re.compile(r"\bduration\b[^\d]{0,35}(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:anos?|years?)", re.I),
     "cap_rate_implicito": re.compile(r"\bcap\s*rate\b[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "tenant_concentration": re.compile(r"(?:maior\s+)?(?:locat[aá]rio|inquilino)[^\d%]{0,55}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "debtor_concentration": re.compile(r"(?:maior\s+)?devedor[^\d%]{0,55}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "issuance_concentration": re.compile(r"(?:maior\s+)?(?:cri|emiss[aã]o)[^\d%]{0,55}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "delinquency": re.compile(r"inadimpl[eê]ncia[^\d]{0,45}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "subordination_protection": re.compile(r"subordina[cç][aã]o[^\d]{0,45}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "lease_expiry_concentration_24m": re.compile(r"(?:vencimentos?|revisional)[^\d%]{0,70}(?:24\s*meses|2\s*anos)[^\d%]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "management_fee": re.compile(r"taxa\s+de\s+administra[cç][aã]o[^\d]{0,60}(\d{1,3}(?:[.,]\d{1,3})?)\s*%", re.I),
+    "credit_spread": re.compile(r"(?:IPCA|CDI|IGP-?M)[^+\d]{0,15}\+?\s*(\d{1,2}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "property_count": re.compile(r"(?:portf[oó]lio|carteira)[^\d]{0,50}(\d{1,4})\s+(?:im[oó]veis|ativos\s+imobili[aá]rios)", re.I),
 }
 
 _PERCENT_METRICS = {"vacancia_fisica", "vacancia_financeira", "ltv",
-                    "cap_rate_implicito"}
+                    "cap_rate_implicito", "tenant_concentration",
+                    "debtor_concentration", "issuance_concentration", "delinquency",
+                    "subordination_protection", "lease_expiry_concentration_24m",
+                    "management_fee", "credit_spread"}
 
 
 def _engine():
@@ -123,7 +135,8 @@ def _extract_evidence(text_value: str, page_texts: list[str] | None = None) -> l
                 evidence.append({
                     "metric_name": metric, "raw_value": raw,
                     "normalized_value": normalized,
-                    "unit": "%" if metric in _PERCENT_METRICS else "anos",
+                    "unit": ("%" if metric in _PERCENT_METRICS else
+                             "quantidade" if metric == "property_count" else "anos"),
                     "page_number": page_number, "bbox_json": None,
                     "evidence_text": page_text[start:end].replace("\x00", " "),
                     "confidence": .80 if plausible else .25,

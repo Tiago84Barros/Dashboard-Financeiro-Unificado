@@ -96,6 +96,24 @@ jobs:
       - name: FIIs — documentos públicos prioritários
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis-documents --limit 25 --json
+      - name: FIIs — cadastro CVM com fundos cancelados
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-registry --json
+      - name: FIIs — security master histórico oficial B3
+        if: steps.mode.outputs.mode == 'annual' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-b3-history --years 15 --json
+      - name: FIIs — resolução de locatários, devedores e emissores
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-entities --json
+      - name: FIIs — calibração dos parsers por revisão humana
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-confidence --json
+      - name: FIIs — reconstrução PIT e backtest walk-forward
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-pit-backtest --years 10 --json
+      - name: FIIs — monitoramento e gates
+        if: always()
+        run: python run_market_ingest.py fiis-monitor --json
       - name: FIIs — séries históricas (preços + rendimentos p/ backtest)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis-series --json

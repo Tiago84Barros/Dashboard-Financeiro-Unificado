@@ -63,6 +63,16 @@ SOURCE_REGISTRY = {
         "scope": "WAULT, contratos, locatários, CRIs, LTV, rating, indexadores e governança; exige evidência e revisão",
         "url": "https://dados.cvm.gov.br/dataset/?groups=fundos-de-investimento",
     },
+    "cvm_fund_registry": {
+        "license": "dados abertos CVM", "access": "zip/csv", "quality": .95,
+        "scope": "registro, início, situação, cancelamento, gestor e administrador",
+        "url": "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/registro_fundo_classe.zip",
+    },
+    "b3_cotahist": {
+        "license": "dados públicos B3", "access": "zip/fixed-width", "quality": .95,
+        "scope": "security master e cotações históricas, inclusive fundos fora do universo atual",
+        "url": "https://www.b3.com.br/pt_br/market-data-e-indices/servicos-de-dados/market-data/historico/mercado-a-vista/cotacoes-historicas/",
+    },
 }
 
 

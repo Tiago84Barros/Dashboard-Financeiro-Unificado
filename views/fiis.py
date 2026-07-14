@@ -125,7 +125,8 @@ _TABS = ["📊 Diligência", "🔎 Busca de ativo", "🧺 Carteira-modelo", "�
 def render(show_header: bool = True) -> None:
     if show_header:
         st.markdown("## Seleção de FIIs — Lista de Diligência")
-        st.caption("Metodologia Integrada v5 específica por tipo. Enquanto a validação point-in-time "
+        st.caption(f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]} específica por tipo. "
+                   "Enquanto a validação point-in-time "
                    "não for aprovada, a saída não é recomendação definitiva nem Carteira Modelo.")
     st.markdown(_CSS, unsafe_allow_html=True)
 
@@ -811,8 +812,6 @@ def _render_portfolio_table(slot, primary: pd.DataFrame | None,
         "Cresc. a.a.": st.column_config.NumberColumn(format="percent"),
         "Pior queda": st.column_config.NumberColumn(format="percent"),
         "Hist. (m)": st.column_config.NumberColumn(format="%d"),
-        "Regiões": st.column_config.NumberColumn(format="%d"),
-        "Imóveis": st.column_config.NumberColumn(format="%d"),
     })
 
 
@@ -1093,7 +1092,7 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
 
 
 def _carteira_integrada(preferences: dict):
-    st.subheader("Resultado da seleção · Metodologia Integrada v5")
+    st.subheader(f"Resultado da seleção · Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]}")
     st.markdown(_info_card_html(
         "Como a carteira é construída",
         "Primeiro são aplicados filtros de elegibilidade. Depois, cada FII é comparado apenas "
@@ -1625,6 +1624,41 @@ def _carteira_qualidade(preferences: dict) -> None:
 # ── Tab 4: Backtest ───────────────────────────────────────────────────────────
 
 def _tab_backtest() -> None:
+    st.subheader("Validação point-in-time da metodologia")
+    validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
+    validation_metrics = validation.get("metrics") or {}
+    pit = validation_metrics.get("backtest") or {}
+    pit_status = str(validation.get("status") or "unvalidated")
+    status_label = {"passed": "Aprovada", "blocked": "Bloqueada",
+                    "failed": "Falhou"}.get(pit_status, "Não executada")
+    cards = st.columns(5)
+    cards[0].markdown(_kpi_html("Validação PIT", status_label,
+                                accent="#00C896" if pit_status == "passed" else "#F6C90E"),
+                      unsafe_allow_html=True)
+    cards[1].markdown(_kpi_html("Períodos", int(pit.get("periods") or 0),
+                                sub="mínimo metodológico: 36", sub_color="#4A5568",
+                                accent="#4A9EFF"), unsafe_allow_html=True)
+    cards[2].markdown(_kpi_html("Snapshots verificados",
+                                f"{float(pit.get('verified_snapshot_fraction') or 0):.0%}",
+                                sub="data de disponibilidade comprovada", sub_color="#4A5568",
+                                accent="#B084F6"), unsafe_allow_html=True)
+    cards[3].markdown(_kpi_html("Cobertura de retornos",
+                                f"{float(pit.get('return_observation_coverage') or 0):.0%}",
+                                accent="#4A9EFF"), unsafe_allow_html=True)
+    ci = pit.get("excess_bootstrap") or {}
+    ci_text = (f"{float(ci['lower']):+.2%} a {float(ci['upper']):+.2%}"
+               if ci.get("lower") is not None and pd.notna(ci.get("lower")) else "—")
+    cards[4].markdown(_kpi_html("IC bootstrap do excesso", ci_text,
+                                sub="intervalo de 95%", sub_color="#4A5568",
+                                accent="#00C896" if float(ci.get("lower") or -1) > 0 else "#F6C90E"),
+                      unsafe_allow_html=True)
+    blockers = validation.get("blockers") or []
+    if blockers:
+        st.warning("Validação ainda bloqueada: " + " · ".join(str(item) for item in blockers))
+    else:
+        st.success("Backtest PIT, cobertura, estabilidade, regimes e custos atenderam aos gates.")
+
+    st.markdown("#### Retrospectiva da seleção atual")
     weights = st.session_state.get("fii_port")
     if not weights:
         st.info("Monte a carteira na aba **Carteira-modelo** primeiro.")

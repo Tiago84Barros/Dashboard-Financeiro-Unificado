@@ -16,6 +16,8 @@ class ValidationThresholds:
     min_rank_stability: float = .45
     max_annual_turnover: float = 3.0
     min_regimes: int = 3
+    min_verified_snapshot_fraction: float = .80
+    min_return_observation_coverage: float = .90
 
 
 def bootstrap_mean_ci(values: Iterable[float], *, samples: int = 2000,
@@ -58,6 +60,7 @@ def portfolio_turnover(previous: pd.Series, current: pd.Series) -> float:
 def point_in_time_backtest(
     snapshots: pd.DataFrame, returns: pd.DataFrame, benchmark: pd.Series, *,
     top_n: int = 12, transaction_cost: float = .0015, slippage: float = .0010,
+    min_daily_return_coverage: float = .80,
 ) -> dict[str, Any]:
     """Backtest sem look-ahead usando apenas snapshots disponíveis na data.
 
@@ -83,6 +86,9 @@ def point_in_time_backtest(
     observations: list[dict] = []
     ranks: list[pd.Series] = []
     turnovers: list[float] = []
+    verified_snapshots = 0
+    used_snapshots = 0
+    weighted_return_coverages: list[float] = []
     for position, dt in enumerate(dates):
         decision_cutoff = dt + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
         possible_execution = [value for value in return_dates if value > dt]
@@ -104,8 +110,21 @@ def point_in_time_backtest(
         if latest.empty:
             continue
         scores = latest.set_index("ticker")["score"].astype(float)
+        if "confidence" in latest:
+            confidence = pd.to_numeric(
+                latest.set_index("ticker")["confidence"], errors="coerce"
+            )
+            scores = scores * (.75 + .25 * confidence.reindex(scores.index).fillna(0.0))
         chosen = scores.nlargest(top_n).index
-        weights = pd.Series(1 / len(chosen), index=chosen)
+        weights = pd.Series(1 / len(chosen), index=chosen, dtype=float)
+        used_snapshots += len(chosen)
+        if "availability_quality" in latest:
+            qualities = latest.set_index("ticker")["availability_quality"].reindex(chosen)
+            verified_snapshots += int(qualities.isin(
+                ["verified_publication", "market_close_observable"]
+            ).sum())
+        else:
+            verified_snapshots += len(chosen)
         period_rows = r[r["date"] >= execution_date]
         if next_execution is not None:
             period_rows = period_rows[period_rows["date"] < next_execution]
@@ -117,7 +136,15 @@ def point_in_time_backtest(
             continue
         weights = weights.loc[valid] / weights.loc[valid].sum()
         turn = portfolio_turnover(previous, weights) if not previous.empty else 1.0
-        daily = period_matrix[valid].fillna(0.0).mul(weights, axis=1).sum(axis=1)
+        matrix = period_matrix[valid]
+        present_weight = matrix.notna().mul(weights, axis=1).sum(axis=1)
+        weighted_return_coverages.extend(present_weight.tolist())
+        eligible_days = present_weight >= float(min_daily_return_coverage)
+        matrix = matrix.loc[eligible_days]
+        present_weight = present_weight.loc[eligible_days]
+        if matrix.empty:
+            continue
+        daily = matrix.mul(weights, axis=1).sum(axis=1, skipna=True) / present_weight
         gross = float((1.0 + daily).prod() - 1.0)
         net = gross - turn * (transaction_cost + slippage)
         benchmark_period = benchmark[(benchmark.index >= execution_date)]
@@ -128,7 +155,9 @@ def point_in_time_backtest(
         observations.append({"date": execution_date, "decision_date": dt,
                              "portfolio_return": net,
                              "benchmark_return": benchmark_return,
-                             "coverage": coverage, "turnover": turn})
+                             "coverage": coverage, "turnover": turn,
+                             "holdings": {str(ticker): float(weight)
+                                          for ticker, weight in weights.items()}})
         turnovers.append(turn)
         ranks.append(scores)
         previous = weights
@@ -138,6 +167,13 @@ def point_in_time_backtest(
     excess = result["portfolio_return"] - result["benchmark_return"]
     stabilities = [ranking_stability(a, b)["spearman"] for a, b in zip(ranks, ranks[1:])]
     valid_stabilities = [value for value in stabilities if not np.isnan(value)]
+    portfolio_curve = (1.0 + result["portfolio_return"]).cumprod()
+    drawdown = portfolio_curve / portfolio_curve.cummax() - 1.0
+    valid_excess = excess.dropna()
+    information_ratio = (
+        float(valid_excess.mean() / valid_excess.std(ddof=1) * math.sqrt(12))
+        if len(valid_excess) > 1 and valid_excess.std(ddof=1) > 0 else np.nan
+    )
     return {
         "status": "calculated", "periods": len(result),
         "mean_return": float(result["portfolio_return"].mean()),
@@ -146,6 +182,11 @@ def point_in_time_backtest(
         "mean_coverage": float(result["coverage"].mean()),
         "annualized_turnover": float(np.mean(turnovers) * 12),
         "rank_stability": float(np.mean(valid_stabilities)) if valid_stabilities else np.nan,
+        "verified_snapshot_fraction": verified_snapshots / used_snapshots if used_snapshots else 0.0,
+        "return_observation_coverage": (float(np.mean(weighted_return_coverages))
+                                        if weighted_return_coverages else 0.0),
+        "max_drawdown": float(drawdown.min()) if len(drawdown) else np.nan,
+        "information_ratio": information_ratio,
         "observations": result.to_dict("records"),
     }
 
@@ -192,6 +233,10 @@ def validate_methodology(backtest: dict[str, Any], regime_results: dict[str, Any
         blockers.append("ranking instável entre rebalanceamentos")
     if float(backtest.get("annualized_turnover") or np.inf) > thresholds.max_annual_turnover:
         blockers.append("turnover anual excessivo após custos")
+    if float(backtest.get("verified_snapshot_fraction") or 0) < thresholds.min_verified_snapshot_fraction:
+        blockers.append("verified snapshot fraction below threshold")
+    if float(backtest.get("return_observation_coverage") or 0) < thresholds.min_return_observation_coverage:
+        blockers.append("return-series observation coverage below threshold")
     valid_regimes = sum(bool(value and value.get("periods")) for value in regime_results.values())
     if valid_regimes < thresholds.min_regimes:
         blockers.append("cobertura insuficiente de regimes macroeconômicos")
