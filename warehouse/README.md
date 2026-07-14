@@ -61,10 +61,26 @@ Confere o arquivo: `dir dumps\metadados.dump` (deve ter ~centenas de MB).
 
 ## Passo 3 — Restaurar no armazém local
 
+O dump completo do Supabase inclui schemas internos (auth, storage, etc.) que
+não existem/importam localmente. Restauramos **só `public` e `market`** e
+criamos a extensão `vector` antes:
+
 ```powershell
+# se você tinha subido com a imagem antiga (postgres:17), recrie com a nova:
+docker compose up -d              # recria o container com pgvector/pgvector:pg17
+
+# extensão do RAG (idempotente)
+docker compose exec warehouse psql -U postgres -d postgres -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# restaura apenas public + market (ignora auth/storage/etc. do Supabase)
 docker compose exec -T warehouse `
-  pg_restore -U postgres -d postgres --no-owner --clean --if-exists /dumps/metadados.dump
+  pg_restore -U postgres -d postgres --no-owner --clean --if-exists `
+  -n public -n market /dumps/metadados.dump
 ```
+
+> Alguns avisos de "role does not exist" / "already exists, skipping" são
+> esperados e inofensivos (pg_restore segue em frente). O que importa é as
+> tabelas de `public`/`market` ficarem lá — validamos no comando abaixo.
 
 Valide (deve bater com o Supabase, ~1,6 GB):
 

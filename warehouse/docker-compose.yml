@@ -16,7 +16,9 @@
 
 services:
   warehouse:
-    image: postgres:17
+    # Postgres 17 + pgvector (o banco usa a extensão `vector` no RAG de docs).
+    # A imagem oficial postgres:17 não traz pgvector e o restore falharia.
+    image: pgvector/pgvector:pg17
     container_name: dfu_warehouse
     restart: unless-stopped
     environment:
