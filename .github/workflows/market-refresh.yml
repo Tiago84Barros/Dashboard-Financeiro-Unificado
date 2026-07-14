@@ -55,8 +55,6 @@ jobs:
           assert b._token(), "BRAPI_TOKEN ausente"
           print("BRAPI_TOKEN ok | len:", len(b._token()))
           PY
-      - name: Garantir schema FII v6 (idempotente)
-        run: python -m scripts.apply_fii_schema
       # Decide o modo: schedule de sábado 08:00 UTC => annual; demais => daily.
       # workflow_dispatch usa o input 'mode'.
       - name: Definir modo
@@ -68,6 +66,8 @@ jobs:
           fi
           echo "mode=$M" >> "$GITHUB_OUTPUT"
           echo "Modo: $M"
+      - name: Garantir schema FII v6 (idempotente)
+        run: python -m scripts.apply_fii_schema
       - name: Daily (preços + dividendos + spot)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py daily --source market --json
@@ -75,7 +75,7 @@ jobs:
         if: steps.mode.outputs.mode == 'annual' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py annual --source market --json
       - name: Reprocessar indicadores (sem rede)
-        if: always()
+        if: always() && steps.mode.outputs.mode != 'schema'
         run: python run_market_ingest.py reprocess --json
       - name: FIIs (ranking — universo type=fund, filtra ETF por setor)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
