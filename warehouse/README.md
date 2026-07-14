@@ -90,11 +90,35 @@ python run_market_ingest.py fiis --json
 
 > A partir daqui, **os dados pesados crescem no seu PC**, não no Supabase.
 
-## Passo 5 — Publicar a vitrine (local → Supabase)   ⏳ *a construir*
+## Passo 5 — Publicar a vitrine (local → Supabase)
 
-Um script `warehouse/publish_vitrine.py` (próximo incremento) vai copiar só as
-tabelas da vitrine do local para o Supabase. Ele lê duas connection strings de
-ambiente (`WAREHOUSE_URL` e `SUPABASE_URL`) — você fornece, o assistente não vê.
+Copia só as tabelas de `tables_vitrine.txt` (as que o app lê ao vivo) do armazém
+para o Supabase, com **truncate + load** (data-only), sem tocar nas finanças
+pessoais. Rode a partir de `warehouse/`, com `$env:SUPABASE_URL` já definido:
+
+```powershell
+# monta a lista "-t market.x -t market.y ..." a partir do arquivo
+$tabs = (Get-Content tables_vitrine.txt | Where-Object { $_ -and $_ -notmatch '^\s*#' })
+$targs = ($tabs | ForEach-Object { "-t", $_ }) 
+
+# 1) dump data-only da vitrine, do LOCAL, para dumps/vitrine.dump
+docker run --rm -v "${PWD}\dumps:/dumps" --network host postgres:17 `
+  pg_dump "postgresql://postgres:<senha>@host.docker.internal:5433/postgres" `
+  -Fc --data-only --no-owner @targs -f /dumps/vitrine.dump
+
+# 2) truncate das mesmas tabelas no Supabase
+$trunc = "TRUNCATE " + ($tabs -join ", ") + " RESTART IDENTITY CASCADE;"
+docker run --rm postgres:17 psql "$env:SUPABASE_URL" -c $trunc
+
+# 3) carrega a vitrine no Supabase
+docker run --rm -v "${PWD}\dumps:/dumps" postgres:17 `
+  pg_restore "$env:SUPABASE_URL" --data-only --no-owner /dumps/vitrine.dump
+```
+
+> ⚠️ `TRUNCATE ... CASCADE` só nas tabelas de mercado da vitrine. Confirme que
+> `tables_vitrine.txt` não contém nenhuma tabela pessoal antes de rodar.
+> Vamos validar este passo juntos com uma tabela pequena primeiro
+> (ex.: `market.fiis`) antes de rodar a lista inteira.
 
 ## Passo 6 — Desligar os passos pesados no GitHub Actions   ⏳ *a construir*
 
@@ -149,6 +173,6 @@ cada 5 min, sem apagar nada. Ver o bloco no chat / SQL Editor.
 | Postgres local (docker-compose) | ✅ pronto |
 | Lista canônica de tabelas | ✅ `tables_armazem.txt` |
 | Runbook dump/restore/ingest local | ✅ este arquivo |
-| `publish_vitrine.py` | ⏳ próximo |
+| Lista da vitrine + fluxo de publicação | ✅ `tables_vitrine.txt` + Passo 5 |
 | Refator das 2 funções de leitura (`load_fii_methodology_inputs`, exposições) | ⏳ próximo |
 | Edição do `market-refresh.yml` | ⏳ próximo |

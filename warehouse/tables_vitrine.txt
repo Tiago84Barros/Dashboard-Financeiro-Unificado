@@ -1,0 +1,30 @@
+# Tabelas "vitrine" — produzidas pela ingestão e LIDAS ao vivo pelo app.
+# São publicadas do armazém local → Supabase (truncate + load, data-only).
+#
+# NÃO inclua aqui:
+#  - Finanças pessoais (accounts, transactions, categories, cards, budgets,
+#    debts, financial_goals, portfolios, portfolio_positions,
+#    investment_transactions, alerts, user_settings, profiles, benchmarks,
+#    bank_statement_*): você as edita direto no app/Supabase — sobrescrever
+#    apagaria seus lançamentos.
+#  - Tabelas "armazém" (ver tables_armazem.txt): essas ficam só no local.
+#
+# docs_corporativos / _chunks: só publique se forem geradas pelo pipeline.
+# Se você as sobe pela UI (upload manual), elas já vivem no Supabase — não liste.
+
+market.historical_prices
+market.calculated_metrics
+market.income_statements
+market.balance_sheets
+market.cash_flow_statements
+market.dividends
+market.fiis
+market.fii_metrics_monthly
+market.fii_score_snapshots
+market.fii_imoveis
+market.fii_universe_history
+market.companies
+market.assets
+market.macro_indicators
+market.ticker_cvm
+market.ticker_alias
