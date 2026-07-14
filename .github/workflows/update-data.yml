@@ -17,9 +17,12 @@ on:
         default: "all"
         type: string
   schedule:
-    # TEMPORÁRIO PARA TESTE: executa a cada 5 minutos.
-    # Depois de validar no app, voltar para "0 8 * * *".
-    - cron: "*/5 * * * *"
+    # Diário 12:00 UTC (09:00 BRT). Horário isolado dos demais jobs para
+    # evitar escrita concorrente no compute Nano (Free): bootstrap 06:00,
+    # market-refresh 09:00 (+ anual sáb 08:00), data_pipeline 21:30.
+    # Manter frequência baixa: execuções frequentes drenam o Disk IO Budget
+    # e saturam CPU/RAM. Para rodar sob demanda use workflow_dispatch.
+    - cron: "0 12 * * *"
 
 permissions:
   contents: read
