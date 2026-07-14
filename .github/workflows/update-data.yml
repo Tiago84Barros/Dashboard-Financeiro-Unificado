@@ -17,10 +17,12 @@ on:
         default: "all"
         type: string
   schedule:
-    # Diário 08:00 UTC (05:00 BRT). Manter frequência baixa: no plano Free
-    # (compute Nano) execuções frequentes drenam o Disk IO Budget e saturam
-    # CPU/RAM. Para rodar sob demanda use workflow_dispatch.
-    - cron: "0 8 * * *"
+    # Diário 12:00 UTC (09:00 BRT). Horário isolado dos demais jobs para
+    # evitar escrita concorrente no compute Nano (Free): bootstrap 06:00,
+    # market-refresh 09:00 (+ anual sáb 08:00), data_pipeline 21:30.
+    # Manter frequência baixa: execuções frequentes drenam o Disk IO Budget
+    # e saturam CPU/RAM. Para rodar sob demanda use workflow_dispatch.
+    - cron: "0 12 * * *"
 
 permissions:
   contents: read
