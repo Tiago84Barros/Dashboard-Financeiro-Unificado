@@ -27,6 +27,9 @@ from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION, MacroSce
                                  score_fiis_by_type)
 from core.fii_portfolio_v4 import PortfolioPolicy, optimize_diligence_portfolio
 from core.fii_selection_explanations import build_selection_reports
+from core.llm_b3 import llm_disponivel, provedores_disponiveis
+from core.llm_context_fii import build_fii_chat_context
+from core.llm_fii import chat_com_fiis
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 
@@ -307,6 +310,94 @@ def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
         f'{int(explanation.get("relationship_months") or 0)} meses coincidentes. '
         'Dados ausentes não recebem valor estimado.</div></div></details>'
     )
+
+
+def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows: list[dict],
+                     result: dict, scenario: MacroScenario, reports: list[dict],
+                     prices: pd.DataFrame) -> None:
+    """Chat contextual da carteira de FIIs, inspirado na Avaliação de Portfólio B3."""
+    st.markdown("---")
+    st.markdown("#### 💬 Tire dúvidas sobre os FIIs e a seleção")
+    st.markdown(_info_card_html(
+        "Chat especializado em FIIs",
+        "Pergunte por que um fundo entrou, compare pares, avalie riscos de vacância, crédito, "
+        "indexadores, concentração, liquidez ou o efeito do cenário macro. A resposta usa os "
+        "dados da seleção atual e explicita quando uma informação não está disponível.",
+        accent="#B084F6",
+    ), unsafe_allow_html=True)
+
+    if not llm_disponivel():
+        st.info("Nenhum provedor LLM configurado. Adicione OPENAI_API_KEY ou GEMINI_API_KEY.")
+        return
+
+    providers = provedores_disponiveis()
+    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    st.caption("Provedor disponível: " + ", ".join(
+        provider_labels.get(provider, provider) for provider in providers))
+
+    signature = repr((
+        tuple(sorted((str(item.get("ticker")), round(float(item.get("weight") or 0), 6))
+                     for item in items)),
+        tuple(sorted(scenario.__dict__.items())),
+    ))
+    previous_signature = st.session_state.get("fii_chat_context_signature")
+    if previous_signature is not None and previous_signature != signature:
+        st.session_state.pop("fii_chat_history", None)
+        st.caption("O histórico foi reiniciado porque a seleção ou o cenário mudou.")
+    st.session_state["fii_chat_context_signature"] = signature
+
+    _, clear_col = st.columns([5, 1])
+    with clear_col:
+        if st.button("🗑️ Limpar chat", key="fii_chat_clear", use_container_width=True):
+            st.session_state.pop("fii_chat_history", None)
+            st.rerun()
+
+    suggestions = (
+        "Quais são os principais riscos desta seleção?",
+        "Quais FIIs se destacam em renda sem depender apenas do DY?",
+        "Como o cenário de juros afeta tijolo, papel e FoFs desta carteira?",
+    )
+    suggested_input = None
+    suggestion_cols = st.columns(3)
+    for index, question in enumerate(suggestions):
+        with suggestion_cols[index]:
+            if st.button(question, key=f"fii_chat_suggestion_{index}",
+                         use_container_width=True):
+                suggested_input = question
+
+    history: list[dict] = st.session_state.get("fii_chat_history", [])
+    for message in history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    user_input = suggested_input or st.chat_input(
+        "Pergunte sobre os FIIs ou sobre a carteira…", key="fii_chat_input")
+    if not user_input:
+        return
+
+    history.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+    with st.chat_message("assistant"):
+        with st.spinner("Consultando seleção, pares, cenário e qualidade dos dados…"):
+            try:
+                context = build_fii_chat_context(
+                    user_question=user_input,
+                    selected_items=items,
+                    scored_rows=scored,
+                    methodology_rows=methodology_rows,
+                    portfolio_result=result,
+                    scenario=scenario,
+                    reports=reports,
+                    prices=prices,
+                )
+                answer = chat_com_fiis(context, history[:-1], user_input)
+            except Exception as exc:
+                answer = f"Não foi possível consultar a LLM neste momento: {exc}"
+        st.markdown(answer)
+        st.caption("Análise educacional baseada nos dados disponíveis; não constitui recomendação.")
+    history.append({"role": "assistant", "content": answer})
+    st.session_state["fii_chat_history"] = history
 
 
 def _comp_tipo_chart(pf: pd.DataFrame) -> None:
@@ -1152,6 +1243,15 @@ def _carteira_integrada(preferences: dict):
             for item in items]
     st.session_state["fii_port"] = weights
     _render_portfolio_history_diagnostics(weights, returns)
+    _render_fii_chat(
+        items=items,
+        scored=scored,
+        methodology_rows=inputs.to_dict("records"),
+        result=result,
+        scenario=scenario,
+        reports=explanations,
+        prices=report_prices,
+    )
     _render_save_portfolio(
         port, {"metodo": "fii_integrated_v5", "model_version": INTEGRATED_MODEL_VERSION,
                "methodology_version": METHODOLOGY_VERSION,
