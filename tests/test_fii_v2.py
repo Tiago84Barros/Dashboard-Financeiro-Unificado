@@ -143,3 +143,41 @@ def test_income_growth_requires_real_three_year_window():
     metrics = {row["metric_name"]: row for row in rows}
     assert metrics["income_recurrence"]["value_numeric"] > .95
     assert metrics["income_growth_per_share_3y"]["value_numeric"] > 0
+
+
+def test_historical_prices_preserve_pit_quality_and_lineage():
+    payload = {"requestedAt": REQUESTED, "fiis": [{
+        "symbol": "KNRI11", "historicalDataPrice": [
+            {"date": 1767139200, "open": 140, "high": 142, "low": 139,
+             "close": 141, "adjustedClose": 142.5, "volume": 12345},
+        ],
+    }]}
+    rows = fii_v2.normalize_historical(payload, raw_payload_id=42)
+    assert len(rows) == 1
+    assert rows[0]["raw_payload_id"] == 42
+    assert rows[0]["source"] == "brapi_fii_v2"
+    assert rows[0]["availability_quality"] == "retrospective_backfill"
+    assert rows[0]["content_hash"]
+    assert rows[0]["knowledge_at"] == rows[0]["available_at"]
+
+
+def test_portfolio_emits_strong_cri_security_key_for_cvm_reconciliation():
+    payload = {"requestedAt": REQUESTED, "fiis": [{
+        "symbol": "PAPR11", "referenceDate": "2026-06-30", "version": 1,
+        "financialAssets": [{
+            "identifier": "CRI A", "issuerCnpj": "12.345.678/0001-90",
+            "issue": "2", "series": "003", "value": 100,
+            "confidential": False,
+        }, {
+            "identifier": "CRI A repetido", "issuerCnpj": "12.345.678/0001-90",
+            "issue": "2", "series": "003", "value": 50,
+            "confidential": False,
+        }],
+    }]}
+    result = fii_v2.normalize_portfolio(payload, raw_payload_id=43)
+    security = next(row for row in result["exposures"]
+                    if row["exposure_type"] == "security")
+    assert security["exposure_name"] == "12345678000190|2|3"
+    assert security["exposure_weight"] == 1
+    assert len([row for row in result["exposures"]
+                if row["exposure_type"] == "security"]) == 1

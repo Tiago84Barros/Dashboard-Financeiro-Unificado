@@ -38,7 +38,11 @@ def get_engine():
         connect_args: dict = {"connect_timeout": 10}
         if not is_local:
             connect_args["sslmode"] = "require"
-        kwargs.update({"pool_size": 3, "max_overflow": 2, "connect_args": connect_args})
+        # Streamlit pode manter vários processos/sessões simultâneos. Um pool pequeno,
+        # LIFO e reciclável evita esgotar o Supavisor sem sacrificar concorrência curta.
+        kwargs.update({"pool_size": 1, "max_overflow": 2, "pool_timeout": 10,
+                       "pool_recycle": 300, "pool_use_lifo": True,
+                       "connect_args": connect_args})
     return create_engine(url, **kwargs)
 
 

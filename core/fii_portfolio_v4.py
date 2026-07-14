@@ -11,7 +11,8 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from core.fii_methodology import MacroScenario, tactical_type_bands, type_scenario_return
+from core.fii_methodology import MacroScenario, tactical_type_bands
+from core.fii_scenarios import asset_scenario_return
 
 
 SCENARIOS = ("base", "selic_alta", "queda_selic", "inflacao_alta", "vacancia", "credito")
@@ -31,6 +32,9 @@ class PortfolioPolicy:
     min_daily_liquidity: float = 1_000_000.0
     min_dimension_coverage: float = .80
     max_assets: int = 12
+    uncertainty_penalty: float = .20
+    cvar_penalty: float = .35
+    max_weighted_uncertainty: float = .30
 
 
 LIMITS = {
@@ -67,8 +71,8 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
     if np.nanmax(dy, initial=0) > 1:
         dy = dy / 100
     adverse = np.array([
-        np.mean([max(-type_scenario_return(str(row.get("tipo")), name), 0)
-                 for name in SCENARIOS[1:]]) for row in pool
+        np.mean([max(-asset_scenario_return(row, name), 0) for name in SCENARIOS[1:]])
+        for row in pool
     ])
     utility = .45 * quality + .30 * confidence + .25 * np.clip(dy / .15, 0, 1) - .35 * adverse
 
@@ -286,11 +290,13 @@ def optimize_diligence_portfolio(
     dy = np.array([_num(r.get("dy_12m")) for r in rows])
     if np.nanmax(dy, initial=0) > 1.0:
         dy = dy / 100.0
-    adverse = np.array([
-        np.mean([max(-type_scenario_return(str(r.get("tipo")), s), 0) for s in SCENARIOS[1:]])
-        for r in rows
-    ])
-    utility = .45 * quality + .30 * confidence + .25 * np.clip(dy / .15, 0, 1) - .35 * adverse
+    scenario_values_by_asset = np.array([
+        [asset_scenario_return(r, s) for s in SCENARIOS] for r in rows
+    ], dtype=float)
+    adverse = np.maximum(-scenario_values_by_asset[:, 1:], 0.0).mean(axis=1)
+    uncertainty = 1.0 - np.clip(confidence, 0.0, 1.0)
+    utility = (.45 * quality + .30 * confidence + .25 * np.clip(dy / .15, 0, 1)
+               - .35 * adverse - policy.uncertainty_penalty * uncertainty)
     correlation_risk, correlation_info = _correlation_risk_matrix(rows, correlation_matrix)
 
     constraints: list[dict] = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
@@ -323,18 +329,24 @@ def optimize_diligence_portfolio(
     illiquid = np.array([1.0 if _num(r.get("liquidez_diaria")) < policy.min_daily_liquidity else 0.0 for r in rows])
     constraints.append({"type": "ineq", "fun": lambda w: policy.max_illiquid - float(w @ illiquid)})
     linear_ub.append((illiquid, policy.max_illiquid))
+    constraints.append({
+        "type": "ineq",
+        "fun": lambda w: policy.max_weighted_uncertainty - float(w @ uncertainty),
+    })
+    linear_ub.append((uncertainty, policy.max_weighted_uncertainty))
 
     def objective(weights: np.ndarray) -> float:
         concentration = float(np.sum(weights ** 2))
-        scenario_values = [sum(weights[i] * type_scenario_return(str(rows[i].get("tipo")), s)
-                               for i in range(n)) for s in SCENARIOS[1:]]
-        tail_loss = -min(scenario_values)
+        scenario_values = weights @ scenario_values_by_asset[:, 1:]
+        losses = np.maximum(-scenario_values, 0.0)
+        tail_count = max(1, int(np.ceil(len(losses) * .40)))
+        cvar_loss = float(np.sort(losses)[-tail_count:].mean())
         correlation_risk_value = (
             float(weights @ correlation_risk @ weights)
             if correlation_risk is not None else 0.0
         )
         return (-float(weights @ utility) + .18 * concentration
-                + .30 * max(tail_loss, 0)
+                + policy.cvar_penalty * cvar_loss
                 + max(float(correlation_penalty), 0.0) * correlation_risk_value)
 
     try:
@@ -369,8 +381,14 @@ def optimize_diligence_portfolio(
     weights = np.where(result.x >= .005, result.x, 0.0)
     weights = weights / weights.sum()
     items = [{**rows[i], "weight": float(weights[i])} for i in range(n) if weights[i] > 0]
-    scenario_returns = {s: round(sum(item["weight"] * type_scenario_return(str(item.get("tipo")), s)
-                                     for item in items), 6) for s in SCENARIOS}
+    scenario_returns = {
+        s: round(sum(item["weight"] * asset_scenario_return(item, s) for item in items), 6)
+        for s in SCENARIOS
+    }
+    adverse_losses = sorted(max(-value, 0.0) for key, value in scenario_returns.items()
+                            if key != "base")
+    tail_count = max(1, int(np.ceil(len(adverse_losses) * .40))) if adverse_losses else 1
+    scenario_cvar = (sum(adverse_losses[-tail_count:]) / tail_count if adverse_losses else 0.0)
     validation_block = any(item.get("publication_status") != "validated" for item in items)
     blockers = []
     if unresolved:
@@ -382,6 +400,9 @@ def optimize_diligence_portfolio(
         "can_publish": not blockers, "blockers": blockers,
         "unresolved_dimensions": sorted(set(unresolved)), "dimension_coverage": dimension_info,
         "scenario_returns": scenario_returns,
+        "scenario_cvar": round(scenario_cvar, 6),
+        "weighted_uncertainty": round(sum(item["weight"] * (1 - _num(item.get("confidence")))
+                                              for item in items), 6),
         "correlation_risk": (
             round(float(weights @ correlation_risk @ weights), 6)
             if correlation_risk is not None else None

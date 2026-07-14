@@ -26,7 +26,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT))
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
 load_dotenv(_ROOT / ".env")
 
 logging.basicConfig(level=logging.INFO,
@@ -41,7 +41,10 @@ def main() -> int:
                             "reprocess", "renormalize", "integrity", "parity", "fiis",
                             "fiis-reprocess", "fiis-cvm", "fiis-series",
                             "fiis-metrics", "fiis-vacancia", "fiis-imoveis",
-                            "fiis-v2", "fiis-cvm-structured", "fiis-v4", "fiis-v4-audit", "fiis-documents",
+                            "fiis-v2", "fiis-v2-history", "fiis-cvm-structured",
+                            "fiis-cvm-cri", "fiis-v4", "fiis-v4-audit", "fiis-documents",
+                            "fiis-registry", "fiis-b3-history", "fiis-entities",
+                            "fiis-confidence", "fiis-pit-backtest", "fiis-monitor",
                             "benchmark", "setores"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
@@ -50,7 +53,7 @@ def main() -> int:
     p.add_argument("--limit", type=int, default=None,
                    help="bootstrap: tamanho do lote por execução (default 50)")
     p.add_argument("--years", type=int, default=5,
-                   help="fiis-cvm-structured: quantidade de anos, incluindo o atual")
+                   help="histórico/CVM: quantidade de anos, incluindo o atual")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
@@ -102,27 +105,72 @@ def main() -> int:
                  rep.get("mapeadas"), rep.get("cvm_raw"), rep.get("erros"))
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
-        if args.command == "fiis-documents":
-            return 0 if rep.get("failed", 0) != -1 else 1
         return 0 if rep.get("erros", 0) != -1 else 1
 
     if args.command in ("fiis", "fiis-reprocess", "fiis-cvm", "fiis-series",
                         "fiis-metrics", "fiis-vacancia", "fiis-imoveis", "fiis-v2",
-                        "fiis-cvm-structured", "fiis-v4",
-                        "fiis-v4-audit", "fiis-documents", "benchmark"):
+                        "fiis-v2-history", "fiis-cvm-structured", "fiis-cvm-cri", "fiis-v4",
+                        "fiis-v4-audit", "fiis-documents", "fiis-registry",
+                        "fiis-b3-history", "fiis-entities", "fiis-confidence",
+                        "fiis-pit-backtest", "fiis-monitor", "benchmark"):
         from data_pipeline.market import fii_ingest
-        if args.command == "fiis-documents":
+        if args.command == "fiis-registry":
+            from data_pipeline.market.fii_registry import ingest_registry
+            rep = ingest_registry()
+            log.info("FIIs cadastro CVM — linhas=%s tickers vinculados=%s status=%s",
+                     rep.get("rows"), rep.get("linked_tickers"), rep.get("status"))
+        elif args.command == "fiis-b3-history":
+            from data_pipeline.market.fii_b3_history import ingest_b3_history
+            rep = ingest_b3_history(years=args.years)
+            log.info("FIIs COTAHIST B3 — arquivos=%s linhas=%s tickers=%s erros=%s",
+                     rep.get("archives"), rep.get("rows"), rep.get("tickers"),
+                     len(rep.get("errors") or []))
+        elif args.command == "fiis-entities":
+            from data_pipeline.market.fii_entity_pipeline import resolve_entities
+            rep = resolve_entities()
+            log.info("FIIs entidades — novas=%s aceitas=%s propostas=%s",
+                     rep.get("canonical_created"), rep.get("accepted"), rep.get("proposed"))
+        elif args.command == "fiis-confidence":
+            from data_pipeline.market.fii_confidence_pipeline import calibrate_parsers
+            rep = calibrate_parsers()
+            log.info("FIIs calibração — métricas=%s revisões=%s",
+                     rep.get("calibrations"), rep.get("reviewed"))
+        elif args.command == "fiis-pit-backtest":
+            from data_pipeline.market.fii_pit import run_pit_validation
+            rep = run_pit_validation(years=args.years)
+            log.info("FIIs PIT — status=%s snapshots=%s períodos=%s benchmark=%s bloqueios=%s",
+                     rep.get("status"), rep.get("snapshots"), rep.get("periods"),
+                     rep.get("benchmark"), rep.get("blockers"))
+        elif args.command == "fiis-monitor":
+            from data_pipeline.market.fii_monitoring import run_monitoring
+            rep = run_monitoring()
+            log.info("FIIs monitoramento — status=%s falhas=%s",
+                     rep.get("status"), rep.get("failed"))
+        elif args.command == "fiis-documents":
             from data_pipeline.market.fii_documents import process_pending_documents
             rep = process_pending_documents(limit=args.limit or 25)
             log.info("FIIs documentos — selecionados=%s baixados=%s extraídos=%s "
                      "revisão=%s falhas=%s", rep.get("selected"), rep.get("downloaded"),
                      rep.get("extracted"), rep.get("needs_review"), rep.get("failed"))
+        elif args.command == "fiis-cvm-cri":
+            from data_pipeline.market.fii_cvm_cri import ingest_cvm_cri
+            rep = ingest_cvm_cri(years=args.years)
+            log.info("FIIs CVM CRI - arquivos=%s CRIs=%s observacoes=%s "
+                     "metricas_FII=%s erros=%s", rep.get("archives"),
+                     rep.get("securities"), rep.get("security_observations"),
+                     rep.get("fii_observations"), len(rep.get("errors") or []))
         elif args.command == "fiis-cvm-structured":
             from data_pipeline.market.fii_cvm_structured import ingest_cvm_structured
             rep = ingest_cvm_structured(years=args.years)
             log.info("FIIs CVM estruturada — arquivos=%s métricas=%s exposições=%s "
                      "documentos=%s erros=%s", rep.get("archives"), rep.get("observations"),
                      rep.get("exposures"), rep.get("documents"), len(rep.get("errors") or []))
+        elif args.command == "fiis-v2-history":
+            rep = fii_ingest.ingest_v2_history(limit=args.limit, tickers=tickers,
+                                                years=args.years)
+            log.info("FIIs Brapi v2 historico - fundos=%s req=%s precos=%s erros=%s",
+                     rep.get("fundos"), rep.get("requisicoes"), rep.get("precos"),
+                     rep.get("erros"))
         elif args.command == "fiis-v2":
             rep = fii_ingest.ingest_v2_details(limit=args.limit, tickers=tickers)
             log.info("FIIs Brapi v2 — fundos=%s req=%s métricas=%s exposições=%s "
@@ -172,11 +220,26 @@ def main() -> int:
             log.info("FIIs — candidatos=%s fiis=%s etfs_ignorados=%s gravados=%s erros=%s",
                      rep.get("candidatos"), rep.get("fiis"), rep.get("etfs_ignorados"),
                      rep.get("gravados"), rep.get("erros"))
-        if args.command not in ("fiis-v2", "fiis-cvm-structured", "fiis-v4", "fiis-v4-audit",
-                                "fiis-documents", "benchmark") and rep.get("erros", 0) != -1:
+        if args.command not in ("fiis-v2", "fiis-v2-history", "fiis-cvm-structured",
+                                "fiis-cvm-cri", "fiis-v4", "fiis-v4-audit",
+                                "fiis-documents", "fiis-registry", "fiis-b3-history",
+                                "fiis-entities", "fiis-confidence", "fiis-pit-backtest",
+                                "fiis-monitor", "benchmark") and rep.get("erros", 0) != -1:
             rep["metodologia_v4"] = fii_ingest.snapshot_methodology_v4()
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
+        if args.command == "fiis-documents":
+            return 0 if rep.get("failed", 0) != -1 else 1
+        if args.command == "fiis-cvm-cri":
+            return 0 if rep.get("status") == "completed" else 1
+        if args.command in ("fiis-registry", "fiis-b3-history", "fiis-entities",
+                            "fiis-confidence"):
+            return 0 if rep.get("status") == "completed" else 1
+        if args.command == "fiis-pit-backtest":
+            # Bloqueio metodológico é resultado válido; só falha operacional retorna 1.
+            return 0 if rep.get("status") in ("passed", "blocked") else 1
+        if args.command == "fiis-monitor":
+            return 0 if rep.get("status") in ("passed", "warning") else 1
         return 0 if rep.get("erros", 0) != -1 else 1
 
     if args.command == "parity":

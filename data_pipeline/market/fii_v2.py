@@ -76,6 +76,26 @@ def _ticker(row: dict) -> str:
     return str(row.get("symbol") or "").strip().upper().replace(".SA", "")
 
 
+def _security_part(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return str(int(raw)) if raw.isdigit() else raw.upper()
+
+
+def cri_security_key(item: dict) -> str | None:
+    """Chave conciliavel com o informe mensal de CRI da CVM."""
+    issuer = re.sub(r"\D", "", str(item.get("issuerCnpj") or ""))
+    issue = _security_part(item.get("issue"))
+    series = _security_part(item.get("series"))
+    if issuer and issue and series:
+        return f"{issuer}|{issue}|{series}"
+    identifier = _security_part(item.get("ticker") or item.get("identifier"))
+    if identifier.startswith("BR") and len(identifier) >= 10:
+        return identifier
+    return None
+
+
 def normalize_type(value: Any) -> str | None:
     text = str(value or "").strip().lower()
     text = "".join(char for char in unicodedata.normalize("NFKD", text)
@@ -204,6 +224,50 @@ def normalize_indicators(payload: dict, raw_payload_id: int | None = None) -> di
         if exposure:
             exposures.append(exposure)
     return {"fii_updates": updates, "observations": observations, "exposures": exposures}
+
+
+def normalize_historical(payload: dict, raw_payload_id: int | None = None) -> list[dict]:
+    """Normaliza OHLCV diario sem transformar backfill em historico PIT."""
+    available = _available_at(payload)
+    rows: list[dict] = []
+    for fund in payload.get("fiis") or []:
+        ticker = _ticker(fund)
+        if not ticker:
+            continue
+        for item in fund.get("historicalDataPrice") or []:
+            raw_date = item.get("date")
+            try:
+                if isinstance(raw_date, (int, float)) or str(raw_date).isdigit():
+                    price_date = datetime.fromtimestamp(float(raw_date), tz=timezone.utc).date()
+                else:
+                    price_date = _date(raw_date)
+            except (OSError, OverflowError, ValueError):
+                price_date = None
+            close = _num(item.get("close"))
+            adjusted = _num(item.get("adjustedClose"))
+            if price_date is None or close is None or close <= 0:
+                continue
+            quality = ("first_observed_proxy"
+                       if (available.date() - price_date).days <= 7
+                       else "retrospective_backfill")
+            semantic = json.dumps({
+                "ticker": ticker, "date": price_date.isoformat(),
+                "open": _num(item.get("open")), "high": _num(item.get("high")),
+                "low": _num(item.get("low")), "close": close,
+                "adjusted_close": adjusted, "volume": item.get("volume"),
+                "source": SOURCE,
+            }, sort_keys=True, separators=(",", ":"), default=str)
+            rows.append({
+                "ticker": ticker, "date": price_date,
+                "open": _num(item.get("open")), "high": _num(item.get("high")),
+                "low": _num(item.get("low")), "close": close,
+                "adjusted_close": adjusted, "volume": int(_num(item.get("volume")) or 0),
+                "source": SOURCE, "raw_payload_id": raw_payload_id,
+                "available_at": available, "knowledge_at": available,
+                "availability_quality": quality,
+                "content_hash": hashlib.sha256(semantic.encode("utf-8")).hexdigest(),
+            })
+    return rows
 
 
 def normalize_indicator_history(payload: dict, raw_payload_id: int | None = None) -> list[dict]:
@@ -530,6 +594,34 @@ def normalize_portfolio(payload: dict, raw_payload_id: int | None = None) -> dic
                 )
                 if exposure:
                     exposures.append(exposure)
+        security_items: dict[str, dict] = {}
+        security_total = 0.0
+        for item in financial:
+            value = _num(item.get("value"))
+            key = cri_security_key(item)
+            if value is None or value <= 0 or not key or item.get("confidential"):
+                continue
+            security_total += value
+            grouped = security_items.setdefault(key, {"item": item, "value": 0.0})
+            grouped["value"] += value
+        for key, grouped in security_items.items():
+            item, value = grouped["item"], grouped["value"]
+            exposure = _exposure(
+                ticker=ticker, exposure_type="security", exposure_name=key,
+                exposure_weight=value / security_total, reference_date=reference,
+                available_at=available, raw_payload_id=raw_payload_id,
+                endpoint="portfolio", vintage=vintage,
+                metadata={
+                    "known_value": security_total,
+                    "linkable_portfolio_coverage": (
+                        min(security_total / known_issuer_value, 1.0)
+                        if known_issuer_value > 0 else 0.0),
+                    "identifier": item.get("identifier"), "issuer": item.get("issuer"),
+                    "issuer_cnpj": item.get("issuerCnpj"), "issue": item.get("issue"),
+                    "series": item.get("series"), "maturity_date": item.get("maturityDate"),
+                })
+            if exposure:
+                exposures.append(exposure)
         concentration = max(issue_weights.values()) if issue_weights else None
         observation = _observation(ticker, "issuance_concentration", concentration,
                                    reference, available, raw_payload_id, endpoint="portfolio",

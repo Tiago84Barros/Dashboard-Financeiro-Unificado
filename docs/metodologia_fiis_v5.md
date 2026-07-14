@@ -63,3 +63,29 @@ A seleção só pode ser salva como Carteira Modelo quando:
 
 Até lá, os resultados são prioridades reproduzíveis de diligência, não uma
 recomendação definitiva de investimento.
+
+## Evolução da base auditável
+
+- **Preços Brapi Pro:** o endpoint dedicado de histórico alimenta uma tabela
+  corrente para compatibilidade e uma tabela append-only por conteúdo. Cada
+  observação preserva `available_at`, `knowledge_at`, qualidade temporal, hash e
+  payload bruto. Backfills são marcados como retrospectivos e não simulam dados
+  que estariam disponíveis no passado.
+- **CRIs da CVM:** informes mensais de securitizadoras são versionados por hash.
+  O vínculo com o FII exige CNPJ da emissora, emissão e série (ou identificador
+  regulatório forte). Duration, LTV, rating, subordinação, inadimplência,
+  indexadores e devedores só chegam ao fundo quando ao menos 60% da carteira é
+  conciliável; valores impossíveis ficam em quarentena.
+- **Relatórios públicos:** a fila usa claim atômico, retry com backoff e versão
+  do parser. PDFs são endereçados por SHA-256, OCR é acionado quando necessário,
+  evidências guardam página e contexto, e mudanças de layout exigem revisão.
+- **Segurança:** as novas tabelas permanecem no schema `market`, com RLS ativo,
+  política restritiva e privilégios revogados de `anon` e `authenticated`.
+
+Comandos incrementais:
+
+```bash
+python run_market_ingest.py fiis-v2-history --years 20 --json
+python run_market_ingest.py fiis-cvm-cri --years 5 --json
+python run_market_ingest.py fiis-documents --limit 25 --json
+```

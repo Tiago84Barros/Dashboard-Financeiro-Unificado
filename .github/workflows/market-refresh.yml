@@ -10,7 +10,7 @@ on:
       mode:
         description: "O que rodar"
         type: choice
-        options: ["daily", "annual", "both"]
+        options: ["schema", "daily", "annual", "both"]
         default: "daily"
   schedule:
     - cron: "0 9 * * *"    # diário 06:00 BRT — daily (após o bootstrap das 03:00)
@@ -27,7 +27,7 @@ jobs:
   refresh:
     name: Market refresh
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 120
     env:
       APP_ENV: production
       PYTHONUNBUFFERED: "1"
@@ -66,6 +66,8 @@ jobs:
           fi
           echo "mode=$M" >> "$GITHUB_OUTPUT"
           echo "Modo: $M"
+      - name: Garantir schema FII v6 (idempotente)
+        run: python -m scripts.apply_fii_schema
       - name: Daily (preços + dividendos + spot)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py daily --source market --json
@@ -73,7 +75,7 @@ jobs:
         if: steps.mode.outputs.mode == 'annual' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py annual --source market --json
       - name: Reprocessar indicadores (sem rede)
-        if: always()
+        if: always() && steps.mode.outputs.mode != 'schema'
         run: python run_market_ingest.py reprocess --json
       - name: FIIs (ranking — universo type=fund, filtra ETF por setor)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
@@ -87,12 +89,39 @@ jobs:
       - name: FIIs — endpoints dedicados Brapi v2 (métricas e look-through)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis-v2 --json
+      - name: FIIs — histórico diário Brapi v2 (backfill incremental)
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-v2-history --years 20 --json
+      - name: FIIs — look-through de CRIs pela CVM
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-cvm-cri --years 5 --json
+      - name: FIIs — documentos públicos prioritários
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-documents --limit 25 --json
+      - name: FIIs — cadastro CVM com fundos cancelados
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-registry --json
+      - name: FIIs — security master histórico oficial B3
+        if: steps.mode.outputs.mode == 'annual' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-b3-history --years 15 --json
+      - name: FIIs — resolução de locatários, devedores e emissores
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-entities --json
+      - name: FIIs — calibração dos parsers por revisão humana
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-confidence --json
       - name: FIIs — séries históricas (preços + rendimentos p/ backtest)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis-series --json
       - name: Benchmark FIIs (IFIX via ETF XFIX11 p/ backtest)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py benchmark --json
+      - name: FIIs — reconstrução PIT e backtest walk-forward
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-pit-backtest --years 10 --json
+      - name: FIIs — monitoramento e gates
+        if: always() && steps.mode.outputs.mode != 'schema'
+        run: python run_market_ingest.py fiis-monitor --json
       - name: Setores — taxonomia B3 (public.setores + mapa aprendido CVM->B3)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py setores --json

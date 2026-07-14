@@ -20,8 +20,8 @@ import math
 from typing import Any, Iterable
 
 
-METHODOLOGY_VERSION = "5.0.0"
-FORMULA_VERSION = "br-fii-integrated-income-resilience-5.0.0"
+METHODOLOGY_VERSION = "6.0.0"
+FORMULA_VERSION = "br-fii-integrated-income-resilience-6.0.0"
 VALID_TYPES = ("tijolo", "papel", "fof", "hibrido")
 
 
@@ -147,7 +147,8 @@ SOURCE_PLANS: dict[str, dict[str, tuple[str, ...]]] = {
     "papel": {
         "required": ("brapi_quote_monthly", "brapi_fii_indicators", "brapi_fii_reports",
                      "brapi_fii_portfolio", "cvm_informe_mensal", "cvm_informe_trimestral"),
-        "optional": ("cvm_eventuais", "cvm_informe_anual", "public_fii_documents"),
+        "optional": ("cvm_eventuais", "cvm_informe_anual", "cvm_cri_monthly",
+                     "public_fii_documents"),
     },
     "fof": {
         "required": ("brapi_quote_monthly", "brapi_fii_indicators", "brapi_fii_reports",
@@ -158,7 +159,8 @@ SOURCE_PLANS: dict[str, dict[str, tuple[str, ...]]] = {
         "required": ("brapi_quote_monthly", "brapi_fii_indicators", "brapi_fii_reports",
                      "brapi_fii_properties", "brapi_fii_portfolio",
                      "cvm_informe_mensal", "cvm_informe_trimestral"),
-        "optional": ("cvm_eventuais", "cvm_informe_anual", "public_fii_documents"),
+        "optional": ("cvm_eventuais", "cvm_informe_anual", "cvm_cri_monthly",
+                     "public_fii_documents"),
     },
 }
 
@@ -173,16 +175,16 @@ def methodology_manifest() -> dict[str, Any]:
         "type_metrics": {key: [asdict(m) for m in value] for key, value in TYPE_METRICS.items()},
         "pvp_targets": PVP_TARGETS,
         "integrated_pipeline": {
-            "eligibility_version": "5.0.0",
-            "stages": ("eligibility", "type_score", "data_confidence",
-                       "scenario_and_correlation_optimization"),
+            "eligibility_version": "6.0.0",
+            "stages": ("eligibility", "type_score", "empirical_confidence",
+                       "pit_walk_forward", "robust_scenario_optimization"),
             "correlation_min_months": 12,
             "legacy_scores_combined": False,
         },
         "confidence_formula": {
             "type": "weighted_geometric_mean",
-            "weights": {"coverage": .45, "freshness": .15, "source_quality": .15,
-                        "consistency": .15, "history": .10},
+            "weights": {"coverage": .40, "freshness": .12, "source_quality": .12,
+                        "consistency": .12, "history": .09, "parser_calibration": .15},
         },
         "missing_data_policy": "missing_reduces_coverage_and_confidence; never_zero_or_neutral",
         "publication_policy": "diligence_only_until_point_in_time_validation_passes",
@@ -342,8 +344,9 @@ def score_fiis_by_type(
             consistency = min(max(_number(row.get("data_consistency")) or .80, 0.0), 1.0)
             history_months = max(_number(row.get("history_months") or row.get("Hist_Meses")) or 0.0, 0.0)
             history_factor = min(history_months / 36.0, 1.0) if history_months else .50
-            dimensions = ((coverage, .45), (freshness, .15), (source_quality, .15),
-                          (consistency, .15), (history_factor, .10))
+            calibration = min(max(_number(row.get("parser_calibration")) or 1.0, .01), 1.0)
+            dimensions = ((coverage, .40), (freshness, .12), (source_quality, .12),
+                          (consistency, .12), (history_factor, .09), (calibration, .15))
             confidence = math.exp(sum(weight * math.log(max(value, .01))
                                       for value, weight in dimensions))
 
@@ -373,6 +376,7 @@ def score_fiis_by_type(
                 "critical_coverage": round(critical_coverage, 4),
                 "freshness_score": round(freshness, 4),
                 "source_quality": round(source_quality, 4),
+                "parser_calibration": round(calibration, 4),
                 "components": components,
                 "missing_metrics": tuple(sorted(missing)),
                 "missing_critical": tuple(sorted(missing_critical)),

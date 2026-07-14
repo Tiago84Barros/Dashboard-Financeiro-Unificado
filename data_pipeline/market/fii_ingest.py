@@ -16,7 +16,7 @@ import re
 import hashlib
 import time
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import text
 
@@ -69,6 +69,23 @@ def _score_metadata_ready(conn) -> bool:
     )).scalar())
 
 
+def _ensure_methodology_version(conn) -> None:
+    """Mantem as FKs de snapshots e gates sincronizadas com a versao do codigo."""
+    from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION,
+                                     methodology_manifest)
+    conn.execute(text("""
+        INSERT INTO market.fii_methodology_versions
+            (methodology_version,formula_version,manifest_json,status)
+        VALUES (:version,:formula,CAST(:manifest AS jsonb),'validation')
+        ON CONFLICT (methodology_version) DO UPDATE SET
+            formula_version=EXCLUDED.formula_version,
+            manifest_json=EXCLUDED.manifest_json,
+            status=CASE WHEN market.fii_methodology_versions.status='passed'
+                        THEN 'passed' ELSE EXCLUDED.status END
+    """), {"version": METHODOLOGY_VERSION, "formula": FORMULA_VERSION,
+             "manifest": json.dumps(methodology_manifest(), ensure_ascii=False)})
+
+
 def snapshot_methodology_v4() -> dict:
     """Calcula e persiste snapshots v4 sem substituir o score legado de market.fiis."""
     from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION,
@@ -78,6 +95,8 @@ def snapshot_methodology_v4() -> dict:
     if engine is None:
         result["blockers"].append("banco indisponível")
         return result
+    with engine.begin() as conn:
+        _ensure_methodology_version(conn)
     with engine.connect() as conn:
         ready = bool(conn.execute(text(
             "SELECT to_regclass('market.fii_score_snapshots') IS NOT NULL"
@@ -166,6 +185,7 @@ def snapshot_methodology_v4() -> dict:
         "publication_reasons_json": json.dumps(row["publication_reasons"], ensure_ascii=False),
     } for row in scored]
     with engine.begin() as conn:
+        _ensure_methodology_version(conn)
         conn.execute(text("""
             UPDATE market.fii_methodology_versions SET manifest_json=CAST(:manifest AS jsonb)
             WHERE methodology_version=:version
@@ -356,6 +376,8 @@ def audit_methodology_v4_data() -> dict:
                        OR (metric_name IN ('dy_12m','dy_1m')
                            AND (value_numeric < 0 OR value_numeric > 0.60))
                        OR (metric_name='pvp' AND (value_numeric <= 0 OR value_numeric > 10))
+                       OR (metric_name='duration_anos' AND
+                           (value_numeric < 0 OR value_numeric > 100))
                     )
                 """,
                 "missing_raw_lineage": """
@@ -364,12 +386,54 @@ def audit_methodology_v4_data() -> dict:
                       AND metadata_json->>'endpoint' NOT LIKE 'derived/%'
                 """,
             })
+        if conn.execute(text(
+                "SELECT to_regclass('market.historical_price_observations') IS NOT NULL")).scalar():
+            queries.update({
+                "future_price_knowledge": """
+                    SELECT count(*) FROM market.historical_price_observations
+                    WHERE knowledge_at > now() OR date > knowledge_at::date
+                """,
+                "missing_price_lineage": """
+                    SELECT count(*) FROM market.historical_price_observations
+                    WHERE source='brapi_fii_v2' AND raw_payload_id IS NULL
+                """,
+                "price_backfill_mislabeled": """
+                    SELECT count(*) FROM market.historical_price_observations
+                    WHERE source='brapi_fii_v2'
+                      AND knowledge_at::date-date > 7
+                      AND availability_quality<>'retrospective_backfill'
+                """,
+            })
+        if conn.execute(text(
+                "SELECT to_regclass('market.cri_security_observations') IS NOT NULL")).scalar():
+            queries.update({
+                "invalid_cri_ranges": """
+                    SELECT count(*) FROM market.cri_security_observations
+                    WHERE quality_status<>'rejected' AND
+                      ((metric_name IN ('ltv','rating_quality','subordination_protection',
+                                           'delinquency')
+                           AND (value_numeric<0 OR value_numeric>1))
+                       OR (metric_name='duration_anos' AND
+                           (value_numeric<0 OR value_numeric>100)))
+                """,
+                "future_cri_knowledge": """
+                    SELECT count(*) FROM market.cri_security_observations
+                    WHERE knowledge_at>now() OR reference_date>knowledge_at::date
+                """,
+                "missing_cri_lineage": """
+                    SELECT count(*) FROM market.cri_security_observations
+                    WHERE raw_payload_id IS NULL OR content_hash IS NULL
+                """,
+            })
         for name, sql in queries.items():
             report["checks"][name] = int(conn.execute(text(sql)).scalar() or 0)
     critical_zero = ("future_available_at", "future_knowledge_at", "reference_after_available",
                      "invalid_exposure_sums", "duplicate_metrics",
                      "missing_temporal_quality", "history_mislabeled_as_pit",
                      "invalid_metric_ranges", "missing_raw_lineage",
+                     "future_price_knowledge", "missing_price_lineage",
+                     "price_backfill_mislabeled", "invalid_cri_ranges",
+                     "future_cri_knowledge", "missing_cri_lineage",
                      "open_reconciliation_issues")
     for check in critical_zero:
         if report["checks"].get(check):
@@ -436,6 +500,7 @@ def record_validation_readiness(audit: dict) -> dict:
         if not conn.execute(text(
                 "SELECT to_regclass('market.fii_validation_runs') IS NOT NULL")).scalar():
             return {"status": "failed", "blockers": blockers + ["migração 023 pendente"]}
+        _ensure_methodology_version(conn)
         run_id = conn.execute(text("""
             INSERT INTO market.fii_validation_runs (
                 methodology_version, as_of_date, status, metrics_json,
@@ -453,7 +518,7 @@ def _release_items(endpoint: str, payload: dict) -> list[dict]:
         "list": "fiis", "indicators": "fiis", "indicators/history": "history", "reports": "reports",
         "properties": "fiis", "properties/history": "history", "portfolio": "fiis",
         "portfolio/history": "history", "dividends": "dividends",
-        "annual-reports": "reports", "financials": "financials",
+        "annual-reports": "reports", "financials": "financials", "historical": "fiis",
     }.get(endpoint)
     return list(payload.get(key) or []) if key else []
 
@@ -473,12 +538,25 @@ def _register_source_releases(conn, endpoint: str, raw_id: int | None,
         reference = (item.get("asOfDate") or item.get("referenceDate") or
                      fields.get("Data_Referencia") or item.get("paymentDate") or
                      item.get("approvedOn"))
+        if endpoint == "historical":
+            points = item.get("historicalDataPrice") or []
+            dates = [point.get("date") for point in points if point.get("date") is not None]
+            if dates:
+                try:
+                    latest = max(dates)
+                    reference = (datetime.fromtimestamp(float(latest), tz=timezone.utc).date()
+                                 if isinstance(latest, (int, float)) or str(latest).isdigit()
+                                 else str(latest)[:10])
+                except (OSError, OverflowError, ValueError):
+                    reference = None
         version = fields.get("Versao") or item.get("version") or 1
         discriminator = ""
         if endpoint == "dividends":
             discriminator = "|".join(str(item.get(key) or "") for key in (
                 "label", "rate", "approvedOn", "paymentDate"))
         natural_key = f"{ticker}|{reference or 'na'}|v{version}"
+        if endpoint == "historical":
+            natural_key = f"{ticker}|price_history"
         if discriminator:
             natural_key = f"{natural_key}|{discriminator}"
         content = json.dumps(item, ensure_ascii=False, default=str,
@@ -615,6 +693,7 @@ def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
     payload = dict(payload)
     payload["requestedAt"] = canonical_collected_at.isoformat()
     counts = {"payloads": 1, "metricas": 0, "exposicoes": 0, "imoveis": 0,
+              "precos": 0,
               "dividendos": 0, "fiis_atualizados": 0, "releases": 0,
               "documentos": 0, "linhagem": 0}
     observations: list[dict] = []
@@ -626,6 +705,16 @@ def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
         exposures.extend(normalized.get("exposures") or [])
     elif endpoint == "indicators/history":
         observations.extend(fii_v2.normalize_indicator_history(payload, raw_id))
+    elif endpoint == "historical":
+        repo.upsert(conn, "assets", [{"ticker": ticker, "asset_type": "fii",
+                                      "exchange": "B3", "currency": "BRL",
+                                      "is_active": True} for ticker in symbols])
+        history_rows = fii_v2.normalize_historical(payload, raw_id)
+        counts["precos"] = repo.upsert(
+            conn, "historical_price_observations", history_rows)
+        current_rows = [{key: value for key, value in row.items() if key != "available_at"}
+                        for row in history_rows]
+        repo.upsert(conn, "historical_prices", current_rows)
     elif endpoint == "reports":
         observations.extend(fii_v2.normalize_reports(payload, raw_id))
     elif endpoint == "properties":
@@ -851,6 +940,7 @@ def ingest_v2_details(limit: int | None = None, tickers: list[str] | None = None
     """Ingere endpoints Pro por categoria e recalcula a Lista de Diligência."""
     engine = _engine()
     progress = {"fundos": 0, "requisicoes": 0, "payloads": 0, "metricas": 0,
+                "precos": 0,
                 "exposicoes": 0, "imoveis": 0, "dividendos": 0,
                 "fiis_atualizados": 0, "releases": 0, "documentos": 0,
                 "linhagem": 0, "erros": 0, "por_endpoint": {}}
@@ -927,10 +1017,67 @@ def ingest_v2_details(limit: int | None = None, tickers: list[str] | None = None
     return progress
 
 
+def ingest_v2_history(limit: int | None = None, tickers: list[str] | None = None,
+                      years: int = 20, delay: float = .10) -> dict:
+    """Completa OHLCV diario e depois opera incrementalmente com sobreposicao.
+
+    A primeira coleta de cada ticker usa ``years``; as seguintes recomecam sete
+    dias antes do ultimo ponto Brapi v2 para capturar ajustes retroativos sem
+    baixar novamente toda a serie.
+    """
+    engine = _engine()
+    progress = {"fundos": 0, "requisicoes": 0, "payloads": 0, "precos": 0,
+                "releases": 0, "linhagem": 0, "erros": 0,
+                "por_endpoint": {}}
+    if engine is None:
+        return {**progress, "erros": -1, "blocker": "banco indisponivel"}
+    with engine.connect() as conn:
+        has_pit = conn.execute(text("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema='market' AND table_name='historical_prices'
+                  AND column_name='knowledge_at'
+            )
+        """)).scalar()
+        if not has_pit:
+            return {**progress, "erros": -1, "blocker": "migration 029 pendente"}
+        rows = conn.execute(text("""
+            SELECT f.ticker, max(h.date) FILTER (WHERE h.source='brapi_fii_v2') AS last_v2
+            FROM market.fiis f
+            LEFT JOIN market.historical_prices h ON h.ticker=f.ticker
+            WHERE f.ticker ~ '^[A-Z]{4}11$'
+              AND f.price > 0 AND f.liquidez_diaria > 0
+            GROUP BY f.ticker ORDER BY f.ticker
+        """)).fetchall()
+    requested = ({str(ticker).upper().replace(".SA", "") for ticker in tickers}
+                 if tickers else None)
+    if requested is not None:
+        rows = [row for row in rows if str(row[0]) in requested]
+    if limit:
+        rows = rows[:max(int(limit), 0)]
+    progress["fundos"] = len(rows)
+    today = datetime.now(timezone.utc).date()
+    initial = today - timedelta(days=max(int(years), 1) * 366)
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for ticker, last_v2 in rows:
+        start = max(initial, last_v2 - timedelta(days=7)) if last_v2 else initial
+        grouped[start.isoformat()].append(str(ticker))
+    for start_date, symbols in grouped.items():
+        _run_fii_v2_endpoint(
+            engine, "historical", symbols, 20, delay, progress,
+            params={"startDate": start_date, "endDate": today.isoformat(),
+                    "sortOrder": "asc"})
+    progress["audit"] = audit_methodology_v4_data()
+    progress["validation"] = record_validation_readiness(progress["audit"])
+    progress["snapshot"] = snapshot_methodology_v4()
+    return progress
+
+
 def _run_fii_v2_endpoint(engine, endpoint: str, symbols: list[str], batch_size: int,
                          delay: float, progress: dict,
                          params: dict | None = None) -> None:
     endpoint_counts = {"requisicoes": 0, "metricas": 0, "exposicoes": 0,
+                       "precos": 0,
                        "imoveis": 0, "dividendos": 0, "releases": 0,
                        "documentos": 0, "linhagem": 0, "cache_hits": 0,
                        "erros": 0}

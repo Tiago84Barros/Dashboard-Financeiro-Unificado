@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 import math
-from functools import lru_cache
 
 import pandas as pd
 import streamlit as st
@@ -50,6 +49,15 @@ def _engine():
     url = _resolve_url()
     if not url:
         return None
+    # Quando Empresas B3 e o app unificado apontam para a mesma base, reutilize a
+    # engine central. Isso evita dois pools concorrentes por processo Streamlit.
+    try:
+        from core.config import settings
+        if settings.db_url and url == settings.db_url:
+            from core.database import get_engine
+            return get_engine()
+    except Exception:
+        pass
     is_sqlite = url.startswith("sqlite")
     is_local = "localhost" in url or "127.0.0.1" in url
     kw: dict = {"pool_pre_ping": True}
@@ -57,7 +65,9 @@ def _engine():
         connect_args: dict = {"connect_timeout": 10}
         if not is_local:  # Supabase exige SSL; staging local (Docker) não tem.
             connect_args["sslmode"] = "require"
-        kw.update({"pool_size": 2, "max_overflow": 2, "connect_args": connect_args})
+        kw.update({"pool_size": 1, "max_overflow": 1, "pool_timeout": 10,
+                   "pool_recycle": 300, "pool_use_lifo": True,
+                   "connect_args": connect_args})
     try:
         return create_engine(url, **kw)
     except Exception:

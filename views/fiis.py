@@ -27,6 +27,9 @@ from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION, MacroSce
                                  score_fiis_by_type)
 from core.fii_portfolio_v4 import PortfolioPolicy, optimize_diligence_portfolio
 from core.fii_selection_explanations import build_selection_reports
+from core.llm_b3 import llm_disponivel, provedores_disponiveis
+from core.llm_context_fii import build_fii_chat_context
+from core.llm_fii import chat_com_fiis
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 
@@ -122,7 +125,8 @@ _TABS = ["📊 Diligência", "🔎 Busca de ativo", "🧺 Carteira-modelo", "�
 def render(show_header: bool = True) -> None:
     if show_header:
         st.markdown("## Seleção de FIIs — Lista de Diligência")
-        st.caption("Metodologia Integrada v5 específica por tipo. Enquanto a validação point-in-time "
+        st.caption(f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]} específica por tipo. "
+                   "Enquanto a validação point-in-time "
                    "não for aprovada, a saída não é recomendação definitiva nem Carteira Modelo.")
     st.markdown(_CSS, unsafe_allow_html=True)
 
@@ -307,6 +311,94 @@ def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
         f'{int(explanation.get("relationship_months") or 0)} meses coincidentes. '
         'Dados ausentes não recebem valor estimado.</div></div></details>'
     )
+
+
+def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows: list[dict],
+                     result: dict, scenario: MacroScenario, reports: list[dict],
+                     prices: pd.DataFrame) -> None:
+    """Chat contextual da carteira de FIIs, inspirado na Avaliação de Portfólio B3."""
+    st.markdown("---")
+    st.markdown("#### 💬 Tire dúvidas sobre os FIIs e a seleção")
+    st.markdown(_info_card_html(
+        "Chat especializado em FIIs",
+        "Pergunte por que um fundo entrou, compare pares, avalie riscos de vacância, crédito, "
+        "indexadores, concentração, liquidez ou o efeito do cenário macro. A resposta usa os "
+        "dados da seleção atual e explicita quando uma informação não está disponível.",
+        accent="#B084F6",
+    ), unsafe_allow_html=True)
+
+    if not llm_disponivel():
+        st.info("Nenhum provedor LLM configurado. Adicione OPENAI_API_KEY ou GEMINI_API_KEY.")
+        return
+
+    providers = provedores_disponiveis()
+    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    st.caption("Provedor disponível: " + ", ".join(
+        provider_labels.get(provider, provider) for provider in providers))
+
+    signature = repr((
+        tuple(sorted((str(item.get("ticker")), round(float(item.get("weight") or 0), 6))
+                     for item in items)),
+        tuple(sorted(scenario.__dict__.items())),
+    ))
+    previous_signature = st.session_state.get("fii_chat_context_signature")
+    if previous_signature is not None and previous_signature != signature:
+        st.session_state.pop("fii_chat_history", None)
+        st.caption("O histórico foi reiniciado porque a seleção ou o cenário mudou.")
+    st.session_state["fii_chat_context_signature"] = signature
+
+    _, clear_col = st.columns([5, 1])
+    with clear_col:
+        if st.button("🗑️ Limpar chat", key="fii_chat_clear", use_container_width=True):
+            st.session_state.pop("fii_chat_history", None)
+            st.rerun()
+
+    suggestions = (
+        "Quais são os principais riscos desta seleção?",
+        "Quais FIIs se destacam em renda sem depender apenas do DY?",
+        "Como o cenário de juros afeta tijolo, papel e FoFs desta carteira?",
+    )
+    suggested_input = None
+    suggestion_cols = st.columns(3)
+    for index, question in enumerate(suggestions):
+        with suggestion_cols[index]:
+            if st.button(question, key=f"fii_chat_suggestion_{index}",
+                         use_container_width=True):
+                suggested_input = question
+
+    history: list[dict] = st.session_state.get("fii_chat_history", [])
+    for message in history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    user_input = suggested_input or st.chat_input(
+        "Pergunte sobre os FIIs ou sobre a carteira…", key="fii_chat_input")
+    if not user_input:
+        return
+
+    history.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+    with st.chat_message("assistant"):
+        with st.spinner("Consultando seleção, pares, cenário e qualidade dos dados…"):
+            try:
+                context = build_fii_chat_context(
+                    user_question=user_input,
+                    selected_items=items,
+                    scored_rows=scored,
+                    methodology_rows=methodology_rows,
+                    portfolio_result=result,
+                    scenario=scenario,
+                    reports=reports,
+                    prices=prices,
+                )
+                answer = chat_com_fiis(context, history[:-1], user_input)
+            except Exception as exc:
+                answer = f"Não foi possível consultar a LLM neste momento: {exc}"
+        st.markdown(answer)
+        st.caption("Análise educacional baseada nos dados disponíveis; não constitui recomendação.")
+    history.append({"role": "assistant", "content": answer})
+    st.session_state["fii_chat_history"] = history
 
 
 def _comp_tipo_chart(pf: pd.DataFrame) -> None:
@@ -720,8 +812,6 @@ def _render_portfolio_table(slot, primary: pd.DataFrame | None,
         "Cresc. a.a.": st.column_config.NumberColumn(format="percent"),
         "Pior queda": st.column_config.NumberColumn(format="percent"),
         "Hist. (m)": st.column_config.NumberColumn(format="%d"),
-        "Regiões": st.column_config.NumberColumn(format="%d"),
-        "Imóveis": st.column_config.NumberColumn(format="%d"),
     })
 
 
@@ -1002,7 +1092,7 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
 
 
 def _carteira_integrada(preferences: dict):
-    st.subheader("Resultado da seleção · Metodologia Integrada v5")
+    st.subheader(f"Resultado da seleção · Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]}")
     st.markdown(_info_card_html(
         "Como a carteira é construída",
         "Primeiro são aplicados filtros de elegibilidade. Depois, cada FII é comparado apenas "
@@ -1152,6 +1242,15 @@ def _carteira_integrada(preferences: dict):
             for item in items]
     st.session_state["fii_port"] = weights
     _render_portfolio_history_diagnostics(weights, returns)
+    _render_fii_chat(
+        items=items,
+        scored=scored,
+        methodology_rows=inputs.to_dict("records"),
+        result=result,
+        scenario=scenario,
+        reports=explanations,
+        prices=report_prices,
+    )
     _render_save_portfolio(
         port, {"metodo": "fii_integrated_v5", "model_version": INTEGRATED_MODEL_VERSION,
                "methodology_version": METHODOLOGY_VERSION,
@@ -1525,6 +1624,41 @@ def _carteira_qualidade(preferences: dict) -> None:
 # ── Tab 4: Backtest ───────────────────────────────────────────────────────────
 
 def _tab_backtest() -> None:
+    st.subheader("Validação point-in-time da metodologia")
+    validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
+    validation_metrics = validation.get("metrics") or {}
+    pit = validation_metrics.get("backtest") or {}
+    pit_status = str(validation.get("status") or "unvalidated")
+    status_label = {"passed": "Aprovada", "blocked": "Bloqueada",
+                    "failed": "Falhou"}.get(pit_status, "Não executada")
+    cards = st.columns(5)
+    cards[0].markdown(_kpi_html("Validação PIT", status_label,
+                                accent="#00C896" if pit_status == "passed" else "#F6C90E"),
+                      unsafe_allow_html=True)
+    cards[1].markdown(_kpi_html("Períodos", int(pit.get("periods") or 0),
+                                sub="mínimo metodológico: 36", sub_color="#4A5568",
+                                accent="#4A9EFF"), unsafe_allow_html=True)
+    cards[2].markdown(_kpi_html("Snapshots verificados",
+                                f"{float(pit.get('verified_snapshot_fraction') or 0):.0%}",
+                                sub="data de disponibilidade comprovada", sub_color="#4A5568",
+                                accent="#B084F6"), unsafe_allow_html=True)
+    cards[3].markdown(_kpi_html("Cobertura de retornos",
+                                f"{float(pit.get('return_observation_coverage') or 0):.0%}",
+                                accent="#4A9EFF"), unsafe_allow_html=True)
+    ci = pit.get("excess_bootstrap") or {}
+    ci_text = (f"{float(ci['lower']):+.2%} a {float(ci['upper']):+.2%}"
+               if ci.get("lower") is not None and pd.notna(ci.get("lower")) else "—")
+    cards[4].markdown(_kpi_html("IC bootstrap do excesso", ci_text,
+                                sub="intervalo de 95%", sub_color="#4A5568",
+                                accent="#00C896" if float(ci.get("lower") or -1) > 0 else "#F6C90E"),
+                      unsafe_allow_html=True)
+    blockers = validation.get("blockers") or []
+    if blockers:
+        st.warning("Validação ainda bloqueada: " + " · ".join(str(item) for item in blockers))
+    else:
+        st.success("Backtest PIT, cobertura, estabilidade, regimes e custos atenderam aos gates.")
+
+    st.markdown("#### Retrospectiva da seleção atual")
     weights = st.session_state.get("fii_port")
     if not weights:
         st.info("Monte a carteira na aba **Carteira-modelo** primeiro.")
