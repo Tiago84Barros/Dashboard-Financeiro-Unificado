@@ -1,0 +1,38 @@
+# Armazém local (warehouse) — Postgres 17 espelhando o Supabase.
+#
+# Objetivo: rodar a ingestão pesada de mercado/FII localmente e manter no
+# Supabase (plano Free, 0,5 GB) apenas a "vitrine" que o app lê ao vivo.
+#
+# Postgres 17 para casar com a versão do Supabase (17.6) e evitar
+# incompatibilidade de dump/restore.
+#
+# Uso rápido:
+#   cd warehouse
+#   copy .env.example .env   # e edite a senha
+#   docker compose up -d
+#   # conecta em: postgresql://postgres:<senha>@localhost:5433/postgres
+#
+# Porta 5433 (não 5432) para não colidir com um Postgres já instalado.
+
+services:
+  warehouse:
+    image: postgres:17
+    container_name: dfu_warehouse
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${WAREHOUSE_PASSWORD:-changeme}
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - warehouse_data:/var/lib/postgresql/data
+      - ./dumps:/dumps          # dumps do Supabase ficam visíveis dentro do container
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  warehouse_data:

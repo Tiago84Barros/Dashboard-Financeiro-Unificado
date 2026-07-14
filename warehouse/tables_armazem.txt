@@ -1,0 +1,23 @@
+# Tabelas "armazém" — vivem no Postgres local e são REMOVIDAS do Supabase
+# após a ingestão passar a rodar localmente.
+#
+# Critério: não são lidas pela UI (views/) nem pela camada core no caminho de
+# renderização — só o pipeline as escreve/lê. Fonte da classificação: mapeamento
+# em warehouse/README.md.
+#
+# Tamanho aprox. no Supabase em jul/2026 entre parênteses.
+# NÃO inclua aqui tabelas da vitrine (preços, métricas, scores, fundamentos,
+# dividendos, docs RAG, finanças pessoais) — essas ficam no Supabase.
+
+market.fii_metric_observations       # 418 MB — observações PIT (pré-computar snapshot p/ vitrine)
+market.fii_b3_security_history       # 243 MB — histórico oficial B3 (só pipeline)
+market.fii_lineage_edges             # 168 MB — proveniência (derivável; código pula se ausente)
+market.cri_security_observations     # 166 MB — observações CRI da CVM (só pipeline)
+market.fii_exposures                 # 105 MB — exposições (pré-computar snapshot p/ vitrine)
+market.brapi_raw_payloads            #  89 MB — cache de reprocessamento (roda local)
+market.historical_price_observations #  54 MB — histórico append-only de OHLCV (auditoria PIT)
+market.calculated_metric_vintages    #  27 MB — versões PIT de métricas
+market.fii_documents                 #  14 MB — documentos brutos
+market.fii_source_releases           #  13 MB — releases imutáveis de origem
+market.fii_registry_observations     #   4 MB — cadastro CVM (fundos cancelados)
+public.multiplos_TRI                 #   5 MB — legado (múltiplos trimestrais yfinance)
