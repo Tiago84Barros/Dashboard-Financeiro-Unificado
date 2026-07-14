@@ -348,6 +348,17 @@ def metric_rows(quote: dict) -> list[dict]:
         return []
     dks = (quote or {}).get("defaultKeyStatistics") or {}
     fin = (quote or {}).get("financialData") or {}
+    # DY trailing da própria brapi (consenso) — evita over-count da janela
+    # de dividendos somada (ex.: SAPR3 cluster de JCP em junho). Em multi-
+    # classe (CEBR5/6...), porém, o consenso da brapi soma TODAS as classes
+    # e infla ~2x: quando excede 1,5x a soma própria 12m (pós-dedup por
+    # classe), descarta — nunca grava lixo em calculated_metrics/vintages.
+    dy_spot = _first(dks, ("dividendYield", "yield"))
+    if dy_spot is not None:
+        from core.brapi import trailing_dy
+        dy_proprio = trailing_dy(quote)
+        if dy_proprio and dy_spot > dy_proprio * 1.5:
+            dy_spot = None
     cand = {
         "P/L": _first(quote, ("priceEarnings",)) or _first(dks, ("trailingPE", "forwardPE")),
         "P/VP": _first(dks, ("priceToBook",)),
@@ -358,9 +369,7 @@ def metric_rows(quote: dict) -> list[dict]:
         "ROA": _first(fin, ("returnOnAssets",)),
         "Margem_Liquida": _first(fin, ("profitMargins",)),
         "Margem_Operacional": _first(fin, ("operatingMargins",)),
-        # DY trailing da própria brapi (consenso) — evita over-count da janela
-        # de dividendos somada (ex.: SAPR3 cluster de JCP em junho).
-        "DY": _first(dks, ("dividendYield", "yield")),
+        "DY": dy_spot,
     }
     rows: list[dict] = []
     for name, val in cand.items():
