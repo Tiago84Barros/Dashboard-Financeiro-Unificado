@@ -22,6 +22,7 @@ METRIC_LABELS = {
     "conflict_alignment": "alinhamento de conflitos",
     "contract_quality": "qualidade dos contratos",
     "credit_spread_adequacy": "adequação do spread de crédito",
+    "credit_spread": "spread de crédito observado",
     "debtor_diversification": "diversificação de devedores",
     "delinquency": "inadimplência",
     "duration_anos": "duration",
@@ -38,6 +39,7 @@ METRIC_LABELS = {
     "mandate_adherence": "aderência ao mandato",
     "nav_discount": "desconto sobre NAV",
     "rating_quality": "qualidade de rating",
+    "subordination_protection": "proteção por subordinação",
     "related_party_exposure": "exposição a partes relacionadas",
     "tenant_concentration": "concentração de locatários",
     "vacancia_financeira": "vacância financeira",
@@ -243,6 +245,9 @@ def _specific_structure(row: dict) -> list[str]:
         lines.extend([
             _metric_line("duration", row.get("duration_anos"), percent=False),
             _metric_line("LTV", row.get("ltv")),
+            _metric_line("spread de crédito", row.get("credit_spread")),
+            _metric_line("qualidade de rating", row.get("rating_quality")),
+            _metric_line("proteção por subordinação", row.get("subordination_protection")),
             _metric_line("inadimplência", row.get("delinquency")),
             _metric_line("concentração do maior devedor", row.get("debtor_concentration")),
             ("indexadores: " + _top_exposures(row.get("indexers"))

@@ -53,6 +53,11 @@ SOURCE_REGISTRY = {
         "license": "dados abertos CVM", "access": "documentos", "quality": .95,
         "scope": "governança, mandato, taxas e conflitos divulgados",
     },
+    "cvm_cri_monthly": {
+        "license": "dados abertos CVM", "access": "csv/zip", "quality": .95,
+        "scope": "duration, LTV, rating, subordinacao, inadimplencia, indexadores e devedores por CRI, conciliados por chave regulatoria",
+        "url": "https://dados.cvm.gov.br/dataset/securit-doc-inf_mensal_cri",
+    },
     "public_fii_documents": {
         "license": "documentos públicos", "access": "CVM/Brapi + PDF/OCR", "quality": .70,
         "scope": "WAULT, contratos, locatários, CRIs, LTV, rating, indexadores e governança; exige evidência e revisão",

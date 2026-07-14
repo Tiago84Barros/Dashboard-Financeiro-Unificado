@@ -244,6 +244,7 @@ migration/backup/
 artifacts/
 local_staging/fii_documents/
 local_staging/fii_cvm/
+local_staging/fii_cvm_cri/
 
 # Saídas de teste locais (lixo)
 _testout.txt

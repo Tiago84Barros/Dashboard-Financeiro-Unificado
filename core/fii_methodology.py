@@ -147,7 +147,8 @@ SOURCE_PLANS: dict[str, dict[str, tuple[str, ...]]] = {
     "papel": {
         "required": ("brapi_quote_monthly", "brapi_fii_indicators", "brapi_fii_reports",
                      "brapi_fii_portfolio", "cvm_informe_mensal", "cvm_informe_trimestral"),
-        "optional": ("cvm_eventuais", "cvm_informe_anual", "public_fii_documents"),
+        "optional": ("cvm_eventuais", "cvm_informe_anual", "cvm_cri_monthly",
+                     "public_fii_documents"),
     },
     "fof": {
         "required": ("brapi_quote_monthly", "brapi_fii_indicators", "brapi_fii_reports",
@@ -158,7 +159,8 @@ SOURCE_PLANS: dict[str, dict[str, tuple[str, ...]]] = {
         "required": ("brapi_quote_monthly", "brapi_fii_indicators", "brapi_fii_reports",
                      "brapi_fii_properties", "brapi_fii_portfolio",
                      "cvm_informe_mensal", "cvm_informe_trimestral"),
-        "optional": ("cvm_eventuais", "cvm_informe_anual", "public_fii_documents"),
+        "optional": ("cvm_eventuais", "cvm_informe_anual", "cvm_cri_monthly",
+                     "public_fii_documents"),
     },
 }
 

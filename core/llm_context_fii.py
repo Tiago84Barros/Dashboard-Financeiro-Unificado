@@ -11,7 +11,8 @@ import pandas as pd
 _DETAIL_METRICS = (
     "vacancia_fisica", "vacancia_financeira", "wault_anos",
     "tenant_concentration", "lease_expiry_concentration_24m", "leverage",
-    "duration_anos", "ltv", "rating_quality", "delinquency",
+    "duration_anos", "ltv", "credit_spread", "rating_quality",
+    "subordination_protection", "delinquency",
     "debtor_diversification", "indexer_diversification", "issuance_concentration",
     "nav_discount", "double_fee_burden", "holdings_overlap",
     "invested_portfolio_liquidity", "holdings_quality",

@@ -18,7 +18,10 @@ _UPDATE_COLS = {
     "companies": ("name", "cnpj", "sector", "subsector", "segment", "website",
                   "description", "logo_url", "codigo_cvm"),
     "assets": ("company_id", "asset_type", "exchange", "currency", "is_active"),
-    "historical_prices": ("open", "high", "low", "close", "adjusted_close", "volume"),
+    "historical_prices": ("open", "high", "low", "close", "adjusted_close", "volume",
+                          "source", "raw_payload_id", "knowledge_at",
+                          "availability_quality", "content_hash"),
+    "historical_price_observations": (),
     # point-in-time (019): period_end_date/raw_payload_id ATUALIZAM no conflito;
     # first_seen_at NUNCA entra aqui nem nas linhas — o DEFAULT NOW() preenche
     # no primeiro INSERT e re-ingestões não apagam o histórico de disponibilidade.
@@ -54,6 +57,10 @@ _UPDATE_COLS = {
                                 "source_url", "raw_payload_id", "quality_status",
                                 "metadata_json", "observed_at"),
     "fii_exposures": ("exposure_weight", "raw_payload_id", "metadata_json"),
+    "cri_security_observations": ("value_numeric", "value_text", "value_json",
+                                  "source_url", "raw_payload_id", "source_release_id",
+                                  "content_hash", "quality_status", "metadata_json",
+                                  "observed_at"),
     "fii_universe_history": ("active_status", "successor_ticker", "source", "metadata_json"),
     "fii_score_snapshots": ("formula_version", "fii_type", "type_score", "confidence",
                             "coverage", "components_json", "inputs_json",
@@ -66,6 +73,7 @@ _CONFLICT = {
     "companies": "codigo_cvm",
     "assets": "ticker",
     "historical_prices": "ticker, date",
+    "historical_price_observations": "ticker, date, source, content_hash",
     "income_statements": "ticker, period, year, quarter",
     "balance_sheets": "ticker, period, year, quarter",
     "cash_flow_statements": "ticker, period, year, quarter",
@@ -77,6 +85,7 @@ _CONFLICT = {
     "fii_imoveis": "ticker, nome_imovel",
     "fii_metric_observations": "ticker, metric_name, reference_date, available_at, vintage, source",
     "fii_exposures": "ticker, exposure_type, exposure_name, reference_date, available_at, vintage, source",
+    "cri_security_observations": "security_key, metric_name, reference_date, available_at, vintage, source",
     "fii_universe_history": "ticker, reference_date, available_at",
     "fii_score_snapshots": "ticker, reference_date, available_at, methodology_version",
 }
@@ -87,6 +96,7 @@ _NATURAL_KEY = {
     "companies": ("codigo_cvm",),
     "assets": ("ticker",),
     "historical_prices": ("ticker", "date"),
+    "historical_price_observations": ("ticker", "date", "source", "content_hash"),
     "income_statements": ("ticker", "period", "year", "quarter"),
     "balance_sheets": ("ticker", "period", "year", "quarter"),
     "cash_flow_statements": ("ticker", "period", "year", "quarter"),
@@ -99,6 +109,8 @@ _NATURAL_KEY = {
     "fii_imoveis": ("ticker", "nome_imovel"),
     "fii_metric_observations": ("ticker", "metric_name", "reference_date", "available_at", "vintage", "source"),
     "fii_exposures": ("ticker", "exposure_type", "exposure_name", "reference_date", "available_at", "vintage", "source"),
+    "cri_security_observations": ("security_key", "metric_name", "reference_date",
+                                  "available_at", "vintage", "source"),
     "fii_universe_history": ("ticker", "reference_date", "available_at"),
     "fii_score_snapshots": ("ticker", "reference_date", "available_at", "methodology_version"),
 }
@@ -543,7 +555,44 @@ def record_lineage_for_raw_payload(conn, raw_payload_id: int | None) -> int:
         FROM market.fii_exposures CROSS JOIN raw WHERE raw_payload_id=:raw
         ON CONFLICT DO NOTHING
     """), {"raw": int(raw_payload_id)})
-    return max(int(result.rowcount or 0), 0)
+    count = max(int(result.rowcount or 0), 0)
+    historical_has_lineage = conn.execute(text("""
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='market' AND table_name='historical_prices'
+              AND column_name='raw_payload_id'
+        )
+    """)).scalar()
+    if historical_has_lineage:
+        extra = conn.execute(text("""
+            INSERT INTO market.fii_lineage_edges
+                (parent_type, parent_id, child_type, child_id, relation)
+            SELECT CASE WHEN p.source='brapi.dev' THEN 'brapi_raw_payload'
+                        ELSE 'source_raw_payload' END,
+                   CAST(:raw AS text), 'historical_price',
+                   CAST(h.id AS text), 'normalized_into'
+            FROM market.historical_price_observations h
+            JOIN market.brapi_raw_payloads p ON p.id=h.raw_payload_id
+            WHERE h.raw_payload_id=:raw
+            ON CONFLICT DO NOTHING
+        """), {"raw": int(raw_payload_id)})
+        count += max(int(extra.rowcount or 0), 0)
+    if conn.execute(text(
+            "SELECT to_regclass('market.cri_security_observations') IS NOT NULL")).scalar():
+        extra = conn.execute(text("""
+            INSERT INTO market.fii_lineage_edges
+                (parent_type, parent_id, child_type, child_id, relation)
+            SELECT CASE WHEN p.source='brapi.dev' THEN 'brapi_raw_payload'
+                        ELSE 'source_raw_payload' END,
+                   CAST(:raw AS text), 'cri_security_observation',
+                   CAST(o.id AS text), 'normalized_into'
+            FROM market.cri_security_observations o
+            JOIN market.brapi_raw_payloads p ON p.id=o.raw_payload_id
+            WHERE o.raw_payload_id=:raw
+            ON CONFLICT DO NOTHING
+        """), {"raw": int(raw_payload_id)})
+        count += max(int(extra.rowcount or 0), 0)
+    return count
 
 
 def log_quality(conn, *, ticker=None, table_name, field_name=None, issue_type,

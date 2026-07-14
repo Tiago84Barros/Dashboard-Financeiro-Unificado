@@ -27,7 +27,7 @@ jobs:
   refresh:
     name: Market refresh
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 120
     env:
       APP_ENV: production
       PYTHONUNBUFFERED: "1"
@@ -87,6 +87,15 @@ jobs:
       - name: FIIs — endpoints dedicados Brapi v2 (métricas e look-through)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis-v2 --json
+      - name: FIIs — histórico diário Brapi v2 (backfill incremental)
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-v2-history --years 20 --json
+      - name: FIIs — look-through de CRIs pela CVM
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-cvm-cri --years 5 --json
+      - name: FIIs — documentos públicos prioritários
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-documents --limit 25 --json
       - name: FIIs — séries históricas (preços + rendimentos p/ backtest)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis-series --json
