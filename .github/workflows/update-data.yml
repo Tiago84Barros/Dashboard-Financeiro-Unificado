@@ -17,9 +17,10 @@ on:
         default: "all"
         type: string
   schedule:
-    # TEMPORÁRIO PARA TESTE: executa a cada 5 minutos.
-    # Depois de validar no app, voltar para "0 8 * * *".
-    - cron: "*/5 * * * *"
+    # Diário 08:00 UTC (05:00 BRT). Manter frequência baixa: no plano Free
+    # (compute Nano) execuções frequentes drenam o Disk IO Budget e saturam
+    # CPU/RAM. Para rodar sob demanda use workflow_dispatch.
+    - cron: "0 8 * * *"
 
 permissions:
   contents: read
