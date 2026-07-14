@@ -11,6 +11,11 @@ market.dividends inclui amount, o eco coexiste com a linha correta e a soma
 12m dobra (ex.: CEBR5 2025 somava 9,41 em vez de 4,4811 do Fato Relevante
 CVM 12/08/2025). A mesma fonte também repete eventos parcelados/escala errada.
 
+A mesma fonte ainda desloca a data-ex do eco (±1 dia em CCRO3/GUAR3/PETZ3...,
+10 dias em AXIA5), escapando do casamento exato por (data-ex, label): AXIA5
+somava 8,38 em 12m em vez de ~4,01. O dedup cobre isso com as regras B/C
+(auto-eco por rate quase igual a confirmada em ±15d + queda do cluster).
+
 O normalizador (core.brapi.dedup_cash_dividends, usado por
 data_pipeline.market.normalize.dividend_rows) passou a descartar essas
 entradas na ingestão; este script remove o que JÁ FOI gravado, re-derivando

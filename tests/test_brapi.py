@@ -61,6 +61,49 @@ def test_dedup_cash_dividends_classe_mista():
     assert rates == [0.5, 0.7, 1.0, 1.665745]  # 1.832319 (eco da PNB) caiu
 
 
+def test_dedup_cash_dividends_eco_cross_date():
+    # Caso AXIA5 (payload real 2026-07): confirmada ex=2025-08-05 rate=2.43036
+    # e DOIS ecos CSV com data-ex deslocada p/ 2025-08-15 — a cópia do próprio
+    # evento (regra B) e o valor da AXIA6 no mesmo slot (regra C).
+    items = [
+        {"lastDatePrior": "2025-08-05T03:00:00.000Z", "rate": 2.43036,
+         "label": "DIVIDENDO", "remarks": "", "paymentDate": "2025-08-28T03:00:00.000Z"},
+        {"lastDatePrior": "2025-08-15T03:00:00.000Z", "rate": 2.4303634,
+         "label": "DIVIDENDO", "remarks": "csv:payment_date_estimated",
+         "paymentDate": "2025-08-15T03:00:00.000Z"},
+        {"lastDatePrior": "2025-08-15T03:00:00.000Z", "rate": 1.9334791,
+         "label": "DIVIDENDO", "remarks": "csv:payment_date_estimated",
+         "paymentDate": "2025-08-15T03:00:00.000Z"},
+        # órfã CSV fora da janela de 15 dias → permanece
+        {"lastDatePrior": "2025-04-29T03:00:00.000Z", "rate": 0.1110415,
+         "label": "DIVIDENDO", "remarks": "csv:payment_date_estimated",
+         "paymentDate": "2025-04-29T03:00:00.000Z"},
+    ]
+    kept = brapi.dedup_cash_dividends(items)
+    assert sorted(d["rate"] for d in kept) == [0.1110415, 2.43036]
+
+
+def test_dedup_cash_dividends_nao_remove_legitimos():
+    # confirmadas próximas com rates distintos (parcelas) ficam TODAS; CSV com
+    # rate diferente de qualquer confirmada na janela (sem cluster B) também
+    # fica — não há âncora provando que é eco.
+    items = [
+        {"lastDatePrior": "2025-03-10T03:00:00.000Z", "rate": 1.0,
+         "label": "JCP", "remarks": "", "paymentDate": "2025-03-20T03:00:00.000Z"},
+        {"lastDatePrior": "2025-03-18T03:00:00.000Z", "rate": 0.98,
+         "label": "JCP", "remarks": "", "paymentDate": "2025-03-28T03:00:00.000Z"},
+        {"lastDatePrior": "2025-03-14T03:00:00.000Z", "rate": 0.5,
+         "label": "JCP", "remarks": "csv:payment_date_estimated",
+         "paymentDate": "2025-03-14T03:00:00.000Z"},
+        # label distinto não ancora: DIVIDENDO ~igual a JCP confirmado fica
+        {"lastDatePrior": "2025-03-12T03:00:00.000Z", "rate": 1.0000005,
+         "label": "DIVIDENDO", "remarks": "csv:payment_date_estimated",
+         "paymentDate": "2025-03-12T03:00:00.000Z"},
+    ]
+    kept = brapi.dedup_cash_dividends(items)
+    assert sorted(d["rate"] for d in kept) == [0.5, 0.98, 1.0, 1.0000005]
+
+
 def test_annual_dividends():
     agg = brapi.annual_dividends(_QUOTE)
     assert agg[2024] == 3.0   # 2.0 + 1.0

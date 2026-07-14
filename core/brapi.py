@@ -108,6 +108,14 @@ def _to_float(v):
 
 # ── Parsers puros ─────────────────────────────────────────────────────────────
 
+# Eco cross-date: a fonte CSV também desloca a data-ex do evento (viu-se ±1 dia
+# em CCRO3/GUAR3/PETZ3... e 10 dias em AXIA5). Janela e tolerância calibradas
+# num survey de 742 payloads: todos os auto-ecos ficaram a <=10 dias e <=0,03%
+# da confirmada; nenhum evento legítimo distinto caiu nessa faixa.
+_ECHO_WINDOW_DAYS = 15
+_ECHO_RATE_RELTOL = 1e-3
+
+
 def dedup_cash_dividends(items: list[dict]) -> list[dict]:
     """
     Remove ecos de fonte secundária do cashDividends da brapi. Em empresas
@@ -116,20 +124,60 @@ def dedup_cash_dividends(items: list[dict]) -> list[dict]:
     carimbadas com o ISIN do próprio ticker (assetIssued NÃO discrimina a
     classe) e marcadas em remarks ('csv:payment_date_estimated',
     'unconfirmed-by-third-party'). A mesma fonte também repete o evento
-    parcelado ou em escala errada. Regra: quando a mesma (data-ex, label) tem
-    entrada confirmada (remarks vazio), as não-confirmadas são eco e caem;
-    sem par confirmado, permanecem (não perde evento que só a CSV conhece).
+    parcelado, em escala errada ou com a data-ex DESLOCADA (ex.: AXIA5 tem
+    confirmada ex=2025-08-05 e ecos CSV em ex=2025-08-15 — o próprio valor e o
+    da AXIA6). Regras, só sobre não-confirmadas (remarks não-vazio):
+      A. mesma (data-ex, label) de uma confirmada → eco, cai;
+      B. mesmo label e rate quase igual (<=0,1%) ao de uma confirmada a até
+         15 dias → cópia do próprio evento com ex deslocado, cai;
+      C. mesma (data-ex, label) de uma entrada B → a CSV publica TODAS as
+         classes numa única data-ex estimada; provado que o grupo é o slot do
+         eco, os irmãos são as outras classes (caso AXIA6 acima), caem.
+    Sem âncora confirmada, permanecem (não perde evento que só a CSV conhece).
+    Comparar rate com confirmada de OUTRA classe (payload irmão) foi avaliado
+    e rejeitado: GOAU4/TAEE4/PINE4... pagam legitimamente o rate da classe
+    irmã e o feed só tem a linha CSV — apagaria histórico verdadeiro.
     """
-    def _key(it: dict):
+    def _label(it: dict) -> str:
+        return str(it.get("label") or "").strip().upper()
+
+    def _ex(it: dict):
         raw = it.get("lastDatePrior") or it.get("approvedOn")
         if not raw:
             return None
-        return (str(raw)[:10], str(it.get("label") or "").strip().upper())
+        try:
+            return datetime.strptime(str(raw)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
 
-    confirmadas = {k for k in (_key(it) for it in items
-                               if not str(it.get("remarks") or "").strip()) if k}
+    def _unconf(it: dict) -> bool:
+        return bool(str(it.get("remarks") or "").strip())
+
+    conf_keys: set[tuple] = set()
+    conf_events: list[tuple] = []          # (ex, label, rate) p/ regra B
+    for it in items:
+        if _unconf(it):
+            continue
+        ex = _ex(it)
+        if ex is None:
+            continue
+        conf_keys.add((ex, _label(it)))
+        rate = _to_float(it.get("rate"))
+        if rate is not None and rate > 0:
+            conf_events.append((ex, _label(it), rate))
+
+    def _self_echo(it: dict) -> bool:
+        ex, label, rate = _ex(it), _label(it), _to_float(it.get("rate"))
+        if ex is None or rate is None or rate <= 0:
+            return False
+        return any(clabel == label and 0 < abs((ex - cex).days) <= _ECHO_WINDOW_DAYS
+                   and abs(rate - crate) <= _ECHO_RATE_RELTOL * max(rate, crate)
+                   for cex, clabel, crate in conf_events)
+
+    echo_slots = {(_ex(it), _label(it)) for it in items
+                  if _unconf(it) and _self_echo(it)}          # regras B (+C via slot)
     return [it for it in items
-            if not (str(it.get("remarks") or "").strip() and _key(it) in confirmadas)]
+            if not (_unconf(it) and (_ex(it), _label(it)) in (conf_keys | echo_slots))]
 
 
 def parse_cash_dividends(quote: dict) -> list[dict]:
