@@ -121,6 +121,82 @@ def _kpi(label: str, value: str, sub: str = "", accent: str = "", val_cls: str =
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Seção 0 — Índice de Confiança dos Dados (por ticker, honesto)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_confianca() -> None:
+    """Índice de confiança derivado de sinais reais (cobertura/frescor/integridade),
+    por ação ativa. Não é o `confidence_score` constante da tabela — ver core.data_confidence."""
+    try:
+        import core.data_confidence as _dc
+        scored = _dc.compute_confidence()
+        resumo = _dc.summarize_confidence(scored)
+    except Exception:
+        resumo = {"n": 0}
+    if not resumo.get("n"):
+        return
+
+    st.markdown('<div class="dh-section">🎯 Índice de Confiança dos Dados '
+                '<span class="dh-badge">por ticker · sinais reais</span></div>',
+                unsafe_allow_html=True)
+
+    media = resumo["media"]
+    acc = "pos" if media >= 75 else "warn" if media >= 55 else "neg"
+    vcls = "dh-pos" if media >= 75 else "dh-warn" if media >= 55 else "dh-neg"
+    n = resumo["n"]
+    cards = "".join([
+        _kpi("📊 Índice médio", f"{media:.0f}/100", f"{n} ações ativas",
+             accent=acc, val_cls=vcls),
+        _kpi("🟢 Alta (≥75)", _fmt_int(resumo["alta"]),
+             f"{100*resumo['alta']/n:.0f}% do universo", accent="pos"),
+        _kpi("🟡 Média (55–74)", _fmt_int(resumo["media_faixa"]),
+             f"{100*resumo['media_faixa']/n:.0f}% do universo",
+             accent="warn" if resumo["media_faixa"] else ""),
+        _kpi("🔴 Baixa (<55)", _fmt_int(resumo["baixa"]),
+             f"{100*resumo['baixa']/n:.0f}% do universo",
+             accent="neg" if resumo["baixa"] else "pos"),
+    ])
+    st.markdown(f'<div class="dh-grid">{cards}</div>', unsafe_allow_html=True)
+
+    # Barra de distribuição Alta/Média/Baixa
+    a, m, b = resumo["alta"], resumo["media_faixa"], resumo["baixa"]
+    seg = (f'<div class="dh-bar-seg" style="width:{100*a/n:.1f}%;background:#34D399"></div>'
+           f'<div class="dh-bar-seg" style="width:{100*m/n:.1f}%;background:#FBBF24"></div>'
+           f'<div class="dh-bar-seg" style="width:{100*b/n:.1f}%;background:#F87171"></div>')
+    st.markdown(
+        f'<div class="dh-bar">{seg}</div>'
+        f'<div class="dh-legend">'
+        f'<span><span class="dh-dot" style="background:#34D399"></span>Alta {a}</span>'
+        f'<span><span class="dh-dot" style="background:#FBBF24"></span>Média {m}</span>'
+        f'<span><span class="dh-dot" style="background:#F87171"></span>Baixa {b}</span>'
+        f'</div>', unsafe_allow_html=True)
+
+    piores = resumo.get("piores") or []
+    if piores:
+        with st.expander(f"🔎 {len(piores)} ações com menor confiança (piores primeiro)"):
+            tbl = pd.DataFrame([{
+                "Ticker": d["ticker"], "Score": d["score"], "Faixa": d["label"],
+                "Cobertura": d["cobertura"], "Frescor": d["frescor"],
+                "Integridade": d["integridade"],
+                "Métr. ttm": f'{d["n_key_ttm"]}/9',
+                "Últ. DRE": d["ymax"] if d["ymax"] else "—",
+                "Dias s/ preço": d["dias_preco"] if d["dias_preco"] is not None else "—",
+                "Flags": d["n_flags"],
+            } for d in piores])
+            st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+    st.markdown(
+        '<div class="dh-note">Score honesto por ticker = <b>45% cobertura</b> '
+        '(métricas-chave ttm + demonstração anual + preço) + <b>30% frescor</b> '
+        '(idade do preço e da última DRE) + <b>25% integridade</b> (ausência de flags '
+        'warn/error). Substitui, para exibição, o <code>confidence_score</code> da tabela, '
+        'que é constante por método (85/80/60) e não distingue cobertura. Não afeta o '
+        'filtro ≥80 do caminho point-in-time — é sinal separado.</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Seção 1 — Fundamentos (market.* / BRAPI Pro), fonte ativa
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -318,6 +394,9 @@ def render(show_header: bool = True) -> None:
         src = _facade.read_source()
     except Exception:
         src = "market"
+
+    # ── 0) Índice de Confiança dos Dados ──────────────────────────────────────
+    _render_confianca()
 
     # ── 1) Fundamentos — market.* ─────────────────────────────────────────────
     try:
