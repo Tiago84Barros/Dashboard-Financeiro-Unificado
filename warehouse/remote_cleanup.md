@@ -55,6 +55,7 @@ DROP TABLE IF EXISTS market.fii_cvm_archive_loads;
 DROP TABLE IF EXISTS market.fii_b3_archive_loads;
 DROP TABLE IF EXISTS market.fii_cri_archive_loads;
 DROP TABLE IF EXISTS market.fii_source_releases;
+DROP TABLE IF EXISTS public."multiplos_TRI";
 ```
 
 `market.brapi_raw_payloads` permanece no Supabase nesta etapa. Ela é referenciada
