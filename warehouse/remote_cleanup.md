@@ -32,7 +32,9 @@ ORDER BY pg_total_relation_size(c.oid) DESC;
 ## Tabelas candidatas a remoção
 
 Somente após a validação acima, as tabelas abaixo podem ser removidas do
-Supabase, pois são armazém e não vitrine:
+Supabase, pois são armazém e não vitrine. As quatro tabelas auxiliares de
+documentos também entram no descarte porque dependem de `fii_documents` ou
+`fii_parser_versions` e possuem cópia no warehouse local:
 
 ```sql
 DROP TABLE IF EXISTS market.fii_lineage_edges;
@@ -42,6 +44,10 @@ DROP TABLE IF EXISTS market.cri_security_observations;
 DROP TABLE IF EXISTS market.fii_exposures;
 DROP TABLE IF EXISTS market.historical_price_observations;
 DROP TABLE IF EXISTS market.calculated_metric_vintages;
+DROP TABLE IF EXISTS market.fii_extraction_evidence;
+DROP TABLE IF EXISTS market.fii_extraction_runs;
+DROP TABLE IF EXISTS market.fii_parser_calibrations;
+DROP TABLE IF EXISTS market.fii_document_versions;
 DROP TABLE IF EXISTS market.fii_documents;
 DROP TABLE IF EXISTS market.fii_parser_versions;
 DROP TABLE IF EXISTS market.fii_registry_observations;
@@ -49,8 +55,13 @@ DROP TABLE IF EXISTS market.fii_cvm_archive_loads;
 DROP TABLE IF EXISTS market.fii_b3_archive_loads;
 DROP TABLE IF EXISTS market.fii_cri_archive_loads;
 DROP TABLE IF EXISTS market.fii_source_releases;
-DROP TABLE IF EXISTS market.brapi_raw_payloads;
 ```
+
+`market.brapi_raw_payloads` permanece no Supabase nesta etapa. Ela é referenciada
+por tabelas vitrine preservadas, como `historical_prices`, `income_statements`,
+`balance_sheets`, `cash_flow_statements` e `fii_universe_history`; removê-la
+exigiria apagar ou enfraquecer essas chaves estrangeiras. O custo restante é
+aceitável e preserva a integridade do aplicativo.
 
 Não remover automaticamente `public.docs_corporativos` ou
 `public.docs_corporativos_chunks`: elas não estão na lista armazém e podem
@@ -59,4 +70,4 @@ finanças pessoais.
 
 Depois do `DROP`, aguardar o Supabase atualizar o uso e executar novamente o
 diagnóstico. A operação é destrutiva no banco remoto; este arquivo documenta o
-procedimento, mas não o executa automaticamente.
+procedimento executado após a validação do backup local.
