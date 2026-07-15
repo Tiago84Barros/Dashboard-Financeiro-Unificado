@@ -191,7 +191,16 @@ cada 5 min, sem apagar nada. Ver o bloco no chat / SQL Editor.
 | Runbook dump/restore/ingest local | ✅ este arquivo |
 | Lista da vitrine + fluxo de publicação | ✅ `tables_vitrine.txt` + Passo 5 |
 | Refator das 2 funções de leitura (`load_fii_methodology_inputs`, exposições) | ⏳ próximo |
-| Edição do `market-refresh.yml` | ⏳ próximo |
+| Edição do `market-refresh.yml` | ✅ cargas pesadas removidas do Supabase |
+
+## Supabase remoto ainda acima do limite
+
+O warehouse local não reduz automaticamente o banco remoto. Depois que o
+workflow remoto foi desativado para cargas pesadas, ainda é necessário remover
+as tabelas históricas que já foram acumuladas no Supabase. Essa remoção deve ser
+precedida por validação da vitrine e aprovação explícita, pois envolve `DROP
+TABLE`. Consulte `warehouse/remote_cleanup.md` para o roteiro somente leitura e
+a lista de tabelas armazém.
 
 ## Expansão auditável da base de FIIs
 

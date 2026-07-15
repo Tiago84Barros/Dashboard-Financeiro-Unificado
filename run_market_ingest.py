@@ -35,6 +35,18 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s  %(levelname)-7s  %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("market_ingest")
 
+_REMOTE_HEAVY_COMMANDS = frozenset({
+    "fiis-v2", "fiis-v2-history", "fiis-cvm-structured", "fiis-cvm-cri",
+    "fiis-documents", "fiis-b3-history", "fiis-pit-backtest", "fiis-enrich",
+})
+
+
+def _local_database_target() -> bool:
+    """Evita que cargas de arquivo/histórico sejam gravadas no Supabase."""
+    url = (os.getenv("SUPABASE_UNIFICADO_URL") or os.getenv("DATABASE_URL") or
+           os.getenv("SUPABASE_DB_URL") or "").lower()
+    return "127.0.0.1" in url or "localhost" in url
+
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão BRAPI Pro -> Supabase (market.*)")
@@ -90,6 +102,15 @@ def main() -> int:
         os.environ["SUPABASE_UNIFICADO_URL"] = (
             "postgresql://postgres:" + quote(password, safe="")
             + "@127.0.0.1:5433/postgres")
+
+    if (args.command in _REMOTE_HEAVY_COMMANDS and
+            not _local_database_target() and
+            os.getenv("ALLOW_HEAVY_REMOTE_INGEST", "").lower() != "true"):
+        log.error(
+            "Comando %s bloqueado: ingestão pesada exige --warehouse. "
+            "Use ALLOW_HEAVY_REMOTE_INGEST=true somente para uma exceção consciente.",
+            args.command)
+        return 2
 
     from data_pipeline.market import ingest
 

@@ -83,27 +83,9 @@ jobs:
       - name: FIIs — enriquecimento CVM (segmento/tipo/VPA/cotistas via CNPJ)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis-cvm --json
-      - name: FIIs — cobertura CVM (mensal, trimestral, anual, DFIN e eventuais)
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-cvm-structured --years 2 --json
-      - name: FIIs — endpoints dedicados Brapi v2 (métricas e look-through)
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-v2 --json
-      - name: FIIs — histórico diário Brapi v2 (backfill incremental)
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-v2-history --years 20 --json
-      - name: FIIs — look-through de CRIs pela CVM
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-cvm-cri --years 5 --json
-      - name: FIIs — documentos públicos prioritários
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-documents --limit 25 --json
-      - name: FIIs — cadastro CVM com fundos cancelados
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-registry --json
-      - name: FIIs — security master histórico oficial B3
-        if: steps.mode.outputs.mode == 'annual' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-b3-history --years 15 --json
+      # O armazém histórico (CVM/CRI/PDF/B3/PIT) roda exclusivamente no
+      # warehouse local com `run_market_ingest.py fiis-enrich --warehouse`.
+      # Estas etapas não devem repovoar o Supabase remoto.
       - name: FIIs — resolução de locatários, devedores e emissores
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis-entities --json
@@ -116,9 +98,6 @@ jobs:
       - name: Benchmark FIIs (IFIX via ETF XFIX11 p/ backtest)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py benchmark --json
-      - name: FIIs — reconstrução PIT e backtest walk-forward
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-pit-backtest --years 10 --json
       - name: FIIs — monitoramento e gates
         if: always() && steps.mode.outputs.mode != 'schema'
         run: python run_market_ingest.py fiis-monitor --json
