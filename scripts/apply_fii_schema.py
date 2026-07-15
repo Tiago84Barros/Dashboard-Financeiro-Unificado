@@ -14,6 +14,7 @@ MIGRATIONS = (
     ("036_fii_cvm_archive_checkpoints.sql", "market.fii_cvm_archive_loads"),
     ("037_fii_b3_parser_checkpoints.sql", "market.idx_fii_b3_archive_parser_status"),
     ("038_fii_cri_archive_checkpoints.sql", "market.fii_cri_archive_loads"),
+    ("039_fii_selection_inputs_snapshot.sql", "market.fii_selection_inputs"),
 )
 
 

@@ -490,7 +490,51 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
 
 @st.cache_data(ttl=900, show_spinner=False)
 def load_fii_methodology_inputs() -> pd.DataFrame:
-    """Inputs v4 com a última observação disponível e metadados de proveniência."""
+    """Inputs da metodologia, priorizando a vitrine compacta PIT do warehouse local."""
+    snapshot = _q("""
+        SELECT ticker, payload_json, as_of_date, available_at, knowledge_at,
+               reference_date, vintage, source, quality_status,
+               schema_version, generated_at, payload_sha256, coverage_json
+        FROM market.fii_selection_inputs
+        WHERE quality_status IN ('published', 'accepted')
+        ORDER BY generated_at DESC, ticker
+    """)
+    if not snapshot.empty:
+        records: list[dict] = []
+        seen: set[str] = set()
+        for item in snapshot.to_dict("records"):
+            ticker = str(item.get("ticker") or "").replace(".SA", "").strip().upper()
+            if not ticker or ticker in seen:
+                continue
+            payload = item.get("payload_json")
+            if isinstance(payload, str):
+                try:
+                    import json
+                    payload = json.loads(payload)
+                except (TypeError, ValueError):
+                    payload = None
+            if not isinstance(payload, dict):
+                continue
+            record = dict(payload)
+            record["ticker"] = ticker
+            record["snapshot_metadata"] = {
+                "as_of_date": item.get("as_of_date"),
+                "available_at": item.get("available_at"),
+                "knowledge_at": item.get("knowledge_at"),
+                "reference_date": item.get("reference_date"),
+                "vintage": item.get("vintage"),
+                "source": item.get("source"),
+                "quality_status": item.get("quality_status"),
+                "schema_version": item.get("schema_version"),
+                "generated_at": item.get("generated_at"),
+                "payload_sha256": item.get("payload_sha256"),
+                "coverage": item.get("coverage_json") or {},
+            }
+            records.append(record)
+            seen.add(ticker)
+        if records:
+            return pd.DataFrame(records)
+
     base = load_fiis().copy()
     if base.empty:
         return base

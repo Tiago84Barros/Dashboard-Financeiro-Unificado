@@ -136,6 +136,25 @@ docker run --rm -v "${PWD}\dumps:/dumps" postgres:17 `
 > Vamos validar este passo juntos com uma tabela pequena primeiro
 > (ex.: `market.fiis`) antes de rodar a lista inteira.
 
+### Publicação recomendada para a Seleção de FIIs
+
+Para o App 4, a seleção não depende mais das tabelas PIT pesadas. O script
+abaixo lê `load_fii_methodology_inputs()` no warehouse local e publica somente
+`market.fii_selection_inputs`, com um payload por ticker, hash, cobertura e
+metadados `available_at`/`knowledge_at`. O destino permanece protegido por RLS.
+
+```powershell
+$targetLine = Get-Content ..\.env | Where-Object { $_ -match '^SUPABASE_DB_URL=' } | Select-Object -First 1
+$target = ($targetLine -replace '^SUPABASE_DB_URL=', '').Trim().Trim('"')
+python ..\scripts\publish_fii_selection_snapshot.py `
+  --source-url "postgresql+psycopg2://postgres:<senha>@127.0.0.1:5433/postgres" `
+  --target-url $target
+```
+
+Faça primeiro uma simulação com `--dry-run`. A publicação esperada é de 393
+linhas, e a tabela compacta normalmente ocupa poucos megabytes. Após publicar,
+atualize o App 4 para expirar o cache do Streamlit.
+
 ## Passo 6 — Desligar os passos pesados no GitHub Actions   ⏳ *a construir*
 
 Editar `.github/workflows/market-refresh.yml` para **não** rodar mais a ingestão

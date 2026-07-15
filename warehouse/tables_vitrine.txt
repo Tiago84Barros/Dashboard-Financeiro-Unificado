@@ -23,6 +23,7 @@ market.fii_metrics_monthly
 market.fii_score_snapshots
 market.fii_imoveis
 market.fii_universe_history
+market.fii_selection_inputs
 market.companies
 market.assets
 market.macro_indicators
