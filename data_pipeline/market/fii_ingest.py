@@ -1157,26 +1157,59 @@ def _extract_quote(payload) -> dict | None:
 
 
 def _latest_fii_payloads(conn) -> list[tuple[str, dict]]:
-    """Último payload realmente completo de FII, ignorando cotações genéricas."""
-    rows = conn.execute(text(
-        "SELECT ticker, payload_json FROM market.brapi_raw_payloads "
-        "WHERE endpoint IN ('quote_fii_full', 'quote') "
-        "AND request_status='success' AND payload_json IS NOT NULL "
-        "ORDER BY ticker, "
-        "CASE WHEN endpoint='quote_fii_full' THEN 0 ELSE 1 END, id DESC"
-    )).fetchall()
+    """Payloads da coleta FII completa mais recente, sem fundos antigos.
+
+    Um intervalo superior a cinco minutos entre payloads ``quote_fii_full``
+    inicia um novo lote. O lote inclui candidatos depois classificados como
+    ETF, pois eles pertencem ao denominador de cobertura da coleta.
+
+    O fallback legado para ``quote`` só é usado quando nunca houve uma coleta
+    completa e permanece restrito a payloads reconhecidos como FII.
+    """
+    batch_start = conn.execute(text("""
+        WITH ordered AS (
+            SELECT fetched_at,
+                   LAG(fetched_at) OVER (ORDER BY fetched_at) AS previous_at
+            FROM market.brapi_raw_payloads
+            WHERE endpoint='quote_fii_full'
+              AND request_status='success'
+              AND payload_json IS NOT NULL
+        )
+        SELECT MAX(fetched_at)
+        FROM ordered
+        WHERE previous_at IS NULL
+           OR fetched_at - previous_at > INTERVAL '5 minutes'
+    """)).scalar()
+    require_fii = batch_start is None
+    if batch_start is not None:
+        rows = conn.execute(text("""
+            SELECT ticker, payload_json
+            FROM market.brapi_raw_payloads
+            WHERE endpoint='quote_fii_full'
+              AND request_status='success'
+              AND payload_json IS NOT NULL
+              AND fetched_at >= :batch_start
+            ORDER BY ticker, id DESC
+        """), {"batch_start": batch_start}).fetchall()
+    else:
+        rows = conn.execute(text(
+            "SELECT ticker, payload_json FROM market.brapi_raw_payloads "
+            "WHERE endpoint='quote' "
+            "AND request_status='success' AND payload_json IS NOT NULL "
+            "ORDER BY ticker, id DESC"
+        )).fetchall()
     selected: list[tuple[str, dict]] = []
     seen: set[str] = set()
     for ticker, payload in rows:
         if ticker in seen:
             continue
+        seen.add(ticker)
         try:
             quote = _extract_quote(payload)
         except (TypeError, ValueError, json.JSONDecodeError):
             continue
-        if quote and fz.is_fii(quote):
+        if quote and (not require_fii or fz.is_fii(quote)):
             selected.append((ticker, quote))
-            seen.add(ticker)
     return selected
 
 
@@ -1191,7 +1224,8 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
     engine = _engine()
     repo.reset_db_cols_cache()  # migração 020 pode ter sido aplicada com processo vivo
     prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0,
-            "gravados": 0, "ranking_aplicado": False, "cobertura": 0.0}
+            "gravados": 0, "ranking_aplicado": False, "cobertura": 0.0,
+            "snapshot_mensal": 0}
     if engine is None:
         return {**prog, "erros": -1}
     with engine.connect() as conn:
@@ -1282,7 +1316,7 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
                     conn, table_name="fiis", field_name="score",
                     issue_type="ranking_preservado_cobertura_insuficiente",
                     old_value=f"{successful}/{len(universe)}",
-                    severity="warning", source="brapi.dev",
+                    severity="warn", source="brapi.dev",
                 )
             prog["snapshot_mensal"] = _snapshot_score_mensal(
                 conn, ranked_by, ref) if apply_ranking else 0
@@ -1580,16 +1614,17 @@ def reprocess(weights: dict | None = None) -> dict:
     engine = _engine()
     repo.reset_db_cols_cache()  # migração 020 pode ter sido aplicada com processo vivo
     prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0,
-            "gravados": 0, "ranking_aplicado": False, "cobertura": 0.0}
+            "gravados": 0, "ranking_aplicado": False, "cobertura": 0.0,
+            "snapshot_mensal": 0}
     if engine is None:
         return {**prog, "erros": -1}
     with engine.connect() as conn:
         if not _schema_ready(conn):
             return {**prog, "erros": -1}
         metadata_ready = _score_metadata_ready(conn)
-        expected = int(conn.execute(text("SELECT COUNT(*) FROM market.fiis")).scalar() or 0)
         rows = _latest_fii_payloads(conn)
         vpa_map = _vpa_map(conn)
+    expected = len(rows)
     ref = datetime.now(timezone.utc).date()
     metrics: list[dict] = []
     for tk, quote in rows:
@@ -1613,8 +1648,9 @@ def reprocess(weights: dict | None = None) -> dict:
             for m in metrics
         ]
         calculated_at = datetime.now(timezone.utc)
-        prog["cobertura"] = round(len(metrics) / max(expected, 1), 4)
-        apply_ranking = _ranking_coverage_ok(len(metrics), expected)
+        successful = prog["fiis"] + prog["etfs_ignorados"]
+        prog["cobertura"] = round(successful / max(expected, 1), 4)
+        apply_ranking = _ranking_coverage_ok(successful, expected)
         ranked_by = (
             {r["ticker"]: r for r in fz.rank_fiis(metrics, weights=weights)}
             if apply_ranking else {}
@@ -1629,11 +1665,15 @@ def reprocess(weights: dict | None = None) -> dict:
         ]
         with engine.begin() as conn:
             prog["gravados"] = repo.upsert(conn, "fiis", out)
-            if not apply_ranking:
+            if apply_ranking:
+                prog["snapshot_mensal"] = _snapshot_score_mensal(
+                    conn, ranked_by, ref,
+                )
+            else:
                 repo.log_quality(
                     conn, table_name="fiis", field_name="score",
                     issue_type="reprocessamento_incompleto_score_preservado",
-                    old_value=f"{len(metrics)}/{expected}", severity="error",
+                    old_value=f"{successful}/{expected}", severity="critical",
                     source="brapi_raw_payloads",
                 )
     logger.info("market/fii reprocess: %s", prog)

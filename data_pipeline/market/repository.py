@@ -13,6 +13,9 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
+_QUALITY_SEVERITIES = frozenset({"info", "warn", "critical"})
+_QUALITY_SEVERITY_ALIASES = {"warning": "warn", "error": "critical"}
+
 # colunas atualizadas no ON CONFLICT (exclui chaves e created_at)
 _UPDATE_COLS = {
     "companies": ("name", "cnpj", "sector", "subsector", "segment", "website",
@@ -595,8 +598,18 @@ def record_lineage_for_raw_payload(conn, raw_payload_id: int | None) -> int:
     return count
 
 
+def _normalize_quality_severity(severity: str) -> str:
+    normalized = str(severity).strip().lower()
+    normalized = _QUALITY_SEVERITY_ALIASES.get(normalized, normalized)
+    if normalized not in _QUALITY_SEVERITIES:
+        allowed = ", ".join(sorted(_QUALITY_SEVERITIES))
+        raise ValueError(f"severity invalida: {severity!r}; use {allowed}")
+    return normalized
+
+
 def log_quality(conn, *, ticker=None, table_name, field_name=None, issue_type,
                 old_value=None, new_value=None, severity="info", source="brapi.dev") -> None:
+    normalized_severity = _normalize_quality_severity(severity)
     conn.execute(text("""
         INSERT INTO market.data_quality_logs
           (ticker, table_name, field_name, issue_type, old_value, new_value, severity, source)
@@ -604,7 +617,7 @@ def log_quality(conn, *, ticker=None, table_name, field_name=None, issue_type,
     """), {"tk": ticker, "tb": table_name, "fn": field_name, "it": issue_type,
            "ov": (str(old_value)[:200] if old_value is not None else None),
            "nv": (str(new_value)[:200] if new_value is not None else None),
-           "sev": severity, "src": source})
+           "sev": normalized_severity, "src": source})
 
 
 def company_id_by_codigo(conn, codigo_cvm: int) -> int | None:
