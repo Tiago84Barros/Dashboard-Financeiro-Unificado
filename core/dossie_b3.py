@@ -21,7 +21,6 @@ Consumidores:
 """
 from __future__ import annotations
 
-import json
 import logging
 from collections import defaultdict
 from datetime import date
@@ -54,6 +53,12 @@ def _f(v) -> float | None:
         return None if v is None else float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _table_exists(name: str) -> bool:
+    """Permite operar com o Supabase vitrine após a limpeza do warehouse."""
+    rows = _rows("SELECT to_regclass(:name) IS NOT NULL AS ok", name=name)
+    return bool(rows and rows[0].get("ok"))
 
 
 def _mi(v) -> float | None:
@@ -185,7 +190,8 @@ def _dividendos(tk: str, preco: float | None) -> dict:
             pass
 
     suspeita_dup = datas_duplicadas >= 2 and ult12_bruto > ult12_conserv * 1.5
-    dy = (lambda v: round(v / preco * 100, 1) if preco else None)
+    def dy(v):
+        return round(v / preco * 100, 1) if preco else None
     return {
         "por_ano": {a: round(v, 4) for a, v in sorted(por_ano_conserv.items())[-8:]},
         "ult_12m_ps": round(ult12_conserv, 4),
@@ -230,15 +236,17 @@ def _precos(tk: str) -> dict:
 
 
 def _market_cap(tk: str) -> float | None:
-    rows = _rows(
-        """
-        SELECT (metric_value)::numeric AS v
-        FROM market.calculated_metric_vintages
-        WHERE ticker = :t AND metric_name = 'marketCap' AND metric_value IS NOT NULL
-        ORDER BY year DESC, available_at DESC LIMIT 1
-        """,
-        t=tk,
-    )
+    rows = []
+    if _table_exists("market.calculated_metric_vintages"):
+        rows = _rows(
+            """
+            SELECT (metric_value)::numeric AS v
+            FROM market.calculated_metric_vintages
+            WHERE ticker = :t AND metric_name = 'marketCap' AND metric_value IS NOT NULL
+            ORDER BY year DESC, available_at DESC LIMIT 1
+            """,
+            t=tk,
+        )
     if not rows:
         rows = _rows(
             """
