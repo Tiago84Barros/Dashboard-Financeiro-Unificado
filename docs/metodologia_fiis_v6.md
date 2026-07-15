@@ -30,6 +30,10 @@ aprovados. Até lá, permanece como Lista de Diligência.
    concentração, correlação e falta de confiança.
 7. **Monitoramento:** frescor, backlog documental, revisão humana, falhas de
    qualidade, cobertura, datas PIT e validação geram alertas persistentes.
+8. **Releases regulatórias:** cada arquivo estruturado da CVM é identificado por
+   hash, encadeado à revisão anterior e processado sob uma versão imutável do
+   parser. O checkpoint combina tipo, ano, hash e parser; uma reapresentação não
+   sobrescreve silenciosamente o vintage anterior.
 
 ## Gates mínimos
 
@@ -50,7 +54,9 @@ Um gate reprovado não é convertido em nota média. Ele bloqueia a publicação
 
 ```bash
 python run_market_ingest.py fiis-registry --json
-python run_market_ingest.py fiis-b3-history --years 15 --json
+python run_market_ingest.py fiis-cvm-structured --years 11 --json
+python run_market_ingest.py fiis-b3-history --years 17 --json
+python run_market_ingest.py fiis-documents --limit 50 --recent-months 24 --json
 python run_market_ingest.py fiis-entities --json
 python run_market_ingest.py fiis-confidence --json
 python run_market_ingest.py fiis-pit-backtest --years 10 --json

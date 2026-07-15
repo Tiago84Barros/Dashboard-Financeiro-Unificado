@@ -26,6 +26,9 @@ URLS = (
 )
 CACHE_ROOT = Path("local_staging/fii_b3_cotahist")
 SOURCE = "b3_cotahist"
+PARSER_NAME = "b3_cotahist_fixed_width"
+PARSER_VERSION = "1.1.0"
+PARSER_SCHEMA_VERSION = "cotahist-layout-2020-r2"
 _LOGGER = logging.getLogger(__name__)
 _BATCH_SIZE = 1_000
 
@@ -116,6 +119,22 @@ def parse_cotahist(content: bytes) -> list[dict]:
     return rows
 
 
+def _parser_hash() -> str:
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def _register_parser(conn) -> None:
+    conn.execute(text("""
+        INSERT INTO market.fii_parser_versions (
+            parser_name,parser_version,schema_version,code_sha256,status,activated_at
+        ) VALUES (:name,:version,:schema,:sha,'active',now())
+        ON CONFLICT (parser_name,parser_version) DO UPDATE SET
+            schema_version=EXCLUDED.schema_version,code_sha256=EXCLUDED.code_sha256,
+            status='active',activated_at=now()
+    """), {"name": PARSER_NAME, "version": PARSER_VERSION,
+             "schema": PARSER_SCHEMA_VERSION, "sha": _parser_hash()})
+
+
 def ingest_b3_history(*, years: int = 10) -> dict:
     engine = get_pipeline_engine()
     if engine is None:
@@ -123,6 +142,15 @@ def ingest_b3_history(*, years: int = 10) -> dict:
     current = datetime.now(timezone.utc).year
     report = {"status": "completed", "archives": 0, "skipped": 0,
               "rows": 0, "tickers": set(), "errors": []}
+    with engine.begin() as conn:
+        columns = {row[0] for row in conn.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema='market' AND table_name='fii_b3_archive_loads'
+        """))}
+        if not {"parser_name", "parser_version"}.issubset(columns):
+            return {**report, "status": "failed",
+                    "errors": ["migration 037 pendente"], "tickers": 0}
+        _register_parser(conn)
     for year in range(current - max(int(years), 1) + 1, current + 1):
         sha: str | None = None
         try:
@@ -135,7 +163,9 @@ def ingest_b3_history(*, years: int = 10) -> dict:
                     SELECT status='completed'
                     FROM market.fii_b3_archive_loads
                     WHERE archive_year=:year AND archive_sha256=:sha
-                """), {"year": year, "sha": sha}).scalar()
+                      AND parser_name=:parser AND parser_version=:version
+                """), {"year": year, "sha": sha, "parser": PARSER_NAME,
+                         "version": PARSER_VERSION}).scalar()
             if completed:
                 report["archives"] += 1
                 report["skipped"] += 1
@@ -153,9 +183,12 @@ def ingest_b3_history(*, years: int = 10) -> dict:
                 conn.execute(text("""
                     INSERT INTO market.fii_b3_archive_loads (
                         archive_year,archive_sha256,source_url,expected_rows,loaded_rows,
-                        status,raw_payload_id,started_at,updated_at,error_message
-                    ) VALUES (:year,:sha,:url,:expected,0,'running',:raw,now(),now(),NULL)
-                    ON CONFLICT (archive_year,archive_sha256) DO UPDATE SET
+                        status,raw_payload_id,started_at,updated_at,error_message,
+                        parser_name,parser_version
+                    ) VALUES (:year,:sha,:url,:expected,0,'running',:raw,now(),now(),NULL,
+                              :parser,:version)
+                    ON CONFLICT (archive_year,archive_sha256,parser_name,parser_version)
+                    DO UPDATE SET
                         source_url=EXCLUDED.source_url,
                         expected_rows=EXCLUDED.expected_rows,
                         status='running',raw_payload_id=EXCLUDED.raw_payload_id,
@@ -163,7 +196,8 @@ def ingest_b3_history(*, years: int = 10) -> dict:
                 """), {"year": year, "sha": sha, "url": url,
                         "expected": sum(1 for row in rows
                                         if row.get("close") and row["close"] > 0),
-                        "raw": raw_id})
+                        "raw": raw_id, "parser": PARSER_NAME,
+                        "version": PARSER_VERSION})
             payload = [{**row, "source_url": url, "raw_payload_id": raw_id,
                         "collected_at": collected.isoformat(), "archive_sha256": sha}
                        for row in rows if row.get("close") and row["close"] > 0]
@@ -193,14 +227,18 @@ def ingest_b3_history(*, years: int = 10) -> dict:
                         UPDATE market.fii_b3_archive_loads
                         SET loaded_rows=:loaded,updated_at=now()
                         WHERE archive_year=:year AND archive_sha256=:sha
+                          AND parser_name=:parser AND parser_version=:version
                     """), {"loaded": min(offset + len(batch), len(payload)),
-                            "year": year, "sha": sha})
+                            "year": year, "sha": sha, "parser": PARSER_NAME,
+                            "version": PARSER_VERSION})
             with engine.begin() as conn:
                 conn.execute(text("""
                     UPDATE market.fii_b3_archive_loads
                     SET loaded_rows=:loaded,status='completed',updated_at=now(),completed_at=now()
                     WHERE archive_year=:year AND archive_sha256=:sha
-                """), {"loaded": len(payload), "year": year, "sha": sha})
+                      AND parser_name=:parser AND parser_version=:version
+                """), {"loaded": len(payload), "year": year, "sha": sha,
+                         "parser": PARSER_NAME, "version": PARSER_VERSION})
             report["archives"] += 1
             report["rows"] += len(rows)
             report["tickers"].update(row["ticker"] for row in rows)
@@ -213,7 +251,10 @@ def ingest_b3_history(*, years: int = 10) -> dict:
                             UPDATE market.fii_b3_archive_loads
                             SET status='failed',updated_at=now(),error_message=:error
                             WHERE archive_year=:year AND archive_sha256=:sha
-                        """), {"year": year, "sha": sha, "error": str(exc)[:500]})
+                              AND parser_name=:parser AND parser_version=:version
+                        """), {"year": year, "sha": sha,
+                                 "parser": PARSER_NAME, "version": PARSER_VERSION,
+                                 "error": str(exc)[:500]})
                 except Exception:
                     pass
             report["errors"].append({"year": year, "error": str(exc)[:500]})

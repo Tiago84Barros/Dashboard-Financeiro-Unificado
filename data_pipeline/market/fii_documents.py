@@ -12,6 +12,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import shutil
 import time
 from datetime import datetime, timedelta, timezone
 import uuid
@@ -22,8 +23,12 @@ from sqlalchemy import text
 logger = logging.getLogger(__name__)
 
 PARSER_NAME = "fii_public_report"
-PARSER_VERSION = "1.2.0"
+PARSER_VERSION = "1.3.0"
 SCHEMA_VERSION = "fii-evidence-v3"
+
+
+class DocumentTooLargeError(ValueError):
+    """Documento excede o limite seguro configurado para uma única coleta."""
 
 _METRIC_PATTERNS = {
     "wault_anos": re.compile(r"\bWAULT\b[^\d]{0,40}(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:anos?|years?)", re.I),
@@ -62,20 +67,42 @@ def _cache_root() -> Path:
     return root.resolve()
 
 
-def _download(url: str, timeout: int = 60) -> tuple[bytes, str]:
+def _download(url: str, timeout: int = 60, *,
+              max_bytes: int = 30 * 1024 * 1024) -> tuple[bytes, str]:
     last_error: Exception | None = None
     for attempt in range(3):
         try:
             response = requests.get(
-                url, timeout=timeout, allow_redirects=True,
+                url, timeout=timeout, allow_redirects=True, stream=True,
                 headers={"User-Agent": "DashboardFinanceiro/1.0 (+fii-document-audit)"})
-            response.raise_for_status()
-            content = response.content
-            mime = str(response.headers.get("Content-Type") or
-                       "application/octet-stream").split(";")[0]
+            try:
+                response.raise_for_status()
+                declared = response.headers.get("Content-Length")
+                if declared and int(declared) > max_bytes:
+                    raise DocumentTooLargeError(
+                        f"documento declara {int(declared)} bytes; limite {max_bytes}")
+                chunks: list[bytes] = []
+                downloaded = 0
+                for chunk in response.iter_content(chunk_size=256 * 1024):
+                    if not chunk:
+                        continue
+                    downloaded += len(chunk)
+                    if downloaded > max_bytes:
+                        raise DocumentTooLargeError(
+                            f"documento excedeu {max_bytes} bytes durante download")
+                    chunks.append(chunk)
+                content = b"".join(chunks)
+                mime = str(response.headers.get("Content-Type") or
+                           "application/octet-stream").split(";")[0]
+            finally:
+                close = getattr(response, "close", None)
+                if close is not None:
+                    close()
             if not content:
                 raise ValueError("documento vazio")
             return content, mime
+        except DocumentTooLargeError:
+            raise
         except (requests.Timeout, requests.ConnectionError,
                 requests.exceptions.HTTPError) as exc:
             last_error = exc
@@ -165,16 +192,42 @@ def _storage(content: bytes, sha: str, suffix: str) -> tuple[str, str | None, bo
     target.parent.mkdir(parents=True, exist_ok=True)
     existed = target.exists()
     if not existed:
-        target.write_bytes(content)
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        temporary.write_bytes(content)
+        temporary.replace(target)
     return "local_cache", storage_key, existed
 
 
-def process_pending_documents(limit: int = 25) -> dict:
+def _release_worker_claims(engine, worker: str) -> int:
+    with engine.begin() as conn:
+        result = conn.execute(text("""
+            UPDATE market.fii_documents SET processing_status='pending',
+                processing_started_at=NULL,processing_worker=NULL
+            WHERE processing_status='processing' AND processing_worker=:worker
+        """), {"worker": worker})
+    return max(int(result.rowcount or 0), 0)
+
+
+def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = None,
+                              recent_months: int = 24,
+                              max_batch_bytes: int = 250 * 1024 * 1024,
+                              max_document_bytes: int = 30 * 1024 * 1024,
+                              min_free_bytes: int = 10 * 1024 * 1024 * 1024) -> dict:
     engine = _engine()
     result = {"selected": 0, "downloaded": 0, "unchanged": 0,
-              "extracted": 0, "needs_review": 0, "failed": 0}
+              "extracted": 0, "needs_review": 0, "failed": 0,
+              "oversized": 0, "released": 0, "bytes_processed": 0}
     if engine is None:
         return {**result, "failed": -1, "blocker": "banco indisponível"}
+    cache_root = _cache_root()
+    free_bytes = shutil.disk_usage(cache_root).free
+    result["free_bytes_before"] = free_bytes
+    if free_bytes < max(int(min_free_bytes), 0):
+        return {**result, "failed": -1,
+                "blocker": "reserva mínima de armazenamento não atendida"}
+    normalized_tickers = sorted({str(value).upper().replace(".SA", "")
+                                 for value in (tickers or []) if value})
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(int(recent_months), 0) * 31)).date()
     worker = f"{os.getenv('GITHUB_RUN_ID') or 'local'}:{uuid.uuid4()}"
     with engine.begin() as conn:
         if not conn.execute(text(
@@ -210,7 +263,11 @@ def process_pending_documents(limit: int = 25) -> dict:
                 OR (d.processing_status='processing' AND
                     d.processing_started_at<now()-interval '2 hours')
               )
-              ORDER BY CASE WHEN f.price>0 AND f.liquidez_diaria>0 THEN 0 ELSE 1 END,
+                AND (:ticker_filter=false OR d.ticker=ANY(CAST(:tickers AS text[])))
+                AND (:recent_months=0 OR d.reference_date IS NULL OR d.reference_date>=:cutoff)
+              ORDER BY CASE WHEN f.score_version IS NOT NULL AND f.price>0
+                                  AND f.liquidez_diaria>0 THEN 0
+                            WHEN f.price>0 AND f.liquidez_diaria>0 THEN 1 ELSE 2 END,
                        CASE WHEN d.document_type='RELAT GERENCIAL' THEN 0 ELSE 1 END,
                        d.reference_date DESC NULLS LAST, d.id DESC
               LIMIT :limit FOR UPDATE OF d SKIP LOCKED
@@ -222,11 +279,19 @@ def process_pending_documents(limit: int = 25) -> dict:
             FROM candidates c WHERE c.id=d.id
             RETURNING d.*
         """), {"limit": max(int(limit), 1), "name": PARSER_NAME,
-                 "parser": PARSER_VERSION, "worker": worker}).mappings().all()
+                 "parser": PARSER_VERSION, "worker": worker,
+                 "ticker_filter": bool(normalized_tickers),
+                 "tickers": normalized_tickers, "recent_months": max(int(recent_months), 0),
+                 "cutoff": cutoff}).mappings().all()
     result["selected"] = len(docs)
     for doc in docs:
         try:
-            content, mime = _download(str(doc["source_url"]))
+            content, mime = _download(str(doc["source_url"]),
+                                      max_bytes=max(int(max_document_bytes), 1))
+            if result["bytes_processed"] + len(content) > max(int(max_batch_bytes), 1):
+                result["budget_exhausted"] = True
+                break
+            result["bytes_processed"] += len(content)
             sha = hashlib.sha256(content).hexdigest()
             suffix = ".pdf" if content[:4] == b"%PDF" or "pdf" in mime.lower() else ".bin"
             storage_backend, storage_key, existed = _storage(content, sha, suffix)
@@ -329,6 +394,26 @@ def process_pending_documents(limit: int = 25) -> dict:
                          "id": doc["id"], "worker": worker})
             result["extracted"] += 1
             result["needs_review"] += int(status == "needs_review")
+        except DocumentTooLargeError as exc:
+            logger.warning("Documento FII %s excedeu o limite: %s", doc.get("id"), exc)
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    UPDATE market.fii_documents
+                    SET processing_status='failed',processing_started_at=NULL,
+                        processing_worker=NULL,next_retry_at=now()+interval '30 days',
+                        last_error=:error
+                    WHERE id=:id AND processing_worker=:worker
+                """), {"error": str(exc)[:1000], "id": doc.get("id"),
+                         "worker": worker})
+                conn.execute(text("""
+                    INSERT INTO market.fii_audit_events (
+                        event_type,entity_type,entity_id,parser_version,payload_json
+                    ) VALUES ('document_rejected_size','fii_document',:id,:parser,
+                              CAST(:payload AS jsonb))
+                """), {"id": str(doc.get("id")), "parser": PARSER_VERSION,
+                         "payload": json.dumps({"message": str(exc)[:500],
+                                                "limit_bytes": max_document_bytes})})
+            result["oversized"] += 1
         except Exception as exc:
             logger.warning("Documento FII %s falhou: %s", doc.get("id"), exc)
             try:
@@ -353,4 +438,5 @@ def process_pending_documents(limit: int = 25) -> dict:
             except Exception:
                 logger.debug("Falha ao auditar erro documental", exc_info=True)
             result["failed"] += 1
+    result["released"] = _release_worker_claims(engine, worker)
     return result

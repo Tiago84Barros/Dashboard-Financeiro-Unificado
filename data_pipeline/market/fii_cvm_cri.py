@@ -30,6 +30,7 @@ from data_pipeline.market.fii_sources import metric_observation
 SOURCE = "cvm_cri_monthly"
 LOOKTHROUGH_SOURCE = "cvm_cri_lookthrough"
 PARSER_VERSION = "1.1.0"
+PARSER_NAME = "cvm_cri_structured"
 ENDPOINT = "securit-doc-inf_mensal_cri"
 URL = "https://dados.cvm.gov.br/dados/SECURIT/DOC/INF_MENSAL_CRI/DADOS/inf_mensal_cri_{year}.zip"
 CACHE_ROOT = Path("local_staging/fii_cvm_cri")
@@ -488,9 +489,13 @@ def ingest_cvm_cri(*, years: int = 5) -> dict:
         if not conn.execute(text(
                 "SELECT to_regclass('market.cri_security_observations') IS NOT NULL")).scalar():
             return {**progress, "status": "failed", "errors": ["migration 029 pendente"]}
+        if not conn.execute(text(
+                "SELECT to_regclass('market.fii_cri_archive_loads') IS NOT NULL")).scalar():
+            return {**progress, "status": "failed", "errors": ["migration 038 pendente"]}
     current = datetime.now(timezone.utc).year
     first = max(2021, current - max(int(years), 1) + 1)
     for year in range(first, current + 1):
+        archive = None
         try:
             archive = fetch_cri_archive(year)
             if archive is None:
@@ -516,6 +521,30 @@ def ingest_cvm_cri(*, years: int = 5) -> dict:
                 """), {"id": raw_id}).scalar()
                 canonical = replace(archive, collected_at=stored_at or archive.collected_at)
                 release_id = _register_release(conn, canonical, int(raw_id))
+                completed = conn.execute(text("""
+                    SELECT status='completed'
+                    FROM market.fii_cri_archive_loads
+                    WHERE archive_year=:year AND archive_sha256=:sha
+                      AND parser_name=:parser AND parser_version=:version
+                """), {"year": year, "sha": canonical.sha256,
+                       "parser": PARSER_NAME, "version": PARSER_VERSION}).scalar()
+                if completed:
+                    progress["archives"] += 1
+                    continue
+                conn.execute(text("""
+                    INSERT INTO market.fii_cri_archive_loads (
+                        archive_year,archive_sha256,parser_name,parser_version,
+                        source_url,status,raw_payload_id,source_release_id,
+                        started_at,updated_at,completed_at,error_message
+                    ) VALUES (:year,:sha,:parser,:version,:url,'running',:raw,:release,
+                              now(),now(),NULL,NULL)
+                    ON CONFLICT (archive_year,archive_sha256,parser_name,parser_version)
+                    DO UPDATE SET status='running',raw_payload_id=EXCLUDED.raw_payload_id,
+                        source_release_id=EXCLUDED.source_release_id,source_url=EXCLUDED.source_url,
+                        started_at=now(),updated_at=now(),completed_at=NULL,error_message=NULL
+                """), {"year": year, "sha": canonical.sha256, "parser": PARSER_NAME,
+                       "version": PARSER_VERSION, "url": canonical.url,
+                       "raw": raw_id, "release": release_id})
                 already_parsed = conn.execute(text("""
                     SELECT count(*),count(DISTINCT security_key)
                     FROM market.cri_security_observations
@@ -529,9 +558,31 @@ def ingest_cvm_cri(*, years: int = 5) -> dict:
                     progress["security_observations"] += repo.upsert(
                         conn, "cri_security_observations", parsed["observations"])
                 progress["lineage"] += repo.record_lineage_for_raw_payload(conn, int(raw_id))
+                conn.execute(text("""
+                    UPDATE market.fii_cri_archive_loads
+                    SET status='completed',security_observation_count=:observations,
+                        updated_at=now(),completed_at=now(),error_message=NULL
+                    WHERE archive_year=:year AND archive_sha256=:sha
+                      AND parser_name=:parser AND parser_version=:version
+                """), {"observations": len(parsed.get("observations") or []),
+                       "year": year, "sha": canonical.sha256,
+                       "parser": PARSER_NAME, "version": PARSER_VERSION})
             progress["archives"] += 1
             progress["securities"] += int(parsed["securities"])
         except Exception as exc:
+            try:
+                with engine.begin() as conn:
+                    if 'archive' in locals() and archive is not None:
+                        conn.execute(text("""
+                            UPDATE market.fii_cri_archive_loads SET status='failed',
+                                updated_at=now(),error_message=:error
+                            WHERE archive_year=:year AND archive_sha256=:sha
+                              AND parser_name=:parser AND parser_version=:version
+                        """), {"year": year, "sha": archive.sha256,
+                               "parser": PARSER_NAME, "version": PARSER_VERSION,
+                               "error": str(exc)[:1000]})
+            except Exception:
+                pass
             progress["errors"].append({"year": year, "error": str(exc)[:500]})
     with engine.begin() as conn:
         quarantined = conn.execute(text("""

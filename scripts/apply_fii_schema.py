@@ -11,6 +11,9 @@ MIGRATIONS = (
     ("033_fii_pit_validation_and_calibration.sql", "market.fii_pit_score_snapshots"),
     ("034_fii_v6_covering_indexes.sql", "market.idx_fii_validation_methodology"),
     ("035_fii_b3_archive_checkpoints.sql", "market.fii_b3_archive_loads"),
+    ("036_fii_cvm_archive_checkpoints.sql", "market.fii_cvm_archive_loads"),
+    ("037_fii_b3_parser_checkpoints.sql", "market.idx_fii_b3_archive_parser_status"),
+    ("038_fii_cri_archive_checkpoints.sql", "market.fii_cri_archive_loads"),
 )
 
 
@@ -23,6 +26,18 @@ def apply() -> dict[str, list[str]]:
     try:
         with raw.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_lock(hashtext(%s))", ("fii-schema-v6",))
+            # O warehouse local não possui os papéis criados pelo Supabase.
+            # Papéis NOLOGIN permitem validar DDL/RLS sem conceder acesso.
+            from core.config import settings
+            if "127.0.0.1" in settings.db_url or "localhost" in settings.db_url:
+                cursor.execute("""
+                    DO $$ BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon')
+                        THEN CREATE ROLE anon NOLOGIN; END IF;
+                        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated')
+                        THEN CREATE ROLE authenticated NOLOGIN; END IF;
+                    END $$
+                """)
             for filename, marker in MIGRATIONS:
                 cursor.execute("SELECT to_regclass(%s)", (marker,))
                 if cursor.fetchone()[0] is not None:

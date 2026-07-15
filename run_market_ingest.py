@@ -21,8 +21,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 _ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT))
@@ -45,6 +47,7 @@ def main() -> int:
                             "fiis-cvm-cri", "fiis-v4", "fiis-v4-audit", "fiis-documents",
                             "fiis-registry", "fiis-b3-history", "fiis-entities",
                             "fiis-confidence", "fiis-pit-backtest", "fiis-monitor",
+                            "fiis-enrich",
                             "benchmark", "setores"])
     p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
@@ -54,8 +57,39 @@ def main() -> int:
                    help="bootstrap: tamanho do lote por execução (default 50)")
     p.add_argument("--years", type=int, default=5,
                    help="histórico/CVM: quantidade de anos, incluindo o atual")
+    p.add_argument("--recent-months", type=int, default=24,
+                   help="documentos FII: prioriza referências recentes (0=todas)")
+    p.add_argument("--max-batch-mb", type=int, default=250,
+                   help="documentos FII: orçamento máximo baixado por execução")
+    p.add_argument("--max-document-mb", type=int, default=30,
+                   help="documentos FII: tamanho máximo por arquivo")
+    p.add_argument("--min-free-gb", type=int, default=10,
+                   help="documentos FII: reserva mínima livre no disco local")
+    p.add_argument("--candidate-limit", type=int, default=12,
+                   help="fiis-enrich: quantidade de FIIs atuais priorizados")
+    p.add_argument("--document-limit", type=int, default=150,
+                   help="fiis-enrich: documentos máximos por execução")
+    p.add_argument("--document-budget-mb", type=int, default=250,
+                   help="fiis-enrich: orçamento de PDFs por execução")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--warehouse", action="store_true",
+                   help="usa o PostgreSQL local warehouse em 127.0.0.1:5433")
     args = p.parse_args()
+
+    if args.warehouse:
+        from dotenv import dotenv_values
+        env_paths = [_ROOT / "warehouse" / ".env"]
+        env_paths.extend(_ROOT.glob(".claude/worktrees/*/warehouse/.env"))
+        warehouse_file = next((path for path in env_paths if path.exists()), None)
+        warehouse_env = dotenv_values(warehouse_file) if warehouse_file else {}
+        password = str(warehouse_env.get("WAREHOUSE_PASSWORD") or "").strip()
+        if not password:
+            log.error("nenhum warehouse/.env com WAREHOUSE_PASSWORD foi encontrado")
+            return 1
+        # Sobrescreve somente o processo filho; nenhuma credencial é exibida.
+        os.environ["SUPABASE_UNIFICADO_URL"] = (
+            "postgresql://postgres:" + quote(password, safe="")
+            + "@127.0.0.1:5433/postgres")
 
     from data_pipeline.market import ingest
 
@@ -112,7 +146,7 @@ def main() -> int:
                         "fiis-v2-history", "fiis-cvm-structured", "fiis-cvm-cri", "fiis-v4",
                         "fiis-v4-audit", "fiis-documents", "fiis-registry",
                         "fiis-b3-history", "fiis-entities", "fiis-confidence",
-                        "fiis-pit-backtest", "fiis-monitor", "benchmark"):
+                        "fiis-pit-backtest", "fiis-monitor", "fiis-enrich", "benchmark"):
         from data_pipeline.market import fii_ingest
         if args.command == "fiis-registry":
             from data_pipeline.market.fii_registry import ingest_registry
@@ -146,12 +180,32 @@ def main() -> int:
             rep = run_monitoring()
             log.info("FIIs monitoramento — status=%s falhas=%s",
                      rep.get("status"), rep.get("failed"))
+        elif args.command == "fiis-enrich":
+            from data_pipeline.market.fii_enrichment import run_enrichment
+            rep = run_enrichment(
+                years=args.years, candidate_limit=args.candidate_limit,
+                document_limit=args.document_limit,
+                recent_months=args.recent_months,
+                document_budget_bytes=max(args.document_budget_mb, 1) * 1024 * 1024,
+                max_document_bytes=max(args.max_document_mb, 1) * 1024 * 1024,
+                min_free_bytes=max(args.min_free_gb, 0) * 1024 * 1024 * 1024,
+                tickers=tickers)
+            log.info("FIIs enriquecimento — status=%s candidatos=%s falhas=%s",
+                     rep.get("status"), len(rep.get("candidates") or []),
+                     rep.get("failed_stages"))
         elif args.command == "fiis-documents":
             from data_pipeline.market.fii_documents import process_pending_documents
-            rep = process_pending_documents(limit=args.limit or 25)
+            rep = process_pending_documents(
+                limit=args.limit or 25, tickers=tickers,
+                recent_months=args.recent_months,
+                max_batch_bytes=max(args.max_batch_mb, 1) * 1024 * 1024,
+                max_document_bytes=max(args.max_document_mb, 1) * 1024 * 1024,
+                min_free_bytes=max(args.min_free_gb, 0) * 1024 * 1024 * 1024)
             log.info("FIIs documentos — selecionados=%s baixados=%s extraídos=%s "
-                     "revisão=%s falhas=%s", rep.get("selected"), rep.get("downloaded"),
-                     rep.get("extracted"), rep.get("needs_review"), rep.get("failed"))
+                     "revisão=%s falhas=%s oversized=%s bytes=%s", rep.get("selected"),
+                     rep.get("downloaded"), rep.get("extracted"),
+                     rep.get("needs_review"), rep.get("failed"), rep.get("oversized"),
+                     rep.get("bytes_processed"))
         elif args.command == "fiis-cvm-cri":
             from data_pipeline.market.fii_cvm_cri import ingest_cvm_cri
             rep = ingest_cvm_cri(years=args.years)
@@ -224,7 +278,7 @@ def main() -> int:
                                 "fiis-cvm-cri", "fiis-v4", "fiis-v4-audit",
                                 "fiis-documents", "fiis-registry", "fiis-b3-history",
                                 "fiis-entities", "fiis-confidence", "fiis-pit-backtest",
-                                "fiis-monitor", "benchmark") and rep.get("erros", 0) != -1:
+                                "fiis-monitor", "fiis-enrich", "benchmark") and rep.get("erros", 0) != -1:
             rep["metodologia_v4"] = fii_ingest.snapshot_methodology_v4()
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
@@ -240,6 +294,8 @@ def main() -> int:
             return 0 if rep.get("status") in ("passed", "blocked") else 1
         if args.command == "fiis-monitor":
             return 0 if rep.get("status") in ("passed", "warning") else 1
+        if args.command == "fiis-enrich":
+            return 0 if rep.get("status") in ("completed", "partial") else 1
         return 0 if rep.get("erros", 0) != -1 else 1
 
     if args.command == "parity":

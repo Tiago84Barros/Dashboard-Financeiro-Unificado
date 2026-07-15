@@ -32,6 +32,22 @@ def run_monitoring() -> dict:
               (SELECT count(*) FROM market.fii_quality_results
                  WHERE status IN ('failed','quarantined')
                    AND created_at >= now()-interval '7 days') AS quality_failures_7d,
+              (SELECT count(*) FROM market.fii_cvm_archive_loads l
+                 WHERE l.parser_version=(SELECT parser_version
+                         FROM market.fii_cvm_archive_loads
+                         ORDER BY started_at DESC LIMIT 1)
+                   AND l.status='failed') AS cvm_archive_failures,
+              (SELECT count(*) FROM market.fii_cvm_archive_loads l
+                 WHERE l.parser_version=(SELECT parser_version
+                         FROM market.fii_cvm_archive_loads
+                         ORDER BY started_at DESC LIMIT 1)
+                   AND l.status='completed') AS cvm_archives_completed,
+              (SELECT count(*) FILTER (WHERE source_release_id IS NOT NULL)::numeric /
+                      NULLIF(count(*),0)
+                 FROM market.fii_metric_observations
+                 WHERE source IN ('cvm_informe_mensal','cvm_informe_trimestral',
+                                  'cvm_informe_anual','cvm_dfin','cvm_eventuais'))
+                  AS cvm_release_coverage,
               (SELECT count(DISTINCT reference_date) FROM market.fii_pit_score_snapshots
                  WHERE methodology_version=:version) AS pit_dates,
               (SELECT status FROM market.fii_validation_runs
@@ -59,6 +75,10 @@ def run_monitoring() -> dict:
              metrics.get("evidence_backlog"), "fila de evidências humanas acima de 250"),
             ("quality_failures", int(metrics.get("quality_failures_7d") or 0) == 0,
              metrics.get("quality_failures_7d"), "falhas ou quarentenas de qualidade nos últimos 7 dias"),
+            ("cvm_archive_failures", int(metrics.get("cvm_archive_failures") or 0) == 0,
+             metrics.get("cvm_archive_failures"), "partições CVM falharam no parser corrente"),
+            ("cvm_release_lineage", float(metrics.get("cvm_release_coverage") or 0) >= .95,
+             metrics.get("cvm_release_coverage"), "menos de 95% das métricas CVM possuem release versionada"),
             ("score_coverage", float(metrics.get("coverage") or 0) >= .70,
              metrics.get("coverage"), "cobertura média do score abaixo de 70%"),
             ("pit_history", int(metrics.get("pit_dates") or 0) >= 36,

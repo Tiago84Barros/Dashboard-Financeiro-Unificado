@@ -2,7 +2,11 @@ from datetime import datetime, timezone
 import io
 import zipfile
 
-from data_pipeline.market.fii_cvm_structured import CvmArchive, parse_archive
+import pytest
+
+from data_pipeline.market.fii_cvm_structured import (
+    CvmArchive, _validate_parsed_archive, fetch_archive, parse_archive,
+)
 
 
 def _archive(kind: str, files: dict[str, str], year: int = 2026) -> CvmArchive:
@@ -109,3 +113,64 @@ def test_eventual_documents_measure_disclosure_regularity():
                for row in parsed["observations"])
     assert all(row["reference_date"] <= row["available_at"][:10]
                for row in parsed["observations"])
+
+
+def test_monthly_supports_legacy_cnpj_fundo_layout_before_2021():
+    general = (
+        "CNPJ_Fundo;Data_Referencia;Versao;Data_Entrega\n"
+        "12.345.678/0001-00;2020-12-31;1;2021-01-08\n")
+    complement = (
+        "CNPJ_Fundo;Data_Referencia;Versao;Patrimonio_Liquido;"
+        "Valor_Patrimonial_Cotas;Total_Numero_Cotistas\n"
+        "12.345.678/0001-00;2020-12-31;1;800;80;100\n")
+    assets = (
+        "CNPJ_Fundo;Data_Referencia;Versao;Valor_Ativo;Total_Passivo\n"
+        "12.345.678/0001-00;2020-12-31;1;1000;200\n")
+    parsed = parse_archive(_archive("monthly", {
+        "inf_mensal_fii_geral_2020.csv": general,
+        "inf_mensal_fii_complemento_2020.csv": complement,
+        "inf_mensal_fii_ativo_passivo_2020.csv": assets,
+    }, year=2020), {"12345678000100": "TEST11"}, 7)
+    values = {row["metric_name"]: row.get("value_numeric")
+              for row in parsed["observations"]}
+    assert values["nav_per_share"] == 80
+    assert values["leverage"] == .2
+
+
+def test_cvm_archive_uses_conditional_cache_on_not_modified(tmp_path, monkeypatch):
+    cache = tmp_path / "monthly" / "2026.zip"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"PKcached")
+    cache.with_suffix(".zip.headers.json").write_text(
+        '{"ETag":"abc","Last-Modified":"Mon, 13 Jul 2026 10:00:00 GMT"}',
+        encoding="utf-8")
+
+    class Response:
+        status_code = 304
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+
+        @staticmethod
+        def mount(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def get(url, timeout, headers):
+            assert headers == {"If-None-Match": "abc",
+                               "If-Modified-Since": "Mon, 13 Jul 2026 10:00:00 GMT"}
+            return Response()
+
+    monkeypatch.setattr("requests.Session", Session)
+    archive = fetch_archive("monthly", 2026, cache_root=tmp_path)
+    assert archive is not None
+    assert archive.from_cache is True
+    assert archive.content == b"PKcached"
+
+
+def test_cvm_archive_quality_gate_rejects_empty_structured_partition():
+    with pytest.raises(ValueError, match="sem cobertura"):
+        _validate_parsed_archive(
+            _archive("monthly", {"empty_2026.csv": "a;b\n"}),
+            {"observations": [], "exposures": [], "documents": [], "contexts": 0})

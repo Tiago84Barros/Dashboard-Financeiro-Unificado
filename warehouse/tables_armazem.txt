@@ -19,5 +19,9 @@ market.historical_price_observations #  54 MB — histórico append-only de OHLC
 market.calculated_metric_vintages    #  27 MB — versões PIT de métricas
 market.fii_documents                 #  14 MB — documentos brutos
 market.fii_source_releases           #  13 MB — releases imutáveis de origem
+market.fii_cvm_archive_loads         # checkpoints por hash/versão do parser CVM
+market.fii_b3_archive_loads          # checkpoints por hash dos arquivos COTAHIST B3
+market.fii_cri_archive_loads         # checkpoints por hash/versão dos arquivos CRI CVM
+market.fii_parser_versions           # registro dos parsers e hashes do código
 market.fii_registry_observations     #   4 MB — cadastro CVM (fundos cancelados)
 public.multiplos_TRI                 #   5 MB — legado (múltiplos trimestrais yfinance)

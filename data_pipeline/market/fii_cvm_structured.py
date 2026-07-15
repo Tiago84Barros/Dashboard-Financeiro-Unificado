@@ -26,6 +26,9 @@ from data_pipeline.market.fii_sources import metric_observation
 
 SOURCE = "cvm_dados_abertos"
 ROOT = "https://dados.cvm.gov.br/dados/FII/DOC"
+PARSER_NAME = "cvm_fii_structured"
+PARSER_VERSION = "1.3.0"
+PARSER_SCHEMA_VERSION = "cvm-fii-structured-v2"
 ARCHIVES = {
     "monthly": ("INF_MENSAL", "inf_mensal_fii_{year}.zip"),
     "quarterly": ("INF_TRIMESTRAL", "inf_trimestral_fii_{year}.zip"),
@@ -56,7 +59,7 @@ def archive_url(kind: str, year: int) -> str:
 
 def fetch_archive(kind: str, year: int, *, timeout: int = 120,
                   cache_root: Path = CACHE_ROOT) -> CvmArchive | None:
-    """Baixa o artefato oficial com retry e cache local endereçado por ano."""
+    """Baixa o artefato oficial com retry, cache condicional e escrita atômica."""
     import requests
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
@@ -65,29 +68,54 @@ def fetch_archive(kind: str, year: int, *, timeout: int = 120,
     suffix = ".zip" if url.endswith(".zip") else ".csv"
     cache = cache_root / kind / f"{year}{suffix}"
     headers_path = cache.with_suffix(cache.suffix + ".headers.json")
+    saved_headers: dict[str, str] = {}
+    if headers_path.exists():
+        try:
+            saved_headers = json.loads(headers_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            saved_headers = {}
     session = requests.Session()
     session.headers["User-Agent"] = "DashboardFinanceiro/1.0 (+cvm-fii-pit)"
     session.mount("https://", HTTPAdapter(max_retries=Retry(
         total=3, backoff_factor=.8, status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset({"GET"}), respect_retry_after_header=True)))
     try:
-        response = session.get(url, timeout=timeout)
+        conditional = {}
+        etag = saved_headers.get("ETag") or saved_headers.get("etag")
+        modified = (saved_headers.get("Last-Modified") or
+                    saved_headers.get("last-modified"))
+        if cache.exists() and etag:
+            conditional["If-None-Match"] = etag
+        if cache.exists() and modified:
+            conditional["If-Modified-Since"] = modified
+        response = session.get(url, timeout=timeout, headers=conditional)
     except requests.RequestException:
         if not cache.exists():
             return None
         content = cache.read_bytes()
-        saved = json.loads(headers_path.read_text(encoding="utf-8")) if headers_path.exists() else {}
-        return CvmArchive(kind, year, url, content, datetime.now(timezone.utc), saved,
+        return CvmArchive(kind, year, url, content, datetime.now(timezone.utc), saved_headers,
                           hashlib.sha256(content).hexdigest(), True)
+    if response.status_code == 304 and cache.exists():
+        content = cache.read_bytes()
+        return CvmArchive(kind, year, url, content, datetime.now(timezone.utc),
+                          saved_headers, hashlib.sha256(content).hexdigest(), True)
     if response.status_code == 404:
         return None
     response.raise_for_status()
     content = response.content
+    if not content:
+        raise ValueError(f"arquivo CVM vazio: {kind}/{year}")
+    if suffix == ".zip" and not content.startswith(b"PK"):
+        raise ValueError(f"arquivo CVM inválido (não ZIP): {kind}/{year}")
     cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_bytes(content)
+    temporary = cache.with_suffix(cache.suffix + ".tmp")
+    temporary.write_bytes(content)
+    temporary.replace(cache)
     safe_headers = {key: str(value) for key, value in response.headers.items()
                     if key.lower() in {"etag", "last-modified", "content-length", "content-type"}}
-    headers_path.write_text(json.dumps(safe_headers, ensure_ascii=False), encoding="utf-8")
+    headers_tmp = headers_path.with_suffix(headers_path.suffix + ".tmp")
+    headers_tmp.write_text(json.dumps(safe_headers, ensure_ascii=False), encoding="utf-8")
+    headers_tmp.replace(headers_path)
     return CvmArchive(kind, year, url, content, datetime.now(timezone.utc), safe_headers,
                       hashlib.sha256(content).hexdigest())
 
@@ -104,6 +132,16 @@ def archive_manifest(archive: CvmArchive) -> dict:
 
 def _digits(value) -> str:
     return re.sub(r"\D", "", str(value or ""))
+
+
+def _row_cnpj(row: dict) -> str:
+    """Normaliza a troca CVM de CNPJ_Fundo para CNPJ_Fundo_Classe em 2021."""
+    for key in ("CNPJ_Fundo_Classe", "CNPJ_Fundo",
+                "CNPJ_FUNDO_CLASSE", "CNPJ_FUNDO"):
+        value = _digits(row.get(key))
+        if value:
+            return value
+    return ""
 
 
 def _text(value) -> str | None:
@@ -177,7 +215,7 @@ def _general_context(tables: dict[str, pd.DataFrame], prefix: str,
     general = tables.get(f"{prefix}_geral", pd.DataFrame())
     contexts: dict[tuple[str, date], dict] = {}
     for row in general.to_dict("records"):
-        cnpj = _digits(row.get("CNPJ_Fundo_Classe"))
+        cnpj = _row_cnpj(row)
         ticker = ticker_by_cnpj.get(cnpj)
         reference = _date(row.get("Data_Referencia"))
         if not ticker or reference is None:
@@ -198,7 +236,7 @@ def _group_rows(frame: pd.DataFrame | None, contexts: dict) -> dict[tuple[str, d
     if frame is None or frame.empty:
         return grouped
     for row in frame.to_dict("records"):
-        key = (_digits(row.get("CNPJ_Fundo_Classe")), _date(row.get("Data_Referencia")))
+        key = (_row_cnpj(row), _date(row.get("Data_Referencia")))
         context = contexts.get(key)
         if context and _version(row.get("Versao")) == context["version"]:
             grouped[key].append(row)
@@ -499,7 +537,7 @@ def parse_financials(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
     observations, documents = [], []
     source = "cvm_dfin"
     for row in frame.to_dict("records"):
-        ticker = ticker_by_cnpj.get(_digits(row.get("CNPJ_Fundo_Classe")))
+        ticker = ticker_by_cnpj.get(_row_cnpj(row))
         reference = _date(row.get("Data_Referencia"))
         if not ticker or reference is None:
             continue
@@ -553,7 +591,7 @@ def parse_eventual(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
         fund_type = (_text(row.get("TP_FUNDO_CLASSE")) or "").upper()
         if "FII" not in fund_type or "FIAGRO" in fund_type:
             continue
-        ticker = ticker_by_cnpj.get(_digits(row.get("CNPJ_FUNDO_CLASSE")))
+        ticker = ticker_by_cnpj.get(_row_cnpj(row))
         reference = _date(row.get("DT_COMPTC")) or _date(row.get("DT_RECEB"))
         published = _published(row.get("DT_RECEB"))
         url = _text(row.get("LINK_ARQ"))
@@ -611,6 +649,148 @@ def parse_archive(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
     return PARSERS[archive.kind](archive, ticker_by_cnpj, raw_payload_id)
 
 
+def _validate_parsed_archive(archive: CvmArchive, parsed: dict) -> None:
+    """Bloqueia partições vazias ou temporalmente impossíveis antes do commit."""
+    observations = parsed.get("observations") or []
+    contexts = int(parsed.get("contexts") or 0)
+    if archive.kind in {"monthly", "quarterly", "annual"}:
+        if contexts <= 0 or not observations:
+            raise ValueError(
+                f"layout/casamento CVM sem cobertura: {archive.kind}/{archive.year}")
+    violations = 0
+    for row in observations:
+        reference = date.fromisoformat(str(row["reference_date"])[:10])
+        knowledge = date.fromisoformat(str(row["knowledge_at"])[:10])
+        violations += int(reference > knowledge)
+    if violations:
+        raise ValueError(
+            f"{violations} observações com referência posterior ao knowledge_at")
+
+
+def _parser_hash() -> str:
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def _ensure_parser_version(conn) -> None:
+    from sqlalchemy import text
+    conn.execute(text("""
+        INSERT INTO market.fii_parser_versions (
+            parser_name,parser_version,schema_version,code_sha256,status,config_json,activated_at
+        ) VALUES (:name,:version,:schema,:sha,'active',CAST(:config AS jsonb),now())
+        ON CONFLICT (parser_name,parser_version) DO UPDATE SET
+            schema_version=EXCLUDED.schema_version,code_sha256=EXCLUDED.code_sha256,
+            status='active',config_json=EXCLUDED.config_json,activated_at=now()
+    """), {"name": PARSER_NAME, "version": PARSER_VERSION,
+             "schema": PARSER_SCHEMA_VERSION, "sha": _parser_hash(),
+             "config": json.dumps({"archive_kinds": sorted(ARCHIVES)})})
+
+
+def _ensure_source_release(conn, archive: CvmArchive, raw_payload_id: int,
+                           published: datetime | None) -> tuple[int, bool]:
+    """Cria a cadeia imutável de revisões do arquivo anual oficial."""
+    from sqlalchemy import text
+    endpoint = f"fii/{archive.kind}"
+    natural_key = f"{archive.kind}|{archive.year}"
+    existing = conn.execute(text("""
+        SELECT id FROM market.fii_source_releases
+        WHERE provider='cvm' AND endpoint=:endpoint AND natural_key=:natural
+          AND content_sha256=:sha
+    """), {"endpoint": endpoint, "natural": natural_key,
+             "sha": archive.sha256}).scalar()
+    if existing is not None:
+        return int(existing), False
+    previous = conn.execute(text("""
+        SELECT id,revision_no FROM market.fii_source_releases
+        WHERE provider='cvm' AND endpoint=:endpoint AND natural_key=:natural
+        ORDER BY revision_no DESC LIMIT 1 FOR UPDATE
+    """), {"endpoint": endpoint, "natural": natural_key}).mappings().first()
+    knowledge_at = published or archive.collected_at
+    release_id = conn.execute(text("""
+        INSERT INTO market.fii_source_releases (
+            provider,endpoint,natural_key,reference_date,source_published_at,
+            first_observed_at,knowledge_at,availability_quality,revision_no,
+            supersedes_id,raw_payload_id,content_sha256,metadata_json
+        ) VALUES (
+            'cvm',:endpoint,:natural,:reference,:published,:observed,:knowledge,
+            :quality,:revision,:previous,:raw,:sha,CAST(:metadata AS jsonb)
+        ) RETURNING id
+    """), {
+        "endpoint": endpoint, "natural": natural_key,
+        "reference": date(archive.year, 1, 1), "published": published,
+        "observed": archive.collected_at, "knowledge": knowledge_at,
+        "quality": "verified_publication" if published else "first_observed_proxy",
+        "revision": int(previous["revision_no"]) + 1 if previous else 1,
+        "previous": int(previous["id"]) if previous else None,
+        "raw": raw_payload_id, "sha": archive.sha256,
+        "metadata": json.dumps({"source_url": archive.url,
+                                  "archive": archive_manifest(archive)},
+                                 ensure_ascii=False, default=str),
+    }).scalar_one()
+    return int(release_id), True
+
+
+def _checkpoint_completed(conn, archive: CvmArchive) -> bool:
+    from sqlalchemy import text
+    return bool(conn.execute(text("""
+        SELECT status='completed' FROM market.fii_cvm_archive_loads
+        WHERE archive_kind=:kind AND archive_year=:year AND archive_sha256=:sha
+          AND parser_name=:parser AND parser_version=:version
+    """), {"kind": archive.kind, "year": archive.year, "sha": archive.sha256,
+             "parser": PARSER_NAME, "version": PARSER_VERSION}).scalar())
+
+
+def _start_checkpoint(conn, archive: CvmArchive, raw_payload_id: int,
+                      source_release_id: int) -> None:
+    from sqlalchemy import text
+    conn.execute(text("""
+        INSERT INTO market.fii_cvm_archive_loads (
+            archive_kind,archive_year,archive_sha256,parser_name,parser_version,
+            source_url,status,raw_payload_id,source_release_id,started_at,updated_at,
+            completed_at,error_message
+        ) VALUES (:kind,:year,:sha,:parser,:version,:url,'running',:raw,:release,
+                  now(),now(),NULL,NULL)
+        ON CONFLICT (archive_kind,archive_year,archive_sha256,parser_name,parser_version)
+        DO UPDATE SET status='running',raw_payload_id=EXCLUDED.raw_payload_id,
+            source_release_id=EXCLUDED.source_release_id,source_url=EXCLUDED.source_url,
+            started_at=now(),updated_at=now(),completed_at=NULL,error_message=NULL
+    """), {"kind": archive.kind, "year": archive.year, "sha": archive.sha256,
+             "parser": PARSER_NAME, "version": PARSER_VERSION, "url": archive.url,
+             "raw": raw_payload_id, "release": source_release_id})
+
+
+def _finish_checkpoint(conn, archive: CvmArchive, parsed: dict) -> None:
+    from sqlalchemy import text
+    conn.execute(text("""
+        UPDATE market.fii_cvm_archive_loads SET status='completed',
+            observation_count=:observations,exposure_count=:exposures,
+            document_count=:documents,context_count=:contexts,
+            updated_at=now(),completed_at=now(),error_message=NULL
+        WHERE archive_kind=:kind AND archive_year=:year AND archive_sha256=:sha
+          AND parser_name=:parser AND parser_version=:version
+    """), {"observations": len(parsed.get("observations") or []),
+             "exposures": len(parsed.get("exposures") or []),
+             "documents": len(parsed.get("documents") or []),
+             "contexts": int(parsed.get("contexts") or 0),
+             "kind": archive.kind, "year": archive.year, "sha": archive.sha256,
+             "parser": PARSER_NAME, "version": PARSER_VERSION})
+
+
+def _fail_checkpoint(engine, archive: CvmArchive, error: Exception) -> None:
+    from sqlalchemy import text
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE market.fii_cvm_archive_loads SET status='failed',
+                    updated_at=now(),error_message=:error
+                WHERE archive_kind=:kind AND archive_year=:year AND archive_sha256=:sha
+                  AND parser_name=:parser AND parser_version=:version
+            """), {"error": str(error)[:1000], "kind": archive.kind,
+                     "year": archive.year, "sha": archive.sha256,
+                     "parser": PARSER_NAME, "version": PARSER_VERSION})
+    except Exception:
+        pass
+
+
 def ingest_cvm_structured(*, years: int = 5,
                           kinds: tuple[str, ...] = tuple(ARCHIVES)) -> dict:
     """Coleta, normaliza e persiste a cobertura estruturada oficial da CVM."""
@@ -622,13 +802,19 @@ def ingest_cvm_structured(*, years: int = 5,
                                                   record_validation_readiness,
                                                   snapshot_methodology_v4)
 
-    progress = {"archives": 0, "missing_archives": 0, "observations": 0,
+    progress = {"archives": 0, "skipped_archives": 0, "revisions": 0,
+                "missing_archives": 0, "observations": 0,
                 "exposures": 0, "documents": 0, "lineage": 0, "errors": [],
                 "by_kind": {}}
     engine = _engine()
     if engine is None:
         return {**progress, "status": "failed", "errors": ["banco indisponível"]}
-    with engine.connect() as conn:
+    with engine.begin() as conn:
+        if not conn.execute(text(
+                "SELECT to_regclass('market.fii_cvm_archive_loads') IS NOT NULL")).scalar():
+            return {**progress, "status": "failed",
+                    "errors": ["migration 036 pendente"]}
+        _ensure_parser_version(conn)
         rows = conn.execute(text("""
             SELECT ticker, regexp_replace(cnpj, '\\D', '', 'g') cnpj
             FROM market.fiis WHERE cnpj IS NOT NULL
@@ -637,9 +823,11 @@ def ingest_cvm_structured(*, years: int = 5,
     current = datetime.now(timezone.utc).year
     first = max(2016, current - max(int(years), 1) + 1)
     for kind in kinds:
-        kind_progress = {"archives": 0, "observations": 0, "exposures": 0,
+        kind_progress = {"archives": 0, "skipped": 0, "revisions": 0,
+                         "observations": 0, "exposures": 0,
                          "documents": 0, "contexts": 0}
         for year in range(first, current + 1):
+            archive = None
             try:
                 archive = fetch_archive(kind, year)
                 if archive is None:
@@ -660,7 +848,21 @@ def ingest_cvm_structured(*, years: int = 5,
                         request_fingerprint=hashlib.sha256(
                             f"cvm_fii_{kind}|{year}".encode()).hexdigest(),
                         source=SOURCE)
-                    parsed = parse_archive(archive, ticker_by_cnpj, raw_id)
+                    release_id, created = _ensure_source_release(
+                        conn, archive, int(raw_id), published)
+                    kind_progress["revisions"] += int(created)
+                    if _checkpoint_completed(conn, archive):
+                        kind_progress["archives"] += 1
+                        kind_progress["skipped"] += 1
+                        continue
+                    _start_checkpoint(conn, archive, int(raw_id), release_id)
+                parsed = parse_archive(archive, ticker_by_cnpj, raw_id)
+                _validate_parsed_archive(archive, parsed)
+                for row in parsed.get("observations") or []:
+                    row["source_release_id"] = release_id
+                for row in parsed.get("exposures") or []:
+                    row["source_release_id"] = release_id
+                with engine.begin() as conn:
                     kind_progress["observations"] += repo.upsert(
                         conn, "fii_metric_observations", parsed["observations"])
                     kind_progress["exposures"] += repo.upsert(
@@ -668,14 +870,19 @@ def ingest_cvm_structured(*, years: int = 5,
                     kind_progress["documents"] += _persist_document_discoveries(
                         conn, parsed["documents"])
                     progress["lineage"] += repo.record_lineage_for_raw_payload(conn, raw_id)
+                    _finish_checkpoint(conn, archive, parsed)
                 kind_progress["archives"] += 1
                 kind_progress["contexts"] += int(parsed.get("contexts") or 0)
             except Exception as exc:
+                if archive is not None:
+                    _fail_checkpoint(engine, archive, exc)
                 progress["errors"].append({"kind": kind, "year": year,
                                            "error": str(exc)[:500]})
         progress["by_kind"][kind] = kind_progress
         for field in ("archives", "observations", "exposures", "documents"):
             progress[field] += kind_progress[field]
+        progress["skipped_archives"] += kind_progress["skipped"]
+        progress["revisions"] += kind_progress["revisions"]
     audit = audit_methodology_v4_data()
     progress["audit"] = audit
     progress["validation"] = record_validation_readiness(audit)

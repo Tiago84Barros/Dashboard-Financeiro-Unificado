@@ -1,7 +1,8 @@
 import pytest
 
 from data_pipeline.market.fii_documents import (
-    PARSER_VERSION, _extract_evidence, _layout_signature,
+    PARSER_VERSION, DocumentTooLargeError, _download, _extract_evidence,
+    _layout_signature,
 )
 
 
@@ -11,7 +12,7 @@ def test_document_evidence_uses_methodology_names_and_page_numbers():
     evidence = _extract_evidence("\n".join(pages), pages)
     rows = {row["metric_name"]: row for row in evidence}
 
-    assert PARSER_VERSION == "1.2.0"
+    assert PARSER_VERSION == "1.3.0"
     assert rows["vacancia_fisica"]["normalized_value"] == pytest.approx(.075)
     assert rows["wault_anos"]["normalized_value"] == pytest.approx(4.2)
     assert rows["cap_rate_implicito"]["normalized_value"] == pytest.approx(.091)
@@ -23,3 +24,25 @@ def test_layout_signature_ignores_numeric_value_changes():
     left = _layout_signature(["Vacância física 5,0% e LTV 40%"], "")
     right = _layout_signature(["Vacância física 8,0% e LTV 55%"], "")
     assert left == right
+
+
+def test_document_download_enforces_streaming_size_limit(monkeypatch):
+    class Response:
+        headers = {"Content-Type": "application/pdf"}
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def iter_content(chunk_size):
+            assert chunk_size > 0
+            yield b"%PDF" + b"x" * 8
+
+    def fake_get(*args, **kwargs):
+        assert kwargs["stream"] is True
+        return Response()
+
+    monkeypatch.setattr("data_pipeline.market.fii_documents.requests.get", fake_get)
+    with pytest.raises(DocumentTooLargeError):
+        _download("https://example.test/report.pdf", max_bytes=10)

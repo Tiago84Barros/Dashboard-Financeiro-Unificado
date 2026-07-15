@@ -192,3 +192,36 @@ cada 5 min, sem apagar nada. Ver o bloco no chat / SQL Editor.
 | Lista da vitrine + fluxo de publicação | ✅ `tables_vitrine.txt` + Passo 5 |
 | Refator das 2 funções de leitura (`load_fii_methodology_inputs`, exposições) | ⏳ próximo |
 | Edição do `market-refresh.yml` | ⏳ próximo |
+
+## Expansão auditável da base de FIIs
+
+O warehouse local é o destino dos históricos extensos. Para ampliar a base sem
+look-ahead e sem reprocessar arquivos idênticos, aplique as migrations até
+`038_fii_cri_archive_checkpoints.sql` e execute o orquestrador:
+
+```powershell
+python run_market_ingest.py fiis-enrich --warehouse --years 5 `
+  --candidate-limit 12 --document-limit 150 --document-budget-mb 250 --json
+```
+
+Para executar etapas isoladas:
+
+```powershell
+# CVM: histórico estruturado completo disponível desde 2016
+python run_market_ingest.py fiis-cvm-structured --years 11 --json
+
+# B3: security master/COTAHIST desde 2010, incluindo fundos encerrados
+python run_market_ingest.py fiis-b3-history --years 17 --json
+
+# PDFs recentes, com orçamento de 250 MB e reserva de 10 GB no disco
+python run_market_ingest.py fiis-documents --warehouse --limit 50 --recent-months 24 `
+  --max-batch-mb 250 --max-document-mb 30 --min-free-gb 10 --json
+```
+
+Cada arquivo CVM é identificado por `SHA-256`, encadeado em
+`market.fii_source_releases` e controlado por parser em
+`market.fii_cvm_archive_loads` e `market.fii_cri_archive_loads`. Uma reapresentação
+gera nova revisão; um hash já concluído com a mesma versão do parser é ignorado.
+Os PDFs ficam no filesystem
+endereçados por conteúdo, enquanto o Postgres guarda hash, tamanho, URL,
+evidências e versão do parser.
