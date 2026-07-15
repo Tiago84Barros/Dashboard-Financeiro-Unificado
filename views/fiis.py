@@ -578,6 +578,14 @@ def _integrated_preference_controls() -> dict:
                                             key="fii_pref_integrated_multicategory")
         st.caption("Quando ativados, dados patrimoniais ausentes reprovam o fundo; não viram zero.")
 
+    uncertainty_cap = st.slider(
+        "Incerteza ponderada máxima da carteira (%)", 20, 50, 35, 1,
+        key="fii_pref_integrated_uncertainty",
+        help="Limite matemático para construir uma carteira de diligência. "
+             "Não eleva a confiança dos FIIs nem libera recomendação definitiva; "
+             "o gate point-in-time continua independente.",
+    ) / 100
+
     return {
         "scenario": MacroScenario(
             selic=selic, ipca=ipca, selic_change_12m=delta,
@@ -586,6 +594,7 @@ def _integrated_preference_controls() -> dict:
         "portfolio_policy": PortfolioPolicy(
             max_assets=n_assets, max_asset=max_asset,
             min_daily_liquidity=min_liquidity,
+            max_weighted_uncertainty=uncertainty_cap,
         ),
         "eligibility_policy": IntegratedEligibilityPolicy(
             min_daily_liquidity=min_liquidity, min_dy_12m=min_dy,

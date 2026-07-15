@@ -34,7 +34,11 @@ class PortfolioPolicy:
     max_assets: int = 12
     uncertainty_penalty: float = .20
     cvar_penalty: float = .35
-    max_weighted_uncertainty: float = .30
+    # Limite de incerteza da carteira de diligência. O antigo .30 exigia
+    # confiança ponderada >=70% e tornava o LP inviável no universo real,
+    # embora houvesse candidatos suficientes. O gate de publicação continua
+    # separado e bloqueia a recomendação enquanto a validação PIT não passar.
+    max_weighted_uncertainty: float = .35
 
 
 LIMITS = {

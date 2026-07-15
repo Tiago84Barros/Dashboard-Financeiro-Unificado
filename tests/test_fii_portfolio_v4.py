@@ -32,6 +32,19 @@ def test_optimizer_respects_asset_limit_and_reports_scenarios():
     assert {"selic_alta", "vacancia", "credito"}.issubset(result["scenario_returns"])
 
 
+def test_default_uncertainty_cap_allows_diligence_portfolio_without_publication():
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    rows = [_candidate(i, fii_type) | {"confidence": .68,
+                                      "publication_status": "diligence_only"}
+            for i, fii_type in enumerate(types)]
+
+    result = optimize_diligence_portfolio(rows, MacroScenario(selic=15, ipca=4.5))
+
+    assert result["items"]
+    assert not result["can_publish"]
+    assert result["weighted_uncertainty"] <= .35 + 1e-6
+
+
 def test_missing_exposure_coverage_blocks_publication():
     types = ["tijolo", "papel", "fof", "hibrido"] * 3
     rows = [_candidate(i, fii_type, complete=i > 4) for i, fii_type in enumerate(types)]
