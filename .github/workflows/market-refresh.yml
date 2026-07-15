@@ -74,9 +74,8 @@ jobs:
       - name: Annual (demonstrações)
         if: steps.mode.outputs.mode == 'annual' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py annual --source market --json
-      - name: Reprocessar indicadores (sem rede)
-        if: always() && steps.mode.outputs.mode != 'schema'
-        run: python run_market_ingest.py reprocess --json
+      # O reprocessamento histórico fica no warehouse local. Manter este passo
+      # no Supabase recriaria market.calculated_metric_vintages após a limpeza.
       - name: FIIs (ranking — universo type=fund, filtra ETF por setor)
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis --json

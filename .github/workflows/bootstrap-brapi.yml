@@ -77,9 +77,5 @@ jobs:
           BATCH="${{ github.event.inputs.batch || '80' }}"
           SRC="${{ github.event.inputs.source || 'setores' }}"
           python run_market_ingest.py bootstrap --source "$SRC" --limit "$BATCH" --json
-      - name: Reprocessar indicadores (sem rede)
-        if: always()
-        run: |
-          # Recalcula o snapshot ttm (ROE, P/L, DY, margens…) a partir de market.*
-          # para todos os tickers já carregados. Não consome cota da BRAPI.
-          python run_market_ingest.py reprocess --json
+      # O reprocessamento histórico e suas vintages ficam no warehouse local.
+      # Não executar aqui para não repovoar tabelas de armazém no Supabase.
