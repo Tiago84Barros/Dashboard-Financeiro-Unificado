@@ -1,0 +1,3 @@
+# Nunca versionar dumps (contêm todos os dados) nem a senha local.
+dumps/
+.env

@@ -155,6 +155,10 @@ def reconstruct_snapshots(
         if not frame.empty:
             frame["knowledge_at"] = pd.to_datetime(frame["knowledge_at"], utc=True)
             frame["reference_date"] = pd.to_datetime(frame["reference_date"])
+    if not observations.empty:
+        observations = observations.sort_values(["reference_date", "knowledge_at"])
+    if not exposures.empty:
+        exposures = exposures.sort_values(["reference_date", "knowledge_at"])
     minimum = pd.Timestamp(start) if start else max(
         min(bundle["monthly"].index.min() for bundle in bundles.values()), pd.Timestamp("2021-01-31"))
     maximum = pd.Timestamp(end) if end else max(bundle["monthly"].index.max() for bundle in bundles.values())
@@ -168,14 +172,23 @@ def reconstruct_snapshots(
             (observations["knowledge_at"] <= cutoff) &
             (observations["reference_date"] <= decision)
         ] if not observations.empty else observations
-        latest_obs = (eligible_obs.sort_values(["reference_date", "knowledge_at"])
+        latest_obs = (eligible_obs
                       .drop_duplicates(["ticker", "metric_name"], keep="last")
                       if not eligible_obs.empty else eligible_obs)
+        observations_by_ticker: dict[str, list[dict]] = {}
+        for observation in latest_obs.to_dict("records"):
+            observations_by_ticker.setdefault(str(observation["ticker"]), []).append(observation)
         eligible_exp = exposures[
             (exposures["knowledge_at"] <= cutoff) &
             (exposures["reference_date"] <= decision) &
             (exposures["exposure_type"] == "asset_class")
         ] if not exposures.empty else exposures
+        exposures_by_ticker: dict[str, list[dict]] = {}
+        if not eligible_exp.empty:
+            latest_reference = eligible_exp.groupby("ticker")["reference_date"].transform("max")
+            latest_exp = eligible_exp[eligible_exp["reference_date"] == latest_reference]
+            for exposure in latest_exp.to_dict("records"):
+                exposures_by_ticker.setdefault(str(exposure["ticker"]), []).append(exposure)
         rows: list[dict] = []
         for ticker, bundle in bundles.items():
             daily = bundle["daily"].loc[:decision]
@@ -184,13 +197,11 @@ def reconstruct_snapshots(
             feature = _features_as_of(bundle, decision)
             if not feature:
                 continue
-            ticker_exp = eligible_exp[eligible_exp["ticker"] == ticker] if not eligible_exp.empty else eligible_exp
-            asset_classes: dict[str, float] = {}
-            if not ticker_exp.empty:
-                latest_ref = ticker_exp["reference_date"].max()
-                subset = ticker_exp[ticker_exp["reference_date"] == latest_ref]
-                asset_classes = {str(row.exposure_name): float(row.exposure_weight)
-                                 for row in subset.itertuples()}
+            ticker_exp = exposures_by_ticker.get(ticker, [])
+            asset_classes = {
+                str(item["exposure_name"]): float(item["exposure_weight"])
+                for item in ticker_exp
+            }
             fii_type = _type_from_asset_classes(asset_classes)
             type_quality = "verified_publication"
             if not fii_type:
@@ -210,8 +221,7 @@ def reconstruct_snapshots(
                         "available_at": cutoff.isoformat(), "source": "public_market_history",
                         "source_quality": .85,
                     }
-            ticker_obs = latest_obs[latest_obs["ticker"] == ticker] if not latest_obs.empty else latest_obs
-            for obs in ticker_obs.to_dict("records"):
+            for obs in observations_by_ticker.get(ticker, []):
                 value = obs.get("value_numeric")
                 if pd.isna(value):
                     value = obs.get("value_text")
