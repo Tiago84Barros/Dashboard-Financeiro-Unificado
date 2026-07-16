@@ -6,12 +6,15 @@ mas reduzem a fração verificada e impedem a aprovação metodológica.
 """
 from __future__ import annotations
 
+import base64
 from datetime import date, datetime, time, timezone
+import hashlib
 import json
 import math
 from typing import Any
 
 import pandas as pd
+import requests
 from sqlalchemy import text
 
 from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION,
@@ -19,6 +22,13 @@ from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION,
 from core.fii_validation import (evaluate_regime_performance, point_in_time_backtest,
                                  validate_methodology)
 from data_pipeline.utils.db_utils import get_pipeline_engine
+
+
+_B3_IFIX_MONTHLY_URL = (
+    "https://sistemaswebb3-listados.b3.com.br/"
+    "indexStatisticsProxy/IndexCall/GetMonthlyEvolution/"
+)
+VALIDATION_PROTOCOL_VERSION = "fii-pit-total-return-events-2.0.0"
 
 
 def _num(value: Any) -> float | None:
@@ -46,6 +56,63 @@ def _json_safe(value: Any) -> Any:
         return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return str(value)
+
+
+def _parse_b3_ifix_monthly(payload: Any, *, start: date, end: date) -> list[dict]:
+    rows: list[dict] = []
+    if not isinstance(payload, list):
+        return rows
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        try:
+            month = int(item.get("month"))
+            year = int(item.get("year"))
+            value = float(item.get("indexClosingRate"))
+            reference = pd.Timestamp(year=year, month=month, day=1) + pd.offsets.MonthEnd(0)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(value) or value <= 0 or not start <= reference.date() <= end:
+            continue
+        rows.append({"date": reference.date(), "value": value})
+    return sorted(rows, key=lambda row: row["date"])
+
+
+def _ingest_b3_ifix_monthly(conn, *, start: date, end: date) -> dict:
+    """Ingere a série oficial de retorno total do IFIX publicada pela B3."""
+    query = {
+        "index": "IFIX", "language": "pt-br",
+        "dateInitial": start.isoformat(), "dateFinal": end.isoformat(),
+    }
+    encoded = base64.b64encode(
+        json.dumps(query, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).decode("ascii")
+    response = requests.get(_B3_IFIX_MONTHLY_URL + encoded, timeout=60)
+    response.raise_for_status()
+    content_hash = hashlib.sha256(response.content).hexdigest()
+    rows = _parse_b3_ifix_monthly(response.json(), start=start, end=end)
+    if not rows:
+        return {"status": "empty", "rows": 0, "content_hash": content_hash}
+    conn.execute(text("""
+        INSERT INTO market.assets (ticker,asset_type,exchange,currency,is_active)
+        VALUES ('IFIX','other','B3','BRL',true)
+        ON CONFLICT (ticker) DO UPDATE SET is_active=true,updated_at=now()
+    """))
+    conn.execute(text("""
+        INSERT INTO market.historical_prices (
+            ticker,date,close,adjusted_close,source,knowledge_at,
+            availability_quality,content_hash
+        ) SELECT 'IFIX',date,value,value,'b3_official_ifix',
+                 (date::timestamp + interval '23 hours 59 minutes') AT TIME ZONE 'America/Sao_Paulo',
+                 'verified_publication',:content_hash
+        FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS x(date date,value numeric)
+        ON CONFLICT (ticker,date) DO UPDATE
+        SET close=EXCLUDED.close,adjusted_close=EXCLUDED.adjusted_close,
+            source=EXCLUDED.source,knowledge_at=EXCLUDED.knowledge_at,
+            availability_quality=EXCLUDED.availability_quality,
+            content_hash=EXCLUDED.content_hash,updated_at=now()
+    """), {"rows": json.dumps(_json_safe(rows)), "content_hash": content_hash})
+    return {"status": "saved", "rows": len(rows), "content_hash": content_hash}
 
 
 def _normalize_type(value: Any) -> str | None:
@@ -81,9 +148,12 @@ def _monthly_market_features(prices: pd.DataFrame, dividends: pd.DataFrame) -> d
         return output
     frame = prices.copy()
     frame["date"] = pd.to_datetime(frame["date"]).dt.normalize()
-    frame["price"] = pd.to_numeric(frame["adjusted_close"], errors="coerce").fillna(
-        pd.to_numeric(frame["close"], errors="coerce"))
     frame["close_raw"] = pd.to_numeric(frame["close"], errors="coerce")
+    # O adjustedClose da fonte pode ser reescrito retroativamente quando o
+    # provedor recalcula fatores corporativos. Isso já produziu saltos espúrios
+    # superiores a 600% em FIIs. Para features PIT usamos o fechamento observável
+    # e tratamos proventos separadamente.
+    frame["price"] = frame["close_raw"]
     frame["volume"] = pd.to_numeric(frame.get("volume"), errors="coerce")
     div = dividends.copy()
     if not div.empty:
@@ -263,7 +333,7 @@ def _load_frames(conn) -> tuple[pd.DataFrame, ...]:
     prices = pd.read_sql(text("""
         SELECT ticker,date,close,adjusted_close,volume,source
         FROM market.historical_prices
-        WHERE close IS NOT NULL AND ticker <> 'XFIX11'
+        WHERE close IS NOT NULL AND ticker NOT IN ('XFIX11','IFIX')
     """), conn)
     dividends = pd.read_sql(text("""
         SELECT ticker,payment_date,ex_date,event_date,amount
@@ -286,15 +356,66 @@ def _load_frames(conn) -> tuple[pd.DataFrame, ...]:
     return prices, dividends, observations, exposures, funds
 
 
-def _monthly_returns(prices: pd.DataFrame) -> pd.DataFrame:
+def _last_completed_month_end(as_of: date | datetime | pd.Timestamp | None = None) -> pd.Timestamp:
+    reference = pd.Timestamp(as_of or datetime.now(timezone.utc)).tz_localize(None).normalize()
+    return reference.to_period("M").start_time - pd.Timedelta(days=1)
+
+
+def _monthly_returns(prices: pd.DataFrame, dividends: pd.DataFrame | None = None, *,
+                     as_of: date | datetime | pd.Timestamp | None = None) -> pd.DataFrame:
+    """Retorno total mensal robusto, sem mês incompleto nem fator retroativo.
+
+    A série principal é ``close-to-close + proventos por cota``. O preço ajustado
+    só substitui essa série quando o fechamento indica um split/incorporação e o
+    retorno ajustado permanece plausível. Se ambas as alternativas forem
+    impossíveis, a observação é descartada em vez de contaminar o backtest.
+    """
     frame = prices.copy()
     frame["date"] = pd.to_datetime(frame["date"])
-    frame["value"] = pd.to_numeric(frame["adjusted_close"], errors="coerce").fillna(
-        pd.to_numeric(frame["close"], errors="coerce"))
-    monthly = (frame.sort_values("date").set_index("date").groupby("ticker")["value"]
-               .resample("ME").last().rename("value").reset_index())
-    monthly["total_return"] = monthly.groupby("ticker")["value"].pct_change(fill_method=None)
-    return monthly.dropna(subset=["total_return"])[["date", "ticker", "total_return"]]
+    frame["close_value"] = pd.to_numeric(frame["close"], errors="coerce")
+    frame["adjusted_value"] = pd.to_numeric(frame["adjusted_close"], errors="coerce")
+    monthly = (frame.sort_values("date").set_index("date")
+               .groupby("ticker")[["close_value", "adjusted_value"]]
+               .resample("ME").last().reset_index())
+    monthly = monthly[monthly["date"] <= _last_completed_month_end(as_of)].copy()
+    grouped = monthly.groupby("ticker", group_keys=False)
+    monthly["previous_close"] = grouped["close_value"].shift(1)
+    monthly["close_return"] = grouped["close_value"].pct_change(fill_method=None)
+    monthly["adjusted_return"] = grouped["adjusted_value"].pct_change(fill_method=None)
+
+    monthly["cash_dividend"] = 0.0
+    if dividends is not None and not dividends.empty:
+        cash = dividends.copy()
+        cash["date"] = pd.to_datetime(cash.get("event_date"), errors="coerce").fillna(
+            pd.to_datetime(cash.get("ex_date"), errors="coerce")).fillna(
+            pd.to_datetime(cash.get("payment_date"), errors="coerce"))
+        cash["amount"] = pd.to_numeric(cash.get("amount"), errors="coerce")
+        cash = cash.dropna(subset=["ticker", "date", "amount"])
+        cash = cash[(cash["amount"] > 0) & (cash["date"] <= _last_completed_month_end(as_of))]
+        if not cash.empty:
+            cash["date"] = cash["date"].dt.to_period("M").dt.to_timestamp("M")
+            monthly_cash = cash.groupby(["ticker", "date"], as_index=False)["amount"].sum()
+            monthly = monthly.merge(monthly_cash.rename(columns={"amount": "cash_amount"}),
+                                    on=["ticker", "date"], how="left")
+            monthly["cash_dividend"] = monthly["cash_amount"].fillna(0.0)
+
+    monthly["cash_total_return"] = (
+        monthly["close_return"]
+        + monthly["cash_dividend"] / monthly["previous_close"].where(monthly["previous_close"] > 0)
+    )
+    result = monthly["cash_total_return"].copy()
+    # Um salto no fechamento com retorno ajustado plausível é compatível com
+    # split/incorporação. O inverso (adjustedClose extremo, close plausível) é
+    # revisão retroativa do fator e permanece no retorno cash, como XPML11/2026.
+    split_like = (monthly["cash_total_return"].abs() > .50) & (monthly["adjusted_return"].abs() <= .50)
+    result = result.where(~split_like, monthly["adjusted_return"])
+    impossible = (result <= -.95) | (result > 1.50) | ~result.map(math.isfinite)
+    monthly["total_return"] = result.mask(impossible)
+    monthly["return_method"] = "close_plus_dividends"
+    monthly.loc[split_like & ~impossible, "return_method"] = "adjusted_split_fallback"
+    return monthly.dropna(subset=["total_return"])[
+        ["date", "ticker", "total_return", "return_method"]
+    ]
 
 
 def _macro_regimes(conn, dates: list[pd.Timestamp]) -> pd.DataFrame:
@@ -360,19 +481,37 @@ def run_pit_validation(*, years: int = 10, top_n: int = 12) -> dict:
         prices, dividends, observations, exposures, funds = _load_frames(conn)
         if prices.empty:
             return {"status": "failed", "blockers": ["histórico de preços ausente"]}
-        end = pd.to_datetime(prices["date"]).max().date()
+        returns = _monthly_returns(prices, dividends)
+        if returns.empty:
+            return {"status": "failed", "blockers": ["retornos mensais válidos ausentes"]}
+        # A decisão mais recente só pode usar um mês integralmente encerrado.
+        end = pd.to_datetime(returns["date"]).max().date()
         start = (pd.Timestamp(end) - pd.DateOffset(years=max(int(years), 1))).date()
+        official_ifix: dict[str, Any]
+        try:
+            official_ifix = _ingest_b3_ifix_monthly(conn, start=start, end=end)
+        except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+            official_ifix = {"status": "failed", "rows": 0, "error": str(exc)}
         snapshots = reconstruct_snapshots(
             prices, dividends, observations, exposures, funds, start=start, end=end,
         )
         persisted = _persist_snapshots(conn, snapshots)
         snapshot_frame = pd.DataFrame(snapshots)
-        returns = _monthly_returns(prices)
         benchmark_prices = pd.read_sql(text("""
-            SELECT date,close,adjusted_close FROM market.historical_prices
-            WHERE ticker='XFIX11' ORDER BY date
+            SELECT ticker,date,close,adjusted_close,source FROM market.historical_prices
+            WHERE ticker IN ('IFIX','XFIX11') ORDER BY ticker,date
         """), conn)
-        benchmark_name = "XFIX11_proxy"
+        official_prices = benchmark_prices[
+            (benchmark_prices["ticker"] == "IFIX")
+            & (benchmark_prices["source"] == "b3_official_ifix")
+        ]
+        proxy_prices = benchmark_prices[benchmark_prices["ticker"] == "XFIX11"]
+        if not official_prices.empty:
+            benchmark_prices = official_prices
+            benchmark_name = "IFIX_official"
+        else:
+            benchmark_prices = proxy_prices
+            benchmark_name = "XFIX11_proxy"
         if benchmark_prices.empty:
             benchmark = returns.groupby("date")["total_return"].median()
             benchmark_name = "universe_median_proxy"
@@ -383,6 +522,7 @@ def run_pit_validation(*, years: int = 10, top_n: int = 12) -> dict:
                     pd.to_numeric(benchmark_prices["close"], errors="coerce"))
             benchmark = (benchmark_prices.set_index("date")["value"].resample("ME").last()
                          .pct_change(fill_method=None).dropna())
+            benchmark = benchmark[benchmark.index <= pd.Timestamp(end)]
         if snapshot_frame.empty:
             backtest = {"status": "blocked", "blockers": ["nenhum snapshot histórico reconstruível"]}
         else:
@@ -391,6 +531,7 @@ def run_pit_validation(*, years: int = 10, top_n: int = 12) -> dict:
                 snapshot_frame, returns, benchmark, top_n=top_n,
                 transaction_cost=.0015, slippage=.0010,
             )
+        backtest["validation_protocol_version"] = VALIDATION_PROTOCOL_VERSION
         regimes = _macro_regimes(conn, [pd.Timestamp(row["date"])
                                         for row in backtest.get("observations", [])])
         regime_results = evaluate_regime_performance(backtest.get("observations", []), regimes)
@@ -416,6 +557,8 @@ def run_pit_validation(*, years: int = 10, top_n: int = 12) -> dict:
                 "metrics": json.dumps(_json_safe({"backtest": backtest,
                                                    "regimes": regime_results,
                                                    "benchmark": benchmark_name,
+                                                   "validation_protocol_version": VALIDATION_PROTOCOL_VERSION,
+                                                   "official_ifix_ingestion": official_ifix,
                                                    "snapshots_reconstructed": len(snapshots),
                                                    "snapshots_persisted": persisted})),
                 "blockers": json.dumps(blockers, ensure_ascii=False)}).scalar()

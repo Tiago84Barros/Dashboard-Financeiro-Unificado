@@ -60,7 +60,7 @@ def portfolio_turnover(previous: pd.Series, current: pd.Series) -> float:
 def point_in_time_backtest(
     snapshots: pd.DataFrame, returns: pd.DataFrame, benchmark: pd.Series, *,
     top_n: int = 12, transaction_cost: float = .0015, slippage: float = .0010,
-    min_daily_return_coverage: float = .80,
+    min_daily_return_coverage: float = .80, rank_buffer: int | None = None,
 ) -> dict[str, Any]:
     """Backtest sem look-ahead usando apenas snapshots disponíveis na data.
 
@@ -115,7 +115,19 @@ def point_in_time_backtest(
                 latest.set_index("ticker")["confidence"], errors="coerce"
             )
             scores = scores * (.75 + .25 * confidence.reindex(scores.index).fillna(0.0))
-        chosen = scores.nlargest(top_n).index
+        ordered = scores.sort_values(ascending=False)
+        buffer_size = max(int(rank_buffer if rank_buffer is not None else math.ceil(top_n * .25)), 0)
+        if previous.empty or buffer_size == 0:
+            chosen = ordered.head(top_n).index
+        else:
+            # Banda de permanência: um ativo existente só sai se cair além de
+            # top_n + buffer. Isso aproxima o rebalanceamento orientado por
+            # eventos e reduz trocas causadas por ruído marginal do ranking.
+            eligible_hold = set(ordered.head(top_n + buffer_size).index)
+            retained = [ticker for ticker in previous.index
+                        if ticker in eligible_hold and ticker in ordered.index]
+            additions = [ticker for ticker in ordered.index if ticker not in retained]
+            chosen = pd.Index((retained + additions)[:top_n])
         weights = pd.Series(1 / len(chosen), index=chosen, dtype=float)
         used_snapshots += len(chosen)
         if "availability_quality" in latest:
@@ -187,6 +199,7 @@ def point_in_time_backtest(
                                         if weighted_return_coverages else 0.0),
         "max_drawdown": float(drawdown.min()) if len(drawdown) else np.nan,
         "information_ratio": information_ratio,
+        "rank_buffer": int(rank_buffer if rank_buffer is not None else math.ceil(top_n * .25)),
         "observations": result.to_dict("records"),
     }
 

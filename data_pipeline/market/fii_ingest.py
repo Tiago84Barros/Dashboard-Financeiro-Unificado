@@ -791,11 +791,241 @@ def _latest_exposure_rows(conn, exposure_type: str) -> list[dict]:
             FROM market.fii_exposures e JOIN latest_ref r USING (ticker, exposure_type, reference_date)
             GROUP BY 1,2,3
         )
-        SELECT e.ticker, e.exposure_name, e.exposure_weight
+        SELECT e.ticker, e.exposure_name, e.exposure_weight,
+               e.reference_date, e.available_at, e.knowledge_at
         FROM market.fii_exposures e JOIN latest_at l
           USING (ticker, exposure_type, reference_date, available_at)
         WHERE e.exposure_type=:kind
     """), {"kind": exposure_type}).mappings().all()]
+
+
+def _asset_class_bucket(name: str) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")
+    if normalized in {"real_estate", "property", "properties", "land", "right",
+                      "real_estate_rights"}:
+        return "tijolo"
+    if normalized in {"credit", "cri", "cra", "lci", "lca", "lig",
+                      "receivable", "receivables", "private_bond", "debenture"}:
+        return "papel"
+    if normalized in {"fund_holdings", "fund_share", "fund_shares", "fii",
+                      "fund_holding", "funds"}:
+        return "fof"
+    if normalized in {"cash", "liquidity", "fixed_income", "treasury"}:
+        return "cash"
+    return None
+
+
+def _mandate_adherence_score(fii_type: str, weights: dict[str, float]) -> float | None:
+    """Proxy transparente de aderência usando a composição pública do fundo."""
+    buckets: dict[str, float] = defaultdict(float)
+    for name, weight in weights.items():
+        bucket = _asset_class_bucket(name)
+        if bucket and weight is not None and 0 <= float(weight) <= 1:
+            buckets[bucket] += float(weight)
+    structural = sum(buckets.get(key, 0.0) for key in ("tijolo", "papel", "fof"))
+    if structural < .50:
+        return None
+    if fii_type in {"tijolo", "papel", "fof"}:
+        # 80% no lastro declarado representa aderência plena; abaixo disso o
+        # score cai proporcionalmente, sem preencher ausências com nota neutra.
+        return round(min(max(buckets.get(fii_type, 0.0) / .80, 0.0), 1.0), 6)
+    if fii_type == "hibrido":
+        active = sorted((buckets.get(key, 0.0) for key in ("tijolo", "papel", "fof")),
+                        reverse=True)
+        if len([value for value in active if value >= .10]) < 2:
+            return 0.0
+        secondary_share = sum(active[1:]) / structural
+        return round(min(max(secondary_share / .30, 0.0), 1.0), 6)
+    return None
+
+
+def _governance_alignment_score(values: dict[str, float]) -> tuple[float | None, float]:
+    """Combina apenas sinais públicos observados; retorna nota e cobertura."""
+    definitions = {
+        "governance_integrity": (.35, lambda value: value),
+        "governance_disclosure_quality": (.30, lambda value: value),
+        "auditor_opinion_quality": (.20, lambda value: value),
+        "related_party_exposure": (.10, lambda value: 1.0 - value),
+        "management_alignment_units": (.05, lambda value: 1.0 if value > 0 else 0.0),
+    }
+    numerator = observed = 0.0
+    for metric, (weight, transform) in definitions.items():
+        value = values.get(metric)
+        if value is None:
+            continue
+        normalized = min(max(float(transform(float(value))), 0.0), 1.0)
+        numerator += weight * normalized
+        observed += weight
+    if observed < .50:
+        return None, observed
+    return round(numerator / observed, 6), round(observed, 6)
+
+
+def _latest_metric_rows(conn, metrics: list[str]) -> list[dict]:
+    return [dict(row) for row in conn.execute(text("""
+        SELECT DISTINCT ON (ticker, metric_name)
+               ticker, metric_name, value_numeric::float AS value,
+               reference_date, available_at, knowledge_at
+        FROM market.fii_metric_observations
+        WHERE metric_name = ANY(CAST(:metrics AS text[]))
+          AND quality_status IN ('observed','accepted')
+          AND value_numeric IS NOT NULL
+          AND knowledge_at <= now()
+        ORDER BY ticker, metric_name, knowledge_at DESC,
+                 reference_date DESC, observed_at DESC
+    """), {"metrics": metrics}).mappings().all()]
+
+
+def _derive_public_quality_observations(conn) -> int:
+    """Deriva mandato, alinhamento e qualidade FoF com fontes públicas PIT."""
+    from data_pipeline.market.fii_sources import metric_observation
+
+    fund_rows = [dict(row) for row in conn.execute(text("""
+        SELECT ticker, tipo, regexp_replace(COALESCE(cnpj,''),'\\D','','g') AS cnpj,
+               liquidez_diaria::float AS liquidity
+        FROM market.fiis WHERE ticker IS NOT NULL
+    """)).mappings().all()]
+    type_by_ticker = {str(row["ticker"]): str(row.get("tipo") or "") for row in fund_rows}
+    ticker_by_cnpj = {row["cnpj"]: str(row["ticker"]) for row in fund_rows if row["cnpj"]}
+    observations: list[dict] = []
+
+    # Aderência ao mandato: usa o último conjunto simultâneo de exposições por
+    # classe, preservando reference_date e available_at da fonte.
+    asset_rows = _latest_exposure_rows(conn, "asset_class")
+    assets: dict[str, dict[str, float]] = defaultdict(dict)
+    asset_meta: dict[str, dict] = {}
+    for row in asset_rows:
+        ticker = str(row["ticker"])
+        assets[ticker][str(row["exposure_name"])] = float(row["exposure_weight"])
+        asset_meta[ticker] = row
+    for ticker, weights in assets.items():
+        score = _mandate_adherence_score(type_by_ticker.get(ticker, ""), weights)
+        meta = asset_meta[ticker]
+        if score is None or not meta.get("reference_date") or not meta.get("available_at"):
+            continue
+        observations.append(metric_observation(
+            ticker=ticker, metric_name="mandate_adherence", value=score,
+            reference_date=meta["reference_date"], available_at=meta["available_at"],
+            source="derived_public_asset_class_v1",
+            vintage=f"mandate-adherence:{meta['reference_date']}",
+            metadata={"formula": "declared_type_share/80pct_or_hybrid_secondary_share/30pct",
+                      "fii_type": type_by_ticker.get(ticker), "asset_class_weights": weights},
+        ))
+
+    governance_metrics = [
+        "governance_integrity", "governance_disclosure_quality",
+        "auditor_opinion_quality", "related_party_exposure",
+        "management_alignment_units",
+    ]
+    governance: dict[str, dict[str, float]] = defaultdict(dict)
+    governance_meta: dict[str, list[dict]] = defaultdict(list)
+    for row in _latest_metric_rows(conn, governance_metrics):
+        ticker = str(row["ticker"])
+        governance[ticker][str(row["metric_name"])] = float(row["value"])
+        governance_meta[ticker].append(row)
+    for ticker, values in governance.items():
+        score, component_coverage = _governance_alignment_score(values)
+        rows = governance_meta[ticker]
+        if score is None or not rows:
+            continue
+        reference = max(row["reference_date"] for row in rows if row.get("reference_date"))
+        available = max(row["available_at"] for row in rows if row.get("available_at"))
+        observations.append(metric_observation(
+            ticker=ticker, metric_name="conflict_alignment", value=score,
+            reference_date=reference, available_at=available,
+            source="derived_public_governance_v1",
+            vintage=f"governance-alignment:{reference}",
+            metadata={"formula": "weighted_observed_public_governance_signals",
+                      "component_coverage": component_coverage,
+                      "components": values},
+        ))
+
+    # Qualidade look-through dos FoFs: recorrência de renda, liquidez relativa
+    # e divulgação dos fundos investidos. Exige ao menos 60% da carteira ligada.
+    quality_metrics = _latest_metric_rows(
+        conn, ["income_recurrence", "governance_disclosure_quality"])
+    quality_values: dict[str, dict[str, float]] = defaultdict(dict)
+    for row in quality_metrics:
+        quality_values[str(row["ticker"])][str(row["metric_name"])] = float(row["value"])
+    liquid = sorted(float(row["liquidity"]) for row in fund_rows
+                    if row.get("liquidity") is not None and float(row["liquidity"]) >= 0)
+    liquidity_score: dict[str, float] = {}
+    for row in fund_rows:
+        if row.get("liquidity") is None or not liquid:
+            continue
+        value = float(row["liquidity"])
+        rank = sum(item <= value for item in liquid) - 1
+        liquidity_score[str(row["ticker"])] = rank / max(len(liquid) - 1, 1)
+
+    underlying_quality: dict[str, float] = {}
+    for row in fund_rows:
+        ticker = str(row["ticker"])
+        components = []
+        if "income_recurrence" in quality_values[ticker]:
+            components.append((quality_values[ticker]["income_recurrence"], .50))
+        if ticker in liquidity_score:
+            components.append((liquidity_score[ticker], .30))
+        if "governance_disclosure_quality" in quality_values[ticker]:
+            components.append((quality_values[ticker]["governance_disclosure_quality"], .20))
+        observed_weight = sum(weight for _, weight in components)
+        if observed_weight >= .80:
+            underlying_quality[ticker] = sum(value * weight for value, weight in components) / observed_weight
+
+    manager_rows = _latest_exposure_rows(conn, "manager")
+    manager_by_ticker = {str(row["ticker"]): str(row["exposure_name"])
+                         for row in manager_rows}
+    holdings = _latest_exposure_rows(conn, "holding")
+    by_fof: dict[str, list[dict]] = defaultdict(list)
+    for row in holdings:
+        by_fof[str(row["ticker"])].append(row)
+    for ticker, rows in by_fof.items():
+        if type_by_ticker.get(ticker) not in {"fof", "hibrido"}:
+            continue
+        matched_quality = quality_weight = 0.0
+        manager_weights: dict[str, float] = defaultdict(float)
+        manager_weight = 0.0
+        linked: list[str] = []
+        for row in rows:
+            name = str(row["exposure_name"])
+            underlying = ticker_by_cnpj.get(re.sub(r"\D", "", name))
+            if underlying is None and name.upper().replace(".SA", "") in type_by_ticker:
+                underlying = name.upper().replace(".SA", "")
+            if not underlying:
+                continue
+            weight = float(row["exposure_weight"])
+            linked.append(underlying)
+            if underlying in underlying_quality:
+                matched_quality += weight * underlying_quality[underlying]
+                quality_weight += weight
+            manager = manager_by_ticker.get(underlying)
+            if manager:
+                manager_weights[manager] += weight
+                manager_weight += weight
+        reference = max(row["reference_date"] for row in rows if row.get("reference_date"))
+        available = max(row["available_at"] for row in rows if row.get("available_at"))
+        if quality_weight >= .60:
+            observations.append(metric_observation(
+                ticker=ticker, metric_name="holdings_quality",
+                value=matched_quality / quality_weight,
+                reference_date=reference, available_at=available,
+                source="derived_public_fof_lookthrough_v1",
+                vintage=f"fof-quality:{reference}",
+                metadata={"formula": "weighted_income_recurrence_liquidity_disclosure",
+                          "lookthrough_coverage": quality_weight,
+                          "linked_tickers": sorted(set(linked))},
+            ))
+        if manager_weight >= .60 and manager_weights:
+            observations.append(metric_observation(
+                ticker=ticker, metric_name="underlying_manager_concentration",
+                value=max(manager_weights.values()) / manager_weight,
+                reference_date=reference, available_at=available,
+                source="derived_public_fof_lookthrough_v1",
+                vintage=f"fof-manager-concentration:{reference}",
+                metadata={"formula": "max_linked_manager_weight",
+                          "lookthrough_coverage": manager_weight},
+            ))
+
+    return repo.upsert(conn, "fii_metric_observations", observations)
 
 
 def _derive_fof_observations(conn) -> int:
@@ -1011,6 +1241,7 @@ def ingest_v2_details(limit: int | None = None, tickers: list[str] | None = None
     with engine.begin() as conn:
         progress["metricas"] += _derive_income_observations(conn)
         progress["metricas"] += _derive_fof_observations(conn)
+        progress["metricas"] += _derive_public_quality_observations(conn)
     progress["audit"] = audit_methodology_v4_data()
     progress["validation"] = record_validation_readiness(progress["audit"])
     progress["snapshot"] = snapshot_methodology_v4()
@@ -1225,7 +1456,7 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
     repo.reset_db_cols_cache()  # migração 020 pode ter sido aplicada com processo vivo
     prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0,
             "gravados": 0, "ranking_aplicado": False, "cobertura": 0.0,
-            "snapshot_mensal": 0}
+            "snapshot_mensal": 0, "metricas_derivadas": 0}
     if engine is None:
         return {**prog, "erros": -1}
     with engine.connect() as conn:
@@ -1624,6 +1855,8 @@ def reprocess(weights: dict | None = None) -> dict:
         metadata_ready = _score_metadata_ready(conn)
         rows = _latest_fii_payloads(conn)
         vpa_map = _vpa_map(conn)
+    with engine.begin() as conn:
+        prog["metricas_derivadas"] = _derive_public_quality_observations(conn)
     expected = len(rows)
     ref = datetime.now(timezone.utc).date()
     metrics: list[dict] = []

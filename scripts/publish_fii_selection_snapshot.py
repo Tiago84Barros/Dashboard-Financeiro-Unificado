@@ -137,6 +137,27 @@ def build_rows(df: pd.DataFrame, now: dt.datetime | None = None) -> list[dict[st
     return rows
 
 
+def _latest_validation(source_engine) -> dict[str, Any] | None:
+    with source_engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT methodology_version,as_of_date,status,metrics_json,blockers_json,
+                   started_at,finished_at
+            FROM market.fii_validation_runs
+            ORDER BY COALESCE(finished_at,started_at) DESC LIMIT 1
+        """)).mappings().first()
+    if not row:
+        return None
+    result = dict(row)
+    metrics = _jsonable(result.get("metrics_json") or {})
+    backtest = metrics.get("backtest") if isinstance(metrics, dict) else None
+    if isinstance(backtest, dict):
+        observations = backtest.pop("observations", [])
+        backtest["observation_count"] = len(observations) if isinstance(observations, list) else 0
+    result["metrics_json"] = metrics
+    result["blockers_json"] = _jsonable(result.get("blockers_json") or [])
+    return result
+
+
 def publish(source_url: str, target_url: str, dry_run: bool = False) -> dict[str, Any]:
     os.environ.update({
         "DATABASE_URL": source_url,
@@ -148,11 +169,15 @@ def publish(source_url: str, target_url: str, dry_run: bool = False) -> dict[str
 
     source = load_fii_methodology_inputs()
     rows = build_rows(source)
+    source_engine = _engine(source_url)
+    validation = _latest_validation(source_engine)
+    source_engine.dispose()
     report: dict[str, Any] = {
         "source_rows": len(source),
         "published_rows": len(rows),
         "schema_version": SCHEMA_VERSION,
         "dry_run": dry_run,
+        "validation_status": validation.get("status") if validation else "unavailable",
     }
     if dry_run:
         report["coverage_mean_pct"] = round(
@@ -183,8 +208,30 @@ def publish(source_url: str, target_url: str, dry_run: bool = False) -> dict[str
         conn.execute(text("TRUNCATE market.fii_selection_inputs"))
         conn.execute(text("INSERT INTO market.fii_selection_inputs SELECT * FROM fii_selection_inputs_stage"))
         count = conn.execute(text("SELECT count(*) FROM market.fii_selection_inputs")).scalar_one()
+        validation_table = conn.execute(
+            text("SELECT to_regclass('market.fii_validation_runs')")
+        ).scalar()
+        if validation and validation_table:
+            conn.execute(text("""
+                DELETE FROM market.fii_validation_runs
+                WHERE methodology_version=:methodology_version
+            """), validation)
+            conn.execute(text("""
+                INSERT INTO market.fii_validation_runs (
+                    methodology_version,as_of_date,status,metrics_json,blockers_json,
+                    started_at,finished_at
+                ) VALUES (
+                    :methodology_version,:as_of_date,:status,CAST(:metrics_json AS jsonb),
+                    CAST(:blockers_json AS jsonb),:started_at,:finished_at
+                )
+            """), {
+                **validation,
+                "metrics_json": json.dumps(validation["metrics_json"], ensure_ascii=False),
+                "blockers_json": json.dumps(validation["blockers_json"], ensure_ascii=False),
+            })
     target.dispose()
     report["target_rows"] = int(count)
+    report["validation_published"] = bool(validation and validation_table)
     if count != len(rows):
         raise RuntimeError(f"publicação incompleta: esperado {len(rows)}, obtido {count}")
     return report

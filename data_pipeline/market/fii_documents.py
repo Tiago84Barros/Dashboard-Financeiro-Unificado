@@ -20,11 +20,14 @@ import uuid
 import requests
 from sqlalchemy import text
 
+from data_pipeline.market import repository as repo
+from data_pipeline.market.fii_sources import metric_observation
+
 logger = logging.getLogger(__name__)
 
 PARSER_NAME = "fii_public_report"
-PARSER_VERSION = "1.3.0"
-SCHEMA_VERSION = "fii-evidence-v3"
+PARSER_VERSION = "1.4.0"
+SCHEMA_VERSION = "fii-evidence-v4"
 
 
 class DocumentTooLargeError(ValueError):
@@ -36,7 +39,7 @@ _METRIC_PATTERNS = {
     "vacancia_financeira": re.compile(r"vac[aâ]ncia\s+financeira[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "ltv": re.compile(r"\bLTV\b[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "duration_anos": re.compile(r"\bduration\b[^\d]{0,35}(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:anos?|years?)", re.I),
-    "cap_rate_implicito": re.compile(r"\bcap\s*rate\b[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "implied_cap_rate": re.compile(r"\bcap\s*rate\b[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "tenant_concentration": re.compile(r"(?:maior\s+)?(?:locat[aá]rio|inquilino)[^\d%]{0,55}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "debtor_concentration": re.compile(r"(?:maior\s+)?devedor[^\d%]{0,55}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "issuance_concentration": re.compile(r"(?:maior\s+)?(?:cri|emiss[aã]o)[^\d%]{0,55}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
@@ -49,10 +52,19 @@ _METRIC_PATTERNS = {
 }
 
 _PERCENT_METRICS = {"vacancia_fisica", "vacancia_financeira", "ltv",
-                    "cap_rate_implicito", "tenant_concentration",
+                    "implied_cap_rate", "tenant_concentration",
                     "debtor_concentration", "issuance_concentration", "delinquency",
                     "subordination_protection", "lease_expiry_concentration_24m",
                     "management_fee", "credit_spread"}
+
+# Métricas de cabeçalho/portfólio que podem alimentar uma observação
+# provisória quando o relatório contém um único valor explícito. Métricas por
+# ativo (spread, emissão, devedor) permanecem somente na fila humana.
+_PROVISIONAL_METRICS = {
+    "vacancia_fisica", "vacancia_financeira", "wault_anos", "duration_anos",
+    "ltv", "implied_cap_rate", "tenant_concentration", "delinquency",
+    "lease_expiry_concentration_24m", "property_count",
+}
 
 
 def _engine():
@@ -166,10 +178,36 @@ def _extract_evidence(text_value: str, page_texts: list[str] | None = None) -> l
                              "quantidade" if metric == "property_count" else "anos"),
                     "page_number": page_number, "bbox_json": None,
                     "evidence_text": page_text[start:end].replace("\x00", " "),
-                    "confidence": .80 if plausible else .25,
+                    "confidence": (.92 if plausible and metric in _PROVISIONAL_METRICS
+                                   else .80 if plausible else .25),
                     "validation_status": "pending" if plausible else "rejected",
                 })
-    return evidence
+    deduplicated: dict[tuple, dict] = {}
+    for row in evidence:
+        key = (row["metric_name"], row["normalized_value"], row["page_number"])
+        previous = deduplicated.get(key)
+        if previous is None or row["confidence"] > previous["confidence"]:
+            deduplicated[key] = row
+    return list(deduplicated.values())
+
+
+def _provisional_candidates(evidence: list[dict], *, extraction_confidence: float,
+                            layout_changed: bool) -> list[dict]:
+    """Seleciona somente evidência inequívoca; não equivale a revisão humana."""
+    if extraction_confidence < .75 or layout_changed:
+        return []
+    grouped: dict[str, list[dict]] = {}
+    for row in evidence:
+        if (row.get("metric_name") in _PROVISIONAL_METRICS
+                and float(row.get("confidence") or 0) >= .90
+                and row.get("validation_status") != "rejected"):
+            grouped.setdefault(str(row["metric_name"]), []).append(row)
+    selected: list[dict] = []
+    for rows in grouped.values():
+        values = {round(float(row["normalized_value"]), 8) for row in rows}
+        if len(values) == 1:
+            selected.append(max(rows, key=lambda row: float(row["confidence"])))
+    return selected
 
 
 def _parser_hash() -> str:
@@ -216,7 +254,8 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
     engine = _engine()
     result = {"selected": 0, "downloaded": 0, "unchanged": 0,
               "extracted": 0, "needs_review": 0, "failed": 0,
-              "oversized": 0, "released": 0, "bytes_processed": 0}
+              "oversized": 0, "released": 0, "bytes_processed": 0,
+              "provisional_promoted": 0}
     if engine is None:
         return {**result, "failed": -1, "blocker": "banco indisponível"}
     cache_root = _cache_root()
@@ -357,6 +396,10 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                 layout_changed = bool(previous_layout and previous_layout != signature)
                 if layout_changed:
                     confidence = max(confidence - .15, 0.0)
+                provisional = _provisional_candidates(
+                    evidence, extraction_confidence=confidence,
+                    layout_changed=layout_changed,
+                )
                 status = "needs_review" if evidence or confidence < .60 or layout_changed else "passed"
                 run_id = conn.execute(text("""
                     INSERT INTO market.fii_extraction_runs (
@@ -369,6 +412,7 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                          "confidence": confidence, "layout": signature,
                          "metrics": json.dumps({"characters": len(extracted), "pages": pages,
                                                 "evidence_count": len(evidence),
+                                                "provisional_count": len(provisional),
                                                 "layout_changed": layout_changed})}).scalar()
                 conn.execute(text("UPDATE market.fii_document_versions SET page_count=:pages WHERE id=:id"),
                              {"pages": pages, "id": version_id})
@@ -383,8 +427,41 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                     """), {"run": run_id, "metric": row["metric_name"], "raw": row["raw_value"],
                              "normalized": json.dumps(row["normalized_value"]), "unit": row["unit"],
                              "page": row["page_number"], "bbox": json.dumps(row["bbox_json"]),
-                             "evidence": row["evidence_text"], "confidence": row["confidence"],
-                             "status": row["validation_status"]})
+                              "evidence": row["evidence_text"], "confidence": row["confidence"],
+                              "status": row["validation_status"]})
+                observed_at = doc.get("first_observed_at") or datetime.now(timezone.utc)
+                reference = doc.get("reference_date") or observed_at.date()
+                published_at = doc.get("source_published_at")
+                provisional_observations = []
+                for row in provisional if doc.get("ticker") else []:
+                    observation = metric_observation(
+                        ticker=str(doc.get("ticker") or ""),
+                        metric_name=str(row["metric_name"]),
+                        value=float(row["normalized_value"]),
+                        reference_date=reference,
+                        available_at=observed_at,
+                        source="public_fii_report_provisional_v1",
+                        vintage=f"document:{reference}:{sha[:16]}",
+                        source_published_at=published_at,
+                        availability_quality=("verified_publication" if published_at
+                                              else "first_observed_proxy"),
+                        metadata={
+                            "document_id": int(doc["id"]),
+                            "document_version_id": version_id,
+                            "extraction_run_id": int(run_id),
+                            "parser_name": PARSER_NAME,
+                            "parser_version": PARSER_VERSION,
+                            "page_number": row.get("page_number"),
+                            "evidence_confidence": row.get("confidence"),
+                            "validation_status": "provisional_requires_human_review",
+                            "rule": "single_explicit_value_and_stable_layout",
+                        },
+                    )
+                    observation["source_url"] = str(doc.get("source_url") or "")
+                    provisional_observations.append(observation)
+                if provisional_observations:
+                    result["provisional_promoted"] += repo.upsert(
+                        conn, "fii_metric_observations", provisional_observations)
                 conn.execute(text("""
                     UPDATE market.fii_documents
                     SET processing_status=:status, processing_started_at=NULL,

@@ -454,6 +454,11 @@ def normalize_properties(payload: dict, raw_payload_id: int | None = None) -> di
             matches = re.findall(r"\b(" + "|".join(_UF_REGION) + r")\b", address.upper())
             uf = matches[-1] if matches else None
             revenue_share = _num(item.get("revenueShare"))
+            # Participação de receita é uma proporção. Alguns payloads Pro
+            # carregam pequenos ajustes negativos; eles não representam peso
+            # econômico válido e violam o domínio da tabela de imóveis.
+            if revenue_share is not None and not 0 <= revenue_share <= 1:
+                revenue_share = None
             delinquency = _num(item.get("delinquencyRate"))
             if revenue_share is not None and revenue_share > 0:
                 property_values[name] += revenue_share

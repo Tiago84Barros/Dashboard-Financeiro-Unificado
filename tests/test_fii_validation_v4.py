@@ -36,3 +36,25 @@ def test_validation_stays_blocked_without_history_and_regimes():
     result = validate_methodology({"status": "blocked"}, {})
     assert result["status"] == "blocked"
     assert result["blockers"]
+
+
+def test_pit_backtest_rank_buffer_reduces_noise_turnover():
+    snapshots = pd.DataFrame([
+        {"reference_date": "2024-01-31", "available_at": "2024-01-31", "ticker": "A", "score": 100},
+        {"reference_date": "2024-01-31", "available_at": "2024-01-31", "ticker": "B", "score": 90},
+        {"reference_date": "2024-02-29", "available_at": "2024-02-29", "ticker": "A", "score": 89},
+        {"reference_date": "2024-02-29", "available_at": "2024-02-29", "ticker": "B", "score": 90},
+    ])
+    returns = pd.DataFrame([
+        {"date": "2024-02-29", "ticker": "A", "total_return": .01},
+        {"date": "2024-02-29", "ticker": "B", "total_return": .01},
+        {"date": "2024-03-31", "ticker": "A", "total_return": .01},
+        {"date": "2024-03-31", "ticker": "B", "total_return": .01},
+    ])
+    benchmark = pd.Series([0.0, 0.0], index=pd.to_datetime(["2024-02-29", "2024-03-31"]))
+    buffered = point_in_time_backtest(
+        snapshots, returns, benchmark, top_n=1, rank_buffer=1,
+        transaction_cost=0, slippage=0,
+    )
+    assert buffered["observations"][1]["holdings"] == {"A": 1.0}
+    assert buffered["observations"][1]["turnover"] == 0.0

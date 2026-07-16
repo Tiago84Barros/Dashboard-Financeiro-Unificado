@@ -128,11 +128,19 @@ _SNAPSHOT_REQUIRED_FIELDS = (
 
 
 def render(show_header: bool = True) -> None:
+    validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
     if show_header:
         st.markdown("## Seleção de FIIs — Lista de Diligência")
-        st.caption(f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]} específica por tipo. "
-                   "Enquanto a validação point-in-time "
-                   "não for aprovada, a saída não é recomendação definitiva nem Carteira Modelo.")
+        if validation.get("status") == "passed":
+            st.caption(
+                f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]} específica por tipo. "
+                "Backtest point-in-time aprovado; a publicação como Carteira Modelo ainda depende "
+                "dos gates de cobertura crítica e confiança dos fundos."
+            )
+        else:
+            st.caption(f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]} específica por tipo. "
+                       "Enquanto a validação point-in-time "
+                       "não for aprovada, a saída não é recomendação definitiva nem Carteira Modelo.")
     st.markdown(_CSS, unsafe_allow_html=True)
 
     df = _mr.load_fiis()
@@ -150,7 +158,6 @@ def render(show_header: bool = True) -> None:
             for p, v, b in zip(df["Preço"], df["VPA"], df["P/VP"])
         ]
     inputs = _mr.load_fii_methodology_inputs()
-    validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
     scored_v4 = score_fiis_by_type(
         inputs.to_dict("records") if not inputs.empty else [],
         validation_status="passed" if validation.get("status") == "passed" else "unvalidated",
@@ -365,12 +372,21 @@ def _render_data_health_summary(
                   "mínimo para publicação: 75%", accent="#FC5C7D"),
         unsafe_allow_html=True,
     )
+    validation_pending = any(
+        "backtest" in reason or "robustez" in reason for reason in gate.reasons
+    )
+    publication_note = (
+        "A publicação continua bloqueada enquanto a confiança e a validação point-in-time não forem aprovadas."
+        if validation_pending else
+        "A validação point-in-time foi aprovada; a publicação continua bloqueada somente pelos gates de "
+        "cobertura crítica e confiança dos fundos."
+    )
     st.markdown(_info_card_html(
         "Como interpretar estes números",
         "Snapshot consumido mede se o App 4 recebeu os dados. Campos essenciais mede a completude dos inputs. "
         "FIIs pontuáveis mede quantos possuem tipo válido. Prontidão metodológica exige cobertura dos campos críticos "
         "e confiança mínima de 75%; é diferente de apenas ter dados no snapshot. "
-        "A publicação continua bloqueada enquanto a confiança e a validação point-in-time não forem aprovadas. "
+        f"{publication_note} "
         f"Fonte: {metrics['snapshot_version']}.",
         accent="#00C896",
     ), unsafe_allow_html=True)

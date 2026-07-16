@@ -2,7 +2,7 @@ import pytest
 
 from data_pipeline.market.fii_documents import (
     PARSER_VERSION, DocumentTooLargeError, _download, _extract_evidence,
-    _layout_signature,
+    _layout_signature, _provisional_candidates,
 )
 
 
@@ -12,12 +12,29 @@ def test_document_evidence_uses_methodology_names_and_page_numbers():
     evidence = _extract_evidence("\n".join(pages), pages)
     rows = {row["metric_name"]: row for row in evidence}
 
-    assert PARSER_VERSION == "1.3.0"
+    assert PARSER_VERSION == "1.4.0"
     assert rows["vacancia_fisica"]["normalized_value"] == pytest.approx(.075)
     assert rows["wault_anos"]["normalized_value"] == pytest.approx(4.2)
-    assert rows["cap_rate_implicito"]["normalized_value"] == pytest.approx(.091)
+    assert rows["implied_cap_rate"]["normalized_value"] == pytest.approx(.091)
     assert rows["ltv"]["normalized_value"] == pytest.approx(.45)
     assert all(row["page_number"] == 2 for row in rows.values())
+
+
+def test_only_unambiguous_stable_evidence_is_provisionally_promoted():
+    evidence = _extract_evidence(
+        "Vacância física 7,5% | WAULT 4,2 anos | LTV 40% | LTV 55%"
+    )
+
+    selected = _provisional_candidates(
+        evidence, extraction_confidence=.90, layout_changed=False
+    )
+
+    assert {row["metric_name"] for row in selected} == {
+        "vacancia_fisica", "wault_anos"
+    }
+    assert not _provisional_candidates(
+        evidence, extraction_confidence=.90, layout_changed=True
+    )
 
 
 def test_layout_signature_ignores_numeric_value_changes():

@@ -100,6 +100,20 @@ def test_properties_create_revenue_weighted_property_diversification():
     assert metadata["formula"] == "1-HHI"
 
 
+def test_properties_quarantine_negative_revenue_share():
+    payload = {"requestedAt": REQUESTED, "fiis": [{
+        "symbol": "VISC11", "referenceDate": "2026-06-30", "version": 1,
+        "properties": [{"name": "Shopping", "revenueShare": -.0006,
+                        "address": "Fortaleza CE"}],
+    }]}
+
+    result = fii_v2.normalize_properties(payload)
+
+    assert result["properties"][0]["pct_receita"] is None
+    assert not any(row["metric_name"] == "property_diversification"
+                   for row in result["observations"])
+
+
 def test_annual_and_financial_reports_preserve_delivery_and_document_url():
     annual = fii_v2.normalize_annual_reports({"requestedAt": REQUESTED, "reports": [{
         "symbol": "KNRI11", "year": 2025, "referenceDate": "2025-12-31",

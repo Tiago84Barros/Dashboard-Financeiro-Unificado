@@ -588,6 +588,12 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
                         for row in calibrations.itertuples()}
                        if not calibrations.empty else {})
     rows: list[dict] = []
+    metric_aliases = {
+        # Nomes legados/documentais normalizados para o vocabulário da
+        # metodologia. O nome canônico sempre prevalece quando ambos existem.
+        "cap_rate_implicito": "implied_cap_rate",
+        "wault_years": "wault_anos",
+    }
     for _, item in base.iterrows():
         ticker = str(item["Ticker"])
         row = {
@@ -628,8 +634,12 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
                 value = obs.get("value_numeric")
                 if pd.isna(value):
                     value = obs.get("value_text") if pd.notna(obs.get("value_text")) else obs.get("value_json")
-                row[str(obs["metric_name"])] = value
-                row["metric_metadata"][str(obs["metric_name"])] = {
+                raw_metric = str(obs["metric_name"])
+                metric = metric_aliases.get(raw_metric, raw_metric)
+                if raw_metric != metric and metric in row:
+                    continue
+                row[metric] = value
+                row["metric_metadata"][metric] = {
                     "reference_date": str(obs.get("reference_date")),
                     "available_at": str(obs.get("available_at")),
                     "knowledge_at": str(obs.get("knowledge_at")),
@@ -642,6 +652,7 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
                         "retrospective_backfill": .55,
                         "migration_baseline": .20,
                     }.get(str(obs.get("availability_quality") or ""), .50),
+                    "raw_metric_name": raw_metric,
                 }
         if not exposures.empty:
             exp = exposures[exposures["ticker"] == ticker]
