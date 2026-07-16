@@ -81,17 +81,13 @@ def render() -> None:
     with abas[1]:
         _tab_explorar()
     with abas[2]:
-        em_construcao("Fase 5 — Análise",
-                      "Score fundamentalista por setor (Qualidade, Crescimento, "
-                      "Solidez, Eficiência de Capital, Valuation, Retorno ao acionista).")
+        _tab_analise_fundamentalista(status)
     with abas[3]:
         em_construcao("Fase 5 — Análise Avançada",
                       "Piotroski F-Score, Altman Z-Score, accruals de Sloan, "
                       "retorno incremental sobre capital.")
     with abas[4]:
-        em_construcao("Fase 5 — Comparação por Indústria",
-                      "Ranking e percentis dentro da mesma indústria (evita comparar "
-                      "setores estruturalmente incompatíveis).")
+        _tab_comparacao_industria(status)
     with abas[5]:
         em_construcao("Fase 6 — Portfólio",
                       "Carteira-modelo americana: restrições por setor/posição, pesos "
@@ -169,24 +165,139 @@ def _tab_explorar() -> None:
     )
 
 
-# ── Dossiê (esqueleto offline; parecer LLM vem na Fase 5) ─────────────────────
+# ── Análise Fundamentalista (score por setor/indústria) ───────────────────────
+_TRACK_LABELS = {
+    "score_quality": "Qualidade", "score_growth": "Crescimento",
+    "score_solidity": "Solidez", "score_capital_efficiency": "Efic. Capital",
+    "score_valuation": "Valuation", "score_shareholder": "Retorno acionista",
+}
+
+
+def _tab_analise_fundamentalista(status: dict) -> None:
+    if status.get("offline"):
+        estado_vazio("Sem dados locais para calcular o score.", "📊")
+        return
+    scored = us.scored_universe()
+    if scored is None or scored.empty:
+        estado_vazio("Sem empresas com demonstrações suficientes para o score.", "📊")
+        return
+    secao_titulo("Score fundamentalista — relativo por indústria", "🏆")
+    st.caption("Winsorização + percentil intra-indústria nas 6 trilhas de fatores. "
+               "Ausência = neutro. Score não é garantia de retorno.")
+    setores = ["(todos)"] + sorted(x for x in scored["sector"].dropna().unique())
+    sel = st.selectbox("Setor", setores, key="us_score_sector")
+    view = scored if sel == "(todos)" else scored[scored["sector"] == sel]
+    cols = ["symbol", "name", "sector", "industry", "score",
+            *_TRACK_LABELS.keys(), "coverage"]
+    cols = [c for c in cols if c in view.columns]
+    show = view[cols].head(200).rename(columns={
+        "symbol": "Ticker", "name": "Nome", "sector": "Setor",
+        "industry": "Indústria", "score": "Score", "coverage": "Cobertura %",
+        **_TRACK_LABELS})
+    st.dataframe(show, hide_index=True, use_container_width=True)
+
+
+# ── Comparação por Indústria ──────────────────────────────────────────────────
+def _tab_comparacao_industria(status: dict) -> None:
+    if status.get("offline"):
+        estado_vazio("Sem dados locais para comparar.", "🏭")
+        return
+    scored = us.scored_universe()
+    if scored is None or scored.empty or "industry" not in scored.columns:
+        estado_vazio("Sem empresas suficientes para comparação por indústria.", "🏭")
+        return
+    industrias = sorted(x for x in scored["industry"].dropna().unique())
+    if not industrias:
+        estado_vazio("Nenhuma indústria classificada nos dados locais.", "🏭")
+        return
+    ind = st.selectbox("Indústria", industrias, key="us_cmp_industry")
+    import core.us_score as _score
+    peers = _score.industry_comparison(scored, ind)
+    if peers.empty:
+        estado_vazio("Sem pares nesta indústria.", "🏭")
+        return
+    secao_titulo(f"{ind} — {len(peers)} empresa(s)", "🏭")
+    show_cols = ["symbol", "name", "score", "score_quality", "score_growth",
+                 "score_valuation", "gross_margin", "roic", "net_debt_ebitda",
+                 "revenue_cagr_3y"]
+    show_cols = [c for c in show_cols if c in peers.columns]
+    st.dataframe(peers[show_cols].rename(columns={
+        "symbol": "Ticker", "name": "Nome", "score": "Score",
+        "score_quality": "Qualidade", "score_growth": "Crescimento",
+        "score_valuation": "Valuation", "gross_margin": "Mrg.Bruta",
+        "roic": "ROIC", "net_debt_ebitda": "DL/EBITDA",
+        "revenue_cagr_3y": "Cresc.Rec 3a"}),
+        hide_index=True, use_container_width=True)
+
+
+# ── Dossiê determinístico ─────────────────────────────────────────────────────
+_CLASS_BADGE = {
+    "consolidada": ("Consolidada", "sucesso"), "crescimento": ("Crescimento", "info"),
+    "assimetrica": ("Assimétrica", "alerta"), "turnaround": ("Turnaround", "alerta"),
+    "ciclica": ("Cíclica", "neutro"), "inadequada": ("Inadequada", "erro"),
+}
+
+
 def _tab_dossie(status: dict) -> None:
     if status.get("offline"):
         estado_vazio("Sem dados locais para montar o dossiê.", "📄")
         return
     symbol = st.text_input("Ticker (ex.: AAPL)", key="us_dossie_symbol").strip().upper()
     if not symbol:
-        st.info("Digite um ticker para ver a série financeira anual (offline).")
+        st.info("Digite um ticker para o dossiê determinístico (offline).")
         return
-    df = us.company_financials(symbol)
-    if df is None or df.empty:
-        estado_vazio(f"Sem histórico local para {symbol}.", "📄")
+    d = us.dossie(symbol)
+    if d.get("erro"):
+        estado_vazio(f"{symbol}: {d['erro']}", "📄")
         return
-    secao_titulo(f"{symbol} — histórico anual", "📈")
-    st.dataframe(df, hide_index=True, use_container_width=True)
-    em_construcao("Fase 5 — Dossiê completo",
-                  "Modelo de negócios, margens, ROIC, dívida, valuation, pares, "
-                  "riscos, tese e parecer narrado por LLM (sem inventar números).")
+
+    label, tipo = _CLASS_BADGE.get(d.get("classification"), ("—", "neutro"))
+    secao_titulo(f"{symbol} — {d.get('name') or ''}", "📄",
+                 f"{d.get('sector') or '—'} / {d.get('industry') or '—'}")
+    cb1, cb2, *_ = st.columns([1, 1, 4])
+    with cb1:
+        badge_status(label, tipo)
+    with cb2:
+        if d.get("score") is not None:
+            badge_status(f"Score {d['score']}", "info")
+    st.caption(d.get("classification_reason", ""))
+
+    m = d.get("metrics", {})
+
+    def _p(x):
+        return "—" if x is None else f"{x*100:.1f}%"
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card_metrica("Margem líquida", _p(m.get("net_margin")))
+    with c2:
+        card_metrica("ROIC", _p(m.get("roic")))
+    with c3:
+        v = m.get("net_debt_ebitda")
+        card_metrica("Dív.líq/EBITDA", "—" if v is None else f"{v:.1f}×")
+    with c4:
+        card_metrica("Cresc. receita 3a", _p(m.get("revenue_cagr_3y")))
+
+    if d.get("red_flags"):
+        secao_titulo("Sinais de alerta", "🚩")
+        for f in d["red_flags"]:
+            st.markdown(f"- {f}")
+
+    notes = d.get("notes", {})
+    if notes.get("tese") or notes.get("condicoes_invalidacao"):
+        colt, coli = st.columns(2)
+        with colt:
+            st.markdown("**Tese**")
+            for t in notes.get("tese", []):
+                st.markdown(f"- {t}")
+        with coli:
+            st.markdown("**Condições de invalidação**")
+            for c in notes.get("condicoes_invalidacao", []):
+                st.markdown(f"- {c}")
+
+    with st.expander("Dossiê completo (texto determinístico)"):
+        import core.us_dossie as _dos
+        st.code(_dos.dossie_to_text(d), language="text")
 
 
 # ── Qualidade dos Dados ───────────────────────────────────────────────────────

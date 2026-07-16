@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 logger = logging.getLogger("us_read")
 
@@ -173,6 +173,117 @@ def load_quality_audit(limit: int = 200) -> pd.DataFrame:
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_quality_audit falhou: %s", exc)
         return pd.DataFrame(columns=cols)
+
+
+_INCOME_COLS = ("fiscal_year", "revenue", "gross_profit", "operating_income",
+                "ebit", "ebitda", "net_income", "interest_expense", "eps")
+_BALANCE_COLS = ("fiscal_year", "total_assets", "total_equity", "total_debt",
+                 "net_debt", "cash_and_equivalents", "current_assets",
+                 "current_liabilities", "invested_capital", "shares_outstanding")
+_CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow",
+                  "dividends_paid", "stock_repurchase", "stock_issuance")
+
+
+def _latest_market_cap(conn, symbol: str):
+    try:
+        return conn.execute(text(
+            "SELECT market_cap FROM market_us.market_cap_history "
+            "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).scalar()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def load_company_bundle(symbol: str) -> dict | None:
+    """Séries anuais + identidade + market cap de UMA empresa (para o dossiê)."""
+    eng = _engine()
+    if eng is None or not schema_ready() or not symbol:
+        return None
+    sym = symbol.upper()
+    try:
+        with eng.connect() as conn:
+            ident = conn.execute(text(
+                "SELECT c.id, c.name, c.sector, c.industry "
+                "FROM market_us.assets a JOIN market_us.companies c ON c.id=a.company_id "
+                "WHERE a.symbol=:s LIMIT 1"), {"s": sym}).fetchone()
+            if ident is None:
+                return None
+            cid = int(ident[0])
+
+            def _series(table, cols):
+                q = (f"SELECT {', '.join(cols)} FROM market_us.{table} "
+                     f"WHERE company_id=:c AND period='annual' ORDER BY fiscal_year")
+                return [dict(r._mapping) for r in conn.execute(text(q), {"c": cid})]
+
+            return {
+                "name": ident[1], "sector": ident[2], "industry": ident[3],
+                "income": _series("income_statements", _INCOME_COLS),
+                "balance": _series("balance_sheets", _BALANCE_COLS),
+                "cashflow": _series("cash_flow_statements", _CASHFLOW_COLS),
+                "market_cap": _latest_market_cap(conn, sym),
+                "price": None,
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("load_company_bundle(%s) falhou: %s", sym, exc)
+        return None
+
+
+def load_scoring_frame(limit_companies: int = 800) -> pd.DataFrame:
+    """Cross-section de métricas (uma linha por empresa) para o score/comparação.
+
+    Puxa as séries anuais em lote e calcula as métricas em Python (core.us_metrics).
+    Retorna vazio se não houver dados — a UI trata offline.
+    """
+    from core.us_metrics import compute_company_metrics
+    cols = ["symbol", "name", "sector", "industry"]
+    eng = _engine()
+    if eng is None or not schema_ready():
+        return pd.DataFrame(columns=cols)
+    try:
+        with eng.connect() as conn:
+            comp = pd.read_sql(text(
+                "SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.name) AS name, "
+                "MAX(c.sector) AS sector, MAX(c.industry) AS industry "
+                "FROM market_us.companies c JOIN market_us.assets a ON a.company_id=c.id "
+                "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
+                "              WHERE i.company_id=c.id AND i.period='annual') "
+                "GROUP BY c.id ORDER BY c.id LIMIT :lim"),
+                conn, params={"lim": int(limit_companies)})
+            if comp.empty:
+                return pd.DataFrame(columns=cols)
+            ids = [int(x) for x in comp["id"].tolist()]
+
+            def _bulk(table, cols_):
+                q = text(f"SELECT company_id, {', '.join(cols_)} "
+                         f"FROM market_us.{table} WHERE period='annual' "
+                         f"AND company_id IN :ids ORDER BY company_id, fiscal_year"
+                         ).bindparams(bindparam("ids", expanding=True))
+                return pd.read_sql(q, conn, params={"ids": ids})
+
+            inc = _bulk("income_statements", _INCOME_COLS)
+            bal = _bulk("balance_sheets", _BALANCE_COLS)
+            cfw = _bulk("cash_flow_statements", _CASHFLOW_COLS)
+            mcaps = pd.read_sql(text(
+                "SELECT DISTINCT ON (symbol) symbol, market_cap "
+                "FROM market_us.market_cap_history ORDER BY symbol, date DESC"), conn)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("load_scoring_frame falhou: %s", exc)
+        return pd.DataFrame(columns=cols)
+
+    mcap_by_symbol = dict(zip(mcaps.get("symbol", []), mcaps.get("market_cap", []))) \
+        if not mcaps.empty else {}
+    inc_g = {k: v.to_dict("records") for k, v in inc.groupby("company_id")} if not inc.empty else {}
+    bal_g = {k: v.to_dict("records") for k, v in bal.groupby("company_id")} if not bal.empty else {}
+    cfw_g = {k: v.to_dict("records") for k, v in cfw.groupby("company_id")} if not cfw.empty else {}
+
+    rows = []
+    for _, c in comp.iterrows():
+        cid = int(c["id"])
+        m = compute_company_metrics(
+            inc_g.get(cid, []), bal_g.get(cid, []), cfw_g.get(cid, []),
+            market_cap=mcap_by_symbol.get(c["symbol"]))
+        rows.append({"symbol": c["symbol"], "name": c["name"],
+                     "sector": c["sector"], "industry": c["industry"], **m})
+    return pd.DataFrame(rows)
 
 
 def load_ingestion_runs() -> pd.DataFrame:
