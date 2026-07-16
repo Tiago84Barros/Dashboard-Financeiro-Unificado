@@ -32,6 +32,7 @@ _ROTAS: dict[str, str] = {
     "💰 Controle Financeiro": "controle_financeiro",
     "📈 Investimentos":       "investimentos",
     "🏢 Empresas B3":         "empresas_b3",
+    "🇺🇸 Empresas Americanas": "empresas_americanas",
     "🏬 Seleção de FIIs":      "fiis",
     "📚 Documentação":        "documentacao",
     "🩺 Saúde dos Dados":      "admin_data_health",
@@ -51,7 +52,8 @@ with st.sidebar:
     opcoes_financas = ["💰 Controle Financeiro"]
 
     st.markdown('<div class="nav-section">Investimentos</div>', unsafe_allow_html=True)
-    opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3", "🏬 Seleção de FIIs"]
+    opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3",
+                     "🇺🇸 Empresas Americanas", "🏬 Seleção de FIIs"]
 
     st.markdown('<div class="nav-section">Sistema</div>', unsafe_allow_html=True)
     opcoes_sistema = ["📚 Documentação", "🩺 Saúde dos Dados", "⚙️ Configurações"]

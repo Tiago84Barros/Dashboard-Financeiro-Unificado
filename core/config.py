@@ -74,6 +74,14 @@ class Settings:
     GEMINI_BASE_URL: str = _get_secret(
         "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
 
+    # ── Financial Modeling Prep (Empresas Americanas) ─────────────────────────
+    # Fonte primária de fundamentos/preços dos EUA. A chave é usada APENAS pela
+    # camada de ingestão (data_pipeline/us, run_us_ingest.py) — NUNCA pela view,
+    # que lê só o warehouse local. Nunca gravar a chave no banco, log ou UI.
+    # Aceita FMP_API_KEY (preferida) ou FINANCIAL_MODELING_PREP_API_KEY.
+    FMP_API_KEY: str = _get_secret("FMP_API_KEY") or _get_secret("FINANCIAL_MODELING_PREP_API_KEY")
+    FMP_BASE_URL: str = _get_secret("FMP_BASE_URL", "https://financialmodelingprep.com/api")
+
     # ── Ambiente ──────────────────────────────────────────────────────────────
     APP_ENV: str = _get_secret("APP_ENV", "development")
     MOCK_MODE: bool = _get_secret("MOCK_MODE", "true").lower() == "true"
@@ -127,6 +135,15 @@ class Settings:
     def has_supabase_unificado(self) -> bool:
         """True se SUPABASE_UNIFICADO_URL estiver configurada (banco unificado ativo)."""
         return bool(self.SUPABASE_UNIFICADO_URL)
+
+    @property
+    def has_fmp(self) -> bool:
+        """True se a chave da Financial Modeling Prep estiver configurada.
+
+        Só a ingestão (CLI/pipeline) precisa dela. A interface de Empresas
+        Americanas funciona offline lendo o warehouse local mesmo sem chave.
+        """
+        return bool(self.FMP_API_KEY)
 
     @property
     def has_openai(self) -> bool:
