@@ -121,6 +121,11 @@ _CSS = """
 
 _TABS = ["📊 Diligência", "🔎 Busca de ativo", "🧺 Carteira-modelo", "📈 Retrospectiva"]
 
+_SNAPSHOT_REQUIRED_FIELDS = (
+    "ticker", "tipo", "dy_12m", "pvp", "liquidez_diaria", "history_months",
+    "max_drawdown", "vacancia_fisica", "property_count", "region_count",
+)
+
 
 def render(show_header: bool = True) -> None:
     if show_header:
@@ -161,13 +166,15 @@ def render(show_header: bool = True) -> None:
         validation_status="passed" if validation.get("status") == "passed" else "unvalidated",
     )
     st.session_state["fii_publication_gate"] = gate
-    if gate.can_publish_recommendation:
-        st.success("Critérios de cobertura, confiança e validação atendidos.")
-    else:
-        st.warning("Publicação bloqueada: " + " · ".join(gate.reasons))
     ranked = df[df["Score"].notna()].sort_values(
         "Score", ascending=False
     ).reset_index(drop=True)
+    health_metrics = _fii_data_health_metrics(df, ranked, inputs, scored_v4, gate)
+    if gate.can_publish_recommendation:
+        st.success("Critérios de cobertura, confiança e validação atendidos.")
+    else:
+        st.warning(_publication_gate_message(health_metrics, gate))
+    _render_data_health_summary(df, ranked, inputs, scored_v4, gate)
 
     # Abas por botão (permitem trocar de aba programaticamente — ex.: card → Busca).
     active = st.session_state.get("fii_active_tab", 0)
@@ -242,6 +249,126 @@ def _kpi_html(label: str, value, sub: str | None = None,
 def _info_card_html(title: str, body: str, *, accent: str = "#4A9EFF") -> str:
     return (f'<div class="fii-info-card" style="border-left-color:{accent};">'
             f'<div class="title">{escape(title)}</div>{escape(body)}</div>')
+
+
+def _fii_data_health_metrics(
+    vitrine: pd.DataFrame,
+    ranked: pd.DataFrame,
+    inputs: pd.DataFrame,
+    scored: list[dict],
+    gate,
+) -> dict[str, float | int | str]:
+    """Calcula os números exibidos no informativo de consistência do App 4."""
+    source_rows = len(inputs)
+    required_coverage: list[float] = []
+    for row in inputs.to_dict("records"):
+        metadata = row.get("snapshot_metadata") or {}
+        snapshot_cov = metadata.get("coverage") if isinstance(metadata, dict) else None
+        value = snapshot_cov.get("coverage_pct") if isinstance(snapshot_cov, dict) else None
+        if value is not None:
+            try:
+                required_coverage.append(float(value) / 100.0)
+                continue
+            except (TypeError, ValueError):
+                pass
+        present = sum(row.get(field) is not None and pd.notna(row.get(field))
+                      for field in _SNAPSHOT_REQUIRED_FIELDS)
+        required_coverage.append(present / len(_SNAPSHOT_REQUIRED_FIELDS))
+
+    ready_count = sum(row.get("data_readiness_status") == "ready" for row in scored)
+    return {
+        "snapshot_rows": source_rows,
+        "vitrine_rows": len(vitrine),
+        "ranked_rows": len(ranked),
+        "scoreable_rows": len(scored),
+        "required_coverage": sum(required_coverage) / len(required_coverage)
+        if required_coverage else 0.0,
+        "ready_count": ready_count,
+        "ready_fraction": ready_count / len(scored) if scored else 0.0,
+        "median_confidence": float(getattr(gate, "median_confidence", 0.0) or 0.0),
+        "snapshot_version": str(
+            next((
+                (row.get("snapshot_metadata") or {}).get("schema_version")
+                for row in inputs.to_dict("records")
+                if isinstance(row.get("snapshot_metadata"), dict)
+                and (row.get("snapshot_metadata") or {}).get("schema_version")
+            ),
+            "fallback_market_tables",
+        )),
+    }
+
+
+def _publication_gate_message(
+    metrics: dict[str, float | int | str],
+    gate,
+) -> str:
+    """Traduz o gate técnico em uma mensagem verificável na própria tela."""
+    scoreable = int(metrics["scoreable_rows"])
+    ready = int(metrics["ready_count"])
+    ready_fraction = float(metrics["ready_fraction"])
+    confidence = float(metrics["median_confidence"])
+    parts = [
+        f"Publicação bloqueada: {ready}/{scoreable} FIIs pontuáveis atingem "
+        f"confiança ≥75% ({ready_fraction:.1%}; mínimo 80%)",
+        f"confiança mediana {confidence:.1%} (mínimo 75%)",
+    ]
+    if any("backtest" in reason or "robustez" in reason for reason in gate.reasons):
+        parts.append("backtest point-in-time/robustez estatística pendente")
+    if any("cobertura do universo" in reason for reason in gate.reasons):
+        parts.append(f"cobertura do universo {float(gate.universe_coverage):.1%}")
+    return " · ".join(parts)
+
+
+def _render_data_health_summary(
+    vitrine: pd.DataFrame,
+    ranked: pd.DataFrame,
+    inputs: pd.DataFrame,
+    scored: list[dict],
+    gate,
+) -> None:
+    """Mostra cobertura operacional separada da prontidão para recomendação."""
+    metrics = _fii_data_health_metrics(vitrine, ranked, inputs, scored, gate)
+    cards = st.columns(5)
+    cards[0].markdown(
+        _kpi_html("Snapshot consumido", f"{metrics['snapshot_rows']}/{metrics['snapshot_rows']}",
+                  "inputs recebidos pelo App 4", accent="#4A9EFF"),
+        unsafe_allow_html=True,
+    )
+    cards[1].markdown(
+        _kpi_html("Campos essenciais", f"{metrics['required_coverage']:.1%}",
+                  "média de 10 campos", accent="#00C896"),
+        unsafe_allow_html=True,
+    )
+    cards[2].markdown(
+        _kpi_html("FIIs pontuáveis", f"{metrics['scoreable_rows']}/{metrics['snapshot_rows']}",
+                  f"ranking exibido: {metrics['ranked_rows']}", accent="#B084F6"),
+        unsafe_allow_html=True,
+    )
+    cards[3].markdown(
+        _kpi_html("Dados suficientes", f"{metrics['ready_count']}/{metrics['scoreable_rows']}",
+                  "confiança ≥ 75%", accent="#F6C90E"),
+        unsafe_allow_html=True,
+    )
+    cards[4].markdown(
+        _kpi_html("Confiança mediana", f"{metrics['median_confidence']:.1%}",
+                  "mínimo para publicação: 75%", accent="#FC5C7D"),
+        unsafe_allow_html=True,
+    )
+    st.markdown(_info_card_html(
+        "Como interpretar estes números",
+        "Snapshot consumido mede se o App 4 recebeu os dados. Campos essenciais mede a completude dos inputs. "
+        "FIIs pontuáveis mede quantos possuem tipo válido. Dados suficientes mede apenas o limiar de confiança de 75%. "
+        "A publicação continua bloqueada enquanto a confiança e a validação point-in-time não forem aprovadas. "
+        f"Fonte: {metrics['snapshot_version']}.",
+        accent="#00C896",
+    ), unsafe_allow_html=True)
+    if metrics["vitrine_rows"] != metrics["snapshot_rows"]:
+        st.warning(
+            "Divergência de sincronização: a vitrine usada no ranking contém "
+            f"{metrics['vitrine_rows']} fundos, mas o snapshot metodológico contém "
+            f"{metrics['snapshot_rows']}. O ranking pode estar em cache ou em um build anterior. "
+            "Após o redeploy, atualize a página para reconciliar as fontes."
+        )
 
 
 def _scenario_cards_html(values: dict[str, float]) -> str:
