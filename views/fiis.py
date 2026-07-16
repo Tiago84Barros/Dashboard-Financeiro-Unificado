@@ -276,6 +276,9 @@ def _fii_data_health_metrics(
         required_coverage.append(present / len(_SNAPSHOT_REQUIRED_FIELDS))
 
     ready_count = sum(row.get("data_readiness_status") == "ready" for row in scored)
+    confidence_qualified_count = sum(
+        float(row.get("confidence") or 0.0) >= .75 for row in scored
+    )
     return {
         "snapshot_rows": source_rows,
         "vitrine_rows": len(vitrine),
@@ -285,6 +288,10 @@ def _fii_data_health_metrics(
         if required_coverage else 0.0,
         "ready_count": ready_count,
         "ready_fraction": ready_count / len(scored) if scored else 0.0,
+        "confidence_qualified_count": confidence_qualified_count,
+        "confidence_qualified_fraction": (
+            confidence_qualified_count / len(scored) if scored else 0.0
+        ),
         "median_confidence": float(getattr(gate, "median_confidence", 0.0) or 0.0),
         "snapshot_version": str(
             next((
@@ -306,10 +313,14 @@ def _publication_gate_message(
     scoreable = int(metrics["scoreable_rows"])
     ready = int(metrics["ready_count"])
     ready_fraction = float(metrics["ready_fraction"])
+    confidence_qualified = int(metrics["confidence_qualified_count"])
+    confidence_qualified_fraction = float(metrics["confidence_qualified_fraction"])
     confidence = float(metrics["median_confidence"])
     parts = [
-        f"Publicação bloqueada: {ready}/{scoreable} FIIs pontuáveis atingem "
-        f"confiança ≥75% ({ready_fraction:.1%}; mínimo 80%)",
+        f"Publicação bloqueada: prontidão metodológica {ready}/{scoreable} "
+        f"({ready_fraction:.1%}; mínimo 80%)",
+        f"confiança ≥75%: {confidence_qualified}/{scoreable} "
+        f"({confidence_qualified_fraction:.1%})",
         f"confiança mediana {confidence:.1%} (mínimo 75%)",
     ]
     if any("backtest" in reason or "robustez" in reason for reason in gate.reasons):
@@ -345,8 +356,8 @@ def _render_data_health_summary(
         unsafe_allow_html=True,
     )
     cards[3].markdown(
-        _kpi_html("Dados suficientes", f"{metrics['ready_count']}/{metrics['scoreable_rows']}",
-                  "confiança ≥ 75%", accent="#F6C90E"),
+        _kpi_html("Prontidão metodológica", f"{metrics['ready_count']}/{metrics['scoreable_rows']}",
+                  "campos críticos + confiança ≥ 75%", accent="#F6C90E"),
         unsafe_allow_html=True,
     )
     cards[4].markdown(
@@ -357,7 +368,8 @@ def _render_data_health_summary(
     st.markdown(_info_card_html(
         "Como interpretar estes números",
         "Snapshot consumido mede se o App 4 recebeu os dados. Campos essenciais mede a completude dos inputs. "
-        "FIIs pontuáveis mede quantos possuem tipo válido. Dados suficientes mede apenas o limiar de confiança de 75%. "
+        "FIIs pontuáveis mede quantos possuem tipo válido. Prontidão metodológica exige cobertura dos campos críticos "
+        "e confiança mínima de 75%; é diferente de apenas ter dados no snapshot. "
         "A publicação continua bloqueada enquanto a confiança e a validação point-in-time não forem aprovadas. "
         f"Fonte: {metrics['snapshot_version']}.",
         accent="#00C896",

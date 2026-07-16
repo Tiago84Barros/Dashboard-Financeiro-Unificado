@@ -34,6 +34,7 @@ def test_health_metrics_separate_completeness_from_readiness():
     assert metrics["snapshot_rows"] == 1
     assert metrics["required_coverage"] == .9
     assert metrics["ready_count"] == 0
+    assert metrics["confidence_qualified_count"] == 0
     assert metrics["median_confidence"] == .6652
     assert metrics["snapshot_version"] == "fii_selection_inputs.v1"
 
@@ -43,6 +44,8 @@ def test_publication_message_uses_explicit_counts_and_thresholds():
         "scoreable_rows": 381,
         "ready_count": 0,
         "ready_fraction": 0.0,
+        "confidence_qualified_count": 0,
+        "confidence_qualified_fraction": 0.0,
         "median_confidence": .6652,
     }
     gate = SimpleNamespace(
@@ -54,7 +57,7 @@ def test_publication_message_uses_explicit_counts_and_thresholds():
 
     message = _publication_gate_message(metrics, gate)
 
-    assert "0/381 FIIs pontuáveis" in message
-    assert "0.0%; mínimo 80%" in message
+    assert "prontidão metodológica 0/381 (0.0%; mínimo 80%)" in message
+    assert "confiança ≥75%: 0/381 (0.0%)" in message
     assert "confiança mediana 66.5% (mínimo 75%)" in message
     assert "backtest point-in-time/robustez estatística pendente" in message
