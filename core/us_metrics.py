@@ -1,0 +1,178 @@
+"""
+core/us_metrics.py
+Cálculo determinístico de métricas fundamentalistas dos EUA (puro, sem DB/rede).
+
+Recebe séries anuais já normalizadas (colunas de market_us.*) e devolve um dict
+de indicadores por empresa. Ausência NUNCA vira zero: divisão inválida → None
+(rank neutro depois). Coberto por tests/test_us_metrics.py.
+"""
+from __future__ import annotations
+
+from typing import Optional, Sequence
+
+_TAX_DEFAULT = 0.21  # alíquota corporativa federal EUA (aproximação p/ NOPAT)
+
+
+def safe_div(num: Optional[float], den: Optional[float]) -> Optional[float]:
+    """Divisão que preserva ausência: None se faltar dado ou denominador ~0."""
+    if num is None or den is None:
+        return None
+    if den == 0:
+        return None
+    return num / den
+
+
+def cagr(first: Optional[float], last: Optional[float], years: int) -> Optional[float]:
+    """CAGR entre first e last em `years` períodos. None se inválido.
+
+    Exige base positiva (crescimento composto não é definido com base <= 0).
+    """
+    if first is None or last is None or years <= 0:
+        return None
+    if first <= 0 or last <= 0:
+        return None
+    return (last / first) ** (1.0 / years) - 1.0
+
+
+def _latest(series: Sequence[dict], field: str) -> Optional[float]:
+    for row in reversed(series):
+        v = row.get(field)
+        if v is not None:
+            return float(v)
+    return None
+
+
+def _series_values(series: Sequence[dict], field: str) -> list[tuple[int, float]]:
+    out = []
+    for row in series:
+        v = row.get(field)
+        y = row.get("fiscal_year")
+        if v is not None and y is not None:
+            out.append((int(y), float(v)))
+    out.sort()
+    return out
+
+
+def _growth(series: Sequence[dict], field: str, window: int) -> Optional[float]:
+    vals = _series_values(series, field)
+    if len(vals) < 2:
+        return None
+    last_year, last_val = vals[-1]
+    # procura o ponto ~window anos antes; senão usa o mais antigo disponível
+    target_year = last_year - window
+    base = None
+    for y, v in vals:
+        if y <= target_year:
+            base = (y, v)
+    if base is None:
+        base = vals[0]
+    span = last_year - base[0]
+    if span <= 0:
+        return None
+    return cagr(base[1], last_val, span)
+
+
+def compute_company_metrics(
+    income: Sequence[dict], balance: Sequence[dict], cashflow: Sequence[dict], *,
+    price: Optional[float] = None, market_cap: Optional[float] = None,
+    shares: Optional[float] = None,
+) -> dict:
+    """Deriva o snapshot de métricas de UMA empresa a partir das séries anuais.
+
+    As séries vêm ordenadas por ano; usamos o último ano com dado para cada campo.
+    market_cap pode ser dado direto ou derivado de price*shares.
+    """
+    revenue     = _latest(income, "revenue")
+    gross       = _latest(income, "gross_profit")
+    op_income   = _latest(income, "operating_income")
+    ebit        = _latest(income, "ebit") or op_income
+    ebitda      = _latest(income, "ebitda")
+    net_income  = _latest(income, "net_income")
+    interest    = _latest(income, "interest_expense")
+    eps         = _latest(income, "eps")
+
+    total_assets = _latest(balance, "total_assets")
+    equity       = _latest(balance, "total_equity")
+    total_debt   = _latest(balance, "total_debt")
+    net_debt     = _latest(balance, "net_debt")
+    cash         = _latest(balance, "cash_and_equivalents")
+    cur_assets   = _latest(balance, "current_assets")
+    cur_liab     = _latest(balance, "current_liabilities")
+    invested_cap = _latest(balance, "invested_capital")
+    shares_out   = shares or _latest(balance, "shares_outstanding")
+
+    ocf   = _latest(cashflow, "operating_cash_flow")
+    capex = _latest(cashflow, "capex")
+    fcf   = _latest(cashflow, "free_cash_flow")
+    if fcf is None and ocf is not None and capex is not None:
+        fcf = ocf + capex  # capex vem negativo
+    div_paid  = _latest(cashflow, "dividends_paid")
+    buyback   = _latest(cashflow, "stock_repurchase")
+    issuance  = _latest(cashflow, "stock_issuance")
+
+    if market_cap is None and price is not None and shares_out is not None:
+        market_cap = price * shares_out
+    if net_debt is None and total_debt is not None and cash is not None:
+        net_debt = total_debt - cash
+    if invested_cap is None and equity is not None and total_debt is not None:
+        invested_cap = equity + total_debt - (cash or 0.0)
+
+    ev = None
+    if market_cap is not None and total_debt is not None:
+        ev = market_cap + total_debt - (cash or 0.0)
+
+    nopat = None if ebit is None else ebit * (1 - _TAX_DEFAULT)
+
+    m = {
+        # Qualidade
+        "gross_margin":     safe_div(gross, revenue),
+        "operating_margin": safe_div(op_income, revenue),
+        "net_margin":       safe_div(net_income, revenue),
+        "fcf_margin":       safe_div(fcf, revenue),
+        "cash_conversion":  safe_div(fcf, net_income),
+        "roe":              safe_div(net_income, equity),
+        "roa":              safe_div(net_income, total_assets),
+        "roic":             safe_div(nopat, invested_cap),
+        # Crescimento
+        "revenue_cagr_3y":  _growth(income, "revenue", 3),
+        "revenue_cagr_5y":  _growth(income, "revenue", 5),
+        "op_income_cagr_3y": _growth(income, "operating_income", 3),
+        "eps_cagr_3y":      _growth(income, "eps", 3),
+        "fcf_cagr_3y":      _growth(cashflow, "free_cash_flow", 3),
+        # Solidez
+        "net_debt_ebitda":  safe_div(net_debt, ebitda),
+        "interest_coverage": safe_div(ebit, abs(interest)) if interest else None,
+        "current_ratio":    safe_div(cur_assets, cur_liab),
+        "debt_to_equity":   safe_div(total_debt, equity),
+        # Valuation
+        "pe":            safe_div(market_cap, net_income),
+        "earnings_yield": safe_div(net_income, market_cap),
+        "ev_ebit":       safe_div(ev, ebit),
+        "ev_ebitda":     safe_div(ev, ebitda),
+        "p_fcf":         safe_div(market_cap, fcf),
+        "fcf_yield":     safe_div(fcf, market_cap),
+        "p_s":           safe_div(market_cap, revenue),
+        # Retorno ao acionista (buyback/dividendo vêm negativos no CF → sinal +)
+        "shareholder_yield": _shareholder_yield(div_paid, buyback, issuance, market_cap),
+        # contexto (não entram no score, ajudam classificação/dossiê)
+        "_revenue": revenue, "_net_income": net_income, "_fcf": fcf,
+        "_equity": equity, "_net_debt": net_debt, "_market_cap": market_cap,
+        "_ebit": ebit, "_years": len(_series_values(income, "revenue")),
+    }
+    return m
+
+
+def _shareholder_yield(div_paid, buyback, issuance, market_cap) -> Optional[float]:
+    if market_cap is None or market_cap == 0:
+        return None
+    parts = [abs(x) for x in (div_paid, buyback) if x is not None]
+    if not parts:
+        return None
+    returned = sum(parts) - (abs(issuance) if issuance is not None else 0.0)
+    return returned / market_cap
+
+
+# métricas em que MENOR é melhor (para o ranqueamento no score)
+LOWER_IS_BETTER = frozenset({
+    "net_debt_ebitda", "debt_to_equity", "pe", "ev_ebit", "ev_ebitda", "p_fcf", "p_s",
+})

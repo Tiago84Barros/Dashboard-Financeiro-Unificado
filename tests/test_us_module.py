@@ -63,6 +63,7 @@ def test_us_read_engine_com_erro_nao_propaga(monkeypatch):
 def test_imports_dos_modulos_novos():
     import importlib
     for mod in ("core.us_data", "core.us_methodology", "core.us_read",
+                "core.us_metrics", "core.us_score", "core.us_dossie",
                 "data_pipeline.us.providers", "data_pipeline.us.normalize",
                 "data_pipeline.us.identity", "data_pipeline.us.repository",
                 "data_pipeline.us.quality", "data_pipeline.us.ingest",

@@ -49,5 +49,20 @@ def ingestion_runs():
     return _read.load_ingestion_runs()
 
 
+@_cache
+def scored_universe(limit_companies: int = 800):
+    """Cross-section com score fundamentalista calculado (para as abas de análise)."""
+    import core.us_score as _score
+    frame = _read.load_scoring_frame(limit_companies=limit_companies)
+    if frame is None or frame.empty:
+        return frame if frame is not None else __import__("pandas").DataFrame()
+    return _score.score_cross_section(frame)
+
+
+def dossie(symbol: str) -> dict:
+    import core.us_dossie as _dos
+    return _dos.build_dossie(symbol)
+
+
 def schema_ready() -> bool:
     return _read.schema_ready()
