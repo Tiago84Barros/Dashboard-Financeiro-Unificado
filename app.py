@@ -32,7 +32,8 @@ _ROTAS: dict[str, str] = {
     "💰 Controle Financeiro": "controle_financeiro",
     "📈 Investimentos":       "investimentos",
     "🏢 Empresas B3":         "empresas_b3",
-    "🇺🇸 Empresas Americanas": "empresas_americanas",
+    # 🌎 e não 🇺🇸: Windows não renderiza emoji de bandeira (vira as letras "US")
+    "🌎 Empresas Americanas": "empresas_americanas",
     "🚀 Empresas Fora da Curva": "empresas_fora_da_curva",
     "🏬 Seleção de FIIs":      "fiis",
     "📚 Documentação":        "documentacao",
@@ -54,7 +55,7 @@ with st.sidebar:
 
     st.markdown('<div class="nav-section">Investimentos</div>', unsafe_allow_html=True)
     opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3",
-                     "🇺🇸 Empresas Americanas", "🚀 Empresas Fora da Curva",
+                     "🌎 Empresas Americanas", "🚀 Empresas Fora da Curva",
                      "🏬 Seleção de FIIs"]
 
     st.markdown('<div class="nav-section">Sistema</div>', unsafe_allow_html=True)
