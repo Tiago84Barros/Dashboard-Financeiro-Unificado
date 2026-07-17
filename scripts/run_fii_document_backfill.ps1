@@ -22,3 +22,7 @@ python scripts\backfill_fii_documents_local.py `
     --max-processing-attempts 3 `
     --checkpoint-every 500 `
     --sleep-seconds 0.2
+
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+python scripts\publish_fii_selection_from_local.py
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
