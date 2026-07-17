@@ -36,6 +36,22 @@ def test_schema_040_conteudo():
     assert "DELETE FROM" not in up
 
 
+def test_todas_migrations_market_us_sao_aplicadas_e_nao_destrutivas():
+    """init-schema deve aplicar 040..043 — não só a base."""
+    from data_pipeline.us.ingest import schema_files
+    nomes = [p.name for p in schema_files()]
+    assert any("040_market_us_schema" in n for n in nomes)
+    assert any("041_market_us_portfolio" in n for n in nomes)
+    assert any("042_market_us_outliers" in n for n in nomes)
+    assert any("043_market_us_retained_earnings" in n for n in nomes)
+    assert nomes == sorted(nomes)          # ordem de aplicação determinística
+    for path in schema_files():
+        code = "\n".join(l for l in path.read_text(encoding="utf-8").splitlines()
+                         if not l.lstrip().startswith("--"))
+        up = code.upper()
+        assert "DROP TABLE" not in up and "TRUNCATE" not in up and "DELETE FROM" not in up
+
+
 # ── leitura offline blindada (nunca levanta para a UI) ────────────────────────
 def test_us_read_sem_engine(monkeypatch):
     monkeypatch.setattr(ur, "_engine", lambda: None)
@@ -65,7 +81,7 @@ def test_imports_dos_modulos_novos():
     for mod in ("core.us_data", "core.us_methodology", "core.us_read",
                 "core.us_metrics", "core.us_score", "core.us_dossie",
                 "core.us_portfolio", "core.us_backtest",
-                "core.us_asymmetry", "core.us_outlier_backtest",
+                "core.us_asymmetry", "core.us_outlier_backtest", "core.us_advanced",
                 "data_pipeline.us.providers", "data_pipeline.us.normalize",
                 "data_pipeline.us.identity", "data_pipeline.us.repository",
                 "data_pipeline.us.quality", "data_pipeline.us.ingest",
