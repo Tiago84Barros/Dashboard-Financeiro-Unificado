@@ -89,13 +89,9 @@ def render() -> None:
     with abas[4]:
         _tab_comparacao_industria(status)
     with abas[5]:
-        em_construcao("Fase 6 — Portfólio",
-                      "Carteira-modelo americana: restrições por setor/posição, pesos "
-                      "por score, benchmarks (S&P 500, Nasdaq-100, Russell 2000).")
+        _tab_portfolio(status)
     with abas[6]:
-        em_construcao("Fase 6 — Backtests",
-                      "Walk-forward point-in-time, Rank-IC, t-stat, hit rate, "
-                      "excesso sobre equal-weight, Sharpe/Sortino/Calmar.")
+        _tab_backtests(status)
     with abas[7]:
         _tab_dossie(status)
     with abas[8]:
@@ -298,6 +294,114 @@ def _tab_dossie(status: dict) -> None:
     with st.expander("Dossiê completo (texto determinístico)"):
         import core.us_dossie as _dos
         st.code(_dos.dossie_to_text(d), language="text")
+
+
+# ── Criação de Portfólio ──────────────────────────────────────────────────────
+def _tab_portfolio(status: dict) -> None:
+    if status.get("offline"):
+        estado_vazio("Sem dados locais para montar a carteira.", "📦")
+        return
+    scored = us.scored_universe()
+    if scored is None or scored.empty:
+        estado_vazio("Sem empresas com score para compor a carteira.", "📦")
+        return
+    from core.us_portfolio import PortfolioConstraints, build_portfolio
+
+    secao_titulo("Carteira-modelo americana", "📦")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        top_n = st.slider("Nº de ativos", 5, 40, 20, key="us_pf_topn")
+    with c2:
+        maxw = st.slider("Peso máx/ativo %", 5, 50, 10, key="us_pf_maxw") / 100
+    with c3:
+        maxs = st.slider("Peso máx/setor %", 15, 60, 30, key="us_pf_maxs") / 100
+    with c4:
+        wmode = st.selectbox("Ponderação", ["score", "equal"], key="us_pf_wmode")
+
+    holdings = build_portfolio(scored, PortfolioConstraints(
+        top_n=top_n, max_weight=maxw, max_sector_weight=maxs, weighting=wmode,
+        max_assets=top_n, min_assets=min(5, top_n)))
+    if holdings.empty:
+        estado_vazio("Nenhum ativo elegível com as restrições atuais.", "📦")
+        return
+
+    show = holdings.copy()
+    show["weight"] = (show["weight"] * 100).round(2)
+    st.dataframe(show.rename(columns={
+        "symbol": "Ticker", "name": "Nome", "sector": "Setor",
+        "industry": "Indústria", "score": "Score", "weight": "Peso %"}),
+        hide_index=True, use_container_width=True)
+
+    if "sector" in holdings.columns:
+        secao_titulo("Alocação por setor", "🧩")
+        alloc = (holdings.groupby("sector")["weight"].sum() * 100).round(1) \
+            .sort_values(ascending=False)
+        st.dataframe(alloc.rename("Peso %").reset_index().rename(
+            columns={"sector": "Setor"}), hide_index=True, use_container_width=True)
+    st.caption("Capping iterativo por posição/setor (heurística de projeção, não "
+               "otimizador de média-variância). Benchmarks (S&P 500 / Nasdaq-100 / "
+               "Russell 2000 / equal-weight) entram no backtest quando houver histórico.")
+
+
+# ── Backtests (point-in-time) ─────────────────────────────────────────────────
+def _tab_backtests(status: dict) -> None:
+    secao_titulo("Backtest walk-forward — point-in-time", "🧪")
+    st.caption("Scores recomputados a cada data com available_at ≤ data (sem "
+               "look-ahead). Requer histórico PIT: `python run_us_ingest.py "
+               "score-history --warehouse`.")
+    c1, c2 = st.columns(2)
+    with c1:
+        top_n = st.slider("Top N por período", 5, 40, 20, key="us_bt_topn")
+    with c2:
+        wmode = st.selectbox("Ponderação", ["score", "equal"], key="us_bt_wmode")
+
+    res = us.backtest(top_n=top_n, weighting=wmode)
+    if not res.get("ok"):
+        estado_vazio(res.get("reason", "backtest indisponível"), "🧪")
+        return
+
+    ic = res["rank_ic"]
+    p = res["portfolio"]
+
+    def _p(x, mult=100, suf="%"):
+        return "—" if x is None else f"{x*mult:.2f}{suf}"
+
+    secao_titulo(f"Rank-IC ({res['n_periods']} períodos)", "📐")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card_metrica("Rank-IC médio", "—" if ic["mean"] is None else f"{ic['mean']:.3f}")
+    with c2:
+        card_metrica("t-stat", "—" if ic["t_stat"] is None else f"{ic['t_stat']:.2f}")
+    with c3:
+        card_metrica("p-valor", "—" if ic["p_value"] is None else f"{ic['p_value']:.3f}")
+    with c4:
+        card_metrica("Hit rate", _p(ic["hit_rate"]))
+
+    secao_titulo("Desempenho da carteira vs equal-weight", "📈")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card_metrica("Retorno anual.", _p(p["ann_return"]))
+    with c2:
+        card_metrica("Excesso vs EW", _p(res.get("excess_ann_vs_ew")))
+    with c3:
+        card_metrica("Sharpe", "—" if p["sharpe"] is None else f"{p['sharpe']:.2f}")
+    with c4:
+        card_metrica("Máx. drawdown", _p(p["max_drawdown"]))
+    c5, c6, c7, c8 = st.columns(4)
+    with c5:
+        card_metrica("Sortino", "—" if p["sortino"] is None else f"{p['sortino']:.2f}")
+    with c6:
+        card_metrica("Calmar", "—" if p["calmar"] is None else f"{p['calmar']:.2f}")
+    with c7:
+        card_metrica("Volatilidade", _p(p["volatility"]))
+    with c8:
+        card_metrica("Turnover médio", _p(res.get("avg_turnover")))
+
+    if res.get("equity_curve"):
+        secao_titulo("Curva de capital", "📉")
+        curve = pd.DataFrame({"Curva": res["equity_curve"]},
+                             index=res.get("dates"))
+        st.line_chart(curve)
 
 
 # ── Qualidade dos Dados ───────────────────────────────────────────────────────

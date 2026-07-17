@@ -5,11 +5,28 @@ inspirada em Empresas B3, Portfólio B3 e Carteira de FIIs. **Offline-first**:
 a interface lê apenas o **warehouse local** (`market_us.*`); a API (Financial
 Modeling Prep) é usada só na ingestão.
 
-> Estado atual: **Fases 2–4 implementadas** (infraestrutura, ingestão mínima,
-> normalização/qualidade, point-in-time). As fases de análise (score, comparação
-> por indústria, dossiê), portfólio/backtests e "Fora da Curva" entram nas
-> próximas iterações — as abas correspondentes já existem na UI, marcadas como
-> em construção.
+> Estado atual: **Fases 2–6 implementadas** — infraestrutura, ingestão,
+> normalização/qualidade/PIT (2–4); score fundamentalista + comparação por
+> indústria + dossiê (5); carteira-modelo + backtest point-in-time + Rank-IC (6).
+> Falta a aba "Empresas Fora da Curva" (Fase 7) e a Análise Avançada
+> (Piotroski/Altman), marcadas como em construção na UI.
+
+## Carteira e backtest (Fase 6)
+
+A carteira-modelo é construída ao vivo a partir do universo com score, com tetos
+por posição e por setor aplicados por **capping iterativo** (heurística de
+projeção, não otimizador de média-variância). O backtest é **walk-forward
+point-in-time**: os scores são recomputados a cada data-base usando só
+observações com `available_at ≤ data` (sem look-ahead), e comparados ao
+equal-weight do universo. Métricas: Rank-IC médio, t-stat, p-valor, hit rate,
+excesso sobre EW, Sharpe/Sortino/Calmar, drawdown e turnover.
+
+```bash
+# computa o histórico PIT de scores (sem rede; usa o que já está no warehouse)
+python run_us_ingest.py score-history --warehouse --start-year 2014 --end-year 2025 --json
+# roda o backtest sobre o painel PIT
+python run_us_ingest.py backtest --warehouse --top-n 20 --json
+```
 
 ## Fluxo de dados
 

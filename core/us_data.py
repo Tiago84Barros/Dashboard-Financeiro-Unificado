@@ -64,5 +64,20 @@ def dossie(symbol: str) -> dict:
     return _dos.build_dossie(symbol)
 
 
+@_cache
+def score_panel(score_version: str | None = None, horizon_months: int = 12):
+    return _read.load_score_panel(score_version=score_version,
+                                  horizon_months=horizon_months)
+
+
+def backtest(top_n: int = 20, weighting: str = "score") -> dict:
+    """Backtest PIT sobre o painel de scores (vazio até computar o histórico)."""
+    import core.us_backtest as _bt
+    panel = score_panel()
+    if panel is None or panel.empty:
+        return {"ok": False, "reason": "sem histórico de scores (rode score-history)"}
+    return _bt.walk_forward(panel, top_n=top_n, weighting=weighting)
+
+
 def schema_ready() -> bool:
     return _read.schema_ready()

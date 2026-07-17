@@ -64,8 +64,10 @@ def test_imports_dos_modulos_novos():
     import importlib
     for mod in ("core.us_data", "core.us_methodology", "core.us_read",
                 "core.us_metrics", "core.us_score", "core.us_dossie",
+                "core.us_portfolio", "core.us_backtest",
                 "data_pipeline.us.providers", "data_pipeline.us.normalize",
                 "data_pipeline.us.identity", "data_pipeline.us.repository",
                 "data_pipeline.us.quality", "data_pipeline.us.ingest",
+                "data_pipeline.us.scoring_history",
                 "views.empresas_americanas"):
         assert importlib.import_module(mod) is not None
