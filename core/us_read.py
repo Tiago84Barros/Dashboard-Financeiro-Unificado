@@ -56,28 +56,60 @@ def _db_is_local() -> bool:
         return False
 
 
+def snapshot_ready() -> bool:
+    """True se a vitrine (company_snapshots) existir e tiver linhas."""
+    eng = _engine()
+    if eng is None:
+        return False
+    try:
+        with eng.connect() as conn:
+            if not conn.execute(text(
+                    "SELECT to_regclass('market_us.company_snapshots')")).scalar():
+                return False
+            return bool(conn.execute(text(
+                "SELECT 1 FROM market_us.company_snapshots LIMIT 1")).scalar())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("snapshot_ready falhou: %s", exc)
+        return False
+
+
 def data_status() -> dict:
-    """Status para os badges da view (conexão, schema, defasagem)."""
+    """Status para os badges da view (conexão, schema/vitrine, defasagem)."""
     eng = _engine()
     is_local = _db_is_local()
     if eng is None:
         return {"connected": False, "schema_ready": False, "offline": True,
-                "db_is_local": is_local, "last_update": None, "companies": 0,
-                "reason": "banco não configurado"}
+                "mode": "none", "db_is_local": is_local, "last_update": None,
+                "companies": 0, "reason": "banco não configurado"}
     if not schema_ready():
-        # No Supabase (deploy) o market_us NÃO existe de propósito: histórico
-        # pesado é warehouse-only. A instrução muda conforme o ambiente.
+        # Sem as tabelas completas, a vitrine (snapshot publicado) ainda serve
+        # a leitura — é assim que o deploy no Streamlit Cloud mostra dados.
+        if snapshot_ready():
+            try:
+                with eng.connect() as conn:
+                    n = conn.execute(text(
+                        "SELECT COUNT(*) FROM market_us.company_snapshots")).scalar() or 0
+                    last = conn.execute(text(
+                        "SELECT MAX(generated_at) FROM market_us.company_snapshots")).scalar()
+            except Exception:  # noqa: BLE001
+                n, last = 0, None
+            return {"connected": True, "schema_ready": True, "offline": False,
+                    "mode": "snapshot", "db_is_local": is_local,
+                    "last_update": last, "companies": int(n),
+                    "reason": ("Dados via vitrine (snapshot publicado do warehouse "
+                               "local). Backtests e sincronização rodam só localmente.")}
+        # Nem tabelas completas nem vitrine: a instrução muda conforme o ambiente.
         if is_local:
             reason = ("schema market_us ausente — rode "
                       "`python run_us_ingest.py init-schema --warehouse` e depois o bootstrap")
         else:
-            reason = ("Esta seção usa o warehouse LOCAL (os dados dos EUA não vão "
-                      "para o Supabase, por desenho). No deploy ela fica vazia; "
-                      "para usar, rode o app na sua máquina apontando para o "
-                      "warehouse (ver aba Sincronização).")
+            reason = ("Esta seção usa o warehouse LOCAL. Para o deploy mostrar "
+                      "dados, publique a vitrine: `python run_us_ingest.py snapshot "
+                      "--warehouse` e depois `python scripts/publish_us_snapshot.py` "
+                      "(ver aba Sincronização).")
         return {"connected": True, "schema_ready": False, "offline": True,
-                "db_is_local": is_local, "last_update": None, "companies": 0,
-                "reason": reason}
+                "mode": "none", "db_is_local": is_local, "last_update": None,
+                "companies": 0, "reason": reason}
     try:
         with eng.connect() as conn:
             companies = conn.execute(text(
@@ -85,13 +117,14 @@ def data_status() -> dict:
             last = conn.execute(text(
                 "SELECT MAX(ingested_at) FROM market_us.income_statements")).scalar()
         return {"connected": True, "schema_ready": True,
-                "offline": companies == 0, "db_is_local": is_local,
-                "last_update": last, "companies": int(companies), "reason": None}
+                "offline": companies == 0, "mode": "warehouse",
+                "db_is_local": is_local, "last_update": last,
+                "companies": int(companies), "reason": None}
     except Exception as exc:  # noqa: BLE001
         logger.warning("data_status falhou: %s", exc)
         return {"connected": False, "schema_ready": False, "offline": True,
-                "db_is_local": is_local, "last_update": None, "companies": 0,
-                "reason": str(exc)[:120]}
+                "mode": "none", "db_is_local": is_local, "last_update": None,
+                "companies": 0, "reason": str(exc)[:120]}
 
 
 def load_overview() -> dict:
@@ -381,6 +414,130 @@ def load_asymmetry_frame(limit_companies: int = 800) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     return df.sort_values("asymmetry_score", ascending=False).reset_index(drop=True) \
         if not df.empty else df
+
+
+# ── Vitrine (snapshot) — leitura no deploy/Supabase ───────────────────────────
+_SNAP_IDENTITY = ("symbol", "cik", "name", "sector", "industry", "exchange",
+                  "security_type", "is_reit", "is_active")
+_SNAP_SCORES = ("score", "score_quality", "score_growth", "score_solidity",
+                "score_capital_efficiency", "score_valuation", "score_shareholder",
+                "coverage")
+
+
+def _parse_json_col(value):
+    """JSONB pode chegar como dict (psycopg2) ou str — normaliza para objeto."""
+    if value is None or isinstance(value, (dict, list)):
+        return value
+    try:
+        import json
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _snapshot_df(extra_json: str | None = None) -> pd.DataFrame:
+    eng = _engine()
+    if eng is None:
+        return pd.DataFrame()
+    cols = list(_SNAP_IDENTITY) + list(_SNAP_SCORES)
+    if extra_json:
+        cols.append(extra_json)
+    try:
+        with eng.connect() as conn:
+            return pd.read_sql(text(
+                f"SELECT {', '.join(cols)} FROM market_us.company_snapshots "
+                f"ORDER BY score DESC NULLS LAST"), conn)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_snapshot_df falhou: %s", exc)
+        return pd.DataFrame()
+
+
+def load_snapshot_scored() -> pd.DataFrame:
+    """Frame equivalente ao scored_universe, lido da vitrine (métricas incluídas)."""
+    df = _snapshot_df("metrics")
+    if df.empty:
+        return df
+    metric_dicts = [(_parse_json_col(v) or {}) for v in df.pop("metrics")]
+    metrics_df = pd.DataFrame(metric_dicts, index=df.index)
+    return pd.concat([df, metrics_df], axis=1)
+
+
+def load_snapshot_asymmetry() -> pd.DataFrame:
+    """Frame equivalente ao asymmetry_universe, lido da vitrine."""
+    df = _snapshot_df("asymmetry")
+    if df.empty:
+        return df
+    asym = [(_parse_json_col(v) or {}) for v in df.pop("asymmetry")]
+    asym_df = pd.DataFrame(asym, index=df.index)
+    out = pd.concat([df[["symbol", "name", "sector", "industry"]], asym_df], axis=1)
+    out = out.dropna(subset=["asymmetry_score"])
+    return out.sort_values("asymmetry_score", ascending=False).reset_index(drop=True)
+
+
+def _snapshot_json_for(symbol: str, column: str):
+    eng = _engine()
+    if eng is None or not symbol:
+        return None
+    try:
+        with eng.connect() as conn:
+            val = conn.execute(text(
+                f"SELECT {column} FROM market_us.company_snapshots WHERE symbol=:s"),
+                {"s": symbol.upper()}).scalar()
+        return _parse_json_col(val)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_snapshot_json_for(%s,%s) falhou: %s", symbol, column, exc)
+        return None
+
+
+def load_snapshot_dossie(symbol: str) -> dict | None:
+    return _snapshot_json_for(symbol, "dossie")
+
+
+def load_snapshot_advanced(symbol: str) -> dict | None:
+    return _snapshot_json_for(symbol, "advanced")
+
+
+def load_snapshot_financials(symbol: str) -> pd.DataFrame:
+    rows = _snapshot_json_for(symbol, "financials") or []
+    cols = ["fiscal_year", "revenue", "net_income", "ebitda", "free_cash_flow",
+            "total_equity", "total_debt"]
+    return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
+
+
+def load_snapshot_companies(sector: str | None = None, search: str | None = None,
+                            limit: int = 500) -> pd.DataFrame:
+    df = _snapshot_df()
+    if df.empty:
+        return df[[c for c in _SNAP_IDENTITY if c in df.columns]] \
+            if len(df.columns) else pd.DataFrame(columns=list(_SNAP_IDENTITY))
+    out = df[list(_SNAP_IDENTITY)].copy()
+    if sector:
+        out = out[out["sector"] == sector]
+    if search:
+        q = search.lower()
+        out = out[out["symbol"].str.lower().str.contains(q, na=False)
+                  | out["name"].str.lower().str.contains(q, na=False)]
+    return out.sort_values("symbol").head(limit).reset_index(drop=True)
+
+
+def load_snapshot_overview() -> dict:
+    df = _snapshot_df()
+    base = {"companies": 0, "assets": 0, "sectors": 0, "delisted": 0,
+            "reits": 0, "last_update": None, "with_statements": 0}
+    if df.empty:
+        return base
+    base["companies"] = base["assets"] = base["with_statements"] = len(df)
+    base["sectors"] = int(df["sector"].dropna().nunique())
+    base["reits"] = int(df["is_reit"].fillna(False).sum())
+    base["delisted"] = int((~df["is_active"].fillna(True)).sum())
+    eng = _engine()
+    try:
+        with eng.connect() as conn:
+            base["last_update"] = conn.execute(text(
+                "SELECT MAX(generated_at) FROM market_us.company_snapshots")).scalar()
+    except Exception:  # noqa: BLE001
+        pass
+    return base
 
 
 def load_score_panel(score_version: str | None = None,
