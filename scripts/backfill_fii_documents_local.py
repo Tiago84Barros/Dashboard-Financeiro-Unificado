@@ -13,8 +13,10 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import time
+from urllib.parse import quote_plus
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -42,7 +44,19 @@ def _args() -> argparse.Namespace:
 def _configure_database() -> str:
     url = os.getenv("WAREHOUSE_DB_URL", "").strip()
     if not url:
-        raise RuntimeError("WAREHOUSE_DB_URL nao configurada")
+        inspection = subprocess.run(
+            ["docker", "inspect", "dfu_warehouse", "--format", "{{json .Config.Env}}"],
+            check=True, capture_output=True, text=True,
+        )
+        environment = json.loads(inspection.stdout)
+        password_entry = next(
+            (item for item in environment if str(item).startswith("POSTGRES_PASSWORD=")),
+            None,
+        )
+        if not password_entry:
+            raise RuntimeError("WAREHOUSE_DB_URL e senha do container indisponiveis")
+        password = str(password_entry).split("=", 1)[1]
+        url = f"postgresql://postgres:{quote_plus(password)}@localhost:5433/postgres"
     # Definido antes de importar core.config/get_engine.
     os.environ["SUPABASE_UNIFICADO_URL"] = url
     os.environ["DATABASE_URL"] = url
