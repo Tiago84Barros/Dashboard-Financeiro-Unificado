@@ -68,7 +68,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão FMP → market_us.* (warehouse local)")
     p.add_argument("command", choices=[
         "init-schema", "test", "universe", "estimate", "bootstrap", "daily",
-        "fundamentals", "resume", "validate", "score-history", "backtest"])
+        "fundamentals", "resume", "validate", "score-history", "backtest",
+        "snapshot"])
     p.add_argument("--tickers", nargs="*", help="símbolos específicos")
     p.add_argument("--exchanges", nargs="*", default=None, help="NYSE NASDAQ AMEX")
     p.add_argument("--limit", type=int, default=None, help="limita o universo/lote")
@@ -89,7 +90,7 @@ def main() -> int:
 
     # Proteção: ingestão pesada NUNCA deve escrever no Supabase remoto.
     if args.command in {"bootstrap", "daily", "fundamentals", "universe", "resume",
-                        "score-history"} \
+                        "score-history", "snapshot"} \
             and not _is_local_target() and not args.dry_run:
         log.error("Comando %s exige --warehouse (destino local). "
                   "Ingestão pesada não pode ir para o Supabase.", args.command)
@@ -125,6 +126,15 @@ def main() -> int:
                     "ingest_ready": settings.us_ingest_ready,
                     "engine_local": _is_local_target(),
                     "db_connected": test_connection()})
+
+    if args.command == "snapshot":
+        # sem rede: constrói a vitrine (company_snapshots) no warehouse a partir
+        # do que já foi ingerido. Publicação p/ Supabase = scripts/publish_us_snapshot.py
+        from core.database import get_engine
+        from data_pipeline.us import snapshot as snap
+        if args.dry_run:
+            return out({"ok": True, "action": "dry-run: vitrine não construída"})
+        return out(snap.build_snapshot(get_engine(), limit_companies=args.limit or 800))
 
     if args.command == "score-history":
         # sem rede: recomputa scores PIT a partir do que já está no warehouse
