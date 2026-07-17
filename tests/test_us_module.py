@@ -85,7 +85,8 @@ def test_imports_dos_modulos_novos():
                 "data_pipeline.us.providers", "data_pipeline.us.normalize",
                 "data_pipeline.us.identity", "data_pipeline.us.repository",
                 "data_pipeline.us.quality", "data_pipeline.us.ingest",
-                "data_pipeline.us.scoring_history",
+                "data_pipeline.us.scoring_history", "data_pipeline.us.edgar",
+                "data_pipeline.us.edgar_facts", "data_pipeline.us.prices_yf",
                 "views.empresas_americanas", "views.empresas_fora_da_curva"):
         assert importlib.import_module(mod) is not None
 

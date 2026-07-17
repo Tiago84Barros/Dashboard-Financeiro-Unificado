@@ -1,6 +1,10 @@
 """
 run_us_ingest.py
-CLI da ingestão Empresas Americanas (FMP → warehouse local market_us.*).
+CLI da ingestão Empresas Americanas → warehouse local market_us.*.
+
+FONTE PADRÃO: SEC EDGAR (fundamentos, domínio público — exige SEC_USER_AGENT no
+.env com nome e e-mail) + yfinance (preços). FMP é opcional via
+US_FUNDAMENTALS_SOURCE=fmp, apenas com licença compatível com armazenamento local.
 
 Comandos:
     python run_us_ingest.py init-schema  --warehouse            # aplica migration 040
@@ -115,7 +119,10 @@ def main() -> int:
 
     if args.command == "test":
         from core.database import test_connection
-        return out({"ok": True, "has_fmp_key": settings.has_fmp,
+        return out({"ok": True, "source": settings.us_source,
+                    "sec_user_agent_ok": settings.has_sec_user_agent,
+                    "has_fmp_key": settings.has_fmp,
+                    "ingest_ready": settings.us_ingest_ready,
                     "engine_local": _is_local_target(),
                     "db_connected": test_connection()})
 
@@ -154,8 +161,13 @@ def main() -> int:
     if args.offline:
         log.error("--offline: comando %s precisaria da rede; nada a fazer.", args.command)
         return out({"ok": False, "reason": "offline"})
-    if not settings.has_fmp and args.command in {"universe", "bootstrap", "daily",
-                                                 "fundamentals", "resume"}:
+    if not settings.us_ingest_ready and args.command in {"universe", "bootstrap",
+                                                          "daily", "fundamentals",
+                                                          "resume"}:
+        if settings.us_source == "edgar":
+            log.error("SEC_USER_AGENT ausente — a SEC exige identificação "
+                      "('Seu Nome seu@email.com') no .env.")
+            return out({"ok": False, "reason": "sem SEC_USER_AGENT"})
         log.error("FMP_API_KEY ausente — configure a chave para ingerir dados novos.")
         return out({"ok": False, "reason": "sem FMP_API_KEY"})
 

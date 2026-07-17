@@ -2,8 +2,9 @@
 views/empresas_americanas.py
 Seção Empresas Americanas (NYSE/Nasdaq/AMEX) — inspirada em Empresas B3 / FIIs.
 
-OFFLINE-FIRST: lê SÓ o warehouse local (core.us_data). Nunca chama a FMP. Sem
-dados, mostra estado vazio e instruções de sincronização — a UI não quebra.
+OFFLINE-FIRST: lê SÓ o warehouse local (core.us_data). Nunca chama API externa
+(SEC EDGAR/yfinance são só de ingestão). Sem dados, mostra estado vazio e
+instruções de sincronização — a UI não quebra.
 
 Fase atual (F2–F4): Visão Geral, Explorar, Qualidade dos Dados, Sincronização e
 Metodologia estão funcionais. As abas analíticas (score, comparação, portfólio,
@@ -481,8 +482,10 @@ def _tab_sincronizacao(status: dict) -> None:
     secao_titulo("Sincronização de Dados Americanos", "🔄")
     st.markdown(
         "A ingestão roda **fora da interface**, por linha de comando, gravando no "
-        "**warehouse local** (Postgres em `127.0.0.1:5433`). A chave `FMP_API_KEY` "
-        "é usada **apenas** pela CLI — nunca pela interface, nunca é exibida aqui.")
+        "**warehouse local** (Postgres em `127.0.0.1:5433`). Fonte padrão: "
+        "**SEC EDGAR** (fundamentos, gratuita — exige `SEC_USER_AGENT` no `.env` "
+        "com nome e e-mail) + **yfinance** (preços). Credenciais/identificação são "
+        "usadas **apenas** pela CLI — nunca pela interface.")
 
     runs = us.ingestion_runs()
     if runs is not None and not runs.empty:
@@ -517,10 +520,12 @@ def _tab_sincronizacao(status: dict) -> None:
 def _tab_metodologia() -> None:
     secao_titulo("Metodologia — Empresas Americanas", "📚")
     st.markdown(f"""
-**Fonte e armazenamento.** Fonte primária: **Financial Modeling Prep (FMP)**,
-acessada só na ingestão. Todo histórico pesado vive no **warehouse local**
-(`market_us.*`), isolado do B3/FII. A interface é **offline-first**: lê o banco
-local e funciona sem a chave após a carga.
+**Fonte e armazenamento.** Fundamentos: **SEC EDGAR** (filings 10-K em XBRL —
+dados públicos e de domínio público; a *filing date* vira `available_at`, o
+padrão-ouro para point-in-time). Preços: **yfinance**. Ambas acessadas só na
+ingestão. Todo histórico vive no **warehouse local** (`market_us.*`), isolado do
+B3/FII. A interface é **offline-first**: lê o banco local e funciona sem rede
+após a carga.
 
 **Identidade.** A empresa é identificada por **CIK** (não pelo ticker, que é
 reutilizado/renomeado). O histórico de símbolos fica em `market_us.ticker_aliases`;
@@ -546,7 +551,9 @@ assimétrico** (score v{US_ASYMMETRY_SCORE_VERSION}) vive numa **seção própri
 menu — "Empresas Fora da Curva"** — porque tem propósito, tolerância a erro e
 tamanho de posição diferentes. Não misture as duas leituras.
 
-> ⚠️ Verifique os termos de licença da FMP quanto ao armazenamento dos dados. O
-> projeto implementa o armazenamento técnico local; a conformidade com a licença
-> é responsabilidade do usuário.
+> ℹ️ A fonte padrão é a SEC EDGAR porque os dados são de **domínio público** —
+> sem licença restritiva sobre o armazenamento local. Os Termos da FMP (fonte
+> opcional, desativada por padrão) proíbem cópia/armazenamento sem autorização
+> escrita e exigem apagar os dados ao encerrar a assinatura; só a use com
+> licença compatível.
 """)
