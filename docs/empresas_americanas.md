@@ -5,11 +5,29 @@ inspirada em Empresas B3, Portfólio B3 e Carteira de FIIs. **Offline-first**:
 a interface lê apenas o **warehouse local** (`market_us.*`); a API (Financial
 Modeling Prep) é usada só na ingestão.
 
-> Estado atual: **Fases 2–7 implementadas** — infraestrutura, ingestão,
+> Estado atual: **módulo completo (Fases 2–8)** — infraestrutura, ingestão,
 > normalização/qualidade/PIT (2–4); score fundamentalista + comparação por
 > indústria + dossiê (5); carteira-modelo + backtest point-in-time + Rank-IC (6);
-> Empresas Fora da Curva (7). Resta apenas a Análise Avançada
-> (Piotroski/Altman), marcada como em construção na UI.
+> Empresas Fora da Curva, em **seção própria** (7); Análise Avançada
+> (Piotroski/Altman/Sloan/ROIC incremental) e validação (8).
+
+## Análise Avançada
+
+`core/us_advanced.py`, determinístico e puro:
+
+- **Piotroski F-Score** (2000) — 9 critérios binários (rentabilidade, alavancagem/
+  liquidez, eficiência). Critério sem dado retorna `None` e **não** conta como
+  atendido: o score reporta `evaluable` (quantos puderam ser avaliados) e marca
+  `partial`. Nunca inflar nota por ausência de dado.
+- **Altman Z-Score** (1968) — `1.2·X1 + 1.4·X2 + 3.3·X3 + 0.6·X4 + 1.0·X5`; zonas
+  segura (> 2,99) / cinzenta / aflição (< 1,81). Exige `retained_earnings`
+  (migration 043) e market cap; sem eles retorna `None`, não um número inventado.
+- **Accruals de Sloan** (1996) — `(lucro − CFO) / ativos médios`; menor é melhor.
+- **ROIC incremental** — `ΔNOPAT / Δcapital investido`; `None` quando o capital
+  investido não cresceu (denominador ≤ 0 não é interpretável).
+
+> `python run_us_ingest.py init-schema --warehouse` aplica **todas** as migrations
+> `market_us` em ordem (040 → 043), de forma idempotente.
 
 ## Empresas Fora da Curva — SEÇÃO PRÓPRIA (Fase 7)
 

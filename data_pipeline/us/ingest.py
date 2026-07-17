@@ -27,23 +27,33 @@ from data_pipeline.us.providers import (
 
 logger = logging.getLogger("us_ingest")
 
-_SCHEMA_SQL = (Path(__file__).resolve().parents[2] / "supabase_unificado" /
-               "schema" / "040_market_us_schema.sql")
+_SCHEMA_DIR = Path(__file__).resolve().parents[2] / "supabase_unificado" / "schema"
+# Todas as migrations do namespace market_us, aplicadas em ordem (idempotentes):
+# 040 base, 041 portfólio/backtest, 042 fora da curva, 043 retained_earnings.
+_SCHEMA_GLOB = "0*_market_us*.sql"
 
 DEFAULT_EXCHANGES = ["NYSE", "NASDAQ", "AMEX"]
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
-def apply_schema(engine=None) -> None:
-    """Aplica a migration 040 (idempotente) no warehouse."""
+def schema_files() -> list[Path]:
+    """Migrations market_us em ordem lexicográfica (040, 041, 042, 043...)."""
+    return sorted(_SCHEMA_DIR.glob(_SCHEMA_GLOB))
+
+
+def apply_schema(engine=None) -> list[str]:
+    """Aplica TODAS as migrations market_us (idempotentes) no warehouse."""
     from core.database import get_engine
     engine = engine or get_engine()
     if engine is None:
         raise RuntimeError("engine indisponível para aplicar o schema market_us.")
-    sql = _SCHEMA_SQL.read_text(encoding="utf-8")
-    with engine.begin() as conn:
-        conn.execute(text(sql))
-    logger.info("schema market_us aplicado (040)")
+    applied = []
+    for path in schema_files():
+        with engine.begin() as conn:
+            conn.execute(text(path.read_text(encoding="utf-8")))
+        applied.append(path.name)
+        logger.info("schema aplicado: %s", path.name)
+    return applied
 
 
 # ── Universo ──────────────────────────────────────────────────────────────────

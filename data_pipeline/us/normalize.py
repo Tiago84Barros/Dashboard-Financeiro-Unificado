@@ -195,6 +195,7 @@ def map_balance_sheet(row: dict) -> dict:
         "current_liabilities":    to_float(row.get("totalCurrentLiabilities")),
         "total_liabilities":      to_float(row.get("totalLiabilities")),
         "total_equity":           to_float(row.get("totalStockholdersEquity")),
+        "retained_earnings":      to_float(row.get("retainedEarnings")),
         "shares_outstanding":     to_float(row.get("weightedAverageShsOut")
                                            or row.get("commonStock")),
         "invested_capital":       to_float(row.get("investedCapital")),

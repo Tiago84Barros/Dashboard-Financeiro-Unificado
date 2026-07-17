@@ -71,6 +71,12 @@ def score_panel(score_version: str | None = None, horizon_months: int = 12):
 
 
 @_cache
+def advanced_snapshot(symbol: str):
+    """Piotroski F-Score, Altman Z-Score, accruals de Sloan e ROIC incremental."""
+    return _read.load_advanced_snapshot(symbol)
+
+
+@_cache
 def asymmetry_universe(limit_companies: int = 800):
     """Cross-section de assimetria (Empresas Fora da Curva)."""
     return _read.load_asymmetry_frame(limit_companies=limit_companies)

@@ -179,7 +179,8 @@ _INCOME_COLS = ("fiscal_year", "revenue", "gross_profit", "operating_income",
                 "ebit", "ebitda", "net_income", "interest_expense", "eps")
 _BALANCE_COLS = ("fiscal_year", "total_assets", "total_equity", "total_debt",
                  "net_debt", "cash_and_equivalents", "current_assets",
-                 "current_liabilities", "invested_capital", "shares_outstanding")
+                 "current_liabilities", "invested_capital", "shares_outstanding",
+                 "total_liabilities", "long_term_debt", "retained_earnings")
 _CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow",
                   "dividends_paid", "stock_repurchase", "stock_issuance")
 
@@ -284,6 +285,20 @@ def load_scoring_frame(limit_companies: int = 800) -> pd.DataFrame:
         rows.append({"symbol": c["symbol"], "name": c["name"],
                      "sector": c["sector"], "industry": c["industry"], **m})
     return pd.DataFrame(rows)
+
+
+def load_advanced_snapshot(symbol: str) -> dict | None:
+    """Indicadores avançados (Piotroski/Altman/Sloan/ROIC incremental) de 1 empresa."""
+    from core.us_advanced import advanced_snapshot
+    bundle = load_company_bundle(symbol)
+    if not bundle or not bundle.get("income"):
+        return None
+    snap = advanced_snapshot(bundle["income"], bundle.get("balance", []),
+                             bundle.get("cashflow", []), bundle.get("market_cap"))
+    snap["symbol"] = (symbol or "").upper()
+    snap["name"] = bundle.get("name")
+    snap["sector"] = bundle.get("sector")
+    return snap
 
 
 def load_asymmetry_frame(limit_companies: int = 800) -> pd.DataFrame:

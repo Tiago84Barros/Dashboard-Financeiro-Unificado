@@ -85,9 +85,7 @@ def render() -> None:
     with abas[2]:
         _tab_analise_fundamentalista(status)
     with abas[3]:
-        em_construcao("Análise Avançada",
-                      "Piotroski F-Score, Altman Z-Score, accruals de Sloan, "
-                      "retorno incremental sobre capital.")
+        _tab_analise_avancada(status)
     with abas[4]:
         _tab_comparacao_industria(status)
     with abas[5]:
@@ -188,6 +186,69 @@ def _tab_analise_fundamentalista(status: dict) -> None:
         "industry": "Indústria", "score": "Score", "coverage": "Cobertura %",
         **_TRACK_LABELS})
     st.dataframe(show, hide_index=True, use_container_width=True)
+
+
+# ── Análise Avançada (Piotroski / Altman / Sloan / ROIC incremental) ──────────
+_F_LABEL = {
+    "roa_positivo": "ROA positivo", "cfo_positivo": "Caixa operacional positivo",
+    "roa_crescente": "ROA crescente", "accruals_saudaveis": "CFO > lucro (accruals)",
+    "alavancagem_caiu": "Alavancagem de longo prazo caiu",
+    "liquidez_subiu": "Liquidez corrente subiu",
+    "sem_emissao_acoes": "Sem emissão de ações",
+    "margem_bruta_subiu": "Margem bruta subiu", "giro_ativos_subiu": "Giro de ativos subiu",
+}
+_ZONE_TIPO = {"segura": "sucesso", "cinzenta": "alerta", "aflição": "erro"}
+
+
+def _tab_analise_avancada(status: dict) -> None:
+    if status.get("offline"):
+        estado_vazio("Sem dados locais para a análise avançada.", "🔬")
+        return
+    symbol = st.text_input("Ticker (ex.: AAPL)", key="us_adv_symbol").strip().upper()
+    if not symbol:
+        st.info("Digite um ticker para Piotroski F-Score, Altman Z-Score, accruals "
+                "de Sloan e retorno incremental sobre capital (offline).")
+        return
+    snap = us.advanced_snapshot(symbol)
+    if not snap:
+        estado_vazio(f"Sem histórico local para {symbol}.", "🔬")
+        return
+
+    secao_titulo(f"{symbol} — {snap.get('name') or ''}", "🔬", snap.get("sector") or "—")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        f = snap.get("f_score")
+        card_metrica("Piotroski F-Score",
+                     "—" if f is None else f"{f}/{snap.get('f_evaluable', 9)}",
+                     ajuda="Critérios atendidos entre os avaliáveis (máx. 9)")
+    with c2:
+        z = snap.get("z_score")
+        card_metrica("Altman Z-Score", "—" if z is None else f"{z:.2f}")
+    with c3:
+        a = snap.get("sloan_accruals")
+        card_metrica("Accruals (Sloan)", "—" if a is None else f"{a:.3f}",
+                     ajuda="(Lucro − CFO)/ativos médios. Menor é melhor.")
+    with c4:
+        ir = snap.get("incremental_roic")
+        card_metrica("ROIC incremental", "—" if ir is None else f"{ir*100:.1f}%",
+                     ajuda="ΔNOPAT / Δcapital investido — retorno do capital novo")
+
+    if snap.get("z_zone"):
+        badge_status(f"Zona {snap['z_zone']}", _ZONE_TIPO.get(snap["z_zone"], "neutro"))
+    elif snap.get("z_score") is None:
+        st.caption("Z-Score indisponível: exige `retained_earnings` e market cap no "
+                   "warehouse (rode um refresh de fundamentos após a migration 043).")
+
+    if snap.get("f_partial"):
+        st.caption(f"⚠️ F-Score parcial: {snap.get('f_evaluable')} de 9 critérios "
+                   "puderam ser avaliados. Critérios sem dado **não** contam como "
+                   "atendidos.")
+
+    secao_titulo("Critérios de Piotroski", "✅")
+    for key, val in (snap.get("f_signals") or {}).items():
+        icon = "✅" if val is True else "❌" if val is False else "➖"
+        st.markdown(f"{icon} {_F_LABEL.get(key, key)}"
+                    + ("  *(sem dado)*" if val is None else ""))
 
 
 # ── Comparação por Indústria ──────────────────────────────────────────────────

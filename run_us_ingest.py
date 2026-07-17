@@ -109,9 +109,9 @@ def main() -> int:
 
     if args.command == "init-schema":
         if args.dry_run:
-            return out({"ok": True, "action": "dry-run: schema não aplicado"})
-        ingest.apply_schema()
-        return out({"ok": True, "action": "schema market_us aplicado (040)"})
+            return out({"ok": True, "action": "dry-run",
+                        "migrations": [p.name for p in ingest.schema_files()]})
+        return out({"ok": True, "applied": ingest.apply_schema()})
 
     if args.command == "test":
         from core.database import test_connection
