@@ -70,5 +70,24 @@ def test_imports_dos_modulos_novos():
                 "data_pipeline.us.identity", "data_pipeline.us.repository",
                 "data_pipeline.us.quality", "data_pipeline.us.ingest",
                 "data_pipeline.us.scoring_history",
-                "views.empresas_americanas"):
+                "views.empresas_americanas", "views.empresas_fora_da_curva"):
         assert importlib.import_module(mod) is not None
+
+
+# ── separação das seções (propósitos distintos) ──────────────────────────────
+def test_fora_da_curva_e_secao_propria_e_nao_aba():
+    """Fora da Curva vive em seção própria — não pode voltar a ser aba do módulo EUA."""
+    americanas = (_ROOT / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
+    fora = (_ROOT / "views" / "empresas_fora_da_curva.py").read_text(encoding="utf-8")
+    # a view de Empresas Americanas não renderiza mais a trilha assimétrica
+    assert "_tab_fora_da_curva" not in americanas
+    assert "asymmetry_universe" not in americanas
+    # e a seção própria tem seu próprio render()
+    assert "def render()" in fora
+    assert "asymmetry_universe" in fora
+
+
+def test_rota_registrada_no_app():
+    app = (_ROOT / "app.py").read_text(encoding="utf-8")
+    assert '"empresas_fora_da_curva"' in app
+    assert "Empresas Fora da Curva" in app

@@ -11,12 +11,22 @@ Modeling Prep) é usada só na ingestão.
 > Empresas Fora da Curva (7). Resta apenas a Análise Avançada
 > (Piotroski/Altman), marcada como em construção na UI.
 
-## Empresas Fora da Curva (Fase 7)
+## Empresas Fora da Curva — SEÇÃO PRÓPRIA (Fase 7)
 
-Aba **experimental e separada** da carteira principal: aceita maior incerteza e
-maior taxa de erro, porque grandes vencedoras são raras e poucas posições podem
-responder por grande parte do retorno. A saída é uma **hipótese** com sinais,
-riscos e condições de invalidação — **nunca** recomendação automática.
+Não é aba desta seção: é uma **seção separada no menu**
+(`views/empresas_fora_da_curva.py`), porque o propósito é outro e misturar as
+duas leituras confunde a decisão.
+
+| | Empresas Americanas | Empresas Fora da Curva |
+|---|---|---|
+| Pergunta | O que a empresa **já entrega**? | Há **retorno assimétrico** possível? |
+| Erro esperado | Baixo | **Alto por construção** |
+| Posição | Normal (carteira-modelo) | **Subcarteira pequena** |
+| Saída | Score + carteira + backtest | **Hipótese** com sinais/riscos/invalidação |
+
+Aceita maior incerteza porque grandes vencedoras são raras e poucas posições
+podem responder por grande parte do retorno. A saída **nunca** é recomendação
+automática.
 
 `core/us_asymmetry.py` combina nível e **trajetória** (tendência de margem,
 persistência de crescimento, diluição, SBC/receita, anos de FCF positivo) em um

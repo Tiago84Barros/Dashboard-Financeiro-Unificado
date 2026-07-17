@@ -69,11 +69,13 @@ def render() -> None:
         st.caption(f"ℹ️ {status['reason']}")
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # "Empresas Fora da Curva" NÃO é aba daqui: é seção própria no menu
+    # (views/empresas_fora_da_curva.py). Propósitos distintos — esta seção é a
+    # análise fundamentalista/carteira; aquela é a trilha assimétrica experimental.
     abas = st.tabs([
         "Visão Geral", "Explorar", "Análise Fundamentalista", "Análise Avançada",
         "Comparação por Indústria", "Criação de Portfólio", "Backtests",
-        "Dossiê", "Fora da Curva", "Qualidade dos Dados", "Sincronização",
-        "Metodologia",
+        "Dossiê", "Qualidade dos Dados", "Sincronização", "Metodologia",
     ])
 
     with abas[0]:
@@ -83,7 +85,7 @@ def render() -> None:
     with abas[2]:
         _tab_analise_fundamentalista(status)
     with abas[3]:
-        em_construcao("Fase 5 — Análise Avançada",
+        em_construcao("Análise Avançada",
                       "Piotroski F-Score, Altman Z-Score, accruals de Sloan, "
                       "retorno incremental sobre capital.")
     with abas[4]:
@@ -95,12 +97,10 @@ def render() -> None:
     with abas[7]:
         _tab_dossie(status)
     with abas[8]:
-        _tab_fora_da_curva(status)
-    with abas[9]:
         _tab_qualidade()
-    with abas[10]:
+    with abas[9]:
         _tab_sincronizacao(status)
-    with abas[11]:
+    with abas[10]:
         _tab_metodologia()
 
 
@@ -401,80 +401,6 @@ def _tab_backtests(status: dict) -> None:
         st.line_chart(curve)
 
 
-# ── Empresas Fora da Curva (retorno assimétrico) ──────────────────────────────
-_STAGE_LABEL = {"early": "Estágio inicial", "scaling": "Escalando",
-                "growth": "Crescimento", "mature": "Madura"}
-_RISK_TIPO = {"média": "info", "alta": "alerta", "muito alta": "erro"}
-
-
-def _tab_fora_da_curva(status: dict) -> None:
-    st.warning("Aba **experimental e separada** da carteira principal. Aceita maior "
-               "incerteza e maior taxa de erro. **Não é recomendação** — são hipóteses "
-               "com sinais, riscos e condições de invalidação.", icon="⚠️")
-    if status.get("offline"):
-        estado_vazio("Sem dados locais para avaliar assimetria.", "🚀")
-        return
-    df = us.asymmetry_universe()
-    if df is None or df.empty:
-        estado_vazio("Sem empresas com histórico suficiente (≥ 3 anos).", "🚀")
-        return
-
-    secao_titulo("Ranking de assimetria", "🚀")
-    tbl = df[["symbol", "name", "sector", "asymmetry_score", "confidence",
-              "stage", "risk_class", "suggested_position_pct"]].head(50).copy()
-    tbl["stage"] = tbl["stage"].map(_STAGE_LABEL).fillna(tbl["stage"])
-    st.dataframe(tbl.rename(columns={
-        "symbol": "Ticker", "name": "Nome", "sector": "Setor",
-        "asymmetry_score": "Assimetria", "confidence": "Confiança %",
-        "stage": "Estágio", "risk_class": "Risco",
-        "suggested_position_pct": "Posição sug. %"}),
-        hide_index=True, use_container_width=True)
-
-    secao_titulo("Detalhe da empresa", "🔎")
-    sym = st.selectbox("Ticker", df["symbol"].tolist(), key="us_outlier_symbol")
-    row = df[df["symbol"] == sym].iloc[0]
-
-    cb1, cb2, cb3, *_ = st.columns([1, 1, 1, 3])
-    with cb1:
-        badge_status(f"Assimetria {row['asymmetry_score']}", "info")
-    with cb2:
-        badge_status(_STAGE_LABEL.get(row["stage"], row["stage"]), "neutro")
-    with cb3:
-        badge_status(f"Risco {row['risk_class']}", _RISK_TIPO.get(row["risk_class"], "neutro"))
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        card_metrica("Confiança", f"{row['confidence']:.0f}%")
-    with c2:
-        card_metrica("Posição sugerida", f"{row['suggested_position_pct']:.2f}%",
-                     ajuda="Subcarteira pequena — assimetria é rara e arriscada")
-    with c3:
-        card_metrica("Horizonte", row.get("horizon", "—"))
-
-    colp, colr = st.columns(2)
-    with colp:
-        st.markdown("**Sinais positivos**")
-        for s in (row.get("positive_signals") or []):
-            st.markdown(f"- ✅ {s}")
-        if not (row.get("positive_signals") or []):
-            st.caption("Nenhum sinal positivo relevante.")
-    with colr:
-        st.markdown("**Riscos**")
-        for s in (row.get("risks") or []):
-            st.markdown(f"- ⚠️ {s}")
-        if not (row.get("risks") or []):
-            st.caption("Nenhum sinal negativo relevante.")
-
-    st.markdown("**Hipóteses necessárias**")
-    for h in (row.get("hypotheses") or []):
-        st.markdown(f"- {h}")
-    st.markdown("**Condições de invalidação**")
-    for i in (row.get("invalidation") or []):
-        st.markdown(f"- {i}")
-    if row.get("missing_data"):
-        st.caption("Dados faltantes: " + ", ".join(row["missing_data"]))
-
-
 # ── Qualidade dos Dados ───────────────────────────────────────────────────────
 def _tab_qualidade() -> None:
     if not us.schema_ready():
@@ -548,10 +474,16 @@ Empresas **deslistadas** permanecem no universo histórico (anti-*survivorship*)
 TTM) são rotulados explicitamente; divergência entre ticker solicitado e retornado
 é rejeitada, não gravada sob o símbolo errado.
 
-**Scores (próximas fases).** Fundamentalista v{US_FUNDAMENTAL_SCORE_VERSION} por
-setor/indústria; assimetria (Fora da Curva) v{US_ASYMMETRY_SCORE_VERSION}. Scores
-são versionados point-in-time em `market_us.score_vintages` e **não** são garantia
-de retorno.
+**Score.** Fundamentalista v{US_FUNDAMENTAL_SCORE_VERSION}, relativo por
+setor/indústria, versionado point-in-time em `market_us.score_vintages`. **Não** é
+garantia de retorno.
+
+**Escopo desta seção.** Aqui mora a análise fundamentalista e a carteira-modelo:
+empresas avaliadas pelo que já entregam (qualidade, crescimento, solidez,
+eficiência de capital, valuation, retorno ao acionista). A trilha de **retorno
+assimétrico** (score v{US_ASYMMETRY_SCORE_VERSION}) vive numa **seção própria no
+menu — "Empresas Fora da Curva"** — porque tem propósito, tolerância a erro e
+tamanho de posição diferentes. Não misture as duas leituras.
 
 > ⚠️ Verifique os termos de licença da FMP quanto ao armazenamento dos dados. O
 > projeto implementa o armazenamento técnico local; a conformidade com a licença
