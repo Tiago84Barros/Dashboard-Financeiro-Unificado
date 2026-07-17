@@ -95,9 +95,11 @@ def _cache_root() -> Path:
 
 
 def _download(url: str, timeout: int = 60, *,
-              max_bytes: int = 30 * 1024 * 1024) -> tuple[bytes, str]:
+              max_bytes: int = 30 * 1024 * 1024,
+              attempts: int = 3) -> tuple[bytes, str]:
     last_error: Exception | None = None
-    for attempt in range(3):
+    total_attempts = max(int(attempts), 1)
+    for attempt in range(total_attempts):
         try:
             response = requests.get(
                 url, timeout=timeout, allow_redirects=True, stream=True,
@@ -136,7 +138,7 @@ def _download(url: str, timeout: int = 60, *,
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status is not None and status < 500 and status != 429:
                 break
-            if attempt < 2:
+            if attempt < total_attempts - 1:
                 time.sleep(2 ** attempt)
     assert last_error is not None
     raise last_error
@@ -240,19 +242,28 @@ def _layout_signature(page_texts: list[str], text_value: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def _storage(content: bytes, sha: str, suffix: str) -> tuple[str, str | None, bool]:
-    """Cache local persistente no desktop; CI preserva hash+URL sem fingir persistencia."""
+def _storage(content: bytes, sha: str, suffix: str, *,
+             retain_binary: bool = True) -> tuple[str, str | None, bool]:
+    """Armazena por conteudo ou preserva somente hash+URL para backfills extensos.
+
+    O modo ``source_hash`` continua auditavel porque a versao guarda SHA-256,
+    tamanho e MIME, enquanto a tabela de documentos preserva a URL publica. Um
+    arquivo que ja esteja no cache nunca e removido por esta funcao.
+    """
     if os.getenv("GITHUB_ACTIONS", "").lower() == "true":
         return "remote_only", None, False
     storage_key = f"{sha[:2]}/{sha}{suffix}"
     target = _cache_root() / storage_key
-    target.parent.mkdir(parents=True, exist_ok=True)
     existed = target.exists()
-    if not existed:
-        temporary = target.with_suffix(target.suffix + ".tmp")
-        temporary.write_bytes(content)
-        temporary.replace(target)
-    return "local_cache", storage_key, existed
+    if existed:
+        return "local_cache", storage_key, True
+    if not retain_binary:
+        return "source_hash", None, False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_bytes(content)
+    temporary.replace(target)
+    return "local_cache", storage_key, False
 
 
 def _release_worker_claims(engine, worker: str) -> int:
@@ -269,7 +280,10 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                               recent_months: int = 24,
                               max_batch_bytes: int = 250 * 1024 * 1024,
                               max_document_bytes: int = 30 * 1024 * 1024,
-                              min_free_bytes: int = 5 * 1024 * 1024 * 1024) -> dict:
+                              min_free_bytes: int = 5 * 1024 * 1024 * 1024,
+                              retain_binary: bool = True,
+                              download_timeout: int = 60,
+                              download_attempts: int = 3) -> dict:
     engine = _engine()
     result = {"selected": 0, "downloaded": 0, "unchanged": 0,
               "extracted": 0, "needs_review": 0, "failed": 0,
@@ -351,14 +365,17 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
     for doc in docs:
         try:
             content, mime = _download(str(doc["source_url"]),
-                                      max_bytes=max(int(max_document_bytes), 1))
+                                      timeout=max(int(download_timeout), 5),
+                                      max_bytes=max(int(max_document_bytes), 1),
+                                      attempts=max(int(download_attempts), 1))
             if result["bytes_processed"] + len(content) > max(int(max_batch_bytes), 1):
                 result["budget_exhausted"] = True
                 break
             result["bytes_processed"] += len(content)
             sha = hashlib.sha256(content).hexdigest()
             suffix = ".pdf" if content[:4] == b"%PDF" or "pdf" in mime.lower() else ".bin"
-            storage_backend, storage_key, existed = _storage(content, sha, suffix)
+            storage_backend, storage_key, existed = _storage(
+                content, sha, suffix, retain_binary=bool(retain_binary))
             if not existed:
                 result["downloaded"] += 1
             else:

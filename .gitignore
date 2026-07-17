@@ -247,6 +247,9 @@ local_staging/fii_cvm/
 local_staging/fii_cvm_cri/
 local_staging/fii_cvm_registry/
 local_staging/fii_b3_cotahist/
+local_staging/logs/
+local_staging/fii_document_backfill.pid
+local_staging/fii_document_backfill.stop
 
 # Saídas de teste locais (lixo)
 _testout.txt

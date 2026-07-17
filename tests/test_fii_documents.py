@@ -1,8 +1,9 @@
 import pytest
+import hashlib
 
 from data_pipeline.market.fii_documents import (
     PARSER_VERSION, DocumentTooLargeError, _download, _extract_evidence,
-    _layout_signature, _provisional_candidates,
+    _layout_signature, _provisional_candidates, _storage,
 )
 
 
@@ -72,3 +73,30 @@ def test_document_download_enforces_streaming_size_limit(monkeypatch):
     monkeypatch.setattr("data_pipeline.market.fii_documents.requests.get", fake_get)
     with pytest.raises(DocumentTooLargeError):
         _download("https://example.test/report.pdf", max_bytes=10)
+
+
+def test_document_download_respects_attempt_limit(monkeypatch):
+    calls = []
+
+    def timeout(*args, **kwargs):
+        calls.append(kwargs)
+        raise __import__("requests").Timeout("indisponivel")
+
+    monkeypatch.setattr("data_pipeline.market.fii_documents.requests.get", timeout)
+    monkeypatch.setattr("data_pipeline.market.fii_documents.time.sleep", lambda _: None)
+    with pytest.raises(__import__("requests").Timeout):
+        _download("https://example.test/report.pdf", attempts=2)
+    assert len(calls) == 2
+
+
+def test_hash_only_storage_does_not_persist_new_binary(monkeypatch, tmp_path):
+    monkeypatch.setenv("FII_DOCUMENT_CACHE", str(tmp_path))
+    content = b"%PDF-auditable"
+    sha = hashlib.sha256(content).hexdigest()
+
+    backend, key, existed = _storage(
+        content, sha, ".pdf", retain_binary=False
+    )
+
+    assert (backend, key, existed) == ("source_hash", None, False)
+    assert not list(tmp_path.rglob("*.pdf"))
