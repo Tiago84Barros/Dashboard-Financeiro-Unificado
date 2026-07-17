@@ -23,14 +23,29 @@ def _current_candidates(limit: int) -> list[str]:
         return []
     with engine.begin() as conn:
         rows = conn.execute(text("""
-            SELECT ticker
-            FROM market.fiis
-            WHERE ticker IS NOT NULL
-              AND score_version IS NOT NULL
-              AND price > 0
-              AND COALESCE(liquidez_diaria, 0) > 0
-            ORDER BY score DESC NULLS LAST, liquidez_diaria DESC NULLS LAST,
-                     ticker
+            WITH latest_score AS (
+              SELECT DISTINCT ON (ticker) ticker, confidence, coverage,
+                     data_readiness_status, type_score
+              FROM market.fii_score_snapshots
+              WHERE methodology_version='6.0.0'
+              ORDER BY ticker, reference_date DESC, available_at DESC
+            )
+            SELECT f.ticker
+            FROM market.fiis f
+            LEFT JOIN latest_score s USING (ticker)
+            WHERE f.ticker IS NOT NULL
+              AND f.score_version IS NOT NULL
+              AND f.price > 0
+              AND COALESCE(f.liquidez_diaria, 0) >= 1000000
+              AND COALESCE(f.dy_12m, 0) >= .08
+              AND COALESCE(f.pvp, 0) BETWEEN .55 AND 1.30
+            ORDER BY
+              CASE WHEN s.data_readiness_status='insufficient'
+                         AND s.confidence BETWEEN .55 AND .75 THEN 0
+                   WHEN s.data_readiness_status='insufficient' THEN 1 ELSE 2 END,
+              abs(COALESCE(s.confidence,.55)-.75),
+              s.type_score DESC NULLS LAST,
+              f.liquidez_diaria DESC NULLS LAST, f.ticker
             LIMIT :limit
         """), {"limit": max(int(limit), 1)}).scalars().all()
     return [str(value).upper().replace(".SA", "") for value in rows]
@@ -48,6 +63,7 @@ def run_enrichment(*, years: int = 5, candidate_limit: int = 12,
     from data_pipeline.market.fii_cvm_cri import ingest_cvm_cri
     from data_pipeline.market.fii_cvm_structured import ingest_cvm_structured
     from data_pipeline.market.fii_documents import process_pending_documents
+    from data_pipeline.market.fii_entity_resolution import resolve_entities
     from data_pipeline.market.fii_ingest import (
         audit_methodology_v4_data, reprocess, snapshot_methodology_v4,
     )
@@ -68,6 +84,7 @@ def run_enrichment(*, years: int = 5, candidate_limit: int = 12,
     run_stage("b3_history", ingest_b3_history, years=max(int(years), 1))
     run_stage("cvm_structured", ingest_cvm_structured, years=max(int(years), 1))
     run_stage("cvm_cri", ingest_cvm_cri, years=max(int(years), 1))
+    run_stage("entity_resolution", resolve_entities)
     run_stage(
         "documents", process_pending_documents,
         limit=max(int(document_limit), 1), tickers=selected,
@@ -76,10 +93,12 @@ def run_enrichment(*, years: int = 5, candidate_limit: int = 12,
         max_document_bytes=max(int(max_document_bytes), 1),
         min_free_bytes=max(int(min_free_bytes), 0),
     )
+    run_stage("confidence_calibration", calibrate_parsers)
+    # A calibração deve anteceder a geração dos snapshots; caso contrário o App
+    # publica por mais um ciclo um fator de confiança já obsoleto.
     run_stage("reprocess", reprocess)
     run_stage("score_snapshot", snapshot_methodology_v4)
     run_stage("audit", audit_methodology_v4_data)
-    run_stage("confidence_calibration", calibrate_parsers)
     run_stage("monitoring", run_monitoring)
 
     failed = [name for name, report in stages.items()

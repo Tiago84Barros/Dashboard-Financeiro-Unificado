@@ -119,7 +119,8 @@ _CSS = """
 </style>
 """
 
-_TABS = ["📊 Diligência", "🔎 Busca de ativo", "🧺 Carteira-modelo", "📈 Retrospectiva"]
+_TABS = ["📊 Diligência", "🔎 Busca de ativo", "🧺 Carteira-modelo",
+         "📈 Retrospectiva", "🧾 Revisão de dados"]
 
 _SNAPSHOT_REQUIRED_FIELDS = (
     "ticker", "tipo", "dy_12m", "pvp", "liquidez_diaria", "history_months",
@@ -172,7 +173,7 @@ def render(show_header: bool = True) -> None:
         scored_v4, expected_universe=len(df),
         validation_status="passed" if validation.get("status") == "passed" else "unvalidated",
     )
-    st.session_state["fii_publication_gate"] = gate
+    st.session_state["fii_raw_publication_gate"] = gate
     ranked = df[df["Score"].notna()].sort_values(
         "Score", ascending=False
     ).reset_index(drop=True)
@@ -200,8 +201,10 @@ def render(show_header: bool = True) -> None:
         _tab_busca(df)
     elif active == 2:
         _tab_carteira(ranked)
-    else:
+    elif active == 3:
         _tab_backtest()
+    else:
+        _tab_evidence_review()
 
 
 # ── Tab 1: Ranking (cards por tipo) ───────────────────────────────────────────
@@ -324,7 +327,7 @@ def _publication_gate_message(
     confidence_qualified_fraction = float(metrics["confidence_qualified_fraction"])
     confidence = float(metrics["median_confidence"])
     parts = [
-        f"Publicação bloqueada: prontidão metodológica {ready}/{scoreable} "
+        f"Diagnóstico do universo completo: prontidão metodológica {ready}/{scoreable} "
         f"({ready_fraction:.1%}; mínimo 80%)",
         f"confiança ≥75%: {confidence_qualified}/{scoreable} "
         f"({confidence_qualified_fraction:.1%})",
@@ -335,6 +338,111 @@ def _publication_gate_message(
     if any("cobertura do universo" in reason for reason in gate.reasons):
         parts.append(f"cobertura do universo {float(gate.universe_coverage):.1%}")
     return " · ".join(parts)
+
+
+def _tab_evidence_review() -> None:
+    """Revisão humana explícita; decisões são versionadas e auditáveis."""
+    from core.config import settings
+    from core.fii_evidence_review import (
+        load_pending_evidence, review_backlog_summary, review_evidence,
+    )
+
+    st.subheader("Revisão auditável de evidências documentais")
+    st.markdown(_info_card_html(
+        "O que esta etapa faz",
+        "Valores extraídos de relatórios gerenciais só se tornam dados aceitos depois de uma "
+        "decisão explícita. Cada decisão preserva documento, hash, página, parser, revisor e "
+        "instante de conhecimento; rejeições automáticas não calibram o parser como revisão humana.",
+        accent="#B084F6",
+    ), unsafe_allow_html=True)
+    summary = review_backlog_summary()
+    if not summary.get("available"):
+        st.info("A fila documental não está disponível neste banco: "
+                + str(summary.get("reason") or "sem detalhes"))
+        return
+    k1, k2, k3 = st.columns(3)
+    k1.markdown(_kpi_html("Evidências pendentes", summary.get("pending", 0),
+                          accent="#F6C90E"), unsafe_allow_html=True)
+    k2.markdown(_kpi_html("FIIs na fila", summary.get("pending_tickers", 0),
+                          accent="#4A9EFF"), unsafe_allow_html=True)
+    k3.markdown(_kpi_html("Revisões humanas", summary.get("human_reviewed", 0),
+                          accent="#00C896"), unsafe_allow_html=True)
+
+    initial = load_pending_evidence(limit=300)
+    if not initial:
+        st.success("Não há evidências pendentes neste banco.")
+        return
+    tickers = sorted({str(row.get("ticker") or "") for row in initial if row.get("ticker")})
+    metrics = sorted({str(row.get("metric_name") or "") for row in initial if row.get("metric_name")})
+    f1, f2 = st.columns(2)
+    ticker = f1.selectbox("FII", ["(todos)", *tickers], key="fii_review_ticker")
+    metric = f2.selectbox("Métrica", ["(todas)", *metrics], key="fii_review_metric")
+    rows = load_pending_evidence(
+        limit=50,
+        tickers=[] if ticker == "(todos)" else [ticker],
+        metrics=[] if metric == "(todas)" else [metric],
+    )
+    if not rows:
+        st.info("Nenhuma evidência corresponde aos filtros.")
+        return
+    selected_id = st.selectbox(
+        "Evidência",
+        [int(row["id"]) for row in rows],
+        format_func=lambda value: next(
+            f"#{value} · {row.get('ticker') or 'sem ticker'} · {row.get('metric_name')} · "
+            f"{float(row.get('confidence') or 0):.0%}"
+            for row in rows if int(row["id"]) == value
+        ),
+        key="fii_review_evidence_id",
+    )
+    evidence = next(row for row in rows if int(row["id"]) == int(selected_id))
+    meta = st.columns(4)
+    meta[0].metric("Ticker", evidence.get("ticker") or "—")
+    meta[1].metric("Métrica", evidence.get("metric_name") or "—")
+    meta[2].metric("Valor extraído", str(evidence.get("normalized_value")))
+    meta[3].metric("Confiança da extração", f"{float(evidence.get('confidence') or 0):.0%}")
+    st.code(str(evidence.get("evidence_text") or ""), language=None, wrap_lines=True)
+    st.caption(
+        f"Documento: {evidence.get('document_type')} · referência: "
+        f"{evidence.get('reference_date') or 'não informada'} · página: "
+        f"{evidence.get('page_number') or 'não identificada'} · parser: "
+        f"{evidence.get('parser_name')} {evidence.get('parser_version')} · SHA-256: "
+        f"{str(evidence.get('content_sha256') or '')[:20]}…"
+    )
+
+    with st.form("fii_evidence_review_form", clear_on_submit=False):
+        decision_label = st.radio(
+            "Decisão", ["Aceitar", "Corrigir", "Rejeitar"], horizontal=True,
+            key="fii_review_decision",
+        )
+        raw_value = evidence.get("normalized_value")
+        try:
+            default_value = float(raw_value)
+        except (TypeError, ValueError):
+            default_value = 0.0
+        corrected = st.number_input(
+            "Valor corrigido", value=default_value, format="%.6f",
+            disabled=decision_label != "Corrigir",
+        )
+        reviewer_default = settings.OWNER_USER_ID or "app_operator"
+        reviewer = st.text_input("Identificador do revisor", value=reviewer_default)
+        note = st.text_area("Justificativa/observação", max_chars=2000)
+        submitted = st.form_submit_button("Registrar decisão", type="primary")
+    if submitted:
+        decisions = {"Aceitar": "accepted", "Corrigir": "corrected", "Rejeitar": "rejected"}
+        try:
+            report = review_evidence(
+                int(selected_id), decision=decisions[decision_label], reviewer_id=reviewer,
+                corrected_value=corrected if decision_label == "Corrigir" else None,
+                note=note,
+            )
+            st.success(
+                f"Decisão registrada. Hash de auditoria: {report['review_hash'][:16]}…"
+            )
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Não foi possível registrar a revisão: {exc}")
 
 
 def _render_data_health_summary(
@@ -1298,6 +1406,29 @@ def _carteira_integrada(preferences: dict):
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
     validation_status = "passed" if validation.get("status") == "passed" else "unvalidated"
     scored = score_fiis_by_type(eligible_rows, validation_status=validation_status)
+    investable_gate = evaluate_publication_gate(
+        scored, expected_universe=len(eligible_rows),
+        validation_status=validation_status,
+    )
+    st.session_state["fii_investable_publication_gate"] = investable_gate
+    investable_ready = sum(
+        row.get("data_readiness_status") == "ready" for row in scored
+    )
+    gate_cards = st.columns(3)
+    gate_cards[0].markdown(_kpi_html(
+        "Prontidão do universo elegível",
+        f"{investable_ready}/{len(scored)}",
+        sub="mínimo de 80% para publicação", accent="#F6C90E",
+    ), unsafe_allow_html=True)
+    gate_cards[1].markdown(_kpi_html(
+        "Confiança mediana elegível", f"{investable_gate.median_confidence:.1%}",
+        sub="mínimo de 75%", accent="#00C896" if investable_gate.median_confidence >= .75 else "#FC5C7D",
+    ), unsafe_allow_html=True)
+    gate_cards[2].markdown(_kpi_html(
+        "Validação PIT", "Aprovada" if validation_status == "passed" else "Pendente",
+        sub=f"metodologia {METHODOLOGY_VERSION}",
+        accent="#00C896" if validation_status == "passed" else "#FC5C7D",
+    ), unsafe_allow_html=True)
 
     # O universo de correlação replica o pool máximo do otimizador e evita
     # consultar séries de centenas de fundos a cada alteração dos controles.
@@ -1321,10 +1452,15 @@ def _carteira_integrada(preferences: dict):
         st.error("Não foi possível construir uma carteira factível: " +
                  " · ".join(result.get("blockers") or []))
         return None
-    if result.get("can_publish"):
+    portfolio_can_publish = bool(
+        result.get("can_publish") and investable_gate.can_publish_recommendation
+    )
+    st.session_state["fii_portfolio_can_publish"] = portfolio_can_publish
+    if portfolio_can_publish:
         st.success("Carteira apta à publicação segundo os gates vigentes.")
     else:
-        st.warning("Rascunho não publicável: " + " · ".join(result.get("blockers") or []))
+        blockers = list(result.get("blockers") or []) + list(investable_gate.reasons)
+        st.warning("Rascunho não publicável: " + " · ".join(dict.fromkeys(blockers)))
     items = result["items"]
     show = pd.DataFrame([{
         "Ticker": item["ticker"], "Tipo": item["tipo"],
@@ -1446,8 +1582,11 @@ def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
             accent="#F6C90E",
         ), unsafe_allow_html=True)
     with cs2:
-        gate = st.session_state.get("fii_publication_gate")
-        can_publish = bool(gate and gate.can_publish_recommendation)
+        gate = st.session_state.get("fii_investable_publication_gate")
+        can_publish = bool(
+            gate and gate.can_publish_recommendation
+            and st.session_state.get("fii_portfolio_can_publish", False)
+        )
         if st.button("💾 Salvar carteira-modelo", use_container_width=True,
                      type="primary", key=key, disabled=not can_publish,
                      help=None if can_publish else "Publicação bloqueada pela metodologia integrada"):

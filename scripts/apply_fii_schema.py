@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-
-from data_pipeline.utils.db_utils import get_pipeline_engine
-
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from data_pipeline.utils.db_utils import get_pipeline_engine
 MIGRATIONS = (
     ("033_fii_pit_validation_and_calibration.sql", "market.fii_pit_score_snapshots"),
     ("034_fii_v6_covering_indexes.sql", "market.idx_fii_validation_methodology"),
@@ -15,6 +17,7 @@ MIGRATIONS = (
     ("037_fii_b3_parser_checkpoints.sql", "market.idx_fii_b3_archive_parser_status"),
     ("038_fii_cri_archive_checkpoints.sql", "market.fii_cri_archive_loads"),
     ("039_fii_selection_inputs_snapshot.sql", "market.fii_selection_inputs"),
+    ("041_fii_evidence_review_and_rls.sql", "market.fii_schema_migrations"),
 )
 
 

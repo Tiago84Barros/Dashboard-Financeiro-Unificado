@@ -28,6 +28,18 @@ def run_monitoring() -> dict:
                  WHERE processing_status IN ('pending','failed','needs_review')) AS document_backlog,
               (SELECT count(*) FROM market.fii_extraction_evidence
                  WHERE validation_status='pending') AS evidence_backlog,
+              (SELECT count(*) FROM market.fii_extraction_evidence
+                 WHERE validation_method='human' AND reviewed_at IS NOT NULL
+                   AND reviewer_id IS NOT NULL) AS human_reviews,
+              (SELECT count(*) FROM market.fii_extraction_evidence
+                 WHERE validation_method='human'
+                   AND (reviewed_at IS NULL OR reviewer_id IS NULL)) AS invalid_human_reviews,
+              (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                 WHERE n.nspname='market'
+                   AND c.relname IN ('fii_documents','fii_document_versions',
+                     'fii_extraction_runs','fii_extraction_evidence',
+                     'fii_metric_observations','fii_audit_events')
+                   AND NOT c.relrowsecurity) AS rls_missing_tables,
               (SELECT count(*) FROM market.fii_reconciliation_issues WHERE status='open') AS reconciliation_open,
               (SELECT count(*) FROM market.fii_quality_results
                  WHERE status IN ('failed','quarantined')
@@ -55,13 +67,19 @@ def run_monitoring() -> dict:
                  ORDER BY coalesce(finished_at,started_at) DESC LIMIT 1) AS validation_status
         """), {"version": "6.0.0"}).mappings().one())
         latest = conn.execute(text("""
+            WITH current_scores AS (
+              SELECT DISTINCT ON (ticker) ticker,confidence,coverage,
+                     data_readiness_status
+              FROM market.fii_score_snapshots
+              WHERE methodology_version=:version
+                AND reference_date=(SELECT max(reference_date)
+                    FROM market.fii_score_snapshots WHERE methodology_version=:version)
+              ORDER BY ticker,available_at DESC,id DESC
+            )
             SELECT avg(confidence) AS confidence, avg(coverage) AS coverage,
                    count(*) FILTER (WHERE data_readiness_status='ready')::numeric /
                        NULLIF(count(*),0) AS ready_fraction
-            FROM market.fii_score_snapshots
-            WHERE methodology_version=:version
-              AND reference_date=(SELECT max(reference_date) FROM market.fii_score_snapshots
-                                  WHERE methodology_version=:version)
+            FROM current_scores
         """), {"version": "6.0.0"}).mappings().one()
         metrics.update(dict(latest))
         rules = [
@@ -73,6 +91,13 @@ def run_monitoring() -> dict:
              metrics.get("document_backlog"), "fila de documentos acima de 500"),
             ("human_review_backlog", int(metrics.get("evidence_backlog") or 0) <= 250,
              metrics.get("evidence_backlog"), "fila de evidências humanas acima de 250"),
+            ("human_calibration_integrity",
+             int(metrics.get("invalid_human_reviews") or 0) == 0,
+             metrics.get("invalid_human_reviews"),
+             "decisões marcadas como humanas sem revisor ou reviewed_at"),
+            ("fii_backend_rls", int(metrics.get("rls_missing_tables") or 0) == 0,
+             metrics.get("rls_missing_tables"),
+             "tabelas backend-only do pipeline FII sem RLS habilitado"),
             ("quality_failures", int(metrics.get("quality_failures_7d") or 0) == 0,
              metrics.get("quality_failures_7d"), "falhas ou quarentenas de qualidade nos últimos 7 dias"),
             ("cvm_archive_failures", int(metrics.get("cvm_archive_failures") or 0) == 0,

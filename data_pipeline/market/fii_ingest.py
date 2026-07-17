@@ -170,6 +170,16 @@ def snapshot_methodology_v4() -> dict:
                 }.get(str(observation.get("availability_quality") or ""), .50),
             }
         inputs.append(row)
+    # Usa a mesma montagem de inputs da aplicação e do publicador. O bloco
+    # acima permanece como fallback mínimo caso a camada enriquecida falhe,
+    # evitando dois conceitos divergentes de cobertura/confiança no sistema.
+    try:
+        from core.market_read import load_fii_methodology_inputs
+        enriched = load_fii_methodology_inputs(prefer_snapshot=False)
+        if not enriched.empty:
+            inputs = enriched.to_dict("records")
+    except Exception:
+        logger.warning("snapshot v6 usou fallback mínimo de inputs", exc_info=True)
     scored = score_fiis_by_type(inputs, validation_status="passed" if validation == "passed" else "unvalidated")
     now = datetime.now(timezone.utc)
     snapshots = [{
@@ -792,9 +802,12 @@ def _latest_exposure_rows(conn, exposure_type: str) -> list[dict]:
             GROUP BY 1,2,3
         )
         SELECT e.ticker, e.exposure_name, e.exposure_weight,
-               e.reference_date, e.available_at, e.knowledge_at
+               e.reference_date, e.available_at, e.knowledge_at,
+               e.canonical_entity_id,ce.legal_identifier AS canonical_identifier,
+               ce.canonical_name,ce.metadata_json AS canonical_metadata
         FROM market.fii_exposures e JOIN latest_at l
           USING (ticker, exposure_type, reference_date, available_at)
+        LEFT JOIN market.fii_canonical_entities ce ON ce.id=e.canonical_entity_id
         WHERE e.exposure_type=:kind
     """), {"kind": exposure_type}).mappings().all()]
 
@@ -987,7 +1000,16 @@ def _derive_public_quality_observations(conn) -> int:
         linked: list[str] = []
         for row in rows:
             name = str(row["exposure_name"])
-            underlying = ticker_by_cnpj.get(re.sub(r"\D", "", name))
+            canonical_meta = row.get("canonical_metadata") or {}
+            if isinstance(canonical_meta, str):
+                try:
+                    canonical_meta = json.loads(canonical_meta)
+                except (TypeError, ValueError):
+                    canonical_meta = {}
+            underlying = str(canonical_meta.get("ticker") or "") or None
+            if underlying not in type_by_ticker:
+                underlying = ticker_by_cnpj.get(
+                    re.sub(r"\D", "", str(row.get("canonical_identifier") or name)))
             if underlying is None and name.upper().replace(".SA", "") in type_by_ticker:
                 underlying = name.upper().replace(".SA", "")
             if not underlying:

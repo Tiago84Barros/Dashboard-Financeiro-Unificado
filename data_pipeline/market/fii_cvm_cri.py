@@ -357,9 +357,11 @@ def _lookthrough(conn) -> dict:
             FROM market.fii_exposures e JOIN latest_ref r USING(ticker,reference_date)
             WHERE e.exposure_type='security' GROUP BY 1,2
         )
-        SELECT e.* FROM market.fii_exposures e JOIN latest_at l
+        SELECT DISTINCT ON (e.ticker,e.exposure_name) e.*
+        FROM market.fii_exposures e JOIN latest_at l
           USING(ticker,reference_date,available_at)
         WHERE e.exposure_type='security'
+        ORDER BY e.ticker,e.exposure_name,e.knowledge_at DESC,e.id DESC
     """)).mappings().all()
     observation_rows = conn.execute(text("""
         SELECT DISTINCT ON (security_key,metric_name) *

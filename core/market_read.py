@@ -489,8 +489,12 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def load_fii_methodology_inputs() -> pd.DataFrame:
-    """Inputs da metodologia, priorizando a vitrine compacta PIT do warehouse local."""
+def load_fii_methodology_inputs(prefer_snapshot: bool = True) -> pd.DataFrame:
+    """Inputs PIT; o publicador pode forçar reconstrução a partir das tabelas-base.
+
+    ``prefer_snapshot=False`` evita que a rotina de publicação leia e republique
+    indefinidamente a própria vitrine antiga em vez do warehouse atualizado.
+    """
     snapshot = _q("""
         SELECT ticker, payload_json, as_of_date, available_at, knowledge_at,
                reference_date, vintage, source, quality_status,
@@ -499,7 +503,7 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
         WHERE quality_status IN ('published', 'accepted')
         ORDER BY generated_at DESC, ticker
     """)
-    if not snapshot.empty:
+    if prefer_snapshot and not snapshot.empty:
         records: list[dict] = []
         seen: set[str] = set()
         for item in snapshot.to_dict("records"):
@@ -548,7 +552,7 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
             column for column in (
                 "Ticker", "Hist_Meses", "Num_Imoveis", "Vacancia", "N_Regioes",
                 "N_UFs", "Property_Diversification", "CAGR", "Max_Drawdown",
-                "Multi_Setorial",
+                "Multi_Setorial", "Series_Source", "Series_AvailableAt",
             ) if column in quality.columns
         ]
         base = base.merge(quality[enrichment_columns], on="Ticker", how="left")
@@ -620,12 +624,12 @@ def load_fii_methodology_inputs() -> pd.DataFrame:
                 "liquidez_diaria": {"available_at": str(item.get("updated_at")), "source": "brapi"},
                 "pvp": {"available_at": str(item.get("updated_at")), "source": "cvm_vpa+brapi_quote"},
                 "total_return_trend": {
-                    "available_at": str(item.get("updated_at")),
-                    "source": "brapi_adjusted_close",
+                    "available_at": str(item.get("Series_AvailableAt") or item.get("updated_at")),
+                    "source": str(item.get("Series_Source") or "brapi_adjusted_close"),
                 },
                 "max_drawdown": {
-                    "available_at": str(item.get("updated_at")),
-                    "source": "brapi_adjusted_close",
+                    "available_at": str(item.get("Series_AvailableAt") or item.get("updated_at")),
+                    "source": str(item.get("Series_Source") or "brapi_adjusted_close"),
                 },
             },
         }
@@ -849,6 +853,8 @@ def load_fii_quality() -> pd.DataFrame:
             "WHERE ticker IN (SELECT ticker FROM market.fiis) "
             "AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY ticker, date")
     cagr_map, dd_map, mes_map = {}, {}, {}
+    series_source: dict[str, str] = {}
+    series_available: dict[str, object] = {}
     if not px.empty:
         px["ticker"] = _norm_ticker(px["ticker"])
         for tk, g in px.groupby("ticker"):
@@ -856,9 +862,49 @@ def load_fii_quality() -> pd.DataFrame:
             cagr_map[tk] = met["cagr"]
             dd_map[tk] = met["max_drawdown"]
             mes_map[tk] = met.get("meses")
+            series_source[tk] = "brapi_adjusted_close"
+            series_available[tk] = g["date"].max()
+
+    # O plano Pro nem sempre devolve série ajustada para todo o universo. Para
+    # os tickers ausentes, reconstrói retorno total com fechamento oficial B3 +
+    # proventos públicos, sem transformar preço bruto em retorno total.
+    missing_tickers = sorted(set(base["Ticker"].dropna().astype(str)) - set(cagr_map))
+    if missing_tickers:
+        b3 = _q("""
+            SELECT ticker,trade_date AS date,close
+            FROM market.fii_b3_security_history
+            WHERE ticker=ANY(:tickers) AND close>0
+            ORDER BY ticker,trade_date
+        """, {"tickers": missing_tickers})
+        dividends = _q("""
+            SELECT ticker,event_date,amount FROM market.dividends
+            WHERE ticker=ANY(:tickers) AND event_date IS NOT NULL AND amount IS NOT NULL
+            ORDER BY ticker,event_date
+        """, {"tickers": missing_tickers})
+        dividend_map = ({str(tk): list(zip(group["event_date"], group["amount"]))
+                         for tk, group in dividends.groupby("ticker")}
+                        if not dividends.empty else {})
+        if not b3.empty:
+            b3["ticker"] = _norm_ticker(b3["ticker"])
+            for tk, group in b3.groupby("ticker"):
+                price_history = list(zip(group["date"], group["close"]))
+                series, _ = _fz.backtest(
+                    {str(tk): 1.0}, {str(tk): price_history},
+                    {str(tk): dividend_map.get(str(tk), [])},
+                )
+                if series.empty or "Carteira" not in series:
+                    continue
+                met = _fz.price_metrics(list(zip(series["Data"], series["Carteira"])))
+                cagr_map[str(tk)] = met["cagr"]
+                dd_map[str(tk)] = met["max_drawdown"]
+                mes_map[str(tk)] = met.get("meses")
+                series_source[str(tk)] = "b3_close+cvm_brapi_dividends_total_return_v1"
+                series_available[str(tk)] = group["date"].max()
     base["CAGR"] = base["Ticker"].map(cagr_map)
     base["Max_Drawdown"] = base["Ticker"].map(dd_map)
     base["Hist_Meses"] = base["Ticker"].map(mes_map)
+    base["Series_Source"] = base["Ticker"].map(series_source)
+    base["Series_AvailableAt"] = base["Ticker"].map(series_available)
     return base
 
 

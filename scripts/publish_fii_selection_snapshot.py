@@ -164,10 +164,32 @@ def publish(source_url: str, target_url: str, dry_run: bool = False) -> dict[str
         "SUPABASE_UNIFICADO_URL": source_url,
         "SUPABASE_DB_URL": source_url,
     })
-    # Importa depois de apontar a configuração para o warehouse local.
+    # Importa depois de apontar a configuração para o warehouse local. Também
+    # atualiza/limpa singletons já importados, tornando a função segura quando
+    # chamada programaticamente no mesmo processo que leu a configuração remota.
+    from core.config import settings
+    previous_urls = (
+        settings.SUPABASE_UNIFICADO_URL, settings.DATABASE_URL, settings.SUPABASE_DB_URL,
+    )
+    settings.SUPABASE_UNIFICADO_URL = source_url
+    settings.DATABASE_URL = source_url
+    settings.SUPABASE_DB_URL = source_url
+    from core.database import get_engine, get_session_factory
+    get_engine.clear()
+    get_session_factory.clear()
     from core.market_read import load_fii_methodology_inputs
+    load_fii_methodology_inputs.clear()
 
-    source = load_fii_methodology_inputs()
+    try:
+        # O warehouse pode conter a vitrine da execução anterior. A publicação
+        # sempre reconstrói os inputs das tabelas-base.
+        source = load_fii_methodology_inputs(prefer_snapshot=False)
+    finally:
+        (settings.SUPABASE_UNIFICADO_URL, settings.DATABASE_URL,
+         settings.SUPABASE_DB_URL) = previous_urls
+        get_engine.clear()
+        get_session_factory.clear()
+        load_fii_methodology_inputs.clear()
     rows = build_rows(source)
     source_engine = _engine(source_url)
     validation = _latest_validation(source_engine)

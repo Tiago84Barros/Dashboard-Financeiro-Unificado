@@ -12,12 +12,21 @@ def test_document_evidence_uses_methodology_names_and_page_numbers():
     evidence = _extract_evidence("\n".join(pages), pages)
     rows = {row["metric_name"]: row for row in evidence}
 
-    assert PARSER_VERSION == "1.4.0"
+    assert PARSER_VERSION == "1.5.0"
     assert rows["vacancia_fisica"]["normalized_value"] == pytest.approx(.075)
     assert rows["wault_anos"]["normalized_value"] == pytest.approx(4.2)
     assert rows["implied_cap_rate"]["normalized_value"] == pytest.approx(.091)
     assert rows["ltv"]["normalized_value"] == pytest.approx(.45)
     assert all(row["page_number"] == 2 for row in rows.values())
+
+
+def test_document_evidence_respects_fii_type_profile():
+    text = "Vacância física 7,5% | LTV 45% | spread IPCA + 7,0%"
+    tijolo = _extract_evidence(text, fii_type="tijolo")
+    papel = _extract_evidence(text, fii_type="papel")
+
+    assert {row["metric_name"] for row in tijolo} == {"vacancia_fisica"}
+    assert {row["metric_name"] for row in papel} == {"ltv", "credit_spread"}
 
 
 def test_only_unambiguous_stable_evidence_is_provisionally_promoted():

@@ -20,8 +20,14 @@ def calibrate_parsers() -> dict:
             FROM market.fii_extraction_evidence e
             JOIN market.fii_extraction_runs r ON r.id=e.extraction_run_id
             WHERE e.validation_status IN ('accepted','corrected','rejected')
+              AND e.validation_method='human'
+              AND e.reviewer_id IS NOT NULL
+              AND e.reviewed_at IS NOT NULL
             GROUP BY 1,2,3
         """))]
+        # A tabela é uma projeção integral das revisões humanas. Remove versões
+        # antigas e métricas sem amostra para impedir calibração fantasma.
+        conn.execute(text("DELETE FROM market.fii_parser_calibrations"))
         for row in groups:
             posterior = beta_posterior(row["accepted"], row["corrected"], row["rejected"])
             conn.execute(text("""

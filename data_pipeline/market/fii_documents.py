@@ -26,8 +26,8 @@ from data_pipeline.market.fii_sources import metric_observation
 logger = logging.getLogger(__name__)
 
 PARSER_NAME = "fii_public_report"
-PARSER_VERSION = "1.4.0"
-SCHEMA_VERSION = "fii-evidence-v4"
+PARSER_VERSION = "1.5.0"
+SCHEMA_VERSION = "fii-evidence-v5"
 
 
 class DocumentTooLargeError(ValueError):
@@ -65,6 +65,21 @@ _PROVISIONAL_METRICS = {
     "ltv", "implied_cap_rate", "tenant_concentration", "delinquency",
     "lease_expiry_concentration_24m", "property_count",
 }
+
+_TYPE_METRICS = {
+    "tijolo": {
+        "wault_anos", "vacancia_fisica", "vacancia_financeira",
+        "implied_cap_rate", "tenant_concentration",
+        "lease_expiry_concentration_24m", "management_fee", "property_count",
+    },
+    "papel": {
+        "ltv", "duration_anos", "debtor_concentration",
+        "issuance_concentration", "delinquency", "subordination_protection",
+        "management_fee", "credit_spread",
+    },
+    "fof": {"management_fee"},
+}
+_TYPE_METRICS["hibrido"] = set(_METRIC_PATTERNS)
 
 
 def _engine():
@@ -156,11 +171,15 @@ def _parse_number(raw: str, *, percent: bool = False) -> float:
     return value / 100.0 if percent else value
 
 
-def _extract_evidence(text_value: str, page_texts: list[str] | None = None) -> list[dict]:
+def _extract_evidence(text_value: str, page_texts: list[str] | None = None,
+                      *, fii_type: str | None = None) -> list[dict]:
     evidence = []
+    applicable = _TYPE_METRICS.get(str(fii_type or "").lower())
     sources = list(enumerate(page_texts or [], start=1)) or [(None, text_value)]
     for page_number, page_text in sources:
         for metric, pattern in _METRIC_PATTERNS.items():
+            if applicable is not None and metric not in applicable:
+                continue
             for match in list(pattern.finditer(page_text))[:20]:
                 raw = match.group(1)
                 try:
@@ -286,7 +305,7 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
               AND column_name='processing_status')
         """)).scalar():
             return {**result, "failed": -1, "blocker": "migration 029 pendente"}
-        docs = conn.execute(text("""
+        docs = [dict(row) for row in conn.execute(text("""
             WITH candidates AS (
               SELECT d.id FROM market.fii_documents d
               LEFT JOIN market.fiis f ON f.ticker=d.ticker
@@ -321,7 +340,13 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                  "parser": PARSER_VERSION, "worker": worker,
                  "ticker_filter": bool(normalized_tickers),
                  "tickers": normalized_tickers, "recent_months": max(int(recent_months), 0),
-                 "cutoff": cutoff}).mappings().all()
+                 "cutoff": cutoff}).mappings().all()]
+        selected_tickers = sorted({str(row.get("ticker")) for row in docs if row.get("ticker")})
+        type_map = {}
+        if selected_tickers:
+            type_map = dict(conn.execute(text(
+                "SELECT ticker,tipo FROM market.fiis WHERE ticker=ANY(CAST(:tickers AS text[]))"
+            ), {"tickers": selected_tickers}).all())
     result["selected"] = len(docs)
     for doc in docs:
         try:
@@ -380,7 +405,8 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                 raise ValueError(f"tipo documental não suportado: {mime}")
             extracted, pages, method, page_texts = _extract_pdf_text(content)
             signature = _layout_signature(page_texts, extracted)
-            evidence = _extract_evidence(extracted, page_texts)
+            fii_type = str(type_map.get(str(doc.get("ticker"))) or "").lower() or None
+            evidence = _extract_evidence(extracted, page_texts, fii_type=fii_type)
             confidence = min(1.0, len(extracted) / max(pages * 800, 1))
             with engine.begin() as conn:
                 previous_layout = conn.execute(text("""
@@ -413,22 +439,28 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                          "metrics": json.dumps({"characters": len(extracted), "pages": pages,
                                                 "evidence_count": len(evidence),
                                                 "provisional_count": len(provisional),
-                                                "layout_changed": layout_changed})}).scalar()
+                                                "layout_changed": layout_changed,
+                                                "fii_type_profile": fii_type or "unknown"})}).scalar()
                 conn.execute(text("UPDATE market.fii_document_versions SET page_count=:pages WHERE id=:id"),
                              {"pages": pages, "id": version_id})
                 for row in evidence:
-                    conn.execute(text("""
+                    evidence_id = conn.execute(text("""
                         INSERT INTO market.fii_extraction_evidence (
                             extraction_run_id, metric_name, raw_value, normalized_value,
                             unit, page_number, bbox_json, evidence_text, confidence,
-                            validation_status
+                            validation_status, validation_method
                         ) VALUES (:run, :metric, :raw, CAST(:normalized AS jsonb), :unit,
-                                  :page, CAST(:bbox AS jsonb), :evidence, :confidence, :status)
+                                  :page, CAST(:bbox AS jsonb), :evidence, :confidence, :status,
+                                  :validation_method)
+                        RETURNING id
                     """), {"run": run_id, "metric": row["metric_name"], "raw": row["raw_value"],
                              "normalized": json.dumps(row["normalized_value"]), "unit": row["unit"],
                              "page": row["page_number"], "bbox": json.dumps(row["bbox_json"]),
                               "evidence": row["evidence_text"], "confidence": row["confidence"],
-                              "status": row["validation_status"]})
+                              "status": row["validation_status"],
+                              "validation_method": ("parser_rule" if row["validation_status"] == "rejected"
+                                                    else "pending")}).scalar()
+                    row["evidence_id"] = int(evidence_id)
                 observed_at = doc.get("first_observed_at") or datetime.now(timezone.utc)
                 reference = doc.get("reference_date") or observed_at.date()
                 published_at = doc.get("source_published_at")
@@ -452,6 +484,7 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                             "parser_name": PARSER_NAME,
                             "parser_version": PARSER_VERSION,
                             "page_number": row.get("page_number"),
+                            "evidence_id": row.get("evidence_id"),
                             "evidence_confidence": row.get("confidence"),
                             "validation_status": "provisional_requires_human_review",
                             "rule": "single_explicit_value_and_stable_layout",
