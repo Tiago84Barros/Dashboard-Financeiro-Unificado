@@ -72,6 +72,9 @@ jobs:
       - name: Taxonomia B3
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py setores --json
+      - name: Snapshot de prontidao B3
+        if: steps.mode.outputs.mode != 'schema'
+        run: python -m scripts.snapshot_b3_readiness
 
   refresh-fiis:
     name: Atualizacao FIIs

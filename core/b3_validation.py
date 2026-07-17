@@ -120,6 +120,33 @@ def validation_readiness(manifest: dict[str, Any]) -> dict[str, Any]:
     return {"ready": not blockers, "blockers": blockers}
 
 
+def persist_readiness_snapshot(*, engine) -> str | None:
+    """Registra o estado dos dados ao fim do ETL, sem depender da interface."""
+    try:
+        manifest = build_data_manifest(engine)
+        readiness = validation_readiness(manifest)
+        payload = {"manifest": manifest, "readiness": readiness}
+        artifact_hash = hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
+        with engine.begin() as conn:
+            if not _table_exists(conn, "market.b3_data_readiness_snapshots"):
+                logger.info("b3_data_readiness_snapshots ausente; execute a migration 043")
+                return None
+            conn.execute(text("""
+                INSERT INTO market.b3_data_readiness_snapshots (
+                    universe_definition, snapshot_json, artifact_hash
+                ) VALUES (:definition, CAST(:snapshot AS jsonb), :hash)
+                ON CONFLICT (artifact_hash) DO NOTHING
+            """), {
+                "definition": manifest.get("universe_definition", "unknown"),
+                "snapshot": _canonical(payload),
+                "hash": artifact_hash,
+            })
+        return artifact_hash
+    except Exception as exc:
+        logger.warning("Nao foi possivel persistir snapshot de prontidao B3: %s", exc)
+        return None
+
+
 def persist_validation_run(
     *,
     engine,
@@ -176,18 +203,6 @@ def persist_validation_run(
                 "data_manifest": _canonical(manifest),
                 "artifact_hash": artifact_hash,
                 "notes": notes,
-            })
-            snapshot = {"manifest": manifest, "result_summary": result_summary}
-            snapshot_hash = hashlib.sha256(_canonical(snapshot).encode("utf-8")).hexdigest()
-            conn.execute(text("""
-                INSERT INTO market.b3_data_readiness_snapshots (
-                    universe_definition, snapshot_json, artifact_hash
-                ) VALUES (:definition, CAST(:snapshot AS jsonb), :hash)
-                ON CONFLICT (artifact_hash) DO NOTHING
-            """), {
-                "definition": manifest.get("universe_definition", "unknown"),
-                "snapshot": _canonical(snapshot),
-                "hash": snapshot_hash,
             })
         return run_id
     except Exception as exc:

@@ -10,7 +10,10 @@ if str(ROOT) not in sys.path:
 
 from data_pipeline.utils.db_utils import get_pipeline_engine
 
-MIGRATIONS = (("043_b3_validation_and_pit_audit.sql", "market.b3_validation_runs"),)
+MIGRATIONS = (
+    ("043_b3_validation_and_pit_audit.sql", "market.b3_validation_runs"),
+    ("044_b3_audit_immutability.sql", "market.trg_b3_validation_runs_append_only"),
+)
 
 
 def apply() -> dict[str, list[str]]:
