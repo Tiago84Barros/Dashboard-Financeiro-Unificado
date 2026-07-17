@@ -269,7 +269,7 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                               recent_months: int = 24,
                               max_batch_bytes: int = 250 * 1024 * 1024,
                               max_document_bytes: int = 30 * 1024 * 1024,
-                              min_free_bytes: int = 10 * 1024 * 1024 * 1024) -> dict:
+                              min_free_bytes: int = 5 * 1024 * 1024 * 1024) -> dict:
     engine = _engine()
     result = {"selected": 0, "downloaded": 0, "unchanged": 0,
               "extracted": 0, "needs_review": 0, "failed": 0,

@@ -55,7 +55,7 @@ def run_enrichment(*, years: int = 5, candidate_limit: int = 12,
                    document_limit: int = 150, recent_months: int = 24,
                    document_budget_bytes: int = 250 * 1024 * 1024,
                    max_document_bytes: int = 30 * 1024 * 1024,
-                   min_free_bytes: int = 10 * 1024 * 1024 * 1024,
+                   min_free_bytes: int = 5 * 1024 * 1024 * 1024,
                    tickers: list[str] | None = None) -> dict[str, Any]:
     """Executa a esteira pública em lotes retomáveis e devolve cada etapa."""
     from data_pipeline.market.fii_b3_history import ingest_b3_history
