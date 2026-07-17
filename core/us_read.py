@@ -286,6 +286,38 @@ def load_scoring_frame(limit_companies: int = 800) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def load_score_panel(score_version: str | None = None,
+                     horizon_months: int = 12) -> pd.DataFrame:
+    """Painel PIT (date, symbol, score, fwd_return) para o backtest da Fase 6.
+
+    Junta market_us.score_vintages (histórico PIT) a prices_monthly. Vazio até o
+    histórico de scores ser computado (run_us_ingest.py score-history).
+    """
+    from data_pipeline.us.scoring_history import build_annual_panel
+    cols = ["date", "symbol", "score", "fwd_return"]
+    eng = _engine()
+    if eng is None or not schema_ready():
+        return pd.DataFrame(columns=cols)
+    try:
+        with eng.connect() as conn:
+            vq = ("SELECT as_of_date, symbol, score FROM market_us.score_vintages "
+                  "WHERE track='fundamental'")
+            params: dict = {}
+            if score_version:
+                vq += " AND score_version=:v"
+                params["v"] = score_version
+            vintages = pd.read_sql(text(vq), conn, params=params)
+            if vintages.empty:
+                return pd.DataFrame(columns=cols)
+            monthly = pd.read_sql(text(
+                "SELECT symbol, month_end, adjusted_close "
+                "FROM market_us.prices_monthly"), conn)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("load_score_panel falhou: %s", exc)
+        return pd.DataFrame(columns=cols)
+    return build_annual_panel(vintages, monthly, horizon_months=horizon_months)
+
+
 def load_ingestion_runs() -> pd.DataFrame:
     eng = _engine()
     cols = ["run_key", "domain", "status", "calls_made", "rows_written",

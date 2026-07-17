@@ -64,12 +64,15 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão FMP → market_us.* (warehouse local)")
     p.add_argument("command", choices=[
         "init-schema", "test", "universe", "estimate", "bootstrap", "daily",
-        "fundamentals", "resume", "validate"])
+        "fundamentals", "resume", "validate", "score-history", "backtest"])
     p.add_argument("--tickers", nargs="*", help="símbolos específicos")
     p.add_argument("--exchanges", nargs="*", default=None, help="NYSE NASDAQ AMEX")
     p.add_argument("--limit", type=int, default=None, help="limita o universo/lote")
     p.add_argument("--years", type=int, default=20, help="anos de histórico anual")
     p.add_argument("--budget", type=int, default=None, help="teto de chamadas na execução")
+    p.add_argument("--start-year", type=int, default=None, help="score-history: ano inicial")
+    p.add_argument("--end-year", type=int, default=None, help="score-history: ano final")
+    p.add_argument("--top-n", type=int, default=20, help="backtest: nº de ativos por período")
     p.add_argument("--dry-run", action="store_true", help="não grava; só estima/planeja")
     p.add_argument("--offline", action="store_true", help="proíbe qualquer chamada de rede")
     p.add_argument("--warehouse", action="store_true",
@@ -81,7 +84,8 @@ def main() -> int:
         return 1
 
     # Proteção: ingestão pesada NUNCA deve escrever no Supabase remoto.
-    if args.command in {"bootstrap", "daily", "fundamentals", "universe", "resume"} \
+    if args.command in {"bootstrap", "daily", "fundamentals", "universe", "resume",
+                        "score-history"} \
             and not _is_local_target() and not args.dry_run:
         log.error("Comando %s exige --warehouse (destino local). "
                   "Ingestão pesada não pode ir para o Supabase.", args.command)
@@ -114,6 +118,37 @@ def main() -> int:
         return out({"ok": True, "has_fmp_key": settings.has_fmp,
                     "engine_local": _is_local_target(),
                     "db_connected": test_connection()})
+
+    if args.command == "score-history":
+        # sem rede: recomputa scores PIT a partir do que já está no warehouse
+        from core.database import get_engine
+        from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
+        from data_pipeline.us import scoring_history as sh
+        end = args.end_year or 2025
+        start = args.start_year or (end - 10)
+        dates = sh.annual_asof_dates(start, end)
+        if args.dry_run:
+            return out({"ok": True, "dates": len(dates), "action": "dry-run"})
+        res = sh.compute_score_history(get_engine(), dates,
+                                       score_version=US_FUNDAMENTAL_SCORE_VERSION)
+        return out(res)
+
+    if args.command == "backtest":
+        from core.database import get_engine
+        from core.us_read import load_score_panel
+        import core.us_backtest as bt
+        panel = load_score_panel()
+        if panel is None or panel.empty:
+            return out({"ok": False, "reason": "sem histórico de scores — rode score-history"})
+        res = bt.walk_forward(panel, top_n=args.top_n)
+        # resumo enxuto p/ o terminal
+        return out({"ok": res.get("ok"), "n_periods": res.get("n_periods"),
+                    "rank_ic_mean": res.get("rank_ic", {}).get("mean"),
+                    "rank_ic_tstat": res.get("rank_ic", {}).get("t_stat"),
+                    "hit_rate": res.get("rank_ic", {}).get("hit_rate"),
+                    "ann_return": res.get("portfolio", {}).get("ann_return"),
+                    "excess_vs_ew": res.get("excess_ann_vs_ew"),
+                    "sharpe": res.get("portfolio", {}).get("sharpe")})
 
     # ── comandos que podem tocar a rede ───────────────────────────────────────
     if args.offline:
