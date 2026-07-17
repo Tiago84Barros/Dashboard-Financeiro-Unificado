@@ -108,3 +108,34 @@ def test_rota_registrada_no_app():
     app = (_ROOT / "app.py").read_text(encoding="utf-8")
     assert '"empresas_fora_da_curva"' in app
     assert "Empresas Fora da Curva" in app
+
+
+def test_sem_emoji_de_bandeira():
+    """Windows não renderiza 🇺🇸 (vira letras 'US') — não usar em UI."""
+    flag = "\U0001F1FA\U0001F1F8"
+    for name in ("app.py", "views/empresas_americanas.py",
+                 "views/empresas_fora_da_curva.py"):
+        content = (_ROOT / name).read_text(encoding="utf-8")
+        # permitido apenas em comentário explicando a proibição
+        for line in content.splitlines():
+            if flag in line:
+                assert line.lstrip().startswith("#") or "não usar" in line, name
+
+
+def test_data_status_explica_ambiente(monkeypatch):
+    """Sem schema: instrução local fala do init-schema; na nuvem explica que os
+    dados dos EUA não vão para o Supabase."""
+    class Eng:
+        def connect(self):
+            raise AssertionError("não deve conectar neste teste")
+    monkeypatch.setattr(ur, "_engine", lambda: object())
+    monkeypatch.setattr(ur, "schema_ready", lambda: False)
+
+    monkeypatch.setattr(ur, "_db_is_local", lambda: True)
+    st_local = ur.data_status()
+    assert "init-schema" in st_local["reason"]
+
+    monkeypatch.setattr(ur, "_db_is_local", lambda: False)
+    st_cloud = ur.data_status()
+    assert "Supabase" in st_cloud["reason"] or "LOCAL" in st_cloud["reason"]
+    assert "init-schema" not in st_cloud["reason"]

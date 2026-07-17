@@ -46,16 +46,38 @@ def schema_ready() -> bool:
         return False
 
 
+def _db_is_local() -> bool:
+    """True se a engine atual aponta para o warehouse local (não Supabase)."""
+    try:
+        from core.config import settings
+        url = (settings.db_url or "").lower()
+        return "localhost" in url or "127.0.0.1" in url
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def data_status() -> dict:
     """Status para os badges da view (conexão, schema, defasagem)."""
     eng = _engine()
+    is_local = _db_is_local()
     if eng is None:
         return {"connected": False, "schema_ready": False, "offline": True,
-                "last_update": None, "companies": 0, "reason": "banco não configurado"}
+                "db_is_local": is_local, "last_update": None, "companies": 0,
+                "reason": "banco não configurado"}
     if not schema_ready():
+        # No Supabase (deploy) o market_us NÃO existe de propósito: histórico
+        # pesado é warehouse-only. A instrução muda conforme o ambiente.
+        if is_local:
+            reason = ("schema market_us ausente — rode "
+                      "`python run_us_ingest.py init-schema --warehouse` e depois o bootstrap")
+        else:
+            reason = ("Esta seção usa o warehouse LOCAL (os dados dos EUA não vão "
+                      "para o Supabase, por desenho). No deploy ela fica vazia; "
+                      "para usar, rode o app na sua máquina apontando para o "
+                      "warehouse (ver aba Sincronização).")
         return {"connected": True, "schema_ready": False, "offline": True,
-                "last_update": None, "companies": 0,
-                "reason": "schema market_us ausente — rode init-schema + bootstrap"}
+                "db_is_local": is_local, "last_update": None, "companies": 0,
+                "reason": reason}
     try:
         with eng.connect() as conn:
             companies = conn.execute(text(
@@ -63,12 +85,13 @@ def data_status() -> dict:
             last = conn.execute(text(
                 "SELECT MAX(ingested_at) FROM market_us.income_statements")).scalar()
         return {"connected": True, "schema_ready": True,
-                "offline": companies == 0, "last_update": last,
-                "companies": int(companies), "reason": None}
+                "offline": companies == 0, "db_is_local": is_local,
+                "last_update": last, "companies": int(companies), "reason": None}
     except Exception as exc:  # noqa: BLE001
         logger.warning("data_status falhou: %s", exc)
         return {"connected": False, "schema_ready": False, "offline": True,
-                "last_update": None, "companies": 0, "reason": str(exc)[:120]}
+                "db_is_local": is_local, "last_update": None, "companies": 0,
+                "reason": str(exc)[:120]}
 
 
 def load_overview() -> dict:

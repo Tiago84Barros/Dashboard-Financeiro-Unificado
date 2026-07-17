@@ -60,7 +60,7 @@ def render() -> None:
     container_pagina(
         "Empresas Americanas",
         "Análise fundamentalista de empresas dos EUA — NYSE, Nasdaq e NYSE American",
-        "🇺🇸",
+        "🌎",   # não usar 🇺🇸: Windows não renderiza bandeiras (vira "US")
     )
 
     status = us.data_status()
@@ -109,7 +109,7 @@ def _tab_visao_geral() -> None:
     if ov.get("companies", 0) == 0:
         estado_vazio(
             "Nenhuma empresa americana no warehouse local ainda. Rode a carga "
-            "inicial (aba Sincronização) para popular o banco local.", "🇺🇸")
+            "inicial (aba Sincronização) para popular o banco local.", "🌎")
         return
     secao_titulo("Cobertura do warehouse local", "📊")
     c1, c2, c3, c4 = st.columns(4)
@@ -512,8 +512,20 @@ def _tab_sincronizacao(status: dict) -> None:
         "# 7) auditar qualidade\n"
         "python run_us_ingest.py validate --warehouse --json",
         language="bash")
+    st.markdown("**Ver os dados na interface** (os dados dos EUA ficam SÓ no "
+                "warehouse local — não são publicados no Supabase):")
+    st.code(
+        "# rode o app na sua máquina apontando para o warehouse local\n"
+        '$env:SUPABASE_UNIFICADO_URL = "postgresql://postgres:<senha>@127.0.0.1:5433/postgres"\n'
+        "streamlit run app.py",
+        language="powershell")
     if not status.get("schema_ready"):
-        st.warning("Schema `market_us` ainda não existe no banco atual. Rode o passo 1.")
+        if status.get("db_is_local"):
+            st.warning("Schema `market_us` ainda não existe no warehouse. Rode o passo 1.")
+        else:
+            st.info("Este deploy lê o Supabase, que **não** guarda os dados dos EUA "
+                    "(regra do projeto: histórico pesado é warehouse-only). A seção "
+                    "funciona rodando o app localmente, como acima.", icon="☁️")
 
 
 # ── Metodologia ───────────────────────────────────────────────────────────────
