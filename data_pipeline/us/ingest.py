@@ -25,6 +25,53 @@ from data_pipeline.us.providers import (
     Budget, FmpProvider, ProviderError, build_default_provider, estimate_calls,
 )
 
+
+class CompositeProvider:
+    """EDGAR (fundamentos) + yfinance (preços) atrás de uma fachada única.
+
+    `pre_normalized=True` sinaliza que as demonstrações já vêm no formato do
+    schema market_us (edgar_facts) e não passam pelos mapeadores da FMP.
+    """
+    pre_normalized = True
+    source_name = "edgar+yfinance"
+
+    def __init__(self, fundamentals, market):
+        self._f = fundamentals
+        self._m = market
+
+    # fundamentos → EDGAR
+    def get_universe(self, exchanges):
+        return self._f.get_universe(exchanges)
+
+    def get_profile(self, symbol):
+        return self._f.get_profile(symbol)
+
+    def get_income_statements(self, *a, **k):
+        return self._f.get_income_statements(*a, **k)
+
+    def get_balance_sheets(self, *a, **k):
+        return self._f.get_balance_sheets(*a, **k)
+
+    def get_cash_flow_statements(self, *a, **k):
+        return self._f.get_cash_flow_statements(*a, **k)
+
+    def get_key_metrics(self, *a, **k):
+        return self._f.get_key_metrics(*a, **k)
+
+    # mercado → yfinance
+    def get_prices_daily(self, *a, **k):
+        return self._m.get_prices_daily(*a, **k)
+
+    def get_dividends(self, *a, **k):
+        return self._m.get_dividends(*a, **k)
+
+    def get_splits(self, *a, **k):
+        return self._m.get_splits(*a, **k)
+
+    @property
+    def calls_made(self) -> int:
+        return getattr(self._f, "calls_made", 0) + getattr(self._m, "calls_made", 0)
+
 logger = logging.getLogger("us_ingest")
 
 _SCHEMA_DIR = Path(__file__).resolve().parents[2] / "supabase_unificado" / "schema"
@@ -119,12 +166,17 @@ def ingest_symbol(provider: FmpProvider, engine, symbol: str, *,
         company_id = repo.upsert_company(conn, prof)
         repo.upsert_asset(conn, company_id, prof)
         n = 0
-        n += repo.upsert_statements(conn, "income_statements", company_id, sym,
-                                    [normalize.map_income_statement(r) for r in income])
-        n += repo.upsert_statements(conn, "balance_sheets", company_id, sym,
-                                    [normalize.map_balance_sheet(r) for r in balance])
-        n += repo.upsert_statements(conn, "cash_flow_statements", company_id, sym,
-                                    [normalize.map_cash_flow(r) for r in cashflow])
+        # EDGAR (edgar_facts) já entrega linhas no formato do schema; FMP passa
+        # pelos mapeadores de normalização.
+        if getattr(provider, "pre_normalized", False):
+            inc_rows, bal_rows, cfw_rows = income, balance, cashflow
+        else:
+            inc_rows = [normalize.map_income_statement(r) for r in income]
+            bal_rows = [normalize.map_balance_sheet(r) for r in balance]
+            cfw_rows = [normalize.map_cash_flow(r) for r in cashflow]
+        n += repo.upsert_statements(conn, "income_statements", company_id, sym, inc_rows)
+        n += repo.upsert_statements(conn, "balance_sheets", company_id, sym, bal_rows)
+        n += repo.upsert_statements(conn, "cash_flow_statements", company_id, sym, cfw_rows)
         if with_prices:
             try:
                 n += repo.upsert_prices_daily(conn, sym, provider.get_prices_daily(sym))
@@ -175,5 +227,17 @@ def estimate(n_symbols: int, *, with_prices: bool = True) -> dict:
     return est
 
 
-def make_provider(budget_limit: Optional[int] = None) -> FmpProvider:
-    return build_default_provider(budget_limit=budget_limit)
+def make_provider(budget_limit: Optional[int] = None, source: str | None = None):
+    """Provider conforme a fonte configurada.
+
+    'edgar' (padrão): SEC EDGAR p/ fundamentos + yfinance p/ preços (composto).
+    'fmp': FmpProvider (só com licença compatível com armazenamento local).
+    """
+    from core.config import settings
+    src = (source or settings.us_source).lower()
+    if src == "fmp":
+        return build_default_provider(budget_limit=budget_limit)
+    from data_pipeline.us.edgar import build_edgar_provider
+    from data_pipeline.us.prices_yf import YFinanceProvider
+    return CompositeProvider(build_edgar_provider(budget_limit=budget_limit),
+                             YFinanceProvider())

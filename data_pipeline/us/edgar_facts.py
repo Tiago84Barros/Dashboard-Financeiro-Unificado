@@ -1,0 +1,242 @@
+"""
+data_pipeline/us/edgar_facts.py
+Tradução XBRL (SEC EDGAR companyfacts) → linhas do schema market_us.*.
+
+Por que EDGAR: dados públicos, oficiais e de domínio público — sem licença
+restritiva, sem cláusula de deleção e sem limite de exibição (a FMP proíbe cópia/
+armazenamento e exige apagar tudo ao cancelar; ver docs/empresas_americanas.md).
+
+Três diferenças importantes em relação à FMP, tratadas aqui:
+
+  1. CONCEITOS: o mesmo número aparece sob tags diferentes conforme a empresa
+     (ex.: receita como Revenues ou RevenueFromContractWithCustomer...). Resolvido
+     por lista de aliases em ordem de prioridade.
+  2. SINAIS: no XBRL, saídas de caixa são POSITIVAS (capex = pagamento). O resto
+     do projeto segue a convenção capex negativo (fcf = cfo + capex). As tags de
+     pagamento são negadas aqui, uma única vez, na fronteira.
+  3. PIT: cada fato traz `filed` — a data em que o filing ficou público. É a
+     melhor `available_at` possível (mais rigorosa que o acceptedDate da FMP).
+
+Puro (sem rede/DB). Coberto por tests/test_us_edgar_facts.py.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Any, Optional
+
+from data_pipeline.us.normalize import content_hash, parse_date, to_float
+
+_USD = "USD"
+_SHARES = "shares"
+_USD_PER_SHARE = "USD/shares"
+
+# Duração aceita como "anual" (10-K com exercícios de ~12 meses).
+_ANNUAL_MIN_DAYS, _ANNUAL_MAX_DAYS = 350, 380
+
+# ── Mapas de conceitos (ordem = prioridade) ───────────────────────────────────
+INCOME_CONCEPTS: dict[str, list[str]] = {
+    "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues", "SalesRevenueNet",
+                "RevenueFromContractWithCustomerIncludingAssessedTax"],
+    "cost_of_revenue": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
+    "gross_profit": ["GrossProfit"],
+    "rnd_expenses": ["ResearchAndDevelopmentExpense"],
+    "sga_expenses": ["SellingGeneralAndAdministrativeExpense",
+                     "GeneralAndAdministrativeExpense"],
+    "operating_income": ["OperatingIncomeLoss"],
+    "interest_expense": ["InterestExpense", "InterestExpenseDebt"],
+    "income_tax": ["IncomeTaxExpenseBenefit"],
+    "net_income": ["NetIncomeLoss", "ProfitLoss"],
+}
+INCOME_SHARE_CONCEPTS = {
+    "eps": (["EarningsPerShareBasic"], _USD_PER_SHARE),
+    "eps_diluted": (["EarningsPerShareDiluted"], _USD_PER_SHARE),
+    "weighted_shares": (["WeightedAverageNumberOfSharesOutstandingBasic",
+                         "WeightedAverageNumberOfSharesOutstanding"], _SHARES),
+    "weighted_shares_diluted": (["WeightedAverageNumberOfDilutedSharesOutstanding"], _SHARES),
+}
+
+BALANCE_CONCEPTS: dict[str, list[str]] = {
+    "cash_and_equivalents": ["CashAndCashEquivalentsAtCarryingValue",
+                             "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
+    "short_term_investments": ["ShortTermInvestments", "MarketableSecuritiesCurrent"],
+    "current_assets": ["AssetsCurrent"],
+    "total_assets": ["Assets"],
+    "goodwill": ["Goodwill"],
+    "intangibles": ["IntangibleAssetsNetExcludingGoodwill", "FiniteLivedIntangibleAssetsNet"],
+    "short_term_debt": ["LongTermDebtCurrent", "ShortTermBorrowings", "DebtCurrent"],
+    "long_term_debt": ["LongTermDebtNoncurrent", "LongTermDebt"],
+    "current_liabilities": ["LiabilitiesCurrent"],
+    "total_liabilities": ["Liabilities"],
+    "total_equity": ["StockholdersEquity",
+                     "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+    "retained_earnings": ["RetainedEarningsAccumulatedDeficit"],
+}
+BALANCE_SHARE_CONCEPTS = {
+    "shares_outstanding": (["CommonStockSharesOutstanding", "CommonStockSharesIssued"], _SHARES),
+}
+
+CASHFLOW_CONCEPTS: dict[str, list[str]] = {
+    "operating_cash_flow": ["NetCashProvidedByUsedInOperatingActivities",
+                            "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
+    "capex": ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
+    "acquisitions": ["PaymentsToAcquireBusinessesNetOfCashAcquired"],
+    "investments": ["PaymentsToAcquireInvestments"],
+    "stock_issuance": ["ProceedsFromIssuanceOfCommonStock"],
+    "stock_repurchase": ["PaymentsForRepurchaseOfCommonStock"],
+    "debt_issuance": ["ProceedsFromIssuanceOfLongTermDebt", "ProceedsFromNotesPayable"],
+    "debt_repayment": ["RepaymentsOfLongTermDebt", "RepaymentsOfDebt"],
+    "dividends_paid": ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"],
+    "stock_based_compensation": ["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense"],
+}
+
+# Campos cujo XBRL é "pagamento" (positivo) e que o projeto guarda NEGATIVO,
+# para casar com a convenção usada no resto do código (fcf = cfo + capex).
+NEGATE_FIELDS = frozenset({"capex", "acquisitions", "investments", "stock_repurchase",
+                           "debt_repayment", "dividends_paid"})
+
+
+def _is_annual_duration(start: Optional[str], end: str) -> bool:
+    """True para fatos instantâneos (sem start) ou durações de ~12 meses."""
+    if not start:
+        return True
+    d0, d1 = parse_date(start), parse_date(end)
+    if d0 is None or d1 is None:
+        return False
+    return _ANNUAL_MIN_DAYS <= (d1 - d0).days <= _ANNUAL_MAX_DAYS
+
+
+def _entries(cf: dict, tag: str, unit: str) -> list[dict]:
+    facts = (cf or {}).get("facts", {})
+    for taxonomy in ("us-gaap", "ifrs-full", "dei"):
+        node = facts.get(taxonomy, {}).get(tag)
+        if node:
+            return node.get("units", {}).get(unit, []) or []
+    return []
+
+
+def _annual_points(entries: list[dict]) -> dict[str, dict]:
+    """{period_end: {val, filed}} de 10-K, escolhendo o filing MAIS ANTIGO.
+
+    O 10-K de 2023 traz 2022 como comparativo; o original de 2022 foi arquivado
+    antes. Pegar o `filed` mais antigo por período dá a data em que o número
+    ficou conhecível pela primeira vez — que é o que o PIT exige.
+    """
+    by_end: dict[str, dict] = {}
+    for e in entries:
+        if not str(e.get("form") or "").startswith("10-K"):
+            continue
+        end, filed = e.get("end"), e.get("filed")
+        if not end or not filed:
+            continue
+        if not _is_annual_duration(e.get("start"), end):
+            continue
+        cur = by_end.get(end)
+        if cur is None or str(filed) < str(cur["filed"]):
+            by_end[end] = {"val": e.get("val"), "filed": filed}
+    return by_end
+
+
+def _collect(cf: dict, concepts: dict[str, list[str]], unit: str = _USD) -> dict[str, dict]:
+    """{field: {end: {val, filed}}} — primeiro alias que tiver dado para o período."""
+    out: dict[str, dict] = {}
+    for field, tags in concepts.items():
+        merged: dict[str, dict] = {}
+        for tag in tags:
+            for end, point in _annual_points(_entries(cf, tag, unit)).items():
+                merged.setdefault(end, point)   # alias anterior tem prioridade
+        out[field] = merged
+    return out
+
+
+def _collect_units(cf: dict, concepts: dict) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for field, (tags, unit) in concepts.items():
+        merged: dict[str, dict] = {}
+        for tag in tags:
+            for end, point in _annual_points(_entries(cf, tag, unit)).items():
+                merged.setdefault(end, point)
+        out[field] = merged
+    return out
+
+
+def _build_rows(collected: dict[str, dict], symbol: str | None = None) -> list[dict]:
+    """Monta uma linha por período, com available_at conservador (filing mais tardio)."""
+    ends: set[str] = set()
+    for per_field in collected.values():
+        ends.update(per_field.keys())
+
+    rows = []
+    for end in sorted(ends):
+        d = parse_date(end)
+        if d is None:
+            continue
+        row: dict[str, Any] = {}
+        filings: list[str] = []
+        for field, per_field in collected.items():
+            point = per_field.get(end)
+            if point is None:
+                row[field] = None            # ausente ≠ zero
+                continue
+            val = to_float(point["val"])
+            if val is not None and field in NEGATE_FIELDS:
+                val = -val                    # pagamento (XBRL +) → saída (projeto −)
+            row[field] = val
+            filings.append(str(point["filed"]))
+        if not filings:
+            continue
+        # conservador: só é conhecível quando o ÚLTIMO insumo da linha foi arquivado
+        available = max(filings)
+        row.update({
+            "period": "annual", "fiscal_year": d.year, "fiscal_quarter": 0,
+            "reference_date": d, "published_date": parse_date(available),
+            "available_at": parse_date(available),
+            "currency": "USD", "unit": "absolute", "source": "sec_edgar",
+        })
+        if symbol:
+            row["symbol"] = symbol
+        row["content_hash"] = content_hash(row)
+        rows.append(row)
+    return rows
+
+
+# ── API pública ───────────────────────────────────────────────────────────────
+def build_income_rows(cf: dict, symbol: str | None = None) -> list[dict]:
+    collected = _collect(cf, INCOME_CONCEPTS, _USD)
+    collected.update(_collect_units(cf, INCOME_SHARE_CONCEPTS))
+    rows = _build_rows(collected, symbol)
+    for r in rows:
+        # EBIT não é tag XBRL: usa o resultado operacional (mesma definição do projeto)
+        r["ebit"] = r.get("operating_income")
+        r["ebitda"] = None        # exigiria D&A do fluxo; ausente > inventado
+    return rows
+
+
+def build_balance_rows(cf: dict, symbol: str | None = None) -> list[dict]:
+    collected = _collect(cf, BALANCE_CONCEPTS, _USD)
+    collected.update(_collect_units(cf, BALANCE_SHARE_CONCEPTS))
+    rows = _build_rows(collected, symbol)
+    for r in rows:
+        std, ltd = r.get("short_term_debt"), r.get("long_term_debt")
+        r["total_debt"] = None if std is None and ltd is None else (std or 0) + (ltd or 0)
+        cash = r.get("cash_and_equivalents")
+        r["net_debt"] = None if r["total_debt"] is None or cash is None \
+            else r["total_debt"] - cash
+        eq = r.get("total_equity")
+        r["invested_capital"] = None if eq is None or r["total_debt"] is None \
+            else eq + r["total_debt"] - (cash or 0.0)
+    return rows
+
+
+def build_cashflow_rows(cf: dict, symbol: str | None = None) -> list[dict]:
+    rows = _build_rows(_collect(cf, CASHFLOW_CONCEPTS, _USD), symbol)
+    for r in rows:
+        ocf, capex = r.get("operating_cash_flow"), r.get("capex")
+        # FCF não existe no XBRL: derivado (capex já está negativo aqui)
+        r["free_cash_flow"] = None if ocf is None or capex is None else ocf + capex
+    return rows
+
+
+def cik_from_facts(cf: dict) -> Optional[str]:
+    cik = (cf or {}).get("cik")
+    return None if cik is None else str(cik).zfill(10)

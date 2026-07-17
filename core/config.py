@@ -74,13 +74,26 @@ class Settings:
     GEMINI_BASE_URL: str = _get_secret(
         "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
 
-    # ── Financial Modeling Prep (Empresas Americanas) ─────────────────────────
-    # Fonte primária de fundamentos/preços dos EUA. A chave é usada APENAS pela
-    # camada de ingestão (data_pipeline/us, run_us_ingest.py) — NUNCA pela view,
-    # que lê só o warehouse local. Nunca gravar a chave no banco, log ou UI.
-    # Aceita FMP_API_KEY (preferida) ou FINANCIAL_MODELING_PREP_API_KEY.
+    # ── Empresas Americanas — fonte de dados ──────────────────────────────────
+    # FONTE PADRÃO: SEC EDGAR (dados públicos, de domínio público) p/ fundamentos
+    # + yfinance p/ preços. Escolhida após a leitura dos Termos da FMP, que
+    # proíbem cópia/armazenamento sem autorização escrita e exigem apagar tudo
+    # (inclusive cache) ao encerrar a assinatura — incompatível com o warehouse
+    # local. Ver docs/empresas_americanas.md.
+    #
+    # A SEC EXIGE User-Agent identificando o consumidor, com e-mail de contato,
+    # senão responde 403. NÃO é segredo (é identificação), mas é obrigatório.
+    # Formato: "Seu Nome seu@email.com"
+    SEC_USER_AGENT: str = _get_secret("SEC_USER_AGENT")
+
+    # FMP: opcional e DESATIVADA por padrão. Só use com licença compatível com
+    # armazenamento local. A chave, se existir, é usada APENAS pela ingestão —
+    # NUNCA pela view — e jamais vai para banco, log ou UI.
     FMP_API_KEY: str = _get_secret("FMP_API_KEY") or _get_secret("FINANCIAL_MODELING_PREP_API_KEY")
     FMP_BASE_URL: str = _get_secret("FMP_BASE_URL", "https://financialmodelingprep.com/api")
+
+    # Fonte de fundamentos: 'edgar' (padrão) | 'fmp'
+    US_FUNDAMENTALS_SOURCE: str = _get_secret("US_FUNDAMENTALS_SOURCE", "edgar")
 
     # ── Ambiente ──────────────────────────────────────────────────────────────
     APP_ENV: str = _get_secret("APP_ENV", "development")
@@ -140,10 +153,25 @@ class Settings:
     def has_fmp(self) -> bool:
         """True se a chave da Financial Modeling Prep estiver configurada.
 
-        Só a ingestão (CLI/pipeline) precisa dela. A interface de Empresas
-        Americanas funciona offline lendo o warehouse local mesmo sem chave.
+        Fonte OPCIONAL (padrão é a SEC EDGAR). Só a ingestão precisa dela.
         """
         return bool(self.FMP_API_KEY)
+
+    @property
+    def has_sec_user_agent(self) -> bool:
+        """True se SEC_USER_AGENT estiver configurado (exigido pela SEC)."""
+        return bool(self.SEC_USER_AGENT)
+
+    @property
+    def us_source(self) -> str:
+        """Fonte de fundamentos EUA: 'edgar' (padrão) ou 'fmp'."""
+        src = (self.US_FUNDAMENTALS_SOURCE or "edgar").strip().lower()
+        return src if src in ("edgar", "fmp") else "edgar"
+
+    @property
+    def us_ingest_ready(self) -> bool:
+        """True se a fonte escolhida tem o que precisa para ingerir."""
+        return self.has_fmp if self.us_source == "fmp" else self.has_sec_user_agent
 
     @property
     def has_openai(self) -> bool:

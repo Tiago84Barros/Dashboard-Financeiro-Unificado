@@ -2,8 +2,29 @@
 
 Seção de análise fundamentalista de empresas dos EUA (NYSE/Nasdaq/AMEX),
 inspirada em Empresas B3, Portfólio B3 e Carteira de FIIs. **Offline-first**:
-a interface lê apenas o **warehouse local** (`market_us.*`); a API (Financial
-Modeling Prep) é usada só na ingestão.
+a interface lê apenas o **warehouse local** (`market_us.*`); as APIs são usadas
+só na ingestão.
+
+## Fontes de dados (decisão de 2026-07)
+
+**Padrão: SEC EDGAR** (fundamentos) + **yfinance** (preços). A FMP era a fonte
+original do projeto, mas a leitura dos seus Termos de Serviço revelou cláusulas
+incompatíveis com o warehouse local: licença revogada ao fim da assinatura
+(§2.1), obrigação de **apagar todos os dados, inclusive cache**, ao encerrar
+(§6.3, com direito de auditoria), cópia/download exigindo aprovação escrita na
+licença pessoal (§2.2.1) e exibição em aplicações multiusuário exigindo acordo
+específico (§2.2.2). A EDGAR não tem nada disso: filings são **domínio público**.
+
+Bônus técnico: a EDGAR entrega a **filing date** de cada 10-K, usada como
+`available_at` — point-in-time mais rigoroso que o `acceptedDate` da FMP.
+Validado ao vivo: AAPL FY2023–FY2025 bate com os 10-K oficiais, com
+`available_at` nas datas reais de arquivamento (início de novembro).
+
+Requisitos: `SEC_USER_AGENT` no `.env` ("Nome email@contato" — a SEC exige
+identificação, senão responde 403) e ≤ 10 req/s (o provider usa 8). yfinance:
+sem SLA (raspa o Yahoo) — aceitável para preço, não para fundamento. A FMP
+permanece disponível via `US_FUNDAMENTALS_SOURCE=fmp`, apenas com licença
+compatível.
 
 > Estado atual: **módulo completo (Fases 2–8)** — infraestrutura, ingestão,
 > normalização/qualidade/PIT (2–4); score fundamentalista + comparação por
@@ -81,7 +102,8 @@ python run_us_ingest.py backtest --warehouse --top-n 20 --json
 
 ```mermaid
 flowchart LR
-    FMP[FMP API] -->|run_us_ingest.py| STG[staging / raw_payloads]
+    EDGAR[SEC EDGAR<br/>fundamentos 10-K] -->|run_us_ingest.py| STG[staging / raw_payloads]
+    YF[yfinance<br/>preços] -->|run_us_ingest.py| STG
     STG --> VAL[validação]
     VAL --> NRM[normalização<br/>unidades · períodos · PIT]
     NRM --> WH[(warehouse local<br/>market_us.*)]
@@ -95,8 +117,9 @@ flowchart LR
     DOS --> UI
 ```
 
-A interface **nunca** chama a FMP: o caminho `FMP → UI` não existe. A chave
-`FMP_API_KEY` só é lida pela CLI/pipeline.
+A interface **nunca** chama API externa: o caminho `fonte → UI` não existe.
+Credenciais/identificação (`SEC_USER_AGENT`, e `FMP_API_KEY` se usada) são lidas
+só pela CLI/pipeline.
 
 ---
 
@@ -137,25 +160,31 @@ permanente por **CIK**; símbolo negociável em `assets`; histórico de tickers 
 `ingestion_runs`, `ingestion_errors`, `data_quality_audit`, `score_vintages`,
 `raw_payloads`. (Portfólio/backtests entram em migration posterior.)
 
-### 6. Endpoints FMP usados
+### 6. Endpoints usados
 
-`stock/list` (universo), `profile/{symbol}`, `income-statement/{symbol}`,
-`balance-sheet-statement/{symbol}`, `cash-flow-statement/{symbol}`,
-`key-metrics/{symbol}`, `historical-price-full/{symbol}`,
-`historical-price-full/stock_dividend/{symbol}`,
-`historical-price-full/stock_split/{symbol}`. A camada de provedor é abstrata —
-trocar/complementar a FMP não exige reescrever a ingestão.
+**SEC EDGAR (padrão)**: `www.sec.gov/files/company_tickers_exchange.json`
+(universo com bolsa), `data.sec.gov/submissions/CIK##########.json` (perfil),
+`data.sec.gov/api/xbrl/companyfacts/CIK##########.json` (todas as demonstrações
+XBRL de uma vez). **yfinance**: `Ticker.history()` (OHLCV ajustado, dividendos,
+splits). **FMP (opcional)**: `stock/list`, `profile`, `income-statement`,
+`balance-sheet-statement`, `cash-flow-statement`, `key-metrics`,
+`historical-price-full/*`. A camada de provedor é abstrata — trocar a fonte não
+exige reescrever a ingestão (foi exatamente assim que a migração FMP→EDGAR foi
+feita).
 
 ### 7. Riscos
 
-- **Licença FMP**: verifique os termos quanto ao armazenamento perpétuo dos
-  dados. O projeto só implementa o armazenamento técnico local.
-- **Custo/limite de plano**: a carga inicial completa pode exceder o rate limit;
-  use `estimate` (dry-run) antes e faça a carga em lotes durante uma assinatura.
+- **Cobertura EDGAR**: só empresas que arquivam na SEC (inclui ADRs com 20-F em
+  fase futura; hoje só 10-K anual). Setor vem do código SIC, menos granular que
+  a taxonomia GICS da FMP.
+- **yfinance sem SLA**: raspa o Yahoo; pode quebrar sem aviso. Aceitável para
+  preço (dado replicado), inadequado para fundamento — que por isso vem da SEC.
 - **Reutilização de ticker/CIK ausente**: empresas sem CIK usam o nome como
   âncora fraca (upsert menos preciso) — documentado no código.
 - **Nunca gravar sob ticker errado**: divergência símbolo solicitado × retornado
   é rejeitada (aprendizado do bug brapi do lado B3).
+- **FMP (se reativada)**: os Termos exigem apagar os dados ao encerrar a
+  assinatura — incompatível com warehouse permanente sem autorização escrita.
 
 ### 8. Plano de execução
 
@@ -170,8 +199,8 @@ Fase 6 (carteira + backtest + Rank-IC), Fase 7 (Fora da Curva), Fase 8
 
 ```bash
 # .env (nunca commitado). Ver .env.example.
-FMP_API_KEY="sua_chave"          # usada SÓ pela ingestão
-FMP_BASE_URL="https://financialmodelingprep.com/api"
+SEC_USER_AGENT="Seu Nome seu@email.com"   # exigido pela SEC (identificação, não segredo)
+US_FUNDAMENTALS_SOURCE="edgar"            # padrão; 'fmp' só com licença compatível
 ```
 
 O warehouse local sobe via `warehouse/docker-compose.yml` (Postgres 17, porta
