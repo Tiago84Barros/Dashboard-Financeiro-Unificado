@@ -21,6 +21,7 @@ python scripts\backfill_fii_documents_local.py `
     --download-attempts 2 `
     --max-processing-attempts 3 `
     --checkpoint-every 500 `
+    --publish-every-checkpoint `
     --sleep-seconds 0.2
 
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

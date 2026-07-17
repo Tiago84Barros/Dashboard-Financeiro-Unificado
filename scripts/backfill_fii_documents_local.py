@@ -34,6 +34,7 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--download-attempts", type=int, default=2)
     parser.add_argument("--retain-binaries", action="store_true")
     parser.add_argument("--checkpoint-every", type=int, default=1000)
+    parser.add_argument("--publish-every-checkpoint", action="store_true")
     parser.add_argument("--max-processing-attempts", type=int, default=3)
     parser.add_argument("--sleep-seconds", type=float, default=.25)
     parser.add_argument("--log-file", default="local_staging/logs/fii_document_backfill.jsonl")
@@ -121,7 +122,7 @@ def _retry_failed(engine, max_attempts: int) -> int:
     return max(int(result.rowcount or 0), 0)
 
 
-def _checkpoint() -> dict:
+def _checkpoint(*, publish_remote: bool = False) -> dict:
     from data_pipeline.market.fii_confidence_pipeline import calibrate_parsers
     from data_pipeline.market.fii_entity_resolution import resolve_entities
     from data_pipeline.market.fii_ingest import reprocess, snapshot_methodology_v4
@@ -137,6 +138,24 @@ def _checkpoint() -> dict:
             report[name] = function()
         except Exception as exc:  # backfill deve continuar e deixar evidencia
             report[name] = {"status": "failed", "error": str(exc)[:1000]}
+    if publish_remote:
+        child_environment = os.environ.copy()
+        # O processo filho deve reencontrar o Supabase nos secrets; a origem
+        # local e descoberta diretamente no container Docker.
+        for key in ("SUPABASE_UNIFICADO_URL", "DATABASE_URL", "SUPABASE_DB_URL",
+                    "WAREHOUSE_DB_URL"):
+            child_environment.pop(key, None)
+        try:
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "publish_fii_selection_from_local.py")],
+                check=True, capture_output=True, text=True, timeout=300,
+                env=child_environment, cwd=str(ROOT),
+            )
+            output = [line for line in completed.stdout.splitlines() if line.strip()]
+            report["remote_publish"] = (json.loads(output[-1]) if output else
+                                         {"status": "completed"})
+        except Exception as exc:
+            report["remote_publish"] = {"status": "failed", "error": str(exc)[:1000]}
     return report
 
 
@@ -239,13 +258,14 @@ def main() -> int:
             if processed >= next_checkpoint:
                 _append_log(log_path, {
                     "event": "checkpoint", "at": datetime.now(timezone.utc).isoformat(),
-                    "processed_session": processed, "result": _checkpoint(),
+                    "processed_session": processed,
+                    "result": _checkpoint(publish_remote=args.publish_every_checkpoint),
                     "queue": _queue_profile(engine),
                 })
                 next_checkpoint += max(int(args.checkpoint_every), 1)
             time.sleep(max(float(args.sleep_seconds), 0.0))
     finally:
-        final_checkpoint = _checkpoint()
+        final_checkpoint = _checkpoint(publish_remote=args.publish_every_checkpoint)
         final = {
             "event": "finished", "at": datetime.now(timezone.utc).isoformat(),
             "reason": stopped_reason, "processed_session": processed,
