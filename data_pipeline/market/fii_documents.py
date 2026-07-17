@@ -364,8 +364,10 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
     result["selected"] = len(docs)
     for doc in docs:
         try:
+            attempt_number = max(int(doc.get("processing_attempts") or 1), 1)
+            adaptive_timeout = max(int(download_timeout), 5) * min(attempt_number, 3)
             content, mime = _download(str(doc["source_url"]),
-                                      timeout=max(int(download_timeout), 5),
+                                      timeout=adaptive_timeout,
                                       max_bytes=max(int(max_document_bytes), 1),
                                       attempts=max(int(download_attempts), 1))
             if result["bytes_processed"] + len(content) > max(int(max_batch_bytes), 1):

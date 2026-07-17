@@ -18,6 +18,7 @@ MIGRATIONS = (
     ("038_fii_cri_archive_checkpoints.sql", "market.fii_cri_archive_loads"),
     ("039_fii_selection_inputs_snapshot.sql", "market.fii_selection_inputs"),
     ("041_fii_evidence_review_and_rls.sql", "market.fii_schema_migrations"),
+    ("042_fii_document_source_hash_storage.sql", "market.idx_fii_document_versions_source_hash"),
 )
 
 

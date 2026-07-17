@@ -34,6 +34,7 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--download-attempts", type=int, default=2)
     parser.add_argument("--retain-binaries", action="store_true")
     parser.add_argument("--checkpoint-every", type=int, default=1000)
+    parser.add_argument("--max-processing-attempts", type=int, default=3)
     parser.add_argument("--sleep-seconds", type=float, default=.25)
     parser.add_argument("--log-file", default="local_staging/logs/fii_document_backfill.jsonl")
     parser.add_argument("--stop-file", default="local_staging/fii_document_backfill.stop")
@@ -97,6 +98,26 @@ def _release_abandoned_claims(engine) -> int:
              WHERE processing_status='processing'
                AND processing_started_at < now()-interval '30 minutes'
         """))
+    return max(int(result.rowcount or 0), 0)
+
+
+def _retry_failed(engine, max_attempts: int) -> int:
+    """Reabre falhas transitorias; rejeicoes por tamanho permanecem finais."""
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        result = conn.execute(text("""
+            UPDATE market.fii_documents d
+               SET processing_status='pending',next_retry_at=NULL
+             WHERE d.processing_status='failed'
+               AND d.processing_attempts < :max_attempts
+               AND NOT EXISTS (
+                 SELECT 1 FROM market.fii_audit_events a
+                  WHERE a.event_type='document_rejected_size'
+                    AND a.entity_type='fii_document'
+                    AND a.entity_id=d.id::text
+               )
+        """), {"max_attempts": max(int(max_attempts), 1)})
     return max(int(result.rowcount or 0), 0)
 
 
@@ -204,6 +225,14 @@ def main() -> int:
             if selected == 0:
                 empty_rounds += 1
                 if empty_rounds >= 3:
+                    retried = _retry_failed(engine, args.max_processing_attempts)
+                    _append_log(log_path, {
+                        "event": "retry_round", "at": datetime.now(timezone.utc).isoformat(),
+                        "reopened": retried, "processed_session": processed,
+                    })
+                    if retried:
+                        empty_rounds = 0
+                        continue
                     break
             else:
                 empty_rounds = 0
