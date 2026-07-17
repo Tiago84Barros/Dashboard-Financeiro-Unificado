@@ -1757,6 +1757,56 @@ def render(show_header: bool = True) -> None:
         st.session_state["pb3_hist_audit"]      = hist_audit
         st.session_state["pb3_entry_guard"]     = entry_guard
         st.session_state["pb3_entry_guard_df"]  = df_entry_guard
+        # Evidencia persistida: a tela continua funcional se o banco estiver
+        # indisponivel, mas cada execucao que puder ser gravada recebe manifesto,
+        # parametros, versoes e qualidade PIT explicitamente declarada.
+        try:
+            from core.b3_validation import persist_validation_run
+            from core.database import get_engine
+
+            _eng_validation = get_engine()
+            if _eng_validation is not None:
+                _summary_validation = {
+                    "segments_processed": len(resultados),
+                    "segments_with_history": sum(
+                        1 for r in resultados if int(r.get("meses", 0) or 0) > 0
+                    ),
+                    "quality_summary": quality_summary,
+                    "price_rows": int(len(df_precos_all)),
+                }
+                _params_validation = {
+                    "score_version": SCORE_VERSION,
+                    "model_schema_version": MODEL_SCHEMA_VERSION,
+                    "approval_mode": criterio_modo,
+                    "validation_window": _janela_label,
+                    "walk_forward": bool(walk_forward),
+                    "start_year": int(ano_inicio),
+                    "minimum_income_history_years": int(min_anos_dre),
+                    "minimum_companies_group": int(min_empresas_grupo),
+                    "cheapness_weight": float(cheapness_weight),
+                    "minimum_market_cap": float(min_mcap),
+                    "rebalance_month": int(_REBAL_MONTH),
+                }
+                _run_id = persist_validation_run(
+                    engine=_eng_validation,
+                    methodology_version=str(MODEL_SCHEMA_VERSION),
+                    score_version=SCORE_VERSION,
+                    validation_mode=("walk_forward" if walk_forward else _janela_label),
+                    input_params=_params_validation,
+                    result_summary=_summary_validation,
+                    status="completed" if resultados else "blocked",
+                    notes="Execucao interativa da Criacao de Portfolio B3.",
+                )
+                if _run_id:
+                    st.session_state["pb3_validation_run_id"] = _run_id
+                    st.caption(
+                        f"Registro auditavel: `{_run_id[:8]}`. A execucao fica como "
+                        "diligencia ate existirem PIT publicado e universo historico "
+                        "completo de deslistadas."
+                    )
+        except Exception:
+            # Persistencia e auditoria nunca podem impedir uma analise solicitada.
+            pass
 
     resultados = st.session_state.get("pb3_resultados", [])
     df_set     = st.session_state.get("pb3_df_set", df_set)

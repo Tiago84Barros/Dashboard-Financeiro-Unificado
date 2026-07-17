@@ -1,9 +1,6 @@
 name: Market refresh (BRAPI Pro)
 
-# Mantém o market.* fresco APÓS o bootstrap: refresh diário leve (preços +
-# dividendos + indicadores spot) e refresh anual semanal (demonstrações
-# completas). Opera só sobre os tickers JÁ carregados (--source market), sem
-# gastar cota com pendentes (esses ficam no bootstrap-brapi.yml).
+# Atualizacao leve e independente: Empresas B3 nao depende do schema de FIIs.
 on:
   workflow_dispatch:
     inputs:
@@ -13,8 +10,8 @@ on:
         options: ["schema", "daily", "annual", "both"]
         default: "daily"
   schedule:
-    - cron: "0 9 * * *"    # diário 06:00 BRT — daily (após o bootstrap das 03:00)
-    - cron: "0 8 * * 6"    # sábado 05:00 BRT — annual (demonstrações)
+    - cron: "0 9 * * *"
+    - cron: "0 8 * * 6"
 
 permissions:
   contents: read
@@ -24,19 +21,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  refresh:
-    name: Market refresh
+  refresh-b3:
+    name: Atualizacao Empresas B3
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
       APP_ENV: production
       PYTHONUNBUFFERED: "1"
       SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
-      DATABASE_URL:           ${{ secrets.DATABASE_URL }}
-      SUPABASE_DB_URL:        ${{ secrets.SUPABASE_DB_URL }}
-      OWNER_USER_ID:          ${{ secrets.OWNER_USER_ID }}
-      BRAPI_TOKEN:            ${{ secrets.BRAPI_TOKEN }}
-      MARKET_DELAY:           "1.0"
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
+      BRAPI_TOKEN: ${{ secrets.BRAPI_TOKEN }}
+      MARKET_DELAY: "1.0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,19 +41,17 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: requirements-pipeline.txt
-      - name: Instalar dependências
+      - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-pipeline.txt
-      - name: Confirmar token (sem expor)
+      - name: Confirmar token sem expor
         run: |
           python - <<'PY'
           import core.brapi as b
           assert b._token(), "BRAPI_TOKEN ausente"
           print("BRAPI_TOKEN ok | len:", len(b._token()))
           PY
-      # Decide o modo: schedule de sábado 08:00 UTC => annual; demais => daily.
-      # workflow_dispatch usa o input 'mode'.
       - name: Definir modo
         id: mode
         run: |
@@ -65,41 +60,74 @@ jobs:
             if [ "${{ github.event.schedule }}" = "0 8 * * 6" ]; then M="annual"; else M="daily"; fi
           fi
           echo "mode=$M" >> "$GITHUB_OUTPUT"
-          echo "Modo: $M"
-      - name: Garantir schema FII v6 (idempotente)
-        run: python -m scripts.apply_fii_schema
-      - name: Daily (preços + dividendos + spot)
+      - name: Garantir schema B3 auditavel
+        if: steps.mode.outputs.mode != 'schema'
+        run: python -m scripts.apply_b3_schema
+      - name: Daily B3
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py daily --source market --json
-      - name: Annual (demonstrações)
+      - name: Annual B3
         if: steps.mode.outputs.mode == 'annual' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py annual --source market --json
-      # O reprocessamento histórico fica no warehouse local. Manter este passo
-      # no Supabase recriaria market.calculated_metric_vintages após a limpeza.
-      - name: FIIs (ranking — universo type=fund, filtra ETF por setor)
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis --json
-      - name: FIIs — enriquecimento CVM (segmento/tipo/VPA/cotistas via CNPJ)
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-cvm --json
-      # O armazém histórico (CVM/CRI/PDF/B3/PIT) roda exclusivamente no
-      # warehouse local com `run_market_ingest.py fiis-enrich --warehouse`.
-      # Estas etapas não devem repovoar o Supabase remoto.
-      - name: FIIs — resolução de locatários, devedores e emissores
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-entities --json
-      - name: FIIs — calibração dos parsers por revisão humana
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-confidence --json
-      - name: FIIs — séries históricas (preços + rendimentos p/ backtest)
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-series --json
-      - name: Benchmark FIIs (IFIX via ETF XFIX11 p/ backtest)
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py benchmark --json
-      - name: FIIs — monitoramento e gates
-        if: always() && steps.mode.outputs.mode != 'schema'
-        run: python run_market_ingest.py fiis-monitor --json
-      - name: Setores — taxonomia B3 (public.setores + mapa aprendido CVM->B3)
+      - name: Taxonomia B3
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py setores --json
+
+  refresh-fiis:
+    name: Atualizacao FIIs
+    needs: refresh-b3
+    if: always() && needs.refresh-b3.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      APP_ENV: production
+      PYTHONUNBUFFERED: "1"
+      SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
+      BRAPI_TOKEN: ${{ secrets.BRAPI_TOKEN }}
+      MARKET_DELAY: "1.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-pipeline.txt
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-pipeline.txt
+      - name: Definir modo
+        id: mode
+        run: |
+          M="${{ github.event.inputs.mode }}"
+          if [ -z "$M" ]; then
+            if [ "${{ github.event.schedule }}" = "0 8 * * 6" ]; then M="annual"; else M="daily"; fi
+          fi
+          echo "mode=$M" >> "$GITHUB_OUTPUT"
+      - name: Garantir schema FII v6
+        if: steps.mode.outputs.mode != 'schema'
+        run: python -m scripts.apply_fii_schema
+      - name: Ranking FIIs
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis --json
+      - name: Enriquecimento CVM de FIIs
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-cvm --json
+      - name: Resolver entidades FII
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-entities --json
+      - name: Calibrar parsers FII
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-confidence --json
+      - name: Series historicas FII
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py fiis-series --json
+      - name: Benchmark IFIX
+        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
+        run: python run_market_ingest.py benchmark --json
+      - name: Monitoramento FII
+        if: always() && steps.mode.outputs.mode != 'schema'
+        run: python run_market_ingest.py fiis-monitor --json

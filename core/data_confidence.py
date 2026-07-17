@@ -130,7 +130,11 @@ def score_ticker(signals: dict, current_year: int,
 _SQL_SIGNALS = """
 WITH ativos AS (
     SELECT ticker FROM market.assets
-    WHERE is_active AND asset_type = 'stock' {tk_filter}
+    -- Universo de acoes analisaveis: evita misturar ETFs/BDRs e ativos sem
+    -- empresa vinculada, que inflavam o denominador do painel de confianca.
+    WHERE is_active
+      AND asset_type IN ('stock', 'unit')
+      AND company_id IS NOT NULL {tk_filter}
 ),
 ttm AS (
     SELECT ticker, count(DISTINCT metric_name)
