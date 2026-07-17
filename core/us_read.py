@@ -286,6 +286,65 @@ def load_scoring_frame(limit_companies: int = 800) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def load_asymmetry_frame(limit_companies: int = 800) -> pd.DataFrame:
+    """Cross-section de assimetria (Empresas Fora da Curva). Uma linha por empresa.
+
+    Reaproveita as séries anuais e calcula métricas + trajetória + score de
+    assimetria (core.us_asymmetry). Vazio se não houver dados.
+    """
+    from core.us_asymmetry import build_trajectory, score_asymmetry
+    from core.us_metrics import compute_company_metrics
+    cols = ["symbol", "name", "sector", "asymmetry_score", "confidence", "stage"]
+    eng = _engine()
+    if eng is None or not schema_ready():
+        return pd.DataFrame(columns=cols)
+    try:
+        with eng.connect() as conn:
+            comp = pd.read_sql(text(
+                "SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.name) AS name, "
+                "MAX(c.sector) AS sector, MAX(c.industry) AS industry "
+                "FROM market_us.companies c JOIN market_us.assets a ON a.company_id=c.id "
+                "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
+                "  WHERE i.company_id=c.id AND i.period='annual') "
+                "GROUP BY c.id ORDER BY c.id LIMIT :lim"),
+                conn, params={"lim": int(limit_companies)})
+            if comp.empty:
+                return pd.DataFrame(columns=cols)
+            ids = [int(x) for x in comp["id"]]
+
+            def _bulk(table, cols_):
+                q = text(f"SELECT company_id, {', '.join(cols_)} "
+                         f"FROM market_us.{table} WHERE period='annual' "
+                         f"AND company_id IN :ids ORDER BY company_id, fiscal_year"
+                         ).bindparams(bindparam("ids", expanding=True))
+                return pd.read_sql(q, conn, params={"ids": ids})
+
+            inc = _bulk("income_statements", _INCOME_COLS)
+            bal = _bulk("balance_sheets", _BALANCE_COLS)
+            cfw = _bulk("cash_flow_statements", _CASHFLOW_COLS)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("load_asymmetry_frame falhou: %s", exc)
+        return pd.DataFrame(columns=cols)
+
+    inc_g = {k: v.to_dict("records") for k, v in inc.groupby("company_id")} if not inc.empty else {}
+    bal_g = {k: v.to_dict("records") for k, v in bal.groupby("company_id")} if not bal.empty else {}
+    cfw_g = {k: v.to_dict("records") for k, v in cfw.groupby("company_id")} if not cfw.empty else {}
+
+    rows = []
+    for _, c in comp.iterrows():
+        cid = int(c["id"])
+        i, b, f = inc_g.get(cid, []), bal_g.get(cid, []), cfw_g.get(cid, [])
+        m = compute_company_metrics(i, b, f)
+        if m.get("_years", 0) < 3:
+            continue
+        a = score_asymmetry(m, build_trajectory(i, b, f))
+        rows.append({"symbol": c["symbol"], "name": c["name"], "sector": c["sector"],
+                     "industry": c["industry"], **a})
+    df = pd.DataFrame(rows)
+    return df.sort_values("asymmetry_score", ascending=False).reset_index(drop=True) \
+        if not df.empty else df
+
+
 def load_score_panel(score_version: str | None = None,
                      horizon_months: int = 12) -> pd.DataFrame:
     """Painel PIT (date, symbol, score, fwd_return) para o backtest da Fase 6.

@@ -5,11 +5,32 @@ inspirada em Empresas B3, Portfólio B3 e Carteira de FIIs. **Offline-first**:
 a interface lê apenas o **warehouse local** (`market_us.*`); a API (Financial
 Modeling Prep) é usada só na ingestão.
 
-> Estado atual: **Fases 2–6 implementadas** — infraestrutura, ingestão,
+> Estado atual: **Fases 2–7 implementadas** — infraestrutura, ingestão,
 > normalização/qualidade/PIT (2–4); score fundamentalista + comparação por
-> indústria + dossiê (5); carteira-modelo + backtest point-in-time + Rank-IC (6).
-> Falta a aba "Empresas Fora da Curva" (Fase 7) e a Análise Avançada
-> (Piotroski/Altman), marcadas como em construção na UI.
+> indústria + dossiê (5); carteira-modelo + backtest point-in-time + Rank-IC (6);
+> Empresas Fora da Curva (7). Resta apenas a Análise Avançada
+> (Piotroski/Altman), marcada como em construção na UI.
+
+## Empresas Fora da Curva (Fase 7)
+
+Aba **experimental e separada** da carteira principal: aceita maior incerteza e
+maior taxa de erro, porque grandes vencedoras são raras e poucas posições podem
+responder por grande parte do retorno. A saída é uma **hipótese** com sinais,
+riscos e condições de invalidação — **nunca** recomendação automática.
+
+`core/us_asymmetry.py` combina nível e **trajetória** (tendência de margem,
+persistência de crescimento, diluição, SBC/receita, anos de FCF positivo) em um
+score 0–100, com sinais negativos penalizando (diluição excessiva, SBC
+descontrolada, dívida alta, FCF negativo persistente, crescimento sem retorno
+sobre capital). Produz estágio, confiança (por cobertura de dados), classe de
+risco e **tamanho de posição sugerido baixo** (subcarteira pequena).
+
+`core/us_outlier_backtest.py` faz o backtest **retrospectivo**: rótulos
+configuráveis (ex.: 3× em 5 anos), precisão/recall, falsos positivos, **lift
+sobre a taxa-base** (comparação determinística com seleção aleatória),
+distribuição de retornos, **contribuição das maiores vencedoras** e o resultado
+quando parte das posições **vai a zero**. O rótulo usa o futuro apenas como
+alvo — nunca como feature.
 
 ## Carteira e backtest (Fase 6)
 
