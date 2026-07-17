@@ -70,6 +70,12 @@ def score_panel(score_version: str | None = None, horizon_months: int = 12):
                                   horizon_months=horizon_months)
 
 
+@_cache
+def asymmetry_universe(limit_companies: int = 800):
+    """Cross-section de assimetria (Empresas Fora da Curva)."""
+    return _read.load_asymmetry_frame(limit_companies=limit_companies)
+
+
 def backtest(top_n: int = 20, weighting: str = "score") -> dict:
     """Backtest PIT sobre o painel de scores (vazio até computar o histórico)."""
     import core.us_backtest as _bt
