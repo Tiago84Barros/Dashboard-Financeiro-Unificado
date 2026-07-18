@@ -69,6 +69,7 @@ class EdgarProvider(FundamentalsProvider):
         self.limiter = RateLimiter(rate=rate, per=per, time_fn=time_fn, sleep_fn=sleep_fn)
         self.calls_made = 0
         self._ticker_map: dict[str, str] | None = None
+        self._facts_cache: tuple[str, dict | None] = ("", None)  # (symbol, facts)
 
     @property
     def session(self):
@@ -184,10 +185,17 @@ class EdgarProvider(FundamentalsProvider):
 
     # ── demonstrações (XBRL) ─────────────────────────────────────────────────
     def company_facts(self, symbol: str) -> dict | None:
-        cik = self._cik_for(symbol)
-        if not cik:
-            return None
-        return self._get(COMPANYFACTS_URL.format(cik=cik))
+        """companyfacts com cache do ÚLTIMO símbolo — as três demonstrações
+        (income/balance/cashflow) são pedidas em sequência para o mesmo símbolo;
+        sem o cache, baixaríamos o JSON (vários MB) 3× por empresa (gargalo real
+        descoberto na varredura em escala)."""
+        sym = normalize_symbol(symbol) or ""
+        if self._facts_cache[0] == sym:
+            return self._facts_cache[1]
+        cik = self._cik_for(sym)
+        facts = self._get(COMPANYFACTS_URL.format(cik=cik)) if cik else None
+        self._facts_cache = (sym, facts)
+        return facts
 
     def _rows(self, symbol: str, builder, limit: int) -> list[dict]:
         cf = self.company_facts(symbol)
