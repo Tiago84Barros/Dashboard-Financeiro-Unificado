@@ -81,6 +81,8 @@ def main() -> int:
                    help="Supabase (default: SUPABASE_UNIFICADO_URL do .env). Use a "
                         "conexão com privilégio de escrita/DDL.")
     p.add_argument("--dry-run", action="store_true", help="não grava no target")
+    p.add_argument("--batch", type=int, default=150,
+                   help="linhas por transação (lotes pequenos p/ o pooler do Supabase)")
     args = p.parse_args()
 
     target = args.target_url or os.getenv("SUPABASE_UNIFICADO_URL") \
@@ -125,8 +127,20 @@ def main() -> int:
     migration = _MIGRATION.read_text(encoding="utf-8")
     with tgt.begin() as conn:
         conn.execute(text(migration))          # schema + tabela (idempotente)
-        conn.execute(text(_build_upsert()), rows)
-    print(f"publicado: {len(rows)} empresa(s) em market_us.company_snapshots (Supabase).")
+
+    # Upsert em LOTES: 1 statement com todas as linhas (JSONB grandes) estoura o
+    # pooler do Supabase ("server terminated"). Lotes pequenos, cada um em sua
+    # transação; como é upsert idempotente, reexecutar completa se algo falhar.
+    upsert = text(_build_upsert())
+    batch = max(1, int(args.batch))
+    done = 0
+    for i in range(0, len(rows), batch):
+        chunk = rows[i:i + batch]
+        with tgt.begin() as conn:
+            conn.execute(upsert, chunk)
+        done += len(chunk)
+        print(f"  ... {done}/{len(rows)}")
+    print(f"publicado: {done} empresa(s) em market_us.company_snapshots (Supabase).")
     return 0
 
 
