@@ -322,7 +322,7 @@ def load_company_bundle(symbol: str) -> dict | None:
         return None
 
 
-def load_scoring_frame(limit_companies: int = 800) -> pd.DataFrame:
+def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
     """Cross-section de métricas (uma linha por empresa) para o score/comparação.
 
     Puxa as séries anuais em lote e calcula as métricas em Python (core.us_metrics).
@@ -335,14 +335,17 @@ def load_scoring_frame(limit_companies: int = 800) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     try:
         with eng.connect() as conn:
-            comp = pd.read_sql(text(
-                "SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.name) AS name, "
-                "MAX(c.sector) AS sector, MAX(c.industry) AS industry "
-                "FROM market_us.companies c JOIN market_us.assets a ON a.company_id=c.id "
-                "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
-                "              WHERE i.company_id=c.id AND i.period='annual') "
-                "GROUP BY c.id ORDER BY c.id LIMIT :lim"),
-                conn, params={"lim": int(limit_companies)})
+            q = ("SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.name) AS name, "
+                 "MAX(c.sector) AS sector, MAX(c.industry) AS industry "
+                 "FROM market_us.companies c JOIN market_us.assets a ON a.company_id=c.id "
+                 "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
+                 "              WHERE i.company_id=c.id AND i.period='annual') "
+                 "GROUP BY c.id ORDER BY c.id")
+            params: dict = {}
+            if limit_companies:               # None/0 = universo inteiro
+                q += " LIMIT :lim"
+                params["lim"] = int(limit_companies)
+            comp = pd.read_sql(text(q), conn, params=params)
             if comp.empty:
                 return pd.DataFrame(columns=cols)
             ids = [int(x) for x in comp["id"].tolist()]
@@ -407,7 +410,7 @@ def load_advanced_snapshot(symbol: str) -> dict | None:
     return snap
 
 
-def load_asymmetry_frame(limit_companies: int = 800) -> pd.DataFrame:
+def load_asymmetry_frame(limit_companies: int | None = None) -> pd.DataFrame:
     """Cross-section de assimetria (Empresas Fora da Curva). Uma linha por empresa.
 
     Reaproveita as séries anuais e calcula métricas + trajetória + score de
@@ -421,14 +424,17 @@ def load_asymmetry_frame(limit_companies: int = 800) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     try:
         with eng.connect() as conn:
-            comp = pd.read_sql(text(
-                "SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.name) AS name, "
-                "MAX(c.sector) AS sector, MAX(c.industry) AS industry "
-                "FROM market_us.companies c JOIN market_us.assets a ON a.company_id=c.id "
-                "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
-                "  WHERE i.company_id=c.id AND i.period='annual') "
-                "GROUP BY c.id ORDER BY c.id LIMIT :lim"),
-                conn, params={"lim": int(limit_companies)})
+            q = ("SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.name) AS name, "
+                 "MAX(c.sector) AS sector, MAX(c.industry) AS industry "
+                 "FROM market_us.companies c JOIN market_us.assets a ON a.company_id=c.id "
+                 "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
+                 "  WHERE i.company_id=c.id AND i.period='annual') "
+                 "GROUP BY c.id ORDER BY c.id")
+            params = {}
+            if limit_companies:
+                q += " LIMIT :lim"
+                params["lim"] = int(limit_companies)
+            comp = pd.read_sql(text(q), conn, params=params)
             if comp.empty:
                 return pd.DataFrame(columns=cols)
             ids = [int(x) for x in comp["id"]]

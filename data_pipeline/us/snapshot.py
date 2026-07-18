@@ -105,7 +105,7 @@ def serialize_row(*, identity: dict, scored_row: dict, metrics: dict,
     return row
 
 
-def build_snapshot(engine, *, limit_companies: int = 800) -> dict:
+def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
     """Computa e grava a vitrine no warehouse (upsert por symbol)."""
     import core.us_read as ur
     from core.us_advanced import advanced_snapshot

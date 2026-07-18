@@ -59,7 +59,7 @@ def ingestion_runs():
 
 
 @_cache
-def scored_universe(limit_companies: int = 800):
+def scored_universe(limit_companies: int | None = None):
     """Cross-section com score fundamentalista calculado (para as abas de análise).
 
     No warehouse local, calcula ao vivo. No deploy (só vitrine), lê os scores já
@@ -99,7 +99,7 @@ def advanced_snapshot(symbol: str):
 
 
 @_cache
-def asymmetry_universe(limit_companies: int = 800):
+def asymmetry_universe(limit_companies: int | None = None):
     """Cross-section de assimetria (Empresas Fora da Curva)."""
     if _use_snapshot():
         return _read.load_snapshot_asymmetry()

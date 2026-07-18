@@ -139,7 +139,7 @@ def main() -> int:
         from data_pipeline.us import snapshot as snap
         if args.dry_run:
             return out({"ok": True, "action": "dry-run: vitrine não construída"})
-        return out(snap.build_snapshot(get_engine(), limit_companies=args.limit or 800))
+        return out(snap.build_snapshot(get_engine(), limit_companies=args.limit))
 
     if args.command == "score-history":
         # sem rede: recomputa scores PIT a partir do que já está no warehouse
