@@ -80,6 +80,9 @@ def main() -> int:
     p.add_argument("--top-n", type=int, default=20, help="backtest: nº de ativos por período")
     p.add_argument("--no-prices", action="store_true",
                    help="bootstrap: só fundamentos (EDGAR); pula o yfinance (rápido)")
+    p.add_argument("--shard", default=None,
+                   help="bootstrap: processa só a fatia N/M do universo (ex.: 0/6). "
+                        "Rode M processos em paralelo p/ acelerar (SEC ~10 req/s).")
     p.add_argument("--dry-run", action="store_true", help="não grava; só estima/planeja")
     p.add_argument("--offline", action="store_true", help="proíbe qualquer chamada de rede")
     p.add_argument("--warehouse", action="store_true",
@@ -202,12 +205,18 @@ def main() -> int:
             # do universo já seedado no warehouse
             from sqlalchemy import text
             with engine.connect() as conn:
-                q = "SELECT symbol FROM market_us.assets WHERE security_type='common'"
+                q = "SELECT symbol FROM market_us.assets WHERE security_type='common' ORDER BY symbol"
                 if args.limit:
-                    q += f" ORDER BY symbol LIMIT {int(args.limit)}"
+                    q += f" LIMIT {int(args.limit)}"
                 symbols = [r[0] for r in conn.execute(text(q)).fetchall()]
+        run_key = "bootstrap"
+        if args.shard:                       # fatia N/M (round-robin) p/ paralelismo
+            n, m = (int(x) for x in args.shard.split("/"))
+            symbols = symbols[n::m]
+            run_key = f"sweep-{n}of{m}"
+            log.info("shard %d/%d: %d símbolos", n, m, len(symbols))
         return out({"ok": True, **ingest.ingest_symbols(
-            provider, engine, symbols, years=args.years,
+            provider, engine, symbols, years=args.years, run_key=run_key,
             resume=(args.command == "resume"), with_prices=not args.no_prices)})
 
     if args.command == "prices":
