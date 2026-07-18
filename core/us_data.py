@@ -107,12 +107,17 @@ def asymmetry_universe(limit_companies: int = 800):
 
 
 def backtest(top_n: int = 20, weighting: str = "score") -> dict:
-    """Backtest PIT sobre o painel de scores (vazio até computar o histórico)."""
+    """Backtest PIT sobre o painel de scores (vazio até computar o histórico).
+
+    O painel é ANUAL (rebalance a cada data-base, retorno futuro de 12 meses):
+    periods_per_year=1, senão a anualização compõe 12× demais.
+    """
     import core.us_backtest as _bt
     panel = score_panel()
     if panel is None or panel.empty:
         return {"ok": False, "reason": "sem histórico de scores (rode score-history)"}
-    return _bt.walk_forward(panel, top_n=top_n, weighting=weighting)
+    return _bt.walk_forward(panel, top_n=top_n, weighting=weighting,
+                            periods_per_year=1)
 
 
 def schema_ready() -> bool:

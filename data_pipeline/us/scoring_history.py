@@ -69,6 +69,43 @@ def forward_returns_from_monthly(monthly: pd.DataFrame) -> pd.DataFrame:
     return out.rename(columns={"month_end": "date"})
 
 
+# ── Derivação de prices_monthly (backtest lê desta tabela) ────────────────────
+def derive_prices_monthly(engine) -> dict:
+    """Deriva o fechamento MENSAL (último pregão do mês) de prices_daily.
+
+    O backtest PIT lê market_us.prices_monthly; a ingestão só grava o diário.
+    Sem este passo o painel do backtest fica vazio. SQL puro no Postgres
+    (DISTINCT ON pega o último pregão de cada mês); idempotente por (symbol,
+    month_end). total_return = retorno mês a mês do adjusted_close.
+    """
+    if engine is None:
+        return {"ok": False, "reason": "engine indisponível"}
+    sql = """
+        INSERT INTO market_us.prices_monthly
+            (symbol, month_end, close, adjusted_close, volume, total_return, source)
+        WITH last_of_month AS (
+            SELECT DISTINCT ON (symbol, date_trunc('month', date))
+                symbol, date AS month_end, close,
+                COALESCE(adjusted_close, close) AS adjusted_close, volume
+            FROM market_us.prices_daily
+            ORDER BY symbol, date_trunc('month', date), date DESC
+        )
+        SELECT symbol, month_end, close, adjusted_close, volume,
+               adjusted_close / NULLIF(
+                   LAG(adjusted_close) OVER (PARTITION BY symbol ORDER BY month_end), 0) - 1
+                   AS total_return,
+               'derived'
+        FROM last_of_month
+        ON CONFLICT (symbol, month_end) DO UPDATE SET
+            close = EXCLUDED.close, adjusted_close = EXCLUDED.adjusted_close,
+            volume = EXCLUDED.volume, total_return = EXCLUDED.total_return
+    """
+    with engine.begin() as conn:
+        conn.execute(text(sql))
+        n = conn.execute(text("SELECT COUNT(*) FROM market_us.prices_monthly")).scalar()
+    return {"ok": True, "rows": int(n or 0)}
+
+
 # ── Orquestração em banco (roda com warehouse) ────────────────────────────────
 def _bulk(conn, table: str, cols: Sequence[str], ids: list[int]) -> pd.DataFrame:
     q = text(f"SELECT {', '.join(cols)} FROM market_us.{table} "

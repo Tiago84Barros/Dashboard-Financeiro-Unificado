@@ -65,3 +65,19 @@ def test_walk_forward():
 
 def test_walk_forward_vazio():
     assert bt.walk_forward(pd.DataFrame())["ok"] is False
+
+
+def test_periods_per_year_afeta_anualizacao():
+    """Painel anual com periods_per_year=1 não deve compor 12× (bug real na 1a carga)."""
+    # 3 períodos anuais, retorno constante 10% no topo
+    rows = []
+    for d in range(3):
+        for i in range(5):
+            rows.append({"date": f"20{20+d}", "symbol": f"S{i}",
+                         "score": 5 - i, "fwd_return": 0.10 if i == 0 else 0.0})
+    panel = pd.DataFrame(rows)
+    anual = bt.walk_forward(panel, top_n=1, weighting="equal", periods_per_year=1)
+    # top-1 rende 10% ao ano, 3 anos → ann_return ~10%, não centenas de %
+    assert anual["portfolio"]["ann_return"] == pytest.approx(0.10, abs=1e-6)
+    mensal = bt.walk_forward(panel, top_n=1, weighting="equal", periods_per_year=12)
+    assert mensal["portfolio"]["ann_return"] > anual["portfolio"]["ann_return"]  # compõe demais
