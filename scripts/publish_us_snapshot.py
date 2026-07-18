@@ -77,9 +77,14 @@ def _engine(url: str):
     parsed = make_url(url)
     if parsed.drivername in {"postgresql", "postgres"}:
         parsed = parsed.set(drivername="postgresql+psycopg2")
+    connect_args: dict = {"connect_timeout": 15}
     if parsed.host and parsed.host not in {"localhost", "127.0.0.1", "::1"}:
         parsed = parsed.update_query_dict({"sslmode": "require"})
-    return create_engine(parsed, pool_pre_ping=True, future=True)
+        # sem timeouts, um pooler que para de responder PENDURA o execute() para
+        # sempre; statement_timeout=60s → falha rápido e o retry reconecta.
+        connect_args["options"] = "-c statement_timeout=60000"
+    return create_engine(parsed, pool_pre_ping=True, future=True,
+                         connect_args=connect_args)
 
 
 def _build_upsert() -> str:
@@ -144,7 +149,16 @@ def main() -> int:
         print("exemplo:", {k: rows[0][k] for k in ("symbol", "name", "sector", "score")})
         return 0
 
-    _exec_retry(tgt, text(_MIGRATION.read_text(encoding="utf-8")))  # schema (idempotente)
+    # A migration é multi-statement e o pooler do Supabase às vezes a rejeita;
+    # se a tabela já existe, pulamos (é idempotente e no-op de qualquer forma).
+    with tgt.connect() as conn:
+        exists = conn.execute(text(
+            "SELECT to_regclass('market_us.company_snapshots')")).scalar()
+    if not exists:
+        _exec_retry(tgt, text(_MIGRATION.read_text(encoding="utf-8")))
+        print("schema market_us.company_snapshots criado no Supabase.")
+    else:
+        print("tabela já existe no Supabase — pulando migration.")
 
     # Upsert em LOTES pequenos, cada um em sua transação com retry: 1 statement
     # com todas as linhas (JSONB grandes) estoura o pooler do Supabase, e o pooler
