@@ -53,14 +53,14 @@ def evaluate_portfolio(holdings: pd.DataFrame, scored: pd.DataFrame,
     """Avalia qualidade, concentração, setores e cada posição da carteira."""
     h = normalize_holdings(holdings)
     if h.empty or scored is None or scored.empty:
-        return {"ok": False, "reason": "carteira ou universo de score vazio"}
+        return {"ok": False, "reason": "carteira ou universo de pontuações vazio"}
     universe = scored.copy()
     universe["symbol"] = universe["symbol"].astype(str).str.upper()
     merged = h.merge(universe, on="symbol", how="left", suffixes=("", "_score"))
     missing = merged.loc[merged["score"].isna(), "symbol"].tolist()
     covered = merged[merged["score"].notna()].copy()
     if covered.empty:
-        return {"ok": False, "reason": "nenhum ticker possui score", "missing": missing}
+        return {"ok": False, "reason": "nenhum ticker possui pontuação", "missing": missing}
 
     covered_weight = float(covered["weight"].sum())
     analysis_weight = covered["weight"] / covered_weight
@@ -109,9 +109,9 @@ def evaluate_portfolio(holdings: pd.DataFrame, scored: pd.DataFrame,
     if max_sector > 0.35:
         alerts.append("Concentração setorial acima de 35%.")
     if covered_weight < 0.90:
-        alerts.append("Menos de 90% do peso possui score fundamentalista válido.")
+        alerts.append("Menos de 90% do peso possui pontuação fundamentalista válida.")
     if adjusted_score < 50:
-        alerts.append("Score fundamentalista consolidado abaixo da faixa neutra.")
+        alerts.append("Pontuação fundamentalista consolidada abaixo da faixa neutra.")
     return {
         "ok": True, "score": round(base_score, 1),
         "adjusted_score": round(adjusted_score, 1),

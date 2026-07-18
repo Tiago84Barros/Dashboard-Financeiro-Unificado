@@ -115,7 +115,7 @@ def backtest(top_n: int = 20, weighting: str = "score") -> dict:
     import core.us_backtest as _bt
     panel = score_panel()
     if panel is None or panel.empty:
-        return {"ok": False, "reason": "sem histórico de scores (rode score-history)"}
+        return {"ok": False, "reason": "sem histórico de pontuações (rode score-history)"}
     return _bt.walk_forward(panel, top_n=top_n, weighting=weighting,
                             periods_per_year=1)
 

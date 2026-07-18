@@ -15,6 +15,11 @@ A camada visual permanece em Streamlit e usa um componente compartilhado real
 entre B3 e EUA para botões, busca, cabeçalhos setoriais e cards. A diferença fica
 na inteligência, nos filtros do universo e na origem dos dados.
 
+A camada de apresentação também foi integralmente localizada para português do
+Brasil. Descrições SEC/SIC em inglês são mantidas como campos brutos para busca e
+auditoria, mas aparecem traduzidas e agrupadas em setores macroeconômicos nos
+cards, filtros, tabelas, gráficos, comparações, dossiês e carteiras.
+
 ## Elementos preservados
 
 - navegação principal em cinco áreas e persistência da área ativa na sessão;
@@ -44,7 +49,7 @@ na inteligência, nos filtros do universo e na origem dos dados.
 | CVM/DFP/ITR | SEC EDGAR, 10-K e XBRL |
 | código CVM/ticker B3 | CIK permanente + histórico de ticker |
 | BRL | USD |
-| setores/segmentos B3 | setor e indústria dos EUA; comparação primária por indústria |
+| setores/segmentos B3 | setores macro dos EUA em português + indústria SEC/SIC traduzida |
 | padrões contábeis locais | US GAAP e regras de disclosure da SEC |
 | Selic | Federal Funds Rate |
 | IPCA | CPI dos EUA |

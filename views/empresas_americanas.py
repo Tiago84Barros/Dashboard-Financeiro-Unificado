@@ -19,7 +19,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import core.us_data as us
-from core.market_companies import filter_market_companies, normalize_us_companies
+from core.market_companies import (
+    filter_market_companies,
+    localize_us_company_frame,
+    normalize_us_companies,
+    translate_us_industry,
+    translate_us_sector,
+)
 from core.us_methodology import (
     US_ASYMMETRY_SCORE_VERSION,
     US_FUNDAMENTAL_SCORE_VERSION,
@@ -42,6 +48,12 @@ _PLOT_LAYOUT = dict(
     plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#CBD5E0"),
     margin=dict(l=18, r=18, t=42, b=18),
 )
+
+_WEIGHTING_LABELS = {
+    "score": "Pontuação fundamentalista",
+    "equal": "Pesos iguais",
+    "inverse_vol": "Inverso da volatilidade",
+}
 
 
 def render() -> None:
@@ -153,14 +165,14 @@ def _render_score_dashboard(row: pd.Series) -> None:
     label, tipo = _score_label(row.get("score"))
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        card_metrica("Score fundamentalista", f"{row.get('score', 0):.1f}/100")
+        card_metrica("Pontuação fundamentalista", f"{row.get('score', 0):.1f}/100")
         badge_status(label, tipo)
     with c2:
         card_metrica("Cobertura", f"{row.get('coverage', 0):.0f}%")
     with c3:
         card_metrica("ROIC", _fmt_pct(row.get("roic")))
     with c4:
-        card_metrica("FCF Yield", _fmt_pct(row.get("fcf_yield")))
+        card_metrica("Retorno do fluxo de caixa livre", _fmt_pct(row.get("fcf_yield")))
     tracks = [(label_, float(row.get(col, 50))) for col, label_ in _TRACK_LABELS.items()]
     fig = go.Figure(go.Scatterpolar(
         r=[x[1] for x in tracks] + [tracks[0][1]],
@@ -180,7 +192,9 @@ def _tab_empresa(status: dict) -> None:
     symbol = _company_selector(scored, "us_company_analysis")
     if not symbol:
         return
-    row = scored[scored["symbol"] == symbol].iloc[0]
+    row = localize_us_company_frame(
+        scored[scored["symbol"] == symbol]
+    ).iloc[0]
     secao_titulo(f"{symbol} — {row.get('name', '')}", "🔍",
                  f"{row.get('sector', '—')} / {row.get('industry', '—')}")
     _render_score_dashboard(row)
@@ -202,7 +216,13 @@ def _tab_empresa(status: dict) -> None:
             value_cols = [c for c in ("revenue", "net_income", "ebitda") if c in financials]
             long = financials.melt("fiscal_year", value_vars=value_cols,
                                    var_name="Indicador", value_name="USD")
-            fig = px.bar(long, x="fiscal_year", y="USD", color="Indicador", barmode="group")
+            long["Indicador"] = long["Indicador"].map({
+                "revenue": "Receita", "net_income": "Lucro líquido", "ebitda": "EBITDA",
+            }).fillna(long["Indicador"])
+            fig = px.bar(
+                long, x="fiscal_year", y="USD", color="Indicador", barmode="group",
+                labels={"fiscal_year": "Ano fiscal", "USD": "Valor (USD)"},
+            )
             fig.update_layout(**_PLOT_LAYOUT, height=390)
             st.plotly_chart(fig, use_container_width=True, key=f"us_fin_{symbol}")
         with tabs[1]:
@@ -222,7 +242,14 @@ def _tab_empresa(status: dict) -> None:
             value_cols = [c for c in ("free_cash_flow", "total_equity", "total_debt") if c in financials]
             long = financials.melt("fiscal_year", value_vars=value_cols,
                                    var_name="Indicador", value_name="USD")
-            fig = px.line(long, x="fiscal_year", y="USD", color="Indicador", markers=True)
+            long["Indicador"] = long["Indicador"].map({
+                "free_cash_flow": "Fluxo de caixa livre",
+                "total_equity": "Patrimônio líquido", "total_debt": "Dívida total",
+            }).fillna(long["Indicador"])
+            fig = px.line(
+                long, x="fiscal_year", y="USD", color="Indicador", markers=True,
+                labels={"fiscal_year": "Ano fiscal", "USD": "Valor (USD)"},
+            )
             fig.update_layout(**_PLOT_LAYOUT, height=360)
             st.plotly_chart(fig, use_container_width=True, key=f"us_cash_{symbol}")
     with st.expander("📄 Dossiê, classificação e critérios avançados"):
@@ -257,15 +284,17 @@ def _macro_controls(key_prefix: str = "us_macro") -> dict:
                "a interface não consulta fontes externas em tempo real.")
     c1, c2, c3 = st.columns(3)
     with c1:
-        fed = st.number_input("Fed Funds %", 0.0, 15.0, 4.25, 0.25, key=f"{key_prefix}_fed")
+        fed = st.number_input("Juros básicos do Fed %", 0.0, 15.0, 4.25, 0.25,
+                              key=f"{key_prefix}_fed")
         gdp = st.number_input("PIB real a/a %", -10.0, 15.0, 2.0, 0.1, key=f"{key_prefix}_gdp")
     with c2:
-        cpi = st.number_input("CPI a/a %", -2.0, 20.0, 2.5, 0.1, key=f"{key_prefix}_cpi")
+        cpi = st.number_input("Inflação ao consumidor (CPI) a/a %", -2.0, 20.0, 2.5, 0.1,
+                              key=f"{key_prefix}_cpi")
         unemp = st.number_input("Desemprego %", 2.0, 20.0, 4.2, 0.1, key=f"{key_prefix}_unemp")
     with c3:
         curve = st.number_input("Curva 10Y–2Y (p.p.)", -5.0, 5.0, 0.25, 0.05,
                                 key=f"{key_prefix}_curve")
-        spread = st.number_input("Spread high yield %", 1.0, 20.0, 3.5, 0.1,
+        spread = st.number_input("Spread de crédito de alto rendimento %", 1.0, 20.0, 3.5, 0.1,
                                  key=f"{key_prefix}_spread")
     return evaluate_macro(USMacroSnapshot(fed, cpi, gdp, unemp, curve, spread))
 
@@ -277,9 +306,9 @@ def _render_macro_dashboard(key_prefix: str = "us_macro") -> dict:
         card_metrica("Regime macro EUA", f"{macro['score']:.0f}/100")
         st.caption(macro["regime"])
     with c2:
-        drivers = pd.DataFrame({"Driver": list(macro["drivers"]),
+        drivers = pd.DataFrame({"Fator": list(macro["drivers"]),
                                 "Impacto": list(macro["drivers"].values())})
-        fig = px.bar(drivers, x="Impacto", y="Driver", orientation="h",
+        fig = px.bar(drivers, x="Impacto", y="Fator", orientation="h",
                      color="Impacto", color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"])
         fig.update_layout(**_PLOT_LAYOUT, height=280, coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_chart")
@@ -287,8 +316,8 @@ def _render_macro_dashboard(key_prefix: str = "us_macro") -> dict:
 
 
 def _tab_avancada_unificada(status: dict) -> None:
-    tabs = st.tabs(["Score e ranking", "Comparação", "Indicadores avançados",
-                    "Backtest", "Macro EUA", "Dados e metodologia"])
+    tabs = st.tabs(["Pontuação e classificação", "Comparação", "Indicadores avançados",
+                    "Teste histórico", "Cenário dos EUA", "Dados e metodologia"])
     with tabs[0]:
         _tab_analise_fundamentalista(status)
     with tabs[1]:
@@ -300,8 +329,9 @@ def _tab_avancada_unificada(status: dict) -> None:
     with tabs[4]:
         secao_titulo("Ambiente macroeconômico americano", "🏛️")
         _render_macro_dashboard("us_macro_adv")
-        st.info("Leitura setorial: juros afetam duration de growth/REITs; inclinação "
-                "da curva e spreads afetam bancos e crédito; emprego e PIB afetam "
+        st.info("Leitura setorial: juros afetam empresas de crescimento e fundos "
+                "imobiliários americanos (REITs); a inclinação da curva e os spreads "
+                "afetam bancos e crédito; emprego e PIB afetam "
                 "consumo cíclico; inflação altera margens e poder de preço.")
     with tabs[5]:
         sub = st.tabs(["Qualidade", "Sincronização", "Metodologia"])
@@ -326,19 +356,23 @@ def _tab_comparacao_empresas(status: dict) -> None:
     if len(selected) < 2:
         st.info("Selecione ao menos duas empresas.")
         return
-    peers = scored[scored["symbol"].isin(selected)].copy()
+    peers = localize_us_company_frame(scored[scored["symbol"].isin(selected)])
     table_cols = [c for c in ("symbol", "name", "sector", "industry", "score",
         "gross_margin", "operating_margin", "roic", "revenue_cagr_3y",
         "net_debt_ebitda", "pe", "ev_ebitda", "fcf_yield", "shareholder_yield") if c in peers]
     st.dataframe(peers[table_cols].rename(columns={
         "symbol": "Ticker", "name": "Nome", "sector": "Setor", "industry": "Indústria",
-        "score": "Score", "gross_margin": "Margem bruta", "operating_margin": "Margem op.",
+        "score": "Pontuação", "gross_margin": "Margem bruta", "operating_margin": "Margem op.",
         "roic": "ROIC", "revenue_cagr_3y": "Cresc. receita 3a", "net_debt_ebitda": "DL/EBITDA",
-        "pe": "P/L", "ev_ebitda": "EV/EBITDA", "fcf_yield": "FCF Yield",
-        "shareholder_yield": "Shareholder Yield"}), hide_index=True, use_container_width=True)
-    tracks = peers[["symbol", *_TRACK_LABELS]].melt("symbol", var_name="Trilha", value_name="Score")
+        "pe": "P/L", "ev_ebitda": "EV/EBITDA", "fcf_yield": "Retorno do FCL",
+        "shareholder_yield": "Retorno ao acionista"}), hide_index=True, use_container_width=True)
+    tracks = peers[["symbol", *_TRACK_LABELS]].melt(
+        "symbol", var_name="Trilha", value_name="Pontuação")
     tracks["Trilha"] = tracks["Trilha"].map(_TRACK_LABELS)
-    fig = px.bar(tracks, x="Trilha", y="Score", color="symbol", barmode="group")
+    fig = px.bar(
+        tracks, x="Trilha", y="Pontuação", color="symbol", barmode="group",
+        labels={"symbol": "Ticker"},
+    )
     fig.update_layout(**_PLOT_LAYOUT, height=420, yaxis_range=[0, 100])
     st.plotly_chart(fig, use_container_width=True, key="us_compare_tracks")
     with st.expander("Comparação por indústria"):
@@ -349,21 +383,22 @@ def _tab_comparacao_empresas(status: dict) -> None:
 _TRACK_LABELS = {
     "score_quality": "Qualidade", "score_growth": "Crescimento",
     "score_solidity": "Solidez", "score_capital_efficiency": "Efic. Capital",
-    "score_valuation": "Valuation", "score_shareholder": "Retorno acionista",
+    "score_valuation": "Avaliação", "score_shareholder": "Retorno ao acionista",
 }
 
 
 def _tab_analise_fundamentalista(status: dict) -> None:
     if status.get("offline"):
-        estado_vazio("Sem dados locais para calcular o score.", "📊")
+        estado_vazio("Sem dados locais para calcular a pontuação.", "📊")
         return
     scored = us.scored_universe()
     if scored is None or scored.empty:
-        estado_vazio("Sem empresas com demonstrações suficientes para o score.", "📊")
+        estado_vazio("Sem empresas com demonstrações suficientes para a pontuação.", "📊")
         return
-    secao_titulo("Score fundamentalista — relativo por indústria", "🏆")
+    secao_titulo("Pontuação fundamentalista — relativa por indústria", "🏆")
     st.caption("Winsorização + percentil intra-indústria nas 6 trilhas de fatores. "
-               "Ausência = neutro. Score não é garantia de retorno.")
+               "Ausência = neutro. A pontuação não é garantia de retorno.")
+    scored = localize_us_company_frame(scored)
     setores = ["(todos)"] + sorted(x for x in scored["sector"].dropna().unique())
     sel = st.selectbox("Setor", setores, key="us_score_sector")
     view = scored if sel == "(todos)" else scored[scored["sector"] == sel]
@@ -372,7 +407,7 @@ def _tab_analise_fundamentalista(status: dict) -> None:
     cols = [c for c in cols if c in view.columns]
     show = view[cols].head(200).rename(columns={
         "symbol": "Ticker", "name": "Nome", "sector": "Setor",
-        "industry": "Indústria", "score": "Score", "coverage": "Cobertura %",
+        "industry": "Indústria", "score": "Pontuação", "coverage": "Cobertura %",
         **_TRACK_LABELS})
     st.dataframe(show, hide_index=True, use_container_width=True)
 
@@ -395,15 +430,18 @@ def _tab_analise_avancada(status: dict) -> None:
         return
     symbol = st.text_input("Ticker (ex.: AAPL)", key="us_adv_symbol").strip().upper()
     if not symbol:
-        st.info("Digite um ticker para Piotroski F-Score, Altman Z-Score, accruals "
-                "de Sloan e retorno incremental sobre capital (offline).")
+        st.info("Digite um ticker para os indicadores de Piotroski, Altman, ajustes "
+                "contábeis de Sloan e retorno incremental sobre capital.")
         return
     snap = us.advanced_snapshot(symbol)
     if not snap:
         estado_vazio(f"Sem histórico local para {symbol}.", "🔬")
         return
 
-    secao_titulo(f"{symbol} — {snap.get('name') or ''}", "🔬", snap.get("sector") or "—")
+    secao_titulo(
+        f"{symbol} — {snap.get('name') or ''}", "🔬",
+        translate_us_sector(snap.get("sector"), snap.get("industry")),
+    )
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         f = snap.get("f_score")
@@ -415,7 +453,7 @@ def _tab_analise_avancada(status: dict) -> None:
         card_metrica("Altman Z-Score", "—" if z is None else f"{z:.2f}")
     with c3:
         a = snap.get("sloan_accruals")
-        card_metrica("Accruals (Sloan)", "—" if a is None else f"{a:.3f}",
+        card_metrica("Ajustes contábeis (Sloan)", "—" if a is None else f"{a:.3f}",
                      ajuda="(Lucro − CFO)/ativos médios. Menor é melhor.")
     with c4:
         ir = snap.get("incremental_roic")
@@ -425,8 +463,8 @@ def _tab_analise_avancada(status: dict) -> None:
     if snap.get("z_zone"):
         badge_status(f"Zona {snap['z_zone']}", _ZONE_TIPO.get(snap["z_zone"], "neutro"))
     elif snap.get("z_score") is None:
-        st.caption("Z-Score indisponível: exige `retained_earnings` e market cap no "
-                   "warehouse (rode um refresh de fundamentos após a migration 043).")
+        st.caption("Indicador Z indisponível: exige lucros acumulados e valor de mercado "
+                   "na base de dados (atualize os fundamentos após a migração 043).")
 
     if snap.get("f_partial"):
         st.caption(f"⚠️ F-Score parcial: {snap.get('f_evaluable')} de 9 critérios "
@@ -453,21 +491,24 @@ def _tab_comparacao_industria(status: dict) -> None:
     if not industrias:
         estado_vazio("Nenhuma indústria classificada nos dados locais.", "🏭")
         return
-    ind = st.selectbox("Indústria", industrias, key="us_cmp_industry")
+    ind = st.selectbox(
+        "Indústria", industrias, key="us_cmp_industry",
+        format_func=translate_us_industry,
+    )
     import core.us_score as _score
     peers = _score.industry_comparison(scored, ind)
     if peers.empty:
         estado_vazio("Sem pares nesta indústria.", "🏭")
         return
-    secao_titulo(f"{ind} — {len(peers)} empresa(s)", "🏭")
+    secao_titulo(f"{translate_us_industry(ind)} — {len(peers)} empresa(s)", "🏭")
     show_cols = ["symbol", "name", "score", "score_quality", "score_growth",
                  "score_valuation", "gross_margin", "roic", "net_debt_ebitda",
                  "revenue_cagr_3y"]
     show_cols = [c for c in show_cols if c in peers.columns]
     st.dataframe(peers[show_cols].rename(columns={
-        "symbol": "Ticker", "name": "Nome", "score": "Score",
+        "symbol": "Ticker", "name": "Nome", "score": "Pontuação",
         "score_quality": "Qualidade", "score_growth": "Crescimento",
-        "score_valuation": "Valuation", "gross_margin": "Mrg.Bruta",
+        "score_valuation": "Avaliação", "gross_margin": "Margem bruta",
         "roic": "ROIC", "net_debt_ebitda": "DL/EBITDA",
         "revenue_cagr_3y": "Cresc.Rec 3a"}),
         hide_index=True, use_container_width=True)
@@ -476,7 +517,7 @@ def _tab_comparacao_industria(status: dict) -> None:
 # ── Dossiê determinístico ─────────────────────────────────────────────────────
 _CLASS_BADGE = {
     "consolidada": ("Consolidada", "sucesso"), "crescimento": ("Crescimento", "info"),
-    "assimetrica": ("Assimétrica", "alerta"), "turnaround": ("Turnaround", "alerta"),
+    "assimetrica": ("Assimétrica", "alerta"), "turnaround": ("Recuperação", "alerta"),
     "ciclica": ("Cíclica", "neutro"), "inadequada": ("Inadequada", "erro"),
 }
 
@@ -495,14 +536,17 @@ def _tab_dossie(status: dict) -> None:
         return
 
     label, tipo = _CLASS_BADGE.get(d.get("classification"), ("—", "neutro"))
-    secao_titulo(f"{symbol} — {d.get('name') or ''}", "📄",
-                 f"{d.get('sector') or '—'} / {d.get('industry') or '—'}")
+    secao_titulo(
+        f"{symbol} — {d.get('name') or ''}", "📄",
+        f"{translate_us_sector(d.get('sector'), d.get('industry'))} / "
+        f"{translate_us_industry(d.get('industry') or d.get('sector'))}",
+    )
     cb1, cb2, *_ = st.columns([1, 1, 4])
     with cb1:
         badge_status(label, tipo)
     with cb2:
         if d.get("score") is not None:
-            badge_status(f"Score {d['score']}", "info")
+            badge_status(f"Pontuação {d['score']}", "info")
     st.caption(d.get("classification_reason", ""))
 
     m = d.get("metrics", {})
@@ -554,6 +598,7 @@ def _portfolio_controls(scored: pd.DataFrame, prefix: str):
         maxs = st.slider("Peso máx/setor %", 15, 60, 30, key=f"{prefix}_maxs") / 100
     with c4:
         mode = st.selectbox("Ponderação", ["score", "equal", "inverse_vol"],
+                            format_func=lambda value: _WEIGHTING_LABELS[value],
                             key=f"{prefix}_mode")
     constraints = PortfolioConstraints(top_n=top_n, max_weight=maxw,
         max_sector_weight=maxs, weighting=mode, max_assets=top_n, min_assets=min(5, top_n))
@@ -565,10 +610,10 @@ def _tab_criacao_portfolio(status: dict) -> None:
         return
     scored = us.scored_universe()
     if scored is None or scored.empty:
-        estado_vazio("Sem empresas com score elegível.", "🚀")
+        estado_vazio("Sem empresas com pontuação elegível.", "🚀")
         return
     secao_titulo("Criação de Portfólio", "🚀")
-    st.caption("Seleção por score e diversificação, adaptada a indústrias e setores "
+    st.caption("Seleção por pontuação e diversificação, adaptada a indústrias e setores "
                "americanos. Pesos respeitam tetos por ativo e setor.")
     with st.expander("⚙️ Parâmetros", expanded=True):
         holdings, constraints = _portfolio_controls(scored, "us_create")
@@ -577,7 +622,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
     if holdings.empty:
         estado_vazio("Nenhum ativo elegível com as restrições atuais.", "🚀")
         return
-    holdings = holdings.copy()
+    holdings = localize_us_company_frame(holdings)
     holdings["allocation_usd"] = holdings["weight"] * capital
     holdings["weight_pct"] = holdings["weight"] * 100
     if st.button("🚀 Rodar Criação de Portfólio", type="primary", key="us_create_run"):
@@ -587,7 +632,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
     with c1:
         card_metrica("Ativos", str(len(holdings)))
     with c2:
-        card_metrica("Score médio", f"{np.average(holdings['score'], weights=holdings['weight']):.1f}")
+        card_metrica("Pontuação média", f"{np.average(holdings['score'], weights=holdings['weight']):.1f}")
     with c3:
         card_metrica("Maior posição", f"{holdings['weight_pct'].max():.1f}%")
     with c4:
@@ -595,20 +640,25 @@ def _tab_criacao_portfolio(status: dict) -> None:
     show = holdings[[c for c in ("symbol", "name", "sector", "industry", "score",
                                  "weight_pct", "allocation_usd") if c in holdings]].rename(columns={
         "symbol": "Ticker", "name": "Nome", "sector": "Setor", "industry": "Indústria",
-        "score": "Score", "weight_pct": "Peso %", "allocation_usd": "Alocação USD"})
+        "score": "Pontuação", "weight_pct": "Peso %", "allocation_usd": "Alocação em USD"})
     st.dataframe(show, hide_index=True, use_container_width=True)
     c1, c2 = st.columns(2)
     with c1:
-        fig = px.pie(holdings, names="symbol", values="weight", hole=.48,
-                     title="Alocação por ativo")
+        fig = px.pie(
+            holdings, names="symbol", values="weight", hole=.48,
+            title="Alocação por ativo", labels={"symbol": "Ticker", "weight": "Peso"},
+        )
         fig.update_layout(**_PLOT_LAYOUT, height=400)
         st.plotly_chart(fig, use_container_width=True, key="us_create_pie")
     with c2:
         sector = holdings.groupby("sector", dropna=False)["weight"].sum().reset_index()
-        fig = px.bar(sector, x="sector", y="weight", title="Alocação por setor")
+        fig = px.bar(
+            sector, x="sector", y="weight", title="Alocação por setor",
+            labels={"sector": "Setor", "weight": "Peso"},
+        )
         fig.update_layout(**_PLOT_LAYOUT, height=400, yaxis_tickformat=".0%")
         st.plotly_chart(fig, use_container_width=True, key="us_create_sector")
-    with st.expander("🧪 Simulação histórica point-in-time"):
+    with st.expander("🧪 Teste histórico sem viés temporal"):
         _tab_backtests(status)
 
 
@@ -646,7 +696,7 @@ def _tab_avaliacao_portfolio(status: dict) -> None:
         return
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        card_metrica("Score da carteira", f"{result['adjusted_score']:.1f}/100",
+        card_metrica("Pontuação da carteira", f"{result['adjusted_score']:.1f}/100",
                      delta=f"Macro {result['macro_adjustment']:+.1f}")
     with c2:
         card_metrica("Diversificação", f"{result['diversification_score']:.0f}/100")
@@ -660,27 +710,29 @@ def _tab_avaliacao_portfolio(status: dict) -> None:
     for alert in result["alerts"]:
         st.warning(alert)
     if result["missing"]:
-        st.info("Sem score: " + ", ".join(result["missing"]))
+        st.info("Sem pontuação: " + ", ".join(result["missing"]))
     c1, c2 = st.columns(2)
     with c1:
         tracks = pd.DataFrame({"Trilha": [_TRACK_LABELS.get(k, k) for k in result["track_scores"]],
-                               "Score": list(result["track_scores"].values())})
-        fig = px.bar(tracks, x="Trilha", y="Score", color="Score",
+                               "Pontuação": list(result["track_scores"].values())})
+        fig = px.bar(tracks, x="Trilha", y="Pontuação", color="Pontuação",
                      color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"])
         fig.update_layout(**_PLOT_LAYOUT, height=380, yaxis_range=[0, 100], coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True, key="us_eval_tracks")
     with c2:
         sectors = result["sector_weights"].rename("weight").reset_index()
         sectors.columns = ["Setor", "Peso"]
+        sectors["Setor"] = sectors["Setor"].map(translate_us_sector)
+        sectors = sectors.groupby("Setor", as_index=False)["Peso"].sum()
         fig = px.pie(sectors, names="Setor", values="Peso", hole=.45,
                      title="Exposição setorial")
         fig.update_layout(**_PLOT_LAYOUT, height=380)
         st.plotly_chart(fig, use_container_width=True, key="us_eval_sectors")
-    positions = result["positions"].copy()
+    positions = localize_us_company_frame(result["positions"])
     positions["weight"] *= 100
     st.dataframe(positions.rename(columns={
         "symbol": "Ticker", "name": "Nome", "sector": "Setor", "weight": "Peso %",
-        "score": "Score", "classification": "Classificação", "action": "Ação sugerida",
+        "score": "Pontuação", "classification": "Classificação", "action": "Ação sugerida",
         "vs_universe_median": "vs. mediana"}), hide_index=True, use_container_width=True)
 
 
@@ -691,7 +743,7 @@ def _tab_portfolio(status: dict) -> None:
         return
     scored = us.scored_universe()
     if scored is None or scored.empty:
-        estado_vazio("Sem empresas com score para compor a carteira.", "📦")
+        estado_vazio("Sem empresas com pontuação para compor a carteira.", "📦")
         return
     from core.us_portfolio import PortfolioConstraints, build_portfolio
 
@@ -704,7 +756,10 @@ def _tab_portfolio(status: dict) -> None:
     with c3:
         maxs = st.slider("Peso máx/setor %", 15, 60, 30, key="us_pf_maxs") / 100
     with c4:
-        wmode = st.selectbox("Ponderação", ["score", "equal"], key="us_pf_wmode")
+        wmode = st.selectbox(
+            "Ponderação", ["score", "equal"],
+            format_func=lambda value: _WEIGHTING_LABELS[value], key="us_pf_wmode",
+        )
 
     holdings = build_portfolio(scored, PortfolioConstraints(
         top_n=top_n, max_weight=maxw, max_sector_weight=maxs, weighting=wmode,
@@ -713,11 +768,12 @@ def _tab_portfolio(status: dict) -> None:
         estado_vazio("Nenhum ativo elegível com as restrições atuais.", "📦")
         return
 
+    holdings = localize_us_company_frame(holdings)
     show = holdings.copy()
     show["weight"] = (show["weight"] * 100).round(2)
     st.dataframe(show.rename(columns={
         "symbol": "Ticker", "name": "Nome", "sector": "Setor",
-        "industry": "Indústria", "score": "Score", "weight": "Peso %"}),
+        "industry": "Indústria", "score": "Pontuação", "weight": "Peso %"}),
         hide_index=True, use_container_width=True)
 
     if "sector" in holdings.columns:
@@ -726,26 +782,30 @@ def _tab_portfolio(status: dict) -> None:
             .sort_values(ascending=False)
         st.dataframe(alloc.rename("Peso %").reset_index().rename(
             columns={"sector": "Setor"}), hide_index=True, use_container_width=True)
-    st.caption("Capping iterativo por posição/setor (heurística de projeção, não "
-               "otimizador de média-variância). Benchmarks (S&P 500 / Nasdaq-100 / "
-               "Russell 2000 / equal-weight) entram no backtest quando houver histórico.")
+    st.caption("Limites iterativos por posição e setor (heurística de projeção, não "
+               "otimizador de média-variância). Índices de referência (S&P 500, Nasdaq-100 "
+               "e Russell 2000) e a carteira de pesos iguais entram no teste histórico "
+               "quando houver dados suficientes.")
 
 
-# ── Backtests (point-in-time) ─────────────────────────────────────────────────
+# ── Testes históricos sem viés temporal ───────────────────────────────────────
 def _tab_backtests(status: dict) -> None:
-    secao_titulo("Backtest walk-forward — point-in-time", "🧪")
-    st.caption("Scores recomputados a cada data com available_at ≤ data (sem "
-               "look-ahead). Requer histórico PIT: `python run_us_ingest.py "
+    secao_titulo("Teste histórico com janela móvel — ponto no tempo", "🧪")
+    st.caption("Pontuações recalculadas em cada data usando apenas informações já "
+               "disponíveis, evitando antecipação indevida. Requer histórico PIT: `python run_us_ingest.py "
                "score-history --warehouse`.")
     c1, c2 = st.columns(2)
     with c1:
         top_n = st.slider("Top N por período", 5, 40, 20, key="us_bt_topn")
     with c2:
-        wmode = st.selectbox("Ponderação", ["score", "equal"], key="us_bt_wmode")
+        wmode = st.selectbox(
+            "Ponderação", ["score", "equal"],
+            format_func=lambda value: _WEIGHTING_LABELS[value], key="us_bt_wmode",
+        )
 
     res = us.backtest(top_n=top_n, weighting=wmode)
     if not res.get("ok"):
-        estado_vazio(res.get("reason", "backtest indisponível"), "🧪")
+        estado_vazio(res.get("reason", "teste histórico indisponível"), "🧪")
         return
 
     ic = res["rank_ic"]
@@ -754,27 +814,27 @@ def _tab_backtests(status: dict) -> None:
     def _p(x, mult=100, suf="%"):
         return "—" if x is None else f"{x*mult:.2f}{suf}"
 
-    secao_titulo(f"Rank-IC ({res['n_periods']} períodos)", "📐")
+    secao_titulo(f"Correlação entre classificação e retorno ({res['n_periods']} períodos)", "📐")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        card_metrica("Rank-IC médio", "—" if ic["mean"] is None else f"{ic['mean']:.3f}")
+        card_metrica("Correlação média", "—" if ic["mean"] is None else f"{ic['mean']:.3f}")
     with c2:
-        card_metrica("t-stat", "—" if ic["t_stat"] is None else f"{ic['t_stat']:.2f}")
+        card_metrica("Estatística t", "—" if ic["t_stat"] is None else f"{ic['t_stat']:.2f}")
     with c3:
         card_metrica("p-valor", "—" if ic["p_value"] is None else f"{ic['p_value']:.3f}")
     with c4:
-        card_metrica("Hit rate", _p(ic["hit_rate"]))
+        card_metrica("Taxa de acerto", _p(ic["hit_rate"]))
 
-    secao_titulo("Desempenho da carteira vs equal-weight", "📈")
+    secao_titulo("Desempenho da carteira versus pesos iguais", "📈")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         card_metrica("Retorno anual.", _p(p["ann_return"]))
     with c2:
-        card_metrica("Excesso vs EW", _p(res.get("excess_ann_vs_ew")))
+        card_metrica("Excesso sobre pesos iguais", _p(res.get("excess_ann_vs_ew")))
     with c3:
         card_metrica("Sharpe", "—" if p["sharpe"] is None else f"{p['sharpe']:.2f}")
     with c4:
-        card_metrica("Máx. drawdown", _p(p["max_drawdown"]))
+        card_metrica("Queda máxima", _p(p["max_drawdown"]))
     c5, c6, c7, c8 = st.columns(4)
     with c5:
         card_metrica("Sortino", "—" if p["sortino"] is None else f"{p['sortino']:.2f}")
@@ -783,7 +843,7 @@ def _tab_backtests(status: dict) -> None:
     with c7:
         card_metrica("Volatilidade", _p(p["volatility"]))
     with c8:
-        card_metrica("Turnover médio", _p(res.get("avg_turnover")))
+        card_metrica("Giro médio da carteira", _p(res.get("avg_turnover")))
 
     if res.get("equity_curve"):
         secao_titulo("Curva de capital", "📉")
@@ -795,7 +855,7 @@ def _tab_backtests(status: dict) -> None:
 # ── Qualidade dos Dados ───────────────────────────────────────────────────────
 def _tab_qualidade() -> None:
     if not us.schema_ready():
-        estado_vazio("Schema market_us ainda não aplicado.", "🔌")
+        estado_vazio("Estrutura de dados `market_us` ainda não aplicada.", "🔌")
         return
     secao_titulo("Auditoria de qualidade", "🩺")
     df = us.quality_audit(limit=200)
@@ -803,7 +863,21 @@ def _tab_qualidade() -> None:
         st.info("Nenhum registro de auditoria ainda. Rode `python run_us_ingest.py "
                 "validate --warehouse` após a carga.")
         return
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    show = df.rename(columns={
+        "created_at": "Data", "symbol": "Ticker", "table_name": "Tabela",
+        "check_name": "Verificação", "severity": "Severidade",
+        "passed": "Aprovado", "detail": "Detalhes",
+    })
+    if "Severidade" in show:
+        show["Severidade"] = show["Severidade"].replace({
+            "info": "Informação", "warning": "Aviso", "error": "Erro", "critical": "Crítica",
+        })
+    if "Aprovado" in show:
+        show["Aprovado"] = show["Aprovado"].map(
+            lambda value: "Sim" if isinstance(value, (bool, np.bool_)) and bool(value)
+            else "Não" if isinstance(value, (bool, np.bool_)) else value
+        )
+    st.dataframe(show, hide_index=True, use_container_width=True)
 
 
 # ── Sincronização ─────────────────────────────────────────────────────────────
@@ -811,7 +885,7 @@ def _tab_sincronizacao(status: dict) -> None:
     secao_titulo("Sincronização de Dados Americanos", "🔄")
     st.markdown(
         "A ingestão roda **fora da interface**, por linha de comando, gravando no "
-        "**warehouse local** (Postgres em `127.0.0.1:5433`). Fonte padrão: "
+        "**armazém de dados local** (Postgres em `127.0.0.1:5433`). Fonte padrão: "
         "**SEC EDGAR** (fundamentos, gratuita — exige `SEC_USER_AGENT` no `.env` "
         "com nome e e-mail) + **yfinance** (preços). Credenciais/identificação são "
         "usadas **apenas** pela CLI — nunca pela interface.")
@@ -819,19 +893,35 @@ def _tab_sincronizacao(status: dict) -> None:
     runs = us.ingestion_runs()
     if runs is not None and not runs.empty:
         st.markdown("**Execuções recentes**")
-        st.dataframe(runs, hide_index=True, use_container_width=True)
+        show_runs = runs.rename(columns={
+            "run_key": "Execução", "domain": "Domínio", "status": "Situação",
+            "calls_made": "Chamadas realizadas", "rows_written": "Linhas gravadas",
+            "started_at": "Início", "finished_at": "Término",
+        })
+        if "Situação" in show_runs:
+            show_runs["Situação"] = show_runs["Situação"].replace({
+                "running": "Em execução", "success": "Concluída", "completed": "Concluída",
+                "failed": "Falhou", "error": "Erro", "partial": "Parcial",
+            })
+        if "Domínio" in show_runs:
+            show_runs["Domínio"] = show_runs["Domínio"].replace({
+                "universe": "Universo", "fundamentals": "Fundamentos", "prices": "Preços",
+                "bootstrap": "Carga inicial", "daily": "Atualização diária",
+                "snapshot": "Vitrine", "validation": "Validação",
+            })
+        st.dataframe(show_runs, hide_index=True, use_container_width=True)
     else:
         st.caption("Nenhuma execução de ingestão registrada ainda.")
 
     st.markdown("**Comandos** (rodar no terminal, na raiz do projeto):")
     st.code(
-        "# 1) aplicar o schema local (idempotente)\n"
+        "# 1) aplicar a estrutura local (idempotente)\n"
         "python run_us_ingest.py init-schema --warehouse\n\n"
         "# 2) testar chave + conexão\n"
         "python run_us_ingest.py test --warehouse --json\n\n"
-        "# 3) estimar a carga ANTES de baixar (dry-run, sem rede)\n"
+        "# 3) estimar a carga ANTES de baixar (simulação, sem rede)\n"
         "python run_us_ingest.py estimate --tickers AAPL MSFT NVDA\n\n"
-        "# 4) seedar o universo (NYSE/Nasdaq/AMEX)\n"
+        "# 4) carregar o cadastro do universo (NYSE/Nasdaq/AMEX)\n"
         "python run_us_ingest.py universe --warehouse --limit 200\n\n"
         "# 5) carga histórica de um lote pequeno\n"
         "python run_us_ingest.py bootstrap --warehouse --tickers AAPL MSFT --years 20 --json\n\n"
@@ -844,20 +934,20 @@ def _tab_sincronizacao(status: dict) -> None:
 
     st.markdown("**Publicar a vitrine** (para o deploy no Streamlit Cloud mostrar "
                 "os dados). Só a vitrine compacta vai para o Supabase; os "
-                "históricos pesados ficam no warehouse.")
+                "históricos pesados ficam no armazém de dados local.")
     st.code(
-        "# 8) construir a vitrine no warehouse (sem rede)\n"
+        "# 8) construir a vitrine no armazém de dados local (sem rede)\n"
         "python run_us_ingest.py snapshot --warehouse --json\n\n"
         "# 9) publicar a vitrine no Supabase (conexão direta, não o pooler)\n"
         "python scripts/publish_us_snapshot.py `\n"
         '  --source-url "postgresql://postgres:<senha>@127.0.0.1:5433/postgres" `\n'
         '  --target-url "<SUPABASE_UNIFICADO_URL>" --dry-run   # confira, depois sem --dry-run',
         language="powershell")
-    st.caption("Backtests e a sincronização rodam **só localmente** — a vitrine "
-               "traz score, dossiê, assimetria e análise avançada já computados, "
-               "mas o backtest PIT precisa do histórico completo no warehouse.")
+    st.caption("Testes históricos e a sincronização rodam **só localmente** — a vitrine "
+               "traz pontuação, dossiê, assimetria e análise avançada já calculados, "
+               "mas o teste sem viés temporal precisa do histórico completo no armazém local.")
 
-    st.markdown("**Ou rodar o app localmente** contra o warehouse (mostra tudo, "
+    st.markdown("**Ou rodar a aplicação localmente** contra o armazém de dados (mostra tudo, "
                 "sem publicar):")
     st.code(
         '$env:SUPABASE_UNIFICADO_URL = "postgresql://postgres:<senha>@127.0.0.1:5433/postgres"\n'
@@ -865,60 +955,64 @@ def _tab_sincronizacao(status: dict) -> None:
         language="powershell")
     if not status.get("schema_ready"):
         if status.get("db_is_local"):
-            st.warning("Schema `market_us` ainda não existe no warehouse. Rode o passo 1.")
+            st.warning("A estrutura `market_us` ainda não existe no armazém local. Rode o passo 1.")
         else:
             st.info("Este deploy lê o Supabase e **ainda não tem a vitrine publicada**. "
                     "Rode os passos 8–9 na sua máquina para popular a nuvem, ou rode "
-                    "o app localmente (regra do projeto: histórico pesado é "
-                    "warehouse-only; só a vitrine compacta vai ao Supabase).", icon="☁️")
+                    "a aplicação localmente (regra do projeto: o histórico pesado fica "
+                    "exclusivamente no armazenamento local; só a vitrine compacta vai ao Supabase).",
+                    icon="☁️")
 
 
 # ── Metodologia ───────────────────────────────────────────────────────────────
 def _tab_metodologia() -> None:
     secao_titulo("Metodologia — Empresas Americanas", "📚")
     st.markdown(f"""
-**Fonte e armazenamento.** Fundamentos: **SEC EDGAR** (filings 10-K em XBRL —
-dados públicos e de domínio público; a *filing date* vira `available_at`, o
-padrão-ouro para point-in-time). Preços: **yfinance**. Ambas acessadas só na
-ingestão. Todo histórico vive no **warehouse local** (`market_us.*`), isolado do
-B3/FII. A interface é **offline-first**: lê o banco local e funciona sem rede
+**Fonte e armazenamento.** Fundamentos: **SEC EDGAR** (relatórios 10-K em XBRL —
+dados públicos e de domínio público; a data de protocolo vira `available_at`, o
+padrão-ouro para análises em cada ponto do tempo). Preços: **yfinance**. Ambas acessadas só na
+ingestão. Todo histórico vive no **armazém de dados local** (`market_us.*`), isolado do
+B3/FII. A interface prioriza a operação local: lê o banco e funciona sem rede
 após a carga.
 
 **Identidade.** A empresa é identificada por **CIK** (não pelo ticker, que é
 reutilizado/renomeado). O histórico de símbolos fica em `market_us.ticker_aliases`;
 o histórico de uma empresa **não é apagado** ao trocar de ticker.
 
-**Point-in-time.** Cada fato financeiro guarda `reference_date` (fim do período),
-`published_date` (filing) e `available_at` (quando era conhecível). Backtests
-filtram por `available_at` — nunca por data de ingestão — para evitar *look-ahead*.
-Empresas **deslistadas** permanecem no universo histórico (anti-*survivorship*).
+**Ponto no tempo.** Cada fato financeiro guarda `reference_date` (fim do período),
+`published_date` (protocolo) e `available_at` (quando era conhecível). Os testes
+históricos filtram por `available_at` — nunca por data de ingestão — para evitar
+antecipação indevida. Empresas **deslistadas** permanecem no universo histórico,
+evitando o viés de sobrevivência.
 
 **Normalização.** Ausência nunca vira zero; unidades e períodos (anual/trimestral/
 TTM) são rotulados explicitamente; divergência entre ticker solicitado e retornado
 é rejeitada, não gravada sob o símbolo errado.
 
-**Score.** Fundamentalista v{US_FUNDAMENTAL_SCORE_VERSION}, relativo por
-setor/indústria, versionado point-in-time em `market_us.score_vintages`. **Não** é
+**Pontuação.** Fundamentalista v{US_FUNDAMENTAL_SCORE_VERSION}, relativa por
+setor/indústria, versionada por ponto no tempo em `market_us.score_vintages`. **Não** é
 garantia de retorno.
 
-**Macro EUA.** O cenário separa o score fundamentalista do ajuste de regime e
-considera Federal Funds, CPI, PIB real, desemprego, curva Treasury 10Y–2Y e
-spread high yield. As fontes oficiais recomendadas para o pipeline são Federal
-Reserve/FRED, BLS e BEA. Valores digitados na interface são premissas de
+**Macro EUA.** O cenário separa a pontuação fundamentalista do ajuste de regime e
+considera juros básicos do Fed, inflação ao consumidor (CPI), PIB real, desemprego,
+curva dos títulos do Tesouro de 10 e 2 anos e spread de crédito de alto rendimento.
+As fontes oficiais recomendadas para o processo de dados são Federal Reserve/FRED,
+BLS e BEA. Valores digitados na interface são premissas de
 simulação, nunca apresentados como cotações oficiais em tempo real.
 
-**Regulação, contabilidade e tributação.** A interpretação segue US GAAP e
-disclosures SEC, incluindo relevância de recompras, stock-based compensation,
-diluição, impairment e ativos intangíveis. REITs e instituições financeiras usam
-pesos setoriais próprios. Withholding, residência fiscal, estate tax e tratados
-dependem do investidor e não alteram automaticamente o score da companhia. Risco
+**Regulação, contabilidade e tributação.** A interpretação segue US GAAP e as
+divulgações à SEC, incluindo relevância de recompras, remuneração baseada em ações,
+diluição, redução ao valor recuperável e ativos intangíveis. Fundos imobiliários
+americanos (REITs) e instituições financeiras usam pesos setoriais próprios.
+Retenção de imposto na fonte, residência fiscal, imposto sucessório e tratados
+dependem do investidor e não alteram automaticamente a pontuação da companhia. Risco
 político, fiscal, antitruste e mudanças regulatórias entram como contexto de
 cenário, sem conclusão jurídica ou tributária individual.
 
 **Escopo desta seção.** Aqui mora a análise fundamentalista e a carteira-modelo:
 empresas avaliadas pelo que já entregam (qualidade, crescimento, solidez,
-eficiência de capital, valuation, retorno ao acionista). A trilha de **retorno
-assimétrico** (score v{US_ASYMMETRY_SCORE_VERSION}) vive numa **seção própria no
+eficiência de capital, avaliação e retorno ao acionista). A trilha de **retorno
+assimétrico** (pontuação v{US_ASYMMETRY_SCORE_VERSION}) vive numa **seção própria no
 menu — "Empresas Fora da Curva"** — porque tem propósito, tolerância a erro e
 tamanho de posição diferentes. Não misture as duas leituras.
 

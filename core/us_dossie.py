@@ -140,9 +140,13 @@ def assemble_dossie(symbol: str, *, name: str | None, sector: str | None,
 
 def dossie_to_text(d: dict) -> str:
     """Serializa o dossiê para narração por LLM (sem recálculo de números)."""
+    from core.market_companies import translate_us_industry, translate_us_sector
+
     if d.get("erro"):
         return f"DOSSIÊ INDISPONÍVEL: {d['erro']}"
     m = d.get("metrics", {})
+    setor = translate_us_sector(d.get("sector"), d.get("industry"))
+    industria = translate_us_industry(d.get("industry") or d.get("sector"))
 
     def pct(x):
         return "—" if x is None else f"{x*100:.1f}%"
@@ -151,10 +155,9 @@ def dossie_to_text(d: dict) -> str:
         return "—" if x is None else (f"{x:.2f}" if not mult else f"{x:.2f}×")
 
     L = [
-        f"EMPRESA: {d['symbol']} — {d.get('name')} | Setor: {d.get('sector')} / "
-        f"{d.get('industry')}",
+        f"EMPRESA: {d['symbol']} — {d.get('name')} | Setor: {setor} / {industria}",
         f"CLASSIFICAÇÃO: {d.get('classification')} ({d.get('classification_reason')})"
-        + (f" | Score: {d['score']}" if d.get("score") is not None else ""),
+        + (f" | Pontuação: {d['score']}" if d.get("score") is not None else ""),
         "\nQUALIDADE — margem bruta {} | operacional {} | líquida {} | FCF {} | "
         "ROE {} | ROIC {}".format(
             pct(m.get("gross_margin")), pct(m.get("operating_margin")),
@@ -166,14 +169,15 @@ def dossie_to_text(d: dict) -> str:
         "SOLIDEZ — dív.líq/EBITDA {} | cobertura juros {} | liquidez corrente {}".format(
             num(m.get("net_debt_ebitda"), True), num(m.get("interest_coverage"), True),
             num(m.get("current_ratio"), True)),
-        "VALUATION — P/L {} | EV/EBIT {} | EV/EBITDA {} | P/FCF {} | FCF yield {}".format(
+        "AVALIAÇÃO — P/L {} | EV/EBIT {} | EV/EBITDA {} | P/FCL {} | retorno do FCL {}".format(
             num(m.get("pe"), True), num(m.get("ev_ebit"), True),
             num(m.get("ev_ebitda"), True), num(m.get("p_fcf"), True),
             pct(m.get("fcf_yield"))),
-        "RETORNO AO ACIONISTA — shareholder yield {}".format(pct(m.get("shareholder_yield"))),
+        "RETORNO AO ACIONISTA — retorno total ao acionista {}".format(
+            pct(m.get("shareholder_yield"))),
     ]
     if d.get("red_flags"):
-        L.append("\nRED FLAGS:")
+        L.append("\nSINAIS DE ALERTA:")
         L.extend(f"  - {f}" for f in d["red_flags"])
     notes = d.get("notes", {})
     if notes.get("tese"):
