@@ -33,6 +33,26 @@ if str(ROOT) not in sys.path:
 load_dotenv()  # popula os.environ a partir do .env (find_dotenv sobe diretórios)
 
 
+def _exec_retry(engine, stmt, params=None, tries: int = 5) -> None:
+    """Executa uma transação com retry — o pooler do Supabase derruba conexões
+    intermitentemente ('server terminated abnormally'). Backoff curto."""
+    import time
+    from sqlalchemy.exc import DBAPIError, OperationalError
+    last = None
+    for attempt in range(1, tries + 1):
+        try:
+            with engine.begin() as conn:
+                if params is not None:
+                    conn.execute(stmt, params)
+                else:
+                    conn.execute(stmt)
+            return
+        except (OperationalError, DBAPIError) as exc:
+            last = exc
+            time.sleep(1.5 * attempt)
+    raise last
+
+
 def _mask(url: str) -> str:
     """Host/porta sem a senha, para exibir com segurança."""
     try:
@@ -124,22 +144,19 @@ def main() -> int:
         print("exemplo:", {k: rows[0][k] for k in ("symbol", "name", "sector", "score")})
         return 0
 
-    migration = _MIGRATION.read_text(encoding="utf-8")
-    with tgt.begin() as conn:
-        conn.execute(text(migration))          # schema + tabela (idempotente)
+    _exec_retry(tgt, text(_MIGRATION.read_text(encoding="utf-8")))  # schema (idempotente)
 
-    # Upsert em LOTES: 1 statement com todas as linhas (JSONB grandes) estoura o
-    # pooler do Supabase ("server terminated"). Lotes pequenos, cada um em sua
-    # transação; como é upsert idempotente, reexecutar completa se algo falhar.
+    # Upsert em LOTES pequenos, cada um em sua transação com retry: 1 statement
+    # com todas as linhas (JSONB grandes) estoura o pooler do Supabase, e o pooler
+    # ainda derruba conexões intermitentemente. Upsert idempotente = seguro retomar.
     upsert = text(_build_upsert())
     batch = max(1, int(args.batch))
     done = 0
     for i in range(0, len(rows), batch):
         chunk = rows[i:i + batch]
-        with tgt.begin() as conn:
-            conn.execute(upsert, chunk)
+        _exec_retry(tgt, upsert, chunk)
         done += len(chunk)
-        print(f"  ... {done}/{len(rows)}")
+        print(f"  ... {done}/{len(rows)}", flush=True)
     print(f"publicado: {done} empresa(s) em market_us.company_snapshots (Supabase).")
     return 0
 
