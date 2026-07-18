@@ -74,17 +74,26 @@ _JSON_COLS = {"metrics", "asymmetry", "advanced", "dossie", "financials"}
 
 
 def _engine(url: str):
+    from sqlalchemy.pool import NullPool
     parsed = make_url(url)
     if parsed.drivername in {"postgresql", "postgres"}:
         parsed = parsed.set(drivername="postgresql+psycopg2")
     connect_args: dict = {"connect_timeout": 15}
-    if parsed.host and parsed.host not in {"localhost", "127.0.0.1", "::1"}:
+    is_remote = bool(parsed.host and parsed.host not in {"localhost", "127.0.0.1", "::1"})
+    if is_remote:
         parsed = parsed.update_query_dict({"sslmode": "require"})
-        # sem timeouts, um pooler que para de responder PENDURA o execute() para
-        # sempre; statement_timeout=60s → falha rápido e o retry reconecta.
-        connect_args["options"] = "-c statement_timeout=60000"
-    return create_engine(parsed, pool_pre_ping=True, future=True,
-                         connect_args=connect_args)
+        # Pooler do Supabase: conexão FRESCA por transação (NullPool) evita
+        # conexões empoçadas que ficam meio-abertas e penduram o execute();
+        # keepalives detectam socket morto; statement_timeout limita a query.
+        connect_args["options"] = "-c statement_timeout=90000"
+        connect_args.update(keepalives=1, keepalives_idle=10,
+                            keepalives_interval=5, keepalives_count=3)
+    kwargs: dict = {"future": True, "connect_args": connect_args}
+    if is_remote:
+        kwargs["poolclass"] = NullPool
+    else:
+        kwargs["pool_pre_ping"] = True
+    return create_engine(parsed, **kwargs)
 
 
 def _build_upsert() -> str:
