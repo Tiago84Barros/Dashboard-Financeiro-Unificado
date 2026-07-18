@@ -68,7 +68,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão FMP → market_us.* (warehouse local)")
     p.add_argument("command", choices=[
         "init-schema", "test", "universe", "estimate", "bootstrap", "daily",
-        "fundamentals", "resume", "validate", "score-history", "backtest"])
+        "fundamentals", "resume", "validate", "score-history", "backtest",
+        "snapshot"])
     p.add_argument("--tickers", nargs="*", help="símbolos específicos")
     p.add_argument("--exchanges", nargs="*", default=None, help="NYSE NASDAQ AMEX")
     p.add_argument("--limit", type=int, default=None, help="limita o universo/lote")
@@ -89,7 +90,7 @@ def main() -> int:
 
     # Proteção: ingestão pesada NUNCA deve escrever no Supabase remoto.
     if args.command in {"bootstrap", "daily", "fundamentals", "universe", "resume",
-                        "score-history"} \
+                        "score-history", "snapshot"} \
             and not _is_local_target() and not args.dry_run:
         log.error("Comando %s exige --warehouse (destino local). "
                   "Ingestão pesada não pode ir para o Supabase.", args.command)
@@ -126,6 +127,15 @@ def main() -> int:
                     "engine_local": _is_local_target(),
                     "db_connected": test_connection()})
 
+    if args.command == "snapshot":
+        # sem rede: constrói a vitrine (company_snapshots) no warehouse a partir
+        # do que já foi ingerido. Publicação p/ Supabase = scripts/publish_us_snapshot.py
+        from core.database import get_engine
+        from data_pipeline.us import snapshot as snap
+        if args.dry_run:
+            return out({"ok": True, "action": "dry-run: vitrine não construída"})
+        return out(snap.build_snapshot(get_engine(), limit_companies=args.limit or 800))
+
     if args.command == "score-history":
         # sem rede: recomputa scores PIT a partir do que já está no warehouse
         from core.database import get_engine
@@ -136,8 +146,13 @@ def main() -> int:
         dates = sh.annual_asof_dates(start, end)
         if args.dry_run:
             return out({"ok": True, "dates": len(dates), "action": "dry-run"})
-        res = sh.compute_score_history(get_engine(), dates,
+        eng = get_engine()
+        # deriva o fechamento mensal (o backtest lê de prices_monthly, que a
+        # ingestão não popula) antes de computar os vintages PIT
+        monthly = sh.derive_prices_monthly(eng)
+        res = sh.compute_score_history(eng, dates,
                                        score_version=US_FUNDAMENTAL_SCORE_VERSION)
+        res["prices_monthly_rows"] = monthly.get("rows")
         return out(res)
 
     if args.command == "backtest":
@@ -147,7 +162,7 @@ def main() -> int:
         panel = load_score_panel()
         if panel is None or panel.empty:
             return out({"ok": False, "reason": "sem histórico de scores — rode score-history"})
-        res = bt.walk_forward(panel, top_n=args.top_n)
+        res = bt.walk_forward(panel, top_n=args.top_n, periods_per_year=1)  # painel anual
         # resumo enxuto p/ o terminal
         return out({"ok": res.get("ok"), "n_periods": res.get("n_periods"),
                     "rank_ic_mean": res.get("rank_ic", {}).get("mean"),

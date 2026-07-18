@@ -156,6 +156,16 @@ def ingest_symbol(provider: FmpProvider, engine, symbol: str, *,
     balance = provider.get_balance_sheets(sym, "annual", years)
     cashflow = provider.get_cash_flow_statements(sym, "annual", years)
 
+    # Sem NENHUMA demonstração o CIK é uma casca (ex.: holding nova de
+    # reestruturação, sem histórico). Não cria empresa-fantasma — registra e pula.
+    if not income and not balance and not cashflow:
+        with engine.begin() as conn:
+            repo.log_error(conn, run_id, symbol=sym, domain="fundamentals",
+                           error_type="empty_facts",
+                           message="CIK sem fatos XBRL (possível holding sem histórico)")
+        result["reason"] = "sem demonstrações (CIK vazio)"
+        return result
+
     with engine.begin() as conn:
         if div is not None:
             repo.log_error(conn, run_id, symbol=sym, domain="profiles",

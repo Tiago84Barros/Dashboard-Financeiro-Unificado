@@ -41,6 +41,15 @@ COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 _EXCHANGE_MAP = {"NYSE": "NYSE", "NASDAQ": "NASDAQ", "NYSEAMER": "AMEX",
                  "NYSE AMERICAN": "AMEX", "AMEX": "AMEX", "CBOE": "CBOE"}
 
+# Override ticker→CIK para reestruturações onde o mapa oficial da SEC passou a
+# apontar para uma holding nova SEM histórico, deixando as demonstrações no CIK
+# antigo (a empresa operacional). Curado e documentado — é a camada de
+# reconciliação de identidade que o módulo prevê. Ex.: em 2025 a ExxonMobil criou
+# "ExxonMobil Holdings Corp" (CIK 2115436, vazia); os 19 anos ficam no 34088.
+_CIK_OVERRIDES = {
+    "XOM": "0000034088",   # Exxon Mobil Corporation (operacional, com histórico)
+}
+
 
 class EdgarProvider(FundamentalsProvider):
     """Fundamentos via SEC EDGAR. Sem chave; exige User-Agent de contato."""
@@ -136,7 +145,10 @@ class EdgarProvider(FundamentalsProvider):
         return out
 
     def _cik_for(self, symbol: str) -> Optional[str]:
-        return self.ticker_map().get(normalize_symbol(symbol) or "")
+        sym = normalize_symbol(symbol) or ""
+        if sym in _CIK_OVERRIDES:      # reestruturação conhecida → CIK operacional
+            return _CIK_OVERRIDES[sym]
+        return self.ticker_map().get(sym)
 
     def get_profile(self, symbol: str) -> dict | None:
         cik = self._cik_for(symbol)

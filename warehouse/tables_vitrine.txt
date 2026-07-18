@@ -26,6 +26,7 @@ market.fii_universe_history
 market.fii_selection_inputs
 market.companies
 market.assets
+market_us.company_snapshots
 market.macro_indicators
 market.ticker_cvm
 market.ticker_alias

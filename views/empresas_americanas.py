@@ -50,19 +50,22 @@ def _fmt_dt(value) -> str:
 
 
 def _status_badges(status: dict) -> None:
-    col1, col2, col3, *_ = st.columns([1.2, 1.4, 4])
+    col1, col2, col3, *_ = st.columns([1.4, 1.4, 4])
+    mode = status.get("mode")
     with col1:
         if not status.get("schema_ready"):
-            badge_status("Schema ausente", "erro")
+            badge_status("Sem dados", "erro")
         elif status.get("offline"):
-            badge_status("Sem dados locais", "alerta")
+            badge_status("Sem dados", "alerta")
+        elif mode == "snapshot":
+            badge_status("Vitrine (publicada)", "sucesso")
         else:
-            badge_status("Dados locais", "sucesso")
+            badge_status("Warehouse local", "sucesso")
     with col2:
         badge_status(f"{status.get('companies', 0)} empresas", "info")
     if status.get("last_update"):
         with col3:
-            badge_status(f"Última atualização: {_fmt_dt(status['last_update'])}", "neutro")
+            badge_status(f"Atualizado: {_fmt_dt(status['last_update'])}", "neutro")
 
 
 def render() -> None:
@@ -941,10 +944,25 @@ def _tab_sincronizacao(status: dict) -> None:
         "# 7) auditar qualidade\n"
         "python run_us_ingest.py validate --warehouse --json",
         language="bash")
-    st.markdown("**Ver os dados na interface** (os dados dos EUA ficam SÓ no "
-                "warehouse local — não são publicados no Supabase):")
+
+    st.markdown("**Publicar a vitrine** (para o deploy no Streamlit Cloud mostrar "
+                "os dados). Só a vitrine compacta vai para o Supabase; os "
+                "históricos pesados ficam no warehouse.")
     st.code(
-        "# rode o app na sua máquina apontando para o warehouse local\n"
+        "# 8) construir a vitrine no warehouse (sem rede)\n"
+        "python run_us_ingest.py snapshot --warehouse --json\n\n"
+        "# 9) publicar a vitrine no Supabase (conexão direta, não o pooler)\n"
+        "python scripts/publish_us_snapshot.py `\n"
+        '  --source-url "postgresql://postgres:<senha>@127.0.0.1:5433/postgres" `\n'
+        '  --target-url "<SUPABASE_UNIFICADO_URL>" --dry-run   # confira, depois sem --dry-run',
+        language="powershell")
+    st.caption("Backtests e a sincronização rodam **só localmente** — a vitrine "
+               "traz score, dossiê, assimetria e análise avançada já computados, "
+               "mas o backtest PIT precisa do histórico completo no warehouse.")
+
+    st.markdown("**Ou rodar o app localmente** contra o warehouse (mostra tudo, "
+                "sem publicar):")
+    st.code(
         '$env:SUPABASE_UNIFICADO_URL = "postgresql://postgres:<senha>@127.0.0.1:5433/postgres"\n'
         "streamlit run app.py",
         language="powershell")
@@ -952,9 +970,10 @@ def _tab_sincronizacao(status: dict) -> None:
         if status.get("db_is_local"):
             st.warning("Schema `market_us` ainda não existe no warehouse. Rode o passo 1.")
         else:
-            st.info("Este deploy lê o Supabase, que **não** guarda os dados dos EUA "
-                    "(regra do projeto: histórico pesado é warehouse-only). A seção "
-                    "funciona rodando o app localmente, como acima.", icon="☁️")
+            st.info("Este deploy lê o Supabase e **ainda não tem a vitrine publicada**. "
+                    "Rode os passos 8–9 na sua máquina para popular a nuvem, ou rode "
+                    "o app localmente (regra do projeto: histórico pesado é "
+                    "warehouse-only; só a vitrine compacta vai ao Supabase).", icon="☁️")
 
 
 # ── Metodologia ───────────────────────────────────────────────────────────────

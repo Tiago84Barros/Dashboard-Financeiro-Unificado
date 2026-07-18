@@ -224,6 +224,30 @@ A atualização busca só o que é novo (upsert por chave natural; dividendos/sp
 com dedup). O estado por domínio fica em `market_us.ingestion_runs` (retomável);
 erros em `market_us.ingestion_errors` (reprocessáveis).
 
+## Vitrine no Supabase (deploy)
+
+Por padrão os dados dos EUA ficam **só no warehouse local** — o Streamlit Cloud
+lê o Supabase, que não guarda os históricos pesados. Para o deploy mostrar dados,
+publique a **vitrine** (`market_us.company_snapshots`): uma linha por empresa com
+score, dossiê, assimetria e análise avançada **já computados** (poucos KB cada) —
+mesmo padrão da vitrine de FIIs.
+
+```powershell
+# no warehouse: constrói a vitrine a partir do que já foi ingerido (sem rede)
+python run_us_ingest.py snapshot --warehouse --json
+# publica no Supabase (conexão direta). Faça primeiro com --dry-run
+python scripts/publish_us_snapshot.py `
+  --source-url "postgresql://postgres:<senha>@127.0.0.1:5433/postgres" `
+  --target-url "<SUPABASE_UNIFICADO_URL>"
+```
+
+`core/us_data` roteia sozinho: com as tabelas completas (warehouse) calcula ao
+vivo; só com a vitrine (deploy) lê os produtos publicados. A migration 044 é
+**autossuficiente** (cria o schema e não tem FK), pois no Supabase as demais
+tabelas `market_us` não existem — é a única `market_us` que vai à nuvem. O
+**backtest PIT** continua local-only: exige o histórico completo, que não é
+publicado.
+
 ## Modo offline
 
 Após a carga, a interface funciona sem chave e sem rede: lê o último snapshot
