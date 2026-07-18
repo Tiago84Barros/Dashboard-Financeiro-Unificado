@@ -146,8 +146,13 @@ def main() -> int:
         dates = sh.annual_asof_dates(start, end)
         if args.dry_run:
             return out({"ok": True, "dates": len(dates), "action": "dry-run"})
-        res = sh.compute_score_history(get_engine(), dates,
+        eng = get_engine()
+        # deriva o fechamento mensal (o backtest lê de prices_monthly, que a
+        # ingestão não popula) antes de computar os vintages PIT
+        monthly = sh.derive_prices_monthly(eng)
+        res = sh.compute_score_history(eng, dates,
                                        score_version=US_FUNDAMENTAL_SCORE_VERSION)
+        res["prices_monthly_rows"] = monthly.get("rows")
         return out(res)
 
     if args.command == "backtest":
@@ -157,7 +162,7 @@ def main() -> int:
         panel = load_score_panel()
         if panel is None or panel.empty:
             return out({"ok": False, "reason": "sem histórico de scores — rode score-history"})
-        res = bt.walk_forward(panel, top_n=args.top_n)
+        res = bt.walk_forward(panel, top_n=args.top_n, periods_per_year=1)  # painel anual
         # resumo enxuto p/ o terminal
         return out({"ok": res.get("ok"), "n_periods": res.get("n_periods"),
                     "rank_ic_mean": res.get("rank_ic", {}).get("mean"),
