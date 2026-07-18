@@ -123,20 +123,30 @@ def _yf_df():
 
 
 def test_yfinance_precos_dividendos_splits():
-    prov = pyf.YFinanceProvider(ticker_factory=lambda s: FakeYFTicker(_yf_df()))
+    calls = {"n": 0}
+
+    def factory(s):
+        calls["n"] += 1
+        return FakeYFTicker(_yf_df())
+
+    prov = pyf.YFinanceProvider(ticker_factory=factory, sleep_fn=lambda s: None)
     prices = prov.get_prices_daily("AAPL")
     assert len(prices) == 2 and prices[0]["adjClose"] == 10.4
     divs = prov.get_dividends("AAPL")
     assert len(divs) == 1 and divs[0]["dividend"] == 0.25   # dia 0.0 não vira registro
     splits = prov.get_splits("AAPL")
     assert len(splits) == 1 and splits[0]["numerator"] == 4.0
+    assert calls["n"] == 1        # UM download por ticker, reaproveitado (não 3)
 
 
-def test_yfinance_vazio():
+def test_yfinance_vazio_com_retry_sem_sleep_real():
     import pandas as pd
-    prov = pyf.YFinanceProvider(ticker_factory=lambda s: FakeYFTicker(pd.DataFrame()))
+    slept = []
+    prov = pyf.YFinanceProvider(ticker_factory=lambda s: FakeYFTicker(pd.DataFrame()),
+                                retries=3, sleep_fn=slept.append)
     assert prov.get_prices_daily("AAPL") == []
     assert prov.get_dividends("AAPL") == []
+    assert len(slept) == 2        # 3 tentativas → 2 esperas (backoff), sem dormir de verdade
 
 
 # ── composição na ingestão ────────────────────────────────────────────────────
