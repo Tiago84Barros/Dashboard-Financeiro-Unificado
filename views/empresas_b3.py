@@ -25,7 +25,14 @@ import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
+from core.market_companies import filter_market_companies, normalize_b3_companies
 from design.componentes import card_metrica  # KPIs em cards CSS (visual coeso)
+from design.market_companies import (
+    render_company_search,
+    render_market_css,
+    render_market_tabs,
+    render_sector_grid,
+)
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 _CDN = "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones"
@@ -57,39 +64,6 @@ _COR_NEU = "#9CA3AF"
 # ── CSS ───────────────────────────────────────────────────────────────────────
 _CSS = """
 <style>
-.b3-sector-hdr {
-    font-size:0.92rem;font-weight:800;text-transform:uppercase;
-    letter-spacing:.10em;color:#E8FBF4;
-    background:linear-gradient(90deg,rgba(0,200,150,.18),rgba(0,200,150,.02));
-    border-left:4px solid #00C896;border-radius:0 8px 8px 0;
-    padding:10px 14px;margin:30px 0 14px;
-    display:flex;align-items:center;gap:10px;
-}
-.b3-sector-count {
-    font-size:0.66rem;font-weight:700;color:#00C896;letter-spacing:.04em;
-    background:rgba(0,200,150,.14);border:1px solid rgba(0,200,150,.32);
-    border-radius:999px;padding:2px 9px;
-}
-/* Grupo "Sem classificação" — neutro (cinza), não parece um setor real */
-.b3-sector-hdr-none {
-    color:#9CA3AF;
-    background:linear-gradient(90deg,rgba(148,163,184,.12),rgba(148,163,184,.02));
-    border-left-color:#5A6678;
-}
-.b3-sector-hdr-none .b3-sector-count {
-    color:#9CA3AF;background:rgba(148,163,184,.12);border-color:rgba(148,163,184,.30);
-}
-.b3-card {
-    background:#12151E;border:1px solid #1E2533;border-radius:12px;
-    padding:14px 14px 10px;height:100%;transition:border-color .2s;
-}
-.b3-card:hover { border-color:rgba(0,200,150,.35); }
-.b3-card-logo { width:36px;height:36px;border-radius:8px;object-fit:contain;
-                background:rgba(255,255,255,.06);padding:3px;flex-shrink:0; }
-.b3-card-ticker { font-size:0.88rem;font-weight:800;color:#E2E8F0; }
-.b3-card-nome   { font-size:0.70rem;color:#718096;margin-top:1px;
-                  overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.b3-card-tag    { font-size:0.62rem;color:#4A5568; }
 .b3-ind-card {
     background:#12151E;border:1px solid #1E2533;border-radius:10px;
     padding:12px 14px;margin-bottom:6px;
@@ -624,15 +598,6 @@ def _so_acoes(df_set: pd.DataFrame) -> pd.DataFrame:
 
 
 def _tab_empresas(df_set: pd.DataFrame) -> None:
-    busca = st.text_input("🔍 Buscar ticker (ex.: PETR4)", key="b3_busca",
-                          placeholder="Digite e pressione Enter")
-
-    if busca.strip():
-        tk = busca.strip().upper().replace(".SA", "")
-        st.session_state["b3_ticker_sel"] = tk
-        st.session_state["b3_active_tab"] = 1
-        st.rerun()
-
     if df_set.empty:
         st.warning(
             "Tabela `setores` não encontrada no banco configurado. "
@@ -644,70 +609,23 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
     if df_set.empty:
         st.info("Nenhuma ação encontrada na lista de setores.")
         return
-    # Ordena setor → subsetor → segmento → ticker (alfabético, case-insensitive).
-    # Empresas SEM classificação setorial B3 (comuns no universo market.*) vão para
-    # o FIM, sob um cabeçalho próprio — senão o grupo de setor vazio ordena antes de
-    # "A" e a paleta inteira parece não agrupada.
-    _empty = pd.Series([""] * len(df_set), index=df_set.index)
-    def _ku(name: str) -> pd.Series:
-        return df_set[name].astype(str).str.upper() if name in df_set.columns else _empty
-    _setor_up = _ku("SETOR")
-    df_set = df_set.assign(
-        _k_setor=_setor_up.where(_setor_up.str.strip() != "", "￿"),  # vazio → fim
-        _k_sub=_ku("SUBSETOR"),
-        _k_seg=_ku("SEGMENTO"),
-        _k_tk=_ku("ticker"),
-    ).sort_values(
-        by=["_k_setor", "_k_sub", "_k_seg", "_k_tk"], kind="stable",
-    ).drop(columns=["_k_setor", "_k_sub", "_k_seg", "_k_tk"]).reset_index(drop=True)
-    for setor, grupo in df_set.groupby("SETOR", sort=False):
-        classificado = isinstance(setor, str) and setor.strip()
-        hdr = html.escape(
-            setor.strip() if classificado else "Sem classificação setorial B3"
-        )
-        cls = "b3-sector-hdr" if classificado else "b3-sector-hdr b3-sector-hdr-none"
-        n_emp = len(grupo)
-        rotulo = "empresa" if n_emp == 1 else "empresas"
-        st.markdown(
-            f'<div class="{cls}">{hdr}'
-            f'<span class="b3-sector-count">{n_emp} {rotulo}</span></div>',
-            unsafe_allow_html=True,
-        )
-        grupo = grupo.reset_index(drop=True)
-        for i in range(0, len(grupo), 4):
-            cols = st.columns(4, gap="small")
-            for j, (_, row) in enumerate(grupo.iloc[i:i+4].iterrows()):
-                tk   = row["ticker"]
-                nome = (row["nome_empresa"] or tk)[:28]
-                sub  = (row.get("SUBSETOR", "") or "").strip()
-                seg  = (row.get("SEGMENTO",  "") or "").strip()
-                # Subsetor · Segmento (omite partes vazias e o "·" sobrando).
-                tag  = " · ".join(p for p in (sub, seg) if p) or "—"
-                logo = _logo_url(tk)
-                tk_html = html.escape(str(tk))
-                nome_html = html.escape(str(nome))
-                tag_html = html.escape(str(tag))
-                logo_html = html.escape(str(logo), quote=True)
-                with cols[j]:
-                    st.markdown(
-                        f'<div class="b3-card">'
-                        f'  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
-                        f'    <img src="{logo_html}" class="b3-card-logo"'
-                        f'         onerror="this.style.display=\'none\'">'
-                        f'    <div style="overflow:hidden;">'
-                        f'      <div class="b3-card-ticker">{tk_html}</div>'
-                        f'      <div class="b3-card-nome">{nome_html}</div>'
-                        f'    </div>'
-                        f'  </div>'
-                        f'  <div class="b3-card-tag">{tag_html}</div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
-                    if st.button("Analisar", key=f"b3_btn_{tk}_{i}_{j}",
-                                 use_container_width=True):
-                        st.session_state["b3_ticker_sel"] = tk
-                        st.session_state["b3_active_tab"] = 1
-                        st.rerun()
+    companies = normalize_b3_companies(df_set, _logo_url)
+    busca = render_company_search(
+        label="🔍 Buscar ticker (ex.: PETR4)",
+        placeholder="Digite e pressione Enter", key="b3_busca",
+    )
+    if busca:
+        ticker_query = busca.upper().replace(".SA", "")
+        if ticker_query in set(companies["ticker"]):
+            st.session_state["b3_ticker_sel"] = ticker_query
+            st.session_state["b3_active_tab"] = 1
+            st.rerun()
+        companies = filter_market_companies(companies, busca)
+    render_sector_grid(
+        companies, key_prefix="b3", selected_ticker=st.session_state.get("b3_ticker_sel"),
+        selected_state_key="b3_ticker_sel", active_state_key="b3_active_tab",
+        unclassified_label="Sem classificação setorial B3",
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -5766,6 +5684,7 @@ def _render_metodologia() -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render() -> None:
+    render_market_css()
     st.markdown(_CSS, unsafe_allow_html=True)
 
     st.markdown(
@@ -5791,42 +5710,7 @@ def render() -> None:
             "no `.env` ou nos secrets do Streamlit Cloud."
         )
 
-    active = st.session_state.get("b3_active_tab", 0)
-
-    col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns([2, 2, 2.5, 2.5, 2.5])
-    with col_t1:
-        if st.button("🏢 Empresas por Setor", use_container_width=True,
-                     type="primary" if active == 0 else "secondary",
-                     key="b3_tab0"):
-            st.session_state["b3_active_tab"] = 0
-            st.rerun()
-    with col_t2:
-        if st.button("🔍 Análise de Empresa", use_container_width=True,
-                     type="primary" if active == 1 else "secondary",
-                     key="b3_tab1"):
-            st.session_state["b3_active_tab"] = 1
-            st.rerun()
-    with col_t3:
-        if st.button("🔬 Análise Avançada", use_container_width=True,
-                     type="primary" if active == 2 else "secondary",
-                     key="b3_tab2"):
-            st.session_state["b3_active_tab"] = 2
-            st.rerun()
-    with col_t4:
-        if st.button("🚀 Criação de Portfólio", use_container_width=True,
-                     type="primary" if active == 3 else "secondary",
-                     key="b3_tab3"):
-            st.session_state["b3_active_tab"] = 3
-            st.rerun()
-    with col_t5:
-        if st.button("🧠 Avaliação de Portfólio", use_container_width=True,
-                     type="primary" if active == 4 else "secondary",
-                     key="b3_tab4"):
-            st.session_state["b3_active_tab"] = 4
-            st.rerun()
-
-    st.markdown("<hr style='margin:4px 0 16px;border-color:#1E2533;'>",
-                unsafe_allow_html=True)
+    active = render_market_tabs(state_key="b3_active_tab", key_prefix="b3")
 
     if active == 0:
         _tab_empresas(df_set)

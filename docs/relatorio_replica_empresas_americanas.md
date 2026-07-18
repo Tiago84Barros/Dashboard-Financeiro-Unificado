@@ -11,13 +11,16 @@ seção **Empresas B3**:
 4. Criação de Portfólio;
 5. Avaliação de Portfólio.
 
-A camada visual permanece em Streamlit e usa os mesmos componentes, cores,
-cards, botões primários/secundários, tabelas, expanders, gráficos Plotly e estados
-vazios do dashboard. A diferença fica na inteligência e na origem dos dados.
+A camada visual permanece em Streamlit e usa um componente compartilhado real
+entre B3 e EUA para botões, busca, cabeçalhos setoriais e cards. A diferença fica
+na inteligência, nos filtros do universo e na origem dos dados.
 
 ## Elementos preservados
 
 - navegação principal em cinco áreas e persistência da área ativa na sessão;
+- vitrine em quatro cards por linha, com logo/placeholder, ticker, nome,
+  setor/indústria, seleção e botão Analisar;
+- busca por ticker, nome, setor ou indústria, tolerante a caixa e acentuação;
 - exploração por setor, indústria, ticker e nome;
 - análise fundamentalista individual com KPIs, demonstrações históricas e
   gráficos de resultados, margens, caixa e balanço;
@@ -98,21 +101,21 @@ e Crítica (<35). Elas servem para triagem e não constituem recomendação.
 
 ## Melhorias que também beneficiariam Empresas B3
 
-1. Extrair o contrato das cinco áreas para um componente compartilhado, evitando
-   divergência futura de navegação e estilos.
-2. Levar HHI, número efetivo de ativos e cobertura ponderada à avaliação B3.
-3. Separar explicitamente score fundamentalista e ajuste macro também na B3.
-4. Exibir a cobertura de métricas por empresa em todos os rankings B3.
-5. Adotar identificação permanente/alias temporal mais forte para mudanças de
+1. Levar HHI, número efetivo de ativos e cobertura ponderada à avaliação B3.
+2. Separar explicitamente score fundamentalista e ajuste macro também na B3.
+3. Exibir a cobertura de métricas por empresa em todos os rankings B3.
+4. Adotar identificação permanente/alias temporal mais forte para mudanças de
    ticker na B3, análoga ao CIK.
-6. Padronizar shareholder yield (proventos + recompras − emissões) quando houver
+5. Padronizar shareholder yield (proventos + recompras − emissões) quando houver
    dados brasileiros confiáveis.
-7. Consolidar os testes PIT e anti-survivorship das duas áreas em contratos
+6. Consolidar os testes PIT e anti-survivorship das duas áreas em contratos
    compartilhados, mantendo fontes e calendários específicos.
 
 ## Arquivos principais
 
 - `views/empresas_americanas.py`: experiência unificada em cinco áreas;
+- `core/market_companies.py`: normalização, universo acionário e busca comum;
+- `design/market_companies.py`: navegação, cabeçalhos e cards usados por B3/EUA;
 - `core/us_score.py`: score relativo por indústria;
 - `core/us_portfolio.py`: construção e limites da carteira;
 - `core/us_portfolio_analysis.py`: avaliação consolidada da carteira;

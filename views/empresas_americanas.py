@@ -19,18 +19,22 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import core.us_data as us
+from core.market_companies import filter_market_companies, normalize_us_companies
 from core.us_methodology import (
     US_ASYMMETRY_SCORE_VERSION,
     US_FUNDAMENTAL_SCORE_VERSION,
-    US_SCHEMA_VERSION,
 )
 from design.componentes import (
     badge_status,
     card_metrica,
-    container_pagina,
-    em_construcao,
     estado_vazio,
     secao_titulo,
+)
+from design.market_companies import (
+    render_company_search,
+    render_market_css,
+    render_market_tabs,
+    render_sector_grid,
 )
 
 _PLOT_LAYOUT = dict(
@@ -40,63 +44,21 @@ _PLOT_LAYOUT = dict(
 )
 
 
-def _fmt_dt(value) -> str:
-    if value is None:
-        return "—"
-    try:
-        return pd.to_datetime(value).strftime("%d/%m/%Y %H:%M")
-    except Exception:
-        return str(value)
-
-
-def _status_badges(status: dict) -> None:
-    col1, col2, col3, *_ = st.columns([1.4, 1.4, 4])
-    mode = status.get("mode")
-    with col1:
-        if not status.get("schema_ready"):
-            badge_status("Sem dados", "erro")
-        elif status.get("offline"):
-            badge_status("Sem dados", "alerta")
-        elif mode == "snapshot":
-            badge_status("Vitrine (publicada)", "sucesso")
-        else:
-            badge_status("Warehouse local", "sucesso")
-    with col2:
-        badge_status(f"{status.get('companies', 0)} empresas", "info")
-    if status.get("last_update"):
-        with col3:
-            badge_status(f"Atualizado: {_fmt_dt(status['last_update'])}", "neutro")
-
-
 def render() -> None:
-    container_pagina(
-        "Empresas Americanas",
-        "Análise fundamentalista de empresas listadas nos EUA e construção "
-        "quantitativa de portfólios com dados SEC/GAAP.",
-        "🌎",   # não usar 🇺🇸: Windows não renderiza bandeiras (vira "US")
+    render_market_css()
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">'
+        '<span style="font-size:2rem">🌎</span>'
+        '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
+        'Empresas Americanas</h1></div>'
+        '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
+        'Análise fundamentalista de empresas listadas nos Estados Unidos e construção '
+        'quantitativa de portfólios aplicáveis com dados SEC/GAAP.</p>',
+        unsafe_allow_html=True,
     )
 
     status = us.data_status()
-    _status_badges(status)
-
-    if status.get("reason"):
-        st.caption(f"ℹ️ {status['reason']}")
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    active = int(st.session_state.get("us_active_tab", 0))
-    labels = [
-        "🏢 Empresas por Setor", "🔍 Análise de Empresa", "🔬 Análise Avançada",
-        "🚀 Criação de Portfólio", "🧠 Avaliação de Portfólio",
-    ]
-    for idx, (col, label) in enumerate(zip(st.columns([2, 2, 2.5, 2.5, 2.5]), labels)):
-        with col:
-            if st.button(label, use_container_width=True,
-                         type="primary" if active == idx else "secondary",
-                         key=f"us_tab{idx}"):
-                st.session_state["us_active_tab"] = idx
-                st.rerun()
-    st.markdown("<hr style='margin:4px 0 16px;border-color:#1E2533;'>",
-                unsafe_allow_html=True)
+    active = render_market_tabs(state_key="us_active_tab", key_prefix="us")
 
     if active == 0:
         _tab_empresas_setor(status)
@@ -153,40 +115,25 @@ def _tab_empresas_setor(status: dict) -> None:
     if _empty_if_offline(status, "Sem dados locais para listar as empresas.", "🏢"):
         _tab_sincronizacao(status)
         return
-    _tab_visao_geral()
-    scored = us.scored_universe()
-    companies = us.companies(limit=800)
+    companies = normalize_us_companies(us.companies(limit=5000))
     if companies is None or companies.empty:
+        estado_vazio("Nenhuma ação americana válida encontrada na vitrine.", "🌎")
         return
-    secao_titulo("Empresas por setor", "🏢")
-    c1, c2, c3 = st.columns([2, 2, 3])
-    sectors = sorted(companies["sector"].dropna().astype(str).unique())
-    with c1:
-        sector = st.selectbox("Setor", ["Todos"] + sectors, key="us_sector_filter")
-    base = companies if sector == "Todos" else companies[companies["sector"] == sector]
-    industries = sorted(base["industry"].dropna().astype(str).unique())
-    with c2:
-        industry = st.selectbox("Indústria", ["Todas"] + industries, key="us_industry_filter")
-    with c3:
-        query = st.text_input("Buscar por ticker ou nome", key="us_company_search")
-    if industry != "Todas":
-        base = base[base["industry"] == industry]
+    query = render_company_search(
+        label="🔍 Buscar ticker (ex.: AAPL)",
+        placeholder="Digite e pressione Enter", key="us_company_search",
+    )
     if query:
-        mask = (base["symbol"].astype(str).str.contains(query, case=False, na=False)
-                | base["name"].astype(str).str.contains(query, case=False, na=False))
-        base = base[mask]
-    if scored is not None and not scored.empty:
-        score_cols = [c for c in ("symbol", "score", "coverage") if c in scored]
-        base = base.merge(scored[score_cols], on="symbol", how="left")
-    show = base.rename(columns={
-        "symbol": "Ticker", "name": "Nome", "sector": "Setor",
-        "industry": "Indústria", "exchange": "Bolsa", "is_reit": "REIT",
-        "score": "Score", "coverage": "Cobertura %",
-    })
-    wanted = [c for c in ("Ticker", "Nome", "Setor", "Indústria", "Bolsa", "REIT",
-                             "Score", "Cobertura %") if c in show]
-    st.caption(f"{len(show)} empresa(s) — universo americano disponível no warehouse.")
-    st.dataframe(show[wanted], hide_index=True, use_container_width=True, height=430)
+        ticker_query = query.upper()
+        if ticker_query in set(companies["ticker"]):
+            st.session_state["us_selected_ticker"] = ticker_query
+            st.session_state["us_active_tab"] = 1
+            st.rerun()
+        companies = filter_market_companies(companies, query)
+    render_sector_grid(
+        companies, key_prefix="us", selected_ticker=st.session_state.get("us_selected_ticker"),
+        selected_state_key="us_selected_ticker", active_state_key="us_active_tab",
+    )
 
 
 def _company_selector(scored: pd.DataFrame, key: str) -> str | None:
@@ -194,8 +141,12 @@ def _company_selector(scored: pd.DataFrame, key: str) -> str | None:
         return None
     options = scored["symbol"].dropna().astype(str).tolist()
     names = scored.set_index("symbol").get("name", pd.Series(dtype=object)).to_dict()
-    return st.selectbox("Empresa", options,
-                        format_func=lambda x: f"{x} — {names.get(x, '')}", key=key)
+    selected = st.session_state.get("us_selected_ticker")
+    index = options.index(selected) if selected in options else 0
+    value = st.selectbox("Empresa", options, index=index,
+                         format_func=lambda x: f"{x} — {names.get(x, '')}", key=key)
+    st.session_state["us_selected_ticker"] = value
+    return value
 
 
 def _render_score_dashboard(row: pd.Series) -> None:
@@ -392,60 +343,6 @@ def _tab_comparacao_empresas(status: dict) -> None:
     st.plotly_chart(fig, use_container_width=True, key="us_compare_tracks")
     with st.expander("Comparação por indústria"):
         _tab_comparacao_industria(status)
-
-
-# ── Visão Geral ───────────────────────────────────────────────────────────────
-def _tab_visao_geral() -> None:
-    ov = us.overview()
-    if ov.get("companies", 0) == 0:
-        estado_vazio(
-            "Nenhuma empresa americana no warehouse local ainda. Rode a carga "
-            "inicial (aba Sincronização) para popular o banco local.", "🌎")
-        return
-    secao_titulo("Cobertura do warehouse local", "📊")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        card_metrica("Empresas", f"{ov['companies']:,}".replace(",", "."))
-    with c2:
-        card_metrica("Ativos (tickers)", f"{ov['assets']:,}".replace(",", "."))
-    with c3:
-        card_metrica("Setores", str(ov["sectors"]))
-    with c4:
-        card_metrica("Com demonstrações", f"{ov['with_statements']:,}".replace(",", "."))
-    c5, c6, c7, c8 = st.columns(4)
-    with c5:
-        card_metrica("REITs", str(ov["reits"]), ajuda="Tratamento específico (FFO/AFFO)")
-    with c6:
-        card_metrica("Deslistadas", str(ov["delisted"]),
-                     ajuda="Mantidas no universo histórico (anti-survivorship)")
-    with c7:
-        card_metrica("Última atualização", _fmt_dt(ov["last_update"]))
-    with c8:
-        card_metrica("Schema", f"market_us v{US_SCHEMA_VERSION}")
-
-
-# ── Explorar ──────────────────────────────────────────────────────────────────
-def _tab_explorar() -> None:
-    if not us.schema_ready():
-        estado_vazio("Schema market_us ainda não aplicado.", "🔌")
-        return
-    col1, col2 = st.columns([2, 3])
-    with col1:
-        search = st.text_input("Buscar por ticker ou nome", key="us_explore_search")
-    df = us.companies(search=search or None, limit=500)
-    if df is None or df.empty:
-        estado_vazio("Nenhuma empresa encontrada para o filtro atual.", "🔎")
-        return
-    st.caption(f"{len(df)} empresa(s) — leitura local, offline.")
-    st.dataframe(
-        df.rename(columns={
-            "symbol": "Ticker", "name": "Nome", "sector": "Setor",
-            "industry": "Indústria", "exchange": "Bolsa",
-            "security_type": "Tipo", "is_reit": "REIT", "is_active": "Ativa",
-            "cik": "CIK",
-        }),
-        hide_index=True, use_container_width=True,
-    )
 
 
 # ── Análise Fundamentalista (score por setor/indústria) ───────────────────────

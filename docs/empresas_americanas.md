@@ -141,11 +141,14 @@ só pela CLI/pipeline.
 | `data_pipeline/us/quality.py` | Checks (identidade contábil, FCF, market cap) |
 | `data_pipeline/us/ingest.py` | Orquestrador por domínio, reiniciável |
 | `run_us_ingest.py` | CLI da ingestão |
-| `views/empresas_americanas.py` | Seção com 12 abas |
+| `views/empresas_americanas.py` | Seção com as mesmas 5 áreas principais da B3 |
+| `core/market_companies.py` | Contrato normalizado B3/EUA, filtros e busca |
+| `design/market_companies.py` | Abas, busca, cabeçalhos e cards compartilhados |
 | `tests/test_us_*.py` | Normalização, identidade, provider, repositório, módulo |
 
 **Reutilizados (não reescritos):** `core/database.py` (engine/warehouse),
-`core/config.py` (+`FMP_API_KEY`/`has_fmp`), `design/componentes.py` (cards CSS),
+`core/config.py` (+`FMP_API_KEY`/`has_fmp`), `design/componentes.py` e
+`design/market_companies.py` (cards CSS compartilhados),
 `app.py` (+1 rota).
 
 ### 5. Esquema de banco
