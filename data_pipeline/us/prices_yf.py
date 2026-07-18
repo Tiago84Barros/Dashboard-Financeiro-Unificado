@@ -16,6 +16,7 @@ O factory de Ticker é injetável (`ticker_factory`) para teste sem rede.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Callable, Optional
 
 from data_pipeline.us.identity import normalize_symbol
@@ -25,9 +26,24 @@ logger = logging.getLogger("us_prices_yf")
 
 
 class YFinanceProvider(MarketDataProvider):
-    def __init__(self, ticker_factory: Optional[Callable[[str], Any]] = None):
+    """Preços/dividendos/splits do yfinance.
+
+    IMPORTANTE: baixa o histórico UMA vez por (symbol,range) e memoiza — preços,
+    dividendos e splits saem do MESMO DataFrame (yfinance traz tudo com
+    actions=True). Sem isso seriam 3 downloads por ticker, o que dispara o
+    rate-limit do Yahoo (o erro "possibly delisted" em nomes óbvios). Retry com
+    backoff cobre a flakiness residual do Yahoo.
+    """
+
+    def __init__(self, ticker_factory: Optional[Callable[[str], Any]] = None,
+                 retries: int = 3, retry_wait: float = 2.0,
+                 sleep_fn: Callable[[float], None] = time.sleep):
         self._factory = ticker_factory
+        self.retries = max(1, retries)
+        self.retry_wait = retry_wait
+        self.sleep_fn = sleep_fn
         self.calls_made = 0
+        self._cache: dict[tuple, Any] = {}
 
     def _ticker(self, symbol: str):
         if self._factory is not None:
@@ -39,13 +55,26 @@ class YFinanceProvider(MarketDataProvider):
         return yf.Ticker(symbol)
 
     def _history(self, symbol: str, start=None, end=None):
-        self.calls_made += 1
-        t = self._ticker(normalize_symbol(symbol) or symbol)
-        try:
-            return t.history(start=start, end=end, period=None if start else "max",
-                             auto_adjust=False, actions=True)
-        except Exception as exc:  # noqa: BLE001
-            raise ProviderError(f"yfinance falhou em {symbol}: {exc}") from exc
+        sym = normalize_symbol(symbol) or symbol
+        key = (sym, start, end)
+        if key in self._cache:
+            return self._cache[key]
+        df = None
+        for attempt in range(1, self.retries + 1):
+            self.calls_made += 1
+            try:
+                t = self._ticker(sym)
+                df = t.history(start=start, end=end, period=None if start else "max",
+                               auto_adjust=False, actions=True)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("yfinance %s tentativa %d falhou: %s", sym, attempt, exc)
+                df = None
+            if df is not None and not getattr(df, "empty", True):
+                break
+            if attempt < self.retries:
+                self.sleep_fn(self.retry_wait * attempt)  # backoff: 2s, 4s...
+        self._cache[key] = df
+        return df
 
     def get_prices_daily(self, symbol: str, start=None, end=None) -> list[dict]:
         df = self._history(symbol, start, end)

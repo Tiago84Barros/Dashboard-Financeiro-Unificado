@@ -12,6 +12,7 @@ e explícito (scripts/publish_us_snapshot.py), espelhando a vitrine de FIIs.
 from __future__ import annotations
 
 import datetime as _dt
+import decimal as _decimal
 import json
 import logging
 from typing import Any, Optional, Sequence
@@ -31,6 +32,9 @@ def jsonable(value: Any) -> Any:
         return [jsonable(v) for v in value]
     if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
         return value.isoformat()
+    if isinstance(value, _decimal.Decimal):   # NUMERIC do Postgres
+        f = float(value)
+        return None if f != f else f
     if hasattr(value, "item") and not isinstance(value, (str, bytes)):
         try:
             return jsonable(value.item())

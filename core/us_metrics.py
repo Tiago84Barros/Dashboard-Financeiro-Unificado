@@ -8,18 +8,32 @@ de indicadores por empresa. Ausência NUNCA vira zero: divisão inválida → No
 """
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 _TAX_DEFAULT = 0.21  # alíquota corporativa federal EUA (aproximação p/ NOPAT)
 
 
-def safe_div(num: Optional[float], den: Optional[float]) -> Optional[float]:
-    """Divisão que preserva ausência: None se faltar dado ou denominador ~0."""
-    if num is None or den is None:
+def _f(v: Any) -> Optional[float]:
+    """Coage para float, tolerando Decimal (NUMERIC do Postgres). None se inválido."""
+    if v is None:
         return None
-    if den == 0:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
         return None
-    return num / den
+    return None if f != f else f
+
+
+def safe_div(num: Any, den: Any) -> Optional[float]:
+    """Divisão que preserva ausência: None se faltar dado ou denominador ~0.
+
+    Coage os operandos a float — o warehouse devolve NUMERIC como Decimal, e
+    float/Decimal levantaria TypeError.
+    """
+    n, d = _f(num), _f(den)
+    if n is None or d is None or d == 0:
+        return None
+    return n / d
 
 
 def cagr(first: Optional[float], last: Optional[float], years: int) -> Optional[float]:
@@ -82,6 +96,9 @@ def compute_company_metrics(
     As séries vêm ordenadas por ano; usamos o último ano com dado para cada campo.
     market_cap pode ser dado direto ou derivado de price*shares.
     """
+    # NUMERIC do Postgres chega como Decimal; coage os escalares externos a float
+    # (há aritmética direta abaixo, não só safe_div).
+    price, market_cap, shares = _f(price), _f(market_cap), _f(shares)
     revenue     = _latest(income, "revenue")
     gross       = _latest(income, "gross_profit")
     op_income   = _latest(income, "operating_income")

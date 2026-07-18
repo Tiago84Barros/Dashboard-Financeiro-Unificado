@@ -16,6 +16,15 @@ def test_jsonable_datas_e_nan():
     assert snap.jsonable({"a": [dt.date(2024, 1, 2), 1.5]}) == {"a": ["2024-01-02", 1.5]}
 
 
+def test_jsonable_decimal():
+    from decimal import Decimal
+    assert snap.jsonable(Decimal("391035000000.00")) == 391035000000.0
+    # dentro de estrutura + serializável por json
+    out = snap.jsonable({"revenue": Decimal("1440"), "years": [Decimal("2023")]})
+    assert out == {"revenue": 1440.0, "years": [2023.0]}
+    json.dumps(out)   # não levanta
+
+
 def test_compact_financials():
     income = [{"fiscal_year": 2022, "revenue": 100, "net_income": 10, "ebitda": 20},
               {"fiscal_year": 2023, "revenue": 120, "net_income": 12, "ebitda": 24}]
