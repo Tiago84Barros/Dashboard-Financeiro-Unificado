@@ -231,6 +231,10 @@ def main() -> int:
                 if args.limit:
                     q += f" LIMIT {int(args.limit)}"
                 symbols = [r[0] for r in conn.execute(text(q)).fetchall()]
+        if args.shard:                       # fatia N/M p/ paralelismo moderado
+            n, m = (int(x) for x in args.shard.split("/"))
+            symbols = symbols[n::m]
+            log.info("shard %d/%d: %d símbolos sem preço", n, m, len(symbols))
         return out({"ok": True, **ingest.ingest_prices_only(provider, engine, symbols)})
 
     if args.command == "daily":
