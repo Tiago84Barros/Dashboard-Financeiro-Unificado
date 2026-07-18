@@ -26,11 +26,12 @@ sem SLA (raspa o Yahoo) — aceitável para preço, não para fundamento. A FMP
 permanece disponível via `US_FUNDAMENTALS_SOURCE=fmp`, apenas com licença
 compatível.
 
-> Estado atual: **módulo completo (Fases 2–8)** — infraestrutura, ingestão,
+> Estado atual: **módulo completo e alinhado à navegação de Empresas B3** — infraestrutura, ingestão,
 > normalização/qualidade/PIT (2–4); score fundamentalista + comparação por
 > indústria + dossiê (5); carteira-modelo + backtest point-in-time + Rank-IC (6);
 > Empresas Fora da Curva, em **seção própria** (7); Análise Avançada
-> (Piotroski/Altman/Sloan/ROIC incremental) e validação (8).
+> (Piotroski/Altman/Sloan/ROIC incremental), comparação, criação/simulação e
+> avaliação de portfólio, regime macro americano e validação (8+).
 
 ## Análise Avançada
 
