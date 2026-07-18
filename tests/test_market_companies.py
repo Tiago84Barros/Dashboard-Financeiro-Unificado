@@ -80,6 +80,9 @@ def test_duas_views_usam_componentes_compartilhados_e_eua_nao_usa_tabela_na_vitr
     start = usa.index("def _tab_empresas_setor")
     end = usa.index("def _company_selector", start)
     assert "st.dataframe" not in usa[start:end]
+    assert "Cobertura do warehouse local" not in usa
+    assert "def _tab_visao_geral" not in usa
+    assert "def _tab_explorar" not in usa
 
 
 def test_componentes_renderizam_quatro_cards_e_navegacao_sem_excecao():
@@ -110,8 +113,13 @@ render_sector_grid(df, key_prefix='test_cards', selected_ticker=None,
 
 def test_view_americana_card_analisar_seleciona_ticker_e_muda_aba():
     from streamlit.testing.v1 import AppTest
+    import views.empresas_americanas as american_view
 
-    app = AppTest.from_string("""
+    originals = {name: getattr(american_view.us, name) for name in (
+        "data_status", "companies", "scored_universe", "company_financials", "dossie",
+    )}
+    try:
+        app = AppTest.from_string("""
 import pandas as pd
 import views.empresas_americanas as view
 companies = pd.DataFrame([
@@ -131,18 +139,24 @@ view.us.company_financials = lambda symbol: pd.DataFrame()
 view.us.dossie = lambda symbol: {'classification':'consolidada','classification_reason':'ok','red_flags':[],'notes':{}}
 view.render()
 """).run(timeout=20)
-    assert not app.exception
-    analyze = next(button for button in app.button if button.label == "Analisar")
-    analyze.click().run(timeout=20)
-    assert not app.exception
-    assert app.session_state["us_selected_ticker"] == "AAPL"
-    assert app.session_state["us_active_tab"] == 1
+        assert not app.exception
+        analyze = next(button for button in app.button if button.label == "Analisar")
+        analyze.click().run(timeout=20)
+        assert not app.exception
+        assert app.session_state["us_selected_ticker"] == "AAPL"
+        assert app.session_state["us_active_tab"] == 1
+    finally:
+        for name, original in originals.items():
+            setattr(american_view.us, name, original)
 
 
 def test_view_b3_continua_renderizando_cards_compartilhados():
     from streamlit.testing.v1 import AppTest
+    import views.empresas_b3 as b3_view
 
-    app = AppTest.from_string("""
+    original_load_setores = b3_view._db.load_setores
+    try:
+        app = AppTest.from_string("""
 import pandas as pd
 import views.empresas_b3 as view
 view._db.load_setores = lambda: pd.DataFrame([
@@ -151,5 +165,7 @@ view._db.load_setores = lambda: pd.DataFrame([
 ])
 view.render()
 """).run(timeout=20)
-    assert not app.exception
-    assert [button.label for button in app.button].count("Analisar") == 2
+        assert not app.exception
+        assert [button.label for button in app.button].count("Analisar") == 2
+    finally:
+        b3_view._db.load_setores = original_load_setores

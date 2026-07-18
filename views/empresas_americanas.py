@@ -23,13 +23,10 @@ from core.market_companies import filter_market_companies, normalize_us_companie
 from core.us_methodology import (
     US_ASYMMETRY_SCORE_VERSION,
     US_FUNDAMENTAL_SCORE_VERSION,
-    US_SCHEMA_VERSION,
 )
 from design.componentes import (
     badge_status,
     card_metrica,
-    container_pagina,
-    em_construcao,
     estado_vazio,
     secao_titulo,
 )
@@ -45,34 +42,6 @@ _PLOT_LAYOUT = dict(
     plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#CBD5E0"),
     margin=dict(l=18, r=18, t=42, b=18),
 )
-
-
-def _fmt_dt(value) -> str:
-    if value is None:
-        return "—"
-    try:
-        return pd.to_datetime(value).strftime("%d/%m/%Y %H:%M")
-    except Exception:
-        return str(value)
-
-
-def _status_badges(status: dict) -> None:
-    col1, col2, col3, *_ = st.columns([1.4, 1.4, 4])
-    mode = status.get("mode")
-    with col1:
-        if not status.get("schema_ready"):
-            badge_status("Sem dados", "erro")
-        elif status.get("offline"):
-            badge_status("Sem dados", "alerta")
-        elif mode == "snapshot":
-            badge_status("Vitrine (publicada)", "sucesso")
-        else:
-            badge_status("Warehouse local", "sucesso")
-    with col2:
-        badge_status(f"{status.get('companies', 0)} empresas", "info")
-    if status.get("last_update"):
-        with col3:
-            badge_status(f"Atualizado: {_fmt_dt(status['last_update'])}", "neutro")
 
 
 def render() -> None:
@@ -374,60 +343,6 @@ def _tab_comparacao_empresas(status: dict) -> None:
     st.plotly_chart(fig, use_container_width=True, key="us_compare_tracks")
     with st.expander("Comparação por indústria"):
         _tab_comparacao_industria(status)
-
-
-# ── Visão Geral ───────────────────────────────────────────────────────────────
-def _tab_visao_geral() -> None:
-    ov = us.overview()
-    if ov.get("companies", 0) == 0:
-        estado_vazio(
-            "Nenhuma empresa americana no warehouse local ainda. Rode a carga "
-            "inicial (aba Sincronização) para popular o banco local.", "🌎")
-        return
-    secao_titulo("Cobertura do warehouse local", "📊")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        card_metrica("Empresas", f"{ov['companies']:,}".replace(",", "."))
-    with c2:
-        card_metrica("Ativos (tickers)", f"{ov['assets']:,}".replace(",", "."))
-    with c3:
-        card_metrica("Setores", str(ov["sectors"]))
-    with c4:
-        card_metrica("Com demonstrações", f"{ov['with_statements']:,}".replace(",", "."))
-    c5, c6, c7, c8 = st.columns(4)
-    with c5:
-        card_metrica("REITs", str(ov["reits"]), ajuda="Tratamento específico (FFO/AFFO)")
-    with c6:
-        card_metrica("Deslistadas", str(ov["delisted"]),
-                     ajuda="Mantidas no universo histórico (anti-survivorship)")
-    with c7:
-        card_metrica("Última atualização", _fmt_dt(ov["last_update"]))
-    with c8:
-        card_metrica("Schema", f"market_us v{US_SCHEMA_VERSION}")
-
-
-# ── Explorar ──────────────────────────────────────────────────────────────────
-def _tab_explorar() -> None:
-    if not us.schema_ready():
-        estado_vazio("Schema market_us ainda não aplicado.", "🔌")
-        return
-    col1, col2 = st.columns([2, 3])
-    with col1:
-        search = st.text_input("Buscar por ticker ou nome", key="us_explore_search")
-    df = us.companies(search=search or None, limit=500)
-    if df is None or df.empty:
-        estado_vazio("Nenhuma empresa encontrada para o filtro atual.", "🔎")
-        return
-    st.caption(f"{len(df)} empresa(s) — leitura local, offline.")
-    st.dataframe(
-        df.rename(columns={
-            "symbol": "Ticker", "name": "Nome", "sector": "Setor",
-            "industry": "Indústria", "exchange": "Bolsa",
-            "security_type": "Tipo", "is_reit": "REIT", "is_active": "Ativa",
-            "cik": "CIK",
-        }),
-        hide_index=True, use_container_width=True,
-    )
 
 
 # ── Análise Fundamentalista (score por setor/indústria) ───────────────────────
