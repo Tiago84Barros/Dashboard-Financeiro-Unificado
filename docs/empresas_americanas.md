@@ -1,9 +1,18 @@
-# Empresas Americanas — arquitetura e runbook
+# Empresas Americanas — arquitetura e guia operacional
 
 Seção de análise fundamentalista de empresas dos EUA (NYSE/Nasdaq/AMEX),
-inspirada em Empresas B3, Portfólio B3 e Carteira de FIIs. **Offline-first**:
-a interface lê apenas o **warehouse local** (`market_us.*`); as APIs são usadas
+inspirada em Empresas B3, Portfólio B3 e Carteira de FIIs. A operação local é
+prioritária: a interface lê apenas o **armazém de dados local** (`market_us.*`); as APIs são usadas
 só na ingestão.
+
+## Localização em português do Brasil
+
+A interface apresenta textos, filtros, mensagens, indicadores, tabelas, gráficos,
+setores e indústrias em português do Brasil. As classificações SEC/SIC são
+consolidadas nos setores macroeconômicos usados pela plataforma e traduzidas na
+camada de apresentação. Os valores originais permanecem preservados internamente
+para busca, auditoria e cálculos. Nomes oficiais de empresas, tickers, bolsas,
+siglas regulatórias e nomes próprios de metodologias não são traduzidos.
 
 ## Fontes de dados (decisão de 2026-07)
 

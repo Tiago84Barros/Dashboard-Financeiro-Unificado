@@ -76,7 +76,8 @@ def test_assemble_dossie_e_texto():
     assert d["classification"] in ("assimetrica", "crescimento", "consolidada")
     assert d["metrics"]["net_margin"] is not None
     txt = ud.dossie_to_text(d)
-    assert "CLASSIFICAÇÃO" in txt and "VALUATION" in txt
+    assert "CLASSIFICAÇÃO" in txt and "AVALIAÇÃO" in txt
+    assert "Tecnologia / Eletrônicos de Consumo" in txt
 
 
 def test_dossie_to_text_erro():

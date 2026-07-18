@@ -46,11 +46,11 @@ def evaluate_macro(snapshot: USMacroSnapshot | dict) -> dict:
     score = round(_clip(50 + 2.0 * (inflation + growth + labor + curve + credit + rates), 0, 100), 1)
 
     if score >= 65:
-        regime, tone = "Expansão / risk-on", "favorável"
+        regime, tone = "Expansão / apetite a risco", "favorável"
     elif score >= 45:
         regime, tone = "Transição / neutro", "neutro"
     else:
-        regime, tone = "Desaceleração / risk-off", "adverso"
+        regime, tone = "Desaceleração / aversão a risco", "adverso"
 
     sector_impacts = {
         "Technology": _clip(growth + rates + credit, -10, 10),

@@ -5,8 +5,11 @@ import pandas as pd
 from core.market_companies import (
     filter_market_companies,
     is_valid_us_equity,
+    localize_us_company_frame,
     normalize_b3_companies,
     normalize_us_companies,
+    translate_us_industry,
+    translate_us_sector,
 )
 
 
@@ -26,8 +29,11 @@ def test_normalize_us_preserva_classes_e_exclui_nao_acoes():
     out = normalize_us_companies(source)
     assert set(out["ticker"]) == {"GOOG", "GOOGL"}
     assert set(out["sector"]) == {"Tecnologia"}
+    assert set(out["industry"]) == {"Conteúdo na Internet"}
     assert out["logo_url"].str.contains("company-logos").all()
     assert (out["currency"] == "USD").all()
+    assert (out["country"] == "Estados Unidos").all()
+    assert (out["asset_type"] == "Ação").all()
 
 
 def test_united_company_nao_e_confundida_com_spac_unit():
@@ -55,6 +61,44 @@ def test_search_usa_ticker_nome_setor_e_industria():
     assert filter_market_companies(frame, "Tecnologia").iloc[0]["ticker"] == "AAPL"
     assert filter_market_companies(frame, "tecnologia").iloc[0]["ticker"] == "AAPL"
     assert filter_market_companies(frame, "Banks").iloc[0]["ticker"] == "JPM"
+    assert filter_market_companies(frame, "Bancos").iloc[0]["ticker"] == "JPM"
+
+
+def test_classificacoes_sec_sao_consolidadas_e_traduzidas_para_pt_br():
+    source = pd.DataFrame([
+        {"symbol": "A", "name": "Agilent", "sector": "Laboratory Analytical Instruments",
+         "industry": "Laboratory Analytical Instruments", "exchange": "NYSE",
+         "security_type": "Stock", "is_active": True},
+        {"symbol": "AA", "name": "Alcoa", "sector": "Primary Production of Aluminum",
+         "industry": "Primary Production of Aluminum", "exchange": "NYSE",
+         "security_type": "Stock", "is_active": True},
+        {"symbol": "AACB", "name": "Artius", "sector": "Blank Checks",
+         "industry": "Blank Checks", "exchange": "NASDAQ",
+         "security_type": "Stock", "is_active": True},
+    ])
+    out = normalize_us_companies(source).set_index("ticker")
+    assert out.loc["A", "sector"] == "Saúde"
+    assert out.loc["A", "industry"] == "Instrumentos Analíticos de Laboratório"
+    assert out.loc["AA", "sector"] == "Materiais Básicos"
+    assert out.loc["AA", "industry"] == "Produção Primária de Alumínio"
+    assert out.loc["AACB", "sector"] == "Serviços Financeiros"
+    assert out.loc["AACB", "industry"] == "Empresas de Cheque em Branco"
+
+
+def test_localizacao_preserva_colunas_originais_para_busca_e_calculos():
+    frame = localize_us_company_frame(pd.DataFrame([{
+        "symbol": "JPM", "sector": "Financial Services", "industry": "Banks - Diversified",
+        "score": 82.0,
+    }]))
+    assert frame.iloc[0]["sector"] == "Serviços Financeiros"
+    assert frame.iloc[0]["industry"] == "Bancos Diversificados"
+    assert frame.iloc[0]["sector_raw"] == "Financial Services"
+    assert frame.iloc[0]["industry_raw"] == "Banks - Diversified"
+    assert frame.iloc[0]["score"] == 82.0
+    assert translate_us_sector("Real Estate Investment Trusts") == "Imobiliário"
+    assert translate_us_industry("Laboratory Analytical Instruments") == (
+        "Instrumentos Analíticos de Laboratório"
+    )
 
 
 def test_normalize_b3_mantem_tag_e_classes():
@@ -83,6 +127,11 @@ def test_duas_views_usam_componentes_compartilhados_e_eua_nao_usa_tabela_na_vitr
     assert "Cobertura do warehouse local" not in usa
     assert "def _tab_visao_geral" not in usa
     assert "def _tab_explorar" not in usa
+    for english_label in (
+        '"FCF Yield"', '"Shareholder Yield"', '"Hit rate"',
+        '"Máx. drawdown"', '"Turnover médio"', '"Backtest"',
+    ):
+        assert english_label not in usa
 
 
 def test_componentes_renderizam_quatro_cards_e_navegacao_sem_excecao():
@@ -140,6 +189,9 @@ view.us.dossie = lambda symbol: {'classification':'consolidada','classification_
 view.render()
 """).run(timeout=20)
         assert not app.exception
+        html_rendered = "\n".join(element.value for element in app.markdown)
+        assert "Eletrônicos de Consumo" in html_rendered
+        assert "Consumer Electronics" not in html_rendered
         analyze = next(button for button in app.button if button.label == "Analisar")
         analyze.click().run(timeout=20)
         assert not app.exception
