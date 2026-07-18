@@ -200,8 +200,13 @@ def ingest_symbol(provider: FmpProvider, engine, symbol: str, *,
 
 
 def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
-                   run_key="bootstrap", years=20, resume=True) -> dict:
-    """Percorre símbolos com checkpoint/retomada. Retoma do cursor se resume=True."""
+                   run_key="bootstrap", years=20, resume=True,
+                   with_prices=True) -> dict:
+    """Percorre símbolos com checkpoint/retomada. Retoma do cursor se resume=True.
+
+    with_prices=False: só fundamentos (EDGAR, rápido) — para varrer o mercado
+    todo sem o gargalo do yfinance; os preços entram numa passagem incremental.
+    """
     symbols = [identity.normalize_symbol(s) for s in symbols if s]
     with engine.begin() as conn:
         run_id = repo.start_run(conn, run_key, "profiles", {"years": years})
@@ -212,7 +217,8 @@ def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
     ok = err = 0
     for sym in symbols[start_idx:]:
         try:
-            r = ingest_symbol(provider, engine, sym, years=years, run_id=run_id)
+            r = ingest_symbol(provider, engine, sym, years=years, run_id=run_id,
+                              with_prices=with_prices)
             ok += 1 if r.get("ok") else 0
             err += 0 if r.get("ok") else 1
         except Exception as exc:  # noqa: BLE001
@@ -226,6 +232,30 @@ def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
         repo.finish_run(conn, run_id)
     return {"processed": len(symbols[start_idx:]), "ok": ok, "errors": err,
             "calls": provider.calls_made}
+
+
+def ingest_prices_only(provider, engine, symbols: Iterable[str]) -> dict:
+    """Passagem incremental de PREÇOS (yfinance) para símbolos já com fundamentos.
+
+    Desacopla o gargalo do yfinance da carga de fundamentos (EDGAR). Uma falha de
+    preço não afeta os outros; nada de fundamentos é tocado aqui.
+    """
+    symbols = [identity.normalize_symbol(s) for s in symbols if s]
+    ok = err = rows = 0
+    for sym in symbols:
+        try:
+            with engine.begin() as conn:
+                n = repo.upsert_prices_daily(conn, sym, provider.get_prices_daily(sym))
+                if n:
+                    n += repo.upsert_dividends(conn, sym, provider.get_dividends(sym))
+                    n += repo.upsert_splits(conn, sym, provider.get_splits(sym))
+            rows += n
+            ok += 1 if n else 0
+            err += 0 if n else 1
+        except Exception as exc:  # noqa: BLE001
+            err += 1
+            logger.warning("prices %s falhou: %s", sym, exc)
+    return {"processed": len(symbols), "with_prices": ok, "empty": err, "rows": rows}
 
 
 # ── Estimativa (dry-run) ──────────────────────────────────────────────────────
