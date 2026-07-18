@@ -57,6 +57,21 @@ def test_compute_company_metrics():
     assert m["shareholder_yield"] == pytest.approx((50 + 30) / 3000)
 
 
+def test_aceita_decimal_do_postgres():
+    """NUMERIC do Postgres chega como Decimal — não pode quebrar (float/Decimal)."""
+    from decimal import Decimal
+    inc = [{"fiscal_year": 2023, "revenue": Decimal("1440"),
+            "net_income": Decimal("216"), "operating_income": Decimal("300"),
+            "ebit": Decimal("300"), "ebitda": Decimal("360")}]
+    bal = [{"fiscal_year": 2023, "total_equity": Decimal("1000"),
+            "total_debt": Decimal("500"), "cash_and_equivalents": Decimal("200"),
+            "total_assets": Decimal("2000")}]
+    m = um.compute_company_metrics(inc, bal, [], market_cap=Decimal("3000"))
+    assert m["net_margin"] == pytest.approx(0.15)
+    assert m["ev_ebit"] == pytest.approx((3000 + 500 - 200) / 300)   # aritmética direta
+    assert m["pe"] == pytest.approx(3000 / 216)
+
+
 def test_no_zero_fill_quando_denominador_ausente():
     inc = [{"fiscal_year": 2023, "revenue": None, "net_income": 100}]
     m = um.compute_company_metrics(inc, [], [])

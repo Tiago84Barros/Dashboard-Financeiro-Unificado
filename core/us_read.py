@@ -241,13 +241,50 @@ _CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow
                   "dividends_paid", "stock_repurchase", "stock_issuance")
 
 
-def _latest_market_cap(conn, symbol: str):
+def _latest_close(conn, symbol: str):
     try:
         return conn.execute(text(
-            "SELECT market_cap FROM market_us.market_cap_history "
+            "SELECT COALESCE(adjusted_close, close) FROM market_us.prices_daily "
             "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).scalar()
     except Exception:  # noqa: BLE001
         return None
+
+
+def _latest_shares(balance_rows) -> float | None:
+    """Ações em circulação mais recentes com dado (float)."""
+    for r in reversed(balance_rows or []):
+        v = r.get("shares_outstanding")
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _latest_market_cap(conn, symbol: str, balance_rows=None):
+    """Market cap: da market_cap_history se houver; senão preço×ações (derivado).
+
+    A ingestão atual não popula market_cap_history (EDGAR não dá cotação); então
+    derivamos do último preço (yfinance) × ações em circulação (balanço). Sem isso
+    valuation e Altman Z ficariam vazios.
+    """
+    try:
+        mc = conn.execute(text(
+            "SELECT market_cap FROM market_us.market_cap_history "
+            "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).scalar()
+        if mc is not None:
+            return mc
+    except Exception:  # noqa: BLE001
+        pass
+    close = _latest_close(conn, symbol)
+    shares = _latest_shares(balance_rows)
+    if close is not None and shares:
+        try:
+            return float(close) * shares
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def load_company_bundle(symbol: str) -> dict | None:
@@ -271,12 +308,13 @@ def load_company_bundle(symbol: str) -> dict | None:
                      f"WHERE company_id=:c AND period='annual' ORDER BY fiscal_year")
                 return [dict(r._mapping) for r in conn.execute(text(q), {"c": cid})]
 
+            balance = _series("balance_sheets", _BALANCE_COLS)
             return {
                 "name": ident[1], "sector": ident[2], "industry": ident[3],
                 "income": _series("income_statements", _INCOME_COLS),
-                "balance": _series("balance_sheets", _BALANCE_COLS),
+                "balance": balance,
                 "cashflow": _series("cash_flow_statements", _CASHFLOW_COLS),
-                "market_cap": _latest_market_cap(conn, sym),
+                "market_cap": _latest_market_cap(conn, sym, balance),
                 "price": None,
             }
     except Exception as exc:  # noqa: BLE001
@@ -322,12 +360,18 @@ def load_scoring_frame(limit_companies: int = 800) -> pd.DataFrame:
             mcaps = pd.read_sql(text(
                 "SELECT DISTINCT ON (symbol) symbol, market_cap "
                 "FROM market_us.market_cap_history ORDER BY symbol, date DESC"), conn)
+            # último preço por símbolo (deriva market cap quando não há histórico)
+            closes = pd.read_sql(text(
+                "SELECT DISTINCT ON (symbol) symbol, COALESCE(adjusted_close, close) AS px "
+                "FROM market_us.prices_daily ORDER BY symbol, date DESC"), conn)
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_scoring_frame falhou: %s", exc)
         return pd.DataFrame(columns=cols)
 
     mcap_by_symbol = dict(zip(mcaps.get("symbol", []), mcaps.get("market_cap", []))) \
         if not mcaps.empty else {}
+    close_by_symbol = dict(zip(closes.get("symbol", []), closes.get("px", []))) \
+        if not closes.empty else {}
     inc_g = {k: v.to_dict("records") for k, v in inc.groupby("company_id")} if not inc.empty else {}
     bal_g = {k: v.to_dict("records") for k, v in bal.groupby("company_id")} if not bal.empty else {}
     cfw_g = {k: v.to_dict("records") for k, v in cfw.groupby("company_id")} if not cfw.empty else {}
@@ -335,9 +379,15 @@ def load_scoring_frame(limit_companies: int = 800) -> pd.DataFrame:
     rows = []
     for _, c in comp.iterrows():
         cid = int(c["id"])
+        bal_rows = bal_g.get(cid, [])
+        mcap = mcap_by_symbol.get(c["symbol"])
+        if mcap is None:  # deriva: último preço × ações em circulação
+            shares = _latest_shares(bal_rows)
+            px = close_by_symbol.get(c["symbol"])
+            if px is not None and shares:
+                mcap = float(px) * shares
         m = compute_company_metrics(
-            inc_g.get(cid, []), bal_g.get(cid, []), cfw_g.get(cid, []),
-            market_cap=mcap_by_symbol.get(c["symbol"]))
+            inc_g.get(cid, []), bal_rows, cfw_g.get(cid, []), market_cap=mcap)
         rows.append({"symbol": c["symbol"], "name": c["name"],
                      "sector": c["sector"], "industry": c["industry"], **m})
     return pd.DataFrame(rows)
