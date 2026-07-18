@@ -69,7 +69,7 @@ def main() -> int:
     p.add_argument("command", choices=[
         "init-schema", "test", "universe", "estimate", "bootstrap", "daily",
         "fundamentals", "resume", "validate", "score-history", "backtest",
-        "snapshot"])
+        "snapshot", "prices"])
     p.add_argument("--tickers", nargs="*", help="símbolos específicos")
     p.add_argument("--exchanges", nargs="*", default=None, help="NYSE NASDAQ AMEX")
     p.add_argument("--limit", type=int, default=None, help="limita o universo/lote")
@@ -78,6 +78,11 @@ def main() -> int:
     p.add_argument("--start-year", type=int, default=None, help="score-history: ano inicial")
     p.add_argument("--end-year", type=int, default=None, help="score-history: ano final")
     p.add_argument("--top-n", type=int, default=20, help="backtest: nº de ativos por período")
+    p.add_argument("--no-prices", action="store_true",
+                   help="bootstrap: só fundamentos (EDGAR); pula o yfinance (rápido)")
+    p.add_argument("--shard", default=None,
+                   help="bootstrap: processa só a fatia N/M do universo (ex.: 0/6). "
+                        "Rode M processos em paralelo p/ acelerar (SEC ~10 req/s).")
     p.add_argument("--dry-run", action="store_true", help="não grava; só estima/planeja")
     p.add_argument("--offline", action="store_true", help="proíbe qualquer chamada de rede")
     p.add_argument("--warehouse", action="store_true",
@@ -134,7 +139,7 @@ def main() -> int:
         from data_pipeline.us import snapshot as snap
         if args.dry_run:
             return out({"ok": True, "action": "dry-run: vitrine não construída"})
-        return out(snap.build_snapshot(get_engine(), limit_companies=args.limit or 800))
+        return out(snap.build_snapshot(get_engine(), limit_companies=args.limit))
 
     if args.command == "score-history":
         # sem rede: recomputa scores PIT a partir do que já está no warehouse
@@ -178,7 +183,7 @@ def main() -> int:
         return out({"ok": False, "reason": "offline"})
     if not settings.us_ingest_ready and args.command in {"universe", "bootstrap",
                                                           "daily", "fundamentals",
-                                                          "resume"}:
+                                                          "resume", "prices"}:
         if settings.us_source == "edgar":
             log.error("SEC_USER_AGENT ausente — a SEC exige identificação "
                       "('Seu Nome seu@email.com') no .env.")
@@ -200,13 +205,33 @@ def main() -> int:
             # do universo já seedado no warehouse
             from sqlalchemy import text
             with engine.connect() as conn:
-                q = "SELECT symbol FROM market_us.assets WHERE security_type='common'"
+                q = "SELECT symbol FROM market_us.assets WHERE security_type='common' ORDER BY symbol"
                 if args.limit:
-                    q += f" ORDER BY symbol LIMIT {int(args.limit)}"
+                    q += f" LIMIT {int(args.limit)}"
                 symbols = [r[0] for r in conn.execute(text(q)).fetchall()]
+        run_key = "bootstrap"
+        if args.shard:                       # fatia N/M (round-robin) p/ paralelismo
+            n, m = (int(x) for x in args.shard.split("/"))
+            symbols = symbols[n::m]
+            run_key = f"sweep-{n}of{m}"
+            log.info("shard %d/%d: %d símbolos", n, m, len(symbols))
         return out({"ok": True, **ingest.ingest_symbols(
-            provider, engine, symbols, years=args.years,
-            resume=(args.command == "resume"))})
+            provider, engine, symbols, years=args.years, run_key=run_key,
+            resume=(args.command == "resume"), with_prices=not args.no_prices)})
+
+    if args.command == "prices":
+        # passagem incremental de preços: só quem tem fundamento e ainda não tem preço
+        symbols = args.tickers
+        if not symbols:
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                q = ("SELECT DISTINCT i.symbol FROM market_us.income_statements i "
+                     "WHERE NOT EXISTS (SELECT 1 FROM market_us.prices_daily p "
+                     "WHERE p.symbol=i.symbol) ORDER BY i.symbol")
+                if args.limit:
+                    q += f" LIMIT {int(args.limit)}"
+                symbols = [r[0] for r in conn.execute(text(q)).fetchall()]
+        return out({"ok": True, **ingest.ingest_prices_only(provider, engine, symbols)})
 
     if args.command == "daily":
         symbols = args.tickers or []

@@ -33,6 +33,26 @@ if str(ROOT) not in sys.path:
 load_dotenv()  # popula os.environ a partir do .env (find_dotenv sobe diretórios)
 
 
+def _exec_retry(engine, stmt, params=None, tries: int = 5) -> None:
+    """Executa uma transação com retry — o pooler do Supabase derruba conexões
+    intermitentemente ('server terminated abnormally'). Backoff curto."""
+    import time
+    from sqlalchemy.exc import DBAPIError, OperationalError
+    last = None
+    for attempt in range(1, tries + 1):
+        try:
+            with engine.begin() as conn:
+                if params is not None:
+                    conn.execute(stmt, params)
+                else:
+                    conn.execute(stmt)
+            return
+        except (OperationalError, DBAPIError) as exc:
+            last = exc
+            time.sleep(1.5 * attempt)
+    raise last
+
+
 def _mask(url: str) -> str:
     """Host/porta sem a senha, para exibir com segurança."""
     try:
@@ -54,12 +74,26 @@ _JSON_COLS = {"metrics", "asymmetry", "advanced", "dossie", "financials"}
 
 
 def _engine(url: str):
+    from sqlalchemy.pool import NullPool
     parsed = make_url(url)
     if parsed.drivername in {"postgresql", "postgres"}:
         parsed = parsed.set(drivername="postgresql+psycopg2")
-    if parsed.host and parsed.host not in {"localhost", "127.0.0.1", "::1"}:
+    connect_args: dict = {"connect_timeout": 15}
+    is_remote = bool(parsed.host and parsed.host not in {"localhost", "127.0.0.1", "::1"})
+    if is_remote:
         parsed = parsed.update_query_dict({"sslmode": "require"})
-    return create_engine(parsed, pool_pre_ping=True, future=True)
+        # Pooler do Supabase: conexão FRESCA por transação (NullPool) evita
+        # conexões empoçadas que ficam meio-abertas e penduram o execute();
+        # keepalives detectam socket morto; statement_timeout limita a query.
+        connect_args["options"] = "-c statement_timeout=90000"
+        connect_args.update(keepalives=1, keepalives_idle=10,
+                            keepalives_interval=5, keepalives_count=3)
+    kwargs: dict = {"future": True, "connect_args": connect_args}
+    if is_remote:
+        kwargs["poolclass"] = NullPool
+    else:
+        kwargs["pool_pre_ping"] = True
+    return create_engine(parsed, **kwargs)
 
 
 def _build_upsert() -> str:
@@ -81,6 +115,8 @@ def main() -> int:
                    help="Supabase (default: SUPABASE_UNIFICADO_URL do .env). Use a "
                         "conexão com privilégio de escrita/DDL.")
     p.add_argument("--dry-run", action="store_true", help="não grava no target")
+    p.add_argument("--batch", type=int, default=150,
+                   help="linhas por transação (lotes pequenos p/ o pooler do Supabase)")
     args = p.parse_args()
 
     target = args.target_url or os.getenv("SUPABASE_UNIFICADO_URL") \
@@ -122,11 +158,29 @@ def main() -> int:
         print("exemplo:", {k: rows[0][k] for k in ("symbol", "name", "sector", "score")})
         return 0
 
-    migration = _MIGRATION.read_text(encoding="utf-8")
-    with tgt.begin() as conn:
-        conn.execute(text(migration))          # schema + tabela (idempotente)
-        conn.execute(text(_build_upsert()), rows)
-    print(f"publicado: {len(rows)} empresa(s) em market_us.company_snapshots (Supabase).")
+    # A migration é multi-statement e o pooler do Supabase às vezes a rejeita;
+    # se a tabela já existe, pulamos (é idempotente e no-op de qualquer forma).
+    with tgt.connect() as conn:
+        exists = conn.execute(text(
+            "SELECT to_regclass('market_us.company_snapshots')")).scalar()
+    if not exists:
+        _exec_retry(tgt, text(_MIGRATION.read_text(encoding="utf-8")))
+        print("schema market_us.company_snapshots criado no Supabase.")
+    else:
+        print("tabela já existe no Supabase — pulando migration.")
+
+    # Upsert em LOTES pequenos, cada um em sua transação com retry: 1 statement
+    # com todas as linhas (JSONB grandes) estoura o pooler do Supabase, e o pooler
+    # ainda derruba conexões intermitentemente. Upsert idempotente = seguro retomar.
+    upsert = text(_build_upsert())
+    batch = max(1, int(args.batch))
+    done = 0
+    for i in range(0, len(rows), batch):
+        chunk = rows[i:i + batch]
+        _exec_retry(tgt, upsert, chunk)
+        done += len(chunk)
+        print(f"  ... {done}/{len(rows)}", flush=True)
+    print(f"publicado: {done} empresa(s) em market_us.company_snapshots (Supabase).")
     return 0
 
 

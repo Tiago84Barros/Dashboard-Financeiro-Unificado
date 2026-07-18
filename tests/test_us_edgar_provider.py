@@ -112,6 +112,30 @@ def test_statements_via_companyfacts_e_404():
     assert prov.get_key_metrics("AAPL") == []
 
 
+def test_companyfacts_baixado_1x_por_simbolo():
+    """income/balance/cashflow reusam o mesmo companyfacts (1 download, não 3)."""
+    facts = {"cik": 320193, "facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+        {"end": "2023-12-31", "start": "2023-01-01", "val": 1200,
+         "filed": "2024-02-14", "form": "10-K"}]}}}}}
+    hits = {"facts": 0}
+
+    class CountingSession(FakeSession):
+        def get(self, url, headers=None, timeout=None):
+            if "companyfacts" in url:
+                hits["facts"] += 1
+            return super().get(url, headers, timeout)
+
+    routes = {"company_tickers.json": {"0": {"cik_str": 320193, "ticker": "AAPL",
+                                             "title": "Apple Inc."}},
+              "companyfacts/CIK0000320193": facts}
+    prov = ed.EdgarProvider(user_agent="t t@e.com", session=CountingSession(routes),
+                            time_fn=lambda: 0.0, sleep_fn=lambda s: None)
+    prov.get_income_statements("AAPL")
+    prov.get_balance_sheets("AAPL")
+    prov.get_cash_flow_statements("AAPL")
+    assert hits["facts"] == 1        # baixou UMA vez, não três
+
+
 # ── yfinance (factory fake, sem rede) ─────────────────────────────────────────
 class FakeYFTicker:
     def __init__(self, df):
