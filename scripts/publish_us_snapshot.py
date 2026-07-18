@@ -19,15 +19,27 @@ idempotente: cria o schema/tabela via migration 044 e faz upsert por symbol.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+load_dotenv()  # popula os.environ a partir do .env (find_dotenv sobe diretórios)
+
+
+def _mask(url: str) -> str:
+    """Host/porta sem a senha, para exibir com segurança."""
+    try:
+        u = make_url(url)
+        return f"{u.host}:{u.port or 5432}/{u.database}"
+    except Exception:  # noqa: BLE001
+        return "(url ilegível)"
 
 _MIGRATION = ROOT / "supabase_unificado" / "schema" / "044_market_us_snapshot.sql"
 # Colunas da vitrine (ordem estável para o upsert).
@@ -62,12 +74,28 @@ def _build_upsert() -> str:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Publica a vitrine EUA no Supabase")
-    p.add_argument("--source-url", required=True, help="warehouse local (source da vitrine)")
-    p.add_argument("--target-url", required=True, help="Supabase (conexão direta)")
+    p.add_argument("--source-url", default=os.getenv("US_WAREHOUSE_URL",
+                   "postgresql://postgres:changeme@127.0.0.1:5433/postgres"),
+                   help="warehouse local (default: 127.0.0.1:5433 changeme)")
+    p.add_argument("--target-url", default=None,
+                   help="Supabase (default: SUPABASE_UNIFICADO_URL do .env). Use a "
+                        "conexão com privilégio de escrita/DDL.")
     p.add_argument("--dry-run", action="store_true", help="não grava no target")
     args = p.parse_args()
 
-    src, tgt = _engine(args.source_url), _engine(args.target_url)
+    target = args.target_url or os.getenv("SUPABASE_UNIFICADO_URL") \
+        or os.getenv("DATABASE_URL")
+    if not target:
+        try:  # mesma resolução do app (lê o .env via find_dotenv que sobe diretórios)
+            from core.config import settings
+            target = settings.db_url or None
+        except Exception:  # noqa: BLE001
+            target = None
+    if not target:
+        print("ERRO: sem target. Defina SUPABASE_UNIFICADO_URL no .env ou passe --target-url.")
+        return 1
+    print(f"source: {_mask(args.source_url)}  ->  target: {_mask(target)}")
+    src, tgt = _engine(args.source_url), _engine(target)
 
     with src.connect() as conn:
         if not conn.execute(text(
