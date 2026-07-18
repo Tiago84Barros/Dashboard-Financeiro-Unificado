@@ -63,6 +63,16 @@ def test_universe_filtra_por_bolsa():
     assert len(todos) == 4
 
 
+def test_cik_override_reestruturacao():
+    """Ticker com holding nova sem histórico → usa o CIK operacional (override)."""
+    # sem o override, o mapa mandaria para o CIK vazio 2115436
+    routes = {"company_tickers.json": {"0": {"cik_str": 2115436, "ticker": "XOM",
+                                             "title": "ExxonMobil Holdings Corp"}}}
+    prov = _provider(routes)
+    assert prov._cik_for("XOM") == "0000034088"     # override vence o mapa
+    assert prov._cik_for("AAPL") is None            # sem override cai no mapa (não listado)
+
+
 def test_profile_via_submissions():
     routes = {
         "company_tickers.json": {"0": {"cik_str": 320193, "ticker": "AAPL",
