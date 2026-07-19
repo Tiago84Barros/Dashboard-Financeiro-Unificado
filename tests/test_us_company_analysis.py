@@ -153,7 +153,11 @@ def test_retorno_anual_em_ordem_cronologica():
     assert ordem == sorted(ordem), "eixo Y deve estar em ordem cronológica"
     assert ordem[0] == "2007" and ordem[-1] == "2026"
 
-    # e a view precisa aplicar essa fixação de ordem
-    fonte = (Path(american_view.__file__).read_text(encoding="utf-8"))
-    trecho = fonte.split("Retorno Anual do Preço", 1)[1][:1200]
-    assert 'categoryorder="array"' in trecho, "view não fixa a ordem das categorias"
+    # As DUAS seções (EUA e B3) usam o mesmo padrão e precisam fixar a ordem.
+    raiz = Path(american_view.__file__).resolve().parent
+    for arquivo in ("empresas_americanas.py", "empresas_b3.py"):
+        fonte = (raiz / arquivo).read_text(encoding="utf-8")
+        trecho = fonte.split("Retorno Anual do Preço", 1)[1][:1400]
+        assert 'categoryorder="array"' in trecho, (
+            f"{arquivo}: gráfico de retorno anual não fixa a ordem das categorias — "
+            "os anos voltariam a ser agrupados por sinal")
