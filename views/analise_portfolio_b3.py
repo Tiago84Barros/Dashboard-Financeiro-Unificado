@@ -17,9 +17,7 @@ import streamlit as st
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.data_reconciliacao as _recon
 from core.b3_portfolio_model import load_active_b3_portfolio_model
-from core.dossie_b3 import gerar_parecer_empresa
 from core.llm_b3 import (
-    analisar_portfolio,
     chat_com_portfolio,
     llm_disponivel,
     parse_chart_directives,
@@ -27,6 +25,10 @@ from core.llm_b3 import (
     redistribuir_pesos,
 )
 from core.llm_context_b3 import build_llm_context_for_portfolio_chat
+from core.portfolio_report_b3 import (
+    analyze_portfolio_report,
+    generate_company_portfolio_report,
+)
 from core.portfolio_chat_charts import infer_chart_directives, render_charts_from_directives
 from core.rag_b3 import (
     format_rag_context,
@@ -119,16 +121,6 @@ def _persp_badge(persp: str) -> str:
     }.get(persp, "apb3-badge-default")
     label = {"forte": "FORTE", "moderada": "MODERADA", "fraca": "FRACA"}.get(persp, persp.upper())
     return f'<span class="apb3-logo-badge {cls}">{label}</span>'
-
-
-def _acao_badge(acao: str) -> str:
-    cls = {
-        "manter":   "apb3-acao-manter",
-        "aumentar": "apb3-acao-aumentar",
-        "reduzir":  "apb3-acao-reduzir",
-        "revisar":  "apb3-acao-revisar",
-    }.get(acao, "apb3-acao-manter")
-    return f'<span class="apb3-alloc-acao {cls}">{acao.upper()}</span>'
 
 
 def _delta_str(new_w: float, old_w: float) -> str:
@@ -428,9 +420,54 @@ def _render_relatorio_consolidado(port_analise: dict) -> None:
         sint = port_analise.get("sintese_alocacao", "")
         if sint:
             st.markdown(
-                f'<div class="apb3-report-qual"><div class="apb3-report-label">Síntese da Realocação</div>{sint}</div>',
+                f'<div class="apb3-report-qual"><div class="apb3-report-label">Leitura da Alocação do Modelo</div>{sint}</div>',
                 unsafe_allow_html=True,
             )
+        causal = port_analise.get("diagnostico_causal", "")
+        if causal:
+            st.markdown(
+                f'<div class="apb3-report-qual"><div class="apb3-report-label">Diagnóstico causal</div>{causal}</div>',
+                unsafe_allow_html=True,
+            )
+
+        risks = port_analise.get("riscos_transmissao") or []
+        catalysts = port_analise.get("catalisadores_portfolio") or []
+        if risks or catalysts:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Riscos e transmissão**")
+                for risk in risks:
+                    if isinstance(risk, dict):
+                        exposed = ", ".join(risk.get("ativos_expostos") or [])
+                        st.markdown(
+                            f"⚠️ **{risk.get('risco', 'Risco')}** — {risk.get('mecanismo', '')}"
+                            + (f" ({exposed})" if exposed else "")
+                        )
+                        if risk.get("monitoramento"):
+                            st.caption(f"Monitorar: {risk['monitoramento']}")
+            with c2:
+                st.markdown("**Catalisadores do conjunto**")
+                for catalyst in catalysts:
+                    if isinstance(catalyst, dict):
+                        exposed = ", ".join(catalyst.get("ativos_expostos") or [])
+                        st.markdown(
+                            f"🚀 **{catalyst.get('catalisador', 'Catalisador')}** — "
+                            f"{catalyst.get('mecanismo', '')}"
+                            + (f" ({exposed})" if exposed else "")
+                        )
+
+        fit = port_analise.get("adequacao_carteira") or {}
+        if fit:
+            fit_text = " · ".join(
+                str(fit.get(k) or "") for k in ("perfil", "horizonte", "volatilidade", "condicoes")
+                if fit.get(k)
+            )
+            if fit_text:
+                st.markdown(
+                    '<div class="apb3-report-qual"><div class="apb3-report-label">'
+                    f'Adequação da carteira</div>{fit_text}</div>',
+                    unsafe_allow_html=True,
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -441,7 +478,7 @@ def _render_alocacao(items_analisados: list[dict], pesos_novos: dict[str, float]
     if not items_analisados or not pesos_novos:
         return
 
-    st.markdown('<div class="apb3-section-title">🎯 Alocação Sugerida (Quanti + Quali)</div>',
+    st.markdown('<div class="apb3-section-title">🎯 Alocação do Modelo (Quanti + Quali)</div>',
                 unsafe_allow_html=True)
 
     cards_html = '<div class="apb3-alloc-grid">'
@@ -450,7 +487,6 @@ def _render_alocacao(items_analisados: list[dict], pesos_novos: dict[str, float]
         nome  = (it.get("nome") or tk)[:24]
         an    = it.get("analise", {})
         persp = an.get("perspectiva", "moderada")
-        acao  = an.get("acao_sugerida", "manter")
         w_new = pesos_novos.get(tk, 0.0)
         w_old = float(it.get("peso_pct", 0.0)) / 100.0
         logo  = _logo_url(tk)
@@ -464,7 +500,7 @@ def _render_alocacao(items_analisados: list[dict], pesos_novos: dict[str, float]
             f'<div class="apb3-alloc-nome" title="{nome}">{nome}</div>'
             f'<div class="apb3-alloc-pct">{w_new*100:.1f}%</div>'
             f'<div class="apb3-alloc-delta">{_delta_str(w_new, w_old)}</div>'
-            + _persp_badge(persp) + _acao_badge(acao) +
+            + _persp_badge(persp) +
             f'</div>'
         )
     cards_html += "</div>"
@@ -480,11 +516,12 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
     an    = it.get("analise", {})
     persp = an.get("perspectiva", "moderada")
     w_new = pesos_novos.get(tk, float(it.get("peso_pct", 0.0)) / 100.0)
+    conclusion = an.get("conclusao") or {}
+    value_band = str(conclusion.get("faixa_valor") or "indeterminada").upper()
 
     persp_icon = {"forte": "🟢", "moderada": "🟡", "fraca": "🔴"}.get(persp, "⚪")
     persp_txt  = persp.upper()
-    acao_txt   = an.get("acao_sugerida", "?").upper()
-    with st.expander(f"{persp_icon} {tk}  —  {acao_txt}  •  {w_new*100:.1f}%  [{persp_txt}]", expanded=False):
+    with st.expander(f"{persp_icon} {tk}  —  {value_band}  •  {w_new*100:.1f}%  [{persp_txt}]", expanded=False):
         # Classificação do parecer para seleção (mesmo critério do gate da
         # Criação de Portfólio) — veto/ressalva aparecem antes de tudo.
         quali_cls = an.get("classificacao_selecao")
@@ -534,14 +571,20 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
             st.markdown(f'<div class="apb3-kpi-row">{cards_d}</div>',
                         unsafe_allow_html=True)
 
-        # Relatório completo por seções (formato do parecer institucional)
+        # Relatório completo por seções. As chaves antigas permanecem na lista
+        # para que análises já salvas na sessão continuem legíveis.
         rel = an.get("relatorio") or {}
         for k_sec, lbl in (
             ("empresa_hoje", "O que a empresa é hoje"),
+            ("analise_pares", "Análise por pares do mesmo setor"),
+            ("valuation_interpretado", "Valuation interpretado"),
+            ("tendencias", "Tendências operacionais e financeiras"),
+            ("qualidade_resultados", "Qualidade dos Resultados"),
             ("resultados", "Resultados"),
             ("dividendos", "Dividendos — recorrente vs extraordinário"),
             ("valuation", "Valuation"),
             ("governanca_controlador", "Governança e controlador"),
+            ("eventos_relevantes", "Eventos relevantes e percepção de mercado"),
             ("qualidade_dados", "Qualidade dos dados"),
         ):
             txt = rel.get(k_sec)
@@ -565,7 +608,15 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
             if riscos:
                 st.markdown("**Riscos**")
                 for r in riscos:
-                    st.markdown(f"⚠️ {r}")
+                    if isinstance(r, dict):
+                        title = r.get("risco") or "Risco"
+                        mechanism = r.get("mecanismo") or ""
+                        monitor = r.get("indicador_monitorado") or ""
+                        st.markdown(f"⚠️ **{title}** — {mechanism}")
+                        if monitor:
+                            st.caption(f"Monitorar: {monitor}")
+                    else:
+                        st.markdown(f"⚠️ {r}")
             macro_s = an.get("sensibilidade_macro", [])
             if macro_s:
                 st.markdown("**Sensibilidade macro**")
@@ -578,53 +629,113 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
             if cats:
                 st.markdown("**Catalisadores**")
                 for c in cats:
-                    st.markdown(f"🚀 {c}")
+                    if isinstance(c, dict):
+                        title = c.get("catalisador") or "Catalisador"
+                        mechanism = c.get("mecanismo") or ""
+                        trigger = c.get("janela_ou_gatilho") or ""
+                        st.markdown(f"🚀 **{title}** — {mechanism}")
+                        if trigger:
+                            st.caption(f"Janela/gatilho: {trigger}")
+                    else:
+                        st.markdown(f"🚀 {c}")
             prox = an.get("proxima_acao", "")
             if prox:
-                st.markdown(f"**Próxima ação:** {prox}")
+                st.markdown(f"**Monitoramento:** {prox}")
+
+        scenarios = an.get("cenarios") or []
+        if scenarios:
+            st.markdown("**Análise probabilística**")
+            scenario_rows = []
+            for scenario in scenarios:
+                if not isinstance(scenario, dict):
+                    continue
+                scenario_rows.append({
+                    "Cenário": scenario.get("cenario", "—"),
+                    "Probabilidade": f"{float(scenario.get('probabilidade_pct') or 0):.1f}%",
+                    "Impacto esperado": scenario.get("impacto_esperado", ""),
+                    "Fundamentação": scenario.get("fundamentacao", ""),
+                })
+            if scenario_rows:
+                st.dataframe(pd.DataFrame(scenario_rows), use_container_width=True, hide_index=True)
+
+        score_detail = an.get("score_qualitativo_detalhado") or {}
+        if score_detail:
+            st.markdown("**Score Qualitativo — composição ponderada**")
+            score_rows = []
+            for item_score in score_detail.values():
+                if not isinstance(item_score, dict):
+                    continue
+                score_rows.append({
+                    "Critério": item_score.get("label", "—"),
+                    "Nota (0–10)": item_score.get("nota", "—"),
+                    "Peso": f"{item_score.get('peso_pct', 0)}%",
+                    "Justificativa": item_score.get("justificativa", ""),
+                    "Evidência ou lacuna": item_score.get("evidencia_ou_lacuna", ""),
+                })
+            if score_rows:
+                st.dataframe(pd.DataFrame(score_rows), use_container_width=True, hide_index=True)
+
+        fit = an.get("adequacao_investidor") or {}
+        if fit:
+            fit_text = " · ".join(
+                str(fit.get(k) or "") for k in
+                ("perfil", "horizonte", "tolerancia_volatilidade", "condicoes")
+                if fit.get(k)
+            )
+            if fit_text:
+                st.markdown(
+                    '<div class="apb3-report-qual"><div class="apb3-report-label">'
+                    f'Adequação ao perfil do investidor</div>{fit_text}</div>',
+                    unsafe_allow_html=True,
+                )
 
         # Alerta + tese final
         alerta = an.get("alerta_principal", "")
         if alerta:
             st.warning(f"⚡ {alerta}")
 
-        tese = an.get("tese_final", "")
-        if tese:
+        conclusion = an.get("conclusao") or {}
+        conclusion_lines = []
+        for label, key in (
+            ("Faixa de valor", "faixa_valor"),
+            ("O desconto é justificável?", "desconto_justificavel"),
+            ("Percepção implícita", "percepcao_mercado"),
+            ("Risco-retorno", "risco_retorno"),
+            ("Principal positivo", "principal_positivo"),
+            ("Principal risco", "principal_risco"),
+        ):
+            if conclusion.get(key):
+                conclusion_lines.append(f"**{label}:** {conclusion[key]}")
+        tese = conclusion.get("resumo_executivo") or an.get("tese_final", "")
+        if conclusion_lines or tese:
+            body = "<br>".join(conclusion_lines + ([f"<br>{tese}"] if tese else []))
             st.markdown(
-                f'<div class="apb3-report-qual"><div class="apb3-report-label">Conclusão</div>{tese}</div>',
+                f'<div class="apb3-report-qual"><div class="apb3-report-label">Conclusão objetiva</div>{body}</div>',
                 unsafe_allow_html=True,
             )
 
         # Métricas numéricas — cards estilizados (mesmo visual dos KPIs do relatório)
         sc = an.get("score_qualitativo")
         cf = an.get("confianca")
-        alloc_sug = an.get("alocacao_sugerida_pct")
-        atual_pct = w_new * 100
+        weighted = an.get("score_qualitativo_ponderado")
         n_docs = it.get("n_docs", 0)
 
         sc_val = f"{sc}/100" if sc is not None else "—"
         cf_val = f"{cf}/100" if cf is not None else "—"
-        if alloc_sug is None:
-            alloc_mod, alloc_val, alloc_sub = "neu", "—", "peso sugerido pela LLM"
-        else:
-            delta = alloc_sug - atual_pct
-            alloc_mod = "pos" if delta > 0.1 else ("neg" if delta < -0.1 else "neu")
-            alloc_val = f"{alloc_sug:.1f}%"
-            alloc_sub = f"atual {atual_pct:.1f}% · {'+' if delta >= 0 else ''}{delta:.1f} p.p."
+        value_band = str(conclusion.get("faixa_valor") or "indeterminada")
 
         cards_m = "".join([
-            _kpi_card("Score qualitativo", sc_val, "nota LLM 0–100", _score_mod(sc, 60, 40)),
+            _kpi_card("Score qualitativo", sc_val,
+                      f"ponderado {weighted}/10" if weighted is not None else "nota ponderada",
+                      _score_mod(sc, 60, 40)),
             _kpi_card("Confiança", cf_val, "convicção da análise", _score_mod(cf, 70, 50)),
-            _kpi_card("Alocação sugerida", alloc_val, alloc_sub, alloc_mod),
+            _kpi_card("Valuation", value_band.upper(),
+                      str(conclusion.get("percepcao_mercado") or "leitura não disponível")),
             _kpi_card("Docs CVM", f"{n_docs:,}" if n_docs else "—",
                       "chunks IPE/ENET no RAG" if n_docs else "sem documentos",
                       "pos" if n_docs else "neu"),
         ])
         st.markdown(f'<div class="apb3-kpi-row">{cards_m}</div>', unsafe_allow_html=True)
-
-        just = an.get("justificativa_alocacao", "")
-        if just:
-            st.caption(just)
 
         # RAG stats
         rag_stats = it.get("rag_stats", {})
@@ -694,8 +805,8 @@ def _executar_analise(
         n_docs    = (cobertura_docs or {}).get(tk, 0)
 
         # Fundamentos por empresa agora vêm do dossiê determinístico
-        # (core/dossie_b3) — mult_batch/dre_batch seguem na assinatura para os
-        # consolidados da tela e retrocompatibilidade do chamador.
+        # O dossiê, os múltiplos e as demonstrações alimentam a leitura histórica,
+        # a qualidade dos resultados e a síntese consolidada do portfólio.
 
         # ── RAG: recupera chunks CVM para este ticker ─────────────────────────
         rag_ctx = ""
@@ -712,19 +823,10 @@ def _executar_analise(
                 rag_ctx = ""
                 rag_stats = {"mode": "error", "error": str(exc_rag)}
 
-        # ── Pares do segmento: contexto comparativo (builder já existente) ────
-        # Sem pares o LLM não tem referência de "cara ou barata vs quem" e a
-        # tese degenera em generalidades setoriais.
-        peers_ctx = ""
-        try:
-            from core.llm_context_b3 import get_peers_context
-            peers_ctx, _peers_map = get_peers_context([tk], max_tickers=1)
-        except Exception:
-            peers_ctx = ""
-
         prog.progress((idx + 1) / len(items), text=f"LLM: {tk}…")
-        # Dossiê determinístico + parecer narrativo (core/dossie_b3): os números
-        # são calculados em código a partir do banco; a LLM só escreve o parecer.
+        # Relatório institucional EXCLUSIVO desta aba. Reusa o dossiê, RAG,
+        # loaders e provedores existentes sem tocar nos prompts do gate, Score,
+        # análise individual B3 ou Empresas Americanas.
         dossie: dict = {}
         try:
             _ctx_emp = (
@@ -732,9 +834,14 @@ def _executar_analise(
                 f"segmento {seg_}. Peso atual na carteira: {peso_pct_:.1f}% | "
                 f"score quantitativo {score_:.1f} | alpha vs Selic {alpha_:+.1f}%."
             )
-            analise, dossie = gerar_parecer_empresa(
-                tk, rag_context=rag_ctx, peers_ctx=peers_ctx,
-                portfolio_ctx=_ctx_emp,
+            analise, dossie = generate_company_portfolio_report(
+                tk,
+                df_fin=(dre_batch or {}).get(tk),
+                df_mult=(mult_batch or {}).get(tk),
+                macro_hist=macro_hist,
+                portfolio_tickers=[item.get("ticker", "") for item in items],
+                rag_context=rag_ctx,
+                portfolio_context=_ctx_emp,
             )
         except Exception as exc:
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -742,10 +849,8 @@ def _executar_analise(
             from core.llm_b3 import _fallback_empresa
             analise = _fallback_empresa(tk, peso_pct_)
         else:
-            # gerar_parecer_empresa nunca levanta exceção — o fallback neutro
-            # vem com confianca=0; detecta para reportar a falha na UI.
-            if int(analise.get("confianca") or 0) == 0 and not analise.get("relatorio"):
-                erros.append(f"{tk}: parecer não gerado — exibindo fallback neutro.")
+            if int(analise.get("confianca") or 0) == 0:
+                erros.append(f"{tk}: relatório institucional não gerado — exibindo fallback neutro.")
 
         items_analisados.append({
             "ticker":     tk,
@@ -765,8 +870,8 @@ def _executar_analise(
     # Análise consolidada do portfólio
     with st.spinner("Gerando relatório consolidado do portfólio…"):
         try:
-            port_analise = analisar_portfolio(items_analisados, macro_hist)
-            if port_analise.get("resumo_executivo") == "Relatório indisponível.":
+            port_analise = analyze_portfolio_report(items_analisados, macro_hist)
+            if int(port_analise.get("confianca_media") or 0) == 0:
                 # _parse_json caiu no fallback (resposta da LLM não era JSON válido).
                 erros.append("Relatório consolidado: resposta da LLM não pôde ser "
                              "interpretada (JSON inválido).")
