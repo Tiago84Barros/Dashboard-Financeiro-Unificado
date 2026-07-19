@@ -44,34 +44,85 @@ from views.empresas_b3 import (
 )
 
 
+_MIN_MARKET_CAP_COVERAGE = 0.80
+
+
+class MarketCapDataError(RuntimeError):
+    """A fonte de valor de mercado não pôde ser consultada com segurança."""
+
+
+def _ticker_key(value: object) -> str:
+    return str(value or "").upper().replace(".SA", "").strip()
+
+
 @st.cache_data(ttl=3600)
 def _load_market_caps() -> dict[str, float]:
-    """Valor de mercado ATUAL por ticker (proxy de liquidez/negociabilidade).
+    """Carrega marketCap PIT e complementa lacunas com o snapshot corrente.
 
-    Lê o último marketCap de market.calculated_metric_vintages. Tickers sem
-    marketCap (deslistados / sem dado, ex.: EKTR3) ficam de fora do dicionário —
-    e portanto são excluídos por qualquer piso > 0.
+    Falhas são levantadas ao chamador para nunca serem confundidas com
+    capitalização zero nem ficarem cacheadas como um mapa vazio.
     """
-    try:
-        from sqlalchemy import text
-        from core.database import get_engine
-        eng = get_engine()
-        if eng is None:
-            return {}
-        q = text("""
+    from sqlalchemy import text
+    from core.database import get_engine
+
+    eng = get_engine()
+    if eng is None:
+        raise MarketCapDataError("conexão com o banco indisponível")
+
+    queries = (
+        text("""
             SELECT DISTINCT ON (ticker) ticker, (metric_value)::numeric AS v
             FROM market.calculated_metric_vintages
             WHERE metric_name = 'marketCap' AND metric_value IS NOT NULL
-            ORDER BY ticker, year DESC, available_at DESC
-        """)
-        with eng.connect() as c:
-            rows = c.execute(q).fetchall()
-        return {
-            str(r.ticker).upper().replace(".SA", "").strip(): float(r.v)
-            for r in rows if r.v is not None
-        }
-    except Exception:
-        return {}
+            ORDER BY ticker, year DESC, available_at DESC, recorded_at DESC
+        """),
+        text("""
+            SELECT DISTINCT ON (ticker) ticker, (metric_value)::numeric AS v
+            FROM market.calculated_metrics
+            WHERE metric_name = 'marketCap' AND metric_value IS NOT NULL
+            ORDER BY ticker, year DESC, updated_at DESC
+        """),
+    )
+    values: dict[str, float] = {}
+    errors: list[str] = []
+    successful_queries = 0
+    for query in queries:
+        try:
+            # Uma conexão por fonte mantém o fallback utilizável se a tabela PIT
+            # estiver ausente ou com schema incompatível.
+            with eng.connect() as conn:
+                rows = conn.execute(query).fetchall()
+            successful_queries += 1
+            for row in rows:
+                if row.v is None:
+                    continue
+                value = float(row.v)
+                if np.isfinite(value) and value > 0:
+                    # PIT tem precedência; o snapshot só completa ausências.
+                    values.setdefault(_ticker_key(row.ticker), value)
+        except Exception as exc:
+            errors.append(type(exc).__name__)
+
+    if successful_queries == 0:
+        detail = ", ".join(errors) if errors else "fonte indisponível"
+        raise MarketCapDataError(f"consultas de marketCap falharam ({detail})")
+    return values
+
+
+def _market_cap_coverage(
+    tickers: pd.Series | list[str] | tuple[str, ...],
+    market_caps: dict[str, float],
+) -> tuple[int, int, float]:
+    """Retorna (cobertos, total, proporção) para o universo normalizado."""
+    universe = {_ticker_key(ticker) for ticker in tickers if _ticker_key(ticker)}
+    covered = sum(
+        1 for ticker in universe
+        if ticker in market_caps
+        and np.isfinite(float(market_caps[ticker]))
+        and float(market_caps[ticker]) > 0
+    )
+    total = len(universe)
+    return covered, total, (covered / total if total else 0.0)
 
 
 # ── CSS incremental ───────────────────────────────────────────────────────────
@@ -1629,10 +1680,31 @@ def render(show_header: bool = True) -> None:
     # mercado (deslistados/dado velho) ANTES de qualquer scoring — senão o modelo
     # coroa empresas boas no papel mas intocáveis na prática (BALM3, CAMB3, EKTR3).
     if min_mcap > 0:
-        _mcaps = _load_market_caps()
+        try:
+            _mcaps = _load_market_caps()
+        except MarketCapDataError as exc:
+            st.error(
+                "Não foi possível validar o piso de liquidez de R$ 1 bilhão. "
+                "A seleção foi interrompida para não classificar dados ausentes "
+                f"como empresas ilíquidas. Detalhe: {exc}."
+            )
+            return
+
         _n_antes = df_set["ticker"].nunique()
+        _n_cobertos, _n_universo, _cobertura_mcap = _market_cap_coverage(
+            df_set["ticker"], _mcaps
+        )
+        if _n_universo and _cobertura_mcap < _MIN_MARKET_CAP_COVERAGE:
+            st.error(
+                "Cobertura de valor de mercado insuficiente para aplicar o piso "
+                f"de {_liq_label}: {_n_cobertos}/{_n_universo} empresas "
+                f"({_cobertura_mcap:.1%}). A seleção foi interrompida; atualize "
+                "a ingestão de `marketCap` antes de continuar."
+            )
+            return
+
         _keep = df_set["ticker"].map(
-            lambda t: _mcaps.get(str(t).upper().replace(".SA", "").strip(), 0.0) >= min_mcap
+            lambda t: _mcaps.get(_ticker_key(t), 0.0) >= min_mcap
         )
         df_set = df_set[_keep].copy()
         _n_removidos = _n_antes - df_set["ticker"].nunique()
