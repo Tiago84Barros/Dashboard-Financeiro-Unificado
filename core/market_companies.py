@@ -302,6 +302,27 @@ def translate_us_sector(sector, industry=None) -> str:
     return "Outros setores"
 
 
+def sector_industry_labels(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Rótulos PT-BR de setor/indústria alinhados ao índice de `df`.
+
+    Para montar FILTROS: as opções devem ser os RÓTULOS (deduplicados) e o filtro
+    deve casar por rótulo. Vários códigos SIC brutos colapsam no mesmo setor macro
+    — usar o valor bruto como opção repete rótulos na lista e, pior, filtra apenas
+    um fragmento do setor. Não altera o quadro: a tradução para exibição continua
+    sendo feita na borda por localize_us_company_frame (traduzir duas vezes
+    corromperia os rótulos).
+    """
+    if df is None or len(df) == 0:
+        vazio = pd.Series(dtype=object)
+        return vazio, vazio
+    idx = df.index
+    sec = (df["sector"] if "sector" in df else pd.Series("", index=idx)).fillna("").astype(str)
+    ind = (df["industry"] if "industry" in df else pd.Series("", index=idx)).fillna("").astype(str)
+    setor = pd.Series([translate_us_sector(s, i) for s, i in zip(sec, ind)], index=idx)
+    industria = pd.Series([translate_us_industry(i or s) for s, i in zip(sec, ind)], index=idx)
+    return setor, industria
+
+
 def localize_us_company_frame(df: pd.DataFrame) -> pd.DataFrame:
     """Localiza setor/indústria para exibição sem alterar as métricas do quadro."""
     if df is None or df.empty:
