@@ -47,7 +47,7 @@ def jsonable(value: Any) -> Any:
 
 def compact_financials(income: Sequence[dict], balance: Sequence[dict],
                        cashflow: Sequence[dict]) -> list[dict]:
-    """Série anual compacta (uma linha/ano) para a tabela do dossiê na vitrine."""
+    """Série anual GAAP compacta para todos os painéis da análise individual."""
     bal_by = {r.get("fiscal_year"): r for r in balance}
     cf_by = {r.get("fiscal_year"): r for r in cashflow}
     out = []
@@ -56,14 +56,72 @@ def compact_financials(income: Sequence[dict], balance: Sequence[dict],
         if y is None:
             continue
         b, c = bal_by.get(y, {}), cf_by.get(y, {})
+        shares = b.get("shares_outstanding")
+        div_paid = c.get("dividends_paid")
+        div_ps = None
+        try:
+            if shares not in (None, 0) and div_paid is not None:
+                div_ps = abs(float(div_paid)) / float(shares)
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+        investing_parts = [c.get(k) for k in ("capex", "acquisitions", "investments")]
+        investing_cf = (sum(float(v) for v in investing_parts if v is not None)
+                        if any(v is not None for v in investing_parts) else None)
         out.append({
             "fiscal_year": y,
-            "revenue": r.get("revenue"), "net_income": r.get("net_income"),
-            "ebitda": r.get("ebitda"),
+            "revenue": r.get("revenue"),
+            "operating_income": r.get("operating_income"), "ebit": r.get("ebit"),
+            "ebitda": r.get("ebitda"), "net_income": r.get("net_income"),
+            "total_assets": b.get("total_assets"), "total_equity": b.get("total_equity"),
+            "cash_and_equivalents": b.get("cash_and_equivalents"),
+            "short_term_debt": b.get("short_term_debt"),
+            "long_term_debt": b.get("long_term_debt"), "total_debt": b.get("total_debt"),
+            "net_debt": b.get("net_debt"), "current_assets": b.get("current_assets"),
+            "current_liabilities": b.get("current_liabilities"),
+            "invested_capital": b.get("invested_capital"),
+            "shares_outstanding": shares,
+            "operating_cash_flow": c.get("operating_cash_flow"),
+            "investing_cash_flow": investing_cf, "capex": c.get("capex"),
             "free_cash_flow": c.get("free_cash_flow"),
-            "total_equity": b.get("total_equity"), "total_debt": b.get("total_debt"),
+            "dividends_paid": div_paid, "dividends_per_share": div_ps,
         })
     return out
+
+
+def compact_company_analysis(market_data: dict) -> dict:
+    """Compacta cotações mensais, dividendos anuais e métricas para a vitrine."""
+    import pandas as pd
+
+    result = {"prices": [], "dividends": [], "metrics": []}
+    prices = market_data.get("prices")
+    if prices is not None and not prices.empty:
+        p = prices[["date", "price"]].copy()
+        p["date"] = pd.to_datetime(p["date"], errors="coerce")
+        p["price"] = pd.to_numeric(p["price"], errors="coerce")
+        p = p.dropna().sort_values("date")
+        if not p.empty:
+            monthly = p.set_index("date")["price"].resample("ME").last().dropna().tail(240)
+            result["prices"] = [
+                {"date": idx.date().isoformat(), "price": float(value)}
+                for idx, value in monthly.items()
+            ]
+    dividends = market_data.get("dividends")
+    if dividends is not None and not dividends.empty:
+        d = dividends[["date", "amount"]].copy()
+        d["date"] = pd.to_datetime(d["date"], errors="coerce")
+        d["amount"] = pd.to_numeric(d["amount"], errors="coerce")
+        d = d.dropna()
+        if not d.empty:
+            annual = d.assign(year=d["date"].dt.year).groupby("year")["amount"].sum()
+            result["dividends"] = [
+                {"date": f"{int(year)}-12-31", "amount": float(value)}
+                for year, value in annual.items()
+            ]
+    metrics = market_data.get("metrics")
+    if metrics is not None and not metrics.empty:
+        keep = metrics[["fiscal_year", "metric_name", "metric_value"]].dropna()
+        result["metrics"] = jsonable(keep.to_dict("records"))
+    return result
 
 
 _SCORE_COLS = ("score", "score_quality", "score_growth", "score_solidity",
@@ -149,6 +207,8 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
                 industry=bundle.get("industry"), income=inc, balance=bal,
                 cashflow=cfw, market_cap=bundle.get("market_cap"),
                 score_row={"score": srow.get("score")})
+            dossie["_company_analysis"] = compact_company_analysis(
+                ur.load_company_market_data(sym))
             metrics = dossie.get("metrics", {})
             asym = score_asymmetry(metrics, build_trajectory(inc, bal, cfw)) \
                 if (metrics.get("_years") or 0) >= 3 else None

@@ -137,7 +137,7 @@ def test_duas_views_usam_componentes_compartilhados_e_eua_nao_usa_tabela_na_vitr
         assert "render_company_search" in content
         assert "render_sector_grid" in content
     start = usa.index("def _tab_empresas_setor")
-    end = usa.index("def _company_selector", start)
+    end = usa.index("def _render_score_dashboard", start)
     assert "st.dataframe" not in usa[start:end]
     assert "Cobertura do warehouse local" not in usa
     assert "def _tab_visao_geral" not in usa

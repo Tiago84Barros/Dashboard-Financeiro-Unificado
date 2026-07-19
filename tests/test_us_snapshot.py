@@ -28,13 +28,34 @@ def test_jsonable_decimal():
 def test_compact_financials():
     income = [{"fiscal_year": 2022, "revenue": 100, "net_income": 10, "ebitda": 20},
               {"fiscal_year": 2023, "revenue": 120, "net_income": 12, "ebitda": 24}]
-    balance = [{"fiscal_year": 2023, "total_equity": 50, "total_debt": 30}]
-    cashflow = [{"fiscal_year": 2023, "free_cash_flow": 15}]
+    balance = [{"fiscal_year": 2023, "total_equity": 50, "total_debt": 30,
+                "shares_outstanding": 10, "cash_and_equivalents": 5}]
+    cashflow = [{"fiscal_year": 2023, "free_cash_flow": 15,
+                 "operating_cash_flow": 20, "capex": -5, "dividends_paid": -2}]
     out = snap.compact_financials(income, balance, cashflow)
     assert len(out) == 2
     assert out[-1]["fiscal_year"] == 2023 and out[-1]["free_cash_flow"] == 15
     assert out[-1]["total_equity"] == 50
+    assert out[-1]["operating_cash_flow"] == 20
+    assert out[-1]["investing_cash_flow"] == -5
+    assert out[-1]["dividends_per_share"] == 0.2
     assert out[0]["free_cash_flow"] is None      # 2022 sem cashflow → None, não zero
+
+
+def test_compact_company_analysis_reduz_preco_e_soma_dividendos():
+    market = {
+        "prices": pd.DataFrame({
+            "date": ["2023-01-02", "2023-01-31", "2023-02-28"],
+            "price": [10, 11, 12],
+        }),
+        "dividends": pd.DataFrame({
+            "date": ["2023-03-01", "2023-09-01"], "amount": [0.2, 0.3],
+        }),
+        "metrics": pd.DataFrame(),
+    }
+    out = snap.compact_company_analysis(market)
+    assert [row["price"] for row in out["prices"]] == [11.0, 12.0]
+    assert out["dividends"] == [{"date": "2023-12-31", "amount": 0.5}]
 
 
 def test_serialize_row():
@@ -109,5 +130,6 @@ def test_migration_044_autossuficiente():
     assert "CREATE SCHEMA IF NOT EXISTS market_us" in sql
     assert "company_snapshots" in sql
     assert "REFERENCES market_us.companies" not in sql
-    code = "\n".join(l for l in sql.splitlines() if not l.lstrip().startswith("--"))
+    code = "\n".join(
+        line for line in sql.splitlines() if not line.lstrip().startswith("--"))
     assert "DROP TABLE" not in code.upper() and "TRUNCATE" not in code.upper()

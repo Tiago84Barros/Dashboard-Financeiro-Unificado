@@ -12,6 +12,8 @@ de carteira. A inteligência usa SEC/GAAP e contexto macroeconômico americano.
 """
 from __future__ import annotations
 
+import html
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -25,6 +27,15 @@ from core.market_companies import (
     normalize_us_companies,
     translate_us_industry,
     translate_us_sector,
+    us_logo_url,
+)
+from core.us_company_analysis import (
+    annual_dividends,
+    annual_price_returns,
+    derive_metric_history,
+    last_value,
+    numeric_financials,
+    regression_cagr,
 )
 from core.us_methodology import (
     US_ASYMMETRY_SCORE_VERSION,
@@ -49,11 +60,30 @@ _PLOT_LAYOUT = dict(
     margin=dict(l=18, r=18, t=42, b=18),
 )
 
+_COR_POS = "#00C896"
+_COR_NEG = "#FF5C7C"
+_COR_INFO = "#4A9EFF"
+_COR_ALT = "#FFC914"
+_COR_NEU = "#718096"
+
 _WEIGHTING_LABELS = {
     "score": "Pontuação fundamentalista",
     "equal": "Pesos iguais",
     "inverse_vol": "Inverso da volatilidade",
 }
+
+
+def _render_company_analysis_css() -> None:
+    st.markdown("""
+    <style>
+    .us-ind-card{background:#12151E;border:1px solid #1E2533;border-radius:12px;
+      padding:14px 16px;min-height:96px;margin-bottom:6px}
+    .us-ind-label{font-size:.64rem;font-weight:800;letter-spacing:.10em;
+      text-transform:uppercase;color:#52627D}
+    .us-ind-value{font-size:1.45rem;font-weight:800;margin:5px 0 2px}
+    .us-ind-sub{font-size:.66rem;color:#52627D}
+    </style>
+    """, unsafe_allow_html=True)
 
 
 def render() -> None:
@@ -123,6 +153,82 @@ def _fmt_ratio(value, decimals: int = 1) -> str:
         return "—"
 
 
+def _fmt_usd(value) -> str:
+    try:
+        v = float(value)
+        if not np.isfinite(v):
+            return "—"
+    except (TypeError, ValueError):
+        return "—"
+    sign = "-" if v < 0 else ""
+    n = abs(v)
+    if n >= 1e12:
+        return f"{sign}US$ {n / 1e12:.2f} tri"
+    if n >= 1e9:
+        return f"{sign}US$ {n / 1e9:.2f} bi"
+    if n >= 1e6:
+        return f"{sign}US$ {n / 1e6:.2f} mi"
+    return f"{sign}US$ {n:,.2f}"
+
+
+def _fmt_growth(value) -> str:
+    try:
+        v = float(value)
+        return "—" if not np.isfinite(v) else f"{v:+.2%}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _value_color(value, *, invert: bool = False) -> str:
+    try:
+        v = float(value)
+        if not np.isfinite(v):
+            return _COR_NEU
+        positive = v > 0
+        if invert:
+            positive = not positive
+        return _COR_POS if positive else _COR_NEG
+    except (TypeError, ValueError):
+        return _COR_NEU
+
+
+def _analysis_card(label: str, value: str, subtitle: str,
+                   color: str = _COR_POS) -> str:
+    return (
+        '<div class="us-ind-card">'
+        f'<div class="us-ind-label">{html.escape(label)}</div>'
+        f'<div class="us-ind-value" style="color:{color}">{html.escape(value)}</div>'
+        f'<div class="us-ind-sub">{html.escape(subtitle)}</div></div>'
+    )
+
+
+def _analysis_header(title: str) -> None:
+    st.markdown(
+        f'<div style="font-size:.75rem;font-weight:700;color:#E2E8F0;'
+        f'margin:18px 0 8px">{title}</div>', unsafe_allow_html=True)
+
+
+def _analysis_cards(items: list[tuple[str, str, str, str]], columns: int = 4) -> None:
+    for start in range(0, len(items), columns):
+        row = items[start:start + columns]
+        cols = st.columns(columns, gap="small")
+        for idx, (label, value, subtitle, color) in enumerate(row):
+            with cols[idx]:
+                st.markdown(_analysis_card(label, value, subtitle, color),
+                            unsafe_allow_html=True)
+
+
+def _company_plot_layout(height: int = 320) -> dict:
+    return dict(
+        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#CBD5E0"), height=height,
+        margin=dict(l=8, r=18, t=10, b=22),
+        legend=dict(orientation="h", y=-.18, bgcolor="rgba(0,0,0,0)"),
+        yaxis=dict(showgrid=True, gridcolor="#1E2533"),
+        xaxis=dict(showgrid=False),
+    )
+
+
 def _tab_empresas_setor(status: dict) -> None:
     if _empty_if_offline(status, "Sem dados locais para listar as empresas.", "🏢"):
         _tab_sincronizacao(status)
@@ -146,19 +252,6 @@ def _tab_empresas_setor(status: dict) -> None:
         companies, key_prefix="us", selected_ticker=st.session_state.get("us_selected_ticker"),
         selected_state_key="us_selected_ticker", active_state_key="us_active_tab",
     )
-
-
-def _company_selector(scored: pd.DataFrame, key: str) -> str | None:
-    if scored is None or scored.empty:
-        return None
-    options = scored["symbol"].dropna().astype(str).tolist()
-    names = scored.set_index("symbol").get("name", pd.Series(dtype=object)).to_dict()
-    selected = st.session_state.get("us_selected_ticker")
-    index = options.index(selected) if selected in options else 0
-    value = st.selectbox("Empresa", options, index=index,
-                         format_func=lambda x: f"{x} — {names.get(x, '')}", key=key)
-    st.session_state["us_selected_ticker"] = value
-    return value
 
 
 def _render_score_dashboard(row: pd.Series) -> None:
@@ -186,72 +279,322 @@ def _render_score_dashboard(row: pd.Series) -> None:
 
 
 def _tab_empresa(status: dict) -> None:
+    _render_company_analysis_css()
     if _empty_if_offline(status, "Sem dados locais para analisar empresas.", "🔍"):
         return
     scored = us.scored_universe()
-    symbol = _company_selector(scored, "us_company_analysis")
-    if not symbol:
+    if scored is None or scored.empty:
+        estado_vazio("Sem empresas com demonstrações suficientes para análise.", "🔍")
         return
-    row = localize_us_company_frame(
-        scored[scored["symbol"] == symbol]
-    ).iloc[0]
-    secao_titulo(f"{symbol} — {row.get('name', '')}", "🔍",
-                 f"{row.get('sector', '—')} / {row.get('industry', '—')}")
+    scored = scored.copy()
+    scored["symbol"] = scored["symbol"].astype(str).str.upper()
+    valid_symbols = set(scored["symbol"])
+    selected = str(st.session_state.get("us_selected_ticker", "") or "").upper()
+    if "us_company_ticker_input" not in st.session_state:
+        st.session_state["us_company_ticker_input"] = selected
+
+    input_col, button_col = st.columns([4, 1])
+    with input_col:
+        ticker_raw = st.text_input(
+            "Ticker da empresa", key="us_company_ticker_input",
+            placeholder="Ex.: AAPL, MSFT, NVDA",
+        )
+    with button_col:
+        st.markdown("<br>", unsafe_allow_html=True)
+        analyze = st.button("Analisar", type="primary", use_container_width=True,
+                            key="us_btn_analisar_empresa")
+    if analyze:
+        requested = ticker_raw.strip().upper()
+        if requested in valid_symbols:
+            st.session_state["us_selected_ticker"] = requested
+            st.rerun()
+        elif requested:
+            st.warning("Ticker não encontrado no universo americano publicado.", icon="⚠️")
+
+    symbol = str(st.session_state.get("us_selected_ticker", "") or "").upper()
+    if not symbol:
+        st.info("Digite um ticker acima e clique em **Analisar**.", icon="🔍")
+        return
+    match = scored[scored["symbol"] == symbol]
+    if match.empty:
+        st.warning("Ticker não encontrado no universo americano publicado.", icon="⚠️")
+        return
+    row = localize_us_company_frame(match).iloc[0]
+
+    with st.spinner(f"Carregando dados de {symbol}…"):
+        financials = numeric_financials(us.company_financials(symbol))
+        market_data = us.company_market_data(symbol)
+    prices = market_data.get("prices", pd.DataFrame()) if isinstance(market_data, dict) else pd.DataFrame()
+    dividends = market_data.get("dividends", pd.DataFrame()) if isinstance(market_data, dict) else pd.DataFrame()
+    if not prices.empty:
+        prices = prices.copy()
+        prices["date"] = pd.to_datetime(prices["date"], errors="coerce")
+        prices["price"] = pd.to_numeric(prices["price"], errors="coerce")
+        prices = prices.dropna().sort_values("date")
+    history = derive_metric_history(financials, prices, dividends)
+    dividend_history = annual_dividends(financials, dividends)
+    current_price = last_value(prices.rename(columns={"price": "value"}), "value") \
+        if not prices.empty else None
+
+    logo_col, identity_col, price_col = st.columns([1, 5, 2])
+    with logo_col:
+        logo = us_logo_url(symbol)
+        st.markdown(
+            f'<img src="{html.escape(logo, quote=True)}" '
+            'style="width:64px;height:64px;border-radius:12px;object-fit:contain;'
+            'background:rgba(255,255,255,.06);padding:6px;margin-top:6px" '
+            'onerror="this.style.display=\'none\'">', unsafe_allow_html=True)
+    with identity_col:
+        st.markdown(
+            f'<h2 style="font-size:1.60rem;font-weight:800;color:#E2E8F0;margin:0 0 4px">'
+            f'{html.escape(symbol)} — {html.escape(str(row.get("name", "")))}</h2>'
+            f'<div style="font-size:.78rem;color:#718096">'
+            f'{html.escape(str(row.get("sector", "—")))} · '
+            f'{html.escape(str(row.get("industry", "—")))}</div>', unsafe_allow_html=True)
+    with price_col:
+        price_text = f"US$ {current_price:,.2f}" if current_price is not None else "—"
+        st.markdown(
+            '<div style="text-align:right;padding-top:8px">'
+            f'<div style="font-size:1.60rem;font-weight:800;color:{_COR_POS}">'
+            f'{price_text}</div><div style="font-size:.68rem;color:#4A5568">'
+            'Cotação no warehouse/snapshot</div></div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _analysis_header("📉 Preço da Ação")
+    if not prices.empty:
+        periods = {"1A": 365, "3A": 1095, "5A": 1825, "Máx": None}
+        selected_period = st.radio(
+            "Período", list(periods), index=3, horizontal=True,
+            key=f"us_price_period_{symbol}")
+        chart_prices = prices.copy()
+        days = periods[selected_period]
+        if days:
+            chart_prices = chart_prices[
+                chart_prices["date"] >= chart_prices["date"].max() - pd.Timedelta(days=days)]
+        fig = px.line(chart_prices, x="date", y="price",
+                      color_discrete_sequence=[_COR_INFO])
+        fig.update_traces(line_width=1.5)
+        fig.update_layout(**_company_plot_layout(280), showlegend=False,
+                          yaxis_title="Preço (US$)", xaxis_title="")
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False}, key=f"us_price_{symbol}_{selected_period}")
+    else:
+        st.info("Histórico de preços ainda não publicado para este ticker.")
+
+    _analysis_header("📊 Retorno Anual do Preço")
+    annual_returns = annual_price_returns(prices)
+    if not annual_returns.empty:
+        annual_returns["Ano"] = annual_returns["Ano"].astype(str)
+        annual_returns["Positivo"] = annual_returns["Retorno"] >= 0
+        annual_returns["Texto"] = annual_returns["Retorno"].map(lambda value: f"{value:+.2f}%")
+        fig = px.bar(
+            annual_returns, x="Retorno", y="Ano", orientation="h", color="Positivo",
+            color_discrete_map={True: _COR_POS, False: _COR_NEG}, text="Texto")
+        fig.update_traces(textposition="outside", textfont_size=10)
+        fig.update_layout(**_company_plot_layout(max(250, len(annual_returns) * 28)),
+                          showlegend=False, xaxis_title="Retorno anual (%)", yaxis_title="Ano")
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False}, key=f"us_returns_{symbol}")
+    else:
+        st.info("Retornos anuais serão exibidos após a publicação do histórico de preços.")
+
+    _analysis_header("📈 Crescimento Médio Anual (CAGR)")
+    cagr_items = []
+    for label, field, source in (
+        ("Receita Líquida", "revenue", financials),
+        ("EBIT", "ebit", financials),
+        ("Lucro Líquido", "net_income", financials),
+        ("Dividendos", "dividends_per_share", dividend_history),
+    ):
+        growth = regression_cagr(source, field)
+        cagr_items.append((label, _fmt_growth(growth), "Regressão log histórica",
+                           _value_color(growth)))
+    _analysis_cards(cagr_items)
+
+    _analysis_header("📋 Último Exercício Disponível")
+    latest_items = []
+    for label, field, row_field, invert in (
+        ("Receita Líquida", "revenue", "_revenue", False),
+        ("EBIT", "ebit", "_ebit", False),
+        ("Lucro Líquido", "net_income", "_net_income", False),
+        ("Dívida Líquida", "net_debt", "_net_debt", True),
+    ):
+        value = last_value(financials, field)
+        if value is None:
+            value = row.get(row_field)
+        latest_items.append((label, _fmt_usd(value), "Último registro SEC/GAAP",
+                             _value_color(value, invert=invert)))
+    _analysis_cards(latest_items)
+
+    _analysis_header("📊 Demonstrações Financeiras — Histórico")
+    statement_map = {
+        "revenue": "Receita Líquida", "ebit": "EBIT", "ebitda": "EBITDA",
+        "net_income": "Lucro Líquido", "total_equity": "Patrimônio Líquido",
+        "net_debt": "Dívida Líquida", "total_debt": "Dívida Total",
+        "total_assets": "Ativo Total",
+    }
+    statement_cols = [column for column in statement_map if column in financials
+                      and financials[column].notna().any()]
+    if statement_cols:
+        labels = [statement_map[column] for column in statement_cols]
+        defaults = [label for label in ("Receita Líquida", "Lucro Líquido") if label in labels]
+        selected_labels = st.multiselect(
+            "Indicadores", labels, default=defaults or labels[:2],
+            key=f"us_statements_{symbol}")
+        if selected_labels:
+            reverse = {label: column for column, label in statement_map.items()}
+            selected_cols = [reverse[label] for label in selected_labels]
+            long = financials[["fiscal_year", *selected_cols]].melt(
+                "fiscal_year", var_name="Indicador", value_name="Valor")
+            long["Indicador"] = long["Indicador"].map(statement_map)
+            fig = px.line(long, x="fiscal_year", y="Valor", color="Indicador", markers=True,
+                          color_discrete_sequence=[_COR_POS, _COR_INFO, _COR_ALT, _COR_NEG])
+            fig.update_layout(**_company_plot_layout(340),
+                              xaxis_title="Ano fiscal", yaxis_title="US$ (valores absolutos)")
+            st.plotly_chart(fig, use_container_width=True,
+                            config={"displayModeBar": False}, key=f"us_statements_chart_{symbol}")
+    else:
+        st.info("Demonstrações históricas indisponíveis para este ticker.")
+
+    _analysis_header("💰 Dividendos por ação")
+    if not dividend_history.empty:
+        fig = px.bar(dividend_history, x="fiscal_year", y="dividends_per_share",
+                     color_discrete_sequence=[_COR_ALT])
+        fig.update_layout(**_company_plot_layout(240),
+                          xaxis_title="Ano fiscal", yaxis_title="US$/ação (soma anual)")
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False}, key=f"us_dividends_{symbol}")
+    else:
+        st.info("Sem histórico de dividendos por ação publicado.")
+
+    _analysis_header("📊 Gráfico de Múltiplos — Histórico")
+    metric_labels = {
+        "net_margin": "Margem Líquida", "operating_margin": "Margem Operacional",
+        "roe": "ROE", "roa": "ROA", "roic": "ROIC", "fcf_margin": "Margem FCL",
+        "dividend_yield": "Dividend Yield", "payout": "Payout",
+    }
+    metric_cols = [column for column in metric_labels if column in history
+                   and history[column].notna().any()]
+    if metric_cols:
+        options = [metric_labels[column] for column in metric_cols]
+        selected_metrics = st.multiselect(
+            "Indicadores (%)", options, default=options[:2], key=f"us_metrics_history_{symbol}")
+        if selected_metrics:
+            reverse = {label: column for column, label in metric_labels.items()}
+            selected_cols = [reverse[label] for label in selected_metrics]
+            plot = history[["fiscal_year", *selected_cols]].copy()
+            plot[selected_cols] = plot[selected_cols] * 100
+            long = plot.melt("fiscal_year", var_name="Indicador", value_name="Valor (%)")
+            long["Indicador"] = long["Indicador"].map(metric_labels)
+            fig = px.bar(long, x="fiscal_year", y="Valor (%)", color="Indicador",
+                         barmode="group", color_discrete_sequence=[_COR_POS, _COR_INFO,
+                                                                    _COR_ALT, _COR_NEG])
+            fig.update_layout(**_company_plot_layout(300), xaxis_title="Ano fiscal")
+            st.plotly_chart(fig, use_container_width=True,
+                            config={"displayModeBar": False}, key=f"us_metrics_chart_{symbol}")
+    else:
+        st.info("Histórico de margens e retornos ainda indisponível.")
+
+    _analysis_header("💰 Fluxo de Caixa")
+    cashflow_map = {
+        "operating_cash_flow": "FCO (Operacional)",
+        "investing_cash_flow": "FCI (Investimento)",
+        "free_cash_flow": "FCL (Livre)",
+    }
+    cash_items = []
+    for field, label in cashflow_map.items():
+        value = last_value(financials, field)
+        cash_items.append((label, _fmt_usd(value), "Fonte: SEC/GAAP",
+                           _value_color(value)))
+    _analysis_cards(cash_items, columns=3)
+    cash_cols = [field for field in cashflow_map if field in financials
+                 and financials[field].notna().any()]
+    if cash_cols:
+        long = financials[["fiscal_year", *cash_cols]].melt(
+            "fiscal_year", var_name="Fluxo", value_name="Valor")
+        long["Fluxo"] = long["Fluxo"].map(cashflow_map)
+        fig = px.bar(long, x="fiscal_year", y="Valor", color="Fluxo", barmode="group",
+                     color_discrete_sequence=[_COR_POS, _COR_NEG, _COR_INFO])
+        fig.update_layout(**_company_plot_layout(300),
+                          xaxis_title="Ano fiscal", yaxis_title="Valor (US$)")
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False}, key=f"us_cashflow_{symbol}")
+
+    _analysis_header("🏛️ Estrutura de Capital e Dívida")
+    capital_map = (
+        ("Caixa", "cash_and_equivalents", False), ("Dívida CP", "short_term_debt", True),
+        ("Dívida LP", "long_term_debt", True), ("Dívida Total", "total_debt", True),
+        ("Dívida Líquida", "net_debt", True), ("Patrimônio Líquido", "total_equity", False),
+    )
+    capital_items = []
+    for label, field, invert in capital_map:
+        value = last_value(financials, field)
+        capital_items.append((label, _fmt_usd(value), "Último período disponível",
+                              _value_color(value, invert=invert)))
+    _analysis_cards(capital_items, columns=3)
+    capital_chart_cols = [field for _, field, _ in capital_map[:3]
+                          if field in financials and financials[field].notna().any()]
+    if capital_chart_cols:
+        label_by_field = {field: label for label, field, _ in capital_map}
+        long = financials[["fiscal_year", *capital_chart_cols]].melt(
+            "fiscal_year", var_name="Item", value_name="Valor")
+        long["Item"] = long["Item"].map(label_by_field)
+        fig = px.bar(long, x="fiscal_year", y="Valor", color="Item", barmode="group",
+                     color_discrete_sequence=[_COR_POS, _COR_ALT, _COR_NEG])
+        fig.update_layout(**_company_plot_layout(300),
+                          xaxis_title="Ano fiscal", yaxis_title="Valor (US$)")
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False}, key=f"us_capital_{symbol}")
+
+    def latest_metric(name: str, row_name: str | None = None):
+        value = last_value(history, name)
+        if value is None and row_name:
+            value = row.get(row_name)
+        return value
+
+    _analysis_header("📐 Rentabilidade")
+    profitability = []
+    for label, metric, row_metric, subtitle in (
+        ("Margem Líquida", "net_margin", "net_margin", "% Lucro/Receita"),
+        ("Margem Operacional", "operating_margin", "operating_margin", "% EBIT/Receita"),
+        ("ROE", "roe", "roe", "Retorno s/ PL"), ("ROA", "roa", "roa", "Retorno s/ Ativos"),
+        ("ROIC", "roic", "roic", "Retorno s/ Capital"),
+        ("Dividend Yield", "dividend_yield", None, "Dividendos/Preço"),
+    ):
+        value = latest_metric(metric, row_metric)
+        profitability.append((label, _fmt_pct(value, 2), subtitle, _value_color(value)))
+    _analysis_cards(profitability, columns=3)
+
+    _analysis_header("💹 Valuation")
+    valuation = []
+    for label, metric, row_metric, subtitle in (
+        ("P/VP", "p_b", None, "Preço/Valor Patrimonial"),
+        ("P/L", "pe", "pe", "Preço/Lucro"),
+        ("EV/EBIT", "ev_ebit", "ev_ebit", "Valor Empresa/EBIT"),
+        ("P/FCL", "p_fcf", "p_fcf", "Preço/Fluxo de Caixa Livre"),
+    ):
+        value = latest_metric(metric, row_metric)
+        valuation.append((label, _fmt_ratio(value, 2), subtitle, _value_color(value)))
+    payout = latest_metric("payout")
+    valuation.append(("Payout", _fmt_pct(payout, 2), "% Lucro distribuído",
+                      _value_color(payout)))
+    _analysis_cards(valuation)
+
+    _analysis_header("🏗️ Estrutura de Capital")
+    structure = []
+    for label, metric, row_metric, subtitle, invert in (
+        ("Endividamento", "debt_to_equity", "debt_to_equity", "Dívida Total/PL", True),
+        ("Alavancagem Fin.", "financial_leverage", None, "Ativos/PL", True),
+        ("Liquidez Corrente", "current_ratio", "current_ratio",
+         "Ativo Circ./Passivo Circ.", False),
+    ):
+        value = latest_metric(metric, row_metric)
+        structure.append((label, _fmt_ratio(value, 2), subtitle,
+                          _value_color(value, invert=invert)))
+    _analysis_cards(structure, columns=3)
+
+    _analysis_header("🏆 Score e critérios de avaliação")
     _render_score_dashboard(row)
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        card_metrica("Margem operacional", _fmt_pct(row.get("operating_margin")))
-    with c2:
-        card_metrica("Margem líquida", _fmt_pct(row.get("net_margin")))
-    with c3:
-        card_metrica("Dív. líquida / EBITDA", _fmt_ratio(row.get("net_debt_ebitda")))
-    with c4:
-        card_metrica("Cresc. receita 3a", _fmt_pct(row.get("revenue_cagr_3y")))
-
-    financials = us.company_financials(symbol)
-    if financials is not None and not financials.empty:
-        tabs = st.tabs(["Resultados", "Margens e crescimento", "Caixa e balanço"])
-        with tabs[0]:
-            value_cols = [c for c in ("revenue", "net_income", "ebitda") if c in financials]
-            long = financials.melt("fiscal_year", value_vars=value_cols,
-                                   var_name="Indicador", value_name="USD")
-            long["Indicador"] = long["Indicador"].map({
-                "revenue": "Receita", "net_income": "Lucro líquido", "ebitda": "EBITDA",
-            }).fillna(long["Indicador"])
-            fig = px.bar(
-                long, x="fiscal_year", y="USD", color="Indicador", barmode="group",
-                labels={"fiscal_year": "Ano fiscal", "USD": "Valor (USD)"},
-            )
-            fig.update_layout(**_PLOT_LAYOUT, height=390)
-            st.plotly_chart(fig, use_container_width=True, key=f"us_fin_{symbol}")
-        with tabs[1]:
-            margin_rows = []
-            for _, r in financials.iterrows():
-                rev = pd.to_numeric(r.get("revenue"), errors="coerce")
-                if pd.notna(rev) and rev:
-                    margin_rows.append({"Ano": r["fiscal_year"],
-                        "Margem líquida": pd.to_numeric(r.get("net_income"), errors="coerce") / rev,
-                        "Margem EBITDA": pd.to_numeric(r.get("ebitda"), errors="coerce") / rev})
-            if margin_rows:
-                fig = px.line(pd.DataFrame(margin_rows).melt("Ano", var_name="Indicador",
-                              value_name="Valor"), x="Ano", y="Valor", color="Indicador", markers=True)
-                fig.update_layout(**_PLOT_LAYOUT, height=360, yaxis_tickformat=".1%")
-                st.plotly_chart(fig, use_container_width=True, key=f"us_margin_{symbol}")
-        with tabs[2]:
-            value_cols = [c for c in ("free_cash_flow", "total_equity", "total_debt") if c in financials]
-            long = financials.melt("fiscal_year", value_vars=value_cols,
-                                   var_name="Indicador", value_name="USD")
-            long["Indicador"] = long["Indicador"].map({
-                "free_cash_flow": "Fluxo de caixa livre",
-                "total_equity": "Patrimônio líquido", "total_debt": "Dívida total",
-            }).fillna(long["Indicador"])
-            fig = px.line(
-                long, x="fiscal_year", y="USD", color="Indicador", markers=True,
-                labels={"fiscal_year": "Ano fiscal", "USD": "Valor (USD)"},
-            )
-            fig.update_layout(**_PLOT_LAYOUT, height=360)
-            st.plotly_chart(fig, use_container_width=True, key=f"us_cash_{symbol}")
     with st.expander("📄 Dossiê, classificação e critérios avançados"):
         _render_dossie_for(symbol)
 

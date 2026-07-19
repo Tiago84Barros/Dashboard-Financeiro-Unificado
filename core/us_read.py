@@ -188,16 +188,34 @@ def load_companies(sector: str | None = None, search: str | None = None,
         return pd.DataFrame(columns=cols)
 
 
+_COMPANY_FINANCIAL_COLS = [
+    "fiscal_year", "revenue", "operating_income", "ebit", "ebitda",
+    "net_income", "total_assets", "total_equity", "cash_and_equivalents",
+    "short_term_debt", "long_term_debt", "total_debt", "net_debt",
+    "current_assets", "current_liabilities", "invested_capital",
+    "shares_outstanding", "operating_cash_flow", "investing_cash_flow",
+    "capex", "free_cash_flow", "dividends_paid", "dividends_per_share",
+]
+
+
 def load_company_financials(symbol: str) -> pd.DataFrame:
-    """Série anual (receita, lucro, FCF) de uma empresa para o dossiê/exploração."""
+    """Série anual GAAP consolidada para a análise individual da empresa."""
     eng = _engine()
-    cols = ["fiscal_year", "revenue", "net_income", "ebitda", "free_cash_flow",
-            "total_equity", "total_debt"]
+    cols = list(_COMPANY_FINANCIAL_COLS)
     if eng is None or not schema_ready() or not symbol:
         return pd.DataFrame(columns=cols)
     sql = (
-        "SELECT i.fiscal_year, i.revenue, i.net_income, i.ebitda, "
-        "cf.free_cash_flow, b.total_equity, b.total_debt "
+        "SELECT i.fiscal_year, i.revenue, i.operating_income, i.ebit, i.ebitda, "
+        "i.net_income, b.total_assets, b.total_equity, b.cash_and_equivalents, "
+        "b.short_term_debt, b.long_term_debt, b.total_debt, b.net_debt, "
+        "b.current_assets, b.current_liabilities, b.invested_capital, "
+        "b.shares_outstanding, cf.operating_cash_flow, "
+        "CASE WHEN cf.capex IS NULL AND cf.acquisitions IS NULL AND cf.investments IS NULL "
+        "THEN NULL ELSE COALESCE(cf.capex, 0) + COALESCE(cf.acquisitions, 0) + "
+        "COALESCE(cf.investments, 0) END AS investing_cash_flow, "
+        "cf.capex, cf.free_cash_flow, cf.dividends_paid, "
+        "CASE WHEN b.shares_outstanding IS NOT NULL AND b.shares_outstanding <> 0 "
+        "THEN ABS(cf.dividends_paid) / b.shares_outstanding END AS dividends_per_share "
         "FROM market_us.income_statements i "
         "LEFT JOIN market_us.balance_sheets b "
         "  ON b.company_id=i.company_id AND b.period=i.period "
@@ -213,6 +231,37 @@ def load_company_financials(symbol: str) -> pd.DataFrame:
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_company_financials falhou: %s", exc)
         return pd.DataFrame(columns=cols)
+
+
+def load_company_market_data(symbol: str) -> dict:
+    """Preço, dividendos e múltiplos históricos do warehouse, sem chamadas externas."""
+    empty = {
+        "prices": pd.DataFrame(columns=["date", "price"]),
+        "dividends": pd.DataFrame(columns=["date", "amount"]),
+        "metrics": pd.DataFrame(columns=["fiscal_year", "metric_name", "metric_value"]),
+    }
+    eng = _engine()
+    if eng is None or not schema_ready() or not symbol:
+        return empty
+    sym = symbol.upper()
+    try:
+        with eng.connect() as conn:
+            prices = pd.read_sql(text(
+                "SELECT date, COALESCE(adjusted_close, close) AS price "
+                "FROM market_us.prices_daily WHERE symbol=:s ORDER BY date"),
+                conn, params={"s": sym})
+            dividends = pd.read_sql(text(
+                "SELECT event_date AS date, COALESCE(adjusted_amount, amount) AS amount "
+                "FROM market_us.dividends WHERE symbol=:s ORDER BY event_date"),
+                conn, params={"s": sym})
+            metrics = pd.read_sql(text(
+                "SELECT fiscal_year, metric_name, metric_value "
+                "FROM market_us.key_metrics WHERE symbol=:s AND period='annual' "
+                "ORDER BY fiscal_year, metric_name"), conn, params={"s": sym})
+        return {"prices": prices, "dividends": dividends, "metrics": metrics}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("load_company_market_data(%s) falhou: %s", sym, exc)
+        return empty
 
 
 def load_quality_audit(limit: int = 200) -> pd.DataFrame:
@@ -236,9 +285,11 @@ _INCOME_COLS = ("fiscal_year", "revenue", "gross_profit", "operating_income",
 _BALANCE_COLS = ("fiscal_year", "total_assets", "total_equity", "total_debt",
                  "net_debt", "cash_and_equivalents", "current_assets",
                  "current_liabilities", "invested_capital", "shares_outstanding",
-                 "total_liabilities", "long_term_debt", "retained_earnings")
+                 "total_liabilities", "short_term_debt", "long_term_debt",
+                 "retained_earnings")
 _CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow",
-                  "dividends_paid", "stock_repurchase", "stock_issuance")
+                  "acquisitions", "investments", "dividends_paid",
+                  "stock_repurchase", "stock_issuance")
 
 
 def _latest_close(conn, symbol: str):
@@ -555,9 +606,22 @@ def load_snapshot_advanced(symbol: str) -> dict | None:
 
 def load_snapshot_financials(symbol: str) -> pd.DataFrame:
     rows = _snapshot_json_for(symbol, "financials") or []
-    cols = ["fiscal_year", "revenue", "net_income", "ebitda", "free_cash_flow",
-            "total_equity", "total_debt"]
-    return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
+    return (pd.DataFrame(rows).reindex(columns=_COMPANY_FINANCIAL_COLS)
+            if rows else pd.DataFrame(columns=_COMPANY_FINANCIAL_COLS))
+
+
+def load_snapshot_company_market_data(symbol: str) -> dict:
+    """Históricos compactos publicados dentro do dossiê da vitrine."""
+    dossie = load_snapshot_dossie(symbol) or {}
+    payload = dossie.get("_company_analysis", {}) if isinstance(dossie, dict) else {}
+    return {
+        "prices": pd.DataFrame(payload.get("prices", []), columns=["date", "price"]),
+        "dividends": pd.DataFrame(
+            payload.get("dividends", []), columns=["date", "amount"]),
+        "metrics": pd.DataFrame(
+            payload.get("metrics", []),
+            columns=["fiscal_year", "metric_name", "metric_value"]),
+    }
 
 
 def load_snapshot_companies(sector: str | None = None, search: str | None = None,
