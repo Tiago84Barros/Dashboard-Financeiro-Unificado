@@ -17,6 +17,7 @@ import re
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
@@ -26,7 +27,7 @@ import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
 from core.market_companies import filter_market_companies, normalize_b3_companies
-from design.componentes import card_metrica  # KPIs em cards CSS (visual coeso)
+from design.componentes import badge_status, card_metrica  # KPIs em cards CSS (visual coeso)
 from design.market_companies import (
     render_company_search,
     render_market_css,
@@ -2936,6 +2937,227 @@ def _render_cards(indicadores: list[tuple], n_cols: int = 4) -> None:
                 st.markdown(_ind_card(lbl, val, sub, cor), unsafe_allow_html=True)
 
 
+def _b3_peer_scores(
+    ticker: str,
+    mult: pd.Series,
+    df_set: pd.DataFrame,
+) -> tuple[pd.Series, str]:
+    """Monta o grupo comparável e calcula as seis trilhas do painel individual."""
+    from core.b3_company_score import score_cross_section
+
+    universo = _db.load_multiplos_todos()
+    if universo is None:
+        universo = pd.DataFrame()
+    universo = universo.copy()
+    if universo.empty:
+        universo = pd.DataFrame([mult.to_dict()]) if not mult.empty else pd.DataFrame()
+    if "Ticker" not in universo.columns:
+        universo["Ticker"] = ""
+    universo["Ticker"] = (
+        universo["Ticker"].astype(str).str.replace(".SA", "", regex=False)
+        .str.strip().str.upper()
+    )
+
+    # O snapshot individual é o mais recente e prevalece sobre a linha do universo.
+    atual = mult.to_dict() if not mult.empty else {}
+    atual["Ticker"] = ticker
+    if ticker in set(universo["Ticker"]):
+        idx = universo.index[universo["Ticker"] == ticker][0]
+        for campo, valor in atual.items():
+            universo.loc[idx, campo] = valor
+    else:
+        universo = pd.concat([universo, pd.DataFrame([atual])], ignore_index=True)
+
+    meta_cols = [c for c in ("ticker", "SETOR", "SUBSETOR", "SEGMENTO") if c in df_set]
+    if "ticker" in meta_cols:
+        meta = df_set[meta_cols].copy().rename(columns={"ticker": "Ticker"})
+        meta["Ticker"] = meta["Ticker"].astype(str).str.replace(".SA", "", regex=False).str.upper()
+        meta = meta.drop_duplicates("Ticker")
+        universo = universo.drop(columns=[c for c in ("SETOR", "SUBSETOR", "SEGMENTO")
+                                           if c in universo.columns], errors="ignore")
+        universo = universo.merge(meta, on="Ticker", how="left")
+
+    alvo = universo[universo["Ticker"] == ticker]
+    pares = universo
+    referencia = "universo B3"
+    if not alvo.empty:
+        for coluna, rotulo in (
+            ("SEGMENTO", "segmento"), ("SUBSETOR", "subsetor"), ("SETOR", "setor")
+        ):
+            if coluna not in universo.columns:
+                continue
+            valor = alvo.iloc[0].get(coluna)
+            if pd.isna(valor) or not str(valor).strip() or str(valor) == "—":
+                continue
+            candidatos = universo[universo[coluna] == valor]
+            if candidatos["Ticker"].nunique() >= 4:
+                pares = candidatos.copy()
+                referencia = f"{rotulo} {valor}"
+                break
+
+    pares = pares.drop_duplicates("Ticker").reset_index(drop=True)
+    tickers = tuple(pares["Ticker"].dropna().astype(str).tolist())
+    historicos: dict[str, pd.DataFrame] = {}
+    try:
+        historicos = _db.load_multiplos_historico_batch(tickers)
+        pares = _enrich_com_slopes(pares, historicos)
+    except Exception:
+        # O score continua válido com crescimento neutro e cobertura reduzida.
+        pass
+
+    scored = score_cross_section(pares)
+    linha = scored[scored["Ticker"] == ticker].copy()
+    if linha.empty:
+        return pd.Series({"Ticker": ticker, "score": 50.0, "coverage": 0.0}), referencia
+
+    # A nota principal continua sendo calculada pelo motor oficial da B3. As
+    # seis trilhas são uma decomposição diagnóstica para o radar, não um score
+    # concorrente com o ranking já utilizado na Análise Avançada/portfólios.
+    try:
+        setor_alvo = str(alvo.iloc[0].get("SETOR") or "") if not alvo.empty else ""
+        pesos = _get_pesos_setor(setor_alvo)
+        oficial = _score_universo(
+            pares, list(tickers), pesos, historicos,
+            group_col_prefer="SEGMENTO",
+        )
+        nota = oficial.loc[oficial["Ticker"] == ticker, "score"]
+        if not nota.empty and np.isfinite(float(nota.iloc[0])):
+            linha.loc[:, "score"] = float(nota.iloc[0])
+    except Exception:
+        # Em indisponibilidade pontual do motor completo, a média das trilhas
+        # mantém o painel utilizável e a cobertura continua explícita.
+        pass
+    return linha.iloc[0], f"{referencia} · {len(pares)} empresa(s)"
+
+
+def _metric_decimal_pct(mult: pd.Series, key: str) -> str:
+    try:
+        value = float(mult.get(key))
+        if not np.isfinite(value):
+            return "—"
+        threshold = _MAX_DECIMAL_PCT.get(key, 2.0)
+        display = value if abs(value) > threshold else value * 100.0
+        return f"{display:.1f}%"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> None:
+    from core.b3_company_score import FACTOR_TRACKS, TRACK_LABELS, classification
+    from core.dossie_b3 import build_dossie
+
+    dossie = build_dossie(ticker)
+    label, tipo = classification(score_row.get("score"))
+    badge_status(label, tipo)
+    st.caption(
+        f"Classificação quantitativa relativa a {referencia}, com "
+        f"{float(score_row.get('coverage', 0)):.0f}% de cobertura. "
+        "Ausências ficam neutras e reduzem a cobertura."
+    )
+
+    if dossie.get("erro"):
+        st.info(f"Dossiê determinístico indisponível: {dossie['erro']}")
+    else:
+        for flag in dossie.get("red_flags", []):
+            st.warning(flag)
+
+    fortes: list[str] = []
+    invalidacoes: list[str] = []
+    for coluna, trilha in TRACK_LABELS.items():
+        valor = float(score_row.get(coluna, 50) or 50)
+        if valor >= 65:
+            fortes.append(f"{trilha}: {valor:.1f}/100 entre os pares.")
+        elif valor < 40:
+            invalidacoes.append(f"{trilha}: {valor:.1f}/100; exige acompanhamento.")
+    if not fortes:
+        fortes.append("Nenhuma trilha superou 65 pontos; a leitura permanece equilibrada.")
+    if not invalidacoes:
+        invalidacoes.append("Reavaliar se fundamentos, preço ou cobertura se deteriorarem.")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Tese / pontos fortes**")
+        for item in fortes:
+            st.markdown(f"- {item}")
+    with c2:
+        st.markdown("**Condições de invalidação**")
+        for item in invalidacoes:
+            st.markdown(f"- {item}")
+
+    criterios = []
+    for coluna, trilha in TRACK_LABELS.items():
+        key = coluna.removeprefix("score_")
+        criterios.append({
+            "Trilha": trilha,
+            "Pontuação": float(score_row.get(coluna, 50) or 50),
+            "Cobertura (%)": float(score_row.get(f"coverage_{key}", 0) or 0),
+            "Indicadores B3": ", ".join(nome for nome, _ in FACTOR_TRACKS[key]),
+        })
+    st.markdown("**Critérios avançados da classificação**")
+    st.dataframe(pd.DataFrame(criterios), hide_index=True, use_container_width=True)
+
+    if not dossie.get("erro"):
+        juros = dossie.get("sensibilidade_juros", {})
+        if juros.get("regra"):
+            st.markdown("**Sensibilidade aos juros brasileiros**")
+            st.caption(juros["regra"])
+        eventos = dossie.get("eventos_societarios", {}).get("eventos", [])
+        if eventos:
+            st.markdown("**Eventos societários recentes (CVM)**")
+            st.dataframe(pd.DataFrame(eventos[:6]), hide_index=True, use_container_width=True)
+
+
+def _render_b3_score_dashboard(
+    ticker: str,
+    mult: pd.Series,
+    df_set: pd.DataFrame,
+) -> None:
+    from core.b3_company_score import TRACK_LABELS, classification
+
+    with st.spinner("Calculando pontuação relativa e dossiê…"):
+        score_row, referencia = _b3_peer_scores(ticker, mult, df_set)
+    label, tipo = classification(score_row.get("score"))
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card_metrica("Pontuação fundamentalista", f"{float(score_row.get('score', 50)):.1f}/100")
+        badge_status(label, tipo)
+    with c2:
+        card_metrica("Cobertura", f"{float(score_row.get('coverage', 0)):.0f}%")
+    with c3:
+        card_metrica("ROIC", _metric_decimal_pct(mult, "ROIC"))
+    with c4:
+        try:
+            p_fco = float(mult.get("P_FCO"))
+            caixa_yield = f"{100 / p_fco:.1f}%" if np.isfinite(p_fco) and p_fco > 0 else "—"
+        except (TypeError, ValueError):
+            caixa_yield = "—"
+        card_metrica("Retorno do fluxo de caixa operacional", caixa_yield)
+
+    tracks = [(rotulo, float(score_row.get(coluna, 50) or 50))
+              for coluna, rotulo in TRACK_LABELS.items()]
+    fig = go.Figure(go.Scatterpolar(
+        r=[valor for _, valor in tracks] + [tracks[0][1]],
+        theta=[nome for nome, _ in tracks] + [tracks[0][0]],
+        fill="toself", line=dict(color=_COR_INF),
+        fillcolor="rgba(74,158,255,.22)",
+    ))
+    fig.update_layout(
+        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#CBD5E0"),
+        height=360, margin=dict(l=20, r=20, t=20, b=20), showlegend=False,
+        polar=dict(
+            radialaxis=dict(range=[0, 100], gridcolor="#2D3748", tickfont=dict(size=10)),
+            angularaxis=dict(gridcolor="#4A5568"), bgcolor="rgba(0,0,0,0)",
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"b3_radar_{ticker}")
+    st.caption(f"Referência da comparação: {referencia}. Metodologia B3 {SCORE_VERSION}.")
+
+    with st.expander("📄 Dossiê, classificação e critérios avançados"):
+        _render_b3_dossie(ticker, score_row, referencia)
+
+
 def _tab_analise(df_set: pd.DataFrame) -> None:
     # ── Input ─────────────────────────────────────────────────────────────────
     default_tk = st.session_state.get("b3_ticker_sel", "")
@@ -3312,6 +3534,9 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         _render_cards(inds_est, n_cols=3)
     else:
         st.caption("Dados de estrutura não disponíveis.")
+
+    _sec_hdr("🏆 Score e critérios de avaliação")
+    _render_b3_score_dashboard(tk, mult, df_set)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
