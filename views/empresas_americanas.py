@@ -384,6 +384,7 @@ def _tab_empresa(status: dict) -> None:
     _analysis_header("📊 Retorno Anual do Preço")
     annual_returns = annual_price_returns(prices)
     if not annual_returns.empty:
+        annual_returns = annual_returns.sort_values("Ano")
         annual_returns["Ano"] = annual_returns["Ano"].astype(str)
         annual_returns["Positivo"] = annual_returns["Retorno"] >= 0
         annual_returns["Texto"] = annual_returns["Retorno"].map(lambda value: f"{value:+.2f}%")
@@ -393,6 +394,11 @@ def _tab_empresa(status: dict) -> None:
         fig.update_traces(textposition="outside", textfont_size=10)
         fig.update_layout(**_company_plot_layout(max(250, len(annual_returns) * 28)),
                           showlegend=False, xaxis_title="Retorno anual (%)", yaxis_title="Ano")
+        # color= divide os dados em 2 traces (positivo/negativo); o eixo categórico
+        # usa categoryorder="trace" por padrão e agruparia por SINAL, quebrando a
+        # cronologia. Fixa a ordem dos anos explicitamente (mais recente no topo).
+        fig.update_yaxes(categoryorder="array",
+                         categoryarray=annual_returns["Ano"].tolist())
         st.plotly_chart(fig, use_container_width=True,
                         config={"displayModeBar": False}, key=f"us_returns_{symbol}")
     else:
