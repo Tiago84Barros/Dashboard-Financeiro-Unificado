@@ -1,0 +1,138 @@
+"""Score em seis trilhas para o painel individual de empresas da B3.
+
+O módulo é deliberadamente puro: recebe um corte transversal já reconciliado,
+faz winsorização + percentil entre pares e devolve score/cobertura. A tela cuida
+apenas da busca de dados e da apresentação.
+"""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+
+FACTOR_TRACKS: dict[str, list[tuple[str, bool]]] = {
+    "quality": [
+        ("ROE", True), ("ROA", True), ("Margem_Liquida", True),
+        ("Margem_Operacional", True),
+    ],
+    "growth": [
+        ("ROE_slope_log", True), ("ROIC_slope_log", True),
+        ("Margem_Liquida_slope_log", True),
+        ("Margem_Operacional_slope_log", True),
+    ],
+    "solidity": [
+        ("Endividamento_Total", False), ("Liquidez_Corrente", True),
+    ],
+    "capital_efficiency": [("ROIC", True), ("ROE", True)],
+    "valuation": [
+        ("P/L", False), ("P/VP", False), ("EV_EBIT", False),
+        ("P_FCO", False),
+    ],
+    "shareholder": [("DY", True), ("Payout", True)],
+}
+
+DEFAULT_TRACK_WEIGHTS: dict[str, float] = {
+    "quality": 0.22,
+    "growth": 0.18,
+    "solidity": 0.15,
+    "capital_efficiency": 0.15,
+    "valuation": 0.18,
+    "shareholder": 0.12,
+}
+
+TRACK_LABELS: dict[str, str] = {
+    "score_quality": "Qualidade",
+    "score_growth": "Crescimento",
+    "score_solidity": "Solidez",
+    "score_capital_efficiency": "Efic. Capital",
+    "score_valuation": "Avaliação",
+    "score_shareholder": "Retorno ao acionista",
+}
+
+_VALUATION = {"P/L", "P/VP", "EV_EBIT", "P_FCO"}
+_NEUTRAL = 0.5
+
+
+def _numeric_metric(df: pd.DataFrame, metric: str) -> pd.Series:
+    values = (pd.to_numeric(df[metric], errors="coerce")
+              if metric in df.columns else pd.Series(np.nan, index=df.index))
+    # Múltiplo negativo não representa barganha e não deve liderar o percentil.
+    if metric in _VALUATION:
+        values = values.where(values > 0)
+    return values.replace([np.inf, -np.inf], np.nan)
+
+
+def _winsorized_percentile(values: pd.Series, *, higher_is_better: bool) -> pd.Series:
+    valid = values.dropna()
+    if valid.empty:
+        return pd.Series(_NEUTRAL, index=values.index, dtype=float)
+    if len(valid) >= 4:
+        lo, hi = valid.quantile(0.05), valid.quantile(0.95)
+        values = values.clip(lower=lo, upper=hi)
+    ranked = values.rank(pct=True, method="average")
+    if not higher_is_better:
+        ranked = 1.0 - ranked
+    return ranked.fillna(_NEUTRAL).clip(0.0, 1.0)
+
+
+def score_cross_section(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula score e cobertura das seis trilhas para cada ticker.
+
+    O DataFrame deve estar previamente limitado ao grupo comparável (segmento,
+    subsetor, setor ou universo). Ausência recebe 50 pontos e é explicitada na
+    cobertura; portanto um dado faltante nunca é confundido com desempenho ruim.
+    """
+    if df is None or df.empty or "Ticker" not in df.columns:
+        return pd.DataFrame(columns=["Ticker", "score", "coverage"])
+
+    base = df.copy().reset_index(drop=True)
+    ranked: dict[str, pd.Series] = {}
+    observed: dict[str, pd.Series] = {}
+    all_metrics = {metric for track in FACTOR_TRACKS.values() for metric, _ in track}
+    for metric in all_metrics:
+        values = _numeric_metric(base, metric)
+        direction = next(
+            higher for track in FACTOR_TRACKS.values()
+            for name, higher in track if name == metric
+        )
+        ranked[metric] = _winsorized_percentile(values, higher_is_better=direction)
+        observed[metric] = values.notna()
+
+    result = base.copy()
+    track_scores: dict[str, pd.Series] = {}
+    for track, metrics in FACTOR_TRACKS.items():
+        names = [name for name, _ in metrics]
+        score = pd.concat([ranked[name] for name in names], axis=1).mean(axis=1)
+        coverage = pd.concat([observed[name] for name in names], axis=1).mean(axis=1)
+        track_scores[track] = score
+        result[f"score_{track}"] = (score * 100).round(1)
+        result[f"coverage_{track}"] = (coverage * 100).round(0)
+
+    result["score"] = (
+        sum(track_scores[name] * weight for name, weight in DEFAULT_TRACK_WEIGHTS.items())
+        * 100
+    ).round(1)
+    result["coverage"] = (
+        pd.concat([observed[name] for name in sorted(all_metrics)], axis=1)
+        .mean(axis=1) * 100
+    ).round(0)
+    return result.sort_values("score", ascending=False).reset_index(drop=True)
+
+
+def classification(score: object) -> tuple[str, str]:
+    """Rótulo e tipo visual compatíveis com ``badge_status``."""
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return "Sem classificação", "neutro"
+    if not np.isfinite(value):
+        return "Sem classificação", "neutro"
+    if value >= 75:
+        return "Excelente", "sucesso"
+    if value >= 65:
+        return "Forte", "info"
+    if value >= 50:
+        return "Neutra", "neutro"
+    if value >= 35:
+        return "Fraca", "alerta"
+    return "Crítica", "erro"
