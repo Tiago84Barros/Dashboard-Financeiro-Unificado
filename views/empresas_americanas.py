@@ -1479,61 +1479,455 @@ def _portfolio_controls(scored: pd.DataFrame, prefix: str):
     return build_portfolio(scored, constraints), constraints
 
 
+def _render_us_portfolio_creation_css() -> None:
+    st.markdown("""
+    <style>
+    .us-pf-card{background:#12151E;border:1px solid #273142;border-radius:12px;
+      padding:14px 16px;min-height:174px;margin-bottom:8px}
+    .us-pf-top{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+    .us-pf-logo{width:44px;height:44px;border-radius:10px;object-fit:contain;
+      background:rgba(255,255,255,.06);padding:5px}
+    .us-pf-ticker{font-size:1rem;font-weight:800;color:#F8FAFC}
+    .us-pf-name{font-size:.70rem;color:#8292AE;white-space:nowrap;overflow:hidden;
+      text-overflow:ellipsis;max-width:210px}
+    .us-pf-meta{font-size:.67rem;color:#60708D;margin:4px 0 10px;min-height:32px}
+    .us-pf-row{display:flex;justify-content:space-between;font-size:.70rem;
+      color:#94A3B8;margin-top:5px}
+    .us-pf-row strong{color:#00C896}
+    .us-pf-industry{background:rgba(0,200,150,.07);border-left:3px solid #00C896;
+      border-radius:6px;padding:11px 14px;margin:10px 0}
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def _render_us_portfolio_cards(holdings: pd.DataFrame) -> None:
+    if holdings is None or holdings.empty:
+        return
+    for start in range(0, len(holdings), 4):
+        columns = st.columns(4, gap="small")
+        for column, (_, row) in zip(columns, holdings.iloc[start:start + 4].iterrows()):
+            ticker = html.escape(str(row.get("symbol", "—")))
+            name = html.escape(str(row.get("name", ticker)))
+            sector = html.escape(str(row.get("sector_group", "Não classificado")))
+            industry = html.escape(translate_us_industry(row.get("industry_group")))
+            logo = html.escape(us_logo_url(ticker), quote=True)
+            weight = float(row.get("weight", 0.0) or 0.0)
+            entry = float(row.get("entry_score", 0.0) or 0.0)
+            allocation = float(row.get("allocation_usd", 0.0) or 0.0)
+            with column:
+                st.markdown(
+                    f'<div class="us-pf-card"><div class="us-pf-top">'
+                    f'<img class="us-pf-logo" src="{logo}" '
+                    f'onerror="this.style.display=\'none\'">'
+                    f'<div><div class="us-pf-ticker">{ticker}</div>'
+                    f'<div class="us-pf-name">{name}</div></div></div>'
+                    f'<div class="us-pf-meta">{sector} · {industry}</div>'
+                    f'<div class="us-pf-row"><span>Score de entrada</span>'
+                    f'<strong>{entry:.1f}</strong></div>'
+                    f'<div class="us-pf-row"><span>Peso</span>'
+                    f'<strong>{weight:.1%}</strong></div>'
+                    f'<div class="us-pf-row"><span>Capital simulado</span>'
+                    f'<strong>US$ {allocation:,.0f}</strong></div></div>',
+                    unsafe_allow_html=True,
+                )
+
+
 def _tab_criacao_portfolio(status: dict) -> None:
+    """Etapa 2 de 3: aplicação em escala da metodologia americana."""
     if _empty_if_offline(status, "Sem dados locais para montar a carteira.", "🚀"):
         return
     scored = us.scored_universe()
     if scored is None or scored.empty:
         estado_vazio("Sem empresas com pontuação elegível.", "🚀")
         return
-    secao_titulo("Criação de Portfólio", "🚀")
-    st.caption("Seleção por pontuação e diversificação, adaptada a indústrias e setores "
-               "americanos. Pesos respeitam tetos por ativo e setor.")
+
+    from core.us_portfolio_creation import (
+        USPortfolioCreationParams,
+        build_portfolio_creation,
+        params_to_dict,
+    )
+
+    _render_us_portfolio_creation_css()
+    st.markdown(
+        '<div style="background:rgba(56,189,248,.06);border-left:3px solid #38BDF8;'
+        'border-radius:6px;padding:12px 16px;margin-bottom:12px;font-size:.84rem;'
+        'color:#CBD5E1"><strong>🚀 Etapa 2 de 3 · Aplicação em escala.</strong> '
+        'Aplica a metodologia validada na Análise Avançada ao universo americano, '
+        'audita as indústrias, seleciona seus líderes e monta uma carteira '
+        'multissetorial. A carteira segue para <strong>Avaliação de Portfólio</strong>.'
+        '</div>', unsafe_allow_html=True,
+    )
+    st.info(
+        "⚠️ **Ferramenta educacional — não é recomendação de investimento.** "
+        "A seleção usa demonstrações SEC/US GAAP e premissas quantitativas. "
+        "Rentabilidade passada não garante resultado futuro."
+    )
+    st.caption(
+        "A aplicação americana é feita em duas etapas para comportar milhares de "
+        "empresas: filtro institucional vetorizado e revisão apenas dos líderes por "
+        "indústria. O score respeita particularidades de financeiras e REITs."
+    )
+
+    snapshot_mode = status.get("mode") == "snapshot"
+    score_panel = pd.DataFrame() if snapshot_mode else us.score_panel()
+    history_available = score_panel is not None and not score_panel.empty
+
     with st.expander("⚙️ Parâmetros", expanded=True):
-        holdings, constraints = _portfolio_controls(scored, "us_create")
-        capital = st.number_input("Capital para simulação (USD)", min_value=100.0,
-                                  value=10000.0, step=500.0, key="us_create_capital")
-    if holdings.empty:
-        estado_vazio("Nenhum ativo elegível com as restrições atuais.", "🚀")
-        return
-    holdings = localize_us_company_frame(holdings)
-    holdings["allocation_usd"] = holdings["weight"] * capital
-    holdings["weight_pct"] = holdings["weight"] * 100
+        p1, p2, p3, p4 = st.columns(4)
+        with p1:
+            benchmark = st.selectbox(
+                "Benchmark de mercado",
+                ["S&P 500 (SPY)", "Russell 1000 (IWB)", "Nasdaq-100 (QQQ)",
+                 "Pesos iguais do universo"],
+                key="us_create_benchmark",
+                help="Referência para a avaliação posterior. O Treasury é tratado "
+                     "separadamente como custo de oportunidade.",
+            )
+        with p2:
+            treasury = st.number_input(
+                "Treasury 3 meses a.a. (%) — premissa", min_value=0.0,
+                max_value=20.0, value=4.25, step=0.25, key="us_create_treasury",
+                help="Equivalente econômico americano da taxa livre de risco. "
+                     "É uma premissa ajustável, não uma cotação em tempo real.",
+            )
+        with p3:
+            market_cap_label = st.selectbox(
+                "Liquidez mínima (valor de mercado)",
+                ["≥ US$ 300 mi", "≥ US$ 1 bi", "≥ US$ 2 bi", "≥ US$ 5 bi",
+                 "≥ US$ 10 bi"], index=1, key="us_create_market_cap",
+            )
+        with p4:
+            capital = st.number_input(
+                "Capital para simulação (USD)", min_value=100.0, value=10_000.0,
+                step=500.0, key="us_create_capital",
+            )
+
+        q1, q2, q3, q4 = st.columns(4)
+        with q1:
+            min_coverage = st.slider(
+                "Cobertura fundamentalista mínima (%)", 30, 100, 50, 5,
+                key="us_create_coverage",
+            )
+        with q2:
+            min_years = st.number_input(
+                "Histórico SEC/GAAP mínimo", 3, 20, 5, 1,
+                key="us_create_years",
+            )
+        with q3:
+            min_group = st.number_input(
+                "Mín. empresas por indústria", 2, 30, 4, 1,
+                key="us_create_group",
+            )
+        with q4:
+            top_n = st.slider(
+                "Número de ativos", 10, 80, 30, 5, key="us_create_topn",
+            )
+
+        r1, r2, r3, r4 = st.columns(4)
+        with r1:
+            max_weight = st.slider(
+                "Peso máximo por ativo (%)", 2, 20, 8, 1,
+                key="us_create_max_weight",
+            )
+        with r2:
+            max_industry = st.slider(
+                "Peso máximo por indústria (%)", 5, 40, 15, 1,
+                key="us_create_max_industry",
+            )
+        with r3:
+            max_sector = st.slider(
+                "Peso máximo por setor (%)", 10, 50, 25, 1,
+                key="us_create_max_sector",
+            )
+        with r4:
+            weighting = st.selectbox(
+                "Ponderação", ["score", "equal", "inverse_vol"],
+                format_func=lambda value: _WEIGHTING_LABELS[value],
+                key="us_create_weighting",
+            )
+
+        s1, s2, s3, s4 = st.columns(4)
+        with s1:
+            min_entry = st.slider(
+                "Score de entrada mínimo", 30, 80, 55, 1,
+                key="us_create_entry_score",
+            )
+        with s2:
+            min_edge = st.number_input(
+                "Vantagem mín. vs universo (pontos)", min_value=0.0,
+                max_value=25.0, value=2.0, step=0.5, key="us_create_edge",
+            )
+        with s3:
+            leaders_per_industry = st.number_input(
+                "Líderes por indústria", 1, 5, 2, 1,
+                key="us_create_leaders",
+            )
+        with s4:
+            monthly = st.number_input(
+                "Aporte mensal (USD)", min_value=0.0, value=500.0,
+                step=100.0, key="us_create_monthly",
+            )
+
+        require_resilience = st.checkbox(
+            "Exigir resiliência (ROIC/ROE/FCF yield acima do Treasury)",
+            value=False, key="us_create_resilience",
+            help="Usa ROIC nas empresas operacionais, ROE em financeiras e FCF "
+                 "yield no setor imobiliário/REITs.",
+        )
+        resilience_spread = st.number_input(
+            "Spread mínimo sobre o Treasury (p.p.)", min_value=-10.0,
+            max_value=30.0, value=0.0, step=0.5,
+            disabled=not require_resilience, key="us_create_resilience_spread",
+        )
+        adaptive_caps = st.checkbox(
+            "Cap adaptativo quando a combinação de limites for inviável",
+            value=True, key="us_create_adaptive_caps",
+        )
+        require_history = st.checkbox(
+            "Exigir validação histórica ponto-no-tempo por indústria",
+            value=False, disabled=not history_available,
+            key="us_create_require_history",
+            help="Disponível somente no ambiente com score_vintages e preços "
+                 "históricos. A vitrine publicada não inventa esse histórico.",
+        )
+        if not history_available:
+            st.caption(
+                "ℹ️ Painel histórico PIT não está disponível nesta vitrine. A aprovação "
+                "usa o sinal institucional atual SEC/GAAP; backtests permanecem locais."
+            )
+
+    market_caps = {
+        "≥ US$ 300 mi": 300_000_000.0, "≥ US$ 1 bi": 1_000_000_000.0,
+        "≥ US$ 2 bi": 2_000_000_000.0, "≥ US$ 5 bi": 5_000_000_000.0,
+        "≥ US$ 10 bi": 10_000_000_000.0,
+    }
+    params = USPortfolioCreationParams(
+        benchmark=benchmark,
+        risk_free_rate=float(treasury) / 100,
+        capital_usd=float(capital),
+        monthly_contribution_usd=float(monthly),
+        top_n=int(top_n),
+        leaders_per_industry=int(leaders_per_industry),
+        min_market_cap=market_caps[market_cap_label],
+        min_coverage=float(min_coverage),
+        min_years=int(min_years),
+        min_companies_per_industry=int(min_group),
+        min_entry_score=float(min_entry),
+        min_score_edge=float(min_edge),
+        require_resilience=bool(require_resilience),
+        min_resilience_spread_pp=float(resilience_spread),
+        max_weight=float(max_weight) / 100,
+        max_industry_weight=float(max_industry) / 100,
+        max_sector_weight=float(max_sector) / 100,
+        weighting=weighting,
+        adaptive_caps=bool(adaptive_caps),
+        require_historical_signal=bool(require_history),
+    )
+
     if st.button("🚀 Rodar Criação de Portfólio", type="primary", key="us_create_run"):
-        st.session_state["us_portfolio_model"] = holdings
-        st.success("Carteira-modelo criada e disponível em Avaliação de Portfólio.")
+        with st.spinner("Aplicando filtros, auditando indústrias e otimizando pesos…"):
+            st.session_state["us_portfolio_creation_result"] = build_portfolio_creation(
+                scored, params, score_panel,
+            )
+            st.session_state["us_portfolio_creation_params"] = params_to_dict(params)
+
+    result = st.session_state.get("us_portfolio_creation_result")
+    if not result:
+        st.caption(
+            "Configure os parâmetros acima e clique **🚀 Rodar Criação de Portfólio**."
+        )
+        return
+    if st.session_state.get("us_portfolio_creation_params") != params_to_dict(params):
+        st.warning(
+            "Os parâmetros foram alterados depois da última execução. Os resultados "
+            "abaixo ainda correspondem à configuração anterior; rode novamente para atualizar."
+        )
+
+    for warning in result.get("warnings", []):
+        st.warning(warning)
+    if result.get("history_required_unavailable"):
+        st.error("A validação histórica foi exigida, mas o painel PIT não está disponível.")
+        return
+
+    audit = result.get("industry_audit", pd.DataFrame())
+    exclusions = result.get("exclusions", pd.DataFrame())
+    holdings = result.get("holdings", pd.DataFrame())
+    metrics = result.get("metrics", {})
+    approved = int(audit["status"].eq("Aprovada").sum()) if not audit.empty else 0
+    observation = int(audit["status"].eq("Observação").sum()) if not audit.empty else 0
+    excluded = int(audit["status"].eq("Excluída").sum()) if not audit.empty else 0
+
+    secao_titulo("Composição de Entrada — Mercado Americano", "🎯")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        card_metrica("Ativos", str(len(holdings)))
+        card_metrica("Empresas elegíveis", f"{result.get('eligible_count', 0):,}".replace(",", "."))
     with c2:
-        card_metrica("Pontuação média", f"{np.average(holdings['score'], weights=holdings['weight']):.1f}")
+        card_metrica("Indústrias aprovadas", str(approved))
     with c3:
-        card_metrica("Maior posição", f"{holdings['weight_pct'].max():.1f}%")
+        card_metrica("Em observação", str(observation))
     with c4:
-        card_metrica("Capital simulado", f"US$ {capital:,.2f}")
-    show = holdings[[c for c in ("symbol", "name", "sector", "industry", "score",
-                                 "weight_pct", "allocation_usd") if c in holdings]].rename(columns={
-        "symbol": "Ticker", "name": "Nome", "sector": "Setor", "industry": "Indústria",
-        "score": "Pontuação", "weight_pct": "Peso %", "allocation_usd": "Alocação em USD"})
-    st.dataframe(show, hide_index=True, use_container_width=True)
-    c1, c2 = st.columns(2)
-    with c1:
+        card_metrica("Indústrias excluídas", str(excluded))
+
+    with st.expander("🩺 Qualidade, saneamento e filtros do universo"):
+        if not exclusions.empty:
+            filtered = int(exclusions["count"].sum())
+            st.caption(
+                f"Universo inicial: {result.get('universe_count', 0):,} · "
+                f"removidas sequencialmente: {filtered:,} · "
+                f"elegíveis: {result.get('eligible_count', 0):,}"
+            )
+            st.dataframe(
+                exclusions.rename(columns={"label": "Critério", "count": "Removidas"})[
+                    ["Critério", "Removidas"]
+                ], hide_index=True, width="stretch",
+            )
+        st.markdown(
+            "**Tratamento setorial:** empresas operacionais usam ROIC; financeiras "
+            "usam ROE; imobiliárias e REITs usam geração de caixa. Múltiplos e "
+            "fundamentos seguem SEC/US GAAP."
+        )
+
+    if not audit.empty:
+        secao_titulo("Auditoria por Indústria", "📋")
+        st.caption(
+            "A aprovação atual combina tamanho de amostra, score dos líderes, "
+            "vantagem relativa e resiliência opcional. Rank‑IC aparece somente "
+            "quando existe histórico ponto-no-tempo."
+        )
+        audit_show = audit.copy()
+        audit_show["Indústria"] = audit_show["industry_group"].map(translate_us_industry)
+        audit_show["Setor"] = audit_show["sector_group"]
+        audit_show["Score líderes"] = audit_show["avg_entry_score"].round(1)
+        audit_show["Vantagem (pts)"] = audit_show["score_edge"].round(1)
+        audit_show["Cobertura (%)"] = audit_show["avg_coverage"].round(0)
+        audit_show["Spread resiliência (p.p.)"] = audit_show[
+            "resilience_spread_pp"
+        ].round(1)
+        audit_show["Rank‑IC"] = audit_show["rank_ic"].round(3)
+        st.dataframe(
+            audit_show[["Indústria", "Setor", "status", "company_count", "leaders",
+                        "Score líderes", "Vantagem (pts)", "Cobertura (%)",
+                        "Spread resiliência (p.p.)", "Rank‑IC", "reason"]].rename(columns={
+                            "status": "Status", "company_count": "Empresas",
+                            "leaders": "Líderes", "reason": "Motivo",
+                        }), hide_index=True, width="stretch",
+        )
+
+    if holdings is None or holdings.empty:
+        estado_vazio(
+            "Nenhuma carteira viável foi formada com os critérios atuais. "
+            "Revise o score mínimo, a amostra por indústria ou os limites de peso.",
+            "🚀",
+        )
+        return
+
+    secao_titulo("Empresas Selecionadas", "🏢")
+    st.caption(
+        "Somente líderes de indústrias aprovadas. Os pesos são projetados em "
+        "conjunto para respeitar concentração por ativo, indústria e setor."
+    )
+    _render_us_portfolio_cards(holdings)
+
+    secao_titulo("Resumo do Portfólio", "📊")
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        card_metrica("Ativos", str(metrics.get("assets", 0)),
+                     delta=f"{metrics.get('effective_assets', 0):.1f} efetivos")
+    with m2:
+        card_metrica("Score de entrada", f"{metrics.get('entry_score', 0):.1f}/100")
+    with m3:
+        card_metrica("Maior posição", f"{metrics.get('max_weight', 0):.1%}")
+    with m4:
+        card_metrica("Capital simulado", f"US$ {metrics.get('capital_usd', 0):,.2f}")
+    m5, m6, m7, m8 = st.columns(4)
+    with m5:
+        card_metrica("Setores", str(metrics.get("sectors", 0)))
+    with m6:
+        card_metrica("Indústrias", str(metrics.get("industries", 0)))
+    with m7:
+        card_metrica("Cobertura média", f"{metrics.get('coverage', 0):.1f}%")
+    with m8:
+        card_metrica("Benchmark", str(metrics.get("benchmark", "—")))
+
+    use_col, info_col = st.columns([1, 3])
+    with use_col:
+        if st.button("💾 Usar na Avaliação de Portfólio", type="primary",
+                     key="us_create_save_model"):
+            st.session_state["us_portfolio_model"] = holdings.copy()
+            st.success("Carteira-modelo enviada para Avaliação de Portfólio.")
+    with info_col:
+        st.info(
+            f"{len(holdings)} ativos · aporte mensal simulado de "
+            f"US$ {metrics.get('monthly_contribution_usd', 0):,.2f} · "
+            f"Treasury de referência {metrics.get('risk_free_rate', 0):.2%}."
+        )
+
+    chart1, chart2 = st.columns(2)
+    with chart1:
         fig = px.pie(
             holdings, names="symbol", values="weight", hole=.48,
             title="Alocação por ativo", labels={"symbol": "Ticker", "weight": "Peso"},
         )
-        fig.update_layout(**_PLOT_LAYOUT, height=400)
-        st.plotly_chart(fig, use_container_width=True, key="us_create_pie")
-    with c2:
-        sector = holdings.groupby("sector", dropna=False)["weight"].sum().reset_index()
+        fig.update_layout(**_PLOT_LAYOUT, height=410)
+        st.plotly_chart(fig, width="stretch", key="us_create_pie")
+    with chart2:
+        sector_weights = holdings.groupby("sector_group", dropna=False)["weight"].sum().reset_index()
         fig = px.bar(
-            sector, x="sector", y="weight", title="Alocação por setor",
-            labels={"sector": "Setor", "weight": "Peso"},
+            sector_weights.sort_values("weight"), x="weight", y="sector_group",
+            orientation="h", title="Alocação por setor",
+            labels={"sector_group": "Setor", "weight": "Peso"},
         )
-        fig.update_layout(**_PLOT_LAYOUT, height=400, yaxis_tickformat=".0%")
-        st.plotly_chart(fig, use_container_width=True, key="us_create_sector")
-    with st.expander("🧪 Teste histórico sem viés temporal"):
-        _tab_backtests(status)
+        fig.update_layout(**_PLOT_LAYOUT, height=410, xaxis_tickformat=".0%")
+        st.plotly_chart(fig, width="stretch", key="us_create_sector")
+
+    secao_titulo("Relação entre Score e Cobertura", "🔭")
+    fig = px.scatter(
+        holdings, x="coverage", y="entry_score", color="sector_group",
+        size="weight", hover_name="symbol",
+        labels={"coverage": "Cobertura fundamentalista (%)",
+                "entry_score": "Score de entrada", "sector_group": "Setor",
+                "weight": "Peso"},
+    )
+    fig.update_layout(**_PLOT_LAYOUT, height=430)
+    st.plotly_chart(fig, width="stretch", key="us_create_scatter")
+
+    with st.expander("🧪 Validação histórica e benchmarks"):
+        if history_available:
+            st.caption(
+                "O painel PIT está disponível. A auditoria acima exibe o Rank‑IC "
+                "por indústria, sem usar demonstrações publicadas após a data-base."
+            )
+            _tab_backtests(status)
+        else:
+            st.info(
+                "A vitrine publicada não contém score_vintages e preços mensais. "
+                "Por integridade metodológica, nenhum retorno histórico foi simulado. "
+                "No warehouse local, rode `score-history` para habilitar esta camada."
+            )
+
+    with st.expander("📚 Metodologia e equivalências B3 × Estados Unidos"):
+        st.markdown("""
+**Elementos preservados da B3**
+
+- aplicação em escala após a Análise Avançada;
+- filtros de universo, auditoria dos grupos, seleção de líderes e carteira multissetorial;
+- score de entrada, controles de concentração, aporte mensal, gráficos e envio para avaliação;
+- separação entre evidência atual e validação histórica ponto-no-tempo.
+
+**Adaptações para os Estados Unidos**
+
+- Tesouro Selic → Treasury de 3 meses como custo de oportunidade;
+- Ibovespa/mercado brasileiro → S&P 500, Russell 1000, Nasdaq‑100 ou pesos iguais;
+- segmentos B3 → indústrias SEC/SIC consolidadas em setores americanos;
+- liquidez em reais → valor de mercado em dólares;
+- DRE societária brasileira → demonstrações anuais SEC/US GAAP;
+- ROIC único → ROIC para operacionais, ROE para financeiras e FCF yield para REITs;
+- seleção pequena → pré-filtro vetorizado e revisão apenas dos líderes por indústria;
+- limite por setor → limites simultâneos por ativo, indústria e setor, com cap adaptativo auditável.
+
+O score não incorpora opinião política nem previsão macro como fato. Fed, inflação,
+PIB e emprego entram como cenário explícito na avaliação posterior da carteira.
+        """)
 
 
 def _tab_avaliacao_portfolio(status: dict) -> None:
