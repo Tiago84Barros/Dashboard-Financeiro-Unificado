@@ -25,6 +25,7 @@ from core.market_companies import (
     filter_market_companies,
     localize_us_company_frame,
     normalize_us_companies,
+    sector_industry_labels,
     translate_us_industry,
     translate_us_sector,
     us_logo_url,
@@ -694,16 +695,21 @@ def _tab_avancada_unificada(status: dict) -> None:
     # ── Filtros do universo ────────────────────────────────────────────────
     _analysis_header("⚙️ Filtros do Universo")
     f1, f2, f3, f4 = st.columns(4)
-    sectors = ["Todos"] + sorted(str(x) for x in scored.get("sector", pd.Series()).dropna().unique())
+    # Vários códigos SIC brutos mapeiam para o MESMO setor macro. Antes as opções
+    # eram os valores brutos e o format_func traduzia só na exibição: além de
+    # repetir rótulos ("Indústria" 5×), escolher um deles filtrava UM único SIC,
+    # excluindo silenciosamente o resto do setor. Agora a opção É o rótulo e o
+    # filtro casa TODAS as linhas daquele rótulo (mesma regra de localize_us_company_frame).
+    setor_label, industria_label = sector_industry_labels(scored)
+
+    sectors = ["Todos"] + sorted(setor_label[setor_label != ""].unique())
     with f1:
-        sector = st.selectbox("Setor", sectors, key="us_lab_sector",
-                              format_func=lambda x: x if x == "Todos" else translate_us_sector(x))
-    sector_view = scored if sector == "Todos" else scored[scored["sector"] == sector]
-    industries = ["Todas"] + sorted(str(x) for x in sector_view.get(
-        "industry", pd.Series()).dropna().unique())
+        sector = st.selectbox("Setor", sectors, key="us_lab_sector")
+    sector_view = scored if sector == "Todos" else scored[setor_label == sector]
+    _ind_no_setor = industria_label.reindex(sector_view.index)
+    industries = ["Todas"] + sorted(_ind_no_setor[_ind_no_setor != ""].unique())
     with f2:
-        industry = st.selectbox("Indústria", industries, key="us_lab_industry",
-            format_func=lambda x: x if x == "Todas" else translate_us_industry(x))
+        industry = st.selectbox("Indústria", industries, key="us_lab_industry")
     exchanges = ["Todas"] + (sorted(str(x) for x in scored["exchange"].dropna().unique())
                               if "exchange" in scored else [])
     with f3:
@@ -726,7 +732,8 @@ def _tab_avancada_unificada(status: dict) -> None:
 
     filtered = sector_view.copy()
     if industry != "Todas":
-        filtered = filtered[filtered["industry"] == industry]
+        # casa pelo RÓTULO traduzido (não pelo bruto), pelo mesmo motivo do setor
+        filtered = filtered[industria_label.reindex(filtered.index) == industry]
     if exchange != "Todas" and "exchange" in filtered:
         filtered = filtered[filtered["exchange"] == exchange]
     profile_col = {"Qualidade": "score_quality", "Crescimento": "score_growth",
