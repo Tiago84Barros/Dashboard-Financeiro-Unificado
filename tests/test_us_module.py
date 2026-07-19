@@ -80,7 +80,7 @@ def test_imports_dos_modulos_novos():
     import importlib
     for mod in ("core.us_data", "core.us_methodology", "core.us_read",
                 "core.us_metrics", "core.us_score", "core.us_dossie",
-                "core.us_portfolio", "core.us_backtest",
+                "core.us_portfolio", "core.us_portfolio_creation", "core.us_backtest",
                 "core.us_asymmetry", "core.us_outlier_backtest", "core.us_advanced",
                 "data_pipeline.us.providers", "data_pipeline.us.normalize",
                 "data_pipeline.us.identity", "data_pipeline.us.repository",
