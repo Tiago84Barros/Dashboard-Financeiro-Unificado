@@ -75,6 +75,15 @@ def test_classificacoes_sec_sao_consolidadas_e_traduzidas_para_pt_br():
         {"symbol": "AACB", "name": "Artius", "sector": "Blank Checks",
          "industry": "Blank Checks", "exchange": "NASDAQ",
          "security_type": "Stock", "is_active": True},
+        {"symbol": "AFL", "name": "Aflac", "sector": "Accident & Health Insurance",
+         "industry": "Accident & Health Insurance", "exchange": "NYSE",
+         "security_type": "Stock", "is_active": True},
+        {"symbol": "FUL", "name": "H.B. Fuller", "sector": "Adhesives & Sealants",
+         "industry": "Adhesives & Sealants", "exchange": "NYSE",
+         "security_type": "Stock", "is_active": True},
+        {"symbol": "AVD", "name": "American Vanguard", "sector": "Agricultural Chemicals",
+         "industry": "Agricultural Chemicals", "exchange": "NYSE",
+         "security_type": "Stock", "is_active": True},
     ])
     out = normalize_us_companies(source).set_index("ticker")
     assert out.loc["A", "sector"] == "Saúde"
@@ -83,6 +92,12 @@ def test_classificacoes_sec_sao_consolidadas_e_traduzidas_para_pt_br():
     assert out.loc["AA", "industry"] == "Produção Primária de Alumínio"
     assert out.loc["AACB", "sector"] == "Serviços Financeiros"
     assert out.loc["AACB", "industry"] == "Empresas de Cheque em Branco"
+    assert out.loc["AFL", "sector"] == "Serviços Financeiros"
+    assert out.loc["AFL", "industry"] == "Seguros de Acidentes e Saúde"
+    assert out.loc["FUL", "sector"] == "Materiais Básicos"
+    assert out.loc["FUL", "industry"] == "Adesivos e Selantes"
+    assert out.loc["AVD", "sector"] == "Materiais Básicos"
+    assert out.loc["AVD", "industry"] == "Produtos Químicos Agrícolas"
 
 
 def test_localizacao_preserva_colunas_originais_para_busca_e_calculos():
