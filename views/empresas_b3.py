@@ -3295,6 +3295,11 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             xaxis={"showgrid": True, "gridcolor": "#1E2533", "zeroline": True,
                    "zerolinecolor": "#4A5568"},
         )
+        # color= divide os dados em 2 traces (positivo/negativo); o eixo categórico
+        # usa categoryorder="trace" por padrão e agruparia os anos por SINAL,
+        # quebrando a cronologia (o sort_values acima não basta: a ordem é do eixo).
+        fig_ret.update_yaxes(categoryorder="array",
+                             categoryarray=ret_sorted["Ano"].tolist())
         st.plotly_chart(fig_ret, use_container_width=True,
                         config={"displayModeBar": False}, key=f"b3_ret_{tk}")
 
