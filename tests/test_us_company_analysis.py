@@ -120,3 +120,40 @@ view.render()
     finally:
         for name, original in originals.items():
             setattr(american_view.us, name, original)
+
+
+def test_retorno_anual_em_ordem_cronologica():
+    """O gráfico de retorno anual precisa respeitar a cronologia.
+
+    px.bar com color= divide os dados em DOIS traces (positivo/negativo). O eixo
+    categórico do Plotly usa categoryorder='trace' por padrão, o que desenha um
+    trace inteiro e depois o outro — agrupando os anos por SINAL e quebrando a
+    linha do tempo (bug real observado no deploy). A correção fixa a ordem das
+    categorias; este teste trava a regressão.
+    """
+    from pathlib import Path
+
+    import plotly.express as px
+
+    import views.empresas_americanas as american_view
+
+    # anos com retornos positivos e negativos intercalados (cenário do bug)
+    df = pd.DataFrame({
+        "Ano": [2007, 2008, 2009, 2015, 2018, 2022, 2024, 2026],
+        "Retorno": [133.47, -56.91, 146.90, -3.01, -5.39, -26.40, 30.71, 22.99],
+    }).sort_values("Ano")
+    df["Ano"] = df["Ano"].astype(str)
+    df["Positivo"] = df["Retorno"] >= 0
+
+    fig = px.bar(df, x="Retorno", y="Ano", orientation="h", color="Positivo")
+    # sem a correção o Plotly agruparia por trace (sinal), não por ano
+    assert fig.layout.yaxis.categoryarray is None
+    fig.update_yaxes(categoryorder="array", categoryarray=df["Ano"].tolist())
+    ordem = list(fig.layout.yaxis.categoryarray)
+    assert ordem == sorted(ordem), "eixo Y deve estar em ordem cronológica"
+    assert ordem[0] == "2007" and ordem[-1] == "2026"
+
+    # e a view precisa aplicar essa fixação de ordem
+    fonte = (Path(american_view.__file__).read_text(encoding="utf-8"))
+    trecho = fonte.split("Retorno Anual do Preço", 1)[1][:1200]
+    assert 'categoryorder="array"' in trecho, "view não fixa a ordem das categorias"
