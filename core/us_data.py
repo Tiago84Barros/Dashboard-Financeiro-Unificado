@@ -49,6 +49,14 @@ def company_financials(symbol: str):
 
 
 @_cache
+def company_market_data(symbol: str):
+    """Históricos de cotação, dividendos e múltiplos, sempre offline-first."""
+    if _use_snapshot():
+        return _read.load_snapshot_company_market_data(symbol)
+    return _read.load_company_market_data(symbol)
+
+
+@_cache
 def quality_audit(limit: int = 200):
     return _read.load_quality_audit(limit=limit)
 
