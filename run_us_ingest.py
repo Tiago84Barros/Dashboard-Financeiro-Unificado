@@ -295,9 +295,15 @@ def main() -> int:
                     query_params["parser_version"] = PARSER_VERSION
                     missing_quarterly = (
                         "AND NOT EXISTS ("
-                        "SELECT 1 FROM market_us.balance_sheets b "
-                        "WHERE b.company_id=a.company_id AND b.period='quarterly' "
-                        "AND b.source_version=:parser_version) "
+                        "SELECT 1 FROM market_us.income_statements s "
+                        "WHERE s.company_id=a.company_id "
+                        "AND s.source_version=:parser_version "
+                        "UNION ALL SELECT 1 FROM market_us.balance_sheets s "
+                        "WHERE s.company_id=a.company_id "
+                        "AND s.source_version=:parser_version "
+                        "UNION ALL SELECT 1 FROM market_us.cash_flow_statements s "
+                        "WHERE s.company_id=a.company_id "
+                        "AND s.source_version=:parser_version) "
                     )
                 else:
                     missing_quarterly = (
