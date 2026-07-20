@@ -1,0 +1,4 @@
+interface:
+  display_name: "Streamlit Financial App"
+  short_description: "Build modular financial Streamlit UI"
+  default_prompt: "Use $streamlit-financial-app to implement a modular, accessible financial workflow in Streamlit."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Financial Data Security"
+  short_description: "Protect sensitive financial data"
+  default_prompt: "Use $financial-data-security to review a financial-data change for least privilege, privacy, and reversibility."

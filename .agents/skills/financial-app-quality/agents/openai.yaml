@@ -1,0 +1,4 @@
+interface:
+  display_name: "Financial App Quality"
+  short_description: "Test financial application behavior"
+  default_prompt: "Use $financial-app-quality to define and run risk-based tests for a financial application."

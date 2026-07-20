@@ -1,0 +1,4 @@
+interface:
+  display_name: "Expense Intelligence"
+  short_description: "Detect expense patterns and anomalies"
+  default_prompt: "Use $expense-intelligence to detect recurring, duplicate, and atypical expenses with evidence and confidence."

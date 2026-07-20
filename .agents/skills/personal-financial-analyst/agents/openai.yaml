@@ -1,0 +1,4 @@
+interface:
+  display_name: "Personal Financial Analyst"
+  short_description: "Analyze personal finances with evidence"
+  default_prompt: "Use $personal-financial-analyst to analyze synthetic personal financial data and separate facts, inferences, simulations, and recommendations."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Streamlit Browser Validation"
+  short_description: "Validate Streamlit safely in browser"
+  default_prompt: "Use $streamlit-browser-validation to validate the local Streamlit app with synthetic data in the official browser tooling."

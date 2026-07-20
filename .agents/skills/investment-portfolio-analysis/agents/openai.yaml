@@ -1,0 +1,4 @@
+interface:
+  display_name: "Investment Portfolio Analysis"
+  short_description: "Analyze portfolio return and risk"
+  default_prompt: "Use $investment-portfolio-analysis to assess portfolio allocation, risk, liquidity, and benchmark fit."

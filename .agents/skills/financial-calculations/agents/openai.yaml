@@ -1,0 +1,4 @@
+interface:
+  display_name: "Financial Calculations"
+  short_description: "Implement verified financial calculations"
+  default_prompt: "Use $financial-calculations to implement and test deterministic financial formulas in Python."
