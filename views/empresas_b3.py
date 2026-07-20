@@ -4051,7 +4051,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         )
         if _db.market_active():
             st.caption("Auditoria cross-source (Fundamentus) desativada: fonte única "
-                       "brapi (market.*). A qualidade é monitorada em Saúde dos Dados.")
+                       "brapi (market.*), monitorada pelos controles internos do pipeline.")
             run_cross = False
         else:
             run_cross = st.checkbox(

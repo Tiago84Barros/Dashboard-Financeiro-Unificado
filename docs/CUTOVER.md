@@ -6,7 +6,7 @@ Fundamentus/Status Invest em `public.*`) para a fonte nova (BRAPI Pro em
 
 ## Gatilho
 - **Só executar quando a cobertura `market/legado` ≥ 90%** (porteiro em
-  `core/b3_data.market_coverage()`; ver na página *Saúde dos Dados*).
+  `core/b3_data.market_coverage()`).
 - Hoje: ~57%. Drenando via `bootstrap-brapi.yml` (cron diário).
 
 ## Já pronto (não precisa esperar o cutover)
@@ -18,7 +18,7 @@ Fundamentus/Status Invest em `public.*`) para a fonte nova (BRAPI Pro em
   `market` ativo, `empresas_b3` NÃO roda MICE, NÃO imputa por mediana de grupo e
   NÃO faz patch via Fundamentus — nulo vira rank neutro. Winsorização e percentil
   permanecem (são método de ranking, não reparo).
-- Painel `core/market_health.py` (qualidade do market.*) já na página.
+- Controles `core/market_health.py` preservados para monitoramento interno.
 - **Frescor do market.* já agendado** (`market-refresh.yml`): `daily` (preços/
   dividendos/spot, 06:00 BRT) e `annual` (demonstrações, sábado) sobre
   `--source market` (só tickers já carregados) + reprocess. Não depende do
@@ -59,15 +59,10 @@ Fundamentus/Status Invest em `public.*`) para a fonte nova (BRAPI Pro em
   `public."Demonstracoes_Financeiras"`: remover/arquivar após período de
   observação.
 
-### 5. Página Saúde dos Dados
-- Remover seções do healing legado (`data_quality_scores/reports`,
-  `data_healing_audit`); manter a seção `market.*` (já pronta).
-- Congelar/arquivar tabelas `data_quality_*`, `multiplos_healing_backup`.
-
 ## Validação pós-cutover
 1. `python run_market_ingest.py parity` — conferir paridade final.
 2. Abrir Empresas B3 / Análise Avançada / Portfólio e checar ranking sane.
-3. Página Saúde dos Dados: completude e anomalias do market.*.
+3. Validar completude e anomalias pelos controles internos de `market.*`.
 4. Rollback se necessário: `MARKET_READ_SOURCE=legacy`.
 
 ## Gaps conhecidos (não bloqueiam)

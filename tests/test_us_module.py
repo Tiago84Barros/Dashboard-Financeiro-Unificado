@@ -103,6 +103,8 @@ def test_rotas_descontinuadas_nao_registradas_no_app():
     assert "Empresas Fora da Curva" not in app
     assert '"analista_financeiro"' not in app
     assert "Analista Financeiro IA" not in app
+    assert '"admin_data_health"' not in app
+    assert "Saúde dos Dados" not in app
 
 
 def test_sem_emoji_de_bandeira():
