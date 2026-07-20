@@ -45,12 +45,27 @@ log = logging.getLogger("us_ingest_cli")
 
 def _point_to_warehouse() -> bool:
     """Aponta a engine para o Postgres local lendo warehouse/.env (sem expor senha)."""
+    import subprocess
     from dotenv import dotenv_values
     env_paths = [_ROOT / "warehouse" / ".env"]
     env_paths.extend(_ROOT.glob(".claude/worktrees/*/warehouse/.env"))
     warehouse_file = next((p for p in env_paths if p.exists()), None)
-    password = str((dotenv_values(warehouse_file) if warehouse_file else {}).get(
-        "WAREHOUSE_PASSWORD") or "").strip()
+    password = ""
+    # O volume pode ter sido recriado com senha diferente do .env. Quando o
+    # contêiner está ativo, sua variável é a fonte de verdade; capture_output
+    # impede que a credencial apareça no terminal/log.
+    try:
+        proc = subprocess.run(
+            ["docker", "compose", "exec", "-T", "warehouse", "printenv",
+             "POSTGRES_PASSWORD"], cwd=str(_ROOT / "warehouse"),
+            capture_output=True, text=True, timeout=10, check=False)
+        if proc.returncode == 0:
+            password = (proc.stdout or "").strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if not password:
+        password = str((dotenv_values(warehouse_file) if warehouse_file else {}).get(
+            "WAREHOUSE_PASSWORD") or "").strip()
     if not password:
         log.error("nenhum warehouse/.env com WAREHOUSE_PASSWORD encontrado")
         return False
@@ -69,7 +84,7 @@ def main() -> int:
     p.add_argument("command", choices=[
         "init-schema", "test", "universe", "estimate", "bootstrap", "daily",
         "fundamentals", "resume", "validate", "score-history", "backtest",
-        "snapshot", "prices"])
+        "snapshot", "prices", "enrich"])
     p.add_argument("--tickers", nargs="*", help="símbolos específicos")
     p.add_argument("--exchanges", nargs="*", default=None, help="NYSE NASDAQ AMEX")
     p.add_argument("--limit", type=int, default=None, help="limita o universo/lote")
@@ -78,11 +93,19 @@ def main() -> int:
     p.add_argument("--start-year", type=int, default=None, help="score-history: ano inicial")
     p.add_argument("--end-year", type=int, default=None, help="score-history: ano final")
     p.add_argument("--top-n", type=int, default=20, help="backtest: nº de ativos por período")
+    p.add_argument("--transaction-cost-bps", type=float, default=10.0,
+                   help="backtest: corretagem/fees em pontos-base por turnover")
+    p.add_argument("--slippage-bps", type=float, default=5.0,
+                   help="backtest: slippage em pontos-base por turnover")
+    p.add_argument("--bootstrap-samples", type=int, default=2000,
+                   help="backtest: reamostragens do intervalo de confiança")
     p.add_argument("--no-prices", action="store_true",
                    help="bootstrap: só fundamentos (EDGAR); pula o yfinance (rápido)")
     p.add_argument("--shard", default=None,
                    help="bootstrap: processa só a fatia N/M do universo (ex.: 0/6). "
                         "Rode M processos em paralelo p/ acelerar (SEC ~10 req/s).")
+    p.add_argument("--workers", type=int, default=1,
+                   help="fundamentos: concorrência local compartilhando o limite SEC (máx. recomendado 6)")
     p.add_argument("--dry-run", action="store_true", help="não grava; só estima/planeja")
     p.add_argument("--offline", action="store_true", help="proíbe qualquer chamada de rede")
     p.add_argument("--warehouse", action="store_true",
@@ -95,7 +118,7 @@ def main() -> int:
 
     # Proteção: ingestão pesada NUNCA deve escrever no Supabase remoto.
     if args.command in {"bootstrap", "daily", "fundamentals", "universe", "resume",
-                        "score-history", "snapshot"} \
+                        "score-history", "snapshot", "enrich"} \
             and not _is_local_target() and not args.dry_run:
         log.error("Comando %s exige --warehouse (destino local). "
                   "Ingestão pesada não pode ir para o Supabase.", args.command)
@@ -141,6 +164,13 @@ def main() -> int:
             return out({"ok": True, "action": "dry-run: vitrine não construída"})
         return out(snap.build_snapshot(get_engine(), limit_companies=args.limit))
 
+    if args.command == "enrich":
+        from core.database import get_engine
+        from data_pipeline.us.enrichment import enrich_warehouse
+        if args.dry_run:
+            return out({"ok": True, "action": "dry-run: enriquecimento não executado"})
+        return out({"ok": True, **enrich_warehouse(get_engine())})
+
     if args.command == "score-history":
         # sem rede: recomputa scores PIT a partir do que já está no warehouse
         from core.database import get_engine
@@ -156,7 +186,8 @@ def main() -> int:
         # ingestão não popula) antes de computar os vintages PIT
         monthly = sh.derive_prices_monthly(eng)
         res = sh.compute_score_history(eng, dates,
-                                       score_version=US_FUNDAMENTAL_SCORE_VERSION)
+                                       score_version=US_FUNDAMENTAL_SCORE_VERSION,
+                                       limit_companies=args.limit)
         res["prices_monthly_rows"] = monthly.get("rows")
         return out(res)
 
@@ -164,10 +195,60 @@ def main() -> int:
         from core.database import get_engine
         from core.us_read import load_score_panel
         import core.us_backtest as bt
-        panel = load_score_panel()
+        from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
+        panel = load_score_panel(score_version=US_FUNDAMENTAL_SCORE_VERSION)
         if panel is None or panel.empty:
             return out({"ok": False, "reason": "sem histórico de scores — rode score-history"})
-        res = bt.walk_forward(panel, top_n=args.top_n, periods_per_year=1)  # painel anual
+        res = bt.walk_forward(
+            panel, top_n=args.top_n, periods_per_year=1,
+            transaction_cost_bps=args.transaction_cost_bps,
+            slippage_bps=args.slippage_bps,
+            bootstrap_samples=args.bootstrap_samples)
+        if res.get("ok"):
+            import datetime as _dt
+            from sqlalchemy import text
+            run_key = f"wf-{res['start_date']}-{res['end_date']}-top{args.top_n}"
+            with get_engine().begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO market_us.backtest_results
+                      (run_key,score_version,strategy,params,start_date,end_date,n_periods,
+                       rank_ic_mean,rank_ic_tstat,rank_ic_pvalue,hit_rate,ann_return,
+                       gross_ann_return,excess_ew,volatility,sharpe,sortino,calmar,
+                       max_drawdown,turnover,transaction_cost_bps,benchmark_name,
+                       validation_status,bootstrap_json,equity_curve)
+                    VALUES
+                      (:run_key,:version,'top_n',CAST(:params AS JSONB),:start,:end,:n,
+                       :ic,:tstat,:pvalue,:hit,:ann,:gross,:excess,:vol,:sharpe,:sortino,
+                       :calmar,:mdd,:turnover,:cost,'equal_weight_universe','diagnostic',
+                       CAST(:bootstrap AS JSONB),CAST(:curve AS JSONB))
+                    ON CONFLICT (run_key,score_version,strategy) DO UPDATE SET
+                       params=EXCLUDED.params,n_periods=EXCLUDED.n_periods,
+                       rank_ic_mean=EXCLUDED.rank_ic_mean,rank_ic_tstat=EXCLUDED.rank_ic_tstat,
+                       rank_ic_pvalue=EXCLUDED.rank_ic_pvalue,hit_rate=EXCLUDED.hit_rate,
+                       ann_return=EXCLUDED.ann_return,gross_ann_return=EXCLUDED.gross_ann_return,
+                       excess_ew=EXCLUDED.excess_ew,volatility=EXCLUDED.volatility,
+                       sharpe=EXCLUDED.sharpe,sortino=EXCLUDED.sortino,calmar=EXCLUDED.calmar,
+                       max_drawdown=EXCLUDED.max_drawdown,turnover=EXCLUDED.turnover,
+                       transaction_cost_bps=EXCLUDED.transaction_cost_bps,
+                       bootstrap_json=EXCLUDED.bootstrap_json,equity_curve=EXCLUDED.equity_curve,
+                       created_at=NOW()
+                """), {
+                    "run_key": run_key, "version": US_FUNDAMENTAL_SCORE_VERSION,
+                    "params": json.dumps({"top_n": args.top_n, "weighting": "score",
+                                          "slippage_bps": args.slippage_bps}),
+                    "start": res["start_date"], "end": res["end_date"], "n": res["n_periods"],
+                    "ic": res["rank_ic"].get("mean"), "tstat": res["rank_ic"].get("t_stat"),
+                    "pvalue": res["rank_ic"].get("p_value"), "hit": res["rank_ic"].get("hit_rate"),
+                    "ann": res["portfolio"].get("ann_return"),
+                    "gross": res["portfolio_gross"].get("ann_return"),
+                    "excess": res.get("excess_ann_vs_ew"), "vol": res["portfolio"].get("volatility"),
+                    "sharpe": res["portfolio"].get("sharpe"), "sortino": res["portfolio"].get("sortino"),
+                    "calmar": res["portfolio"].get("calmar"), "mdd": res["portfolio"].get("max_drawdown"),
+                    "turnover": res.get("avg_turnover"),
+                    "cost": args.transaction_cost_bps + args.slippage_bps,
+                    "bootstrap": json.dumps(res.get("bootstrap_excess")),
+                    "curve": json.dumps(res.get("equity_curve")),
+                })
         # resumo enxuto p/ o terminal
         return out({"ok": res.get("ok"), "n_periods": res.get("n_periods"),
                     "rank_ic_mean": res.get("rank_ic", {}).get("mean"),
@@ -202,13 +283,46 @@ def main() -> int:
     if args.command in {"bootstrap", "fundamentals", "resume"}:
         symbols = args.tickers
         if not symbols:
-            # do universo já seedado no warehouse
+            # Uma representação por companhia. Evita repetir o mesmo CIK para
+            # classes de ações diferentes e ignora ativos sem identidade
+            # analisável. No incremental, prioriza apenas quem ainda não possui
+            # demonstrações trimestrais válidas.
             from sqlalchemy import text
             with engine.connect() as conn:
-                q = "SELECT symbol FROM market_us.assets WHERE security_type='common' ORDER BY symbol"
+                query_params = {}
+                if args.command == "bootstrap":
+                    from data_pipeline.us.edgar_facts import PARSER_VERSION
+                    query_params["parser_version"] = PARSER_VERSION
+                    missing_quarterly = (
+                        "AND NOT EXISTS ("
+                        "SELECT 1 FROM market_us.balance_sheets b "
+                        "WHERE b.company_id=a.company_id AND b.period='quarterly' "
+                        "AND b.source_version=:parser_version) "
+                    )
+                else:
+                    missing_quarterly = (
+                        "AND NOT EXISTS ("
+                        "SELECT 1 FROM market_us.income_statements i "
+                        "WHERE i.company_id=a.company_id AND i.period='quarterly') "
+                    )
+                q = (
+                    "SELECT symbol FROM ("
+                    "SELECT DISTINCT ON (a.company_id) a.symbol, "
+                    "(SELECT max(i.updated_at) FROM market_us.income_statements i "
+                    " WHERE i.company_id=a.company_id) AS last_statement_update "
+                    "FROM market_us.assets a "
+                    "WHERE a.company_id IS NOT NULL "
+                    "AND a.analysis_status IN ('eligible','pending') "
+                    "AND a.security_type IN ('common','reit') "
+                    f"{missing_quarterly}"
+                    "ORDER BY a.company_id, a.is_active DESC, a.symbol"
+                    ") eligible_companies "
+                    "ORDER BY last_statement_update NULLS FIRST, symbol"
+                )
                 if args.limit:
                     q += f" LIMIT {int(args.limit)}"
-                symbols = [r[0] for r in conn.execute(text(q)).fetchall()]
+                symbols = [r[0] for r in conn.execute(
+                    text(q), query_params).fetchall()]
         run_key = "bootstrap"
         if args.shard:                       # fatia N/M (round-robin) p/ paralelismo
             n, m = (int(x) for x in args.shard.split("/"))
@@ -217,7 +331,8 @@ def main() -> int:
             log.info("shard %d/%d: %d símbolos", n, m, len(symbols))
         return out({"ok": True, **ingest.ingest_symbols(
             provider, engine, symbols, years=args.years, run_key=run_key,
-            resume=(args.command == "resume"), with_prices=not args.no_prices)})
+            resume=(args.command == "resume"), with_prices=not args.no_prices,
+            workers=max(1, min(int(args.workers), 8)))})
 
     if args.command == "prices":
         # passagem incremental de preços: só quem tem fundamento e ainda não tem preço

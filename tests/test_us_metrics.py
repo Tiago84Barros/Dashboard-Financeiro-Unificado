@@ -84,3 +84,15 @@ def test_fcf_derivado_de_ocf_capex():
     cf = [{"fiscal_year": 2023, "operating_cash_flow": 260, "capex": -60}]
     m = um.compute_company_metrics(inc, bal, cf, market_cap=3000)
     assert m["fcf_margin"] == pytest.approx(200 / 1440)   # 260 + (-60)
+
+
+def test_ebitda_derivado_de_operating_income_e_depreciacao():
+    inc = [{"fiscal_year": 2023, "operating_income": 300, "ebit": 300,
+            "ebitda": None, "net_income": 200}]
+    bal = [{"fiscal_year": 2023, "total_debt": 500,
+            "cash_and_equivalents": 100}]
+    cf = [{"fiscal_year": 2023, "depreciation_and_amortization": 60}]
+    m = um.compute_company_metrics(inc, bal, cf, market_cap=3000)
+    assert m["_ebitda"] == 360
+    assert m["_ebitda_derived"] is True
+    assert m["net_debt_ebitda"] == pytest.approx(400 / 360)

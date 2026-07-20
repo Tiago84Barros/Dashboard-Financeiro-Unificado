@@ -38,6 +38,7 @@ def test_income_basico_com_pit():
     assert r23["net_income"] == 150
     assert r23["available_at"] == date(2024, 2, 14)   # filing date = PIT
     assert r23["source"] == "sec_edgar" and r23["period"] == "annual"
+    assert r23["source_version"] == ef.PARSER_VERSION
     assert r23["gross_profit"] is None                # ausente ≠ zero
 
 
@@ -122,3 +123,53 @@ def test_available_at_conservador_no_maximo_dos_filings():
 def test_cik_from_facts():
     assert ef.cik_from_facts({"cik": 320193}) == "0000320193"
     assert ef.cik_from_facts({}) is None
+
+
+def test_quarterly_usa_10q_curto_e_rejeita_ytd():
+    q1 = _e("2024-03-31", 300, "2024-05-01", start="2024-01-01", form="10-Q")
+    q1.update({"fy": 2024, "fp": "Q1"})
+    ytd = _e("2024-06-30", 650, "2024-08-01", start="2024-01-01", form="10-Q")
+    ytd.update({"fy": 2024, "fp": "Q2"})
+    facts = _fact("Revenues", [q1, ytd])
+    rows = ef.build_income_quarterly_rows(_cf(facts), "TEST")
+    assert len(rows) == 1
+    assert rows[0]["period"] == "quarterly"
+    assert rows[0]["fiscal_year"] == 2024 and rows[0]["fiscal_quarter"] == 1
+    assert rows[0]["revenue"] == 300
+
+
+def test_quarterly_prefere_fim_corrente_ao_comparativo():
+    comparative = _e("2023-03-31", 250, "2024-05-01",
+                     start="2023-01-01", form="10-Q")
+    comparative.update({"fy": 2024, "fp": "Q1"})
+    current = _e("2024-03-31", 300, "2024-05-01",
+                 start="2024-01-01", form="10-Q")
+    current.update({"fy": 2024, "fp": "Q1"})
+    rows = ef.build_income_quarterly_rows(
+        _cf(_fact("Revenues", [comparative, current])))
+    assert len(rows) == 1
+    assert rows[0]["reference_date"] == date(2024, 3, 31)
+    assert rows[0]["revenue"] == 300
+
+
+def test_balance_quarterly_aceita_fatos_instantaneos_e_alinha_fim():
+    facts = {}
+    for tag, value in (("Assets", 2000), ("Liabilities", 1200),
+                       ("StockholdersEquity", 800)):
+        old = _e("2023-03-31", value - 100, "2024-05-01", form="10-Q")
+        old.update({"fy": 2024, "fp": "Q1"})
+        current = _e("2024-03-31", value, "2024-05-01", form="10-Q")
+        current.update({"fy": 2024, "fp": "Q1"})
+        facts.update(_fact(tag, [old, current]))
+    rows = ef.build_balance_quarterly_rows(_cf(facts))
+    assert len(rows) == 1
+    assert rows[0]["reference_date"] == date(2024, 3, 31)
+    assert rows[0]["total_assets"] == 2000
+    assert rows[0]["total_liabilities"] + rows[0]["total_equity"] == 2000
+
+
+def test_depreciacao_disponivel_para_ebitda_derivado():
+    facts = _fact("DepreciationDepletionAndAmortization", [
+        _e("2023-12-31", 40, "2024-02-14", start="2023-01-01")])
+    rows = ef.build_cashflow_rows(_cf(facts))
+    assert rows[0]["depreciation_and_amortization"] == 40

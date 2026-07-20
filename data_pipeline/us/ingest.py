@@ -155,6 +155,10 @@ def ingest_symbol(provider: FmpProvider, engine, symbol: str, *,
     income = provider.get_income_statements(sym, "annual", years)
     balance = provider.get_balance_sheets(sym, "annual", years)
     cashflow = provider.get_cash_flow_statements(sym, "annual", years)
+    quarterly_limit = max(8, years * 4)
+    income_q = provider.get_income_statements(sym, "quarterly", quarterly_limit)
+    balance_q = provider.get_balance_sheets(sym, "quarterly", quarterly_limit)
+    cashflow_q = provider.get_cash_flow_statements(sym, "quarterly", quarterly_limit)
 
     # Sem NENHUMA demonstração o CIK é uma casca (ex.: holding nova de
     # reestruturação, sem histórico). Não cria empresa-fantasma — registra e pula.
@@ -179,11 +183,11 @@ def ingest_symbol(provider: FmpProvider, engine, symbol: str, *,
         # EDGAR (edgar_facts) já entrega linhas no formato do schema; FMP passa
         # pelos mapeadores de normalização.
         if getattr(provider, "pre_normalized", False):
-            inc_rows, bal_rows, cfw_rows = income, balance, cashflow
+            inc_rows, bal_rows, cfw_rows = income + income_q, balance + balance_q, cashflow + cashflow_q
         else:
-            inc_rows = [normalize.map_income_statement(r) for r in income]
-            bal_rows = [normalize.map_balance_sheet(r) for r in balance]
-            cfw_rows = [normalize.map_cash_flow(r) for r in cashflow]
+            inc_rows = [normalize.map_income_statement(r) for r in income + income_q]
+            bal_rows = [normalize.map_balance_sheet(r) for r in balance + balance_q]
+            cfw_rows = [normalize.map_cash_flow(r) for r in cashflow + cashflow_q]
         n += repo.upsert_statements(conn, "income_statements", company_id, sym, inc_rows)
         n += repo.upsert_statements(conn, "balance_sheets", company_id, sym, bal_rows)
         n += repo.upsert_statements(conn, "cash_flow_statements", company_id, sym, cfw_rows)
@@ -201,7 +205,7 @@ def ingest_symbol(provider: FmpProvider, engine, symbol: str, *,
 
 def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
                    run_key="bootstrap", years=20, resume=True,
-                   with_prices=True) -> dict:
+                   with_prices=True, workers: int = 1) -> dict:
     """Percorre símbolos com checkpoint/retomada. Retoma do cursor se resume=True.
 
     with_prices=False: só fundamentos (EDGAR, rápido) — para varrer o mercado
@@ -209,29 +213,50 @@ def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
     """
     symbols = [identity.normalize_symbol(s) for s in symbols if s]
     with engine.begin() as conn:
-        run_id = repo.start_run(conn, run_key, "profiles", {"years": years})
         open_run = repo.get_open_run(conn, run_key, "profiles")
+        run_id = repo.start_run(conn, run_key, "profiles", {"years": years,
+                                                            "workers": workers})
     start_idx = 0
     if resume and open_run and open_run.get("cursor") in symbols:
         start_idx = symbols.index(open_run["cursor"]) + 1
-    ok = err = 0
-    for sym in symbols[start_idx:]:
+    pending = symbols[start_idx:]
+    ok = err = rows_written = 0
+
+    def process(sym):
         try:
-            r = ingest_symbol(provider, engine, sym, years=years, run_id=run_id,
-                              with_prices=with_prices)
-            ok += 1 if r.get("ok") else 0
-            err += 0 if r.get("ok") else 1
+            return sym, ingest_symbol(provider, engine, sym, years=years, run_id=run_id,
+                                      with_prices=with_prices), None
         except Exception as exc:  # noqa: BLE001
-            err += 1
             with engine.begin() as conn:
                 repo.log_error(conn, run_id, symbol=sym, domain="profiles",
                                error_type="unexpected", message=str(exc))
-        with engine.begin() as conn:
-            repo.checkpoint_run(conn, run_id, cursor=sym, calls=provider.calls_made)
+            return sym, None, exc
+
+    if workers > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=int(workers)) as pool:
+            futures = [pool.submit(process, sym) for sym in pending]
+            results = (f.result() for f in as_completed(futures))
+            for sym, result, exc in results:
+                success = bool(result and result.get("ok"))
+                ok += int(success)
+                err += int(not success)
+                rows_written += int((result or {}).get("rows") or 0)
+    else:
+        for sym in pending:
+            _, result, exc = process(sym)
+            success = bool(result and result.get("ok"))
+            ok += int(success)
+            err += int(not success)
+            rows_written += int((result or {}).get("rows") or 0)
+            with engine.begin() as conn:
+                repo.checkpoint_run(conn, run_id, cursor=sym)
     with engine.begin() as conn:
+        repo.checkpoint_run(conn, run_id, cursor=None, calls=provider.calls_made,
+                            rows=rows_written)
         repo.finish_run(conn, run_id)
-    return {"processed": len(symbols[start_idx:]), "ok": ok, "errors": err,
-            "calls": provider.calls_made}
+    return {"processed": len(pending), "ok": ok, "errors": err,
+            "calls": provider.calls_made, "rows": rows_written, "workers": int(workers)}
 
 
 def ingest_prices_only(provider, engine, symbols: Iterable[str]) -> dict:

@@ -19,6 +19,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any, Callable, Optional
 
@@ -54,29 +55,38 @@ _CIK_OVERRIDES = {
 class EdgarProvider(FundamentalsProvider):
     """Fundamentos via SEC EDGAR. Sem chave; exige User-Agent de contato."""
 
-    def __init__(self, user_agent: str, session: Any = None, rate: int = 8,
-                 per: float = 1.0, max_retries: int = 4,
-                 budget: Optional[Budget] = None, timeout: float = 30.0,
+    def __init__(self, user_agent: str, session: Any = None, rate: int = 4,
+                 per: float = 1.0, max_retries: int = 3,
+                 budget: Optional[Budget] = None, timeout: float = 20.0,
                  time_fn: Callable[[], float] = time.monotonic,
                  sleep_fn: Callable[[float], None] = time.sleep):
         self.user_agent = (user_agent or "").strip()
         self._session = session
+        self._thread_local = threading.local()
         self.max_retries = max_retries
         self.budget = budget or Budget()
         self.timeout = timeout
         self.sleep_fn = sleep_fn
-        # SEC pede ≤ 10 req/s; 8 dá margem.
+        # SEC pede ≤ 10 req/s. Quatro chamadas/s reduz throttling silencioso em
+        # varreduras longas e ainda mantém boa vazão com múltiplos workers.
         self.limiter = RateLimiter(rate=rate, per=per, time_fn=time_fn, sleep_fn=sleep_fn)
         self.calls_made = 0
         self._ticker_map: dict[str, str] | None = None
-        self._facts_cache: tuple[str, dict | None] = ("", None)  # (symbol, facts)
+        self._facts_cache: dict[str, dict | None] = {}
+        self._cache_lock = threading.Lock()
 
     @property
     def session(self):
-        if self._session is None:
+        if self._session is not None:
+            return self._session
+        # requests.Session não é thread-safe. Cada worker mantém sua própria
+        # conexão persistente, evitando travamentos raros em backfills longos.
+        session = getattr(self._thread_local, "session", None)
+        if session is None:
             import requests
-            self._session = requests.Session()
-        return self._session
+            session = requests.Session()
+            self._thread_local.session = session
+        return session
 
     def _get(self, url: str) -> Any:
         if not self.user_agent:
@@ -114,16 +124,22 @@ class EdgarProvider(FundamentalsProvider):
     # ── universo / identidade ────────────────────────────────────────────────
     def ticker_map(self) -> dict[str, str]:
         """{symbol: cik10}. Cacheado no provider (1 chamada para todo o universo)."""
-        if self._ticker_map is None:
+        with self._cache_lock:
+            cached = self._ticker_map
+        if cached is None:
             data = self._get(TICKERS_URL) or {}
             rows = data.values() if isinstance(data, dict) else data
-            self._ticker_map = {}
+            mapped = {}
             for r in rows:
                 sym = normalize_symbol(r.get("ticker"))
                 cik = normalize_cik(r.get("cik_str") or r.get("cik"))
                 if sym and cik:
-                    self._ticker_map[sym] = cik
-        return self._ticker_map
+                    mapped[sym] = cik
+            with self._cache_lock:
+                if self._ticker_map is None:
+                    self._ticker_map = mapped
+                cached = self._ticker_map
+        return cached or {}
 
     def get_universe(self, exchanges: list[str]) -> list[dict]:
         """Universo da SEC com bolsa de listagem (company_tickers_exchange.json)."""
@@ -181,6 +197,7 @@ class EdgarProvider(FundamentalsProvider):
             "isActivelyTrading": not bool(sub.get("formerNames") and not exchanges),
             "_sic": sub.get("sic"),
             "_former_names": sub.get("formerNames") or [],
+            "_source": "sec_edgar",
         }
 
     # ── demonstrações (XBRL) ─────────────────────────────────────────────────
@@ -190,11 +207,16 @@ class EdgarProvider(FundamentalsProvider):
         sem o cache, baixaríamos o JSON (vários MB) 3× por empresa (gargalo real
         descoberto na varredura em escala)."""
         sym = normalize_symbol(symbol) or ""
-        if self._facts_cache[0] == sym:
-            return self._facts_cache[1]
+        with self._cache_lock:
+            if sym in self._facts_cache:
+                return self._facts_cache[sym]
         cik = self._cik_for(sym)
         facts = self._get(COMPANYFACTS_URL.format(cik=cik)) if cik else None
-        self._facts_cache = (sym, facts)
+        with self._cache_lock:
+            self._facts_cache[sym] = facts
+            # Limite pequeno: cada JSON pode ter vários MB.
+            while len(self._facts_cache) > 16:
+                self._facts_cache.pop(next(iter(self._facts_cache)))
         return facts
 
     def _rows(self, symbol: str, builder, limit: int) -> list[dict]:
@@ -205,19 +227,16 @@ class EdgarProvider(FundamentalsProvider):
         return rows[-limit:] if limit else rows
 
     def get_income_statements(self, symbol, period="annual", limit=20):
-        if period != "annual":
-            return []      # 10-Q/trimestral entra depois; não fingir que existe
-        return self._rows(symbol, ef.build_income_rows, limit)
+        builder = ef.build_income_rows if period == "annual" else ef.build_income_quarterly_rows
+        return self._rows(symbol, builder, limit) if period in {"annual", "quarterly"} else []
 
     def get_balance_sheets(self, symbol, period="annual", limit=20):
-        if period != "annual":
-            return []
-        return self._rows(symbol, ef.build_balance_rows, limit)
+        builder = ef.build_balance_rows if period == "annual" else ef.build_balance_quarterly_rows
+        return self._rows(symbol, builder, limit) if period in {"annual", "quarterly"} else []
 
     def get_cash_flow_statements(self, symbol, period="annual", limit=20):
-        if period != "annual":
-            return []
-        return self._rows(symbol, ef.build_cashflow_rows, limit)
+        builder = ef.build_cashflow_rows if period == "annual" else ef.build_cashflow_quarterly_rows
+        return self._rows(symbol, builder, limit) if period in {"annual", "quarterly"} else []
 
     def get_key_metrics(self, symbol, period="annual", limit=20):
         # A SEC não publica múltiplos — o projeto os calcula em core/us_metrics.py

@@ -152,6 +152,8 @@ def _pit_common(row: dict) -> dict:
         "currency": (row.get("reportedCurrency") or "USD") or "USD",
         "unit": "absolute",
         "source": "fmp",
+        "source_version": "fmp-normalizer-v2",
+        "quality_status": "raw",
     }
 
 
@@ -219,6 +221,9 @@ def map_cash_flow(row: dict) -> dict:
         "debt_repayment":      to_float(row.get("debtRepayment")),
         "dividends_paid":      to_float(row.get("dividendsPaid")),
         "stock_based_compensation": to_float(row.get("stockBasedCompensation")),
+        "depreciation_and_amortization": to_float(
+            row.get("depreciationAndAmortization") or row.get("depreciationAndAmortizationExpense")
+        ),
     })
     out["content_hash"] = content_hash(out)
     return out
@@ -263,4 +268,5 @@ def map_profile(row: dict) -> dict:
         "is_reit":   sec_type == "reit",
         "is_adr":    bool(row.get("isAdr")),
         "is_active": not bool(row.get("isActivelyTrading") is False),
+        "source":    row.get("_source") or row.get("source") or "fmp",
     }

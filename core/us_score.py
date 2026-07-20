@@ -6,7 +6,8 @@ Metodologia (alinhada ao rigor do B3, adaptada aos EUA):
   1. Winsorização intra-grupo (apara caudas antes de ranquear).
   2. Percentil intra-INDÚSTRIA por métrica (grupo estruturalmente comparável);
      grupos pequenos caem para setor e, por fim, universo (flag de fallback).
-  3. Ausência = neutro (0.5) — nunca zero, nunca imputação por fonte externa.
+  3. Ausência preserva neutralidade estatística, mas reduz explicitamente a
+     confiança e puxa a trilha incompleta para 50 (não mascara cobertura baixa).
   4. Seis trilhas de fatores → média das métricas da trilha → soma ponderada → 0–100.
   5. Pesos por trilha ajustáveis por setor (economicamente justificado).
 
@@ -49,6 +50,20 @@ SECTOR_TRACK_OVERRIDES: dict[str, dict[str, float]] = {
 
 NEUTRAL = 0.5
 _ALL_METRICS = [m for ms in FACTOR_TRACKS.values() for m in ms]
+
+# Uma nota pode ser calculada com informação parcial, mas só é considerada
+# decision-grade quando as trilhas essenciais possuem cobertura mínima.
+CRITICAL_TRACK_MIN_COVERAGE = {
+    "quality": 0.40,
+    "growth": 0.40,
+    "solidity": 0.25,
+    "valuation": 0.50,
+}
+
+
+def _sector_confidence_penalty(sector: object) -> float:
+    """Penaliza categorias ainda atendidas por proxies contábeis genéricas."""
+    return 0.85 if str(sector or "") in {"Real Estate", "Financial Services"} else 1.0
 
 
 def _weights_for(sector: str | None) -> dict[str, float]:
@@ -119,6 +134,10 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
         else:
             track_scores[track] = pd.Series(NEUTRAL, index=df.index)
             cov = pd.Series(0.0, index=df.index)
+        # Uma trilha esparsa não pode produzir convicção extrema. A nota é
+        # encolhida para o neutro conforme a raiz da cobertura observada.
+        reliability = cov.pow(0.5)
+        track_scores[track] = NEUTRAL + (track_scores[track] - NEUTRAL) * reliability
         result[f"score_{track}"] = (track_scores[track] * 100).round(1)
         result[f"coverage_{track}"] = (cov * 100).round(0)
 
@@ -133,6 +152,31 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
     metric_cols = [m for m in _ALL_METRICS if m in df.columns]
     result["coverage"] = (df[metric_cols].notna().mean(axis=1) * 100).round(0) \
         if metric_cols else 0.0
+    critical_missing: list[list[str]] = []
+    confidence: list[float] = []
+    statuses: list[str] = []
+    for i in range(len(result)):
+        missing = [
+            track for track, minimum in CRITICAL_TRACK_MIN_COVERAGE.items()
+            if float(result.at[i, f"coverage_{track}"] or 0) / 100.0 < minimum
+        ]
+        critical_missing.append(missing)
+        overall = float(result.at[i, "coverage"] or 0) / 100.0
+        critical_ratio = 1.0 - len(missing) / len(CRITICAL_TRACK_MIN_COVERAGE)
+        sector = df.at[i, "sector"] if "sector" in df.columns else None
+        conf = 100.0 * (0.70 * overall + 0.30 * critical_ratio)
+        conf *= _sector_confidence_penalty(sector)
+        conf = round(max(0.0, min(100.0, conf)), 1)
+        confidence.append(conf)
+        if conf >= 75.0 and not missing:
+            statuses.append("decision_grade")
+        elif conf >= 60.0:
+            statuses.append("research_grade")
+        else:
+            statuses.append("screen_grade")
+    result["score_confidence"] = confidence
+    result["score_status"] = statuses
+    result["critical_missing"] = critical_missing
     return result.sort_values("score", ascending=False).reset_index(drop=True)
 
 

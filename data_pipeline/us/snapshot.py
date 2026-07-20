@@ -81,6 +81,7 @@ def compact_financials(income: Sequence[dict], balance: Sequence[dict],
             "invested_capital": b.get("invested_capital"),
             "shares_outstanding": shares,
             "operating_cash_flow": c.get("operating_cash_flow"),
+            "depreciation_and_amortization": c.get("depreciation_and_amortization"),
             "investing_cash_flow": investing_cf, "capex": c.get("capex"),
             "free_cash_flow": c.get("free_cash_flow"),
             "dividends_paid": div_paid, "dividends_per_share": div_ps,
@@ -126,7 +127,7 @@ def compact_company_analysis(market_data: dict) -> dict:
 
 _SCORE_COLS = ("score", "score_quality", "score_growth", "score_solidity",
                "score_capital_efficiency", "score_valuation", "score_shareholder",
-               "coverage")
+               "coverage", "score_confidence")
 _ASYM_KEYS = ("asymmetry_score", "confidence", "stage", "risk_class", "horizon",
               "suggested_position_pct", "positive_signals", "risks", "hypotheses",
               "invalidation", "missing_data")
@@ -156,6 +157,8 @@ def serialize_row(*, identity: dict, scored_row: dict, metrics: dict,
         "last_fiscal_year": (financials[-1]["fiscal_year"] if financials else None),
         "score_version": score_version,
         "generated_at": generated_at,
+        "score_status": scored_row.get("score_status") or "screen_grade",
+        "critical_missing": dumps(scored_row.get("critical_missing") or []),
     }
     for col in _SCORE_COLS:
         v = scored_row.get(col)
@@ -231,6 +234,10 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
                            conflict=["symbol"])
         with engine.begin() as conn:
             conn.execute(text(sql), rows_out)
+            if limit_companies is None:
+                conn.execute(text(
+                    "DELETE FROM market_us.company_snapshots WHERE generated_at <> :generated"
+                ), {"generated": generated_at})
         written = len(rows_out)
     return {"ok": True, "written": written, "errors": errors,
             "generated_at": str(generated_at)}

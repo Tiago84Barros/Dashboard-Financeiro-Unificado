@@ -220,10 +220,13 @@ def load_company_financials(symbol: str) -> pd.DataFrame:
         "LEFT JOIN market_us.balance_sheets b "
         "  ON b.company_id=i.company_id AND b.period=i.period "
         "  AND b.fiscal_year=i.fiscal_year AND b.fiscal_quarter=i.fiscal_quarter "
+        "  AND b.quality_status IN ('raw','validated') "
         "LEFT JOIN market_us.cash_flow_statements cf "
         "  ON cf.company_id=i.company_id AND cf.period=i.period "
         "  AND cf.fiscal_year=i.fiscal_year AND cf.fiscal_quarter=i.fiscal_quarter "
+        "  AND cf.quality_status IN ('raw','validated') "
         "WHERE i.symbol=:sym AND i.period='annual' "
+        "AND i.quality_status IN ('raw','validated') "
         "ORDER BY i.fiscal_year")
     try:
         with eng.connect() as conn:
@@ -289,7 +292,7 @@ _BALANCE_COLS = ("fiscal_year", "total_assets", "total_equity", "total_debt",
                  "retained_earnings")
 _CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow",
                   "acquisitions", "investments", "dividends_paid",
-                  "stock_repurchase", "stock_issuance")
+                  "stock_repurchase", "stock_issuance", "depreciation_and_amortization")
 
 
 def _latest_close(conn, symbol: str):
@@ -356,7 +359,8 @@ def load_company_bundle(symbol: str) -> dict | None:
 
             def _series(table, cols):
                 q = (f"SELECT {', '.join(cols)} FROM market_us.{table} "
-                     f"WHERE company_id=:c AND period='annual' ORDER BY fiscal_year")
+                     f"WHERE company_id=:c AND period='annual' "
+                     f"AND quality_status IN ('raw','validated') ORDER BY fiscal_year")
                 return [dict(r._mapping) for r in conn.execute(text(q), {"c": cid})]
 
             balance = _series("balance_sheets", _BALANCE_COLS)
@@ -403,8 +407,9 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
 
             def _bulk(table, cols_):
                 q = text(f"SELECT company_id, {', '.join(cols_)} "
-                         f"FROM market_us.{table} WHERE period='annual' "
-                         f"AND company_id IN :ids ORDER BY company_id, fiscal_year"
+                          f"FROM market_us.{table} WHERE period='annual' "
+                          f"AND quality_status IN ('raw','validated') "
+                          f"AND company_id IN :ids ORDER BY company_id, fiscal_year"
                          ).bindparams(bindparam("ids", expanding=True))
                 return pd.read_sql(q, conn, params={"ids": ids})
 
@@ -493,6 +498,7 @@ def load_asymmetry_frame(limit_companies: int | None = None) -> pd.DataFrame:
             def _bulk(table, cols_):
                 q = text(f"SELECT company_id, {', '.join(cols_)} "
                          f"FROM market_us.{table} WHERE period='annual' "
+                         f"AND quality_status IN ('raw','validated') "
                          f"AND company_id IN :ids ORDER BY company_id, fiscal_year"
                          ).bindparams(bindparam("ids", expanding=True))
                 return pd.read_sql(q, conn, params={"ids": ids})
@@ -527,8 +533,8 @@ def load_asymmetry_frame(limit_companies: int | None = None) -> pd.DataFrame:
 _SNAP_IDENTITY = ("symbol", "cik", "name", "sector", "industry", "exchange",
                   "security_type", "is_reit", "is_active")
 _SNAP_SCORES = ("score", "score_quality", "score_growth", "score_solidity",
-                "score_capital_efficiency", "score_valuation", "score_shareholder",
-                "coverage")
+                 "score_capital_efficiency", "score_valuation", "score_shareholder",
+                 "coverage", "score_confidence", "score_status", "critical_missing")
 
 
 def _parse_json_col(value):
@@ -668,6 +674,9 @@ def load_score_panel(score_version: str | None = None,
     histórico de scores ser computado (run_us_ingest.py score-history).
     """
     from data_pipeline.us.scoring_history import build_annual_panel
+    if score_version is None:
+        from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
+        score_version = US_FUNDAMENTAL_SCORE_VERSION
     cols = ["date", "symbol", "score", "fwd_return"]
     eng = _engine()
     if eng is None or not schema_ready():
@@ -677,9 +686,8 @@ def load_score_panel(score_version: str | None = None,
             vq = ("SELECT as_of_date, symbol, score FROM market_us.score_vintages "
                   "WHERE track='fundamental'")
             params: dict = {}
-            if score_version:
-                vq += " AND score_version=:v"
-                params["v"] = score_version
+            vq += " AND score_version=:v"
+            params["v"] = score_version
             vintages = pd.read_sql(text(vq), conn, params=params)
             if vintages.empty:
                 return pd.DataFrame(columns=cols)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import time
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -56,6 +57,7 @@ class RateLimiter:
     sleep_fn: Callable[[float], None] = time.sleep
     _allowance: float = field(default=None, init=False)  # type: ignore[assignment]
     _last: float = field(default=None, init=False)        # type: ignore[assignment]
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._allowance = float(self.rate)
@@ -63,23 +65,23 @@ class RateLimiter:
 
     def acquire(self) -> float:
         """Bloqueia (via sleep_fn) até haver crédito. Retorna o tempo dormido."""
-        if self.rate <= 0:
-            return 0.0
-        now = self.time_fn()
-        elapsed = now - self._last
-        self._last = now
-        self._allowance = min(float(self.rate), self._allowance + elapsed * (self.rate / self.per))
-        slept = 0.0
-        if self._allowance < 1.0:
-            # tempo até acumular 1 token
-            deficit = (1.0 - self._allowance) * (self.per / self.rate)
-            self.sleep_fn(deficit)
-            slept = deficit
-            self._last = self.time_fn()
-            self._allowance = 0.0
-        else:
-            self._allowance -= 1.0
-        return slept
+        with self._lock:
+            if self.rate <= 0:
+                return 0.0
+            now = self.time_fn()
+            elapsed = now - self._last
+            self._last = now
+            self._allowance = min(float(self.rate), self._allowance + elapsed * (self.rate / self.per))
+            slept = 0.0
+            if self._allowance < 1.0:
+                deficit = (1.0 - self._allowance) * (self.per / self.rate)
+                self.sleep_fn(deficit)
+                slept = deficit
+                self._last = self.time_fn()
+                self._allowance = 0.0
+            else:
+                self._allowance -= 1.0
+            return slept
 
 
 @dataclass
@@ -87,12 +89,14 @@ class Budget:
     """Orçamento de chamadas por execução (0/None = ilimitado)."""
     limit: Optional[int] = None
     spent: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def charge(self, n: int = 1) -> None:
-        if self.limit is not None and self.spent + n > self.limit:
-            raise BudgetExceededError(
-                f"orçamento de {self.limit} chamadas atingido (gastas={self.spent})")
-        self.spent += n
+        with self._lock:
+            if self.limit is not None and self.spent + n > self.limit:
+                raise BudgetExceededError(
+                    f"orçamento de {self.limit} chamadas atingido (gastas={self.spent})")
+            self.spent += n
 
     def remaining(self) -> Optional[int]:
         return None if self.limit is None else max(0, self.limit - self.spent)

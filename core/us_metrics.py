@@ -104,6 +104,11 @@ def compute_company_metrics(
     op_income   = _latest(income, "operating_income")
     ebit        = _latest(income, "ebit") or op_income
     ebitda      = _latest(income, "ebitda")
+    depreciation = _latest(cashflow, "depreciation_and_amortization")
+    ebitda_derived = False
+    if ebitda is None and op_income is not None and depreciation is not None:
+        ebitda = op_income + abs(depreciation)
+        ebitda_derived = True
     net_income  = _latest(income, "net_income")
     interest    = _latest(income, "interest_expense")
     eps         = _latest(income, "eps")
@@ -174,7 +179,8 @@ def compute_company_metrics(
         # contexto (não entram no score, ajudam classificação/dossiê)
         "_revenue": revenue, "_net_income": net_income, "_fcf": fcf,
         "_equity": equity, "_net_debt": net_debt, "_market_cap": market_cap,
-        "_ebit": ebit, "_years": len(_series_values(income, "revenue")),
+        "_ebit": ebit, "_ebitda": ebitda, "_ebitda_derived": ebitda_derived,
+        "_years": len(_series_values(income, "revenue")),
     }
     return m
 

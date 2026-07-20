@@ -50,6 +50,23 @@ def test_missing_neutro_nao_quebra():
     df.loc[df["symbol"] == "C", "roic"] = None       # ausência
     scored = sc.score_cross_section(df, min_group=3)
     assert not scored.empty and scored["score"].notna().all()
+    c = scored[scored["symbol"] == "C"].iloc[0]
+    assert c["score_confidence"] < 100
+    assert c["score_status"] in {"screen_grade", "research_grade", "decision_grade"}
+    assert isinstance(c["critical_missing"], list)
+
+
+def test_trilha_esparsa_encolhe_para_neutro_e_reduz_confianca():
+    df = _frame()
+    sparse = df["symbol"] == "A"
+    for metric in sc.FACTOR_TRACKS["valuation"]:
+        if metric in df.columns:
+            df.loc[sparse, metric] = None
+    scored = sc.score_cross_section(df, min_group=3)
+    a = scored[scored["symbol"] == "A"].iloc[0]
+    assert a["score_valuation"] == pytest.approx(50.0)
+    assert "valuation" in a["critical_missing"]
+    assert a["score_status"] != "decision_grade"
 
 
 def test_empty_frame():

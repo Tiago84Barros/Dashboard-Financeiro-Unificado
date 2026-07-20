@@ -32,6 +32,8 @@ _USD_PER_SHARE = "USD/shares"
 
 # Duração aceita como "anual" (10-K com exercícios de ~12 meses).
 _ANNUAL_MIN_DAYS, _ANNUAL_MAX_DAYS = 350, 380
+_QUARTERLY_MIN_DAYS, _QUARTERLY_MAX_DAYS = 70, 110
+PARSER_VERSION = "companyfacts-parser-v3"
 
 # ── Mapas de conceitos (ordem = prioridade) ───────────────────────────────────
 INCOME_CONCEPTS: dict[str, list[str]] = {
@@ -88,6 +90,12 @@ CASHFLOW_CONCEPTS: dict[str, list[str]] = {
     "debt_repayment": ["RepaymentsOfLongTermDebt", "RepaymentsOfDebt"],
     "dividends_paid": ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"],
     "stock_based_compensation": ["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense"],
+    "depreciation_and_amortization": [
+        "DepreciationDepletionAndAmortization",
+        "DepreciationDepletionAndAmortizationPropertyPlantAndEquipmentAndIntangibleAssets",
+        "DepreciationDepletionAndAmortizationPropertyPlantAndEquipment",
+        "Depreciation",
+    ],
 }
 
 # Campos cujo XBRL é "pagamento" (positivo) e que o projeto guarda NEGATIVO,
@@ -104,6 +112,16 @@ def _is_annual_duration(start: Optional[str], end: str) -> bool:
     if d0 is None or d1 is None:
         return False
     return _ANNUAL_MIN_DAYS <= (d1 - d0).days <= _ANNUAL_MAX_DAYS
+
+
+def _is_quarterly_duration(start: Optional[str], end: str) -> bool:
+    """Aceita fatos instantâneos ou duração de aproximadamente três meses."""
+    if not start:
+        return True
+    d0, d1 = parse_date(start), parse_date(end)
+    if d0 is None or d1 is None:
+        return False
+    return _QUARTERLY_MIN_DAYS <= (d1 - d0).days <= _QUARTERLY_MAX_DAYS
 
 
 def _entries(cf: dict, tag: str, unit: str) -> list[dict]:
@@ -137,6 +155,46 @@ def _annual_points(entries: list[dict]) -> dict[str, dict]:
     return by_end
 
 
+def _quarterly_points(entries: list[dict], *, instant: bool = False) -> dict[tuple[int, int], dict]:
+    """Fatos 10-Q trimestrais por (fiscal_year, fiscal_quarter), sempre PIT.
+
+    Fluxos acumulados de seis/nove meses são rejeitados pela duração. Isso reduz
+    cobertura, mas evita tratar YTD como trimestre isolado.
+    """
+    out: dict[tuple[int, int], dict] = {}
+    for e in entries:
+        if not str(e.get("form") or "").startswith("10-Q"):
+            continue
+        fp = str(e.get("fp") or "").upper()
+        if fp not in {"Q1", "Q2", "Q3", "Q4"}:
+            continue
+        end, filed = e.get("end"), e.get("filed")
+        if not end or not filed:
+            continue
+        # Balanços são fatos instantâneos e normalmente não têm `start`.
+        # Fluxos/resultados precisam ter duração de um trimestre isolado.
+        if not instant and not _is_quarterly_duration(e.get("start"), end):
+            continue
+        fy = e.get("fy")
+        try:
+            fy = int(fy)
+        except (TypeError, ValueError):
+            d = parse_date(end)
+            fy = d.year if d else 0
+        if not fy:
+            continue
+        key = (fy, int(fp[1]))
+        cur = out.get(key)
+        # Um 10-Q também carrega comparativos de períodos anteriores com o
+        # mesmo FY/FP do filing. Primeiro escolhemos o maior `end` (período
+        # corrente); entre revisões desse mesmo período, preservamos o filing
+        # mais antigo para manter o point-in-time.
+        if (cur is None or str(end) > str(cur["end"])
+                or (str(end) == str(cur["end"]) and str(filed) < str(cur["filed"]))):
+            out[key] = {"val": e.get("val"), "filed": filed, "end": end}
+    return out
+
+
 def _collect(cf: dict, concepts: dict[str, list[str]], unit: str = _USD) -> dict[str, dict]:
     """{field: {end: {val, filed}}} — primeiro alias que tiver dado para o período."""
     out: dict[str, dict] = {}
@@ -156,6 +214,31 @@ def _collect_units(cf: dict, concepts: dict) -> dict[str, dict]:
         for tag in tags:
             for end, point in _annual_points(_entries(cf, tag, unit)).items():
                 merged.setdefault(end, point)
+        out[field] = merged
+    return out
+
+
+def _collect_quarterly(cf: dict, concepts: dict[str, list[str]], unit: str = _USD,
+                       *, instant: bool = False) -> dict:
+    out: dict[str, dict] = {}
+    for field, tags in concepts.items():
+        merged: dict[tuple[int, int], dict] = {}
+        for tag in tags:
+            for key, point in _quarterly_points(
+                    _entries(cf, tag, unit), instant=instant).items():
+                merged.setdefault(key, point)
+        out[field] = merged
+    return out
+
+
+def _collect_quarterly_units(cf: dict, concepts: dict, *, instant: bool = False) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for field, (tags, unit) in concepts.items():
+        merged: dict[tuple[int, int], dict] = {}
+        for tag in tags:
+            for key, point in _quarterly_points(
+                    _entries(cf, tag, unit), instant=instant).items():
+                merged.setdefault(key, point)
         out[field] = merged
     return out
 
@@ -192,6 +275,45 @@ def _build_rows(collected: dict[str, dict], symbol: str | None = None) -> list[d
             "reference_date": d, "published_date": parse_date(available),
             "available_at": parse_date(available),
             "currency": "USD", "unit": "absolute", "source": "sec_edgar",
+            "source_version": PARSER_VERSION, "quality_status": "raw",
+        })
+        if symbol:
+            row["symbol"] = symbol
+        row["content_hash"] = content_hash(row)
+        rows.append(row)
+    return rows
+
+
+def _build_quarterly_rows(collected: dict[str, dict], symbol: str | None = None) -> list[dict]:
+    periods: set[tuple[int, int]] = set()
+    for per_field in collected.values():
+        periods.update(per_field.keys())
+    rows = []
+    for fy, fq in sorted(periods):
+        row: dict[str, Any] = {}
+        filings: list[str] = []
+        ends: list[str] = []
+        for field, per_field in collected.items():
+            point = per_field.get((fy, fq))
+            if point is None:
+                row[field] = None
+                continue
+            val = to_float(point["val"])
+            if val is not None and field in NEGATE_FIELDS:
+                val = -val
+            row[field] = val
+            filings.append(str(point["filed"]))
+            ends.append(str(point["end"]))
+        if not filings or not ends:
+            continue
+        available = max(filings)
+        reference = max(ends)
+        row.update({
+            "period": "quarterly", "fiscal_year": fy, "fiscal_quarter": fq,
+            "reference_date": parse_date(reference),
+            "published_date": parse_date(available), "available_at": parse_date(available),
+            "currency": "USD", "unit": "absolute", "source": "sec_edgar",
+            "source_version": PARSER_VERSION, "quality_status": "raw",
         })
         if symbol:
             row["symbol"] = symbol
@@ -233,6 +355,41 @@ def build_cashflow_rows(cf: dict, symbol: str | None = None) -> list[dict]:
     for r in rows:
         ocf, capex = r.get("operating_cash_flow"), r.get("capex")
         # FCF não existe no XBRL: derivado (capex já está negativo aqui)
+        r["free_cash_flow"] = None if ocf is None or capex is None else ocf + capex
+    return rows
+
+
+def build_income_quarterly_rows(cf: dict, symbol: str | None = None) -> list[dict]:
+    collected = _collect_quarterly(cf, INCOME_CONCEPTS, _USD)
+    collected.update(_collect_quarterly_units(cf, INCOME_SHARE_CONCEPTS))
+    rows = _build_quarterly_rows(collected, symbol)
+    for r in rows:
+        r["ebit"] = r.get("operating_income")
+        r["ebitda"] = None
+    return rows
+
+
+def build_balance_quarterly_rows(cf: dict, symbol: str | None = None) -> list[dict]:
+    collected = _collect_quarterly(cf, BALANCE_CONCEPTS, _USD, instant=True)
+    collected.update(_collect_quarterly_units(
+        cf, BALANCE_SHARE_CONCEPTS, instant=True))
+    rows = _build_quarterly_rows(collected, symbol)
+    for r in rows:
+        std, ltd = r.get("short_term_debt"), r.get("long_term_debt")
+        r["total_debt"] = None if std is None and ltd is None else (std or 0) + (ltd or 0)
+        cash = r.get("cash_and_equivalents")
+        r["net_debt"] = None if r["total_debt"] is None or cash is None \
+            else r["total_debt"] - cash
+        eq = r.get("total_equity")
+        r["invested_capital"] = None if eq is None or r["total_debt"] is None \
+            else eq + r["total_debt"] - (cash or 0.0)
+    return rows
+
+
+def build_cashflow_quarterly_rows(cf: dict, symbol: str | None = None) -> list[dict]:
+    rows = _build_quarterly_rows(_collect_quarterly(cf, CASHFLOW_CONCEPTS, _USD), symbol)
+    for r in rows:
+        ocf, capex = r.get("operating_cash_flow"), r.get("capex")
         r["free_cash_flow"] = None if ocf is None or capex is None else ocf + capex
     return rows
 

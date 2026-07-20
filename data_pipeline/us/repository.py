@@ -77,7 +77,7 @@ def upsert_company(conn, profile: dict) -> int:
         "ceo": profile.get("ceo"), "employees": profile.get("employees"),
         "ipo_date": profile.get("ipo_date"), "is_reit": bool(profile.get("is_reit")),
         "is_adr": bool(profile.get("is_adr")), "is_active": bool(profile.get("is_active", True)),
-        "source": "fmp",
+        "source": profile.get("source") or "fmp",
     }
     if fields["cik"]:
         _exec_many(conn, "companies", [fields], conflict=["cik"])
@@ -155,9 +155,12 @@ def start_run(conn, run_key: str, domain: str, params: dict | None = None) -> in
     sql = build_upsert("ingestion_runs",
                        ["run_key", "domain", "status", "params"],
                        conflict=["run_key", "domain"],
-                       update=["status", "params"])
+                       update=["status", "params", "cursor", "calls_made",
+                               "rows_written", "started_at", "finished_at", "note"])
     conn.execute(text(sql), {"run_key": run_key, "domain": domain,
-                             "status": "running", "params": _json(params)})
+                             "status": "running", "params": _json(params),
+                             "cursor": None, "calls_made": 0, "rows_written": 0,
+                             "started_at": _now(), "finished_at": None, "note": None})
     row = conn.execute(text(f"SELECT id FROM {SCHEMA}.ingestion_runs "
                             f"WHERE run_key=:k AND domain=:d"),
                        {"k": run_key, "d": domain}).fetchone()
@@ -215,3 +218,8 @@ def _json(obj: Any) -> Optional[str]:
         return None
     import json
     return json.dumps(obj, default=str)
+
+
+def _now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)

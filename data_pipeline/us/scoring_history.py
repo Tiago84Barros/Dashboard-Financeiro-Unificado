@@ -14,6 +14,8 @@ orquestração em banco roda com o warehouse via run_us_ingest.py score-history.
 from __future__ import annotations
 
 import logging
+import json
+from bisect import bisect_right
 from datetime import date
 from typing import Iterable, Sequence
 
@@ -32,7 +34,7 @@ _BALANCE = ("company_id", "fiscal_year", "available_at", "total_assets", "total_
             "current_liabilities", "invested_capital", "shares_outstanding")
 _CASHFLOW = ("company_id", "fiscal_year", "available_at", "operating_cash_flow",
              "capex", "free_cash_flow", "dividends_paid", "stock_repurchase",
-             "stock_issuance")
+             "stock_issuance", "depreciation_and_amortization")
 
 
 def visible_rows(rows: Sequence[dict], as_of: date) -> list[dict]:
@@ -109,46 +111,78 @@ def derive_prices_monthly(engine) -> dict:
 # ── Orquestração em banco (roda com warehouse) ────────────────────────────────
 def _bulk(conn, table: str, cols: Sequence[str], ids: list[int]) -> pd.DataFrame:
     q = text(f"SELECT {', '.join(cols)} FROM market_us.{table} "
-             f"WHERE period='annual' AND company_id IN :ids "
+             f"WHERE period='annual' AND quality_status IN ('raw','validated') "
+             f"AND company_id IN :ids "
              f"ORDER BY company_id, fiscal_year"
              ).bindparams(bindparam("ids", expanding=True))
     return pd.read_sql(q, conn, params={"ids": ids})
 
 
+def _asof_value(points: list[tuple[date, float]], as_of: date) -> float | None:
+    """Último valor cuja data é <= as_of; busca binária determinística."""
+    if not points:
+        return None
+    idx = bisect_right([p[0] for p in points], as_of) - 1
+    return None if idx < 0 else points[idx][1]
+
+
 def compute_score_history(engine, as_of_dates: Iterable[date], *,
-                          score_version: str, limit_companies: int = 800) -> dict:
+                          score_version: str, limit_companies: int | None = None) -> dict:
     """Para cada as_of, calcula o score PIT e grava em market_us.score_vintages."""
     if engine is None:
         return {"ok": False, "reason": "engine indisponível"}
     as_of_dates = list(as_of_dates)
     written = 0
     with engine.begin() as conn:
-        comp = pd.read_sql(text(
+        sql = (
             "SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.sector) AS sector, "
-            "MAX(c.industry) AS industry FROM market_us.companies c "
+            "MAX(c.industry) AS industry, MIN(a.first_trade_date) AS first_trade_date, "
+            "MAX(a.delisted_date) AS delisted_date FROM market_us.companies c "
             "JOIN market_us.assets a ON a.company_id=c.id "
             "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
             "  WHERE i.company_id=c.id AND i.period='annual') "
-            "GROUP BY c.id ORDER BY c.id LIMIT :lim"),
-            conn, params={"lim": int(limit_companies)})
+            "GROUP BY c.id ORDER BY c.id")
+        params = {}
+        if limit_companies:
+            sql += " LIMIT :lim"
+            params["lim"] = int(limit_companies)
+        comp = pd.read_sql(text(sql), conn, params=params)
         if comp.empty:
             return {"ok": True, "written": 0, "reason": "sem empresas"}
         ids = [int(x) for x in comp["id"]]
         inc = _bulk(conn, "income_statements", _INCOME, ids)
         bal = _bulk(conn, "balance_sheets", _BALANCE, ids)
         cfw = _bulk(conn, "cash_flow_statements", _CASHFLOW, ids)
+        mcaps = pd.read_sql(text(
+            "SELECT symbol, date, market_cap FROM market_us.market_cap_history "
+            "WHERE market_cap>0 ORDER BY symbol,date"), conn)
         inc_g = {k: v.to_dict("records") for k, v in inc.groupby("company_id")}
         bal_g = {k: v.to_dict("records") for k, v in bal.groupby("company_id")}
         cfw_g = {k: v.to_dict("records") for k, v in cfw.groupby("company_id")}
+        mcap_g: dict[str, list[tuple[date, float]]] = {}
+        if not mcaps.empty:
+            for sym, group in mcaps.groupby("symbol"):
+                mcap_g[str(sym)] = [
+                    ((d.date() if hasattr(d, "date") else d), float(v))
+                    for d, v in zip(pd.to_datetime(group["date"]), group["market_cap"])
+                ]
 
         for as_of in as_of_dates:
             rows = []
             for _, c in comp.iterrows():
                 cid = int(c["id"])
+                first_trade = c.get("first_trade_date")
+                delisted = c.get("delisted_date")
+                if pd.notna(first_trade) and pd.to_datetime(first_trade).date() > as_of:
+                    continue
+                if pd.notna(delisted) and pd.to_datetime(delisted).date() < as_of:
+                    continue
+                inc_vis = visible_rows(inc_g.get(cid, []), as_of)
+                bal_vis = visible_rows(bal_g.get(cid, []), as_of)
+                cfw_vis = visible_rows(cfw_g.get(cid, []), as_of)
                 m = compute_company_metrics(
-                    visible_rows(inc_g.get(cid, []), as_of),
-                    visible_rows(bal_g.get(cid, []), as_of),
-                    visible_rows(cfw_g.get(cid, []), as_of))
+                    inc_vis, bal_vis, cfw_vis,
+                    market_cap=_asof_value(mcap_g.get(str(c["symbol"]), []), as_of))
                 if m.get("_years", 0) < 2:
                     continue
                 rows.append({"company_id": cid, "symbol": c["symbol"],
@@ -156,16 +190,26 @@ def compute_score_history(engine, as_of_dates: Iterable[date], *,
             if not rows:
                 continue
             scored = score_cross_section(pd.DataFrame(rows))
+            payload = []
             for _, r in scored.iterrows():
-                conn.execute(text(
-                    "INSERT INTO market_us.score_vintages "
-                    "(company_id, symbol, score_version, as_of_date, track, score) "
-                    "VALUES (:cid,:sym,:ver,:asof,'fundamental',:score) "
-                    "ON CONFLICT (company_id, score_version, as_of_date, track) "
-                    "DO UPDATE SET score=EXCLUDED.score"),
-                    {"cid": int(r["company_id"]), "sym": r["symbol"],
-                     "ver": score_version, "asof": as_of, "score": float(r["score"])})
-                written += 1
+                payload.append({"cid": int(r["company_id"]), "sym": r["symbol"],
+                     "ver": score_version, "asof": as_of, "score": float(r["score"]),
+                     "coverage": float(r.get("coverage") or 0),
+                     "confidence": float(r.get("score_confidence") or 0),
+                     "factors": json.dumps({
+                         "score_status": r.get("score_status"),
+                         "critical_missing": r.get("critical_missing") or [],
+                         "methodology": score_version,
+                     })})
+            conn.execute(text(
+                "INSERT INTO market_us.score_vintages "
+                "(company_id, symbol, score_version, as_of_date, track, score, "
+                " coverage, score_confidence, factors_json) "
+                "VALUES (:cid,:sym,:ver,:asof,'fundamental',:score,:coverage,:confidence,CAST(:factors AS JSONB)) "
+                "ON CONFLICT (company_id, score_version, as_of_date, track) "
+                "DO UPDATE SET score=EXCLUDED.score, coverage=EXCLUDED.coverage, "
+                "score_confidence=EXCLUDED.score_confidence, factors_json=EXCLUDED.factors_json"), payload)
+            written += len(payload)
     return {"ok": True, "written": written, "dates": len(as_of_dates)}
 
 

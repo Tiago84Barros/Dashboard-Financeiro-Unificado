@@ -90,6 +90,21 @@ def turnover(prev: dict, new: dict) -> float:
     return 0.5 * sum(abs(new.get(s, 0.0) - prev.get(s, 0.0)) for s in symbols)
 
 
+def bootstrap_mean_ci(values, *, samples: int = 2000, confidence: float = 0.95,
+                      seed: int = 42) -> dict:
+    """Intervalo bootstrap reprodutível da média dos retornos/excessos."""
+    x = np.asarray(pd.Series(values).dropna(), dtype=float)
+    if len(x) < 2 or samples <= 0:
+        return {"n": int(len(x)), "samples": int(samples), "mean": None,
+                "ci_low": None, "ci_high": None}
+    rng = np.random.default_rng(seed)
+    means = rng.choice(x, size=(samples, len(x)), replace=True).mean(axis=1)
+    alpha = (1.0 - confidence) / 2.0
+    return {"n": int(len(x)), "samples": int(samples), "mean": float(x.mean()),
+            "ci_low": float(np.quantile(means, alpha)),
+            "ci_high": float(np.quantile(means, 1.0 - alpha))}
+
+
 def _period_weights(g: pd.DataFrame, top_n: int, weighting: str) -> dict:
     sel = g.sort_values("score", ascending=False).head(top_n)
     if sel.empty:
@@ -103,14 +118,16 @@ def _period_weights(g: pd.DataFrame, top_n: int, weighting: str) -> dict:
 
 
 def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
-                 weighting: str = "score", periods_per_year: int = 12) -> dict:
+                 weighting: str = "score", periods_per_year: int = 12,
+                 transaction_cost_bps: float = 0.0, slippage_bps: float = 0.0,
+                 bootstrap_samples: int = 2000) -> dict:
     """Backtest PIT: em cada data forma a carteira pelos scores e realiza o
     fwd_return; compara com equal-weight do universo. Retorna curvas + métricas.
     """
     if panel is None or panel.empty:
         return {"ok": False, "reason": "painel vazio"}
     panel = panel.dropna(subset=["score", "fwd_return"])
-    port_ret, ew_ret, dates = [], [], []
+    port_ret, gross_ret, ew_ret, dates = [], [], [], []
     prev_w: dict = {}
     turns = []
     for date, g in panel.groupby("date"):
@@ -119,28 +136,38 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
             continue
         fwd = dict(zip(g["symbol"], g["fwd_return"]))
         pr = sum(wi * fwd.get(s, 0.0) for s, wi in w.items())
-        port_ret.append(pr)
+        turn = turnover(prev_w, w)
+        cost = turn * (float(transaction_cost_bps) + float(slippage_bps)) / 10_000.0
+        gross_ret.append(pr)
+        port_ret.append(pr - cost)
         ew_ret.append(float(g["fwd_return"].mean()))
         dates.append(date)
-        turns.append(turnover(prev_w, w))
+        turns.append(turn)
         prev_w = w
     if not dates:
         return {"ok": False, "reason": "sem períodos utilizáveis"}
     pr_s = pd.Series(port_ret, index=dates)
+    gross_s = pd.Series(gross_ret, index=dates)
     ew_s = pd.Series(ew_ret, index=dates)
     ic = rank_ic_series(panel)
     ic_stats = ic_summary(ic)
     p_stats = performance_stats(pr_s, periods_per_year)
+    gross_stats = performance_stats(gross_s, periods_per_year)
     ew_stats = performance_stats(ew_s, periods_per_year)
     excess = (p_stats["ann_return"] - ew_stats["ann_return"]) \
         if p_stats["ann_return"] is not None and ew_stats["ann_return"] is not None else None
+    excess_series = pr_s - ew_s
     return {
         "ok": True, "n_periods": len(dates),
         "start_date": min(dates), "end_date": max(dates),
         "rank_ic": ic_stats,
         "portfolio": p_stats, "equal_weight": ew_stats,
+        "portfolio_gross": gross_stats,
         "excess_ann_vs_ew": excess,
         "avg_turnover": float(np.mean(turns)) if turns else None,
+        "transaction_cost_bps": float(transaction_cost_bps),
+        "slippage_bps": float(slippage_bps),
+        "bootstrap_excess": bootstrap_mean_ci(excess_series, samples=bootstrap_samples),
         "equity_curve": list((1 + pr_s).cumprod().values),
         "dates": [str(d) for d in dates],
     }

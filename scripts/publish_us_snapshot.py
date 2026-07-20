@@ -67,10 +67,11 @@ _COLS = [
     "symbol", "cik", "name", "sector", "industry", "exchange", "security_type",
     "is_reit", "is_active", "score", "score_quality", "score_growth",
     "score_solidity", "score_capital_efficiency", "score_valuation",
-    "score_shareholder", "coverage", "metrics", "asymmetry", "advanced",
-    "dossie", "financials", "last_fiscal_year", "score_version", "generated_at",
+    "score_shareholder", "coverage", "score_confidence", "score_status",
+    "critical_missing", "metrics", "asymmetry", "advanced", "dossie",
+    "financials", "last_fiscal_year", "score_version", "generated_at",
 ]
-_JSON_COLS = {"metrics", "asymmetry", "advanced", "dossie", "financials"}
+_JSON_COLS = {"critical_missing", "metrics", "asymmetry", "advanced", "dossie", "financials"}
 
 
 def _engine(url: str):

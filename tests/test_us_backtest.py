@@ -67,6 +67,21 @@ def test_walk_forward_vazio():
     assert bt.walk_forward(pd.DataFrame())["ok"] is False
 
 
+def test_custos_reduzem_retorno_e_bootstrap_e_reprodutivel():
+    panel = _panel(periods=8)
+    gross = bt.walk_forward(panel, top_n=2, weighting="equal")
+    net = bt.walk_forward(panel, top_n=2, weighting="equal",
+                          transaction_cost_bps=10, slippage_bps=5,
+                          bootstrap_samples=500)
+    assert net["portfolio"]["ann_return"] <= gross["portfolio"]["ann_return"]
+    assert net["portfolio_gross"]["ann_return"] == pytest.approx(
+        gross["portfolio"]["ann_return"])
+    assert net["bootstrap_excess"]["samples"] == 500
+    assert net["bootstrap_excess"] == bt.walk_forward(
+        panel, top_n=2, weighting="equal", transaction_cost_bps=10,
+        slippage_bps=5, bootstrap_samples=500)["bootstrap_excess"]
+
+
 def test_periods_per_year_afeta_anualizacao():
     """Painel anual com periods_per_year=1 não deve compor 12× (bug real na 1a carga)."""
     # 3 períodos anuais, retorno constante 10% no topo

@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS market_us.company_snapshots (
     score_valuation            NUMERIC(6,2),
     score_shareholder          NUMERIC(6,2),
     coverage                   NUMERIC(6,2),
+    score_confidence           NUMERIC(6,2),
+    score_status               TEXT,
+    critical_missing           JSONB,
     -- produtos completos serializados (deterministas, computados no warehouse)
     metrics         JSONB,      -- compute_company_metrics (snapshot)
     asymmetry       JSONB,      -- score_asymmetry (Fora da Curva)
@@ -49,6 +52,21 @@ COMMENT ON TABLE market_us.company_snapshots IS
     'Vitrine EUA: 1 linha/empresa com scores e produtos finais. Publicada do warehouse local; única tabela market_us no Supabase.';
 CREATE INDEX IF NOT EXISTS idx_us_snap_sector ON market_us.company_snapshots (sector, industry);
 CREATE INDEX IF NOT EXISTS idx_us_snap_score  ON market_us.company_snapshots (score DESC);
+
+ALTER TABLE market_us.company_snapshots
+    ADD COLUMN IF NOT EXISTS score_confidence NUMERIC(6,2),
+    ADD COLUMN IF NOT EXISTS score_status TEXT,
+    ADD COLUMN IF NOT EXISTS critical_missing JSONB;
+
+ALTER TABLE market_us.company_snapshots ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        REVOKE ALL ON TABLE market_us.company_snapshots FROM anon;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        REVOKE ALL ON TABLE market_us.company_snapshots FROM authenticated;
+    END IF;
+END $$;
 
 -- ============================================================
 -- FIM 044.
