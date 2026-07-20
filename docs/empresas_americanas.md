@@ -38,7 +38,7 @@ compatível.
 > Estado atual: **módulo completo e alinhado à navegação de Empresas B3** — infraestrutura, ingestão,
 > normalização/qualidade/PIT (2–4); score fundamentalista + comparação por
 > indústria + dossiê (5); carteira-modelo + backtest point-in-time + Rank-IC (6);
-> Empresas Fora da Curva, em **seção própria** (7); Análise Avançada
+> Análise Avançada
 > (Piotroski/Altman/Sloan/ROIC incremental), comparação, criação/simulação e
 > avaliação de portfólio, regime macro americano e validação (8+).
 
@@ -59,37 +59,6 @@ compatível.
 
 > `python run_us_ingest.py init-schema --warehouse` aplica **todas** as migrations
 > `market_us` em ordem (040 → 043), de forma idempotente.
-
-## Empresas Fora da Curva — SEÇÃO PRÓPRIA (Fase 7)
-
-Não é aba desta seção: é uma **seção separada no menu**
-(`views/empresas_fora_da_curva.py`), porque o propósito é outro e misturar as
-duas leituras confunde a decisão.
-
-| | Empresas Americanas | Empresas Fora da Curva |
-|---|---|---|
-| Pergunta | O que a empresa **já entrega**? | Há **retorno assimétrico** possível? |
-| Erro esperado | Baixo | **Alto por construção** |
-| Posição | Normal (carteira-modelo) | **Subcarteira pequena** |
-| Saída | Score + carteira + backtest | **Hipótese** com sinais/riscos/invalidação |
-
-Aceita maior incerteza porque grandes vencedoras são raras e poucas posições
-podem responder por grande parte do retorno. A saída **nunca** é recomendação
-automática.
-
-`core/us_asymmetry.py` combina nível e **trajetória** (tendência de margem,
-persistência de crescimento, diluição, SBC/receita, anos de FCF positivo) em um
-score 0–100, com sinais negativos penalizando (diluição excessiva, SBC
-descontrolada, dívida alta, FCF negativo persistente, crescimento sem retorno
-sobre capital). Produz estágio, confiança (por cobertura de dados), classe de
-risco e **tamanho de posição sugerido baixo** (subcarteira pequena).
-
-`core/us_outlier_backtest.py` faz o backtest **retrospectivo**: rótulos
-configuráveis (ex.: 3× em 5 anos), precisão/recall, falsos positivos, **lift
-sobre a taxa-base** (comparação determinística com seleção aleatória),
-distribuição de retornos, **contribuição das maiores vencedoras** e o resultado
-quando parte das posições **vai a zero**. O rótulo usa o futuro apenas como
-alvo — nunca como feature.
 
 ## Carteira e backtest (Fase 6)
 

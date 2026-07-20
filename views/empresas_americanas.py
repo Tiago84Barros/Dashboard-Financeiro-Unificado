@@ -38,10 +38,7 @@ from core.us_company_analysis import (
     numeric_financials,
     regression_cagr,
 )
-from core.us_methodology import (
-    US_ASYMMETRY_SCORE_VERSION,
-    US_FUNDAMENTAL_SCORE_VERSION,
-)
+from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 from design.componentes import (
     badge_status,
     card_metrica,
@@ -2292,10 +2289,7 @@ cenário, sem conclusão jurídica ou tributária individual.
 
 **Escopo desta seção.** Aqui mora a análise fundamentalista e a carteira-modelo:
 empresas avaliadas pelo que já entregam (qualidade, crescimento, solidez,
-eficiência de capital, avaliação e retorno ao acionista). A trilha de **retorno
-assimétrico** (pontuação v{US_ASYMMETRY_SCORE_VERSION}) vive numa **seção própria no
-menu — "Empresas Fora da Curva"** — porque tem propósito, tolerância a erro e
-tamanho de posição diferentes. Não misture as duas leituras.
+eficiência de capital, avaliação e retorno ao acionista).
 
 > ℹ️ A fonte padrão é a SEC EDGAR porque os dados são de **domínio público** —
 > sem licença restritiva sobre o armazenamento local. Os Termos da FMP (fonte
