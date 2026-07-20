@@ -30,6 +30,7 @@ verificar_autenticacao()
 _ROTAS: dict[str, str] = {
     "📊 Dashboard Geral":     "dashboard_geral",
     "💰 Controle Financeiro": "controle_financeiro",
+    "🧠 Analista Financeiro IA": "analista_financeiro",
     "📈 Investimentos":       "investimentos",
     "🏢 Empresas B3":         "empresas_b3",
     # 🌎 e não 🇺🇸: Windows não renderiza emoji de bandeira (vira as letras "US")
@@ -51,7 +52,7 @@ with st.sidebar:
     opcoes_visao = ["📊 Dashboard Geral"]
 
     st.markdown('<div class="nav-section">Finanças</div>', unsafe_allow_html=True)
-    opcoes_financas = ["💰 Controle Financeiro"]
+    opcoes_financas = ["💰 Controle Financeiro", "🧠 Analista Financeiro IA"]
 
     st.markdown('<div class="nav-section">Investimentos</div>', unsafe_allow_html=True)
     opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3",
