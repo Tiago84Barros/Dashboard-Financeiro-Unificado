@@ -45,10 +45,17 @@ from views.empresas_b3 import (
 
 
 _MIN_MARKET_CAP_COVERAGE = 0.80
+_MIN_ADTV_COVERAGE = 0.70
+_MIN_CORR_PAIR_COVERAGE = 0.60
+_PREGOES_MES = 21.0
 
 
 class MarketCapDataError(RuntimeError):
     """A fonte de valor de mercado não pôde ser consultada com segurança."""
+
+
+class LiquidezDataError(RuntimeError):
+    """A série de volume negociado não pôde ser consultada com segurança."""
 
 
 def _ticker_key(value: object) -> str:
@@ -123,6 +130,65 @@ def _market_cap_coverage(
     )
     total = len(universe)
     return covered, total, (covered / total if total else 0.0)
+
+
+@st.cache_data(ttl=3600)
+def _load_adtv(meses: int = 6) -> dict[str, float]:
+    """Volume financeiro DIÁRIO típico (R$/dia) por ticker.
+
+    Mediana do volume financeiro MENSAL dos últimos ``meses`` ÷ 21 pregões.
+    **Mediana e não média**: um único pregão atípico (leilão, notícia, negócio
+    de bloco) infla a média e faz um papel ilíquido parecer líquido.
+
+    Por que existe: o piso de "liquidez" da tela era o **valor de mercado**, que
+    mede TAMANHO e não NEGOCIABILIDADE. São coisas distintas — BRAP3 e CEBR5
+    passam folgadamente por um piso de R$ 1 bi de capitalização e mesmo assim
+    não têm contraparte no book para uma ordem relevante. Espelha a regra que
+    ``data_pipeline.market.fii.liquidez_diaria`` já aplica aos FIIs.
+
+    A agregação por mês é agnóstica à granularidade da série: se as barras de
+    ``market.historical_prices`` forem diárias, a soma do mês é o volume
+    financeiro mensal; se já forem mensais, a soma é a própria barra.
+    """
+    from sqlalchemy import text
+    from core.database import get_engine
+
+    eng = get_engine()
+    if eng is None:
+        raise LiquidezDataError("conexão com o banco indisponível")
+
+    query = text("""
+        WITH mensal AS (
+            SELECT ticker,
+                   date_trunc('month', date) AS mes,
+                   SUM(COALESCE(close, adjusted_close) * volume) AS financeiro
+            FROM market.historical_prices
+            WHERE volume IS NOT NULL AND volume > 0
+              AND COALESCE(close, adjusted_close) IS NOT NULL
+              AND date >= (CURRENT_DATE - make_interval(months => :m))
+            GROUP BY 1, 2
+        )
+        SELECT ticker,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY financeiro) AS mediana
+        FROM mensal
+        GROUP BY ticker
+    """)
+    try:
+        with eng.connect() as conn:
+            rows = conn.execute(query, {"m": int(meses)}).fetchall()
+    except Exception as exc:
+        raise LiquidezDataError(
+            f"consulta de volume negociado falhou ({type(exc).__name__})"
+        ) from exc
+
+    values: dict[str, float] = {}
+    for row in rows:
+        if row.mediana is None:
+            continue
+        diario = float(row.mediana) / _PREGOES_MES
+        if np.isfinite(diario) and diario > 0:
+            values[_ticker_key(row.ticker)] = diario
+    return values
 
 
 # ── CSS incremental ───────────────────────────────────────────────────────────
@@ -475,6 +541,108 @@ def _aplicar_gate_qualitativo(
             log["substituicoes"].append({"entra": substituto, "sai": tk,
                                          "segmento": seg_label})
     return finais
+
+
+def _aplicar_diversificacao_correlacao(
+    items: list[dict],
+    aprovados: list[dict],
+    returns: pd.DataFrame,
+    entry_guard: dict,
+    threshold: float,
+    max_substituicoes: int = 3,
+) -> tuple[list[dict], list[dict]]:
+    """
+    Troca o mais fraco de um par muito correlacionado (rho >= threshold) pelo
+    próximo do ranking do MESMO segmento — nunca troca entre segmentos
+    distintos, isso quebraria a ideia de "líder do segmento".
+
+    Roda DEPOIS da seleção estatística e do gate qualitativo, sobre a lista
+    final já deduplicada entre segmentos. A cada iteração:
+      1. mede a correlação da seleção atual;
+      2. pega o par mais correlacionado acima do limiar;
+      3. tenta substituir o mais fraco (menor score) por candidatos do
+         PRÓPRIO segmento, na ordem do ranking, aceitando o primeiro que
+         reduz a correlação média da carteira e passa no entry guard;
+      4. se nenhum candidato do primeiro par ajuda, tenta o próximo par mais
+         correlacionado na mesma rodada, para não travar num par sem saída.
+    Para quando não há mais par acima do limiar, quando nenhum par tem
+    substituto que ajude, ou após max_substituicoes trocas.
+    """
+    from core.b3_correlation_diversification import (
+        average_pairwise_correlation, correlation_matrix, high_correlation_pairs,
+    )
+
+    items = [dict(it) for it in items]
+    log: list[dict] = []
+    res_by_segmento = {
+        (r["setor"], r["subsetor"], r["segmento"]): r for r in aprovados
+    }
+
+    for _ in range(max_substituicoes):
+        cols = [it["tk"] for it in items if it["tk"] in returns.columns]
+        if len(cols) < 2:
+            break
+        corr = correlation_matrix(returns[cols])
+        pairs = high_correlation_pairs(corr, threshold)
+        if not pairs:
+            break
+        baseline_avg = average_pairwise_correlation(corr)
+        existing = {it["tk"] for it in items}
+
+        troca = None  # (idx_do_fraco, cand_tk, cand_score, rho, seg_label)
+        for tk_a, tk_b, rho in pairs:
+            idx_a = next(i for i, it in enumerate(items) if it["tk"] == tk_a)
+            idx_b = next(i for i, it in enumerate(items) if it["tk"] == tk_b)
+            fraco_idx, forte_idx = (
+                (idx_a, idx_b)
+                if float(items[idx_a].get("score", 0.0)) <= float(items[idx_b].get("score", 0.0))
+                else (idx_b, idx_a)
+            )
+            fraco = items[fraco_idx]
+            seg_key = (fraco["setor"], fraco["subsetor"], fraco["segmento"])
+            res = res_by_segmento.get(seg_key)
+            if res is None:
+                continue
+            ranked = sorted(res["score_proximo"].items(), key=lambda kv: kv[1], reverse=True)
+            for cand_tk, cand_score in ranked:
+                cand_tk = str(cand_tk)
+                if cand_tk in existing or cand_tk == fraco["tk"]:
+                    continue
+                if cand_tk not in returns.columns:
+                    continue
+                if _entry_guard_exclui(entry_guard, cand_tk):
+                    continue
+                trial_cols = [cand_tk if c == fraco["tk"] else c for c in cols]
+                trial_corr = correlation_matrix(returns[trial_cols])
+                trial_avg = average_pairwise_correlation(trial_corr)
+                if trial_avg < baseline_avg - 1e-6:
+                    troca = (fraco_idx, cand_tk, float(cand_score), rho,
+                             f"{fraco['setor']} › {fraco['segmento']}")
+                    break
+            if troca:
+                break
+
+        if troca is None:
+            break
+        idx, cand_tk, cand_score, rho, seg_label = troca
+        antigo = items[idx]
+        novo = dict(antigo)
+        novo["tk"] = cand_tk
+        novo["score"] = cand_score
+        novo["rank_score"] = _rank_ticker(res_by_segmento[
+            (antigo["setor"], antigo["subsetor"], antigo["segmento"])
+        ]["score_proximo"], cand_tk)
+        novo["quali"] = None
+        novo["motivos"] = list(dict.fromkeys(
+            (antigo.get("motivos") or [])
+            + [f"Entrou por diversificação no lugar de {antigo['tk']} (correlação {rho:.2f})"]
+        ))
+        items[idx] = novo
+        log.append({
+            "sai": antigo["tk"], "entra": cand_tk, "rho": rho, "segmento": seg_label,
+        })
+
+    return items, log
 
 
 def _rank_ticker(score_map: dict[str, float], ticker: str) -> int | None:
@@ -1508,6 +1676,9 @@ def render(show_header: bool = True) -> None:
                  "ao cenário macro). Aqui você decide se, além disso, a margem "
                  "precisa superar o piso ao lado.",
         )
+        # Definido aqui (e não depois do bloco de captions) porque as legendas
+        # do modo econômico precisam informar se o segundo portão está ativo.
+        usar_ew_como_criterio = uso_ew == "Exigir margem mínima"
         max_anos_lid = p4.number_input(
             "Máx. anos desde última liderança", 1, 20, 5, 1,
             key="pb3_max_anos",
@@ -1584,18 +1755,37 @@ def render(show_header: bool = True) -> None:
                  "acima do risco-livre. Exige também ROIC > Selic na maioria dos anos.",
         )
         thr_roic_spread = float(thr_roic_spread_pct) / 100.0
-        _liq_label = st.selectbox(
-            "Liquidez mínima (valor de mercado)",
+        lc1, lc2 = st.columns(2)
+        _liq_label = lc1.selectbox(
+            "Tamanho mínimo (valor de mercado)",
             ["Sem filtro", "≥ R$ 1 bi", "≥ R$ 2 bi", "≥ R$ 5 bi"],
             index=1,
             key="pb3_min_mcap",
             help="Remove micro-caps e nomes sem valor de mercado "
-                 "(ilíquidos/deslistados, ex.: EKTR3). Evita coroar empresas boas "
-                 "no papel mas INTOCÁVEIS na prática (ex.: BALM3 ~R$ 210 mi). Usa o "
-                 "valor de mercado como proxy de negociabilidade.",
+                 "(ilíquidos/deslistados, ex.: EKTR3). Mede TAMANHO — não "
+                 "negociabilidade: uma empresa de R$ 3 bi com free-float mínimo "
+                 "passa aqui e mesmo assim é impossível de negociar. Para isso "
+                 "existe o filtro de volume ao lado.",
         )
         _MCAP_MAP = {"Sem filtro": 0.0, "≥ R$ 1 bi": 1e9, "≥ R$ 2 bi": 2e9, "≥ R$ 5 bi": 5e9}
         min_mcap = _MCAP_MAP[_liq_label]
+        _adtv_label = lc2.selectbox(
+            "Liquidez mínima (volume negociado · R$/dia)",
+            ["Sem filtro", "≥ R$ 500 mil", "≥ R$ 1 mi", "≥ R$ 5 mi", "≥ R$ 20 mi"],
+            index=2,
+            key="pb3_min_adtv",
+            help="Negociabilidade REAL: mediana do volume financeiro diário dos "
+                 "últimos 6 meses (mediana, não média — um leilão ou negócio de "
+                 "bloco isolado não conta como liquidez). É o filtro que separa "
+                 "'empresa grande' de 'ação que dá para comprar e vender sem "
+                 "mover o preço'. Sem ele, o modelo coroa classes ilíquidas "
+                 "(ex.: a ON de uma holding cuja PN concentra todo o giro).",
+        )
+        _ADTV_MAP = {
+            "Sem filtro": 0.0, "≥ R$ 500 mil": 5e5, "≥ R$ 1 mi": 1e6,
+            "≥ R$ 5 mi": 5e6, "≥ R$ 20 mi": 2e7,
+        }
+        min_adtv = _ADTV_MAP[_adtv_label]
         cap_adaptativo = st.checkbox(
             "Cap adaptativo (relaxa o teto por ativo quando faltam nomes)",
             value=True,
@@ -1621,7 +1811,55 @@ def render(show_header: bool = True) -> None:
                  "Rank-IC; falha de LLM nunca veta (fail-open). Sem LLM "
                  "configurado, fica desativado.",
         )
+        diversificar_corr = st.checkbox(
+            "Diversificar por correlação (reduz peso / substitui ativos correlacionados)",
+            value=True,
+            key="pb3_diversificar_corr",
+            help="Cada segmento escolhe seu líder olhando só para os PRÓPRIOS "
+                 "fundamentos — nunca para o que os outros segmentos já "
+                 "escolheram. Isso produz diversificação nominal: 5 segmentos "
+                 "diferentes podem, na prática, compartilhar o mesmo fator de "
+                 "risco (ex.: mineração + petroquímica + autopeças = mesmo "
+                 "ciclo de commodities). Ligado, a carteira final passa por "
+                 "dois ajustes: (1) o par mais correlacionado acima do limiar "
+                 "tem o mais fraco substituído pelo próximo do ranking DO "
+                 "MESMO segmento, se isso reduzir a correlação média; (2) os "
+                 "pesos são reponderados por min-variance (Ledoit-Wolf) — "
+                 "ativos que colaboram pouco para a diversificação perdem "
+                 "peso mesmo sem serem substituídos. Nunca troca entre "
+                 "segmentos distintos: só desempata dentro do próprio "
+                 "ranking, como o gate qualitativo já faz.",
+        )
+        ccol1, ccol2 = st.columns(2)
+        corr_threshold = ccol1.slider(
+            "Limiar de correlação p/ substituição (ρ)", 0.40, 0.90, 0.65, 0.05,
+            key="pb3_corr_threshold", disabled=not diversificar_corr,
+            help="Pares com correlação (valor absoluto) acima deste limiar "
+                 "disparam a tentativa de substituição do mais fraco dos dois.",
+        )
+        corr_alpha_pct = ccol2.slider(
+            "Peso da nota fundamentalista no reajuste (%)", 0, 100, 60, 5,
+            key="pb3_corr_alpha", disabled=not diversificar_corr,
+            help="100% = pesos só pela nota/orçamento por segmento (ignora "
+                 "correlação). 0% = pesos só por min-variance (ignora a nota, "
+                 "minimiza risco). 60% é o meio-termo: dá mais peso a quem "
+                 "pontuou melhor, mas encolhe quem carrega risco redundante.",
+        )
+        corr_alpha = float(corr_alpha_pct) / 100.0
         if criterio_modo == "economico":
+            if usar_ew_como_criterio:
+                st.caption(
+                    "✅ O piso **vs Pesos Iguais** está ativo e é aplicado neste "
+                    "modo sobre o histórico cheio — o segmento precisa passar nos "
+                    "**dois** exames (Selic **e** 1/N)."
+                )
+            else:
+                st.caption(
+                    "⚠️ O piso **vs Pesos Iguais** está desligado: o segmento é "
+                    "aprovado só por bater a Selic. Sem esse segundo exame, não há "
+                    "garantia de que a seleção supere dividir igualmente entre as "
+                    "empresas do próprio segmento."
+                )
             st.caption(
                 "**Como a aprovação funciona — modo Econômico (Brasil):** um "
                 "segmento é aprovado quando **bate o Tesouro Selic no histórico** "
@@ -1659,8 +1897,6 @@ def render(show_header: bool = True) -> None:
             "vez. *Poder preditivo (Rank-IC)* = o quanto a pontuação de qualidade "
             "acertou o retorno futuro."
         )
-
-    usar_ew_como_criterio = uso_ew == "Exigir margem mínima"
 
     rodar = st.button("🚀 Rodar Criação de Portfólio", type="primary", key="pb3_rodar")
 
@@ -1710,10 +1946,65 @@ def render(show_header: bool = True) -> None:
         _n_removidos = _n_antes - df_set["ticker"].nunique()
         if _n_removidos > 0:
             st.caption(
-                f"🔒 Filtro de liquidez ({_liq_label}): {_n_removidos} empresa(s) "
+                f"🔒 Filtro de tamanho ({_liq_label}): {_n_removidos} empresa(s) "
                 "removida(s) por valor de mercado abaixo do piso ou ausente "
                 "(ilíquidas/deslistadas)."
             )
+
+    # Filtro de NEGOCIABILIDADE (volume financeiro mediano diário). Distinto do
+    # filtro de tamanho acima: valor de mercado alto com free-float mínimo
+    # continua intocável na prática. Falha de consulta NUNCA é tratada como
+    # iliquidez — o filtro é pulado com aviso explícito, porque classificar dado
+    # ausente como "ilíquido" derrubaria o universo inteiro em silêncio.
+    if min_adtv > 0:
+        try:
+            _adtvs = _load_adtv()
+        except LiquidezDataError as exc:
+            _adtvs = {}
+            st.warning(
+                f"⚠️ Filtro de liquidez ({_adtv_label}) **não aplicado**: não foi "
+                f"possível consultar o volume negociado ({exc}). A seleção seguiu "
+                "sem esse piso — trate os nomes finais como não verificados quanto "
+                "à negociabilidade."
+            )
+        if _adtvs:
+            _n_antes_adtv = df_set["ticker"].nunique()
+            _cob_adtv, _tot_adtv, _ratio_adtv = _market_cap_coverage(
+                df_set["ticker"], _adtvs
+            )
+            if _tot_adtv and _ratio_adtv < _MIN_ADTV_COVERAGE:
+                st.warning(
+                    f"⚠️ Filtro de liquidez ({_adtv_label}) **não aplicado**: "
+                    f"cobertura de volume insuficiente ({_cob_adtv}/{_tot_adtv} = "
+                    f"{_ratio_adtv:.1%}). Atualize a ingestão de `volume` em "
+                    "`market.historical_prices`."
+                )
+            else:
+                _removidos_adtv = sorted(
+                    str(t) for t in df_set["ticker"].unique()
+                    if _adtvs.get(_ticker_key(t), 0.0) < min_adtv
+                )
+                df_set = df_set[
+                    df_set["ticker"].map(
+                        lambda t: _adtvs.get(_ticker_key(t), 0.0) >= min_adtv
+                    )
+                ].copy()
+                _n_rem_adtv = _n_antes_adtv - df_set["ticker"].nunique()
+                if _n_rem_adtv > 0:
+                    _amostra = ", ".join(_removidos_adtv[:12])
+                    _reticencias = "…" if len(_removidos_adtv) > 12 else ""
+                    st.caption(
+                        f"💧 Filtro de liquidez ({_adtv_label}): {_n_rem_adtv} "
+                        f"empresa(s) removida(s) por volume negociado abaixo do "
+                        f"piso ou sem série de volume — {_amostra}{_reticencias}"
+                    )
+
+    if df_set.empty:
+        st.error(
+            "Nenhuma empresa sobreviveu aos filtros de tamanho e liquidez. "
+            "Afrouxe os pisos acima."
+        )
+        return
 
     taxa_selic_aa = (
         float(np.mean(list(selic_macro.values()))) if selic_macro else 0.1075
@@ -1940,6 +2231,18 @@ def render(show_header: bool = True) -> None:
             m_selic_full = _margem_pct(res.get("val_est", 0.0), res.get("val_selic", 0.0))
             if m_selic_full < thr_selic:
                 return False
+            # Segundo portão: bater também o ingênuo 1/N (Pesos Iguais). O
+            # Livro do Sistema Quant (cap. 9) define a aprovação como DOIS
+            # exames — "se a estratégia não bate a renda fixa por uma margem,
+            # não vale o risco; se toda a inteligência não supera dividir
+            # igualmente, a inteligência é decorativa" — e só aprova quem passa
+            # nos dois. O modo econômico lia apenas o primeiro: o controle
+            # "Margem mín. vs Pesos Iguais" ficava INERTE na tela, dando ao
+            # usuário a impressão de um piso que nunca era testado. Usa a janela
+            # cheia para casar com o teste vs Selic acima (mesma janela).
+            if usar_ew_como_criterio and res.get("val_ew", 0.0) > 0:
+                if _margem_pct(res.get("val_est", 0.0), res.get("val_ew", 0.0)) < thr_ew:
+                    return False
             # Guarda-corpo estatístico: reprova só EVIDÊNCIA CONTRA — sinal
             # claramente anti-preditivo. NÃO exige prova positiva de significância.
             _ic = float(res.get("rank_ic_mean", float("nan")))
@@ -1989,12 +2292,16 @@ def render(show_header: bool = True) -> None:
              f"{len(aprovados)} aprovados")
     if criterio_modo == "economico":
         _modo_txt = (
-            "**Critério: Econômico (Brasil).** A aprovação é ECONÔMICA: a "
-            "estratégia precisa bater a Selic no histórico pela margem configurada "
-            "(robusto a amostra pequena, adequado a mercado instável). A estatística "
-            "vira **guarda-corpo** — só reprova sinal claramente anti-preditivo "
-            "(Rank-IC < −0,05); **não exige** prova de significância. As colunas "
-            "valor-p e Rank-IC ficam como **diagnóstico**."
+            "**Critério: Econômico (Brasil).** A aprovação é ECONÔMICA e medida "
+            "no **histórico cheio** — ou seja, **dentro da amostra** (*in-sample*): "
+            "a estratégia precisa bater a Selic pela margem configurada e, se o "
+            "piso vs Pesos Iguais estiver ligado, também o ingênuo 1/N. É robusto "
+            "a amostra pequena e adequado a mercado instável, mas **não é prova "
+            "fora da amostra**: parte da margem pode ser ajuste ao passado. A "
+            "estatística vira **guarda-corpo** — só reprova sinal claramente "
+            "anti-preditivo (Rank-IC < −0,05); **não exige** significância. "
+            "⚠️ Para medir quanto do resultado é ajuste ao passado, rode também "
+            "em **Sinal fundamental (Rank-IC)** e compare os aprovados."
         )
     elif usar_gate_sinal:
         _modo_txt = (
@@ -2033,10 +2340,25 @@ def render(show_header: bool = True) -> None:
     )
     st.caption(_modo_txt + _comum_txt + _resil_txt + _wf_txt)
 
+    # Descasamento decisão × exibição (corrigido): o modo econômico APROVA pela
+    # margem do histórico cheio (val_est vs val_selic), mas a tabela mostrava
+    # apenas a margem da janela de validação — números diferentes dos que
+    # decidiram, levando a ler "aprovado com 4%" quando o portão viu 22%. Agora
+    # as duas janelas aparecem e o sufixo marca qual delas decidiu.
+    _decide_full = criterio_modo == "economico"
+    _sfx_hist = " ← DECIDE" if _decide_full else " (diagnóstico)"
+    _sfx_val  = " (diagnóstico)" if _decide_full else " ← DECIDE"
+    _col_selic_hist = f"vs Selic · histórico{_sfx_hist} (%)"
+    _col_selic_val  = f"vs Selic · validação{_sfx_val} (%)"
+    _col_ew_hist    = f"vs Pesos Iguais · histórico{_sfx_hist} (%)"
+    _col_ew_val     = f"vs Pesos Iguais · validação{_sfx_val} (%)"
+
     rows_tbl: list[dict] = []
     for res in resultados:
         m_s  = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_selic_oos", 0.0))
         m_ew = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_ew_oos", 0.0))
+        m_s_full  = _margem_pct(res.get("val_est", 0.0), res.get("val_selic", 0.0))
+        m_ew_full = _margem_pct(res.get("val_est", 0.0), res.get("val_ew", 0.0))
         ult  = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
         rows_tbl.append({
             "Setor":     res["setor"],
@@ -2047,8 +2369,10 @@ def render(show_header: bool = True) -> None:
                 if _aprovado(res)
                 else "❌ Reprovado (risco/evidência)"
             ),
-            "vs Selic · validação (%)": round(m_s, 1),
-            "vs Pesos Iguais · validação (%)": round(m_ew, 1),
+            _col_selic_hist: round(m_s_full, 1),
+            _col_ew_hist: round(m_ew_full, 1),
+            _col_selic_val: round(m_s, 1),
+            _col_ew_val: round(m_ew, 1),
             "valor-p (validação)": round(float(res.get("p_value_oos", 1.0)), 4),
             "q-valor (falsos positivos)": round(float(res.get("q_value_oos", 1.0)), 4),
             "Meses de validação": int(res.get("n_months_oos", 0)),
@@ -2243,6 +2567,109 @@ def render(show_header: bool = True) -> None:
         cur["peso"] = combined_weight
         cur["motivos"] = combined_motivos
     proximos_uniq = sorted(mapa_prox.values(), key=lambda x: x["score"], reverse=True)
+
+    # ── DIVERSIFICAÇÃO POR CORRELAÇÃO ────────────────────────────────────────
+    # A seleção por segmento é decidida sem olhar para os OUTROS segmentos —
+    # produz diversificação nominal (segmentos distintos, mesmo fator de risco
+    # macro). Aqui, sobre a lista já deduplicada: (1) troca o mais fraco de um
+    # par muito correlacionado pelo próximo do ranking do MESMO segmento, se
+    # isso reduzir a correlação média; (2) repondera por min-variance
+    # (Ledoit-Wolf), encolhendo quem carrega risco redundante mesmo sem sair
+    # da carteira.
+    from core.b3_correlation_diversification import (
+        MIN_OBS_CORRELACAO,
+        average_pairwise_correlation,
+        correlation_coverage,
+        correlation_matrix,
+        diversification_index,
+        high_correlation_pairs,
+        monthly_returns_for,
+    )
+
+    corr_log: list[dict] = []
+    corr_diag: dict = {"aplicado": False, "motivo_pulado": None}
+    if diversificar_corr and proximos_uniq:
+        _universo_tickers = [it["tk"] for it in proximos_uniq] + [
+            str(tk) for res in aprovados for tk in res["score_proximo"]
+        ]
+        _returns_universo = monthly_returns_for(df_precos_all, _universo_tickers)
+        _cols_antes = [it["tk"] for it in proximos_uniq if it["tk"] in _returns_universo.columns]
+        if len(_cols_antes) < 2:
+            corr_diag["motivo_pulado"] = "menos de 2 ativos com série de preço disponível"
+        else:
+            _ok_pares, _tot_pares = correlation_coverage(
+                _returns_universo[_cols_antes], MIN_OBS_CORRELACAO
+            )
+            if _tot_pares and (_ok_pares / _tot_pares) < _MIN_CORR_PAIR_COVERAGE:
+                corr_diag["motivo_pulado"] = (
+                    f"sobreposição de preço insuficiente entre os ativos "
+                    f"({_ok_pares}/{_tot_pares} pares com ≥{MIN_OBS_CORRELACAO} "
+                    "meses em comum)"
+                )
+            else:
+                _corr_antes = correlation_matrix(_returns_universo[_cols_antes])
+                avg_antes = average_pairwise_correlation(_corr_antes)
+                div_antes = diversification_index(
+                    {it["tk"]: float(it.get("peso") or 0.0) for it in proximos_uniq}
+                )
+
+                proximos_uniq, corr_log = _aplicar_diversificacao_correlacao(
+                    proximos_uniq, aprovados, _returns_universo, entry_guard,
+                    threshold=corr_threshold,
+                )
+
+                _cols_dep = [it["tk"] for it in proximos_uniq if it["tk"] in _returns_universo.columns]
+                _corr_depois = (
+                    correlation_matrix(_returns_universo[_cols_dep])
+                    if len(_cols_dep) >= 2 else pd.DataFrame()
+                )
+                avg_depois_subst = average_pairwise_correlation(_corr_depois)
+
+                _mk_res = None
+                _ret_final = (
+                    _returns_universo[_cols_dep].dropna(how="any")
+                    if len(_cols_dep) >= 2 else pd.DataFrame()
+                )
+                if len(_cols_dep) >= 2 and len(_ret_final) >= MIN_OBS_CORRELACAO:
+                    try:
+                        from core.markowitz import (
+                            min_variance_capped, pesos_hibridos_score_markowitz,
+                        )
+                        _mk_res = min_variance_capped(
+                            _cols_dep, _ret_final[_cols_dep].to_numpy(),
+                            cap=cap, shrinkage=True,
+                        )
+                        _score_weights = {
+                            it["tk"]: float(it.get("peso") or 0.0) for it in proximos_uniq
+                        }
+                        _blended = pesos_hibridos_score_markowitz(
+                            _score_weights, _mk_res, alpha=corr_alpha, cap=cap,
+                        )
+                        for item in proximos_uniq:
+                            if item["tk"] in _blended:
+                                item["peso"] = _blended[item["tk"]]
+                    except Exception as exc:
+                        corr_diag["reponderacao_pulada"] = (
+                            f"otimização min-variance falhou ({type(exc).__name__})"
+                        )
+
+                div_depois = diversification_index(
+                    {it["tk"]: float(it.get("peso") or 0.0) for it in proximos_uniq}
+                )
+                corr_diag.update({
+                    "aplicado": True,
+                    "avg_corr_antes": avg_antes,
+                    "avg_corr_apos_substituicao": avg_depois_subst,
+                    "div_index_antes": div_antes,
+                    "div_index_depois": div_depois,
+                    "markowitz_method": _mk_res.method if _mk_res else None,
+                    "markowitz_convergiu": _mk_res.converged if _mk_res else None,
+                    "pares_alta_correlacao_restantes": (
+                        high_correlation_pairs(_corr_depois, corr_threshold)
+                        if len(_cols_dep) >= 2 else []
+                    ),
+                })
+
     from core.portfolio_constraints import (
         minimum_assets_for_cap,
         project_capped_simplex,
@@ -2250,12 +2677,23 @@ def render(show_header: bool = True) -> None:
     _required_global = minimum_assets_for_cap(cap)
     _portfolio_viavel = len(proximos_uniq) >= _required_global
     if proximos_uniq and _portfolio_viavel:
-        _projected = project_capped_simplex(
-            {item["tk"]: float(item.get("peso") or 0.0) for item in proximos_uniq},
-            cap,
-        )
-        for item in proximos_uniq:
-            item["peso"] = _projected[item["tk"]]
+        if not corr_diag.get("aplicado"):
+            # Comportamento original: pesos só do orçamento/score, projetados no cap.
+            _projected = project_capped_simplex(
+                {item["tk"]: float(item.get("peso") or 0.0) for item in proximos_uniq},
+                cap,
+            )
+            for item in proximos_uniq:
+                item["peso"] = _projected[item["tk"]]
+        elif any(float(it.get("peso") or 0.0) > cap + 1e-6 for it in proximos_uniq):
+            # A reponderação por correlação já aplica o cap internamente; isto é
+            # só uma salvaguarda para quando ela foi pulada por dados insuficientes.
+            _projected = project_capped_simplex(
+                {item["tk"]: float(item.get("peso") or 0.0) for item in proximos_uniq},
+                cap,
+            )
+            for item in proximos_uniq:
+                item["peso"] = _projected[item["tk"]]
     elif proximos_uniq:
         st.error(
             f"Carteira não pode respeitar o cap global de {cap:.0%}: "
@@ -2338,6 +2776,75 @@ def render(show_header: bool = True) -> None:
                 for _tk, _mot in quali_log["ressalvas"].items():
                     st.markdown(f"• **{_tk}**: {_mot}")
 
+    # ── TRANSPARÊNCIA DA DIVERSIFICAÇÃO POR CORRELAÇÃO ───────────────────────
+    if diversificar_corr and proximos_uniq:
+        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                    unsafe_allow_html=True)
+        _sec_hdr("🔗 Diversificação por correlação")
+        if corr_diag.get("motivo_pulado"):
+            st.warning(
+                f"⚠️ Diversificação por correlação **não aplicada**: "
+                f"{corr_diag['motivo_pulado']}. A carteira segue com os pesos "
+                "de orçamento por segmento, sem ajuste de correlação — trate "
+                "como não verificada quanto a risco redundante entre segmentos."
+            )
+        elif corr_diag.get("aplicado"):
+            st.caption(
+                "Roda DEPOIS da estatística e do parecer qualitativo, sobre a "
+                "lista final. Nunca troca ativos entre segmentos distintos — "
+                "só desempata dentro do ranking do próprio segmento, como o "
+                "gate qualitativo já faz."
+            )
+            _mcol1, _mcol2, _mcol3 = st.columns(3)
+            _mcol1.metric(
+                "Correlação média da seleção",
+                f"{corr_diag['avg_corr_apos_substituicao']:.2f}",
+                delta=f"{corr_diag['avg_corr_apos_substituicao'] - corr_diag['avg_corr_antes']:+.2f}",
+                delta_color="inverse",
+                help="Média dos pares de correlação (Pearson, retornos "
+                     "mensais) entre os ativos finais. Antes da diversificação: "
+                     f"{corr_diag['avg_corr_antes']:.2f}.",
+            )
+            _mcol2.metric(
+                "Índice de diversificação (1−HHI)",
+                f"{corr_diag['div_index_depois']:.2f}",
+                delta=f"{corr_diag['div_index_depois'] - corr_diag['div_index_antes']:+.2f}",
+                help="0 = concentrado num único ativo; próximo de 1 = peso "
+                     "espalhado. Antes: "
+                     f"{corr_diag['div_index_antes']:.2f}.",
+            )
+            _mk_txt = (
+                f"{corr_diag['markowitz_method']} "
+                f"({'convergiu' if corr_diag['markowitz_convergiu'] else 'não convergiu — projeção aproximada'})"
+                if corr_diag.get("markowitz_method") else "não aplicada"
+            )
+            _mcol3.metric("Reponderação min-variance", _mk_txt)
+            if corr_diag.get("reponderacao_pulada"):
+                st.caption(f"⚠️ {corr_diag['reponderacao_pulada']} — pesos ficaram só na substituição.")
+            if corr_log:
+                for s in corr_log:
+                    st.markdown(
+                        f"🔁 **{s['entra']}** herda a vaga de **{s['sai']}** "
+                        f"({s['segmento']}) — correlação {s['rho']:.2f}"
+                    )
+            else:
+                st.markdown("✅ Nenhuma substituição necessária — nenhum par "
+                            f"da seleção passou de ρ={corr_threshold:.2f}.")
+            _pares_restantes = corr_diag.get("pares_alta_correlacao_restantes") or []
+            if _pares_restantes:
+                with st.expander(
+                    f"⚠️ Pares ainda correlacionados após o ajuste ({len(_pares_restantes)})",
+                    expanded=False,
+                ):
+                    st.caption(
+                        "Sem substituto viável no próprio segmento (ou a troca não "
+                        "reduzia a correlação média). O peso desses ativos já foi "
+                        "reduzido pela reponderação min-variance, mas o risco "
+                        "permanece — considere não comprar os dois juntos."
+                    )
+                    for tk_a, tk_b, rho in _pares_restantes:
+                        st.markdown(f"• **{tk_a}** × **{tk_b}**: ρ = {rho:.2f}")
+
     if proximos_uniq:
         st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
                     unsafe_allow_html=True)
@@ -2370,6 +2877,10 @@ def render(show_header: bool = True) -> None:
             "qualitative_gate": bool(_gate_ativo),
             "quali_vetados": quali_log["vetados"],
             "quali_substituicoes": quali_log["substituicoes"],
+            "correlation_diversification": bool(diversificar_corr),
+            "correlation_threshold": float(corr_threshold),
+            "correlation_score_alpha": float(corr_alpha),
+            "correlation_substituicoes": corr_log,
         }
         metrics_modelo = {
             "num_empresas": len(proximos_uniq),
@@ -2381,6 +2892,8 @@ def render(show_header: bool = True) -> None:
                 (r.get("q_value_oos", 1.0) for r in aprovados),
                 default=1.0,
             )),
+            "correlacao_media_final": corr_diag.get("avg_corr_apos_substituicao"),
+            "indice_diversificacao_final": corr_diag.get("div_index_depois"),
         }
         c_save, c_info = st.columns([1, 3], gap="medium")
         with c_save:
