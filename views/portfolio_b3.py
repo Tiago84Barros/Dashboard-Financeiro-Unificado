@@ -45,10 +45,16 @@ from views.empresas_b3 import (
 
 
 _MIN_MARKET_CAP_COVERAGE = 0.80
+_MIN_ADTV_COVERAGE = 0.70
+_PREGOES_MES = 21.0
 
 
 class MarketCapDataError(RuntimeError):
     """A fonte de valor de mercado não pôde ser consultada com segurança."""
+
+
+class LiquidezDataError(RuntimeError):
+    """A série de volume negociado não pôde ser consultada com segurança."""
 
 
 def _ticker_key(value: object) -> str:
@@ -123,6 +129,65 @@ def _market_cap_coverage(
     )
     total = len(universe)
     return covered, total, (covered / total if total else 0.0)
+
+
+@st.cache_data(ttl=3600)
+def _load_adtv(meses: int = 6) -> dict[str, float]:
+    """Volume financeiro DIÁRIO típico (R$/dia) por ticker.
+
+    Mediana do volume financeiro MENSAL dos últimos ``meses`` ÷ 21 pregões.
+    **Mediana e não média**: um único pregão atípico (leilão, notícia, negócio
+    de bloco) infla a média e faz um papel ilíquido parecer líquido.
+
+    Por que existe: o piso de "liquidez" da tela era o **valor de mercado**, que
+    mede TAMANHO e não NEGOCIABILIDADE. São coisas distintas — BRAP3 e CEBR5
+    passam folgadamente por um piso de R$ 1 bi de capitalização e mesmo assim
+    não têm contraparte no book para uma ordem relevante. Espelha a regra que
+    ``data_pipeline.market.fii.liquidez_diaria`` já aplica aos FIIs.
+
+    A agregação por mês é agnóstica à granularidade da série: se as barras de
+    ``market.historical_prices`` forem diárias, a soma do mês é o volume
+    financeiro mensal; se já forem mensais, a soma é a própria barra.
+    """
+    from sqlalchemy import text
+    from core.database import get_engine
+
+    eng = get_engine()
+    if eng is None:
+        raise LiquidezDataError("conexão com o banco indisponível")
+
+    query = text("""
+        WITH mensal AS (
+            SELECT ticker,
+                   date_trunc('month', date) AS mes,
+                   SUM(COALESCE(close, adjusted_close) * volume) AS financeiro
+            FROM market.historical_prices
+            WHERE volume IS NOT NULL AND volume > 0
+              AND COALESCE(close, adjusted_close) IS NOT NULL
+              AND date >= (CURRENT_DATE - make_interval(months => :m))
+            GROUP BY 1, 2
+        )
+        SELECT ticker,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY financeiro) AS mediana
+        FROM mensal
+        GROUP BY ticker
+    """)
+    try:
+        with eng.connect() as conn:
+            rows = conn.execute(query, {"m": int(meses)}).fetchall()
+    except Exception as exc:
+        raise LiquidezDataError(
+            f"consulta de volume negociado falhou ({type(exc).__name__})"
+        ) from exc
+
+    values: dict[str, float] = {}
+    for row in rows:
+        if row.mediana is None:
+            continue
+        diario = float(row.mediana) / _PREGOES_MES
+        if np.isfinite(diario) and diario > 0:
+            values[_ticker_key(row.ticker)] = diario
+    return values
 
 
 # ── CSS incremental ───────────────────────────────────────────────────────────
@@ -1508,6 +1573,9 @@ def render(show_header: bool = True) -> None:
                  "ao cenário macro). Aqui você decide se, além disso, a margem "
                  "precisa superar o piso ao lado.",
         )
+        # Definido aqui (e não depois do bloco de captions) porque as legendas
+        # do modo econômico precisam informar se o segundo portão está ativo.
+        usar_ew_como_criterio = uso_ew == "Exigir margem mínima"
         max_anos_lid = p4.number_input(
             "Máx. anos desde última liderança", 1, 20, 5, 1,
             key="pb3_max_anos",
@@ -1584,18 +1652,37 @@ def render(show_header: bool = True) -> None:
                  "acima do risco-livre. Exige também ROIC > Selic na maioria dos anos.",
         )
         thr_roic_spread = float(thr_roic_spread_pct) / 100.0
-        _liq_label = st.selectbox(
-            "Liquidez mínima (valor de mercado)",
+        lc1, lc2 = st.columns(2)
+        _liq_label = lc1.selectbox(
+            "Tamanho mínimo (valor de mercado)",
             ["Sem filtro", "≥ R$ 1 bi", "≥ R$ 2 bi", "≥ R$ 5 bi"],
             index=1,
             key="pb3_min_mcap",
             help="Remove micro-caps e nomes sem valor de mercado "
-                 "(ilíquidos/deslistados, ex.: EKTR3). Evita coroar empresas boas "
-                 "no papel mas INTOCÁVEIS na prática (ex.: BALM3 ~R$ 210 mi). Usa o "
-                 "valor de mercado como proxy de negociabilidade.",
+                 "(ilíquidos/deslistados, ex.: EKTR3). Mede TAMANHO — não "
+                 "negociabilidade: uma empresa de R$ 3 bi com free-float mínimo "
+                 "passa aqui e mesmo assim é impossível de negociar. Para isso "
+                 "existe o filtro de volume ao lado.",
         )
         _MCAP_MAP = {"Sem filtro": 0.0, "≥ R$ 1 bi": 1e9, "≥ R$ 2 bi": 2e9, "≥ R$ 5 bi": 5e9}
         min_mcap = _MCAP_MAP[_liq_label]
+        _adtv_label = lc2.selectbox(
+            "Liquidez mínima (volume negociado · R$/dia)",
+            ["Sem filtro", "≥ R$ 500 mil", "≥ R$ 1 mi", "≥ R$ 5 mi", "≥ R$ 20 mi"],
+            index=2,
+            key="pb3_min_adtv",
+            help="Negociabilidade REAL: mediana do volume financeiro diário dos "
+                 "últimos 6 meses (mediana, não média — um leilão ou negócio de "
+                 "bloco isolado não conta como liquidez). É o filtro que separa "
+                 "'empresa grande' de 'ação que dá para comprar e vender sem "
+                 "mover o preço'. Sem ele, o modelo coroa classes ilíquidas "
+                 "(ex.: a ON de uma holding cuja PN concentra todo o giro).",
+        )
+        _ADTV_MAP = {
+            "Sem filtro": 0.0, "≥ R$ 500 mil": 5e5, "≥ R$ 1 mi": 1e6,
+            "≥ R$ 5 mi": 5e6, "≥ R$ 20 mi": 2e7,
+        }
+        min_adtv = _ADTV_MAP[_adtv_label]
         cap_adaptativo = st.checkbox(
             "Cap adaptativo (relaxa o teto por ativo quando faltam nomes)",
             value=True,
@@ -1622,6 +1709,19 @@ def render(show_header: bool = True) -> None:
                  "configurado, fica desativado.",
         )
         if criterio_modo == "economico":
+            if usar_ew_como_criterio:
+                st.caption(
+                    "✅ O piso **vs Pesos Iguais** está ativo e é aplicado neste "
+                    "modo sobre o histórico cheio — o segmento precisa passar nos "
+                    "**dois** exames (Selic **e** 1/N)."
+                )
+            else:
+                st.caption(
+                    "⚠️ O piso **vs Pesos Iguais** está desligado: o segmento é "
+                    "aprovado só por bater a Selic. Sem esse segundo exame, não há "
+                    "garantia de que a seleção supere dividir igualmente entre as "
+                    "empresas do próprio segmento."
+                )
             st.caption(
                 "**Como a aprovação funciona — modo Econômico (Brasil):** um "
                 "segmento é aprovado quando **bate o Tesouro Selic no histórico** "
@@ -1659,8 +1759,6 @@ def render(show_header: bool = True) -> None:
             "vez. *Poder preditivo (Rank-IC)* = o quanto a pontuação de qualidade "
             "acertou o retorno futuro."
         )
-
-    usar_ew_como_criterio = uso_ew == "Exigir margem mínima"
 
     rodar = st.button("🚀 Rodar Criação de Portfólio", type="primary", key="pb3_rodar")
 
@@ -1710,10 +1808,65 @@ def render(show_header: bool = True) -> None:
         _n_removidos = _n_antes - df_set["ticker"].nunique()
         if _n_removidos > 0:
             st.caption(
-                f"🔒 Filtro de liquidez ({_liq_label}): {_n_removidos} empresa(s) "
+                f"🔒 Filtro de tamanho ({_liq_label}): {_n_removidos} empresa(s) "
                 "removida(s) por valor de mercado abaixo do piso ou ausente "
                 "(ilíquidas/deslistadas)."
             )
+
+    # Filtro de NEGOCIABILIDADE (volume financeiro mediano diário). Distinto do
+    # filtro de tamanho acima: valor de mercado alto com free-float mínimo
+    # continua intocável na prática. Falha de consulta NUNCA é tratada como
+    # iliquidez — o filtro é pulado com aviso explícito, porque classificar dado
+    # ausente como "ilíquido" derrubaria o universo inteiro em silêncio.
+    if min_adtv > 0:
+        try:
+            _adtvs = _load_adtv()
+        except LiquidezDataError as exc:
+            _adtvs = {}
+            st.warning(
+                f"⚠️ Filtro de liquidez ({_adtv_label}) **não aplicado**: não foi "
+                f"possível consultar o volume negociado ({exc}). A seleção seguiu "
+                "sem esse piso — trate os nomes finais como não verificados quanto "
+                "à negociabilidade."
+            )
+        if _adtvs:
+            _n_antes_adtv = df_set["ticker"].nunique()
+            _cob_adtv, _tot_adtv, _ratio_adtv = _market_cap_coverage(
+                df_set["ticker"], _adtvs
+            )
+            if _tot_adtv and _ratio_adtv < _MIN_ADTV_COVERAGE:
+                st.warning(
+                    f"⚠️ Filtro de liquidez ({_adtv_label}) **não aplicado**: "
+                    f"cobertura de volume insuficiente ({_cob_adtv}/{_tot_adtv} = "
+                    f"{_ratio_adtv:.1%}). Atualize a ingestão de `volume` em "
+                    "`market.historical_prices`."
+                )
+            else:
+                _removidos_adtv = sorted(
+                    str(t) for t in df_set["ticker"].unique()
+                    if _adtvs.get(_ticker_key(t), 0.0) < min_adtv
+                )
+                df_set = df_set[
+                    df_set["ticker"].map(
+                        lambda t: _adtvs.get(_ticker_key(t), 0.0) >= min_adtv
+                    )
+                ].copy()
+                _n_rem_adtv = _n_antes_adtv - df_set["ticker"].nunique()
+                if _n_rem_adtv > 0:
+                    _amostra = ", ".join(_removidos_adtv[:12])
+                    _reticencias = "…" if len(_removidos_adtv) > 12 else ""
+                    st.caption(
+                        f"💧 Filtro de liquidez ({_adtv_label}): {_n_rem_adtv} "
+                        f"empresa(s) removida(s) por volume negociado abaixo do "
+                        f"piso ou sem série de volume — {_amostra}{_reticencias}"
+                    )
+
+    if df_set.empty:
+        st.error(
+            "Nenhuma empresa sobreviveu aos filtros de tamanho e liquidez. "
+            "Afrouxe os pisos acima."
+        )
+        return
 
     taxa_selic_aa = (
         float(np.mean(list(selic_macro.values()))) if selic_macro else 0.1075
@@ -1940,6 +2093,18 @@ def render(show_header: bool = True) -> None:
             m_selic_full = _margem_pct(res.get("val_est", 0.0), res.get("val_selic", 0.0))
             if m_selic_full < thr_selic:
                 return False
+            # Segundo portão: bater também o ingênuo 1/N (Pesos Iguais). O
+            # Livro do Sistema Quant (cap. 9) define a aprovação como DOIS
+            # exames — "se a estratégia não bate a renda fixa por uma margem,
+            # não vale o risco; se toda a inteligência não supera dividir
+            # igualmente, a inteligência é decorativa" — e só aprova quem passa
+            # nos dois. O modo econômico lia apenas o primeiro: o controle
+            # "Margem mín. vs Pesos Iguais" ficava INERTE na tela, dando ao
+            # usuário a impressão de um piso que nunca era testado. Usa a janela
+            # cheia para casar com o teste vs Selic acima (mesma janela).
+            if usar_ew_como_criterio and res.get("val_ew", 0.0) > 0:
+                if _margem_pct(res.get("val_est", 0.0), res.get("val_ew", 0.0)) < thr_ew:
+                    return False
             # Guarda-corpo estatístico: reprova só EVIDÊNCIA CONTRA — sinal
             # claramente anti-preditivo. NÃO exige prova positiva de significância.
             _ic = float(res.get("rank_ic_mean", float("nan")))
@@ -1989,12 +2154,16 @@ def render(show_header: bool = True) -> None:
              f"{len(aprovados)} aprovados")
     if criterio_modo == "economico":
         _modo_txt = (
-            "**Critério: Econômico (Brasil).** A aprovação é ECONÔMICA: a "
-            "estratégia precisa bater a Selic no histórico pela margem configurada "
-            "(robusto a amostra pequena, adequado a mercado instável). A estatística "
-            "vira **guarda-corpo** — só reprova sinal claramente anti-preditivo "
-            "(Rank-IC < −0,05); **não exige** prova de significância. As colunas "
-            "valor-p e Rank-IC ficam como **diagnóstico**."
+            "**Critério: Econômico (Brasil).** A aprovação é ECONÔMICA e medida "
+            "no **histórico cheio** — ou seja, **dentro da amostra** (*in-sample*): "
+            "a estratégia precisa bater a Selic pela margem configurada e, se o "
+            "piso vs Pesos Iguais estiver ligado, também o ingênuo 1/N. É robusto "
+            "a amostra pequena e adequado a mercado instável, mas **não é prova "
+            "fora da amostra**: parte da margem pode ser ajuste ao passado. A "
+            "estatística vira **guarda-corpo** — só reprova sinal claramente "
+            "anti-preditivo (Rank-IC < −0,05); **não exige** significância. "
+            "⚠️ Para medir quanto do resultado é ajuste ao passado, rode também "
+            "em **Sinal fundamental (Rank-IC)** e compare os aprovados."
         )
     elif usar_gate_sinal:
         _modo_txt = (
@@ -2033,10 +2202,25 @@ def render(show_header: bool = True) -> None:
     )
     st.caption(_modo_txt + _comum_txt + _resil_txt + _wf_txt)
 
+    # Descasamento decisão × exibição (corrigido): o modo econômico APROVA pela
+    # margem do histórico cheio (val_est vs val_selic), mas a tabela mostrava
+    # apenas a margem da janela de validação — números diferentes dos que
+    # decidiram, levando a ler "aprovado com 4%" quando o portão viu 22%. Agora
+    # as duas janelas aparecem e o sufixo marca qual delas decidiu.
+    _decide_full = criterio_modo == "economico"
+    _sfx_hist = " ← DECIDE" if _decide_full else " (diagnóstico)"
+    _sfx_val  = " (diagnóstico)" if _decide_full else " ← DECIDE"
+    _col_selic_hist = f"vs Selic · histórico{_sfx_hist} (%)"
+    _col_selic_val  = f"vs Selic · validação{_sfx_val} (%)"
+    _col_ew_hist    = f"vs Pesos Iguais · histórico{_sfx_hist} (%)"
+    _col_ew_val     = f"vs Pesos Iguais · validação{_sfx_val} (%)"
+
     rows_tbl: list[dict] = []
     for res in resultados:
         m_s  = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_selic_oos", 0.0))
         m_ew = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_ew_oos", 0.0))
+        m_s_full  = _margem_pct(res.get("val_est", 0.0), res.get("val_selic", 0.0))
+        m_ew_full = _margem_pct(res.get("val_est", 0.0), res.get("val_ew", 0.0))
         ult  = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
         rows_tbl.append({
             "Setor":     res["setor"],
@@ -2047,8 +2231,10 @@ def render(show_header: bool = True) -> None:
                 if _aprovado(res)
                 else "❌ Reprovado (risco/evidência)"
             ),
-            "vs Selic · validação (%)": round(m_s, 1),
-            "vs Pesos Iguais · validação (%)": round(m_ew, 1),
+            _col_selic_hist: round(m_s_full, 1),
+            _col_ew_hist: round(m_ew_full, 1),
+            _col_selic_val: round(m_s, 1),
+            _col_ew_val: round(m_ew, 1),
             "valor-p (validação)": round(float(res.get("p_value_oos", 1.0)), 4),
             "q-valor (falsos positivos)": round(float(res.get("q_value_oos", 1.0)), 4),
             "Meses de validação": int(res.get("n_months_oos", 0)),
