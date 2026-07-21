@@ -132,16 +132,15 @@ def render(show_header: bool = True) -> None:
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
     if show_header:
         st.markdown("## Seleção de FIIs — Lista de Diligência")
-        if validation.get("status") == "passed":
-            st.caption(
-                f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]} específica por tipo. "
-                "Backtest point-in-time aprovado; a publicação como Carteira Modelo ainda depende "
-                "dos gates de cobertura crítica e confiança dos fundos."
-            )
-        else:
-            st.caption(f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]} específica por tipo. "
-                       "Enquanto a validação point-in-time "
-                       "não for aprovada, a saída não é recomendação definitiva nem Carteira Modelo.")
+        # A frase sobre publicabilidade saiu daqui: era dita de novo, logo abaixo,
+        # no aviso colorido do gate. Sobra o que só existe nesta linha — a versão
+        # da metodologia e o status da validação point-in-time.
+        st.caption(
+            f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]}, específica por tipo · "
+            + ("validação point-in-time aprovada"
+               if validation.get("status") == "passed"
+               else "validação point-in-time pendente")
+        )
     st.markdown(_CSS, unsafe_allow_html=True)
 
     df = _mr.load_fiis()
@@ -178,11 +177,17 @@ def render(show_header: bool = True) -> None:
         "Score", ascending=False
     ).reset_index(drop=True)
     health_metrics = _fii_data_health_metrics(df, ranked, inputs, scored_v4, gate)
+    # O aviso do gate continua sempre visível e colorido — é um freio, não um
+    # detalhe. O que desceu para o expander foi o diagnóstico numérico que o
+    # acompanhava, e que ocupava quatro linhas em todas as abas.
     if gate.can_publish_recommendation:
-        st.success("Critérios de cobertura, confiança e validação atendidos.")
+        st.success("Cobertura, confiança e validação atendidas — "
+                   "apta à publicação como Carteira Modelo.")
     else:
-        st.warning(_publication_gate_message(health_metrics, gate))
-    _render_data_health_summary(df, ranked, inputs, scored_v4, gate)
+        st.warning("Rascunho de diligência: não é recomendação definitiva nem "
+                   "Carteira Modelo. Os números do bloqueio estão em "
+                   "“Qualidade dos dados”, logo abaixo.")
+    _render_data_health_summary(health_metrics, gate)
 
     # Abas por botão (permitem trocar de aba programaticamente — ex.: card → Busca).
     active = st.session_state.get("fii_active_tab", 0)
@@ -445,15 +450,32 @@ def _tab_evidence_review() -> None:
             st.error(f"Não foi possível registrar a revisão: {exc}")
 
 
-def _render_data_health_summary(
-    vitrine: pd.DataFrame,
-    ranked: pd.DataFrame,
-    inputs: pd.DataFrame,
-    scored: list[dict],
-    gate,
-) -> None:
-    """Mostra cobertura operacional separada da prontidão para recomendação."""
-    metrics = _fii_data_health_metrics(vitrine, ranked, inputs, scored, gate)
+def _render_data_health_summary(metrics: dict[str, float | int | str], gate) -> None:
+    """Cobertura operacional e prontidão para recomendação, recolhidas por padrão.
+
+    Auditoria não disputa espaço com a decisão: o rótulo do expander carrega os
+    três números que resumem o estado dos dados, de modo que o essencial é legível
+    sem abrir, e o detalhamento fica a um clique. A divergência de sincronização
+    permanece fora do expander — é alarme, não diagnóstico de rotina.
+    """
+    with st.expander(
+        f"Qualidade dos dados · prontidão {int(metrics['ready_count'])}/"
+        f"{int(metrics['scoreable_rows'])} · confiança mediana "
+        f"{float(metrics['median_confidence']):.0%} · campos essenciais "
+        f"{float(metrics['required_coverage']):.0%}"
+    ):
+        _render_data_health_detail(metrics, gate)
+    if metrics["vitrine_rows"] != metrics["snapshot_rows"]:
+        st.warning(
+            "Divergência de sincronização: a vitrine usada no ranking contém "
+            f"{metrics['vitrine_rows']} fundos, mas o snapshot metodológico contém "
+            f"{metrics['snapshot_rows']}. O ranking pode estar em cache ou em um build anterior. "
+            "Após o redeploy, atualize a página para reconciliar as fontes."
+        )
+
+
+def _render_data_health_detail(metrics: dict[str, float | int | str], gate) -> None:
+    st.caption(_publication_gate_message(metrics, gate))
     cards = st.columns(5)
     cards[0].markdown(
         _kpi_html("Snapshot consumido", f"{metrics['snapshot_rows']}/{metrics['snapshot_rows']}",
@@ -498,13 +520,6 @@ def _render_data_health_summary(
         f"Fonte: {metrics['snapshot_version']}.",
         accent="#00C896",
     ), unsafe_allow_html=True)
-    if metrics["vitrine_rows"] != metrics["snapshot_rows"]:
-        st.warning(
-            "Divergência de sincronização: a vitrine usada no ranking contém "
-            f"{metrics['vitrine_rows']} fundos, mas o snapshot metodológico contém "
-            f"{metrics['snapshot_rows']}. O ranking pode estar em cache ou em um build anterior. "
-            "Após o redeploy, atualize a página para reconciliar as fontes."
-        )
 
 
 def _scenario_cards_html(values: dict[str, float]) -> str:
