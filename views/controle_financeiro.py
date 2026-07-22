@@ -42,6 +42,9 @@ from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, barra_progresso
 
+# Chat "Analista Financeiro Pessoal" (aba Análises) — importado localmente na
+# função de render para não pesar no carregamento das demais abas/reruns.
+
 # ── Paleta ────────────────────────────────────────────────────────────────────
 _COR_RECEITA = "#00C896"
 _COR_DESPESA = "#FC5C7D"
@@ -791,6 +794,8 @@ def _fig_barras_categoria_anual(cats: list) -> go.Figure:
 def _tab_analises(
     d: dict, historico: list, hist_anual: dict,
     gastos_cartao: dict, investido_mes: float = 0.0,
+    evolucao: dict | None = None, ano_ref: int | None = None,
+    mes_ref: int | None = None,
 ) -> None:
     receitas = d["receitas"]
     despesas = d["despesas"]
@@ -985,6 +990,140 @@ def _tab_analises(
         st.dataframe(pd.DataFrame(rows_pat), use_container_width=True, hide_index=True)
     else:
         st.caption("Sem dados históricos disponíveis.")
+
+    # ── Analista Financeiro Pessoal (chat com IA) ─────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
+    _render_chat_financeiro(
+        d, historico, hist_anual, gastos_cartao, investido_mes,
+        evolucao or {}, ano_ref or _date.today().year, mes_ref or _date.today().month,
+    )
+
+
+def _render_chat_financeiro(
+    d: dict, historico: list, hist_anual: dict, gastos_cartao: dict,
+    investido_mes: float, evolucao: dict, ano_ref: int, mes_ref: int,
+) -> None:
+    """
+    Chat "Analista Financeiro Pessoal": conversa em linguagem natural sobre os
+    dados REAIS do usuário (mesmas funções filtradas por OWNER_USER_ID). Mantém
+    o histórico da sessão e pode gerar gráficos a partir das séries reais.
+    """
+    from core.llm_b3 import llm_disponivel, provedores_disponiveis
+    from core.llm_financeiro import chat_com_financas, parse_chart_directives
+    from core.llm_context_financeiro import build_financas_chat_context
+    from core.financeiro_chat_charts import (
+        render_financas_charts, infer_financas_chart_directives,
+    )
+
+    _secao_titulo("🤖", "Analista Financeiro Pessoal (IA)")
+    st.markdown(
+        '<p style="color:#718096;font-size:0.82rem;margin-top:2px;margin-bottom:12px;">'
+        'Converse em linguagem natural sobre suas receitas, despesas, investimentos, '
+        'saldo e fluxo de caixa. A IA usa <b style="color:#E2E8F0">apenas os seus dados</b> '
+        '(mês selecionado, histórico mensal e anual, categorias e cartão), mostra os '
+        'cálculos e sinaliza quando algo é estimativa ou projeção.</p>',
+        unsafe_allow_html=True,
+    )
+
+    if not llm_disponivel():
+        st.info(
+            "IA indisponível: nenhum provedor LLM configurado. Defina `OPENAI_API_KEY` "
+            "e/ou `GEMINI_API_KEY` no `.env` local ou em Streamlit Secrets."
+        )
+        return
+
+    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    st.caption("Provedor(es): " + ", ".join(
+        provider_labels.get(p, p) for p in provedores_disponiveis()))
+
+    # Reinicia o histórico quando o mês selecionado muda (o contexto muda junto).
+    _ctx_sig = f"{ano_ref}-{mes_ref}-{d.get('data_source')}"
+    if st.session_state.get("cf_chat_ctx_sig") not in (None, _ctx_sig):
+        st.session_state.pop("cf_chat_history", None)
+    st.session_state["cf_chat_ctx_sig"] = _ctx_sig
+
+    # Sugestões de perguntas iniciais
+    suggestions = [
+        "Quais categorias mais comprometem minha renda?",
+        "Onde posso reduzir gastos sem afetar despesas essenciais?",
+        "Quanto posso investir mensalmente mantendo o orçamento equilibrado?",
+        "Projete meu saldo para os próximos seis meses.",
+        "Compare meus gastos dos últimos três meses.",
+        "Simule o impacto de uma redução de 15% nas despesas não essenciais.",
+    ]
+    suggested_input = None
+    _sug_cols = st.columns(3)
+    for i, q in enumerate(suggestions):
+        with _sug_cols[i % 3]:
+            if st.button(q, key=f"cf_chat_sug_{i}", use_container_width=True):
+                suggested_input = q
+
+    _, _clr = st.columns([5, 1])
+    with _clr:
+        if st.button("🗑️ Limpar", key="cf_chat_clear", use_container_width=True):
+            st.session_state.pop("cf_chat_history", None)
+            st.rerun()
+
+    history: list[dict] = st.session_state.get("cf_chat_history", [])
+    for msg in history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            for direc in msg.get("_charts", []) or []:
+                try:
+                    render_financas_charts([direc], msg.get("_chart_meta", {}))
+                except Exception:
+                    pass
+
+    user_input = suggested_input or st.chat_input(
+        "Pergunte sobre suas finanças…", key="cf_chat_input")
+    if not user_input:
+        return
+
+    history.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    with st.chat_message("assistant"):
+        chart_directives: list[dict] = []
+        chart_meta: dict = {}
+        with st.spinner("Analisando seus dados financeiros…"):
+            try:
+                cats_anual = get_gastos_categoria_anual(ano_ref)
+                context, chart_meta = build_financas_chat_context(
+                    user_question=user_input,
+                    dados_mes=d,
+                    historico=historico,
+                    hist_anual=hist_anual,
+                    gastos_categoria_anual=cats_anual,
+                    gastos_cartao=gastos_cartao,
+                    evolucao=evolucao,
+                    investido_mes=investido_mes,
+                    ano_ref=ano_ref,
+                    mes_ref=mes_ref,
+                )
+                resposta_raw = chat_com_financas(context, history[:-1], user_input)
+                resposta, chart_directives = parse_chart_directives(resposta_raw)
+                if not chart_directives:
+                    chart_directives = infer_financas_chart_directives(user_input, chart_meta)
+            except Exception as exc:
+                resposta = f"Não foi possível consultar a IA agora: {exc}"
+        st.markdown(resposta)
+        desenhados = 0
+        if chart_directives:
+            try:
+                desenhados = render_financas_charts(chart_directives, chart_meta)
+            except Exception as exc:
+                st.caption(f"⚠️ Não foi possível gerar os gráficos: {exc}")
+        st.caption("Análise educacional baseada nos seus dados; não é recomendação "
+                   "de investimento nem garantia de resultado.")
+
+    msg_assistant = {"role": "assistant", "content": resposta}
+    if desenhados and chart_directives:
+        msg_assistant["_charts"] = chart_directives[:2]
+        msg_assistant["_chart_meta"] = chart_meta
+    history.append(msg_assistant)
+    st.session_state["cf_chat_history"] = history
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2456,7 +2595,8 @@ def render() -> None:
     ) or _SECOES[0]
 
     if secao == _SECOES[1]:
-        _tab_analises(d, historico, hist_anual, gastos_cartao, investido_mes)
+        _tab_analises(d, historico, hist_anual, gastos_cartao, investido_mes,
+                      evolucao, sel["ano"], sel["mes"])
     elif secao == _SECOES[2]:
         _tab_tabelas(d)
     elif secao == _SECOES[3]:
