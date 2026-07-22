@@ -80,6 +80,49 @@ _CSS = """
     display: none;
 }
 
+/* Subnavegação persistente do Controle Financeiro.
+   Mantém o estado do segmented_control, mas replica o visual de st.tabs
+   usado em Investimentos: fundo transparente, divisor e aba ativa sublinhada. */
+.st-key-cf_secao_ativa,
+.st-key-cf_secao_ativa [data-testid="stButtonGroup"] {
+    width: 100%;
+}
+.st-key-cf_secao_ativa [data-baseweb="button-group"] {
+    display: flex;
+    justify-content: flex-start;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    gap: 0;
+    border-bottom: 1px solid #2D3748;
+}
+.st-key-cf_secao_ativa [data-baseweb="button-group"] > button {
+    flex: 0 0 auto;
+    min-height: 2.5rem;
+    margin: 0 1.25rem 0 0 !important;
+    padding: 0.5rem 0.2rem 0.65rem !important;
+    background: transparent !important;
+    border: 0 !important;
+    border-bottom: 3px solid transparent !important;
+    border-radius: 0 !important;
+    color: #E2E8F0 !important;
+    box-shadow: none !important;
+    font-weight: 500 !important;
+    white-space: nowrap;
+}
+.st-key-cf_secao_ativa [data-baseweb="button-group"] > button:hover {
+    color: #00C896 !important;
+}
+.st-key-cf_secao_ativa [data-baseweb="button-group"] > [data-testid="stBaseButton-segmented_controlActive"] {
+    color: #00C896 !important;
+    border-bottom-color: #00C896 !important;
+}
+.st-key-cf_secao_ativa [data-baseweb="button-group"] > button:focus-visible {
+    outline: 2px solid #4A9EFF !important;
+    outline-offset: -2px;
+}
+
 /* ═══════════════════════════════════════════════
    CARDS DE MÉTRICAS (st.metric)
 ═══════════════════════════════════════════════ */
