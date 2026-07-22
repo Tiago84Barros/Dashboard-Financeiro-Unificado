@@ -64,17 +64,18 @@ def run_audit(engine, limit: int = 100000) -> dict:
     """Roda checks agregados, preservando taxas e um identificador de execução."""
     if engine is None:
         return {"ran": False, "reason": "engine indisponível"}
-    run_key = datetime.now(timezone.utc).strftime("quality-v3-%Y%m%dT%H%M%SZ")
+    run_key = datetime.now(timezone.utc).strftime("quality-v4-%Y%m%dT%H%M%SZ")
     checks: list[dict] = []
 
     def add(name: str, table: str, total: int, failed: int, skipped: int = 0,
-            severity: str = "warn", threshold: float = 0.0):
+            severity: str = "warn", threshold: float = 0.0, gate: bool = True):
         checked = max(0, int(total) - int(skipped))
         rate = (failed / checked) if checked else 0.0
         checks.append({"name": name, "table": table, "total": int(total),
                        "checked": checked, "failed": int(failed),
                        "skipped": int(skipped), "failure_rate": rate,
-                       "passed": rate <= threshold, "severity": severity})
+                       "passed": (rate <= threshold) if gate else None,
+                       "severity": severity, "gate": gate})
 
     with engine.begin() as conn:
         b = conn.execute(text("""
@@ -85,7 +86,21 @@ def run_audit(engine, limit: int = 100000) -> dict:
               GREATEST(ABS(total_assets),ABS(total_liabilities+total_equity),1) > .02) failed
           FROM (SELECT * FROM market_us.balance_sheets ORDER BY reference_date DESC LIMIT :l) x
         """), {"l": limit}).one()
-        add("balance_identity", "balance_sheets", b[0], b[2], b[1], threshold=0.02)
+        add("balance_identity_source", "balance_sheets", b[0], b[2], b[1],
+            severity="info", gate=False)
+
+        bu = conn.execute(text("""
+          SELECT COUNT(*) total,
+            COUNT(*) FILTER (WHERE total_assets IS NULL OR total_liabilities IS NULL OR total_equity IS NULL) skipped,
+            COUNT(*) FILTER (WHERE total_assets IS NOT NULL AND total_liabilities IS NOT NULL
+              AND total_equity IS NOT NULL AND ABS(total_assets-(total_liabilities+total_equity)) /
+              GREATEST(ABS(total_assets),ABS(total_liabilities+total_equity),1) > .02) failed
+          FROM (SELECT * FROM market_us.balance_sheets
+                WHERE quality_status IN ('raw','validated')
+                ORDER BY reference_date DESC LIMIT :l) x
+        """), {"l": limit}).one()
+        add("balance_identity_usable", "balance_sheets", bu[0], bu[2], bu[1],
+            severity="critical", threshold=0.0)
 
         c = conn.execute(text("""
           SELECT COUNT(*) total,
@@ -97,7 +112,7 @@ def run_audit(engine, limit: int = 100000) -> dict:
         """), {"l": limit}).one()
         add("fcf_coherence", "cash_flow_statements", c[0], c[2], c[1], threshold=0.01)
 
-        d = conn.execute(text("""
+        d_source = conn.execute(text("""
           SELECT COUNT(*), COUNT(*) FILTER (WHERE available_at IS NULL OR content_hash IS NULL),
             COUNT(*) FILTER (WHERE reference_date>CURRENT_DATE OR available_at<reference_date)
           FROM (
@@ -106,7 +121,22 @@ def run_audit(engine, limit: int = 100000) -> dict:
             UNION ALL SELECT reference_date,available_at,content_hash FROM market_us.cash_flow_statements
           ) x
         """)).one()
-        add("pit_dates_and_hash", "financial_statements", d[0], d[2], d[1],
+        add("pit_quarantine_source", "financial_statements", d_source[0], d_source[2],
+            d_source[1], severity="info", gate=False)
+
+        d = conn.execute(text("""
+          SELECT COUNT(*), COUNT(*) FILTER (WHERE available_at IS NULL OR content_hash IS NULL),
+            COUNT(*) FILTER (WHERE reference_date>CURRENT_DATE OR available_at<reference_date)
+          FROM (
+            SELECT reference_date,available_at,content_hash FROM market_us.income_statements
+              WHERE quality_status IN ('raw','validated')
+            UNION ALL SELECT reference_date,available_at,content_hash FROM market_us.balance_sheets
+              WHERE quality_status IN ('raw','validated')
+            UNION ALL SELECT reference_date,available_at,content_hash FROM market_us.cash_flow_statements
+              WHERE quality_status IN ('raw','validated')
+          ) x
+        """)).one()
+        add("pit_dates_and_hash_usable", "financial_statements", d[0], d[2], d[1],
             severity="critical", threshold=0.0)
 
         p = conn.execute(text("""
@@ -145,7 +175,8 @@ def run_audit(engine, limit: int = 100000) -> dict:
                     "detail": json.dumps({k: v for k, v in item.items()
                                           if k not in {"name", "table", "severity", "passed"}})})
     return {"ran": True, "run_key": run_key, "checks": checks,
-            "passed": sum(int(x["passed"]) for x in checks), "total": len(checks)}
+            "passed": sum(int(bool(x["passed"])) for x in checks if x["gate"]),
+            "total": sum(int(x["gate"]) for x in checks)}
 
 
 def _f(v):

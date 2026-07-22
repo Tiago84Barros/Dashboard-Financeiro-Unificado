@@ -8,7 +8,7 @@ sejam versionados de forma point-in-time em market_us.score_vintages.
 US_SCHEMA_VERSION = 1
 
 # Score fundamentalista (Qualidade/Crescimento/Solidez/Eficiência/Valuation/Retorno).
-US_FUNDAMENTAL_SCORE_VERSION = "0.3.0"
+US_FUNDAMENTAL_SCORE_VERSION = "0.4.0"
 
 # Score de assimetria da aba "Empresas Fora da Curva".
 US_ASYMMETRY_SCORE_VERSION = "0.1.0"

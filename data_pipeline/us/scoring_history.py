@@ -98,6 +98,7 @@ def derive_prices_monthly(engine) -> dict:
                    AS total_return,
                'derived'
         FROM last_of_month
+        WHERE adjusted_close > 0
         ON CONFLICT (symbol, month_end) DO UPDATE SET
             close = EXCLUDED.close, adjusted_close = EXCLUDED.adjusted_close,
             volume = EXCLUDED.volume, total_return = EXCLUDED.total_return
@@ -139,6 +140,7 @@ def compute_score_history(engine, as_of_dates: Iterable[date], *,
             "MAX(c.industry) AS industry, MIN(a.first_trade_date) AS first_trade_date, "
             "MAX(a.delisted_date) AS delisted_date FROM market_us.companies c "
             "JOIN market_us.assets a ON a.company_id=c.id "
+            "AND a.analysis_status='eligible' "
             "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
             "  WHERE i.company_id=c.id AND i.period='annual') "
             "GROUP BY c.id ORDER BY c.id")
@@ -209,6 +211,14 @@ def compute_score_history(engine, as_of_dates: Iterable[date], *,
                 "ON CONFLICT (company_id, score_version, as_of_date, track) "
                 "DO UPDATE SET score=EXCLUDED.score, coverage=EXCLUDED.coverage, "
                 "score_confidence=EXCLUDED.score_confidence, factors_json=EXCLUDED.factors_json"), payload)
+            if limit_companies is None:
+                prune = text(
+                    "DELETE FROM market_us.score_vintages "
+                    "WHERE score_version=:ver AND as_of_date=:asof "
+                    "AND track='fundamental' AND company_id NOT IN :keep"
+                ).bindparams(bindparam("keep", expanding=True))
+                conn.execute(prune, {"ver": score_version, "asof": as_of,
+                                     "keep": [int(x["cid"]) for x in payload]})
             written += len(payload)
     return {"ok": True, "written": written, "dates": len(as_of_dates)}
 

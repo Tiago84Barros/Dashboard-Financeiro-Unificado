@@ -33,7 +33,7 @@ _USD_PER_SHARE = "USD/shares"
 # Duração aceita como "anual" (10-K com exercícios de ~12 meses).
 _ANNUAL_MIN_DAYS, _ANNUAL_MAX_DAYS = 350, 380
 _QUARTERLY_MIN_DAYS, _QUARTERLY_MAX_DAYS = 70, 110
-PARSER_VERSION = "companyfacts-parser-v3"
+PARSER_VERSION = "companyfacts-parser-v4"
 
 # ── Mapas de conceitos (ordem = prioridade) ───────────────────────────────────
 INCOME_CONCEPTS: dict[str, list[str]] = {
@@ -70,8 +70,8 @@ BALANCE_CONCEPTS: dict[str, list[str]] = {
     "long_term_debt": ["LongTermDebtNoncurrent", "LongTermDebt"],
     "current_liabilities": ["LiabilitiesCurrent"],
     "total_liabilities": ["Liabilities"],
-    "total_equity": ["StockholdersEquity",
-                     "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+    "total_equity": ["StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+                     "StockholdersEquity"],
     "retained_earnings": ["RetainedEarningsAccumulatedDeficit"],
 }
 BALANCE_SHARE_CONCEPTS = {
@@ -124,6 +124,12 @@ def _is_quarterly_duration(start: Optional[str], end: str) -> bool:
     return _QUARTERLY_MIN_DAYS <= (d1 - d0).days <= _QUARTERLY_MAX_DAYS
 
 
+def _valid_filing_timing(end: Any, filed: Any) -> bool:
+    """Rejeita fatos cujo período termina depois da própria divulgação."""
+    period_end, filing_date = parse_date(end), parse_date(filed)
+    return bool(period_end and filing_date and filing_date >= period_end)
+
+
 def _entries(cf: dict, tag: str, unit: str) -> list[dict]:
     facts = (cf or {}).get("facts", {})
     for taxonomy in ("us-gaap", "ifrs-full", "dei"):
@@ -145,7 +151,7 @@ def _annual_points(entries: list[dict]) -> dict[str, dict]:
         if not str(e.get("form") or "").startswith("10-K"):
             continue
         end, filed = e.get("end"), e.get("filed")
-        if not end or not filed:
+        if not end or not filed or not _valid_filing_timing(end, filed):
             continue
         if not _is_annual_duration(e.get("start"), end):
             continue
@@ -169,7 +175,7 @@ def _quarterly_points(entries: list[dict], *, instant: bool = False) -> dict[tup
         if fp not in {"Q1", "Q2", "Q3", "Q4"}:
             continue
         end, filed = e.get("end"), e.get("filed")
-        if not end or not filed:
+        if not end or not filed or not _valid_filing_timing(end, filed):
             continue
         # Balanços são fatos instantâneos e normalmente não têm `start`.
         # Fluxos/resultados precisam ter duração de um trimestre isolado.
