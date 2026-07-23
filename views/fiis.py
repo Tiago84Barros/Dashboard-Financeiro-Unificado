@@ -649,8 +649,9 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    user_input = suggested_input or st.chat_input(
+    typed_input = st.chat_input(
         "Pergunte sobre os FIIs ou sobre a carteira…", key="fii_chat_input")
+    user_input = suggested_input or typed_input
     if not user_input:
         return
 
