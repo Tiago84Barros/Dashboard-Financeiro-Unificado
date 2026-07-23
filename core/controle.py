@@ -289,6 +289,24 @@ _SQL_UPDATE_TX = """
       AND  user_id  = CAST(:uid AS uuid)
 """
 
+# Edição de lançamentos da fatura de cartão (aba Cartão de Crédito). Atualiza os
+# campos armazenados que o usuário vê/edita na tabela detalhada. NÃO altera `type`
+# nem `source` (preserva a natureza CSV do lançamento e a lógica de fluxo futuro).
+_SQL_UPDATE_TX_CARTAO = """
+    UPDATE transactions
+    SET    description         = :description,
+           category_id         = CAST(:category_id AS uuid),
+           account_id          = CAST(:account_id AS uuid),
+           amount              = :amount,
+           due_date            = :due_date,
+           payment_date        = :payment_date,
+           installment_current = :installment_current,
+           installment_total   = :installment_total,
+           status              = :status
+    WHERE  id       = CAST(:tx_id AS uuid)
+      AND  user_id  = CAST(:uid AS uuid)
+"""
+
 _SQL_HISTORICO_ANUAL = f"""
     SELECT
         EXTRACT(YEAR FROM t.due_date)::int AS ano,
@@ -1190,6 +1208,70 @@ def atualizar_transacao(
 
     except Exception as exc:
         logger.error("[controle] Falha ao atualizar transação: %s", exc)
+        return False, str(exc)
+
+
+def atualizar_transacao_cartao(
+    tx_id: str,
+    descricao: str,
+    valor: float,
+    data_vencimento: _date,
+    data_compra: Optional[_date],
+    categoria_id: Optional[str],
+    conta_id: str,
+    installment_current: int,
+    installment_total: int,
+    status: str,
+) -> tuple[bool, str]:
+    """
+    Atualiza os campos editáveis de um lançamento da fatura de cartão de crédito
+    (aba Cartão de Crédito → tabela detalhada). Filtra por OWNER_USER_ID.
+
+    `valor` é o amount ASSINADO já resolvido pela view (mantém o sinal original).
+    Preserva type, source e installment_group.
+    """
+    if settings.MOCK_MODE:
+        return False, "Modo mock ativo — UPDATE não executado."
+
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            return False, "Banco não configurado."
+
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            return False, "OWNER_USER_ID não configurado."
+
+        inst_total = max(1, int(installment_total or 1))
+        inst_current = min(max(1, int(installment_current or 1)), inst_total)
+        status_norm = (str(status or "settled").strip() or "settled")
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(_SQL_UPDATE_TX_CARTAO),
+                {
+                    "tx_id":               tx_id,
+                    "uid":                 owner,
+                    "description":         str(descricao or "").strip(),
+                    "category_id":         categoria_id,
+                    "account_id":          conta_id,
+                    "amount":              float(valor),
+                    "due_date":            data_vencimento,
+                    "payment_date":        data_compra,
+                    "installment_current": inst_current,
+                    "installment_total":   inst_total,
+                    "status":              status_norm,
+                },
+            )
+
+        _clear_controle_caches()
+        return True, ""
+
+    except Exception as exc:
+        logger.error("[controle] Falha ao atualizar transação de cartão: %s", exc)
         return False, str(exc)
 
 
