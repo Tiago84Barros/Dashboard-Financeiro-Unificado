@@ -1728,7 +1728,7 @@ _SUBSCRIPTION_BRANDS = [
     ("CHATGPT", "OpenAI"), ("OPENAI", "OpenAI"),
     ("IFOOD", "iFood Club"), ("LIVELO", "Clube Livelo"), ("SMILES", "Smiles"),
     ("WELLHUB", "Wellhub"), ("GYMPASS", "Wellhub"),
-    ("SUPABASE", "Supabase"), ("BRAPI", "Brapi"),
+    ("SUPABASE", "Supabase"), ("BRAPI", "Brapi"), ("JUSBRASIL", "JusBrasil"),
     ("GOOGLE", "Google"), ("SPOTIFY", "Spotify"), ("NETFLIX", "Netflix"),
     ("DISNEY", "Disney+"), ("AMAZON PRIME", "Amazon Prime"), ("PRIME VIDEO", "Prime Video"),
     ("YOUTUBE", "YouTube Premium"), ("NIO FIBRA", "Nio Fibra"), ("MICROSOFT", "Microsoft"),

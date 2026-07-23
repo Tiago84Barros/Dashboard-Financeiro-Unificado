@@ -74,6 +74,7 @@ MERCHANT_RULES = [
     ("LIVELO", "Assinaturas & Serviços digitais"),
     ("SMILES", "Assinaturas & Serviços digitais"),
     ("IFOOD CLUB", "Assinaturas & Serviços digitais"),
+    ("JUSBRASIL", "Assinaturas & Serviços digitais"),
     ("GOOGLE", "Assinaturas & Serviços digitais"),
     ("IFOOD", "Alimentação"),
     ("TUCUPI", "Alimentação"),
@@ -97,6 +98,9 @@ MERCHANT_RULES = [
     ("CENTRO DE TR", "Educação & Profissional"),
     ("PLANET PARK", "Lazer & Entretenimento"),
     ("ANANIN PARK", "Lazer & Entretenimento"),
+    ("CINESYSTEM", "Lazer & Entretenimento"),
+    ("CINEMARK", "Lazer & Entretenimento"),
+    ("KINOPLEX", "Lazer & Entretenimento"),
 ]
 
 # ── Fallback pela categoria da operadora (MCC) -> categoria-alvo ──────────────
