@@ -38,6 +38,10 @@ def get_engine():
         connect_args: dict = {"connect_timeout": 10}
         if not is_local:
             connect_args["sslmode"] = "require"
+            # Contorno operacional opcional para falha DNS do pooler. O host
+            # lógico continua na URL; somente a resolução TCP usa o IP fornecido.
+            if os.getenv("SUPABASE_DB_HOSTADDR"):
+                connect_args["hostaddr"] = os.environ["SUPABASE_DB_HOSTADDR"]
         # Streamlit pode manter vários processos/sessões simultâneos. Um pool pequeno,
         # LIFO e reciclável evita esgotar o Supavisor sem sacrificar concorrência curta.
         kwargs.update({"pool_size": 1, "max_overflow": 2, "pool_timeout": 10,

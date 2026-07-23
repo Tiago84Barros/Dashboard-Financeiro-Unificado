@@ -7,10 +7,42 @@ brutos; nenhuma delas apaga observações históricas.
 from __future__ import annotations
 
 from datetime import date
+import re
 
 from sqlalchemy import text
 
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
+
+
+_NON_OPERATING_SECTORS = {"blank checks"}
+_EXPLICIT_NON_COMMON = re.compile(r"(?:-P[A-Z0-9]?|-WT|-WS|-UN)$")
+_NASDAQ_ISSUE_SUFFIX = re.compile(r"^[A-Z]{4,}[WRU]$")
+
+
+def instrument_exclusion_reason(symbol: str | None, security_type: str | None,
+                                sector: str | None,
+                                related_symbols: tuple[str, ...] = ()) -> str | None:
+    """Retorna motivo auditável quando o ativo não é ação operacional ordinária."""
+    sym = str(symbol or "").upper().strip()
+    sec = str(security_type or "common").lower().strip()
+    sector_norm = str(sector or "").lower().strip()
+    if sec in {"etf", "fund", "spac", "preferred", "warrant", "right", "unit"}:
+        return "instrumento sem ação operacional ordinária"
+    if sector_norm in _NON_OPERATING_SECTORS:
+        return "companhia de cheque em branco (SPAC)"
+    if _EXPLICIT_NON_COMMON.search(sym):
+        return "preferencial, warrant ou unit"
+    if _NASDAQ_ISSUE_SUFFIX.fullmatch(sym):
+        return "sufixo Nasdaq de warrant, right ou unit"
+    base = sym[:-1] if sym.endswith(("W", "R", "U")) else ""
+    if base and any(
+            str(other).upper() != sym
+            and len(str(other).upper()) == len(sym)
+            and str(other).upper()[:-1] == base
+            and str(other).upper()[-1] in "WRU"
+            for other in related_symbols):
+        return "classe acessória de companhia sem ação ordinária identificada"
+    return None
 
 
 def classify_assets(engine) -> dict:
@@ -31,39 +63,43 @@ def classify_assets(engine) -> dict:
         FROM statement_map sm
         WHERE a.company_id IS NULL AND a.symbol = sm.symbol
     """
-    sql_status = """
-        UPDATE market_us.assets a SET
-            analysis_status = CASE
-                WHEN lower(COALESCE(a.security_type, 'common')) IN ('etf','fund','spac')
-                    THEN 'excluded'
-                WHEN a.company_id IS NULL THEN 'unresolved'
-                WHEN EXISTS (SELECT 1 FROM market_us.income_statements i
-                             WHERE i.company_id=a.company_id)
-                 AND EXISTS (SELECT 1 FROM market_us.balance_sheets b
-                             WHERE b.company_id=a.company_id)
-                 AND EXISTS (SELECT 1 FROM market_us.cash_flow_statements c
-                             WHERE c.company_id=a.company_id)
-                    THEN 'eligible'
-                ELSE 'pending'
-            END,
-            status_reason = CASE
-                WHEN lower(COALESCE(a.security_type, 'common')) IN ('etf','fund','spac')
-                    THEN 'instrumento sem empresa operacional'
-                WHEN a.company_id IS NULL THEN 'sem vínculo CIK/demonstrações'
-                WHEN EXISTS (SELECT 1 FROM market_us.income_statements i
-                             WHERE i.company_id=a.company_id)
-                 AND EXISTS (SELECT 1 FROM market_us.balance_sheets b
-                             WHERE b.company_id=a.company_id)
-                 AND EXISTS (SELECT 1 FROM market_us.cash_flow_statements c
-                             WHERE c.company_id=a.company_id)
-                    THEN NULL
-                ELSE 'demonstrações incompletas'
-            END,
-            classified_at = NOW()
-    """
     with engine.begin() as conn:
         matched = conn.execute(text(sql_match)).rowcount
-        conn.execute(text(sql_status))
+        assets = conn.execute(text("""
+            SELECT a.id,a.company_id,a.symbol,a.security_type,c.sector,
+              EXISTS (SELECT 1 FROM market_us.income_statements i
+                      WHERE i.company_id=a.company_id) has_income,
+              EXISTS (SELECT 1 FROM market_us.balance_sheets b
+                      WHERE b.company_id=a.company_id) has_balance,
+              EXISTS (SELECT 1 FROM market_us.cash_flow_statements f
+                      WHERE f.company_id=a.company_id) has_cashflow
+            FROM market_us.assets a
+            LEFT JOIN market_us.companies c ON c.id=a.company_id
+        """)).mappings().all()
+        symbols_by_company: dict[int, tuple[str, ...]] = {}
+        for row in assets:
+            if row["company_id"] is not None:
+                cid = int(row["company_id"])
+                symbols_by_company[cid] = (*symbols_by_company.get(cid, ()), row["symbol"])
+        updates = []
+        for row in assets:
+            cid = int(row["company_id"]) if row["company_id"] is not None else None
+            reason = instrument_exclusion_reason(
+                row["symbol"], row["security_type"], row["sector"],
+                symbols_by_company.get(cid, ()))
+            if reason:
+                status = "excluded"
+            elif cid is None:
+                status, reason = "unresolved", "sem vínculo CIK/demonstrações"
+            elif row["has_income"] and row["has_balance"] and row["has_cashflow"]:
+                status, reason = "eligible", None
+            else:
+                status, reason = "pending", "demonstrações incompletas"
+            updates.append({"id": int(row["id"]), "status": status, "reason": reason})
+        conn.execute(text("""
+            UPDATE market_us.assets SET analysis_status=:status,
+              status_reason=:reason,classified_at=NOW() WHERE id=:id
+        """), updates)
         rows = conn.execute(text(
             "SELECT analysis_status, COUNT(*) FROM market_us.assets GROUP BY 1"
         )).fetchall()
@@ -117,14 +153,14 @@ def promote_lineage_and_quality(engine) -> dict:
 
         conn.execute(text("""
             UPDATE market_us.income_statements SET quality_status = CASE
-              WHEN reference_date > CURRENT_DATE OR available_at < reference_date THEN 'flagged'
+              WHEN reference_date > CURRENT_DATE OR available_at < reference_date THEN 'rejected'
               WHEN available_at IS NOT NULL AND content_hash IS NOT NULL
                    AND (revenue IS NOT NULL OR net_income IS NOT NULL) THEN 'validated'
               ELSE 'raw' END
         """))
         conn.execute(text("""
             UPDATE market_us.balance_sheets SET quality_status = CASE
-              WHEN reference_date > CURRENT_DATE OR available_at < reference_date THEN 'flagged'
+              WHEN reference_date > CURRENT_DATE OR available_at < reference_date THEN 'rejected'
               WHEN total_assets IS NOT NULL AND total_liabilities IS NOT NULL
                    AND total_equity IS NOT NULL
                    AND ABS(total_assets-(total_liabilities+total_equity)) /
@@ -136,7 +172,7 @@ def promote_lineage_and_quality(engine) -> dict:
         """))
         conn.execute(text("""
             UPDATE market_us.cash_flow_statements SET quality_status = CASE
-              WHEN reference_date > CURRENT_DATE OR available_at < reference_date THEN 'flagged'
+              WHEN reference_date > CURRENT_DATE OR available_at < reference_date THEN 'rejected'
               WHEN operating_cash_flow IS NOT NULL AND capex IS NOT NULL
                    AND free_cash_flow IS NOT NULL
                    AND ABS((operating_cash_flow+capex)-free_cash_flow) /

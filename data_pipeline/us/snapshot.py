@@ -187,7 +187,8 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
         ident_rows = conn.execute(text(
             "SELECT a.symbol, c.cik, c.name, c.sector, c.industry, a.exchange, "
             "a.security_type, c.is_reit, c.is_active "
-            "FROM market_us.assets a JOIN market_us.companies c ON c.id=a.company_id"
+            "FROM market_us.assets a JOIN market_us.companies c ON c.id=a.company_id "
+            "WHERE a.analysis_status='eligible'"
         )).fetchall()
         generated_at = conn.execute(text("SELECT NOW()")).scalar()
     identity_by = {r[0]: {"symbol": r[0], "cik": r[1], "name": r[2], "sector": r[3],

@@ -34,12 +34,30 @@ SOURCE = (
 
 
 def _engine(url: str):
+    from sqlalchemy.pool import NullPool
+
     parsed = make_url(url)
     if parsed.drivername in {"postgresql", "postgres"}:
         parsed = parsed.set(drivername="postgresql+psycopg2")
-    if parsed.host and parsed.host not in {"localhost", "127.0.0.1", "::1"}:
+    is_remote = bool(parsed.host and parsed.host not in {"localhost", "127.0.0.1", "::1"})
+    connect_args: dict[str, Any] = {"connect_timeout": 15}
+    if is_remote:
         parsed = parsed.update_query_dict({"sslmode": "require"})
-    return create_engine(parsed, pool_pre_ping=True, future=True)
+        connect_args.update(
+            options="-c statement_timeout=120000",
+            keepalives=1,
+            keepalives_idle=10,
+            keepalives_interval=5,
+            keepalives_count=3,
+        )
+        if os.getenv("SUPABASE_DB_HOSTADDR"):
+            connect_args["hostaddr"] = os.environ["SUPABASE_DB_HOSTADDR"]
+    kwargs: dict[str, Any] = {"future": True, "connect_args": connect_args}
+    if is_remote:
+        kwargs["poolclass"] = NullPool
+    else:
+        kwargs["pool_pre_ping"] = True
+    return create_engine(parsed, **kwargs)
 
 
 def _jsonable(value: Any) -> Any:
@@ -86,11 +104,28 @@ def _coverage(payload: dict) -> dict[str, Any]:
     }
 
 
+def _schema_ready(engine) -> bool:
+    required = {
+        "ticker", "payload_json", "as_of_date", "available_at", "knowledge_at",
+        "reference_date", "vintage", "source", "quality_status",
+        "schema_version", "generated_at", "payload_sha256", "coverage_json",
+    }
+    with engine.connect() as conn:
+        columns = set(conn.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema='market' AND table_name='fii_selection_inputs'
+        """)).scalars())
+    return required.issubset(columns)
+
+
 def _ensure_schema(engine) -> None:
+    if _schema_ready(engine):
+        return
     sql = (ROOT / "supabase_unificado" / "schema" / "039_fii_selection_inputs_snapshot.sql").read_text(
         encoding="utf-8"
     )
     with engine.begin() as conn:
+        conn.execute(text("SET LOCAL statement_timeout = '120s'"))
         conn.exec_driver_sql(sql)
 
 
@@ -225,6 +260,7 @@ def publish(source_url: str, target_url: str, dry_run: bool = False) -> dict[str
                 :payload_sha256, CAST(:coverage_json AS jsonb))
     """
     with target.begin() as conn:
+        conn.execute(text("SET LOCAL statement_timeout = '120s'"))
         conn.exec_driver_sql(stage_sql)
         conn.execute(text(insert_sql), rows)
         conn.execute(text("TRUNCATE market.fii_selection_inputs"))

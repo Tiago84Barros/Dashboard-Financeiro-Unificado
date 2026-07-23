@@ -1,6 +1,7 @@
 """Testes do construtor de upsert e dos checks de qualidade (puros, sem DB)."""
 import data_pipeline.us.quality as q
 import data_pipeline.us.repository as repo
+from data_pipeline.us.enrichment import instrument_exclusion_reason
 
 
 def test_build_upsert_do_update():
@@ -55,3 +56,22 @@ def test_margin_plausible():
     assert q.check_margin_plausible(0.3) is True
     assert q.check_margin_plausible(2.0) is False
     assert q.check_margin_plausible(None) is None
+
+
+def test_exclui_spac_e_classes_nao_ordinarias():
+    assert instrument_exclusion_reason("ABCD", "common", "Blank Checks")
+    assert instrument_exclusion_reason("F-PB", "common", "Automobiles")
+    assert instrument_exclusion_reason("GRAF-WT", "common", "Aircraft")
+    assert instrument_exclusion_reason("KDKRW", "common", "Software")
+
+
+def test_preserva_ticker_comum_que_termina_em_w():
+    assert instrument_exclusion_reason("HROW", "common", "Pharmaceuticals") is None
+    assert instrument_exclusion_reason("LAW", "common", "Software") is None
+    assert instrument_exclusion_reason(
+        "ABR", "reit", "Real Estate", ("ABR", "ABR-PD", "ABR-PE")) is None
+
+
+def test_exclui_unit_curta_quando_companhia_so_tem_classes_acessorias():
+    related = ("PMT-PA", "PMT-PB", "PMTU", "PMTW")
+    assert instrument_exclusion_reason("PMTU", "common", "Real Estate", related)

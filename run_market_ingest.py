@@ -22,6 +22,7 @@ import argparse
 import json
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -46,6 +47,38 @@ def _local_database_target() -> bool:
     url = (os.getenv("SUPABASE_UNIFICADO_URL") or os.getenv("DATABASE_URL") or
            os.getenv("SUPABASE_DB_URL") or "").lower()
     return "127.0.0.1" in url or "localhost" in url
+
+
+def _point_to_warehouse() -> bool:
+    """Usa a senha efetiva do container; o arquivo local é apenas fallback."""
+    from dotenv import dotenv_values
+
+    password = ""
+    try:
+        proc = subprocess.run(
+            ["docker", "compose", "exec", "-T", "warehouse", "printenv",
+             "POSTGRES_PASSWORD"],
+            cwd=str(_ROOT / "warehouse"), capture_output=True, text=True,
+            timeout=10, check=False,
+        )
+        if proc.returncode == 0:
+            password = (proc.stdout or "").strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if not password:
+        env_paths = [_ROOT / "warehouse" / ".env"]
+        env_paths.extend(_ROOT.glob(".claude/worktrees/*/warehouse/.env"))
+        warehouse_file = next((path for path in env_paths if path.exists()), None)
+        password = str((dotenv_values(warehouse_file) if warehouse_file else {}).get(
+            "WAREHOUSE_PASSWORD") or "").strip()
+    if not password:
+        log.error("senha do warehouse local indisponível")
+        return False
+    local_url = ("postgresql://postgres:" + quote(password, safe="")
+                 + "@127.0.0.1:5433/postgres")
+    for key in ("SUPABASE_UNIFICADO_URL", "DATABASE_URL", "SUPABASE_DB_URL"):
+        os.environ[key] = local_url
+    return True
 
 
 def main() -> int:
@@ -89,19 +122,8 @@ def main() -> int:
     args = p.parse_args()
 
     if args.warehouse:
-        from dotenv import dotenv_values
-        env_paths = [_ROOT / "warehouse" / ".env"]
-        env_paths.extend(_ROOT.glob(".claude/worktrees/*/warehouse/.env"))
-        warehouse_file = next((path for path in env_paths if path.exists()), None)
-        warehouse_env = dotenv_values(warehouse_file) if warehouse_file else {}
-        password = str(warehouse_env.get("WAREHOUSE_PASSWORD") or "").strip()
-        if not password:
-            log.error("nenhum warehouse/.env com WAREHOUSE_PASSWORD foi encontrado")
+        if not _point_to_warehouse():
             return 1
-        # Sobrescreve somente o processo filho; nenhuma credencial é exibida.
-        os.environ["SUPABASE_UNIFICADO_URL"] = (
-            "postgresql://postgres:" + quote(password, safe="")
-            + "@127.0.0.1:5433/postgres")
 
     if (args.command in _REMOTE_HEAVY_COMMANDS and
             not _local_database_target() and

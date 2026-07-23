@@ -108,6 +108,20 @@ def test_balance_derivados():
     assert r["retained_earnings"] == 700           # termo X2 do Altman
 
 
+def test_equity_inclusivo_tem_prioridade_sobre_equity_da_controladora():
+    facts = {}
+    facts.update(_fact("Assets", [_e("2024-12-31", 1000, "2025-02-15")]))
+    facts.update(_fact("Liabilities", [_e("2024-12-31", 600, "2025-02-15")]))
+    facts.update(_fact("StockholdersEquity", [
+        _e("2024-12-31", 250, "2025-02-15")]))
+    facts.update(_fact(
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+        [_e("2024-12-31", 400, "2025-02-15")]))
+    row = ef.build_balance_rows(_cf(facts))[0]
+    assert row["total_equity"] == 400
+    assert row["total_assets"] == row["total_liabilities"] + row["total_equity"]
+
+
 def test_available_at_conservador_no_maximo_dos_filings():
     """Se campos da mesma linha vêm de filings diferentes, available_at = o mais
     tardio (a linha completa só era conhecível quando o último saiu)."""
@@ -118,6 +132,17 @@ def test_available_at_conservador_no_maximo_dos_filings():
                        [_e("2023-12-31", 150, "2024-03-01", start="2023-01-01")]))
     rows = ef.build_income_rows(_cf(facts))
     assert rows[0]["available_at"] == date(2024, 3, 1)
+
+
+def test_rejeita_fato_arquivado_antes_do_fim_do_periodo():
+    invalid = _e("2025-12-31", 999, "2025-11-01",
+                 start="2025-01-01", form="10-K")
+    valid = _e("2024-12-31", 800, "2025-02-15",
+               start="2024-01-01", form="10-K")
+    rows = ef.build_income_rows(_cf(_fact("Revenues", [invalid, valid])))
+    assert len(rows) == 1
+    assert rows[0]["reference_date"] == date(2024, 12, 31)
+    assert rows[0]["revenue"] == 800
 
 
 def test_cik_from_facts():
@@ -136,6 +161,14 @@ def test_quarterly_usa_10q_curto_e_rejeita_ytd():
     assert rows[0]["period"] == "quarterly"
     assert rows[0]["fiscal_year"] == 2024 and rows[0]["fiscal_quarter"] == 1
     assert rows[0]["revenue"] == 300
+
+
+def test_quarterly_rejeita_periodo_posterior_ao_filing():
+    invalid = _e("2027-03-31", 300, "2021-05-07", form="10-Q")
+    invalid.update({"fy": 2021, "fp": "Q1"})
+    rows = ef.build_balance_quarterly_rows(
+        _cf(_fact("Assets", [invalid])))
+    assert rows == []
 
 
 def test_quarterly_prefere_fim_corrente_ao_comparativo():

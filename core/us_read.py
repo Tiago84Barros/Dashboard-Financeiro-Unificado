@@ -165,7 +165,7 @@ def load_companies(sector: str | None = None, search: str | None = None,
             "is_reit", "is_active", "cik"]
     if eng is None or not schema_ready():
         return pd.DataFrame(columns=cols)
-    where = ["1=1"]
+    where = ["a.analysis_status='eligible'"]
     params: dict = {"lim": int(limit)}
     if sector:
         where.append("c.sector = :sector")
@@ -352,7 +352,8 @@ def load_company_bundle(symbol: str) -> dict | None:
             ident = conn.execute(text(
                 "SELECT c.id, c.name, c.sector, c.industry "
                 "FROM market_us.assets a JOIN market_us.companies c ON c.id=a.company_id "
-                "WHERE a.symbol=:s LIMIT 1"), {"s": sym}).fetchone()
+                "WHERE a.symbol=:s AND a.analysis_status='eligible' LIMIT 1"),
+                {"s": sym}).fetchone()
             if ident is None:
                 return None
             cid = int(ident[0])
@@ -393,6 +394,7 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
             q = ("SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.name) AS name, "
                  "MAX(c.sector) AS sector, MAX(c.industry) AS industry "
                  "FROM market_us.companies c JOIN market_us.assets a ON a.company_id=c.id "
+                 "AND a.analysis_status='eligible' "
                  "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
                  "              WHERE i.company_id=c.id AND i.period='annual') "
                  "GROUP BY c.id ORDER BY c.id")
@@ -483,6 +485,7 @@ def load_asymmetry_frame(limit_companies: int | None = None) -> pd.DataFrame:
             q = ("SELECT c.id, MIN(a.symbol) AS symbol, MAX(c.name) AS name, "
                  "MAX(c.sector) AS sector, MAX(c.industry) AS industry "
                  "FROM market_us.companies c JOIN market_us.assets a ON a.company_id=c.id "
+                 "AND a.analysis_status='eligible' "
                  "WHERE EXISTS (SELECT 1 FROM market_us.income_statements i "
                  "  WHERE i.company_id=c.id AND i.period='annual') "
                  "GROUP BY c.id ORDER BY c.id")
