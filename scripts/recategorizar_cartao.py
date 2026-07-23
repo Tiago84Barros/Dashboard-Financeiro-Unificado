@@ -28,9 +28,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import re
 import sys
-import unicodedata
 
 from sqlalchemy import text
 
@@ -39,115 +37,15 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from core.config import settings          # noqa: E402
 from core.database import get_engine      # noqa: E402
-from core.controle import _get_or_create_category  # noqa: E402
+from core.controle import _get_or_create_category, get_card_category_rules  # noqa: E402
+# Fonte ÚNICA de regras/taxonomia — a mesma usada pelo importador de faturas.
+from core.card_categorization import (    # noqa: E402
+    CATEGORY_TYPE, REVIEW_SENTINEL, classify,
+)
 
 
-# ── Taxonomia-alvo e regras de classificação ─────────────────────────────────
-# Tipo de cada categoria-alvo (para criação quando não existir).
-CATEGORY_TYPE = {
-    "Alimentação": "expense",
-    "Mercado": "expense",
-    "Compras / Varejo": "expense",
-    "Assinaturas & Serviços digitais": "expense",
-    "Saúde & Bem-estar": "expense",
-    "Cuidados pessoais": "expense",
-    "Casa & Construção": "expense",
-    "Transporte & Combustível": "expense",
-    "Lazer & Entretenimento": "expense",
-    "Educação & Profissional": "expense",
-    "Tarifas & Anuidade": "expense",
-    "Pagamento de Cartão": "transfer",   # preservado (hardcoded em SQL do app)
-    "Créditos e Estornos": "transfer",   # preservado
-}
-
-# Regras por ESTABELECIMENTO (prioridade alta -> baixa). Vencem a categoria da
-# operadora quando a descrição contém a palavra-chave.
-MERCHANT_RULES = [
-    ("SCARDINO", "Casa & Construção"),        # toldo p/ reforma (informado pelo usuário)
-    ("WELLHUB", "Saúde & Bem-estar"),
-    ("GYMPASS", "Saúde & Bem-estar"),
-    ("CLAUDE", "Assinaturas & Serviços digitais"),
-    ("ANTHROPIC", "Assinaturas & Serviços digitais"),
-    ("OPENAI", "Assinaturas & Serviços digitais"),
-    ("CHATGPT", "Assinaturas & Serviços digitais"),
-    ("SUPABASE", "Assinaturas & Serviços digitais"),
-    ("BRAPI", "Assinaturas & Serviços digitais"),
-    ("123COMPROU", "Assinaturas & Serviços digitais"),
-    ("LIVELO", "Assinaturas & Serviços digitais"),
-    ("SMILES", "Assinaturas & Serviços digitais"),
-    ("IFOOD CLUB", "Assinaturas & Serviços digitais"),
-    ("GOOGLE", "Assinaturas & Serviços digitais"),
-    ("IFOOD", "Alimentação"),
-    ("TUCUPI", "Alimentação"),
-    ("PESCADO", "Alimentação"),
-    ("ATACADAO", "Mercado"),
-    ("ASSAI", "Mercado"),
-    ("ATACADISTA", "Mercado"),
-    ("TIP HOME", "Casa & Construção"),
-    ("HOME CENTER", "Casa & Construção"),
-    ("CASAS BAHIA", "Compras / Varejo"),
-    ("TEMU", "Compras / Varejo"),
-    ("MERCADOLIVRE", "Compras / Varejo"),
-    ("MERCADO LIVRE", "Compras / Varejo"),
-    ("KALUNGA", "Compras / Varejo"),
-    ("QUADROSDECORA", "Compras / Varejo"),
-    ("POSTO", "Transporte & Combustível"),
-    ("PBADMINISTRADORA", "Transporte & Combustível"),
-    ("BARBEARIA", "Cuidados pessoais"),
-    ("CABELO", "Cuidados pessoais"),
-    ("NAUTINST", "Educação & Profissional"),
-    ("CENTRO DE TR", "Educação & Profissional"),
-    ("PLANET PARK", "Lazer & Entretenimento"),
-    ("ANANIN PARK", "Lazer & Entretenimento"),
-]
-
-# Fallback por categoria da operadora -> categoria-alvo.
-CATEGORY_MAP = {
-    "Restaurante / Lanchonete / Bar": "Alimentação",
-    "Supermercados / Mercearia / Padarias / Lojas de Conveniência": "Mercado",
-    "Entretenimento": "Lazer & Entretenimento",
-    "Recreativo": "Lazer & Entretenimento",
-    "Arte / Artesanato / Passatempo": "Lazer & Entretenimento",
-    "Vestuário / Roupas": "Compras / Varejo",
-    "Departamento / Desconto": "Compras / Varejo",
-    "Especialidade varejo": "Compras / Varejo",
-    "Serviços Profissionais": "Compras / Varejo",
-    "Empresa para empresa": "Compras / Varejo",
-    "Construção": "Casa & Construção",
-    "Casa / Escritório Mobiliário": "Casa & Construção",
-    "Materiais de construção para casa": "Casa & Construção",
-    "Transporte": "Transporte & Combustível",
-    "Relacionados a Automotivo": "Transporte & Combustível",
-    "Serviços de telecomunicações": "Assinaturas & Serviços digitais",
-    "Empresa serviços": "Assinaturas & Serviços digitais",
-    "Marketing Direto": "Assinaturas & Serviços digitais",
-    "Elétrico": "Assinaturas & Serviços digitais",
-    "Serviços pessoais": "Cuidados pessoais",
-    "Educacional": "Educação & Profissional",
-    "Associação": "Educação & Profissional",
-    "Anuidade": "Tarifas & Anuidade",
-    "T&E": "Alimentação",
-    # Preservadas (mapeiam para si mesmas -> não geram UPDATE):
-    "Pagamento de Cartão": "Pagamento de Cartão",
-    "Créditos e Estornos": "Créditos e Estornos",
-}
-
-
-def _norm(s: object) -> str:
-    s = unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode().upper()
-    return re.sub(r"\s+", " ", s).strip()
-
-
-def classificar(categoria_atual: str, descricao: str) -> tuple[str, str]:
-    """Retorna (categoria_nova, regra)."""
-    d = _norm(descricao)
-    for kw, nc in MERCHANT_RULES:
-        if _norm(kw) in d:
-            return nc, f"merchant:{kw}"
-    if categoria_atual in CATEGORY_MAP:
-        return CATEGORY_MAP[categoria_atual], "categoria"
-    return "Outros / A revisar", "SEM-REGRA"
-
+# A taxonomia, as regras por estabelecimento e o fallback por categoria vivem em
+# core.card_categorization (fonte única, compartilhada com o importador).
 
 _SQL_FETCH = """
     SELECT t.id::text AS id,
@@ -174,9 +72,14 @@ def _scratch_path(nome: str) -> str:
 
 def _load(conn, owner: str) -> list[dict]:
     rows = conn.execute(text(_SQL_FETCH), {"uid": owner}).fetchall()
+    user_rules = get_card_category_rules()   # respeita regras aprendidas pelo usuário
     out = []
     for r in rows:
-        nova, regra = classificar(r.categoria, r.descricao)
+        # Valor POSITIVO (convenção do CSV): compras são positivas. Assim a regra
+        # estrutural "value<0 -> estorno" não dispara para despesas; pagamento e
+        # estorno são detectados pelas palavras-chave na descrição.
+        nova, regra = classify(r.categoria, r.descricao, float(r.valor or 0.0),
+                               user_rules=user_rules)
         out.append({
             "id": r.id,
             "old_category_id": r.category_id,
@@ -199,7 +102,7 @@ def _resumo(items: list[dict]) -> None:
         agg[it["categoria_nova"]][1] += it["valor"]
         if it["categoria_nova"] != it["categoria_atual"]:
             mudam += 1
-        if it["categoria_nova"] == "Outros / A revisar":
+        if it["categoria_nova"] == REVIEW_SENTINEL:
             revisar.append(it)
     print(f"Total de lançamentos de cartão: {len(items)}")
     print(f"Lançamentos que MUDAM de categoria: {mudam}")
@@ -228,7 +131,7 @@ def cmd_dry_run(items: list[dict]) -> None:
 
 
 def cmd_apply(engine, owner: str, items: list[dict]) -> None:
-    if any(it["categoria_nova"] == "Outros / A revisar" for it in items):
+    if any(it["categoria_nova"] == REVIEW_SENTINEL for it in items):
         print("ABORTADO: há lançamentos sem regra ('A revisar'). Ajuste as regras antes.")
         return
 
