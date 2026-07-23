@@ -122,6 +122,10 @@ REGRAS OBRIGATÓRIAS:
 1. Use como FATOS apenas os números do CONTEXTO abaixo. Nunca invente valores, \
 estabelecimentos, categorias ou datas. Se faltar dado, diga qual e como mudaria a conclusão.
 2. Isto é a FATURA (fluxo futuro), não o fluxo de caixa mensal manual — não misture os dois.
+2b. Para perguntas sobre ASSINATURAS/serviços recorrentes, use SEMPRE a seção \
+"ASSINATURAS / SERVIÇOS RECORRENTES" do contexto (consolidada por marca, de todas \
+as faturas) — ela já une variações de nome do mesmo serviço e o IOF. NÃO tente \
+deduzir assinaturas item a item nem omita as de valor pequeno (ex.: iFood Club).
 3. Separe FATO, ESTIMATIVA e PROJEÇÃO. Projeção de faturas futuras é um PISO (só \
 parcelas já lançadas; não inclui compras novas) — deixe isso explícito.
 4. MOSTRE OS CÁLCULOS (ex.: "3 assinaturas de R$ X = R$ Y/mês; em 12 meses = R$ Z").
@@ -141,6 +145,7 @@ GRÁFICOS (opcional): se ajudar OU o usuário pedir, TERMINE com um bloco:
 ```
 Tipos válidos (o app desenha com os dados reais do contexto — não gere código):
 - "despesas_categoria"        — compras por categoria (pizza/barras).
+- "cartao_assinaturas"        — custo mensal estimado por assinatura.
 - "cartao_estabelecimentos"   — maiores gastos por estabelecimento.
 - "cartao_evolucao"           — evolução mensal das compras.
 - "cartao_projecao"           — faturas futuras pelas parcelas (estimativa).

@@ -1716,6 +1716,72 @@ def _best_merchant_label(values: pd.Series) -> str:
     return sorted(candidates, key=lambda s: (-len(s), s))[0]
 
 
+# ── Assinaturas: nomes canônicos por marca ────────────────────────────────────
+# A operadora muda o descritor do mesmo serviço entre meses (ex.: "CLAUDE.AI
+# SUBSCRIPTION SA" vs "ANTHROPIC* CLAUDE SUB SA"), o que quebra a detecção de
+# recorrência por estabelecimento. Este mapa canoniza variantes conhecidas para
+# um nome único, e também identifica marcas de assinatura fora da categoria
+# "Assinaturas & Serviços digitais" (ex.: Wellhub, que fica em Saúde).
+# (palavra-chave em MAIÚSCULO sem acento) -> nome exibido
+_SUBSCRIPTION_BRANDS = [
+    ("ANTHROPIC", "Claude (Anthropic)"), ("CLAUDE", "Claude (Anthropic)"),
+    ("CHATGPT", "OpenAI"), ("OPENAI", "OpenAI"),
+    ("IFOOD", "iFood Club"), ("LIVELO", "Clube Livelo"), ("SMILES", "Smiles"),
+    ("WELLHUB", "Wellhub"), ("GYMPASS", "Wellhub"),
+    ("SUPABASE", "Supabase"), ("BRAPI", "Brapi"), ("123COMPROU", "123Comprou"),
+    ("GOOGLE", "Google"), ("SPOTIFY", "Spotify"), ("NETFLIX", "Netflix"),
+    ("DISNEY", "Disney+"), ("AMAZON PRIME", "Amazon Prime"), ("PRIME VIDEO", "Prime Video"),
+    ("YOUTUBE", "YouTube Premium"), ("NIO FIBRA", "Nio Fibra"), ("MICROSOFT", "Microsoft"),
+    ("APPLE", "Apple"), ("ICLOUD", "Apple iCloud"),
+]
+
+
+def _subscription_brand(description: object) -> str | None:
+    """Nome canônico da assinatura se a descrição casar uma marca conhecida."""
+    up = _norm_ui_text(description).upper()
+    for kw, nome in _SUBSCRIPTION_BRANDS:
+        if kw in up:
+            return nome
+    return None
+
+
+def _prepare_subscriptions(df: pd.DataFrame) -> list[dict]:
+    """
+    Lista consolidada de ASSINATURAS/serviços recorrentes, agrupada por marca
+    canônica. Fonte confiável: tudo na categoria 'Assinaturas & Serviços digitais'
+    MAIS qualquer compra cuja descrição case uma marca de assinatura conhecida
+    (ex.: Wellhub, que fica em Saúde). Agrega as linhas de IOF junto do principal.
+    """
+    if df.empty:
+        return []
+    compras = df[df["tipo_lancamento"] == "compra"].copy()
+    if compras.empty:
+        return []
+    marca = compras["descricao"].map(_subscription_brand)
+    eh_assinatura_cat = compras["categoria"] == "Assinaturas & Serviços digitais"
+    base = compras[eh_assinatura_cat | marca.notna()].copy()
+    if base.empty:
+        return []
+    base["_marca"] = base["descricao"].map(
+        lambda d: _subscription_brand(d) or _clean_card_description(d))
+    linhas = []
+    for nome, grupo in base.groupby("_marca"):
+        meses = sorted({int(m) for m in grupo["mes_vencimento"].dropna()})
+        total = float(grupo["valor_fatura"].sum())
+        n_meses = len(meses) or 1
+        cat = grupo["categoria"].mode()
+        linhas.append({
+            "Assinatura": str(nome),
+            "Categoria": str(cat.iloc[0]) if not cat.empty else "-",
+            "Total (R$)": round(total, 2),
+            "Meses": n_meses,
+            "Media mensal": round(total / n_meses, 2),
+            "Lancamentos": int(len(grupo)),
+        })
+    linhas.sort(key=lambda x: x["Media mensal"], reverse=True)
+    return linhas
+
+
 def _classify_card_movement(tx: dict) -> str:
     tipo_fluxo = tx.get("tipo_fluxo")
     text = _norm_ui_text(f"{tx.get('categoria', '')} {tx.get('descricao', '')}")
@@ -2734,7 +2800,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     # ── Analista Financeiro do Cartão (chat com IA) ───────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
-    _render_chat_cartao(df, filters)
+    _render_chat_cartao(df, df_all, filters)
 
 
 def _evolucao_compras_mensal(df: pd.DataFrame) -> list[dict]:
@@ -2750,12 +2816,16 @@ def _evolucao_compras_mensal(df: pd.DataFrame) -> list[dict]:
             for _, r in grp.iterrows()]
 
 
-def _render_chat_cartao(df: pd.DataFrame, filters: dict) -> None:
+def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -> None:
     """
     Chat "Analista Financeiro do Cartão": conversa em linguagem natural sobre a
     FATURA (compras, categorias, estabelecimentos, parcelas, recorrências,
     projeções). Usa apenas os dados do usuário (filtrados por OWNER_USER_ID) e o
     mesmo protocolo de gráficos do chat de Análises.
+
+    `df` = lançamentos filtrados (contexto principal); `df_all` = todas as faturas
+    (usado só para a lista de assinaturas, que deve ser completa independentemente
+    do filtro de mês/cartão).
     """
     from core.llm_b3 import llm_disponivel, provedores_disponiveis
     from core.llm_financeiro import chat_com_cartao, parse_chart_directives
@@ -2850,6 +2920,9 @@ def _render_chat_cartao(df: pd.DataFrame, filters: dict) -> None:
                     nao_consumo=_prepare_non_consumption(df).to_dict("records"),
                     evolucao_mensal=_evolucao_compras_mensal(df),
                     recorrentes=_prepare_recurring_analysis(df).to_dict("records"),
+                    # Assinaturas: SEMPRE de todas as faturas (df_all), para a lista
+                    # ser completa mesmo com filtro de mês/cartão ativo.
+                    assinaturas=_prepare_subscriptions(df_all),
                     filtro_label=filtro_label,
                 )
                 resposta_raw = chat_com_cartao(context, history[:-1], user_input)

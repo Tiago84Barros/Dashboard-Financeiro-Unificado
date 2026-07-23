@@ -293,6 +293,24 @@ def _r_cartao_projecao(d: dict, meta: dict) -> bool:
     return True
 
 
+def _r_cartao_assinaturas(d: dict, meta: dict) -> bool:
+    """Barras do custo mensal estimado por assinatura."""
+    itens = [i for i in (meta.get("cartao_assinaturas") or [])
+             if float(i.get("gasto", 0) or 0) > 0]
+    if not itens:
+        return False
+    itens = sorted(itens, key=lambda i: i["gasto"], reverse=True)[:15]
+    fig = go.Figure(go.Bar(
+        x=[i["gasto"] for i in itens], y=[i["nome"] for i in itens], orientation="h",
+        marker_color="#9B59B6", opacity=0.9,
+        hovertemplate="<b>%{y}</b><br>~R$ %{x:,.2f}/mês<extra></extra>",
+    ))
+    fig.update_layout(**_LAYOUT, title=d.get("titulo") or "Assinaturas — custo mensal estimado",
+                      xaxis=_MOEDA_AXIS, yaxis=dict(autorange="reversed"))
+    _emit(fig)
+    return True
+
+
 _RENDERERS = {
     "despesas_categoria": _r_despesas_categoria,
     "fluxo_mensal": _r_fluxo_mensal,
@@ -306,6 +324,7 @@ _RENDERERS = {
     "cartao_estabelecimentos": _r_cartao_estabelecimentos,
     "cartao_evolucao": _r_cartao_evolucao,
     "cartao_projecao": _r_cartao_projecao,
+    "cartao_assinaturas": _r_cartao_assinaturas,
 }
 
 
@@ -370,6 +389,8 @@ def infer_cartao_chart_directives(question: str, meta: dict | None = None) -> li
                                          "mostre", "desenh"))
     if not pediu_grafico:
         return []
+    if any(t in q for t in ("assinatura", "recorrent", "streaming", "mensalidade")):
+        return [{"tipo": "cartao_assinaturas"}]
     if any(t in q for t in ("estabelecim", "loja", "comércio", "comercio", "onde gast")):
         return [{"tipo": "cartao_estabelecimentos"}]
     if any(t in q for t in ("projeç", "projec", "parcela", "futur", "próximos", "proximos")):
