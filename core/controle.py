@@ -603,23 +603,18 @@ def _parse_installment(value: object) -> tuple[int, int, str]:
     return current, total, raw
 
 
-def _invoice_category(raw_category: object, description: object, value_brl: float) -> str:
-    raw = str(raw_category or "").strip()
-    desc_norm = _norm_text(description)
-    if raw and raw != "-":
-        return raw
-    # Pagamentos da fatura (Inclusão de Pagamento, Pag Fatura Boleto, débito em conta)
-    if any(p in desc_norm for p in (
-        "pag fatura", "pagamento fatura", "inclusao de pagamento",
-        "inclusão de pagamento", "debito em conta", "pagto debito",
-    )):
-        return "Pagamento de Cartão"
-    if "anuidade" in desc_norm:
-        return "Anuidade"
-    # Apenas valores negativos que NÃO são pagamentos são estornos reais
-    if value_brl < 0 or "estorno" in desc_norm:
-        return "Créditos e Estornos"
-    return "Compras"
+def _invoice_category(raw_category: object, description: object, value_brl: float,
+                      user_rules: list | None = None) -> str:
+    """
+    Categoria de um lançamento da fatura usando a taxonomia limpa (13 categorias).
+    Delega a core.card_categorization.classify — fonte única de regras, também
+    usada pelo script scripts/recategorizar_cartao.py. `user_rules` são as regras
+    aprendidas pelo usuário (palavra-chave -> categoria) e têm prioridade sobre as
+    internas. Sem regra e sem catálogo, retorna o sentinela "A revisar".
+    """
+    from core.card_categorization import classify
+    categoria, _regra = classify(raw_category, description, value_brl, user_rules=user_rules)
+    return categoria
 
 
 def _invoice_tx_type(value_brl: float, description: object) -> str:
@@ -673,12 +668,16 @@ def _read_invoice_csv(file_bytes: bytes):
     raise ValueError(f"Não foi possível ler o CSV da fatura: {last_exc}")
 
 
-def parse_fatura_cartao_csv(file_bytes: bytes, vencimento: _date) -> dict:
+def parse_fatura_cartao_csv(file_bytes: bytes, vencimento: _date,
+                            user_rules: list | None = None) -> dict:
     """
     Lê o CSV da fatura e retorna linhas normalizadas sem gravar no banco.
 
     A data de compra fica em payment_date; due_date representa o vencimento da fatura,
     que é o eixo usado pela aba Cartão de Crédito.
+
+    `user_rules`: regras aprendidas pelo usuário (palavra-chave -> categoria). Quando
+    None, usa apenas as regras internas (não acessa banco — seguro em testes/CLI).
     """
     import pandas as pd
 
@@ -712,7 +711,7 @@ def parse_fatura_cartao_csv(file_bytes: bytes, vencimento: _date) -> dict:
         value_usd = _parse_money(raw["Valor (em US$)"])
         fx_brl = _parse_money(raw["Cotação (em R$)"])
         inst_current, inst_total, inst_label = _parse_installment(raw["Parcela"])
-        category = _invoice_category(raw["Categoria"], raw["Descrição"], value_brl)
+        category = _invoice_category(raw["Categoria"], raw["Descrição"], value_brl, user_rules)
         tx_type = _invoice_tx_type(value_brl, raw["Descrição"])
         amount = -abs(value_brl) if tx_type == "expense" else abs(value_brl)
         description = _invoice_description(
@@ -951,7 +950,8 @@ def importar_fatura_cartao_csv(file_bytes: bytes, vencimento: _date, account_id:
     if settings.MOCK_MODE:
         return {"ok": False, "message": "Modo mock ativo — importação não executada."}
 
-    parsed = parse_fatura_cartao_csv(file_bytes, vencimento)
+    # Regras aprendidas pelo usuário (fora do begin() da importação; degrada p/ []).
+    parsed = parse_fatura_cartao_csv(file_bytes, vencimento, get_card_category_rules())
     if parsed.get("errors"):
         return {"ok": False, "message": "; ".join(parsed["errors"][:5])}
     if not parsed["rows"]:
@@ -1272,6 +1272,145 @@ def atualizar_transacao_cartao(
 
     except Exception as exc:
         logger.error("[controle] Falha ao atualizar transação de cartão: %s", exc)
+        return False, str(exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Regras de categoria APRENDIDAS pelo usuário (cartão de crédito)
+# Quando o importador não sabe classificar um estabelecimento, o usuário define a
+# categoria na tela; a escolha vira uma regra (palavra_chave -> categoria) que
+# passa a valer automaticamente nas próximas faturas.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SQL_ENSURE_CARD_RULES = """
+    CREATE TABLE IF NOT EXISTS card_category_rules (
+        id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id       uuid NOT NULL,
+        palavra_chave text NOT NULL,
+        category_name text NOT NULL,
+        created_at    timestamptz NOT NULL DEFAULT now(),
+        updated_at    timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (user_id, palavra_chave)
+    )
+"""
+
+
+def _ensure_card_rules_table(conn) -> None:
+    from sqlalchemy import text
+    conn.execute(text(_SQL_ENSURE_CARD_RULES))
+
+
+def get_card_category_rules() -> list[tuple[str, str]]:
+    """
+    Regras (palavra_chave, categoria) aprendidas pelo usuário, ordenadas da mais
+    específica (chave mais longa) para a mais curta. Defensiva: retorna [] se não
+    houver banco/owner ou se a tabela ainda não existir (nunca lança).
+    """
+    if settings.MOCK_MODE or not settings.OWNER_USER_ID:
+        return []
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            return []
+        owner = settings.OWNER_USER_ID
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT palavra_chave, category_name
+                    FROM   card_category_rules
+                    WHERE  user_id = CAST(:uid AS uuid)
+                    ORDER BY length(palavra_chave) DESC
+                """),
+                {"uid": owner},
+            ).fetchall()
+        return [(r.palavra_chave, r.category_name) for r in rows]
+    except Exception as exc:
+        logger.info("[controle] get_card_category_rules indisponível (%s).",
+                    type(exc).__name__)
+        return []
+
+
+def add_card_category_rule(palavra_chave: str, category_name: str) -> tuple[bool, str]:
+    """Cria/atualiza uma regra do usuário. A chave é normalizada em MAIÚSCULO."""
+    if settings.MOCK_MODE:
+        return False, "Modo mock ativo."
+    from core.card_categorization import _norm_up, CATEGORY_TYPE
+
+    chave = _norm_up(palavra_chave)
+    if not chave:
+        return False, "Palavra-chave vazia."
+    if category_name not in CATEGORY_TYPE:
+        return False, f"Categoria inválida: {category_name}"
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            return False, "Banco não configurado."
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            return False, "OWNER_USER_ID não configurado."
+        with engine.begin() as conn:
+            _ensure_card_rules_table(conn)
+            conn.execute(
+                text("""
+                    INSERT INTO card_category_rules (user_id, palavra_chave, category_name)
+                    VALUES (CAST(:uid AS uuid), :kw, :cat)
+                    ON CONFLICT (user_id, palavra_chave)
+                    DO UPDATE SET category_name = EXCLUDED.category_name,
+                                  updated_at    = now()
+                """),
+                {"uid": owner, "kw": chave, "cat": category_name},
+            )
+        return True, ""
+    except Exception as exc:
+        logger.error("[controle] add_card_category_rule falhou: %s", exc)
+        return False, str(exc)
+
+
+def definir_categoria_transacao_cartao(tx_id: str, category_name: str) -> tuple[bool, str]:
+    """
+    Define a categoria de UM lançamento de cartão (usado na revisão de itens não
+    catalogados). Cria/reutiliza a categoria pelo nome e atualiza category_id.
+    Não altera transaction.type.
+    """
+    if settings.MOCK_MODE:
+        return False, "Modo mock ativo."
+    from core.card_categorization import CATEGORY_TYPE
+    if category_name not in CATEGORY_TYPE:
+        return False, f"Categoria inválida: {category_name}"
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            return False, "Banco não configurado."
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            return False, "OWNER_USER_ID não configurado."
+        with engine.begin() as conn:
+            cat_id = _get_or_create_category(
+                conn, owner, category_name, CATEGORY_TYPE.get(category_name, "expense"))
+            if not cat_id:
+                return False, "Falha ao obter/criar a categoria."
+            conn.execute(
+                text("""
+                    UPDATE transactions
+                    SET    category_id = CAST(:cid AS uuid)
+                    WHERE  id      = CAST(:tid AS uuid)
+                      AND  user_id = CAST(:uid AS uuid)
+                """),
+                {"cid": cat_id, "tid": tx_id, "uid": owner},
+            )
+        _clear_controle_caches()
+        return True, ""
+    except Exception as exc:
+        logger.error("[controle] definir_categoria_transacao_cartao falhou: %s", exc)
         return False, str(exc)
 
 

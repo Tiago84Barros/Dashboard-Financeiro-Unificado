@@ -39,7 +39,9 @@ from core.controle import (
     get_gastos_cartao_mensal,
     get_gastos_categoria_anual,
     get_transacoes_cartao_credito,
+    definir_categoria_transacao_cartao, add_card_category_rule,
 )
+from core.card_categorization import categorias_disponiveis, REVIEW_SENTINEL
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, barra_progresso
@@ -2506,6 +2508,97 @@ def _editor_cartao_detalhado(detail: pd.DataFrame) -> None:
         st.info("Nenhuma alteração detectada.")
 
 
+def _render_cartao_a_revisar(df_all: pd.DataFrame) -> None:
+    """
+    Painel de revisão dos lançamentos que o importador não soube categorizar
+    (categoria = 'A revisar'). O usuário escolhe a categoria correta e, opcional-
+    mente, cria uma regra (estabelecimento → categoria) que passa a valer nas
+    próximas faturas automaticamente.
+    """
+    if "categoria" not in df_all.columns:
+        return
+    pend = df_all[df_all["categoria"] == REVIEW_SENTINEL].copy()
+    if pend.empty:
+        return
+
+    pend = pend.sort_values("valor_abs", ascending=False)
+    n = len(pend)
+    st.markdown(
+        f'<div style="background:#2A1A12;border:1px solid #7A4A28;border-radius:10px;'
+        f'padding:12px 16px;margin-bottom:12px;">'
+        f'<span style="font-size:0.95rem;font-weight:800;color:#F6C90E;">'
+        f'🏷️ {n} lançamento(s) a categorizar</span>'
+        f'<span style="color:#B8A98C;font-size:0.8rem;">'
+        f' — o importador não reconheceu o estabelecimento. Escolha a categoria e, '
+        f'se marcar “criar regra”, as próximas faturas desse estabelecimento entram '
+        f'nela automaticamente.</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    opcoes_cat = [REVIEW_SENTINEL] + categorias_disponiveis()
+    id_to_merchant = {str(r["id"]): str(r.get("estabelecimento") or r.get("descricao") or "")
+                      for _, r in pend.iterrows()}
+
+    rows = [{
+        "ID":         str(r["id"]),
+        "Data":       r["data_compra"].date() if pd.notna(r["data_compra"]) else None,
+        "Descrição":  str(r.get("estabelecimento") or r.get("descricao") or ""),
+        "Valor":      round(abs(float(r.get("valor_original") or 0.0)), 2),
+        "Categoria":  REVIEW_SENTINEL,
+        "Criar regra": True,
+    } for _, r in pend.iterrows()]
+    df_edit = pd.DataFrame(rows)
+
+    with st.form("cc_revisar_form", clear_on_submit=False):
+        edited = st.data_editor(
+            df_edit,
+            hide_index=True,
+            use_container_width=True,
+            num_rows="fixed",
+            key="cc_revisar_editor",
+            column_config={
+                "ID": None,
+                "Data":  st.column_config.DateColumn("Compra", format="DD/MM/YYYY", disabled=True),
+                "Descrição": st.column_config.TextColumn("Estabelecimento", disabled=True),
+                "Valor": st.column_config.NumberColumn("Valor (R$)", format="%.2f", disabled=True),
+                "Categoria": st.column_config.SelectboxColumn("Categoria", options=opcoes_cat, required=True),
+                "Criar regra": st.column_config.CheckboxColumn(
+                    "Criar regra", help="Aprende estabelecimento → categoria para as próximas faturas."),
+            },
+        )
+        salvar = st.form_submit_button("Salvar categorizações", type="primary")
+
+    if not salvar:
+        return
+
+    ok_count, regras, erros = 0, 0, []
+    for _, row in edited.iterrows():
+        cat = str(row["Categoria"])
+        if cat == REVIEW_SENTINEL or cat not in opcoes_cat:
+            continue  # ainda não definido — ignora
+        tx_id = str(row["ID"])
+        ok, msg = definir_categoria_transacao_cartao(tx_id, cat)
+        if not ok:
+            erros.append(f"{row['Descrição'][:30]}: {msg}")
+            continue
+        ok_count += 1
+        if bool(row["Criar regra"]):
+            kw = id_to_merchant.get(tx_id, "")
+            if kw:
+                r_ok, _r_msg = add_card_category_rule(kw, cat)
+                if r_ok:
+                    regras += 1
+
+    if ok_count:
+        extra = f" · {regras} regra(s) aprendida(s)" if regras else ""
+        st.success(f"✅ {ok_count} lançamento(s) categorizado(s){extra}.")
+        st.rerun()
+    for e in erros:
+        st.error(e)
+    if ok_count == 0 and not erros:
+        st.info("Escolha uma categoria (≠ “A revisar”) em pelo menos uma linha.")
+
+
 def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     st.markdown(
         '<h2 style="font-size:1.45rem;font-weight:800;color:#E2E8F0;margin-bottom:0;">'
@@ -2521,6 +2614,9 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     if df_all.empty:
         st.info("Importe uma fatura em Configurações > Fatura do Cartão para visualizar os indicadores e graficos do cartao.")
         return
+
+    # Itens que o importador não soube classificar → o usuário define a categoria.
+    _render_cartao_a_revisar(df_all)
 
     _secao_titulo("Filtros", "Cabecalho e filtros")
     filters = _render_card_filters(df_all, selected_year, selected_month)
