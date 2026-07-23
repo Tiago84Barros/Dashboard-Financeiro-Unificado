@@ -260,3 +260,208 @@ def build_financas_chat_context(
     L.append("  - Valores em Reais (BRL).")
 
     return "\n".join(L), chart_meta
+
+
+# ── Contexto específico do CARTÃO DE CRÉDITO ─────────────────────────────────
+# Essencialidade por categoria-alvo do cartão (taxonomia limpa). Heurística
+# assumida — a IA deve tratar como premissa, não verdade absoluta.
+_CARD_ESSENCIAL = {
+    "Alimentação", "Mercado", "Transporte & Combustível",
+    "Saúde & Bem-estar", "Educação & Profissional", "Tarifas & Anuidade",
+    "Casa & Construção",
+}
+_CARD_NAO_ESSENCIAL = {
+    "Compras / Varejo", "Assinaturas & Serviços digitais",
+    "Lazer & Entretenimento", "Cuidados pessoais",
+}
+# Não são consumo (não entram na análise essencial × não essencial).
+_CARD_NAO_CONSUMO = {"Pagamento de Cartão", "Créditos e Estornos"}
+
+
+def _card_essencialidade(nome: object) -> str:
+    n = str(nome or "").strip()
+    if n in _CARD_ESSENCIAL:
+        return "essencial"
+    if n in _CARD_NAO_ESSENCIAL:
+        return "nao_essencial"
+    if n in _CARD_NAO_CONSUMO:
+        return "nao_consumo"
+    return "nao_classificada"
+
+
+def build_cartao_chat_context(
+    *,
+    user_question: str,
+    resumo: dict,
+    categorias: list,
+    estabelecimentos: list,
+    parcelas: list,
+    projecao: list,
+    nao_consumo: list,
+    evolucao_mensal: list,
+    recorrentes: list,
+    filtro_label: str,
+) -> tuple[str, dict]:
+    """
+    Constrói (contexto_texto, chart_meta) para o chat da aba Cartão de Crédito, a
+    partir das estruturas REAIS já calculadas pela view (todas derivadas de
+    get_transacoes_cartao_credito, filtrado por OWNER_USER_ID).
+
+    Parâmetros são listas de dicts (records) das tabelas do cartão:
+      resumo          : _summary_credit_card(df)
+      categorias      : _prepare_category_analysis(df) → records
+      estabelecimentos: _prepare_merchant_analysis(df) → records
+      parcelas        : _prepare_installment_analysis(df) → records
+      projecao        : _prepare_future_invoice_projection(df) → records
+      nao_consumo     : _prepare_non_consumption(df) → records
+      evolucao_mensal : [{label, total}] (compras por mês)
+      recorrentes     : _prepare_recurring_analysis(df) → records
+      filtro_label    : descrição do filtro ativo (ano/mês/cartão)
+    """
+    def g(d, *keys, default=0.0):
+        for k in keys:
+            if k in d:
+                return d[k]
+        return default
+
+    # ── chart_meta ───────────────────────────────────────────────────────────
+    cats_meta = []
+    ess = {"essencial": 0.0, "nao_essencial": 0.0, "nao_classificada": 0.0}
+    for c in categorias or []:
+        nome = str(g(c, "Categoria", default="—"))
+        gasto = float(g(c, "Total (R$)", "total") or 0)
+        e = _card_essencialidade(nome)
+        cats_meta.append({"nome": nome, "gasto": round(gasto, 2), "essencialidade": e})
+        if e in ess:
+            ess[e] += gasto
+    ess = {k: round(v, 2) for k, v in ess.items()}
+
+    estab_meta = [
+        {"nome": str(g(e, "Estabelecimento", default="—")),
+         "gasto": round(float(g(e, "Total (R$)", "total") or 0), 2)}
+        for e in (estabelecimentos or [])
+    ]
+    evol_meta = [
+        {"label": str(x.get("label", "")), "total": round(float(x.get("total", 0) or 0), 2)}
+        for x in (evolucao_mensal or [])
+    ]
+    proj_meta = [
+        {"label": str(g(p, "Mes", default="")),
+         "total": round(float(g(p, "Valor projetado", default=0) or 0), 2)}
+        for p in (projecao or [])
+    ]
+
+    chart_meta = {
+        "categorias_mes": [{"nome": c["nome"], "gasto": c["gasto"], "orcamento": 0.0,
+                            "pct_usado": 0.0, "essencialidade": c["essencialidade"]}
+                           for c in cats_meta],
+        "categorias_anual": cats_meta,
+        "essencialidade_mes": {k: ess.get(k, 0.0) for k in
+                               ("essencial", "nao_essencial", "nao_classificada")},
+        "cartao_estabelecimentos": estab_meta,
+        "cartao_evolucao": evol_meta,
+        "cartao_projecao": proj_meta,
+        "escopo_cartao": True,
+    }
+
+    # ── Texto do contexto ────────────────────────────────────────────────────
+    L: list[str] = []
+    L.append("CONTEXTO: aba CARTÃO DE CRÉDITO (fatura importada por CSV).")
+    L.append(f"  Filtro ativo: {filtro_label}")
+    L.append(f"  Data de hoje: {_date.today().strftime('%d/%m/%Y')}")
+    L.append("  IMPORTANTE: aqui é a FATURA do cartão (fluxo futuro), NÃO o fluxo de caixa")
+    L.append("  mensal manual. 'compra' entra na fatura; 'pagamento'/'estorno'/'tarifa' são")
+    L.append("  ajustes. Valores em Reais (BRL).")
+
+    L.append("")
+    L.append("RESUMO DA FATURA (no filtro atual):")
+    L.append(f"  Total de compras: {_brl(resumo.get('total_compras', 0))} "
+             f"em {resumo.get('compras_qtd', 0)} compras")
+    L.append(f"  Ticket médio: {_brl(resumo.get('ticket_medio', 0))}")
+    L.append(f"  Maior compra: {_brl(resumo.get('maior_valor', 0))} "
+             f"({resumo.get('maior_desc', '-')})")
+    L.append(f"  Parceladas: {_brl(resumo.get('parceladas_total', 0))} "
+             f"em {resumo.get('parceladas_qtd', 0)} lançamentos")
+    L.append(f"  Tarifas: {_brl(resumo.get('tarifas', 0))} · "
+             f"Estornos: {_brl(resumo.get('estornos', 0))} · "
+             f"Pagamentos: {_brl(resumo.get('pagamentos', 0))}")
+    L.append(f"  Total líquido (compras − créditos): {_brl(resumo.get('total_liquido', 0))}")
+    L.append(f"  Categoria dominante: {resumo.get('categoria_dominante', '-')} "
+             f"({_pct(resumo.get('categoria_pct', 0))} das compras)")
+
+    L.append("")
+    L.append("COMPRAS POR CATEGORIA (categoria: total | nº | ticket | % | essencialidade):")
+    if categorias:
+        for c in categorias:
+            nome = str(g(c, "Categoria", default="—"))
+            L.append(f"  {nome}: {_brl(g(c, 'Total (R$)', 'total'))} | "
+                     f"{int(g(c, 'Transacoes', 'transacoes') or 0)} | "
+                     f"{_brl(g(c, 'Ticket medio', 'ticket'))} | "
+                     f"{_pct(g(c, '% compras', 'pct'))} | {_card_essencialidade(nome)}")
+    else:
+        L.append("  Sem compras no filtro atual.")
+
+    L.append("")
+    L.append("ESSENCIAL × NÃO ESSENCIAL (compras do cartão):")
+    tot_ess = sum(ess.values()) or 1.0
+    L.append(f"  Essenciais: {_brl(ess['essencial'])} ({_pct(ess['essencial'] / tot_ess * 100)})")
+    L.append(f"  Não essenciais: {_brl(ess['nao_essencial'])} "
+             f"({_pct(ess['nao_essencial'] / tot_ess * 100)})")
+    L.append(f"  Não classificadas: {_brl(ess['nao_classificada'])} "
+             f"({_pct(ess['nao_classificada'] / tot_ess * 100)})")
+    L.append("  (Essenciais: alimentação, mercado, transporte, saúde, educação, casa, tarifas;")
+    L.append("   não essenciais: compras/varejo, assinaturas, lazer, cuidados pessoais.)")
+
+    L.append("")
+    L.append("MAIORES ESTABELECIMENTOS (estab.: total | nº | categoria | recorrência):")
+    if estabelecimentos:
+        for e in estabelecimentos[:15]:
+            L.append(f"  {g(e, 'Estabelecimento', default='—')}: "
+                     f"{_brl(g(e, 'Total (R$)', 'total'))} | "
+                     f"{int(g(e, 'Transacoes', 'transacoes') or 0)} | "
+                     f"{g(e, 'Categoria principal', default='-')} | "
+                     f"{g(e, 'Recorrencia', default='-')}")
+    else:
+        L.append("  Sem estabelecimentos no filtro atual.")
+
+    if recorrentes:
+        L.append("")
+        L.append("GASTOS RECORRENTES DETECTADOS (estab.: total | meses | valor médio):")
+        for r in recorrentes[:12]:
+            L.append(f"  {g(r, 'Estabelecimento', default='—')}: "
+                     f"{_brl(g(r, 'Total (R$)', 'total'))} | "
+                     f"{int(g(r, 'Meses', default=0) or 0)} meses | "
+                     f"{_brl(g(r, 'Valor medio', default=0))}")
+
+    if parcelas:
+        L.append("")
+        L.append("COMPRAS PARCELADAS (estab.: valor no mês | parcela | restantes | pendente):")
+        for p in parcelas[:15]:
+            L.append(f"  {g(p, 'Estabelecimento', default='—')}: "
+                     f"{_brl(g(p, 'Valor no mes', default=0))} | "
+                     f"{int(g(p, 'Parcela atual', default=1) or 1)}/"
+                     f"{int(g(p, 'Total parcelas', default=1) or 1)} | "
+                     f"faltam {int(g(p, 'Restantes', default=0) or 0)} | "
+                     f"pendente {_brl(g(p, 'Pendente estimado', default=0))}")
+
+    if projecao:
+        L.append("")
+        L.append("PROJEÇÃO DE FATURAS FUTURAS (pelas parcelas restantes) — ESTIMATIVA:")
+        for p in projecao:
+            L.append(f"  {g(p, 'Mes', default='')}: {_brl(g(p, 'Valor projetado', default=0))} "
+                     f"({int(g(p, 'Parcelas futuras', default=0) or 0)} parcela(s))")
+
+    if evolucao_mensal:
+        L.append("")
+        L.append("EVOLUÇÃO MENSAL DAS COMPRAS (mês: total):")
+        for x in evolucao_mensal:
+            L.append(f"  {x.get('label', '')}: {_brl(x.get('total', 0))}")
+
+    if nao_consumo:
+        L.append("")
+        L.append("AJUSTES (tarifas/estornos/pagamentos) — top por valor:")
+        for a in nao_consumo[:10]:
+            L.append(f"  {g(a, 'Tipo', default='-')}: {g(a, 'Descricao', default='-')} "
+                     f"({g(a, 'Categoria', default='-')}) {_brl(g(a, 'Valor (R$)', default=0))}")
+
+    return "\n".join(L), chart_meta

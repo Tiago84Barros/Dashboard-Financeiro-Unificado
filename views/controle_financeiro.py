@@ -2731,6 +2731,150 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     _secao_titulo("Insights", "Insights automaticos")
     _render_credit_card_insights(df, projection_df)
 
+    # ── Analista Financeiro do Cartão (chat com IA) ───────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
+    _render_chat_cartao(df, filters)
+
+
+def _evolucao_compras_mensal(df: pd.DataFrame) -> list[dict]:
+    """Série [{label, total}] das compras do cartão por mês de vencimento."""
+    compras = df[df["tipo_lancamento"] == "compra"].copy()
+    if compras.empty:
+        return []
+    grp = (compras.groupby("ano_mes", as_index=False)
+           .agg(total=("valor_fatura", "sum"),
+                label=("mes_label", "first")))
+    grp = grp.sort_values("ano_mes")
+    return [{"label": str(r["label"]), "total": round(float(r["total"]), 2)}
+            for _, r in grp.iterrows()]
+
+
+def _render_chat_cartao(df: pd.DataFrame, filters: dict) -> None:
+    """
+    Chat "Analista Financeiro do Cartão": conversa em linguagem natural sobre a
+    FATURA (compras, categorias, estabelecimentos, parcelas, recorrências,
+    projeções). Usa apenas os dados do usuário (filtrados por OWNER_USER_ID) e o
+    mesmo protocolo de gráficos do chat de Análises.
+    """
+    from core.llm_b3 import llm_disponivel, provedores_disponiveis
+    from core.llm_financeiro import chat_com_cartao, parse_chart_directives
+    from core.llm_context_financeiro import build_cartao_chat_context
+    from core.financeiro_chat_charts import (
+        render_financas_charts, infer_cartao_chart_directives,
+    )
+
+    _secao_titulo("🤖", "Analista Financeiro do Cartão (IA)")
+    st.markdown(
+        '<p style="color:#718096;font-size:0.82rem;margin-top:2px;margin-bottom:12px;">'
+        'Converse sobre a sua <b style="color:#E2E8F0">fatura</b>: categorias, '
+        'estabelecimentos, assinaturas recorrentes, parcelas e projeções. A IA usa '
+        'apenas os lançamentos do cartão (respeitando os filtros acima), mostra os '
+        'cálculos e sinaliza quando algo é estimativa.</p>',
+        unsafe_allow_html=True,
+    )
+
+    if not llm_disponivel():
+        st.info(
+            "IA indisponível: nenhum provedor LLM configurado. Defina `OPENAI_API_KEY` "
+            "e/ou `GEMINI_API_KEY` no `.env` local ou em Streamlit Secrets."
+        )
+        return
+
+    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    st.caption("Provedor(es): " + ", ".join(
+        provider_labels.get(p, p) for p in provedores_disponiveis()))
+
+    # Descrição do filtro ativo + assinatura de contexto (reinicia o chat se mudar).
+    anos = sorted({int(a) for a in df["ano_vencimento"].dropna().unique()})
+    filtro_label = (f"{len(df)} lançamento(s)"
+                    + (f"; vencimentos {anos[0]}–{anos[-1]}" if anos else "")
+                    + (f"; cartão final {filters.get('card')}" if filters.get("card") else ""))
+    _ctx_sig = f"{filtro_label}|{round(float(df['valor_fatura'].sum()), 2)}"
+    if st.session_state.get("cc_chat_ctx_sig") not in (None, _ctx_sig):
+        st.session_state.pop("cc_chat_history", None)
+    st.session_state["cc_chat_ctx_sig"] = _ctx_sig
+
+    suggestions = [
+        "Quais assinaturas recorrentes eu tenho e quanto somam por mês?",
+        "Onde posso cortar na fatura sem afetar o essencial?",
+        "Quanto das minhas compras é essencial vs não essencial?",
+        "Projete minhas próximas faturas pelas parcelas em aberto.",
+        "Quais estabelecimentos mais pesaram na fatura?",
+        "Simule o impacto de cortar 20% dos gastos não essenciais.",
+    ]
+    suggested_input = None
+    _sug_cols = st.columns(3)
+    for i, q in enumerate(suggestions):
+        with _sug_cols[i % 3]:
+            if st.button(q, key=f"cc_chat_sug_{i}", use_container_width=True):
+                suggested_input = q
+
+    _, _clr = st.columns([5, 1])
+    with _clr:
+        if st.button("🗑️ Limpar", key="cc_chat_clear", use_container_width=True):
+            st.session_state.pop("cc_chat_history", None)
+            st.rerun()
+
+    history: list[dict] = st.session_state.get("cc_chat_history", [])
+    for msg in history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            for direc in msg.get("_charts", []) or []:
+                try:
+                    render_financas_charts([direc], msg.get("_chart_meta", {}))
+                except Exception:
+                    pass
+
+    typed_input = st.chat_input("Pergunte sobre a sua fatura…", key="cc_chat_input")
+    user_input = suggested_input or typed_input
+    if not user_input:
+        return
+
+    history.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    with st.chat_message("assistant"):
+        chart_directives: list[dict] = []
+        chart_meta: dict = {}
+        with st.spinner("Analisando a sua fatura…"):
+            try:
+                context, chart_meta = build_cartao_chat_context(
+                    user_question=user_input,
+                    resumo=_summary_credit_card(df),
+                    categorias=_prepare_category_analysis(df).to_dict("records"),
+                    estabelecimentos=_prepare_merchant_analysis(df).to_dict("records"),
+                    parcelas=_prepare_installment_analysis(df).to_dict("records"),
+                    projecao=_prepare_future_invoice_projection(df).to_dict("records"),
+                    nao_consumo=_prepare_non_consumption(df).to_dict("records"),
+                    evolucao_mensal=_evolucao_compras_mensal(df),
+                    recorrentes=_prepare_recurring_analysis(df).to_dict("records"),
+                    filtro_label=filtro_label,
+                )
+                resposta_raw = chat_com_cartao(context, history[:-1], user_input)
+                resposta, chart_directives = parse_chart_directives(resposta_raw)
+                if not chart_directives:
+                    chart_directives = infer_cartao_chart_directives(user_input, chart_meta)
+            except Exception as exc:
+                resposta = f"Não foi possível consultar a IA agora: {exc}"
+        st.markdown(resposta)
+        desenhados = 0
+        if chart_directives:
+            try:
+                desenhados = render_financas_charts(chart_directives, chart_meta)
+            except Exception as exc:
+                st.caption(f"⚠️ Não foi possível gerar os gráficos: {exc}")
+        st.caption("Análise educacional baseada nos seus dados; não é recomendação "
+                   "de investimento nem garantia de resultado.")
+
+    msg_assistant = {"role": "assistant", "content": resposta}
+    if desenhados and chart_directives:
+        msg_assistant["_charts"] = chart_directives[:2]
+        msg_assistant["_chart_meta"] = chart_meta
+    history.append(msg_assistant)
+    st.session_state["cc_chat_history"] = history
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RENDER PRINCIPAL
