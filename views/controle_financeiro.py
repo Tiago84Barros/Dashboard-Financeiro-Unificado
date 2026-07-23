@@ -1728,7 +1728,7 @@ _SUBSCRIPTION_BRANDS = [
     ("CHATGPT", "OpenAI"), ("OPENAI", "OpenAI"),
     ("IFOOD", "iFood Club"), ("LIVELO", "Clube Livelo"), ("SMILES", "Smiles"),
     ("WELLHUB", "Wellhub"), ("GYMPASS", "Wellhub"),
-    ("SUPABASE", "Supabase"), ("BRAPI", "Brapi"), ("123COMPROU", "123Comprou"),
+    ("SUPABASE", "Supabase"), ("BRAPI", "Brapi"),
     ("GOOGLE", "Google"), ("SPOTIFY", "Spotify"), ("NETFLIX", "Netflix"),
     ("DISNEY", "Disney+"), ("AMAZON PRIME", "Amazon Prime"), ("PRIME VIDEO", "Prime Video"),
     ("YOUTUBE", "YouTube Premium"), ("NIO FIBRA", "Nio Fibra"), ("MICROSOFT", "Microsoft"),
@@ -1759,7 +1759,11 @@ def _prepare_subscriptions(df: pd.DataFrame) -> list[dict]:
         return []
     marca = compras["descricao"].map(_subscription_brand)
     eh_assinatura_cat = compras["categoria"] == "Assinaturas & Serviços digitais"
-    base = compras[eh_assinatura_cat | marca.notna()].copy()
+    # Guarda anti-marketplace: uma compra PARCELADA (installment_total > 1) sem
+    # marca de assinatura conhecida quase nunca é assinatura — é compra avulsa
+    # que pode ter caído na categoria por engano. Só entra por marca conhecida.
+    nao_parcelada = ~compras["is_parcelada"].fillna(False).astype(bool)
+    base = compras[(eh_assinatura_cat & nao_parcelada) | marca.notna()].copy()
     if base.empty:
         return []
     base["_marca"] = base["descricao"].map(

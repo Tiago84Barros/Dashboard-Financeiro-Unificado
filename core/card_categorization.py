@@ -69,7 +69,8 @@ MERCHANT_RULES = [
     ("CHATGPT", "Assinaturas & Serviços digitais"),
     ("SUPABASE", "Assinaturas & Serviços digitais"),
     ("BRAPI", "Assinaturas & Serviços digitais"),
-    ("123COMPROU", "Assinaturas & Serviços digitais"),
+    # 123Comprou (MERCADO*123COMPROU) é MARKETPLACE, não assinatura → varejo.
+    ("123COMPROU", "Compras / Varejo"),
     ("LIVELO", "Assinaturas & Serviços digitais"),
     ("SMILES", "Assinaturas & Serviços digitais"),
     ("IFOOD CLUB", "Assinaturas & Serviços digitais"),
@@ -115,10 +116,15 @@ CATEGORY_MAP = {
     "Materiais de construção para casa": "Casa & Construção",
     "Transporte": "Transporte & Combustível",
     "Relacionados a Automotivo": "Transporte & Combustível",
+    # Telecom é serviço genuinamente recorrente → assinatura.
     "Serviços de telecomunicações": "Assinaturas & Serviços digitais",
-    "Empresa serviços": "Assinaturas & Serviços digitais",
-    "Marketing Direto": "Assinaturas & Serviços digitais",
-    "Elétrico": "Assinaturas & Serviços digitais",
+    # MCC "grab-bag": misturam SaaS real (pego pelas MERCHANT_RULES) com
+    # marketplaces e compras avulsas. NÃO devem cair automaticamente em
+    # "Assinaturas": o que não casar uma marca conhecida vai para revisão do
+    # usuário, evitando classificar compra como assinatura.
+    "Empresa serviços": REVIEW_SENTINEL,
+    "Marketing Direto": REVIEW_SENTINEL,
+    "Elétrico": REVIEW_SENTINEL,
     "Serviços pessoais": "Cuidados pessoais",
     "Educacional": "Educação & Profissional",
     "Associação": "Educação & Profissional",
