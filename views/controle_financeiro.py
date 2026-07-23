@@ -33,7 +33,9 @@ import streamlit as st
 
 from core.controle import (
     get_controle, get_opcoes_formulario, inserir_transacao,
-    atualizar_transacao, get_historico_anual, get_transacoes_filtradas,
+    atualizar_transacao, atualizar_transacao_cartao,
+    get_contas_cartao_credito,
+    get_historico_anual, get_transacoes_filtradas,
     get_gastos_cartao_mensal,
     get_gastos_categoria_anual,
     get_transacoes_cartao_credito,
@@ -2373,6 +2375,137 @@ def _render_credit_card_insights(
             st.info(message)
 
 
+def _editor_cartao_detalhado(detail: pd.DataFrame) -> None:
+    """
+    Editor in-place da fatura de cartão: st.data_editor + gravação via
+    atualizar_transacao_cartao. Grava apenas as linhas alteradas.
+
+    Campos editáveis (armazenados no banco): Vencimento, Compra, Descrição,
+    Categoria, Cartão, Valor, Parcela atual/total e Status. As colunas derivadas
+    (Tipo, Recorrência, Final, Valor fatura) são recalculadas automaticamente na
+    próxima leitura a partir desses campos, por isso não aparecem aqui.
+    """
+    opcoes    = get_opcoes_formulario()
+    cats_db   = opcoes.get("categorias", []) or []
+    contas_db = get_contas_cartao_credito() or []
+    cat_nomes   = sorted({c["nome"] for c in cats_db} | set(detail["categoria"].dropna()))
+    conta_nomes = sorted({c["nome"] for c in contas_db} | set(detail["conta"].dropna()))
+    status_opcoes = sorted(set(detail["status"].dropna()) | {"settled", "pending"})
+
+    rows_edit = []
+    for _, tx in detail.iterrows():
+        venc = tx["data_vencimento"]
+        comp = tx["data_compra"]
+        rows_edit.append({
+            "ID":           tx["id"],
+            "Vencimento":   venc.date() if pd.notna(venc) else None,
+            "Compra":       comp.date() if pd.notna(comp) else None,
+            "Descrição":    str(tx.get("descricao") or ""),
+            "Categoria":    tx.get("categoria") or "Sem categoria",
+            "Cartão":       tx.get("conta") or "Sem cartao",
+            "Valor":        round(abs(float(tx.get("valor_original") or 0.0)), 2),
+            "Parc. atual":  int(tx.get("installment_current") or 1),
+            "Parc. total":  int(tx.get("installment_total") or 1),
+            "Status":       tx.get("status") or "settled",
+        })
+    df_edit = pd.DataFrame(rows_edit)
+
+    st.caption(
+        "Edite qualquer campo e clique em **Salvar alterações**. O valor é a "
+        "magnitude da compra (o sinal original é preservado). Colunas derivadas "
+        "(Tipo, Recorrência, Final, Valor fatura) recalculam sozinhas."
+    )
+
+    with st.form("cc_detail_editor_form", clear_on_submit=False):
+        edited = st.data_editor(
+            df_edit,
+            num_rows="fixed",
+            hide_index=True,
+            use_container_width=True,
+            key="cc_detail_editor",
+            column_config={
+                "ID": None,
+                "Vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+                "Compra":     st.column_config.DateColumn("Compra", format="DD/MM/YYYY"),
+                "Descrição":  st.column_config.TextColumn("Descrição"),
+                "Categoria":  st.column_config.SelectboxColumn(
+                    "Categoria", options=cat_nomes if cat_nomes else ["Sem categoria"]),
+                "Cartão":     st.column_config.SelectboxColumn(
+                    "Cartão", options=conta_nomes if conta_nomes else ["Sem cartao"]),
+                "Valor":      st.column_config.NumberColumn("Valor (R$)", format="%.2f", step=0.01, min_value=0.0),
+                "Parc. atual": st.column_config.NumberColumn("Parc. atual", format="%d", step=1, min_value=1),
+                "Parc. total": st.column_config.NumberColumn("Parc. total", format="%d", step=1, min_value=1),
+                "Status":     st.column_config.SelectboxColumn("Status", options=status_opcoes),
+            },
+        )
+        salvar = st.form_submit_button("Salvar alterações", type="primary")
+
+    if not salvar:
+        return
+
+    erros, ok_count = [], 0
+    for i, row in edited.iterrows():
+        orig = df_edit.iloc[i]
+        row_venc = pd.to_datetime(row["Vencimento"]).date() if pd.notna(row["Vencimento"]) else None
+        orig_venc = pd.to_datetime(orig["Vencimento"]).date() if pd.notna(orig["Vencimento"]) else None
+        row_comp = pd.to_datetime(row["Compra"]).date() if pd.notna(row["Compra"]) else None
+        orig_comp = pd.to_datetime(orig["Compra"]).date() if pd.notna(orig["Compra"]) else None
+
+        mudou = (
+            row["Descrição"] != orig["Descrição"]
+            or row["Categoria"] != orig["Categoria"]
+            or row["Cartão"] != orig["Cartão"]
+            or row["Status"] != orig["Status"]
+            or abs(float(row["Valor"]) - float(orig["Valor"])) > 0.001
+            or int(row["Parc. atual"]) != int(orig["Parc. atual"])
+            or int(row["Parc. total"]) != int(orig["Parc. total"])
+            or row_venc != orig_venc
+            or row_comp != orig_comp
+        )
+        if not mudou:
+            continue
+
+        if row_venc is None:
+            erros.append(f"Linha {i + 1}: 'Vencimento' é obrigatório.")
+            continue
+        conta_m = next((c for c in contas_db if c["nome"] == row["Cartão"]), None)
+        if not conta_m:
+            erros.append(f"Linha {i + 1}: cartão inválido ou não encontrado.")
+            continue
+        cat_m = next((c for c in cats_db if c["nome"] == row["Categoria"]), None)
+        cat_id = cat_m["id"] if cat_m else None
+
+        # Preserva o sinal original do amount; edita apenas a magnitude.
+        orig_amount = float(detail.iloc[i].get("valor_original") or 0.0)
+        sinal = -1.0 if orig_amount < 0 else 1.0
+        novo_amount = sinal * abs(float(row["Valor"]))
+
+        ok, msg = atualizar_transacao_cartao(
+            tx_id=str(row["ID"]),
+            descricao=str(row["Descrição"]),
+            valor=novo_amount,
+            data_vencimento=row_venc,
+            data_compra=row_comp,
+            categoria_id=cat_id,
+            conta_id=conta_m["id"],
+            installment_current=int(row["Parc. atual"]),
+            installment_total=int(row["Parc. total"]),
+            status=str(row["Status"]),
+        )
+        if ok:
+            ok_count += 1
+        else:
+            erros.append(f"Linha {i + 1} (ID {row['ID']}): {msg}")
+
+    if ok_count > 0:
+        st.success(f"✅ {ok_count} lançamento(s) atualizado(s).")
+        st.rerun()
+    for e in erros:
+        st.error(e)
+    if ok_count == 0 and not erros:
+        st.info("Nenhuma alteração detectada.")
+
+
 def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     st.markdown(
         '<h2 style="font-size:1.45rem;font-weight:800;color:#E2E8F0;margin-bottom:0;">'
@@ -2470,23 +2603,33 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
     with st.expander("Tabela detalhada de lancamentos", expanded=False):
         detail = df.sort_values(["data_vencimento", "data_compra"], ascending=[False, False]).copy()
-        detail["Vencimento"] = detail["data_vencimento"].dt.strftime("%d/%m/%Y")
-        detail["Compra"] = detail["data_compra"].dt.strftime("%d/%m/%Y")
-        detail["Tipo"] = detail["tipo_lancamento"].str.title()
-        detail["Valor fatura"] = detail["valor_fatura"]
-        detail["Recorrencia"] = detail["recorrencia_status"].str.title()
-        cols = [
-            "Vencimento", "Compra", "final_cartao", "Tipo", "estabelecimento",
-            "categoria", "installment_label", "Recorrencia", "Valor fatura", "source",
-        ]
-        display = detail[cols].rename(columns={
-            "final_cartao": "Final",
-            "estabelecimento": "Descricao",
-            "categoria": "Categoria",
-            "installment_label": "Parcela",
-            "source": "Origem",
-        })
-        _render_money_dataframe(display, ["Valor fatura"])
+
+        modo_edicao = st.toggle(
+            "✏️ Editar lançamentos",
+            key="cc_detail_edit_mode",
+            help="Ative para editar qualquer campo diretamente na tabela e salvar no banco.",
+        )
+
+        if modo_edicao:
+            _editor_cartao_detalhado(detail)
+        else:
+            detail["Vencimento"] = detail["data_vencimento"].dt.strftime("%d/%m/%Y")
+            detail["Compra"] = detail["data_compra"].dt.strftime("%d/%m/%Y")
+            detail["Tipo"] = detail["tipo_lancamento"].str.title()
+            detail["Valor fatura"] = detail["valor_fatura"]
+            detail["Recorrencia"] = detail["recorrencia_status"].str.title()
+            cols = [
+                "Vencimento", "Compra", "final_cartao", "Tipo", "estabelecimento",
+                "categoria", "installment_label", "Recorrencia", "Valor fatura", "source",
+            ]
+            display = detail[cols].rename(columns={
+                "final_cartao": "Final",
+                "estabelecimento": "Descricao",
+                "categoria": "Categoria",
+                "installment_label": "Parcela",
+                "source": "Origem",
+            })
+            _render_money_dataframe(display, ["Valor fatura"])
 
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo("Insights", "Insights automaticos")
