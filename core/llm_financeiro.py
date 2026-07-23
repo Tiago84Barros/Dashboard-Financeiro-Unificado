@@ -78,7 +78,7 @@ gráfico, você DEVE emitir o bloco correspondente — nunca diga apenas "vou ge
 gráfico". Se nenhum gráfico for útil, omita o bloco.
 
 === CONTEXTO FINANCEIRO ===
-{context}"""
+"""
 
 
 def chat_com_financas(context: str, history: Iterable[dict], user_message: str,
@@ -88,7 +88,9 @@ def chat_com_financas(context: str, history: Iterable[dict], user_message: str,
     fornecido. Mantém o histórico da conversa (últimos turnos) para continuidade.
     A resposta pode terminar com um bloco ```charts``` (diretivas de gráfico).
     """
-    system = _SYSTEM.format(context=context)
+    # Concatenação (NÃO str.format): o prompt contém chaves { } literais dos
+    # exemplos de diretiva JSON, que o str.format interpretaria como campos.
+    system = _SYSTEM + (context or "")
     messages = [{"role": "system", "content": system}]
     for message in list(history)[-10:]:
         role = str(message.get("role") or "")
