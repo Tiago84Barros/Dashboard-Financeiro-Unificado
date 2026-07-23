@@ -82,6 +82,11 @@ def test_income_eps_scale_and_fallback():
     q3 = {"symbol": "VALE3", "incomeStatementHistory": [
         {"endDate": "2025-12-31", "netIncome": 50.0, "basicEarningsPerCommonShare": 0}]}
     assert nz.income_rows(q3)[0]["eps"] is None
+    # sentinela/erro de escala não pode abortar a ingestão da demonstração
+    q4 = {"symbol": "AMAR3", "incomeStatementHistory": [
+        {"endDate": "2021-12-31", "netIncome": -71_754_000.0,
+         "basicEarningsPerCommonShare": -2.744e19}]}
+    assert nz.income_rows(q4)[0]["eps"] is None
 
 
 def test_balance_and_cashflow():

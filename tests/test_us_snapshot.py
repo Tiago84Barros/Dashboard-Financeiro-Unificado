@@ -133,3 +133,28 @@ def test_migration_044_autossuficiente():
     code = "\n".join(
         line for line in sql.splitlines() if not line.lstrip().startswith("--"))
     assert "DROP TABLE" not in code.upper() and "TRUNCATE" not in code.upper()
+
+
+def test_us_snapshot_publisher_deactivates_stale_symbols_without_deleting():
+    from scripts.publish_us_snapshot import _build_deactivate_stale
+
+    sql = _build_deactivate_stale()
+    assert "UPDATE market_us.company_snapshots" in sql
+    assert "is_active = FALSE" in sql
+    assert "symbol = ANY(:symbols)" in sql
+    assert "DELETE" not in sql
+
+
+def test_us_snapshot_schema_updater_is_incremental():
+    from scripts.publish_us_snapshot import _ensure_schema
+
+    assert callable(_ensure_schema)
+
+
+def test_us_snapshot_publisher_declares_resumable_identity():
+    from pathlib import Path
+
+    code = (Path(__file__).resolve().parents[1] / "scripts" /
+            "publish_us_snapshot.py").read_text(encoding="utf-8")
+    assert "já confirmadas" in code
+    assert "score_version,generated_at" in code

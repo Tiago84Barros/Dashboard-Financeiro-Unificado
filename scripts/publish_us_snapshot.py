@@ -89,6 +89,8 @@ def _engine(url: str):
         connect_args["options"] = "-c statement_timeout=90000"
         connect_args.update(keepalives=1, keepalives_idle=10,
                             keepalives_interval=5, keepalives_count=3)
+        if os.getenv("SUPABASE_DB_HOSTADDR"):
+            connect_args["hostaddr"] = os.environ["SUPABASE_DB_HOSTADDR"]
     kwargs: dict = {"future": True, "connect_args": connect_args}
     if is_remote:
         kwargs["poolclass"] = NullPool
@@ -105,6 +107,58 @@ def _build_upsert() -> str:
     updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in _COLS if c != "symbol")
     return (f"INSERT INTO market_us.company_snapshots ({cols}) VALUES ({binds}) "
             f"ON CONFLICT (symbol) DO UPDATE SET {updates}, published_at = NOW()")
+
+
+def _build_deactivate_stale() -> str:
+    """Preserva, mas retira do universo ativo, registros ausentes do snapshot."""
+    return (
+        "UPDATE market_us.company_snapshots "
+        "SET is_active = FALSE, score_status = 'stale', published_at = NOW() "
+        "WHERE NOT (symbol = ANY(:symbols))"
+    )
+
+
+def _ensure_schema(engine) -> str:
+    """Aplica somente o DDL necessário e mantém RLS/menor privilégio."""
+    with engine.connect() as conn:
+        exists = bool(conn.execute(text(
+            "SELECT to_regclass('market_us.company_snapshots')"
+        )).scalar())
+        columns = set(conn.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema='market_us' AND table_name='company_snapshots'
+        """)).scalars()) if exists else set()
+    if not exists:
+        _exec_retry(engine, text(_MIGRATION.read_text(encoding="utf-8")))
+        return "criado"
+    missing = {
+        "score_confidence": "NUMERIC(6,2)",
+        "score_status": "TEXT",
+        "critical_missing": "JSONB",
+    }
+    missing_columns = [column for column in missing if column not in columns]
+    if not missing_columns:
+        # O primeiro upgrade já aplicou RLS/revogações. Evita adquirir lock DDL
+        # novamente em cada retomada de uma carga grande.
+        return "verificado"
+    for column, data_type in missing.items():
+        if column not in columns:
+            _exec_retry(engine, text(
+                f"ALTER TABLE market_us.company_snapshots "
+                f"ADD COLUMN IF NOT EXISTS {column} {data_type}"
+            ))
+    _exec_retry(engine, text("""
+        ALTER TABLE market_us.company_snapshots ENABLE ROW LEVEL SECURITY;
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+                REVOKE ALL ON TABLE market_us.company_snapshots FROM anon;
+            END IF;
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+                REVOKE ALL ON TABLE market_us.company_snapshots FROM authenticated;
+            END IF;
+        END $$
+    """))
+    return "atualizado"
 
 
 def main() -> int:
@@ -159,16 +213,25 @@ def main() -> int:
         print("exemplo:", {k: rows[0][k] for k in ("symbol", "name", "sector", "score")})
         return 0
 
-    # A migration é multi-statement e o pooler do Supabase às vezes a rejeita;
-    # se a tabela já existe, pulamos (é idempotente e no-op de qualquer forma).
+    schema_status = _ensure_schema(tgt)
+    print(f"schema market_us.company_snapshots {schema_status} no Supabase.")
+
+    # Retomada por identidade do artefato. Evita regravar milhares de JSONB já
+    # confirmados quando o Supabase interrompe um lote perto do fim.
     with tgt.connect() as conn:
-        exists = conn.execute(text(
-            "SELECT to_regclass('market_us.company_snapshots')")).scalar()
-    if not exists:
-        _exec_retry(tgt, text(_MIGRATION.read_text(encoding="utf-8")))
-        print("schema market_us.company_snapshots criado no Supabase.")
-    else:
-        print("tabela já existe no Supabase — pulando migration.")
+        existing = {
+            (str(row.symbol), str(row.score_version or ""), row.generated_at)
+            for row in conn.execute(text("""
+                SELECT symbol,score_version,generated_at
+                FROM market_us.company_snapshots
+            """))
+        }
+    pending = [
+        row for row in rows
+        if (str(row["symbol"]), str(row.get("score_version") or ""), row.get("generated_at"))
+        not in existing
+    ]
+    print(f"já confirmadas: {len(rows) - len(pending)}; pendentes: {len(pending)}")
 
     # Upsert em LOTES pequenos, cada um em sua transação com retry: 1 statement
     # com todas as linhas (JSONB grandes) estoura o pooler do Supabase, e o pooler
@@ -176,12 +239,38 @@ def main() -> int:
     upsert = text(_build_upsert())
     batch = max(1, int(args.batch))
     done = 0
-    for i in range(0, len(rows), batch):
-        chunk = rows[i:i + batch]
+    for i in range(0, len(pending), batch):
+        chunk = pending[i:i + batch]
         _exec_retry(tgt, upsert, chunk)
         done += len(chunk)
-        print(f"  ... {done}/{len(rows)}", flush=True)
-    print(f"publicado: {done} empresa(s) em market_us.company_snapshots (Supabase).")
+        print(f"  ... {done}/{len(pending)} pendentes", flush=True)
+
+    # Preserva sobras para rollback, mas as marca como inativas somente após todos
+    # os lotes. Uma falha intermediária não reduz nem invalida a vitrine remota.
+    symbols = [str(row["symbol"]) for row in rows]
+    _exec_retry(tgt, text(_build_deactivate_stale()), {"symbols": symbols})
+    expected = {
+        (str(row["symbol"]), str(row.get("score_version") or ""), row.get("generated_at"))
+        for row in rows
+    }
+    with tgt.connect() as conn:
+        confirmed = {
+            (str(row.symbol), str(row.score_version or ""), row.generated_at)
+            for row in conn.execute(text("""
+                SELECT symbol,score_version,generated_at
+                FROM market_us.company_snapshots
+                WHERE symbol = ANY(:symbols)
+            """), {"symbols": symbols})
+        }
+    remote_count = len(expected & confirmed)
+    if remote_count != len(expected):
+        raise RuntimeError(
+            f"publicação incompleta: esperado {len(expected)}, obtido {remote_count}"
+        )
+    print(
+        f"publicado nesta execução: {done}; snapshot confirmado: {remote_count} "
+        "empresa(s) em market_us.company_snapshots (Supabase)."
+    )
     return 0
 
 

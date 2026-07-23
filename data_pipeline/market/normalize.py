@@ -217,9 +217,15 @@ def _eps(it: dict):
     reais. 0/None => None (algumas empresas, ex. VALE, não reportam).
     """
     scaled = _first(it, ("basicEarningsPerCommonShare", "dilutedEarningsPerCommonShare"))
-    if scaled:
-        return scaled / 1000.0
-    return _first(it, ("earningsPerShare", "basicEarningsPerShare", "dilutedEarningsPerShare")) or None
+    value = (scaled / 1000.0) if scaled else (
+        _first(it, ("earningsPerShare", "basicEarningsPerShare",
+                    "dilutedEarningsPerShare")) or None)
+    # Alguns payloads históricos da BRAPI trazem sentinelas/erros de escala
+    # (ex.: 2,7e16 por ação). Ausência é preferível a contaminar a linha
+    # inteira ou exceder NUMERIC(20,6). O limite é deliberadamente amplo.
+    if value is None or abs(value) > 1_000_000:
+        return None
+    return value
 
 
 def balance_rows(quote: dict) -> list[dict]:

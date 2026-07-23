@@ -11,8 +11,8 @@ if str(ROOT) not in sys.path:
 from data_pipeline.utils.db_utils import get_pipeline_engine
 
 MIGRATIONS = (
-    ("043_b3_validation_and_pit_audit.sql", "market.b3_validation_runs"),
-    ("044_b3_audit_immutability.sql", "market.trg_b3_validation_runs_append_only"),
+    ("043_b3_validation_and_pit_audit.sql", "regclass", "market.b3_validation_runs"),
+    ("044_b3_audit_immutability.sql", "regprocedure", "market.prevent_b3_audit_mutation()"),
 )
 
 
@@ -25,8 +25,9 @@ def apply() -> dict[str, list[str]]:
     try:
         with raw.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_lock(hashtext(%s))", ("b3-audit-schema",))
-            for filename, marker in MIGRATIONS:
-                cursor.execute("SELECT to_regclass(%s)", (marker,))
+            for filename, marker_type, marker in MIGRATIONS:
+                resolver = "to_regprocedure" if marker_type == "regprocedure" else "to_regclass"
+                cursor.execute(f"SELECT {resolver}(%s)", (marker,))
                 if cursor.fetchone()[0] is not None:
                     report["skipped"].append(filename)
                     continue
