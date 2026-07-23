@@ -1075,8 +1075,11 @@ def _render_chat_financeiro(
                 except Exception:
                     pass
 
-    user_input = suggested_input or st.chat_input(
-        "Pergunte sobre suas finanças…", key="cf_chat_input")
+    # O st.chat_input é SEMPRE renderizado (nunca em short-circuit): se ficasse
+    # atrás de `suggested_input or ...`, clicar numa sugestão pulava a renderização
+    # do campo e a caixa de digitar sumia até o próximo rerun.
+    typed_input = st.chat_input("Pergunte sobre suas finanças…", key="cf_chat_input")
+    user_input = suggested_input or typed_input
     if not user_input:
         return
 
