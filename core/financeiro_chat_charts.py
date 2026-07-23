@@ -242,6 +242,57 @@ def _r_simulacao_corte(d: dict, meta: dict) -> bool:
     return True
 
 
+def _r_cartao_estabelecimentos(d: dict, meta: dict) -> bool:
+    itens = [i for i in (meta.get("cartao_estabelecimentos") or [])
+             if float(i.get("gasto", 0) or 0) > 0]
+    if not itens:
+        return False
+    itens = sorted(itens, key=lambda i: i["gasto"], reverse=True)[:12]
+    fig = go.Figure(go.Bar(
+        x=[i["gasto"] for i in itens], y=[i["nome"] for i in itens], orientation="h",
+        marker_color=_COR_INVEST, opacity=0.9,
+        hovertemplate="<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(**_LAYOUT, title=d.get("titulo") or "Maiores gastos por estabelecimento",
+                      xaxis=_MOEDA_AXIS, yaxis=dict(autorange="reversed"))
+    _emit(fig)
+    return True
+
+
+def _r_cartao_evolucao(d: dict, meta: dict) -> bool:
+    serie = meta.get("cartao_evolucao") or []
+    if len(serie) < 2:
+        return False
+    fig = go.Figure(go.Bar(
+        x=[s["label"] for s in serie], y=[s["total"] for s in serie],
+        marker_color=_COR_DESPESA, opacity=0.9,
+        hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(**_LAYOUT, title=d.get("titulo") or "Evolução mensal das compras no cartão",
+                      xaxis=dict(showgrid=False), yaxis=_MOEDA_AXIS, showlegend=False)
+    _emit(fig)
+    return True
+
+
+def _r_cartao_projecao(d: dict, meta: dict) -> bool:
+    """Faturas futuras estimadas pelas parcelas restantes (ESTIMATIVA)."""
+    serie = meta.get("cartao_projecao") or []
+    if not serie:
+        return False
+    fig = go.Figure(go.Bar(
+        x=[s["label"] for s in serie], y=[s["total"] for s in serie],
+        marker_color=_COR_ESTIM, opacity=0.9,
+        hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(**_LAYOUT,
+                      title=d.get("titulo") or "Projeção de faturas futuras (parcelas · estimativa)",
+                      xaxis=dict(showgrid=False), yaxis=_MOEDA_AXIS, showlegend=False)
+    _emit(fig)
+    st.caption("Projeção pelas parcelas já lançadas que ainda vencerão. Não inclui compras "
+               "futuras novas — é um piso, não a fatura final.")
+    return True
+
+
 _RENDERERS = {
     "despesas_categoria": _r_despesas_categoria,
     "fluxo_mensal": _r_fluxo_mensal,
@@ -251,6 +302,10 @@ _RENDERERS = {
     "essencial": _r_essencial,
     "projecao_saldo": _r_projecao_saldo,
     "simulacao_corte": _r_simulacao_corte,
+    # Específicos do cartão de crédito
+    "cartao_estabelecimentos": _r_cartao_estabelecimentos,
+    "cartao_evolucao": _r_cartao_evolucao,
+    "cartao_projecao": _r_cartao_projecao,
 }
 
 
@@ -305,4 +360,25 @@ def infer_financas_chart_directives(question: str, meta: dict | None = None) -> 
     if any(t in q for t in ("patrimôn", "patrimon", "investido acumulado")):
         return [{"tipo": "evolucao_patrimonio"}]
     # padrão: categorias
+    return [{"tipo": "despesas_categoria", "escopo": "mes"}]
+
+
+def infer_cartao_chart_directives(question: str, meta: dict | None = None) -> list[dict]:
+    """Fallback de gráficos para o chat da aba Cartão de Crédito."""
+    q = (question or "").lower()
+    pediu_grafico = any(t in q for t in ("gráfico", "grafico", "visualiz", "plot", "chart",
+                                         "mostre", "desenh"))
+    if not pediu_grafico:
+        return []
+    if any(t in q for t in ("estabelecim", "loja", "comércio", "comercio", "onde gast")):
+        return [{"tipo": "cartao_estabelecimentos"}]
+    if any(t in q for t in ("projeç", "projec", "parcela", "futur", "próximos", "proximos")):
+        return [{"tipo": "cartao_projecao"}]
+    if any(t in q for t in ("essenc", "não essenc", "nao essenc")):
+        return [{"tipo": "essencial_vs_nao_essencial"}]
+    if any(t in q for t in ("corte", "reduç", "reduc", "simul")):
+        return [{"tipo": "simulacao_corte", "percentual": 15}]
+    if any(t in q for t in ("evolu", "mês a mês", "mes a mes", "mensal", "meses")):
+        return [{"tipo": "cartao_evolucao"}]
+    # padrão: categorias do cartão
     return [{"tipo": "despesas_categoria", "escopo": "mes"}]
