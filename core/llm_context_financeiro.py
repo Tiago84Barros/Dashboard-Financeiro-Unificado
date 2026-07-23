@@ -301,6 +301,7 @@ def build_cartao_chat_context(
     evolucao_mensal: list,
     recorrentes: list,
     filtro_label: str,
+    assinaturas: list | None = None,
 ) -> tuple[str, dict]:
     """
     Constrói (contexto_texto, chart_meta) para o chat da aba Cartão de Crédito, a
@@ -351,6 +352,12 @@ def build_cartao_chat_context(
         for p in (projecao or [])
     ]
 
+    assin_meta = [
+        {"nome": str(g(a, "Assinatura", default="—")),
+         "gasto": round(float(g(a, "Media mensal", default=0) or 0), 2)}
+        for a in (assinaturas or [])
+    ]
+
     chart_meta = {
         "categorias_mes": [{"nome": c["nome"], "gasto": c["gasto"], "orcamento": 0.0,
                             "pct_usado": 0.0, "essencialidade": c["essencialidade"]}
@@ -361,6 +368,7 @@ def build_cartao_chat_context(
         "cartao_estabelecimentos": estab_meta,
         "cartao_evolucao": evol_meta,
         "cartao_projecao": proj_meta,
+        "cartao_assinaturas": assin_meta,
         "escopo_cartao": True,
     }
 
@@ -388,6 +396,26 @@ def build_cartao_chat_context(
     L.append(f"  Total líquido (compras − créditos): {_brl(resumo.get('total_liquido', 0))}")
     L.append(f"  Categoria dominante: {resumo.get('categoria_dominante', '-')} "
              f"({_pct(resumo.get('categoria_pct', 0))} das compras)")
+
+    # ── Assinaturas (lista completa, de TODAS as faturas) ────────────────────
+    L.append("")
+    L.append("ASSINATURAS / SERVIÇOS RECORRENTES (consolidado de TODAS as faturas,")
+    L.append("por marca — inclui variações de nome do mesmo serviço e as linhas de IOF):")
+    if assinaturas:
+        total_mes = 0.0
+        for a in assinaturas:
+            media = float(g(a, "Media mensal", default=0) or 0)
+            total_mes += media
+            L.append(f"  {g(a, 'Assinatura', default='—')}: ~{_brl(media)}/mês "
+                     f"(total {_brl(g(a, 'Total (R$)', default=0))} em "
+                     f"{int(g(a, 'Meses', default=1) or 1)} mês(es); "
+                     f"categoria: {g(a, 'Categoria', default='-')})")
+        L.append(f"  SOMA ESTIMADA DAS ASSINATURAS: ~{_brl(total_mes)}/mês.")
+        L.append("  OBS: esta é a fonte confiável para 'quais assinaturas eu tenho' — use-a")
+        L.append("  em vez de inferir recorrência estabelecimento a estabelecimento. 'Meses' = ")
+        L.append("  meses distintos com cobrança; média mensal = total ÷ meses.")
+    else:
+        L.append("  Nenhuma assinatura recorrente identificada nas faturas.")
 
     L.append("")
     L.append("COMPRAS POR CATEGORIA (categoria: total | nº | ticket | % | essencialidade):")
