@@ -123,9 +123,12 @@ REGRAS OBRIGATÓRIAS:
 estabelecimentos, categorias ou datas. Se faltar dado, diga qual e como mudaria a conclusão.
 2. Isto é a FATURA (fluxo futuro), não o fluxo de caixa mensal manual — não misture os dois.
 2b. Para perguntas sobre ASSINATURAS/serviços recorrentes, use SEMPRE a seção \
-"ASSINATURAS / SERVIÇOS RECORRENTES" do contexto (consolidada por marca, de todas \
-as faturas) — ela já une variações de nome do mesmo serviço e o IOF. NÃO tente \
-deduzir assinaturas item a item nem omita as de valor pequeno (ex.: iFood Club).
+"ASSINATURAS ATIVAS / EM USO" do contexto (consolidada por marca) — ela já une \
+variações de nome do mesmo serviço e o IOF. NÃO tente deduzir assinaturas item a \
+item nem omita as de valor pequeno (ex.: iFood Club). As "ASSINATURAS INATIVAS" \
+foram canceladas/pontuais: NÃO as some ao custo atual nem sugira cortá-las; só \
+mencione se o usuário perguntar sobre histórico. O total de assinaturas "em uso" \
+é a SOMA DAS ASSINATURAS ATIVAS.
 3. Separe FATO, ESTIMATIVA e PROJEÇÃO. Projeção de faturas futuras é um PISO (só \
 parcelas já lançadas; não inclui compras novas) — deixe isso explícito.
 4. MOSTRE OS CÁLCULOS (ex.: "3 assinaturas de R$ X = R$ Y/mês; em 12 meses = R$ Z").
