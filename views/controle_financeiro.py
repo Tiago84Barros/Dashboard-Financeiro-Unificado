@@ -1768,12 +1768,30 @@ def _prepare_subscriptions(df: pd.DataFrame) -> list[dict]:
         return []
     base["_marca"] = base["descricao"].map(
         lambda d: _subscription_brand(d) or _clean_card_description(d))
+
+    # Referência de "atividade": ordinal (ano*12+mês) da fatura MAIS RECENTE entre
+    # TODAS as compras do cartão. Uma assinatura é ATIVA se sua última cobrança
+    # está na fatura mais recente ou na anterior (gap <= 1). Assim, assinaturas
+    # canceladas/pontuais (ex.: um mês só, há vários meses) não são contadas como
+    # "em uso" — evita inflar o total mensal atual.
+    def _ord(ano, mes) -> int:
+        return int(ano) * 12 + int(mes)
+
+    comp_ok = compras.dropna(subset=["ano_vencimento", "mes_vencimento"])
+    global_last = int((comp_ok["ano_vencimento"].astype(int) * 12
+                       + comp_ok["mes_vencimento"].astype(int)).max()) if not comp_ok.empty else 0
+
     linhas = []
     for nome, grupo in base.groupby("_marca"):
+        g_ok = grupo.dropna(subset=["ano_vencimento", "mes_vencimento"])
         meses = sorted({int(m) for m in grupo["mes_vencimento"].dropna()})
         total = float(grupo["valor_fatura"].sum())
         n_meses = len(meses) or 1
         cat = grupo["categoria"].mode()
+        last_ord = int((g_ok["ano_vencimento"].astype(int) * 12
+                        + g_ok["mes_vencimento"].astype(int)).max()) if not g_ok.empty else 0
+        ativa = bool(global_last and (global_last - last_ord) <= 1)
+        ult_ano, ult_mes = (last_ord // 12, last_ord % 12) if last_ord else (0, 0)
         linhas.append({
             "Assinatura": str(nome),
             "Categoria": str(cat.iloc[0]) if not cat.empty else "-",
@@ -1781,8 +1799,11 @@ def _prepare_subscriptions(df: pd.DataFrame) -> list[dict]:
             "Meses": n_meses,
             "Media mensal": round(total / n_meses, 2),
             "Lancamentos": int(len(grupo)),
+            "Ativa": ativa,
+            "Ultima cobranca": f"{_MESES_PT.get(ult_mes, '')}/{ult_ano}" if last_ord else "-",
         })
-    linhas.sort(key=lambda x: x["Media mensal"], reverse=True)
+    # Ativas primeiro, depois por custo mensal.
+    linhas.sort(key=lambda x: (not x["Ativa"], -x["Media mensal"]))
     return linhas
 
 

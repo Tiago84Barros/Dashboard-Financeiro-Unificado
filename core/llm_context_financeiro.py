@@ -352,10 +352,11 @@ def build_cartao_chat_context(
         for p in (projecao or [])
     ]
 
+    # Só ATIVAS entram no gráfico (assinaturas em uso hoje).
     assin_meta = [
         {"nome": str(g(a, "Assinatura", default="—")),
          "gasto": round(float(g(a, "Media mensal", default=0) or 0), 2)}
-        for a in (assinaturas or [])
+        for a in (assinaturas or []) if a.get("Ativa", True)
     ]
 
     chart_meta = {
@@ -397,25 +398,36 @@ def build_cartao_chat_context(
     L.append(f"  Categoria dominante: {resumo.get('categoria_dominante', '-')} "
              f"({_pct(resumo.get('categoria_pct', 0))} das compras)")
 
-    # ── Assinaturas (lista completa, de TODAS as faturas) ────────────────────
+    # ── Assinaturas: separar ATIVAS (em uso) de INATIVAS (canceladas/pontuais) ─
+    ativas = [a for a in (assinaturas or []) if a.get("Ativa", True)]
+    inativas = [a for a in (assinaturas or []) if not a.get("Ativa", True)]
     L.append("")
-    L.append("ASSINATURAS / SERVIÇOS RECORRENTES (consolidado de TODAS as faturas,")
-    L.append("por marca — inclui variações de nome do mesmo serviço e as linhas de IOF):")
-    if assinaturas:
+    L.append("ASSINATURAS ATIVAS / EM USO (cobradas na fatura mais recente ou na")
+    L.append("anterior; consolidadas por marca, incluindo variações de nome e o IOF):")
+    if ativas:
         total_mes = 0.0
-        for a in assinaturas:
+        for a in ativas:
             media = float(g(a, "Media mensal", default=0) or 0)
             total_mes += media
             L.append(f"  {g(a, 'Assinatura', default='—')}: ~{_brl(media)}/mês "
-                     f"(total {_brl(g(a, 'Total (R$)', default=0))} em "
-                     f"{int(g(a, 'Meses', default=1) or 1)} mês(es); "
-                     f"categoria: {g(a, 'Categoria', default='-')})")
-        L.append(f"  SOMA ESTIMADA DAS ASSINATURAS: ~{_brl(total_mes)}/mês.")
-        L.append("  OBS: esta é a fonte confiável para 'quais assinaturas eu tenho' — use-a")
-        L.append("  em vez de inferir recorrência estabelecimento a estabelecimento. 'Meses' = ")
-        L.append("  meses distintos com cobrança; média mensal = total ÷ meses.")
+                     f"(categoria: {g(a, 'Categoria', default='-')}; "
+                     f"última cobrança: {g(a, 'Ultima cobranca', default='-')})")
+        L.append(f"  SOMA DAS ASSINATURAS ATIVAS: ~{_brl(total_mes)}/mês.")
+        L.append("  Esta é a fonte confiável para 'quais assinaturas eu tenho HOJE'.")
     else:
-        L.append("  Nenhuma assinatura recorrente identificada nas faturas.")
+        L.append("  Nenhuma assinatura ativa identificada.")
+
+    if inativas:
+        L.append("")
+        L.append("ASSINATURAS INATIVAS (canceladas ou pontuais — NÃO contam no total")
+        L.append("atual; última cobrança antiga, ausente das faturas recentes):")
+        for a in inativas:
+            L.append(f"  {g(a, 'Assinatura', default='—')}: última cobrança "
+                     f"{g(a, 'Ultima cobranca', default='-')}, "
+                     f"~{_brl(g(a, 'Media mensal', default=0))}/mês quando ativa "
+                     f"({int(g(a, 'Meses', default=1) or 1)} mês(es) no total).")
+        L.append("  NÃO some estas ao custo atual de assinaturas nem sugira cortá-las")
+        L.append("  (já não estão em uso). Só cite se o usuário perguntar sobre histórico.")
 
     L.append("")
     L.append("COMPRAS POR CATEGORIA (categoria: total | nº | ticket | % | essencialidade):")
