@@ -61,6 +61,19 @@ def test_price_rows():
     assert rows[1]["volume"] == 2000
 
 
+def test_price_rows_pula_candle_vazio():
+    # Meses sem negociação (FIIs/ETFs ilíquidos) vêm da brapi só com a data:
+    # sem close não há informação — não gravar placeholder (auditoria 2026-07).
+    q = {"symbol": "FSRF11", "historicalDataPrice": [
+        {"date": 1735516800, "close": None, "volume": None},
+        {"date": 1735516800, "close": 0},
+        {"date": 1738195200, "close": 95.5, "volume": 10},
+    ]}
+    rows = nz.price_rows(q)
+    assert len(rows) == 1
+    assert rows[0]["close"] == 95.5
+
+
 def test_income_rows_annual_and_quarterly():
     rows = nz.income_rows(_Q)
     ann = [r for r in rows if r["period"] == "annual"][0]

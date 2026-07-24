@@ -30,6 +30,13 @@ _USD = "USD"
 _SHARES = "shares"
 _USD_PER_SHARE = "USD/shares"
 
+# Faixa plausível de exercício fiscal. Alguns filers (ex.: PRTH, TNET) gravam
+# o `fy` do XBRL como serial de data estilo Excel (43465 = 2018-12-31); a SEC
+# repassa o valor cru no companyfacts.
+_FY_MIN, _FY_MAX = 1990, 2100
+_EXCEL_SERIAL_MIN, _EXCEL_SERIAL_MAX = 20000, 80000
+_EXCEL_EPOCH = date(1899, 12, 30)
+
 # Duração aceita como "anual" (10-K com exercícios de ~12 meses).
 _ANNUAL_MIN_DAYS, _ANNUAL_MAX_DAYS = 350, 380
 _QUARTERLY_MIN_DAYS, _QUARTERLY_MAX_DAYS = 70, 110
@@ -161,6 +168,21 @@ def _annual_points(entries: list[dict]) -> dict[str, dict]:
     return by_end
 
 
+def _sane_fiscal_year(fy: Any, end: Any) -> int:
+    """Ano fiscal validado; serial-Excel é convertido; resto cai no ano do `end`."""
+    from datetime import timedelta
+    try:
+        year = int(fy)
+    except (TypeError, ValueError):
+        year = 0
+    if _FY_MIN <= year <= _FY_MAX:
+        return year
+    if _EXCEL_SERIAL_MIN <= year <= _EXCEL_SERIAL_MAX:
+        return (_EXCEL_EPOCH + timedelta(days=year)).year
+    d = parse_date(end)
+    return d.year if d else 0
+
+
 def _quarterly_points(entries: list[dict], *, instant: bool = False) -> dict[tuple[int, int], dict]:
     """Fatos 10-Q trimestrais por (fiscal_year, fiscal_quarter), sempre PIT.
 
@@ -181,12 +203,7 @@ def _quarterly_points(entries: list[dict], *, instant: bool = False) -> dict[tup
         # Fluxos/resultados precisam ter duração de um trimestre isolado.
         if not instant and not _is_quarterly_duration(e.get("start"), end):
             continue
-        fy = e.get("fy")
-        try:
-            fy = int(fy)
-        except (TypeError, ValueError):
-            d = parse_date(end)
-            fy = d.year if d else 0
+        fy = _sane_fiscal_year(e.get("fy"), end)
         if not fy:
             continue
         key = (fy, int(fp[1]))

@@ -87,7 +87,8 @@ def main() -> int:
                    choices=["validate", "cadastro", "bootstrap", "daily", "annual",
                             "reprocess", "renormalize", "integrity", "parity", "fiis",
                             "fiis-reprocess", "fiis-cvm", "fiis-series",
-                            "fiis-metrics", "fiis-vacancia", "fiis-imoveis",
+                            "fiis-metrics", "fiis-vacancia", "fiis-cadastro-gaps",
+                            "fiis-imoveis",
                             "fiis-v2", "fiis-v2-history", "fiis-cvm-structured",
                             "fiis-cvm-cri", "fiis-v4", "fiis-v4-audit", "fiis-documents",
                             "fiis-registry", "fiis-b3-history", "fiis-entities",
@@ -185,7 +186,8 @@ def main() -> int:
         return 0 if rep.get("erros", 0) != -1 else 1
 
     if args.command in ("fiis", "fiis-reprocess", "fiis-cvm", "fiis-series",
-                        "fiis-metrics", "fiis-vacancia", "fiis-imoveis", "fiis-v2",
+                        "fiis-metrics", "fiis-vacancia", "fiis-cadastro-gaps",
+                        "fiis-imoveis", "fiis-v2",
                         "fiis-v2-history", "fiis-cvm-structured", "fiis-cvm-cri", "fiis-v4",
                         "fiis-v4-audit", "fiis-documents", "fiis-registry",
                         "fiis-b3-history", "fiis-entities", "fiis-confidence",
@@ -298,6 +300,11 @@ def main() -> int:
             log.info("FIIs vacância — com_imoveis=%s com_vacancia=%s gravados=%s erros=%s",
                      rep.get("fiis_com_imoveis"), rep.get("com_vacancia"),
                      rep.get("gravados"), rep.get("erros"))
+        elif args.command == "fiis-cadastro-gaps":
+            rep = fii_ingest.enrich_cadastro_gaps()
+            log.info("FIIs cadastro — segmento=%s vacancia=%s erros=%s",
+                     rep.get("segmento_preenchido"), rep.get("vacancia_preenchida"),
+                     rep.get("erros"))
         elif args.command == "fiis-imoveis":
             rep = fii_ingest.ingest_imoveis()
             log.info("FIIs imóveis — fiis=%s com_imoveis=%s imoveis=%s gravados=%s erros=%s",

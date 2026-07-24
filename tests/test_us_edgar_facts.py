@@ -145,6 +145,25 @@ def test_rejeita_fato_arquivado_antes_do_fim_do_periodo():
     assert rows[0]["revenue"] == 800
 
 
+def test_sane_fiscal_year_converte_serial_excel_e_valida_faixa():
+    # PRTH/TNET gravam fy como serial-Excel (43465 = 2018-12-31)
+    assert ef._sane_fiscal_year(43465, "2018-12-31") == 2018
+    assert ef._sane_fiscal_year(43646, "2019-06-30") == 2019
+    # ano plausível passa intacto; lixo cai para o ano do fim do período
+    assert ef._sane_fiscal_year(2024, "2024-12-31") == 2024
+    assert ef._sane_fiscal_year("borked", "2021-03-31") == 2021
+    assert ef._sane_fiscal_year(123456789, "2020-09-30") == 2020
+    assert ef._sane_fiscal_year(None, None) == 0
+
+
+def test_quarterly_fy_serial_excel_nao_polui_fiscal_year():
+    q1 = _e("2018-09-30", 120, "2018-11-01", start="2018-07-01", form="10-Q")
+    q1.update({"fy": 43465, "fp": "Q3"})  # serial-Excel de 2018-12-31
+    rows = ef.build_income_quarterly_rows(_cf(_fact("Revenues", [q1])), "PRTH")
+    assert len(rows) == 1
+    assert rows[0]["fiscal_year"] == 2018 and rows[0]["fiscal_quarter"] == 3
+
+
 def test_cik_from_facts():
     assert ef.cik_from_facts({"cik": 320193}) == "0000320193"
     assert ef.cik_from_facts({}) is None

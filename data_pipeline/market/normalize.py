@@ -163,10 +163,16 @@ def price_rows(quote: dict) -> list[dict]:
         d = _as_date(it.get("date"))
         if d is None:
             continue
+        close = _f(it.get("close"))
+        # Candle vazio (mês sem negociação de ativo ilíquido): a brapi devolve
+        # a data sem OHLC. Sem close não há informação de preço — não gravar
+        # placeholder (auditoria 2026-07: 1.526 linhas nulas em FSRF11 etc.).
+        if close is None or close <= 0:
+            continue
         out.append({
             "ticker": tk, "date": d,
             "open": _f(it.get("open")), "high": _f(it.get("high")),
-            "low": _f(it.get("low")), "close": _f(it.get("close")),
+            "low": _f(it.get("low")), "close": close,
             "adjusted_close": _f(it.get("adjustedClose")),
             "volume": int(_f(it.get("volume")) or 0) if it.get("volume") is not None else None,
         })

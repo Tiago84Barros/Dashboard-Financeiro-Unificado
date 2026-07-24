@@ -106,6 +106,7 @@ def _ingest_b3_ifix_monthly(conn, *, start: date, end: date) -> dict:
                  (date::timestamp + interval '23 hours 59 minutes') AT TIME ZONE 'America/Sao_Paulo',
                  'verified_publication',:content_hash
         FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS x(date date,value numeric)
+        WHERE value IS NOT NULL AND value > 0
         ON CONFLICT (ticker,date) DO UPDATE
         SET close=EXCLUDED.close,adjusted_close=EXCLUDED.adjusted_close,
             source=EXCLUDED.source,knowledge_at=EXCLUDED.knowledge_at,
