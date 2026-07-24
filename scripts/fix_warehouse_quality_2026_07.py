@@ -161,6 +161,58 @@ def _add_constraint(conn, table: str, name: str, definition: str) -> str:
     return "criada"
 
 
+def _warehouse_engine():
+    """Engine do armazém local (senha via docker inspect, nunca em arquivo)."""
+    import json
+    import subprocess
+    from urllib.parse import quote_plus
+
+    from sqlalchemy import create_engine
+    inspection = subprocess.run(
+        ["docker", "inspect", "dfu_warehouse", "--format", "{{json .Config.Env}}"],
+        check=True, capture_output=True, text=True,
+    )
+    password = next(
+        (str(item).split("=", 1)[1] for item in json.loads(inspection.stdout)
+         if str(item).startswith("POSTGRES_PASSWORD=")), None)
+    if not password:
+        raise RuntimeError("senha do warehouse local indisponível")
+    return create_engine(
+        f"postgresql+psycopg2://postgres:{quote_plus(password)}@localhost:5433/postgres")
+
+
+def _sync_cadastro_from_warehouse(engine) -> None:
+    """Copia vacância/segmento preenchidos no armazém local para o banco alvo.
+
+    Só preenche onde o alvo está vazio — nunca sobrescreve. Necessário porque
+    as observações PIT (fonte da vacância) vivem apenas no armazém local.
+    """
+    local = _warehouse_engine()
+    with local.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT ticker, segmento, vacancia, vacancia_ref_date
+            FROM market.fiis
+            WHERE vacancia IS NOT NULL OR COALESCE(segmento, '') <> ''
+        """)).mappings().all()
+    filled = {"segmento": 0, "vacancia": 0}
+    with engine.begin() as conn:
+        for r in rows:
+            if r["vacancia"] is not None:
+                filled["vacancia"] += conn.execute(text("""
+                    UPDATE market.fiis
+                       SET vacancia = :v, vacancia_ref_date = :d, updated_at = NOW()
+                     WHERE ticker = :t AND vacancia IS NULL
+                """), {"t": r["ticker"], "v": r["vacancia"],
+                       "d": r["vacancia_ref_date"]}).rowcount
+            if r["segmento"]:
+                filled["segmento"] += conn.execute(text("""
+                    UPDATE market.fiis
+                       SET segmento = :s, updated_at = NOW()
+                     WHERE ticker = :t AND COALESCE(segmento, '') = ''
+                """), {"t": r["ticker"], "s": r["segmento"]}).rowcount
+    print(f"  sincronizado do armazém local: {filled}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--apply", action="store_true", help="aplica (padrão: dry-run)")
@@ -168,6 +220,9 @@ def main() -> int:
                     help="não adiciona os CHECKs preventivos")
     ap.add_argument("--no-cadastro", action="store_true",
                     help="pula o preenchimento do cadastro FII")
+    ap.add_argument("--vacancia-from-warehouse", action="store_true",
+                    help="copia vacância/segmento do armazém local para o alvo "
+                         "(use ao rodar contra o Supabase)")
     args = ap.parse_args()
 
     from core.database import get_engine
@@ -224,6 +279,8 @@ def main() -> int:
         print("\n== cadastro FII (segmento/vacância) ==")
         from data_pipeline.market import fii_ingest
         print(f"  {fii_ingest.enrich_cadastro_gaps()}")
+        if args.vacancia_from_warehouse:
+            _sync_cadastro_from_warehouse(engine)
 
     print("\nConcluído. Backups em", BACKUP_DIR)
     return 0
