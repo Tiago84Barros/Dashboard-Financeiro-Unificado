@@ -1817,6 +1817,56 @@ def enrich_vacancia() -> dict:
     return prog
 
 
+def enrich_cadastro_gaps() -> dict:
+    """
+    Fecha lacunas do cadastro market.fiis com fontes já coletadas, SEM rede:
+      * segmento vazio <- segmento_cvm (Informe CVM, já casado por CNPJ);
+      * vacancia nula  <- última observação PIT 'vacancia_fisica'
+        (market.fii_metric_observations, informes CVM), com a data-base.
+    Só preenche ausências — nunca sobrescreve valor existente (a vacância por
+    imóveis de enrich_vacancia continua preferencial). Idempotente.
+    """
+    engine = _engine()
+    prog = {"segmento_preenchido": 0, "vacancia_preenchida": 0, "erros": 0}
+    if engine is None:
+        return {**prog, "erros": -1}
+    with engine.begin() as conn:
+        if not _schema_ready(conn):
+            return {**prog, "erros": -1}
+        prog["segmento_preenchido"] = conn.execute(text("""
+            UPDATE market.fiis
+               SET segmento = segmento_cvm, updated_at = NOW()
+             WHERE COALESCE(segmento, '') = ''
+               AND COALESCE(segmento_cvm, '') <> ''
+        """)).rowcount
+        # As observações PIT vivem só no armazém local; na vitrine (Supabase)
+        # a tabela pode não existir — o preenchimento de vacância é pulado.
+        has_obs = conn.execute(text("""
+            SELECT 1 FROM information_schema.tables
+             WHERE table_schema = 'market' AND table_name = 'fii_metric_observations'
+        """)).scalar()
+        if not has_obs:
+            return prog
+        prog["vacancia_preenchida"] = conn.execute(text("""
+            UPDATE market.fiis f
+               SET vacancia = o.value_numeric,
+                   vacancia_ref_date = o.reference_date,
+                   updated_at = NOW()
+              FROM (
+                SELECT DISTINCT ON (ticker) ticker, value_numeric, reference_date
+                  FROM market.fii_metric_observations
+                 WHERE metric_name = 'vacancia_fisica'
+                   AND value_numeric IS NOT NULL
+                   AND value_numeric BETWEEN 0 AND 1
+                 ORDER BY ticker, reference_date DESC, knowledge_at DESC
+              ) o
+             WHERE o.ticker = f.ticker
+               AND f.vacancia IS NULL
+        """)).rowcount
+    logger.info("market/fii enrich_cadastro_gaps: %s", prog)
+    return prog
+
+
 def ingest_imoveis() -> dict:
     """
     Carteira de imóveis (scraping Status Invest) p/ FIIs de tijolo/híbrido ->
