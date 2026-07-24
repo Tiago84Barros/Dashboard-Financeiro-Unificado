@@ -1839,6 +1839,14 @@ def enrich_cadastro_gaps() -> dict:
              WHERE COALESCE(segmento, '') = ''
                AND COALESCE(segmento_cvm, '') <> ''
         """)).rowcount
+        # As observações PIT vivem só no armazém local; na vitrine (Supabase)
+        # a tabela pode não existir — o preenchimento de vacância é pulado.
+        has_obs = conn.execute(text("""
+            SELECT 1 FROM information_schema.tables
+             WHERE table_schema = 'market' AND table_name = 'fii_metric_observations'
+        """)).scalar()
+        if not has_obs:
+            return prog
         prog["vacancia_preenchida"] = conn.execute(text("""
             UPDATE market.fiis f
                SET vacancia = o.value_numeric,

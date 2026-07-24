@@ -128,6 +128,14 @@ CONSTRAINTS = [
 ]
 
 
+def _table_exists(conn, qualified: str) -> bool:
+    schema, name = qualified.split(".", 1)
+    return bool(conn.execute(text(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = :s AND table_name = :t"
+    ), {"s": schema, "t": name}).scalar())
+
+
 def _backup(conn, label: str, select_sql: str) -> int:
     rows = conn.execute(text(select_sql)).mappings().all()
     if not rows:
@@ -169,16 +177,24 @@ def main() -> int:
         return 1
 
     fronts = [
-        ("precos_close_nulo", PRICES_SELECT, [PRICES_DELETE]),
-        ("dividendos_amount_invalido", DIV_INVALID_SELECT, [DIV_INVALID_DELETE]),
-        ("dividendos_duplicados", DIV_DUP_SELECT, [DIV_DUP_DELETE]),
+        ("precos_close_nulo", "market.historical_prices",
+         PRICES_SELECT, [PRICES_DELETE]),
+        ("dividendos_amount_invalido", "market.dividends",
+         DIV_INVALID_SELECT, [DIV_INVALID_DELETE]),
+        ("dividendos_duplicados", "market.dividends",
+         DIV_DUP_SELECT, [DIV_DUP_DELETE]),
     ] + [
-        (f"us_fiscal_year_{t}", _us_select(t), [_us_update(t), _us_delete(t)])
+        (f"us_fiscal_year_{t}", f"market_us.{t}",
+         _us_select(t), [_us_update(t), _us_delete(t)])
         for t in _US_TABLES
     ]
 
+    # No Supabase (vitrine) as tabelas pesadas podem não existir — pular.
     with engine.connect() as conn:
-        for label, select_sql, _ in fronts:
+        fronts = [f for f in fronts
+                  if _table_exists(conn, f[1])
+                  or print(f"{f[0]}: tabela {f[1]} ausente — pulado") or False]
+        for label, _table, select_sql, _ in fronts:
             n = conn.execute(
                 text(f"SELECT COUNT(*) FROM ({select_sql}) s")).scalar() or 0
             print(f"{label}: {n} linha(s) afetada(s)")
@@ -188,7 +204,7 @@ def main() -> int:
         return 0
 
     with engine.begin() as conn:
-        for label, select_sql, statements in fronts:
+        for label, _table, select_sql, statements in fronts:
             print(f"\n== {label} ==")
             if _backup(conn, label, select_sql) == 0:
                 print("  nada a corrigir")
@@ -199,6 +215,9 @@ def main() -> int:
         if not args.no_constraints:
             print("\n== constraints preventivas ==")
             for table, name, definition in CONSTRAINTS:
+                if not _table_exists(conn, table):
+                    print(f"  {table}.{name}: tabela ausente — pulado")
+                    continue
                 print(f"  {table}.{name}: {_add_constraint(conn, table, name, definition)}")
 
     if not args.no_cadastro:
