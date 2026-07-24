@@ -171,19 +171,28 @@ def main() -> int:
         path = _backup(plan["to_delete"], "removidas_supabase")
         print(f"\nbackup das removidas: {path}")
 
-    with target.begin() as conn:
-        deleted = 0
-        for row in plan["to_delete"]:
+    # Remoção em LOTES com commit por lote: cada DELETE individual custaria uma
+    # ida-e-volta à rede (17k linhas = dezenas de minutos) e uma transação única
+    # não sobrevive ao pooler instável do plano Free. Idempotente: re-executar
+    # continua de onde parou.
+    deleted = 0
+    ids = [row["id"] for row in plan["to_delete"]]
+    for start in range(0, len(ids), 1000):
+        chunk = ids[start:start + 1000]
+        with target.begin() as conn:
             deleted += conn.execute(
-                text("DELETE FROM market.dividends WHERE id = :id"),
-                {"id": row["id"]}).rowcount
-        inserted = 0
-        for row in insertable:
-            inserted += conn.execute(text(f"""
-                INSERT INTO market.dividends ({', '.join(COLUMNS)})
-                VALUES ({', '.join(':' + c for c in COLUMNS)})
-                ON CONFLICT DO NOTHING
-            """), {c: row[c] for c in COLUMNS}).rowcount
+                text("DELETE FROM market.dividends WHERE id = ANY(:ids)"),
+                {"ids": chunk}).rowcount
+        print(f"  removidas {deleted}/{len(ids)}...")
+    inserted = 0
+    if insertable:
+        with target.begin() as conn:
+            for row in insertable:
+                inserted += conn.execute(text(f"""
+                    INSERT INTO market.dividends ({', '.join(COLUMNS)})
+                    VALUES ({', '.join(':' + c for c in COLUMNS)})
+                    ON CONFLICT DO NOTHING
+                """), {c: row[c] for c in COLUMNS}).rowcount
     print(f"removidas: {deleted} | adicionadas: {inserted}")
     print("Concluído. Rode scripts/report_db_state.py para conferir.")
     return 0
