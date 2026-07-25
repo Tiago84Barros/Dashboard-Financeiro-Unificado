@@ -4,6 +4,22 @@ Relatório gerado por `scripts/report_db_state.py` (read-only) nos dois bancos,
 após as correções da auditoria percentual (PR #104, aplicadas no armazém local
 em 24/07/2026).
 
+> **Atualização de 24/07/2026, fim do dia — TODAS as pendências foram fechadas.**
+> O usuário replicou as correções no Supabase (PR #104/#105) e executou o sync
+> seletivo de dividendos (PR #106/#107). Verificação final read-only:
+>
+> | Métrica no Supabase | Resultado |
+> |---|---|
+> | Preços: linhas / closes inválidos | 141.096 (até 24/07) / **0** |
+> | Dividendos: linhas / duplicatas / inválidos | **39.333** (era 56.851) / **0** / **0** |
+> | FIIs com preço: sem segmento / sem vacância | **0** / 199 (137 papel/FoF — não se aplica) |
+> | Seleção FII servida ao app (`fii_selection_inputs`) | 394 linhas, corte **23/07** |
+> | Vitrine EUA (`company_snapshots`) | 2.830 ativos, gerada 23/07 |
+>
+> Os ~17,6 mil ecos de dividendos foram removidos: a divergência estrutural
+> entre armazém local e Supabase descrita na nota (³) **não existe mais**.
+> As seções abaixo preservam o diagnóstico original que motivou as correções.
+
 ## Resumo executivo
 
 | | Armazém local | Supabase (vitrine) |
