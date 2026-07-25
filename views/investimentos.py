@@ -15,7 +15,7 @@ Dashboard:
 Dados: core/investimentos + core/proventos
 """
 import html as _html
-from datetime import date as _date, datetime as _datetime
+from datetime import datetime as _datetime
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -23,10 +23,24 @@ import streamlit as st
 
 from core.investimentos import get_carteira, get_cashflow_mensal, get_evolucao_patrimonial
 from core.proventos import get_proventos
+from core.tesouro_analysis import (
+    analise_suficiencia_tesouro,
+    retorno_mercado_sobre_custo,
+    tesouro_meta,
+)
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status
 import core.fundamentus as _fund
 import core.data_reconciliacao as _recon
+from core.correlation_analysis import (
+    DEFAULT_CORR_PERIOD,
+    MIN_CORR_MONTHS,
+    calcular_correlacao_mensal,
+    classificar_correlacao,
+    correlacao_media_ponderada,
+    converter_precos_para_brl,
+    intervalo_confianca_correlacao,
+)
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
 _COR_POSITIVO = "#00C896"
@@ -130,17 +144,15 @@ def _f_logo(ticker: str) -> str:
     clean = ticker.removesuffix(".SA")
     base  = clean[:-1] if clean.endswith("F") and len(clean) > 4 else clean
     esc   = _html.escape(ticker)
-    tid   = ticker.replace(" ", "_")
-    url   = f"{_ICONES_B3_CDN}/{base}.png"
+    url   = _html.escape(f"{_ICONES_B3_CDN}/{base}.png", quote=True)
     return (
-        f'<img src="{url}" '
-        f'style="width:36px;height:36px;border-radius:8px;object-fit:contain;'
-        f'background:rgba(255,255,255,0.08);padding:3px;flex-shrink:0;" '
-        f'onerror="this.style.display=\'none\';'
-        f'document.getElementById(\'ph_{tid}\').style.display=\'flex\';">'
-        f'<div id="ph_{tid}" style="display:none;width:36px;height:36px;border-radius:8px;'
-        f'background:rgba(0,200,150,0.2);align-items:center;justify-content:center;'
-        f'font-size:0.82rem;font-weight:700;color:#00C896;flex-shrink:0;">{_html.escape(esc[:3])}</div>'
+        f'<div style="position:relative;width:36px;height:36px;border-radius:8px;'
+        f'background:rgba(0,200,150,0.2);display:flex;align-items:center;'
+        f'justify-content:center;font-size:0.72rem;font-weight:700;color:#00C896;'
+        f'flex-shrink:0;">{esc[:3]}'
+        f'<span style="position:absolute;inset:0;border-radius:8px;'
+        f'background:rgba(255,255,255,0.08) url(\'{url}\') center/contain no-repeat;'
+        f'padding:3px;"></span></div>'
     )
 
 def _f_alert_html(cls: str, lbl_cls: str, label: str, msg: str) -> str:
@@ -262,8 +274,17 @@ def _estado_carteira(carteira: dict, n_efetivo: float, pct_ext: float) -> list:
                             "titulo": "INFO",
                             "texto": f"FIIs com {fii['pct_carteira']:.2f}% de peso — participação no portfólio."})
 
-    # Resultado
-    if rentab > 0:
+    # Resultado em BRL só é interpretado quando todos os custos cambiais são conhecidos.
+    if not carteira.get("rentabilidade_total_disponivel", True):
+        analise.append({
+            "tipo": "info",
+            "titulo": "DADO INSUFICIENTE",
+            "texto": (
+                "Retorno consolidado em BRL indisponível: falta o câmbio histórico "
+                "de aquisição de ao menos uma posição internacional."
+            ),
+        })
+    elif rentab > 0:
         analise.append({"tipo": "positivo",
                         "titulo": "POSITIVO",
                         "texto": f"Portfólio com resultado positivo de +{rentab:.2f}% sobre o custo."})
@@ -296,7 +317,7 @@ def _acoes_sugeridas(carteira: dict, n_efetivo: float, dy: float) -> list:
         sugestoes.append({
             "cor":   _COR_ALERTA,
             "tag":   "⚡",
-            "titulo": "Importe cotações para calcular rentabilidade real",
+            "titulo": "Importe cotações para atualizar valores de mercado",
             "texto":  "Acesse Configurações > Atualização de Dados e execute a atualização.",
         })
 
@@ -443,9 +464,14 @@ def _yf_symbol_for_pos(pos: dict) -> str | None:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _load_corr_precos_db(symbol_map: tuple[tuple[str, str], ...], period: str = "2y") -> dict:
+def _load_corr_precos_db(
+    symbol_map: tuple[tuple[str, str, str], ...],
+    period: str = DEFAULT_CORR_PERIOD,
+) -> dict:
     """Fallback: usa asset_quotes/snapshots do banco quando yfinance nao esta disponivel."""
-    tickers = [tk for tk, _ in symbol_map]
+    tickers = [tk for tk, _, _ in symbol_map]
+    moedas = {tk: moeda for tk, _, moeda in symbol_map}
+    precisa_usd = any(moeda == "USD" for moeda in moedas.values())
     if len(tickers) < 2:
         return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
 
@@ -474,7 +500,8 @@ def _load_corr_precos_db(symbol_map: tuple[tuple[str, str], ...], period: str = 
                   AND aq.timestamp >= CURRENT_DATE - INTERVAL '3 years'
                 ORDER BY aq.timestamp
             """).bindparams(bindparam("tickers", expanding=True))
-            rows = conn.execute(q_quotes, {"tickers": tickers}).mappings().all()
+            tickers_consulta = [*tickers, *(["USDBRL"] if precisa_usd else [])]
+            rows = conn.execute(q_quotes, {"tickers": tickers_consulta}).mappings().all()
             if rows:
                 quote_frame = pd.DataFrame(rows)
         except Exception:
@@ -485,18 +512,32 @@ def _load_corr_precos_db(symbol_map: tuple[tuple[str, str], ...], period: str = 
             dfq["data"] = pd.to_datetime(dfq["data"], errors="coerce")
             dfq["preco"] = pd.to_numeric(dfq["preco"], errors="coerce")
             dfq = dfq.dropna(subset=["data", "ticker", "preco"])
+            cambio_para_brl = {}
+            if precisa_usd:
+                fx = dfq.loc[dfq["ticker"] == "USDBRL", ["data", "preco"]]
+                if not fx.empty:
+                    cambio_para_brl["USD"] = fx.set_index("data")["preco"]
+            dfq = dfq[dfq["ticker"].isin(tickers)]
             daily = (
                 dfq.sort_values("data")
                 .drop_duplicates(["data", "ticker"], keep="last")
                 .pivot(index="data", columns="ticker", values="preco")
                 .sort_index()
-                .dropna(axis=1, thresh=12)
             )
-            daily_returns = daily.pct_change(fill_method=None).dropna(how="all").dropna(axis=1, thresh=10)
-            if daily_returns.shape[1] >= 2:
-                corr = daily_returns.corr(min_periods=10).dropna(how="all").dropna(axis=1, how="all").round(3)
-                if corr.shape[1] >= 2:
-                    return {"corr": corr, "returns": daily_returns, "symbols_ok": list(corr.columns)}
+            conversao = converter_precos_para_brl(daily, moedas, cambio_para_brl)
+            diag = calcular_correlacao_mensal(conversao["prices"], MIN_CORR_MONTHS)
+            corr = diag["corr"]
+            if corr.shape[1] >= 2:
+                return {
+                    **diag,
+                    "symbols_ok": list(corr.columns),
+                    "source": "asset_quotes",
+                    "return_kind": "retorno de preço em BRL",
+                    "base_currency": "BRL",
+                    "fx_source": "asset_quotes: USDBRL" if conversao["converted"] else "não aplicável",
+                    "converted": conversao["converted"],
+                    "missing_fx": conversao["missing_fx"],
+                }
 
         try:
             q_snap = text("""
@@ -540,18 +581,26 @@ def _load_corr_precos_db(symbol_map: tuple[tuple[str, str], ...], period: str = 
         .pivot(index="data", columns="ticker", values="preco")
         .sort_index()
     )
-    close = close.resample("ME").last().dropna(axis=1, thresh=7)
-    returns = close.pct_change(fill_method=None).replace([float("inf"), float("-inf")], pd.NA).dropna(how="all")
-    returns = returns.dropna(axis=1, thresh=6)
-    if returns.shape[1] < 2:
-        return {"corr": pd.DataFrame(), "returns": returns, "symbols_ok": list(returns.columns)}
-    corr = returns.corr(min_periods=6).dropna(how="all").dropna(axis=1, how="all").round(3)
-    return {"corr": corr, "returns": returns, "symbols_ok": list(corr.columns)}
+    diag = calcular_correlacao_mensal(close, MIN_CORR_MONTHS)
+    corr = diag["corr"]
+    return {
+        **diag,
+        "symbols_ok": list(corr.columns),
+        "source": "portfolio_position_snapshots",
+        "return_kind": "retorno de preço em BRL informado no snapshot",
+        "base_currency": "BRL",
+        "fx_source": "taxa registrada no snapshot",
+        "converted": [tk for tk, moeda in moedas.items() if moeda != "BRL"],
+        "missing_fx": [],
+    }
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _load_corr_precos(symbol_map: tuple[tuple[str, str], ...], period: str = "2y") -> dict:
-    """Baixa precos e retorna correlacao de retornos mensais para ativos negociaveis."""
+def _load_corr_precos(
+    symbol_map: tuple[tuple[str, str, str], ...],
+    period: str = DEFAULT_CORR_PERIOD,
+) -> dict:
+    """Baixa preços públicos e calcula correlação mensal na moeda-base BRL."""
     if len(symbol_map) < 2:
         return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
     try:
@@ -559,10 +608,13 @@ def _load_corr_precos(symbol_map: tuple[tuple[str, str], ...], period: str = "2y
     except Exception:
         return _load_corr_precos_db(symbol_map, period)
 
-    tickers = [sym for _, sym in symbol_map]
-    symbol_to_ticker = {sym: tk for tk, sym in symbol_map}
+    asset_symbols = [sym for _, sym, _ in symbol_map]
+    symbol_to_ticker = {sym: tk for tk, sym, _ in symbol_map}
+    moedas = {tk: moeda for tk, _, moeda in symbol_map}
+    precisa_usd = any(moeda == "USD" for moeda in moedas.values())
+    download_symbols = [*asset_symbols, *(["USDBRL=X"] if precisa_usd else [])]
 
-    def _close_from_download(raw_data: pd.DataFrame) -> pd.DataFrame:
+    def _close_from_download(raw_data: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
         if raw_data is None or raw_data.empty:
             return pd.DataFrame()
         if isinstance(raw_data.columns, pd.MultiIndex):
@@ -574,53 +626,91 @@ def _load_corr_precos(symbol_map: tuple[tuple[str, str], ...], period: str = "2y
                 close_data = raw_data.xs(raw_data.columns.get_level_values(0)[0], axis=1, level=0)
         else:
             close_data = raw_data[["Close"]] if "Close" in raw_data.columns else raw_data
-            if len(tickers) == 1:
-                close_data.columns = tickers
+            if len(symbols) == 1 and close_data.shape[1] == 1:
+                close_data.columns = symbols
         return close_data.rename(columns=symbol_to_ticker)
 
     try:
-        raw = yf.download(tickers, period=period, interval="1d", auto_adjust=True,
-                          progress=False, threads=True)
+        raw = yf.download(
+            download_symbols,
+            period=period,
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
     except Exception:
         return _load_corr_precos_db(symbol_map, period)
 
-    close = _close_from_download(raw)
-    if close.empty or close.dropna(axis=1, thresh=30).shape[1] < 2:
+    close = _close_from_download(raw, download_symbols)
+    ativos_disponiveis = [c for c in close.columns if c in moedas]
+    if close.empty or close[ativos_disponiveis].dropna(axis=1, thresh=30).shape[1] < 2:
         series = {}
-        for ticker, symbol in symbol_map:
+        for ticker, symbol, _ in symbol_map:
             try:
-                hist = yf.download(symbol, period=period, interval="1d", auto_adjust=True,
-                                   progress=False, threads=False)
-                item_close = _close_from_download(hist)
+                hist = yf.download(
+                    symbol,
+                    period=period,
+                    interval="1d",
+                    auto_adjust=True,
+                    progress=False,
+                    threads=False,
+                )
+                item_close = _close_from_download(hist, [symbol])
                 if not item_close.empty:
                     series[ticker] = item_close.iloc[:, 0]
             except Exception:
                 continue
         close = pd.DataFrame(series)
 
-    close = close.dropna(axis=1, thresh=30)
+    cambio_para_brl = {}
+    if precisa_usd:
+        if "USDBRL=X" in close.columns:
+            cambio_para_brl["USD"] = close.pop("USDBRL=X")
+        else:
+            try:
+                fx_raw = yf.download(
+                    "USDBRL=X",
+                    period=period,
+                    interval="1d",
+                    auto_adjust=True,
+                    progress=False,
+                    threads=False,
+                )
+                fx_close = _close_from_download(fx_raw, ["USDBRL=X"])
+                if not fx_close.empty:
+                    cambio_para_brl["USD"] = fx_close.iloc[:, 0]
+            except Exception:
+                pass
+
+    close = close[[c for c in close.columns if c in moedas]].dropna(axis=1, thresh=30)
     if close.shape[1] < 2:
         return _load_corr_precos_db(symbol_map, period)
 
-    close = close.resample("ME").last().dropna(how="all")
-    returns = close.pct_change(fill_method=None).replace([float("inf"), float("-inf")], pd.NA).dropna(how="all")
-    returns = returns.dropna(axis=1, thresh=6)
-    if returns.shape[1] < 2:
-        db_data = _load_corr_precos_db(symbol_map, period)
-        return db_data if not db_data.get("corr", pd.DataFrame()).empty else {
-            "corr": pd.DataFrame(), "returns": returns, "symbols_ok": list(returns.columns)
-        }
-    corr = returns.corr(min_periods=6).dropna(how="all").dropna(axis=1, how="all").round(3)
+    conversao = converter_precos_para_brl(close, moedas, cambio_para_brl)
+    diag = calcular_correlacao_mensal(conversao["prices"], MIN_CORR_MONTHS)
+    corr = diag["corr"]
+    metadata = {
+        "symbols_ok": list(corr.columns),
+        "source": "yfinance",
+        "return_kind": "retorno de preço ajustado em BRL",
+        "base_currency": "BRL",
+        "fx_source": "yfinance: USDBRL=X" if conversao["converted"] else "não aplicável",
+        "converted": conversao["converted"],
+        "missing_fx": conversao["missing_fx"],
+    }
     if corr.shape[1] < 2:
         db_data = _load_corr_precos_db(symbol_map, period)
         return db_data if not db_data.get("corr", pd.DataFrame()).empty else {
-            "corr": corr, "returns": returns, "symbols_ok": list(corr.columns)
+            **diag,
+            **metadata,
         }
-    return {"corr": corr, "returns": returns, "symbols_ok": list(corr.columns)}
+    return {**diag, **metadata}
 
 
 def _build_corr_data(posicoes: list) -> dict:
     symbol_map = []
+    pesos = {}
     seen = set()
     skipped = []
     for pos in sorted(posicoes, key=lambda p: float(p.get("valor_mercado") or 0), reverse=True):
@@ -628,13 +718,23 @@ def _build_corr_data(posicoes: list) -> dict:
         sym = _yf_symbol_for_pos(pos)
         if sym:
             if tk not in seen:
-                symbol_map.append((tk, sym))
+                moeda = str(pos.get("moeda") or "BRL").upper().strip()
+                if moeda not in {"BRL", "USD"}:
+                    skipped.append(f"{tk} (câmbio {moeda} indisponível)")
+                    continue
+                symbol_map.append((tk, sym, moeda))
+                pesos[tk] = float(pos.get("valor_mercado") or 0.0)
                 seen.add(tk)
         elif tk:
             skipped.append(tk)
     data = _load_corr_precos(tuple(symbol_map[:28]))
     data["skipped"] = skipped
-    data["requested"] = [tk for tk, _ in symbol_map[:28]]
+    data["requested"] = [tk for tk, _, _ in symbol_map[:28]]
+    data["weights"] = {tk: pesos[tk] for tk, _, _ in symbol_map[:28]}
+    data["portfolio_market_total"] = sum(
+        max(float(pos.get("valor_mercado") or 0.0), 0.0) for pos in posicoes
+    )
+    data["period"] = DEFAULT_CORR_PERIOD
     return data
 
 
@@ -1055,8 +1155,8 @@ def _fig_corr_heatmap(corr: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def _corr_pairs(corr: pd.DataFrame) -> pd.DataFrame:
-    """Lista pares de ativos por intensidade de correlacao."""
+def _corr_pairs(corr: pd.DataFrame, overlap: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Lista pares com direção, cobertura e incerteza da correlação."""
     if corr.empty:
         return pd.DataFrame()
 
@@ -1068,14 +1168,27 @@ def _corr_pairs(corr: pd.DataFrame) -> pd.DataFrame:
             if pd.isna(val):
                 continue
             abs_val = abs(float(val))
-            leitura = "Alta" if abs_val >= 0.70 else "Moderada" if abs_val >= 0.40 else "Baixa"
+            observacoes = (
+                int(overlap.loc[ativo_a, ativo_b])
+                if overlap is not None
+                and ativo_a in overlap.index
+                and ativo_b in overlap.columns
+                else None
+            )
+            ic = (
+                intervalo_confianca_correlacao(float(val), observacoes)
+                if observacoes is not None
+                else None
+            )
             rows.append({
                 "Par": f"{ativo_a} x {ativo_b}",
-                "Correlacao": round(float(val), 2),
-                "|Correlacao|": round(abs_val, 2),
-                "Leitura": leitura,
+                "Correlação": float(val),
+                "|Correlação|": abs_val,
+                "Observações": observacoes,
+                "IC 95%": f"{ic[0]:.2f} a {ic[1]:.2f}" if ic is not None else "—",
+                "Leitura": classificar_correlacao(float(val)),
             })
-    return pd.DataFrame(rows).sort_values("|Correlacao|", ascending=False)
+    return pd.DataFrame(rows).sort_values("|Correlação|", ascending=False)
 
 
 @st.cache_data(ttl=1800)
@@ -1378,6 +1491,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
     invest      = carteira["total_investido"]
     resultado   = round(total - invest, 2)
     rentab_pct  = carteira["rentabilidade_total_pct"]
+    rentab_total_ok = carteira.get("rentabilidade_total_disponivel", True)
     pct_br      = round(br  / total * 100, 2) if total > 0 else 0
     pct_ext     = round(ext / total * 100, 2) if total > 0 else 0
     renda_12m   = proventos.get("total_12m", proventos.get("total_ano", 0.0))
@@ -1407,10 +1521,11 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         ), unsafe_allow_html=True)
     with c4:
         st.markdown(_kpi(
-            "Resultado Acumulado",
+            "Resultado de Mercado",
             f"{'+' if resultado >= 0 else ''}{fmt_moeda(resultado)}",
-            f"{'+' if rentab_pct >= 0 else ''}{rentab_pct:.2f}%",
-            cor_res,
+            (f"Mercado/custo: {'+' if rentab_pct >= 0 else ''}{rentab_pct:.2f}% · sem proventos"
+             if rentab_total_ok else "Estimado; retorno BRL indisponível por falta de câmbio histórico"),
+            cor_res if rentab_total_ok else _COR_NEUTRO,
         ), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1689,67 +1804,80 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
     )
     corr_data = _build_corr_data(posicoes)
     corr = corr_data.get("corr", pd.DataFrame())
+    overlap = corr_data.get("overlap", pd.DataFrame())
     if not corr.empty:
-        pares = _corr_pairs(corr)
+        pares = _corr_pairs(corr, overlap)
         if not pares.empty:
-            media_abs = pares["|Correlacao|"].mean()
-            max_pair = pares.iloc[0]
-            baixa_pct = (pares["|Correlacao|"] < 0.40).mean() * 100
-            if media_abs < 0.30:
-                _corr_label, _corr_cor = "Boa", _COR_POSITIVO
-            elif media_abs < 0.50:
-                _corr_label, _corr_cor = "Razoável", _COR_ALERTA
-            else:
-                _corr_label, _corr_cor = "Ruim", _COR_NEGATIVO
+            positivas = pares[pares["Correlação"] > 0].sort_values("Correlação", ascending=False)
+            inversas = pares[pares["Correlação"] < 0].sort_values("Correlação")
+            independentes = pares.sort_values("|Correlação|")
+            dependencia_ponderada = correlacao_media_ponderada(
+                corr,
+                corr_data.get("weights", {}),
+            )
+            maior_positiva = positivas.iloc[0] if not positivas.empty else None
+            maior_inversa = inversas.iloc[0] if not inversas.empty else None
             ck1, ck2, ck3 = st.columns(3, gap="small")
             with ck1:
                 st.markdown(_kpi_macro(
-                    "Correlação média",
-                    f"{media_abs:.2f}",
-                    f"Diversificação {_corr_label.lower()} · média absoluta dos pares", _corr_cor,
+                    "Dependência ponderada",
+                    f"{dependencia_ponderada:.2f}" if dependencia_ponderada is not None else "—",
+                    "Média de |corr.| ponderada pelos pesos; diagnóstico, não nota",
+                    _COR_INFO,
                 ), unsafe_allow_html=True)
             with ck2:
-                cor_max = _COR_NEGATIVO if max_pair["|Correlacao|"] >= 0.70 else _COR_ALERTA
                 st.markdown(_kpi_macro(
-                    "Maior par",
-                    f"{max_pair['|Correlacao|']:.2f}",
-                    max_pair["Par"], cor_max,
+                    "Maior positiva",
+                    f"{maior_positiva['Correlação']:.2f}" if maior_positiva is not None else "—",
+                    maior_positiva["Par"] if maior_positiva is not None else "Nenhum par positivo",
+                    _COR_NEGATIVO if maior_positiva is not None
+                    and maior_positiva["Correlação"] >= 0.70 else _COR_ALERTA,
                 ), unsafe_allow_html=True)
             with ck3:
-                cor_baixa = _COR_POSITIVO if baixa_pct >= 60 else _COR_ALERTA
                 st.markdown(_kpi_macro(
-                    "Pares baixa corr.",
-                    f"{baixa_pct:.0f}%",
-                    "|corr| abaixo de 0.40", cor_baixa,
+                    "Inversa mais forte",
+                    f"{maior_inversa['Correlação']:.2f}" if maior_inversa is not None else "—",
+                    maior_inversa["Par"] if maior_inversa is not None else "Nenhum par inverso",
+                    _COR_POSITIVO if maior_inversa is not None else _COR_NEUTRO,
                 ), unsafe_allow_html=True)
 
-        col_heat, col_pairs = st.columns([2, 1], gap="medium")
-        with col_heat:
-            st.plotly_chart(
-                _fig_corr_heatmap(corr),
-                use_container_width=True,
-                config={"displayModeBar": False},
-                key="dash_corr_heatmap",
-            )
-        with col_pairs:
-            if not pares.empty:
-                st.markdown("**Pares mais correlacionados**")
+        st.plotly_chart(
+            _fig_corr_heatmap(corr),
+            use_container_width=True,
+            config={"displayModeBar": False},
+            key="dash_corr_heatmap",
+        )
+        if not pares.empty:
+            st.markdown("**Relações entre os pares**")
+            tab_pos, tab_inv, tab_ind = st.tabs(["Positivas", "Inversas", "Independentes"])
+            colunas_pares = ["Par", "Correlação", "Observações", "IC 95%", "Leitura"]
+            config_pares = {
+                "Par": st.column_config.TextColumn(width="medium"),
+                "Correlação": st.column_config.NumberColumn(format="%.2f", width="small"),
+                "Observações": st.column_config.NumberColumn(format="%d", width="small"),
+                "IC 95%": st.column_config.TextColumn(width="medium"),
+                "Leitura": st.column_config.TextColumn(width="medium"),
+            }
+            with tab_pos:
                 st.dataframe(
-                    pares[["Par", "Correlacao", "Leitura"]].head(10),
+                    positivas[colunas_pares].head(8),
                     use_container_width=True,
                     hide_index=True,
-                    column_config={
-                        "Correlacao": st.column_config.NumberColumn(format="%.2f"),
-                    },
+                    column_config=config_pares,
                 )
-                st.markdown("**Pares com menor correlação**")
+            with tab_inv:
                 st.dataframe(
-                    pares.sort_values("|Correlacao|")[["Par", "Correlacao", "Leitura"]].head(8),
+                    inversas[colunas_pares].head(8),
                     use_container_width=True,
                     hide_index=True,
-                    column_config={
-                        "Correlacao": st.column_config.NumberColumn(format="%.2f"),
-                    },
+                    column_config=config_pares,
+                )
+            with tab_ind:
+                st.dataframe(
+                    independentes[colunas_pares].head(8),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=config_pares,
                 )
         pulados = corr_data.get("skipped", [])
         if pulados:
@@ -1758,10 +1886,27 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                 ("..." if len(pulados) > 12 else "") +
                 ". Normalmente são Tesouro, renda fixa ou ativos sem série de preços comparável."
             )
+        obs_validas = [int(v) for v in pares.get("Observações", []) if pd.notna(v)]
+        faixa_obs = (
+            f"{min(obs_validas)}–{max(obs_validas)} observações sobrepostas por par"
+            if obs_validas else "cobertura não disponível"
+        )
+        pesos = corr_data.get("weights", {})
+        total_carteira = float(corr_data.get("portfolio_market_total") or 0.0)
+        valor_coberto = sum(float(pesos.get(str(tk), 0.0) or 0.0) for tk in corr.columns)
+        cobertura_peso = valor_coberto / total_carteira * 100 if total_carteira > 0 else None
+        convertidos = corr_data.get("converted", [])
+        sem_cambio = corr_data.get("missing_fx", [])
         st.caption(
-            "Correlação calculada com retornos dos preços disponíveis: yfinance quando instalado, "
-            "asset_quotes diário como fallback e snapshots históricos quando necessário. "
-            "Quanto menor a correlação absoluta entre os ativos, maior tende a ser a diversificação estatística."
+            f"Correlação de Pearson sobre retornos mensais ({corr_data.get('return_kind', 'preço')}); "
+            f"janela solicitada: {corr_data.get('period', DEFAULT_CORR_PERIOD)}; "
+            f"fonte: {corr_data.get('source', 'não identificada')}; moeda-base: "
+            f"{corr_data.get('base_currency', 'não identificada')}; {faixa_obs}; mínimo exigido: "
+            f"{corr_data.get('min_obs', MIN_CORR_MONTHS)} meses"
+            + (f"; cobertura: {cobertura_peso:.1f}% do valor da carteira" if cobertura_peso is not None else "")
+            + (f"; convertidos por {corr_data.get('fx_source')}: {', '.join(convertidos)}" if convertidos else "")
+            + (f"; sem câmbio histórico e fora da matriz: {', '.join(sem_cambio)}" if sem_cambio else "")
+            + ". Pares insuficientes não são exibidos; os intervalos de 95% são aproximações de Fisher."
         )
     else:
         st.caption(
@@ -1910,56 +2055,69 @@ def _header_classe(cls_info: dict, renda_cls: float) -> None:
 
 def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     cor      = pos["cor"]
-    rentab   = pos["rentab_pct"]
-    cor_r    = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
-    seta_r   = "▲" if rentab >= 0 else "▼"
+    rentab   = pos.get("rentab_pct")
+    rentab_ok = rentab is not None
+    cor_r    = (_COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO) if rentab_ok else _COR_NEUTRO
+    seta_r   = ("▲" if rentab >= 0 else "▼") if rentab_ok else ""
     cor_vm   = _COR_POSITIVO if pos["valor_mercado"] >= pos["total_investido"] else _COR_NEGATIVO
     dot_cor  = _COR_POSITIVO if pos["preco_atual"] >= pos["preco_medio"] else _COR_NEGATIVO
     ti       = pos["total_investido"]
     custo_fonte = pos.get("custo_fonte", "snapshot")
     custo_ausente = custo_fonte == "mercado_fallback"
-    rsc      = (pos["valor_mercado"] + renda - ti) / ti * 100 if ti > 0 and not custo_ausente else 0.0
+    moeda = str(pos.get("moeda") or "BRL").upper()
+    custo_cambio_atual = custo_fonte == "cambio_atual_estimado"
+    custo_comparavel_brl = not custo_ausente and not custo_cambio_atual
+    rsc      = (pos["valor_mercado"] + renda - ti) / ti * 100 if ti > 0 and custo_comparavel_brl else 0.0
     cor_rsc  = _COR_POSITIVO if rsc >= 0 else _COR_NEGATIVO
     # Yield on Cost (YoC) — dividend yield personalizado: renda dos ultimos
     # 12 meses dividida pelo custo total investido pelo usuario. Mostra
     # melhor o retorno real de proventos do que o DY de mercado.
-    yoc      = renda / ti * 100 if ti > 0 and not custo_ausente else 0.0
+    yoc      = renda / ti * 100 if ti > 0 and custo_comparavel_brl else 0.0
 
     dot = (f'<span style="display:inline-block;width:7px;height:7px;border-radius:50%;'
            f'background:{dot_cor};margin-left:3px;vertical-align:middle;"></span>')
 
-    custo_label = "Custo estimado" if custo_fonte == "preco_medio_estimado" else "Custo investido"
-    custo_val = "Não informado" if custo_ausente else fmt_moeda(ti)
-    resultado_val = "—" if custo_ausente else f"{seta_r} {abs(rentab):.2f}%"
-    retorno_val = "—" if custo_ausente else f"{rsc:.2f}%"
-    yoc_val = "—" if custo_ausente or renda <= 0 else f"{yoc:.2f}%"
+    if custo_cambio_atual:
+        custo_label = f"Custo conhecido ({moeda})"
+        custo_original = pos.get("total_investido_moeda_original")
+        custo_val = f"US$ {custo_original:,.2f}" if custo_original is not None else "Não informado"
+    else:
+        custo_label = "Custo estimado" if custo_fonte == "preco_medio_estimado" else "Custo investido"
+        custo_val = "Não informado" if custo_ausente else fmt_moeda(ti)
+    resultado_val = "—" if custo_ausente or not rentab_ok else f"{seta_r} {abs(rentab):.2f}%"
+    retorno_val = "—" if not custo_comparavel_brl else f"{rsc:.2f}%"
+    yoc_val = "—" if not custo_comparavel_brl or renda <= 0 else f"{yoc:.2f}%"
     resultado_cor = "#718096" if custo_ausente else cor_r
-    retorno_cor = "#718096" if custo_ausente else cor_rsc
-    yoc_cor = "#718096" if (custo_ausente or renda <= 0) else _COR_ROXO
+    retorno_cor = "#718096" if not custo_comparavel_brl else cor_rsc
+    yoc_cor = "#718096" if (not custo_comparavel_brl or renda <= 0) else _COR_ROXO
     mercado_cor = "#CBD5E0" if custo_ausente else cor_vm
 
-    # Indicador da fonte da cotação: 🟢 live (asset_quotes) | 🟡 snapshot (XP)
+    # Indicador da fonte e do frescor da cotação.
     cotacao_fonte = pos.get("cotacao_fonte", "snapshot")
-    fonte_icon    = "🟢" if cotacao_fonte == "live" else "🟡"
-    fonte_label   = "mercado" if cotacao_fonte == "live" else "snapshot XP"
+    if cotacao_fonte == "live":
+        fonte_icon, fonte_label = "🟢", "mercado atual"
+    elif cotacao_fonte == "stale":
+        fonte_icon, fonte_label = "🟠", "mercado desatualizado"
+    else:
+        fonte_icon, fonte_label = "🟡", "snapshot"
 
     diferenca_r   = pos.get("diferenca_reais", round(pos["valor_mercado"] - ti, 2))
     dif_sign      = "+" if diferenca_r >= 0 else ""
     dif_cor       = _COR_POSITIVO if diferenca_r >= 0 else _COR_NEGATIVO
-    dif_val       = "—" if custo_ausente else f"{dif_sign}{fmt_moeda(diferenca_r)}"
+    dif_val       = "—" if not custo_comparavel_brl else f"{dif_sign}{fmt_moeda(diferenca_r)}"
 
     metricas = [
         ("Peso na carteira",              f"{pos['pct_carteira']:.2f}%",             "#CBD5E0"),
         ("Quantidade",                    f"{pos['quantidade']:,.6f}".rstrip("0").rstrip(".") if "." in f"{pos['quantidade']:.6f}" else f"{pos['quantidade']:,.0f}".replace(",", "."), "#CBD5E0"),
         (f"{fonte_icon} Cotação ({fonte_label}) {dot}", fmt_moeda(pos["preco_atual"]), "#CBD5E0"),
-        ("Preço médio (custo)",           fmt_moeda(pos["preco_medio"]),               "#CBD5E0"),
+        ("Preço médio (custo)",           (f"US$ {pos.get('preco_medio_moeda_original', 0):,.2f}" if custo_cambio_atual else fmt_moeda(pos["preco_medio"])), "#CBD5E0"),
         (custo_label,                     custo_val,                                   "#CBD5E0"),
         ("Valor de mercado atual",        fmt_moeda(pos["valor_mercado"]),              mercado_cor),
-        ("Valoriz./Desvalorização (R$)",  dif_val,                                     dif_cor),
-        ("Resultado (%)",                 resultado_val,                                resultado_cor),
-        ("Renda recebida",                fmt_moeda(renda),                             _COR_ALERTA),
-        ("Yield s/ custo",                yoc_val,                                      yoc_cor),
-        ("Retorno s/ custo (c/ renda)",   retorno_val,                                  retorno_cor),
+        ("Valoriz./Desvalorização (R$)",  dif_val,                                     dif_cor if custo_comparavel_brl else "#718096"),
+        (f"Retorno mercado/custo ({pos.get('rentab_moeda', 'BRL')})", resultado_val,     resultado_cor),
+        ("Renda recebida (12M)",          fmt_moeda(renda),                             _COR_ALERTA),
+        ("Yield 12M s/ custo",            yoc_val,                                      yoc_cor),
+        ("Resultado simplificado c/ renda 12M", retorno_val,                            retorno_cor),
     ]
     rows_html = "".join(
         f'<div style="display:flex;justify-content:space-between;padding:4px 0;'
@@ -1971,14 +2129,12 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     )
     initials   = pos["ticker"][:5]
     nome_curto = pos["nome"][:22] if len(pos["nome"]) > 22 else pos["nome"]
-    # Avatar: iniciais como fundo; logo sobreposta via position:absolute.
-    # onerror oculta o <img> se o CDN retornar 404 → iniciais ficam visíveis.
+    # Avatar: iniciais como fundo; imagem CSS transparente quando o CDN falha.
     img_tag = (
-        f'<img src="{logo_url}" '
-        f'style="position:absolute;top:0;left:0;width:40px;height:40px;'
-        f'border-radius:8px;object-fit:contain;background:#1E2533;" '
-        f'onerror="this.style.display=\'none\'" '
-        f'alt="{pos["ticker"]}">'
+        f'<span role="img" aria-label="{_html.escape(pos["ticker"], quote=True)}" '
+        f'style="position:absolute;inset:0;border-radius:8px;'
+        f'background:transparent url(\'{_html.escape(logo_url, quote=True)}\') '
+        f'center/contain no-repeat;"></span>'
     ) if logo_url else ""
     avatar_html = (
         f'<div style="width:40px;height:40px;border-radius:8px;position:relative;'
@@ -2010,10 +2166,10 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
     posicoes   = carteira.get("posicoes", [])
     por_classe = carteira.get("por_classe", [])
 
-    # Renda recebida por ticker
+    # Renda recebida nos últimos 12 meses por ticker.
     renda_por_ticker: dict[str, float] = {
         a["ticker"]: a["total"]
-        for a in proventos.get("por_ativo", [])
+        for a in proventos.get("por_ativo_12m", [])
     }
     # Renda total por classe (para header)
     renda_por_classe: dict[str, float] = _dd(float)
@@ -2270,8 +2426,8 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
     if ult_rend:
         lbl_rend = f"Últ. Rendimento{' (' + data_rend + ')' if data_rend else ''}"
         rows += R(lbl_rend, _f_brs(ult_rend, 4))
-    if yoc:             rows += R("YoC (renda/custo)", f"{yoc:.1f}%", "fund-val-pos")
-    if renda_recebida > 0: rows += R("Renda recebida", _f_brs(renda_recebida, 0), "fund-val-pos")
+    if yoc:             rows += R("YoC 12M (renda/custo)", f"{yoc:.1f}%", "fund-val-pos")
+    if renda_recebida > 0: rows += R("Renda recebida (12M)", _f_brs(renda_recebida, 0), "fund-val-pos")
 
     rows += S("Ocupação e Diversificação  (Fundamentus)")
     if fii_tipo: rows += R("Tipo de FII", fii_tipo, "fund-val-pos")
@@ -2369,7 +2525,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     total_mkt = carteira["total_mercado"]
     rentab    = carteira["rentabilidade_total_pct"]
     renda_12m = proventos.get("total_12m", proventos.get("total_ano", 0.0))
-    renda_por_ticker = {a["ticker"]: a["total"] for a in proventos.get("por_ativo", [])}
+    renda_por_ticker = {
+        a["ticker"]: a["total"] for a in proventos.get("por_ativo_12m", [])
+    }
 
     # Injeta CSS dos cards (idempotente — Streamlit de-dups <style>)
     st.markdown(_FUND_CSS, unsafe_allow_html=True)
@@ -2416,8 +2574,14 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                              "Ativos com cotação disponível", _COR_INFO),
                         unsafe_allow_html=True)
         with c3:
-            st.markdown(_kpi("Rentabilidade Acumulada", f"{seta_r} {abs(rentab):.1f}%",
-                             "Mercado vs custo (ativos com cotação)", cor_r),
+            _rent_total_ok = carteira.get("rentabilidade_total_disponivel", True)
+            st.markdown(_kpi(
+                "Retorno Mercado/Custo",
+                f"{seta_r} {abs(rentab):.1f}%" if _rent_total_ok else "Indisponível em BRL",
+                ("Não inclui proventos nem ajusta aportes/resgates" if _rent_total_ok else
+                 "Falta câmbio histórico de aquisição em posição USD"),
+                cor_r if _rent_total_ok else _COR_NEUTRO,
+            ),
                         unsafe_allow_html=True)
         with c4:
             st.markdown(_kpi("Renda Total Recebida (12M)", fmt_moeda(renda_12m),
@@ -2460,7 +2624,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             with col_dv:
                 st.markdown(
                     '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                    'margin-bottom:10px;">🏆 Maior Valorização</div>',
+                    'margin-bottom:10px;">🏆 Maior valorização mercado/custo</div>',
                     unsafe_allow_html=True,
                 )
                 for p in top_val:
@@ -2477,7 +2641,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             with col_dq:
                 st.markdown(
                     '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                    'margin-bottom:10px;">📉 Maior Queda</div>',
+                    'margin-bottom:10px;">📉 Maior queda mercado/custo</div>',
                     unsafe_allow_html=True,
                 )
                 for p in top_qda:
@@ -2780,7 +2944,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                                     unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Tesouro Direto — analise de marcacao a mercado
+    # Tesouro Direto — retorno acumulado e suficiência para MtM
     # ══════════════════════════════════════════════════════════════════════════
     with tt:
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2793,82 +2957,18 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             from datetime import date as _date_today
             ano_atual = _date_today.today().year
 
-            def _tesouro_meta(ticker: str) -> dict:
-                """Extrai (tipo, ano_venc, label) do ticker (TSELIC2031, TIPCA2032 etc.)."""
-                t = (ticker or "").upper().strip()
-                ano = "".join(c for c in t if c.isdigit())[-4:]
-                ano_int = int(ano) if ano.isdigit() and len(ano) == 4 else None
-                if t.startswith("TSELIC"):
-                    tipo, label = "Selic",     "Tesouro Selic"
-                elif t.startswith("TIPCA"):
-                    tipo, label = "IPCA+",     "Tesouro IPCA+"
-                elif t.startswith("TPRE"):
-                    tipo, label = "Prefixado", "Tesouro Prefixado"
-                elif t.startswith("TEDUCA"):
-                    tipo, label = "Educa+",    "Tesouro Educa+"
-                else:
-                    tipo, label = "Outro",     "Tesouro"
-                return {"tipo": tipo, "ano": ano_int, "label": label}
-
-            def _recomendacao(tipo: str, ganho_pct: float, anos: int | None) -> dict:
-                """Determina recomendacao de venda baseada na marcacao a mercado."""
-                # Selic: pouca sensibilidade a juros — MtM neutro sempre
-                if tipo == "Selic":
-                    return {
-                        "icone":   "⚪",
-                        "label":   "NEUTRO (Selic)",
-                        "cor":     _COR_NEUTRO,
-                        "msg":     "Tesouro Selic acompanha a SELIC diária — MtM tem volatilidade mínima. "
-                                   "Não há ganho relevante em antecipar venda; mantém na curva.",
-                    }
-                # Prefixados/IPCA/Educa: sensiveis. Ganho MtM > 15% = excelente venda
-                if ganho_pct >= 15:
-                    horizonte = (
-                        f" Com vencimento em {anos} ano(s) ainda à frente, "
-                        "consolidar o ganho agora trava a rentabilidade."
-                        if anos and anos > 2 else ""
-                    )
-                    return {
-                        "icone":   "🟢",
-                        "label":   "EXCELENTE PARA VENDA",
-                        "cor":     _COR_POSITIVO,
-                        "msg":     f"Ganho MtM acima de 15% indica que taxas de mercado caíram "
-                                   f"significativamente desde a compra.{horizonte}",
-                    }
-                if ganho_pct >= 8:
-                    return {
-                        "icone":   "🟢",
-                        "label":   "BOM MOMENTO",
-                        "cor":     _COR_POSITIVO,
-                        "msg":     "Ganho MtM relevante. Avalie realizar se precisa de liquidez "
-                                   "ou se há outras alocações mais atrativas.",
-                    }
-                if ganho_pct >= 0:
-                    return {
-                        "icone":   "🟡",
-                        "label":   "NEUTRO",
-                        "cor":     _COR_ALERTA,
-                        "msg":     "MtM positivo modesto. Acumulação normal — manter até "
-                                   "estratégia mudar ou ganho ficar atrativo.",
-                    }
-                return {
-                    "icone":   "🔴",
-                    "label":   "SEGURAR",
-                    "cor":     _COR_NEGATIVO,
-                    "msg":     "MtM negativo. Vender agora realizaria perda — segure até "
-                               "o vencimento ou até o mercado reverter (queda de juros).",
-                }
-
             # KPIs consolidados
             total_mv_ts = sum(p["valor_mercado"] for p in tesouros)
             total_vi_ts = sum(p["total_investido"] for p in tesouros)
-            ganho_mtm   = total_mv_ts - total_vi_ts
-            rentab_med  = ganho_mtm / total_vi_ts * 100 if total_vi_ts > 0 else 0.0
-            cor_ganho   = _COR_POSITIVO if ganho_mtm >= 0 else _COR_NEGATIVO
+            resultado_mercado = total_mv_ts - total_vi_ts
+            retorno_total = retorno_mercado_sobre_custo(total_mv_ts, total_vi_ts)
+            retorno_total_pct = retorno_total * 100 if retorno_total is not None else None
+            cor_resultado = _COR_POSITIVO if resultado_mercado >= 0 else _COR_NEGATIVO
 
             _secao_titulo_orig(
-                "🏦", "Tesouro Direto — Marcação a Mercado",
-                f"{len(tesouros)} títulos · ganho MtM total {fmt_moeda(ganho_mtm)} ({rentab_med:+.2f}%)"
+                "🏦", "Tesouro Direto — Retorno e Marcação a Mercado",
+                f"{len(tesouros)} títulos · resultado de mercado sobre custo "
+                f"{fmt_moeda(resultado_mercado)}"
             )
 
             c1, c2, c3, c4 = st.columns(4, gap="small")
@@ -2886,24 +2986,31 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 ), unsafe_allow_html=True)
             with c3:
                 st.markdown(_kpi(
-                    "Ganho MtM Total",
-                    f"{'+' if ganho_mtm >= 0 else ''}{fmt_moeda(ganho_mtm)}",
-                    "Diferença Mercado − Custo (não tributada)",
-                    cor_ganho,
+                    "Resultado de Mercado",
+                    f"{'+' if resultado_mercado >= 0 else ''}{fmt_moeda(resultado_mercado)}",
+                    "Mercado − custo; inclui carrego e não é MtM isolado",
+                    cor_resultado,
                 ), unsafe_allow_html=True)
             with c4:
                 st.markdown(_kpi(
-                    "Rentabilidade Acumulada",
-                    f"{rentab_med:+.2f}%",
-                    "Sobre o custo investido",
-                    cor_ganho,
+                    "Retorno Mercado/Custo",
+                    f"{retorno_total_pct:+.2f}%" if retorno_total_pct is not None else "Indisponível",
+                    "Retorno de preço acumulado; não inclui imposto",
+                    cor_resultado if retorno_total_pct is not None else _COR_NEUTRO,
                 ), unsafe_allow_html=True)
+
+            st.warning(
+                "**MtM real indisponível:** o banco não possui a taxa contratada e a data de "
+                "liquidação de cada lote. Até esses dados existirem, esta tela não emite sinal "
+                "automático de venda.",
+                icon="⚠️",
+            )
 
             # Tabela com analise por titulo
             st.markdown("<br>", unsafe_allow_html=True)
             _secao_titulo_orig("📊", "Análise por Título")
 
-            # Ordena por ganho MtM% desc (oportunidades primeiro)
+            # Ordena apenas para leitura pelo retorno de mercado/custo, sem inferir oportunidade.
             tesouros_ord = sorted(
                 tesouros,
                 key=lambda p: ((p["valor_mercado"] - p["total_investido"]) / p["total_investido"] * 100
@@ -2912,47 +3019,54 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             )
 
             for p in tesouros_ord:
-                meta = _tesouro_meta(p["ticker"])
+                meta = tesouro_meta(p["ticker"])
                 mv   = float(p["valor_mercado"])
                 vi   = float(p["total_investido"])
-                ganho_abs = mv - vi
-                ganho_pct = (ganho_abs / vi * 100) if vi > 0 else 0.0
-                anos_venc = (meta["ano"] - ano_atual) if meta["ano"] else None
-                rec  = _recomendacao(meta["tipo"], ganho_pct, anos_venc)
+                resultado_abs = mv - vi
+                retorno = retorno_mercado_sobre_custo(mv, vi)
+                retorno_pct = retorno * 100 if retorno is not None else None
+                anos_ref = (meta.ano_referencia - ano_atual) if meta.ano_referencia else None
+                rec = analise_suficiencia_tesouro(meta.tipo, None)
+                rec_cor = {
+                    "info": _COR_INFO,
+                    "alerta": _COR_ALERTA,
+                    "neutro": _COR_NEUTRO,
+                }.get(rec["nivel"], _COR_NEUTRO)
 
-                # Vencimento e prazo
-                if anos_venc is not None:
-                    if anos_venc > 0:
-                        prazo_str = f"Vencimento {meta['ano']} ({anos_venc} ano{'s' if anos_venc != 1 else ''} a frente)"
-                    elif anos_venc == 0:
-                        prazo_str = f"Vencimento {meta['ano']} (este ano!)"
+                # Data de conversão do Educa+ não é tratada como vencimento.
+                papel_data = "Conversão" if meta.papel_ano == "conversao" else "Vencimento"
+                if anos_ref is not None:
+                    if anos_ref > 0:
+                        prazo_str = f"{papel_data} {meta.ano_referencia} ({anos_ref} ano{'s' if anos_ref != 1 else ''} a frente)"
+                    elif anos_ref == 0:
+                        prazo_str = f"{papel_data} {meta.ano_referencia} (este ano)"
                     else:
-                        prazo_str = f"Vencido em {meta['ano']}"
+                        prazo_str = f"{papel_data} em {meta.ano_referencia} já ocorreu"
                 else:
-                    prazo_str = "Vencimento não identificado"
+                    prazo_str = "Data de referência não identificada"
 
                 # Card individual
                 st.markdown(
                     f'<div style="background:#12151E;border:1px solid #1E2533;'
-                    f'border-left:4px solid {rec["cor"]};border-radius:10px;'
+                    f'border-left:4px solid {rec_cor};border-radius:10px;'
                     f'padding:16px 18px;margin-bottom:12px;">'
                     # Header
                     f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">'
                     f'  <div>'
                     f'    <div style="font-size:1.05rem;font-weight:800;color:#E2E8F0;">'
-                    f'      {meta["label"]} {meta["ano"] or ""}'
+                    f'      {meta.label} {meta.ano_referencia or ""}'
                     f'    </div>'
                     f'    <div style="font-size:0.72rem;color:#9CA3AF;margin-top:2px;">'
                     f'      {p["ticker"]} · {prazo_str}'
                     f'    </div>'
                     f'  </div>'
                     f'  <div style="text-align:right;">'
-                    f'    <div style="font-size:0.65rem;font-weight:800;color:{rec["cor"]};'
+                    f'    <div style="font-size:0.65rem;font-weight:800;color:{_COR_INFO};'
                     f'      text-transform:uppercase;letter-spacing:0.06em;">'
-                    f'      {rec["icone"]} {rec["label"]}'
+                    f'      RETORNO MERCADO/CUSTO'
                     f'    </div>'
-                    f'    <div style="font-size:1.15rem;font-weight:800;color:{rec["cor"]};margin-top:4px;">'
-                    f'      {"+" if ganho_pct >= 0 else ""}{ganho_pct:.2f}%'
+                    f'    <div style="font-size:1.15rem;font-weight:800;color:{_COR_INFO};margin-top:4px;">'
+                    f'      {f"{retorno_pct:+.2f}%" if retorno_pct is not None else "—"}'
                     f'    </div>'
                     f'  </div>'
                     f'</div>'
@@ -2963,24 +3077,23 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{fmt_moeda(vi)}</div></div>'
                     f'  <div><div style="font-size:0.65rem;color:#718096;">MERCADO</div>'
                     f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{fmt_moeda(mv)}</div></div>'
-                    f'  <div><div style="font-size:0.65rem;color:#718096;">GANHO R$</div>'
-                    f'    <div style="font-size:0.85rem;font-weight:700;color:{rec["cor"]};">{"+" if ganho_abs >= 0 else ""}{fmt_moeda(ganho_abs)}</div></div>'
+                    f'  <div><div style="font-size:0.65rem;color:#718096;">RESULTADO R$</div>'
+                    f'    <div style="font-size:0.85rem;font-weight:700;color:{cor_resultado};">{"+" if resultado_abs >= 0 else ""}{fmt_moeda(resultado_abs)}</div></div>'
                     f'  <div><div style="font-size:0.65rem;color:#718096;">% NA CARTEIRA</div>'
                     f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{p["pct_carteira"]:.2f}%</div></div>'
                     f'</div>'
-                    # Recomendacao
+                    # Análise de suficiência, sem recomendação automática.
                     f'<div style="font-size:0.80rem;color:#9CA3AF;line-height:1.5;">'
-                    f'  <strong style="color:{rec["cor"]};">Análise:</strong> {rec["msg"]}'
+                    f'  <strong style="color:{rec_cor};">{rec["icone"]} {rec["label"]}:</strong> {rec["msg"]}'
                     f'</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
 
             st.caption(
-                "💡 A marcação a mercado (MtM) precifica diariamente cada título conforme as taxas atuais. "
-                "Ganho MtM positivo em prefixados/IPCA+ indica queda de juros desde a compra — bom para venda antecipada. "
-                "Tesouro Selic não tem volatilidade significativa de MtM. "
-                "Esta análise não considera Imposto de Renda na venda (IR regressivo: 22.5% a 15%)."
+                "💡 Retorno mercado/custo inclui carrego, juros e variação de preço. MtM real exige comparar "
+                "o preço de mercado de hoje com o preço teórico de hoje pela taxa contratada em cada lote. "
+                "IR líquido também está indisponível sem a data de liquidação de cada compra."
             )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -3008,6 +3121,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 (total_ext_brl - total_ext_inv) / total_ext_inv * 100
                 if total_ext_inv > 0 else 0.0
             )
+            rentab_ext_disponivel = all(
+                p.get("retorno_brl_disponivel", True) for p in ext_pos
+            )
             renda_ext = sum(
                 renda_por_ticker.get(p["ticker"], 0.0) for p in ext_pos
             )
@@ -3029,16 +3145,18 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 ), unsafe_allow_html=True)
             with c2:
                 st.markdown(_kpi(
-                    "Custo Investido", fmt_moeda(total_ext_inv),
-                    "Custo histórico em BRL",
+                    "Custo de Referência", fmt_moeda(total_ext_inv),
+                    ("Custo histórico em BRL" if rentab_ext_disponivel else
+                     "Estimado no câmbio atual; não é custo histórico BRL"),
                     _COR_INFO,
                 ), unsafe_allow_html=True)
             with c3:
                 st.markdown(_kpi(
-                    "Rentabilidade",
-                    f"{seta_ext} {abs(rentab_ext):.2f}%",
-                    "Mercado − Custo / Custo",
-                    cor_rent_ext,
+                    "Retorno em BRL",
+                    f"{seta_ext} {abs(rentab_ext):.2f}%" if rentab_ext_disponivel else "Indisponível",
+                    ("Mercado − custo histórico / custo" if rentab_ext_disponivel else
+                     "Falta câmbio histórico de aquisição"),
+                    cor_rent_ext if rentab_ext_disponivel else _COR_NEUTRO,
                 ), unsafe_allow_html=True)
             with c4:
                 st.markdown(_kpi(
@@ -3053,8 +3171,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             c5, c6 = st.columns(2, gap="small")
             with c5:
                 st.markdown(_kpi(
-                    "Renda Recebida (12M)", fmt_moeda(renda_ext),
-                    "Dividendos/distribuições convertidos para BRL",
+                    "Renda Registrada (12M)", fmt_moeda(renda_ext),
+                    "Moeda conforme a origem; conversão cambial não é decomposta",
                     _COR_ALERTA,
                 ), unsafe_allow_html=True)
             with c6:
@@ -3237,13 +3355,31 @@ def render() -> None:
     proventos = get_proventos()
     evolucao  = get_evolucao_patrimonial()
 
+    if carteira.get("data_source") == "error":
+        st.error(
+            carteira.get("error_message", "Carteira real indisponível."),
+            icon="🚫",
+        )
+        st.caption("Nenhum dado mockado foi usado como substituto.")
+        return
+
+    if proventos.get("data_source") == "error":
+        st.warning(
+            proventos.get("error_message", "Proventos reais indisponíveis."),
+            icon="⚠️",
+        )
+
+    for aviso in carteira.get("avisos_dados", []):
+        st.warning(aviso, icon="⚠️")
+
     # ── Header ────────────────────────────────────────────────────────────────
     _fonte = carteira.get("data_source", "mock")
     _fonte_label = (
         "Dados reais" if _fonte == "real"
-        else "Fallback (mock)" if _fonte == "mock_fallback"
         else "Modo mock"
     )
+    _data_ref = carteira.get("data_referencia_max")
+    _data_ref_label = _data_ref.strftime("%d/%m/%Y") if _data_ref else "Não informada"
 
     col_title, col_date = st.columns([3, 1])
     with col_title:
@@ -3259,9 +3395,9 @@ def render() -> None:
         st.markdown(
             f'<div style="text-align:right;padding-top:6px;">'
             f'<div style="font-size:0.60rem;text-transform:uppercase;'
-            f'letter-spacing:0.1em;color:#4A5568;">Última Atualização</div>'
+            f'letter-spacing:0.1em;color:#4A5568;">Referência mais recente</div>'
             f'<div style="font-size:1.00rem;font-weight:700;color:{_COR_POSITIVO};">'
-            f'{_date.today().strftime("%d/%m/%Y")}</div>'
+            f'{_data_ref_label}</div>'
             f'<div style="font-size:0.70rem;color:#4A5568;">{_fonte_label}</div>'
             f'</div>',
             unsafe_allow_html=True,
@@ -3271,17 +3407,17 @@ def render() -> None:
     col_b1, col_b2, col_b3, *_ = st.columns([1, 1, 1, 4])
     with col_b1:
         badge_status(
-            "Dados reais"     if _fonte == "real" else
-            "Fallback (mock)" if _fonte == "mock_fallback" else "Modo mock",
-            "sucesso" if _fonte == "real" else
-            "erro"    if _fonte == "mock_fallback" else "alerta",
+            "Dados reais" if _fonte == "real" else "Modo mock",
+            "sucesso" if _fonte == "real" else "alerta",
         )
     with col_b2:
         _n_live  = carteira.get("n_cotacoes_live", 0)
+        _n_stale = carteira.get("n_cotacoes_stale", 0)
         _n_tot   = carteira.get("num_ativos", 0)
         badge_status(
-            f"Cotações live {_n_live}/{_n_tot}" if _n_live else "Cotações snapshot",
-            "sucesso" if _n_live else "alerta",
+            (f"Cotações atuais {_n_live}/{_n_tot}" if not _n_stale else
+             f"Atuais {_n_live} · antigas {_n_stale}"),
+            "sucesso" if _n_live and not _n_stale else "alerta",
         )
     with col_b3:
         badge_status(f"{proventos['num_eventos']} proventos", "neutro")
