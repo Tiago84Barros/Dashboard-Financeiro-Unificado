@@ -2,9 +2,9 @@
 core/investimentos.py
 Camada de serviço de investimentos — posições da carteira, alocação e custo médio.
 
-Padrão idêntico ao core/financeiro.py:
-  MOCK_MODE=true  → retorna dados mockados
-  MOCK_MODE=false → tenta banco real; fallback para mock em qualquer erro
+Política de origem:
+  MOCK_MODE=true  → retorna dados mockados de forma intencional
+  MOCK_MODE=false → usa somente dados reais; falhas permanecem explícitas
 
 Tabelas consultadas (Fase 5.1):
   portfolio_positions  — posições atuais (qty, preço médio, total investido)
@@ -26,12 +26,12 @@ Query principal:
   ORDER  BY pp.total_invested DESC
 
 Chave "data_source" sempre presente no dict retornado:
-  "real"          → dados do banco, tudo OK
-  "mock"          → MOCK_MODE=true, mock intencional
-  "mock_fallback" → banco falhou, caiu no mock automaticamente
+  "real"  → dados do banco
+  "mock"  → MOCK_MODE=true, mock intencional
+  "error" → fonte real indisponível, sem substituição sintética
 
 Schema do dict retornado por get_carteira():
-  data_source              str   "real" | "mock" | "mock_fallback"
+  data_source              str   "real" | "mock" | "error"
   total_investido          float  Custo histórico total (qty × avg_price)
   total_mercado            float  Valor de mercado (= total_investido sem cotações)
   rentabilidade_total_pct  float  Rentabilidade total (0.0 sem cotações)
@@ -56,6 +56,8 @@ from collections import defaultdict
 import streamlit as st
 
 from core.config import settings
+from core.currency_returns import retorno_moeda_origem
+from core.market_freshness import classificar_cotacao, intervalo_referencia
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +126,7 @@ _MOCK_POSICOES_RAW: list[tuple] = [
     ("TRPL3F",  "CTEEP",                          "stock", "utilities",   "BRL", 200,     29.19,  5_838.32),
     ("ROMI3",   "Romi S.A.",                      "stock", "industrials", "BRL", 602,      8.38,  5_042.49),
     ("ITUB3F",  "Itaú Unibanco",                  "stock", "financials",  "BRL", 174,     25.37,  4_414.29),
-    ("IRDM11",  "Iridium Recebíveis CRI FII",     "reit",  "real_estate", "BRL",  69,     57.67,  3_979.03),
+    ("HGRE11",  "Pátria Escritórios FII",          "reit",  "real_estate", "BRL",  30,    120.00,  3_600.00),
     ("SBSP3",   "Sabesp",                         "stock", "utilities",   "BRL", 118,     33.87,  3_997.22),
     ("CSMG3F",  "COPASA",                         "stock", "utilities",   "BRL",  94,     40.83,  3_837.85),
     ("BRAP3",   "Bradespar",                      "stock", "materials",   "BRL", 206,     18.47,  3_804.64),
@@ -144,7 +146,7 @@ def get_carteira() -> dict:
     Cache de 5 minutos — mesma estratégia do get_visao_geral().
 
     Retorna dados mockados se MOCK_MODE=true.
-    Tenta banco real se MOCK_MODE=false; em caso de falha usa mock + "mock_fallback".
+    Tenta banco real se MOCK_MODE=false; falhas retornam estado vazio explícito.
     """
     if settings.MOCK_MODE:
         dados = _carteira_mock()
@@ -157,13 +159,25 @@ def get_carteira() -> dict:
         return dados
     except Exception as exc:
         logger.warning(
-            "[investimentos] Banco real falhou (%s: %s) — usando mock.",
+            "[investimentos] Banco real indisponível (%s).",
             type(exc).__name__,
-            str(exc)[:120],
         )
-        dados = _carteira_mock()
-        dados["data_source"] = "mock_fallback"
-        return dados
+        return {
+            "data_source": "error",
+            "error_message": "Não foi possível carregar a carteira real.",
+            "total_investido": 0.0,
+            "total_mercado": 0.0,
+            "diferenca_reais": 0.0,
+            "rentabilidade_total_pct": 0.0,
+            "rentabilidade_total_disponivel": False,
+            "num_ativos": 0,
+            "cotacoes_disponiveis": False,
+            "n_cotacoes_live": 0,
+            "posicoes": [],
+            "por_classe": [],
+            "por_setor": [],
+            "avisos_dados": ["Carteira indisponível; nenhum dado sintético foi substituído."],
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -177,7 +191,7 @@ def _carteira_mock() -> dict:
     posicoes = []
     for row in _MOCK_POSICOES_RAW:
         ticker, nome, classe_raw, setor_raw, moeda, qty, pm, ti = row
-        pct = round(ti / total_inv * 100, 2) if total_inv > 0 else 0.0
+        pct = ti / total_inv * 100 if total_inv > 0 else 0.0
         posicoes.append({
             "ticker":          ticker,
             "nome":            nome,
@@ -190,6 +204,9 @@ def _carteira_mock() -> dict:
             "preco_atual":     round(float(pm), 6),    # sem cotações = preço médio
             "valor_mercado":   round(float(ti), 2),    # sem cotações = custo histórico
             "rentab_pct":      0.0,
+            "rentab_moeda":    "BRL",
+            "rentab_brl_pct":  0.0,
+            "retorno_brl_disponivel": True,
             "pct_carteira":    pct,
             "cor":             _CLASS_COR.get(classe_raw, "#718096"),
         })
@@ -198,6 +215,7 @@ def _carteira_mock() -> dict:
         "total_investido":         round(total_inv, 2),
         "total_mercado":           round(total_inv, 2),
         "rentabilidade_total_pct": 0.0,
+        "rentabilidade_total_disponivel": True,
         "num_ativos":              len(posicoes),
         "cotacoes_disponiveis":    False,
         "posicoes":                posicoes,
@@ -228,18 +246,20 @@ _SQL_POSICOES = """
         a.sector,
         a.currency,
         aq.close        AS current_price,
-        fx.close        AS usd_brl_rate
+        aq.timestamp    AS current_price_timestamp,
+        fx.close        AS usd_brl_rate,
+        fx.timestamp    AS usd_brl_timestamp
     FROM   portfolio_positions pp
     JOIN   assets a ON a.id = pp.asset_id
     LEFT JOIN LATERAL (
-        SELECT close
+        SELECT close, timestamp
         FROM   asset_quotes
         WHERE  asset_id = pp.asset_id
         ORDER  BY timestamp DESC
         LIMIT  1
     ) aq ON true
     LEFT JOIN LATERAL (
-        SELECT aq2.close
+        SELECT aq2.close, aq2.timestamp
         FROM   asset_quotes aq2
         JOIN   assets a2 ON a2.id = aq2.asset_id
         WHERE  a2.ticker = 'USDBRL'
@@ -271,6 +291,7 @@ _SQL_POSICOES_SNAPSHOT = """
     )
     SELECT
         pps.quantity,
+        pps.report_date,
         pps.market_price,
         pps.market_value,
         pps.invested_value,
@@ -288,7 +309,8 @@ _SQL_POSICOES_SNAPSHOT = """
         a.sector,
         aq_live.close        AS live_price,
         aq_live.timestamp    AS live_timestamp,
-        fx.close             AS usd_brl_rate
+        fx.close             AS usd_brl_rate,
+        fx.timestamp         AS usd_brl_timestamp
     FROM portfolio_position_snapshots pps
     JOIN latest_source ls
       ON ls.source_system = pps.source_system
@@ -305,7 +327,7 @@ _SQL_POSICOES_SNAPSHOT = """
         LIMIT  1
     ) aq_live ON true
     LEFT JOIN LATERAL (
-        SELECT aq2.close
+        SELECT aq2.close, aq2.timestamp
         FROM   asset_quotes aq2
         JOIN   assets a2 ON a2.id = aq2.asset_id
         WHERE  a2.ticker = 'USDBRL'
@@ -328,18 +350,20 @@ _SQL_POSICOES_EXTRAS_FORA_SNAPSHOT = """
         a.sector,
         a.currency,
         aq.close        AS current_price,
-        fx.close        AS usd_brl_rate
+        aq.timestamp    AS current_price_timestamp,
+        fx.close        AS usd_brl_rate,
+        fx.timestamp    AS usd_brl_timestamp
     FROM   portfolio_positions pp
     JOIN   assets a ON a.id = pp.asset_id
     LEFT JOIN LATERAL (
-        SELECT close
+        SELECT close, timestamp
         FROM   asset_quotes
         WHERE  asset_id = pp.asset_id
         ORDER  BY timestamp DESC
         LIMIT  1
     ) aq ON true
     LEFT JOIN LATERAL (
-        SELECT aq2.close
+        SELECT aq2.close, aq2.timestamp
         FROM   asset_quotes aq2
         JOIN   assets a2 ON a2.id = aq2.asset_id
         WHERE  a2.ticker = 'USDBRL'
@@ -358,11 +382,8 @@ _SQL_POSICOES_EXTRAS_FORA_SNAPSHOT = """
 """
 
 
-_USD_BRL_FALLBACK = 5.05  # usado quando asset_quotes não tem USDBRL
-
-
-def _get_usd_brl_live() -> float:
-    """Tenta buscar USD/BRL via yfinance. Fallback para constante se falhar."""
+def _get_usd_brl_live() -> float | None:
+    """Tenta buscar USD/BRL via yfinance; ausência permanece explícita."""
     try:
         import yfinance as yf
         df = yf.download("USDBRL=X", period="3d", interval="1d",
@@ -371,7 +392,7 @@ def _get_usd_brl_live() -> float:
             return float(df["Close"].dropna().iloc[-1])
     except Exception:
         pass
-    return _USD_BRL_FALLBACK
+    return None
 
 
 def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
@@ -391,6 +412,11 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
     fx_rate = _f(extra_rows[0].usd_brl_rate) if extra_rows else 0.0
     if fx_rate < 2.0:  # valor inválido ou ausente
         fx_rate = _get_usd_brl_live()
+    if fx_rate is None or fx_rate < 2.0:
+        carteira.setdefault("avisos_dados", []).append(
+            "Posições em USD sem cotação USD/BRL válida foram mantidas fora da avaliação consolidada."
+        )
+        return
 
     tickers_existentes = {p["ticker"].upper() for p in carteira.get("posicoes", [])}
     novas: list[dict] = []
@@ -410,17 +436,27 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
 
         # Preço atual: cotação do banco (USD) ou fallback para pm_raw
         pr_raw = _f(r.current_price) if r.current_price is not None else pm_raw
+        cotacao_ts = getattr(r, "current_price_timestamp", None)
+        status_cotacao = classificar_cotacao(cotacao_ts) if r.current_price is not None else "missing"
+        cotacao_fonte = (
+            "live" if status_cotacao == "fresh"
+            else "stale" if status_cotacao in {"stale", "invalid"}
+            else "custo_fallback"
+        )
 
         # Converte tudo para BRL
+        custo_usd = ti_raw if ti_raw > 0 else pm_raw * qty
         pm       = pm_raw  * fx_rate
-        ti       = ti_raw  * fx_rate
+        ti       = custo_usd * fx_rate
         pr_atual = pr_raw  * fx_rate
 
         if ti <= 0:
             ti = pm * qty
 
         vm      = round(qty * pr_atual, 2)
-        rentab  = round((vm - ti) / ti * 100, 2) if ti > 0 else 0.0
+        valor_atual_usd = qty * pr_raw
+        retorno_local = retorno_moeda_origem(valor_atual_usd, custo_usd)
+        rentab = round(retorno_local * 100, 2) if retorno_local is not None else None
         classe_raw = "etf_intl"
 
         novas.append({
@@ -433,11 +469,23 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
             "quantidade":      qty,
             "preco_medio":     round(pm, 6),
             "total_investido": round(ti, 2),
+            "preco_medio_moeda_original": round(pm_raw, 6),
+            "total_investido_moeda_original": round(custo_usd, 2),
+            "preco_atual_moeda_original": round(pr_raw, 6),
+            "fx_rate_atual": fx_rate,
+            "fx_rate_compra": None,
             "custo_estimado":  True,
-            "custo_fonte":     "portfolio_positions",
+            "custo_fonte":     "cambio_atual_estimado",
+            "cotacao_fonte":   cotacao_fonte,
+            "cotacao_timestamp": cotacao_ts,
+            "data_referencia": cotacao_ts,
             "preco_atual":     round(pr_atual, 6),
             "valor_mercado":   vm,
+            "diferenca_reais": round(vm - ti, 2),
             "rentab_pct":      rentab,
+            "rentab_moeda":    ccy,
+            "rentab_brl_pct":  None,
+            "retorno_brl_disponivel": False,
             "pct_carteira":    0.0,
             "cor":             _CLASS_COR.get(classe_raw, "#4A9EFF"),
         })
@@ -452,7 +500,7 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
     vm_total = sum(p["valor_mercado"]   for p in carteira["posicoes"])
     base     = vm_total if vm_total > 0 else ti_total
     for p in carteira["posicoes"]:
-        p["pct_carteira"] = round(p["valor_mercado"] / base * 100, 2) if base > 0 else 0.0
+        p["pct_carteira"] = p["valor_mercado"] / base * 100 if base > 0 else 0.0
 
     carteira["total_investido"]         = round(ti_total, 2)
     carteira["total_mercado"]           = round(vm_total, 2)
@@ -460,6 +508,25 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
     carteira["rentabilidade_total_pct"] = round(
         (vm_total - ti_total) / ti_total * 100, 2
     ) if ti_total > 0 else 0.0
+    carteira["rentabilidade_total_disponivel"] = not any(
+        p.get("retorno_brl_disponivel") is False for p in carteira["posicoes"]
+    )
+    carteira["n_cotacoes_live"] = sum(
+        1 for p in carteira["posicoes"] if p.get("cotacao_fonte") == "live"
+    )
+    carteira["n_cotacoes_stale"] = sum(
+        1 for p in carteira["posicoes"] if p.get("cotacao_fonte") == "stale"
+    )
+    data_ref_min, data_ref_max = intervalo_referencia(
+        [p.get("data_referencia") for p in carteira["posicoes"]]
+    )
+    carteira["data_referencia_min"] = data_ref_min
+    carteira["data_referencia_max"] = data_ref_max
+    novos_stale = sum(1 for p in novas if p.get("cotacao_fonte") == "stale")
+    if novos_stale:
+        carteira.setdefault("avisos_dados", []).append(
+            f"{novos_stale} posição(ões) USD usam cotação desatualizada com sinalização explícita."
+        )
     carteira["por_classe"] = _agregar_por_classe(carteira["posicoes"])
     carteira["por_setor"]  = _agregar_por_setor(carteira["posicoes"])
 
@@ -470,7 +537,7 @@ def _carteira_real() -> dict:
     Retorna o mesmo schema que _carteira_mock().
 
     Lança RuntimeError em qualquer problema (engine ausente, sem dados, etc.).
-    O caller (get_carteira) captura e faz fallback para mock.
+    O caller (get_carteira) captura e retorna estado indisponível sem mock.
 
     SEGURANÇA:
       - Sem credenciais no código.
@@ -529,25 +596,46 @@ def _carteira_real() -> dict:
     total_investido = 0.0
     total_mercado   = 0.0
     posicoes        = []
+    avisos_dados    = []
 
     for r in rows:
         qty    = _f(r.quantity)
         pm     = _f(r.average_price)
         ti     = _f(r.total_invested)
         preco_atual = _f(r.current_price) if r.current_price is not None else pm
+        preco_medio_original = pm
+        total_investido_original = ti
+        preco_atual_original = preco_atual
 
         # Conversão USD → BRL para posições internacionais (Nomad, BDR USD).
         # fx_rate vem do ativo sintético USDBRL (LATERAL JOIN no SQL acima).
-        # Sem cotação USD/BRL no banco ainda, mantém rate=1.0 e exibe em USD.
+        # Sem USD/BRL válido, a posição não entra silenciosamente em um total BRL.
         ccy = (r.currency or "BRL").upper()
-        fx_rate = _f(getattr(r, "usd_brl_rate", None)) or 1.0
-        if ccy == "USD" and fx_rate > 0:
+        fx_rate = _f(getattr(r, "usd_brl_rate", None))
+        if ccy == "USD" and fx_rate < 2.0:
+            fx_rate = _get_usd_brl_live() or 0.0
+        if ccy == "USD" and fx_rate < 2.0:
+            avisos_dados.append(
+                f"{r.ticker}: posição USD sem USD/BRL válido, excluída da avaliação consolidada."
+            )
+            continue
+        if ccy == "USD":
             preco_atual *= fx_rate
             pm *= fx_rate
             ti *= fx_rate
 
         vm     = round(qty * preco_atual, 2)
-        rentab = round((vm - ti) / ti * 100, 2) if ti > 0 else 0.0
+        if ccy == "USD":
+            retorno_local = retorno_moeda_origem(
+                qty * preco_atual_original, total_investido_original
+            )
+            rentab = round(retorno_local * 100, 2) if retorno_local is not None else None
+            rentab_brl = None
+            retorno_brl_disponivel = False
+        else:
+            rentab = round((vm - ti) / ti * 100, 2) if ti > 0 else None
+            rentab_brl = rentab
+            retorno_brl_disponivel = rentab is not None
 
         classe_raw = r.asset_class or "other"
         setor_raw  = r.sector or "other"
@@ -555,7 +643,13 @@ def _carteira_real() -> dict:
         total_investido += ti
         total_mercado   += vm
 
-        cotacao_fonte = "live" if r.current_price is not None else "snapshot"
+        cotacao_ts = getattr(r, "current_price_timestamp", None)
+        status_cotacao = classificar_cotacao(cotacao_ts) if r.current_price is not None else "missing"
+        cotacao_fonte = (
+            "live" if status_cotacao == "fresh"
+            else "stale" if status_cotacao in {"stale", "invalid"}
+            else "snapshot"
+        )
         posicoes.append({
             "ticker":            r.ticker,
             "nome":              r.asset_name,
@@ -566,10 +660,20 @@ def _carteira_real() -> dict:
             "preco_medio":       pm,
             "total_investido":   ti,
             "cotacao_fonte":     cotacao_fonte,
+            "cotacao_timestamp": cotacao_ts,
+            "data_referencia":   cotacao_ts,
             "preco_atual":       preco_atual,
             "valor_mercado":     vm,
             "diferenca_reais":   round(vm - ti, 2),
             "rentab_pct":        rentab,
+            "rentab_moeda":      ccy,
+            "rentab_brl_pct":    rentab_brl,
+            "retorno_brl_disponivel": retorno_brl_disponivel,
+            "preco_medio_moeda_original": preco_medio_original,
+            "total_investido_moeda_original": total_investido_original,
+            "preco_atual_moeda_original": preco_atual_original,
+            "fx_rate_atual": fx_rate if ccy == "USD" else None,
+            "fx_rate_compra": None,
             "pct_carteira":      0.0,
             "cor":               _CLASS_COR.get(classe_raw, "#718096"),
         })
@@ -577,25 +681,40 @@ def _carteira_real() -> dict:
     # Preenche pct_carteira com base no total_mercado consolidado
     base = total_mercado if total_mercado > 0 else total_investido
     n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
+    n_stale = sum(1 for p in posicoes if p.get("cotacao_fonte") == "stale")
     for p in posicoes:
-        p["pct_carteira"] = round(p["valor_mercado"] / base * 100, 2) if base > 0 else 0.0
+        p["pct_carteira"] = p["valor_mercado"] / base * 100 if base > 0 else 0.0
 
     diferenca_total = round(total_mercado - total_investido, 2)
     rentabilidade_total = round(
         diferenca_total / total_investido * 100, 2
     ) if total_investido > 0 else 0.0
+    data_ref_min, data_ref_max = intervalo_referencia(
+        [p.get("data_referencia") for p in posicoes]
+    )
+    if n_stale:
+        avisos_dados.append(
+            f"{n_stale} cotação(ões) excedem o limite de frescor e foram marcadas como desatualizadas."
+        )
 
     return {
         "total_investido":         round(total_investido, 2),
         "total_mercado":           round(total_mercado, 2),
         "diferenca_reais":         diferenca_total,
         "rentabilidade_total_pct": rentabilidade_total,
+        "rentabilidade_total_disponivel": not any(
+            p.get("retorno_brl_disponivel") is False for p in posicoes
+        ),
         "num_ativos":              len(posicoes),
         "cotacoes_disponiveis":    cotacoes_disponiveis,
         "n_cotacoes_live":         n_live,
+        "n_cotacoes_stale":        n_stale,
+        "data_referencia_min":     data_ref_min,
+        "data_referencia_max":     data_ref_max,
         "posicoes":                posicoes,
         "por_classe":              _agregar_por_classe(posicoes),
         "por_setor":               _agregar_por_setor(posicoes),
+        "avisos_dados":            avisos_dados,
         # data_source injetado pelo caller
     }
 
@@ -687,12 +806,14 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
                 "live_price":     None,   # preço mais recente de asset_quotes
                 "live_ts":        None,   # timestamp do preço live
                 "usd_brl_rate":   None,   # taxa USD/BRL (apenas para USD assets)
+                "report_dates":   [],
             }
         g = grupos[base]
         g["rows"].append(r)
         g["qty_snap_sum"] += qty
         g["vm_sum"]       += vm
         g["vi_snap_sum"]  += float(r.invested_value or 0)
+        g["report_dates"].append(getattr(r, "report_date", None))
         # Captura preço live do primeiro row com cotação disponível
         lp = getattr(r, "live_price", None)
         if lp is not None and g["live_price"] is None:
@@ -783,6 +904,7 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         usd_brl_live = g.get("usd_brl_rate") or 1.0
         is_rf = asset_type_low in ("fixed_income", "tesouro", "renda_fixa", "fundo_rf")
 
+        status_cotacao = classificar_cotacao(g.get("live_ts")) if live_price else "missing"
         if live_price and not is_rf:
             ccy_snap = str(primary.currency or "BRL").upper()
             if ccy_snap == "USD":
@@ -790,12 +912,14 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
             else:
                 preco_atual = live_price
             vm_calc = round(qty * preco_atual, 2)
-            cotacao_fonte = "live"
+            cotacao_fonte = "live" if status_cotacao == "fresh" else "stale"
         else:
             # Fallback: preço implícito do snapshot
             preco_atual = (vm / qty) if qty > 0 else 0.0
             vm_calc = round(vm, 2)
             cotacao_fonte = "snapshot"
+        report_date = max((d for d in g["report_dates"] if d is not None), default=None)
+        data_referencia = g.get("live_ts") if cotacao_fonte in {"live", "stale"} else report_date
 
         rentab = round((vm_calc - ti) / ti * 100, 2) if ti > 0 else 0.0
         custo_estimado = custo_fonte != "b3_negociacao"
@@ -817,10 +941,16 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
             "custo_estimado":     custo_estimado,
             "custo_fonte":        custo_fonte,
             "cotacao_fonte":      cotacao_fonte,  # "live" | "snapshot"
+            "cotacao_timestamp":  g.get("live_ts"),
+            "snapshot_report_date": report_date,
+            "data_referencia":    data_referencia,
             "preco_atual":        round(preco_atual, 6),
             "valor_mercado":      vm_calc,
             "diferenca_reais":    round(vm_calc - ti, 2),
             "rentab_pct":         rentab,
+            "rentab_moeda":       "BRL",
+            "rentab_brl_pct":     rentab,
+            "retorno_brl_disponivel": True,
             "pct_carteira":       0.0,
             "cor":                _CLASS_COR.get(classe_raw, "#718096"),
         })
@@ -830,25 +960,43 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
 
     base_total = total_mercado if total_mercado > 0 else total_investido
     n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
+    n_stale = sum(1 for p in posicoes if p.get("cotacao_fonte") == "stale")
     for p in posicoes:
-        p["pct_carteira"] = round(p["valor_mercado"] / base_total * 100, 2) if base_total > 0 else 0.0
+        p["pct_carteira"] = p["valor_mercado"] / base_total * 100 if base_total > 0 else 0.0
 
     diferenca_total = round(total_mercado - total_investido, 2)
     rentabilidade_total = round(
         diferenca_total / total_investido * 100, 2
     ) if total_investido > 0 else 0.0
+    data_ref_min, data_ref_max = intervalo_referencia(
+        [p.get("data_referencia") for p in posicoes]
+    )
+    avisos_dados = []
+    if n_stale:
+        avisos_dados.append(
+            f"{n_stale} cotação(ões) excedem o limite de frescor e foram marcadas como desatualizadas."
+        )
+    if data_ref_min and data_ref_max and data_ref_min != data_ref_max:
+        avisos_dados.append(
+            f"A carteira combina datas de referência entre {data_ref_min:%d/%m/%Y} e {data_ref_max:%d/%m/%Y}."
+        )
 
     return {
         "total_investido":         round(total_investido, 2),
         "total_mercado":           round(total_mercado, 2),
         "diferenca_reais":         diferenca_total,
         "rentabilidade_total_pct": rentabilidade_total,
+        "rentabilidade_total_disponivel": True,
         "num_ativos":              len(posicoes),
         "cotacoes_disponiveis":    n_live > 0,
         "n_cotacoes_live":         n_live,
+        "n_cotacoes_stale":        n_stale,
+        "data_referencia_min":     data_ref_min,
+        "data_referencia_max":     data_ref_max,
         "posicoes":                posicoes,
         "por_classe":              _agregar_por_classe(posicoes),
         "por_setor":               _agregar_por_setor(posicoes),
+        "avisos_dados":            avisos_dados,
     }
 
 
@@ -884,7 +1032,7 @@ def _agregar_por_classe(posicoes: list) -> list:
         rentab = round((vm - ti) / ti * 100, 2) if ti > 0 else 0.0
         resultado.append({
             **b,
-            "pct_carteira": round(vm / total * 100, 1),
+            "pct_carteira": vm / total * 100,
             "rentab_pct":   rentab,
         })
     return resultado
@@ -957,8 +1105,8 @@ def get_cashflow_mensal() -> list:
     try:
         return _cashflow_real()
     except Exception as exc:
-        logger.warning("[investimentos] cashflow falhou (%s) — mock.", exc)
-        return _cashflow_mock()
+        logger.warning("[investimentos] cashflow indisponível (%s).", type(exc).__name__)
+        return []
 
 
 def _cashflow_mock() -> list:
@@ -1034,7 +1182,7 @@ def _agregar_por_setor(posicoes: list) -> list:
             {
                 "nome":           setor,
                 "valor_mercado":  round(vm, 2),
-                "pct_carteira":   round(vm / total * 100, 1),
+                "pct_carteira":   vm / total * 100,
             }
             for setor, vm in buckets.items()
         ],
@@ -1165,10 +1313,15 @@ def get_evolucao_patrimonial() -> dict:
         d["data_source"] = "real"
         return d
     except Exception as exc:
-        logger.warning("[investimentos] evolução falhou (%s) — mock.", exc)
-        d = _evolucao_mock()
-        d["data_source"] = "mock_fallback"
-        return d
+        logger.warning("[investimentos] evolução indisponível (%s).", type(exc).__name__)
+        return {
+            "data_source": "error",
+            "error_message": "Não foi possível carregar a evolução patrimonial real.",
+            "snapshots": [],
+            "total_investido": 0.0,
+            "total_mercado": 0.0,
+            "total_dividendos": 0.0,
+        }
 
 
 def _evolucao_real() -> dict:

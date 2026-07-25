@@ -2,9 +2,9 @@
 core/proventos.py
 Camada de serviço de proventos — dividendos, JCP e rendimentos de FII.
 
-Padrão idêntico ao core/investimentos.py:
-  MOCK_MODE=true  → retorna dados mockados
-  MOCK_MODE=false → tenta banco real; fallback para mock em qualquer erro
+Política de origem:
+  MOCK_MODE=true  → retorna dados mockados de forma intencional
+  MOCK_MODE=false → usa somente dados reais; falhas permanecem explícitas
 
 Tabelas consultadas (Fase 5.2):
   dividends  — todos os proventos (amount_per_unit, quantity, total_amount,
@@ -20,11 +20,13 @@ Schema do dict retornado por get_proventos():
   data_source              str
   total_mes                float   Proventos com payment_date no mês corrente
   total_ano                float   Proventos com payment_date no ano corrente
+  total_12m                float   Proventos nos últimos 365 dias até hoje
   total_historico          float   Todos os proventos registrados
   num_ativos               int     Ativos distintos com ao menos 1 provento
   num_eventos              int     Total de registros em dividends
   historico_mensal         list    [{mes, ano, label, total}]
   por_ativo                list    [{ticker, nome, classe, cor, total, num_eventos, pct}]
+  por_ativo_12m            list    Mesmo schema, restrito aos últimos 365 dias
   por_tipo                 list    [{tipo, label, total, num_eventos, pct}]
   eventos                  list    [{id, ticker, nome, classe, cor, tipo, label_tipo,
                                      amount_per_unit, quantity, total_amount,
@@ -170,12 +172,12 @@ def get_proventos() -> dict:
         return dados
     except Exception as exc:
         logger.warning(
-            "[proventos] Banco real falhou (%s: %s) — usando mock.",
+            "[proventos] Banco real indisponível (%s).",
             type(exc).__name__,
-            str(exc)[:120],
         )
-        dados = _proventos_mock()
-        dados["data_source"] = "mock_fallback"
+        dados = _montar_dict([], _date.today())
+        dados["data_source"] = "error"
+        dados["error_message"] = "Não foi possível carregar os proventos reais."
         return dados
 
 
@@ -285,6 +287,10 @@ def _montar_dict(eventos: list, hoje: _date) -> dict:
         if e["payment_date"] and inicio_12m <= e["payment_date"] <= hoje
     )
     total_hist    = sum(e["total_amount"] for e in eventos)
+    eventos_12m   = [
+        e for e in eventos
+        if e["payment_date"] and inicio_12m <= e["payment_date"] <= hoje
+    ]
     ativos_set    = {e["ticker"] for e in eventos}
 
     return {
@@ -296,6 +302,7 @@ def _montar_dict(eventos: list, hoje: _date) -> dict:
         "num_eventos":     len(eventos),
         "historico_mensal": _historico_mensal(eventos),
         "por_ativo":        _agregar_por_ativo(eventos, total_hist),
+        "por_ativo_12m":    _agregar_por_ativo(eventos_12m, total_12m),
         "por_tipo":         _agregar_por_tipo(eventos, total_hist),
         "eventos":          eventos,
         # data_source injetado pelo caller
