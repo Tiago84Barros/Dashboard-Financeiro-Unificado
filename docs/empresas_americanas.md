@@ -42,6 +42,32 @@ compatível.
 > (Piotroski/Altman/Sloan/ROIC incremental), comparação, criação/simulação e
 > avaliação de portfólio, regime macro americano e validação (8+).
 
+## Score fundamentalista — SBC e diluição (v0.5.0, 2026-07)
+
+A auditoria percentual de 2026-07 avaliou o tratamento de **stock-based
+compensation em 55%** e de **diluição em 72%**: nenhum dos dois era fator do
+score, embora o dado já estivesse ingerido (SBC presente em ~89% das linhas
+anuais de fluxo de caixa, 2.782 símbolos). O `US_FUNDAMENTAL_SCORE_VERSION`
+passou a `0.5.0` com três métricas novas em `core/us_metrics.py`:
+
+| Métrica | Trilha | Direção | Por quê |
+|---|---|---|---|
+| `sbc_to_revenue` | Qualidade | menor é melhor | SBC é despesa econômica real do acionista; o peso sobre a receita separa quem paga o time em caixa de quem paga em participação |
+| `fcf_ex_sbc_margin` | Qualidade | maior é melhor | o FCF GAAP **soma a SBC de volta** (sai do lucro, retorna no fluxo operacional) e infla a margem de caixa; esta é a margem depois de absorvê-la |
+| `share_count_cagr_3y` | Retorno ao acionista | menor é melhor | recompra só cria valor se a base acionária encolher; emissão por SBC pode anular o buyback — negativo = recompra líquida efetiva |
+
+Regras preservadas: ausência **nunca** vira zero (reduz cobertura e confiança);
+o sinal do SBC varia por filer e é tratado em módulo; scores anteriores seguem
+consultáveis em `market_us.score_vintages` pela versão antiga. A interface
+mostra as três métricas no painel da empresa e a variação da base acionária na
+tabela de retorno ao acionista, com alerta quando a diluição passa de 2% a.a.
+
+Para recomputar o histórico PIT com a nova versão:
+
+```bash
+python run_us_ingest.py score-history
+```
+
 ## Análise Avançada
 
 `core/us_advanced.py`, determinístico e puro:

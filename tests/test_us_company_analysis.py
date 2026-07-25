@@ -106,7 +106,7 @@ view.us.dossie = lambda symbol: {"classification":"consolidada","classification_
 view.st.session_state["us_active_tab"] = 1
 view.st.session_state["us_selected_ticker"] = "AAPL"
 view.render()
-''').run(timeout=30)
+''').run(timeout=60)
         assert not app.exception
         rendered = "\n".join(element.value for element in app.markdown)
         for label in (

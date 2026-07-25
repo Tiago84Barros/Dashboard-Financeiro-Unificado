@@ -16,90 +16,332 @@
       "cobertura_auditoria_pct": 72,
       "qualidade_projetada_pos_correcoes_pct": 88.6,
       "pesos_modulos": {
-        "empresas_br": 0.25, "fiis": 0.20, "eua": 0.15, "banco_dados": 0.15,
-        "carteiras": 0.08, "pontuacao": 0.07, "llm": 0.03, "codigo": 0.07
+        "empresas_br": 0.25,
+        "fiis": 0.2,
+        "eua": 0.15,
+        "banco_dados": 0.15,
+        "carteiras": 0.08,
+        "pontuacao": 0.07,
+        "llm": 0.03,
+        "codigo": 0.07
       }
     },
     "modulos": {
       "empresas_brasileiras": {
-        "geral_pct": 85.8, "confianca_pct": 84, "cobertura_pct": 85,
-        "dados": 88.4, "metodologia": 87.2, "indicadores": 84.8,
-        "ranking": 86.1, "carteira_modelo": 85.3, "llm": 78.9, "codigo": 80.7,
+        "geral_pct": 85.8,
+        "confianca_pct": 84,
+        "cobertura_pct": 85,
+        "dados": 88.4,
+        "metodologia": 87.2,
+        "indicadores": 84.8,
+        "ranking": 86.1,
+        "carteira_modelo": 85.3,
+        "llm": 78.9,
+        "codigo": 80.7,
         "situacao": "aprovado com ressalvas",
         "evidencias": {
-          "calculated_metrics": {"linhas": 65213, "tickers": 818, "nulos": 0, "duplicatas": 0, "atualizado": "2026-07-23"},
-          "historical_prices": {"linhas": 138241, "tickers": 1087, "ate": "2026-07-22", "closes_nulos_ou_zero": 1527, "pos_2024": 729},
-          "dividends": {"linhas": 39132, "grupos_duplicados": 4, "amount_invalido": 18},
-          "demonstracoes": {"linhas_dre": 27616, "tickers": 423, "anos": "2010-2026"},
-          "companies": {"linhas": 390, "sem_setor": 27},
+          "calculated_metrics": {
+            "linhas": 65213,
+            "tickers": 818,
+            "nulos": 0,
+            "duplicatas": 0,
+            "atualizado": "2026-07-23"
+          },
+          "historical_prices": {
+            "linhas": 138241,
+            "tickers": 1087,
+            "ate": "2026-07-22",
+            "closes_nulos_ou_zero": 1527,
+            "pos_2024": 729
+          },
+          "dividends": {
+            "linhas": 39132,
+            "grupos_duplicados": 4,
+            "amount_invalido": 18
+          },
+          "demonstracoes": {
+            "linhas_dre": 27616,
+            "tickers": 423,
+            "anos": "2010-2026"
+          },
+          "companies": {
+            "linhas": 390,
+            "sem_setor": 27
+          },
           "ticker_alias": 15
         }
       },
       "fiis_brasileiros": {
-        "geral_pct": 84.2, "confianca_pct": 80, "cobertura_pct": 82,
-        "dados": 79.8, "metodologia": 89.1, "indicadores": 84.3,
-        "ranking": 85.7, "carteira_modelo": 84.9, "llm": 77.5, "codigo": 86.2,
+        "geral_pct": 84.2,
+        "confianca_pct": 80,
+        "cobertura_pct": 82,
+        "dados": 79.8,
+        "metodologia": 89.1,
+        "indicadores": 84.3,
+        "ranking": 85.7,
+        "carteira_modelo": 84.9,
+        "llm": 77.5,
+        "codigo": 86.2,
         "situacao": "aprovado com ressalvas",
         "evidencias": {
-          "fiis_cadastro": {"total": 1066, "com_preco": 430, "sem_segmento_com_preco": 92, "sem_vacancia_com_preco": 294},
-          "score_snapshot_2026_07_23": {"linhas": 1146, "validated": 756, "diligence_only": 390},
-          "universe_history": {"linhas": 4808, "tickers": 1030},
-          "pit": {"pit_score_snapshots": 20155, "metric_observations_mb": 418, "entity_aliases": 10867, "canonicas": 8530},
+          "fiis_cadastro": {
+            "total": 1066,
+            "com_preco": 430,
+            "sem_segmento_com_preco": 92,
+            "sem_vacancia_com_preco": 294
+          },
+          "score_snapshot_2026_07_23": {
+            "linhas": 1146,
+            "validated": 756,
+            "diligence_only": 390
+          },
+          "universe_history": {
+            "linhas": 4808,
+            "tickers": 1030
+          },
+          "pit": {
+            "pit_score_snapshots": 20155,
+            "metric_observations_mb": 418,
+            "entity_aliases": 10867,
+            "canonicas": 8530
+          },
           "reconciliation_issues_abertas": 97
         }
       },
       "acoes_americanas": {
-        "geral_pct": 84.5, "confianca_pct": 82, "cobertura_pct": 80,
-        "dados": 89.4, "metodologia": 84.6, "indicadores": 82.9,
-        "ranking": 84.1, "carteira_modelo": 79.6, "llm": 76.8, "codigo": 84.3,
+        "geral_pct": 84.5,
+        "confianca_pct": 82,
+        "cobertura_pct": 80,
+        "dados": 89.4,
+        "metodologia": 84.6,
+        "indicadores": 82.9,
+        "ranking": 84.1,
+        "carteira_modelo": 79.6,
+        "llm": 76.8,
+        "codigo": 84.3,
         "situacao": "aprovado com ressalvas",
         "evidencias": {
-          "company_snapshots": {"total": 2989, "ativos": 2830, "com_score_confidence_status_pct": 100, "gerado": "2026-07-23", "exercicio_anterior_2024": 9},
-          "prices_monthly": {"linhas": 609347, "simbolos": 2817, "ate": "2026-07-17"},
-          "score_vintages": {"linhas": 56064, "simbolos": 2800},
-          "fiscal_year_invalido_serial_excel": {"linhas": 26, "simbolos": ["PRTH", "TNET"]},
+          "company_snapshots": {
+            "total": 2989,
+            "ativos": 2830,
+            "com_score_confidence_status_pct": 100,
+            "gerado": "2026-07-23",
+            "exercicio_anterior_2024": 9
+          },
+          "prices_monthly": {
+            "linhas": 609347,
+            "simbolos": 2817,
+            "ate": "2026-07-17"
+          },
+          "score_vintages": {
+            "linhas": 56064,
+            "simbolos": 2800
+          },
+          "fiscal_year_invalido_serial_excel": {
+            "linhas": 26,
+            "simbolos": [
+              "PRTH",
+              "TNET"
+            ]
+          },
           "dividends_por_evento": 0
         }
       },
       "banco_de_dados": {
-        "geral_pct": 86.3, "confianca_pct": 85, "cobertura_pct": 75,
+        "geral_pct": 86.3,
+        "confianca_pct": 85,
+        "cobertura_pct": 75,
         "situacao": "aprovado com ressalvas",
         "por_base": {
-          "precos_br": 91.4, "demonstracoes_br": 91.3, "dividendos": 90.6,
-          "indicadores_calculados_br": 95.9, "cadastro_setores_br": 90.3,
-          "cadastro_fii": 79.3, "pit_fii": 91.8, "precos_eua": 92.7,
-          "demonstracoes_eua": 89.6, "vitrine_eua": 94.5,
-          "macro": "nao_auditado", "financas_pessoais": "nao_auditado"
+          "precos_br": 91.4,
+          "demonstracoes_br": 91.3,
+          "dividendos": 90.6,
+          "indicadores_calculados_br": 95.9,
+          "cadastro_setores_br": 90.3,
+          "cadastro_fii": 79.3,
+          "pit_fii": 91.8,
+          "precos_eua": 92.7,
+          "demonstracoes_eua": 89.6,
+          "vitrine_eua": 94.5,
+          "macro": "nao_auditado",
+          "financas_pessoais": "nao_auditado"
         },
         "registros_consultados_aprox": 1470000,
         "registros_problematicos_aprox": 1585
       },
-      "pontuacao_rankings": {"geral_pct": 85.4, "confianca_pct": 82, "cobertura_pct": 80, "projetada_pct": 89, "situacao": "aprovado com ressalvas"},
-      "carteiras_modelo": {"geral_pct": 83.3, "confianca_pct": 75, "cobertura_pct": 60, "b3": 85.3, "fii": 84.9, "eua": 79.6, "situacao": "B3/FII aprovados com ressalvas; EUA dependente de correcoes"},
-      "llm": {"geral_pct": 78.1, "confianca_pct": 55, "cobertura_pct": 50, "validacao_saida": 55, "respostas_corretas_pct": "nao_auditado", "situacao": "aprovado com ressalvas; harness de avaliacao ausente"},
+      "pontuacao_rankings": {
+        "geral_pct": 85.4,
+        "confianca_pct": 82,
+        "cobertura_pct": 80,
+        "projetada_pct": 89,
+        "situacao": "aprovado com ressalvas"
+      },
+      "carteiras_modelo": {
+        "geral_pct": 83.3,
+        "confianca_pct": 75,
+        "cobertura_pct": 60,
+        "b3": 85.3,
+        "fii": 84.9,
+        "eua": 79.6,
+        "situacao": "B3/FII aprovados com ressalvas; EUA dependente de correcoes"
+      },
+      "llm": {
+        "geral_pct": 78.1,
+        "confianca_pct": 55,
+        "cobertura_pct": 50,
+        "validacao_saida": 55,
+        "respostas_corretas_pct": "nao_auditado",
+        "situacao": "aprovado com ressalvas; harness de avaliacao ausente"
+      },
       "codigo_arquitetura": {
-        "geral_pct": 83.7, "confianca_pct": 88, "cobertura_pct": 90,
+        "geral_pct": 83.7,
+        "confianca_pct": 88,
+        "cobertura_pct": 90,
         "situacao": "aprovado com ressalvas",
         "evidencias": {
-          "loc_python": 80197, "arquivos_teste": 117, "funcoes_teste": 756,
+          "loc_python": 80197,
+          "arquivos_teste": 117,
+          "funcoes_teste": 756,
           "testes_aprovados": "772/776 (4 falhas = ambiente/isolamento, nao producao)",
           "except_exception_amplos_core": 209,
-          "views_gigantes": {"views/empresas_b3.py": 5958, "views/portfolio_b3.py": 3071},
+          "views_gigantes": {
+            "views/empresas_b3.py": 5958,
+            "views/portfolio_b3.py": 3071
+          },
           "ci_executa_pytest": false,
           "cobertura_testes": "nao medida; estimativa core 55-65%, repo ~45%"
         }
       }
     },
     "correcoes_prioritarias": [
-      {"elemento": "Parser SEC fiscal_year serial-Excel (PRTH/TNET)", "atual": 88, "projetada": 95, "ganho_pp": 7},
-      {"elemento": "Closes nulos em historical_prices (1527)", "atual": 84, "projetada": 93, "ganho_pp": 9},
-      {"elemento": "Dividendos duplicados/invalidos (4 grupos + 18)", "atual": 90, "projetada": 96, "ganho_pp": 6},
-      {"elemento": "CI executando pytest em PR", "atual": 0, "projetada": 90, "ganho_pp": 90},
-      {"elemento": "Harness de avaliacao LLM (golden set)", "atual": 55, "projetada": 80, "ganho_pp": 25},
-      {"elemento": "Completude cadastro FII (segmento/vacancia)", "atual": 63, "projetada": 82, "ganho_pp": 19},
-      {"elemento": "SBC explicito no score EUA", "atual": 55, "projetada": 82, "ganho_pp": 27},
-      {"elemento": "Extrair validacao estatistica de views/portfolio_b3.py para core/", "atual": 74, "projetada": 85, "ganho_pp": 11},
-      {"elemento": "Isolamento de cache Streamlit nos testes (2 flakes)", "atual": 99.5, "projetada": 100, "ganho_pp": 0.5}
-    ]
+      {
+        "elemento": "Parser SEC fiscal_year serial-Excel (PRTH/TNET)",
+        "atual": 88,
+        "projetada": 95,
+        "ganho_pp": 7
+      },
+      {
+        "elemento": "Closes nulos em historical_prices (1527)",
+        "atual": 84,
+        "projetada": 93,
+        "ganho_pp": 9
+      },
+      {
+        "elemento": "Dividendos duplicados/invalidos (4 grupos + 18)",
+        "atual": 90,
+        "projetada": 96,
+        "ganho_pp": 6
+      },
+      {
+        "elemento": "CI executando pytest em PR",
+        "atual": 0,
+        "projetada": 90,
+        "ganho_pp": 90
+      },
+      {
+        "elemento": "Harness de avaliacao LLM (golden set)",
+        "atual": 55,
+        "projetada": 80,
+        "ganho_pp": 25
+      },
+      {
+        "elemento": "Completude cadastro FII (segmento/vacancia)",
+        "atual": 63,
+        "projetada": 82,
+        "ganho_pp": 19
+      },
+      {
+        "elemento": "SBC explicito no score EUA",
+        "atual": 55,
+        "projetada": 82,
+        "ganho_pp": 27
+      },
+      {
+        "elemento": "Extrair validacao estatistica de views/portfolio_b3.py para core/",
+        "atual": 74,
+        "projetada": 85,
+        "ganho_pp": 11
+      },
+      {
+        "elemento": "Isolamento de cache Streamlit nos testes (2 flakes)",
+        "atual": 99.5,
+        "projetada": 100,
+        "ganho_pp": 0.5
+      }
+    ],
+    "reavaliacao_2026_07_24": {
+      "global_pct": 87.3,
+      "global_pct_anterior": 84.8,
+      "ganho_pp": 2.5,
+      "classificacao": "Muito bom",
+      "confianca_pct": 84,
+      "cobertura_auditoria_pct": 82,
+      "base": "execucao verificada (nao projecao)",
+      "modulos": {
+        "empresas_brasileiras": {
+          "geral_pct": 87.4,
+          "anterior": 85.8,
+          "dados": 93.0,
+          "llm": 84.2,
+          "codigo": 83.1
+        },
+        "fiis_brasileiros": {
+          "geral_pct": 86.5,
+          "anterior": 84.2,
+          "dados": 86.0,
+          "llm": 82.8,
+          "codigo": 88.6
+        },
+        "acoes_americanas": {
+          "geral_pct": 87.3,
+          "anterior": 84.5,
+          "dados": 92.5,
+          "metodologia": 88.4,
+          "indicadores": 86.5,
+          "llm": 82.1,
+          "codigo": 86.7
+        },
+        "banco_de_dados": {
+          "geral_pct": 92.0,
+          "anterior": 86.3
+        },
+        "pontuacao_rankings": {
+          "geral_pct": 86.8,
+          "anterior": 85.4
+        },
+        "carteiras_modelo": {
+          "geral_pct": 83.3,
+          "anterior": 83.3
+        },
+        "llm": {
+          "geral_pct": 83.4,
+          "anterior": 78.1,
+          "validacao_saida": 82
+        },
+        "codigo_arquitetura": {
+          "geral_pct": 86.1,
+          "anterior": 83.7,
+          "testes": "821 verdes em ambiente limpo",
+          "ci_executa_pytest": true
+        }
+      },
+      "correcoes_executadas": [
+        "parser SEC fiscal_year serial-Excel + CHECK (0 fora de faixa nos 2 bancos)",
+        "candles vazios removidos (1527 local / 1509 Supabase) + guarda na ingestao + CHECK",
+        "dividendos: invalidos/duplicados removidos + CHECK; 17,5k ecos de classe sincronizados",
+        "cadastro FII: 727 segmentos + 312 vacancias (0 sem segmento)",
+        "CI .github/workflows/tests.yml (3.11 e 3.12) validado em venv limpo",
+        "score EUA v0.5.0: sbc_to_revenue, fcf_ex_sbc_margin, share_count_cagr_3y",
+        "core/llm_grounding.py + aviso nos chats + scripts/eval_llm.py (23 testes)",
+        "flakes eliminados: vazamento de core.b3_data entre testes (causa real)"
+      ],
+      "pendencias": [
+        "separacao UI/negocio: views/empresas_b3.py (5958) e portfolio_b3.py (3071)",
+        "percentuais de acerto da LLM dependem de rodar eval_llm.py com chave",
+        "carteira modelo EUA: sem custos de rebalanceamento nem exposicao cambial",
+        "observabilidade: sem metricas/alertas de execucao",
+        "cobertura de testes nao medida"
+      ]
+    }
   }
 }

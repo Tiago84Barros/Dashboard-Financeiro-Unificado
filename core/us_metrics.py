@@ -131,6 +131,13 @@ def compute_company_metrics(
     div_paid  = _latest(cashflow, "dividends_paid")
     buyback   = _latest(cashflow, "stock_repurchase")
     issuance  = _latest(cashflow, "stock_issuance")
+    sbc       = _latest(cashflow, "stock_based_compensation")
+
+    # SBC é despesa real do acionista (paga em participação, não em caixa) que
+    # o FCF GAAP devolve como se fosse ganho: sai do lucro e volta somada no
+    # fluxo operacional. Sem esta linha, empresas que remuneram em ações
+    # aparentam margem de caixa melhor do que a economia do negócio entrega.
+    fcf_ex_sbc = None if fcf is None or sbc is None else fcf - abs(sbc)
 
     if market_cap is None and price is not None and shares_out is not None:
         market_cap = price * shares_out
@@ -174,8 +181,16 @@ def compute_company_metrics(
         "p_fcf":         safe_div(market_cap, fcf),
         "fcf_yield":     safe_div(fcf, market_cap),
         "p_s":           safe_div(market_cap, revenue),
+        # Qualidade dos lucros: peso da remuneração em ações e caixa livre
+        # depois de absorvê-la (menor SBC/receita é melhor).
+        "sbc_to_revenue":   safe_div(abs(sbc) if sbc is not None else None, revenue),
+        "fcf_ex_sbc_margin": safe_div(fcf_ex_sbc, revenue),
         # Retorno ao acionista (buyback/dividendo vêm negativos no CF → sinal +)
         "shareholder_yield": _shareholder_yield(div_paid, buyback, issuance, market_cap),
+        # Diluição: recompra sem olhar a contagem de ações engana — a emissão
+        # por SBC pode anular o buyback. Crescimento do share count: menor é
+        # melhor (negativo = recompra líquida efetiva).
+        "share_count_cagr_3y": _growth(balance, "shares_outstanding", 3),
         # contexto (não entram no score, ajudam classificação/dossiê)
         "_revenue": revenue, "_net_income": net_income, "_fcf": fcf,
         "_equity": equity, "_net_debt": net_debt, "_market_cap": market_cap,
@@ -198,4 +213,6 @@ def _shareholder_yield(div_paid, buyback, issuance, market_cap) -> Optional[floa
 # métricas em que MENOR é melhor (para o ranqueamento no score)
 LOWER_IS_BETTER = frozenset({
     "net_debt_ebitda", "debt_to_equity", "pe", "ev_ebit", "ev_ebitda", "p_fcf", "p_s",
+    # SBC pesada corrói o acionista; share count crescente é diluição.
+    "sbc_to_revenue", "share_count_cagr_3y",
 })

@@ -16,5 +16,12 @@ def test_snapshot_backup_rejects_unsafe_table_names(value: str):
 
 
 def test_snapshot_backup_is_ignored_by_git():
+    """Backups de produção nunca podem entrar no versionamento.
+
+    Antes o teste exigia que o diretório EXISTISSE — fato da máquina local
+    (ele é criado sob demanda e é gitignorado), o que reprovava em checkout
+    limpo. O invariante real é a regra de ignore.
+    """
     root = Path(__file__).resolve().parents[1]
-    assert (root / "migration" / "backup").is_dir()
+    regras = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert any(linha.strip().rstrip("/") == "migration/backup" for linha in regras)

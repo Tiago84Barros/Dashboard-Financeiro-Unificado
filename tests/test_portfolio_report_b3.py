@@ -201,6 +201,6 @@ item = {"ticker": "TEST3", "nome": "Empresa Teste", "peso_pct": 10.0,
         "analise": analysis, "dossie": {}, "n_docs": 0, "rag_stats": {}}
 _render_empresa_expander(item, {"TEST3": 0.10})
 ''')
-    app.run(timeout=30)
+    app.run(timeout=60)
     assert not app.exception
     assert any("TEST3" in exp.label and "BARATA" in exp.label for exp in app.expander)

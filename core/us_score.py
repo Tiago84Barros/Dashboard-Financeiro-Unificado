@@ -21,8 +21,12 @@ from core.us_metrics import LOWER_IS_BETTER
 
 # ── Trilhas de fatores ────────────────────────────────────────────────────────
 FACTOR_TRACKS: dict[str, list[str]] = {
+    # sbc_to_revenue e fcf_ex_sbc_margin entram como QUALIDADE DOS LUCROS: a
+    # remuneração em ações é despesa econômica que o FCF GAAP devolve somada,
+    # inflando a margem de caixa de quem paga o time em participação.
     "quality": ["gross_margin", "operating_margin", "net_margin", "fcf_margin",
-                "cash_conversion", "roe", "roa"],
+                "cash_conversion", "roe", "roa", "sbc_to_revenue",
+                "fcf_ex_sbc_margin"],
     "growth": ["revenue_cagr_3y", "revenue_cagr_5y", "op_income_cagr_3y",
                "eps_cagr_3y", "fcf_cagr_3y"],
     "solidity": ["net_debt_ebitda", "interest_coverage", "current_ratio",
@@ -30,7 +34,9 @@ FACTOR_TRACKS: dict[str, list[str]] = {
     "capital_efficiency": ["roic"],
     "valuation": ["earnings_yield", "ev_ebit", "ev_ebitda", "fcf_yield",
                   "p_fcf", "p_s"],
-    "shareholder": ["shareholder_yield"],
+    # Recompra só cria valor se reduzir a base acionária: share_count_cagr_3y
+    # é o contraponto ao shareholder_yield (buyback anulado por emissão SBC).
+    "shareholder": ["shareholder_yield", "share_count_cagr_3y"],
 }
 
 DEFAULT_TRACK_WEIGHTS: dict[str, float] = {

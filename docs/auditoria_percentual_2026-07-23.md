@@ -236,11 +236,38 @@ Fidelidade aos dados (por design) 88% (regras "use apenas o CONTEXTO", aviso de 
 
 Testes existentes: `test_llm_provider_fallback`, `test_llm_report_context`, `test_llm_fii`, `test_apb3_*` — estruturais (contexto/protocolo), não avaliam qualidade da resposta.
 
+> **Correção aplicada (24/07/2026)** — a lacuna de validação de saída foi fechada:
+> - `core/llm_grounding.py`: verificador determinístico e offline de **ancoragem numérica** — todo número citado pela LLM precisa existir no contexto enviado ou ser derivável dele (soma, diferença, variação). Conservador por construção: percentuais só casam com percentuais (um defeito encontrado durante a implementação — a variação de 780,95% ancorava indevidamente "R$ 780,00" — está travado por teste de regressão), derivações exigem tolerância apertada (0,3%), e anos/contagens não contam como afirmação factual.
+> - **Na interface**: os chats de Finanças e de Cartão passam a exibir aviso quando a resposta cita valor sem lastro nos dados enviados. A verificação nunca derruba o chat (falha silenciosa por design).
+> - `scripts/eval_llm.py`: harness de **golden set** com contexto sintético (nenhum dado real do usuário) que mede exatamente os percentuais que faltavam — corretas, parcialmente corretas, com dados inventados, fora do formato — mais aderência ao protocolo de gráficos, honestidade sobre dado ausente e presença de ressalva. Requer chave de API; executado pelo usuário.
+> - 23 testes offline cobrem o verificador e o avaliador.
+>
+> Reavaliação: validação da saída **55% → 82%**; prevenção de alucinação 80% → 88%; consistência numérica 80% → 88%. **LLM consolidado: 78,1% → 83,4%** (confiança da avaliação sobe para 72%; o percentual de respostas corretas segue *não medido* até o usuário rodar o harness com chave).
+
 ---
 
 ## 9. Arquitetura e Qualidade do Código (§12.9) — **83,7%**
 
 Organização 88% (core/views/data_pipeline/etl/scripts/docs conforme CLAUDE.md) · modularização 82% (núcleos puros exemplares; **`views/empresas_b3.py` 5.958 linhas e `views/portfolio_b3.py` 3.071 linhas concentram lógica de negócio na camada de interface**, incluindo a validação estatística do portfólio B3) · legibilidade 88% · documentação 92% (docs/ com 40+ documentos, metodologias versionadas, dicionário de dados) · tratamento de erros 78% (209 `except Exception` amplos em core) · segurança 84% (RLS nas tabelas de carteira, sem credenciais no repo, `check_secrets.py`, isolamento OWNER_USER_ID) · validação de entradas 82% · testes automatizados 86% (117 arquivos, 756 funções, 99,5% verdes) · **cobertura de testes: não medida; estimativa ~55–65% do core, ~45% do repositório** (funções críticas de metodologia: ~85% testadas; fórmulas com testes unitários: ~80%; pipelines validados: ~70%; exceções tratadas: ~75%; regras de negócio documentadas: ~85%) · rastreabilidade dos cálculos 92% · separação UI/negócio 74% · separação entre metodologias de classes 90% (B3/FII/US totalmente apartados) · manutenção 82% · escalabilidade 80% · observabilidade 74% (logging presente; sem métricas/alertas de execução) · **controle de versões 90%, porém nenhum workflow de CI executa `pytest`** — os 5 workflows são só de dados.
+
+> **Correção aplicada (24/07/2026)** — `.github/workflows/tests.yml` executa a suíte
+> em cada PR e push na main (Python 3.11 e 3.12, sem banco e sem chaves). Antes de
+> declarar o CI verde, a suíte foi validada em **ambiente limpo** (venv só com
+> `requirements.txt` + pytest), o que revelou dois problemas que teriam deixado o
+> CI vermelho e foram corrigidos na origem:
+> 1. `tests/test_b3_company_score.py` substituía atributos de `core.b3_data` em
+>    escopo de módulo via AppTest e **vazava para `tests/test_market_read.py`** —
+>    era a causa real dos 2 "flakes de cache" relatados na §0.1; agora há fixture
+>    de restauração;
+> 2. `test_snapshot_backup_is_ignored_by_git` exigia que um diretório
+>    **gitignorado existisse** (fato da máquina local); passou a verificar o
+>    invariante real, a regra no `.gitignore`;
+> 3. testes de AppTest com timeout de 20–40s reprovavam em runner lento —
+>    elevados a 60s (o assert é o comportamento renderizado, não o tempo).
+>
+> Resultado: **821 testes, 100% verdes em ambiente limpo**. Reavaliação: testes
+> automatizados 86% → 92%; controle de versões 90% → 96%; observabilidade
+> mantida em 74%. **Código consolidado: 83,7% → 86,1%.**
 
 ---
 
@@ -317,3 +344,71 @@ Pesos por módulo transversal (justificativa: BR é o módulo mais usado e madur
 | Flakes de teste | 99,5% verde | isolar cache Streamlit entre testes (fixture de limpeza) | 100% | +0,5 p.p. |
 
 Todos os valores "projetada" são **estimativas técnicas**, condicionadas a implementação + re-teste.
+
+---
+
+## 14. Fechamento do ciclo — reavaliação de 24/07/2026
+
+Todas as correções da §13 foram implementadas e verificadas, exceto a extração
+das views gigantes (mantida como próximo passo). Esta seção reavalia os
+percentuais **com base em evidência de execução**, não em projeção.
+
+### 14.1 O que foi executado
+
+| Correção | Evidência | Situação |
+|---|---|---|
+| Parser SEC (`fiscal_year` serial-Excel) | `_sane_fiscal_year` + 2 testes; 26 linhas corrigidas/removidas; CHECK criado | ✅ verificado nos dois bancos (0 fora de faixa) |
+| Preços BR (candles vazios) | guarda em `price_rows` + `fii_pit` + CHECK; 1.527 linhas locais e 1.509 no Supabase removidas com backup | ✅ 0 restantes |
+| Dividendos inválidos/duplicados | limpeza + CHECK `amount > 0`; sync seletivo removeu 17,5 mil ecos de classe no Supabase | ✅ 0 restantes; bases alinhadas |
+| Cadastro FII | `enrich_cadastro_gaps()` + comando `fiis-cadastro-gaps`: 727 segmentos e 312 vacâncias | ✅ 0 sem segmento; lacuna real de vacância = 62 fundos (o resto é papel/FoF, onde não se aplica) |
+| CI de testes | `.github/workflows/tests.yml` (3.11 e 3.12); suíte validada em venv limpo | ✅ **821 testes, 100% verdes** |
+| SBC e diluição (EUA) | `sbc_to_revenue`, `fcf_ex_sbc_margin`, `share_count_cagr_3y`; score v0.5.0; 9 testes; exposto na UI | ✅ dado já existia (SBC em 89% das linhas anuais) |
+| Validação de saída da LLM | `core/llm_grounding.py` + aviso nos chats + `scripts/eval_llm.py`; 23 testes | ✅ percentuais de acerto ainda dependem de execução com chave |
+| Flakes de teste | causa real era vazamento de atributos entre módulos (não cache); fixture de restauração | ✅ eliminados |
+
+Dois defeitos foram descobertos **durante** a implementação e travados por teste
+de regressão: o vazamento de `core.b3_data` entre arquivos de teste, e o
+verificador de ancoragem aceitando variação percentual (780,95%) como âncora de
+um valor em reais (R$ 780,00).
+
+### 14.2 Percentuais reavaliados
+
+| Módulo | Dados | Metodologia | Indicadores | Ranking | Carteira | LLM | Código | **Geral** | Antes |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Empresas brasileiras | 93,0% | 87,2% | 84,8% | 86,1% | 85,3% | 84,2% | 83,1% | **87,4%** | 85,8% |
+| FIIs brasileiros | 86,0% | 89,1% | 84,3% | 85,7% | 84,9% | 82,8% | 88,6% | **86,5%** | 84,2% |
+| Ações americanas | 92,5% | 88,4% | 86,5% | 84,1% | 79,6% | 82,1% | 86,7% | **87,3%** | 84,5% |
+
+Transversais: banco de dados **92,0%** (era 86,3%) · pontuação **86,8%** (era
+85,4%) · carteiras 83,3% (inalterado — a extração de lógica das views segue
+pendente) · LLM **83,4%** (era 78,1%) · código **86,1%** (era 83,7%).
+
+### 14.3 Percentual global
+
+Com os mesmos pesos da §11:
+
+**Global = .25·87,4 + .20·86,5 + .15·87,3 + .15·92,0 + .08·83,3 + .07·86,8 + .03·83,4 + .07·86,1 = 87,3%**
+
+| | Auditoria inicial (23/07) | Após as correções (24/07) |
+|---|---:|---:|
+| Percentual global | 84,8% | **87,3%** (+2,5 p.p.) |
+| Classificação | Muito bom | **Muito bom** (a 2,7 p.p. de "Excelente") |
+| Confiança da avaliação | 78% | **84%** (execução verificada, não projeção) |
+| Cobertura da auditoria | ~72% | **~82%** (Supabase agora auditado) |
+
+### 14.4 O que continua aberto
+
+1. **Separação UI/negócio (74%)** — `views/empresas_b3.py` (5.958 linhas) e
+   `views/portfolio_b3.py` (3.071) ainda concentram lógica de negócio, incluindo
+   a validação estatística do portfólio B3. É agora o maior redutor isolado da
+   nota de código e o próximo passo natural.
+2. **Percentuais de acerto da LLM** — o harness existe, mas os números de §12.8
+   (respostas corretas / inventadas) só saem quando `scripts/eval_llm.py` rodar
+   com chave de API. Até lá seguem **não medidos**, não estimados.
+3. **Carteira Modelo EUA (79,6%)** — menos madura que a B3: sem custos de
+   rebalanceamento nem modelagem de exposição cambial.
+4. **Observabilidade (74%)** — logging existe; faltam métricas/alertas de
+   execução dos pipelines.
+5. **Cobertura de testes não medida** — a suíte é grande e verde, mas nenhum
+   relatório de cobertura é gerado; a estimativa de ~55–65% do core segue sem
+   verificação.

@@ -87,3 +87,51 @@ def test_weights_renormalizam_e_override_setor():
     assert w["shareholder"] > sc.DEFAULT_TRACK_WEIGHTS["shareholder"]  # REIT dá mais peso
     w2 = sc._weights_for(None)
     assert sum(w2.values()) == pytest.approx(1.0)
+
+
+# ── SBC e diluição no score (v0.5.0, auditoria 2026-07) ──────────────────────
+
+def _par_sbc(sbc_a: float, sbc_b: float) -> pd.DataFrame:
+    """Duas empresas idênticas, exceto no peso da remuneração em ações."""
+    base = {"sector": "Technology", "industry": "Software",
+            "gross_margin": 0.70, "operating_margin": 0.25, "net_margin": 0.18,
+            "fcf_margin": 0.20, "cash_conversion": 1.1, "roe": 0.25, "roa": 0.12}
+    return pd.DataFrame([
+        {"symbol": "LEVE", **base, "sbc_to_revenue": sbc_a,
+         "fcf_ex_sbc_margin": 0.20 - sbc_a},
+        {"symbol": "PESADA", **base, "sbc_to_revenue": sbc_b,
+         "fcf_ex_sbc_margin": 0.20 - sbc_b},
+    ])
+
+
+def test_sbc_pesada_reduz_a_trilha_de_qualidade():
+    scored = sc.score_cross_section(_par_sbc(0.01, 0.15), min_group=2)
+    leve = scored[scored["symbol"] == "LEVE"].iloc[0]
+    pesada = scored[scored["symbol"] == "PESADA"].iloc[0]
+    # Antes do v0.5.0 as duas empatavam: o FCF GAAP soma a SBC de volta.
+    assert leve["score_quality"] > pesada["score_quality"]
+    assert leve["score"] > pesada["score"]
+
+
+def test_diluicao_anula_vantagem_do_shareholder_yield():
+    base = {"sector": "Technology", "industry": "Software"}
+    df = pd.DataFrame([
+        # mesmo yield de recompra, mas uma emite ações e a outra retira
+        {"symbol": "RECOMPRA", **base, "shareholder_yield": 0.05,
+         "share_count_cagr_3y": -0.03},
+        {"symbol": "DILUI", **base, "shareholder_yield": 0.05,
+         "share_count_cagr_3y": 0.06},
+    ])
+    scored = sc.score_cross_section(df, min_group=2)
+    recompra = scored[scored["symbol"] == "RECOMPRA"].iloc[0]
+    dilui = scored[scored["symbol"] == "DILUI"].iloc[0]
+    assert recompra["score_shareholder"] > dilui["score_shareholder"]
+
+
+def test_ausencia_de_sbc_nao_penaliza_nem_premia():
+    """Sem o dado, a empresa não pode ser punida — só perde cobertura."""
+    df = _par_sbc(0.01, 0.15)
+    df.loc[df["symbol"] == "PESADA", ["sbc_to_revenue", "fcf_ex_sbc_margin"]] = None
+    scored = sc.score_cross_section(df, min_group=2)
+    pesada = scored[scored["symbol"] == "PESADA"].iloc[0]
+    assert pesada["coverage_quality"] < 100
