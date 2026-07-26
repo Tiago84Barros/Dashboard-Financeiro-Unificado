@@ -478,3 +478,90 @@ Pontuação/rankings: 86,8% → **87,0%** (a correção de 79% → 86% em coerê
 pesos entra com peso pequeno no consolidado). Global: **87,3% → 87,4%**. A
 mudança material não é a nota — é a retirada de uma recomendação que teria
 degradado a estabilidade do sistema se implementada.
+
+---
+
+## 16. Poder estatístico, amostra e a rota de valor ausente (25/07/2026)
+
+Continuação da §15, após aprofundamento da objeção. Aqui há uma **terceira
+correção da auditoria** e o diagnóstico do que de fato falta.
+
+### 16.1 Correção: descrevi o gate de forma incompleta
+
+A §2.2 apresentou "holdout OOS, Rank-IC com t-stat, walk-forward, FDR" como se
+fosse **o** critério de aprovação da carteira B3. Não é. O seletor "Critério de
+aprovação" (`views/portfolio_b3.py:1723`) tem três modos e o **padrão é
+"Econômico (Brasil)"**, no qual:
+
+* o gate primário é **econômico** — margem vs Selic no histórico cheio e, como
+  segundo portão, margem vs Equal-Weight do próprio segmento;
+* a estatística atua só como **guarda-corpo**: reprova apenas `rank_ic_mean <
+  -0,05`, isto é, **evidência contra** (sinal claramente anti-preditivo). Não
+  exige prova positiva de significância.
+
+Os modos "Sinal fundamental (Rank-IC)" e "Retorno de 24m (FDR)" — que exigem
+significância — são **opcionais**, e a própria ajuda da interface avisa que
+dependem de amplitude "escassa na B3". O cenário de "0 aprovados" documentado no
+guia (§6) descreve o modo estatístico, não o padrão.
+
+Portanto: **o sistema não responde "nunca invista" por padrão.** A auditoria
+deveria ter registrado essa arquitetura de modos; a nota de metodologia BR
+(87,2%) não muda, mas a descrição estava incompleta e induzia à leitura errada.
+
+### 16.2 Onde a objeção procede — com números
+
+Amostra por segmento na B3 (consulta em 25/07/2026, `market.assets` × `public.setores`):
+
+| Métrica | Valor |
+|---|---:|
+| Segmentos | 78 |
+| Empresas por segmento (média) | 5,6 |
+| Empresas por segmento (**mediana**) | **3** |
+| Segmentos com menos de 5 empresas | 51 (65%) |
+| Segmentos com menos de 3 empresas | 37 (47%) |
+
+Com **mediana de 3 empresas por segmento**, um Rank-IC cross-seccional é
+praticamente sem conteúdo: não se demonstra habilidade de ordenação entre três
+nomes. Somando ~10 anos de histórico e correção FDR entre 64–78 testes, o
+**poder estatístico é próximo de zero**. E aí incide o erro conceitual clássico:
+*ausência de evidência não é evidência de ausência*. Nos modos estatísticos,
+"não rejeitei H₀" é tratado como reprovação — quando o correto seria
+**inconclusivo**.
+
+Nota sobre o argumento dos investidores bem-sucedidos: ele é, isoladamente,
+evidência fraca (viés de sobrevivência — ouvimos falar dos que acertaram). Mas a
+conclusão continua correta por outro caminho, mais forte: um teste sem poder não
+autoriza concluir inviabilidade. A objeção não precisa dos casos de sucesso.
+
+### 16.3 O que de fato falta: rota de valor para a carteira
+
+`core/valuation.py` (Graham, Bazin, margem de segurança) é usado em
+`views/empresas_b3.py` — painel **individual** — e **não** em
+`views/portfolio_b3.py`. Ou seja: existe rota de "habilidade de seleção por
+segmento" (econômica ou estatística), mas **não existe rota de valor** que
+construa carteira a partir de distorção de preço vs valor intrínseco. O controle
+"Peso de barganha no score" mistura múltiplos baratos ao score (padrão 0%), o que
+é atenuação, não uma tese própria.
+
+Essa é a lacuna que corresponde à tese "crise = oportunidade": ela hoje só existe
+na análise caso a caso, não na construção de carteira.
+
+### 16.4 Caminho proposto (não implementado — decisão do proprietário)
+
+1. **Separar "inconclusivo" de "reprovado"** nos modos estatísticos: reportar
+   amplitude e poder ao lado do p-valor, com três estados (evidência a favor /
+   evidência contra / inconclusivo por falta de amplitude). Nunca deixar
+   "inconclusivo" bloquear sozinho.
+2. **Rota de valor paralela**: seleção por margem de segurança vs valor
+   intrínseco, com gate de **solvência e resiliência** (Altman, cobertura de
+   juros, ROIC > risco-livre, geração de caixa) — a disciplina que separa
+   distorção de armadilha de valor. Lembrete factual do próprio guia: ~20% das
+   ações brasileiras perderam mais de 90% em 15 anos (Oi, Americanas, Gol).
+3. **Estatística dimensionada à amostra**: em vez de 64–78 testes independentes
+   por segmento (N mediano = 3), usar *pooling* hierárquico com encolhimento —
+   empresta força entre segmentos — e testar habilidade no nível do **universo**
+   (N > 300), onde há amplitude. Isso não é afrouxar rigor: é trocar um teste
+   inadequado ao tamanho da amostra por um adequado.
+
+O item 3 preserva a função de veto contra vieses que continuam valendo
+independentemente do regime: sobrevivência, look-ahead e sinal anti-preditivo.
