@@ -1013,6 +1013,10 @@ def _processar_segmento(
         "rank_ic_years": rank_ic_years,
         "rank_ic_tstat": rank_ic_tstat,
         "p_value_ic": p_value_ic,
+        # ICs anuais preservados para classificar o ESTADO DA EVIDÊNCIA
+        # (a favor / contra / inconclusivo) e calcular o efeito mínimo
+        # detectável — ver core/b3_evidence.py e auditoria §16.
+        "rank_ic_values": list(ic_values),
         "roic_spread_mean": roic_spread_mean,
         "roic_hit_rate": roic_hit_rate,
         "wf_hit_rate": wf_hit_rate,
@@ -2492,6 +2496,11 @@ def render(show_header: bool = True) -> None:
     _col_ew_hist    = f"vs Pesos Iguais · histórico{_sfx_hist} (%)"
     _col_ew_val     = f"vs Pesos Iguais · validação{_sfx_val} (%)"
 
+    # Estado da evidência por segmento (auditoria §16): "não pude medir" e
+    # "medi e é ruim" deixam de ser o mesmo rótulo. Só evidência CONTRA é
+    # reprovação estatística; inconclusivo é limite do dado, não do ativo.
+    from core.b3_evidence import classify_evidence, evidence_label
+
     rows_tbl: list[dict] = []
     for res in resultados:
         m_s  = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_selic_oos", 0.0))
@@ -2499,14 +2508,37 @@ def render(show_header: bool = True) -> None:
         m_s_full  = _margem_pct(res.get("val_est", 0.0), res.get("val_selic", 0.0))
         m_ew_full = _margem_pct(res.get("val_est", 0.0), res.get("val_ew", 0.0))
         ult  = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
+        _verdict = classify_evidence(
+            ic_values=res.get("rank_ic_values") or [],
+            ic_mean=res.get("rank_ic_mean"),
+            p_value=res.get("p_value_ic"),
+        )
+        # O portão econômico é aferido à parte para não confundir "reprovado por
+        # não bater a Selic" com "reprovado pela estatística".
+        _economico_ok = (
+            res.get("val_est", 0.0) > 0
+            and m_s_full >= thr_selic
+            and (not usar_ew_como_criterio or res.get("val_ew", 0.0) <= 0
+                 or m_ew_full >= thr_ew)
+        )
+        if _aprovado(res):
+            _situacao = "✅ Aprovado"
+        elif _verdict.bloqueante:
+            _situacao = "❌ Reprovado (evidência contra)"
+        elif not _economico_ok:
+            _situacao = "❌ Reprovado (critério econômico)"
+        else:
+            # Passou no econômico e a estatística não teve como falar.
+            _situacao = f"🟡 {evidence_label(_verdict)}"
         rows_tbl.append({
             "Setor":     res["setor"],
             "Subsetor":  res["subsetor"],
             "Segmento":  res["segmento"],
-            "Situação": (
-                "✅ Aprovado"
-                if _aprovado(res)
-                else "❌ Reprovado (risco/evidência)"
+            "Situação": _situacao,
+            "Estado da evidência": evidence_label(_verdict),
+            "Efeito mín. detectável (Rank-IC)": (
+                round(_verdict.efeito_minimo_detectavel, 3)
+                if _verdict.efeito_minimo_detectavel is not None else None
             ),
             _col_selic_hist: round(m_s_full, 1),
             _col_ew_hist: round(m_ew_full, 1),
@@ -2545,13 +2577,31 @@ def render(show_header: bool = True) -> None:
 
     def _cor_status(v: str) -> str:
         if "✅" in v:    return "color: #00C896"
-        if "⚠️" in v:   return "color: #F6C90E"
+        # Inconclusivo é âmbar, não vermelho: não houve reprovação de mérito.
+        if "⚠️" in v or "🟡" in v:   return "color: #F6C90E"
         return "color: #FC5C7D"
 
     st.dataframe(
         df_tbl.style.applymap(_cor_status, subset=["Situação"]),
         use_container_width=True,
         height=min(500, 60 + 35 * len(df_tbl)),
+    )
+    _n_inconclusivos = sum("🟡" in str(linha["Situação"]) for linha in rows_tbl)
+    st.caption(
+        "**Como ler a Situação.** ❌ *evidência contra* = o score ordenou ao "
+        "contrário do retorno (reprovação de mérito). ❌ *critério econômico* = "
+        "não bateu a Selic/Pesos Iguais pela margem. 🟡 *Inconclusivo* = passou "
+        "no econômico e a estatística **não teve como falar** — amplitude ou "
+        "significância insuficientes. Inconclusivo NÃO é reprovação: não "
+        "rejeitar a hipótese nula não prova ausência de habilidade."
+        + (f" Nesta rodada, {_n_inconclusivos} segmento(s) ficaram nesse estado."
+           if _n_inconclusivos else "")
+    )
+    st.caption(
+        "**Efeito mín. detectável (Rank-IC)** é o menor poder preditivo que o "
+        "teste conseguiria enxergar com os dados disponíveis (80% de poder). "
+        "Valor alto significa teste cego para efeitos moderados — com mediana de "
+        "3 empresas por segmento na B3, é o caso frequente."
     )
 
     # ── SEGMENTOS APROVADOS ───────────────────────────────────────────────────

@@ -306,3 +306,33 @@ cobertura de fundamentos e fila de prioridade para a ingestão.
 
 Não diz **quando** comprar. Mostra o que está barato e sobrevive; o timing
 continua sendo decisão do investidor — a mesma divisão de eixos da §8.
+
+---
+
+## 12. Três estados de evidência — "inconclusivo" ≠ "reprovado" (25/07/2026)
+
+Segunda correção derivada da auditoria §16. A tabela de auditoria rotulava como
+**Reprovado** tanto o segmento cujo score ordenou ao contrário do retorno quanto
+aquele que **nunca pôde ser medido**. São coisas opostas.
+
+Com mediana de 3 empresas por segmento, o Rank-IC anual exige ao menos 5 empresas
+alinhadas — muitos segmentos simplesmente não geram nenhuma observação. Chamar
+isso de reprovação é confundir *ausência de evidência* com *evidência de ausência*.
+
+### O que a tabela mostra agora
+
+| Situação | Significado |
+|---|---|
+| ✅ Aprovado | passou nos critérios do modo escolhido |
+| ❌ Reprovado (evidência contra) | Rank-IC claramente negativo — reprovação de mérito |
+| ❌ Reprovado (critério econômico) | não bateu Selic/Pesos Iguais pela margem |
+| 🟡 Inconclusivo (sem amplitude) | não houve dados para calcular o Rank-IC |
+| 🟡 Inconclusivo (sem significância) | mediu, mas não distingue do acaso |
+
+Duas colunas novas: **Estado da evidência** e **Efeito mínimo detectável
+(Rank-IC)** — o menor poder preditivo que o teste enxergaria com os dados
+disponíveis, a 80% de poder. Valor alto = teste cego para efeitos moderados.
+É o número que faltava para julgar se um "não passou" significa alguma coisa.
+
+`core/b3_evidence.py` é puro e testado; só `evidencia_contra` é bloqueante.
+
