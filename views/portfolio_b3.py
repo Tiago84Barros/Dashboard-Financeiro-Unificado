@@ -1618,6 +1618,145 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ROTA DE VALOR — distorção de preço com disciplina de solvência
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
+                          taxa_selic_aa: float) -> None:
+    """Caminho paralelo ao dos segmentos, que não depende de amplitude.
+
+    A rota por segmento pergunta "meu processo de escolha tem skill comprovado?"
+    — pergunta que exige amplitude cross-seccional, e a B3 tem mediana de 3
+    empresas por segmento. Esta seção responde outra: "está barata frente ao
+    valor intrínseco E sobrevive para realizar esse valor?". Por isso continua
+    útil justamente quando a rota de segmentos fica muda.
+    """
+    from core.b3_value_route import (
+        ARMADILHA, OPORTUNIDADE, SEM_EVIDENCIA, SEM_MARGEM, ValuePolicy,
+        blocked_by_missing_data, rank_value_opportunities, route_summary,
+    )
+
+    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                unsafe_allow_html=True)
+    _sec_hdr("💎 Rota de valor — distorção com solvência")
+    st.caption(
+        "Independe de significância estatística e de amplitude: avalia empresa a "
+        "empresa. O gate de solvência é o que separa distorção de armadilha de "
+        "valor — ~20% das ações brasileiras perderam mais de 90% em 15 anos."
+    )
+
+    if df_mult_todos is None or df_mult_todos.empty:
+        st.info("Sem fundamentos carregados para avaliar a rota de valor.")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    margem_min = col1.slider(
+        "Margem de segurança mínima (%)", 0, 100, 20, 5, key="pb3_vr_margem",
+        help="Desconto exigido frente ao valor intrínseco (média de Graham e "
+             "Bazin disponíveis). Não é a margem vs Selic da rota de segmentos.",
+    ) / 100.0
+    max_div = col2.slider(
+        "Endividamento máximo (dívida/PL)", 0.5, 5.0, 2.5, 0.5, key="pb3_vr_div")
+    min_liq = col3.slider(
+        "Liquidez corrente mínima", 0.5, 3.0, 1.0, 0.1, key="pb3_vr_liq")
+
+    policy = ValuePolicy(margem_minima=margem_min, max_endividamento=max_div,
+                         min_liquidez_corrente=min_liq)
+    ranked = rank_value_opportunities(df_mult_todos, policy=policy,
+                                      selic=float(taxa_selic_aa))
+    resumo = route_summary(ranked)
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        card_metrica("Oportunidades", str(resumo[OPORTUNIDADE]))
+    with k2:
+        card_metrica("Armadilhas barradas", str(resumo[ARMADILHA]))
+    with k3:
+        card_metrica("Sem desconto", str(resumo[SEM_MARGEM]))
+    with k4:
+        card_metrica("Sem evidência", str(resumo[SEM_EVIDENCIA]))
+
+    setores = (df_set[["Ticker", "SETOR", "SEGMENTO"]].drop_duplicates("Ticker")
+               if {"Ticker", "SETOR", "SEGMENTO"}.issubset(df_set.columns)
+               else pd.DataFrame(columns=["Ticker", "SETOR", "SEGMENTO"]))
+
+    oportunidades = ranked[ranked["classificacao"] == OPORTUNIDADE]
+    if oportunidades.empty:
+        st.info(
+            "Nenhuma empresa combina o desconto exigido com solvência preservada "
+            "nos parâmetros atuais. Diferente da rota de segmentos, aqui a "
+            "ausência é sobre PREÇO, não sobre evidência estatística."
+        )
+    else:
+        show = oportunidades.merge(setores, on="Ticker", how="left")
+        cols = [c for c in ("Ticker", "SETOR", "SEGMENTO", "margem_valor",
+                            "valor_score", "forca_solvencia", "explicacao")
+                if c in show.columns]
+        st.dataframe(
+            show[cols].head(40).rename(columns={
+                "SETOR": "Setor", "SEGMENTO": "Segmento",
+                "margem_valor": "Margem de segurança",
+                "valor_score": "Score de valor",
+                "forca_solvencia": "Folga de solvência",
+                "explicacao": "Por quê"}),
+            hide_index=True, use_container_width=True,
+            column_config={
+                "Margem de segurança": st.column_config.NumberColumn(format="%.0f%%"),
+            },
+        )
+        st.caption(
+            "Score de valor = 60% desconto + 40% folga de solvência. A decisão de "
+            "timing continua sua: a rota mostra o que está barato e sobrevive, "
+            "não quando comprar."
+        )
+
+    armadilhas = ranked[ranked["classificacao"] == ARMADILHA]
+    if not armadilhas.empty:
+        with st.expander(
+            f"🪤 Armadilhas de valor barradas ({len(armadilhas)}) — desconto sem solvência",
+            expanded=False,
+        ):
+            st.caption(
+                "Estas apareceriam como 'baratas' em qualquer filtro de múltiplos. "
+                "O gate de solvência é justamente o que as separa das oportunidades."
+            )
+            trap = armadilhas.copy()
+            trap["motivo"] = trap["falhas_solvencia"].apply(lambda v: "; ".join(v))
+            st.dataframe(
+                trap[["Ticker", "margem_valor", "motivo"]].head(40).rename(columns={
+                    "margem_valor": "Desconto aparente", "motivo": "Reprovação"}),
+                hide_index=True, use_container_width=True,
+                column_config={
+                    "Desconto aparente": st.column_config.NumberColumn(format="%.0f%%"),
+                },
+            )
+
+    bloqueadas = blocked_by_missing_data(ranked, policy=policy)
+    if not bloqueadas.empty:
+        with st.expander(
+            f"🕳️ Teses não julgadas por falta de dado ({len(bloqueadas)})",
+            expanded=False,
+        ):
+            st.caption(
+                "Têm desconto relevante, mas falta insumo crítico de solvência — "
+                "não foram avaliadas e NÃO são recomendações. A lista mede o custo "
+                "da cobertura de fundamentos e serve para priorizar a ingestão."
+            )
+            faltantes = bloqueadas.copy()
+            faltantes["falta"] = faltantes["criticos_ausentes"].apply(
+                lambda v: ", ".join(v))
+            st.dataframe(
+                faltantes[["Ticker", "margem_valor", "falta"]].head(40).rename(
+                    columns={"margem_valor": "Desconto aparente",
+                             "falta": "Dado ausente"}),
+                hide_index=True, use_container_width=True,
+                column_config={
+                    "Desconto aparente": st.column_config.NumberColumn(format="%.0f%%"),
+                },
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -2424,6 +2563,9 @@ def render(show_header: bool = True) -> None:
                           key=lambda r: _margem_pct(r["val_est"], r["val_selic"]),
                           reverse=True):
             _bloco_segmento(res, df_set, thr_selic, thr_ew, max_anos_lid)
+
+    # ── ROTA DE VALOR (independe de habilidade cross-seccional) ──────────────
+    _render_rota_de_valor(df_mult_todos, df_set, taxa_selic_aa)
 
     # ── EMPRESAS LÍDERES PARA O PRÓXIMO ANO ──────────────────────────────────
     st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
