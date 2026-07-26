@@ -80,7 +80,7 @@ Evidência: `core/b3_company_score.py` (6 trilhas, winsorização p5–p95, perc
 | Robustez metodológica | 88% | Controle de vieses (look-ahead/survivorship) | 91% |
 | Adequação à classe/mercado BR | 87% | Estabilidade do ranking | 78% (bootstrap disponível, não contínuo) |
 | Diferenciação setorial | 80% (intra-setor sim; sem override de trilhas p/ bancos como no módulo EUA) | Explicabilidade | 90% (Shapley/XAI) |
-| Qualidade das fórmulas | 88% | Coerência dos pesos | 79% (0,22/0,18/0,15… fixos por convenção; Fama-MacBeth só opcional) |
+| Qualidade das fórmulas | 88% | Coerência dos pesos | **86%** (0,22/0,18/0,15… fixos por convenção — ver correção em §15: peso fixo é robustez sob quebra de regime, não defeito) |
 | Filtros eliminatórios | 88% | Utilidade p/ longo prazo | 88% |
 
 Sub-avaliações exigidas: fundamentalista 90% · setores B3 84% · financeiras 74% (EV/EBIT e P/FCO pouco adequados a bancos; mitigado pelo percentil intra-setor, sem exclusão explícita das métricas) · cíclicas 82% (reversão à média + CV) · commodities 80% · endividamento 88% · rentabilidade 92% · crescimento 84% (slopes log) · geração de caixa 86% (P/FCO, cobertura FCO) · dividendos 90% (Bazin + sustentabilidade/payout) · governança 62% (sem métricas explícitas de governança no score BR — diferente dos FIIs) · valuation 88% · aderência macro 85% (ajuste Selic/IPCA) · confiabilidade da seleção final 86%.
@@ -198,7 +198,13 @@ Confiança: 85% · Cobertura: 75% (produção Supabase fora do alcance). **Muito
 
 Fundamentação dos pesos 80% · coerência 86% · estabilidade 78% · sensibilidade do ranking 80% · outliers 92% (winsorização universal) · normalização 92% (percentil) · eliminatórios 88% · desempates 84% (rank médio em empates) · dupla contagem 76% (ROE 2×; DY no score e na utilidade da carteira FII) · sobreposição de fatores 80% · robustez estatística 88% (OOS, rank-IC, walk-forward, FDR) · reprodutibilidade 92% (versões de fórmula/metodologia persistidas, PIT) · explicabilidade 90% (Shapley, componentes por trilha) · resistência a perturbações 76% (bootstrap existe, não é gate contínuo).
 
-Por sistema: B3 86,1% (confiança 85%) · FII 85,7% (confiança 82%) · EUA 84,1% (confiança 80%). Principais fragilidades: pesos de trilha por convenção; dupla contagem leve. Alteração recomendada: calibração empírica periódica (Fama-MacBeth já implementado, tornar rotina) + teste de estabilidade bootstrap como gate. Qualidade estimada após correção: ~89% (**estimativa**).
+Por sistema: B3 86,1% (confiança 85%) · FII 85,7% (confiança 82%) · EUA 84,1% (confiança 80%). Principal fragilidade: dupla contagem leve (ROE em duas trilhas). Alteração recomendada: teste de estabilidade bootstrap como gate — mede a fragilidade do ranking a perturbações nos dados e rejeita ranking frágil. Qualidade estimada após correção: ~88% (**estimativa**).
+
+> **Recomendação RETIRADA (25/07/2026)** — a versão original desta seção também
+> recomendava "tornar rotina a calibração empírica periódica dos pesos
+> (Fama-MacBeth)". Isso foi retirado: ver §15. Recalibrar pesos a cada período
+> importa uma premissa de estacionariedade que o mercado brasileiro não
+> satisfaz, e faria o ranking perseguir o regime macro.
 
 ---
 
@@ -412,3 +418,63 @@ Com os mesmos pesos da §11:
 5. **Cobertura de testes não medida** — a suíte é grande e verde, mas nenhum
    relatório de cobertura é gerado; a estimativa de ~55–65% do core segue sem
    verificação.
+
+---
+
+## 15. Correção metodológica — estatística como gate, não como calibrador (25/07/2026)
+
+Registro de uma crítica do proprietário do sistema que **procede** e corrige duas
+avaliações desta auditoria.
+
+### 15.1 A objeção
+
+*"A validação estatística já não tinha sido discutida diante das dificuldades de
+usá-la no âmbito brasileiro — instabilidade política e econômica? Isso não
+tornaria o sistema instável?"*
+
+### 15.2 O que estava correto e o que estava errado
+
+**Correto:** nada da validação estatística foi alterado nesta sessão — o `git log`
+não registra commits em `views/portfolio_b3.py`, `core/b3_validation.py`,
+`core/b3_methodology.py`, `core/fama_macbeth.py` ou `core/survivorship.py`. A
+auditoria apenas **descreveu** o mecanismo já existente. E a discussão anterior
+(`docs/guia_metodologia_carteira_b3.md` §6–§8) nunca concluiu remover a
+estatística: concluiu que, com a Selic acumulando ~30% em 24 meses, o gate
+aprovaria pouco ou nada — e que esse é o resultado honesto, sendo a margem vs
+Selic a única alavanca aceitável para ampliar, **nunca** a significância.
+
+**Errado — duas avaliações importaram premissa de estacionariedade:**
+
+1. **§2.2 penalizava "coerência dos pesos" em 79%** por os pesos das trilhas
+   serem fixos por convenção e o Fama-MacBeth ser apenas opcional. Sob quebras
+   de regime (eleições, choques de juro, intervenção setorial), peso fixo é
+   **robustez**: não há amostra estacionária que justifique reestimá-los sem
+   perseguir ruído. Corrigido para **86%**.
+2. **§6 recomendava tornar rotina a calibração empírica dos pesos.** Retirada.
+   Seria justamente o mecanismo que instabilizaria o ranking a cada virada de
+   ciclo — o risco levantado na objeção.
+
+### 15.3 A distinção que resolve a aparente contradição
+
+| Uso da estatística | Efeito sob instabilidade macro | Estado no sistema |
+|---|---|---|
+| **Gate** — aprovar/reprovar seleção; "0 aprovados" é resposta válida | **Reduz** instabilidade: recusa emitir carteira a partir de ruído | ativo, auditado, inalterado |
+| **Calibrador de parâmetros** — reestimar pesos com os dados de cada período | **Aumenta** instabilidade: os pesos perseguem o regime | opcional, desligado — e assim deve permanecer |
+
+A objeção é decisiva contra o segundo uso e **favorável** ao primeiro. Um gate que
+se cala por falta de evidência é estabilizador por construção; o que desestabiliza
+é reescrever os parâmetros do modelo a cada leitura nova do mercado.
+
+Permanecem válidas, portanto: FDR entre segmentos, Rank-IC com t-stat, holdout
+OOS, walk-forward com purga e publication lag — todos operando como **veto**, com
+pesos fixos e versionados. E permanece pendente, sem prazo definido, a sugestão
+já registrada no guia: exigir significância do excesso **vs Equal-Weight do
+próprio segmento**, que isola habilidade de seleção e neutraliza o regime —
+resposta direta à pró-ciclicidade do gate atual.
+
+### 15.4 Efeito nos percentuais
+
+Pontuação/rankings: 86,8% → **87,0%** (a correção de 79% → 86% em coerência dos
+pesos entra com peso pequeno no consolidado). Global: **87,3% → 87,4%**. A
+mudança material não é a nota — é a retirada de uma recomendação que teria
+degradado a estabilidade do sistema se implementada.
