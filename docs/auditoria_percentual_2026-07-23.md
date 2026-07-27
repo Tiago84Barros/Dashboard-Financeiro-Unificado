@@ -80,7 +80,7 @@ Evidência: `core/b3_company_score.py` (6 trilhas, winsorização p5–p95, perc
 | Robustez metodológica | 88% | Controle de vieses (look-ahead/survivorship) | 91% |
 | Adequação à classe/mercado BR | 87% | Estabilidade do ranking | 78% (bootstrap disponível, não contínuo) |
 | Diferenciação setorial | 80% (intra-setor sim; sem override de trilhas p/ bancos como no módulo EUA) | Explicabilidade | 90% (Shapley/XAI) |
-| Qualidade das fórmulas | 88% | Coerência dos pesos | 79% (0,22/0,18/0,15… fixos por convenção; Fama-MacBeth só opcional) |
+| Qualidade das fórmulas | 88% | Coerência dos pesos | **86%** (0,22/0,18/0,15… fixos por convenção — ver correção em §15: peso fixo é robustez sob quebra de regime, não defeito) |
 | Filtros eliminatórios | 88% | Utilidade p/ longo prazo | 88% |
 
 Sub-avaliações exigidas: fundamentalista 90% · setores B3 84% · financeiras 74% (EV/EBIT e P/FCO pouco adequados a bancos; mitigado pelo percentil intra-setor, sem exclusão explícita das métricas) · cíclicas 82% (reversão à média + CV) · commodities 80% · endividamento 88% · rentabilidade 92% · crescimento 84% (slopes log) · geração de caixa 86% (P/FCO, cobertura FCO) · dividendos 90% (Bazin + sustentabilidade/payout) · governança 62% (sem métricas explícitas de governança no score BR — diferente dos FIIs) · valuation 88% · aderência macro 85% (ajuste Selic/IPCA) · confiabilidade da seleção final 86%.
@@ -198,7 +198,13 @@ Confiança: 85% · Cobertura: 75% (produção Supabase fora do alcance). **Muito
 
 Fundamentação dos pesos 80% · coerência 86% · estabilidade 78% · sensibilidade do ranking 80% · outliers 92% (winsorização universal) · normalização 92% (percentil) · eliminatórios 88% · desempates 84% (rank médio em empates) · dupla contagem 76% (ROE 2×; DY no score e na utilidade da carteira FII) · sobreposição de fatores 80% · robustez estatística 88% (OOS, rank-IC, walk-forward, FDR) · reprodutibilidade 92% (versões de fórmula/metodologia persistidas, PIT) · explicabilidade 90% (Shapley, componentes por trilha) · resistência a perturbações 76% (bootstrap existe, não é gate contínuo).
 
-Por sistema: B3 86,1% (confiança 85%) · FII 85,7% (confiança 82%) · EUA 84,1% (confiança 80%). Principais fragilidades: pesos de trilha por convenção; dupla contagem leve. Alteração recomendada: calibração empírica periódica (Fama-MacBeth já implementado, tornar rotina) + teste de estabilidade bootstrap como gate. Qualidade estimada após correção: ~89% (**estimativa**).
+Por sistema: B3 86,1% (confiança 85%) · FII 85,7% (confiança 82%) · EUA 84,1% (confiança 80%). Principal fragilidade: dupla contagem leve (ROE em duas trilhas). Alteração recomendada: teste de estabilidade bootstrap como gate — mede a fragilidade do ranking a perturbações nos dados e rejeita ranking frágil. Qualidade estimada após correção: ~88% (**estimativa**).
+
+> **Recomendação RETIRADA (25/07/2026)** — a versão original desta seção também
+> recomendava "tornar rotina a calibração empírica periódica dos pesos
+> (Fama-MacBeth)". Isso foi retirado: ver §15. Recalibrar pesos a cada período
+> importa uma premissa de estacionariedade que o mercado brasileiro não
+> satisfaz, e faria o ranking perseguir o regime macro.
 
 ---
 
@@ -236,11 +242,38 @@ Fidelidade aos dados (por design) 88% (regras "use apenas o CONTEXTO", aviso de 
 
 Testes existentes: `test_llm_provider_fallback`, `test_llm_report_context`, `test_llm_fii`, `test_apb3_*` — estruturais (contexto/protocolo), não avaliam qualidade da resposta.
 
+> **Correção aplicada (24/07/2026)** — a lacuna de validação de saída foi fechada:
+> - `core/llm_grounding.py`: verificador determinístico e offline de **ancoragem numérica** — todo número citado pela LLM precisa existir no contexto enviado ou ser derivável dele (soma, diferença, variação). Conservador por construção: percentuais só casam com percentuais (um defeito encontrado durante a implementação — a variação de 780,95% ancorava indevidamente "R$ 780,00" — está travado por teste de regressão), derivações exigem tolerância apertada (0,3%), e anos/contagens não contam como afirmação factual.
+> - **Na interface**: os chats de Finanças e de Cartão passam a exibir aviso quando a resposta cita valor sem lastro nos dados enviados. A verificação nunca derruba o chat (falha silenciosa por design).
+> - `scripts/eval_llm.py`: harness de **golden set** com contexto sintético (nenhum dado real do usuário) que mede exatamente os percentuais que faltavam — corretas, parcialmente corretas, com dados inventados, fora do formato — mais aderência ao protocolo de gráficos, honestidade sobre dado ausente e presença de ressalva. Requer chave de API; executado pelo usuário.
+> - 23 testes offline cobrem o verificador e o avaliador.
+>
+> Reavaliação: validação da saída **55% → 82%**; prevenção de alucinação 80% → 88%; consistência numérica 80% → 88%. **LLM consolidado: 78,1% → 83,4%** (confiança da avaliação sobe para 72%; o percentual de respostas corretas segue *não medido* até o usuário rodar o harness com chave).
+
 ---
 
 ## 9. Arquitetura e Qualidade do Código (§12.9) — **83,7%**
 
 Organização 88% (core/views/data_pipeline/etl/scripts/docs conforme CLAUDE.md) · modularização 82% (núcleos puros exemplares; **`views/empresas_b3.py` 5.958 linhas e `views/portfolio_b3.py` 3.071 linhas concentram lógica de negócio na camada de interface**, incluindo a validação estatística do portfólio B3) · legibilidade 88% · documentação 92% (docs/ com 40+ documentos, metodologias versionadas, dicionário de dados) · tratamento de erros 78% (209 `except Exception` amplos em core) · segurança 84% (RLS nas tabelas de carteira, sem credenciais no repo, `check_secrets.py`, isolamento OWNER_USER_ID) · validação de entradas 82% · testes automatizados 86% (117 arquivos, 756 funções, 99,5% verdes) · **cobertura de testes: não medida; estimativa ~55–65% do core, ~45% do repositório** (funções críticas de metodologia: ~85% testadas; fórmulas com testes unitários: ~80%; pipelines validados: ~70%; exceções tratadas: ~75%; regras de negócio documentadas: ~85%) · rastreabilidade dos cálculos 92% · separação UI/negócio 74% · separação entre metodologias de classes 90% (B3/FII/US totalmente apartados) · manutenção 82% · escalabilidade 80% · observabilidade 74% (logging presente; sem métricas/alertas de execução) · **controle de versões 90%, porém nenhum workflow de CI executa `pytest`** — os 5 workflows são só de dados.
+
+> **Correção aplicada (24/07/2026)** — `.github/workflows/tests.yml` executa a suíte
+> em cada PR e push na main (Python 3.11 e 3.12, sem banco e sem chaves). Antes de
+> declarar o CI verde, a suíte foi validada em **ambiente limpo** (venv só com
+> `requirements.txt` + pytest), o que revelou dois problemas que teriam deixado o
+> CI vermelho e foram corrigidos na origem:
+> 1. `tests/test_b3_company_score.py` substituía atributos de `core.b3_data` em
+>    escopo de módulo via AppTest e **vazava para `tests/test_market_read.py`** —
+>    era a causa real dos 2 "flakes de cache" relatados na §0.1; agora há fixture
+>    de restauração;
+> 2. `test_snapshot_backup_is_ignored_by_git` exigia que um diretório
+>    **gitignorado existisse** (fato da máquina local); passou a verificar o
+>    invariante real, a regra no `.gitignore`;
+> 3. testes de AppTest com timeout de 20–40s reprovavam em runner lento —
+>    elevados a 60s (o assert é o comportamento renderizado, não o tempo).
+>
+> Resultado: **821 testes, 100% verdes em ambiente limpo**. Reavaliação: testes
+> automatizados 86% → 92%; controle de versões 90% → 96%; observabilidade
+> mantida em 74%. **Código consolidado: 83,7% → 86,1%.**
 
 ---
 
@@ -317,3 +350,218 @@ Pesos por módulo transversal (justificativa: BR é o módulo mais usado e madur
 | Flakes de teste | 99,5% verde | isolar cache Streamlit entre testes (fixture de limpeza) | 100% | +0,5 p.p. |
 
 Todos os valores "projetada" são **estimativas técnicas**, condicionadas a implementação + re-teste.
+
+---
+
+## 14. Fechamento do ciclo — reavaliação de 24/07/2026
+
+Todas as correções da §13 foram implementadas e verificadas, exceto a extração
+das views gigantes (mantida como próximo passo). Esta seção reavalia os
+percentuais **com base em evidência de execução**, não em projeção.
+
+### 14.1 O que foi executado
+
+| Correção | Evidência | Situação |
+|---|---|---|
+| Parser SEC (`fiscal_year` serial-Excel) | `_sane_fiscal_year` + 2 testes; 26 linhas corrigidas/removidas; CHECK criado | ✅ verificado nos dois bancos (0 fora de faixa) |
+| Preços BR (candles vazios) | guarda em `price_rows` + `fii_pit` + CHECK; 1.527 linhas locais e 1.509 no Supabase removidas com backup | ✅ 0 restantes |
+| Dividendos inválidos/duplicados | limpeza + CHECK `amount > 0`; sync seletivo removeu 17,5 mil ecos de classe no Supabase | ✅ 0 restantes; bases alinhadas |
+| Cadastro FII | `enrich_cadastro_gaps()` + comando `fiis-cadastro-gaps`: 727 segmentos e 312 vacâncias | ✅ 0 sem segmento; lacuna real de vacância = 62 fundos (o resto é papel/FoF, onde não se aplica) |
+| CI de testes | `.github/workflows/tests.yml` (3.11 e 3.12); suíte validada em venv limpo | ✅ **821 testes, 100% verdes** |
+| SBC e diluição (EUA) | `sbc_to_revenue`, `fcf_ex_sbc_margin`, `share_count_cagr_3y`; score v0.5.0; 9 testes; exposto na UI | ✅ dado já existia (SBC em 89% das linhas anuais) |
+| Validação de saída da LLM | `core/llm_grounding.py` + aviso nos chats + `scripts/eval_llm.py`; 23 testes | ✅ percentuais de acerto ainda dependem de execução com chave |
+| Flakes de teste | causa real era vazamento de atributos entre módulos (não cache); fixture de restauração | ✅ eliminados |
+
+Dois defeitos foram descobertos **durante** a implementação e travados por teste
+de regressão: o vazamento de `core.b3_data` entre arquivos de teste, e o
+verificador de ancoragem aceitando variação percentual (780,95%) como âncora de
+um valor em reais (R$ 780,00).
+
+### 14.2 Percentuais reavaliados
+
+| Módulo | Dados | Metodologia | Indicadores | Ranking | Carteira | LLM | Código | **Geral** | Antes |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Empresas brasileiras | 93,0% | 87,2% | 84,8% | 86,1% | 85,3% | 84,2% | 83,1% | **87,4%** | 85,8% |
+| FIIs brasileiros | 86,0% | 89,1% | 84,3% | 85,7% | 84,9% | 82,8% | 88,6% | **86,5%** | 84,2% |
+| Ações americanas | 92,5% | 88,4% | 86,5% | 84,1% | 79,6% | 82,1% | 86,7% | **87,3%** | 84,5% |
+
+Transversais: banco de dados **92,0%** (era 86,3%) · pontuação **86,8%** (era
+85,4%) · carteiras 83,3% (inalterado — a extração de lógica das views segue
+pendente) · LLM **83,4%** (era 78,1%) · código **86,1%** (era 83,7%).
+
+### 14.3 Percentual global
+
+Com os mesmos pesos da §11:
+
+**Global = .25·87,4 + .20·86,5 + .15·87,3 + .15·92,0 + .08·83,3 + .07·86,8 + .03·83,4 + .07·86,1 = 87,3%**
+
+| | Auditoria inicial (23/07) | Após as correções (24/07) |
+|---|---:|---:|
+| Percentual global | 84,8% | **87,3%** (+2,5 p.p.) |
+| Classificação | Muito bom | **Muito bom** (a 2,7 p.p. de "Excelente") |
+| Confiança da avaliação | 78% | **84%** (execução verificada, não projeção) |
+| Cobertura da auditoria | ~72% | **~82%** (Supabase agora auditado) |
+
+### 14.4 O que continua aberto
+
+1. **Separação UI/negócio (74%)** — `views/empresas_b3.py` (5.958 linhas) e
+   `views/portfolio_b3.py` (3.071) ainda concentram lógica de negócio, incluindo
+   a validação estatística do portfólio B3. É agora o maior redutor isolado da
+   nota de código e o próximo passo natural.
+2. **Percentuais de acerto da LLM** — o harness existe, mas os números de §12.8
+   (respostas corretas / inventadas) só saem quando `scripts/eval_llm.py` rodar
+   com chave de API. Até lá seguem **não medidos**, não estimados.
+3. **Carteira Modelo EUA (79,6%)** — menos madura que a B3: sem custos de
+   rebalanceamento nem modelagem de exposição cambial.
+4. **Observabilidade (74%)** — logging existe; faltam métricas/alertas de
+   execução dos pipelines.
+5. **Cobertura de testes não medida** — a suíte é grande e verde, mas nenhum
+   relatório de cobertura é gerado; a estimativa de ~55–65% do core segue sem
+   verificação.
+
+---
+
+## 15. Correção metodológica — estatística como gate, não como calibrador (25/07/2026)
+
+Registro de uma crítica do proprietário do sistema que **procede** e corrige duas
+avaliações desta auditoria.
+
+### 15.1 A objeção
+
+*"A validação estatística já não tinha sido discutida diante das dificuldades de
+usá-la no âmbito brasileiro — instabilidade política e econômica? Isso não
+tornaria o sistema instável?"*
+
+### 15.2 O que estava correto e o que estava errado
+
+**Correto:** nada da validação estatística foi alterado nesta sessão — o `git log`
+não registra commits em `views/portfolio_b3.py`, `core/b3_validation.py`,
+`core/b3_methodology.py`, `core/fama_macbeth.py` ou `core/survivorship.py`. A
+auditoria apenas **descreveu** o mecanismo já existente. E a discussão anterior
+(`docs/guia_metodologia_carteira_b3.md` §6–§8) nunca concluiu remover a
+estatística: concluiu que, com a Selic acumulando ~30% em 24 meses, o gate
+aprovaria pouco ou nada — e que esse é o resultado honesto, sendo a margem vs
+Selic a única alavanca aceitável para ampliar, **nunca** a significância.
+
+**Errado — duas avaliações importaram premissa de estacionariedade:**
+
+1. **§2.2 penalizava "coerência dos pesos" em 79%** por os pesos das trilhas
+   serem fixos por convenção e o Fama-MacBeth ser apenas opcional. Sob quebras
+   de regime (eleições, choques de juro, intervenção setorial), peso fixo é
+   **robustez**: não há amostra estacionária que justifique reestimá-los sem
+   perseguir ruído. Corrigido para **86%**.
+2. **§6 recomendava tornar rotina a calibração empírica dos pesos.** Retirada.
+   Seria justamente o mecanismo que instabilizaria o ranking a cada virada de
+   ciclo — o risco levantado na objeção.
+
+### 15.3 A distinção que resolve a aparente contradição
+
+| Uso da estatística | Efeito sob instabilidade macro | Estado no sistema |
+|---|---|---|
+| **Gate** — aprovar/reprovar seleção; "0 aprovados" é resposta válida | **Reduz** instabilidade: recusa emitir carteira a partir de ruído | ativo, auditado, inalterado |
+| **Calibrador de parâmetros** — reestimar pesos com os dados de cada período | **Aumenta** instabilidade: os pesos perseguem o regime | opcional, desligado — e assim deve permanecer |
+
+A objeção é decisiva contra o segundo uso e **favorável** ao primeiro. Um gate que
+se cala por falta de evidência é estabilizador por construção; o que desestabiliza
+é reescrever os parâmetros do modelo a cada leitura nova do mercado.
+
+Permanecem válidas, portanto: FDR entre segmentos, Rank-IC com t-stat, holdout
+OOS, walk-forward com purga e publication lag — todos operando como **veto**, com
+pesos fixos e versionados. E permanece pendente, sem prazo definido, a sugestão
+já registrada no guia: exigir significância do excesso **vs Equal-Weight do
+próprio segmento**, que isola habilidade de seleção e neutraliza o regime —
+resposta direta à pró-ciclicidade do gate atual.
+
+### 15.4 Efeito nos percentuais
+
+Pontuação/rankings: 86,8% → **87,0%** (a correção de 79% → 86% em coerência dos
+pesos entra com peso pequeno no consolidado). Global: **87,3% → 87,4%**. A
+mudança material não é a nota — é a retirada de uma recomendação que teria
+degradado a estabilidade do sistema se implementada.
+
+---
+
+## 16. Poder estatístico, amostra e a rota de valor ausente (25/07/2026)
+
+Continuação da §15, após aprofundamento da objeção. Aqui há uma **terceira
+correção da auditoria** e o diagnóstico do que de fato falta.
+
+### 16.1 Correção: descrevi o gate de forma incompleta
+
+A §2.2 apresentou "holdout OOS, Rank-IC com t-stat, walk-forward, FDR" como se
+fosse **o** critério de aprovação da carteira B3. Não é. O seletor "Critério de
+aprovação" (`views/portfolio_b3.py:1723`) tem três modos e o **padrão é
+"Econômico (Brasil)"**, no qual:
+
+* o gate primário é **econômico** — margem vs Selic no histórico cheio e, como
+  segundo portão, margem vs Equal-Weight do próprio segmento;
+* a estatística atua só como **guarda-corpo**: reprova apenas `rank_ic_mean <
+  -0,05`, isto é, **evidência contra** (sinal claramente anti-preditivo). Não
+  exige prova positiva de significância.
+
+Os modos "Sinal fundamental (Rank-IC)" e "Retorno de 24m (FDR)" — que exigem
+significância — são **opcionais**, e a própria ajuda da interface avisa que
+dependem de amplitude "escassa na B3". O cenário de "0 aprovados" documentado no
+guia (§6) descreve o modo estatístico, não o padrão.
+
+Portanto: **o sistema não responde "nunca invista" por padrão.** A auditoria
+deveria ter registrado essa arquitetura de modos; a nota de metodologia BR
+(87,2%) não muda, mas a descrição estava incompleta e induzia à leitura errada.
+
+### 16.2 Onde a objeção procede — com números
+
+Amostra por segmento na B3 (consulta em 25/07/2026, `market.assets` × `public.setores`):
+
+| Métrica | Valor |
+|---|---:|
+| Segmentos | 78 |
+| Empresas por segmento (média) | 5,6 |
+| Empresas por segmento (**mediana**) | **3** |
+| Segmentos com menos de 5 empresas | 51 (65%) |
+| Segmentos com menos de 3 empresas | 37 (47%) |
+
+Com **mediana de 3 empresas por segmento**, um Rank-IC cross-seccional é
+praticamente sem conteúdo: não se demonstra habilidade de ordenação entre três
+nomes. Somando ~10 anos de histórico e correção FDR entre 64–78 testes, o
+**poder estatístico é próximo de zero**. E aí incide o erro conceitual clássico:
+*ausência de evidência não é evidência de ausência*. Nos modos estatísticos,
+"não rejeitei H₀" é tratado como reprovação — quando o correto seria
+**inconclusivo**.
+
+Nota sobre o argumento dos investidores bem-sucedidos: ele é, isoladamente,
+evidência fraca (viés de sobrevivência — ouvimos falar dos que acertaram). Mas a
+conclusão continua correta por outro caminho, mais forte: um teste sem poder não
+autoriza concluir inviabilidade. A objeção não precisa dos casos de sucesso.
+
+### 16.3 O que de fato falta: rota de valor para a carteira
+
+`core/valuation.py` (Graham, Bazin, margem de segurança) é usado em
+`views/empresas_b3.py` — painel **individual** — e **não** em
+`views/portfolio_b3.py`. Ou seja: existe rota de "habilidade de seleção por
+segmento" (econômica ou estatística), mas **não existe rota de valor** que
+construa carteira a partir de distorção de preço vs valor intrínseco. O controle
+"Peso de barganha no score" mistura múltiplos baratos ao score (padrão 0%), o que
+é atenuação, não uma tese própria.
+
+Essa é a lacuna que corresponde à tese "crise = oportunidade": ela hoje só existe
+na análise caso a caso, não na construção de carteira.
+
+### 16.4 Caminho proposto (não implementado — decisão do proprietário)
+
+1. **Separar "inconclusivo" de "reprovado"** nos modos estatísticos: reportar
+   amplitude e poder ao lado do p-valor, com três estados (evidência a favor /
+   evidência contra / inconclusivo por falta de amplitude). Nunca deixar
+   "inconclusivo" bloquear sozinho.
+2. **Rota de valor paralela**: seleção por margem de segurança vs valor
+   intrínseco, com gate de **solvência e resiliência** (Altman, cobertura de
+   juros, ROIC > risco-livre, geração de caixa) — a disciplina que separa
+   distorção de armadilha de valor. Lembrete factual do próprio guia: ~20% das
+   ações brasileiras perderam mais de 90% em 15 anos (Oi, Americanas, Gol).
+3. **Estatística dimensionada à amostra**: em vez de 64–78 testes independentes
+   por segmento (N mediano = 3), usar *pooling* hierárquico com encolhimento —
+   empresta força entre segmentos — e testar habilidade no nível do **universo**
+   (N > 300), onde há amplitude. Isso não é afrouxar rigor: é trocar um teste
+   inadequado ao tamanho da amostra por um adequado.
+
+O item 3 preserva a função de veto contra vieses que continuam valendo
+independentemente do regime: sobrevivência, look-ahead e sinal anti-preditivo.

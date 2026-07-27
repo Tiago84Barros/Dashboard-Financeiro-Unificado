@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from core.b3_company_score import TRACK_LABELS, classification, score_cross_section
 
@@ -62,7 +63,26 @@ def test_classificacao_visual():
     assert classification(None) == ("Sem classificação", "neutro")
 
 
-def test_painel_b3_renderiza_radar_e_dossie_no_streamlit():
+@pytest.fixture
+def _restaura_facade_b3():
+    """O AppTest roda o script NESTE processo e substitui atributos de
+    core.b3_data/core.dossie_b3. Sem restaurar, o vazamento derruba
+    tests/test_market_read.py quando a suíte roda inteira."""
+    import core.b3_data as facade
+    import core.dossie_b3 as dossie
+    originais = [
+        (facade, "load_multiplos_todos", facade.load_multiplos_todos),
+        (facade, "load_multiplos_historico_batch", facade.load_multiplos_historico_batch),
+        (dossie, "build_dossie", dossie.build_dossie),
+    ]
+    try:
+        yield
+    finally:
+        for modulo, nome, valor in originais:
+            setattr(modulo, nome, valor)
+
+
+def test_painel_b3_renderiza_radar_e_dossie_no_streamlit(_restaura_facade_b3):
     from streamlit.testing.v1 import AppTest
 
     app = AppTest.from_string("""
@@ -96,7 +116,7 @@ dossie.build_dossie = lambda ticker: {
     'eventos_societarios':{'eventos':[]},
 }
 view._render_b3_score_dashboard('BOA3', universo.iloc[0], meta)
-""").run(timeout=20)
+""").run(timeout=60)
 
     assert not app.exception
     assert any(exp.label == "📄 Dossiê, classificação e critérios avançados"

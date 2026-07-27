@@ -292,7 +292,9 @@ _BALANCE_COLS = ("fiscal_year", "total_assets", "total_equity", "total_debt",
                  "retained_earnings")
 _CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow",
                   "acquisitions", "investments", "dividends_paid",
-                  "stock_repurchase", "stock_issuance", "depreciation_and_amortization")
+                  "stock_repurchase", "stock_issuance", "depreciation_and_amortization",
+                  # SBC alimenta sbc_to_revenue/fcf_ex_sbc_margin no score (v0.5.0).
+                  "stock_based_compensation")
 
 
 def _latest_close(conn, symbol: str):

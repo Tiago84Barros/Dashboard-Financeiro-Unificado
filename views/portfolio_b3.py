@@ -907,6 +907,10 @@ def _processar_segmento(
         # não recebem aprovação por ausência de poder estatístico.
         score_frame = pd.DataFrame(score_rows)
         ic_values: list[float] = []
+        # Pares (ano, score, retorno) preservados para o teste no nível do
+        # UNIVERSO — onde há amplitude real (N>300) em vez de 78 testes com
+        # mediana de 3 empresas. Ver core/b3_pooled_evidence.py e auditoria §16.
+        ic_pairs: list[tuple[int, float, float]] = []
         if not score_frame.empty:
             for year in sorted(score_frame["Ano"].unique()):
                 scores_year = score_frame[score_frame["Ano"] == year].set_index(
@@ -929,6 +933,11 @@ def _processar_segmento(
                     [scores_year.rename("score"), returns_year.rename("return")],
                     axis=1,
                 ).dropna()
+                # O universo aproveita TODAS as empresas alinhadas, inclusive as
+                # dos anos que o segmento sozinho descarta por amplitude.
+                ic_pairs.extend(
+                    (int(year), float(s), float(r))
+                    for s, r in zip(aligned["score"], aligned["return"]))
                 if len(aligned) < 5:
                     continue
                 ic = aligned["score"].corr(aligned["return"], method="spearman")
@@ -1013,6 +1022,15 @@ def _processar_segmento(
         "rank_ic_years": rank_ic_years,
         "rank_ic_tstat": rank_ic_tstat,
         "p_value_ic": p_value_ic,
+        # ICs anuais preservados para classificar o ESTADO DA EVIDÊNCIA
+        # (a favor / contra / inconclusivo) e calcular o efeito mínimo
+        # detectável — ver core/b3_evidence.py e auditoria §16.
+        "rank_ic_values": list(ic_values),
+        "ic_pairs": ic_pairs,
+        "n_empresas_medio": (
+            float(score_frame.groupby("Ano")["ticker"].nunique().mean())
+            if not score_frame.empty and "Ano" in score_frame.columns else 0.0
+        ),
         "roic_spread_mean": roic_spread_mean,
         "roic_hit_rate": roic_hit_rate,
         "wf_hit_rate": wf_hit_rate,
@@ -1615,6 +1633,248 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
         "Notas: crescimento usa inclinação log-linear anualizada quando há dados suficientes. "
         "Preço, volatilidade e máxima queda usam a matriz de preços baixada para a criação do portfólio."
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EVIDÊNCIA NO UNIVERSO — o teste que tem amplitude
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_evidencia_universo(resultados: list[dict]) -> None:
+    """Um teste com N>300 no lugar de 78 testes com mediana de 3 empresas.
+
+    O Rank-IC por segmento responde "este segmento tem sinal?" — pergunta que a
+    amostra brasileira não sustenta. Aqui a pergunta é "o meu score ordena
+    vencedores acima de perdedores no mercado?", que a mesma base responde com
+    amplitude real. As estimativas por segmento aparecem encolhidas em direção
+    ao universo, na medida da incerteza de cada uma.
+    """
+    from core.b3_evidence import A_FAVOR, CONTRA
+    from core.b3_pooled_evidence import (
+        SegmentSample, pooled_yearly_ics, shrink_segment_estimates,
+        universe_evidence,
+    )
+
+    todos_pares: list[tuple] = []
+    for res in resultados:
+        todos_pares.extend(res.get("ic_pairs") or [])
+    if not todos_pares:
+        return
+
+    ics_universo = pooled_yearly_ics(todos_pares)
+    n_medio = (len(todos_pares) / len(ics_universo)) if ics_universo else 0.0
+    evidencia = universe_evidence(ics_universo, n_medio_ativos=n_medio)
+
+    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                unsafe_allow_html=True)
+    _sec_hdr("🔬 Evidência no universo — o teste com amplitude")
+    st.caption(
+        "Testar cada segmento isoladamente é inviável na B3: a mediana é de 3 "
+        "empresas por segmento. Este teste agrupa TODAS as empresas de cada ano "
+        "num único Rank-IC — mesma base, amplitude real, sem multiplicidade a "
+        "corrigir."
+    )
+
+    icone = {A_FAVOR: "✅", CONTRA: "❌"}.get(evidencia.estado, "🟡")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card_metrica("Rank-IC do universo",
+                     f"{evidencia.ic_medio:+.3f}"
+                     if np.isfinite(evidencia.ic_medio) else "—")
+    with c2:
+        card_metrica("valor-p",
+                     f"{evidencia.p_value:.3f}" if evidencia.p_value is not None else "—")
+    with c3:
+        card_metrica("Anos × empresas/ano",
+                     f"{evidencia.anos} × ~{evidencia.n_medio_ativos:.0f}")
+    with c4:
+        card_metrica("Efeito mín. detectável",
+                     f"{evidencia.efeito_minimo_detectavel:.3f}"
+                     if evidencia.efeito_minimo_detectavel is not None else "—")
+    st.markdown(f"{icone} {evidencia.explicacao}")
+
+    amostras = [
+        SegmentSample(
+            key=f'{res["setor"]} · {res["segmento"]}',
+            ic_values=tuple(res.get("rank_ic_values") or []),
+            n_assets=float(res.get("n_empresas_medio") or 0.0),
+        )
+        for res in resultados
+    ]
+    encolhidas = shrink_segment_estimates(
+        amostras,
+        universe_mean=evidencia.ic_medio if np.isfinite(evidencia.ic_medio) else None,
+    )
+    if not encolhidas:
+        return
+
+    with st.expander(
+        "📐 Estimativas por segmento após empréstimo de força (empirical Bayes)",
+        expanded=False,
+    ):
+        st.caption(
+            "Cada segmento é puxado em direção à média do universo conforme a "
+            "própria incerteza. Segmento com 3 empresas e IC alto é quase "
+            "inteiramente encolhido — é ruído; com muitas empresas, preserva o "
+            "seu valor. Sem observação, adota a estimativa do universo — que é "
+            "a melhor inferência disponível, não uma reprovação."
+        )
+        tabela = pd.DataFrame([{
+            "Segmento": e.key,
+            "IC bruto": round(e.ic_bruto, 3) if e.ic_bruto is not None else None,
+            "IC encolhido": round(e.ic_encolhido, 3),
+            "Peso próprio (%)": round(e.peso_proprio * 100, 0),
+            "Anos medidos": e.anos,
+        } for e in encolhidas])
+        st.dataframe(
+            tabela.sort_values("IC encolhido", ascending=False),
+            hide_index=True, use_container_width=True,
+            height=min(420, 60 + 35 * len(tabela)),
+        )
+        _sem_dado = sum(1 for e in encolhidas if e.ic_bruto is None)
+        if _sem_dado:
+            st.caption(
+                f"{_sem_dado} segmento(s) sem observação própria receberam a "
+                "estimativa do universo."
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ROTA DE VALOR — distorção de preço com disciplina de solvência
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
+                          taxa_selic_aa: float) -> None:
+    """Caminho paralelo ao dos segmentos, que não depende de amplitude.
+
+    A rota por segmento pergunta "meu processo de escolha tem skill comprovado?"
+    — pergunta que exige amplitude cross-seccional, e a B3 tem mediana de 3
+    empresas por segmento. Esta seção responde outra: "está barata frente ao
+    valor intrínseco E sobrevive para realizar esse valor?". Por isso continua
+    útil justamente quando a rota de segmentos fica muda.
+    """
+    from core.b3_value_route import (
+        ARMADILHA, OPORTUNIDADE, SEM_EVIDENCIA, SEM_MARGEM, ValuePolicy,
+        blocked_by_missing_data, rank_value_opportunities, route_summary,
+    )
+
+    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                unsafe_allow_html=True)
+    _sec_hdr("💎 Rota de valor — distorção com solvência")
+    st.caption(
+        "Independe de significância estatística e de amplitude: avalia empresa a "
+        "empresa. O gate de solvência é o que separa distorção de armadilha de "
+        "valor — ~20% das ações brasileiras perderam mais de 90% em 15 anos."
+    )
+
+    if df_mult_todos is None or df_mult_todos.empty:
+        st.info("Sem fundamentos carregados para avaliar a rota de valor.")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    margem_min = col1.slider(
+        "Margem de segurança mínima (%)", 0, 100, 20, 5, key="pb3_vr_margem",
+        help="Desconto exigido frente ao valor intrínseco (média de Graham e "
+             "Bazin disponíveis). Não é a margem vs Selic da rota de segmentos.",
+    ) / 100.0
+    max_div = col2.slider(
+        "Endividamento máximo (dívida/PL)", 0.5, 5.0, 2.5, 0.5, key="pb3_vr_div")
+    min_liq = col3.slider(
+        "Liquidez corrente mínima", 0.5, 3.0, 1.0, 0.1, key="pb3_vr_liq")
+
+    policy = ValuePolicy(margem_minima=margem_min, max_endividamento=max_div,
+                         min_liquidez_corrente=min_liq)
+    ranked = rank_value_opportunities(df_mult_todos, policy=policy,
+                                      selic=float(taxa_selic_aa))
+    resumo = route_summary(ranked)
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        card_metrica("Oportunidades", str(resumo[OPORTUNIDADE]))
+    with k2:
+        card_metrica("Armadilhas barradas", str(resumo[ARMADILHA]))
+    with k3:
+        card_metrica("Sem desconto", str(resumo[SEM_MARGEM]))
+    with k4:
+        card_metrica("Sem evidência", str(resumo[SEM_EVIDENCIA]))
+
+    setores = (df_set[["Ticker", "SETOR", "SEGMENTO"]].drop_duplicates("Ticker")
+               if {"Ticker", "SETOR", "SEGMENTO"}.issubset(df_set.columns)
+               else pd.DataFrame(columns=["Ticker", "SETOR", "SEGMENTO"]))
+
+    oportunidades = ranked[ranked["classificacao"] == OPORTUNIDADE]
+    if oportunidades.empty:
+        st.info(
+            "Nenhuma empresa combina o desconto exigido com solvência preservada "
+            "nos parâmetros atuais. Diferente da rota de segmentos, aqui a "
+            "ausência é sobre PREÇO, não sobre evidência estatística."
+        )
+    else:
+        show = oportunidades.merge(setores, on="Ticker", how="left")
+        cols = [c for c in ("Ticker", "SETOR", "SEGMENTO", "margem_valor",
+                            "valor_score", "forca_solvencia", "explicacao")
+                if c in show.columns]
+        st.dataframe(
+            show[cols].head(40).rename(columns={
+                "SETOR": "Setor", "SEGMENTO": "Segmento",
+                "margem_valor": "Margem de segurança",
+                "valor_score": "Score de valor",
+                "forca_solvencia": "Folga de solvência",
+                "explicacao": "Por quê"}),
+            hide_index=True, use_container_width=True,
+            column_config={
+                "Margem de segurança": st.column_config.NumberColumn(format="%.0f%%"),
+            },
+        )
+        st.caption(
+            "Score de valor = 60% desconto + 40% folga de solvência. A decisão de "
+            "timing continua sua: a rota mostra o que está barato e sobrevive, "
+            "não quando comprar."
+        )
+
+    armadilhas = ranked[ranked["classificacao"] == ARMADILHA]
+    if not armadilhas.empty:
+        with st.expander(
+            f"🪤 Armadilhas de valor barradas ({len(armadilhas)}) — desconto sem solvência",
+            expanded=False,
+        ):
+            st.caption(
+                "Estas apareceriam como 'baratas' em qualquer filtro de múltiplos. "
+                "O gate de solvência é justamente o que as separa das oportunidades."
+            )
+            trap = armadilhas.copy()
+            trap["motivo"] = trap["falhas_solvencia"].apply(lambda v: "; ".join(v))
+            st.dataframe(
+                trap[["Ticker", "margem_valor", "motivo"]].head(40).rename(columns={
+                    "margem_valor": "Desconto aparente", "motivo": "Reprovação"}),
+                hide_index=True, use_container_width=True,
+                column_config={
+                    "Desconto aparente": st.column_config.NumberColumn(format="%.0f%%"),
+                },
+            )
+
+    bloqueadas = blocked_by_missing_data(ranked, policy=policy)
+    if not bloqueadas.empty:
+        with st.expander(
+            f"🕳️ Teses não julgadas por falta de dado ({len(bloqueadas)})",
+            expanded=False,
+        ):
+            st.caption(
+                "Têm desconto relevante, mas falta insumo crítico de solvência — "
+                "não foram avaliadas e NÃO são recomendações. A lista mede o custo "
+                "da cobertura de fundamentos e serve para priorizar a ingestão."
+            )
+            faltantes = bloqueadas.copy()
+            faltantes["falta"] = faltantes["criticos_ausentes"].apply(
+                lambda v: ", ".join(v))
+            st.dataframe(
+                faltantes[["Ticker", "margem_valor", "falta"]].head(40).rename(
+                    columns={"margem_valor": "Desconto aparente",
+                             "falta": "Dado ausente"}),
+                hide_index=True, use_container_width=True,
+                column_config={
+                    "Desconto aparente": st.column_config.NumberColumn(format="%.0f%%"),
+                },
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2353,6 +2613,11 @@ def render(show_header: bool = True) -> None:
     _col_ew_hist    = f"vs Pesos Iguais · histórico{_sfx_hist} (%)"
     _col_ew_val     = f"vs Pesos Iguais · validação{_sfx_val} (%)"
 
+    # Estado da evidência por segmento (auditoria §16): "não pude medir" e
+    # "medi e é ruim" deixam de ser o mesmo rótulo. Só evidência CONTRA é
+    # reprovação estatística; inconclusivo é limite do dado, não do ativo.
+    from core.b3_evidence import classify_evidence, evidence_label
+
     rows_tbl: list[dict] = []
     for res in resultados:
         m_s  = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_selic_oos", 0.0))
@@ -2360,14 +2625,37 @@ def render(show_header: bool = True) -> None:
         m_s_full  = _margem_pct(res.get("val_est", 0.0), res.get("val_selic", 0.0))
         m_ew_full = _margem_pct(res.get("val_est", 0.0), res.get("val_ew", 0.0))
         ult  = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
+        _verdict = classify_evidence(
+            ic_values=res.get("rank_ic_values") or [],
+            ic_mean=res.get("rank_ic_mean"),
+            p_value=res.get("p_value_ic"),
+        )
+        # O portão econômico é aferido à parte para não confundir "reprovado por
+        # não bater a Selic" com "reprovado pela estatística".
+        _economico_ok = (
+            res.get("val_est", 0.0) > 0
+            and m_s_full >= thr_selic
+            and (not usar_ew_como_criterio or res.get("val_ew", 0.0) <= 0
+                 or m_ew_full >= thr_ew)
+        )
+        if _aprovado(res):
+            _situacao = "✅ Aprovado"
+        elif _verdict.bloqueante:
+            _situacao = "❌ Reprovado (evidência contra)"
+        elif not _economico_ok:
+            _situacao = "❌ Reprovado (critério econômico)"
+        else:
+            # Passou no econômico e a estatística não teve como falar.
+            _situacao = f"🟡 {evidence_label(_verdict)}"
         rows_tbl.append({
             "Setor":     res["setor"],
             "Subsetor":  res["subsetor"],
             "Segmento":  res["segmento"],
-            "Situação": (
-                "✅ Aprovado"
-                if _aprovado(res)
-                else "❌ Reprovado (risco/evidência)"
+            "Situação": _situacao,
+            "Estado da evidência": evidence_label(_verdict),
+            "Efeito mín. detectável (Rank-IC)": (
+                round(_verdict.efeito_minimo_detectavel, 3)
+                if _verdict.efeito_minimo_detectavel is not None else None
             ),
             _col_selic_hist: round(m_s_full, 1),
             _col_ew_hist: round(m_ew_full, 1),
@@ -2406,13 +2694,31 @@ def render(show_header: bool = True) -> None:
 
     def _cor_status(v: str) -> str:
         if "✅" in v:    return "color: #00C896"
-        if "⚠️" in v:   return "color: #F6C90E"
+        # Inconclusivo é âmbar, não vermelho: não houve reprovação de mérito.
+        if "⚠️" in v or "🟡" in v:   return "color: #F6C90E"
         return "color: #FC5C7D"
 
     st.dataframe(
         df_tbl.style.applymap(_cor_status, subset=["Situação"]),
         use_container_width=True,
         height=min(500, 60 + 35 * len(df_tbl)),
+    )
+    _n_inconclusivos = sum("🟡" in str(linha["Situação"]) for linha in rows_tbl)
+    st.caption(
+        "**Como ler a Situação.** ❌ *evidência contra* = o score ordenou ao "
+        "contrário do retorno (reprovação de mérito). ❌ *critério econômico* = "
+        "não bateu a Selic/Pesos Iguais pela margem. 🟡 *Inconclusivo* = passou "
+        "no econômico e a estatística **não teve como falar** — amplitude ou "
+        "significância insuficientes. Inconclusivo NÃO é reprovação: não "
+        "rejeitar a hipótese nula não prova ausência de habilidade."
+        + (f" Nesta rodada, {_n_inconclusivos} segmento(s) ficaram nesse estado."
+           if _n_inconclusivos else "")
+    )
+    st.caption(
+        "**Efeito mín. detectável (Rank-IC)** é o menor poder preditivo que o "
+        "teste conseguiria enxergar com os dados disponíveis (80% de poder). "
+        "Valor alto significa teste cego para efeitos moderados — com mediana de "
+        "3 empresas por segmento na B3, é o caso frequente."
     )
 
     # ── SEGMENTOS APROVADOS ───────────────────────────────────────────────────
@@ -2424,6 +2730,12 @@ def render(show_header: bool = True) -> None:
                           key=lambda r: _margem_pct(r["val_est"], r["val_selic"]),
                           reverse=True):
             _bloco_segmento(res, df_set, thr_selic, thr_ew, max_anos_lid)
+
+    # ── EVIDÊNCIA NO UNIVERSO (amplitude real, sem multiplicidade) ───────────
+    _render_evidencia_universo(resultados)
+
+    # ── ROTA DE VALOR (independe de habilidade cross-seccional) ──────────────
+    _render_rota_de_valor(df_mult_todos, df_set, taxa_selic_aa)
 
     # ── EMPRESAS LÍDERES PARA O PRÓXIMO ANO ──────────────────────────────────
     st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",

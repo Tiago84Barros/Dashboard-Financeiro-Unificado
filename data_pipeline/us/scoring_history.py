@@ -34,7 +34,10 @@ _BALANCE = ("company_id", "fiscal_year", "available_at", "total_assets", "total_
             "current_liabilities", "invested_capital", "shares_outstanding")
 _CASHFLOW = ("company_id", "fiscal_year", "available_at", "operating_cash_flow",
              "capex", "free_cash_flow", "dividends_paid", "stock_repurchase",
-             "stock_issuance", "depreciation_and_amortization")
+             "stock_issuance", "depreciation_and_amortization",
+             # SBC entra no score v0.5.0; sem esta coluna o histórico PIT
+             # reconstruiria as vintages sem a trilha de qualidade completa.
+             "stock_based_compensation")
 
 
 def visible_rows(rows: Sequence[dict], as_of: date) -> list[dict]:

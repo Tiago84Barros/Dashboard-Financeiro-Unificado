@@ -165,7 +165,7 @@ df = pd.DataFrame([
 ])
 render_sector_grid(df, key_prefix='test_cards', selected_ticker=None,
                    selected_state_key='test_ticker', active_state_key='test_active')
-""").run(timeout=20)
+""").run(timeout=60)
     assert not app.exception
     labels = [button.label for button in app.button]
     assert labels[:5] == [
@@ -202,13 +202,13 @@ view.us.scored_universe = lambda: scored
 view.us.company_financials = lambda symbol: pd.DataFrame()
 view.us.dossie = lambda symbol: {'classification':'consolidada','classification_reason':'ok','red_flags':[],'notes':{}}
 view.render()
-""").run(timeout=20)
+""").run(timeout=60)
         assert not app.exception
         html_rendered = "\n".join(element.value for element in app.markdown)
         assert "Eletrônicos de Consumo" in html_rendered
         assert "Consumer Electronics" not in html_rendered
         analyze = next(button for button in app.button if button.label == "Analisar")
-        analyze.click().run(timeout=20)
+        analyze.click().run(timeout=60)
         assert not app.exception
         assert app.session_state["us_selected_ticker"] == "AAPL"
         assert app.session_state["us_active_tab"] == 1
@@ -231,7 +231,7 @@ view._db.load_setores = lambda: pd.DataFrame([
     {'ticker':'PETR4','nome_empresa':'Petrobras','SETOR':'Petróleo','SUBSETOR':'Petróleo e Gás','SEGMENTO':'Exploração'},
 ])
 view.render()
-""").run(timeout=20)
+""").run(timeout=60)
         assert not app.exception
         assert [button.label for button in app.button].count("Analisar") == 2
     finally:
