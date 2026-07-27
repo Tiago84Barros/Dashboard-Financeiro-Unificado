@@ -336,3 +336,55 @@ disponíveis, a 80% de poder. Valor alto = teste cego para efeitos moderados.
 
 `core/b3_evidence.py` é puro e testado; só `evidencia_contra` é bloqueante.
 
+
+---
+
+## 13. Estatística dimensionada à amostra (25/07/2026)
+
+Terceira e última peça da resposta à objeção da §16 da auditoria. As duas
+anteriores contornaram o problema (rota de valor; três estados de evidência).
+Esta ataca a causa: **o desenho do teste estava errado para o tamanho da
+amostra**.
+
+### O diagnóstico, em um número
+
+Simulação com as amplitudes REAIS da B3 (78 segmentos, mediana de 3 empresas,
+438 no total), 10 anos, α=10%:
+
+| Desenho | Efeito mínimo detectável (Rank-IC) |
+|---|---:|
+| Um teste por segmento (3 empresas) | **0,533** |
+| Um teste no universo (438 empresas) | **0,027** |
+| | **19× mais sensível** |
+
+Um Rank-IC de 0,533 não existe em mercado nenhum: sinais fundamentalistas reais
+vivem na faixa de 0,02 a 0,10 (Grinold-Kahn). Ou seja, **o teste por segmento
+era estruturalmente cego a qualquer efeito realista** — ele nunca poderia
+aprovar por mérito, só por acaso. Na mesma simulação, com sinal verdadeiro
+**igual a zero**, apenas 27 dos 78 segmentos eram sequer mensuráveis e 1
+"passava" por sorte.
+
+### O que mudou
+
+1. **Teste no nível do universo** (`pooled_yearly_ics` + `universe_evidence`):
+   o Rank-IC anual passa a ser calculado sobre todas as empresas de cada ano,
+   num único teste com amplitude real — e sem multiplicidade a corrigir, já que
+   é um teste, não 78.
+2. **Encolhimento hierárquico** (`shrink_segment_estimates`, empirical Bayes por
+   método dos momentos): a estimativa de cada segmento é puxada para a média do
+   universo na medida da própria incerteza. Na simulação com ruído puro, os ICs
+   brutos mais extremos (−0,186; +0,151) foram encolhidos a 0,000 com peso
+   próprio 0% — exatamente o que deveria acontecer com ruído.
+3. **Segmento sem observação recebe a estimativa do universo**, não uma
+   reprovação: sem dado próprio, a melhor inferência disponível é a do mercado.
+
+A seção "🔬 Evidência no universo" exibe o Rank-IC agrupado, o valor-p, a
+amplitude (anos × empresas/ano), o efeito mínimo detectável e a tabela de
+estimativas encolhidas com o peso próprio de cada segmento.
+
+### O que continua valendo
+
+Sobrevivência, publication lag e o guarda-corpo anti-preditivo não dependem de
+amplitude e seguem ativos. A rota econômica continua sendo o padrão para
+aprovar segmentos; o teste de universo informa se o score, como um todo, tem
+poder preditivo no mercado brasileiro — pergunta que agora pode ser respondida.

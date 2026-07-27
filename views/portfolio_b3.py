@@ -907,6 +907,10 @@ def _processar_segmento(
         # não recebem aprovação por ausência de poder estatístico.
         score_frame = pd.DataFrame(score_rows)
         ic_values: list[float] = []
+        # Pares (ano, score, retorno) preservados para o teste no nível do
+        # UNIVERSO — onde há amplitude real (N>300) em vez de 78 testes com
+        # mediana de 3 empresas. Ver core/b3_pooled_evidence.py e auditoria §16.
+        ic_pairs: list[tuple[int, float, float]] = []
         if not score_frame.empty:
             for year in sorted(score_frame["Ano"].unique()):
                 scores_year = score_frame[score_frame["Ano"] == year].set_index(
@@ -929,6 +933,11 @@ def _processar_segmento(
                     [scores_year.rename("score"), returns_year.rename("return")],
                     axis=1,
                 ).dropna()
+                # O universo aproveita TODAS as empresas alinhadas, inclusive as
+                # dos anos que o segmento sozinho descarta por amplitude.
+                ic_pairs.extend(
+                    (int(year), float(s), float(r))
+                    for s, r in zip(aligned["score"], aligned["return"]))
                 if len(aligned) < 5:
                     continue
                 ic = aligned["score"].corr(aligned["return"], method="spearman")
@@ -1017,6 +1026,11 @@ def _processar_segmento(
         # (a favor / contra / inconclusivo) e calcular o efeito mínimo
         # detectável — ver core/b3_evidence.py e auditoria §16.
         "rank_ic_values": list(ic_values),
+        "ic_pairs": ic_pairs,
+        "n_empresas_medio": (
+            float(score_frame.groupby("Ano")["ticker"].nunique().mean())
+            if not score_frame.empty and "Ano" in score_frame.columns else 0.0
+        ),
         "roic_spread_mean": roic_spread_mean,
         "roic_hit_rate": roic_hit_rate,
         "wf_hit_rate": wf_hit_rate,
@@ -1619,6 +1633,109 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
         "Notas: crescimento usa inclinação log-linear anualizada quando há dados suficientes. "
         "Preço, volatilidade e máxima queda usam a matriz de preços baixada para a criação do portfólio."
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EVIDÊNCIA NO UNIVERSO — o teste que tem amplitude
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_evidencia_universo(resultados: list[dict]) -> None:
+    """Um teste com N>300 no lugar de 78 testes com mediana de 3 empresas.
+
+    O Rank-IC por segmento responde "este segmento tem sinal?" — pergunta que a
+    amostra brasileira não sustenta. Aqui a pergunta é "o meu score ordena
+    vencedores acima de perdedores no mercado?", que a mesma base responde com
+    amplitude real. As estimativas por segmento aparecem encolhidas em direção
+    ao universo, na medida da incerteza de cada uma.
+    """
+    from core.b3_evidence import A_FAVOR, CONTRA
+    from core.b3_pooled_evidence import (
+        SegmentSample, pooled_yearly_ics, shrink_segment_estimates,
+        universe_evidence,
+    )
+
+    todos_pares: list[tuple] = []
+    for res in resultados:
+        todos_pares.extend(res.get("ic_pairs") or [])
+    if not todos_pares:
+        return
+
+    ics_universo = pooled_yearly_ics(todos_pares)
+    n_medio = (len(todos_pares) / len(ics_universo)) if ics_universo else 0.0
+    evidencia = universe_evidence(ics_universo, n_medio_ativos=n_medio)
+
+    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                unsafe_allow_html=True)
+    _sec_hdr("🔬 Evidência no universo — o teste com amplitude")
+    st.caption(
+        "Testar cada segmento isoladamente é inviável na B3: a mediana é de 3 "
+        "empresas por segmento. Este teste agrupa TODAS as empresas de cada ano "
+        "num único Rank-IC — mesma base, amplitude real, sem multiplicidade a "
+        "corrigir."
+    )
+
+    icone = {A_FAVOR: "✅", CONTRA: "❌"}.get(evidencia.estado, "🟡")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card_metrica("Rank-IC do universo",
+                     f"{evidencia.ic_medio:+.3f}"
+                     if np.isfinite(evidencia.ic_medio) else "—")
+    with c2:
+        card_metrica("valor-p",
+                     f"{evidencia.p_value:.3f}" if evidencia.p_value is not None else "—")
+    with c3:
+        card_metrica("Anos × empresas/ano",
+                     f"{evidencia.anos} × ~{evidencia.n_medio_ativos:.0f}")
+    with c4:
+        card_metrica("Efeito mín. detectável",
+                     f"{evidencia.efeito_minimo_detectavel:.3f}"
+                     if evidencia.efeito_minimo_detectavel is not None else "—")
+    st.markdown(f"{icone} {evidencia.explicacao}")
+
+    amostras = [
+        SegmentSample(
+            key=f'{res["setor"]} · {res["segmento"]}',
+            ic_values=tuple(res.get("rank_ic_values") or []),
+            n_assets=float(res.get("n_empresas_medio") or 0.0),
+        )
+        for res in resultados
+    ]
+    encolhidas = shrink_segment_estimates(
+        amostras,
+        universe_mean=evidencia.ic_medio if np.isfinite(evidencia.ic_medio) else None,
+    )
+    if not encolhidas:
+        return
+
+    with st.expander(
+        "📐 Estimativas por segmento após empréstimo de força (empirical Bayes)",
+        expanded=False,
+    ):
+        st.caption(
+            "Cada segmento é puxado em direção à média do universo conforme a "
+            "própria incerteza. Segmento com 3 empresas e IC alto é quase "
+            "inteiramente encolhido — é ruído; com muitas empresas, preserva o "
+            "seu valor. Sem observação, adota a estimativa do universo — que é "
+            "a melhor inferência disponível, não uma reprovação."
+        )
+        tabela = pd.DataFrame([{
+            "Segmento": e.key,
+            "IC bruto": round(e.ic_bruto, 3) if e.ic_bruto is not None else None,
+            "IC encolhido": round(e.ic_encolhido, 3),
+            "Peso próprio (%)": round(e.peso_proprio * 100, 0),
+            "Anos medidos": e.anos,
+        } for e in encolhidas])
+        st.dataframe(
+            tabela.sort_values("IC encolhido", ascending=False),
+            hide_index=True, use_container_width=True,
+            height=min(420, 60 + 35 * len(tabela)),
+        )
+        _sem_dado = sum(1 for e in encolhidas if e.ic_bruto is None)
+        if _sem_dado:
+            st.caption(
+                f"{_sem_dado} segmento(s) sem observação própria receberam a "
+                "estimativa do universo."
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2613,6 +2730,9 @@ def render(show_header: bool = True) -> None:
                           key=lambda r: _margem_pct(r["val_est"], r["val_selic"]),
                           reverse=True):
             _bloco_segmento(res, df_set, thr_selic, thr_ew, max_anos_lid)
+
+    # ── EVIDÊNCIA NO UNIVERSO (amplitude real, sem multiplicidade) ───────────
+    _render_evidencia_universo(resultados)
 
     # ── ROTA DE VALOR (independe de habilidade cross-seccional) ──────────────
     _render_rota_de_valor(df_mult_todos, df_set, taxa_selic_aa)
