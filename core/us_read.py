@@ -553,13 +553,15 @@ def _parse_json_col(value):
         return None
 
 
-def _snapshot_df(extra_json: str | None = None) -> pd.DataFrame:
+def _snapshot_df(extra_json: str | None = None,
+                 extra_jsons: tuple[str, ...] = ()) -> pd.DataFrame:
     eng = _engine()
     if eng is None:
         return pd.DataFrame()
     cols = list(_SNAP_IDENTITY) + list(_SNAP_SCORES)
     if extra_json:
         cols.append(extra_json)
+    cols.extend(c for c in extra_jsons if c not in cols)
     try:
         with eng.connect() as conn:
             return pd.read_sql(text(
@@ -571,13 +573,24 @@ def _snapshot_df(extra_json: str | None = None) -> pd.DataFrame:
 
 
 def load_snapshot_scored() -> pd.DataFrame:
-    """Frame equivalente ao scored_universe, lido da vitrine (métricas incluídas)."""
-    df = _snapshot_df("metrics")
+    """Frame equivalente ao scored_universe, lido da vitrine (métricas incluídas).
+
+    Expande também o bloco ``advanced`` (Altman Z, Piotroski F, accruals de
+    Sloan, ROIC incremental). Esses indicadores eram calculados e gravados para
+    TODAS as empresas, mas só apareciam na análise individual — nunca chegavam
+    à construção de carteira. Trazê-los ao frame é o que permite usá-los como
+    penalidade de risco em ``core/us_advanced_lab.build_entry_scores``.
+    """
+    df = _snapshot_df("metrics", extra_jsons=("advanced",))
     if df.empty:
         return df
     metric_dicts = [(_parse_json_col(v) or {}) for v in df.pop("metrics")]
     metrics_df = pd.DataFrame(metric_dicts, index=df.index)
-    return pd.concat([df, metrics_df], axis=1)
+    blocos = [df, metrics_df]
+    if "advanced" in df.columns:
+        avancado = [(_parse_json_col(v) or {}) for v in blocos[0].pop("advanced")]
+        blocos.append(pd.DataFrame(avancado, index=df.index))
+    return pd.concat(blocos, axis=1)
 
 
 def load_snapshot_asymmetry() -> pd.DataFrame:

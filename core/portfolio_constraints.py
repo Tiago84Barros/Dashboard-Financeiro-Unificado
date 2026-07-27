@@ -104,3 +104,136 @@ def project_capped_simplex(
     if float(result.max()) > float(cap) + 1e-9:
         raise RuntimeError("Falha numérica: projeção excedeu o cap.")
     return {key: float(result[idx]) for idx, key in enumerate(keys)}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Teto por GRUPO (setor) — a proteção que a carteira B3 não tinha
+# ──────────────────────────────────────────────────────────────────────────
+#
+# Contexto (27/07/2026): a carteira B3 limitava só o peso por ATIVO. A
+# "diversificação por segmento" elegia líderes de segmentos distintos, mas
+# segmento não é setor: quatro segmentos podem viver em dois setores e num
+# único fator de risco. Uma carteira real saiu 100% cíclica por esse caminho.
+# FIIs (max_sector .25 + 6 dimensões) e EUA (max_sector_weight) já tinham o
+# equivalente; o B3 era o único desprotegido.
+
+def sector_cap_feasibility(group_sizes: Mapping[str, int], cap: float,
+                           group_cap: float) -> tuple[bool, str]:
+    """Verifica se existe carteira com ambos os tetos e soma 1.
+
+    A capacidade de um grupo é ``min(group_cap, n_ativos_do_grupo × cap)``.
+    Se a soma das capacidades não alcança 1, nenhum algoritmo resolve — e o
+    honesto é dizer isso em vez de devolver pesos que violam o teto em silêncio.
+    """
+    if not group_sizes:
+        return False, "Sem grupos para avaliar."
+    capacidade = sum(min(float(group_cap), int(n) * float(cap))
+                     for n in group_sizes.values())
+    if capacidade >= 1.0 - 1e-9:
+        return True, ""
+    return False, (
+        f"Teto setorial de {group_cap:.0%} com {len(group_sizes)} setor(es) "
+        f"comporta no máximo {capacidade:.0%} da carteira. Reduza o número de "
+        "setores exigido, amplie o teto ou inclua ativos de outros setores."
+    )
+
+
+def project_sector_capped(weights: Mapping[str, float],
+                          groups: Mapping[str, str],
+                          cap: float,
+                          group_cap: float,
+                          *,
+                          max_iter: int = 500,
+                          tolerance: float = 1e-9
+                          ) -> tuple[dict[str, float], list[str]]:
+    """Projeta pesos respeitando teto por ativo E por grupo (setor).
+
+    Alterna capping de ativo e de grupo redistribuindo o excesso aos não
+    saturados (water-filling) — heurística de projeção, não otimizador de
+    média-variância; rotulada como tal para não superprometer.
+
+    Args:
+        weights: pesos iniciais por ativo (serão normalizados).
+        groups: ativo → grupo (setor). Ativo sem grupo vira grupo próprio,
+            para não criar um "setor None" artificialmente concentrado.
+        cap: teto por ativo.
+        group_cap: teto por grupo.
+
+    Returns:
+        ``(pesos, avisos)``. Se a configuração for inviável, devolve a melhor
+        aproximação possível e um aviso explícito — nunca viola em silêncio.
+    """
+    keys = list(weights)
+    if not keys:
+        return {}, []
+    validate_cap_feasibility(len(keys), cap)
+
+    grupo_de = {k: (str(groups.get(k) or "").strip() or f"__sem_setor__{k}")
+                for k in keys}
+    tamanhos: dict[str, int] = {}
+    for grupo in grupo_de.values():
+        tamanhos[grupo] = tamanhos.get(grupo, 0) + 1
+
+    avisos: list[str] = []
+    viavel, motivo = sector_cap_feasibility(tamanhos, cap, group_cap)
+    if not viavel:
+        avisos.append(motivo)
+
+    valores = np.asarray(
+        [max(float(weights.get(k, 0.0) or 0.0), 0.0) for k in keys], dtype=float)
+    valores[~np.isfinite(valores)] = 0.0
+    valores = (np.full(len(keys), 1.0 / len(keys)) if valores.sum() <= tolerance
+               else valores / valores.sum())
+
+    indices_por_grupo = {
+        grupo: np.array([i for i, k in enumerate(keys) if grupo_de[k] == grupo])
+        for grupo in tamanhos
+    }
+
+    for _ in range(max_iter):
+        antes = valores.copy()
+        # 1) teto por ativo
+        excesso = float(np.clip(valores - cap, 0.0, None).sum())
+        if excesso > tolerance:
+            valores = np.minimum(valores, cap)
+            folga = np.where(valores < cap - tolerance, cap - valores, 0.0)
+            total = float(folga.sum())
+            valores = (valores + excesso * folga / total if total > tolerance
+                       else valores + excesso / len(valores))
+        # 2) teto por grupo
+        excesso_grupo = 0.0
+        for grupo, idx in indices_por_grupo.items():
+            peso = float(valores[idx].sum())
+            if peso > group_cap + tolerance:
+                sobra = peso - group_cap
+                valores[idx] *= group_cap / peso
+                excesso_grupo += sobra
+        if excesso_grupo > tolerance:
+            folga = np.zeros(len(valores))
+            for grupo, idx in indices_por_grupo.items():
+                disponivel = group_cap - float(valores[idx].sum())
+                if disponivel > tolerance:
+                    capacidade_ativo = np.clip(cap - valores[idx], 0.0, None)
+                    if capacidade_ativo.sum() > tolerance:
+                        folga[idx] = capacidade_ativo
+            total = float(folga.sum())
+            if total > tolerance:
+                valores = valores + excesso_grupo * folga / total
+            else:
+                break                      # nada a receber: inviável, sai
+        if np.abs(valores - antes).max() <= tolerance:
+            break
+
+    soma = float(valores.sum())
+    if soma > tolerance:
+        valores = valores / soma
+
+    # Relata violações remanescentes em vez de escondê-las.
+    if float(valores.max()) > cap + 1e-6:
+        avisos.append(f"Teto por ativo de {cap:.0%} não pôde ser respeitado.")
+    for grupo, idx in indices_por_grupo.items():
+        peso = float(valores[idx].sum())
+        if peso > group_cap + 1e-6 and not grupo.startswith("__sem_setor__"):
+            avisos.append(
+                f"Setor '{grupo}' ficou com {peso:.0%} (teto {group_cap:.0%}).")
+    return {k: float(valores[i]) for i, k in enumerate(keys)}, avisos

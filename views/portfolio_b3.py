@@ -2052,6 +2052,17 @@ def render(show_header: bool = True) -> None:
                  "agrupados no subsetor, para haver massa suficiente para medir o "
                  "poder preditivo (Rank-IC). Use 1 para desativar o agrupamento.",
         )
+        pb3.number_input(
+            "Teto por setor (%)", 20, 100, 100, 5,
+            key="pb3_teto_setor",
+            help="Peso máximo somado dos ativos de um MESMO setor B3. "
+                 "Segmento não é setor: quatro segmentos podem viver em dois "
+                 "setores e num único fator de risco (industrial/commodities). "
+                 "FIIs e Empresas Americanas já tinham este teto; a carteira B3 "
+                 "não. 100% = desligado. Se a configuração for impossível "
+                 "(poucos setores para o teto), o app avisa em vez de violar "
+                 "em silêncio.",
+        )
         cheapness_pct = pb3.number_input(
             "Peso de barganha no score (%)", 0, 50, 0, 5,
             key="pb3_cheapness",
@@ -2364,6 +2375,9 @@ def render(show_header: bool = True) -> None:
     gamma = st.session_state.get("b3_av_gamma", _GAMMA_DEF)
     cap   = st.session_state.get("b3_av_cap",   _CAP_DEF)
     soft  = st.session_state.get("b3_av_soft",  _SOFT_DEF)
+    # Teto por setor: 100% = desligado. Lido aqui (fora do `if rodar:`) pelo
+    # mesmo motivo dos demais — as seções de exibição usam a cada rerun.
+    teto_setor = float(st.session_state.get("pb3_teto_setor", 100)) / 100.0
 
     if rodar:
         all_tickers = tuple(sorted(df_set["ticker"].unique()))
@@ -3066,6 +3080,7 @@ def render(show_header: bool = True) -> None:
     from core.portfolio_constraints import (
         minimum_assets_for_cap,
         project_capped_simplex,
+        project_sector_capped,
     )
     _required_global = minimum_assets_for_cap(cap)
     _portfolio_viavel = len(proximos_uniq) >= _required_global
@@ -3087,6 +3102,28 @@ def render(show_header: bool = True) -> None:
             )
             for item in proximos_uniq:
                 item["peso"] = _projected[item["tk"]]
+
+        # ── TETO POR SETOR ────────────────────────────────────────────────
+        # Segmento não é setor: quatro segmentos podem viver em dois setores e
+        # num único fator de risco. FIIs e EUA já tinham teto setorial; o B3
+        # era o único sem — e uma carteira real saiu 100% cíclica por aí.
+        if teto_setor < 1.0:
+            _mapa_setor: dict[str, str] = {}
+            if df_set is not None and not df_set.empty and "SETOR" in df_set.columns:
+                _ctk = "ticker" if "ticker" in df_set.columns else "Ticker"
+                if _ctk in df_set.columns:
+                    _mapa_setor = {str(r[_ctk]).upper(): str(r["SETOR"] or "")
+                                   for _, r in df_set.iterrows()}
+            _pesos_setor, _avisos_setor = project_sector_capped(
+                {item["tk"]: float(item.get("peso") or 0.0) for item in proximos_uniq},
+                {item["tk"]: _mapa_setor.get(str(item["tk"]).upper(), "")
+                 for item in proximos_uniq},
+                cap, float(teto_setor),
+            )
+            for item in proximos_uniq:
+                item["peso"] = _pesos_setor[item["tk"]]
+            for _aviso in _avisos_setor:
+                st.warning(_aviso, icon="⚠️")
     elif proximos_uniq:
         st.error(
             f"Carteira não pode respeitar o cap global de {cap:.0%}: "
