@@ -1636,6 +1636,75 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SAÚDE DAS SELECIONADAS — cruzamento entre a rota de segmentos e a de valor
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_saude_da_carteira(tickers: list[str], df_mult_todos: pd.DataFrame,
+                              df_set: pd.DataFrame, taxa_selic_aa: float) -> None:
+    """Alerta sobre as empresas que a carteira REALMENTE escolheu.
+
+    Lacuna encontrada em 27/07/2026: a rota de segmentos aprovava um nome que a
+    rota de valor — na mesma tela — classificava como armadilha potencial
+    (payout de 318%, endividamento 3,2×), e nada avisava. Os gates existentes
+    são de SEGMENTO (margem vs Selic, resiliência dos líderes históricos) ou de
+    score; nenhum olhava solvência e dividendo da empresa escolhida.
+    """
+    from core.b3_holdings_health import ATENCAO, CRITICO, check_portfolio
+
+    if not tickers or df_mult_todos is None or df_mult_todos.empty:
+        return
+
+    mapa_setor: dict[str, str] = {}
+    if df_set is not None and not df_set.empty:
+        _col_tk = ("ticker" if "ticker" in df_set.columns
+                   else ("Ticker" if "Ticker" in df_set.columns else None))
+        if _col_tk and "SETOR" in df_set.columns:
+            mapa_setor = {str(r[_col_tk]).upper(): r["SETOR"]
+                          for _, r in df_set.iterrows()}
+
+    saude = check_portfolio(df_mult_todos, list(tickers), mapa_setor,
+                            selic=float(taxa_selic_aa))
+    if not saude.holdings:
+        return
+
+    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                unsafe_allow_html=True)
+    _sec_hdr("🩺 Saúde das empresas selecionadas")
+    st.caption(
+        "Verificação no nível da EMPRESA escolhida — solvência, sustentabilidade "
+        "do dividendo e retorno vs risco-livre — cruzada com o veredito da rota "
+        "de valor. Os demais portões da carteira julgam o segmento, não o nome."
+    )
+
+    k1, k2, k3 = st.columns(3)
+    with k1:
+        card_metrica("Críticos", str(len(saude.criticos)))
+    with k2:
+        card_metrica("Atenção", str(len(saude.atencao)))
+    with k3:
+        card_metrica("Cíclicos na carteira", f"{saude.pct_ciclico:.0%}")
+
+    for alerta in saude.alertas:
+        st.warning(alerta, icon="⚠️")
+
+    for holding in saude.holdings:
+        if holding.nivel == CRITICO:
+            st.error(f"**{holding.ticker}** — {holding.resumo}", icon="🚨")
+        elif holding.nivel == ATENCAO:
+            st.warning(f"**{holding.ticker}** — {holding.resumo}", icon="⚠️")
+
+    if not saude.criticos and not saude.atencao and not saude.alertas:
+        st.success("Nenhum alerta de solvência, dividendo ou concentração.",
+                   icon="✅")
+    else:
+        st.caption(
+            "Estes alertas NÃO removem ativos automaticamente — a decisão é sua. "
+            "Eles existem para que a divergência entre as duas rotas apareça "
+            "onde a decisão é tomada, e não escondida numa seção separada."
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # EVIDÊNCIA NO UNIVERSO — o teste que tem amplitude
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -3069,6 +3138,12 @@ def render(show_header: bool = True) -> None:
                     )
     else:
         st.info("Nenhum líder identificado com os parâmetros atuais.")
+
+    # ── SAÚDE DAS SELECIONADAS (cruza as duas rotas) ─────────────────────────
+    _render_saude_da_carteira(
+        [item["tk"] for item in proximos_uniq] if proximos_uniq else [],
+        df_mult_todos, df_set, taxa_selic_aa,
+    )
 
     # ── TRANSPARÊNCIA DO GATE QUALITATIVO ────────────────────────────────────
     if _gate_ativo:
