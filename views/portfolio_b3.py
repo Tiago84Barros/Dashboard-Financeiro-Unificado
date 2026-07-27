@@ -1797,9 +1797,16 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
     with k4:
         card_metrica("Sem evidência", str(resumo[SEM_EVIDENCIA]))
 
-    setores = (df_set[["Ticker", "SETOR", "SEGMENTO"]].drop_duplicates("Ticker")
-               if {"Ticker", "SETOR", "SEGMENTO"}.issubset(df_set.columns)
-               else pd.DataFrame(columns=["Ticker", "SETOR", "SEGMENTO"]))
+    # load_setores devolve a coluna em MINÚSCULO ('ticker'); procurar 'Ticker'
+    # fazia o merge falhar em silêncio e Setor/Segmento saíam como None.
+    setores = pd.DataFrame(columns=["Ticker", "SETOR", "SEGMENTO"])
+    if df_set is not None and not df_set.empty:
+        _col_tk = ("ticker" if "ticker" in df_set.columns
+                   else ("Ticker" if "Ticker" in df_set.columns else None))
+        if _col_tk and {"SETOR", "SEGMENTO"}.issubset(df_set.columns):
+            setores = (df_set[[_col_tk, "SETOR", "SEGMENTO"]]
+                       .drop_duplicates(_col_tk)
+                       .rename(columns={_col_tk: "Ticker"}))
 
     oportunidades = ranked[ranked["classificacao"] == OPORTUNIDADE]
     if oportunidades.empty:
@@ -1810,6 +1817,9 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
         )
     else:
         show = oportunidades.merge(setores, on="Ticker", how="left")
+        # A margem é FRAÇÃO (1,97 = 197%). Formatar direto como "%.0f%%" exibia
+        # "2%" ao lado de uma explicação dizendo 197% — converter antes.
+        show["margem_valor"] = show["margem_valor"] * 100.0
         cols = [c for c in ("Ticker", "SETOR", "SEGMENTO", "margem_valor",
                             "valor_score", "forca_solvencia", "explicacao")
                 if c in show.columns]
@@ -1843,6 +1853,7 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
             )
             trap = armadilhas.copy()
             trap["motivo"] = trap["falhas_solvencia"].apply(lambda v: "; ".join(v))
+            trap["margem_valor"] = trap["margem_valor"] * 100.0   # fração → %
             st.dataframe(
                 trap[["Ticker", "margem_valor", "motivo"]].head(40).rename(columns={
                     "margem_valor": "Desconto aparente", "motivo": "Reprovação"}),
@@ -1866,6 +1877,7 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
             faltantes = bloqueadas.copy()
             faltantes["falta"] = faltantes["criticos_ausentes"].apply(
                 lambda v: ", ".join(v))
+            faltantes["margem_valor"] = faltantes["margem_valor"] * 100.0
             st.dataframe(
                 faltantes[["Ticker", "margem_valor", "falta"]].head(40).rename(
                     columns={"margem_valor": "Desconto aparente",

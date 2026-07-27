@@ -189,3 +189,32 @@ view._render_rota_de_valor(mult, setores, 0.1075)
     assert any("Armadilhas de valor barradas" in exp.label for exp in app.expander)
     captions = "\n".join(item.value for item in app.caption)
     assert "armadilha de valor" in captions
+
+
+def test_tabela_exibe_margem_em_pontos_percentuais_e_setor_resolvido():
+    """Dois bugs vistos em producao: margem 1,97 exibida como '2%' (era fracao
+    formatada como percentual) e Setor/Segmento None (load_setores usa a coluna
+    'ticker' em minusculo, e o merge procurava 'Ticker')."""
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_string("""
+import pandas as pd
+import views.portfolio_b3 as view
+
+mult = pd.DataFrame([
+    {'Ticker':'BOA3','P/L':5.0,'P/VP':0.8,'DY':0.09,'ROIC':0.18,
+     'Margem_Operacional':0.20,'Endividamento_Total':0.5,
+     'Liquidez_Corrente':2.0,'P_FCO':8.0},
+])
+# coluna em minusculo, como o load_setores real devolve
+setores = pd.DataFrame([{'ticker':'BOA3','SETOR':'Industrial','SEGMENTO':'Motores'}])
+view._render_rota_de_valor(mult, setores, 0.1075)
+""").run(timeout=60)
+
+    assert not app.exception
+    tabela = app.dataframe[0].value
+    assert "Setor" in tabela.columns
+    assert tabela.iloc[0]["Setor"] == "Industrial"      # antes vinha None
+    # média de Graham (137%) e Bazin (50%) ≈ 94 — em PONTOS PERCENTUAIS.
+    # Antes chegava como 0,94 e a coluna exibia "1%".
+    assert tabela.iloc[0]["Margem de segurança"] == pytest.approx(93.6, abs=1.0)
