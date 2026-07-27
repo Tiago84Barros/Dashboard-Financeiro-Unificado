@@ -274,3 +274,43 @@ nunca por `ingested_at`. Empresas deslistadas permanecem no universo histórico
 - Estimativas de analistas/insider/13F dependem do plano/licença da FMP.
 - REITs usam FFO/AFFO (P/L e depreciação são inadequados) — tratamento próprio
   entra com a Fase de score.
+
+## Motores avançados na seleção (27/07/2026)
+
+Uma verificação transversal encontrou o mesmo padrão que a carteira B3 expôs:
+**motores de diagnóstico que nunca alcançavam a decisão**. No módulo EUA,
+`core/us_advanced.py` (Altman Z, Piotroski F, accruals de Sloan, ROIC
+incremental) era consumido só por `us_read.py`, na análise individual.
+
+Os números da vitrine mostravam o custo disso: **597 empresas ativas (21%) em
+zona de aflição do Altman** e cobertura de 99,9% do Piotroski — tudo calculado,
+gravado e ignorado na hora de montar carteira.
+
+### O que mudou
+
+`load_snapshot_scored()` passou a expandir também o bloco `advanced` (antes só
+`metrics`), e `build_entry_scores` ganhou três penalidades, no mesmo padrão das
+que já existiam:
+
+| Alerta | Peso | Ressalva |
+|---|---:|---|
+| Altman Z em zona de aflição | 8 | não se aplica a Financial Services e Real Estate |
+| Piotroski ≤ 3 de 9 | 6 | só quando ≥ 6 critérios foram avaliáveis |
+| Payout > 1,5× o lucro | 7 | REITs isentos (distribuem FFO por exigência legal) |
+
+O peso 8 do Altman é deliberado: **sozinho não exclui** (o corte é 10), mas
+somado a outro alerta independente exclui. O Z-Score foi calibrado em indústrias
+de 1968 e classifica mal empresas asset-light — tratá-lo como veto isolado
+reprovaria boas empresas de tecnologia.
+
+### Efeito medido no universo real (2.830 ativas)
+
+| Status | Antes | Depois |
+|---|---:|---:|
+| Aprovada | 424 | 399 |
+| Observação | 1.229 | 1.046 |
+| Excluída | 1.177 | 1.385 |
+
+**208 empresas que passavam agora são excluídas** — quase todas por aflição do
+Altman confirmada por um segundo alerta independente (liquidez corrente baixa ou
+cobertura de juros insuficiente). Nenhuma exclusão vem de um sinal isolado.

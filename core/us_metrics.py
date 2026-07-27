@@ -187,6 +187,12 @@ def compute_company_metrics(
         "fcf_ex_sbc_margin": safe_div(fcf_ex_sbc, revenue),
         # Retorno ao acionista (buyback/dividendo vêm negativos no CF → sinal +)
         "shareholder_yield": _shareholder_yield(div_paid, buyback, issuance, market_cap),
+        # Payout: distribuir acima do lucro não se sustenta. Em REIT é normal
+        # (distribui FFO, e a depreciação deprime o lucro contábil) — quem
+        # consome a métrica precisa tratar esse caso, ver us_advanced_lab.
+        "payout_ratio": (safe_div(abs(div_paid), net_income)
+                         if div_paid is not None and net_income and net_income > 0
+                         else None),
         # Diluição: recompra sem olhar a contagem de ações engana — a emissão
         # por SBC pode anular o buyback. Crescimento do share count: menor é
         # melhor (negativo = recompra líquida efetiva).
