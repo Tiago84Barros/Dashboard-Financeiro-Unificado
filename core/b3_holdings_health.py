@@ -28,7 +28,9 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from core.b3_value_route import ValuePolicy, rank_value_opportunities
+from core.b3_value_route import (
+    ValuePolicy, is_operational_failure, rank_value_opportunities,
+)
 from core.valuation import dividend_sustainability
 
 VERSION = "b3-holdings-health-1.0.0"
@@ -99,6 +101,18 @@ class PortfolioHealth:
         return tuple(h for h in self.holdings if h.nivel == ATENCAO)
 
 
+def _parece_holding(linha) -> bool:
+    """Sem margem operacional E sem P/FCO: não há operação própria a medir.
+
+    É o caso de ITSA4 e BRAP3 — o resultado vem de participações. Regras
+    calibradas para operadoras produzem ruído nesses casos.
+    """
+    if linha is None:
+        return False
+    margem, fco = _num(linha.get("Margem_Operacional")), _num(linha.get("P_FCO"))
+    return margem != margem and fco != fco      # ambos NaN
+
+
 def _num(valor) -> float:
     try:
         numero = float(valor)
@@ -136,11 +150,28 @@ def check_holdings(df_mult: pd.DataFrame, tickers: list[str], *,
         nivel = OK
         classificacao = str(linha_valor["classificacao"]) if linha_valor is not None else ""
 
-        # 1) Solvência — reaproveita exatamente o gate da rota de valor.
+        # 1) Solvência — reaproveita o gate da rota de valor, mas exigindo
+        # CONFIRMAÇÃO para falhas estruturais. Calibração contra caso real
+        # (28/07/2026): PETR4 tinha liquidez corrente 0,74 e por isso era
+        # marcada crítica, apesar de margem operacional de 29%, ROIC de 14% e
+        # FCO forte. No universo, 54 das 86 empresas com liquidez < 1 geram
+        # caixa — tratar isso como insolvência é alarme falso em 63% dos casos.
+        # Mesmo princípio do Altman no módulo EUA: sinal isolado não condena.
         falhas = list(linha_valor["falhas_solvencia"]) if linha_valor is not None else []
         if falhas:
-            nivel = CRITICO
-            alertas.append("Solvência: " + "; ".join(falhas))
+            operacionais = [f for f in falhas if is_operational_failure(f)]
+            estruturais = [f for f in falhas if not is_operational_failure(f)]
+            if operacionais:
+                nivel = CRITICO
+                alertas.append("Solvência: " + "; ".join(falhas))
+            elif len(estruturais) >= 2:
+                nivel = CRITICO
+                alertas.append("Solvência: " + "; ".join(estruturais))
+            else:
+                nivel = ATENCAO
+                alertas.append(
+                    "Estrutura de balanço: " + "; ".join(estruturais)
+                    + " — sem confirmação por falha operacional")
 
         # 2) Sustentabilidade do dividendo — motor já existente, nunca usado aqui.
         if linha_base is not None:
@@ -161,7 +192,10 @@ def check_holdings(df_mult: pd.DataFrame, tickers: list[str], *,
             elif "🔴" in saude.label:
                 nivel = CRITICO
                 alertas.append(f"Dividendo: {saude.motivo}")
-            elif "🟡" in saude.label:
+            elif "🟡" in saude.label and not _parece_holding(linha_base):
+                # Holding não tem operação própria: payout na faixa "apertado"
+                # é repasse do dividendo da controlada, não aperto de caixa
+                # (ITSA4 a 82%). Ruído aqui treina o usuário a ignorar alerta.
                 nivel = ATENCAO if nivel == OK else nivel
                 alertas.append(f"Dividendo: {saude.motivo}")
 

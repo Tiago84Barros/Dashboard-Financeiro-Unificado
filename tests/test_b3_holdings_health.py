@@ -42,14 +42,57 @@ def test_payout_acima_do_lucro_e_critico():
     assert h.bloqueante is True
 
 
-def test_endividamento_alto_e_critico_e_cruza_com_a_rota_de_valor():
+def test_falha_estrutural_isolada_e_atencao_nao_critico():
+    """Calibração contra caso real (28/07/2026): PETR4 tinha liquidez corrente
+    0,74 e virava crítica, apesar de margem operacional de 29%, ROIC de 14% e
+    FCO forte. No universo, 54 das 86 empresas com liquidez < 1 geram caixa —
+    condenar por sinal estrutural isolado é alarme falso em 63% dos casos."""
     df = pd.DataFrame([_empresa("ALAV3", Endividamento_Total=3.24,
                                 **{"P/L": 4.0, "P/VP": 0.5})])
     h = check_holdings(df, ["ALAV3"], selic=0.11)[0]
-    assert h.nivel == CRITICO
-    assert any("Solvência" in a for a in h.alertas)
+    assert h.nivel == ATENCAO and h.bloqueante is False
+    assert any("sem confirmação por falha operacional" in a for a in h.alertas)
+    # a divergência entre as rotas continua sendo reportada
     assert h.classificacao_valor == "armadilha_potencial"
     assert any("ARMADILHA POTENCIAL" in a for a in h.alertas)
+
+
+def test_estrutural_confirmada_por_operacional_volta_a_ser_critico():
+    df = pd.DataFrame([_empresa("GRAVE3", Endividamento_Total=3.24,
+                                Margem_Operacional=-0.05)])
+    h = check_holdings(df, ["GRAVE3"], selic=0.11)[0]
+    assert h.nivel == CRITICO and h.bloqueante is True
+
+
+def test_duas_falhas_estruturais_juntas_sao_criticas():
+    df = pd.DataFrame([_empresa("DUPLA3", Endividamento_Total=3.24,
+                                Liquidez_Corrente=0.6)])
+    h = check_holdings(df, ["DUPLA3"], selic=0.11)[0]
+    assert h.nivel == CRITICO
+
+
+def test_geradora_de_caixa_com_liquidez_baixa_nao_e_condenada():
+    """PETR4 real: liquidez 0,74, margem operacional 29%, ROIC 14%, FCO 2,85."""
+    df = pd.DataFrame([_empresa("PETR4", Liquidez_Corrente=0.74,
+                                Margem_Operacional=0.289, ROIC=0.142,
+                                P_FCO=2.85, Endividamento_Total=1.34,
+                                Payout=0.31)])
+    h = check_holdings(df, ["PETR4"], selic=0.11)[0]
+    assert h.nivel == ATENCAO and h.bloqueante is False
+
+
+def test_holding_nao_recebe_alerta_de_payout_apertado():
+    """ITSA4 real: payout de 82% numa holding é repasse, não aperto de caixa."""
+    df = pd.DataFrame([_empresa("ITSA4", Payout=0.82, Margem_Operacional=np.nan,
+                                P_FCO=np.nan)])
+    h = check_holdings(df, ["ITSA4"], selic=0.11)[0]
+    assert not any("Dividendo" in a for a in h.alertas)
+
+
+def test_operadora_com_payout_apertado_continua_alertando():
+    df = pd.DataFrame([_empresa("OPER3", Payout=0.85)])
+    h = check_holdings(df, ["OPER3"], selic=0.11)[0]
+    assert any("Dividendo" in a for a in h.alertas)
 
 
 def test_roic_abaixo_da_selic_e_atencao_nao_veto():
