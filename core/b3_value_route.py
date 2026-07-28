@@ -63,6 +63,20 @@ class ValuePolicy:
 # Insumos sem os quais não se decide solvência: ausência → ``sem_evidencia``.
 _CRITICOS = ("P_FCO", "Margem_Operacional", "Endividamento_Total", "Liquidez_Corrente")
 
+# Falhas OPERACIONAIS: a operação não se sustenta. Bastam por si.
+# As demais são ESTRUTURAIS (balanço) — uma geradora de caixa forte pode
+# carregá-las sem risco de insolvência (PETR4: liquidez corrente 0,74 com
+# margem operacional de 29% e FCO barato). Quem consome deve exigir
+# confirmação antes de tratar falha estrutural como crítica.
+FALHAS_OPERACIONAIS = ("FCO negativo", "margem operacional negativa",
+                       "ROIC negativo")
+
+
+def is_operational_failure(motivo: str) -> bool:
+    """True quando a falha indica operação que não se paga."""
+    texto = str(motivo or "")
+    return any(texto.startswith(chave) for chave in FALHAS_OPERACIONAIS)
+
 
 def _num(df: pd.DataFrame, column: str) -> pd.Series:
     if column not in df.columns:
