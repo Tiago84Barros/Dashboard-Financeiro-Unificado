@@ -7,6 +7,7 @@ apareciam na análise individual — nunca tocavam a construção de carteira
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from core.us_advanced_lab import build_entry_scores
 
@@ -125,3 +126,58 @@ def test_reit_com_payout_alto_nao_e_penalizado():
 def test_payout_ausente_nao_pune():
     out = build_entry_scores(pd.DataFrame([_base("SEMDIV")]))
     assert out.iloc[0]["risk_penalty"] == 0
+
+
+# ── accruals de Sloan ────────────────────────────────────────────────────────
+
+def test_accruals_elevados_penalizam():
+    """Corte em 0,10 = cauda de ~5% do universo real (p95 = 0,112)."""
+    out = build_entry_scores(pd.DataFrame([_base("ACCR", sloan_accruals=0.25)]))
+    linha = out.iloc[0]
+    assert linha["risk_penalty"] == 5
+    assert "accruals" in linha["risk_driver"]
+
+
+def test_accruals_normais_nao_punem():
+    # mediana do universo é −0,050; valores típicos não podem disparar
+    for valor in (-0.05, 0.0, 0.03):
+        out = build_entry_scores(pd.DataFrame([_base("OK", sloan_accruals=valor)]))
+        assert out.iloc[0]["risk_penalty"] == 0, valor
+
+
+def test_roic_incremental_negativo_nao_e_penalizado():
+    """Decisão explícita: 39% dos que têm o dado são negativos e a métrica é um
+    delta de 2 anos — penalizar dispararia em vale de ciclo."""
+    out = build_entry_scores(pd.DataFrame([
+        _base("CICLO", incremental_roic=-0.35)]))
+    assert out.iloc[0]["risk_penalty"] == 0
+
+
+# ── payout derivado do histórico (sem re-ingestão) ───────────────────────────
+
+def test_payout_derivado_do_ultimo_exercicio_com_lucro():
+    from core.us_read import _payout_do_historico
+
+    historico = [
+        {"fiscal_year": 2023, "net_income": 100.0, "dividends_paid": -50.0},
+        {"fiscal_year": 2024, "net_income": 80.0, "dividends_paid": -160.0},
+    ]
+    assert _payout_do_historico(historico) == pytest.approx(2.0)
+
+
+def test_payout_ignora_ano_de_prejuizo_e_usa_o_anterior():
+    from core.us_read import _payout_do_historico
+
+    historico = [
+        {"fiscal_year": 2023, "net_income": 100.0, "dividends_paid": -40.0},
+        {"fiscal_year": 2024, "net_income": -20.0, "dividends_paid": -30.0},
+    ]
+    assert _payout_do_historico(historico) == pytest.approx(0.4)
+
+
+def test_payout_indeterminavel_devolve_none():
+    from core.us_read import _payout_do_historico
+
+    assert _payout_do_historico([]) is None
+    assert _payout_do_historico(None) is None
+    assert _payout_do_historico([{"fiscal_year": 2024, "net_income": 10.0}]) is None

@@ -297,6 +297,23 @@ que já existiam:
 | Altman Z em zona de aflição | 8 | não se aplica a Financial Services e Real Estate |
 | Piotroski ≤ 3 de 9 | 6 | só quando ≥ 6 critérios foram avaliáveis |
 | Payout > 1,5× o lucro | 7 | REITs isentos (distribuem FFO por exigência legal) |
+| Accruals de Sloan > 0,10 | 5 | corte na cauda de ~5% (p95 = 0,112; mediana −0,050) |
+
+**O ROIC incremental ficou deliberadamente de fora.** 39% das empresas que têm
+esse dado o apresentam negativo, e a métrica é um delta de dois anos que vira
+com uma única queda de EBIT — penalizá-la dispararia em vale de ciclo, o erro
+que a §16 da auditoria corrigiu. Segue exibido na análise individual, onde o
+contexto do ano está à vista.
+
+### Payout sem esperar re-ingestão
+
+`payout_ratio` passou a ser calculado em `core/us_metrics.py`, mas a vitrine já
+publicada foi gerada antes disso — a penalidade nasceria inerte (0 de 2.830
+snapshots tinham o campo). `load_snapshot_scored()` deriva o payout do bloco
+`financials`, que já traz `dividends_paid` e `net_income` por exercício, usando
+o último ano com lucro positivo. Resultado: **1.293 empresas passaram a ter a
+métrica imediatamente**, sem re-ingestão, e 111 foram sinalizadas — XRX
+distribuindo 151× o lucro, HRI 87×, FSK 71×.
 
 O peso 8 do Altman é deliberado: **sozinho não exclui** (o corte é 10), mas
 somado a outro alerta independente exclui. O Z-Score foi calibrado em indústrias

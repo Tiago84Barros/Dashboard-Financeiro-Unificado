@@ -134,6 +134,24 @@ def build_entry_scores(scored: pd.DataFrame,
             "payout acima de 1,5× o lucro",
             risk_driver.loc[_payout_alto].astype(str) + "; payout acima de 1,5× o lucro")
 
+    # Accruals de Sloan (1996): lucro que não vira caixa antecipa reversão. O
+    # corte de 0,10 é a cauda de ~5% do universo real (p95 = 0,112; mediana
+    # −0,050) — sinaliza o extremo, não o normal.
+    #
+    # O ROIC incremental foi DELIBERADAMENTE deixado de fora: 39% das empresas
+    # com esse dado o têm negativo, e ele é um delta de 2 anos que vira com uma
+    # única queda de EBIT. Penalizá-lo dispararia em vale de ciclo — o erro que
+    # a auditoria §16 corrigiu. Segue exibido na análise individual.
+    if "sloan_accruals" in out:
+        _accruals = (pd.to_numeric(out["sloan_accruals"], errors="coerce") > 0.10)
+        _accruals = _accruals.fillna(False)
+        penalty.loc[_accruals] += 5
+        risk_driver.loc[_accruals] = np.where(
+            risk_driver.loc[_accruals].eq("sem alerta crítico"),
+            "accruals elevados (lucro pouco em caixa)",
+            risk_driver.loc[_accruals].astype(str)
+            + "; accruals elevados (lucro pouco em caixa)")
+
     # Piotroski ≤ 3 de 9 é fraqueza fundamentalista ampla (cobertura ~100%).
     # Só conta quando houve critérios suficientes avaliados — ausência não pune.
     if "f_score" in out:
