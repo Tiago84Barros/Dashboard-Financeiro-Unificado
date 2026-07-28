@@ -220,13 +220,25 @@ def check_holdings(df_mult: pd.DataFrame, tickers: list[str], *,
     return saida
 
 
-def _classificar_setor(setor: object) -> str:
+def classify_cycle(setor: object) -> str:
+    """Classe de ciclo do setor: ``ciclico`` | ``defensivo`` | ``outros``.
+
+    Pública porque o teto por CLASSE DE CICLO precisa dela. O teto por setor
+    sozinho não resolve concentração de fator: numa carteira real de 28/07/2026,
+    limitar cada setor a 30% deixou a carteira com 82,5% em setores cíclicos,
+    porque 4 dos 5 setores eram cíclicos. Setor e fator são granularidades
+    diferentes.
+    """
     texto = str(setor or "").strip().lower()
     if texto in SETORES_CICLICOS:
         return "ciclico"
     if texto in SETORES_DEFENSIVOS:
         return "defensivo"
     return "outros"
+
+
+# Alias retrocompatível para o uso interno anterior.
+_classificar_setor = classify_cycle
 
 
 def check_portfolio(df_mult: pd.DataFrame, tickers: list[str],

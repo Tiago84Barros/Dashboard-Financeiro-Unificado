@@ -2063,6 +2063,17 @@ def render(show_header: bool = True) -> None:
                  "(poucos setores para o teto), o app avisa em vez de violar "
                  "em silêncio.",
         )
+        pb3.number_input(
+            "Teto para setores cíclicos (%)", 30, 100, 100, 5,
+            key="pb3_teto_ciclico",
+            help="Peso máximo somado dos ativos de setores CÍCLICOS (materiais "
+                 "básicos, bens industriais, consumo cíclico, petróleo e gás). "
+                 "Setor e fator são coisas diferentes: limitar cada setor a 30% "
+                 "pode deixar a carteira 82% cíclica se quase todos os setores "
+                 "forem cíclicos. 100% = desligado. Se não houver nomes "
+                 "não-cíclicos suficientes, o app avisa que o gargalo está na "
+                 "seleção, não na ponderação.",
+        )
         cheapness_pct = pb3.number_input(
             "Peso de barganha no score (%)", 0, 50, 0, 5,
             key="pb3_cheapness",
@@ -2378,6 +2389,7 @@ def render(show_header: bool = True) -> None:
     # Teto por setor: 100% = desligado. Lido aqui (fora do `if rodar:`) pelo
     # mesmo motivo dos demais — as seções de exibição usam a cada rerun.
     teto_setor = float(st.session_state.get("pb3_teto_setor", 100)) / 100.0
+    teto_ciclico = float(st.session_state.get("pb3_teto_ciclico", 100)) / 100.0
 
     if rodar:
         all_tickers = tuple(sorted(df_set["ticker"].unique()))
@@ -3080,6 +3092,7 @@ def render(show_header: bool = True) -> None:
     from core.portfolio_constraints import (
         minimum_assets_for_cap,
         project_capped_simplex,
+        project_class_capped,
         project_sector_capped,
     )
     _required_global = minimum_assets_for_cap(cap)
@@ -3124,6 +3137,37 @@ def render(show_header: bool = True) -> None:
                 item["peso"] = _pesos_setor[item["tk"]]
             for _aviso in _avisos_setor:
                 st.warning(_aviso, icon="⚠️")
+
+        # ── TETO POR CLASSE DE CICLO ──────────────────────────────────────
+        # Setor e fator são granularidades diferentes: limitar cada setor a
+        # 30% deixou uma carteira real com 82,5% em cíclicos, porque 4 dos 5
+        # setores eram cíclicos. Quando este teto for inviável, o aviso mostra
+        # que o gargalo está na SELEÇÃO, não na ponderação.
+        if teto_ciclico < 1.0:
+            from core.b3_holdings_health import classify_cycle
+            _mapa_ciclo: dict[str, str] = {}
+            if df_set is not None and not df_set.empty and "SETOR" in df_set.columns:
+                _ctk = "ticker" if "ticker" in df_set.columns else "Ticker"
+                if _ctk in df_set.columns:
+                    _mapa_ciclo = {str(r[_ctk]).upper(): classify_cycle(r["SETOR"])
+                                   for _, r in df_set.iterrows()}
+            _eh_ciclico = {
+                item["tk"]: _mapa_ciclo.get(str(item["tk"]).upper()) == "ciclico"
+                for item in proximos_uniq
+            }
+            _pesos_ciclo, _avisos_ciclo = project_class_capped(
+                {item["tk"]: float(item.get("peso") or 0.0) for item in proximos_uniq},
+                _eh_ciclico, cap, float(teto_ciclico),
+            )
+            for item in proximos_uniq:
+                item["peso"] = _pesos_ciclo[item["tk"]]
+            _n_ciclicos = sum(1 for v in _eh_ciclico.values() if v)
+            for _aviso in _avisos_ciclo:
+                st.warning(
+                    _aviso + f" Há {_n_ciclicos} cíclico(s) de "
+                    f"{len(proximos_uniq)} ativos — o gargalo está na SELEÇÃO, "
+                    "não na ponderação.",
+                    icon="⚠️")
     elif proximos_uniq:
         st.error(
             f"Carteira não pode respeitar o cap global de {cap:.0%}: "

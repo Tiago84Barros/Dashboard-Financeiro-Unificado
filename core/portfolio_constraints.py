@@ -237,3 +237,65 @@ def project_sector_capped(weights: Mapping[str, float],
             avisos.append(
                 f"Setor '{grupo}' ficou com {peso:.0%} (teto {group_cap:.0%}).")
     return {k: float(valores[i]) for i, k in enumerate(keys)}, avisos
+
+
+def project_class_capped(weights: Mapping[str, float],
+                         is_capped_class: Mapping[str, bool],
+                         cap: float,
+                         class_cap: float,
+                         *, tolerance: float = 1e-9
+                         ) -> tuple[dict[str, float], list[str]]:
+    """Limita o peso somado de UMA classe (ex.: setores cíclicos).
+
+    Diferente de ``project_sector_capped``, aqui só a classe marcada recebe
+    teto — as demais ficam livres. E, crucialmente, **recusa** em vez de
+    distorcer: se os ativos de fora da classe não têm capacidade para absorver
+    o excesso sem estourar o teto por ativo, os pesos originais são devolvidos
+    intactos com um aviso explícito.
+
+    Motivo (28/07/2026): a primeira versão empurrava o único ativo não-cíclico
+    de uma carteira real para 36,8% — violando o teto de 35% por ativo — só
+    para satisfazer o limite de fator. Trocar concentração de fator por
+    concentração num único nome é piorar o risco, não reduzi-lo.
+    """
+    keys = list(weights)
+    if not keys:
+        return {}, []
+
+    valores = np.asarray([max(float(weights.get(k, 0.0) or 0.0), 0.0) for k in keys],
+                         dtype=float)
+    valores[~np.isfinite(valores)] = 0.0
+    soma = float(valores.sum())
+    valores = (np.full(len(keys), 1.0 / len(keys)) if soma <= tolerance
+               else valores / soma)
+    original = {k: float(valores[i]) for i, k in enumerate(keys)}
+
+    marcados = np.array([bool(is_capped_class.get(k, False)) for k in keys])
+    peso_classe = float(valores[marcados].sum()) if marcados.any() else 0.0
+    if peso_classe <= class_cap + 1e-6:
+        return original, []
+
+    livres = ~marcados
+    n_livres = int(livres.sum())
+    capacidade_livre = n_livres * float(cap)
+    necessario = 1.0 - float(class_cap)
+    if capacidade_livre < necessario - 1e-9:
+        minimo = int(math.ceil(necessario / float(cap)))
+        return original, [
+            f"Teto de {class_cap:.0%} para a classe não pôde ser aplicado: os "
+            f"{n_livres} ativo(s) fora dela comportam no máximo "
+            f"{capacidade_livre:.0%} com o teto de {cap:.0%} por ativo, e seriam "
+            f"necessários {necessario:.0%} (ao menos {minimo} ativos fora da "
+            "classe). Os pesos foram mantidos — nenhuma distorção foi aplicada."
+        ]
+
+    # Viável: encolhe a classe para o teto e redistribui aos livres.
+    ajustados = valores.copy()
+    ajustados[marcados] *= class_cap / peso_classe
+    excesso = 1.0 - float(ajustados.sum())
+    folga = np.where(livres, np.clip(cap - ajustados, 0.0, None), 0.0)
+    total_folga = float(folga.sum())
+    if total_folga > tolerance:
+        ajustados = ajustados + excesso * folga / total_folga
+    ajustados = ajustados / float(ajustados.sum())
+    return ({k: float(ajustados[i]) for i, k in enumerate(keys)}, [])

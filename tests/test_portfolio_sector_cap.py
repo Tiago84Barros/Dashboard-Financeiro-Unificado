@@ -103,3 +103,52 @@ def test_pesos_ja_conformes_ficam_praticamente_intactos():
 def test_entrada_vazia_nao_quebra():
     out, avisos = project_sector_capped({}, {}, cap=0.3, group_cap=0.3)
     assert out == {} and avisos == []
+
+
+# ── teto por CLASSE (cíclicos) — recusa em vez de distorcer ─────────────────
+
+def test_classe_recusa_quando_nao_ha_capacidade_fora_dela():
+    """Caso real (28/07/2026): 5 cíclicos e 1 não-cíclico. Para ter 60% de teto
+    cíclico, ITSA4 sozinha teria que carregar 40% — acima do teto de 35% por
+    ativo. Trocar concentração de fator por concentração num nome é piorar."""
+    from core.portfolio_constraints import project_class_capped
+
+    pesos = {"WEGE3": .175, "PETR4": .175, "LEVE3": .175,
+             "BRAP3": .15, "UNIP6": .15, "ITSA4": .175}
+    ciclico = {"WEGE3": True, "PETR4": True, "LEVE3": True,
+               "BRAP3": True, "UNIP6": True, "ITSA4": False}
+    out, avisos = project_class_capped(pesos, ciclico, cap=0.35, class_cap=0.60)
+
+    assert out == pytest.approx(pesos)          # pesos INTACTOS
+    assert avisos and "não pôde ser aplicado" in avisos[0]
+    assert "ao menos 2 ativos fora da classe" in avisos[0]
+    assert "nenhuma distorção" in avisos[0]
+
+
+def test_classe_aplica_quando_ha_capacidade():
+    from core.portfolio_constraints import project_class_capped
+
+    pesos = {"C1": .25, "C2": .25, "D1": .25, "D2": .25}
+    ciclico = {"C1": True, "C2": True, "D1": False, "D2": False}
+    out, avisos = project_class_capped(pesos, ciclico, cap=0.35, class_cap=0.40)
+
+    assert out["C1"] + out["C2"] == pytest.approx(0.40, abs=1e-6)
+    assert max(out.values()) <= 0.35 + 1e-6     # teto por ativo respeitado
+    assert sum(out.values()) == pytest.approx(1.0)
+    assert not avisos
+
+
+def test_classe_ja_dentro_do_teto_nao_mexe_nos_pesos():
+    from core.portfolio_constraints import project_class_capped
+
+    pesos = {"C1": .30, "D1": .35, "D2": .35}
+    out, avisos = project_class_capped(pesos, {"C1": True}, cap=0.40, class_cap=0.50)
+    assert out == pytest.approx(pesos) and not avisos
+
+
+def test_classe_sem_ativos_marcados_nao_faz_nada():
+    from core.portfolio_constraints import project_class_capped
+
+    pesos = {"A": .5, "B": .5}
+    out, avisos = project_class_capped(pesos, {}, cap=0.6, class_cap=0.3)
+    assert out == pytest.approx(pesos) and not avisos
