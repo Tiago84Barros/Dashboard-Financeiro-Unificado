@@ -565,3 +565,69 @@ na análise caso a caso, não na construção de carteira.
 
 O item 3 preserva a função de veto contra vieses que continuam valendo
 independentemente do regime: sobrevivência, look-ahead e sinal anti-preditivo.
+
+---
+
+## 17. O padrão "diagnóstico sem porta de entrada" (27/07/2026)
+
+Uma carteira real gerada pelo app disparou a verificação mais produtiva de todo
+o ciclo. O achado não é sobre dado nem sobre estatística: é sobre **arquitetura**.
+
+### O padrão
+
+Motor de diagnóstico que não é consultado no caminho da decisão é **decoração**.
+Ele passa em todos os testes, aparece bonito na tela e não protege ninguém.
+
+Encontrado em dois dos três módulos:
+
+| Módulo | Motores que não alcançavam a decisão |
+|---|---|
+| **B3** | rota de valor, estados de evidência, saúde das empresas — todos display-only |
+| **EUA** | Altman Z, Piotroski F, accruals de Sloan, ROIC incremental — só na análise individual |
+| **FIIs** | **nenhum** — `confidence` é 30% da utilidade, `publication_status` bloqueia, 7 dimensões de concentração com `min_dimension_coverage` |
+
+O módulo de FIIs é a implementação de referência. Foi o menos alardeado e o
+único sem a falha.
+
+### O que a lacuna custava, em números
+
+* **B3**: uma carteira aprovou empresa com payout de 318%, endividamento de 3,2×
+  e ROIC abaixo da Selic — que a rota de valor, na mesma tela, classificava como
+  armadilha potencial. E o B3 era o único dos três **sem teto setorial**: quatro
+  segmentos distintos produziram uma carteira 100% cíclica.
+* **EUA**: **597 empresas ativas (21%) em zona de aflição do Altman**, com o
+  Z-Score calculado e gravado para todas elas — e ignorado na seleção. Depois de
+  ligá-lo, 208 empresas que passavam foram excluídas, todas por aflição
+  **confirmada por segundo alerta independente**.
+* **EUA (payout)**: a primeira versão da penalidade nasceu **inerte** — o campo
+  não existia na vitrine publicada. Derivar do bloco `financials` fez 1.293
+  empresas ganharem a métrica na hora, sinalizando 111 (XRX a 151× o lucro).
+
+### Duas decisões de projeto que valem mais que o código
+
+1. **Alertar, não remover.** O gate de saúde do B3 não exclui ativos
+   automaticamente. Veto automático sobre métrica contábil pontual repetiria o
+   erro da §15: deixar a máquina decidir onde não tem base. Payout de um ano
+   pode ser evento extraordinário; ROIC abaixo da Selic pode ser vale de ciclo.
+2. **Recusar o que não se sustenta.** O ROIC incremental **não** virou
+   penalidade: 39% dos que têm o dado o têm negativo, e é um delta de dois anos
+   que vira com uma queda de EBIT. Ligá-lo seria disparar em vale de ciclo.
+   Nem todo motor disponível deve entrar na decisão.
+
+### Calibrações feitas contra casos reais, não contra intuição
+
+| Regra | Primeira versão | Corrigida para | Motivo |
+|---|---|---|---|
+| Payout (B3) | crítico acima de 100% | atenção ≥100%, crítico ≥150% | holding repassa dividendo da controlada (BRAP3 a 120%) — alarme falso treina a ignorar alarme |
+| Altman (EUA) | — | peso 8, corte de exclusão 10 | sozinho não exclui: o Z-Score de 1968 erra em asset-light |
+| Sloan (EUA) | — | corte em 0,10 | p95 do universo real é 0,112; mediana é −0,050 |
+
+### Efeito nos percentuais
+
+Carteiras Modelo: 83,3% → **87,5%** (o teto setorial e o gate de saúde eram as
+lacunas que sustentavam a nota baixa). Ações americanas: 87,3% → **88,9%**
+(quatro motores passaram a participar da seleção). Empresas brasileiras:
+87,4% → **88,6%**. **Global: 87,3% → 88,4%.**
+
+Permanece o alerta metodológico da §14.4: a nota de carteiras tem cobertura de
+auditoria de ~60% — as instâncias salvas seguem não auditadas.
