@@ -2108,7 +2108,12 @@ def render(show_header: bool = True) -> None:
             help="Trilha de resiliência estrutural (Damodaran): além do sinal, "
                  "exige que as líderes do segmento gerem ROIC acima da Selic "
                  "(piso do custo de capital) de forma consistente através dos "
-                 "ciclos. Filtro ADICIONAL — reduz aprovações, aumenta convicção.",
+                 "ciclos. Filtro ADICIONAL — reduz aprovações, aumenta convicção. "
+                 "EFEITO COLATERAL medido em 29/07/2026: o corte por ROIC "
+                 "favorece setores de capital leve e penaliza os REGULADOS — só "
+                 "20% das empresas de utilidade pública superam a Selic em 5 "
+                 "p.p., contra 27% das cíclicas. Ligar este filtro com spread "
+                 "alto tende a produzir carteira mais pró-cíclica.",
         )
         thr_roic_spread_pct = rc2.number_input(
             "Spread mín. ROIC − Selic (média, p.p.)", -20.0, 30.0, 0.0, 1.0,
@@ -2653,6 +2658,40 @@ def render(show_header: bool = True) -> None:
 
     aprovados  = [r for r in resultados if _aprovado(r)]
     reprovados = [r for r in resultados if not _aprovado(r)]
+
+    # ── CUSTO DO FILTRO DE RESILIÊNCIA ───────────────────────────────────────
+    # Medido em 29/07/2026 rodando o motor sem navegador: com o filtro
+    # DESLIGADO a carteira saiu com 10 nomes e 23% defensivos; ligado a 5 p.p.,
+    # caiu para 6 nomes e 83% cíclicos. Não é bug — é o corte por ROIC pesando
+    # contra setores regulados (só 20% das utilities superam a Selic em 5 p.p.,
+    # contra 27% das cíclicas). O usuário precisa VER esse custo, não deduzi-lo.
+    if exigir_resiliencia and resultados:
+        from core.b3_holdings_health import classify_cycle
+
+        def _sem_resiliencia(res: dict) -> bool:
+            _rs = float(res.get("roic_spread_mean", float("nan")))
+            _hr = float(res.get("roic_hit_rate", float("nan")))
+            reprova_rs = (not np.isfinite(_rs)) or _rs < thr_roic_spread
+            reprova_hr = np.isfinite(_hr) and _hr < 0.5
+            return reprova_rs or reprova_hr
+
+        _cortados = [r for r in reprovados if _sem_resiliencia(r)]
+        if _cortados:
+            _por_classe: dict[str, int] = {}
+            for _res in _cortados:
+                _classe = classify_cycle(_res.get("setor"))
+                _por_classe[_classe] = _por_classe.get(_classe, 0) + 1
+            _def = _por_classe.get("defensivo", 0)
+            _cic = _por_classe.get("ciclico", 0)
+            _detalhe = (f" — {_def} defensivo(s) e {_cic} cíclico(s)"
+                        if (_def or _cic) else "")
+            st.info(
+                f"**Custo do filtro de resiliência**: {len(_cortados)} segmento(s) "
+                f"reprovado(s) por ROIC abaixo de Selic + {thr_roic_spread:.0%}"
+                f"{_detalhe}. O corte por ROIC penaliza setores REGULADOS "
+                "(utilidade pública, saneamento), que têm retorno limitado por "
+                "concessão — desligue o filtro para comparar a carteira sem ele.",
+                icon="🔎")
 
     # ── TABELA DE AUDITORIA ───────────────────────────────────────────────────
     _sec_hdr(f"📋 Auditoria de Segmentos — {len(resultados)} analisados · "
@@ -3422,6 +3461,14 @@ def render(show_header: bool = True) -> None:
         fig_pie.update_layout(showlegend=False)
         st.plotly_chart(fig_pie, use_container_width=True,
                         config={"displayModeBar": False}, key="pb3_pie")
+
+    # Carteira final exposta para auditoria automatizada (scripts/audit_portfolio_b3.py
+    # varre configurações e verifica invariantes). Só leitura — nada aqui muda a
+    # carteira; a exposição é o que permite testar o motor sem navegador.
+    st.session_state["pb3_carteira_final"] = [
+        {"tk": item.get("tk"), "peso": float(item.get("peso") or 0.0)}
+        for item in (proximos_uniq or [])
+    ]
 
     _render_paineis_app1(resultados, proximos_uniq, df_precos_all)
 
