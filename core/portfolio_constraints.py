@@ -299,3 +299,57 @@ def project_class_capped(weights: Mapping[str, float],
         ajustados = ajustados + excesso * folga / total_folga
     ajustados = ajustados / float(ajustados.sum())
     return ({k: float(ajustados[i]) for i, k in enumerate(keys)}, [])
+
+
+def project_dual_capped(weights: Mapping[str, float],
+                        groups: Mapping[str, str],
+                        is_capped_class: Mapping[str, bool],
+                        cap: float,
+                        group_cap: float,
+                        class_cap: float,
+                        *, max_rounds: int = 12
+                        ) -> tuple[dict[str, float], list[str]]:
+    """Aplica teto por ativo, por setor e por classe SIMULTANEAMENTE.
+
+    Motivo (29/07/2026): aplicar o teto setorial e depois o de classe em
+    sequência fazia o segundo desfazer o primeiro em silêncio — a varredura
+    automatizada flagrou 'Utilidade Pública' a 25,2% com teto de 25%, porque a
+    redistribuição da classe cíclica empurrou peso de volta para um setor
+    defensivo já no limite.
+
+    Alterna as duas projeções até convergir. Se não convergir, devolve o melhor
+    estado alcançado e **declara o conflito** — restrições incompatíveis são
+    fato a reportar, não algo a esconder atrás de uma violação de 0,2%.
+    """
+    atual = dict(weights)
+    avisos: list[str] = []
+    for _ in range(max_rounds):
+        anterior = dict(atual)
+        atual, avisos_setor = project_sector_capped(atual, groups, cap, group_cap)
+        atual, avisos_classe = project_class_capped(atual, is_capped_class, cap,
+                                                    class_cap)
+        avisos = list(dict.fromkeys(avisos_setor + avisos_classe))
+        if all(abs(atual[k] - anterior.get(k, 0.0)) <= 1e-9 for k in atual):
+            break
+
+    # Verificação final: qualquer violação remanescente vira aviso explícito.
+    por_grupo: dict[str, float] = {}
+    for ticker, peso in atual.items():
+        grupo = str(groups.get(ticker) or "").strip()
+        if grupo:
+            por_grupo[grupo] = por_grupo.get(grupo, 0.0) + peso
+    excedidos = {g: p for g, p in por_grupo.items() if p > group_cap + 1e-4}
+    peso_classe = sum(p for t, p in atual.items()
+                      if is_capped_class.get(t, False))
+    if excedidos:
+        avisos.append(
+            "Tetos incompatíveis: mesmo após conciliação, "
+            + ", ".join(f"{g} ficou com {p:.1%}" for g, p in excedidos.items())
+            + f" (teto setorial {group_cap:.0%}). Limitar a classe a "
+            f"{class_cap:.0%} empurra peso para os setores de fora dela, que "
+            "por sua vez esbarram no próprio teto. Afrouxe um dos dois.")
+    if peso_classe > class_cap + 1e-4:
+        avisos.append(
+            f"Teto de classe de {class_cap:.0%} não foi alcançado "
+            f"({peso_classe:.1%}) sem violar o teto setorial de {group_cap:.0%}.")
+    return atual, avisos

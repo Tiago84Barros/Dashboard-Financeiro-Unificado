@@ -178,3 +178,62 @@ def test_determinismo_aceita_execucoes_identicas():
         return r
 
     assert verificar_determinismo(_r(), _r()) == []
+
+
+# ── tetos aplicados EM CONJUNTO (defeito da varredura de 29/07/2026) ────────
+
+def test_teto_de_classe_nao_desfaz_o_teto_setorial_em_silencio():
+    """A varredura automatizada flagrou: com teto setorial 25% e de ciclo 50%,
+    'Utilidade Pública' terminava com 25,2% — a redistribuição da classe
+    cíclica empurrava peso de volta para um setor defensivo já no limite,
+    desfazendo o primeiro teto sem avisar."""
+    from core.portfolio_constraints import project_dual_capped
+
+    pesos = {f"C{i}": 0.10 for i in range(5)}          # 50% cíclico
+    pesos.update({"U1": 0.20, "U2": 0.20, "F1": 0.10})  # utilities + financeiro
+    setores = {**{f"C{i}": "Materiais Básicos" for i in range(5)},
+               "U1": "Utilidade Pública", "U2": "Utilidade Pública",
+               "F1": "Financeiro"}
+    ciclico = {**{f"C{i}": True for i in range(5)},
+               "U1": False, "U2": False, "F1": False}
+
+    out, avisos = project_dual_capped(pesos, setores, ciclico, cap=0.35,
+                                      group_cap=0.25, class_cap=0.50)
+
+    assert sum(out.values()) == pytest.approx(1.0)
+    por_setor: dict[str, float] = {}
+    for ticker, peso in out.items():
+        por_setor[setores[ticker]] = por_setor.get(setores[ticker], 0.0) + peso
+    violados = {s: p for s, p in por_setor.items() if p > 0.25 + 1e-4}
+    # ou respeita o teto, ou declara o conflito — nunca viola em silêncio
+    assert not violados or avisos, f"violação silenciosa: {violados}"
+
+
+def test_tetos_compativeis_convergem_sem_aviso():
+    from core.portfolio_constraints import project_dual_capped
+
+    pesos = {"C1": .25, "C2": .25, "D1": .25, "D2": .25}
+    setores = {"C1": "Materiais Básicos", "C2": "Bens Industriais",
+               "D1": "Utilidade Pública", "D2": "Saúde"}
+    ciclico = {"C1": True, "C2": True, "D1": False, "D2": False}
+    out, avisos = project_dual_capped(pesos, setores, ciclico, cap=0.35,
+                                      group_cap=0.40, class_cap=0.60)
+    assert sum(out.values()) == pytest.approx(1.0)
+    assert max(out.values()) <= 0.35 + 1e-6
+    assert not avisos
+
+
+def test_conflito_entre_tetos_e_declarado_com_explicacao():
+    """Teto de classe muito baixo + teto setorial apertado = incompatíveis."""
+    from core.portfolio_constraints import project_dual_capped
+
+    pesos = {"C1": .34, "C2": .33, "D1": .33}
+    setores = {"C1": "Materiais Básicos", "C2": "Bens Industriais",
+               "D1": "Utilidade Pública"}
+    ciclico = {"C1": True, "C2": True, "D1": False}
+    out, avisos = project_dual_capped(pesos, setores, ciclico, cap=0.35,
+                                      group_cap=0.25, class_cap=0.30)
+    assert sum(out.values()) == pytest.approx(1.0)
+    assert avisos, "conflito precisa ser declarado"
+    assert any("Afrouxe um dos dois" in a or "não foi alcançado" in a
+               for a in avisos)

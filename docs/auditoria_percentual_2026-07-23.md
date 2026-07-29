@@ -687,10 +687,42 @@ defensiva** (SBSP3, ISAE4, VIVT3 entram). A concentração de 83% observada ante
 era efeito de configuração, não do motor. Monotonia confirmada: margem de 25%
 aprova 7 ativos; margem de 5% aprova 10.
 
+### Iteração 4 — varredura completa (13 configurações)
+
+Um quarto defeito, encontrado só com a varredura ampla:
+
+**4. Tetos que se desfazem em silêncio.** Com teto setorial de 25% e de ciclo
+de 50%, *Utilidade Pública* terminou com **25,2%** — violação sem aviso. Causa:
+os dois tetos rodavam em sequência, e a redistribuição da classe cíclica
+empurrava peso de volta para um setor defensivo já no limite. Corrigido com
+`project_dual_capped`, que alterna as duas projeções até convergir e, quando
+são incompatíveis, **declara o conflito** em vez de esconder atrás de uma
+violação de 0,2%. Re-verificado no motor real: 0 defeitos nas duas
+configurações de teto.
+
+### O que a varredura mediu
+
+| Configuração | Ativos | Leitura |
+|---|---:|---|
+| base | 10 | referência |
+| margem 5% | 10 | monotonia preservada |
+| margem 25% | 7 | margem maior aprova menos |
+| grupo mínimo = 1 | 13 | granularidade fina amplia o universo |
+| barganha 30% | 12 | peso de valuation amplia a seleção |
+| **resiliência 0 p.p.** | **9** | o filtro custa 1 ativo |
+| **resiliência 5 p.p.** | **6** | o filtro custa **4 ativos** — era a causa da carteira de 6 nomes |
+| **critério "Sinal (Rank-IC)"** | **0** | — |
+| **critério "Retorno 24m (FDR)"** | **0** | — |
+
+Os dois modos estatísticos aprovam **zero segmentos** no universo real. É a
+confirmação empírica do que a §16 previu por cálculo de poder: com mediana de
+3 empresas por segmento, o efeito mínimo detectável é 0,533 — inalcançável.
+O modo "Econômico (Brasil)" ser o padrão não é preferência, é necessidade.
+
 ### Convergência
 
-O ciclo convergiu para **"sem defeitos conhecidos nos invariantes"**, que é o
-máximo verificável. Não convergiu para "carteira ótima" e não convergirá. O
+O ciclo convergiu, em cinco iterações, para **"sem defeitos conhecidos nos
+invariantes"** — que é o máximo verificável. Não convergiu para "carteira ótima" e não convergirá. O
 ganho real foi outro: o motor passou a ser **reproduzível** — antes a mesma
 configuração podia devolver carteiras diferentes — e **honesto sobre o custo
 dos filtros**.
