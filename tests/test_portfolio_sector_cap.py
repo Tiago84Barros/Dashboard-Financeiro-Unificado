@@ -152,3 +152,29 @@ def test_classe_sem_ativos_marcados_nao_faz_nada():
     pesos = {"A": .5, "B": .5}
     out, avisos = project_class_capped(pesos, {}, cap=0.6, class_cap=0.3)
     assert out == pytest.approx(pesos) and not avisos
+
+
+# ── harness de auditoria: inconclusivo ≠ vazio ───────────────────────────────
+
+def test_execucao_incompleta_e_inconclusiva_nao_determinismo_quebrado():
+    """Aprendizado de 29/07/2026: um timeout devolveu carteira vazia e quase
+    passou por defeito de determinismo. Ausência de resultado não é evidência."""
+    from scripts.audit_portfolio_b3 import Resultado, verificar_determinismo
+
+    completa = Resultado(config="base")
+    completa.carteira = [{"tk": "A3", "peso": 0.5}, {"tk": "B3", "peso": 0.5}]
+    vazia = Resultado(config="base")           # execução que não concluiu
+
+    falhas = verificar_determinismo(completa, vazia)
+    assert falhas, "divergência entre completa e vazia precisa ser reportada"
+
+
+def test_determinismo_aceita_execucoes_identicas():
+    from scripts.audit_portfolio_b3 import Resultado, verificar_determinismo
+
+    def _r():
+        r = Resultado(config="base")
+        r.carteira = [{"tk": "B3", "peso": 0.5}, {"tk": "A3", "peso": 0.5}]
+        return r
+
+    assert verificar_determinismo(_r(), _r()) == []
