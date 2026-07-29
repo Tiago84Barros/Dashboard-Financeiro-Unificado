@@ -603,7 +603,11 @@ def _aplicar_diversificacao_correlacao(
             res = res_by_segmento.get(seg_key)
             if res is None:
                 continue
-            ranked = sorted(res["score_proximo"].items(), key=lambda kv: kv[1], reverse=True)
+            # Desempate pelo TICKER: sem chave secundária, empates de score
+            # seguem a ordem do dict de origem, que varia com PYTHONHASHSEED
+            # entre processos (medido em 29/07/2026: GOAU4 vs SHUL4).
+            ranked = sorted(res["score_proximo"].items(),
+                            key=lambda kv: (-float(kv[1]), str(kv[0])))
             for cand_tk, cand_score in ranked:
                 cand_tk = str(cand_tk)
                 if cand_tk in existing or cand_tk == fraco["tk"]:
@@ -760,7 +764,10 @@ def _processar_segmento(
         for tk in list(anos_lideranca):
             if tk not in novos:
                 del anos_lideranca[tk]
-        for tk in novos:
+        # Itera a LISTA (ordenada por score), não o set: iteração de conjunto
+        # varia entre processos. Aqui os valores não dependem da ordem, mas a
+        # ordem de inserção do dict sim — e dicts alimentam outras estruturas.
+        for tk in dict.fromkeys(lids):
             anos_lideranca[tk] = anos_lideranca.get(tk, 0) + 1
             liderancas_hist[tk].append(ano)
 
@@ -777,7 +784,10 @@ def _processar_segmento(
     ano_ref_score = ano_atual - 1
 
     # Líderes para próximo ano
-    ranked_prox = sorted(score_proximo.items(), key=lambda x: x[1], reverse=True)
+    # Ordenação TOTAL (score desc, ticker asc): empate não pode ser resolvido
+    # pela ordem de inserção do dict — ela varia entre processos.
+    ranked_prox = sorted(score_proximo.items(),
+                         key=lambda x: (-float(x[1]), str(x[0])))
     scores_prox = [s for _, s in ranked_prox[:3]]
     from core.portfolio_constraints import minimum_assets_for_cap
     n_prox      = _select_n_heuristica(scores_prox) if len(ranked_prox) >= 2 else 1
@@ -1182,7 +1192,8 @@ def _render_paineis_app1(
                 df_ano["Convicção"] = (
                     (df_ano["Score_Ajustado"] - smin) / ((smax - smin) + 1e-9) * 100
                 )
-                df_ano = df_ano.sort_values("Score_Ajustado", ascending=False)
+                df_ano = df_ano.sort_values(
+                    ["Score_Ajustado", "ticker"], ascending=[False, True])
                 fig = px.bar(
                     df_ano, x="ticker", y="Convicção", color="Convicção",
                     color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"],
@@ -2896,7 +2907,8 @@ def render(show_header: bool = True) -> None:
     if _gate_ativo and aprovados:
         _pend: list[str] = []
         for res in aprovados:
-            _rp = sorted(res["score_proximo"].items(), key=lambda x: x[1], reverse=True)
+            _rp = sorted(res["score_proximo"].items(),
+                         key=lambda x: (-float(x[1]), str(x[0])))
             if _rp:
                 _pend.append(str(_rp[0][0]))
                 _tm = res.get("ticker_maior_part")
@@ -3024,7 +3036,8 @@ def render(show_header: bool = True) -> None:
             cur.update({k: v for k, v in p.items() if k != "motivos"})
         cur["peso"] = combined_weight
         cur["motivos"] = combined_motivos
-    proximos_uniq = sorted(mapa_prox.values(), key=lambda x: x["score"], reverse=True)
+    proximos_uniq = sorted(mapa_prox.values(),
+                           key=lambda x: (-float(x.get("score") or 0.0), str(x["tk"])))
 
     # ── DIVERSIFICAÇÃO POR CORRELAÇÃO ────────────────────────────────────────
     # A seleção por segmento é decidida sem olhar para os OUTROS segmentos —

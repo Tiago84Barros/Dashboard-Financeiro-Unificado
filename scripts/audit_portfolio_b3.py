@@ -205,8 +205,50 @@ def verificar_invariantes(resultado: Resultado, config: Config) -> None:
 
 
 def verificar_determinismo(a: Resultado, b: Resultado) -> list[str]:
-    if a.tickers != b.tickers:
-        return [f"I7 não determinístico: {a.tickers} vs {b.tickers}"]
+    """Compara duas execuções da MESMA configuração.
+
+    Atenção (aprendizado de 29/07/2026): repetir no mesmo processo NÃO testa
+    determinismo de verdade — o cache está quente e a ordem de hash é a mesma.
+    Uma divergência real (GOAU4 vs SHUL4, ambas de Siderurgia) só apareceu ao
+    comparar processos distintos. Use ``verificar_determinismo_entre_processos``
+    para o teste forte; este aqui cobre apenas o caso trivial.
+    """
+    if sorted(a.tickers) != sorted(b.tickers):
+        return [f"I7 não determinístico no mesmo processo: {a.tickers} vs {b.tickers}"]
+    return []
+
+
+def verificar_determinismo_entre_processos(config: Config, *,
+                                           timeout: int = 900) -> list[str]:
+    """I7 forte: roda a mesma configuração em PROCESSOS separados.
+
+    Cada processo tem seu próprio ``PYTHONHASHSEED``, então ordens de conjunto
+    e de dicionário construído a partir de conjuntos podem diferir. Se o
+    resultado muda, há dependência de ordem instável em algum desempate.
+    """
+    import subprocess
+    import textwrap
+
+    codigo = textwrap.dedent(f"""
+        import json, sys
+        sys.path.insert(0, {str(ROOT)!r})
+        from scripts.audit_portfolio_b3 import Config, executar
+        r = executar(Config({config.nome!r}), timeout={timeout})
+        print("###" + json.dumps(sorted(r.tickers)))
+    """)
+    saidas: list[list[str]] = []
+    for semente in ("0", "1"):
+        ambiente = {**os.environ, "PYTHONHASHSEED": semente,
+                    "PYTHONIOENCODING": "utf-8"}
+        proc = subprocess.run([sys.executable, "-c", codigo], capture_output=True,
+                              text=True, env=ambiente, timeout=timeout + 120)
+        linha = next((l for l in proc.stdout.splitlines() if l.startswith("###")), None)
+        saidas.append(json.loads(linha[3:]) if linha else [])
+    if saidas[0] and saidas[1] and saidas[0] != saidas[1]:
+        so_a = sorted(set(saidas[0]) - set(saidas[1]))
+        so_b = sorted(set(saidas[1]) - set(saidas[0]))
+        return [f"I7 não determinístico ENTRE PROCESSOS: só na semente 0 {so_a}; "
+                f"só na semente 1 {so_b}"]
     return []
 
 
