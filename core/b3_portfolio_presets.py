@@ -20,7 +20,9 @@ Evidências que fundamentam o perfil recomendado (universo real, 29/07/2026):
   carteira de 10 para **6 ativos** e penaliza utilities (20% passam) mais que
   cíclicas (27%), porque concessão limita retorno contábil por desenho.
 * **Teto setorial 30% + teto cíclico 60%** — a combinação verificada sem
-  conflito entre restrições; produziu 10 ativos com os dois limites ativos.
+  conflito entre restrições; produziu 10 ativos (60% cíclico, 20%
+  defensivo, 7 setores) com os dois limites ativos, e resultado idêntico
+  em sementes de hash distintas após o conserto de determinismo.
 * **Margem de 15% vs Selic** — 25% derruba para 7 ativos; 5% não muda o
   resultado (10). O piso intermediário mantém exigência sem estrangular.
 
