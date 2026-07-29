@@ -237,3 +237,52 @@ def test_conflito_entre_tetos_e_declarado_com_explicacao():
     assert avisos, "conflito precisa ser declarado"
     assert any("Afrouxe um dos dois" in a or "não foi alcançado" in a
                for a in avisos)
+
+
+# ── ordenação total dos pares de correlação (não determinismo residual) ─────
+
+def test_pares_de_correlacao_tem_ordenacao_total():
+    """Empate em |rho| não pode seguir a ordem das colunas: essa era a fonte
+    residual de não determinismo (GOAU4 vs SHUL4 na Siderurgia, 29/07/2026),
+    que três sementes de hash não pegaram por acaso."""
+    import pandas as pd
+    from core.b3_correlation_diversification import high_correlation_pairs
+
+    def _matriz(ordem):
+        # A-B e C-D com o MESMO rho: só o desempate por ticker decide a ordem
+        base = {("A", "B"): 0.90, ("C", "D"): 0.90}
+        m = pd.DataFrame(0.0, index=ordem, columns=ordem)
+        for t in ordem:
+            m.loc[t, t] = 1.0
+        for (x, y), v in base.items():
+            m.loc[x, y] = m.loc[y, x] = v
+        return m
+
+    p1 = high_correlation_pairs(_matriz(["A", "B", "C", "D"]), 0.5)
+    p2 = high_correlation_pairs(_matriz(["D", "C", "B", "A"]), 0.5)
+    assert [(a, b) for a, b, _ in p1] == [(a, b) for a, b, _ in p2]
+
+
+def test_pares_seguem_ordenados_por_correlacao_decrescente():
+    import pandas as pd
+    from core.b3_correlation_diversification import high_correlation_pairs
+
+    m = pd.DataFrame([[1.0, 0.95, 0.60], [0.95, 1.0, 0.70], [0.60, 0.70, 1.0]],
+                     index=["X", "Y", "Z"], columns=["X", "Y", "Z"])
+    pares = high_correlation_pairs(m, 0.5)
+    assert [round(abs(r), 2) for _, _, r in pares] == [0.95, 0.70, 0.60]
+
+
+def test_nenhuma_ordenacao_por_score_sem_desempate_no_motor():
+    """Guarda de regressão: toda ordenação por score no caminho de seleção
+    precisa de chave secundária. Duas rodadas de conserto deixaram passar três
+    ocorrências (linhas 656/737/2993), que só apareceram porque sementes de
+    hash diferentes trocavam o líder da Siderurgia."""
+    import pathlib
+    import re
+
+    fonte = pathlib.Path("views/portfolio_b3.py").read_text(encoding="utf-8")
+    # sorted(...) cuja key devolve UM único valor numérico (sem tupla)
+    suspeitas = re.findall(r"sorted\([^)]*key=lambda \w+: \w+\[1\][^)]*\)", fonte)
+    assert not suspeitas, (
+        "ordenação por score sem desempate encontrada: " + "; ".join(suspeitas))

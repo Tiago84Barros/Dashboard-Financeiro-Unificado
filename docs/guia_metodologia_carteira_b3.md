@@ -388,3 +388,43 @@ Sobrevivência, publication lag e o guarda-corpo anti-preditivo não dependem de
 amplitude e seguem ativos. A rota econômica continua sendo o padrão para
 aprovar segmentos; o teste de universo informa se o score, como um todo, tem
 poder preditivo no mercado brasileiro — pergunta que agora pode ser respondida.
+
+---
+
+## 15. Perfis pré-configurados (29/07/2026)
+
+A aba tem cerca de vinte parâmetros. Alguns, mal calibrados, degradam a
+carteira **sem sinal visível** — o usuário atribui ao mercado o que foi da
+configuração. Os perfis resolvem isso com combinações cujo efeito foi
+**medido** na varredura automatizada sobre o universo real.
+
+| Perfil | Para quê | Efeito medido |
+|---|---|---|
+| **Equilibrado (recomendado)** | uso normal | 10 ativos · 60% cíclico · 20% defensivo · 7 setores |
+| **Conservador** | menos exposição ao ciclo | carteira menor por construção |
+| **Amplo (diagnóstico)** | explorar o universo | sem proteção de concentração — não use para decidir |
+
+O perfil recomendado é `Econômico (Brasil)` · margem 15% · teto setorial 30% ·
+teto cíclico 60% · resiliência desligada · grupo mínimo 5. Cada valor tem
+evidência:
+
+* modos estatísticos aprovam **zero segmentos** (efeito mínimo detectável de
+  0,533 é inalcançável com mediana de 3 empresas por segmento);
+* resiliência a 5 p.p. corta de 10 para **6 ativos** e penaliza utilities
+  (20% passam) mais que cíclicas (27%);
+* margem de 25% cai para 7 ativos; 5% não muda o resultado;
+* tetos 30%/60% foram a combinação verificada **sem conflito** entre si.
+
+### Alertas de calibragem
+
+Alterar um parâmetro com custo conhecido dispara um aviso **com o número
+medido** — por exemplo, ligar resiliência a 5 p.p. avisa que cortaria de 10
+para 6 ativos. Os alertas informam; nunca bloqueiam. A decisão continua do
+usuário, agora sabendo o preço.
+
+### O que os perfis NÃO são
+
+Não são "carteira ótima". Isso não existe de forma verificável fora da
+amostra, e persegui-lo por iteração é sobreajuste — o erro que a §16 da
+auditoria corrigiu. São combinações **medidas e reprodutíveis**, com o custo
+de cada desvio declarado.

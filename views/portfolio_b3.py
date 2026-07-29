@@ -579,7 +579,10 @@ def _aplicar_diversificacao_correlacao(
     }
 
     for _ in range(max_substituicoes):
-        cols = [it["tk"] for it in items if it["tk"] in returns.columns]
+        # Ordem canônica das colunas: a matriz de correlação é simétrica, então
+        # ordenar não muda valor nenhum — mas fixa a enumeração dos pares, que
+        # de outro modo herda a ordem de montagem da carteira.
+        cols = sorted(it["tk"] for it in items if it["tk"] in returns.columns)
         if len(cols) < 2:
             break
         corr = correlation_matrix(returns[cols])
@@ -650,7 +653,8 @@ def _aplicar_diversificacao_correlacao(
 
 
 def _rank_ticker(score_map: dict[str, float], ticker: str) -> int | None:
-    ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
+    ranked = sorted(score_map.items(),
+                 key=lambda x: (-float(x[1]), str(x[0])))
     for idx, (tk, _) in enumerate(ranked, start=1):
         if tk == ticker:
             return idx
@@ -731,7 +735,8 @@ def _processar_segmento(
                 "SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento,
             })
 
-        ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
+        ranked = sorted(score_map.items(),
+                     key=lambda x: (-float(x[1]), str(x[0])))
         scores_desc = [s for _, s in ranked[:3]]
         from core.portfolio_constraints import minimum_assets_for_cap
         n = _select_n_heuristica(scores_desc) if len(ranked) >= 2 else 1
@@ -1647,6 +1652,63 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# PERFIS PRÉ-CONFIGURADOS — protegem contra calibragem que degrada a carteira
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_perfil_configuracao() -> None:
+    """Perfis medidos + alerta quando a configuração tem custo conhecido.
+
+    A aba tem ~20 parâmetros; alguns degradam a carteira sem sinal visível. Os
+    perfis vêm da varredura automatizada sobre o universo real, não de gosto —
+    cada um declara a evidência que o sustenta (core/b3_portfolio_presets.py).
+    """
+    from core.b3_portfolio_presets import (
+        PERSONALIZADO, PRESETS, RECOMENDADO, avaliar_configuracao,
+        identificar_perfil,
+    )
+
+    def _aplicar(nome: str):
+        def _cb():
+            for chave, valor in PRESETS[nome].valores.items():
+                st.session_state[chave] = valor
+        return _cb
+
+    col_sel, col_btn = st.columns([3, 1])
+    escolhido = col_sel.selectbox(
+        "Perfil de configuração", list(PRESETS), key="pb3_perfil_escolha",
+        help="Combinações cujo efeito foi MEDIDO no universo real. Aplicar um "
+             "perfil sobrescreve os parâmetros abaixo; depois disso você pode "
+             "ajustar o que quiser — o app avisa se a alteração tiver custo "
+             "conhecido.",
+    )
+    col_btn.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    col_btn.button("Aplicar perfil", key="pb3_aplicar_perfil",
+                   on_click=_aplicar(escolhido), use_container_width=True)
+
+    preset = PRESETS[escolhido]
+    st.caption(f"**{preset.nome}** — {preset.resumo}")
+    with st.expander("Por que estes valores (evidência medida)", expanded=False):
+        for evidencia in preset.evidencias:
+            st.markdown(f"- {evidencia}")
+        if preset.ressalva:
+            st.warning(preset.ressalva, icon="⚠️")
+
+    # Estado ATUAL dos controles (não o do perfil escolhido no seletor).
+    atual = {chave: st.session_state.get(chave)
+             for preset_item in PRESETS.values() for chave in preset_item.valores}
+    ativo = identificar_perfil(atual)
+    if ativo == PERSONALIZADO:
+        st.caption(
+            "Configuração atual: **personalizada** (não corresponde a nenhum "
+            f"perfil). Para voltar ao padrão, aplique “{RECOMENDADO}”.")
+    else:
+        st.caption(f"Configuração atual: **{ativo}**.")
+
+    for alerta in avaliar_configuracao(atual):
+        st.warning(alerta, icon="⚠️")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SAÚDE DAS SELECIONADAS — cruzamento entre a rota de segmentos e a de valor
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -2002,6 +2064,7 @@ def render(show_header: bool = True) -> None:
 
     # ── PARÂMETROS ────────────────────────────────────────────────────────────
     with st.expander("⚙️ Parâmetros", expanded=True):
+        _render_perfil_configuracao()
         p1, p2, p3, p4 = st.columns(4)
         thr_selic   = p1.number_input(
             "Margem mín. vs Selic · histórico (%)", 0.0, 500.0, 0.0, 5.0,
@@ -2929,7 +2992,8 @@ def render(show_header: bool = True) -> None:
         pesos_p    = dict(res["pesos_prox"])  # cópia: o gate pode realocar peso
         part_hist  = res["participacao"]
         ano_ref    = int(res.get("ano_ref_score", ano_atual - 1))
-        ranked_prox = sorted(score_prox.items(), key=lambda x: x[1], reverse=True)
+        ranked_prox = sorted(score_prox.items(),
+                             key=lambda x: (-float(x[1]), str(x[0])))
         if not ranked_prox:
             continue
 
