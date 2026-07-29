@@ -128,11 +128,22 @@ def executar(config: Config, timeout: int = 600) -> Resultado:
         resultado.ok = False
         resultado.defeitos.append(
             f"I1 exceção na renderização: {app.exception[0].value}")
-    # session_state do AppTest é SafeSessionState: não tem .get()
+    # session_state do AppTest é SafeSessionState: não tem .get().
+    #
+    # A CHAVE AUSENTE é diferente de carteira vazia: ausente significa que a
+    # execução não chegou ao fim (timeout, exceção antes da montagem), e tratar
+    # isso como "nenhum ativo aprovado" produziria conclusão falsa — foi o que
+    # aconteceu em 29/07/2026, quando um timeout virou "carteira vazia" e quase
+    # passou por defeito de determinismo.
     try:
         resultado.carteira = list(app.session_state["pb3_carteira_final"] or [])
     except (KeyError, AttributeError):
         resultado.carteira = []
+        resultado.ok = False
+        resultado.defeitos.append(
+            "I1 execução não concluiu: a carteira final não chegou a ser montada "
+            "(timeout ou interrupção). Resultado INCONCLUSIVO — não confundir "
+            "com carteira vazia por ausência de aprovados.")
     resultado.avisos = [item.value for item in app.warning]
     resultado.erros = [item.value for item in app.error]
     return resultado
@@ -244,7 +255,11 @@ def verificar_determinismo_entre_processos(config: Config, *,
                               text=True, env=ambiente, timeout=timeout + 120)
         linha = next((l for l in proc.stdout.splitlines() if l.startswith("###")), None)
         saidas.append(json.loads(linha[3:]) if linha else [])
-    if saidas[0] and saidas[1] and saidas[0] != saidas[1]:
+    if not saidas[0] or not saidas[1]:
+        # Execução incompleta não prova nem refuta determinismo.
+        return ["I7 INCONCLUSIVO: uma das execuções não concluiu (timeout?). "
+                "Repita com timeout maior — ausência de resultado não é evidência."]
+    if saidas[0] != saidas[1]:
         so_a = sorted(set(saidas[0]) - set(saidas[1]))
         so_b = sorted(set(saidas[1]) - set(saidas[0]))
         return [f"I7 não determinístico ENTRE PROCESSOS: só na semente 0 {so_a}; "
