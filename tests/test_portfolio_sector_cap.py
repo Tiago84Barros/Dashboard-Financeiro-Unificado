@@ -271,3 +271,18 @@ def test_pares_seguem_ordenados_por_correlacao_decrescente():
                      index=["X", "Y", "Z"], columns=["X", "Y", "Z"])
     pares = high_correlation_pairs(m, 0.5)
     assert [round(abs(r), 2) for _, _, r in pares] == [0.95, 0.70, 0.60]
+
+
+def test_nenhuma_ordenacao_por_score_sem_desempate_no_motor():
+    """Guarda de regressão: toda ordenação por score no caminho de seleção
+    precisa de chave secundária. Duas rodadas de conserto deixaram passar três
+    ocorrências (linhas 656/737/2993), que só apareceram porque sementes de
+    hash diferentes trocavam o líder da Siderurgia."""
+    import pathlib
+    import re
+
+    fonte = pathlib.Path("views/portfolio_b3.py").read_text(encoding="utf-8")
+    # sorted(...) cuja key devolve UM único valor numérico (sem tupla)
+    suspeitas = re.findall(r"sorted\([^)]*key=lambda \w+: \w+\[1\][^)]*\)", fonte)
+    assert not suspeitas, (
+        "ordenação por score sem desempate encontrada: " + "; ".join(suspeitas))

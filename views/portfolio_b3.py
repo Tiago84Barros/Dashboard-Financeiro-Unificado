@@ -653,7 +653,8 @@ def _aplicar_diversificacao_correlacao(
 
 
 def _rank_ticker(score_map: dict[str, float], ticker: str) -> int | None:
-    ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
+    ranked = sorted(score_map.items(),
+                 key=lambda x: (-float(x[1]), str(x[0])))
     for idx, (tk, _) in enumerate(ranked, start=1):
         if tk == ticker:
             return idx
@@ -734,7 +735,8 @@ def _processar_segmento(
                 "SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento,
             })
 
-        ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
+        ranked = sorted(score_map.items(),
+                     key=lambda x: (-float(x[1]), str(x[0])))
         scores_desc = [s for _, s in ranked[:3]]
         from core.portfolio_constraints import minimum_assets_for_cap
         n = _select_n_heuristica(scores_desc) if len(ranked) >= 2 else 1
@@ -2990,7 +2992,8 @@ def render(show_header: bool = True) -> None:
         pesos_p    = dict(res["pesos_prox"])  # cópia: o gate pode realocar peso
         part_hist  = res["participacao"]
         ano_ref    = int(res.get("ano_ref_score", ano_atual - 1))
-        ranked_prox = sorted(score_prox.items(), key=lambda x: x[1], reverse=True)
+        ranked_prox = sorted(score_prox.items(),
+                             key=lambda x: (-float(x[1]), str(x[0])))
         if not ranked_prox:
             continue
 
