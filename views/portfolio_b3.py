@@ -3144,8 +3144,7 @@ def render(show_header: bool = True) -> None:
     from core.portfolio_constraints import (
         minimum_assets_for_cap,
         project_capped_simplex,
-        project_class_capped,
-        project_sector_capped,
+        project_dual_capped,
     )
     _required_global = minimum_assets_for_cap(cap)
     _portfolio_viavel = len(proximos_uniq) >= _required_global
@@ -3168,58 +3167,42 @@ def render(show_header: bool = True) -> None:
             for item in proximos_uniq:
                 item["peso"] = _projected[item["tk"]]
 
-        # ── TETO POR SETOR ────────────────────────────────────────────────
-        # Segmento não é setor: quatro segmentos podem viver em dois setores e
-        # num único fator de risco. FIIs e EUA já tinham teto setorial; o B3
-        # era o único sem — e uma carteira real saiu 100% cíclica por aí.
-        if teto_setor < 1.0:
+        # ── TETOS DE CONCENTRAÇÃO (setor + classe de ciclo) ───────────────
+        # Segmento não é setor, e setor não é fator: quatro segmentos podem
+        # viver em dois setores e num único fator de risco. Os dois tetos são
+        # aplicados EM CONJUNTO — aplicá-los em sequência fazia o segundo
+        # desfazer o primeiro em silêncio (a varredura automatizada de
+        # 29/07/2026 flagrou Utilidade Pública a 25,2% com teto de 25%).
+        if teto_setor < 1.0 or teto_ciclico < 1.0:
+            from core.b3_holdings_health import classify_cycle
             _mapa_setor: dict[str, str] = {}
             if df_set is not None and not df_set.empty and "SETOR" in df_set.columns:
                 _ctk = "ticker" if "ticker" in df_set.columns else "Ticker"
                 if _ctk in df_set.columns:
                     _mapa_setor = {str(r[_ctk]).upper(): str(r["SETOR"] or "")
                                    for _, r in df_set.iterrows()}
-            _pesos_setor, _avisos_setor = project_sector_capped(
-                {item["tk"]: float(item.get("peso") or 0.0) for item in proximos_uniq},
-                {item["tk"]: _mapa_setor.get(str(item["tk"]).upper(), "")
-                 for item in proximos_uniq},
-                cap, float(teto_setor),
-            )
-            for item in proximos_uniq:
-                item["peso"] = _pesos_setor[item["tk"]]
-            for _aviso in _avisos_setor:
-                st.warning(_aviso, icon="⚠️")
-
-        # ── TETO POR CLASSE DE CICLO ──────────────────────────────────────
-        # Setor e fator são granularidades diferentes: limitar cada setor a
-        # 30% deixou uma carteira real com 82,5% em cíclicos, porque 4 dos 5
-        # setores eram cíclicos. Quando este teto for inviável, o aviso mostra
-        # que o gargalo está na SELEÇÃO, não na ponderação.
-        if teto_ciclico < 1.0:
-            from core.b3_holdings_health import classify_cycle
-            _mapa_ciclo: dict[str, str] = {}
-            if df_set is not None and not df_set.empty and "SETOR" in df_set.columns:
-                _ctk = "ticker" if "ticker" in df_set.columns else "Ticker"
-                if _ctk in df_set.columns:
-                    _mapa_ciclo = {str(r[_ctk]).upper(): classify_cycle(r["SETOR"])
-                                   for _, r in df_set.iterrows()}
+            _pesos_ini = {item["tk"]: float(item.get("peso") or 0.0)
+                          for item in proximos_uniq}
+            _grupos = {item["tk"]: _mapa_setor.get(str(item["tk"]).upper(), "")
+                       for item in proximos_uniq}
             _eh_ciclico = {
-                item["tk"]: _mapa_ciclo.get(str(item["tk"]).upper()) == "ciclico"
+                item["tk"]: classify_cycle(
+                    _mapa_setor.get(str(item["tk"]).upper(), "")) == "ciclico"
                 for item in proximos_uniq
             }
-            _pesos_ciclo, _avisos_ciclo = project_class_capped(
-                {item["tk"]: float(item.get("peso") or 0.0) for item in proximos_uniq},
-                _eh_ciclico, cap, float(teto_ciclico),
+            _pesos_fin, _avisos_tetos = project_dual_capped(
+                _pesos_ini, _grupos, _eh_ciclico, cap,
+                float(teto_setor), float(teto_ciclico),
             )
             for item in proximos_uniq:
-                item["peso"] = _pesos_ciclo[item["tk"]]
+                item["peso"] = _pesos_fin[item["tk"]]
             _n_ciclicos = sum(1 for v in _eh_ciclico.values() if v)
-            for _aviso in _avisos_ciclo:
-                st.warning(
-                    _aviso + f" Há {_n_ciclicos} cíclico(s) de "
-                    f"{len(proximos_uniq)} ativos — o gargalo está na SELEÇÃO, "
-                    "não na ponderação.",
-                    icon="⚠️")
+            for _aviso in _avisos_tetos:
+                _sufixo = ("" if "classe" not in _aviso.lower() else
+                           f" Há {_n_ciclicos} cíclico(s) de "
+                           f"{len(proximos_uniq)} ativos — o gargalo está na "
+                           "SELEÇÃO, não na ponderação.")
+                st.warning(_aviso + _sufixo, icon="⚠️")
     elif proximos_uniq:
         st.error(
             f"Carteira não pode respeitar o cap global de {cap:.0%}: "
