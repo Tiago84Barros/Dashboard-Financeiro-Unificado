@@ -631,3 +631,69 @@ lacunas que sustentavam a nota baixa). Ações americanas: 87,3% → **88,9%**
 
 Permanece o alerta metodológico da §14.4: a nota de carteiras tem cobertura de
 auditoria de ~60% — as instâncias salvas seguem não auditadas.
+
+---
+
+## 18. Ciclo de auditoria automatizada da carteira (29/07/2026)
+
+Pedido: rodar o app, montar carteiras, achar falhas, corrigir e repetir até
+convergir. Aceito com uma ressalva de método que muda o desenho.
+
+### O que o ciclo NÃO pode fazer
+
+Iterar parâmetros até a carteira "ficar boa" é **sobreajuste**. Não existe
+carteira ótima verificável fora da amostra; ajustar até o resultado agradar é
+o mesmo erro da §15. O ciclo foi construído para caçar **defeitos** —
+propriedades que devem valer em qualquer configuração. Violação de invariante é
+defeito; carteira feia não é.
+
+### A ferramenta
+
+`scripts/audit_portfolio_b3.py` roda a aba **sem navegador**, dirigindo os
+widgets pela API do AppTest (pré-definir `session_state` de widget é rejeitado
+pelo Streamlit). Cada execução leva ~7 minutos. Verifica nove invariantes: sem
+exceção, pesos somam 1, teto por ativo, sem duplicata, teto setorial e de ciclo
+respeitados **ou avisados**, determinismo, monotonia e coerência entre motores.
+
+### Três defeitos encontrados — nenhum por teste unitário
+
+**1. Não determinismo (grave).** A mesma configuração produzia carteiras
+diferentes: SHUL4 numa execução, GOAU4 noutra. Isolado fixando
+`PYTHONHASHSEED`. Causa: `sorted()` é estável, então empates preservavam a
+ordem de dicionários alimentados por iteração de conjunto — que varia com o
+hash seed do processo. **A recomendação dependia de um detalhe interno do
+Python.** Corrigido tornando a ordenação total (desempate por ticker) em cinco
+pontos de decisão. Determinismo confirmado depois em três sementes (0, 1, 7).
+
+**2. Custo oculto do filtro de resiliência.** A carteira 83% cíclica que
+motivou toda a investigação não vinha do critério econômico: vinha do filtro
+"Exigir resiliência (ROIC > risco-livre)" a 5 p.p. Medição: apenas **20% das
+utilities** superam a Selic nesse spread, contra **27% das cíclicas** — o corte
+por ROIC penaliza setores regulados por concessão, cujo retorno contábil é
+limitado por desenho regulatório. O app passou a declarar quantos segmentos o
+filtro cortou, **separando defensivos de cíclicos**.
+
+**3. Defeito na própria ferramenta de auditoria.** Uma execução devolveu
+carteira vazia e quase foi reportada como quebra de determinismo. Re-execução
+com mais tempo devolveu a carteira idêntica: era timeout. O harness tratava
+chave ausente como "nenhum aprovado", confundindo execução interrompida com
+resposta legítima. Agora distingue **inconclusivo** de **vazio** — o mesmo
+princípio da §16 aplicado à ferramenta que audita.
+
+### O que o ciclo mostrou sobre a carteira
+
+Com os parâmetros padrão, a carteira sai com **10 ativos, 55% cíclica e 23%
+defensiva** (SBSP3, ISAE4, VIVT3 entram). A concentração de 83% observada antes
+era efeito de configuração, não do motor. Monotonia confirmada: margem de 25%
+aprova 7 ativos; margem de 5% aprova 10.
+
+### Convergência
+
+O ciclo convergiu para **"sem defeitos conhecidos nos invariantes"**, que é o
+máximo verificável. Não convergiu para "carteira ótima" e não convergirá. O
+ganho real foi outro: o motor passou a ser **reproduzível** — antes a mesma
+configuração podia devolver carteiras diferentes — e **honesto sobre o custo
+dos filtros**.
+
+Padrão dos três defeitos: nenhum apareceu em teste unitário. Todos surgiram ao
+**executar o sistema inteiro e comparar execuções entre si**.
