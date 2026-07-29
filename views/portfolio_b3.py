@@ -603,7 +603,11 @@ def _aplicar_diversificacao_correlacao(
             res = res_by_segmento.get(seg_key)
             if res is None:
                 continue
-            ranked = sorted(res["score_proximo"].items(), key=lambda kv: kv[1], reverse=True)
+            # Desempate pelo TICKER: sem chave secundária, empates de score
+            # seguem a ordem do dict de origem, que varia com PYTHONHASHSEED
+            # entre processos (medido em 29/07/2026: GOAU4 vs SHUL4).
+            ranked = sorted(res["score_proximo"].items(),
+                            key=lambda kv: (-float(kv[1]), str(kv[0])))
             for cand_tk, cand_score in ranked:
                 cand_tk = str(cand_tk)
                 if cand_tk in existing or cand_tk == fraco["tk"]:
@@ -760,7 +764,10 @@ def _processar_segmento(
         for tk in list(anos_lideranca):
             if tk not in novos:
                 del anos_lideranca[tk]
-        for tk in novos:
+        # Itera a LISTA (ordenada por score), não o set: iteração de conjunto
+        # varia entre processos. Aqui os valores não dependem da ordem, mas a
+        # ordem de inserção do dict sim — e dicts alimentam outras estruturas.
+        for tk in dict.fromkeys(lids):
             anos_lideranca[tk] = anos_lideranca.get(tk, 0) + 1
             liderancas_hist[tk].append(ano)
 
@@ -777,7 +784,10 @@ def _processar_segmento(
     ano_ref_score = ano_atual - 1
 
     # Líderes para próximo ano
-    ranked_prox = sorted(score_proximo.items(), key=lambda x: x[1], reverse=True)
+    # Ordenação TOTAL (score desc, ticker asc): empate não pode ser resolvido
+    # pela ordem de inserção do dict — ela varia entre processos.
+    ranked_prox = sorted(score_proximo.items(),
+                         key=lambda x: (-float(x[1]), str(x[0])))
     scores_prox = [s for _, s in ranked_prox[:3]]
     from core.portfolio_constraints import minimum_assets_for_cap
     n_prox      = _select_n_heuristica(scores_prox) if len(ranked_prox) >= 2 else 1
@@ -1182,7 +1192,8 @@ def _render_paineis_app1(
                 df_ano["Convicção"] = (
                     (df_ano["Score_Ajustado"] - smin) / ((smax - smin) + 1e-9) * 100
                 )
-                df_ano = df_ano.sort_values("Score_Ajustado", ascending=False)
+                df_ano = df_ano.sort_values(
+                    ["Score_Ajustado", "ticker"], ascending=[False, True])
                 fig = px.bar(
                     df_ano, x="ticker", y="Convicção", color="Convicção",
                     color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"],
@@ -2108,7 +2119,12 @@ def render(show_header: bool = True) -> None:
             help="Trilha de resiliência estrutural (Damodaran): além do sinal, "
                  "exige que as líderes do segmento gerem ROIC acima da Selic "
                  "(piso do custo de capital) de forma consistente através dos "
-                 "ciclos. Filtro ADICIONAL — reduz aprovações, aumenta convicção.",
+                 "ciclos. Filtro ADICIONAL — reduz aprovações, aumenta convicção. "
+                 "EFEITO COLATERAL medido em 29/07/2026: o corte por ROIC "
+                 "favorece setores de capital leve e penaliza os REGULADOS — só "
+                 "20% das empresas de utilidade pública superam a Selic em 5 "
+                 "p.p., contra 27% das cíclicas. Ligar este filtro com spread "
+                 "alto tende a produzir carteira mais pró-cíclica.",
         )
         thr_roic_spread_pct = rc2.number_input(
             "Spread mín. ROIC − Selic (média, p.p.)", -20.0, 30.0, 0.0, 1.0,
@@ -2654,6 +2670,40 @@ def render(show_header: bool = True) -> None:
     aprovados  = [r for r in resultados if _aprovado(r)]
     reprovados = [r for r in resultados if not _aprovado(r)]
 
+    # ── CUSTO DO FILTRO DE RESILIÊNCIA ───────────────────────────────────────
+    # Medido em 29/07/2026 rodando o motor sem navegador: com o filtro
+    # DESLIGADO a carteira saiu com 10 nomes e 23% defensivos; ligado a 5 p.p.,
+    # caiu para 6 nomes e 83% cíclicos. Não é bug — é o corte por ROIC pesando
+    # contra setores regulados (só 20% das utilities superam a Selic em 5 p.p.,
+    # contra 27% das cíclicas). O usuário precisa VER esse custo, não deduzi-lo.
+    if exigir_resiliencia and resultados:
+        from core.b3_holdings_health import classify_cycle
+
+        def _sem_resiliencia(res: dict) -> bool:
+            _rs = float(res.get("roic_spread_mean", float("nan")))
+            _hr = float(res.get("roic_hit_rate", float("nan")))
+            reprova_rs = (not np.isfinite(_rs)) or _rs < thr_roic_spread
+            reprova_hr = np.isfinite(_hr) and _hr < 0.5
+            return reprova_rs or reprova_hr
+
+        _cortados = [r for r in reprovados if _sem_resiliencia(r)]
+        if _cortados:
+            _por_classe: dict[str, int] = {}
+            for _res in _cortados:
+                _classe = classify_cycle(_res.get("setor"))
+                _por_classe[_classe] = _por_classe.get(_classe, 0) + 1
+            _def = _por_classe.get("defensivo", 0)
+            _cic = _por_classe.get("ciclico", 0)
+            _detalhe = (f" — {_def} defensivo(s) e {_cic} cíclico(s)"
+                        if (_def or _cic) else "")
+            st.info(
+                f"**Custo do filtro de resiliência**: {len(_cortados)} segmento(s) "
+                f"reprovado(s) por ROIC abaixo de Selic + {thr_roic_spread:.0%}"
+                f"{_detalhe}. O corte por ROIC penaliza setores REGULADOS "
+                "(utilidade pública, saneamento), que têm retorno limitado por "
+                "concessão — desligue o filtro para comparar a carteira sem ele.",
+                icon="🔎")
+
     # ── TABELA DE AUDITORIA ───────────────────────────────────────────────────
     _sec_hdr(f"📋 Auditoria de Segmentos — {len(resultados)} analisados · "
              f"{len(aprovados)} aprovados")
@@ -2857,7 +2907,8 @@ def render(show_header: bool = True) -> None:
     if _gate_ativo and aprovados:
         _pend: list[str] = []
         for res in aprovados:
-            _rp = sorted(res["score_proximo"].items(), key=lambda x: x[1], reverse=True)
+            _rp = sorted(res["score_proximo"].items(),
+                         key=lambda x: (-float(x[1]), str(x[0])))
             if _rp:
                 _pend.append(str(_rp[0][0]))
                 _tm = res.get("ticker_maior_part")
@@ -2985,7 +3036,8 @@ def render(show_header: bool = True) -> None:
             cur.update({k: v for k, v in p.items() if k != "motivos"})
         cur["peso"] = combined_weight
         cur["motivos"] = combined_motivos
-    proximos_uniq = sorted(mapa_prox.values(), key=lambda x: x["score"], reverse=True)
+    proximos_uniq = sorted(mapa_prox.values(),
+                           key=lambda x: (-float(x.get("score") or 0.0), str(x["tk"])))
 
     # ── DIVERSIFICAÇÃO POR CORRELAÇÃO ────────────────────────────────────────
     # A seleção por segmento é decidida sem olhar para os OUTROS segmentos —
@@ -3422,6 +3474,14 @@ def render(show_header: bool = True) -> None:
         fig_pie.update_layout(showlegend=False)
         st.plotly_chart(fig_pie, use_container_width=True,
                         config={"displayModeBar": False}, key="pb3_pie")
+
+    # Carteira final exposta para auditoria automatizada (scripts/audit_portfolio_b3.py
+    # varre configurações e verifica invariantes). Só leitura — nada aqui muda a
+    # carteira; a exposição é o que permite testar o motor sem navegador.
+    st.session_state["pb3_carteira_final"] = [
+        {"tk": item.get("tk"), "peso": float(item.get("peso") or 0.0)}
+        for item in (proximos_uniq or [])
+    ]
 
     _render_paineis_app1(resultados, proximos_uniq, df_precos_all)
 

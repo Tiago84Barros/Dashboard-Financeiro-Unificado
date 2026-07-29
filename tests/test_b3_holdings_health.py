@@ -228,3 +228,38 @@ view._render_saude_da_carteira([], pd.DataFrame(), pd.DataFrame(), 0.11)
 """).run(timeout=60)
     assert not app.exception
     assert not any("Saúde das empresas" in i.value for i in app.markdown)
+
+
+def test_aviso_do_custo_de_resiliencia_aparece_quando_o_filtro_corta():
+    """Descoberta de 29/07/2026 rodando o motor sem navegador: com o filtro
+    desligado a carteira saiu com 10 nomes e 23% defensivos; ligado a 5 p.p.,
+    caiu para 6 e 83% cíclicos. O custo precisa ser exibido, não deduzido."""
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_string("""
+import numpy as np, pandas as pd, streamlit as st
+import views.portfolio_b3 as view
+
+# Reproduz o trecho do diagnóstico com dois segmentos reprovados pelo filtro
+resultados = [
+    {"setor": "Utilidade Pública", "segmento": "Energia", "roic_spread_mean": 0.01,
+     "roic_hit_rate": 0.4},
+    {"setor": "Materiais Básicos", "segmento": "Mineração", "roic_spread_mean": 0.02,
+     "roic_hit_rate": 0.3},
+]
+from core.b3_holdings_health import classify_cycle
+thr = 0.05
+cortados = [r for r in resultados
+            if (not np.isfinite(r["roic_spread_mean"])) or r["roic_spread_mean"] < thr]
+por_classe = {}
+for r in cortados:
+    c = classify_cycle(r["setor"]); por_classe[c] = por_classe.get(c, 0) + 1
+st.info(f"Custo do filtro de resiliência: {len(cortados)} segmento(s) — "
+        f"{por_classe.get('defensivo',0)} defensivo(s) e "
+        f"{por_classe.get('ciclico',0)} cíclico(s).")
+""").run(timeout=60)
+
+    assert not app.exception
+    texto = "\n".join(item.value for item in app.info)
+    assert "Custo do filtro de resiliência" in texto
+    assert "1 defensivo(s)" in texto and "1 cíclico(s)" in texto
