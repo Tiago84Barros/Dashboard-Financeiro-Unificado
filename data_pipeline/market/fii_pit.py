@@ -19,7 +19,9 @@ from sqlalchemy import text
 
 from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION,
                                   score_fiis_by_type)
-from core.fii_validation import (evaluate_regime_performance, point_in_time_backtest,
+from core.fii_portfolio_v4 import LIVE_PORTFOLIO_STRATEGY_ID
+from core.fii_validation import (evaluate_regime_performance,
+                                 robust_optimizer_point_in_time_backtest,
                                  validate_methodology)
 from data_pipeline.utils.db_utils import get_pipeline_engine
 
@@ -28,7 +30,7 @@ _B3_IFIX_MONTHLY_URL = (
     "https://sistemaswebb3-listados.b3.com.br/"
     "indexStatisticsProxy/IndexCall/GetMonthlyEvolution/"
 )
-VALIDATION_PROTOCOL_VERSION = "fii-pit-total-return-events-2.0.0"
+VALIDATION_PROTOCOL_VERSION = "fii-pit-robust-optimizer-3.3.0"
 
 
 def _num(value: Any) -> float | None:
@@ -251,12 +253,13 @@ def reconstruct_snapshots(
             observations_by_ticker.setdefault(str(observation["ticker"]), []).append(observation)
         eligible_exp = exposures[
             (exposures["knowledge_at"] <= cutoff) &
-            (exposures["reference_date"] <= decision) &
-            (exposures["exposure_type"] == "asset_class")
+            (exposures["reference_date"] <= decision)
         ] if not exposures.empty else exposures
         exposures_by_ticker: dict[str, list[dict]] = {}
         if not eligible_exp.empty:
-            latest_reference = eligible_exp.groupby("ticker")["reference_date"].transform("max")
+            latest_reference = eligible_exp.groupby(
+                ["ticker", "exposure_type"]
+            )["reference_date"].transform("max")
             latest_exp = eligible_exp[eligible_exp["reference_date"] == latest_reference]
             for exposure in latest_exp.to_dict("records"):
                 exposures_by_ticker.setdefault(str(exposure["ticker"]), []).append(exposure)
@@ -271,7 +274,7 @@ def reconstruct_snapshots(
             ticker_exp = exposures_by_ticker.get(ticker, [])
             asset_classes = {
                 str(item["exposure_name"]): float(item["exposure_weight"])
-                for item in ticker_exp
+                for item in ticker_exp if str(item["exposure_type"]) == "asset_class"
             }
             fii_type = _type_from_asset_classes(asset_classes)
             type_quality = "verified_publication"
@@ -285,6 +288,23 @@ def reconstruct_snapshots(
                 "metric_metadata": {}, "data_consistency": .90,
                 "snapshot_availability_quality": type_quality,
             }
+            for exposure_type in {
+                str(item["exposure_type"]) for item in ticker_exp
+            }:
+                mapping = {
+                    str(item["exposure_name"]): float(item["exposure_weight"])
+                    for item in ticker_exp
+                    if str(item["exposure_type"]) == exposure_type
+                }
+                key = {
+                    "tenant": "tenants", "debtor": "debtors", "issuer": "issuers",
+                    "indexer": "indexers", "region": "regions",
+                    "holding": "holdings",
+                }.get(exposure_type)
+                if key:
+                    row[key] = mapping
+                elif exposure_type in {"manager", "sector"} and mapping:
+                    row[exposure_type] = max(mapping, key=mapping.get)
             for metric in ("dy_12m", "liquidez_diaria", "total_return_trend", "max_drawdown",
                            "income_growth_per_share_3y", "income_recurrence"):
                 if row.get(metric) is not None:
@@ -326,6 +346,7 @@ def reconstruct_snapshots(
                 "components_json": item["components"], "inputs_json": item["score_inputs"],
                 "missing_metrics_json": list(item["missing_metrics"]),
                 "data_readiness_status": item["data_readiness_status"],
+                "portfolio_input_json": item,
             })
     return snapshots
 
@@ -420,29 +441,59 @@ def _monthly_returns(prices: pd.DataFrame, dividends: pd.DataFrame | None = None
 
 
 def _macro_regimes(conn, dates: list[pd.Timestamp]) -> pd.DataFrame:
-    macro = pd.read_sql(text("SELECT ano,selic,ipca FROM public.macro ORDER BY ano"), conn)
-    if macro.empty:
-        return pd.DataFrame(columns=["date", "regime"])
-    by_year = {int(row.ano): row for row in macro.itertuples()}
+    scenarios = _macro_scenarios(conn, dates)
     rows = []
-    previous_selic = None
-    for dt in dates:
-        item = by_year.get(int(dt.year))
-        if item is None:
+    for decision in dates:
+        values = scenarios.get(decision.date().isoformat())
+        if not values:
             continue
-        selic = float(item.selic or 0) * (100 if float(item.selic or 0) <= 1 else 1)
-        ipca = float(item.ipca or 0) * (100 if float(item.ipca or 0) <= 1 else 1)
+        selic = float(values["selic"])
+        ipca = float(values["ipca"])
         if ipca >= 7:
             regime = "inflation_stress"
         elif selic - ipca >= 7:
             regime = "high_real_rate"
-        elif previous_selic is not None and selic < previous_selic - 1:
+        elif float(values["selic_change_12m"]) < -1:
             regime = "easing"
         else:
             regime = "neutral"
-        rows.append({"date": dt, "regime": regime})
-        previous_selic = selic
+        rows.append({"date": decision, "regime": regime})
     return pd.DataFrame(rows)
+
+
+def _macro_scenarios(conn, dates: list[pd.Timestamp]) -> dict[str, dict[str, float]]:
+    """Usa o último mês integralmente observável antes de cada decisão."""
+    macro = pd.read_sql(text("""
+        SELECT data, "Selic_Final" AS selic, "IPCA_12m" AS ipca
+        FROM public.info_economica_mensal ORDER BY data
+    """), conn)
+    if macro.empty:
+        return {}
+    macro["data"] = pd.to_datetime(macro["data"], utc=True).dt.tz_localize(None)
+    macro["selic"] = pd.to_numeric(macro["selic"], errors="coerce")
+    macro["ipca"] = pd.to_numeric(macro["ipca"], errors="coerce")
+    macro = macro.dropna(subset=["data", "selic", "ipca"]).sort_values("data")
+    scenarios: dict[str, dict[str, float]] = {}
+    for decision in dates:
+        observable = macro[macro["data"] < decision.normalize()]
+        if observable.empty:
+            continue
+        latest = observable.iloc[-1]
+        selic = float(latest["selic"])
+        ipca = float(latest["ipca"])
+        prior = observable[
+            observable["data"] <= latest["data"] - pd.DateOffset(months=12)
+        ]
+        previous_selic = float(prior.iloc[-1]["selic"]) if not prior.empty else selic
+        scenarios[decision.date().isoformat()] = {
+            "selic": selic,
+            "ipca": ipca,
+            "cdi": selic,
+            "selic_change_12m": selic - previous_selic,
+            "vacancy_shock": .08,
+            "credit_event_rate": .03,
+        }
+    return scenarios
 
 
 def _persist_snapshots(conn, snapshots: list[dict]) -> int:
@@ -479,6 +530,8 @@ def run_pit_validation(*, years: int = 10, top_n: int = 12) -> dict:
     if engine is None:
         return {"status": "failed", "blockers": ["banco indisponível"]}
     with engine.begin() as conn:
+        from data_pipeline.market.fii_ingest import _ensure_methodology_version
+        _ensure_methodology_version(conn)
         prices, dividends, observations, exposures, funds = _load_frames(conn)
         if prices.empty:
             return {"status": "failed", "blockers": ["histórico de preços ausente"]}
@@ -527,12 +580,18 @@ def run_pit_validation(*, years: int = 10, top_n: int = 12) -> dict:
         if snapshot_frame.empty:
             backtest = {"status": "blocked", "blockers": ["nenhum snapshot histórico reconstruível"]}
         else:
-            snapshot_frame = snapshot_frame.rename(columns={"score": "score"})
-            backtest = point_in_time_backtest(
-                snapshot_frame, returns, benchmark, top_n=top_n,
-                transaction_cost=.0015, slippage=.0010,
+            decision_dates = sorted(
+                pd.to_datetime(snapshot_frame["reference_date"]).dt.normalize().unique()
+            )
+            scenarios = _macro_scenarios(
+                conn, [pd.Timestamp(value) for value in decision_dates],
+            )
+            backtest = robust_optimizer_point_in_time_backtest(
+                snapshot_frame, returns, benchmark, scenarios, top_n=top_n,
+                transaction_cost=.0015, slippage=.0010, correlation_penalty=.12,
             )
         backtest["validation_protocol_version"] = VALIDATION_PROTOCOL_VERSION
+        backtest["strategy_id"] = LIVE_PORTFOLIO_STRATEGY_ID
         regimes = _macro_regimes(conn, [pd.Timestamp(row["date"])
                                         for row in backtest.get("observations", [])])
         regime_results = evaluate_regime_performance(backtest.get("observations", []), regimes)
@@ -559,6 +618,7 @@ def run_pit_validation(*, years: int = 10, top_n: int = 12) -> dict:
                                                    "regimes": regime_results,
                                                    "benchmark": benchmark_name,
                                                    "validation_protocol_version": VALIDATION_PROTOCOL_VERSION,
+                                                   "strategy_id": LIVE_PORTFOLIO_STRATEGY_ID,
                                                    "official_ifix_ingestion": official_ifix,
                                                    "snapshots_reconstructed": len(snapshots),
                                                    "snapshots_persisted": persisted})),

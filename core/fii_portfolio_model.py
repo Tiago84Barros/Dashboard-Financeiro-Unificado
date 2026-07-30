@@ -81,6 +81,7 @@ DDL_SQL = [
               AND policyname='fii_models_owner_all'
         ) THEN
             CREATE POLICY fii_models_owner_all ON fii_portfolio_models
+                FOR ALL TO authenticated
                 USING (user_id = auth.uid())
                 WITH CHECK (user_id = auth.uid());
         END IF;
@@ -95,6 +96,7 @@ DDL_SQL = [
               AND policyname='fii_model_items_owner_all'
         ) THEN
             CREATE POLICY fii_model_items_owner_all ON fii_portfolio_model_items
+                FOR ALL TO authenticated
                 USING (EXISTS (
                     SELECT 1 FROM fii_portfolio_models m
                     WHERE m.id = model_id AND m.user_id = auth.uid()
@@ -144,6 +146,102 @@ def _fii_plan_hash(items: list[dict], params: dict,
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
+def _model_from_connection(conn, owner: str, *,
+                           model_id: str | None = None,
+                           active_only: bool = False) -> dict:
+    where = ["user_id = :uid"]
+    parameters = {"uid": owner}
+    if model_id:
+        where.append("id = :mid")
+        parameters["mid"] = model_id
+    if active_only:
+        where.append("status = 'active'")
+    header = conn.execute(
+        text(f"""
+            SELECT id, name, status, plan_hash, params_json, metrics_json,
+                   created_at, updated_at
+            FROM fii_portfolio_models
+            WHERE {' AND '.join(where)}
+            ORDER BY created_at DESC
+            LIMIT 1
+        """),
+        parameters,
+    ).mappings().fetchone()
+    if not header:
+        return {}
+    rows = conn.execute(
+        text("""
+            SELECT ticker, nome, tipo, segmento, weight, dy_12m, pvp, score
+            FROM fii_portfolio_model_items
+            WHERE model_id = :mid
+            ORDER BY weight DESC, score DESC, ticker
+        """),
+        {"mid": str(header["id"])},
+    ).mappings().all()
+    items = []
+    for row in rows:
+        item = dict(row)
+        for key in ("weight", "dy_12m", "pvp", "score"):
+            item[key] = float(item[key]) if item[key] is not None else None
+        item["peso"] = item.get("weight") or 0.0
+        items.append(item)
+    model = dict(header)
+    model["items"] = items
+    model["num_items"] = len(items)
+    return model
+
+
+def validate_fii_portfolio_model(model: dict, *,
+                                 weight_tolerance: float = 1e-6) -> dict:
+    """Valida integridade determinística da versão persistida.
+
+    Pesos usam fração decimal e devem totalizar 1. O hash cobre composição,
+    pesos, scores e parâmetros metodológicos; divergência bloqueia restauração.
+    """
+    items = list(model.get("items") or [])
+    reasons: list[str] = []
+    tickers = [
+        str(item.get("ticker") or item.get("tk") or "").strip().upper()
+        for item in items
+    ]
+    if not items:
+        reasons.append("modelo sem itens")
+    if any(not ticker for ticker in tickers):
+        reasons.append("ticker vazio")
+    if len(set(tickers)) != len(tickers):
+        reasons.append("tickers duplicados")
+    weights = {
+        ticker: float(item.get("weight") or item.get("peso") or 0.0)
+        for ticker, item in zip(tickers, items)
+        if ticker
+    }
+    if any(weight <= 0 or weight > 1 for weight in weights.values()):
+        reasons.append("peso fora do intervalo (0, 1]")
+    weight_sum = sum(weights.values())
+    if items and abs(weight_sum - 1.0) > weight_tolerance:
+        reasons.append(f"soma dos pesos divergente: {weight_sum:.8f}")
+    params = model.get("params_json") or {}
+    expected_hash = _fii_plan_hash(items, params, weights)
+    stored_hash = str(model.get("plan_hash") or "")
+    if stored_hash and stored_hash != expected_hash:
+        reasons.append("hash do plano divergente")
+    if not stored_hash:
+        reasons.append("hash do plano ausente")
+    return {
+        "ok": not reasons,
+        "reasons": reasons,
+        "item_count": len(items),
+        "weight_sum": weight_sum,
+        "expected_plan_hash": expected_hash,
+        "stored_plan_hash": stored_hash,
+    }
+
+
+def _clear_portfolio_caches() -> None:
+    load_active_fii_portfolio_model.clear()
+    list_fii_portfolio_model_versions.clear()
+
+
 def save_fii_portfolio_model(
     items: list[dict],
     params: dict,
@@ -159,12 +257,30 @@ def save_fii_portfolio_model(
         raise RuntimeError("Banco unificado não configurado.")
 
     owner = _owner_id()
+    tickers = [
+        str(item.get("ticker") or item.get("tk") or "").upper().strip()
+        for item in items
+    ]
+    valid_tickers = [ticker for ticker in tickers if ticker]
+    if not valid_tickers:
+        raise ValueError("Nenhum ticker válido para salvar.")
+    if len(valid_tickers) != len(set(valid_tickers)):
+        raise ValueError("A carteira contém tickers duplicados.")
     weights = _normalize_weight(items)          # aceita 'peso'/'weight' + 'ticker'/'tk'
     plan_hash = _fii_plan_hash(items, params, weights)
     model_id = str(uuid.uuid4())
 
     with engine.begin() as conn:
         _ensure_tables(conn)
+        # Serializa substituições concorrentes do modelo ativo do mesmo dono.
+        conn.execute(
+            text("""
+                SELECT id FROM fii_portfolio_models
+                WHERE user_id = :uid
+                FOR UPDATE
+            """),
+            {"uid": owner},
+        ).all()
         conn.execute(
             text("""
                 UPDATE fii_portfolio_models SET status = 'archived', updated_at = NOW()
@@ -212,7 +328,15 @@ def save_fii_portfolio_model(
                 },
             )
 
-    load_active_fii_portfolio_model.clear()
+        persisted = _model_from_connection(conn, owner, model_id=model_id)
+        integrity = validate_fii_portfolio_model(persisted)
+        if not integrity["ok"]:
+            raise RuntimeError(
+                "Verificação pós-gravação falhou: "
+                + " · ".join(integrity["reasons"])
+            )
+
+    _clear_portfolio_caches()
     return model_id
 
 
@@ -230,37 +354,96 @@ def load_active_fii_portfolio_model() -> dict:
         """)).scalar()
         if not exists:
             return {}
-        header = conn.execute(
-            text("""
-                SELECT id, name, params_json, metrics_json, created_at
-                FROM fii_portfolio_models
-                WHERE user_id = :uid AND status = 'active'
-                ORDER BY created_at DESC LIMIT 1
-            """),
-            {"uid": str(settings.OWNER_USER_ID)},
-        ).mappings().fetchone()
-        if not header:
-            return {}
+        model = _model_from_connection(
+            conn, str(settings.OWNER_USER_ID), active_only=True
+        )
+    if model:
+        model["integrity"] = validate_fii_portfolio_model(model)
+    return model
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def list_fii_portfolio_model_versions(limit: int = 10) -> list[dict]:
+    """Lista versões do proprietário sem expor posições ou dados pessoais."""
+    engine = get_engine()
+    if engine is None or not settings.OWNER_USER_ID:
+        return []
+    safe_limit = max(1, min(int(limit), 50))
+    with engine.connect() as conn:
         rows = conn.execute(
             text("""
-                SELECT ticker, nome, tipo, segmento, weight, dy_12m, pvp, score
-                FROM fii_portfolio_model_items
-                WHERE model_id = :mid
-                ORDER BY weight DESC, score DESC, ticker
+                SELECT m.id, m.name, m.status, m.plan_hash, m.params_json,
+                       m.created_at, m.updated_at, count(i.id) AS item_count,
+                       COALESCE(sum(i.weight), 0) AS weight_sum
+                FROM fii_portfolio_models m
+                LEFT JOIN fii_portfolio_model_items i ON i.model_id = m.id
+                WHERE m.user_id = :uid
+                GROUP BY m.id
+                ORDER BY m.created_at DESC
+                LIMIT :limit
             """),
-            {"mid": str(header["id"])},
+            {"uid": str(settings.OWNER_USER_ID), "limit": safe_limit},
         ).mappings().all()
+    return [
+        {
+            **dict(row),
+            "item_count": int(row["item_count"] or 0),
+            "weight_sum": float(row["weight_sum"] or 0.0),
+        }
+        for row in rows
+    ]
 
-    items = []
-    for r in rows:
-        d = dict(r)
-        for k in ("weight", "dy_12m", "pvp", "score"):
-            d[k] = float(d[k]) if d[k] is not None else None
-        # normaliza para o mesmo formato do build_portfolio (peso)
-        d["peso"] = d.get("weight") or 0.0
-        items.append(d)
 
-    model = dict(header)
-    model["items"] = items
-    model["num_items"] = len(items)
-    return model
+def restore_fii_portfolio_model(model_id: str) -> str:
+    """Restaura uma versão íntegra do proprietário em uma única transação."""
+    try:
+        target_id = str(uuid.UUID(str(model_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("Identificador de versão inválido.") from exc
+    engine = get_engine()
+    if engine is None:
+        raise RuntimeError("Banco unificado não configurado.")
+    owner = _owner_id()
+    with engine.begin() as conn:
+        _ensure_tables(conn)
+        owned_ids = {
+            str(value) for value in conn.execute(
+                text("""
+                    SELECT id FROM fii_portfolio_models
+                    WHERE user_id = :uid
+                    FOR UPDATE
+                """),
+                {"uid": owner},
+            ).scalars()
+        }
+        if target_id not in owned_ids:
+            raise ValueError("Versão inexistente ou pertencente a outro usuário.")
+        target = _model_from_connection(conn, owner, model_id=target_id)
+        integrity = validate_fii_portfolio_model(target)
+        if not integrity["ok"]:
+            raise RuntimeError(
+                "Restauração bloqueada por falha de integridade: "
+                + " · ".join(integrity["reasons"])
+            )
+        if target.get("status") != "active":
+            conn.execute(
+                text("""
+                    UPDATE fii_portfolio_models
+                    SET status = 'archived', updated_at = NOW()
+                    WHERE user_id = :uid AND status = 'active'
+                """),
+                {"uid": owner},
+            )
+            conn.execute(
+                text("""
+                    UPDATE fii_portfolio_models
+                    SET status = 'active', updated_at = NOW()
+                    WHERE id = :mid AND user_id = :uid
+                """),
+                {"mid": target_id, "uid": owner},
+            )
+        restored = _model_from_connection(conn, owner, model_id=target_id)
+        if restored.get("status") != "active":
+            raise RuntimeError("A versão restaurada não ficou ativa.")
+    _clear_portfolio_caches()
+    return target_id

@@ -23,9 +23,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.config import settings
-
-
 SAFE_TABLE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$")
 
 
@@ -53,6 +50,8 @@ def _engine(url: str):
 
 
 def backup_table(table: str, output_dir: Path) -> dict:
+    from core.config import settings
+
     if not SAFE_TABLE.fullmatch(table):
         raise ValueError(f"nome de tabela inválido: {table!r}")
     url = settings.db_url
@@ -145,11 +144,15 @@ def main() -> int:
     args = parser.parse_args()
     stamp = dt.datetime.now().strftime("remote_snapshots_%Y%m%d_%H%M%S")
     output_dir = args.output_dir or ROOT / "migration" / "backup" / stamp
-    reports = [backup_table(table, output_dir) for table in args.table]
     manifest = output_dir / "manifest.json"
-    manifest.write_text(
-        json.dumps(reports, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    reports = []
+    for table in args.table:
+        reports.append(backup_table(table, output_dir))
+        # Persiste progresso verificado: uma falha de rede posterior não apaga
+        # a evidência das tabelas que já tiveram dump e catálogo validados.
+        manifest.write_text(
+            json.dumps(reports, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     print(json.dumps({"output_dir": str(output_dir), "tables": reports}, ensure_ascii=False))
     return 0
 

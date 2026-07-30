@@ -17,6 +17,7 @@ from html import escape
 
 import pandas as pd
 import streamlit as st
+from sqlalchemy.exc import SQLAlchemyError
 
 import core.market_read as _mr
 from core.fii_integrated_model import (INTEGRATED_MODEL_VERSION,
@@ -25,7 +26,10 @@ from core.fii_integrated_model import (INTEGRATED_MODEL_VERSION,
 from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION, MacroScenario,
                                  classify_macro_regime, evaluate_publication_gate,
                                  score_fiis_by_type)
-from core.fii_portfolio_v4 import PortfolioPolicy, optimize_diligence_portfolio
+from core.fii_portfolio_monitor import build_fii_portfolio_monitor
+from core.fii_portfolio_v4 import (LIVE_PORTFOLIO_STRATEGY_ID, PortfolioPolicy,
+                                   optimize_diligence_portfolio)
+from core.fii_validation import validation_supports_strategy
 from core.fii_selection_explanations import build_selection_reports
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_context_fii import build_fii_chat_context
@@ -128,8 +132,41 @@ _SNAPSHOT_REQUIRED_FIELDS = (
 )
 
 
+def _methodology_inputs_to_vitrine(inputs: pd.DataFrame) -> pd.DataFrame:
+    """Projeta o snapshot metodológico no formato visual sem uma segunda consulta."""
+    if inputs.empty:
+        return inputs.copy()
+    mapping = {
+        "ticker": "Ticker", "name": "Nome", "sector": "Segmento", "tipo": "Tipo",
+        "price": "Preço", "pvp": "P/VP", "dy_12m": "DY_12m",
+        "liquidez_diaria": "Liquidez_Diaria", "patrimonio_liquido": "Patrimonio",
+        "vpa": "VPA", "num_cotistas": "Cotistas", "tipo_gestao": "Gestao",
+        "pct_imoveis": "Pct_Imoveis", "pct_papel": "Pct_Papel",
+        "pct_caixa": "Pct_Caixa", "pct_fundos": "Pct_Fundos",
+    }
+    frame = inputs.rename(columns=mapping).copy()
+    for column in (*mapping.values(), "updated_at", "cvm_ref_date", "vacancia_ref_date"):
+        if column not in frame:
+            frame[column] = pd.NA
+    return frame[[*mapping.values(), "updated_at", "cvm_ref_date", "vacancia_ref_date"]]
+
+
+def _snapshot_as_of(inputs: pd.DataFrame):
+    dates = []
+    for row in inputs.to_dict("records"):
+        metadata = row.get("snapshot_metadata") or {}
+        value = metadata.get("as_of_date") if isinstance(metadata, dict) else None
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.notna(parsed):
+            dates.append(parsed.date())
+    return min(dates) if dates else None
+
+
 def render(show_header: bool = True) -> None:
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
+    validation_applicable = validation_supports_strategy(
+        validation, LIVE_PORTFOLIO_STRATEGY_ID
+    )
     if show_header:
         st.markdown("## Seleção de FIIs — Lista de Diligência")
         # A frase sobre publicabilidade saiu daqui: era dita de novo, logo abaixo,
@@ -137,16 +174,24 @@ def render(show_header: bool = True) -> None:
         # da metodologia e o status da validação point-in-time.
         st.caption(
             f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]}, específica por tipo · "
-            + ("validação point-in-time aprovada"
-               if validation.get("status") == "passed"
-               else "validação point-in-time pendente")
+            + ("validação point-in-time aplicável ao motor atual"
+               if validation_applicable
+               else "validação do motor atual pendente")
         )
     st.markdown(_CSS, unsafe_allow_html=True)
 
-    df = _mr.load_fiis()
+    with st.spinner("Carregando snapshot auditável de FIIs…"):
+        inputs = _mr.load_fii_methodology_inputs()
+    df = _methodology_inputs_to_vitrine(inputs)
     if df.empty:
-        st.info("Ainda não há FIIs no banco. Rode `python run_market_ingest.py fiis` "
-                "(+ `fiis-cvm`, `fiis-series`) para popular.")
+        if inputs.attrs.get("load_error"):
+            st.error(
+                "Não foi possível consultar o universo de FIIs agora. "
+                "A conexão foi preservada em modo somente leitura; tente novamente."
+            )
+        else:
+            st.info("Ainda não há FIIs no banco. Rode `python run_market_ingest.py fiis` "
+                    "(+ `fiis-cvm`, `fiis-series`) para popular.")
         return
     df = df.copy()
     # P/VP efetivo (fix auditoria FII 2026-07): preço ÷ VPA CVM quando
@@ -157,10 +202,9 @@ def render(show_header: bool = True) -> None:
             _fz.pvp_efetivo(p, v, b)
             for p, v, b in zip(df["Preço"], df["VPA"], df["P/VP"])
         ]
-    inputs = _mr.load_fii_methodology_inputs()
     scored_v4 = score_fiis_by_type(
         inputs.to_dict("records") if not inputs.empty else [],
-        validation_status="passed" if validation.get("status") == "passed" else "unvalidated",
+        validation_status="passed" if validation_applicable else "unvalidated",
     )
     score_map = {r["ticker"]: r for r in scored_v4}
     df["Score"] = df["Ticker"].map(lambda ticker: (score_map.get(ticker) or {}).get("type_score"))
@@ -170,7 +214,8 @@ def render(show_header: bool = True) -> None:
         lambda ticker: (score_map.get(ticker) or {}).get("publication_status", "diligence_only"))
     gate = evaluate_publication_gate(
         scored_v4, expected_universe=len(df),
-        validation_status="passed" if validation.get("status") == "passed" else "unvalidated",
+        validation_status="passed" if validation_applicable else "unvalidated",
+        snapshot_as_of=_snapshot_as_of(inputs),
     )
     st.session_state["fii_raw_publication_gate"] = gate
     ranked = df[df["Score"].notna()].sort_values(
@@ -184,9 +229,12 @@ def render(show_header: bool = True) -> None:
         st.success("Cobertura, confiança e validação atendidas — "
                    "apta à publicação como Carteira Modelo.")
     else:
-        st.warning("Rascunho de diligência: não é recomendação definitiva nem "
-                   "Carteira Modelo. Os números do bloqueio estão em "
-                   "“Qualidade dos dados”, logo abaixo.")
+        st.warning(
+            "Universo bruto em diligência: a lista completa ainda não atende ao "
+            "gate de publicação. Isso não bloqueia automaticamente a Carteira-modelo, "
+            "que usa somente o subconjunto elegível e aplica gates próprios. "
+            "Os números do universo estão em “Qualidade dos dados”, logo abaixo."
+        )
     _render_data_health_summary(health_metrics, gate)
 
     # Abas por botão (permitem trocar de aba programaticamente — ex.: card → Busca).
@@ -194,7 +242,7 @@ def render(show_header: bool = True) -> None:
     cols = st.columns(len(_TABS))
     for i, (c, lab) in enumerate(zip(cols, _TABS)):
         with c:
-            if st.button(lab, use_container_width=True, key=f"fii_tab{i}",
+            if st.button(lab, width="stretch", key=f"fii_tab{i}",
                          type="primary" if active == i else "secondary"):
                 st.session_state["fii_active_tab"] = i
                 st.rerun()
@@ -627,7 +675,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
 
     _, clear_col = st.columns([5, 1])
     with clear_col:
-        if st.button("🗑️ Limpar chat", key="fii_chat_clear", use_container_width=True):
+        if st.button("🗑️ Limpar chat", key="fii_chat_clear", width="stretch"):
             st.session_state.pop("fii_chat_history", None)
             st.rerun()
 
@@ -641,7 +689,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
     for index, question in enumerate(suggestions):
         with suggestion_cols[index]:
             if st.button(question, key=f"fii_chat_suggestion_{index}",
-                         use_container_width=True):
+                         width="stretch"):
                 suggested_input = question
 
     history: list[dict] = st.session_state.get("fii_chat_history", [])
@@ -691,7 +739,7 @@ def _comp_tipo_chart(pf: pd.DataFrame) -> None:
                       xaxis=dict(visible=False, range=[0, max(float(comp.max()) * 1.18, 1)]),
                       yaxis_title=None, plot_bgcolor="rgba(0,0,0,0)",
                       paper_bgcolor="rgba(0,0,0,0)", font_color="#CBD5E0")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _number_or_none(value):
@@ -928,7 +976,7 @@ def _render_portfolio_correlation(weights: dict[str, float],
         font_color="#CBD5E0", coloraxis_colorbar=dict(title="Correlação"),
     )
     fig.update_xaxes(side="bottom", tickangle=-45)
-    st.plotly_chart(fig, use_container_width=True, key="fii_selected_correlation")
+    st.plotly_chart(fig, width="stretch", key="fii_selected_correlation")
     return returns
 
 
@@ -1018,7 +1066,7 @@ def _render_portfolio_history_diagnostics(weights: dict[str, float],
         f"Efeito incremental da diversificação na mesma janela comum de {months} meses. "
         f"Número efetivo: {effective:.1f} de {len(weights)}." if effective else
         f"Efeito incremental da diversificação na mesma janela comum de {months} meses.")
-    st.plotly_chart(figure, use_container_width=True, key="fii_integrated_risk_curve")
+    st.plotly_chart(figure, width="stretch", key="fii_integrated_risk_curve")
 
 
 def _merge_portfolio_views(primary: pd.DataFrame | None,
@@ -1063,7 +1111,7 @@ def _render_portfolio_table(slot, primary: pd.DataFrame | None,
     show = _merge_portfolio_views(primary, complementary)
     if show.empty:
         return
-    slot.dataframe(show, use_container_width=True, hide_index=True, column_config={
+    slot.dataframe(show, width="stretch", hide_index=True, column_config={
         "Peso": st.column_config.NumberColumn(format="percent"),
         "Score": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.1f"),
         "Peso v4": st.column_config.NumberColumn(format="percent"),
@@ -1112,7 +1160,7 @@ def _render_grupo(tipo_key: str, grupo: pd.DataFrame) -> None:
             with cols[j]:
                 st.markdown(_fii_card_html(row), unsafe_allow_html=True)
                 if st.button("Analisar 🔎", key=f"fii_an_{row['Ticker']}",
-                             use_container_width=True):
+                             width="stretch"):
                     st.session_state["fii_sel_ticker"] = row["Ticker"]
                     st.session_state["fii_active_tab"] = 1
                     st.rerun()
@@ -1168,7 +1216,7 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
             show = view[["Ticker", "Nome", "Segmento", "Tipo", "Preço", "DY_12m",
                          "P/VP", "VPA", "Liquidez_Diaria", "Cotistas", "Score",
                          "Confiança", "Cobertura", "Status_Publicação"]]
-            st.dataframe(show, use_container_width=True, hide_index=True, column_config={
+            st.dataframe(show, width="stretch", hide_index=True, column_config={
                 "Nome": st.column_config.TextColumn("Nome", width="medium"),
                 "Preço": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
                 "DY_12m": st.column_config.NumberColumn("DY 12m", format="percent"),
@@ -1186,7 +1234,8 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
                f"dados ausentes reduzem cobertura e confiança, sem imputação neutra. "
                f"{fora} fundos ficaram sem score por tipo ausente/inválido. "
                f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}. "
-               "As limitações e métricas críticas ausentes impedem o uso como recomendação.")
+               "O universo bruto permanece em diligência; a Carteira-modelo usa "
+               "somente o subconjunto elegível e possui gate de publicação próprio.")
 
 
 # ── Tab 2: Busca de ativo (detalhe por FII) ───────────────────────────────────
@@ -1319,7 +1368,7 @@ def _tab_busca(df: pd.DataFrame) -> None:
     cols[1].markdown(_kpi_html("Regiões", regioes or "—", accent="#B084F6"), unsafe_allow_html=True)
     cols[2].markdown(_kpi_html("Área total (m²)", area_tot, accent="#4A9EFF"), unsafe_allow_html=True)
     if not imoveis.empty:
-        st.dataframe(imoveis, use_container_width=True, hide_index=True, column_config={
+        st.dataframe(imoveis, width="stretch", hide_index=True, column_config={
             "Imóvel": st.column_config.TextColumn("Imóvel", width="medium"),
             "Área_m2": st.column_config.NumberColumn("Área (m²)", format="%.0f"),
             "Vacância": st.column_config.NumberColumn("Vacância", format="percent"),
@@ -1340,7 +1389,7 @@ def _tab_busca(df: pd.DataFrame) -> None:
 def _tab_carteira(ranked: pd.DataFrame) -> None:
     st.subheader("Preferências da seleção")
     st.markdown(_info_card_html(
-        "Seleção Integrada de FIIs · v5",
+        "Seleção Integrada de FIIs · v6.4",
         "Um único motor combina elegibilidade histórica, score específico por tipo, "
         "qualidade dos dados, cenário macroeconômico, concentração e correlação. "
         "DY, P/VP e liquidez entram uma única vez, sem somar scores concorrentes.",
@@ -1408,18 +1457,22 @@ def _carteira_integrada(preferences: dict):
                 {"Motivo": reason, "FIIs excluídos": count}
                 for reason, count in eligibility["exclusion_counts"].items()
             ])
-            st.dataframe(exclusions, hide_index=True, use_container_width=True)
+            st.dataframe(exclusions, hide_index=True, width="stretch")
     if not eligible_rows:
         st.error("Nenhum FII atende à combinação escolhida. Relaxe os filtros de elegibilidade.")
         st.session_state.pop("fii_port", None)
         return None
 
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
-    validation_status = "passed" if validation.get("status") == "passed" else "unvalidated"
+    validation_status = (
+        "passed" if validation_supports_strategy(validation, LIVE_PORTFOLIO_STRATEGY_ID)
+        else "unvalidated"
+    )
     scored = score_fiis_by_type(eligible_rows, validation_status=validation_status)
     investable_gate = evaluate_publication_gate(
         scored, expected_universe=len(eligible_rows),
         validation_status=validation_status,
+        snapshot_as_of=_snapshot_as_of(inputs),
     )
     st.session_state["fii_investable_publication_gate"] = investable_gate
     investable_ready = sum(
@@ -1453,11 +1506,24 @@ def _carteira_integrada(preferences: dict):
     candidate_prices = _mr.load_precos_mensais(tuple(sorted(correlation_candidates)))
     _, candidate_correlation = _portfolio_return_correlation(
         candidate_prices, correlation_candidates, min_months=12)
+    previous_weights: dict[str, float] = {}
+    active_model: dict = {}
+    try:
+        from core.fii_portfolio_model import load_active_fii_portfolio_model
+        active_model = load_active_fii_portfolio_model()
+        previous_weights = {
+            str(item.get("ticker") or ""): float(item.get("weight") or 0.0)
+            for item in (active_model.get("items") or [])
+            if item.get("ticker") and float(item.get("weight") or 0.0) > 0
+        }
+    except (RuntimeError, ValueError, TypeError, SQLAlchemyError):
+        previous_weights = {}
     result = optimize_diligence_portfolio(
         scored, scenario, policy=portfolio_policy,
         correlation_matrix=(candidate_correlation.to_dict()
                             if not candidate_correlation.empty else None),
         correlation_penalty=float(preferences["correlation_penalty"]),
+        previous_weights=previous_weights,
     )
     if not result.get("items"):
         st.error("Não foi possível construir uma carteira factível: " +
@@ -1473,6 +1539,18 @@ def _carteira_integrada(preferences: dict):
         blockers = list(result.get("blockers") or []) + list(investable_gate.reasons)
         st.warning("Rascunho não publicável: " + " · ".join(dict.fromkeys(blockers)))
     items = result["items"]
+    monitor = build_fii_portfolio_monitor(
+        current_items=items,
+        saved_model=active_model,
+        snapshot_as_of=_snapshot_as_of(inputs),
+        validation=validation,
+        expected_strategy_id=LIVE_PORTFOLIO_STRATEGY_ID,
+        expected_methodology_version=METHODOLOGY_VERSION,
+        gate_can_publish=portfolio_can_publish,
+        dimension_coverage=result.get("dimension_coverage") or {},
+    )
+    st.session_state["fii_portfolio_monitor"] = monitor
+    _render_portfolio_monitor(monitor)
     show = pd.DataFrame([{
         "Ticker": item["ticker"], "Tipo": item["tipo"],
         "Segmento": item.get("sector"), "Peso": item["weight"],
@@ -1497,7 +1575,8 @@ def _carteira_integrada(preferences: dict):
                           sub=f"{eligibility['eligible_count']} elegíveis",
                           accent="#4A9EFF"),
                 unsafe_allow_html=True)
-    k2.markdown(_kpi_html("Renda esperada", f"{result['expected_yield']:.1%}"),
+    k2.markdown(_kpi_html("DY histórico ponderado", f"{result['trailing_yield_12m']:.1%}",
+                          sub="distribuições dos últimos 12 meses; não é previsão"),
                 unsafe_allow_html=True)
     k3.markdown(_kpi_html("P/VP ponderado",
                           f"{weighted_pvp:.2f}" if weighted_pvp is not None else "—",
@@ -1513,8 +1592,12 @@ def _carteira_integrada(preferences: dict):
                           accent="#FC5C7D" if corr_coverage < .80 else "#4A9EFF"),
                 unsafe_allow_html=True)
     if result.get("unresolved_dimensions"):
-        st.caption("Dimensões de concentração ainda sem look-through suficiente: "
-                   + ", ".join(result["unresolved_dimensions"]) + ".")
+        st.caption(
+            "Look-through adicional ainda sem cobertura suficiente: "
+            + ", ".join(result["unresolved_dimensions"])
+            + ". Esses limites só são aplicados quando observáveis; setor e "
+              "emissor possuem histórico point-in-time obrigatório."
+        )
     weights = {item["ticker"]: item["weight"] for item in items}
     fii_types = {item["ticker"]: item["tipo"] for item in items}
     returns = _render_portfolio_correlation(weights, fii_types)
@@ -1563,20 +1646,65 @@ def _carteira_integrada(preferences: dict):
         prices=report_prices,
     )
     _render_save_portfolio(
-        port, {"metodo": "fii_integrated_v5", "model_version": INTEGRATED_MODEL_VERSION,
+        port, {"metodo": "fii_integrated_v6_4", "model_version": INTEGRATED_MODEL_VERSION,
+               "strategy_id": LIVE_PORTFOLIO_STRATEGY_ID,
                "methodology_version": METHODOLOGY_VERSION,
                "formula_version": FORMULA_VERSION,
                "regime": classify_macro_regime(scenario),
                "scenario": scenario.__dict__, "policy": result.get("policy"),
                "eligibility": eligibility.get("policy"),
                "correlation_penalty": result.get("correlation_penalty")},
-        {"expected_yield": result["expected_yield"], "effective_assets": result["effective_assets"],
+        {"trailing_yield_12m": result["trailing_yield_12m"],
+         "expected_yield": result["expected_yield"],
+         "effective_assets": result["effective_assets"],
          "scenario_returns": result["scenario_returns"],
          "correlation_risk": result.get("correlation_risk"),
          "correlation_coverage": corr_coverage,
          "average_confidence": average_confidence,
-         "eligible_count": eligibility["eligible_count"]}, key="fii_save_model_integrated_v5")
+         "eligible_count": eligibility["eligible_count"]}, key="fii_save_model_integrated_v6_4")
     return table_slot, show, specific_metrics
+
+
+def _render_portfolio_monitor(monitor: dict) -> None:
+    status = str(monitor.get("status") or "blocked")
+    label = {"ok": "OK", "warning": "Revisão", "blocked": "Bloqueado"}.get(
+        status, "Indisponível"
+    )
+    metrics = monitor.get("metrics") or {}
+    with st.expander(
+        f"🛡️ Monitoramento operacional · {label}",
+        expanded=status != "ok",
+    ):
+        columns = st.columns(3)
+        age = metrics.get("snapshot_age_days")
+        turnover = metrics.get("turnover")
+        drift = metrics.get("max_asset_weight_drift")
+        columns[0].metric(
+            "Idade do snapshot",
+            f"{int(age)} dias" if age is not None else "—",
+        )
+        columns[1].metric(
+            "Turnover vs. versão salva",
+            f"{float(turnover):.1%}" if turnover is not None else "—",
+        )
+        columns[2].metric(
+            "Maior drift por FII",
+            f"{float(drift):.1%}" if drift is not None else "—",
+        )
+        checks = pd.DataFrame([
+            {
+                "Controle": item.get("code"),
+                "Status": item.get("status"),
+                "Diagnóstico": item.get("message"),
+            }
+            for item in (monitor.get("checks") or [])
+        ])
+        if not checks.empty:
+            st.dataframe(checks, width="stretch", hide_index=True)
+        st.caption(
+            "Ausência de exposição permanece desconhecida e não é tratada como "
+            "baixo risco. O monitor não executa ordens ou rebalanceamentos."
+        )
 
 
 def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
@@ -1598,15 +1726,69 @@ def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
             gate and gate.can_publish_recommendation
             and st.session_state.get("fii_portfolio_can_publish", False)
         )
-        if st.button("💾 Salvar carteira-modelo", use_container_width=True,
+        if st.button("💾 Salvar carteira-modelo", width="stretch",
                      type="primary", key=key, disabled=not can_publish,
                      help=None if can_publish else "Publicação bloqueada pela metodologia integrada"):
             try:
                 from core.fii_portfolio_model import save_fii_portfolio_model
                 save_fii_portfolio_model(port, params, metrics)
-                st.success("Carteira-modelo de FIIs salva e disponível no Dashboard Geral.")
-            except Exception as exc:
+                st.success(
+                    "Carteira-modelo salva, relida e verificada na mesma transação."
+                )
+            except (RuntimeError, ValueError) as exc:
                 st.error(f"Não foi possível salvar: {exc}")
+            except SQLAlchemyError:
+                st.error(
+                    "Não foi possível salvar por uma falha transacional no banco. "
+                    "Nenhuma substituição parcial foi mantida."
+                )
+    _render_portfolio_version_history(key)
+
+
+def _render_portfolio_version_history(key: str) -> None:
+    try:
+        from core.fii_portfolio_model import (
+            list_fii_portfolio_model_versions,
+            restore_fii_portfolio_model,
+        )
+        versions = list_fii_portfolio_model_versions()
+    except (RuntimeError, ValueError, SQLAlchemyError):
+        return
+    archived = [item for item in versions if item.get("status") == "archived"]
+    if not archived:
+        return
+    with st.expander("🕘 Histórico e restauração da Carteira-modelo"):
+        by_id = {str(item["id"]): item for item in archived}
+        selected = st.selectbox(
+            "Versão arquivada",
+            options=list(by_id),
+            format_func=lambda model_id: (
+                f"{fmt_datetime_br(by_id[model_id].get('created_at'))} · "
+                f"{by_id[model_id].get('item_count', 0)} FIIs · "
+                f"{(by_id[model_id].get('params_json') or {}).get('methodology_version', 'legado')}"
+            ),
+            key=f"{key}_restore_version",
+        )
+        confirmed = st.checkbox(
+            "Confirmo que desejo substituir a versão ativa por esta versão arquivada.",
+            key=f"{key}_restore_confirm",
+        )
+        if st.button(
+            "Restaurar versão selecionada",
+            key=f"{key}_restore_action",
+            disabled=not confirmed,
+        ):
+            try:
+                restore_fii_portfolio_model(selected)
+                st.success("Versão restaurada e verificada transacionalmente.")
+                st.rerun()
+            except (RuntimeError, ValueError) as exc:
+                st.error(f"Restauração bloqueada: {exc}")
+            except SQLAlchemyError:
+                st.error(
+                    "Restauração bloqueada por uma falha transacional no banco; "
+                    "a versão ativa anterior foi preservada."
+                )
 
 
 # ── Tab 4: Backtest ───────────────────────────────────────────────────────────

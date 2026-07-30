@@ -1,8 +1,13 @@
 from datetime import date
 
-from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION, MacroScenario,
-                                  evaluate_publication_gate, score_fiis_by_type,
-                                  tactical_type_bands)
+from core.fii_methodology import (
+    FORMULA_VERSION,
+    METHODOLOGY_VERSION,
+    MacroScenario,
+    evaluate_publication_gate,
+    score_fiis_by_type,
+    tactical_type_bands,
+)
 
 
 def _full_tijolo(ticker: str, multiplier: float = 1.0) -> dict:
@@ -64,3 +69,84 @@ def test_tactical_bands_change_with_selic_cycle():
     easing = tactical_type_bands(MacroScenario(selic=10, ipca=4, selic_change_12m=-3))
     assert high["papel"][0] > easing["papel"][0]
     assert easing["tijolo"][0] > high["tijolo"][0]
+
+
+def test_baseline_sensitivity_shocks_do_not_force_stress_regime():
+    scenario = MacroScenario(
+        selic=15, ipca=4, selic_change_12m=1,
+        vacancy_shock=.08, credit_event_rate=.03,
+    )
+
+    assert tactical_type_bands(scenario)["papel"][0] == .30
+
+
+def test_stale_snapshot_blocks_publication_even_with_passed_validation():
+    rows = score_fiis_by_type([_full_tijolo("AAAA11")], as_of=date(2026, 7, 12),
+                              validation_status="passed")
+    gate = evaluate_publication_gate(
+        rows, expected_universe=1, validation_status="passed",
+        snapshot_as_of=date(2026, 7, 1), max_snapshot_age_days=4,
+        as_of=date(2026, 7, 12),
+    )
+
+    assert not gate.can_publish_recommendation
+    assert any("snapshot com 11 dias" in reason for reason in gate.reasons)
+
+
+def test_missing_confidence_inputs_are_penalized_and_explicit_zero_is_preserved():
+    missing = _full_tijolo("AAAA11")
+    missing.pop("data_consistency")
+    explicit_zero = _full_tijolo("BBBB11")
+    explicit_zero["data_consistency"] = 0.0
+    rows = score_fiis_by_type([missing, explicit_zero], as_of=date(2026, 7, 12),
+                              validation_status="passed")
+    by_ticker = {row["ticker"]: row for row in rows}
+
+    assert "data_consistency_missing" in by_ticker["AAAA11"]["confidence_assumptions"]
+    assert by_ticker["BBBB11"]["confidence"] < by_ticker["AAAA11"]["confidence"]
+
+
+def test_compact_snapshot_metadata_matches_nominal_provenance():
+    nominal = _full_tijolo("AAAA11")
+    nominal["metric_metadata"] = {
+        "dy_12m": {
+            "available_at": "2026-07-01",
+            "source_quality": .95,
+            "reference_date": "2026-06-30",
+            "source": "cvm_informe_mensal",
+        },
+    }
+    compact = _full_tijolo("AAAA11")
+    compact["metric_metadata"] = {
+        "dy_12m": [
+            "2026-07-01", .95, "2026-06-30", "cvm_informe_mensal",
+        ],
+    }
+
+    nominal_score = score_fiis_by_type(
+        [nominal], as_of=date(2026, 7, 12), validation_status="passed",
+    )[0]
+    compact_score = score_fiis_by_type(
+        [compact], as_of=date(2026, 7, 12), validation_status="passed",
+    )[0]
+
+    assert compact_score["freshness_score"] == nominal_score["freshness_score"]
+    assert compact_score["source_quality"] == nominal_score["source_quality"]
+    assert compact_score["confidence"] == nominal_score["confidence"]
+
+
+def test_malformed_metric_metadata_is_missing_instead_of_crashing():
+    row = _full_tijolo("AAAA11")
+    row["metric_metadata"] = {
+        "dy_12m": "invalid",
+        "pvp": [],
+        "liquidez_diaria": None,
+    }
+
+    scored = score_fiis_by_type(
+        [row], as_of=date(2026, 7, 12), validation_status="passed",
+    )
+
+    assert len(scored) == 1
+    assert scored[0]["ticker"] == "AAAA11"
+    assert 0 <= scored[0]["source_quality"] <= 1

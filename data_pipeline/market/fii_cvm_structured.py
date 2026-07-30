@@ -16,6 +16,7 @@ import json
 import math
 from pathlib import Path
 import re
+import unicodedata
 import zipfile
 from zoneinfo import ZoneInfo
 
@@ -27,7 +28,7 @@ from data_pipeline.market.fii_sources import metric_observation
 SOURCE = "cvm_dados_abertos"
 ROOT = "https://dados.cvm.gov.br/dados/FII/DOC"
 PARSER_NAME = "cvm_fii_structured"
-PARSER_VERSION = "1.3.0"
+PARSER_VERSION = "1.5.0"
 PARSER_SCHEMA_VERSION = "cvm-fii-structured-v2"
 ARCHIVES = {
     "monthly": ("INF_MENSAL", "inf_mensal_fii_{year}.zip"),
@@ -171,6 +172,65 @@ def _ratio(value) -> float | None:
     if 1 < number <= 100:
         number /= 100.0
     return number if 0 <= number <= 1 else None
+
+
+BRAZIL_STATE_CODES = frozenset({
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT",
+    "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO",
+    "RR", "SC", "SP", "SE", "TO",
+})
+BRAZIL_STATE_NAMES = {
+    "ACRE": "AC", "ALAGOAS": "AL", "AMAPA": "AP", "AMAZONAS": "AM",
+    "BAHIA": "BA", "CEARA": "CE", "DISTRITO FEDERAL": "DF",
+    "ESPIRITO SANTO": "ES", "GOIAS": "GO", "MARANHAO": "MA",
+    "MATO GROSSO": "MT", "MATO GROSSO DO SUL": "MS", "MINAS GERAIS": "MG",
+    "PARA": "PA", "PARAIBA": "PB", "PARANA": "PR", "PERNAMBUCO": "PE",
+    "PIAUI": "PI", "RIO DE JANEIRO": "RJ", "RIO GRANDE DO NORTE": "RN",
+    "RIO GRANDE DO SUL": "RS", "RONDONIA": "RO", "RORAIMA": "RR",
+    "SANTA CATARINA": "SC", "SAO PAULO": "SP", "SERGIPE": "SE",
+    "TOCANTINS": "TO",
+}
+
+
+def _ascii_upper(value: str) -> str:
+    return "".join(
+        character for character in unicodedata.normalize("NFKD", value)
+        if not unicodedata.combining(character)
+    ).upper()
+
+
+def _property_state(row: dict) -> str | None:
+    """Extrai somente UF explicitamente declarada, sem geocodificação."""
+    for field in ("UF", "Sigla_UF", "Estado"):
+        value = _ascii_upper(_text(row.get(field)) or "")
+        if value in BRAZIL_STATE_CODES:
+            return value
+        if value in BRAZIL_STATE_NAMES:
+            return BRAZIL_STATE_NAMES[value]
+    address = _ascii_upper(_text(row.get("Endereco")) or "")
+    if not address:
+        return None
+    match = re.search(
+        r"(?:^|[\s,;/\-])("
+        + "|".join(sorted(BRAZIL_STATE_CODES))
+        + r")(?:[\s,;/\-]+(?:CEP\s*)?\d{5}-?\d{3})?\s*$",
+        address,
+    )
+    if match:
+        return match.group(1)
+    full_name_match = re.search(
+        r"(?:^|[\s,;/\-])("
+        + "|".join(
+            re.escape(name)
+            for name in sorted(BRAZIL_STATE_NAMES, key=len, reverse=True)
+        )
+        + r")(?:[\s,;/\-]+(?:CEP\s*)?\d{5}-?\d{3})?\s*$",
+        address,
+    )
+    return (
+        BRAZIL_STATE_NAMES[full_name_match.group(1)]
+        if full_name_match else None
+    )
 
 
 def _date(value) -> date | None:
@@ -420,6 +480,7 @@ def parse_quarterly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
         prop_rows = properties.get(key) or []
         vacancy_num = delinquency_num = weight_total = 0.0
         property_amounts: dict[str, float] = defaultdict(float)
+        region_amounts: dict[str, float] = defaultdict(float)
         for row in prop_rows:
             weight = (_ratio(row.get("Percentual_Receitas_FII")) or
                       _ratio(row.get("Percentual_Imovel_Total_Investido")) or 0)
@@ -428,7 +489,24 @@ def parse_quarterly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
             weight_total += weight
             vacancy_num += weight * (_ratio(row.get("Percentual_Vacancia")) or 0)
             delinquency_num += weight * (_ratio(row.get("Percentual_Inadimplencia")) or 0)
-            property_amounts[_text(row.get("Nome_Imovel")) or _text(row.get("Endereco")) or "não informado"] += weight
+            property_name = (
+                _text(row.get("Nome_Imovel"))
+                or _text(row.get("Endereco"))
+                or "não informado"
+            )
+            property_amounts[property_name] += weight
+            state = _property_state(row)
+            if state:
+                region_amounts[state] += weight
+        exposures.extend(_exposures(
+            context, "region", region_amounts, source=source,
+            raw_payload_id=raw_payload_id,
+            metadata={
+                "scope": "property_state",
+                "derivation": "explicit_uf_or_address_suffix",
+                "source_url": archive.url,
+            },
+        ))
         for metric, value in (
             ("vacancia_fisica", vacancy_num / weight_total if weight_total else None),
             ("delinquency", delinquency_num / weight_total if weight_total else None),
@@ -791,8 +869,12 @@ def _fail_checkpoint(engine, archive: CvmArchive, error: Exception) -> None:
         pass
 
 
-def ingest_cvm_structured(*, years: int = 5,
-                          kinds: tuple[str, ...] = tuple(ARCHIVES)) -> dict:
+def ingest_cvm_structured(
+    *,
+    years: int = 5,
+    kinds: tuple[str, ...] = tuple(ARCHIVES),
+    run_postprocess: bool = True,
+) -> dict:
     """Coleta, normaliza e persiste a cobertura estruturada oficial da CVM."""
     from email.utils import parsedate_to_datetime
     from sqlalchemy import text
@@ -883,9 +965,12 @@ def ingest_cvm_structured(*, years: int = 5,
             progress[field] += kind_progress[field]
         progress["skipped_archives"] += kind_progress["skipped"]
         progress["revisions"] += kind_progress["revisions"]
-    audit = audit_methodology_v4_data()
-    progress["audit"] = audit
-    progress["validation"] = record_validation_readiness(audit)
-    progress["snapshot"] = snapshot_methodology_v4()
+    if run_postprocess:
+        audit = audit_methodology_v4_data()
+        progress["audit"] = audit
+        progress["validation"] = record_validation_readiness(audit)
+        progress["snapshot"] = snapshot_methodology_v4()
+    else:
+        progress["postprocess"] = "skipped_for_controlled_validation"
     progress["status"] = "completed" if not progress["errors"] else "partial"
     return progress

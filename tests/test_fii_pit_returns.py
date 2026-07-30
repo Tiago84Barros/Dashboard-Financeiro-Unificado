@@ -4,7 +4,7 @@ import pytest
 from datetime import date
 
 from data_pipeline.market.fii_pit import (VALIDATION_PROTOCOL_VERSION, _monthly_returns,
-                                         _parse_b3_ifix_monthly)
+                                         _macro_scenarios, _parse_b3_ifix_monthly)
 
 
 def test_monthly_returns_uses_close_and_dividends_when_adjustment_factor_is_rewritten():
@@ -54,4 +54,24 @@ def test_parse_b3_ifix_monthly_filters_range_and_invalid_values():
         payload, start=date(2024, 1, 1), end=date(2024, 12, 31),
     )
     assert rows == [{"date": date(2024, 1, 31), "value": 3330.12}]
-    assert VALIDATION_PROTOCOL_VERSION == "fii-pit-total-return-events-2.0.0"
+    assert VALIDATION_PROTOCOL_VERSION == "fii-pit-robust-optimizer-3.3.0"
+
+
+def test_macro_scenario_uses_only_month_closed_before_decision(monkeypatch):
+    macro = pd.DataFrame({
+        "data": pd.to_datetime([
+            "2024-01-31", "2025-01-31", "2025-02-28",
+        ], utc=True),
+        "selic": [11.0, 13.0, 14.0],
+        "ipca": [4.0, 4.5, 5.0],
+    })
+    monkeypatch.setattr(
+        "data_pipeline.market.fii_pit.pd.read_sql",
+        lambda *_args, **_kwargs: macro.copy(),
+    )
+
+    scenarios = _macro_scenarios(object(), [pd.Timestamp("2025-02-28")])
+
+    assert scenarios["2025-02-28"]["selic"] == 13.0
+    assert scenarios["2025-02-28"]["ipca"] == 4.5
+    assert scenarios["2025-02-28"]["selic_change_12m"] == 2.0

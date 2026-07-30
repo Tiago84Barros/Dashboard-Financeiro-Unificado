@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,9 @@ def _warehouse_url() -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
     # O destino precisa ser capturado antes de a rotina de publicacao apontar os
     # loaders para o warehouse local.
     from core.config import settings
@@ -37,7 +41,7 @@ def main() -> int:
     target = settings.db_url
     if not target:
         raise RuntimeError("destino Supabase nao configurado")
-    report = publish(_warehouse_url(), target, dry_run=False)
+    report = publish(_warehouse_url(), target, dry_run=args.dry_run)
     print(json.dumps(report, ensure_ascii=False, sort_keys=True), flush=True)
     return 0
 
