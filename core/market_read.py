@@ -1027,3 +1027,68 @@ def load_historico_anos() -> dict[str, int]:
         except Exception:
             pass
     return out
+
+
+# Pregões por mês, para converter o giro MENSAL da série em estimativa diária.
+# market.historical_prices guarda um candle por mês (a brapi devolve mensal no
+# range longo), então close*volume de uma linha é o giro do MÊS inteiro.
+_PREGOES_POR_MES = 21
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_giro_diario(dias: int = 400) -> dict[str, float]:
+    """{ticker: giro financeiro diário estimado em R$}.
+
+    Usa a MEDIANA das barras mensais, não a média: um único mês de leilão ou de
+    entrada em índice multiplica o volume e faria um papel ilíquido parecer
+    negociável. Validação cruzada em 30/07/2026 — EUCA4 deu ~R$ 570 mil/dia
+    aqui contra R$ 766 mil de ADTV publicado, mesma ordem de grandeza.
+    """
+    df = _q("""
+        SELECT p.ticker,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY p.close * p.volume)
+                 AS giro_mensal
+        FROM market.historical_prices p
+        WHERE p.date >= CURRENT_DATE - make_interval(days => :dias)
+          AND p.volume > 0 AND p.close > 0
+        GROUP BY p.ticker
+    """, {"dias": int(dias)})
+    if df.empty:
+        return {}
+    out: dict[str, float] = {}
+    for _, row in df.iterrows():
+        tk = str(row["ticker"]).replace(".SA", "").strip().upper()
+        try:
+            out[tk] = float(row["giro_mensal"]) / _PREGOES_POR_MES
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_classes_irmas() -> dict[str, tuple[str, ...]]:
+    """{ticker: classes ATIVAS da mesma empresa}, incluindo o próprio.
+
+    Agrupa por ``company_id`` e não pela raiz de 4 letras: a raiz é heurística e
+    junta tickers de empresas distintas que começam igual, o que aqui produziria
+    troca entre companhias diferentes — exatamente o que este módulo não pode
+    fazer.
+    """
+    df = _q("""
+        SELECT a.company_id, a.ticker
+        FROM market.assets a
+        WHERE a.is_active AND a.company_id IS NOT NULL
+          AND a.asset_type IN ('stock', 'unit')
+    """)
+    if df.empty:
+        return {}
+    por_empresa: dict[object, list[str]] = {}
+    for _, row in df.iterrows():
+        tk = str(row["ticker"]).replace(".SA", "").strip().upper()
+        por_empresa.setdefault(row["company_id"], []).append(tk)
+    out: dict[str, tuple[str, ...]] = {}
+    for tickers in por_empresa.values():
+        grupo = tuple(sorted(set(tickers)))
+        for tk in grupo:
+            out[tk] = grupo
+    return out

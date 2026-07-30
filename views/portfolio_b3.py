@@ -3163,6 +3163,59 @@ def render(show_header: bool = True) -> None:
     proximos_uniq = sorted(mapa_prox.values(),
                            key=lambda x: (-float(x.get("score") or 0.0), str(x["tk"])))
 
+    # ── PISO DE NEGOCIABILIDADE POR CLASSE ───────────────────────────────────
+    # ANTES da correlação, porque dali em diante o ticker é usado para buscar
+    # série de preços: trocar depois mediria a correlação de um papel que não
+    # está na carteira.
+    #
+    # Sem toggle, de propósito. Os perfis existem porque parâmetro demais degrada
+    # a carteira em silêncio; este não tem contrapartida a calibrar — troca ON
+    # por PN da MESMA empresa quando a irmã negocia muito mais. A tese não muda,
+    # só a facilidade de sair. Nunca exclui ativo: isso sim custaria
+    # diversificação e seria decisão do usuário.
+    liq_trocas: list[dict] = []
+    liq_avisos: list[str] = []
+    if proximos_uniq:
+        from core.b3_holdings_health import CRITICO, check_holdings
+        from core.b3_liquidity import LiquidityPolicy, aplicar_piso_de_liquidez
+        try:
+            _giro = _db.load_giro_diario()
+            _irmas = _db.load_classes_irmas()
+        except Exception:                             # dado ausente não decide
+            _giro, _irmas = {}, {}
+
+        if _giro and _irmas:
+            _candidatas = sorted({
+                t for tk in (str(i["tk"]).upper() for i in proximos_uniq)
+                for t in _irmas.get(tk, (tk,))
+            })
+            _saude_liq = {
+                h.ticker: h for h in check_holdings(
+                    df_mult_todos, _candidatas, selic=float(taxa_selic_aa))
+            }
+
+            def _veto_liquidez(candidata: str) -> str | None:
+                """Impede que a troca entre com papel que o piso reprovaria."""
+                h = _saude_liq.get(str(candidata).upper())
+                if h is None:
+                    return "sem dados de saúde para a classe irmã"
+                if h.nivel == CRITICO:
+                    return f"reprovada no piso de qualidade ({h.resumo})"
+                return None
+
+            proximos_uniq, liq_trocas, liq_avisos = aplicar_piso_de_liquidez(
+                proximos_uniq, _irmas, _giro,
+                policy=LiquidityPolicy(), veto=_veto_liquidez,
+            )
+            for _t in liq_trocas:
+                for _item in proximos_uniq:
+                    if _item["tk"] == _t["entra"]:
+                        _nome_row = df_set[df_set["ticker"] == _t["entra"]]
+                        if not _nome_row.empty:
+                            _item["nome"] = _nome_row["nome_empresa"].iloc[0][:24]
+                        _item["motivos"] = list(_item.get("motivos") or []) + [
+                            f"Classe trocada de {_t['sai']} (mais negociável)"]
+
     # ── DIVERSIFICAÇÃO POR CORRELAÇÃO ────────────────────────────────────────
     # A seleção por segmento é decidida sem olhar para os OUTROS segmentos —
     # produz diversificação nominal (segmentos distintos, mesmo fator de risco
@@ -3452,6 +3505,39 @@ def render(show_header: bool = True) -> None:
             ):
                 for _tk, _mot in quali_log["ressalvas"].items():
                     st.markdown(f"• **{_tk}**: {_mot}")
+
+    # ── TRANSPARÊNCIA DO PISO DE NEGOCIABILIDADE ─────────────────────────────
+    if liq_trocas or liq_avisos:
+        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                    unsafe_allow_html=True)
+        from core.b3_liquidity import formata_reais as _liq_reais
+        _sec_hdr("💧 Negociabilidade — troca de classe da mesma empresa")
+        st.caption(
+            "O filtro de porte olha o valor de mercado da EMPRESA, que é igual "
+            "para todas as classes — então uma ordinária que quase não negocia "
+            "passava junto com a companhia. Aqui a carteira troca para a classe "
+            "irmã mais negociada da mesma dona: a tese não muda, só a facilidade "
+            "de entrar e sair. Nenhum ativo é excluído por liquidez."
+        )
+        for _t in liq_trocas:
+            _cA, _cB = st.columns(2)
+            with _cA:
+                card_metrica(f"Saiu · {_t['sai']}",
+                             f"R$ {_liq_reais(_t['giro_sai'] / 1000)} mil/dia",
+                             positivo=False)
+            with _cB:
+                card_metrica(f"Entrou · {_t['entra']}",
+                             f"R$ {_liq_reais(_t['giro_entra'] / 1000)} mil/dia",
+                             delta=f"{_t['giro_entra'] / max(_t['giro_sai'], 1.0):.0f}× mais negociável",
+                             positivo=True)
+        if liq_trocas:
+            st.caption(
+                "Atenção ao que a troca NÃO resolve: ordinária e preferencial "
+                "diferem em direito a voto e em tag-along. A escolha aqui é por "
+                "negociabilidade, não por direitos de sócio."
+            )
+        for _av in liq_avisos:
+            st.warning(_av, icon="⚠️")
 
     # ── TRANSPARÊNCIA DA DIVERSIFICAÇÃO POR CORRELAÇÃO ───────────────────────
     if diversificar_corr and proximos_uniq:
