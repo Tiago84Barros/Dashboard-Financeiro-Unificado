@@ -80,7 +80,43 @@ def _pivot_metrics(long_df: pd.DataFrame) -> pd.DataFrame:
             wide[c] = pd.NA
     for c in _MULT_COLS:
         wide[c] = pd.to_numeric(wide[c], errors="coerce")
-    return wide[["Ticker", "year", *_MULT_COLS]]
+    return _suprime_razoes_sobre_patrimonio_negativo(
+        wide[["Ticker", "year", *_MULT_COLS]])
+
+
+# Razões cujo DENOMINADOR é o patrimônio líquido. Com PL negativo o quociente
+# inverte de sinal e desastre vira destaque.
+_RAZOES_SOBRE_PL = ("ROE", "P/VP", "Endividamento_Total")
+
+
+def _suprime_razoes_sobre_patrimonio_negativo(wide: pd.DataFrame) -> pd.DataFrame:
+    """Anula ROE/P-VP/Endividamento quando o patrimônio líquido é negativo.
+
+    Por que na LEITURA e não só no cálculo: ``calculated_metrics`` tem mais de
+    uma fonte para a mesma métrica. O ETL calcula (``market.compute``) e a brapi
+    entrega a dela pronta (``brapi_trailing``). Guardar apenas o cálculo deixava
+    passar a versão da brapi — medido em 30/07/2026, MWET4 exibia ROE de +4,23
+    com patrimônio negativo e prejuízo de R$ 28,6 mi, e o método gravado era
+    ``brapi_trailing``. Das 45 empresas com patrimônio negativo, 32 mostravam
+    ROE POSITIVO, até +423%; a faixa canônica de ROE (-3, 5) aceita o número,
+    porque os dois sinais se cancelam antes de ela olhar.
+
+    Suprimir aqui cobre todo consumidor do frame, seja qual for a fonte que
+    gravou. O veredito sobre a empresa não se perde: fica no sinal
+    ``Patrimonio_Negativo``, que é justamente a coluna consultada para saber
+    disso.
+    """
+    if wide.empty or "Patrimonio_Negativo" not in wide.columns:
+        return wide
+    insolvente = pd.to_numeric(wide["Patrimonio_Negativo"],
+                               errors="coerce").fillna(0) == 1
+    if not bool(insolvente.any()):
+        return wide
+    wide = wide.copy()
+    for coluna in _RAZOES_SOBRE_PL:
+        if coluna in wide.columns:
+            wide.loc[insolvente, coluna] = float("nan")
+    return wide
 
 
 # ── Loaders ───────────────────────────────────────────────────────────────────

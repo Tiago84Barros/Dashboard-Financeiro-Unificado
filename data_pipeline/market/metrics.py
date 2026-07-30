@@ -48,6 +48,17 @@ def compute_snapshot(f: dict) -> dict[str, tuple[float, str]]:
     inv_capital = None
     if all(_dq.to_float(x) is not None for x in (eq, gd)):
         inv_capital = _dq.to_float(eq) + _dq.to_float(gd) - (_dq.to_float(cash) or 0.0)
+    # Denominador NEGATIVO inverte o sinal do quociente e transforma desastre em
+    # destaque. Medido em 30/07/2026: das 45 empresas com patrimônio negativo,
+    # 32 exibiam ROE POSITIVO — prejuízo dividido por patrimônio negativo dá
+    # retorno positivo, e a faixa de ROE (-3, 5) aceita numericamente. RAIZ4
+    # (Raízen) tinha ROE de +3,28 com prejuízo de R$ 27 bi e patrimônio de
+    # R$ -8,3 bi: para o ranking, retorno de 328% sobre o capital próprio.
+    # Aqui não há valor a salvar — a razão é indefinida, e o veredito quem dá é
+    # o sinal Patrimonio_Negativo emitido abaixo.
+    if inv_capital is not None and inv_capital <= 0:
+        inv_capital = None
+    eq_para_razao = eq if (_dq.to_float(eq) or 0.0) > 0 else None
     ev = None
     if mc is not None and nd is not None:
         ev = _dq.to_float(mc) + _dq.to_float(nd)
@@ -97,7 +108,7 @@ def compute_snapshot(f: dict) -> dict[str, tuple[float, str]]:
     candidates = {
         "Margem_Liquida":      (_safe_div(ni, rev),  "net_income/revenue"),
         "Margem_Operacional":  (_safe_div(ebit, rev), "ebit/revenue"),
-        "ROE":                 (_safe_div(ni, eq),   "net_income/equity"),
+        "ROE":                 (_safe_div(ni, eq_para_razao), "net_income/equity"),
         "ROA":                 (_safe_div(ni, ta),   "net_income/total_assets"),
         "ROIC":                (_safe_div(ebit, inv_capital), "ebit/(equity+gross_debt-cash)"),
         "Endividamento_Total": (_safe_div(gd, eq),   "gross_debt/equity"),
