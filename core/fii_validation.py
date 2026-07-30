@@ -228,7 +228,7 @@ def robust_optimizer_point_in_time_backtest(
 ) -> dict[str, Any]:
     """Walk-forward do mesmo otimizador robusto usado pela carteira-modelo.
 
-    Cada rebalanceamento aplica a elegibilidade padrão v6.4, o score reconstruído
+    Cada rebalanceamento aplica a elegibilidade padrão v6.5, o score reconstruído
     naquela data, o cenário macro então observável e correlações calculadas
     exclusivamente com retornos anteriores à decisão.
     """
@@ -463,8 +463,8 @@ def robust_optimizer_point_in_time_backtest(
         return {
             "status": "blocked",
             "strategy_id": LIVE_PORTFOLIO_STRATEGY_ID,
-            "blockers": ["nenhum período PIT elegível para o otimizador v6.4"],
-            "optimizer_failures": optimizer_failures[:24],
+            "blockers": ["nenhum período PIT elegível para o otimizador v6.5"],
+            "optimizer_failures": optimizer_failures[:100],
             "optimizer_failure_summary": failure_summary,
             "missing_macro_periods": missing_macro_periods,
         }
@@ -515,7 +515,9 @@ def robust_optimizer_point_in_time_backtest(
         ),
         "mean_eligible_assets": float(np.mean(eligible_counts)) if eligible_counts else 0.0,
         "missing_macro_periods": missing_macro_periods,
-        "optimizer_failures": optimizer_failures[:24],
+        # Limite alto o suficiente para não ocultar falhas do solver atrás dos
+        # períodos iniciais sem universo elegível, mas ainda bounded no JSON.
+        "optimizer_failures": optimizer_failures[:100],
         "optimizer_failure_summary": failure_summary,
         "correlation_penalty": float(correlation_penalty),
         "correlation_lookback_months": int(correlation_lookback_months),

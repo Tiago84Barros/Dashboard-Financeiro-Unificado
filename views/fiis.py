@@ -162,28 +162,41 @@ def _snapshot_as_of(inputs: pd.DataFrame):
     return min(dates) if dates else None
 
 
+def _selection_status_copy(*, validation_applicable: bool, can_publish: bool) -> dict[str, str]:
+    approved = validation_applicable and can_publish
+    return {
+        "title": (
+            "## Seleção de FIIs — Universo Validado"
+            if approved else "## Seleção de FIIs — Lista de Diligência"
+        ),
+        "tab": "📊 Seleção validada" if approved else "📊 Diligência",
+        "footer": (
+            "O universo bruto atende ao gate vigente; a Carteira-modelo ainda "
+            "aplica elegibilidade e controles próprios."
+            if approved else
+            "O universo bruto permanece em diligência; a Carteira-modelo usa "
+            "somente o subconjunto elegível e possui gate de publicação próprio."
+        ),
+    }
+
+
 def render(show_header: bool = True) -> None:
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
     validation_applicable = validation_supports_strategy(
         validation, LIVE_PORTFOLIO_STRATEGY_ID
     )
-    if show_header:
-        st.markdown("## Seleção de FIIs — Lista de Diligência")
-        # A frase sobre publicabilidade saiu daqui: era dita de novo, logo abaixo,
-        # no aviso colorido do gate. Sobra o que só existe nesta linha — a versão
-        # da metodologia e o status da validação point-in-time.
-        st.caption(
-            f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]}, específica por tipo · "
-            + ("validação point-in-time aplicável ao motor atual"
-               if validation_applicable
-               else "validação do motor atual pendente")
-        )
     st.markdown(_CSS, unsafe_allow_html=True)
 
     with st.spinner("Carregando snapshot auditável de FIIs…"):
         inputs = _mr.load_fii_methodology_inputs()
     df = _methodology_inputs_to_vitrine(inputs)
     if df.empty:
+        if show_header:
+            st.markdown("## Seleção de FIIs — Lista de Diligência")
+            st.caption(
+                f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]}, "
+                "específica por tipo · dados ainda indisponíveis"
+            )
         if inputs.attrs.get("load_error"):
             st.error(
                 "Não foi possível consultar o universo de FIIs agora. "
@@ -218,6 +231,18 @@ def render(show_header: bool = True) -> None:
         snapshot_as_of=_snapshot_as_of(inputs),
     )
     st.session_state["fii_raw_publication_gate"] = gate
+    status_copy = _selection_status_copy(
+        validation_applicable=validation_applicable,
+        can_publish=gate.can_publish_recommendation,
+    )
+    if show_header:
+        st.markdown(status_copy["title"])
+        st.caption(
+            f"Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]}, específica por tipo · "
+            + ("validação point-in-time aplicável ao motor atual"
+               if validation_applicable
+               else "validação do motor atual pendente")
+        )
     ranked = df[df["Score"].notna()].sort_values(
         "Score", ascending=False
     ).reset_index(drop=True)
@@ -239,8 +264,9 @@ def render(show_header: bool = True) -> None:
 
     # Abas por botão (permitem trocar de aba programaticamente — ex.: card → Busca).
     active = st.session_state.get("fii_active_tab", 0)
-    cols = st.columns(len(_TABS))
-    for i, (c, lab) in enumerate(zip(cols, _TABS)):
+    tab_labels = [status_copy["tab"], *_TABS[1:]]
+    cols = st.columns(len(tab_labels))
+    for i, (c, lab) in enumerate(zip(cols, tab_labels)):
         with c:
             if st.button(lab, width="stretch", key=f"fii_tab{i}",
                          type="primary" if active == i else "secondary"):
@@ -1230,12 +1256,17 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
                 "Status_Publicação": "Status",
             })
     ts = df["updated_at"].max() if "updated_at" in df.columns else None
+    raw_gate = st.session_state.get("fii_raw_publication_gate")
+    status_copy = _selection_status_copy(
+        # O gate só pode ser publicável quando a validação PIT aplicável passou.
+        validation_applicable=bool(raw_gate and raw_gate.can_publish_recommendation),
+        can_publish=bool(raw_gate and raw_gate.can_publish_recommendation),
+    )
     st.caption(f"Metodologia Integrada {METHODOLOGY_VERSION}: comparação somente dentro de cada categoria; "
                f"dados ausentes reduzem cobertura e confiança, sem imputação neutra. "
                f"{fora} fundos ficaram sem score por tipo ausente/inválido. "
                f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}. "
-               "O universo bruto permanece em diligência; a Carteira-modelo usa "
-               "somente o subconjunto elegível e possui gate de publicação próprio.")
+               + status_copy["footer"])
 
 
 # ── Tab 2: Busca de ativo (detalhe por FII) ───────────────────────────────────
@@ -1389,7 +1420,7 @@ def _tab_busca(df: pd.DataFrame) -> None:
 def _tab_carteira(ranked: pd.DataFrame) -> None:
     st.subheader("Preferências da seleção")
     st.markdown(_info_card_html(
-        "Seleção Integrada de FIIs · v6.4",
+        "Seleção Integrada de FIIs · v6.5",
         "Um único motor combina elegibilidade histórica, score específico por tipo, "
         "qualidade dos dados, cenário macroeconômico, concentração e correlação. "
         "DY, P/VP e liquidez entram uma única vez, sem somar scores concorrentes.",
@@ -1621,8 +1652,12 @@ def _carteira_integrada(preferences: dict):
         "Critério de comparação",
         "Comparação exclusiva com fundos do mesmo tipo. O score já incorpora renda, P/VP, "
         "liquidez, estabilidade histórica, governança e métricas próprias da categoria. "
-        "O otimizador combina score (45%), confiança (30%) e renda (25%), penalizando "
-        "concentração, estresse e correlação. Os destaques são prioridades de diligência.",
+        "O otimizador combina score (45%), confiança (30%), renda (25%) e uma preferência "
+        "moderada por evidência nominal observada, penalizando concentração, estresse e "
+        "correlação. "
+        + ("Os destaques passaram pelos gates vigentes."
+           if result.get("can_publish")
+           else "Os destaques permanecem prioridades de diligência."),
         accent="#00C896",
     ), unsafe_allow_html=True)
     explanation_cols = st.columns(2)
@@ -1646,7 +1681,7 @@ def _carteira_integrada(preferences: dict):
         prices=report_prices,
     )
     _render_save_portfolio(
-        port, {"metodo": "fii_integrated_v6_4", "model_version": INTEGRATED_MODEL_VERSION,
+        port, {"metodo": "fii_integrated_v6_5", "model_version": INTEGRATED_MODEL_VERSION,
                "strategy_id": LIVE_PORTFOLIO_STRATEGY_ID,
                "methodology_version": METHODOLOGY_VERSION,
                "formula_version": FORMULA_VERSION,
@@ -1661,7 +1696,7 @@ def _carteira_integrada(preferences: dict):
          "correlation_risk": result.get("correlation_risk"),
          "correlation_coverage": corr_coverage,
          "average_confidence": average_confidence,
-         "eligible_count": eligibility["eligible_count"]}, key="fii_save_model_integrated_v6_4")
+         "eligible_count": eligibility["eligible_count"]}, key="fii_save_model_integrated_v6_5")
     return table_slot, show, specific_metrics
 
 

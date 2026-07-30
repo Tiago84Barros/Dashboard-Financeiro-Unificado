@@ -69,7 +69,7 @@ def test_passed_validation_cannot_release_a_different_live_strategy():
     }
 
     assert not validation_supports_strategy(
-        validation, "fii_integrated_robust_optimizer.v6.4"
+        validation, "fii_integrated_robust_optimizer.v6.5"
     )
     assert validation_supports_strategy(
         validation, "fii_rank_equal_weight_buffered.v1"
@@ -128,7 +128,7 @@ def test_robust_optimizer_backtest_uses_v63_weights_without_constraint_violation
         transaction_cost=0, slippage=0,
     )
 
-    assert result["strategy_id"] == "fii_integrated_robust_optimizer.v6.4"
+    assert result["strategy_id"] == "fii_integrated_robust_optimizer.v6.5"
     assert result["status"] == "calculated", result
     assert result["periods"] == 2
     assert result["constraint_violation_periods"] == 0
