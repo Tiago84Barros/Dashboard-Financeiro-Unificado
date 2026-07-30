@@ -731,6 +731,21 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 div_ps_ttm = sum(float(a) for d, a in divs
                                  if d is not None and a is not None and 0 <= (ref - d).days <= 366)
 
+                # Payout: separar "não distribuiu" de "não sabemos".
+                # `div_ps_ttm or None` convertia 0.0 em None, então empresa que
+                # retém todo o lucro ficava SEM Payout em vez de Payout = 0 —
+                # e o piso de qualidade não podia aprová-la nem reprová-la.
+                # Medido em 30/07/2026: 165 dos 170 tickers sem Payout caíam
+                # aqui. Mas zero só é medição quando há EVIDÊNCIA de que a
+                # ingestão de dividendos funciona para o ticker: 110 têm
+                # histórico e nada em 366 dias (zero real); 55 nunca tiveram
+                # nenhum evento, e aí é indecidível entre "não paga" e "não
+                # ingerido" — gravar 0 nesses seria inventar valor favorável.
+                tem_historico_dividendo = any(
+                    d is not None and a is not None for d, a in divs)
+                div_ttm_val = (div_ps_ttm if (div_ps_ttm or tem_historico_dividendo)
+                               else None)
+
                 # ── Base do snapshot: TTM REAL (soma dos 4 últimos trimestres) ──
                 # Metodologia de consenso (Fundamentus/SI): fluxos (receita/EBIT/
                 # lucro/FCO) somam 4 trimestres; estoques (balanço) usam o trimestre
@@ -781,8 +796,15 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                         "total_assets": q_bal[2], "equity": q_bal[3], "cash": q_bal[4],
                         "gross_debt": q_bal[5], "net_debt": q_bal[6],
                         "current_assets": q_bal[7], "current_liabilities": q_bal[8],
-                        "fco": _sum4(q_cf, 2) if aligned_cf else None, "market_cap": mc,
-                        "div_ttm": div_ps_ttm or None, "price": last_price, "eps": eps,
+                        # Sem 4 trimestres de CF alinhados, o FCO ANUAL é melhor
+                        # que nada: descartá-lo deixava 96 tickers com FCO no
+                        # balanço e nenhum P_FCO (93 deles com preço disponível).
+                        # É base mista (fluxo anual sobre market cap de hoje), e
+                        # por isso o método fica marcado abaixo.
+                        "fco": (_sum4(q_cf, 2) if aligned_cf
+                                else (cf[0] if cf else None)),
+                        "market_cap": mc,
+                        "div_ttm": div_ttm_val, "price": last_price, "eps": eps,
                     }
                 else:
                     base_method = "annual"
@@ -795,9 +817,15 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                         "current_assets": bal[5] if bal else None,
                         "current_liabilities": bal[6] if bal else None,
                         "fco": cf[0] if cf else None, "market_cap": mc,
-                        "div_ttm": div_ps_ttm or None, "price": last_price, "eps": eps,
+                        "div_ttm": div_ttm_val, "price": last_price, "eps": eps,
                     }
                 snap = mx.compute_snapshot(f)
+                # Procedência do FCO misto fica no método (auditoria), não na
+                # confiança: o leitor filtra confidence_score >= 80, então
+                # rebaixar aqui apagaria a métrica que acabamos de recuperar.
+                if from_q and not aligned_cf and "P_FCO" in snap:
+                    _val, _met = snap["P_FCO"]
+                    snap["P_FCO"] = (_val, _met + " (fco anual sobre base ttm)")
 
                 # brapi spot: no caminho ANUAL sobrescreve (anual distorce por
                 # não-recorrentes); no TTM real só PREENCHE o que faltar. DY sempre
@@ -863,6 +891,14 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 for y in sorted(set(inc_y) | set(bal_y) | set(cf_y)):
                     i, b, cfy = inc_y.get(y), bal_y.get(y), cf_y.get(y)
                     px, dps = year_end.get(y), div_year.get(y)
+                    # Mesmo princípio do snapshot: ano sem dividendo é payout 0,
+                    # não payout desconhecido — mas só quando o ticker tem algum
+                    # histórico, provando que a ingestão de dividendos funciona
+                    # para ele. A brapi devolve o histórico inteiro num payload,
+                    # então lacuna de UM ano dentro de um histórico existente é
+                    # ano sem distribuição, não ano não coletado.
+                    if dps is None and div_year:
+                        dps = 0.0
                     ni = i[3] if i else None
                     eps_y = i[4] if i else None
                     # ações do ano: NI/LPA (exato) com guarda 0,2–5× das atuais;

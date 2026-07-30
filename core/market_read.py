@@ -29,7 +29,12 @@ from core.data_quality import clean_multiples_frame
 # entra como coluna vazia para preservar o shape de saída.
 _MULT_COLS = ["P/L", "P/VP", "DY", "ROE", "ROA", "ROIC",
               "Margem_Liquida", "Margem_Operacional", "Endividamento_Total",
-              "Liquidez_Corrente", "EV_EBIT", "P_FCO", "Payout"]
+              "Liquidez_Corrente", "EV_EBIT", "P_FCO", "Payout",
+              # SINAIS (0/1), não indicadores: registram balanço estruturalmente
+              # rompido, que a faixa coerente descartava como se fosse ausência.
+              # O piso de qualidade precisa vê-los para REPROVAR; ranking e
+              # score os ignoram (não estão em CANONICAL_MULTIPLOS_FIELDS).
+              "Patrimonio_Negativo", "Endividamento_Fora_De_Faixa", "FCO_Negativo"]
 
 
 @st.cache_resource(show_spinner=False)

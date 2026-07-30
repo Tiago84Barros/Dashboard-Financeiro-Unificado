@@ -46,6 +46,27 @@ CANONICAL_RANGES: dict[str, tuple[float | None, float | None]] = {
 
 CANONICAL_MULTIPLOS_FIELDS: tuple[str, ...] = tuple(CANONICAL_RANGES.keys())
 
+# SINAIS (0/1), não indicadores ranqueáveis. Existem porque a faixa coerente,
+# ao rejeitar um valor absurdo, apagava informação em vez de registrá-la:
+# dívida/PL com patrimônio NEGATIVO dá razão negativa, era descartada, e o
+# resultado era NULL — a mesma coisa que "sem dado". Medido em 30/07/2026: dos
+# 41 tickers que tinham dívida e patrimônio no balanço e nenhuma métrica de
+# endividamento, 37 tinham PATRIMÔNIO NEGATIVO e 4 razão fora de faixa. O piso
+# de qualidade tratava empresa tecnicamente insolvente igual a empresa sem
+# balanço. Ausência é indecidível; patrimônio negativo é um veredito.
+#
+# Deliberadamente FORA de CANONICAL_RANGES: aquele dict define o universo de
+# indicadores para reconciliação (core/data_reconciliacao.py) e healing
+# (core/data_healing.py). Sinal não se reconcilia com fonte externa nem se
+# imputa — ou o balanço diz, ou não diz.
+SIGNAL_RANGES: dict[str, tuple[float | None, float | None]] = {
+    "Patrimonio_Negativo": (0.0, 1.0),
+    "Endividamento_Fora_De_Faixa": (0.0, 1.0),
+    "FCO_Negativo": (0.0, 1.0),
+}
+
+SIGNAL_FIELDS: tuple[str, ...] = tuple(SIGNAL_RANGES.keys())
+
 # Campos % (armazenados em decimal no BD: 0.15 = 15%)
 PCT_FIELDS: frozenset[str] = frozenset({
     "DY", "ROE", "ROIC", "ROA", "Margem_Liquida", "Margem_Operacional", "Payout",
@@ -101,7 +122,7 @@ def is_valid_value(
         zero_invalid.update(zero_invalid_fields)
     if field in zero_invalid and abs(x) <= 1e-12:
         return False
-    lo, hi = CANONICAL_RANGES.get(field, (None, None))
+    lo, hi = CANONICAL_RANGES.get(field, SIGNAL_RANGES.get(field, (None, None)))
     if lo is not None and x < lo:
         return False
     if hi is not None and x > hi:
