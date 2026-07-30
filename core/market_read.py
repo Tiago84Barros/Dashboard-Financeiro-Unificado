@@ -17,12 +17,23 @@ NÃO são reimplementados aqui — o facade (core.b3_data) os mantém no legado.
 from __future__ import annotations
 
 import datetime as _dt
+import gzip
+import hashlib
+import json
+import logging
+import os
+import queue
+import threading
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from core.data_quality import clean_multiples_frame
+
+logger = logging.getLogger(__name__)
 
 # Métricas do snapshot, na MESMA grafia das colunas do legado public.multiplos.
 # Liquidez_Corrente ainda não é computável a partir de market.* (gap conhecido):
@@ -45,12 +56,19 @@ def _engine():
 def _q(sql: str, params: dict | None = None) -> pd.DataFrame:
     eng = _engine()
     if eng is None:
-        return pd.DataFrame()
+        frame = pd.DataFrame()
+        frame.attrs["load_error"] = "database_unavailable"
+        return frame
     try:
         with eng.connect() as conn:
             return pd.read_sql_query(text(sql), conn, params=params or {})
-    except Exception:
-        return pd.DataFrame()
+    except Exception as exc:
+        # Não exponha URL, SQL completo nem parâmetros financeiros no log/UI.
+        logger.warning("market read failed (%s)", type(exc).__name__)
+        frame = pd.DataFrame()
+        frame.attrs["load_error"] = "query_failed"
+        frame.attrs["error_type"] = type(exc).__name__
+        return frame
 
 
 def _norm_ticker(s: pd.Series) -> pd.Series:
@@ -459,12 +477,6 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
         params["seg"] = segmento
     where = "WHERE " + " AND ".join(conditions)
     df = _q(f"""
-        WITH current_universe AS (
-            SELECT DISTINCT ON (ticker) ticker, active_status
-            FROM market.fii_universe_history
-            WHERE knowledge_at <= now()
-            ORDER BY ticker, knowledge_at DESC, reference_date DESC
-        )
         SELECT f.ticker AS "Ticker", f.name AS "Nome",
                COALESCE(f.segmento_cvm, f.segmento) AS "Segmento", f.tipo AS "Tipo",
                f.price AS "Preço", f.pvp AS "P/VP", f.dy_12m AS "DY_12m",
@@ -475,7 +487,15 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
                f.pct_caixa AS "Pct_Caixa", f.pct_fundos AS "Pct_Fundos",
                f.score AS "Score", f.updated_at,
                f.cvm_ref_date, f.vacancia_ref_date
-        FROM market.fiis f JOIN current_universe u USING (ticker) {where}
+        FROM market.fiis f
+        JOIN LATERAL (
+            SELECT history.active_status
+            FROM market.fii_universe_history history
+            WHERE history.ticker = f.ticker AND history.knowledge_at <= now()
+            ORDER BY history.knowledge_at DESC, history.reference_date DESC
+            LIMIT 1
+        ) u ON TRUE
+        {where}
         ORDER BY f.score DESC NULLS LAST, f.ticker
     """, params)
     if df.empty:
@@ -488,21 +508,353 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
     return df
 
 
+_FII_SELECTION_SNAPSHOT_PAGE_SQL = """
+        SELECT ticker,
+               CASE WHEN schema_version = 'fii_selection_inputs.v1'
+                    THEN payload_json - 'metric_metadata'
+                    ELSE payload_json END AS payload_json,
+               as_of_date, available_at, knowledge_at,
+               reference_date, vintage, source, quality_status,
+               schema_version, generated_at, payload_sha256, coverage_json
+        FROM market.fii_selection_inputs
+        WHERE quality_status IN ('published', 'accepted')
+          AND ticker > :after_ticker
+        ORDER BY ticker
+        LIMIT :page_size
+"""
+
+_FII_SNAPSHOT_SCHEMA = "fii_selection_inputs.v2"
+_FII_SNAPSHOT_MAX_AGE_DAYS = 4
+_FII_SNAPSHOT_MEMORY_TTL_SECONDS = 900
+_FII_SNAPSHOT_MAX_ATTEMPTS = 2
+_FII_SNAPSHOT_DEADLINE_SECONDS = 12.0
+_FII_SNAPSHOT_REQUIRED_COLUMNS = {
+    "ticker", "payload_json", "as_of_date", "available_at", "knowledge_at",
+    "reference_date", "vintage", "source", "quality_status", "schema_version",
+    "generated_at", "payload_sha256", "coverage_json",
+}
+_FII_SNAPSHOT_LOCK = threading.RLock()
+_FII_SNAPSHOT_LAST_GOOD: pd.DataFrame | None = None
+_FII_SNAPSHOT_LAST_GOOD_AT: _dt.datetime | None = None
+_FII_SNAPSHOT_JOB: tuple[threading.Thread, queue.Queue] | None = None
+_FII_SNAPSHOT_ARTIFACT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "data" / "public" / "fii_selection_snapshot_v2.json.gz"
+)
+
+
+def _utcnow() -> _dt.datetime:
+    return _dt.datetime.now(_dt.timezone.utc)
+
+
+def _fii_snapshot_engine():
+    """Conexão efêmera dedicada ao snapshot; isola o restante do App4."""
+    try:
+        from core.database import get_fii_snapshot_read_engine
+        return get_fii_snapshot_read_engine()
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _snapshot_payload_digest(payload: dict) -> str:
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _expand_snapshot_payload(payload: dict) -> dict:
+    """Restaura a proveniência nominal armazenada de forma compacta no v2."""
+    record = dict(payload)
+    metadata = record.get("metric_metadata")
+    if not isinstance(metadata, dict):
+        return record
+    expanded: dict[str, dict] = {}
+    keys = ("available_at", "source_quality", "reference_date", "source")
+    for metric, details in metadata.items():
+        if isinstance(details, dict):
+            expanded[str(metric)] = dict(details)
+        elif isinstance(details, (list, tuple)):
+            expanded[str(metric)] = {
+                key: value for key, value in zip(keys, details)
+                if value is not None
+            }
+    record["metric_metadata"] = expanded
+    return record
+
+
+def _fii_snapshot_integrity_error(frame: pd.DataFrame) -> str | None:
+    """Valida versão, unicidade, hashes e atualidade antes de servir/cachear."""
+    if frame.empty:
+        return "snapshot_empty"
+    if not _FII_SNAPSHOT_REQUIRED_COLUMNS.issubset(frame.columns):
+        return "snapshot_columns_invalid"
+
+    tickers = (
+        frame["ticker"].fillna("").astype(str)
+        .str.replace(".SA", "", regex=False).str.strip().str.upper()
+    )
+    if (tickers == "").any() or tickers.duplicated().any():
+        return "snapshot_tickers_invalid"
+    if not frame["schema_version"].eq(_FII_SNAPSHOT_SCHEMA).all():
+        return "snapshot_schema_unsupported"
+    if not frame["quality_status"].isin({"published", "accepted"}).all():
+        return "snapshot_quality_invalid"
+    if not frame["coverage_json"].map(lambda value: isinstance(value, dict)).all():
+        return "snapshot_coverage_invalid"
+
+    as_of = pd.to_datetime(frame["as_of_date"], errors="coerce").dt.date
+    if as_of.isna().any() or as_of.nunique() != 1:
+        return "snapshot_as_of_invalid"
+    age_days = (_utcnow().date() - as_of.iloc[0]).days
+    if age_days < 0 or age_days > _FII_SNAPSHOT_MAX_AGE_DAYS:
+        return "snapshot_stale"
+
+    for payload, expected in zip(frame["payload_json"], frame["payload_sha256"]):
+        if not isinstance(payload, dict):
+            return "snapshot_payload_invalid"
+        digest = str(expected or "").strip().lower()
+        try:
+            actual_digest = _snapshot_payload_digest(payload)
+        except (TypeError, ValueError):
+            return "snapshot_payload_invalid"
+        if len(digest) != 64 or actual_digest != digest:
+            return "snapshot_hash_invalid"
+    return None
+
+
+def _remember_fii_snapshot(frame: pd.DataFrame) -> None:
+    global _FII_SNAPSHOT_LAST_GOOD, _FII_SNAPSHOT_LAST_GOOD_AT
+    with _FII_SNAPSHOT_LOCK:
+        _FII_SNAPSHOT_LAST_GOOD = frame.copy(deep=True)
+        _FII_SNAPSHOT_LAST_GOOD_AT = _utcnow()
+
+
+def _load_fii_snapshot_artifact(
+    path: Path | None = None,
+) -> pd.DataFrame:
+    artifact_path = path
+    if artifact_path is None:
+        configured = os.getenv("FII_SNAPSHOT_ARTIFACT_PATH", "").strip()
+        artifact_path = Path(configured) if configured else _FII_SNAPSHOT_ARTIFACT_PATH
+
+    def parse_json_value(value):
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        with gzip.open(artifact_path, "rt", encoding="utf-8") as handle:
+            artifact = json.load(handle)
+    except (OSError, TypeError, ValueError):
+        frame = pd.DataFrame()
+        frame.attrs["load_error"] = "snapshot_artifact_unavailable"
+        return frame
+    if (
+        not isinstance(artifact, dict)
+        or artifact.get("schema_version") != _FII_SNAPSHOT_SCHEMA
+        or not isinstance(artifact.get("rows"), list)
+    ):
+        frame = pd.DataFrame()
+        frame.attrs["load_error"] = "snapshot_artifact_invalid"
+        return frame
+    frame = pd.DataFrame(artifact["rows"])
+    if "payload_json" in frame:
+        frame["payload_json"] = frame["payload_json"].map(parse_json_value)
+    if "coverage_json" in frame:
+        frame["coverage_json"] = frame["coverage_json"].map(parse_json_value)
+    integrity_error = _fii_snapshot_integrity_error(frame)
+    if integrity_error is not None:
+        frame.attrs["load_error"] = integrity_error
+        return frame
+    frame.attrs.update({
+        "snapshot_source": "local_verified_artifact",
+        "snapshot_fallback": True,
+        "fallback_reason": "remote_refresh_in_background",
+        "snapshot_read_attempts": 0,
+    })
+    return frame
+
+
+def _fresh_fii_snapshot_fallback(reason: str, attempts: int) -> pd.DataFrame | None:
+    with _FII_SNAPSHOT_LOCK:
+        if _FII_SNAPSHOT_LAST_GOOD is None or _FII_SNAPSHOT_LAST_GOOD_AT is None:
+            return None
+        cache_age = (_utcnow() - _FII_SNAPSHOT_LAST_GOOD_AT).total_seconds()
+        cached = _FII_SNAPSHOT_LAST_GOOD.copy(deep=True)
+    if cache_age < 0 or cache_age > _FII_SNAPSHOT_MEMORY_TTL_SECONDS:
+        return None
+    if _fii_snapshot_integrity_error(cached) is not None:
+        return None
+    cached.attrs.update({
+        "snapshot_source": "last_good_memory",
+        "snapshot_fallback": True,
+        "fallback_reason": reason,
+        "snapshot_cache_age_seconds": float(cache_age),
+        "snapshot_read_attempts": int(attempts),
+    })
+    return cached
+
+
+def _reset_fii_snapshot_memory_cache() -> None:
+    """Limpa somente o último snapshot verificado mantido no processo."""
+    global _FII_SNAPSHOT_LAST_GOOD, _FII_SNAPSHOT_LAST_GOOD_AT, _FII_SNAPSHOT_JOB
+    with _FII_SNAPSHOT_LOCK:
+        _FII_SNAPSHOT_LAST_GOOD = None
+        _FII_SNAPSHOT_LAST_GOOD_AT = None
+        if _FII_SNAPSHOT_JOB is not None and not _FII_SNAPSHOT_JOB[0].is_alive():
+            _FII_SNAPSHOT_JOB = None
+
+
+def _read_fii_selection_snapshot(eng, page_size: int) -> pd.DataFrame:
+    """Executa a leitura bloqueante no worker descartável."""
+    last_error_type = "UnknownError"
+    for attempt in range(1, _FII_SNAPSHOT_MAX_ATTEMPTS + 1):
+        frames: list[pd.DataFrame] = []
+        after_ticker = ""
+        try:
+            with eng.connect() as conn:
+                for _ in range(4):  # limite defensivo: até 2.000 FIIs
+                    page = pd.read_sql_query(
+                        text(_FII_SELECTION_SNAPSHOT_PAGE_SQL), conn,
+                        params={"after_ticker": after_ticker, "page_size": int(page_size)},
+                    )
+                    if page.empty:
+                        break
+                    frames.append(page)
+                    after_ticker = str(page.iloc[-1]["ticker"])
+                    if len(page) < page_size:
+                        break
+            result = (
+                pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            )
+            integrity_error = _fii_snapshot_integrity_error(result)
+            if integrity_error is not None:
+                result.attrs["load_error"] = integrity_error
+                result.attrs["snapshot_read_attempts"] = attempt
+                return result
+            result.attrs.update({
+                "snapshot_source": "database",
+                "snapshot_fallback": False,
+                "snapshot_read_attempts": attempt,
+            })
+            _remember_fii_snapshot(result)
+            return result
+        except (SQLAlchemyError, OSError, TimeoutError) as exc:
+            last_error_type = type(exc).__name__
+            logger.warning(
+                "FII snapshot read attempt %s/%s failed (%s)",
+                attempt, _FII_SNAPSHOT_MAX_ATTEMPTS, last_error_type,
+            )
+
+    fallback = _fresh_fii_snapshot_fallback(
+        "snapshot_query_failed", _FII_SNAPSHOT_MAX_ATTEMPTS
+    )
+    if fallback is not None:
+        return fallback
+    frame = pd.DataFrame()
+    frame.attrs["load_error"] = "snapshot_query_failed"
+    frame.attrs["error_type"] = last_error_type
+    frame.attrs["snapshot_read_attempts"] = _FII_SNAPSHOT_MAX_ATTEMPTS
+    return frame
+
+
+def _wait_for_fii_snapshot_job(
+    eng, page_size: int, timeout_seconds: float | None = None,
+) -> pd.DataFrame | None:
+    """Espera no máximo o orçamento da tela; o worker lento fica daemon."""
+    global _FII_SNAPSHOT_JOB
+
+    def run(result_queue: queue.Queue) -> None:
+        try:
+            result_queue.put(_read_fii_selection_snapshot(eng, page_size))
+        except (
+            SQLAlchemyError, OSError, TimeoutError, RuntimeError, TypeError, ValueError,
+        ) as exc:
+            failed = pd.DataFrame()
+            failed.attrs.update({
+                "load_error": "snapshot_query_failed",
+                "error_type": type(exc).__name__,
+            })
+            result_queue.put(failed)
+
+    with _FII_SNAPSHOT_LOCK:
+        if _FII_SNAPSHOT_JOB is None:
+            result_queue: queue.Queue = queue.Queue(maxsize=1)
+            worker = threading.Thread(
+                target=run,
+                args=(result_queue,),
+                name="fii-snapshot-reader",
+                daemon=True,
+            )
+            _FII_SNAPSHOT_JOB = (worker, result_queue)
+            worker.start()
+        worker, result_queue = _FII_SNAPSHOT_JOB
+
+    worker.join(timeout=(
+        _FII_SNAPSHOT_DEADLINE_SECONDS
+        if timeout_seconds is None else max(float(timeout_seconds), 0.0)
+    ))
+    if worker.is_alive():
+        return None
+    try:
+        result = result_queue.get_nowait()
+    except queue.Empty:
+        result = pd.DataFrame()
+        result.attrs["load_error"] = "snapshot_worker_failed"
+    with _FII_SNAPSHOT_LOCK:
+        if _FII_SNAPSHOT_JOB is not None and _FII_SNAPSHOT_JOB[0] is worker:
+            _FII_SNAPSHOT_JOB = None
+    return result
+
+
+def _load_fii_selection_snapshot(page_size: int = 500) -> pd.DataFrame:
+    """Lê a vitrine v2 sob prazo total e fallback verificado de 15 minutos."""
+    eng = _fii_snapshot_engine()
+    artifact = _load_fii_snapshot_artifact()
+    if not artifact.empty:
+        if eng is not None:
+            _wait_for_fii_snapshot_job(eng, int(page_size), timeout_seconds=0)
+        return artifact
+    if eng is None:
+        fallback = _fresh_fii_snapshot_fallback("database_unavailable", 0)
+        if fallback is not None:
+            return fallback
+        frame = pd.DataFrame()
+        frame.attrs["load_error"] = "database_unavailable"
+        return frame
+
+    result = _wait_for_fii_snapshot_job(eng, int(page_size))
+    if result is not None:
+        return result
+
+    fallback = _fresh_fii_snapshot_fallback("snapshot_deadline_exceeded", 0)
+    if fallback is not None:
+        return fallback
+    frame = pd.DataFrame()
+    frame.attrs.update({
+        "load_error": "snapshot_deadline_exceeded",
+        "error_type": "DeadlineExceeded",
+        "snapshot_deadline_seconds": _FII_SNAPSHOT_DEADLINE_SECONDS,
+    })
+    return frame
+
+
 @st.cache_data(ttl=900, show_spinner=False)
-def load_fii_methodology_inputs(prefer_snapshot: bool = True) -> pd.DataFrame:
+def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.DataFrame:
     """Inputs PIT; o publicador pode forçar reconstrução a partir das tabelas-base.
 
     ``prefer_snapshot=False`` evita que a rotina de publicação leia e republique
     indefinidamente a própria vitrine antiga em vez do warehouse atualizado.
     """
-    snapshot = _q("""
-        SELECT ticker, payload_json, as_of_date, available_at, knowledge_at,
-               reference_date, vintage, source, quality_status,
-               schema_version, generated_at, payload_sha256, coverage_json
-        FROM market.fii_selection_inputs
-        WHERE quality_status IN ('published', 'accepted')
-        ORDER BY generated_at DESC, ticker
-    """)
+    snapshot = _load_fii_selection_snapshot() if prefer_snapshot else pd.DataFrame()
+    if prefer_snapshot and snapshot.attrs.get("load_error"):
+        # Falhe de forma explícita: reconstruir dezenas de tabelas após timeout
+        # mascara a indisponibilidade e pode manter a tela pendurada por minutos.
+        return snapshot
     if prefer_snapshot and not snapshot.empty:
         records: list[dict] = []
         seen: set[str] = set()
@@ -519,7 +871,7 @@ def load_fii_methodology_inputs(prefer_snapshot: bool = True) -> pd.DataFrame:
                     payload = None
             if not isinstance(payload, dict):
                 continue
-            record = dict(payload)
+            record = _expand_snapshot_payload(payload)
             record["ticker"] = ticker
             record["snapshot_metadata"] = {
                 "as_of_date": item.get("as_of_date"),
@@ -537,7 +889,9 @@ def load_fii_methodology_inputs(prefer_snapshot: bool = True) -> pd.DataFrame:
             records.append(record)
             seen.add(ticker)
         if records:
-            return pd.DataFrame(records)
+            result = pd.DataFrame(records)
+            result.attrs.update(snapshot.attrs)
+            return result
 
     base = load_fiis().copy()
     if base.empty:
@@ -564,7 +918,8 @@ def load_fii_methodology_inputs(prefer_snapshot: bool = True) -> pd.DataFrame:
         FROM market.fii_metric_observations
         WHERE knowledge_at <= now()
           AND quality_status IN ('observed','accepted')
-        ORDER BY ticker, metric_name, knowledge_at DESC, reference_date DESC, observed_at DESC
+        ORDER BY ticker, metric_name, knowledge_at DESC, reference_date DESC,
+                 observed_at DESC, id DESC
     """)
     exposures = _q("""
         WITH latest_ref AS (
@@ -575,10 +930,13 @@ def load_fii_methodology_inputs(prefer_snapshot: bool = True) -> pd.DataFrame:
             FROM market.fii_exposures e JOIN latest_ref r USING (ticker, exposure_type, reference_date)
             GROUP BY 1,2,3
         )
-        SELECT e.ticker, e.exposure_type, e.exposure_name, e.exposure_weight,
+        SELECT DISTINCT ON (e.ticker, e.exposure_type, e.exposure_name)
+               e.ticker, e.exposure_type, e.exposure_name, e.exposure_weight,
                e.reference_date, e.available_at, e.vintage, e.source
         FROM market.fii_exposures e JOIN latest_at l
           USING (ticker, exposure_type, reference_date, available_at)
+        ORDER BY e.ticker, e.exposure_type, e.exposure_name,
+                 e.knowledge_at DESC, e.id DESC
     """)
     calibrations = _q("""
         SELECT metric_name,
@@ -677,8 +1035,24 @@ def load_fii_methodology_inputs(prefer_snapshot: bool = True) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def load_fii_methodology_inputs(prefer_snapshot: bool = True) -> pd.DataFrame:
+    """Wrapper que não perpetua uma indisponibilidade no cache do Streamlit."""
+    frame = _load_fii_methodology_inputs_cached(prefer_snapshot=prefer_snapshot)
+    if frame.attrs.get("load_error"):
+        _load_fii_methodology_inputs_cached.clear()
+    return frame
+
+
+def _clear_fii_methodology_inputs_cache() -> None:
+    _load_fii_methodology_inputs_cached.clear()
+    _reset_fii_snapshot_memory_cache()
+
+
+load_fii_methodology_inputs.clear = _clear_fii_methodology_inputs_cache
+
+
 @st.cache_data(ttl=900, show_spinner=False)
-def load_fii_validation_status(methodology_version: str = "6.0.0") -> dict:
+def load_fii_validation_status(methodology_version: str = "6.4.0") -> dict:
     df = _q("""
         SELECT status, metrics_json, blockers_json, as_of_date, finished_at
         FROM market.fii_validation_runs

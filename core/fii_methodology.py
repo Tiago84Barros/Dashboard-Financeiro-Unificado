@@ -14,14 +14,14 @@ a cobertura e podem bloquear a publicação quando a métrica é crítica.
 """
 from __future__ import annotations
 
+import math
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
-import math
-from typing import Any, Iterable
+from typing import Any
 
-
-METHODOLOGY_VERSION = "6.0.0"
-FORMULA_VERSION = "br-fii-integrated-income-resilience-6.0.0"
+METHODOLOGY_VERSION = "6.4.0"
+FORMULA_VERSION = "br-fii-integrated-income-resilience-6.4.0"
 VALID_TYPES = ("tijolo", "papel", "fof", "hibrido")
 
 
@@ -136,6 +136,9 @@ TYPE_METRICS: dict[str, tuple[MetricDefinition, ...]] = {
 
 
 PVP_TARGETS = {"tijolo": .95, "papel": .98, "fof": .90, "hibrido": .95}
+_COMPACT_METADATA_FIELDS = (
+    "available_at", "source_quality", "reference_date", "source",
+)
 
 
 SOURCE_PLANS: dict[str, dict[str, tuple[str, ...]]] = {
@@ -175,7 +178,8 @@ def methodology_manifest() -> dict[str, Any]:
         "type_metrics": {key: [asdict(m) for m in value] for key, value in TYPE_METRICS.items()},
         "pvp_targets": PVP_TARGETS,
         "integrated_pipeline": {
-            "eligibility_version": "6.0.0",
+            "eligibility_version": "6.4.0",
+            "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.4",
             "stages": ("eligibility", "type_score", "empirical_confidence",
                        "pit_walk_forward", "robust_scenario_optimization"),
             "correlation_min_months": 12,
@@ -249,8 +253,31 @@ def _metric_values(rows: list[dict], definition: MetricDefinition, fii_type: str
     return [abs(math.log(value / target)) if value and value > 0 else None for value in values]
 
 
+def _metric_metadata_for(row: dict, metric_key: str) -> dict[str, Any]:
+    """Normaliza proveniência nominal ou vetorial na fronteira de cálculo.
+
+    O snapshot público v2 compacta cada proveniência na ordem definida em
+    ``_COMPACT_METADATA_FIELDS``. O leitor normalmente restaura os nomes, mas a
+    metodologia também aceita o vetor para permanecer segura diante de caches,
+    artefatos ou consumidores que entreguem o payload bruto.
+    """
+    metadata = row.get("metric_metadata")
+    if not isinstance(metadata, dict):
+        return {}
+    details = metadata.get(metric_key)
+    if isinstance(details, dict):
+        return details
+    if isinstance(details, (list, tuple)):
+        return {
+            key: value
+            for key, value in zip(_COMPACT_METADATA_FIELDS, details)
+            if value is not None
+        }
+    return {}
+
+
 def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date) -> float:
-    metadata = (row.get("metric_metadata") or {}).get(definition.key) or {}
+    metadata = _metric_metadata_for(row, definition.key)
     available = _date(metadata.get("available_at") or row.get("metrics_fetched_at") or row.get("updated_at"))
     if available is None:
         return .50
@@ -261,7 +288,7 @@ def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date) 
 
 
 def _source_quality_for_metric(row: dict, definition: MetricDefinition) -> float:
-    metadata = (row.get("metric_metadata") or {}).get(definition.key) or {}
+    metadata = _metric_metadata_for(row, definition.key)
     quality = _number(metadata.get("source_quality"))
     if quality is not None:
         return min(max(quality, 0.0), 1.0)
@@ -341,10 +368,12 @@ def score_fiis_by_type(
             final_score = raw_score * (.55 + .45 * coverage)
             freshness = freshness_weighted / observed_weight if observed_weight else 0.0
             source_quality = source_weighted / observed_weight if observed_weight else 0.0
-            consistency = min(max(_number(row.get("data_consistency")) or .80, 0.0), 1.0)
+            raw_consistency = _number(row.get("data_consistency"))
+            consistency = min(max(.60 if raw_consistency is None else raw_consistency, 0.0), 1.0)
             history_months = max(_number(row.get("history_months") or row.get("Hist_Meses")) or 0.0, 0.0)
             history_factor = min(history_months / 36.0, 1.0) if history_months else .50
-            calibration = min(max(_number(row.get("parser_calibration")) or 1.0, .01), 1.0)
+            raw_calibration = _number(row.get("parser_calibration"))
+            calibration = min(max(.60 if raw_calibration is None else raw_calibration, .01), 1.0)
             dimensions = ((coverage, .40), (freshness, .12), (source_quality, .12),
                           (consistency, .12), (history_factor, .09), (calibration, .15))
             confidence = math.exp(sum(weight * math.log(max(value, .01))
@@ -377,6 +406,12 @@ def score_fiis_by_type(
                 "freshness_score": round(freshness, 4),
                 "source_quality": round(source_quality, 4),
                 "parser_calibration": round(calibration, 4),
+                "confidence_assumptions": tuple(
+                    name for name, value in (
+                        ("data_consistency_missing", raw_consistency),
+                        ("parser_calibration_missing", raw_calibration),
+                    ) if value is None
+                ),
                 "components": components,
                 "missing_metrics": tuple(sorted(missing)),
                 "missing_critical": tuple(sorted(missing_critical)),
@@ -399,6 +434,9 @@ def evaluate_publication_gate(
     min_universe_coverage: float = .85,
     min_validated_fraction: float = .80,
     min_median_confidence: float = .75,
+    snapshot_as_of: date | None = None,
+    max_snapshot_age_days: int = 4,
+    as_of: date | None = None,
 ) -> PublicationGate:
     rows = list(scored_rows)
     coverage = len(rows) / expected_universe if expected_universe > 0 else 0.0
@@ -415,6 +453,12 @@ def evaluate_publication_gate(
         reasons.append(f"confiança mediana {median:.0%} abaixo de {min_median_confidence:.0%}")
     if validation_status != "passed":
         reasons.append("backtest point-in-time/robustez estatística ainda não aprovado")
+    if snapshot_as_of is not None:
+        age_days = max(((as_of or datetime.now(timezone.utc).date()) - snapshot_as_of).days, 0)
+        if age_days > max_snapshot_age_days:
+            reasons.append(
+                f"snapshot com {age_days} dias; máximo permitido {max_snapshot_age_days}"
+            )
     return PublicationGate(
         can_publish_recommendation=not reasons,
         status="publishable" if not reasons else "diligence_only",
@@ -426,7 +470,10 @@ def evaluate_publication_gate(
 
 
 def classify_macro_regime(scenario: MacroScenario) -> str:
-    if scenario.credit_event_rate >= .03 or scenario.vacancy_shock >= .08:
+    # 8% de vacância e 3% de eventos são os choques-base usados na análise de
+    # sensibilidade. Eles não devem, por si sós, transformar toda execução no
+    # regime tático de estresse; somente uma hipótese mais severa o faz.
+    if scenario.credit_event_rate > .03 or scenario.vacancy_shock > .08:
         return "stress"
     if scenario.ipca >= 6.0:
         return "inflation_stress"

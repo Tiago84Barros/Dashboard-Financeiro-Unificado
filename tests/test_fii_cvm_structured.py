@@ -1,11 +1,15 @@
-from datetime import datetime, timezone
 import io
 import zipfile
+from datetime import datetime, timezone
 
 import pytest
 
 from data_pipeline.market.fii_cvm_structured import (
-    CvmArchive, _validate_parsed_archive, fetch_archive, parse_archive,
+    CvmArchive,
+    _property_state,
+    _validate_parsed_archive,
+    fetch_archive,
+    parse_archive,
 )
 
 
@@ -58,8 +62,9 @@ def test_quarterly_derives_expiry_indexer_tenant_and_duration():
             + common + ";1;E1;S1;CRI A;2029-06-30;600\n"
             + common + ";2;E2;S2;CRI B;2030-06-30;400\n",
         "inf_trimestral_fii_imovel_2026.csv":
-            "CNPJ_Fundo_Classe;Data_Referencia;Versao;Nome_Imovel;Percentual_Receitas_FII;Percentual_Vacancia\n"
-            + common + ";Imóvel A;0.6;0.05\n" + common + ";Imóvel B;0.4;0.10\n",
+            "CNPJ_Fundo_Classe;Data_Referencia;Versao;Nome_Imovel;Endereco;Percentual_Receitas_FII;Percentual_Vacancia\n"
+            + common + ";Imóvel A;São Paulo - SP;0.6;0.05\n"
+            + common + ";Imóvel B;Rio de Janeiro/RJ;0.4;0.10\n",
         "inf_trimestral_fii_imovel_renda_acabado_inquilino_2026.csv":
             "CNPJ_Fundo_Classe;Data_Referencia;Versao;Setor_Atuacao;Percentual_Receitas_FII\n"
             + common + ";Logística;0.7\n" + common + ";Varejo;0.3\n",
@@ -71,6 +76,22 @@ def test_quarterly_derives_expiry_indexer_tenant_and_duration():
     assert values["tenant_concentration"] == .7
     assert values["duration_anos"] > 3
     assert round(values["property_diversification"], 2) == .48
+    regions = {
+        row["exposure_name"]: row["exposure_weight"]
+        for row in parsed["exposures"] if row["exposure_type"] == "region"
+    }
+    assert regions == {"RJ": .4, "SP": .6}
+
+
+@pytest.mark.parametrize(("row", "expected"), [
+    ({"Estado": "Pernambuco"}, "PE"),
+    ({"Endereco": "Cabo de Santo Agostinho, Pernambuco, CEP 50000-000"}, "PE"),
+    ({"Endereco": "Angra dos Reis - Rio de Janeiro"}, "RJ"),
+    ({"Endereco": "Brasília, Distrito Federal"}, "DF"),
+    ({"Endereco": "Rua sem município ou UF"}, None),
+])
+def test_property_state_normalizes_only_explicit_state_evidence(row, expected):
+    assert _property_state(row) == expected
 
 
 def test_financials_maps_auditor_opinion_to_quality():
