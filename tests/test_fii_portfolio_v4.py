@@ -1,11 +1,17 @@
 import pytest
 
-from core.fii_methodology import MacroScenario
-from core.fii_portfolio_v4 import (PortfolioPolicy, optimize_diligence_portfolio,
-                                   portfolio_constraint_violations)
+from core.fii_methodology import MacroScenario, tactical_type_bands
+from core.fii_portfolio_v4 import (
+    PortfolioPolicy,
+    _candidate_pool,
+    _dimension_matrix,
+    optimize_diligence_portfolio,
+    portfolio_constraint_violations,
+)
 
 
 def _candidate(i: int, fii_type: str, complete: bool = True) -> dict:
+    regions = ("Norte", "Nordeste", "Centro-Oeste", "Sudeste", "Sul")
     row = {
         "ticker": f"F{i:03d}11", "tipo": fii_type, "type_score": 80 - i,
         "confidence": .9, "coverage": .95, "publication_status": "validated",
@@ -13,13 +19,33 @@ def _candidate(i: int, fii_type: str, complete: bool = True) -> dict:
         "manager": f"gestor-{i}", "sector": f"setor-{i}",
     }
     if fii_type in ("tijolo", "hibrido"):
-        row.update(tenants={f"locatario-{i}": 1.0}, regions={f"regiao-{i}": 1.0})
+        row.update(tenants={f"locatario-{i}": 1.0}, regions={regions[i % len(regions)]: 1.0})
     if fii_type in ("papel", "hibrido"):
         row.update(debtors={f"devedor-{i}": 1.0}, issuers={f"emissor-{i}": 1.0},
                    indexers={f"indexador-{i}": 1.0})
     if not complete:
         row.pop("manager")
     return row
+
+
+def test_hybrid_coverage_excludes_non_material_economic_side():
+    rows = [
+        _candidate(0, "hibrido") | {"pct_imoveis": .30, "pct_papel": 0.0},
+        _candidate(1, "hibrido") | {"pct_imoveis": 0.0, "pct_papel": .70},
+    ]
+    rows[0].pop("debtors")
+    rows[0].pop("issuers")
+    rows[0].pop("indexers")
+    rows[1].pop("sector")
+    rows[1].pop("tenants")
+    rows[1].pop("regions")
+
+    _, _, debtor_coverage = _dimension_matrix(rows, "debtor")
+    _, region_labels, region_coverage = _dimension_matrix(rows, "region")
+
+    assert debtor_coverage == 1.0
+    assert region_coverage == 1.0
+    assert region_labels == ["Norte"]
 
 
 def test_optimizer_respects_asset_limit_and_reports_scenarios():
@@ -158,6 +184,35 @@ def test_preselection_reserves_documented_assets_for_required_coverage():
     assert result["dimension_coverage"]["sector"]["coverage"] >= .80
     assert result["dimension_coverage"]["issuer"]["coverage"] >= .80
     assert all(item["weight"] >= .02 - 1e-6 for item in result["items"])
+
+
+def test_preselection_applies_observed_limits_before_coverage_crosses_threshold():
+    types = ["tijolo", "papel", "fof", "hibrido"] * 4
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    property_rows = [row for row in rows if row["tipo"] in {"tijolo", "hibrido"}]
+    for row in property_rows:
+        row["regions"] = {"Sudeste": 1.0}
+    property_rows[-1]["regions"] = {"Sul": 1.0}
+    property_rows[-1]["type_score"] = 1
+    property_rows[0].pop("regions")
+    property_rows[1].pop("regions")
+
+    scenario = MacroScenario(selic=12, ipca=5)
+    _, diagnostics = _candidate_pool(
+        rows,
+        tactical_type_bands(scenario),
+        PortfolioPolicy(max_assets=12, max_region=.35),
+        scenario,
+    )
+
+    selected_weights = diagnostics["selected_weights"]
+    sudeste = sum(
+        selected_weights.get(row["ticker"], 0.0)
+        for row in property_rows
+        if row.get("regions") == {"Sudeste": 1.0}
+    )
+    assert diagnostics["universe_dimension_coverage"]["region"] < .80
+    assert sudeste <= .35 + 1e-8
 
 
 def test_sector_coverage_applies_only_to_property_funds():

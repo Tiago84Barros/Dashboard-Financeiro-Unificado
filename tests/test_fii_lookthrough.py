@@ -1,5 +1,8 @@
 from core.fii_lookthrough import (
+    dimension_is_applicable,
     has_observed_dimension,
+    normalized_dimension_mapping,
+    supplementary_evidence_score,
     summarize_lookthrough_coverage,
 )
 
@@ -50,3 +53,44 @@ def test_lookthrough_ignores_invalid_and_non_positive_weights():
     }
 
     assert has_observed_dimension(row, "issuer") is False
+
+
+def test_regions_are_canonicalized_and_aggregated_by_ibge_macroregion():
+    row = {
+        "ticker": "TIJO11",
+        "tipo": "tijolo",
+        "regions": {"SP": .40, "Sudeste": .30, "RJ": .30, "Inválida": .50},
+    }
+
+    assert normalized_dimension_mapping(row, "region") == {"Sudeste": 1.0}
+    assert has_observed_dimension(row, "region") is True
+
+
+def test_hybrid_dimension_applicability_follows_material_economic_exposure():
+    property_hybrid = {
+        "ticker": "PROP11", "tipo": "hibrido",
+        "pct_imoveis": .26, "pct_papel": 0.0,
+        "regions": {"SP": 1.0},
+    }
+    credit_hybrid = {
+        "ticker": "CRED11", "tipo": "hibrido",
+        "pct_imoveis": 0.0, "pct_papel": .66,
+        "debtors": {"Devedor": 1.0},
+        "indexers": {"IPCA": 1.0},
+    }
+
+    assert dimension_is_applicable(property_hybrid, "region") is True
+    assert dimension_is_applicable(property_hybrid, "debtor") is False
+    assert dimension_is_applicable(property_hybrid, "indexer") is False
+    assert dimension_is_applicable(credit_hybrid, "region") is False
+    assert dimension_is_applicable(credit_hybrid, "tenant") is False
+    assert dimension_is_applicable(credit_hybrid, "debtor") is True
+    assert supplementary_evidence_score(property_hybrid) == 1.0
+    assert supplementary_evidence_score(credit_hybrid) == 1.0
+
+
+def test_missing_hybrid_composition_preserves_conservative_applicability():
+    row = {"ticker": "HBRD11", "tipo": "hibrido"}
+
+    assert dimension_is_applicable(row, "region") is True
+    assert dimension_is_applicable(row, "debtor") is True

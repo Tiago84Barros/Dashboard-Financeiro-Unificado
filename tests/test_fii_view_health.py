@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from views.fiis import (_fii_data_health_metrics, _methodology_inputs_to_vitrine,
-                        _publication_gate_message)
+                        _publication_gate_message, _selection_status_copy)
 
 
 def test_health_metrics_separate_completeness_from_readiness():
@@ -76,3 +76,12 @@ def test_snapshot_is_reused_as_visual_vitrine_without_second_database_shape():
     assert frame.loc[0, "Ticker"] == "ABCD11"
     assert frame.loc[0, "Preço"] == 100.0
     assert frame.loc[0, "DY_12m"] == .1
+
+
+def test_selection_label_only_leaves_diligence_when_both_gates_pass():
+    pending = _selection_status_copy(validation_applicable=False, can_publish=True)
+    approved = _selection_status_copy(validation_applicable=True, can_publish=True)
+
+    assert "Diligência" in pending["title"]
+    assert approved["title"].endswith("Universo Validado")
+    assert approved["tab"] == "📊 Seleção validada"

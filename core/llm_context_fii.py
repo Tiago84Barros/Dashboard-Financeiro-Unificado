@@ -137,9 +137,15 @@ def build_fii_chat_context(
     cited = re.findall(r"\b[A-Z]{4}11\b", (user_question or "").upper())
     detail_tickers = list(dict.fromkeys(selected_tickers + cited))
 
+    current_output = (
+        "Carteira Modelo aprovada pelos gates vigentes; resultado quantitativo "
+        "não constitui garantia de retorno."
+        if portfolio_result.get("can_publish")
+        else "lista de diligência; há gates ou pré-requisitos pendentes."
+    )
     lines = [
         "STATUS E ESCOPO:",
-        "  Saída atual: lista de diligência; metodologia ainda depende de validação PIT.",
+        f"  Saída atual: {current_output}",
         f"  FIIs selecionados={len(selected)}; elegíveis={len(scored)}; "
         f"renda esperada={_fmt(portfolio_result.get('expected_yield'), percent=True)}; "
         f"número efetivo={_fmt(portfolio_result.get('effective_assets'))}; "

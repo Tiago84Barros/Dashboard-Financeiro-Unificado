@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
-METHODOLOGY_VERSION = "6.4.0"
+METHODOLOGY_VERSION = "6.5.0"
 FORMULA_VERSION = "br-fii-integrated-income-resilience-6.4.0"
 VALID_TYPES = ("tijolo", "papel", "fof", "hibrido")
 
@@ -178,8 +178,8 @@ def methodology_manifest() -> dict[str, Any]:
         "type_metrics": {key: [asdict(m) for m in value] for key, value in TYPE_METRICS.items()},
         "pvp_targets": PVP_TARGETS,
         "integrated_pipeline": {
-            "eligibility_version": "6.4.0",
-            "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.4",
+            "eligibility_version": "6.5.0",
+            "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.5",
             "stages": ("eligibility", "type_score", "empirical_confidence",
                        "pit_walk_forward", "robust_scenario_optimization"),
             "correlation_min_months": 12,
