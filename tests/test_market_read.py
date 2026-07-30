@@ -104,3 +104,34 @@ def test_market_active_sempre_true(monkeypatch):
     for src in ("legacy", "market", "compare"):
         monkeypatch.setenv("MARKET_READ_SOURCE", src)
         assert facade.market_active() is True
+
+
+def test_pivot_suprime_razoes_sobre_patrimonio_negativo():
+    """MWET4 real: ROE de +4,23 com PL negativo, vindo de `brapi_trailing`.
+
+    A guarda tem de ficar na LEITURA porque calculated_metrics tem mais de uma
+    fonte para a mesma métrica: o ETL calcula e a brapi entrega a dela pronta.
+    Proteger só o cálculo deixava passar a versão da brapi.
+    """
+    import pandas as pd
+
+    from core.market_read import _pivot_metrics
+
+    longo = pd.DataFrame([
+        {"Ticker": "MWET4", "year": 2025, "metric_name": "ROE", "metric_value": 4.23},
+        {"Ticker": "MWET4", "year": 2025, "metric_name": "P/VP", "metric_value": 2.1},
+        {"Ticker": "MWET4", "year": 2025, "metric_name": "Patrimonio_Negativo",
+         "metric_value": 1.0},
+        {"Ticker": "MWET4", "year": 2025, "metric_name": "ROA", "metric_value": -0.18},
+        {"Ticker": "BOA3", "year": 2025, "metric_name": "ROE", "metric_value": 0.20},
+        {"Ticker": "BOA3", "year": 2025, "metric_name": "P/VP", "metric_value": 1.5},
+    ])
+    largo = _pivot_metrics(longo).set_index("Ticker")
+
+    assert pd.isna(largo.at["MWET4", "ROE"])
+    assert pd.isna(largo.at["MWET4", "P/VP"])
+    # ROA tem denominador positivo (ativo total) — o sinal é confiável e fica.
+    assert largo.at["MWET4", "ROA"] == -0.18
+    # Empresa sadia não é tocada.
+    assert largo.at["BOA3", "ROE"] == 0.20
+    assert largo.at["BOA3", "P/VP"] == 1.5

@@ -543,6 +543,26 @@ def _aplicar_gate_qualitativo(
     return finais
 
 
+def _aplicar_piso_qualidade(
+    selecionados: list[str],
+    ranked_prox: list[tuple[str, float]],
+    df_mult: pd.DataFrame,
+    pesos_p: dict[str, float],
+    seg_label: str,
+    log: dict,
+    selic: float,
+) -> list[str]:
+    """Adaptador fino sobre core.b3_quality_floor (a regra mora lá, pura)."""
+    from core.b3_quality_floor import apply_with_substitution
+
+    if df_mult is None or getattr(df_mult, "empty", True):
+        return selecionados
+    return apply_with_substitution(
+        selecionados, ranked_prox, df_mult, seg_label=seg_label,
+        selic=selic, pesos=pesos_p, log=log,
+    )
+
+
 def _aplicar_diversificacao_correlacao(
     items: list[dict],
     aprovados: list[dict],
@@ -1713,7 +1733,8 @@ def _render_perfil_configuracao() -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _render_saude_da_carteira(tickers: list[str], df_mult_todos: pd.DataFrame,
-                              df_set: pd.DataFrame, taxa_selic_aa: float) -> None:
+                              df_set: pd.DataFrame, taxa_selic_aa: float,
+                              pesos: dict[str, float] | None = None) -> None:
     """Alerta sobre as empresas que a carteira REALMENTE escolheu.
 
     Lacuna encontrada em 27/07/2026: a rota de segmentos aprovava um nome que a
@@ -1736,7 +1757,7 @@ def _render_saude_da_carteira(tickers: list[str], df_mult_todos: pd.DataFrame,
                           for _, r in df_set.iterrows()}
 
     saude = check_portfolio(df_mult_todos, list(tickers), mapa_setor,
-                            selic=float(taxa_selic_aa))
+                            selic=float(taxa_selic_aa), pesos=pesos)
     if not saude.holdings:
         return
 
@@ -1755,7 +1776,10 @@ def _render_saude_da_carteira(tickers: list[str], df_mult_todos: pd.DataFrame,
     with k2:
         card_metrica("Atenção", str(len(saude.atencao)))
     with k3:
-        card_metrica("Cíclicos na carteira", f"{saude.pct_ciclico:.0%}")
+        # O rótulo diz a BASE porque o teto de ciclo limita peso: sem isso, um
+        # card em contagem e um teto em peso são grandezas diferentes exibidas
+        # como se fossem a mesma.
+        card_metrica(f"Cíclicos ({saude.base_medida})", f"{saude.pct_ciclico:.0%}")
 
     for alerta in saude.alertas:
         st.warning(alerta, icon="⚠️")
@@ -2236,6 +2260,21 @@ def render(show_header: bool = True) -> None:
                  "de 25% exige 4. Ligado, o teto por ativo é relaxado até ficar "
                  "viável (ex.: 2 nomes → até 50% cada), eliminando as 'restrições "
                  "inviáveis'. Desligado, usa o cap fixo (padrão de mercado grande).",
+        )
+        usar_piso_qualidade = st.checkbox(
+            "Piso absoluto de qualidade — reprova e substitui no mesmo segmento",
+            value=True,
+            key="pb3_piso_qualidade",
+            help="A carteira escolhe o LÍDER de cada segmento aprovado, então a "
+                 "qualidade é medida DENTRO do segmento, nunca contra o mercado: "
+                 "uma empresa no pior decil de endividamento da bolsa entra por "
+                 "ser a melhor das suas pares. Ligado, quem a seção de Saúde "
+                 "marca como CRÍTICO é reprovado e o PRÓXIMO do mesmo segmento "
+                 "herda a vaga — a diversificação setorial não é perdida. Se "
+                 "nenhum candidato do segmento passar, a vaga fica vazia e o app "
+                 "declara, em vez de rebaixar em silêncio. Usa exatamente a mesma "
+                 "régua da seção de Saúde; ausência de dado NUNCA reprova (uma "
+                 "holding não tem margem operacional própria).",
         )
         _quali_ok = quali_gate_disponivel()
         usar_gate_quali = st.checkbox(
@@ -2967,6 +3006,11 @@ def render(show_header: bool = True) -> None:
     # (as avaliações são cacheadas — reruns e substitutos reaproveitam)
     quali_log: dict = {"vetados": [], "substituicoes": [], "ressalvas": {}}
     _gate_ativo = bool(st.session_state.get("pb3_gate_quali")) and quali_gate_disponivel()
+    # Piso absoluto de qualidade (determinístico, sem rede). Ligado por padrão:
+    # sem ele o app entrega o líder do segmento seja ele qual for, e a única
+    # defesa é o usuário ler a seção de saúde.
+    piso_log: dict = {"reprovados": [], "substituicoes": [], "sem_substituto": []}
+    _piso_ativo = bool(st.session_state.get("pb3_piso_qualidade", True))
     if _gate_ativo and aprovados:
         _pend: list[str] = []
         for res in aprovados:
@@ -3010,6 +3054,17 @@ def render(show_header: bool = True) -> None:
             if maior_info[0]:
                 selecionados.append(str(ticker_maior))
 
+        # PISO ABSOLUTO antes do gate de LLM: é determinístico e não custa
+        # chamada de API, então filtrar aqui evita pedir parecer sobre nome que
+        # já está reprovado. A vaga do segmento é preservada por substituição —
+        # é o que permite exigir qualidade SEM abrir mão de diversificação.
+        if _piso_ativo:
+            selecionados = _aplicar_piso_qualidade(
+                selecionados, ranked_prox, df_mult_todos, pesos_p,
+                f"{res['setor']} › {res['segmento']}", piso_log,
+                float(taxa_selic_aa),
+            )
+
         if _gate_ativo:
             selecionados = _aplicar_gate_qualitativo(
                 selecionados, ranked_prox, entry_guard, pesos_p,
@@ -3039,6 +3094,11 @@ def render(show_header: bool = True) -> None:
                     motivos.append(maior_info[1])
                 else:
                     motivos.append("Maior participação no segmento")
+            if _piso_ativo:
+                _sub_piso = next((s["sai"] for s in piso_log["substituicoes"]
+                                  if s["entra"] == tk), None)
+                if _sub_piso:
+                    motivos.append(f"Entrou por piso de qualidade sobre {_sub_piso}")
             _aval_quali = (st.session_state.get("pb3_quali_cache", {}).get(tk)
                            if _gate_ativo else None)
             if _gate_ativo:
@@ -3319,10 +3379,48 @@ def render(show_header: bool = True) -> None:
     else:
         st.info("Nenhum líder identificado com os parâmetros atuais.")
 
+    # ── TRANSPARÊNCIA DO PISO ABSOLUTO ───────────────────────────────────────
+    if _piso_ativo and (piso_log["reprovados"] or piso_log["sem_substituto"]):
+        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                    unsafe_allow_html=True)
+        _sec_hdr("🚧 Piso absoluto de qualidade — reprovações e substituições")
+        st.caption(
+            "Aplicado ANTES do parecer qualitativo, com a mesma régua da seção "
+            "de Saúde: reprova o que lá seria CRÍTICO. Quem entra vem do MESMO "
+            "segmento, então nenhuma vaga setorial é perdida por exigir "
+            "qualidade. Ausência de dado não reprova."
+        )
+        k1, k2, k3 = st.columns(3)
+        with k1:
+            card_metrica("Reprovados", str(len(piso_log["reprovados"])))
+        with k2:
+            card_metrica("Substituídos", str(len(piso_log["substituicoes"])))
+        with k3:
+            card_metrica("Vagas sem substituto", str(len(piso_log["sem_substituto"])))
+
+        for sub in piso_log["substituicoes"]:
+            st.success(
+                f"**{sub['entra']}** entrou no lugar de **{sub['sai']}** "
+                f"· {sub['segmento']}", icon="🔁")
+        for rep in piso_log["reprovados"]:
+            st.warning(f"**{rep['tk']}** reprovado · {rep['segmento']} — "
+                       f"{rep['motivo']}", icon="⛔")
+        for vazio in piso_log["sem_substituto"]:
+            st.error(
+                f"Segmento **{vazio['segmento']}** ficou SEM representante: "
+                f"{vazio['tk']} foi reprovado e nenhum candidato do mesmo "
+                "segmento passou no piso. A carteira perde este setor — é uma "
+                "informação sobre o segmento, não uma falha do filtro.",
+                icon="🕳️")
+
     # ── SAÚDE DAS SELECIONADAS (cruza as duas rotas) ─────────────────────────
     _render_saude_da_carteira(
         [item["tk"] for item in proximos_uniq] if proximos_uniq else [],
         df_mult_todos, df_set, taxa_selic_aa,
+        # Pesos JÁ projetados pelos tetos (project_dual_capped roda acima), que
+        # é o que torna a concentração comparável com o limite configurado.
+        pesos={item["tk"]: float(item.get("peso") or 0.0)
+               for item in (proximos_uniq or [])},
     )
 
     # ── TRANSPARÊNCIA DO GATE QUALITATIVO ────────────────────────────────────

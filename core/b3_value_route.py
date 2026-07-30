@@ -71,11 +71,32 @@ _CRITICOS = ("P_FCO", "Margem_Operacional", "Endividamento_Total", "Liquidez_Cor
 FALHAS_OPERACIONAIS = ("FCO negativo", "margem operacional negativa",
                        "ROIC negativo")
 
+# Falhas ESTRUTURAIS GRAVES: não são operacionais (não falam da operação), mas
+# também não pedem confirmação. Patrimônio líquido negativo é insolvência
+# contábil — o passivo excede o ativo; não há segundo sinal a esperar. O mesmo
+# vale para dívida/PL fora da faixa coerente (> 20×). Distinguem-se da estrutura
+# apenas APERTADA (liquidez < 1, endividamento acima do limite de política), que
+# uma geradora de caixa forte carrega sem risco — daí a exigência de confirmação.
+FALHAS_ESTRUTURAIS_GRAVES = ("patrimônio líquido negativo",
+                             "endividamento fora de faixa")
+
 
 def is_operational_failure(motivo: str) -> bool:
     """True quando a falha indica operação que não se paga."""
     texto = str(motivo or "")
     return any(texto.startswith(chave) for chave in FALHAS_OPERACIONAIS)
+
+
+def is_conclusive_failure(motivo: str) -> bool:
+    """True quando a falha basta por si — sem precisar de segundo sinal.
+
+    É o predicado que quem decide deve usar. ``is_operational_failure`` cobre
+    só metade do conjunto e continua exportado porque distinguir operação de
+    balanço ainda importa na hora de explicar ao usuário o que houve.
+    """
+    texto = str(motivo or "")
+    return is_operational_failure(motivo) or any(
+        texto.startswith(chave) for chave in FALHAS_ESTRUTURAIS_GRAVES)
 
 
 def _num(df: pd.DataFrame, column: str) -> pd.Series:
@@ -116,11 +137,24 @@ def _avaliar_solvencia(df: pd.DataFrame, policy: ValuePolicy,
     liquidez = _num(df, "Liquidez_Corrente")
     roic = _num(df, "ROIC")
 
+    # Sinais de balanço/caixa rompido: valores que a faixa coerente rejeita e
+    # que por isso NUNCA chegam como número. Sem eles a regra abaixo era letra
+    # morta — medido em 30/07/2026, das 3.066 linhas de P_FCO no banco, ZERO
+    # eram negativas (mínimo 0,0135), porque a faixa é (0,01, 200). A regra
+    # "p_fco < 0" nunca disparou para nenhuma empresa desde que existe, e as
+    # 71 que queimam caixa caíam em "sem evidência" por falta justamente de
+    # P_FCO. Ver core.data_quality.SIGNAL_RANGES.
+    fco_negativo = _num(df, "FCO_Negativo") == 1
+    pl_negativo = _num(df, "Patrimonio_Negativo") == 1
+    endiv_fora = _num(df, "Endividamento_Fora_De_Faixa") == 1
+
     # Cada regra devolve True quando a empresa FALHA nela. NaN não é falha —
     # a ausência é tratada à parte, como falta de evidência.
     falhas = {
         # FCO negativo: a operação queima caixa. Nenhum desconto compensa.
-        "FCO negativo": p_fco < 0,
+        "FCO negativo": (p_fco < 0) | fco_negativo,
+        "patrimônio líquido negativo": pl_negativo,
+        f"endividamento fora de faixa (> {policy.max_endividamento:g}x)": endiv_fora,
         "margem operacional negativa": margem_op < 0,
         f"endividamento > {policy.max_endividamento:g}x": endividamento > policy.max_endividamento,
         f"liquidez corrente < {policy.min_liquidez_corrente:g}": liquidez < policy.min_liquidez_corrente,
@@ -216,7 +250,15 @@ def rank_value_opportunities(df: pd.DataFrame, *,
         tem_margem = (fontes >= policy.min_fontes_valuation
                       and pd.notna(margem) and margem >= policy.margem_minima)
 
-        if ausentes:
+        # Uma falha CONCLUSIVA vence a ausência de dado. Antes, `ausentes` era
+        # avaliado primeiro e engolia o veredito: empresa com patrimônio
+        # negativo não tem Endividamento_Total (a razão fica negativa e a faixa
+        # rejeita), e empresa que queima caixa não tem P_FCO — os dois são
+        # CRÍTICOS, então as piores empresas do universo saíam classificadas
+        # como "sem evidência", o estado reservado a quem não tem dado. A
+        # ausência aqui é CONSEQUÊNCIA da falha, não desconhecimento dela.
+        conclusivas = [f for f in falhas if is_conclusive_failure(f)]
+        if ausentes and not conclusivas:
             classificacoes.append(SEM_EVIDENCIA)
             explicacoes.append(
                 "Falta dado crítico para julgar solvência: " + ", ".join(ausentes))

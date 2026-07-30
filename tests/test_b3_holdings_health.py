@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from core.b3_holdings_health import (
     ATENCAO, CRITICO, OK, check_holdings, check_portfolio,
@@ -33,13 +34,35 @@ def test_empresa_saudavel_nao_gera_alerta():
     assert h.bloqueante is False
 
 
-def test_payout_acima_do_lucro_e_critico():
-    """UNIP6 real: payout de 318% com DY de 17%."""
-    df = pd.DataFrame([_empresa("UNIP6", Payout=3.18, DY=0.17)])
+def test_payout_acima_do_lucro_com_aperto_de_caixa_e_critico():
+    """UNIP6 real: payout de 318%, DY de 17% e endividamento de 3,24×.
+
+    O endividamento é parte do caso, não detalhe: é ele que CONFIRMA que a
+    distribuição não se sustenta. Antes o payout condenava sozinho e o fixture
+    omitia a dívida, embora o docstring do módulo já citasse os 3,2×.
+    """
+    df = pd.DataFrame([_empresa("UNIP6", Payout=3.18, DY=0.17,
+                                Endividamento_Total=3.24)])
     h = check_holdings(df, ["UNIP6"], selic=0.11)[0]
     assert h.nivel == CRITICO
     assert any("payout" in a.lower() for a in h.alertas)
     assert h.bloqueante is True
+
+
+def test_payout_alto_sem_aperto_de_caixa_e_apenas_atencao():
+    """SBSP3 real (30/07/2026): 151% por distribuição de privatização.
+
+    Dívida/PL 1,18, margem de 33% e FCO positivo — a empresa banca o que
+    distribuiu. Um corte fixo em 150% fazia um ponto percentual decidir o
+    veredito; sinal isolado não condena, mesma regra já aplicada à liquidez.
+    """
+    df = pd.DataFrame([_empresa("SBSP3", Payout=1.51, DY=0.12, ROIC=0.143,
+                                Endividamento_Total=1.18,
+                                Margem_Operacional=0.33, P_FCO=13.67)])
+    h = check_holdings(df, ["SBSP3"], selic=0.11)[0]
+    assert h.nivel == ATENCAO
+    assert h.bloqueante is False
+    assert any("extraordin" in a.lower() for a in h.alertas)
 
 
 def test_falha_estrutural_isolada_e_atencao_nao_critico():
@@ -166,7 +189,8 @@ def test_carteira_equilibrada_nao_gera_alerta_de_fator():
 
 def test_carteira_agrega_criticos_e_atencao():
     df = pd.DataFrame([
-        _empresa("TRAP3", Payout=3.0),          # crítico
+        # crítico: payout acima do lucro CONFIRMADO por endividamento alto
+        _empresa("TRAP3", Payout=3.0, Endividamento_Total=3.24),
         _empresa("CICL3", ROIC=0.05),           # atenção
         _empresa("BOA3"),                        # ok
     ])
@@ -174,6 +198,46 @@ def test_carteira_agrega_criticos_e_atencao():
     saude = check_portfolio(df, list(setores), setores, selic=0.11)
     assert [h.ticker for h in saude.criticos] == ["TRAP3"]
     assert [h.ticker for h in saude.atencao] == ["CICL3"]
+
+
+def test_concentracao_por_peso_difere_de_contagem_e_e_declarada():
+    """O teto de ciclo limita PESO; um card em contagem media outra grandeza.
+
+    Caso real de 30/07/2026: a carteira exibia 64% de cíclicos (contagem) com o
+    teto de peso em 60% respeitado, e nada na tela dizia qual base era qual.
+    """
+    df = pd.DataFrame([_empresa("CICL3"), _empresa("DEF3")])
+    setores = {"CICL3": "Materiais Básicos", "DEF3": "Utilidade Pública"}
+
+    por_contagem = check_portfolio(df, list(setores), setores, selic=0.11)
+    assert por_contagem.base_medida == "contagem"
+    assert por_contagem.pct_ciclico == 0.5
+
+    por_peso = check_portfolio(df, list(setores), setores, selic=0.11,
+                               pesos={"CICL3": 0.20, "DEF3": 0.80})
+    assert por_peso.base_medida == "peso"
+    assert por_peso.pct_ciclico == pytest.approx(0.20)
+    assert por_peso.pct_defensivo == pytest.approx(0.80)
+
+
+def test_peso_parcial_cai_para_contagem():
+    """Base incompleta produziria percentual sobre denominador errado."""
+    df = pd.DataFrame([_empresa("A3"), _empresa("B3")])
+    setores = {"A3": "Materiais Básicos", "B3": "Utilidade Pública"}
+    saude = check_portfolio(df, list(setores), setores, selic=0.11,
+                            pesos={"A3": 0.5})     # B3 sem peso
+    assert saude.base_medida == "contagem"
+
+
+def test_fco_negativo_e_patrimonio_negativo_sao_criticos_sozinhos():
+    """Sinais que a faixa coerente descartava — nunca chegavam como número."""
+    df = pd.DataFrame([
+        _empresa("QUEIMA3", P_FCO=np.nan, FCO_Negativo=1.0),
+        _empresa("INSOLV3", Endividamento_Total=np.nan, Patrimonio_Negativo=1.0),
+    ])
+    niveis = {h.ticker: h.nivel for h in check_holdings(df, ["QUEIMA3", "INSOLV3"],
+                                                        selic=0.11)}
+    assert niveis == {"QUEIMA3": CRITICO, "INSOLV3": CRITICO}
 
 
 def test_setor_desconhecido_nao_penaliza_como_ciclico():

@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from core.b3_value_route import (
-    ValuePolicy, is_operational_failure, rank_value_opportunities,
+    ValuePolicy, is_conclusive_failure, rank_value_opportunities,
 )
 from core.valuation import dividend_sustainability
 
@@ -91,6 +91,11 @@ class PortfolioHealth:
     pct_defensivo: float = 0.0
     setores: tuple[str, ...] = ()
     alertas: tuple[str, ...] = field(default_factory=tuple)
+    # "peso" | "contagem" — qual base gerou pct_ciclico/pct_defensivo. A
+    # interface PRECISA dizer isso: o teto de ciclo limita PESO, então um card
+    # em contagem podia mostrar 64% com o teto de 60% respeitado, e o usuário
+    # não tinha como saber se havia violação. Ver check_portfolio.
+    base_medida: str = "contagem"
 
     @property
     def criticos(self) -> tuple[HoldingHealth, ...]:
@@ -159,8 +164,13 @@ def check_holdings(df_mult: pd.DataFrame, tickers: list[str], *,
         # Mesmo princípio do Altman no módulo EUA: sinal isolado não condena.
         falhas = list(linha_valor["falhas_solvencia"]) if linha_valor is not None else []
         if falhas:
-            operacionais = [f for f in falhas if is_operational_failure(f)]
-            estruturais = [f for f in falhas if not is_operational_failure(f)]
+            # Conclusivas = operacionais + estruturais GRAVES (patrimônio
+            # negativo, dívida/PL fora de faixa). Antes só as operacionais
+            # bastavam por si, e insolvência contábil — passivo maior que ativo —
+            # entrava como "estrutura de balanço", pedindo confirmação que não
+            # faz sentido exigir.
+            operacionais = [f for f in falhas if is_conclusive_failure(f)]
+            estruturais = [f for f in falhas if not is_conclusive_failure(f)]
             if operacionais:
                 nivel = CRITICO
                 alertas.append("Solvência: " + "; ".join(falhas))
@@ -179,11 +189,37 @@ def check_holdings(df_mult: pd.DataFrame, tickers: list[str], *,
             dy = _num(linha_base.get("DY"))
             p_fco = _num(linha_base.get("P_FCO"))
             saude = dividend_sustainability(payout, dy, p_fco)
-            if payout == payout and payout >= PAYOUT_CRITICO:
+            # Payout alto NÃO condena sozinho — mesmo princípio já aplicado à
+            # liquidez corrente. Calibração contra caso real (30/07/2026): SBSP3
+            # apareceu CRÍTICA por payout de 151% contra um corte de 150%, sendo
+            # distribuição extraordinária de privatização, com dívida/PL de 1,18,
+            # margem de 33% e FCO positivo. Um ponto percentual decidindo o
+            # veredito é navalha, não medição. A confirmação exigida é de CAIXA:
+            # a empresa consegue bancar a distribuição? UNIP6 (payout 310% com
+            # dívida/PL 3,24) é confirmada e segue crítica; SBSP3 não.
+            endividamento = _num(linha_base.get("Endividamento_Total"))
+            margem_op = _num(linha_base.get("Margem_Operacional"))
+            fco_negativo = _num(linha_base.get("FCO_Negativo")) == 1
+            confirmacoes = []
+            if fco_negativo:
+                confirmacoes.append("FCO negativo")
+            if endividamento == endividamento and endividamento > policy.max_endividamento:
+                confirmacoes.append(
+                    f"endividamento {endividamento:.2f}× > {policy.max_endividamento:g}×")
+            if margem_op == margem_op and margem_op < 0:
+                confirmacoes.append("margem operacional negativa")
+
+            if payout == payout and payout >= PAYOUT_CRITICO and confirmacoes:
                 nivel = CRITICO
                 alertas.append(
-                    f"Dividendo: payout de {payout:.0%} — distribui muito acima "
-                    "do lucro, insustentável")
+                    f"Dividendo: payout de {payout:.0%} sem caixa que o sustente "
+                    "(" + "; ".join(confirmacoes) + ") — insustentável")
+            elif payout == payout and payout >= PAYOUT_CRITICO:
+                nivel = ATENCAO if nivel == OK else nivel
+                alertas.append(
+                    f"Dividendo: payout de {payout:.0%} muito acima do lucro — "
+                    "sem confirmação por aperto de caixa; verifique se é evento "
+                    "extraordinário (venda de ativo, privatização)")
             elif payout == payout and payout >= PAYOUT_ATENCAO:
                 nivel = ATENCAO if nivel == OK else nivel
                 alertas.append(
@@ -245,6 +281,7 @@ def check_portfolio(df_mult: pd.DataFrame, tickers: list[str],
                     setores: dict[str, str] | None = None, *,
                     policy: ValuePolicy | None = None,
                     selic: float | None = None,
+                    pesos: dict[str, float] | None = None,
                     min_ativos: int = 5,
                     max_pct_ciclico: float = 0.75) -> PortfolioHealth:
     """Diagnóstico da carteira: saúde individual + concentração de ciclo.
@@ -252,14 +289,36 @@ def check_portfolio(df_mult: pd.DataFrame, tickers: list[str],
     Setores nominalmente distintos podem ser o mesmo fator de risco. Bens
     industriais, mineração, autopeças e petroquímica são quatro setores — e uma
     aposta só no ciclo industrial global.
+
+    Args:
+        pesos: peso final por ticker. Quando informado, a concentração é medida
+            por PESO — a mesma grandeza que o teto de ciclo limita. Sem ele,
+            cai para contagem de nomes, que responde a outra pergunta: numa
+            carteira real de 30/07/2026 a contagem dava 64% de cíclicos com o
+            teto de peso em 60% respeitado, e nada na tela dizia qual era qual.
     """
     holdings = tuple(check_holdings(df_mult, tickers, policy=policy, selic=selic))
     alvos = [h.ticker for h in holdings]
     mapa = {str(k).upper(): v for k, v in (setores or {}).items()}
     classes = [_classificar_setor(mapa.get(t)) for t in alvos]
-    total = len(alvos) or 1
-    pct_ciclico = classes.count("ciclico") / total
-    pct_defensivo = classes.count("defensivo") / total
+
+    mapa_peso = {str(k).upper().replace(".SA", ""): _num(v)
+                 for k, v in (pesos or {}).items()}
+    pesos_alvo = [mapa_peso.get(t, float("nan")) for t in alvos]
+    soma = sum(p for p in pesos_alvo if p == p and p > 0)
+    # Só mede por peso quando TODOS os selecionados têm peso e a soma é positiva;
+    # peso parcial produziria percentual sobre base incompleta, pior que contagem.
+    usar_peso = (soma > 0 and all(p == p and p >= 0 for p in pesos_alvo))
+
+    if usar_peso:
+        base_medida = "peso"
+        pct_ciclico = sum(p for p, c in zip(pesos_alvo, classes) if c == "ciclico") / soma
+        pct_defensivo = sum(p for p, c in zip(pesos_alvo, classes) if c == "defensivo") / soma
+    else:
+        base_medida = "contagem"
+        total = len(alvos) or 1
+        pct_ciclico = classes.count("ciclico") / total
+        pct_defensivo = classes.count("defensivo") / total
 
     alertas: list[str] = []
     if len(alvos) < min_ativos:
@@ -268,9 +327,9 @@ def check_portfolio(df_mult: pd.DataFrame, tickers: list[str],
             f"de {min_ativos} para diversificar risco específico.")
     if pct_ciclico >= max_pct_ciclico and len(alvos) >= 2:
         alertas.append(
-            f"Fator único: {pct_ciclico:.0%} da carteira em setores cíclicos. "
-            "Setores diferentes, mesmo fator — tendem a cair juntos num aperto "
-            "do ciclo industrial/commodities.")
+            f"Fator único: {pct_ciclico:.0%} da carteira em setores cíclicos "
+            f"(medido por {base_medida}). Setores diferentes, mesmo fator — "
+            "tendem a cair juntos num aperto do ciclo industrial/commodities.")
     if pct_defensivo == 0 and len(alvos) >= 2:
         alertas.append(
             "Sem contrapeso defensivo (utilidade pública, saúde ou consumo "
@@ -282,4 +341,4 @@ def check_portfolio(df_mult: pd.DataFrame, tickers: list[str],
             f"para {len(alvos)} ativos.")
 
     return PortfolioHealth(holdings, len(alvos), pct_ciclico, pct_defensivo,
-                           setores_unicos, tuple(alertas))
+                           setores_unicos, tuple(alertas), base_medida)

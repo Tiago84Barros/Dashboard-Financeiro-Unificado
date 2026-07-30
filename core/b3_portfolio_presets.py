@@ -64,12 +64,15 @@ PRESETS: dict[str, Preset] = {
             "pb3_resiliencia": False,
             "pb3_min_empresas": 5,
             "pb3_cheapness": 0,
+            "pb3_piso_qualidade": True,
         },
         evidencias=(
             "Modos estatísticos aprovam 0 segmentos no universo real.",
             "Tetos 30%/60% produziram 10 ativos sem conflito entre si.",
             "Margem de 15%: 25% cai para 7 ativos; 5% não muda (10).",
             "Resiliência a 5 p.p. cortaria de 10 para 6 ativos.",
+            "Piso de qualidade ligado: sem ele, o líder do segmento entra "
+            "mesmo no pior decil de endividamento da bolsa (UNIP6, 30/07/2026).",
         ),
     ),
     CONSERVADOR: Preset(
@@ -85,6 +88,7 @@ PRESETS: dict[str, Preset] = {
             "pb3_roic_spread": 0.0,
             "pb3_min_empresas": 5,
             "pb3_cheapness": 0,
+            "pb3_piso_qualidade": True,
         },
         evidencias=(
             "Resiliência a 0 p.p. custa 1 ativo (10 → 9); a 5 p.p. custaria 4.",
@@ -105,10 +109,15 @@ PRESETS: dict[str, Preset] = {
             "pb3_resiliencia": False,
             "pb3_min_empresas": 1,
             "pb3_cheapness": 30,
+            # Desligado DE PROPÓSITO: este perfil existe para ver o universo
+            # inteiro que o motor enxerga, inclusive o que o piso barraria.
+            "pb3_piso_qualidade": False,
         },
         evidencias=(
             "Grupo mínimo 1 chega a 13 ativos; barganha 30% chega a 12.",
             "Sem tetos, nada impede concentração de setor ou de fator.",
+            "Piso de qualidade DESLIGADO: empresa com FCO negativo ou "
+            "patrimônio negativo pode entrar (103 no universo têm o sinal).",
         ),
         ressalva="Perfil de diagnóstico: sem proteção de concentração. A "
                  "carteira daqui pode ficar dominada por um único fator.",
@@ -156,6 +165,14 @@ def avaliar_configuracao(valores: dict) -> list[str]:
             "Tetos de 25% por setor e 50% para cíclicos são difíceis de "
             "satisfazer juntos — se conflitarem, o app avisa em vez de violar "
             "em silêncio.")
+
+    if "pb3_piso_qualidade" in valores and not valores.get("pb3_piso_qualidade"):
+        alertas.append(
+            "Piso absoluto de qualidade DESLIGADO: a carteira volta a aceitar o "
+            "líder do segmento seja ele qual for. No universo real há **103 "
+            "empresas** com sinal conclusivo de FCO negativo, patrimônio "
+            "negativo ou endividamento fora de faixa — e o líder de um segmento "
+            "pode ser uma delas.")
 
     if int(valores.get("pb3_min_empresas") or 5) <= 2:
         alertas.append(
