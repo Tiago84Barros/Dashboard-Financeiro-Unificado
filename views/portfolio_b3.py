@@ -3472,32 +3472,44 @@ def render(show_header: bool = True) -> None:
                 "só desempata dentro do ranking do próprio segmento, como o "
                 "gate qualitativo já faz."
             )
-            _mcol1, _mcol2, _mcol3 = st.columns(3)
-            _mcol1.metric(
-                "Correlação média da seleção",
-                f"{corr_diag['avg_corr_apos_substituicao']:.2f}",
-                delta=f"{corr_diag['avg_corr_apos_substituicao'] - corr_diag['avg_corr_antes']:+.2f}",
-                delta_color="inverse",
-                help="Média dos pares de correlação (Pearson, retornos "
-                     "mensais) entre os ativos finais. Antes da diversificação: "
-                     f"{corr_diag['avg_corr_antes']:.2f}.",
-            )
-            _mcol2.metric(
-                "Índice de diversificação (1−HHI)",
-                f"{corr_diag['div_index_depois']:.2f}",
-                delta=f"{corr_diag['div_index_depois'] - corr_diag['div_index_antes']:+.2f}",
-                help="0 = concentrado num único ativo; próximo de 1 = peso "
-                     "espalhado. Antes: "
-                     f"{corr_diag['div_index_antes']:.2f}.",
-            )
-            _mk_txt = (
-                f"{corr_diag['markowitz_method']} "
-                f"({'convergiu' if corr_diag['markowitz_convergiu'] else 'não convergiu — projeção aproximada'})"
-                if corr_diag.get("markowitz_method") else "não aplicada"
-            )
-            _mcol3.metric("Reponderação min-variance", _mk_txt)
+            _d_corr = (corr_diag["avg_corr_apos_substituicao"]
+                       - corr_diag["avg_corr_antes"])
+            _d_div = corr_diag["div_index_depois"] - corr_diag["div_index_antes"]
+            _mcol1, _mcol2 = st.columns(2)
+            with _mcol1:
+                card_metrica(
+                    "Correlação média da seleção",
+                    f"{corr_diag['avg_corr_apos_substituicao']:.2f}",
+                    delta=(f"{_d_corr:+.2f} vs "
+                           f"{corr_diag['avg_corr_antes']:.2f} antes"),
+                    # Correlação MENOR é melhor: queda diversifica.
+                    positivo=(None if abs(_d_corr) < 5e-3 else _d_corr < 0),
+                    ajuda="Média dos pares de correlação (Pearson, retornos "
+                          "mensais) entre os ativos finais. Quanto menor, menos "
+                          "os ativos repetem o mesmo risco.",
+                )
+            with _mcol2:
+                card_metrica(
+                    "Índice de diversificação (1−HHI)",
+                    f"{corr_diag['div_index_depois']:.2f}",
+                    delta=(f"{_d_div:+.2f} vs "
+                           f"{corr_diag['div_index_antes']:.2f} antes"),
+                    positivo=(None if abs(_d_div) < 5e-3 else _d_div > 0),
+                    ajuda="0 = tudo num único ativo; perto de 1 = peso bem "
+                          "espalhado entre os ativos da carteira.",
+                )
+            # O NOME do otimizador (slsqp etc.) não diz nada a quem investe.
+            # O que importa é se os pesos são confiáveis: só avisa quando NÃO
+            # são, e em português.
+            if corr_diag.get("markowitz_method") and not corr_diag.get("markowitz_convergiu"):
+                st.warning(
+                    "O ajuste fino de pesos não convergiu — a carteira usa uma "
+                    "aproximação. Os ativos escolhidos não mudam; só a divisão "
+                    "entre eles fica menos precisa.", icon="⚠️")
             if corr_diag.get("reponderacao_pulada"):
-                st.caption(f"⚠️ {corr_diag['reponderacao_pulada']} — pesos ficaram só na substituição.")
+                st.warning(
+                    f"{corr_diag['reponderacao_pulada']} — os pesos vieram só da "
+                    "substituição de ativos, sem ajuste fino.", icon="⚠️")
             if corr_log:
                 for s in corr_log:
                     st.markdown(
@@ -3591,11 +3603,17 @@ def render(show_header: bool = True) -> None:
                 except Exception as exc:
                     st.error(f"Não foi possível salvar o portfólio padrão: {exc}")
         with c_info:
-            st.info(
-                f"{len(proximos_uniq)} empresas selecionadas · "
-                f"{len(aprovados)} segmentos aprovados · "
-                f"score médio {metrics_modelo['score_medio']:.2f}"
-            )
+            _r1, _r2, _r3 = st.columns(3)
+            with _r1:
+                card_metrica("Empresas selecionadas", str(len(proximos_uniq)),
+                             accent="#4A9EFF")
+            with _r2:
+                card_metrica("Segmentos aprovados", str(len(aprovados)),
+                             accent="#4A9EFF")
+            with _r3:
+                card_metrica("Score médio",
+                             f"{metrics_modelo['score_medio']:.2f}",
+                             accent="#4A9EFF")
 
     # ── DISTRIBUIÇÃO SETORIAL ────────────────────────────────────────────────
     if proximos_uniq:
