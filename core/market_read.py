@@ -1092,3 +1092,53 @@ def load_classes_irmas() -> dict[str, tuple[str, ...]]:
         for tk in grupo:
             out[tk] = grupo
     return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_resiliencia_ciclo() -> dict[str, dict]:
+    """{ticker: {razao, margem_normal, margem_crise, anos}} nas recessões.
+
+    Compara a margem operacional MEDIANA dos anos de recessão com a dos anos
+    normais, no histórico da própria empresa. Mediana e não média: um único ano
+    de item extraordinário deslocaria a média e inverteria a leitura.
+
+    Só descreve o passado do próprio ticker — não é inferência cruzada e não
+    depende de amplitude de segmento. Ver core.b3_cycle_evidence para por que o
+    resultado informa mas não reclassifica.
+    """
+    from core.b3_cycle_evidence import ANOS_DE_CRISE
+
+    df = _q("""
+        WITH m AS (
+            SELECT ticker, year, ebit::numeric / NULLIF(revenue, 0) AS margem
+            FROM market.income_statements
+            WHERE period = 'annual' AND ebit IS NOT NULL AND revenue > 0
+        )
+        SELECT ticker,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY margem)
+                 FILTER (WHERE year = ANY(:crise))        AS margem_crise,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY margem)
+                 FILTER (WHERE NOT (year = ANY(:crise)))  AS margem_normal,
+               count(*) FILTER (WHERE year = ANY(:crise)) AS anos_crise
+        FROM m
+        GROUP BY ticker
+    """, {"crise": list(ANOS_DE_CRISE)})
+    if df.empty:
+        return {}
+
+    out: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        tk = str(row["ticker"]).replace(".SA", "").strip().upper()
+        try:
+            normal = float(row["margem_normal"])
+            crise = float(row["margem_crise"])
+            anos = int(row["anos_crise"])
+        except (TypeError, ValueError):
+            continue
+        # Margem normal <= 0 torna a razão sem sentido (dois negativos dão
+        # positivo — o mesmo defeito do ROE sobre patrimônio negativo).
+        if normal != normal or crise != crise or normal <= 0:
+            continue
+        out[tk] = {"razao": crise / normal, "margem_normal": normal,
+                   "margem_crise": crise, "anos": anos}
+    return out

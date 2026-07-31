@@ -1732,6 +1732,79 @@ def _render_perfil_configuracao() -> None:
 # SAÚDE DAS SELECIONADAS — cruzamento entre a rota de segmentos e a de valor
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _render_resiliencia_medida(tickers: list[str], df_set: pd.DataFrame) -> None:
+    """Como cada selecionada se comportou nas recessões de 2015-16 e 2020.
+
+    Exibe, não decide. O teto de cíclicos continua na taxonomia setorial porque
+    são só duas recessões e a de 2020 teve formato atípico — favoreceu
+    exportador. Medido por setor em 30/07/2026, Materiais Básicos (0,89) sairia
+    MAIS resiliente que Utilidade Pública (0,87), e deixar isso reclassificar
+    afrouxaria justamente a proteção contra concentração em commodity.
+    """
+    from core.b3_cycle_evidence import (
+        FRAGIL, RESILIENTE, Resiliencia, classificar_resiliencia,
+        divergencias_de_ciclo,
+    )
+    from core.b3_holdings_health import classify_cycle
+
+    try:
+        bruto = _db.load_resiliencia_ciclo()
+    except Exception:
+        return
+    if not bruto:
+        return
+
+    medidas = {
+        t: Resiliencia(t, d["razao"], d["margem_normal"], d["margem_crise"],
+                       d["anos"], classificar_resiliencia(d["razao"], d["anos"]))
+        for t, d in bruto.items()
+    }
+    presentes = [t for t in tickers if t in medidas and medidas[t].confiavel]
+    if not presentes:
+        return
+
+    mapa_setor: dict[str, str] = {}
+    if df_set is not None and not df_set.empty and "SETOR" in df_set.columns:
+        _ctk = "ticker" if "ticker" in df_set.columns else "Ticker"
+        if _ctk in df_set.columns:
+            mapa_setor = {str(r[_ctk]).upper(): str(r["SETOR"] or "")
+                          for _, r in df_set.iterrows()}
+
+    with st.expander("📉 Como se comportaram nas recessões (2015-16 e 2020)",
+                     expanded=False):
+        st.caption(
+            "Margem operacional mediana nos anos de recessão dividida pela dos "
+            "anos normais, no histórico da própria empresa. Acima de 1,00 a "
+            "margem SUBIU na crise. Isto informa e **não** altera o teto de "
+            "cíclicos: são duas recessões, e a de 2020 favoreceu exportador — "
+            "por ela, commodity mediria como mais defensiva que saneamento."
+        )
+        linhas = []
+        for t in sorted(presentes, key=lambda x: -medidas[x].razao):
+            m = medidas[t]
+            rotulo = {RESILIENTE: "🟢 segurou", FRAGIL: "🔴 desabou"}.get(
+                m.classe, "🟡 intermediária")
+            linhas.append({
+                "Ticker": t,
+                "Setor (taxonomia)": classify_cycle(mapa_setor.get(t)),
+                "Margem normal": f"{m.margem_normal:.1%}",
+                "Margem na crise": f"{m.margem_crise:.1%}",
+                "Resiliência": f"{m.razao:.2f}",
+                "Leitura": rotulo,
+            })
+        st.dataframe(pd.DataFrame(linhas), hide_index=True,
+                     use_container_width=True)
+
+        tax = {t: classify_cycle(mapa_setor.get(t)) for t in presentes}
+        for tk, classe, m in divergencias_de_ciclo(tax, medidas):
+            st.info(
+                f"**{tk}** é {classe} pela taxonomia da B3, mas segurou a margem "
+                f"na crise ({m.razao:.2f}). O teto de cíclicos continua tratando "
+                "como cíclica — evidência de duas recessões não derruba "
+                "estrutura, mas vale saber ao julgar a concentração.",
+                icon="🔎")
+
+
 def _render_saude_da_carteira(tickers: list[str], df_mult_todos: pd.DataFrame,
                               df_set: pd.DataFrame, taxa_selic_aa: float,
                               pesos: dict[str, float] | None = None) -> None:
@@ -1770,7 +1843,7 @@ def _render_saude_da_carteira(tickers: list[str], df_mult_todos: pd.DataFrame,
         "de valor. Os demais portões da carteira julgam o segmento, não o nome."
     )
 
-    k1, k2, k3 = st.columns(3)
+    k1, k2, k3, k4 = st.columns(4)
     with k1:
         card_metrica("Críticos", str(len(saude.criticos)))
     with k2:
@@ -1780,9 +1853,20 @@ def _render_saude_da_carteira(tickers: list[str], df_mult_todos: pd.DataFrame,
         # card em contagem e um teto em peso são grandezas diferentes exibidas
         # como se fossem a mesma.
         card_metrica(f"Cíclicos ({saude.base_medida})", f"{saude.pct_ciclico:.0%}")
+    with k4:
+        card_metrica(
+            f"Decisão de governo ({saude.base_medida})",
+            f"{saude.pct_regulado:.0%}",
+            positivo=(False if saude.pct_regulado >= 0.30 else None),
+            ajuda="Peso cuja receita ou preço depende de agência reguladora ou "
+                  "de controlador estatal. Nenhum indicador contábil desta tela "
+                  "mede esse risco.",
+        )
 
     for alerta in saude.alertas:
         st.warning(alerta, icon="⚠️")
+
+    _render_resiliencia_medida([h.ticker for h in saude.holdings], df_set)
 
     for holding in saude.holdings:
         if holding.nivel == CRITICO:
