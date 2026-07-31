@@ -91,6 +91,11 @@ class PortfolioHealth:
     pct_defensivo: float = 0.0
     setores: tuple[str, ...] = ()
     alertas: tuple[str, ...] = field(default_factory=tuple)
+    # Fração exposta a DECISÃO DE GOVERNO (tarifa ou controle estatal). Nenhum
+    # indicador contábil enxerga esse risco: numa carteira real de 30/07/2026,
+    # 40% do peso dependia de regulador ou de controlador estatal e nada dizia.
+    pct_regulado: float = 0.0
+    regulacao: tuple[tuple[str, str], ...] = ()   # (ticker, tarifa|estatal|livre)
     # "peso" | "contagem" — qual base gerou pct_ciclico/pct_defensivo. A
     # interface PRECISA dizer isso: o teto de ciclo limita PESO, então um card
     # em contagem podia mostrar 64% com o teto de 60% respeitado, e o usuário
@@ -340,5 +345,32 @@ def check_portfolio(df_mult: pd.DataFrame, tickers: list[str],
             f"Diversificação setorial baixa: {len(setores_unicos)} setor(es) "
             f"para {len(alvos)} ativos.")
 
-    return PortfolioHealth(holdings, len(alvos), pct_ciclico, pct_defensivo,
-                           setores_unicos, tuple(alertas), base_medida)
+    # Dependência de decisão de governo — eixo ortogonal ao ciclo. Uma carteira
+    # pode estar perfeita em setor e em fator e ainda ter metade do dinheiro
+    # dependendo de revisão tarifária ou de política de preços de estatal.
+    from core.b3_cycle_evidence import LIVRE, peso_regulado
+    base_reg = ({t: mapa_peso.get(t, 0.0) for t in alvos} if usar_peso
+                else {t: 1.0 for t in alvos})
+    pct_regulado, mapa_reg = peso_regulado(base_reg, mapa)
+    if pct_regulado >= 0.30 and len(alvos) >= 2:
+        _nomes = sorted(t for t in alvos if mapa_reg.get(t, LIVRE) != LIVRE)
+        alertas.append(
+            f"Decisão de governo: {pct_regulado:.0%} da carteira "
+            f"({', '.join(_nomes)}) tem receita ou preço dependendo de "
+            "regulador ou de controlador estatal. É risco que nenhum indicador "
+            "contábil desta tela mede — revisão tarifária, marco setorial e "
+            "política de preços não aparecem em balanço.")
+
+    # Nomeados de propósito: a ordem posicional já trocou base_medida por
+    # pct_regulado uma vez, e o erro só apareceu na formatação da tela.
+    return PortfolioHealth(
+        holdings=holdings,
+        n_ativos=len(alvos),
+        pct_ciclico=pct_ciclico,
+        pct_defensivo=pct_defensivo,
+        setores=setores_unicos,
+        alertas=tuple(alertas),
+        base_medida=base_medida,
+        pct_regulado=pct_regulado,
+        regulacao=tuple(sorted((t, mapa_reg.get(t, LIVRE)) for t in alvos)),
+    )

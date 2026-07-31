@@ -114,6 +114,11 @@ def load_classes_irmas(*a, **k):
     return _financeiro("load_classes_irmas", {}, *a, **k)
 
 
+def load_resiliencia_ciclo(*a, **k):
+    """Margem operacional nas recessões vs anos normais, por ticker."""
+    return _financeiro("load_resiliencia_ciclo", {}, *a, **k)
+
+
 def load_demonstracoes(*a, **k):
     return _financeiro("load_demonstracoes", pd.DataFrame(), *a, **k)
 
