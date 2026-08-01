@@ -1,4 +1,4 @@
-"""Backfill integral, paralelo e retomavel dos documentos publicos de FIIs.
+"""Backfill integral e retomável dos documentos públicos de FIIs.
 
 O banco e a propria fila sao o checkpoint. Por padrao, o worker guarda URL,
 hash, versao e evidencias, mas nao retém novos binarios; isso torna viavel
@@ -7,7 +7,6 @@ processar todo o catalogo respeitando a reserva local de armazenamento.
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
 import os
@@ -29,9 +28,13 @@ def _args() -> argparse.Namespace:
     parser.add_argument("--max-documents", type=int, default=0,
                         help="0 processa ate esgotar a fila elegivel.")
     parser.add_argument("--min-free-gb", type=float, default=5.0)
+    parser.add_argument("--max-batch-mb", type=int, default=150)
     parser.add_argument("--max-document-mb", type=int, default=100)
     parser.add_argument("--download-timeout", type=int, default=45)
     parser.add_argument("--download-attempts", type=int, default=2)
+    parser.add_argument("--host-failure-threshold", type=int, default=3)
+    parser.add_argument("--host-cooldown-minutes", type=int, default=30)
+    parser.add_argument("--max-documents-per-host", type=int, default=3)
     parser.add_argument("--retain-binaries", action="store_true")
     parser.add_argument("--checkpoint-every", type=int, default=1000)
     parser.add_argument("--publish-every-checkpoint", action="store_true")
@@ -194,18 +197,22 @@ def main() -> int:
         "released_claims": released, "queue": _queue_profile(engine),
     })
 
-    def one() -> dict:
+    def one(batch_limit: int) -> dict:
         return process_pending_documents(
-            limit=1, recent_months=0, max_batch_bytes=max(args.max_document_mb, 1) * 1024**2,
+            limit=max(int(batch_limit), 1), recent_months=0,
+            max_batch_bytes=max(args.max_batch_mb, 1) * 1024**2,
             max_document_bytes=max(args.max_document_mb, 1) * 1024**2,
             min_free_bytes=min_free, retain_binary=bool(args.retain_binaries),
             download_timeout=max(int(args.download_timeout), 5),
             download_attempts=max(int(args.download_attempts), 1),
+            host_failure_threshold=max(int(args.host_failure_threshold), 1),
+            host_cooldown_minutes=max(int(args.host_cooldown_minutes), 1),
+            max_documents_per_host=max(int(args.max_documents_per_host), 1),
         )
 
-    def safe_one() -> dict:
+    def safe_one(batch_limit: int) -> dict:
         try:
-            return one()
+            return one(batch_limit)
         except Exception as exc:
             return {"selected": 0, "extracted": 0, "failed": 1,
                     "worker_error": f"{type(exc).__name__}: {str(exc)[:500]}"}
@@ -225,10 +232,11 @@ def main() -> int:
                 stopped_reason = "max_documents"
                 break
             batch_size = workers if not maximum else min(workers, maximum - processed)
-            with ThreadPoolExecutor(max_workers=batch_size,
-                                    thread_name_prefix="fii-document") as pool:
-                results = [future.result() for future in as_completed(
-                    [pool.submit(safe_one) for _ in range(batch_size)])]
+            # Uma chamada única mantém o circuit breaker e o limite por host
+            # compartilhados por todo o lote. Paralelizar uma chamada por
+            # documento permitia que vários downloads do mesmo host falhassem
+            # antes que o circuito fosse aberto.
+            results = [safe_one(batch_size)]
             selected = sum(max(int(row.get("selected") or 0), 0) for row in results)
             extracted = sum(max(int(row.get("extracted") or 0), 0) for row in results)
             processed += selected

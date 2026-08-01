@@ -59,7 +59,8 @@ def archive_url(kind: str, year: int) -> str:
 
 
 def fetch_archive(kind: str, year: int, *, timeout: int = 120,
-                  cache_root: Path = CACHE_ROOT) -> CvmArchive | None:
+                  cache_root: Path = CACHE_ROOT,
+                  max_bytes: int = 128 * 1024 * 1024) -> CvmArchive | None:
     """Baixa o artefato oficial com retry, cache condicional e escrita atômica."""
     import requests
     from requests.adapters import HTTPAdapter
@@ -76,10 +77,15 @@ def fetch_archive(kind: str, year: int, *, timeout: int = 120,
         except (OSError, json.JSONDecodeError):
             saved_headers = {}
     session = requests.Session()
-    session.headers["User-Agent"] = "DashboardFinanceiro/1.0 (+cvm-fii-pit)"
+    session.headers.update({
+        "User-Agent": "DashboardFinanceiro/1.0 (+cvm-fii-pit)",
+        "Accept-Encoding": "identity",
+        "Connection": "close",
+    })
     session.mount("https://", HTTPAdapter(max_retries=Retry(
         total=3, backoff_factor=.8, status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset({"GET"}), respect_retry_after_header=True)))
+    response = None
     try:
         conditional = {}
         etag = saved_headers.get("ETag") or saved_headers.get("etag")
@@ -89,21 +95,48 @@ def fetch_archive(kind: str, year: int, *, timeout: int = 120,
             conditional["If-None-Match"] = etag
         if cache.exists() and modified:
             conditional["If-Modified-Since"] = modified
-        response = session.get(url, timeout=timeout, headers=conditional)
+        response = session.get(
+            url, timeout=timeout, headers=conditional, stream=True,
+        )
+        if response.status_code == 304 and cache.exists():
+            content = cache.read_bytes()
+            return CvmArchive(kind, year, url, content, datetime.now(timezone.utc),
+                              saved_headers, hashlib.sha256(content).hexdigest(), True)
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        declared = response.headers.get("Content-Length")
+        if declared and int(declared) > max(int(max_bytes), 1):
+            raise ValueError(
+                f"arquivo CVM declara {int(declared)} bytes; limite {max_bytes}"
+            )
+        chunks: list[bytes] = []
+        downloaded = 0
+        for chunk in response.iter_content(chunk_size=512 * 1024):
+            if not chunk:
+                continue
+            downloaded += len(chunk)
+            if downloaded > max(int(max_bytes), 1):
+                raise ValueError(
+                    f"arquivo CVM excedeu {max_bytes} bytes durante download"
+                )
+            chunks.append(chunk)
+        content = b"".join(chunks)
     except requests.RequestException:
         if not cache.exists():
             return None
         content = cache.read_bytes()
+        if len(content) > max(int(max_bytes), 1):
+            raise ValueError("cache CVM excede o limite seguro configurado")
         return CvmArchive(kind, year, url, content, datetime.now(timezone.utc), saved_headers,
                           hashlib.sha256(content).hexdigest(), True)
-    if response.status_code == 304 and cache.exists():
-        content = cache.read_bytes()
-        return CvmArchive(kind, year, url, content, datetime.now(timezone.utc),
-                          saved_headers, hashlib.sha256(content).hexdigest(), True)
-    if response.status_code == 404:
-        return None
-    response.raise_for_status()
-    content = response.content
+    finally:
+        close = getattr(response, "close", None)
+        if close is not None:
+            close()
+        close_session = getattr(session, "close", None)
+        if close_session is not None:
+            close_session()
     if not content:
         raise ValueError(f"arquivo CVM vazio: {kind}/{year}")
     if suffix == ".zip" and not content.startswith(b"PK"):
@@ -884,7 +917,8 @@ def ingest_cvm_structured(
                                                   record_validation_readiness,
                                                   snapshot_methodology_v4)
 
-    progress = {"archives": 0, "skipped_archives": 0, "revisions": 0,
+    progress = {"archives": 0, "cached_archives": 0,
+                "skipped_archives": 0, "revisions": 0,
                 "missing_archives": 0, "observations": 0,
                 "exposures": 0, "documents": 0, "lineage": 0, "errors": [],
                 "by_kind": {}}
@@ -905,7 +939,8 @@ def ingest_cvm_structured(
     current = datetime.now(timezone.utc).year
     first = max(2016, current - max(int(years), 1) + 1)
     for kind in kinds:
-        kind_progress = {"archives": 0, "skipped": 0, "revisions": 0,
+        kind_progress = {"archives": 0, "cached": 0,
+                         "skipped": 0, "revisions": 0,
                          "observations": 0, "exposures": 0,
                          "documents": 0, "contexts": 0}
         for year in range(first, current + 1):
@@ -915,6 +950,7 @@ def ingest_cvm_structured(
                 if archive is None:
                     progress["missing_archives"] += 1
                     continue
+                kind_progress["cached"] += int(archive.from_cache)
                 published = None
                 if archive.headers.get("Last-Modified"):
                     try:
@@ -964,6 +1000,7 @@ def ingest_cvm_structured(
         for field in ("archives", "observations", "exposures", "documents"):
             progress[field] += kind_progress[field]
         progress["skipped_archives"] += kind_progress["skipped"]
+        progress["cached_archives"] += kind_progress["cached"]
         progress["revisions"] += kind_progress["revisions"]
     if run_postprocess:
         audit = audit_methodology_v4_data()

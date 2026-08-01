@@ -68,6 +68,7 @@ def run_enrichment(*, years: int = 5, candidate_limit: int = 12,
         audit_methodology_v4_data, reprocess, snapshot_methodology_v4,
     )
     from data_pipeline.market.fii_monitoring import run_monitoring
+    from data_pipeline.market.fii_ri_documents import collect_due_document_sources
 
     selected = sorted({str(value).upper().replace(".SA", "")
                        for value in (tickers or []) if value})
@@ -85,6 +86,10 @@ def run_enrichment(*, years: int = 5, candidate_limit: int = 12,
     run_stage("cvm_structured", ingest_cvm_structured, years=max(int(years), 1))
     run_stage("cvm_cri", ingest_cvm_cri, years=max(int(years), 1))
     run_stage("entity_resolution", resolve_entities)
+    run_stage(
+        "official_documents", collect_due_document_sources,
+        limit=max(int(candidate_limit), 1),
+    )
     run_stage(
         "documents", process_pending_documents,
         limit=max(int(document_limit), 1), tickers=selected,
