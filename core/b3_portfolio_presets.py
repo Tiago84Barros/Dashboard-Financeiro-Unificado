@@ -25,6 +25,13 @@ Evidências que fundamentam o perfil recomendado (universo real, 29/07/2026):
   em sementes de hash distintas após o conserto de determinismo.
 * **Margem de 15% vs Selic** — 25% derruba para 7 ativos; 5% não muda o
   resultado (10). O piso intermediário mantém exigência sem estrangular.
+* **Liquidez de R$ 500 mil/dia** — mantém 222 empresas em 10 setores e não tira
+  nada da carteira atual. O padrão do controle (R$ 1 mi) cai para 203 e elimina
+  a EUCA4, que tem saúde limpa e classificação de oportunidade. Piso de liquidez
+  é escolha sobre TAMANHO DE POSIÇÃO, não sobre qualidade da empresa: com aporte
+  de R$ 1.000/mês, um papel que gira R$ 700 mil por dia é comprável sem mover
+  preço. Exigir mais liquidez do que o aporte precisa custa empresa boa sem
+  reduzir risco nenhum.
 
 Puro (sem Streamlit, sem banco). Coberto por tests/test_b3_portfolio_presets.py.
 """
@@ -65,6 +72,8 @@ PRESETS: dict[str, Preset] = {
             "pb3_min_empresas": 5,
             "pb3_cheapness": 0,
             "pb3_piso_qualidade": True,
+            "pb3_min_mcap": "≥ R$ 1 bi",
+            "pb3_min_adtv": "≥ R$ 500 mil",
         },
         evidencias=(
             "Modos estatísticos aprovam 0 segmentos no universo real.",
@@ -73,6 +82,9 @@ PRESETS: dict[str, Preset] = {
             "Resiliência a 5 p.p. cortaria de 10 para 6 ativos.",
             "Piso de qualidade ligado: sem ele, o líder do segmento entra "
             "mesmo no pior decil de endividamento da bolsa (UNIP6, 30/07/2026).",
+            "Liquidez de R$ 500 mil/dia deixa 222 empresas em 10 setores e não "
+            "remove nenhuma da carteira atual; R$ 1 mi cai para 203 e elimina a "
+            "EUCA4, que tem saúde limpa e classificação de oportunidade.",
         ),
     ),
     CONSERVADOR: Preset(
@@ -89,10 +101,14 @@ PRESETS: dict[str, Preset] = {
             "pb3_min_empresas": 5,
             "pb3_cheapness": 0,
             "pb3_piso_qualidade": True,
+            "pb3_min_mcap": "≥ R$ 2 bi",
+            "pb3_min_adtv": "≥ R$ 5 mi",
         },
         evidencias=(
             "Resiliência a 0 p.p. custa 1 ativo (10 → 9); a 5 p.p. custaria 4.",
             "Tetos mais apertados podem conflitar — o app declara se ocorrer.",
+            "Liquidez de R$ 5 mi/dia deixa 159 empresas e 43 defensivas — "
+            "sair da posição fica fácil, ao custo de EUCA4 e SHUL4.",
         ),
         ressalva="Menos ativos significa mais risco específico por nome. "
                  "Confira se a carteira final ainda tem 5+ ativos.",
@@ -112,12 +128,16 @@ PRESETS: dict[str, Preset] = {
             # Desligado DE PROPÓSITO: este perfil existe para ver o universo
             # inteiro que o motor enxerga, inclusive o que o piso barraria.
             "pb3_piso_qualidade": False,
+            "pb3_min_mcap": "Sem filtro",
+            "pb3_min_adtv": "Sem filtro",
         },
         evidencias=(
             "Grupo mínimo 1 chega a 13 ativos; barganha 30% chega a 12.",
             "Sem tetos, nada impede concentração de setor ou de fator.",
             "Piso de qualidade DESLIGADO: empresa com FCO negativo ou "
             "patrimônio negativo pode entrar (103 no universo têm o sinal).",
+            "Sem piso de liquidez: 442 empresas, das quais 220 giram menos de "
+            "R$ 500 mil/dia — visíveis para diagnóstico, impossíveis de montar.",
         ),
         ressalva="Perfil de diagnóstico: sem proteção de concentração. A "
                  "carteira daqui pode ficar dominada por um único fator.",
@@ -173,6 +193,35 @@ def avaliar_configuracao(valores: dict) -> list[str]:
             "empresas** com sinal conclusivo de FCO negativo, patrimônio "
             "negativo ou endividamento fora de faixa — e o líder de um segmento "
             "pode ser uma delas.")
+
+    # Negociabilidade: o piso é uma escolha sobre TAMANHO DE POSIÇÃO, não sobre
+    # qualidade da empresa, e o padrão do controle está calibrado para bolso
+    # institucional. Com aporte de R$ 1.000/mês, um papel que gira R$ 700 mil
+    # por dia é comprável sem mover preço.
+    adtv = str(valores.get("pb3_min_adtv") or "")
+    if adtv in ("≥ R$ 1 mi", "≥ R$ 5 mi", "≥ R$ 20 mi"):
+        _custo = {
+            "≥ R$ 1 mi": ("203 empresas", "elimina a EUCA4, que tem saúde "
+                          "limpa e classificação de oportunidade"),
+            "≥ R$ 5 mi": ("159 empresas e 43 defensivas", "elimina EUCA4 e SHUL4"),
+            "≥ R$ 20 mi": ("113 empresas e 33 defensivas", "elimina EUCA4, "
+                           "SHUL4 e LEVE3"),
+        }[adtv]
+        alertas.append(
+            f"Piso de liquidez em {adtv} deixa {_custo[0]} no universo e "
+            f"{_custo[1]}. Contra R$ 500 mil/dia, que mantém 222 empresas e não "
+            "remove nada da carteira. Exigir mais liquidez do que o seu aporte "
+            "precisa custa empresa boa sem reduzir risco.")
+    elif adtv in ("", "Sem filtro"):
+        alertas.append(
+            "Sem piso de liquidez: 220 das 442 empresas giram menos de R$ 500 "
+            "mil por dia. Elas aparecem no diagnóstico, mas montar e desmontar "
+            "posição nelas move o preço contra você.")
+
+    if str(valores.get("pb3_min_mcap") or "") in ("", "Sem filtro"):
+        alertas.append(
+            "Sem piso de tamanho: entram micro-caps e nomes sem valor de "
+            "mercado, que costumam ser deslistados ou de dado velho.")
 
     if int(valores.get("pb3_min_empresas") or 5) <= 2:
         alertas.append(

@@ -164,3 +164,52 @@ view._render_perfil_configuracao()
     # com o perfil aplicado, o alerta de concentração some
     avisos = "\n".join(w.value for w in app.warning)
     assert "único fator" not in avisos
+
+
+def test_valores_de_preset_existem_nas_opcoes_do_widget():
+    """Um preset que grave valor fora das opções quebra o app em runtime.
+
+    `_aplicar` escreve direto em `st.session_state[chave]`, e o Streamlit
+    rejeita valor ausente da lista de opções do selectbox. Ler as opções do
+    fonte da view amarra as duas pontas: renomear um rótulo lá sem atualizar o
+    preset aqui passa a falhar no CI, não na tela do usuário.
+    """
+    import re
+    from pathlib import Path
+
+    from core.b3_portfolio_presets import PRESETS
+
+    fonte = (Path(__file__).resolve().parents[1]
+             / "views" / "portfolio_b3.py").read_text(encoding="utf-8")
+
+    for chave in ("pb3_min_mcap", "pb3_min_adtv"):
+        # Captura a lista de opções literal que precede key="<chave>".
+        bloco = re.search(
+            r"\[([^\]]*?)\][^\[\]]*?key=\"" + chave + r"\"", fonte, re.S)
+        assert bloco, f"não achei as opções de {chave} na view"
+        opcoes = set(re.findall(r'"([^"]+)"', bloco.group(1)))
+        assert opcoes, f"lista de opções de {chave} veio vazia"
+        for preset in PRESETS.values():
+            if chave in preset.valores:
+                assert preset.valores[chave] in opcoes, (
+                    f"{preset.nome}: {chave}={preset.valores[chave]!r} não está "
+                    f"entre as opções {sorted(opcoes)}")
+
+
+def test_piso_de_liquidez_alto_avisa_o_custo_medido():
+    from core.b3_portfolio_presets import avaliar_configuracao
+
+    alertas = avaliar_configuracao({"pb3_min_adtv": "≥ R$ 20 mi"})
+    assert any("113 empresas" in a and "LEVE3" in a for a in alertas)
+
+    # O recomendado não pode disparar alerta sobre si mesmo.
+    from core.b3_portfolio_presets import PRESETS, RECOMENDADO
+    assert not [a for a in avaliar_configuracao(PRESETS[RECOMENDADO].valores)
+                if "liquidez" in a.lower() or "tamanho" in a.lower()]
+
+
+def test_sem_piso_de_liquidez_tambem_avisa():
+    from core.b3_portfolio_presets import avaliar_configuracao
+
+    alertas = avaliar_configuracao({"pb3_min_adtv": "Sem filtro"})
+    assert any("220 das 442" in a for a in alertas)
