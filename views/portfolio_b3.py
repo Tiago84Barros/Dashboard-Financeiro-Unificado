@@ -1693,39 +1693,74 @@ def _render_perfil_configuracao() -> None:
                 st.session_state[chave] = valor
         return _cb
 
-    col_sel, col_btn = st.columns([3, 1])
-    escolhido = col_sel.selectbox(
-        "Perfil de configuração", list(PRESETS), key="pb3_perfil_escolha",
-        help="Combinações cujo efeito foi MEDIDO no universo real. Aplicar um "
-             "perfil sobrescreve os parâmetros abaixo; depois disso você pode "
-             "ajustar o que quiser — o app avisa se a alteração tiver custo "
-             "conhecido.",
+    # Estado ATUAL dos controles (não o do perfil escolhido no seletor).
+    atual = {chave: st.session_state.get(chave)
+             for preset_item in PRESETS.values() for chave in preset_item.valores}
+    ativo = identificar_perfil(atual)
+    alertas = avaliar_configuracao(atual)
+
+    _ok = ativo != PERSONALIZADO and not alertas
+    _cor = "#00C896" if _ok else ("#F6C90E" if alertas else "#4A9EFF")
+    _selo = ativo if ativo != PERSONALIZADO else "Personalizada"
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:10px;'
+        f'margin:4px 0 10px;">'
+        f'<span style="font-size:0.78rem;font-weight:700;color:#E2E8F0;">'
+        f'Perfil de configuração</span>'
+        f'<span style="font-size:0.66rem;font-weight:700;letter-spacing:.04em;'
+        f'color:{_cor};border:1px solid {_cor}55;background:{_cor}14;'
+        f'border-radius:999px;padding:2px 9px;">{html.escape(_selo)}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
     )
-    col_btn.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
+    col_sel, col_btn = st.columns([3, 1], vertical_alignment="bottom")
+    escolhido = col_sel.selectbox(
+        # Rótulo COLAPSADO, não removido: o título visível é o markdown acima,
+        # mas leitor de tela precisa do nome do controle.
+        "Perfil de configuração", list(PRESETS), key="pb3_perfil_escolha",
+        label_visibility="collapsed",
+        help="Combinações cujo efeito foi MEDIDO no universo real. Aplicar um "
+             "perfil sobrescreve os parâmetros avançados; depois disso você "
+             "pode ajustar o que quiser — o app avisa se a alteração tiver "
+             "custo conhecido.",
+    )
     col_btn.button("Aplicar perfil", key="pb3_aplicar_perfil",
                    on_click=_aplicar(escolhido), use_container_width=True)
 
     preset = PRESETS[escolhido]
-    st.caption(f"**{preset.nome}** — {preset.resumo}")
+    st.caption(preset.resumo)
     with st.expander("Por que estes valores (evidência medida)", expanded=False):
         for evidencia in preset.evidencias:
             st.markdown(f"- {evidencia}")
         if preset.ressalva:
             st.warning(preset.ressalva, icon="⚠️")
 
-    # Estado ATUAL dos controles (não o do perfil escolhido no seletor).
-    atual = {chave: st.session_state.get(chave)
-             for preset_item in PRESETS.values() for chave in preset_item.valores}
-    ativo = identificar_perfil(atual)
     if ativo == PERSONALIZADO:
         st.caption(
-            "Configuração atual: **personalizada** (não corresponde a nenhum "
-            f"perfil). Para voltar ao padrão, aplique “{RECOMENDADO}”.")
-    else:
-        st.caption(f"Configuração atual: **{ativo}**.")
-
-    for alerta in avaliar_configuracao(atual):
+            "Os controles não correspondem a nenhum perfil medido. Para voltar "
+            f"ao padrão, escolha “{RECOMENDADO}” e clique em Aplicar perfil.")
+    for alerta in alertas:
         st.warning(alerta, icon="⚠️")
+
+
+def _semear_perfil_padrao() -> None:
+    """Primeira carga já vem no perfil recomendado, não nos defaults dos widgets.
+
+    Antes, cada controle nascia com o próprio default e a combinação inicial não
+    correspondia a nenhum perfil medido — o usuário via "Personalizada" sem ter
+    mexido em nada, e rodava a carteira com valores que ninguém verificou. O
+    caso mais caro era o piso de liquidez, cujo default (R$ 1 mi) elimina uma
+    empresa de saúde limpa.
+
+    ``setdefault`` e não atribuição: semear é para a PRIMEIRA carga. Sobrescrever
+    a cada rerun desfaria qualquer ajuste que o usuário fizesse.
+    """
+    from core.b3_portfolio_presets import PRESETS, RECOMENDADO
+
+    for chave, valor in PRESETS[RECOMENDADO].valores.items():
+        if chave not in st.session_state:
+            st.session_state[chave] = valor
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2170,9 +2205,21 @@ def render(show_header: bool = True) -> None:
         unsafe_allow_html=True,
     )
 
+    # ── PERFIL ────────────────────────────────────────────────────────────────
+    # FORA do expander de parâmetros, e antes dele: perfil é estrutura medida,
+    # não ajuste fino. Deixá-lo lá dentro obrigava a abrir a área de ~20
+    # controles para ver ou trocar o que é a decisão padrão do app.
+    _semear_perfil_padrao()
+    _render_perfil_configuracao()
+
     # ── PARÂMETROS ────────────────────────────────────────────────────────────
-    with st.expander("⚙️ Parâmetros", expanded=True):
-        _render_perfil_configuracao()
+    # Fechado por padrão: com o perfil semeado, a tela abre pronta para rodar e
+    # os controles só aparecem para quem quiser mesmo mexer.
+    with st.expander("⚙️ Parâmetros avançados", expanded=False):
+        st.caption(
+            "Já preenchidos pelo perfil acima. Alterar aqui é opcional — o app "
+            "avisa quando a mudança tem custo medido."
+        )
         p1, p2, p3, p4 = st.columns(4)
         thr_selic   = p1.number_input(
             "Margem mín. vs Selic · histórico (%)", 0.0, 500.0, 0.0, 5.0,
