@@ -83,11 +83,11 @@ def secao_titulo(titulo: str, icone: str = "", subtitulo: str = "") -> None:
 # ══════════════════════════════════════════════════════════════════
 
 def card_metrica(
-    titulo: str,
-    valor: str,
-    delta: str | None = None,
+    titulo: object,
+    valor: object,
+    delta: object | None = None,
     positivo: bool | None = None,
-    ajuda: str | None = None,
+    ajuda: object | None = None,
     accent: str | None = None,
 ) -> None:
     """
@@ -95,24 +95,36 @@ def card_metrica(
 
     Args:
         titulo:   Rótulo do indicador (ex: "Patrimônio Total")
-        valor:    Valor já formatado (ex: "R$ 87.450,00")
-        delta:    Variação formatada (ex: "+5,2%") ou None para omitir
+        valor:    Valor do indicador. Aceita número e converte — ver nota abaixo.
+        delta:    Variação (ex: "+5,2%") ou None para omitir
         positivo: True → verde, False → vermelho, None → neutro (cor do delta)
         ajuda:    Tooltip de ajuda (via atributo title do card)
         accent:   Cor da borda-esquerda; default deriva de `positivo` (neutro=azul)
+
+    Os parâmetros de texto são tipados como ``object`` e convertidos aqui de
+    propósito. A assinatura anterior pedia ``str`` e a maioria das chamadas
+    respeitava, mas 19 delas em quatro telas passam ``int(...)`` ou ``len(...)``
+    — contagem é o caso natural de um KPI. Enquanto a renderização era f-string
+    isso funcionava por acidente; ao passar a escapar HTML, ``html.escape``
+    chamou ``.replace`` num inteiro e derrubou a aba inteira em produção
+    (31/07/2026, "Empresas B3": *'int' object has no attribute 'replace'*).
+
+    Converter no componente, e não pedir que 19 chamadores lembrem de formatar,
+    é o que impede a falha de voltar pela vigésima chamada.
     """
     cor_delta = "#00C896" if positivo is True else "#FC5C7D" if positivo is False else "#9CA3AF"
     accent = accent or ("#00C896" if positivo is True
                         else "#FC5C7D" if positivo is False else "#4A9EFF")
     delta_html = (
-        f'<div class="app-kpi-delta" style="color:{cor_delta}">{escape(delta)}</div>'
-        if delta else ""
+        f'<div class="app-kpi-delta" style="color:{cor_delta}">{escape(str(delta))}</div>'
+        if delta is not None and str(delta) != "" else ""
     )
-    ajuda_attr = f' title="{escape(ajuda, quote=True)}"' if ajuda else ""
+    ajuda_attr = (f' title="{escape(str(ajuda), quote=True)}"'
+                  if ajuda is not None and str(ajuda) != "" else "")
     st.markdown(
         f'<div class="app-kpi-card"{ajuda_attr} style="--app-kpi-accent:{accent}">'
-        f'<div class="app-kpi-label">{escape(titulo)}</div>'
-        f'<div class="app-kpi-value">{escape(valor)}</div>'
+        f'<div class="app-kpi-label">{escape(str(titulo))}</div>'
+        f'<div class="app-kpi-value">{escape(str(valor))}</div>'
         f'{delta_html}</div>',
         unsafe_allow_html=True,
     )

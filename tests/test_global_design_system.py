@@ -60,3 +60,51 @@ def test_all_primary_routes_use_global_or_dashboard_header():
     for filename, marker in expected.items():
         source = (ROOT / "views" / filename).read_text(encoding="utf-8")
         assert marker in source, f"{filename} não usa o cabeçalho moderno"
+
+
+def test_card_metrica_aceita_numero_sem_quebrar():
+    """Regressão de produção (31/07/2026): a aba Empresas B3 caiu inteira com
+    *'int' object has no attribute 'replace'*.
+
+    A assinatura pedia `str`, mas 19 chamadas em quatro telas passam `int(...)`
+    ou `len(...)` — contagem é o caso natural de um KPI. Enquanto a renderização
+    era f-string isso funcionava por acidente; ao passar a escapar HTML,
+    `html.escape` chamou `.replace` num inteiro.
+    """
+    from unittest.mock import patch
+
+    from design.componentes import card_metrica
+
+    with patch("design.componentes.st") as fake_st:
+        card_metrica("Tickers", 426)                       # int, o caso real
+        card_metrica("Peso", 0.4, delta=12)                # float e delta numérico
+        card_metrica("Total", 7, ajuda=3)                  # ajuda numérica
+        assert fake_st.markdown.call_count == 3
+        html_int = fake_st.markdown.call_args_list[0][0][0]
+        assert ">426<" in html_int
+
+
+def test_card_metrica_escapa_html_do_valor():
+    """A conversão para str não pode desligar o escape."""
+    from unittest.mock import patch
+
+    from design.componentes import card_metrica
+
+    with patch("design.componentes.st") as fake_st:
+        card_metrica("T", "<script>alert(1)</script>")
+        html = fake_st.markdown.call_args_list[0][0][0]
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
+
+def test_card_metrica_omite_delta_zero_string_vazia():
+    """Delta ausente não deve virar um bloco vazio na tela."""
+    from unittest.mock import patch
+
+    from design.componentes import card_metrica
+
+    with patch("design.componentes.st") as fake_st:
+        card_metrica("T", "1", delta=None)
+        card_metrica("T", "1", delta="")
+        for chamada in fake_st.markdown.call_args_list:
+            assert "app-kpi-delta" not in chamada[0][0]
