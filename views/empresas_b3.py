@@ -27,7 +27,11 @@ import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
 from core.market_companies import filter_market_companies, normalize_b3_companies
-from design.componentes import badge_status, card_metrica  # KPIs em cards CSS (visual coeso)
+from design.componentes import (
+    badge_status,
+    card_metrica,
+    container_pagina,
+)  # KPIs em cards CSS (visual coeso)
 from design.market_companies import (
     render_company_search,
     render_market_css,
@@ -5917,17 +5921,11 @@ def render() -> None:
     render_market_css()
     st.markdown(_CSS, unsafe_allow_html=True)
 
-    st.markdown(
-        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">'
-        '<span style="font-size:2rem">🏢</span>'
-        '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
-        'Empresas B3</h1>'
-        '</div>'
-        '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
-        'Análise fundamentalista de empresas listadas na B3 e construção '
-        'quantitativa de portfólios aplicáveis com dados reais.'
-        '</p>',
-        unsafe_allow_html=True,
+    container_pagina(
+        "Empresas B3",
+        "Análise fundamentalista e construção quantitativa de portfólios brasileiros.",
+        "🏢",
+        metadados=[("Mercado", "B3 · Brasil")],
     )
 
     with st.spinner("Carregando lista de empresas…"):

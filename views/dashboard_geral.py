@@ -8,16 +8,23 @@ Layout:
   Row 3 — Distribuição de despesas (ano) | Comparativo Ano a Ano
 """
 from datetime import date as _date
+from datetime import datetime as _datetime
+from html import escape
+from zoneinfo import ZoneInfo
 
 import plotly.graph_objects as go
 import streamlit as st
 
-from core.controle import get_gastos_categoria_anual, get_historico_anual
 from core.b3_portfolio_model import load_active_b3_portfolio_model
+from core.config import settings
+from core.controle import get_gastos_categoria_anual, get_historico_anual
 from core.financeiro import get_visao_geral
-from core.investimentos import get_carteira, get_cashflow_mensal, get_evolucao_patrimonial
+from core.investimentos import (
+    get_carteira,
+    get_cashflow_mensal,
+    get_evolucao_patrimonial,
+)
 from core.utils import fmt_moeda, fmt_percentual
-from design.componentes import badge_status, container_pagina
 
 # Carteira-modelo de FIIs — recomputada com a mesma lógica da página Seleção de FIIs.
 _FIIS_N_MAX = 10          # nº de FIIs na carteira-modelo (default da página)
@@ -43,24 +50,422 @@ _MESES_PT = {
     9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
 }
 
+_DASHBOARD_STYLES = """
+<style>
+/* Dashboard Geral v4 — escopo próprio para permitir evolução/reversão isolada. */
+.dg-shell {
+    --dg-surface: rgba(18, 22, 33, 0.88);
+    --dg-surface-strong: rgba(22, 27, 41, 0.96);
+    --dg-border: rgba(148, 163, 184, 0.14);
+    --dg-text: #F8FAFC;
+    --dg-muted: #94A3B8;
+    --dg-subtle: #64748B;
+    margin-bottom: 0.35rem;
+}
+.dg-hero {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1.5rem;
+    padding: 1.75rem 1.9rem;
+    margin: 0 0 1rem;
+    border: 1px solid var(--dg-border);
+    border-radius: 20px;
+    background:
+        radial-gradient(circle at 88% 8%, rgba(74,158,255,.20), transparent 34%),
+        radial-gradient(circle at 8% 105%, rgba(0,200,150,.13), transparent 36%),
+        linear-gradient(145deg, #171C2A 0%, #111620 58%, #10131C 100%);
+    box-shadow: 0 18px 46px rgba(0,0,0,.27), inset 0 1px 0 rgba(255,255,255,.045);
+}
+.dg-hero::after {
+    content: "";
+    position: absolute;
+    width: 230px;
+    height: 230px;
+    right: -120px;
+    bottom: -155px;
+    border: 1px solid rgba(74,158,255,.22);
+    border-radius: 50%;
+}
+.dg-eyebrow {
+    color: #60A5FA;
+    font-size: .68rem;
+    font-weight: 800;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    margin-bottom: .55rem;
+}
+.dg-title {
+    color: var(--dg-text);
+    font-size: clamp(1.75rem, 3vw, 2.45rem);
+    font-weight: 820;
+    letter-spacing: -.045em;
+    line-height: 1.03;
+    margin: 0;
+}
+.dg-subtitle {
+    color: var(--dg-muted);
+    font-size: .88rem;
+    line-height: 1.55;
+    margin-top: .65rem;
+    max-width: 660px;
+}
+.dg-hero-meta {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: .45rem;
+    min-width: 220px;
+}
+.dg-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .42rem;
+    min-height: 30px;
+    padding: .32rem .7rem;
+    border: 1px solid var(--dg-border);
+    border-radius: 999px;
+    background: rgba(15,23,42,.66);
+    color: #CBD5E1;
+    font-size: .72rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.dg-chip-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--chip-color, #4A9EFF);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--chip-color, #4A9EFF) 16%, transparent);
+}
+.dg-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .78rem;
+    margin: 0 0 1.4rem;
+}
+.dg-kpi {
+    position: relative;
+    min-width: 0;
+    padding: 1rem 1.05rem 1.05rem;
+    border: 1px solid var(--dg-border);
+    border-radius: 15px;
+    background: linear-gradient(155deg, var(--dg-surface-strong), var(--dg-surface));
+    box-shadow: 0 8px 24px rgba(0,0,0,.18);
+}
+.dg-kpi::before {
+    content: "";
+    position: absolute;
+    left: 1rem;
+    right: 1rem;
+    top: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--kpi-color), transparent);
+}
+.dg-kpi-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .6rem;
+}
+.dg-kpi-label {
+    color: var(--dg-muted);
+    font-size: .67rem;
+    font-weight: 760;
+    letter-spacing: .085em;
+    text-transform: uppercase;
+}
+.dg-kpi-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid color-mix(in srgb, var(--kpi-color) 38%, transparent);
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--kpi-color) 11%, transparent);
+    color: var(--kpi-color);
+    font-size: .82rem;
+}
+.dg-kpi-value {
+    overflow-wrap: anywhere;
+    color: var(--dg-text);
+    font-size: clamp(1.25rem, 2vw, 1.7rem);
+    font-weight: 820;
+    letter-spacing: -.035em;
+    line-height: 1.08;
+    margin-top: .7rem;
+}
+.dg-kpi-detail {
+    color: var(--dg-subtle);
+    font-size: .72rem;
+    line-height: 1.35;
+    margin-top: .46rem;
+}
+.dg-kpi-detail strong {
+    color: var(--kpi-color);
+    font-weight: 760;
+}
+.dg-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 1.7rem 0 .85rem;
+}
+.dg-section-main {
+    display: flex;
+    align-items: center;
+    gap: .78rem;
+    min-width: 0;
+}
+.dg-section-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    border: 1px solid color-mix(in srgb, var(--section-color) 34%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--section-color) 10%, transparent);
+    font-size: .95rem;
+}
+.dg-section-title {
+    color: #E2E8F0;
+    font-size: 1rem;
+    font-weight: 760;
+    letter-spacing: -.015em;
+}
+.dg-section-subtitle {
+    color: var(--dg-subtle);
+    font-size: .75rem;
+    line-height: 1.35;
+    margin-top: .14rem;
+}
+.dg-section-rule {
+    width: 86px;
+    height: 1px;
+    flex: 0 0 auto;
+    background: linear-gradient(90deg, var(--section-color), transparent);
+}
+.dg-callout {
+    display: flex;
+    align-items: flex-start;
+    gap: .75rem;
+    padding: .85rem 1rem;
+    margin: .85rem 0 1.35rem;
+    border: 1px solid rgba(74,158,255,.18);
+    border-radius: 12px;
+    background: rgba(74,158,255,.055);
+}
+.dg-callout-icon {
+    color: #60A5FA;
+    font-size: 1rem;
+    line-height: 1.4;
+}
+.dg-callout-copy {
+    color: #94A3B8;
+    font-size: .78rem;
+    line-height: 1.5;
+}
+.dg-callout-copy strong { color: #E2E8F0; }
+.dg-exec-detail {
+    min-height: 246px;
+    padding: .35rem .25rem .15rem;
+}
+.dg-chart-label {
+    display: flex;
+    align-items: center;
+    gap: .48rem;
+    color: var(--chart-color);
+    font-size: .67rem;
+    font-weight: 800;
+    letter-spacing: .105em;
+    text-transform: uppercase;
+    margin: .05rem .15rem .2rem;
+}
+
+/* Containers nativos da página; evita divs HTML "abertas" entre elementos Streamlit. */
+.st-key-dg_executive_card,
+.st-key-dg_investment_card,
+.st-key-dg_history_chart,
+.st-key-dg_categories_chart,
+.st-key-dg_yoy_chart,
+.st-key-dg_allocation_chart,
+.st-key-dg_geography_chart,
+.st-key-dg_positions_chart,
+.st-key-dg_evolution_chart {
+    border-color: rgba(148,163,184,.14) !important;
+    border-radius: 16px !important;
+    background: linear-gradient(160deg, rgba(20,25,38,.94), rgba(14,17,26,.96));
+    box-shadow: 0 8px 26px rgba(0,0,0,.18);
+}
+
+@media (max-width: 1100px) {
+    .dg-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+    .dg-hero {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 1.25rem 1.1rem;
+        border-radius: 16px;
+    }
+    .dg-hero-meta { justify-content: flex-start; min-width: 0; }
+    .dg-kpi-grid { grid-template-columns: 1fr; }
+    .dg-section { align-items: flex-start; }
+    .dg-section-rule { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dg-shell *, .dg-shell *::before, .dg-shell *::after {
+        scroll-behavior: auto !important;
+        transition: none !important;
+    }
+}
+</style>
+"""
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — Cards CSS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _titulo_secao(icone: str, titulo: str, subtitulo: str, cor: str) -> None:
-    st.markdown(f"""
-    <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;margin-top:8px;">
-        <div style="width:3px;min-height:36px;background:{cor};
-                    border-radius:2px;flex-shrink:0;margin-top:2px"></div>
-        <div>
-            <div style="font-size:1.05rem;font-weight:700;color:#E2E8F0">
-                {icone} {titulo}
+def _render_dashboard_header(
+    mes_ref: str,
+    fonte_label: str,
+    fonte_cor: str,
+    atualizado_em: _date,
+) -> None:
+    """Cabeçalho executivo responsivo e autocontido do Dashboard Geral."""
+    st.markdown(_DASHBOARD_STYLES, unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="dg-shell">
+          <section class="dg-hero" aria-labelledby="dg-page-title">
+            <div>
+              <div class="dg-eyebrow">Visão financeira consolidada</div>
+              <h1 class="dg-title" id="dg-page-title">Seu dinheiro, em perspectiva.</h1>
+              <div class="dg-subtitle">
+                Caixa, patrimônio e decisões de investimento reunidos em uma leitura
+                executiva — do mês atual ao histórico da carteira.
+              </div>
             </div>
-            <div style="font-size:0.78rem;color:#4A5568;margin-top:1px">{subtitulo}</div>
+            <div class="dg-hero-meta" aria-label="Contexto dos dados">
+              <span class="dg-chip">
+                <span class="dg-chip-dot" style="--chip-color:{escape(fonte_cor)}"></span>
+                {escape(fonte_label)}
+              </span>
+              <span class="dg-chip">Período&nbsp;·&nbsp;{escape(mes_ref)}</span>
+              <span class="dg-chip">Atualizado&nbsp;·&nbsp;{atualizado_em.strftime("%d/%m/%Y")}</span>
+            </div>
+          </section>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _kpi_html(
+    label: str,
+    value: str,
+    detail: str,
+    icon: str,
+    color: str,
+) -> str:
+    return (
+        f'<article class="dg-kpi" style="--kpi-color:{escape(color)}">'
+        '<div class="dg-kpi-top">'
+        f'<div class="dg-kpi-label">{escape(label)}</div>'
+        f'<div class="dg-kpi-icon" aria-hidden="true">{escape(icon)}</div>'
+        '</div>'
+        f'<div class="dg-kpi-value">{escape(value)}</div>'
+        f'<div class="dg-kpi-detail">{detail}</div>'
+        '</article>'
+    )
+
+
+def _render_kpi_grid(
+    pat: dict,
+    receitas: float,
+    despesas: float,
+    investimentos: float,
+    carteira: dict,
+) -> None:
+    """Quatro indicadores essenciais, em CSS Grid responsivo."""
+    saldo = receitas - despesas - investimentos
+    taxa = (saldo / receitas * 100) if receitas > 0 else 0.0
+    delta_pat = float(pat.get("delta_mes_pct") or 0)
+    rentab = float(carteira.get("rentabilidade_total_pct") or 0)
+    saldo_cor = _COR_FLUXO if saldo >= 0 else _COR_NEGATIVO
+    taxa_cor = _COR_FLUXO if taxa >= 30 else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO
+    delta_cor = _COR_FLUXO if delta_pat >= 0 else _COR_NEGATIVO
+    rentab_cor = _COR_FLUXO if rentab >= 0 else _COR_NEGATIVO
+
+    cards = [
+        _kpi_html(
+            "Patrimônio total",
+            fmt_moeda(float(pat.get("total") or 0)),
+            f'<strong style="color:{delta_cor}">{delta_pat:+.1f}%</strong> no mês',
+            "◆",
+            _COR_PATRIMONIO,
+        ),
+        _kpi_html(
+            "Saldo líquido do mês",
+            fmt_moeda(saldo),
+            f'Receitas menos despesas e aportes · <strong style="color:{saldo_cor}">'
+            f'{"positivo" if saldo >= 0 else "negativo"}</strong>',
+            "↗" if saldo >= 0 else "↘",
+            saldo_cor,
+        ),
+        _kpi_html(
+            "Taxa de poupança",
+            fmt_percentual(taxa, sinal=False),
+            f'Meta de referência: 30% · <strong style="color:{taxa_cor}">'
+            f'{"atingida" if taxa >= 30 else "em acompanhamento"}</strong>',
+            "%",
+            taxa_cor,
+        ),
+        _kpi_html(
+            "Rentabilidade da carteira",
+            f"{rentab:+.2f}%",
+            f'Sobre o custo consolidado · <strong style="color:{rentab_cor}">'
+            f'{"resultado positivo" if rentab >= 0 else "resultado negativo"}</strong>',
+            "⌁",
+            rentab_cor,
+        ),
+    ]
+    st.markdown(
+        '<div class="dg-shell"><section class="dg-kpi-grid" '
+        'aria-label="Indicadores financeiros principais">'
+        + "".join(cards)
+        + "</section></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _titulo_secao(icone: str, titulo: str, subtitulo: str, cor: str) -> None:
+    st.markdown(
+        f"""
+        <div class="dg-shell">
+          <div class="dg-section" style="--section-color:{escape(cor)}">
+            <div class="dg-section-main">
+              <div class="dg-section-icon" aria-hidden="true">{escape(icone)}</div>
+              <div>
+                <div class="dg-section-title">{escape(titulo)}</div>
+                <div class="dg-section-subtitle">{escape(subtitulo)}</div>
+              </div>
+            </div>
+            <div class="dg-section-rule" aria-hidden="true"></div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _linha_kv(label: str, valor: str, cor_val: str = "#E2E8F0") -> str:
@@ -83,13 +488,11 @@ def _barra(pct: float, cor: str) -> str:
 
 
 def _card(borda_cor: str, corpo_html: str) -> None:
-    st.markdown(f"""
-    <div style="background:linear-gradient(160deg,rgba(20,24,38,0.97) 0%,rgba(14,17,26,1) 100%);
-                border:1px solid rgba(255,255,255,0.07);border-top:4px solid {borda_cor};
-                border-radius:14px;padding:22px 20px 18px;min-height:280px;
-                box-shadow:0 4px 24px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.04);">
-        {corpo_html}
-    </div>""", unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="dg-shell"><div class="dg-exec-detail" '
+        f'style="border-top:2px solid {escape(borda_cor)}">{corpo_html}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _label_card(texto: str, cor: str) -> str:
@@ -125,11 +528,11 @@ def _card_fluxo(receitas: float, despesas: float, investimentos: float) -> None:
         + _linha_kv("📈 Investido",   fmt_moeda(investimentos), _COR_INVEST)
         + _divisor()
         + _titulo_valor("Saldo do mês (líquido)", fmt_moeda(saldo), cor_saldo)
-        + f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
-        + f'<span style="font-size:0.78rem;color:#718096">Taxa de poupança</span>'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
+        + '<span style="font-size:0.78rem;color:#718096">Taxa de poupança</span>'
         + f'<span style="font-size:0.88rem;font-weight:700;color:{cor_taxa}">'
         + f'{fmt_percentual(taxa, sinal=False)} '
-        + f'<span style="font-size:0.70rem;color:#4A5568">/ meta 30%</span></span></div>'
+        + '<span style="font-size:0.70rem;color:#4A5568">/ meta 30%</span></span></div>'
         + _barra(taxa_w, cor_taxa)
     )
     _card(_COR_FLUXO, corpo)
@@ -141,8 +544,6 @@ def _card_investimentos(pat: dict, classes: list, aportado_ano: float) -> None:
 
     linhas = ""
     for c in classes[:4]:
-        cor_r = _COR_FLUXO if c["rentab_mes_pct"] >= 0 else _COR_NEGATIVO
-        rent_str = f'+{c["rentab_mes_pct"]:.1f}%' if c["rentab_mes_pct"] > 0 else f'{c["rentab_mes_pct"]:.1f}%'
         linhas += _linha_kv(
             f'<span style="display:inline-flex;align-items:center;gap:6px;">'
             f'<span style="width:7px;height:7px;border-radius:50%;background:{c["cor"]};'
@@ -565,21 +966,16 @@ def _secao_resumo_modulos(
 
 
 def _grafico_container_open(icone: str, titulo: str, cor: str) -> None:
-    st.markdown(f"""
-    <div style="background:linear-gradient(180deg,rgba(22,26,40,0.95) 0%,rgba(14,17,26,0.98) 100%);
-                border:1px solid rgba(255,255,255,0.07);border-top:3px solid {cor};
-                border-radius:14px;padding:18px 18px 4px;
-                box-shadow:0 4px 20px rgba(0,0,0,0.4);">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-            <span style="font-size:1rem">{icone}</span>
-            <span style="font-size:0.72rem;font-weight:800;text-transform:uppercase;
-                         letter-spacing:0.12em;color:{cor}">{titulo}</span>
-        </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="dg-shell"><div class="dg-chart-label" '
+        f'style="--chart-color:{escape(cor)}">'
+        f'<span aria-hidden="true">{escape(icone)}</span>{escape(titulo)}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _grafico_container_close() -> None:
-    st.markdown("</div>", unsafe_allow_html=True)
+    """Compatibilidade local; containers de gráficos agora são nativos."""
 
 
 def _secao_raio_x_portfolio(carteira: dict, evolucao: dict, classes: list) -> None:
@@ -616,29 +1012,45 @@ def _secao_raio_x_portfolio(carteira: dict, evolucao: dict, classes: list) -> No
     st.markdown("<br>", unsafe_allow_html=True)
 
     c1, c2 = st.columns([1.05, 0.95], gap="medium")
-    with c1:
+    with c1, st.container(border=True, key="dg_allocation_chart"):
         _grafico_container_open("🥧", "Alocação por classe", _COR_INVEST)
-        st.plotly_chart(_fig_donut_classes(classes), use_container_width=True, config={"displayModeBar": False})
-        _grafico_container_close()
-    with c2:
+        st.plotly_chart(
+            _fig_donut_classes(classes),
+            width="stretch",
+            config={"displayModeBar": False},
+            key="dg_allocation_plot",
+        )
+    with c2, st.container(border=True, key="dg_geography_chart"):
         _grafico_container_open("🌎", "Brasil vs Exterior", _COR_PATRIMONIO)
-        st.plotly_chart(_fig_br_exterior(br, ext), use_container_width=True, config={"displayModeBar": False})
-        _grafico_container_close()
+        st.plotly_chart(
+            _fig_br_exterior(br, ext),
+            width="stretch",
+            config={"displayModeBar": False},
+            key="dg_geography_plot",
+        )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     c3, c4 = st.columns(2, gap="medium")
-    with c3:
+    with c3, st.container(border=True, key="dg_positions_chart"):
         _grafico_container_open("🏆", "Maiores posições", _COR_ALERTA)
-        st.plotly_chart(_fig_top_posicoes(posicoes), use_container_width=True, config={"displayModeBar": False})
-        _grafico_container_close()
-    with c4:
+        st.plotly_chart(
+            _fig_top_posicoes(posicoes),
+            width="stretch",
+            config={"displayModeBar": False},
+            key="dg_positions_plot",
+        )
+    with c4, st.container(border=True, key="dg_evolution_chart"):
         _grafico_container_open("📈", "Evolução dos investimentos", _COR_FLUXO)
         if evolucao.get("snapshots"):
-            st.plotly_chart(_fig_evolucao_investimentos(evolucao), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(
+                _fig_evolucao_investimentos(evolucao),
+                width="stretch",
+                config={"displayModeBar": False},
+                key="dg_evolution_plot",
+            )
         else:
             st.caption("Sem snapshots patrimoniais suficientes.")
-        _grafico_container_close()
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -735,7 +1147,7 @@ def _fiis_carteira_modelo() -> tuple[list[dict], bool]:
         saved = load_active_fii_portfolio_model()
         if saved and saved.get("items"):
             return saved["items"], True
-    except Exception:
+    except Exception:  # noqa: BLE001 - fronteira de fallback entre banco e modelo
         # Fix auditoria FII 2026-07: o fallback era SILENCIOSO — em erro de
         # banco o usuário via uma carteira recalculada achando que era a
         # salva. Agora o desvio é avisado.
@@ -749,7 +1161,7 @@ def _fiis_carteira_modelo() -> tuple[list[dict], bool]:
         import core.market_read as _mr
         from data_pipeline.market import fii as _fz
         df = _mr.load_fiis()
-    except Exception:
+    except Exception:  # noqa: BLE001 - fonte opcional; ausência mantém estado vazio
         return [], False
     if df is None or df.empty:
         return [], False
@@ -777,7 +1189,7 @@ def _fiis_carteira_modelo() -> tuple[list[dict], bool]:
     try:
         port = _fz.build_portfolio(rows, n_max=_FIIS_N_MAX, max_weight=_FIIS_MAX_W,
                                    max_tipo_frac=_FIIS_MAX_TIPO) or []
-    except Exception:
+    except Exception:  # noqa: BLE001 - otimizador opcional não bloqueia o dashboard
         port = []
     return port, False
 
@@ -946,6 +1358,16 @@ def _fig_yoy(por_ano: dict, anos: list) -> go.Figure:
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _load_decision_models() -> tuple[dict, list[dict], bool]:
+    """Carrega modelos persistidos somente quando o app usa dados reais."""
+    if settings.MOCK_MODE:
+        return {}, [], False
+
+    modelo_b3 = load_active_b3_portfolio_model()
+    fiis_port, fiis_salvo = _fiis_carteira_modelo()
+    return modelo_b3, fiis_port, fiis_salvo
+
+
 def render() -> None:
     # ── Dados ─────────────────────────────────────────────────────────────────
     try:
@@ -954,12 +1376,13 @@ def render() -> None:
         st.error(f"**Banco não configurado.** {exc}")
         return
 
-    hoje          = _date.today()
+    hoje          = _datetime.now(ZoneInfo("America/Cayenne")).date()
     hist_cashflow = get_cashflow_mensal()        # list[{ano, mes, receitas, despesas, investimentos}]
     hist_anual    = get_historico_anual()         # {anos, por_ano}
     carteira      = get_carteira()
     evolucao_inv  = get_evolucao_patrimonial()
-    modelo_b3     = load_active_b3_portfolio_model()
+    # O modo de demonstração não deve consultar nem combinar carteiras persistidas.
+    modelo_b3, fiis_port, fiis_salvo = _load_decision_models()
     ano_atual     = hoje.year
     cats_ano      = get_gastos_categoria_anual(ano_atual)
 
@@ -984,25 +1407,22 @@ def render() -> None:
 
     # ── Fonte de dados ─────────────────────────────────────────────────────────
     fonte = d.get("data_source", "mock")
-    badge_label, badge_tipo = (
-        ("Dados reais",     "sucesso") if fonte == "real" else
-        ("Fallback (mock)", "erro")    if fonte == "mock_fallback" else
-        ("Modo mock",       "alerta")
+    badge_label, badge_cor = (
+        ("Dados reais",     _COR_FLUXO)    if fonte == "real" else
+        ("Fallback demonstrativo", _COR_NEGATIVO) if fonte == "mock_fallback" else
+        ("Dados de demonstração", _COR_ALERTA)
     )
     mes_ref = f"{_MESES_PT[hoje.month]} {hoje.year}"
 
     # ── Cabeçalho ──────────────────────────────────────────────────────────────
-    container_pagina("Dashboard Geral", f"Visão consolidada · {mes_ref}", "📊")
-
-    col_b1, col_b2, *_ = st.columns([1, 1, 5])
-    with col_b1:
-        badge_status(badge_label, badge_tipo)
-    with col_b2:
-        badge_status(mes_ref, "info")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    fiis_port, fiis_salvo = _fiis_carteira_modelo()
-
+    _render_dashboard_header(mes_ref, badge_label, badge_cor, hoje)
+    _render_kpi_grid(
+        pat,
+        receitas_mes,
+        despesas_mes,
+        investimentos_mes,
+        carteira,
+    )
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 1 — Visão executiva
     # ══════════════════════════════════════════════════════════════════════════
@@ -1013,12 +1433,25 @@ def render() -> None:
     )
 
     col1, col2 = st.columns(2, gap="medium")
-    with col1:
+    with col1, st.container(border=True, key="dg_executive_card"):
         _card_fluxo(receitas_mes, despesas_mes, investimentos_mes)
-    with col2:
+    with col2, st.container(border=True, key="dg_investment_card"):
         _card_investimentos(pat, classes, aportado_ano)
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    saldo_mes = receitas_mes - despesas_mes - investimentos_mes
+    leitura = (
+        "O caixa fechou positivo após despesas e aportes."
+        if saldo_mes >= 0
+        else "As saídas e os aportes superaram as receitas no período."
+    )
+    st.markdown(
+        '<div class="dg-shell"><div class="dg-callout">'
+        '<div class="dg-callout-icon" aria-hidden="true">◎</div>'
+        f'<div class="dg-callout-copy"><strong>Leitura do mês.</strong> {escape(leitura)} '
+        'Os valores acima são fatos do período; metas e modelos exibidos abaixo são '
+        'referências analíticas, não garantias de resultado.</div></div></div>',
+        unsafe_allow_html=True,
+    )
 
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 2 — Mapa dos módulos do app
@@ -1060,19 +1493,16 @@ def render() -> None:
         "💹", "Histórico mensal (6 meses)",
         "Receitas · Despesas · Investimentos por mês", _COR_FLUXO,
     )
-    st.markdown(
-        '<div style="background:#12151E;border:1px solid #1E2533;'
-        'border-radius:12px;padding:16px 16px 8px">',
-        unsafe_allow_html=True,
-    )
-    if hist6:
-        st.plotly_chart(_fig_historico(hist6), use_container_width=True,
-                        config={"displayModeBar": False})
-    else:
-        st.caption("Sem histórico disponível.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
+    with st.container(border=True, key="dg_history_chart"):
+        if hist6:
+            st.plotly_chart(
+                _fig_historico(hist6),
+                width="stretch",
+                config={"displayModeBar": False},
+                key="dg_history_plot",
+            )
+        else:
+            st.caption("Sem histórico disponível.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 6 — Distribuição de despesas | Comparativo Ano a Ano
@@ -1084,37 +1514,35 @@ def render() -> None:
             "🍕", f"Despesas por categoria ({ano_atual})",
             "Compras de cartão excluídas", _COR_NEGATIVO,
         )
-        st.markdown(
-            '<div style="background:#12151E;border:1px solid #1E2533;'
-            'border-radius:12px;padding:16px">',
-            unsafe_allow_html=True,
-        )
-        if cats_ano:
-            st.plotly_chart(_fig_donut_cats(cats_ano), use_container_width=True,
-                            config={"displayModeBar": False})
-            total_cats = sum(c["gasto"] for c in cats_ano)
-            for c in cats_ano[:5]:
-                pct = c["gasto"] / total_cats * 100 if total_cats else 0
-                st.markdown(
-                    f'<div style="display:flex;justify-content:space-between;'
-                    f'align-items:center;padding:4px 0;border-bottom:1px solid #1A1F2E;">'
-                    f'<span style="font-size:0.79rem;color:#CBD5E0">{c["nome"]}</span>'
-                    f'<span style="font-size:0.79rem;font-weight:600;color:#E2E8F0">'
-                    f'{fmt_moeda(c["gasto"])} '
-                    f'<span style="color:#4A5568;font-size:0.70rem">{pct:.1f}%</span>'
-                    f'</span></div>',
-                    unsafe_allow_html=True,
+        with st.container(border=True, key="dg_categories_chart"):
+            if cats_ano:
+                st.plotly_chart(
+                    _fig_donut_cats(cats_ano),
+                    width="stretch",
+                    config={"displayModeBar": False},
+                    key="dg_categories_plot",
                 )
-            if len(cats_ano) > 5:
-                restante = sum(c["gasto"] for c in cats_ano[5:])
-                st.markdown(
-                    f'<div style="font-size:0.75rem;color:#4A5568;margin-top:6px">'
-                    f'+ {len(cats_ano)-5} outras categorias · {fmt_moeda(restante)}</div>',
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.caption(f"Sem despesas registradas em {ano_atual}.")
-        st.markdown("</div>", unsafe_allow_html=True)
+                total_cats = sum(c["gasto"] for c in cats_ano)
+                for c in cats_ano[:5]:
+                    pct = c["gasto"] / total_cats * 100 if total_cats else 0
+                    st.markdown(
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'align-items:center;padding:4px 0;border-bottom:1px solid #1A1F2E;">'
+                        f'<span style="font-size:0.79rem;color:#CBD5E0">'
+                        f'{escape(str(c["nome"]))}</span>'
+                        f'<span style="font-size:0.79rem;font-weight:600;color:#E2E8F0">'
+                        f'{fmt_moeda(c["gasto"])} '
+                        f'<span style="color:#64748B;font-size:0.70rem">{pct:.1f}%</span>'
+                        f'</span></div>',
+                        unsafe_allow_html=True,
+                    )
+                if len(cats_ano) > 5:
+                    restante = sum(c["gasto"] for c in cats_ano[5:])
+                    st.caption(
+                        f"+ {len(cats_ano)-5} outras categorias · {fmt_moeda(restante)}"
+                    )
+            else:
+                st.caption(f"Sem despesas registradas em {ano_atual}.")
 
     with col_yoy:
         anos = hist_anual.get("anos", [])
@@ -1122,24 +1550,23 @@ def render() -> None:
             "📅", "Comparativo Ano a Ano",
             "Receitas · Investimentos · Despesas acumuladas", _COR_PATRIMONIO,
         )
-        st.markdown(
-            '<div style="background:#12151E;border:1px solid #1E2533;'
-            'border-radius:12px;padding:16px">',
-            unsafe_allow_html=True,
-        )
-        if len(anos) >= 1:
-            st.plotly_chart(_fig_yoy(por_ano, anos), use_container_width=True,
-                            config={"displayModeBar": False})
-            import pandas as pd
-            rows = []
-            for a in anos:
-                rows.append({
-                    "Ano":           str(a),
-                    "Receitas":      f"R$ {por_ano[a]['receitas']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                    "Investimentos": f"R$ {por_ano[a].get('investimentos',0.0):,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                    "Despesas":      f"R$ {por_ano[a]['despesas']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        else:
-            st.caption("Sem histórico anual disponível.")
-        st.markdown("</div>", unsafe_allow_html=True)
+        with st.container(border=True, key="dg_yoy_chart"):
+            if len(anos) >= 1:
+                st.plotly_chart(
+                    _fig_yoy(por_ano, anos),
+                    width="stretch",
+                    config={"displayModeBar": False},
+                    key="dg_yoy_plot",
+                )
+                import pandas as pd
+                rows = []
+                for a in anos:
+                    rows.append({
+                        "Ano":           str(a),
+                        "Receitas":      f"R$ {por_ano[a]['receitas']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                        "Investimentos": f"R$ {por_ano[a].get('investimentos',0.0):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                        "Despesas":      f"R$ {por_ano[a]['despesas']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                    })
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+            else:
+                st.caption("Sem histórico anual disponível.")

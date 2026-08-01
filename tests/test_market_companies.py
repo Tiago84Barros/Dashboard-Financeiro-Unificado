@@ -180,7 +180,8 @@ def test_view_americana_card_analisar_seleciona_ticker_e_muda_aba():
     import views.empresas_americanas as american_view
 
     originals = {name: getattr(american_view.us, name) for name in (
-        "data_status", "companies", "scored_universe", "company_financials", "dossie",
+        "data_status", "companies", "scored_universe", "company_financials",
+        "company_market_data", "dossie",
     )}
     try:
         app = AppTest.from_string("""
@@ -200,6 +201,7 @@ view.us.data_status = lambda: {'offline':False,'schema_ready':True,'mode':'snaps
 view.us.companies = lambda limit=5000: companies
 view.us.scored_universe = lambda: scored
 view.us.company_financials = lambda symbol: pd.DataFrame()
+view.us.company_market_data = lambda symbol: {'prices': pd.DataFrame(), 'dividends': pd.DataFrame()}
 view.us.dossie = lambda symbol: {'classification':'consolidada','classification_reason':'ok','red_flags':[],'notes':{}}
 view.render()
 """).run(timeout=20)

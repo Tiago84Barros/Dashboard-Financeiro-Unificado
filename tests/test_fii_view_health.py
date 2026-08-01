@@ -2,7 +2,8 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from views.fiis import _fii_data_health_metrics, _publication_gate_message
+from views.fiis import (_fii_data_health_metrics, _methodology_inputs_to_vitrine,
+                        _publication_gate_message)
 
 
 def test_health_metrics_separate_completeness_from_readiness():
@@ -61,3 +62,17 @@ def test_publication_message_uses_explicit_counts_and_thresholds():
     assert "confiança ≥75%: 0/381 (0.0%)" in message
     assert "confiança mediana 66.5% (mínimo 75%)" in message
     assert "backtest point-in-time/robustez estatística pendente" in message
+
+
+def test_snapshot_is_reused_as_visual_vitrine_without_second_database_shape():
+    inputs = pd.DataFrame([{
+        "ticker": "ABCD11", "name": "FII Sintético", "tipo": "tijolo",
+        "sector": "Logística", "price": 100.0, "pvp": .9, "dy_12m": .1,
+        "liquidez_diaria": 2_000_000,
+    }])
+
+    frame = _methodology_inputs_to_vitrine(inputs)
+
+    assert frame.loc[0, "Ticker"] == "ABCD11"
+    assert frame.loc[0, "Preço"] == 100.0
+    assert frame.loc[0, "DY_12m"] == .1

@@ -29,7 +29,7 @@ from core.tesouro_analysis import (
     tesouro_meta,
 )
 from core.utils import fmt_moeda, fmt_percentual
-from design.componentes import badge_status
+from design.componentes import badge_status, container_pagina
 import core.fundamentus as _fund
 import core.data_reconciliacao as _recon
 from core.correlation_analysis import (
@@ -3381,27 +3381,15 @@ def render() -> None:
     _data_ref = carteira.get("data_referencia_max")
     _data_ref_label = _data_ref.strftime("%d/%m/%Y") if _data_ref else "Não informada"
 
-    col_title, col_date = st.columns([3, 1])
-    with col_title:
-        st.markdown(
-            '<div style="display:flex;align-items:center;gap:12px;">'
-            '<span style="font-size:2rem">📈</span>'
-            '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
-            'Investimentos</h1>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-    with col_date:
-        st.markdown(
-            f'<div style="text-align:right;padding-top:6px;">'
-            f'<div style="font-size:0.60rem;text-transform:uppercase;'
-            f'letter-spacing:0.1em;color:#4A5568;">Referência mais recente</div>'
-            f'<div style="font-size:1.00rem;font-weight:700;color:{_COR_POSITIVO};">'
-            f'{_data_ref_label}</div>'
-            f'<div style="font-size:0.70rem;color:#4A5568;">{_fonte_label}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+    container_pagina(
+        "Investimentos",
+        "Carteira consolidada, proventos, risco e evolução patrimonial.",
+        "📈",
+        metadados=[
+            ("Referência", _data_ref_label),
+            ("Fonte", _fonte_label),
+        ],
+    )
 
     # Badges
     col_b1, col_b2, col_b3, *_ = st.columns([1, 1, 1, 4])

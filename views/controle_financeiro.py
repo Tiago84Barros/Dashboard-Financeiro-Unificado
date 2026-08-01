@@ -44,7 +44,7 @@ from core.controle import (
 from core.card_categorization import categorias_disponiveis, REVIEW_SENTINEL
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
-from design.componentes import badge_status, barra_progresso
+from design.componentes import badge_status, barra_progresso, container_pagina
 
 # Chat "Analista Financeiro Pessoal" (aba Análises) — importado localmente na
 # função de render para não pesar no carregamento das demais abas/reruns.
@@ -2996,38 +2996,30 @@ def render() -> None:
     opcoes     = _opcoes_mes(12)
     labels_mes = [o["label"] for o in opcoes]
 
-    col_title, col_mes = st.columns([3, 1])
-    with col_title:
-        st.markdown(
-            '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
-            '💰 Controle Financeiro</h1>',
-            unsafe_allow_html=True,
-        )
-    with col_mes:
-        idx = st.selectbox(
-            "Mês",
-            range(len(labels_mes)),
-            format_func=lambda i: labels_mes[i],
-            key="cf_mes_idx",
-            label_visibility="collapsed",
-        )
-        st.markdown(
-            f'<div style="text-align:right;font-size:0.72rem;color:#4A5568;margin-top:2px;">'
-            f'hoje: {_date.today().strftime("%d/%m/%Y")}</div>',
-            unsafe_allow_html=True,
-        )
+    container_pagina(
+        "Controle Financeiro",
+        "Acompanhe renda, despesas, aportes e saldo mensal em uma única visão.",
+        "💰",
+        metadados=[("Atualizado", _date.today().strftime("%d/%m/%Y"))],
+    )
+
+    with st.container(border=True, key="cf_period_filter"):
+        col_contexto, col_mes = st.columns([3, 1], vertical_alignment="center")
+        with col_contexto:
+            st.markdown("**Período de análise**")
+            st.caption("Selecione o mês usado nos indicadores, gráficos e lançamentos.")
+        with col_mes:
+            st.caption("Mês de referência")
+            idx = st.selectbox(
+                "Mês",
+                range(len(labels_mes)),
+                format_func=lambda i: labels_mes[i],
+                key="cf_mes_idx",
+                label_visibility="collapsed",
+            )
 
     sel = opcoes[idx]
     d   = get_controle(sel["ano"], sel["mes"])
-
-    # Subtítulo
-    st.markdown(
-        f'<p style="color:#718096;font-size:0.88rem;margin-top:3px;margin-bottom:0;">'
-        f'Visão geral de <b style="color:#E2E8F0">'
-        f'{sel["mes"]:02d}/{sel["ano"]}</b>'
-        f'&nbsp;•&nbsp; acompanhe renda, despesas e saldo em tempo real</p>',
-        unsafe_allow_html=True,
-    )
 
     # Badge de fonte de dados
     _fonte = d.get("data_source", "mock")

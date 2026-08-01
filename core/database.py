@@ -12,10 +12,25 @@ import os
 
 import streamlit as st
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
-
+from sqlalchemy.pool import NullPool
 
 SUPABASE_FREE_DB_LIMIT_MB = 500.0
+
+
+def _fii_snapshot_connection_url(url: str):
+    """Normaliza o endpoint curto para o modo transacional do Supavisor."""
+    parsed = make_url(url)
+    if parsed.drivername in {"postgresql", "postgres"}:
+        parsed = parsed.set(drivername="postgresql+psycopg2")
+    if (
+        parsed.host
+        and parsed.host.endswith(".pooler.supabase.com")
+        and (parsed.port is None or parsed.port == 5432)
+    ):
+        parsed = parsed.set(port=6543)
+    return parsed
 
 
 @st.cache_resource
@@ -48,6 +63,46 @@ def get_engine():
                        "pool_recycle": 300, "pool_use_lifo": True,
                        "connect_args": connect_args})
     return create_engine(url, **kwargs)
+
+
+@st.cache_resource
+def get_fii_snapshot_read_engine():
+    """Engine de leitura curta da vitrine de FIIs.
+
+    A conexão nova por tentativa evita reutilizar sockets degradados do pooler
+    e mantém limites independentes das consultas analíticas mais longas.
+    """
+    from core.config import settings
+
+    url = settings.db_url
+    if not url:
+        return None
+
+    parsed = _fii_snapshot_connection_url(url)
+    if parsed.drivername.startswith("sqlite"):
+        return get_engine()
+
+    is_local = parsed.host in {"localhost", "127.0.0.1", "::1"}
+    if is_local:
+        return get_engine()
+
+    parsed = parsed.update_query_dict({"sslmode": "require"})
+    connect_args: dict = {
+        "connect_timeout": 8,
+        "options": "-c statement_timeout=20000",
+        "keepalives": 1,
+        "keepalives_idle": 10,
+        "keepalives_interval": 5,
+        "keepalives_count": 3,
+    }
+    if os.getenv("SUPABASE_DB_HOSTADDR"):
+        connect_args["hostaddr"] = os.environ["SUPABASE_DB_HOSTADDR"]
+    return create_engine(
+        parsed,
+        future=True,
+        poolclass=NullPool,
+        connect_args=connect_args,
+    )
 
 
 @st.cache_resource

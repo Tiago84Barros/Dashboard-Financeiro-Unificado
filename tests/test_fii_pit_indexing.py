@@ -29,12 +29,17 @@ def test_reconstruct_snapshots_uses_latest_observation_and_exposure(monkeypatch)
          "exposure_weight": 0.80, "reference_date": "2024-12-31",
          "knowledge_at": "2025-01-10T00:00:00Z", "availability_quality": "verified_publication",
          "source": "latest"},
+        {"ticker": "TEST11", "exposure_type": "manager", "exposure_name": "Gestora PIT",
+         "exposure_weight": 1.0, "reference_date": "2024-12-31",
+         "knowledge_at": "2025-01-10T00:00:00Z", "availability_quality": "verified_publication",
+         "source": "latest"},
     ])
     funds = pd.DataFrame([{"ticker": "TEST11", "tipo": "tijolo"}])
 
     def fake_score(rows, **_kwargs):
         assert rows[0]["nav_per_share"] == 100.0
         assert rows[0]["tipo"] == "papel"
+        assert rows[0]["manager"] == "Gestora PIT"
         return [{
             **rows[0], "type_score": 50.0, "confidence": 0.8, "coverage": 0.9,
             "critical_coverage": 0.9, "components": {}, "score_inputs": {},
@@ -51,3 +56,4 @@ def test_reconstruct_snapshots_uses_latest_observation_and_exposure(monkeypatch)
     assert len(snapshots) == 1
     assert snapshots[0]["ticker"] == "TEST11"
     assert snapshots[0]["fii_type"] == "papel"
+    assert snapshots[0]["portfolio_input_json"]["manager"] == "Gestora PIT"

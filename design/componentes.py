@@ -10,34 +10,72 @@ Uso padrão em cada página:
         with col1:
             card_metrica("Saldo", "R$ 12.300,00", delta="+5,2%", positivo=True)
 """
-import streamlit as st
+from html import escape
 
+import streamlit as st
 
 # ══════════════════════════════════════════════════════════════════
 # Estrutura de página
 # ══════════════════════════════════════════════════════════════════
 
-def container_pagina(titulo: str, subtitulo: str = "", icone: str = "") -> None:
+def container_pagina(
+    titulo: str,
+    subtitulo: str = "",
+    icone: str = "",
+    metadados: list[tuple[str, str]] | None = None,
+    eyebrow: str = "Dashboard Financeiro",
+) -> None:
     """
     Cabeçalho padrão de página com título, ícone e subtítulo opcionals.
     Deve ser a primeira chamada em cada render().
     """
-    titulo_completo = f"{icone} {titulo}" if icone else titulo
+    meta_html = "".join(
+        '<span class="app-page-meta">'
+        f'<small>{escape(str(label))}</small>{escape(str(valor))}'
+        "</span>"
+        for label, valor in (metadados or [])
+        if valor not in (None, "")
+    )
+    icon_html = (
+        f'<span class="app-page-icon" aria-hidden="true">{escape(icone)}</span>'
+        if icone else ""
+    )
+    subtitle_html = (
+        f'<p class="app-page-subtitle">{escape(subtitulo)}</p>'
+        if subtitulo else ""
+    )
+    meta_group = (
+        f'<div class="app-page-meta-group" aria-label="Contexto da página">{meta_html}</div>'
+        if meta_html else ""
+    )
     st.markdown(
-        f'<h1 style="margin-bottom:0">{titulo_completo}</h1>',
+        '<section class="app-page-hero">'
+        '<div class="app-page-copy">'
+        f'<div class="app-page-eyebrow">{escape(eyebrow)}</div>'
+        '<div class="app-page-title-row">'
+        f'{icon_html}<h1>{escape(titulo)}</h1>'
+        "</div>"
+        f"{subtitle_html}</div>{meta_group}</section>",
         unsafe_allow_html=True,
     )
-    if subtitulo:
-        st.caption(subtitulo)
-    st.divider()
 
 
 def secao_titulo(titulo: str, icone: str = "", subtitulo: str = "") -> None:
     """Cabeçalho de seção dentro de uma página."""
-    label = f"{icone} {titulo}" if icone else titulo
-    st.subheader(label)
-    if subtitulo:
-        st.caption(subtitulo)
+    icon_html = (
+        f'<span class="app-section-icon" aria-hidden="true">{escape(icone)}</span>'
+        if icone else ""
+    )
+    subtitle_html = (
+        f'<div class="app-section-subtitle">{escape(subtitulo)}</div>'
+        if subtitulo else ""
+    )
+    st.markdown(
+        '<div class="app-section-heading">'
+        f'{icon_html}<div><div class="app-section-title">{escape(titulo)}</div>'
+        f"{subtitle_html}</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -47,10 +85,10 @@ def secao_titulo(titulo: str, icone: str = "", subtitulo: str = "") -> None:
 def card_metrica(
     titulo: str,
     valor: str,
-    delta: str = None,
-    positivo: bool = None,
-    ajuda: str = None,
-    accent: str = None,
+    delta: str | None = None,
+    positivo: bool | None = None,
+    ajuda: str | None = None,
+    accent: str | None = None,
 ) -> None:
     """
     Card de KPI em CSS (não usa st.metric) — visual coeso com o restante do app.
@@ -66,17 +104,15 @@ def card_metrica(
     cor_delta = "#00C896" if positivo is True else "#FC5C7D" if positivo is False else "#9CA3AF"
     accent = accent or ("#00C896" if positivo is True
                         else "#FC5C7D" if positivo is False else "#4A9EFF")
-    delta_html = (f'<div style="font-size:0.72rem;font-weight:700;color:{cor_delta};'
-                  f'margin-top:4px">{delta}</div>') if delta else ""
-    ajuda_attr = f' title="{ajuda}"' if ajuda else ""
+    delta_html = (
+        f'<div class="app-kpi-delta" style="color:{cor_delta}">{escape(delta)}</div>'
+        if delta else ""
+    )
+    ajuda_attr = f' title="{escape(ajuda, quote=True)}"' if ajuda else ""
     st.markdown(
-        f'<div{ajuda_attr} style="background:#12151E;border:1px solid #1E2533;'
-        f'border-left:3px solid {accent};border-radius:10px;padding:12px 15px;'
-        f'margin-bottom:6px;">'
-        f'<div style="font-size:0.62rem;font-weight:700;text-transform:uppercase;'
-        f'letter-spacing:.08em;color:#4A5568;margin-bottom:5px">{titulo}</div>'
-        f'<div style="font-size:1.5rem;font-weight:800;line-height:1.05;'
-        f'color:#E2E8F0;word-break:break-word">{valor}</div>'
+        f'<div class="app-kpi-card"{ajuda_attr} style="--app-kpi-accent:{accent}">'
+        f'<div class="app-kpi-label">{escape(titulo)}</div>'
+        f'<div class="app-kpi-value">{escape(valor)}</div>'
         f'{delta_html}</div>',
         unsafe_allow_html=True,
     )
@@ -100,16 +136,8 @@ def badge_status(texto: str, tipo: str = "info") -> None:
     }
     cor_texto, cor_fundo = paleta.get(tipo, paleta["info"])
     st.markdown(
-        f"""<span style="
-            background:{cor_fundo};
-            color:{cor_texto};
-            border:1px solid {cor_texto};
-            border-radius:20px;
-            padding:3px 12px;
-            font-size:0.78rem;
-            font-weight:600;
-            display:inline-block;
-        ">{texto}</span>""",
+        f'<span class="app-status-badge" style="--badge-color:{cor_texto};'
+        f'--badge-bg:{cor_fundo}">{escape(texto)}</span>',
         unsafe_allow_html=True,
     )
 
@@ -118,7 +146,7 @@ def indicador_linha(
     label: str,
     valor: str,
     cor_valor: str = "#F7FAFC",
-    badge: str = None,
+    badge: str | None = None,
     tipo_badge: str = "info",
 ) -> None:
     """
@@ -197,8 +225,8 @@ def barra_progresso(
     label: str,
     valor_atual: float,
     valor_total: float,
-    fmt_valor: str = None,
-    fmt_total: str = None,
+    fmt_valor: str | None = None,
+    fmt_total: str | None = None,
 ) -> None:
     """
     Barra de progresso com label, valores e percentual.

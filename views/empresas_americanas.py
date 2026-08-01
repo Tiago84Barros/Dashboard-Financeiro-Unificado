@@ -42,6 +42,7 @@ from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 from design.componentes import (
     badge_status,
     card_metrica,
+    container_pagina,
     estado_vazio,
     secao_titulo,
 )
@@ -86,15 +87,11 @@ def _render_company_analysis_css() -> None:
 
 def render() -> None:
     render_market_css()
-    st.markdown(
-        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">'
-        '<span style="font-size:2rem">🌎</span>'
-        '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
-        'Empresas Americanas</h1></div>'
-        '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
-        'Análise fundamentalista de empresas listadas nos Estados Unidos e construção '
-        'quantitativa de portfólios aplicáveis com dados SEC/GAAP.</p>',
-        unsafe_allow_html=True,
+    container_pagina(
+        "Empresas Americanas",
+        "Análise fundamentalista e portfólios com dados corporativos SEC/GAAP.",
+        "🌎",
+        metadados=[("Mercado", "NYSE · Nasdaq · AMEX")],
     )
 
     status = us.data_status()

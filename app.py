@@ -8,6 +8,7 @@ Motivo: isolamento de erros por módulo e compatibilidade futura com autenticaç
 import importlib
 
 import streamlit as st
+
 from core.auth import verificar_autenticacao
 from core.config import settings
 from design.componentes import mensagem_erro
@@ -41,33 +42,34 @@ _ROTAS: dict[str, str] = {
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 📊 Dashboard Financeiro")
-    st.caption("v0.9.0 · Reserva de Fluxo de Caixa")
-    st.divider()
+    st.markdown(
+        '<div class="app-brand">'
+        '<div class="app-brand-mark" aria-hidden="true">📊</div>'
+        '<div class="app-brand-title">Dashboard Financeiro</div>'
+        '<div class="app-brand-subtitle">Visão unificada do seu caixa e dos investimentos</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
-    st.markdown('<div class="nav-section">Visão Geral</div>', unsafe_allow_html=True)
     opcoes_visao = ["📊 Dashboard Geral"]
-
-    st.markdown('<div class="nav-section">Finanças</div>', unsafe_allow_html=True)
     opcoes_financas = ["💰 Controle Financeiro"]
-
-    st.markdown('<div class="nav-section">Investimentos</div>', unsafe_allow_html=True)
     opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3",
                      "🌎 Empresas Americanas",
                      "🏬 Seleção de FIIs"]
-
-    st.markdown('<div class="nav-section">Sistema</div>', unsafe_allow_html=True)
     opcoes_sistema = ["📚 Documentação", "⚙️ Configurações"]
 
+    st.markdown('<div class="nav-section">Navegação</div>', unsafe_allow_html=True)
     menu = st.radio(
         "Navegação",
         opcoes_visao + opcoes_financas + opcoes_invest + opcoes_sistema,
         label_visibility="collapsed",
+        key="app_main_navigation",
     )
 
     avisos = settings.validate()
     if avisos:
         st.divider()
+        st.markdown('<div class="nav-section">Ambiente</div>', unsafe_allow_html=True)
         for aviso in avisos:
             st.caption(f"⚠️ {aviso}")
 
@@ -78,7 +80,7 @@ if modulo_nome:
     try:
         modulo = importlib.import_module(f"views.{modulo_nome}")
         modulo.render()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - fronteira de isolamento entre rotas
         mensagem_erro(
             f'Erro ao carregar o módulo "{menu}"',
             str(exc),

@@ -88,14 +88,20 @@ meta = pd.DataFrame([
     {'ticker':tk,'SETOR':'Teste','SUBSETOR':'Teste','SEGMENTO':'Teste'}
     for tk in universo['Ticker']
 ])
-view._db.load_multiplos_todos = lambda: universo
-view._db.load_multiplos_historico_batch = lambda tickers: {}
-dossie.build_dossie = lambda ticker: {
-    'ticker':ticker, 'red_flags':[],
-    'sensibilidade_juros':{'regra':'Alavancagem moderada.'},
-    'eventos_societarios':{'eventos':[]},
-}
-view._render_b3_score_dashboard('BOA3', universo.iloc[0], meta)
+original_load = view._db.load_multiplos_todos
+original_history = view._db.load_multiplos_historico_batch
+try:
+    view._db.load_multiplos_todos = lambda: universo
+    view._db.load_multiplos_historico_batch = lambda tickers: {}
+    dossie.build_dossie = lambda ticker: {
+        'ticker':ticker, 'red_flags':[],
+        'sensibilidade_juros':{'regra':'Alavancagem moderada.'},
+        'eventos_societarios':{'eventos':[]},
+    }
+    view._render_b3_score_dashboard('BOA3', universo.iloc[0], meta)
+finally:
+    view._db.load_multiplos_todos = original_load
+    view._db.load_multiplos_historico_batch = original_history
 """).run(timeout=20)
 
     assert not app.exception

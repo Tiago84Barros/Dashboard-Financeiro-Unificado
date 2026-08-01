@@ -253,3 +253,12 @@ local_staging/fii_document_backfill.stop
 
 # Saídas de teste locais (lixo)
 _testout.txt
+
+# Grafo de conhecimento gerado pelo graphify (artefato, ~1,4 MB) — nao versionar
+graphify-out/
+
+# Artefatos locais de validacao, cache e execucao
+tmp/
+data/cache/
+data/test-*.xml
+data/us_refresh/
