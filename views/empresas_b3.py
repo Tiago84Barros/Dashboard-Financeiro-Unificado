@@ -3552,6 +3552,62 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 # TAB 3 — Análise Avançada
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _render_saude_do_ranking(df_mult: pd.DataFrame, df_scored: pd.DataFrame,
+                             top_n: int = 20) -> None:
+    """Piso de qualidade sobre as PRIMEIRAS do ranking desta aba.
+
+    Por que existe. A Criação de Portfólio é extensão desta tela e já reprova
+    pelo piso absoluto; aqui o ranking ordenava por score e nada dizia que a
+    líder tinha patrimônio negativo ou queimava caixa. É o mesmo padrão de
+    "motor de diagnóstico sem porta de entrada" que originou o piso — uma aba
+    ao lado. Medido em 01/08/2026: **117 das 427 empresas do universo (27%)**
+    são CRÍTICAS pelo piso e podiam liderar este ranking sem qualquer sinal.
+
+    Aqui o piso NÃO remove ninguém, e isso é deliberado: esta é a tela de
+    análise, onde ver a empresa ruim é parte do trabalho. Quem decide alocação
+    é a Criação de Portfólio, e lá ele reprova de fato.
+    """
+    from core.b3_holdings_health import ATENCAO, CRITICO, check_holdings
+
+    if df_scored is None or df_scored.empty or df_mult is None or df_mult.empty:
+        return
+    alvos = [str(t).upper() for t in df_scored["Ticker"].head(top_n).tolist()]
+    if not alvos:
+        return
+    try:
+        saude = check_holdings(df_mult, alvos)
+    except Exception:
+        return
+
+    criticos = [h for h in saude if h.nivel == CRITICO]
+    atencao = [h for h in saude if h.nivel == ATENCAO]
+    if not criticos and not atencao:
+        return
+
+    _sec_hdr("🩺 Piso de qualidade sobre as primeiras do ranking")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        card_metrica(f"Avaliadas (top {len(alvos)})", len(alvos))
+    with c2:
+        card_metrica("Críticas", len(criticos),
+                     positivo=(False if criticos else None))
+    with c3:
+        card_metrica("Atenção", len(atencao))
+
+    st.caption(
+        "Score mede atratividade relativa; isto mede se a empresa se sustenta. "
+        "São perguntas diferentes, e uma empresa pode liderar a primeira e "
+        "falhar a segunda. Nada é removido desta tela — na **Criação de "
+        "Portfólio** o mesmo piso reprova e substitui no próprio segmento."
+    )
+    for h in criticos:
+        st.error(f"**{h.ticker}** — {h.resumo}", icon="🚨")
+    if atencao:
+        with st.expander(f"Em atenção ({len(atencao)})", expanded=False):
+            for h in atencao:
+                st.warning(f"**{h.ticker}** — {h.resumo}", icon="⚠️")
+
+
 def _render_calibracao_segmento(calib) -> None:
     """Painel da calibração ótima automática do segmento (aba Análise Avançada)."""
     from core.segment_calibration import pesos_rows, criterios_rows
@@ -3716,10 +3772,15 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     }
     sel_liq = fc1.selectbox(
         "Liquidez mínima (negociação)", list(liq_opts.keys()),
-        index=2, key="b3_av_liq_min",
+        # index=1 (R$ 500 mil), não 2: o mesmo piso do perfil recomendado da
+        # Criação de Portfólio, que é extensão desta aba. Duas telas com pisos
+        # diferentes davam universos diferentes para a MESMA pergunta.
+        index=1, key="b3_av_liq_min",
         help="Exclui ações com baixo volume diário negociado, onde o spread "
-             "encarece a entrada/saída. Baseado na mediana de Close×Volume "
-             "dos últimos ~3 meses (yfinance).",
+             "encarece a entrada/saída. Mediana do volume financeiro diário "
+             "do último ano, do armazém local — a MESMA medida que a Criação "
+             "de Portfólio usa, para as duas abas não discordarem sobre a "
+             "mesma empresa.",
     )
     liq_min_rs = liq_opts[sel_liq]
 
@@ -3802,26 +3863,45 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     # Filtro de liquidez de negociação — exclui ações ilíquidas onde o spread
     # encarece a operação (proteção ao investidor iniciante).
     if liq_min_rs > 0 and tks_uni:
-        with st.spinner("Verificando liquidez de negociação…"):
-            liq_map = _batch_yf_liquidez(tuple(sorted(tks_uni)))
+        # Armazém local, não yfinance. Três motivos, todos medidos em
+        # 01/08/2026: (1) a Criação de Portfólio já usa esta fonte, e duas telas
+        # com fontes distintas discordavam sobre a mesma empresa; (2) é offline
+        # — a versão anterior derrubava a aba INTEIRA quando a rede falhava, e
+        # "nenhum ativo aprovado" é o pior modo de falha possível para uma tela
+        # de análise; (3) as duas fontes concordam de fato: razão mediana
+        # armazém/yfinance de 1,02 em 14 tickers, 12 deles dentro de ±26%.
+        #
+        # A janela do armazém é maior (~12 meses contra 3 do yfinance) e por
+        # isso mais conservadora: liquidez que apareceu num trimestre de alta
+        # não vira permanente. EUCA4 deu R$ 698 mil aqui contra R$ 1,94 mi no
+        # yfinance justamente porque subiu 43% em 2026 — a pergunta que importa
+        # é se dá para sair num mês ruim, não no melhor trimestre.
+        try:
+            liq_map = _db.load_giro_diario()
+        except Exception:
+            liq_map = {}
         if not liq_map:
-            st.error(
-                "Não foi possível verificar a liquidez. O filtro falha de forma "
-                "segura: nenhum ativo será aprovado até a fonte responder."
+            # Sem a leitura, NÃO filtra. O bloco de exclusão abaixo removeria
+            # todos os tickers (get() devolve None para cada um) — trocar um
+            # modo de falha por outro pior.
+            st.warning(
+                "⚠️ Filtro de liquidez **não aplicado**: não foi possível ler o "
+                "volume negociado. A análise segue com o universo completo — "
+                "trate os nomes como não verificados quanto à negociabilidade."
             )
-            return
-        _antes_liq = len(tks_uni)
-        _sem_liq = [tk for tk in tks_uni if liq_map.get(tk) is None]
-        tks_uni = [
-            tk for tk in tks_uni
-            if liq_map.get(tk) is not None and liq_map[tk] >= liq_min_rs
-        ]
-        _n_iliq = _antes_liq - len(tks_uni)
-        if _n_iliq:
-            st.caption(
-                f"💧 {_n_iliq} ação(ões) abaixo do mínimo ou sem liquidez "
-                f"verificável foram excluídas ({len(_sem_liq)} sem dado)."
-            )
+        else:
+            _antes_liq = len(tks_uni)
+            _sem_liq = [tk for tk in tks_uni if liq_map.get(tk) is None]
+            tks_uni = [
+                tk for tk in tks_uni
+                if liq_map.get(tk) is not None and liq_map[tk] >= liq_min_rs
+            ]
+            _n_iliq = _antes_liq - len(tks_uni)
+            if _n_iliq:
+                st.caption(
+                    f"💧 {_n_iliq} ação(ões) abaixo do mínimo ou sem liquidez "
+                    f"verificável foram excluídas ({len(_sem_liq)} sem dado)."
+                )
 
     if not tks_uni:
         st.info("Nenhuma empresa encontrada com os filtros selecionados.")
@@ -3999,6 +4079,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             st.dataframe(pd.DataFrame(excluidas_dados),
                          use_container_width=True, hide_index=True,
                          height=min(300, 45 + 32 * len(excluidas_dados)))
+    _render_saude_do_ranking(df_mult_enrich, df_scored)
+
     tk_info       = {row["ticker"]: row for _, row in df_filt.iterrows()}
     tks_com_score = set(df_scored["Ticker"].tolist()) if not df_scored.empty else set()
     tks_sem_mult  = [tk for tk in tks_uni if tk not in tks_com_score]

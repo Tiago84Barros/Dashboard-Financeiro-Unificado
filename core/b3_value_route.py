@@ -136,6 +136,10 @@ def _avaliar_solvencia(df: pd.DataFrame, policy: ValuePolicy,
     endividamento = _num(df, "Endividamento_Total")
     liquidez = _num(df, "Liquidez_Corrente")
     roic = _num(df, "ROIC")
+    # Confirmação de prejuízo para as falhas operacionais que a métrica sozinha
+    # não decide (ver "margem operacional negativa" abaixo). ROE é o proxy
+    # disponível no cross-section; ausente, não confirma nem absolve.
+    roe = _num(df, "ROE")
 
     # Sinais de balanço/caixa rompido: valores que a faixa coerente rejeita e
     # que por isso NUNCA chegam como número. Sem eles a regra abaixo era letra
@@ -155,7 +159,19 @@ def _avaliar_solvencia(df: pd.DataFrame, policy: ValuePolicy,
         "FCO negativo": (p_fco < 0) | fco_negativo,
         "patrimônio líquido negativo": pl_negativo,
         f"endividamento fora de faixa (> {policy.max_endividamento:g}x)": endiv_fora,
-        "margem operacional negativa": margem_op < 0,
+        # Margem operacional negativa exige PREJUÍZO confirmando, pelo mesmo
+        # motivo do FCO negativo. EBIT/receita não é conceito válido para
+        # instituição financeira — banco não tem "operação" no sentido
+        # industrial, e a brapi devolve o quociente mesmo assim. Medido em
+        # 01/08/2026: das 81 empresas com margem operacional negativa, 28 são do
+        # setor Financeiro (o maior grupo) e 33 têm ROE POSITIVO. Sem a
+        # confirmação, Banco do Brasil e Bradesco saíam CRÍTICOS por um número
+        # que não se aplica a eles.
+        #
+        # ROE ausente não confirma nem absolve: sem o segundo sinal a falha não
+        # é conclusiva, e a empresa cai na faixa de atenção como qualquer
+        # estrutura apertada.
+        "margem operacional negativa": (margem_op < 0) & (roe < 0),
         f"endividamento > {policy.max_endividamento:g}x": endividamento > policy.max_endividamento,
         f"liquidez corrente < {policy.min_liquidez_corrente:g}": liquidez < policy.min_liquidez_corrente,
     }

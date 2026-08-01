@@ -82,7 +82,7 @@ def test_falha_estrutural_isolada_e_atencao_nao_critico():
 
 def test_estrutural_confirmada_por_operacional_volta_a_ser_critico():
     df = pd.DataFrame([_empresa("GRAVE3", Endividamento_Total=3.24,
-                                Margem_Operacional=-0.05)])
+                                Margem_Operacional=-0.05, ROE=-0.10)])
     h = check_holdings(df, ["GRAVE3"], selic=0.11)[0]
     assert h.nivel == CRITICO and h.bloqueante is True
 
@@ -327,3 +327,23 @@ st.info(f"Custo do filtro de resiliência: {len(cortados)} segmento(s) — "
     texto = "\n".join(item.value for item in app.info)
     assert "Custo do filtro de resiliência" in texto
     assert "1 defensivo(s)" in texto and "1 cíclico(s)" in texto
+
+
+def test_banco_lucrativo_nao_e_critico_por_metrica_que_nao_se_aplica():
+    """BBAS3/BBDC3/ABCB4 saíam CRÍTICOS na varredura de 01/08/2026.
+
+    Duas causas, ambas com a mesma raiz — deixar métrica inválida decidir:
+    1. margem operacional negativa não exigia prejuízo confirmando;
+    2. a confirmação do sinal FCO_Negativo pedia lucro > 0 E EBIT > 0, então o
+       EBIT (inválido para banco) vetava o lucro (válido). ABCB4 fechou 2025 com
+       lucro de R$ 1,0 bi e FCO POSITIVO de R$ 150 mi, e ainda assim carregava
+       o sinal, porque o EBIT reportado era -R$ 456 mi.
+
+    Efeito medido no universo: 142 → 117 críticos.
+    """
+    df = pd.DataFrame([_empresa("BBAS3", Margem_Operacional=-0.01, ROE=0.14,
+                                Endividamento_Total=np.nan,
+                                Liquidez_Corrente=np.nan)])
+    h = check_holdings(df, ["BBAS3"], selic=0.15)[0]
+    assert h.nivel != CRITICO
+    assert not any("margem operacional" in a for a in h.alertas)

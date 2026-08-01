@@ -46,18 +46,44 @@ def test_barata_com_fco_negativo_e_armadilha_nao_oportunidade():
     assert pd.isna(linha["valor_score"])
 
 
-@pytest.mark.parametrize("campo,valor,esperado", [
-    ("Margem_Operacional", -0.05, "margem operacional negativa"),
-    ("Endividamento_Total", 4.0, "endividamento"),
-    ("Liquidez_Corrente", 0.6, "liquidez corrente"),
-    ("ROIC", -0.02, "ROIC negativo"),
+@pytest.mark.parametrize("campos,esperado", [
+    # Margem operacional negativa PRECISA de prejuízo confirmando — ver
+    # test_margem_negativa_com_lucro_nao_reprova logo abaixo.
+    ({"Margem_Operacional": -0.05, "ROE": -0.10}, "margem operacional negativa"),
+    ({"Endividamento_Total": 4.0}, "endividamento"),
+    ({"Liquidez_Corrente": 0.6}, "liquidez corrente"),
+    ({"ROIC": -0.02}, "ROIC negativo"),
 ])
-def test_cada_regra_de_solvencia_reprova_isoladamente(campo, valor, esperado):
-    df = pd.DataFrame([
-        _empresa("X3", **{"P/L": 4.0, "P/VP": 0.5, campo: valor})])
+def test_cada_regra_de_solvencia_reprova_isoladamente(campos, esperado):
+    df = pd.DataFrame([_empresa("X3", **{"P/L": 4.0, "P/VP": 0.5, **campos})])
     linha = rank_value_opportunities(df).iloc[0]
     assert linha["classificacao"] == ARMADILHA
     assert esperado in "; ".join(linha["falhas_solvencia"])
+
+
+def test_margem_negativa_com_lucro_nao_reprova():
+    """Banco do Brasil e Bradesco saíam CRÍTICOS por métrica que não se aplica.
+
+    EBIT/receita não é conceito válido para instituição financeira, e a brapi
+    devolve o quociente mesmo assim. Medido em 01/08/2026: das 81 empresas com
+    margem operacional negativa, 28 são do setor Financeiro — o maior grupo — e
+    33 têm ROE POSITIVO.
+    """
+    df = pd.DataFrame([
+        _empresa("BANK3", **{"P/L": 4.0, "P/VP": 0.5,
+                             "Margem_Operacional": -0.01, "ROE": 0.14})])
+    linha = rank_value_opportunities(df).iloc[0]
+    assert "margem operacional negativa" not in "; ".join(linha["falhas_solvencia"])
+    assert linha["classificacao"] != ARMADILHA
+
+
+def test_margem_negativa_sem_roe_nao_confirma_nem_absolve():
+    """Ausência não vira veredito: sem o segundo sinal a falha não é conclusiva."""
+    df = pd.DataFrame([
+        _empresa("SEMROE3", **{"P/L": 4.0, "P/VP": 0.5,
+                               "Margem_Operacional": -0.05})])
+    linha = rank_value_opportunities(df).iloc[0]
+    assert "margem operacional negativa" not in "; ".join(linha["falhas_solvencia"])
 
 
 def test_solida_e_cara_fica_sem_margem():
