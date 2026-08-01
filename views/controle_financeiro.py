@@ -3019,10 +3019,33 @@ def _opcoes_mes(n: int = 12) -> list:
     return result
 
 
+def _indice_periodo_com_dados(opcoes: list[dict], historico: list[dict]) -> int:
+    """Retorna o índice do mês mais recente realmente presente no histórico."""
+    indices = {
+        (int(opcao["ano"]), int(opcao["mes"])): indice
+        for indice, opcao in enumerate(opcoes)
+    }
+    periodos_disponiveis: list[tuple[int, int]] = []
+    for item in historico:
+        try:
+            periodo = (int(item["ano"]), int(item["mes"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if periodo in indices:
+            periodos_disponiveis.append(periodo)
+
+    if not periodos_disponiveis:
+        return 0
+    return indices[max(periodos_disponiveis)]
+
+
 def render() -> None:
     # ── Seletor de mês no header ──────────────────────────────────────────────
     opcoes     = _opcoes_mes(12)
-    labels_mes = [o["label"] for o in opcoes]
+    periodos   = [(o["ano"], o["mes"]) for o in opcoes]
+    labels_mes = {(o["ano"], o["mes"]): o["label"] for o in opcoes}
+    historico  = get_cashflow_mensal()
+    indice_padrao = _indice_periodo_com_dados(opcoes, historico)
 
     container_pagina(
         "Controle Financeiro",
@@ -3038,16 +3061,31 @@ def render() -> None:
             st.caption("Selecione o mês usado nos indicadores, gráficos e lançamentos.")
         with col_mes:
             st.caption("Mês de referência")
-            idx = st.selectbox(
+            periodo_selecionado = st.selectbox(
                 "Mês",
-                range(len(labels_mes)),
-                format_func=lambda i: labels_mes[i],
-                key="cf_mes_idx",
+                periodos,
+                index=indice_padrao,
+                format_func=lambda periodo: labels_mes[periodo],
+                key="cf_periodo_ref",
                 label_visibility="collapsed",
             )
 
-    sel = opcoes[idx]
+    ano_selecionado, mes_selecionado = periodo_selecionado
+    sel = next(
+        opcao for opcao in opcoes
+        if opcao["ano"] == ano_selecionado and opcao["mes"] == mes_selecionado
+    )
     d   = get_controle(sel["ano"], sel["mes"])
+
+    periodo_tem_dados = any(
+        item.get("ano") == sel["ano"] and item.get("mes") == sel["mes"]
+        for item in historico
+    )
+    if not periodo_tem_dados and d.get("data_source") == "real":
+        st.info(
+            f"Não há lançamentos liquidados em {sel['label']}. "
+            "Os indicadores permanecem zerados até existirem movimentações nesse período."
+        )
 
     # Badge de fonte de dados
     _fonte = d.get("data_source", "mock")
@@ -3064,7 +3102,6 @@ def render() -> None:
     _sidebar_render(sel["ano"], sel["mes"])
 
     # ── Dados compartilhados entre tabs ──────────────────────────────────────
-    historico    = get_cashflow_mensal()
     hist_anual   = get_historico_anual()
     evolucao     = get_evolucao_patrimonial()
     fluxo_inv    = {(f["ano"], f["mes"]): f["aporte"] for f in evolucao.get("fluxo_mensal", [])}

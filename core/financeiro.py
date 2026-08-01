@@ -22,6 +22,7 @@ Padrão de uso nas páginas:
     patrimonio = dados["patrimonio"]["total"]
 """
 import logging
+import math
 
 import streamlit as st
 
@@ -123,6 +124,32 @@ _MESES_PT = {
     5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
     9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
 }
+
+
+def patrimonio_investido_confiavel(
+    carteira: dict | None,
+    patrimonio: dict | None = None,
+) -> float | None:
+    """Retorna o valor de mercado verificável da carteira, sem somar saldos estimados.
+
+    O saldo de ``v_account_balance`` é reconstruído pelo saldo inicial mais o
+    histórico de transações. Sem conciliação bancária explícita, ele não deve ser
+    tratado como saldo atual nem somado novamente às posições de investimento.
+    """
+    candidatos = (
+        (carteira or {}).get("total_mercado"),
+        (patrimonio or {}).get("investido"),
+    )
+    for candidato in candidatos:
+        if candidato is None:
+            continue
+        try:
+            valor = float(candidato)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(valor) and valor >= 0:
+            return valor
+    return None
 
 
 def _visao_geral_real() -> dict:

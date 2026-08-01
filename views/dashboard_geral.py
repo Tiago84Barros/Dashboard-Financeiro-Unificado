@@ -18,7 +18,7 @@ import streamlit as st
 from core.b3_portfolio_model import load_active_b3_portfolio_model
 from core.config import settings
 from core.controle import get_gastos_categoria_anual, get_historico_anual
-from core.financeiro import get_visao_geral
+from core.financeiro import get_visao_geral, patrimonio_investido_confiavel
 from core.investimentos import (
     get_carteira,
     get_cashflow_mensal,
@@ -399,18 +399,28 @@ def _render_kpi_grid(
     """Quatro indicadores essenciais, em CSS Grid responsivo."""
     saldo = receitas - despesas - investimentos
     taxa = (saldo / receitas * 100) if receitas > 0 else 0.0
-    delta_pat = float(pat.get("delta_mes_pct") or 0)
     rentab = float(carteira.get("rentabilidade_total_pct") or 0)
+    patrimonio_investido = patrimonio_investido_confiavel(carteira, pat)
+    num_ativos = int(carteira.get("num_ativos") or 0)
     saldo_cor = _COR_FLUXO if saldo >= 0 else _COR_NEGATIVO
     taxa_cor = _COR_FLUXO if taxa >= 30 else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO
-    delta_cor = _COR_FLUXO if delta_pat >= 0 else _COR_NEGATIVO
     rentab_cor = _COR_FLUXO if rentab >= 0 else _COR_NEGATIVO
+    patrimonio_valor = (
+        fmt_moeda(patrimonio_investido)
+        if patrimonio_investido is not None
+        else "N/D"
+    )
+    patrimonio_detalhe = (
+        f"Valor de mercado consolidado · {num_ativos} ativos"
+        if patrimonio_investido is not None
+        else "Valor de mercado da carteira indisponível"
+    )
 
     cards = [
         _kpi_html(
-            "Patrimônio total",
-            fmt_moeda(float(pat.get("total") or 0)),
-            f'<strong style="color:{delta_cor}">{delta_pat:+.1f}%</strong> no mês',
+            "Patrimônio investido",
+            patrimonio_valor,
+            escape(patrimonio_detalhe),
             "◆",
             _COR_PATRIMONIO,
         ),
