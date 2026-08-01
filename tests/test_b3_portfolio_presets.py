@@ -213,3 +213,63 @@ def test_sem_piso_de_liquidez_tambem_avisa():
 
     alertas = avaliar_configuracao({"pb3_min_adtv": "Sem filtro"})
     assert any("220 das 442" in a for a in alertas)
+
+
+def test_semear_perfil_padrao_deixa_a_tela_no_recomendado():
+    """Primeira carga tem de nascer no perfil medido, não nos defaults soltos.
+
+    Antes, cada controle nascia com o próprio default e a combinação inicial
+    não correspondia a nenhum perfil — o usuário via "Personalizada" sem ter
+    mexido em nada. O caso mais caro era o piso de liquidez, cujo default
+    (R$ 1 mi) elimina uma empresa de saúde limpa do universo.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    from core.b3_portfolio_presets import PRESETS, RECOMENDADO
+
+    app = AppTest.from_string("""
+import streamlit as st
+import views.portfolio_b3 as view
+view._semear_perfil_padrao()
+st.write({k: st.session_state.get(k) for k in view.__dict__.get('_X', [])} or 'ok')
+""").run(timeout=60)
+    assert not app.exception
+
+    # A semeadura roda no session_state do AppTest; confere chave a chave.
+    for chave, esperado in PRESETS[RECOMENDADO].valores.items():
+        assert app.session_state[chave] == esperado, chave
+
+
+def test_semear_nao_sobrescreve_ajuste_do_usuario():
+    """Semear é para a PRIMEIRA carga; a cada rerun desfaria o que o usuário fez."""
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_string("""
+import streamlit as st
+import views.portfolio_b3 as view
+st.session_state['pb3_teto_setor'] = 42
+view._semear_perfil_padrao()
+view._semear_perfil_padrao()
+st.write('ok')
+""").run(timeout=60)
+    assert not app.exception
+    assert app.session_state["pb3_teto_setor"] == 42
+
+
+def test_parametros_fecham_por_padrao_e_perfil_fica_fora():
+    """O perfil é estrutura medida; os ~20 controles são ajuste fino opcional."""
+    import re
+    from pathlib import Path
+
+    fonte = (Path(__file__).resolve().parents[1]
+             / "views" / "portfolio_b3.py").read_text(encoding="utf-8")
+
+    expander = re.search(r'st\.expander\("⚙️ Parâmetros[^"]*",\s*expanded=(\w+)\)',
+                         fonte)
+    assert expander, "não achei o expander de parâmetros"
+    assert expander.group(1) == "False"
+
+    # A chamada do perfil precisa vir ANTES do expander, não dentro dele.
+    pos_perfil = fonte.index("_render_perfil_configuracao()\n\n    # ── PARÂMETROS")
+    pos_expander = fonte.index('st.expander("⚙️ Parâmetros')
+    assert pos_perfil < pos_expander
