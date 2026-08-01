@@ -292,7 +292,9 @@ _BALANCE_COLS = ("fiscal_year", "total_assets", "total_equity", "total_debt",
                  "retained_earnings")
 _CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow",
                   "acquisitions", "investments", "dividends_paid",
-                  "stock_repurchase", "stock_issuance", "depreciation_and_amortization")
+                  "stock_repurchase", "stock_issuance", "depreciation_and_amortization",
+                  # SBC alimenta sbc_to_revenue/fcf_ex_sbc_margin no score (v0.5.0).
+                  "stock_based_compensation")
 
 
 def _latest_close(conn, symbol: str):
@@ -551,13 +553,15 @@ def _parse_json_col(value):
         return None
 
 
-def _snapshot_df(extra_json: str | None = None) -> pd.DataFrame:
+def _snapshot_df(extra_json: str | None = None,
+                 extra_jsons: tuple[str, ...] = ()) -> pd.DataFrame:
     eng = _engine()
     if eng is None:
         return pd.DataFrame()
     cols = list(_SNAP_IDENTITY) + list(_SNAP_SCORES)
     if extra_json:
         cols.append(extra_json)
+    cols.extend(c for c in extra_jsons if c not in cols)
     try:
         with eng.connect() as conn:
             return pd.read_sql(text(
@@ -569,13 +573,54 @@ def _snapshot_df(extra_json: str | None = None) -> pd.DataFrame:
 
 
 def load_snapshot_scored() -> pd.DataFrame:
-    """Frame equivalente ao scored_universe, lido da vitrine (métricas incluídas)."""
-    df = _snapshot_df("metrics")
+    """Frame equivalente ao scored_universe, lido da vitrine (métricas incluídas).
+
+    Expande também o bloco ``advanced`` (Altman Z, Piotroski F, accruals de
+    Sloan, ROIC incremental). Esses indicadores eram calculados e gravados para
+    TODAS as empresas, mas só apareciam na análise individual — nunca chegavam
+    à construção de carteira. Trazê-los ao frame é o que permite usá-los como
+    penalidade de risco em ``core/us_advanced_lab.build_entry_scores``.
+    """
+    df = _snapshot_df("metrics", extra_jsons=("advanced", "financials"))
     if df.empty:
         return df
     metric_dicts = [(_parse_json_col(v) or {}) for v in df.pop("metrics")]
     metrics_df = pd.DataFrame(metric_dicts, index=df.index)
-    return pd.concat([df, metrics_df], axis=1)
+    financeiros = ([(_parse_json_col(v) or []) for v in df.pop("financials")]
+                   if "financials" in df.columns else [])
+    blocos = [df, metrics_df]
+    if "advanced" in df.columns:
+        avancado = [(_parse_json_col(v) or {}) for v in blocos[0].pop("advanced")]
+        blocos.append(pd.DataFrame(avancado, index=df.index))
+    out = pd.concat(blocos, axis=1)
+
+    # payout_ratio passou a ser calculado em core.us_metrics, mas a vitrine já
+    # publicada foi gerada antes disso. Derivar do bloco `financials` (que traz
+    # dividends_paid e net_income por exercício) faz a verificação valer HOJE,
+    # sem exigir re-ingestão — e continua correta depois dela.
+    if "payout_ratio" not in out.columns or out["payout_ratio"].isna().all():
+        out["payout_ratio"] = [_payout_do_historico(hist) for hist in financeiros] \
+            if financeiros else None
+    return out
+
+
+def _payout_do_historico(historico) -> float | None:
+    """Payout do último exercício com lucro positivo. None se indeterminável."""
+    if not isinstance(historico, list) or not historico:
+        return None
+    anos = [linha for linha in historico
+            if isinstance(linha, dict) and linha.get("fiscal_year") is not None]
+    for linha in sorted(anos, key=lambda x: x["fiscal_year"], reverse=True):
+        lucro, dividendos = linha.get("net_income"), linha.get("dividends_paid")
+        if lucro is None or dividendos is None:
+            continue
+        try:
+            lucro, dividendos = float(lucro), abs(float(dividendos))
+        except (TypeError, ValueError):
+            continue
+        if lucro > 0:                      # payout sobre prejuízo não é razão
+            return dividendos / lucro
+    return None
 
 
 def load_snapshot_asymmetry() -> pd.DataFrame:

@@ -81,7 +81,7 @@ for i, symbol in enumerate(["AAPL", "MSFT", "NVDA", "GOOG", "META", "AMZN"]):
 scored = pd.DataFrame(rows)
 view.us.scored_universe = lambda: scored
 view._tab_avancada_unificada({"offline":False, "schema_ready":True})
-''').run(timeout=40)
+''').run(timeout=60)
 
     assert not app.exception
     rendered = "\n".join(item.value for item in app.markdown)

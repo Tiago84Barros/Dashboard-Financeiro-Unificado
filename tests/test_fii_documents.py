@@ -91,6 +91,11 @@ def test_document_download_respects_attempt_limit(monkeypatch):
 
 def test_hash_only_storage_does_not_persist_new_binary(monkeypatch, tmp_path):
     monkeypatch.setenv("FII_DOCUMENT_CACHE", str(tmp_path))
+    # _storage curto-circuita para 'remote_only' dentro do Actions (o runner é
+    # efêmero e não deve materializar cache). Aqui o alvo é a política de
+    # retenção, então o ambiente é neutralizado — senão o teste passa na
+    # máquina do dev e reprova no CI.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     content = b"%PDF-auditable"
     sha = hashlib.sha256(content).hexdigest()
 
@@ -99,4 +104,15 @@ def test_hash_only_storage_does_not_persist_new_binary(monkeypatch, tmp_path):
     )
 
     assert (backend, key, existed) == ("source_hash", None, False)
+    assert not list(tmp_path.rglob("*.pdf"))
+
+
+def test_storage_no_github_actions_nao_materializa_cache(monkeypatch, tmp_path):
+    """O ramo específico do CI existia sem cobertura — agora é verificado."""
+    monkeypatch.setenv("FII_DOCUMENT_CACHE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    content = b"%PDF-runner"
+    sha = hashlib.sha256(content).hexdigest()
+
+    assert _storage(content, sha, ".pdf") == ("remote_only", None, False)
     assert not list(tmp_path.rglob("*.pdf"))

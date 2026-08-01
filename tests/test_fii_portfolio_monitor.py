@@ -4,8 +4,8 @@ import pytest
 
 from core.fii_portfolio_monitor import build_fii_portfolio_monitor
 
-STRATEGY = "fii_integrated_robust_optimizer.v6.4"
-METHODOLOGY = "6.4.0"
+STRATEGY = "fii_integrated_robust_optimizer.v6.5"
+METHODOLOGY = "6.5.0"
 
 
 def _validation(strategy: str = STRATEGY) -> dict:

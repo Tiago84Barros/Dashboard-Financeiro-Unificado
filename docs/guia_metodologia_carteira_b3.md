@@ -245,3 +245,186 @@ Recomendação: confie mais nos dados de **FII** (CVM) do que nos fundamentos de
 
 *Documento gerado como material de apoio. A metodologia continua evoluindo; se algo
 mudar no código, este guia deve ser atualizado junto.*
+
+---
+
+## 11. Rota de valor — distorção com solvência (implementada em 25/07/2026)
+
+Resposta à objeção registrada em `docs/auditoria_percentual_2026-07-23.md` §16:
+a carteira só tinha o caminho "habilidade de seleção por segmento", que exige
+amplitude cross-seccional — e a B3 tem **mediana de 3 empresas por segmento**,
+onde nenhum teste de ordenação tem poder. Faltava o caminho que a tese de
+crise-como-oportunidade exige.
+
+### Que pergunta esta rota responde
+
+| Rota | Pergunta | Depende de amplitude? |
+|---|---|---|
+| Segmentos (existente) | "Meu processo de escolha tem habilidade comprovada?" | Sim |
+| **Valor (nova)** | **"Está barata vs valor intrínseco E sobrevive para realizar esse valor?"** | **Não** |
+
+São perguntas diferentes; nenhuma substitui a outra. A rota de valor continua
+útil quando a de segmentos fica muda.
+
+### Como funciona (`core/b3_value_route.py`, puro e testado)
+
+1. **Margem de segurança** — média das fontes disponíveis (Graham via
+   P/L·P/VP; Bazin via DY vs yield-alvo). É a média, não o máximo: escolher a
+   fonte mais generosa seria torcer o resultado.
+2. **Gate de solvência** — o que separa distorção de armadilha. Reprova FCO
+   negativo, margem operacional negativa, endividamento acima do teto, liquidez
+   corrente abaixo do piso e ROIC negativo.
+3. **Classificação** em quatro estados, sempre com o motivo explícito:
+   `oportunidade` · `armadilha_potencial` · `sem_margem` · `sem_evidencia`.
+
+Regra preservada de todo o projeto: **ausência de dado nunca vira aprovação**.
+Sem insumo crítico, a empresa fica em `sem_evidencia` e não entra.
+
+ROIC abaixo da Selic é **ressalva, não reprovação** — pode ser vale de ciclo,
+que é exatamente a hipótese que a rota existe para capturar.
+
+### Resultado no universo real (25/07/2026, 426 empresas)
+
+| Classe | Empresas |
+|---|---:|
+| Oportunidade | 96 |
+| Armadilha potencial (barrada) | 28 |
+| Sem desconto | 148 |
+| Sem evidência | 154 |
+
+As armadilhas barradas são o ponto: HBRE3 aparecia com "desconto" de 1025% e
+liquidez corrente < 1; JALL3 com 99% e margem operacional negativa, dívida acima
+do teto e ROIC negativo. Qualquer filtro de múltiplos as mostraria como
+barganhas.
+
+Das 154 sem evidência, **57 tinham desconto ≥ 20%** e ficaram mudas por falta de
+insumo (P_FCO ausente em 107 casos, endividamento em 79). A interface lista essas
+teses num painel próprio — não como recomendação, mas como medida do custo da
+cobertura de fundamentos e fila de prioridade para a ingestão.
+
+### O que a rota NÃO faz
+
+Não diz **quando** comprar. Mostra o que está barato e sobrevive; o timing
+continua sendo decisão do investidor — a mesma divisão de eixos da §8.
+
+---
+
+## 12. Três estados de evidência — "inconclusivo" ≠ "reprovado" (25/07/2026)
+
+Segunda correção derivada da auditoria §16. A tabela de auditoria rotulava como
+**Reprovado** tanto o segmento cujo score ordenou ao contrário do retorno quanto
+aquele que **nunca pôde ser medido**. São coisas opostas.
+
+Com mediana de 3 empresas por segmento, o Rank-IC anual exige ao menos 5 empresas
+alinhadas — muitos segmentos simplesmente não geram nenhuma observação. Chamar
+isso de reprovação é confundir *ausência de evidência* com *evidência de ausência*.
+
+### O que a tabela mostra agora
+
+| Situação | Significado |
+|---|---|
+| ✅ Aprovado | passou nos critérios do modo escolhido |
+| ❌ Reprovado (evidência contra) | Rank-IC claramente negativo — reprovação de mérito |
+| ❌ Reprovado (critério econômico) | não bateu Selic/Pesos Iguais pela margem |
+| 🟡 Inconclusivo (sem amplitude) | não houve dados para calcular o Rank-IC |
+| 🟡 Inconclusivo (sem significância) | mediu, mas não distingue do acaso |
+
+Duas colunas novas: **Estado da evidência** e **Efeito mínimo detectável
+(Rank-IC)** — o menor poder preditivo que o teste enxergaria com os dados
+disponíveis, a 80% de poder. Valor alto = teste cego para efeitos moderados.
+É o número que faltava para julgar se um "não passou" significa alguma coisa.
+
+`core/b3_evidence.py` é puro e testado; só `evidencia_contra` é bloqueante.
+
+
+---
+
+## 13. Estatística dimensionada à amostra (25/07/2026)
+
+Terceira e última peça da resposta à objeção da §16 da auditoria. As duas
+anteriores contornaram o problema (rota de valor; três estados de evidência).
+Esta ataca a causa: **o desenho do teste estava errado para o tamanho da
+amostra**.
+
+### O diagnóstico, em um número
+
+Simulação com as amplitudes REAIS da B3 (78 segmentos, mediana de 3 empresas,
+438 no total), 10 anos, α=10%:
+
+| Desenho | Efeito mínimo detectável (Rank-IC) |
+|---|---:|
+| Um teste por segmento (3 empresas) | **0,533** |
+| Um teste no universo (438 empresas) | **0,027** |
+| | **19× mais sensível** |
+
+Um Rank-IC de 0,533 não existe em mercado nenhum: sinais fundamentalistas reais
+vivem na faixa de 0,02 a 0,10 (Grinold-Kahn). Ou seja, **o teste por segmento
+era estruturalmente cego a qualquer efeito realista** — ele nunca poderia
+aprovar por mérito, só por acaso. Na mesma simulação, com sinal verdadeiro
+**igual a zero**, apenas 27 dos 78 segmentos eram sequer mensuráveis e 1
+"passava" por sorte.
+
+### O que mudou
+
+1. **Teste no nível do universo** (`pooled_yearly_ics` + `universe_evidence`):
+   o Rank-IC anual passa a ser calculado sobre todas as empresas de cada ano,
+   num único teste com amplitude real — e sem multiplicidade a corrigir, já que
+   é um teste, não 78.
+2. **Encolhimento hierárquico** (`shrink_segment_estimates`, empirical Bayes por
+   método dos momentos): a estimativa de cada segmento é puxada para a média do
+   universo na medida da própria incerteza. Na simulação com ruído puro, os ICs
+   brutos mais extremos (−0,186; +0,151) foram encolhidos a 0,000 com peso
+   próprio 0% — exatamente o que deveria acontecer com ruído.
+3. **Segmento sem observação recebe a estimativa do universo**, não uma
+   reprovação: sem dado próprio, a melhor inferência disponível é a do mercado.
+
+A seção "🔬 Evidência no universo" exibe o Rank-IC agrupado, o valor-p, a
+amplitude (anos × empresas/ano), o efeito mínimo detectável e a tabela de
+estimativas encolhidas com o peso próprio de cada segmento.
+
+### O que continua valendo
+
+Sobrevivência, publication lag e o guarda-corpo anti-preditivo não dependem de
+amplitude e seguem ativos. A rota econômica continua sendo o padrão para
+aprovar segmentos; o teste de universo informa se o score, como um todo, tem
+poder preditivo no mercado brasileiro — pergunta que agora pode ser respondida.
+
+---
+
+## 15. Perfis pré-configurados (29/07/2026)
+
+A aba tem cerca de vinte parâmetros. Alguns, mal calibrados, degradam a
+carteira **sem sinal visível** — o usuário atribui ao mercado o que foi da
+configuração. Os perfis resolvem isso com combinações cujo efeito foi
+**medido** na varredura automatizada sobre o universo real.
+
+| Perfil | Para quê | Efeito medido |
+|---|---|---|
+| **Equilibrado (recomendado)** | uso normal | 10 ativos · 60% cíclico · 20% defensivo · 7 setores |
+| **Conservador** | menos exposição ao ciclo | carteira menor por construção |
+| **Amplo (diagnóstico)** | explorar o universo | sem proteção de concentração — não use para decidir |
+
+O perfil recomendado é `Econômico (Brasil)` · margem 15% · teto setorial 30% ·
+teto cíclico 60% · resiliência desligada · grupo mínimo 5. Cada valor tem
+evidência:
+
+* modos estatísticos aprovam **zero segmentos** (efeito mínimo detectável de
+  0,533 é inalcançável com mediana de 3 empresas por segmento);
+* resiliência a 5 p.p. corta de 10 para **6 ativos** e penaliza utilities
+  (20% passam) mais que cíclicas (27%);
+* margem de 25% cai para 7 ativos; 5% não muda o resultado;
+* tetos 30%/60% foram a combinação verificada **sem conflito** entre si.
+
+### Alertas de calibragem
+
+Alterar um parâmetro com custo conhecido dispara um aviso **com o número
+medido** — por exemplo, ligar resiliência a 5 p.p. avisa que cortaria de 10
+para 6 ativos. Os alertas informam; nunca bloqueiam. A decisão continua do
+usuário, agora sabendo o preço.
+
+### O que os perfis NÃO são
+
+Não são "carteira ótima". Isso não existe de forma verificável fora da
+amostra, e persegui-lo por iteração é sobreajuste — o erro que a §16 da
+auditoria corrigiu. São combinações **medidas e reprodutíveis**, com o custo
+de cada desvio declarado.

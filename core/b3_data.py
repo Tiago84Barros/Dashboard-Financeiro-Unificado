@@ -104,6 +104,21 @@ def load_historico_anos(*a, **k):
     return _financeiro("load_historico_anos", pd.DataFrame(), *a, **k)
 
 
+def load_giro_diario(*a, **k):
+    """Giro financeiro diário estimado por ticker (piso de negociabilidade)."""
+    return _financeiro("load_giro_diario", {}, *a, **k)
+
+
+def load_classes_irmas(*a, **k):
+    """Classes ativas de cada empresa, por ticker (troca ON↔PN da mesma dona)."""
+    return _financeiro("load_classes_irmas", {}, *a, **k)
+
+
+def load_resiliencia_ciclo(*a, **k):
+    """Margem operacional nas recessões vs anos normais, por ticker."""
+    return _financeiro("load_resiliencia_ciclo", {}, *a, **k)
+
+
 def load_demonstracoes(*a, **k):
     return _financeiro("load_demonstracoes", pd.DataFrame(), *a, **k)
 

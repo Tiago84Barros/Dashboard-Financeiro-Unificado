@@ -71,8 +71,17 @@ def high_correlation_pairs(
         for j in range(i + 1, len(tickers)):
             rho = corr.iloc[i, j]
             if pd.notna(rho) and abs(float(rho)) >= threshold:
-                pairs.append((tickers[i], tickers[j], float(rho)))
-    pairs.sort(key=lambda p: abs(p[2]), reverse=True)
+                # Orientação canônica (menor ticker primeiro): sem isso o par
+                # sai como (A,B) ou (B,A) conforme a ordem das colunas, e quem
+                # consome decide o "mais fraco" pelo primeiro em caso de empate
+                # exato de score.
+                a, b = sorted((str(tickers[i]), str(tickers[j])))
+                pairs.append((a, b, float(rho)))
+    # Ordenação TOTAL: só por |rho| os empates seguiriam a ordem das colunas,
+    # que vem da ordem dos itens da carteira — variável entre processos. Foi a
+    # fonte residual de não determinismo medida em 29/07/2026 (GOAU4 vs SHUL4
+    # na Siderurgia, com três sementes concordando por acaso).
+    pairs.sort(key=lambda p: (-abs(p[2]), str(p[0]), str(p[1])))
     return pairs
 
 

@@ -96,3 +96,50 @@ def test_ebitda_derivado_de_operating_income_e_depreciacao():
     assert m["_ebitda"] == 360
     assert m["_ebitda_derived"] is True
     assert m["net_debt_ebitda"] == pytest.approx(400 / 360)
+
+
+# ── SBC e diluição (score v0.5.0, auditoria 2026-07) ─────────────────────────
+
+def test_sbc_entra_como_qualidade_dos_lucros():
+    inc, bal, cf = _synthetic()
+    cf[0]["stock_based_compensation"] = 144      # 10% da receita de 1440
+    m = um.compute_company_metrics(inc, bal, cf, market_cap=3000)
+    assert m["sbc_to_revenue"] == pytest.approx(0.10)
+    # FCF ex-SBC absorve a despesa paga em participação: 200 - 144 = 56
+    assert m["fcf_ex_sbc_margin"] == pytest.approx(56 / 1440)
+    # a margem GAAP segue inflada — é justamente o contraste que o score usa
+    assert m["fcf_margin"] == pytest.approx(200 / 1440)
+
+
+def test_sbc_ausente_nao_vira_zero():
+    inc, bal, cf = _synthetic()           # sem stock_based_compensation
+    m = um.compute_company_metrics(inc, bal, cf, market_cap=3000)
+    assert m["sbc_to_revenue"] is None    # ausência ≠ "não paga SBC"
+    assert m["fcf_ex_sbc_margin"] is None
+
+
+def test_sbc_negativo_no_cf_e_tratado_em_modulo():
+    inc, bal, cf = _synthetic()
+    cf[0]["stock_based_compensation"] = -144   # sinal varia por filer
+    m = um.compute_company_metrics(inc, bal, cf, market_cap=3000)
+    assert m["sbc_to_revenue"] == pytest.approx(0.10)
+    assert m["fcf_ex_sbc_margin"] == pytest.approx(56 / 1440)
+
+
+def test_diluicao_pela_contagem_de_acoes():
+    inc, _bal, cf = _synthetic()
+    # emissão líquida: 100 -> 121 em 2 anos = +10% a.a.
+    bal = [{"fiscal_year": 2021, "shares_outstanding": 100},
+           {"fiscal_year": 2023, "shares_outstanding": 121, "total_equity": 1000}]
+    m = um.compute_company_metrics(inc, bal, cf, market_cap=3000)
+    assert m["share_count_cagr_3y"] == pytest.approx(0.10)
+    # recompra efetiva devolve valor negativo (menor é melhor no ranking)
+    bal[1]["shares_outstanding"] = 81
+    m2 = um.compute_company_metrics(inc, bal, cf, market_cap=3000)
+    assert m2["share_count_cagr_3y"] == pytest.approx(-0.10)
+
+
+def test_metricas_novas_tem_direcao_correta_no_ranking():
+    assert "sbc_to_revenue" in um.LOWER_IS_BETTER
+    assert "share_count_cagr_3y" in um.LOWER_IS_BETTER
+    assert "fcf_ex_sbc_margin" not in um.LOWER_IS_BETTER

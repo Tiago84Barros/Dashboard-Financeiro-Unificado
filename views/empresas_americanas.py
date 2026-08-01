@@ -261,6 +261,19 @@ def _render_score_dashboard(row: pd.Series) -> None:
         card_metrica("ROIC", _fmt_pct(row.get("roic")))
     with c4:
         card_metrica("Retorno do fluxo de caixa livre", _fmt_pct(row.get("fcf_yield")))
+    # SBC e diluição entraram no score v0.5.0 (auditoria 2026-07): a margem de
+    # caixa GAAP soma a remuneração em ações de volta, e recompra só cria valor
+    # se a base acionária realmente encolher.
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        card_metrica("Remuneração em ações / receita", _fmt_pct(row.get("sbc_to_revenue")))
+    with s2:
+        card_metrica("Margem de FCL ex-SBC", _fmt_pct(row.get("fcf_ex_sbc_margin")))
+    with s3:
+        variacao = row.get("share_count_cagr_3y")
+        card_metrica("Variação da base acionária (3a)", _fmt_pct(variacao))
+        if variacao is not None and float(variacao) > 0.02:
+            st.caption("⚠️ Diluição: a emissão de ações supera as recompras.")
     tracks = [(label_, float(row.get(col, 50))) for col, label_ in _TRACK_LABELS.items()]
     fig = go.Figure(go.Scatterpolar(
         r=[x[1] for x in tracks] + [tracks[0][1]],
@@ -841,16 +854,21 @@ def _tab_avancada_unificada(status: dict) -> None:
 
     with st.expander("💰 Avaliação e retorno ao acionista"):
         cols = [c for c in ("symbol", "name", "pe", "ev_ebit", "ev_ebitda", "p_fcf",
-                            "fcf_yield", "shareholder_yield", "score_valuation",
-                            "score_shareholder") if c in entry]
+                            "fcf_yield", "shareholder_yield", "share_count_cagr_3y",
+                            "score_valuation", "score_shareholder") if c in entry]
         if cols:
             st.dataframe(entry[cols].head(50).rename(columns={
                 "symbol": "Ticker", "name": "Nome", "pe": "P/L", "ev_ebit": "EV/EBIT",
                 "ev_ebitda": "EV/EBITDA", "p_fcf": "P/FCL", "fcf_yield": "Retorno FCL",
                 "shareholder_yield": "Retorno ao acionista",
+                # Retorno ao acionista sem a base acionária engana: a emissão
+                # por SBC pode anular a recompra (auditoria 2026-07).
+                "share_count_cagr_3y": "Δ base acionária (3a)",
                 "score_valuation": "Score avaliação",
                 "score_shareholder": "Score acionista"}), hide_index=True,
                 use_container_width=True)
+            st.caption("Δ base acionária negativo = recompra líquida efetiva; "
+                       "positivo = diluição.")
 
     with st.expander("🛡️ Resiliência histórica e saúde financeira — sensibilidade EUA"):
         health_cols = [c for c in ("symbol", "net_debt_ebitda", "interest_coverage",

@@ -42,6 +42,32 @@ compatível.
 > (Piotroski/Altman/Sloan/ROIC incremental), comparação, criação/simulação e
 > avaliação de portfólio, regime macro americano e validação (8+).
 
+## Score fundamentalista — SBC e diluição (v0.5.0, 2026-07)
+
+A auditoria percentual de 2026-07 avaliou o tratamento de **stock-based
+compensation em 55%** e de **diluição em 72%**: nenhum dos dois era fator do
+score, embora o dado já estivesse ingerido (SBC presente em ~89% das linhas
+anuais de fluxo de caixa, 2.782 símbolos). O `US_FUNDAMENTAL_SCORE_VERSION`
+passou a `0.5.0` com três métricas novas em `core/us_metrics.py`:
+
+| Métrica | Trilha | Direção | Por quê |
+|---|---|---|---|
+| `sbc_to_revenue` | Qualidade | menor é melhor | SBC é despesa econômica real do acionista; o peso sobre a receita separa quem paga o time em caixa de quem paga em participação |
+| `fcf_ex_sbc_margin` | Qualidade | maior é melhor | o FCF GAAP **soma a SBC de volta** (sai do lucro, retorna no fluxo operacional) e infla a margem de caixa; esta é a margem depois de absorvê-la |
+| `share_count_cagr_3y` | Retorno ao acionista | menor é melhor | recompra só cria valor se a base acionária encolher; emissão por SBC pode anular o buyback — negativo = recompra líquida efetiva |
+
+Regras preservadas: ausência **nunca** vira zero (reduz cobertura e confiança);
+o sinal do SBC varia por filer e é tratado em módulo; scores anteriores seguem
+consultáveis em `market_us.score_vintages` pela versão antiga. A interface
+mostra as três métricas no painel da empresa e a variação da base acionária na
+tabela de retorno ao acionista, com alerta quando a diluição passa de 2% a.a.
+
+Para recomputar o histórico PIT com a nova versão:
+
+```bash
+python run_us_ingest.py score-history
+```
+
 ## Análise Avançada
 
 `core/us_advanced.py`, determinístico e puro:
@@ -248,3 +274,60 @@ nunca por `ingested_at`. Empresas deslistadas permanecem no universo histórico
 - Estimativas de analistas/insider/13F dependem do plano/licença da FMP.
 - REITs usam FFO/AFFO (P/L e depreciação são inadequados) — tratamento próprio
   entra com a Fase de score.
+
+## Motores avançados na seleção (27/07/2026)
+
+Uma verificação transversal encontrou o mesmo padrão que a carteira B3 expôs:
+**motores de diagnóstico que nunca alcançavam a decisão**. No módulo EUA,
+`core/us_advanced.py` (Altman Z, Piotroski F, accruals de Sloan, ROIC
+incremental) era consumido só por `us_read.py`, na análise individual.
+
+Os números da vitrine mostravam o custo disso: **597 empresas ativas (21%) em
+zona de aflição do Altman** e cobertura de 99,9% do Piotroski — tudo calculado,
+gravado e ignorado na hora de montar carteira.
+
+### O que mudou
+
+`load_snapshot_scored()` passou a expandir também o bloco `advanced` (antes só
+`metrics`), e `build_entry_scores` ganhou três penalidades, no mesmo padrão das
+que já existiam:
+
+| Alerta | Peso | Ressalva |
+|---|---:|---|
+| Altman Z em zona de aflição | 8 | não se aplica a Financial Services e Real Estate |
+| Piotroski ≤ 3 de 9 | 6 | só quando ≥ 6 critérios foram avaliáveis |
+| Payout > 1,5× o lucro | 7 | REITs isentos (distribuem FFO por exigência legal) |
+| Accruals de Sloan > 0,10 | 5 | corte na cauda de ~5% (p95 = 0,112; mediana −0,050) |
+
+**O ROIC incremental ficou deliberadamente de fora.** 39% das empresas que têm
+esse dado o apresentam negativo, e a métrica é um delta de dois anos que vira
+com uma única queda de EBIT — penalizá-la dispararia em vale de ciclo, o erro
+que a §16 da auditoria corrigiu. Segue exibido na análise individual, onde o
+contexto do ano está à vista.
+
+### Payout sem esperar re-ingestão
+
+`payout_ratio` passou a ser calculado em `core/us_metrics.py`, mas a vitrine já
+publicada foi gerada antes disso — a penalidade nasceria inerte (0 de 2.830
+snapshots tinham o campo). `load_snapshot_scored()` deriva o payout do bloco
+`financials`, que já traz `dividends_paid` e `net_income` por exercício, usando
+o último ano com lucro positivo. Resultado: **1.293 empresas passaram a ter a
+métrica imediatamente**, sem re-ingestão, e 111 foram sinalizadas — XRX
+distribuindo 151× o lucro, HRI 87×, FSK 71×.
+
+O peso 8 do Altman é deliberado: **sozinho não exclui** (o corte é 10), mas
+somado a outro alerta independente exclui. O Z-Score foi calibrado em indústrias
+de 1968 e classifica mal empresas asset-light — tratá-lo como veto isolado
+reprovaria boas empresas de tecnologia.
+
+### Efeito medido no universo real (2.830 ativas)
+
+| Status | Antes | Depois |
+|---|---:|---:|
+| Aprovada | 424 | 399 |
+| Observação | 1.229 | 1.046 |
+| Excluída | 1.177 | 1.385 |
+
+**208 empresas que passavam agora são excluídas** — quase todas por aflição do
+Altman confirmada por um segundo alerta independente (liquidez corrente baixa ou
+cobertura de juros insuficiente). Nenhuma exclusão vem de um sinal isolado.

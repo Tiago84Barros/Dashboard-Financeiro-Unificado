@@ -1004,6 +1004,26 @@ def _tab_analises(
     )
 
 
+def _aviso_ancoragem(resposta: str, contexto: str) -> str:
+    """Alerta quando a IA cita número que não se ancora nos dados enviados.
+
+    Auditoria 2026-07 (§12.8): os prompts proíbem inventar valores, mas nada
+    verificava a saída. A checagem é determinística e conservadora — só avisa,
+    nunca esconde a resposta, e ignora números derivados do próprio contexto.
+    """
+    try:
+        from core.llm_grounding import check_grounding
+        relatorio = check_grounding(resposta or "", contexto or "")
+    except Exception:                      # verificação nunca derruba o chat
+        return ""
+    if not relatorio.ungrounded:
+        return ""
+    citados = ", ".join(claim.raw for claim in relatorio.ungrounded[:4])
+    return (f"⚠️ Confira antes de usar: {citados} — "
+            f"{'este valor não foi encontrado' if len(relatorio.ungrounded) == 1 else 'estes valores não foram encontrados'} "
+            "nos dados enviados à IA.")
+
+
 def _render_chat_financeiro(
     d: dict, historico: list, hist_anual: dict, gastos_cartao: dict,
     investido_mes: float, evolucao: dict, ano_ref: int, mes_ref: int,
@@ -1094,6 +1114,7 @@ def _render_chat_financeiro(
     with st.chat_message("assistant"):
         chart_directives: list[dict] = []
         chart_meta: dict = {}
+        aviso_ancoragem = ""
         with st.spinner("Analisando seus dados financeiros…"):
             try:
                 cats_anual = get_gastos_categoria_anual(ano_ref)
@@ -1113,9 +1134,12 @@ def _render_chat_financeiro(
                 resposta, chart_directives = parse_chart_directives(resposta_raw)
                 if not chart_directives:
                     chart_directives = infer_financas_chart_directives(user_input, chart_meta)
+                aviso_ancoragem = _aviso_ancoragem(resposta, context)
             except Exception as exc:
                 resposta = f"Não foi possível consultar a IA agora: {exc}"
         st.markdown(resposta)
+        if aviso_ancoragem:
+            st.caption(aviso_ancoragem)
         desenhados = 0
         if chart_directives:
             try:
@@ -2933,6 +2957,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
     with st.chat_message("assistant"):
         chart_directives: list[dict] = []
         chart_meta: dict = {}
+        aviso_ancoragem = ""
         with st.spinner("Analisando a sua fatura…"):
             try:
                 context, chart_meta = build_cartao_chat_context(
@@ -2954,9 +2979,12 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                 resposta, chart_directives = parse_chart_directives(resposta_raw)
                 if not chart_directives:
                     chart_directives = infer_cartao_chart_directives(user_input, chart_meta)
+                aviso_ancoragem = _aviso_ancoragem(resposta, context)
             except Exception as exc:
                 resposta = f"Não foi possível consultar a IA agora: {exc}"
         st.markdown(resposta)
+        if aviso_ancoragem:
+            st.caption(aviso_ancoragem)
         desenhados = 0
         if chart_directives:
             try:

@@ -543,6 +543,26 @@ def _aplicar_gate_qualitativo(
     return finais
 
 
+def _aplicar_piso_qualidade(
+    selecionados: list[str],
+    ranked_prox: list[tuple[str, float]],
+    df_mult: pd.DataFrame,
+    pesos_p: dict[str, float],
+    seg_label: str,
+    log: dict,
+    selic: float,
+) -> list[str]:
+    """Adaptador fino sobre core.b3_quality_floor (a regra mora lá, pura)."""
+    from core.b3_quality_floor import apply_with_substitution
+
+    if df_mult is None or getattr(df_mult, "empty", True):
+        return selecionados
+    return apply_with_substitution(
+        selecionados, ranked_prox, df_mult, seg_label=seg_label,
+        selic=selic, pesos=pesos_p, log=log,
+    )
+
+
 def _aplicar_diversificacao_correlacao(
     items: list[dict],
     aprovados: list[dict],
@@ -579,7 +599,10 @@ def _aplicar_diversificacao_correlacao(
     }
 
     for _ in range(max_substituicoes):
-        cols = [it["tk"] for it in items if it["tk"] in returns.columns]
+        # Ordem canônica das colunas: a matriz de correlação é simétrica, então
+        # ordenar não muda valor nenhum — mas fixa a enumeração dos pares, que
+        # de outro modo herda a ordem de montagem da carteira.
+        cols = sorted(it["tk"] for it in items if it["tk"] in returns.columns)
         if len(cols) < 2:
             break
         corr = correlation_matrix(returns[cols])
@@ -603,7 +626,11 @@ def _aplicar_diversificacao_correlacao(
             res = res_by_segmento.get(seg_key)
             if res is None:
                 continue
-            ranked = sorted(res["score_proximo"].items(), key=lambda kv: kv[1], reverse=True)
+            # Desempate pelo TICKER: sem chave secundária, empates de score
+            # seguem a ordem do dict de origem, que varia com PYTHONHASHSEED
+            # entre processos (medido em 29/07/2026: GOAU4 vs SHUL4).
+            ranked = sorted(res["score_proximo"].items(),
+                            key=lambda kv: (-float(kv[1]), str(kv[0])))
             for cand_tk, cand_score in ranked:
                 cand_tk = str(cand_tk)
                 if cand_tk in existing or cand_tk == fraco["tk"]:
@@ -646,7 +673,8 @@ def _aplicar_diversificacao_correlacao(
 
 
 def _rank_ticker(score_map: dict[str, float], ticker: str) -> int | None:
-    ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
+    ranked = sorted(score_map.items(),
+                 key=lambda x: (-float(x[1]), str(x[0])))
     for idx, (tk, _) in enumerate(ranked, start=1):
         if tk == ticker:
             return idx
@@ -727,7 +755,8 @@ def _processar_segmento(
                 "SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento,
             })
 
-        ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
+        ranked = sorted(score_map.items(),
+                     key=lambda x: (-float(x[1]), str(x[0])))
         scores_desc = [s for _, s in ranked[:3]]
         from core.portfolio_constraints import minimum_assets_for_cap
         n = _select_n_heuristica(scores_desc) if len(ranked) >= 2 else 1
@@ -760,7 +789,10 @@ def _processar_segmento(
         for tk in list(anos_lideranca):
             if tk not in novos:
                 del anos_lideranca[tk]
-        for tk in novos:
+        # Itera a LISTA (ordenada por score), não o set: iteração de conjunto
+        # varia entre processos. Aqui os valores não dependem da ordem, mas a
+        # ordem de inserção do dict sim — e dicts alimentam outras estruturas.
+        for tk in dict.fromkeys(lids):
             anos_lideranca[tk] = anos_lideranca.get(tk, 0) + 1
             liderancas_hist[tk].append(ano)
 
@@ -777,7 +809,10 @@ def _processar_segmento(
     ano_ref_score = ano_atual - 1
 
     # Líderes para próximo ano
-    ranked_prox = sorted(score_proximo.items(), key=lambda x: x[1], reverse=True)
+    # Ordenação TOTAL (score desc, ticker asc): empate não pode ser resolvido
+    # pela ordem de inserção do dict — ela varia entre processos.
+    ranked_prox = sorted(score_proximo.items(),
+                         key=lambda x: (-float(x[1]), str(x[0])))
     scores_prox = [s for _, s in ranked_prox[:3]]
     from core.portfolio_constraints import minimum_assets_for_cap
     n_prox      = _select_n_heuristica(scores_prox) if len(ranked_prox) >= 2 else 1
@@ -907,6 +942,10 @@ def _processar_segmento(
         # não recebem aprovação por ausência de poder estatístico.
         score_frame = pd.DataFrame(score_rows)
         ic_values: list[float] = []
+        # Pares (ano, score, retorno) preservados para o teste no nível do
+        # UNIVERSO — onde há amplitude real (N>300) em vez de 78 testes com
+        # mediana de 3 empresas. Ver core/b3_pooled_evidence.py e auditoria §16.
+        ic_pairs: list[tuple[int, float, float]] = []
         if not score_frame.empty:
             for year in sorted(score_frame["Ano"].unique()):
                 scores_year = score_frame[score_frame["Ano"] == year].set_index(
@@ -929,6 +968,11 @@ def _processar_segmento(
                     [scores_year.rename("score"), returns_year.rename("return")],
                     axis=1,
                 ).dropna()
+                # O universo aproveita TODAS as empresas alinhadas, inclusive as
+                # dos anos que o segmento sozinho descarta por amplitude.
+                ic_pairs.extend(
+                    (int(year), float(s), float(r))
+                    for s, r in zip(aligned["score"], aligned["return"]))
                 if len(aligned) < 5:
                     continue
                 ic = aligned["score"].corr(aligned["return"], method="spearman")
@@ -1013,6 +1057,15 @@ def _processar_segmento(
         "rank_ic_years": rank_ic_years,
         "rank_ic_tstat": rank_ic_tstat,
         "p_value_ic": p_value_ic,
+        # ICs anuais preservados para classificar o ESTADO DA EVIDÊNCIA
+        # (a favor / contra / inconclusivo) e calcular o efeito mínimo
+        # detectável — ver core/b3_evidence.py e auditoria §16.
+        "rank_ic_values": list(ic_values),
+        "ic_pairs": ic_pairs,
+        "n_empresas_medio": (
+            float(score_frame.groupby("Ano")["ticker"].nunique().mean())
+            if not score_frame.empty and "Ano" in score_frame.columns else 0.0
+        ),
         "roic_spread_mean": roic_spread_mean,
         "roic_hit_rate": roic_hit_rate,
         "wf_hit_rate": wf_hit_rate,
@@ -1164,7 +1217,8 @@ def _render_paineis_app1(
                 df_ano["Convicção"] = (
                     (df_ano["Score_Ajustado"] - smin) / ((smax - smin) + 1e-9) * 100
                 )
-                df_ano = df_ano.sort_values("Score_Ajustado", ascending=False)
+                df_ano = df_ano.sort_values(
+                    ["Score_Ajustado", "ticker"], ascending=[False, True])
                 fig = px.bar(
                     df_ano, x="ticker", y="Convicção", color="Convicção",
                     color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"],
@@ -1618,6 +1672,474 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# PERFIS PRÉ-CONFIGURADOS — protegem contra calibragem que degrada a carteira
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_perfil_configuracao() -> None:
+    """Perfis medidos + alerta quando a configuração tem custo conhecido.
+
+    A aba tem ~20 parâmetros; alguns degradam a carteira sem sinal visível. Os
+    perfis vêm da varredura automatizada sobre o universo real, não de gosto —
+    cada um declara a evidência que o sustenta (core/b3_portfolio_presets.py).
+    """
+    from core.b3_portfolio_presets import (
+        PERSONALIZADO, PRESETS, RECOMENDADO, avaliar_configuracao,
+        identificar_perfil,
+    )
+
+    def _aplicar(nome: str):
+        def _cb():
+            for chave, valor in PRESETS[nome].valores.items():
+                st.session_state[chave] = valor
+        return _cb
+
+    col_sel, col_btn = st.columns([3, 1])
+    escolhido = col_sel.selectbox(
+        "Perfil de configuração", list(PRESETS), key="pb3_perfil_escolha",
+        help="Combinações cujo efeito foi MEDIDO no universo real. Aplicar um "
+             "perfil sobrescreve os parâmetros abaixo; depois disso você pode "
+             "ajustar o que quiser — o app avisa se a alteração tiver custo "
+             "conhecido.",
+    )
+    col_btn.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    col_btn.button("Aplicar perfil", key="pb3_aplicar_perfil",
+                   on_click=_aplicar(escolhido), use_container_width=True)
+
+    preset = PRESETS[escolhido]
+    st.caption(f"**{preset.nome}** — {preset.resumo}")
+    with st.expander("Por que estes valores (evidência medida)", expanded=False):
+        for evidencia in preset.evidencias:
+            st.markdown(f"- {evidencia}")
+        if preset.ressalva:
+            st.warning(preset.ressalva, icon="⚠️")
+
+    # Estado ATUAL dos controles (não o do perfil escolhido no seletor).
+    atual = {chave: st.session_state.get(chave)
+             for preset_item in PRESETS.values() for chave in preset_item.valores}
+    ativo = identificar_perfil(atual)
+    if ativo == PERSONALIZADO:
+        st.caption(
+            "Configuração atual: **personalizada** (não corresponde a nenhum "
+            f"perfil). Para voltar ao padrão, aplique “{RECOMENDADO}”.")
+    else:
+        st.caption(f"Configuração atual: **{ativo}**.")
+
+    for alerta in avaliar_configuracao(atual):
+        st.warning(alerta, icon="⚠️")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SAÚDE DAS SELECIONADAS — cruzamento entre a rota de segmentos e a de valor
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_resiliencia_medida(tickers: list[str], df_set: pd.DataFrame) -> None:
+    """Como cada selecionada se comportou nas recessões de 2015-16 e 2020.
+
+    Exibe, não decide. O teto de cíclicos continua na taxonomia setorial porque
+    são só duas recessões e a de 2020 teve formato atípico — favoreceu
+    exportador. Medido por setor em 30/07/2026, Materiais Básicos (0,89) sairia
+    MAIS resiliente que Utilidade Pública (0,87), e deixar isso reclassificar
+    afrouxaria justamente a proteção contra concentração em commodity.
+    """
+    from core.b3_cycle_evidence import (
+        FRAGIL, RESILIENTE, Resiliencia, classificar_resiliencia,
+        divergencias_de_ciclo,
+    )
+    from core.b3_holdings_health import classify_cycle
+
+    try:
+        bruto = _db.load_resiliencia_ciclo()
+    except Exception:
+        return
+    if not bruto:
+        return
+
+    medidas = {
+        t: Resiliencia(t, d["razao"], d["margem_normal"], d["margem_crise"],
+                       d["anos"], classificar_resiliencia(d["razao"], d["anos"]))
+        for t, d in bruto.items()
+    }
+    presentes = [t for t in tickers if t in medidas and medidas[t].confiavel]
+    if not presentes:
+        return
+
+    mapa_setor: dict[str, str] = {}
+    if df_set is not None and not df_set.empty and "SETOR" in df_set.columns:
+        _ctk = "ticker" if "ticker" in df_set.columns else "Ticker"
+        if _ctk in df_set.columns:
+            mapa_setor = {str(r[_ctk]).upper(): str(r["SETOR"] or "")
+                          for _, r in df_set.iterrows()}
+
+    with st.expander("📉 Como se comportaram nas recessões (2015-16 e 2020)",
+                     expanded=False):
+        st.caption(
+            "Margem operacional mediana nos anos de recessão dividida pela dos "
+            "anos normais, no histórico da própria empresa. Acima de 1,00 a "
+            "margem SUBIU na crise. Isto informa e **não** altera o teto de "
+            "cíclicos: são duas recessões, e a de 2020 favoreceu exportador — "
+            "por ela, commodity mediria como mais defensiva que saneamento."
+        )
+        linhas = []
+        for t in sorted(presentes, key=lambda x: -medidas[x].razao):
+            m = medidas[t]
+            rotulo = {RESILIENTE: "🟢 segurou", FRAGIL: "🔴 desabou"}.get(
+                m.classe, "🟡 intermediária")
+            linhas.append({
+                "Ticker": t,
+                "Setor (taxonomia)": classify_cycle(mapa_setor.get(t)),
+                "Margem normal": f"{m.margem_normal:.1%}",
+                "Margem na crise": f"{m.margem_crise:.1%}",
+                "Resiliência": f"{m.razao:.2f}",
+                "Leitura": rotulo,
+            })
+        st.dataframe(pd.DataFrame(linhas), hide_index=True,
+                     use_container_width=True)
+
+        tax = {t: classify_cycle(mapa_setor.get(t)) for t in presentes}
+        for tk, classe, m in divergencias_de_ciclo(tax, medidas):
+            st.info(
+                f"**{tk}** é {classe} pela taxonomia da B3, mas segurou a margem "
+                f"na crise ({m.razao:.2f}). O teto de cíclicos continua tratando "
+                "como cíclica — evidência de duas recessões não derruba "
+                "estrutura, mas vale saber ao julgar a concentração.",
+                icon="🔎")
+
+
+def _render_saude_da_carteira(tickers: list[str], df_mult_todos: pd.DataFrame,
+                              df_set: pd.DataFrame, taxa_selic_aa: float,
+                              pesos: dict[str, float] | None = None) -> None:
+    """Alerta sobre as empresas que a carteira REALMENTE escolheu.
+
+    Lacuna encontrada em 27/07/2026: a rota de segmentos aprovava um nome que a
+    rota de valor — na mesma tela — classificava como armadilha potencial
+    (payout de 318%, endividamento 3,2×), e nada avisava. Os gates existentes
+    são de SEGMENTO (margem vs Selic, resiliência dos líderes históricos) ou de
+    score; nenhum olhava solvência e dividendo da empresa escolhida.
+    """
+    from core.b3_holdings_health import ATENCAO, CRITICO, check_portfolio
+
+    if not tickers or df_mult_todos is None or df_mult_todos.empty:
+        return
+
+    mapa_setor: dict[str, str] = {}
+    if df_set is not None and not df_set.empty:
+        _col_tk = ("ticker" if "ticker" in df_set.columns
+                   else ("Ticker" if "Ticker" in df_set.columns else None))
+        if _col_tk and "SETOR" in df_set.columns:
+            mapa_setor = {str(r[_col_tk]).upper(): r["SETOR"]
+                          for _, r in df_set.iterrows()}
+
+    saude = check_portfolio(df_mult_todos, list(tickers), mapa_setor,
+                            selic=float(taxa_selic_aa), pesos=pesos)
+    if not saude.holdings:
+        return
+
+    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                unsafe_allow_html=True)
+    _sec_hdr("🩺 Saúde das empresas selecionadas")
+    st.caption(
+        "Verificação no nível da EMPRESA escolhida — solvência, sustentabilidade "
+        "do dividendo e retorno vs risco-livre — cruzada com o veredito da rota "
+        "de valor. Os demais portões da carteira julgam o segmento, não o nome."
+    )
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        card_metrica("Críticos", str(len(saude.criticos)))
+    with k2:
+        card_metrica("Atenção", str(len(saude.atencao)))
+    with k3:
+        # O rótulo diz a BASE porque o teto de ciclo limita peso: sem isso, um
+        # card em contagem e um teto em peso são grandezas diferentes exibidas
+        # como se fossem a mesma.
+        card_metrica(f"Cíclicos ({saude.base_medida})", f"{saude.pct_ciclico:.0%}")
+    with k4:
+        card_metrica(
+            f"Decisão de governo ({saude.base_medida})",
+            f"{saude.pct_regulado:.0%}",
+            positivo=(False if saude.pct_regulado >= 0.30 else None),
+            ajuda="Peso cuja receita ou preço depende de agência reguladora ou "
+                  "de controlador estatal. Nenhum indicador contábil desta tela "
+                  "mede esse risco.",
+        )
+
+    for alerta in saude.alertas:
+        st.warning(alerta, icon="⚠️")
+
+    _render_resiliencia_medida([h.ticker for h in saude.holdings], df_set)
+
+    for holding in saude.holdings:
+        if holding.nivel == CRITICO:
+            st.error(f"**{holding.ticker}** — {holding.resumo}", icon="🚨")
+        elif holding.nivel == ATENCAO:
+            st.warning(f"**{holding.ticker}** — {holding.resumo}", icon="⚠️")
+
+    if not saude.criticos and not saude.atencao and not saude.alertas:
+        st.success("Nenhum alerta de solvência, dividendo ou concentração.",
+                   icon="✅")
+    else:
+        st.caption(
+            "Estes alertas NÃO removem ativos automaticamente — a decisão é sua. "
+            "Eles existem para que a divergência entre as duas rotas apareça "
+            "onde a decisão é tomada, e não escondida numa seção separada."
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EVIDÊNCIA NO UNIVERSO — o teste que tem amplitude
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_evidencia_universo(resultados: list[dict]) -> None:
+    """Um teste com N>300 no lugar de 78 testes com mediana de 3 empresas.
+
+    O Rank-IC por segmento responde "este segmento tem sinal?" — pergunta que a
+    amostra brasileira não sustenta. Aqui a pergunta é "o meu score ordena
+    vencedores acima de perdedores no mercado?", que a mesma base responde com
+    amplitude real. As estimativas por segmento aparecem encolhidas em direção
+    ao universo, na medida da incerteza de cada uma.
+    """
+    from core.b3_evidence import A_FAVOR, CONTRA
+    from core.b3_pooled_evidence import (
+        SegmentSample, pooled_yearly_ics, shrink_segment_estimates,
+        universe_evidence,
+    )
+
+    todos_pares: list[tuple] = []
+    for res in resultados:
+        todos_pares.extend(res.get("ic_pairs") or [])
+    if not todos_pares:
+        return
+
+    ics_universo = pooled_yearly_ics(todos_pares)
+    n_medio = (len(todos_pares) / len(ics_universo)) if ics_universo else 0.0
+    evidencia = universe_evidence(ics_universo, n_medio_ativos=n_medio)
+
+    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                unsafe_allow_html=True)
+    _sec_hdr("🔬 Evidência no universo — o teste com amplitude")
+    st.caption(
+        "Testar cada segmento isoladamente é inviável na B3: a mediana é de 3 "
+        "empresas por segmento. Este teste agrupa TODAS as empresas de cada ano "
+        "num único Rank-IC — mesma base, amplitude real, sem multiplicidade a "
+        "corrigir."
+    )
+
+    icone = {A_FAVOR: "✅", CONTRA: "❌"}.get(evidencia.estado, "🟡")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card_metrica("Rank-IC do universo",
+                     f"{evidencia.ic_medio:+.3f}"
+                     if np.isfinite(evidencia.ic_medio) else "—")
+    with c2:
+        card_metrica("valor-p",
+                     f"{evidencia.p_value:.3f}" if evidencia.p_value is not None else "—")
+    with c3:
+        card_metrica("Anos × empresas/ano",
+                     f"{evidencia.anos} × ~{evidencia.n_medio_ativos:.0f}")
+    with c4:
+        card_metrica("Efeito mín. detectável",
+                     f"{evidencia.efeito_minimo_detectavel:.3f}"
+                     if evidencia.efeito_minimo_detectavel is not None else "—")
+    st.markdown(f"{icone} {evidencia.explicacao}")
+
+    amostras = [
+        SegmentSample(
+            key=f'{res["setor"]} · {res["segmento"]}',
+            ic_values=tuple(res.get("rank_ic_values") or []),
+            n_assets=float(res.get("n_empresas_medio") or 0.0),
+        )
+        for res in resultados
+    ]
+    encolhidas = shrink_segment_estimates(
+        amostras,
+        universe_mean=evidencia.ic_medio if np.isfinite(evidencia.ic_medio) else None,
+    )
+    if not encolhidas:
+        return
+
+    with st.expander(
+        "📐 Estimativas por segmento após empréstimo de força (empirical Bayes)",
+        expanded=False,
+    ):
+        st.caption(
+            "Cada segmento é puxado em direção à média do universo conforme a "
+            "própria incerteza. Segmento com 3 empresas e IC alto é quase "
+            "inteiramente encolhido — é ruído; com muitas empresas, preserva o "
+            "seu valor. Sem observação, adota a estimativa do universo — que é "
+            "a melhor inferência disponível, não uma reprovação."
+        )
+        tabela = pd.DataFrame([{
+            "Segmento": e.key,
+            "IC bruto": round(e.ic_bruto, 3) if e.ic_bruto is not None else None,
+            "IC encolhido": round(e.ic_encolhido, 3),
+            "Peso próprio (%)": round(e.peso_proprio * 100, 0),
+            "Anos medidos": e.anos,
+        } for e in encolhidas])
+        st.dataframe(
+            tabela.sort_values("IC encolhido", ascending=False),
+            hide_index=True, use_container_width=True,
+            height=min(420, 60 + 35 * len(tabela)),
+        )
+        _sem_dado = sum(1 for e in encolhidas if e.ic_bruto is None)
+        if _sem_dado:
+            st.caption(
+                f"{_sem_dado} segmento(s) sem observação própria receberam a "
+                "estimativa do universo."
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ROTA DE VALOR — distorção de preço com disciplina de solvência
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
+                          taxa_selic_aa: float) -> None:
+    """Caminho paralelo ao dos segmentos, que não depende de amplitude.
+
+    A rota por segmento pergunta "meu processo de escolha tem skill comprovado?"
+    — pergunta que exige amplitude cross-seccional, e a B3 tem mediana de 3
+    empresas por segmento. Esta seção responde outra: "está barata frente ao
+    valor intrínseco E sobrevive para realizar esse valor?". Por isso continua
+    útil justamente quando a rota de segmentos fica muda.
+    """
+    from core.b3_value_route import (
+        ARMADILHA, OPORTUNIDADE, SEM_EVIDENCIA, SEM_MARGEM, ValuePolicy,
+        blocked_by_missing_data, rank_value_opportunities, route_summary,
+    )
+
+    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                unsafe_allow_html=True)
+    _sec_hdr("💎 Rota de valor — distorção com solvência")
+    st.caption(
+        "Independe de significância estatística e de amplitude: avalia empresa a "
+        "empresa. O gate de solvência é o que separa distorção de armadilha de "
+        "valor — ~20% das ações brasileiras perderam mais de 90% em 15 anos."
+    )
+
+    if df_mult_todos is None or df_mult_todos.empty:
+        st.info("Sem fundamentos carregados para avaliar a rota de valor.")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    margem_min = col1.slider(
+        "Margem de segurança mínima (%)", 0, 100, 20, 5, key="pb3_vr_margem",
+        help="Desconto exigido frente ao valor intrínseco (média de Graham e "
+             "Bazin disponíveis). Não é a margem vs Selic da rota de segmentos.",
+    ) / 100.0
+    max_div = col2.slider(
+        "Endividamento máximo (dívida/PL)", 0.5, 5.0, 2.5, 0.5, key="pb3_vr_div")
+    min_liq = col3.slider(
+        "Liquidez corrente mínima", 0.5, 3.0, 1.0, 0.1, key="pb3_vr_liq")
+
+    policy = ValuePolicy(margem_minima=margem_min, max_endividamento=max_div,
+                         min_liquidez_corrente=min_liq)
+    ranked = rank_value_opportunities(df_mult_todos, policy=policy,
+                                      selic=float(taxa_selic_aa))
+    resumo = route_summary(ranked)
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        card_metrica("Oportunidades", str(resumo[OPORTUNIDADE]))
+    with k2:
+        card_metrica("Armadilhas barradas", str(resumo[ARMADILHA]))
+    with k3:
+        card_metrica("Sem desconto", str(resumo[SEM_MARGEM]))
+    with k4:
+        card_metrica("Sem evidência", str(resumo[SEM_EVIDENCIA]))
+
+    # load_setores devolve a coluna em MINÚSCULO ('ticker'); procurar 'Ticker'
+    # fazia o merge falhar em silêncio e Setor/Segmento saíam como None.
+    setores = pd.DataFrame(columns=["Ticker", "SETOR", "SEGMENTO"])
+    if df_set is not None and not df_set.empty:
+        _col_tk = ("ticker" if "ticker" in df_set.columns
+                   else ("Ticker" if "Ticker" in df_set.columns else None))
+        if _col_tk and {"SETOR", "SEGMENTO"}.issubset(df_set.columns):
+            setores = (df_set[[_col_tk, "SETOR", "SEGMENTO"]]
+                       .drop_duplicates(_col_tk)
+                       .rename(columns={_col_tk: "Ticker"}))
+
+    oportunidades = ranked[ranked["classificacao"] == OPORTUNIDADE]
+    if oportunidades.empty:
+        st.info(
+            "Nenhuma empresa combina o desconto exigido com solvência preservada "
+            "nos parâmetros atuais. Diferente da rota de segmentos, aqui a "
+            "ausência é sobre PREÇO, não sobre evidência estatística."
+        )
+    else:
+        show = oportunidades.merge(setores, on="Ticker", how="left")
+        # A margem é FRAÇÃO (1,97 = 197%). Formatar direto como "%.0f%%" exibia
+        # "2%" ao lado de uma explicação dizendo 197% — converter antes.
+        show["margem_valor"] = show["margem_valor"] * 100.0
+        cols = [c for c in ("Ticker", "SETOR", "SEGMENTO", "margem_valor",
+                            "valor_score", "forca_solvencia", "explicacao")
+                if c in show.columns]
+        st.dataframe(
+            show[cols].head(40).rename(columns={
+                "SETOR": "Setor", "SEGMENTO": "Segmento",
+                "margem_valor": "Margem de segurança",
+                "valor_score": "Score de valor",
+                "forca_solvencia": "Folga de solvência",
+                "explicacao": "Por quê"}),
+            hide_index=True, use_container_width=True,
+            column_config={
+                "Margem de segurança": st.column_config.NumberColumn(format="%.0f%%"),
+            },
+        )
+        st.caption(
+            "Score de valor = 60% desconto + 40% folga de solvência. A decisão de "
+            "timing continua sua: a rota mostra o que está barato e sobrevive, "
+            "não quando comprar."
+        )
+
+    armadilhas = ranked[ranked["classificacao"] == ARMADILHA]
+    if not armadilhas.empty:
+        with st.expander(
+            f"🪤 Armadilhas de valor barradas ({len(armadilhas)}) — desconto sem solvência",
+            expanded=False,
+        ):
+            st.caption(
+                "Estas apareceriam como 'baratas' em qualquer filtro de múltiplos. "
+                "O gate de solvência é justamente o que as separa das oportunidades."
+            )
+            trap = armadilhas.copy()
+            trap["motivo"] = trap["falhas_solvencia"].apply(lambda v: "; ".join(v))
+            trap["margem_valor"] = trap["margem_valor"] * 100.0   # fração → %
+            st.dataframe(
+                trap[["Ticker", "margem_valor", "motivo"]].head(40).rename(columns={
+                    "margem_valor": "Desconto aparente", "motivo": "Reprovação"}),
+                hide_index=True, use_container_width=True,
+                column_config={
+                    "Desconto aparente": st.column_config.NumberColumn(format="%.0f%%"),
+                },
+            )
+
+    bloqueadas = blocked_by_missing_data(ranked, policy=policy)
+    if not bloqueadas.empty:
+        with st.expander(
+            f"🕳️ Teses não julgadas por falta de dado ({len(bloqueadas)})",
+            expanded=False,
+        ):
+            st.caption(
+                "Têm desconto relevante, mas falta insumo crítico de solvência — "
+                "não foram avaliadas e NÃO são recomendações. A lista mede o custo "
+                "da cobertura de fundamentos e serve para priorizar a ingestão."
+            )
+            faltantes = bloqueadas.copy()
+            faltantes["falta"] = faltantes["criticos_ausentes"].apply(
+                lambda v: ", ".join(v))
+            faltantes["margem_valor"] = faltantes["margem_valor"] * 100.0
+            st.dataframe(
+                faltantes[["Ticker", "margem_valor", "falta"]].head(40).rename(
+                    columns={"margem_valor": "Desconto aparente",
+                             "falta": "Dado ausente"}),
+                hide_index=True, use_container_width=True,
+                column_config={
+                    "Desconto aparente": st.column_config.NumberColumn(format="%.0f%%"),
+                },
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1650,6 +2172,7 @@ def render(show_header: bool = True) -> None:
 
     # ── PARÂMETROS ────────────────────────────────────────────────────────────
     with st.expander("⚙️ Parâmetros", expanded=True):
+        _render_perfil_configuracao()
         p1, p2, p3, p4 = st.columns(4)
         thr_selic   = p1.number_input(
             "Margem mín. vs Selic · histórico (%)", 0.0, 500.0, 0.0, 5.0,
@@ -1711,6 +2234,28 @@ def render(show_header: bool = True) -> None:
                  "agrupados no subsetor, para haver massa suficiente para medir o "
                  "poder preditivo (Rank-IC). Use 1 para desativar o agrupamento.",
         )
+        pb3.number_input(
+            "Teto por setor (%)", 20, 100, 100, 5,
+            key="pb3_teto_setor",
+            help="Peso máximo somado dos ativos de um MESMO setor B3. "
+                 "Segmento não é setor: quatro segmentos podem viver em dois "
+                 "setores e num único fator de risco (industrial/commodities). "
+                 "FIIs e Empresas Americanas já tinham este teto; a carteira B3 "
+                 "não. 100% = desligado. Se a configuração for impossível "
+                 "(poucos setores para o teto), o app avisa em vez de violar "
+                 "em silêncio.",
+        )
+        pb3.number_input(
+            "Teto para setores cíclicos (%)", 30, 100, 100, 5,
+            key="pb3_teto_ciclico",
+            help="Peso máximo somado dos ativos de setores CÍCLICOS (materiais "
+                 "básicos, bens industriais, consumo cíclico, petróleo e gás). "
+                 "Setor e fator são coisas diferentes: limitar cada setor a 30% "
+                 "pode deixar a carteira 82% cíclica se quase todos os setores "
+                 "forem cíclicos. 100% = desligado. Se não houver nomes "
+                 "não-cíclicos suficientes, o app avisa que o gargalo está na "
+                 "seleção, não na ponderação.",
+        )
         cheapness_pct = pb3.number_input(
             "Peso de barganha no score (%)", 0, 50, 0, 5,
             key="pb3_cheapness",
@@ -1745,7 +2290,12 @@ def render(show_header: bool = True) -> None:
             help="Trilha de resiliência estrutural (Damodaran): além do sinal, "
                  "exige que as líderes do segmento gerem ROIC acima da Selic "
                  "(piso do custo de capital) de forma consistente através dos "
-                 "ciclos. Filtro ADICIONAL — reduz aprovações, aumenta convicção.",
+                 "ciclos. Filtro ADICIONAL — reduz aprovações, aumenta convicção. "
+                 "EFEITO COLATERAL medido em 29/07/2026: o corte por ROIC "
+                 "favorece setores de capital leve e penaliza os REGULADOS — só "
+                 "20% das empresas de utilidade pública superam a Selic em 5 "
+                 "p.p., contra 27% das cíclicas. Ligar este filtro com spread "
+                 "alto tende a produzir carteira mais pró-cíclica.",
         )
         thr_roic_spread_pct = rc2.number_input(
             "Spread mín. ROIC − Selic (média, p.p.)", -20.0, 30.0, 0.0, 1.0,
@@ -1794,6 +2344,21 @@ def render(show_header: bool = True) -> None:
                  "de 25% exige 4. Ligado, o teto por ativo é relaxado até ficar "
                  "viável (ex.: 2 nomes → até 50% cada), eliminando as 'restrições "
                  "inviáveis'. Desligado, usa o cap fixo (padrão de mercado grande).",
+        )
+        usar_piso_qualidade = st.checkbox(
+            "Piso absoluto de qualidade — reprova e substitui no mesmo segmento",
+            value=True,
+            key="pb3_piso_qualidade",
+            help="A carteira escolhe o LÍDER de cada segmento aprovado, então a "
+                 "qualidade é medida DENTRO do segmento, nunca contra o mercado: "
+                 "uma empresa no pior decil de endividamento da bolsa entra por "
+                 "ser a melhor das suas pares. Ligado, quem a seção de Saúde "
+                 "marca como CRÍTICO é reprovado e o PRÓXIMO do mesmo segmento "
+                 "herda a vaga — a diversificação setorial não é perdida. Se "
+                 "nenhum candidato do segmento passar, a vaga fica vazia e o app "
+                 "declara, em vez de rebaixar em silêncio. Usa exatamente a mesma "
+                 "régua da seção de Saúde; ausência de dado NUNCA reprova (uma "
+                 "holding não tem margem operacional própria).",
         )
         _quali_ok = quali_gate_disponivel()
         usar_gate_quali = st.checkbox(
@@ -2023,6 +2588,10 @@ def render(show_header: bool = True) -> None:
     gamma = st.session_state.get("b3_av_gamma", _GAMMA_DEF)
     cap   = st.session_state.get("b3_av_cap",   _CAP_DEF)
     soft  = st.session_state.get("b3_av_soft",  _SOFT_DEF)
+    # Teto por setor: 100% = desligado. Lido aqui (fora do `if rodar:`) pelo
+    # mesmo motivo dos demais — as seções de exibição usam a cada rerun.
+    teto_setor = float(st.session_state.get("pb3_teto_setor", 100)) / 100.0
+    teto_ciclico = float(st.session_state.get("pb3_teto_ciclico", 100)) / 100.0
 
     if rodar:
         all_tickers = tuple(sorted(df_set["ticker"].unique()))
@@ -2287,6 +2856,40 @@ def render(show_header: bool = True) -> None:
     aprovados  = [r for r in resultados if _aprovado(r)]
     reprovados = [r for r in resultados if not _aprovado(r)]
 
+    # ── CUSTO DO FILTRO DE RESILIÊNCIA ───────────────────────────────────────
+    # Medido em 29/07/2026 rodando o motor sem navegador: com o filtro
+    # DESLIGADO a carteira saiu com 10 nomes e 23% defensivos; ligado a 5 p.p.,
+    # caiu para 6 nomes e 83% cíclicos. Não é bug — é o corte por ROIC pesando
+    # contra setores regulados (só 20% das utilities superam a Selic em 5 p.p.,
+    # contra 27% das cíclicas). O usuário precisa VER esse custo, não deduzi-lo.
+    if exigir_resiliencia and resultados:
+        from core.b3_holdings_health import classify_cycle
+
+        def _sem_resiliencia(res: dict) -> bool:
+            _rs = float(res.get("roic_spread_mean", float("nan")))
+            _hr = float(res.get("roic_hit_rate", float("nan")))
+            reprova_rs = (not np.isfinite(_rs)) or _rs < thr_roic_spread
+            reprova_hr = np.isfinite(_hr) and _hr < 0.5
+            return reprova_rs or reprova_hr
+
+        _cortados = [r for r in reprovados if _sem_resiliencia(r)]
+        if _cortados:
+            _por_classe: dict[str, int] = {}
+            for _res in _cortados:
+                _classe = classify_cycle(_res.get("setor"))
+                _por_classe[_classe] = _por_classe.get(_classe, 0) + 1
+            _def = _por_classe.get("defensivo", 0)
+            _cic = _por_classe.get("ciclico", 0)
+            _detalhe = (f" — {_def} defensivo(s) e {_cic} cíclico(s)"
+                        if (_def or _cic) else "")
+            st.info(
+                f"**Custo do filtro de resiliência**: {len(_cortados)} segmento(s) "
+                f"reprovado(s) por ROIC abaixo de Selic + {thr_roic_spread:.0%}"
+                f"{_detalhe}. O corte por ROIC penaliza setores REGULADOS "
+                "(utilidade pública, saneamento), que têm retorno limitado por "
+                "concessão — desligue o filtro para comparar a carteira sem ele.",
+                icon="🔎")
+
     # ── TABELA DE AUDITORIA ───────────────────────────────────────────────────
     _sec_hdr(f"📋 Auditoria de Segmentos — {len(resultados)} analisados · "
              f"{len(aprovados)} aprovados")
@@ -2353,6 +2956,11 @@ def render(show_header: bool = True) -> None:
     _col_ew_hist    = f"vs Pesos Iguais · histórico{_sfx_hist} (%)"
     _col_ew_val     = f"vs Pesos Iguais · validação{_sfx_val} (%)"
 
+    # Estado da evidência por segmento (auditoria §16): "não pude medir" e
+    # "medi e é ruim" deixam de ser o mesmo rótulo. Só evidência CONTRA é
+    # reprovação estatística; inconclusivo é limite do dado, não do ativo.
+    from core.b3_evidence import classify_evidence, evidence_label
+
     rows_tbl: list[dict] = []
     for res in resultados:
         m_s  = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_selic_oos", 0.0))
@@ -2360,14 +2968,37 @@ def render(show_header: bool = True) -> None:
         m_s_full  = _margem_pct(res.get("val_est", 0.0), res.get("val_selic", 0.0))
         m_ew_full = _margem_pct(res.get("val_est", 0.0), res.get("val_ew", 0.0))
         ult  = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
+        _verdict = classify_evidence(
+            ic_values=res.get("rank_ic_values") or [],
+            ic_mean=res.get("rank_ic_mean"),
+            p_value=res.get("p_value_ic"),
+        )
+        # O portão econômico é aferido à parte para não confundir "reprovado por
+        # não bater a Selic" com "reprovado pela estatística".
+        _economico_ok = (
+            res.get("val_est", 0.0) > 0
+            and m_s_full >= thr_selic
+            and (not usar_ew_como_criterio or res.get("val_ew", 0.0) <= 0
+                 or m_ew_full >= thr_ew)
+        )
+        if _aprovado(res):
+            _situacao = "✅ Aprovado"
+        elif _verdict.bloqueante:
+            _situacao = "❌ Reprovado (evidência contra)"
+        elif not _economico_ok:
+            _situacao = "❌ Reprovado (critério econômico)"
+        else:
+            # Passou no econômico e a estatística não teve como falar.
+            _situacao = f"🟡 {evidence_label(_verdict)}"
         rows_tbl.append({
             "Setor":     res["setor"],
             "Subsetor":  res["subsetor"],
             "Segmento":  res["segmento"],
-            "Situação": (
-                "✅ Aprovado"
-                if _aprovado(res)
-                else "❌ Reprovado (risco/evidência)"
+            "Situação": _situacao,
+            "Estado da evidência": evidence_label(_verdict),
+            "Efeito mín. detectável (Rank-IC)": (
+                round(_verdict.efeito_minimo_detectavel, 3)
+                if _verdict.efeito_minimo_detectavel is not None else None
             ),
             _col_selic_hist: round(m_s_full, 1),
             _col_ew_hist: round(m_ew_full, 1),
@@ -2406,13 +3037,31 @@ def render(show_header: bool = True) -> None:
 
     def _cor_status(v: str) -> str:
         if "✅" in v:    return "color: #00C896"
-        if "⚠️" in v:   return "color: #F6C90E"
+        # Inconclusivo é âmbar, não vermelho: não houve reprovação de mérito.
+        if "⚠️" in v or "🟡" in v:   return "color: #F6C90E"
         return "color: #FC5C7D"
 
     st.dataframe(
         df_tbl.style.applymap(_cor_status, subset=["Situação"]),
         use_container_width=True,
         height=min(500, 60 + 35 * len(df_tbl)),
+    )
+    _n_inconclusivos = sum("🟡" in str(linha["Situação"]) for linha in rows_tbl)
+    st.caption(
+        "**Como ler a Situação.** ❌ *evidência contra* = o score ordenou ao "
+        "contrário do retorno (reprovação de mérito). ❌ *critério econômico* = "
+        "não bateu a Selic/Pesos Iguais pela margem. 🟡 *Inconclusivo* = passou "
+        "no econômico e a estatística **não teve como falar** — amplitude ou "
+        "significância insuficientes. Inconclusivo NÃO é reprovação: não "
+        "rejeitar a hipótese nula não prova ausência de habilidade."
+        + (f" Nesta rodada, {_n_inconclusivos} segmento(s) ficaram nesse estado."
+           if _n_inconclusivos else "")
+    )
+    st.caption(
+        "**Efeito mín. detectável (Rank-IC)** é o menor poder preditivo que o "
+        "teste conseguiria enxergar com os dados disponíveis (80% de poder). "
+        "Valor alto significa teste cego para efeitos moderados — com mediana de "
+        "3 empresas por segmento na B3, é o caso frequente."
     )
 
     # ── SEGMENTOS APROVADOS ───────────────────────────────────────────────────
@@ -2425,6 +3074,12 @@ def render(show_header: bool = True) -> None:
                           reverse=True):
             _bloco_segmento(res, df_set, thr_selic, thr_ew, max_anos_lid)
 
+    # ── EVIDÊNCIA NO UNIVERSO (amplitude real, sem multiplicidade) ───────────
+    _render_evidencia_universo(resultados)
+
+    # ── ROTA DE VALOR (independe de habilidade cross-seccional) ──────────────
+    _render_rota_de_valor(df_mult_todos, df_set, taxa_selic_aa)
+
     # ── EMPRESAS LÍDERES PARA O PRÓXIMO ANO ──────────────────────────────────
     st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
                 unsafe_allow_html=True)
@@ -2435,10 +3090,16 @@ def render(show_header: bool = True) -> None:
     # (as avaliações são cacheadas — reruns e substitutos reaproveitam)
     quali_log: dict = {"vetados": [], "substituicoes": [], "ressalvas": {}}
     _gate_ativo = bool(st.session_state.get("pb3_gate_quali")) and quali_gate_disponivel()
+    # Piso absoluto de qualidade (determinístico, sem rede). Ligado por padrão:
+    # sem ele o app entrega o líder do segmento seja ele qual for, e a única
+    # defesa é o usuário ler a seção de saúde.
+    piso_log: dict = {"reprovados": [], "substituicoes": [], "sem_substituto": []}
+    _piso_ativo = bool(st.session_state.get("pb3_piso_qualidade", True))
     if _gate_ativo and aprovados:
         _pend: list[str] = []
         for res in aprovados:
-            _rp = sorted(res["score_proximo"].items(), key=lambda x: x[1], reverse=True)
+            _rp = sorted(res["score_proximo"].items(),
+                         key=lambda x: (-float(x[1]), str(x[0])))
             if _rp:
                 _pend.append(str(_rp[0][0]))
                 _tm = res.get("ticker_maior_part")
@@ -2459,7 +3120,8 @@ def render(show_header: bool = True) -> None:
         pesos_p    = dict(res["pesos_prox"])  # cópia: o gate pode realocar peso
         part_hist  = res["participacao"]
         ano_ref    = int(res.get("ano_ref_score", ano_atual - 1))
-        ranked_prox = sorted(score_prox.items(), key=lambda x: x[1], reverse=True)
+        ranked_prox = sorted(score_prox.items(),
+                             key=lambda x: (-float(x[1]), str(x[0])))
         if not ranked_prox:
             continue
 
@@ -2475,6 +3137,17 @@ def render(show_header: bool = True) -> None:
             )
             if maior_info[0]:
                 selecionados.append(str(ticker_maior))
+
+        # PISO ABSOLUTO antes do gate de LLM: é determinístico e não custa
+        # chamada de API, então filtrar aqui evita pedir parecer sobre nome que
+        # já está reprovado. A vaga do segmento é preservada por substituição —
+        # é o que permite exigir qualidade SEM abrir mão de diversificação.
+        if _piso_ativo:
+            selecionados = _aplicar_piso_qualidade(
+                selecionados, ranked_prox, df_mult_todos, pesos_p,
+                f"{res['setor']} › {res['segmento']}", piso_log,
+                float(taxa_selic_aa),
+            )
 
         if _gate_ativo:
             selecionados = _aplicar_gate_qualitativo(
@@ -2505,6 +3178,11 @@ def render(show_header: bool = True) -> None:
                     motivos.append(maior_info[1])
                 else:
                     motivos.append("Maior participação no segmento")
+            if _piso_ativo:
+                _sub_piso = next((s["sai"] for s in piso_log["substituicoes"]
+                                  if s["entra"] == tk), None)
+                if _sub_piso:
+                    motivos.append(f"Entrou por piso de qualidade sobre {_sub_piso}")
             _aval_quali = (st.session_state.get("pb3_quali_cache", {}).get(tk)
                            if _gate_ativo else None)
             if _gate_ativo:
@@ -2566,7 +3244,61 @@ def render(show_header: bool = True) -> None:
             cur.update({k: v for k, v in p.items() if k != "motivos"})
         cur["peso"] = combined_weight
         cur["motivos"] = combined_motivos
-    proximos_uniq = sorted(mapa_prox.values(), key=lambda x: x["score"], reverse=True)
+    proximos_uniq = sorted(mapa_prox.values(),
+                           key=lambda x: (-float(x.get("score") or 0.0), str(x["tk"])))
+
+    # ── PISO DE NEGOCIABILIDADE POR CLASSE ───────────────────────────────────
+    # ANTES da correlação, porque dali em diante o ticker é usado para buscar
+    # série de preços: trocar depois mediria a correlação de um papel que não
+    # está na carteira.
+    #
+    # Sem toggle, de propósito. Os perfis existem porque parâmetro demais degrada
+    # a carteira em silêncio; este não tem contrapartida a calibrar — troca ON
+    # por PN da MESMA empresa quando a irmã negocia muito mais. A tese não muda,
+    # só a facilidade de sair. Nunca exclui ativo: isso sim custaria
+    # diversificação e seria decisão do usuário.
+    liq_trocas: list[dict] = []
+    liq_avisos: list[str] = []
+    if proximos_uniq:
+        from core.b3_holdings_health import CRITICO, check_holdings
+        from core.b3_liquidity import LiquidityPolicy, aplicar_piso_de_liquidez
+        try:
+            _giro = _db.load_giro_diario()
+            _irmas = _db.load_classes_irmas()
+        except Exception:                             # dado ausente não decide
+            _giro, _irmas = {}, {}
+
+        if _giro and _irmas:
+            _candidatas = sorted({
+                t for tk in (str(i["tk"]).upper() for i in proximos_uniq)
+                for t in _irmas.get(tk, (tk,))
+            })
+            _saude_liq = {
+                h.ticker: h for h in check_holdings(
+                    df_mult_todos, _candidatas, selic=float(taxa_selic_aa))
+            }
+
+            def _veto_liquidez(candidata: str) -> str | None:
+                """Impede que a troca entre com papel que o piso reprovaria."""
+                h = _saude_liq.get(str(candidata).upper())
+                if h is None:
+                    return "sem dados de saúde para a classe irmã"
+                if h.nivel == CRITICO:
+                    return f"reprovada no piso de qualidade ({h.resumo})"
+                return None
+
+            proximos_uniq, liq_trocas, liq_avisos = aplicar_piso_de_liquidez(
+                proximos_uniq, _irmas, _giro,
+                policy=LiquidityPolicy(), veto=_veto_liquidez,
+            )
+            for _t in liq_trocas:
+                for _item in proximos_uniq:
+                    if _item["tk"] == _t["entra"]:
+                        _nome_row = df_set[df_set["ticker"] == _t["entra"]]
+                        if not _nome_row.empty:
+                            _item["nome"] = _nome_row["nome_empresa"].iloc[0][:24]
+                        _item["motivos"] = list(_item.get("motivos") or []) + [
+                            f"Classe trocada de {_t['sai']} (mais negociável)"]
 
     # ── DIVERSIFICAÇÃO POR CORRELAÇÃO ────────────────────────────────────────
     # A seleção por segmento é decidida sem olhar para os OUTROS segmentos —
@@ -2673,6 +3405,7 @@ def render(show_header: bool = True) -> None:
     from core.portfolio_constraints import (
         minimum_assets_for_cap,
         project_capped_simplex,
+        project_dual_capped,
     )
     _required_global = minimum_assets_for_cap(cap)
     _portfolio_viavel = len(proximos_uniq) >= _required_global
@@ -2694,6 +3427,43 @@ def render(show_header: bool = True) -> None:
             )
             for item in proximos_uniq:
                 item["peso"] = _projected[item["tk"]]
+
+        # ── TETOS DE CONCENTRAÇÃO (setor + classe de ciclo) ───────────────
+        # Segmento não é setor, e setor não é fator: quatro segmentos podem
+        # viver em dois setores e num único fator de risco. Os dois tetos são
+        # aplicados EM CONJUNTO — aplicá-los em sequência fazia o segundo
+        # desfazer o primeiro em silêncio (a varredura automatizada de
+        # 29/07/2026 flagrou Utilidade Pública a 25,2% com teto de 25%).
+        if teto_setor < 1.0 or teto_ciclico < 1.0:
+            from core.b3_holdings_health import classify_cycle
+            _mapa_setor: dict[str, str] = {}
+            if df_set is not None and not df_set.empty and "SETOR" in df_set.columns:
+                _ctk = "ticker" if "ticker" in df_set.columns else "Ticker"
+                if _ctk in df_set.columns:
+                    _mapa_setor = {str(r[_ctk]).upper(): str(r["SETOR"] or "")
+                                   for _, r in df_set.iterrows()}
+            _pesos_ini = {item["tk"]: float(item.get("peso") or 0.0)
+                          for item in proximos_uniq}
+            _grupos = {item["tk"]: _mapa_setor.get(str(item["tk"]).upper(), "")
+                       for item in proximos_uniq}
+            _eh_ciclico = {
+                item["tk"]: classify_cycle(
+                    _mapa_setor.get(str(item["tk"]).upper(), "")) == "ciclico"
+                for item in proximos_uniq
+            }
+            _pesos_fin, _avisos_tetos = project_dual_capped(
+                _pesos_ini, _grupos, _eh_ciclico, cap,
+                float(teto_setor), float(teto_ciclico),
+            )
+            for item in proximos_uniq:
+                item["peso"] = _pesos_fin[item["tk"]]
+            _n_ciclicos = sum(1 for v in _eh_ciclico.values() if v)
+            for _aviso in _avisos_tetos:
+                _sufixo = ("" if "classe" not in _aviso.lower() else
+                           f" Há {_n_ciclicos} cíclico(s) de "
+                           f"{len(proximos_uniq)} ativos — o gargalo está na "
+                           "SELEÇÃO, não na ponderação.")
+                st.warning(_aviso + _sufixo, icon="⚠️")
     elif proximos_uniq:
         st.error(
             f"Carteira não pode respeitar o cap global de {cap:.0%}: "
@@ -2746,6 +3516,50 @@ def render(show_header: bool = True) -> None:
     else:
         st.info("Nenhum líder identificado com os parâmetros atuais.")
 
+    # ── TRANSPARÊNCIA DO PISO ABSOLUTO ───────────────────────────────────────
+    if _piso_ativo and (piso_log["reprovados"] or piso_log["sem_substituto"]):
+        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                    unsafe_allow_html=True)
+        _sec_hdr("🚧 Piso absoluto de qualidade — reprovações e substituições")
+        st.caption(
+            "Aplicado ANTES do parecer qualitativo, com a mesma régua da seção "
+            "de Saúde: reprova o que lá seria CRÍTICO. Quem entra vem do MESMO "
+            "segmento, então nenhuma vaga setorial é perdida por exigir "
+            "qualidade. Ausência de dado não reprova."
+        )
+        k1, k2, k3 = st.columns(3)
+        with k1:
+            card_metrica("Reprovados", str(len(piso_log["reprovados"])))
+        with k2:
+            card_metrica("Substituídos", str(len(piso_log["substituicoes"])))
+        with k3:
+            card_metrica("Vagas sem substituto", str(len(piso_log["sem_substituto"])))
+
+        for sub in piso_log["substituicoes"]:
+            st.success(
+                f"**{sub['entra']}** entrou no lugar de **{sub['sai']}** "
+                f"· {sub['segmento']}", icon="🔁")
+        for rep in piso_log["reprovados"]:
+            st.warning(f"**{rep['tk']}** reprovado · {rep['segmento']} — "
+                       f"{rep['motivo']}", icon="⛔")
+        for vazio in piso_log["sem_substituto"]:
+            st.error(
+                f"Segmento **{vazio['segmento']}** ficou SEM representante: "
+                f"{vazio['tk']} foi reprovado e nenhum candidato do mesmo "
+                "segmento passou no piso. A carteira perde este setor — é uma "
+                "informação sobre o segmento, não uma falha do filtro.",
+                icon="🕳️")
+
+    # ── SAÚDE DAS SELECIONADAS (cruza as duas rotas) ─────────────────────────
+    _render_saude_da_carteira(
+        [item["tk"] for item in proximos_uniq] if proximos_uniq else [],
+        df_mult_todos, df_set, taxa_selic_aa,
+        # Pesos JÁ projetados pelos tetos (project_dual_capped roda acima), que
+        # é o que torna a concentração comparável com o limite configurado.
+        pesos={item["tk"]: float(item.get("peso") or 0.0)
+               for item in (proximos_uniq or [])},
+    )
+
     # ── TRANSPARÊNCIA DO GATE QUALITATIVO ────────────────────────────────────
     if _gate_ativo:
         st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
@@ -2776,6 +3590,39 @@ def render(show_header: bool = True) -> None:
                 for _tk, _mot in quali_log["ressalvas"].items():
                     st.markdown(f"• **{_tk}**: {_mot}")
 
+    # ── TRANSPARÊNCIA DO PISO DE NEGOCIABILIDADE ─────────────────────────────
+    if liq_trocas or liq_avisos:
+        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+                    unsafe_allow_html=True)
+        from core.b3_liquidity import formata_reais as _liq_reais
+        _sec_hdr("💧 Negociabilidade — troca de classe da mesma empresa")
+        st.caption(
+            "O filtro de porte olha o valor de mercado da EMPRESA, que é igual "
+            "para todas as classes — então uma ordinária que quase não negocia "
+            "passava junto com a companhia. Aqui a carteira troca para a classe "
+            "irmã mais negociada da mesma dona: a tese não muda, só a facilidade "
+            "de entrar e sair. Nenhum ativo é excluído por liquidez."
+        )
+        for _t in liq_trocas:
+            _cA, _cB = st.columns(2)
+            with _cA:
+                card_metrica(f"Saiu · {_t['sai']}",
+                             f"R$ {_liq_reais(_t['giro_sai'] / 1000)} mil/dia",
+                             positivo=False)
+            with _cB:
+                card_metrica(f"Entrou · {_t['entra']}",
+                             f"R$ {_liq_reais(_t['giro_entra'] / 1000)} mil/dia",
+                             delta=f"{_t['giro_entra'] / max(_t['giro_sai'], 1.0):.0f}× mais negociável",
+                             positivo=True)
+        if liq_trocas:
+            st.caption(
+                "Atenção ao que a troca NÃO resolve: ordinária e preferencial "
+                "diferem em direito a voto e em tag-along. A escolha aqui é por "
+                "negociabilidade, não por direitos de sócio."
+            )
+        for _av in liq_avisos:
+            st.warning(_av, icon="⚠️")
+
     # ── TRANSPARÊNCIA DA DIVERSIFICAÇÃO POR CORRELAÇÃO ───────────────────────
     if diversificar_corr and proximos_uniq:
         st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
@@ -2795,32 +3642,44 @@ def render(show_header: bool = True) -> None:
                 "só desempata dentro do ranking do próprio segmento, como o "
                 "gate qualitativo já faz."
             )
-            _mcol1, _mcol2, _mcol3 = st.columns(3)
-            _mcol1.metric(
-                "Correlação média da seleção",
-                f"{corr_diag['avg_corr_apos_substituicao']:.2f}",
-                delta=f"{corr_diag['avg_corr_apos_substituicao'] - corr_diag['avg_corr_antes']:+.2f}",
-                delta_color="inverse",
-                help="Média dos pares de correlação (Pearson, retornos "
-                     "mensais) entre os ativos finais. Antes da diversificação: "
-                     f"{corr_diag['avg_corr_antes']:.2f}.",
-            )
-            _mcol2.metric(
-                "Índice de diversificação (1−HHI)",
-                f"{corr_diag['div_index_depois']:.2f}",
-                delta=f"{corr_diag['div_index_depois'] - corr_diag['div_index_antes']:+.2f}",
-                help="0 = concentrado num único ativo; próximo de 1 = peso "
-                     "espalhado. Antes: "
-                     f"{corr_diag['div_index_antes']:.2f}.",
-            )
-            _mk_txt = (
-                f"{corr_diag['markowitz_method']} "
-                f"({'convergiu' if corr_diag['markowitz_convergiu'] else 'não convergiu — projeção aproximada'})"
-                if corr_diag.get("markowitz_method") else "não aplicada"
-            )
-            _mcol3.metric("Reponderação min-variance", _mk_txt)
+            _d_corr = (corr_diag["avg_corr_apos_substituicao"]
+                       - corr_diag["avg_corr_antes"])
+            _d_div = corr_diag["div_index_depois"] - corr_diag["div_index_antes"]
+            _mcol1, _mcol2 = st.columns(2)
+            with _mcol1:
+                card_metrica(
+                    "Correlação média da seleção",
+                    f"{corr_diag['avg_corr_apos_substituicao']:.2f}",
+                    delta=(f"{_d_corr:+.2f} vs "
+                           f"{corr_diag['avg_corr_antes']:.2f} antes"),
+                    # Correlação MENOR é melhor: queda diversifica.
+                    positivo=(None if abs(_d_corr) < 5e-3 else _d_corr < 0),
+                    ajuda="Média dos pares de correlação (Pearson, retornos "
+                          "mensais) entre os ativos finais. Quanto menor, menos "
+                          "os ativos repetem o mesmo risco.",
+                )
+            with _mcol2:
+                card_metrica(
+                    "Índice de diversificação (1−HHI)",
+                    f"{corr_diag['div_index_depois']:.2f}",
+                    delta=(f"{_d_div:+.2f} vs "
+                           f"{corr_diag['div_index_antes']:.2f} antes"),
+                    positivo=(None if abs(_d_div) < 5e-3 else _d_div > 0),
+                    ajuda="0 = tudo num único ativo; perto de 1 = peso bem "
+                          "espalhado entre os ativos da carteira.",
+                )
+            # O NOME do otimizador (slsqp etc.) não diz nada a quem investe.
+            # O que importa é se os pesos são confiáveis: só avisa quando NÃO
+            # são, e em português.
+            if corr_diag.get("markowitz_method") and not corr_diag.get("markowitz_convergiu"):
+                st.warning(
+                    "O ajuste fino de pesos não convergiu — a carteira usa uma "
+                    "aproximação. Os ativos escolhidos não mudam; só a divisão "
+                    "entre eles fica menos precisa.", icon="⚠️")
             if corr_diag.get("reponderacao_pulada"):
-                st.caption(f"⚠️ {corr_diag['reponderacao_pulada']} — pesos ficaram só na substituição.")
+                st.warning(
+                    f"{corr_diag['reponderacao_pulada']} — os pesos vieram só da "
+                    "substituição de ativos, sem ajuste fino.", icon="⚠️")
             if corr_log:
                 for s in corr_log:
                     st.markdown(
@@ -2914,11 +3773,17 @@ def render(show_header: bool = True) -> None:
                 except Exception as exc:
                     st.error(f"Não foi possível salvar o portfólio padrão: {exc}")
         with c_info:
-            st.info(
-                f"{len(proximos_uniq)} empresas selecionadas · "
-                f"{len(aprovados)} segmentos aprovados · "
-                f"score médio {metrics_modelo['score_medio']:.2f}"
-            )
+            _r1, _r2, _r3 = st.columns(3)
+            with _r1:
+                card_metrica("Empresas selecionadas", str(len(proximos_uniq)),
+                             accent="#4A9EFF")
+            with _r2:
+                card_metrica("Segmentos aprovados", str(len(aprovados)),
+                             accent="#4A9EFF")
+            with _r3:
+                card_metrica("Score médio",
+                             f"{metrics_modelo['score_medio']:.2f}",
+                             accent="#4A9EFF")
 
     # ── DISTRIBUIÇÃO SETORIAL ────────────────────────────────────────────────
     if proximos_uniq:
@@ -2942,6 +3807,14 @@ def render(show_header: bool = True) -> None:
         fig_pie.update_layout(showlegend=False)
         st.plotly_chart(fig_pie, use_container_width=True,
                         config={"displayModeBar": False}, key="pb3_pie")
+
+    # Carteira final exposta para auditoria automatizada (scripts/audit_portfolio_b3.py
+    # varre configurações e verifica invariantes). Só leitura — nada aqui muda a
+    # carteira; a exposição é o que permite testar o motor sem navegador.
+    st.session_state["pb3_carteira_final"] = [
+        {"tk": item.get("tk"), "peso": float(item.get("peso") or 0.0)}
+        for item in (proximos_uniq or [])
+    ]
 
     _render_paineis_app1(resultados, proximos_uniq, df_precos_all)
 

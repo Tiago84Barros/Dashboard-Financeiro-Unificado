@@ -97,6 +97,74 @@ def build_entry_scores(scored: pd.DataFrame,
     penalize("net_margin", lambda s: s < 0, 8, "margem líquida negativa")
     penalize("fcf_yield", lambda s: s < 0, 5, "fluxo de caixa livre negativo")
     penalize("interest_coverage", lambda s: s < 1.5, 8, "baixa cobertura de juros")
+
+    # ── Motores avançados que existiam mas nunca chegavam à carteira ────────
+    # Altman e Piotroski eram calculados para TODAS as empresas e gravados na
+    # vitrine, porém só apareciam na análise individual. 597 empresas ativas
+    # (21%) estão na zona de aflição do Altman e isso não tocava a seleção.
+    #
+    # Peso 8 é deliberado: sozinho NÃO exclui (corte em 10), mas somado a outro
+    # alerta exclui. O Z-Score foi calibrado em indústrias de 1968 e classifica
+    # mal empresas asset-light; tratá-lo como veto isolado reprovaria boas
+    # empresas de tecnologia. Bancos, seguradoras e REITs ficam de fora — o
+    # modelo não se aplica a esses balanços.
+    _setor = out["sector"].astype(str) if "sector" in out else pd.Series("", index=out.index)
+    _altman_aplicavel = ~_setor.isin(["Financial Services", "Real Estate"])
+    if "z_zone" in out:
+        _aflicao = out["z_zone"].astype(str).eq("aflição") & _altman_aplicavel
+        penalty.loc[_aflicao] += 8
+        risk_driver.loc[_aflicao] = np.where(
+            risk_driver.loc[_aflicao].eq("sem alerta crítico"),
+            "Altman Z em zona de aflição",
+            risk_driver.loc[_aflicao].astype(str) + "; Altman Z em zona de aflição")
+    # Payout acima de 1,5× o lucro não se sustenta (mesma calibração do B3,
+    # onde UNIP6 distribuía 318%). REITs ficam de fora: distribuem FFO por
+    # exigência legal e a depreciação deprime o lucro contábil — payout > 1 ali
+    # é estrutural, não alerta.
+    if "payout_ratio" in out:
+        _reit = (out["is_reit"].astype(bool) if "is_reit" in out
+                 else pd.Series(False, index=out.index))
+        _payout_alto = (
+            (pd.to_numeric(out["payout_ratio"], errors="coerce") > 1.5)
+            & ~_reit & ~_setor.isin(["Real Estate"])
+        ).fillna(False)
+        penalty.loc[_payout_alto] += 7
+        risk_driver.loc[_payout_alto] = np.where(
+            risk_driver.loc[_payout_alto].eq("sem alerta crítico"),
+            "payout acima de 1,5× o lucro",
+            risk_driver.loc[_payout_alto].astype(str) + "; payout acima de 1,5× o lucro")
+
+    # Accruals de Sloan (1996): lucro que não vira caixa antecipa reversão. O
+    # corte de 0,10 é a cauda de ~5% do universo real (p95 = 0,112; mediana
+    # −0,050) — sinaliza o extremo, não o normal.
+    #
+    # O ROIC incremental foi DELIBERADAMENTE deixado de fora: 39% das empresas
+    # com esse dado o têm negativo, e ele é um delta de 2 anos que vira com uma
+    # única queda de EBIT. Penalizá-lo dispararia em vale de ciclo — o erro que
+    # a auditoria §16 corrigiu. Segue exibido na análise individual.
+    if "sloan_accruals" in out:
+        _accruals = (pd.to_numeric(out["sloan_accruals"], errors="coerce") > 0.10)
+        _accruals = _accruals.fillna(False)
+        penalty.loc[_accruals] += 5
+        risk_driver.loc[_accruals] = np.where(
+            risk_driver.loc[_accruals].eq("sem alerta crítico"),
+            "accruals elevados (lucro pouco em caixa)",
+            risk_driver.loc[_accruals].astype(str)
+            + "; accruals elevados (lucro pouco em caixa)")
+
+    # Piotroski ≤ 3 de 9 é fraqueza fundamentalista ampla (cobertura ~100%).
+    # Só conta quando houve critérios suficientes avaliados — ausência não pune.
+    if "f_score" in out:
+        _f = pd.to_numeric(out["f_score"], errors="coerce")
+        _aval = (pd.to_numeric(out["f_evaluable"], errors="coerce")
+                 if "f_evaluable" in out else pd.Series(9, index=out.index))
+        _fraco = (_f <= 3) & (_aval >= 6)
+        _fraco = _fraco.fillna(False)
+        penalty.loc[_fraco] += 6
+        risk_driver.loc[_fraco] = np.where(
+            risk_driver.loc[_fraco].eq("sem alerta crítico"),
+            "Piotroski fraco (≤3 de 9)",
+            risk_driver.loc[_fraco].astype(str) + "; Piotroski fraco (≤3 de 9)")
     out["risk_penalty"] = penalty.clip(0, 25).round(1)
     out["risk_driver"] = risk_driver
 

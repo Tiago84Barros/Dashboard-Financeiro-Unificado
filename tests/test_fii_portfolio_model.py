@@ -9,8 +9,8 @@ import core.fii_portfolio_model as portfolio_model
 OWNER_ID = "11111111-1111-1111-1111-111111111111"
 OTHER_OWNER_ID = "22222222-2222-2222-2222-222222222222"
 PARAMS = {
-    "methodology_version": "6.4.0",
-    "strategy_id": "fii_integrated_robust_optimizer.v6.4",
+    "methodology_version": "6.5.0",
+    "strategy_id": "fii_integrated_robust_optimizer.v6.5",
 }
 
 

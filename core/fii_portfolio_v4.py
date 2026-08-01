@@ -11,12 +11,17 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from core.fii_lookthrough import (
+    dimension_is_applicable,
+    normalized_dimension_mapping,
+    supplementary_evidence_score,
+)
 from core.fii_methodology import MacroScenario, tactical_type_bands
 from core.fii_scenarios import asset_scenario_return
 
 
 SCENARIOS = ("base", "selic_alta", "queda_selic", "inflacao_alta", "vacancia", "credito")
-LIVE_PORTFOLIO_STRATEGY_ID = "fii_integrated_robust_optimizer.v6.4"
+LIVE_PORTFOLIO_STRATEGY_ID = "fii_integrated_robust_optimizer.v6.5"
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,9 @@ class PortfolioPolicy:
     uncertainty_penalty: float = .20
     cvar_penalty: float = .35
     turnover_penalty: float = .02
+    # Preferência pequena por evidência nominal suplementar observada. Não
+    # substitui score, confiança, renda nem os gates de cobertura.
+    data_quality_bonus: float = .06
     min_distinct_types: int = 2
     max_single_type: float = .70
     # Dimensões cuja identidade tem histórico PIT verificável nas fontes
@@ -163,7 +171,14 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
         np.mean([max(-asset_scenario_return(row, name), 0) for name in SCENARIOS[1:]])
         for row in pool
     ])
-    utility = .45 * quality + .30 * confidence + .25 * np.clip(dy / .15, 0, 1) - .35 * adverse
+    evidence = np.array([supplementary_evidence_score(row) for row in pool])
+    utility = (
+        .45 * quality
+        + .30 * confidence
+        + .25 * np.clip(dy / .15, 0, 1)
+        + policy.data_quality_bonus * evidence
+        - .35 * adverse
+    )
     previous_weights = previous_weights or {}
     previous = np.array([
         max(_num(previous_weights.get(str(row.get("ticker")))), 0.0)
@@ -190,8 +205,11 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
     for dimension, limit_attr in LIMITS.items():
         exposure, labels, coverage = _dimension_matrix(pool, dimension)
         universe_dimension_coverage[dimension] = coverage
-        if coverage < policy.min_dimension_coverage:
-            continue
+        # A pré-seleção sempre respeita as exposições nominais que foram
+        # observadas. A cobertura continua decidindo se o limite pode ser
+        # declarado controlado no resultado final; ela não deve, porém, permitir
+        # que o MILP escolha um subconjunto documentado que o solver contínuo
+        # imediatamente reprovará.
         for column in range(len(labels)):
             constraint(exposure[:, column], -np.inf, getattr(policy, limit_attr))
     illiquid = np.array([
@@ -258,6 +276,11 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
                 "status": "milp_feasible",
                 "solver_message": str(solution.message),
                 "selected_count": len(selected),
+                "selected_weights": {
+                    str(pool[index].get("ticker")): float(weight)
+                    for index, weight in enumerate(solution.x[:n])
+                    if weight >= policy.min_asset_weight - 1e-8
+                },
                 "universe_dimension_coverage": universe_dimension_coverage,
                 "selected_dimension_coverage": selected_coverage,
             }
@@ -296,7 +319,7 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
             if not available:
                 break
 
-            def priority(row: dict) -> tuple[int, int, int, int, float, float]:
+            def priority(row: dict) -> tuple[int, int, int, int, float, float, float]:
                 sector = str(row.get("sector") or "")
                 manager = str(row.get("manager") or "")
                 return (
@@ -305,6 +328,7 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
                         and len(sectors) < sector_groups),
                     int(bool(manager) and manager not in managers
                         and len(managers) < manager_groups),
+                    supplementary_evidence_score(row),
                     _num(row.get("type_score")), _num(row.get("confidence")),
                 )
 
@@ -324,6 +348,7 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
             issuer_fit(row), liquid(row),
             int(bool(row.get("manager")) and str(row.get("manager")) not in selected_managers),
             int(bool(row.get("sector")) and str(row.get("sector")) not in selected_sectors),
+            supplementary_evidence_score(row),
             _num(row.get("type_score")), _num(row.get("confidence")),
         ))
         selected.append(candidate)
@@ -361,10 +386,7 @@ def _exposure(row: dict, dimension: str) -> dict[str, float]:
     plural = {"tenant": "tenants", "debtor": "debtors", "issuer": "issuers",
               "indexer": "indexers", "region": "regions"}.get(dimension)
     if plural:
-        raw = row.get(plural)
-        if not isinstance(raw, dict):
-            return {}
-        return {str(k): _num(v) for k, v in raw.items() if _num(v) > 0}
+        return normalized_dimension_mapping(row, dimension)
     value = row.get(dimension)
     return {str(value): 1.0} if value not in (None, "") else {}
 
@@ -372,14 +394,8 @@ def _exposure(row: dict, dimension: str) -> dict[str, float]:
 def _dimension_observation_masks(
     rows: list[dict], dimension: str,
 ) -> tuple[np.ndarray, np.ndarray]:
-    applicable_types = {
-        "sector": {"tijolo", "hibrido"},
-        "tenant": {"tijolo", "hibrido"}, "region": {"tijolo", "hibrido"},
-        "debtor": {"papel", "hibrido"}, "issuer": {"papel", "hibrido"},
-        "indexer": {"papel", "hibrido"},
-    }.get(dimension)
     applicable = np.array([
-        1.0 if applicable_types is None or str(row.get("tipo")) in applicable_types else 0.0
+        1.0 if dimension_is_applicable(row, dimension) else 0.0
         for row in rows
     ])
     known = np.array([
@@ -550,6 +566,7 @@ def optimize_diligence_portfolio(
         [asset_scenario_return(r, s) for s in SCENARIOS] for r in rows
     ], dtype=float)
     adverse = np.maximum(-scenario_values_by_asset[:, 1:], 0.0).mean(axis=1)
+    evidence = np.array([supplementary_evidence_score(row) for row in rows])
     uncertainty = 1.0 - np.clip(confidence, 0.0, 1.0)
     normalized_previous = {
         str(ticker): max(_num(weight), 0.0)
@@ -561,8 +578,14 @@ def optimize_diligence_portfolio(
     previous_outside_pool = max(
         sum(normalized_previous.values()) - float(previous_vector.sum()), 0.0
     )
-    utility = (.45 * quality + .30 * confidence + .25 * np.clip(dy / .15, 0, 1)
-               - .35 * adverse - policy.uncertainty_penalty * uncertainty)
+    utility = (
+        .45 * quality
+        + .30 * confidence
+        + .25 * np.clip(dy / .15, 0, 1)
+        + policy.data_quality_bonus * evidence
+        - .35 * adverse
+        - policy.uncertainty_penalty * uncertainty
+    )
     correlation_risk, correlation_info = _correlation_risk_matrix(rows, correlation_matrix)
 
     constraints: list[dict] = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
@@ -636,6 +659,7 @@ def optimize_diligence_portfolio(
                     "blockers": [f"restrições lineares inviáveis: {feasible.message}"],
                     "unresolved_dimensions": sorted(set(unresolved)),
                     "dimension_coverage": dimension_info, "policy": asdict(policy),
+                    "candidate_pool": candidate_pool_info,
                     "feasibility_diagnostics": {
                         "available_by_type": available_by_type,
                         "candidate_count": len(rows),

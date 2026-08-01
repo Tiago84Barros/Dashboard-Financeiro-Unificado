@@ -40,7 +40,12 @@ logger = logging.getLogger(__name__)
 # entra como coluna vazia para preservar o shape de saída.
 _MULT_COLS = ["P/L", "P/VP", "DY", "ROE", "ROA", "ROIC",
               "Margem_Liquida", "Margem_Operacional", "Endividamento_Total",
-              "Liquidez_Corrente", "EV_EBIT", "P_FCO", "Payout"]
+              "Liquidez_Corrente", "EV_EBIT", "P_FCO", "Payout",
+              # SINAIS (0/1), não indicadores: registram balanço estruturalmente
+              # rompido, que a faixa coerente descartava como se fosse ausência.
+              # O piso de qualidade precisa vê-los para REPROVAR; ranking e
+              # score os ignoram (não estão em CANONICAL_MULTIPLOS_FIELDS).
+              "Patrimonio_Negativo", "Endividamento_Fora_De_Faixa", "FCO_Negativo"]
 
 
 @st.cache_resource(show_spinner=False)
@@ -93,7 +98,43 @@ def _pivot_metrics(long_df: pd.DataFrame) -> pd.DataFrame:
             wide[c] = pd.NA
     for c in _MULT_COLS:
         wide[c] = pd.to_numeric(wide[c], errors="coerce")
-    return wide[["Ticker", "year", *_MULT_COLS]]
+    return _suprime_razoes_sobre_patrimonio_negativo(
+        wide[["Ticker", "year", *_MULT_COLS]])
+
+
+# Razões cujo DENOMINADOR é o patrimônio líquido. Com PL negativo o quociente
+# inverte de sinal e desastre vira destaque.
+_RAZOES_SOBRE_PL = ("ROE", "P/VP", "Endividamento_Total")
+
+
+def _suprime_razoes_sobre_patrimonio_negativo(wide: pd.DataFrame) -> pd.DataFrame:
+    """Anula ROE/P-VP/Endividamento quando o patrimônio líquido é negativo.
+
+    Por que na LEITURA e não só no cálculo: ``calculated_metrics`` tem mais de
+    uma fonte para a mesma métrica. O ETL calcula (``market.compute``) e a brapi
+    entrega a dela pronta (``brapi_trailing``). Guardar apenas o cálculo deixava
+    passar a versão da brapi — medido em 30/07/2026, MWET4 exibia ROE de +4,23
+    com patrimônio negativo e prejuízo de R$ 28,6 mi, e o método gravado era
+    ``brapi_trailing``. Das 45 empresas com patrimônio negativo, 32 mostravam
+    ROE POSITIVO, até +423%; a faixa canônica de ROE (-3, 5) aceita o número,
+    porque os dois sinais se cancelam antes de ela olhar.
+
+    Suprimir aqui cobre todo consumidor do frame, seja qual for a fonte que
+    gravou. O veredito sobre a empresa não se perde: fica no sinal
+    ``Patrimonio_Negativo``, que é justamente a coluna consultada para saber
+    disso.
+    """
+    if wide.empty or "Patrimonio_Negativo" not in wide.columns:
+        return wide
+    insolvente = pd.to_numeric(wide["Patrimonio_Negativo"],
+                               errors="coerce").fillna(0) == 1
+    if not bool(insolvente.any()):
+        return wide
+    wide = wide.copy()
+    for coluna in _RAZOES_SOBRE_PL:
+        if coluna in wide.columns:
+            wide.loc[insolvente, coluna] = float("nan")
+    return wide
 
 
 # ── Loaders ───────────────────────────────────────────────────────────────────
@@ -1052,7 +1093,7 @@ load_fii_methodology_inputs.clear = _clear_fii_methodology_inputs_cache
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def load_fii_validation_status(methodology_version: str = "6.4.0") -> dict:
+def load_fii_validation_status(methodology_version: str = "6.5.0") -> dict:
     df = _q("""
         SELECT status, metrics_json, blockers_json, as_of_date, finished_at
         FROM market.fii_validation_runs
@@ -1359,4 +1400,119 @@ def load_historico_anos() -> dict[str, int]:
             out[tk] = int(row["anos"])
         except Exception:
             pass
+    return out
+
+
+# Pregões por mês, para converter o giro MENSAL da série em estimativa diária.
+# market.historical_prices guarda um candle por mês (a brapi devolve mensal no
+# range longo), então close*volume de uma linha é o giro do MÊS inteiro.
+_PREGOES_POR_MES = 21
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_giro_diario(dias: int = 400) -> dict[str, float]:
+    """{ticker: giro financeiro diário estimado em R$}.
+
+    Usa a MEDIANA das barras mensais, não a média: um único mês de leilão ou de
+    entrada em índice multiplica o volume e faria um papel ilíquido parecer
+    negociável. Validação cruzada em 30/07/2026 — EUCA4 deu ~R$ 570 mil/dia
+    aqui contra R$ 766 mil de ADTV publicado, mesma ordem de grandeza.
+    """
+    df = _q("""
+        SELECT p.ticker,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY p.close * p.volume)
+                 AS giro_mensal
+        FROM market.historical_prices p
+        WHERE p.date >= CURRENT_DATE - make_interval(days => :dias)
+          AND p.volume > 0 AND p.close > 0
+        GROUP BY p.ticker
+    """, {"dias": int(dias)})
+    if df.empty:
+        return {}
+    out: dict[str, float] = {}
+    for _, row in df.iterrows():
+        tk = str(row["ticker"]).replace(".SA", "").strip().upper()
+        try:
+            out[tk] = float(row["giro_mensal"]) / _PREGOES_POR_MES
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_classes_irmas() -> dict[str, tuple[str, ...]]:
+    """{ticker: classes ATIVAS da mesma empresa}, incluindo o próprio.
+
+    Agrupa por ``company_id`` e não pela raiz de 4 letras: a raiz é heurística e
+    junta tickers de empresas distintas que começam igual, o que aqui produziria
+    troca entre companhias diferentes — exatamente o que este módulo não pode
+    fazer.
+    """
+    df = _q("""
+        SELECT a.company_id, a.ticker
+        FROM market.assets a
+        WHERE a.is_active AND a.company_id IS NOT NULL
+          AND a.asset_type IN ('stock', 'unit')
+    """)
+    if df.empty:
+        return {}
+    por_empresa: dict[object, list[str]] = {}
+    for _, row in df.iterrows():
+        tk = str(row["ticker"]).replace(".SA", "").strip().upper()
+        por_empresa.setdefault(row["company_id"], []).append(tk)
+    out: dict[str, tuple[str, ...]] = {}
+    for tickers in por_empresa.values():
+        grupo = tuple(sorted(set(tickers)))
+        for tk in grupo:
+            out[tk] = grupo
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_resiliencia_ciclo() -> dict[str, dict]:
+    """{ticker: {razao, margem_normal, margem_crise, anos}} nas recessões.
+
+    Compara a margem operacional MEDIANA dos anos de recessão com a dos anos
+    normais, no histórico da própria empresa. Mediana e não média: um único ano
+    de item extraordinário deslocaria a média e inverteria a leitura.
+
+    Só descreve o passado do próprio ticker — não é inferência cruzada e não
+    depende de amplitude de segmento. Ver core.b3_cycle_evidence para por que o
+    resultado informa mas não reclassifica.
+    """
+    from core.b3_cycle_evidence import ANOS_DE_CRISE
+
+    df = _q("""
+        WITH m AS (
+            SELECT ticker, year, ebit::numeric / NULLIF(revenue, 0) AS margem
+            FROM market.income_statements
+            WHERE period = 'annual' AND ebit IS NOT NULL AND revenue > 0
+        )
+        SELECT ticker,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY margem)
+                 FILTER (WHERE year = ANY(:crise))        AS margem_crise,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY margem)
+                 FILTER (WHERE NOT (year = ANY(:crise)))  AS margem_normal,
+               count(*) FILTER (WHERE year = ANY(:crise)) AS anos_crise
+        FROM m
+        GROUP BY ticker
+    """, {"crise": list(ANOS_DE_CRISE)})
+    if df.empty:
+        return {}
+
+    out: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        tk = str(row["ticker"]).replace(".SA", "").strip().upper()
+        try:
+            normal = float(row["margem_normal"])
+            crise = float(row["margem_crise"])
+            anos = int(row["anos_crise"])
+        except (TypeError, ValueError):
+            continue
+        # Margem normal <= 0 torna a razão sem sentido (dois negativos dão
+        # positivo — o mesmo defeito do ROE sobre patrimônio negativo).
+        if normal != normal or crise != crise or normal <= 0:
+            continue
+        out[tk] = {"razao": crise / normal, "margem_normal": normal,
+                   "margem_crise": crise, "anos": anos}
     return out

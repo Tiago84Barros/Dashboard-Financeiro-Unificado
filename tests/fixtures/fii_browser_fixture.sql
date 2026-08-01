@@ -146,7 +146,16 @@ WITH synthetic AS (
             'tenants', CASE WHEN fii_type IN ('tijolo', 'hibrido')
                             THEN jsonb_build_object('Locatário sintético ' || number, 1.0) END,
             'regions', CASE WHEN fii_type IN ('tijolo', 'hibrido')
-                            THEN jsonb_build_object('SP', .6, 'MG', .4) END,
+                            THEN jsonb_build_object(
+                                CASE number % 5
+                                    WHEN 0 THEN 'AM'
+                                    WHEN 1 THEN 'BA'
+                                    WHEN 2 THEN 'DF'
+                                    WHEN 3 THEN 'SP'
+                                    ELSE 'RS'
+                                END,
+                                1.0
+                            ) END,
             'issuers', CASE WHEN fii_type IN ('papel', 'hibrido')
                             THEN jsonb_build_object('Emissor sintético ' || number, 1.0) END,
             'debtors', CASE WHEN fii_type IN ('papel', 'hibrido')
@@ -173,9 +182,9 @@ INSERT INTO market.fii_validation_runs
     (methodology_version, as_of_date, status, metrics_json, blockers_json,
      started_at, finished_at)
 VALUES (
-    '6.4.0', DATE '2026-07-29', 'passed',
-    '{"strategy_id":"fii_integrated_robust_optimizer.v6.4",
-      "backtest":{"strategy_id":"fii_integrated_robust_optimizer.v6.4",
+    '6.5.0', DATE '2026-07-29', 'passed',
+    '{"strategy_id":"fii_integrated_robust_optimizer.v6.5",
+      "backtest":{"strategy_id":"fii_integrated_robust_optimizer.v6.5",
                   "periods":65,"verified_snapshot_fraction":1,
                   "return_observation_coverage":1}}',
     '[]', TIMESTAMPTZ '2026-07-24 10:00:00+00',
@@ -198,14 +207,14 @@ VALUES
     ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
      '11111111-1111-1111-1111-111111111111',
      'Carteira sintética ativa','active','synthetic_test','fixture-active',
-     '{"methodology_version":"6.4.0",
-       "strategy_id":"fii_integrated_robust_optimizer.v6.4"}',
+     '{"methodology_version":"6.5.0",
+       "strategy_id":"fii_integrated_robust_optimizer.v6.5"}',
      '{}','2026-07-24 12:00:00+00','2026-07-24 12:00:00+00'),
     ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
      '11111111-1111-1111-1111-111111111111',
      'Carteira sintética arquivada','archived','synthetic_test','fixture-archived',
-     '{"methodology_version":"6.4.0",
-       "strategy_id":"fii_integrated_robust_optimizer.v6.4"}',
+     '{"methodology_version":"6.5.0",
+       "strategy_id":"fii_integrated_robust_optimizer.v6.5"}',
      '{}','2026-06-24 12:00:00+00','2026-06-24 12:00:00+00');
 
 INSERT INTO fii_portfolio_model_items
