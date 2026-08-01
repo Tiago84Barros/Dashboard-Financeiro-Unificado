@@ -69,7 +69,7 @@ def test_payout_alto_com_aperto_de_caixa_reprova():
 def test_substituicao_preserva_a_vaga_do_segmento():
     """É isto que torna qualidade e diversificação compatíveis."""
     df = pd.DataFrame([
-        _empresa("RUIM3", Margem_Operacional=-0.10),
+        _empresa("RUIM3", Margem_Operacional=-0.10, ROE=-0.10),
         _empresa("BOA3"),
     ])
     log: dict = {}
@@ -84,7 +84,7 @@ def test_substituicao_preserva_a_vaga_do_segmento():
 
 
 def test_substituto_herda_o_orcamento_de_peso():
-    df = pd.DataFrame([_empresa("RUIM3", Margem_Operacional=-0.10), _empresa("BOA3")])
+    df = pd.DataFrame([_empresa("RUIM3", Margem_Operacional=-0.10, ROE=-0.10), _empresa("BOA3")])
     pesos = {"RUIM3": 0.30}
     apply_with_substitution(["RUIM3"], [("RUIM3", 9.0), ("BOA3", 8.0)], df,
                             selic=SELIC, pesos=pesos, log={})
@@ -94,7 +94,7 @@ def test_substituto_herda_o_orcamento_de_peso():
 def test_segmento_sem_candidato_bom_fica_vazio_e_declarado():
     """Rebaixar para o menos ruim devolveria ao usuário o problema que o piso resolve."""
     df = pd.DataFrame([
-        _empresa("RUIM3", Margem_Operacional=-0.10),
+        _empresa("RUIM3", Margem_Operacional=-0.10, ROE=-0.10),
         _empresa("PIOR3", FCO_Negativo=1.0, P_FCO=float("nan")),
     ])
     log: dict = {}
@@ -107,7 +107,7 @@ def test_segmento_sem_candidato_bom_fica_vazio_e_declarado():
 
 
 def test_piso_desligado_por_politica_nao_reprova_nada():
-    df = pd.DataFrame([_empresa("RUIM3", Margem_Operacional=-0.10)])
+    df = pd.DataFrame([_empresa("RUIM3", Margem_Operacional=-0.10, ROE=-0.10)])
     politica = FloorPolicy(reprovar_criticos=False)
     v = evaluate(df, ["RUIM3"], policy=politica, selic=SELIC)["RUIM3"]
     assert v.situacao != REPROVADO
@@ -121,7 +121,7 @@ def test_mesma_regua_da_secao_de_saude():
     """
     from core.b3_holdings_health import CRITICO, check_holdings
     df = pd.DataFrame([
-        _empresa("A3"), _empresa("B3", Margem_Operacional=-0.10),
+        _empresa("A3"), _empresa("B3", Margem_Operacional=-0.10, ROE=-0.10),
         _empresa("C3", Payout=3.10, Endividamento_Total=3.24),
         _empresa("D3", Patrimonio_Negativo=1.0, Endividamento_Total=float("nan")),
     ])

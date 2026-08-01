@@ -90,11 +90,22 @@ def compute_snapshot(f: dict) -> dict[str, tuple[float, str]]:
     # lucro positivos — e o setor mais representado era Financeiro, com 21.
     # ISAE4 (transmissora, EBIT de R$ 4,1 bi e lucro de R$ 2,5 bi) seria
     # reprovada e a carteira perderia justamente o contrapeso defensivo.
+    # A confirmação olha o LUCRO LÍQUIDO, não o EBIT. Exigir os dois (a versão
+    # anterior pedia lucro > 0 E ebit > 0) fazia a métrica inválida vetar a
+    # válida: banco não tem EBIT no sentido industrial, e a brapi devolve o
+    # campo negativo mesmo assim. Medido em 01/08/2026, ABCB4 (Banco ABC Brasil)
+    # fechou 2025 com lucro de R$ 1,0 bi e FCO POSITIVO de R$ 150 mi, e ainda
+    # assim carregava o sinal — porque o EBIT reportado era -R$ 456 mi.
+    #
+    # Lucro positivo com FCO negativo é ambíguo, não conclusivo: pode ser
+    # originação de crédito, IFRIC 12 ou capital de giro. Ambíguo vira ATENÇÃO
+    # pelos outros caminhos, nunca CRÍTICO por este sinal. EBIT só decide quando
+    # não há lucro líquido para consultar.
     nif, ebitf = _dq.to_float(ni), _dq.to_float(ebit)
-    lucrativa = (nif is not None and nif > 0) and (ebitf is not None and ebitf > 0)
+    lucrativa = (nif > 0) if nif is not None else (ebitf is not None and ebitf > 0)
     if fcof is not None and fcof <= 0 and not lucrativa:
         signals["FCO_Negativo"] = (
-            1.0, "operating_cash_flow <= 0 confirmado por prejuízo (EBIT/lucro)")
+            1.0, "operating_cash_flow <= 0 confirmado por prejuízo (lucro líquido)")
 
     if eqf is not None and eqf < 0:
         signals["Patrimonio_Negativo"] = (1.0, "equity < 0")
