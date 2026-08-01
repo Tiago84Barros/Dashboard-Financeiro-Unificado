@@ -432,11 +432,140 @@ def _publication_gate_message(
     return " · ".join(parts)
 
 
+def _render_project_evidence_review(
+    rows: list[dict], *, reviewer_default: str,
+) -> None:
+    from core.fii_evidence_review import review_project_observation
+
+    if not rows:
+        st.success("Não há empreendimentos pendentes de revisão.")
+        return
+    selected_id = st.selectbox(
+        "Empreendimento extraído",
+        [int(row["id"]) for row in rows],
+        format_func=lambda value: next(
+            f"#{value} · {row.get('ticker')} · {row.get('project_name')} · "
+            f"{row.get('reference_date')}"
+            for row in rows if int(row["id"]) == value
+        ),
+        key="fii_project_review_id",
+    )
+    row = next(item for item in rows if int(item["id"]) == int(selected_id))
+    st.dataframe(pd.DataFrame([{
+        "FII": row.get("ticker"),
+        "Empreendimento": row.get("project_name"),
+        "Local": " · ".join(filter(None, [row.get("city"), row.get("state")])),
+        "Fase": row.get("stage"),
+        "Peso": row.get("portfolio_weight"),
+        "% obras": row.get("construction_progress"),
+        "% vendas": row.get("sales_progress"),
+        "TIR esperada": row.get("expected_irr"),
+        "Resultado esperado (R$)": row.get("expected_result_brl"),
+        "Natureza": row.get("value_nature"),
+    }]), width="stretch", hide_index=True)
+    st.code(str(row.get("evidence_text") or ""), language=None, wrap_lines=True)
+    st.caption(
+        "Valores esperados são estimativas do gestor, não fatos realizados. "
+        f"Página {row.get('page_number') or '—'} · confiança de extração "
+        f"{float(row.get('confidence') or 0):.0%} · SHA-256 "
+        f"{str(row.get('content_sha256') or '')[:20]}…"
+    )
+    with st.form("fii_project_review_form"):
+        decision_label = st.radio(
+            "Decisão", ["Aceitar como evidência", "Rejeitar"],
+            horizontal=True, key="fii_project_review_decision",
+        )
+        reviewer = st.text_input(
+            "Identificador do revisor", value=reviewer_default,
+            key="fii_project_reviewer",
+        )
+        note = st.text_area(
+            "Justificativa/observação", max_chars=2000,
+            key="fii_project_review_note",
+        )
+        submitted = st.form_submit_button("Registrar decisão", type="primary")
+    if submitted:
+        try:
+            report = review_project_observation(
+                int(selected_id),
+                decision=("accepted" if decision_label == "Aceitar como evidência"
+                          else "rejected"),
+                reviewer_id=reviewer,
+                note=note,
+            )
+            st.success(f"Decisão registrada · auditoria {report['review_hash'][:16]}…")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Não foi possível registrar a revisão: {exc}")
+
+
+def _render_finding_evidence_review(
+    rows: list[dict], *, reviewer_default: str,
+) -> None:
+    from core.fii_evidence_review import review_document_finding
+
+    if not rows:
+        st.success("Não há achados qualitativos pendentes de revisão.")
+        return
+    selected_id = st.selectbox(
+        "Achado extraído",
+        [int(row["id"]) for row in rows],
+        format_func=lambda value: next(
+            f"#{value} · {row.get('ticker')} · {row.get('finding_type')} · "
+            f"{row.get('topic')}"
+            for row in rows if int(row["id"]) == value
+        ),
+        key="fii_finding_review_id",
+    )
+    row = next(item for item in rows if int(item["id"]) == int(selected_id))
+    st.markdown(_info_card_html(
+        f"{row.get('ticker') or 'FII'} · {row.get('topic')}",
+        str(row.get("claim_text") or ""),
+        accent="#FC5C7D" if row.get("finding_type") == "risk" else "#4A9EFF",
+    ), unsafe_allow_html=True)
+    st.caption(
+        "Alegação do relatório, ainda não corroborada por fonte independente. "
+        f"Página {row.get('page_number') or '—'} · confiança de extração "
+        f"{float(row.get('confidence') or 0):.0%}."
+    )
+    with st.form("fii_finding_review_form"):
+        decision_label = st.radio(
+            "Decisão", ["Aceitar como alegação atribuída", "Rejeitar"],
+            horizontal=True, key="fii_finding_review_decision",
+        )
+        reviewer = st.text_input(
+            "Identificador do revisor", value=reviewer_default,
+            key="fii_finding_reviewer",
+        )
+        note = st.text_area(
+            "Justificativa/observação", max_chars=2000,
+            key="fii_finding_review_note",
+        )
+        submitted = st.form_submit_button("Registrar decisão", type="primary")
+    if submitted:
+        try:
+            report = review_document_finding(
+                int(selected_id),
+                decision=("accepted" if decision_label == "Aceitar como alegação atribuída"
+                          else "rejected"),
+                reviewer_id=reviewer,
+                note=note,
+            )
+            st.success(f"Decisão registrada · auditoria {report['review_hash'][:16]}…")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Não foi possível registrar a revisão: {exc}")
+
+
 def _tab_evidence_review() -> None:
     """Revisão humana explícita; decisões são versionadas e auditáveis."""
     from core.config import settings
     from core.fii_evidence_review import (
         load_pending_evidence,
+        load_pending_findings,
+        load_pending_project_observations,
         review_backlog_summary,
         review_evidence,
     )
@@ -454,13 +583,37 @@ def _tab_evidence_review() -> None:
         st.info("A fila documental não está disponível neste banco: "
                 + str(summary.get("reason") or "sem detalhes"))
         return
-    k1, k2, k3 = st.columns(3)
+    k1, k2, k3, k4, k5 = st.columns(5)
     k1.markdown(_kpi_html("Evidências pendentes", summary.get("pending", 0),
                           accent="#F6C90E"), unsafe_allow_html=True)
     k2.markdown(_kpi_html("FIIs na fila", summary.get("pending_tickers", 0),
                           accent="#4A9EFF"), unsafe_allow_html=True)
     k3.markdown(_kpi_html("Revisões humanas", summary.get("human_reviewed", 0),
                           accent="#00C896"), unsafe_allow_html=True)
+    k4.markdown(_kpi_html("Projetos pendentes", summary.get("project_pending", 0),
+                          accent="#B084F6"), unsafe_allow_html=True)
+    k5.markdown(_kpi_html("Achados pendentes", summary.get("finding_pending", 0),
+                          accent="#FC5C7D"), unsafe_allow_html=True)
+
+    reviewer_default = settings.OWNER_USER_ID or "app_operator"
+    review_kind = st.radio(
+        "Tipo de evidência",
+        ["Métricas", "Empreendimentos", "Achados qualitativos"],
+        horizontal=True,
+        key="fii_review_kind",
+    )
+    if review_kind == "Empreendimentos":
+        _render_project_evidence_review(
+            load_pending_project_observations(limit=100),
+            reviewer_default=reviewer_default,
+        )
+        return
+    if review_kind == "Achados qualitativos":
+        _render_finding_evidence_review(
+            load_pending_findings(limit=100),
+            reviewer_default=reviewer_default,
+        )
+        return
 
     initial = load_pending_evidence(limit=300)
     if not initial:
@@ -518,7 +671,6 @@ def _tab_evidence_review() -> None:
             "Valor corrigido", value=default_value, format="%.6f",
             disabled=decision_label != "Corrigir",
         )
-        reviewer_default = settings.OWNER_USER_ID or "app_operator"
         reviewer = st.text_input("Identificador do revisor", value=reviewer_default)
         note = st.text_area("Justificativa/observação", max_chars=2000)
         submitted = st.form_submit_button("Registrar decisão", type="primary")

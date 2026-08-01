@@ -178,9 +178,10 @@ def test_cvm_archive_uses_conditional_cache_on_not_modified(tmp_path, monkeypatc
             return None
 
         @staticmethod
-        def get(url, timeout, headers):
+        def get(url, timeout, headers, stream):
             assert headers == {"If-None-Match": "abc",
                                "If-Modified-Since": "Mon, 13 Jul 2026 10:00:00 GMT"}
+            assert stream is True
             return Response()
 
     monkeypatch.setattr("requests.Session", Session)
@@ -195,3 +196,70 @@ def test_cvm_archive_quality_gate_rejects_empty_structured_partition():
         _validate_parsed_archive(
             _archive("monthly", {"empty_2026.csv": "a;b\n"}),
             {"observations": [], "exposures": [], "documents": [], "contexts": 0})
+
+
+def test_cvm_archive_rejects_declared_size_above_limit(tmp_path, monkeypatch):
+    class Response:
+        status_code = 200
+        headers = {"Content-Length": "101"}
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+
+        @staticmethod
+        def mount(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def get(*args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("requests.Session", Session)
+    with pytest.raises(ValueError, match="declara 101 bytes"):
+        fetch_archive("monthly", 2026, cache_root=tmp_path, max_bytes=100)
+    assert not list(tmp_path.rglob("*.zip"))
+
+
+def test_cvm_archive_uses_last_good_cache_on_interrupted_stream(
+    tmp_path, monkeypatch,
+):
+    requests = __import__("requests")
+    cache = tmp_path / "monthly" / "2026.zip"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"PKlast-good")
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def iter_content(chunk_size):
+            yield b"PKpartial"
+            raise requests.exceptions.ChunkedEncodingError("interrompido")
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+
+        @staticmethod
+        def mount(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def get(*args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("requests.Session", Session)
+    archive = fetch_archive("monthly", 2026, cache_root=tmp_path)
+    assert archive is not None
+    assert archive.from_cache is True
+    assert archive.content == b"PKlast-good"

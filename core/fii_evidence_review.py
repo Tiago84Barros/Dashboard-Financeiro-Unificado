@@ -48,7 +48,25 @@ def review_backlog_summary() -> dict[str, Any]:
                 JOIN market.fii_document_versions v ON v.id=r.document_version_id
                 JOIN market.fii_documents d ON d.id=v.document_id
             """)).mappings().one()
-        return {"available": True, **{key: int(value or 0) for key, value in row.items()}}
+            project_pending = 0
+            finding_pending = 0
+            if conn.execute(text(
+                "SELECT to_regclass('market.fii_project_observations') IS NOT NULL"
+            )).scalar():
+                project_pending = int(conn.execute(text("""
+                    SELECT count(*) FROM market.fii_project_observations
+                    WHERE validation_status IN ('pending','conflicting')
+                """)).scalar() or 0)
+                finding_pending = int(conn.execute(text("""
+                    SELECT count(*) FROM market.fii_document_findings
+                    WHERE validation_status IN ('pending','conflicting')
+                """)).scalar() or 0)
+        return {
+            "available": True,
+            **{key: int(value or 0) for key, value in row.items()},
+            "project_pending": project_pending,
+            "finding_pending": finding_pending,
+        }
     except Exception as exc:
         return {"available": False, "pending": 0, "reason": str(exc)[:300]}
 
@@ -66,6 +84,10 @@ def load_pending_evidence(*, limit: int = 50, tickers: list[str] | None = None,
         rows = conn.execute(text("""
             SELECT e.id,e.metric_name,e.raw_value,e.normalized_value,e.unit,
                    e.page_number,e.evidence_text,e.confidence,e.validation_status,
+                   COALESCE(to_jsonb(e)->>'value_nature','manager_reported')
+                       AS value_nature,
+                   COALESCE((to_jsonb(e)->>'review_priority')::integer,50)
+                       AS review_priority,
                    d.ticker,d.document_type,d.reference_date,d.source_published_at,
                    d.first_observed_at,d.source_url,v.content_sha256,
                    r.parser_name,r.parser_version,r.layout_signature,r.text_method
@@ -76,7 +98,8 @@ def load_pending_evidence(*, limit: int = 50, tickers: list[str] | None = None,
             WHERE e.validation_status='pending'
               AND (:ticker_filter=false OR d.ticker=ANY(CAST(:tickers AS text[])))
               AND (:metric_filter=false OR e.metric_name=ANY(CAST(:metrics AS text[])))
-            ORDER BY CASE WHEN e.confidence>=.90 THEN 0 ELSE 1 END,
+            ORDER BY COALESCE((to_jsonb(e)->>'review_priority')::integer,50) DESC,
+                     CASE WHEN e.confidence>=.90 THEN 0 ELSE 1 END,
                      d.reference_date DESC NULLS LAST,e.confidence DESC,e.id
             LIMIT :limit
         """), {
@@ -85,6 +108,154 @@ def load_pending_evidence(*, limit: int = 50, tickers: list[str] | None = None,
             "limit": max(1, min(int(limit), 500)),
         }).mappings().all()
     return [dict(row) for row in rows]
+
+
+def load_pending_project_observations(
+    *, limit: int = 50, tickers: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    engine = get_pipeline_engine()
+    if engine is None:
+        return []
+    normalized_tickers = sorted({
+        str(value).upper().replace(".SA", "") for value in (tickers or []) if value
+    })
+    with engine.connect() as conn:
+        if not conn.execute(text(
+            "SELECT to_regclass('market.fii_project_observations') IS NOT NULL"
+        )).scalar():
+            return []
+        rows = conn.execute(text("""
+            SELECT o.*,p.ticker,p.project_name,p.city,p.state,
+                   d.document_type,d.source_url,v.content_sha256
+            FROM market.fii_project_observations o
+            JOIN market.fii_projects p ON p.id=o.project_id
+            JOIN market.fii_document_versions v ON v.id=o.document_version_id
+            JOIN market.fii_documents d ON d.id=v.document_id
+            WHERE o.validation_status IN ('pending','conflicting')
+              AND (:ticker_filter=false OR p.ticker=ANY(CAST(:tickers AS text[])))
+            ORDER BY CASE WHEN o.validation_status='conflicting' THEN 0 ELSE 1 END,
+                     o.confidence DESC,o.reference_date DESC,o.id
+            LIMIT :limit
+        """), {
+            "ticker_filter": bool(normalized_tickers), "tickers": normalized_tickers,
+            "limit": max(1, min(int(limit), 500)),
+        }).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def load_pending_findings(
+    *, limit: int = 50, tickers: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    engine = get_pipeline_engine()
+    if engine is None:
+        return []
+    normalized_tickers = sorted({
+        str(value).upper().replace(".SA", "") for value in (tickers or []) if value
+    })
+    with engine.connect() as conn:
+        if not conn.execute(text(
+            "SELECT to_regclass('market.fii_document_findings') IS NOT NULL"
+        )).scalar():
+            return []
+        rows = conn.execute(text("""
+            SELECT f.*,d.document_type,d.source_url,v.content_sha256
+            FROM market.fii_document_findings f
+            JOIN market.fii_document_versions v ON v.id=f.document_version_id
+            JOIN market.fii_documents d ON d.id=v.document_id
+            WHERE f.validation_status IN ('pending','conflicting')
+              AND (:ticker_filter=false OR f.ticker=ANY(CAST(:tickers AS text[])))
+            ORDER BY CASE WHEN f.validation_status='conflicting' THEN 0 ELSE 1 END,
+                     f.confidence DESC,f.reference_date DESC,f.id
+            LIMIT :limit
+        """), {
+            "ticker_filter": bool(normalized_tickers), "tickers": normalized_tickers,
+            "limit": max(1, min(int(limit), 500)),
+        }).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def _review_extended_evidence(
+    table_name: str,
+    row_id: int,
+    *,
+    decision: str,
+    reviewer_id: str,
+    note: str | None = None,
+) -> dict[str, Any]:
+    if table_name not in {"fii_project_observations", "fii_document_findings"}:
+        raise ValueError("tipo de evidência estendida inválido")
+    decision = str(decision).strip().lower()
+    if decision not in {"accepted", "rejected"}:
+        raise ValueError("evidência estendida aceita somente accepted ou rejected")
+    reviewer = str(reviewer_id or "").strip()
+    if len(reviewer) < 3:
+        raise ValueError("informe um identificador de revisor com ao menos 3 caracteres")
+    engine = get_pipeline_engine()
+    if engine is None:
+        raise RuntimeError("banco indisponível")
+    now = datetime.now(timezone.utc)
+    correlation_id = uuid.uuid4()
+    with engine.begin() as conn:
+        row = conn.execute(text(f"""
+            SELECT * FROM market.{table_name} WHERE id=:id FOR UPDATE
+        """), {"id": int(row_id)}).mappings().first()
+        if not row:
+            raise LookupError(f"evidência estendida {row_id} não encontrada")
+        if row["validation_status"] not in {"pending", "conflicting"}:
+            raise ValueError("evidência estendida já foi revisada")
+        payload = {
+            "table": table_name, "id": int(row_id), "decision": decision,
+            "reviewer_id": reviewer, "note": str(note or ""),
+            "reviewed_at": now.isoformat(),
+        }
+        review_hash = hashlib.sha256(json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
+        conn.execute(text(f"""
+            UPDATE market.{table_name}
+            SET validation_status=:decision,validation_method='human',
+                reviewer_id=:reviewer,reviewed_at=:reviewed_at,
+                review_note=:note,review_hash=:review_hash
+            WHERE id=:id
+        """), {
+            "decision": decision, "reviewer": reviewer, "reviewed_at": now,
+            "note": str(note or "")[:2000], "review_hash": review_hash,
+            "id": int(row_id),
+        })
+        conn.execute(text("""
+            INSERT INTO market.fii_audit_events (
+                event_type,entity_type,entity_id,actor_type,actor_id,
+                correlation_id,payload_json
+            ) VALUES (
+                'extended_evidence_human_reviewed',:entity_type,:entity_id,
+                'user',:actor,:correlation,CAST(:payload AS jsonb)
+            )
+        """), {
+            "entity_type": table_name, "entity_id": str(row_id),
+            "actor": reviewer, "correlation": correlation_id,
+            "payload": json.dumps(payload, ensure_ascii=False),
+        })
+    return {"id": int(row_id), "decision": decision, "review_hash": review_hash}
+
+
+def review_project_observation(
+    observation_id: int, *, decision: str, reviewer_id: str,
+    note: str | None = None,
+) -> dict[str, Any]:
+    return _review_extended_evidence(
+        "fii_project_observations", observation_id,
+        decision=decision, reviewer_id=reviewer_id, note=note,
+    )
+
+
+def review_document_finding(
+    finding_id: int, *, decision: str, reviewer_id: str,
+    note: str | None = None,
+) -> dict[str, Any]:
+    return _review_extended_evidence(
+        "fii_document_findings", finding_id,
+        decision=decision, reviewer_id=reviewer_id, note=note,
+    )
 
 
 def review_evidence(evidence_id: int, *, decision: str, reviewer_id: str,

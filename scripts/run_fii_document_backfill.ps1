@@ -16,7 +16,8 @@ if ($health -ne "healthy") {
 python scripts\backfill_fii_documents_local.py `
     --workers 10 `
     --min-free-gb 5 `
-    --max-document-mb 100 `
+    --max-batch-mb 150 `
+    --max-document-mb 30 `
     --download-timeout 20 `
     --download-attempts 2 `
     --max-processing-attempts 3 `
