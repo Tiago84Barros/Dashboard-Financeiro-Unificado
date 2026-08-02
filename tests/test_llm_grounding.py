@@ -135,3 +135,80 @@ def test_aviso_da_ui_nunca_derruba_o_chat():
 
     assert _aviso_ancoragem(None, None) == ""
     assert _aviso_ancoragem("", "") == ""
+
+
+# ── Notação: pt-BR e en-US no MESMO verificador ──────────────────────────────
+# A LLM responde ora numa notação, ora noutra. "12,500" vale 12.500 em inglês e
+# 12,5 em português, e nada no token decide.
+
+@pytest.mark.parametrize("token,esperado", [
+    ("1.234,56", 1234.56), ("1,234.56", 1234.56),      # milhar + decimal
+    ("24,8", 24.8), ("24.8", 24.8),                     # decimal, 1 casa
+    ("3.100,00", 3100.0), ("3,100.00", 3100.0),         # decimal, 2 casas
+    ("1.234.567,89", 1234567.89), ("1,234,567.89", 1234567.89),
+    ("0,500", 0.5), ("0.500", 0.5),                     # zero à esquerda não é ambíguo
+    ("8058", 8058.0), ("12,345,678", 12345678.0),
+])
+def test_parse_number_aceita_as_duas_notacoes(token, esperado):
+    assert parse_number(token) == pytest.approx(esperado)
+
+
+@pytest.mark.parametrize("token", ["3.100", "3,100", "12.500", "12,500"])
+def test_separador_ambiguo_e_ignorado_nas_duas_notacoes(token):
+    """Regressão: a guarda existia só para o ponto.
+
+    A vírgula caía num `replace(',', '.')` cego e "12,500" virava 12,5 — erro de
+    fator 1.000, silencioso. Valor real de R$ 12.500 não ancorava e a resposta
+    correta era acusada de inventar dado. Ignorar não cria falso positivo nem
+    falso negativo; chutar cria os dois.
+    """
+    assert parse_number(token) is None
+
+
+def test_tolerancia_sai_da_precisao_declarada():
+    """R$ 7.777,00 inventado passava por casar com 7.800 dentro de 1%.
+
+    Quem escreve centavos afirma seis dígitos de precisão; quem escreve
+    "7,8 mil" afirma dois e merece a folga.
+    """
+    contexto = "Despesas: R$ 7.800,00"
+    exato = check_grounding("Gastou R$ 7.777,00.", contexto)
+    assert not exato.claims[0].grounded
+
+    aproximado = check_grounding("Gastou cerca de R$ 7,8 mil.", contexto)
+    assert all(c.grounded for c in aproximado.claims)
+
+
+def test_mesmo_token_ancora_sob_qualquer_leitura():
+    """"8,3 mil" gera duas leituras (8,3 e 8.300) da MESMA afirmação.
+
+    Julgá-las isoladas fazia o mesmo texto sair aprovado numa e reprovado na
+    outra. Vale para "24,8%" (percentual e absoluta) pelo mesmo motivo.
+    """
+    contexto = "Despesas: R$ 8.300,00\nReceitas: R$ 12.500,00"
+    rel = check_grounding("Gastou cerca de R$ 8,3 mil.", contexto)
+    assert all(c.grounded for c in rel.claims)
+
+
+def test_cadeia_aceita_conta_certa_e_recusa_errada():
+    """A projeção encadeia: 20% de 1.210 = 242 → 8.300 − 242 = 8.058."""
+    contexto = ("Despesas: R$ 8.300,00\nAssinaturas: R$ 210,00\n"
+                "Outros: R$ 1.000,00")
+    pergunta = "E se eu cortar 20% dos gastos não essenciais?"
+    certa = check_grounding(
+        "Não essenciais somam R$ 1.210,00; cortar 20% economiza R$ 242,00, "
+        "deixando R$ 8.058,00.", contexto, pergunta=pergunta)
+    assert all(c.grounded for c in certa.claims)
+
+    errada = check_grounding(
+        "Não essenciais somam R$ 1.210,00; cortar 20% economiza R$ 900,00, "
+        "deixando R$ 7.400,00.", contexto, pergunta=pergunta)
+    ruins = [c.raw for c in errada.claims if not c.grounded]
+    assert "900,00" in ruins and "7.400,00" in ruins
+
+
+def test_cem_da_formula_de_percentual_nao_e_dado():
+    """"(3.100 / 12.500) × 100" — o 100 é a base da conversão, não um valor."""
+    contexto = "Moradia: R$ 3.100,00\nReceitas: R$ 12.500,00"
+    rel = check_grounding("(3.100 / 12.500) × 100 ≈ 24,8%", contexto)
+    assert all(c.grounded for c in rel.claims)
