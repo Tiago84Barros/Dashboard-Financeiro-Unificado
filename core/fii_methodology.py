@@ -20,8 +20,8 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
-METHODOLOGY_VERSION = "6.5.0"
-FORMULA_VERSION = "br-fii-integrated-income-resilience-6.4.0"
+METHODOLOGY_VERSION = "6.6.0"
+FORMULA_VERSION = "br-fii-integrated-income-resilience-6.6.0"
 VALID_TYPES = ("tijolo", "papel", "fof", "hibrido")
 
 
@@ -34,6 +34,7 @@ class MetricDefinition:
     target: float | None = None
     critical: bool = False
     max_age_days: int = 120
+    fallback_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -86,8 +87,11 @@ COMMON_METRICS = (
 
 TYPE_METRICS: dict[str, tuple[MetricDefinition, ...]] = {
     "tijolo": (
-        MetricDefinition("vacancia_fisica", "risk", .04, "lower", critical=True),
-        MetricDefinition("vacancia_financeira", "risk", .06, "lower", critical=True),
+        # Vacância financeira é preferida por refletir receita; a física é uma
+        # aproximação estrutural válida quando a gestão não publica a financeira.
+        # As duas medem o mesmo risco e não devem gerar dupla penalização.
+        MetricDefinition("vacancia_operacional", "risk", .10, "lower", critical=True,
+                         fallback_keys=("vacancia_financeira", "vacancia_fisica")),
         MetricDefinition("wault_anos", "quality", .05, "higher", critical=True),
         MetricDefinition("tenant_concentration", "risk", .04, "lower", critical=True),
         MetricDefinition("geographic_diversification", "quality", .035, "higher"),
@@ -119,7 +123,8 @@ TYPE_METRICS: dict[str, tuple[MetricDefinition, ...]] = {
         MetricDefinition("portfolio_income_recurrence", "income", .04, "higher"),
     ),
     "hibrido": (
-        MetricDefinition("vacancia_financeira", "risk", .05, "lower", critical=True),
+        MetricDefinition("vacancia_operacional", "risk", .05, "lower", critical=True,
+                         fallback_keys=("vacancia_financeira", "vacancia_fisica")),
         MetricDefinition("wault_anos", "quality", .04, "higher"),
         MetricDefinition("tenant_concentration", "risk", .04, "lower"),
         MetricDefinition("geographic_diversification", "quality", .03, "higher"),
@@ -178,8 +183,8 @@ def methodology_manifest() -> dict[str, Any]:
         "type_metrics": {key: [asdict(m) for m in value] for key, value in TYPE_METRICS.items()},
         "pvp_targets": PVP_TARGETS,
         "integrated_pipeline": {
-            "eligibility_version": "6.5.0",
-            "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.5",
+            "eligibility_version": "6.6.0",
+            "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.6",
             "stages": ("eligibility", "type_score", "empirical_confidence",
                        "pit_walk_forward", "robust_scenario_optimization"),
             "correlation_min_months": 12,
@@ -241,8 +246,22 @@ def _rank_scores(values: list[float | None], *, higher: bool) -> dict[int, float
     return result
 
 
+def _metric_key_and_value(row: dict, definition: MetricDefinition) -> tuple[str, float | None]:
+    """Resolve uma métrica virtual sem fabricar nem combinar observações.
+
+    A ordem dos ``fallback_keys`` é parte da fórmula versionada. O primeiro
+    valor numérico finito é usado e sua chave original preserva a linhagem.
+    """
+    keys = definition.fallback_keys or (definition.key,)
+    for key in keys:
+        value = _number(row.get(key))
+        if value is not None:
+            return key, value
+    return definition.key, None
+
+
 def _metric_values(rows: list[dict], definition: MetricDefinition, fii_type: str) -> list[float | None]:
-    values = [_number(row.get(definition.key)) for row in rows]
+    values = [_metric_key_and_value(row, definition)[1] for row in rows]
     if definition.direction != "target":
         return values
     target = definition.target
@@ -276,8 +295,9 @@ def _metric_metadata_for(row: dict, metric_key: str) -> dict[str, Any]:
     return {}
 
 
-def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date) -> float:
-    metadata = _metric_metadata_for(row, definition.key)
+def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date,
+                          *, source_key: str | None = None) -> float:
+    metadata = _metric_metadata_for(row, source_key or definition.key)
     available = _date(metadata.get("available_at") or row.get("metrics_fetched_at") or row.get("updated_at"))
     if available is None:
         return .50
@@ -287,8 +307,9 @@ def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date) 
     return max(0.0, 1.0 - (age - definition.max_age_days) / max(definition.max_age_days * 2, 1))
 
 
-def _source_quality_for_metric(row: dict, definition: MetricDefinition) -> float:
-    metadata = _metric_metadata_for(row, definition.key)
+def _source_quality_for_metric(row: dict, definition: MetricDefinition,
+                               *, source_key: str | None = None) -> float:
+    metadata = _metric_metadata_for(row, source_key or definition.key)
     quality = _number(metadata.get("source_quality"))
     if quality is not None:
         return min(max(quality, 0.0), 1.0)
@@ -341,9 +362,10 @@ def score_fiis_by_type(
             components_num: dict[str, float] = {}
             components_den: dict[str, float] = {}
             used_inputs: dict[str, Any] = {}
+            input_sources: dict[str, str] = {}
 
             for definition in definitions:
-                value = _number(row.get(definition.key))
+                source_key, value = _metric_key_and_value(row, definition)
                 score = metric_scores[definition.key].get(index)
                 if value is None or score is None:
                     missing.append(definition.key)
@@ -356,9 +378,12 @@ def score_fiis_by_type(
                 weighted_score += definition.weight * score
                 components_num[definition.component] = components_num.get(definition.component, 0.0) + definition.weight * score
                 components_den[definition.component] = components_den.get(definition.component, 0.0) + definition.weight
-                freshness_weighted += definition.weight * _freshness_for_metric(row, definition, today)
-                source_weighted += definition.weight * _source_quality_for_metric(row, definition)
+                freshness_weighted += definition.weight * _freshness_for_metric(
+                    row, definition, today, source_key=source_key)
+                source_weighted += definition.weight * _source_quality_for_metric(
+                    row, definition, source_key=source_key)
                 used_inputs[definition.key] = value
+                input_sources[definition.key] = source_key
 
             coverage = observed_weight / total_weight if total_weight else 0.0
             critical_coverage = (observed_critical_weight / total_critical_weight
@@ -420,6 +445,7 @@ def score_fiis_by_type(
                 "publication_status": publication_status,
                 "publication_reasons": tuple(reasons),
                 "score_inputs": used_inputs,
+                "score_input_sources": input_sources,
                 "as_of_date": today.isoformat(),
             })
     output.sort(key=lambda row: (float(row.get("type_score") or 0), float(row.get("confidence") or 0)), reverse=True)

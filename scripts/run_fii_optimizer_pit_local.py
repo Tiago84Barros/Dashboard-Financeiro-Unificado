@@ -1,4 +1,4 @@
-"""Executa e persiste no warehouse local o walk-forward do otimizador FII v6.5."""
+"""Executa e persiste no warehouse local o walk-forward do otimizador FII v6.6."""
 from __future__ import annotations
 
 import argparse

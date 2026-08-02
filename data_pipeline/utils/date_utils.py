@@ -111,7 +111,7 @@ def freshness_label(
         return "outdated"
 
 
-def fmt_datetime_br(dt: datetime | None) -> str:
+def fmt_datetime_br(dt: object) -> str:
     if dt is None:
         return "Nunca"
     if isinstance(dt, str):
@@ -119,7 +119,14 @@ def fmt_datetime_br(dt: datetime | None) -> str:
             dt = datetime.fromisoformat(dt)
         except ValueError:
             return dt
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    dt = dt.astimezone(_BRASILIA_TZ)
-    return dt.strftime("%d/%m/%Y %H:%M")
+    # Agregações pandas devolvem NaN/NaT quando a coluna não possui datas.
+    # Esses sentinelas não podem atravessar a fronteira de apresentação.
+    if not isinstance(dt, datetime):
+        return "Nunca"
+    try:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.astimezone(_BRASILIA_TZ)
+        return dt.strftime("%d/%m/%Y %H:%M")
+    except (AttributeError, OSError, OverflowError, TypeError, ValueError):
+        return "Nunca"

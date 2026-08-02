@@ -96,13 +96,49 @@ def cri_security_key(item: dict) -> str | None:
     return None
 
 
-def normalize_type(value: Any) -> str | None:
+def _normalized_text(value: Any) -> str:
     text = str(value or "").strip().lower()
-    text = "".join(char for char in unicodedata.normalize("NFKD", text)
+    return "".join(char for char in unicodedata.normalize("NFKD", text)
                    if not unicodedata.combining(char))
+
+
+def normalize_type(value: Any) -> str | None:
+    text = _normalized_text(value)
     aliases = {"tijolo": "tijolo", "papel": "papel", "fof": "fof",
                "fundo de fundos": "fof", "hibrido": "hibrido"}
     return aliases.get(text)
+
+
+def infer_type_from_profile(*, mandate: Any = None, sector: Any = None,
+                            name: Any = None, property_count: Any = None,
+                            financial_asset_count: Any = None) -> str | None:
+    """Infere tipo somente a partir de sinais estruturais não ambíguos.
+
+    ``Renda``, setores genéricos e a mera presença de ativos financeiros não
+    distinguem papel, FoF e caixa; por isso permanecem sem classificação.
+    """
+    mandate_text = _normalized_text(mandate)
+    mandate_types = {
+        "hibrido": "hibrido",
+        "titulos e valores mobiliarios": "papel",
+        "fundo de fundos": "fof",
+    }
+    if mandate_text in mandate_types:
+        return mandate_types[mandate_text]
+
+    sector_text = _normalized_text(sector)
+    if sector_text in {"fundo de fundos", "fof"}:
+        return "fof"
+
+    name_text = _normalized_text(name)
+    if re.search(r"(?:^|\W)fof(?:\W|$)", name_text, flags=re.IGNORECASE):
+        return "fof"
+
+    properties = _num(property_count)
+    financial = _num(financial_asset_count)
+    if properties is not None and properties > 0 and financial == 0:
+        return "tijolo"
+    return None
 
 
 def _observation(ticker: str, metric: str, value: Any, reference_date: date,
@@ -176,7 +212,10 @@ def normalize_indicators(payload: dict, raw_payload_id: int | None = None) -> di
     for item in payload.get("fiis") or []:
         ticker = _ticker(item)
         reference = _date(item.get("asOfDate")) or available.date()
-        fii_type = normalize_type(item.get("segmentType"))
+        fii_type = normalize_type(item.get("segmentType")) or infer_type_from_profile(
+            mandate=item.get("mandate"), sector=item.get("segmentoAtuacao"),
+            name=item.get("name"),
+        )
         pvp_raw = _num(item.get("priceToNav"))
         dy_raw = _num(item.get("dividendYield12m"))
         pvp = pvp_raw if pvp_raw is not None and 0 < pvp_raw <= 10 else None
@@ -566,13 +605,26 @@ def normalize_portfolio(payload: dict, raw_payload_id: int | None = None) -> dic
                 allocation_types.add("tijolo")
             elif asset_class in {"cri", "lci", "receivable", "private_bond"}:
                 allocation_types.add("papel")
-            elif asset_class in {"fund_share", "fii", "fund_holding"}:
+            # ``fund_share`` é genérico na fonte e também aparece em veículos
+            # imobiliários diretos; apenas classes explicitamente FII/FoF são
+            # evidência estrutural suficiente para classificar como FoF.
+            elif asset_class in {"fii", "fund_holding"}:
                 allocation_types.add("fof")
         if allocation_types:
             inferred_type = (next(iter(allocation_types)) if len(allocation_types) == 1
                              else "hibrido")
             type_inferences.append({"ticker": ticker, "tipo": inferred_type,
                                     "reference_date": reference, "raw_payload_id": raw_payload_id})
+        else:
+            summary = fund.get("summary") or {}
+            inferred_type = infer_type_from_profile(
+                property_count=(summary.get("properties") or {}).get("count"),
+                financial_asset_count=(summary.get("financialAssets") or {}).get("count"),
+            )
+            if inferred_type:
+                type_inferences.append({"ticker": ticker, "tipo": inferred_type,
+                                        "reference_date": reference,
+                                        "raw_payload_id": raw_payload_id})
         financial = fund.get("financialAssets") or []
         allocation_weights, allocation_value = _weighted_exposures(
             allocations, lambda item: item.get("assetClass"))

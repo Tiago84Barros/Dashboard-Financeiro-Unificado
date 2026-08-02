@@ -1150,6 +1150,7 @@ def reclassify_fii_types_from_cache() -> dict:
     if engine is None:
         return {"status": "failed", "updated": 0}
     authoritative: dict[str, str] = {}
+    official_profile: dict[str, str] = {}
     fallback: dict[str, str] = {}
     with engine.connect() as conn:
         rows = conn.execute(text("""
@@ -1159,6 +1160,40 @@ def reclassify_fii_types_from_cache() -> dict:
               AND request_status='success' AND payload_json IS NOT NULL
             ORDER BY collected_at, id
         """)).mappings().all()
+        profiles = conn.execute(text("""
+            SELECT f.ticker, f.name, COALESCE(f.segmento_cvm, f.segmento) AS sector,
+                   mandate.value_text AS mandate,
+                   properties.value_numeric AS property_count,
+                   financial.value_numeric AS financial_asset_count
+            FROM market.fiis f
+            LEFT JOIN LATERAL (
+                SELECT value_text FROM market.fii_metric_observations
+                WHERE ticker=f.ticker AND metric_name='mandate'
+                  AND quality_status IN ('observed','accepted')
+                ORDER BY reference_date DESC, available_at DESC LIMIT 1
+            ) mandate ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT value_numeric FROM market.fii_metric_observations
+                WHERE ticker=f.ticker AND metric_name='property_count'
+                  AND quality_status IN ('observed','accepted')
+                ORDER BY reference_date DESC, available_at DESC LIMIT 1
+            ) properties ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT value_numeric FROM market.fii_metric_observations
+                WHERE ticker=f.ticker AND metric_name='financial_asset_count'
+                  AND quality_status IN ('observed','accepted')
+                ORDER BY reference_date DESC, available_at DESC LIMIT 1
+            ) financial ON TRUE
+            WHERE COALESCE(f.ticker,'') <> ''
+        """)).mappings().all()
+    for profile in profiles:
+        inferred = fii_v2.infer_type_from_profile(
+            mandate=profile.get("mandate"), sector=profile.get("sector"),
+            name=profile.get("name"), property_count=profile.get("property_count"),
+            financial_asset_count=profile.get("financial_asset_count"),
+        )
+        if inferred:
+            official_profile[str(profile["ticker"])] = inferred
     for row in rows:
         payload = dict(row["payload_json"] or {})
         if row["endpoint"] == "fii_v2_indicators":
@@ -1171,20 +1206,33 @@ def reclassify_fii_types_from_cache() -> dict:
             for item in normalized["type_inferences"]:
                 if item.get("ticker") and item.get("tipo"):
                     fallback[str(item["ticker"])] = str(item["tipo"])
-    classifications = {**fallback, **authoritative}
+    # Precedência: composição genérica < perfil oficial CVM < tipo explícito.
+    inferred = {**fallback, **official_profile}
+    classifications = {**inferred, **authoritative}
     if not classifications:
         return {"status": "empty", "updated": 0}
     with engine.begin() as conn:
-        result = conn.execute(text("""
+        inferred_result = conn.execute(text("""
+            UPDATE market.fiis f SET tipo=x.tipo
+            FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS x(ticker text, tipo text)
+            WHERE f.ticker=x.ticker AND x.tipo IN ('tijolo','papel','fof','hibrido')
+              AND (f.tipo IS NULL OR f.tipo NOT IN ('tijolo','papel','fof','hibrido'))
+        """), {"rows": json.dumps([{"ticker": ticker, "tipo": fii_type}
+                                     for ticker, fii_type in inferred.items()])})
+        authoritative_result = conn.execute(text("""
             UPDATE market.fiis f SET tipo=x.tipo
             FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS x(ticker text, tipo text)
             WHERE f.ticker=x.ticker AND x.tipo IN ('tijolo','papel','fof','hibrido')
               AND f.tipo IS DISTINCT FROM x.tipo
         """), {"rows": json.dumps([{"ticker": ticker, "tipo": fii_type}
-                                     for ticker, fii_type in classifications.items()])})
-    return {"status": "updated", "updated": max(int(result.rowcount or 0), 0),
+                                     for ticker, fii_type in authoritative.items()])})
+    inferred_updated = max(int(inferred_result.rowcount or 0), 0)
+    authoritative_updated = max(int(authoritative_result.rowcount or 0), 0)
+    return {"status": "updated", "updated": inferred_updated + authoritative_updated,
             "classified": len(classifications), "authoritative": len(authoritative),
-            "fallback": len(fallback)}
+            "official_profile": len(official_profile), "fallback": len(fallback),
+            "inferred_updated": inferred_updated,
+            "authoritative_updated": authoritative_updated}
 
 
 def ingest_v2_details(limit: int | None = None, tickers: list[str] | None = None,
