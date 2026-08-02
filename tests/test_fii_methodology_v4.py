@@ -150,3 +150,46 @@ def test_malformed_metric_metadata_is_missing_instead_of_crashing():
     assert len(scored) == 1
     assert scored[0]["ticker"] == "AAAA11"
     assert 0 <= scored[0]["source_quality"] <= 1
+
+
+def test_operational_vacancy_uses_financial_then_physical_without_double_counting():
+    financial = _full_tijolo("FINA11")
+    financial["vacancia_fisica"] = .08
+    financial["vacancia_financeira"] = .03
+    physical = _full_tijolo("FISI11")
+    physical["vacancia_fisica"] = .06
+    physical.pop("vacancia_financeira")
+    missing = _full_tijolo("MISS11")
+    missing.pop("vacancia_fisica")
+    missing.pop("vacancia_financeira")
+
+    rows = score_fiis_by_type(
+        [financial, physical, missing], as_of=date(2026, 7, 12),
+        validation_status="passed",
+    )
+    by_ticker = {row["ticker"]: row for row in rows}
+
+    assert by_ticker["FINA11"]["score_inputs"]["vacancia_operacional"] == .03
+    assert by_ticker["FISI11"]["score_inputs"]["vacancia_operacional"] == .06
+    assert "vacancia_operacional" not in by_ticker["FINA11"]["missing_critical"]
+    assert "vacancia_operacional" not in by_ticker["FISI11"]["missing_critical"]
+    assert "vacancia_operacional" in by_ticker["MISS11"]["missing_critical"]
+
+
+def test_operational_vacancy_uses_metadata_from_the_selected_source_metric():
+    row = _full_tijolo("META11")
+    row["vacancia_fisica"] = .08
+    row.pop("vacancia_financeira")
+    row["metric_metadata"] = {
+        "vacancia_fisica": {
+            "available_at": "2026-07-01",
+            "source_quality": .95,
+            "source": "cvm_informe_trimestral",
+        },
+    }
+
+    scored = score_fiis_by_type(
+        [row], as_of=date(2026, 7, 12), validation_status="passed",
+    )[0]
+
+    assert scored["score_input_sources"]["vacancia_operacional"] == "vacancia_fisica"

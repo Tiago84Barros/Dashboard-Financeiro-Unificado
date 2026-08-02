@@ -1587,7 +1587,7 @@ def _tab_busca(df: pd.DataFrame) -> None:
 def _tab_carteira(ranked: pd.DataFrame) -> None:
     st.subheader("Preferências da seleção")
     st.markdown(_info_card_html(
-        "Seleção Integrada de FIIs · v6.5",
+        "Seleção Integrada de FIIs · v6.6",
         "Um único motor combina elegibilidade histórica, score específico por tipo, "
         "qualidade dos dados, cenário macroeconômico, concentração e correlação. "
         "DY, P/VP e liquidez entram uma única vez, sem somar scores concorrentes.",

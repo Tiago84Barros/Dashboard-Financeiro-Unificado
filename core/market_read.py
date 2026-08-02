@@ -1093,7 +1093,7 @@ load_fii_methodology_inputs.clear = _clear_fii_methodology_inputs_cache
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def load_fii_validation_status(methodology_version: str = "6.5.0") -> dict:
+def load_fii_validation_status(methodology_version: str = "6.6.0") -> dict:
     df = _q("""
         SELECT status, metrics_json, blockers_json, as_of_date, finished_at
         FROM market.fii_validation_runs

@@ -195,3 +195,71 @@ def test_portfolio_emits_strong_cri_security_key_for_cvm_reconciliation():
     assert security["exposure_weight"] == 1
     assert len([row for row in result["exposures"]
                 if row["exposure_type"] == "security"]) == 1
+
+
+@pytest.mark.parametrize(("profile", "expected"), [
+    ({"mandate": "Híbrido"}, "hibrido"),
+    ({"mandate": "Títulos e Valores Mobiliários"}, "papel"),
+    ({"mandate": "Fundo de Fundos"}, "fof"),
+    ({"name": "FII RB Capital I FOF"}, "fof"),
+    ({"property_count": 2, "financial_asset_count": 0}, "tijolo"),
+])
+def test_profile_type_inference_accepts_only_strong_structural_signals(profile, expected):
+    assert fii_v2.infer_type_from_profile(**profile) == expected
+
+
+@pytest.mark.parametrize("profile", [
+    {"mandate": "Renda"},
+    {"sector": "Outros"},
+    {"name": "Fundo Imobiliário Genérico"},
+    {"property_count": 0, "financial_asset_count": 2},
+    {"property_count": 1, "financial_asset_count": 1},
+])
+def test_profile_type_inference_preserves_ambiguity(profile):
+    assert fii_v2.infer_type_from_profile(**profile) is None
+
+
+def test_indicators_use_profile_inference_only_when_explicit_type_is_absent():
+    payload = {"requestedAt": REQUESTED, "fiis": [{
+        "symbol": "HYPI11", "asOfDate": "2026-06-01",
+        "segmentType": None, "mandate": "Híbrido", "name": "Hire Properties I",
+    }, {
+        "symbol": "OVRD11", "asOfDate": "2026-06-01",
+        "segmentType": "papel", "mandate": "Híbrido", "name": "Tipo explícito",
+    }]}
+
+    result = fii_v2.normalize_indicators(payload)
+    by_ticker = {row["ticker"]: row for row in result["fii_updates"]}
+
+    assert by_ticker["HYPI11"]["tipo"] == "hibrido"
+    assert by_ticker["OVRD11"]["tipo"] == "papel"
+
+
+def test_portfolio_infers_tijolo_from_exclusive_property_inventory():
+    payload = {"requestedAt": REQUESTED, "fiis": [{
+        "symbol": "FMOF11", "referenceDate": "2026-06-30", "version": 1,
+        "allocations": [{"assetClass": "cash", "count": 1, "value": 10}],
+        "summary": {
+            "properties": {"count": 1},
+            "financialAssets": {"count": 0},
+        },
+    }]}
+
+    result = fii_v2.normalize_portfolio(payload)
+
+    assert result["type_inferences"][0]["tipo"] == "tijolo"
+
+
+def test_portfolio_does_not_treat_generic_fund_share_as_fof():
+    payload = {"requestedAt": REQUESTED, "fiis": [{
+        "symbol": "BBFI11", "referenceDate": "2026-06-30", "version": 1,
+        "allocations": [{"assetClass": "fund_share", "count": 2, "value": 100}],
+        "summary": {
+            "properties": {"count": 0},
+            "financialAssets": {"count": 2},
+        },
+    }]}
+
+    result = fii_v2.normalize_portfolio(payload)
+
+    assert result["type_inferences"] == []

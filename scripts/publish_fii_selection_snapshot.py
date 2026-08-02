@@ -99,10 +99,10 @@ def _compact_payload(record: dict[str, Any]) -> dict[str, Any]:
     from core.fii_methodology import COMMON_METRICS, TYPE_METRICS
 
     fii_type = str(payload.get("tipo") or "").strip().lower()
-    relevant_metrics = {definition.key for definition in COMMON_METRICS}
-    relevant_metrics.update(
-        definition.key for definition in TYPE_METRICS.get(fii_type, ())
-    )
+    definitions = (*COMMON_METRICS, *TYPE_METRICS.get(fii_type, ()))
+    relevant_metrics = {definition.key for definition in definitions}
+    for definition in definitions:
+        relevant_metrics.update(definition.fallback_keys)
     compact: dict[str, list[Any]] = {}
     for metric, details in metadata.items():
         if str(metric) not in relevant_metrics or not isinstance(details, dict):

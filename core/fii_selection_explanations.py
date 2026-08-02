@@ -42,6 +42,7 @@ METRIC_LABELS = {
     "subordination_protection": "proteção por subordinação",
     "related_party_exposure": "exposição a partes relacionadas",
     "tenant_concentration": "concentração de locatários",
+    "vacancia_operacional": "vacância operacional (financeira ou física)",
     "vacancia_financeira": "vacância financeira",
     "vacancia_fisica": "vacância física",
     "wault_anos": "WAULT",

@@ -53,6 +53,7 @@ def test_publisher_preserves_configured_pooler_mode():
 def test_build_rows_compacts_metric_metadata_without_losing_provenance():
     frame = pd.DataFrame([{
         "ticker": "ABCD11",
+        "tipo": "tijolo",
         "metric_metadata": {
             "dy_12m": {
                 "source": "brapi",
@@ -63,6 +64,11 @@ def test_build_rows_compacts_metric_metadata_without_losing_provenance():
                 "unused_debug_payload": "x" * 10_000,
             },
             "unrelated_metric": {"source": "unused"},
+            "vacancia_fisica": {
+                "source": "cvm_informe_trimestral",
+                "available_at": "2026-07-13T12:00:00+00:00",
+                "source_quality": .95,
+            },
         },
     }])
 
@@ -73,6 +79,9 @@ def test_build_rows_compacts_metric_metadata_without_losing_provenance():
         "2026-07-14T12:00:00+00:00", .8, None, "brapi",
     ]
     assert "unrelated_metric" not in payload["metric_metadata"]
+    assert payload["metric_metadata"]["vacancia_fisica"] == [
+        "2026-07-13T12:00:00+00:00", .95, None, "cvm_informe_trimestral",
+    ]
     assert row["schema_version"] == "fii_selection_inputs.v2"
 
 
@@ -119,8 +128,8 @@ def test_publication_ensures_methodology_before_validation_fk():
     _ensure_target_methodology(connection)
 
     assert "INSERT INTO market.fii_methodology_versions" in connection.statement
-    assert connection.parameters["version"] == "6.5.0"
-    assert "fii_integrated_robust_optimizer.v6.5" in connection.parameters["manifest"]
+    assert connection.parameters["version"] == "6.6.0"
+    assert "fii_integrated_robust_optimizer.v6.6" in connection.parameters["manifest"]
 
 
 def test_publication_promotes_only_passed_methodology():
@@ -133,12 +142,12 @@ def test_publication_promotes_only_passed_methodology():
 
     connection = Connection()
     _sync_methodology_status(connection, {
-        "methodology_version": "6.5.0", "status": "blocked",
+        "methodology_version": "6.6.0", "status": "blocked",
     })
     assert connection.statements == []
 
     _sync_methodology_status(connection, {
-        "methodology_version": "6.5.0", "status": "passed",
+        "methodology_version": "6.6.0", "status": "passed",
     })
     assert "SET status='passed'" in connection.statements[0][0]
 
@@ -167,7 +176,7 @@ def test_publication_preflight_accepts_current_approved_validation():
     validation = {
         "status": "passed",
         "metrics_json": {
-            "strategy_id": "fii_integrated_robust_optimizer.v6.5",
+            "strategy_id": "fii_integrated_robust_optimizer.v6.6",
             "backtest": {"periods": 65},
         },
         "blockers_json": [],
