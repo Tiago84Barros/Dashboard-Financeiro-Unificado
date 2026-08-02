@@ -191,3 +191,53 @@ o agendamento foi reativado. Falha documental totalmente transitória e coberta
 por fallback íntegro vira `warning`; falha estrutural, queda material de
 cobertura, duplicidade, violação temporal, promoção provisória ou claim preso
 continua pausando a recorrência.
+
+## Descoberta auxiliar pelo Fundamentus
+
+O comando `scripts/discover_fii_reports_fundamentus.py` consulta, no máximo,
+20 páginas de FIIs por execução. O Fundamentus atua apenas como índice: só
+são aceitos links HTTPS para o endpoint exato `downloadDocumento` do
+Fundos.NET. A URL canônica, o identificador do documento e a chave natural são
+do Fundos.NET; links externos, linhas sem período e parâmetros inesperados são
+rejeitados.
+
+O modo padrão é somente leitura:
+
+```powershell
+python scripts/discover_fii_reports_fundamentus.py --tickers BRCR11 MFII11
+```
+
+Para cadastrar apenas lacunas na fila local:
+
+```powershell
+python scripts/discover_fii_reports_fundamentus.py --tickers BRCR11 MFII11 --write
+```
+
+A inserção usa `ON CONFLICT DO NOTHING`: registros existentes não são
+sobrescritos. Cada novo documento recebe auditoria com o hash da página de
+descoberta e `score_eligible=false`. O coletor não baixa binários, não executa
+o parser, não promove evidências e não publica snapshots.
+
+Antes da escrita, a identidade do fundo precisa ser ancorada pela sobreposição
+de ao menos um ID Fundos.NET já conhecido para o mesmo ticker. Qualquer colisão
+da URL canônica com outro ticker bloqueia a página inteira.
+
+### Piloto Fundamentus/Fundos.NET — 02/08/2026
+
+O dry-run limitado a 20 FIIs encontrou 2.071 links Fundos.NET: 1.087 já
+existiam no warehouse e 984 eram lacunas históricas. As 984 lacunas foram
+registradas somente no warehouse local, todas como `pending`, com auditoria
+individual e referências entre abril de 2016 e junho de 2026. Nenhuma página
+falhou e nenhum link precisou ser rejeitado.
+
+A validação posterior confirmou 984 documentos para 984 eventos de auditoria,
+zero URLs fora do endpoint canônico, zero datas vazias, zero versões baixadas,
+zero registros elegíveis ao score e zero chaves naturais duplicadas. Uma nova
+execução do MFII11 reconheceu os 133 links como existentes e inseriu zero
+linhas, comprovando a idempotência.
+
+O catálogo bruto local passou de 53.629 para 54.613 documentos e a fila
+`pending`, de 47.343 para 48.327. Como não houve download, extração, revisão
+ou recálculo, o snapshot metodológico 6.4.0 permanece com 245 FIIs `ready` e
+137 `insufficient`. A automação recorrente continua pausada até a correção do
+timeout do worker documental.
