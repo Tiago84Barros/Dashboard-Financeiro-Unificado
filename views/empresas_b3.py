@@ -3569,6 +3569,122 @@ def _render_saude_do_ranking(df_mult: pd.DataFrame, df_scored: pd.DataFrame,
                 st.warning(f"**{h.ticker}** — {h.resumo}", icon="⚠️")
 
 
+def _render_classe_mais_liquida(tickers: list[str]) -> None:
+    """Avisa quando existe classe irmã MAIS NEGOCIADA da mesma empresa.
+
+    Diferença deliberada para a Criação de Portfólio: lá a troca é automática,
+    porque a tela decide alocação; aqui só avisa, porque análise não troca nada.
+    O que não pode é omitir — o filtro de giro desta aba aprova BRAP3 sem dizer
+    que BRAP4 gira 72× mais com a MESMA exposição econômica, e quem estuda a
+    empresa aqui acaba comprando o papel errado lá fora.
+    """
+    from core.b3_liquidity import (
+        LiquidityPolicy, formata_reais, melhor_classe,
+    )
+
+    if not tickers:
+        return
+    try:
+        giro = _db.load_giro_diario()
+        irmas = _db.load_classes_irmas()
+    except Exception:
+        return
+    if not giro or not irmas:
+        return
+
+    politica = LiquidityPolicy()
+    achados = []
+    for tk in tickers:
+        alvo = str(tk).upper()
+        candidata = melhor_classe(alvo, irmas.get(alvo, ()), giro, politica)
+        if candidata:
+            achados.append((alvo, candidata, giro.get(alvo, 0.0),
+                            giro.get(candidata, 0.0)))
+    if not achados:
+        return
+
+    _sec_hdr("💧 Classe mais negociada da mesma empresa")
+    st.caption(
+        "Mesma empresa, mesma tese — outra classe de ação. O filtro de giro "
+        "acima olha o papel que você selecionou; aqui o app diz quando a irmã "
+        "negocia muito mais. Vale lembrar o que a troca NÃO resolve: ordinária "
+        "e preferencial diferem em direito a voto e em tag-along."
+    )
+    st.dataframe(
+        pd.DataFrame([
+            {"No ranking": a, "Giro/dia": f"R$ {formata_reais(ga / 1000)} mil",
+             "Mais negociada": b, "Giro/dia ": f"R$ {formata_reais(gb / 1000)} mil",
+             "Vantagem": f"{gb / max(ga, 1.0):.0f}×"}
+            for a, b, ga, gb in achados
+        ]),
+        hide_index=True, use_container_width=True,
+    )
+
+
+def _render_governo_e_resiliencia(tickers: list[str], df_set: pd.DataFrame) -> None:
+    """Dependência de decisão de governo + comportamento nas recessões.
+
+    Duas dimensões que nenhum indicador contábil desta tela mede: revisão
+    tarifária e política de preços de estatal não aparecem em balanço, e o rótulo
+    setorial da B3 não sabe como a empresa atravessou 2015-16 e 2020.
+
+    Informa e não reclassifica nada, pelo motivo registrado em
+    ``core/b3_cycle_evidence``: são duas recessões, e a de 2020 favoreceu
+    exportador a ponto de fazer commodity medir como mais defensiva que
+    saneamento.
+    """
+    from core.b3_cycle_evidence import (
+        FRAGIL, LIVRE, REGULADO_ESTATAL, RESILIENTE, Resiliencia,
+        classificar_resiliencia, classify_regulation,
+    )
+
+    if not tickers:
+        return
+    mapa_setor: dict[str, str] = {}
+    if df_set is not None and not df_set.empty and "SETOR" in df_set.columns:
+        _ctk = "ticker" if "ticker" in df_set.columns else "Ticker"
+        if _ctk in df_set.columns:
+            mapa_setor = {str(r[_ctk]).upper(): str(r["SETOR"] or "")
+                          for _, r in df_set.iterrows()}
+    try:
+        bruto = _db.load_resiliencia_ciclo()
+    except Exception:
+        bruto = {}
+
+    linhas = []
+    for tk in tickers:
+        alvo = str(tk).upper()
+        reg = classify_regulation(mapa_setor.get(alvo), alvo)
+        d = bruto.get(alvo)
+        r = None
+        if d:
+            r = Resiliencia(alvo, d["razao"], d["margem_normal"], d["margem_crise"],
+                            d["anos"], classificar_resiliencia(d["razao"], d["anos"]))
+        if reg == LIVRE and (r is None or not r.confiavel):
+            continue
+        linhas.append({
+            "Ticker": alvo,
+            "Decisão de governo": {"tarifa": "tarifa regulada",
+                                   REGULADO_ESTATAL: "controle estatal"}.get(reg, "—"),
+            "Resiliência em recessão": (f"{r.razao:.2f}" if r and r.confiavel else "—"),
+            "Leitura": ({RESILIENTE: "🟢 segurou a margem",
+                         FRAGIL: "🔴 margem desabou"}.get(r.classe, "🟡 intermediária")
+                        if r and r.confiavel else "sem medição"),
+        })
+    if not linhas:
+        return
+
+    _sec_hdr("🏛️ Dependência de governo e comportamento em recessão")
+    st.caption(
+        "Receita ou preço que dependem de regulador ou de controlador estatal, "
+        "e margem operacional mediana nos anos de recessão (2015-16 e 2020) "
+        "contra os anos normais. Acima de 1,00 a margem SUBIU na crise. "
+        "**Informa, não reclassifica** — são duas recessões, e a de 2020 "
+        "favoreceu exportador."
+    )
+    st.dataframe(pd.DataFrame(linhas), hide_index=True, use_container_width=True)
+
+
 def _render_calibracao_segmento(calib) -> None:
     """Painel da calibração ótima automática do segmento (aba Análise Avançada)."""
     from core.segment_calibration import pesos_rows, criterios_rows
@@ -4041,6 +4157,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                          use_container_width=True, hide_index=True,
                          height=min(300, 45 + 32 * len(excluidas_dados)))
     _render_saude_do_ranking(df_mult_enrich, df_scored)
+    _topo_ranking = ([str(t).upper() for t in df_scored["Ticker"].head(20)]
+                     if df_scored is not None and not df_scored.empty else [])
+    _render_classe_mais_liquida(_topo_ranking)
+    _render_governo_e_resiliencia(_topo_ranking, df_set)
 
     tk_info       = {row["ticker"]: row for _, row in df_filt.iterrows()}
     tks_com_score = set(df_scored["Ticker"].tolist()) if not df_scored.empty else set()

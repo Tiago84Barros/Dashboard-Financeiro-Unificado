@@ -99,3 +99,76 @@ v._render_saude_do_ranking(mult, pd.DataFrame({'Ticker': ['BOA3']}))
     assert not app.exception
     assert not app.error
     assert not app.warning
+
+
+def test_avancada_avisa_classe_irma_mais_liquida():
+    """A Avançada não troca de classe — mas não pode OMITIR que existe melhor.
+
+    O filtro de giro aprova BRAP3 sem dizer que BRAP4 negocia 72× mais com a
+    mesma exposição econômica, e quem estuda a empresa aqui acaba comprando o
+    papel errado lá fora.
+    """
+    from unittest.mock import patch
+
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_string("""
+from unittest.mock import patch
+import views.empresas_b3 as v
+with patch.object(v._db, 'load_giro_diario',
+                  return_value={'BRAP3': 649_000.0, 'BRAP4': 46_819_000.0,
+                                'WEGE3': 358_068_000.0}), \
+     patch.object(v._db, 'load_classes_irmas',
+                  return_value={'BRAP3': ('BRAP3', 'BRAP4'),
+                                'BRAP4': ('BRAP3', 'BRAP4'),
+                                'WEGE3': ('WEGE3',)}):
+    v._render_classe_mais_liquida(['BRAP3', 'WEGE3'])
+""").run(timeout=60)
+    assert not app.exception
+    tabela = app.dataframe[0].value
+    assert list(tabela["No ranking"]) == ["BRAP3"]      # WEGE3 não tem irmã melhor
+    assert list(tabela["Mais negociada"]) == ["BRAP4"]
+
+
+def test_avancada_nao_mostra_secao_quando_nao_ha_o_que_avisar():
+    """Seção que aparece sempre vira ruído — só surge quando há achado."""
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_string("""
+from unittest.mock import patch
+import views.empresas_b3 as v
+with patch.object(v._db, 'load_giro_diario', return_value={'WEGE3': 3.5e8}), \
+     patch.object(v._db, 'load_classes_irmas', return_value={'WEGE3': ('WEGE3',)}):
+    v._render_classe_mais_liquida(['WEGE3'])
+""").run(timeout=60)
+    assert not app.exception
+    assert not app.dataframe
+
+
+def test_avancada_expoe_dependencia_de_governo_e_resiliencia():
+    """Duas dimensões que nenhum indicador contábil da tela mede."""
+    import pandas as pd
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_string("""
+import pandas as pd
+from unittest.mock import patch
+import views.empresas_b3 as v
+setores = pd.DataFrame([
+    {'ticker': 'PETR4', 'SETOR': 'Petróleo, Gás e Biocombustíveis'},
+    {'ticker': 'SBSP3', 'SETOR': 'Utilidade Pública'},
+    {'ticker': 'WEGE3', 'SETOR': 'Bens Industriais'},
+])
+with patch.object(v._db, 'load_resiliencia_ciclo', return_value={
+        'PETR4': {'razao': 0.27, 'margem_normal': 0.21, 'margem_crise': 0.06, 'anos': 3},
+        'WEGE3': {'razao': 0.85, 'margem_normal': 0.14, 'margem_crise': 0.12, 'anos': 3}}):
+    v._render_governo_e_resiliencia(['PETR4', 'SBSP3', 'WEGE3'], setores)
+""").run(timeout=60)
+    assert not app.exception
+    t = app.dataframe[0].value.set_index("Ticker")
+    # Controle estatal tem precedência sobre o setor.
+    assert t.at["PETR4", "Decisão de governo"] == "controle estatal"
+    assert t.at["SBSP3", "Decisão de governo"] == "tarifa regulada"
+    # WEGE3 entra por ter resiliência medida, mesmo sem dependência de governo.
+    assert t.at["WEGE3", "Decisão de governo"] == "—"
+    assert "0.85" in str(t.at["WEGE3", "Resiliência em recessão"])
