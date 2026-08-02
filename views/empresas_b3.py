@@ -419,48 +419,9 @@ def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def _batch_yf_liquidez(tickers: tuple[str, ...]) -> dict[str, float]:
-    """
-    Liquidez média diária negociada (R$/dia) dos últimos ~3 meses via yfinance.
-
-    Calcula a MEDIANA de (Close × Volume) por pregão — robusta a dias atípicos.
-    Liquidez muda lentamente, então cache de 24h é suficiente.
-
-    Returns:
-      {ticker_sem_sa: liquidez_mediana_diaria_rs}
-    """
-    if not tickers:
-        return {}
-    tks_sa = [f"{t.strip().upper().replace('.SA', '')}.SA" for t in tickers]
-    out: dict[str, float] = {}
-    try:
-        if len(tks_sa) == 1:
-            raw = yf.download(tks_sa[0], period="3mo", interval="1d",
-                              auto_adjust=True, progress=False)
-            if raw is None or raw.empty:
-                return {}
-            tk = tks_sa[0].replace(".SA", "").upper()
-            fin = (raw["Close"] * raw["Volume"]).dropna()
-            if not fin.empty:
-                out[tk] = float(fin.median())
-        else:
-            raw = yf.download(tks_sa, period="3mo", interval="1d",
-                              auto_adjust=True, progress=False)
-            if raw is None or raw.empty:
-                return {}
-            if isinstance(raw.columns, pd.MultiIndex):
-                close = raw["Close"]
-                vol   = raw["Volume"]
-                fin   = (close * vol)
-                for col in fin.columns:
-                    s = fin[col].dropna()
-                    tk = str(col).replace(".SA", "").strip().upper()
-                    if not s.empty:
-                        out[tk] = float(s.median())
-    except Exception:
-        return out
-    return out
+# _batch_yf_liquidez (liquidez média diária via yfinance) foi removida: o
+# filtro de liquidez da Análise Avançada lê _db.load_giro_diario() (armazém
+# local), em paridade com a Criação de Portfólio.
 
 
 def _prerank_tickers(df_mult: pd.DataFrame, tickers: list[str]) -> list[str]:

@@ -26,7 +26,9 @@ def test_liquidez_vem_do_armazem_nas_duas_telas():
     avancada = _fonte("empresas_b3.py")
     trecho = avancada[avancada.index("Filtro de liquidez de negociação"):][:2000]
     assert "load_giro_diario" in trecho
-    assert "_batch_yf_liquidez" not in trecho
+    # A helper em rede não existe mais; trava a reintrodução no arquivo inteiro
+    # (o comentário-lápide cita o nome, por isso o teste olha a definição).
+    assert "def _batch_yf_liquidez" not in avancada
 
 
 def test_piso_de_liquidez_padrao_igual_ao_perfil_recomendado():
