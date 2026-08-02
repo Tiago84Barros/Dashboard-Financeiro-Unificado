@@ -81,46 +81,74 @@ _CSS = """
 }
 
 /* Subnavegação persistente do Controle Financeiro.
-   Mantém o estado do segmented_control, mas replica o visual de st.tabs
-   usado em Investimentos: fundo transparente, divisor e aba ativa sublinhada. */
+   Mantém o estado do segmented_control e replica o trilho de cards suspensos
+   das vitrines de empresas, com destaque turquesa para a seção ativa. */
 .st-key-cf_secao_ativa,
 .st-key-cf_secao_ativa [data-testid="stButtonGroup"] {
     width: 100%;
 }
 .st-key-cf_secao_ativa [data-baseweb="button-group"] {
-    display: flex;
-    justify-content: flex-start;
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     width: 100%;
     max-width: 100%;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    gap: 0;
-    border-bottom: 1px solid #2D3748;
+    gap: 1rem;
+    padding: .2rem 0 .55rem;
+    overflow: visible;
+    border: 0 !important;
+    background: transparent !important;
 }
 .st-key-cf_secao_ativa [data-baseweb="button-group"] > button {
-    flex: 0 0 auto;
-    min-height: 2.5rem;
-    margin: 0 1.25rem 0 0 !important;
-    padding: 0.5rem 0.2rem 0.65rem !important;
-    background: transparent !important;
-    border: 0 !important;
-    border-bottom: 3px solid transparent !important;
-    border-radius: 0 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 3.4rem;
+    margin: 0 !important;
+    padding: .7rem .85rem !important;
+    background: rgba(23, 29, 43, .92) !important;
+    border: 1px solid #2D3748 !important;
+    border-radius: 12px !important;
     color: #E2E8F0 !important;
-    box-shadow: none !important;
-    font-weight: 500 !important;
-    white-space: nowrap;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, .18) !important;
+    font-weight: 680 !important;
+    line-height: 1.25;
+    white-space: normal;
+    transition: transform .16s ease, border-color .16s ease,
+                background .16s ease, box-shadow .16s ease;
 }
 .st-key-cf_secao_ativa [data-baseweb="button-group"] > button:hover {
     color: #00C896 !important;
+    border-color: rgba(0, 200, 150, .48) !important;
+    background: rgba(25, 34, 48, .98) !important;
+    box-shadow: 0 13px 28px rgba(0, 0, 0, .24) !important;
+    transform: translateY(-2px);
 }
 .st-key-cf_secao_ativa [data-baseweb="button-group"] > [data-testid="stBaseButton-segmented_controlActive"] {
-    color: #00C896 !important;
-    border-bottom-color: #00C896 !important;
+    color: #071711 !important;
+    background: #00C896 !important;
+    border-color: #00C896 !important;
+    box-shadow: 0 12px 28px rgba(0, 200, 150, .22) !important;
 }
 .st-key-cf_secao_ativa [data-baseweb="button-group"] > button:focus-visible {
     outline: 2px solid #4A9EFF !important;
-    outline-offset: -2px;
+    outline-offset: 3px;
+}
+@media (max-width: 720px) {
+    .st-key-cf_secao_ativa [data-baseweb="button-group"] {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: .7rem;
+    }
+    .st-key-cf_secao_ativa [data-baseweb="button-group"] > button {
+        min-height: 3.15rem;
+        padding: .62rem .7rem !important;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .st-key-cf_secao_ativa [data-baseweb="button-group"] > button {
+        transition: none;
+    }
+    .st-key-cf_secao_ativa [data-baseweb="button-group"] > button:hover {
+        transform: none;
+    }
 }
 
 /* ═══════════════════════════════════════════════
