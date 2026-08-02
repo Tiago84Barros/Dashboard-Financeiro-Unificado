@@ -17,8 +17,12 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import os
 import re
+import shutil
 import threading
+import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -34,16 +38,92 @@ _text_cache: "dict[str, tuple[str, int]]" = {}
 _CACHE_MAX = 8
 
 
+def _discover_tesseract_command(*, environ=None, which=shutil.which) -> str | None:
+    """Localiza o binário sem depender do PATH da automação no Windows."""
+    found = which("tesseract")
+    if found:
+        return str(found)
+    values = {
+        str(key).lower(): value
+        for key, value in (os.environ if environ is None else environ).items()
+    }
+    roots = [
+        values.get("programfiles"),
+        values.get("programfiles(x86)"),
+        str(Path(values["localappdata"]) / "Programs")
+        if values.get("localappdata") else None,
+    ]
+    for root in roots:
+        if not root:
+            continue
+        candidate = Path(root) / "Tesseract-OCR" / "tesseract.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def ocr_available() -> bool:
     """True se as dependências de OCR (pytesseract + binário + pypdfium2) existem."""
     try:
         import pypdfium2  # noqa: F401
         import pytesseract
 
+        command = _discover_tesseract_command()
+        if command:
+            pytesseract.pytesseract.tesseract_cmd = command
         pytesseract.get_tesseract_version()
     except Exception:
         return False
     return True
+
+
+def ocr_extract_page_texts(
+    file_bytes: bytes, *, render_scale: float = _RENDER_SCALE,
+    max_seconds: float | None = None, page_limit: int | None = None,
+) -> tuple[list[str], int, bool]:
+    """Executa OCR por página e devolve resultado parcial antes do deadline."""
+    if not file_bytes or not ocr_available():
+        return [], 0, False
+    import pypdfium2 as pdfium
+    import pytesseract
+
+    started = time.monotonic()
+    lang = _resolve_lang()
+    config = "--psm 4 --oem 1"
+    try:
+        pdf = pdfium.PdfDocument(io.BytesIO(file_bytes))
+        total_pages = len(pdf)
+        selected_pages = min(total_pages, max(int(page_limit or total_pages), 1))
+        page_texts: list[str] = []
+        for index in range(selected_pages):
+            remaining = None
+            if max_seconds is not None:
+                remaining = max(float(max_seconds), .1) - (
+                    time.monotonic() - started
+                )
+                if remaining <= 0:
+                    break
+            image = pdf[index].render(
+                scale=max(min(float(render_scale), 3.0), .75),
+                grayscale=True,
+            ).to_pil().convert("L")
+            try:
+                try:
+                    data = pytesseract.image_to_data(
+                        image, lang=lang, config=config,
+                        output_type=pytesseract.Output.DICT,
+                        **({"timeout": max(remaining, .1)}
+                           if remaining is not None else {}),
+                    )
+                except RuntimeError:
+                    break
+            finally:
+                image.close()
+            page_texts.append("\n".join(_lines_from_tsv(data)))
+        return page_texts, total_pages, len(page_texts) == selected_pages
+    except Exception:
+        logger.warning("[c6_ocr] falha no OCR paginado.", exc_info=True)
+        return [], 0, False
 
 
 def _resolve_lang() -> str:

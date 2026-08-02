@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--process-limit", type=int, default=10)
+    parser.add_argument("--tickers", nargs="+", default=None)
     parser.add_argument("--recent-months", type=int, default=24)
     parser.add_argument(
         "--document-types",
@@ -26,9 +27,9 @@ def main() -> int:
     parser.add_argument("--max-document-mb", type=int, default=30)
     parser.add_argument("--download-timeout", type=int, default=15)
     parser.add_argument("--download-attempts", type=int, default=2)
-    parser.add_argument("--document-deadline-seconds", type=int, default=25)
-    parser.add_argument("--parser-timeout-seconds", type=int, default=20)
-    parser.add_argument("--batch-timeout-seconds", type=int, default=75)
+    parser.add_argument("--document-deadline-seconds", type=int, default=50)
+    parser.add_argument("--parser-timeout-seconds", type=int, default=45)
+    parser.add_argument("--batch-timeout-seconds", type=int, default=90)
     parser.add_argument("--claim-release-reserve-seconds", type=int, default=5)
     parser.add_argument("--minimum-document-start-seconds", type=int, default=5)
     parser.add_argument("--host-failure-threshold", type=int, default=2)
@@ -74,6 +75,7 @@ def main() -> int:
             cooldown_minutes=max(int(args.host_cooldown_minutes), 1),
             document_options={
                 "limit": max(int(args.process_limit), 1),
+                "tickers": list(args.tickers or []),
                 "document_types": list(args.document_types),
                 "recent_months": max(int(args.recent_months), 0),
                 "max_batch_bytes": max(int(args.max_batch_mb), 1) * 1024**2,

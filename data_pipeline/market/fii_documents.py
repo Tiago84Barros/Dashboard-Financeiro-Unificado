@@ -32,7 +32,7 @@ from data_pipeline.market.fii_sources import metric_observation
 logger = logging.getLogger(__name__)
 
 PARSER_NAME = "fii_public_report"
-PARSER_VERSION = "1.6.6"
+PARSER_VERSION = "1.7.1"
 SCHEMA_VERSION = "fii-evidence-v6"
 
 
@@ -117,7 +117,12 @@ _METRIC_PATTERNS = {
     "subordination_protection": re.compile(r"subordina[cç][aã]o[^\d]{0,45}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "lease_expiry_concentration_24m": re.compile(r"(?:vencimentos?|revisional)[^\d%]{0,70}(?:24\s*meses|2\s*anos)[^\d%]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "management_fee": re.compile(r"taxa\s+de\s+administra[cç][aã]o[^\d]{0,60}(\d{1,3}(?:[.,]\d{1,3})?)\s*%", re.I),
-    "credit_spread": re.compile(r"(?:IPCA|CDI|IGP-?M)[^+\d]{0,15}\+?\s*(\d{1,2}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "credit_spread": re.compile(
+        r"(?:\bspread(?:\s+m[eé]dio)?(?:\s+(?:IPCA|CDI|IGP-?M))?"
+        r"[^\d%]{0,15}|(?:IPCA|CDI|IGP-?M)\s*\+\s*)"
+        r"(\d{1,2}(?:[.,]\d{1,2})?)\s*%",
+        re.I,
+    ),
     "property_count": re.compile(r"(?:portf[oó]lio|carteira)[^\d]{0,50}(\d{1,4})\s+(?:im[oó]veis|ativos\s+imobili[aá]rios)", re.I),
 }
 
@@ -159,10 +164,10 @@ _DEVELOPMENT_METRICS = (
      re.compile(r"(\d{1,3})\s+conclu[ií]dos", re.I),
      1.0, "quantidade", "manager_reported", 75),
     ("development_construction_project_count",
-     re.compile(r"(\d{1,3})\s+em\s+obras", re.I),
+     re.compile(r"(\d{1,3})\s*(?:em|m)\s+obras", re.I),
      1.0, "quantidade", "manager_reported", 75),
     ("development_prelaunch_project_count",
-     re.compile(r"(\d{1,3})\s+em\s+pr[eé]\s*-?\s*lan[cç]amento", re.I),
+     re.compile(r"(\d{1,3})\s+em\s+pr[eé]\s*-?\s*lan[cçg]amento", re.I),
      1.0, "quantidade", "manager_reported", 75),
     ("development_planned_units",
      re.compile(r"(\d[\d.\s]{1,11})\s+unidades\s+previstas", re.I),
@@ -351,7 +356,10 @@ def _download(url: str, timeout: int = 60, *,
     raise last_error
 
 
-def _extract_pdf_text(content: bytes, page_limit: int = 120) -> tuple[str, int, str, list[str]]:
+def _extract_pdf_text(
+    content: bytes, page_limit: int = 120, *,
+    ocr_timeout_seconds: float | None = None,
+) -> tuple[str, int, str, list[str]]:
     import pypdf
     reader = pypdf.PdfReader(io.BytesIO(content))
     pages = min(len(reader.pages), page_limit)
@@ -366,19 +374,36 @@ def _extract_pdf_text(content: bytes, page_limit: int = 120) -> tuple[str, int, 
     density = len(extracted) / max(pages, 1)
     if density < 80:
         try:
-            from core.c6_ocr import ocr_extract_text
-            ocr_text, ocr_pages = ocr_extract_text(content)
+            from core.c6_ocr import ocr_extract_page_texts
+            ocr_page_texts, ocr_pages, ocr_complete = ocr_extract_page_texts(
+                content,
+                render_scale=1.5,
+                max_seconds=ocr_timeout_seconds,
+                page_limit=page_limit,
+            )
+            ocr_text = "\n".join(value for value in ocr_page_texts if value)
             if len(ocr_text) > len(extracted):
-                extracted, pages, method = ocr_text, ocr_pages, "tesseract_ocr"
+                extracted, pages = ocr_text, ocr_pages
+                method = (
+                    "tesseract_ocr" if ocr_complete
+                    else "tesseract_ocr_partial"
+                )
+                values = ocr_page_texts
         except Exception:
             logger.debug("OCR opcional indisponível", exc_info=True)
-    return extracted, pages, method, values if method == "pypdf" else []
+    return extracted, pages, method, values
 
 
-def _extract_pdf_text_worker(content: bytes, page_limit: int, output) -> None:
+def _extract_pdf_text_worker(
+    content: bytes, page_limit: int, output, ocr_timeout_seconds: float,
+) -> None:
     """Executa no filho; nunca inclui o conteúdo documental no erro."""
     try:
-        output.put(("ok", _extract_pdf_text(content, page_limit=page_limit)))
+        output.put(("ok", _extract_pdf_text(
+            content,
+            page_limit=page_limit,
+            ocr_timeout_seconds=ocr_timeout_seconds,
+        )))
     except Exception as exc:
         output.put(("error", type(exc).__name__, str(exc)[:500]))
 
@@ -395,7 +420,12 @@ def _extract_pdf_text_isolated(
     output = context.Queue(maxsize=1)
     process = context.Process(
         target=_extract_pdf_text_worker,
-        args=(content, max(int(page_limit), 1), output),
+        args=(
+            content,
+            max(int(page_limit), 1),
+            output,
+            max(float(timeout) - 5.0, .1),
+        ),
         daemon=True,
     )
     process.start()
@@ -776,6 +806,66 @@ def _previous_document_status(value: object) -> str:
 
 def _normalize_document_types(values: list[str] | None) -> list[str]:
     return sorted({str(value).strip().upper() for value in (values or []) if value})
+
+
+def _document_quality_profile(
+    *, document: dict, extracted: str, pages: int, method: str,
+    evidence: list[dict], projects: list[dict], findings: list[dict],
+    layout_changed: bool, processed_pages: int | None = None,
+) -> dict:
+    """Separa confiabilidade da fonte, extração e cobertura do parser."""
+    host = _download_host(str(document.get("source_url") or ""))
+    natural_key = str(document.get("natural_key") or "")
+    if host in {"fnet.bmfbovespa.com.br", "web.cvm.gov.br", "dados.cvm.gov.br"}:
+        source_class, source_reliability = "official_regulatory_filing", 1.0
+    elif natural_key.startswith("official-ri:"):
+        source_class, source_reliability = "official_manager_ir", .95
+    else:
+        source_class, source_reliability = "public_document_unverified", .60
+    text_density = min(
+        1.0, len(extracted) / max(max(int(pages), 1) * 800, 1)
+    )
+    total_pages = max(int(pages), 1)
+    pages_processed = min(
+        max(int(processed_pages if processed_pages is not None else total_pages), 0),
+        total_pages,
+    )
+    page_coverage = pages_processed / total_pages
+    extraction_completeness = min(text_density, page_coverage)
+    structured_weight = (
+        len(evidence) + min(len(projects), 10) + min(len(findings), 5)
+    )
+    parser_coverage = min(1.0, structured_weight / 10.0)
+    evidence_values = [
+        float(row["confidence"])
+        for row in evidence
+        if row.get("confidence") is not None
+    ]
+    evidence_confidence = (
+        sum(evidence_values) / len(evidence_values) if evidence_values else None
+    )
+    if extraction_completeness < .15 and not method.startswith("tesseract_ocr"):
+        usability_status = "ocr_required"
+    elif method == "tesseract_ocr_partial":
+        usability_status = "partial_ocr_review"
+    elif structured_weight:
+        usability_status = "structured_evidence"
+    elif extraction_completeness >= .60:
+        usability_status = "readable_no_target_facts"
+    else:
+        usability_status = "sparse_text_review"
+    return {
+        "source_class": source_class,
+        "source_reliability": source_reliability,
+        "text_density": text_density,
+        "pages_processed": pages_processed,
+        "page_coverage": page_coverage,
+        "extraction_completeness": extraction_completeness,
+        "parser_coverage": parser_coverage,
+        "evidence_confidence": evidence_confidence,
+        "layout_stability": 0.0 if layout_changed else 1.0,
+        "usability_status": usability_status,
+    }
 
 
 def _effective_document_reference(document: dict) -> tuple[object | None, str]:
@@ -1279,7 +1369,6 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
             evidence = _extract_evidence(extracted, page_texts, fii_type=fii_type)
             projects = _extract_development_projects(page_texts)
             findings = _extract_document_findings(page_texts)
-            confidence = min(1.0, len(extracted) / max(pages * 800, 1))
             with engine.begin() as conn:
                 if reference_source == "source_label":
                     updated_reference = conn.execute(text("""
@@ -1338,8 +1427,20 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                 """), {"document": doc["id"], "version": version_id,
                          "name": PARSER_NAME}).scalar()
                 layout_changed = bool(previous_layout and previous_layout != signature)
-                if layout_changed:
-                    confidence = max(confidence - .15, 0.0)
+                quality = _document_quality_profile(
+                    document=doc,
+                    extracted=extracted,
+                    pages=pages,
+                    method=method,
+                    evidence=evidence,
+                    projects=projects,
+                    findings=findings,
+                    layout_changed=layout_changed,
+                    processed_pages=(
+                        len(page_texts) if method.startswith("tesseract_ocr") else pages
+                    ),
+                )
+                confidence = float(quality["extraction_completeness"])
                 provisional = _provisional_candidates(
                     evidence, extraction_confidence=confidence,
                     layout_changed=layout_changed,
@@ -1364,6 +1465,7 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                                                     str(reference) if reference else None
                                                 ),
                                                 "reference_date_source": reference_source,
+                                                **quality,
                                                 "fii_type_profile": fii_type or "unknown"})}).scalar()
                 conn.execute(text("UPDATE market.fii_document_versions SET page_count=:pages WHERE id=:id"),
                              {"pages": pages, "id": version_id})

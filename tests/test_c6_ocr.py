@@ -1,5 +1,18 @@
 """Testes do fallback de OCR de extratos C6 (parte que não depende das libs)."""
-from core.c6_ocr import _normalize
+from core.c6_ocr import _discover_tesseract_command, _normalize
+
+
+def test_discovers_standard_windows_tesseract_installation(tmp_path):
+    executable = tmp_path / "Tesseract-OCR" / "tesseract.exe"
+    executable.parent.mkdir()
+    executable.touch()
+
+    discovered = _discover_tesseract_command(
+        environ={"ProgramFiles": str(tmp_path)},
+        which=lambda _: None,
+    )
+
+    assert discovered == str(executable)
 
 
 def test_normalize_fixes_currency_symbol_ocr_errors():

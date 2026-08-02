@@ -9,6 +9,7 @@ from data_pipeline.market.fii_documents import (
     DocumentTooLargeError,
     _BatchDeadline,
     _download,
+    _document_quality_profile,
     _effective_document_reference,
     _extract_development_projects,
     _extract_evidence,
@@ -21,6 +22,94 @@ from data_pipeline.market.fii_documents import (
     _retry_delay_seconds,
     _storage,
 )
+
+
+def test_document_quality_separates_source_extraction_and_parser_coverage():
+    rich = _document_quality_profile(
+        document={
+            "natural_key": "fundamentus-fnet:1249631",
+            "source_url": "https://fnet.bmfbovespa.com.br/fnet/publico/downloadDocumento?id=1249631",
+        },
+        extracted="x" * 57_486,
+        pages=29,
+        method="pypdf",
+        evidence=[{"confidence": .80}, {"confidence": .92}],
+        projects=[{}] * 34,
+        findings=[{}] * 7,
+        layout_changed=False,
+    )
+    rasterized = _document_quality_profile(
+        document={
+            "natural_key": "official-ri:abc",
+            "source_url": "https://merito.inc/MFII11_RelatorioMensal_202502.pdf",
+        },
+        extracted="x" * 452,
+        pages=27,
+        method="pypdf",
+        evidence=[],
+        projects=[],
+        findings=[],
+        layout_changed=False,
+    )
+
+    assert rich["source_class"] == "official_regulatory_filing"
+    assert rich["source_reliability"] == 1.0
+    assert rich["extraction_completeness"] == 1.0
+    assert rich["parser_coverage"] == 1.0
+    assert rich["evidence_confidence"] == pytest.approx(.86)
+    assert rich["usability_status"] == "structured_evidence"
+
+    assert rasterized["source_class"] == "official_manager_ir"
+    assert rasterized["source_reliability"] == .95
+    assert rasterized["extraction_completeness"] == pytest.approx(
+        452 / (27 * 800)
+    )
+    assert rasterized["parser_coverage"] == 0.0
+    assert rasterized["evidence_confidence"] is None
+    assert rasterized["usability_status"] == "ocr_required"
+
+
+def test_readable_document_without_target_fields_is_not_called_unreliable():
+    profile = _document_quality_profile(
+        document={
+            "natural_key": "official-ri:def",
+            "source_url": "https://gestor.example/Informe.pdf",
+        },
+        extracted="texto " * 1000,
+        pages=3,
+        method="pypdf",
+        evidence=[],
+        projects=[],
+        findings=[],
+        layout_changed=False,
+    )
+
+    assert profile["extraction_completeness"] == 1.0
+    assert profile["parser_coverage"] == 0.0
+    assert profile["usability_status"] == "readable_no_target_facts"
+
+
+def test_partial_ocr_completeness_is_limited_by_processed_page_coverage():
+    profile = _document_quality_profile(
+        document={
+            "natural_key": "official-ri:partial",
+            "source_url": "https://gestor.example/Relatorio.pdf",
+        },
+        extracted="x" * 28_485,
+        pages=27,
+        processed_pages=12,
+        method="tesseract_ocr_partial",
+        evidence=[{"confidence": .93}],
+        projects=[],
+        findings=[],
+        layout_changed=False,
+    )
+
+    assert profile["text_density"] == 1.0
+    assert profile["pages_processed"] == 12
+    assert profile["page_coverage"] == pytest.approx(12 / 27)
+    assert profile["extraction_completeness"] == pytest.approx(12 / 27)
+    assert profile["usability_status"] == "partial_ocr_review"
 
 
 def test_effective_document_reference_never_uses_observation_date_as_period():
@@ -48,7 +137,7 @@ def test_document_evidence_uses_methodology_names_and_page_numbers():
     evidence = _extract_evidence("\n".join(pages), pages)
     rows = {row["metric_name"]: row for row in evidence}
 
-    assert PARSER_VERSION == "1.6.6"
+    assert PARSER_VERSION == "1.7.1"
     assert rows["vacancia_fisica"]["normalized_value"] == pytest.approx(.075)
     assert rows["wault_anos"]["normalized_value"] == pytest.approx(4.2)
     assert rows["implied_cap_rate"]["normalized_value"] == pytest.approx(.091)
@@ -63,6 +152,21 @@ def test_document_evidence_respects_fii_type_profile():
 
     assert {row["metric_name"] for row in tijolo} == {"vacancia_fisica"}
     assert {row["metric_name"] for row in papel} == {"ltv", "credit_spread"}
+
+
+def test_credit_spread_requires_plus_sign_or_explicit_spread_language():
+    performance = _extract_evidence(
+        "CDI líquido de IR 0,75% no mês.", fii_type="papel"
+    )
+    explicit = _extract_evidence(
+        "Spread médio IPCA 7,0% e CDI + 4,5%.", fii_type="papel"
+    )
+
+    assert "credit_spread" not in {row["metric_name"] for row in performance}
+    assert [
+        row["normalized_value"]
+        for row in explicit if row["metric_name"] == "credit_spread"
+    ] == pytest.approx([.07, .045])
 
 
 def test_tenant_concentration_requires_explicit_largest_tenant_language():
@@ -470,6 +574,23 @@ def test_development_report_extracts_aggregate_metrics_with_value_nature():
     )
     assert rows["development_inventory_brl"]["value_nature"] == "manager_estimate"
     assert rows["development_receivables_brl"]["value_nature"] == "manager_reported"
+
+
+def test_development_counts_tolerate_observed_tesseract_substitutions():
+    page = (
+        "34 ativos formam a carteira atual do fundo. 7 concluidos. "
+        "14m obras. 12 em pré-langamento."
+    )
+
+    rows = {
+        row["metric_name"]: row
+        for row in _extract_evidence(page, [page], fii_type="hibrido")
+    }
+
+    assert rows["development_active_project_count"]["normalized_value"] == 34
+    assert rows["development_completed_project_count"]["normalized_value"] == 7
+    assert rows["development_construction_project_count"]["normalized_value"] == 14
+    assert rows["development_prelaunch_project_count"]["normalized_value"] == 12
 
 
 def test_development_project_table_preserves_estimates_as_estimates():
