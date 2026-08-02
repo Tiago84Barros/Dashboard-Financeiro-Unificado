@@ -11,6 +11,7 @@ Configurações do sistema — cinco abas organizadas por finalidade.
 from __future__ import annotations
 
 import io
+from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -24,32 +25,136 @@ from views.credit_card_invoice_upload import render_upload_fatura_cartao
 
 
 def render() -> None:
-    container_pagina("Configurações", "Status do sistema e atualização de dados", "⚙️")
-    # CSS dos cards é injetado uma vez por render — todas as abas usam.
-    st.markdown(_CARD_CSS, unsafe_allow_html=True)
+    container_pagina(
+        "Central de Configurações",
+        "Importações, atualização de dados e integridade do ambiente em um único lugar.",
+        "⚙️",
+        metadados=[("Áreas", "5 fluxos"), ("Operação", "Revisão antes de gravar")],
+        eyebrow="Administração do app",
+    )
+    st.markdown(_CONFIG_CSS + _CARD_CSS, unsafe_allow_html=True)
+    _render_settings_overview()
 
     tab_controle, tab_invest, tab_dados, tab_banco, tab_seg = st.tabs([
-        "💳 Atualizar Controle Financeiro",
-        "📈 Atualizar Investimentos",
-        "🔄 Atualizar Dados Financeiros",
-        "🗄️ Informações do BD",
+        "💳 Controle",
+        "📈 Investimentos",
+        "🔄 Dados de mercado",
+        "🗄️ Banco de dados",
         "🔒 Segurança",
     ])
 
     with tab_controle:
+        _render_tab_intro(
+            "ENTRADAS FINANCEIRAS",
+            "Controle Financeiro",
+            "Importe faturas e extratos com prévia, classificação e proteção contra duplicidades.",
+            "CSV + PDF",
+            "#00C896",
+        )
         _render_controle_financeiro()
 
     with tab_invest:
+        _render_tab_intro(
+            "POSIÇÕES E MOVIMENTAÇÕES",
+            "Investimentos",
+            "Centralize arquivos da B3, XP e Nomad antes de atualizar posições e proventos.",
+            "B3 · XP · Nomad",
+            "#B084F6",
+        )
         _render_investimentos()
 
     with tab_dados:
+        _render_tab_intro(
+            "ORQUESTRAÇÃO",
+            "Dados de mercado",
+            "Acompanhe a atualização de cotações, fundamentos e indicadores macroeconômicos.",
+            "Fontes monitoradas",
+            "#4A9EFF",
+        )
         _render_atualizacao()
 
     with tab_banco:
+        _render_tab_intro(
+            "INFRAESTRUTURA",
+            "Banco de dados",
+            "Verifique conexão, capacidade, schema e rotas controladas de importação.",
+            "Diagnóstico técnico",
+            "#F6C90E",
+        )
         _render_banco()
 
     with tab_seg:
+        _render_tab_intro(
+            "ACESSO E SESSÃO",
+            "Segurança",
+            "Revise a proteção do aplicativo e encerre sessões de forma explícita.",
+            "Credenciais protegidas",
+            "#FC5C7D",
+        )
         _render_seguranca()
+
+
+def _render_settings_overview() -> None:
+    cards = [
+        ("01", "Importar", "Faturas, extratos e posições", "Arquivos validados antes da gravação"),
+        ("02", "Atualizar", "Mercado e indicadores", "Fontes acompanhadas por status"),
+        ("03", "Proteger", "Banco, acesso e sessão", "Operações sensíveis sempre explícitas"),
+    ]
+    html = "".join(
+        '<article class="cfg-overview-card">'
+        f'<span class="cfg-overview-index">{escape(index)}</span>'
+        f'<div class="cfg-overview-title">{escape(title)}</div>'
+        f'<div class="cfg-overview-copy">{escape(copy)}</div>'
+        f'<div class="cfg-overview-note">{escape(note)}</div>'
+        "</article>"
+        for index, title, copy, note in cards
+    )
+    st.markdown(
+        '<section class="cfg-overview" aria-label="Resumo das configurações">'
+        f"{html}</section>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_tab_intro(
+    eyebrow: str,
+    title: str,
+    description: str,
+    badge: str,
+    accent: str,
+) -> None:
+    st.markdown(
+        f'<section class="cfg-tab-intro" style="--cfg-accent:{escape(accent, quote=True)}">'
+        '<div class="cfg-tab-copy">'
+        f'<div class="cfg-tab-eyebrow">{escape(eyebrow)}</div>'
+        f'<div class="cfg-tab-title">{escape(title)}</div>'
+        f'<div class="cfg-tab-description">{escape(description)}</div>'
+        "</div>"
+        f'<span class="cfg-tab-badge">{escape(badge)}</span>'
+        "</section>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_workflow_header(
+    index: str,
+    title: str,
+    description: str,
+    file_type: str,
+    destination: str,
+) -> None:
+    st.markdown(
+        '<div class="cfg-workflow-header">'
+        f'<span class="cfg-workflow-index">{escape(index)}</span>'
+        '<div class="cfg-workflow-copy">'
+        f'<div class="cfg-workflow-title">{escape(title)}</div>'
+        f'<div class="cfg-workflow-description">{escape(description)}</div>'
+        "</div>"
+        '<div class="cfg-workflow-meta">'
+        f'<span>{escape(file_type)}</span><span>{escape(destination)}</span>'
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -58,21 +163,25 @@ def render() -> None:
 
 def _render_controle_financeiro() -> None:
     """Agrupa as importações usadas pela seção Controle Financeiro."""
-    st.subheader("Fatura do Cartão de Crédito")
-    st.caption(
-        "Importe a fatura do cartão de crédito. "
-        "Os dados processados aparecem na seção **Controle Financeiro → Cartão de Crédito**."
-    )
-    render_upload_fatura_cartao()
+    with st.container(border=True, key="cfg_credit_card_workflow"):
+        _render_workflow_header(
+            "01",
+            "Fatura do cartão",
+            "Revise vencimento, conta e lançamentos antes de publicar a fatura.",
+            "CSV",
+            "Controle · Cartão",
+        )
+        render_upload_fatura_cartao(show_header=False)
 
-    st.divider()
-
-    st.subheader("Extratos Bancários")
-    st.caption(
-        "Importe extratos bancários. "
-        "As movimentações processadas aparecem na seção **Controle Financeiro**."
-    )
-    render_upload_extrato_bancario()
+    with st.container(border=True, key="cfg_bank_statement_workflow"):
+        _render_workflow_header(
+            "02",
+            "Extrato bancário",
+            "Confira direção, valor e categoria de cada movimento antes da importação.",
+            "PDF",
+            "Controle · Movimentos",
+        )
+        render_upload_extrato_bancario(show_header=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -81,14 +190,18 @@ def _render_controle_financeiro() -> None:
 
 def _render_investimentos() -> None:
     """Importações manuais de investimentos: B3, XP e Nomad."""
-    st.caption(
-        "Importe arquivos exportados pela B3, XP ou Nomad. "
-        "Os dados processados aparecem na seção **Investimentos**."
-    )
-    if settings.has_database:
-        _render_import_investimentos()
-    else:
-        st.warning("Banco não conectado. Configure `SUPABASE_UNIFICADO_URL` para habilitar as importações.")
+    with st.container(border=True, key="cfg_investment_imports"):
+        _render_workflow_header(
+            "01",
+            "Arquivos da carteira",
+            "Selecione a instituição e valide a prévia antes de atualizar a carteira consolidada.",
+            "CSV · XLSX · PDF",
+            "Investimentos",
+        )
+        if settings.has_database:
+            _render_import_investimentos()
+        else:
+            st.warning("Banco não conectado. Configure `SUPABASE_UNIFICADO_URL` para habilitar as importações.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -111,6 +224,154 @@ _FRESHNESS_LABEL = {
     "error":         "Erro",
     "skipped":       "Ignorado",
 }
+
+
+_CONFIG_CSS = """
+<style>
+.cfg-overview {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0 0 22px;
+}
+.cfg-overview-card {
+    position: relative;
+    overflow: hidden;
+    min-height: 118px;
+    padding: 16px 17px;
+    border: 1px solid rgba(148,163,184,.14);
+    border-radius: 14px;
+    background: linear-gradient(150deg, rgba(23,29,43,.94), rgba(15,19,29,.96));
+    box-shadow: 0 8px 24px rgba(0,0,0,.14);
+}
+.cfg-overview-index {
+    position: absolute;
+    top: 13px;
+    right: 14px;
+    color: rgba(74,158,255,.34);
+    font-size: 1.7rem;
+    font-weight: 900;
+    letter-spacing: -.06em;
+}
+.cfg-overview-title {
+    color: #F8FAFC;
+    font-size: .9rem;
+    font-weight: 800;
+}
+.cfg-overview-copy {
+    color: #A7B3C5;
+    font-size: .76rem;
+    line-height: 1.45;
+    margin-top: 7px;
+}
+.cfg-overview-note {
+    color: #64748B;
+    font-size: .66rem;
+    margin-top: 9px;
+}
+.cfg-tab-intro {
+    --cfg-accent: #4A9EFF;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 18px;
+    margin: 18px 0 14px;
+    padding: 18px 20px;
+    border: 1px solid color-mix(in srgb, var(--cfg-accent) 25%, rgba(148,163,184,.14));
+    border-left: 3px solid var(--cfg-accent);
+    border-radius: 14px;
+    background:
+        radial-gradient(circle at 93% 0%, color-mix(in srgb, var(--cfg-accent) 12%, transparent), transparent 35%),
+        linear-gradient(150deg, rgba(22,28,41,.96), rgba(14,18,27,.96));
+}
+.cfg-tab-copy { min-width: 0; }
+.cfg-tab-eyebrow {
+    color: var(--cfg-accent);
+    font-size: .59rem;
+    font-weight: 850;
+    letter-spacing: .15em;
+}
+.cfg-tab-title {
+    color: #F8FAFC;
+    font-size: 1.12rem;
+    font-weight: 820;
+    letter-spacing: -.02em;
+    margin-top: 4px;
+}
+.cfg-tab-description {
+    max-width: 740px;
+    color: #94A3B8;
+    font-size: .76rem;
+    line-height: 1.5;
+    margin-top: 5px;
+}
+.cfg-tab-badge {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    border: 1px solid color-mix(in srgb, var(--cfg-accent) 30%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--cfg-accent) 9%, transparent);
+    color: #DCE7F5;
+    font-size: .65rem;
+    font-weight: 720;
+}
+.cfg-workflow-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 13px;
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid rgba(148,163,184,.12);
+}
+.cfg-workflow-index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border: 1px solid rgba(0,200,150,.24);
+    border-radius: 11px;
+    background: rgba(0,200,150,.08);
+    color: #00C896;
+    font-size: .7rem;
+    font-weight: 850;
+}
+.cfg-workflow-copy { min-width: 0; }
+.cfg-workflow-title {
+    color: #F1F5F9;
+    font-size: .93rem;
+    font-weight: 790;
+}
+.cfg-workflow-description {
+    color: #718096;
+    font-size: .7rem;
+    line-height: 1.45;
+    margin-top: 3px;
+}
+.cfg-workflow-meta {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.cfg-workflow-meta span {
+    padding: 5px 8px;
+    border: 1px solid rgba(148,163,184,.15);
+    border-radius: 8px;
+    background: rgba(15,23,42,.56);
+    color: #94A3B8;
+    font-size: .61rem;
+    font-weight: 680;
+}
+@media (max-width: 760px) {
+    .cfg-overview { grid-template-columns: 1fr; }
+    .cfg-tab-intro { align-items: flex-start; flex-direction: column; }
+    .cfg-workflow-header { grid-template-columns: auto minmax(0, 1fr); }
+    .cfg-workflow-meta { grid-column: 1 / -1; justify-content: flex-start; }
+}
+</style>
+"""
 
 
 _CARD_CSS = """
@@ -402,91 +663,108 @@ def _executar_pipeline(update_group: str, force: bool) -> None:
 def _render_banco() -> None:
     status = get_db_status()
 
-    # ── Status de conexão ──────────────────────────────────────────────────────
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if status["conectado"]:
-            st.success("Banco conectado")
-        elif status["configurado"]:
-            st.warning("Configurado, mas sem conexão")
-        else:
-            st.error("Banco não configurado")
-    with col2:
-        if status["mock_mode"]:
-            st.warning("Modo mock — dados simulados")
-        else:
-            st.success("Dados reais")
-    with col3:
-        if settings.has_owner:
-            st.success("Usuário configurado")
-        else:
-            st.warning("OWNER_USER_ID ausente")
-
-    if not status["configurado"]:
-        st.info(
-            "Adicione `SUPABASE_UNIFICADO_URL` no arquivo **.env** local "
-            "ou em **Settings > Secrets** no Streamlit Cloud.",
-            icon="ℹ️",
+    with st.container(border=True, key="cfg_database_connection"):
+        _render_workflow_header(
+            "01", "Conexão e contexto",
+            "Diagnóstico mínimo do ambiente sem revelar credenciais ou identificadores.",
+            "Somente leitura", "Supabase",
         )
-        return
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if status["conectado"]:
+                st.success("Banco conectado")
+            elif status["configurado"]:
+                st.warning("Configurado, mas sem conexão")
+            else:
+                st.error("Banco não configurado")
+        with col2:
+            if status["mock_mode"]:
+                st.warning("Modo mock — dados simulados")
+            else:
+                st.success("Dados reais")
+        with col3:
+            if settings.has_owner:
+                st.success("Usuário configurado")
+            else:
+                st.warning("OWNER_USER_ID ausente")
 
-    st.divider()
+        if not status["configurado"]:
+            st.info(
+                "Adicione `SUPABASE_UNIFICADO_URL` no arquivo **.env** local "
+                "ou em **Settings > Secrets** no Streamlit Cloud.",
+                icon="ℹ️",
+            )
+            return
 
-    # ── Schema ─────────────────────────────────────────────────────────────────
-    _render_storage_health()
-    st.divider()
+    with st.container(border=True, key="cfg_database_storage"):
+        _render_workflow_header(
+            "02", "Capacidade do banco",
+            "Monitore uso, limite configurado e margem disponível para novas cargas.",
+            "Métricas agregadas", "Sem conteúdo financeiro",
+        )
+        _render_storage_health(show_header=False)
 
     from etl.schema_setup import TABELAS_ESPERADAS, verificar_schema
 
-    with st.spinner("Verificando schema…"):
-        presenca = verificar_schema()
+    with st.container(border=True, key="cfg_database_schema"):
+        _render_workflow_header(
+            "03", "Integridade do schema",
+            "Compare a estrutura instalada com as tabelas esperadas pelo aplicativo.",
+            "Verificação", "Ação confirmada",
+        )
+        with st.spinner("Verificando schema…"):
+            presenca = verificar_schema()
 
-    total      = len(TABELAS_ESPERADAS)
-    existentes = sum(1 for v in presenca.values() if v)
-    ausentes   = total - existentes
+        total = len(TABELAS_ESPERADAS)
+        existentes = sum(1 for v in presenca.values() if v)
+        ausentes = total - existentes
 
-    col_p, col_b = st.columns([3, 1])
-    with col_p:
-        st.progress(existentes / total if total else 0)
-        st.caption(f"{existentes}/{total} tabelas presentes")
-    with col_b:
+        col_p, col_b = st.columns([3, 1])
+        with col_p:
+            st.progress(existentes / total if total else 0)
+            st.caption(f"{existentes}/{total} tabelas presentes")
+        with col_b:
+            if ausentes > 0:
+                if st.button(f"Criar {ausentes} tabela(s)", type="primary", use_container_width=True):
+                    _executar_criar_schema()
+            else:
+                st.success("Schema completo ✓")
+
         if ausentes > 0:
-            if st.button(f"Criar {ausentes} tabela(s)", type="primary", use_container_width=True):
-                _executar_criar_schema()
-        else:
-            st.success("Schema completo ✓")
+            faltando = [t for t in TABELAS_ESPERADAS if not presenca[t]]
+            st.caption(f"Ausentes: {', '.join(faltando)}")
 
-    if ausentes > 0:
-        faltando = [t for t in TABELAS_ESPERADAS if not presenca[t]]
-        st.caption(f"Ausentes: {', '.join(faltando)}")
+    with st.container(border=True, key="cfg_database_imports"):
+        _render_workflow_header(
+            "04", "Rotas de importação",
+            "Use simulação e revisão antes de gravar arquivos ou copiar dados de outra origem.",
+            "CSV · Excel · SQL", "Prévia obrigatória",
+        )
+        with st.expander("📄 Importar dados de arquivo (CSV / Excel)"):
+            if settings.has_database:
+                _render_import_csv()
+            else:
+                st.warning("Banco não conectado.")
 
-    st.divider()
-
-    # ── Importação (colapsável) ────────────────────────────────────────────────
-    with st.expander("📄 Importar dados de arquivo (CSV / Excel)"):
-        if settings.has_database:
-            _render_import_csv()
-        else:
-            st.warning("Banco não conectado.")
-
-    with st.expander("🔗 Importar de banco de origem (PostgreSQL / SQLite)"):
-        if settings.has_database:
-            _render_import_postgres()
-        else:
-            st.warning("Banco não conectado.")
+        with st.expander("🔗 Importar de banco de origem (PostgreSQL / SQLite)"):
+            if settings.has_database:
+                _render_import_postgres()
+            else:
+                st.warning("Banco não conectado.")
 
     # As importações de investimentos (B3, XP, Nomad) ficam na aba
     # "Atualizar Investimentos" — não são exibidas aqui.
 
 
-def _render_storage_health() -> None:
+def _render_storage_health(*, show_header: bool = True) -> None:
     storage = get_database_storage_status()
 
-    st.subheader("Uso do Supabase")
-    st.caption(
-        "Monitoramento preventivo do tamanho do banco. O limite padrão é 500 MB, "
-        "ajustável por `SUPABASE_DB_LIMIT_MB`."
-    )
+    if show_header:
+        st.subheader("Uso do Supabase")
+        st.caption(
+            "Monitoramento preventivo do tamanho do banco. O limite padrão é 500 MB, "
+            "ajustável por `SUPABASE_DB_LIMIT_MB`."
+        )
 
     if not storage.get("ok"):
         st.warning(
@@ -1189,30 +1467,42 @@ def _render_import_result(summary: dict) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _render_seguranca() -> None:
-    col1, col2 = st.columns(2)
-    with col1:
-        if settings.APP_PASSWORD:
-            st.success("Senha de acesso configurada")
-        else:
-            st.warning("Sem senha (modo dev)")
-    with col2:
-        if esta_autenticado():
-            st.success("Sessão autenticada")
-            if st.button("Encerrar sessão", type="secondary"):
-                encerrar_sessao()
-        else:
-            st.info("Sem sessão ativa")
-
-    st.divider()
-
-    with st.expander("🔑 Gerar hash de senha (APP_PASSWORD)"):
-        st.caption(
-            "Cole o hash gerado no campo `APP_PASSWORD` do `.env` ou Streamlit Secrets. "
-            "Nunca use a senha em texto puro em produção."
+    with st.container(border=True, key="cfg_security_session"):
+        _render_workflow_header(
+            "01", "Proteção e sessão",
+            "Confira se o acesso está protegido e controle a sessão ativa deste navegador.",
+            "Estado local", "Sem expor segredos",
         )
-        senha = st.text_input("Senha", type="password", key="_hash_input",
-                              placeholder="Digite para gerar o hash SHA-256")
-        if senha:
-            import hashlib
-            h = hashlib.sha256(senha.encode()).hexdigest()
-            st.code(h)
+        col1, col2 = st.columns(2)
+        with col1:
+            if settings.APP_PASSWORD:
+                st.success("Senha de acesso configurada")
+            else:
+                st.warning("Sem senha (modo dev)")
+        with col2:
+            if esta_autenticado():
+                st.success("Sessão autenticada")
+                if st.button("Encerrar sessão", type="secondary"):
+                    encerrar_sessao()
+            else:
+                st.info("Sem sessão ativa")
+
+    with st.container(border=True, key="cfg_security_password"):
+        _render_workflow_header(
+            "02", "Credencial do aplicativo",
+            "Gere o hash localmente e armazene apenas o resultado em Secrets.",
+            "SHA-256", "Nunca texto puro",
+        )
+        with st.expander("🔑 Gerar hash de senha (APP_PASSWORD)"):
+            st.caption(
+                "Cole o hash gerado no campo `APP_PASSWORD` do `.env` ou Streamlit Secrets. "
+                "Nunca use a senha em texto puro em produção."
+            )
+            senha = st.text_input(
+                "Senha", type="password", key="_hash_input",
+                placeholder="Digite para gerar o hash SHA-256",
+            )
+            if senha:
+                import hashlib
+                h = hashlib.sha256(senha.encode()).hexdigest()
+                st.code(h)

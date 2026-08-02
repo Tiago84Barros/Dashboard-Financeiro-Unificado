@@ -163,9 +163,10 @@ def _render_diagnostics(parsed: dict) -> None:
             )
 
 
-def _render_upload() -> None:
-    st.subheader("Upload de Extrato Bancário")
-    st.caption("Importe PDFs de movimentações bancárias. O padrão inicial suportado é C6 Bank.")
+def _render_upload(*, show_header: bool = True) -> None:
+    if show_header:
+        st.subheader("Upload de Extrato Bancário")
+        st.caption("Importe PDFs de movimentações bancárias. O padrão inicial suportado é C6 Bank.")
 
     if settings.MOCK_MODE:
         st.warning("Modo mock ativo: a prévia funciona, mas a gravação no Supabase fica desabilitada.")
@@ -385,8 +386,8 @@ def _render_review_queue() -> None:
         st.error(msg or "Falha ao confirmar classificação.")
 
 
-def render_upload_extrato_bancario() -> None:
+def render_upload_extrato_bancario(*, show_header: bool = True) -> None:
     """Renderiza o fluxo exclusivo de upload/revisao de extratos bancarios."""
-    _render_upload()
+    _render_upload(show_header=show_header)
     st.divider()
     _render_review_queue()

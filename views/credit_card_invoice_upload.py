@@ -117,10 +117,11 @@ def _invoice_upload_summary(rows: list[dict]) -> dict:
     }
 
 
-def render_upload_fatura_cartao() -> None:
+def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
     """Renderiza o fluxo exclusivo de importacao da fatura do cartao."""
-    st.subheader("Upload de Fatura do Cartão")
-    st.caption("Importe a fatura CSV. Depois, acompanhe os dados em Controle Financeiro > Cartão de Crédito.")
+    if show_header:
+        st.subheader("Upload de Fatura do Cartão")
+        st.caption("Importe a fatura CSV. Depois, acompanhe os dados em Controle Financeiro > Cartão de Crédito.")
 
     last_result = st.session_state.get("cc_invoice_import_result")
     last_ok = bool(last_result and last_result.get("ok"))
