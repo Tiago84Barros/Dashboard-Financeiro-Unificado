@@ -1004,7 +1004,8 @@ def _tab_analises(
     )
 
 
-def _aviso_ancoragem(resposta: str, contexto: str) -> str:
+def _aviso_ancoragem(resposta: str, contexto: str,
+                     pergunta: str = "") -> str:
     """Alerta quando a IA cita número que não se ancora nos dados enviados.
 
     Auditoria 2026-07 (§12.8): os prompts proíbem inventar valores, mas nada
@@ -1013,7 +1014,10 @@ def _aviso_ancoragem(resposta: str, contexto: str) -> str:
     """
     try:
         from core.llm_grounding import check_grounding
-        relatorio = check_grounding(resposta or "", contexto or "")
+        # A pergunta ancora junto: número que o usuário propôs ("cortar 20%")
+        # é parâmetro do cenário, não afirmação sobre os dados.
+        relatorio = check_grounding(resposta or "", contexto or "",
+                                    pergunta=pergunta or "")
     except Exception:                      # verificação nunca derruba o chat
         return ""
     if not relatorio.ungrounded:
@@ -1134,7 +1138,7 @@ def _render_chat_financeiro(
                 resposta, chart_directives = parse_chart_directives(resposta_raw)
                 if not chart_directives:
                     chart_directives = infer_financas_chart_directives(user_input, chart_meta)
-                aviso_ancoragem = _aviso_ancoragem(resposta, context)
+                aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
                 resposta = f"Não foi possível consultar a IA agora: {exc}"
         st.markdown(resposta)
@@ -2979,7 +2983,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                 resposta, chart_directives = parse_chart_directives(resposta_raw)
                 if not chart_directives:
                     chart_directives = infer_cartao_chart_directives(user_input, chart_meta)
-                aviso_ancoragem = _aviso_ancoragem(resposta, context)
+                aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
                 resposta = f"Não foi possível consultar a IA agora: {exc}"
         st.markdown(resposta)

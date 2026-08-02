@@ -66,6 +66,27 @@ class GroundingReport:
         return 1.0 if not self.claims else self.grounded / len(self.claims)
 
 
+def _separador_ambiguo(text: str, sep: str) -> bool:
+    """True quando um separador único pode ser milhar OU decimal.
+
+    ``12,500`` vale 12.500 na notação americana e 12,5 na brasileira, e nada no
+    token decide. Antes, o ponto tinha essa guarda e a vírgula NÃO: o código
+    fazia ``replace(',', '.')`` direto e devolvia 12,5 — **erro de fator 1.000**,
+    silencioso. Como a LLM responde ora numa notação ora noutra, um valor real de
+    R$ 12.500 virava 12,5, não ancorava, e a resposta correta era acusada de
+    inventar dado.
+
+    Três casas decimais é o único caso ambíguo: ``24,8`` e ``1.234,56`` têm 1 e 2
+    casas, e valor monetário em real sempre traz 2. Inteiro ``0`` também não é
+    ambíguo (``0,500`` é meio, não quinhentos).
+
+    Ambíguo → o chamador devolve None e o número é IGNORADO. Ignorar não cria
+    falso positivo nem falso negativo; chutar cria os dois.
+    """
+    integer, _, fraction = text.partition(sep)
+    return len(fraction) == 3 and len(integer) <= 3 and integer != "0"
+
+
 def parse_number(token: str) -> float | None:
     """Converte um token numérico pt-BR/en-US em float. None se ambíguo."""
     text = token.strip().rstrip(".,")
@@ -78,15 +99,17 @@ def parse_number(token: str) -> float | None:
         decimal_sep = "," if text.rfind(",") > text.rfind(".") else "."
         thousand_sep = "." if decimal_sep == "," else ","
         text = text.replace(thousand_sep, "").replace(decimal_sep, ".")
+    elif text.count(",") > 1:
+        text = text.replace(",", "")           # 1,234,567 (milhar en-US)
     elif "," in text:
-        # vírgula única: decimal (12,5) ou milhar (1,234)? pt-BR: decimal
-        text = text.replace(",", ".")
+        if _separador_ambiguo(text, ","):
+            return None                        # 12,500 é milhar ou decimal?
+        text = text.replace(",", ".")          # 12,5 → decimal pt-BR
     elif text.count(".") > 1:
         text = text.replace(".", "")           # 1.234.567
     elif "." in text:
-        integer, _, fraction = text.partition(".")
-        if len(fraction) == 3 and len(integer) <= 3 and integer != "0":
-            return None                        # 1.234 é ambíguo: milhar ou decimal
+        if _separador_ambiguo(text, "."):
+            return None                        # 1.234 é milhar ou decimal?
     try:
         value = float(text)
     except ValueError:
@@ -135,7 +158,41 @@ def _is_trivial(value: float) -> bool:
             return True                      # ano
         if abs(integer) <= _SMALL_INT_MAX:
             return True                      # contagem/enumeração
+        if integer == 100:
+            # Base da conversão para porcentagem. Aparece em toda resposta que
+            # mostra a conta ("(3.100 / 12.500) × 100"), e cobrá-la como se
+            # fosse dado gerava falso positivo em TODO cálculo de percentual —
+            # o caso mais comum do chat. Valor monetário real vem formatado com
+            # centavos ("R$ 100,00"), que é outro token.
+            return True
     return False
+
+
+# Piso da folga, mesmo para número escrito com todas as casas. Existe porque
+# arredondar ao real mais próximo é legítimo — "cerca de R$ 2.146,00" para
+# R$ 2.145,90 erra 0,005% e não é invenção. Já o caso adversarial (R$ 7.777,00
+# contra R$ 7.800,00) erra 0,29%, quase sessenta vezes mais. 0,1% separa os dois
+# com folga dos dois lados.
+_TOLERANCIA_MINIMA = 0.001
+
+
+def _tolerancia_declarada(raw: str, teto: float) -> float:
+    """Folga compatível com a PRECISÃO que o próprio número afirma.
+
+    Uma tolerância fixa de 1% serve à linguagem aproximada ("cerca de 7,8 mil"),
+    mas aplicada a um valor escrito com centavos abre 78 reais de folga sobre
+    R$ 7.800 — e foi assim que "R$ 7.777,00", inventado do nada, passou como
+    ancorado no teste adversarial de 02/08/2026.
+
+    Quem escreve ``7.777,00`` afirma seis dígitos de precisão e deve ser cobrado
+    neles; quem escreve ``7,8 mil`` afirma dois e merece a folga. A régua passa a
+    sair do texto, não de uma constante.
+
+    Devolve no máximo ``teto`` — o chamador segue no comando do limite superior.
+    """
+    digitos = "".join(c for c in str(raw or "") if c.isdigit()).lstrip("0")
+    significativos = len(digitos) or 1
+    return min(teto, max(_TOLERANCIA_MINIMA, 0.5 * 10.0 ** (1 - significativos)))
 
 
 def _matches(value: float, pool: list[float], *, tolerance: float,
@@ -192,7 +249,29 @@ def _derivations(pool: list[float], *, limit: int = 40) -> tuple[list[float], li
     return absolutes, percents
 
 
+def _encadeados(pool: list[float], percentuais: list[float], *,
+                limit: int = 60) -> list[float]:
+    """Somas, diferenças e ``p%`` sobre valores JÁ ancorados.
+
+    Difere de ``_derivations`` em dois pontos: opera sobre o acumulado da
+    resposta (contexto + o que já se sustentou), e conhece "percentual de", que
+    é a operação da qual saem as projeções. Devolve só absolutos — percentual de
+    percentual não é conta que apareça no chat.
+    """
+    valores = [v for v in pool if not _is_trivial(v)][-limit:]
+    saida: list[float] = []
+    for indice, primeiro in enumerate(valores):
+        for segundo in valores[indice + 1:]:
+            saida.extend((primeiro + segundo, primeiro - segundo,
+                          segundo - primeiro))
+        for pct in percentuais:
+            fatia = primeiro * pct / 100.0
+            saida.extend((fatia, primeiro - fatia, primeiro + fatia))
+    return saida
+
+
 def check_grounding(response: str, context: str, *,
+                    pergunta: str | None = None,
                     tolerance: float = 0.01,
                     allow_derived: bool = True) -> GroundingReport:
     """Verifica se os números da resposta se ancoram no contexto fornecido.
@@ -200,32 +279,101 @@ def check_grounding(response: str, context: str, *,
     Args:
         response: texto devolvido pela LLM.
         context: contexto factual enviado no prompt (os dados do usuário).
-        tolerance: folga relativa para arredondamento (1% por padrão).
+        pergunta: texto da pergunta, quando houver. Números que o usuário
+            propõe ("cortar 20%") são parâmetros do cenário e ancoram a
+            resposta — repetir o que o usuário deu não é inventar dado.
+        tolerance: TETO da folga relativa. A folga efetiva sai da precisão que
+            cada número declara (ver ``_tolerancia_declarada``).
         allow_derived: aceita somas/diferenças/razões do contexto como ancoradas.
 
     Returns:
         GroundingReport com uma Claim por número não trivial da resposta.
     """
+    # A PERGUNTA ancora tanto quanto o contexto: em "e se eu cortar 20% dos
+    # supérfluos?", o 20 é parâmetro do cenário, não afirmação sobre os dados.
+    # Cobrá-lo como invenção acusaria o assistente de alucinar por repetir o
+    # número que o próprio usuário deu.
     context_pool = [value for value, _ in extract_numbers(context)]
+    if pergunta:
+        context_pool.extend(value for value, _ in extract_numbers(pergunta))
     derived_abs, derived_pct = (_derivations(context_pool) if allow_derived
                                 else ([], []))
     derived_tolerance = min(tolerance, DERIVED_TOLERANCE)
-    seen: set[str] = set()
-    claims: list[Claim] = []
+    # Um MESMO valor pode aparecer nas duas leituras dentro da resposta: a LLM
+    # escreve "≈ 24,8\%" no texto e "24,8" solto ao fechar a fórmula LaTeX. A
+    # versão anterior punha `is_percent` na chave de deduplicação e julgava as
+    # duas ocorrências separadamente — a percentual ancorava em derived_pct e a
+    # solta era cobrada contra derived_abs, onde não existe. O relatório saía
+    # com o mesmo 24,8 aprovado E reprovado, e a resposta (correta) contava como
+    # inventada. Medido em 02/08/2026: sozinho, este defeito respondia por
+    # metade dos "dados inventados" do golden set.
+    #
+    # Agora cada VALOR distinto é julgado uma vez, contra as duas leituras que
+    # ele de fato assume no texto. Ancorar sob qualquer leitura presente basta.
+    # Agrupado pelo TOKEN, não pelo valor: "8,3 mil" produz duas leituras (8,3 e
+    # 8.300) e "24,8\%" produz a percentual e a absoluta. São interpretações
+    # alternativas da MESMA afirmação — julgar cada uma isolada fazia o mesmo
+    # texto sair aprovado numa leitura e reprovado noutra. Ancorar sob qualquer
+    # leitura que o token admite basta.
+    ocorrencias: dict[str, dict] = {}
     for value, raw, is_percent in extract_numbers_typed(response):
-        key = f"{value:.6g}|{raw}|{is_percent}"
-        if key in seen:
-            continue
-        seen.add(key)
         if _is_trivial(value):
             continue
-        derived_pool = derived_pct if is_percent else derived_abs
-        if _matches(value, context_pool, tolerance=tolerance):
-            claims.append(Claim(value, raw, True, "presente no contexto"))
-        elif derived_pool and _matches(value, derived_pool,
-                                       tolerance=derived_tolerance,
-                                       percent_equivalence=False):
-            claims.append(Claim(value, raw, True, "derivado do contexto"))
-        else:
-            claims.append(Claim(value, raw, False, "sem âncora no contexto"))
+        registro = ocorrencias.setdefault(
+            raw, {"raw": raw, "leituras": [], "percent": False, "abs": False})
+        registro["leituras"].append(value)
+        registro["percent" if is_percent else "abs"] = True
+
+    # Percentuais CITADOS na resposta, para as operações "p% de X". Sem elas, a
+    # conta mais comum de projeção ("cortar 20% dos supérfluos") ficava fora do
+    # alcance: 20% de 1.210 = 242 não é soma, diferença nem razão do contexto.
+    percentuais = [r["leituras"][0] for r in ocorrencias.values() if r["percent"]]
+
+    # Cadeia: um valor JÁ ANCORADO da resposta pode servir de insumo ao passo
+    # seguinte. É como se confere uma conta no papel — 1.210 ancora, 242 sai de
+    # 20% dele, 8.058 sai de 8.300 − 242. Só entram valores ancorados, e o passo
+    # é registrado com motivo próprio para o relatório não misturar o que veio
+    # direto do contexto com o que veio de encadeamento.
+    #
+    # O custo é real e assumido: cada operação a mais aumenta a chance de um
+    # número inventado casar por acaso. Por isso a cadeia parte apenas do que já
+    # se sustenta, e não de qualquer número que a resposta cite.
+    corrente: list[float] = list(context_pool)
+
+    claims: list[Claim] = []
+    for registro in ocorrencias.values():
+        raw = registro["raw"]
+        leituras = registro["leituras"]
+        principal = leituras[0]
+        pools: list[list[float]] = []
+        if registro["percent"]:
+            pools.append(derived_pct)
+        if registro["abs"]:
+            pools.append(derived_abs)
+
+        tol = _tolerancia_declarada(raw, tolerance)
+        tol_derivada = min(derived_tolerance, tol)
+
+        ancora = None
+        for leitura in leituras:
+            if _matches(leitura, context_pool, tolerance=tol):
+                ancora = (leitura, "presente no contexto")
+                break
+            if any(pool and _matches(leitura, pool, tolerance=tol_derivada,
+                                     percent_equivalence=False)
+                   for pool in pools):
+                ancora = (leitura, "derivado do contexto")
+                break
+            if allow_derived and registro["abs"] and _matches(
+                    leitura, _encadeados(corrente, percentuais),
+                    tolerance=tol_derivada, percent_equivalence=False):
+                ancora = (leitura, "derivado em cadeia")
+                break
+
+        if ancora is None:
+            claims.append(Claim(principal, raw, False, "sem âncora no contexto"))
+            continue
+        valor, motivo = ancora
+        claims.append(Claim(valor, raw, True, motivo))
+        corrente.append(valor)
     return GroundingReport(tuple(claims))

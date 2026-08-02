@@ -103,7 +103,8 @@ def _avaliar(cenario: Cenario, resposta: str) -> dict:
     from core.llm_b3 import parse_chart_directives
 
     texto, diretivas = parse_chart_directives(resposta)
-    relatorio = check_grounding(texto, CONTEXTO_FINANCEIRO)
+    relatorio = check_grounding(texto, CONTEXTO_FINANCEIRO,
+                                pergunta=cenario.pergunta)
     minusculo = texto.lower()
 
     checagens: dict[str, bool | None] = {
