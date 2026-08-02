@@ -115,3 +115,28 @@ def test_transient_document_failure_is_warning_when_cvm_fallback_succeeds(
 
     assert report["status"] == "warning"
     assert report["compensated_transient_failure"] is True
+
+
+def test_clean_batch_deadline_is_warning_and_not_partial_failure(monkeypatch):
+    monkeypatch.setattr(fallback, "_engine", lambda: object())
+    monkeypatch.setattr(
+        fallback, "active_document_host_circuits", lambda **_: [],
+    )
+    monkeypatch.setattr(
+        fallback, "structured_monthly_profile",
+        lambda **_: {"reference_date": "2026-06-01"},
+    )
+    monkeypatch.setattr(
+        "data_pipeline.market.fii_documents.process_pending_documents",
+        lambda **_: {
+            "attempted": 2,
+            "failed": 0,
+            "batch_deadline_exhausted": True,
+            "released": 8,
+        },
+    )
+
+    report = fallback.run_resilient_fallback(document_options={"limit": 10})
+
+    assert report["status"] == "warning"
+    assert report["deadline_limited"] is True

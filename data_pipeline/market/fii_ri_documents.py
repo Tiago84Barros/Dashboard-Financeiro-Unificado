@@ -7,24 +7,23 @@ existente; download, hash, versionamento e extração continuam a cargo de
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from functools import lru_cache
 import hashlib
 import ipaddress
 import json
 import re
 import socket
 import time
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from functools import lru_cache
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
-from bs4 import BeautifulSoup
 import requests
+from bs4 import BeautifulSoup
 from sqlalchemy import text
 
 from data_pipeline.utils.db_utils import get_pipeline_engine
-
 
 USER_AGENT = "DashboardFinanceiro/1.0 (+official-fii-document-audit)"
 MAX_HTML_BYTES = 5 * 1024 * 1024
@@ -157,8 +156,21 @@ def _safe_get(
     raise ValueError("excesso de redirecionamentos na fonte oficial")
 
 
-def _infer_reference_date(value: str) -> date | None:
+def infer_reference_date(value: str) -> date | None:
+    """Infere somente períodos explicitamente codificados no rótulo/URL."""
     text_value = str(value)
+    quarter_patterns = (
+        r"(?<!\d)([1-4])\s*[tq]\s*[-_/]?\s*(20\d{2})(?!\d)",
+        r"(?<!\d)([1-4])\s*(?:º|o)?\s*tri(?:mestre)?"
+        r"(?:\s+de)?[\s_-]*(20\d{2})(?!\d)",
+    )
+    for pattern in quarter_patterns:
+        match = re.search(pattern, text_value, flags=re.IGNORECASE)
+        if match:
+            quarter, year = (int(value) for value in match.groups())
+            month = quarter * 3
+            day = 31 if month in {3, 12} else 30
+            return date(year, month, day)
     patterns = (
         (r"(?<!\d)(20\d{2})(0[1-9]|1[0-2])(?!\d)", "ymd"),
         (r"(?<!\d)(20\d{2})[-_/](0[1-9]|1[0-2])(?:[-_/]([0-3]\d))?(?!\d)", "ymd"),
@@ -189,6 +201,10 @@ def _infer_reference_date(value: str) -> date | None:
     if match:
         return date(int(match.group(2)), month_names[match.group(1)], 1)
     return None
+
+
+# Compatibilidade interna para integrações que ainda importam o nome privado.
+_infer_reference_date = infer_reference_date
 
 
 def discover_pdf_links(
@@ -240,7 +256,7 @@ def discover_pdf_links(
         found[normalized] = DiscoveredDocument(
             url=normalized,
             title=label or parsed.path.rsplit("/", 1)[-1],
-            reference_date=_infer_reference_date(
+            reference_date=infer_reference_date(
                 f"{label} {parsed.path.rsplit('/', 1)[-1]}"
             ),
             document_type=_infer_document_type(searchable),
@@ -308,7 +324,7 @@ def discover_wordpress_media(
         found[normalized] = DiscoveredDocument(
             url=normalized,
             title=title or slug or normalized.rsplit("/", 1)[-1],
-            reference_date=_infer_reference_date(f"{slug} {title} {url.rsplit('/', 1)[-1]}"),
+            reference_date=infer_reference_date(f"{slug} {title} {url.rsplit('/', 1)[-1]}"),
             source_published_at=published,
             document_type=_infer_document_type(searchable),
         )

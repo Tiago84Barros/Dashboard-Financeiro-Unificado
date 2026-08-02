@@ -145,6 +145,7 @@ def run_resilient_fallback(
     attempted = int(documents.get("attempted") or 0)
     failure_rate = failures / attempted if attempted else 0.0
     structured_failed = str(structured.get("status")) in {"failed", "partial"}
+    deadline_limited = bool(documents.get("batch_deadline_exhausted"))
     status = "completed"
     compensated_transient_failure = bool(
         failure_rate > .5
@@ -158,6 +159,8 @@ def run_resilient_fallback(
         status = "partial"
     elif compensated_transient_failure:
         status = "warning"
+    elif deadline_limited:
+        status = "warning"
     return {
         "status": status,
         "fallback_triggered": fallback_triggered,
@@ -169,6 +172,7 @@ def run_resilient_fallback(
         "quality_after": after,
         "failure_rate_attempted": failure_rate,
         "compensated_transient_failure": compensated_transient_failure,
+        "deadline_limited": deadline_limited,
         "policy": {
             "source": "CVM Portal de Dados Abertos",
             "kinds": ["monthly"],
