@@ -483,6 +483,16 @@ de riscos genéricos de setor). Frases que valem para qualquer empresa são proi
 evidência no dossiê/documentos (ex.: interferência do controlador destruindo valor, lucro \
 insustentável mascarado, dados insuficientes para confiar na tese, evento societário de alto risco). \
 Ressalvas relevantes sem gravidade de veto → "aprovar_com_ressalvas".
+5.1. NÃO CONFUNDA lucro COMPRIMIDO PELO CICLO com lucro INSUSTENTÁVEL. Margem e lucro caindo em \
+empresa que segue LUCRATIVA, com balanço intacto (dívida baixa, liquidez folgada, caixa relevante), \
+é vale de ciclo — e comprar ativo cíclico no vale é justamente uma das teses que este sistema \
+existe para encontrar. Vetar aí é opinião de preço, proibida pelo item 5. "Lucro insustentável" \
+exige mascaramento: lucro que só existe por item não recorrente enquanto a OPERAÇÃO dá prejuízo, \
+ou distribuição muito acima do lucro recorrente. Na dúvida entre as duas leituras, use \
+"aprovar_com_ressalvas" e diga no motivo que o resultado depende do ciclo.
+5.2. Ausência de trechos CVM indexados NÃO é, sozinha, "dados insuficientes": o dossiê determinístico \
+acima já traz série anual, trimestres, dividendos e eventos. Só invoque dados insuficientes quando \
+faltar o que a TESE precisa (ex.: série anual curta demais, sem lucro nem patrimônio).
 
 CONTEXTO DE PORTFÓLIO: {portfolio_ctx}
 PARES DO SEGMENTO: {peers_ctx}
@@ -560,14 +570,25 @@ def gerar_parecer_empresa(
     rag_context: str = "",
     peers_ctx: str = "",
     portfolio_ctx: str = "",
+    dossie: dict | None = None,
 ) -> tuple[dict, dict]:
     """
     Constrói o dossiê determinístico e pede ao LLM apenas a narrativa.
     Retorna (parecer, dossie). Nunca levanta exceção: em falha de LLM devolve
     fallback neutro (sem veto) com o dossiê intacto.
+
+    Args:
+        dossie: dossiê PRONTO, no lugar de consultar o banco. Existe para o
+            harness de avaliação (``scripts/eval_gate_selecao.py``) poder medir
+            o gate com casos de veredito conhecido — sem isso, este gate, que
+            REPROVA empresas da carteira, só era exercitável contra dados reais,
+            onde não há gabarito. Componente de decisão que não se testa
+            isolado não se mede; e o que não se mede foi, nesta base, sempre
+            onde os defeitos estavam.
     """
     tk = ticker.strip().upper().replace(".SA", "")
-    dossie = build_dossie(tk)
+    if dossie is None:
+        dossie = build_dossie(tk)
     if dossie.get("erro"):
         return _parecer_fallback(tk, f"dossiê indisponível: {dossie['erro']}"), dossie
     prompt = _PROMPT_PARECER.format(
