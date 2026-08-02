@@ -14,6 +14,11 @@ sobrevive na vitrine para sempre. Isso não é hipotético — em 30/07/2026 o s
 perderam. Sem remoção, a vitrine seguiria reprovando empresas que a origem já
 tinha absolvido, e as duas bases divergiriam em silêncio.
 
+As linhas que somem são gravadas em CSV ANTES de sumir, pelo próprio script, e
+falha no backup aborta a publicação inteira — os upserts não precisam disso
+(são derivados determinísticos do armazém, reprodutíveis com
+``reprocess_metrics``), mas o DELETE precisa.
+
 Padrão da casa: DRY-RUN por omissão; nada é escrito sem ``--apply``.
 
     python scripts/publish_b3_metrics_to_supabase.py                 # simula
@@ -23,8 +28,10 @@ Padrão da casa: DRY-RUN por omissão; nada é escrito sem ``--apply``.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -71,13 +78,63 @@ def _chave(row: dict) -> tuple:
             int(row["quarter"] or 0), str(row["metric_name"]))
 
 
+def _salvar_backup_orfas(conn, orfas: list[dict], destino: Path) -> Path:
+    """Grava as linhas COMPLETAS que serão apagadas, antes de apagar.
+
+    Por que o script faz isso sozinho: os upserts não são irreversíveis — são
+    derivados determinísticos do armazém, reprodutíveis com ``reprocess_metrics``.
+    Os DELETEs são. Em 01/08/2026 o backup dessas linhas dependia de quem rodava
+    lembrar de fazê-lo à mão, e a tentativa manual de baixar a tabela anual
+    inteira caiu no meio, deixando um CSV com 34.781 de 56.460 linhas e nome de
+    arquivo íntegro. Proteção que depende de disciplina não é proteção.
+
+    Falha aqui ABORTA a publicação: sem backup, não se apaga. Como a chamada
+    acontece dentro da transação, levantar aqui desfaz também os upserts.
+    """
+    linhas: list[dict] = []
+    for r in orfas:
+        achadas = [dict(x) for x in conn.execute(text("""
+            SELECT * FROM market.calculated_metrics
+            WHERE ticker=:ticker AND period=:period AND year=:year
+              AND quarter=:quarter AND metric_name=:metric_name
+        """), dict(r)).mappings()]
+        linhas.extend(achadas)
+
+    if len(linhas) != len(orfas):
+        raise RuntimeError(
+            f"backup incompleto: {len(linhas)} linhas lidas para {len(orfas)} "
+            "órfãs — publicação abortada sem apagar nada")
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    with destino.open("w", newline="", encoding="utf-8") as arquivo:
+        escritor = csv.DictWriter(arquivo, fieldnames=list(linhas[0].keys()))
+        escritor.writeheader()
+        escritor.writerows(linhas)
+
+    # Conferência de integridade do que ACABOU no disco: contar as linhas de
+    # volta é o que teria pego o CSV truncado do caso acima.
+    with destino.open(encoding="utf-8") as arquivo:
+        gravadas = sum(1 for _ in csv.DictReader(arquivo))
+    if gravadas != len(linhas):
+        raise RuntimeError(
+            f"backup gravou {gravadas} de {len(linhas)} linhas em {destino} — "
+            "publicação abortada sem apagar nada")
+    return destino
+
+
+BACKUP_DIR_PADRAO = ROOT / "backups" / "vitrine"
+
+
 def publish(periods: list[str], *, apply: bool = False,
-            limit: int | None = None) -> dict:
+            limit: int | None = None,
+            backup_dir: Path | None = None) -> dict:
     remote_url = _remote_url()
     if not remote_url:
         raise RuntimeError(
             "Supabase não configurado — defina SUPABASE_DB_URL no .env")
 
+    backup_dir = Path(backup_dir) if backup_dir else BACKUP_DIR_PADRAO
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     source = create_engine(_warehouse_url(), pool_pre_ping=True)
     target = _engine(remote_url)
     repository.reset_db_cols_cache()
@@ -135,6 +192,12 @@ def publish(periods: list[str], *, apply: bool = False,
                  for r in origem])
             resultado["linhas_gravadas"] = gravadas
 
+            if orfas:
+                arquivo = _salvar_backup_orfas(
+                    dst, orfas,
+                    backup_dir / f"orfas_{'-'.join(periods)}_{stamp}.csv")
+                resultado["backup_orfas"] = str(arquivo)
+
             removidas = 0
             for r in orfas:
                 removidas += dst.execute(text("""
@@ -160,10 +223,15 @@ def main() -> int:
                         "'annual' (~7,4 MB) alimenta o score ponto-no-tempo")
     p.add_argument("--limit", type=int, default=None,
                    help="processa só os N primeiros tickers (teste de fumaça)")
+    p.add_argument("--backup-dir", default=None,
+                   help=f"onde gravar o backup das linhas apagadas "
+                        f"(padrão: {BACKUP_DIR_PADRAO}). O backup é automático "
+                        "e obrigatório: se falhar, nada é apagado")
     args = p.parse_args()
 
     periods = [s.strip() for s in str(args.periods).split(",") if s.strip()]
-    saida = publish(periods, apply=bool(args.apply), limit=args.limit)
+    saida = publish(periods, apply=bool(args.apply), limit=args.limit,
+                    backup_dir=args.backup_dir)
     print(json.dumps(saida, indent=2, ensure_ascii=False, default=str))
     return 0
 
