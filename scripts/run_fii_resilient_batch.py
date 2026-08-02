@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import shutil
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -17,11 +16,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--process-limit", type=int, default=10)
     parser.add_argument("--recent-months", type=int, default=24)
+    parser.add_argument(
+        "--document-types",
+        nargs="+",
+        default=["RELAT GERENCIAL", "INFORME RI", "RESULTADO RI"],
+    )
     parser.add_argument("--min-free-gb", type=float, default=2.5)
     parser.add_argument("--max-batch-mb", type=int, default=150)
     parser.add_argument("--max-document-mb", type=int, default=30)
     parser.add_argument("--download-timeout", type=int, default=15)
     parser.add_argument("--download-attempts", type=int, default=2)
+    parser.add_argument("--document-deadline-seconds", type=int, default=25)
+    parser.add_argument("--parser-timeout-seconds", type=int, default=20)
+    parser.add_argument("--batch-timeout-seconds", type=int, default=75)
+    parser.add_argument("--claim-release-reserve-seconds", type=int, default=5)
+    parser.add_argument("--minimum-document-start-seconds", type=int, default=5)
     parser.add_argument("--host-failure-threshold", type=int, default=2)
     parser.add_argument("--host-cooldown-minutes", type=int, default=60)
     parser.add_argument("--max-documents-per-host", type=int, default=2)
@@ -41,6 +50,7 @@ def main() -> int:
     from scripts.backfill_fii_documents_local import _configure_database
     _configure_database()
     from sqlalchemy import text
+
     from data_pipeline.market.fii_resilient_fallback import run_resilient_fallback
     from data_pipeline.utils.db_utils import get_pipeline_engine
 
@@ -64,6 +74,7 @@ def main() -> int:
             cooldown_minutes=max(int(args.host_cooldown_minutes), 1),
             document_options={
                 "limit": max(int(args.process_limit), 1),
+                "document_types": list(args.document_types),
                 "recent_months": max(int(args.recent_months), 0),
                 "max_batch_bytes": max(int(args.max_batch_mb), 1) * 1024**2,
                 "max_document_bytes": max(int(args.max_document_mb), 1) * 1024**2,
@@ -71,6 +82,17 @@ def main() -> int:
                 "retain_binary": False,
                 "download_timeout": max(int(args.download_timeout), 5),
                 "download_attempts": max(int(args.download_attempts), 1),
+                "max_document_elapsed_seconds": max(
+                    int(args.document_deadline_seconds), 1
+                ),
+                "parser_timeout_seconds": max(int(args.parser_timeout_seconds), 1),
+                "batch_timeout_seconds": max(int(args.batch_timeout_seconds), 1),
+                "claim_release_reserve_seconds": max(
+                    int(args.claim_release_reserve_seconds), 0
+                ),
+                "minimum_document_start_seconds": max(
+                    int(args.minimum_document_start_seconds), 1
+                ),
                 "host_failure_threshold": max(int(args.host_failure_threshold), 1),
                 "host_cooldown_minutes": max(int(args.host_cooldown_minutes), 1),
                 "max_documents_per_host": max(int(args.max_documents_per_host), 1),

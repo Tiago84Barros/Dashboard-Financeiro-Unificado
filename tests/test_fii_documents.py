@@ -1,11 +1,45 @@
-import pytest
 import hashlib
+from datetime import date
+
+import pytest
 
 from data_pipeline.market.fii_documents import (
-    PARSER_VERSION, DocumentTooLargeError, _HostCircuitBreaker, _download,
-    _extract_evidence, _extract_development_projects, _layout_signature,
-    _provisional_candidates, _retry_delay_seconds, _storage,
+    PARSER_VERSION,
+    DocumentParserTimeoutError,
+    DocumentTooLargeError,
+    _BatchDeadline,
+    _download,
+    _effective_document_reference,
+    _extract_development_projects,
+    _extract_evidence,
+    _extract_pdf_text_isolated,
+    _find_reusable_extraction,
+    _HostCircuitBreaker,
+    _layout_signature,
+    _normalize_document_types,
+    _provisional_candidates,
+    _retry_delay_seconds,
+    _storage,
 )
+
+
+def test_effective_document_reference_never_uses_observation_date_as_period():
+    explicit = _effective_document_reference({
+        "reference_date": date(2026, 6, 30),
+        "source_url": "https://ri.test/Relatorio-1T2023.pdf",
+    })
+    inferred = _effective_document_reference({
+        "reference_date": None,
+        "source_url": "https://ri.test/Relatorio-2T2023.pdf",
+    })
+    unknown = _effective_document_reference({
+        "reference_date": None,
+        "source_url": "https://ri.test/2024/05/Relatorio-sem-periodo.pdf",
+    })
+
+    assert explicit == (date(2026, 6, 30), "document_metadata")
+    assert inferred == (date(2023, 6, 30), "source_label")
+    assert unknown == (None, "unknown")
 
 
 def test_document_evidence_uses_methodology_names_and_page_numbers():
@@ -14,7 +48,7 @@ def test_document_evidence_uses_methodology_names_and_page_numbers():
     evidence = _extract_evidence("\n".join(pages), pages)
     rows = {row["metric_name"]: row for row in evidence}
 
-    assert PARSER_VERSION == "1.6.4"
+    assert PARSER_VERSION == "1.6.6"
     assert rows["vacancia_fisica"]["normalized_value"] == pytest.approx(.075)
     assert rows["wault_anos"]["normalized_value"] == pytest.approx(4.2)
     assert rows["implied_cap_rate"]["normalized_value"] == pytest.approx(.091)
@@ -29,6 +63,27 @@ def test_document_evidence_respects_fii_type_profile():
 
     assert {row["metric_name"] for row in tijolo} == {"vacancia_fisica"}
     assert {row["metric_name"] for row in papel} == {"ltv", "credit_spread"}
+
+
+def test_tenant_concentration_requires_explicit_largest_tenant_language():
+    ambiguous = _extract_evidence(
+        "Alocação por Segmento de Locatários. "
+        "Locatários estratégicos e cap rate de 9,4%. "
+        "Alocação por Inquilino. Contratos atípicos 81%.",
+        fii_type="tijolo",
+    )
+    explicit = _extract_evidence(
+        "O inquilino de maior peso representa 11,9% da receita do fundo.",
+        fii_type="tijolo",
+    )
+
+    assert "tenant_concentration" not in {
+        row["metric_name"] for row in ambiguous
+    }
+    tenant = next(
+        row for row in explicit if row["metric_name"] == "tenant_concentration"
+    )
+    assert tenant["normalized_value"] == pytest.approx(.119)
 
 
 def test_only_unambiguous_stable_evidence_is_provisionally_promoted():
@@ -93,6 +148,151 @@ def test_document_download_respects_attempt_limit(monkeypatch):
     with pytest.raises(__import__("requests").Timeout):
         _download("https://example.test/report.pdf", attempts=2)
     assert len(calls) == 2
+
+
+def test_document_download_total_deadline_caps_per_attempt_timeout(monkeypatch):
+    requests = __import__("requests")
+    captured = []
+
+    def timeout(*args, **kwargs):
+        captured.append(kwargs["timeout"])
+        raise requests.Timeout("synthetic timeout")
+
+    monkeypatch.setattr("data_pipeline.market.fii_documents.requests.get", timeout)
+    monkeypatch.setattr("data_pipeline.market.fii_documents.time.sleep", lambda _: None)
+
+    with pytest.raises(requests.Timeout):
+        _download(
+            "https://example.test/report.pdf",
+            timeout=60,
+            attempts=1,
+            max_elapsed_seconds=5,
+        )
+
+    assert captured == [pytest.approx(5, abs=.1)]
+
+
+def test_isolated_parser_terminates_process_after_hard_timeout():
+    class FakeQueue:
+        def get(self, timeout=None):
+            raise __import__("queue").Empty
+
+        def close(self):
+            return None
+
+        def join_thread(self):
+            return None
+
+    class FakeProcess:
+        exitcode = None
+
+        def __init__(self):
+            self.alive = True
+            self.terminated = False
+
+        def start(self):
+            return None
+
+        def join(self, timeout=None):
+            return None
+
+        def is_alive(self):
+            return self.alive
+
+        def terminate(self):
+            self.terminated = True
+            self.alive = False
+
+    class FakeContext:
+        def __init__(self):
+            self.process = FakeProcess()
+            self.queue = FakeQueue()
+
+        def Queue(self, maxsize):
+            assert maxsize == 1
+            return self.queue
+
+        def Process(self, **kwargs):
+            assert kwargs["daemon"] is True
+            return self.process
+
+    context = FakeContext()
+
+    with pytest.raises(DocumentParserTimeoutError, match="prazo de extração"):
+        _extract_pdf_text_isolated(
+            b"%PDF-synthetic",
+            timeout=1,
+            mp_context=context,
+        )
+
+    assert context.process.terminated is True
+
+
+def test_batch_deadline_reserves_time_for_claim_release():
+    now = [100.0]
+    deadline = _BatchDeadline(
+        75,
+        release_reserve_seconds=5,
+        clock=lambda: now[0],
+    )
+
+    assert deadline.work_budget(25) == pytest.approx(25)
+    now[0] = 168.0
+    assert deadline.work_budget(25) == pytest.approx(2)
+    assert deadline.exhausted() is False
+    now[0] = 170.1
+    assert deadline.work_budget(25) == 0
+    assert deadline.exhausted() is True
+
+
+def test_duplicate_content_reuse_requires_same_ticker_and_finished_run():
+    expected = {
+        "version_id": 41,
+        "document_id": 17,
+        "run_id": 53,
+        "status": "needs_review",
+    }
+
+    class Mappings:
+        def first(self):
+            return expected
+
+    class Result:
+        def mappings(self):
+            return Mappings()
+
+    class Connection:
+        def __init__(self):
+            self.params = None
+
+        def execute(self, statement, params):
+            self.params = params
+            return Result()
+
+    connection = Connection()
+
+    row = _find_reusable_extraction(
+        connection,
+        content_sha256="a" * 64,
+        current_document_id=99,
+        ticker="KNRE11",
+    )
+
+    assert row == expected
+    assert connection.params == {
+        "sha": "a" * 64,
+        "document": 99,
+        "ticker": "KNRE11",
+        "name": "fii_public_report",
+        "parser": PARSER_VERSION,
+    }
+
+
+def test_document_type_filter_is_normalized_and_deduplicated():
+    assert _normalize_document_types([
+        " relat gerencial ", "RELAT GERENCIAL", "Informe RI", "",
+    ]) == ["INFORME RI", "RELAT GERENCIAL"]
+    assert _normalize_document_types(None) == []
 
 
 def test_document_download_retries_transient_http_with_retry_after(monkeypatch):

@@ -2,7 +2,6 @@ import pytest
 
 from data_pipeline.market import fii_ri_documents as ri
 
-
 ORIGINAL_ASSERT_PUBLIC_HOST = ri._assert_public_host
 
 
@@ -166,3 +165,16 @@ def test_discovery_does_not_mislabel_informe_as_management_report():
 
     assert len(rows) == 1
     assert rows[0].document_type == "INFORME RI"
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("Relatorio-Trimestral-MFII11-1T2023-1.pdf", "2023-03-31"),
+        ("Relatorio Trimestral MFII11 2T2023", "2023-06-30"),
+        ("MFII11-relatorio-3Q2024.pdf", "2024-09-30"),
+        ("MFII11 4 trimestre 2025", "2025-12-31"),
+    ],
+)
+def test_infer_reference_date_understands_explicit_quarters(label, expected):
+    assert ri.infer_reference_date(label).isoformat() == expected

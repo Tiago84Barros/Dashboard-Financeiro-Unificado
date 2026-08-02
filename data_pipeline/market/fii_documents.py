@@ -9,32 +9,65 @@ import hashlib
 import io
 import json
 import logging
+import multiprocessing
 import os
-from pathlib import Path
+import queue
 import random
 import re
 import shutil
 import time
-from datetime import datetime, timedelta, timezone
 import unicodedata
-from urllib.parse import urlsplit
 import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 from sqlalchemy import text
 
 from data_pipeline.market import repository as repo
+from data_pipeline.market.fii_ri_documents import infer_reference_date
 from data_pipeline.market.fii_sources import metric_observation
 
 logger = logging.getLogger(__name__)
 
 PARSER_NAME = "fii_public_report"
-PARSER_VERSION = "1.6.4"
+PARSER_VERSION = "1.6.6"
 SCHEMA_VERSION = "fii-evidence-v6"
 
 
 class DocumentTooLargeError(ValueError):
     """Documento excede o limite seguro configurado para uma única coleta."""
+
+
+class DocumentParserTimeoutError(TimeoutError):
+    """Extração PDF excedeu o prazo e o processo isolado foi encerrado."""
+
+
+class _BatchDeadline:
+    """Orçamento monotônico que preserva tempo para liberar claims."""
+
+    def __init__(
+        self,
+        seconds: float,
+        *,
+        release_reserve_seconds: float = 5,
+        clock=time.monotonic,
+    ):
+        self._clock = clock
+        self._started = float(clock())
+        self._deadline = self._started + max(float(seconds), .1)
+        self._release_reserve = max(float(release_reserve_seconds), 0.0)
+
+    def work_budget(self, cap_seconds: float) -> float:
+        available = self._deadline - float(self._clock()) - self._release_reserve
+        return max(min(float(cap_seconds), available), 0.0)
+
+    def exhausted(self) -> bool:
+        return self.work_budget(float("inf")) <= 0
+
+    def elapsed(self) -> float:
+        return max(float(self._clock()) - self._started, 0.0)
 
 
 class _HostCircuitBreaker:
@@ -69,7 +102,15 @@ _METRIC_PATTERNS = {
     "ltv": re.compile(r"\bLTV\b[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "duration_anos": re.compile(r"\bduration\b[^\d]{0,35}(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:anos?|years?)", re.I),
     "implied_cap_rate": re.compile(r"\bcap\s*rate\b[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
-    "tenant_concentration": re.compile(r"(?:maior\s+)?(?:locat[aá]rio|inquilino)[^\d%]{0,55}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
+    "tenant_concentration": re.compile(
+        r"(?:maior\s+(?:locat[aá]rio|inquilino)|"
+        r"(?:locat[aá]rio|inquilino)\s+(?:de\s+)?maior\s+"
+        r"(?:peso|participa[cç][aã]o|representatividade|exposi[cç][aã]o)|"
+        r"concentra[cç][aã]o\s+(?:do\s+)?(?:maior\s+)?"
+        r"(?:locat[aá]rio|inquilino))"
+        r"[^\d%]{0,55}(\d{1,3}(?:[.,]\d{1,2})?)\s*%",
+        re.I,
+    ),
     "debtor_concentration": re.compile(r"(?:maior\s+)?devedor[^\d%]{0,55}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "issuance_concentration": re.compile(r"(?:maior\s+)?(?:cri|emiss[aã]o)[^\d%]{0,55}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "delinquency": re.compile(r"inadimpl[eê]ncia[^\d]{0,45}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
@@ -232,7 +273,7 @@ def _download(url: str, timeout: int = 60, *,
     total_attempts = max(int(attempts), 1)
     per_attempt_timeout = max(float(timeout), 1.0)
     total_budget = (
-        max(float(max_elapsed_seconds), per_attempt_timeout)
+        max(float(max_elapsed_seconds), .1)
         if max_elapsed_seconds is not None
         else per_attempt_timeout * total_attempts + min(2 ** total_attempts, 30)
     )
@@ -243,7 +284,7 @@ def _download(url: str, timeout: int = 60, *,
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise requests.Timeout("prazo total de download excedido")
-            current_timeout = max(min(per_attempt_timeout, remaining), 1.0)
+            current_timeout = max(min(per_attempt_timeout, remaining), .1)
             if allowed_host:
                 from data_pipeline.market.fii_ri_documents import (
                     download_official_document,
@@ -332,6 +373,61 @@ def _extract_pdf_text(content: bytes, page_limit: int = 120) -> tuple[str, int, 
         except Exception:
             logger.debug("OCR opcional indisponível", exc_info=True)
     return extracted, pages, method, values if method == "pypdf" else []
+
+
+def _extract_pdf_text_worker(content: bytes, page_limit: int, output) -> None:
+    """Executa no filho; nunca inclui o conteúdo documental no erro."""
+    try:
+        output.put(("ok", _extract_pdf_text(content, page_limit=page_limit)))
+    except Exception as exc:
+        output.put(("error", type(exc).__name__, str(exc)[:500]))
+
+
+def _extract_pdf_text_isolated(
+    content: bytes,
+    page_limit: int = 120,
+    *,
+    timeout: float = 60,
+    mp_context=None,
+) -> tuple[str, int, str, list[str]]:
+    """Extrai em processo terminável para impor deadline inclusive ao OCR."""
+    context = mp_context or multiprocessing.get_context("spawn")
+    output = context.Queue(maxsize=1)
+    process = context.Process(
+        target=_extract_pdf_text_worker,
+        args=(content, max(int(page_limit), 1), output),
+        daemon=True,
+    )
+    process.start()
+    try:
+        deadline = time.monotonic() + max(float(timeout), .1)
+        payload = None
+        while payload is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise DocumentParserTimeoutError("prazo de extração PDF excedido")
+            try:
+                # Consumir antes do join evita deadlock do Queue com textos grandes.
+                payload = output.get(timeout=min(remaining, .2))
+            except queue.Empty:
+                if not process.is_alive():
+                    raise RuntimeError(
+                        "processo de extração terminou sem resultado "
+                        f"(exit={process.exitcode})"
+                    ) from None
+        process.join(timeout=5)
+        if payload[0] == "error":
+            raise RuntimeError(f"extração PDF falhou: {payload[1]}: {payload[2]}")
+        return payload[1]
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+            if process.is_alive() and hasattr(process, "kill"):
+                process.kill()
+                process.join(timeout=1)
+        output.close()
+        output.join_thread()
 
 
 def _parse_number(raw: str, *, percent: bool = False) -> float:
@@ -678,6 +774,70 @@ def _previous_document_status(value: object) -> str:
     return status if status in _RESTORABLE_DOCUMENT_STATUSES else "pending"
 
 
+def _normalize_document_types(values: list[str] | None) -> list[str]:
+    return sorted({str(value).strip().upper() for value in (values or []) if value})
+
+
+def _effective_document_reference(document: dict) -> tuple[object | None, str]:
+    """Retorna apenas período documental comprovado, nunca a data de coleta."""
+    explicit = document.get("reference_date")
+    if explicit is not None:
+        return explicit, "document_metadata"
+    source_path = urlsplit(str(document.get("source_url") or "")).path
+    source_label = source_path.rsplit("/", 1)[-1]
+    inferred = infer_reference_date(source_label)
+    if inferred is not None:
+        return inferred, "source_label"
+    return None, "unknown"
+
+
+def _preclassify_document_references(
+    conn, *, document_types: list[str] | None = None, limit: int = 2000,
+) -> int:
+    """Preenche datas ausentes somente quando o nome do arquivo é inequívoco."""
+    normalized_types = _normalize_document_types(document_types)
+    rows = conn.execute(text("""
+        SELECT id,source_url
+          FROM market.fii_documents
+         WHERE reference_date IS NULL
+           AND source_url LIKE 'https://%'
+           AND natural_key NOT LIKE 'manual-pilot:%'
+           AND (:type_filter=false OR
+                document_type=ANY(CAST(:document_types AS text[])))
+         ORDER BY id DESC
+         LIMIT :limit
+    """), {
+        "type_filter": bool(normalized_types),
+        "document_types": normalized_types,
+        "limit": max(int(limit), 1),
+    }).mappings().all()
+    updates = []
+    for row in rows:
+        reference, source = _effective_document_reference(dict(row))
+        if reference is not None and source == "source_label":
+            updates.append({"document": int(row["id"]), "reference": reference})
+    if not updates:
+        return 0
+    updated = conn.execute(text("""
+        UPDATE market.fii_documents
+           SET reference_date=:reference
+         WHERE id=:document AND reference_date IS NULL
+    """), updates)
+    conn.execute(text("""
+        INSERT INTO market.fii_audit_events (
+            event_type,entity_type,entity_id,parser_version,payload_json
+        ) VALUES (
+            'document_reference_date_inferred','fii_document',
+            CAST(:document AS text),:parser,
+            jsonb_build_object(
+                'reference_date',CAST(:reference AS text),
+                'reference_date_source','source_label'
+            )
+        )
+    """), [{**row, "parser": PARSER_VERSION} for row in updates])
+    return max(int(updated.rowcount or 0), 0)
+
+
 def _release_worker_claims(engine, worker: str,
                            previous_statuses: dict[int, str] | None = None) -> int:
     released = 0
@@ -718,7 +878,39 @@ def _defer_circuit_claim(engine, *, document_id: int, worker: str,
     return max(int(result.rowcount or 0), 0)
 
 
+def _find_reusable_extraction(
+    conn,
+    *,
+    content_sha256: str,
+    current_document_id: int,
+    ticker: str | None,
+):
+    """Localiza extração concluída do mesmo binário e do mesmo FII."""
+    return conn.execute(text("""
+        SELECT v.id AS version_id,v.document_id,v.page_count,
+               r.id AS run_id,r.status,r.confidence,r.layout_signature,
+               r.metrics_json
+          FROM market.fii_document_versions v
+          JOIN market.fii_documents d ON d.id=v.document_id
+          JOIN market.fii_extraction_runs r ON r.document_version_id=v.id
+         WHERE v.content_sha256=:sha
+           AND v.document_id<>:document
+           AND d.ticker IS NOT DISTINCT FROM :ticker
+           AND r.parser_name=:name AND r.parser_version=:parser
+           AND r.status IN ('passed','needs_review')
+         ORDER BY r.finished_at DESC NULLS LAST,r.id DESC
+         LIMIT 1
+    """), {
+        "sha": content_sha256,
+        "document": int(current_document_id),
+        "ticker": ticker,
+        "name": PARSER_NAME,
+        "parser": PARSER_VERSION,
+    }).mappings().first()
+
+
 def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = None,
+                              document_types: list[str] | None = None,
                               recent_months: int = 24,
                               max_batch_bytes: int = 250 * 1024 * 1024,
                               max_document_bytes: int = 30 * 1024 * 1024,
@@ -726,6 +918,11 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                               retain_binary: bool = True,
                               download_timeout: int = 60,
                               download_attempts: int = 3,
+                              max_document_elapsed_seconds: int = 60,
+                              parser_timeout_seconds: int = 60,
+                              batch_timeout_seconds: int = 300,
+                              claim_release_reserve_seconds: int = 5,
+                              minimum_document_start_seconds: int = 5,
                               host_failure_threshold: int = 3,
                               host_cooldown_minutes: int = 30,
                               max_documents_per_host: int = 3) -> dict:
@@ -735,8 +932,18 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
               "oversized": 0, "released": 0, "bytes_processed": 0,
               "provisional_promoted": 0, "projects_extracted": 0,
               "findings_extracted": 0, "project_conflicts": 0,
+              "project_conflicts_resolved": 0,
               "attempted": 0, "transient_failed": 0,
-              "circuit_deferred": 0, "circuit_opened_hosts": 0}
+              "circuit_deferred": 0, "circuit_opened_hosts": 0,
+              "batch_deadline_exhausted": False, "deadline_deferred": 0,
+              "parser_timed_out": 0, "duplicate_content_reused": 0,
+              "reference_date_inferred": 0, "reference_date_missing": 0,
+              "reference_dates_preclassified": 0,
+              "temporal_rows_rejected": 0}
+    deadline = _BatchDeadline(
+        max(float(batch_timeout_seconds), 1),
+        release_reserve_seconds=max(float(claim_release_reserve_seconds), 0),
+    )
     if engine is None:
         return {**result, "failed": -1, "blocker": "banco indisponível"}
     cache_root = _cache_root()
@@ -747,6 +954,8 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                 "blocker": "reserva mínima de armazenamento não atendida"}
     normalized_tickers = sorted({str(value).upper().replace(".SA", "")
                                  for value in (tickers or []) if value})
+    normalized_document_types = _normalize_document_types(document_types)
+    result["document_types"] = normalized_document_types
     cutoff = (datetime.now(timezone.utc) - timedelta(days=max(int(recent_months), 0) * 31)).date()
     worker = f"{os.getenv('GITHUB_RUN_ID') or 'local'}:{uuid.uuid4()}"
     with engine.begin() as conn:
@@ -767,6 +976,9 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
               AND column_name='processing_status')
         """)).scalar():
             return {**result, "failed": -1, "blocker": "migration 029 pendente"}
+        result["reference_dates_preclassified"] = _preclassify_document_references(
+            conn, document_types=normalized_document_types,
+        )
         docs = [dict(row) for row in conn.execute(text("""
             WITH ranked AS (
               SELECT d.id,d.processing_status AS previous_status,
@@ -802,6 +1014,8 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                 AND d.source_url LIKE 'https://%'
                 AND d.natural_key NOT LIKE 'manual-pilot:%'
                 AND (:ticker_filter=false OR d.ticker=ANY(CAST(:tickers AS text[])))
+                AND (:document_type_filter=false OR
+                     d.document_type=ANY(CAST(:document_types AS text[])))
                 AND (:recent_months=0 OR d.reference_date IS NULL OR d.reference_date>=:cutoff)
                 AND NOT EXISTS (
                   SELECT 1 FROM market.fii_audit_events a
@@ -830,6 +1044,8 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                  "parser": PARSER_VERSION, "worker": worker,
                  "ticker_filter": bool(normalized_tickers),
                  "tickers": normalized_tickers, "recent_months": max(int(recent_months), 0),
+                 "document_type_filter": bool(normalized_document_types),
+                 "document_types": normalized_document_types,
                  "cutoff": cutoff,
                  "cooldown_minutes": max(int(host_cooldown_minutes), 1),
                  "max_per_host": max(int(max_documents_per_host), 1)}).mappings().all()]
@@ -859,6 +1075,10 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
     for doc in docs:
         host = ""
         try:
+            if deadline.exhausted():
+                result["batch_deadline_exhausted"] = True
+                break
+            reference, reference_source = _effective_document_reference(doc)
             host = _download_host(str(doc.get("source_url") or ""))
             if circuit.is_open(host):
                 retry_at = datetime.now(timezone.utc) + timedelta(
@@ -870,9 +1090,15 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                     retry_at=retry_at,
                 )
                 continue
-            result["attempted"] += 1
             attempt_number = max(int(doc.get("processing_attempts") or 1), 1)
             adaptive_timeout = max(int(download_timeout), 5) * min(attempt_number, 3)
+            document_budget = deadline.work_budget(
+                max(float(max_document_elapsed_seconds), 1)
+            )
+            if document_budget < max(float(minimum_document_start_seconds), .1):
+                result["batch_deadline_exhausted"] = True
+                break
+            result["attempted"] += 1
             allowed_host = None
             if str(doc.get("natural_key") or "").startswith("official-ri:"):
                 from data_pipeline.market.fii_ri_documents import _host_allowed
@@ -886,15 +1112,15 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                         "documento RI sem fonte oficial habilitada para o host"
                     )
             content, mime = _download(str(doc["source_url"]),
-                                      timeout=adaptive_timeout,
+                                      timeout=min(float(adaptive_timeout), document_budget),
                                       max_bytes=max(int(max_document_bytes), 1),
                                       attempts=max(int(download_attempts), 1),
                                       allowed_host=allowed_host,
-                                      max_elapsed_seconds=(
-                                          adaptive_timeout
-                                          * max(int(download_attempts), 1) + 15
-                                      ))
+                                      max_elapsed_seconds=document_budget)
             circuit.success(host)
+            if deadline.exhausted():
+                result["batch_deadline_exhausted"] = True
+                break
             if result["bytes_processed"] + len(content) > max(int(max_batch_bytes), 1):
                 result["budget_exhausted"] = True
                 break
@@ -932,22 +1158,122 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                     conn.execute(text("UPDATE market.fii_documents SET current_version_id=:version WHERE id=:doc"),
                                  {"version": version_id, "doc": doc["id"]})
                 already = conn.execute(text("""
-                    SELECT id FROM market.fii_extraction_runs
+                    SELECT id,status FROM market.fii_extraction_runs
                     WHERE document_version_id=:version AND parser_name=:name
                       AND parser_version=:parser AND status IN ('passed','needs_review')
                 """), {"version": version_id, "name": PARSER_NAME,
-                         "parser": PARSER_VERSION}).scalar()
+                         "parser": PARSER_VERSION}).mappings().first()
+                reusable = None
+                if not already:
+                    reusable = _find_reusable_extraction(
+                        conn,
+                        content_sha256=sha,
+                        current_document_id=int(doc["id"]),
+                        ticker=str(doc.get("ticker") or "") or None,
+                    )
+                if reusable:
+                    metrics = dict(reusable.get("metrics_json") or {})
+                    metrics.update({
+                        "duplicate_content_reused": True,
+                        "duplicate_of_version_id": int(reusable["version_id"]),
+                        "duplicate_of_run_id": int(reusable["run_id"]),
+                    })
+                    conn.execute(text("""
+                        INSERT INTO market.fii_extraction_runs (
+                            document_version_id,parser_name,parser_version,status,
+                            text_method,confidence,layout_signature,metrics_json,
+                            finished_at
+                        ) VALUES (
+                            :version,:name,:parser,:status,'duplicate_sha256',
+                            :confidence,:layout,CAST(:metrics AS jsonb),now()
+                        )
+                    """), {
+                        "version": version_id,
+                        "name": PARSER_NAME,
+                        "parser": PARSER_VERSION,
+                        "status": reusable["status"],
+                        "confidence": reusable.get("confidence"),
+                        "layout": reusable.get("layout_signature"),
+                        "metrics": json.dumps(metrics, ensure_ascii=False),
+                    })
+                    conn.execute(text("""
+                        UPDATE market.fii_document_versions
+                           SET page_count=:pages WHERE id=:version
+                    """), {
+                        "pages": reusable.get("page_count"),
+                        "version": version_id,
+                    })
+                    conn.execute(text("""
+                        INSERT INTO market.fii_lineage_edges (
+                            parent_type,parent_id,child_type,child_id,relation
+                        ) VALUES (
+                            'fii_document_version',:parent,
+                            'fii_document_version',:child,'duplicate_content_sha256'
+                        ) ON CONFLICT DO NOTHING
+                    """), {
+                        "parent": str(reusable["version_id"]),
+                        "child": str(version_id),
+                    })
+                    conn.execute(text("""
+                        INSERT INTO market.fii_audit_events (
+                            event_type,entity_type,entity_id,parser_version,payload_json
+                        ) VALUES (
+                            'document_duplicate_content_reused','fii_document',
+                            :document,:parser,CAST(:payload AS jsonb)
+                        )
+                    """), {
+                        "document": str(doc["id"]),
+                        "parser": PARSER_VERSION,
+                        "payload": json.dumps({
+                            "source_document_id": int(reusable["document_id"]),
+                            "source_version_id": int(reusable["version_id"]),
+                            "source_run_id": int(reusable["run_id"]),
+                            "content_sha256": sha,
+                            "same_ticker_required": True,
+                        }),
+                    })
             if already:
                 with engine.begin() as conn:
                     conn.execute(text("""
-                        UPDATE market.fii_documents SET processing_status='completed',
+                        UPDATE market.fii_documents SET processing_status=:status,
                             processing_started_at=NULL,processing_worker=NULL,last_error=NULL
                         WHERE id=:id AND processing_worker=:worker
-                    """), {"id": doc["id"], "worker": worker})
+                    """), {
+                        "status": (
+                            "needs_review" if already["status"] == "needs_review"
+                            else "completed"
+                        ),
+                        "id": doc["id"], "worker": worker,
+                    })
+                continue
+            if reusable:
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        UPDATE market.fii_documents SET processing_status=:status,
+                            processing_started_at=NULL,processing_worker=NULL,
+                            next_retry_at=NULL,last_error=NULL
+                        WHERE id=:id AND processing_worker=:worker
+                    """), {
+                        "status": (
+                            "needs_review" if reusable["status"] == "needs_review"
+                            else "completed"
+                        ),
+                        "id": doc["id"], "worker": worker,
+                    })
+                result["duplicate_content_reused"] += 1
                 continue
             if suffix != ".pdf":
                 raise ValueError(f"tipo documental não suportado: {mime}")
-            extracted, pages, method, page_texts = _extract_pdf_text(content)
+            parser_budget = deadline.work_budget(
+                max(float(parser_timeout_seconds), .1)
+            )
+            if parser_budget <= 0:
+                result["batch_deadline_exhausted"] = True
+                break
+            extracted, pages, method, page_texts = _extract_pdf_text_isolated(
+                content,
+                timeout=parser_budget,
+            )
             signature = _layout_signature(page_texts, extracted)
             fii_type = str(type_map.get(str(doc.get("ticker"))) or "").lower() or None
             evidence = _extract_evidence(extracted, page_texts, fii_type=fii_type)
@@ -955,6 +1281,52 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
             findings = _extract_document_findings(page_texts)
             confidence = min(1.0, len(extracted) / max(pages * 800, 1))
             with engine.begin() as conn:
+                if reference_source == "source_label":
+                    updated_reference = conn.execute(text("""
+                        UPDATE market.fii_documents
+                           SET reference_date=:reference
+                         WHERE id=:document AND reference_date IS NULL
+                    """), {
+                        "reference": reference, "document": int(doc["id"]),
+                    })
+                    result["reference_date_inferred"] += max(
+                        int(updated_reference.rowcount or 0), 0
+                    )
+                temporal_rejected = 0
+                if reference is not None:
+                    for table_name in (
+                        "fii_project_observations", "fii_document_findings",
+                    ):
+                        rejected = conn.execute(text(f"""
+                            UPDATE market.{table_name} target
+                               SET validation_status='rejected',
+                                   validation_method='reference_date_mismatch'
+                              FROM market.fii_document_versions version
+                             WHERE target.document_version_id=version.id
+                               AND version.document_id=:document
+                               AND target.reference_date<>:reference
+                               AND target.validation_status IN ('pending','conflicting')
+                        """), {
+                            "reference": reference, "document": int(doc["id"]),
+                        })
+                        temporal_rejected += max(int(rejected.rowcount or 0), 0)
+                if temporal_rejected:
+                    result["temporal_rows_rejected"] += temporal_rejected
+                    conn.execute(text("""
+                        INSERT INTO market.fii_audit_events (
+                            event_type,entity_type,entity_id,parser_version,payload_json
+                        ) VALUES (
+                            'document_reference_date_corrected','fii_document',
+                            :document,:parser,CAST(:payload AS jsonb)
+                        )
+                    """), {
+                        "document": str(doc["id"]), "parser": PARSER_VERSION,
+                        "payload": json.dumps({
+                            "reference_date": str(reference),
+                            "reference_date_source": reference_source,
+                            "rejected_rows": temporal_rejected,
+                        }),
+                    })
                 previous_layout = conn.execute(text("""
                     SELECT r.layout_signature
                     FROM market.fii_extraction_runs r
@@ -988,6 +1360,10 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                                                 "finding_count": len(findings),
                                                 "provisional_count": len(provisional),
                                                 "layout_changed": layout_changed,
+                                                "reference_date": (
+                                                    str(reference) if reference else None
+                                                ),
+                                                "reference_date_source": reference_source,
                                                 "fii_type_profile": fii_type or "unknown"})}).scalar()
                 conn.execute(text("UPDATE market.fii_document_versions SET page_count=:pages WHERE id=:id"),
                              {"pages": pages, "id": version_id})
@@ -1030,19 +1406,22 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
                                                     else "pending")}).scalar()
                     row["evidence_id"] = int(evidence_id)
                 observed_at = doc.get("first_observed_at") or datetime.now(timezone.utc)
-                reference = doc.get("reference_date") or observed_at.date()
                 published_at = doc.get("source_published_at")
-                project_count, finding_count = _persist_extended_extractions(
-                    conn,
-                    ticker=str(doc.get("ticker") or "") or None,
-                    document_version_id=int(version_id),
-                    extraction_run_id=int(run_id),
-                    reference_date=reference,
-                    source_published_at=published_at,
-                    knowledge_at=observed_at,
-                    projects=projects,
-                    findings=findings,
-                )
+                if reference is None:
+                    result["reference_date_missing"] += 1
+                    project_count, finding_count = 0, 0
+                else:
+                    project_count, finding_count = _persist_extended_extractions(
+                        conn,
+                        ticker=str(doc.get("ticker") or "") or None,
+                        document_version_id=int(version_id),
+                        extraction_run_id=int(run_id),
+                        reference_date=reference,
+                        source_published_at=published_at,
+                        knowledge_at=observed_at,
+                        projects=projects,
+                        findings=findings,
+                    )
                 result["projects_extracted"] += project_count
                 result["findings_extracted"] += finding_count
                 provisional_observations = []
@@ -1107,6 +1486,9 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
             result["oversized"] += 1
         except Exception as exc:
             logger.warning("Documento FII %s falhou: %s", doc.get("id"), exc)
+            result["parser_timed_out"] += int(
+                isinstance(exc, DocumentParserTimeoutError)
+            )
             transient = _is_transient_download_error(exc)
             opened_now = circuit.failure(host, transient=transient)
             result["transient_failed"] += int(transient)
@@ -1152,6 +1534,10 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
     result["released"] = _release_worker_claims(
         engine, worker, previous_statuses=previous_statuses,
     )
+    result["deadline_deferred"] = (
+        result["released"] if result["batch_deadline_exhausted"] else 0
+    )
+    result["batch_elapsed_seconds"] = round(deadline.elapsed(), 3)
     result["failure_rate"] = (
         result["failed"] / result["attempted"] if result["attempted"] else 0.0
     )
@@ -1165,6 +1551,9 @@ def process_pending_documents(limit: int = 25, *, tickers: list[str] | None = No
             )
             reconciliation = detect_project_conflicts(tickers=normalized_tickers)
             result["project_conflicts"] = int(reconciliation.get("conflicts") or 0)
+            result["project_conflicts_resolved"] = int(
+                reconciliation.get("resolved_stale") or 0
+            )
         except Exception:
             logger.warning("Reconciliação de projetos FII falhou", exc_info=True)
     return result

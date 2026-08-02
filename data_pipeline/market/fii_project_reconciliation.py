@@ -9,7 +9,6 @@ from sqlalchemy import text
 
 from data_pipeline.utils.db_utils import get_pipeline_engine
 
-
 PROJECT_TOLERANCES: dict[str, tuple[float, float]] = {
     # campo: (tolerância absoluta, tolerância relativa)
     "portfolio_weight": (.01, .10),
@@ -60,6 +59,44 @@ def detect_project_conflicts(*, tickers: list[str] | None = None) -> dict[str, i
             "SELECT to_regclass('market.fii_project_observations') IS NOT NULL"
         )).scalar():
             return {"compared": 0, "conflicts": 0}
+        resolved_stale = conn.execute(text("""
+            WITH stale AS (
+                SELECT issue.id
+                  FROM market.fii_reconciliation_issues issue
+                  JOIN market.fii_project_observations left_observation
+                    ON left_observation.id=split_part(issue.left_source,':',2)::bigint
+                  JOIN market.fii_document_versions left_version
+                    ON left_version.id=left_observation.document_version_id
+                  JOIN market.fii_documents left_document
+                    ON left_document.id=left_version.document_id
+                  JOIN market.fii_project_observations right_observation
+                    ON right_observation.id=split_part(issue.right_source,':',2)::bigint
+                  JOIN market.fii_document_versions right_version
+                    ON right_version.id=right_observation.document_version_id
+                  JOIN market.fii_documents right_document
+                    ON right_document.id=right_version.document_id
+                 WHERE issue.metric_name LIKE 'project.%'
+                   AND issue.status='open'
+                   AND issue.left_source ~ '^document:[0-9]+$'
+                   AND issue.right_source ~ '^document:[0-9]+$'
+                   AND (
+                       left_observation.reference_date
+                           IS DISTINCT FROM left_document.reference_date
+                       OR right_observation.reference_date
+                           IS DISTINCT FROM right_document.reference_date
+                   )
+            )
+            UPDATE market.fii_reconciliation_issues issue
+               SET status='resolved',resolved_at=now(),
+                   resolution_json=COALESCE(issue.resolution_json,'{}'::jsonb)
+                     || jsonb_build_object(
+                         'resolution','invalid_temporal_pairing',
+                         'resolved_by','document_reference_gate_v1'
+                     )
+              FROM stale
+             WHERE issue.id=stale.id
+        """))
+        resolved_stale_count = max(int(resolved_stale.rowcount or 0), 0)
         rows = conn.execute(text("""
             WITH ranked AS (
                 SELECT o.*,p.ticker,p.project_key,
@@ -73,6 +110,8 @@ def detect_project_conflicts(*, tickers: list[str] | None = None) -> dict[str, i
                 JOIN market.fii_document_versions v ON v.id=o.document_version_id
                 JOIN market.fii_documents d ON d.id=v.document_id
                 WHERE o.validation_status<>'rejected'
+                  AND d.reference_date IS NOT NULL
+                  AND o.reference_date=d.reference_date
                   AND (:ticker_filter=false OR p.ticker=ANY(CAST(:tickers AS text[])))
             )
             SELECT newest.id AS newest_id,previous.id AS previous_id,
@@ -164,4 +203,7 @@ def detect_project_conflicts(*, tickers: list[str] | None = None) -> dict[str, i
                       AND validation_status='pending'
                 """), {"ids": [int(row["newest_id"]), int(row["previous_id"])]})
                 conflicts += row_conflicts
-        return {"compared": len(rows), "conflicts": conflicts}
+        return {
+            "compared": len(rows), "conflicts": conflicts,
+            "resolved_stale": resolved_stale_count,
+        }
