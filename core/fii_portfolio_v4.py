@@ -21,7 +21,7 @@ from core.fii_scenarios import asset_scenario_return
 
 
 SCENARIOS = ("base", "selic_alta", "queda_selic", "inflacao_alta", "vacancia", "credito")
-LIVE_PORTFOLIO_STRATEGY_ID = "fii_integrated_robust_optimizer.v6.6"
+LIVE_PORTFOLIO_STRATEGY_ID = "fii_integrated_robust_optimizer.v6.7"
 
 
 @dataclass(frozen=True)

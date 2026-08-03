@@ -12,7 +12,7 @@ import math
 from typing import Any, Iterable
 
 
-INTEGRATED_MODEL_VERSION = "6.6.0"
+INTEGRATED_MODEL_VERSION = "6.7.0"
 
 
 @dataclass(frozen=True)
