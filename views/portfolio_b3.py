@@ -1729,7 +1729,9 @@ def _render_perfil_configuracao() -> None:
                    on_click=_aplicar(escolhido), use_container_width=True)
 
     preset = PRESETS[escolhido]
-    st.caption(preset.resumo)
+    # O resumo do perfil saiu da tela: o selo acima já nomeia a configuração
+    # ativa, e a justificativa mora no expander de evidência logo abaixo, onde
+    # vem acompanhada dos números que a sustentam.
     with st.expander("Por que estes valores (evidência medida)", expanded=False):
         for evidencia in preset.evidencias:
             st.markdown(f"- {evidencia}")
@@ -2619,10 +2621,8 @@ def render(show_header: bool = True) -> None:
     )
 
     if not rodar and "pb3_resultados" not in st.session_state:
-        st.info(
-            "Configure os parâmetros acima e clique **🚀 Rodar Criação de Portfólio**.",
-            icon="ℹ️",
-        )
+        # Sem mensagem: o botão de rodar está logo acima e diz o que fazer.
+        # Repetir a instrução embaixo dele era ruído.
         return
 
     # Gamma/cap/soft calibrados (ou defaults). Definidos FORA do `if rodar:`
