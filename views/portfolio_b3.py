@@ -2196,11 +2196,7 @@ def render(show_header: bool = True) -> None:
         '<strong style="color:#CBD5E1;">Etapa 2 de 3 · Aplicação em escala.</strong> '
         'Roda a metodologia validada na aba <strong>Análise Avançada</strong> em '
         '<strong>todos os segmentos</strong> da B3 de uma vez, identifica as empresas '
-        'vencedoras de cada segmento e consolida uma carteira inicial multissetorial. '
-        'Usa pontuação (score) com defasagem de publicação = 1 ano, reconstrução '
-        'histórica e comparação vs Tesouro Selic e vs carteira de Pesos Iguais '
-        '(que distribui igualmente entre as empresas do segmento). A carteira salva aqui segue '
-        'para a aba <strong>Avaliação de Portfólio</strong>, que a julga como conjunto.'
+        'vencedoras de cada segmento e consolida uma carteira inicial multissetorial.'
         '</p>',
         unsafe_allow_html=True,
     )
