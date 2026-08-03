@@ -763,3 +763,98 @@ def load_ingestion_runs() -> pd.DataFrame:
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_ingestion_runs falhou: %s", exc)
         return pd.DataFrame(columns=cols)
+
+
+def load_us_giro_diario(dias: int = 180) -> dict[str, float]:
+    """{symbol: giro financeiro diário mediano em US$}.
+
+    Diferente do B3, aqui a série é DIÁRIA de verdade (``prices_daily``), então
+    não há a aproximação de dividir barra mensal por 21 pregões. Mediana e não
+    média: um dia de leilão ou de entrada em índice não vira liquidez
+    permanente.
+    """
+    eng = _engine()
+    if eng is None or not schema_ready():
+        return {}
+    with eng.connect() as conn:
+        df = pd.read_sql_query(text("""
+        SELECT p.symbol,
+               percentile_cont(0.5) WITHIN GROUP (
+                   ORDER BY (p.close * p.volume)::double precision) AS giro
+        FROM market_us.prices_daily p
+        WHERE p.date >= CURRENT_DATE - make_interval(days => :dias)
+          AND p.volume > 0 AND p.close > 0
+        GROUP BY p.symbol
+        """), conn, params={"dias": int(dias)})
+    if df is None or df.empty:
+        return {}
+    out: dict[str, float] = {}
+    for _, row in df.iterrows():
+        try:
+            out[str(row["symbol"]).strip().upper()] = float(row["giro"])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def load_us_resiliencia() -> dict[str, dict]:
+    """Margem operacional nas recessões vs anos normais, por símbolo.
+
+    Devolve também quantos exercícios caem em CADA janela de crise, porque o
+    consumidor precisa saber se o número vem de 2008 (recessão de demanda) ou só
+    da COVID (choque de oferta, curto e com estímulo fiscal). Ver
+    core.us_cycle_evidence para por que só a primeira sustenta veredito.
+    """
+    from core.us_cycle_evidence import (
+        CRISE_2008, CRISE_COVID, MARGEM_NORMAL_MINIMA,
+    )
+
+    crises = list(CRISE_2008) + list(CRISE_COVID)
+    eng = _engine()
+    if eng is None or not schema_ready():
+        return {}
+    with eng.connect() as conn:
+        df = pd.read_sql_query(text("""
+        WITH m AS (
+            SELECT symbol, fiscal_year,
+                   operating_income::double precision / NULLIF(revenue, 0) AS margem
+            FROM market_us.income_statements
+            WHERE period = 'annual' AND revenue > 0
+              AND operating_income IS NOT NULL
+        )
+        SELECT symbol,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY margem)
+                 FILTER (WHERE fiscal_year = ANY(:crises))       AS margem_crise,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY margem)
+                 FILTER (WHERE NOT (fiscal_year = ANY(:crises))) AS margem_normal,
+               count(*) FILTER (WHERE fiscal_year = ANY(:c2008)) AS anos_2008,
+               count(*) FILTER (WHERE fiscal_year = ANY(:covid)) AS anos_covid
+        FROM m GROUP BY symbol
+        """), conn, params={"crises": crises, "c2008": list(CRISE_2008),
+                            "covid": list(CRISE_COVID)})
+    if df is None or df.empty:
+        return {}
+
+    out: dict[str, dict] = {}
+    for _, row in df.iterrows():
+        try:
+            normal = float(row["margem_normal"])
+            crise = float(row["margem_crise"])
+        except (TypeError, ValueError):
+            continue
+        # Margem normal <= 0 torna a razão sem sentido: dois negativos dão
+        # positivo, o mesmo defeito do ROE sobre patrimônio negativo no B3.
+        #
+        # E margem normal PERTO de zero explode a razão sem que nada tenha
+        # acontecido com o negócio: medido em 03/08/2026, AZTA tinha margem
+        # normal de 0,10% e aparecia com razão de 59,74. O piso de 2% custa 25
+        # das 525 empresas com a crise de 2008 e elimina a cauda inventada.
+        if normal != normal or crise != crise or normal < MARGEM_NORMAL_MINIMA:
+            continue
+        out[str(row["symbol"]).strip().upper()] = {
+            "razao": crise / normal, "margem_normal": normal,
+            "margem_crise": crise,
+            "anos_2008": int(row["anos_2008"] or 0),
+            "anos_covid": int(row["anos_covid"] or 0),
+        }
+    return out
