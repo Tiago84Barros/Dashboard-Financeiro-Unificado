@@ -133,6 +133,34 @@ _ASYM_KEYS = ("asymmetry_score", "confidence", "stage", "risk_class", "horizon",
               "invalidation", "missing_data")
 
 
+# Colunas que o cross-section publica para negociabilidade e ciclo. Os mesmos
+# nomes são montados no modo local (core.us_data), para que motor e telas leiam
+# UMA coluna e não precisem saber de qual modo o app está lendo.
+NEGOCIABILIDADE_COLS = ("giro_diario_usd", "crise_razao", "crise_anos_2008",
+                        "crise_anos_covid", "crise_margem_normal",
+                        "crise_margem_crise")
+
+
+def negociabilidade_e_ciclo(symbol: str, giro: dict, ciclo: dict) -> dict:
+    """Chaves de liquidez e travessia de crise para o blob ``metrics``.
+
+    Ausência vira None, nunca zero: giro zero significaria "não negocia", e
+    razão zero significaria "colapso total" — dois vereditos fortes inventados
+    a partir de lacuna de coleta.
+    """
+    s = str(symbol).strip().upper()
+    g = giro.get(s)
+    c = ciclo.get(s) or {}
+    return {
+        "giro_diario_usd": float(g) if g is not None else None,
+        "crise_razao": c.get("razao"),
+        "crise_anos_2008": c.get("anos_2008"),
+        "crise_anos_covid": c.get("anos_covid"),
+        "crise_margem_normal": c.get("margem_normal"),
+        "crise_margem_crise": c.get("margem_crise"),
+    }
+
+
 def serialize_row(*, identity: dict, scored_row: dict, metrics: dict,
                   asymmetry: Optional[dict], advanced: Optional[dict],
                   dossie: Optional[dict], financials: list[dict],
@@ -195,6 +223,14 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
                           "industry": r[4], "exchange": r[5], "security_type": r[6],
                           "is_reit": r[7], "is_active": r[8]} for r in ident_rows}
 
+    # Negociabilidade e travessia de recessão vivem em prices_daily e
+    # income_statements — tabelas que a vitrine NÃO carrega. Sem gravá-las aqui,
+    # o piso de liquidez e a evidência de ciclo funcionariam só no warehouse
+    # local e ficariam mudos no app publicado, que roda em modo snapshot.
+    # Duas consultas agregadas para o universo inteiro, fora do laço.
+    giro_por_symbol = ur.load_us_giro_diario()
+    ciclo_por_symbol = ur.load_us_resiliencia()
+
     written = errors = 0
     rows_out: list[dict] = []
     for _, srow in scored.iterrows():
@@ -214,6 +250,9 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
             dossie["_company_analysis"] = compact_company_analysis(
                 ur.load_company_market_data(sym))
             metrics = dossie.get("metrics", {})
+            metrics = dict(metrics)
+            metrics.update(negociabilidade_e_ciclo(
+                sym, giro_por_symbol, ciclo_por_symbol))
             asym = score_asymmetry(metrics, build_trajectory(inc, bal, cfw)) \
                 if (metrics.get("_years") or 0) >= 3 else None
             adv = advanced_snapshot(inc, bal, cfw, bundle.get("market_cap"))

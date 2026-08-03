@@ -48,6 +48,14 @@ class USPortfolioCreationParams:
     require_historical_signal: bool = False
     min_rank_ic: float = 0.0
     min_history_periods: int = 3
+    # Volume financeiro mediano por pregão. Valor de mercado alto não garante
+    # que o papel negocie: ADR, spin-off recente e ação encalhada aparecem
+    # grandes e saem caro. Ver core.us_liquidity para a calibragem do piso.
+    min_daily_turnover_usd: float = 1_000_000.0
+    # Piso absoluto de qualidade: reprova quem o laboratório avançado marcou
+    # como "Excluída" e chama o próximo da MESMA indústria. Ver
+    # core.us_quality_floor para por que ele não define limiares próprios.
+    apply_quality_floor: bool = True
 
 
 def params_to_dict(params: USPortfolioCreationParams) -> dict[str, Any]:
@@ -143,10 +151,37 @@ def prepare_eligible_universe(
         "Score fundamentalista abaixo do piso", exclusions,
     )
 
+    # Negociabilidade. Fica DEPOIS do score e ANTES da montagem das indústrias:
+    # remover papel encalhado antes de contar a amostra evitaria que uma
+    # indústria fosse aprovada por empresas que ninguém consegue comprar.
+    liquidity_warnings: list[str] = []
+    if float(params.min_daily_turnover_usd) > 0 and "giro_diario_usd" in work:
+        from core.us_liquidity import (
+            LiquidityPolicy, aplicar_piso, formata_usd_curto,
+        )
+
+        giro = {
+            str(s).upper(): float(v)
+            for s, v in zip(work["symbol"], _numeric(work, "giro_diario_usd"))
+            if pd.notna(v)
+        }
+        aprovados, _removidos, liquidity_warnings = aplicar_piso(
+            work["symbol"].astype(str).tolist(), giro,
+            policy=LiquidityPolicy(piso_diario_usd=float(params.min_daily_turnover_usd)),
+        )
+        work = _sequential_filter(
+            work, work["symbol"].astype(str).str.upper().isin(set(aprovados)),
+            "liquidity",
+            f"Volume abaixo de US$ "
+            f"{formata_usd_curto(float(params.min_daily_turnover_usd))}/dia",
+            exclusions,
+        )
+
     if work.empty:
         audit = pd.DataFrame(exclusions, columns=columns)
         audit.attrs["total"] = total
         audit.attrs["eligible"] = 0
+        audit.attrs["liquidity_warnings"] = liquidity_warnings
         return work, audit
 
     work["sector_raw"] = work.get("sector", "Não classificado")
@@ -160,6 +195,7 @@ def prepare_eligible_universe(
     audit = pd.DataFrame(exclusions, columns=columns)
     audit.attrs["total"] = total
     audit.attrs["eligible"] = len(work)
+    audit.attrs["liquidity_warnings"] = liquidity_warnings
     return work.reset_index(drop=True), audit
 
 
@@ -317,29 +353,61 @@ def select_industry_leaders(
     params: USPortfolioCreationParams,
 ) -> pd.DataFrame:
     """Seleciona finalistas somente dentro das indústrias aprovadas."""
+    def _vazio() -> pd.DataFrame:
+        """Frame vazio que ainda carrega o log — quem consome não precisa
+        descobrir por qual caminho a seleção saiu vazia."""
+        saida = pd.DataFrame()
+        saida.attrs["quality_floor_log"] = {}
+        return saida
+
     if eligible is None or eligible.empty or industry_audit is None or industry_audit.empty:
-        return pd.DataFrame()
+        return _vazio()
     approved = set(industry_audit.loc[
         industry_audit["status"].eq("Aprovada"), "industry_group"
     ].astype(str))
     if not approved:
-        return pd.DataFrame()
+        return _vazio()
 
+    from core.us_quality_floor import apply_with_substitution
+
+    floor_log: dict[str, list[dict]] = {}
     records = []
     for industry, group in eligible[eligible["industry_group"].isin(approved)].groupby(
         "industry_group", dropna=False
     ):
-        leaders = group.sort_values(
-            ["entry_score", "fundamental_score"], ascending=False
-        ).head(max(1, int(params.leaders_per_industry))).copy()
+        ranked = group.sort_values(
+            ["entry_score", "fundamental_score"], ascending=False)
+        leaders = ranked.head(max(1, int(params.leaders_per_industry))).copy()
+
+        if params.apply_quality_floor:
+            # A vaga da indústria é preservada: quem é reprovado sai e o próximo
+            # da MESMA indústria entra. Os pesos ainda não existem nesta etapa —
+            # o otimizador os projeta depois sobre a lista final —, então o dict
+            # vazio é o correto: a diversificação é mantida pela posição na
+            # lista, não por herança de peso.
+            escolhidos = apply_with_substitution(
+                leaders["symbol"].astype(str).tolist(),
+                list(zip(ranked["symbol"].astype(str),
+                         _numeric(ranked, "entry_score").fillna(0.0))),
+                ranked, {}, str(industry), floor_log,
+            )
+            if not escolhidos:
+                continue
+            leaders = ranked[ranked["symbol"].astype(str).str.upper().isin(
+                {s.upper() for s in escolhidos})].copy()
+
         leaders["selection_reason"] = "Liderança de score na indústria aprovada"
         records.append(leaders)
     if not records:
-        return pd.DataFrame()
+        saida = pd.DataFrame()
+        saida.attrs["quality_floor_log"] = floor_log
+        return saida
     candidates = pd.concat(records, ignore_index=True)
-    return candidates.sort_values(
+    candidates = candidates.sort_values(
         ["entry_score", "fundamental_score"], ascending=False
     ).head(int(params.top_n)).reset_index(drop=True)
+    candidates.attrs["quality_floor_log"] = floor_log
+    return candidates
 
 
 def _base_target(candidates: pd.DataFrame, weighting: str) -> np.ndarray:
@@ -537,8 +605,45 @@ def build_portfolio_creation(
     eligible, exclusions = prepare_eligible_universe(scored, params)
     audit = build_industry_audit(eligible, params, score_panel)
     candidates = select_industry_leaders(eligible, audit, params)
+    floor_log = dict(candidates.attrs.get("quality_floor_log") or {})
     holdings, warnings = allocate_weights(candidates, params)
     history_available = score_panel is not None and not score_panel.empty
+
+    # Os avisos do piso de negociabilidade nascem em prepare_eligible_universe,
+    # antes de existirem indústrias. Sobem aqui para a mesma lista que a tela já
+    # exibe, em vez de virarem um canal paralelo que a view precisa lembrar de ler.
+    warnings = list(exclusions.attrs.get("liquidity_warnings") or []) + list(warnings)
+
+    reprovados = floor_log.get("reprovados") or []
+    if reprovados:
+        trocas = len(floor_log.get("substituicoes") or [])
+        vazias = len(floor_log.get("sem_substituto") or [])
+        detalhe = f"{trocas} substituída(s) pelo próximo da mesma indústria"
+        if vazias:
+            detalhe += f"; {vazias} sem substituto aprovado na indústria"
+        warnings.append(
+            f"{len(reprovados)} líder(es) reprovado(s) no piso de qualidade — "
+            f"{detalhe}.")
+
+    # Corte inalcançável não pode falhar em silêncio. O piso de entrada é
+    # comparado com a MÉDIA da indústria, e o score é recalculado sobre o
+    # universo já filtrado — então não há como o usuário saber, olhando a tela,
+    # qual valor o mercado de fato alcança naquele recorte. Subir o piso alguns
+    # pontos pode zerar a carteira sem explicação.
+    #
+    # O aviso devolve o teto real do recorte, para calibrar em vez de adivinhar.
+    # Com os parâmetros de fábrica ele não dispara: 44 indústrias aprovadas e 30
+    # ativos (medido em 03/08/2026).
+    if audit is not None and not audit.empty and "status" in audit.columns:
+        aprovadas = int(audit["status"].eq("Aprovada").sum())
+        if aprovadas == 0 and "avg_entry_score" in audit.columns:
+            teto = pd.to_numeric(audit["avg_entry_score"], errors="coerce").max()
+            if pd.notna(teto):
+                warnings = list(warnings) + [
+                    f"Nenhuma indústria aprovada: o piso de score de entrada está "
+                    f"em {float(params.min_entry_score):.0f} e a melhor indústria "
+                    f"do universo alcança {float(teto):.1f}. Baixe o piso para "
+                    "obter carteira."]
     return {
         "ok": not holdings.empty,
         "params": params_to_dict(params),
@@ -548,6 +653,7 @@ def build_portfolio_creation(
         "exclusions": exclusions,
         "industry_audit": audit,
         "candidates": candidates,
+        "quality_floor_log": floor_log,
         "holdings": holdings,
         "metrics": portfolio_metrics(holdings, params),
         "warnings": warnings,
