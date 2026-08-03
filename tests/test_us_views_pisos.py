@@ -231,3 +231,23 @@ def test_o_piso_de_qualidade_nao_reordena_por_conta_propria():
     # Sem nenhuma reprovação, ligar o piso não pode alterar nada.
     assert com["symbol"].tolist() == sem["symbol"].tolist()
     assert not (com.attrs["quality_floor_log"].get("reprovados") or [])
+
+
+def test_vitrine_nao_carrega_o_bloco_mais_pesado_por_padrao():
+    """Trava de custo: `financials` fora da consulta principal da vitrine.
+
+    Medido em 03/08/2026 sobre a vitrine publicada: a consulta trafega 29 MB
+    descomprimidos e 24 MB deles (83%) são esse bloco, que só serve de reserva
+    para derivar payout_ratio em vitrine antiga. Buscá-lo sempre fazia a leitura
+    estourar a conexão antes de terminar — o app publicado não conseguia abrir a
+    aba. Se alguém devolver `financials` ao caminho normal, isto falha.
+    """
+    import re
+    from pathlib import Path
+    fonte = (Path(__file__).resolve().parents[1]
+             / "core" / "us_read.py").read_text(encoding="utf-8")
+    corpo = fonte.split("def load_snapshot_scored")[1].split("\ndef ")[0]
+    chamada = re.search(r"_snapshot_df\((.*?)\)", corpo, re.S)
+    assert chamada, "load_snapshot_scored não chama mais _snapshot_df"
+    assert "financials" not in chamada.group(1), (
+        "financials voltou para a consulta principal da vitrine")

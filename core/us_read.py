@@ -581,27 +581,56 @@ def load_snapshot_scored() -> pd.DataFrame:
     à construção de carteira. Trazê-los ao frame é o que permite usá-los como
     penalidade de risco em ``core/us_advanced_lab.build_entry_scores``.
     """
-    df = _snapshot_df("metrics", extra_jsons=("advanced", "financials"))
+    # `financials` NÃO entra aqui. Medido em 03/08/2026 sobre a vitrine
+    # publicada: a consulta inteira trafega 29 MB descomprimidos, dos quais
+    # **24 MB (83%) são esse bloco** — e ele só serve de reserva para derivar
+    # payout_ratio em vitrine antiga. Buscá-lo sempre fazia a leitura estourar a
+    # conexão ("SSL connection has been closed unexpectedly") antes de terminar;
+    # sem ele, as mesmas 3.052 linhas chegam em 70s.
+    #
+    # Continua havendo reserva: se payout_ratio faltar, uma segunda consulta traz
+    # só symbol+financials. Vitrine atual não precisa dela (2.830 de 2.830 têm a
+    # chave), então o caminho caro deixou de ser o caminho normal.
+    df = _snapshot_df("metrics", extra_jsons=("advanced",))
     if df.empty:
         return df
     metric_dicts = [(_parse_json_col(v) or {}) for v in df.pop("metrics")]
     metrics_df = pd.DataFrame(metric_dicts, index=df.index)
-    financeiros = ([(_parse_json_col(v) or []) for v in df.pop("financials")]
-                   if "financials" in df.columns else [])
     blocos = [df, metrics_df]
     if "advanced" in df.columns:
         avancado = [(_parse_json_col(v) or {}) for v in blocos[0].pop("advanced")]
         blocos.append(pd.DataFrame(avancado, index=df.index))
     out = pd.concat(blocos, axis=1)
 
-    # payout_ratio passou a ser calculado em core.us_metrics, mas a vitrine já
-    # publicada foi gerada antes disso. Derivar do bloco `financials` (que traz
-    # dividends_paid e net_income por exercício) faz a verificação valer HOJE,
-    # sem exigir re-ingestão — e continua correta depois dela.
+    # payout_ratio passou a ser calculado em core.us_metrics, mas uma vitrine
+    # gerada antes disso não o tem. Derivar de `financials` (que traz
+    # dividends_paid e net_income por exercício) faz a verificação valer sem
+    # exigir re-publicação — e continua correta depois dela.
     if "payout_ratio" not in out.columns or out["payout_ratio"].isna().all():
-        out["payout_ratio"] = [_payout_do_historico(hist) for hist in financeiros] \
-            if financeiros else None
+        out["payout_ratio"] = _payout_da_vitrine_antiga(out.get("symbol"))
     return out
+
+
+def _payout_da_vitrine_antiga(symbols) -> list | None:
+    """Deriva payout_ratio do bloco `financials`, só quando ele falta.
+
+    Consulta separada e deliberadamente rara: é o bloco mais pesado da vitrine.
+    Falha de leitura devolve None em vez de levantar — a ausência do payout
+    reduz a evidência de uma verificação, mas não pode esvaziar a aba inteira.
+    """
+    eng = _engine()
+    if eng is None or symbols is None:
+        return None
+    try:
+        with eng.connect() as conn:
+            bruto = dict(conn.execute(text(
+                "SELECT symbol, financials FROM market_us.company_snapshots"
+            )).fetchall())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("payout de reserva indisponível: %s", exc)
+        return None
+    return [_payout_do_historico(_parse_json_col(bruto.get(s)) or [])
+            for s in symbols]
 
 
 def _payout_do_historico(historico) -> float | None:
