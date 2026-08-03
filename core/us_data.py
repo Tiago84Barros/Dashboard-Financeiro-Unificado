@@ -66,6 +66,43 @@ def ingestion_runs():
     return _read.load_ingestion_runs()
 
 
+def _anexa_negociabilidade_e_ciclo(frame):
+    """Garante giro diário e travessia de crise como COLUNAS do cross-section.
+
+    No modo vitrine elas já chegam expandidas do blob ``metrics``; aqui é o
+    caminho local, que lê ``prices_daily`` e ``income_statements`` direto. Os
+    nomes são os mesmos nos dois modos (data_pipeline.us.snapshot), então o
+    motor de carteira e as telas leem uma coluna sem saber de qual modo vieram.
+    """
+    import pandas as pd
+
+    from data_pipeline.us.snapshot import NEGOCIABILIDADE_COLS
+
+    if frame is None or frame.empty or "symbol" not in frame.columns:
+        return frame
+    if all(c in frame.columns for c in NEGOCIABILIDADE_COLS):
+        return frame
+
+    try:
+        giro = _read.load_us_giro_diario()
+        ciclo = _read.load_us_resiliencia()
+    except Exception:                       # dado ausente não pode zerar a aba
+        return frame
+
+    chaves = frame["symbol"].astype(str).str.strip().str.upper()
+    out = frame.copy()
+    out["giro_diario_usd"] = chaves.map(giro).astype(float)
+    for coluna, campo in (("crise_razao", "razao"),
+                          ("crise_anos_2008", "anos_2008"),
+                          ("crise_anos_covid", "anos_covid"),
+                          ("crise_margem_normal", "margem_normal"),
+                          ("crise_margem_crise", "margem_crise")):
+        out[coluna] = chaves.map(
+            lambda s, _c=campo: (ciclo.get(s) or {}).get(_c))
+        out[coluna] = pd.to_numeric(out[coluna], errors="coerce")
+    return out
+
+
 @_cache
 def scored_universe(limit_companies: int | None = None):
     """Cross-section com score fundamentalista calculado (para as abas de análise).
@@ -75,12 +112,12 @@ def scored_universe(limit_companies: int | None = None):
     """
     import pandas as pd
     if _use_snapshot():
-        return _read.load_snapshot_scored()
+        return _anexa_negociabilidade_e_ciclo(_read.load_snapshot_scored())
     import core.us_score as _score
     frame = _read.load_scoring_frame(limit_companies=limit_companies)
     if frame is None or frame.empty:
         return frame if frame is not None else pd.DataFrame()
-    return _score.score_cross_section(frame)
+    return _anexa_negociabilidade_e_ciclo(_score.score_cross_section(frame))
 
 
 def dossie(symbol: str) -> dict:

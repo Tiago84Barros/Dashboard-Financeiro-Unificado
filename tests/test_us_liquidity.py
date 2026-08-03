@@ -61,3 +61,25 @@ def test_nao_existe_troca_de_classe_neste_modulo():
 
 def test_formata_usd_usa_padrao_americano():
     assert formata_usd(1_000_000.0) == "1,000,000"
+
+
+def test_ordem_de_grandeza_usa_virgula_decimal():
+    """A interface é em português e o valor é em dólar.
+
+    "US$ 1,000,000" mistura as convenções: um leitor brasileiro pode ler "1
+    vírgula zero". E o decimal precisa sair com VÍRGULA — a primeira versão
+    desta função escrevia "2.5 bilhões", trocando o separador errado.
+    """
+    from core.us_liquidity import formata_usd_curto as f
+
+    assert f(1e6) == "1 milhão"
+    assert f(5e6) == "5 milhões"
+    assert f(20e6) == "20 milhões"
+    assert f(1.5e6) == "1,5 milhões"
+    assert f(2.5e9) == "2,5 bilhões"
+    assert f(1e9) == "1 bilhão"
+    assert f(750e3) == "750 mil"
+    # Nenhuma saída pode conter ponto: em pt-BR ele é separador de MILHAR e
+    # inverteria a leitura de qualquer valor decimal.
+    for v in (1e6, 1.5e6, 2.5e9, 750e3, 20e6):
+        assert "." not in f(v), f(v)

@@ -59,6 +59,29 @@ def formata_usd(valor: float) -> str:
     return f"{valor:,.0f}"
 
 
+def formata_usd_curto(valor: float) -> str:
+    """Ordem de grandeza por extenso — "1 milhão", "20 milhões", "750 mil".
+
+    A interface é em português e o valor é em dólar: "US$ 1,000,000" mistura as
+    duas convenções e um leitor brasileiro pode ler "1,000000". Escrever a
+    ordem de grandeza remove a ambiguidade sem precisar escolher um dos dois
+    padrões de separador.
+    """
+    def _pt(n: float) -> str:
+        """Decimal com VÍRGULA — o texto é lido em português."""
+        return (f"{int(n)}" if n == int(n) else f"{n:.1f}".replace(".", ","))
+
+    v = float(valor)
+    for corte, singular, plural in ((1e9, "bilhão", "bilhões"),
+                                    (1e6, "milhão", "milhões")):
+        if v >= corte:
+            n = v / corte
+            return f"{_pt(n)} {singular if n == 1 else plural}"
+    if v >= 1e3:
+        return f"{_pt(v / 1e3)} mil"
+    return f"{v:.0f}"
+
+
 def aplicar_piso(
     symbols: Sequence[str],
     giro: Mapping[str, float],
@@ -100,8 +123,8 @@ def aplicar_piso(
         reticencias = "…" if len(removidos) > 12 else ""
         avisos.append(
             f"{len(removidos)} empresa(s) abaixo de US$ "
-            f"{formata_usd(policy.piso_diario_usd)}/dia de volume negociado — "
-            f"{exemplos}{reticencias}")
+            f"{formata_usd_curto(policy.piso_diario_usd)}/dia de volume "
+            f"negociado — {exemplos}{reticencias}")
     if sem_medicao:
         avisos.append(
             f"{len(sem_medicao)} empresa(s) sem série de volume: **não foram "

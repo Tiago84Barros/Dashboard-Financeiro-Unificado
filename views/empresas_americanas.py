@@ -748,11 +748,23 @@ def _tab_avancada_unificada(status: dict) -> None:
                    "Solidez": "score_solidity"}.get(profile)
     if profile_col and profile_col in filtered:
         filtered = filtered[pd.to_numeric(filtered[profile_col], errors="coerce") >= 60]
-    volume_col = next((c for c in ("avg_dollar_volume", "dollar_volume") if c in filtered), None)
+    # O filtro procurava `avg_dollar_volume`/`dollar_volume`, colunas que nunca
+    # existiram no cross-section: escolher "≥ US$ 20 milhões/dia" não removia
+    # ninguém e a legenda dizia que o dado não estava publicado. Agora lê
+    # `giro_diario_usd`, a mediana de close × volume dos últimos 180 pregões.
+    volume_col = next((c for c in ("giro_diario_usd", "avg_dollar_volume",
+                                   "dollar_volume") if c in filtered), None)
     liquidity_floor = {"≥ US$ 1 milhão/dia": 1e6, "≥ US$ 5 milhões/dia": 5e6,
                        "≥ US$ 20 milhões/dia": 20e6}.get(liquidity)
     if liquidity_floor and volume_col:
-        filtered = filtered[pd.to_numeric(filtered[volume_col], errors="coerce") >= liquidity_floor]
+        giro = pd.to_numeric(filtered[volume_col], errors="coerce")
+        # Sem medição não é sinônimo de sem liquidez — o corte cai só sobre quem
+        # foi medido, e as demais são declaradas em vez de sumirem em silêncio.
+        nao_medidas = int(giro.isna().sum())
+        filtered = filtered[giro.isna() | (giro >= liquidity_floor)]
+        if nao_medidas:
+            st.caption(f"💧 {nao_medidas} empresa(s) sem série de volume permanecem no "
+                       "universo: ausência de medição não é prova de iliquidez.")
     elif liquidity_floor:
         st.caption("💧 Volume médio não está publicado nesta vitrine; o filtro de liquidez "
                    "permanece informativo e nenhuma empresa é excluída por dado ausente.")
@@ -871,6 +883,7 @@ def _tab_avancada_unificada(status: dict) -> None:
                        "positivo = diluição.")
 
     with st.expander("🛡️ Resiliência histórica e saúde financeira — sensibilidade EUA"):
+        _render_us_piso_e_ciclo(entry)
         health_cols = [c for c in ("symbol", "net_debt_ebitda", "interest_coverage",
                                    "current_ratio", "fcf_margin", "risk_penalty",
                                    "risk_driver") if c in entry]
@@ -923,6 +936,133 @@ def _tab_avancada_unificada(status: dict) -> None:
     _render_us_lab_backtest()
     _render_us_lab_comparisons(entry)
     _render_us_lab_methodology()
+
+
+def _resiliencia_do_frame(frame: pd.DataFrame) -> dict:
+    """Vereditos de travessia de recessão a partir das colunas do cross-section."""
+    from core.us_cycle_evidence import montar
+
+    exigidas = ("crise_razao", "crise_anos_2008", "crise_anos_covid")
+    if frame is None or frame.empty or not all(c in frame.columns for c in exigidas):
+        return {}
+    bruto = {}
+    for _, linha in frame.iterrows():
+        razao = pd.to_numeric(linha.get("crise_razao"), errors="coerce")
+        if pd.isna(razao):
+            continue
+        bruto[str(linha.get("symbol", "")).upper()] = {
+            "razao": float(razao),
+            "margem_normal": pd.to_numeric(linha.get("crise_margem_normal"),
+                                           errors="coerce"),
+            "margem_crise": pd.to_numeric(linha.get("crise_margem_crise"),
+                                          errors="coerce"),
+            "anos_2008": pd.to_numeric(linha.get("crise_anos_2008"), errors="coerce"),
+            "anos_covid": pd.to_numeric(linha.get("crise_anos_covid"), errors="coerce"),
+        }
+    return montar(bruto)
+
+
+def _render_us_piso_e_ciclo(entry: pd.DataFrame, *, mostrar_piso: bool = True) -> None:
+    """Veredito do piso de qualidade e travessia de recessão sobre o ranking.
+
+    As duas leituras ficam juntas porque respondem à mesma pergunta por ângulos
+    diferentes: o piso olha o balanço de hoje, o ciclo olha o que aconteceu na
+    última recessão de demanda. Nenhuma das duas reordena o ranking — elas
+    dizem o que o score sozinho não conta.
+    """
+    from core.us_quality_floor import evaluate
+
+    if entry is None or entry.empty:
+        return
+
+    # Sobre uma carteira já montada o piso é redundante: ninguém reprovado
+    # chegou até ali. Repetir "nenhuma reprovada" viraria ruído.
+    if not mostrar_piso:
+        _render_us_ciclo(entry)
+        return
+
+    st.markdown("**Piso de qualidade — veredito do laboratório sobre este recorte**")
+    vereditos = evaluate(entry)
+    reprovadas = sorted(v.symbol for v in vereditos.values() if v.reprovado)
+    mudas = sum(1 for v in vereditos.values() if v.situacao == "sem_evidencia")
+    if reprovadas:
+        st.caption(
+            f"⛔ {len(reprovadas)} de {len(vereditos)} empresa(s) do recorte não "
+            f"passariam no piso e **não entram em carteira** na Criação de "
+            f"Portfólio: {', '.join(reprovadas[:15])}"
+            f"{'…' if len(reprovadas) > 15 else ''}."
+        )
+    else:
+        st.caption(f"✅ Nenhuma das {len(vereditos)} empresas do recorte é reprovada "
+                   "no piso de qualidade.")
+    if mudas:
+        st.caption(f"ℹ️ {mudas} sem veredito do laboratório — lacuna de dado, "
+                   "não reprovação.")
+
+    _render_us_ciclo(entry)
+
+
+def _render_us_ciclo(entry: pd.DataFrame) -> None:
+    """Como as empresas do recorte atravessaram a última recessão de demanda."""
+    from core.us_cycle_evidence import (
+        FRAGIL, INTERMEDIARIO, RESILIENTE, cobertura,
+    )
+
+    if entry is None or entry.empty:
+        return
+    medidas = _resiliencia_do_frame(entry)
+    st.markdown("**Travessia de recessão — medida, não inferida do setor**")
+    if not medidas:
+        st.caption("Sem série anual suficiente neste recorte para medir margem de "
+                   "crise. No app publicado, exige vitrine republicada.")
+        return
+
+    cob = cobertura(medidas)
+    rotulos = {RESILIENTE: "Resilientes", INTERMEDIARIO: "Intermediárias",
+               FRAGIL: "Frágeis"}
+    contagem = {k: 0 for k in rotulos}
+    for v in medidas.values():
+        if v.confiavel:
+            contagem[v.classe] = contagem.get(v.classe, 0) + 1
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card_metrica("Com veredito", str(cob["com_veredito"]),
+                     delta=f"de {cob['total']} medidas")
+    with c2:
+        card_metrica(rotulos[RESILIENTE], str(contagem[RESILIENTE]))
+    with c3:
+        card_metrica(rotulos[INTERMEDIARIO], str(contagem[INTERMEDIARIO]))
+    with c4:
+        card_metrica(rotulos[FRAGIL], str(contagem[FRAGIL]))
+
+    st.caption(
+        f"Só a crise de 2008-09 sustenta veredito: foi recessão de demanda. "
+        f"{cob['so_covid']} empresa(s) deste recorte só alcançam 2020 — choque de "
+        "oferta, curto e com estímulo fiscal — e ficam **sem veredito** em vez de "
+        "receberem um número frágil. A razão é margem operacional na crise "
+        "dividida pela margem em anos normais."
+    )
+
+    linhas = [{
+        "Ticker": v.symbol,
+        "Veredito": rotulos.get(v.classe, "—"),
+        "Razão de margem": round(v.razao, 2),
+        # Frações no motor, pontos percentuais na tela — sem isto a coluna
+        # formatada como "%.1f%%" mostraria 0,0% para uma margem de 8%.
+        "Margem normal": v.margem_normal * 100,
+        "Margem na crise": v.margem_crise * 100,
+        "Crises medidas": v.crises_medidas,
+    } for v in medidas.values() if v.confiavel]
+    if linhas:
+        tabela = pd.DataFrame(linhas).sort_values("Razão de margem")
+        st.dataframe(tabela.head(50), hide_index=True, use_container_width=True,
+                     column_config={
+                         "Margem normal": st.column_config.NumberColumn(format="%.1f%%"),
+                         "Margem na crise": st.column_config.NumberColumn(format="%.1f%%"),
+                     })
+        st.caption("Ordenado da pior para a melhor travessia. Razão abaixo de 0,40 "
+                   "é frágil; a partir de 0,80, resiliente.")
 
 
 def _render_us_lab_universe(entry: pd.DataFrame) -> None:
@@ -1508,7 +1648,7 @@ def _render_us_portfolio_creation_css() -> None:
     st.markdown("""
     <style>
     .us-pf-card{background:#12151E;border:1px solid #273142;border-radius:12px;
-      padding:14px 16px;min-height:174px;margin-bottom:8px}
+      padding:14px 16px;min-height:196px;margin-bottom:8px}
     .us-pf-top{display:flex;align-items:center;gap:10px;margin-bottom:9px}
     .us-pf-logo{width:44px;height:44px;border-radius:10px;object-fit:contain;
       background:rgba(255,255,255,.06);padding:5px}
@@ -1539,6 +1679,11 @@ def _render_us_portfolio_cards(holdings: pd.DataFrame) -> None:
             weight = float(row.get("weight", 0.0) or 0.0)
             entry = float(row.get("entry_score", 0.0) or 0.0)
             allocation = float(row.get("allocation_usd", 0.0) or 0.0)
+            giro = pd.to_numeric(row.get("giro_diario_usd"), errors="coerce")
+            # "não medido" é diferente de "não negocia": o card diz qual dos dois.
+            giro_txt = ("—" if pd.isna(giro) else
+                        f"US$ {giro / 1e6:,.1f} mi" if giro >= 1e6 else
+                        f"US$ {giro / 1e3:,.0f} mil")
             with column:
                 st.markdown(
                     f'<div class="us-pf-card"><div class="us-pf-top">'
@@ -1551,6 +1696,8 @@ def _render_us_portfolio_cards(holdings: pd.DataFrame) -> None:
                     f'<strong>{entry:.1f}</strong></div>'
                     f'<div class="us-pf-row"><span>Peso</span>'
                     f'<strong>{weight:.1%}</strong></div>'
+                    f'<div class="us-pf-row"><span>Giro diário</span>'
+                    f'<strong>{giro_txt}</strong></div>'
                     f'<div class="us-pf-row"><span>Capital simulado</span>'
                     f'<strong>US$ {allocation:,.0f}</strong></div></div>',
                     unsafe_allow_html=True,
@@ -1617,9 +1764,12 @@ def _tab_criacao_portfolio(status: dict) -> None:
             )
         with p3:
             market_cap_label = st.selectbox(
-                "Liquidez mínima (valor de mercado)",
+                "Tamanho mínimo (valor de mercado)",
                 ["≥ US$ 300 mi", "≥ US$ 1 bi", "≥ US$ 2 bi", "≥ US$ 5 bi",
                  "≥ US$ 10 bi"], index=1, key="us_create_market_cap",
+                help="Tamanho não é negociabilidade: ADR, spin-off recente e "
+                     "ação preferencial aparecem grandes e negociam pouco. O "
+                     "piso de volume é o campo ao lado.",
             )
         with p4:
             capital = st.number_input(
@@ -1693,6 +1843,30 @@ def _tab_criacao_portfolio(status: dict) -> None:
                 step=100.0, key="us_create_monthly",
             )
 
+        # Os dois pisos absolutos ficam juntos e fora das linhas de calibragem:
+        # não são parâmetros a otimizar, são condições mínimas para uma empresa
+        # entrar. Ver core/us_liquidity.py e core/us_quality_floor.py.
+        t1, t2 = st.columns([1, 2])
+        with t1:
+            turnover_label = st.selectbox(
+                "Negociabilidade mínima (volume/dia)",
+                ["Sem piso", "≥ US$ 1 milhão", "≥ US$ 5 milhões",
+                 "≥ US$ 20 milhões"], index=1, key="us_create_turnover",
+                help="Mediana de preço × volume dos últimos 180 pregões. Quem "
+                     "não tem série medida permanece no universo e é declarado: "
+                     "ausência de medição não é prova de iliquidez.",
+            )
+        with t2:
+            apply_floor = st.checkbox(
+                "Piso absoluto de qualidade (reprova as 'Excluída' do laboratório)",
+                value=True, key="us_create_quality_floor",
+                help="Usa o mesmo veredito da Análise Avançada — Altman em "
+                     "aflição somado a outro alerta, margem líquida e FCF "
+                     "negativos, dívida/EBITDA elevada. Quem é reprovado cede a "
+                     "vaga ao próximo da MESMA indústria, para que exigir "
+                     "qualidade não custe diversificação.",
+            )
+
         require_resilience = st.checkbox(
             "Exigir resiliência (ROIC/ROE/FCF yield acima do Treasury)",
             value=False, key="us_create_resilience",
@@ -1726,7 +1900,12 @@ def _tab_criacao_portfolio(status: dict) -> None:
         "≥ US$ 2 bi": 2_000_000_000.0, "≥ US$ 5 bi": 5_000_000_000.0,
         "≥ US$ 10 bi": 10_000_000_000.0,
     }
+    turnover_floors = {"Sem piso": 0.0, "≥ US$ 1 milhão": 1_000_000.0,
+                       "≥ US$ 5 milhões": 5_000_000.0,
+                       "≥ US$ 20 milhões": 20_000_000.0}
     params = USPortfolioCreationParams(
+        min_daily_turnover_usd=turnover_floors[turnover_label],
+        apply_quality_floor=bool(apply_floor),
         benchmark=benchmark,
         risk_free_rate=float(treasury) / 100,
         capital_usd=float(capital),
@@ -1852,6 +2031,34 @@ def _tab_criacao_portfolio(status: dict) -> None:
         "conjunto para respeitar concentração por ativo, indústria e setor."
     )
     _render_us_portfolio_cards(holdings)
+
+    floor_log = result.get("quality_floor_log") or {}
+    if floor_log.get("reprovados"):
+        with st.expander("⛔ Empresas barradas pelo piso de qualidade"):
+            st.caption(
+                "Eram as melhores da indústria pelo score, mas o laboratório "
+                "avançado as marcou como 'Excluída'. Quando existe candidato "
+                "aprovado na MESMA indústria, ele herda a vaga; quando não "
+                "existe, a vaga fica vazia — declarar é melhor que rebaixar em "
+                "silêncio para o segundo pior."
+            )
+            st.dataframe(
+                pd.DataFrame(floor_log["reprovados"]).rename(columns={
+                    "symbol": "Ticker", "grupo": "Indústria", "motivo": "Motivo"}),
+                hide_index=True, width="stretch")
+            if floor_log.get("substituicoes"):
+                st.dataframe(
+                    pd.DataFrame(floor_log["substituicoes"]).rename(columns={
+                        "entra": "Entrou", "sai": "Saiu", "grupo": "Indústria"}),
+                    hide_index=True, width="stretch")
+            if floor_log.get("sem_substituto"):
+                vazias = ", ".join(
+                    f"{d['symbol']} ({d['grupo']})"
+                    for d in floor_log["sem_substituto"][:12])
+                st.caption(f"Sem substituto aprovado na indústria: {vazias}.")
+
+    secao_titulo("Travessia de Recessão", "🛡️")
+    _render_us_ciclo(holdings)
 
     secao_titulo("Resumo do Portfólio", "📊")
     m1, m2, m3, m4 = st.columns(4)

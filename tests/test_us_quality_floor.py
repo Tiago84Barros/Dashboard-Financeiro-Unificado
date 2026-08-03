@@ -106,3 +106,60 @@ def test_o_piso_nao_define_limiar_proprio():
     # Nenhuma comparação numérica de métrica financeira no corpo executável.
     assert not re.search(r"^\s*(?!#).*\b(risk_penalty|f_score)\b\s*[<>]=?",
                          corpo, re.M)
+
+
+# ── Guarda do piso de score de entrada ───────────────────────────────────────
+
+def test_piso_inalcancavel_avisa_com_o_teto_real():
+    """Subir o piso alguns pontos pode zerar a carteira sem explicação.
+
+    O piso é comparado com a MÉDIA da indústria, e o score é recalculado sobre o
+    universo já filtrado — não há como o usuário saber, olhando a tela, qual
+    valor o mercado alcança naquele recorte.
+    """
+    import numpy as np
+    from core.us_portfolio_creation import (
+        USPortfolioCreationParams, build_portfolio_creation,
+    )
+
+    universo = pd.DataFrame({
+        "symbol": [f"S{i}" for i in range(8)],
+        "name": [f"Empresa {i}" for i in range(8)],
+        "sector": ["Software"] * 8, "industry": ["Software"] * 8,
+        "score": np.linspace(60, 80, 8),
+        "coverage": [90.0] * 8, "_market_cap": [5e9] * 8, "_years": [12] * 8,
+        "roe": np.linspace(.10, .25, 8), "net_margin": np.linspace(.05, .2, 8),
+    })
+    r = build_portfolio_creation(universo, USPortfolioCreationParams(min_entry_score=99.0))
+    assert r["holdings"].empty
+    aviso = " ".join(r["warnings"])
+    assert "Nenhuma indústria aprovada" in aviso and "99" in aviso
+
+
+def test_guarda_nao_dispara_quando_ha_carteira():
+    """Aviso que aparece sempre vira ruído — só surge quando zera de fato.
+
+    Duas indústrias de propósito: com uma só, o critério de vantagem sobre as
+    demais não tem contra o que comparar e nada é aprovado — o aviso dispararia
+    corretamente, mas por outro motivo, e o teste não provaria nada.
+    """
+    import numpy as np
+    from core.us_portfolio_creation import (
+        USPortfolioCreationParams, build_portfolio_creation,
+    )
+
+    n = 16
+    universo = pd.DataFrame({
+        "symbol": [f"S{i}" for i in range(n)],
+        "name": [f"Empresa {i}" for i in range(n)],
+        "sector": ["Tecnologia"] * n,
+        "industry": ["Software"] * 8 + ["Semicondutores"] * 8,
+        "score": np.r_[np.linspace(70, 85, 8), np.linspace(40, 55, 8)],
+        "coverage": [90.0] * n, "_market_cap": [5e9] * n, "_years": [12] * n,
+        "roe": np.r_[np.linspace(.15, .30, 8), np.linspace(.02, .08, 8)],
+        "net_margin": np.r_[np.linspace(.12, .25, 8), np.linspace(.01, .05, 8)],
+    })
+    r = build_portfolio_creation(
+        universo, USPortfolioCreationParams(min_entry_score=0.0, min_score_edge=0.0))
+    assert not r["holdings"].empty
+    assert not any("Nenhuma indústria aprovada" in w for w in r["warnings"])
