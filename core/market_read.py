@@ -948,9 +948,14 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
                 "Ticker", "Hist_Meses", "Num_Imoveis", "Vacancia", "N_Regioes",
                 "N_UFs", "Property_Diversification", "CAGR", "Max_Drawdown",
                 "Multi_Setorial", "Series_Source", "Series_AvailableAt",
+                "Liquidity_Fallback", "Liquidity_Source", "Liquidity_AvailableAt",
             ) if column in quality.columns
         ]
         base = base.merge(quality[enrichment_columns], on="Ticker", how="left")
+        if "Liquidity_Fallback" in base:
+            base["Liquidez_Diaria"] = base["Liquidez_Diaria"].fillna(
+                base["Liquidity_Fallback"]
+            )
     observations = _q("""
         SELECT DISTINCT ON (ticker, metric_name)
                ticker, metric_name, value_numeric, value_text, value_json,
@@ -999,6 +1004,12 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
     }
     for _, item in base.iterrows():
         ticker = str(item["Ticker"])
+        liquidity_source = item.get("Liquidity_Source")
+        if pd.isna(liquidity_source):
+            liquidity_source = None
+        liquidity_available = item.get("Liquidity_AvailableAt")
+        if pd.isna(liquidity_available):
+            liquidity_available = None
         row = {
             "ticker": ticker, "name": item.get("Nome"), "tipo": item.get("Tipo"),
             "sector": item.get("Segmento"), "dy_12m": item.get("DY_12m"),
@@ -1020,7 +1031,11 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
             "region_count": item.get("N_Regioes"),
             "metric_metadata": {
                 "dy_12m": {"available_at": str(item.get("updated_at")), "source": "brapi"},
-                "liquidez_diaria": {"available_at": str(item.get("updated_at")), "source": "brapi"},
+                "liquidez_diaria": {
+                    "available_at": str(liquidity_available or item.get("updated_at")),
+                    "source": str(liquidity_source or "brapi"),
+                    "source_quality": .95 if liquidity_source else .80,
+                },
                 "pvp": {"available_at": str(item.get("updated_at")), "source": "cvm_vpa+brapi_quote"},
                 "total_return_trend": {
                     "available_at": str(item.get("Series_AvailableAt") or item.get("updated_at")),
@@ -1093,7 +1108,7 @@ load_fii_methodology_inputs.clear = _clear_fii_methodology_inputs_cache
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def load_fii_validation_status(methodology_version: str = "6.6.0") -> dict:
+def load_fii_validation_status(methodology_version: str = "6.7.0") -> dict:
     df = _q("""
         SELECT status, metrics_json, blockers_json, as_of_date, finished_at
         FROM market.fii_validation_runs
@@ -1221,11 +1236,22 @@ def load_fii_quality() -> pd.DataFrame:
     """
     from data_pipeline.market import fii as _fz
     base = _q("""
-        SELECT ticker AS "Ticker", name AS "Nome", tipo AS "Tipo",
-               COALESCE(segmento_cvm, segmento) AS "Segmento",
-               dy_12m AS "DY_12m", pvp AS "P/VP", liquidez_diaria AS "Liquidez_Diaria",
-               num_imoveis AS "Num_Imoveis", vacancia AS "Vacancia", score AS "Score"
-        FROM market.fiis
+        SELECT f.ticker AS "Ticker", f.name AS "Nome", f.tipo AS "Tipo",
+               COALESCE(f.segmento_cvm, f.segmento) AS "Segmento",
+               f.dy_12m AS "DY_12m", f.pvp AS "P/VP",
+               f.liquidez_diaria AS "Liquidez_Diaria",
+               f.num_imoveis AS "Num_Imoveis", f.vacancia AS "Vacancia",
+               f.score AS "Score"
+        FROM market.fiis f
+        JOIN LATERAL (
+            SELECT history.active_status
+            FROM market.fii_universe_history history
+            WHERE history.ticker=f.ticker AND history.knowledge_at <= now()
+            ORDER BY history.knowledge_at DESC,history.reference_date DESC
+            LIMIT 1
+        ) universe ON TRUE
+        WHERE universe.active_status IN ('listed','active')
+          AND f.ticker ~ '^[A-Z]{4}11$' AND f.price > 0
     """)
     if base.empty:
         return pd.DataFrame()
@@ -1238,7 +1264,12 @@ def load_fii_quality() -> pd.DataFrame:
 
     # Regiões/UFs distintas e diversificação econômica dos imóveis. O índice
     # 1-HHI só é calculado com ao menos 60% da receita identificada.
-    properties = _q("SELECT ticker, regiao, uf, pct_receita FROM market.fii_imoveis")
+    active_tickers = base["Ticker"].dropna().astype(str).tolist()
+    properties = _q(
+        "SELECT ticker,regiao,uf,pct_receita FROM market.fii_imoveis "
+        "WHERE ticker=ANY(:tickers)",
+        {"tickers": active_tickers},
+    )
     if not properties.empty:
         properties["ticker"] = _norm_ticker(properties["ticker"])
         properties["pct_receita"] = pd.to_numeric(properties["pct_receita"], errors="coerce")
@@ -1263,10 +1294,10 @@ def load_fii_quality() -> pd.DataFrame:
         base["Property_Diversification"] = None
 
     # CAGR + drawdown da série de retorno total (adjusted_close mensal)
-    px = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c "
+    px = _q("SELECT ticker,date,adjusted_close AS c "
             "FROM market.historical_prices "
-            "WHERE ticker IN (SELECT ticker FROM market.fiis) "
-            "AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY ticker, date")
+            "WHERE ticker=ANY(:tickers) AND adjusted_close IS NOT NULL "
+            "ORDER BY ticker,date", {"tickers": active_tickers})
     cagr_map, dd_map, mes_map = {}, {}, {}
     series_source: dict[str, str] = {}
     series_available: dict[str, object] = {}
@@ -1283,43 +1314,86 @@ def load_fii_quality() -> pd.DataFrame:
     # O plano Pro nem sempre devolve série ajustada para todo o universo. Para
     # os tickers ausentes, reconstrói retorno total com fechamento oficial B3 +
     # proventos públicos, sem transformar preço bruto em retorno total.
-    missing_tickers = sorted(set(base["Ticker"].dropna().astype(str)) - set(cagr_map))
-    if missing_tickers:
+    series_candidates = {
+        str(ticker) for ticker in base["Ticker"].dropna().astype(str)
+        if cagr_map.get(str(ticker)) is None
+        or dd_map.get(str(ticker)) is None
+        or int(mes_map.get(str(ticker)) or 0) < 6
+    }
+    liquidity_candidates = set(
+        base.loc[base["Liquidez_Diaria"].isna(), "Ticker"].dropna().astype(str)
+    )
+    b3_candidates = sorted(series_candidates | liquidity_candidates)
+    liquidity_map: dict[str, float] = {}
+    liquidity_available: dict[str, object] = {}
+    if b3_candidates:
         b3 = _q("""
-            SELECT ticker,trade_date AS date,close
+            SELECT DISTINCT ON (ticker,trade_date)
+                   ticker,trade_date AS date,close,financial_volume,collected_at
             FROM market.fii_b3_security_history
             WHERE ticker=ANY(:tickers) AND close>0
-            ORDER BY ticker,trade_date
-        """, {"tickers": missing_tickers})
+            ORDER BY ticker,trade_date,collected_at DESC,id DESC
+        """, {"tickers": b3_candidates})
         dividends = _q("""
             SELECT ticker,event_date,amount FROM market.dividends
             WHERE ticker=ANY(:tickers) AND event_date IS NOT NULL AND amount IS NOT NULL
             ORDER BY ticker,event_date
-        """, {"tickers": missing_tickers})
+        """, {"tickers": sorted(series_candidates)}) if series_candidates else pd.DataFrame()
+        if not dividends.empty:
+            dividends["ticker"] = _norm_ticker(dividends["ticker"])
         dividend_map = ({str(tk): list(zip(group["event_date"], group["amount"]))
                          for tk, group in dividends.groupby("ticker")}
                         if not dividends.empty else {})
         if not b3.empty:
             b3["ticker"] = _norm_ticker(b3["ticker"])
             for tk, group in b3.groupby("ticker"):
-                price_history = list(zip(group["date"], group["close"]))
+                ticker = str(tk)
+                if ticker in liquidity_candidates:
+                    liquidity = _fz.liquidez_diaria_b3(list(zip(
+                        group["date"], group["financial_volume"],
+                    )))
+                    if liquidity.get("value") is not None:
+                        liquidity_map[ticker] = float(liquidity["value"])
+                        liquidity_available[ticker] = liquidity.get("available_at")
+                if ticker not in series_candidates:
+                    continue
+                price_history = _fz.latest_contiguous_history(
+                    list(zip(group["date"], group["close"])),
+                )
+                if not price_history:
+                    continue
+                first_date = pd.to_datetime(price_history[0][0], errors="coerce")
+                ticker_dividends = dividend_map.get(ticker, [])
+                if pd.notna(first_date):
+                    ticker_dividends = [
+                        item for item in ticker_dividends
+                        if pd.to_datetime(item[0], errors="coerce") >= first_date
+                    ]
                 series, _ = _fz.backtest(
-                    {str(tk): 1.0}, {str(tk): price_history},
-                    {str(tk): dividend_map.get(str(tk), [])},
+                    {ticker: 1.0}, {ticker: price_history},
+                    {ticker: ticker_dividends},
                 )
                 if series.empty or "Carteira" not in series:
                     continue
                 met = _fz.price_metrics(list(zip(series["Data"], series["Carteira"])))
-                cagr_map[str(tk)] = met["cagr"]
-                dd_map[str(tk)] = met["max_drawdown"]
-                mes_map[str(tk)] = met.get("meses")
-                series_source[str(tk)] = "b3_close+cvm_brapi_dividends_total_return_v1"
-                series_available[str(tk)] = group["date"].max()
+                if met.get("cagr") is None or met.get("max_drawdown") is None:
+                    continue
+                cagr_map[ticker] = met["cagr"]
+                dd_map[ticker] = met["max_drawdown"]
+                mes_map[ticker] = met.get("meses")
+                series_source[ticker] = "b3_close+cvm_brapi_dividends_total_return_v2"
+                series_available[ticker] = price_history[-1][0]
     base["CAGR"] = base["Ticker"].map(cagr_map)
     base["Max_Drawdown"] = base["Ticker"].map(dd_map)
     base["Hist_Meses"] = base["Ticker"].map(mes_map)
     base["Series_Source"] = base["Ticker"].map(series_source)
     base["Series_AvailableAt"] = base["Ticker"].map(series_available)
+    base["Liquidity_Fallback"] = base["Ticker"].map(liquidity_map)
+    base["Liquidity_Source"] = base["Ticker"].map(
+        lambda ticker: "b3_cotahist_monthly_median_div_21_v1"
+        if ticker in liquidity_map else None
+    )
+    base["Liquidity_AvailableAt"] = base["Ticker"].map(liquidity_available)
     return base
 
 

@@ -40,6 +40,35 @@ def test_liquidez_mediana():
     assert liq == 2000.0 / fii._PREGOES_MES
 
 
+def test_latest_contiguous_history_does_not_join_reused_ticker():
+    history = [
+        ("2020-01-31", 100), ("2020-02-28", 101),
+        ("2025-01-31", 50), ("2025-02-28", 51),
+    ]
+
+    assert fii.latest_contiguous_history(history) == [
+        ("2025-01-31", 50), ("2025-02-28", 51),
+    ]
+
+
+def test_liquidez_b3_uses_closed_months_and_counts_silent_month_as_zero():
+    history = [
+        ("2026-01-15", 2_100),
+        ("2026-03-15", 4_200),
+        ("2026-04-15", 6_300),
+        ("2026-05-15", 8_400),
+        ("2026-06-15", 10_500),
+        ("2026-07-15", 999_999),  # mês-fonte mais recente: potencialmente parcial
+    ]
+
+    result = fii.liquidez_diaria_b3(history)
+
+    # Jan-Jun / 21: [100, 0, 200, 300, 400, 500] -> mediana 250.
+    assert result["value"] == 250.0
+    assert str(result["available_at"]) == "2026-06-15"
+    assert result["observed_months"] == 5
+
+
 def test_compute_fii_none_para_etf():
     assert fii.compute_fii(_fii_quote("BOVA11", sector="ETF"), _REF) is None
     m = fii.compute_fii(_fii_quote("HGLG11"), _REF)

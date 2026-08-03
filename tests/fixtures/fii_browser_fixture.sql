@@ -182,9 +182,9 @@ INSERT INTO market.fii_validation_runs
     (methodology_version, as_of_date, status, metrics_json, blockers_json,
      started_at, finished_at)
 VALUES (
-    '6.6.0', DATE '2026-07-29', 'passed',
-    '{"strategy_id":"fii_integrated_robust_optimizer.v6.6",
-      "backtest":{"strategy_id":"fii_integrated_robust_optimizer.v6.6",
+    '6.7.0', DATE '2026-07-29', 'passed',
+    '{"strategy_id":"fii_integrated_robust_optimizer.v6.7",
+      "backtest":{"strategy_id":"fii_integrated_robust_optimizer.v6.7",
                   "periods":65,"verified_snapshot_fraction":1,
                   "return_observation_coverage":1}}',
     '[]', TIMESTAMPTZ '2026-07-24 10:00:00+00',
@@ -207,14 +207,14 @@ VALUES
     ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
      '11111111-1111-1111-1111-111111111111',
      'Carteira sintética ativa','active','synthetic_test','fixture-active',
-     '{"methodology_version":"6.6.0",
-       "strategy_id":"fii_integrated_robust_optimizer.v6.6"}',
+     '{"methodology_version":"6.7.0",
+       "strategy_id":"fii_integrated_robust_optimizer.v6.7"}',
      '{}','2026-07-24 12:00:00+00','2026-07-24 12:00:00+00'),
     ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
      '11111111-1111-1111-1111-111111111111',
      'Carteira sintética arquivada','archived','synthetic_test','fixture-archived',
-     '{"methodology_version":"6.6.0",
-       "strategy_id":"fii_integrated_robust_optimizer.v6.6"}',
+     '{"methodology_version":"6.7.0",
+       "strategy_id":"fii_integrated_robust_optimizer.v6.7"}',
      '{}','2026-06-24 12:00:00+00','2026-06-24 12:00:00+00');
 
 INSERT INTO fii_portfolio_model_items

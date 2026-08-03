@@ -1,6 +1,10 @@
 import pandas as pd
 
-from data_pipeline.market.fii_pit import reconstruct_snapshots
+from data_pipeline.market.fii_pit import (
+    _features_as_of,
+    _monthly_market_features,
+    reconstruct_snapshots,
+)
 
 
 def test_reconstruction_respects_knowledge_at_and_builds_monthly_scores():
@@ -36,3 +40,38 @@ def test_reconstruction_respects_knowledge_at_and_builds_monthly_scores():
     assert january and january[0]["availability_quality"] == "first_observed_proxy"
     assert february and february[0]["fii_type"] == "tijolo"
     assert "pvp" in february[0]["inputs_json"]
+
+
+def test_pit_liquidity_converts_monthly_bar_volume_to_daily_unit():
+    prices = pd.DataFrame({
+        "ticker": ["TEST11"] * 6,
+        "date": pd.date_range("2026-01-31", periods=6, freq="ME"),
+        "close": [10.0] * 6,
+        "adjusted_close": [10.0] * 6,
+        "volume": [21_000.0] * 6,
+        "source": ["brapi_legacy_quote"] * 6,
+    })
+    bundle = _monthly_market_features(prices, pd.DataFrame())["TEST11"]
+
+    result = _features_as_of(bundle, pd.Timestamp("2026-06-30"))
+
+    assert result["liquidez_diaria"] == 10_000.0
+    assert result["liquidity_method"] == "monthly_financial_volume_div_21"
+
+
+def test_pit_liquidity_keeps_daily_b3_volume_in_daily_unit():
+    dates = pd.date_range("2026-04-01", periods=63, freq="B")
+    prices = pd.DataFrame({
+        "ticker": ["TEST11"] * len(dates),
+        "date": dates,
+        "close": [10.0] * len(dates),
+        "adjusted_close": [10.0] * len(dates),
+        "volume": [21_000.0] * len(dates),
+        "source": ["b3_cotahist"] * len(dates),
+    })
+    bundle = _monthly_market_features(prices, pd.DataFrame())["TEST11"]
+
+    result = _features_as_of(bundle, dates.max())
+
+    assert result["liquidez_diaria"] == 210_000.0
+    assert result["liquidity_method"] == "daily_financial_volume_median_63"

@@ -54,7 +54,7 @@ def test_parse_b3_ifix_monthly_filters_range_and_invalid_values():
         payload, start=date(2024, 1, 1), end=date(2024, 12, 31),
     )
     assert rows == [{"date": date(2024, 1, 31), "value": 3330.12}]
-    assert VALIDATION_PROTOCOL_VERSION == "fii-pit-robust-optimizer-3.3.0"
+    assert VALIDATION_PROTOCOL_VERSION == "fii-pit-robust-optimizer-3.4.0"
 
 
 def test_macro_scenario_uses_only_month_closed_before_decision(monkeypatch):

@@ -93,6 +93,80 @@ def liquidez_diaria(historical: list, n: int = 6) -> float | None:
     return med / _PREGOES_MES
 
 
+def latest_contiguous_history(prices: list, max_gap_days: int = 120) -> list:
+    """Mantém apenas o trecho cronológico mais recente sem hiato prolongado.
+
+    Um ticker de FII pode desaparecer e mais tarde ser reutilizado por outro
+    veículo. Preencher esse intervalo ligaria duas entidades econômicas distintas
+    e fabricaria histórico. O corte também evita que o ``ffill`` do backtest
+    atravesse períodos longos sem negociação.
+    """
+    valid: list[tuple[_dt.date, object, object]] = []
+    for item in prices or []:
+        try:
+            raw_date, value = item[0], item[1]
+        except (TypeError, IndexError):
+            continue
+        parsed = _as_date(raw_date)
+        if parsed is not None and _f(value) is not None:
+            valid.append((parsed, raw_date, value))
+    if not valid:
+        return []
+    valid.sort(key=lambda item: item[0])
+    start = 0
+    for index in range(1, len(valid)):
+        if (valid[index][0] - valid[index - 1][0]).days > max(int(max_gap_days), 1):
+            start = index
+    return [(raw_date, value) for _, raw_date, value in valid[start:]]
+
+
+def liquidez_diaria_b3(
+    history: list,
+    *,
+    n_months: int = 6,
+    min_observed_months: int = 3,
+) -> dict:
+    """Estima ADTV com o volume financeiro oficial diário da B3.
+
+    Soma o giro por mês, inclui como zero meses sem negócio e usa a mediana dos
+    últimos seis meses encerrados. O mês mais recente presente na fonte é sempre
+    excluído, pois um arquivo anual parcial não prova que o mês esteja completo.
+    Retorna também a data máxima efetivamente usada para a linhagem.
+    """
+    import pandas as pd
+
+    rows = []
+    for item in history or []:
+        try:
+            raw_date, raw_value = item[0], item[1]
+        except (TypeError, IndexError):
+            continue
+        parsed = pd.to_datetime(raw_date, errors="coerce")
+        value = _f(raw_value)
+        if pd.notna(parsed) and value is not None and value >= 0:
+            rows.append((parsed.normalize(), value))
+    if not rows:
+        return {"value": None, "available_at": None, "observed_months": 0}
+    frame = pd.DataFrame(rows, columns=["date", "financial_volume"])
+    latest_source_month = frame["date"].max().to_period("M")
+    cutoff_month = latest_source_month - 1
+    first_month = cutoff_month - (max(int(n_months), 1) - 1)
+    frame["month"] = frame["date"].dt.to_period("M")
+    window = frame[(frame["month"] >= first_month) & (frame["month"] <= cutoff_month)]
+    observed = int(window["month"].nunique())
+    if observed < max(int(min_observed_months), 1):
+        return {"value": None, "available_at": None, "observed_months": observed}
+    monthly = window.groupby("month")["financial_volume"].sum()
+    months = pd.period_range(first_month, cutoff_month, freq="M")
+    typical = float(monthly.reindex(months, fill_value=0.0).median()) / _PREGOES_MES
+    available = window.loc[window["month"] <= cutoff_month, "date"].max()
+    return {
+        "value": typical,
+        "available_at": available.date() if pd.notna(available) else None,
+        "observed_months": observed,
+    }
+
+
 def pvp_efetivo(price, vpa, pvp_brapi) -> float | None:
     """P/VP preferindo o VPA oficial (Informe Mensal CVM): preço ÷ VPA quando
     ambos válidos; senão o priceToBook da brapi.

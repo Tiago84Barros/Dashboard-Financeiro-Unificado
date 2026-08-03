@@ -30,7 +30,7 @@ _B3_IFIX_MONTHLY_URL = (
     "https://sistemaswebb3-listados.b3.com.br/"
     "indexStatisticsProxy/IndexCall/GetMonthlyEvolution/"
 )
-VALIDATION_PROTOCOL_VERSION = "fii-pit-robust-optimizer-3.3.0"
+VALIDATION_PROTOCOL_VERSION = "fii-pit-robust-optimizer-3.4.0"
 
 
 def _num(value: Any) -> float | None:
@@ -176,7 +176,9 @@ def _monthly_market_features(prices: pd.DataFrame, dividends: pd.DataFrame) -> d
     return output
 
 
-def _features_as_of(bundle: dict, cutoff: pd.Timestamp) -> dict[str, float | int | None]:
+def _features_as_of(
+    bundle: dict, cutoff: pd.Timestamp,
+) -> dict[str, float | int | str | None]:
     daily = bundle["daily"].loc[:cutoff]
     monthly = bundle["monthly"].loc[:cutoff]
     if daily.empty or monthly.empty:
@@ -188,7 +190,29 @@ def _features_as_of(bundle: dict, cutoff: pd.Timestamp) -> dict[str, float | int
     drawdown = trailing / trailing.cummax() - 1.0 if len(trailing) else pd.Series(dtype=float)
     trend = (float(adjusted.iloc[-1] / adjusted.iloc[-13] - 1.0)
              if len(adjusted) >= 13 and adjusted.iloc[-13] > 0 else None)
-    liquidity = bundle["daily_value"].loc[:cutoff].tail(63).median()
+    value_history = bundle["daily_value"].loc[:cutoff].dropna()
+    liquidity = None
+    liquidity_method = None
+    if len(value_history) >= 3:
+        sources = daily.get("source", pd.Series(dtype=object)).dropna().astype(str).str.lower()
+        latest_source = sources.iloc[-1] if not sources.empty else ""
+        if "brapi" in latest_source:
+            monthly_volume = True
+        elif "b3" in latest_source or "cotahist" in latest_source:
+            monthly_volume = False
+        else:
+            # Fontes desconhecidas usam somente a cauda observável para inferir
+            # a granularidade, sem varrer toda a série a cada rebalanceamento.
+            spacing = value_history.tail(12).index.to_series().diff().dt.days.dropna().median()
+            monthly_volume = bool(pd.notna(spacing) and float(spacing) >= 14)
+        if monthly_volume:
+            # historical_prices é mensal para a brapi: o volume da barra é o
+            # total do mês, não ADTV. Seis barras / 21 pregões preservam a unidade.
+            liquidity = value_history.tail(6).median() / 21.0
+            liquidity_method = "monthly_financial_volume_div_21"
+        else:
+            liquidity = value_history.tail(63).median()
+            liquidity_method = "daily_financial_volume_median_63"
     div = bundle["dividends"]
     trailing_div = div[(div["date"] <= cutoff) &
                        (div["date"] > cutoff - pd.Timedelta(days=365))] if not div.empty else div
@@ -211,6 +235,7 @@ def _features_as_of(bundle: dict, cutoff: pd.Timestamp) -> dict[str, float | int
         "history_months": history_months, "total_return_trend": trend,
         "max_drawdown": float(drawdown.min()) if len(drawdown) else None,
         "income_growth_per_share_3y": growth, "income_recurrence": recurrence,
+        "liquidity_method": liquidity_method,
     }
 
 
@@ -308,9 +333,16 @@ def reconstruct_snapshots(
             for metric in ("dy_12m", "liquidez_diaria", "total_return_trend", "max_drawdown",
                            "income_growth_per_share_3y", "income_recurrence"):
                 if row.get(metric) is not None:
+                    metric_source = "public_market_history"
+                    metric_quality = .85
+                    if metric == "liquidez_diaria":
+                        metric_source = str(
+                            row.get("liquidity_method") or "public_market_history"
+                        )
+                        metric_quality = .80 if "monthly" in metric_source else .85
                     row["metric_metadata"][metric] = {
-                        "available_at": cutoff.isoformat(), "source": "public_market_history",
-                        "source_quality": .85,
+                        "available_at": cutoff.isoformat(), "source": metric_source,
+                        "source_quality": metric_quality,
                     }
             for obs in observations_by_ticker.get(ticker, []):
                 value = obs.get("value_numeric")
