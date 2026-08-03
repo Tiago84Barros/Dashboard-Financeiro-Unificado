@@ -1704,6 +1704,83 @@ def _render_us_portfolio_cards(holdings: pd.DataFrame) -> None:
                 )
 
 
+def _semear_perfil_us_padrao() -> None:
+    """Primeira carga já nasce no perfil recomendado, não nos defaults soltos.
+
+    Sem isto, cada controle nasce com o próprio default e a combinação inicial
+    não corresponde a nenhum perfil medido: o usuário vê "Personalizada" sem ter
+    mexido em nada e roda a carteira com valores que ninguém verificou. Aqui o
+    custo seria concreto — os defaults dão 7 setores e 20 indústrias, contra 10
+    e 30 do recomendado.
+
+    ``setdefault`` e não atribuição: semear é para a PRIMEIRA carga; sobrescrever
+    a cada rerun desfaria qualquer ajuste do usuário.
+    """
+    from core.us_portfolio_presets import PRESETS, RECOMENDADO
+
+    for chave, valor in PRESETS[RECOMENDADO].valores.items():
+        if chave not in st.session_state:
+            st.session_state[chave] = valor
+
+
+def _render_perfil_us() -> None:
+    """Perfis medidos + alerta quando a configuração tem custo conhecido."""
+    from core.us_portfolio_presets import (
+        PERSONALIZADO, PRESETS, RECOMENDADO, avaliar_configuracao,
+        identificar_perfil,
+    )
+
+    def _aplicar(nome: str):
+        def _cb():
+            for chave, valor in PRESETS[nome].valores.items():
+                st.session_state[chave] = valor
+        return _cb
+
+    # Estado ATUAL dos controles — não o do perfil escolhido no seletor.
+    atual = {chave: st.session_state.get(chave)
+             for item in PRESETS.values() for chave in item.valores}
+    ativo = identificar_perfil(atual)
+    alertas = avaliar_configuracao(atual)
+
+    cor = ("#00C896" if ativo != PERSONALIZADO and not alertas
+           else "#F6C90E" if alertas else "#4A9EFF")
+    selo = ativo if ativo != PERSONALIZADO else "Personalizada"
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:10px;margin:4px 0 10px">'
+        f'<span style="font-size:.78rem;font-weight:700;color:#E2E8F0">'
+        f'Perfil de configuração</span>'
+        f'<span style="font-size:.66rem;font-weight:700;letter-spacing:.04em;'
+        f'color:{cor};border:1px solid {cor}55;background:{cor}14;'
+        f'border-radius:999px;padding:2px 9px">{html.escape(selo)}</span></div>',
+        unsafe_allow_html=True)
+
+    col_sel, col_btn = st.columns([3, 1], vertical_alignment="bottom")
+    escolhido = col_sel.selectbox(
+        # Rótulo colapsado, não removido: o título visível é o markdown acima,
+        # mas leitor de tela precisa do nome do controle.
+        "Perfil de configuração", list(PRESETS), key="us_create_perfil",
+        label_visibility="collapsed",
+        help="Combinações cujo efeito foi MEDIDO no universo americano real. "
+             "Aplicar sobrescreve os parâmetros; depois disso ajuste o que "
+             "quiser — o app avisa se a alteração tiver custo conhecido.")
+    col_btn.button("Aplicar perfil", key="us_create_aplicar_perfil",
+                   on_click=_aplicar(escolhido), width="stretch")
+
+    preset = PRESETS[escolhido]
+    with st.expander("Por que estes valores (evidência medida)", expanded=False):
+        for evidencia in preset.evidencias:
+            st.markdown(f"- {evidencia}")
+        if preset.ressalva:
+            st.warning(preset.ressalva, icon="⚠️")
+
+    if ativo == PERSONALIZADO:
+        st.caption(
+            "Os controles não correspondem a nenhum perfil medido. Para voltar "
+            f"ao padrão, escolha “{RECOMENDADO}” e clique em Aplicar perfil.")
+    for alerta in alertas:
+        st.warning(alerta, icon="⚠️")
+
+
 def _tab_criacao_portfolio(status: dict) -> None:
     """Etapa 2 de 3: aplicação em escala da metodologia americana."""
     if _empty_if_offline(status, "Sem dados locais para montar a carteira.", "🚀"):
@@ -1744,7 +1821,17 @@ def _tab_criacao_portfolio(status: dict) -> None:
     score_panel = pd.DataFrame() if snapshot_mode else us.score_panel()
     history_available = score_panel is not None and not score_panel.empty
 
-    with st.expander("⚙️ Parâmetros", expanded=True):
+    # Semear ANTES de instanciar qualquer widget: depois de instanciado, o
+    # Streamlit não deixa mais escrever a chave no session_state.
+    _semear_perfil_us_padrao()
+    _render_perfil_us()
+
+    # Fechado por padrão: quem confia no perfil não precisa ver 18 controles, e
+    # quem quer ajustar abre. O selo acima já diz qual configuração está ativa.
+    with st.expander("⚙️ Parâmetros", expanded=False):
+        st.caption(
+            "Já preenchidos pelo perfil acima. Alterar aqui é opcional — o app "
+            "avisa quando a mudança tem custo medido.")
         p1, p2, p3, p4 = st.columns(4)
         with p1:
             benchmark = st.selectbox(
