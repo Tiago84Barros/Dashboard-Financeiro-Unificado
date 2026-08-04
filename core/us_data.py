@@ -57,6 +57,12 @@ def company_market_data(symbol: str):
 
 
 @_cache
+def macro_observado() -> dict:
+    """Snapshot macro OBSERVADO (FRED) do warehouse; {} quando não ingerido."""
+    return _read.load_us_macro()
+
+
+@_cache
 def quality_audit(limit: int = 200):
     return _read.load_quality_audit(limit=limit)
 

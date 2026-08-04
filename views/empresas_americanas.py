@@ -636,24 +636,70 @@ def _render_dossie_for(symbol: str) -> None:
 
 
 def _macro_controls(key_prefix: str = "us_macro") -> dict:
-    from core.us_macro import USMacroSnapshot, evaluate_macro
-    st.caption("Cenário macro ajustável. Os valores são premissas de simulação; "
-               "a interface não consulta fontes externas em tempo real.")
+    """Controles do regime macro, partindo da série observada quando existe.
+
+    Uma fonte só para a seção inteira: com valores de partida diferentes, esta
+    aba e a Avaliação de Portfólio exibiriam taxas do Fed diferentes na mesma
+    sessão, e nenhuma das duas estaria declaradamente errada.
+    """
+    from core.us_macro import (
+        FONTE_OBSERVADO, FONTE_PREMISSA, USMacroSnapshot, evaluate_macro,
+    )
+
+    try:
+        observado = us.macro_observado() or {}
+    except Exception:  # noqa: BLE001 - leitura opcional
+        observado = {}
+    padrao = USMacroSnapshot()
+    base = {
+        "fed_funds": observado.get("fed_funds", padrao.fed_funds),
+        "cpi_yoy": observado.get("cpi_yoy", padrao.cpi_yoy),
+        "real_gdp_yoy": observado.get("real_gdp_yoy", padrao.real_gdp_yoy),
+        "unemployment": observado.get("unemployment", padrao.unemployment),
+        "yield_curve_10y_2y": observado.get("yield_curve_10y_2y", padrao.yield_curve_10y_2y),
+        "high_yield_spread": observado.get("high_yield_spread", padrao.high_yield_spread),
+    }
+    if observado:
+        st.caption(
+            f"Cenário macro a partir de **séries oficiais (FRED)** no warehouse "
+            f"· data-base {observado.get('as_of') or 'não informada'}. "
+            "Alterar qualquer campo transforma a leitura em simulação."
+        )
+    else:
+        st.caption(
+            "Cenário macro ajustável. Os valores são **premissas de simulação**, "
+            "não leitura de mercado — a interface não consulta fontes externas. "
+            "Para usar séries oficiais, rode `python run_us_ingest.py macro --warehouse`."
+        )
+
     c1, c2, c3 = st.columns(3)
     with c1:
-        fed = st.number_input("Juros básicos do Fed %", 0.0, 15.0, 4.25, 0.25,
-                              key=f"{key_prefix}_fed")
-        gdp = st.number_input("PIB real a/a %", -10.0, 15.0, 2.0, 0.1, key=f"{key_prefix}_gdp")
+        fed = st.number_input("Juros básicos do Fed %", 0.0, 15.0,
+                              float(base["fed_funds"]), 0.25, key=f"{key_prefix}_fed")
+        gdp = st.number_input("PIB real a/a %", -10.0, 15.0,
+                              float(base["real_gdp_yoy"]), 0.1, key=f"{key_prefix}_gdp")
     with c2:
-        cpi = st.number_input("Inflação ao consumidor (CPI) a/a %", -2.0, 20.0, 2.5, 0.1,
-                              key=f"{key_prefix}_cpi")
-        unemp = st.number_input("Desemprego %", 2.0, 20.0, 4.2, 0.1, key=f"{key_prefix}_unemp")
+        cpi = st.number_input("Inflação ao consumidor (CPI) a/a %", -2.0, 20.0,
+                              float(base["cpi_yoy"]), 0.1, key=f"{key_prefix}_cpi")
+        unemp = st.number_input("Desemprego %", 2.0, 20.0,
+                                float(base["unemployment"]), 0.1, key=f"{key_prefix}_unemp")
     with c3:
-        curve = st.number_input("Curva 10Y–2Y (p.p.)", -5.0, 5.0, 0.25, 0.05,
+        curve = st.number_input("Curva 10Y–2Y (p.p.)", -5.0, 5.0,
+                                float(base["yield_curve_10y_2y"]), 0.05,
                                 key=f"{key_prefix}_curve")
-        spread = st.number_input("Spread de crédito de alto rendimento %", 1.0, 20.0, 3.5, 0.1,
+        spread = st.number_input("Spread de crédito de alto rendimento %", 1.0, 20.0,
+                                 float(base["high_yield_spread"]), 0.1,
                                  key=f"{key_prefix}_spread")
-    return evaluate_macro(USMacroSnapshot(fed, cpi, gdp, unemp, curve, spread))
+
+    escolhido = {"fed_funds": fed, "cpi_yoy": cpi, "real_gdp_yoy": gdp,
+                 "unemployment": unemp, "yield_curve_10y_2y": curve,
+                 "high_yield_spread": spread}
+    intacto = all(abs(escolhido[k] - float(base[k])) < 1e-9 for k in escolhido)
+    fonte = FONTE_OBSERVADO if (observado and intacto) else FONTE_PREMISSA
+    return evaluate_macro(USMacroSnapshot(
+        **escolhido, fonte=fonte,
+        as_of=observado.get("as_of") if fonte == FONTE_OBSERVADO else None,
+    ))
 
 
 def _render_macro_dashboard(key_prefix: str = "us_macro") -> dict:

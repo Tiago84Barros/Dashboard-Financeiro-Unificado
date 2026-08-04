@@ -84,7 +84,7 @@ def main() -> int:
     p.add_argument("command", choices=[
         "init-schema", "test", "universe", "estimate", "bootstrap", "daily",
         "fundamentals", "resume", "validate", "score-history", "backtest",
-        "snapshot", "prices", "enrich"])
+        "snapshot", "prices", "enrich", "macro"])
     p.add_argument("--tickers", nargs="*", help="símbolos específicos")
     p.add_argument("--exchanges", nargs="*", default=None, help="NYSE NASDAQ AMEX")
     p.add_argument("--limit", type=int, default=None, help="limita o universo/lote")
@@ -118,7 +118,7 @@ def main() -> int:
 
     # Proteção: ingestão pesada NUNCA deve escrever no Supabase remoto.
     if args.command in {"bootstrap", "daily", "fundamentals", "universe", "resume",
-                        "score-history", "snapshot", "enrich"} \
+                        "score-history", "snapshot", "enrich", "macro"} \
             and not _is_local_target() and not args.dry_run:
         log.error("Comando %s exige --warehouse (destino local). "
                   "Ingestão pesada não pode ir para o Supabase.", args.command)
@@ -163,6 +163,19 @@ def main() -> int:
         if args.dry_run:
             return out({"ok": True, "action": "dry-run: vitrine não construída"})
         return out(snap.build_snapshot(get_engine(), limit_companies=args.limit))
+
+    if args.command == "macro":
+        # Rede permitida AQUI (ingestao), nunca na interface: o modulo americano
+        # e offline-first na leitura. Sem este passo, o regime macro da tela
+        # continua sendo premissa — e a tela declara isso.
+        from core.database import get_engine
+        from data_pipeline.us import macro as us_macro
+        if args.offline:
+            return out({"ok": False, "reason": "macro exige rede (FRED)"})
+        if args.dry_run:
+            return out({"ok": True, "action": "dry-run: series FRED nao baixadas",
+                        "series": sorted(us_macro.SERIES)})
+        return out(us_macro.run(get_engine(), anos=args.years))
 
     if args.command == "enrich":
         from core.database import get_engine

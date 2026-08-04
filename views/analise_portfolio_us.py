@@ -16,6 +16,7 @@ o que é intrínseco ao mercado americano:
 from __future__ import annotations
 
 import json
+from html import escape
 
 import numpy as np
 import pandas as pd
@@ -34,7 +35,13 @@ from core.portfolio_report_us import (
     analyze_us_portfolio_report,
     generate_company_us_report,
 )
-from core.us_macro import USMacroSnapshot, evaluate_macro
+from core.portfolio_report_us import GRAU_LABEL, grau_de_confianca
+from core.us_macro import (
+    FONTE_OBSERVADO,
+    FONTE_PREMISSA,
+    USMacroSnapshot,
+    evaluate_macro,
+)
 from core.us_portfolio_model import load_active_us_portfolio_model
 
 # CSS compartilhado com a aba B3: o visual das duas telas é o mesmo contrato,
@@ -170,8 +177,14 @@ def _render_macro(macro: dict) -> None:
         st.caption("Cenário macro americano indisponível.")
         return
     entradas = macro.get("inputs") or {}
+    observado = bool(macro.get("observado"))
+    selo = (f'<span class="apb3-tag-pill" style="color:#34D399;">📡 observado'
+            + (f' · {macro.get("as_of")}' if macro.get("as_of") else "") + '</span>'
+            if observado else
+            '<span class="apb3-tag-pill" style="color:#FBBF24;">📐 premissa de simulação</span>')
     st.markdown(
-        f'<div class="apb3-section-title">🌐 Cenário Macroeconômico — Estados Unidos</div>',
+        '<div class="apb3-section-title">🌐 Cenário Macroeconômico — Estados Unidos '
+        f'{selo}</div>',
         unsafe_allow_html=True,
     )
     tom = macro.get("tone", "neutro")
@@ -207,24 +220,79 @@ def _render_macro(macro: dict) -> None:
 
 
 def _controles_macro() -> dict:
-    """Parâmetros do regime. Alterá-los é análise de sensibilidade explícita."""
+    """Regime macro: prefere série observada; premissa só quando não há dado.
+
+    A distinção não é cosmética. Sem ela a tela exibia "Fed funds 4,25%" sob o
+    título "Cenário Macroeconômico" e mandava o mesmo número para a LLM, que
+    escrevia "com o Fed em 4,25%" num relatório institucional — afirmação sobre
+    o mundo vinda de um literal de código.
+    """
+    observado = {}
+    try:
+        observado = us.macro_observado() or {}
+    except Exception:  # noqa: BLE001 - leitura opcional
+        observado = {}
+
+    padrao = USMacroSnapshot()
+    base = {
+        "fed_funds": observado.get("fed_funds", padrao.fed_funds),
+        "cpi_yoy": observado.get("cpi_yoy", padrao.cpi_yoy),
+        "real_gdp_yoy": observado.get("real_gdp_yoy", padrao.real_gdp_yoy),
+        "unemployment": observado.get("unemployment", padrao.unemployment),
+        "yield_curve_10y_2y": observado.get("yield_curve_10y_2y", padrao.yield_curve_10y_2y),
+        "high_yield_spread": observado.get("high_yield_spread", padrao.high_yield_spread),
+    }
+    tem_observado = bool(observado)
+
+    if tem_observado:
+        st.caption(
+            f"📡 Regime macro com **séries oficiais (FRED)** ingeridas no "
+            f"warehouse · data-base {observado.get('as_of') or 'não informada'}."
+        )
+    else:
+        st.warning(
+            "**O cenário macro abaixo é premissa de simulação, não leitura de "
+            "mercado.** Nenhuma série do FRED foi ingerida, então os valores são "
+            "parâmetros de partida. O relatório é instruído a tratá-los de forma "
+            "condicional (“sob a premissa de…”). Para usar dado observado, rode "
+            "`python run_us_ingest.py macro --warehouse`.",
+            icon="📐",
+        )
+
     with st.expander("⚙️ Ajustar o cenário macro usado na análise", expanded=False):
         st.caption(
-            "Os valores padrão descrevem o regime corrente. Alterá-los roda a "
-            "análise sob um cenário hipotético — o relatório passa a responder "
-            "'e se', não 'como está'."
+            "Alterar qualquer valor transforma a leitura em cenário hipotético: "
+            "o relatório passa a responder “e se”, não “como está” — e é marcado "
+            "como premissa mesmo que haja série observada."
         )
         c1, c2, c3 = st.columns(3)
-        fed = c1.number_input("Fed funds (%)", 0.0, 12.0, 4.25, 0.25, key="apus_fed")
-        cpi = c2.number_input("CPI a/a (%)", -2.0, 15.0, 2.5, 0.1, key="apus_cpi")
-        pib = c3.number_input("PIB real a/a (%)", -5.0, 8.0, 2.0, 0.1, key="apus_pib")
+        fed = c1.number_input("Fed funds (%)", 0.0, 12.0,
+                              float(base["fed_funds"]), 0.25, key="apus_fed")
+        cpi = c2.number_input("CPI a/a (%)", -2.0, 15.0,
+                              float(base["cpi_yoy"]), 0.1, key="apus_cpi")
+        pib = c3.number_input("PIB real a/a (%)", -5.0, 8.0,
+                              float(base["real_gdp_yoy"]), 0.1, key="apus_pib")
         c4, c5, c6 = st.columns(3)
-        desemp = c4.number_input("Desemprego (%)", 2.0, 15.0, 4.2, 0.1, key="apus_unemp")
-        curva = c5.number_input("Curva 10a-2a (p.p.)", -3.0, 3.0, 0.25, 0.05, key="apus_curve")
-        spread = c6.number_input("Spread high yield (p.p.)", 1.0, 20.0, 3.5, 0.1, key="apus_hy")
+        desemp = c4.number_input("Desemprego (%)", 2.0, 15.0,
+                                 float(base["unemployment"]), 0.1, key="apus_unemp")
+        curva = c5.number_input("Curva 10a-2a (p.p.)", -3.0, 3.0,
+                                float(base["yield_curve_10y_2y"]), 0.05, key="apus_curve")
+        spread = c6.number_input("Spread high yield (p.p.)", 1.0, 20.0,
+                                 float(base["high_yield_spread"]), 0.1, key="apus_hy")
+
+    escolhido = {
+        "fed_funds": fed, "cpi_yoy": cpi, "real_gdp_yoy": pib,
+        "unemployment": desemp, "yield_curve_10y_2y": curva,
+        "high_yield_spread": spread,
+    }
+    # Mexeu num controle → deixa de ser observação e vira cenário. Manter o
+    # rótulo "observado" depois de o usuário alterar o número seria pior que
+    # não ter rótulo nenhum.
+    intacto = all(abs(escolhido[k] - float(base[k])) < 1e-9 for k in escolhido)
+    fonte = FONTE_OBSERVADO if (tem_observado and intacto) else FONTE_PREMISSA
     return evaluate_macro(USMacroSnapshot(
-        fed_funds=fed, cpi_yoy=cpi, real_gdp_yoy=pib,
-        unemployment=desemp, yield_curve_10y_2y=curva, high_yield_spread=spread,
+        **escolhido, fonte=fonte,
+        as_of=observado.get("as_of") if fonte == FONTE_OBSERVADO else None,
     ))
 
 
@@ -382,11 +450,27 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
     conclusao = an.get("conclusao") or {}
     faixa = str(conclusao.get("faixa_valor") or "indeterminada").upper()
     icone = {"forte": "🟢", "moderada": "🟡", "fraca": "🔴"}.get(persp, "⚪")
+    # O grau vai no TÍTULO do expander: quem só bate o olho na lista precisa
+    # saber que aquele veredicto veio de cobertura de triagem antes de abrir.
+    grau = str(it.get("score_status") or "")
+    selo_grau = {"research_grade": " · ⚠️ cobertura parcial",
+                 "screen_grade": " · ⛔ só triagem"}.get(grau, "")
 
     with st.expander(
-        f"{icone} {tk}  —  {faixa}  •  {w_novo*100:.1f}%  [{persp.upper()}]",
+        f"{icone} {tk}  —  {faixa}  •  {w_novo*100:.1f}%  [{persp.upper()}]{selo_grau}",
         expanded=False,
     ):
+        if grau and grau != "decision_grade":
+            faltando = it.get("critical_missing") or []
+            st.warning(
+                f"**Cobertura de dados: {GRAU_LABEL.get(grau, grau)}.** "
+                + (f"Trilhas sem cobertura mínima: {', '.join(map(str, faltando))}. "
+                   if faltando else "")
+                + "A leitura abaixo é limitada pelo que falta — não é veredicto "
+                  "sobre a empresa, é o que os dados disponíveis sustentam.",
+                icon="⚠️",
+            )
+
         resumo = an.get("resumo", "")
         if resumo:
             st.markdown(
@@ -582,8 +666,44 @@ def _render_conclusao(port_analise: dict) -> None:
 # Runner da análise
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _linha_do_score(scored: pd.DataFrame, ticker: str):
+    """Linha do cross-section para um ticker; None quando não pontuou."""
+    if scored is None or scored.empty or "symbol" not in scored.columns:
+        return None
+    linha = scored[scored["symbol"].astype(str).str.upper() == ticker.upper()]
+    return None if linha.empty else linha.iloc[0]
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _usd_brl_da_base() -> float | None:
+    """Última cotação USD/BRL do banco unificado (asset_quotes).
+
+    Número real, não estimativa: a exposição cambial só é dizível se a taxa
+    tiver origem. Sem a cotação, o relatório declara a ausência.
+    """
+    try:
+        from sqlalchemy import text
+        from core.database import get_engine
+        engine = get_engine()
+        if engine is None:
+            return None
+        with engine.connect() as conn:
+            valor = conn.execute(text("""
+                SELECT q.close
+                FROM asset_quotes q
+                JOIN assets a ON a.id = q.asset_id
+                WHERE UPPER(a.ticker) IN ('USDBRL', 'USDBRL=X', 'USD/BRL')
+                ORDER BY q.date DESC
+                LIMIT 1
+            """)).scalar()
+        return float(valor) if valor is not None else None
+    except Exception:  # noqa: BLE001 - câmbio é contexto, não bloqueio
+        return None
+
+
 def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
-                      avaliacao_quant: dict | None = None) -> dict:
+                      avaliacao_quant: dict | None = None,
+                      status: dict | None = None) -> dict:
     """Relatório por empresa + consolidado + redistribuição de pesos."""
     contexto_carteira = (
         f"Portfólio americano com {len(items)} empresas. "
@@ -594,6 +714,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
 
     items_analisados: list[dict] = []
     erros: list[str] = []
+    financials: dict[str, pd.DataFrame] = {}
     progresso = st.progress(0, text="Analisando empresas via LLM…")
 
     for idx, it in enumerate(items):
@@ -613,6 +734,9 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
             avancado = us.advanced_snapshot(tk) or {}
         except Exception:
             avancado = {}
+        linha_score = _linha_do_score(scored, tk)
+        if df_fin is not None and not getattr(df_fin, "empty", True):
+            financials[tk] = df_fin
 
         progresso.progress((idx + 1) / len(items), text=f"LLM: {tk}…")
         dossie: dict = {}
@@ -630,6 +754,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 scored=scored,
                 portfolio_tickers=[str(i.get("ticker") or "") for i in items],
                 portfolio_context=contexto_empresa,
+                status=status,
             )
         except Exception as exc:  # noqa: BLE001 - fronteira de isolamento por empresa
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -642,6 +767,11 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                     f"{tk}: relatório institucional não gerado — exibindo fallback neutro."
                 )
 
+        grau, _rotulo, confianca_score = grau_de_confianca(linha_score)
+        faltando = []
+        if linha_score is not None:
+            bruto = linha_score.get("critical_missing") if hasattr(linha_score, "get") else None
+            faltando = list(bruto) if bruto is not None else []
         items_analisados.append({
             "ticker": tk,
             "nome": nome,
@@ -652,6 +782,12 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
             "analise": analise,
             "dossie": dossie,
             "avancado": avancado,
+            # Grau de cobertura viaja com o item: o expander sinaliza e o
+            # relatório consolidado sabe qual fatia da carteira não sustenta
+            # leitura fundamentalista.
+            "score_status": grau,
+            "score_confidence": confianca_score,
+            "critical_missing": faltando,
         })
         progresso.progress((idx + 1) / len(items), text=f"Analisado: {tk}")
 
@@ -660,7 +796,11 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
     with st.spinner("Gerando relatório consolidado do portfólio…"):
         try:
             port_analise = analyze_us_portfolio_report(
-                items_analisados, macro, avaliacao_quant=avaliacao_quant,
+                items_analisados, macro,
+                avaliacao_quant=avaliacao_quant,
+                status=status,
+                financials=financials,
+                usd_brl=_usd_brl_da_base(),
             )
             if int(port_analise.get("confianca_media") or 0) == 0:
                 erros.append("Relatório consolidado: resposta da LLM não pôde ser "
@@ -879,11 +1019,32 @@ def render(show_header: bool = True) -> None:
     state = st.session_state.get(_STATE, {})
     _render_portfolio_salvo(model, state.get("pesos_novos") if state else None)
 
+    # Procedência visível antes de qualquer número: uma nota profissional
+    # começa dizendo de quando é o dado que sustenta a leitura.
+    status = {}
+    try:
+        status = us.data_status() or {}
+    except Exception:  # noqa: BLE001
+        status = {}
+    modo_txt = {"warehouse": "warehouse local completo",
+                "snapshot": "vitrine publicada"}.get(str(status.get("mode") or ""), "origem não identificada")
+    ultima = status.get("last_update")
+    usd_brl = _usd_brl_da_base()
     st.markdown(
-        '<div style="font-size:.76rem;color:#718096;margin:-8px 0 12px;">'
-        '📄 Sem base documental indexada para o mercado americano — a evidência '
-        'vem do dossiê determinístico e do laboratório avançado (Piotroski, '
-        'Altman, Sloan), calculados em código sobre as demonstrações SEC.</div>',
+        '<div style="font-size:.76rem;color:#718096;margin:-8px 0 12px;line-height:1.7;">'
+        f'🗂️ <b>Base:</b> {escape(modo_txt)}'
+        + (f' · última ingestão {escape(str(ultima)[:19])}' if ultima else
+           ' · data de ingestão não informada')
+        + (f' · universo {status["companies"]} empresas' if status.get("companies") else "")
+        + '<br>📄 Sem base documental indexada para o mercado americano — a evidência '
+          'vem do dossiê determinístico e do laboratório avançado (Piotroski, '
+          'Altman, Sloan), calculados em código sobre as demonstrações SEC.'
+        + '<br>💱 <b>Carteira em dólares.</b> Seu retorno em reais é o retorno do '
+          'ativo combinado com a variação do câmbio — o USD/BRL é um segundo '
+          'ativo embutido nesta carteira'
+        + (f' (referência na base: R$ {usd_brl:.2f}).' if usd_brl else
+           ' (cotação USD/BRL não disponível na base).')
+        + '</div>',
         unsafe_allow_html=True,
     )
 
@@ -933,7 +1094,8 @@ def render(show_header: bool = True) -> None:
 
     if rodar:
         st.session_state[_STATE] = _executar_analise(
-            items, macro, scored, avaliacao_quant=avaliacao_quant,
+            items, macro, scored,
+            avaliacao_quant=avaliacao_quant, status=status,
         )
         st.rerun()
 
