@@ -134,8 +134,13 @@ def test_duas_views_usam_componentes_compartilhados_e_eua_nao_usa_tabela_na_vitr
     usa = (root / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
     for content in (b3, usa):
         assert "render_market_tabs" in content
-        assert "render_company_search" in content
         assert "render_sector_grid" in content
+    # A busca por ticker existe só na vitrine americana. Na B3 a navegação é
+    # por setor: o card já leva à Análise de Empresa, e o campo duplicava o
+    # caminho. Importar o componente sem usá-lo é o que o teste barra aqui.
+    assert "render_company_search" in usa
+    assert "render_company_search" not in b3
+    assert "filter_market_companies" not in b3
     start = usa.index("def _tab_empresas_setor")
     end = usa.index("def _render_score_dashboard", start)
     assert "st.dataframe" not in usa[start:end]

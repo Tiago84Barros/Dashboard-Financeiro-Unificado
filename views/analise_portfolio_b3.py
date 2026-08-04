@@ -24,7 +24,10 @@ from core.llm_b3 import (
     provedores_disponiveis,
     redistribuir_pesos,
 )
-from core.llm_context_b3 import build_llm_context_for_portfolio_chat
+from core.llm_context_b3 import (
+    build_llm_context_for_portfolio_chat,
+    get_web_evidence_context,
+)
 from core.portfolio_report_b3 import (
     analyze_portfolio_report,
     generate_company_portfolio_report,
@@ -43,16 +46,32 @@ from views.empresas_b3 import _logo_url, _sec_hdr
 
 _CSS = """
 <style>
-.apb3-kpi-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
-.apb3-kpi{flex:1;min-width:140px;background:#12151E;border:1px solid #1E2533;
-           border-radius:12px;padding:16px 18px;}
-.apb3-kpi-label{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;
-                color:#718096;font-weight:700;margin-bottom:6px;}
-.apb3-kpi-val{font-size:1.55rem;font-weight:900;color:#E2E8F0;line-height:1.1;}
-.apb3-kpi-sub{font-size:.72rem;color:#4A5568;margin-top:4px;}
+/* Grid e não flex: com flex:1 os quatro cards herdavam larguras diferentes do
+   conteúdo, e um rótulo longo ("CONSTRUTIVA", "índice 0–100 da análise") vazava
+   do card em vez de quebrar. auto-fit + minmax dá colunas iguais e reflui
+   sozinho de 4 → 2 → 1 conforme a largura disponível. */
+.apb3-kpi-row{display:grid;gap:12px;margin-bottom:20px;
+              grid-template-columns:repeat(auto-fit,minmax(190px,1fr));}
+.apb3-kpi{display:flex;flex-direction:column;min-width:0;background:#12151E;
+           border:1px solid #1E2533;border-radius:12px;padding:16px 18px;}
+.apb3-kpi-label{font-size:.68rem;letter-spacing:.10em;text-transform:uppercase;
+                color:#718096;font-weight:700;margin-bottom:6px;line-height:1.35;
+                overflow-wrap:anywhere;}
+/* clamp: "MODERADA"/"CONSTRUTIVA" cabem em uma linha nas telas largas e
+   encolhem sem estourar nas estreitas. anywhere quebra a palavra única, que é
+   o caso que o white-space padrão não resolve. */
+.apb3-kpi-val{font-size:clamp(1.05rem,1.15rem + .8vw,1.55rem);font-weight:900;
+              color:#E2E8F0;line-height:1.18;overflow-wrap:anywhere;
+              margin-bottom:2px;}
+.apb3-kpi-sub{font-size:.72rem;color:#4A5568;margin-top:auto;padding-top:4px;
+              line-height:1.4;overflow-wrap:anywhere;}
 .apb3-kpi-pos{border-color:rgba(34,197,94,.3);background:rgba(16,185,129,.08);}
 .apb3-kpi-neg{border-color:rgba(248,113,113,.3);background:rgba(239,68,68,.07);}
 .apb3-kpi-neu{border-color:rgba(148,163,184,.2);}
+@media (max-width:720px){
+  .apb3-kpi-row{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
+  .apb3-kpi{padding:13px 14px;}
+}
 
 .apb3-macro-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px;}
 .apb3-macro{flex:1;min-width:120px;background:#0E1119;border:1px solid #1E2533;
@@ -478,8 +497,16 @@ def _render_alocacao(items_analisados: list[dict], pesos_novos: dict[str, float]
     if not items_analisados or not pesos_novos:
         return
 
-    st.markdown('<div class="apb3-section-title">🎯 Alocação do Modelo (Quanti + Quali)</div>',
+    st.markdown('<div class="apb3-section-title">🎯 Alocação do Modelo '
+                '(Quanti + Quali + Web)</div>',
                 unsafe_allow_html=True)
+    st.caption(
+        "Modelo único: score quantitativo (60%) e qualitativo da LLM (40%), "
+        "ajustados por perspectiva, alpha vs Selic, convicção declarada e "
+        "corroboração entre banco e web. Piso de 2% e teto de 25% por ativo — "
+        "nenhuma empresa é excluída aqui; quem decide entrada é a Criação de "
+        "Portfólio."
+    )
 
     cards_html = '<div class="apb3-alloc-grid">'
     for it in sorted(items_analisados, key=lambda x: -pesos_novos.get(x.get("ticker",""), 0)):
@@ -768,13 +795,36 @@ def _render_conclusao(port_analise: dict) -> None:
 # Runner de análise LLM
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _web_ctx_da_empresa(ticker: str, web_sinal: dict[str, dict] | None) -> str:
+    """Frase sobre a segunda fonte desta empresa, para o prompt individual.
+
+    Só o recorte do ticker: o confronto completo da carteira vai no relatório
+    consolidado, e repeti-lo em cada empresa gastaria prompt sem acrescentar
+    informação sobre a empresa analisada.
+    """
+    registro = (web_sinal or {}).get(str(ticker).upper()) or {}
+    detalhes = registro.get("detalhes") or []
+    if not detalhes:
+        if not web_sinal:
+            return ""
+        return (" Segunda fonte (Fundamentus/Status Invest): sem divergência "
+                "com o banco nos indicadores comparáveis.")
+    return (
+        f" Segunda fonte (Fundamentus/Status Invest) diverge do banco em "
+        f"{registro.get('divergentes', 0)} indicador(es) e preencheu "
+        f"{registro.get('preenchidos', 0)} lacuna(s): "
+        + "; ".join(detalhes[:6])
+        + ". Trate esses números como incertos e diga isso na leitura."
+    )
+
 def _executar_analise(
     items: list[dict],
     macro_hist: dict,
-    mode: str,
     mult_batch: dict,
     dre_batch: dict,
     cobertura_docs: dict[str, int] | None = None,
+    web_context: str = "",
+    web_sinal: dict[str, dict] | None = None,
 ) -> dict:
     """Roda análise individual de cada empresa + análise consolidada + redistribuição."""
 
@@ -784,8 +834,7 @@ def _executar_analise(
     portfolio_ctx = (
         f"Portfólio com {len(items)} empresas. "
         f"Alpha médio vs Selic: {float(np.mean([it.get('alpha_selic',0) for it in items])):.1f}%. "
-        f"Score quantitativo médio: {float(np.mean([it.get('score',50) for it in items])):.1f}. "
-        f"Modo de redistribuição: {mode}."
+        f"Score quantitativo médio: {float(np.mean([it.get('score',50) for it in items])):.1f}."
     )
     n_com_docs = sum(1 for it in items if (cobertura_docs or {}).get(it["ticker"], 0) > 0)
 
@@ -833,6 +882,7 @@ def _executar_analise(
                 f"{portfolio_ctx} Empresa avaliada: {nome_} | setor {setor_} / "
                 f"segmento {seg_}. Peso atual na carteira: {peso_pct_:.1f}% | "
                 f"score quantitativo {score_:.1f} | alpha vs Selic {alpha_:+.1f}%."
+                + _web_ctx_da_empresa(tk, web_sinal)
             )
             analise, dossie = generate_company_portfolio_report(
                 tk,
@@ -870,7 +920,9 @@ def _executar_analise(
     # Análise consolidada do portfólio
     with st.spinner("Gerando relatório consolidado do portfólio…"):
         try:
-            port_analise = analyze_portfolio_report(items_analisados, macro_hist)
+            port_analise = analyze_portfolio_report(
+                items_analisados, macro_hist, web_context=web_context,
+            )
             if int(port_analise.get("confianca_media") or 0) == 0:
                 # _parse_json caiu no fallback (resposta da LLM não era JSON válido).
                 erros.append("Relatório consolidado: resposta da LLM não pôde ser "
@@ -881,14 +933,14 @@ def _executar_analise(
             from core.llm_b3 import _fallback_portfolio
             port_analise = _fallback_portfolio()
 
-    # Redistribuição de pesos
-    pesos_novos = redistribuir_pesos(items_analisados, mode=mode)
+    # Redistribuição de pesos — modelo único (quanti + quali + evidência web)
+    pesos_novos = redistribuir_pesos(items_analisados, sinal_web=web_sinal)
 
     return {
         "items_analisados": items_analisados,
         "port_analise":     port_analise,
         "pesos_novos":      pesos_novos,
-        "mode":             mode,
+        "web_sinal":        web_sinal or {},
         "erros":            erros,
     }
 
@@ -1372,18 +1424,14 @@ def render(show_header: bool = True) -> None:
         _txt = " → ".join(_lbl.get(p, p) for p in _provs)
         st.caption(f"🤖 Provedores LLM ativos (com fallback automático): **{_txt}**")
 
-    col_mode, col_btn, col_reset = st.columns([2, 2, 1])
-    with col_mode:
-        mode = st.radio(
-            "Modo de redistribuição",
-            ["Rígida", "Flexível"],
-            horizontal=True,
-            key="apb3_mode",
-            help=(
-                "**Rígida**: exclui empresas com perspectiva 'fraca'; peso mínimo 3%.\n"
-                "**Flexível**: mantém todas com peso mínimo 2%."
-            ),
-        )
+    st.caption(
+        "A análise combina **duas fontes**: os fundamentos do banco interno e "
+        "uma segunda leitura na web (Fundamentus + Status Invest). Onde as duas "
+        "divergem, a LLM recebe o confronto explícito e trata o indicador como "
+        "incerto — a redistribuição de pesos usa esse mesmo sinal."
+    )
+
+    col_btn, col_reset, _col_livre = st.columns([2, 1, 2])
     with col_btn:
         rodar = st.button(
             "🚀 Executar Análise LLM",
@@ -1402,9 +1450,22 @@ def render(show_header: bool = True) -> None:
             mult_batch = _db.load_multiplos_historico_batch(tickers_tuple)
             dre_batch  = _db.load_demonstracoes_batch(tickers_tuple)
 
+        with st.spinner("Conferindo os fundamentos com fontes da web…"):
+            try:
+                web_ctx, web_sinal = get_web_evidence_context(tickers_tuple)
+            except Exception as exc_web:  # noqa: BLE001 - web nunca bloqueia a análise
+                st.warning(
+                    f"Segunda fonte (web) indisponível — a análise segue apenas "
+                    f"com o banco interno. Detalhe: {exc_web}",
+                    icon="🌐",
+                )
+                web_ctx, web_sinal = "", {}
+
         result = _executar_analise(
-            items, macro_hist, mode, mult_batch, dre_batch,
+            items, macro_hist, mult_batch, dre_batch,
             cobertura_docs=cobertura_docs,
+            web_context=web_ctx,
+            web_sinal=web_sinal,
         )
         st.session_state["apb3_state"] = result
         st.rerun()
@@ -1446,9 +1507,9 @@ def render(show_header: bool = True) -> None:
         _render_conclusao(port_an)
     else:
         st.info(
-            "Configure o modo acima e clique **🚀 Executar Análise LLM** para o "
-            "relatório qualitativo completo. O chat abaixo já responde com os dados "
-            "quantitativos reais da carteira (indicadores, fundamentos e documentos).",
+            "Clique **🚀 Executar Análise LLM** para o relatório qualitativo "
+            "completo. O chat abaixo já responde com os dados quantitativos reais "
+            "da carteira (indicadores, fundamentos e documentos).",
             icon="ℹ️",
         )
 

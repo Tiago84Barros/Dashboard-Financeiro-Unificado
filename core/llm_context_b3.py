@@ -250,6 +250,101 @@ def get_company_fundamentals_context(tickers: list[str], max_n: int = 15) -> str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Evidência web (Fundamentus + Status Invest) confrontada com o banco
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Ações da reconciliação que significam "a web mudou o que o banco dizia".
+_ACOES_WEB = ("web_preencheu", "web_corrigiu", "db_sobrescrito")
+_CAP_WEB = 2600
+
+
+def _corroboracao(preenchidos: int, divergentes: int) -> float:
+    """Fator 0,90–1,05 sobre a convicção da empresa.
+
+    Divergir da web não prova que o banco está errado, então o castigo é
+    pequeno e limitado: derruba no máximo 10% do peso. Concordar dá um bônus
+    menor ainda — dado corroborado é o caso NORMAL, não um mérito.
+    """
+    if divergentes:
+        return max(0.90, 1.0 - 0.035 * divergentes)
+    if preenchidos:
+        return 1.0
+    return 1.05
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_web_evidence_context(tickers: tuple[str, ...]) -> tuple[str, dict[str, dict]]:
+    """Confronta os fundamentos do banco com Fundamentus e Status Invest.
+
+    Reaproveita ``core.data_reconciliacao.batch_multiplos_reconciliados``, que
+    já é o caminho oficial banco→web do app (mesmos limiares de discrepância,
+    mesma normalização de escala). Aqui a reconciliação não corrige tabela
+    nenhuma: vira (1) texto para o prompt, para a LLM saber quais números têm
+    segunda fonte e quais são palavra do banco, e (2) um fator de convicção por
+    empresa, usado na redistribuição de pesos.
+
+    Rede indisponível devolve ("", {}) — offline a análise segue só com banco.
+    """
+    tks = tuple(dict.fromkeys(_norm_tk(t) for t in (tickers or []) if t))
+    if not tks:
+        return "", {}
+    try:
+        import core.data_reconciliacao as _recon
+        _, audit, summary = _recon.batch_multiplos_reconciliados(
+            tks, include_status=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - fonte externa nunca derruba a análise
+        logger.warning("Evidência web indisponível: %s", exc)
+        return "", {}
+
+    por_ticker: dict[str, dict] = {
+        tk: {"preenchidos": 0, "divergentes": 0, "detalhes": []} for tk in tks
+    }
+    if audit is not None and not audit.empty:
+        for _, row in audit.iterrows():
+            tk = _norm_tk(row.get("Ticker", ""))
+            if tk not in por_ticker:
+                continue
+            acao = str(row.get("Acao") or "")
+            if acao not in _ACOES_WEB:
+                continue
+            registro = por_ticker[tk]
+            if acao == "db_sobrescrito":
+                registro["divergentes"] += 1
+            else:
+                registro["preenchidos"] += 1
+            registro["detalhes"].append(
+                f"{row.get('Indicador')}: banco={_fmt_val(str(row.get('Indicador')), row.get('Antes'))} "
+                f"→ {row.get('Fonte')}={_fmt_val(str(row.get('Indicador')), row.get('Depois'))}"
+            )
+
+    for registro in por_ticker.values():
+        registro["fator"] = _corroboracao(registro["preenchidos"], registro["divergentes"])
+
+    linhas = [
+        "EVIDÊNCIA WEB (Fundamentus + Status Invest) CONFRONTADA COM O BANCO:",
+        "  Regra de leitura: sem linha abaixo, o indicador do banco foi confirmado "
+        "pela web ou não tem segunda fonte. Divergência NÃO prova erro do banco — "
+        "trate como incerteza e diga isso na análise.",
+    ]
+    for tk in tks:
+        registro = por_ticker[tk]
+        if not registro["detalhes"]:
+            linhas.append(f"  {tk}: sem divergência entre banco e web.")
+            continue
+        linhas.append(
+            f"  {tk}: {registro['divergentes']} divergência(s), "
+            f"{registro['preenchidos']} lacuna(s) preenchida(s) pela web — "
+            + "; ".join(registro["detalhes"][:6])
+        )
+    if summary:
+        linhas.append(
+            f"  Resumo: {summary.get('correcoes_web', 0)} célula(s) ajustada(s) pela web."
+        )
+    return _cap("\n".join(linhas), _CAP_WEB), por_ticker
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Pares / concorrentes (mesmo segmento) de tickers citados
 # ─────────────────────────────────────────────────────────────────────────────
 
