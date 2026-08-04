@@ -1,0 +1,676 @@
+"""Relatório institucional da Avaliação de Portfólio das Empresas Americanas.
+
+Espelha ``core/portfolio_report_b3.py``: mesmo contrato de saída, mesmas
+dimensões de score, mesmos cenários — a maquinaria comum vive em
+``core/portfolio_report_common.py``. O que muda aqui é tudo que é intrínseco
+ao mercado americano:
+
+* moeda e escala em dólares, não reais;
+* demonstrações anuais SEC/US GAAP (10-K) por ``fiscal_year``, não DRE societária;
+* pares por **indústria SEC/SIC**, não por segmento B3;
+* macro do Fed (juros, CPI, PIB real, desemprego, curva 10a-2a, spread de
+  crédito), não Selic/IPCA/câmbio;
+* referência de custo de oportunidade é o Treasury de 3 meses e o benchmark é
+  o S&P 500, não Selic e Ibovespa;
+* **não há RAG de documentos**: a CVM/IPE não tem equivalente indexado aqui. A
+  camada de evidência é o dossiê determinístico mais o laboratório avançado
+  (Piotroski, Altman, Sloan, ROIC incremental), tudo calculado em código.
+
+Offline-first, como o resto do módulo americano: nenhuma chamada de rede sai
+daqui. Sem dado local, o relatório degrada com a lacuna declarada em vez de
+inventar.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import pandas as pd
+
+from core.llm_b3 import _call_llm, _parse_json, _report_model
+from core.portfolio_report_common import (
+    QUALITATIVE_WEIGHTS,
+    company_summary_for_portfolio,
+    fallback_company,
+    fallback_portfolio,
+    format_number,
+    prioritize_peer_tickers,
+    safe_float,
+    sanitize_company_report,
+    sanitize_portfolio_report,
+    weights_contract,
+)
+from core.us_dossie import build_dossie, dossie_to_text
+
+logger = logging.getLogger(__name__)
+
+# Métricas do cross-section usadas na comparação por pares. Nomes vêm de
+# core.us_metrics.compute_company_metrics.
+_PEER_METRICS: tuple[tuple[str, str, str], ...] = (
+    ("pe", "P/L", "x"),
+    ("ev_ebit", "EV/EBIT", "x"),
+    ("ev_ebitda", "EV/EBITDA", "x"),
+    ("p_fcf", "P/FCL", "x"),
+    ("fcf_yield", "Retorno do FCL", "%"),
+    ("roe", "ROE", "%"),
+    ("roic", "ROIC", "%"),
+    ("net_margin", "Margem líquida", "%"),
+    ("revenue_cagr_3y", "Cresc. receita 3a", "%"),
+    ("net_debt_ebitda", "Dív.líq/EBITDA", "x"),
+    ("shareholder_yield", "Retorno ao acionista", "%"),
+)
+
+
+def _fmt_metric(value: Any, unit: str) -> str:
+    number = safe_float(value)
+    if number is None:
+        return "N/D"
+    if unit == "%":
+        return f"{number * 100:.1f}%" if abs(number) <= 2.0 else f"{number:.1f}%"
+    return f"{number:.2f}x"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pares por indústria SEC
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_industry_peers(
+    scored: pd.DataFrame | None,
+    ticker: str,
+    max_peers: int = 12,
+) -> tuple[list[str], str]:
+    """Pares da MESMA indústria; cai para o setor quando a indústria é rala.
+
+    Equivale a ``compute_segment_peers`` da B3. A hierarquia americana é
+    indústria → setor, não segmento → subsetor → setor, porque a classificação
+    que existe no warehouse é a da SEC consolidada em setores.
+    """
+    tk = str(ticker).strip().upper()
+    if scored is None or scored.empty or "symbol" not in scored.columns:
+        return [], ""
+    frame = scored.copy()
+    frame["symbol"] = frame["symbol"].astype(str).str.upper()
+    linha = frame[frame["symbol"] == tk]
+    if linha.empty:
+        return [], ""
+    alvo = linha.iloc[0]
+
+    for coluna, nivel in (("industry", "indústria SEC"), ("sector", "setor")):
+        if coluna not in frame.columns:
+            continue
+        valor = alvo.get(coluna)
+        if not valor or pd.isna(valor):
+            continue
+        mesmos = frame[frame[coluna] == valor]
+        mesmos = mesmos[mesmos["symbol"] != tk]
+        # Mesmo limiar da hierarquia B3: com menos de 3 pares a mediana da
+        # indústria é ruído, e comparar contra ruído é pior do que subir um
+        # nível. Indústria SEC é granular — nicho com dois nomes é comum.
+        if len(mesmos) >= 3 or nivel == "setor":
+            if "score" in mesmos.columns:
+                mesmos = mesmos.sort_values("score", ascending=False)
+            return mesmos["symbol"].head(max_peers).tolist(), nivel
+    return [], ""
+
+
+def build_us_fundamentals_context(
+    scored: pd.DataFrame | None,
+    tickers: list[str],
+    max_n: int = 12,
+) -> str:
+    """Múltiplos e retornos das empresas consultadas, direto do cross-section."""
+    tks = list(dict.fromkeys(str(t).strip().upper() for t in (tickers or []) if t))[:max_n]
+    if not tks or scored is None or scored.empty or "symbol" not in scored.columns:
+        return "FUNDAMENTOS DOS PARES: indisponíveis no warehouse local."
+    frame = scored.copy()
+    frame["symbol"] = frame["symbol"].astype(str).str.upper()
+    sub = frame[frame["symbol"].isin(tks)]
+    if sub.empty:
+        return f"FUNDAMENTOS: sem dados locais para {', '.join(tks)}."
+    linhas = ["FUNDAMENTOS (warehouse local, últimas demonstrações anuais SEC):"]
+    for _, row in sub.iterrows():
+        setor = row.get("industry") or row.get("sector") or ""
+        inds = " | ".join(
+            f"{label}={_fmt_metric(row.get(key), unit)}"
+            for key, label, unit in _PEER_METRICS
+            if safe_float(row.get(key)) is not None
+        )
+        score = safe_float(row.get("score"))
+        prefixo = f"  {row['symbol']} [{setor}]"
+        if score is not None:
+            prefixo += f" score={score:.1f}"
+        linhas.append(f"{prefixo}: {inds or 'sem métricas utilizáveis'}")
+    return "\n".join(linhas)
+
+
+def build_industry_medians_context(
+    scored: pd.DataFrame | None,
+    industries: list[str] | None,
+) -> str:
+    """Medianas por indústria — a régua contra a qual o desconto é julgado."""
+    if scored is None or scored.empty or "industry" not in scored.columns:
+        return "MEDIANAS POR INDÚSTRIA: indisponíveis."
+    alvos = [i for i in (industries or []) if i]
+    frame = scored if not alvos else scored[scored["industry"].isin(alvos)]
+    if frame.empty:
+        return "MEDIANAS POR INDÚSTRIA: sem empresas nas indústrias consultadas."
+    linhas = ["MEDIANAS POR INDÚSTRIA (universo americano elegível):"]
+    for industria, grupo in frame.groupby("industry", dropna=True):
+        if len(grupo) < 3:
+            continue
+        partes = []
+        for key, label, unit in _PEER_METRICS:
+            if key not in grupo.columns:
+                continue
+            mediana = pd.to_numeric(grupo[key], errors="coerce").median()
+            if pd.notna(mediana):
+                partes.append(f"{label}={_fmt_metric(mediana, unit)}")
+        if partes:
+            linhas.append(f"  {industria} (n={len(grupo)}): " + " | ".join(partes))
+    return "\n".join(linhas) if len(linhas) > 1 else "MEDIANAS POR INDÚSTRIA: amostra insuficiente."
+
+
+def build_peer_context(
+    ticker: str,
+    portfolio_tickers: list[str] | tuple[str, ...],
+    *,
+    scored: pd.DataFrame | None = None,
+    industry: str | None = None,
+    max_peers: int = 8,
+) -> str:
+    """Hierarquia de pares: carteira primeiro, universo americano depois."""
+    tk = str(ticker).strip().upper()
+    candidatos, nivel = compute_industry_peers(scored, tk, max_peers=max(12, max_peers))
+    na_carteira, do_universo = prioritize_peer_tickers(
+        candidatos, portfolio_tickers, tk, max_peers=max_peers,
+    )
+    selecionados = na_carteira + do_universo
+    return "\n".join([
+        f"HIERARQUIA DE PARES DE {tk}: comparação primária por {nivel or 'indústria SEC'}.",
+        "  PARES DA MESMA INDÚSTRIA JÁ NA CARTEIRA (prioridade): "
+        + (", ".join(na_carteira) if na_carteira else "nenhum"),
+        "  PARES COMPLEMENTARES DO UNIVERSO AMERICANO: "
+        + (", ".join(do_universo) if do_universo else "nenhum com dados suficientes"),
+        "  REGRA: comparar múltiplos entre indústrias diferentes não conclui caro/barato. "
+        "Um software com P/L 30 e uma siderúrgica com P/L 6 não são comparáveis.",
+        build_us_fundamentals_context(scored, [tk, *selecionados], max_n=max_peers + 1),
+        build_industry_medians_context(scored, [industry] if industry else None),
+    ])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Séries anuais SEC
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_financial_history_context(df_fin: pd.DataFrame | None) -> str:
+    """Serializa até 10 exercícios SEC e calcula qualidade do lucro em Python.
+
+    Diferença estrutural para a B3: aqui existe ``free_cash_flow`` publicado e
+    ``capex`` separado, então FCL não precisa ser inferido do FCO — e o prompt
+    pode cobrar a distinção sem margem para o modelo confundir os dois.
+    """
+    if df_fin is None or df_fin.empty:
+        return ("HISTÓRICO FINANCEIRO (SEC): indisponível. Não infira tendência, "
+                "FCL ou conversão de caixa sem dados.")
+    frame = df_fin.copy()
+    if "fiscal_year" in frame.columns:
+        frame = frame.sort_values("fiscal_year").tail(10)
+    else:
+        frame = frame.tail(10)
+
+    colunas = [
+        c for c in (
+            "revenue", "ebitda", "ebit", "operating_income", "net_income",
+            "total_equity", "net_debt", "operating_cash_flow", "capex",
+            "free_cash_flow", "dividends_paid",
+        ) if c in frame.columns
+    ]
+    linhas = ["HISTÓRICO FINANCEIRO SEC/US GAAP (até 10 exercícios anuais, em USD):"]
+    for idx, row in frame.iterrows():
+        ano = str(row.get("fiscal_year") or idx)
+        partes = [f"{col}={format_number(row.get(col))}" for col in colunas]
+        receita = safe_float(row.get("revenue"))
+        ebitda = safe_float(row.get("ebitda"))
+        lucro = safe_float(row.get("net_income"))
+        fco = safe_float(row.get("operating_cash_flow"))
+        fcl = safe_float(row.get("free_cash_flow"))
+        if receita:
+            if ebitda is not None:
+                partes.append(f"Margem_EBITDA={ebitda / receita * 100:.1f}%")
+            if lucro is not None:
+                partes.append(f"Margem_liquida={lucro / receita * 100:.1f}%")
+            if fcl is not None:
+                partes.append(f"Margem_FCL={fcl / receita * 100:.1f}%")
+        if lucro and fco is not None:
+            partes.append(f"FCO_Lucro={fco / lucro:.2f}x")
+        linhas.append(f"  FY{ano}: " + " | ".join(partes))
+
+    def _razao_recente(numerador: str, denominador: str) -> str:
+        if numerador not in frame.columns or denominador not in frame.columns:
+            return "N/D"
+        for _, row in frame.iloc[::-1].iterrows():
+            n, d = safe_float(row.get(numerador)), safe_float(row.get(denominador))
+            if n is not None and d not in (None, 0.0):
+                return f"{n / d:.2f}x"
+        return "N/D"
+
+    def _anos_positivos(coluna: str) -> str | None:
+        if coluna not in frame.columns:
+            return None
+        valores = pd.to_numeric(frame[coluna], errors="coerce").dropna()
+        return f"{int((valores > 0).sum())}/{len(valores)} anos" if len(valores) else None
+
+    linhas.extend([
+        "QUALIDADE DO RESULTADO — cálculos determinísticos:",
+        f"  Conversão FCO/lucro mais recente: {_razao_recente('operating_cash_flow', 'net_income')}",
+        f"  Conversão FCL/lucro mais recente: {_razao_recente('free_cash_flow', 'net_income')}",
+        f"  FCO positivo: {_anos_positivos('operating_cash_flow') or 'N/D'} | "
+        f"FCL positivo: {_anos_positivos('free_cash_flow') or 'N/D'}",
+        "  FCO não é FCL: a diferença é capex. Ambos estão publicados acima; "
+        "se um estiver N/D, declare a limitação em vez de usar o outro no lugar.",
+    ])
+    return "\n".join(linhas)
+
+
+def build_advanced_context(advanced: dict | None) -> str:
+    """Piotroski, Altman, Sloan e ROIC incremental — evidência calculada.
+
+    É o que ocupa, no mercado americano, o lugar que o RAG de documentos CVM
+    ocupa na B3: sinal verificável em código sobre a qualidade contábil, em
+    vez de trecho de documento recuperado.
+    """
+    if not advanced:
+        return ("LABORATÓRIO AVANÇADO: indisponível para esta empresa. Não conclua "
+                "solidez contábil sem estes indicadores.")
+    # Chaves conforme core.us_advanced.advanced_snapshot.
+    rotulos = (
+        ("f_score", "Piotroski F-Score (0–9)", "{:.0f}"),
+        ("z_score", "Altman Z-Score", "{:.2f}"),
+        ("sloan_accruals", "Accruals de Sloan", "{:.3f}"),
+        ("incremental_roic", "ROIC incremental", "{:.1%}"),
+    )
+    partes = []
+    for chave, rotulo, formato in rotulos:
+        valor = safe_float(advanced.get(chave))
+        if valor is not None:
+            partes.append(f"  {rotulo}: {formato.format(valor)}")
+    zona = advanced.get("z_zone")
+    if zona:
+        partes.append(f"  Zona de Altman: {zona}")
+    # O F-Score só é comparável quando os nove sinais foram avaliáveis; declarar
+    # a parcialidade evita que "4/9" seja lido como empresa fraca quando na
+    # verdade cinco sinais não tinham dado.
+    avaliaveis = safe_float(advanced.get("f_evaluable"))
+    if avaliaveis is not None and avaliaveis < 9:
+        partes.append(
+            f"  Atenção: apenas {avaliaveis:.0f} dos 9 sinais de Piotroski eram "
+            "avaliáveis — o F-Score está parcial e não compara com empresa completa."
+        )
+    if not partes:
+        return "LABORATÓRIO AVANÇADO: sem indicadores utilizáveis."
+    return "\n".join([
+        "LABORATÓRIO AVANÇADO (calculado em código sobre as demonstrações SEC):",
+        *partes,
+        "  Leitura: F-Score alto indica melhora contábil ampla; Z-Score baixo, risco "
+        "de insolvência; accruals altos, lucro pouco sustentado por caixa. São "
+        "sinais, não veredictos — explique o mecanismo antes de concluir.",
+    ])
+
+
+def format_us_macro(macro: dict | None) -> str:
+    """Regime macro americano — saída de ``core.us_macro.evaluate_macro``."""
+    if not macro:
+        return "CENÁRIO MACRO EUA: indisponível."
+    entradas = macro.get("inputs") or {}
+    linhas = [
+        "CENÁRIO MACRO ESTADOS UNIDOS:",
+        f"  Regime: {macro.get('regime', 'N/D')} "
+        f"(pontuação {macro.get('score', 'N/D')}/100, tom {macro.get('tone', 'N/D')})",
+    ]
+    for chave, rotulo, sufixo in (
+        ("fed_funds", "Fed funds", "%"),
+        ("cpi_yoy", "CPI a/a", "%"),
+        ("real_gdp_yoy", "PIB real a/a", "%"),
+        ("unemployment", "Desemprego", "%"),
+        ("yield_curve_10y_2y", "Curva 10a-2a", " p.p."),
+        ("high_yield_spread", "Spread high yield", " p.p."),
+    ):
+        valor = safe_float(entradas.get(chave))
+        if valor is not None:
+            linhas.append(f"  {rotulo}: {valor:.2f}{sufixo}")
+    impactos = macro.get("sector_impacts") or {}
+    if impactos:
+        ordenados = sorted(impactos.items(), key=lambda kv: -kv[1])
+        linhas.append(
+            "  Impulso por setor (-10 a +10): "
+            + " | ".join(f"{setor}={valor:+.1f}" for setor, valor in ordenados)
+        )
+    linhas.append(
+        "  Custo de oportunidade de referência é o Treasury; o benchmark de "
+        "comparação é o S&P 500. Não use Selic nem Ibovespa."
+    )
+    return "\n".join(linhas)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompts
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PROMPT_COMPANY_PORTFOLIO = """\
+Você é um analista sênior de ações americanas preparando uma nota de diligência para um gestor.
+Esta chamada pertence EXCLUSIVAMENTE à aba Avaliação de Portfólio das Empresas Americanas. Produza
+interpretação causal, não uma enumeração de indicadores. Todo fato ou número deve vir do contexto;
+inferências devem ser marcadas como inferência. Se a evidência não sustentar uma causa, diga
+"causa não confirmada nos dados". Responda em português do Brasil, com os valores em dólares.
+
+EMPRESA: {ticker} — {name}
+SETOR: {sector} | INDÚSTRIA: {industry}
+
+=== DOSSIÊ DETERMINÍSTICO ===
+{dossier}
+
+=== HISTÓRICO, TENDÊNCIAS E QUALIDADE DO RESULTADO (SEC/US GAAP) ===
+{financial_history}
+
+=== EVIDÊNCIA CONTÁBIL CALCULADA ===
+{advanced_context}
+
+=== PEER ANALYSIS — ORDEM OBRIGATÓRIA ===
+{peer_context}
+
+=== MACRO ESTADOS UNIDOS ===
+{macro}
+
+=== CONTEXTO SUPLEMENTAR DA CARTEIRA ===
+{portfolio_context}
+
+REGRAS ANALÍTICAS OBRIGATÓRIAS:
+1. Compare valuation prioritariamente com pares da MESMA indústria. Pares da carteira têm
+   prioridade quando são comparáveis; complete com o universo americano. Outras indústrias são
+   apenas contexto de diversificação — múltiplo de software não julga múltiplo de banco.
+2. Explique por que os múltiplos podem estar baixos/altos: conecte expectativa, tendência
+   operacional, balanço, qualidade do lucro, governança, regulação e eventos. Não atribua opinião
+   ao "mercado" sem evidência; nesse caso use "os múltiplos sugerem".
+3. Em Qualidade dos Resultados, trate lucro, FCO, FCL, conversão caixa/lucro, recompras,
+   remuneração em ações (SBC) e itens extraordinários. FCO não é FCL — a diferença é capex, e os
+   dois estão publicados. Ausência de dado reduz confiança e nota, não autoriza invenção.
+4. Classifique cada tendência relevante como acelerando, desacelerando, estável ou deteriorando e
+   explique o mecanismo. Não conclua tendência com apenas um exercício.
+5. Catalisadores e riscos devem ser específicos, ligados a uma métrica, evento, janela de evidência
+   ou transmissão econômica. É proibido usar listas genéricas sem explicar o efeito.
+6. Não escreva "vale comprar", "compre", "venda", "substitua por" ou "pode entrar na carteira".
+   Descreva perfil de investidor, horizonte, tolerância a volatilidade e condições de adequação.
+7. Os cenários Otimista/Base/Pessimista devem somar 100%, explicar probabilidade e mecanismo de
+   impacto. Não invente preço-alvo. Use impacto qualitativo quando não houver modelo de preço.
+8. Só cite fato corporativo (fusão, litígio, revisão contábil, mudança regulatória) se ele estiver
+   no dossiê ou na evidência calculada. NÃO há base documental indexada nesta aba: se a informação
+   não está no contexto, declare a lacuna em vez de recorrer à memória.
+9. Sensibilidade macro deve usar os fatores americanos do contexto — Fed funds, CPI, PIB real,
+   desemprego, curva de juros, spread de crédito e dólar. Não use Selic, IPCA nem Ibovespa.
+10. A conclusão deve responder: cara/justa/barata; desconto justificável; pessimismo/otimismo
+    implícito; risco-retorno; principal positivo; principal risco. Termine com resumo executivo de
+    até cinco linhas.
+11. Score qualitativo: notas 0–10, justificativa causal e evidência/lacuna para cada dimensão.
+    Pesos: {weights_contract}. O código recalcula a média ponderada; não manipule a nota para
+    recomendar ação.
+
+Responda somente JSON válido, sem markdown, com exatamente esta estrutura principal:
+{{
+  "perspectiva": "forte|moderada|fraca",
+  "confianca": <inteiro de 0 a 100 — NUNCA fração; 85 significa 85%, 0.85 é inválido>,
+  "resumo": "síntese analítica de até cinco linhas",
+  "relatorio": {{
+    "empresa_hoje": "modelo econômico e fonte de valor",
+    "analise_pares": "comparação por indústria e leitura dos descontos/prêmios",
+    "valuation_interpretado": "múltiplos, causas prováveis, expectativas e justificativa",
+    "tendencias": "receita, EBITDA, lucro, margens, ROE, ROIC, dívida e caixa",
+    "qualidade_resultados": "lucro, FCO, FCL, conversão, recompras, SBC e extraordinários",
+    "governanca_controlador": "governança e alocação de capital com evidência disponível",
+    "eventos_relevantes": "fatos documentados no contexto e seu efeito potencial",
+    "qualidade_dados": "lacunas que limitam a leitura"
+  }},
+  "riscos": [{{"risco": "", "mecanismo": "", "indicador_monitorado": ""}}],
+  "catalisadores": [{{"catalisador": "", "mecanismo": "", "janela_ou_gatilho": ""}}],
+  "sensibilidade_macro": ["fator americano -> mecanismo de transmissão"],
+  "cenarios": [
+    {{"cenario": "Otimista", "probabilidade_pct": 0, "impacto_esperado": "", "fundamentacao": ""}},
+    {{"cenario": "Base", "probabilidade_pct": 0, "impacto_esperado": "", "fundamentacao": ""}},
+    {{"cenario": "Pessimista", "probabilidade_pct": 0, "impacto_esperado": "", "fundamentacao": ""}}
+  ],
+  "score_qualitativo_detalhado": {{
+    "modelo_negocio": {{"nota": 0, "justificativa": "", "evidencia_ou_lacuna": ""}},
+    "vantagem_competitiva": {{"nota": 0, "justificativa": "", "evidencia_ou_lacuna": ""}},
+    "governanca": {{"nota": 0, "justificativa": "", "evidencia_ou_lacuna": ""}},
+    "eficiencia_operacional": {{"nota": 0, "justificativa": "", "evidencia_ou_lacuna": ""}},
+    "saude_financeira": {{"nota": 0, "justificativa": "", "evidencia_ou_lacuna": ""}},
+    "crescimento": {{"nota": 0, "justificativa": "", "evidencia_ou_lacuna": ""}},
+    "geracao_caixa": {{"nota": 0, "justificativa": "", "evidencia_ou_lacuna": ""}},
+    "rentabilidade": {{"nota": 0, "justificativa": "", "evidencia_ou_lacuna": ""}},
+    "qualidade_resultados": {{"nota": 0, "justificativa": "", "evidencia_ou_lacuna": ""}},
+    "valuation": {{"nota": 0, "justificativa": "", "evidencia_ou_lacuna": ""}}
+  }},
+  "adequacao_investidor": {{"perfil": "", "horizonte": "", "tolerancia_volatilidade": "", "condicoes": ""}},
+  "conclusao": {{
+    "faixa_valor": "cara|justa|barata|indeterminada",
+    "desconto_justificavel": "",
+    "percepcao_mercado": "pessimista|neutra|otimista|indeterminada",
+    "risco_retorno": "",
+    "principal_positivo": "",
+    "principal_risco": "",
+    "resumo_executivo": "até cinco linhas"
+  }}
+}}
+"""
+
+
+_PROMPT_PORTFOLIO = """\
+Você é um gestor de ações americanas revisando uma carteira como conjunto. Use somente as análises
+individuais e o macro abaixo. Explique causa e efeito, concentração, complementaridade, transmissão
+de riscos e condições de adequação. Não dê ordens de compra, venda ou substituição. A comparação de
+valuation de cada empresa já foi feita contra pares da mesma indústria; não compare múltiplos entre
+indústrias diferentes. Responda em português do Brasil, com valores em dólares.
+
+=== COMPOSIÇÃO E LEITURAS INDIVIDUAIS ===
+{items_context}
+
+=== MACRO ESTADOS UNIDOS ===
+{macro}
+
+=== CONCENTRAÇÃO POR SETOR E INDÚSTRIA ===
+{concentration}
+
+=== AVALIAÇÃO QUANTITATIVA DETERMINÍSTICA ===
+{quant_context}
+
+Considere explicitamente o que é próprio deste mercado: exposição cambial de quem investe em reais,
+concentração em megacaps de tecnologia, sensibilidade à política do Fed e à curva de juros, e
+diferença entre recompra e dividendo como forma de retorno ao acionista.
+
+Responda somente JSON válido com este schema. Preserve os campos legados porque a interface os consome:
+{{
+  "qualidade_carteira": "alta|media|baixa",
+  "perspectiva_12m": "construtiva|equilibrada|cautelosa",
+  "confianca_media": 0,
+  "score_medio": 0,
+  "cobertura": "alta|media|baixa",
+  "resumo_executivo": "até cinco linhas, decisão central e principal risco",
+  "relatorio_estrategico": "leitura causal do conjunto, sem recomendação simplista",
+  "papel_dos_ativos": "como exposições se complementam ou concentram",
+  "pontos_fortes": ["força específica e mecanismo"],
+  "pontos_fracos": ["fragilidade específica e mecanismo"],
+  "sintese_alocacao": "como o método quanti+quali altera exposições; não dê ordem de negociação",
+  "diagnostico_causal": "choques -> transmissão -> impacto na carteira",
+  "riscos_transmissao": [{{"risco": "", "ativos_expostos": [""], "mecanismo": "", "monitoramento": ""}}],
+  "catalisadores_portfolio": [{{"catalisador": "", "ativos_expostos": [""], "mecanismo": ""}}],
+  "adequacao_carteira": {{"perfil": "", "horizonte": "", "volatilidade": "", "condicoes": ""}},
+  "conclusao_estrategica": "conclusão em até cinco linhas com risco-retorno e gatilhos de revisão"
+}}
+"""
+
+
+def build_company_prompt(
+    ticker: str,
+    dossier: dict,
+    df_fin: pd.DataFrame | None,
+    advanced: dict | None,
+    macro: dict | None,
+    peer_context: str,
+    portfolio_context: str,
+) -> str:
+    try:
+        dossier_text = dossie_to_text(dossier)
+    except (KeyError, TypeError):
+        dossier_text = str(dossier)
+    return _PROMPT_COMPANY_PORTFOLIO.format(
+        ticker=ticker,
+        name=dossier.get("name") or ticker,
+        sector=dossier.get("sector") or "N/D",
+        industry=dossier.get("industry") or "N/D",
+        dossier=dossier_text,
+        financial_history=build_financial_history_context(df_fin),
+        advanced_context=build_advanced_context(advanced),
+        peer_context=peer_context or "PARES: indisponíveis; não conclua prêmio/desconto setorial.",
+        macro=format_us_macro(macro),
+        portfolio_context=portfolio_context or "Sem contexto suplementar da carteira.",
+        weights_contract=weights_contract(),
+    )
+
+
+def generate_company_us_report(
+    ticker: str,
+    *,
+    df_fin: pd.DataFrame | None = None,
+    advanced: dict | None = None,
+    macro: dict | None = None,
+    scored: pd.DataFrame | None = None,
+    portfolio_tickers: list[str] | tuple[str, ...] = (),
+    portfolio_context: str = "",
+    model: str | None = None,
+) -> tuple[dict, dict]:
+    """Nota institucional de uma empresa americana. Devolve (relatório, dossiê)."""
+    tk = str(ticker).strip().upper()
+    dossier = build_dossie(tk)
+    if dossier.get("erro"):
+        return fallback_company(tk, f"dossiê indisponível: {dossier['erro']}"), dossier
+    try:
+        peer_context = build_peer_context(
+            tk, portfolio_tickers, scored=scored, industry=dossier.get("industry"),
+        )
+    except Exception as exc:  # noqa: BLE001 - pares nunca derrubam o relatório
+        logger.warning("Pares institucionais de %s indisponíveis: %s", tk, exc)
+        peer_context = "PARES: indisponíveis; não conclua prêmio/desconto setorial."
+    prompt = build_company_prompt(
+        tk, dossier, df_fin, advanced, macro, peer_context, portfolio_context,
+    )
+    try:
+        raw = _call_llm(prompt, model=model or _report_model())
+        parsed = _parse_json(raw, fallback_company(tk, "JSON inválido"))
+        return sanitize_company_report(parsed, tk), dossier
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Relatório institucional de %s falhou: %s", tk, exc)
+        return fallback_company(tk, str(exc)[:200]), dossier
+
+
+def build_quant_context(avaliacao: dict | None) -> str:
+    """Avaliação quantitativa determinística — saída de ``evaluate_portfolio``.
+
+    Ocupa aqui o papel que o dossiê ocupa na nota individual: números fechados
+    em código, que a LLM interpreta mas não recalcula. Sem este bloco, ela
+    estimaria concentração "de olho" a partir da lista de pesos.
+    """
+    if not avaliacao or not avaliacao.get("ok"):
+        return "AVALIAÇÃO QUANTITATIVA: indisponível."
+    linhas = [
+        "AVALIAÇÃO QUANTITATIVA (calculada em código, não estime novamente):",
+        f"  Pontuação consolidada: {avaliacao.get('adjusted_score')}/100 "
+        f"(base {avaliacao.get('score')} + ajuste macro {avaliacao.get('macro_adjustment'):+})",
+        f"  Classificação: {avaliacao.get('classification')}",
+        f"  Diversificação: {avaliacao.get('diversification_score')}/100 | "
+        f"ativos efetivos: {avaliacao.get('effective_assets')} | HHI: {avaliacao.get('hhi')}",
+        f"  Maior peso setorial: {avaliacao.get('max_sector_weight')}% | "
+        f"cobertura pontuada: {avaliacao.get('coverage_weight')}% do peso",
+    ]
+    trilhas = avaliacao.get("track_scores") or {}
+    if trilhas:
+        linhas.append("  Trilhas: " + " | ".join(
+            f"{nome}={valor:.0f}" for nome, valor in trilhas.items()
+        ))
+    alertas = avaliacao.get("alerts") or []
+    if alertas:
+        linhas.append("  Alertas determinísticos: " + "; ".join(alertas))
+    ausentes = avaliacao.get("missing") or []
+    if ausentes:
+        linhas.append(
+            f"  Sem pontuação no universo: {', '.join(map(str, ausentes[:10]))} — "
+            "trate como lacuna de cobertura, não como qualidade ruim."
+        )
+    return "\n".join(linhas)
+
+
+def build_concentration_context(items: list[dict]) -> str:
+    """Peso por setor e por indústria — insumo do diagnóstico de concentração."""
+    if not items:
+        return "CONCENTRAÇÃO: carteira vazia."
+
+    def _agrega(chave: str) -> dict[str, float]:
+        acumulado: dict[str, float] = {}
+        for item in items:
+            rotulo = str(item.get(chave) or "Não classificado")
+            acumulado[rotulo] = acumulado.get(rotulo, 0.0) + float(item.get("peso_pct") or 0.0)
+        return acumulado
+
+    linhas = []
+    for chave, rotulo in (("setor", "SETOR"), ("industria", "INDÚSTRIA")):
+        agregado = _agrega(chave)
+        if not agregado:
+            continue
+        ordenado = sorted(agregado.items(), key=lambda kv: -kv[1])
+        linhas.append(
+            f"  Por {rotulo.lower()}: "
+            + " | ".join(f"{nome}={peso:.1f}%" for nome, peso in ordenado[:10])
+        )
+        maior = ordenado[0]
+        linhas.append(f"    Maior exposição em {rotulo.lower()}: {maior[0]} com {maior[1]:.1f}%.")
+    return "CONCENTRAÇÃO DA CARTEIRA:\n" + "\n".join(linhas) if linhas else "CONCENTRAÇÃO: indisponível."
+
+
+def analyze_us_portfolio_report(
+    items_analyzed: list[dict],
+    macro: dict | None,
+    *,
+    model: str | None = None,
+    avaliacao_quant: dict | None = None,
+) -> dict:
+    """Síntese consolidada da carteira americana, no schema que a UI consome."""
+    prompt = _PROMPT_PORTFOLIO.format(
+        items_context="\n".join(
+            company_summary_for_portfolio(item) for item in items_analyzed
+        ) or "Carteira vazia.",
+        macro=format_us_macro(macro),
+        concentration=build_concentration_context(items_analyzed),
+        quant_context=build_quant_context(avaliacao_quant),
+    )
+    try:
+        raw = _call_llm(prompt, model=model or _report_model())
+        parsed = _parse_json(raw, fallback_portfolio("JSON inválido"))
+        return sanitize_portfolio_report(parsed, items_analyzed)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Relatório consolidado americano falhou: %s", exc)
+        return fallback_portfolio(str(exc)[:200])
+
+
+__all__ = [
+    "QUALITATIVE_WEIGHTS",
+    "analyze_us_portfolio_report",
+    "build_advanced_context",
+    "build_company_prompt",
+    "build_concentration_context",
+    "build_financial_history_context",
+    "build_quant_context",
+    "build_industry_medians_context",
+    "build_peer_context",
+    "build_us_fundamentals_context",
+    "compute_industry_peers",
+    "format_us_macro",
+    "generate_company_us_report",
+]
