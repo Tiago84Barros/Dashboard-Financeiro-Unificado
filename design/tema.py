@@ -80,77 +80,6 @@ _CSS = """
     display: none;
 }
 
-/* Subnavegação persistente do Controle Financeiro.
-   Mantém o estado do segmented_control e replica o trilho de cards suspensos
-   das vitrines de empresas, com destaque turquesa para a seção ativa. */
-.st-key-cf_secao_ativa,
-.st-key-cf_secao_ativa [data-testid="stButtonGroup"] {
-    width: 100%;
-}
-.st-key-cf_secao_ativa [data-baseweb="button-group"] {
-    display: grid !important;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    width: 100%;
-    max-width: 100%;
-    gap: 1rem;
-    padding: .2rem 0 .55rem;
-    overflow: visible;
-    border: 0 !important;
-    background: transparent !important;
-}
-.st-key-cf_secao_ativa [data-baseweb="button-group"] > button {
-    width: 100% !important;
-    min-width: 0 !important;
-    min-height: 3.4rem;
-    margin: 0 !important;
-    padding: .7rem .85rem !important;
-    background: rgba(23, 29, 43, .92) !important;
-    border: 1px solid #2D3748 !important;
-    border-radius: 12px !important;
-    color: #E2E8F0 !important;
-    box-shadow: 0 10px 24px rgba(0, 0, 0, .18) !important;
-    font-weight: 680 !important;
-    line-height: 1.25;
-    white-space: normal;
-    transition: transform .16s ease, border-color .16s ease,
-                background .16s ease, box-shadow .16s ease;
-}
-.st-key-cf_secao_ativa [data-baseweb="button-group"] > button:hover {
-    color: #00C896 !important;
-    border-color: rgba(0, 200, 150, .48) !important;
-    background: rgba(25, 34, 48, .98) !important;
-    box-shadow: 0 13px 28px rgba(0, 0, 0, .24) !important;
-    transform: translateY(-2px);
-}
-.st-key-cf_secao_ativa [data-baseweb="button-group"] > [data-testid="stBaseButton-segmented_controlActive"] {
-    color: #071711 !important;
-    background: #00C896 !important;
-    border-color: #00C896 !important;
-    box-shadow: 0 12px 28px rgba(0, 200, 150, .22) !important;
-}
-.st-key-cf_secao_ativa [data-baseweb="button-group"] > button:focus-visible {
-    outline: 2px solid #4A9EFF !important;
-    outline-offset: 3px;
-}
-@media (max-width: 720px) {
-    .st-key-cf_secao_ativa [data-baseweb="button-group"] {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: .7rem;
-    }
-    .st-key-cf_secao_ativa [data-baseweb="button-group"] > button {
-        min-height: 3.15rem;
-        padding: .62rem .7rem !important;
-    }
-}
-@media (prefers-reduced-motion: reduce) {
-    .st-key-cf_secao_ativa [data-baseweb="button-group"] > button {
-        transition: none;
-    }
-    .st-key-cf_secao_ativa [data-baseweb="button-group"] > button:hover {
-        transform: none;
-    }
-}
-
 /* ═══════════════════════════════════════════════
    CARDS DE MÉTRICAS (st.metric)
 ═══════════════════════════════════════════════ */
@@ -604,6 +533,83 @@ hr {
     background: rgba(0,200,150,.055) !important;
 }
 .stTabs [data-baseweb="tab-highlight"] { background-color: var(--app-primary); }
+
+/* ═══════════════════════════════════════════════
+   SUB-NAVEGAÇÃO DE SEÇÕES (design.componentes.abas_secao)
+   ───────────────────────────────────────────────
+   Um único contrato visual para as abas internas do app: o mesmo trilho
+   sublinhado das abas nativas (.stTabs, usadas em Investimentos), aplicado ao
+   segmented_control — que, ao contrário de st.tabs, aceita `key` (a aba ativa
+   sobrevive a reruns) e `on_change` (permite rolar ao topo na troca).
+   O seletor casa por prefixo de key: qualquer widget criado por abas_secao
+   nasce com a classe st-key-appnav_<nome>, sem CSS novo por tela.
+═══════════════════════════════════════════════ */
+[class*="st-key-appnav_"],
+[class*="st-key-appnav_"] [data-testid="stButtonGroup"] {
+    width: 100%;
+}
+[class*="st-key-appnav_"] [data-baseweb="button-group"] {
+    display: flex !important;
+    flex-wrap: nowrap;
+    gap: .25rem;
+    width: 100%;
+    max-width: 100%;
+    margin: 0 0 1rem;
+    padding: 0 !important;
+    overflow-x: auto;
+    border: 0 !important;
+    border-bottom: 1px solid var(--app-border) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+}
+[class*="st-key-appnav_"] [data-baseweb="button-group"] > button {
+    flex: 0 0 auto;
+    width: auto !important;
+    min-width: 0 !important;
+    min-height: 42px;
+    margin: 0 !important;
+    padding: .62rem .9rem !important;
+    border: 0 !important;
+    border-radius: 9px 9px 0 0 !important;
+    background: transparent !important;
+    color: var(--app-muted) !important;
+    box-shadow: none !important;
+    font-size: .78rem;
+    font-weight: 650 !important;
+    line-height: 1.25;
+    white-space: nowrap;
+    transition: color .16s ease, background .16s ease;
+}
+[class*="st-key-appnav_"] [data-baseweb="button-group"] > button:hover {
+    color: #DCE6F4 !important;
+    background: rgba(74, 158, 255, .05) !important;
+}
+[class*="st-key-appnav_"] [data-baseweb="button-group"] > [data-testid="stBaseButton-segmented_controlActive"] {
+    color: var(--app-primary) !important;
+    background: rgba(0, 200, 150, .055) !important;
+    box-shadow: inset 0 -2px 0 var(--app-primary) !important;
+}
+[class*="st-key-appnav_"] [data-baseweb="button-group"] > button:focus-visible {
+    outline: 2px solid #4A9EFF !important;
+    outline-offset: -2px;
+}
+/* O iframe de 0px que reposiciona a página no topo não pode abrir espaço. */
+[class*="st-key-appnav_"] + div [data-testid="stIFrame"],
+[data-testid="stIFrame"][height="0"] {
+    display: block;
+    height: 0 !important;
+    border: 0;
+}
+@media (max-width: 760px) {
+    [class*="st-key-appnav_"] [data-baseweb="button-group"] > button {
+        padding-inline: .68rem !important;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    [class*="st-key-appnav_"] [data-baseweb="button-group"] > button {
+        transition: none;
+    }
+}
 
 /* Formulários e ações */
 .stButton > button {

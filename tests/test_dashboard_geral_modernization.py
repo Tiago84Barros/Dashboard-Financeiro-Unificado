@@ -1,4 +1,7 @@
-from datetime import date
+import contextlib
+import inspect
+from datetime import date, datetime
+from pathlib import Path
 
 import views.dashboard_geral as dashboard
 
@@ -82,6 +85,66 @@ def test_mock_mode_does_not_load_persisted_decision_models(monkeypatch):
         raise AssertionError("persisted model must not be read in mock mode")
 
     monkeypatch.setattr(dashboard, "load_active_b3_portfolio_model", unexpected_call)
+    monkeypatch.setattr(dashboard, "load_active_us_portfolio_model", unexpected_call)
     monkeypatch.setattr(dashboard, "_fiis_carteira_modelo", unexpected_call)
 
-    assert dashboard._load_decision_models() == ({}, [], False)
+    assert dashboard._load_decision_models() == ({}, {}, [], False)
+
+
+def test_allocation_decisions_heading_is_gone():
+    """A seção "Decisões de alocação" foi removida do Dashboard Geral."""
+    fonte = Path(dashboard.__file__).read_text(encoding="utf-8")
+    assert "Decisões de alocação" not in fonte
+
+
+def test_portfolio_suggestions_render_after_every_other_section():
+    """Sugestões de carteira fecham o dashboard — nada é renderizado depois."""
+    corpo = inspect.getsource(dashboard.render)
+    posicao_sugestoes = corpo.index("_secao_sugestoes_carteira(")
+    for anterior in ("_render_kpi_grid(", "_secao_resumo_modulos(",
+                     "_secao_raio_x_portfolio(", "Histórico mensal (6 meses)",
+                     "Comparativo Ano a Ano"):
+        assert corpo.index(anterior) < posicao_sugestoes, anterior
+    assert corpo.rstrip().endswith("_secao_sugestoes_carteira(modelo_b3, modelo_us, "
+                                   "fiis_port, fiis_salvo)")
+
+
+def test_us_portfolio_has_its_own_dashboard_section():
+    """Empresas Americanas entra no dashboard pelo mesmo caminho da B3."""
+    corpo = inspect.getsource(dashboard._secao_sugestoes_carteira)
+    assert "_secao_portfolio_modelo_b3(modelo_b3)" in corpo
+    assert "_secao_portfolio_modelo_us(modelo_us)" in corpo
+    # Ambas as seções passam pelo mesmo renderizador: divergir é o defeito.
+    for funcao in (dashboard._secao_portfolio_modelo_b3,
+                   dashboard._secao_portfolio_modelo_us):
+        assert "_secao_carteira_modelo(" in inspect.getsource(funcao)
+
+
+def test_model_company_list_is_not_silently_truncated(monkeypatch):
+    """Carteira maior que o teto declara quantas ficaram de fora."""
+    rendered = _capture_markdown(monkeypatch)
+    monkeypatch.setattr(dashboard.st, "caption", lambda *a, **k: None)
+    monkeypatch.setattr(dashboard.st, "button", lambda *a, **k: False)
+    monkeypatch.setattr(
+        dashboard.st, "columns",
+        lambda spec, **k: [contextlib.nullcontext()] * (
+            spec if isinstance(spec, int) else len(spec)),
+    )
+
+    total = dashboard._MAX_TICKERS_VISIVEIS + 4
+    modelo = {
+        "items": [
+            {"ticker": f"TK{i:02d}", "nome": f"Empresa {i}", "weight": 1 / total,
+             "setor": "Setor"}
+            for i in range(total)
+        ],
+        "metrics_json": {"score_medio": 1.0},
+        "ano_compra": 2026,
+        "created_at": datetime(2026, 7, 1),
+    }
+    dashboard._secao_portfolio_modelo_b3(modelo)
+
+    html = "\n".join(rendered)
+    assert "TK00" in html and f"TK{dashboard._MAX_TICKERS_VISIVEIS - 1:02d}" in html
+    assert "+4 outras" in html
+    assert f"{dashboard._MAX_PESOS_VISIVEIS} maiores pesos de {total} empresas." in html
