@@ -2268,77 +2268,17 @@ PIB e emprego entram como cenário explícito na avaliação posterior da cartei
 
 
 def _tab_avaliacao_portfolio(status: dict) -> None:
+    """Etapa 3 de 3 — delega para a tela dedicada, espelho da Avaliação B3.
+
+    A avaliação quantitativa rápida que vivia aqui foi absorvida: o relatório
+    institucional cobre diversificação, concentração e adequação com o mesmo
+    contrato da B3, sobre a carteira SALVA, não sobre uma seleção improvisada.
+    """
     if _empty_if_offline(status, "Sem dados locais para avaliar a carteira.", "🧠"):
         return
-    from core.us_portfolio_analysis import evaluate_portfolio
-    scored = us.scored_universe()
-    if scored is None or scored.empty:
-        return
-    secao_titulo("Avaliação de Portfólio", "🧠")
-    mode = st.radio("Origem da carteira", ["Carteira-modelo criada", "Carteira personalizada"],
-                    horizontal=True, key="us_eval_mode")
-    if mode == "Carteira-modelo criada" and "us_portfolio_model" in st.session_state:
-        base = st.session_state["us_portfolio_model"][["symbol", "weight"]].copy()
-        base["weight"] *= 100
-    else:
-        options = scored["symbol"].astype(str).tolist()
-        default = options[:min(8, len(options))]
-        selected = st.multiselect("Ativos da carteira", options, default=default,
-                                  key="us_eval_assets")
-        if not selected:
-            st.info("Selecione os ativos a avaliar.")
-            return
-        base = pd.DataFrame({"symbol": selected, "weight": 100 / len(selected)})
-    edited = st.data_editor(base, hide_index=True, use_container_width=True,
-                            column_config={"symbol": st.column_config.TextColumn("Ticker", disabled=True),
-                                           "weight": st.column_config.NumberColumn("Peso %", min_value=0.0)},
-                            key="us_eval_editor")
-    with st.expander("🏛️ Cenário macroeconômico (Fed / inflação / atividade)"):
-        macro = _render_macro_dashboard("us_macro_eval")
-    result = evaluate_portfolio(edited, scored, macro)
-    if not result.get("ok"):
-        st.warning(result.get("reason", "Não foi possível avaliar a carteira."))
-        return
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        card_metrica("Pontuação da carteira", f"{result['adjusted_score']:.1f}/100",
-                     delta=f"Macro {result['macro_adjustment']:+.1f}")
-    with c2:
-        card_metrica("Diversificação", f"{result['diversification_score']:.0f}/100")
-    with c3:
-        card_metrica("Ativos efetivos", f"{result['effective_assets']:.1f}",
-                     ajuda="Inverso do HHI; captura concentração real dos pesos")
-    with c4:
-        card_metrica("Cobertura avaliada", f"{result['coverage_weight']:.1f}%")
-    label, tipo = _score_label(result["adjusted_score"])
-    badge_status(f"Classificação: {label}", tipo)
-    for alert in result["alerts"]:
-        st.warning(alert)
-    if result["missing"]:
-        st.info("Sem pontuação: " + ", ".join(result["missing"]))
-    c1, c2 = st.columns(2)
-    with c1:
-        tracks = pd.DataFrame({"Trilha": [_TRACK_LABELS.get(k, k) for k in result["track_scores"]],
-                               "Pontuação": list(result["track_scores"].values())})
-        fig = px.bar(tracks, x="Trilha", y="Pontuação", color="Pontuação",
-                     color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"])
-        fig.update_layout(**_PLOT_LAYOUT, height=380, yaxis_range=[0, 100], coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True, key="us_eval_tracks")
-    with c2:
-        sectors = result["sector_weights"].rename("weight").reset_index()
-        sectors.columns = ["Setor", "Peso"]
-        sectors["Setor"] = sectors["Setor"].map(translate_us_sector)
-        sectors = sectors.groupby("Setor", as_index=False)["Peso"].sum()
-        fig = px.pie(sectors, names="Setor", values="Peso", hole=.45,
-                     title="Exposição setorial")
-        fig.update_layout(**_PLOT_LAYOUT, height=380)
-        st.plotly_chart(fig, use_container_width=True, key="us_eval_sectors")
-    positions = localize_us_company_frame(result["positions"])
-    positions["weight"] *= 100
-    st.dataframe(positions.rename(columns={
-        "symbol": "Ticker", "name": "Nome", "sector": "Setor", "weight": "Peso %",
-        "score": "Pontuação", "classification": "Classificação", "action": "Ação sugerida",
-        "vs_universe_median": "vs. mediana"}), hide_index=True, use_container_width=True)
+    from views import analise_portfolio_us
+
+    analise_portfolio_us.render(show_header=False)
 
 
 # ── Criação de Portfólio ──────────────────────────────────────────────────────
