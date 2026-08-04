@@ -2675,225 +2675,217 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     # ══════════════════════════════════════════════════════════════════════════
     with ta:
         st.markdown("<br>", unsafe_allow_html=True)
-        # Subabas: o bloco unico empilhava resumo, destaques e concentracao
-        # numa rolagem so. Cada pergunta agora tem a sua aba.
-        vg_resumo, vg_destaques, vg_concentracao = st.tabs([
-            "📋 Resumo", "🏆 Destaques", "📊 Concentração",
-        ])
+        _secao_titulo_orig("📋", "Resumo do Portfólio")
 
-        with vg_resumo:
-            _secao_titulo_orig("📋", "Resumo do Portfólio")
+        c1, c2, c3, c4 = st.columns(4, gap="small")
+        cor_r = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
+        seta_r = "▲" if rentab >= 0 else "▼"
+        with c1:
+            st.markdown(_kpi("Valor Total Investido", fmt_moeda(total_inv),
+                             f"{carteira['num_ativos']} ativos na carteira", "#E2E8F0"),
+                        unsafe_allow_html=True)
+        with c2:
+            st.markdown(_kpi("Valor de Mercado", fmt_moeda(total_mkt),
+                             "Ativos com cotação disponível", _COR_INFO),
+                        unsafe_allow_html=True)
+        with c3:
+            _rent_total_ok = carteira.get("rentabilidade_total_disponivel", True)
+            st.markdown(_kpi(
+                "Retorno Mercado/Custo",
+                f"{seta_r} {abs(rentab):.1f}%" if _rent_total_ok else "Indisponível em BRL",
+                ("Não inclui proventos nem ajusta aportes/resgates" if _rent_total_ok else
+                 "Falta câmbio histórico de aquisição em posição USD"),
+                cor_r if _rent_total_ok else _COR_NEUTRO,
+            ),
+                        unsafe_allow_html=True)
+        with c4:
+            st.markdown(_kpi("Renda Total Recebida (12M)", fmt_moeda(renda_12m),
+                             "Dividendos + JCP + Rendimentos", _COR_ALERTA),
+                        unsafe_allow_html=True)
 
-            c1, c2, c3, c4 = st.columns(4, gap="small")
-            cor_r = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
-            seta_r = "▲" if rentab >= 0 else "▼"
-            with c1:
-                st.markdown(_kpi("Valor Total Investido", fmt_moeda(total_inv),
-                                 f"{carteira['num_ativos']} ativos na carteira", "#E2E8F0"),
-                            unsafe_allow_html=True)
-            with c2:
-                st.markdown(_kpi("Valor de Mercado", fmt_moeda(total_mkt),
-                                 "Ativos com cotação disponível", _COR_INFO),
-                            unsafe_allow_html=True)
-            with c3:
-                _rent_total_ok = carteira.get("rentabilidade_total_disponivel", True)
-                st.markdown(_kpi(
-                    "Retorno Mercado/Custo",
-                    f"{seta_r} {abs(rentab):.1f}%" if _rent_total_ok else "Indisponível em BRL",
-                    ("Não inclui proventos nem ajusta aportes/resgates" if _rent_total_ok else
-                     "Falta câmbio histórico de aquisição em posição USD"),
-                    cor_r if _rent_total_ok else _COR_NEUTRO,
-                ),
-                            unsafe_allow_html=True)
-            with c4:
-                st.markdown(_kpi("Renda Total Recebida (12M)", fmt_moeda(renda_12m),
-                                 "Dividendos + JCP + Rendimentos", _COR_ALERTA),
-                            unsafe_allow_html=True)
-
-            if por_classe:
-                st.markdown("<br>", unsafe_allow_html=True)
-                n_cls = min(len(por_classe), 6)
-                cols_cls = st.columns(n_cls, gap="small")
-                for i, cls in enumerate(por_classe[:n_cls]):
-                    with cols_cls[i]:
-                        st.markdown(_kpi_classe(cls), unsafe_allow_html=True)
-
-
-        with vg_destaques:
-            _secao_titulo_orig("🏆", "Destaques da Carteira")
-
-            if posicoes:
-                pos_com_rent  = [p for p in posicoes if p.get("rentab_pct") is not None]
-                top_val       = sorted(pos_com_rent, key=lambda p: p["rentab_pct"], reverse=True)[:5]
-                top_qda       = sorted(pos_com_rent, key=lambda p: p["rentab_pct"])[:5]
-                top_peso_list = sorted(posicoes,     key=lambda p: p["pct_carteira"], reverse=True)[:5]
-
-                def _dest_row(nome: str, valor_str: str, badge: str, cor: str) -> str:
-                    return (
-                        f'<div style="display:flex;justify-content:space-between;align-items:center;'
-                        f'padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
-                        f'<span style="font-size:0.82rem;font-weight:700;color:#E2E8F0;'
-                        f'max-width:54%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
-                        f'{_html.escape(nome)}</span>'
-                        f'<span style="font-size:0.80rem;font-weight:700;color:{cor};white-space:nowrap;">'
-                        f'{badge}&nbsp;<span style="font-size:0.72rem;color:#4A5568;font-weight:400;">'
-                        f'{valor_str}</span></span>'
-                        f'</div>'
-                    )
-
-                col_dv, col_dq, col_dp = st.columns(3, gap="medium")
-
-                with col_dv:
-                    st.markdown(
-                        '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                        'margin-bottom:10px;">🏆 Maior valorização mercado/custo</div>',
-                        unsafe_allow_html=True,
-                    )
-                    for p in top_val:
-                        r    = p["rentab_pct"]
-                        nome = (p.get("nome") or p["ticker"])[:24]
-                        seta = "▲" if r >= 0 else "▼"
-                        cor  = _COR_POSITIVO if r >= 0 else _COR_NEGATIVO
-                        st.markdown(
-                            _dest_row(nome, fmt_moeda(p["valor_mercado"]),
-                                      f"{seta} {abs(r):.1f}%", cor),
-                            unsafe_allow_html=True,
-                        )
-
-                with col_dq:
-                    st.markdown(
-                        '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                        'margin-bottom:10px;">📉 Maior queda mercado/custo</div>',
-                        unsafe_allow_html=True,
-                    )
-                    for p in top_qda:
-                        r    = p["rentab_pct"]
-                        nome = (p.get("nome") or p["ticker"])[:24]
-                        seta = "▼" if r < 0 else "▲"
-                        cor  = _COR_NEGATIVO if r < 0 else _COR_POSITIVO
-                        st.markdown(
-                            _dest_row(nome, fmt_moeda(p["valor_mercado"]),
-                                      f"{seta} {abs(r):.1f}%", cor),
-                            unsafe_allow_html=True,
-                        )
-
-                with col_dp:
-                    st.markdown(
-                        '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                        'margin-bottom:10px;">⚖️ Maior Peso</div>',
-                        unsafe_allow_html=True,
-                    )
-                    for p in top_peso_list:
-                        pct  = p["pct_carteira"]
-                        nome = (p.get("nome") or p["ticker"])[:24]
-                        cor  = (_COR_NEGATIVO if pct >= 15 else
-                                _COR_ALERTA   if pct >= 10 else "#CBD5E0")
-                        st.markdown(
-                            _dest_row(nome, fmt_moeda(p["valor_mercado"]),
-                                      f"{pct:.1f}%", cor),
-                            unsafe_allow_html=True,
-                        )
-
-            # ── Alertas de Concentração ───────────────────────────────────────────
-            concentrados = [p for p in posicoes if p["pct_carteira"] > 10.0]
-            if concentrados:
-                st.markdown("<br>", unsafe_allow_html=True)
-                _secao_titulo_orig("⚠️", "Alertas de Concentração")
-                for p in concentrados:
-                    st.markdown(
-                        f'<div style="border-left:4px solid {_COR_ALERTA};padding:10px 14px;'
-                        f'margin-bottom:8px;background:rgba(246,201,14,0.05);'
-                        f'border-radius:0 8px 8px 0;">'
-                        f'<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;'
-                        f'letter-spacing:0.08em;color:{_COR_ALERTA};margin-bottom:3px;">'
-                        f'CONCENTRAÇÃO ELEVADA</div>'
-                        f'<div style="font-size:0.82rem;color:#CBD5E0;">'
-                        f'{_html.escape(p["ticker"])} ({_html.escape(p["classe"])}) representa '
-                        f'{p["pct_carteira"]:.1f}% da carteira. '
-                        f'Posições acima de 10% ampliam o risco específico.</div>'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
-
+        if por_classe:
             st.markdown("<br>", unsafe_allow_html=True)
-            col_donut, col_top15 = st.columns([1, 1], gap="medium")
-            with col_donut:
-                _secao_titulo_orig("🥧", "Distribuição por Classe de Ativo")
-                if por_classe:
-                    st.plotly_chart(_fig_donut_classes(por_classe),
-                                    use_container_width=True,
-                                    config={"displayModeBar": False},
-                                    key="analise_donut")
-                else:
-                    st.caption("Sem dados de alocação.")
-            with col_top15:
-                _secao_titulo_orig("🏆", "Top 15 Posições por Custo")
-                if posicoes:
-                    st.plotly_chart(_fig_top15(posicoes),
-                                    use_container_width=True,
-                                    config={"displayModeBar": False},
-                                    key="analise_top15")
-                else:
-                    st.caption("Sem posições.")
+            n_cls = min(len(por_classe), 6)
+            cols_cls = st.columns(n_cls, gap="small")
+            for i, cls in enumerate(por_classe[:n_cls]):
+                with cols_cls[i]:
+                    st.markdown(_kpi_classe(cls), unsafe_allow_html=True)
 
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo_orig("🏆", "Destaques da Carteira")
 
-        with vg_concentracao:
-            _secao_titulo_orig("📊", "Concentração")
-            col_cls, col_set = st.columns(2, gap="medium")
-            with col_cls:
-                st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                            'margin-bottom:10px;">Por Classe de Ativo</div>',
-                            unsafe_allow_html=True)
-                for cls in por_classe:
-                    barra_cor = (_COR_NEGATIVO if cls["pct_carteira"] >= 50 else
-                                 _COR_ALERTA   if cls["pct_carteira"] >= 35 else _COR_POSITIVO)
-                    w = min(cls["pct_carteira"], 100)
+        if posicoes:
+            pos_com_rent  = [p for p in posicoes if p.get("rentab_pct") is not None]
+            top_val       = sorted(pos_com_rent, key=lambda p: p["rentab_pct"], reverse=True)[:5]
+            top_qda       = sorted(pos_com_rent, key=lambda p: p["rentab_pct"])[:5]
+            top_peso_list = sorted(posicoes,     key=lambda p: p["pct_carteira"], reverse=True)[:5]
+
+            def _dest_row(nome: str, valor_str: str, badge: str, cor: str) -> str:
+                return (
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                    f'padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
+                    f'<span style="font-size:0.82rem;font-weight:700;color:#E2E8F0;'
+                    f'max-width:54%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+                    f'{_html.escape(nome)}</span>'
+                    f'<span style="font-size:0.80rem;font-weight:700;color:{cor};white-space:nowrap;">'
+                    f'{badge}&nbsp;<span style="font-size:0.72rem;color:#4A5568;font-weight:400;">'
+                    f'{valor_str}</span></span>'
+                    f'</div>'
+                )
+
+            col_dv, col_dq, col_dp = st.columns(3, gap="medium")
+
+            with col_dv:
+                st.markdown(
+                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                    'margin-bottom:10px;">🏆 Maior valorização mercado/custo</div>',
+                    unsafe_allow_html=True,
+                )
+                for p in top_val:
+                    r    = p["rentab_pct"]
+                    nome = (p.get("nome") or p["ticker"])[:24]
+                    seta = "▲" if r >= 0 else "▼"
+                    cor  = _COR_POSITIVO if r >= 0 else _COR_NEGATIVO
+                    st.markdown(
+                        _dest_row(nome, fmt_moeda(p["valor_mercado"]),
+                                  f"{seta} {abs(r):.1f}%", cor),
+                        unsafe_allow_html=True,
+                    )
+
+            with col_dq:
+                st.markdown(
+                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                    'margin-bottom:10px;">📉 Maior queda mercado/custo</div>',
+                    unsafe_allow_html=True,
+                )
+                for p in top_qda:
+                    r    = p["rentab_pct"]
+                    nome = (p.get("nome") or p["ticker"])[:24]
+                    seta = "▼" if r < 0 else "▲"
+                    cor  = _COR_NEGATIVO if r < 0 else _COR_POSITIVO
+                    st.markdown(
+                        _dest_row(nome, fmt_moeda(p["valor_mercado"]),
+                                  f"{seta} {abs(r):.1f}%", cor),
+                        unsafe_allow_html=True,
+                    )
+
+            with col_dp:
+                st.markdown(
+                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                    'margin-bottom:10px;">⚖️ Maior Peso</div>',
+                    unsafe_allow_html=True,
+                )
+                for p in top_peso_list:
+                    pct  = p["pct_carteira"]
+                    nome = (p.get("nome") or p["ticker"])[:24]
+                    cor  = (_COR_NEGATIVO if pct >= 15 else
+                            _COR_ALERTA   if pct >= 10 else "#CBD5E0")
+                    st.markdown(
+                        _dest_row(nome, fmt_moeda(p["valor_mercado"]),
+                                  f"{pct:.1f}%", cor),
+                        unsafe_allow_html=True,
+                    )
+
+        # ── Alertas de Concentração ───────────────────────────────────────────
+        concentrados = [p for p in posicoes if p["pct_carteira"] > 10.0]
+        if concentrados:
+            st.markdown("<br>", unsafe_allow_html=True)
+            _secao_titulo_orig("⚠️", "Alertas de Concentração")
+            for p in concentrados:
+                st.markdown(
+                    f'<div style="border-left:4px solid {_COR_ALERTA};padding:10px 14px;'
+                    f'margin-bottom:8px;background:rgba(246,201,14,0.05);'
+                    f'border-radius:0 8px 8px 0;">'
+                    f'<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;'
+                    f'letter-spacing:0.08em;color:{_COR_ALERTA};margin-bottom:3px;">'
+                    f'CONCENTRAÇÃO ELEVADA</div>'
+                    f'<div style="font-size:0.82rem;color:#CBD5E0;">'
+                    f'{_html.escape(p["ticker"])} ({_html.escape(p["classe"])}) representa '
+                    f'{p["pct_carteira"]:.1f}% da carteira. '
+                    f'Posições acima de 10% ampliam o risco específico.</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_donut, col_top15 = st.columns([1, 1], gap="medium")
+        with col_donut:
+            _secao_titulo_orig("🥧", "Distribuição por Classe de Ativo")
+            if por_classe:
+                st.plotly_chart(_fig_donut_classes(por_classe),
+                                use_container_width=True,
+                                config={"displayModeBar": False},
+                                key="analise_donut")
+            else:
+                st.caption("Sem dados de alocação.")
+        with col_top15:
+            _secao_titulo_orig("🏆", "Top 15 Posições por Custo")
+            if posicoes:
+                st.plotly_chart(_fig_top15(posicoes),
+                                use_container_width=True,
+                                config={"displayModeBar": False},
+                                key="analise_top15")
+            else:
+                st.caption("Sem posições.")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo_orig("📊", "Concentração")
+        col_cls, col_set = st.columns(2, gap="medium")
+        with col_cls:
+            st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                        'margin-bottom:10px;">Por Classe de Ativo</div>',
+                        unsafe_allow_html=True)
+            for cls in por_classe:
+                barra_cor = (_COR_NEGATIVO if cls["pct_carteira"] >= 50 else
+                             _COR_ALERTA   if cls["pct_carteira"] >= 35 else _COR_POSITIVO)
+                w = min(cls["pct_carteira"], 100)
+                st.markdown(
+                    f'<div style="margin-bottom:10px;">'
+                    f'<div style="display:flex;justify-content:space-between;'
+                    f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
+                    f'<span style="display:flex;align-items:center;gap:6px;">'
+                    f'<span style="width:8px;height:8px;border-radius:50%;'
+                    f'background:{cls["cor"]};display:inline-block"></span>'
+                    f'{cls["nome"]}</span>'
+                    f'<span style="font-weight:700;color:{barra_cor}">'
+                    f'{cls["pct_carteira"]:.1f}%</span></div>'
+                    f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
+                    f'<div style="background:{cls["cor"]};width:{w:.0f}%;'
+                    f'height:100%;border-radius:3px;"></div></div>'
+                    f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
+                    f'margin-top:2px;">{fmt_moeda(cls["valor_mercado"])}'
+                    f' · {cls["num_ativos"]} ativo{"s" if cls["num_ativos"] != 1 else ""}'
+                    f'</div></div>', unsafe_allow_html=True)
+        with col_set:
+            st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                        'margin-bottom:10px;">Por Setor</div>', unsafe_allow_html=True)
+            if por_setor:
+                total_setor = sum(s["valor_mercado"] for s in por_setor) or 1
+                for s in por_setor[:8]:
+                    pct_s = round(s["valor_mercado"] / total_setor * 100, 1)
+                    w = min(pct_s, 100)
+                    bc = (_COR_NEGATIVO if pct_s >= 40 else
+                          _COR_ALERTA   if pct_s >= 25 else _COR_INFO)
                     st.markdown(
                         f'<div style="margin-bottom:10px;">'
                         f'<div style="display:flex;justify-content:space-between;'
                         f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
-                        f'<span style="display:flex;align-items:center;gap:6px;">'
-                        f'<span style="width:8px;height:8px;border-radius:50%;'
-                        f'background:{cls["cor"]};display:inline-block"></span>'
-                        f'{cls["nome"]}</span>'
-                        f'<span style="font-weight:700;color:{barra_cor}">'
-                        f'{cls["pct_carteira"]:.1f}%</span></div>'
+                        f'<span>{s["nome"]}</span>'
+                        f'<span style="font-weight:700;color:{bc}">{pct_s:.1f}%</span></div>'
                         f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
-                        f'<div style="background:{cls["cor"]};width:{w:.0f}%;'
+                        f'<div style="background:{bc};width:{w:.0f}%;'
                         f'height:100%;border-radius:3px;"></div></div>'
                         f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
-                        f'margin-top:2px;">{fmt_moeda(cls["valor_mercado"])}'
-                        f' · {cls["num_ativos"]} ativo{"s" if cls["num_ativos"] != 1 else ""}'
-                        f'</div></div>', unsafe_allow_html=True)
-            with col_set:
-                st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                            'margin-bottom:10px;">Por Setor</div>', unsafe_allow_html=True)
-                if por_setor:
-                    total_setor = sum(s["valor_mercado"] for s in por_setor) or 1
-                    for s in por_setor[:8]:
-                        pct_s = round(s["valor_mercado"] / total_setor * 100, 1)
-                        w = min(pct_s, 100)
-                        bc = (_COR_NEGATIVO if pct_s >= 40 else
-                              _COR_ALERTA   if pct_s >= 25 else _COR_INFO)
-                        st.markdown(
-                            f'<div style="margin-bottom:10px;">'
-                            f'<div style="display:flex;justify-content:space-between;'
-                            f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
-                            f'<span>{s["nome"]}</span>'
-                            f'<span style="font-weight:700;color:{bc}">{pct_s:.1f}%</span></div>'
-                            f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
-                            f'<div style="background:{bc};width:{w:.0f}%;'
-                            f'height:100%;border-radius:3px;"></div></div>'
-                            f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
-                            f'margin-top:2px;">{fmt_moeda(s["valor_mercado"])}</div></div>',
-                            unsafe_allow_html=True)
-                else:
-                    st.caption("Sem dados de setor.")
+                        f'margin-top:2px;">{fmt_moeda(s["valor_mercado"])}</div></div>',
+                        unsafe_allow_html=True)
+            else:
+                st.caption("Sem dados de setor.")
 
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # Ações — cards fundamentalistas
-    # ══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════
+# Ações — cards fundamentalistas
+# ══════════════════════════════════════════════════════════════════════════
+
     with tb:
         st.markdown("<br>", unsafe_allow_html=True)
 
