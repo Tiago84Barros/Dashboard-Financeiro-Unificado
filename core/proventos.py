@@ -24,7 +24,8 @@ Schema do dict retornado por get_proventos():
   total_historico          float   Todos os proventos registrados
   num_ativos               int     Ativos distintos com ao menos 1 provento
   num_eventos              int     Total de registros em dividends
-  historico_mensal         list    [{mes, ano, label, total}]
+  historico_mensal         list    [{mes, ano, label, total}] — últimos 12 meses com dados
+  historico_anual          list    [{ano, label, total, num_eventos}] — série completa
   por_ativo                list    [{ticker, nome, classe, cor, total, num_eventos, pct}]
   por_ativo_12m            list    Mesmo schema, restrito aos últimos 365 dias
   por_tipo                 list    [{tipo, label, total, num_eventos, pct}]
@@ -301,6 +302,7 @@ def _montar_dict(eventos: list, hoje: _date) -> dict:
         "num_ativos":      len(ativos_set),
         "num_eventos":     len(eventos),
         "historico_mensal": _historico_mensal(eventos),
+        "historico_anual":  _historico_anual(eventos),
         "por_ativo":        _agregar_por_ativo(eventos, total_hist),
         "por_ativo_12m":    _agregar_por_ativo(eventos_12m, total_12m),
         "por_tipo":         _agregar_por_tipo(eventos, total_hist),
@@ -330,6 +332,34 @@ def _historico_mensal(eventos: list) -> list:
         key=lambda x: (x["ano"], list(_MESES_PT.values()).index(x["mes"])),
     )
     return resultado[-12:]  # últimos 12 meses com dados
+
+
+def _historico_anual(eventos: list) -> list:
+    """Agrupa proventos por ano — série COMPLETA, sem recorte.
+
+    Existe porque ``historico_mensal`` corta nos últimos 12 meses com dados, e
+    a visão anual da aba Histórico agregava justamente essa lista cortada: uma
+    base com proventos desde 2019 aparecia com dois anos na tela. O recorte faz
+    sentido para o gráfico mensal (12 barras) e nenhum para o anual, que existe
+    exatamente para a leitura de longo prazo.
+    """
+    buckets: dict[int, float] = defaultdict(float)
+    eventos_por_ano: dict[int, int] = defaultdict(int)
+    for e in eventos:
+        if e["payment_date"]:
+            ano = e["payment_date"].year
+            buckets[ano] += e["total_amount"]
+            eventos_por_ano[ano] += 1
+
+    return [
+        {
+            "ano":         ano,
+            "label":       str(ano),
+            "total":       round(buckets[ano], 2),
+            "num_eventos": eventos_por_ano[ano],
+        }
+        for ano in sorted(buckets)
+    ]
 
 
 def _agregar_por_ativo(eventos: list, total: float) -> list:
