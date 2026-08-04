@@ -326,7 +326,7 @@ Responda somente JSON válido, sem markdown, com exatamente esta estrutura princ
 descritos são obrigatórios):
 {{
   "perspectiva": "forte|moderada|fraca",
-  "confianca": 0,
+  "confianca": <inteiro de 0 a 100 — NUNCA fração; 85 significa 85%, 0.85 é inválido>,
   "resumo": "síntese analítica de até cinco linhas",
   "relatorio": {{
     "empresa_hoje": "modelo econômico e fonte de valor",
@@ -383,6 +383,9 @@ valuation de cada empresa já foi feita contra pares setoriais; não compare mú
 
 === MACRO BRASIL ===
 {macro}
+
+=== SEGUNDA FONTE (WEB) SOBRE OS MESMOS FUNDAMENTOS ===
+{web_context}
 
 Responda somente JSON válido com este schema. Preserve os campos legados porque a interface os consome:
 {{
@@ -540,6 +543,26 @@ def _normalize_scores(raw: Any) -> tuple[dict, float, int]:
     return normalized, score_10, int(round(score_10 * 10))
 
 
+def _normalize_confidence(raw: Any) -> int:
+    """Confiança em 0–100, tolerando a LLM responder em fração.
+
+    O contrato do prompt pede ``<int 0-100>``, mas "confiança" é palavra que
+    puxa o modelo para probabilidade: ele devolve 0.85 e o arredondamento
+    direto virava **1** no card — o mesmo 1 que um analista leria como "1% de
+    confiança". Como 0 < v <= 1 é indistinguível de uma confiança de 1%, que
+    nenhum relatório útil emite, a leitura por fração é a correta.
+
+    Zero continua zero de propósito: é o valor dos fallbacks e a UI o usa para
+    detectar que o relatório não foi gerado.
+    """
+    value = _safe_float(raw)
+    if value is None or value <= 0:
+        return 0
+    if value <= 1.0:
+        value *= 100.0
+    return int(round(min(100.0, value)))
+
+
 def sanitize_company_report(raw: Any, ticker: str) -> dict:
     """Valida invariantes e mantém chaves legadas usadas pela tela/alocação."""
     if not isinstance(raw, dict):
@@ -549,8 +572,7 @@ def sanitize_company_report(raw: Any, ticker: str) -> dict:
         report.get("perspectiva") if report.get("perspectiva") in {"forte", "moderada", "fraca"}
         else "moderada"
     )
-    confidence = _safe_float(report.get("confianca"))
-    report["confianca"] = int(round(max(0.0, min(100.0, confidence if confidence is not None else 0.0))))
+    report["confianca"] = _normalize_confidence(report.get("confianca"))
     report["cenarios"] = _normalize_scenarios(report.get("cenarios"))
     detail, weighted_10, weighted_100 = _normalize_scores(report.get("score_qualitativo_detalhado"))
     report["score_qualitativo_detalhado"] = detail
@@ -699,12 +721,18 @@ def analyze_portfolio_report(
     macro_hist: dict | None,
     *,
     model: str | None = None,
+    web_context: str = "",
 ) -> dict:
-    """Síntese consolidada exclusiva da aba, preservando o schema da UI."""
+    """Síntese consolidada exclusiva da aba, preservando o schema da UI.
+
+    ``web_context`` traz a reconciliação banco × Fundamentus/Status Invest da
+    carteira. Vazio quando a rede falha — a síntese sai só com o banco.
+    """
     prompt = _PROMPT_PORTFOLIO.format(
         items_context="\n".join(_company_summary_for_portfolio(item) for item in items_analyzed)
         or "Carteira vazia.",
         macro=_format_macro(macro_hist),
+        web_context=web_context or "Sem segunda fonte disponível nesta execução.",
     )
     try:
         raw = _call_llm(prompt, model=model or _report_model())

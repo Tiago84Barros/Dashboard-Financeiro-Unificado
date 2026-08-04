@@ -26,14 +26,13 @@ import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
-from core.market_companies import filter_market_companies, normalize_b3_companies
+from core.market_companies import normalize_b3_companies
 from design.componentes import (
     badge_status,
     card_metrica,
     container_pagina,
 )  # KPIs em cards CSS (visual coeso)
 from design.market_companies import (
-    render_company_search,
     render_market_css,
     render_market_tabs,
     render_sector_grid,
@@ -575,18 +574,9 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
     if df_set.empty:
         st.info("Nenhuma ação encontrada na lista de setores.")
         return
+    # Sem busca por ticker: a navegação desta aba é por setor, e o botão
+    # "Analisar" de cada card já leva à Análise de Empresa.
     companies = normalize_b3_companies(df_set, _logo_url)
-    busca = render_company_search(
-        label="🔍 Buscar ticker (ex.: PETR4)",
-        placeholder="Digite e pressione Enter", key="b3_busca",
-    )
-    if busca:
-        ticker_query = busca.upper().replace(".SA", "")
-        if ticker_query in set(companies["ticker"]):
-            st.session_state["b3_ticker_sel"] = ticker_query
-            st.session_state["b3_active_tab"] = 1
-            st.rerun()
-        companies = filter_market_companies(companies, busca)
     render_sector_grid(
         companies, key_prefix="b3", selected_ticker=st.session_state.get("b3_ticker_sel"),
         selected_state_key="b3_ticker_sel", active_state_key="b3_active_tab",
@@ -3603,22 +3593,26 @@ def _render_classe_mais_liquida(tickers: list[str]) -> None:
     if not achados:
         return
 
-    _sec_hdr("💧 Classe mais negociada da mesma empresa")
-    st.caption(
-        "Mesma empresa, mesma tese — outra classe de ação. O filtro de giro "
-        "acima olha o papel que você selecionou; aqui o app diz quando a irmã "
-        "negocia muito mais. Vale lembrar o que a troca NÃO resolve: ordinária "
-        "e preferencial diferem em direito a voto e em tag-along."
-    )
-    st.dataframe(
-        pd.DataFrame([
-            {"No ranking": a, "Giro/dia": f"R$ {formata_reais(ga / 1000)} mil",
-             "Mais negociada": b, "Giro/dia ": f"R$ {formata_reais(gb / 1000)} mil",
-             "Vantagem": f"{gb / max(ga, 1.0):.0f}×"}
-            for a, b, ga, gb in achados
-        ]),
-        hide_index=True, use_container_width=True,
-    )
+    # Mesmo tratamento de indicador opcional dado à leitura de governo/recessão.
+    with st.expander(
+        f"💧 Classe mais negociada da mesma empresa ({len(achados)})",
+        expanded=False,
+    ):
+        st.caption(
+            "Mesma empresa, mesma tese — outra classe de ação. O filtro de giro "
+            "acima olha o papel que você selecionou; aqui o app diz quando a irmã "
+            "negocia muito mais. Vale lembrar o que a troca NÃO resolve: ordinária "
+            "e preferencial diferem em direito a voto e em tag-along."
+        )
+        st.dataframe(
+            pd.DataFrame([
+                {"No ranking": a, "Giro/dia": f"R$ {formata_reais(ga / 1000)} mil",
+                 "Mais negociada": b, "Giro/dia ": f"R$ {formata_reais(gb / 1000)} mil",
+                 "Vantagem": f"{gb / max(ga, 1.0):.0f}×"}
+                for a, b, ga, gb in achados
+            ]),
+            hide_index=True, use_container_width=True,
+        )
 
 
 def _render_governo_e_resiliencia(tickers: list[str], df_set: pd.DataFrame) -> None:
@@ -3674,15 +3668,22 @@ def _render_governo_e_resiliencia(tickers: list[str], df_set: pd.DataFrame) -> N
     if not linhas:
         return
 
-    _sec_hdr("🏛️ Dependência de governo e comportamento em recessão")
-    st.caption(
-        "Receita ou preço que dependem de regulador ou de controlador estatal, "
-        "e margem operacional mediana nos anos de recessão (2015-16 e 2020) "
-        "contra os anos normais. Acima de 1,00 a margem SUBIU na crise. "
-        "**Informa, não reclassifica** — são duas recessões, e a de 2020 "
-        "favoreceu exportador."
-    )
-    st.dataframe(pd.DataFrame(linhas), hide_index=True, use_container_width=True)
+    # Colapsado, como os demais indicadores opcionais da aba (calibração de
+    # segmento, auditoria de dados, Fama-MacBeth): são leituras de apoio que
+    # informam sem reclassificar nada, e abrir todas de uma vez enterra o
+    # ranking, que é o produto da tela.
+    with st.expander(
+        f"🏛️ Dependência de governo e comportamento em recessão ({len(linhas)})",
+        expanded=False,
+    ):
+        st.caption(
+            "Receita ou preço que dependem de regulador ou de controlador estatal, "
+            "e margem operacional mediana nos anos de recessão (2015-16 e 2020) "
+            "contra os anos normais. Acima de 1,00 a margem SUBIU na crise. "
+            "**Informa, não reclassifica** — são duas recessões, e a de 2020 "
+            "favoreceu exportador."
+        )
+        st.dataframe(pd.DataFrame(linhas), hide_index=True, use_container_width=True)
 
 
 def _render_calibracao_segmento(calib) -> None:
@@ -3772,15 +3773,6 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
 
-    st.info(
-        "⚠️ **Ferramenta de análise educacional — não é recomendação de "
-        "investimento.** Os scores, backtests e preços-justos exibidos são "
-        "estimativas quantitativas baseadas em dados históricos e premissas "
-        "do modelo. Rentabilidade passada não garante resultado futuro. "
-        "Esta ferramenta não constitui consultoria de valores mobiliários "
-        "(CVM). Decisões de alocação são de responsabilidade do investidor."
-    )
-
     df_precos = pd.DataFrame()
 
     # Ano-base do score: SEMPRE o último ano COMPLETO (anterior ao corrente).
@@ -3789,38 +3781,6 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     import datetime as _dt_ref
     _ano_corrente = _dt_ref.date.today().year
     _ano_base     = _ano_corrente - 1
-
-    # Dados base
-    with st.spinner("Carregando múltiplos e histórico…"):
-        df_mult_todos = _db.load_multiplos_todos(ano_ref_max=_ano_base)
-        anos_hist     = _db.load_historico_anos()
-
-    # Ano de referência efetivo dos dados carregados (pode ser < _ano_base se
-    # a ingestão do ano anterior ainda não ocorreu para parte do universo).
-    _ano_dados = None
-    if not df_mult_todos.empty and "data" in df_mult_todos.columns:
-        _datas = pd.to_datetime(df_mult_todos["data"], errors="coerce").dropna()
-        if not _datas.empty:
-            _ano_dados = int(_datas.dt.year.max())
-    _ano_label = _ano_dados if _ano_dados is not None else _ano_base
-    _fonte_pit = ""
-    try:
-        if _db.market_active():
-            # Fix auditoria 2026-07: com fonte market, load_multiplos_todos
-            # (ano_ref_max) agora serve métricas do exercício ANUAL fechado
-            # — antes servia o snapshot TTM de hoje rotulado com o ano do
-            # último balanço, contradizendo a frase abaixo.
-            _fonte_pit = (" Fonte market.*: métricas anuais fechadas. A data "
-                          "de publicação histórica ainda é aproximada; períodos "
-                          "anteriores ao versionamento não são point-in-time.")
-    except Exception:
-        pass
-    st.caption(
-        f"📅 **Ano-base do score: {_ano_label}** — a seleção do ano atual "
-        f"({_ano_corrente}) usa os fundamentos consolidados do ano anterior. "
-        "Dados parciais do ano corrente são ignorados por metodologia."
-        + _fonte_pit
-    )
 
     # ── FILTROS ──────────────────────────────────────────────────────────────
     _sec_hdr("⚙️ Filtros do Universo")
@@ -3926,6 +3886,78 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         "DY": float(p_dy), "Endividamento_Total": float(p_div),
         "Liquidez_Corrente": float(p_liq),
     }
+
+    # ── PORTÃO DE EXECUÇÃO ───────────────────────────────────────────────────
+    # A aba abria calculando: scoring, backtest, calibração e reconciliação
+    # rodavam com os filtros default antes de o usuário escolher qualquer coisa,
+    # e recomeçavam a cada mexida num slider. Agora o cálculo só parte quando o
+    # usuário confirma, e a assinatura invalida o resultado quando a
+    # configuração muda — resultado na tela sempre corresponde aos filtros.
+    _assinatura_filtros = _stable_signature({
+        "setor": sel_set, "subsetor": sel_sub, "segmento": sel_seg,
+        "perfil": sel_perf, "liquidez": liq_min_rs,
+        "pesos_setor": usar_pesos_setor, "auto_calib": usar_auto_calib,
+        "fama_macbeth": usar_fama_macbeth, "fm_alpha": fm_alpha,
+        "pesos_usuario": pesos_usuario_raw, "cheapness": cheapness_weight_av,
+        "ano_base": _ano_base,
+    })
+    _executada = st.session_state.get("b3_av_assinatura")
+
+    col_run, col_status = st.columns([1, 3], vertical_alignment="center")
+    with col_run:
+        if st.button("🔎 Executar análise", type="primary", key="b3_av_run",
+                     width="stretch"):
+            st.session_state["b3_av_assinatura"] = _assinatura_filtros
+            _executada = _assinatura_filtros
+    with col_status:
+        if _executada == _assinatura_filtros:
+            st.caption(
+                "Resultados abaixo correspondem aos filtros atuais. Alterar "
+                "qualquer filtro exige executar de novo."
+            )
+        elif _executada:
+            st.caption("⚠️ Filtros alterados — execute novamente para atualizar.")
+
+    if _executada != _assinatura_filtros:
+        st.info(
+            "Configure os filtros acima e clique **🔎 Executar análise**. "
+            "O scoring, a calibração por segmento e os testes históricos são "
+            "cálculos pesados — só rodam quando você pedir.",
+            icon="🧪",
+        )
+        return
+
+    # Dados base — carregados só depois da confirmação.
+    with st.spinner("Carregando múltiplos e histórico…"):
+        df_mult_todos = _db.load_multiplos_todos(ano_ref_max=_ano_base)
+        anos_hist     = _db.load_historico_anos()
+
+    # Ano de referência efetivo dos dados carregados (pode ser < _ano_base se
+    # a ingestão do ano anterior ainda não ocorreu para parte do universo).
+    _ano_dados = None
+    if not df_mult_todos.empty and "data" in df_mult_todos.columns:
+        _datas = pd.to_datetime(df_mult_todos["data"], errors="coerce").dropna()
+        if not _datas.empty:
+            _ano_dados = int(_datas.dt.year.max())
+    _ano_label = _ano_dados if _ano_dados is not None else _ano_base
+    _fonte_pit = ""
+    try:
+        if _db.market_active():
+            # Fix auditoria 2026-07: com fonte market, load_multiplos_todos
+            # (ano_ref_max) agora serve métricas do exercício ANUAL fechado
+            # — antes servia o snapshot TTM de hoje rotulado com o ano do
+            # último balanço, contradizendo a frase abaixo.
+            _fonte_pit = (" Fonte market.*: métricas anuais fechadas. A data "
+                          "de publicação histórica ainda é aproximada; períodos "
+                          "anteriores ao versionamento não são point-in-time.")
+    except Exception:
+        pass
+    st.caption(
+        f"📅 **Ano-base do score: {_ano_label}** — a seleção do ano atual "
+        f"({_ano_corrente}) usa os fundamentos consolidados do ano anterior. "
+        "Dados parciais do ano corrente são ignorados por metodologia."
+        + _fonte_pit
+    )
 
     # Aplicar filtros
     df_filt  = df_ss if sel_seg == "Todos" else df_ss[df_ss["SEGMENTO"] == sel_seg]
@@ -4091,12 +4123,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     # Antes, empresa com quase nenhum indicador disponível era ranqueada
     # mesmo assim (ausente vira percentil neutro 0,5) e podia ocupar boa
     # posição sem dados que a sustentem. Agora: completude ponderada pelos
-    # pesos do score (ignorando slopes, que medem tendência) precisa ser
-    # ≥ 60%; excluídas aparecem em lista visível abaixo do ranking.
+    # pesos do score (ignorando slopes, que medem tendência) precisa ser ≥ 60%.
+    # A relação nominal das excluídas não é exibida — o ranking é o produto
+    # desta tela, e quem ficou de fora por lacuna de ingestão não muda decisão.
     _COMPLETUDE_MIN = 0.60
     _inds_comp = [c for c in pesos_v2
                   if c in df_mult_enrich.columns and not c.endswith("_slope_log")]
-    excluidas_dados: list[dict] = []
     if _inds_comp and not df_mult_enrich.empty and tks_uni:
         _w_tot = sum(pesos_v2[c][0] for c in _inds_comp) or 1.0
         _comp_map: dict[str, float] = {}
@@ -4109,14 +4141,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             _comp_map[_tk_c] = sum(
                 pesos_v2[c][0] for c in _inds_comp if pd.notna(_row_c.get(c))
             ) / _w_tot
-        excluidas_dados = sorted(
-            [{"Ticker": t, "Completude (%)": round(_comp_map.get(t, 0.0) * 100)}
-             for t in tks_uni if _comp_map.get(t, 0.0) < _COMPLETUDE_MIN],
-            key=lambda d: d["Completude (%)"],
-        )
-        _excl_comp = {d["Ticker"] for d in excluidas_dados}
-        if _excl_comp:
-            tks_uni = [t for t in tks_uni if t not in _excl_comp]
+        tks_uni = [t for t in tks_uni
+                   if _comp_map.get(t, 0.0) >= _COMPLETUDE_MIN]
     if not tks_uni:
         st.warning(
             "Nenhuma empresa do filtro atende à completude mínima de dados "
@@ -4140,22 +4166,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         group_col_prefer=group_prefer,
         macro_context=_macro_for_year(macro_history),
     )
-    if excluidas_dados:
-        st.caption(
-            f"🧪 **{len(excluidas_dados)} empresa(s) fora do ranking por dados "
-            f"insuficientes** (completude ponderada < {_COMPLETUDE_MIN:.0%} dos "
-            "indicadores do score). Detalhe no expander abaixo."
-        )
-        with st.expander("Empresas excluídas por completude de dados"):
-            st.caption(
-                "Ranquear com indicador ausente atribui percentil neutro 0,5 — "
-                "aceitável para UMA lacuna pontual, enganoso quando a maioria "
-                "dos indicadores falta. Estas empresas voltam ao ranking "
-                "quando a ingestão cobrir seus fundamentos."
-            )
-            st.dataframe(pd.DataFrame(excluidas_dados),
-                         use_container_width=True, hide_index=True,
-                         height=min(300, 45 + 32 * len(excluidas_dados)))
+    # A relação nominal das reprovadas por completude saiu da tela: quem chega
+    # aqui quer o ranking, e a lista de quem não entrou não muda decisão alguma.
+    # A contagem permanece no cabeçalho do universo, para o número de empresas
+    # analisadas continuar auditável.
     _render_saude_do_ranking(df_mult_enrich, df_scored)
     _topo_ranking = ([str(t).upper() for t in df_scored["Ticker"].head(20)]
                      if df_scored is not None and not df_scored.empty else [])
@@ -4163,8 +4177,6 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     _render_governo_e_resiliencia(_topo_ranking, df_set)
 
     tk_info       = {row["ticker"]: row for _, row in df_filt.iterrows()}
-    tks_com_score = set(df_scored["Ticker"].tolist()) if not df_scored.empty else set()
-    tks_sem_mult  = [tk for tk in tks_uni if tk not in tks_com_score]
 
     if not audit_fallback.empty:
         with st.expander("Auditoria dos dados usados no scoring"):
@@ -5130,8 +5142,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     )
 
     # ── CARDS DO UNIVERSO ────────────────────────────────────────────────────
-    _sec_hdr(f"🏢 Universo Filtrado — {len(tks_uni)} empresa(s)")
-    show_tks = (df_scored["Ticker"].tolist() if not df_scored.empty else []) + tks_sem_mult
+    # Só quem pontuou. Antes a grade emendava as empresas sem múltiplos, que
+    # apareciam como "#— · Score 0" — um card por empresa que a análise não
+    # conseguiu avaliar, ocupando o mesmo espaço visual das ranqueadas.
+    _sec_hdr(f"🏢 Universo Filtrado — {len(tks_uni)} empresa(s) ranqueada(s)")
+    show_tks = df_scored["Ticker"].tolist() if not df_scored.empty else []
 
     for i in range(0, min(len(show_tks), 20), 4):
         cols_c = st.columns(4, gap="small")

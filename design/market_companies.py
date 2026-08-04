@@ -6,6 +6,8 @@ import html
 import pandas as pd
 import streamlit as st
 
+from design.componentes import rolar_para_topo
+
 
 MARKET_COMPANIES_CSS = """
 <style>
@@ -67,7 +69,14 @@ def render_market_css() -> None:
 
 
 def render_market_tabs(*, state_key: str, key_prefix: str) -> int:
+    """Trilho de abas das vitrines B3/EUA. Trocar de aba sempre volta ao topo.
+
+    O Streamlit preserva a rolagem entre reruns, e as abas com chat (Avaliação
+    de Portfólio) ainda puxam o foco para o rodapé quando o ``st.chat_input``
+    monta — a aba abria no meio da conversa com a LLM, não no relatório.
+    """
     active = int(st.session_state.get(state_key, 0))
+    rolar_flag = f"_{state_key}_rolar"
     widths = [2, 2, 2.5, 2.5, 2.5]
     for idx, (col, (icon, label)) in enumerate(zip(st.columns(widths), NAV_ITEMS)):
         with col:
@@ -77,9 +86,14 @@ def render_market_tabs(*, state_key: str, key_prefix: str) -> int:
                 key=f"{key_prefix}_tab{idx}",
             ):
                 st.session_state[state_key] = idx
+                st.session_state[rolar_flag] = True
                 st.rerun()
     st.markdown("<hr style='margin:4px 0 16px;border-color:#1E2533;'>",
                 unsafe_allow_html=True)
+    # pop: vale para o rerun da troca. Mantê-lo jogaria o usuário de volta ao
+    # topo a cada interação dentro da aba.
+    if st.session_state.pop(rolar_flag, False):
+        rolar_para_topo()
     return active
 
 
@@ -151,6 +165,8 @@ def render_sector_grid(
                     ):
                         st.session_state[selected_state_key] = ticker
                         st.session_state[active_state_key] = 1
+                        # Mesma troca de aba do trilho — mesma volta ao topo.
+                        st.session_state[f"_{active_state_key}_rolar"] = True
                         st.rerun()
 
     if len(df) > visible_limit:

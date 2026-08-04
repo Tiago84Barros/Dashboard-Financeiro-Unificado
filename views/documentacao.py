@@ -1006,8 +1006,11 @@ FLOW_ANALISE_PORTFOLIO = FlowSpec(
         ),
         "pesos_ap": _node(
             "pesos_ap", "Redistribuicao", "Decisao",
-            "Combina score quantitativo, score qualitativo, confianca, alpha e perspectiva para sugerir novos pesos.",
-            ("60% quanti + 40% quali", "Multiplicador por perspectiva", "Modo rigido/flexivel", "Min e max por ativo"),
+            "Combina score quantitativo, score qualitativo, confianca, alpha, perspectiva e a "
+            "corroboracao entre banco e web para sugerir novos pesos.",
+            ("60% quanti + 40% quali", "Multiplicador por perspectiva",
+             "Modelo unico (sem escolha de modo)", "Corroboracao banco x web",
+             "Min 2% e max 25% por ativo"),
             "Ajuda a transformar analise em acao: manter, aumentar, reduzir ou revisar.",
         ),
         "relatorio_ap": _node(
@@ -1464,7 +1467,9 @@ _FLOW_DETAIL_OVERRIDES = {
     "pesos_ap": {
         "formula": "Score combinado = (score quantitativo x 60%) + (score qualitativo x 40%)",
         "exemplo": "Score quanti = 80\nScore quali = 70\nScore combinado = 80 x 0,60 + 70 x 0,40 = 76",
-        "interpretacao": "A redistribuicao combina dados historicos com leitura qualitativa para sugerir novos pesos.",
+        "interpretacao": "A redistribuicao combina dados historicos do banco, leitura qualitativa da LLM "
+                         "e uma segunda fonte na web (Fundamentus/Status Invest) para sugerir novos pesos. "
+                         "Indicador em que as duas fontes divergem reduz o peso da empresa em ate 10%.",
     },
     "snapshot_ai": {
         "formula": "Valor de mercado = quantidade consolidada x cotacao atual",

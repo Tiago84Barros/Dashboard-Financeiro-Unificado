@@ -449,31 +449,65 @@ def analisar_portfolio(
 # Redistribuição de pesos quanti + quali
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Redistribuição: piso e teto por ativo do modelo único.
+PESO_MIN = 0.02
+PESO_MAX = 0.25
+# Teto relativo ao peso igualitário, usado quando PESO_MAX é inatingível.
+_CAP_SOBRE_EQUAL_WEIGHT = 1.5
+# Convicção mínima atribuída a quem não teve relatório gerado. Sem este piso a
+# empresa com confiança 0 (fallback) saía com peso ~0 — uma exclusão silenciosa
+# causada por falha de LLM, não por análise.
+_CONVICCAO_MIN = 0.35
+
+
 def redistribuir_pesos(
     items_analisados: list[dict],
-    mode: str = "Rígida",
+    sinal_web: dict[str, dict] | None = None,
 ) -> dict[str, float]:
+    """Modelo único de redistribuição quanti + quali + evidência web.
+
+    Substitui a antiga escolha entre "Rígida" (excluía perspectiva fraca) e
+    "Flexível" (mantinha tudo). O par era uma decisão sem critério: nenhum dos
+    dois modos media *quanto* a leitura qualitativa era confiável, então a
+    diferença entre eles era apenas quem o usuário decidia punir antes de ver a
+    análise.
+
+    O modelo único não exclui ninguém — quem julga entrada é a Criação de
+    Portfólio — e faz o peso responder ao que de fato varia entre as empresas:
+
+    * ``score`` quantitativo e ``score_qualitativo`` da LLM (60/40);
+    * alpha vs Selic, com efeito deliberadamente pequeno (±15%);
+    * perspectiva, como multiplicador (forte 1,20 · moderada 1,00 · fraca 0,65);
+    * convicção declarada pela LLM, com piso para não converter falha técnica
+      em exclusão;
+    * corroboração entre banco e web (``sinal_web``): indicador que a segunda
+      fonte contradiz reduz o peso em até 10%.
+
+    O piso de 2% e o teto de 25% valem para todos.
     """
-    Combina score quantitativo + score qualitativo LLM.
-    mode="Rígida": exclui empresas com perspectiva "fraca".
-    mode="Flexível": mantém todas, peso mínimo 2%.
-    """
+    sinal_web = sinal_web or {}
     scores: dict[str, float] = {}
     for it in items_analisados:
-        tk   = it.get("ticker", "")
-        an   = it.get("analise", {})
+        tk   = str(it.get("ticker", "") or "")
+        if not tk:
+            continue
+        an   = it.get("analise", {}) or {}
         persp = an.get("perspectiva", "moderada")
 
-        if mode == "Rígida" and persp == "fraca":
-            continue
-
-        score_q   = float(it.get("score", 50)) / 100.0
-        score_llm = float(an.get("score_qualitativo", 50)) / 100.0
-        confianca = float(an.get("confianca", 50)) / 100.0
-        alpha_n   = min(max(float(it.get("alpha_selic", 0)) / 100.0, -0.5), 1.0)
+        score_q   = float(it.get("score", 50) or 0) / 100.0
+        score_llm = float(an.get("score_qualitativo", 50) or 0) / 100.0
+        conviccao = max(float(an.get("confianca", 50) or 0) / 100.0, _CONVICCAO_MIN)
+        alpha_n   = min(max(float(it.get("alpha_selic", 0) or 0) / 100.0, -0.5), 1.0)
 
         mult = {"forte": 1.20, "moderada": 1.00, "fraca": 0.65}.get(persp, 1.00)
-        combined = (score_q * 0.60 + score_llm * 0.40) * (1 + alpha_n * 0.15) * mult * confianca
+        fator_web = float((sinal_web.get(tk) or {}).get("fator", 1.0))
+        combined = (
+            (score_q * 0.60 + score_llm * 0.40)
+            * (1 + alpha_n * 0.15)
+            * mult
+            * conviccao
+            * fator_web
+        )
 
         scores[tk] = max(combined, 1e-6)
 
@@ -483,10 +517,17 @@ def redistribuir_pesos(
     total = sum(scores.values())
     raw = {tk: v / total for tk, v in scores.items()}
 
-    min_w = 0.03 if mode == "Rígida" else 0.02
-    max_w = 0.25
+    # Piso e teto EFETIVOS. Com poucos ativos o teto fixo é inatingível — em
+    # três empresas o peso médio já é 33%, acima dos 25%, e o laço de clip +
+    # renormalização convergia para pesos iguais: a análise inteira era
+    # descartada em silêncio, e forte, moderada e fraca saíam idênticas.
+    # Quando o teto não cabe, ele passa a ser relativo ao peso igualitário.
+    # Para carteiras de seis ou mais nomes (o caso real) nada muda.
+    n = len(raw)
+    teto = max(PESO_MAX, _CAP_SOBRE_EQUAL_WEIGHT / n)
+    piso = min(PESO_MIN, 1.0 / n)
     for _ in range(15):
-        clipped = {tk: min(max(v, min_w), max_w) for tk, v in raw.items()}
+        clipped = {tk: min(max(v, piso), teto) for tk, v in raw.items()}
         t = sum(clipped.values())
         raw = {tk: v / t for tk, v in clipped.items()}
 
