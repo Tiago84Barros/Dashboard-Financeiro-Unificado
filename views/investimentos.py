@@ -1039,33 +1039,55 @@ def _fig_evolucao_patrimonial(snapshots: list) -> go.Figure:
     return fig
 
 
+def _faixa_sensibilidade(v: float) -> tuple[str, str]:
+    """(rótulo, cor) da faixa de sensibilidade de um fator macro."""
+    if v >= 70:
+        return "Alta", _COR_NEGATIVO
+    if v >= 50:
+        return "Moderada", _COR_ALERTA
+    return "Baixa", _COR_INFO
+
+
 def _fig_dependencias_macro(deps: list) -> go.Figure:
-    """Gráfico de barras horizontais — exposição macro do portfólio."""
+    """Barras 0–100% — sensibilidade INDEPENDENTE do portfólio a cada fator.
+
+    Cada barra responde a "que fração da carteira reage a este fator", medida
+    de forma independente das demais. As barras somam bem mais que 100% porque
+    o mesmo ativo reage a vários fatores ao mesmo tempo — uma ação brasileira
+    responde a Bolsa, a risco fiscal e a juros simultaneamente. O eixo é fixo
+    em 0–100 para que a leitura seja sempre "de 0 a 100 por fator", nunca
+    "fatia de um bolo".
+    """
     fatores = [d["fator"]    for d in deps]
     valores = [d["exposicao"] for d in deps]
-    cores   = [
-        _COR_NEGATIVO if v >= 70 else
-        _COR_ALERTA   if v >= 50 else
-        _COR_INFO
-        for v in valores
-    ]
+    cores   = [_faixa_sensibilidade(v)[1] for v in valores]
+    faixas  = [_faixa_sensibilidade(v)[0] for v in valores]
 
     fig = go.Figure(go.Bar(
         x=valores, y=fatores,
         orientation="h",
         marker_color=cores,
-        text=[f"{v:.1f}%" for v in valores],
+        text=[f"{v:.0f}/100 · {f}" for v, f in zip(valores, faixas)],
         textposition="outside",
         textfont={"size": 11, "color": "#E2E8F0"},
-        hovertemplate="<b>%{y}</b><br>Exposição: %{x:.1f}%<extra></extra>",
+        customdata=faixas,
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Sensibilidade: %{x:.0f} de 100 (%{customdata})<br>"
+            "<i>escala própria deste fator — não é fatia da carteira</i>"
+            "<extra></extra>"
+        ),
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font_color=_COR_NEUTRO,
-        margin={"t": 10, "b": 10, "l": 0, "r": 70},
-        height=260,
+        margin={"t": 10, "b": 40, "l": 0, "r": 110},
+        height=280,
         xaxis={"showgrid": True, "gridcolor": "#1E2533",
-               "range": [0, 115], "ticksuffix": "%"},
+               "range": [0, 128], "tickvals": [0, 25, 50, 75, 100],
+               "title": {"text": "Sensibilidade do portfólio ao fator (0 a 100, "
+                                 "medida independente por fator)",
+                         "font": {"size": 10, "color": "#718096"}}},
         yaxis={"showgrid": False, "automargin": True},
         showlegend=False,
     )
@@ -1076,8 +1098,22 @@ def _fig_dependencias_macro(deps: list) -> go.Figure:
 # HELPERS — Dados externos (BCB + yfinance, cache 30 min)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _sensibilidade_da_classe(classe: str, fator: str) -> float:
+    """Sensibilidade 0–100 da classe ao fator (o coeficiente fixo, em %)."""
+    if fator not in _MACRO_FATORES:
+        return 0.0
+    coefs = _macro_coefs_for_class(classe)
+    return round(float(coefs[_MACRO_FATORES.index(fator)]) * 100, 0)
+
+
 def _fig_macro_ativos(df_macro: pd.DataFrame, fator: str) -> go.Figure:
-    """Mostra quais ativos mais contribuem para um fator macro."""
+    """Contribuição de cada ativo para um fator macro, em p.p. da carteira.
+
+    O número é **peso do ativo × sensibilidade da classe**, e a soma de todos os
+    ativos reproduz exatamente a barra do fator na seção anterior. Sem isso
+    escrito, valores pequenos como 3, 2 e 1 eram lidos como níveis ("nível 3"),
+    quando são pontos percentuais.
+    """
     if df_macro.empty or fator not in df_macro.columns:
         return go.Figure()
 
@@ -1089,31 +1125,39 @@ def _fig_macro_ativos(df_macro: pd.DataFrame, fator: str) -> go.Figure:
         _COR_INFO
         for v in valores
     ]
+    sens = [_sensibilidade_da_classe(c, fator) for c in df["Classe"]]
 
     fig = go.Figure(go.Bar(
         x=valores,
         y=df["Rotulo"] if "Rotulo" in df.columns else df["Ativo"],
         orientation="h",
         marker_color=cores,
-        text=[f"{v:.1f} p.p." for v in valores],
+        text=[f"{v:.2f} p.p." for v in valores],
         textposition="outside",
         textfont={"size": 11, "color": "#E2E8F0"},
-        customdata=df[["Ativo", "Ticker", "Classe", "Peso (%)"]].to_numpy(),
+        customdata=list(zip(
+            df["Ativo"], df["Ticker"], df["Classe"], df["Peso (%)"], sens,
+        )),
         hovertemplate=(
             "<b>%{y}</b><br>"
             "Ativo: %{customdata[0]}<br>"
             "Ticker: %{customdata[1]}<br>"
             "Classe: %{customdata[2]}<br>"
-            "Peso: %{customdata[3]:.2f}%<br>"
-            f"Contrib. {fator}: " + "%{x:.2f} p.p.<extra></extra>"
+            "Peso na carteira: %{customdata[3]:.2f}%<br>"
+            "Sensibilidade da classe: %{customdata[4]:.0f}/100<br>"
+            "<b>Contribuição: %{x:.2f} p.p.</b> (peso × sensibilidade)"
+            "<extra></extra>"
         ),
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font_color=_COR_NEUTRO,
-        margin={"t": 10, "b": 10, "l": 0, "r": 90},
-        height=max(320, 26 * len(df) + 90),
-        xaxis={"showgrid": True, "gridcolor": "#1E2533", "ticksuffix": " p.p."},
+        margin={"t": 10, "b": 44, "l": 0, "r": 100},
+        height=max(320, 26 * len(df) + 110),
+        xaxis={"showgrid": True, "gridcolor": "#1E2533", "ticksuffix": " p.p.",
+               "title": {"text": "Contribuição para o fator, em pontos percentuais "
+                                 "da carteira (peso × sensibilidade)",
+                         "font": {"size": 10, "color": "#718096"}}},
         yaxis={"showgrid": False, "automargin": True},
         showlegend=False,
     )
@@ -1706,16 +1750,33 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
     # ── Dependências Macro do Portfólio ────────────────────────────────────────
     _secao_titulo_orig(
         "📐", "Dependências Macro do Portfólio",
-        "Exposição estimada por fator macroeconômico — baseado na alocação por classe",
+        "Quanto a carteira reage a cada fator — seis medidas independentes, "
+        "de 0 a 100 cada",
     )
 
     deps = _calc_dependencias_macro(por_classe)
     if deps:
+        # O ponto que gerava confusão: as barras somam bem mais que 100% e isso
+        # é correto. Cada fator tem escala própria porque o mesmo ativo reage a
+        # vários ao mesmo tempo. Dizer isso ANTES do gráfico evita que o usuário
+        # tente ler seis barras como fatias de um bolo.
+        st.info(
+            "**Cada fator tem escala própria, de 0 a 100.** Não são fatias da "
+            "carteira e **não somam 100%** — a mesma ação brasileira reage ao "
+            "mesmo tempo à Bolsa, ao risco fiscal e aos juros, então aparece em "
+            f"mais de uma barra. A soma das seis barras aqui é "
+            f"{sum(d['exposicao'] for d in deps):.0f}, e isso é esperado. "
+            "Leia cada barra sozinha: *“de 0 a 100, o quanto minha carteira "
+            "sente este fator”*.",
+            icon="📐",
+        )
+
         fator_max = max(deps, key=lambda d: d["exposicao"])
         if fator_max["exposicao"] >= 60:
             st.warning(
-                f"⚠️ Alta dependência em **{fator_max['fator']}** "
-                f"({fator_max['exposicao']:.1f}%) — considere diversificar para reduzir concentração.",
+                f"⚠️ Sensibilidade alta a **{fator_max['fator']}**: "
+                f"{fator_max['exposicao']:.0f} de 100 — considere diversificar "
+                "para reduzir a concentração nesse fator.",
             )
 
         col_chart, col_leg = st.columns([2, 1], gap="medium")
@@ -1725,20 +1786,32 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                             config={"displayModeBar": False},
                             key="dash_macro_deps")
         with col_leg:
+            linhas_faixa = "".join(
+                f'<div style="display:flex;justify-content:space-between;gap:10px;'
+                f'padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05);">'
+                f'<span style="color:#CBD5E0;">{_html.escape(d["fator"])}</span>'
+                f'<span style="color:{_faixa_sensibilidade(d["exposicao"])[1]};'
+                f'font-weight:700;white-space:nowrap;">'
+                f'{d["exposicao"]:.0f}/100 · {_faixa_sensibilidade(d["exposicao"])[0]}'
+                f'</span></div>'
+                for d in sorted(deps, key=lambda d: -d["exposicao"])
+            )
             st.markdown(
-                '<div style="font-size:0.78rem;color:#718096;padding-top:16px;">'
-                '<b style="color:#CBD5E0;">Como interpretar</b><br><br>'
-                'Cada barra mostra quanto o portfólio pode ser afetado por um fator '
-                'macroeconômico, ponderado pela composição por classe de ativo.<br><br>'
-                f'<span style="color:{_COR_NEGATIVO};">■</span> ≥ 70% — alta exposição<br>'
-                f'<span style="color:{_COR_ALERTA};">■</span> 50–70% — moderada<br>'
-                f'<span style="color:{_COR_INFO};">■</span> &lt; 50% — controlada'
-                '</div>',
+                '<div style="font-size:0.76rem;color:#718096;padding-top:10px;">'
+                '<b style="color:#CBD5E0;">Leitura por fator</b>'
+                f'{linhas_faixa}'
+                '<div style="margin-top:10px;">'
+                f'<span style="color:{_COR_NEGATIVO};">■</span> 70–100 alta · '
+                f'<span style="color:{_COR_ALERTA};">■</span> 50–69 moderada · '
+                f'<span style="color:{_COR_INFO};">■</span> 0–49 baixa'
+                '</div></div>',
                 unsafe_allow_html=True,
             )
         st.caption(
-            "Exposição estimada por coeficientes fixos por classe. "
-            "Valores indicativos — não constituem recomendação de investimento."
+            "Como é calculado: cada classe de ativo tem uma sensibilidade fixa "
+            "(0 a 1) a cada fator; a barra é a média dessas sensibilidades "
+            "ponderada pelo peso das classes na carteira. Estimativa indicativa "
+            "— não constitui recomendação de investimento."
         )
     else:
         st.caption("Sem dados de alocação para calcular dependências macro.")
@@ -1749,7 +1822,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         st.markdown("<br>", unsafe_allow_html=True)
         _secao_titulo_orig(
             "\U0001F9ED", "Ativos expostos aos fatores macro",
-            "Mostra quais posições mais contribuem para cada dependência macroeconômica",
+            "Quanto cada posição contribui, em pontos percentuais, para a "
+            "sensibilidade do fator escolhido",
         )
 
         fator_padrao = 0
@@ -1765,6 +1839,23 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             key="dash_macro_fator_ativo",
         )
 
+        # Os números aqui são pontos percentuais, não níveis. Um "3" ao lado de
+        # um ativo não é "nível 3 de exposição": é o ativo respondendo por 3 dos
+        # pontos de sensibilidade daquele fator. Explicar isso com a conta na
+        # frente, e ancorar na barra da seção anterior, remove a ambiguidade.
+        _total_fator = float(df_macro_ativos[fator_sel].sum())
+        st.info(
+            f"**Como ler os números:** cada valor é a contribuição do ativo em "
+            f"**pontos percentuais (p.p.)** — não é nota, nível nem ranking. "
+            f"A conta é `peso do ativo na carteira × sensibilidade da classe`. "
+            f"Exemplo: um ativo com 5% da carteira numa classe de sensibilidade "
+            f"60/100 contribui com `5 × 0,60 = 3,0 p.p.`. "
+            f"Somando **todos** os ativos chega-se a "
+            f"**{_total_fator:.0f} de 100**, que é exatamente a barra de "
+            f"*{fator_sel}* no gráfico acima.",
+            icon="🧭",
+        )
+
         col_exp_chart, col_exp_table = st.columns([2, 1], gap="medium")
         with col_exp_chart:
             st.plotly_chart(
@@ -1775,26 +1866,42 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             )
         with col_exp_table:
             df_rank = (
-                df_macro_ativos[["Ativo", "Ticker", "Classe", "Peso (%)", fator_sel, "Valor"]]
+                df_macro_ativos[["Ativo", "Ticker", "Classe", "Peso (%)", fator_sel]]
                 .sort_values(fator_sel, ascending=False)
                 .head(12)
-                .rename(columns={fator_sel: "Contrib. (p.p.)"})
+                .copy()
             )
-            df_rank = df_rank.copy()
-            df_rank["Valor"] = df_rank["Valor"].apply(fmt_moeda)
+            # A sensibilidade é a peça que faltava para a conta fechar na tela:
+            # sem ela o usuário via peso e contribuição sem o elo entre os dois.
+            df_rank["Sensib. classe"] = [
+                _sensibilidade_da_classe(c, fator_sel) for c in df_rank["Classe"]
+            ]
+            df_rank = df_rank.rename(columns={
+                fator_sel: "Contribuição (p.p.)",
+                "Peso (%)": "Peso na carteira",
+            })[["Ativo", "Ticker", "Classe", "Peso na carteira",
+                "Sensib. classe", "Contribuição (p.p.)"]]
             st.dataframe(
                 df_rank,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "Peso (%)": st.column_config.NumberColumn(format="%.2f%%"),
-                    "Contrib. (p.p.)": st.column_config.NumberColumn(format="%.2f"),
-                    "Valor": st.column_config.TextColumn(),
+                    "Peso na carteira": st.column_config.NumberColumn(
+                        format="%.2f%%", help="Participação do ativo no valor de mercado."),
+                    "Sensib. classe": st.column_config.NumberColumn(
+                        format="%.0f/100",
+                        help="O quanto a CLASSE do ativo reage a este fator, "
+                             "de 0 (indiferente) a 100 (reage integralmente)."),
+                    "Contribuição (p.p.)": st.column_config.NumberColumn(
+                        format="%.2f p.p.",
+                        help="Peso × sensibilidade. Somando todos os ativos "
+                             "resulta na sensibilidade total do fator."),
                 },
             )
         st.caption(
-            "A contribuição usa o peso real do ativo multiplicado pelo coeficiente macro "
-            "da sua classe. Assim, o usuário enxerga quais ativos puxam cada fator."
+            "Sensibilidades são coeficientes fixos por classe de ativo — a "
+            "mesma tabela que alimenta as barras da seção anterior. Dois ativos "
+            "da mesma classe têm a mesma sensibilidade e diferem só pelo peso."
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1961,8 +2068,12 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Proventos — seleção Mensal / Anual
-    hist_prov = proventos.get("historico_mensal", [])
+    # Proventos — seleção Mensal / Anual.
+    # A visão anual NÃO agrega historico_mensal: aquela lista é cortada nos
+    # últimos 12 meses com dados, então uma base desde 2019 aparecia com dois
+    # anos no gráfico. O core passou a expor a série anual completa.
+    hist_prov  = proventos.get("historico_mensal", [])
+    hist_anual = proventos.get("historico_anual", [])
 
     col_prov_title, col_prov_vis = st.columns([3, 1])
     with col_prov_title:
@@ -1976,17 +2087,18 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
             label_visibility="collapsed",
         )
 
-    if hist_prov:
-        if visao_prov == "Mensal":
-            labels_p = [h["label"] for h in hist_prov]
-            vals_p   = [h["total"] for h in hist_prov]
-        else:
-            # Agrega por ano
-            agg: dict[int, float] = {}
-            for h in hist_prov:
-                agg[h["ano"]] = agg.get(h["ano"], 0.0) + h["total"]
-            labels_p = [str(a) for a in sorted(agg)]
-            vals_p   = [round(agg[a], 2) for a in sorted(agg)]
+    if visao_prov == "Anual" and not hist_anual and hist_prov:
+        # Compatibilidade: dicionário antigo em cache ainda sem historico_anual.
+        agg: dict[int, float] = {}
+        for h in hist_prov:
+            agg[h["ano"]] = agg.get(h["ano"], 0.0) + h["total"]
+        hist_anual = [{"ano": a, "label": str(a), "total": round(agg[a], 2),
+                       "num_eventos": 0} for a in sorted(agg)]
+
+    serie_prov = hist_prov if visao_prov == "Mensal" else hist_anual
+    if serie_prov:
+        labels_p = [h["label"] for h in serie_prov]
+        vals_p   = [h["total"] for h in serie_prov]
 
         fig_prov = go.Figure(go.Bar(
             x=labels_p, y=vals_p,
@@ -2009,9 +2121,8 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
                         config={"displayModeBar": False},
                         key="hist_proventos_bar")
 
-        # Totalizador por ano abaixo do gráfico (sempre visível)
+        total_exibido = sum(vals_p)
         if visao_prov == "Anual":
-            total_exibido = sum(vals_p)
             st.markdown(
                 f'<div style="font-size:0.78rem;color:{_COR_ALERTA};'
                 f'font-weight:700;text-align:right;margin-top:-8px;">'
@@ -2019,11 +2130,15 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
                 f'</div>',
                 unsafe_allow_html=True,
             )
+            st.caption(
+                f"Histórico completo · {serie_prov[0]['label']}–{serie_prov[-1]['label']} "
+                f"({len(serie_prov)} anos)."
+            )
         else:
-            total_exibido = sum(vals_p)
             st.caption(
                 f"Total no período: **R$ {total_exibido:,.2f}**".replace(",", "X").replace(".", ",").replace("X", ".")
-                + f" · {len(hist_prov)} meses"
+                + f" · {len(serie_prov)} meses (últimos 12 com dados) — "
+                "escolha **Anual** para o histórico completo"
             )
     else:
         st.caption("Sem histórico de proventos.")
@@ -2519,7 +2634,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     posicoes   = carteira.get("posicoes", [])
     por_classe = carteira.get("por_classe", [])
     por_setor  = carteira.get("por_setor",  [])
-    n_efetivo  = _calc_n_efetivo(posicoes)
+    # n_efetivo era calculado aqui e nunca lido — a métrica vive no Dashboard.
 
     total_inv = carteira["total_investido"]
     total_mkt = carteira["total_mercado"]
@@ -2560,321 +2675,221 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     # ══════════════════════════════════════════════════════════════════════════
     with ta:
         st.markdown("<br>", unsafe_allow_html=True)
-        _secao_titulo_orig("📋", "Resumo do Portfólio")
+        # Subabas: o bloco unico empilhava resumo, destaques e concentracao
+        # numa rolagem so. Cada pergunta agora tem a sua aba.
+        vg_resumo, vg_destaques, vg_concentracao = st.tabs([
+            "📋 Resumo", "🏆 Destaques", "📊 Concentração",
+        ])
 
-        c1, c2, c3, c4 = st.columns(4, gap="small")
-        cor_r = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
-        seta_r = "▲" if rentab >= 0 else "▼"
-        with c1:
-            st.markdown(_kpi("Valor Total Investido", fmt_moeda(total_inv),
-                             f"{carteira['num_ativos']} ativos na carteira", "#E2E8F0"),
-                        unsafe_allow_html=True)
-        with c2:
-            st.markdown(_kpi("Valor de Mercado", fmt_moeda(total_mkt),
-                             "Ativos com cotação disponível", _COR_INFO),
-                        unsafe_allow_html=True)
-        with c3:
-            _rent_total_ok = carteira.get("rentabilidade_total_disponivel", True)
-            st.markdown(_kpi(
-                "Retorno Mercado/Custo",
-                f"{seta_r} {abs(rentab):.1f}%" if _rent_total_ok else "Indisponível em BRL",
-                ("Não inclui proventos nem ajusta aportes/resgates" if _rent_total_ok else
-                 "Falta câmbio histórico de aquisição em posição USD"),
-                cor_r if _rent_total_ok else _COR_NEUTRO,
-            ),
-                        unsafe_allow_html=True)
-        with c4:
-            st.markdown(_kpi("Renda Total Recebida (12M)", fmt_moeda(renda_12m),
-                             "Dividendos + JCP + Rendimentos", _COR_ALERTA),
-                        unsafe_allow_html=True)
+        with vg_resumo:
+            _secao_titulo_orig("📋", "Resumo do Portfólio")
 
-        if por_classe:
-            st.markdown("<br>", unsafe_allow_html=True)
-            n_cls = min(len(por_classe), 6)
-            cols_cls = st.columns(n_cls, gap="small")
-            for i, cls in enumerate(por_classe[:n_cls]):
-                with cols_cls[i]:
-                    st.markdown(_kpi_classe(cls), unsafe_allow_html=True)
+            c1, c2, c3, c4 = st.columns(4, gap="small")
+            cor_r = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
+            seta_r = "▲" if rentab >= 0 else "▼"
+            with c1:
+                st.markdown(_kpi("Valor Total Investido", fmt_moeda(total_inv),
+                                 f"{carteira['num_ativos']} ativos na carteira", "#E2E8F0"),
+                            unsafe_allow_html=True)
+            with c2:
+                st.markdown(_kpi("Valor de Mercado", fmt_moeda(total_mkt),
+                                 "Ativos com cotação disponível", _COR_INFO),
+                            unsafe_allow_html=True)
+            with c3:
+                _rent_total_ok = carteira.get("rentabilidade_total_disponivel", True)
+                st.markdown(_kpi(
+                    "Retorno Mercado/Custo",
+                    f"{seta_r} {abs(rentab):.1f}%" if _rent_total_ok else "Indisponível em BRL",
+                    ("Não inclui proventos nem ajusta aportes/resgates" if _rent_total_ok else
+                     "Falta câmbio histórico de aquisição em posição USD"),
+                    cor_r if _rent_total_ok else _COR_NEUTRO,
+                ),
+                            unsafe_allow_html=True)
+            with c4:
+                st.markdown(_kpi("Renda Total Recebida (12M)", fmt_moeda(renda_12m),
+                                 "Dividendos + JCP + Rendimentos", _COR_ALERTA),
+                            unsafe_allow_html=True)
 
-        # ── Destaques ─────────────────────────────────────────────────────────
-        st.markdown("<br>", unsafe_allow_html=True)
-        _secao_titulo_orig("🏆", "Destaques da Carteira")
-
-        if posicoes:
-            pos_com_rent  = [p for p in posicoes if p.get("rentab_pct") is not None]
-            top_val       = sorted(pos_com_rent, key=lambda p: p["rentab_pct"], reverse=True)[:5]
-            top_qda       = sorted(pos_com_rent, key=lambda p: p["rentab_pct"])[:5]
-            top_peso_list = sorted(posicoes,     key=lambda p: p["pct_carteira"], reverse=True)[:5]
-
-            def _dest_row(nome: str, valor_str: str, badge: str, cor: str) -> str:
-                return (
-                    f'<div style="display:flex;justify-content:space-between;align-items:center;'
-                    f'padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
-                    f'<span style="font-size:0.82rem;font-weight:700;color:#E2E8F0;'
-                    f'max-width:54%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
-                    f'{_html.escape(nome)}</span>'
-                    f'<span style="font-size:0.80rem;font-weight:700;color:{cor};white-space:nowrap;">'
-                    f'{badge}&nbsp;<span style="font-size:0.72rem;color:#4A5568;font-weight:400;">'
-                    f'{valor_str}</span></span>'
-                    f'</div>'
-                )
-
-            col_dv, col_dq, col_dp = st.columns(3, gap="medium")
-
-            with col_dv:
-                st.markdown(
-                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                    'margin-bottom:10px;">🏆 Maior valorização mercado/custo</div>',
-                    unsafe_allow_html=True,
-                )
-                for p in top_val:
-                    r    = p["rentab_pct"]
-                    nome = (p.get("nome") or p["ticker"])[:24]
-                    seta = "▲" if r >= 0 else "▼"
-                    cor  = _COR_POSITIVO if r >= 0 else _COR_NEGATIVO
-                    st.markdown(
-                        _dest_row(nome, fmt_moeda(p["valor_mercado"]),
-                                  f"{seta} {abs(r):.1f}%", cor),
-                        unsafe_allow_html=True,
-                    )
-
-            with col_dq:
-                st.markdown(
-                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                    'margin-bottom:10px;">📉 Maior queda mercado/custo</div>',
-                    unsafe_allow_html=True,
-                )
-                for p in top_qda:
-                    r    = p["rentab_pct"]
-                    nome = (p.get("nome") or p["ticker"])[:24]
-                    seta = "▼" if r < 0 else "▲"
-                    cor  = _COR_NEGATIVO if r < 0 else _COR_POSITIVO
-                    st.markdown(
-                        _dest_row(nome, fmt_moeda(p["valor_mercado"]),
-                                  f"{seta} {abs(r):.1f}%", cor),
-                        unsafe_allow_html=True,
-                    )
-
-            with col_dp:
-                st.markdown(
-                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                    'margin-bottom:10px;">⚖️ Maior Peso</div>',
-                    unsafe_allow_html=True,
-                )
-                for p in top_peso_list:
-                    pct  = p["pct_carteira"]
-                    nome = (p.get("nome") or p["ticker"])[:24]
-                    cor  = (_COR_NEGATIVO if pct >= 15 else
-                            _COR_ALERTA   if pct >= 10 else "#CBD5E0")
-                    st.markdown(
-                        _dest_row(nome, fmt_moeda(p["valor_mercado"]),
-                                  f"{pct:.1f}%", cor),
-                        unsafe_allow_html=True,
-                    )
-
-        # ── Alertas de Concentração ───────────────────────────────────────────
-        concentrados = [p for p in posicoes if p["pct_carteira"] > 10.0]
-        if concentrados:
-            st.markdown("<br>", unsafe_allow_html=True)
-            _secao_titulo_orig("⚠️", "Alertas de Concentração")
-            for p in concentrados:
-                st.markdown(
-                    f'<div style="border-left:4px solid {_COR_ALERTA};padding:10px 14px;'
-                    f'margin-bottom:8px;background:rgba(246,201,14,0.05);'
-                    f'border-radius:0 8px 8px 0;">'
-                    f'<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;'
-                    f'letter-spacing:0.08em;color:{_COR_ALERTA};margin-bottom:3px;">'
-                    f'CONCENTRAÇÃO ELEVADA</div>'
-                    f'<div style="font-size:0.82rem;color:#CBD5E0;">'
-                    f'{_html.escape(p["ticker"])} ({_html.escape(p["classe"])}) representa '
-                    f'{p["pct_carteira"]:.1f}% da carteira. '
-                    f'Posições acima de 10% ampliam o risco específico.</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        col_donut, col_top15 = st.columns([1, 1], gap="medium")
-        with col_donut:
-            _secao_titulo_orig("🥧", "Distribuição por Classe de Ativo")
             if por_classe:
-                st.plotly_chart(_fig_donut_classes(por_classe),
-                                use_container_width=True,
-                                config={"displayModeBar": False},
-                                key="analise_donut")
-            else:
-                st.caption("Sem dados de alocação.")
-        with col_top15:
-            _secao_titulo_orig("🏆", "Top 15 Posições por Custo")
-            if posicoes:
-                st.plotly_chart(_fig_top15(posicoes),
-                                use_container_width=True,
-                                config={"displayModeBar": False},
-                                key="analise_top15")
-            else:
-                st.caption("Sem posições.")
+                st.markdown("<br>", unsafe_allow_html=True)
+                n_cls = min(len(por_classe), 6)
+                cols_cls = st.columns(n_cls, gap="small")
+                for i, cls in enumerate(por_classe[:n_cls]):
+                    with cols_cls[i]:
+                        st.markdown(_kpi_classe(cls), unsafe_allow_html=True)
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        _secao_titulo_orig("📊", "Concentração")
-        col_cls, col_set = st.columns(2, gap="medium")
-        with col_cls:
-            st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                        'margin-bottom:10px;">Por Classe de Ativo</div>',
-                        unsafe_allow_html=True)
-            for cls in por_classe:
-                barra_cor = (_COR_NEGATIVO if cls["pct_carteira"] >= 50 else
-                             _COR_ALERTA   if cls["pct_carteira"] >= 35 else _COR_POSITIVO)
-                w = min(cls["pct_carteira"], 100)
-                st.markdown(
-                    f'<div style="margin-bottom:10px;">'
-                    f'<div style="display:flex;justify-content:space-between;'
-                    f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
-                    f'<span style="display:flex;align-items:center;gap:6px;">'
-                    f'<span style="width:8px;height:8px;border-radius:50%;'
-                    f'background:{cls["cor"]};display:inline-block"></span>'
-                    f'{cls["nome"]}</span>'
-                    f'<span style="font-weight:700;color:{barra_cor}">'
-                    f'{cls["pct_carteira"]:.1f}%</span></div>'
-                    f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
-                    f'<div style="background:{cls["cor"]};width:{w:.0f}%;'
-                    f'height:100%;border-radius:3px;"></div></div>'
-                    f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
-                    f'margin-top:2px;">{fmt_moeda(cls["valor_mercado"])}'
-                    f' · {cls["num_ativos"]} ativo{"s" if cls["num_ativos"] != 1 else ""}'
-                    f'</div></div>', unsafe_allow_html=True)
-        with col_set:
-            st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                        'margin-bottom:10px;">Por Setor</div>', unsafe_allow_html=True)
-            if por_setor:
-                total_setor = sum(s["valor_mercado"] for s in por_setor) or 1
-                for s in por_setor[:8]:
-                    pct_s = round(s["valor_mercado"] / total_setor * 100, 1)
-                    w = min(pct_s, 100)
-                    bc = (_COR_NEGATIVO if pct_s >= 40 else
-                          _COR_ALERTA   if pct_s >= 25 else _COR_INFO)
+
+        with vg_destaques:
+            _secao_titulo_orig("🏆", "Destaques da Carteira")
+
+            if posicoes:
+                pos_com_rent  = [p for p in posicoes if p.get("rentab_pct") is not None]
+                top_val       = sorted(pos_com_rent, key=lambda p: p["rentab_pct"], reverse=True)[:5]
+                top_qda       = sorted(pos_com_rent, key=lambda p: p["rentab_pct"])[:5]
+                top_peso_list = sorted(posicoes,     key=lambda p: p["pct_carteira"], reverse=True)[:5]
+
+                def _dest_row(nome: str, valor_str: str, badge: str, cor: str) -> str:
+                    return (
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                        f'padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
+                        f'<span style="font-size:0.82rem;font-weight:700;color:#E2E8F0;'
+                        f'max-width:54%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+                        f'{_html.escape(nome)}</span>'
+                        f'<span style="font-size:0.80rem;font-weight:700;color:{cor};white-space:nowrap;">'
+                        f'{badge}&nbsp;<span style="font-size:0.72rem;color:#4A5568;font-weight:400;">'
+                        f'{valor_str}</span></span>'
+                        f'</div>'
+                    )
+
+                col_dv, col_dq, col_dp = st.columns(3, gap="medium")
+
+                with col_dv:
+                    st.markdown(
+                        '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                        'margin-bottom:10px;">🏆 Maior valorização mercado/custo</div>',
+                        unsafe_allow_html=True,
+                    )
+                    for p in top_val:
+                        r    = p["rentab_pct"]
+                        nome = (p.get("nome") or p["ticker"])[:24]
+                        seta = "▲" if r >= 0 else "▼"
+                        cor  = _COR_POSITIVO if r >= 0 else _COR_NEGATIVO
+                        st.markdown(
+                            _dest_row(nome, fmt_moeda(p["valor_mercado"]),
+                                      f"{seta} {abs(r):.1f}%", cor),
+                            unsafe_allow_html=True,
+                        )
+
+                with col_dq:
+                    st.markdown(
+                        '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                        'margin-bottom:10px;">📉 Maior queda mercado/custo</div>',
+                        unsafe_allow_html=True,
+                    )
+                    for p in top_qda:
+                        r    = p["rentab_pct"]
+                        nome = (p.get("nome") or p["ticker"])[:24]
+                        seta = "▼" if r < 0 else "▲"
+                        cor  = _COR_NEGATIVO if r < 0 else _COR_POSITIVO
+                        st.markdown(
+                            _dest_row(nome, fmt_moeda(p["valor_mercado"]),
+                                      f"{seta} {abs(r):.1f}%", cor),
+                            unsafe_allow_html=True,
+                        )
+
+                with col_dp:
+                    st.markdown(
+                        '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                        'margin-bottom:10px;">⚖️ Maior Peso</div>',
+                        unsafe_allow_html=True,
+                    )
+                    for p in top_peso_list:
+                        pct  = p["pct_carteira"]
+                        nome = (p.get("nome") or p["ticker"])[:24]
+                        cor  = (_COR_NEGATIVO if pct >= 15 else
+                                _COR_ALERTA   if pct >= 10 else "#CBD5E0")
+                        st.markdown(
+                            _dest_row(nome, fmt_moeda(p["valor_mercado"]),
+                                      f"{pct:.1f}%", cor),
+                            unsafe_allow_html=True,
+                        )
+
+            # ── Alertas de Concentração ───────────────────────────────────────────
+            concentrados = [p for p in posicoes if p["pct_carteira"] > 10.0]
+            if concentrados:
+                st.markdown("<br>", unsafe_allow_html=True)
+                _secao_titulo_orig("⚠️", "Alertas de Concentração")
+                for p in concentrados:
+                    st.markdown(
+                        f'<div style="border-left:4px solid {_COR_ALERTA};padding:10px 14px;'
+                        f'margin-bottom:8px;background:rgba(246,201,14,0.05);'
+                        f'border-radius:0 8px 8px 0;">'
+                        f'<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;'
+                        f'letter-spacing:0.08em;color:{_COR_ALERTA};margin-bottom:3px;">'
+                        f'CONCENTRAÇÃO ELEVADA</div>'
+                        f'<div style="font-size:0.82rem;color:#CBD5E0;">'
+                        f'{_html.escape(p["ticker"])} ({_html.escape(p["classe"])}) representa '
+                        f'{p["pct_carteira"]:.1f}% da carteira. '
+                        f'Posições acima de 10% ampliam o risco específico.</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            col_donut, col_top15 = st.columns([1, 1], gap="medium")
+            with col_donut:
+                _secao_titulo_orig("🥧", "Distribuição por Classe de Ativo")
+                if por_classe:
+                    st.plotly_chart(_fig_donut_classes(por_classe),
+                                    use_container_width=True,
+                                    config={"displayModeBar": False},
+                                    key="analise_donut")
+                else:
+                    st.caption("Sem dados de alocação.")
+            with col_top15:
+                _secao_titulo_orig("🏆", "Top 15 Posições por Custo")
+                if posicoes:
+                    st.plotly_chart(_fig_top15(posicoes),
+                                    use_container_width=True,
+                                    config={"displayModeBar": False},
+                                    key="analise_top15")
+                else:
+                    st.caption("Sem posições.")
+
+
+        with vg_concentracao:
+            _secao_titulo_orig("📊", "Concentração")
+            col_cls, col_set = st.columns(2, gap="medium")
+            with col_cls:
+                st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                            'margin-bottom:10px;">Por Classe de Ativo</div>',
+                            unsafe_allow_html=True)
+                for cls in por_classe:
+                    barra_cor = (_COR_NEGATIVO if cls["pct_carteira"] >= 50 else
+                                 _COR_ALERTA   if cls["pct_carteira"] >= 35 else _COR_POSITIVO)
+                    w = min(cls["pct_carteira"], 100)
                     st.markdown(
                         f'<div style="margin-bottom:10px;">'
                         f'<div style="display:flex;justify-content:space-between;'
                         f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
-                        f'<span>{s["nome"]}</span>'
-                        f'<span style="font-weight:700;color:{bc}">{pct_s:.1f}%</span></div>'
+                        f'<span style="display:flex;align-items:center;gap:6px;">'
+                        f'<span style="width:8px;height:8px;border-radius:50%;'
+                        f'background:{cls["cor"]};display:inline-block"></span>'
+                        f'{cls["nome"]}</span>'
+                        f'<span style="font-weight:700;color:{barra_cor}">'
+                        f'{cls["pct_carteira"]:.1f}%</span></div>'
                         f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
-                        f'<div style="background:{bc};width:{w:.0f}%;'
+                        f'<div style="background:{cls["cor"]};width:{w:.0f}%;'
                         f'height:100%;border-radius:3px;"></div></div>'
                         f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
-                        f'margin-top:2px;">{fmt_moeda(s["valor_mercado"])}</div></div>',
-                        unsafe_allow_html=True)
-            else:
-                st.caption("Sem dados de setor.")
+                        f'margin-top:2px;">{fmt_moeda(cls["valor_mercado"])}'
+                        f' · {cls["num_ativos"]} ativo{"s" if cls["num_ativos"] != 1 else ""}'
+                        f'</div></div>', unsafe_allow_html=True)
+            with col_set:
+                st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                            'margin-bottom:10px;">Por Setor</div>', unsafe_allow_html=True)
+                if por_setor:
+                    total_setor = sum(s["valor_mercado"] for s in por_setor) or 1
+                    for s in por_setor[:8]:
+                        pct_s = round(s["valor_mercado"] / total_setor * 100, 1)
+                        w = min(pct_s, 100)
+                        bc = (_COR_NEGATIVO if pct_s >= 40 else
+                              _COR_ALERTA   if pct_s >= 25 else _COR_INFO)
+                        st.markdown(
+                            f'<div style="margin-bottom:10px;">'
+                            f'<div style="display:flex;justify-content:space-between;'
+                            f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
+                            f'<span>{s["nome"]}</span>'
+                            f'<span style="font-weight:700;color:{bc}">{pct_s:.1f}%</span></div>'
+                            f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
+                            f'<div style="background:{bc};width:{w:.0f}%;'
+                            f'height:100%;border-radius:3px;"></div></div>'
+                            f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
+                            f'margin-top:2px;">{fmt_moeda(s["valor_mercado"])}</div></div>',
+                            unsafe_allow_html=True)
+                else:
+                    st.caption("Sem dados de setor.")
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        _secao_titulo_orig("💵", "Proventos por Ativo")
-        por_ativo = proventos.get("por_ativo", [])
-        if por_ativo:
-            df_prov = pd.DataFrame([{"Ticker": a["ticker"],
-                                     "Proventos": fmt_moeda(a["total"]),
-                                     "Eventos": a["num_eventos"],
-                                     "Último": a.get("ultimo_pagamento") or "—"}
-                                    for a in por_ativo[:20]])
-            st.dataframe(df_prov,
-                         column_config={
-                             "Ticker":    st.column_config.TextColumn("Ticker"),
-                             "Proventos": st.column_config.TextColumn("Proventos"),
-                             "Eventos":   st.column_config.NumberColumn("Eventos", format="%d"),
-                             "Último":    st.column_config.TextColumn("Último Pagamento"),
-                         },
-                         hide_index=True, use_container_width=True)
-        else:
-            st.caption("Sem dados de proventos por ativo.")
-
-        # ── Banca A2ui (2026-05-25): Brinson attribution ──────────────────────
-        st.markdown("<br>", unsafe_allow_html=True)
-        _secao_titulo_orig(
-            "🧬", "Decomposição de Retorno (Brinson)",
-            "Separa retorno ativo entre alocação setorial e seleção de ativos "
-            "vs benchmark IBOV.",
-        )
-        try:
-            from core.attribution import attribution_brinson, attribution_summary
-        except Exception as exc:
-            st.caption(f"Módulo attribution indisponível: {exc}")
-        else:
-            res_attr = attribution_brinson(posicoes)
-            sumr = attribution_summary(res_attr)
-
-            ca1, ca2, ca3, ca4 = st.columns(4, gap="small")
-            ae_pct = sumr["allocation"] * 100
-            se_pct = sumr["selection"] * 100
-            ie_pct = sumr["interaction"] * 100
-            tot_pct = sumr["total_active_return"] * 100
-            with ca1:
-                st.markdown(_kpi(
-                    "Alocação Setorial",
-                    f"{ae_pct:+.2f}%",
-                    "Over/under-weight setores",
-                    _COR_POSITIVO if ae_pct >= 0 else _COR_NEGATIVO,
-                ), unsafe_allow_html=True)
-            with ca2:
-                st.markdown(_kpi(
-                    "Seleção de Ativos",
-                    f"{se_pct:+.2f}%",
-                    "Escolha intra-setor",
-                    _COR_POSITIVO if se_pct >= 0 else _COR_NEGATIVO,
-                ), unsafe_allow_html=True)
-            with ca3:
-                st.markdown(_kpi(
-                    "Interação",
-                    f"{ie_pct:+.2f}%",
-                    "Termo cruzado AE × SE",
-                    _COR_INFO,
-                ), unsafe_allow_html=True)
-            with ca4:
-                st.markdown(_kpi(
-                    "Active Return",
-                    f"{tot_pct:+.2f}%",
-                    "Total vs IBOV benchmark",
-                    _COR_POSITIVO if tot_pct >= 0 else _COR_NEGATIVO,
-                ), unsafe_allow_html=True)
-
-            # Tabela detalhada apenas para setores presentes na carteira
-            with_alloc = [r for r in res_attr
-                          if r.peso_portfolio > 0.001 or r.peso_benchmark > 0.001]
-            df_attr = pd.DataFrame([{
-                "Setor":      r.setor,
-                "W Port (%)": r.peso_portfolio * 100,
-                "W Bench (%)": r.peso_benchmark * 100,
-                "R Port (%)": r.retorno_portfolio * 100,
-                "R Bench (%)": r.retorno_benchmark * 100,
-                "Alocação (%)":  r.allocation_effect * 100,
-                "Seleção (%)":   r.selection_effect * 100,
-                "Total (%)":     r.total_effect * 100,
-            } for r in with_alloc])
-            st.markdown(
-                '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                'margin:14px 0 8px;">Decomposição por setor</div>',
-                unsafe_allow_html=True,
-            )
-            st.dataframe(
-                df_attr, hide_index=True, use_container_width=True,
-                column_config={
-                    "W Port (%)":   st.column_config.NumberColumn(format="%.1f%%"),
-                    "W Bench (%)":  st.column_config.NumberColumn(format="%.1f%%"),
-                    "R Port (%)":   st.column_config.NumberColumn(format="%.1f%%"),
-                    "R Bench (%)":  st.column_config.NumberColumn(format="%.1f%%"),
-                    "Alocação (%)": st.column_config.NumberColumn(format="%+.2f%%"),
-                    "Seleção (%)":  st.column_config.NumberColumn(format="%+.2f%%"),
-                    "Total (%)":    st.column_config.NumberColumn(format="%+.2f%%"),
-                },
-            )
-            with st.expander("ℹ️ Como interpretar Brinson"):
-                st.markdown(
-                    "- **Alocação Setorial** positiva: você sobrepondera setores que renderam mais que a média.<br/>"
-                    "- **Seleção de Ativos** positiva: dentro de cada setor, escolheu ativos melhores que a média setorial.<br/>"
-                    "- **Active Return** = soma dos 3 efeitos = seu retorno vs IBOV.<br/>"
-                    "- Benchmark IBOV usado é aproximação 2020-2025; em produção plugar com composição oficial via b3.com.br/indices.<br/>"
-                    "- Referência: Brinson, Hood & Beebower (1986), <i>Financial Analysts Journal</i>.",
-                    unsafe_allow_html=True,
-                )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Ações — cards fundamentalistas
@@ -3261,8 +3276,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         st.markdown("<br>", unsafe_allow_html=True)
         _secao_titulo_orig(
             "🌪️", "Stress Tests Históricos",
-            "Estimativa de perda do portfólio em cenários adversos passados — "
-            "calibrado em dados B3/BCB.",
+            "Quanto a carteira de hoje perderia se cada crise passada se "
+            "repetisse agora — choques calibrados em dados B3/BCB.",
         )
 
         try:
@@ -3275,75 +3290,190 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             else:
                 resultados = aplicar_todos_cenarios(posicoes)
                 pior = cenario_pior_caso(posicoes)
+                # perda_pct do core é NEGATIVO (variação do valor). A tela fala
+                # em "perda", então usa o módulo: exibir "-31%" ao lado de uma
+                # perda em reais POSITIVA obrigava o leitor a reconciliar dois
+                # sinais para a mesma informação.
+                perda_pct = abs(float(pior.get("perda_pct", 0.0))) * 100
+                perda_abs = abs(float(pior.get("perda_absoluta", 0.0)))
+                valor_pre = float(pior.get("total_pre", 0.0))
+                valor_pos = float(pior.get("total_pos", 0.0))
+                rec_m = int(pior.get("tempo_recuperacao_meses", 0) or 0)
 
-                # KPIs resumo
-                cs1, cs2, cs3 = st.columns(3, gap="small")
-                with cs1:
-                    st.markdown(_kpi(
-                        "Pior Cenário",
-                        pior.get("cenario", "—"),
-                        pior.get("data_ref", ""),
-                        _COR_NEGATIVO,
-                    ), unsafe_allow_html=True)
-                with cs2:
-                    perda_pct = pior.get("perda_pct", 0.0) * 100
-                    st.markdown(_kpi(
-                        "Perda Estimada",
-                        f"{perda_pct:.1f}%",
-                        fmt_moeda(pior.get("perda_absoluta", 0.0)),
-                        _COR_NEGATIVO,
-                    ), unsafe_allow_html=True)
-                with cs3:
-                    rec_m = pior.get("tempo_recuperacao_meses", 0)
-                    st.markdown(_kpi(
-                        "Tempo de Recuperação",
-                        f"{rec_m} meses",
-                        "Mediana histórica do evento",
-                        _COR_ALERTA,
-                    ), unsafe_allow_html=True)
-
-                st.markdown("<br>", unsafe_allow_html=True)
+                # Frase primeiro, números depois: a pergunta que a aba responde
+                # é "quanto eu perderia e em quanto tempo volto", e a tabela
+                # sozinha não respondia isso sem o leitor montar a conta.
                 st.markdown(
-                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
-                    'margin-bottom:10px;">📉 Impacto por cenário histórico</div>',
+                    '<div style="background:rgba(252,92,125,.07);border-left:3px solid '
+                    f'{_COR_NEGATIVO};border-radius:6px;padding:14px 18px;margin-bottom:10px;">'
+                    '<div style="font-size:.70rem;font-weight:800;letter-spacing:.12em;'
+                    f'text-transform:uppercase;color:{_COR_NEGATIVO};margin-bottom:6px;">'
+                    'Cenário mais severo para esta carteira</div>'
+                    '<div style="font-size:0.95rem;color:#E2E8F0;line-height:1.65;">'
+                    f'Se <b>{_html.escape(str(pior.get("cenario", "—")))}</b> '
+                    f'({_html.escape(str(pior.get("data_ref", "")))}) acontecesse hoje, '
+                    f'a carteira cairia <b style="color:{_COR_NEGATIVO}">{perda_pct:.1f}%</b>'
+                    f' — de {fmt_moeda(valor_pre)} para <b>{fmt_moeda(valor_pos)}</b>, '
+                    f'uma perda de <b style="color:{_COR_NEGATIVO}">{fmt_moeda(perda_abs)}</b>. '
+                    'Historicamente, um evento desse porte levou cerca de '
+                    f'<b style="color:{_COR_ALERTA}">{rec_m} meses</b> para ser recuperado.'
+                    '</div></div>',
                     unsafe_allow_html=True,
                 )
 
-                # Tabela detalhada
-                df_stress = pd.DataFrame([{
-                    "Cenário":           r["cenario"],
-                    "Período":           r["data_ref"],
-                    "Valor pré":         r["total_pre"],
-                    "Valor pós":         r["total_pos"],
-                    "Perda %":           r["perda_pct"] * 100,
-                    "Perda R$":          r["perda_absoluta"],
-                    "Recuperação (m)":   r["tempo_recuperacao_meses"],
-                } for r in resultados])
-                st.dataframe(
-                    df_stress,
-                    use_container_width=True, hide_index=True,
-                    column_config={
-                        "Valor pré":  st.column_config.NumberColumn(format="R$ %.0f"),
-                        "Valor pós":  st.column_config.NumberColumn(format="R$ %.0f"),
-                        "Perda %":    st.column_config.NumberColumn(format="%.1f%%"),
-                        "Perda R$":   st.column_config.NumberColumn(format="R$ %.0f"),
-                        "Recuperação (m)": st.column_config.NumberColumn(format="%d meses"),
-                    },
-                )
+                cs1, cs2, cs3 = st.columns(3, gap="small")
+                with cs1:
+                    st.markdown(_kpi(
+                        "Queda no pior cenário", f"-{perda_pct:.1f}%",
+                        f"{fmt_moeda(perda_abs)} a menos", _COR_NEGATIVO,
+                    ), unsafe_allow_html=True)
+                with cs2:
+                    st.markdown(_kpi(
+                        "Valor restante", fmt_moeda(valor_pos),
+                        "Quanto sobraria da carteira", _COR_INFO,
+                    ), unsafe_allow_html=True)
+                with cs3:
+                    st.markdown(_kpi(
+                        "Tempo de recuperação", f"{rec_m} meses",
+                        "Mediana histórica do evento", _COR_ALERTA,
+                    ), unsafe_allow_html=True)
 
-                with st.expander("ℹ️ Como interpretar"):
+                # ── Comparação entre cenários ─────────────────────────────────
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                    'margin-bottom:10px;">📉 Queda estimada por crise</div>',
+                    unsafe_allow_html=True,
+                )
+                ordenados = sorted(resultados, key=lambda r: r["perda_pct"])
+                quedas = [abs(float(r["perda_pct"])) * 100 for r in ordenados]
+                fig_stress = go.Figure(go.Bar(
+                    x=quedas,
+                    y=[r["cenario"] for r in ordenados],
+                    orientation="h",
+                    marker_color=[
+                        _COR_NEGATIVO if q >= 25 else
+                        _COR_ALERTA if q >= 12 else _COR_INFO
+                        for q in quedas
+                    ],
+                    text=[f"-{q:.1f}%" for q in quedas],
+                    textposition="outside",
+                    textfont={"size": 11, "color": "#E2E8F0"},
+                    customdata=list(zip(
+                        [r["data_ref"] for r in ordenados],
+                        [abs(float(r["perda_absoluta"])) for r in ordenados],
+                        [r["tempo_recuperacao_meses"] for r in ordenados],
+                        [r.get("descricao", "") for r in ordenados],
+                    )),
+                    hovertemplate=(
+                        "<b>%{y}</b><br>%{customdata[3]}<br>"
+                        "Período: %{customdata[0]}<br>"
+                        "Queda: %{x:.1f}%<br>"
+                        "Perda: R$ %{customdata[1]:,.0f}<br>"
+                        "Recuperação: %{customdata[2]} meses<extra></extra>"
+                    ),
+                ))
+                fig_stress.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    font_color=_COR_NEUTRO,
+                    margin={"t": 10, "b": 44, "l": 0, "r": 80},
+                    height=max(240, 42 * len(ordenados) + 90),
+                    xaxis={"showgrid": True, "gridcolor": "#1E2533",
+                           "ticksuffix": "%",
+                           "title": {"text": "Queda do valor de mercado da carteira atual",
+                                     "font": {"size": 10, "color": "#718096"}}},
+                    yaxis={"showgrid": False, "automargin": True},
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_stress, use_container_width=True,
+                                config={"displayModeBar": False},
+                                key="analise_stress_bar")
+
+                # ── Onde dói: perda por classe no pior cenário ────────────────
+                # O core já devolvia por_classe e a tela ignorava. É o dado que
+                # transforma "perco 31%" em "o que eu reduzo para perder menos".
+                por_classe_stress = pior.get("por_classe") or {}
+                if por_classe_stress:
+                    st.markdown("<br>", unsafe_allow_html=True)
                     st.markdown(
-                        "- **Perda %** é a queda estimada do valor de mercado total "
-                        "da carteira atual se o cenário se repetir hoje.<br/>"
-                        "- **Recuperação** é a mediana histórica de tempo para o "
-                        "portfólio voltar ao valor pré-choque (Ibovespa como proxy).<br/>"
-                        "- Choques aplicados por classe (Ações BR / FII / ETF / Tesouro / "
-                        "Renda Fixa). Posições em USD ganham proteção parcial do câmbio.<br/>"
-                        "- Modelo simplificado — não considera correlações tail "
-                        "(usar copulas para análise rigorosa, recomendação M2 da banca).",
+                        '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                        'margin-bottom:4px;">🎯 Onde a perda se concentra — '
+                        f'{_html.escape(str(pior.get("cenario", "")))}</div>',
                         unsafe_allow_html=True,
                     )
+                    st.caption(
+                        "**Queda** é o tombo da própria classe. **Contribuição** é "
+                        "quanto dessa classe representa da perda total da carteira "
+                        "— é ela que responde “o que reduzir para amortecer o "
+                        "próximo choque”."
+                    )
+                    linhas_cls = []
+                    for classe, agg in por_classe_stress.items():
+                        pre = float(agg.get("pre", 0.0))
+                        pos = float(agg.get("pos", 0.0))
+                        perda_cls = pre - pos
+                        linhas_cls.append({
+                            "Classe": classe,
+                            "Valor hoje": pre,
+                            "Valor pós-choque": pos,
+                            "Queda": abs(float(agg.get("perda_pct", 0.0))) * 100,
+                            "Perda": perda_cls,
+                            "Contribuição": (perda_cls / perda_abs * 100) if perda_abs else 0.0,
+                        })
+                    linhas_cls.sort(key=lambda r: -r["Perda"])
+                    st.dataframe(
+                        pd.DataFrame(linhas_cls),
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "Valor hoje": st.column_config.NumberColumn(format="R$ %.0f"),
+                            "Valor pós-choque": st.column_config.NumberColumn(format="R$ %.0f"),
+                            "Queda": st.column_config.NumberColumn(
+                                format="-%.1f%%",
+                                help="Queda percentual da própria classe."),
+                            "Perda": st.column_config.NumberColumn(format="R$ %.0f"),
+                            "Contribuição": st.column_config.ProgressColumn(
+                                format="%.0f%%", min_value=0, max_value=100,
+                                help="Participação da classe na perda total da carteira."),
+                        },
+                    )
 
+                # ── Detalhe numérico de todos os cenários ─────────────────────
+                with st.expander("📋 Todos os cenários em números"):
+                    df_stress = pd.DataFrame([{
+                        "Cenário":          r["cenario"],
+                        "Período":          r["data_ref"],
+                        "Valor hoje":       r["total_pre"],
+                        "Valor pós-choque": r["total_pos"],
+                        "Queda":            abs(float(r["perda_pct"])) * 100,
+                        "Perda":            abs(float(r["perda_absoluta"])),
+                        "Recuperação":      r["tempo_recuperacao_meses"],
+                    } for r in ordenados])
+                    st.dataframe(
+                        df_stress,
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "Valor hoje": st.column_config.NumberColumn(format="R$ %.0f"),
+                            "Valor pós-choque": st.column_config.NumberColumn(format="R$ %.0f"),
+                            "Queda":  st.column_config.NumberColumn(format="-%.1f%%"),
+                            "Perda":  st.column_config.NumberColumn(format="R$ %.0f"),
+                            "Recuperação": st.column_config.NumberColumn(format="%d meses"),
+                        },
+                    )
+
+                with st.expander("ℹ️ Como estes números são calculados"):
+                    st.markdown(
+                        "- Cada crise vira um **choque por classe de ativo** medido "
+                        "no evento real (Ações BR, FII, ETF, Tesouro, Renda Fixa). "
+                        "O choque é aplicado à carteira de **hoje**.<br/>"
+                        "- Posições em dólar recebem também o efeito do câmbio do "
+                        "período, que costuma amortecer parte da queda.<br/>"
+                        "- **Recuperação** é a mediana histórica de tempo até o "
+                        "portfólio voltar ao valor pré-choque (Ibovespa como proxy).<br/>"
+                        "- É exercício de ordem de grandeza, não previsão: o modelo "
+                        "aplica choque uniforme por classe e não modela correlações "
+                        "de cauda entre ativos.",
+                        unsafe_allow_html=True,
+                    )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RENDER PRINCIPAL
