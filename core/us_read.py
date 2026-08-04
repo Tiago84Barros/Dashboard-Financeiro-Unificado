@@ -887,3 +887,56 @@ def load_us_resiliencia() -> dict[str, dict]:
             "anos_covid": int(row["anos_covid"] or 0),
         }
     return out
+
+
+def load_us_macro() -> dict:
+    """Último valor observado de cada indicador macro (market_us.macro_observations).
+
+    Offline: lê só o warehouse. Devolve {} quando a tabela não existe ou está
+    vazia — nesse caso a interface cai na premissa e diz que caiu, em vez de
+    exibir número sem procedência.
+    """
+    eng = _engine()
+    if eng is None:
+        return {}
+    try:
+        with eng.connect() as conn:
+            existe = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'market_us'
+                      AND table_name = 'macro_observations'
+                )
+            """)).scalar()
+            if not existe:
+                return {}
+            linhas = conn.execute(text("""
+                SELECT DISTINCT ON (indicator)
+                       indicator, observed_at, value
+                FROM market_us.macro_observations
+                ORDER BY indicator, observed_at DESC
+            """)).mappings().all()
+    except Exception as exc:  # noqa: BLE001 - leitura opcional nunca quebra a UI
+        logger.warning("load_us_macro falhou: %s", exc)
+        return {}
+    if not linhas:
+        return {}
+
+    from core.us_macro import FONTE_OBSERVADO
+
+    snapshot: dict = {}
+    datas = []
+    for linha in linhas:
+        try:
+            snapshot[str(linha["indicator"])] = float(linha["value"])
+        except (TypeError, ValueError):
+            continue
+        if linha["observed_at"] is not None:
+            datas.append(linha["observed_at"])
+    if not snapshot:
+        return {}
+    snapshot["fonte"] = FONTE_OBSERVADO
+    # A data-base do conjunto é a do indicador MAIS DEFASADO: o regime só vale
+    # até onde a série mais antiga alcança.
+    snapshot["as_of"] = min(datas).isoformat() if datas else None
+    return snapshot

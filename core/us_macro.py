@@ -11,31 +11,61 @@ from dataclasses import dataclass, asdict
 from math import isfinite
 
 
+# Procedência de cada observação macro. Existe porque o relatório institucional
+# NÃO pode apresentar premissa como fato: um analista que escreve "com o Fed em
+# 4,25%" a partir de um literal de código está afirmando algo que não verificou.
+FONTE_PREMISSA = "premissa"      # valor de partida do código ou digitado na tela
+FONTE_OBSERVADO = "observado"    # série oficial ingerida no warehouse (FRED)
+
+
 @dataclass(frozen=True)
 class USMacroSnapshot:
+    """Fotografia macro. Os defaults são PREMISSAS, não leitura de mercado.
+
+    ``fonte`` e ``as_of`` viajam com o dado até o relatório. Quando a ingestão
+    do FRED preenche ``market_us.macro_observations``, a leitura passa a
+    ``observado`` com a data da série — e só então o texto pode afirmar o valor
+    em vez de condicioná-lo.
+    """
     fed_funds: float = 4.25
     cpi_yoy: float = 2.5
     real_gdp_yoy: float = 2.0
     unemployment: float = 4.2
     yield_curve_10y_2y: float = 0.25
     high_yield_spread: float = 3.5
+    fonte: str = FONTE_PREMISSA
+    as_of: str | None = None
 
 
 def _clip(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+# Campos numéricos do snapshot — os demais são procedência, não indicador.
+_CAMPOS_NUMERICOS = (
+    "fed_funds", "cpi_yoy", "real_gdp_yoy",
+    "unemployment", "yield_curve_10y_2y", "high_yield_spread",
+)
+
+
 def evaluate_macro(snapshot: USMacroSnapshot | dict) -> dict:
-    """Classifica o regime e calcula impulsos setoriais em escala -10..+10."""
+    """Classifica o regime e calcula impulsos setoriais em escala -10..+10.
+
+    A procedência (``fonte``/``as_of``) atravessa intacta: quem escreve o
+    relatório precisa saber se o número foi observado ou presumido.
+    """
     values = asdict(snapshot) if isinstance(snapshot, USMacroSnapshot) else dict(snapshot)
-    clean = {}
     defaults = asdict(USMacroSnapshot())
-    for key, default in defaults.items():
+    clean = {}
+    for key in _CAMPOS_NUMERICOS:
+        default = defaults[key]
         try:
             value = float(values.get(key, default))
             clean[key] = value if isfinite(value) else default
         except (TypeError, ValueError):
             clean[key] = default
+    fonte = str(values.get("fonte") or FONTE_PREMISSA)
+    as_of = values.get("as_of")
 
     inflation = _clip((3.0 - clean["cpi_yoy"]) * 1.8, -4, 4)
     growth = _clip((clean["real_gdp_yoy"] - 1.5) * 1.6, -4, 4)
@@ -68,6 +98,9 @@ def evaluate_macro(snapshot: USMacroSnapshot | dict) -> dict:
         "score": score,
         "regime": regime,
         "tone": tone,
+        "fonte": fonte,
+        "as_of": as_of,
+        "observado": fonte == FONTE_OBSERVADO,
         "inputs": clean,
         "drivers": {
             "Inflação": round(inflation, 2), "Crescimento": round(growth, 2),

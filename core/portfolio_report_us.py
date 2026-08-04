@@ -318,12 +318,38 @@ def build_advanced_context(advanced: dict | None) -> str:
 
 
 def format_us_macro(macro: dict | None) -> str:
-    """Regime macro americano — saída de ``core.us_macro.evaluate_macro``."""
+    """Regime macro americano — saída de ``core.us_macro.evaluate_macro``.
+
+    A procedência abre o bloco de propósito. Sem ela, a LLM lê "Fed funds:
+    4.25%" e escreve "com o Fed em 4,25%" no relatório institucional — uma
+    afirmação sobre o mundo a partir de um literal de código. Com o rótulo de
+    premissa, a mesma leitura vira "sob a premissa de Fed a 4,25%", que é o que
+    o dado sustenta.
+    """
     if not macro:
         return "CENÁRIO MACRO EUA: indisponível."
     entradas = macro.get("inputs") or {}
+    observado = bool(macro.get("observado"))
+    as_of = macro.get("as_of")
+
+    if observado:
+        procedencia = (
+            f"  PROCEDÊNCIA: séries oficiais (FRED) ingeridas no warehouse"
+            + (f", data-base {as_of}." if as_of else ".")
+            + " Pode afirmar estes valores como observados."
+        )
+    else:
+        procedencia = (
+            "  PROCEDÊNCIA: **PREMISSA DE SIMULAÇÃO**, não observação de mercado. "
+            "Os valores abaixo são parâmetros de cenário definidos na interface, "
+            "não leitura das séries oficiais. É PROIBIDO afirmá-los como fato "
+            "('o Fed está em X%'); escreva sempre de forma condicional "
+            "('sob a premissa de Fed a X%', 'num cenário de CPI a Y%')."
+        )
+
     linhas = [
         "CENÁRIO MACRO ESTADOS UNIDOS:",
+        procedencia,
         f"  Regime: {macro.get('regime', 'N/D')} "
         f"(pontuação {macro.get('score', 'N/D')}/100, tom {macro.get('tone', 'N/D')})",
     ]
@@ -381,6 +407,9 @@ SETOR: {sector} | INDÚSTRIA: {industry}
 === MACRO ESTADOS UNIDOS ===
 {macro}
 
+=== PROCEDÊNCIA E GRAU DE CONFIANÇA DESTA EMPRESA ===
+{provenance}
+
 === CONTEXTO SUPLEMENTAR DA CARTEIRA ===
 {portfolio_context}
 
@@ -407,6 +436,12 @@ REGRAS ANALÍTICAS OBRIGATÓRIAS:
    não está no contexto, declare a lacuna em vez de recorrer à memória.
 9. Sensibilidade macro deve usar os fatores americanos do contexto — Fed funds, CPI, PIB real,
    desemprego, curva de juros, spread de crédito e dólar. Não use Selic, IPCA nem Ibovespa.
+   Respeite a PROCEDÊNCIA declarada no bloco macro: se ele estiver marcado como premissa,
+   escreva de forma condicional e nunca afirme o valor como observação de mercado.
+9b. O grau de confiança do score e a data-base estão declarados. Se a empresa estiver em grau
+   de triagem, ou se faltarem trilhas críticas, NÃO conclua sobre valuation ou qualidade:
+   descreva o que falta, rebaixe a nota de "confianca" e diga em qualidade_dados o que
+   impediria a conclusão. Cobertura baixa não é sinônimo de empresa ruim.
 10. A conclusão deve responder: cara/justa/barata; desconto justificável; pessimismo/otimismo
     implícito; risco-retorno; principal positivo; principal risco. Termine com resumo executivo de
     até cinco linhas.
@@ -482,9 +517,26 @@ indústrias diferentes. Responda em português do Brasil, com valores em dólare
 === AVALIAÇÃO QUANTITATIVA DETERMINÍSTICA ===
 {quant_context}
 
+=== PROCEDÊNCIA DOS DADOS ===
+{provenance}
+
+=== GRAU DE CONFIANÇA POR EMPRESA ===
+{confidence}
+
+=== EXPOSIÇÃO CAMBIAL ===
+{fx_context}
+
 Considere explicitamente o que é próprio deste mercado: exposição cambial de quem investe em reais,
 concentração em megacaps de tecnologia, sensibilidade à política do Fed e à curva de juros, e
 diferença entre recompra e dividendo como forma de retorno ao acionista.
+
+REGRAS DE HONESTIDADE (obrigatórias):
+- Respeite a procedência do bloco macro. Premissa entra como cenário condicional, nunca como fato.
+- Declare a data-base dos dados no resumo executivo. Uma leitura sobre demonstrações defasadas é
+  válida, mas o leitor precisa saber que é isso que está lendo.
+- Peso relevante em grau de triagem limita a conclusão do conjunto: diga qual fatia da carteira
+  não sustenta leitura fundamentalista e ajuste a cobertura declarada para baixo.
+- Trate a exposição cambial na adequação: ela é proteção e risco ao mesmo tempo.
 
 Responda somente JSON válido com este schema. Preserve os campos legados porque a interface os consome:
 {{
@@ -508,6 +560,45 @@ Responda somente JSON válido com este schema. Preserve os campos legados porque
 """
 
 
+def build_company_provenance(
+    df_fin: pd.DataFrame | None,
+    score_row: Any = None,
+    status: dict | None = None,
+) -> str:
+    """Data-base e grau de confiança DESTA empresa, para o prompt individual."""
+    linhas = ["PROCEDÊNCIA E CONFIANÇA:"]
+    if df_fin is not None and not getattr(df_fin, "empty", True) \
+            and "fiscal_year" in df_fin.columns:
+        anos = pd.to_numeric(df_fin["fiscal_year"], errors="coerce").dropna()
+        if not anos.empty:
+            linhas.append(
+                f"  Exercícios disponíveis: FY{int(anos.min())}–FY{int(anos.max())} "
+                f"({len(anos)} anos). O mais recente é a base da leitura."
+            )
+    if status and status.get("last_update") is not None:
+        linhas.append(f"  Última ingestão do warehouse: {status['last_update']}.")
+
+    grau, rotulo, confianca = grau_de_confianca(score_row)
+    parte = f"  Grau do score: {rotulo}"
+    if confianca is not None:
+        parte += f" (confiança {confianca:.0%})"
+    linhas.append(parte + ".")
+    if grau != "decision_grade":
+        linhas.append(
+            "  ATENÇÃO: cobertura insuficiente para conclusão fundamentalista "
+            "firme. Descreva a lacuna, rebaixe a confiança e evite veredicto de "
+            "valuation. Cobertura baixa não é empresa ruim."
+        )
+    faltando = None
+    if score_row is not None:
+        getter = score_row.get if hasattr(score_row, "get") else (
+            lambda k, d=None: getattr(score_row, k, d))
+        faltando = getter("critical_missing", None)
+    if faltando is not None and len(faltando) > 0:
+        linhas.append(f"  Trilhas sem cobertura mínima: {', '.join(map(str, faltando))}.")
+    return "\n".join(linhas)
+
+
 def build_company_prompt(
     ticker: str,
     dossier: dict,
@@ -516,6 +607,7 @@ def build_company_prompt(
     macro: dict | None,
     peer_context: str,
     portfolio_context: str,
+    provenance: str = "",
 ) -> str:
     try:
         dossier_text = dossie_to_text(dossier)
@@ -531,6 +623,7 @@ def build_company_prompt(
         advanced_context=build_advanced_context(advanced),
         peer_context=peer_context or "PARES: indisponíveis; não conclua prêmio/desconto setorial.",
         macro=format_us_macro(macro),
+        provenance=provenance or build_company_provenance(df_fin),
         portfolio_context=portfolio_context or "Sem contexto suplementar da carteira.",
         weights_contract=weights_contract(),
     )
@@ -546,6 +639,7 @@ def generate_company_us_report(
     portfolio_tickers: list[str] | tuple[str, ...] = (),
     portfolio_context: str = "",
     model: str | None = None,
+    status: dict | None = None,
 ) -> tuple[dict, dict]:
     """Nota institucional de uma empresa americana. Devolve (relatório, dossiê)."""
     tk = str(ticker).strip().upper()
@@ -559,8 +653,16 @@ def generate_company_us_report(
     except Exception as exc:  # noqa: BLE001 - pares nunca derrubam o relatório
         logger.warning("Pares institucionais de %s indisponíveis: %s", tk, exc)
         peer_context = "PARES: indisponíveis; não conclua prêmio/desconto setorial."
+
+    score_row = None
+    if scored is not None and not scored.empty and "symbol" in scored.columns:
+        linha = scored[scored["symbol"].astype(str).str.upper() == tk]
+        if not linha.empty:
+            score_row = linha.iloc[0]
+
     prompt = build_company_prompt(
         tk, dossier, df_fin, advanced, macro, peer_context, portfolio_context,
+        provenance=build_company_provenance(df_fin, score_row, status),
     )
     try:
         raw = _call_llm(prompt, model=model or _report_model())
@@ -569,6 +671,130 @@ def generate_company_us_report(
     except Exception as exc:  # noqa: BLE001
         logger.warning("Relatório institucional de %s falhou: %s", tk, exc)
         return fallback_company(tk, str(exc)[:200]), dossier
+
+
+# Grau de confiança do score, produzido por core.us_score. O relatório precisa
+# dele: um valuation concluído sobre `screen_grade` é opinião com aparência de
+# análise.
+GRAU_LABEL = {
+    "decision_grade": "decisão (cobertura alta)",
+    "research_grade": "pesquisa (cobertura parcial)",
+    "screen_grade": "triagem (cobertura baixa)",
+}
+
+
+def grau_de_confianca(row: Any) -> tuple[str, str, float | None]:
+    """(status, rótulo legível, confiança 0–1) de uma linha do cross-section."""
+    if row is None:
+        return "screen_grade", GRAU_LABEL["screen_grade"], None
+    getter = row.get if hasattr(row, "get") else (lambda k, d=None: getattr(row, k, d))
+    status = str(getter("score_status", "") or "") or "screen_grade"
+    return status, GRAU_LABEL.get(status, status), safe_float(getter("score_confidence", None))
+
+
+def build_data_provenance_context(
+    status: dict | None,
+    df_por_ticker: dict[str, pd.DataFrame] | None = None,
+) -> str:
+    """Data-base e origem dos dados — o cabeçalho de qualquer nota profissional.
+
+    Uma nota que não diz "demonstrações até FY2024, ingeridas em 03/08/2026"
+    não permite ao leitor julgar se está lendo análise ou arqueologia.
+    """
+    status = status or {}
+    modo = {
+        "warehouse": "warehouse local completo",
+        "snapshot": "vitrine publicada (snapshot do warehouse)",
+        "none": "sem base disponível",
+    }.get(str(status.get("mode") or "none"), str(status.get("mode")))
+    linhas = ["PROCEDÊNCIA DOS DADOS:", f"  Origem: {modo}."]
+    ultima = status.get("last_update")
+    if ultima is not None:
+        linhas.append(f"  Última ingestão: {ultima}.")
+    else:
+        linhas.append("  Última ingestão: não informada — trate a base como de "
+                      "frescor desconhecido e diga isso na leitura.")
+    if status.get("companies"):
+        linhas.append(f"  Universo disponível: {status['companies']} empresas.")
+
+    anos: list[int] = []
+    for frame in (df_por_ticker or {}).values():
+        if frame is None or getattr(frame, "empty", True):
+            continue
+        if "fiscal_year" in frame.columns:
+            serie = pd.to_numeric(frame["fiscal_year"], errors="coerce").dropna()
+            if not serie.empty:
+                anos.append(int(serie.max()))
+    if anos:
+        linhas.append(
+            f"  Último exercício fiscal disponível na carteira: FY{max(anos)}"
+            + (f" (mais antigo entre as empresas: FY{min(anos)})" if min(anos) != max(anos) else "")
+            + ". Demonstração anual publicada tem defasagem natural; não a "
+              "confunda com posição de hoje."
+        )
+    return "\n".join(linhas)
+
+
+def build_confidence_context(items: list[dict]) -> str:
+    """Grau de confiança do score por empresa e o que falta em cada uma."""
+    if not items:
+        return "GRAU DE CONFIANÇA: carteira vazia."
+    linhas = [
+        "GRAU DE CONFIANÇA DO SCORE POR EMPRESA (calculado pela cobertura real "
+        "das trilhas, não estimado):",
+    ]
+    peso_frag = 0.0
+    for item in items:
+        status = str(item.get("score_status") or "screen_grade")
+        rotulo = GRAU_LABEL.get(status, status)
+        confianca = safe_float(item.get("score_confidence"))
+        faltando = item.get("critical_missing") or []
+        peso = float(item.get("peso_pct") or 0.0)
+        if status != "decision_grade":
+            peso_frag += peso
+        parte = f"  {item.get('ticker')}: {rotulo}"
+        if confianca is not None:
+            parte += f" (confiança {confianca:.0%})"
+        if faltando:
+            parte += f" — trilhas sem cobertura mínima: {', '.join(map(str, faltando))}"
+        linhas.append(parte)
+    linhas.append(
+        f"  {peso_frag:.1f}% do peso da carteira está abaixo de grau de decisão."
+    )
+    linhas.append(
+        "  REGRA: empresa em grau de triagem NÃO sustenta conclusão de valuation "
+        "nem de qualidade. Para essas, escreva o que falta e rebaixe a confiança "
+        "do parecer em vez de concluir com o que existe."
+    )
+    return "\n".join(linhas)
+
+
+def build_fx_context(usd_brl: float | None = None) -> str:
+    """Exposição cambial de quem investe em reais numa carteira em dólares.
+
+    A carteira é cotada em USD, mas o patrimônio do usuário é medido em reais.
+    Sem este bloco, o relatório discute retorno em dólar e o leitor lê como
+    retorno dele — são coisas diferentes, e a diferença já foi de dois dígitos
+    em anos recentes.
+    """
+    linhas = [
+        "EXPOSIÇÃO CAMBIAL (investidor com patrimônio em reais):",
+        "  Toda posição desta carteira é denominada em dólares. O retorno em "
+        "reais é aproximadamente (1 + retorno em USD) × (1 + variação do "
+        "USD/BRL) − 1 — o câmbio é um segundo ativo embutido, não um detalhe "
+        "de conversão.",
+    ]
+    taxa = safe_float(usd_brl)
+    if taxa is not None:
+        linhas.append(f"  USD/BRL de referência na base: R$ {taxa:.2f}.")
+    else:
+        linhas.append("  USD/BRL não disponível na base — não estime a taxa.")
+    linhas.append(
+        "  Trate a exposição cambial na adequação da carteira: ela protege "
+        "contra risco Brasil e, ao mesmo tempo, adiciona volatilidade em reais. "
+        "Não a apresente só como proteção nem só como risco."
+    )
+    return "\n".join(linhas)
 
 
 def build_quant_context(avaliacao: dict | None) -> str:
@@ -640,6 +866,9 @@ def analyze_us_portfolio_report(
     *,
     model: str | None = None,
     avaliacao_quant: dict | None = None,
+    status: dict | None = None,
+    financials: dict[str, pd.DataFrame] | None = None,
+    usd_brl: float | None = None,
 ) -> dict:
     """Síntese consolidada da carteira americana, no schema que a UI consome."""
     prompt = _PROMPT_PORTFOLIO.format(
@@ -649,6 +878,9 @@ def analyze_us_portfolio_report(
         macro=format_us_macro(macro),
         concentration=build_concentration_context(items_analyzed),
         quant_context=build_quant_context(avaliacao_quant),
+        provenance=build_data_provenance_context(status, financials),
+        confidence=build_confidence_context(items_analyzed),
+        fx_context=build_fx_context(usd_brl),
     )
     try:
         raw = _call_llm(prompt, model=model or _report_model())
@@ -660,13 +892,19 @@ def analyze_us_portfolio_report(
 
 
 __all__ = [
+    "GRAU_LABEL",
     "QUALITATIVE_WEIGHTS",
     "analyze_us_portfolio_report",
     "build_advanced_context",
     "build_company_prompt",
+    "build_company_provenance",
     "build_concentration_context",
+    "build_confidence_context",
+    "build_data_provenance_context",
     "build_financial_history_context",
+    "build_fx_context",
     "build_quant_context",
+    "grau_de_confianca",
     "build_industry_medians_context",
     "build_peer_context",
     "build_us_fundamentals_context",
