@@ -15,11 +15,26 @@ _FONTE = (Path(__file__).resolve().parents[1] / "views" / "investimentos.py").re
 
 # ── Aba Análise · Visão Geral ────────────────────────────────────────────────
 
-def test_visao_geral_virou_subabas():
+def test_visao_geral_nao_tem_subabas():
+    """Resumo, Destaques e Concentração ficam na própria Visão Geral.
+
+    Chegaram a virar subabas; com o conteúdo que sobrou depois das remoções,
+    um segundo nível de abas só acrescentava cliques.
+    """
     corpo = inspect.getsource(inv._tab_analise)
-    assert 'vg_resumo, vg_destaques, vg_concentracao = st.tabs([' in corpo
-    for sub in ("with vg_resumo:", "with vg_destaques:", "with vg_concentracao:"):
-        assert sub in corpo, sub
+    for marcador in ("vg_resumo", "vg_destaques", "vg_concentracao"):
+        assert marcador not in corpo, marcador
+    for titulo in ("Resumo do Portfólio", "Destaques da Carteira", "Concentração"):
+        assert titulo in corpo, titulo
+
+
+def test_analise_mantem_o_trilho_de_abas_por_classe():
+    """As abas de primeiro nível (Ações, FIIs, Tesouro…) seguem intactas."""
+    corpo = inspect.getsource(inv._tab_analise)
+    assert "ta, tb, tc, tt, te, td, ts = st.tabs([" in corpo
+    for aba in ("📋 Visão Geral", "📈 Ações", "🏢 FIIs", "🏦 Tesouro",
+                "🌎 Exterior", "🔔 Alertas", "🌪️ Stress"):
+        assert aba in corpo, aba
 
 
 def test_proventos_por_ativo_e_brinson_sairam():
