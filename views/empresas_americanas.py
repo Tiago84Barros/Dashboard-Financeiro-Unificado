@@ -2168,12 +2168,30 @@ def _tab_criacao_portfolio(status: dict) -> None:
     with m8:
         card_metrica("Benchmark", str(metrics.get("benchmark", "—")))
 
-    use_col, info_col = st.columns([1, 3])
+    use_col, save_col, info_col = st.columns([1, 1, 2])
     with use_col:
         if st.button("💾 Usar na Avaliação de Portfólio", type="primary",
                      key="us_create_save_model"):
             st.session_state["us_portfolio_model"] = holdings.copy()
             st.success("Carteira-modelo enviada para Avaliação de Portfólio.")
+    with save_col:
+        # Mesma decisão que "Salvar portfólio padrão" na B3: sem persistir, o
+        # Dashboard Geral não tem como exibir a carteira americana entre reruns.
+        if st.button("⭐ Salvar como carteira padrão", key="us_create_persist_model"):
+            try:
+                from core.us_portfolio_model import save_us_portfolio_model
+                model_id = save_us_portfolio_model(
+                    holdings.to_dict("records"),
+                    params=result.get("params") or {},
+                    metrics=metrics,
+                    name=f"Portfolio EUA Modelo {pd.Timestamp.today().year}",
+                )
+                st.success(
+                    "Carteira padrão americana salva — aparece no Dashboard Geral. "
+                    f"ID: {model_id[:8]}"
+                )
+            except Exception as exc:  # noqa: BLE001 - fronteira de persistência
+                st.error(f"Não foi possível salvar a carteira padrão: {exc}")
     with info_col:
         st.info(
             f"{len(holdings)} ativos · aporte mensal simulado de "

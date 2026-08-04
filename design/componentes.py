@@ -13,6 +13,7 @@ Uso padrão em cada página:
 from html import escape
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ══════════════════════════════════════════════════════════════════
 # Estrutura de página
@@ -58,6 +59,112 @@ def container_pagina(
         f"{subtitle_html}</div>{meta_group}</section>",
         unsafe_allow_html=True,
     )
+
+
+# ══════════════════════════════════════════════════════════════════
+# Sub-navegação de seções (abas)
+# ══════════════════════════════════════════════════════════════════
+
+# Prefixo obrigatório da key. O CSS em design/tema.py estiliza a
+# sub-navegação por [class*="st-key-appnav_"]; sem o prefixo o widget
+# renderiza com o visual cru do Streamlit.
+NAV_KEY_PREFIX = "appnav_"
+
+
+def rolar_para_topo() -> None:
+    """Reposiciona a página no topo.
+
+    O Streamlit preserva a posição de rolagem entre reruns e o ``st.chat_input``
+    no fim das abas com IA recebe foco ao montar — o navegador então rola o
+    rodapé para dentro da tela. Sem isto, "Análises" e "Cartão de Crédito"
+    abrem no fim da página, longe do conteúdo que o usuário pediu.
+
+    O reposicionamento é repetido por alguns frames de propósito: este iframe
+    carrega antes do restante da aba, e uma única chamada seria desfeita pelo
+    foco que chega depois.
+    """
+    components.html(
+        """
+        <script>
+        (function () {
+            const doc = window.parent && window.parent.document;
+            if (!doc) { return; }
+            function aoTopo() {
+                const alvos = [
+                    doc.querySelector('section.stMain'),
+                    doc.querySelector('[data-testid="stMain"]'),
+                    doc.querySelector('section.main'),
+                    doc.scrollingElement,
+                ];
+                for (const alvo of alvos) {
+                    if (alvo && typeof alvo.scrollTo === 'function') {
+                        alvo.scrollTo({top: 0, behavior: 'auto'});
+                    }
+                }
+            }
+            aoTopo();
+            requestAnimationFrame(aoTopo);
+            [60, 160, 320, 600].forEach(function (ms) { setTimeout(aoTopo, ms); });
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def abas_secao(
+    opcoes: list[str],
+    *,
+    key: str,
+    default: str | None = None,
+    rolar_ao_trocar: bool = True,
+    label: str = "Seção",
+) -> str:
+    """
+    Sub-navegação padrão do app, com a mesma aparência das abas nativas
+    (``st.tabs``) usadas em Investimentos.
+
+    Por que não ``st.tabs`` direto: ele não expõe ``key`` nem ``on_change``.
+    Sem ``key``, qualquer widget interno que dispare rerun (um filtro numa
+    tabela, por exemplo) devolve o usuário à primeira aba; sem ``on_change``,
+    não há como reposicionar a página no topo ao trocar de seção. O
+    ``segmented_control`` tem os dois e recebe o visual de aba via CSS.
+
+    Args:
+        opcoes:          Rótulos das seções, na ordem de exibição.
+        key:             Sufixo da chave em session_state (o prefixo é fixo).
+        default:         Seção inicial; ``opcoes[0]`` quando omitido.
+        rolar_ao_trocar: Rola para o topo ao mudar de seção.
+        label:           Rótulo acessível (visualmente colapsado).
+
+    Returns:
+        O rótulo da seção ativa — sempre um item de ``opcoes``.
+    """
+    if not opcoes:
+        raise ValueError("abas_secao exige pelo menos uma opção.")
+
+    widget_key = f"{NAV_KEY_PREFIX}{key}"
+    flag_key = f"_{widget_key}_rolar"
+
+    def _marcar_troca() -> None:
+        st.session_state[flag_key] = True
+
+    escolhida = st.segmented_control(
+        label,
+        opcoes,
+        key=widget_key,
+        default=default or opcoes[0],
+        label_visibility="collapsed",
+        on_change=_marcar_troca if rolar_ao_trocar else None,
+    ) or (default or opcoes[0])
+
+    # pop e não get: a rolagem vale para o rerun da troca, não para os
+    # seguintes — senão qualquer interação dentro da aba jogaria o usuário
+    # de volta ao topo.
+    if st.session_state.pop(flag_key, False):
+        rolar_para_topo()
+
+    return escolhida
 
 
 def secao_titulo(titulo: str, icone: str = "", subtitulo: str = "") -> None:

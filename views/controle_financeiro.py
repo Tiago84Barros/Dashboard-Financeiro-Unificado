@@ -44,7 +44,12 @@ from core.controle import (
 from core.card_categorization import categorias_disponiveis, REVIEW_SENTINEL
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
-from design.componentes import badge_status, barra_progresso, container_pagina
+from design.componentes import (
+    abas_secao,
+    badge_status,
+    barra_progresso,
+    container_pagina,
+)
 
 # Chat "Analista Financeiro Pessoal" (aba Análises) — importado localmente na
 # função de render para não pesar no carregamento das demais abas/reruns.
@@ -3127,17 +3132,12 @@ def render() -> None:
         gastos_cartao["todos"].extend(_dados_a)
 
     # ── Sub-navegação (persistente entre reruns) ──────────────────────────────
-    # st.tabs não expõe `key` e perde a aba ativa quando um widget interno
-    # (ex.: filtro de categoria em Tabelas) dispara rerun — voltava sempre para
-    # Dashboard. O segmented_control guarda a seção em session_state e sobrevive.
+    # Componente compartilhado: mesmo visual das abas de Investimentos, com
+    # estado preservado (st.tabs não expõe `key` e voltava para Dashboard quando
+    # um filtro interno disparava rerun) e rolagem ao topo na troca de seção —
+    # sem ela, Análises e Cartão de Crédito abriam no rodapé, junto do chat.
     _SECOES = ["📊  Dashboard", "📈  Análises", "🧾  Tabelas", "💳  Cartão de Crédito"]
-    secao = st.segmented_control(
-        "Seção",
-        _SECOES,
-        key="cf_secao_ativa",
-        default=_SECOES[0],
-        label_visibility="collapsed",
-    ) or _SECOES[0]
+    secao = abas_secao(_SECOES, key="cf_secao_ativa", default=_SECOES[0])
 
     if secao == _SECOES[1]:
         _tab_analises(d, historico, hist_anual, gastos_cartao, investido_mes,

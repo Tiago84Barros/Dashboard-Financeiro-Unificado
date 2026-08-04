@@ -1,11 +1,14 @@
 """
-views/dashboard_geral.py  — v3
+views/dashboard_geral.py  — v4
 Visão Geral consolidada: dados reais do DB, 3 domínios.
 
-Layout:
-  Row 1 — 2 cards: Fluxo Real do Mês · Investimentos
-  Row 2 — Histórico 6 meses (Receitas × Despesas × Investimentos)
-  Row 3 — Distribuição de despesas (ano) | Comparativo Ano a Ano
+Ordem das seções (fatos primeiro, referências depois):
+  1 — Visão executiva: fluxo do mês · carteira investida
+  2 — Resumo por área (Controle Financeiro · Investimentos · B3 · EUA · FIIs)
+  3 — Raio X do portfólio investido
+  4 — Histórico mensal (6 meses)
+  5 — Despesas por categoria | Comparativo Ano a Ano
+  6 — Sugestões de carteira (B3 · EUA · FIIs) — sempre por último
 """
 from datetime import date as _date
 from datetime import datetime as _datetime
@@ -24,6 +27,7 @@ from core.investimentos import (
     get_cashflow_mensal,
     get_evolucao_patrimonial,
 )
+from core.us_portfolio_model import load_active_us_portfolio_model
 from core.utils import fmt_moeda, fmt_percentual
 
 # Carteira-modelo de FIIs — recomputada com a mesma lógica da página Seleção de FIIs.
@@ -853,6 +857,56 @@ def _resumo_modelo_b3(modelo: dict) -> tuple[str, str, list[tuple[str, str, str]
     )
 
 
+def _resumo_modelo_us(modelo: dict) -> tuple[str, str, list[tuple[str, str, str]]]:
+    """Resumo da carteira americana — mesmo contrato de ``_resumo_modelo_b3``."""
+    items = modelo.get("items") or []
+    if not items:
+        return (
+            "Sem carteira",
+            _COR_NEUTRO,
+            [
+                ("Empresas selecionadas", "0", _COR_NEUTRO),
+                ("Score de entrada médio", "N/D", _COR_NEUTRO),
+                ("Referência ativa", "Não salva", _COR_ALERTA),
+            ],
+        )
+
+    status = "Revisar" if modelo.get("is_stale") else "Ativa"
+    status_cor = _COR_ALERTA if modelo.get("is_stale") else _COR_FLUXO
+    ano = modelo.get("ano_compra") or "ciclo atual"
+    metrics = modelo.get("metrics_json") or {}
+    entrada = metrics.get("entry_score")
+    if entrada is None:
+        entrada = _media_ponderada(items, "entry_score")
+
+    return (
+        status,
+        status_cor,
+        [
+            ("Empresas selecionadas", str(len(items)), _COR_PATRIMONIO),
+            ("Score de entrada médio",
+             f"{float(entrada):.1f}" if entrada is not None else "N/D",
+             _COR_FLUXO),
+            ("Ano/ciclo de compra", str(ano), _COR_NEUTRO),
+        ],
+    )
+
+
+def _media_ponderada(items: list[dict], campo: str) -> float | None:
+    """Média de ``campo`` ponderada pelo peso; None quando não há valor medido."""
+    pares = [
+        (float(i.get(campo) or 0.0), float(i.get("weight") or 0.0))
+        for i in items
+        if i.get(campo) is not None
+    ]
+    peso_total = sum(p for _, p in pares if p > 0)
+    if not pares:
+        return None
+    if peso_total <= 0:
+        return sum(v for v, _ in pares) / len(pares)
+    return sum(v * p for v, p in pares) / peso_total
+
+
 def _resumo_fiis(port: list[dict], salvo: bool) -> tuple[str, str, list[tuple[str, str, str]]]:
     if not port:
         return (
@@ -889,6 +943,7 @@ def _secao_resumo_modulos(
     aportado_ano: float,
     carteira: dict,
     modelo_b3: dict,
+    modelo_us: dict,
     fiis_port: list[dict],
     fiis_salvo: bool,
 ) -> None:
@@ -896,6 +951,7 @@ def _secao_resumo_modulos(
     taxa_poupanca = (saldo_mes / receitas_mes * 100) if receitas_mes > 0 else 0.0
     rentab = float(carteira.get("rentabilidade_total_pct") or 0)
     b3_status, b3_status_cor, b3_linhas = _resumo_modelo_b3(modelo_b3)
+    us_status, us_status_cor, us_linhas = _resumo_modelo_us(modelo_us)
     fii_status, fii_status_cor, fii_linhas = _resumo_fiis(fiis_port, fiis_salvo)
 
     _titulo_secao(
@@ -962,6 +1018,23 @@ def _secao_resumo_modulos(
         st.markdown(
             _modulo_card(
                 "4",
+                "Empresas Americanas",
+                "Carteira modelo de ações dos EUA definida na criação de portfólio.",
+                us_status,
+                us_status_cor,
+                us_linhas,
+                _COR_INVEST,
+            ),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col5, _col6 = st.columns(2, gap="medium")
+    with col5:
+        st.markdown(
+            _modulo_card(
+                "5",
                 "Seleção de FIIs",
                 "Carteira modelo de fundos imobiliários com diversificação por tipo.",
                 fii_status,
@@ -1065,6 +1138,138 @@ def _secao_raio_x_portfolio(carteira: dict, evolucao: dict, classes: list) -> No
     st.markdown("<br>", unsafe_allow_html=True)
 
 
+# Teto de tickers exibidos por carteira. Antes o corte era em 8 SEM aviso: uma
+# carteira de 20 empresas aparecia com 8 no dashboard e parecia desatualizada
+# perante a tela de origem. Agora o corte é alto e sempre declarado.
+_MAX_TICKERS_VISIVEIS = 30
+_MAX_PESOS_VISIVEIS = 8
+# Acima disto o modelo salvo deixa de ser tratado como referência corrente.
+_DIAS_MODELO_ANTIGO = 180
+
+
+def _idade_modelo(modelo: dict) -> tuple[str, int | None]:
+    """(data de criação formatada, idade em dias). ('', None) sem data no modelo."""
+    criado = modelo.get("created_at")
+    if not hasattr(criado, "strftime"):
+        return "", None
+    criado_data = criado.date() if hasattr(criado, "date") else criado
+    hoje = _datetime.now(ZoneInfo("America/Cayenne")).date()
+    return criado.strftime("%d/%m/%Y"), (hoje - criado_data).days
+
+
+def _card_lista_html(titulo: str, cor: str, corpo: str, rodape: str) -> str:
+    return (
+        '<div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;'
+        'padding:16px 18px;">'
+        f'<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;'
+        f'color:{cor};font-weight:800;margin-bottom:10px;">{escape(titulo)}</div>'
+        f'{corpo}'
+        + (f'<div style="font-size:0.76rem;color:#9CA3AF;margin-top:10px;">{escape(rodape)}</div>'
+           if rodape else "")
+        + '</div>'
+    )
+
+
+def _secao_carteira_modelo(
+    modelo: dict,
+    *,
+    icone: str,
+    titulo: str,
+    subtitulo: str,
+    cor: str,
+    origem: str,
+    metricas: list[tuple[str, str, str, str]],
+    nota: str,
+    chave: str,
+    invalidar_cache,
+) -> None:
+    """Renderiza uma carteira-modelo salva (B3 ou EUA) no mesmo layout.
+
+    B3 e Estados Unidos só diferem nas quatro métricas do topo e no texto; tudo
+    o mais — frescor, lista completa de empresas, pesos e recarga — é idêntico
+    e vive aqui para não divergir com o tempo.
+    """
+    items = modelo.get("items") or []
+    if not items:
+        return
+
+    criado_txt, idade_dias = _idade_modelo(modelo)
+    _titulo_secao(icone, titulo, subtitulo, cor)
+
+    if modelo.get("is_stale"):
+        versao_salva = (modelo.get("params_json") or {}).get("score_version") or "anterior"
+        st.warning(
+            f"Esta carteira foi criada com uma metodologia anterior "
+            f"(score {versao_salva} × atual {modelo.get('current_score_version')}) e "
+            f"está marcada como desatualizada. Recalcule-a em {origem} antes de "
+            f"usá-la como referência."
+        )
+    elif idade_dias is not None and idade_dias > _DIAS_MODELO_ANTIGO:
+        st.info(
+            f"A carteira salva tem {idade_dias} dias ({criado_txt}). Os "
+            f"fundamentos das empresas mudam a cada balanço — refaça a seleção "
+            f"em {origem} para reavaliar a lista.",
+            icon="🕗",
+        )
+
+    col_frescor, col_acao = st.columns([3, 1], vertical_alignment="center")
+    with col_frescor:
+        idade_txt = (f" · há {idade_dias} dia{'s' if idade_dias != 1 else ''}"
+                     if idade_dias is not None else "")
+        st.caption(
+            f"Fonte: carteira salva em {origem}"
+            + (f" · atualizada em {criado_txt}{idade_txt}" if criado_txt else "")
+            + f" · {len(items)} empresas"
+        )
+    with col_acao:
+        if st.button("🔄 Recarregar", key=f"dg_reload_{chave}",
+                     help="Invalida o cache de 5 minutos e relê a carteira no banco.",
+                     width="stretch"):
+            invalidar_cache()
+            st.rerun()
+
+    colunas = st.columns(4, gap="small")
+    for coluna, (label, valor, detalhe, cor_metrica) in zip(colunas, metricas):
+        with coluna:
+            st.markdown(_mini_metric(label, valor, detalhe, cor_metrica),
+                        unsafe_allow_html=True)
+
+    tickers_todos = [str(i.get("ticker") or i.get("symbol") or "") for i in items]
+    visiveis = tickers_todos[:_MAX_TICKERS_VISIVEIS]
+    ocultos = len(tickers_todos) - len(visiveis)
+    lista_html = (
+        '<div style="font-size:1.05rem;font-weight:850;color:#E2E8F0;line-height:1.55;">'
+        + escape(", ".join(visiveis))
+        + (f' <span style="color:#9CA3AF;font-weight:700;">+{ocultos} outras</span>'
+           if ocultos > 0 else "")
+        + "</div>"
+    )
+
+    c1, c2 = st.columns([1.2, 0.8], gap="medium")
+    with c1:
+        st.markdown(
+            _card_lista_html("Empresas selecionadas", _COR_PATRIMONIO, lista_html, nota),
+            unsafe_allow_html=True,
+        )
+    with c2:
+        rows = ""
+        for item in items[:_MAX_PESOS_VISIVEIS]:
+            rotulo = f"{item.get('ticker') or item.get('symbol')} · {str(item.get('nome') or '')[:18]}"
+            rows += _linha_kv(
+                escape(rotulo),
+                f"{float(item.get('weight') or 0) * 100:.1f}%",
+                _COR_FLUXO,
+            )
+        rodape = (f"{_MAX_PESOS_VISIVEIS} maiores pesos de {len(items)} empresas."
+                  if len(items) > _MAX_PESOS_VISIVEIS else "")
+        st.markdown(
+            _card_lista_html("Pesos sugeridos", _COR_FLUXO, rows, rodape),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+
 def _secao_portfolio_modelo_b3(modelo: dict) -> None:
     items = modelo.get("items") or []
     if not items:
@@ -1077,71 +1282,66 @@ def _secao_portfolio_modelo_b3(modelo: dict) -> None:
         setor = item.get("setor") or "Sem setor"
         setores[setor] = setores.get(setor, 0.0) + float(item.get("weight") or 0)
     top_setor = max(setores.items(), key=lambda x: x[1]) if setores else ("Sem setor", 0.0)
-    top_items = items[:8]
-    tickers = ", ".join(i["ticker"] for i in top_items)
-    criado = modelo.get("created_at")
-    criado_txt = criado.strftime("%d/%m/%Y") if hasattr(criado, "strftime") else ""
+    criado_txt, _ = _idade_modelo(modelo)
 
-    _titulo_secao(
-        "🎯", "Portfólio B3 padrão",
-        "Carteira modelo criada na seção Empresas B3 e definida pelo usuário", _COR_PATRIMONIO,
+    _secao_carteira_modelo(
+        modelo,
+        icone="🎯",
+        titulo="Portfólio B3 padrão",
+        subtitulo="Carteira modelo criada na seção Empresas B3 e definida pelo usuário",
+        cor=_COR_PATRIMONIO,
+        origem="Empresas B3",
+        metricas=[
+            ("Empresas", str(len(items)), f"Para compra em {ano}", _COR_PATRIMONIO),
+            ("Score médio", f"{float(metrics.get('score_medio') or 0):.2f}",
+             "Média das selecionadas", _COR_FLUXO),
+            ("Setor líder", f"{top_setor[1] * 100:.1f}%", str(top_setor[0])[:34], _COR_ALERTA),
+            ("Criado", criado_txt or "Ativo", "Modelo salvo no banco", _COR_INVEST),
+        ],
+        nota="Substitui versões anteriores e vira a referência padrão de investimento B3.",
+        chave="b3",
+        invalidar_cache=load_active_b3_portfolio_model.clear,
     )
-    if modelo.get("is_stale"):
-        st.warning(
-            "Esta carteira foi criada com uma metodologia anterior e está "
-            "marcada como desatualizada. Recalcule-a em Empresas B3 antes de "
-            "usá-la como referência."
-        )
 
-    m1, m2, m3, m4 = st.columns(4, gap="small")
-    with m1:
-        st.markdown(_mini_metric("Empresas", str(len(items)), f"Para compra em {ano}", _COR_PATRIMONIO), unsafe_allow_html=True)
-    with m2:
-        st.markdown(_mini_metric("Score médio", f"{float(metrics.get('score_medio') or 0):.2f}", "Média das selecionadas", _COR_FLUXO), unsafe_allow_html=True)
-    with m3:
-        st.markdown(_mini_metric("Setor líder", f"{top_setor[1] * 100:.1f}%", str(top_setor[0])[:34], _COR_ALERTA), unsafe_allow_html=True)
-    with m4:
-        st.markdown(_mini_metric("Criado", criado_txt or "Ativo", "Modelo salvo no banco", _COR_INVEST), unsafe_allow_html=True)
 
-    c1, c2 = st.columns([1.2, 0.8], gap="medium")
-    with c1:
-        st.markdown(
-            f"""
-            <div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;
-                        padding:16px 18px;">
-                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
-                            color:#4A9EFF;font-weight:800;margin-bottom:10px;">Empresas selecionadas</div>
-                <div style="font-size:1.05rem;font-weight:850;color:#E2E8F0;line-height:1.55;">
-                    {tickers}
-                </div>
-                <div style="font-size:0.76rem;color:#9CA3AF;margin-top:10px;">
-                    Substitui versões anteriores e vira a referência padrão de investimento B3.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with c2:
-        rows = ""
-        for item in top_items[:5]:
-            rows += _linha_kv(
-                f"{item['ticker']} · {str(item.get('nome') or '')[:18]}",
-                f"{float(item.get('weight') or 0) * 100:.1f}%",
-                _COR_FLUXO,
-            )
-        st.markdown(
-            f"""
-            <div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;
-                        padding:16px 18px;">
-                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
-                            color:#00C896;font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>
-                {rows}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+def _secao_portfolio_modelo_us(modelo: dict) -> None:
+    """Carteira americana salva — mesmo layout e mesmo componente da B3."""
+    items = modelo.get("items") or []
+    if not items:
+        return
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    metrics = modelo.get("metrics_json") or {}
+    ano = modelo.get("ano_compra") or "próximo ciclo"
+    setores: dict[str, float] = {}
+    for item in items:
+        setor = item.get("setor") or "Sem setor"
+        setores[setor] = setores.get(setor, 0.0) + float(item.get("weight") or 0)
+    top_setor = max(setores.items(), key=lambda x: x[1]) if setores else ("Sem setor", 0.0)
+    entrada = metrics.get("entry_score")
+    if entrada is None:
+        entrada = _media_ponderada(items, "entry_score")
+    criado_txt, _ = _idade_modelo(modelo)
+
+    _secao_carteira_modelo(
+        modelo,
+        icone="🌎",
+        titulo="Portfólio EUA padrão",
+        subtitulo="Carteira modelo criada na seção Empresas Americanas e definida pelo usuário",
+        cor=_COR_INVEST,
+        origem="Empresas Americanas",
+        metricas=[
+            ("Empresas", str(len(items)), f"Para compra em {ano}", _COR_PATRIMONIO),
+            ("Score de entrada",
+             f"{float(entrada):.1f}" if entrada is not None else "N/D",
+             "Média ponderada pelo peso", _COR_FLUXO),
+            ("Setor líder", f"{top_setor[1] * 100:.1f}%", str(top_setor[0])[:34], _COR_ALERTA),
+            ("Criado", criado_txt or "Ativo", "Modelo salvo no banco", _COR_INVEST),
+        ],
+        nota="Seleção SEC/US GAAP por líderes de indústria, com tetos por ativo, "
+             "indústria e setor.",
+        chave="us",
+        invalidar_cache=load_active_us_portfolio_model.clear,
+    )
 
 
 def _fiis_carteira_modelo() -> tuple[list[dict], bool]:
@@ -1271,6 +1471,26 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
     st.markdown("<br>", unsafe_allow_html=True)
 
 
+def _secao_sugestoes_carteira(
+    modelo_b3: dict,
+    modelo_us: dict,
+    fiis_port: list[dict],
+    fiis_salvo: bool,
+) -> None:
+    """Carteiras-modelo (B3 · EUA · FIIs) — último bloco do Dashboard Geral."""
+    if not (modelo_b3.get("items") or modelo_us.get("items") or fiis_port):
+        return
+
+    st.markdown(
+        '<div class="dg-shell"><div style="border-top:1px solid #1E2533;'
+        'margin:26px 0 6px;"></div></div>',
+        unsafe_allow_html=True,
+    )
+    _secao_portfolio_modelo_b3(modelo_b3)
+    _secao_portfolio_modelo_us(modelo_us)
+    _secao_fiis_sugeridos(fiis_port, fiis_salvo)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # GRÁFICOS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1368,14 +1588,32 @@ def _fig_yoy(por_ano: dict, anos: list) -> go.Figure:
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _load_decision_models() -> tuple[dict, list[dict], bool]:
+def _load_decision_models() -> tuple[dict, dict, list[dict], bool]:
     """Carrega modelos persistidos somente quando o app usa dados reais."""
     if settings.MOCK_MODE:
-        return {}, [], False
+        return {}, {}, [], False
 
     modelo_b3 = load_active_b3_portfolio_model()
+    modelo_us = _carteira_modelo_us()
     fiis_port, fiis_salvo = _fiis_carteira_modelo()
-    return modelo_b3, fiis_port, fiis_salvo
+    return modelo_b3, modelo_us, fiis_port, fiis_salvo
+
+
+def _carteira_modelo_us() -> dict:
+    """Carteira americana salva; falha de banco não pode derrubar o dashboard.
+
+    Mesmo contrato do modelo B3 (``items``/``is_stale``/``created_at``). Vazio
+    enquanto o usuário não salvar uma carteira em Empresas Americanas — a seção
+    simplesmente não aparece, como já ocorre com a B3.
+    """
+    try:
+        return load_active_us_portfolio_model() or {}
+    except Exception:  # noqa: BLE001 - fronteira de isolamento entre módulos
+        st.warning(
+            "⚠️ Não foi possível carregar a carteira-modelo americana salva. "
+            "As demais seções do dashboard continuam válidas."
+        )
+        return {}
 
 
 def render() -> None:
@@ -1392,7 +1630,7 @@ def render() -> None:
     carteira      = get_carteira()
     evolucao_inv  = get_evolucao_patrimonial()
     # O modo de demonstração não deve consultar nem combinar carteiras persistidas.
-    modelo_b3, fiis_port, fiis_salvo = _load_decision_models()
+    modelo_b3, modelo_us, fiis_port, fiis_salvo = _load_decision_models()
     ano_atual     = hoje.year
     cats_ano      = get_gastos_categoria_anual(ano_atual)
 
@@ -1475,29 +1713,18 @@ def render() -> None:
         aportado_ano,
         carteira,
         modelo_b3,
+        modelo_us,
         fiis_port,
         fiis_salvo,
     )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 3 — Portfólio B3 modelo salvo pelo usuário + FIIs sugeridos
-    # ══════════════════════════════════════════════════════════════════════════
-    if modelo_b3.get("items") or fiis_port:
-        _titulo_secao(
-            "🎯", "Decisões de alocação",
-            "Modelos que conectam análise de empresas e seleção de FIIs à carteira",
-            _COR_ALERTA,
-        )
-        _secao_portfolio_modelo_b3(modelo_b3)
-        _secao_fiis_sugeridos(fiis_port, fiis_salvo)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 4 — Raio X do portfólio investido
+    # BLOCO 3 — Raio X do portfólio investido
     # ══════════════════════════════════════════════════════════════════════════
     _secao_raio_x_portfolio(carteira, evolucao_inv, classes)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 5 — Histórico 6 meses
+    # BLOCO 4 — Histórico 6 meses
     # ══════════════════════════════════════════════════════════════════════════
     _titulo_secao(
         "💹", "Histórico mensal (6 meses)",
@@ -1515,7 +1742,7 @@ def render() -> None:
             st.caption("Sem histórico disponível.")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 6 — Distribuição de despesas | Comparativo Ano a Ano
+    # BLOCO 5 — Distribuição de despesas | Comparativo Ano a Ano
     # ══════════════════════════════════════════════════════════════════════════
     col_cats, col_yoy = st.columns(2, gap="medium")
 
@@ -1580,3 +1807,11 @@ def render() -> None:
                 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
             else:
                 st.caption("Sem histórico anual disponível.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BLOCO 6 — Sugestões de carteira (fecham o dashboard)
+    # ══════════════════════════════════════════════════════════════════════════
+    # Ficam por último de propósito: o que está acima são FATOS do período
+    # (caixa, carteira investida, histórico); o que vem aqui são REFERÊNCIAS
+    # analíticas que o usuário salvou nas telas de seleção.
+    _secao_sugestoes_carteira(modelo_b3, modelo_us, fiis_port, fiis_salvo)
