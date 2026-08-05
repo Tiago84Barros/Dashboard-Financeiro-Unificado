@@ -33,7 +33,6 @@ from core.fii_methodology import (
     evaluate_publication_gate,
     score_fiis_by_type,
 )
-from core.fii_portfolio_monitor import build_fii_portfolio_monitor
 from core.fii_portfolio_v4 import (
     LIVE_PORTFOLIO_STRATEGY_ID,
     PortfolioPolicy,
@@ -46,7 +45,7 @@ from core.llm_context_fii import build_fii_chat_context
 from core.llm_fii import chat_com_fiis
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
-from design.componentes import container_pagina
+from design.componentes import container_pagina, rolar_para_topo
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
 _TIPO_META = {
@@ -260,19 +259,18 @@ def render(show_header: bool = True) -> None:
         "Score", ascending=False
     ).reset_index(drop=True)
     health_metrics = _fii_data_health_metrics(df, ranked, inputs, scored_v4, gate)
-    # O aviso do gate continua sempre visível e colorido — é um freio, não um
-    # detalhe. O que desceu para o expander foi o diagnóstico numérico que o
-    # acompanhava, e que ocupava quatro linhas em todas as abas.
+    # O banner de "universo bruto em diligência" saiu: ele repetia, em quatro
+    # linhas e em TODAS as abas, o que o rótulo da própria aba já diz — que
+    # alterna entre "Seleção validada" e "Diligência" conforme o mesmo gate.
+    # Na Carteira-modelo era pior que redundante: o texto existia para avisar
+    # que NÃO se aplicava ali.
+    #
+    # O sinal não se perdeu. O estado do gate continua no rótulo da aba, e os
+    # números que o sustentam seguem em "Qualidade dos dados", logo abaixo.
+    # A aprovação continua sendo anunciada, porque aí é notícia, não rótulo.
     if gate.can_publish_recommendation:
         st.success("Cobertura, confiança e validação atendidas — "
                    "apta à publicação como Carteira Modelo.")
-    else:
-        st.warning(
-            "Universo bruto em diligência: a lista completa ainda não atende ao "
-            "gate de publicação. Isso não bloqueia automaticamente a Carteira-modelo, "
-            "que usa somente o subconjunto elegível e aplica gates próprios. "
-            "Os números do universo estão em “Qualidade dos dados”, logo abaixo."
-        )
     _render_data_health_summary(health_metrics, gate)
 
     # Abas por botão (permitem trocar de aba programaticamente — ex.: card → Busca).
@@ -284,8 +282,15 @@ def render(show_header: bool = True) -> None:
             if st.button(lab, width="stretch", key=f"fii_tab{i}",
                          type="primary" if active == i else "secondary"):
                 st.session_state["fii_active_tab"] = i
+                st.session_state["_fii_rolar_topo"] = True
                 st.rerun()
     st.markdown("<hr style='margin:4px 0 16px;border-color:#1E2533;'>", unsafe_allow_html=True)
+    # Carteira-modelo abria no rodapé: o st.chat_input do assistente recebe foco
+    # ao montar e o navegador rola até ele. Mesmo tratamento do trilho de abas
+    # das vitrines B3/EUA. pop e não get: a rolagem vale para o rerun da troca —
+    # mantê-la jogaria o usuário ao topo a cada mexida num filtro da aba.
+    if st.session_state.pop("_fii_rolar_topo", False):
+        rolar_para_topo()
 
     if active == 0:
         _tab_ranking(df, ranked)
@@ -300,41 +305,6 @@ def render(show_header: bool = True) -> None:
 
 
 # ── Tab 1: Ranking (cards por tipo) ───────────────────────────────────────────
-
-def _score_cls(score) -> str:
-    if score is None or pd.isna(score):
-        return "fii-sc-mid"
-    return "fii-sc-high" if score >= 66 else "fii-sc-mid" if score >= 33 else "fii-sc-low"
-
-
-def _fii_card_html(row: pd.Series) -> str:
-    tk = escape(str(row["Ticker"]))
-    nome = escape(str(row.get("Nome") or tk)[:34], quote=True)
-    seg = escape(str(row.get("Segmento") or "—")[:30])
-    score = row.get("Score")
-    dy, pvp = row.get("DY_12m"), row.get("P/VP")
-    confidence, coverage = row.get("Confiança"), row.get("Cobertura")
-    _, _, color = _TIPO_META.get(str(row.get("Tipo") or "").lower(), _TIPO_OUTROS)
-    sc_txt = f"{score:.0f}" if pd.notna(score) else "—"
-    dy_txt = f"{dy*100:.1f}%" if pd.notna(dy) else "—"
-    pvp_txt = f"{pvp:.2f}" if pd.notna(pvp) else "—"
-    conf_txt = f"{confidence:.0%}" if pd.notna(confidence) else "—"
-    cov_txt = f"{coverage:.0%}" if pd.notna(coverage) else "—"
-    return (
-        f'<div class="fii-card" style="border-top:3px solid {color};">'
-        f'  <div class="fii-top"><span class="fii-tk">{tk}</span>'
-        f'    <span class="fii-score {_score_cls(score)}">{sc_txt}</span></div>'
-        f'  <div class="fii-nome" title="{nome}">{nome}</div>'
-        f'  <div class="fii-seg">{seg}</div>'
-        f'  <div class="fii-mini">'
-        f'    <div><span class="lbl">DY 12m</span><span class="val">{dy_txt}</span></div>'
-        f'    <div><span class="lbl">P/VP</span><span class="val">{pvp_txt}</span></div>'
-        f'    <div><span class="lbl">Conf.</span><span class="val">{conf_txt}</span></div>'
-        f'    <div><span class="lbl">Cob.</span><span class="val">{cov_txt}</span></div>'
-        f'  </div>'
-        f'</div>'
-    )
-
 
 def _kpi_html(label: str, value, sub: str | None = None,
               sub_color: str = "#00C896", accent: str = "#00C896") -> str:
@@ -1046,44 +1016,36 @@ def _quality_portfolio_view(pf: pd.DataFrame) -> pd.DataFrame:
 
 
 def _integrated_preference_controls() -> dict:
-    """Controles globais da seleção integrada; todos afetam a mesma carteira."""
-    st.markdown("**Carteira e elegibilidade**")
-    c1, c2, c3, c4 = st.columns(4)
-    n_assets = c1.slider("Nº máximo de FIIs", 8, 20, 12, key="fii_pref_integrated_assets")
-    max_asset = c2.slider("Máx. por FII (%)", 5, 25, 15, 1,
-                          key="fii_pref_integrated_max_asset") / 100
-    min_liquidity = c3.slider("Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, .5,
-                              key="fii_pref_integrated_liquidity") * 1e6
-    min_history = c4.slider("Histórico mín. (meses)", 0, 60, 24, 6,
-                            key="fii_pref_integrated_history")
+    """Controles globais da seleção integrada; todos afetam a mesma carteira.
 
-    c5, c6, c7, c8 = st.columns(4)
-    min_dy = c5.slider("DY 12m mín. (%)", 0.0, 20.0, 8.0, .5,
-                       key="fii_pref_integrated_dy") / 100
-    max_drawdown = c6.slider("Drawdown máx. tolerado (%)", 10, 60, 35, 5,
-                             key="fii_pref_integrated_drawdown") / 100
-    correlation_penalty = c7.slider(
-        "Penalização por correlação", 0.0, .30, .12, .02,
-        key="fii_pref_integrated_correlation",
-        help="Reduz pesos de combinações que historicamente oscilaram juntas.")
-    pvp_below_one = c8.checkbox("Exigir P/VP abaixo de 1", value=False,
-                                key="fii_pref_integrated_pvp")
+    Tudo recolhido por padrão, como os painéis de apoio da seção Empresas B3:
+    os valores default já produzem a carteira, e quem entra aqui quer ver o
+    resultado primeiro. Os controles continuam a um clique — nenhum parâmetro,
+    limite ou filtro mudou.
+    """
+    with st.expander("⚙️ Carteira e elegibilidade", expanded=False):
+        c1, c2, c3, c4 = st.columns(4)
+        n_assets = c1.slider("Nº máximo de FIIs", 8, 20, 12, key="fii_pref_integrated_assets")
+        max_asset = c2.slider("Máx. por FII (%)", 5, 25, 15, 1,
+                              key="fii_pref_integrated_max_asset") / 100
+        min_liquidity = c3.slider("Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, .5,
+                                  key="fii_pref_integrated_liquidity") * 1e6
+        min_history = c4.slider("Histórico mín. (meses)", 0, 60, 24, 6,
+                                key="fii_pref_integrated_history")
 
-    st.markdown("**Cenário macroeconômico e estresse**")
-    m1, m2, m3 = st.columns(3)
-    selic = m1.number_input("Selic (%)", 0.0, 30.0, 15.0, .25,
-                            key="fii_pref_integrated_selic")
-    ipca = m2.number_input("IPCA (%)", -2.0, 20.0, 4.5, .25,
-                           key="fii_pref_integrated_ipca")
-    delta = m3.number_input("Δ Selic 12m (p.p.)", -15.0, 15.0, 0.0, .25,
-                            key="fii_pref_integrated_delta")
-    s1, s2 = st.columns(2)
-    vacancy_shock = s1.slider("Choque de vacância (%)", 0.0, 20.0, 8.0, 1.0,
-                              key="fii_pref_integrated_vacancy") / 100
-    credit_event = s2.slider("Eventos de crédito (%)", 0.0, 10.0, 3.0, .5,
-                             key="fii_pref_integrated_credit") / 100
+        c5, c6, c7, c8 = st.columns(4)
+        min_dy = c5.slider("DY 12m mín. (%)", 0.0, 20.0, 8.0, .5,
+                           key="fii_pref_integrated_dy") / 100
+        max_drawdown = c6.slider("Drawdown máx. tolerado (%)", 10, 60, 35, 5,
+                                 key="fii_pref_integrated_drawdown") / 100
+        correlation_penalty = c7.slider(
+            "Penalização por correlação", 0.0, .30, .12, .02,
+            key="fii_pref_integrated_correlation",
+            help="Reduz pesos de combinações que historicamente oscilaram juntas.")
+        pvp_below_one = c8.checkbox("Exigir P/VP abaixo de 1", value=False,
+                                    key="fii_pref_integrated_pvp")
 
-    with st.expander("Filtros patrimoniais opcionais para Tijolo/Híbridos"):
+        st.markdown("**Filtros patrimoniais opcionais para Tijolo/Híbridos**")
         g1, g2, g3 = st.columns(3)
         require_regions = g1.checkbox("Ao menos 2 regiões", value=False,
                                       key="fii_pref_integrated_regions")
@@ -1093,13 +1055,27 @@ def _integrated_preference_controls() -> dict:
                                             key="fii_pref_integrated_multicategory")
         st.caption("Quando ativados, dados patrimoniais ausentes reprovam o fundo; não viram zero.")
 
-    uncertainty_cap = st.slider(
-        "Incerteza ponderada máxima da carteira (%)", 20, 50, 35, 1,
-        key="fii_pref_integrated_uncertainty",
-        help="Limite matemático para construir uma carteira de diligência. "
-             "Não eleva a confiança dos FIIs nem libera recomendação definitiva; "
-             "o gate point-in-time continua independente.",
-    ) / 100
+        uncertainty_cap = st.slider(
+            "Incerteza ponderada máxima da carteira (%)", 20, 50, 35, 1,
+            key="fii_pref_integrated_uncertainty",
+            help="Limite matemático para construir uma carteira de diligência. "
+                 "Não eleva a confiança dos FIIs nem libera recomendação definitiva; "
+                 "o gate point-in-time continua independente.",
+        ) / 100
+
+    with st.expander("🌐 Cenário macroeconômico e estresse", expanded=False):
+        m1, m2, m3 = st.columns(3)
+        selic = m1.number_input("Selic (%)", 0.0, 30.0, 15.0, .25,
+                                key="fii_pref_integrated_selic")
+        ipca = m2.number_input("IPCA (%)", -2.0, 20.0, 4.5, .25,
+                               key="fii_pref_integrated_ipca")
+        delta = m3.number_input("Δ Selic 12m (p.p.)", -15.0, 15.0, 0.0, .25,
+                                key="fii_pref_integrated_delta")
+        s1, s2 = st.columns(2)
+        vacancy_shock = s1.slider("Choque de vacância (%)", 0.0, 20.0, 8.0, 1.0,
+                                  key="fii_pref_integrated_vacancy") / 100
+        credit_event = s2.slider("Eventos de crédito (%)", 0.0, 10.0, 3.0, .5,
+                                 key="fii_pref_integrated_credit") / 100
 
     return {
         "scenario": MacroScenario(
@@ -1339,26 +1315,6 @@ def _render_portfolio_table(slot, primary: pd.DataFrame | None,
     })
 
 
-def _render_grupo(tipo_key: str, grupo: pd.DataFrame) -> None:
-    """Cabeçalho do tipo + grade de cards (4 por linha), com botão Analisar."""
-    emoji, label, color = _TIPO_META.get(tipo_key, _TIPO_OUTROS)
-    st.markdown(
-        f'<div class="fii-hdr" style="border-color:{color}55;">'
-        f'<span>{emoji} {label}</span><span class="cnt">· {len(grupo)} FIIs</span></div>',
-        unsafe_allow_html=True)
-    grupo = grupo.reset_index(drop=True)
-    for i in range(0, len(grupo), 4):
-        cols = st.columns(4, gap="small")
-        for j, (_, row) in enumerate(grupo.iloc[i:i + 4].iterrows()):
-            with cols[j]:
-                st.markdown(_fii_card_html(row), unsafe_allow_html=True)
-                if st.button("Analisar 🔎", key=f"fii_an_{row['Ticker']}",
-                             width="stretch"):
-                    st.session_state["fii_sel_ticker"] = row["Ticker"]
-                    st.session_state["fii_active_tab"] = 1
-                    st.rerun()
-
-
 def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
     fora = len(df) - len(ranked)
     c1, c2, c3, c4 = st.columns([2, 1.3, 1, 1])
@@ -1380,48 +1336,30 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
         view = view[view["Tipo"] == tipo]
     view = view[(view["DY_12m"].fillna(0) * 100 >= dy_min) & (view["P/VP"].fillna(99) <= pvp_max)]
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.markdown(_kpi_html("FIIs no ranking", len(view), accent="#4A9EFF"),
-                unsafe_allow_html=True)
-    if not view.empty:
-        top = view.iloc[0]
-        k2.markdown(_kpi_html("🏆 Top", top["Ticker"], f"↑ {top['Score']:.0f} pts",
-                              accent="#F6C90E"), unsafe_allow_html=True)
-        k3.markdown(_kpi_html("DY 12m mediano", f"{view['DY_12m'].median()*100:.1f}%"),
-                    unsafe_allow_html=True)
-        k4.markdown(_kpi_html("P/VP mediano", f"{view['P/VP'].median():.2f}",
-                              accent="#B084F6"), unsafe_allow_html=True)
-
+    # Sem cards por FII e sem KPIs medianos: o objetivo desta aba é apresentar
+    # o universo existente. Mediana de DY e de P/VP sobre um recorte filtrado
+    # não descreve nem o mercado nem uma carteira — quem decide alocação é a
+    # Carteira-modelo, que tem os próprios números.
     if view.empty:
         st.warning("Nenhum FII atende aos filtros.")
     else:
-        tipo_lower = view["Tipo"].astype(str).str.lower()
-        vistos: set[str] = set()
-        for tk_tipo in _TIPO_ORDER:
-            grupo = view[tipo_lower == tk_tipo]
-            if not grupo.empty:
-                _render_grupo(tk_tipo, grupo)
-                vistos.add(tk_tipo)
-        resto = view[~tipo_lower.isin(vistos)]      # tipos None/desconhecidos
-        if not resto.empty:
-            _render_grupo("__outros__", resto)
-        with st.expander("📋 Ver como tabela"):
-            show = view[["Ticker", "Nome", "Segmento", "Tipo", "Preço", "DY_12m",
-                         "P/VP", "VPA", "Liquidez_Diaria", "Cotistas", "Score",
-                         "Confiança", "Cobertura", "Status_Publicação"]]
-            st.dataframe(show, width="stretch", hide_index=True, column_config={
-                "Nome": st.column_config.TextColumn("Nome", width="medium"),
-                "Preço": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
-                "DY_12m": st.column_config.NumberColumn("DY 12m", format="percent"),
-                "P/VP": st.column_config.NumberColumn("P/VP", format="%.2f"),
-                "VPA": st.column_config.NumberColumn("VPA", format="R$ %.2f"),
-                "Liquidez_Diaria": st.column_config.NumberColumn("Liquidez/dia", format="R$ %.0f"),
-                "Cotistas": st.column_config.NumberColumn("Cotistas", format="%d"),
-                "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
-                "Confiança": st.column_config.ProgressColumn("Confiança", min_value=0, max_value=1, format="percent"),
-                "Cobertura": st.column_config.ProgressColumn("Cobertura", min_value=0, max_value=1, format="percent"),
-                "Status_Publicação": "Status",
-            })
+        st.caption(f"{len(view)} FIIs no universo com os filtros atuais.")
+        show = view[["Ticker", "Nome", "Segmento", "Tipo", "Preço", "DY_12m",
+                     "P/VP", "VPA", "Liquidez_Diaria", "Cotistas", "Score",
+                     "Confiança", "Cobertura", "Status_Publicação"]]
+        st.dataframe(show, width="stretch", hide_index=True, column_config={
+            "Nome": st.column_config.TextColumn("Nome", width="medium"),
+            "Preço": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
+            "DY_12m": st.column_config.NumberColumn("DY 12m", format="percent"),
+            "P/VP": st.column_config.NumberColumn("P/VP", format="%.2f"),
+            "VPA": st.column_config.NumberColumn("VPA", format="R$ %.2f"),
+            "Liquidez_Diaria": st.column_config.NumberColumn("Liquidez/dia", format="R$ %.0f"),
+            "Cotistas": st.column_config.NumberColumn("Cotistas", format="%d"),
+            "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
+            "Confiança": st.column_config.ProgressColumn("Confiança", min_value=0, max_value=1, format="percent"),
+            "Cobertura": st.column_config.ProgressColumn("Cobertura", min_value=0, max_value=1, format="percent"),
+            "Status_Publicação": "Status",
+        })
     ts = df["updated_at"].max() if "updated_at" in df.columns else None
     raw_gate = st.session_state.get("fii_raw_publication_gate")
     status_copy = _selection_status_copy(
@@ -1622,14 +1560,10 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
 
 
 def _carteira_integrada(preferences: dict):
-    st.subheader(f"Resultado da seleção · Metodologia Integrada v{METHODOLOGY_VERSION.split('.')[0]}")
-    st.markdown(_info_card_html(
-        "Como a carteira é construída",
-        "Primeiro são aplicados filtros de elegibilidade. Depois, cada FII é comparado apenas "
-        "com fundos do mesmo tipo. Os pesos equilibram qualidade, confiança, renda, cenários, "
-        "concentração e correlação; o rebalanceamento continua orientado por eventos.",
-        accent="#00C896",
-    ), unsafe_allow_html=True)
+    # Sem o subtítulo de versão da metodologia: o cabeçalho da página já traz
+    # "Metodologia" nos metadados, e o nome interno do motor não muda decisão
+    # de quem lê a carteira. A lógica de seleção é a mesma.
+    st.subheader("Resultado da seleção")
     scenario = preferences["scenario"]
     portfolio_policy = preferences["portfolio_policy"]
     eligibility_policy = preferences["eligibility_policy"]
@@ -1649,13 +1583,9 @@ def _carteira_integrada(preferences: dict):
         "nota neutra.",
         accent="#4A9EFF" if eligible_rows else "#FC5C7D",
     ), unsafe_allow_html=True)
-    if eligibility.get("exclusion_counts"):
-        with st.expander("Diagnóstico dos filtros de elegibilidade"):
-            exclusions = pd.DataFrame([
-                {"Motivo": reason, "FIIs excluídos": count}
-                for reason, count in eligibility["exclusion_counts"].items()
-            ])
-            st.dataframe(exclusions, hide_index=True, width="stretch")
+    # "Diagnóstico dos filtros de elegibilidade" removido: era a contagem de
+    # quem NÃO entrou, e a linha "Universo elegível" acima já dá o total que
+    # importa. A elegibilidade em si não mudou.
     if not eligible_rows:
         st.error("Nenhum FII atende à combinação escolhida. Relaxe os filtros de elegibilidade.")
         st.session_state.pop("fii_port", None)
@@ -1737,18 +1667,11 @@ def _carteira_integrada(preferences: dict):
         blockers = list(result.get("blockers") or []) + list(investable_gate.reasons)
         st.warning("Rascunho não publicável: " + " · ".join(dict.fromkeys(blockers)))
     items = result["items"]
-    monitor = build_fii_portfolio_monitor(
-        current_items=items,
-        saved_model=active_model,
-        snapshot_as_of=_snapshot_as_of(inputs),
-        validation=validation,
-        expected_strategy_id=LIVE_PORTFOLIO_STRATEGY_ID,
-        expected_methodology_version=METHODOLOGY_VERSION,
-        gate_can_publish=portfolio_can_publish,
-        dimension_coverage=result.get("dimension_coverage") or {},
-    )
-    st.session_state["fii_portfolio_monitor"] = monitor
-    _render_portfolio_monitor(monitor)
+    # "Monitoramento operacional" removido da interface. O cálculo saiu junto:
+    # o resultado só alimentava aquele expander (a chave de sessão não era lida
+    # por ninguém), então mantê-lo seria trabalho sem leitor. O gate de
+    # publicação, que é o freio de verdade, continua acima e inalterado —
+    # core/fii_portfolio_monitor.py e seus testes seguem no projeto.
     show = pd.DataFrame([{
         "Ticker": item["ticker"], "Tipo": item["tipo"],
         "Segmento": item.get("sector"), "Peso": item["weight"],
@@ -1865,48 +1788,6 @@ def _carteira_integrada(preferences: dict):
          "average_confidence": average_confidence,
          "eligible_count": eligibility["eligible_count"]}, key="fii_save_model_integrated_v6_5")
     return table_slot, show, specific_metrics
-
-
-def _render_portfolio_monitor(monitor: dict) -> None:
-    status = str(monitor.get("status") or "blocked")
-    label = {"ok": "OK", "warning": "Revisão", "blocked": "Bloqueado"}.get(
-        status, "Indisponível"
-    )
-    metrics = monitor.get("metrics") or {}
-    with st.expander(
-        f"🛡️ Monitoramento operacional · {label}",
-        expanded=status != "ok",
-    ):
-        columns = st.columns(3)
-        age = metrics.get("snapshot_age_days")
-        turnover = metrics.get("turnover")
-        drift = metrics.get("max_asset_weight_drift")
-        columns[0].metric(
-            "Idade do snapshot",
-            f"{int(age)} dias" if age is not None else "—",
-        )
-        columns[1].metric(
-            "Turnover vs. versão salva",
-            f"{float(turnover):.1%}" if turnover is not None else "—",
-        )
-        columns[2].metric(
-            "Maior drift por FII",
-            f"{float(drift):.1%}" if drift is not None else "—",
-        )
-        checks = pd.DataFrame([
-            {
-                "Controle": item.get("code"),
-                "Status": item.get("status"),
-                "Diagnóstico": item.get("message"),
-            }
-            for item in (monitor.get("checks") or [])
-        ])
-        if not checks.empty:
-            st.dataframe(checks, width="stretch", hide_index=True)
-        st.caption(
-            "Ausência de exposição permanece desconhecida e não é tratada como "
-            "baixo risco. O monitor não executa ordens ou rebalanceamentos."
-        )
 
 
 def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
