@@ -1,17 +1,18 @@
 """Montagem, saneamento, digest e teto de tamanho do payload de snapshot.
 
-Modulo puro: nao toca banco nem Streamlit. Coberto por
-tests/test_portfolio_snapshots_payload.py.
+Modulo puro: nao toca banco nem Streamlit. _clean_nan e importado dentro de
+build_payload() (local, nao global) para preservar pureza do modulo — importar
+core.b3_portfolio_model no topo traria dependencias impuras (streamlit, database,
+config com load_dotenv). Ver Task 9 do plano sobre ciclos de importacao.
+
+Coberto por tests/test_portfolio_snapshots_payload.py.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
-
-# Reaproveita o saneador ja validado (NaN/Infinity/numpy -> JSON valido) em vez
-# de reescreve-lo. Ver tests/test_b3_portfolio_model.py.
-from core.b3_portfolio_model import _clean_nan
 
 SCHEMA_VERSION = 1
 MAX_PAYLOAD_BYTES = 120_000
@@ -45,7 +46,14 @@ def build_payload(blocks: dict) -> dict:
 
     Preenche blocos ausentes, saneia valores nao serializaveis e aplica o teto
     de tamanho podando os blocos volumosos, sempre registrando o que foi podado.
+    Se o payload permanecer acima do teto mesmo apos truncacao, registra essa
+    condicao honestamente em provenance.over_limit.
     """
+    # Importacao local para preservar pureza do modulo: evita trazer streamlit,
+    # core.database (@st.cache_resource), core.config (load_dotenv).
+    # Ver Task 9 do plano sobre ciclos de importacao.
+    from core.b3_portfolio_model import _clean_nan
+
     if not blocks.get("identity"):
         raise ValueError("bloco 'identity' e obrigatorio no payload de snapshot")
 
@@ -60,6 +68,7 @@ def build_payload(blocks: dict) -> dict:
     provenance = dict(payload.get("provenance") or {})
     provenance.setdefault("truncated", False)
     provenance.setdefault("truncated_blocks", [])
+    provenance.setdefault("over_limit", False)
     payload["provenance"] = provenance
 
     podados: list[str] = []
@@ -72,4 +81,18 @@ def build_payload(blocks: dict) -> dict:
 
     payload["provenance"]["truncated"] = bool(podados)
     payload["provenance"]["truncated_blocks"] = podados
+
+    # Verifica se o payload ainda estoura o teto apos truncacao.
+    # Se sim, registra honestamente em provenance.over_limit (nao silencia).
+    tamanho_final = payload_size_bytes(payload)
+    if tamanho_final > MAX_PAYLOAD_BYTES:
+        payload["provenance"]["over_limit"] = True
+        logging.warning(
+            f"Payload oversized after truncation: {tamanho_final} bytes "
+            f"> {MAX_PAYLOAD_BYTES} bytes (symbol in identity not available at "
+            f"this layer)"
+        )
+    else:
+        payload["provenance"]["over_limit"] = False
+
     return payload
