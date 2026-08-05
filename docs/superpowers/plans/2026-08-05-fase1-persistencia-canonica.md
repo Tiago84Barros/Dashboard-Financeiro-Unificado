@@ -19,6 +19,10 @@
 - **Teto de payload:** `MAX_PAYLOAD_BYTES = 120_000` por ativo. Acima disso, o payload é truncado nos blocos volumosos e marcado.
 - **Idioma do código:** comentários e docstrings em português, sem acentuação em SQL de schema (padrão dos arquivos existentes em `supabase_unificado/schema/`).
 - **Testes:** `pytest`. Não existe `conftest.py` nem configuração de pytest no repositório; testes são arquivos `tests/test_*.py` autocontidos.
+- **Interpretador:** o `python` do PATH resolve para a venv do Hermes, que **não tem pytest**. Usar sempre o caminho completo:
+  `"/c/Users/Tiago Barros/AppData/Local/Programs/Python/Python312/python.exe" -m pytest ...`
+  (Python 3.12.10, pytest 9.0.3, com pandas e sqlalchemy). Onde o plano escreve `python -m pytest`, leia este caminho.
+- **Baseline da suíte antes desta fase:** `1431 passed, 3 skipped, 0 failed`. Nenhum teste que passava pode quebrar.
 
 ---
 
@@ -1085,18 +1089,62 @@ git commit -m "feat(portfolio): repositorio de snapshots com retencao e poda de 
 ### Task 6: Adaptador B3
 
 **Files:**
-- Create: `core/portfolio/adapters/__init__.py`, `core/portfolio/adapters/b3.py`
-- Test: `tests/test_portfolio_adapter_b3.py`
+- Create: `core/portfolio/adapters/__init__.py`, `core/portfolio/adapters/_frames.py`, `core/portfolio/adapters/b3.py`
+- Test: `tests/test_portfolio_adapter_frames.py`, `tests/test_portfolio_adapter_b3.py`
 
 **Interfaces:**
 - Consumes: `core.market_read.load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame]`, `core.market_read.load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame]`, `core.portfolio.models.AssetSnapshot`.
-- Produces: `build_snapshots(items: list[dict], *, model_id: str, params: dict, as_of: date, loaders: dict | None = None) -> list[AssetSnapshot]`.
+- Produces:
+  - `core.portfolio.adapters._frames.registros(frame) -> list[dict]` — usado também pelas Tasks 7 e 8.
+  - `core.portfolio.adapters._frames.indexar(frame, coluna: str) -> dict[str, dict]` — usado também pelas Tasks 7 e 8.
+  - `build_snapshots(items: list[dict], *, model_id: str, params: dict, as_of: date, loaders: dict | None = None) -> list[AssetSnapshot]`.
+
+Os dois helpers de DataFrame vivem em `_frames.py` e **não** são reimplementados nos adaptadores das Tasks 7 e 8 — os três leem tabelas com formatos diferentes, mas a conversão para dicts com `NaN → None` é idêntica.
 
 O parâmetro `loaders` existe para injeção nos testes: um dicionário com as chaves `"multiplos"` e `"demonstracoes"`, cada uma uma função `tuple[str, ...] -> dict[str, pd.DataFrame]`. Quando `None`, usa `core.market_read`. Ambos os adaptadores seguintes têm o mesmo contrato.
 
 Leitura em lote e não por ativo: montar o snapshot acrescenta segundos ao salvamento e ler ticker a ticker multiplicaria isso pelo tamanho da carteira.
 
-- [ ] **Step 1: Escrever o teste que falha**
+- [ ] **Step 1a: Escrever o teste dos helpers compartilhados**
+
+Criar `tests/test_portfolio_adapter_frames.py`:
+
+```python
+"""Helpers de DataFrame compartilhados pelos adaptadores."""
+import pandas as pd
+
+from core.portfolio.adapters._frames import indexar, registros
+
+DF = pd.DataFrame({"Ticker": ["petr4", " vale3"], "P/L": [4.1, None]})
+
+
+def test_registros_converte_para_lista_de_dicts():
+    assert registros(DF)[0]["Ticker"] == "petr4"
+
+
+def test_registros_converte_nan_para_none():
+    assert registros(DF)[1]["P/L"] is None
+
+
+def test_registros_tolera_none_e_dataframe_vazio():
+    assert registros(None) == []
+    assert registros(pd.DataFrame()) == []
+
+
+def test_indexar_normaliza_a_chave_para_maiusculo_sem_espaco():
+    assert set(indexar(DF, "Ticker")) == {"PETR4", "VALE3"}
+
+
+def test_indexar_devolve_vazio_quando_a_coluna_nao_existe():
+    assert indexar(DF, "Symbol") == {}
+
+
+def test_indexar_tolera_none_e_dataframe_vazio():
+    assert indexar(None, "Ticker") == {}
+    assert indexar(pd.DataFrame(), "Ticker") == {}
+```
+
+- [ ] **Step 1b: Escrever o teste do adaptador B3**
 
 ```python
 """Adaptador B3: montagem do payload a partir dos itens da carteira."""
@@ -1194,7 +1242,7 @@ def test_item_sem_ticker_e_ignorado_sem_quebrar():
 
 - [ ] **Step 2: Rodar o teste e confirmar que falha**
 
-Run: `python -m pytest tests/test_portfolio_adapter_b3.py -v`
+Run: `python -m pytest tests/test_portfolio_adapter_frames.py tests/test_portfolio_adapter_b3.py -v`
 Expected: FAIL com `ModuleNotFoundError: No module named 'core.portfolio.adapters'`
 
 - [ ] **Step 3: Escrever a implementação**
@@ -1203,6 +1251,35 @@ Criar `core/portfolio/adapters/__init__.py` vazio com docstring:
 
 ```python
 """Adaptadores que montam o payload de snapshot de cada classe de ativo."""
+```
+
+Criar `core/portfolio/adapters/_frames.py`:
+
+```python
+"""Conversao de DataFrame compartilhada pelos tres adaptadores.
+
+As tabelas de origem tem formatos diferentes, mas a conversao para dicts com
+NaN -> None e identica. Coberto por tests/test_portfolio_adapter_frames.py.
+"""
+from __future__ import annotations
+
+import pandas as pd
+
+
+def registros(frame) -> list[dict]:
+    """DataFrame -> lista de dicts, tolerante a None e vazio. NaN vira None."""
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return []
+    return frame.where(pd.notna(frame), None).to_dict(orient="records")
+
+
+def indexar(frame, coluna: str) -> dict[str, dict]:
+    """DataFrame -> {chave normalizada: linha}. Vazio se a coluna nao existir."""
+    if not isinstance(frame, pd.DataFrame) or frame.empty or coluna not in frame:
+        return {}
+    limpo = frame.where(pd.notna(frame), None)
+    return {str(linha[coluna]).strip().upper(): dict(linha)
+            for linha in limpo.to_dict(orient="records")}
 ```
 
 Criar `core/portfolio/adapters/b3.py`:
@@ -1217,8 +1294,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-import pandas as pd
-
+from core.portfolio.adapters._frames import registros
 from core.portfolio.models import AssetSnapshot
 from core.portfolio.registry import get_spec
 
@@ -1231,13 +1307,6 @@ def _default_loaders() -> dict:
         "multiplos": lambda tks: market_read.load_multiplos_historico_batch(tks),
         "demonstracoes": lambda tks: market_read.load_demonstracoes_batch(tks),
     }
-
-
-def _registros(frame) -> list[dict]:
-    """DataFrame -> lista de dicts ordenada, tolerante a None/vazio."""
-    if not isinstance(frame, pd.DataFrame) or frame.empty:
-        return []
-    return frame.where(pd.notna(frame), None).to_dict(orient="records")
 
 
 def _ticker(item: dict) -> str:
@@ -1259,8 +1328,8 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
 
     saida: list[AssetSnapshot] = []
     for item, tk in validos:
-        mult = _registros(multiplos.get(tk))
-        demo = _registros(demonstracoes.get(tk))
+        mult = registros(multiplos.get(tk))
+        demo = registros(demonstracoes.get(tk))
         saida.append(AssetSnapshot.from_blocks(
             asset_class=SPEC.key,
             model_id=model_id,
@@ -1311,14 +1380,14 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
 
 - [ ] **Step 4: Rodar o teste e confirmar que passa**
 
-Run: `python -m pytest tests/test_portfolio_adapter_b3.py -v`
-Expected: 10 passed
+Run: `python -m pytest tests/test_portfolio_adapter_frames.py tests/test_portfolio_adapter_b3.py -v`
+Expected: 16 passed (6 dos helpers + 10 do adaptador)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add core/portfolio/adapters/__init__.py core/portfolio/adapters/b3.py tests/test_portfolio_adapter_b3.py
-git commit -m "feat(portfolio): adaptador de snapshot das empresas B3"
+git add core/portfolio/adapters/ tests/test_portfolio_adapter_frames.py tests/test_portfolio_adapter_b3.py
+git commit -m "feat(portfolio): helpers de DataFrame e adaptador de snapshot das empresas B3"
 ```
 
 ---
@@ -1330,7 +1399,7 @@ git commit -m "feat(portfolio): adaptador de snapshot das empresas B3"
 - Test: `tests/test_portfolio_adapter_us.py`
 
 **Interfaces:**
-- Consumes: `core.us_read.load_snapshot_scored() -> pd.DataFrame` (uma linha por símbolo, coluna `symbol`), `core.us_read.load_company_financials(symbol: str) -> pd.DataFrame`, `core.portfolio.models.AssetSnapshot`.
+- Consumes: `core.portfolio.adapters._frames.registros` e `indexar` (Task 6 — **não** reimplementar), `core.us_read.load_snapshot_scored() -> pd.DataFrame` (uma linha por símbolo, coluna `symbol`), `core.us_read.load_company_financials(symbol: str) -> pd.DataFrame`, `core.portfolio.models.AssetSnapshot`.
 - Produces: `build_snapshots(items, *, model_id, params, as_of, loaders=None) -> list[AssetSnapshot]` — mesma assinatura do adaptador B3. `loaders` aceita as chaves `"scored"` (função sem argumentos devolvendo `pd.DataFrame`) e `"financials"` (função `str -> pd.DataFrame`).
 
 A chave do item americano é `symbol` (e não `tk`/`ticker`), conforme `core/us_portfolio_model.py:_symbol_of`.
@@ -1447,8 +1516,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-import pandas as pd
-
+from core.portfolio.adapters._frames import indexar, registros
 from core.portfolio.models import AssetSnapshot
 from core.portfolio.registry import get_spec
 
@@ -1466,20 +1534,6 @@ def _default_loaders() -> dict:
     }
 
 
-def _registros(frame) -> list[dict]:
-    if not isinstance(frame, pd.DataFrame) or frame.empty:
-        return []
-    return frame.where(pd.notna(frame), None).to_dict(orient="records")
-
-
-def _indexar_vitrine(frame) -> dict[str, dict]:
-    if not isinstance(frame, pd.DataFrame) or frame.empty or "symbol" not in frame:
-        return {}
-    limpo = frame.where(pd.notna(frame), None)
-    return {str(linha["symbol"]).strip().upper(): dict(linha)
-            for linha in limpo.to_dict(orient="records")}
-
-
 def _symbol(item: dict) -> str:
     return str(item.get("symbol") or item.get("tk") or item.get("ticker") or "").strip().upper()
 
@@ -1493,14 +1547,14 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
     if not validos:
         return []
 
-    vitrine = _indexar_vitrine(loaders["scored"]())
+    vitrine = indexar(loaders["scored"](), "symbol")
 
     saida: list[AssetSnapshot] = []
     for item, sym in validos:
         linha = dict(vitrine.get(sym) or {})
         classificacao = {campo: linha.pop(campo, None) for campo in _CAMPOS_CLASSIFICACAO}
         linha.pop("symbol", None)
-        financials = _registros(loaders["financials"](sym))
+        financials = registros(loaders["financials"](sym))
 
         saida.append(AssetSnapshot.from_blocks(
             asset_class=SPEC.key,
@@ -1564,7 +1618,7 @@ git commit -m "feat(portfolio): adaptador de snapshot das empresas americanas"
 - Test: `tests/test_portfolio_adapter_fii.py`
 
 **Interfaces:**
-- Consumes: `core.market_read.load_fiis() -> pd.DataFrame` (colunas com inicial maiúscula: `Ticker`, `Nome`, `Segmento`, `Tipo`, `Preço`, `P/VP`, `DY_12m`, `Liquidez_Diaria`, `Patrimonio`, `VPA`, `Cotistas`, `Gestao`, `Pct_Imoveis`, `Pct_Papel`, `Pct_Caixa`, `Pct_Fundos`, `Score`), `core.portfolio.models.AssetSnapshot`.
+- Consumes: `core.portfolio.adapters._frames.indexar` (Task 6 — **não** reimplementar), `core.market_read.load_fiis() -> pd.DataFrame` (colunas com inicial maiúscula: `Ticker`, `Nome`, `Segmento`, `Tipo`, `Preço`, `P/VP`, `DY_12m`, `Liquidez_Diaria`, `Patrimonio`, `VPA`, `Cotistas`, `Gestao`, `Pct_Imoveis`, `Pct_Papel`, `Pct_Caixa`, `Pct_Fundos`, `Score`), `core.portfolio.models.AssetSnapshot`.
 - Produces: `build_snapshots(items, *, model_id, params, as_of, loaders=None) -> list[AssetSnapshot]`. `loaders` aceita a chave `"fiis"` (função sem argumentos devolvendo `pd.DataFrame`).
 
 A composição por tipo de ativo (`Pct_Imoveis`, `Pct_Papel`, `Pct_Caixa`, `Pct_Fundos`) vai para um bloco `composition` dentro de `classification` — é o que a Fase 2 usará no look-through.
@@ -1683,8 +1737,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-import pandas as pd
-
+from core.portfolio.adapters._frames import indexar
 from core.portfolio.models import AssetSnapshot
 from core.portfolio.registry import get_spec
 
@@ -1715,14 +1768,6 @@ def _default_loaders() -> dict:
     return {"fiis": lambda: market_read.load_fiis()}
 
 
-def _indexar(frame) -> dict[str, dict]:
-    if not isinstance(frame, pd.DataFrame) or frame.empty or "Ticker" not in frame:
-        return {}
-    limpo = frame.where(pd.notna(frame), None)
-    return {str(linha["Ticker"]).strip().upper(): dict(linha)
-            for linha in limpo.to_dict(orient="records")}
-
-
 def _ticker(item: dict) -> str:
     return str(item.get("ticker") or item.get("tk") or "").strip().upper()
 
@@ -1736,7 +1781,7 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
     if not validos:
         return []
 
-    base = _indexar(loaders["fiis"]())
+    base = indexar(loaders["fiis"](), "Ticker")
 
     saida: list[AssetSnapshot] = []
     for item, tk in validos:
@@ -2302,13 +2347,13 @@ Expected: 5 passed
 
 - [ ] **Step 5: Rodar a suíte completa da fase**
 
-Run: `python -m pytest tests/test_portfolio_snapshots_schema.py tests/test_portfolio_snapshots_payload.py tests/test_portfolio_models.py tests/test_portfolio_registry.py tests/test_portfolio_repository.py tests/test_portfolio_adapter_b3.py tests/test_portfolio_adapter_us.py tests/test_portfolio_adapter_fii.py tests/test_portfolio_capture.py tests/test_backfill_portfolio_snapshots.py -v`
-Expected: 81 passed (7 + 9 + 6 + 11 + 8 + 10 + 9 + 8 + 8 + 5)
+Run: `python -m pytest tests/test_portfolio_snapshots_schema.py tests/test_portfolio_snapshots_payload.py tests/test_portfolio_models.py tests/test_portfolio_registry.py tests/test_portfolio_repository.py tests/test_portfolio_adapter_frames.py tests/test_portfolio_adapter_b3.py tests/test_portfolio_adapter_us.py tests/test_portfolio_adapter_fii.py tests/test_portfolio_capture.py tests/test_backfill_portfolio_snapshots.py -v`
+Expected: 87 passed (7 + 9 + 6 + 11 + 8 + 6 + 10 + 9 + 8 + 8 + 5)
 
 - [ ] **Step 6: Rodar a suíte inteira do repositório para confirmar ausência de regressão**
 
-Run: `python -m pytest tests/ -q`
-Expected: mesma contagem de falhas de antes da fase (registrar o número antes de começar; nenhum teste novo pode falhar e nenhum teste que passava pode quebrar).
+Run: `python -m pytest tests/ -q --tb=no`
+Expected: `1518 passed, 3 skipped` (baseline de 1431 + os 87 desta fase), zero falhas.
 
 - [ ] **Step 7: Commit**
 
