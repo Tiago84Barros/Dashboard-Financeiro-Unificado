@@ -9,9 +9,9 @@
 --   model_id e POLIMORFICO: aponta para b3_portfolio_models,
 --   us_portfolio_models ou fii_portfolio_models conforme asset_class.
 --   Por isso nao ha FOREIGN KEY nem ON DELETE CASCADE nessa coluna.
---   A limpeza de orfaos e feita em core/portfolio/repository.prune_orphans(),
---   chamada a cada gravacao. Foi uma troca deliberada: integridade
---   declarativa por extensibilidade (classe de ativo nova nao exige ALTER).
+--   A limpeza de orfaos e responsabilidade de core/portfolio/repository.prune_orphans(),
+--   criada na Task 5 desta fase e chamada a cada gravacao. Foi uma troca deliberada:
+--   integridade declarativa por extensibilidade (classe de ativo nova nao exige ALTER).
 --
 -- SEGURANCA:
 --   Apenas CREATE e ALTER (idempotentes).

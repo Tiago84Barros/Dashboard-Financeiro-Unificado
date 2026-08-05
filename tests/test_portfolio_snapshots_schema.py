@@ -24,7 +24,10 @@ def test_schema_nao_contem_comando_destrutivo(sql):
 def test_criacoes_sao_idempotentes(sql):
     upper = sql.upper()
     assert upper.count("CREATE TABLE") == upper.count("CREATE TABLE IF NOT EXISTS")
+    # Regular indexes must be idempotent
     assert upper.count("CREATE INDEX") == upper.count("CREATE INDEX IF NOT EXISTS")
+    # Unique indexes must also be idempotent
+    assert upper.count("CREATE UNIQUE INDEX") == upper.count("CREATE UNIQUE INDEX IF NOT EXISTS")
 
 
 def test_tabelas_esperadas_declaradas(sql):
@@ -45,3 +48,8 @@ def test_cascata_por_usuario_preservada(sql):
     # user_id sempre cascateia; model_id e polimorfico e por isso nao tem FK.
     assert sql.count("REFERENCES profiles(id) ON DELETE CASCADE") == 2
     assert "REFERENCES b3_portfolio_models" not in sql
+
+
+def test_asset_class_enum_values_pinned(sql):
+    # Pin asset_class enum values to prevent silent drift with Task 4 registry
+    assert "asset_class IN ('b3', 'us', 'fii')" in sql
