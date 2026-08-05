@@ -46,9 +46,16 @@ torna o tamanho do payload uma restrição de projeto, não um detalhe.
 
 Uma tabela nova guarda o payload rico, referenciando `(asset_class, model_id, symbol)`. As tabelas
 existentes permanecem intactas como fonte de identidade e pesos. Um registro de classes de ativo
-descreve tabelas, coluna-chave, moeda, país e adaptador, e um único repositório genérico substitui
-a triplicação de `save_*`/`load_*`; os três módulos atuais viram wrappers finos que preservam
-assinatura e comportamento.
+descreve tabelas, coluna-chave, moeda, país e adaptador, e um repositório genérico faz a leitura
+uniforme das três classes para o Portfólio Global.
+
+**Restrição de aditividade.** A Fase 1 não reescreve `core/b3_portfolio_model.py`,
+`core/us_portfolio_model.py` nem `core/fii_portfolio_model.py`. A lógica de cada um permanece
+intacta; cada `save_*` ganha somente uma chamada extra que grava o snapshot, protegida por
+`try/except`, de modo que uma falha ali deixa o salvamento com o comportamento idêntico ao de hoje.
+A deduplicação dos três módulos é desejável mas fica como fase posterior e opcional, executada
+apenas depois da nova camada estar em produção e validada. Reescrever código validado sem
+necessidade contraria a regra do projeto.
 
 Alternativas descartadas:
 
@@ -178,10 +185,14 @@ gravar.
 
 ### 5.6 Compatibilidade
 
-`save_b3_portfolio_model`, `save_us_portfolio_model` e `save_fii_portfolio_model` mantêm assinatura
-e comportamento observável. Internamente delegam ao repositório genérico e gravam o snapshot. Se a
-gravação do snapshot falhar, a carteira é salva mesmo assim e a interface avisa — degrada, não
-quebra.
+`save_b3_portfolio_model`, `save_us_portfolio_model` e `save_fii_portfolio_model` mantêm assinatura,
+lógica interna e comportamento observável. A única alteração é uma chamada adicional ao final,
+dentro de `try/except`, que grava o snapshot. Falha na gravação do snapshot deixa o salvamento com
+resultado idêntico ao atual e apenas registra aviso na interface — degrada, não quebra.
+
+Custos reais assumidos, e são apenas dois: até cerca de 10 MB de espaço no Supabase sob a política
+de retenção, e alguns segundos adicionais ao salvar uma carteira, porque montar o snapshot lê
+fundamentos e histórico. Nenhum efeito sobre leitura ou sobre as telas existentes.
 
 ## 6. Análise do Portfólio Global
 
@@ -369,8 +380,17 @@ Cada fase recebe spec de implementação, plano e PR próprios.
 | 2 | Portfólio Global: agregação, alocação-alvo, diversificação, correlação, fatores, métricas | 6 |
 | 3 | Papel estratégico e motor determinístico de movimentação | 7, 8 |
 | 4 | Chat LLM, crítica do motor, macro de 12 meses com ingestão BCB/SGS | 9, 10 |
+| 5 (opcional) | Deduplicação dos três `*_portfolio_model.py` sobre o repositório genérico | 3 |
 
-A Fase 1 é o próximo passo e será planejada em detalhe.
+A Fase 1 é o próximo passo e será planejada em detalhe. A Fase 5 só é considerada depois das
+anteriores estarem em produção e validadas, e pode simplesmente não ser feita: ela melhora a
+manutenção sem entregar funcionalidade.
+
+Todas as fases são aditivas em relação ao que já existe. Nenhuma remove ou reescreve comportamento
+das seções Empresas B3, Empresas Americanas e Seleção de FIIs. A única alteração em arquivo
+existente na Fase 1 é a chamada extra de gravação de snapshot descrita em 5.6; na Fase 2, o
+registro da nova rota em `app.py`; na Fase 4, a substituição do `_MACRO_REF` hardcoded por leitura
+de tabela em `views/macro.py`.
 
 ## 15. Fora de escopo
 
