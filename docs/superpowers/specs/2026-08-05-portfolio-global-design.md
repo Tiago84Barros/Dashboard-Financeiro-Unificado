@@ -153,7 +153,7 @@ integridade declarativa por extensibilidade, e é deliberada.
 | `identity` | símbolo, nome, classe, país, moeda, setor/subsetor/segmento, CNPJ ou CIK | 0,5 KB |
 | `fundamentals` | múltiplos e demonstrativos do momento da seleção, com `reference_date` por campo | 4 KB |
 | `metrics` | score, cobertura, alpha, DY, volatilidade, beta, margens, crescimento | 2 KB |
-| `classification` | piso de qualidade, ciclo, `data_confidence`, status, `critical_missing` | 1 KB |
+| `classification` | piso de qualidade, ciclo, `data_confidence`, `score_status`, `critical_missing` | 1 KB |
 | `history` | 6 anos anuais de DRE e 5 anos de proventos, agregados | 5 KB |
 | `assumptions` | parâmetros do modelo, restrições, taxas, cenário vigente | 1 KB |
 | `evidence` | proveniência por campo, divergências banco/web, fontes | 4 KB |
