@@ -18,12 +18,16 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import logging
 import sys
 
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from core.portfolio.registry import SPECS, get_spec, load_adapter
 from core.portfolio.repository import save_snapshots
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_json(valor, default):
@@ -38,7 +42,14 @@ def _parse_json(valor, default):
 
 
 def active_models(asset_class: str, *, engine, owner_id: str) -> list[dict]:
-    """Modelos ativos do dono para a classe. Lista vazia se a tabela nao existir."""
+    """Modelos ativos do dono para a classe.
+
+    Lista vazia se a tabela nao existir (classe nunca usada) ou se a consulta
+    falhar por qualquer outro motivo (conexao caida, permissao, erro de SQL).
+    Em qualquer um desses casos a falha e logada com exc_info, para que uma
+    ausencia legitima de carteira nao se confunda, no log, com uma consulta
+    quebrada — a contagem "0" sozinha nao distingue as duas coisas.
+    """
     spec = get_spec(asset_class)
     try:
         with engine.connect() as conn:
@@ -50,7 +61,12 @@ def active_models(asset_class: str, *, engine, owner_id: str) -> list[dict]:
                 """),
                 {"uid": str(owner_id)},
             ).mappings().all()
-    except Exception:
+    except DBAPIError:
+        logger.warning(
+            "Falha ao consultar modelos ativos da classe %s (tabela %s); "
+            "contribuicao considerada zero nesta rodada.",
+            asset_class, spec.models_table, exc_info=True,
+        )
         return []
     return [{"id": str(l["id"]), "params_json": _parse_json(l["params_json"], {})}
             for l in linhas]

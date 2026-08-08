@@ -1,6 +1,4 @@
 """Backfill de snapshots das carteiras ja salvas."""
-import datetime as dt
-
 import pytest
 from sqlalchemy import create_engine, text
 
@@ -82,6 +80,28 @@ def test_classe_sem_carteira_nao_quebra(engine, monkeypatch):
     monkeypatch.setattr(bf, "load_adapter", lambda key: _FakeAdapter)
     resumo = bf.backfill(engine=engine, owner_id=OWNER, apply=False, classes=["b3", "us"])
     assert resumo["us"] == 0
+
+
+def test_falha_real_na_consulta_e_logada_e_nao_apenas_tolerada(caplog):
+    """Distingue, no log, uma consulta quebrada de uma classe legitimamente sem carteira.
+
+    A tabela existe mas nao tem a coluna 'status' exigida pela query: e um erro
+    de verdade (SQL invalido/permissao/conexao), nao a ausencia esperada da
+    tabela. active_models() deve devolver [] sem propagar, mas tem que deixar
+    rastro no log — do contrario "0 carteiras" fica indistinguivel de "a
+    consulta falhou".
+    """
+    eng = create_engine("sqlite:///:memory:")
+    with eng.begin() as conn:
+        conn.execute(text("CREATE TABLE b3_portfolio_models (id TEXT PRIMARY KEY, user_id TEXT)"))
+
+    with caplog.at_level("WARNING"):
+        modelos = bf.active_models("b3", engine=eng, owner_id=OWNER)
+
+    assert modelos == []
+    avisos = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("b3" in r.getMessage() for r in avisos)
+    assert any(r.exc_info is not None for r in avisos)
 
 
 class _FakeAdapter:
