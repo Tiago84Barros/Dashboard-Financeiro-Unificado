@@ -40,13 +40,15 @@ def _default_loaders() -> dict:
 
 
 def _ticker(item: dict) -> str:
-    return str(item.get("ticker") or item.get("tk") or "").strip().upper()
+    # Precedência: tk > ticker (alinhado com b3._ticker)
+    return str(item.get("tk") or item.get("ticker") or "").strip().upper()
 
 
 def build_snapshots(items: list[dict], *, model_id: str, params: dict,
                     as_of: dt.date, loaders: dict | None = None) -> list[AssetSnapshot]:
     """Monta um AssetSnapshot por item valido da carteira de FIIs."""
-    loaders = loaders or _default_loaders()
+    if loaders is None:
+        loaders = _default_loaders()
     validos = [(item, _ticker(item)) for item in items]
     validos = [(item, tk) for item, tk in validos if tk]
     if not validos:
