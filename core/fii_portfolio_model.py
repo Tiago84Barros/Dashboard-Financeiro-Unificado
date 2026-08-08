@@ -336,6 +336,10 @@ def save_fii_portfolio_model(
                 + " · ".join(integrity["reasons"])
             )
 
+    # Ver nota em core/b3_portfolio_model.py: captura aditiva, nunca bloqueante.
+    from core.portfolio.capture import capture_snapshots
+    capture_snapshots("fii", model_id, items, params, owner_id=owner)
+
     _clear_portfolio_caches()
     return model_id
 

@@ -316,6 +316,10 @@ def save_us_portfolio_model(
                 },
             )
 
+    # Ver nota em core/b3_portfolio_model.py: captura aditiva, nunca bloqueante.
+    from core.portfolio.capture import capture_snapshots
+    capture_snapshots("us", model_id, items, params, owner_id=owner)
+
     load_active_us_portfolio_model.clear()
     return model_id
 
