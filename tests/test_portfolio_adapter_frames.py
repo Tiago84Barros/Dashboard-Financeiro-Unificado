@@ -30,3 +30,35 @@ def test_indexar_devolve_vazio_quando_a_coluna_nao_existe():
 def test_indexar_tolera_none_e_dataframe_vazio():
     assert indexar(None, "Ticker") == {}
     assert indexar(pd.DataFrame(), "Ticker") == {}
+
+
+def test_registros_preserva_tipo_bool():
+    df = pd.DataFrame({"Flag": [True, False]})
+    out = registros(df)
+    assert out[0]["Flag"] is True
+    assert isinstance(out[0]["Flag"], bool)
+    assert out[1]["Flag"] is False
+    assert isinstance(out[1]["Flag"], bool)
+
+
+def test_registros_preserva_tipo_int():
+    df = pd.DataFrame({"Count": [42, 0]})
+    out = registros(df)
+    assert out[0]["Count"] == 42
+    assert isinstance(out[0]["Count"], (int, pd.Int64Dtype, pd.Int32Dtype))
+    assert out[1]["Count"] == 0
+    assert isinstance(out[1]["Count"], (int, pd.Int64Dtype, pd.Int32Dtype))
+
+
+def test_registros_converte_nat_para_none():
+    df = pd.DataFrame({"Data": pd.to_datetime(["2026-01-01", pd.NaT])})
+    out = registros(df)
+    assert out[0]["Data"] is not None
+    assert out[1]["Data"] is None
+
+
+def test_registros_preserva_none_nativo_em_object():
+    df = pd.DataFrame({"Valor": ["texto", None]})
+    out = registros(df)
+    assert out[0]["Valor"] == "texto"
+    assert out[1]["Valor"] is None
