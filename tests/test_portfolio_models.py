@@ -1,4 +1,5 @@
 """Dataclass do snapshot: normalizacao e digest."""
+import dataclasses
 import datetime as dt
 
 import pytest
@@ -35,7 +36,7 @@ def test_digest_e_estavel_entre_instancias_iguais():
 
 def test_snapshot_e_imutavel():
     snap = _snap()
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         snap.symbol = "VALE3"
 
 
