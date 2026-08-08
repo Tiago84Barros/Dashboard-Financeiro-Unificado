@@ -15,7 +15,7 @@ from core.portfolio.registry import get_spec
 SPEC = get_spec("us")
 
 # Campos da vitrine que entram como classificacao, e nao como fundamento.
-_CAMPOS_CLASSIFICACAO = ("score_confidence", "status", "critical_missing")
+_CAMPOS_CLASSIFICACAO = ("score_confidence", "score_status", "critical_missing")
 
 
 def _default_loaders() -> dict:
@@ -33,7 +33,8 @@ def _symbol(item: dict) -> str:
 def build_snapshots(items: list[dict], *, model_id: str, params: dict,
                     as_of: dt.date, loaders: dict | None = None) -> list[AssetSnapshot]:
     """Monta um AssetSnapshot por item valido da carteira americana."""
-    loaders = loaders or _default_loaders()
+    if loaders is None:
+        loaders = _default_loaders()
     validos = [(item, _symbol(item)) for item in items]
     validos = [(item, sym) for item, sym in validos if sym]
     if not validos:

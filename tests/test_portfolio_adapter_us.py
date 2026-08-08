@@ -18,7 +18,7 @@ SCORED = pd.DataFrame({
     "pe_ratio": [28.4, 24.1],
     "dividend_yield": [0.5, 3.1],
     "score_confidence": [0.91, 0.62],
-    "status": ["ok", "parcial"],
+    "score_status": ["ok", "parcial"],
 })
 
 FIN = {"AAPL": pd.DataFrame({"fiscal_year": [2024, 2025],
@@ -65,10 +65,15 @@ def test_metrics_preserva_os_scores_da_selecao():
     assert metrics["coverage"] == 92.0
 
 
-def test_classification_carrega_confianca_e_status_da_vitrine():
+def test_classification_carrega_confianca_e_score_status_da_vitrine():
     cls = _build()[0].payload["classification"]
     assert cls["score_confidence"] == 0.91
-    assert cls["status"] == "ok"
+    assert cls["score_status"] == "ok"
+    # Verificar que os campos de classificacao foram removidos de fundamentals
+    fund = _build()[0].payload["fundamentals"]
+    assert "score_confidence" not in fund
+    assert "score_status" not in fund
+    assert "critical_missing" not in fund
 
 
 def test_history_traz_os_demonstrativos_anuais():
