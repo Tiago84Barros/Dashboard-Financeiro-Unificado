@@ -289,6 +289,8 @@ def save_b3_portfolio_model(
     # Persiste o snapshot analitico (fundamentos, historico, premissas) da
     # carteira. Aditivo: capture_snapshots nunca levanta excecao, entao uma
     # falha aqui deixa o salvamento exatamente como era antes.
+    # Import local: no topo criaria ciclo com core/portfolio/snapshots.py,
+    # que importa _clean_nan deste modulo.
     from core.portfolio.capture import capture_snapshots
     capture_snapshots("b3", model_id, items, params, owner_id=owner)
 

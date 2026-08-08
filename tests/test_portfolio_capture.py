@@ -80,10 +80,34 @@ def test_lista_vazia_nao_chama_o_adaptador(monkeypatch):
     ("core.fii_portfolio_model", "save_fii_portfolio_model", "fii"),
 ])
 def test_as_tres_funcoes_de_salvamento_chamam_a_captura(modulo, funcao, classe):
-    """Regressao: a captura precisa estar ligada, senao nada e persistido."""
+    """Regressao: a captura precisa estar ligada, senao nada e persistido.
+
+    Verificacao via AST, nao substring: um `assert "capture_snapshots" in fonte`
+    passaria mesmo com a chamada comentada (`# capture_snapshots(...)`), o que
+    deixaria a camada inteira construida e nunca invocada em producao sem que
+    nenhum teste percebesse. Exige um no `Call` de verdade na arvore sintatica,
+    com a classe de ativo correta como primeiro argumento posicional.
+    """
+    import ast
     import importlib
     import inspect
+    import textwrap
 
     fonte = inspect.getsource(getattr(importlib.import_module(modulo), funcao))
-    assert "capture_snapshots" in fonte, f"{funcao} nao chama capture_snapshots"
-    assert f'"{classe}"' in fonte or f"'{classe}'" in fonte
+    arvore = ast.parse(textwrap.dedent(fonte))
+
+    chamadas = [
+        node for node in ast.walk(arvore)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "capture_snapshots"
+    ]
+    assert chamadas, f"{funcao} nao chama capture_snapshots"
+
+    chamada = chamadas[0]
+    assert chamada.args, f"{funcao} chama capture_snapshots sem argumentos posicionais"
+    primeiro_arg = chamada.args[0]
+    assert isinstance(primeiro_arg, ast.Constant) and primeiro_arg.value == classe, (
+        f"{funcao} deveria chamar capture_snapshots com a classe {classe!r} "
+        f"como primeiro argumento posicional"
+    )

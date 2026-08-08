@@ -337,6 +337,8 @@ def save_fii_portfolio_model(
             )
 
     # Ver nota em core/b3_portfolio_model.py: captura aditiva, nunca bloqueante.
+    # Import local: no topo criaria ciclo com core/portfolio/snapshots.py,
+    # que importa _clean_nan de core/b3_portfolio_model.py.
     from core.portfolio.capture import capture_snapshots
     capture_snapshots("fii", model_id, items, params, owner_id=owner)
 
