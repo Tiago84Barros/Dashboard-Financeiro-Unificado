@@ -1515,7 +1515,18 @@ git commit -m "feat(global): metricas agregadas com cobertura e qualidade por cl
 Para que a view seja testável sem Streamlit, a lógica de decisão fica em funções puras e só a formatação chama `st.*`:
 - `carregar_snapshots(*, engine=None, owner_id=None) -> dict[str, dict[str, dict]]`
 - `estado_vazio(snapshots: dict, alvos: dict) -> str | None` — devolve a mensagem apropriada, ou `None` quando há o que exibir.
-- `_kpi_html(label, value, detail, icon, color) -> str` — **copiar a implementação de `views/dashboard_geral.py:377`**, porque ela é privada àquele módulo; não importar de lá.
+- `detalhe_cobertura(metrica) -> str` — texto do rodapé do card, incluindo o aviso quando a cobertura está abaixo do mínimo.
+
+**Cards: usar `design.componentes.card_metrica`, não escrever HTML novo.**
+`card_metrica(titulo, valor, delta=None, positivo=None, ajuda=None, accent=None) -> None`
+já é o componente padrão do projeto — a própria docstring o descreve como "Card de
+KPI em CSS (não usa st.metric) — visual coeso com o restante do app". Ele renderiza
+direto, não devolve string.
+
+Não copiar `_kpi_html`: essa função é privada e **já está duplicada** entre
+`views/dashboard_geral.py:377` e `views/fiis.py:309`, com assinaturas divergentes.
+Replicá-la uma terceira vez pioraria um problema que o projeto já tem, e
+`card_metrica` existe justamente para isso.
 
 **Mensagens de estado vazio, exatamente estas:**
 - Sem snapshot em nenhuma classe → `"Nenhum snapshot encontrado. Rode o schema 049 no Supabase e depois `python -m scripts.backfill_portfolio_snapshots --apply`."`
@@ -1566,10 +1577,29 @@ def test_classe_com_dicionario_vazio_conta_como_sem_snapshot():
     assert portfolio_global.estado_vazio({"b3": {}, "us": {}}, {"b3": 1.0}) is not None
 
 
-def test_kpi_html_escapa_o_rotulo():
-    html = portfolio_global._kpi_html("<script>", "1", "d", "i", "#fff")
-    assert "<script>" not in html
-    assert "&lt;script&gt;" in html
+def test_detalhe_cobertura_avisa_quando_abaixo_do_minimo():
+    from core.global_portfolio.metrics import MetricaAgregada
+    baixa = MetricaAgregada(valor=10.0, cobertura=0.30, n_ativos=1)
+    texto = portfolio_global.detalhe_cobertura(baixa)
+    assert "⚠️" in texto and "30%" in texto
+
+
+def test_detalhe_cobertura_sem_valor_diz_que_nao_ha_dado():
+    from core.global_portfolio.metrics import MetricaAgregada
+    vazia = MetricaAgregada(valor=None, cobertura=0.0, n_ativos=0)
+    assert "sem dado" in portfolio_global.detalhe_cobertura(vazia)
+
+
+def test_a_view_nao_reimplementa_o_card_do_projeto():
+    """Regressao: card_metrica ja existe em design/componentes.py.
+
+    _kpi_html ja esta duplicado entre dashboard_geral.py e fiis.py com
+    assinaturas divergentes; uma terceira copia pioraria o problema.
+    """
+    import inspect
+    fonte = inspect.getsource(portfolio_global)
+    assert "_kpi_html" not in fonte
+    assert "card_metrica" in fonte
 
 
 def test_carregar_snapshots_usa_o_modelo_ativo_de_cada_classe(monkeypatch):
@@ -1607,8 +1637,6 @@ tests/test_portfolio_global_view.py.
 """
 from __future__ import annotations
 
-from html import escape
-
 import pandas as pd
 import streamlit as st
 
@@ -1621,26 +1649,13 @@ from core.portfolio.repository import (
     load_allocation_targets,
     save_allocation_targets,
 )
+from design.componentes import card_metrica
 
 MSG_SEM_SNAPSHOT = (
     "Nenhum snapshot encontrado. Rode o schema 049 no Supabase e depois "
     "`python -m scripts.backfill_portfolio_snapshots --apply`."
 )
 MSG_SEM_ALVO = "Defina a alocação-alvo por classe para consolidar o patrimônio."
-
-
-def _kpi_html(label: str, value: str, detail: str, icon: str, color: str) -> str:
-    """Card de metrica. Copia do helper de views/dashboard_geral.py, que e privado."""
-    return (
-        f'<article class="dg-kpi" style="--kpi-color:{escape(color)}">'
-        '<div class="dg-kpi-top">'
-        f'<div class="dg-kpi-label">{escape(label)}</div>'
-        f'<div class="dg-kpi-icon" aria-hidden="true">{escape(icon)}</div>'
-        '</div>'
-        f'<div class="dg-kpi-value">{escape(value)}</div>'
-        f'<div class="dg-kpi-detail">{detail}</div>'
-        '</article>'
-    )
 
 
 def carregar_snapshots(*, engine=None, owner_id=None) -> dict[str, dict[str, dict]]:
@@ -1666,7 +1681,8 @@ def _fmt(valor: float | None, sufixo: str = "", casas: int = 2) -> str:
     return f"{valor:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".") + sufixo
 
 
-def _detalhe_cobertura(metrica) -> str:
+def detalhe_cobertura(metrica) -> str:
+    """Texto de rodape do card: cobertura e, se for o caso, o aviso."""
     pct = f"{metrica.cobertura * 100:.0f}%"
     if metrica.valor is None:
         return "sem dado disponível"
@@ -1707,24 +1723,22 @@ def _cards_de_concentracao(resumo: dict) -> None:
     st.markdown("#### Concentração")
     colunas = st.columns(4)
     cartoes = [
-        ("Posições efetivas", resumo["symbol"], "🎯", "#5B8DEF"),
-        ("Setores efetivos", resumo["sector"], "🏭", "#38BDF8"),
-        ("Países efetivos", resumo["country"], "🌎", "#34D399"),
-        ("Classes efetivas", resumo["asset_class"], "🧩", "#FBBF24"),
+        ("Posições efetivas", resumo["symbol"], "#5B8DEF"),
+        ("Setores efetivos", resumo["sector"], "#38BDF8"),
+        ("Países efetivos", resumo["country"], "#34D399"),
+        ("Classes efetivas", resumo["asset_class"], "#FBBF24"),
     ]
-    for coluna, (rotulo, dados, icone, cor) in zip(colunas, cartoes):
+    for coluna, (rotulo, dados, cor) in zip(colunas, cartoes):
         maior = dados["maior_nome"] or "—"
         if rotulo == "Setores efetivos":
             maior = ROTULOS.get(dados["maior_nome"], maior)
         with coluna:
-            st.markdown(
-                _kpi_html(
-                    rotulo,
-                    _fmt(dados["numero_efetivo"], casas=1),
-                    f'maior: {escape(str(maior))} · {dados["maior_peso"] * 100:.1f}%',
-                    icone, cor,
-                ),
-                unsafe_allow_html=True,
+            card_metrica(
+                rotulo,
+                _fmt(dados["numero_efetivo"], casas=1),
+                delta=f'maior: {maior} · {dados["maior_peso"] * 100:.1f}%',
+                accent=cor,
+                ajuda="Número de posições iguais que teria a mesma concentração (1/HHI).",
             )
 
 
@@ -1736,14 +1750,15 @@ def _cards_de_metricas(df: pd.DataFrame) -> None:
 
     colunas = st.columns(3)
     cartoes = [
-        ("P/L agregado", _fmt(pl.valor), _detalhe_cobertura(pl), "📊", "#5B8DEF"),
-        ("P/VP agregado", _fmt(pvp.valor), _detalhe_cobertura(pvp), "📐", "#38BDF8"),
-        ("Dividend yield", _fmt(dy.valor, "%"), _detalhe_cobertura(dy), "💰", "#34D399"),
+        ("P/L agregado", _fmt(pl.valor), pl, "#5B8DEF"),
+        ("P/VP agregado", _fmt(pvp.valor), pvp, "#38BDF8"),
+        ("Dividend yield", _fmt(dy.valor, "%"), dy, "#34D399"),
     ]
-    for coluna, (rotulo, valor, detalhe, icone, cor) in zip(colunas, cartoes):
+    for coluna, (rotulo, valor, metrica, cor) in zip(colunas, cartoes):
         with coluna:
-            st.markdown(_kpi_html(rotulo, valor, detalhe, icone, cor),
-                        unsafe_allow_html=True)
+            card_metrica(rotulo, valor, delta=detalhe_cobertura(metrica),
+                         positivo=None if metrica.confiavel else False,
+                         accent=cor)
 
     st.caption(
         "O P/L e o P/VP agregados usam **earnings yield ponderado**, invertido ao final. "
@@ -1767,11 +1782,8 @@ def _qualidade(df: pd.DataFrame) -> None:
     for coluna, classe in zip(colunas, sorted(por_classe)):
         metrica = por_classe[classe]
         with coluna:
-            st.markdown(
-                _kpi_html(get_spec(classe).label, _fmt(metrica.valor, casas=1),
-                          _detalhe_cobertura(metrica), "⭐", "#A78BFA"),
-                unsafe_allow_html=True,
-            )
+            card_metrica(get_spec(classe).label, _fmt(metrica.valor, casas=1),
+                         delta=detalhe_cobertura(metrica), accent="#A78BFA")
 
 
 def _tabelas(df: pd.DataFrame) -> None:
@@ -1857,15 +1869,15 @@ E na lista `opcoes_invest`, acrescentar o mesmo rótulo ao final:
 - [ ] **Step 5: Rodar o teste e confirmar que passa**
 
 Run: `"/c/Users/Tiago Barros/AppData/Local/Programs/Python/Python312/python.exe" -m pytest tests/test_portfolio_global_view.py -v`
-Expected: 8 passed
+Expected: 10 passed
 
 - [ ] **Step 6: Rodar a suíte da fase e a suíte completa**
 
 Run: `"/c/Users/Tiago Barros/AppData/Local/Programs/Python/Python312/python.exe" -m pytest tests/test_portfolio_repository_global.py tests/test_global_taxonomy.py tests/test_global_fields.py tests/test_global_aggregate.py tests/test_global_concentration.py tests/test_global_metrics.py tests/test_portfolio_global_view.py -v`
-Expected: 95 passed (9 + 28 + 16 + 11 + 13 + 10 + 8)
+Expected: 97 passed (9 + 28 + 16 + 11 + 13 + 10 + 10)
 
 Run: `"/c/Users/Tiago Barros/AppData/Local/Programs/Python/Python312/python.exe" -m pytest tests/ -q --tb=short`
-Expected: `1634 passed, 3 skipped, 0 failed` (baseline 1539 + 95). Qualquer falha é regressão.
+Expected: `1636 passed, 3 skipped, 0 failed` (baseline 1539 + 97). Qualquer falha é regressão.
 
 - [ ] **Step 7: Commit**
 
@@ -1898,6 +1910,6 @@ git commit -m "feat(global): secao Portfolio Global com composicao, concentracao
 
 **Consistência de nomes verificada:** `montar_posicoes` (Task 4) é consumida com a mesma assinatura nas Tasks 5, 6 e 7. `MetricaAgregada` (Task 6) tem `valor`/`cobertura`/`n_ativos`/`confiavel` e é lida assim na Task 7. `setor_canonico` e `ROTULOS` (Task 2) são usados nas Tasks 4 e 7. `valor` de `fields` (Task 3) é importado como `campo_valor` na Task 6 para não colidir com a variável local. `load_active_snapshots` e `load_allocation_targets` (Task 1) são consumidos na Task 7 com os mesmos parâmetros nomeados.
 
-**Ponto de atenção para quem executar a Task 7:** `_kpi_html` é copiado de `views/dashboard_geral.py`, não importado — a função é privada àquele módulo e importá-la criaria acoplamento entre duas views. A duplicação é deliberada e está comentada no código.
+**Ponto de atenção para quem executar a Task 7:** os cards usam `design.componentes.card_metrica`, que já é o componente padrão do projeto. Não copiar `_kpi_html` de `views/dashboard_geral.py` nem de `views/fiis.py` — ela já está duplicada entre essas duas views com assinaturas divergentes, e uma terceira cópia agravaria o problema. Há um teste na Task 7 que falha se `_kpi_html` aparecer no módulo novo.
 
 **Costura real, não fake:** a Task 1 testa o repositório contra SQLite de verdade, incluindo as três tabelas de modelo. A Task 7 testa `carregar_snapshots` verificando que as três classes são consultadas, e verifica a rota lendo `app.py`. Nenhum teste desta fase substitui um módulo desta fase por um fake — a lição da Fase 1.
