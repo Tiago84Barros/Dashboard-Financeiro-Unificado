@@ -2,7 +2,7 @@
 import pandas as pd
 import pytest
 
-from core.global_portfolio.aggregate import montar_posicoes
+from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
 
 SNAPS = {
     "b3": {
@@ -136,3 +136,31 @@ def test_metrics_weight_nao_numerico():
     df = montar_posicoes(snaps, {"b3": 1.0})
     row = df.iloc[0]
     assert row["weight_global"] == pytest.approx(0.0)
+
+
+def test_classe_com_alvo_e_sem_snapshot_e_reportada():
+    """Sem isso, o patrimonio soma menos que 1 sem nenhum aviso na tela."""
+    achados = classes_sem_posicao({"b3": SNAPS["b3"]}, {"b3": 0.7, "us": 0.3})
+    assert achados == [("us", 0.3)]
+
+
+def test_classe_com_alvo_e_snapshot_nao_e_reportada():
+    achados = classes_sem_posicao(SNAPS, ALVOS)
+    assert achados == []
+
+
+def test_classe_com_snapshot_e_sem_alvo_nao_e_reportada():
+    """Ja fica visivel com peso zero (comportamento ja coberto em outro teste)."""
+    achados = classes_sem_posicao(SNAPS, {"b3": 1.0})
+    assert achados == []
+
+
+def test_classe_com_alvo_zero_e_sem_snapshot_nao_e_reportada():
+    """Alvo zero significa que nada foi esperado dessa classe."""
+    achados = classes_sem_posicao({"b3": SNAPS["b3"]}, {"b3": 1.0, "us": 0.0})
+    assert achados == []
+
+
+def test_classes_sem_posicao_ordenada_por_classe():
+    achados = classes_sem_posicao({}, {"us": 0.3, "b3": 0.2, "fii": 0.5})
+    assert achados == [("b3", 0.2), ("fii", 0.5), ("us", 0.3)]

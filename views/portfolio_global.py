@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from core.global_portfolio import concentration, metrics
-from core.global_portfolio.aggregate import montar_posicoes
+from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
 from core.global_portfolio.taxonomy import ROTULOS, nao_mapeados
 from core.portfolio.registry import asset_classes, get_spec
 from core.portfolio.repository import (
@@ -47,6 +48,31 @@ def estado_vazio(snapshots: dict, alvos: dict) -> str | None:
     if not alvos:
         return MSG_SEM_ALVO
     return None
+
+
+_MARCAS_TABELA_AUSENTE = ("does not exist", "no such table")
+
+
+def mensagem_de_erro_ao_carregar(exc: Exception) -> str:
+    """Traduz uma excecao ao carregar snapshots/alocacao para o texto a exibir.
+
+    O schema 049 (tabelas de snapshot e de alocacao-alvo) pode ainda nao ter
+    sido aplicado no Supabase: nesse caso a consulta cai numa tabela
+    inexistente, o que e o primeiro-uso esperado, nao um erro de verdade.
+    Postgres levanta ProgrammingError para relacao ausente; SQLite levanta
+    OperationalError. Checar os dois tipos cobre os bancos usados pelo
+    projeto; a checagem por substring do texto complementa (para outros
+    drivers), mas nao substitui, porque grepar texto de excecao arbitraria e
+    fragil. Qualquer outra excecao mantem a mensagem crua — uma falha de
+    conexao real precisa continuar visivel, nao disfarcada de "sem dados".
+    """
+    tabela_ausente = isinstance(exc, (ProgrammingError, OperationalError))
+    if not tabela_ausente:
+        texto = str(exc).lower()
+        tabela_ausente = any(marca in texto for marca in _MARCAS_TABELA_AUSENTE)
+    if tabela_ausente:
+        return MSG_SEM_SNAPSHOT
+    return f"Não foi possível ler os dados do portfólio: {exc}"
 
 
 def _fmt(valor: float | None, sufixo: str = "", casas: int = 2) -> str:
@@ -205,7 +231,11 @@ def render() -> None:
         snapshots = carregar_snapshots()
         alocacao = load_allocation_targets()
     except Exception as exc:  # noqa: BLE001 - fronteira de isolamento da rota
-        st.error(f"Não foi possível ler os dados do portfólio: {exc}")
+        mensagem = mensagem_de_erro_ao_carregar(exc)
+        if mensagem == MSG_SEM_SNAPSHOT:
+            st.info(mensagem)
+        else:
+            st.error(mensagem)
         return
 
     alvos = alocacao.get("targets") or {}
@@ -225,7 +255,14 @@ def render() -> None:
     if sem_mapa:
         st.warning(
             "Setores sem mapeamento canônico (contabilizados como Outros): "
-            + ", ".join(f"{c}/{s}" for c, s in sem_mapa)
+            + ", ".join(f"{get_spec(c).label}/{s}" for c, s in sem_mapa)
+        )
+
+    sem_posicao = classes_sem_posicao(snapshots, alvos)
+    if sem_posicao:
+        st.warning(
+            "Classes com alvo definido mas sem posições capturadas: "
+            + ", ".join(f"{get_spec(c).label} ({a * 100:.0f}%)" for c, a in sem_posicao)
         )
 
     _cards_de_concentracao(concentration.resumo(df))

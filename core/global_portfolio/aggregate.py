@@ -77,3 +77,23 @@ def montar_posicoes(snapshots_por_classe: dict[str, dict[str, dict]],
     return (df.sort_values(["weight_global", "asset_class", "symbol"],
                            ascending=[False, True, True])
               .reset_index(drop=True))
+
+
+def classes_sem_posicao(snapshots_por_classe: dict[str, dict[str, dict]],
+                        alvos: dict[str, float]) -> list[tuple[str, float]]:
+    """Classes com alvo acima de zero que nao contribuiram nenhuma posicao.
+
+    montar_posicoes pula, deliberadamente, uma classe alocada sem snapshot
+    (o modelo pode nao ter sido capturado ainda) — mas o pulo e silencioso:
+    sem este relatorio, weight_global soma menos que 1 e valor_brl subestima
+    o patrimonio sem nenhum aviso na tela. Ordenado por classe para
+    determinismo.
+    """
+    achados: list[tuple[str, float]] = []
+    for classe, alvo in alvos.items():
+        peso = float(alvo or 0.0)
+        if peso <= 0:
+            continue
+        if not (snapshots_por_classe.get(classe) or {}):
+            achados.append((classe, peso))
+    return sorted(achados)
