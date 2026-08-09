@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
-from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from core.global_portfolio import concentration, metrics
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
@@ -50,7 +49,37 @@ def estado_vazio(snapshots: dict, alvos: dict) -> str | None:
     return None
 
 
-_MARCAS_TABELA_AUSENTE = ("does not exist", "no such table")
+# undefined_table no Postgres (SQLSTATE); ver
+# https://www.postgresql.org/docs/current/errcodes-appendix.html
+_PGCODE_TABELA_AUSENTE = "42P01"
+
+# SQLite nao tem codigo de erro estruturado: "no such table" e o unico sinal.
+# "does not exist" sozinho e ambiguo demais (aparece em erros de coluna, de
+# funcao etc.); exigir "relation" junto restringe ao caso de tabela.
+_MARCAS_TABELA_AUSENTE = ("no such table",)
+
+
+def _e_erro_de_tabela_ausente(exc: Exception) -> bool:
+    """True quando a excecao representa uma tabela/relacao inexistente.
+
+    Nao usa o tipo da excecao SQLAlchemy (ProgrammingError/OperationalError)
+    como sinal: no psycopg2, OperationalError e a categoria de falha de
+    CONEXAO/autenticacao, nao de relacao ausente — um Supabase fora do ar ou
+    uma credencial errada tambem levantam OperationalError, e confundir os
+    dois faz a tela mentir "rode o schema" quando o problema e outro. O sinal
+    correto vem do erro do driver: pgcode 42P01 (undefined_table) no
+    Postgres, ou a mensagem "no such table" no SQLite (que nao tem pgcode).
+    """
+    orig = getattr(exc, "orig", None)
+    pgcode = getattr(orig, "pgcode", None)
+    if pgcode == _PGCODE_TABELA_AUSENTE:
+        return True
+    texto = str(exc).lower()
+    if any(marca in texto for marca in _MARCAS_TABELA_AUSENTE):
+        return True
+    if "does not exist" in texto and "relation" in texto:
+        return True
+    return False
 
 
 def mensagem_de_erro_ao_carregar(exc: Exception) -> str:
@@ -59,18 +88,12 @@ def mensagem_de_erro_ao_carregar(exc: Exception) -> str:
     O schema 049 (tabelas de snapshot e de alocacao-alvo) pode ainda nao ter
     sido aplicado no Supabase: nesse caso a consulta cai numa tabela
     inexistente, o que e o primeiro-uso esperado, nao um erro de verdade.
-    Postgres levanta ProgrammingError para relacao ausente; SQLite levanta
-    OperationalError. Checar os dois tipos cobre os bancos usados pelo
-    projeto; a checagem por substring do texto complementa (para outros
-    drivers), mas nao substitui, porque grepar texto de excecao arbitraria e
-    fragil. Qualquer outra excecao mantem a mensagem crua — uma falha de
-    conexao real precisa continuar visivel, nao disfarcada de "sem dados".
+    Qualquer outra falha — incluindo conexao recusada ou autenticacao
+    invalida, que tambem chegam como OperationalError — mantem a mensagem
+    crua: uma falha de conexao real precisa continuar visivel, nao
+    disfarcada de "sem dados".
     """
-    tabela_ausente = isinstance(exc, (ProgrammingError, OperationalError))
-    if not tabela_ausente:
-        texto = str(exc).lower()
-        tabela_ausente = any(marca in texto for marca in _MARCAS_TABELA_AUSENTE)
-    if tabela_ausente:
+    if _e_erro_de_tabela_ausente(exc):
         return MSG_SEM_SNAPSHOT
     return f"Não foi possível ler os dados do portfólio: {exc}"
 

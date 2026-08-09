@@ -93,25 +93,39 @@ def test_carregar_snapshots_usa_o_modelo_ativo_de_cada_classe(monkeypatch):
     assert set(saida["b3"]) == {"X"}
 
 
-def test_erro_de_tabela_ausente_no_postgres_vira_orientacao_de_backfill():
+class _OrigFake(Exception):
+    """Substituto do erro do driver DBAPI (psycopg2), com pgcode como o real.
+
+    psycopg2.errors.UndefinedTable so tem pgcode preenchido quando o erro vem
+    de uma conexao de verdade (o atributo e escrito pela extensao C); nos
+    testes o substituto precisa carregar o mesmo dado — SQLSTATE — do jeito
+    que o codigo de producao vai le-lo: `exc.orig.pgcode`.
+    """
+
+    def __init__(self, msg: str, pgcode: str | None = None):
+        super().__init__(msg)
+        self.pgcode = pgcode
+
+
+def test_erro_de_tabela_ausente_no_postgres_por_pgcode_vira_orientacao():
     """Regressao: schema 049 nao aplicado nao pode aparecer como erro cru.
 
     load_allocation_targets consulta portfolio_allocation_targets; se o
     schema 049 nao foi rodado no Supabase, a tabela nao existe e o Postgres
-    levanta ProgrammingError. Isso e o primeiro-uso esperado, nao uma falha
-    de verdade: o usuario deve ver a orientacao do backfill, nao "relation
-    does not exist".
+    levanta ProgrammingError com pgcode 42P01 (undefined_table). Isso e o
+    primeiro-uso esperado, nao uma falha de verdade: o usuario deve ver a
+    orientacao do backfill.
     """
     exc = ProgrammingError(
         "SELECT 1", {},
-        Exception('relation "portfolio_allocation_targets" does not exist'),
+        _OrigFake('relation "portfolio_allocation_targets" does not exist', "42P01"),
     )
     msg = portfolio_global.mensagem_de_erro_ao_carregar(exc)
     assert msg == portfolio_global.MSG_SEM_SNAPSHOT
 
 
 def test_erro_de_tabela_ausente_no_sqlite_vira_orientacao_de_backfill():
-    """Mesmo caso do teste acima, mas para o driver SQLite (usado em testes)."""
+    """SQLite nao tem pgcode; o sinal e so a mensagem 'no such table'."""
     exc = OperationalError(
         "SELECT 1", {}, Exception("no such table: portfolio_allocation_targets"),
     )
@@ -119,12 +133,41 @@ def test_erro_de_tabela_ausente_no_sqlite_vira_orientacao_de_backfill():
     assert msg == portfolio_global.MSG_SEM_SNAPSHOT
 
 
-def test_erro_generico_mantem_a_mensagem_crua():
-    """Uma falha de conexao real precisa continuar visivel, nao disfarcada."""
-    exc = RuntimeError("connection refused")
+def test_operational_error_de_conexao_recusada_mantem_a_mensagem_crua():
+    """Regressao do re-review: no psycopg2, OperationalError e a categoria de
+    falha de CONEXAO, nao de tabela ausente. Um Supabase fora do ar nao pode
+    virar "rode o schema 049" — isso seria pior que o erro cru, porque
+    parece uma resposta confiante e esta errada.
+    """
+    exc = OperationalError(
+        "SELECT 1", {},
+        Exception(
+            'connection to server at "db.supabase.co" (1.2.3.4), port 5432 '
+            "failed: Connection refused"
+        ),
+    )
     msg = portfolio_global.mensagem_de_erro_ao_carregar(exc)
     assert msg != portfolio_global.MSG_SEM_SNAPSHOT
-    assert "connection refused" in msg
+    assert "Connection refused" in msg
+
+
+def test_operational_error_de_autenticacao_mantem_a_mensagem_crua():
+    """Mesma regressao do re-review, para credencial invalida."""
+    exc = OperationalError(
+        "SELECT 1", {},
+        Exception('FATAL: password authentication failed for user "postgres"'),
+    )
+    msg = portfolio_global.mensagem_de_erro_ao_carregar(exc)
+    assert msg != portfolio_global.MSG_SEM_SNAPSHOT
+    assert "password authentication failed" in msg
+
+
+def test_erro_generico_mantem_a_mensagem_crua():
+    """Uma excecao qualquer, sem relacao com o banco, tambem fica crua."""
+    exc = RuntimeError("algo inesperado")
+    msg = portfolio_global.mensagem_de_erro_ao_carregar(exc)
+    assert msg != portfolio_global.MSG_SEM_SNAPSHOT
+    assert "algo inesperado" in msg
 
 
 def test_load_allocation_targets_falhando_por_schema_ausente_aciona_a_orientacao(monkeypatch):
@@ -136,7 +179,7 @@ def test_load_allocation_targets_falhando_por_schema_ausente_aciona_a_orientacao
     def fake_load(*, engine=None, owner_id=None):
         raise ProgrammingError(
             "SELECT 1", {},
-            Exception('relation "portfolio_allocation_targets" does not exist'),
+            _OrigFake('relation "portfolio_allocation_targets" does not exist', "42P01"),
         )
 
     monkeypatch.setattr(portfolio_global, "load_allocation_targets", fake_load)
