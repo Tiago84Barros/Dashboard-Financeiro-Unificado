@@ -65,7 +65,17 @@ def detalhe_cobertura(metrica) -> str:
     return f"cobertura {pct} · {metrica.n_ativos} ativos"
 
 
-def _editor_de_alocacao(alvos: dict) -> None:
+def _valor_inicial_total(total_brl: float | None) -> float:
+    """Valor inicial do campo de patrimonio total: o total salvo, ou 0.0.
+
+    Funcao pura para nao deixar essa decisao so alcancavel via st.* — o bug
+    original (total salvo sumindo a cada reabertura do formulario) veio
+    justamente de o widget nunca receber o total ja persistido.
+    """
+    return float(total_brl) if total_brl is not None else 0.0
+
+
+def _editor_de_alocacao(alvos: dict, total_brl: float | None = None) -> None:
     """Formulario da alocacao-alvo por classe."""
     with st.expander("⚖️ Alocação-alvo por classe", expanded=not alvos):
         with st.form("form_alocacao_global"):
@@ -81,7 +91,8 @@ def _editor_de_alocacao(alvos: dict) -> None:
                     )
             total = st.number_input(
                 "Patrimônio total em R$ (opcional)",
-                min_value=0.0, step=1000.0, value=0.0,
+                min_value=0.0, step=1000.0,
+                value=_valor_inicial_total(total_brl),
                 help="Se informado, a tabela mostra o valor por ativo. Não é usado nos percentuais.",
             )
             if st.form_submit_button("Salvar alocação"):
@@ -198,7 +209,7 @@ def render() -> None:
         return
 
     alvos = alocacao.get("targets") or {}
-    _editor_de_alocacao(alvos)
+    _editor_de_alocacao(alvos, alocacao.get("total_brl"))
 
     aviso = estado_vazio(snapshots, alvos)
     if aviso:

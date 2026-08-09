@@ -65,6 +65,19 @@ def test_a_view_nao_reimplementa_o_card_do_projeto():
     assert "card_metrica" in fonte
 
 
+def test_valor_inicial_do_total_usa_o_total_salvo_em_vez_de_zero():
+    """Regressao: o total salvo nao pode sumir a cada reabertura do formulario.
+
+    _editor_de_alocacao so recebia `alvos`, nunca `alocacao["total_brl"]`, e o
+    campo do formulario vinha hardcoded em `value=0.0`. Resultado: reabrir o
+    formulario para ajustar uma classe e salvar apagava o total ja persistido
+    (`total or None` mandava None). O valor inicial do widget precisa ser o
+    total carregado, nao zero.
+    """
+    assert portfolio_global._valor_inicial_total(15000.0) == 15000.0
+    assert portfolio_global._valor_inicial_total(None) == 0.0
+
+
 def test_carregar_snapshots_usa_o_modelo_ativo_de_cada_classe(monkeypatch):
     chamadas = []
 
