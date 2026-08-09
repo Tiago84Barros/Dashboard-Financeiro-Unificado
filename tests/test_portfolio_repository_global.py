@@ -108,6 +108,7 @@ def test_salvar_alocacao_arquiva_a_anterior(engine):
 
     alvo = load_allocation_targets(engine=engine, owner_id=OWNER)
     assert alvo["targets"] == pytest.approx({"b3": 0.6, "fii": 0.4})
+    assert alvo["total_brl"] is None
 
     with engine.connect() as conn:
         ativos = conn.execute(
@@ -119,6 +120,11 @@ def test_salvar_alocacao_arquiva_a_anterior(engine):
 def test_alocacao_com_soma_zero_e_rejeitada(engine):
     with pytest.raises(ValueError, match="soma"):
         save_allocation_targets({"b3": 0, "us": 0}, engine=engine, owner_id=OWNER)
+
+
+def test_alocacao_com_peso_negativo_e_rejeitada(engine):
+    with pytest.raises(ValueError, match="b3"):
+        save_allocation_targets({"b3": -10, "us": 20}, engine=engine, owner_id=OWNER)
 
 
 def test_alocacao_com_classe_desconhecida_e_rejeitada(engine):
