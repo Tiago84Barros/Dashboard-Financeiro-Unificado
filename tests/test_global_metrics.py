@@ -1,4 +1,6 @@
 """Metricas agregadas do patrimonio, com cobertura explicita."""
+import math
+
 import pandas as pd
 import pytest
 
@@ -106,3 +108,47 @@ def test_dataframe_vazio_nao_quebra():
     assert valuation_agregado(vazio, "pe").valor is None
     assert dy_consolidado(vazio).valor is None
     assert qualidade_por_classe(vazio) == {}
+
+
+def test_peso_nan_nao_contamina_o_calculo():
+    # float('nan') or 0.0 avalia para NaN (NaN e "truthy"); um parser ingenuo
+    # deixaria esse peso passar pelo filtro "peso > 0" (NaN <= 0 e False) e
+    # NaN se propagaria por toda soma a jusante.
+    df = pd.DataFrame([
+        _linha("b3", "A3", 0.5, {"P/L": 10.0}),
+        _linha("b3", "B3X", float("nan"), {"P/L": 100.0}),
+    ])
+    resultado = valuation_agregado(df, "pe")
+    assert resultado.valor is not None
+    assert math.isfinite(resultado.valor)
+    assert resultado.cobertura is not None
+    assert math.isfinite(resultado.cobertura)
+
+    qualidade = qualidade_por_classe(pd.DataFrame([
+        _linha("b3", "A3", 0.5, {}, {"score": 80.0}),
+        _linha("b3", "B3X", float("nan"), {}, {"score": 60.0}),
+    ]))
+    assert math.isfinite(qualidade["b3"].cobertura)
+    assert qualidade["b3"].valor is None or math.isfinite(qualidade["b3"].valor)
+
+
+def test_todos_os_pesos_zero_devolve_metrica_vazia():
+    df = pd.DataFrame([
+        _linha("b3", "A3", 0.0, {"P/L": 10.0}),
+        _linha("b3", "B3X", 0.0, {"P/L": 20.0}),
+    ])
+    resultado = valuation_agregado(df, "pe")
+    assert resultado.valor is None
+    assert resultado.cobertura == 0.0
+    assert cobertura(df, "pe") == 0.0
+    assert qualidade_por_classe(df)["b3"].valor is None
+
+
+def test_weight_global_ausente_devolve_metrica_vazia():
+    df = pd.DataFrame([
+        {"asset_class": "b3", "symbol": "A3",
+         "payload": {"fundamentals": {"P/L": 10.0}, "metrics": {}}},
+    ])
+    resultado = valuation_agregado(df, "pe")
+    assert resultado.valor is None
+    assert resultado.cobertura == 0.0
