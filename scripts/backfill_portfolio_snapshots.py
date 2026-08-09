@@ -2,11 +2,25 @@
 
 Simulacao por padrao; grava somente com --apply (padrao dos scripts do projeto).
 
-LIMITE CONHECIDO: as vintages point-in-time em market.calculated_metric_vintages
-sao hoje praticamente todas baseline, entao o backfill grava o valor ATUAL, nao
-o da data da selecao. Por isso todo payload gerado aqui leva
-provenance.backfilled = True. As gravacoes feitas a partir de agora, pelo
-gancho em core/portfolio/capture.py, capturam o valor correto no momento certo.
+O QUE E E O QUE NAO E POINT-IN-TIME AQUI:
+
+  Point-in-time (verdadeiro) — vem das tabelas *_portfolio_model_items, que
+  gravaram os valores no momento da selecao: identidade (nome, setor,
+  subsetor, segmento), metricas (score, alpha, rank, peso) e classificacao
+  (motivos, parecer qualitativo, ano lider), mais os parametros do modelo.
+
+  Valor de hoje — fundamentals e history, lidos de market.* agora. As vintages
+  em market.calculated_metric_vintages sao hoje praticamente todas baseline,
+  entao nao ha como reconstruir o fundamento como era na data da selecao.
+
+Por isso todo payload gerado aqui leva provenance.backfilled = True: parte do
+conteudo e historico fiel e parte e atual, e quem consumir precisa saber disso.
+As gravacoes feitas a partir de agora, pelo gancho em core/portfolio/capture.py,
+capturam tudo no momento certo.
+
+A traducao entre a linha crua do banco e o formato que os adaptadores esperam
+esta em normalizar_itens(); sem ela, dado point-in-time que ESTA gravado se
+perde na montagem do payload.
 
 Uso:
     python -m scripts.backfill_portfolio_snapshots
@@ -31,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_json(valor, default):
-    if isinstance(valor, dict):
+    if isinstance(valor, (dict, list)):
         return valor
     if not valor:
         return default
@@ -39,6 +53,33 @@ def _parse_json(valor, default):
         return json.loads(valor)
     except (TypeError, ValueError):
         return default
+
+
+def _normalizar_b3(linha: dict) -> dict:
+    """Traduz a linha crua de b3_portfolio_model_items para o formato do adaptador.
+
+    O adaptador foi escrito para o item em memoria usado no momento de salvar,
+    onde os campos se chamam 'motivos' e 'quali'. No banco eles sao colunas JSONB
+    chamadas 'motivos_json' e 'meta_json'. Sem esta traducao os dois blocos
+    chegam vazios ao payload — perdendo dado point-in-time que esta gravado.
+    """
+    item = dict(linha)
+    item["motivos"] = _parse_json(linha.get("motivos_json"), [])
+    item["quali"] = _parse_json(linha.get("meta_json"), {})
+    return item
+
+
+# Classes ausentes deste mapa usam a linha crua: suas colunas ja coincidem com
+# as chaves que o adaptador procura.
+_NORMALIZADORES = {"b3": _normalizar_b3}
+
+
+def normalizar_itens(asset_class: str, linhas: list[dict]) -> list[dict]:
+    """Aplica a traducao coluna-do-banco -> chave-do-adaptador da classe."""
+    normalizador = _NORMALIZADORES.get(get_spec(asset_class).key)
+    if normalizador is None:
+        return list(linhas)
+    return [normalizador(linha) for linha in linhas]
 
 
 def active_models(asset_class: str, *, engine, owner_id: str) -> list[dict]:
@@ -97,7 +138,7 @@ def backfill(*, engine, owner_id: str, apply: bool,
     for key in alvo:
         total = 0
         for modelo in active_models(key, engine=engine, owner_id=owner_id):
-            itens = read_model_items(key, modelo["id"], engine=engine)
+            itens = normalizar_itens(key, read_model_items(key, modelo["id"], engine=engine))
             if not itens:
                 continue
             snapshots = load_adapter(key).build_snapshots(

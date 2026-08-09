@@ -34,6 +34,13 @@ _COMPOSICAO = {
 }
 
 
+# Fundamentos que a propria selecao gravou junto do item. Quando o item os traz,
+# eles vencem o valor lido da base agora: no salvamento os dois sao identicos, e
+# no backfill o do item e o valor point-in-time correto, enquanto o da base e o
+# de hoje. Preferir a base ali trocaria historico verdadeiro por valor atual.
+_FUNDAMENTOS_DO_ITEM = ("dy_12m", "pvp")
+
+
 def _default_loaders() -> dict:
     from core import market_read
     return {"fiis": lambda: market_read.load_fiis()}
@@ -61,6 +68,9 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
         linha = base.get(tk) or {}
         fundamentals = {destino: linha[origem]
                         for origem, destino in _FUNDAMENTOS.items() if origem in linha}
+        for campo in _FUNDAMENTOS_DO_ITEM:
+            if item.get(campo) is not None:
+                fundamentals[campo] = item[campo]
         composition = {destino: linha[origem]
                        for origem, destino in _COMPOSICAO.items() if origem in linha}
 

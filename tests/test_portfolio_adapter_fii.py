@@ -87,5 +87,28 @@ def test_fii_ausente_da_base_gera_snapshot_degradado():
     assert xxxx.payload["classification"]["composition"] == {}
 
 
+def test_dy_e_pvp_do_item_vencem_o_valor_atual_da_base():
+    """No backfill o item traz o valor da selecao; a base traz o de hoje.
+
+    Preferir a base trocaria historico verdadeiro por valor atual, em silencio.
+    No salvamento ao vivo os dois coincidem, entao a regra nao muda nada la.
+    """
+    itens = [{"ticker": "HGLG11", "nome": "CSHG Logistica", "segmento": "Logistica",
+              "score": 78.0, "peso": 0.6, "dy_12m": 7.1, "pvp": 0.88}]
+    fund = build_snapshots(itens, model_id="m01", params={},
+                           as_of=dt.date(2026, 8, 5),
+                           loaders=_loaders())[0].payload["fundamentals"]
+
+    assert fund["dy_12m"] == 7.1     # do item (selecao), nao 8.4 da base
+    assert fund["pvp"] == 0.88       # do item (selecao), nao 0.95 da base
+    assert fund["patrimonio_liquido"] == 3.2e9   # este so existe na base
+
+
+def test_sem_dy_e_pvp_no_item_usa_a_base():
+    fund = _build()[0].payload["fundamentals"]
+    assert fund["dy_12m"] == 8.4
+    assert fund["pvp"] == 0.95
+
+
 def test_provenance_registra_origem():
     assert _build()[0].payload["provenance"]["source"] == "selecao_fiis"

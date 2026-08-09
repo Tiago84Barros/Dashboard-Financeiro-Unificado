@@ -30,7 +30,8 @@ def engine():
             CREATE TABLE b3_portfolio_model_items (
                 model_id TEXT, ticker TEXT, nome TEXT, setor TEXT, subsetor TEXT,
                 segmento TEXT, weight REAL, score REAL, alpha_selic REAL, alpha_ew REAL,
-                rank_score INTEGER, ano_lider INTEGER
+                rank_score INTEGER, ano_lider INTEGER,
+                motivos_json TEXT, meta_json TEXT
             )
         """))
         conn.execute(text("INSERT INTO b3_portfolio_models (id, user_id, status, params_json) "
@@ -38,8 +39,11 @@ def engine():
         for tk, nome, peso in [("PETR4", "Petrobras", 0.6), ("VALE3", "Vale", 0.4)]:
             conn.execute(
                 text("INSERT INTO b3_portfolio_model_items "
-                     "(model_id, ticker, nome, weight, score) VALUES ('m01', :t, :n, :w, 70)"),
-                {"t": tk, "n": nome, "w": peso},
+                     "(model_id, ticker, nome, weight, score, motivos_json, meta_json) "
+                     "VALUES ('m01', :t, :n, :w, 70, :mot, :meta)"),
+                {"t": tk, "n": nome, "w": peso,
+                 "mot": '["Lider de score"]',
+                 "meta": '{"classificacao": "aprovada", "motivo": "governanca ok"}'},
             )
     return eng
 
@@ -102,6 +106,70 @@ def test_falha_real_na_consulta_e_logada_e_nao_apenas_tolerada(caplog):
     avisos = [r for r in caplog.records if r.levelname == "WARNING"]
     assert any("b3" in r.getMessage() for r in avisos)
     assert any(r.exc_info is not None for r in avisos)
+
+
+def _neutralizar_leituras_de_mercado(monkeypatch):
+    """Deixa o adaptador B3 real rodar sem tocar em market_read.
+
+    Substitui _default_loaders no proprio adaptador em vez de remendar funcoes
+    de core.market_read: importar aquele modulo puxa Streamlit, que polui a
+    saida dos testes com avisos de runtime ausente. O adaptador nao importa
+    market_read no topo justamente para permitir isso.
+    """
+    from core.portfolio.adapters import b3 as adaptador_b3
+    monkeypatch.setattr(
+        adaptador_b3, "_default_loaders",
+        lambda: {"multiplos": lambda tks: {}, "demonstracoes": lambda tks: {}},
+    )
+
+
+def test_normalizar_itens_traduz_colunas_cruas_do_b3(engine):
+    """motivos_json/meta_json (colunas) -> motivos/quali (o que o adaptador procura)."""
+    cru = bf.read_model_items("b3", "m01", engine=engine)
+    assert "motivos" not in cru[0] and "quali" not in cru[0]   # a linha crua nao tem
+
+    itens = bf.normalizar_itens("b3", cru)
+    assert itens[0]["motivos"] == ["Lider de score"]
+    assert itens[0]["quali"]["classificacao"] == "aprovada"
+
+
+def test_normalizar_itens_devolve_a_linha_intacta_para_classe_sem_traducao():
+    linhas = [{"symbol": "AAPL", "entry_score": 71.0}]
+    assert bf.normalizar_itens("us", linhas) == linhas
+
+
+def test_backfill_com_adaptador_REAL_preserva_motivos_e_quali(engine, monkeypatch):
+    """Regressao do defeito que os fakes escondiam.
+
+    Todos os outros testes deste arquivo fazem monkeypatch de load_adapter, entao
+    a costura entre read_model_items (colunas cruas) e o adaptador (formato em
+    memoria) nunca era exercitada — e o desalinhamento motivos_json/motivos e
+    meta_json/quali passava despercebido, gravando classification vazia.
+
+    Aqui o adaptador B3 real roda; so as leituras de mercado sao neutralizadas,
+    porque o que esta sob teste e a traducao do item, nao o enriquecimento.
+    """
+    _neutralizar_leituras_de_mercado(monkeypatch)
+
+    resumo = bf.backfill(engine=engine, owner_id=OWNER, apply=True, classes=["b3"])
+    assert resumo["b3"] == 2
+
+    from core.portfolio.repository import load_snapshots
+    cls = load_snapshots("b3", "m01", engine=engine)["PETR4"]["classification"]
+    assert cls["motivos"] == ["Lider de score"]
+    assert cls["quali"]["classificacao"] == "aprovada"
+
+
+def test_backfill_com_adaptador_REAL_preserva_metricas_point_in_time(engine, monkeypatch):
+    """Score e peso gravados na selecao sao historico verdadeiro, nao valor de hoje."""
+    _neutralizar_leituras_de_mercado(monkeypatch)
+
+    bf.backfill(engine=engine, owner_id=OWNER, apply=True, classes=["b3"])
+
+    from core.portfolio.repository import load_snapshots
+    metrics = load_snapshots("b3", "m01", engine=engine)["PETR4"]["metrics"]
+    assert metrics["score"] == 70
+    assert metrics["weight"] == 0.6
 
 
 class _FakeAdapter:
