@@ -164,3 +164,108 @@ def apply_retention(asset_class: str, *, engine=None, keep: int = RETENTION_ARCH
                 {"ac": spec.key, "mid": str(model_id)},
             )
     return len(alvo)
+
+
+_TABELA_ALVO = "portfolio_allocation_targets"
+
+
+def active_model_id(asset_class: str, *, engine=None, owner_id=None) -> str | None:
+    """Id do modelo ativo do dono para a classe, ou None se nao houver."""
+    spec = get_spec(asset_class)
+    eng = _resolve_engine(engine)
+    owner = _resolve_owner(owner_id)
+
+    with eng.connect() as conn:
+        linha = conn.execute(
+            text(f"""
+                SELECT id FROM {spec.models_table}
+                WHERE user_id = :uid AND status = 'active'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+            """),
+            {"uid": owner},
+        ).mappings().first()
+    return str(linha["id"]) if linha else None
+
+
+def load_active_snapshots(asset_class: str, *, engine=None, owner_id=None) -> dict[str, dict]:
+    """{simbolo: payload} do modelo ATIVO da classe. Vazio se nao houver modelo."""
+    model_id = active_model_id(asset_class, engine=engine, owner_id=owner_id)
+    if not model_id:
+        return {}
+    return load_snapshots(asset_class, model_id, engine=engine)
+
+
+def _normalizar_alvos(targets: dict) -> dict[str, float]:
+    """Valida as classes e normaliza os pesos para somar 1."""
+    limpos: dict[str, float] = {}
+    for chave, valor in targets.items():
+        spec = get_spec(chave)              # levanta KeyError em classe desconhecida
+        peso = float(valor or 0.0)
+        if peso < 0:
+            raise ValueError(f"peso negativo para a classe {spec.key!r}")
+        limpos[spec.key] = peso
+
+    total = sum(limpos.values())
+    if total <= 0:
+        raise ValueError("a soma dos pesos da alocacao-alvo precisa ser maior que zero")
+    return {k: limpos[k] / total for k in sorted(limpos)}
+
+
+def save_allocation_targets(targets: dict[str, float], *, total_brl: float | None = None,
+                            notes: str = "", engine=None, owner_id=None) -> str:
+    """Salva a alocacao-alvo ativa, arquivando a anterior. Devolve o id."""
+    normalizados = _normalizar_alvos(targets)
+    eng = _resolve_engine(engine)
+    owner = _resolve_owner(owner_id)
+    placeholder = ("CAST(:targets_json AS jsonb)"
+                   if eng.dialect.name == "postgresql" else ":targets_json")
+    novo_id = str(uuid.uuid4())
+
+    with eng.begin() as conn:
+        conn.execute(
+            text(f"UPDATE {_TABELA_ALVO} SET status = 'archived' "
+                 f"WHERE user_id = :uid AND status = 'active'"),
+            {"uid": owner},
+        )
+        conn.execute(
+            text(f"""
+                INSERT INTO {_TABELA_ALVO}
+                    (id, user_id, status, total_brl, targets_json, notes)
+                VALUES
+                    (:id, :uid, 'active', :total_brl, {placeholder}, :notes)
+            """),
+            {
+                "id": novo_id, "uid": owner, "total_brl": total_brl,
+                "targets_json": canonical_json(normalizados), "notes": notes or "",
+            },
+        )
+    return novo_id
+
+
+def load_allocation_targets(*, engine=None, owner_id=None) -> dict:
+    """Alocacao-alvo ativa do dono. Estrutura vazia se nao houver."""
+    eng = _resolve_engine(engine)
+    owner = _resolve_owner(owner_id)
+
+    with eng.connect() as conn:
+        linha = conn.execute(
+            text(f"""
+                SELECT total_brl, targets_json, notes FROM {_TABELA_ALVO}
+                WHERE user_id = :uid AND status = 'active'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+            """),
+            {"uid": owner},
+        ).mappings().first()
+
+    if not linha:
+        return {"targets": {}, "total_brl": None, "notes": ""}
+
+    alvos = _decode(linha["targets_json"]) or {}
+    total = linha["total_brl"]
+    return {
+        "targets": {str(k): float(v) for k, v in sorted(alvos.items())},
+        "total_brl": float(total) if total is not None else None,
+        "notes": linha["notes"] or "",
+    }

@@ -36,6 +36,7 @@ _ROTAS: dict[str, str] = {
     # 🌎 e não 🇺🇸: Windows não renderiza emoji de bandeira (vira as letras "US")
     "🌎 Empresas Americanas": "empresas_americanas",
     "🏬 Seleção de FIIs":      "fiis",
+    "🌐 Portfólio Global":    "portfolio_global",
     "📚 Documentação":        "documentacao",
     "⚙️ Configurações":       "configuracoes",
 }
@@ -55,7 +56,8 @@ with st.sidebar:
     opcoes_financas = ["💰 Controle Financeiro"]
     opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3",
                      "🌎 Empresas Americanas",
-                     "🏬 Seleção de FIIs"]
+                     "🏬 Seleção de FIIs",
+                     "🌐 Portfólio Global"]
     opcoes_sistema = ["📚 Documentação", "⚙️ Configurações"]
 
     st.markdown('<div class="nav-section">Navegação</div>', unsafe_allow_html=True)
