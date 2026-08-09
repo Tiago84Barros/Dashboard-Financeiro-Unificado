@@ -99,3 +99,40 @@ def test_snapshots_vazios_devolvem_dataframe_vazio_com_as_colunas():
     assert df.empty
     for coluna in ("asset_class", "symbol", "sector", "weight_global"):
         assert coluna in df.columns
+
+
+def test_classe_com_todos_pesos_zero_nao_falha():
+    """Edge case: renormalizacao com total_classe == 0."""
+    snaps = {"b3": {
+        "X1": {"identity": {"symbol": "X1", "name": "X1"}, "metrics": {"weight": 0.0}},
+        "X2": {"identity": {"symbol": "X2", "name": "X2"}, "metrics": {"weight": 0.0}},
+    }}
+    df = montar_posicoes(snaps, {"b3": 1.0})
+    assert not df.empty
+    assert (df["weight_class"] == 0.0).all()
+    assert (df["weight_global"] == 0.0).all()
+
+
+def test_payload_sem_bloco_identity():
+    """Payload malformado: sem bloco 'identity'."""
+    snaps = {"b3": {
+        "NOTNAME": {"metrics": {"weight": 0.5}},
+    }}
+    df = montar_posicoes(snaps, {"b3": 1.0})
+    row = df.iloc[0]
+    assert row["symbol"] == "NOTNAME"
+    assert row["name"] == "NOTNAME"  # fallback para o simbolo
+    # Peso renormalizado: unico ativo na classe, entao 100% da classe.
+    # weight_global = 1.0 (alvo) * 1.0 (peso_classe renormalizado) = 1.0
+    assert row["weight_global"] == pytest.approx(1.0)
+
+
+def test_metrics_weight_nao_numerico():
+    """Payload malformado: weight nao e numero."""
+    snaps = {"b3": {
+        "BADWEIGHT": {"identity": {"symbol": "BADWEIGHT", "name": "Bad"},
+                      "metrics": {"weight": "abc"}},
+    }}
+    df = montar_posicoes(snaps, {"b3": 1.0})
+    row = df.iloc[0]
+    assert row["weight_global"] == pytest.approx(0.0)
