@@ -1,0 +1,101 @@
+"""Quadro unificado de posicoes das tres carteiras."""
+import pandas as pd
+import pytest
+
+from core.global_portfolio.aggregate import montar_posicoes
+
+SNAPS = {
+    "b3": {
+        "PETR4": {"identity": {"symbol": "PETR4", "name": "Petrobras",
+                               "sector": "Petróleo, Gás e Biocombustíveis"},
+                  "metrics": {"weight": 0.6}},
+        "ITUB4": {"identity": {"symbol": "ITUB4", "name": "Itaú",
+                               "sector": "Financeiro"},
+                  "metrics": {"weight": 0.4}},
+    },
+    "us": {
+        "AAPL": {"identity": {"symbol": "AAPL", "name": "Apple",
+                              "sector": "Technology"},
+                 "metrics": {"weight": 1.0}},
+    },
+    "fii": {
+        "HGLG11": {"identity": {"symbol": "HGLG11", "name": "CSHG Log",
+                                "sector": "Logística", "segment": "Tijolo"},
+                   "metrics": {"weight": 1.0}},
+    },
+}
+
+ALVOS = {"b3": 0.5, "us": 0.3, "fii": 0.2}
+
+
+def test_peso_global_e_alvo_da_classe_vezes_peso_no_modelo():
+    df = montar_posicoes(SNAPS, ALVOS)
+    petr = df[df["symbol"] == "PETR4"].iloc[0]
+    assert petr["weight_global"] == pytest.approx(0.5 * 0.6)
+
+
+def test_pesos_globais_somam_um():
+    df = montar_posicoes(SNAPS, ALVOS)
+    assert df["weight_global"].sum() == pytest.approx(1.0)
+
+
+def test_pesos_do_modelo_sao_renormalizados_dentro_da_classe():
+    snaps = {"b3": {
+        "A3": {"identity": {"symbol": "A3"}, "metrics": {"weight": 0.3}},
+        "B3X": {"identity": {"symbol": "B3X"}, "metrics": {"weight": 0.3}},
+    }}
+    df = montar_posicoes(snaps, {"b3": 1.0})
+    assert df["weight_global"].sum() == pytest.approx(1.0)
+    assert df["weight_class"].tolist() == pytest.approx([0.5, 0.5])
+
+
+def test_setor_canonico_e_preenchido_e_o_bruto_preservado():
+    df = montar_posicoes(SNAPS, ALVOS).set_index("symbol")
+    assert df.loc["PETR4", "sector"] == "energy"
+    assert df.loc["PETR4", "sector_raw"] == "Petróleo, Gás e Biocombustíveis"
+    assert df.loc["AAPL", "sector"] == "technology"
+    assert df.loc["HGLG11", "sector"] == "real_estate"
+
+
+def test_moeda_e_pais_vem_do_registro_da_classe():
+    df = montar_posicoes(SNAPS, ALVOS).set_index("symbol")
+    assert df.loc["PETR4", "currency"] == "BRL"
+    assert df.loc["PETR4", "country"] == "BR"
+    assert df.loc["AAPL", "currency"] == "USD"
+    assert df.loc["AAPL", "country"] == "US"
+
+
+def test_valor_brl_sai_do_total_informado_sem_conversao_cambial():
+    df = montar_posicoes(SNAPS, ALVOS, total_brl=100000.0).set_index("symbol")
+    assert df.loc["AAPL", "valor_brl"] == pytest.approx(30000.0)
+
+
+def test_sem_total_informado_valor_brl_fica_nulo():
+    df = montar_posicoes(SNAPS, ALVOS)
+    assert df["valor_brl"].isna().all()
+
+
+def test_classe_no_alvo_sem_snapshot_e_ignorada():
+    df = montar_posicoes({"b3": SNAPS["b3"]}, {"b3": 0.5, "us": 0.5})
+    assert set(df["asset_class"]) == {"b3"}
+    assert df["weight_global"].sum() == pytest.approx(0.5)
+
+
+def test_classe_com_snapshot_fora_do_alvo_aparece_com_peso_zero():
+    df = montar_posicoes(SNAPS, {"b3": 1.0})
+    fora = df[df["asset_class"] != "b3"]
+    assert not fora.empty
+    assert (fora["weight_global"] == 0.0).all()
+
+
+def test_ordenacao_e_deterministica():
+    df = montar_posicoes(SNAPS, ALVOS)
+    pesos = df["weight_global"].tolist()
+    assert pesos == sorted(pesos, reverse=True)
+
+
+def test_snapshots_vazios_devolvem_dataframe_vazio_com_as_colunas():
+    df = montar_posicoes({}, {})
+    assert df.empty
+    for coluna in ("asset_class", "symbol", "sector", "weight_global"):
+        assert coluna in df.columns
