@@ -170,6 +170,68 @@ def test_erro_generico_mantem_a_mensagem_crua():
     assert "algo inesperado" in msg
 
 
+def test_rotulo_maior_traduz_setor_via_rotulos():
+    assert portfolio_global.rotulo_maior("sector", "consumer") == "Consumo Cíclico"
+
+
+def test_rotulo_maior_traduz_classe_via_registry():
+    """Regressao: 'Classes efetivas' mostrava a chave crua ('b3'), nao o
+    rotulo de exibicao ('Empresas B3') que o resto do app usa.
+    """
+    assert portfolio_global.rotulo_maior("asset_class", "b3") == "Empresas B3"
+    assert portfolio_global.rotulo_maior("asset_class", "us") == "Empresas Americanas"
+    assert portfolio_global.rotulo_maior("asset_class", "fii") == "FIIs"
+
+
+def test_rotulo_maior_classe_desconhecida_nao_propaga_keyerror():
+    """get_spec levanta KeyError para chave desconhecida; a exibicao nao pode quebrar."""
+    assert portfolio_global.rotulo_maior("asset_class", "cripto") == "cripto"
+
+
+def test_rotulo_maior_pais_e_moeda_ficam_como_estao():
+    assert portfolio_global.rotulo_maior("country", "BR") == "BR"
+    assert portfolio_global.rotulo_maior("currency", "USD") == "USD"
+
+
+def test_rotulo_maior_com_chave_none_mostra_travessao():
+    """maior_nome e None quando o frame de origem esta vazio."""
+    assert portfolio_global.rotulo_maior("sector", None) == "—"
+    assert portfolio_global.rotulo_maior("asset_class", None) == "—"
+
+
+def test_rotulo_maior_setor_sem_mapa_mantem_a_chave_crua():
+    assert portfolio_global.rotulo_maior("sector", "algo_nao_mapeado") == "algo_nao_mapeado"
+
+
+def test_top_ns_a_exibir_carteira_de_um_ativo_mostra_so_top1():
+    assert portfolio_global.top_ns_a_exibir(1) == [1]
+
+
+def test_top_ns_a_exibir_carteira_de_quatro_ativos_omite_top5_e_top10():
+    """Top 5 e Top 10 saturariam no mesmo valor (100%) que Top 4 posicoes
+    inteiras somariam — mostrar os dois seria redundante.
+    """
+    assert portfolio_global.top_ns_a_exibir(4) == [1, 3]
+
+
+def test_top_ns_a_exibir_carteira_de_trinta_ativos_mostra_os_quatro():
+    assert portfolio_global.top_ns_a_exibir(30) == [1, 3, 5, 10]
+
+
+def test_top_ns_a_exibir_carteira_vazia_nao_quebra():
+    assert portfolio_global.top_ns_a_exibir(0) == [1]
+
+
+def test_qualidade_gini_e_top_n_sao_de_fato_usados_na_view():
+    """Regressao: concentration.top_n e concentration.gini existiam e eram
+    testados no modulo de calculo mas nunca chamados pela tela.
+    """
+    import inspect
+    fonte = inspect.getsource(portfolio_global)
+    assert "concentration.top_n(" in fonte
+    assert "concentration.gini(" in fonte
+
+
 def test_load_allocation_targets_falhando_por_schema_ausente_aciona_a_orientacao(monkeypatch):
     """Ponta a ponta da decisao (sem Streamlit): a falha real que o primeiro
     acesso provoca — load_allocation_targets contra uma tabela que o schema

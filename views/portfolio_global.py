@@ -31,6 +31,13 @@ MSG_SEM_SNAPSHOT = (
 )
 MSG_SEM_ALVO = "Defina a alocação-alvo por classe para consolidar o patrimônio."
 
+# Chave de session_state que carrega a confirmacao de "alocacao salva" atraves
+# do st.rerun() disparado logo apos salvar (ver _editor_de_alocacao).
+_FLAG_ALOCACAO_SALVA = "portfolio_global_alocacao_salva"
+
+# Tamanhos de Top-N exibidos na concentracao acumulada (ordem de exibicao).
+_TOP_NS_CANDIDATOS: tuple[int, ...] = (1, 3, 5, 10)
+
 
 def carregar_snapshots(*, engine=None, owner_id=None) -> dict[str, dict[str, dict]]:
     """Snapshots do modelo ativo de cada classe registrada."""
@@ -126,6 +133,12 @@ def _valor_inicial_total(total_brl: float | None) -> float:
 
 def _editor_de_alocacao(alvos: dict, total_brl: float | None = None) -> None:
     """Formulario da alocacao-alvo por classe."""
+    # A confirmacao precisa sobreviver ao st.rerun() disparado apos salvar —
+    # por isso vem de session_state, exibida ANTES do expander: salvar altera
+    # `alvos`, o que recolhe o expander (expanded=not alvos) no rerun
+    # seguinte, e uma mensagem dentro dele ficaria escondida.
+    if st.session_state.pop(_FLAG_ALOCACAO_SALVA, False):
+        st.success("Alocação-alvo salva.")
     with st.expander("⚖️ Alocação-alvo por classe", expanded=not alvos):
         with st.form("form_alocacao_global"):
             entradas: dict[str, float] = {}
@@ -147,25 +160,62 @@ def _editor_de_alocacao(alvos: dict, total_brl: float | None = None) -> None:
             if st.form_submit_button("Salvar alocação"):
                 try:
                     save_allocation_targets(entradas, total_brl=total or None)
-                    st.success("Alocação-alvo salva.")
+                    st.session_state[_FLAG_ALOCACAO_SALVA] = True
                     st.rerun()
                 except (ValueError, KeyError) as exc:
                     st.error(f"Não foi possível salvar: {exc}")
 
 
-def _cards_de_concentracao(resumo: dict) -> None:
+def rotulo_maior(dimensao: str, chave: str | None) -> str:
+    """Traduz a chave do maior item de uma dimensao de concentracao.
+
+    Setor usa o mapa ROTULOS; classe de ativo usa o label do registry
+    (`get_spec`) — a mesma fonte que qualquer outra tela usa para nomear
+    b3/us/fii, em vez da chave crua. Pais e moeda ja chegam prontos para
+    exibicao ('BR', 'USD') e nao passam por traducao nenhuma.
+
+    Funcao pura para poder testar a decisao de rotulagem sem Streamlit,
+    seguindo o padrao de estado_vazio/detalhe_cobertura.
+    """
+    if chave is None:
+        return "—"
+    if dimensao == "sector":
+        return ROTULOS.get(chave, chave)
+    if dimensao == "asset_class":
+        try:
+            return get_spec(chave).label
+        except KeyError:
+            return chave
+    return chave
+
+
+def top_ns_a_exibir(n_posicoes: int) -> list[int]:
+    """Quais cartoes Top-N mostrar dado o numero de posicoes da carteira.
+
+    `concentration.top_n(df, n)` satura no total (100%) quando `n` e maior ou
+    igual ao numero de posicoes — mostrar dois cartoes saturados no mesmo
+    valor so repete informacao (ex.: "Top 10" identico a "Top 5" numa
+    carteira de 4 ativos). Por isso um tamanho so aparece quando e
+    estritamente menor que o numero de posicoes. "Top 1" e sempre exibido,
+    mesmo saturado, para a secao nunca ficar vazia (carteira de 1 ativo).
+    """
+    exibir = [n for n in _TOP_NS_CANDIDATOS if n < n_posicoes]
+    if 1 not in exibir:
+        exibir = [1] + exibir
+    return exibir
+
+
+def _cards_de_concentracao(df: pd.DataFrame, resumo: dict) -> None:
     st.markdown("#### Concentração")
-    colunas = st.columns(4)
+    colunas = st.columns(5)
     cartoes = [
-        ("Posições efetivas", resumo["symbol"], "#5B8DEF"),
-        ("Setores efetivos", resumo["sector"], "#38BDF8"),
-        ("Países efetivos", resumo["country"], "#34D399"),
-        ("Classes efetivas", resumo["asset_class"], "#FBBF24"),
+        ("Posições efetivas", "symbol", resumo["symbol"], "#5B8DEF"),
+        ("Setores efetivos", "sector", resumo["sector"], "#38BDF8"),
+        ("Países efetivos", "country", resumo["country"], "#34D399"),
+        ("Classes efetivas", "asset_class", resumo["asset_class"], "#FBBF24"),
     ]
-    for coluna, (rotulo, dados, cor) in zip(colunas, cartoes):
-        maior = dados["maior_nome"] or "—"
-        if rotulo == "Setores efetivos":
-            maior = ROTULOS.get(dados["maior_nome"], maior)
+    for coluna, (rotulo, dimensao, dados, cor) in zip(colunas[:4], cartoes):
+        maior = rotulo_maior(dimensao, dados["maior_nome"])
         with coluna:
             card_metrica(
                 rotulo,
@@ -173,6 +223,31 @@ def _cards_de_concentracao(resumo: dict) -> None:
                 delta=f'maior: {maior} · {dados["maior_peso"] * 100:.1f}%',
                 accent=cor,
                 ajuda="Número de posições iguais que teria a mesma concentração (1/HHI).",
+            )
+    with colunas[4]:
+        card_metrica(
+            "Desigualdade (Gini)",
+            _fmt(concentration.gini(df["weight_global"]), casas=2),
+            accent="#F472B6",
+            ajuda=(
+                "0 = todas as posições têm o mesmo peso; perto de 1 = "
+                "patrimônio concentrado em poucas posições."
+            ),
+        )
+
+
+def _cards_de_top_n(df: pd.DataFrame) -> None:
+    """Participação acumulada das maiores posições (spec §6.3)."""
+    rotulos = {1: "Top 1", 3: "Top 3", 5: "Top 5", 10: "Top 10"}
+    ns = top_ns_a_exibir(len(df))
+    colunas = st.columns(len(ns))
+    for coluna, n in zip(colunas, ns):
+        with coluna:
+            card_metrica(
+                rotulos[n],
+                _fmt(concentration.top_n(df, n) * 100, "%", casas=1),
+                accent="#F97316",
+                ajuda=f"Participação somada das {n} maior(es) posição(ões) do patrimônio.",
             )
 
 
@@ -217,7 +292,9 @@ def _qualidade(df: pd.DataFrame) -> None:
         metrica = por_classe[classe]
         with coluna:
             card_metrica(get_spec(classe).label, _fmt(metrica.valor, casas=1),
-                         delta=detalhe_cobertura(metrica), accent="#A78BFA")
+                         delta=detalhe_cobertura(metrica),
+                         positivo=None if metrica.confiavel else False,
+                         accent="#A78BFA")
 
 
 def _tabelas(df: pd.DataFrame) -> None:
@@ -288,7 +365,8 @@ def render() -> None:
             + ", ".join(f"{get_spec(c).label} ({a * 100:.0f}%)" for c, a in sem_posicao)
         )
 
-    _cards_de_concentracao(concentration.resumo(df))
+    _cards_de_concentracao(df, concentration.resumo(df))
+    _cards_de_top_n(df)
     _cards_de_metricas(df)
     _qualidade(df)
     _tabelas(df)
