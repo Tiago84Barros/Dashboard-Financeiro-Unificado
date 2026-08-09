@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import date
 from typing import Any
@@ -291,8 +292,18 @@ def save_b3_portfolio_model(
     # falha aqui deixa o salvamento exatamente como era antes.
     # Import local: no topo criaria ciclo com core/portfolio/snapshots.py,
     # que importa _clean_nan deste modulo.
-    from core.portfolio.capture import capture_snapshots
-    capture_snapshots("b3", model_id, items, params, owner_id=owner)
+    # O import fica protegido porque a garantia de capture_snapshots cobre o
+    # corpo da funcao, nao o ato de importa-la: uma quebra no pacote portfolio
+    # nunca pode impedir o salvamento da carteira.
+    try:
+        from core.portfolio.capture import capture_snapshots
+    except ImportError:
+        logging.getLogger(__name__).error(
+            "Falha ao importar core.portfolio.capture; snapshot nao capturado. "
+            "A carteira foi salva normalmente.", exc_info=True,
+        )
+    else:
+        capture_snapshots("b3", model_id, items, params, owner_id=owner)
 
     load_active_b3_portfolio_model.clear()
     return model_id

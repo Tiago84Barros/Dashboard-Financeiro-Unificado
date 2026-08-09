@@ -87,6 +87,12 @@ def test_as_tres_funcoes_de_salvamento_chamam_a_captura(modulo, funcao, classe):
     deixaria a camada inteira construida e nunca invocada em producao sem que
     nenhum teste percebesse. Exige um no `Call` de verdade na arvore sintatica,
     com a classe de ativo correta como primeiro argumento posicional.
+
+    Tambem verifica que o import de capture_snapshots esta blindado: ele deve
+    viver no `try` de um `Try`/`except ImportError`, e a chamada em si no seu
+    `else` — nunca dentro do `try` (isso confundiria falha de import com falha
+    de execucao) nem fora de qualquer protecao (uma quebra no pacote portfolio
+    nao pode impedir o salvamento da carteira; ver Finding 1 da revisao final).
     """
     import ast
     import importlib
@@ -110,4 +116,38 @@ def test_as_tres_funcoes_de_salvamento_chamam_a_captura(modulo, funcao, classe):
     assert isinstance(primeiro_arg, ast.Constant) and primeiro_arg.value == classe, (
         f"{funcao} deveria chamar capture_snapshots com a classe {classe!r} "
         f"como primeiro argumento posicional"
+    )
+
+    def _contem(nos: list[ast.stmt], alvo: ast.AST) -> bool:
+        return any(no is alvo for stmt in nos for no in ast.walk(stmt))
+
+    try_que_envolve = next(
+        (
+            node for node in ast.walk(arvore)
+            if isinstance(node, ast.Try) and _contem(node.orelse, chamada)
+        ),
+        None,
+    )
+    assert try_que_envolve is not None, (
+        f"{funcao} deveria chamar capture_snapshots no bloco `else:` de um "
+        "try/except que protege o import (Finding 1: import desprotegido "
+        "pode propagar e impedir o salvamento da carteira)"
+    )
+    assert not _contem(try_que_envolve.body, chamada), (
+        f"{funcao}: a chamada a capture_snapshots deveria estar no `else:`, "
+        "nao dentro do `try:` — misturaria falha de import com falha de execucao"
+    )
+
+    nomes_capturados: set[str] = set()
+    for handler in try_que_envolve.handlers:
+        tipo = handler.type
+        if isinstance(tipo, ast.Name):
+            nomes_capturados.add(tipo.id)
+        elif isinstance(tipo, ast.Tuple):
+            nomes_capturados.update(
+                elt.id for elt in tipo.elts if isinstance(elt, ast.Name)
+            )
+    assert "ImportError" in nomes_capturados, (
+        f"{funcao}: o try que protege o import de capture_snapshots deveria "
+        "capturar ImportError"
     )

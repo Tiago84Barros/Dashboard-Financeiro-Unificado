@@ -2370,7 +2370,7 @@ Depois do merge na `main`:
 
 1. Executar `supabase_unificado/schema/049_portfolio_asset_snapshots.sql` no Supabase.
 2. Simular o backfill: `python -m scripts.backfill_portfolio_snapshots`
-3. Conferir a contagem por classe e então aplicar: `python -m scripts.backfill_portfolio_snapshots --apply`
+3. Conferir a contagem por classe e então aplicar: `python -m scripts.backfill_portfolio_snapshots --apply`. Se o processo abortar no meio com erro de conexão (`TimeoutError`/`DisconnectionError` do pool), é seguro rodar `--apply` de novo: `save_snapshots` grava com `ON CONFLICT ... DO UPDATE`, então o rerun apenas completa o que faltou, sem duplicar nem corromper o que já foi gravado.
 4. Salvar uma carteira nova em qualquer das três seções e confirmar, no Supabase, que a linha correspondente tem `provenance.backfilled = false`.
 
 ## Auto-revisão deste plano
