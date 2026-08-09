@@ -1,7 +1,7 @@
 """De-para entre o nome canonico de um indicador e a chave real de cada classe.
 
 Cada classe gravou o mesmo conceito com nome proprio: o P/L e "P/L" no B3 e
-"pe_ratio" nos EUA. Sem esta camada, todo consumidor reimplementaria o de-para
+"pe" nos EUA. Sem esta camada, todo consumidor reimplementaria o de-para
 e eles divergiriam.
 
 Campo ausente ou nao aplicavel devolve None, nunca 0 — zero seria confundido
