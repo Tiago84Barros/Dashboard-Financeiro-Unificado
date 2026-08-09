@@ -92,3 +92,51 @@ def test_dataframe_vazio_nao_quebra():
     saida = resumo(vazio)
     assert saida["symbol"]["numero_efetivo"] == 0.0
     assert saida["symbol"]["maior_nome"] is None
+
+
+def test_gini_exclui_pesos_negativos():
+    # gini() exclui pesos negativos do calculo deliberadamente.
+    # Retorna 0 para carteira de 4 posicoes iguais, mesmo com um peso negativo.
+    # Este teste fixa o comportamento atual.
+    pesos = pd.Series([0.25, 0.25, 0.25, 0.25, -0.1])
+    resultado = gini(pesos)
+    assert resultado == pytest.approx(0.0, abs=1e-9)
+
+
+def test_por_dimensao_desempata_por_nome_dimensao():
+    # Quando dois valores da dimensao teem o mesmo peso, devem vir em ordem
+    # alfabetica (ascending) do nome da dimensao.
+    df = pd.DataFrame([
+        {"asset_class": "b3", "symbol": "ZZZA", "sector": "energy",
+         "country": "ZZ", "currency": "BRL", "weight_global": 0.5},
+        {"asset_class": "b3", "symbol": "AAAA", "sector": "energy",
+         "country": "AA", "currency": "BRL", "weight_global": 0.5},
+    ])
+    saida = por_dimensao(df, "country")
+    assert saida["country"].tolist() == ["AA", "ZZ"]
+
+
+def test_resumo_com_linha_unica():
+    # Resumo deve lidar com DataFrame com uma unica linha.
+    unica = pd.DataFrame([
+        {"asset_class": "b3", "symbol": "PETR4", "sector": "energy",
+         "country": "BR", "currency": "BRL", "weight_global": 1.0},
+    ])
+    saida = resumo(unica)
+    assert saida["symbol"]["hhi"] == pytest.approx(1.0)
+    assert saida["symbol"]["numero_efetivo"] == pytest.approx(1.0)
+    assert saida["symbol"]["maior_nome"] == "PETR4"
+
+
+def test_resumo_com_peso_nan():
+    # Resumo deve tolerar pesos NaN sem quebrar.
+    com_nan = pd.DataFrame([
+        {"asset_class": "b3", "symbol": "PETR4", "sector": "energy",
+         "country": "BR", "currency": "BRL", "weight_global": 0.5},
+        {"asset_class": "b3", "symbol": "ITUB4", "sector": "financials",
+         "country": "BR", "currency": "BRL", "weight_global": float("nan")},
+    ])
+    saida = resumo(com_nan)
+    # Deve retornar resultados sensatos sem levantar.
+    assert saida["symbol"]["numero_efetivo"] >= 0.0
+    assert saida["symbol"]["maior_nome"] is not None

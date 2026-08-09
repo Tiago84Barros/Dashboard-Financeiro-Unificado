@@ -37,6 +37,7 @@ def top_n(df: pd.DataFrame, n: int) -> float:
 def gini(pesos: pd.Series) -> float:
     """Coeficiente de Gini dos pesos: 0 = perfeitamente igual."""
     limpos = pd.to_numeric(pesos, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    # Exclui pesos negativos: carteiras nao suportam posicoes curtas neste contexto.
     limpos = np.sort(limpos[limpos >= 0])
     total = limpos.sum()
     if total <= 0 or limpos.size == 0:
