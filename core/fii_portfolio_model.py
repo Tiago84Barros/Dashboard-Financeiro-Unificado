@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 
 import streamlit as st
@@ -335,6 +336,22 @@ def save_fii_portfolio_model(
                 "Verificação pós-gravação falhou: "
                 + " · ".join(integrity["reasons"])
             )
+
+    # Ver nota em core/b3_portfolio_model.py: captura aditiva, nunca bloqueante.
+    # Import local: no topo criaria ciclo com core/portfolio/snapshots.py,
+    # que importa _clean_nan de core/b3_portfolio_model.py.
+    # O import fica protegido porque a garantia de capture_snapshots cobre o
+    # corpo da funcao, nao o ato de importa-la: uma quebra no pacote portfolio
+    # nunca pode impedir o salvamento da carteira.
+    try:
+        from core.portfolio.capture import capture_snapshots
+    except ImportError:
+        logging.getLogger(__name__).error(
+            "Falha ao importar core.portfolio.capture; snapshot nao capturado. "
+            "A carteira foi salva normalmente.", exc_info=True,
+        )
+    else:
+        capture_snapshots("fii", model_id, items, params, owner_id=owner)
 
     _clear_portfolio_caches()
     return model_id
