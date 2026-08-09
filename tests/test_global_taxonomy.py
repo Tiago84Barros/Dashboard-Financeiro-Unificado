@@ -36,14 +36,18 @@ def test_setores_da_b3(setor, esperado):
 @pytest.mark.parametrize("setor,esperado", [
     ("Energy", "energy"),
     ("Basic Materials", "materials"),
+    ("Materials", "materials"),
     ("Industrials", "industrials"),
     ("Consumer Defensive", "consumer_staples"),
     ("Consumer Cyclical", "consumer"),
     ("Healthcare", "health_care"),
+    ("Health Care", "health_care"),
     ("Technology", "technology"),
+    ("Information Technology", "technology"),
     ("Communication Services", "telecom"),
     ("Utilities", "utilities"),
     ("Financial Services", "financials"),
+    ("Financials", "financials"),
     ("Real Estate", "real_estate"),
 ])
 def test_setores_do_mercado_americano(setor, esperado):

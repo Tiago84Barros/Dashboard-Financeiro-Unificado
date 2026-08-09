@@ -19,6 +19,11 @@ SETORES_CANONICOS: tuple[str, ...] = (
     "telecom", "utilities",
 )
 
+# ROTULOS divergem propositalmente de core/empresas.py::_SETOR_LABEL em dois pontos:
+#   - consumer: "Consumo Cíclico" (vs "Consumo") — distingue claro de "Consumo Básico"
+#     na interface global e responde aos nomes oficiais da B3;
+#   - real_estate: "Imóveis" (vs "Imóveis / FII") — correto aqui porque real_estate
+#     absorbe REITs americanos, não apenas FIIs. Contexto FII é claro fora deste mapa.
 ROTULOS: dict[str, str] = {
     "consumer": "Consumo Cíclico",
     "consumer_staples": "Consumo Básico",
@@ -87,7 +92,8 @@ def setor_canonico(asset_class: str, setor: str | None,
 
     FII nao usa `setor`/`segmento` para esta decisao: todo FII e exposicao
     imobiliaria. O segmento (tijolo, papel, hibrido) e detalhe de subsetor e
-    e preservado a parte, no proprio snapshot.
+    e preservado a parte, no proprio snapshot. O parametro `segmento` e aceito
+    para simetria na interface e uso futuro em subsetores (nao consultado hoje).
     """
     classe = str(asset_class or "").strip().lower()
     if classe == "fii":
