@@ -16,12 +16,17 @@ CAMPOS: tuple[str, ...] = ("dy", "market_cap", "pe", "pvp", "roe")
 # campo canonico -> {classe: chave dentro de payload["fundamentals"]}
 # Ausencia da classe no dicionario interno significa "nao aplicavel".
 _ORIGEM: dict[str, dict[str, str]] = {
-    "pe": {"b3": "P/L", "us": "pe_ratio"},
-    "pvp": {"b3": "P/VP", "us": "price_to_book", "fii": "pvp"},
-    "dy": {"b3": "DY", "us": "dividend_yield", "fii": "dy_12m"},
-    "roe": {"b3": "ROE", "us": "return_on_equity"},
-    "market_cap": {"b3": "Valor de mercado", "us": "market_cap",
-                   "fii": "patrimonio_liquido"},
+    # us: chave real de compute_company_metrics, nao "pe_ratio".
+    "pe": {"b3": "P/L", "us": "pe"},
+    # us ausente: us_metrics nao calcula P/B.
+    "pvp": {"b3": "P/VP", "fii": "pvp"},
+    # us ausente: us_metrics nao calcula dividend yield. payout_ratio e
+    # shareholder_yield existem, mas sao outra coisa — nao servem de proxy.
+    "dy": {"b3": "DY", "fii": "dy_12m"},
+    "roe": {"b3": "ROE", "us": "roe"},
+    # b3 ausente: "Valor de mercado" nao esta em _MULT_COLS.
+    # us: a chave real leva underscore (campo de contexto em us_metrics).
+    "market_cap": {"us": "_market_cap", "fii": "patrimonio_liquido"},
 }
 
 
