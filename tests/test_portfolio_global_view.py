@@ -170,6 +170,31 @@ def test_erro_generico_mantem_a_mensagem_crua():
     assert "algo inesperado" in msg
 
 
+def test_fracao_para_percentual_converte_dy_para_pontos_percentuais():
+    """Regressao: dy_consolidado devolve fracao (contrato de MetricaAgregada),
+    e o cartao de DY exibia essa fracao direto com sufixo '%' — 0,1307 virava
+    '0,13%' em vez de '13,07%'. A conversao precisa acontecer na borda de
+    exibicao, sem tocar core/global_portfolio/metrics.py.
+    """
+    assert portfolio_global.fracao_para_percentual(0.1307) is not None
+    valor = portfolio_global.fracao_para_percentual(0.1307)
+    assert round(valor, 2) == 13.07
+    assert portfolio_global._fmt(valor, "%", casas=2) == "13,07%"
+
+
+def test_fracao_para_percentual_preserva_none():
+    assert portfolio_global.fracao_para_percentual(None) is None
+
+
+def test_cartao_de_dy_usa_fracao_para_percentual():
+    """Regressao: garante que o call site do cartao de DY passou a converter
+    a fracao antes de formatar, e nao voltou a exibir o valor cru.
+    """
+    import inspect
+    fonte = inspect.getsource(portfolio_global._cards_de_metricas)
+    assert "fracao_para_percentual(dy.valor)" in fonte
+
+
 def test_rotulo_maior_traduz_setor_via_rotulos():
     assert portfolio_global.rotulo_maior("sector", "consumer") == "Consumo Cíclico"
 

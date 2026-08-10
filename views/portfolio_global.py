@@ -111,6 +111,23 @@ def _fmt(valor: float | None, sufixo: str = "", casas: int = 2) -> str:
     return f"{valor:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".") + sufixo
 
 
+def fracao_para_percentual(fracao: float | None) -> float | None:
+    """Converte uma fracao (contrato de MetricaAgregada.valor, ex.: dy_consolidado)
+    para pontos percentuais de exibicao.
+
+    core/global_portfolio/metrics.py::dy_consolidado devolve o DY como fracao
+    (0,1307), nao como percentual (13,07) — o mesmo contrato que weight_global
+    ja usa e que esta tela ja multiplica por 100 em varios outros cartoes
+    (concentracao, top-N, peso por ativo). O card de DY historicamente
+    esqueceu essa conversao e exibia "0,13%" em vez de "13,07%"; esta funcao
+    torna a conversao explicita e testavel no ponto de formatacao, sem tocar
+    o valor armazenado.
+    """
+    if fracao is None:
+        return None
+    return fracao * 100.0
+
+
 def detalhe_cobertura(metrica) -> str:
     """Texto de rodape do card: cobertura e, se for o caso, o aviso."""
     pct = f"{metrica.cobertura * 100:.0f}%"
@@ -261,7 +278,7 @@ def _cards_de_metricas(df: pd.DataFrame) -> None:
     cartoes = [
         ("P/L agregado", _fmt(pl.valor), pl, "#5B8DEF"),
         ("P/VP agregado", _fmt(pvp.valor), pvp, "#38BDF8"),
-        ("Dividend yield", _fmt(dy.valor, "%"), dy, "#34D399"),
+        ("Dividend yield", _fmt(fracao_para_percentual(dy.valor), "%"), dy, "#34D399"),
     ]
     for coluna, (rotulo, valor, metrica, cor) in zip(colunas, cartoes):
         with coluna:
