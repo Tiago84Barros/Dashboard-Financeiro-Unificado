@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from core.portfolio.adapters._frames import indexar
+from core.portfolio.adapters._frames import indexar, registros
 from core.portfolio.models import AssetSnapshot
 from core.portfolio.registry import get_spec
 
@@ -41,9 +41,65 @@ _COMPOSICAO = {
 _FUNDAMENTOS_DO_ITEM = ("dy_12m", "pvp")
 
 
+def _carregar_metricas_mensais(tickers: tuple[str, ...]) -> dict:
+    """Serie mensal por FII (market.fii_metrics_monthly).
+
+    load_fii_metrics_mensal e por ticker e nao tem versao em lote (nota do
+    plano: nao criar uma so para isto). Sao N consultas, cada uma cacheada
+    por uma hora via @st.cache_data — custo aceito, o gancho de captura ja
+    roda fora da transacao da carteira.
+    """
+    from core import market_read
+    saida: dict = {}
+    for tk in tickers:
+        serie = market_read.load_fii_metrics_mensal(tk)
+        if serie is not None and not serie.empty:
+            saida[tk] = serie
+    return saida
+
+
+def _carregar_proventos(tickers: tuple[str, ...]) -> dict:
+    """Proventos anuais por FII: mesma agregacao que load_demonstracoes_batch usa."""
+    if not tickers:
+        return {}
+    from core.market_read import _q
+    tks = list(tickers)
+    divs = _q(
+        "SELECT ticker, EXTRACT(YEAR FROM event_date)::int AS y, SUM(amount) AS d "
+        "FROM market.dividends WHERE ticker = ANY(:tks) AND event_date IS NOT NULL "
+        "GROUP BY 1, 2",
+        {"tks": tks},
+    )
+    if divs.empty:
+        return {}
+    saida: dict = {}
+    for r in divs.itertuples():
+        tk = str(r.ticker).strip().upper()
+        saida.setdefault(tk, {})[int(r.y)] = float(r.d)
+    return saida
+
+
 def _default_loaders() -> dict:
     from core import market_read
-    return {"fiis": lambda: market_read.load_fiis()}
+    return {
+        "fiis": lambda: market_read.load_fiis(),
+        "metricas_mensais": _carregar_metricas_mensais,
+        "proventos": _carregar_proventos,
+    }
+
+
+def _historico_fii(tk: str, metricas: dict, proventos: dict) -> dict:
+    """Monta o bloco history a partir dos loaders de serie mensal e proventos.
+
+    FII sem serie ou sem proventos ainda produz um snapshot valido: listas
+    vazias, nunca chave ausente.
+    """
+    serie = metricas.get(tk)
+    mensal = registros(serie) if serie is not None else []
+    anuais = proventos.get(tk) or {}
+    proventos_anuais = [{"ano": ano, "total": total}
+                        for ano, total in sorted(anuais.items())]
+    return {"metricas_mensais": mensal, "proventos_anuais": proventos_anuais}
 
 
 def _ticker(item: dict) -> str:
@@ -62,6 +118,12 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
         return []
 
     base = indexar(loaders["fiis"](), "Ticker")
+
+    tickers = tuple(sorted({tk for _, tk in validos}))
+    # Chaves opcionais: fixtures dos testes ja existentes nao as fornecem, e o
+    # snapshot degradado (sem serie) e o comportamento correto, nao um erro.
+    metricas = loaders.get("metricas_mensais", lambda tks: {})(tickers) or {}
+    proventos = loaders.get("proventos", lambda tks: {})(tickers) or {}
 
     saida: list[AssetSnapshot] = []
     for item, tk in validos:
@@ -98,7 +160,7 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
                               else item.get("weight"),
                 },
                 "classification": {"composition": composition},
-                "history": {},
+                "history": _historico_fii(tk, metricas, proventos),
                 "assumptions": {"params": dict(params or {})},
                 "evidence": {},
                 "notes": "",

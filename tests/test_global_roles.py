@@ -158,3 +158,97 @@ def test_limiares_estao_num_so_lugar():
     for chave in ("payout_instavel", "cagr_minimo", "vol_baixa",
                   "correlacao_baixa", "papel_dominante", "tijolo_dominante"):
         assert chave in LIMIARES
+
+
+def _fii(symbol, dy_mensal, vpa, peso=0.1):
+    """Linha de FII com serie mensal sintetica."""
+    meses = [{"Data": f"2024-{m:02d}-01", "DY_Patrimonial": d, "VPA": v}
+             for m, (d, v) in enumerate(zip(dy_mensal, vpa), start=1)]
+    return {
+        "asset_class": "fii", "symbol": symbol, "name": symbol,
+        "sector": "real_estate", "currency": "BRL", "weight_global": peso,
+        "payload": {
+            "fundamentals": {"dy_12m": sum(dy_mensal) / len(dy_mensal) * 12 * 100},
+            "history": {"metricas_mensais": meses, "proventos_anuais": []},
+            "classification": {"composition": {"pct_imoveis": 0.96, "pct_papel": 0.0}},
+        },
+    }
+
+
+def test_renda_de_fii_usa_o_dy_mensal_e_exige_estabilidade():
+    import pandas as pd
+    from core.global_portfolio.roles import classificar
+
+    estavel = [0.008] * 24
+    # Mesma media que "estavel" (0.008): o teste isola a estabilidade como
+    # unico diferenciador. Com [0.001, 0.020] a media do erratico (0.0105)
+    # supera a do estavel, e a mediana da classe (so 2 FIIs neste teste) cai
+    # entre as duas — ESTAVEL nunca alcancaria "acima da mediana" nem com
+    # qualquer implementacao correta da regra. [0.001, 0.015] mantem o
+    # mesmo espirito de oscilacao extrema sem essa colisao aritmetica.
+    erratico = [0.001, 0.015] * 12
+    vpa = [100.0] * 24
+    df = pd.DataFrame([_fii("ESTAVEL", estavel, vpa), _fii("ERRATICO", erratico, vpa)])
+    saida = {p.symbol: p for p in classificar(df)}
+
+    assert "renda" in saida["ESTAVEL"].papeis
+    assert "renda" not in saida["ERRATICO"].papeis
+    assert "renda" not in saida["ERRATICO"].indeterminados, "avaliado e reprovado, nao indeterminado"
+
+
+def test_fii_com_serie_curta_deixa_renda_indeterminada():
+    import pandas as pd
+    from core.global_portfolio.roles import classificar
+
+    df = pd.DataFrame([_fii("CURTO", [0.008] * 6, [100.0] * 6)])
+    p = classificar(df)[0]
+    assert "renda" in p.indeterminados
+    assert "renda" not in p.papeis
+
+
+def test_crescimento_de_fii_usa_cagr_do_vpa_com_a_janela_declarada():
+    import pandas as pd
+    from core.global_portfolio.roles import classificar
+
+    subindo = [100.0 * (1.02 ** i) for i in range(24)]
+    parado = [100.0] * 24
+    df = pd.DataFrame([_fii("SOBE", [0.008] * 24, subindo),
+                       _fii("PARADO", [0.008] * 24, parado)])
+    saida = {p.symbol: p for p in classificar(df)}
+
+    assert "crescimento" in saida["SOBE"].papeis
+    assert "crescimento" not in saida["PARADO"].papeis
+
+    ev = [e for e in saida["SOBE"].evidencias if e.papel == "crescimento"][0]
+    assert "mes" in ev.texto.lower(), "a janela real precisa aparecer na evidencia"
+
+
+def test_limiar_de_meses_minimos_existe():
+    from core.global_portfolio.roles import LIMIARES
+    assert "meses_minimos_fii" in LIMIARES
+
+
+def test_renda_de_fii_formata_dy_em_pontos_percentuais_no_texto():
+    """dy e fracao por contrato de fields.valor (verificado em producao: DY de
+    FII varia 0,0993 a 0,1817). O texto da evidencia precisa exibir pontos
+    percentuais; Evidencia.valor/referencia continuam a fracao crua."""
+    dy_mensal = [0.0125] * 12
+    linha = {
+        "asset_class": "fii", "symbol": "REIT11", "name": "REIT11",
+        "sector": "real_estate", "currency": "BRL", "weight_global": 0.1,
+        "payload": {
+            "fundamentals": {"dy_12m": 0.1497},
+            "history": {"metricas_mensais": [
+                {"Data": f"2024-{m:02d}-01", "DY_Patrimonial": d}
+                for m, d in enumerate(dy_mensal, start=1)
+            ]},
+            "classification": {},
+        },
+    }
+    df = pd.DataFrame([linha])
+    p = classificar(df)[0]
+    ev = next(e for e in p.evidencias if e.papel == "renda")
+
+    assert ev.valor == pytest.approx(0.1497), "Evidencia.valor continua fracao crua"
+    assert "14." in ev.texto or "15." in ev.texto, "texto precisa mostrar ~14,97%, nao 0,15%"
+    assert "0.15%" not in ev.texto and "0,15%" not in ev.texto
