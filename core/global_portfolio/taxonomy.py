@@ -13,6 +13,11 @@ from __future__ import annotations
 
 import unicodedata
 
+# core/market_companies.py importa so re, unicodedata e pandas — sem
+# Streamlit, sem banco — entao este import de modulo nao fere a pureza de
+# core/global_portfolio/*.
+from core.market_companies import US_SECTOR_LABELS
+
 SETORES_CANONICOS: tuple[str, ...] = (
     "consumer", "consumer_staples", "energy", "financials", "health_care",
     "industrials", "materials", "other", "real_estate", "technology",
@@ -63,7 +68,7 @@ _B3: dict[str, str] = {
 }
 
 # Setores GICS como o yfinance os devolve -> canonico.
-_US: dict[str, str] = {
+_US_EN: dict[str, str] = {
     _chave("Energy"): "energy",
     _chave("Basic Materials"): "materials",
     _chave("Materials"): "materials",
@@ -82,6 +87,26 @@ _US: dict[str, str] = {
     _chave("Financials"): "financials",
     _chave("Real Estate"): "real_estate",
 }
+
+# Alias em portugues: os snapshots americanos NAO carregam os nomes GICS em
+# ingles acima. `us_portfolio_model_items.setor` grava o setor ja traduzido
+# para PT-BR por core.market_companies.translate_us_sector (via
+# US_SECTOR_LABELS) antes de persistir. Derivar o alias do proprio mapa do
+# modulo EUA — em vez de retipar as strings aqui — garante que um setor novo
+# adicionado la carrega o alias automaticamente, ao inves de cair
+# silenciosamente em 'other'.
+_US_PT: dict[str, str] = {
+    _chave(rotulo_pt): _US_EN[_chave(chave_en)]
+    for chave_en, rotulo_pt in US_SECTOR_LABELS.items()
+    if _chave(chave_en) in _US_EN
+}
+# "Outros setores" e o fallback do proprio modulo EUA
+# (core/market_companies.py::translate_us_sector) quando nada casa — nao
+# aparece em US_SECTOR_LABELS por definicao, entao precisa do mapeamento
+# explicito para 'other'.
+_US_PT[_chave("Outros setores")] = "other"
+
+_US: dict[str, str] = {**_US_EN, **_US_PT}
 
 _POR_CLASSE: dict[str, dict[str, str]] = {"b3": _B3, "us": _US}
 
