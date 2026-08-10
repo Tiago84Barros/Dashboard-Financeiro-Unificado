@@ -297,17 +297,49 @@ def _qualidade(df: pd.DataFrame) -> None:
                          accent="#A78BFA")
 
 
+def texto_de_apoio_do_ativo(nome: str | None, classe_label: str, setor_label: str,
+                            valor_brl: float | None) -> str:
+    """Texto de apoio do card de um ativo: nome, classe, setor e, se houver, valor.
+
+    valor_brl fica de fora quando None em vez de aparecer como travessão —
+    ele so existe quando o usuario informou o patrimonio total no editor de
+    alocacao (ver _valor_inicial_total); sem isso a ausencia e falta de
+    entrada, nao um zero.
+    """
+    texto = f"{nome or '—'} · {classe_label} · {setor_label}"
+    if valor_brl is not None:
+        texto += f" · R$ {_fmt(valor_brl, casas=0)}"
+    return texto
+
+
+def _cards_de_ativos(df: pd.DataFrame, *, n_colunas: int = 4) -> None:
+    """Grade de cartões 'Por ativo', na ordem de peso global (já vem de
+    montar_posicoes ordenado decrescente) — um cartão por ativo em vez de
+    linha de tabela, seguindo o padrão de card_metrica do restante do app.
+    """
+    linhas = df.to_dict(orient="records")
+    for inicio in range(0, len(linhas), n_colunas):
+        colunas = st.columns(n_colunas, gap="small")
+        for coluna, linha in zip(colunas, linhas[inicio:inicio + n_colunas]):
+            with coluna:
+                classe_label = rotulo_maior("asset_class", linha.get("asset_class"))
+                setor_label = rotulo_maior("sector", linha.get("sector"))
+                card_metrica(
+                    linha.get("symbol", "—"),
+                    _fmt(linha.get("weight_global", 0.0) * 100, "%", casas=2),
+                    delta=texto_de_apoio_do_ativo(
+                        linha.get("name"), classe_label, setor_label, linha.get("valor_brl"),
+                    ),
+                    accent="#5B8DEF",
+                )
+
+
 def _tabelas(df: pd.DataFrame) -> None:
     st.markdown("#### Composição")
     aba_ativos, aba_setor, aba_pais = st.tabs(["Por ativo", "Por setor", "Por país"])
 
     with aba_ativos:
-        visao = df[["symbol", "name", "asset_class", "sector", "weight_global",
-                    "valor_brl"]].copy()
-        visao["sector"] = visao["sector"].map(lambda s: ROTULOS.get(s, s))
-        visao["weight_global"] = (visao["weight_global"] * 100).round(2)
-        visao.columns = ["Ativo", "Nome", "Classe", "Setor", "Peso %", "Valor R$"]
-        st.dataframe(visao, use_container_width=True, hide_index=True)
+        _cards_de_ativos(df)
 
     with aba_setor:
         setores = concentration.por_dimensao(df, "sector")
