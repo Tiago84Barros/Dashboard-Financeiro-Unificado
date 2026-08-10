@@ -216,7 +216,7 @@ def _avaliar_renda(linha: dict, mediana_classe: float | None) -> tuple[bool | No
 
     cumpre = dy >= mediana_classe and desvio_rel < LIMIARES["payout_instavel"]
     texto = (
-        f"DY {dy:.2f}% (mediana da classe {mediana_classe:.2f}%), "
+        f"DY {dy * 100:.2f}% (mediana da classe {mediana_classe * 100:.2f}%), "
         f"payout com desvio relativo de {desvio_rel:.2f} "
         f"(limite {LIMIARES['payout_instavel']:.2f})"
     )
@@ -242,7 +242,7 @@ def _avaliar_renda_fii(payload: dict, dy: float, mediana_classe: float) -> tuple
 
     cumpre = dy >= mediana_classe and desvio_rel < LIMIARES["payout_instavel"]
     texto = (
-        f"DY {dy:.2f}% (mediana da classe {mediana_classe:.2f}%), "
+        f"DY {dy * 100:.2f}% (mediana da classe {mediana_classe * 100:.2f}%), "
         f"DY_Patrimonial mensal com desvio relativo de {desvio_rel:.2f} "
         f"(limite {LIMIARES['payout_instavel']:.2f}) em {meses} meses de serie"
     )

@@ -226,3 +226,29 @@ def test_crescimento_de_fii_usa_cagr_do_vpa_com_a_janela_declarada():
 def test_limiar_de_meses_minimos_existe():
     from core.global_portfolio.roles import LIMIARES
     assert "meses_minimos_fii" in LIMIARES
+
+
+def test_renda_de_fii_formata_dy_em_pontos_percentuais_no_texto():
+    """dy e fracao por contrato de fields.valor (verificado em producao: DY de
+    FII varia 0,0993 a 0,1817). O texto da evidencia precisa exibir pontos
+    percentuais; Evidencia.valor/referencia continuam a fracao crua."""
+    dy_mensal = [0.0125] * 12
+    linha = {
+        "asset_class": "fii", "symbol": "REIT11", "name": "REIT11",
+        "sector": "real_estate", "currency": "BRL", "weight_global": 0.1,
+        "payload": {
+            "fundamentals": {"dy_12m": 0.1497},
+            "history": {"metricas_mensais": [
+                {"Data": f"2024-{m:02d}-01", "DY_Patrimonial": d}
+                for m, d in enumerate(dy_mensal, start=1)
+            ]},
+            "classification": {},
+        },
+    }
+    df = pd.DataFrame([linha])
+    p = classificar(df)[0]
+    ev = next(e for e in p.evidencias if e.papel == "renda")
+
+    assert ev.valor == pytest.approx(0.1497), "Evidencia.valor continua fracao crua"
+    assert "14." in ev.texto or "15." in ev.texto, "texto precisa mostrar ~14,97%, nao 0,15%"
+    assert "0.15%" not in ev.texto and "0,15%" not in ev.texto
