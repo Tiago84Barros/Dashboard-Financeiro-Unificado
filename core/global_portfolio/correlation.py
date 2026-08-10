@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from core.b3_correlation_diversification import (
+    MIN_OBS_CORRELACAO,
     correlation_matrix,
     high_correlation_pairs,
 )
@@ -51,21 +52,59 @@ def correlacao_media(retornos: pd.DataFrame) -> float | None:
     return float(triangulo.mean()) if triangulo.size else None
 
 
-def _pesos_alinhados(retornos: pd.DataFrame, pesos: dict) -> np.ndarray | None:
+def _covariancia_confiavel(retornos: pd.DataFrame,
+                           min_obs: int = MIN_OBS_CORRELACAO) -> pd.DataFrame:
+    """Covariancia com o mesmo piso de sobreposicao que a matriz de correlacao.
+
+    Dois ativos podem ter historico individual longo e mesmo assim se cruzarem
+    por poucos meses: a covariancia desse par e ruido. `matriz()` ja recusa esse
+    par (o piso `MIN_OBS_CORRELACAO` vira NaN em `correlation_matrix`); sem o
+    mesmo piso aqui, o par entrava calado na razao de diversificacao e no PCA
+    das apostas efetivas, que sao exibidos como fato.
+
+    Com o piso, o par reprovado vira NaN — e NaN contamina tanto `w @ cov @ w`
+    quanto a decomposicao espectral, o que apareceria como `nan` na tela. Entao
+    o ativo e descartado do calculo: melhor medir a diversificacao dos ativos
+    que se sobrepoem o bastante do que devolver um numero invalido. Remove um
+    por vez, sempre o de mais pares reprovados (desempate pelo nome, para o
+    resultado nao depender da ordem das colunas). Devolve quadro vazio quando
+    nao sobra nenhum par confiavel.
+    """
+    cov = retornos.cov(ddof=1, min_periods=min_obs)
+    while cov.shape[0] >= 2 and bool(cov.isna().to_numpy().any()):
+        reprovados = cov.isna().sum(axis=1)
+        pior = min(reprovados.index, key=lambda c: (-int(reprovados[c]), str(c)))
+        restantes = [c for c in cov.columns if c != pior]
+        cov = cov.loc[restantes, restantes]
+    return cov if cov.shape[0] >= 2 else pd.DataFrame()
+
+
+def _cov_e_pesos(retornos: pd.DataFrame,
+                 pesos: dict) -> tuple[pd.DataFrame | None, np.ndarray | None]:
+    """Covariancia confiavel e pesos renormalizados sobre os ativos que sobraram."""
     if not isinstance(retornos, pd.DataFrame) or retornos.shape[1] < 2:
-        return None
-    w = np.array([float(pesos.get(c, 0.0)) for c in retornos.columns], dtype=float)
+        return None, None
+    cov = _covariancia_confiavel(retornos)
+    if cov.empty:
+        return None, None
+    w = np.array([float(pesos.get(c, 0.0)) for c in cov.columns], dtype=float)
     total = w.sum()
-    return (w / total) if total > 0 else None
+    if total <= 0:
+        return None, None
+    return cov, w / total
 
 
 def razao_diversificacao(retornos: pd.DataFrame, pesos: dict) -> float | None:
-    """(soma de wi*sigma_i) / sigma_p. 1,0 = nenhuma diversificacao real."""
-    w = _pesos_alinhados(retornos, pesos)
-    if w is None:
+    """(soma de wi*sigma_i) / sigma_p. 1,0 = nenhuma diversificacao real.
+
+    Calculada apenas sobre os ativos com sobreposicao suficiente entre si
+    (ver `_covariancia_confiavel`); pesos renormalizados sobre esse subconjunto.
+    """
+    cov_df, w = _cov_e_pesos(retornos, pesos)
+    if cov_df is None:
         return None
-    sigmas = retornos.std(ddof=1).to_numpy(dtype=float)
-    cov = retornos.cov(ddof=1).to_numpy(dtype=float)
+    sigmas = retornos[list(cov_df.columns)].std(ddof=1).to_numpy(dtype=float)
+    cov = cov_df.to_numpy(dtype=float)
     sigma_p = float(np.sqrt(max(w @ cov @ w, 0.0)))
     if sigma_p <= 0:
         return None
@@ -89,11 +128,14 @@ def apostas_efetivas(retornos: pd.DataFrame, pesos: dict) -> float | None:
     resultado em 1,0 independente do quao correlacionados os ativos
     realmente estao. Ponderar a matriz antes de decompor evita essa
     descontinuidade.
+
+    Como a razao de diversificacao, considera apenas os ativos com sobreposicao
+    suficiente entre si (ver `_covariancia_confiavel`).
     """
-    w = _pesos_alinhados(retornos, pesos)
-    if w is None:
+    cov_df, w = _cov_e_pesos(retornos, pesos)
+    if cov_df is None:
         return None
-    cov = retornos.cov(ddof=1).to_numpy(dtype=float)
+    cov = cov_df.to_numpy(dtype=float)
     cov_ponderada = np.outer(w, w) * cov
     autovalores = np.clip(np.linalg.eigvalsh(cov_ponderada), 0.0, None)
     total = autovalores.sum()

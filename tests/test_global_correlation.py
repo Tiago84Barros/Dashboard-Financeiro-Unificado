@@ -79,6 +79,54 @@ def test_um_ativo_so_nao_levanta():
     assert razao_diversificacao(ret, {"A": 1.0}) is None
 
 
+def _retornos_com_sobreposicao_curta():
+    """A e B com 24 meses; C com 26 meses, mas so 5 em comum com A e B.
+
+    Todos os tres passam no piso individual de 18 observacoes — o que falha e a
+    sobreposicao PAR A PAR (5 meses), exatamente o caso que a matriz de
+    correlacao ja recusa. C tem variancia 20x maior para que, se entrasse no
+    calculo, o resultado mudasse de forma visivel.
+    """
+    rng = np.random.default_rng(7)
+    idx = pd.date_range("2021-01-31", periods=45, freq="ME")
+    a = np.full(45, np.nan)
+    b = np.full(45, np.nan)
+    c = np.full(45, np.nan)
+    a[:24] = rng.normal(0, 0.05, 24)
+    b[:24] = rng.normal(0, 0.05, 24)
+    c[19:] = rng.normal(0, 1.00, 26)
+    return pd.DataFrame({"A": a, "B": b, "C": c}, index=idx)
+
+
+def test_sobreposicao_curta_nao_contamina_diversificacao():
+    ret = _retornos_com_sobreposicao_curta()
+    pesos = {"A": 0.4, "B": 0.4, "C": 0.2}
+
+    razao = razao_diversificacao(ret, pesos)
+    apostas = apostas_efetivas(ret, pesos)
+
+    assert razao is not None and not np.isnan(razao)
+    assert apostas is not None and not np.isnan(apostas)
+    # C e descartado: o resultado tem de ser identico ao de A e B sozinhos, com
+    # os pesos renormalizados (0,4/0,4 -> 0,5/0,5).
+    so_ab = ret[["A", "B"]]
+    assert razao == pytest.approx(razao_diversificacao(so_ab, {"A": 0.5, "B": 0.5}))
+    assert apostas == pytest.approx(apostas_efetivas(so_ab, {"A": 0.5, "B": 0.5}))
+
+
+def test_sem_nenhum_par_confiavel_devolve_none():
+    # A nos 24 primeiros meses, B nos 24 ultimos: zero sobreposicao.
+    idx = pd.date_range("2021-01-31", periods=48, freq="ME")
+    rng = np.random.default_rng(3)
+    a = np.full(48, np.nan)
+    b = np.full(48, np.nan)
+    a[:24] = rng.normal(0, 0.05, 24)
+    b[24:] = rng.normal(0, 0.05, 24)
+    ret = pd.DataFrame({"A": a, "B": b}, index=idx)
+    assert razao_diversificacao(ret, {"A": 0.5, "B": 0.5}) is None
+    assert apostas_efetivas(ret, {"A": 0.5, "B": 0.5}) is None
+
+
 def test_quadro_vazio_nao_levanta():
     vazio = pd.DataFrame()
     assert matriz(vazio).empty
