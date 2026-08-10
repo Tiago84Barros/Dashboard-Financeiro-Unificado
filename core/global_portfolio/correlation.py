@@ -143,3 +143,27 @@ def apostas_efetivas(retornos: pd.DataFrame, pesos: dict) -> float | None:
         return None
     p = autovalores / total
     return float(1.0 / np.square(p).sum())
+
+
+def correlacao_media_por_ativo(retornos: pd.DataFrame) -> dict[str, float]:
+    """Correlacao media de cada ativo com os DEMAIS, sem a diagonal.
+
+    Correlacao media baixa e a evidencia de que o ativo diversifica de fato,
+    e nao apenas de que tem nome diferente. A diagonal fica de fora porque
+    1.0 contra si mesmo inflaria todo mundo igualmente.
+
+    Ativo cuja linha nao tem nenhum par valido fica ausente do resultado —
+    devolver 0.0 diria "nao se correlaciona com nada", que e o oposto de
+    "nao sabemos".
+    """
+    m = matriz(retornos)
+    if m.empty or len(m.columns) < 2:
+        return {}
+
+    saida: dict[str, float] = {}
+    for simbolo in sorted(m.columns):
+        outros = m.loc[simbolo, [c for c in m.columns if c != simbolo]]
+        media = pd.to_numeric(outros, errors="coerce").mean()
+        if pd.notna(media):
+            saida[str(simbolo)] = float(media)
+    return saida

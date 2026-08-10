@@ -133,3 +133,58 @@ def test_quadro_vazio_nao_levanta():
     assert pares_redundantes(vazio) == []
     assert correlacao_media(vazio) is None
     assert apostas_efetivas(vazio, {}) is None
+
+
+def test_correlacao_media_por_ativo_exclui_a_diagonal():
+    import numpy as np
+    import pandas as pd
+    from core.global_portfolio.correlation import correlacao_media_por_ativo
+
+    # A e B andam juntos; C anda sozinho.
+    n = 60
+    base = np.sin(np.arange(n) / 3.0)
+    ret = pd.DataFrame({
+        "A": base,
+        "B": base * 1.01,
+        "C": np.cos(np.arange(n) / 7.0),
+    }, index=pd.date_range("2020-01-31", periods=n, freq="ME"))
+
+    saida = correlacao_media_por_ativo(ret)
+    assert set(saida) == {"A", "B", "C"}
+    # A diagonal (1.0) nao pode entrar: se entrasse, todo valor subiria.
+    assert saida["A"] < 1.0
+    assert saida["A"] > saida["C"], "A anda com B; C nao anda com ninguem"
+
+
+def test_correlacao_media_por_ativo_ignora_ativo_sem_par():
+    import numpy as np
+    import pandas as pd
+    from core.global_portfolio.correlation import correlacao_media_por_ativo
+
+    n = 60
+    idx = pd.date_range("2020-01-31", periods=n, freq="ME")
+    ret = pd.DataFrame({
+        "A": np.sin(np.arange(n) / 3.0),
+        "B": np.cos(np.arange(n) / 5.0),
+        "SEMPAR": [np.nan] * n,
+    }, index=idx)
+
+    saida = correlacao_media_por_ativo(ret)
+    assert "SEMPAR" not in saida, "linha toda NaN nao pode virar 0.0"
+    assert set(saida) == {"A", "B"}
+
+
+def test_correlacao_media_por_ativo_com_um_ativo_devolve_vazio():
+    import numpy as np
+    import pandas as pd
+    from core.global_portfolio.correlation import correlacao_media_por_ativo
+
+    ret = pd.DataFrame({"A": np.arange(60.0)},
+                       index=pd.date_range("2020-01-31", periods=60, freq="ME"))
+    assert correlacao_media_por_ativo(ret) == {}
+
+
+def test_correlacao_media_por_ativo_com_frame_vazio_devolve_vazio():
+    import pandas as pd
+    from core.global_portfolio.correlation import correlacao_media_por_ativo
+    assert correlacao_media_por_ativo(pd.DataFrame()) == {}
