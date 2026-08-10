@@ -41,7 +41,13 @@ def test_pares_redundantes_ignora_correlacao_baixa():
 
 
 def test_correlacao_media_de_ativos_independentes_e_proxima_de_zero():
-    assert correlacao_media(_retornos_com_correlacao(0.0)) == pytest.approx(0.0, abs=0.15)
+    # n=500 aqui, nao 60 como nos vizinhos: o erro padrao da correlacao amostral
+    # entre series independentes e ~1/sqrt(n). Em n=60 (~0.13) a semente 11
+    # sorteia 0,333 por acaso puro — quase 3 desvios do zero — e derruba o
+    # teste sem nenhum defeito na implementacao. Em n=500 (~0.045) a tolerancia
+    # de 0.15 fica a mais de 3 desvios-padrao, entao o teste passa a medir o
+    # que o nome promete. Nao "tidy" isso de volta para 60.
+    assert correlacao_media(_retornos_com_correlacao(0.0, n=500)) == pytest.approx(0.0, abs=0.15)
 
 
 def test_razao_de_diversificacao_e_um_quando_tudo_e_identico():
