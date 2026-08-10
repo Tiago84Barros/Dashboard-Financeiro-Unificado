@@ -73,6 +73,10 @@ LIMIARES: dict[str, float] = {
     # Participacao minima de imoveis fisicos ("tijolo") na carteira do FII
     # para contar como reserva de valor real.
     "tijolo_dominante": 80.0,
+    # Meses minimos de serie mensal (metricas_mensais) para julgar renda ou
+    # crescimento de FII. Abaixo disto o papel fica indeterminado, nunca
+    # negado — poucos meses nao sustentam nem "cumpre" nem "nao cumpre".
+    "meses_minimos_fii": 12,
 }
 
 # Anos minimos de historico exigidos para cada regra baseada em serie anual.
@@ -106,15 +110,15 @@ def _asset_class(linha: dict) -> str:
     return str(linha.get("asset_class") or "").strip().lower()
 
 
-def _serie_anual(payload: dict, bloco: str) -> list[dict]:
-    """Registros anuais do bloco de historico, ordenados do mais antigo ao mais
-    recente.
+def _serie_historica(payload: dict, bloco: str) -> list[dict]:
+    """Registros do bloco de historico (anual ou mensal), ordenados do mais
+    antigo ao mais recente.
 
     Quando os registros trazem "Data", a ordenacao usa a data (a origem no
     banco nao garante ordem); sem "Data" (como nos testes) preserva a ordem
     recebida, que ja e cronologica por convencao dos fixtures e dos
-    adaptadores (core/portfolio/adapters/b3.py grava do jeito que a consulta
-    devolve).
+    adaptadores (core/portfolio/adapters/b3.py e fii.py gravam do jeito que a
+    consulta devolve).
     """
     registros = ((payload or {}).get("history", {}) or {}).get(bloco) or []
     if not isinstance(registros, list):
@@ -124,8 +128,8 @@ def _serie_anual(payload: dict, bloco: str) -> list[dict]:
     return list(registros)
 
 
-def _janela_recente(registros: list[dict], chave: str, janela: int = _JANELA_ANOS) -> list[float]:
-    """Ultimos `janela` valores numericos validos de `chave`, do mais antigo ao mais novo."""
+def _valores_validos(registros: list[dict], chave: str) -> list[float]:
+    """Todos os valores numericos validos de `chave`, do mais antigo ao mais novo, sem janela."""
     valores: list[float] = []
     for r in registros:
         bruto = (r or {}).get(chave)
@@ -135,7 +139,12 @@ def _janela_recente(registros: list[dict], chave: str, janela: int = _JANELA_ANO
             valores.append(float(bruto))
         except (TypeError, ValueError):
             continue
-    return valores[-janela:]
+    return valores
+
+
+def _janela_recente(registros: list[dict], chave: str, janela: int = _JANELA_ANOS) -> list[float]:
+    """Ultimos `janela` valores numericos validos de `chave`, do mais antigo ao mais novo."""
+    return _valores_validos(registros, chave)[-janela:]
 
 
 def _desvio_relativo(valores: list[float]) -> float | None:
@@ -194,10 +203,15 @@ def _avaliar_renda(linha: dict, mediana_classe: float | None) -> tuple[bool | No
     classe = _asset_class(linha)
     payload = linha.get("payload") or {}
     dy = campo_valor(payload, classe, "dy")
-    payout_valores = _janela_recente(_serie_anual(payload, "multiplos_anuais"), "Payout")
-    desvio_rel = _desvio_relativo(payout_valores)
+    if dy is None or mediana_classe is None:
+        return None, None
 
-    if dy is None or mediana_classe is None or desvio_rel is None:
+    if classe == "fii":
+        return _avaliar_renda_fii(payload, dy, mediana_classe)
+
+    payout_valores = _janela_recente(_serie_historica(payload, "multiplos_anuais"), "Payout")
+    desvio_rel = _desvio_relativo(payout_valores)
+    if desvio_rel is None:
         return None, None
 
     cumpre = dy >= mediana_classe and desvio_rel < LIMIARES["payout_instavel"]
@@ -210,9 +224,40 @@ def _avaliar_renda(linha: dict, mediana_classe: float | None) -> tuple[bool | No
     return cumpre, evidencia
 
 
+def _avaliar_renda_fii(payload: dict, dy: float, mediana_classe: float) -> tuple[bool | None, Evidencia | None]:
+    """Renda de FII: a estabilidade e medida no DY mensal (DY_Patrimonial de
+    metricas_mensais), nao no payout anual — FII nao tem serie de payout.
+    Mesmo criterio em espirito ao das acoes (DY acima da mediana da classe e
+    estavel); so a fonte da estabilidade muda. Menos de
+    LIMIARES["meses_minimos_fii"] meses de serie deixa o papel indeterminado.
+    """
+    dy_mensal = _valores_validos(_serie_historica(payload, "metricas_mensais"), "DY_Patrimonial")
+    meses = len(dy_mensal)
+    if meses < LIMIARES["meses_minimos_fii"]:
+        return None, None
+
+    desvio_rel = _desvio_relativo(dy_mensal)
+    if desvio_rel is None:
+        return None, None
+
+    cumpre = dy >= mediana_classe and desvio_rel < LIMIARES["payout_instavel"]
+    texto = (
+        f"DY {dy:.2f}% (mediana da classe {mediana_classe:.2f}%), "
+        f"DY_Patrimonial mensal com desvio relativo de {desvio_rel:.2f} "
+        f"(limite {LIMIARES['payout_instavel']:.2f}) em {meses} meses de serie"
+    )
+    evidencia = Evidencia("renda", dy, mediana_classe, texto) if cumpre else None
+    return cumpre, evidencia
+
+
 def _avaliar_crescimento(linha: dict) -> tuple[bool | None, Evidencia | None]:
+    classe = _asset_class(linha)
     payload = linha.get("payload") or {}
-    lpa_valores = _janela_recente(_serie_anual(payload, "demonstracoes_anuais"), "LPA")
+
+    if classe == "fii":
+        return _avaliar_crescimento_fii(payload)
+
+    lpa_valores = _janela_recente(_serie_historica(payload, "demonstracoes_anuais"), "LPA")
     cagr = _cagr(lpa_valores)
     if cagr is None:
         return None, None
@@ -220,6 +265,36 @@ def _avaliar_crescimento(linha: dict) -> tuple[bool | None, Evidencia | None]:
     cumpre = cagr >= LIMIARES["cagr_minimo"]
     texto = (
         f"CAGR de LPA em {len(lpa_valores) - 1} anos de {cagr * 100:.2f}% "
+        f"(minimo {LIMIARES['cagr_minimo'] * 100:.2f}%)"
+    )
+    evidencia = Evidencia("crescimento", cagr, LIMIARES["cagr_minimo"], texto) if cumpre else None
+    return cumpre, evidencia
+
+
+def _avaliar_crescimento_fii(payload: dict) -> tuple[bool | None, Evidencia | None]:
+    """Crescimento de FII: CAGR do VPA (metricas_mensais) sobre a janela
+    disponivel, anualizado pelo numero real de meses — nao pelos 5 anos que a
+    regra de acoes assume. A serie hoje cobre 2024-01 a 2026-05 (~29 meses,
+    ~2,4 anos): a janela real entra no texto da evidencia para nao apresentar
+    um CAGR de dois anos e meio como se fosse de cinco. Menos de
+    LIMIARES["meses_minimos_fii"] meses deixa o papel indeterminado.
+    """
+    vpa_mensal = _valores_validos(_serie_historica(payload, "metricas_mensais"), "VPA")
+    meses = len(vpa_mensal)
+    if meses < LIMIARES["meses_minimos_fii"]:
+        return None, None
+
+    inicio, fim = vpa_mensal[0], vpa_mensal[-1]
+    if inicio <= 0 or fim <= 0:
+        return None, None
+    intervalos = meses - 1
+    if intervalos <= 0:
+        return None, None
+    cagr = float((fim / inicio) ** (12.0 / intervalos) - 1.0)
+
+    cumpre = cagr >= LIMIARES["cagr_minimo"]
+    texto = (
+        f"CAGR de VPA em {intervalos} meses de {cagr * 100:.2f}% "
         f"(minimo {LIMIARES['cagr_minimo'] * 100:.2f}%)"
     )
     evidencia = Evidencia("crescimento", cagr, LIMIARES["cagr_minimo"], texto) if cumpre else None
