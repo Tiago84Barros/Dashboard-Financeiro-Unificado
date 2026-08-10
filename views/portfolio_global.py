@@ -14,8 +14,9 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core.global_portfolio import concentration, metrics
+from core.global_portfolio import concentration, correlation, factors, metrics, risk
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
+from core.global_portfolio.returns import Cobertura, retornos_mensais
 from core.global_portfolio.taxonomy import ROTULOS, nao_mapeados
 from core.portfolio.registry import asset_classes, get_spec
 from core.portfolio.repository import (
@@ -407,6 +408,165 @@ def _tabelas(df: pd.DataFrame) -> None:
         st.dataframe(paises, use_container_width=True, hide_index=True)
 
 
+def aviso_de_cobertura(cob: Cobertura) -> str | None:
+    """Mensagem que nomeia os ativos sem série de preços mensal e o quanto do
+    patrimônio fica de fora dos painéis de correlação, fatores e risco.
+
+    Hoje isso e toda a classe `us` (sem preço no Supabase — ver
+    core/global_portfolio/returns.py); mas a função não assume isso, so lê
+    `cob`. Os três painéis calculam sobre a fatia coberta apenas — um deles
+    falar do "patrimônio" sem dizer que na verdade descreve 62% dele mentiria
+    por omissão, o mesmo risco que _setores_sem_mapa e classes_sem_posicao já
+    nomeiam nesta tela. `None` quando a cobertura é total (nada a avisar).
+    """
+    if cob.peso_coberto >= 1.0:
+        return None
+    pct_coberto = cob.peso_coberto * 100.0
+    pct_fora = 100.0 - pct_coberto
+    nomes = ", ".join(cob.simbolos_sem_serie) if cob.simbolos_sem_serie else "nenhum símbolo identificado"
+    return (
+        f"Correlação, fatores e risco cobrem {pct_coberto:.0f}% do patrimônio "
+        f"({pct_fora:.0f}% de fora, sem série mensal de preços): {nomes}."
+    )
+
+
+def _tabela_de_pares_redundantes(pares: list[tuple[str, str, float]]) -> pd.DataFrame:
+    """Tabela de exibição dos pares redundantes.
+
+    A ordem já vem pronta de `correlation.pares_redundantes` (mais
+    correlacionado primeiro, empate por símbolo) — esta função só formata
+    para exibição, não reordena.
+    """
+    return pd.DataFrame(
+        [(a, b, round(c, 2)) for a, b, c in pares],
+        columns=["Ativo 1", "Ativo 2", "Correlação"],
+    )
+
+
+def _tabela_de_exposicoes(exposicoes: list) -> pd.DataFrame:
+    """Tabela de exibição das exposições a fatores, com marca de significância.
+
+    Um fator não significativo continua na tabela — omiti-lo esconderia que
+    a estimativa é fraca, o mesmo raciocínio de `fatores_excluidos` em
+    core/global_portfolio/factors.py. A marca vai numa coluna de texto
+    própria (não só cor) para não depender de CSS nem sumir num leitor de
+    tela ou numa exportação da tabela.
+    """
+    return pd.DataFrame(
+        [
+            {
+                "Fator": factors.ROTULOS_FATOR.get(e.fator, e.fator),
+                "Beta": round(e.beta, 3),
+                "Erro-padrão": round(e.erro_padrao, 3),
+                "R²": round(e.r2, 2),
+                "Observações": e.n_obs,
+                "Significativo": "✅ Sim" if e.significativo else "⚠️ Não",
+            }
+            for e in exposicoes
+        ]
+    )
+
+
+def _painel_correlacao(ret: pd.DataFrame, pesos: dict) -> None:
+    st.markdown("#### Correlação e diversificação")
+    if ret.empty or ret.shape[1] < 2:
+        st.info(
+            "Menos de dois ativos com série de preços mensal suficiente — "
+            "sem base para calcular correlação entre eles."
+        )
+        return
+
+    colunas = st.columns(3)
+    cartoes = [
+        ("Correlação média", correlation.correlacao_media(ret), "#5B8DEF",
+         "Média das correlações par a par entre os ativos com série de preços."),
+        ("Razão de diversificação", correlation.razao_diversificacao(ret, pesos), "#38BDF8",
+         "Soma ponderada das volatilidades individuais sobre a volatilidade da "
+         "carteira. 1,0 = nenhuma diversificação real."),
+        ("Apostas efetivas", correlation.apostas_efetivas(ret, pesos), "#34D399",
+         "Número efetivo de apostas independentes na carteira (PCA da "
+         "covariância ponderada pelos pesos)."),
+    ]
+    for coluna, (rotulo, valor, cor, ajuda) in zip(colunas, cartoes):
+        with coluna:
+            card_metrica(rotulo, _fmt(valor, casas=2), accent=cor, ajuda=ajuda)
+
+    st.markdown("###### Pares redundantes (correlação ≥ {:.2f})".format(correlation.LIMIAR_REDUNDANCIA))
+    pares = correlation.pares_redundantes(ret)
+    if not pares:
+        st.caption("Nenhum par de ativos acima do limiar de redundância.")
+    else:
+        st.dataframe(_tabela_de_pares_redundantes(pares), use_container_width=True, hide_index=True)
+
+
+def _painel_fatores(ret: pd.DataFrame, pesos: dict) -> None:
+    st.markdown("#### Exposição a fatores de risco")
+    if ret.empty:
+        st.info("Sem série de preços mensal suficiente para estimar exposição a fatores.")
+        return
+
+    serie_fatores = factors.series_de_fatores()
+    if serie_fatores.empty:
+        st.info("Sem série dos fatores de referência (proxies via ETF na B3).")
+        return
+
+    resultado = factors.exposicao_do_portfolio(ret, pesos, serie_fatores)
+    if not resultado.exposicoes:
+        st.info(
+            "Amostra insuficiente para estimar exposição a fatores "
+            f"(mínimo de {factors.MIN_OBS_REGRESSAO} meses em comum)."
+        )
+        return
+
+    st.dataframe(_tabela_de_exposicoes(resultado.exposicoes), use_container_width=True, hide_index=True)
+    st.caption(
+        "Beta estimado por regressão múltipla contra ETFs-proxy na B3. "
+        "⚠️ marca um fator cujo beta não supera ~2 erros-padrão de zero — "
+        "não é evidência de exposição real, é ruído de amostra."
+    )
+    if resultado.fatores_excluidos:
+        nomes = ", ".join(
+            factors.ROTULOS_FATOR.get(f, f) for f in resultado.fatores_excluidos
+        )
+        st.caption(
+            f"Fora da regressão por falta de dado em comum: {nomes}. "
+            "Ausente da tabela não é o mesmo que irrelevante — é a série não "
+            "ter sustentado a estimativa."
+        )
+
+
+def _painel_risco(ret: pd.DataFrame, pesos: dict) -> None:
+    st.markdown("#### Risco do patrimônio")
+    if ret.empty:
+        st.info("Sem série de preços mensal suficiente para estimar risco.")
+        return
+
+    r = risk.metricas_de_risco(ret, pesos)
+    if r is None:
+        st.info(
+            "Série mensal curta demais para estimar risco com confiança "
+            f"(mínimo de {risk.MIN_OBS} meses)."
+        )
+        return
+
+    colunas = st.columns(4)
+    cartoes = [
+        ("Volatilidade anual", r.vol_anual, "#5B8DEF",
+         "Desvio-padrão dos retornos mensais, anualizado (×√12)."),
+        ("VaR 95%", r.var_95, "#F97316",
+         "Perda mensal no percentil histórico de 5% — 1 a cada 20 meses, sem "
+         "supor distribuição normal."),
+        ("CVaR 95%", r.cvar_95, "#FC5C7D",
+         "Perda média nos meses que ultrapassam o VaR 95% — a cauda além do corte."),
+        ("Drawdown máximo", r.drawdown_max, "#A78BFA",
+         "Maior queda do pico ao vale na série de retornos acumulados."),
+    ]
+    for coluna, (rotulo, valor, cor, ajuda) in zip(colunas, cartoes):
+        with coluna:
+            card_metrica(rotulo, _fmt(valor * 100, "%", casas=1), accent=cor, ajuda=ajuda)
+    st.caption(f"Baseado em {r.n_obs} meses de retornos do patrimônio consolidado.")
+
+
 def render() -> None:
     st.markdown("## 🌐 Portfólio Global")
     st.caption("As três carteiras lidas como um único patrimônio.")
@@ -454,3 +614,15 @@ def render() -> None:
     _cards_de_metricas(df)
     _qualidade(df)
     _tabelas(df)
+
+    st.markdown("#### Correlação, fatores e risco")
+    # Uma unica chamada a retornos_mensais por render: o quadro (ret, cob) e
+    # reaproveitado pelos tres paineis abaixo, em vez de buscar preco tres vezes.
+    ret, cob = retornos_mensais(df)
+    aviso = aviso_de_cobertura(cob)
+    if aviso:
+        st.warning(aviso)
+    pesos = dict(zip(df["symbol"], df["weight_global"]))
+    _painel_correlacao(ret, pesos)
+    _painel_fatores(ret, pesos)
+    _painel_risco(ret, pesos)
