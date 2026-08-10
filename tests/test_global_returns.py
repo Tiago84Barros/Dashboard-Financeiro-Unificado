@@ -83,3 +83,33 @@ def test_quadro_vazio_nao_levanta():
 def test_colunas_em_ordem_deterministica():
     ret, _ = retornos_mensais(_posicoes(), loader=_loader(("HGLG11", "PETR4")))
     assert list(ret.columns) == sorted(ret.columns)
+
+
+def test_gap_interior_vira_nan_e_nao_zero_fabricado():
+    """Um preco ausente no meio da serie nao pode virar 0% de retorno.
+
+    fill_method='pad' (default antigo do pandas) forward-preenche o preco
+    faltante antes de calcular a variacao, fabricando um retorno de 0% que
+    parece um mes real de calmaria. O gap tem que sobreviver como NaN.
+    """
+    idx = pd.date_range("2023-01-31", periods=25, freq="ME")
+    precos_petr4 = [100.0 + i for i in range(25)]
+    precos_petr4[10] = np.nan  # gap interior — nao e o primeiro preco da serie
+    precos_hglg11 = [50.0 + i * 0.5 for i in range(25)]
+    quadro = pd.DataFrame({"PETR4": precos_petr4, "HGLG11": precos_hglg11}, index=idx)
+
+    def loader(tickers):
+        return quadro[[t for t in tickers if t in quadro.columns]]
+
+    ret, cob = retornos_mensais(_posicoes(), loader=loader)
+
+    mes_do_gap = idx[10]
+    mes_seguinte = idx[11]     # tambem depende do preco ausente (preco anterior = NaN)
+    assert pd.isna(ret.loc[mes_do_gap, "PETR4"])
+    assert pd.isna(ret.loc[mes_seguinte, "PETR4"])
+    assert ret.loc[mes_do_gap, "PETR4"] != 0.0  # nao pode ser um 0% fabricado
+
+    # a contagem de observacoes validas cai com o gap, nao e preenchida
+    assert ret["PETR4"].count() == 22  # 24 retornos possiveis - 2 afetados pelo gap
+    # mesmo com o gap a serie continua acima do MIN_OBS e permanece coberta
+    assert "PETR4" in cob.simbolos_com_serie

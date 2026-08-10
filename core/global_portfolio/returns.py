@@ -60,7 +60,10 @@ def retornos_mensais(df_posicoes: pd.DataFrame,
     if not isinstance(precos, pd.DataFrame) or precos.empty:
         return pd.DataFrame(), Cobertura((), tuple(sorted(sem_preco + candidatos)), 0.0, 0)
 
-    retornos = precos.sort_index().pct_change().dropna(how="all")
+    # fill_method=None: um preco ausente vira NaN no retorno, nunca um 0%
+    # fabricado (o default 'pad' do pandas preenche o preco antes de diferenciar
+    # e transforma o gap em "calmaria" que nao existiu).
+    retornos = precos.sort_index().pct_change(fill_method=None).dropna(how="all")
     # Serie curta nao sustenta correlacao: sai e conta como nao coberta.
     validos = sorted(c for c in retornos.columns if retornos[c].count() >= MIN_OBS)
     descartados = [c for c in retornos.columns if c not in validos]
