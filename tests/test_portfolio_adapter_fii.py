@@ -112,3 +112,65 @@ def test_sem_dy_e_pvp_no_item_usa_a_base():
 
 def test_provenance_registra_origem():
     assert _build()[0].payload["provenance"]["source"] == "selecao_fiis"
+
+
+def test_history_do_fii_traz_a_serie_mensal_e_os_proventos():
+    serie = pd.DataFrame({
+        "Data": pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01"]),
+        "VPA": [100.0, 101.0, 102.0],
+        "P/VP": [0.95, 0.97, 0.99],
+        "Patrimonio": [1.0e9, 1.1e9, 1.2e9],
+        "Cotistas": [1000, 1100, 1200],
+        "DY_Patrimonial": [0.008, 0.0082, 0.0079],
+        "Pct_Imoveis": [0.96, 0.96, 0.95],
+        "Pct_Papel": [0.0, 0.0, 0.0],
+        "Pct_Caixa": [0.04, 0.04, 0.05],
+        "Pct_Fundos": [0.0, 0.0, 0.0],
+    })
+    loaders = {
+        "fiis": lambda: pd.DataFrame({"Ticker": ["HGLG11"], "Nome": ["CSHG"],
+                                      "Segmento": ["Logistica"], "Tipo": ["Tijolo"],
+                                      "P/VP": [0.95], "DY_12m": [8.4]}),
+        "metricas_mensais": lambda tks: {"HGLG11": serie},
+        "proventos": lambda tks: {"HGLG11": {2024: 11.5, 2025: 12.1}},
+    }
+    snaps = build_snapshots([{"ticker": "HGLG11", "peso": 1.0}], model_id="m1",
+                            params={}, as_of=dt.date(2026, 8, 10), loaders=loaders)
+    hist = snaps[0].payload["history"]
+
+    assert len(hist["metricas_mensais"]) == 3
+    assert hist["metricas_mensais"][-1]["VPA"] == 102.0
+    assert hist["proventos_anuais"] == [{"ano": 2024, "total": 11.5},
+                                        {"ano": 2025, "total": 12.1}]
+
+
+def test_fii_sem_serie_mensal_mantem_history_com_listas_vazias():
+    loaders = {
+        "fiis": lambda: pd.DataFrame({"Ticker": ["XXXX11"], "Nome": ["Sem serie"]}),
+        "metricas_mensais": lambda tks: {},
+        "proventos": lambda tks: {},
+    }
+    snaps = build_snapshots([{"ticker": "XXXX11", "peso": 1.0}], model_id="m1",
+                            params={}, as_of=dt.date(2026, 8, 10), loaders=loaders)
+    hist = snaps[0].payload["history"]
+    assert hist["metricas_mensais"] == []
+    assert hist["proventos_anuais"] == []
+
+
+def test_proventos_saem_ordenados_por_ano():
+    loaders = {
+        "fiis": lambda: pd.DataFrame({"Ticker": ["A11"], "Nome": ["A"]}),
+        "metricas_mensais": lambda tks: {},
+        "proventos": lambda tks: {"A11": {2026: 3.0, 2024: 1.0, 2025: 2.0}},
+    }
+    snaps = build_snapshots([{"ticker": "A11", "peso": 1.0}], model_id="m1",
+                            params={}, as_of=dt.date(2026, 8, 10), loaders=loaders)
+    anos = [r["ano"] for r in snaps[0].payload["history"]["proventos_anuais"]]
+    assert anos == sorted(anos), "ordem crescente e determinismo"
+
+
+def test_loaders_padrao_expõem_as_duas_chaves_novas():
+    from core.portfolio.adapters.fii import _default_loaders
+    d = _default_loaders()
+    assert "metricas_mensais" in d
+    assert "proventos" in d
