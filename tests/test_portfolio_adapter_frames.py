@@ -62,3 +62,33 @@ def test_registros_preserva_none_nativo_em_object():
     out = registros(df)
     assert out[0]["Valor"] == "texto"
     assert out[1]["Valor"] is None
+
+
+def test_registros_preserva_lista_em_coluna_object():
+    """Regressao: pd.isna(lista) devolve array, e `if <array>` levanta
+    ValueError. Lista e dado de verdade (ex.: critical_missing vindo de
+    coluna JSONB) e precisa atravessar intacta, nao virar None.
+    """
+    df = pd.DataFrame({"critical_missing": [["roe", "margem"], ["pl"]]})
+    out = registros(df)
+    assert out[0]["critical_missing"] == ["roe", "margem"]
+    assert out[1]["critical_missing"] == ["pl"]
+
+
+def test_registros_preserva_dict_em_coluna_object():
+    """Regressao equivalente para dict (ex.: f_signals do bloco advanced)."""
+    df = pd.DataFrame({"f_signals": [{"momentum": 1}, {"quality": 0}]})
+    out = registros(df)
+    assert out[0]["f_signals"] == {"momentum": 1}
+    assert out[1]["f_signals"] == {"quality": 0}
+
+
+def test_registros_preserva_lista_vazia_sem_levantar_valueerror():
+    """A causa raiz do bug original: pd.isna([]) e um array vazio, e
+    `if <array vazio>` e o caso que produz exatamente a mensagem "the truth
+    value of an empty array is ambiguous".
+    """
+    df = pd.DataFrame({"critical_missing": [[], ["pl"]]})
+    out = registros(df)
+    assert out[0]["critical_missing"] == []
+    assert out[1]["critical_missing"] == ["pl"]

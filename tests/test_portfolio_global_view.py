@@ -232,6 +232,42 @@ def test_qualidade_gini_e_top_n_sao_de_fato_usados_na_view():
     assert "concentration.gini(" in fonte
 
 
+def test_texto_de_apoio_do_ativo_inclui_valor_quando_presente():
+    texto = portfolio_global.texto_de_apoio_do_ativo(
+        "Petrobras", "Empresas B3", "Energia", 12345.0,
+    )
+    assert texto == "Petrobras · Empresas B3 · Energia · R$ 12.345"
+
+
+def test_texto_de_apoio_do_ativo_omite_valor_quando_none():
+    """Regressao: valor_brl ausente e falta de patrimonio total informado, nao
+    zero — o card nao pode mostrar travessao no lugar de um valor que nunca
+    foi calculado.
+    """
+    texto = portfolio_global.texto_de_apoio_do_ativo(
+        "Petrobras", "Empresas B3", "Energia", None,
+    )
+    assert texto == "Petrobras · Empresas B3 · Energia"
+    assert "R$" not in texto
+
+
+def test_texto_de_apoio_do_ativo_sem_nome_mostra_travessao():
+    texto = portfolio_global.texto_de_apoio_do_ativo(None, "Empresas B3", "Energia", None)
+    assert texto == "— · Empresas B3 · Energia"
+
+
+def test_aba_por_ativo_usa_cartoes_em_vez_de_dataframe():
+    """Regressao: informacao nunca solta em tabela — a regra do projeto e
+    cartoes CSS (card_metrica). 'Por setor' e 'Por pais' continuam tabela
+    porque sao agregados de verdade, nao uma lista de ativos individuais.
+    """
+    import inspect
+    fonte_tabelas = inspect.getsource(portfolio_global._tabelas)
+    assert "_cards_de_ativos(df)" in fonte_tabelas
+    assert "st.dataframe" not in inspect.getsource(portfolio_global._cards_de_ativos)
+    assert "card_metrica" in inspect.getsource(portfolio_global._cards_de_ativos)
+
+
 def test_load_allocation_targets_falhando_por_schema_ausente_aciona_a_orientacao(monkeypatch):
     """Ponta a ponta da decisao (sem Streamlit): a falha real que o primeiro
     acesso provoca — load_allocation_targets contra uma tabela que o schema
