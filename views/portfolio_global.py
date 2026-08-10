@@ -14,7 +14,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core.global_portfolio import concentration, correlation, factors, metrics, risk
+from core.global_portfolio import concentration, correlation, factors, metrics, risk, roles
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
 from core.global_portfolio.returns import Cobertura, retornos_mensais
 from core.global_portfolio.taxonomy import ROTULOS, nao_mapeados
@@ -567,6 +567,157 @@ def _painel_risco(ret: pd.DataFrame, pesos: dict) -> None:
     st.caption(f"Baseado em {r.n_obs} meses de retornos do patrimônio consolidado.")
 
 
+# Rotulos de exibicao dos limiares de roles.LIMIARES: so texto, a mesma
+# necessidade que ROTULOS_PAPEL ja atende para as chaves de papel — nao
+# reinterpreta nem deriva nada do valor, so nomeia a chave para leitura.
+_ROTULOS_LIMIAR: dict[str, str] = {
+    "payout_instavel": "desvio relativo máximo do payout (renda)",
+    "cagr_minimo": "CAGR mínimo de LPA (crescimento)",
+    "vol_baixa": "volatilidade anualizada máxima (baixa volatilidade)",
+    "correlacao_baixa": "correlação média máxima (diversificação)",
+    "papel_dominante": "% mínimo em recebíveis (proteção contra inflação, FII)",
+    "tijolo_dominante": "% mínimo em imóveis (reserva de valor, FII)",
+}
+
+
+def _texto_de_limiares() -> str:
+    """Frase que declara os limiares como escolhas heurísticas e lista os
+    valores em uso — para que quem le julgue o corte em vez de tomá-lo como
+    fato sobre os ativos (regra do plano de Fase 3a)."""
+    partes = [
+        f"{_ROTULOS_LIMIAR.get(chave, chave)} = {valor:g}"
+        for chave, valor in roles.LIMIARES.items()
+    ]
+    return (
+        "Limiares heurísticos, ajustáveis e não fatos sobre os ativos — "
+        + "; ".join(partes) + "."
+    )
+
+
+def _resumo_de_papeis(entradas: list[roles.PapelDoAtivo]) -> dict:
+    """Agregados do painel: quantos ativos cumprem cada papel e quantos não
+    cumprem papel algum.
+
+    Todo papel de `roles.PAPEIS` aparece no resultado, mesmo com contagem
+    zero, quando ha pelo menos um ativo classificado — um papel que nenhum
+    ativo cumpre (ex.: "renda" na carteira real) e informacao, nao ausencia
+    de informacao, e sumir do resumo esconderia justamente esse caso. Lista
+    vazia devolve resumo vazio: sem ativo classificado nao ha o que contar.
+    """
+    if not entradas:
+        return {"por_papel": {}, "sem_papel": 0}
+
+    contagem = {papel: 0 for papel in roles.PAPEIS}
+    sem_papel = 0
+    for entrada in entradas:
+        if not entrada.papeis:
+            sem_papel += 1
+        for papel in entrada.papeis:
+            contagem[papel] += 1
+    return {"por_papel": contagem, "sem_papel": sem_papel}
+
+
+def _tabela_de_papeis_do_ativo(entrada: roles.PapelDoAtivo) -> pd.DataFrame:
+    """Uma linha por papel para um ativo: cumpre (com a evidência numérica),
+    indeterminado (sem dado suficiente) ou não cumpre (regra avaliada e
+    negada).
+
+    "Indeterminado" e "não cumpre" recebem rótulos de status diferentes de
+    propósito — são coisas diferentes ("não sabemos" vs. "sabemos e não
+    cumpre"), e uma tabela que os tratasse igual diria ao leitor algo que os
+    dados não sustentam.
+    """
+    evidencia_por_papel = {e.papel: e for e in entrada.evidencias}
+    linhas = []
+    for papel in roles.PAPEIS:
+        rotulo = roles.ROTULOS_PAPEL[papel]
+        if papel in entrada.papeis:
+            evidencia = evidencia_por_papel.get(papel)
+            linhas.append({
+                "Papel": rotulo,
+                "Status": "✅ Cumpre",
+                "Evidência": evidencia.texto if evidencia else "—",
+            })
+        elif papel in entrada.indeterminados:
+            linhas.append({
+                "Papel": rotulo,
+                "Status": "❔ Indeterminado",
+                "Evidência": "sem dado suficiente para avaliar",
+            })
+        else:
+            linhas.append({
+                "Papel": rotulo,
+                "Status": "— Não cumpre",
+                "Evidência": "—",
+            })
+    return pd.DataFrame(linhas)
+
+
+def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> None:
+    """Painel 'Papel estratégico': para que serve cada ativo do patrimônio.
+
+    So formata o que `roles.classificar` ja decidiu — nenhum calculo entra
+    aqui. `correlacao_media_por_ativo` reduz a matriz de correlacao ja
+    calculada pelo painel de correlacao (Task 1 da Fase 3a); nao chama
+    `retornos_mensais` de novo, reaproveita o `ret` que `render()` ja tem.
+    """
+    st.markdown("#### Papel estratégico por ativo")
+
+    if df.empty:
+        st.info("Sem posições para classificar por papel estratégico.")
+        return
+
+    correlacoes = correlation.correlacao_media_por_ativo(ret)
+    entradas = roles.classificar(df, retornos=ret, correlacoes=correlacoes)
+    if not entradas:
+        st.info("Sem posições para classificar por papel estratégico.")
+        return
+
+    st.caption(_texto_de_limiares())
+
+    resumo = _resumo_de_papeis(entradas)
+
+    card_metrica(
+        "Sem papel algum",
+        resumo["sem_papel"],
+        positivo=(resumo["sem_papel"] == 0),
+        accent="#FC5C7D" if resumo["sem_papel"] else "#00C896",
+        ajuda="Ativos para os quais nenhuma regra teve evidência suficiente — "
+              "o número acionável deste painel.",
+    )
+
+    itens_por_papel = list(resumo["por_papel"].items())
+    n_colunas = 4
+    for inicio in range(0, len(itens_por_papel), n_colunas):
+        colunas = st.columns(n_colunas)
+        fatia = itens_por_papel[inicio:inicio + n_colunas]
+        for coluna, (papel, contagem) in zip(colunas, fatia):
+            with coluna:
+                card_metrica(roles.ROTULOS_PAPEL[papel], contagem, accent="#5B8DEF")
+
+    sem_papel_symbols = [e.symbol for e in entradas if not e.papeis]
+    if sem_papel_symbols:
+        st.warning(
+            f"⚠️ {len(sem_papel_symbols)} ativo(s) sem nenhum papel identificado: "
+            + ", ".join(sem_papel_symbols)
+        )
+
+    por_symbol = {e.symbol: e for e in entradas}
+    for _, linha in df.iterrows():
+        symbol = linha["symbol"]
+        entrada = por_symbol.get(symbol)
+        if entrada is None:
+            continue
+        titulo = (
+            f"🔴 {symbol} — nenhum papel identificado" if not entrada.papeis
+            else symbol
+        )
+        with st.expander(titulo):
+            st.dataframe(_tabela_de_papeis_do_ativo(entrada),
+                        use_container_width=True, hide_index=True)
+            st.caption(entrada.justificativa)
+
+
 def render() -> None:
     st.markdown("## 🌐 Portfólio Global")
     st.caption("As três carteiras lidas como um único patrimônio.")
@@ -626,3 +777,4 @@ def render() -> None:
     _painel_correlacao(ret, pesos)
     _painel_fatores(ret, pesos)
     _painel_risco(ret, pesos)
+    _painel_papeis(df, ret)

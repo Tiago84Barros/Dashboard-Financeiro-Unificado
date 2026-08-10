@@ -444,3 +444,79 @@ def test_load_allocation_targets_falhando_por_schema_ausente_aciona_a_orientacao
     except Exception as exc:  # noqa: BLE001 - espelha o except da render()
         msg = portfolio_global.mensagem_de_erro_ao_carregar(exc)
     assert msg == portfolio_global.MSG_SEM_SNAPSHOT
+
+
+def test_o_painel_de_papeis_e_chamado_no_render():
+    """Regressao: motor que ninguem consulta e decoracao — mesmo risco que
+    'Diagnostico precisa de porta de entrada' ja registrou nesta base."""
+    import ast
+    import inspect
+    import textwrap
+
+    fonte = textwrap.dedent(inspect.getsource(portfolio_global.render))
+    arvore = ast.parse(fonte)
+    chamadas = {
+        n.func.id for n in ast.walk(arvore)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+    assert "_painel_papeis" in chamadas
+
+
+def test_resumo_de_papeis_conta_os_sem_papel_algum():
+    from core.global_portfolio.roles import PapelDoAtivo
+
+    entradas = [
+        PapelDoAtivo("A", ("renda",), (), (), "x"),
+        PapelDoAtivo("B", (), (), (), "y"),
+        PapelDoAtivo("C", (), (), (), "z"),
+    ]
+    resumo = portfolio_global._resumo_de_papeis(entradas)
+    assert resumo["sem_papel"] == 2
+    assert resumo["por_papel"]["renda"] == 1
+
+
+def test_resumo_de_papeis_com_lista_vazia_nao_quebra():
+    resumo = portfolio_global._resumo_de_papeis([])
+    assert resumo["sem_papel"] == 0
+    assert resumo["por_papel"] == {}
+
+
+def test_resumo_de_papeis_inclui_papel_com_zero_ativos():
+    """Um papel que nenhum ativo cumpre precisa aparecer com contagem 0 em vez
+    de sumir do resumo — sumir esconderia justamente o caso mais informativo
+    (na carteira real, 'renda' hoje nao e cumprido por nenhum ativo)."""
+    from core.global_portfolio.roles import PapelDoAtivo
+
+    entradas = [PapelDoAtivo("A", ("crescimento",), (), (), "x")]
+    resumo = portfolio_global._resumo_de_papeis(entradas)
+    assert resumo["por_papel"]["renda"] == 0
+    assert resumo["por_papel"]["crescimento"] == 1
+
+
+def test_tabela_de_papeis_do_ativo_distingue_indeterminado_de_nao_cumpre():
+    """Regra de honestidade do painel: 'indeterminado' (sem dado) e 'nao
+    cumpre' (regra avaliada e negada) precisam ter status visivelmente
+    diferentes — nunca o mesmo rotulo, senao o painel diria 'nao cumpre'
+    quando na verdade e so 'nao sabemos'."""
+    from core.global_portfolio.roles import ROTULOS_PAPEL, Evidencia, PapelDoAtivo
+
+    ev = Evidencia("hedge_cambial", 1.0, 0.0, "Moeda de referencia USD, fora do BRL")
+    entrada = PapelDoAtivo(
+        symbol="AAPL",
+        papeis=("hedge_cambial",),
+        evidencias=(ev,),
+        indeterminados=("baixa_volatilidade", "diversificacao"),
+        justificativa="Hedge cambial — Moeda de referencia USD, fora do BRL",
+    )
+    tabela = portfolio_global._tabela_de_papeis_do_ativo(entrada)
+    status_por_papel = dict(zip(tabela["Papel"], tabela["Status"]))
+
+    status_cumpre = status_por_papel[ROTULOS_PAPEL["hedge_cambial"]]
+    status_indeterminado = status_por_papel[ROTULOS_PAPEL["baixa_volatilidade"]]
+    status_nao_cumpre = status_por_papel[ROTULOS_PAPEL["renda"]]
+
+    assert status_cumpre != status_indeterminado
+    assert status_indeterminado != status_nao_cumpre
+    assert status_cumpre != status_nao_cumpre
+    # A evidencia so acompanha o papel que de fato foi cumprido.
+    assert "USD" in dict(zip(tabela["Papel"], tabela["Evidência"]))[ROTULOS_PAPEL["hedge_cambial"]]
