@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
+from core.global_portfolio.aggregate import montar_posicoes
 from views import portfolio_global
 
 
@@ -291,6 +292,64 @@ def test_aba_por_ativo_usa_cartoes_em_vez_de_dataframe():
     assert "_cards_de_ativos(df)" in fonte_tabelas
     assert "st.dataframe" not in inspect.getsource(portfolio_global._cards_de_ativos)
     assert "card_metrica" in inspect.getsource(portfolio_global._cards_de_ativos)
+
+
+def test_setores_sem_mapa_fica_silencioso_quando_tudo_mapeia():
+    """Regressao do defeito: nao_mapeados espera o setor BRUTO (contrato da
+    funcao), mas a view chamava com `sector` — a coluna JA canonica que
+    montar_posicoes produz. `setor_canonico("b3", "consumer")` nao acha
+    "consumer" entre os rotulos de origem da B3 e devolve 'other': quase todo
+    ativo virava "sem mapeamento", mesmo mapeado com sucesso. Construir a
+    carteira via montar_posicoes (nao a mao) e o que expõe o bug: um dict
+    manual com "sector" ja no formato certo mascara a confusao raw/canonico.
+    """
+    snaps = {
+        "b3": {
+            "PETR4": {"identity": {"symbol": "PETR4", "name": "Petrobras",
+                                   "sector": "Petróleo, Gás e Biocombustíveis"},
+                      "metrics": {"weight": 1.0}},
+        },
+        "us": {
+            "AAPL": {"identity": {"symbol": "AAPL", "name": "Apple",
+                                  "sector": "Tecnologia"},
+                     "metrics": {"weight": 1.0}},
+        },
+    }
+    df = montar_posicoes(snaps, {"b3": 0.5, "us": 0.5})
+    assert portfolio_global._setores_sem_mapa(df) == []
+
+
+def test_setores_sem_mapa_reporta_setor_genuinamente_desconhecido():
+    """Um setor que nao existe em nenhum vocabulario de origem precisa
+    continuar aparecendo — o aviso nao pode virar um silencio cego.
+    """
+    snaps = {
+        "b3": {
+            "XYZ3": {"identity": {"symbol": "XYZ3", "name": "Fantasia",
+                                  "sector": "Setor Inexistente"},
+                     "metrics": {"weight": 1.0}},
+        },
+    }
+    df = montar_posicoes(snaps, {"b3": 1.0})
+    assert portfolio_global._setores_sem_mapa(df) == [("b3", "Setor Inexistente")]
+
+
+def test_setores_sem_mapa_nao_acusa_o_fallback_deliberado_do_modulo_eua():
+    """'Outros setores' e o proprio modulo EUA dizendo que a fonte nao tinha
+    setor determinavel (core/market_companies.py::translate_us_sector,
+    linha 302) — nao e uma lacuna do nosso mapa, e sim ausencia de dado na
+    origem. Listar sob "sem mapeamento canonico" seria enganoso: o mapeamento
+    funcionou, so nao havia o que mapear.
+    """
+    snaps = {
+        "us": {
+            "ZZZZ": {"identity": {"symbol": "ZZZZ", "name": "Desconhecida",
+                                  "sector": "Outros setores"},
+                     "metrics": {"weight": 1.0}},
+        },
+    }
+    df = montar_posicoes(snaps, {"us": 1.0})
+    assert portfolio_global._setores_sem_mapa(df) == []
 
 
 def test_load_allocation_targets_falhando_por_schema_ausente_aciona_a_orientacao(monkeypatch):
