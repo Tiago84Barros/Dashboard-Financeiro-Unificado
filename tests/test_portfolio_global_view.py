@@ -352,6 +352,79 @@ def test_setores_sem_mapa_nao_acusa_o_fallback_deliberado_do_modulo_eua():
     assert portfolio_global._setores_sem_mapa(df) == []
 
 
+def test_aviso_de_cobertura_nomeia_os_ativos_de_fora():
+    from core.global_portfolio.returns import Cobertura
+    cob = Cobertura(("PETR4",), ("AAPL", "MSFT"), 0.615, 60)
+    msg = portfolio_global.aviso_de_cobertura(cob)
+    assert "AAPL" in msg and "MSFT" in msg
+    assert "38" in msg or "38,5" in msg
+
+
+def test_aviso_de_cobertura_silencia_quando_tudo_coberto():
+    from core.global_portfolio.returns import Cobertura
+    assert portfolio_global.aviso_de_cobertura(Cobertura(("PETR4",), (), 1.0, 60)) is None
+
+
+def test_aviso_de_cobertura_com_cobertura_zero_orienta():
+    from core.global_portfolio.returns import Cobertura
+    msg = portfolio_global.aviso_de_cobertura(Cobertura((), ("AAPL",), 0.0, 0))
+    assert msg is not None and "AAPL" in msg
+
+
+def test_tabela_de_pares_redundantes_preserva_a_ordem_e_arredonda():
+    """A ordenacao ja vem de correlation.pares_redundantes; a funcao de
+    exibicao nao pode reordenar, so formatar.
+    """
+    pares = [("PETR4", "VALE3", 0.912345), ("ITUB4", "BBDC4", 0.856)]
+    tabela = portfolio_global._tabela_de_pares_redundantes(pares)
+    assert list(tabela["Ativo 1"]) == ["PETR4", "ITUB4"]
+    assert list(tabela["Ativo 2"]) == ["VALE3", "BBDC4"]
+    assert tabela["Correlação"].iloc[0] == 0.91
+
+
+def test_tabela_de_exposicoes_marca_significancia_visivelmente():
+    """Beta fraco (erro-padrao grande) precisa ficar marcado como 'Não', nao
+    ficar indistinguivel de um beta significativo so pela cor.
+    """
+    from core.global_portfolio.factors import Exposicao
+
+    sig = Exposicao(fator="mercado_br", beta=0.527, erro_padrao=0.05, r2=0.90, n_obs=31)
+    fraco = Exposicao(fator="small_cap", beta=0.227, erro_padrao=0.117, r2=0.10, n_obs=31)
+    tabela = portfolio_global._tabela_de_exposicoes([sig, fraco])
+
+    assert tabela.loc[tabela["Fator"] == "Mercado brasileiro", "Significativo"].iloc[0] == "✅ Sim"
+    assert tabela.loc[tabela["Fator"] == "Small caps", "Significativo"].iloc[0] == "⚠️ Não"
+
+
+def test_tabela_de_exposicoes_traduz_o_rotulo_do_fator():
+    from core.global_portfolio.factors import Exposicao
+
+    exp = Exposicao(fator="juros_nominais", beta=0.1, erro_padrao=0.2, r2=0.05, n_obs=25)
+    tabela = portfolio_global._tabela_de_exposicoes([exp])
+    assert tabela["Fator"].iloc[0] == "Juros nominais"
+
+
+def test_paineis_de_risco_correlacao_e_fatores_sao_chamados_no_render():
+    """Regressao: garante que os tres paineis desta fase realmente entram no
+    fluxo de render() em vez de ficarem so definidos e nunca chamados —
+    mesmo risco que motivou 'Diagnostico precisa de porta de entrada'.
+    """
+    import inspect
+    fonte = inspect.getsource(portfolio_global.render)
+    assert "_painel_correlacao(" in fonte
+    assert "_painel_fatores(" in fonte
+    assert "_painel_risco(" in fonte
+    assert "retornos_mensais(" in fonte
+    assert "aviso_de_cobertura(" in fonte
+
+
+def test_render_chama_retornos_mensais_uma_unica_vez():
+    """Regra do plano: 'uma unica chamada a retornos_mensais por render'."""
+    import inspect
+    fonte = inspect.getsource(portfolio_global.render)
+    assert fonte.count("retornos_mensais(") == 1
+
+
 def test_load_allocation_targets_falhando_por_schema_ausente_aciona_a_orientacao(monkeypatch):
     """Ponta a ponta da decisao (sem Streamlit): a falha real que o primeiro
     acesso provoca — load_allocation_targets contra uma tabela que o schema
