@@ -7,6 +7,18 @@ Duas honestidades que a saida carrega sempre: o erro-padrao e o numero de
 observacoes. Beta estimado com 24 pontos mensais nao e a mesma coisa que beta
 estimado com 120, e quem le precisa poder distinguir.
 
+Uma terceira: os proxies tem historicos bem diferentes (IMAB11 e IVVB11 tem
+buracos reais na serie de precos), e a regressao conjunta so aceita meses em
+que TODOS os fatores usados tem dado. Em vez de exigir os 6 fatores sempre
+juntos — o que pode nao sobrar nenhuma observacao — o modulo descarta o fator
+que mais limita a amostra ate a interseccao sustentar o piso, e diz quem
+descartou. Isso tem custo: o fator excluido nao some do retorno do ativo,
+so some da equacao — a sensibilidade real que ele carregava e absorvida pelos
+fatores correlacionados que sobraram (vies de variavel omitida). Por isso a
+selecao NUNCA regride um fator sozinho como substituto: um beta univariado
+absorve o efeito de tudo que deveria estar ao lado dele e nao e comparavel a
+um beta estimado junto com os demais sob o mesmo rotulo.
+
 Coberto por tests/test_global_factors.py.
 """
 from __future__ import annotations
@@ -36,6 +48,7 @@ ROTULOS_FATOR: dict[str, str] = {
 }
 
 MIN_OBS_REGRESSAO = 24
+MIN_OBS_FATOR = MIN_OBS_REGRESSAO  # piso que a selecao adaptativa persegue
 
 
 @dataclass(frozen=True)
@@ -52,6 +65,22 @@ class Exposicao:
     def significativo(self) -> bool:
         """Dois erros-padrao — aproximacao de 95%."""
         return bool(self.erro_padrao > 0 and abs(self.beta) > 2 * self.erro_padrao)
+
+
+@dataclass(frozen=True)
+class ResultadoExposicao:
+    """Exposicoes estimadas mais os fatores que o dado nao sustentou.
+
+    As duas viajam juntas de proposito: mostrar so `exposicoes` esconderia
+    que a lista pode estar incompleta por falta de dado, nao por o fator
+    ser irrelevante. `fatores_excluidos` e o que a selecao adaptativa
+    descartou para a interseccao de datas caber no piso — cada nome aqui e
+    sensibilidade real que ficou de fora da equacao e foi absorvida pelos
+    fatores correlacionados que sobraram.
+    """
+
+    exposicoes: list[Exposicao]
+    fatores_excluidos: tuple[str, ...]
 
 
 def _default_loader(tickers: tuple[str, ...]) -> pd.DataFrame:
@@ -118,15 +147,63 @@ def _regredir(y: pd.Series, X: pd.DataFrame) -> list[Exposicao]:
     return sorted(saida, key=lambda e: (-abs(e.beta), e.fator))
 
 
-def betas_do_ativo(retornos_ativo: pd.Series, fatores: pd.DataFrame) -> list[Exposicao]:
-    """Betas de um ativo contra os fatores."""
+def _n_obs_comuns(y: pd.Series, X: pd.DataFrame) -> int:
+    """Quantas datas sobrariam se X (com suas colunas atuais) entrasse na
+    regressao junto com y — mesma regra de interseccao que _regredir usa."""
+    if X.shape[1] == 0:
+        return 0
+    return len(y.dropna().index.intersection(X.dropna().index))
+
+
+def _selecionar_fatores(y: pd.Series, X: pd.DataFrame) -> tuple[pd.DataFrame, tuple[str, ...]]:
+    """Maior subconjunto de fatores cuja interseccao de datas com y sustenta
+    o piso MIN_OBS_FATOR.
+
+    Descarte e ultimo recurso, um fator por vez: a cada rodada sai o fator
+    cuja ausencia mais aumenta a amostra comum (empate quebrado pelo nome,
+    para a escolha ser reprodutivel). Nunca substitui o descartado por uma
+    regressao univariada — isso mudaria o que o beta significa.
+    """
+    colunas = sorted(X.columns)
+    excluidos: list[str] = []
+
+    while colunas and _n_obs_comuns(y, X[colunas]) < MIN_OBS_FATOR:
+        def ganho_ao_remover(candidato: str) -> int:
+            resto = [c for c in colunas if c != candidato]
+            return _n_obs_comuns(y, X[resto]) if resto else len(y.dropna())
+
+        pior = min(colunas, key=lambda c: (-ganho_ao_remover(c), c))
+        colunas.remove(pior)
+        excluidos.append(pior)
+
+    return X[colunas], tuple(sorted(excluidos))
+
+
+def _regredir_com_selecao(y: pd.Series, fatores: pd.DataFrame) -> ResultadoExposicao:
+    """Regride com selecao adaptativa do conjunto de fatores.
+
+    Se a regressao nao rende exposicoes mesmo apos a selecao (matriz singular,
+    graus de liberdade esgotados), reporta TODOS os fatores originais como
+    excluidos — nenhum sobreviveu de fato, entao nao ha meio-termo a mostrar.
+    """
     if not isinstance(fatores, pd.DataFrame) or fatores.empty:
-        return []
-    return _regredir(pd.Series(retornos_ativo).dropna(), fatores)
+        return ResultadoExposicao([], ())
+
+    y = pd.Series(y).dropna()
+    X, excluidos_selecao = _selecionar_fatores(y, fatores)
+    exposicoes = _regredir(y, X) if not X.empty else []
+    if not exposicoes:
+        return ResultadoExposicao([], tuple(sorted(fatores.columns)))
+    return ResultadoExposicao(exposicoes, excluidos_selecao)
+
+
+def betas_do_ativo(retornos_ativo: pd.Series, fatores: pd.DataFrame) -> ResultadoExposicao:
+    """Betas de um ativo contra os fatores, com selecao adaptativa do conjunto."""
+    return _regredir_com_selecao(retornos_ativo, fatores)
 
 
 def exposicao_do_portfolio(retornos: pd.DataFrame, pesos: dict,
-                           fatores: pd.DataFrame) -> list[Exposicao]:
+                           fatores: pd.DataFrame) -> ResultadoExposicao:
     """Betas do portfolio sintetico, ponderado pelos pesos informados.
 
     Ponderacao renormalizada mes a mes pelos ativos com retorno disponivel:
@@ -139,10 +216,10 @@ def exposicao_do_portfolio(retornos: pd.DataFrame, pesos: dict,
     """
     if (not isinstance(retornos, pd.DataFrame) or retornos.empty
             or not isinstance(fatores, pd.DataFrame) or fatores.empty):
-        return []
+        return ResultadoExposicao([], ())
     w = pd.Series({c: float(pesos.get(c, 0.0)) for c in retornos.columns})
     if w.sum() <= 0:
-        return []
+        return ResultadoExposicao([], ())
 
     disponivel = retornos.notna()
     pesos_mes = disponivel.mul(w, axis=1)
@@ -151,4 +228,4 @@ def exposicao_do_portfolio(retornos: pd.DataFrame, pesos: dict,
     carteira = (retornos.fillna(0.0) * pesos_norm).sum(axis=1)
     carteira[total_mes <= 0] = np.nan
 
-    return _regredir(carteira, fatores)
+    return _regredir_com_selecao(carteira, fatores)
