@@ -38,6 +38,41 @@ _FLAG_ALOCACAO_SALVA = "portfolio_global_alocacao_salva"
 # Tamanhos de Top-N exibidos na concentracao acumulada (ordem de exibicao).
 _TOP_NS_CANDIDATOS: tuple[int, ...] = (1, 3, 5, 10)
 
+# Fallback deliberado de core/market_companies.py::translate_us_sector quando
+# a fonte (SEC/SIC) nao tras setor determinavel para a empresa. Nao e uma
+# lacuna do nosso mapa — e o proprio dado de origem dizendo "nao sei" — entao
+# fica fora do aviso de "sem mapeamento canonico" (ver _setores_sem_mapa).
+_US_SETOR_INDETERMINADO = "Outros setores"
+
+
+def _setores_sem_mapa(df: pd.DataFrame) -> list[tuple[str, str]]:
+    """Pares (classe, setor bruto) que nao mapearam para um setor canonico.
+
+    `nao_mapeados` espera o setor BRUTO, como a fonte escreveu (contrato da
+    funcao, ver core/global_portfolio/taxonomy.py) — mas `df` (de
+    montar_posicoes) carrega as duas versoes: `sector_raw` (texto original) e
+    `sector` (ja canonico). Passar `sector` faria a funcao tentar re-traduzir
+    um valor que ja é canonico (ex.: "consumer") e nao acharia correspondencia
+    em nenhum vocabulario de origem — acusando quase todo ativo como "sem
+    mapeamento". Por isso remontamos os registros com `sector_raw` no lugar
+    de `sector` antes de chamar.
+
+    Tambem filtra o fallback deliberado do modulo EUA (_US_SETOR_INDETERMINADO):
+    ele já é, por definição, "sem setor na fonte" — listá-lo sob um aviso de
+    "sem mapeamento canônico" sugeriria um problema no nosso mapa que não
+    existe.
+    """
+    registros = (
+        df[["asset_class", "sector_raw"]]
+        .rename(columns={"sector_raw": "sector"})
+        .to_dict(orient="records")
+    )
+    achados = nao_mapeados(registros)
+    return [
+        (classe, setor) for classe, setor in achados
+        if not (classe == "us" and setor == _US_SETOR_INDETERMINADO)
+    ]
+
 
 def carregar_snapshots(*, engine=None, owner_id=None) -> dict[str, dict[str, dict]]:
     """Snapshots do modelo ativo de cada classe registrada."""
@@ -109,6 +144,23 @@ def _fmt(valor: float | None, sufixo: str = "", casas: int = 2) -> str:
     if valor is None:
         return "—"
     return f"{valor:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".") + sufixo
+
+
+def fracao_para_percentual(fracao: float | None) -> float | None:
+    """Converte uma fracao (contrato de MetricaAgregada.valor, ex.: dy_consolidado)
+    para pontos percentuais de exibicao.
+
+    core/global_portfolio/metrics.py::dy_consolidado devolve o DY como fracao
+    (0,1307), nao como percentual (13,07) — o mesmo contrato que weight_global
+    ja usa e que esta tela ja multiplica por 100 em varios outros cartoes
+    (concentracao, top-N, peso por ativo). O card de DY historicamente
+    esqueceu essa conversao e exibia "0,13%" em vez de "13,07%"; esta funcao
+    torna a conversao explicita e testavel no ponto de formatacao, sem tocar
+    o valor armazenado.
+    """
+    if fracao is None:
+        return None
+    return fracao * 100.0
 
 
 def detalhe_cobertura(metrica) -> str:
@@ -261,7 +313,7 @@ def _cards_de_metricas(df: pd.DataFrame) -> None:
     cartoes = [
         ("P/L agregado", _fmt(pl.valor), pl, "#5B8DEF"),
         ("P/VP agregado", _fmt(pvp.valor), pvp, "#38BDF8"),
-        ("Dividend yield", _fmt(dy.valor, "%"), dy, "#34D399"),
+        ("Dividend yield", _fmt(fracao_para_percentual(dy.valor), "%"), dy, "#34D399"),
     ]
     for coluna, (rotulo, valor, metrica, cor) in zip(colunas, cartoes):
         with coluna:
@@ -383,7 +435,7 @@ def render() -> None:
         st.info(MSG_SEM_SNAPSHOT)
         return
 
-    sem_mapa = nao_mapeados(df.to_dict(orient="records"))
+    sem_mapa = _setores_sem_mapa(df)
     if sem_mapa:
         st.warning(
             "Setores sem mapeamento canônico (contabilizados como Outros): "
