@@ -64,6 +64,24 @@ por tabelas vitrine preservadas, como `historical_prices`, `income_statements`,
 exigiria apagar ou enfraquecer essas chaves estrangeiras. O custo restante é
 aceitável e preserva a integridade do aplicativo.
 
+> **Desatualizado desde 2026-08-16.** Aquele parágrafo descrevia o schema de
+> julho. Hoje a única chave estrangeira que aponta para `brapi_raw_payloads` é a
+> auto-referência `brapi_raw_payloads_supersedes_id_fkey`; as FKs vindas de
+> `historical_prices`, `income_statements`, `balance_sheets`,
+> `cash_flow_statements` e `fii_universe_history` **não existem mais**. Confirme
+> antes de agir — a consulta abaixo é a fonte da verdade, não este texto:
+>
+> ```sql
+> SELECT conrelid::regclass, conname FROM pg_constraint
+> WHERE confrelid = 'market.brapi_raw_payloads'::regclass AND contype = 'f';
+> ```
+>
+> Ou seja, o `DROP TABLE ... CASCADE` de `scripts/compact_remote_brapi_raw.py`
+> hoje derruba apenas aquela auto-referência, e a compactação é bem menos
+> arriscada do que o parágrafo acima sugere. O que continua valendo é o
+> pré-requisito real: **arquivar antes de compactar**. O script se recusa a rodar
+> se algum hash remoto faltar no warehouse local, e é assim que deve ser.
+
 Não remover automaticamente `public.docs_corporativos` ou
 `public.docs_corporativos_chunks`: elas não estão na lista armazém e podem
 conter documentos usados pelo aplicativo. Também não remover nenhuma tabela de

@@ -30,7 +30,10 @@ def _loader(disponiveis=("PETR4", "HGLG11"), meses=36):
     return carregar
 
 
-def test_us_nunca_entra_na_busca_de_precos():
+def test_us_entra_na_busca_de_precos():
+    """A serie mensal dos EUA agora existe (core.us_read.load_precos_mensais_us),
+    entao AAPL vira candidato como qualquer b3/fii e chega ate o loader.
+    """
     pedidos = []
 
     def espiao(tickers):
@@ -38,10 +41,13 @@ def test_us_nunca_entra_na_busca_de_precos():
         return _precos([t for t in tickers if t != "AAPL"])
 
     retornos_mensais(_posicoes(), loader=espiao)
-    assert pedidos == [("HGLG11", "PETR4")]
+    assert pedidos == [("AAPL", "HGLG11", "PETR4")]
 
 
-def test_us_aparece_como_sem_serie():
+def test_us_sem_serie_disponivel_aparece_como_sem_serie():
+    """AAPL segue sem serie aqui porque o loader de teste (_loader) so tem
+    dados para PETR4/HGLG11 - nao porque a classe `us` esteja excluida.
+    """
     _, cob = retornos_mensais(_posicoes(), loader=_loader())
     assert cob.simbolos_sem_serie == ("AAPL",)
     assert cob.simbolos_com_serie == ("HGLG11", "PETR4")
@@ -113,3 +119,26 @@ def test_gap_interior_vira_nan_e_nao_zero_fabricado():
     assert ret["PETR4"].count() == 22  # 24 retornos possiveis - 2 afetados pelo gap
     # mesmo com o gap a serie continua acima do MIN_OBS e permanece coberta
     assert "PETR4" in cob.simbolos_com_serie
+
+
+def test_us_entra_nas_classes_com_preco():
+    from core.global_portfolio.returns import _CLASSES_COM_PRECO
+    assert "us" in _CLASSES_COM_PRECO
+
+
+def test_retornos_juntam_series_das_duas_fontes_alinhadas_por_mes():
+    idx = pd.date_range("2022-01-31", periods=30, freq="ME")
+    br = pd.DataFrame({"PETR4": range(100, 130)}, index=idx).astype(float)
+    us = pd.DataFrame({"AAPL": range(200, 230)}, index=idx).astype(float)
+
+    df = pd.DataFrame([
+        {"asset_class": "b3", "symbol": "PETR4", "weight_global": 0.5, "payload": {}},
+        {"asset_class": "us", "symbol": "AAPL", "weight_global": 0.5, "payload": {}},
+    ])
+
+    ret, cob = retornos_mensais(df, loader=lambda tks: pd.concat(
+        [br[[c for c in br.columns if c in tks]],
+         us[[c for c in us.columns if c in tks]]], axis=1))
+    assert set(ret.columns) == {"PETR4", "AAPL"}
+    assert cob.peso_coberto == 1.0
+    assert not ret.isna().all().any(), "coluna toda NaN indica desalinhamento de indice"
