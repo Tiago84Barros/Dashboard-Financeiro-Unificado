@@ -940,3 +940,50 @@ def load_us_macro() -> dict:
     # até onde a série mais antiga alcança.
     snapshot["as_of"] = min(datas).isoformat() if datas else None
     return snapshot
+
+
+# ── Série mensal (formato do análogo da B3) ───────────────────────────────────
+
+def load_precos_mensais_us(symbols: tuple[str, ...], *, engine=None) -> pd.DataFrame:
+    """Preços mensais dos EUA (adjusted_close = retorno total) no MESMO formato
+    de core.market_read.load_precos_mensais: DatetimeIndex mensal × colunas =
+    símbolos. Necessário porque core.global_portfolio.returns.retornos_mensais
+    consome as duas fontes pelo mesmo caminho e as concatena alinhando por
+    data — um formato divergente aqui viraria coluna duplicada ou índice
+    desalinhado, e o defeito apareceria como cobertura estranha, não como erro.
+
+    `engine` é injetável (os testes usam SQLite em memória); por padrão resolve
+    pelo motor do módulo. SQLite não tem schema, então o nome da tabela muda
+    por dialeto — mesmo truque de scripts.publish_us_prices_monthly.
+    Símbolos vazios, ou tabela ausente, devolvem DataFrame vazio (nunca levanta).
+    """
+    if not symbols:
+        return pd.DataFrame()
+    syms = [s.strip().upper() for s in symbols if s and s.strip()]
+    if not syms:
+        return pd.DataFrame()
+    eng = engine if engine is not None else _engine()
+    if eng is None:
+        return pd.DataFrame()
+    tabela = ("prices_monthly" if eng.dialect.name == "sqlite"
+              else "market_us.prices_monthly")
+    try:
+        with eng.connect() as conn:
+            df = pd.read_sql_query(
+                text(f"SELECT symbol, month_end, adjusted_close FROM {tabela} "
+                     "WHERE symbol IN :symbols AND adjusted_close IS NOT NULL "
+                     "ORDER BY symbol, month_end").bindparams(
+                         bindparam("symbols", expanding=True)),
+                conn, params={"symbols": syms})
+    except Exception as exc:  # noqa: BLE001 - tabela ausente/schema não criado
+        logger.warning("load_precos_mensais_us falhou: %s", exc)
+        return pd.DataFrame()
+    if df.empty:
+        return pd.DataFrame()
+    df["month_end"] = pd.to_datetime(df["month_end"], errors="coerce")
+    df = df.dropna(subset=["month_end"])
+    wide = df.pivot_table(index="month_end", columns="symbol",
+                          values="adjusted_close", aggfunc="last")
+    mensal = wide.resample("ME").last()           # último preço válido de cada mês
+    mensal.columns = [str(c).strip().upper() for c in mensal.columns]
+    return mensal.dropna(how="all")
