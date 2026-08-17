@@ -92,6 +92,33 @@ reportar qualidade por classe.
 Função pura: recebe os quadros e as saídas dos analisadores, devolve os sinais.
 Sem I/O, sem Streamlit.
 
+### Task 2b: Sinal de fator — resolve uma contradição da spec
+
+**Files:** Modify: `core/global_portfolio/signals.py` · Test: `tests/test_global_signals.py`
+
+Descoberto ao implementar a Task 2: a §8 **exige** que o teste verifique
+`factors` como gatilho de alguma recomendação, mas a lista numerada de sinais da
+mesma seção não tem nenhum sinal de fator. As duas coisas não podem ser
+verdadeiras ao mesmo tempo.
+
+Rotular um sinal existente como vindo de `factors` faria o teste da Task 5 passar
+com procedência falsa — o pior desfecho possível, porque cria a aparência de
+auditoria. A saída correta é a oitava: `factors` ganha um sinal real.
+
+**Sinal 8 — redundância em espaço de fatores.** A `correlation` já pega
+redundância entre pares. Fator pega o que ela não pega: dois ativos podem ter
+correlação moderada e ainda assim carregar a mesma aposta macro. Se a carteira
+já está muito exposta a um fator, o ativo que **empilha** nessa mesma exposição
+soma aposta em vez de somar diversificação.
+
+O sinal é a carga do ativo no fator em que a carteira está mais concentrada,
+normalizada e com sinal negativo quando reforça um tilt já extremo. Só existe
+quando a regressão de `factors.py` produziu exposição estatisticamente utilizável
+para aquele ativo — sem isso, nenhum sinal, nunca zero.
+
+Isso também dá consumidor à §6.5, que hoje calcula exposição a fatores e não é
+consultada por nenhuma decisão.
+
 ### Task 3: Custo por classe
 
 **Files:** Modify: `core/transaction_costs.py` · Test: `tests/test_transaction_costs.py`
