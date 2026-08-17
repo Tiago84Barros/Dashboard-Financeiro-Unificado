@@ -9,6 +9,12 @@ puxaria a volatilidade para baixo, fabricando calmaria que nao existiu). Em vez
 disso, o peso e renormalizado sobre os ativos que de fato tem retorno naquele
 mes; se nenhum ativo tem retorno no mes, o mes cai fora da serie.
 
+`contribuicao_marginal` decompoe essa mesma volatilidade por ativo (Euler nas
+funcoes homogeneas de grau 1: a soma das contribuicoes fecha exatamente em
+sigma_p). Ativo sem serie confiavel sai ausente do resultado, nunca com
+contribuicao 0.0 — 0.0 diria "nao carrega risco", que e uma afirmacao sobre um
+ativo que na verdade nao foi medido.
+
 Coberto por tests/test_global_risk.py.
 """
 from __future__ import annotations
@@ -18,6 +24,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from core.global_portfolio.correlation import _covariancia_confiavel
 from core.global_portfolio.returns import MIN_OBS
 
 PERCENTIL_VAR = 5
@@ -83,3 +90,84 @@ def metricas_de_risco(retornos: pd.DataFrame, pesos: dict) -> Risco | None:
         drawdown_max=_drawdown_maximo(serie),
         n_obs=len(serie),
     )
+
+
+@dataclass(frozen=True)
+class ContribuicaoRisco:
+    """Quanto um ativo contribui para a volatilidade do portfolio.
+
+    `contribuicao` esta na mesma unidade de `Risco.vol_mensal` (fracao
+    mensal) e a soma de todas as contribuicoes fecha em sigma_p — e essa
+    propriedade (Euler para funcoes homogeneas de grau 1) que torna a
+    decomposicao legitima, nao decorativa.
+
+    `razao` e contribuicao/peso: 1.0 significa que o ativo contribui na
+    proporcao exata do seu peso; acima de 1.0, ele carrega mais risco do
+    que a fatia sugere. Fica `None` quando o peso do ativo e zero — a
+    razao nao tem leitura nesse caso (divisao por zero), mas a
+    contribuicao em si e legitimamente 0.0 (peso zero contribui zero risco
+    de fato, o que e diferente de "nao sabemos").
+    """
+
+    symbol: str
+    contribuicao: float
+    razao: float | None
+
+
+def contribuicao_marginal(retornos: pd.DataFrame, pesos: dict) -> dict[str, ContribuicaoRisco]:
+    """Contribuicao marginal de cada ativo a volatilidade do portfolio.
+
+    MCR_i = w_i * (Sigma @ w)_i / sigma_p, com Sigma a covariancia e
+    sigma_p = sqrt(w @ Sigma @ w). A soma dos MCR_i fecha exatamente em
+    sigma_p (Euler nas funcoes homogeneas de grau 1) — e o teste central
+    deste modulo.
+
+    Reaproveita `_covariancia_confiavel` (mesmo piso de sobreposicao par a
+    par que a matriz de correlacao usa): ativo sem serie confiavel — curta
+    demais, sem sobreposicao suficiente com os demais, ou inteiramente NaN —
+    e removido da covariancia e por isso sai AUSENTE do dict devolvido,
+    nunca com contribuicao 0.0. Herda tambem a exigencia de pelo menos dois
+    ativos: com um so, `_covariancia_confiavel` ja devolve vazio, entao o
+    resultado aqui tambem e vazio.
+
+    Pesos sao renormalizados sobre o subconjunto de ativos que sobrou da
+    covariancia confiavel (mesmo criterio de `_cov_e_pesos` em
+    correlation.py, para a nocao de "portfolio" ser a mesma nos dois
+    modulos). Peso total nao positivo, ou frame vazio/com uma coluna so,
+    devolve dict vazio.
+
+    Saida ordenada por simbolo — deterministica independente da ordem das
+    colunas de entrada ou da ordem de `pesos`.
+    """
+    if not isinstance(retornos, pd.DataFrame) or retornos.shape[1] < 2:
+        return {}
+    cov_df = _covariancia_confiavel(retornos)
+    if cov_df.empty:
+        return {}
+
+    colunas = list(cov_df.columns)
+    w_bruto = np.array([float(pesos.get(c, 0.0)) for c in colunas], dtype=float)
+    total = w_bruto.sum()
+    if total <= 0:
+        return {}
+    w = w_bruto / total
+
+    cov = cov_df.to_numpy(dtype=float)
+    variancia = float(w @ cov @ w)
+    if variancia <= 0:
+        return {}
+    sigma_p = float(np.sqrt(variancia))
+    contribuicoes = w * (cov @ w) / sigma_p
+
+    por_simbolo = {
+        str(simbolo): (float(c), float(peso))
+        for simbolo, c, peso in zip(colunas, contribuicoes, w)
+    }
+    return {
+        simbolo: ContribuicaoRisco(
+            symbol=simbolo,
+            contribuicao=c,
+            razao=(c / peso) if peso > 0 else None,
+        )
+        for simbolo, (c, peso) in sorted(por_simbolo.items())
+    }
