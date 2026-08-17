@@ -53,6 +53,20 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def ids_sem_manifesto(ids_remotos, ids_no_manifesto) -> set:
+    """Ids do remoto que o manifesto local nao cobre. Vazio = pode compactar.
+
+    Cobertura e questao de CONJUNTO, nao de total. A checagem anterior comparava
+    contagens (`manifest_rows != len(metadata)`) e por isso so passava na
+    primeira execucao: o manifesto e chaveado por (archive_source, remote_id) e
+    ACUMULA entre rodadas, enquanto a tabela remota e podada. Em 16/08/2026 ele
+    tinha 26.481 linhas para 19.115 remotas -- 7.366 ids de julho que ja nao
+    existem la -- e o portao acusava "manifesto incompleto" justamente quando
+    havia dado a MAIS preservado, travando a compactacao para sempre.
+    """
+    return set(ids_remotos) - set(ids_no_manifesto)
+
+
 def archive() -> dict:
     if not settings.db_url:
         raise RuntimeError("Supabase não configurado")
@@ -176,10 +190,10 @@ def archive() -> dict:
 
     with local.connect() as conn:
         final_local_hashes = set(conn.execute(hash_sql).scalars())
-        manifest_rows = int(conn.execute(text("""
-            SELECT count(*) FROM market.brapi_remote_archive_manifest
+        manifest_ids = set(conn.execute(text("""
+            SELECT remote_id FROM market.brapi_remote_archive_manifest
             WHERE archive_source='supabase_pre_compaction_2026_07'
-        """)).scalar_one())
+        """)).scalars())
     remote.dispose()
     local.dispose()
     remote_hashes = {
@@ -188,9 +202,10 @@ def archive() -> dict:
     missing_after = len(remote_hashes - final_local_hashes)
     if missing_after:
         raise RuntimeError(f"arquivo local incompleto: {missing_after} hashes ausentes")
-    if manifest_rows != len(metadata):
+    sem_manifesto = ids_sem_manifesto((int(row["id"]) for row in metadata), manifest_ids)
+    if sem_manifesto:
         raise RuntimeError(
-            f"manifesto incompleto: esperado {len(metadata)}, obtido {manifest_rows}"
+            f"manifesto incompleto: {len(sem_manifesto)} ids remotos sem registro"
         )
     return {
         "remote_rows": len(metadata),
@@ -200,7 +215,8 @@ def archive() -> dict:
         ),
         "read": read,
         "inserted": inserted,
-        "manifest_rows": manifest_rows,
+        "manifest_rows": len(manifest_ids),
+        "remote_ids_sem_manifesto": len(sem_manifesto),
         "remote_unique_hashes": len(remote_hashes),
         "local_unique_hashes": len(final_local_hashes),
         "remote_hashes_missing_local": missing_after,

@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.config import settings
+from scripts.archive_remote_brapi_raw import ids_sem_manifesto
 from scripts.publish_fii_selection_from_local import _warehouse_url
 
 
@@ -79,6 +80,8 @@ def audit() -> dict:
     """)
     with remote.connect() as conn:
         remote_keys = set(conn.execute(query).scalars())
+        remote_ids = set(conn.execute(
+            text("SELECT id FROM market.brapi_raw_payloads")).scalars())
         before = dict(conn.execute(text("""
             SELECT count(*) rows,pg_total_relation_size('market.brapi_raw_payloads') bytes,
                    pg_database_size(current_database()) database_bytes
@@ -86,10 +89,10 @@ def audit() -> dict:
         """)).mappings().one())
     with local.connect() as conn:
         local_keys = set(conn.execute(query).scalars())
-        manifest_rows = int(conn.execute(text("""
-            SELECT count(*) FROM market.brapi_remote_archive_manifest
+        manifest_ids = set(conn.execute(text("""
+            SELECT remote_id FROM market.brapi_remote_archive_manifest
             WHERE archive_source='supabase_pre_compaction_2026_07'
-        """)).scalar_one())
+        """)).scalars())
     remote.dispose()
     local.dispose()
     return {
@@ -97,7 +100,11 @@ def audit() -> dict:
         "remote_unique_hashes": len(remote_keys),
         "local_unique_hashes": len(local_keys),
         "remote_hashes_missing_local": len(remote_keys - local_keys),
-        "local_manifest_rows": manifest_rows,
+        "local_manifest_rows": len(manifest_ids),
+        # Cobertura por conjunto: o manifesto acumula entre rodadas e guarda ids
+        # que a tabela remota ja podou, entao comparar totais acusaria falta onde
+        # ha sobra. Ver ids_sem_manifesto em archive_remote_brapi_raw.
+        "remote_ids_sem_manifesto": len(ids_sem_manifesto(remote_ids, manifest_ids)),
     }
 
 
@@ -105,7 +112,7 @@ def compact() -> dict:
     before = audit()
     if before["remote_hashes_missing_local"]:
         raise RuntimeError("compactação bloqueada: payloads remotos ausentes no local")
-    if int(before["local_manifest_rows"]) != int(before["rows"]):
+    if before["remote_ids_sem_manifesto"]:
         raise RuntimeError("compactação bloqueada: manifesto remoto incompleto")
     engine = _engine(settings.db_url, True)
     with engine.begin() as conn:
