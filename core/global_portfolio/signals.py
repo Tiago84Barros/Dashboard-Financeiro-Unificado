@@ -9,11 +9,18 @@ dos modulos que de fato calculou o numero: `concentration`, `correlation`,
 analisador que nao produziu o valor seria mentir sobre a origem — o oposto do
 que este modulo existe para garantir.
 
-Convencao de sinal, identica nos sete: `valor` vive em [-1, +1], negativo
+Convencao de sinal, identica nos oito: `valor` vive em [-1, +1], negativo
 empurra para reduzir a posicao, positivo empurra para aumentar. `direcao` e
 so a leitura textual de `valor` ("reduzir"/"aumentar"/"neutro") — nunca uma
 fonte de verdade paralela, para nao existir risco de um sinal dizer "reduzir"
 com valor positivo por descuido de quem escreve o texto.
+
+O oitavo sinal (fator, Task 2b da Fase 3b) resolve uma contradicao da propria
+spec: a secao 8 exige um teste provando que `factors` dispara pelo menos uma
+recomendacao, mas a lista numerada de sete sinais da mesma secao nao inclui
+nenhum sinal produzido por `factors.py`. Rotular um dos outros sete como
+vindo de `factors` faria esse teste passar com procedencia falsa — por isso
+`factors` ganhou um sinal real (`sinais_fator`), em vez de emprestar o nome.
 
 Normalizacao por percentil, quando usada, e SEMPRE dentro da classe do ativo
 (b3/fii/us), nunca contra o mercado inteiro: as escalas de P/L, P/VP e score
@@ -44,6 +51,7 @@ import pandas as pd
 
 from core.global_portfolio import concentration
 from core.global_portfolio.correlation import LIMIAR_REDUNDANCIA
+from core.global_portfolio.factors import ROTULOS_FATOR, ResultadoExposicao
 from core.global_portfolio.fields import valor as campo_valor
 from core.global_portfolio.risk import ContribuicaoRisco
 from core.global_portfolio.roles import PAPEIS, PapelDoAtivo
@@ -75,6 +83,14 @@ _MIN_ATIVOS_PERCENTIL = 2  # com 1 ativo, todo percentil seria 1.0 por construca
 LIMITE_ATIVO_DEFAULT = 0.10
 LIMITE_SETOR_DEFAULT = 0.30
 LIMITE_PAIS_DEFAULT = 0.60
+
+# Magnitude de beta (contra os proxies de factors.py) a partir da qual a
+# exposicao da CARTEIRA a um fator e tratada como "tilt ja extremo" — beta 1.0
+# equivale a carregar o proxy inteiro (ex.: BOVA11) 1-para-1 na carteira
+# sintetica; 0.5 e a escolha de que "meio proxy" ja e concentracao digna de
+# nota, nao uma constante fisica. Escolha de desenho, visivel e ajustavel
+# (mesmo espirito de LIMITE_ATIVO_DEFAULT e dos LIMIARES de roles.py).
+LIMIAR_TILT_FATOR_EXTREMO = 0.5
 
 
 @dataclass(frozen=True)
@@ -512,6 +528,77 @@ def sinais_desvio_alvo(df_posicoes: pd.DataFrame, alvos: dict[str, float]) -> li
 
 
 # ---------------------------------------------------------------------------
+# 8. fator — redundancia em espaco de fatores (Task 2b)
+# ---------------------------------------------------------------------------
+
+def sinais_fator(exposicao_portfolio: ResultadoExposicao | None,
+                 exposicoes_ativos: dict[str, ResultadoExposicao] | None) -> list[Sinal]:
+    """Ativo que empilha na mesma aposta macro onde a carteira ja esta extrema
+    empurra para reduzir; nunca gera sinal positivo (so flagra quem empilha,
+    mesmo desenho de `sinais_concentracao`, que so flagra quem estoura).
+
+    `correlation.pares_redundantes` (sinal 4) pega redundancia par a par; este
+    sinal pega o que ele nao pega: dois ativos podem ter correlacao moderada
+    e ainda carregar a mesma exposicao a um fator macro (`factors.py`).
+
+    "Fator onde a carteira esta mais concentrada" e definido como o fator de
+    MAIOR |beta| absoluto dentre `exposicao_portfolio.exposicoes` — a
+    exposicao PONDERADA PELOS PESOS da carteira (`factors.exposicao_do_portfolio`,
+    que regride o retorno sintetico ja ponderado), nao a media das exposicoes
+    individuais dos ativos. `factors._regredir` ja devolve essa lista ordenada
+    por (-abs(beta), fator), entao o primeiro elemento e o escolhido, com
+    desempate deterministico pelo nome do fator embutido na propria ordenacao.
+
+    Esse tilt so conta como "ja extremo" quando |beta| passa de
+    `LIMIAR_TILT_FATOR_EXTREMO` — limiar escolhido, nao fato (ver comentario
+    da constante); abaixo dele, ninguem empilha em nada digno de sinal e a
+    funcao devolve lista vazia.
+
+    Regra nao-negociavel: o sinal SO existe quando `factors.py` produziu uma
+    `Exposicao` estatisticamente usavel para aquele ativo NAQUELE MESMO fator
+    — `exposicao.significativo` (dois erros-padrao, ~95%). Ativo cuja
+    selecao adaptativa descartou o fator concentrado (`fatores_excluidos`),
+    cuja regressao nao rendeu exposicoes, ou cujo beta no fator nao e
+    significativo NAO gera sinal — nunca 0.0, que seria uma carga fabricada
+    para um ativo que a regressao nao mediu de fato ali.
+
+    Sinal so dispara quando a carga do ativo tem o MESMO sinal do tilt da
+    carteira (reforca a aposta); carga oposta e diversificacao genuina e nao
+    gera sinal (nem positivo — este sinal e so gatilho de alerta, como o 5).
+    """
+    if exposicao_portfolio is None or not exposicao_portfolio.exposicoes:
+        return []
+    if not exposicoes_ativos:
+        return []
+
+    fator_concentrado = exposicao_portfolio.exposicoes[0]
+    if abs(fator_concentrado.beta) <= LIMIAR_TILT_FATOR_EXTREMO:
+        return []
+
+    rotulo = ROTULOS_FATOR.get(fator_concentrado.fator, fator_concentrado.fator)
+    saida: list[Sinal] = []
+    for symbol in sorted(exposicoes_ativos):
+        resultado = exposicoes_ativos[symbol]
+        if resultado is None or not resultado.exposicoes:
+            continue
+        exp_ativo = next((e for e in resultado.exposicoes if e.fator == fator_concentrado.fator), None)
+        if exp_ativo is None or not exp_ativo.significativo:
+            continue
+        if (exp_ativo.beta > 0) != (fator_concentrado.beta > 0):
+            continue  # carga oposta ao tilt: diversifica, nao empilha
+
+        intensidade = _clamp01(abs(exp_ativo.beta) / LIMIAR_TILT_FATOR_EXTREMO)
+        valor_final = _clamp(-intensidade)
+        texto = (f"Carga {exp_ativo.beta:+.2f} no fator '{rotulo}', onde a carteira "
+                 f"ja concentra beta {fator_concentrado.beta:+.2f} "
+                 f"(limiar de tilt extremo {LIMIAR_TILT_FATOR_EXTREMO:.2f}): "
+                 f"reforca a mesma aposta macro em vez de diversificar")
+        saida.append(Sinal(nome="fator", symbol=symbol, valor=valor_final,
+                           direcao=_direcao(valor_final), analisador="factors", texto=texto))
+    return saida
+
+
+# ---------------------------------------------------------------------------
 # Orquestrador
 # ---------------------------------------------------------------------------
 
@@ -521,10 +608,12 @@ def gerar_sinais(df_posicoes: pd.DataFrame, *,
                  papeis: list[PapelDoAtivo] | None = None,
                  alvos: dict[str, float] | None = None,
                  confianca: dict[str, float] | None = None,
+                 exposicao_portfolio: ResultadoExposicao | None = None,
+                 exposicoes_ativos: dict[str, ResultadoExposicao] | None = None,
                  limite_ativo: float = LIMITE_ATIVO_DEFAULT,
                  limite_setor: float = LIMITE_SETOR_DEFAULT,
                  limite_pais: float = LIMITE_PAIS_DEFAULT) -> list[Sinal]:
-    """Combina os sete sinais. Saidas de analisador ausentes (None) simplesmente
+    """Combina os oito sinais. Saidas de analisador ausentes (None) simplesmente
     nao contribuem sinais daquele tipo — o quadro de posicoes e o unico
     argumento obrigatorio.
 
@@ -544,4 +633,6 @@ def gerar_sinais(df_posicoes: pd.DataFrame, *,
         saida += sinais_papel_ausente(papeis)
     if alvos:
         saida += sinais_desvio_alvo(df_posicoes, alvos)
+    if exposicao_portfolio is not None and exposicoes_ativos:
+        saida += sinais_fator(exposicao_portfolio, exposicoes_ativos)
     return sorted(saida, key=lambda s: (s.nome, s.symbol))

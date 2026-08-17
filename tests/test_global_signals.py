@@ -5,9 +5,16 @@ import pytest
 
 from core.data_confidence import score_ticker
 from core.global_portfolio.correlation import LIMIAR_REDUNDANCIA, pares_redundantes
+from core.global_portfolio.factors import (
+    Exposicao,
+    ResultadoExposicao,
+    betas_do_ativo,
+    exposicao_do_portfolio,
+)
 from core.global_portfolio.risk import contribuicao_marginal
 from core.global_portfolio.roles import PAPEIS, classificar
 from core.global_portfolio.signals import (
+    LIMIAR_TILT_FATOR_EXTREMO,
     LIMITE_ATIVO_DEFAULT,
     LIMITE_PAIS_DEFAULT,
     LIMITE_SETOR_DEFAULT,
@@ -15,6 +22,7 @@ from core.global_portfolio.signals import (
     gerar_sinais,
     sinais_concentracao,
     sinais_desvio_alvo,
+    sinais_fator,
     sinais_papel_ausente,
     sinais_qualidade,
     sinais_redundancia,
@@ -423,6 +431,126 @@ def test_desvio_alvo_sem_alvos_devolve_vazio():
 
 
 # ---------------------------------------------------------------------------
+# 8. fator -- redundancia em espaco de fatores (Task 2b)
+# ---------------------------------------------------------------------------
+
+def _fatores_sinteticos(n=60, seed=7):
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2019-01-31", periods=n, freq="ME")
+    return pd.DataFrame({
+        "mercado_br": rng.normal(0, 0.04, n),
+        "juros_nominais": rng.normal(0, 0.03, n),
+    }, index=idx)
+
+
+def test_fator_real_regressao_pilha_reduz_diverso_e_fraco_ficam_de_fora():
+    # Regressao de verdade (factors.betas_do_ativo / exposicao_do_portfolio),
+    # nao um Exposicao construido a mao -- e a costura que a lista de review
+    # deste projeto ja pegou faltando em outras tasks.
+    fatores = _fatores_sinteticos()
+    rng = np.random.default_rng(99)
+    n = len(fatores)
+    retornos = pd.DataFrame({
+        "PILHA1": 1.0 * fatores["mercado_br"] + rng.normal(0, 0.005, n),
+        "PILHA2": 0.8 * fatores["mercado_br"] + rng.normal(0, 0.005, n),
+        "DIVERSO": -1.0 * fatores["mercado_br"] + rng.normal(0, 0.005, n),
+        "FRACO": rng.normal(0, 0.20, n),  # sem relacao com nenhum fator
+    }, index=fatores.index)
+    pesos = {"PILHA1": 0.5, "PILHA2": 0.3, "DIVERSO": 0.1, "FRACO": 0.1}
+
+    exposicao_portfolio = exposicao_do_portfolio(retornos, pesos, fatores)  # regressao real
+    assert exposicao_portfolio.exposicoes  # regrediu de fato
+    assert exposicao_portfolio.exposicoes[0].fator == "mercado_br"
+    assert exposicao_portfolio.exposicoes[0].beta > LIMIAR_TILT_FATOR_EXTREMO  # tilt extremo
+
+    exposicoes_ativos = {
+        symbol: betas_do_ativo(retornos[symbol], fatores)  # regressao real por ativo
+        for symbol in retornos.columns
+    }
+
+    saida = {s.symbol: s for s in sinais_fator(exposicao_portfolio, exposicoes_ativos)}
+    _checar_convencao(list(saida.values()))
+
+    assert set(saida) == {"PILHA1", "PILHA2"}
+    assert saida["PILHA1"].valor < 0
+    assert saida["PILHA2"].valor < 0
+    assert saida["PILHA1"].analisador == "factors"
+    assert saida["PILHA1"].nome == "fator"
+    # DIVERSO tem carga oposta a do tilt da carteira: diversifica, nao empilha.
+    assert "DIVERSO" not in saida
+    # FRACO nao tem exposicao significativa ao fator concentrado.
+    assert "FRACO" not in saida
+
+
+def test_fator_portfolio_sem_tilt_extremo_nao_gera_sinal():
+    portfolio = ResultadoExposicao(
+        exposicoes=[Exposicao(fator="mercado_br", beta=0.3, erro_padrao=0.05, r2=0.4, n_obs=30)],
+        fatores_excluidos=(),
+    )
+    ativos = {"A": ResultadoExposicao(
+        exposicoes=[Exposicao(fator="mercado_br", beta=0.9, erro_padrao=0.05, r2=0.5, n_obs=30)],
+        fatores_excluidos=(),
+    )}
+    assert sinais_fator(portfolio, ativos) == []
+
+
+def test_fator_ativo_nao_significativo_nao_gera_sinal():
+    portfolio = ResultadoExposicao(
+        exposicoes=[Exposicao(fator="mercado_br", beta=0.9, erro_padrao=0.05, r2=0.5, n_obs=30)],
+        fatores_excluidos=(),
+    )
+    ativos = {"A": ResultadoExposicao(
+        exposicoes=[Exposicao(fator="mercado_br", beta=0.05, erro_padrao=0.10, r2=0.1, n_obs=30)],
+        fatores_excluidos=(),
+    )}
+    assert sinais_fator(portfolio, ativos) == []
+
+
+def test_fator_ativo_com_fator_concentrado_excluido_da_propria_regressao_nao_gera_sinal():
+    # O ativo teve "mercado_br" descartado pela selecao adaptativa da sua
+    # propria regressao (fatores_excluidos). Regra nao-negociavel: exposicao
+    # ausente NUNCA vira zero -- sem Exposicao para o fator, sem sinal.
+    portfolio = ResultadoExposicao(
+        exposicoes=[Exposicao(fator="mercado_br", beta=0.9, erro_padrao=0.05, r2=0.5, n_obs=30)],
+        fatores_excluidos=(),
+    )
+    ativos = {"A": ResultadoExposicao(
+        exposicoes=[Exposicao(fator="juros_nominais", beta=0.4, erro_padrao=0.05, r2=0.3, n_obs=30)],
+        fatores_excluidos=("mercado_br",),
+    )}
+    assert sinais_fator(portfolio, ativos) == []
+
+
+def test_fator_sem_exposicao_de_portfolio_devolve_vazio():
+    assert sinais_fator(None, {"A": ResultadoExposicao([], ())}) == []
+    assert sinais_fator(ResultadoExposicao([], ()), {"A": ResultadoExposicao([], ())}) == []
+
+
+def test_fator_sem_exposicoes_de_ativos_devolve_vazio():
+    portfolio = ResultadoExposicao(
+        exposicoes=[Exposicao(fator="mercado_br", beta=0.9, erro_padrao=0.05, r2=0.5, n_obs=30)],
+        fatores_excluidos=(),
+    )
+    assert sinais_fator(portfolio, None) == []
+    assert sinais_fator(portfolio, {}) == []
+
+
+def test_fator_ativo_com_beta_oposto_ao_tilt_nunca_gera_sinal_positivo():
+    # Diversificar nao vira "sinal de aumentar" aqui -- o sinal 8 so existe
+    # para flagrar quem empilha; nao ha contraparte positiva (mesmo desenho
+    # do sinal 5, estouro_limite, que so flagra quem estoura).
+    portfolio = ResultadoExposicao(
+        exposicoes=[Exposicao(fator="mercado_br", beta=-0.9, erro_padrao=0.05, r2=0.5, n_obs=30)],
+        fatores_excluidos=(),
+    )
+    ativos = {"A": ResultadoExposicao(
+        exposicoes=[Exposicao(fator="mercado_br", beta=0.9, erro_padrao=0.05, r2=0.5, n_obs=30)],
+        fatores_excluidos=(),
+    )}
+    assert sinais_fator(portfolio, ativos) == []
+
+
+# ---------------------------------------------------------------------------
 # Orquestrador
 # ---------------------------------------------------------------------------
 
@@ -453,6 +581,18 @@ def test_gerar_sinais_combina_todos_os_analisadores_informados():
     contribuicoes = contribuicao_marginal(ret, pesos)
     pares = pares_redundantes(_retornos_com_correlacao(0.95))
 
+    # Regressao real de fatores (Task 2b): A e B empilham no mesmo tilt,
+    # dando ao motor um consumidor de verdade para factors.py.
+    fatores = _fatores_sinteticos()
+    rng = np.random.default_rng(5)
+    n = len(fatores)
+    retornos_fator = pd.DataFrame({
+        "A": 1.0 * fatores["mercado_br"] + rng.normal(0, 0.005, n),
+        "B": 0.8 * fatores["mercado_br"] + rng.normal(0, 0.005, n),
+    }, index=fatores.index)
+    exposicao_portfolio = exposicao_do_portfolio(retornos_fator, pesos, fatores)
+    exposicoes_ativos = {s: betas_do_ativo(retornos_fator[s], fatores) for s in retornos_fator.columns}
+
     df = pd.DataFrame([
         _linha("A", peso=0.5, fundamentals={"P/L": 10.0}, metrics={"score": 80.0}),
         _linha("B", peso=0.5, fundamentals={"P/L": 20.0}, metrics={"score": 40.0}),
@@ -461,11 +601,12 @@ def test_gerar_sinais_combina_todos_os_analisadores_informados():
     alvos = _normalizar_alvos({"b3": 1.0})
 
     saida = gerar_sinais(df, contribuicoes=contribuicoes, pares_redundantes=pares,
-                         papeis=papeis, alvos=alvos)
+                         papeis=papeis, alvos=alvos,
+                         exposicao_portfolio=exposicao_portfolio,
+                         exposicoes_ativos=exposicoes_ativos)
     _checar_convencao(saida)
     analisadores = {s.analisador for s in saida}
-    # com todos os insumos presentes, os seis analisadores que os sete sinais
-    # do Task 2 de fato consultam aparecem. "factors" fica de fora de proposito:
-    # nenhum dos sete sinais especificados na spec e produzido por factors.py
-    # (ver docstring do modulo) -- rotula-lo aqui seria procedencia falsa.
-    assert analisadores == {"risk", "correlation", "roles", "targets", "metrics", "concentration"}
+    # com todos os insumos presentes (incluindo a regressao real de fatores,
+    # Task 2b), os sete analisadores dos oito sinais aparecem.
+    assert analisadores == {"risk", "correlation", "roles", "targets", "metrics",
+                            "concentration", "factors"}
