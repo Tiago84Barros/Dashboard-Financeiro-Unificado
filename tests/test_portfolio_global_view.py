@@ -520,3 +520,207 @@ def test_tabela_de_papeis_do_ativo_distingue_indeterminado_de_nao_cumpre():
     assert status_cumpre != status_nao_cumpre
     # A evidencia so acompanha o papel que de fato foi cumprido.
     assert "USD" in dict(zip(tabela["Papel"], tabela["Evidência"]))[ROTULOS_PAPEL["hedge_cambial"]]
+
+
+# ---------------------------------------------------------------------------
+# Fase 3b, Task 6: painel "Recomendações do motor de movimentação"
+# ---------------------------------------------------------------------------
+
+def _acao(symbol="ADBE", acao="manter", peso_atual=0.05, peso_sugerido=0.03,
+         score=-0.4, componentes=None, analisadores=frozenset(),
+         custo_estimado=0.0, custo_calibrado=True):
+    """Constroi uma `Acao` com defaults sensatos, so para nao repetir os
+    nove campos posicionais em cada teste que precisa de uma."""
+    from core.global_portfolio.advisor import Acao
+    return Acao(
+        symbol=symbol, acao=acao, peso_atual=peso_atual, peso_sugerido=peso_sugerido,
+        score=score, componentes=componentes or {}, analisadores=analisadores,
+        custo_estimado=custo_estimado, custo_calibrado=custo_calibrado,
+    )
+
+
+def test_texto_de_custo_nao_calibrado_nunca_mostra_nan_zero_ou_branco():
+    """Task 3 faz calibrado=False sair NaN de proposito -- o painel nao pode
+    deixar esse NaN vazar para a tela como 'nan', '0' ou um campo vazio, que
+    leria como 'de graca'."""
+    import math
+    acao = _acao(acao="manter", custo_estimado=math.nan, custo_calibrado=False)
+    texto = portfolio_global.texto_de_custo(acao)
+    assert texto.strip() != ""
+    assert "nan" not in texto.lower()
+    assert "calibrado" in texto.lower()
+
+
+def test_texto_de_custo_de_venda_traz_a_ressalva_de_ir_junto_do_numero():
+    """Task 4: custo_venda sempre roda com lucro=0.0 (sem rastreio de base de
+    custo) -- o numero mostrado e so friccao de negociacao, e a ressalva
+    precisa estar na MESMA string do numero, nao numa nota a parte."""
+    acao = _acao(acao="vender", peso_atual=0.05, peso_sugerido=0.0,
+                custo_estimado=12.34, custo_calibrado=True)
+    texto = portfolio_global.texto_de_custo(acao)
+    assert "12,34" in texto
+    assert "IR" in texto
+
+
+def test_texto_de_custo_de_reducao_tambem_traz_a_ressalva_de_ir():
+    """'reduzir' tambem e venda parcial -- o custo tambem veio de
+    custo_venda com lucro=0.0, entao a mesma ressalva se aplica."""
+    acao = _acao(acao="reduzir", peso_atual=0.08, peso_sugerido=0.05,
+                custo_estimado=3.21, custo_calibrado=True)
+    texto = portfolio_global.texto_de_custo(acao)
+    assert "IR" in texto
+
+
+def test_texto_de_custo_de_compra_nao_menciona_ir():
+    """'aumentar' e compra -- custo_compra nunca calcula IR, entao a
+    ressalva nao se aplica e nao deve aparecer."""
+    acao = _acao(acao="aumentar", peso_atual=0.03, peso_sugerido=0.05,
+                custo_estimado=5.0, custo_calibrado=True)
+    texto = portfolio_global.texto_de_custo(acao)
+    assert "IR" not in texto
+
+
+def test_texto_de_custo_indeterminado_nao_mostra_zero_como_se_fosse_apurado():
+    """Task 4: custo_estimado=0.0 para 'indeterminado' e um placeholder (o
+    motor nunca tentou calcular), nao um custo de fato zero -- mostrar
+    'R$ 0,00' mentiria por omissao."""
+    acao = _acao(acao="indeterminado", score=None, componentes={},
+                analisadores=frozenset(), custo_estimado=0.0, custo_calibrado=True)
+    texto = portfolio_global.texto_de_custo(acao)
+    assert "R$" not in texto
+
+
+def test_resumo_de_acoes_inclui_toda_categoria_mesmo_com_zero():
+    """Mesma razao de _resumo_de_papeis: uma acao que nenhuma recomendacao
+    recebeu (ex.: nenhuma venda hoje) e informacao, nao ausencia dela."""
+    acoes = [_acao(symbol="A", acao="aumentar")]
+    resumo = portfolio_global._resumo_de_acoes(acoes)
+    assert resumo["aumentar"] == 1
+    assert resumo["vender"] == 0
+    assert resumo["indeterminado"] == 0
+    assert set(resumo) == {"aumentar", "reduzir", "vender", "manter", "indeterminado"}
+
+
+def test_texto_de_limiares_do_motor_avisa_que_sao_escolhas_nao_fatos():
+    """Mesma ressalva do painel de papel estrategico (_texto_de_limiares),
+    copiada de tom e lugar para o motor de movimentacao."""
+    texto = portfolio_global._texto_de_limiares_motor()
+    baixo = texto.lower()
+    assert "não fatos" in baixo or "nao fatos" in baixo
+    assert "limite por ativo" in baixo
+
+
+def test_gerar_recomendacoes_sem_serie_suficiente_devolve_vazio():
+    """Sem retornos mensais (classe sem preco, ex.: EUA hoje) o motor nao
+    tem como calcular risco/correlacao/fatores -- a view precisa degradar
+    para lista vazia, nao propagar excecao nem inventar sinal."""
+    df = pd.DataFrame([
+        {"asset_class": "b3", "symbol": "A", "sector": "industrials", "country": "BR",
+         "weight_global": 1.0, "payload": {}},
+    ])
+    assert portfolio_global._gerar_recomendacoes(df, pd.DataFrame(), {"A": 1.0}, {}, 0.0) == []
+
+
+def test_gerar_recomendacoes_com_df_vazio_devolve_vazio():
+    assert portfolio_global._gerar_recomendacoes(pd.DataFrame(), pd.DataFrame(), {}, {}, 0.0) == []
+
+
+def test_gerar_recomendacoes_wiring_produz_analisadores_de_verdade():
+    """Regressao do risco 'motor que ninguem consulta e decoracao'
+    (mesma classe de defeito que Task 5 provou para core/, aqui provada
+    para a COLA da view -- signals.gerar_sinais so recebe contribuicoes/
+    pares/papeis/exposicoes se _gerar_recomendacoes de fato passar tudo).
+
+    Carteira sintetica com a mesma estrutura economica de
+    tests/test_global_advisor_procedencia.py: GRANDE concentrado (55%,
+    acima do limite de 10%) e carregando parte real do fator; PILHA1/PILHA2
+    correlacionadas entre si (~0,98) e carregando o mesmo fator dominante.
+    """
+    import numpy as np
+
+    n = 60
+    rng = np.random.default_rng(13)
+    idx = pd.date_range("2019-01-31", periods=n, freq="ME")
+    mercado_br = rng.normal(0, 0.04, n)
+    grande = 0.8 * mercado_br + rng.normal(0, 0.05, n)
+    pilha1 = 1.3 * mercado_br + rng.normal(0, 0.005, n)
+    pilha2 = 1.1 * mercado_br + rng.normal(0, 0.005, n)
+    filler1 = rng.normal(0, 0.09, n)
+    filler2 = rng.normal(0, 0.09, n)
+
+    ret = pd.DataFrame({
+        "GRANDE": grande, "PILHA1": pilha1, "PILHA2": pilha2,
+        "FILLER1": filler1, "FILLER2": filler2,
+    }, index=idx)
+
+    df = pd.DataFrame([
+        {"asset_class": "b3", "symbol": "GRANDE", "sector": "industrials", "country": "BR",
+         "weight_global": 0.55, "payload": {}},
+        {"asset_class": "us", "symbol": "PILHA1", "sector": "tech", "country": "US",
+         "weight_global": 0.10, "payload": {}},
+        {"asset_class": "us", "symbol": "PILHA2", "sector": "tech", "country": "US",
+         "weight_global": 0.08, "payload": {}},
+        {"asset_class": "fii", "symbol": "FILLER1", "sector": "diversos", "country": "JP",
+         "weight_global": 0.09, "payload": {}},
+        {"asset_class": "fii", "symbol": "FILLER2", "sector": "saude", "country": "CA",
+         "weight_global": 0.18, "payload": {}},
+    ])
+    pesos = dict(zip(df["symbol"], df["weight_global"]))
+
+    precos_bova = pd.Series((1.0 + mercado_br), index=idx).cumprod() * 100.0
+
+    def _loader_fake(tickers):
+        return pd.DataFrame({"BOVA11": precos_bova})
+
+    acoes = portfolio_global._gerar_recomendacoes(
+        df, ret, pesos, {}, 1_000_000.0, loader=_loader_fake,
+    )
+
+    todos_analisadores: set = set()
+    for acao in acoes:
+        todos_analisadores |= acao.analisadores
+    assert "concentration" in todos_analisadores
+    assert "correlation" in todos_analisadores
+    assert "factors" in todos_analisadores
+
+
+def test_painel_de_recomendacoes_e_chamado_no_render():
+    """Mesmo risco que 'Diagnostico precisa de porta de entrada' ja
+    registrou nesta base: um motor que ninguem chama no render e decoracao."""
+    import inspect
+    fonte = inspect.getsource(portfolio_global.render)
+    assert "_painel_recomendacoes(" in fonte
+
+
+def test_painel_de_recomendacoes_isola_falha_do_motor_sem_quebrar_a_secao():
+    """Mesmo padrao de fronteira de isolamento que
+    dashboard_geral._carteira_modelo_us ja usa entre modulos: uma falha do
+    motor (_gerar_recomendacoes) nao pode derrubar o resto do Portfolio
+    Global."""
+    import inspect
+    fonte = inspect.getsource(portfolio_global._painel_recomendacoes)
+    assert "_gerar_recomendacoes(" in fonte
+    assert "except Exception" in fonte
+
+
+def test_painel_de_recomendacoes_usa_cartoes_css_nunca_informacao_solta():
+    """Regra do projeto: metricas sempre em card_metrica, nunca soltas."""
+    import inspect
+    fonte = inspect.getsource(portfolio_global._painel_recomendacoes)
+    assert "card_metrica(" in fonte
+
+
+def test_painel_de_recomendacoes_exibe_a_ressalva_de_limiares():
+    import inspect
+    fonte = inspect.getsource(portfolio_global._painel_recomendacoes)
+    assert "_texto_de_limiares_motor()" in fonte
+
+
+def test_painel_de_recomendacoes_conta_e_nomeia_as_nao_calibradas():
+    """Ponto 1 do brief: custo nao calibrado precisa ser visivel sem
+    precisar abrir cada recomendacao -- um card de contagem e um aviso que
+    nomeia os ativos, mesmo padrao de sem_papel_symbols em _painel_papeis."""
+    import inspect
+    fonte = inspect.getsource(portfolio_global._painel_recomendacoes)
+    assert "custo_calibrado" in fonte
+    assert "st.warning" in fonte
