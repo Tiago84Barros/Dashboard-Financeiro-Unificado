@@ -6,6 +6,7 @@ import json
 import pandas as pd
 
 import core.portfolio_report_b3 as report
+from core.portfolio_report_common import normalize_confidence
 
 
 def _score_payload(note: float = 8.0) -> dict:
@@ -17,6 +18,11 @@ def _score_payload(note: float = 8.0) -> dict:
         }
         for key in report.QUALITATIVE_WEIGHTS
     }
+
+
+def test_alias_privado_de_confianca_permanece_compativel_com_modulo_extraido():
+    """Importadores legados recebem exatamente a normalização compartilhada."""
+    assert report._normalize_confidence is normalize_confidence
 
 
 def _raw_report() -> dict:

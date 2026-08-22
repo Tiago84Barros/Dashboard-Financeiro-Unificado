@@ -26,96 +26,12 @@ from core.config import settings
 from core.database import get_engine
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION, US_SCHEMA_VERSION
 
-
-DDL_SQL = [
-    """
-    CREATE TABLE IF NOT EXISTS us_portfolio_models (
-        id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id      UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-        name         VARCHAR(160) NOT NULL,
-        status       VARCHAR(20) NOT NULL DEFAULT 'active',
-        ano_compra   INTEGER,
-        source       VARCHAR(80) NOT NULL DEFAULT 'criacao_portfolio_us',
-        plan_hash    TEXT NOT NULL,
-        params_json  JSONB NOT NULL DEFAULT '{}'::jsonb,
-        metrics_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-        notes        TEXT,
-        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CHECK (status IN ('active', 'archived'))
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS us_portfolio_model_items (
-        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        model_id      UUID NOT NULL REFERENCES us_portfolio_models(id) ON DELETE CASCADE,
-        symbol        VARCHAR(16) NOT NULL,
-        nome          VARCHAR(200),
-        setor         TEXT,
-        industria     TEXT,
-        weight        NUMERIC(12,8),
-        entry_score   NUMERIC(18,8),
-        fundamental_score NUMERIC(18,8),
-        coverage      NUMERIC(12,4),
-        rank_score    INTEGER,
-        meta_json     JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE (model_id, symbol)
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_us_portfolio_models_user_status
-    ON us_portfolio_models (user_id, status, created_at DESC)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_us_portfolio_model_items_model_weight
-    ON us_portfolio_model_items (model_id, weight DESC)
-    """,
-    # Mesmo endurecimento das carteiras B3/FII: RLS (protege acesso via Supabase
-    # API/anon key; a conexao do app, role postgres, bypassa) e no maximo um
-    # modelo ativo por usuario.
-    "ALTER TABLE us_portfolio_models ENABLE ROW LEVEL SECURITY",
-    "ALTER TABLE us_portfolio_model_items ENABLE ROW LEVEL SECURITY",
-    """
-    DO $$ BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_policies
-            WHERE schemaname='public'
-              AND tablename='us_portfolio_models'
-              AND policyname='us_portfolio_models_owner_all'
-        ) THEN
-            CREATE POLICY us_portfolio_models_owner_all ON us_portfolio_models
-                USING (user_id = auth.uid())
-                WITH CHECK (user_id = auth.uid());
-        END IF;
-    END; $$
-    """,
-    """
-    DO $$ BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_policies
-            WHERE schemaname='public'
-              AND tablename='us_portfolio_model_items'
-              AND policyname='us_portfolio_model_items_owner_all'
-        ) THEN
-            CREATE POLICY us_portfolio_model_items_owner_all ON us_portfolio_model_items
-                USING (EXISTS (
-                    SELECT 1 FROM us_portfolio_models m
-                    WHERE m.id = model_id AND m.user_id = auth.uid()
-                ))
-                WITH CHECK (EXISTS (
-                    SELECT 1 FROM us_portfolio_models m
-                    WHERE m.id = model_id AND m.user_id = auth.uid()
-                ));
-        END IF;
-    END; $$
-    """,
-    """
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_us_portfolio_models_active_per_user
-    ON us_portfolio_models (user_id)
-    WHERE status = 'active'
-    """,
-]
+_REQUIRED_TABLES = ("us_portfolio_models", "us_portfolio_model_items")
+_SCHEMA_MIGRATIONS = ("047_us_portfolio_models.sql",)
+_OWNER_POLICIES = {
+    "us_portfolio_models": "us_portfolio_models_owner_all",
+    "us_portfolio_model_items": "us_portfolio_model_items_owner_all",
+}
 
 
 def _clean_nan(obj: Any) -> Any:
@@ -199,9 +115,38 @@ def _plan_hash(items: list[dict], params: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
-def _ensure_tables(conn) -> None:
-    for ddl in DDL_SQL:
-        conn.execute(text(ddl))
+def _preflight_schema(conn) -> None:
+    """Confirma tabelas, RLS e policies do dono, apenas por catálogo."""
+    columns = []
+    for table, policy in _OWNER_POLICIES.items():
+        relation = f"to_regclass('public.{table}')"
+        columns.extend((
+            f"{relation} AS {table}",
+            f"COALESCE((SELECT relrowsecurity FROM pg_class WHERE oid = {relation}), FALSE) AS {table}_rls",
+            "EXISTS (SELECT 1 FROM pg_policies "
+            f"WHERE schemaname = 'public' AND tablename = '{table}' "
+            f"AND policyname = '{policy}') AS {table}_policy",
+        ))
+    available = conn.execute(text("SELECT " + ", ".join(columns))).mappings().one()
+    missing = [table for table in _REQUIRED_TABLES if available[table] is None]
+    rls_disabled = [table for table in _REQUIRED_TABLES if not available[f"{table}_rls"]]
+    policies_missing = [
+        f"{table} ({_OWNER_POLICIES[table]})"
+        for table in _REQUIRED_TABLES if not available[f"{table}_policy"]
+    ]
+    if missing or rls_disabled or policies_missing:
+        problems = []
+        if missing:
+            problems.append("tabelas ausentes: " + ", ".join(missing))
+        if rls_disabled:
+            problems.append("RLS desabilitado em: " + ", ".join(rls_disabled))
+        if policies_missing:
+            problems.append("policy de dono ausente: " + ", ".join(policies_missing))
+        raise RuntimeError(
+            "Preflight da carteira EUA falhou (" + "; ".join(problems) + "). "
+            "Aplique a migration " + ", ".join(_SCHEMA_MIGRATIONS)
+            + " antes de salvar; o aplicativo não executa DDL em runtime."
+        )
 
 
 def _owner_id() -> str:
@@ -221,6 +166,96 @@ def _normalize_weight(items: list[dict]) -> dict[str, float]:
         ew = 1.0 / len(raw)
         return {k: ew for k in raw}
     return {k: max(v, 0.0) / total for k, v in raw.items()}
+
+
+def _model_from_connection(conn, owner: str, *,
+                           model_id: str | None = None,
+                           active_only: bool = False) -> dict:
+    """Le um header + itens do portfolio EUA, por id ou pelo modelo ativo.
+
+    Espelha core.fii_portfolio_model._model_from_connection (mesmo padrao de
+    header + items, mesma semantica de filtros).
+    """
+    where = ["user_id = :uid"]
+    parameters: dict[str, Any] = {"uid": owner}
+    if model_id:
+        where.append("id = :mid")
+        parameters["mid"] = model_id
+    if active_only:
+        where.append("status = 'active'")
+    header = conn.execute(
+        text(f"""
+            SELECT id, name, status, ano_compra, plan_hash, params_json,
+                   metrics_json, created_at, updated_at
+            FROM us_portfolio_models
+            WHERE {' AND '.join(where)}
+            ORDER BY created_at DESC
+            LIMIT 1
+        """),
+        parameters,
+    ).mappings().fetchone()
+    if not header:
+        return {}
+    rows = conn.execute(
+        text("""
+            SELECT symbol, nome, setor, industria, weight, entry_score,
+                   fundamental_score, coverage, rank_score
+            FROM us_portfolio_model_items
+            WHERE model_id = :mid
+            ORDER BY weight DESC, entry_score DESC, symbol
+        """),
+        {"mid": str(header["id"])},
+    ).mappings().all()
+    items = []
+    for row in rows:
+        item = dict(row)
+        for key in ("weight", "entry_score", "fundamental_score", "coverage"):
+            item[key] = float(item[key]) if item[key] is not None else None
+        item["ticker"] = item["symbol"]
+        items.append(item)
+    model = dict(header)
+    model["items"] = items
+    model["num_items"] = len(items)
+    return model
+
+
+def validate_us_portfolio_model(model: dict, *,
+                                weight_tolerance: float = 1e-6) -> dict:
+    """Valida integridade estrutural da versao persistida antes de restaurar.
+
+    Nao compara plan_hash pelo mesmo motivo documentado em
+    core.b3_portfolio_model.validate_b3_portfolio_model: o hash e calculado
+    sobre o peso bruto de entrada, e a coluna `weight` gravada ja e o peso
+    normalizado. A garantia aqui e estrutural: sem itens, symbols
+    duplicados/vazios ou pesos fora do intervalo (0, 1] bloqueiam a
+    restauracao da mesma forma que bloqueariam a gravacao original.
+    """
+    items = list(model.get("items") or [])
+    reasons: list[str] = []
+    symbols = [str(item.get("symbol") or "").strip().upper() for item in items]
+    if not items:
+        reasons.append("modelo sem itens")
+    if any(not symbol for symbol in symbols):
+        reasons.append("symbol vazio")
+    if len(set(symbols)) != len(symbols):
+        reasons.append("symbols duplicados")
+    weights = [float(item.get("weight") or 0.0) for item in items]
+    if any(weight <= 0 or weight > 1 for weight in weights):
+        reasons.append("peso fora do intervalo (0, 1]")
+    weight_sum = sum(weights)
+    if items and abs(weight_sum - 1.0) > weight_tolerance:
+        reasons.append(f"soma dos pesos divergente: {weight_sum:.8f}")
+    return {
+        "ok": not reasons,
+        "reasons": reasons,
+        "item_count": len(items),
+        "weight_sum": weight_sum,
+    }
+
+
+def _clear_us_portfolio_caches() -> None:
+    load_active_us_portfolio_model.clear()
+    list_us_portfolio_model_versions.clear()
 
 
 def save_us_portfolio_model(
@@ -247,7 +282,7 @@ def save_us_portfolio_model(
     model_id = str(uuid.uuid4())
 
     with engine.begin() as conn:
-        _ensure_tables(conn)
+        _preflight_schema(conn)
         conn.execute(
             text("""
                 UPDATE us_portfolio_models
@@ -333,7 +368,7 @@ def save_us_portfolio_model(
     else:
         capture_snapshots("us", model_id, items, params, owner_id=owner)
 
-    load_active_us_portfolio_model.clear()
+    _clear_us_portfolio_caches()
     return model_id
 
 
@@ -398,3 +433,96 @@ def load_active_us_portfolio_model() -> dict:
     )
     model["current_score_version"] = US_FUNDAMENTAL_SCORE_VERSION
     return model
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def list_us_portfolio_model_versions(limit: int = 10) -> list[dict]:
+    """Lista versoes do proprietario sem expor posicoes ou dados pessoais.
+
+    Espelha core.fii_portfolio_model.list_fii_portfolio_model_versions.
+    """
+    engine = get_engine()
+    if engine is None or not settings.OWNER_USER_ID:
+        return []
+    safe_limit = max(1, min(int(limit), 50))
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT m.id, m.name, m.status, m.plan_hash, m.params_json,
+                       m.created_at, m.updated_at, count(i.id) AS item_count,
+                       COALESCE(sum(i.weight), 0) AS weight_sum
+                FROM us_portfolio_models m
+                LEFT JOIN us_portfolio_model_items i ON i.model_id = m.id
+                WHERE m.user_id = :uid
+                GROUP BY m.id
+                ORDER BY m.created_at DESC
+                LIMIT :limit
+            """),
+            {"uid": str(settings.OWNER_USER_ID), "limit": safe_limit},
+        ).mappings().all()
+    return [
+        {
+            **dict(row),
+            "item_count": int(row["item_count"] or 0),
+            "weight_sum": float(row["weight_sum"] or 0.0),
+        }
+        for row in rows
+    ]
+
+
+def restore_us_portfolio_model(model_id: str) -> str:
+    """Restaura uma versao integra do proprietario em uma unica transacao.
+
+    Espelha core.fii_portfolio_model.restore_fii_portfolio_model.
+    """
+    try:
+        target_id = str(uuid.UUID(str(model_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("Identificador de versão inválido.") from exc
+    engine = get_engine()
+    if engine is None:
+        raise RuntimeError("Banco unificado não configurado.")
+    owner = _owner_id()
+    with engine.begin() as conn:
+        _preflight_schema(conn)
+        owned_ids = {
+            str(value) for value in conn.execute(
+                text("""
+                    SELECT id FROM us_portfolio_models
+                    WHERE user_id = :uid
+                    FOR UPDATE
+                """),
+                {"uid": owner},
+            ).scalars()
+        }
+        if target_id not in owned_ids:
+            raise ValueError("Versão inexistente ou pertencente a outro usuário.")
+        target = _model_from_connection(conn, owner, model_id=target_id)
+        integrity = validate_us_portfolio_model(target)
+        if not integrity["ok"]:
+            raise RuntimeError(
+                "Restauração bloqueada por falha de integridade: "
+                + " · ".join(integrity["reasons"])
+            )
+        if target.get("status") != "active":
+            conn.execute(
+                text("""
+                    UPDATE us_portfolio_models
+                    SET status = 'archived', updated_at = NOW()
+                    WHERE user_id = :uid AND status = 'active'
+                """),
+                {"uid": owner},
+            )
+            conn.execute(
+                text("""
+                    UPDATE us_portfolio_models
+                    SET status = 'active', updated_at = NOW()
+                    WHERE id = :mid AND user_id = :uid
+                """),
+                {"mid": target_id, "uid": owner},
+            )
+        restored = _model_from_connection(conn, owner, model_id=target_id)
+        if restored.get("status") != "active":
+            raise RuntimeError("A versão restaurada não ficou ativa.")
+    _clear_us_portfolio_caches()
+    return target_id

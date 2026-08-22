@@ -1,10 +1,9 @@
-from datetime import date
 import json
+from datetime import date
 
 import pytest
 
 from data_pipeline.market import fii_v2
-
 
 REQUESTED = "2026-07-12T12:00:00Z"
 

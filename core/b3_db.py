@@ -5,7 +5,20 @@ Camada de acesso a dados do Dashboard Fundamentalista B3 (App 1).
 Variável de ambiente esperada (em ordem de prioridade):
   1. SUPABASE_DB_URL_B3  — URL dedicada ao banco do App 1
   2. SUPABASE_DB_URL     — URL do App 1 (nome antigo)
-  3. DATABASE_URL        — fallback: mesmo banco do app unificado
+  3. settings.db_url     — fallback: mesmo banco do app unificado (respeita
+                           SUPABASE_UNIFICADO_URL > DATABASE_URL > SUPABASE_DB_URL)
+
+ATENÇÃO (achado A-009, artifacts/app4_professionalizacao/correcao_a009_b3_db_fallback.md):
+esta prioridade é PRÓPRIA e INDEPENDENTE da de core.config.Settings.db_url —
+mantida de propósito porque scripts de ingestão sobrescrevem SUPABASE_DB_URL_B3
+apenas na sessão do shell para apontar o coletor a um banco de staging local sem
+alterar o restante do app (ver local_staging/README.md). Isso significa que, se
+SUPABASE_DB_URL_B3/SUPABASE_DB_URL estiverem definidas no ambiente/.env (comum em
+produção, para o banco original do App 1), esta camada NUNCA respeita um
+DATABASE_URL sobrescrito no processo — mesmo que o resto do app respeite. Quando
+isso diverge, _resolve_url() registra um logger.warning (sem credenciais) e
+core.b3_data.load_setores() marca `df.attrs["fallback_legado"] = True` para que
+a UI (views/empresas_b3.py) avise o usuário — nunca fica silencioso.
 
 Tabelas usadas (schema public do Supabase do App 1):
   - setores                    → listagem de empresas B3 por setor
@@ -14,8 +27,9 @@ Tabelas usadas (schema public do Supabase do App 1):
 """
 from __future__ import annotations
 
-import os
+import logging
 import math
+import os
 
 import pandas as pd
 import streamlit as st
@@ -23,18 +37,52 @@ from sqlalchemy import create_engine, text
 
 from core.data_quality import clean_multiples_frame
 
+logger = logging.getLogger(__name__)
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
+def _mask_url(url: str) -> str:
+    """Reduz uma connection string a `esquema://usuario@host:porta/db`, sem senha."""
+    try:
+        from sqlalchemy.engine import make_url
+        u = make_url(url)
+        host = u.host or "?"
+        port = f":{u.port}" if u.port else ""
+        db = f"/{u.database}" if u.database else ""
+        user = f"{u.username}@" if u.username else ""
+        return f"{u.drivername}://{user}{host}{port}{db}"
+    except Exception:
+        return "<url ilegível>"
+
+
 def _resolve_url() -> str | None:
     for key in ("SUPABASE_DB_URL_B3", "SUPABASE_DB_URL"):
+        v = None
         try:
             if hasattr(st, "secrets") and key in st.secrets:
-                return str(st.secrets[key])
+                v = str(st.secrets[key])
         except Exception:
             pass
-        v = os.getenv(key)
+        v = v or os.getenv(key)
         if v:
+            # A-009: este caminho tem prioridade PRÓPRIA (independente de
+            # settings.db_url/DATABASE_URL) por compatibilidade retroativa com
+            # scripts de ingestão que sobrescrevem SUPABASE_DB_URL_B3 na sessão
+            # do shell (ver local_staging/README.md). Quando diverge do que o
+            # resto do app usaria, registra para não ficar silencioso — ver
+            # core.b3_data.load_setores para o aviso visível na UI.
+            try:
+                from core.config import settings
+                unified = settings.db_url
+            except Exception:
+                unified = os.getenv("DATABASE_URL") or ""
+            if unified and unified != v:
+                logger.warning(
+                    "b3_db._resolve_url: usando %s=%s (legado), diverge do banco "
+                    "unificado %s — DATABASE_URL/SUPABASE_UNIFICADO_URL do processo "
+                    "está sendo IGNORADO para esta conexão.",
+                    key, _mask_url(v), _mask_url(unified),
+                )
             return v
     # Último recurso: mesmo banco do app unificado
     try:

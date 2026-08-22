@@ -20,8 +20,8 @@ from design.componentes import (
     badge_status,
     card_metrica,
     container_pagina,
-    secao_titulo,
     em_construcao,
+    secao_titulo,
 )
 
 # ── Dados de referência (atualização manual) ──────────────────────────────────
@@ -192,9 +192,10 @@ def render() -> None:
 def _render_benchmarks_db() -> None:
     """Tenta exibir benchmarks da tabela `benchmarks`."""
     try:
-        from sqlalchemy import text
-        from core.database import get_engine
         import pandas as pd
+        from sqlalchemy import text
+
+        from core.database import get_engine
 
         engine = get_engine()
         if engine is None:
@@ -224,7 +225,7 @@ def _render_benchmarks_db() -> None:
             for r in rows
         ])
 
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, width="stretch")
         st.caption(
             f"{len(rows)} benchmark(s) cadastrado(s) · "
             "Histórico de cotações pendente de importação via API BCB/yfinance."

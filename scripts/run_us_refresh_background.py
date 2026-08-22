@@ -16,7 +16,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / "data" / "us_refresh"
 STATUS = STATE_DIR / "status.json"

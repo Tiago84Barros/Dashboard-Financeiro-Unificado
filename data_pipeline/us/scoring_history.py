@@ -13,8 +13,8 @@ orquestração em banco roda com o warehouse via run_us_ingest.py score-history.
 """
 from __future__ import annotations
 
-import logging
 import json
+import logging
 from bisect import bisect_right
 from datetime import date
 from typing import Iterable, Sequence

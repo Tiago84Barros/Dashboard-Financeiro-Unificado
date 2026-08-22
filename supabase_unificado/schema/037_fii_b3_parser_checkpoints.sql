@@ -10,7 +10,7 @@ ALTER TABLE market.fii_b3_archive_loads
         (archive_year,archive_sha256,parser_name,parser_version);
 
 DROP INDEX IF EXISTS market.idx_fii_b3_archive_status;
-CREATE INDEX idx_fii_b3_archive_parser_status
+CREATE INDEX IF NOT EXISTS idx_fii_b3_archive_parser_status
     ON market.fii_b3_archive_loads
        (parser_name,parser_version,status,archive_year DESC);
 

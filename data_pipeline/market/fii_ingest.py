@@ -9,11 +9,11 @@ bruto p/ permitir re-ranking sem rede (reprocess).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
-import hashlib
 import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -71,8 +71,11 @@ def _score_metadata_ready(conn) -> bool:
 
 def _ensure_methodology_version(conn) -> None:
     """Mantem as FKs de snapshots e gates sincronizadas com a versao do codigo."""
-    from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION,
-                                     methodology_manifest)
+    from core.fii_methodology import (
+        FORMULA_VERSION,
+        METHODOLOGY_VERSION,
+        methodology_manifest,
+    )
     conn.execute(text("""
         INSERT INTO market.fii_methodology_versions
             (methodology_version,formula_version,manifest_json,status)
@@ -88,8 +91,12 @@ def _ensure_methodology_version(conn) -> None:
 
 def snapshot_methodology_v4() -> dict:
     """Calcula e persiste snapshots v4 sem substituir o score legado de market.fiis."""
-    from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION,
-                                     methodology_manifest, score_fiis_by_type)
+    from core.fii_methodology import (
+        FORMULA_VERSION,
+        METHODOLOGY_VERSION,
+        methodology_manifest,
+        score_fiis_by_type,
+    )
     engine = _engine()
     result = {"status": "blocked", "fundos": 0, "gravados": 0, "blockers": []}
     if engine is None:
@@ -1738,8 +1745,9 @@ def enrich_cvm(year: int | None = None) -> dict:
     segmento real, tipo (tijolo/papel/fof/híbrido), patrimônio, VPA, nº cotistas
     e composição de ativos. Requer que o ingest da brapi já tenha gravado o CNPJ.
     """
-    import core.cvm_fii as cvm
     from datetime import datetime, timezone
+
+    import core.cvm_fii as cvm
     engine = _engine()
     prog = {"ano": year, "anos_consultados": [], "fiis_no_banco": 0,
             "casados": 0, "gravados": 0, "erros": 0}
@@ -1793,8 +1801,9 @@ def backfill_metrics_monthly(years: int = 3) -> dict:
     Casa por CNPJ com market.fiis (só grava tickers conhecidos). VPA mensal + preço
     bruto (market.historical_prices) dão o P/VP histórico na leitura. Idempotente.
     """
-    import core.cvm_fii as cvm
     from datetime import datetime, timezone
+
+    import core.cvm_fii as cvm
     engine = _engine()
     prog = {"anos": [], "fiis_no_banco": 0, "linhas": 0, "gravados": 0, "erros": 0}
     if engine is None:
@@ -1921,8 +1930,9 @@ def ingest_imoveis() -> dict:
     market.fii_imoveis. Grava num_imoveis e a vacância do fundo (média ponderada
     pela área) em market.fiis. Best-effort: cobertura varia por fundo.
     """
-    import core.fii_imoveis as fim
     from datetime import datetime, timezone
+
+    import core.fii_imoveis as fim
     engine = _engine()
     prog = {"fiis": 0, "com_imoveis": 0, "imoveis": 0, "gravados": 0, "erros": 0}
     if engine is None:

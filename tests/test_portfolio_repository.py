@@ -1,6 +1,5 @@
 """Repositorio de snapshots: round-trip, retencao e poda de orfaos (SQLite)."""
 import datetime as dt
-import json
 
 import pytest
 from sqlalchemy import create_engine, text

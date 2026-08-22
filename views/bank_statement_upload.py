@@ -23,7 +23,6 @@ from core.config import settings
 from core.utils import fmt_moeda
 from design.componentes import card_metrica
 
-
 _COR_RECEITA = "#00C896"
 _COR_DESPESA = "#FC5C7D"
 _COR_INVEST = "#4A9EFF"
@@ -159,7 +158,7 @@ def _render_diagnostics(parsed: dict) -> None:
                     [{"Motivo": k, "Ocorrencias": v} for k, v in motivos.items()]
                 ),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
 
@@ -229,7 +228,7 @@ def _render_upload(*, show_header: bool = True) -> None:
     edited = st.data_editor(
         edit_df,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         num_rows="fixed",
         column_config={
             "Data": st.column_config.TextColumn("Data", disabled=True),
@@ -245,7 +244,7 @@ def _render_upload(*, show_header: bool = True) -> None:
     if st.button(
         "Importar extrato",
         type="primary",
-        use_container_width=True,
+        width="stretch",
         disabled=(not rows or settings.MOCK_MODE),
         key="bank_statement_import_btn",
     ):
@@ -335,7 +334,7 @@ def _render_review_queue() -> None:
     st.dataframe(
         df,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={"Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")},
     )
 
@@ -373,7 +372,7 @@ def _render_review_queue() -> None:
             key="bank_statement_rule_keyword",
         )
 
-    if st.button("Confirmar classificação", type="primary", use_container_width=True, key="bank_statement_confirm_btn"):
+    if st.button("Confirmar classificação", type="primary", width="stretch", key="bank_statement_confirm_btn"):
         ok, msg = confirm_bank_statement_movement(
             selected["id"],
             categories[category_idx]["id"],

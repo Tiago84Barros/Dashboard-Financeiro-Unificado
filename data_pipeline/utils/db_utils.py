@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy.engine import Engine
-from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 

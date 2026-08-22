@@ -1,5 +1,4 @@
-from views.fiis import (_info_card_html, _scenario_cards_html,
-                        _selection_card_html)
+from views.fiis import _info_card_html, _scenario_cards_html, _selection_card_html
 
 
 def test_info_and_scenario_cards_render_compact_css_blocks():

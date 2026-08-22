@@ -6,19 +6,18 @@ retornos com proventos separadamente quando disponíveis e reporta a cobertura.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import io
 import json
 import logging
-from pathlib import Path
 import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import text
 
 from data_pipeline.market.repository import save_raw_payload
 from data_pipeline.utils.db_utils import get_pipeline_engine
-
 
 URLS = (
     "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A{year}.ZIP",

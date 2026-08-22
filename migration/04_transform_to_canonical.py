@@ -37,7 +37,6 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Mapeamentos de colunas: App 3 (português) → canônico (inglês)
 # Ref: docs/banco_unificado_mapa_origem_destino.md
@@ -519,6 +518,7 @@ def transform_all(cfg) -> dict[str, Any]:  # noqa: ANN001
     if cfg.dest_url:
         try:
             from sqlalchemy import text as _text  # noqa: PLC0415
+
             from migration.config import make_engine  # noqa: PLC0415
             _cat_engine = make_engine(cfg.dest_url, source_label="categories_lookup", read_only_hint=True)
             with _cat_engine.connect() as _conn:

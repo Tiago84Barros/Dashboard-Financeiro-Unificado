@@ -10,7 +10,6 @@ import unicodedata
 
 import pandas as pd
 
-
 US_SECTOR_LABELS = {
     "Basic Materials": "Materiais Básicos",
     "Materials": "Materiais Básicos",

@@ -4,6 +4,7 @@
 def test_load_precos_mensais_us_devolve_indice_mensal_por_simbolo():
     import pandas as pd
     from sqlalchemy import create_engine, text
+
     import core.us_read as ur
 
     eng = create_engine("sqlite:///:memory:")
@@ -29,6 +30,7 @@ def test_load_precos_mensais_us_sem_simbolos_devolve_vazio():
 
 def test_load_precos_mensais_us_com_tabela_ausente_devolve_vazio():
     from sqlalchemy import create_engine
+
     import core.us_read as ur
     assert ur.load_precos_mensais_us(("AAPL",),
                                      engine=create_engine("sqlite:///:memory:")).empty

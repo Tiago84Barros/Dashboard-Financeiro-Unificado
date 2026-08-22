@@ -65,7 +65,11 @@ def _run_job(job_name: str, registry_item: dict) -> dict:
         "execution_time_seconds": 0.0,
     }
 
-    from data_pipeline.utils.logging_utils import log_start, log_finish, update_freshness
+    from data_pipeline.utils.logging_utils import (
+        log_finish,
+        log_start,
+        update_freshness,
+    )
 
     log_id = log_start(table_name, source_name, job_name)
 

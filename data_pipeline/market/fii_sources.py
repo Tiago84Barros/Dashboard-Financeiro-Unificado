@@ -1,13 +1,12 @@
 """Registro de fontes e planos de coleta específicos por categoria de FII."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
 import hashlib
 import json
+from datetime import date, datetime, timezone
 from typing import Any
 
 from core.fii_methodology import source_plan_for_type
-
 
 SOURCE_REGISTRY = {
     "brapi_quote_monthly": {

@@ -2,8 +2,8 @@ from core.fii_lookthrough import (
     dimension_is_applicable,
     has_observed_dimension,
     normalized_dimension_mapping,
-    supplementary_evidence_score,
     summarize_lookthrough_coverage,
+    supplementary_evidence_score,
 )
 
 

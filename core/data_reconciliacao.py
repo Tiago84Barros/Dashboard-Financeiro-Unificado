@@ -37,6 +37,10 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from core.data_quality import CANONICAL_MULTIPLOS_FIELDS
+from core.data_quality import CANONICAL_RANGES as VALID_RANGES
+from core.data_quality import ZERO_INVALID_FIELDS as _ZERO_ALWAYS_INVALID
+
 # ── Mapeamento Fundamentus key → coluna canônica BD ───────────────────────────
 # Fundamentus retorna campos % como raw % (roe=15 para 15%)
 # BD armazena como decimal (ROE=0.15 para 15%)
@@ -81,11 +85,7 @@ _THRESH_PCT   = 0.05   # 5 p.p. em escala decimal
 # fonte externa valida confirmar outra coisa.
 # Fonte unica da verdade: core/data_quality.py (evita duplicacao/divergencia que
 # antes deixava margens de +-200% passarem).
-from core.data_quality import (
-    CANONICAL_RANGES as VALID_RANGES,
-    CANONICAL_MULTIPLOS_FIELDS,
-    ZERO_INVALID_FIELDS as _ZERO_ALWAYS_INVALID,
-)
+
 _ZERO_SUSPECT_MIN_ROWS = 20
 _ZERO_SUSPECT_RATE = 0.80
 _ZERO_SUSPECT_POS_RATE = 0.05
@@ -263,8 +263,8 @@ def get_multiplos_reconciliados(ticker: str) -> dict[str, Any]:
 
     Retorna {} se todas as fontes falharem.
     """
-    from core import b3_db        as _db
-    from core import fundamentus  as _fund
+    from core import b3_db as _db
+    from core import fundamentus as _fund
     from core import status_invest as _si
 
     tk = ticker.strip().upper().replace(".SA", "")
@@ -529,7 +529,7 @@ def batch_fund_fmt(tickers: tuple[str, ...]) -> dict[str, dict]:
     Inclui todos os campos Fundamentus originais (cotacao, setor, psr, etc.),
     com campos do BD sobrescrevendo Fundamentus quando há dado válido sem discrepância.
     """
-    from core import b3_db       as _db
+    from core import b3_db as _db
     from core import fundamentus as _fund
 
     if not tickers:

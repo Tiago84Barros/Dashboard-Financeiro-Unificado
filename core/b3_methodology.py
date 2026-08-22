@@ -1,4 +1,4 @@
 """Identidade da metodologia Empresas B3 compartilhada entre UI e persistência."""
 
-SCORE_VERSION = "2.24.0"
+SCORE_VERSION = "2.25.0"
 MODEL_SCHEMA_VERSION = 3

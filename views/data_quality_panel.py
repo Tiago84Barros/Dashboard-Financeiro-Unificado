@@ -47,7 +47,7 @@ def render_quality_report(df: pd.DataFrame, key_prefix: str = "dq") -> dict:
         )
     if out:
         with st.expander(f"🔎 {len(out)} indicador(es) fora de faixa coerente (tratados como N/D)"):
-            st.dataframe(pd.DataFrame(out), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(out), width="stretch", hide_index=True)
     if dup:
         st.caption(f"Tickers duplicados: {', '.join(dup[:20])}")
     if sem_setor:

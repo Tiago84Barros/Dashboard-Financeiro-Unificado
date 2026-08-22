@@ -9,11 +9,15 @@ Ignora vendas para PM (que e o padrao "preco medio de aquisicao" usado pela B3).
 
 Compara com o que o App 4 esta mostrando para cada ticker.
 """
-import os, sys, sqlite3
+import os
+import sqlite3
+import sys
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collections import defaultdict
+
 from core.config import settings
 
 # Tickers a analisar (LOTE + FRAC tratados como mesmo papel)

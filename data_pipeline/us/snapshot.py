@@ -136,9 +136,9 @@ _ASYM_KEYS = ("asymmetry_score", "confidence", "stage", "risk_class", "horizon",
 # Colunas que o cross-section publica para negociabilidade e ciclo. Os mesmos
 # nomes são montados no modo local (core.us_data), para que motor e telas leiam
 # UMA coluna e não precisem saber de qual modo o app está lendo.
-NEGOCIABILIDADE_COLS = ("giro_diario_usd", "crise_razao", "crise_anos_2008",
-                        "crise_anos_covid", "crise_margem_normal",
-                        "crise_margem_crise")
+NEGOCIABILIDADE_COLS = ("giro_diario_usd", "giro_diario_usd_at", "crise_razao",
+                        "crise_anos_2008", "crise_anos_covid",
+                        "crise_margem_normal", "crise_margem_crise")
 
 
 def negociabilidade_e_ciclo(symbol: str, giro: dict, ciclo: dict) -> dict:
@@ -146,13 +146,16 @@ def negociabilidade_e_ciclo(symbol: str, giro: dict, ciclo: dict) -> dict:
 
     Ausência vira None, nunca zero: giro zero significaria "não negocia", e
     razão zero significaria "colapso total" — dois vereditos fortes inventados
-    a partir de lacuna de coleta.
+    a partir de lacuna de coleta. ``giro_diario_usd_at`` (data da última
+    observação de preço usada no cálculo do giro) é o que
+    ``core.us_liquidity`` exige para considerar a medição atual.
     """
     s = str(symbol).strip().upper()
-    g = giro.get(s)
+    g = giro.get(s) or {}
     c = ciclo.get(s) or {}
     return {
-        "giro_diario_usd": float(g) if g is not None else None,
+        "giro_diario_usd": g.get("giro_diario_usd"),
+        "giro_diario_usd_at": g.get("giro_diario_usd_at"),
         "crise_razao": c.get("razao"),
         "crise_anos_2008": c.get("anos_2008"),
         "crise_anos_covid": c.get("anos_covid"),

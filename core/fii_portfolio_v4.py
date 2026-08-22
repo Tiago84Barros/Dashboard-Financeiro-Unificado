@@ -19,7 +19,6 @@ from core.fii_lookthrough import (
 from core.fii_methodology import MacroScenario, tactical_type_bands
 from core.fii_scenarios import asset_scenario_return
 
-
 SCENARIOS = ("base", "selic_alta", "queda_selic", "inflacao_alta", "vacancia", "credito")
 LIVE_PORTFOLIO_STRATEGY_ID = "fii_integrated_robust_optimizer.v6.7"
 

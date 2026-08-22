@@ -1,5 +1,4 @@
 """Publicacao da serie mensal dos EUA do warehouse local para o Supabase."""
-import pandas as pd
 import pytest
 from sqlalchemy import create_engine, text
 

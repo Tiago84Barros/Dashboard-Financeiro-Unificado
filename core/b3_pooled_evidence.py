@@ -26,13 +26,16 @@ Puro (sem banco, sem rede). Coberto por tests/test_b3_pooled_evidence.py.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
 from core.b3_evidence import (
-    A_FAVOR, CONTRA, INCONCLUSIVO, minimum_detectable_effect,
+    A_FAVOR,
+    CONTRA,
+    INCONCLUSIVO,
+    minimum_detectable_effect,
 )
 
 VERSION = "b3-pooled-evidence-1.0.0"

@@ -17,7 +17,6 @@ from core.portfolio_constraints import (
     project_capped_simplex,
 )
 
-
 Params = tuple[float, float, float]
 
 

@@ -111,7 +111,7 @@ def compute_company_metrics(
         ebitda_derived = True
     net_income  = _latest(income, "net_income")
     interest    = _latest(income, "interest_expense")
-    eps         = _latest(income, "eps")
+    _latest(income, "eps")
 
     total_assets = _latest(balance, "total_assets")
     equity       = _latest(balance, "total_equity")

@@ -264,6 +264,7 @@ def _has_embeddings(ticker: str) -> bool:
 def _get_openai_client():
     try:
         from openai import OpenAI
+
         from core.config import settings
         key = getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY", "")
         if not key:

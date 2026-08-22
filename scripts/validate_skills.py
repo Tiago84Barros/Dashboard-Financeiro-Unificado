@@ -15,6 +15,7 @@ EXPECTED = {
     "streamlit-financial-app",
     "financial-app-quality",
     "streamlit-browser-validation",
+    "profissionalizar-app4",
 }
 
 

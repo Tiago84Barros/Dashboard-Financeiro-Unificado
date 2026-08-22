@@ -17,7 +17,6 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-
 DEFAULT_CANDIDATES: tuple[str, ...] = (
     "ROE",
     "ROIC",

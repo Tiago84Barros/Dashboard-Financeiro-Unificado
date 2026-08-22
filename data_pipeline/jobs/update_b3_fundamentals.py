@@ -41,15 +41,17 @@ def run() -> dict:
     }
 
     try:
-        import yfinance as yf
-        import pandas as pd
+        __import__("pandas")
+        __import__("yfinance")
     except ImportError as e:
         result["status"] = "failed"
         result["error_message"] = f"Dependência não instalada: {e}"
         return result
 
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import text
+
     from data_pipeline.utils.db_utils import get_pipeline_engine
-    from sqlalchemy import text, inspect as sa_inspect
 
     engine = get_pipeline_engine()
     if engine is None:
@@ -60,15 +62,14 @@ def run() -> dict:
     # Reutiliza lógica do backfill existente
     try:
         from scripts.backfill_b3_fundamentals import (
-            yf_annual_rows,
-            current_web_row,
-            collect_changes_for_table,
-            apply_changes,
-            fetch_existing,
-            table_columns,
-            clean_ticker,
             DEMO_COLS,
             MULT_COLS,
+            apply_changes,
+            collect_changes_for_table,
+            current_web_row,
+            fetch_existing,
+            table_columns,
+            yf_annual_rows,
         )
     except ImportError as e:
         result["status"] = "failed"
@@ -206,12 +207,14 @@ def run() -> dict:
 
 def _yf_quarterly_rows(ticker: str) -> dict[date, dict[str, float]]:
     """Retorna linhas trimestrais via yfinance quarterly_financials/balance_sheet/cashflow."""
-    import math
     import pandas as pd
     import yfinance as yf
+
     from scripts.backfill_b3_fundamentals import (
-        stmt_col, first_value, safe_div, finite,
-        annual_dividends, annual_prices,
+        finite,
+        first_value,
+        safe_div,
+        stmt_col,
     )
 
     tkr = yf.Ticker(f"{ticker}.SA")

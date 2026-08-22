@@ -38,12 +38,21 @@ def compute_snapshot(f: dict) -> dict[str, tuple[float, str]]:
        enquanto market_cap/net_income são absolutos: misturar daria ~0).
     Retorna {indicador: (valor, metodo)} apenas com valores válidos na faixa coerente.
     """
-    ni  = f.get("net_income"); rev = f.get("revenue"); ebit = f.get("ebit")
-    ta  = f.get("total_assets"); eq = f.get("equity"); cash = f.get("cash")
-    gd  = f.get("gross_debt"); nd = f.get("net_debt"); fco = f.get("fco")
+    ni  = f.get("net_income")
+    rev = f.get("revenue")
+    ebit = f.get("ebit")
+    ta  = f.get("total_assets")
+    eq = f.get("equity")
+    cash = f.get("cash")
+    gd  = f.get("gross_debt")
+    nd = f.get("net_debt")
+    fco = f.get("fco")
     mc  = f.get("market_cap")
-    div_ps = f.get("div_ttm"); price = f.get("price"); eps = f.get("eps")
-    ca  = f.get("current_assets"); cl = f.get("current_liabilities")
+    div_ps = f.get("div_ttm")
+    price = f.get("price")
+    eps = f.get("eps")
+    ca  = f.get("current_assets")
+    cl = f.get("current_liabilities")
 
     inv_capital = None
     if all(_dq.to_float(x) is not None for x in (eq, gd)):

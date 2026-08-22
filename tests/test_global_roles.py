@@ -177,6 +177,7 @@ def _fii(symbol, dy_mensal, vpa, peso=0.1):
 
 def test_renda_de_fii_usa_o_dy_mensal_e_exige_estabilidade():
     import pandas as pd
+
     from core.global_portfolio.roles import classificar
 
     estavel = [0.008] * 24
@@ -198,6 +199,7 @@ def test_renda_de_fii_usa_o_dy_mensal_e_exige_estabilidade():
 
 def test_fii_com_serie_curta_deixa_renda_indeterminada():
     import pandas as pd
+
     from core.global_portfolio.roles import classificar
 
     df = pd.DataFrame([_fii("CURTO", [0.008] * 6, [100.0] * 6)])
@@ -208,6 +210,7 @@ def test_fii_com_serie_curta_deixa_renda_indeterminada():
 
 def test_crescimento_de_fii_usa_cagr_do_vpa_com_a_janela_declarada():
     import pandas as pd
+
     from core.global_portfolio.roles import classificar
 
     subindo = [100.0 * (1.02 ** i) for i in range(24)]

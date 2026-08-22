@@ -346,8 +346,9 @@ def cadastro(apply: bool = True, years: list[int] | None = None) -> dict:
     market.companies a partir do cadastro oficial da CVM (cad + FCA).
     apply=False = dry-run (só conta). Idempotente.
     """
-    import core.cvm_cadastro as cad
     from datetime import datetime, timezone
+
+    import core.cvm_cadastro as cad
     engine = _engine()
     rep = {"tickers_no_mapa": 0, "novos_cvm_to_ticker": 0, "companies_upsert": 0,
            "apply": apply, "erro": None}
@@ -512,6 +513,7 @@ def enrich_setores() -> dict:
          por ticker no load_setores.
     """
     import pandas as pd
+
     import core.cvm_cadastro as cad
     engine = _engine()
     prog = {"cad": 0, "mapa": 0, "empresas": 0, "mapeadas": 0, "cvm_raw": 0, "erros": 0}
@@ -677,8 +679,9 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
     Roda sobre as empresas já em market.assets (cresce com o bootstrap).
     """
     from datetime import datetime, timezone
-    from data_pipeline.market import metrics as mx
+
     import core.data_quality as dq
+    from data_pipeline.market import metrics as mx
     engine = _engine()
     prog = _new_progress()
     if engine is None:

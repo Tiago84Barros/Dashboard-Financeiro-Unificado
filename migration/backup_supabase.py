@@ -31,8 +31,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def run_backup() -> int:
-    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine  # noqa: PLC0415
     from sqlalchemy import inspect, text  # noqa: PLC0415
+
+    from migration.config import (
+        MigrationConfig,
+        _ensure_utf8_stdout,
+        make_engine,
+    )
 
     _ensure_utf8_stdout()
 

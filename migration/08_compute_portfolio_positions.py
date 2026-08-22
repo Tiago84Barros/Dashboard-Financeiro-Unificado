@@ -459,8 +459,9 @@ def validate_results(conn, text, portfolio_id: str, owner_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 def run(apply: bool) -> int:
-    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine
     from sqlalchemy import text
+
+    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine
 
     _ensure_utf8_stdout()
     cfg = MigrationConfig.from_env(dry_run=not apply)
@@ -519,7 +520,7 @@ def run(apply: bool) -> int:
             print(f"  {len(neg_qty_alerts)} alertas de qty_negativa em {len(neg_by_ticker)} ativos:")
             for ticker, cnt in sorted(neg_by_ticker.items()):
                 print(f"    {ticker:<14} {cnt:>3} ocorrencias")
-            print(f"  Causa: vendas excedem posicao (historico incompleto)")
+            print("  Causa: vendas excedem posicao (historico incompleto)")
 
         if other_alerts:
             for a in other_alerts:

@@ -106,6 +106,63 @@ def test_score_historico_respeita_available_at():
     assert "BBB3" in result
 
 
+def test_score_historico_barra_baseline_quando_prazo_cvm_nao_venceu():
+    """Fail-closed do achado A-002: sem vintage medida, a disponibilidade é
+    MODELADA pelo prazo legal de publicação (31/03 do ano seguinte). Decisão
+    anterior a esse prazo não pode aceitar a linha — era look-ahead latente.
+    """
+    hist = {
+        "AAA3": pd.DataFrame([{
+            "Ticker": "AAA3", "Data": pd.Timestamp("2021-12-31"), "ROE": 0.20,
+        }]),
+        "BBB3": pd.DataFrame([{
+            "Ticker": "BBB3", "Data": pd.Timestamp("2021-12-31"), "ROE": 0.10,
+        }]),
+    }
+    kwargs = dict(pesos={"ROE": (1.0, True)}, lag=1)
+    assert _score_historico_ano(hist, ["AAA3", "BBB3"], ano_ref=2022,
+                                rebal_month=1, **kwargs) == {}
+    assert _score_historico_ano(hist, ["AAA3", "BBB3"], ano_ref=2022,
+                                rebal_month=4, **kwargs) != {}
+
+
+def test_backtest_nao_roda_quando_a_decisao_antecede_a_publicacao():
+    tickers = ["AAAA3", "BBBB3", "CCCC3", "DDDD3", "EEEE3"]
+    index = pd.date_range("2022-01-31", periods=3, freq="ME")
+    prices = pd.DataFrame(
+        [[10.0] * 5] * 3, index=index, columns=tickers,
+    )
+    history = {
+        ticker: pd.DataFrame([{
+            "Ticker": ticker,
+            "Data": pd.Timestamp("2021-12-31"),
+            "ROE": 0.10 + idx * 0.01,
+        }])
+        for idx, ticker in enumerate(tickers)
+    }
+    comum = dict(
+        aporte=1000.0, data_inicio=pd.Timestamp("2022-01-01"),
+        taxa_selic_aa=0.0, pesos={"ROE": (1.0, True)},
+        tk_grupos={ticker: {} for ticker in tickers}, top_n_max=5, cap=0.25,
+    )
+    # janeiro/2022: o balanço FY2021 ainda não é público e não há vintage real
+    vazio, _, _ = _simular_backtest(
+        prices, pd.DataFrame(), history, tickers, rebal_month=1, **comum)
+    assert vazio.empty
+    # abril/2022: prazo vencido — a simulação existe, mas MODELADA
+    prices_abr = pd.DataFrame(
+        [[10.0] * 5] * 3,
+        index=pd.date_range("2022-04-30", periods=3, freq="ME"),
+        columns=tickers,
+    )
+    cheio, _, _ = _simular_backtest(
+        prices_abr, pd.DataFrame(), history, tickers, rebal_month=4, **comum)
+    assert not cheio.empty
+    assert cheio.iloc[-1]["Estratégia"] == pytest.approx(3000.0)
+    assert cheio.attrs["pit_disponibilidade"] == "modelada"
+    assert cheio.attrs["pit_cobertura_medida"] == 0.0
+
+
 def test_plan_hash_muda_quando_peso_ou_score_muda():
     from core.b3_portfolio_model import _plan_hash
 

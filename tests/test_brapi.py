@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 
-import core.brapi as brapi
 import pytest
+
+import core.brapi as brapi
 
 
 def _ts(y, m, d):

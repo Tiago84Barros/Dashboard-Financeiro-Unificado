@@ -29,7 +29,9 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from core.b3_value_route import (
-    ValuePolicy, is_conclusive_failure, rank_value_opportunities,
+    ValuePolicy,
+    is_conclusive_failure,
+    rank_value_opportunities,
 )
 from core.valuation import dividend_sustainability
 

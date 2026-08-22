@@ -109,8 +109,8 @@ def active_models(asset_class: str, *, engine, owner_id: str) -> list[dict]:
             asset_class, spec.models_table, exc_info=True,
         )
         return []
-    return [{"id": str(l["id"]), "params_json": _parse_json(l["params_json"], {})}
-            for l in linhas]
+    return [{"id": str(linha["id"]), "params_json": _parse_json(linha["params_json"], {})}
+            for linha in linhas]
 
 
 def read_model_items(asset_class: str, model_id: str, *, engine) -> list[dict]:
@@ -125,7 +125,7 @@ def read_model_items(asset_class: str, model_id: str, *, engine) -> list[dict]:
             """),
             {"mid": str(model_id)},
         ).mappings().all()
-    return [dict(l) for l in linhas]
+    return [dict(linha) for linha in linhas]
 
 
 def backfill(*, engine, owner_id: str, apply: bool,

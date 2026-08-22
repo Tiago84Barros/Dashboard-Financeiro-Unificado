@@ -85,7 +85,9 @@ def _token() -> str:
     if tok:
         return tok
     try:
-        from core.config import settings  # importa config → load_dotenv() popula os.environ
+        from core.config import (
+            settings,  # importa config → load_dotenv() popula os.environ
+        )
         v = str(getattr(settings, "BRAPI_TOKEN", "") or "").strip()
         if v:
             return v

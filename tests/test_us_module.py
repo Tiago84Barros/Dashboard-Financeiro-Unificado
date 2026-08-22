@@ -29,7 +29,7 @@ def test_schema_040_conteudo():
     for col in ("reference_date", "published_date", "available_at", "content_hash", "cik"):
         assert col in sql, col
     # sem operações destrutivas (ignora comentários -- ...)
-    code = "\n".join(l for l in sql.splitlines() if not l.lstrip().startswith("--"))
+    code = "\n".join(linha for linha in sql.splitlines() if not linha.lstrip().startswith("--"))
     up = code.upper()
     assert "DROP TABLE" not in up
     assert "TRUNCATE" not in up
@@ -46,8 +46,8 @@ def test_todas_migrations_market_us_sao_aplicadas_e_nao_destrutivas():
     assert any("043_market_us_retained_earnings" in n for n in nomes)
     assert nomes == sorted(nomes)          # ordem de aplicação determinística
     for path in schema_files():
-        code = "\n".join(l for l in path.read_text(encoding="utf-8").splitlines()
-                         if not l.lstrip().startswith("--"))
+        code = "\n".join(linha for linha in path.read_text(encoding="utf-8").splitlines()
+                         if not linha.lstrip().startswith("--"))
         up = code.upper()
         assert "DROP TABLE" not in up and "TRUNCATE" not in up and "DELETE FROM" not in up
 

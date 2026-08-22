@@ -27,7 +27,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-
 # ──────────────────────────────────────────────────────────────────────────
 # Lista curada de delisted BR 2010-2025
 # Fontes: notícias B3 + relatórios públicos CVM + jornalismo financeiro

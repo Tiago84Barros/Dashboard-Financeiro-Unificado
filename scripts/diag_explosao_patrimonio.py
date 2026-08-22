@@ -8,16 +8,21 @@ multiplos relatorios XP. Verifica:
   4. Top 5 ativos por market_value somado
   5. Numero de posicoes em portfolio_positions vs snapshots
 """
-import os, sys
+import os
+import sys
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text
+
 from core.config import settings
 from core.database import get_engine
 
+
 def fmt_br(v, d=2):
-    if v is None: return "—"
+    if v is None:
+        return "—"
     try:
         s = f"{float(v):,.{d}f}"
         return s.replace(",", "X").replace(".", ",").replace("X", ".")
@@ -99,7 +104,7 @@ with get_engine().connect() as conn:
     total_mv = sum(float(r.market_value or 0) for r in rows)
     print(f"  Linhas retornadas pelo SQL: {len(rows)}")
     print(f"  Soma market_value:          R$ {fmt_br(total_mv)}")
-    print(f"\n  Top 10 (eventual duplicacao mostra ticker repetido):")
+    print("\n  Top 10 (eventual duplicacao mostra ticker repetido):")
     print(f"  {'Ticker':<10} {'Fonte':<25} {'Qty':>10} {'MV':>14}")
     for r in rows[:10]:
         f = f"{r.source_system}/{r.source_table}"[:25]

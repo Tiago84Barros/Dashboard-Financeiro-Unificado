@@ -151,8 +151,10 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
         result["error_message"] = "yfinance nao instalado"
         return result
 
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import text
+
     from data_pipeline.utils.db_utils import get_pipeline_engine
-    from sqlalchemy import inspect as sa_inspect, text
 
     engine = get_pipeline_engine()
     if engine is None:

@@ -2,12 +2,12 @@ from datetime import date
 
 from core.bank_statement_import import (
     VALOR_ALTO_FINANCIAMENTO,
+    _is_bank_statement_account_type,
+    _transaction_type_for,
     build_bank_statement_hash,
     classify_bank_movement,
     classify_bank_movements,
     parse_c6_bank_text,
-    _is_bank_statement_account_type,
-    _transaction_type_for,
 )
 
 

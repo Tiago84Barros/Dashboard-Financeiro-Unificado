@@ -21,7 +21,7 @@ Puro (sem rede/DB). Coberto por tests/test_us_edgar_facts.py.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Optional
 
 from data_pipeline.us.normalize import content_hash, parse_date, to_float

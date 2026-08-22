@@ -1,9 +1,12 @@
 """Lista colunas reais de investment_transactions."""
-import os, sys
+import os
+import sys
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text
+
 from core.database import get_engine
 
 with get_engine().connect() as conn:

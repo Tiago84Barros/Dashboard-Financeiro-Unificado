@@ -2,7 +2,9 @@
 Diagnostico rapido da carteira (T8 Fase 5.5).
 Chama _carteira_real diretamente, sem Streamlit.
 """
-import os, sys
+import os
+import sys
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

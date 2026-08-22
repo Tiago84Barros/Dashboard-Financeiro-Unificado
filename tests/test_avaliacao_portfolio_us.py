@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pandas as pd
 
-import core.portfolio_report_common as comum
 import core.portfolio_report_b3 as rel_b3
+import core.portfolio_report_common as comum
 import core.portfolio_report_us as rel_us
 import views.analise_portfolio_us as view_us
 
@@ -91,10 +91,10 @@ def test_macro_americano_e_do_fed_nao_do_bcb():
     # Nenhum indicador brasileiro é REPORTADO. A última linha cita Selic e
     # Ibovespa de propósito, para proibi-los — por isso o teste olha só as
     # linhas de dado, não a instrução.
-    linhas_dado = [l for l in texto.splitlines() if l.startswith("  ")
-                   and not l.strip().startswith("Custo de oportunidade")]
+    linhas_dado = [linha for linha in texto.splitlines() if linha.startswith("  ")
+                   and not linha.strip().startswith("Custo de oportunidade")]
     for termo_br in ("Selic", "IPCA", "Ibovespa", "USD/BRL"):
-        assert not any(termo_br in l for l in linhas_dado), termo_br
+        assert not any(termo_br in linha for linha in linhas_dado), termo_br
 
 
 def test_prompt_americano_proibe_referencias_brasileiras():

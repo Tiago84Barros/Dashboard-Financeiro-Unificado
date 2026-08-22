@@ -1,11 +1,15 @@
-from datetime import datetime, timezone
 import io
 import json
 import zipfile
+from datetime import datetime, timezone
 
 import pytest
 
-from data_pipeline.market.fii_cvm_cri import _duration_years, parse_cri_archive, security_key
+from data_pipeline.market.fii_cvm_cri import (
+    _duration_years,
+    parse_cri_archive,
+    security_key,
+)
 from data_pipeline.market.fii_cvm_structured import CvmArchive
 
 

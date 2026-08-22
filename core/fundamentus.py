@@ -404,10 +404,13 @@ def alerts_stock(pos: dict, fd: dict) -> list[Alert]:
     alerts: list[Alert] = []
     t    = pos["ticker"]
     peso = _safe_f(pos.get("pct_carteira", 0))
-    pl   = fd.get("pl");   pvp  = fd.get("pvp")
-    roe  = fd.get("roe");  roic = fd.get("roic")
+    pl   = fd.get("pl")
+    pvp  = fd.get("pvp")
+    roe  = fd.get("roe")
+    roic = fd.get("roic")
     marg = fd.get("marg_liq")
-    divid = fd.get("div_brut_patrim");  dy = fd.get("dy")
+    divid = fd.get("div_brut_patrim")
+    dy = fd.get("dy")
 
     if peso > THR["stock_conc_max"]:
         alerts.append(("yellow", "warn", "Concentração elevada",
@@ -449,7 +452,8 @@ def alerts_fii(pos: dict, fd: dict) -> list[Alert]:
     alerts: list[Alert] = []
     t    = pos["ticker"]
     peso = _safe_f(pos.get("pct_carteira", 0))
-    pvp  = fd.get("pvp");  dy  = fd.get("dy")
+    pvp  = fd.get("pvp")
+    dy  = fd.get("dy")
     vac  = fd.get("vacancia_media") or fd.get("vacancia_fisica")
     qtd  = fd.get("qtd_imoveis")
 

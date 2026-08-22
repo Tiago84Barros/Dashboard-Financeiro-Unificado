@@ -46,14 +46,14 @@ Schema da list retornada por get_transacoes_filtradas():
   lista de dicts idêntica ao schema de 'transacoes' em get_controle()
   extra: ano, mes, dia (ints)
 """
-import logging
 import io
+import logging
 import re
+import unicodedata
 import uuid
 from collections import Counter
 from datetime import date as _date
 from typing import Optional
-import unicodedata
 
 import streamlit as st
 
@@ -450,6 +450,8 @@ _SQL_TRANSACOES_FILTRADAS = """
         t.status,
         COALESCE(c.name, 'Sem categoria') AS category_name,
         COALESCE(ac.name, 'Sem conta')    AS account_name,
+        COALESCE(ac.type, '')             AS account_type,
+        COALESCE(t.source, '')            AS source,
         EXTRACT(year  FROM t.due_date)::int AS ano,
         EXTRACT(month FROM t.due_date)::int AS mes,
         EXTRACT(day   FROM t.due_date)::int AS dia
@@ -515,6 +517,7 @@ def get_contas_cartao_credito() -> list[dict]:
 
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -831,6 +834,7 @@ def corrigir_classificacao_pagamentos_fatura(account_id: str) -> int:
     Retorna o número de registros corrigidos.
     """
     from sqlalchemy import text as _t
+
     from core.database import get_engine
 
     engine = get_engine()
@@ -905,6 +909,7 @@ def limpar_transacoes_cartao(account_id: str, due_date: _date | None = None) -> 
     Retorna o número de registros apagados.
     """
     from sqlalchemy import text as _t
+
     from core.database import get_engine
 
     engine = get_engine()
@@ -958,6 +963,7 @@ def importar_fatura_cartao_csv(file_bytes: bytes, vencimento: _date, account_id:
         return {"ok": False, "message": "; ".join(parsed.get("errors") or ["Fatura sem linhas válidas."])}
 
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()
@@ -1115,6 +1121,7 @@ def inserir_transacao(
 
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1134,9 +1141,9 @@ def inserir_transacao(
                 {"account_id": conta_id, "uid": owner},
             ).fetchone()
             if not account:
-                return False, "Conta nÃ£o encontrada."
+                return False, "Conta não encontrada."
             if account.type == "credit_card":
-                return False, "Compras de cartÃ£o de crÃ©dito devem ser importadas pela fatura CSV."
+                return False, "Compras de cartão de crédito devem ser importadas pela fatura CSV."
 
             conn.execute(
                 text(_SQL_INSERT_TX),
@@ -1178,6 +1185,7 @@ def atualizar_transacao(
 
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1235,6 +1243,7 @@ def atualizar_transacao_cartao(
 
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1310,6 +1319,7 @@ def get_card_category_rules() -> list[tuple[str, str]]:
         return []
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1337,7 +1347,7 @@ def add_card_category_rule(palavra_chave: str, category_name: str) -> tuple[bool
     """Cria/atualiza uma regra do usuário. A chave é normalizada em MAIÚSCULO."""
     if settings.MOCK_MODE:
         return False, "Modo mock ativo."
-    from core.card_categorization import _norm_up, CATEGORY_TYPE
+    from core.card_categorization import CATEGORY_TYPE, _norm_up
 
     chave = _norm_up(palavra_chave)
     if not chave:
@@ -1346,6 +1356,7 @@ def add_card_category_rule(palavra_chave: str, category_name: str) -> tuple[bool
         return False, f"Categoria inválida: {category_name}"
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1385,6 +1396,7 @@ def definir_categoria_transacao_cartao(tx_id: str, category_name: str) -> tuple[
         return False, f"Categoria inválida: {category_name}"
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1463,6 +1475,7 @@ def get_gastos_categoria_anual(ano: int) -> list:
 
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1497,19 +1510,25 @@ def get_transacoes_filtradas(
     mes: Optional[int] = None,
     dia: Optional[int] = None,
     texto: str = "",
+    incluir_fatura_cartao: bool = False,
 ) -> list:
     """
     Retorna transações filtradas para a aba Tabelas.
     Aplica filtros opcionais em Python (sobre lista completa do usuário).
+
+    Por padrão EXCLUI lançamentos da fatura de cartão (account_type='credit_card'
+    AND source='csv') — são fluxo FUTURO (ainda não saíram da conta), enquanto
+    esta aba mistura receitas/despesas/investimentos que já são fluxo de caixa.
+    Ver `incluir_fatura_cartao=True` para incluí-los explicitamente na consulta.
     """
     if settings.MOCK_MODE:
-        return _transacoes_mock_filtradas(tipo, categoria, ano, mes, dia, texto)
+        return _transacoes_mock_filtradas(tipo, categoria, ano, mes, dia, texto, incluir_fatura_cartao)
 
     try:
-        return _transacoes_real_filtradas(tipo, categoria, ano, mes, dia, texto)
+        return _transacoes_real_filtradas(tipo, categoria, ano, mes, dia, texto, incluir_fatura_cartao)
     except Exception as exc:
         logger.warning("[controle] get_transacoes_filtradas falhou (%s) — usando mock.", type(exc).__name__)
-        return _transacoes_mock_filtradas(tipo, categoria, ano, mes, dia, texto)
+        return _transacoes_mock_filtradas(tipo, categoria, ano, mes, dia, texto, incluir_fatura_cartao)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1543,6 +1562,7 @@ def _gastos_cartao_mock(ano: int) -> list:
 
 def _gastos_cartao_real(ano: int) -> list:
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()
@@ -1581,6 +1601,7 @@ def get_gastos_cartao_fatura_mensal(ano: int) -> list:
         return []
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1623,6 +1644,7 @@ def get_historico_cc_mensal() -> list:
         return []
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1659,6 +1681,7 @@ def get_transacoes_cartao_credito() -> list:
 
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1724,6 +1747,7 @@ def get_dividas_cc() -> list:
 
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -1847,6 +1871,7 @@ def _controle_real(ano: int, mes: int) -> dict:
       - Todas as queries filtradas por OWNER_USER_ID.
     """
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()
@@ -1957,6 +1982,7 @@ def _controle_real(ano: int, mes: int) -> dict:
 def _opcoes_real() -> dict:
     """Carrega categorias e contas do banco para popular o formulário."""
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()
@@ -2038,6 +2064,7 @@ def _historico_anual_mock() -> dict:
 
 def _historico_anual_real() -> dict:
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()
@@ -2092,6 +2119,7 @@ def _tx_to_dict(tx: dict) -> dict:
 def _transacoes_mock_filtradas(
     tipo: str, categoria: str, ano: Optional[int],
     mes: Optional[int], dia: Optional[int], texto: str,
+    incluir_fatura_cartao: bool = False,
 ) -> list:
     """Filtra o mock de transações."""
     from datetime import date as _dt
@@ -2113,6 +2141,7 @@ def _transacoes_mock_filtradas(
             "status": "settled",
             "categoria": cat,
             "conta": conta,
+            "eh_fatura_cartao": False,  # mock não modela lançamento de fatura CSV
             "eh_receita": tipo_fluxo == "income",
             "eh_despesa": tipo_fluxo == "expense",
             "eh_investimento": tipo_fluxo == "investment",
@@ -2121,14 +2150,16 @@ def _transacoes_mock_filtradas(
             "dia": data.day,
         })
 
-    return _filtrar_transacoes(raw, tipo, categoria, ano, mes, dia, texto)
+    return _filtrar_transacoes(raw, tipo, categoria, ano, mes, dia, texto, incluir_fatura_cartao)
 
 
 def _transacoes_real_filtradas(
     tipo: str, categoria: str, ano: Optional[int],
     mes: Optional[int], dia: Optional[int], texto: str,
+    incluir_fatura_cartao: bool = False,
 ) -> list:
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()
@@ -2164,6 +2195,7 @@ def _transacoes_real_filtradas(
             "status": r.status,
             "categoria": r.category_name,
             "conta": r.account_name,
+            "eh_fatura_cartao": (r.account_type == "credit_card" and r.source == "csv"),
             "eh_receita": tipo_fluxo == "income",
             "eh_despesa": tipo_fluxo == "expense",
             "eh_investimento": tipo_fluxo == "investment",
@@ -2172,15 +2204,19 @@ def _transacoes_real_filtradas(
             "dia": int(r.dia) if r.dia else None,
         })
 
-    return _filtrar_transacoes(txs, tipo, categoria, ano, mes, dia, texto)
+    return _filtrar_transacoes(txs, tipo, categoria, ano, mes, dia, texto, incluir_fatura_cartao)
 
 
 def _filtrar_transacoes(
     txs: list, tipo: str, categoria: str,
     ano: Optional[int], mes: Optional[int], dia: Optional[int], texto: str,
+    incluir_fatura_cartao: bool = False,
 ) -> list:
     """Aplica filtros em memória."""
     out = txs
+
+    if not incluir_fatura_cartao:
+        out = [t for t in out if not t.get("eh_fatura_cartao")]
 
     if tipo == "Receitas":
         out = [t for t in out if t.get("tipo_fluxo") == "income"]

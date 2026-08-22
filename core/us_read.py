@@ -13,6 +13,7 @@ Usa a engine central (core.database.get_engine). Nenhuma engine nova é criada.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 import pandas as pd
 from sqlalchemy import bindparam, text
@@ -794,13 +795,22 @@ def load_ingestion_runs() -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
 
-def load_us_giro_diario(dias: int = 180) -> dict[str, float]:
-    """{symbol: giro financeiro diário mediano em US$}.
+def load_us_giro_diario(dias: int = 180) -> dict[str, dict]:
+    """{symbol: {"giro_diario_usd": float, "giro_diario_usd_at": iso str|None}}.
 
     Diferente do B3, aqui a série é DIÁRIA de verdade (``prices_daily``), então
     não há a aproximação de dividir barra mensal por 21 pregões. Mediana e não
     média: um dia de leilão ou de entrada em índice não vira liquidez
     permanente.
+
+    ``giro_diario_usd_at`` é a data da observação de preço mais recente dentro
+    da janela (``MAX(date)``), em meia-noite UTC — é o timestamp que
+    ``core.us_liquidity._timestamp_atual`` usa para decidir se a medição de
+    negociabilidade está atual (gate de liquidez). Sem esta chave, nenhuma
+    medição de giro tinha como ser considerada "atual" em lugar nenhum do
+    pipeline, e o piso de negociabilidade ficava permanentemente
+    inatingível — achado descoberto ao investigar por que a Criação de
+    Portfólio bloqueava 100% do universo mesmo com preços recém-atualizados.
     """
     eng = _engine()
     if eng is None or not schema_ready():
@@ -809,7 +819,8 @@ def load_us_giro_diario(dias: int = 180) -> dict[str, float]:
         df = pd.read_sql_query(text("""
         SELECT p.symbol,
                percentile_cont(0.5) WITHIN GROUP (
-                   ORDER BY (p.close * p.volume)::double precision) AS giro
+                   ORDER BY (p.close * p.volume)::double precision) AS giro,
+               MAX(p.date) AS ultima_data
         FROM market_us.prices_daily p
         WHERE p.date >= CURRENT_DATE - make_interval(days => :dias)
           AND p.volume > 0 AND p.close > 0
@@ -817,12 +828,19 @@ def load_us_giro_diario(dias: int = 180) -> dict[str, float]:
         """), conn, params={"dias": int(dias)})
     if df is None or df.empty:
         return {}
-    out: dict[str, float] = {}
+    out: dict[str, dict] = {}
     for _, row in df.iterrows():
         try:
-            out[str(row["symbol"]).strip().upper()] = float(row["giro"])
+            giro = float(row["giro"])
         except (TypeError, ValueError):
             continue
+        symbol = str(row["symbol"]).strip().upper()
+        ultima_data = row.get("ultima_data")
+        as_of = None
+        if ultima_data is not None and pd.notna(ultima_data):
+            ts = pd.Timestamp(ultima_data)
+            as_of = datetime(ts.year, ts.month, ts.day, tzinfo=timezone.utc).isoformat()
+        out[symbol] = {"giro_diario_usd": giro, "giro_diario_usd_at": as_of}
     return out
 
 
@@ -835,7 +853,9 @@ def load_us_resiliencia() -> dict[str, dict]:
     core.us_cycle_evidence para por que só a primeira sustenta veredito.
     """
     from core.us_cycle_evidence import (
-        CRISE_2008, CRISE_COVID, MARGEM_NORMAL_MINIMA,
+        CRISE_2008,
+        CRISE_COVID,
+        MARGEM_NORMAL_MINIMA,
     )
 
     crises = list(CRISE_2008) + list(CRISE_COVID)

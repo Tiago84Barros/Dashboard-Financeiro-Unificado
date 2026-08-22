@@ -1,6 +1,6 @@
+import inspect
 from contextlib import contextmanager
 from datetime import date
-import inspect
 
 import pandas as pd
 from sqlalchemy import create_engine, text

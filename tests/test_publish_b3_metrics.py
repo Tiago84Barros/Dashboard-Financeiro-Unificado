@@ -57,7 +57,7 @@ def test_grava_linhas_completas_nao_so_as_chaves(tmp_path):
     with destino.open(encoding="utf-8") as f:
         linhas = list(csv.DictReader(f))
     assert len(linhas) == 2
-    assert {l["ticker"] for l in linhas} == {"BBAS3", "ITSA4"}
+    assert {linha["ticker"] for linha in linhas} == {"BBAS3", "ITSA4"}
     assert linhas[0]["metric_value"] == "1.0"          # valor, não só a chave
     assert linhas[0]["calculation_method"] == "x"
 

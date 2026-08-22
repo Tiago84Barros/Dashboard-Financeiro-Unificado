@@ -6,9 +6,11 @@ import pytest
 
 from core.b3_evidence import A_FAVOR, CONTRA, INCONCLUSIVO
 from core.b3_pooled_evidence import (
-    SegmentSample, pooled_yearly_ics, shrink_segment_estimates, universe_evidence,
+    SegmentSample,
+    pooled_yearly_ics,
+    shrink_segment_estimates,
+    universe_evidence,
 )
-
 
 # ── IC agrupado no universo ──────────────────────────────────────────────────
 

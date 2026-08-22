@@ -29,6 +29,7 @@ def _universo(n: int = 24) -> pd.DataFrame:
         "roe": np.linspace(.08, .30, n),
         "net_margin": np.linspace(.03, .22, n),
         "giro_diario_usd": np.r_[np.full(metade, 5e7), np.full(n - metade, 2e5)],
+        "giro_diario_usd_at": [pd.Timestamp.now(tz="UTC")] * n,
         "crise_razao": np.r_[np.full(metade, 0.95), np.full(n - metade, 0.25)],
         "crise_margem_normal": [0.18] * n,
         "crise_margem_crise": np.r_[np.full(metade, 0.171),
@@ -55,7 +56,8 @@ def test_piso_de_giro_remove_quem_nao_negocia():
     """Valor de mercado alto não é negociabilidade — metade do universo tem
     US$ 5 bi e gira US$ 200 mil/dia."""
     from core.us_portfolio_creation import (
-        USPortfolioCreationParams, prepare_eligible_universe,
+        USPortfolioCreationParams,
+        prepare_eligible_universe,
     )
     u = _universo()
     sem, _ = prepare_eligible_universe(
@@ -67,30 +69,63 @@ def test_piso_de_giro_remove_quem_nao_negocia():
     assert exc.attrs["liquidity_warnings"]
 
 
-def test_sem_serie_de_volume_nao_e_removida():
-    """Ausência de medição não é prova de iliquidez — é o erro da faixa de
-    validação, que gravava NULL e depois lia o NULL como falha."""
+def test_sem_serie_de_volume_sai_do_universo_de_carteira_com_piso_ligado():
+    """INVERTE `test_sem_serie_de_volume_nao_e_removida` (achado A-004).
+
+    O teste antigo exigia `len(elegiveis) == len(u)` com o piso ligado: o
+    universo inteiro sem medição de giro seguia elegível. A premissa ("ausência
+    de medição não é prova de iliquidez") vale para explorar o universo e não
+    para montar carteira — não medir a negociabilidade de um papel que se vai
+    comprar é risco não verificado, não é neutralidade.
+
+    A ausência continua ausência: elas não são contadas como reprovadas, vão
+    para uma linha de exclusão própria e voltam quando o piso é zerado.
+    """
     from core.us_portfolio_creation import (
-        USPortfolioCreationParams, prepare_eligible_universe,
+        USPortfolioCreationParams,
+        prepare_eligible_universe,
     )
     u = _universo()
     u["giro_diario_usd"] = np.nan
     elegiveis, exc = prepare_eligible_universe(u, USPortfolioCreationParams())
 
-    assert len(elegiveis) == len(u)
+    assert elegiveis.empty
     assert exc.loc[exc["key"] == "liquidity", "count"].iloc[0] == 0
-    assert any("não foram verificadas" in a
-               for a in exc.attrs["liquidity_warnings"])
+    assert exc.loc[exc["key"] == "liquidity_unverified", "count"].iloc[0] == len(u)
+    assert len(exc.attrs["liquidity_unverified"]) == len(u)
+    assert any("não verificada" in a for a in exc.attrs["liquidity_warnings"])
+
+    livre, exc_livre = prepare_eligible_universe(
+        u, USPortfolioCreationParams(min_daily_turnover_usd=0.0))
+    assert len(livre) == len(u)
+    assert any("exploratório" in a for a in exc_livre.attrs["liquidity_warnings"])
 
 
-def test_universo_sem_a_coluna_de_giro_nao_quebra():
-    """A vitrine publicada antes desta mudança não tem a coluna."""
+def test_universo_sem_a_coluna_de_giro_bloqueia_a_publicacao():
+    """INVERTE `test_universo_sem_a_coluna_de_giro_nao_quebra` (achado A-004).
+
+    "Não quebra" era o requisito errado: a vitrine sem a coluna fazia o motor
+    PULAR o gate inteiro e devolver carteira cheia, com o piso de US$ 1 mi/dia
+    ligado na tela e nenhuma posição verificada. Não quebrar continua valendo —
+    o motor devolve payload completo, sem exceção —, mas o resultado é bloqueio
+    com instrução de ingestão, não carteira.
+    """
     from core.us_portfolio_creation import (
-        USPortfolioCreationParams, build_portfolio_creation,
+        USPortfolioCreationParams,
+        build_portfolio_creation,
     )
     u = _universo().drop(columns=["giro_diario_usd"])
     r = build_portfolio_creation(u, _params_frouxos(USPortfolioCreationParams))
-    assert not r["holdings"].empty
+
+    assert r["ok"] is False and r["blocked"] is True
+    assert r["holdings"].empty
+    assert "run_us_ingest.py" in r["blocking_error"]
+
+    # Zerar o piso é a decisão explícita de explorar sem validar liquidez.
+    sem_piso = build_portfolio_creation(
+        u, _params_frouxos(USPortfolioCreationParams, min_daily_turnover_usd=0.0))
+    assert not sem_piso["holdings"].empty
+    assert sem_piso["blocking_error"] is None
 
 
 def test_piso_de_qualidade_substitui_dentro_da_industria():
@@ -99,8 +134,10 @@ def test_piso_de_qualidade_substitui_dentro_da_industria():
     as 21 indústrias com líder 'Excluída' são 100% 'Excluída' —, então a
     substituição precisa de fixture para ser exercitada de verdade."""
     from core.us_portfolio_creation import (
-        USPortfolioCreationParams, prepare_eligible_universe,
-        build_industry_audit, select_industry_leaders,
+        USPortfolioCreationParams,
+        build_industry_audit,
+        prepare_eligible_universe,
+        select_industry_leaders,
     )
     p = _params_frouxos(USPortfolioCreationParams,
                         min_daily_turnover_usd=0.0, leaders_per_industry=1)
@@ -131,8 +168,10 @@ def test_piso_de_qualidade_substitui_dentro_da_industria():
 def test_piso_desligado_deixa_a_reprovada_entrar():
     """O toggle precisa mudar o resultado, senão é decoração."""
     from core.us_portfolio_creation import (
-        USPortfolioCreationParams, prepare_eligible_universe,
-        build_industry_audit, select_industry_leaders,
+        USPortfolioCreationParams,
+        build_industry_audit,
+        prepare_eligible_universe,
+        select_industry_leaders,
     )
     base = dict(min_daily_turnover_usd=0.0, leaders_per_industry=1)
     elegiveis, _ = prepare_eligible_universe(
@@ -157,15 +196,6 @@ def test_piso_desligado_deixa_a_reprovada_entrar():
 
 # ── Renderização ─────────────────────────────────────────────────────────────
 
-def _sem_streamlit_runtime():
-    try:
-        from streamlit.testing.v1 import AppTest       # noqa: F401
-        return False
-    except Exception:
-        return True
-
-
-@pytest.mark.skipif(_sem_streamlit_runtime(), reason="streamlit.testing indisponível")
 def test_ciclo_renderiza_sem_erro(tmp_path):
     """Percentuais, cards e column_config passam pelo Streamlit de verdade."""
     from streamlit.testing.v1 import AppTest
@@ -185,7 +215,99 @@ def test_ciclo_renderiza_sem_erro(tmp_path):
     assert "2008" in texto
 
 
-@pytest.mark.skipif(_sem_streamlit_runtime(), reason="streamlit.testing indisponível")
+def _app_filtro_liquidez(tmp_path, frame: pd.DataFrame, piso: float):
+    """Roda `_render_us_filtro_liquidez` no Streamlit de verdade, sem banco.
+
+    Pickle e não JSON: `to_json` grava ±infinito como null e o caso mais
+    perigoso (inf passando por `>= piso`) viraria um NaN comum no caminho.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    dados = tmp_path / "u.pkl"
+    frame.to_pickle(dados)
+    script = tmp_path / "app.py"
+    piso_expr = (
+        "float('nan')" if np.isnan(piso) else
+        "float('inf')" if np.isposinf(piso) else
+        "float('-inf')" if np.isneginf(piso) else repr(piso)
+    )
+    script.write_text(
+        "import pandas as pd, streamlit as st\n"
+        f"u = pd.read_pickle(r'{dados}')\n"
+        "from views.empresas_americanas import _render_us_filtro_liquidez\n"
+        f"saida = _render_us_filtro_liquidez(u, {piso_expr})\n"
+        "st.text(','.join(sorted(saida['symbol'].astype(str))))\n",
+        encoding="utf-8")
+    at = AppTest.from_file(str(script), default_timeout=60).run()
+    assert not at.exception, at.exception
+    restantes = [s for s in at.text[0].value.split(",") if s]
+    return at, restantes
+
+
+def _universo_tres_estados() -> pd.DataFrame:
+    """S00/S01 não verificadas, S02/S03 lixo (±inf), S04/S05 abaixo, S06/S07 ok."""
+    u = _universo(8)
+    u["giro_diario_usd"] = [np.nan, np.nan, np.inf, -np.inf,
+                            2e5, 0.0, 5e7, 4e6]
+    return u
+
+
+def test_tela_com_piso_remove_o_nao_verificado_e_declara_quantos(tmp_path):
+    """A tela replicava `giro.isna() | (giro >= piso)`: prometia "≥ US$ 20
+    milhões/dia" e listava empresa cujo volume ninguém mediu."""
+    u = _universo_tres_estados()
+    at, restantes = _app_filtro_liquidez(tmp_path, u, 1e6)
+
+    assert set(restantes) == {"S06", "S07"}
+    # Card CSS, não informação solta: os três estados aparecem no markdown.
+    cards = " ".join(m.value for m in at.markdown)
+    assert "Não verificadas" in cards and "Medida abaixo do piso" in cards
+    assert any("sem série de volume ou sem data" in c.value
+               for c in at.caption)
+
+
+def test_tela_sem_piso_mantem_tudo_mas_avisa_que_nao_validou(tmp_path):
+    """Modo exploratório: o não verificado aparece e a tela diz que aparece."""
+    u = _universo_tres_estados()
+    at, restantes = _app_filtro_liquidez(tmp_path, u, 0.0)
+
+    assert set(restantes) == set(u["symbol"])
+    assert any("não validada" in c.value for c in at.caption)
+
+
+@pytest.mark.parametrize("piso_invalido", [float("nan"), -1.0,
+                                            float("inf"), float("-inf")])
+def test_tela_bloqueia_piso_invalido_sem_excecao(tmp_path, piso_invalido):
+    """O mesmo valor inválido do motor não pode renderizar análise enganosa."""
+    at, restantes = _app_filtro_liquidez(tmp_path, _universo_tres_estados(), piso_invalido)
+
+    assert restantes == []
+    assert any("Piso de negociabilidade inválido" in error.value for error in at.error)
+
+
+def test_tela_exige_timestamp_atual_para_o_giro_alto(tmp_path):
+    """Valor alto não basta: a UI usa a mesma janela de frescor do motor."""
+    u = _universo(4)
+    u["giro_diario_usd"] = 50e6
+    u["giro_diario_usd_at"] = [pd.Timestamp.now(tz="UTC"),
+                                 pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=8),
+                                 pd.NaT, "data inválida"]
+    at, restantes = _app_filtro_liquidez(tmp_path, u, 1e6)
+
+    assert restantes == ["S00"]
+    assert any("sem série de volume ou sem data" in c.value for c in at.caption)
+
+
+def test_tela_sem_a_coluna_de_volume_nao_finge_ter_aplicado_o_piso(tmp_path):
+    """Sem a coluna, o piso não pode ser aplicado — e devolver o universo
+    inteiro seria afirmar que ele foi."""
+    u = _universo(8).drop(columns=["giro_diario_usd"])
+    at, restantes = _app_filtro_liquidez(tmp_path, u, 5e6)
+
+    assert restantes == []
+    assert any("não publica o volume negociado" in w.value for w in at.warning)
+
+
 def test_ciclo_sem_dado_declara_em_vez_de_sumir(tmp_path):
     """A vitrine publicada hoje não traz as colunas; a seção precisa dizer
     isso em vez de renderizar uma tabela vazia que parece 'tudo certo'."""
@@ -215,8 +337,10 @@ def test_o_piso_de_qualidade_nao_reordena_por_conta_propria():
     o de maior score sem nenhuma linha dizendo por quê.
     """
     from core.us_portfolio_creation import (
-        USPortfolioCreationParams, prepare_eligible_universe,
-        build_industry_audit, select_industry_leaders,
+        USPortfolioCreationParams,
+        build_industry_audit,
+        prepare_eligible_universe,
+        select_industry_leaders,
     )
     p = _params_frouxos(USPortfolioCreationParams, min_daily_turnover_usd=0.0,
                         leaders_per_industry=2)

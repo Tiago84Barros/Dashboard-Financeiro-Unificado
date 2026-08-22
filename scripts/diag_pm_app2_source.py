@@ -6,7 +6,10 @@ A SOURCE_DB_APP2 e a base de transacoes/posicoes do app original que migrou
 para o App 4. Os PMs ali sao a verdade que o usuario validou via Dashboard
 Investimentos.
 """
-import os, sys, sqlite3
+import os
+import sqlite3
+import sys
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -58,13 +61,12 @@ def main():
     # Tenta descobrir nome das tabelas-chave
     table_names = [r["name"] for r in rows]
     pos_table = None
-    tx_table = None
     for name in table_names:
         n = name.lower()
         if "position" in n or "carteira" in n:
             pos_table = name
         if "transac" in n or "trade" in n or "operac" in n:
-            tx_table = name
+            pass
 
     if not pos_table:
         # Fallback: ver tabelas com mais rows e que contenham ticker

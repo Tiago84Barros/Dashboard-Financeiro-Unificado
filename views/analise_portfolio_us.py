@@ -30,12 +30,17 @@ from core.llm_b3 import (
     redistribuir_pesos,
 )
 from core.llm_context_us import build_llm_context_for_us_portfolio_chat
-from core.market_companies import translate_us_industry, translate_us_sector, us_logo_url
+from core.market_companies import (
+    translate_us_industry,
+    translate_us_sector,
+    us_logo_url,
+)
 from core.portfolio_report_us import (
+    GRAU_LABEL,
     analyze_us_portfolio_report,
     generate_company_us_report,
+    grau_de_confianca,
 )
-from core.portfolio_report_us import GRAU_LABEL, grau_de_confianca
 from core.us_macro import (
     FONTE_OBSERVADO,
     FONTE_PREMISSA,
@@ -43,6 +48,7 @@ from core.us_macro import (
     evaluate_macro,
 )
 from core.us_portfolio_model import load_active_us_portfolio_model
+from design.market_companies import render_company_logo
 
 # CSS compartilhado com a aba B3: o visual das duas telas é o mesmo contrato,
 # e duplicar a folha garantiria que uma divergisse da outra na primeira mudança.
@@ -94,21 +100,25 @@ def _render_portfolio_salvo(model: dict, pesos_novos: dict[str, float] | None) -
     ])
     st.markdown(f'<div class="apb3-kpi-row">{cards}</div>', unsafe_allow_html=True)
 
-    logos = '<div class="apb3-logo-grid">'
-    for it in sorted(items, key=lambda x: -float(x.get("weight") or 0)):
-        tk = str(it.get("ticker") or it.get("symbol") or "")
-        peso_original = float(it.get("weight") or 0)
-        peso = (pesos_novos.get(tk, peso_original) if pesos_novos else peso_original)
-        logos += (
-            f'<div class="apb3-logo-item">'
-            f'<img src="{us_logo_url(tk)}" width="38" height="38" '
-            f'style="border-radius:8px;object-fit:contain;" '
-            f'onerror="this.style.display=\'none\'">'
-            f'<div class="apb3-logo-ticker">{tk}</div>'
-            f'<div class="apb3-logo-weight">{peso*100:.1f}%</div>'
-            f'</div>'
-        )
-    st.markdown(logos + "</div>", unsafe_allow_html=True)
+    # Colunas fixas — sem <img onerror> cru, achado A-012.
+    itens_ordenados = sorted(items, key=lambda x: -float(x.get("weight") or 0))
+    _LOGO_GRID_COLS = 6
+    for start in range(0, len(itens_ordenados), _LOGO_GRID_COLS):
+        cols_logo = st.columns(_LOGO_GRID_COLS, gap="small")
+        linha = itens_ordenados[start:start + _LOGO_GRID_COLS]
+        for col, it in zip(cols_logo, linha):
+            tk = str(it.get("ticker") or it.get("symbol") or "")
+            peso_original = float(it.get("weight") or 0)
+            peso = (pesos_novos.get(tk, peso_original) if pesos_novos else peso_original)
+            with col:
+                st.markdown('<div class="apb3-logo-item">', unsafe_allow_html=True)
+                render_company_logo(tk, us_logo_url(tk), size=38)
+                st.markdown(
+                    f'<div class="apb3-logo-ticker">{tk}</div>'
+                    f'<div class="apb3-logo-weight">{peso*100:.1f}%</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
 
 def _avaliacao_quantitativa(model: dict, scored: pd.DataFrame, macro: dict) -> dict:
@@ -178,7 +188,7 @@ def _render_macro(macro: dict) -> None:
         return
     entradas = macro.get("inputs") or {}
     observado = bool(macro.get("observado"))
-    selo = (f'<span class="apb3-tag-pill" style="color:#34D399;">📡 observado'
+    selo = ('<span class="apb3-tag-pill" style="color:#34D399;">📡 observado'
             + (f' · {macro.get("as_of")}' if macro.get("as_of") else "") + '</span>'
             if observado else
             '<span class="apb3-tag-pill" style="color:#FBBF24;">📐 premissa de simulação</span>')
@@ -416,26 +426,32 @@ def _render_alocacao(items_analisados: list[dict], pesos_novos: dict[str, float]
         "a Criação de Portfólio."
     )
 
-    cards = '<div class="apb3-alloc-grid">'
-    for it in sorted(items_analisados, key=lambda x: -pesos_novos.get(x.get("ticker", ""), 0)):
-        tk = it.get("ticker", "")
-        nome = (it.get("nome") or tk)[:24]
-        persp = (it.get("analise", {}) or {}).get("perspectiva", "moderada")
-        w_novo = pesos_novos.get(tk, 0.0)
-        w_antigo = float(it.get("peso_pct", 0.0)) / 100.0
-        cards += (
-            f'<div class="apb3-alloc-card">'
-            f'<img src="{us_logo_url(tk)}" width="36" height="36" '
-            f'style="border-radius:8px;object-fit:contain;" '
-            f'onerror="this.style.display=\'none\'">'
-            f'<div class="apb3-alloc-ticker">{tk}</div>'
-            f'<div class="apb3-alloc-nome" title="{nome}">{nome}</div>'
-            f'<div class="apb3-alloc-pct">{w_novo*100:.1f}%</div>'
-            f'<div class="apb3-alloc-delta">{_delta_str(w_novo, w_antigo)}</div>'
-            + _persp_badge(persp) +
-            f'</div>'
-        )
-    st.markdown(cards + "</div>", unsafe_allow_html=True)
+    # Colunas fixas — sem <img onerror> cru, achado A-012.
+    itens_alocacao = sorted(
+        items_analisados, key=lambda x: -pesos_novos.get(x.get("ticker", ""), 0)
+    )
+    _ALLOC_GRID_COLS = 4
+    for start in range(0, len(itens_alocacao), _ALLOC_GRID_COLS):
+        cols_alloc = st.columns(_ALLOC_GRID_COLS, gap="small")
+        linha = itens_alocacao[start:start + _ALLOC_GRID_COLS]
+        for col, it in zip(cols_alloc, linha):
+            tk = it.get("ticker", "")
+            nome = (it.get("nome") or tk)[:24]
+            persp = (it.get("analise", {}) or {}).get("perspectiva", "moderada")
+            w_novo = pesos_novos.get(tk, 0.0)
+            w_antigo = float(it.get("peso_pct", 0.0)) / 100.0
+            with col:
+                st.markdown('<div class="apb3-alloc-card">', unsafe_allow_html=True)
+                render_company_logo(tk, us_logo_url(tk), size=36)
+                st.markdown(
+                    f'<div class="apb3-alloc-ticker">{tk}</div>'
+                    f'<div class="apb3-alloc-nome" title="{nome}">{nome}</div>'
+                    f'<div class="apb3-alloc-pct">{w_novo*100:.1f}%</div>'
+                    f'<div class="apb3-alloc-delta">{_delta_str(w_novo, w_antigo)}</div>'
+                    + _persp_badge(persp) +
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -574,7 +590,7 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
                     "Impacto esperado": c.get("impacto_esperado", ""),
                     "Fundamentação": c.get("fundamentacao", ""),
                 } for c in cenarios if isinstance(c, dict)]),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
 
         detalhe = an.get("score_qualitativo_detalhado") or {}
@@ -588,7 +604,7 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
                     "Justificativa": d.get("justificativa", ""),
                     "Evidência ou lacuna": d.get("evidencia_ou_lacuna", ""),
                 } for d in detalhe.values() if isinstance(d, dict)]),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
 
         fit = an.get("adequacao_investidor") or {}
@@ -683,6 +699,7 @@ def _usd_brl_da_base() -> float | None:
     """
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
         engine = get_engine()
         if engine is None:
@@ -911,7 +928,7 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
 
     _, col_limpar = st.columns([5, 1])
     with col_limpar:
-        if st.button("🗑️ Limpar chat", key="apus_chat_clear", use_container_width=True):
+        if st.button("🗑️ Limpar chat", key="apus_chat_clear", width="stretch"):
             st.session_state.pop(_CHAT, None)
             st.rerun()
 
@@ -1086,9 +1103,9 @@ def render(show_header: bool = True) -> None:
     col_rodar, col_limpar, _ = st.columns([2, 1, 2])
     with col_rodar:
         rodar = st.button("🚀 Executar Análise LLM", type="primary",
-                          use_container_width=True, key="apus_rodar")
+                          width="stretch", key="apus_rodar")
     with col_limpar:
-        if st.button("🗑️ Limpar", use_container_width=True, key="apus_reset"):
+        if st.button("🗑️ Limpar", width="stretch", key="apus_reset"):
             st.session_state.pop(_STATE, None)
             st.rerun()
 

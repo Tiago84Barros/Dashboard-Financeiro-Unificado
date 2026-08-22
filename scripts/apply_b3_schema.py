@@ -1,14 +1,14 @@
 """Aplica o schema auditavel de Empresas B3 de forma idempotente."""
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
+
+from data_pipeline.utils.db_utils import get_pipeline_engine
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-from data_pipeline.utils.db_utils import get_pipeline_engine
 
 MIGRATIONS = (
     ("043_b3_validation_and_pit_audit.sql", "regclass", "market.b3_validation_runs"),

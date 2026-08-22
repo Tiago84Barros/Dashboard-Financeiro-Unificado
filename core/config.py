@@ -70,7 +70,7 @@ class Settings:
     # endpoint compatível com a API da OpenAI, então reaproveita o mesmo SDK.
     # Aceita GEMINI_API_KEY ou GOOGLE_API_KEY.
     GEMINI_API_KEY: str = _get_secret("GEMINI_API_KEY") or _get_secret("GOOGLE_API_KEY")
-    GEMINI_MODEL: str = _get_secret("GEMINI_MODEL", "gemini-2.0-flash")
+    GEMINI_MODEL: str = _get_secret("GEMINI_MODEL", "gemini-3.6-flash")
     GEMINI_BASE_URL: str = _get_secret(
         "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
 

@@ -29,7 +29,6 @@ class _FakeConn:
 class _FakeEngine:
     def begin(self):
         # context manager que só permite o log_error (via repo), não upserts de empresa
-        eng = self
 
         class _Ctx:
             def __enter__(self_):

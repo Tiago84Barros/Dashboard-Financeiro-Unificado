@@ -29,7 +29,7 @@ Sem dependência externa além de pandas/numpy.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from typing import Iterable, Literal
 
 import numpy as np

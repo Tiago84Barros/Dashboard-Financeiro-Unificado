@@ -1,6 +1,5 @@
 import core.data_confidence as dc
 
-
 CY = 2026  # ano de referência fixo nos testes
 
 

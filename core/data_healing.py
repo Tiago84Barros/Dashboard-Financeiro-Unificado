@@ -21,8 +21,8 @@ Reaproveita:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, asdict
-from datetime import date, datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -312,6 +312,7 @@ def apply_healing(
     Retorna {gravados, backupados, erro}.
     """
     from sqlalchemy import text
+
     from core.database import get_engine
 
     if preview_df is None or preview_df.empty:

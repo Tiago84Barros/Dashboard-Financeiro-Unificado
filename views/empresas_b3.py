@@ -13,11 +13,13 @@ import hashlib
 import html
 import json
 import re
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 import yfinance as yf
 
@@ -33,6 +35,7 @@ from design.componentes import (
     container_pagina,
 )  # KPIs em cards CSS (visual coeso)
 from design.market_companies import (
+    render_company_logo,
     render_market_css,
     render_market_tabs,
     render_sector_grid,
@@ -98,6 +101,11 @@ _CSS = """
 .b3-fator-pos { color:#00C896;font-size:0.68rem;font-weight:700; }
 .b3-fator-neg { color:#FC5C7D;font-size:0.68rem;font-weight:700; }
 .b3-fator-neu { color:#718096;font-size:0.68rem; }
+/* Declaração de disponibilidade contábil (point-in-time) */
+.b3-pit-card  { background:#12151E;border:1px solid #1E2533;border-radius:10px;
+                padding:12px 14px;margin-bottom:6px; }
+.b3-pit-title { font-size:0.78rem;font-weight:800;line-height:1.25;margin-bottom:5px; }
+.b3-pit-text  { font-size:0.70rem;color:#9CA3AF;line-height:1.45; }
 </style>
 """
 
@@ -111,9 +119,12 @@ def _fv(v, d: int = 2) -> str:
         if v is None or (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
             return "—"
         x = float(v)
-        if abs(x) >= 1e9: return f"R$ {x/1e9:.2f}B"
-        if abs(x) >= 1e6: return f"R$ {x/1e6:.2f}M"
-        if abs(x) >= 1e3: return f"R$ {x/1e3:.1f}K"
+        if abs(x) >= 1e9:
+            return f"R$ {x/1e9:.2f}B"
+        if abs(x) >= 1e6:
+            return f"R$ {x/1e6:.2f}M"
+        if abs(x) >= 1e3:
+            return f"R$ {x/1e3:.1f}K"
         return f"{x:,.{d}f}"
     except Exception:
         return "—"
@@ -160,9 +171,11 @@ def _kpi_macro(titulo: str, valor: str, sub: str, cor: str) -> str:
 def _cor_val(v, invert: bool = False) -> str:
     try:
         x = float(v)
-        if np.isnan(x) or np.isinf(x): return _COR_NEU
+        if np.isnan(x) or np.isinf(x):
+            return _COR_NEU
         pos = x > 0
-        if invert: pos = not pos
+        if invert:
+            pos = not pos
         return _COR_POS if pos else _COR_NEG
     except Exception:
         return _COR_NEU
@@ -203,19 +216,49 @@ def _last_val(df: pd.DataFrame, col: str) -> float | None:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # yfinance helpers
+#
+# _preco_atual/_yf_precos/_yf_dividendos_anuais alimentam SÓ a aba "Análise de
+# Empresa" (cotação pontual, gráfico "Preço da Ação" e fallback de dividendos)
+# — decisão de produto documentada no A-011 (auditoria 2026-08-19): a cotação
+# e o histórico diário de preço permanecem yfinance ao vivo porque
+# market.historical_prices só guarda UM candle por MÊS (ver
+# core/market_read.py::load_precos_mensais), então trocar a fonte aqui
+# perderia granularidade diária num gráfico só de leitura visual, sem uso em
+# score/portfolio/backtest (esses já são market-first via
+# _batch_yf_precos_mensais). Em troca: (a) o rótulo de fonte fica visível no
+# GRÁFICO, não só na cotação pontual, (b) timeout explícito nas chamadas de
+# rede, e (c) falha de rede vira estado observável (df.attrs["load_error"] /
+# status), distinto de ausência real de dado — antes ambos caíam em silêncio
+# para vazio/None. Dividendos anuais (_dividendos_anuais_market_first, mais
+# abaixo) SÃO market-first: são somas anuais, sem perda de granularidade.
 # ══════════════════════════════════════════════════════════════════════════════
 
+_YF_TIMEOUT_SEGUNDOS = 10
+
+
 @st.cache_data(ttl=600, show_spinner=False)
-def _preco_atual(ticker: str) -> float | None:
+def _preco_atual_com_status(ticker: str) -> tuple[float | None, str]:
+    """Cotação pontual via yfinance. Retorna (preço, status); status é
+    'ok', 'sem_dado' (ticker sem cotação — ausência real) ou 'falha_rede'
+    (timeout/erro de conexão — não confundir com ausência de dado, A-011)."""
     tk = ticker.strip().upper().replace(".SA", "")
+    falhou_rede = False
     for var in [f"{tk}.SA", tk]:
         try:
             p = yf.Ticker(var).fast_info.last_price
             if p and float(p) > 0:
-                return float(p)
+                return float(p), "ok"
+        except (requests.RequestException, TimeoutError, OSError):
+            falhou_rede = True
         except Exception:
             pass
-    return None
+    return None, ("falha_rede" if falhou_rede else "sem_dado")
+
+
+def _preco_atual(ticker: str) -> float | None:
+    """Compat: só o preço, sem status (mantém a assinatura pré-A-011 p/
+    chamadores que não precisam distinguir causa de ausência)."""
+    return _preco_atual_com_status(ticker)[0]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -239,6 +282,25 @@ def _yf_dividendos_anuais(ticker: str) -> pd.DataFrame:
         except Exception:
             pass
     return pd.DataFrame()
+
+
+def _dividendos_anuais_market_first(ticker: str) -> tuple[pd.DataFrame, str]:
+    """Dividendos anuais para a aba "Análise de Empresa" — market-first
+    (A-011): lê ``market.dividends`` via ``core.market_read`` quando o
+    warehouse está saudável; cai no yfinance ao vivo (``_yf_dividendos_anuais``,
+    inalterada — segue usada como fallback também pelo Portfólio B3) só
+    quando ``market.*`` está indisponível ou não cobre o ticker. Sem perda de
+    granularidade (são somas anuais dos dois lados), diferente do gráfico de
+    preço. Retorna (DataFrame [Data, Dividendos], fonte) para rótulo na UI.
+    """
+    if _db.market_active():
+        try:
+            df_market = _mr.load_dividendos_anuais(ticker)
+            if not df_market.empty:
+                return df_market, "market.dividends"
+        except Exception:
+            pass
+    return _yf_dividendos_anuais(ticker), "yfinance"
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -320,11 +382,22 @@ def _yf_multiplos_dividendos(ticker: str) -> dict[str, float]:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _yf_precos(ticker: str) -> pd.DataFrame:
-    """Retorna histórico de preços ajustados via yfinance — colunas [Data, Preco]."""
+    """Histórico DIÁRIO de preços ajustados via yfinance — colunas [Data, Preco].
+
+    Fonte ao vivo por decisão de produto (A-011): market.historical_prices só
+    tem um candle por MÊS, então virar market-first aqui trocaria o gráfico
+    diário de anos de histórico por ~12 pontos/ano. Em compensação, falha de
+    rede/timeout marca ``df.attrs["load_error"] = "falha_rede"`` num
+    DataFrame vazio — distinto de ausência real de dado (vazio sem attrs) —
+    para a UI poder mostrar um aviso em vez de a seção sumir em silêncio.
+    """
     tk = ticker.strip().upper().replace(".SA", "")
+    falhou_rede = False
     for var in [f"{tk}.SA", tk]:
         try:
-            hist = yf.Ticker(var).history(period="max", auto_adjust=True)
+            hist = yf.Ticker(var).history(
+                period="max", auto_adjust=True, timeout=_YF_TIMEOUT_SEGUNDOS,
+            )
             if hist is not None and not hist.empty:
                 if hasattr(hist.index, "tz") and hist.index.tz is not None:
                     hist.index = hist.index.tz_localize(None)
@@ -332,9 +405,14 @@ def _yf_precos(ticker: str) -> pd.DataFrame:
                 df.columns = ["Data", "Preco"]
                 df["Data"] = pd.to_datetime(df["Data"])
                 return df
+        except (requests.RequestException, TimeoutError, OSError):
+            falhou_rede = True
         except Exception:
             pass
-    return pd.DataFrame()
+    out = pd.DataFrame()
+    if falhou_rede:
+        out.attrs["load_error"] = "falha_rede"
+    return out
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1297,8 +1375,8 @@ def _score_universo(
     #    fundamentais — margem de segurança à la Graham, adaptada ao Brasil.
     try:
         from core.resilience_score import (
-            historical_reversion_adj,
             financial_health_penalty,
+            historical_reversion_adj,
             valuation_history_adj,
         )
         _scale = float(df["score_raw"].mean()) or 1.0
@@ -1642,6 +1720,26 @@ SCORE_VERSION_CHANGELOG = {
         "walk-forward com fold final intocado, cap global obrigatório, seleção "
         "de segmentos com BH-FDR, quarentena de baselines PIT e substituição "
         "atômica de métricas obsoletas."
+    ),
+    "2.25.0": (
+        "Auditoria 2026-08 (achado A-002), disponibilidade contabil MEDIDA vs "
+        "MODELADA: (A) linha sem vintage real (backfill migration_baseline, "
+        "cujo available_at e a data de INGESTAO e por isso e anulado em "
+        "core/market_read) deixa de ser tratada como 'disponivel desde "
+        "sempre' — a disponibilidade passa a ser MODELADA pelo prazo legal de "
+        "publicacao da CVM (31/03 do ano seguinte ao exercicio, constante "
+        "_CVM_DF_DEADLINE_*); (B) fail-closed: essa linha so entra se a data "
+        "de decisao (ano_ref/rebal_month) for POSTERIOR ao prazo — antes "
+        "lag=0 ou rebalance antes de 31/03 aceitavam exercicio ainda nao "
+        "publicado (look-ahead latente); (C) vintage MEDIDA nunca e "
+        "contornada, mesmo havendo linha baseline do mesmo ticker/ano; "
+        "(D) _score_historico_ano passa a receber rebal_month, de modo que a "
+        "data de decisao do backtest e do Rank-IC seja a real e nao a "
+        "constante default; (E) backtest e Rank-IC publicam a cobertura "
+        "point-in-time (PITCoverage em attrs) e a UI rotula o resultado: com "
+        "cobertura medida 0 e SIMULACAO com disponibilidade MODELADA, nao "
+        "'backtest point-in-time validado'; o card nomeia o risco residual de "
+        "restatement (metric_value guarda o valor atual/reapresentado)."
     ),
 }
 
@@ -2209,6 +2307,335 @@ def _fco_lucro_rows(batch_fco: dict[str, pd.DataFrame]) -> tuple[list[dict], dic
     return rows, audit
 
 
+# ── Disponibilidade contábil: MEDIDA vs MODELADA ──────────────────────────────
+# Prazo legal de publicação das demonstrações financeiras anuais (CVM 480/2009,
+# art. 25, II): até 3 meses do encerramento do exercício social — 31/03 do ano
+# seguinte para o exercício encerrado em 31/12, que é o caso da quase totalidade
+# das companhias abertas brasileiras. É desta constante, e não do mês de
+# rebalance, que sai o modelo de disponibilidade usado quando NÃO há vintage
+# medida; se o mês de rebalance mudar, o modelo continua correto.
+_CVM_DF_DEADLINE_MES = 3
+_CVM_DF_DEADLINE_DIA = 31
+
+_PIT_RISCO_RESTATEMENT = (
+    "Risco residual que permanece mesmo com disponibilidade medida: a base "
+    "guarda em metric_value o valor ATUAL do indicador. Se a companhia "
+    "reapresentou o balanço depois, a simulação usa o número revisado como se "
+    "ele já fosse conhecido na época (restatement bias). Não há vintage de "
+    "VALOR na base — só de data."
+)
+
+
+def _prazo_publicacao_cvm(ano_fiscal: int) -> pd.Timestamp:
+    """Data a partir da qual o exercício `ano_fiscal` é presumidamente público."""
+    return pd.Timestamp(int(ano_fiscal) + 1, _CVM_DF_DEADLINE_MES, _CVM_DF_DEADLINE_DIA)
+
+
+def _classificar_disponibilidade_pit(
+    validos: pd.DataFrame, decision_date: pd.Timestamp
+) -> tuple[pd.Series, pd.Series]:
+    """Classifica cada linha do histórico em MEDIDA/MODELADA e aceita/barra.
+
+    Retorna (medida, aceita) — duas máscaras booleanas alinhadas a `validos`.
+
+    Por que duas categorias: `core/market_read.py::_annual_long()` ANULA o
+    `available_at` das vintages `migration_baseline`, porque nelas o carimbo é a
+    data da INGESTÃO (recente), não a disponibilidade histórica. A linha sem
+    carimbo não é "disponível desde sempre": ela simplesmente não tem
+    disponibilidade MEDIDA, e o sistema a substitui por um MODELO — o prazo
+    legal de publicação. Tratar as duas como a mesma coisa é o que transformava
+    um modelo em fato.
+
+    Regras (fail-closed):
+      • vintage MEDIDA nunca é contornada: só passa se `AvailableAt` for anterior
+        ou igual à data de decisão. Se uma vintage real concorrente do mesmo
+        exercício for posterior (ou inválida), ela também impede o fallback de
+        uma linha baseline (`NaT`) desse exercício;
+      • linha MODELADA só passa se a data de decisão for POSTERIOR ao prazo legal
+        de publicação daquele exercício. Fora dessa janela a disponibilidade não
+        é medida nem justificável pelo modelo — aceitá-la é look-ahead (era o
+        caso latente com lag=0 ou rebalance antes de 31/03).
+    """
+    if validos.empty:
+        vazio = pd.Series(dtype=bool, index=validos.index)
+        return vazio, vazio
+    if "AvailableAt" in validos.columns:
+        # `NaT` é a proveniência explícita do backfill baseline (logo, pode usar
+        # o modelo de prazo CVM). Um valor PRESENTE mas impossível de converter
+        # não é baseline: não sabemos quando ficou disponível e ele deve falhar
+        # fechado, em vez de ser silenciosamente rebaixado a disponibilidade
+        # modelada.
+        baseline = validos["AvailableAt"].isna()
+        available_at = pd.to_datetime(
+            validos["AvailableAt"], errors="coerce", utc=True
+        ).dt.tz_convert(None)
+        malformado = (~baseline) & available_at.isna()
+    else:
+        available_at = pd.Series(pd.NaT, index=validos.index)
+        malformado = pd.Series(False, index=validos.index)
+    # Para contagem e fail-closed, timestamp malformado se comporta como uma
+    # vintage não utilizável (não como baseline); assim entra em
+    # `linhas_barradas_vintage` e nunca em `linhas_modeladas`.
+    medida = available_at.notna() | malformado
+    prazo = pd.to_datetime(validos["_ano"].map(_prazo_publicacao_cvm))
+    aceita_medida = medida & (available_at <= decision_date)
+    # O histórico pode conter simultaneamente uma baseline de migração e uma
+    # vintage real para o mesmo ticker/exercício. Como esta função recebe um
+    # ticker por vez, `_ano` é a chave do snapshot concorrente. Sem esta
+    # redução por exercício, uma vintage posterior seria barrada por linha,
+    # mas a NaT do mesmo ano passaria pelo prazo CVM e a reabilitaria.
+    vintage_concorrente_barrada = medida & (~aceita_medida)
+    ano_com_vintage_concorrente_barrada = (
+        vintage_concorrente_barrada.groupby(validos["_ano"]).transform("any")
+    )
+    aceita = aceita_medida | (
+        (~medida)
+        & (~ano_com_vintage_concorrente_barrada)
+        & (prazo <= decision_date)
+    )
+    return medida, aceita
+
+
+@dataclass(frozen=True)
+class PITCoverage:
+    """Cobertura point-in-time de um (ou vários) snapshots históricos.
+
+    Unidade: contagem de linhas anuais e de snapshots (1 por ticker/decisão).
+    `cobertura_medida` é adimensional (0..1) e mede a fração dos snapshots que
+    efetivamente entraram no score cuja disponibilidade foi MEDIDA — o restante
+    foi MODELADO pelo prazo CVM.
+    """
+
+    linhas_avaliadas: int = 0          # linhas que passaram no corte fiscal
+    linhas_medidas: int = 0            # aceitas com AvailableAt real
+    linhas_modeladas: int = 0          # aceitas pelo prazo CVM (sem vintage)
+    linhas_barradas_vintage: int = 0   # vintage real/concor. posterior à decisão
+    linhas_barradas_prazo: int = 0     # sem vintage e decisão antes do prazo
+    snapshots_medidos: int = 0         # linha usada no score veio de vintage
+    snapshots_modelados: int = 0       # linha usada no score veio do modelo
+    decisoes: int = 0                  # nº de datas de decisão agregadas
+
+    def __add__(self, other: PITCoverage) -> PITCoverage:
+        if not isinstance(other, PITCoverage):
+            return NotImplemented
+        return PITCoverage(
+            linhas_avaliadas=self.linhas_avaliadas + other.linhas_avaliadas,
+            linhas_medidas=self.linhas_medidas + other.linhas_medidas,
+            linhas_modeladas=self.linhas_modeladas + other.linhas_modeladas,
+            linhas_barradas_vintage=(
+                self.linhas_barradas_vintage + other.linhas_barradas_vintage),
+            linhas_barradas_prazo=(
+                self.linhas_barradas_prazo + other.linhas_barradas_prazo),
+            snapshots_medidos=self.snapshots_medidos + other.snapshots_medidos,
+            snapshots_modelados=(
+                self.snapshots_modelados + other.snapshots_modelados),
+            decisoes=self.decisoes + other.decisoes,
+        )
+
+    @property
+    def snapshots(self) -> int:
+        return self.snapshots_medidos + self.snapshots_modelados
+
+    @property
+    def cobertura_medida(self) -> float:
+        """Fração dos snapshots usados com disponibilidade MEDIDA (0..1).
+
+        Sem nenhum snapshot não existe cobertura a reportar: devolve 0.0, que é
+        o valor conservador (nada foi medido) — nunca 1.0 por vacuidade.
+        """
+        return self.snapshots_medidos / self.snapshots if self.snapshots else 0.0
+
+    @property
+    def nivel(self) -> str:
+        """'medida' | 'mista' | 'modelada' | 'indisponivel'."""
+        if not self.snapshots:
+            return "indisponivel"
+        cob = self.cobertura_medida
+        if cob >= 1.0:
+            return "medida"
+        return "modelada" if cob <= 0.0 else "mista"
+
+    def as_dict(self) -> dict[str, float | int | str]:
+        return {
+            "linhas_avaliadas": self.linhas_avaliadas,
+            "linhas_medidas": self.linhas_medidas,
+            "linhas_modeladas": self.linhas_modeladas,
+            "linhas_barradas_vintage": self.linhas_barradas_vintage,
+            "linhas_barradas_prazo": self.linhas_barradas_prazo,
+            "snapshots_medidos": self.snapshots_medidos,
+            "snapshots_modelados": self.snapshots_modelados,
+            "decisoes": self.decisoes,
+            "cobertura_medida": round(self.cobertura_medida, 4),
+            "nivel": self.nivel,
+        }
+
+
+def _pit_rotulo_resultado(cov: PITCoverage, contexto: str = "Backtest") -> dict[str, str]:
+    """Rótulo honesto do resultado conforme a ORIGEM da disponibilidade.
+
+    Regra de nomenclatura (G1/G2): só é "point-in-time validado" o resultado em
+    que 100 % dos snapshots usados tinham disponibilidade MEDIDA. Com cobertura
+    medida nula o resultado é uma SIMULAÇÃO com disponibilidade modelada pelo
+    prazo CVM — continua útil e continua sem look-ahead conhecido, mas é
+    inferência sobre a data de publicação, não observação dela.
+    """
+    nivel = cov.nivel
+    pct = cov.cobertura_medida * 100.0
+    if nivel == "medida":
+        titulo = f"{contexto} point-in-time validado (disponibilidade medida)"
+        detalhe = (
+            f"{cov.snapshots_medidos} de {cov.snapshots} snapshots usados têm "
+            "vintage real de disponibilidade (available_at observado)."
+        )
+        cor = _COR_POS
+    elif nivel == "mista":
+        titulo = (
+            f"{contexto} PARCIALMENTE point-in-time — {pct:.0f}% da "
+            "disponibilidade é medida"
+        )
+        detalhe = (
+            f"{cov.snapshots_medidos} de {cov.snapshots} snapshots usados têm "
+            f"vintage real; os outros {cov.snapshots_modelados} tiveram a "
+            "disponibilidade MODELADA pelo prazo legal de publicação (31/03 do "
+            "ano seguinte ao exercício, CVM 480)."
+        )
+        cor = _COR_ALT
+    elif nivel == "modelada":
+        titulo = (
+            f"{contexto} é SIMULAÇÃO com disponibilidade MODELADA (prazo CVM) — "
+            "não é backtest point-in-time validado"
+        )
+        detalhe = (
+            f"Nenhum dos {cov.snapshots} snapshots usados tem vintage real: o "
+            "histórico vem do backfill (migration_baseline), cujo carimbo é a "
+            "data da INGESTÃO e por isso é descartado. A data de publicação foi "
+            "INFERIDA do prazo legal (31/03 do ano seguinte ao exercício, "
+            "CVM 480), e só entram linhas cujo prazo já venceu na data de "
+            "decisão."
+        )
+        cor = _COR_NEG
+    else:
+        titulo = f"{contexto} sem snapshot histórico avaliado"
+        detalhe = ("Nenhuma linha sobreviveu ao corte fiscal e ao filtro de "
+                   "disponibilidade — não há cobertura a declarar.")
+        cor = _COR_NEU
+    barradas = cov.linhas_barradas_vintage + cov.linhas_barradas_prazo
+    detalhe += (
+        f" Linhas barradas pelo filtro: {cov.linhas_barradas_vintage} por "
+        f"vintage posterior/concorrente e {cov.linhas_barradas_prazo} por prazo "
+        f"de publicação não vencido (total {barradas})."
+    )
+    return {
+        "nivel": nivel,
+        "cobertura_pct": f"{pct:.0f}%",
+        "titulo": titulo,
+        "detalhe": detalhe,
+        "risco": _PIT_RISCO_RESTATEMENT,
+        "cor": cor,
+    }
+
+
+def _pit_card_html(cov: PITCoverage, contexto: str = "Backtest") -> str:
+    """Card CSS com o rótulo, a cobertura e o risco residual (padrão do app)."""
+    info = _pit_rotulo_resultado(cov, contexto)
+    return (
+        f'<div class="b3-pit-card" style="border-left:4px solid {info["cor"]};">'
+        f'<div class="b3-ind-label">Disponibilidade contábil (point-in-time)</div>'
+        f'<div class="b3-ind-value" style="color:{info["cor"]};">'
+        f'{info["cobertura_pct"]} medida</div>'
+        f'<div class="b3-ind-sub">cobertura point-in-time = snapshots com '
+        f'vintage real ÷ snapshots usados ({cov.snapshots_medidos}/'
+        f'{cov.snapshots})</div>'
+        f'<div class="b3-pit-title" style="color:{info["cor"]};margin-top:8px;">'
+        f'{html.escape(info["titulo"])}</div>'
+        f'<div class="b3-pit-text">{html.escape(info["detalhe"])}</div>'
+        f'<div class="b3-pit-text" style="margin-top:6px;">'
+        f'{html.escape(info["risco"])}</div>'
+        f'</div>'
+    )
+
+
+def _score_historico_ano_com_cobertura(
+    df_hist_batch: dict[str, pd.DataFrame],
+    tickers: list[str],
+    ano_ref: int,
+    pesos: dict[str, tuple[float, bool]],
+    tk_grupos: dict[str, dict] | None = None,
+    lag: int = 1,
+    macro_by_year: dict[int, dict[str, float]] | None = None,
+    rebal_month: int = _REBAL_MONTH,
+) -> tuple[dict[str, float], PITCoverage]:
+    """Igual a `_score_historico_ano`, mas devolve também a cobertura PIT.
+
+    Existe como função irmã para que os chamadores point-in-time (backtest,
+    calibração e Rank-IC) possam DECLARAR se a disponibilidade dos dados foi
+    medida ou modelada, sem alterar a assinatura pública já usada.
+    """
+    ano_cutoff = ano_ref - lag
+    decision_date = pd.Timestamp(ano_ref, int(rebal_month), 1)
+    rows = []
+    cov = PITCoverage(decisoes=1)
+    for tk in tickers:
+        df_h = df_hist_batch.get(tk)
+        if df_h is None or df_h.empty or "Data" not in df_h.columns:
+            continue
+        df_h = df_h.copy()
+        df_h["_ano"] = pd.to_datetime(df_h["Data"], errors="coerce").dt.year
+        # reset_index: o snapshot é localizado por rótulo mais adiante; índice
+        # duplicado vindo do batch faria `.loc` devolver Series em vez de bool.
+        validos = df_h[df_h["_ano"] <= ano_cutoff].reset_index(drop=True)
+        medida, aceita = _classificar_disponibilidade_pit(validos, decision_date)
+        prazo = pd.to_datetime(validos["_ano"].map(_prazo_publicacao_cvm))
+        # Uma baseline cujo prazo já venceu só pode ter sido recusada por uma
+        # vintage real concorrente do mesmo exercício; atribuí-la ao prazo CVM
+        # esconderia a causa do bloqueio na declaração de cobertura.
+        baseline_barrada_por_vintage = (
+            (~medida) & (~aceita) & (prazo <= decision_date)
+        )
+        cov = cov + PITCoverage(
+            linhas_avaliadas=len(validos),
+            linhas_medidas=int((medida & aceita).sum()),
+            linhas_modeladas=int(((~medida) & aceita).sum()),
+            linhas_barradas_vintage=int(
+                (medida & (~aceita)).sum() + baseline_barrada_por_vintage.sum()
+            ),
+            linhas_barradas_prazo=int(
+                ((~medida) & (~aceita) & (~baseline_barrada_por_vintage)).sum()
+            ),
+        )
+        validos = validos[aceita] if len(validos) else validos
+        if validos.empty:
+            continue
+        ordenadas = validos.sort_values("_ano")
+        idx_snap = ordenadas.index[-1]
+        row = ordenadas.iloc[-1].to_dict()
+        row["Ticker"] = tk
+        row = _sanitize_dy(row)
+        if tk_grupos:
+            row.update(tk_grupos.get(tk) or {})
+        rows.append(row)
+        cov = cov + (
+            PITCoverage(snapshots_medidos=1) if bool(medida.loc[idx_snap])
+            else PITCoverage(snapshots_modelados=1)
+        )
+
+    if not rows:
+        return {}, cov
+
+    df_snap = pd.DataFrame(rows)
+    df_sc   = _score_universo(
+        df_snap, tickers, pesos,
+        macro_context=_macro_for_year(macro_by_year, ano_cutoff),
+    )
+    if df_sc.empty or "score" not in df_sc.columns:
+        return {}, cov
+    # descarta scores não-finitos (NaN/inf): empresa sem score computável naquele
+    # ano não entra no ranking — evita poluir pesos/backtest com NaN (alpha NaN).
+    sc = pd.to_numeric(df_sc["score"], errors="coerce")
+    return {tk: float(s) for tk, s in zip(df_sc["Ticker"], sc)
+            if pd.notna(s) and np.isfinite(s)}, cov
+
+
 def _score_historico_ano(
     df_hist_batch: dict[str, pd.DataFrame],
     tickers: list[str],
@@ -2217,60 +2644,20 @@ def _score_historico_ano(
     tk_grupos: dict[str, dict] | None = None,
     lag: int = 1,
     macro_by_year: dict[int, dict[str, float]] | None = None,
+    rebal_month: int = _REBAL_MONTH,
 ) -> dict[str, float]:
     """
     Monta snapshot cross-sectional com dados até ano_ref − lag, depois pontua.
-    Elimina look-ahead bias: score do ano N usa apenas dados até N−1.
+    Elimina look-ahead bias: score do ano N usa apenas dados até N−1, e cada
+    linha ainda precisa estar disponível na data de decisão
+    (`ano_ref`/`rebal_month`) — por vintage MEDIDA ou pelo prazo legal de
+    publicação (ver `_classificar_disponibilidade_pit`).
     Retorna {ticker: score}.
     """
-    ano_cutoff = ano_ref - lag
-    rows = []
-    for tk in tickers:
-        df_h = df_hist_batch.get(tk)
-        if df_h is None or df_h.empty or "Data" not in df_h.columns:
-            continue
-        df_h = df_h.copy()
-        df_h["_ano"] = pd.to_datetime(df_h["Data"], errors="coerce").dt.year
-        validos = df_h[df_h["_ano"] <= ano_cutoff]
-        if "AvailableAt" in validos.columns:
-            available_at = pd.to_datetime(
-                validos["AvailableAt"], errors="coerce", utc=True
-            ).dt.tz_convert(None)
-            decision_date = pd.Timestamp(ano_ref, _REBAL_MONTH, 1)
-            # NaT = linha do backfill (migration_baseline), cuja disponibilidade
-            # real é desconhecida — vale o CORTE FISCAL já aplicado acima, então
-            # ela PASSA. Só as vintages com carimbo real (first_seen_proxy)
-            # respeitam o ponto-no-tempo estrito. Exigir notna() aqui zerava o
-            # histórico inteiro assim que a 1ª vintage real aparecia no lote
-            # (a coluna vem para o batch todo) → "Nenhum segmento retornou
-            # dados suficientes" na Criação de Portfólio.
-            validos = validos[
-                available_at.isna() | (available_at <= decision_date)
-            ]
-        if validos.empty:
-            continue
-        row = validos.sort_values("_ano").iloc[-1].to_dict()
-        row["Ticker"] = tk
-        row = _sanitize_dy(row)
-        if tk_grupos:
-            row.update(tk_grupos.get(tk) or {})
-        rows.append(row)
-
-    if not rows:
-        return {}
-
-    df_snap = pd.DataFrame(rows)
-    df_sc   = _score_universo(
-        df_snap, tickers, pesos,
-        macro_context=_macro_for_year(macro_by_year, ano_cutoff),
-    )
-    if df_sc.empty or "score" not in df_sc.columns:
-        return {}
-    # descarta scores não-finitos (NaN/inf): empresa sem score computável naquele
-    # ano não entra no ranking — evita poluir pesos/backtest com NaN (alpha NaN).
-    sc = pd.to_numeric(df_sc["score"], errors="coerce")
-    return {tk: float(s) for tk, s in zip(df_sc["Ticker"], sc)
-            if pd.notna(s) and np.isfinite(s)}
+    return _score_historico_ano_com_cobertura(
+        df_hist_batch, tickers, ano_ref, pesos, tk_grupos, lag,
+        macro_by_year, rebal_month,
+    )[0]
 
 
 def _apply_decay_penalty(
@@ -2461,7 +2848,8 @@ def _simular_backtest(
     for _ano_scan in anos_serie:
         if _score_historico_ano(df_hist_batch, tks_all_valid, _ano_scan,
                                 pesos, tk_grupos, lag=1,
-                                macro_by_year=macro_by_year):
+                                macro_by_year=macro_by_year,
+                                rebal_month=rebal_month):
             primeiro_ano_valido = _ano_scan
             break
     if primeiro_ano_valido is None:
@@ -2497,6 +2885,7 @@ def _simular_backtest(
     tax_state: dict[str, float] = {"prejuizo_acumulado": 0.0}
     caixa_est = 0.0
     caixa_bench = 0.0
+    pit_cov = PITCoverage()
 
     for dt, row in df.iterrows():
         ano = dt.year
@@ -2511,11 +2900,14 @@ def _simular_backtest(
         if ano != ultimo_ano_rebal and dt.month >= rebal_month:
             ultimo_ano_rebal = ano
 
-            # Calcula scores com dados até ano − 1
-            score_map = _score_historico_ano(
+            # Calcula scores com dados até ano − 1. A cobertura point-in-time
+            # é acumulada para a UI declarar se a disponibilidade dos dados foi
+            # medida (vintage real) ou modelada pelo prazo CVM.
+            score_map, _cov_ano = _score_historico_ano_com_cobertura(
                 df_hist_batch, tks_all_valid, ano, pesos, tk_grupos, lag=1,
-                macro_by_year=macro_by_year,
+                macro_by_year=macro_by_year, rebal_month=rebal_month,
             )
+            pit_cov = pit_cov + _cov_ano
             # Fix auditoria 2026-07: sem fallback p/ scores de HOJE (era
             # look-ahead). Gap de histórico no meio da série ⇒ mantém a
             # carteira vigente sem rebalance neste ano (o início da série
@@ -2562,7 +2954,8 @@ def _simular_backtest(
                     if use_markowitz and len(tickers_yr) >= 2:
                         try:
                             from core.markowitz import (
-                                min_variance_capped, pesos_hibridos_score_markowitz,
+                                min_variance_capped,
+                                pesos_hibridos_score_markowitz,
                             )
                             # Janela de retornos ANTES da data atual (lag=0 ok pq
                             # rebalanceia no inicio do ano e usa dados ate dt-1)
@@ -2686,6 +3079,12 @@ def _simular_backtest(
         float(tax_state.get("prejuizo_acumulado", 0.0)), 2
     )
     df_resultado.attrs["restricoes_inviaveis"] = sorted(set(restricoes_inviaveis))
+    # Proveniência temporal: fração dos snapshots que alimentaram os rebalances
+    # com disponibilidade MEDIDA. Com 0.0 o resultado não pode ser rotulado como
+    # backtest point-in-time validado (ver _pit_rotulo_resultado).
+    df_resultado.attrs["pit_coverage"] = pit_cov
+    df_resultado.attrs["pit_cobertura_medida"] = round(pit_cov.cobertura_medida, 4)
+    df_resultado.attrs["pit_disponibilidade"] = pit_cov.nivel
     df_resultado.attrs["caixa_pendente_estrategia"] = round(float(caixa_est), 2)
     df_resultado.attrs["caixa_pendente_benchmark"] = round(float(caixa_bench), 2)
     return df_resultado, tickers_top_final, n_efetivo_final
@@ -2720,6 +3119,7 @@ def _rank_ic_por_ano(
         return pd.DataFrame()
     rebal_m = _REBAL_MONTH
     out: list[dict] = []
+    pit_cov = PITCoverage()
     for ano in sorted({d.year for d in df_precos.index}):
         # base: último preço até março/N; fim: último preço até março/N+1
         jan0 = df_precos[(df_precos.index.year == ano) &
@@ -2728,10 +3128,11 @@ def _rank_ic_por_ano(
                          (df_precos.index.month < rebal_m)]
         if jan0.empty or jan1.empty:
             continue
-        score_map = _score_historico_ano(
+        score_map, _cov_ano = _score_historico_ano_com_cobertura(
             df_hist_batch, tks, ano, pesos, tk_grupos, lag=1,
-            macro_by_year=macro_by_year,
+            macro_by_year=macro_by_year, rebal_month=rebal_m,
         )
+        pit_cov = pit_cov + _cov_ano
         if len(score_map) < min_n:
             continue
         rets: dict[str, float] = {}
@@ -2760,7 +3161,13 @@ def _rank_ic_por_ano(
             "Bottom tercil (%)": round(bot_m * 100, 1),
             "Spread (pp)": round((top_m - bot_m) * 100, 1),
         })
-    return pd.DataFrame(out)
+    df_ic = pd.DataFrame(out)
+    # Mesma declaração do backtest: o IC é medido sobre scores cuja
+    # disponibilidade pode ter sido MODELADA, e a UI precisa dizer isso.
+    df_ic.attrs["pit_coverage"] = pit_cov
+    df_ic.attrs["pit_cobertura_medida"] = round(pit_cov.cobertura_medida, 4)
+    df_ic.attrs["pit_disponibilidade"] = pit_cov.nivel
+    return df_ic
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2784,7 +3191,8 @@ def _build_indicators(mult: pd.Series, fontes: dict | None = None,
     grupo: 'rentabilidade' | 'valuation' | 'estrutura' | 'todos'
     """
     def _g(key: str):
-        if mult.empty: return None
+        if mult.empty:
+            return None
         kn = key.lower().replace(" ", "").replace("_", "").replace(".", "")
         for k, v in mult.items():
             if kn in str(k).lower().replace(" ", "").replace("_", "").replace(".", ""):
@@ -3049,7 +3457,7 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
             "Indicadores B3": ", ".join(nome for nome, _ in FACTOR_TRACKS[key]),
         })
     st.markdown("**Critérios avançados da classificação**")
-    st.dataframe(pd.DataFrame(criterios), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(criterios), hide_index=True, width="stretch")
 
     if not dossie.get("erro"):
         juros = dossie.get("sensibilidade_juros", {})
@@ -3059,7 +3467,7 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
         eventos = dossie.get("eventos_societarios", {}).get("eventos", [])
         if eventos:
             st.markdown("**Eventos societários recentes (CVM)**")
-            st.dataframe(pd.DataFrame(eventos[:6]), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(eventos[:6]), hide_index=True, width="stretch")
 
 
 def _render_b3_score_dashboard(
@@ -3106,7 +3514,7 @@ def _render_b3_score_dashboard(
             angularaxis=dict(gridcolor="#4A5568"), bgcolor="rgba(0,0,0,0)",
         ),
     )
-    st.plotly_chart(fig, use_container_width=True, key=f"b3_radar_{ticker}")
+    st.plotly_chart(fig, width="stretch", key=f"b3_radar_{ticker}")
     st.caption(f"Referência da comparação: {referencia}. Metodologia B3 {SCORE_VERSION}.")
 
     with st.expander("📄 Dossiê, classificação e critérios avançados"):
@@ -3125,7 +3533,7 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         )
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Analisar", type="primary", use_container_width=True,
+        if st.button("Analisar", type="primary", width="stretch",
                      key="b3_btn_analisar") and ticker_raw.strip():
             st.session_state["b3_ticker_sel"] = (
                 ticker_raw.strip().upper().replace(".SA", "")
@@ -3138,7 +3546,7 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         return
 
     # ── Header ────────────────────────────────────────────────────────────────
-    preco    = _preco_atual(tk)
+    preco, preco_status = _preco_atual_com_status(tk)
     info_row = (df_set[df_set["ticker"] == tk].iloc[0]
                 if not df_set.empty and tk in df_set["ticker"].values else None)
     nome_emp = info_row["nome_empresa"] if info_row is not None else tk
@@ -3147,13 +3555,8 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 
     col_logo, col_info, col_preco = st.columns([1, 5, 2])
     with col_logo:
-        st.markdown(
-            f'<img src="{_logo_url(tk)}" '
-            f'style="width:64px;height:64px;border-radius:12px;object-fit:contain;'
-            f'background:rgba(255,255,255,.06);padding:6px;margin-top:6px;" '
-            f'onerror="this.style.display=\'none\'">',
-            unsafe_allow_html=True,
-        )
+        # Sem <img> cru via unsafe_allow_html — ver achado A-012.
+        render_company_logo(tk, _logo_url(tk), size=64)
     with col_info:
         st.markdown(
             f'<h2 style="font-size:1.60rem;font-weight:800;color:#E2E8F0;margin:0 0 4px;">'
@@ -3163,10 +3566,16 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         )
     with col_preco:
         preco_str = f"R$ {preco:,.2f}" if preco else "—"
+        if preco_status == "falha_rede":
+            preco_legenda = "Falha de rede/timeout ao consultar yfinance"
+        elif preco_status == "sem_dado":
+            preco_legenda = "Sem cotação disponível (yfinance)"
+        else:
+            preco_legenda = "Cotação (yfinance)"
         st.markdown(
             f'<div style="text-align:right;padding-top:8px;">'
             f'<div style="font-size:1.60rem;font-weight:800;color:{_COR_POS};">{preco_str}</div>'
-            f'<div style="font-size:0.68rem;color:#4A5568;">Cotação (yfinance)</div>'
+            f'<div style="font-size:0.68rem;color:#4A5568;">{preco_legenda}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -3188,7 +3597,7 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             fontes_recon = dict(recon.get("_fontes", {}))
         # DY/Payout via yfinance só como patch do legado; no market o snapshot já traz.
         yf_divs_mult = {} if _db.market_active() else _yf_multiplos_dividendos(tk)
-        df_yf_divs   = _yf_dividendos_anuais(tk)
+        df_yf_divs, fonte_divs = _dividendos_anuais_market_first(tk)
         df_precos    = _yf_precos(tk)
 
     # Patch DY / Payout ausentes com yfinance (apenas no legado)
@@ -3206,6 +3615,8 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     # ══════════════════════════════════════════════════════════════════════════
     if not df_precos.empty:
         _sec_hdr("📉 Preço da Ação")
+        st.caption("Fonte: yfinance (histórico diário; ver nota de arquitetura A-011 "
+                   "— market.historical_prices só guarda 1 candle/mês)")
 
         periodos = {"1A": 365, "3A": 1095, "5A": 1825, "Máx": None}
         sel_per = st.radio("Período", list(periodos.keys()),
@@ -3222,7 +3633,7 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         fig_preco.update_layout(**_plot_layout(280))
         fig_preco.update_layout(showlegend=False,
                                 yaxis_title="Preço (R$)", xaxis_title="")
-        st.plotly_chart(fig_preco, use_container_width=True,
+        st.plotly_chart(fig_preco, width="stretch",
                         config={"displayModeBar": False}, key=f"b3_preco_{tk}_{sel_per}")
 
         # Retorno anual
@@ -3255,7 +3666,7 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         # quebrando a cronologia (o sort_values acima não basta: a ordem é do eixo).
         fig_ret.update_yaxes(categoryorder="array",
                              categoryarray=ret_sorted["Ano"].tolist())
-        st.plotly_chart(fig_ret, use_container_width=True,
+        st.plotly_chart(fig_ret, width="stretch",
                         config={"displayModeBar": False}, key=f"b3_ret_{tk}")
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -3271,12 +3682,14 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             (c4, "Dividendos",      "Dividendos"),
         ]:
             df_src = df_fin
+            subtitulo = "Regressão log histórico"
             if field == "Dividendos" and (df_fin.empty or "Dividendos" not in df_fin.columns):
                 df_src = df_yf_divs
+                subtitulo = f"Regressão log histórico · fonte: {fonte_divs}"
             g = _cagr(df_src, field)
             with col:
                 st.markdown(
-                    _ind_card(lbl, _fg(g), "Regressão log histórico",
+                    _ind_card(lbl, _fg(g), subtitulo,
                               _cor_val(g) if g is not None else _COR_NEU),
                     unsafe_allow_html=True,
                 )
@@ -3311,28 +3724,28 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                 ("Divida_Liquida", "Dívida Líquida"), ("Divida_Total", "Dívida Total"),
                 ("Ativo_Total", "Ativo Total"),
             ]
-            disp_dre = [(c, l) for c, l in cands_dre if c in df_fin.columns]
+            disp_dre = [(coluna, rotulo) for coluna, rotulo in cands_dre if coluna in df_fin.columns]
             if disp_dre:
-                opcoes = [l for _, l in disp_dre]
+                opcoes = [rotulo for _, rotulo in disp_dre]
                 deflt  = [x for x in ("Receita Líquida", "Lucro Líquido") if x in opcoes]
                 sel    = st.multiselect("Indicadores", opcoes, default=deflt or opcoes[:2],
                                         key=f"b3_dre_sel_{tk}")
                 if sel:
-                    lbl2col  = {l: c for c, l in disp_dre}
-                    cols_sel = [lbl2col[l] for l in sel if l in lbl2col]
+                    lbl2col  = {rotulo: coluna for coluna, rotulo in disp_dre}
+                    cols_sel = [lbl2col[rotulo] for rotulo in sel if rotulo in lbl2col]
                     plot     = df_fin[["Data"] + cols_sel].copy()
                     for c in cols_sel:
                         plot[c] = pd.to_numeric(plot[c], errors="coerce")
                     melt = plot.melt("Data", value_vars=cols_sel,
                                      var_name="Indicador", value_name="Valor")
-                    melt["Indicador"] = melt["Indicador"].map({c: l for c, l in disp_dre})
+                    melt["Indicador"] = melt["Indicador"].map({coluna: rotulo for coluna, rotulo in disp_dre})
                     fig = px.line(melt, x="Data", y="Valor", color="Indicador", markers=True,
                                   color_discrete_sequence=[
                                       _COR_POS, _COR_INF, _COR_ALT, _COR_NEG,
                                       "#9B59B6", "#E67E22", _COR_NEU])
                     fig.update_layout(**_plot_layout(340))
                     fig.update_yaxes(title="R$ (valores absolutos)")
-                    st.plotly_chart(fig, use_container_width=True,
+                    st.plotly_chart(fig, width="stretch",
                                     config={"displayModeBar": False}, key=f"b3_dre_{tk}")
 
             # Dividendos em gráfico próprio, com a unidade correta (R$/ação)
@@ -3347,7 +3760,7 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                                     color_discrete_sequence=[_COR_ALT])
                     fig_dv.update_layout(**_plot_layout(240))
                     fig_dv.update_yaxes(title="R$/ação (soma anual)")
-                    st.plotly_chart(fig_dv, use_container_width=True,
+                    st.plotly_chart(fig_dv, width="stretch",
                                     config={"displayModeBar": False},
                                     key=f"b3_dre_divps_{tk}")
 
@@ -3381,7 +3794,7 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                                        _COR_POS, _COR_INF, _COR_ALT, _COR_NEG,
                                        "#9B59B6", "#E67E22"])
                     fig_m.update_layout(**_plot_layout(300))
-                    st.plotly_chart(fig_m, use_container_width=True,
+                    st.plotly_chart(fig_m, width="stretch",
                                     config={"displayModeBar": False}, key=f"b3_mhist_{tk}")
 
         # Fluxo de Caixa (condicional) — exige df não-vazio e coluna 'Data'
@@ -3418,7 +3831,7 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             fig_fc = px.bar(melt_fc, x="Data", y="Valor", color="Fluxo", barmode="group",
                              color_discrete_sequence=[_COR_POS, _COR_NEG, _COR_INF])
             fig_fc.update_layout(**_plot_layout(300))
-            st.plotly_chart(fig_fc, use_container_width=True,
+            st.plotly_chart(fig_fc, width="stretch",
                             config={"displayModeBar": False}, key=f"b3_fco_{tk}")
 
         # Estrutura de Capital e Dívida
@@ -3464,12 +3877,20 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                                   barmode="group",
                                   color_discrete_sequence=[_COR_POS, _COR_ALT, _COR_NEG])
                 fig_cap.update_layout(**_plot_layout(300))
-                st.plotly_chart(fig_cap, use_container_width=True,
+                st.plotly_chart(fig_cap, width="stretch",
                                 config={"displayModeBar": False}, key=f"b3_cap_{tk}")
 
     elif df_precos.empty:
-        st.warning("Dados financeiros não encontrados. Configure `SUPABASE_DB_URL_B3`.",
-                   icon="⚠️")
+        if df_precos.attrs.get("load_error") == "falha_rede":
+            st.warning(
+                "Não foi possível carregar o histórico de preços: falha de "
+                "rede/timeout ao consultar a yfinance. Não é um problema de "
+                "configuração de banco — tente novamente em instantes.",
+                icon="⚠️",
+            )
+        else:
+            st.warning("Dados financeiros não encontrados. Configure `SUPABASE_DB_URL_B3`.",
+                       icon="⚠️")
 
     # ══════════════════════════════════════════════════════════════════════════
     # SEÇÃO 3 — Múltiplos Fundamentalistas (agrupados)
@@ -3569,7 +3990,9 @@ def _render_classe_mais_liquida(tickers: list[str]) -> None:
     empresa aqui acaba comprando o papel errado lá fora.
     """
     from core.b3_liquidity import (
-        LiquidityPolicy, formata_reais, melhor_classe,
+        LiquidityPolicy,
+        formata_reais,
+        melhor_classe,
     )
 
     if not tickers:
@@ -3611,7 +4034,7 @@ def _render_classe_mais_liquida(tickers: list[str]) -> None:
                  "Vantagem": f"{gb / max(ga, 1.0):.0f}×"}
                 for a, b, ga, gb in achados
             ]),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
         )
 
 
@@ -3628,8 +4051,13 @@ def _render_governo_e_resiliencia(tickers: list[str], df_set: pd.DataFrame) -> N
     saneamento.
     """
     from core.b3_cycle_evidence import (
-        FRAGIL, LIVRE, REGULADO_ESTATAL, RESILIENTE, Resiliencia,
-        classificar_resiliencia, classify_regulation,
+        FRAGIL,
+        LIVRE,
+        REGULADO_ESTATAL,
+        RESILIENTE,
+        Resiliencia,
+        classificar_resiliencia,
+        classify_regulation,
     )
 
     if not tickers:
@@ -3683,12 +4111,12 @@ def _render_governo_e_resiliencia(tickers: list[str], df_set: pd.DataFrame) -> N
             "**Informa, não reclassifica** — são duas recessões, e a de 2020 "
             "favoreceu exportador."
         )
-        st.dataframe(pd.DataFrame(linhas), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(linhas), hide_index=True, width="stretch")
 
 
 def _render_calibracao_segmento(calib) -> None:
     """Painel da calibração ótima automática do segmento (aba Análise Avançada)."""
-    from core.segment_calibration import pesos_rows, criterios_rows
+    from core.segment_calibration import criterios_rows, pesos_rows
 
     alvo = (f"segmento **{calib.segmento}**" if calib.segmento and calib.segmento != "Todos"
             else f"setor **{calib.setor}**")
@@ -3718,14 +4146,14 @@ def _render_calibracao_segmento(calib) -> None:
         st.markdown("**✅ Pesos dos indicadores — aplicados ao score**")
         st.dataframe(
             pd.DataFrame(pesos_rows(calib)),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
             column_config={"Peso %": st.column_config.NumberColumn(format="%.1f%%")},
         )
 
         st.markdown("**📋 Critérios do segmento — perfil recomendado**")
         st.dataframe(
             pd.DataFrame(criterios_rows(calib)),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
         )
 
         ap = calib.aprovacao
@@ -4055,7 +4483,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
     # ── Transparência + saneamento de dados (qualidade antes do ranking) ──────
     try:
-        from views.data_quality_panel import render_quality_report, render_healing_panel
+        from views.data_quality_panel import render_healing_panel, render_quality_report
         with st.expander("🩺 Qualidade & saneamento dos dados (antes do ranking)",
                          expanded=False):
             _df_qa = df_mult_enrich[df_mult_enrich["Ticker"].isin(tks_uni)] \
@@ -4103,7 +4531,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     if usar_pesos_setor and usar_fama_macbeth and hist_batch:
         try:
             from core.fama_macbeth import (
-                blend_with_base_weights, estimate_fama_macbeth_weights,
+                blend_with_base_weights,
+                estimate_fama_macbeth_weights,
             )
 
             fm_result = estimate_fama_macbeth_weights(
@@ -4184,7 +4613,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 "Valores vazios, zerados indevidamente ou fora de faixas razoáveis "
                 "foram substituídos antes do cálculo do score."
             )
-            st.dataframe(audit_fallback, use_container_width=True,
+            st.dataframe(audit_fallback, width="stretch",
                          height=min(260, 45 + 32 * len(audit_fallback)))
 
     if usar_pesos_setor and usar_fama_macbeth:
@@ -4211,7 +4640,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     })
                 st.dataframe(
                     pd.DataFrame(rows_fm).sort_values("Peso Final %", ascending=False),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     column_config={
                         "Peso Final %": st.column_config.NumberColumn(format="%.1f%%"),
@@ -4261,7 +4690,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     card_metrica("OK", n_ok, accent="#00C896")
                 st.dataframe(
                     audit_cross,
-                    use_container_width=True,
+                    width="stretch",
                     height=min(360, 45 + 28 * len(audit_cross)),
                     column_config={
                         "Banco": st.column_config.NumberColumn(format="%.4g"),
@@ -4291,7 +4720,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             key="b3_show_cross_history",
         )
         if show_cross_history:
-            from core.cross_source import load_validation_history, summarize_validation_history
+            from core.cross_source import (
+                load_validation_history,
+                summarize_validation_history,
+            )
 
             hist_rows = load_validation_history(limit=300)
             if not hist_rows:
@@ -4313,7 +4745,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 ]
                 st.dataframe(
                     hist_df[cols_hist].head(120) if cols_hist else hist_df.head(120),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
 
@@ -4359,7 +4791,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 })
                 st.dataframe(
                     df_bs_show,
-                    use_container_width=True, hide_index=True,
+                    width="stretch", hide_index=True,
                     column_config={
                         "Score Médio": st.column_config.NumberColumn(format="%.1f"),
                         "Largura IC":  st.column_config.NumberColumn(
@@ -4497,8 +4929,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                         if cov_method == "Fama-French":
                             try:
                                 from core.ff_risk_model import (
-                                    build_ff_risk_model,
                                     build_br_factors_etf,
+                                    build_ff_risk_model,
                                     ticker_monthly_returns_from_price_df,
                                 )
                                 tk_rets = ticker_monthly_returns_from_price_df(
@@ -4522,8 +4954,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
                         elif cov_method == "DCC-GARCH":
                             try:
-                                from core.dcc_garch import fit_dcc_garch
                                 import pandas as _pd_dcc
+
+                                from core.dcc_garch import fit_dcc_garch
                                 if returns.shape[0] < 12:
                                     st.warning("DCC-GARCH requer ≥ 12 observações; usando Ledoit-Wolf.")
                                 else:
@@ -4536,7 +4969,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                                     mk = min_variance_with_cov(
                                         list(dcc.tickers), cov_dcc, cap=cap_mk
                                     )
-                                    from core.dcc_garch import dcc_regime_score, result_summary
+                                    from core.dcc_garch import (
+                                        result_summary,
+                                    )
                                     summ = result_summary(dcc)
                                     st.caption(
                                         f"DCC-GARCH: α={dcc.alpha:.3f}, β={dcc.beta:.3f} · "
@@ -4596,7 +5031,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                         "Peso Híbrido": round(w_hibrid.get(tk, 0.0) * 100, 1),
                     } for tk in top_tks])
                     st.dataframe(
-                        df_w, hide_index=True, use_container_width=True,
+                        df_w, hide_index=True, width="stretch",
                         column_config={
                             "Score":         st.column_config.NumberColumn(format="%.1f"),
                             "Peso Score":    st.column_config.NumberColumn(format="%.1f%%"),
@@ -4649,7 +5084,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     "Veredito Preço", "Sustentab. Dividendo", "Score Sust.", "Motivo",
                 ]
                 st.dataframe(
-                    _val_df[_val_cols], hide_index=True, use_container_width=True,
+                    _val_df[_val_cols], hide_index=True, width="stretch",
                     column_config={
                         "Score":          st.column_config.NumberColumn(format="%.1f"),
                         "MS Graham (%)":  st.column_config.NumberColumn(format="%.1f%%",
@@ -4723,7 +5158,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     "saude":          "Saúde",
                 })
                 st.dataframe(
-                    _res_df, hide_index=True, use_container_width=True,
+                    _res_df, hide_index=True, width="stretch",
                     column_config={
                         "Score":                  st.column_config.NumberColumn(format="%.1f"),
                         "Bônus Hist. (%)":        st.column_config.NumberColumn(format="%.1f%%",
@@ -4770,10 +5205,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             st.info("Sem empresas scoradas para analisar.")
         else:
             # Aplica Shapley nos top 10
-            from views.empresas_b3 import _compute_score_entrada
             from core.shapley_xai import (
-                compute_shapley_engines, explain_score_entrada_shapley,
+                compute_shapley_engines,
+                explain_score_entrada_shapley,
             )
+            from views.empresas_b3 import _compute_score_entrada
             df_se = _compute_score_entrada(df_scored.copy(),
                                             anos_hist=anos_hist or {})
             top_tks = df_se["Ticker"].tolist()[:10]
@@ -4790,11 +5226,6 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             labels = ["Baseline (50)"] + [lbl for lbl, _, _ in explic] + ["Score Final"]
             values = [50.0] + [v for _, v, _ in explic] + [0.0]
             measures = ["absolute"] + ["relative"] * len(explic) + ["total"]
-            colors_map = {
-                "positivo": "#00C896",
-                "negativo": "#FC5C7D",
-                "neutro":   "#9CA3AF",
-            }
             text_arr = [""] + [f"{v:+.1f}" for _, v, _ in explic] + [f"{50.0 + sum(phis.values()):.1f}"]
 
             fig = go.Figure(go.Waterfall(
@@ -4819,7 +5250,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 margin={"t": 30, "b": 0, "l": 0, "r": 0},
                 height=350,
             )
-            st.plotly_chart(fig, use_container_width=True,
+            st.plotly_chart(fig, width="stretch",
                             config={"displayModeBar": False},
                             key=f"shap_water_{ticker_sel}")
 
@@ -4831,7 +5262,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                            else "▼" if sn == "negativo" else "—")}
                 for lbl, v, sn in explic
             ])
-            st.dataframe(df_phi, hide_index=True, use_container_width=True,
+            st.dataframe(df_phi, hide_index=True, width="stretch",
                          column_config={"φ (Shapley)": st.column_config.NumberColumn(format="%+.2f pts")})
             st.caption(
                 f"Σ φ = {sum(phis.values()):+.2f} pts (baseline 50, "
@@ -4921,6 +5352,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
                 if run_bl:
                     import numpy as _np
+
                     from core.black_litterman import BLView, bl_combined_optimization
 
                     view = BLView(
@@ -4943,7 +5375,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                             "Δ (pp)":     (bl["expected_returns"][i] - prior[i]) * 100,
                         } for i, tk in enumerate(top_bl)])
                         st.dataframe(df_bl, hide_index=True,
-                                      use_container_width=True,
+                                      width="stretch",
                                       column_config={
                             "Prior (%)":     st.column_config.NumberColumn(format="%.2f%%"),
                             "Posterior (%)": st.column_config.NumberColumn(format="%.2f%%"),
@@ -5013,7 +5445,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                                 "E[R_p] / σ_p", _COR_NEU,
                             ), unsafe_allow_html=True)
                         st.dataframe(
-                            df_w, hide_index=True, use_container_width=True,
+                            df_w, hide_index=True, width="stretch",
                             column_config={
                                 "Peso (%)": st.column_config.NumberColumn(format="%.1f%%"),
                             },
@@ -5043,7 +5475,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             run_a6 = st.checkbox("Executar validação", value=False, key="b3_a6_run")
         if run_a6:
                 from core.cross_source import (
-                    compare_indicators, batch_validate, resumo_validacao,
+                    batch_validate,
+                    resumo_validacao,
                 )
                 # Monta dict {ticker: {indicador: {fonte: valor}}}
                 # Sources: df_mult_enrich (Fundamentus/StatusInvest pipeline)
@@ -5121,7 +5554,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                         "DRE":        f.valores.get("dre"),
                     } for f in flags])
                     st.dataframe(
-                        df_flags, hide_index=True, use_container_width=True,
+                        df_flags, hide_index=True, width="stretch",
                         column_config={
                             "Spread (%)": st.column_config.NumberColumn(format="%.1f%%"),
                             "Mediana":    st.column_config.NumberColumn(format="%.3f"),
@@ -5163,21 +5596,27 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 "b3-score-low"
             )
             with cols_c[j]:
-                st.markdown(
-                    f'<div class="b3-card">'
-                    f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
-                    f'<img src="{_logo_url(tk)}" class="b3-card-logo"'
-                    f'     onerror="this.style.display=\'none\'">'
-                    f'<div style="flex:1;overflow:hidden;">'
-                    f'<div class="b3-card-ticker">#{rank} {tk}</div>'
-                    f'<div class="b3-card-nome">{nome}</div>'
-                    f'</div></div>'
-                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                    f'<span class="b3-score-badge {badge_cls}">Score {score:.0f}</span>'
-                    f'<span class="b3-card-tag">{anos} anos DRE</span>'
-                    f'</div></div>',
-                    unsafe_allow_html=True,
-                )
+                # Sem <img> cru via unsafe_allow_html — ver achado A-012.
+                # Container com borda nativa substitui o card CSS custom
+                # (.b3-card) só na linha logo+nome; o restante do conteúdo
+                # mantém o estilo original (.b3-score-badge/.b3-card-tag).
+                with st.container(border=True):
+                    logo_col, nome_col = st.columns([1, 4], gap="small")
+                    with logo_col:
+                        render_company_logo(tk, _logo_url(tk), size=36)
+                    with nome_col:
+                        st.markdown(
+                            f'<div class="b3-card-ticker">#{rank} {tk}</div>'
+                            f'<div class="b3-card-nome">{nome}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    st.markdown(
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                        f'<span class="b3-score-badge {badge_cls}">Score {score:.0f}</span>'
+                        f'<span class="b3-card-tag">{anos} anos DRE</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
     # ── SCORE DE ENTRADA — COMPOSIÇÃO AVANÇADA ──────────────────────────────
     st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
@@ -5238,7 +5677,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             ]
             st.dataframe(
                 df_tbl.sort_values("Score Entrada", ascending=False),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 height=min(480, 60 + 35 * len(df_tbl)),
                 column_config={
@@ -5571,7 +6010,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         )
         fig_bt.update_traces(line_width=2.0)
         fig_bt.update_layout(**_plot_layout(380))
-        st.plotly_chart(fig_bt, use_container_width=True,
+        st.plotly_chart(fig_bt, width="stretch",
                         config={"displayModeBar": False}, key="b3_av_bt_chart")
 
         _custos_on     = st.session_state.get("b3_av_bt_custos", True)
@@ -5628,6 +6067,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "índice — referência de mercado real; a linha **Pesos Iguais** "
             "(carteira igualitária) é interna ao universo filtrado."
         )
+
+        # Declaração de proveniência temporal (G2): o rótulo do resultado muda
+        # conforme a disponibilidade tenha sido MEDIDA ou MODELADA pelo prazo
+        # CVM — sem isto o app apresentava um modelo como se fosse fato.
+        _pit_cov_bt = df_bt.attrs.get("pit_coverage")
+        if isinstance(_pit_cov_bt, PITCoverage):
+            st.markdown(_pit_card_html(_pit_cov_bt, "Backtest"),
+                        unsafe_allow_html=True)
 
         # Auditoria 2026-07: transparência dos dois vieses estruturais da
         # simulação — sobrevivência (universo só de listadas hoje) e corte
@@ -5746,8 +6193,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             with icc3:
                 card_metrica("Spread top−bottom (pp)", f"{_spread_med:+.1f}",
                              accent=_COR_POS if _spread_med > 0 else _COR_NEG)
-            st.dataframe(df_ic, hide_index=True, use_container_width=True,
+            st.dataframe(df_ic, hide_index=True, width="stretch",
                          height=min(300, 45 + 35 * len(df_ic)))
+            _pit_cov_ic = df_ic.attrs.get("pit_coverage")
+            if isinstance(_pit_cov_ic, PITCoverage):
+                st.markdown(_pit_card_html(_pit_cov_ic, "Rank-IC"),
+                            unsafe_allow_html=True)
             if _ic_med <= 0.0:
                 st.warning(
                     "IC médio ≤ 0 nesta janela/universo: o score NÃO demonstrou "
@@ -5823,7 +6274,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             )
             fig_cm.update_layout(**_plot_layout(380))
             fig_cm.update_layout(yaxis_title=y_lbl)
-            st.plotly_chart(fig_cm, use_container_width=True,
+            st.plotly_chart(fig_cm, width="stretch",
                             config={"displayModeBar": False}, key="b3_av_mh_chart")
         else:
             st.caption("Indicador não disponível para as empresas selecionadas.")
@@ -5891,7 +6342,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     "#9B59B6", "#E67E22", "#1ABC9C", _COR_NEU],
             )
             fig_cd.update_layout(**_plot_layout(400))
-            st.plotly_chart(fig_cd, use_container_width=True,
+            st.plotly_chart(fig_cd, width="stretch",
                             config={"displayModeBar": False}, key="b3_av_dre_chart")
         else:
             st.caption("Item de DRE não disponível para as empresas selecionadas.")
@@ -5934,7 +6385,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             styled = df_tbl.style.apply(_style_col, axis=0).format(
                 {lbl: "{:.2f}" for _, lbl in cols_disp}, na_rep="—"
             )
-            st.dataframe(styled, use_container_width=True,
+            st.dataframe(styled, width="stretch",
                          height=min(420, 50 + 35 * len(df_tbl)))
         else:
             st.caption("Nenhum indicador disponível para o universo selecionado.")
@@ -5986,7 +6437,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             fig_sc.add_hline(y=med_y, line_dash="dot", line_color="#4A5568")
             fig_sc.update_traces(textposition="top center", textfont_size=9)
             fig_sc.update_layout(**_plot_layout(440))
-            st.plotly_chart(fig_sc, use_container_width=True,
+            st.plotly_chart(fig_sc, width="stretch",
                             config={"displayModeBar": False}, key="b3_av_sc_chart")
         else:
             st.caption("Clique **🔭 Gerar Scatter** para plotar.")
@@ -6022,7 +6473,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         fig_fco.add_hline(y=1.0, line_dash="dot", line_color="#4A5568",
                           annotation_text="FCO = Lucro", annotation_position="top right")
         fig_fco.update_layout(**_plot_layout(360))
-        st.plotly_chart(fig_fco, use_container_width=True,
+        st.plotly_chart(fig_fco, width="stretch",
                         config={"displayModeBar": False}, key="b3_av_fco_chart")
 
         # Mini-tabela com os valores
@@ -6030,7 +6481,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         df_fco_disp["FCO"]      = df_fco_disp["FCO"].map(_fv)
         df_fco_disp["Lucro"]    = df_fco_disp["Lucro"].map(_fv)
         df_fco_disp["FCO/Lucro"] = df_fco_disp["FCO/Lucro"].map(lambda v: f"{v:.2f}x")
-        st.dataframe(df_fco_disp.set_index("Empresa"), use_container_width=True,
+        st.dataframe(df_fco_disp.set_index("Empresa"), width="stretch",
                      height=min(300, 50 + 35 * len(df_fco_disp)))
         audit = st.session_state.get("b3_av_fco_audit", {})
         if audit.get("fallback_fcf_fci", 0):
@@ -6108,12 +6559,22 @@ def render() -> None:
 
     with st.spinner("Carregando lista de empresas…"):
         df_set = _db.load_setores()
+    # Captura a proveniência ANTES de qualquer filtro (attrs pode não sobreviver
+    # a operações de indexação/reset_index) — ver core.b3_data.load_setores.
+    fallback_legado = bool(getattr(df_set, "attrs", {}).get("fallback_legado"))
     df_set = _so_acoes(df_set)
 
     if df_set.empty:
         st.caption(
             "⚠️ Banco não configurado — configure `SUPABASE_DB_URL_B3` "
             "no `.env` ou nos secrets do Streamlit Cloud."
+        )
+    elif fallback_legado:
+        st.caption(
+            "⚠️ Taxonomia setorial via fonte legada (`public.setores`, banco "
+            "resolvido separadamente do restante do app) — a fonte primária "
+            "(`market.*`) falhou ou está vazia. Classificação de setor/subsetor "
+            "pode divergir/estar desatualizada em relação às demais telas."
         )
 
     active = render_market_tabs(state_key="b3_active_tab", key_prefix="b3")

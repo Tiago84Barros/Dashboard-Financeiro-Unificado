@@ -7,7 +7,6 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-
 _DETAIL_METRICS = (
     "vacancia_fisica", "vacancia_financeira", "wault_anos",
     "tenant_concentration", "lease_expiry_concentration_24m", "leverage",

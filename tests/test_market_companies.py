@@ -182,6 +182,7 @@ render_sector_grid(df, key_prefix='test_cards', selected_ticker=None,
 
 def test_view_americana_card_analisar_seleciona_ticker_e_muda_aba():
     from streamlit.testing.v1 import AppTest
+
     import views.empresas_americanas as american_view
 
     originals = {name: getattr(american_view.us, name) for name in (
@@ -226,6 +227,7 @@ view.render()
 
 def test_view_b3_continua_renderizando_cards_compartilhados():
     from streamlit.testing.v1 import AppTest
+
     import views.empresas_b3 as b3_view
 
     original_load_setores = b3_view._db.load_setores

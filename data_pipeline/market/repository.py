@@ -5,9 +5,9 @@ Inclui salvamento do payload bruto e log de qualidade.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-import hashlib
 
 from sqlalchemy import text
 

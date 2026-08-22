@@ -11,7 +11,6 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-
 COMPONENT_LABELS = {
     "income": "renda", "valuation": "valuation", "liquidity": "liquidez",
     "quality": "qualidade dos ativos/carteira", "risk": "controle de risco",

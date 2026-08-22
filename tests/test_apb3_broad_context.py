@@ -4,7 +4,6 @@ import core.llm_b3 as llm
 import core.llm_context_b3 as ctxmod
 import core.portfolio_chat_charts as charts
 
-
 # ── parse_chart_directives ────────────────────────────────────────────────────
 
 def test_parse_chart_directives_extracts_and_strips_block():

@@ -7,7 +7,6 @@ import sys
 from datetime import date
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -21,6 +20,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    from core import market_read
     from core.config import settings
     from core.database import get_engine, get_session_factory
     from core.fii_integrated_model import (
@@ -38,7 +38,6 @@ def main() -> int:
         optimize_diligence_portfolio,
     )
     from core.fii_validation import validation_supports_strategy
-    from core import market_read
     from scripts.publish_fii_selection_from_local import _warehouse_url
 
     if not args.remote:

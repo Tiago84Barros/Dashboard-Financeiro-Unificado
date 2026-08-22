@@ -46,7 +46,6 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-
 # ──────────────────────────────────────────────────────────────────────────
 # Parâmetros padrão — calibrados para mercado brasileiro PF mainstream
 # ──────────────────────────────────────────────────────────────────────────

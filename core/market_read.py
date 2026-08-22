@@ -397,8 +397,12 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
         # histórico vazio e o app voltava ao public.multiplos legado (unidades
         # misturadas/corrompidas). Para o baseline, o available_at é o carimbo da
         # INGESTÃO (semana passada), não a disponibilidade histórica real; por
-        # isso é anulado (→ o scorer usa o corte fiscal, idêntico ao legado, que
-        # nunca teve AvailableAt) — preservando a integridade do walk-forward.
+        # isso é anulado. CONTRATO com o consumidor (auditoria 2026-08, A-002):
+        # available_at nulo significa "disponibilidade NÃO MEDIDA", e não
+        # "disponível desde sempre" — views/empresas_b3.py substitui a medição
+        # pelo prazo legal de publicação da CVM, barra a linha cuja publicação
+        # ainda não venceu na data de decisão e declara na UI que a cobertura
+        # point-in-time medida é zero.
         return _q(f"""
             WITH first_vintage AS (
                 SELECT DISTINCT ON (ticker, year, quarter, metric_name)
@@ -468,7 +472,9 @@ def load_multiplos_historico(ticker: str) -> pd.DataFrame:
     out = clean_multiples_frame(out)  # belt: faixa-fora/outlier → NaN
     cols = ["Ticker", "Data", *_MULT_COLS]
     # Mantém AvailableAt só se houver disponibilidade real (não-baseline); com
-    # baseline puro (available_at anulado) a coluna some → paridade com o legado.
+    # baseline puro (available_at anulado) a coluna some. Ausência da coluna e
+    # coluna toda-NaT são equivalentes para o consumidor: nenhuma linha tem
+    # disponibilidade MEDIDA (ver contrato em _annual_long).
     if "available_at" in out and out["available_at"].notna().any():
         out = out.rename(columns={"available_at": "AvailableAt"})
         cols.append("AvailableAt")
@@ -1446,6 +1452,39 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     mensal = wide.resample("ME").last()          # último preço válido de cada mês
     mensal.columns = [str(c).strip().upper() for c in mensal.columns]
     return mensal.dropna(how="all")
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_dividendos_anuais(ticker: str) -> pd.DataFrame:
+    """Dividendos anuais totais (R$/ação) de ``market.dividends`` — colunas
+    [Data, Dividendos], Data = 31/12 do ano de referência.
+
+    Fonte governada usada como PRIMÁRIA pela aba "Análise de Empresa" (Empresas
+    B3) quando ``market.*`` está ativo — yfinance ao vivo só entra como
+    fallback quando o warehouse está indisponível ou não cobre o ticker
+    (achado A-011, 2026-08-19: antes a tela chamava yfinance incondicionalmente,
+    mesmo com o dado governado disponível).
+    """
+    tk = ticker.strip().upper().replace(".SA", "")
+    df = _q("""
+        SELECT EXTRACT(YEAR FROM event_date)::int AS ano, SUM(amount) AS total
+        FROM market.dividends
+        WHERE ticker = :t AND event_date IS NOT NULL
+        GROUP BY 1
+        ORDER BY 1
+    """, {"t": tk})
+    if df.empty:
+        return pd.DataFrame()
+    df = df.dropna(subset=["ano", "total"])
+    total = pd.to_numeric(df["total"], errors="coerce")
+    df = df[total > 0]
+    if df.empty:
+        return pd.DataFrame()
+    out = pd.DataFrame({
+        "Data": df["ano"].map(lambda y: pd.Timestamp(_dt.date(int(y), 12, 31))),
+        "Dividendos": pd.to_numeric(df["total"], errors="coerce"),
+    })
+    return out.dropna().reset_index(drop=True)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

@@ -80,6 +80,7 @@ def upsert_scores(rows: list[dict]) -> int:
     if not rows:
         return 0
     from sqlalchemy import text
+
     from core.database import get_engine
     engine = get_engine()
     if engine is None:
@@ -112,6 +113,7 @@ def upsert_scores(rows: list[dict]) -> int:
 
 def bank_average_score() -> float | None:
     from sqlalchemy import text
+
     from core.database import get_engine
     engine = get_engine()
     if engine is None:

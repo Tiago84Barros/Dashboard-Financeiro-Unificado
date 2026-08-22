@@ -6,12 +6,11 @@ um limiar alto e, mesmo assim, preservam nome original, algoritmo e evidência.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from difflib import SequenceMatcher
 import re
 import unicodedata
+from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Iterable
-
 
 LEGAL_SUFFIXES = {
     "sa", "s a", "ltda", "eireli", "spe", "fii", "fundo", "investimento",

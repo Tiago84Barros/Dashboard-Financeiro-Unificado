@@ -1,10 +1,14 @@
+from datetime import date
+
 import pandas as pd
 import pytest
 
-from datetime import date
-
-from data_pipeline.market.fii_pit import (VALIDATION_PROTOCOL_VERSION, _monthly_returns,
-                                         _macro_scenarios, _parse_b3_ifix_monthly)
+from data_pipeline.market.fii_pit import (
+    VALIDATION_PROTOCOL_VERSION,
+    _macro_scenarios,
+    _monthly_returns,
+    _parse_b3_ifix_monthly,
+)
 
 
 def test_monthly_returns_uses_close_and_dividends_when_adjustment_factor_is_rewritten():

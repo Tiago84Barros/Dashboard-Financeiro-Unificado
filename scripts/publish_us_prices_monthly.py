@@ -133,9 +133,10 @@ def main(argv=None) -> int:
                         help="limita a um ou mais simbolos; pode repetir")
     args = parser.parse_args(argv)
 
+    from sqlalchemy import create_engine
+
     from core.database import get_engine
     from scripts.publish_fii_selection_from_local import _warehouse_url
-    from sqlalchemy import create_engine
 
     remoto = get_engine()
     if remoto is None:

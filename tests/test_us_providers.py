@@ -63,7 +63,8 @@ def test_budget_exceeded():
 
 def test_budget_remaining():
     b = pv.Budget(limit=3)
-    b.charge(); b.charge()
+    b.charge()
+    b.charge()
     assert b.remaining() == 1
     assert pv.Budget().remaining() is None  # ilimitado
 
@@ -72,7 +73,8 @@ def test_budget_remaining():
 def test_rate_limiter_dorme_quando_esgota():
     clock = Clock()
     rl = pv.RateLimiter(rate=2, per=60.0, time_fn=clock.time, sleep_fn=clock.sleep)
-    rl.acquire(); rl.acquire()          # consome os 2 tokens sem dormir
+    rl.acquire()
+    rl.acquire()          # consome os 2 tokens sem dormir
     assert clock.slept == []
     rl.acquire()                        # terceiro: precisa dormir
     assert clock.slept and clock.slept[-1] > 0

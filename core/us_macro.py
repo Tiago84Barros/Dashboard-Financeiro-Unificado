@@ -7,9 +7,8 @@ explicitamente identificada como tal.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from math import isfinite
-
 
 # Procedência de cada observação macro. Existe porque o relatório institucional
 # NÃO pode apresentar premissa como fato: um analista que escreve "com o Fed em

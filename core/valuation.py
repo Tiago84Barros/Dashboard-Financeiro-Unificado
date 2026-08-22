@@ -67,7 +67,6 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-
 # Constantes Graham/Bazin
 _GRAHAM_K        = 22.5    # 15 × 1.5
 _BAZIN_YIELD_DEF = 0.06    # yield-alvo padrão do método Bazin (6%)

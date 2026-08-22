@@ -21,7 +21,22 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from core.investimentos import get_carteira, get_cashflow_mensal, get_evolucao_patrimonial
+import core.data_reconciliacao as _recon
+import core.fundamentus as _fund
+from core.correlation_analysis import (
+    DEFAULT_CORR_PERIOD,
+    MIN_CORR_MONTHS,
+    calcular_correlacao_mensal,
+    classificar_correlacao,
+    converter_precos_para_brl,
+    correlacao_media_ponderada,
+    intervalo_confianca_correlacao,
+)
+from core.investimentos import (
+    get_carteira,
+    get_cashflow_mensal,
+    get_evolucao_patrimonial,
+)
 from core.proventos import get_proventos
 from core.tesouro_analysis import (
     analise_suficiencia_tesouro,
@@ -30,17 +45,6 @@ from core.tesouro_analysis import (
 )
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
-import core.fundamentus as _fund
-import core.data_reconciliacao as _recon
-from core.correlation_analysis import (
-    DEFAULT_CORR_PERIOD,
-    MIN_CORR_MONTHS,
-    calcular_correlacao_mensal,
-    classificar_correlacao,
-    correlacao_media_ponderada,
-    converter_precos_para_brl,
-    intervalo_confianca_correlacao,
-)
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
 _COR_POSITIVO = "#00C896"
@@ -118,8 +122,10 @@ def _f_brs(v, d: int = 2) -> str:
 def _f_big(v) -> str:
     try:
         v = float(v)
-        if abs(v) >= 1e9: return f"R$ {v/1e9:.2f}B"
-        if abs(v) >= 1e6: return f"R$ {v/1e6:.2f}M"
+        if abs(v) >= 1e9:
+            return f"R$ {v/1e9:.2f}B"
+        if abs(v) >= 1e6:
+            return f"R$ {v/1e6:.2f}M"
         return _f_brs(v, 0)
     except Exception:
         return "—"
@@ -135,7 +141,8 @@ def _f_sec(title: str) -> str:
     return f'<div class="fund-sec">{_html.escape(title)}</div>'
 
 def _f_color_pct(v, good_positive: bool = True) -> str:
-    if v is None: return "fund-val"
+    if v is None:
+        return "fund-val"
     if good_positive:
         return "fund-val-pos" if v > 0.1 else ("fund-val-neg" if v < -0.1 else "fund-val")
     return "fund-val-neg" if v > 0.1 else ("fund-val-pos" if v < -0.1 else "fund-val")
@@ -228,7 +235,7 @@ def _split_br_ext(posicoes: list) -> tuple:
 def _estado_carteira(carteira: dict, n_efetivo: float, pct_ext: float) -> list:
     """Gera análise qualitativa da carteira — lista de dicts {tipo, titulo, texto}."""
     analise  = []
-    total    = carteira["total_mercado"]
+    carteira["total_mercado"]
     por_cls  = carteira.get("por_classe", [])
     rentab   = carteira["rentabilidade_total_pct"]
 
@@ -303,7 +310,7 @@ def _estado_carteira(carteira: dict, n_efetivo: float, pct_ext: float) -> list:
 def _acoes_sugeridas(carteira: dict, n_efetivo: float, dy: float) -> list:
     """Gera lista de ações sugeridas baseadas nos dados do portfólio."""
     sugestoes = []
-    por_cls   = carteira.get("por_classe", [])
+    carteira.get("por_classe", [])
 
     if carteira.get("posicoes"):
         sugestoes.append({
@@ -458,7 +465,7 @@ def _yf_symbol_for_pos(pos: dict) -> str | None:
         return ticker
     if ticker.endswith("F") and len(ticker) > 4:
         ticker = ticker[:-1]
-    if any(k in classe for k in ("aÃ§", "aç", "fii", "etf")):
+    if any(k in classe for k in ("aç", "fii", "etf")):
         return f"{ticker}.SA"
     return None
 
@@ -477,6 +484,7 @@ def _load_corr_precos_db(
 
     try:
         from sqlalchemy import bindparam, text
+
         from core.config import settings
         from core.database import get_engine
     except Exception:
@@ -855,7 +863,7 @@ def _fig_evolucao(cashflow: list, total_atual: float) -> go.Figure:
 def _fig_radar(carteira: dict, n_efetivo: float, pct_ext: float) -> go.Figure:
     """Radar de risco com 5 dimensões."""
     posicoes = carteira.get("posicoes", [])
-    total    = carteira["total_mercado"]
+    carteira["total_mercado"]
     por_cls  = carteira.get("por_classe", [])
 
     # Maior posição individual
@@ -1400,7 +1408,7 @@ def _load_performance_history(
     # 2) Fallback: asset_quotes
     try:
         from sqlalchemy import bindparam, text
-        from core.config import settings
+
         from core.database import get_engine
         engine = get_engine()
         if engine is None or not tickers_local:
@@ -1622,13 +1630,13 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         snapshots = evolucao.get("snapshots", []) if isinstance(evolucao, dict) else []
         if snapshots:
             st.plotly_chart(_fig_evolucao_patrimonial(snapshots),
-                            use_container_width=True,
+                            width="stretch",
                             config={"displayModeBar": False},
                             key="dash_evolucao_snapshot")
             st.caption("Evolucao baseada nos snapshots importados do App2.")
         elif cashflow:
             st.plotly_chart(_fig_evolucao(cashflow, total),
-                            use_container_width=True,
+                            width="stretch",
                             config={"displayModeBar": False},
                             key="dash_evolucao")
             st.caption("Evolução estimada com base no fluxo de caixa mensal acumulado.")
@@ -1647,7 +1655,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             unsafe_allow_html=True,
         )
         st.plotly_chart(_fig_radar(carteira, n_efetivo, pct_ext),
-                        use_container_width=True,
+                        width="stretch",
                         config={"displayModeBar": False},
                         key="dash_radar")
         st.caption("0 = mínimo · 10 = máximo para cada dimensão")
@@ -1686,7 +1694,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                 unsafe_allow_html=True,
             )
             st.plotly_chart(_fig_donut_classes(por_classe),
-                            use_container_width=True,
+                            width="stretch",
                             config={"displayModeBar": False},
                             key="dash_donut")
         with col_barras:
@@ -1696,7 +1704,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                 unsafe_allow_html=True,
             )
             st.plotly_chart(_fig_barras_classes(por_classe),
-                            use_container_width=True,
+                            width="stretch",
                             config={"displayModeBar": False},
                             key="dash_barras_classes")
     else:
@@ -1782,7 +1790,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         col_chart, col_leg = st.columns([2, 1], gap="medium")
         with col_chart:
             st.plotly_chart(_fig_dependencias_macro(deps),
-                            use_container_width=True,
+                            width="stretch",
                             config={"displayModeBar": False},
                             key="dash_macro_deps")
         with col_leg:
@@ -1860,7 +1868,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         with col_exp_chart:
             st.plotly_chart(
                 _fig_macro_ativos(df_macro_ativos, fator_sel),
-                use_container_width=True,
+                width="stretch",
                 config={"displayModeBar": False},
                 key="dash_macro_ativos",
             )
@@ -1883,7 +1891,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                 "Sensib. classe", "Contribuição (p.p.)"]]
             st.dataframe(
                 df_rank,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "Peso na carteira": st.column_config.NumberColumn(
@@ -1950,7 +1958,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
 
         st.plotly_chart(
             _fig_corr_heatmap(corr),
-            use_container_width=True,
+            width="stretch",
             config={"displayModeBar": False},
             key="dash_corr_heatmap",
         )
@@ -1968,21 +1976,21 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             with tab_pos:
                 st.dataframe(
                     positivas[colunas_pares].head(8),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     column_config=config_pares,
                 )
             with tab_inv:
                 st.dataframe(
                     inversas[colunas_pares].head(8),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     column_config=config_pares,
                 )
             with tab_ind:
                 st.dataframe(
                     independentes[colunas_pares].head(8),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     column_config=config_pares,
                 )
@@ -2054,7 +2062,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.plotly_chart(_fig_evolucao_patrimonial(snapshots),
-                        use_container_width=True,
+                        width="stretch",
                         config={"displayModeBar": False},
                         key="hist_evolucao_patrimonial")
         st.caption(
@@ -2117,7 +2125,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
                    "tickformat": ",.0f", "tickprefix": "R$ "},
             showlegend=False,
         )
-        st.plotly_chart(fig_prov, use_container_width=True,
+        st.plotly_chart(fig_prov, width="stretch",
                         config={"displayModeBar": False},
                         key="hist_proventos_bar")
 
@@ -2127,7 +2135,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
                 f'<div style="font-size:0.78rem;color:{_COR_ALERTA};'
                 f'font-weight:700;text-align:right;margin-top:-8px;">'
                 f'Total no período: R$ {total_exibido:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".") +
-                f'</div>',
+                '</div>',
                 unsafe_allow_html=True,
             )
             st.caption(
@@ -2367,10 +2375,14 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
 
 def _cls_to_type(classe: str) -> str:
     c = classe.lower()
-    if "fii" in c or "fundo imob" in c: return "fii"
-    if "ação" in c or "ações" in c or "acoes" in c or "acao" in c: return "stock"
-    if "etf" in c: return "etf"
-    if "bdr" in c: return "bdr"
+    if "fii" in c or "fundo imob" in c:
+        return "fii"
+    if "ação" in c or "ações" in c or "acoes" in c or "acao" in c:
+        return "stock"
+    if "etf" in c:
+        return "etf"
+    if "bdr" in c:
+        return "bdr"
     return "stock"
 
 
@@ -2389,79 +2401,124 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
     vm_mes  = _fund.var_mes(hist)
     vm_12   = _fund.var_12m(hist)
 
-    pl = fd.get("pl");   pvp = fd.get("pvp")
-    psr = fd.get("psr"); p_ebit = fd.get("p_ebit")
-    ev_ebit = fd.get("ev_ebit"); ev_ebitda = fd.get("ev_ebitda")
-    roe = fd.get("roe"); roic = fd.get("roic")
-    ml = fd.get("marg_liq"); cresc_r = fd.get("cresc_rec_5a")
-    div_p = fd.get("div_brut_patrim"); div_liq = fd.get("div_liquida")
-    liq_c = fd.get("liq_corr"); patrim = fd.get("patrim_liq")
-    receita = fd.get("receita_liq"); lucro = fd.get("lucro_liq")
-    dy = fd.get("dy"); setor = fd.get("setor") or "—"
+    pl = fd.get("pl")
+    pvp = fd.get("pvp")
+    psr = fd.get("psr")
+    p_ebit = fd.get("p_ebit")
+    ev_ebit = fd.get("ev_ebit")
+    ev_ebitda = fd.get("ev_ebitda")
+    roe = fd.get("roe")
+    roic = fd.get("roic")
+    ml = fd.get("marg_liq")
+    cresc_r = fd.get("cresc_rec_5a")
+    div_p = fd.get("div_brut_patrim")
+    div_liq = fd.get("div_liquida")
+    liq_c = fd.get("liq_corr")
+    patrim = fd.get("patrim_liq")
+    receita = fd.get("receita_liq")
+    lucro = fd.get("lucro_liq")
+    dy = fd.get("dy")
+    setor = fd.get("setor") or "—"
     subsetor = fd.get("subsetor") or ""
 
     chips = []
-    if pvp and pvp < 1.0:           chips.append(_f_chip("P/VP < 1", "green"))
-    if pl  and pl  < 10:            chips.append(_f_chip("P/L baixo", "green"))
-    if roe and roe > 20:            chips.append(_f_chip("ROE alto ▲", "green"))
-    if roic and roic > 15:          chips.append(_f_chip("ROIC alto ▲", "green"))
-    if ml  is not None and ml < 0:  chips.append(_f_chip("Prejuízo", "red"))
-    if div_p and div_p > T["stock_divida_alta"]: chips.append(_f_chip("Alavancagem ⚠", "red"))
-    if peso > T["stock_conc_max"]:  chips.append(_f_chip("Concentrada", "yellow"))
-    if any(a[0] == "red" for a in alerts): chips.append(_f_chip("Revisar", "red"))
-    if not chips:                   chips.append(_f_chip("Monitorando", "blue"))
+    if pvp and pvp < 1.0:
+        chips.append(_f_chip("P/VP < 1", "green"))
+    if pl  and pl  < 10:
+        chips.append(_f_chip("P/L baixo", "green"))
+    if roe and roe > 20:
+        chips.append(_f_chip("ROE alto ▲", "green"))
+    if roic and roic > 15:
+        chips.append(_f_chip("ROIC alto ▲", "green"))
+    if ml  is not None and ml < 0:
+        chips.append(_f_chip("Prejuízo", "red"))
+    if div_p and div_p > T["stock_divida_alta"]:
+        chips.append(_f_chip("Alavancagem ⚠", "red"))
+    if peso > T["stock_conc_max"]:
+        chips.append(_f_chip("Concentrada", "yellow"))
+    if any(a[0] == "red" for a in alerts):
+        chips.append(_f_chip("Revisar", "red"))
+    if not chips:
+        chips.append(_f_chip("Monitorando", "blue"))
 
     price_str = f"R$ {_f_br(preco)}" if preco else "—"
-    if chg > 0.1:    chg_cls = "fund-chg-pos"; chg_str = f"▲ {chg:.2f}% hoje"
-    elif chg < -0.1: chg_cls = "fund-chg-neg"; chg_str = f"▼ {abs(chg):.2f}% hoje"
-    else:            chg_cls = "fund-chg-neu"; chg_str = f"{chg:.2f}% hoje"
+    if chg > 0.1:
+        chg_cls = "fund-chg-pos"
+        chg_str = f"▲ {chg:.2f}% hoje"
+    elif chg < -0.1:
+        chg_cls = "fund-chg-neg"
+        chg_str = f"▼ {abs(chg):.2f}% hoje"
+    else:
+        chg_cls = "fund-chg-neu"
+        chg_str = f"{chg:.2f}% hoje"
 
-    R = _f_row; S = _f_sec
+    R = _f_row
+    S = _f_sec
     rows  = S("Posição")
     rows += R("Peso na carteira", f"{peso:.1f}%")
     rows += R("Custo investido", _f_brs(custo, 0))
-    if pm: rows += R("Preço médio", _f_brs(pm))
+    if pm:
+        rows += R("Preço médio", _f_brs(pm))
 
     rows += S("Valuation  (Fundamentus)")
-    if pl:    rows += R("P/L", f"{pl:.1f}x",
+    if pl:
+        rows += R("P/L", f"{pl:.1f}x",
                   "fund-val-warn" if pl > T["stock_pl_alto"] else
                   "fund-val-pos"  if pl < T["stock_pl_baixo"] else "fund-val")
-    if pvp:   rows += R("P/VP", f"{pvp:.2f}x",
+    if pvp:
+        rows += R("P/VP", f"{pvp:.2f}x",
                   "fund-val-warn" if pvp > T["stock_pvp_alto"] else "fund-val")
-    if psr:   rows += R("PSR", f"{psr:.2f}x")
-    if p_ebit: rows += R("P/EBIT", f"{p_ebit:.2f}x")
-    if ev_ebitda: rows += R("EV/EBITDA", f"{ev_ebitda:.2f}x")
-    if ev_ebit:   rows += R("EV/EBIT", f"{ev_ebit:.2f}x")
-    if dy:    rows += R("Dividend Yield", f"{dy:.2f}%",
+    if psr:
+        rows += R("PSR", f"{psr:.2f}x")
+    if p_ebit:
+        rows += R("P/EBIT", f"{p_ebit:.2f}x")
+    if ev_ebitda:
+        rows += R("EV/EBITDA", f"{ev_ebitda:.2f}x")
+    if ev_ebit:
+        rows += R("EV/EBIT", f"{ev_ebit:.2f}x")
+    if dy:
+        rows += R("Dividend Yield", f"{dy:.2f}%",
                   "fund-val-warn" if dy > T["stock_dy_alto"] else "fund-val-pos")
 
     rows += S("Rentabilidade  (Fundamentus)")
-    if roe:   rows += R("ROE", f"{roe:.1f}%", _f_color_pct(roe - T["stock_roe_baixo"]))
-    if roic:  rows += R("ROIC", f"{roic:.1f}%", _f_color_pct(roic - T["stock_roic_baixo"]))
-    if fd.get("marg_bruta") is not None: rows += R("Margem Bruta", f"{fd['marg_bruta']:.1f}%", _f_color_pct(fd["marg_bruta"]))
-    if ml is not None: rows += R("Margem Líq.", f"{ml:.1f}%",
+    if roe:
+        rows += R("ROE", f"{roe:.1f}%", _f_color_pct(roe - T["stock_roe_baixo"]))
+    if roic:
+        rows += R("ROIC", f"{roic:.1f}%", _f_color_pct(roic - T["stock_roic_baixo"]))
+    if fd.get("marg_bruta") is not None:
+        rows += R("Margem Bruta", f"{fd['marg_bruta']:.1f}%", _f_color_pct(fd["marg_bruta"]))
+    if ml is not None:
+        rows += R("Margem Líq.", f"{ml:.1f}%",
                   "fund-val-neg" if ml < 0 else ("fund-val-warn" if ml < 5 else "fund-val-pos"))
-    if cresc_r is not None: rows += R("Cresc. Receita 5a", f"{cresc_r:+.1f}%", _f_color_pct(cresc_r))
+    if cresc_r is not None:
+        rows += R("Cresc. Receita 5a", f"{cresc_r:+.1f}%", _f_color_pct(cresc_r))
 
     rows += S("Endividamento e Liquidez  (Fundamentus)")
-    if div_p: rows += R("Dív.Bruta/Patrim.", f"{div_p:.2f}x",
+    if div_p:
+        rows += R("Dív.Bruta/Patrim.", f"{div_p:.2f}x",
                   "fund-val-neg" if div_p > T["stock_divida_alta"] else "fund-val")
-    if div_liq is not None: rows += R("Dívida Líquida", _f_big(div_liq),
+    if div_liq is not None:
+        rows += R("Dívida Líquida", _f_big(div_liq),
                   "fund-val-neg" if div_liq > 0 else "fund-val-pos")
-    if liq_c:  rows += R("Liq. Corrente", f"{liq_c:.2f}x",
+    if liq_c:
+        rows += R("Liq. Corrente", f"{liq_c:.2f}x",
                   "fund-val-pos" if liq_c > 1 else "fund-val-neg")
-    if patrim: rows += R("Patrimônio Líq.", _f_big(patrim))
+    if patrim:
+        rows += R("Patrimônio Líq.", _f_big(patrim))
 
     rows += S("Demonstrativos LTM  (Fundamentus)")
-    if receita: rows += R("Receita Líq.", _f_big(receita))
-    if lucro is not None: rows += R("Lucro Líq.", _f_big(lucro),
+    if receita:
+        rows += R("Receita Líq.", _f_big(receita))
+    if lucro is not None:
+        rows += R("Lucro Líq.", _f_big(lucro),
                   "fund-val-pos" if lucro > 0 else "fund-val-neg")
 
     rows += S("Preço e Variação  (yfinance)")
     rows += R("Var. no Mês",   f"{vm_mes:+.1f}%" if vm_mes is not None else "—", _f_color_pct(vm_mes))
     rows += R("Var. 12 Meses", f"{vm_12:+.1f}%"  if vm_12  is not None else "—", _f_color_pct(vm_12))
     rows += R("Setor", setor)
-    if subsetor: rows += R("Subsetor", subsetor)
+    if subsetor:
+        rows += R("Subsetor", subsetor)
 
     return (
         f'<div class="fund-card">'
@@ -2497,65 +2554,98 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
     vm_mes = _fund.var_mes(hist)
     vm_12  = _fund.var_12m(hist)
 
-    pvp      = fd.get("pvp"); dy_f = fd.get("dy")
+    pvp      = fd.get("pvp")
+    dy_f = fd.get("dy")
     vac      = fd.get("vacancia_media") or fd.get("vacancia_fisica")
     vac_fin  = fd.get("vacancia_financ")
-    qtd_im   = fd.get("qtd_imoveis"); qtd_cot = fd.get("qtd_cotistas")
-    vp_cota  = fd.get("vp_cota"); patrim = fd.get("patrim_liq")
-    ult_rend = fd.get("ult_rendimento"); data_rend = fd.get("data_rendimento") or ""
+    qtd_im   = fd.get("qtd_imoveis")
+    qtd_cot = fd.get("qtd_cotistas")
+    vp_cota  = fd.get("vp_cota")
+    patrim = fd.get("patrim_liq")
+    ult_rend = fd.get("ult_rendimento")
+    data_rend = fd.get("data_rendimento") or ""
     liq      = fd.get("liq_diaria")
     seg_raw  = fd.get("segmento") or ""
     fii_tipo = _fund.get_fii_tipo(ticker, seg_raw)
     yoc = (renda_recebida / custo * 100) if (renda_recebida > 0 and custo > 0) else None
 
     chips = []
-    if fii_tipo:                                     chips.append(_f_chip(fii_tipo, "purple"))
-    if pvp and pvp < T["fii_pvp_desconto"]:          chips.append(_f_chip("P/VP descontado", "green"))
-    if pvp and pvp > T["fii_pvp_premium"]:           chips.append(_f_chip("P/VP c/ prêmio", "yellow"))
-    if vac is not None and vac > T["fii_vacancia_alta"]: chips.append(_f_chip(f"Vacância {vac:.0f}%", "red"))
-    if vac == 0:                                     chips.append(_f_chip("100% ocupado ✓", "green"))
-    if dy_f and 8 <= dy_f <= 13:                     chips.append(_f_chip("DY saudável", "green"))
-    if dy_f and dy_f > T["fii_dy_alto"]:             chips.append(_f_chip("DY elevado ⚠", "yellow"))
-    if qtd_im is not None and qtd_im <= 3:           chips.append(_f_chip("Poucos imóveis ⚠", "yellow"))
-    if peso > T["fii_conc_max"]:                     chips.append(_f_chip("Concentrado", "yellow"))
-    if not chips:                                    chips.append(_f_chip("Monitorando", "blue"))
+    if fii_tipo:
+        chips.append(_f_chip(fii_tipo, "purple"))
+    if pvp and pvp < T["fii_pvp_desconto"]:
+        chips.append(_f_chip("P/VP descontado", "green"))
+    if pvp and pvp > T["fii_pvp_premium"]:
+        chips.append(_f_chip("P/VP c/ prêmio", "yellow"))
+    if vac is not None and vac > T["fii_vacancia_alta"]:
+        chips.append(_f_chip(f"Vacância {vac:.0f}%", "red"))
+    if vac == 0:
+        chips.append(_f_chip("100% ocupado ✓", "green"))
+    if dy_f and 8 <= dy_f <= 13:
+        chips.append(_f_chip("DY saudável", "green"))
+    if dy_f and dy_f > T["fii_dy_alto"]:
+        chips.append(_f_chip("DY elevado ⚠", "yellow"))
+    if qtd_im is not None and qtd_im <= 3:
+        chips.append(_f_chip("Poucos imóveis ⚠", "yellow"))
+    if peso > T["fii_conc_max"]:
+        chips.append(_f_chip("Concentrado", "yellow"))
+    if not chips:
+        chips.append(_f_chip("Monitorando", "blue"))
 
     price_str = f"R$ {_f_br(preco)}" if preco else "—"
-    if chg > 0.1:    chg_cls = "fund-chg-pos"; chg_str = f"▲ {chg:.2f}% hoje"
-    elif chg < -0.1: chg_cls = "fund-chg-neg"; chg_str = f"▼ {abs(chg):.2f}% hoje"
-    else:            chg_cls = "fund-chg-neu"; chg_str = f"{chg:.2f}% hoje"
+    if chg > 0.1:
+        chg_cls = "fund-chg-pos"
+        chg_str = f"▲ {chg:.2f}% hoje"
+    elif chg < -0.1:
+        chg_cls = "fund-chg-neg"
+        chg_str = f"▼ {abs(chg):.2f}% hoje"
+    else:
+        chg_cls = "fund-chg-neu"
+        chg_str = f"{chg:.2f}% hoje"
 
-    R = _f_row; S = _f_sec
+    R = _f_row
+    S = _f_sec
     rows  = S("Posição")
     rows += R("Peso na carteira", f"{peso:.1f}%")
     rows += R("Custo investido", _f_brs(custo, 0))
     rows += R("Cotas", _f_br(qty, 0))
 
     rows += S("Indicadores  (Fundamentus)")
-    if pvp:   rows += R("P/VP", f"{pvp:.2f}x",
+    if pvp:
+        rows += R("P/VP", f"{pvp:.2f}x",
                   "fund-val-warn" if pvp > T["fii_pvp_premium"] else
                   "fund-val-pos"  if pvp < T["fii_pvp_desconto"] else "fund-val")
-    if vp_cota: rows += R("VP/Cota", _f_brs(vp_cota))
-    if dy_f:  rows += R("Dividend Yield", f"{dy_f:.2f}%",
+    if vp_cota:
+        rows += R("VP/Cota", _f_brs(vp_cota))
+    if dy_f:
+        rows += R("Dividend Yield", f"{dy_f:.2f}%",
                   "fund-val-warn" if dy_f > T["fii_dy_alto"] else "fund-val-pos")
     if ult_rend:
         lbl_rend = f"Últ. Rendimento{' (' + data_rend + ')' if data_rend else ''}"
         rows += R(lbl_rend, _f_brs(ult_rend, 4))
-    if yoc:             rows += R("YoC 12M (renda/custo)", f"{yoc:.1f}%", "fund-val-pos")
-    if renda_recebida > 0: rows += R("Renda recebida (12M)", _f_brs(renda_recebida, 0), "fund-val-pos")
+    if yoc:
+        rows += R("YoC 12M (renda/custo)", f"{yoc:.1f}%", "fund-val-pos")
+    if renda_recebida > 0:
+        rows += R("Renda recebida (12M)", _f_brs(renda_recebida, 0), "fund-val-pos")
 
     rows += S("Ocupação e Diversificação  (Fundamentus)")
-    if fii_tipo: rows += R("Tipo de FII", fii_tipo, "fund-val-pos")
+    if fii_tipo:
+        rows += R("Tipo de FII", fii_tipo, "fund-val-pos")
     rows += R("Segmento", seg_raw or "—")
-    if vac is not None: rows += R("Vacância Média", f"{vac:.1f}%",
+    if vac is not None:
+        rows += R("Vacância Média", f"{vac:.1f}%",
                   "fund-val-neg" if vac > T["fii_vacancia_alta"] else
                   "fund-val-pos" if vac == 0 else "fund-val-warn" if vac > 5 else "fund-val")
-    if vac_fin is not None: rows += R("Vacância Financeira", f"{vac_fin:.1f}%")
-    if qtd_im is not None:  rows += R("Nº de Imóveis", str(int(qtd_im)),
+    if vac_fin is not None:
+        rows += R("Vacância Financeira", f"{vac_fin:.1f}%")
+    if qtd_im is not None:
+        rows += R("Nº de Imóveis", str(int(qtd_im)),
                   "fund-val-warn" if qtd_im <= 3 else "fund-val")
-    if qtd_cot is not None: rows += R("Nº de Cotistas", _f_br(qtd_cot, 0))
-    if patrim:  rows += R("Patrimônio Líq.", _f_big(patrim))
-    if liq:     rows += R("Liq. Diária", _f_big(liq))
+    if qtd_cot is not None:
+        rows += R("Nº de Cotistas", _f_br(qtd_cot, 0))
+    if patrim:
+        rows += R("Patrimônio Líq.", _f_big(patrim))
+    if liq:
+        rows += R("Liq. Diária", _f_big(liq))
 
     rows += S("Variação de Preço  (yfinance)")
     rows += R("Var. no Mês",   f"{vm_mes:+.1f}%" if vm_mes is not None else "—", _f_color_pct(vm_mes))
@@ -2813,7 +2903,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             _secao_titulo_orig("🥧", "Distribuição por Classe de Ativo")
             if por_classe:
                 st.plotly_chart(_fig_donut_classes(por_classe),
-                                use_container_width=True,
+                                width="stretch",
                                 config={"displayModeBar": False},
                                 key="analise_donut")
             else:
@@ -2822,7 +2912,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             _secao_titulo_orig("🏆", "Top 15 Posições por Custo")
             if posicoes:
                 st.plotly_chart(_fig_top15(posicoes),
-                                use_container_width=True,
+                                width="stretch",
                                 config={"displayModeBar": False},
                                 key="analise_top15")
             else:
@@ -3377,7 +3467,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     yaxis={"showgrid": False, "automargin": True},
                     showlegend=False,
                 )
-                st.plotly_chart(fig_stress, use_container_width=True,
+                st.plotly_chart(fig_stress, width="stretch",
                                 config={"displayModeBar": False},
                                 key="analise_stress_bar")
 
@@ -3415,7 +3505,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     linhas_cls.sort(key=lambda r: -r["Perda"])
                     st.dataframe(
                         pd.DataFrame(linhas_cls),
-                        use_container_width=True, hide_index=True,
+                        width="stretch", hide_index=True,
                         column_config={
                             "Valor hoje": st.column_config.NumberColumn(format="R$ %.0f"),
                             "Valor pós-choque": st.column_config.NumberColumn(format="R$ %.0f"),
@@ -3442,7 +3532,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     } for r in ordenados])
                     st.dataframe(
                         df_stress,
-                        use_container_width=True, hide_index=True,
+                        width="stretch", hide_index=True,
                         column_config={
                             "Valor hoje": st.column_config.NumberColumn(format="R$ %.0f"),
                             "Valor pós-choque": st.column_config.NumberColumn(format="R$ %.0f"),

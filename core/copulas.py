@@ -36,10 +36,8 @@ Referências:
 from __future__ import annotations
 
 import math
-from typing import Tuple
 
 import numpy as np
-
 
 # ──────────────────────────────────────────────────────────────────────────
 # Helpers

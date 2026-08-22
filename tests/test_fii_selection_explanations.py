@@ -1,8 +1,10 @@
 import pandas as pd
 
 from core.fii_methodology import MacroScenario
-from core.fii_selection_explanations import (build_selection_explanations,
-                                             build_selection_reports)
+from core.fii_selection_explanations import (
+    build_selection_explanations,
+    build_selection_reports,
+)
 
 
 def _row(ticker, score, confidence=.8, coverage=.8, dy=.1):

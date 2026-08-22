@@ -44,8 +44,9 @@ def run() -> dict:
         result["error_message"] = "SOURCE_DB_APP1/SUPABASE_DB_URL_B3 não configurado"
         return result
 
-    from data_pipeline.utils.db_utils import get_pipeline_engine
     from sqlalchemy import create_engine, text
+
+    from data_pipeline.utils.db_utils import get_pipeline_engine
 
     dst_engine = get_pipeline_engine()
     if dst_engine is None:
@@ -73,7 +74,6 @@ def run() -> dict:
 
         total_docs = 0
         total_chunks = 0
-        offset = 0
 
         while True:
             with src_engine.connect() as src_conn:

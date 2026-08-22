@@ -11,7 +11,11 @@ import pandas as pd
 import pytest
 
 from core.b3_holdings_health import (
-    ATENCAO, CRITICO, OK, check_holdings, check_portfolio,
+    ATENCAO,
+    CRITICO,
+    OK,
+    check_holdings,
+    check_portfolio,
 )
 
 

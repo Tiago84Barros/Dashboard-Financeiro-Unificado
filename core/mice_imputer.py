@@ -39,7 +39,6 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-
 # Colunas numéricas padrão para MICE no contexto fundamentalista B3
 DEFAULT_NUMERIC_COLS: tuple[str, ...] = (
     "ROE", "ROIC", "Margem_Liquida", "Margem_Operacional",

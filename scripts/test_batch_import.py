@@ -5,14 +5,19 @@ Roda b3_negociacao e b3_movimentacao a partir dos XLSX em data_imports/
 e mede tempo + contadores. Usado para validar o refactor de
 b3_negociacao.py e b3_movimentacao.py (2026-05-22).
 """
-import os, sys, time
+import os
+import sys
+import time
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pathlib import Path
+
 from core.database import get_engine
 from data_pipeline.importers.investments import (
-    parse_b3_negociacao, parse_b3_movimentacao,
+    parse_b3_movimentacao,
+    parse_b3_negociacao,
 )
 
 ROOT = Path(__file__).parent.parent

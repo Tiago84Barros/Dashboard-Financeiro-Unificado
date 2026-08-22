@@ -60,6 +60,7 @@ def run(periodo: str = "1mo", apenas_sem_cotacao: bool = False) -> dict:
         sys.exit(1)
 
     from sqlalchemy import text
+
     from core.config import settings
     from core.database import get_engine
 

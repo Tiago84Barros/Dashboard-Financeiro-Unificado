@@ -1,7 +1,13 @@
 """Resiliência em recessão do módulo EUA — exige a crise de 2008."""
 from core.us_cycle_evidence import (
-    FRAGIL, INTERMEDIARIO, MIN_ANOS_CRISE, RESILIENTE, SEM_EVIDENCIA,
-    classificar, cobertura, montar,
+    FRAGIL,
+    INTERMEDIARIO,
+    MIN_ANOS_CRISE,
+    RESILIENTE,
+    SEM_EVIDENCIA,
+    classificar,
+    cobertura,
+    montar,
 )
 
 

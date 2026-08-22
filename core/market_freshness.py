@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-
 MAX_QUOTE_AGE_DAYS = 5
 
 

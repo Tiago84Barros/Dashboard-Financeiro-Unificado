@@ -7,25 +7,30 @@ carteira identificavel; ausencia nunca vira zero.
 """
 from __future__ import annotations
 
-from collections import defaultdict
-from dataclasses import replace
-from datetime import date, datetime, timezone
 import hashlib
 import io
 import json
-from pathlib import Path
 import re
 import zipfile
+from collections import defaultdict
+from dataclasses import replace
+from datetime import date, datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import text
 
 from data_pipeline.market.fii_cvm_structured import (
-    CvmArchive, _date, _digits, _num, _published, _ratio, _text,
+    CvmArchive,
+    _date,
+    _digits,
+    _num,
+    _published,
+    _ratio,
+    _text,
     archive_manifest,
 )
 from data_pipeline.market.fii_sources import metric_observation
-
 
 SOURCE = "cvm_cri_monthly"
 LOOKTHROUGH_SOURCE = "cvm_cri_lookthrough"
@@ -475,9 +480,12 @@ def _lookthrough(conn) -> dict:
 
 def ingest_cvm_cri(*, years: int = 5) -> dict:
     from email.utils import parsedate_to_datetime
+
     from data_pipeline.market import repository as repo
     from data_pipeline.market.fii_ingest import (
-        _engine, audit_methodology_v4_data, record_validation_readiness,
+        _engine,
+        audit_methodology_v4_data,
+        record_validation_readiness,
         snapshot_methodology_v4,
     )
 

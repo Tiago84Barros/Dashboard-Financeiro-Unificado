@@ -22,7 +22,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-
 DEFAULT_CORR_THRESHOLD = 0.65
 MIN_OBS_CORRELACAO = 18  # meses de sobreposição — mesmo piso do walk-forward
 

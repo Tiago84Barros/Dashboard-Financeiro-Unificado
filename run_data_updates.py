@@ -16,11 +16,12 @@ import logging
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Garante que o diretório raiz está no path
 _ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT))
 
-from dotenv import load_dotenv
 load_dotenv(_ROOT / ".env")
 
 logging.basicConfig(

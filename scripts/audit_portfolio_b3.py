@@ -253,7 +253,7 @@ def verificar_determinismo_entre_processos(config: Config, *,
                     "PYTHONIOENCODING": "utf-8"}
         proc = subprocess.run([sys.executable, "-c", codigo], capture_output=True,
                               text=True, env=ambiente, timeout=timeout + 120)
-        linha = next((l for l in proc.stdout.splitlines() if l.startswith("###")), None)
+        linha = next((saida for saida in proc.stdout.splitlines() if saida.startswith("###")), None)
         saidas.append(json.loads(linha[3:]) if linha else [])
     if not saidas[0] or not saidas[1]:
         # Execução incompleta não prova nem refuta determinismo.

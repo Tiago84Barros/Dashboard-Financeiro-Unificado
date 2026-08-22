@@ -10,11 +10,14 @@ Hipoteses:
   H2: investment_transactions tem linhas duplicadas vindas de migracoes diferentes
   H3: A mesma transacao foi importada do CSV legacy E do XLSX B3 negociacao
 """
-import os, sys
+import os
+import sys
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text
+
 from core.config import settings
 from core.database import get_engine
 

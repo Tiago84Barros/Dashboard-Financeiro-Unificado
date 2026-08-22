@@ -12,7 +12,7 @@ tests/test_us_asymmetry.py.
 """
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Sequence
 
 
 def _series_pairs(series: Sequence[dict], field: str) -> list[tuple[int, float]]:

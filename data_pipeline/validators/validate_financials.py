@@ -19,8 +19,9 @@ def validate() -> dict:
     try:
         import pandas as pd  # noqa: F401
         from sqlalchemy import text
-        from data_pipeline.utils.db_utils import get_pipeline_engine
+
         import core.data_quality as dq
+        from data_pipeline.utils.db_utils import get_pipeline_engine
     except Exception as exc:  # dependência ausente
         return {"status": "skipped", "issues": [], "error_message": f"dependência: {exc}"}
 

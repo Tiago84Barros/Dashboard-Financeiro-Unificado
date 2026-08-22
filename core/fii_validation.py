@@ -1,14 +1,13 @@
 """Validação point-in-time e estatística da metodologia de FIIs v4."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import math
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
-
 
 VALIDATION_STRATEGY_ID = "fii_rank_equal_weight_buffered.v1"
 
@@ -233,11 +232,13 @@ def robust_optimizer_point_in_time_backtest(
     exclusivamente com retornos anteriores à decisão.
     """
     from core.fii_integrated_model import (
-        IntegratedEligibilityPolicy, apply_integrated_eligibility,
+        IntegratedEligibilityPolicy,
+        apply_integrated_eligibility,
     )
     from core.fii_methodology import MacroScenario
     from core.fii_portfolio_v4 import (
-        LIVE_PORTFOLIO_STRATEGY_ID, PortfolioPolicy,
+        LIVE_PORTFOLIO_STRATEGY_ID,
+        PortfolioPolicy,
         optimize_diligence_portfolio,
     )
 

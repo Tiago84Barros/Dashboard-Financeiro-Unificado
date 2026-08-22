@@ -165,6 +165,7 @@ def _visao_geral_real() -> dict:
       - Não executa DDL, DML de escrita nem SQL parametrizado com dados do usuário.
     """
     from sqlalchemy import text
+
     from core.database import get_engine
 
     # ── Pré-condições ─────────────────────────────────────────────────────
@@ -368,7 +369,7 @@ def _visao_geral_real() -> dict:
     saude_score = calcular_saude_score(
         taxa_poupanca=taxa_poup,
         meses_reserva=meses_reserva,
-        categorias_no_limite=cats_no_limite,
+        categorias_estouradas=cats_no_limite,
         total_categorias=len(categorias_despesa),
         rentabilidade_positiva=False,   # cotações ausentes → retorno = 0
     )
@@ -609,7 +610,7 @@ def _gerar_proximos_passos_real(
 def calcular_saude_score(
     taxa_poupanca: float,
     meses_reserva: float,
-    categorias_no_limite: int,
+    categorias_estouradas: int,
     total_categorias: int,
     rentabilidade_positiva: bool,
 ) -> int:
@@ -619,8 +620,11 @@ def calcular_saude_score(
     Componentes:
       40 pts → taxa de poupança ≥ 30% (proporcional)
       30 pts → reserva de emergência ≥ 6 meses (proporcional)
-      20 pts → orçamento respeitado (proporção de categorias OK)
+      20 pts → orçamento respeitado (proporção de categorias fora do limite)
       10 pts → investimentos com rentabilidade positiva
+
+    `categorias_estouradas` conta categorias com uso ≥ 90% do orçamento (ruim);
+    o componente de orçamento premia quem tem MENOS categorias estouradas.
     """
     score = 0.0
 
@@ -632,7 +636,8 @@ def calcular_saude_score(
 
     # Orçamento respeitado (categorias abaixo de 90% do limite)
     if total_categorias > 0:
-        score += (categorias_no_limite / total_categorias) * 20
+        categorias_ok = total_categorias - categorias_estouradas
+        score += (categorias_ok / total_categorias) * 20
 
     # Rentabilidade positiva
     if rentabilidade_positiva:

@@ -1,6 +1,5 @@
 import data_pipeline.market.metrics as mx
 
-
 _F = {
     "revenue": 1000.0, "net_income": 200.0, "ebit": 300.0, "ebitda": 350.0,
     "total_assets": 2000.0, "equity": 1000.0, "cash": 100.0,

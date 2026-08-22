@@ -6,11 +6,10 @@ explícitas. Valores ausentes também não são convertidos em zero.
 """
 from __future__ import annotations
 
+import math
 from collections import Counter
 from dataclasses import asdict, dataclass
-import math
 from typing import Any, Iterable
-
 
 INTEGRATED_MODEL_VERSION = "6.7.0"
 

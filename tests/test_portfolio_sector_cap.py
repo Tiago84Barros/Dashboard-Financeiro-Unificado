@@ -8,7 +8,8 @@ from __future__ import annotations
 import pytest
 
 from core.portfolio_constraints import (
-    project_sector_capped, sector_cap_feasibility,
+    project_sector_capped,
+    sector_cap_feasibility,
 )
 
 
@@ -246,6 +247,7 @@ def test_pares_de_correlacao_tem_ordenacao_total():
     residual de não determinismo (GOAU4 vs SHUL4 na Siderurgia, 29/07/2026),
     que três sementes de hash não pegaram por acaso."""
     import pandas as pd
+
     from core.b3_correlation_diversification import high_correlation_pairs
 
     def _matriz(ordem):
@@ -265,6 +267,7 @@ def test_pares_de_correlacao_tem_ordenacao_total():
 
 def test_pares_seguem_ordenados_por_correlacao_decrescente():
     import pandas as pd
+
     from core.b3_correlation_diversification import high_correlation_pairs
 
     m = pd.DataFrame([[1.0, 0.95, 0.60], [0.95, 1.0, 0.70], [0.60, 0.70, 1.0]],

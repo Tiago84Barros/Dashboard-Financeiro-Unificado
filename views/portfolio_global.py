@@ -11,6 +11,7 @@ tests/test_portfolio_global_view.py.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 import pandas as pd
@@ -32,11 +33,16 @@ from core.portfolio.repository import (
 from core.rebalancing import CalendarRebalance
 from design.componentes import card_metrica
 
+logger = logging.getLogger(__name__)
+
 MSG_SEM_SNAPSHOT = (
     "Nenhum snapshot encontrado. Rode o schema 049 no Supabase e depois "
     "`python -m scripts.backfill_portfolio_snapshots --apply`."
 )
 MSG_SEM_ALVO = "Defina a alocação-alvo por classe para consolidar o patrimônio."
+MSG_FALHA_AO_CARREGAR = (
+    "Não foi possível conectar ao banco de dados. Tente novamente em instantes."
+)
 
 # Chave de session_state que carrega a confirmacao de "alocacao salva" atraves
 # do st.rerun() disparado logo apos salvar (ver _editor_de_alocacao).
@@ -136,15 +142,21 @@ def mensagem_de_erro_ao_carregar(exc: Exception) -> str:
 
     O schema 049 (tabelas de snapshot e de alocacao-alvo) pode ainda nao ter
     sido aplicado no Supabase: nesse caso a consulta cai numa tabela
-    inexistente, o que e o primeiro-uso esperado, nao um erro de verdade.
+    inexistente, o que e o primeiro-uso esperado, nao um erro de verdade — a
+    pessoa usuaria ve a orientacao de backfill.
+
     Qualquer outra falha — incluindo conexao recusada ou autenticacao
-    invalida, que tambem chegam como OperationalError — mantem a mensagem
-    crua: uma falha de conexao real precisa continuar visivel, nao
-    disfarcada de "sem dados".
+    invalida, que tambem chegam como OperationalError — precisa continuar
+    visivel para quem opera o app, mas NAO como texto cru de excecao Python
+    na tela (driver, host, porta, link do SQLAlchemy): isso e detalhe de
+    implementacao que nao ajuda a pessoa usuaria final e foi documentado como
+    achado A-013. O chamador (`render`) e responsavel por logar o `exc`
+    original por inteiro via `logging.exception` antes de chamar esta funcao;
+    aqui so decidimos qual mensagem amigavel mostrar.
     """
     if _e_erro_de_tabela_ausente(exc):
         return MSG_SEM_SNAPSHOT
-    return f"Não foi possível ler os dados do portfólio: {exc}"
+    return MSG_FALHA_AO_CARREGAR
 
 
 def _fmt(valor: float | None, sufixo: str = "", casas: int = 2) -> str:
@@ -405,13 +417,13 @@ def _tabelas(df: pd.DataFrame) -> None:
         setores["sector"] = setores["sector"].map(lambda s: ROTULOS.get(s, s))
         setores["peso"] = (setores["peso"] * 100).round(2)
         setores.columns = ["Setor", "Peso %", "Ativos"]
-        st.dataframe(setores, use_container_width=True, hide_index=True)
+        st.dataframe(setores, width="stretch", hide_index=True)
 
     with aba_pais:
         paises = concentration.por_dimensao(df, "country")
         paises["peso"] = (paises["peso"] * 100).round(2)
         paises.columns = ["País", "Peso %", "Ativos"]
-        st.dataframe(paises, use_container_width=True, hide_index=True)
+        st.dataframe(paises, width="stretch", hide_index=True)
 
 
 def aviso_de_cobertura(cob: Cobertura) -> str | None:
@@ -425,15 +437,58 @@ def aviso_de_cobertura(cob: Cobertura) -> str | None:
     por omissão, o mesmo risco que _setores_sem_mapa e classes_sem_posicao já
     nomeiam nesta tela. `None` quando a cobertura é total (nada a avisar).
     """
-    if cob.peso_coberto >= 1.0:
+    if (cob.peso_coberto >= 1.0
+            and not cob.simbolos_sem_fx and not cob.simbolos_fx_stale
+            and not cob.meses_removidos_intersecao):
         return None
     pct_coberto = cob.peso_coberto * 100.0
     pct_fora = 100.0 - pct_coberto
-    nomes = ", ".join(cob.simbolos_sem_serie) if cob.simbolos_sem_serie else "nenhum símbolo identificado"
+    nomes = (
+        ", ".join(cob.simbolos_sem_serie)
+        if cob.simbolos_sem_serie else "nenhum símbolo identificado"
+    )
+    motivos: list[str] = []
+    if cob.simbolos_sem_fx:
+        motivos.append("câmbio ausente: " + ", ".join(cob.simbolos_sem_fx))
+    if cob.simbolos_fx_stale:
+        motivos.append("câmbio defasado: " + ", ".join(cob.simbolos_fx_stale))
+    detalhe = f" Motivos cambiais — {'; '.join(motivos)}." if motivos else ""
+    # Cobertura e janela sao eixos diferentes: 100% do patrimonio pode estar
+    # coberto e ainda assim faltarem meses. Sem esta frase o usuario leria
+    # "100%" e suporia serie completa.
+    janela = ""
+    if cob.periodo_comum:
+        janela = f" Janela comum: {cob.periodo_comum[0]} a {cob.periodo_comum[1]}."
+    if cob.meses_removidos_intersecao:
+        janela += (
+            f" {len(cob.meses_removidos_intersecao)} meses removidos por falta de "
+            f"preço ou câmbio em algum ativo: "
+            f"{', '.join(cob.meses_removidos_intersecao)}."
+        )
     return (
         f"Correlação, fatores e risco cobrem {pct_coberto:.0f}% do patrimônio "
-        f"({pct_fora:.0f}% de fora, sem série mensal de preços): {nomes}."
+        f"({pct_fora:.0f}% de fora, sem série mensal válida): {nomes}."
+        f"{detalhe}{janela}"
     )
+
+
+def detalhe_fx(cob: Cobertura) -> str | None:
+    """Rastreabilidade da conversão usada nos retornos e no risco."""
+    if not cob.fx_evidence:
+        return None
+    partes: list[str] = []
+    for evidencia in cob.fx_evidence:
+        data = (evidencia.last_observed_at or "não informada")[:10]
+        stale = (
+            f" · {evidencia.stale_months} mês(es) sem taxa dentro da tolerância"
+            if evidencia.stale_months else ""
+        )
+        partes.append(
+            f"{evidencia.currency}→{evidencia.base_currency} · convenção "
+            f"{evidencia.convention} · fonte {evidencia.source} · última observação "
+            f"{data} · defasagem máxima {evidencia.max_age_days} dias{stale}"
+        )
+    return "Câmbio point-in-time: " + " | ".join(partes)
 
 
 def _tabela_de_pares_redundantes(pares: list[tuple[str, str, float]]) -> pd.DataFrame:
@@ -502,7 +557,7 @@ def _painel_correlacao(ret: pd.DataFrame, pesos: dict) -> None:
     if not pares:
         st.caption("Nenhum par de ativos acima do limiar de redundância.")
     else:
-        st.dataframe(_tabela_de_pares_redundantes(pares), use_container_width=True, hide_index=True)
+        st.dataframe(_tabela_de_pares_redundantes(pares), width="stretch", hide_index=True)
 
 
 def _painel_fatores(ret: pd.DataFrame, pesos: dict) -> None:
@@ -524,7 +579,7 @@ def _painel_fatores(ret: pd.DataFrame, pesos: dict) -> None:
         )
         return
 
-    st.dataframe(_tabela_de_exposicoes(resultado.exposicoes), use_container_width=True, hide_index=True)
+    st.dataframe(_tabela_de_exposicoes(resultado.exposicoes), width="stretch", hide_index=True)
     st.caption(
         "Beta estimado por regressão múltipla contra ETFs-proxy na B3. "
         "⚠️ marca um fator cujo beta não supera ~2 erros-padrão de zero — "
@@ -720,7 +775,7 @@ def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> None:
         )
         with st.expander(titulo):
             st.dataframe(_tabela_de_papeis_do_ativo(entrada),
-                        use_container_width=True, hide_index=True)
+                        width="stretch", hide_index=True)
             st.caption(entrada.justificativa)
 
 
@@ -971,6 +1026,9 @@ def render() -> None:
         snapshots = carregar_snapshots()
         alocacao = load_allocation_targets()
     except Exception as exc:  # noqa: BLE001 - fronteira de isolamento da rota
+        # O detalhe tecnico completo (driver, host, porta) vai para o log,
+        # nao para a tela — ver achado A-013.
+        logger.exception("Falha ao carregar snapshots/alocacao do portfolio global")
         mensagem = mensagem_de_erro_ao_carregar(exc)
         if mensagem == MSG_SEM_SNAPSHOT:
             st.info(mensagem)
@@ -1018,6 +1076,9 @@ def render() -> None:
     aviso = aviso_de_cobertura(cob)
     if aviso:
         st.warning(aviso)
+    fx_info = detalhe_fx(cob)
+    if fx_info:
+        st.caption(fx_info)
     pesos = dict(zip(df["symbol"], df["weight_global"]))
     _painel_correlacao(ret, pesos)
     _painel_fatores(ret, pesos)

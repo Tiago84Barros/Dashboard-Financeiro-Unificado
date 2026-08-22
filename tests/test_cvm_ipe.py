@@ -89,7 +89,8 @@ def test_extract_text_html():
 
 
 def test_extract_text_zip_with_html():
-    import io, zipfile
+    import io
+    import zipfile
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("doc.html", "<html><body>Resultado trimestral lucro de 100</body></html>")

@@ -36,7 +36,19 @@ BEGIN
 END
 $private_tables$;
 
-ALTER FUNCTION public.match_corporate_chunks(vector, integer, text)
-    SET search_path = pg_catalog, public;
-ALTER FUNCTION market.set_updated_at()
-    SET search_path = pg_catalog, market;
+-- `match_corporate_chunks` pertence a uma instalação opcional de busca
+-- vetorial. O hardening é aplicado quando a função está presente, sem tornar
+-- o bootstrap base dependente da extensão/vector store legado.
+DO $function_hardening$
+BEGIN
+    IF to_regprocedure('public.match_corporate_chunks(vector,integer,text)') IS NOT NULL THEN
+        EXECUTE 'ALTER FUNCTION public.match_corporate_chunks(vector, integer, text) '
+             || 'SET search_path = pg_catalog, public';
+    END IF;
+
+    IF to_regprocedure('market.set_updated_at()') IS NOT NULL THEN
+        EXECUTE 'ALTER FUNCTION market.set_updated_at() '
+             || 'SET search_path = pg_catalog, market';
+    END IF;
+END
+$function_hardening$;

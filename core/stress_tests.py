@@ -24,8 +24,7 @@ Nenhum acesso ao DB. Pode ser invocada em loop tight.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
+from dataclasses import dataclass
 
 # ──────────────────────────────────────────────────────────────────────────
 # Cenários históricos (calibrados em dados públicos B3 / BCB)

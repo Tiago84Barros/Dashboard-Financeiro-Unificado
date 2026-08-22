@@ -334,7 +334,7 @@ def format_us_macro(macro: dict | None) -> str:
 
     if observado:
         procedencia = (
-            f"  PROCEDÊNCIA: séries oficiais (FRED) ingeridas no warehouse"
+            "  PROCEDÊNCIA: séries oficiais (FRED) ingeridas no warehouse"
             + (f", data-base {as_of}." if as_of else ".")
             + " Pode afirmar estes valores como observados."
         )

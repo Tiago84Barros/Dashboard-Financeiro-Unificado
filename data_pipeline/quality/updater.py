@@ -24,6 +24,7 @@ def recent_history(limit: int = 100) -> pd.DataFrame:
     depois, fonte, ação, data). Vazio se a tabela não existir."""
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
     except Exception:
         return pd.DataFrame()

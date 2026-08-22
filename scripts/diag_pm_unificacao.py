@@ -10,11 +10,14 @@ Inspeciona, para tickers especificos reportados pelo usuario:
 Objetivo: descobrir onde o PM esta divergindo (ex: BBAS3 mostra R$ 33,30
 quando deveria ser R$ 9,42).
 """
-import os, sys
+import os
+import sys
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text
+
 from core.config import settings
 from core.database import get_engine
 

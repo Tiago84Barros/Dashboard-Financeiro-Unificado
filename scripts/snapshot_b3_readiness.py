@@ -1,8 +1,8 @@
 """Gera snapshot auditavel da prontidao dos dados de Empresas B3."""
 from __future__ import annotations
 
-from data_pipeline.utils.db_utils import get_pipeline_engine
 from core.b3_validation import persist_readiness_snapshot
+from data_pipeline.utils.db_utils import get_pipeline_engine
 
 
 def main() -> int:

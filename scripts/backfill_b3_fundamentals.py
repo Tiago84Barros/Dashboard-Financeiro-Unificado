@@ -25,7 +25,6 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 import yfinance as yf
 from sqlalchemy import create_engine, inspect, text
@@ -36,7 +35,6 @@ if str(ROOT) not in sys.path:
 
 from core.b3_db import _resolve_url  # noqa: E402
 from core.data_reconciliacao import get_multiplos_reconciliados  # noqa: E402
-
 
 DEMO_TABLE = '"Demonstracoes_Financeiras"'
 MULT_TABLE = "multiplos"

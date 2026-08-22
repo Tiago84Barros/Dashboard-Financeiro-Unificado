@@ -5,7 +5,6 @@ Gerencia o registry de fontes/tabelas a atualizar.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 from sqlalchemy import text
 

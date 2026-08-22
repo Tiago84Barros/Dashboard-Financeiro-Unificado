@@ -29,11 +29,9 @@ Fundamentação:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
-
 
 # Direção padrão: indicadores onde "menor é melhor"
 _MENOR_MELHOR = ("P/L", "P/VP", "EV_EBIT", "P_FCO")

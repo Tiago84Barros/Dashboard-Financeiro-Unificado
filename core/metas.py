@@ -147,6 +147,7 @@ def atualizar_progresso(goal_id: str, novo_valor: float) -> tuple:
 
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -184,6 +185,7 @@ def inserir_meta(
 
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -233,6 +235,7 @@ def _metas_mock() -> dict:
 
 def _metas_real() -> dict:
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()

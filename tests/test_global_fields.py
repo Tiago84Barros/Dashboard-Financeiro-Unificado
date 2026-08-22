@@ -63,8 +63,8 @@ def test_disponivel_reflete_a_presenca_do_valor():
 
 def test_seam_b3_chaves_existem_em_mult_cols():
     """B3: todas as chaves da de-para estao em _MULT_COLS."""
-    from core.market_read import _MULT_COLS
     from core.global_portfolio.fields import _ORIGEM
+    from core.market_read import _MULT_COLS
 
     b3_keys = _ORIGEM["pe"].get("b3"), _ORIGEM["pvp"].get("b3"), \
               _ORIGEM["dy"].get("b3"), _ORIGEM["roe"].get("b3")
@@ -76,8 +76,8 @@ def test_seam_b3_chaves_existem_em_mult_cols():
 
 def test_seam_fii_chaves_existem_em_fundamentos():
     """FII: todas as chaves da de-para estao em _FUNDAMENTOS.values()."""
-    from core.portfolio.adapters.fii import _FUNDAMENTOS
     from core.global_portfolio.fields import _ORIGEM
+    from core.portfolio.adapters.fii import _FUNDAMENTOS
 
     fii_fundamentos = set(_FUNDAMENTOS.values())
     fii_keys = _ORIGEM["pvp"].get("fii"), _ORIGEM["dy"].get("fii"), \

@@ -41,8 +41,13 @@ ACCOUNTS_TO_CREATE = [
 
 
 def run(apply: bool) -> int:
-    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine  # noqa: PLC0415
     from sqlalchemy import text  # noqa: PLC0415
+
+    from migration.config import (
+        MigrationConfig,
+        _ensure_utf8_stdout,
+        make_engine,
+    )
 
     _ensure_utf8_stdout()
     cfg = MigrationConfig.from_env(dry_run=not apply)

@@ -4,13 +4,13 @@ from types import SimpleNamespace
 
 import core.controle as controle
 from core.controle import (
-    canonical_transaction_type,
-    importar_fatura_cartao_csv,
-    parse_fatura_cartao_csv,
-    _filtrar_transacoes,
     _SQL_DIVIDAS_CC,
     _SQL_HISTORICO_CC_MENSAL,
     _SQL_TRANSACOES_CARTAO,
+    _filtrar_transacoes,
+    canonical_transaction_type,
+    importar_fatura_cartao_csv,
+    parse_fatura_cartao_csv,
 )
 from views.controle_financeiro import (
     _CAT_ENTRADA,

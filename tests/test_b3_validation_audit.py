@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import hashlib
 
-from core.b3_validation import _canonical, _clean, persist_readiness_snapshot, validation_readiness
+from core.b3_validation import (
+    _canonical,
+    _clean,
+    persist_readiness_snapshot,
+    validation_readiness,
+)
 
 
 def test_canonical_is_stable_and_removes_non_finite_values():

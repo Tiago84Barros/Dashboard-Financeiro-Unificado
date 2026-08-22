@@ -6,20 +6,19 @@ são fatos regulatórios; ``collected_at`` registra quando esta versão foi vist
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import io
 import json
-from pathlib import Path
 import re
 import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import text
 
 from data_pipeline.market.repository import save_raw_payload
 from data_pipeline.utils.db_utils import get_pipeline_engine
-
 
 URL = "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/registro_fundo_classe.zip"
 CACHE = Path("local_staging/fii_cvm_registry/registro_fundo_classe.zip")

@@ -51,14 +51,20 @@ _BUCKET_ORDER = ["resultado", "fato", "comunicado", "provento",
 
 def _bucket(tipo: str, titulo: str) -> str:
     s = f"{tipo} {titulo}".lower()
-    if "fato relevante" in s:                              return "fato"
+    if "fato relevante" in s:
+        return "fato"
     if "dados econ" in s or "resultado" in s or "release" in s or "itr" in s or "dfp" in s:
         return "resultado"
-    if "comunicado ao mercado" in s:                       return "comunicado"
-    if "aviso aos acionistas" in s or "provento" in s:     return "provento"
-    if "assembleia" in s:                                  return "assembleia"
-    if "oferta" in s or "deb" in s:                        return "capital"
-    if "recupera" in s or "opa" in s:                      return "critico"
+    if "comunicado ao mercado" in s:
+        return "comunicado"
+    if "aviso aos acionistas" in s or "provento" in s:
+        return "provento"
+    if "assembleia" in s:
+        return "assembleia"
+    if "oferta" in s or "deb" in s:
+        return "capital"
+    if "recupera" in s or "opa" in s:
+        return "critico"
     return "outro"
 
 

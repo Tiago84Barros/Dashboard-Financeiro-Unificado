@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from core.b3_evidence import (
-    A_FAVOR, CONTRA, INCONCLUSIVO, SEM_AMPLITUDE, SEM_SIGNIFICANCIA,
-    classify_evidence, evidence_label, minimum_detectable_effect,
+    A_FAVOR,
+    CONTRA,
+    INCONCLUSIVO,
+    SEM_AMPLITUDE,
+    SEM_SIGNIFICANCIA,
+    classify_evidence,
+    evidence_label,
+    minimum_detectable_effect,
 )
 
 

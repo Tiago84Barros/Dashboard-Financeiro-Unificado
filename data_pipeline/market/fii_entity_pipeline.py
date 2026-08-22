@@ -8,7 +8,6 @@ from sqlalchemy import text
 from core.fii_entity_resolution import match_entity, normalize_entity_name
 from data_pipeline.utils.db_utils import get_pipeline_engine
 
-
 ENTITY_TYPES = ("tenant", "debtor", "issuer", "manager", "holding", "security")
 
 

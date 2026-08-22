@@ -5,8 +5,12 @@ import pandas as pd
 import pytest
 
 from core.b3_quality_floor import (
-    APROVADO, REPROVADO, SEM_EVIDENCIA, FloorPolicy,
-    apply_with_substitution, evaluate,
+    APROVADO,
+    REPROVADO,
+    SEM_EVIDENCIA,
+    FloorPolicy,
+    apply_with_substitution,
+    evaluate,
 )
 
 SELIC = 0.15

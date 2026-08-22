@@ -35,8 +35,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def run(apply: bool) -> int:
-    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine
     from sqlalchemy import text
+
+    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine
 
     _ensure_utf8_stdout()
     cfg = MigrationConfig.from_env(dry_run=not apply)
@@ -105,14 +106,14 @@ def run(apply: bool) -> int:
 
         # ── 2. DELETE ───────────────────────────────────────────────────
         if not apply:
-            print(f"  [DRY RUN] DELETE seria executado, mas --apply nao foi passado.")
+            print("  [DRY RUN] DELETE seria executado, mas --apply nao foi passado.")
             print()
-            print(f"  Para deletar de verdade:")
-            print(f"    python migration/10_backup_and_clean_transactions.py --apply")
+            print("  Para deletar de verdade:")
+            print("    python migration/10_backup_and_clean_transactions.py --apply")
             print(sep)
             return 0
 
-        print(f"  DELETE FROM investment_transactions WHERE user_id = :uid")
+        print("  DELETE FROM investment_transactions WHERE user_id = :uid")
         result = conn.execute(text(
             "DELETE FROM investment_transactions WHERE user_id = :uid"
         ), {"uid": cfg.owner_id})

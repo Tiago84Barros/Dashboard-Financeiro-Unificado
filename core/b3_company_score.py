@@ -9,7 +9,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-
 FACTOR_TRACKS: dict[str, list[tuple[str, bool]]] = {
     "quality": [
         ("ROE", True), ("ROA", True), ("Margem_Liquida", True),

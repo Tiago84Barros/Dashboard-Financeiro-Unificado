@@ -26,7 +26,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-
 # Thresholds de divergência por tipo de indicador (em fração relativa)
 # Calibrados empiricamente — indicadores de magnitude grande (P/L) toleram
 # mais divergência absoluta que percentuais (ROE).

@@ -15,106 +15,51 @@ import uuid
 import streamlit as st
 from sqlalchemy import text
 
+# Reaproveita os helpers já testados do modelo B3 (mesma semântica).
+from core.b3_portfolio_model import _normalize_weight, _owner_id, _safe_json
 from core.config import settings
 from core.database import get_engine
-# Reaproveita os helpers já testados do modelo B3 (mesma semântica).
-from core.b3_portfolio_model import _owner_id, _safe_json, _normalize_weight
+
+_REQUIRED_TABLES = ("fii_portfolio_models", "fii_portfolio_model_items")
+_SCHEMA_MIGRATIONS = ("018_fiis_hardening.sql",)
+_OWNER_POLICIES = {
+    "fii_portfolio_models": "fii_models_owner_all",
+    "fii_portfolio_model_items": "fii_model_items_owner_all",
+}
 
 
-DDL_SQL = [
-    """
-    CREATE TABLE IF NOT EXISTS fii_portfolio_models (
-        id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id      UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-        name         VARCHAR(160) NOT NULL,
-        status       VARCHAR(20) NOT NULL DEFAULT 'active',
-        source       VARCHAR(80) NOT NULL DEFAULT 'selecao_fiis',
-        plan_hash    TEXT NOT NULL,
-        params_json  JSONB NOT NULL DEFAULT '{}'::jsonb,
-        metrics_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-        notes        TEXT,
-        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CHECK (status IN ('active', 'archived'))
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS fii_portfolio_model_items (
-        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        model_id   UUID NOT NULL REFERENCES fii_portfolio_models(id) ON DELETE CASCADE,
-        ticker     VARCHAR(16) NOT NULL,
-        nome       VARCHAR(200),
-        tipo       TEXT,
-        segmento   TEXT,
-        weight     NUMERIC(12,8) NOT NULL CHECK (weight >= 0 AND weight <= 1),
-        dy_12m     NUMERIC(18,8),
-        pvp        NUMERIC(18,8),
-        score      NUMERIC(18,8),
-        meta_json  JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE (model_id, ticker)
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_fii_portfolio_models_user_status
-    ON fii_portfolio_models (user_id, status, created_at DESC)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS idx_fii_portfolio_model_items_model_weight
-    ON fii_portfolio_model_items (model_id, weight DESC)
-    """,
-    """
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_fii_portfolio_models_one_active
-    ON fii_portfolio_models (user_id) WHERE status = 'active'
-    """,
-    # Auditoria FII 2026-07: RLS no DDL de runtime — antes as tabelas criadas
-    # aqui nasciam SEM RLS (a proteção só vinha se a 018_fiis_hardening fosse
-    # executada). Espelha as policies da 018 (mesmos nomes, idempotente).
-    # A conexão do app (role postgres) bypassa; protege acesso via anon key.
-    "ALTER TABLE fii_portfolio_models ENABLE ROW LEVEL SECURITY",
-    "ALTER TABLE fii_portfolio_model_items ENABLE ROW LEVEL SECURITY",
-    """
-    DO $$ BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_policies
-            WHERE schemaname='public'
-              AND tablename='fii_portfolio_models'
-              AND policyname='fii_models_owner_all'
-        ) THEN
-            CREATE POLICY fii_models_owner_all ON fii_portfolio_models
-                FOR ALL TO authenticated
-                USING (user_id = auth.uid())
-                WITH CHECK (user_id = auth.uid());
-        END IF;
-    END; $$
-    """,
-    """
-    DO $$ BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_policies
-            WHERE schemaname='public'
-              AND tablename='fii_portfolio_model_items'
-              AND policyname='fii_model_items_owner_all'
-        ) THEN
-            CREATE POLICY fii_model_items_owner_all ON fii_portfolio_model_items
-                FOR ALL TO authenticated
-                USING (EXISTS (
-                    SELECT 1 FROM fii_portfolio_models m
-                    WHERE m.id = model_id AND m.user_id = auth.uid()
-                ))
-                WITH CHECK (EXISTS (
-                    SELECT 1 FROM fii_portfolio_models m
-                    WHERE m.id = model_id AND m.user_id = auth.uid()
-                ));
-        END IF;
-    END; $$
-    """,
-]
-
-
-def _ensure_tables(conn) -> None:
-    for ddl in DDL_SQL:
-        conn.execute(text(ddl))
+def _preflight_schema(conn) -> None:
+    """Confirma tabelas, RLS e policies do dono, apenas por catálogo."""
+    columns = []
+    for table, policy in _OWNER_POLICIES.items():
+        relation = f"to_regclass('public.{table}')"
+        columns.extend((
+            f"{relation} AS {table}",
+            f"COALESCE((SELECT relrowsecurity FROM pg_class WHERE oid = {relation}), FALSE) AS {table}_rls",
+            "EXISTS (SELECT 1 FROM pg_policies "
+            f"WHERE schemaname = 'public' AND tablename = '{table}' "
+            f"AND policyname = '{policy}') AS {table}_policy",
+        ))
+    available = conn.execute(text("SELECT " + ", ".join(columns))).mappings().one()
+    missing = [table for table in _REQUIRED_TABLES if available[table] is None]
+    rls_disabled = [table for table in _REQUIRED_TABLES if not available[f"{table}_rls"]]
+    policies_missing = [
+        f"{table} ({_OWNER_POLICIES[table]})"
+        for table in _REQUIRED_TABLES if not available[f"{table}_policy"]
+    ]
+    if missing or rls_disabled or policies_missing:
+        problems = []
+        if missing:
+            problems.append("tabelas ausentes: " + ", ".join(missing))
+        if rls_disabled:
+            problems.append("RLS desabilitado em: " + ", ".join(rls_disabled))
+        if policies_missing:
+            problems.append("policy de dono ausente: " + ", ".join(policies_missing))
+        raise RuntimeError(
+            "Preflight da carteira FIIs falhou (" + "; ".join(problems) + "). "
+            "Aplique a migration " + ", ".join(_SCHEMA_MIGRATIONS)
+            + " antes de salvar ou restaurar; o aplicativo não executa DDL em runtime."
+        )
 
 
 def _num(v):
@@ -272,7 +217,7 @@ def save_fii_portfolio_model(
     model_id = str(uuid.uuid4())
 
     with engine.begin() as conn:
-        _ensure_tables(conn)
+        _preflight_schema(conn)
         # Serializa substituições concorrentes do modelo ativo do mesmo dono.
         conn.execute(
             text("""
@@ -422,7 +367,7 @@ def restore_fii_portfolio_model(model_id: str) -> str:
         raise RuntimeError("Banco unificado não configurado.")
     owner = _owner_id()
     with engine.begin() as conn:
-        _ensure_tables(conn)
+        _preflight_schema(conn)
         owned_ids = {
             str(value) for value in conn.execute(
                 text("""

@@ -7,23 +7,22 @@ em que este sistema observou aquela versão do arquivo.
 """
 from __future__ import annotations
 
-from collections import defaultdict
-from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
 import hashlib
 import io
 import json
 import math
-from pathlib import Path
 import re
 import unicodedata
 import zipfile
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date, datetime, time, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from data_pipeline.market.fii_sources import metric_observation
-
 
 SOURCE = "cvm_dados_abertos"
 ROOT = "https://dados.cvm.gov.br/dados/FII/DOC"
@@ -910,12 +909,17 @@ def ingest_cvm_structured(
 ) -> dict:
     """Coleta, normaliza e persiste a cobertura estruturada oficial da CVM."""
     from email.utils import parsedate_to_datetime
+
     from sqlalchemy import text
+
     from data_pipeline.market import repository as repo
-    from data_pipeline.market.fii_ingest import (_engine, _persist_document_discoveries,
-                                                  audit_methodology_v4_data,
-                                                  record_validation_readiness,
-                                                  snapshot_methodology_v4)
+    from data_pipeline.market.fii_ingest import (
+        _engine,
+        _persist_document_discoveries,
+        audit_methodology_v4_data,
+        record_validation_readiness,
+        snapshot_methodology_v4,
+    )
 
     progress = {"archives": 0, "cached_archives": 0,
                 "skipped_archives": 0, "revisions": 0,

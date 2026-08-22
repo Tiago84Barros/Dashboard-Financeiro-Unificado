@@ -1,0 +1,2 @@
+# Ferramentas de qualidade usadas localmente e no CI.
+ruff==0.16.0

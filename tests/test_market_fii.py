@@ -223,7 +223,7 @@ def test_build_portfolio_min_por_tipo_forca_mix():
                {"ticker": "F1", "score": 40, "tipo": "fof", "liquidez_diaria": 5e6,
                 "dy_12m": 0.10, "pvp": 0.95}])
     # sem piso: só papel entraria (scores dominam) — teto por tipo limita a 4
-    port0 = fii.build_portfolio(rows, n_max=6, max_tipo_frac=0.7, min_por_tipo=0)
+    fii.build_portfolio(rows, n_max=6, max_tipo_frac=0.7, min_por_tipo=0)
     # com piso 1: garante ao menos 1 tijolo e 1 fof
     port1 = fii.build_portfolio(rows, n_max=6, max_tipo_frac=0.7, min_por_tipo=1)
     tipos1 = {p["tipo"] for p in port1}

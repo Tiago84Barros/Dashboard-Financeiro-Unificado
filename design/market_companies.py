@@ -8,7 +8,6 @@ import streamlit as st
 
 from design.componentes import rolar_para_topo
 
-
 MARKET_COMPANIES_CSS = """
 <style>
 .b3-sector-hdr {
@@ -81,7 +80,7 @@ def render_market_tabs(*, state_key: str, key_prefix: str) -> int:
     for idx, (col, (icon, label)) in enumerate(zip(st.columns(widths), NAV_ITEMS)):
         with col:
             if st.button(
-                f"{icon} {label}", use_container_width=True,
+                f"{icon} {label}", width="stretch",
                 type="primary" if active == idx else "secondary",
                 key=f"{key_prefix}_tab{idx}",
             ):
@@ -99,6 +98,56 @@ def render_market_tabs(*, state_key: str, key_prefix: str) -> int:
 
 def render_company_search(*, label: str, placeholder: str, key: str) -> str:
     return st.text_input(label, key=key, placeholder=placeholder).strip()
+
+
+def _logo_disponivel(url: str) -> bool:
+    """True apenas quando a URL pública do logo responde HTTP 200.
+
+    Qualquer falha (timeout, DNS, 4xx/5xx, exceção de rede) conta como
+    indisponível — nunca propaga para a interface. Timeout curto porque isto
+    roda no caminho de renderização da página.
+    """
+    if not url:
+        return False
+    try:
+        import requests
+        resposta = requests.head(url, timeout=2.0, allow_redirects=True)
+        return resposta.status_code == 200
+    except Exception:
+        return False
+
+
+_logo_disponivel_cached = st.cache_data(ttl=3600, show_spinner=False)(_logo_disponivel)
+
+
+def render_company_logo(ticker: str, url: str, *, size: int = 64) -> None:
+    """Logo da empresa sem tag ``<img>`` crua injetada via HTML (achado A-012).
+
+    Um teste de isolamento anterior (ver
+    ``artifacts/app4_professionalizacao/achado_a012_react_error_231_onerror_empresas_americanas.md``)
+    mostrou que remover só o atributo ``onerror`` do ``<img>`` não evitava o
+    erro de console React #231 — o padrão persistia de forma idêntica. Esta
+    função remove a própria tag ``<img>`` do markdown: quando o logo público
+    responde, usa ``st.image`` (renderização nativa do Streamlit, sem HTML
+    manual); quando não responde — ou a checagem de disponibilidade falha —,
+    cai no mesmo círculo com a inicial do ticker que já era o fallback visual
+    original (revelado antes pelo ``onerror``, agora decidido antes de tentar
+    carregar a imagem).
+    """
+    inicial = html.escape((ticker or "?")[:1].upper())
+    if url and _logo_disponivel_cached(url):
+        try:
+            st.image(url, width=size)
+            return
+        except Exception:
+            pass  # cai no placeholder abaixo — nunca propaga para a página
+    st.markdown(
+        f'<div style="width:{size}px;height:{size}px;border-radius:12px;'
+        'background:rgba(255,255,255,.06);display:flex;align-items:center;'
+        f'justify-content:center;color:#718096;font-size:{size * 0.32:.0f}px;'
+        f'font-weight:800;">{inicial}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_sector_grid(
@@ -143,25 +192,32 @@ def render_sector_grid(
                 name = str(row["company_name"] or ticker)[:28]
                 tag = str(row["card_tag"] or row["industry"] or "—")
                 logo = str(row["logo_url"] or "")
-                initial = html.escape((name or ticker or "?")[:1].upper())
                 selected = ticker == (selected_ticker or "")
                 selected_class = " b3-card-selected" if selected else ""
                 with cols[offset]:
                     st.markdown(
-                        f'<div class="b3-card{selected_class}">'
-                        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
-                        f'<div class="b3-card-logo-wrap"><span>{initial}</span>'
-                        + (f'<img src="{html.escape(logo, quote=True)}" class="b3-card-logo" '
-                           f'onerror="this.style.display=\'none\'">' if logo else "")
-                        + f'</div><div style="overflow:hidden;">'
-                        f'<div class="b3-card-ticker">{html.escape(ticker)}</div>'
-                        f'<div class="b3-card-nome">{html.escape(name)}</div>'
-                        f'</div></div><div class="b3-card-tag">{html.escape(tag)}</div></div>',
+                        f'<div class="b3-card{selected_class}" style="padding-bottom:0;'
+                        'margin-bottom:0;border-bottom:none;">',
+                        unsafe_allow_html=True,
+                    )
+                    logo_col, text_col = st.columns([1, 4], gap="small")
+                    with logo_col:
+                        render_company_logo(ticker, logo, size=32)
+                    with text_col:
+                        st.markdown(
+                            f'<div style="overflow:hidden;">'
+                            f'<div class="b3-card-ticker">{html.escape(ticker)}</div>'
+                            f'<div class="b3-card-nome">{html.escape(name)}</div>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                    st.markdown(
+                        f'<div class="b3-card-tag">{html.escape(tag)}</div></div>',
                         unsafe_allow_html=True,
                     )
                     if st.button(
                         "Analisar", key=f"{key_prefix}_analyze_{ticker}_{start}_{offset}",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         st.session_state[selected_state_key] = ticker
                         st.session_state[active_state_key] = 1
@@ -173,7 +229,7 @@ def render_sector_grid(
         remaining = len(df) - visible_limit
         if st.button(
             f"Mostrar mais empresas ({remaining} restantes)",
-            key=f"{key_prefix}_show_more", use_container_width=True,
+            key=f"{key_prefix}_show_more", width="stretch",
         ):
             st.session_state[limit_key] = visible_limit + page_size
             st.rerun()

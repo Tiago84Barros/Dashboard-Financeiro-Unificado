@@ -116,7 +116,7 @@ def _metric_series(col: str, tickers: list[str]) -> pd.DataFrame:
 
 def _fig_to_streamlit(fig, key: str | None = None) -> None:
     fig.update_layout(**_LAYOUT)
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.plotly_chart(fig, width="stretch", key=key)
 
 
 # ── Renderizadores individuais ────────────────────────────────────────────────

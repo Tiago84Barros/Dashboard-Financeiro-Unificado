@@ -493,9 +493,12 @@ def get_macro_context(macro_hist: dict | None = None) -> str:
     for ano in sorted(anos):
         d = hist[ano]
         parts = []
-        if "selic" in d:  parts.append(f"Selic={d['selic']*100:.2f}%")
-        if "ipca" in d:   parts.append(f"IPCA={d['ipca']*100:.2f}%")
-        if "cambio" in d: parts.append(f"USD/BRL={d['cambio']:.2f}")
+        if "selic" in d:
+            parts.append(f"Selic={d['selic']*100:.2f}%")
+        if "ipca" in d:
+            parts.append(f"IPCA={d['ipca']*100:.2f}%")
+        if "cambio" in d:
+            parts.append(f"USD/BRL={d['cambio']:.2f}")
         if parts:
             lines.append(f"  {ano}: {', '.join(parts)}")
     return "\n".join(lines)
@@ -574,7 +577,7 @@ def get_creation_context(model: dict, max_rejected: int = 12) -> str:
 def get_chunks_context(query: str, tickers: list[str], cobertura_docs: dict | None = None) -> str:
     """Recupera trechos CVM/IPE relevantes (até 3 tickers)."""
     try:
-        from core.rag_b3 import retrieve_chunks, format_rag_context
+        from core.rag_b3 import format_rag_context, retrieve_chunks
     except Exception:
         return ""
     cob = cobertura_docs or {}

@@ -65,7 +65,9 @@ def run_enrichment(*, years: int = 5, candidate_limit: int = 12,
     from data_pipeline.market.fii_documents import process_pending_documents
     from data_pipeline.market.fii_entity_resolution import resolve_entities
     from data_pipeline.market.fii_ingest import (
-        audit_methodology_v4_data, reprocess, snapshot_methodology_v4,
+        audit_methodology_v4_data,
+        reprocess,
+        snapshot_methodology_v4,
     )
     from data_pipeline.market.fii_monitoring import run_monitoring
     from data_pipeline.market.fii_ri_documents import collect_due_document_sources

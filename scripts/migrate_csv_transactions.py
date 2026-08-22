@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from pathlib import Path
+
+import pandas as pd
+from sqlalchemy import create_engine, text
 
 # Script standalone -- nao importa nada de core/ (evita dependencia do Streamlit)
 _ROOT = Path(__file__).resolve().parent.parent
@@ -43,9 +45,6 @@ try:
                 os.environ[k] = v
 except Exception:
     pass
-
-import pandas as pd
-from sqlalchemy import create_engine, text
 
 # ---------------------------------------------------------------------------
 # Mapeamentos
@@ -244,7 +243,7 @@ def run_migration(csv_path: str, dry_run: bool,
     uid_counts   = df["user_id"].value_counts()
     main_uid_csv = uid_counts.index[0]
     all_uids_csv = set(uid_counts.index)
-    print(f"user_ids no CSV         :")
+    print("user_ids no CSV         :")
     for uid, cnt in uid_counts.items():
         flag = " <-- principal" if uid == main_uid_csv else ""
         print(f"  {uid}: {cnt} transacoes{flag}")
@@ -368,7 +367,7 @@ def run_migration(csv_path: str, dry_run: bool,
                 .agg(qtd=("amount", "count"), total=("amount", lambda s: s.abs().sum()))
                 .reset_index()
             )
-            print(f"\nDistribuicao por mes e tipo:")
+            print("\nDistribuicao por mes e tipo:")
             print(f"  {'Mes':<10} {'Tipo':<12} {'Qtd':>4}  {'Total R$':>13}")
             print(f"  {'-'*44}")
             for _, mr in por_mes.iterrows():

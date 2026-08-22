@@ -19,7 +19,7 @@ import streamlit as st
 from core.auth import encerrar_sessao, esta_autenticado
 from core.config import settings
 from core.database import get_database_storage_status, get_db_status
-from design.componentes import container_pagina, card_metrica
+from design.componentes import card_metrica, container_pagina
 from views.bank_statement_upload import render_upload_extrato_bancario
 from views.credit_card_invoice_upload import render_upload_fatura_cartao
 
@@ -444,7 +444,7 @@ def _render_atualizacao() -> None:
         )
         return
 
-    from data_pipeline.utils.db_utils import table_exists, ensure_pipeline_tables
+    from data_pipeline.utils.db_utils import ensure_pipeline_tables, table_exists
 
     pipeline_ok = (
         table_exists("data_update_registry")
@@ -470,7 +470,7 @@ def _render_atualizacao() -> None:
         return
 
     from data_pipeline.orchestrator import get_last_global_update
-    from data_pipeline.update_registry import seed_registry, get_registry
+    from data_pipeline.update_registry import get_registry, seed_registry
     from data_pipeline.utils.date_utils import fmt_datetime_br
 
     seed_registry()
@@ -514,12 +514,12 @@ def _render_atualizacao() -> None:
     # ── Botões de execução ─────────────────────────────────────────────────────
     col_run, col_force = st.columns([1, 1])
     with col_run:
-        run_all = st.button("🔄 Atualizar tudo", type="primary", use_container_width=True)
+        run_all = st.button("🔄 Atualizar tudo", type="primary", width="stretch")
     with col_force:
         force_all = st.button(
             "⚡ Forçar atualização",
             type="secondary",
-            use_container_width=True,
+            width="stretch",
             help="Ignora o controle de frequência e executa todos os jobs agora",
         )
 
@@ -559,7 +559,7 @@ def _render_atualizacao() -> None:
             })
         st.dataframe(
             pd.DataFrame(dados),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "O que atualiza": st.column_config.TextColumn(width="large"),
@@ -587,7 +587,7 @@ def _render_atualizacao() -> None:
             for i, item in enumerate(runnable):
                 with cols[i % 3]:
                     nome = item.get("source_name", item.get("job_name", "?"))
-                    if st.button(nome, use_container_width=True, key=f"_run_{item['job_name']}"):
+                    if st.button(nome, width="stretch", key=f"_run_{item['job_name']}"):
                         _executar_pipeline(item["job_name"], force=True)
 
     # ── Log de execuções ───────────────────────────────────────────────────────
@@ -610,7 +610,7 @@ def _render_atualizacao() -> None:
                                if lg.get("execution_time_seconds") else "—",
                     "Erro":    (lg.get("error_message") or "")[:60],
                 })
-            st.dataframe(pd.DataFrame(log_dados), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(log_dados), width="stretch", hide_index=True)
         else:
             st.caption("Nenhum log registrado.")
 
@@ -725,7 +725,7 @@ def _render_banco() -> None:
             st.caption(f"{existentes}/{total} tabelas presentes")
         with col_b:
             if ausentes > 0:
-                if st.button(f"Criar {ausentes} tabela(s)", type="primary", use_container_width=True):
+                if st.button(f"Criar {ausentes} tabela(s)", type="primary", width="stretch"):
                     _executar_criar_schema()
             else:
                 st.success("Schema completo ✓")
@@ -833,7 +833,7 @@ def _render_storage_health(*, show_header: bool = True) -> None:
             df["Tamanho (MB)"] = df["Tamanho (MB)"].map(lambda value: f"{float(value):.2f}")
             st.dataframe(
                 df[["Tabela", "Tamanho (MB)", "Bytes"]],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -896,7 +896,7 @@ def _render_import_csv() -> None:
         return
 
     st.success(f"{len(df)} linhas · {len(df.columns)} colunas")
-    st.dataframe(df.head(5), use_container_width=True)
+    st.dataframe(df.head(5), width="stretch")
 
     usuario_id = settings.OWNER_USER_ID or st.text_input(
         "OWNER_USER_ID", placeholder="UUID do usuário", key="_csv_owner"
@@ -965,7 +965,7 @@ def _mostrar_template_csv(tipo: str) -> None:
     }
     df_t = templates[tipo]
     st.caption("Colunas esperadas:")
-    st.dataframe(df_t, use_container_width=True)
+    st.dataframe(df_t, width="stretch")
     st.download_button(
         f"Baixar template {tipo}.csv",
         df_t.to_csv(index=False).encode("utf-8"),
@@ -1038,7 +1038,7 @@ def _listar_tabelas_fonte(url: str) -> None:
         return
     dados = [{"Tabela": t, "Colunas": ", ".join(imp.listar_colunas(t)[:8])}
              for t in sorted(tabelas)]
-    st.dataframe(pd.DataFrame(dados), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(dados), width="stretch", hide_index=True)
 
 
 def _render_import_generica(url_fonte: str) -> None:
@@ -1177,7 +1177,7 @@ def _render_import_investimentos() -> None:
             recompute_clicked = st.button(
                 "Recalcular",
                 type="secondary",
-                use_container_width=True,
+                width="stretch",
                 key="_inv_recompute_btn",
                 disabled=not settings.OWNER_USER_ID,
             )
@@ -1244,7 +1244,7 @@ def _render_import_block(cfg: dict) -> None:
             run = st.button(
                 btn_label,
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 key=f"_inv_btn_{cfg['key']}",
                 disabled=not has_files,
             )
@@ -1288,14 +1288,18 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     from datetime import datetime, timezone
 
     from core.database import get_engine
+    from core.import_guard import serialized_import
     from data_pipeline.importers.investments import (
-        parse_b3_negociacao, parse_b3_movimentacao,
-        parse_xp_consolidado, parse_nomad_pdf,
+        parse_b3_movimentacao,
+        parse_b3_negociacao,
+        parse_nomad_pdf,
+        parse_xp_consolidado,
     )
     from data_pipeline.utils.logging_utils import (
-        log_finish, log_start, update_freshness,
+        log_finish,
+        log_start,
+        update_freshness,
     )
-    from core.import_guard import serialized_import
 
     parsers = {
         "parse_b3_negociacao":   parse_b3_negociacao,

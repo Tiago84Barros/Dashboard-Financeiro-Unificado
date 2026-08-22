@@ -70,6 +70,7 @@ def _ensure_table(conn) -> None:
 
 def persist_to_db(report: dict) -> bool:
     from sqlalchemy import text
+
     from core.database import get_engine
     engine = get_engine()
     if engine is None:

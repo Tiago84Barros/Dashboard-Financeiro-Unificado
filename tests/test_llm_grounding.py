@@ -3,7 +3,6 @@ import pytest
 
 from core.llm_grounding import check_grounding, extract_numbers, parse_number
 
-
 # ── parsing de números pt-BR / en-US ─────────────────────────────────────────
 
 @pytest.mark.parametrize("token,esperado", [

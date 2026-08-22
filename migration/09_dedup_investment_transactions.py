@@ -137,8 +137,9 @@ def find_duplicate_groups(conn, text, owner_id: str, ticker_filter: str | None =
 
 
 def run(apply: bool, ticker_filter: str | None) -> int:
-    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine
     from sqlalchemy import text
+
+    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine
 
     _ensure_utf8_stdout()
     cfg = MigrationConfig.from_env(dry_run=not apply)
@@ -210,9 +211,9 @@ def run(apply: bool, ticker_filter: str | None) -> int:
 
         # Executa DELETE
         if not apply:
-            print(f"  [DRY RUN] Nenhuma linha foi deletada.")
-            print(f"  Para deletar de verdade:")
-            print(f"    python migration/09_dedup_investment_transactions.py --apply")
+            print("  [DRY RUN] Nenhuma linha foi deletada.")
+            print("  Para deletar de verdade:")
+            print("    python migration/09_dedup_investment_transactions.py --apply")
             print(sep)
             return 0
 

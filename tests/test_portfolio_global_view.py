@@ -1,6 +1,5 @@
 """Secao Portfolio Global: roteamento, estado vazio e montagem."""
 import pandas as pd
-import pytest
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from core.global_portfolio.aggregate import montar_posicoes
@@ -134,11 +133,12 @@ def test_erro_de_tabela_ausente_no_sqlite_vira_orientacao_de_backfill():
     assert msg == portfolio_global.MSG_SEM_SNAPSHOT
 
 
-def test_operational_error_de_conexao_recusada_mantem_a_mensagem_crua():
-    """Regressao do re-review: no psycopg2, OperationalError e a categoria de
-    falha de CONEXAO, nao de tabela ausente. Um Supabase fora do ar nao pode
-    virar "rode o schema 049" — isso seria pior que o erro cru, porque
-    parece uma resposta confiante e esta errada.
+def test_operational_error_de_conexao_recusada_vira_mensagem_amigavel():
+    """Regressao do achado A-013: uma falha de CONEXAO real (Supabase fora do
+    ar, porta errada) nao pode expor na tela o texto cru da excecao do driver
+    (host, porta, protocolo, link do SQLAlchemy) — a pessoa usuaria final ve
+    uma mensagem amigavel; o detalhe tecnico completo vai para o log via
+    `logging.exception` em `render()`, nao para a tela.
     """
     exc = OperationalError(
         "SELECT 1", {},
@@ -149,26 +149,59 @@ def test_operational_error_de_conexao_recusada_mantem_a_mensagem_crua():
     )
     msg = portfolio_global.mensagem_de_erro_ao_carregar(exc)
     assert msg != portfolio_global.MSG_SEM_SNAPSHOT
-    assert "Connection refused" in msg
+    assert msg == portfolio_global.MSG_FALHA_AO_CARREGAR
+    assert "Connection refused" not in msg
+    assert "db.supabase.co" not in msg
 
 
-def test_operational_error_de_autenticacao_mantem_a_mensagem_crua():
-    """Mesma regressao do re-review, para credencial invalida."""
+def test_operational_error_de_autenticacao_vira_mensagem_amigavel():
+    """Mesma regressao do A-013, para credencial invalida."""
     exc = OperationalError(
         "SELECT 1", {},
         Exception('FATAL: password authentication failed for user "postgres"'),
     )
     msg = portfolio_global.mensagem_de_erro_ao_carregar(exc)
     assert msg != portfolio_global.MSG_SEM_SNAPSHOT
-    assert "password authentication failed" in msg
+    assert msg == portfolio_global.MSG_FALHA_AO_CARREGAR
+    assert "password authentication failed" not in msg
 
 
-def test_erro_generico_mantem_a_mensagem_crua():
-    """Uma excecao qualquer, sem relacao com o banco, tambem fica crua."""
+def test_erro_generico_vira_mensagem_amigavel():
+    """Uma excecao qualquer, sem relacao com o banco, tambem vira amigavel."""
     exc = RuntimeError("algo inesperado")
     msg = portfolio_global.mensagem_de_erro_ao_carregar(exc)
     assert msg != portfolio_global.MSG_SEM_SNAPSHOT
-    assert "algo inesperado" in msg
+    assert msg == portfolio_global.MSG_FALHA_AO_CARREGAR
+    assert "algo inesperado" not in msg
+
+
+def test_render_loga_a_excecao_tecnica_completa_sem_mostra_la(monkeypatch, caplog):
+    """O detalhe tecnico (driver, host, porta) precisa continuar rastreavel
+    para quem opera o app — via log — mesmo que a tela mostre so a mensagem
+    amigavel. Ver achado A-013.
+    """
+    import logging as _logging
+
+    def _quebra(*_a, **_k):
+        raise OperationalError(
+            "SELECT 1", {},
+            Exception(
+                'connection to server at "localhost" (::1), port 15433 '
+                "failed: Connection refused"
+            ),
+        )
+
+    monkeypatch.setattr(portfolio_global, "carregar_snapshots", _quebra)
+    monkeypatch.setattr(portfolio_global.st, "error", lambda *_a, **_k: None)
+    monkeypatch.setattr(portfolio_global.st, "info", lambda *_a, **_k: None)
+    monkeypatch.setattr(portfolio_global.st, "markdown", lambda *_a, **_k: None)
+    monkeypatch.setattr(portfolio_global.st, "caption", lambda *_a, **_k: None)
+
+    with caplog.at_level(_logging.ERROR, logger="views.portfolio_global"):
+        portfolio_global.render()
+
+    assert "Connection refused" in caplog.text
+    assert "port 15433" in caplog.text
 
 
 def test_fracao_para_percentual_converte_dy_para_pontos_percentuais():
@@ -369,6 +402,52 @@ def test_aviso_de_cobertura_com_cobertura_zero_orienta():
     from core.global_portfolio.returns import Cobertura
     msg = portfolio_global.aviso_de_cobertura(Cobertura((), ("AAPL",), 0.0, 0))
     assert msg is not None and "AAPL" in msg
+
+
+def test_aviso_de_cobertura_distingue_fx_ausente_e_stale():
+    from core.global_portfolio.returns import Cobertura
+    cob = Cobertura(
+        ("PETR4",), ("AAPL", "MSFT"), 0.4, 24,
+        simbolos_sem_fx=("AAPL",), simbolos_fx_stale=("MSFT",),
+    )
+    msg = portfolio_global.aviso_de_cobertura(cob)
+    assert "câmbio ausente: AAPL" in msg
+    assert "câmbio defasado: MSFT" in msg
+
+
+def test_detalhe_fx_exibe_moeda_fonte_timestamp_convenção_e_defasagem():
+    from core.global_portfolio.returns import Cobertura, FxEvidence
+    evidencia = FxEvidence(
+        currency="USD", base_currency="BRL", convention="BRL_per_USD",
+        source="asset_quotes:USDBRL", last_observed_at="2026-08-14T00:00:00+00:00",
+        max_age_days=7, stale_months=2,
+    )
+    texto = portfolio_global.detalhe_fx(Cobertura(
+        ("AAPL",), (), 1.0, 24, fx_evidence=(evidencia,),
+    ))
+    assert "USD→BRL" in texto
+    assert "asset_quotes:USDBRL" in texto
+    assert "2026-08-14" in texto
+    assert "BRL_per_USD" in texto
+    assert "2 mês(es)" in texto
+
+
+def test_detalhe_fx_expoe_intersecao_sem_contradizer_cobertura_total():
+    from core.global_portfolio.returns import Cobertura
+    cob = Cobertura(
+        ("AAPL", "PETR4"), (), 1.0, 22,
+        simbolos_fx_stale=("AAPL",),
+        meses_removidos_intersecao=("2023-11-30", "2023-12-31"),
+        periodo_comum=("2023-02-28", "2025-01-31"),
+    )
+
+    aviso = portfolio_global.aviso_de_cobertura(cob)
+
+    assert "100%" in aviso
+    assert "0% de fora" in aviso
+    assert "2 meses removidos" in aviso
+    assert "2023-11-30" in aviso and "2023-12-31" in aviso
+    assert "2023-02-28 a 2025-01-31" in aviso
 
 
 def test_tabela_de_pares_redundantes_preserva_a_ordem_e_arredonda():

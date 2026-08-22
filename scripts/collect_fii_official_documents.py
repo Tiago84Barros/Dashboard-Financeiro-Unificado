@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -33,7 +32,8 @@ def main() -> int:
 
     from data_pipeline.market.fii_documents import process_pending_documents
     from data_pipeline.market.fii_ri_documents import (
-        collect_document_source, collect_due_document_sources,
+        collect_document_source,
+        collect_due_document_sources,
     )
 
     if args.source_id:

@@ -81,9 +81,10 @@ def run() -> dict:
 
     try:
         from sqlalchemy import text
-        from data_pipeline.utils.db_utils import get_pipeline_engine
+
         import core.brapi as brapi
         import core.data_quality as dq
+        from data_pipeline.utils.db_utils import get_pipeline_engine
     except Exception as exc:
         result["status"] = "failed"
         result["error_message"] = f"import: {exc}"[:500]
@@ -116,7 +117,7 @@ def run() -> dict:
         result["error_message"] = "Nenhuma empresa pendente de backfill (ciclo completo)."
         return result
 
-    run_id = f"brapi_hist_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+    f"brapi_hist_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     preenchidos = falhas = 0
     blocos = 0

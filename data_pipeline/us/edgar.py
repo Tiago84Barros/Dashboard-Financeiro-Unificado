@@ -26,7 +26,11 @@ from typing import Any, Callable, Optional
 from data_pipeline.us import edgar_facts as ef
 from data_pipeline.us.identity import normalize_cik, normalize_symbol
 from data_pipeline.us.providers import (
-    Budget, FundamentalsProvider, MissingCredentialError, ProviderError, RateLimiter,
+    Budget,
+    FundamentalsProvider,
+    MissingCredentialError,
+    ProviderError,
+    RateLimiter,
 )
 
 logger = logging.getLogger("us_edgar")

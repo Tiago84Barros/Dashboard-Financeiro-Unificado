@@ -12,9 +12,10 @@
 --   Nao contem DROP TABLE, TRUNCATE ou DELETE.
 --   CREATE sao idempotentes.
 --
--- Este arquivo e a referencia declarativa. O app tambem cria as tabelas sob
--- demanda em core/us_portfolio_model.py (_ensure_tables), como ja acontece
--- com as carteiras B3 e FII.
+-- Este arquivo e a referencia declarativa e deve ser aplicado antes de usar
+-- a persistencia de carteira EUA. Em runtime, o app apenas faz preflight do
+-- catalogo e falha de forma acionavel quando o schema estiver ausente; nao
+-- executa DDL sob demanda.
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS us_portfolio_models (

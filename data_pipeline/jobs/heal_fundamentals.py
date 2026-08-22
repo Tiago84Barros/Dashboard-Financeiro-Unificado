@@ -28,9 +28,9 @@ def run(apply: bool = False, batch_size: int = 40, max_tickers: int | None = Non
     }
     try:
         from sqlalchemy import text
-        from data_pipeline.utils.db_utils import get_pipeline_engine
+
         import core.data_healing as healing
-        import pandas as pd  # noqa: F401
+        from data_pipeline.utils.db_utils import get_pipeline_engine
     except Exception as exc:
         result["status"] = "failed"
         result["error_message"] = f"dependência: {exc}"

@@ -1,14 +1,15 @@
 """Aplica, de forma idempotente, as migrations necessárias à metodologia FII v6."""
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
+
+from data_pipeline.utils.db_utils import get_pipeline_engine
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from data_pipeline.utils.db_utils import get_pipeline_engine
 MIGRATIONS = (
     ("033_fii_pit_validation_and_calibration.sql", "market.fii_pit_score_snapshots"),
     ("034_fii_v6_covering_indexes.sql", "market.idx_fii_validation_methodology"),

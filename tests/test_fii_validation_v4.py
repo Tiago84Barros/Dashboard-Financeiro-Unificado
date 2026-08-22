@@ -1,10 +1,14 @@
 import pandas as pd
 import pytest
 
-from core.fii_validation import (bootstrap_mean_ci, point_in_time_backtest,
-                                 portfolio_turnover,
-                                 robust_optimizer_point_in_time_backtest,
-                                 validate_methodology, validation_supports_strategy)
+from core.fii_validation import (
+    bootstrap_mean_ci,
+    point_in_time_backtest,
+    portfolio_turnover,
+    robust_optimizer_point_in_time_backtest,
+    validate_methodology,
+    validation_supports_strategy,
+)
 
 
 def test_bootstrap_is_reproducible_and_turnover_is_two_way_adjusted():

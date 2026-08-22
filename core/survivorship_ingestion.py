@@ -32,7 +32,8 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from core.survivorship import (
-    DELISTED_BR_2010_2025, DelistedTicker, universo_delisted_ate,
+    DELISTED_BR_2010_2025,
+    DelistedTicker,
 )
 
 logger = logging.getLogger(__name__)

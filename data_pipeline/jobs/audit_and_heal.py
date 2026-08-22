@@ -106,7 +106,9 @@ def run(apply: bool | None = None, batch_size: int | None = None) -> dict:
 
     try:
         from core.data_healing import (
-            collect_and_resolve, resolutions_to_preview_df, apply_healing,
+            apply_healing,
+            collect_and_resolve,
+            resolutions_to_preview_df,
         )
     except Exception as exc:
         result["status"] = "failed"

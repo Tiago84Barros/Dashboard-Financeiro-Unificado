@@ -30,8 +30,8 @@ def run() -> dict:
     }
 
     try:
-        import pandas as pd
-        import requests
+        __import__("pandas")
+        __import__("requests")
     except ImportError as exc:
         result["status"] = "failed"
         result["error_message"] = f"Dependência ausente: {exc}"

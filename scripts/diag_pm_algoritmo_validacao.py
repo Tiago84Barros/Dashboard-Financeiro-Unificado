@@ -4,8 +4,13 @@ Se os resultados baterem com o Dashboard Investimentos, o port do algoritmo
 esta correto. Se nao bater, ha bug no port. Se bater aqui mas Supabase nao
 bater, ha problema de dados (duplicatas no Supabase).
 """
-import os, sys, sqlite3
 import importlib.util
+import os
+import sqlite3
+import sys
+
+from core.config import settings
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -17,8 +22,6 @@ spec = importlib.util.spec_from_file_location(
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 compute_positions = mod.compute_positions
-
-from core.config import settings
 
 FOCUS = ["BBAS3", "BBAS3F", "GMAT3", "GMAT3F", "PSSA3", "PSSA3F",
         "ROMI3", "ROMI3F", "CSMG3", "CSMG3F", "BRAP3", "BRAP3F",

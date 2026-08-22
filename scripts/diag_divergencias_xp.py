@@ -11,11 +11,14 @@ Tickers e valores esperados (XP mobile, 23/05/2026 15:42):
   CSMG3:  qty 94   PM 40.83  pos 4,915.26  rentab +28.07%
   DEXP3:  qty 17   PM  7.41  pos   124.10  rentab  -1.53%
 """
-import os, sys
+import os
+import sys
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text
+
 from core.config import settings
 from core.database import get_engine
 
@@ -34,7 +37,8 @@ EXPECTED = {
 }
 
 def fmt(v, d=2):
-    if v is None: return "—"
+    if v is None:
+        return "—"
     s = f"{float(v):,.{d}f}"
     return s.replace(",", "X").replace(".", ",").replace("X", ".")
 

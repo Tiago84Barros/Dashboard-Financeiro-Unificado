@@ -50,7 +50,7 @@ def _fmt_brl(v: float) -> str:
 
 
 def _emit(fig: go.Figure) -> None:
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 # ── Renderers (cada um lê apenas de meta) ─────────────────────────────────────

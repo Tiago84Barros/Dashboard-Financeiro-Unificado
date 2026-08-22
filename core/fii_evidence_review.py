@@ -1,11 +1,11 @@
 """Fila de revisão humana e promoção auditável de métricas documentais de FIIs."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import text
@@ -13,7 +13,6 @@ from sqlalchemy import text
 from data_pipeline.market import repository as repo
 from data_pipeline.market.fii_sources import metric_observation
 from data_pipeline.utils.db_utils import get_pipeline_engine
-
 
 VALID_DECISIONS = frozenset({"accepted", "corrected", "rejected"})
 

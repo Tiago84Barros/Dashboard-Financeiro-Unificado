@@ -129,8 +129,8 @@ def update_freshness(
     frequency: str = "diario",
 ) -> None:
     """Atualiza (UPSERT) data_freshness_status após cada execução."""
-    from data_pipeline.utils.db_utils import get_pipeline_engine, table_exists
     from data_pipeline.utils.date_utils import freshness_label, next_expected_update
+    from data_pipeline.utils.db_utils import get_pipeline_engine, table_exists
 
     engine = get_pipeline_engine()
     if engine is None or not table_exists("data_freshness_status"):

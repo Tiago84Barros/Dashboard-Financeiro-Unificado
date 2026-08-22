@@ -1,6 +1,8 @@
-from core.fii_integrated_model import (INTEGRATED_MODEL_VERSION,
-                                       IntegratedEligibilityPolicy,
-                                       apply_integrated_eligibility)
+from core.fii_integrated_model import (
+    INTEGRATED_MODEL_VERSION,
+    IntegratedEligibilityPolicy,
+    apply_integrated_eligibility,
+)
 
 
 def _row(ticker="AAAA11", fii_type="tijolo"):

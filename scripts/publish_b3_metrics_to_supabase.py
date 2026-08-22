@@ -42,11 +42,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from data_pipeline.market import repository                      # noqa: E402
-from scripts.publish_b3_tickers_from_local import _remote_url     # noqa: E402
-from scripts.publish_fii_selection_from_local import _warehouse_url  # noqa: E402
-from scripts.publish_us_snapshot import _engine                  # noqa: E402
-
 # Colunas de controle que a vitrine gera sozinha.
 EXCLUDED_COLUMNS = {"id", "created_at", "updated_at"}
 
@@ -128,6 +123,13 @@ BACKUP_DIR_PADRAO = ROOT / "backups" / "vitrine"
 def publish(periods: list[str], *, apply: bool = False,
             limit: int | None = None,
             backup_dir: Path | None = None) -> dict:
+    # O caminho da raiz é configurado acima para suportar execução direta do
+    # script; dependências do projeto são carregadas somente depois disso.
+    from data_pipeline.market import repository
+    from scripts.publish_b3_tickers_from_local import _remote_url
+    from scripts.publish_fii_selection_from_local import _warehouse_url
+    from scripts.publish_us_snapshot import _engine
+
     remote_url = _remote_url()
     if not remote_url:
         raise RuntimeError(

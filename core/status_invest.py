@@ -17,8 +17,8 @@ Funções públicas:
 """
 from __future__ import annotations
 
-import streamlit as st
 import requests
+import streamlit as st
 
 _SI_HEADERS = {
     "User-Agent": (

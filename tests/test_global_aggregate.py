@@ -1,5 +1,4 @@
 """Quadro unificado de posicoes das tres carteiras."""
-import pandas as pd
 import pytest
 
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes

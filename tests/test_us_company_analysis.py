@@ -57,6 +57,7 @@ def test_metricas_gaap_historicas_preservam_ausencia():
 
 def test_aba_americana_renderiza_mesmos_blocos_da_analise_b3():
     from streamlit.testing.v1 import AppTest
+
     import views.empresas_americanas as american_view
 
     originals = {name: getattr(american_view.us, name) for name in (

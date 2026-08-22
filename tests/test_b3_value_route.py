@@ -6,8 +6,13 @@ import pandas as pd
 import pytest
 
 from core.b3_value_route import (
-    ARMADILHA, OPORTUNIDADE, SEM_EVIDENCIA, SEM_MARGEM, ValuePolicy,
-    rank_value_opportunities, route_summary,
+    ARMADILHA,
+    OPORTUNIDADE,
+    SEM_EVIDENCIA,
+    SEM_MARGEM,
+    ValuePolicy,
+    rank_value_opportunities,
+    route_summary,
 )
 
 

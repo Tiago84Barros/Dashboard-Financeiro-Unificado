@@ -25,12 +25,13 @@ from typing import Any
 from sqlalchemy.engine import Engine
 
 from core.config import settings
+
 from .common import (
+    ensure_external_id_columns,
     finalize_summary,
     get_or_create_account,
     get_or_create_asset,
     get_or_create_institution,
-    ensure_external_id_columns,
     insert_investment_transaction,
     make_external_id,
     make_summary,

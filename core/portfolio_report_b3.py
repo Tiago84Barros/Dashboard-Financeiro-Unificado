@@ -18,36 +18,58 @@ Responsabilidades:
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import pandas as pd
 
 from core.dossie_b3 import build_dossie, dossie_to_text
-from core.portfolio_report_common import (
-    QUALITATIVE_WEIGHTS,
-    company_summary_for_portfolio as _company_summary_for_portfolio,
-    fallback_company as _fallback_company,
-    fallback_portfolio as _fallback_portfolio,
-    format_number as _format_number,
-    normalize_confidence as _normalize_confidence,
-    normalize_scenarios as _normalize_scenarios,
-    normalize_scores as _normalize_scores,
-    prioritize_peer_tickers,
-    safe_float as _safe_float,
-    sanitize_company_report,
-    sanitize_portfolio_report,
-    sanitize_recursive as _sanitize_recursive,
-    sanitize_text as _sanitize_text,
-    weights_contract as _weights_contract,
-)
 from core.llm_b3 import _call_llm, _parse_json, _report_model
 from core.llm_context_b3 import (
     compute_segment_peers,
     get_company_fundamentals_context,
     get_sector_comparison_context,
 )
+from core.portfolio_report_common import (
+    QUALITATIVE_WEIGHTS,
+    prioritize_peer_tickers,
+    sanitize_company_report,
+    sanitize_portfolio_report,
+)
+from core.portfolio_report_common import (
+    company_summary_for_portfolio as _company_summary_for_portfolio,
+)
+from core.portfolio_report_common import (
+    fallback_company as _fallback_company,
+)
+from core.portfolio_report_common import (
+    fallback_portfolio as _fallback_portfolio,
+)
+from core.portfolio_report_common import (
+    format_number as _format_number,
+)
+from core.portfolio_report_common import (
+    normalize_confidence as _normalize_confidence,
+)
+from core.portfolio_report_common import (
+    safe_float as _safe_float,
+)
+from core.portfolio_report_common import (
+    weights_contract as _weights_contract,
+)
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "QUALITATIVE_WEIGHTS",
+    "analyze_portfolio_report",
+    "build_company_prompt",
+    "build_financial_history_context",
+    "build_multiples_history_context",
+    "build_peer_context",
+    "generate_company_portfolio_report",
+    "sanitize_company_report",
+    "sanitize_portfolio_report",
+    "_normalize_confidence",
+]
 
 
 def build_peer_context(

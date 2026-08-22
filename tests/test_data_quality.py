@@ -3,7 +3,6 @@ import pandas as pd
 
 import core.data_quality as dq
 
-
 # ── faixas coerentes / outliers ───────────────────────────────────────────────
 
 def test_tightened_margin_rejects_impossible_value():

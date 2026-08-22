@@ -15,7 +15,6 @@ import streamlit as st
 
 from design.componentes import container_pagina
 
-
 _CSS = """
 <style>
 .doc-intro {
@@ -1576,7 +1575,7 @@ def _render_flow(flow: FlowSpec) -> None:
             st.button(
                 button_label,
                 key=f"doc_fluxo_{flow.key}_{node_id}",
-                use_container_width=True,
+                width="stretch",
                 type="primary" if selected else "secondary",
                 on_click=_select_fluxograma_documentacao,
                 args=(flow.key, node_id),
@@ -1687,7 +1686,7 @@ def render_fluxograma_analise_avancada() -> None:
             st.button(
                 button_label,
                 key=f"btn_fluxo_av_{key}",
-                use_container_width=True,
+                width="stretch",
                 type="primary" if selected or is_score else "secondary",
                 on_click=_select_etapa_analise_avancada,
                 args=(key,),

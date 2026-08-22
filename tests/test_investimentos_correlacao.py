@@ -7,8 +7,8 @@ from core.correlation_analysis import (
     MIN_CORR_MONTHS,
     calcular_correlacao_mensal,
     classificar_correlacao,
-    correlacao_media_ponderada,
     converter_precos_para_brl,
+    correlacao_media_ponderada,
     intervalo_confianca_correlacao,
     retornos_mensais,
 )

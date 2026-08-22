@@ -18,8 +18,8 @@ com os dados que tenho?"*. Puro, sem banco e sem rede.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 import numpy as np
 

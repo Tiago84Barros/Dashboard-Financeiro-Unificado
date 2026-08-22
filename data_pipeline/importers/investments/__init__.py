@@ -19,7 +19,7 @@ Imports lazy:
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
 __all__ = [
     "parse_b3_negociacao",

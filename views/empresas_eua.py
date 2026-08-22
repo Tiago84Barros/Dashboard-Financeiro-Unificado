@@ -16,8 +16,8 @@ from design.componentes import (
     badge_status,
     card_metrica,
     container_pagina,
-    secao_titulo,
     em_construcao,
+    secao_titulo,
 )
 
 
@@ -89,7 +89,7 @@ def render() -> None:
                 "Preço":  st.column_config.NumberColumn("Preço", format="$ %.2f"),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
         st.divider()

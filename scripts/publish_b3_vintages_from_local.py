@@ -9,14 +9,13 @@ from pathlib import Path
 from psycopg2.extras import execute_values
 from sqlalchemy import text
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 from core.config import settings
 from scripts.publish_fii_selection_from_local import _warehouse_url
 from scripts.publish_us_snapshot import _engine
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 DDL = """
 CREATE TABLE IF NOT EXISTS market.calculated_metric_vintages (

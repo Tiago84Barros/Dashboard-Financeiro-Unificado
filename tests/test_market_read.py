@@ -2,9 +2,8 @@ import types
 
 import pandas as pd
 
-import core.market_read as mr
 import core.b3_data as facade
-
+import core.market_read as mr
 
 # ── pivot puro ────────────────────────────────────────────────────────────────
 
@@ -97,6 +96,48 @@ def test_macro_segue_no_legado(monkeypatch):
     _fakes(monkeypatch)
     # macro/selic/snapshot são de outros domínios — seguem no legado
     assert facade.load_macro_history() == "LEGACY_MACRO"
+
+
+# ── A-009: proveniência do fallback legado não pode ficar silenciosa ──────────
+# core.b3_db._resolve_url() tem prioridade de URL própria (SUPABASE_DB_URL_B3 >
+# SUPABASE_DB_URL > settings.db_url) que ignora um DATABASE_URL sobrescrito no
+# processo. Em vez de unificar (quebraria scripts de ingestão que dependem
+# desse desvio para apontar a staging local), load_setores() marca em attrs
+# quando os dados vieram do legado, para a UI avisar o usuário mesmo quando o
+# fallback "funciona" (retorna dado não-vazio de uma fonte diferente).
+
+def test_setores_marca_proveniencia_do_fallback_legado(monkeypatch):
+    _fakes(monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("market down")
+    facade._market.load_setores = boom
+    df_legacy = pd.DataFrame({"ticker": ["PETR4"], "SETOR": ["Petróleo"]})
+    facade._legacy.load_setores = lambda *a, **k: df_legacy
+
+    out = facade.load_setores()
+    assert out.attrs.get("fallback_legado") is True
+    # não deve mutar o objeto original devolvido pelo legado
+    assert "fallback_legado" not in df_legacy.attrs
+
+
+def test_setores_sem_fallback_nao_marca_proveniencia(monkeypatch):
+    _fakes(monkeypatch)
+    # market funciona: não passa pelo legado, não há attrs de fallback
+    out = facade.load_setores()
+    assert out == "MARKET_SET"  # string dos fakes: nem tem .attrs, e tudo bem
+
+
+def test_setores_fallback_com_retorno_nao_dataframe_nao_quebra(monkeypatch):
+    # Guarda de regressão: alguns testes/fakes fazem load_setores legado
+    # devolver algo que não é DataFrame (ex.: "LEGACY_SET" em _fakes) — a
+    # marcação de proveniência não pode lançar exceção nesse caso.
+    _fakes(monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("market down")
+    facade._market.load_setores = boom
+    assert facade.load_setores() == "LEGACY_SET"
 
 
 def test_market_active_sempre_true(monkeypatch):

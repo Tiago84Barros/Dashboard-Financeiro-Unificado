@@ -23,7 +23,6 @@ from typing import Any
 
 import numpy as np
 
-
 # Dimensões e pesos do score qualitativo. Valem para os dois mercados: são
 # perguntas sobre o negócio, não sobre a bolsa em que ele é listado.
 QUALITATIVE_WEIGHTS: dict[str, tuple[str, int]] = {

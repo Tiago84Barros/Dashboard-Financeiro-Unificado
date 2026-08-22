@@ -199,7 +199,7 @@ mantendo fallback automático para mock em caso de falha.
 | `_visao_geral_real()` com banco real | ✅ 9/9 chaves · schema idêntico ao mock |
 | Fallback `engine=None` → RuntimeError | ✅ propagada corretamente |
 | Fallback `owner_id=''` → RuntimeError | ✅ propagada corretamente |
-| `calcular_saude_score(50, 15, 0, 7, False)` | ✅ → 70 |
+| `calcular_saude_score(50, 15, 0, 7, False)` | ✅ → 90 |
 
 ### Validação visual em produção (Streamlit Cloud)
 

@@ -10,8 +10,13 @@ from __future__ import annotations
 import pytest
 
 from core.us_portfolio_presets import (
-    AMPLO, DEFENSIVO, PERSONALIZADO, PRESETS, RECOMENDADO,
-    avaliar_configuracao, identificar_perfil,
+    AMPLO,
+    DEFENSIVO,
+    PERSONALIZADO,
+    PRESETS,
+    RECOMENDADO,
+    avaliar_configuracao,
+    identificar_perfil,
 )
 
 

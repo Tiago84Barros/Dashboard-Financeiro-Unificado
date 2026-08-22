@@ -6,7 +6,6 @@ import math
 
 import pandas as pd
 
-
 MIN_CORR_MONTHS = 24
 DEFAULT_CORR_PERIOD = "5y"
 MAX_FX_GAP_DAYS = 7

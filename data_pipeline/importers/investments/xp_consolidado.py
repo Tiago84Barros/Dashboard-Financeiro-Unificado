@@ -37,6 +37,7 @@ from typing import Any
 from sqlalchemy.engine import Connection, Engine
 
 from core.config import settings
+
 from .common import (
     ensure_external_id_columns,
     finalize_summary,

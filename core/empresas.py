@@ -173,6 +173,7 @@ def get_ativo_por_ticker(ticker: str):
 
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
 
         engine = get_engine()
@@ -212,6 +213,7 @@ def _ativos_mock() -> dict:
 
 def _ativos_real() -> dict:
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()

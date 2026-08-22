@@ -8,9 +8,9 @@ data_pipeline/quality e core/data_quality do lado B3.
 """
 from __future__ import annotations
 
-from typing import Optional
 import json
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import text
 

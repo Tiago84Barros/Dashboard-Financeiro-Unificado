@@ -16,9 +16,13 @@ import pandas as pd
 
 from core.market_companies import translate_us_sector
 from core.us_advanced_lab import build_entry_scores
+from core.us_liquidity import VERSION as US_LIQUIDITY_VERSION
 
-
-PORTFOLIO_SCHEMA_VERSION = "us_portfolio_creation_v2"
+# v3 (2026-08-17): ``params`` passou a carregar `liquidity_version`, porque a
+# regra de elegibilidade por negociabilidade mudou de comportamento e uma
+# carteira salva precisa dizer sob qual regra nasceu. Chave ADITIVA: carteiras
+# gravadas com v2 continuam legíveis (a leitura usa .get) e não são migradas.
+PORTFOLIO_SCHEMA_VERSION = "us_portfolio_creation_v3"
 
 
 @dataclass(frozen=True)
@@ -59,7 +63,11 @@ class USPortfolioCreationParams:
 
 
 def params_to_dict(params: USPortfolioCreationParams) -> dict[str, Any]:
-    return {"schema_version": PORTFOLIO_SCHEMA_VERSION, **asdict(params)}
+    return {
+        "schema_version": PORTFOLIO_SCHEMA_VERSION,
+        "liquidity_version": US_LIQUIDITY_VERSION,
+        **asdict(params),
+    }
 
 
 def _numeric(frame: pd.DataFrame, column: str, default=np.nan) -> pd.Series:
@@ -91,6 +99,106 @@ def _sequential_filter(
     removed = int((~clean_mask).sum())
     exclusions.append({"key": key, "label": label, "count": removed})
     return frame.loc[clean_mask].copy()
+
+
+_INGESTAO_GIRO = (
+    "Ingira os preços diários (`python run_us_ingest.py daily --warehouse`) e "
+    "republique a vitrine (`python run_us_ingest.py snapshot --warehouse`), ou "
+    "zere a negociabilidade mínima para explorar o universo sem montar carteira."
+)
+_LIQUIDITY_TIMESTAMP_COLUMNS = (
+    "giro_diario_usd_at", "giro_diario_usd_as_of", "liquidity_as_of",
+)
+
+
+def _apply_liquidity_gate(
+    work: pd.DataFrame,
+    params: USPortfolioCreationParams,
+    exclusions: list[dict[str, Any]],
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Piso de negociabilidade em três estados, fail-closed com piso > 0.
+
+    Duas linhas de exclusão em vez de uma: "medido e abaixo do piso" e "nunca
+    medido" são fatos diferentes e um usuário que vê 1.007 saídas precisa saber
+    qual dos dois aconteceu. A contagem sequencial continua reconciliando.
+
+    A coluna AUSENTE deixou de significar "todos passam". Antes o gate inteiro
+    era pulado em silêncio quando ``giro_diario_usd`` não vinha na vitrine — o
+    usuário pedia piso de US$ 1 mi/dia e recebia carteira sem nenhuma verificação
+    de liquidez. Coluna ausente com piso > 0 significa "ninguém foi verificado",
+    e nesse estado não se publica carteira.
+    """
+    from core.us_liquidity import (
+        PISO_INVALIDO_MESSAGE,
+        LiquidityPolicy,
+        aplicar_piso,
+        formata_usd_curto,
+    )
+
+    policy = LiquidityPolicy(piso_diario_usd=params.min_daily_turnover_usd)
+    piso = policy.piso_normalizado
+    meta: dict[str, Any] = {
+        "liquidity_warnings": [],
+        "liquidity_unverified": [],
+        "liquidity_block": None,
+        "liquidity_floor_usd": piso,
+        "liquidity_exploratory": policy.exploratorio,
+        "liquidity_version": US_LIQUIDITY_VERSION,
+    }
+    if work.empty:
+        return work, meta
+
+    if piso is None:
+        meta["liquidity_warnings"] = [PISO_INVALIDO_MESSAGE]
+        meta["liquidity_unverified"] = work["symbol"].astype(str).str.upper().tolist()
+        meta["liquidity_block"] = PISO_INVALIDO_MESSAGE
+        return _sequential_filter(
+            work, pd.Series(False, index=work.index), "liquidity_invalid",
+            PISO_INVALIDO_MESSAGE, exclusions,
+        ), meta
+
+    tem_coluna = "giro_diario_usd" in work
+    timestamp_col = next((c for c in _LIQUIDITY_TIMESTAMP_COLUMNS if c in work), None)
+    medido = _numeric(work, "giro_diario_usd")     # coluna ausente → tudo NaN
+    giro = {str(s).upper(): float(v)
+            for s, v in zip(work["symbol"], medido) if pd.notna(v)}
+    timestamps = ({str(s).upper(): at for s, at in zip(work["symbol"], work[timestamp_col])}
+                  if timestamp_col else {})
+    screen = aplicar_piso(work["symbol"].astype(str).tolist(), giro,
+                          timestamps=timestamps, policy=policy)
+    meta["liquidity_warnings"] = list(screen.avisos)
+    meta["liquidity_unverified"] = list(screen.nao_verificados)
+
+    if policy.exploratorio:
+        # Sem piso não há o que filtrar; o aviso já declara que a liquidez de
+        # quem não tem série NÃO foi validada.
+        return work, meta
+
+    reprovados = {r["symbol"] for r in screen.removidos}
+    chaves = work["symbol"].astype(str).str.upper()
+    work = _sequential_filter(
+        work, ~chaves.isin(reprovados), "liquidity",
+        f"Volume medido abaixo de US$ {formata_usd_curto(piso)}/dia", exclusions,
+    )
+    chaves = work["symbol"].astype(str).str.upper()
+    work = _sequential_filter(
+        work, ~chaves.isin(set(screen.nao_verificados)), "liquidity_unverified",
+        "Negociabilidade não verificada (sem série ou data de referência atual)", exclusions,
+    )
+
+    if not giro or not screen.aprovados:
+        onde = ("a coluna `giro_diario_usd` não existe neste universo"
+                if not tem_coluna else
+                "a coluna `giro_diario_usd` existe mas nenhuma empresa do "
+                "recorte tem giro medido") if not giro else (
+                "não há nenhuma medição de giro com data de referência atual")
+        meta["liquidity_block"] = (
+            f"Negociabilidade não verificada: {onde}, e a negociabilidade mínima "
+            f"está em US$ {formata_usd_curto(piso)}/dia. Nenhuma empresa pôde ser "
+            f"verificada, então nenhuma carteira é publicada — comprar sem medir "
+            f"negociabilidade é assumir risco não verificado. " + _INGESTAO_GIRO
+        )
+    return work, meta
 
 
 def prepare_eligible_universe(
@@ -154,34 +262,13 @@ def prepare_eligible_universe(
     # Negociabilidade. Fica DEPOIS do score e ANTES da montagem das indústrias:
     # remover papel encalhado antes de contar a amostra evitaria que uma
     # indústria fosse aprovada por empresas que ninguém consegue comprar.
-    liquidity_warnings: list[str] = []
-    if float(params.min_daily_turnover_usd) > 0 and "giro_diario_usd" in work:
-        from core.us_liquidity import (
-            LiquidityPolicy, aplicar_piso, formata_usd_curto,
-        )
-
-        giro = {
-            str(s).upper(): float(v)
-            for s, v in zip(work["symbol"], _numeric(work, "giro_diario_usd"))
-            if pd.notna(v)
-        }
-        aprovados, _removidos, liquidity_warnings = aplicar_piso(
-            work["symbol"].astype(str).tolist(), giro,
-            policy=LiquidityPolicy(piso_diario_usd=float(params.min_daily_turnover_usd)),
-        )
-        work = _sequential_filter(
-            work, work["symbol"].astype(str).str.upper().isin(set(aprovados)),
-            "liquidity",
-            f"Volume abaixo de US$ "
-            f"{formata_usd_curto(float(params.min_daily_turnover_usd))}/dia",
-            exclusions,
-        )
+    work, liquidity_meta = _apply_liquidity_gate(work, params, exclusions)
 
     if work.empty:
         audit = pd.DataFrame(exclusions, columns=columns)
         audit.attrs["total"] = total
         audit.attrs["eligible"] = 0
-        audit.attrs["liquidity_warnings"] = liquidity_warnings
+        audit.attrs.update(liquidity_meta)
         return work, audit
 
     work["sector_raw"] = work.get("sector", "Não classificado")
@@ -195,7 +282,7 @@ def prepare_eligible_universe(
     audit = pd.DataFrame(exclusions, columns=columns)
     audit.attrs["total"] = total
     audit.attrs["eligible"] = len(work)
-    audit.attrs["liquidity_warnings"] = liquidity_warnings
+    audit.attrs.update(liquidity_meta)
     return work.reset_index(drop=True), audit
 
 
@@ -614,6 +701,23 @@ def build_portfolio_creation(
     # exibe, em vez de virarem um canal paralelo que a view precisa lembrar de ler.
     warnings = list(exclusions.attrs.get("liquidity_warnings") or []) + list(warnings)
 
+    # Bloqueio de publicação. Não é aviso: com piso ligado e NENHUMA medição
+    # disponível, "carteira vazia" e "carteira sem liquidez verificada" seriam
+    # indistinguíveis na tela. Aqui a diferença fica explícita e acionável.
+    liquidity_block = exclusions.attrs.get("liquidity_block")
+    liquidity_unverified = list(exclusions.attrs.get("liquidity_unverified") or [])
+    exploratory_unverified = bool(
+        exclusions.attrs.get("liquidity_exploratory") and liquidity_unverified)
+    publication_blocking_error = None
+    if exploratory_unverified:
+        publication_blocking_error = (
+            f"{len(liquidity_unverified)} empresa(s) da carteira têm "
+            "negociabilidade não verificada. O modo exploratório permite "
+            "analisar esta composição, mas não enviá-la à Avaliação de "
+            "Portfólio nem salvá-la como carteira padrão. Informe um giro "
+            "diário com data de referência atual para publicar."
+        )
+
     reprovados = floor_log.get("reprovados") or []
     if reprovados:
         trocas = len(floor_log.get("substituicoes") or [])
@@ -645,7 +749,19 @@ def build_portfolio_creation(
                     f"do universo alcança {float(teto):.1f}. Baixe o piso para "
                     "obter carteira."]
     return {
-        "ok": not holdings.empty,
+        "ok": bool(not holdings.empty and not liquidity_block),
+        "blocked": bool(liquidity_block),
+        "blocking_error": liquidity_block,
+        # ``blocked`` interrompe a análise; ``can_publish`` é mais estrito.
+        # No modo exploratório, holdings sem giro validado continuam visíveis
+        # para investigação, mas não podem chegar à avaliação/persistência.
+        "can_publish": bool(
+            not liquidity_block and not exploratory_unverified and not holdings.empty),
+        "publication_blocking_error": publication_blocking_error,
+        "liquidity_unverified": liquidity_unverified,
+        "liquidity_floor_usd": exclusions.attrs.get("liquidity_floor_usd"),
+        "liquidity_version": exclusions.attrs.get(
+            "liquidity_version", US_LIQUIDITY_VERSION),
         "params": params_to_dict(params),
         "universe_count": int(exclusions.attrs.get("total", len(scored) if scored is not None else 0)),
         "eligible_count": int(len(eligible)),

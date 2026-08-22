@@ -34,7 +34,6 @@ from data_pipeline.importers.investments.common import (  # noqa: E402
     to_float_br,
 )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # to_float_br
 # ─────────────────────────────────────────────────────────────────────────────
@@ -215,8 +214,12 @@ def test_safe_error_limita_tamanho():
 # ─────────────────────────────────────────────────────────────────────────────
 
 from data_pipeline.importers.investments.nomad_pdf import (  # noqa: E402
-    _to_float_usd, _parse_iso_date, _parse_us_date,
-    _is_apex, _is_drivewealth, _is_monthly_statement,
+    _is_apex,
+    _is_drivewealth,
+    _is_monthly_statement,
+    _parse_iso_date,
+    _parse_us_date,
+    _to_float_usd,
 )
 
 
@@ -287,8 +290,11 @@ def test_nomad_is_monthly_statement_descarta_notas_negociacao():
 # ─────────────────────────────────────────────────────────────────────────────
 
 from data_pipeline.importers.investments.xp_consolidado import (  # noqa: E402
-    _parse_report_date, _extract_ticker_name, _tesouro_ticker, _is_fundo_rf,
+    _extract_ticker_name,
+    _is_fundo_rf,
     _map_asset_type,
+    _parse_report_date,
+    _tesouro_ticker,
 )
 
 

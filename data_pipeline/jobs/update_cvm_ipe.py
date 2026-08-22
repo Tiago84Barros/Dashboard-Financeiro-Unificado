@@ -101,8 +101,9 @@ def run() -> dict:
     }
     try:
         from sqlalchemy import text
-        from data_pipeline.utils.db_utils import get_pipeline_engine
+
         import core.cvm_ipe as ipe
+        from data_pipeline.utils.db_utils import get_pipeline_engine
     except Exception as exc:
         result["status"] = "failed"
         result["error_message"] = f"import: {exc}"[:500]

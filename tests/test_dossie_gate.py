@@ -16,7 +16,6 @@ from core.dossie_b3 import (
     _valuation,
 )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Sensibilidade a juros — a regra é decidida pelos dados, não pelo LLM
 # ─────────────────────────────────────────────────────────────────────────────

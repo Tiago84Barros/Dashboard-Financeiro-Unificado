@@ -4,7 +4,6 @@ import datetime as dt
 from data_pipeline.market import normalize as nz
 from data_pipeline.market import repository as repo
 
-
 _QUOTE = {
     "symbol": "TST3",
     "incomeStatementHistory": [{

@@ -6,18 +6,17 @@ duration zero. Todo backfill usa o instante da coleta como ``available_at``.
 """
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import date, datetime, timezone
 import hashlib
 import json
 import math
 import re
-from typing import Any, Iterable
 import unicodedata
+from collections import defaultdict
+from datetime import date, datetime, timezone
+from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 from data_pipeline.market.fii_sources import metric_observation
-
 
 SOURCE = "brapi_fii_v2"
 VALID_TYPES = {"tijolo", "papel", "fof", "hibrido"}

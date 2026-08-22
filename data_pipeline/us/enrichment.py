@@ -6,13 +6,12 @@ brutos; nenhuma delas apaga observações históricas.
 """
 from __future__ import annotations
 
-from datetime import date
 import re
+from datetime import date
 
 from sqlalchemy import text
 
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
-
 
 _NON_OPERATING_SECTORS = {"blank checks"}
 _EXPLICIT_NON_COMMON = re.compile(r"(?:-P[A-Z0-9]?|-WT|-WS|-UN)$")

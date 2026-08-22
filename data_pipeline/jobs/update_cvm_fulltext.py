@@ -50,7 +50,7 @@ def _cfg_int(name: str, default: int) -> int:
 def _select_pending(conn, limit: int):
     from sqlalchemy import text
     # Prioriza: carteira (b3_portfolio_model_items) → Fato Relevante/Resultados → mais antigos
-    return conn.execute(text(f"""
+    return conn.execute(text("""
         SELECT d.id, d.ticker, d.url, d.categoria, d.document_date
         FROM public.docs_corporativos d
         LEFT JOIN (SELECT DISTINCT ticker FROM public.b3_portfolio_model_items) c
@@ -79,8 +79,9 @@ def run() -> dict:
 
     try:
         from sqlalchemy import create_engine, text
-        from core.b3_db import _resolve_url
+
         import core.cvm_ipe as ipe
+        from core.b3_db import _resolve_url
     except Exception as exc:
         result["status"] = "failed"
         result["error_message"] = f"import: {exc}"[:500]

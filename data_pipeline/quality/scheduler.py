@@ -141,6 +141,7 @@ def _ensure_cursor_table(conn) -> None:
 
 def get_cursor() -> int:
     from sqlalchemy import text
+
     from core.database import get_engine
     engine = get_engine()
     if engine is None:
@@ -160,6 +161,7 @@ def get_cursor() -> int:
 
 def save_cursor(pos: int, wrapped: bool = False) -> None:
     from sqlalchemy import text
+
     from core.database import get_engine
     engine = get_engine()
     if engine is None:
@@ -193,6 +195,7 @@ def _load_universe() -> list[str]:
 def _load_carteira() -> set[str]:
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
         engine = get_engine()
         if engine is None:
@@ -216,6 +219,7 @@ def _load_carteira() -> set[str]:
 def _load_last_audited() -> dict[str, float]:
     try:
         from sqlalchemy import text
+
         from core.database import get_engine
         engine = get_engine()
         if engine is None:

@@ -37,6 +37,7 @@ def _exec_retry(engine, stmt, params=None, tries: int = 5) -> None:
     """Executa uma transação com retry — o pooler do Supabase derruba conexões
     intermitentemente ('server terminated abnormally'). Backoff curto."""
     import time
+
     from sqlalchemy.exc import DBAPIError, OperationalError
     last = None
     for attempt in range(1, tries + 1):

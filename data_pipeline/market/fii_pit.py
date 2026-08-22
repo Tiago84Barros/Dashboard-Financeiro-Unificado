@@ -7,24 +7,28 @@ mas reduzem a fração verificada e impedem a aprovação metodológica.
 from __future__ import annotations
 
 import base64
-from datetime import date, datetime, time, timezone
 import hashlib
 import json
 import math
+from datetime import date, datetime, time, timezone
 from typing import Any
 
 import pandas as pd
 import requests
 from sqlalchemy import text
 
-from core.fii_methodology import (FORMULA_VERSION, METHODOLOGY_VERSION,
-                                  score_fiis_by_type)
+from core.fii_methodology import (
+    FORMULA_VERSION,
+    METHODOLOGY_VERSION,
+    score_fiis_by_type,
+)
 from core.fii_portfolio_v4 import LIVE_PORTFOLIO_STRATEGY_ID
-from core.fii_validation import (evaluate_regime_performance,
-                                 robust_optimizer_point_in_time_backtest,
-                                 validate_methodology)
+from core.fii_validation import (
+    evaluate_regime_performance,
+    robust_optimizer_point_in_time_backtest,
+    validate_methodology,
+)
 from data_pipeline.utils.db_utils import get_pipeline_engine
-
 
 _B3_IFIX_MONTHLY_URL = (
     "https://sistemaswebb3-listados.b3.com.br/"

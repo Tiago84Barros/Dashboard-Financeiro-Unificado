@@ -268,9 +268,79 @@ nunca por `ingested_at`. Empresas deslistadas permanecem no universo histórico
 (anti-survivorship). Divergências de ticker e restatements são detectados
 (`content_hash`).
 
+## Benchmark efetivo no backtest EUA (`us-benchmark-1.0.0`, 17/08/2026)
+
+O seletor da Simulação de Patrimônio agora entrega a escolha ao motor: **S&P 500
+(SPY)**, **Russell 1000 (IWB)**, **Nasdaq-100 (QQQ)** ou a opção explícita de
+não usar índice. A curva, o retorno anual do índice e o excesso são calculados
+contra a seleção, e não contra um índice fixo ou contra pesos iguais disfarçados.
+
+- O equal-weight do universo permanece uma baseline separada: ele mede a
+  seleção dentro do universo elegível; o índice mede a estratégia inteira.
+- As duas pernas usam `market_us.prices_monthly.adjusted_close`: preço ajustado
+  (retorno total), USD e frequência mensal. O motor compara apenas as datas
+  comuns e remede a carteira nessa mesma janela.
+- A janela do índice segue o painel PIT (12 meses no painel anual). Não há
+  conversão de moeda, interpolação ou substituição de lacuna por retorno zero.
+- Escolha desconhecida, série ausente ou interseção com menos de três períodos
+  falha fechada, com estado nomeado e sem métrica de excesso contra índice.
+
+## Negociabilidade tri-estado e fail-closed (`us-liquidity-2.1.0`, 17/08/2026)
+
+Achado A-004 (severidade alta): **ativo sem medição de liquidez permanecia
+elegível por padrão**. O defeito estava replicado em três lugares —
+`core/us_liquidity.py::aplicar_piso` (giro `NaN` entrava em `aprovados` e saía
+só num aviso), `core/us_portfolio_creation.py` (`if piso > 0 and
+"giro_diario_usd" in work` pulava o gate inteiro quando a vitrine não publicava
+a coluna) e `views/empresas_americanas.py` (`giro.isna() | (giro >= piso)`).
+
+O argumento que sustentava a permissividade continua válido no que ele de fato
+prova: o universo americano tem 3.759 ativos contra 2.752 com série de volume, e
+**ausência de medição não é prova de iliquidez** — cortar os 1.007 sem dado
+perderia empresa boa por lacuna de coleta. O que não se sustenta é usar esse
+argumento para montar carteira: comprar um papel cuja negociabilidade nunca foi
+medida é assumir risco não verificado. Os dois usos passaram a ser separados.
+
+| Estado | Significado | Piso > 0 | Piso = 0 (exploratório) |
+|---|---|---|---|
+| `MEDIDA_APROVADA` | giro finito, data UTC atual e ≥ piso | investível | aparece |
+| `MEDIDA_REPROVADA` | giro finito medido, data UTC atual e < piso (inclui zero) | fora | fora |
+| `NAO_VERIFICADA` | sem série, `None`, texto vazio/inválido, ±infinito ou data inválida | **fora** | aparece com aviso, não publica |
+
+- `aplicar_piso` devolve `LiquidityScreen` (quatro conjuntos) no lugar da tupla
+  de três posições. A quebra de contrato é deliberada: obriga cada chamador a
+  tratar o terceiro estado em vez de ler o desconhecido como aprovado.
+- **±infinito não é medição.** `float("inf") >= piso` é `True`, e a versão 1.0.0
+  aprovava overflow/divisão por zero como se fosse o ativo mais líquido do
+  mercado. Agora ±inf é `NAO_VERIFICADA`, como `None` e texto não numérico.
+- **Atualidade é UTC e tem intervalo inclusivo de 7 dias corridos.** A data de
+  referência do giro precisa ter fuso e estar entre `agora UTC − 7 dias` e
+  `agora UTC`, inclusive. Data ausente, inválida, sem fuso, anterior à janela
+  ou com timestamp futuro é `NAO_VERIFICADA`; não se presume UTC nem se usa observação futura
+  para autorizar uma posição.
+- **Coluna ausente bloqueia a publicação.** Com piso > 0 e nenhuma medição
+  disponível, `build_portfolio_creation` devolve `blocked=True` e
+  `blocking_error` com a instrução de ingestão (`run_us_ingest.py daily
+  --warehouse` + `snapshot --warehouse`). Antes devolvia carteira cheia sem
+  nenhuma posição verificada.
+- A auditoria de exclusões ganhou a linha `liquidity_unverified`, separada de
+  `liquidity`: "medido e abaixo do piso" e "nunca medido" são fatos diferentes.
+- **Explorar não é publicar.** Com piso zero, ativos não verificados podem ser
+  analisados, mas o resultado não pode ser enviado à Avaliação de Portfólio nem
+  salvo como carteira padrão até que todas as posições tenham negociabilidade
+  verificada.
+- `params_to_dict` passou a gravar `liquidity_version`, e
+  `PORTFOLIO_SCHEMA_VERSION` foi para `us_portfolio_creation_v3`. As duas chaves
+  são **aditivas**: carteiras gravadas com v2 continuam legíveis e nenhum dado
+  foi migrado. A staleness continua sendo decidida por `score_version` e
+  `model_schema_version`, que não mudaram.
+
 ## Limitações conhecidas
 
 - CIK ausente em parte do universo reduz a precisão da identidade.
+- Giro diário é mediana de `close × volume` dos últimos 180 pregões
+  (`market_us.prices_daily`). Sem a série, o ativo é `NAO_VERIFICADA` e não
+  entra em carteira — o que não afirma que ele seja ilíquido.
 - Estimativas de analistas/insider/13F dependem do plano/licença da FMP.
 - REITs usam FFO/AFFO (P/L e depreciação são inadequados) — tratamento próprio
   entra com a Fase de score.

@@ -5,13 +5,15 @@ universo real — não de preferência. Os testes travam essa correspondência.
 """
 from __future__ import annotations
 
-import pytest
-
 from core.b3_portfolio_presets import (
-    AMPLO, CONSERVADOR, PERSONALIZADO, PRESETS, RECOMENDADO,
-    avaliar_configuracao, identificar_perfil,
+    AMPLO,
+    CONSERVADOR,
+    PERSONALIZADO,
+    PRESETS,
+    RECOMENDADO,
+    avaliar_configuracao,
+    identificar_perfil,
 )
-
 
 # ── estrutura dos perfis ─────────────────────────────────────────────────────
 

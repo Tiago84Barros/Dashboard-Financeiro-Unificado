@@ -6,10 +6,10 @@ publicacao: a qualidade PIT e declarada explicitamente no manifesto.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import logging
+from datetime import datetime, timezone
 from numbers import Real
 from typing import Any
 from uuid import uuid4

@@ -22,7 +22,6 @@ import streamlit as st
 
 from core.config import settings
 
-
 # ── Pública ───────────────────────────────────────────────────────────────────
 
 def verificar_autenticacao() -> None:
@@ -90,7 +89,7 @@ def _renderizar_login() -> None:
             placeholder="Digite sua senha",
         )
 
-        if st.button("Entrar", use_container_width=True, type="primary"):
+        if st.button("Entrar", width="stretch", type="primary"):
             if not senha:
                 st.warning("Informe a senha.")
             elif _senha_correta(senha):

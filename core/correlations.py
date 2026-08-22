@@ -32,11 +32,7 @@ Referências:
 """
 from __future__ import annotations
 
-from math import log
-from typing import Sequence
-
 import numpy as np
-
 
 # ──────────────────────────────────────────────────────────────────────────
 # Parâmetros default — calibrados em literatura

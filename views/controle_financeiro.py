@@ -22,32 +22,36 @@ Novas funcionalidades implementadas na Fase 5.1:
 
 Dados: core/controle + core/investimentos.get_cashflow_mensal()
 """
-from datetime import date as _date, timedelta
 import html
 import re
 import unicodedata
+from datetime import date as _date
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from core.card_categorization import REVIEW_SENTINEL, categorias_disponiveis
 from core.controle import (
-    get_controle, get_opcoes_formulario, inserir_transacao,
-    atualizar_transacao, atualizar_transacao_cartao,
+    add_card_category_rule,
+    atualizar_transacao,
+    atualizar_transacao_cartao,
+    definir_categoria_transacao_cartao,
     get_contas_cartao_credito,
-    get_historico_anual, get_transacoes_filtradas,
+    get_controle,
     get_gastos_cartao_mensal,
     get_gastos_categoria_anual,
+    get_historico_anual,
+    get_opcoes_formulario,
     get_transacoes_cartao_credito,
-    definir_categoria_transacao_cartao, add_card_category_rule,
+    get_transacoes_filtradas,
+    inserir_transacao,
 )
-from core.card_categorization import categorias_disponiveis, REVIEW_SENTINEL
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import (
     abas_secao,
     badge_status,
-    barra_progresso,
     container_pagina,
 )
 
@@ -422,7 +426,7 @@ def _sidebar_render(ano: int, mes: int) -> None:
             "Descrição (opcional)", height=60, key="cf_sb_desc",
         )
 
-        submitted = st.form_submit_button("Salvar lançamento", use_container_width=True)
+        submitted = st.form_submit_button("Salvar lançamento", width="stretch")
 
     if submitted:
         if valor <= 0:
@@ -540,7 +544,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
         cats = d["categorias"]
         if cats:
             st.plotly_chart(_fig_cat_horizontal(cats),
-                            use_container_width=True,
+                            width="stretch",
                             config={"displayModeBar": False})
             # Tabela com % da renda (igual ao original)
             if receitas > 0:
@@ -575,7 +579,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
         _secao_titulo("📈", "Histórico de 6 meses (Receitas × Despesas × Investimentos)")
         if historico:
             st.plotly_chart(_fig_historico(historico, fluxo_inv),
-                            use_container_width=True,
+                            width="stretch",
                             config={"displayModeBar": False})
         else:
             st.caption("Histórico não disponível.")
@@ -603,7 +607,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                     "Investimentos": st.column_config.TextColumn("Investimentos"),
                 },
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -867,11 +871,11 @@ def _tab_analises(
             _pizza_cats = [{"nome": c["nome"], "gasto": c["gasto"],
                             "orcamento": 0.0, "pct_usado": 0.0, "tipo_badge": ""}
                            for c in cats_anuais]
-            st.plotly_chart(_fig_pizza_cats(_pizza_cats), use_container_width=True,
+            st.plotly_chart(_fig_pizza_cats(_pizza_cats), width="stretch",
                             config={"displayModeBar": False})
         with col_barras:
             st.plotly_chart(_fig_barras_categoria_anual(cats_anuais),
-                            use_container_width=True, config={"displayModeBar": False})
+                            width="stretch", config={"displayModeBar": False})
 
         import pandas as pd
         total_anual = sum(c["gasto"] for c in cats_anuais)
@@ -883,7 +887,7 @@ def _tab_analises(
             }
             for c in cats_anuais
         ]
-        st.dataframe(pd.DataFrame(rows_dist), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows_dist), width="stretch", hide_index=True)
     else:
         st.caption(f"Sem despesas registradas em {_ano_dist}.")
 
@@ -902,7 +906,7 @@ def _tab_analises(
     por_ano  = hist_anual.get("por_ano", {})
 
     if len(anos) >= 2:
-        st.plotly_chart(_fig_yoy(por_ano, anos), use_container_width=True,
+        st.plotly_chart(_fig_yoy(por_ano, anos), width="stretch",
                         config={"displayModeBar": False})
 
         # Tabela resumo (igual ao original: Ano | Receitas | Investimentos | Despesas)
@@ -916,7 +920,7 @@ def _tab_analises(
                 "Investimentos":  f"R$ {inv:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
                 "Despesas":       f"R$ {por_ano[a]['despesas']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
             })
-        st.dataframe(pd.DataFrame(rows_yoy), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows_yoy), width="stretch", hide_index=True)
     elif len(anos) == 1:
         st.caption(f"Apenas 1 ano de dados disponível ({anos[0]}). Aguarde mais histórico.")
     else:
@@ -968,12 +972,12 @@ def _tab_analises(
                    "tickformat": ",.0f", "tickprefix": "R$ ",
                    "title": {"text": "Total relacionado a cartão (R$)", "font": {"size": 10}}},
         )
-        st.plotly_chart(fig_cartao, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig_cartao, width="stretch", config={"displayModeBar": False})
 
         rows_cart = [{"Mês": item["label"],
                       "Total (R$)": f"R$ {item['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")}
                      for item in dados_cartao]
-        st.dataframe(pd.DataFrame(rows_cart), use_container_width=True, hide_index=False)
+        st.dataframe(pd.DataFrame(rows_cart), width="stretch", hide_index=False)
     else:
         st.caption(f"Sem lançamentos de 'Pagamento de Cartão' para {_ano_sel_str}.")
 
@@ -982,7 +986,7 @@ def _tab_analises(
     # ── Evolução do Patrimônio Investido (igual ao original) ──────────────────
     _secao_titulo("📈", "Evolução do patrimônio investido (ano a ano)")
     if len(anos) >= 1:
-        st.plotly_chart(_fig_patrimonio_investido(por_ano, anos), use_container_width=True,
+        st.plotly_chart(_fig_patrimonio_investido(por_ano, anos), width="stretch",
                         config={"displayModeBar": False})
 
         import pandas as pd
@@ -996,7 +1000,7 @@ def _tab_analises(
                 "Investido no ano (R$)":   f"R$ {inv:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
                 "Acumulado investido (R$)": f"R$ {acum:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
             })
-        st.dataframe(pd.DataFrame(rows_pat), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows_pat), width="stretch", hide_index=True)
     else:
         st.caption("Sem dados históricos disponíveis.")
 
@@ -1042,12 +1046,13 @@ def _render_chat_financeiro(
     dados REAIS do usuário (mesmas funções filtradas por OWNER_USER_ID). Mantém
     o histórico da sessão e pode gerar gráficos a partir das séries reais.
     """
-    from core.llm_b3 import llm_disponivel, provedores_disponiveis
-    from core.llm_financeiro import chat_com_financas, parse_chart_directives
-    from core.llm_context_financeiro import build_financas_chat_context
     from core.financeiro_chat_charts import (
-        render_financas_charts, infer_financas_chart_directives,
+        infer_financas_chart_directives,
+        render_financas_charts,
     )
+    from core.llm_b3 import llm_disponivel, provedores_disponiveis
+    from core.llm_context_financeiro import build_financas_chat_context
+    from core.llm_financeiro import chat_com_financas, parse_chart_directives
 
     _secao_titulo("🤖", "Analista Financeiro Pessoal (IA)")
     st.markdown(
@@ -1089,12 +1094,12 @@ def _render_chat_financeiro(
     _sug_cols = st.columns(3)
     for i, q in enumerate(suggestions):
         with _sug_cols[i % 3]:
-            if st.button(q, key=f"cf_chat_sug_{i}", use_container_width=True):
+            if st.button(q, key=f"cf_chat_sug_{i}", width="stretch"):
                 suggested_input = q
 
     _, _clr = st.columns([5, 1])
     with _clr:
-        if st.button("🗑️ Limpar", key="cf_chat_clear", use_container_width=True):
+        if st.button("🗑️ Limpar", key="cf_chat_clear", width="stretch"):
             st.session_state.pop("cf_chat_history", None)
             st.rerun()
 
@@ -1198,7 +1203,7 @@ def _editor_lancamentos(txs: list, form_key: str, editor_key: str, limit: int = 
             df_edit,
             num_rows="fixed",
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             key=editor_key,
             column_config={
                 "ID": None,
@@ -1285,12 +1290,24 @@ def _tab_tabelas(d: dict) -> None:
         key="tab_tipo_radio",
     )
 
+    f_incluir_fatura = st.checkbox(
+        "Incluir fatura de cartão (fluxo futuro)",
+        value=False,
+        key="tab_incluir_fatura",
+        help=(
+            "Lançamentos importados de fatura de cartão (CSV) ainda não saíram da conta — "
+            "são fluxo futuro, não fluxo de caixa realizado. Ficam fora da consulta por padrão "
+            "para não misturar com receitas/despesas/investimentos já efetivados."
+        ),
+    )
+
     # 2) Coleta todos os lançamentos do usuário para popular os seletores
-    todos = get_transacoes_filtradas()  # sem filtros = tudo
+    # incluir_fatura_cartao=True aqui para os dropdowns mostrarem todas as opções possíveis
+    todos = get_transacoes_filtradas(incluir_fatura_cartao=True)
 
     cats_disponiveis = sorted({t["categoria"] for t in todos})
     anos_disp = sorted({t.get("ano") for t in todos if t.get("ano")}, reverse=True)
-    meses_disp_labels = [f"{m:02d} - {_MESES_PT[m]}" for m in sorted({t.get("mes") for t in todos if t.get("mes")})]
+    [f"{m:02d} - {_MESES_PT[m]}" for m in sorted({t.get("mes") for t in todos if t.get("mes")})]
 
     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
     with col_f1:
@@ -1330,6 +1347,7 @@ def _tab_tabelas(d: dict) -> None:
         mes=f_mes,
         dia=f_dia,
         texto=f_busca,
+        incluir_fatura_cartao=f_incluir_fatura,
     )
 
     # ── Resumo (igual ao original) ─────────────────────────────────────────────
@@ -1475,7 +1493,7 @@ def _editor_extratos(rows: list, categories: list) -> None:
             df,
             num_rows="fixed",
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             key="editor_extratos",
             column_config={
                 "ID": None,
@@ -1613,7 +1631,7 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
     st.dataframe(
         df,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={"Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")},
     )
 
@@ -1651,7 +1669,7 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
             value=str(selected.get("descricao_original") or "")[:80],
             key="bank_tx_review_keyword",
         )
-        if st.button("Confirmar lançamento importado", type="primary", use_container_width=True, key="bank_tx_review_confirm"):
+        if st.button("Confirmar lançamento importado", type="primary", width="stretch", key="bank_tx_review_confirm"):
             ok, msg = confirm_bank_statement_movement(
                 selected["id"],
                 categories[category_idx]["id"],
@@ -2458,7 +2476,7 @@ def _render_money_dataframe(df: pd.DataFrame, money_cols: list[str], pct_cols: l
     for col in pct_cols:
         if col in df.columns:
             column_config[col] = st.column_config.NumberColumn(col, format="%.1f%%")
-    st.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
+    st.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
 
 
 def _render_credit_card_insights(
@@ -2547,7 +2565,7 @@ def _editor_cartao_detalhado(detail: pd.DataFrame) -> None:
             df_edit,
             num_rows="fixed",
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             key="cc_detail_editor",
             column_config={
                 "ID": None,
@@ -2677,7 +2695,7 @@ def _render_cartao_a_revisar(df_all: pd.DataFrame) -> None:
         edited = st.data_editor(
             df_edit,
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             num_rows="fixed",
             key="cc_revisar_editor",
             column_config={
@@ -2764,19 +2782,19 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
         if cat_df.empty:
             st.caption("Sem compras reais no filtro atual.")
         else:
-            st.plotly_chart(_fig_donut_categoria(cat_df), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(_fig_donut_categoria(cat_df), width="stretch", config={"displayModeBar": False})
     with col_top:
         st.markdown("**Categorias que mais pesaram na fatura**")
         if cat_df.empty:
             st.caption("Sem categorias de consumo para exibir.")
         else:
-            st.plotly_chart(_fig_horizontal_bar(cat_df, "Categoria", "Total (R$)", _COR_DESPESA), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(_fig_horizontal_bar(cat_df, "Categoria", "Total (R$)", _COR_DESPESA), width="stretch", config={"displayModeBar": False})
 
     st.markdown("**Maiores gastos por estabelecimento**")
     if merchant_df.empty:
         st.caption("Sem estabelecimentos de compra para exibir.")
     else:
-        st.plotly_chart(_fig_horizontal_bar(merchant_df, "Estabelecimento", "Total (R$)", _COR_INVEST, height=360), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(_fig_horizontal_bar(merchant_df, "Estabelecimento", "Total (R$)", _COR_INVEST, height=360), width="stretch", config={"displayModeBar": False})
 
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo("Parcelas", "Compras parceladas")
@@ -2787,7 +2805,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     else:
         col_parc_chart, col_parc_table = st.columns([1, 1.25], gap="medium")
         with col_parc_chart:
-            st.plotly_chart(_fig_horizontal_bar(installment_df, "Estabelecimento", "Pendente estimado", _COR_INVEST, height=320), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(_fig_horizontal_bar(installment_df, "Estabelecimento", "Pendente estimado", _COR_INVEST, height=320), width="stretch", config={"displayModeBar": False})
         with col_parc_table:
             _render_money_dataframe(installment_df.head(12), ["Valor no mes", "Pendente estimado"])
         st.markdown("**Projecao de faturas futuras pelas parcelas restantes**")
@@ -2796,7 +2814,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
         else:
             col_proj_chart, col_proj_table = st.columns([1, 1], gap="medium")
             with col_proj_chart:
-                st.plotly_chart(_fig_future_projection(projection_df), use_container_width=True, config={"displayModeBar": False})
+                st.plotly_chart(_fig_future_projection(projection_df), width="stretch", config={"displayModeBar": False})
             with col_proj_table:
                 _render_money_dataframe(projection_df, ["Valor projetado"])
 
@@ -2808,7 +2826,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     else:
         col_non_chart, col_non_table = st.columns([1, 1.35], gap="medium")
         with col_non_chart:
-            st.plotly_chart(_fig_non_consumption(df), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(_fig_non_consumption(df), width="stretch", config={"displayModeBar": False})
         with col_non_table:
             _render_money_dataframe(non_df.head(20), ["Valor (R$)"])
 
@@ -2818,7 +2836,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     if monthly_points < 2:
         st.caption("Ainda nao ha meses suficientes para comparar a evolucao.")
     else:
-        st.plotly_chart(_fig_monthly_evolution(df), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(_fig_monthly_evolution(df), width="stretch", config={"displayModeBar": False})
 
     st.markdown("<br>", unsafe_allow_html=True)
     with st.expander("Tabela detalhada de lancamentos", expanded=False):
@@ -2885,12 +2903,13 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
     (usado só para a lista de assinaturas, que deve ser completa independentemente
     do filtro de mês/cartão).
     """
-    from core.llm_b3 import llm_disponivel, provedores_disponiveis
-    from core.llm_financeiro import chat_com_cartao, parse_chart_directives
-    from core.llm_context_financeiro import build_cartao_chat_context
     from core.financeiro_chat_charts import (
-        render_financas_charts, infer_cartao_chart_directives,
+        infer_cartao_chart_directives,
+        render_financas_charts,
     )
+    from core.llm_b3 import llm_disponivel, provedores_disponiveis
+    from core.llm_context_financeiro import build_cartao_chat_context
+    from core.llm_financeiro import chat_com_cartao, parse_chart_directives
 
     _secao_titulo("🤖", "Analista Financeiro do Cartão (IA)")
     st.markdown(
@@ -2935,12 +2954,12 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
     _sug_cols = st.columns(3)
     for i, q in enumerate(suggestions):
         with _sug_cols[i % 3]:
-            if st.button(q, key=f"cc_chat_sug_{i}", use_container_width=True):
+            if st.button(q, key=f"cc_chat_sug_{i}", width="stretch"):
                 suggested_input = q
 
     _, _clr = st.columns([5, 1])
     with _clr:
-        if st.button("🗑️ Limpar", key="cc_chat_clear", use_container_width=True):
+        if st.button("🗑️ Limpar", key="cc_chat_clear", width="stretch"):
             st.session_state.pop("cc_chat_history", None)
             st.rerun()
 

@@ -13,7 +13,6 @@ import datetime as dt
 import numpy as np
 import pytest
 
-
 # ── Pesos setoriais ──────────────────────────────────────────────────────────
 
 def test_pesos_consumo_nao_ciclico_nao_recebe_perfil_ciclico():

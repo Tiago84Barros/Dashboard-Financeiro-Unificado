@@ -24,7 +24,6 @@ from design.componentes import (
     secao_titulo,
 )
 
-
 # ── Helpers de gráfico ────────────────────────────────────────────────────────
 
 def _fig_donut(labels: list, values: list, cores: list, titulo_centro: str = "") -> go.Figure:
@@ -203,7 +202,7 @@ def render() -> None:
                 cores=[c["cor"] for c in por_classe],
                 titulo_centro=f"{len(por_classe)} classes",
             )
-            st.plotly_chart(fig_cls, use_container_width=True)
+            st.plotly_chart(fig_cls, width="stretch")
 
             # Tabela de classes
             st.markdown(
@@ -242,7 +241,7 @@ def render() -> None:
                 cores=cores_set,
                 titulo_centro=f"{len(por_setor)} setores",
             )
-            st.plotly_chart(fig_set, use_container_width=True)
+            st.plotly_chart(fig_set, width="stretch")
 
             # Tabela de setores
             st.markdown(
@@ -269,7 +268,7 @@ def render() -> None:
     secao_titulo(
         "Posições",
         "📋",
-        f"Todas as posições · ordenado por total investido DESC",
+        "Todas as posições · ordenado por total investido DESC",
     )
 
     # Filtros rápidos
@@ -349,7 +348,7 @@ def render() -> None:
             ),
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         height=min(40 + len(posicoes_filtradas) * 36, 560),
     )
 

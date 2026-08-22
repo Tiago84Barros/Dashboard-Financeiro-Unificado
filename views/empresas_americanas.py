@@ -19,6 +19,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from sqlalchemy.exc import SQLAlchemyError
 
 import core.us_data as us
 from core.market_companies import (
@@ -39,6 +40,7 @@ from core.us_company_analysis import (
     regression_cagr,
 )
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
+from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import (
     badge_status,
     card_metrica,
@@ -47,6 +49,7 @@ from design.componentes import (
     secao_titulo,
 )
 from design.market_companies import (
+    render_company_logo,
     render_company_search,
     render_market_css,
     render_market_tabs,
@@ -283,7 +286,7 @@ def _render_score_dashboard(row: pd.Series) -> None:
     fig.update_layout(**_PLOT_LAYOUT, height=360,
                       polar=dict(radialaxis=dict(range=[0, 100], gridcolor="#2D3748"),
                                  bgcolor="rgba(0,0,0,0)"), showlegend=False)
-    st.plotly_chart(fig, use_container_width=True, key=f"us_radar_{row.get('symbol')}")
+    st.plotly_chart(fig, width="stretch", key=f"us_radar_{row.get('symbol')}")
 
 
 def _tab_empresa(status: dict) -> None:
@@ -309,7 +312,7 @@ def _tab_empresa(status: dict) -> None:
         )
     with button_col:
         st.markdown("<br>", unsafe_allow_html=True)
-        analyze = st.button("Analisar", type="primary", use_container_width=True,
+        analyze = st.button("Analisar", type="primary", width="stretch",
                             key="us_btn_analisar_empresa")
     if analyze:
         requested = ticker_raw.strip().upper()
@@ -346,12 +349,8 @@ def _tab_empresa(status: dict) -> None:
 
     logo_col, identity_col, price_col = st.columns([1, 5, 2])
     with logo_col:
-        logo = us_logo_url(symbol)
-        st.markdown(
-            f'<img src="{html.escape(logo, quote=True)}" '
-            'style="width:64px;height:64px;border-radius:12px;object-fit:contain;'
-            'background:rgba(255,255,255,.06);padding:6px;margin-top:6px" '
-            'onerror="this.style.display=\'none\'">', unsafe_allow_html=True)
+        # Sem <img> cru via unsafe_allow_html — ver achado A-012.
+        render_company_logo(symbol, us_logo_url(symbol), size=64)
     with identity_col:
         st.markdown(
             f'<h2 style="font-size:1.60rem;font-weight:800;color:#E2E8F0;margin:0 0 4px">'
@@ -384,7 +383,7 @@ def _tab_empresa(status: dict) -> None:
         fig.update_traces(line_width=1.5)
         fig.update_layout(**_company_plot_layout(280), showlegend=False,
                           yaxis_title="Preço (US$)", xaxis_title="")
-        st.plotly_chart(fig, use_container_width=True,
+        st.plotly_chart(fig, width="stretch",
                         config={"displayModeBar": False}, key=f"us_price_{symbol}_{selected_period}")
     else:
         st.info("Histórico de preços ainda não publicado para este ticker.")
@@ -407,7 +406,7 @@ def _tab_empresa(status: dict) -> None:
         # cronologia. Fixa a ordem dos anos explicitamente (mais recente no topo).
         fig.update_yaxes(categoryorder="array",
                          categoryarray=annual_returns["Ano"].tolist())
-        st.plotly_chart(fig, use_container_width=True,
+        st.plotly_chart(fig, width="stretch",
                         config={"displayModeBar": False}, key=f"us_returns_{symbol}")
     else:
         st.info("Retornos anuais serão exibidos após a publicação do histórico de preços.")
@@ -465,7 +464,7 @@ def _tab_empresa(status: dict) -> None:
                           color_discrete_sequence=[_COR_POS, _COR_INFO, _COR_ALT, _COR_NEG])
             fig.update_layout(**_company_plot_layout(340),
                               xaxis_title="Ano fiscal", yaxis_title="US$ (valores absolutos)")
-            st.plotly_chart(fig, use_container_width=True,
+            st.plotly_chart(fig, width="stretch",
                             config={"displayModeBar": False}, key=f"us_statements_chart_{symbol}")
     else:
         st.info("Demonstrações históricas indisponíveis para este ticker.")
@@ -476,7 +475,7 @@ def _tab_empresa(status: dict) -> None:
                      color_discrete_sequence=[_COR_ALT])
         fig.update_layout(**_company_plot_layout(240),
                           xaxis_title="Ano fiscal", yaxis_title="US$/ação (soma anual)")
-        st.plotly_chart(fig, use_container_width=True,
+        st.plotly_chart(fig, width="stretch",
                         config={"displayModeBar": False}, key=f"us_dividends_{symbol}")
     else:
         st.info("Sem histórico de dividendos por ação publicado.")
@@ -504,7 +503,7 @@ def _tab_empresa(status: dict) -> None:
                          barmode="group", color_discrete_sequence=[_COR_POS, _COR_INFO,
                                                                     _COR_ALT, _COR_NEG])
             fig.update_layout(**_company_plot_layout(300), xaxis_title="Ano fiscal")
-            st.plotly_chart(fig, use_container_width=True,
+            st.plotly_chart(fig, width="stretch",
                             config={"displayModeBar": False}, key=f"us_metrics_chart_{symbol}")
     else:
         st.info("Histórico de margens e retornos ainda indisponível.")
@@ -531,7 +530,7 @@ def _tab_empresa(status: dict) -> None:
                      color_discrete_sequence=[_COR_POS, _COR_NEG, _COR_INFO])
         fig.update_layout(**_company_plot_layout(300),
                           xaxis_title="Ano fiscal", yaxis_title="Valor (US$)")
-        st.plotly_chart(fig, use_container_width=True,
+        st.plotly_chart(fig, width="stretch",
                         config={"displayModeBar": False}, key=f"us_cashflow_{symbol}")
 
     _analysis_header("🏛️ Estrutura de Capital e Dívida")
@@ -557,7 +556,7 @@ def _tab_empresa(status: dict) -> None:
                      color_discrete_sequence=[_COR_POS, _COR_ALT, _COR_NEG])
         fig.update_layout(**_company_plot_layout(300),
                           xaxis_title="Ano fiscal", yaxis_title="Valor (US$)")
-        st.plotly_chart(fig, use_container_width=True,
+        st.plotly_chart(fig, width="stretch",
                         config={"displayModeBar": False}, key=f"us_capital_{symbol}")
 
     def latest_metric(name: str, row_name: str | None = None):
@@ -643,7 +642,10 @@ def _macro_controls(key_prefix: str = "us_macro") -> dict:
     sessão, e nenhuma das duas estaria declaradamente errada.
     """
     from core.us_macro import (
-        FONTE_OBSERVADO, FONTE_PREMISSA, USMacroSnapshot, evaluate_macro,
+        FONTE_OBSERVADO,
+        FONTE_PREMISSA,
+        USMacroSnapshot,
+        evaluate_macro,
     )
 
     try:
@@ -714,8 +716,92 @@ def _render_macro_dashboard(key_prefix: str = "us_macro") -> dict:
         fig = px.bar(drivers, x="Impacto", y="Fator", orientation="h",
                      color="Impacto", color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"])
         fig.update_layout(**_PLOT_LAYOUT, height=280, coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_chart")
+        st.plotly_chart(fig, width="stretch", key=f"{key_prefix}_chart")
     return macro
+
+
+def _render_us_filtro_liquidez(frame: pd.DataFrame, piso_usd: float) -> pd.DataFrame:
+    """Piso de negociabilidade da tela, com os três estados à vista.
+
+    Mesma regra do motor de carteira (``core.us_liquidity.classificar``) para que
+    o laboratório não prometa um filtro que a Criação de Portfólio aplica de
+    outro jeito. Com piso > 0 só o giro MEDIDO e acima do piso permanece: o
+    filtro anterior mantinha quem nunca foi medido e a tela dizia "≥ US$ 20
+    milhões/dia" exibindo empresas cujo volume ninguém conhece.
+
+    Com o piso zerado (padrão desta tela) nada é removido — é o modo de
+    exploração — mas o card diz quantas seguem sem liquidez validada.
+    """
+    from core.us_liquidity import (
+        PISO_INVALIDO_MESSAGE,
+        EstadoLiquidez,
+        classificar,
+        formata_usd_curto,
+        normalizar_piso_diario_usd,
+    )
+
+    if frame is None or frame.empty:
+        return frame
+
+    # `avg_dollar_volume`/`dollar_volume` nunca existiram no cross-section; a
+    # coluna real é `giro_diario_usd` (mediana de close × volume, 180 pregões).
+    # Os dois nomes antigos ficam como alias de vitrines de terceiros.
+    volume_col = next((c for c in ("giro_diario_usd", "avg_dollar_volume",
+                                   "dollar_volume") if c in frame), None)
+    timestamp_col = next((c for c in ("giro_diario_usd_at", "giro_diario_usd_as_of",
+                                       "liquidity_as_of") if c in frame), None)
+    piso = normalizar_piso_diario_usd(piso_usd)
+    if piso is None:
+        st.error(PISO_INVALIDO_MESSAGE)
+        return frame.iloc[0:0].copy()
+    bruto = (frame[volume_col] if volume_col
+             else pd.Series(np.nan, index=frame.index, dtype=float))
+    timestamps = (frame[timestamp_col] if timestamp_col
+                  else pd.Series(None, index=frame.index, dtype=object))
+    estados = pd.Series(
+        [classificar(v, piso, at) for v, at in zip(bruto, timestamps)],
+        index=frame.index,
+    )
+    aprovadas = int((estados == EstadoLiquidez.MEDIDA_APROVADA).sum())
+    reprovadas = int((estados == EstadoLiquidez.MEDIDA_REPROVADA).sum())
+    nao_verificadas = int((estados == EstadoLiquidez.NAO_VERIFICADA).sum())
+
+    if piso <= 0:
+        if nao_verificadas:
+            st.caption(
+                f"💧 Sem piso de negociabilidade (modo exploratório): "
+                f"{nao_verificadas} empresa(s) aparecem com a liquidez **não "
+                "validada** — ausência de medição não é prova de iliquidez, mas "
+                "também não é prova de negociabilidade.")
+        return frame
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        card_metrica("Liquidez medida e aprovada", aprovadas, positivo=True,
+                     ajuda=f"Giro mediano medido ≥ US$ {formata_usd_curto(piso)}/dia.")
+    with c2:
+        card_metrica("Medida abaixo do piso", reprovadas,
+                     positivo=False if reprovadas else None,
+                     ajuda="Giro medido, porém abaixo do piso escolhido.")
+    with c3:
+        card_metrica("Não verificadas", nao_verificadas,
+                     positivo=False if nao_verificadas else None,
+                     ajuda="Sem série de volume: a negociabilidade nunca foi "
+                           "medida. Com piso ligado elas ficam fora.")
+    if not volume_col:
+        st.warning(
+            f"Negociabilidade não verificada: esta vitrine não publica o volume "
+            f"negociado, então nenhuma das {len(frame)} empresas pode ser "
+            f"verificada contra o piso de US$ {formata_usd_curto(piso)}/dia. "
+            "Escolha **Sem filtro** para explorar o universo sem validar "
+            "liquidez, ciente de que a negociabilidade não foi medida.")
+    elif nao_verificadas:
+        st.caption(
+            f"💧 {nao_verificadas} empresa(s) sem série de volume ou sem data "
+            "de referência atual saíram do recorte: com piso ligado, "
+            "negociabilidade não medida não é "
+            "aprovada. Escolha **Sem filtro** para examiná-las.")
+    return frame[estados == EstadoLiquidez.MEDIDA_APROVADA]
 
 
 def _tab_avancada_unificada(status: dict) -> None:
@@ -777,7 +863,10 @@ def _tab_avancada_unificada(status: dict) -> None:
             "Liquidez mínima (negociação)",
             ["Sem filtro", "≥ US$ 1 milhão/dia", "≥ US$ 5 milhões/dia",
              "≥ US$ 20 milhões/dia"], key="us_lab_liquidity",
-            help="Aplicado somente quando o volume financeiro médio estiver publicado.")
+            help="Mediana de preço × volume dos últimos 180 pregões. Com piso "
+                 "ligado, só quem foi MEDIDO e ficou acima dele permanece: "
+                 "empresa sem série de volume não é aprovada por omissão. "
+                 "Use 'Sem filtro' para explorar sem validar liquidez.")
     with l2:
         min_coverage = st.selectbox("Cobertura mínima dos dados", [40, 50, 60, 70, 80],
                                     index=2, format_func=lambda x: f"≥ {x}%",
@@ -794,26 +883,9 @@ def _tab_avancada_unificada(status: dict) -> None:
                    "Solidez": "score_solidity"}.get(profile)
     if profile_col and profile_col in filtered:
         filtered = filtered[pd.to_numeric(filtered[profile_col], errors="coerce") >= 60]
-    # O filtro procurava `avg_dollar_volume`/`dollar_volume`, colunas que nunca
-    # existiram no cross-section: escolher "≥ US$ 20 milhões/dia" não removia
-    # ninguém e a legenda dizia que o dado não estava publicado. Agora lê
-    # `giro_diario_usd`, a mediana de close × volume dos últimos 180 pregões.
-    volume_col = next((c for c in ("giro_diario_usd", "avg_dollar_volume",
-                                   "dollar_volume") if c in filtered), None)
     liquidity_floor = {"≥ US$ 1 milhão/dia": 1e6, "≥ US$ 5 milhões/dia": 5e6,
-                       "≥ US$ 20 milhões/dia": 20e6}.get(liquidity)
-    if liquidity_floor and volume_col:
-        giro = pd.to_numeric(filtered[volume_col], errors="coerce")
-        # Sem medição não é sinônimo de sem liquidez — o corte cai só sobre quem
-        # foi medido, e as demais são declaradas em vez de sumirem em silêncio.
-        nao_medidas = int(giro.isna().sum())
-        filtered = filtered[giro.isna() | (giro >= liquidity_floor)]
-        if nao_medidas:
-            st.caption(f"💧 {nao_medidas} empresa(s) sem série de volume permanecem no "
-                       "universo: ausência de medição não é prova de iliquidez.")
-    elif liquidity_floor:
-        st.caption("💧 Volume médio não está publicado nesta vitrine; o filtro de liquidez "
-                   "permanece informativo e nenhuma empresa é excluída por dado ausente.")
+                       "≥ US$ 20 milhões/dia": 20e6}.get(liquidity, 0.0)
+    filtered = _render_us_filtro_liquidez(filtered, liquidity_floor)
 
     # ── Pesos e score de entrada ──────────────────────────────────────────
     from core.us_advanced_lab import DEFAULT_WEIGHTS, build_entry_scores
@@ -840,9 +912,12 @@ def _tab_avancada_unificada(status: dict) -> None:
     # ── Qualidade, incerteza e análises opcionais ─────────────────────────
     with st.expander("🩺 Qualidade & saneamento dos dados (antes do ranking)"):
         q1, q2, q3, q4 = st.columns(4)
-        with q1: card_metrica("Universo filtrado", f"{len(filtered)}")
-        with q2: card_metrica("Elegíveis", f"{len(entry)}")
-        with q3: card_metrica("Excluídas", f"{len(excluded)}")
+        with q1:
+            card_metrica("Universo filtrado", f"{len(filtered)}")
+        with q2:
+            card_metrica("Elegíveis", f"{len(entry)}")
+        with q3:
+            card_metrica("Excluídas", f"{len(excluded)}")
         with q4:
             card_metrica("Cobertura média", f"{coverage.mean():.0f}%" if len(coverage) else "—")
         track_cov = []
@@ -853,7 +928,7 @@ def _tab_avancada_unificada(status: dict) -> None:
                                   "Cobertura média (%)": pd.to_numeric(
                                       filtered[cov_col], errors="coerce").mean()})
         if track_cov:
-            st.dataframe(pd.DataFrame(track_cov), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(track_cov), hide_index=True, width="stretch")
         st.caption("Ausência não vira zero: recebe posição neutra no score e reduz a cobertura.")
 
     with st.expander("Empresas excluídas por completude de dados"):
@@ -864,7 +939,7 @@ def _tab_avancada_unificada(status: dict) -> None:
             show = localize_us_company_frame(excluded[cols]).rename(columns={
                 "symbol": "Ticker", "name": "Nome", "sector": "Setor",
                 "industry": "Indústria", "coverage": "Cobertura (%)"})
-            st.dataframe(show, hide_index=True, use_container_width=True)
+            st.dataframe(show, hide_index=True, width="stretch")
 
     with st.expander("Validação cross-source — SEC/GAAP × dados de mercado"):
         st.caption("Fundamentos são derivados das demonstrações SEC/GAAP; múltiplos exigem "
@@ -878,7 +953,7 @@ def _tab_avancada_unificada(status: dict) -> None:
                     "Empresas com dado": int(filtered[metric].notna().sum()),
                     "Cobertura (%)": filtered[metric].notna().mean() * 100,
                     "Fontes necessárias": "SEC/GAAP + preço"})
-        st.dataframe(pd.DataFrame(validation_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(validation_rows), hide_index=True, width="stretch")
 
     with st.expander("📊 Análise de incerteza (bootstrap) — opcional"):
         if entry.empty:
@@ -892,10 +967,14 @@ def _tab_avancada_unificada(status: dict) -> None:
                 result = bootstrap_track_score(
                     entry[entry["symbol"] == bt_symbol].iloc[0], custom_weights, n_boot)
                 b1, b2, b3, b4 = st.columns(4)
-                with b1: card_metrica("Média", f"{result['mean']:.1f}")
-                with b2: card_metrica("Percentil 5", f"{result['p05']:.1f}")
-                with b3: card_metrica("Percentil 95", f"{result['p95']:.1f}")
-                with b4: card_metrica("Desvio", f"{result['std']:.1f}")
+                with b1:
+                    card_metrica("Média", f"{result['mean']:.1f}")
+                with b2:
+                    card_metrica("Percentil 5", f"{result['p05']:.1f}")
+                with b3:
+                    card_metrica("Percentil 95", f"{result['p95']:.1f}")
+                with b4:
+                    card_metrica("Desvio", f"{result['std']:.1f}")
 
     with st.expander("🎯 Otimização pós-seleção — equivalente EUA"):
         st.caption("Aplica limites por ativo e setor sobre a pontuação de entrada; "
@@ -908,7 +987,7 @@ def _tab_avancada_unificada(status: dict) -> None:
                 show = localize_us_company_frame(holdings).rename(columns={
                     "symbol": "Ticker", "name": "Nome", "sector": "Setor",
                     "weight": "Peso"})
-                st.dataframe(show, hide_index=True, use_container_width=True)
+                st.dataframe(show, hide_index=True, width="stretch")
 
     with st.expander("💰 Avaliação e retorno ao acionista"):
         cols = [c for c in ("symbol", "name", "pe", "ev_ebit", "ev_ebitda", "p_fcf",
@@ -924,7 +1003,7 @@ def _tab_avancada_unificada(status: dict) -> None:
                 "share_count_cagr_3y": "Δ base acionária (3a)",
                 "score_valuation": "Score avaliação",
                 "score_shareholder": "Score acionista"}), hide_index=True,
-                use_container_width=True)
+                width="stretch")
             st.caption("Δ base acionária negativo = recompra líquida efetiva; "
                        "positivo = diluição.")
 
@@ -937,7 +1016,7 @@ def _tab_avancada_unificada(status: dict) -> None:
             "symbol": "Ticker", "net_debt_ebitda": "Dív. líq./EBITDA",
             "interest_coverage": "Cobertura de juros", "current_ratio": "Liquidez corrente",
             "fcf_margin": "Margem FCL", "risk_penalty": "Penalidade",
-            "risk_driver": "Motivo"}), hide_index=True, use_container_width=True)
+            "risk_driver": "Motivo"}), hide_index=True, width="stretch")
         st.markdown("**Cenário macroeconômico americano**")
         _render_macro_dashboard("us_lab_macro")
 
@@ -952,7 +1031,7 @@ def _tab_avancada_unificada(status: dict) -> None:
                          color="Contribuição",
                          color_continuous_scale=[_COR_NEG, _COR_ALT, _COR_POS])
             fig.update_layout(**_PLOT_LAYOUT, height=300, coloraxis_showscale=False)
-            st.plotly_chart(fig, use_container_width=True, key="us_lab_contributions")
+            st.plotly_chart(fig, width="stretch", key="us_lab_contributions")
 
     with st.expander("🔮 Black-Litterman — incorporar suas visões"):
         st.caption("Camada de cenário: ajusta a nota exibida sem reescrever os fundamentos. "
@@ -971,7 +1050,7 @@ def _tab_avancada_unificada(status: dict) -> None:
                 adjusted["entry_score"] + adjusted["Visão"] * .35).clip(0, 100).round(1)
             st.dataframe(adjusted.sort_values("Score ajustado", ascending=False).head(20)
                          .rename(columns={"symbol": "Ticker", "entry_score": "Score base"}),
-                         hide_index=True, use_container_width=True)
+                         hide_index=True, width="stretch")
 
     with st.expander("🔬 Diagnósticos avançados — Piotroski, Altman, Sloan e ROIC incremental"):
         _tab_analise_avancada(status)
@@ -1051,7 +1130,10 @@ def _render_us_piso_e_ciclo(entry: pd.DataFrame, *, mostrar_piso: bool = True) -
 def _render_us_ciclo(entry: pd.DataFrame) -> None:
     """Como as empresas do recorte atravessaram a última recessão de demanda."""
     from core.us_cycle_evidence import (
-        FRAGIL, INTERMEDIARIO, RESILIENTE, cobertura,
+        FRAGIL,
+        INTERMEDIARIO,
+        RESILIENTE,
+        cobertura,
     )
 
     if entry is None or entry.empty:
@@ -1102,7 +1184,7 @@ def _render_us_ciclo(entry: pd.DataFrame) -> None:
     } for v in medidas.values() if v.confiavel]
     if linhas:
         tabela = pd.DataFrame(linhas).sort_values("Razão de margem")
-        st.dataframe(tabela.head(50), hide_index=True, use_container_width=True,
+        st.dataframe(tabela.head(50), hide_index=True, width="stretch",
                      column_config={
                          "Margem normal": st.column_config.NumberColumn(format="%.1f%%"),
                          "Margem na crise": st.column_config.NumberColumn(format="%.1f%%"),
@@ -1121,24 +1203,32 @@ def _render_us_lab_universe(entry: pd.DataFrame) -> None:
         cols = st.columns(4, gap="small")
         for idx, (_, row) in enumerate(top.iloc[start:start + 4].iterrows()):
             with cols[idx]:
-                symbol = html.escape(str(row.get("symbol", "")))
+                symbol_raw = str(row.get("symbol", ""))
+                symbol = html.escape(symbol_raw)
                 name = html.escape(str(row.get("name") or symbol))
                 score = float(row.get("score_base_adv", 0) or 0)
                 years = row.get("_years")
                 years_text = f"{int(years)} anos SEC" if pd.notna(years) else "histórico SEC"
-                st.markdown(
-                    '<div class="us-ind-card" style="min-height:126px">'
-                    f'<div style="display:flex;gap:9px;align-items:center">'
-                    f'<img src="{us_logo_url(symbol)}" style="width:42px;height:42px;'
-                    'border-radius:8px;object-fit:contain;background:rgba(255,255,255,.05)" '
-                    'onerror="this.style.display=\'none\'">'
-                    f'<div><strong style="color:#E2E8F0">{symbol}</strong><br>'
-                    f'<span style="font-size:.67rem;color:#718096">{name[:30]}</span></div></div>'
-                    f'<div style="display:flex;justify-content:space-between;margin-top:14px">'
-                    f'<span style="background:rgba(0,200,150,.12);color:#00C896;'
-                    f'border-radius:14px;padding:3px 10px;font-size:.72rem;font-weight:800">'
-                    f'Score {score:.0f}</span><span style="font-size:.64rem;color:#52627D">'
-                    f'{years_text}</span></div></div>', unsafe_allow_html=True)
+                # Sem <img> cru via unsafe_allow_html — ver achado A-012.
+                # Container com borda nativa substitui o card CSS custom
+                # (.us-ind-card) só nesta linha logo+nome; o restante do
+                # conteúdo mantém o estilo original.
+                with st.container(border=True):
+                    logo_col, nome_col = st.columns([1, 4], gap="small")
+                    with logo_col:
+                        render_company_logo(symbol_raw, us_logo_url(symbol_raw), size=42)
+                    with nome_col:
+                        st.markdown(
+                            f'<div><strong style="color:#E2E8F0">{symbol}</strong><br>'
+                            f'<span style="font-size:.67rem;color:#718096">{name[:30]}</span></div>',
+                            unsafe_allow_html=True,
+                        )
+                    st.markdown(
+                        '<div style="display:flex;justify-content:space-between;margin-top:10px">'
+                        '<span style="background:rgba(0,200,150,.12);color:#00C896;'
+                        'border-radius:14px;padding:3px 10px;font-size:.72rem;font-weight:800">'
+                        f'Score {score:.0f}</span><span style="font-size:.64rem;color:#52627D">'
+                        f'{years_text}</span></div>', unsafe_allow_html=True)
 
 
 def _entry_detail_card(row: pd.Series) -> str:
@@ -1183,10 +1273,14 @@ def _render_us_lab_entry(entry: pd.DataFrame) -> None:
     _analysis_header("🎯 Score de Entrada — Composição Avançada")
     counts = entry["entry_status"].value_counts()
     c1, c2, c3, c4 = st.columns(4)
-    with c1: card_metrica("Aprovadas", str(int(counts.get("Aprovada", 0))), accent=_COR_POS)
-    with c2: card_metrica("Observação", str(int(counts.get("Observação", 0))), accent=_COR_ALT)
-    with c3: card_metrica("Excluídas", str(int(counts.get("Excluída", 0))), accent=_COR_NEG)
-    with c4: card_metrica("Score médio", f"{entry['entry_score'].mean():.1f}", accent=_COR_INFO)
+    with c1:
+        card_metrica("Aprovadas", str(int(counts.get("Aprovada", 0))), accent=_COR_POS)
+    with c2:
+        card_metrica("Observação", str(int(counts.get("Observação", 0))), accent=_COR_ALT)
+    with c3:
+        card_metrica("Excluídas", str(int(counts.get("Excluída", 0))), accent=_COR_NEG)
+    with c4:
+        card_metrica("Score médio", f"{entry['entry_score'].mean():.1f}", accent=_COR_INFO)
 
     with st.expander("📊 Breakdown completo — todas as empresas"):
         cols = [c for c in ("symbol", "name", "sector", "industry", "score_base_adv",
@@ -1199,7 +1293,7 @@ def _render_us_lab_entry(entry: pd.DataFrame) -> None:
             "score_growth": "Consistência", "cash_quality": "Caixa",
             "risk_penalty": "Penalidade", "risk_driver": "Motivo",
             "coverage": "Cobertura (%)"})
-        st.dataframe(show, hide_index=True, use_container_width=True)
+        st.dataframe(show, hide_index=True, width="stretch")
 
     _analysis_header("🔍 Detalhamento por Empresa")
     details = entry.head(12)
@@ -1213,7 +1307,7 @@ def _render_us_lab_entry(entry: pd.DataFrame) -> None:
 def _render_us_lab_backtest() -> None:
     st.divider()
     _analysis_header("📈 Simulação de Patrimônio e Teste Histórico")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         monthly = st.number_input("Aporte mensal (US$)", min_value=0.0, value=500.0,
                                   step=100.0, key="us_lab_monthly")
@@ -1224,11 +1318,15 @@ def _render_us_lab_backtest() -> None:
         mode = st.selectbox("Ponderação", ["score", "equal"],
             format_func=lambda value: _WEIGHTING_LABELS[value], key="us_lab_bt_mode")
     with c4:
+        benchmark = st.selectbox("Benchmark de mercado", us.benchmark_options(),
+                                 key="us_lab_bt_benchmark")
+    with c5:
         fed = st.number_input("Fed Funds a.a. (%) — referência", 0.0, 15.0, 4.25, .25,
                               key="us_lab_bt_fed")
 
     if st.button("▶ Simular Backtest", type="primary", key="us_lab_bt_btn"):
-        st.session_state["us_lab_bt_result"] = us.backtest(top_n=top_n, weighting=mode)
+        st.session_state["us_lab_bt_result"] = us.backtest(
+            top_n=top_n, weighting=mode, benchmark=benchmark)
     result = st.session_state.get("us_lab_bt_result")
     if not result:
         st.caption("Configure os parâmetros e clique em ▶ Simular Backtest.")
@@ -1242,7 +1340,11 @@ def _render_us_lab_backtest() -> None:
             ("Queda máxima", p.get("max_drawdown"), True),
             ("Rank-IC médio", ic.get("mean"), False),
         ]
-        cols = st.columns(4)
+        benchmark_state = result.get("benchmark") or {}
+        if benchmark_state.get("modo") == "indice" and benchmark_state.get("ok"):
+            stats.append((f"Excesso vs {benchmark_state['simbolo']}",
+                          result.get("excess_ann_vs_benchmark"), True))
+        cols = st.columns(len(stats))
         for idx, (label, value, percent) in enumerate(stats):
             with cols[idx]:
                 text = "—" if value is None else (f"{value*100:.2f}%" if percent else f"{value:.3f}")
@@ -1259,10 +1361,39 @@ def _render_us_lab_backtest() -> None:
                 prev = float(value)
             plot = pd.DataFrame({"Data": dates, "Carteira (índice)": curve,
                                  "Patrimônio com aportes (US$)": projected})
+            benchmark_curve = result.get("benchmark_equity_curve")
+            benchmark_dates = result.get("benchmark_dates")
+            if benchmark_curve and benchmark_dates:
+                benchmark_plot = pd.DataFrame({
+                    "Data": benchmark_dates,
+                    f"Benchmark ({benchmark_state.get('simbolo', 'índice')})": benchmark_curve,
+                })
+                plot = plot.merge(benchmark_plot, on="Data", how="left")
             fig = px.line(plot, x="Data", y=["Carteira (índice)",
-                                               "Patrimônio com aportes (US$)"], markers=True)
+                                               "Patrimônio com aportes (US$)"]
+                          + ([f"Benchmark ({benchmark_state.get('simbolo', 'índice')})"]
+                             if benchmark_curve and benchmark_dates else []), markers=True)
             fig.update_layout(**_PLOT_LAYOUT, height=340, legend_title_text="Série")
-            st.plotly_chart(fig, use_container_width=True, key="us_lab_bt_curve")
+            st.plotly_chart(fig, width="stretch", key="us_lab_bt_curve")
+        if benchmark_state and not benchmark_state.get("ok"):
+            st.warning(benchmark_state.get("mensagem", "Benchmark indisponível; "
+                       "o excesso contra índice não foi calculado."))
+        elif benchmark_state.get("modo") == "sem_indice":
+            st.caption("Comparação contra índice desativada explicitamente; pesos iguais "
+                       "do universo continuam como baseline interno.")
+        elif benchmark_state.get("modo") == "indice":
+            st.caption(f"Benchmark {benchmark_state.get('simbolo')} em USD, retorno total, "
+                       f"frequência mensal e mesmas janelas do painel PIT "
+                       f"({benchmark_state.get('horizonte_meses')} meses).")
+        concentration = result.get("concentration") or {}
+        if concentration and not concentration.get("eligible_for_conclusion", True):
+            st.warning(
+                "Resultado teórico sem teto de posição: o maior peso observado "
+                f"({concentration.get('max_weight', 0.0):.1%}) excede a política "
+                f"de {concentration.get('policy_max_weight', 0.0):.1%} "
+                f"(HHI máximo {concentration.get('max_hhi', 0.0):.3f}). "
+                "Não use este backtest para concluir sobre uma carteira investível."
+            )
         st.caption(f"Taxa do Fed informada ({fed:.2f}% a.a.) é referência de cenário; "
                    "o retorno exibido vem do painel ponto-no-tempo, sem substituição sintética.")
 
@@ -1296,7 +1427,7 @@ def _render_us_lab_comparisons(entry: pd.DataFrame) -> None:
                      color_continuous_scale=[_COR_POS, _COR_ALT, _COR_NEG])
         fig.update_layout(**_PLOT_LAYOUT, height=320, xaxis_title="Ticker", yaxis_title=label,
                           coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True, key="us_lab_compare_chart")
+        st.plotly_chart(fig, width="stretch", key="us_lab_compare_chart")
 
     _analysis_header("📋 Comparação de Demonstrações Financeiras")
     d1, d2 = st.columns([2, 3])
@@ -1323,7 +1454,7 @@ def _render_us_lab_comparisons(entry: pd.DataFrame) -> None:
             fig = px.line(pd.DataFrame(records), x="Ano fiscal", y="Valor", color="Ticker",
                           markers=True)
             fig.update_layout(**_PLOT_LAYOUT, height=360, yaxis_title=f"{statement_label} (US$)")
-            st.plotly_chart(fig, use_container_width=True, key="us_lab_statement_chart")
+            st.plotly_chart(fig, width="stretch", key="us_lab_statement_chart")
         else:
             st.info("Sem histórico publicado para a seleção.")
 
@@ -1338,13 +1469,15 @@ def _render_us_lab_comparisons(entry: pd.DataFrame) -> None:
               "current_ratio": "Liquidez", "entry_score": "Score Entrada"}
     st.caption("Verde = top 25% · Vermelho = bottom 25%, respeitando a direção econômica.")
     st.dataframe(entry[display_cols].head(200).rename(columns=labels), hide_index=True,
-                 use_container_width=True)
+                 width="stretch")
 
     _analysis_header("🔭 Scatter Plot — Correlação entre Indicadores")
     numeric_options = [label for label, col in _US_COMPARE_METRICS.items() if col in entry]
     s1, s2 = st.columns(2)
-    with s1: x_label = st.selectbox("Eixo X", numeric_options, key="us_lab_scatter_x")
-    with s2: y_label = st.selectbox("Eixo Y", numeric_options,
+    with s1:
+        x_label = st.selectbox("Eixo X", numeric_options, key="us_lab_scatter_x")
+    with s2:
+        y_label = st.selectbox("Eixo Y", numeric_options,
         index=min(1, len(numeric_options) - 1), key="us_lab_scatter_y")
     if st.button("🔭 Gerar Scatter", key="us_lab_scatter_btn"):
         x, y = _US_COMPARE_METRICS[x_label], _US_COMPARE_METRICS[y_label]
@@ -1353,7 +1486,7 @@ def _render_us_lab_comparisons(entry: pd.DataFrame) -> None:
         fig.add_vline(x=pd.to_numeric(entry[x], errors="coerce").median(), line_dash="dot")
         fig.add_hline(y=pd.to_numeric(entry[y], errors="coerce").median(), line_dash="dot")
         fig.update_layout(**_PLOT_LAYOUT, height=420, xaxis_title=x_label, yaxis_title=y_label)
-        st.plotly_chart(fig, use_container_width=True, key="us_lab_scatter_chart")
+        st.plotly_chart(fig, width="stretch", key="us_lab_scatter_chart")
 
     _analysis_header("💵 FCO / Lucro Líquido — Qualidade do Resultado")
     st.caption("Razão > 1: caixa operacional tende a superar o lucro contábil. "
@@ -1369,7 +1502,7 @@ def _render_us_lab_comparisons(entry: pd.DataFrame) -> None:
             fig.add_hline(y=.5, line_dash="dot", line_color=_COR_NEG)
             fig.update_layout(**_PLOT_LAYOUT, height=360, xaxis_title="Ticker",
                               yaxis_title="FCO / Lucro Líquido")
-            st.plotly_chart(fig, use_container_width=True, key="us_lab_cash_chart")
+            st.plotly_chart(fig, width="stretch", key="us_lab_cash_chart")
 
 
 def _render_us_lab_methodology() -> None:
@@ -1450,7 +1583,7 @@ def _tab_comparacao_empresas(status: dict) -> None:
         "score": "Pontuação", "gross_margin": "Margem bruta", "operating_margin": "Margem op.",
         "roic": "ROIC", "revenue_cagr_3y": "Cresc. receita 3a", "net_debt_ebitda": "DL/EBITDA",
         "pe": "P/L", "ev_ebitda": "EV/EBITDA", "fcf_yield": "Retorno do FCL",
-        "shareholder_yield": "Retorno ao acionista"}), hide_index=True, use_container_width=True)
+        "shareholder_yield": "Retorno ao acionista"}), hide_index=True, width="stretch")
     tracks = peers[["symbol", *_TRACK_LABELS]].melt(
         "symbol", var_name="Trilha", value_name="Pontuação")
     tracks["Trilha"] = tracks["Trilha"].map(_TRACK_LABELS)
@@ -1459,7 +1592,7 @@ def _tab_comparacao_empresas(status: dict) -> None:
         labels={"symbol": "Ticker"},
     )
     fig.update_layout(**_PLOT_LAYOUT, height=420, yaxis_range=[0, 100])
-    st.plotly_chart(fig, use_container_width=True, key="us_compare_tracks")
+    st.plotly_chart(fig, width="stretch", key="us_compare_tracks")
     with st.expander("Comparação por indústria"):
         _tab_comparacao_industria(status)
 
@@ -1494,7 +1627,7 @@ def _tab_analise_fundamentalista(status: dict) -> None:
         "symbol": "Ticker", "name": "Nome", "sector": "Setor",
         "industry": "Indústria", "score": "Pontuação", "coverage": "Cobertura %",
         **_TRACK_LABELS})
-    st.dataframe(show, hide_index=True, use_container_width=True)
+    st.dataframe(show, hide_index=True, width="stretch")
 
 
 # ── Análise Avançada (Piotroski / Altman / Sloan / ROIC incremental) ──────────
@@ -1596,7 +1729,7 @@ def _tab_comparacao_industria(status: dict) -> None:
         "score_valuation": "Avaliação", "gross_margin": "Margem bruta",
         "roic": "ROIC", "net_debt_ebitda": "DL/EBITDA",
         "revenue_cagr_3y": "Cresc.Rec 3a"}),
-        hide_index=True, use_container_width=True)
+        hide_index=True, width="stretch")
 
 
 # ── Dossiê determinístico ─────────────────────────────────────────────────────
@@ -1717,11 +1850,11 @@ def _render_us_portfolio_cards(holdings: pd.DataFrame) -> None:
     for start in range(0, len(holdings), 4):
         columns = st.columns(4, gap="small")
         for column, (_, row) in zip(columns, holdings.iloc[start:start + 4].iterrows()):
-            ticker = html.escape(str(row.get("symbol", "—")))
+            ticker_raw = str(row.get("symbol", "—"))
+            ticker = html.escape(ticker_raw)
             name = html.escape(str(row.get("name", ticker)))
             sector = html.escape(str(row.get("sector_group", "Não classificado")))
             industry = html.escape(translate_us_industry(row.get("industry_group")))
-            logo = html.escape(us_logo_url(ticker), quote=True)
             weight = float(row.get("weight", 0.0) or 0.0)
             entry = float(row.get("entry_score", 0.0) or 0.0)
             allocation = float(row.get("allocation_usd", 0.0) or 0.0)
@@ -1731,23 +1864,32 @@ def _render_us_portfolio_cards(holdings: pd.DataFrame) -> None:
                         f"US$ {giro / 1e6:,.1f} mi" if giro >= 1e6 else
                         f"US$ {giro / 1e3:,.0f} mil")
             with column:
-                st.markdown(
-                    f'<div class="us-pf-card"><div class="us-pf-top">'
-                    f'<img class="us-pf-logo" src="{logo}" '
-                    f'onerror="this.style.display=\'none\'">'
-                    f'<div><div class="us-pf-ticker">{ticker}</div>'
-                    f'<div class="us-pf-name">{name}</div></div></div>'
-                    f'<div class="us-pf-meta">{sector} · {industry}</div>'
-                    f'<div class="us-pf-row"><span>Score de entrada</span>'
-                    f'<strong>{entry:.1f}</strong></div>'
-                    f'<div class="us-pf-row"><span>Peso</span>'
-                    f'<strong>{weight:.1%}</strong></div>'
-                    f'<div class="us-pf-row"><span>Giro diário</span>'
-                    f'<strong>{giro_txt}</strong></div>'
-                    f'<div class="us-pf-row"><span>Capital simulado</span>'
-                    f'<strong>US$ {allocation:,.0f}</strong></div></div>',
-                    unsafe_allow_html=True,
-                )
+                # Sem <img> cru via unsafe_allow_html — ver achado A-012.
+                # Container com borda nativa substitui o card CSS custom
+                # (.us-pf-card) só na linha logo+nome; o restante do
+                # conteúdo mantém o estilo original (.us-pf-meta/.us-pf-row).
+                with st.container(border=True):
+                    logo_col, nome_col = st.columns([1, 4], gap="small")
+                    with logo_col:
+                        render_company_logo(ticker_raw, us_logo_url(ticker_raw), size=44)
+                    with nome_col:
+                        st.markdown(
+                            f'<div class="us-pf-ticker">{ticker}</div>'
+                            f'<div class="us-pf-name">{name}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    st.markdown(
+                        f'<div class="us-pf-meta">{sector} · {industry}</div>'
+                        f'<div class="us-pf-row"><span>Score de entrada</span>'
+                        f'<strong>{entry:.1f}</strong></div>'
+                        f'<div class="us-pf-row"><span>Peso</span>'
+                        f'<strong>{weight:.1%}</strong></div>'
+                        f'<div class="us-pf-row"><span>Giro diário</span>'
+                        f'<strong>{giro_txt}</strong></div>'
+                        f'<div class="us-pf-row"><span>Capital simulado</span>'
+                        f'<strong>US$ {allocation:,.0f}</strong></div>',
+                        unsafe_allow_html=True,
+                    )
 
 
 def _semear_perfil_us_padrao() -> None:
@@ -1772,7 +1914,10 @@ def _semear_perfil_us_padrao() -> None:
 def _render_perfil_us() -> None:
     """Perfis medidos + alerta quando a configuração tem custo conhecido."""
     from core.us_portfolio_presets import (
-        PERSONALIZADO, PRESETS, RECOMENDADO, avaliar_configuracao,
+        PERSONALIZADO,
+        PRESETS,
+        RECOMENDADO,
+        avaliar_configuracao,
         identificar_perfil,
     )
 
@@ -1825,6 +1970,57 @@ def _render_perfil_us() -> None:
             f"ao padrão, escolha “{RECOMENDADO}” e clique em Aplicar perfil.")
     for alerta in alertas:
         st.warning(alerta, icon="⚠️")
+
+
+def _render_us_portfolio_version_history(key: str) -> None:
+    """Histórico e restauração da carteira-modelo EUA (achado A-006).
+
+    Espelha ``views/fiis.py::_render_portfolio_version_history`` e
+    ``views/portfolio_b3.py::_render_b3_portfolio_version_history`` — mesmo
+    padrão de UI sobre o núcleo já existente em ``core.us_portfolio_model``.
+    """
+    try:
+        from core.us_portfolio_model import (
+            list_us_portfolio_model_versions,
+            restore_us_portfolio_model,
+        )
+        versions = list_us_portfolio_model_versions()
+    except (RuntimeError, ValueError, SQLAlchemyError):
+        return
+    archived = [item for item in versions if item.get("status") == "archived"]
+    if not archived:
+        return
+    with st.expander("🕘 Histórico e restauração do Portfólio EUA"):
+        by_id = {str(item["id"]): item for item in archived}
+        selected = st.selectbox(
+            "Versão arquivada",
+            options=list(by_id),
+            format_func=lambda model_id: (
+                f"{fmt_datetime_br(by_id[model_id].get('created_at'))} · "
+                f"{by_id[model_id].get('item_count', 0)} ativos"
+            ),
+            key=f"{key}_restore_version",
+        )
+        confirmed = st.checkbox(
+            "Confirmo que desejo substituir a versão ativa por esta versão arquivada.",
+            key=f"{key}_restore_confirm",
+        )
+        if st.button(
+            "Restaurar versão selecionada",
+            key=f"{key}_restore_action",
+            disabled=not confirmed,
+        ):
+            try:
+                restore_us_portfolio_model(selected)
+                st.success("Versão restaurada e verificada transacionalmente.")
+                st.rerun()
+            except (RuntimeError, ValueError) as exc:
+                st.error(f"Restauração bloqueada: {exc}")
+            except SQLAlchemyError:
+                st.error(
+                    "Restauração bloqueada por uma falha transacional no banco; "
+                    "a versão ativa anterior foi preservada."
+                )
 
 
 def _tab_criacao_portfolio(status: dict) -> None:
@@ -1985,9 +2181,11 @@ def _tab_criacao_portfolio(status: dict) -> None:
                 "Negociabilidade mínima (volume/dia)",
                 ["Sem piso", "≥ US$ 1 milhão", "≥ US$ 5 milhões",
                  "≥ US$ 20 milhões"], index=1, key="us_create_turnover",
-                help="Mediana de preço × volume dos últimos 180 pregões. Quem "
-                     "não tem série medida permanece no universo e é declarado: "
-                     "ausência de medição não é prova de iliquidez.",
+                help="Mediana de preço × volume dos últimos 180 pregões. Com "
+                     "piso ligado, quem não tem série medida NÃO entra: comprar "
+                     "papel cuja negociabilidade nunca foi medida é assumir "
+                     "risco não verificado. 'Sem piso' é modo exploratório e "
+                     "admite ativo com liquidez não validada.",
             )
         with t2:
             apply_floor = st.checkbox(
@@ -2082,6 +2280,12 @@ def _tab_criacao_portfolio(status: dict) -> None:
 
     for warning in result.get("warnings", []):
         st.warning(warning)
+    # Bloqueio antes de qualquer número: sem liquidez verificada não existe
+    # carteira publicável, e mostrar auditoria de indústria abaixo faria parecer
+    # que só faltou afrouxar um parâmetro.
+    if result.get("blocking_error"):
+        st.error(result["blocking_error"])
+        return
     if result.get("history_required_unavailable"):
         st.error("A validação histórica foi exigida, mas o painel PIT não está disponível.")
         return
@@ -2095,7 +2299,9 @@ def _tab_criacao_portfolio(status: dict) -> None:
     excluded = int(audit["status"].eq("Excluída").sum()) if not audit.empty else 0
 
     secao_titulo("Composição de Entrada — Mercado Americano", "🎯")
-    c1, c2, c3, c4 = st.columns(4)
+    nao_verificadas = len(result.get("liquidity_unverified") or [])
+    piso_liquidez = float(result.get("liquidity_floor_usd") or 0.0)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         card_metrica("Empresas elegíveis", f"{result.get('eligible_count', 0):,}".replace(",", "."))
     with c2:
@@ -2104,6 +2310,17 @@ def _tab_criacao_portfolio(status: dict) -> None:
         card_metrica("Em observação", str(observation))
     with c4:
         card_metrica("Indústrias excluídas", str(excluded))
+    with c5:
+        # O número precisa aparecer nos dois modos, com significados opostos:
+        # com piso ligado ele conta quem FICOU DE FORA por falta de medição;
+        # sem piso, quem ENTROU sem liquidez validada.
+        card_metrica(
+            "Liquidez não verificada", nao_verificadas,
+            positivo=False if nao_verificadas else None,
+            ajuda=("Sem série de volume — barradas pelo piso de negociabilidade."
+                   if piso_liquidez > 0 else
+                   "Sem série de volume — no modo exploratório (sem piso) elas "
+                   "permanecem no universo com a liquidez NÃO validada."))
 
     with st.expander("🩺 Qualidade, saneamento e filtros do universo"):
         if not exclusions.empty:
@@ -2214,16 +2431,22 @@ def _tab_criacao_portfolio(status: dict) -> None:
     with m8:
         card_metrica("Benchmark", str(metrics.get("benchmark", "—")))
 
+    can_publish = bool(result.get("can_publish"))
+    publication_blocking_error = result.get("publication_blocking_error")
+    if publication_blocking_error:
+        st.warning(publication_blocking_error)
+
     use_col, save_col, info_col = st.columns([1, 1, 2])
     with use_col:
         if st.button("💾 Usar na Avaliação de Portfólio", type="primary",
-                     key="us_create_save_model"):
+                     key="us_create_save_model", disabled=not can_publish):
             st.session_state["us_portfolio_model"] = holdings.copy()
             st.success("Carteira-modelo enviada para Avaliação de Portfólio.")
     with save_col:
         # Mesma decisão que "Salvar portfólio padrão" na B3: sem persistir, o
         # Dashboard Geral não tem como exibir a carteira americana entre reruns.
-        if st.button("⭐ Salvar como carteira padrão", key="us_create_persist_model"):
+        if st.button("⭐ Salvar como carteira padrão", key="us_create_persist_model",
+                     disabled=not can_publish):
             try:
                 from core.us_portfolio_model import save_us_portfolio_model
                 model_id = save_us_portfolio_model(
@@ -2238,6 +2461,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
                 )
             except Exception as exc:  # noqa: BLE001 - fronteira de persistência
                 st.error(f"Não foi possível salvar a carteira padrão: {exc}")
+        _render_us_portfolio_version_history("us_create_persist_model")
     with info_col:
         st.info(
             f"{len(holdings)} ativos · aporte mensal simulado de "
@@ -2365,14 +2589,14 @@ def _tab_portfolio(status: dict) -> None:
     st.dataframe(show.rename(columns={
         "symbol": "Ticker", "name": "Nome", "sector": "Setor",
         "industry": "Indústria", "score": "Pontuação", "weight": "Peso %"}),
-        hide_index=True, use_container_width=True)
+        hide_index=True, width="stretch")
 
     if "sector" in holdings.columns:
         secao_titulo("Alocação por setor", "🧩")
         alloc = (holdings.groupby("sector")["weight"].sum() * 100).round(1) \
             .sort_values(ascending=False)
         st.dataframe(alloc.rename("Peso %").reset_index().rename(
-            columns={"sector": "Setor"}), hide_index=True, use_container_width=True)
+            columns={"sector": "Setor"}), hide_index=True, width="stretch")
     st.caption("Limites iterativos por posição e setor (heurística de projeção, não "
                "otimizador de média-variância). Índices de referência (S&P 500, Nasdaq-100 "
                "e Russell 2000) e a carteira de pesos iguais entram no teste histórico "
@@ -2385,7 +2609,7 @@ def _tab_backtests(status: dict) -> None:
     st.caption("Pontuações recalculadas em cada data usando apenas informações já "
                "disponíveis, evitando antecipação indevida. Requer histórico PIT: `python run_us_ingest.py "
                "score-history --warehouse`.")
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         top_n = st.slider("Top N por período", 5, 40, 20, key="us_bt_topn")
     with c2:
@@ -2393,8 +2617,11 @@ def _tab_backtests(status: dict) -> None:
             "Ponderação", ["score", "equal"],
             format_func=lambda value: _WEIGHTING_LABELS[value], key="us_bt_wmode",
         )
+    with c3:
+        benchmark = st.selectbox("Benchmark de mercado", us.benchmark_options(),
+                                 key="us_bt_benchmark")
 
-    res = us.backtest(top_n=top_n, weighting=wmode)
+    res = us.backtest(top_n=top_n, weighting=wmode, benchmark=benchmark)
     if not res.get("ok"):
         estado_vazio(res.get("reason", "teste histórico indisponível"), "🧪")
         return
@@ -2436,6 +2663,29 @@ def _tab_backtests(status: dict) -> None:
     with c8:
         card_metrica("Giro médio da carteira", _p(res.get("avg_turnover")))
 
+    benchmark_state = res.get("benchmark") or {}
+    if benchmark_state.get("modo") == "indice" and benchmark_state.get("ok"):
+        secao_titulo(f"Comparação contra {benchmark_state['simbolo']}", "📊")
+        card_metrica("Excesso anualizado", _p(res.get("excess_ann_vs_benchmark")))
+        st.caption(f"Retorno total em USD, nas mesmas janelas de "
+                   f"{benchmark_state.get('horizonte_meses')} meses do painel PIT.")
+    elif benchmark_state and not benchmark_state.get("ok"):
+        st.warning(benchmark_state.get("mensagem", "Benchmark indisponível; "
+                   "o excesso contra índice não foi calculado."))
+    elif benchmark_state.get("modo") == "sem_indice":
+        st.caption("Comparação contra índice desativada explicitamente; pesos iguais "
+                   "do universo continuam como baseline interno.")
+
+    concentration = res.get("concentration") or {}
+    if concentration and not concentration.get("eligible_for_conclusion", True):
+        st.warning(
+            "Resultado teórico sem teto de posição: o maior peso observado "
+            f"({concentration.get('max_weight', 0.0):.1%}) excede a política "
+            f"de {concentration.get('policy_max_weight', 0.0):.1%} "
+            f"(HHI máximo {concentration.get('max_hhi', 0.0):.3f}). "
+            "Não use este backtest para concluir sobre uma carteira investível."
+        )
+
     if res.get("equity_curve"):
         secao_titulo("Curva de capital", "📉")
         curve = pd.DataFrame({"Curva": res["equity_curve"]},
@@ -2468,7 +2718,7 @@ def _tab_qualidade() -> None:
             lambda value: "Sim" if isinstance(value, (bool, np.bool_)) and bool(value)
             else "Não" if isinstance(value, (bool, np.bool_)) else value
         )
-    st.dataframe(show, hide_index=True, use_container_width=True)
+    st.dataframe(show, hide_index=True, width="stretch")
 
 
 # ── Sincronização ─────────────────────────────────────────────────────────────
@@ -2500,7 +2750,7 @@ def _tab_sincronizacao(status: dict) -> None:
                 "bootstrap": "Carga inicial", "daily": "Atualização diária",
                 "snapshot": "Vitrine", "validation": "Validação",
             })
-        st.dataframe(show_runs, hide_index=True, use_container_width=True)
+        st.dataframe(show_runs, hide_index=True, width="stretch")
     else:
         st.caption("Nenhuma execução de ingestão registrada ainda.")
 

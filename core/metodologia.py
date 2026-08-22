@@ -15,7 +15,7 @@ que não aplica (o que minaria a credibilidade).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Engines
 ENG_AV = "AVANCADA"

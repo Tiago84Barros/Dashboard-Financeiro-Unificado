@@ -35,15 +35,6 @@ from sqlalchemy import text
 # Permite rodar de qualquer diretório (adiciona a raiz do projeto ao path).
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from core.config import settings          # noqa: E402
-from core.database import get_engine      # noqa: E402
-from core.controle import _get_or_create_category, get_card_category_rules  # noqa: E402
-# Fonte ÚNICA de regras/taxonomia — a mesma usada pelo importador de faturas.
-from core.card_categorization import (    # noqa: E402
-    CATEGORY_TYPE, REVIEW_SENTINEL, classify,
-)
-
-
 # A taxonomia, as regras por estabelecimento e o fallback por categoria vivem em
 # core.card_categorization (fonte única, compartilhada com o importador).
 
@@ -71,6 +62,10 @@ def _scratch_path(nome: str) -> str:
 
 
 def _load(conn, owner: str) -> list[dict]:
+    # Carrega após ajustar sys.path, pois este script também roda diretamente.
+    from core.card_categorization import classify
+    from core.controle import get_card_category_rules
+
     rows = conn.execute(text(_SQL_FETCH), {"uid": owner}).fetchall()
     user_rules = get_card_category_rules()   # respeita regras aprendidas pelo usuário
     out = []
@@ -94,6 +89,9 @@ def _load(conn, owner: str) -> list[dict]:
 
 def _resumo(items: list[dict]) -> None:
     from collections import defaultdict
+
+    from core.card_categorization import REVIEW_SENTINEL
+
     agg = defaultdict(lambda: [0, 0.0])
     mudam = 0
     revisar = []
@@ -131,6 +129,9 @@ def cmd_dry_run(items: list[dict]) -> None:
 
 
 def cmd_apply(engine, owner: str, items: list[dict]) -> None:
+    from core.card_categorization import CATEGORY_TYPE, REVIEW_SENTINEL
+    from core.controle import _get_or_create_category
+
     if any(it["categoria_nova"] == REVIEW_SENTINEL for it in items):
         print("ABORTADO: há lançamentos sem regra ('A revisar'). Ajuste as regras antes.")
         return
@@ -215,6 +216,9 @@ def _clear_caches() -> None:
 
 
 def main() -> int:
+    from core.config import settings
+    from core.database import get_engine
+
     ap = argparse.ArgumentParser(description="Recategorização das transações de cartão de crédito.")
     grp = ap.add_mutually_exclusive_group()
     grp.add_argument("--apply", action="store_true", help="Aplica as mudanças (grava backup antes).")

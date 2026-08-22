@@ -7,8 +7,6 @@ divergir aqui significa dar universos diferentes para a MESMA pergunta.
 import re
 from pathlib import Path
 
-import pandas as pd
-
 RAIZ = Path(__file__).resolve().parents[1]
 
 
@@ -108,7 +106,6 @@ def test_avancada_avisa_classe_irma_mais_liquida():
     mesma exposição econômica, e quem estuda a empresa aqui acaba comprando o
     papel errado lá fora.
     """
-    from unittest.mock import patch
 
     from streamlit.testing.v1 import AppTest
 
@@ -147,7 +144,6 @@ with patch.object(v._db, 'load_giro_diario', return_value={'WEGE3': 3.5e8}), \
 
 def test_avancada_expoe_dependencia_de_governo_e_resiliencia():
     """Duas dimensões que nenhum indicador contábil da tela mede."""
-    import pandas as pd
     from streamlit.testing.v1 import AppTest
 
     app = AppTest.from_string("""

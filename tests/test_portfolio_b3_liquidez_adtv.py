@@ -9,11 +9,10 @@ from unittest.mock import patch
 import pytest
 
 from views.portfolio_b3 import (
+    _PREGOES_MES,
     LiquidezDataError,
     _load_adtv,
     _market_cap_coverage,
-    _PREGOES_MES,
-    _ticker_key,
 )
 
 

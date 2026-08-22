@@ -40,8 +40,8 @@ from typing import Optional
 
 import pandas as pd
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import SQLAlchemyError
 
 from core.database import get_engine
 from core.import_guard import (

@@ -1,8 +1,8 @@
 """Publica no Supabase o snapshot FII reconstruido no warehouse local."""
 from __future__ import annotations
 
-import json
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path

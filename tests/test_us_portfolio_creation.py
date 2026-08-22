@@ -14,6 +14,13 @@ from core.us_portfolio_creation import (
 
 
 def _universe(groups: int = 9, names_per_group: int = 6) -> pd.DataFrame:
+    """Universo sintético com a negociabilidade MEDIDA.
+
+    A coluna `giro_diario_usd` não é decoração: desde us-liquidity-2.0.0 um
+    universo sem medição de giro não produz carteira com piso ligado (é o
+    achado A-004). Sem ela, todo teste de peso/limite aqui passaria a exercitar
+    o caminho de bloqueio em vez do otimizador.
+    """
     sectors = ["Technology", "Healthcare", "Industrials"]
     rows = []
     for group in range(groups):
@@ -45,6 +52,8 @@ def _universe(groups: int = 9, names_per_group: int = 6) -> pd.DataFrame:
                 "current_ratio": 1.5,
                 "net_margin": .15,
                 "interest_coverage": 8.0,
+                "giro_diario_usd": 5_000_000.0,
+                "giro_diario_usd_at": pd.Timestamp.now(tz="UTC"),
             })
     return pd.DataFrame(rows)
 
@@ -121,6 +130,158 @@ def test_cap_adaptativo_documenta_ajuste_matematico():
     assert result["holdings"]["weight"].sum() == pytest.approx(1.0, abs=1e-8)
 
 
+def test_coluna_de_giro_ausente_bloqueia_a_carteira_em_vez_de_aprovar_todos():
+    """Achado A-004: `"giro_diario_usd" in work` pulava o gate inteiro.
+
+    Com a coluna ausente e piso > 0 o motor não filtrava ninguém — o usuário
+    pedia US$ 1 mi/dia de negociabilidade e recebia uma carteira em que nenhuma
+    posição tinha sido verificada. Ausência de coluna significa "ninguém foi
+    verificado", e nesse estado não se publica carteira.
+    """
+    universo = _universe().drop(columns=["giro_diario_usd"])
+    params = USPortfolioCreationParams(min_entry_score=50, min_score_edge=0)
+    result = build_portfolio_creation(universo, params)
+
+    assert result["ok"] is False
+    assert result["blocked"] is True
+    assert result["holdings"].empty
+    assert "giro_diario_usd" in result["blocking_error"]
+    # A mensagem precisa dizer O QUE INGERIR, senão é só um beco sem saída.
+    assert "run_us_ingest.py" in result["blocking_error"]
+    assert len(result["liquidity_unverified"]) == len(universo)
+
+
+def test_giro_ausente_com_piso_zerado_segue_em_modo_exploratorio():
+    """Zerar o piso é a decisão explícita do usuário de explorar sem validar."""
+    universo = _universe().drop(columns=["giro_diario_usd"])
+    params = USPortfolioCreationParams(
+        min_entry_score=50, min_score_edge=0, min_daily_turnover_usd=0.0)
+    result = build_portfolio_creation(universo, params)
+
+    assert result["blocking_error"] is None
+    assert not result["holdings"].empty
+    assert any("exploratório" in w for w in result["warnings"])
+
+
+def test_modo_exploratorio_permite_analise_mas_nao_publicacao_sem_liquidez():
+    """A-004/R2: o piso zero não autoriza avaliação nem persistência.
+
+    O resultado continua trazendo holdings para investigação, mas deve declarar
+    explicitamente que não é publicável quando alguma posição não tem uma
+    medição de liquidez válida. A view usa este contrato para desabilitar os
+    dois canais que tornam a carteira efetiva.
+    """
+    universo = _universe().drop(columns=["giro_diario_usd"])
+    result = build_portfolio_creation(
+        universo,
+        USPortfolioCreationParams(
+            min_entry_score=50, min_score_edge=0, min_daily_turnover_usd=0.0),
+    )
+
+    assert not result["holdings"].empty
+    assert result["blocked"] is False
+    assert result["can_publish"] is False
+    assert "não verificada" in result["publication_blocking_error"]
+
+
+def test_documentacao_registra_a_regra_de_liquidez_em_vigor():
+    """Evita documentação 2.0.0 após a regra UTC/7 dias da versão 2.1.0."""
+    from core.us_liquidity import VERSION
+
+    root = Path(__file__).resolve().parents[1]
+    docs = (root / "docs" / "empresas_americanas.md").read_text(encoding="utf-8")
+
+    assert VERSION in docs
+    for regra in ("UTC", "7 dias", "inclusivo", "futuro"):
+        assert regra in docs
+
+
+def test_carteira_com_piso_ligado_nunca_contem_simbolo_nao_verificado():
+    """Metade do universo perde a medição; nenhuma delas pode chegar à carteira."""
+    universo = _universe()
+    sem_medida = universo["symbol"].iloc[::2].tolist()
+    universo.loc[universo["symbol"].isin(sem_medida), "giro_diario_usd"] = np.nan
+    params = USPortfolioCreationParams(
+        top_n=15, leaders_per_industry=2, min_companies_per_industry=2,
+        min_entry_score=50, min_score_edge=0, max_weight=.10,
+        max_industry_weight=.18, max_sector_weight=.40)
+    result = build_portfolio_creation(universo, params)
+
+    assert not result["holdings"].empty
+    assert not set(result["holdings"]["symbol"]) & set(sem_medida)
+    assert set(result["liquidity_unverified"]) == set(sem_medida)
+    assert result["blocking_error"] is None
+
+
+def test_giro_infinito_nao_vira_o_ativo_mais_liquido_do_mercado():
+    """`inf >= piso` é True: sem tratamento, lixo entraria como aprovado."""
+    universo = _universe()
+    universo.loc[universo.index[:6], "giro_diario_usd"] = np.inf
+    params = USPortfolioCreationParams(
+        top_n=15, leaders_per_industry=2, min_companies_per_industry=2,
+        min_entry_score=50, min_score_edge=0, max_weight=.10,
+        max_industry_weight=.18, max_sector_weight=.40)
+    result = build_portfolio_creation(universo, params)
+    infinitos = set(universo["symbol"].iloc[:6])
+
+    assert not set(result["holdings"]["symbol"]) & infinitos
+    assert infinitos <= set(result["liquidity_unverified"])
+
+
+@pytest.mark.parametrize("timestamp", [
+    pd.Timestamp.now(tz="UTC"),
+    pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=8),
+    pd.NaT,
+    "timestamp inválido",
+])
+def test_criacao_exige_timestamp_atual_para_giro_medido(timestamp):
+    """Atual permite a carteira; stale, ausente e inválido bloqueiam sem rede."""
+    universo = _universe()
+    universo["giro_diario_usd_at"] = timestamp
+    result = build_portfolio_creation(
+        universo, USPortfolioCreationParams(min_entry_score=50, min_score_edge=0))
+
+    if isinstance(timestamp, pd.Timestamp) and timestamp >= pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=1):
+        assert result["blocked"] is False
+        assert not result["holdings"].empty
+    else:
+        assert result["blocked"] is True
+        assert result["holdings"].empty
+        assert len(result["liquidity_unverified"]) == len(universo)
+
+
+def test_params_registram_a_versao_da_metodologia_de_liquidez():
+    """Carteira salva precisa dizer sob qual regra de elegibilidade nasceu."""
+    from core.us_liquidity import VERSION as LIQ
+    from core.us_portfolio_creation import params_to_dict
+
+    params = params_to_dict(USPortfolioCreationParams())
+    assert params["liquidity_version"] == LIQ
+    assert params["schema_version"] == "us_portfolio_creation_v3"
+
+
+@pytest.mark.parametrize("piso_invalido", [float("nan"), -1.0,
+                                            float("inf"), float("-inf")])
+def test_piso_de_giro_invalido_bloqueia_o_motor_sem_excecao(piso_invalido):
+    """Entrada inválida não pode virar exploração nem chegar à publicação."""
+    result = build_portfolio_creation(
+        _universe(),
+        USPortfolioCreationParams(
+            min_daily_turnover_usd=piso_invalido,
+            min_entry_score=50,
+            min_score_edge=0,
+        ),
+    )
+
+    assert result["ok"] is False
+    assert result["blocked"] is True
+    assert result["can_publish"] is False
+    assert result["holdings"].empty
+    assert result["blocking_error"] == (
+        "Piso de negociabilidade inválido: informe um valor finito maior ou igual a zero."
+    )
+
+
 def test_interface_expoe_paridade_e_equivalentes_americanos():
     root = Path(__file__).resolve().parents[1]
     source = (root / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
@@ -132,5 +293,7 @@ def test_interface_expoe_paridade_e_equivalentes_americanos():
         "Peso máximo por indústria",
         "Usar na Avaliação de Portfólio",
         "Metodologia e equivalências B3 × Estados Unidos",
+        "can_publish",
+        "disabled=not can_publish",
     ):
         assert token in source

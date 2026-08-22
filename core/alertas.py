@@ -137,6 +137,7 @@ def get_alertas() -> dict:
 
 def _alertas_real() -> list:
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()

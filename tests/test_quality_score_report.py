@@ -1,10 +1,9 @@
 import json
 
-import data_pipeline.quality.score as score
 import data_pipeline.quality.report as report
 import data_pipeline.quality.sanitizer as san
+import data_pipeline.quality.score as score
 from core.data_healing import resolve_field
-
 
 # ── score ─────────────────────────────────────────────────────────────────────
 

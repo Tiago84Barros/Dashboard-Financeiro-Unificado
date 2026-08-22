@@ -71,7 +71,17 @@ def load_setores(*a, **k):
             return m
     except Exception as exc:
         logger.warning("setores market falhou (%s) — fallback legado", exc)
-    return _legacy.load_setores(*a, **k)
+    df = _legacy.load_setores(*a, **k)
+    # Proveniência (A-009): o legado (core.b3_db) resolve a URL do banco com
+    # prioridade PRÓPRIA (SUPABASE_DB_URL_B3 > SUPABASE_DB_URL > settings.db_url),
+    # diferente da do resto do app — pode contatar o Supabase remoto real mesmo
+    # quando DATABASE_URL foi sobrescrito para isolar um teste. Marcar em attrs
+    # (em vez de silenciar) permite que a UI avise o usuário quando os dados
+    # vieram dessa fonte legada, mesmo quando ela "funciona" (retorna não-vazio).
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        df = df.copy()
+        df.attrs["fallback_legado"] = True
+    return df
 
 
 # ── Dados FINANCEIROS: fonte ÚNICA = market.* (brapi) ─────────────────────────

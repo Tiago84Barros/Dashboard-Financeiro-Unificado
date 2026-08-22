@@ -1,6 +1,8 @@
 """Piso de negociabilidade por classe — casos medidos no universo real."""
 from core.b3_liquidity import (
-    LiquidityPolicy, aplicar_piso_de_liquidez, melhor_classe,
+    LiquidityPolicy,
+    aplicar_piso_de_liquidez,
+    melhor_classe,
 )
 
 # Giro diário estimado (R$), medido em 30/07/2026 sobre a carteira real.

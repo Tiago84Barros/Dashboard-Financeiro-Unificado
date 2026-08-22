@@ -11,14 +11,13 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 from core.config import settings
 from scripts.archive_remote_brapi_raw import ids_sem_manifesto
 from scripts.publish_fii_selection_from_local import _warehouse_url
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 COMPACTION_SQL = """
 DROP TABLE market.brapi_raw_payloads CASCADE;

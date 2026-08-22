@@ -17,7 +17,6 @@ import logging
 import os
 import re
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -37,7 +36,7 @@ def _report_model() -> str:
     except Exception:
         pass
     return os.getenv("LLM_REPORT_MODEL", "").strip() or _REPORT_MODEL_DEFAULT
-_GEMINI_MODEL_DEFAULT = "gemini-2.0-flash"
+_GEMINI_MODEL_DEFAULT = "gemini-3.6-flash"
 _GEMINI_BASE_URL_DEFAULT = "https://generativelanguage.googleapis.com/v1beta/openai/"
 _TEMPERATURE   = 0.2
 _TIMEOUT       = 90
@@ -55,6 +54,7 @@ _TIMEOUT       = 90
 def _get_openai_client():
     try:
         from openai import OpenAI
+
         from core.config import settings
         key = getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY", "")
         if not key:
@@ -69,6 +69,7 @@ def _get_openai_client():
 def _get_gemini_client():
     try:
         from openai import OpenAI
+
         from core.config import settings
         key = (getattr(settings, "GEMINI_API_KEY", None)
                or os.environ.get("GEMINI_API_KEY", "")

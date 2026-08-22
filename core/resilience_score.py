@@ -55,7 +55,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-
 # ── Constantes de calibração ──────────────────────────────────────────────
 
 # Indicadores de qualidade usados para ajuste A e verificação de C

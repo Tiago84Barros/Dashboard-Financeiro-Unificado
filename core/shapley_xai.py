@@ -35,7 +35,6 @@ from __future__ import annotations
 from itertools import combinations
 from math import factorial
 
-
 # Os 4 engines + 1 baseline (score_base). Ordem documenta a composição:
 #   score_entrada = 0.60·score_base + 0.20·q + 0.10·c + 0.10·cq − r_penalty
 ENGINES = ["score_base", "q_bonus", "c_bonus", "cq_bonus", "r_penalty"]

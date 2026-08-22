@@ -15,10 +15,10 @@ from datetime import date as _date
 import streamlit as st
 
 from core.metas import (
-    get_metas,
-    atualizar_progresso,
-    inserir_meta,
     _TIPO_LABEL,
+    atualizar_progresso,
+    get_metas,
+    inserir_meta,
 )
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import (
@@ -172,7 +172,7 @@ def _form_atualizar_progresso(metas: list) -> None:
 
     col_btn, _ = st.columns([1, 3])
     with col_btn:
-        if st.button("💾 Salvar progresso", type="primary", use_container_width=True, key="btn_upd_meta"):
+        if st.button("💾 Salvar progresso", type="primary", width="stretch", key="btn_upd_meta"):
             ok, msg = atualizar_progresso(ids[meta_idx], novo_valor)
             if ok:
                 st.success(f"✅ Progresso de '{nomes[meta_idx]}' atualizado para {fmt_moeda(novo_valor)}.")
@@ -225,7 +225,7 @@ def _form_nova_meta() -> None:
                     format="DD/MM/YYYY",
                 )
 
-        submitted = st.form_submit_button("💾 Criar meta", use_container_width=True)
+        submitted = st.form_submit_button("💾 Criar meta", width="stretch")
 
         if submitted:
             erros = []

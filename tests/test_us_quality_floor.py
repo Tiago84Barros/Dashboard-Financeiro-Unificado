@@ -1,9 +1,12 @@
 """Piso absoluto de qualidade do módulo EUA — casos do universo real."""
 import pandas as pd
-import pytest
 
 from core.us_quality_floor import (
-    APROVADO, REPROVADO, SEM_EVIDENCIA, FloorPolicy, apply_with_substitution,
+    APROVADO,
+    REPROVADO,
+    SEM_EVIDENCIA,
+    FloorPolicy,
+    apply_with_substitution,
     evaluate,
 )
 
@@ -100,8 +103,8 @@ def test_o_piso_nao_define_limiar_proprio():
     corpo = fonte.split('"""', 2)[-1]          # ignora o docstring do módulo
     import re
     for termo in ("altman", "piotroski", "z_score", "sloan", "payout_ratio"):
-        linhas = [l for l in corpo.splitlines()
-                  if termo in l.lower() and not l.strip().startswith("#")]
+        linhas = [linha for linha in corpo.splitlines()
+                  if termo in linha.lower() and not linha.strip().startswith("#")]
         assert not linhas, f"limiar de {termo} vazou para o piso: {linhas}"
     # Nenhuma comparação numérica de métrica financeira no corpo executável.
     assert not re.search(r"^\s*(?!#).*\b(risk_penalty|f_score)\b\s*[<>]=?",
@@ -118,8 +121,10 @@ def test_piso_inalcancavel_avisa_com_o_teto_real():
     valor o mercado alcança naquele recorte.
     """
     import numpy as np
+
     from core.us_portfolio_creation import (
-        USPortfolioCreationParams, build_portfolio_creation,
+        USPortfolioCreationParams,
+        build_portfolio_creation,
     )
 
     universo = pd.DataFrame({
@@ -129,6 +134,11 @@ def test_piso_inalcancavel_avisa_com_o_teto_real():
         "score": np.linspace(60, 80, 8),
         "coverage": [90.0] * 8, "_market_cap": [5e9] * 8, "_years": [12] * 8,
         "roe": np.linspace(.10, .25, 8), "net_margin": np.linspace(.05, .2, 8),
+        # Liquidez MEDIDA: sem ela o motor bloquearia por negociabilidade não
+        # verificada (us-liquidity-2.0.0) e o teste deixaria de exercitar o
+        # piso de score, que é o objeto sob teste.
+        "giro_diario_usd": [5e6] * 8,
+        "giro_diario_usd_at": [pd.Timestamp.now(tz="UTC")] * 8,
     })
     r = build_portfolio_creation(universo, USPortfolioCreationParams(min_entry_score=99.0))
     assert r["holdings"].empty
@@ -144,8 +154,10 @@ def test_guarda_nao_dispara_quando_ha_carteira():
     corretamente, mas por outro motivo, e o teste não provaria nada.
     """
     import numpy as np
+
     from core.us_portfolio_creation import (
-        USPortfolioCreationParams, build_portfolio_creation,
+        USPortfolioCreationParams,
+        build_portfolio_creation,
     )
 
     n = 16
@@ -158,6 +170,10 @@ def test_guarda_nao_dispara_quando_ha_carteira():
         "coverage": [90.0] * n, "_market_cap": [5e9] * n, "_years": [12] * n,
         "roe": np.r_[np.linspace(.15, .30, 8), np.linspace(.02, .08, 8)],
         "net_margin": np.r_[np.linspace(.12, .25, 8), np.linspace(.01, .05, 8)],
+        # Ver o comentário do teste anterior: liquidez medida para que o objeto
+        # sob teste continue sendo a guarda do piso de score.
+        "giro_diario_usd": [5e6] * n,
+        "giro_diario_usd_at": [pd.Timestamp.now(tz="UTC")] * n,
     })
     r = build_portfolio_creation(
         universo, USPortfolioCreationParams(min_entry_score=0.0, min_score_edge=0.0))

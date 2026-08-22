@@ -28,17 +28,21 @@ from core.llm_context_b3 import (
     build_llm_context_for_portfolio_chat,
     get_web_evidence_context,
 )
+from core.portfolio_chat_charts import (
+    infer_chart_directives,
+    render_charts_from_directives,
+)
 from core.portfolio_report_b3 import (
     analyze_portfolio_report,
     generate_company_portfolio_report,
 )
-from core.portfolio_chat_charts import infer_chart_directives, render_charts_from_directives
 from core.rag_b3 import (
     format_rag_context,
     get_cobertura_docs,
     retrieve_chunks,
 )
-from views.empresas_b3 import _logo_url, _sec_hdr
+from design.market_companies import render_company_logo
+from views.empresas_b3 import _logo_url
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS
@@ -193,8 +197,10 @@ def _render_portfolio_salvo(model: dict, pesos_novos: dict[str, float] | None) -
     metrics  = model.get("metrics_json") or {}
     if isinstance(metrics, str):
         import json
-        try: metrics = json.loads(metrics)
-        except Exception: metrics = {}
+        try:
+            metrics = json.loads(metrics)
+        except Exception:
+            metrics = {}
 
     n        = len(items)
     alpha_m  = metrics.get("alpha_selic_medio") or (
@@ -225,25 +231,25 @@ def _render_portfolio_salvo(model: dict, pesos_novos: dict[str, float] | None) -
     ])
     st.markdown(f'<div class="apb3-kpi-row">{cards_html}</div>', unsafe_allow_html=True)
 
-    # Grade de logos + pesos
-    logos_html = '<div class="apb3-logo-grid">'
-    for it in sorted(items, key=lambda x: -float(x.get("weight") or 0)):
-        tk      = it["ticker"]
-        nome    = (it.get("nome") or tk)[:22]
-        w_orig  = float(it.get("weight") or 0)
-        w_exib  = (pesos_novos.get(tk, w_orig) if pesos_novos else w_orig)
-        logo    = _logo_url(tk)
-        logos_html += (
-            f'<div class="apb3-logo-item">'
-            f'<img src="{logo}" width="38" height="38" '
-            f'style="border-radius:8px;object-fit:contain;" '
-            f'onerror="this.style.display=\'none\'">'
-            f'<div class="apb3-logo-ticker">{tk}</div>'
-            f'<div class="apb3-logo-weight">{w_exib*100:.1f}%</div>'
-            f'</div>'
-        )
-    logos_html += "</div>"
-    st.markdown(logos_html, unsafe_allow_html=True)
+    # Grade de logos + pesos (colunas fixas — sem <img onerror> cru, achado A-012)
+    itens_ordenados = sorted(items, key=lambda x: -float(x.get("weight") or 0))
+    _LOGO_GRID_COLS = 6
+    for start in range(0, len(itens_ordenados), _LOGO_GRID_COLS):
+        cols_logo = st.columns(_LOGO_GRID_COLS, gap="small")
+        linha = itens_ordenados[start:start + _LOGO_GRID_COLS]
+        for col, it in zip(cols_logo, linha):
+            tk     = it["ticker"]
+            w_orig = float(it.get("weight") or 0)
+            w_exib = (pesos_novos.get(tk, w_orig) if pesos_novos else w_orig)
+            with col:
+                st.markdown('<div class="apb3-logo-item">', unsafe_allow_html=True)
+                render_company_logo(tk, _logo_url(tk), size=38)
+                st.markdown(
+                    f'<div class="apb3-logo-ticker">{tk}</div>'
+                    f'<div class="apb3-logo-weight">{w_exib*100:.1f}%</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -385,7 +391,7 @@ def _render_relatorio_consolidado(port_analise: dict) -> None:
     persp = port_analise.get("perspectiva_12m", "—")
     conf  = port_analise.get("confianca_media", 0)
     score = port_analise.get("score_medio", 0)
-    cob   = port_analise.get("cobertura", "—")
+    port_analise.get("cobertura", "—")
 
     qual_mod  = {"alta": "pos", "media": "neu", "baixa": "neg"}.get(qual, "neu")
     persp_mod = {"construtiva": "pos", "equilibrada": "neu", "cautelosa": "neg"}.get(persp, "neu")
@@ -508,30 +514,33 @@ def _render_alocacao(items_analisados: list[dict], pesos_novos: dict[str, float]
         "Portfólio."
     )
 
-    cards_html = '<div class="apb3-alloc-grid">'
-    for it in sorted(items_analisados, key=lambda x: -pesos_novos.get(x.get("ticker",""), 0)):
-        tk    = it.get("ticker", "")
-        nome  = (it.get("nome") or tk)[:24]
-        an    = it.get("analise", {})
-        persp = an.get("perspectiva", "moderada")
-        w_new = pesos_novos.get(tk, 0.0)
-        w_old = float(it.get("peso_pct", 0.0)) / 100.0
-        logo  = _logo_url(tk)
-
-        cards_html += (
-            f'<div class="apb3-alloc-card">'
-            f'<img src="{logo}" width="36" height="36" '
-            f'style="border-radius:8px;object-fit:contain;" '
-            f'onerror="this.style.display=\'none\'">'
-            f'<div class="apb3-alloc-ticker">{tk}</div>'
-            f'<div class="apb3-alloc-nome" title="{nome}">{nome}</div>'
-            f'<div class="apb3-alloc-pct">{w_new*100:.1f}%</div>'
-            f'<div class="apb3-alloc-delta">{_delta_str(w_new, w_old)}</div>'
-            + _persp_badge(persp) +
-            f'</div>'
-        )
-    cards_html += "</div>"
-    st.markdown(cards_html, unsafe_allow_html=True)
+    # Colunas fixas — sem <img onerror> cru, achado A-012.
+    itens_alocacao = sorted(
+        items_analisados, key=lambda x: -pesos_novos.get(x.get("ticker", ""), 0)
+    )
+    _ALLOC_GRID_COLS = 4
+    for start in range(0, len(itens_alocacao), _ALLOC_GRID_COLS):
+        cols_alloc = st.columns(_ALLOC_GRID_COLS, gap="small")
+        linha = itens_alocacao[start:start + _ALLOC_GRID_COLS]
+        for col, it in zip(cols_alloc, linha):
+            tk    = it.get("ticker", "")
+            nome  = (it.get("nome") or tk)[:24]
+            an    = it.get("analise", {})
+            persp = an.get("perspectiva", "moderada")
+            w_new = pesos_novos.get(tk, 0.0)
+            w_old = float(it.get("peso_pct", 0.0)) / 100.0
+            with col:
+                st.markdown('<div class="apb3-alloc-card">', unsafe_allow_html=True)
+                render_company_logo(tk, _logo_url(tk), size=36)
+                st.markdown(
+                    f'<div class="apb3-alloc-ticker">{tk}</div>'
+                    f'<div class="apb3-alloc-nome" title="{nome}">{nome}</div>'
+                    f'<div class="apb3-alloc-pct">{w_new*100:.1f}%</div>'
+                    f'<div class="apb3-alloc-delta">{_delta_str(w_new, w_old)}</div>'
+                    + _persp_badge(persp) +
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -683,7 +692,7 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
                     "Fundamentação": scenario.get("fundamentacao", ""),
                 })
             if scenario_rows:
-                st.dataframe(pd.DataFrame(scenario_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(scenario_rows), width="stretch", hide_index=True)
 
         score_detail = an.get("score_qualitativo_detalhado") or {}
         if score_detail:
@@ -700,7 +709,7 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
                     "Evidência ou lacuna": item_score.get("evidencia_ou_lacuna", ""),
                 })
             if score_rows:
-                st.dataframe(pd.DataFrame(score_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(score_rows), width="stretch", hide_index=True)
 
         fit = an.get("adequacao_investidor") or {}
         if fit:
@@ -836,7 +845,7 @@ def _executar_analise(
         f"Alpha médio vs Selic: {float(np.mean([it.get('alpha_selic',0) for it in items])):.1f}%. "
         f"Score quantitativo médio: {float(np.mean([it.get('score',50) for it in items])):.1f}."
     )
-    n_com_docs = sum(1 for it in items if (cobertura_docs or {}).get(it["ticker"], 0) > 0)
+    sum(1 for it in items if (cobertura_docs or {}).get(it["ticker"], 0) > 0)
 
     items_analisados: list[dict] = []
     erros: list[str] = []          # erros de LLM capturados — exibidos após o rerun
@@ -1180,10 +1189,14 @@ def _build_chat_context(model: dict, state: dict, macro_hist: dict,
         w  = weights.get(tk, 0.0) * 100
         f  = fund.get(tk, {})
         meta = [f"peso={w:.1f}%"]
-        if it.get("segmento"): meta.append(f"segmento={it['segmento']}")
-        if it.get("score") is not None: meta.append(f"score={float(it['score']):.1f}")
-        if it.get("alpha_selic") is not None: meta.append(f"alphaSelic={float(it['alpha_selic']):+.1f}%")
-        if it.get("ano_lider"): meta.append(f"líder_em={it['ano_lider']}")
+        if it.get("segmento"):
+            meta.append(f"segmento={it['segmento']}")
+        if it.get("score") is not None:
+            meta.append(f"score={float(it['score']):.1f}")
+        if it.get("alpha_selic") is not None:
+            meta.append(f"alphaSelic={float(it['alpha_selic']):+.1f}%")
+        if it.get("ano_lider"):
+            meta.append(f"líder_em={it['ano_lider']}")
         lines.append(f"  {tk} ({it.get('nome','')}) | " + " | ".join(meta))
         inds = " | ".join(
             f"{_IND_LABEL.get(c,c)}={_fmt_ind(c, f.get(c))}"
@@ -1217,9 +1230,12 @@ def _build_chat_context(model: dict, state: dict, macro_hist: dict,
             an = it.get("analise", {})
             tk = it.get("ticker", "")
             extra = []
-            if an.get("perspectiva"): extra.append(f"perspectiva={an['perspectiva']}")
-            if an.get("acao_sugerida"): extra.append(f"ação={an['acao_sugerida']}")
-            if an.get("resumo"): extra.append(f"tese={an['resumo'][:160]}")
+            if an.get("perspectiva"):
+                extra.append(f"perspectiva={an['perspectiva']}")
+            if an.get("acao_sugerida"):
+                extra.append(f"ação={an['acao_sugerida']}")
+            if an.get("resumo"):
+                extra.append(f"tese={an['resumo'][:160]}")
             if extra:
                 lines.append(f"  {tk}: " + " | ".join(extra))
     else:
@@ -1234,9 +1250,12 @@ def _build_chat_context(model: dict, state: dict, macro_hist: dict,
         for ano in sorted(anos):
             d = macro_hist[ano]
             parts = []
-            if "selic" in d:  parts.append(f"Selic={d['selic']*100:.2f}%")
-            if "ipca" in d:   parts.append(f"IPCA={d['ipca']*100:.2f}%")
-            if "cambio" in d: parts.append(f"USD/BRL={d['cambio']:.2f}")
+            if "selic" in d:
+                parts.append(f"Selic={d['selic']*100:.2f}%")
+            if "ipca" in d:
+                parts.append(f"IPCA={d['ipca']*100:.2f}%")
+            if "cambio" in d:
+                parts.append(f"USD/BRL={d['cambio']:.2f}")
             if parts:
                 lines.append(f"  {ano}: {', '.join(parts)}")
 
@@ -1260,7 +1279,7 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
 
     col_chat_hdr, col_chat_clr = st.columns([5, 1])
     with col_chat_clr:
-        if st.button("🗑️ Limpar chat", key="apb3_chat_clear", use_container_width=True):
+        if st.button("🗑️ Limpar chat", key="apb3_chat_clear", width="stretch"):
             st.session_state.pop("apb3_chat_history", None)
             st.rerun()
 
@@ -1436,11 +1455,11 @@ def render(show_header: bool = True) -> None:
         rodar = st.button(
             "🚀 Executar Análise LLM",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             key="apb3_rodar",
         )
     with col_reset:
-        if st.button("🗑️ Limpar", use_container_width=True, key="apb3_reset"):
+        if st.button("🗑️ Limpar", width="stretch", key="apb3_reset"):
             st.session_state.pop("apb3_state", None)
             st.rerun()
 

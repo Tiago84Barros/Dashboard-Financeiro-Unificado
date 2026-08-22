@@ -6,10 +6,10 @@ arquivo CSV usado pela seção Configurações.
 """
 from __future__ import annotations
 
-from datetime import date
 import html
 import re
 import unicodedata
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -22,7 +22,6 @@ from core.controle import (
     parse_fatura_cartao_csv,
 )
 from core.utils import fmt_moeda
-
 
 _COR_RECEITA = "#00C896"
 _COR_DESPESA = "#FC5C7D"
@@ -233,7 +232,7 @@ def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
     st.dataframe(
         preview,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
         },
@@ -247,14 +246,14 @@ def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
             "Importar fatura",
             type="primary",
             disabled=(not account_id or not rows or bool(parsed.get("errors"))),
-            use_container_width=True,
+            width="stretch",
             key="settings_cc_invoice_import_btn",
         )
     with col_fix:
         fix_btn = st.button(
             "🔧 Corrigir pagamentos",
             disabled=not account_id,
-            use_container_width=True,
+            width="stretch",
             key="settings_cc_fix_payments_btn",
             help="Reclassifica 'Inclusão de Pagamento' e 'Pag Fatura Boleto' "
                  "que foram importados incorretamente como estornos.",
@@ -263,7 +262,7 @@ def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
         del_btn = st.button(
             "🗑️ Limpar fatura",
             disabled=not account_id,
-            use_container_width=True,
+            width="stretch",
             key="settings_cc_clear_btn",
             help="Apaga os lançamentos CSV desta fatura (vencimento selecionado) "
                  "para reimportação limpa.",
@@ -281,7 +280,7 @@ def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
         )
         c_yes, c_no = st.columns(2)
         with c_yes:
-            if st.button("✅ Confirmar limpeza", key="cc_confirm_yes", use_container_width=True):
+            if st.button("✅ Confirmar limpeza", key="cc_confirm_yes", width="stretch"):
                 with st.spinner("Apagando lançamentos..."):
                     deleted = limpar_transacoes_cartao(account_id, due_date)
                 st.session_state["cc_confirm_clear"] = False
@@ -295,7 +294,7 @@ def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
                     st.info("Nenhum lançamento encontrado para esta fatura.")
                 st.rerun()
         with c_no:
-            if st.button("❌ Cancelar", key="cc_confirm_no", use_container_width=True):
+            if st.button("❌ Cancelar", key="cc_confirm_no", width="stretch"):
                 st.session_state["cc_confirm_clear"] = False
                 st.rerun()
 

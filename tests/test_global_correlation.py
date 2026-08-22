@@ -138,6 +138,7 @@ def test_quadro_vazio_nao_levanta():
 def test_correlacao_media_por_ativo_exclui_a_diagonal():
     import numpy as np
     import pandas as pd
+
     from core.global_portfolio.correlation import correlacao_media_por_ativo
 
     # A e B andam juntos; C anda sozinho.
@@ -159,6 +160,7 @@ def test_correlacao_media_por_ativo_exclui_a_diagonal():
 def test_correlacao_media_por_ativo_ignora_ativo_sem_par():
     import numpy as np
     import pandas as pd
+
     from core.global_portfolio.correlation import correlacao_media_por_ativo
 
     n = 60
@@ -177,6 +179,7 @@ def test_correlacao_media_por_ativo_ignora_ativo_sem_par():
 def test_correlacao_media_por_ativo_com_um_ativo_devolve_vazio():
     import numpy as np
     import pandas as pd
+
     from core.global_portfolio.correlation import correlacao_media_por_ativo
 
     ret = pd.DataFrame({"A": np.arange(60.0)},
@@ -186,5 +189,6 @@ def test_correlacao_media_por_ativo_com_um_ativo_devolve_vazio():
 
 def test_correlacao_media_por_ativo_com_frame_vazio_devolve_vazio():
     import pandas as pd
+
     from core.global_portfolio.correlation import correlacao_media_por_ativo
     assert correlacao_media_por_ativo(pd.DataFrame()) == {}

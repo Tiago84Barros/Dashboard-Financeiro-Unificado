@@ -20,6 +20,7 @@ import streamlit as st
 
 import core.us_data as us
 from core.llm_context_b3 import detect_intent
+from core.portfolio_report_common import safe_float
 from core.portfolio_report_us import (
     _PEER_METRICS,
     build_industry_medians_context,
@@ -27,7 +28,6 @@ from core.portfolio_report_us import (
     compute_industry_peers,
     format_us_macro,
 )
-from core.portfolio_report_common import safe_float
 
 logger = logging.getLogger(__name__)
 

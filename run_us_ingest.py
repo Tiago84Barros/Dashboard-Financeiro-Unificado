@@ -36,6 +36,7 @@ from urllib.parse import quote
 _ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT))
 from dotenv import load_dotenv  # noqa: E402
+
 load_dotenv(_ROOT / ".env")
 
 logging.basicConfig(level=logging.INFO,
@@ -46,6 +47,7 @@ log = logging.getLogger("us_ingest_cli")
 def _point_to_warehouse() -> bool:
     """Aponta a engine para o Postgres local lendo warehouse/.env (sem expor senha)."""
     import subprocess
+
     from dotenv import dotenv_values
     env_paths = [_ROOT / "warehouse" / ".env"]
     env_paths.extend(_ROOT.glob(".claude/worktrees/*/warehouse/.env"))
@@ -205,10 +207,10 @@ def main() -> int:
         return out(res)
 
     if args.command == "backtest":
-        from core.database import get_engine
-        from core.us_read import load_score_panel
         import core.us_backtest as bt
+        from core.database import get_engine
         from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
+        from core.us_read import load_score_panel
         panel = load_score_panel(score_version=US_FUNDAMENTAL_SCORE_VERSION)
         if panel is None or panel.empty:
             return out({"ok": False, "reason": "sem histórico de scores — rode score-history"})
@@ -218,7 +220,7 @@ def main() -> int:
             slippage_bps=args.slippage_bps,
             bootstrap_samples=args.bootstrap_samples)
         if res.get("ok"):
-            import datetime as _dt
+
             from sqlalchemy import text
             run_key = f"wf-{res['start_date']}-{res['end_date']}-top{args.top_n}"
             with get_engine().begin() as conn:

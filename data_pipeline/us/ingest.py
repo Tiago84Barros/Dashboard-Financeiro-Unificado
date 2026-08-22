@@ -20,9 +20,13 @@ from typing import Iterable, Optional
 
 from sqlalchemy import text
 
-from data_pipeline.us import identity, normalize, repository as repo
+from data_pipeline.us import identity, normalize
+from data_pipeline.us import repository as repo
 from data_pipeline.us.providers import (
-    Budget, FmpProvider, ProviderError, build_default_provider, estimate_calls,
+    FmpProvider,
+    ProviderError,
+    build_default_provider,
+    estimate_calls,
 )
 
 

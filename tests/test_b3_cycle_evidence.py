@@ -1,8 +1,17 @@
 """Resiliência medida e dependência regulatória — casos do universo real."""
 from core.b3_cycle_evidence import (
-    FRAGIL, INTERMEDIARIO, LIVRE, REGULADO_ESTATAL, REGULADO_TARIFA,
-    RESILIENTE, SEM_EVIDENCIA, Resiliencia, classificar_resiliencia,
-    classify_regulation, divergencias_de_ciclo, peso_regulado,
+    FRAGIL,
+    INTERMEDIARIO,
+    LIVRE,
+    REGULADO_ESTATAL,
+    REGULADO_TARIFA,
+    RESILIENTE,
+    SEM_EVIDENCIA,
+    Resiliencia,
+    classificar_resiliencia,
+    classify_regulation,
+    divergencias_de_ciclo,
+    peso_regulado,
 )
 
 # Medidos em 30/07/2026 (margem de crise ÷ margem normal).

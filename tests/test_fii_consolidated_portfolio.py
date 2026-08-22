@@ -1,8 +1,12 @@
 import pandas as pd
 import pytest
 
-from views.fiis import (_fii_specific_metrics_frame, _merge_portfolio_views,
-                        _portfolio_return_correlation, _quality_portfolio_view)
+from views.fiis import (
+    _fii_specific_metrics_frame,
+    _merge_portfolio_views,
+    _portfolio_return_correlation,
+    _quality_portfolio_view,
+)
 
 
 def test_merge_portfolio_views_consolidates_rows_and_preserves_both_methods():

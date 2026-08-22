@@ -103,8 +103,9 @@ MANUAL_SECTOR_MAP: dict[str, tuple[str, str]] = {
 
 
 def run(apply: bool, overwrite: bool) -> int:
-    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine
     from sqlalchemy import text
+
+    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine
 
     _ensure_utf8_stdout()
     cfg = MigrationConfig.from_env(dry_run=not apply)

@@ -104,8 +104,9 @@ def run(periodo: str = "1mo") -> dict:
         "error_message": None,
     }
 
-    from data_pipeline.utils.db_utils import get_pipeline_engine
     from sqlalchemy import text
+
+    from data_pipeline.utils.db_utils import get_pipeline_engine
 
     engine = get_pipeline_engine()
     if engine is None:

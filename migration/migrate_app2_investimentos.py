@@ -123,7 +123,7 @@ def migrate_institutions(conn, text, apply, owner_id):
         name = str(r.get("name") or "").strip()
         code = str(r.get("code") or "").strip().upper()
         inst_type = INSTITUTION_TYPE_MAP.get(code, "broker")
-        country = str(r.get("country") or "BR").strip().upper()
+        str(r.get("country") or "BR").strip().upper()
 
         if name.lower() in existing:
             print(f"    -- (ja existe) {name}")
@@ -163,7 +163,7 @@ def migrate_assets(conn, text, apply, records):
         raw_type = str(r.get("type") or "").strip().lower()
         asset_class = ASSET_CLASS_MAP.get(raw_type, "stock")
         currency = str(r.get("currency") or "BRL").strip()
-        country = str(r.get("country") or "BR").strip().upper()
+        str(r.get("country") or "BR").strip().upper()
 
         if ticker in existing:
             id_map[app2_id] = existing[ticker]
@@ -304,8 +304,13 @@ def migrate_dividends(conn, text, apply, records, asset_id_map, owner_id):
 # ---------------------------------------------------------------------------
 
 def run(apply: bool) -> int:
-    from migration.config import MigrationConfig, _ensure_utf8_stdout, make_engine  # noqa: PLC0415
     from sqlalchemy import text  # noqa: PLC0415
+
+    from migration.config import (
+        MigrationConfig,
+        _ensure_utf8_stdout,
+        make_engine,
+    )
 
     _ensure_utf8_stdout()
     cfg = MigrationConfig.from_env(dry_run=not apply)

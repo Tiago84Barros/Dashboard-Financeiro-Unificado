@@ -24,13 +24,13 @@ import sys
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from dotenv import load_dotenv
 load_dotenv(_ROOT / ".env")
-
-from sqlalchemy import create_engine, text
 
 logging.basicConfig(
     level=logging.INFO,

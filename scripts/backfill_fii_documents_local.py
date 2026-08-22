@@ -7,14 +7,14 @@ processar todo o catalogo respeitando a reserva local de armazenamento.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import quote_plus
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -165,7 +165,10 @@ def _checkpoint(*, publish_remote: bool = False) -> dict:
 def main() -> int:
     args = _args()
     _configure_database()
-    from data_pipeline.market.fii_documents import _cache_root, process_pending_documents
+    from data_pipeline.market.fii_documents import (
+        _cache_root,
+        process_pending_documents,
+    )
     from data_pipeline.utils.db_utils import get_pipeline_engine
 
     engine = get_pipeline_engine()

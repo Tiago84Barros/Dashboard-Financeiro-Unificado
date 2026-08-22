@@ -545,6 +545,7 @@ def _carteira_real() -> dict:
       - Somente SELECT — sem DDL nem DML de escrita.
     """
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()
@@ -1136,6 +1137,7 @@ def _cashflow_mock() -> list:
 
 def _cashflow_real() -> list:
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()
@@ -1326,6 +1328,7 @@ def get_evolucao_patrimonial() -> dict:
 
 def _evolucao_real() -> dict:
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()

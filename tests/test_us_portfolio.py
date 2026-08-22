@@ -1,6 +1,5 @@
 """Testes da construção de carteira (restrições de posição/setor)."""
 import pandas as pd
-import pytest
 
 import core.us_portfolio as up
 

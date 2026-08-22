@@ -48,11 +48,16 @@ def run() -> dict:
         if str(_root) not in sys.path:
             sys.path.insert(0, str(_root))
 
-        from scripts.import_macro_app1_to_app4 import (
-            _engine, _source_columns, _normalize_macro, _create_or_extend_target, _upsert
-        )
         import pandas as pd
         from sqlalchemy import text
+
+        from scripts.import_macro_app1_to_app4 import (
+            _create_or_extend_target,
+            _engine,
+            _normalize_macro,
+            _source_columns,
+            _upsert,
+        )
     except ImportError as exc:
         result["status"] = "failed"
         result["error_message"] = f"Dependência ausente: {exc}"

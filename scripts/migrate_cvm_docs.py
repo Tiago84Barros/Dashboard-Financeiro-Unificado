@@ -23,14 +23,14 @@ import sys
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+
 # Garante que o diretório raiz do projeto está no path
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from dotenv import load_dotenv
 load_dotenv(_ROOT / ".env")
-
-from sqlalchemy import create_engine, text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -228,7 +228,7 @@ def migrate_docs(src_engine, dst_engine, tickers: list[str] | None, batch: int, 
                 with dst_engine.begin() as dst_conn:
                     for row in rows:
                         d = dict(row)
-                        src_id = d.pop("id")  # ID da origem — não usamos no destino
+                        d.pop("id")  # ID da origem — não usamos no destino
                         # Mapeia doc_hash como chave de upsert
                         doc_hash = d.get("doc_hash")
                         if doc_hash:

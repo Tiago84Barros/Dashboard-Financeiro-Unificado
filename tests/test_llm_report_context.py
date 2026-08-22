@@ -2,7 +2,7 @@
 limpeza de boilerplate jurídico do RAG."""
 import pandas as pd
 
-from core.llm_b3 import _fmt_dre, _fmt_multiplos, _report_model, analisar_empresa
+from core.llm_b3 import _fmt_dre, _fmt_multiplos, _report_model
 from core.rag_b3 import _strip_boilerplate
 
 

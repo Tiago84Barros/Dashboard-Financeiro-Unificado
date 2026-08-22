@@ -21,17 +21,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Re-exportar tudo do modulo importavel
 from migration.config import (  # noqa: F401, E402
-    MigrationConfig,
     OUTPUT_DIR,
     SOURCE_APP1,
     SOURCE_APP2,
     SOURCE_APP3,
+    MigrationConfig,
     _env,
     _mask,
     make_engine,
     run_config_check,
 )
-
 
 # ---------------------------------------------------------------------------
 # CLI

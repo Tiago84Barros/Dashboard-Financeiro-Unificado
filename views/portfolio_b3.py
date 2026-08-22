@@ -7,34 +7,53 @@ por segmento e monta uma carteira sugerida com empresas reais da B3.
 from __future__ import annotations
 
 import html
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from sqlalchemy.exc import SQLAlchemyError
 
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.data_reconciliacao as _recon
-from core.b3_portfolio_model import save_b3_portfolio_model
 from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
+from core.b3_portfolio_model import (
+    list_b3_portfolio_model_versions,
+    restore_b3_portfolio_model,
+    save_b3_portfolio_model,
+)
 from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
+from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import card_metrica
+from design.market_companies import render_company_logo
 
 # ── Importa engine compartilhado de empresas_b3 ───────────────────────────────
 from views.empresas_b3 import (
-    _GAMMA_DEF, _CAP_DEF, _SOFT_DEF, _REBAL_MONTH,
-    _COR_POS, _COR_NEG, _COR_ALT, _COR_INF, _COR_NEU,
+    _CAP_DEF,
+    _COR_ALT,
+    _COR_INF,
+    _COR_NEU,
+    _COR_POS,
     _DIV_POR_ACAO_MAX,
+    _GAMMA_DEF,
+    _REBAL_MONTH,
+    _SOFT_DEF,
+    PITCoverage,
     _aplicar_cheapness,
-    _apply_cap_soft, _apply_decay_penalty,
+    _apply_cap_soft,
+    _apply_decay_penalty,
     _batch_yf_precos_mensais,
-    _div_mes_sanitizado,
-    _enrich_com_slopes,
-    _fv, _fp, _logo_url,
-    _get_pesos_setor,
-    _plot_layout, _sec_hdr,
     _compute_score_entrada,
+    _div_mes_sanitizado,
+    _fv,
+    _get_pesos_setor,
+    _logo_url,
+    _pit_card_html,
+    _pit_rotulo_resultado,
+    _plot_layout,
+    _score_historico_ano_com_cobertura,
     _score_universo,
-    _score_historico_ano,
+    _sec_hdr,
     _select_n_heuristica,
     _so_acoes,
     _weights_from_scores,
@@ -42,7 +61,6 @@ from views.empresas_b3 import (
     _yf_multiplos_dividendos,
     _yf_trailing12m_divs,
 )
-
 
 _MIN_MARKET_CAP_COVERAGE = 0.80
 _MIN_ADTV_COVERAGE = 0.70
@@ -70,6 +88,7 @@ def _load_market_caps() -> dict[str, float]:
     capitalização zero nem ficarem cacheadas como um mapa vazio.
     """
     from sqlalchemy import text
+
     from core.database import get_engine
 
     eng = get_engine()
@@ -151,6 +170,7 @@ def _load_adtv(meses: int = 6) -> dict[str, float]:
     financeiro mensal; se já forem mensais, a soma é a própria barra.
     """
     from sqlalchemy import text
+
     from core.database import get_engine
 
     eng = get_engine()
@@ -326,10 +346,10 @@ def _render_data_quality_box(summary: dict, audit: pd.DataFrame, hist_audit: pd.
         if zeros:
             st.warning("Campos tratados como ausentes por excesso de zeros: " + ", ".join(zeros))
         if not audit.empty:
-            st.dataframe(audit.head(80), use_container_width=True, height=260)
+            st.dataframe(audit.head(80), width="stretch", height=260)
         if not hist_audit.empty:
             st.caption("Outliers removidos do historico usado no backtest")
-            st.dataframe(hist_audit.head(80), use_container_width=True, height=220)
+            st.dataframe(hist_audit.head(80), width="stretch", height=220)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -589,7 +609,9 @@ def _aplicar_diversificacao_correlacao(
     substituto que ajude, ou após max_substituicoes trocas.
     """
     from core.b3_correlation_diversification import (
-        average_pairwise_correlation, correlation_matrix, high_correlation_pairs,
+        average_pairwise_correlation,
+        correlation_matrix,
+        high_correlation_pairs,
     )
 
     items = [dict(it) for it in items]
@@ -739,14 +761,18 @@ def _processar_segmento(
     score_rows: list[dict]                 = []
     lideres_rows: list[dict]               = []
     constraint_warnings: list[str]         = []
+    pit_por_ano: dict[int, PITCoverage]    = {}
+    pit_historico = PITCoverage()
 
     for ano in range(ano_inicio, ano_atual):
-        score_map = _score_historico_ano(
+        score_map, pit_ano = _score_historico_ano_com_cobertura(
             hist_batch, tickers, ano, pesos, tk_grupos, lag=1,
             macro_by_year=macro_history or None,
         )
         if not score_map:
             continue
+        pit_por_ano[ano] = pit_ano
+        pit_historico = pit_historico + pit_ano
         score_map = _apply_decay_penalty(score_map, anos_lideranca)
         anos_com_score.append(ano)
         for tk, score in score_map.items():
@@ -800,7 +826,7 @@ def _processar_segmento(
         return None
 
     # Score para o próximo ano (dados até ano_atual - 1)
-    score_proximo = _score_historico_ano(
+    score_proximo, pit_proximo = _score_historico_ano_com_cobertura(
         hist_batch, tickers, ano_atual, pesos, tk_grupos, lag=1,
         macro_by_year=macro_history or None,
     )
@@ -846,6 +872,7 @@ def _processar_segmento(
     p_value_ic = 1.0
     wf_hit_rate = float("nan")
     contrib_est: dict[str, float] = {}
+    pit_validacao = PITCoverage()
     if tks_disp and not df_precos_all.empty:
         df_prec_seg = df_precos_all[tks_disp].dropna(how="all")
         # Fix auditoria 2026-07: corta a série pelo ano_inicio. Sem o corte,
@@ -893,6 +920,16 @@ def _processar_segmento(
                 )
             ]
         if len(df_validation) >= 18:
+            # A validação só é chamada PIT se cada decisão que alimentou os
+            # retornos exibidos tiver vintage real. A cobertura é reconstituída
+            # por ano de decisão, não inferida da cobertura do segmento inteiro.
+            anos_validacao = set(pd.DatetimeIndex(df_validation.index).year)
+            if walk_forward:
+                pit_validacao = pit_historico
+            else:
+                for ano, cobertura in pit_por_ano.items():
+                    if ano in anos_validacao:
+                        pit_validacao = pit_validacao + cobertura
             validation_details: dict = {}
             val_est_oos, val_selic_oos, val_ew_oos, _ = _simular_seg_backtest(
                 df_validation, lids_por_ano, pesos_por_ano,
@@ -1072,6 +1109,13 @@ def _processar_segmento(
         "n_anos": len(anos_com_score),
         "ano_inicio": min(anos_com_score),
         "ano_fim": max(anos_com_score),
+        # Proveniência da decisão corrente, da reconstrução e da janela que
+        # alimenta a aprovação. Nenhuma dessas três é deduzida de outra.
+        "pit_coverage": pit_historico + pit_proximo,
+        "pit_coverage_historico": pit_historico,
+        "pit_coverage_validacao": pit_validacao,
+        "pit_coverage_decisao": pit_proximo,
+        "pit_coverage_por_ano": dict(pit_por_ano),
         "constraint_warnings": sorted(set(constraint_warnings)),
     }
 
@@ -1085,6 +1129,12 @@ def _margem_pct(val: float, ref: float) -> float:
     if not (np.isfinite(val) and np.isfinite(ref)) or ref <= 0:
         return 0.0
     return (val / ref - 1) * 100
+
+
+def _rotulo_validacao_pit(res: dict) -> str:
+    """Rótulo de aprovação: nunca valida PIT com cobertura medida parcial."""
+    cobertura = res.get("pit_coverage_validacao") or PITCoverage()
+    return _pit_rotulo_resultado(cobertura, "Validação")["titulo"]
 
 
 def _benjamini_hochberg(p_values: list[float]) -> list[float]:
@@ -1135,6 +1185,13 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
         f'</div>',
         unsafe_allow_html=True,
     )
+    cobertura_validacao = res.get("pit_coverage_validacao")
+    if isinstance(cobertura_validacao, PITCoverage):
+        # Este é o mesmo conjunto de decisões que alimenta o gate exibido no
+        # segmento; portanto o card evita chamar de validação PIT aquilo que foi
+        # só uma simulação do prazo legal.
+        st.markdown(_pit_card_html(cobertura_validacao, "Validação"),
+                    unsafe_allow_html=True)
 
     if val_est > 0:
         sub_val = f"Valor final da estratégia: **{_fv(val_est)}**"
@@ -1164,11 +1221,9 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
         anos_desde = ano_atual - ultimo if ultimo else 99
         cor_part = _COR_POS if anos_desde <= max_anos_lid else _COR_NEU
         with cols[j % 4]:
+            st.markdown('<div class="pb3-emp-card">', unsafe_allow_html=True)
+            render_company_logo(tk, _logo_url(tk), size=40)
             st.markdown(
-                f'<div class="pb3-emp-card">'
-                f'<img src="{_logo_url(tk)}" style="width:40px;height:40px;'
-                f'border-radius:8px;object-fit:contain;background:rgba(255,255,255,.06);'
-                f'padding:4px;" onerror="this.style.display=\'none\'">'
                 f'<div class="pb3-emp-ticker">{tk}</div>'
                 f'<div class="pb3-emp-nome">{nome}</div>'
                 f'<div class="pb3-emp-hist">'
@@ -1226,7 +1281,7 @@ def _render_paineis_app1(
                 )
                 fig.update_layout(**_plot_layout(320))
                 fig.update_layout(coloraxis_showscale=False)
-                st.plotly_chart(fig, use_container_width=True,
+                st.plotly_chart(fig, width="stretch",
                                 config={"displayModeBar": False}, key="pb3_patch1")
 
     with st.expander("🧩 Patch 2 — Dominância", expanded=False):
@@ -1240,7 +1295,7 @@ def _render_paineis_app1(
             )
             dom.columns = ["Ticker", "Setor", "Segmento", "Anos como líder", "Anos"]
             dom = dom.sort_values("Anos como líder", ascending=False)
-            st.dataframe(dom, use_container_width=True, hide_index=True)
+            st.dataframe(dom, width="stretch", hide_index=True)
 
     with st.expander("🧩 Patch 3 — Diversificação e Concentração", expanded=False):
         df_sel = pd.DataFrame(proximos_uniq)
@@ -1253,7 +1308,7 @@ def _render_paineis_app1(
             fig_setor = px.bar(by_setor, x="Setor", y="Empresas", color="Setor")
             fig_setor.update_layout(**_plot_layout(320))
             fig_setor.update_layout(showlegend=False)
-            c1.plotly_chart(fig_setor, use_container_width=True,
+            c1.plotly_chart(fig_setor, width="stretch",
                             config={"displayModeBar": False}, key="pb3_patch3_setor")
 
             by_seg = df_sel["segmento"].value_counts().head(12).reset_index()
@@ -1262,7 +1317,7 @@ def _render_paineis_app1(
                              color="Empresas", color_continuous_scale="Teal")
             fig_seg.update_layout(**_plot_layout(320))
             fig_seg.update_layout(coloraxis_showscale=False)
-            c2.plotly_chart(fig_seg, use_container_width=True,
+            c2.plotly_chart(fig_seg, width="stretch",
                             config={"displayModeBar": False}, key="pb3_patch3_seg")
 
     with st.expander("🧩 Patch 4 — Benchmark do Segmento", expanded=False):
@@ -1276,7 +1331,7 @@ def _render_paineis_app1(
                 "Alfa vs Selic (%)": round(float(p.get("alpha_selic", 0.0)), 1),
                 "Alfa vs Pesos Iguais (%)": round(float(p.get("alpha_ew", 0.0)), 1),
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     with st.expander("🧩 Patch 5 — Qualidade das Empresas", expanded=False):
         _render_patch5_qualidade(proximos_uniq, df_precos_all)
@@ -1683,7 +1738,10 @@ def _render_perfil_configuracao() -> None:
     cada um declara a evidência que o sustenta (core/b3_portfolio_presets.py).
     """
     from core.b3_portfolio_presets import (
-        PERSONALIZADO, PRESETS, RECOMENDADO, avaliar_configuracao,
+        PERSONALIZADO,
+        PRESETS,
+        RECOMENDADO,
+        avaliar_configuracao,
         identificar_perfil,
     )
 
@@ -1726,7 +1784,7 @@ def _render_perfil_configuracao() -> None:
              "custo conhecido.",
     )
     col_btn.button("Aplicar perfil", key="pb3_aplicar_perfil",
-                   on_click=_aplicar(escolhido), use_container_width=True)
+                   on_click=_aplicar(escolhido), width="stretch")
 
     preset = PRESETS[escolhido]
     # O resumo do perfil saiu da tela: o selo acima já nomeia a configuração
@@ -1779,7 +1837,10 @@ def _render_resiliencia_medida(tickers: list[str], df_set: pd.DataFrame) -> None
     afrouxaria justamente a proteção contra concentração em commodity.
     """
     from core.b3_cycle_evidence import (
-        FRAGIL, RESILIENTE, Resiliencia, classificar_resiliencia,
+        FRAGIL,
+        RESILIENTE,
+        Resiliencia,
+        classificar_resiliencia,
         divergencias_de_ciclo,
     )
     from core.b3_holdings_health import classify_cycle
@@ -1830,7 +1891,7 @@ def _render_resiliencia_medida(tickers: list[str], df_set: pd.DataFrame) -> None
                 "Leitura": rotulo,
             })
         st.dataframe(pd.DataFrame(linhas), hide_index=True,
-                     use_container_width=True)
+                     width="stretch")
 
         tax = {t: classify_cycle(mapa_setor.get(t)) for t in presentes}
         for tk, classe, m in divergencias_de_ciclo(tax, medidas):
@@ -1937,7 +1998,9 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
     """
     from core.b3_evidence import A_FAVOR, CONTRA
     from core.b3_pooled_evidence import (
-        SegmentSample, pooled_yearly_ics, shrink_segment_estimates,
+        SegmentSample,
+        pooled_yearly_ics,
+        shrink_segment_estimates,
         universe_evidence,
     )
 
@@ -2014,7 +2077,7 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
         } for e in encolhidas])
         st.dataframe(
             tabela.sort_values("IC encolhido", ascending=False),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
             height=min(420, 60 + 35 * len(tabela)),
         )
         _sem_dado = sum(1 for e in encolhidas if e.ic_bruto is None)
@@ -2040,8 +2103,14 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
     útil justamente quando a rota de segmentos fica muda.
     """
     from core.b3_value_route import (
-        ARMADILHA, OPORTUNIDADE, SEM_EVIDENCIA, SEM_MARGEM, ValuePolicy,
-        blocked_by_missing_data, rank_value_opportunities, route_summary,
+        ARMADILHA,
+        OPORTUNIDADE,
+        SEM_EVIDENCIA,
+        SEM_MARGEM,
+        ValuePolicy,
+        blocked_by_missing_data,
+        rank_value_opportunities,
+        route_summary,
     )
 
     st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
@@ -2117,7 +2186,7 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
                 "valor_score": "Score de valor",
                 "forca_solvencia": "Folga de solvência",
                 "explicacao": "Por quê"}),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
             column_config={
                 "Margem de segurança": st.column_config.NumberColumn(format="%.0f%%"),
             },
@@ -2144,7 +2213,7 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
             st.dataframe(
                 trap[["Ticker", "margem_valor", "motivo"]].head(40).rename(columns={
                     "margem_valor": "Desconto aparente", "motivo": "Reprovação"}),
-                hide_index=True, use_container_width=True,
+                hide_index=True, width="stretch",
                 column_config={
                     "Desconto aparente": st.column_config.NumberColumn(format="%.0f%%"),
                 },
@@ -2169,11 +2238,58 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
                 faltantes[["Ticker", "margem_valor", "falta"]].head(40).rename(
                     columns={"margem_valor": "Desconto aparente",
                              "falta": "Dado ausente"}),
-                hide_index=True, use_container_width=True,
+                hide_index=True, width="stretch",
                 column_config={
                     "Desconto aparente": st.column_config.NumberColumn(format="%.0f%%"),
                 },
             )
+
+
+def _render_b3_portfolio_version_history(key: str) -> None:
+    """Histórico e restauração da carteira-modelo B3 (achado A-006).
+
+    Espelha ``views/fiis.py::_render_portfolio_version_history`` — mesmo
+    padrão de UI (expander com versão arquivada + confirmação explícita)
+    sobre o núcleo já existente em ``core.b3_portfolio_model``.
+    """
+    try:
+        versions = list_b3_portfolio_model_versions()
+    except (RuntimeError, ValueError, SQLAlchemyError):
+        return
+    archived = [item for item in versions if item.get("status") == "archived"]
+    if not archived:
+        return
+    with st.expander("🕘 Histórico e restauração do Portfólio B3"):
+        by_id = {str(item["id"]): item for item in archived}
+        selected = st.selectbox(
+            "Versão arquivada",
+            options=list(by_id),
+            format_func=lambda model_id: (
+                f"{fmt_datetime_br(by_id[model_id].get('created_at'))} · "
+                f"{by_id[model_id].get('item_count', 0)} empresas"
+            ),
+            key=f"{key}_restore_version",
+        )
+        confirmed = st.checkbox(
+            "Confirmo que desejo substituir a versão ativa por esta versão arquivada.",
+            key=f"{key}_restore_confirm",
+        )
+        if st.button(
+            "Restaurar versão selecionada",
+            key=f"{key}_restore_action",
+            disabled=not confirmed,
+        ):
+            try:
+                restore_b3_portfolio_model(selected)
+                st.success("Versão restaurada e verificada transacionalmente.")
+                st.rerun()
+            except (RuntimeError, ValueError) as exc:
+                st.error(f"Restauração bloqueada: {exc}")
+            except SQLAlchemyError:
+                st.error(
+                    "Restauração bloqueada por uma falha transacional no banco; "
+                    "a versão ativa anterior foi preservada."
+                )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2390,7 +2506,7 @@ def render(show_header: bool = True) -> None:
                  "viável (ex.: 2 nomes → até 50% cada), eliminando as 'restrições "
                  "inviáveis'. Desligado, usa o cap fixo (padrão de mercado grande).",
         )
-        usar_piso_qualidade = st.checkbox(
+        st.checkbox(
             "Piso absoluto de qualidade — reprova e substitui no mesmo segmento",
             value=True,
             key="pb3_piso_qualidade",
@@ -2406,7 +2522,7 @@ def render(show_header: bool = True) -> None:
                  "holding não tem margem operacional própria).",
         )
         _quali_ok = quali_gate_disponivel()
-        usar_gate_quali = st.checkbox(
+        st.checkbox(
             "Parecer qualitativo (LLM) na seleção — veto com substituição",
             value=_quali_ok,
             disabled=not _quali_ok,
@@ -2936,6 +3052,19 @@ def render(show_header: bool = True) -> None:
     # ── TABELA DE AUDITORIA ───────────────────────────────────────────────────
     _sec_hdr(f"📋 Auditoria de Segmentos — {len(resultados)} analisados · "
              f"{len(aprovados)} aprovados")
+    cobertura_validacao_total = PITCoverage()
+    for resultado in resultados:
+        cobertura = resultado.get("pit_coverage_validacao")
+        if isinstance(cobertura, PITCoverage):
+            cobertura_validacao_total = cobertura_validacao_total + cobertura
+    st.markdown(_pit_card_html(cobertura_validacao_total, "Validação agregada"),
+                unsafe_allow_html=True)
+    if cobertura_validacao_total.cobertura_medida < 1.0:
+        st.caption(
+            "A aprovação quantitativa abaixo permanece uma diligência/simulação "
+            "metodológica na parcela sem vintage medido; não é validação "
+            "point-in-time integral. O risco de restatement está declarado no card."
+        )
     if criterio_modo == "economico":
         _modo_txt = (
             "**Critério: Econômico (Brasil).** A aprovação é ECONÔMICA e medida "
@@ -3038,6 +3167,11 @@ def render(show_header: bool = True) -> None:
             "Subsetor":  res["subsetor"],
             "Segmento":  res["segmento"],
             "Situação": _situacao,
+            "Cobertura PIT da validação (%)": round(
+                float((res.get("pit_coverage_validacao") or PITCoverage()).cobertura_medida) * 100,
+                1,
+            ),
+            "Proveniência da validação": _rotulo_validacao_pit(res),
             "Estado da evidência": evidence_label(_verdict),
             "Efeito mín. detectável (Rank-IC)": (
                 round(_verdict.efeito_minimo_detectavel, 3)
@@ -3079,14 +3213,16 @@ def render(show_header: bool = True) -> None:
     df_tbl = pd.DataFrame(rows_tbl)
 
     def _cor_status(v: str) -> str:
-        if "✅" in v:    return "color: #00C896"
+        if "✅" in v:
+            return "color: #00C896"
         # Inconclusivo é âmbar, não vermelho: não houve reprovação de mérito.
-        if "⚠️" in v or "🟡" in v:   return "color: #F6C90E"
+        if "⚠️" in v or "🟡" in v:
+            return "color: #F6C90E"
         return "color: #FC5C7D"
 
     st.dataframe(
         df_tbl.style.applymap(_cor_status, subset=["Situação"]),
-        use_container_width=True,
+        width="stretch",
         height=min(500, 60 + 35 * len(df_tbl)),
     )
     _n_inconclusivos = sum("🟡" in str(linha["Situação"]) for linha in rows_tbl)
@@ -3215,7 +3351,7 @@ def render(show_header: bool = True) -> None:
                 motivos.append(f"Score Entrada em observacao ({score_entrada:.1f})")
             if tk == ticker_lider:
                 motivos.append(f"Líder no Score ({ano_ref})")
-            maior_part = max(part_hist, key=part_hist.get) if part_hist else None
+            max(part_hist, key=part_hist.get) if part_hist else None
             if ticker_maior == tk:
                 if maior_info and maior_info[1]:
                     motivos.append(maior_info[1])
@@ -3408,7 +3544,8 @@ def render(show_header: bool = True) -> None:
                 if len(_cols_dep) >= 2 and len(_ret_final) >= MIN_OBS_CORRELACAO:
                     try:
                         from core.markowitz import (
-                            min_variance_capped, pesos_hibridos_score_markowitz,
+                            min_variance_capped,
+                            pesos_hibridos_score_markowitz,
                         )
                         _mk_res = min_variance_capped(
                             _cols_dep, _ret_final[_cols_dep].to_numpy(),
@@ -3542,13 +3679,10 @@ def render(show_header: bool = True) -> None:
                 ) or '<div class="pb3-lider-motivo">Líder do segmento</div>'
                 _tk_html = html.escape(str(item["tk"]))
                 _nome_html = html.escape(str(item["nome"]))
-                _logo_html = html.escape(str(_logo_url(item["tk"])), quote=True)
                 with cols_p[j]:
+                    st.markdown('<div class="pb3-lider-card">', unsafe_allow_html=True)
+                    render_company_logo(item["tk"], _logo_url(item["tk"]), size=48)
                     st.markdown(
-                        f'<div class="pb3-lider-card">'
-                        f'<img src="{_logo_html}" style="width:48px;height:48px;'
-                        f'border-radius:10px;object-fit:contain;background:rgba(255,255,255,.06);'
-                        f'padding:5px;" onerror="this.style.display=\'none\'">'
                         f'<div class="pb3-lider-ticker">({_tk_html})</div>'
                         f'<div class="pb3-emp-nome">{_nome_html}</div>'
                         f'{mot_html}'
@@ -3827,6 +3961,7 @@ def render(show_header: bool = True) -> None:
                 card_metrica("Score médio",
                              f"{metrics_modelo['score_medio']:.2f}",
                              accent="#4A9EFF")
+        _render_b3_portfolio_version_history("pb3_save_model")
 
     # ── DISTRIBUIÇÃO SETORIAL ────────────────────────────────────────────────
     if proximos_uniq:
@@ -3848,7 +3983,7 @@ def render(show_header: bool = True) -> None:
                               textfont_size=11)
         fig_pie.update_layout(**_plot_layout(420))
         fig_pie.update_layout(showlegend=False)
-        st.plotly_chart(fig_pie, use_container_width=True,
+        st.plotly_chart(fig_pie, width="stretch",
                         config={"displayModeBar": False}, key="pb3_pie")
 
     # Carteira final exposta para auditoria automatizada (scripts/audit_portfolio_b3.py
@@ -3922,7 +4057,7 @@ def render(show_header: bool = True) -> None:
                     )
                     fig_perf.update_traces(line_width=2)
                     fig_perf.update_layout(**_plot_layout(360))
-                    st.plotly_chart(fig_perf, use_container_width=True,
+                    st.plotly_chart(fig_perf, width="stretch",
                                     config={"displayModeBar": False},
                                     key="pb3_perf_chart")
             else:

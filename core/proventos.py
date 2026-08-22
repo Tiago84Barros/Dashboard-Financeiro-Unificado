@@ -222,6 +222,7 @@ def _proventos_real() -> dict:
       - Todos os registros filtrados por OWNER_USER_ID.
     """
     from sqlalchemy import text
+
     from core.database import get_engine
 
     engine = get_engine()

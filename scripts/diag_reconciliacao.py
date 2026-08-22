@@ -1,13 +1,16 @@
 """
 T9 - Reconciliacao completa de dados reais (Fase 5.5)
 """
-import os, sys
+import os
+import sys
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy import text
+
 from core.config import settings
 from core.database import get_engine
-from sqlalchemy import text
 
 engine = get_engine()
 owner = settings.OWNER_USER_ID

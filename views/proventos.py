@@ -16,7 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core.proventos import get_proventos
-from core.utils import fmt_moeda, fmt_percentual
+from core.utils import fmt_moeda
 from design.componentes import (
     badge_status,
     card_metrica,
@@ -24,7 +24,6 @@ from design.componentes import (
     indicador_linha,
     secao_titulo,
 )
-
 
 # ── Gráfico de barras mensais ─────────────────────────────────────────────────
 
@@ -145,7 +144,7 @@ def render() -> None:
         "Proventos recebidos por mês (barra mais clara = mês atual)",
     )
     if hist:
-        st.plotly_chart(_fig_historico(hist), use_container_width=True)
+        st.plotly_chart(_fig_historico(hist), width="stretch")
     else:
         st.caption("Sem dados históricos suficientes para o gráfico.")
 
@@ -269,7 +268,7 @@ def render() -> None:
             "Total (R$)": st.column_config.NumberColumn("Total",    format="R$ %.2f"),
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         height=min(40 + len(ev_filtrados) * 36, 480),
     )
 

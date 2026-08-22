@@ -15,9 +15,9 @@ texto legítimo. Coberto por tests/test_llm_grounding.py.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
 import re
+from dataclasses import dataclass, field
 
 # Número em pt-BR ou en-US: 1.234,56 | 1,234.56 | 1234.56 | 12,5 | 45%
 _NUMBER_RE = re.compile(r"-?\d[\d.,]*")
