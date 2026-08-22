@@ -11,10 +11,15 @@ tests/test_portfolio_global_view.py.
 """
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
-from core.global_portfolio import concentration, correlation, factors, metrics, risk, roles
+from core import transaction_costs
+from core.global_portfolio import (
+    advisor, concentration, correlation, factors, metrics, risk, roles, signals,
+)
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
 from core.global_portfolio.returns import Cobertura, retornos_mensais
 from core.global_portfolio.taxonomy import ROTULOS, nao_mapeados
@@ -24,6 +29,7 @@ from core.portfolio.repository import (
     load_allocation_targets,
     save_allocation_targets,
 )
+from core.rebalancing import CalendarRebalance
 from design.componentes import card_metrica
 
 MSG_SEM_SNAPSHOT = (
@@ -718,6 +724,245 @@ def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> None:
             st.caption(entrada.justificativa)
 
 
+# ---------------------------------------------------------------------------
+# Fase 3b, Task 6: painel "Recomendações do motor de movimentação"
+# ---------------------------------------------------------------------------
+
+# Rotulo e cor de exibicao de cada acao de core.global_portfolio.advisor.Acao —
+# so texto/estilo, nao reinterpreta nem deriva nada da decisao do motor.
+_ROTULO_ACAO: dict[str, str] = {
+    "aumentar": "Aumentar",
+    "reduzir": "Reduzir",
+    "vender": "Vender",
+    "manter": "Manter",
+    "indeterminado": "Indeterminado",
+}
+
+_ACCENT_ACAO: dict[str, str] = {
+    "aumentar": "#00C896",
+    "reduzir": "#F97316",
+    "vender": "#FC5C7D",
+    "manter": "#9CA3AF",
+    "indeterminado": "#9CA3AF",
+}
+
+# Ordem de exibicao dos cartoes de resumo — nao a ordem de ACOES_VALIDAS
+# (um frozenset, sem ordem estavel), e sim a leitura natural do fluxo de
+# decisao (compra -> venda -> nada -> sem dado).
+_ORDEM_RESUMO_ACOES: tuple[str, ...] = ("aumentar", "reduzir", "vender", "manter", "indeterminado")
+
+
+def texto_de_custo(acao: advisor.Acao) -> str:
+    """Texto de exibicao do custo de uma recomendacao.
+
+    Nunca um numero cru quando a classe nao esta calibrada: Task 3 fez
+    `calibrado=False` produzir `math.nan` de proposito, precisamente para
+    nao ser confundido com um custo apurado — este texto intercepta o NaN
+    ANTES de qualquer formatacao numerica (nunca chega a `_fmt`) e devolve
+    "não calibrado" por extenso. Tambem nunca um "R$ 0,00" para o ativo
+    indeterminado: ali `custo_estimado` e 0.0 so porque o motor nunca
+    tentou calcular (Task 4), nao porque o custo de fato seja zero.
+
+    A ressalva de IR fica NA MESMA string do numero, nunca numa nota a
+    parte: o motor (Task 4) sempre chama `custo_venda` com `lucro=0.0`
+    porque esta camada pura nao rastreia preco medio/lote — o IR relatado
+    e sempre 0 por construcao, entao o numero mostrado e so a friccao de
+    negociacao. Isso vale para toda recomendacao cujo peso sugerido caia
+    abaixo do atual (venda ou reducao parcial), mesmo quando a acao final
+    virou "manter" pelo guard de custo — o numero exibido ali tambem veio
+    de `custo_venda`.
+    """
+    if acao.acao == "indeterminado":
+        return "custo: não aplicável (sem sinal para este ativo)"
+    if not acao.custo_calibrado:
+        return "custo: não calibrado (classe sem parâmetros — ver Custo por classe)"
+    texto = f"custo: R$ {_fmt(acao.custo_estimado, casas=2)}"
+    if acao.peso_sugerido < acao.peso_atual:
+        texto += " — fricção de negociação; não inclui IR (sem rastreio de custo de aquisição)"
+    return texto
+
+
+def _resumo_de_acoes(acoes: list[advisor.Acao]) -> dict[str, int]:
+    """Contagem de recomendacoes por acao.
+
+    Toda chave de `advisor.ACOES_VALIDAS` aparece, mesmo com contagem zero
+    — mesma razao de `_resumo_de_papeis`: uma acao que nenhuma recomendacao
+    recebeu hoje (ex.: nenhuma venda) e informacao, nao ausencia dela.
+    """
+    contagem = {a: 0 for a in advisor.ACOES_VALIDAS}
+    for acao in acoes:
+        contagem[acao.acao] = contagem.get(acao.acao, 0) + 1
+    return contagem
+
+
+def _linha_de_componentes(acao: advisor.Acao) -> pd.DataFrame:
+    """Tabela de decomposicao numerica do score: um sinal por linha, ordenada
+    por nome para exibicao deterministica."""
+    linhas = [{"Sinal": nome, "Valor": round(valor, 3)}
+              for nome, valor in sorted(acao.componentes.items())]
+    return pd.DataFrame(linhas, columns=["Sinal", "Valor"])
+
+
+def _texto_de_limiares_motor() -> str:
+    """Ressalva do motor de movimentacao — mesmo tom e lugar de
+    `_texto_de_limiares` (papel estrategico, Fase 3a): os limiares abaixo
+    sao escolhas de desenho do motor, nao fatos sobre os ativos, e ficam
+    listados para quem le julgar o corte em vez de toma-lo como dado.
+    """
+    partes = [
+        f"limite por ativo = {signals.LIMITE_ATIVO_DEFAULT:.0%}",
+        f"limite por setor = {signals.LIMITE_SETOR_DEFAULT:.0%}",
+        f"limite por país = {signals.LIMITE_PAIS_DEFAULT:.0%}",
+        f"correlação de redundância ≥ {correlation.LIMIAR_REDUNDANCIA:g}",
+        f"tilt de fator extremo = {signals.LIMIAR_TILT_FATOR_EXTREMO:g}",
+        f"sensibilidade do score = {advisor.SENSIBILIDADE_SCORE_DEFAULT:g}",
+        f"peso mínimo antes de virar venda = {advisor.LIMIAR_VENDA_DEFAULT:.2%}",
+    ]
+    return (
+        "Limiares heurísticos do motor de movimentação, ajustáveis e não fatos "
+        "sobre os ativos — " + "; ".join(partes) + "."
+    )
+
+
+def _custos_por_classe() -> dict[str, transaction_costs.CostConfig]:
+    """Mapa classe -> CostConfig que o motor usa para descontar custo.
+
+    Só a B3 tem parâmetro calibrado hoje (`brasil_pf_default`). EUA e FII
+    ficam explicitamente `nao_calibrado`: a ressalva registrada no plano da
+    Fase 3b é explícita — não inventamos alíquota, spread nem isenção para
+    essas classes só para a tela mostrar um número que parece apurado e não
+    é (ver docstring de `core/transaction_costs.py`).
+    """
+    return {
+        transaction_costs.CLASSE_B3: transaction_costs.CostConfig.brasil_pf_default(),
+        transaction_costs.CLASSE_US: transaction_costs.CostConfig.nao_calibrado(
+            transaction_costs.CLASSE_US),
+        transaction_costs.CLASSE_FII: transaction_costs.CostConfig.nao_calibrado(
+            transaction_costs.CLASSE_FII),
+    }
+
+
+def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
+                         alvos: dict, total_brl: float | None, *,
+                         loader=None) -> list[advisor.Acao]:
+    """Monta os sinais (Fase 3b Task 2) a partir dos analisadores de verdade
+    e chama o motor (Task 4). Função pura, sem Streamlit — a fronteira de
+    isolamento contra falha do motor fica em `_painel_recomendacoes`, que a
+    chama dentro de um try/except (mesmo padrão de
+    `dashboard_geral._carteira_modelo_us`).
+
+    Sem série mensal suficiente (menos de dois ativos com retorno, ou
+    `df`/`ret` vazios) não há como calcular risco, correlação ou fatores —
+    devolve lista vazia em vez de propagar exceção ou inventar sinal.
+
+    `loader` só existe para o teste poder injetar uma série de fatores
+    sintética sem tocar o banco — produção sempre usa o default de
+    `factors.series_de_fatores` (mesmo padrão de `_painel_fatores`).
+    """
+    if df is None or df.empty or ret is None or ret.empty or ret.shape[1] < 2:
+        return []
+
+    pares = correlation.pares_redundantes(ret)
+    contribuicoes = risk.contribuicao_marginal(ret, pesos)
+    correlacoes_media = correlation.correlacao_media_por_ativo(ret)
+    papeis = roles.classificar(df, retornos=ret, correlacoes=correlacoes_media)
+
+    serie_fatores = factors.series_de_fatores(loader=loader)
+    exposicao_portfolio = None
+    exposicoes_ativos: dict = {}
+    if not serie_fatores.empty:
+        exposicao_portfolio = factors.exposicao_do_portfolio(ret, pesos, serie_fatores)
+        if exposicao_portfolio.exposicoes:
+            exposicoes_ativos = {
+                s: factors.betas_do_ativo(ret[s], serie_fatores) for s in ret.columns
+            }
+
+    sinais = signals.gerar_sinais(
+        df, contribuicoes=contribuicoes, pares_redundantes=pares, papeis=papeis,
+        alvos=alvos, exposicao_portfolio=exposicao_portfolio,
+        exposicoes_ativos=exposicoes_ativos,
+    )
+
+    return advisor.recomendar(
+        df, sinais, alvos=alvos, politica=CalendarRebalance(),
+        custos=_custos_por_classe(), patrimonio_total=float(total_brl or 0.0),
+        data_atual=date.today(),
+    )
+
+
+def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
+                          alvos: dict, total_brl: float | None) -> None:
+    """Painel 'Recomendações do motor de movimentação' (Fase 3b, Task 6).
+
+    Cartões CSS (`card_metrica`), nunca informação solta — mesma regra do
+    resto da tela. Uma falha do motor (`_gerar_recomendacoes`) nunca derruba
+    a seção: cai no aviso e o restante do Portfólio Global continua válido,
+    mesmo padrão de fronteira de isolamento que
+    `dashboard_geral._carteira_modelo_us` já usa entre módulos.
+    """
+    st.markdown("#### Recomendações do motor de movimentação")
+
+    try:
+        acoes = _gerar_recomendacoes(df, ret, pesos, alvos, total_brl)
+    except Exception:  # noqa: BLE001 - fronteira de isolamento do motor de recomendacao
+        st.warning(
+            "⚠️ Não foi possível gerar as recomendações do motor de movimentação. "
+            "As demais seções do Portfólio Global continuam válidas."
+        )
+        return
+
+    if not acoes:
+        st.info(
+            "Sem série mensal suficiente para o motor combinar sinais e "
+            "recomendar movimentos."
+        )
+        return
+
+    st.caption(_texto_de_limiares_motor())
+
+    resumo = _resumo_de_acoes(acoes)
+    colunas = st.columns(len(_ORDEM_RESUMO_ACOES))
+    for coluna, chave in zip(colunas, _ORDEM_RESUMO_ACOES):
+        with coluna:
+            card_metrica(_ROTULO_ACAO[chave], resumo[chave], accent=_ACCENT_ACAO[chave])
+
+    # Ponto 1 do brief: custo nao calibrado precisa ser visivel sem que o
+    # usuario precise abrir cada recomendacao — um cartao de contagem, mais
+    # o aviso que nomeia os ativos (mesmo padrao de sem_papel_symbols em
+    # _painel_papeis).
+    nao_calibrados = [a for a in acoes if not a.custo_calibrado]
+    card_metrica(
+        "Recomendações com custo não calibrado",
+        len(nao_calibrados),
+        positivo=(len(nao_calibrados) == 0),
+        accent="#FC5C7D" if nao_calibrados else "#00C896",
+        ajuda="Classe sem parâmetros de custo calibrados (core.transaction_costs): "
+              "o motor recusa mexer até o custo real ser conhecido.",
+    )
+    if nao_calibrados:
+        st.warning(
+            f"⚠️ {len(nao_calibrados)} recomendação(ões) com custo não calibrado, "
+            "mantidas em vez de executadas: "
+            + ", ".join(a.symbol for a in nao_calibrados)
+        )
+
+    for acao in acoes:
+        titulo = f"{acao.symbol} — {_ROTULO_ACAO.get(acao.acao, acao.acao)}"
+        with st.expander(titulo):
+            card_metrica(
+                "Peso atual → sugerido",
+                f"{acao.peso_atual * 100:.2f}% → {acao.peso_sugerido * 100:.2f}%",
+                delta=texto_de_custo(acao),
+                accent=_ACCENT_ACAO.get(acao.acao, "#9CA3AF"),
+            )
+            if acao.analisadores:
+                st.caption("Analisadores que dispararam: " + ", ".join(sorted(acao.analisadores)))
+            else:
+                st.caption("Nenhum analisador produziu sinal para este ativo.")
+            if acao.componentes:
+                st.dataframe(_linha_de_componentes(acao), use_container_width=True, hide_index=True)
+
+
 def render() -> None:
     st.markdown("## 🌐 Portfólio Global")
     st.caption("As três carteiras lidas como um único patrimônio.")
@@ -778,3 +1023,4 @@ def render() -> None:
     _painel_fatores(ret, pesos)
     _painel_risco(ret, pesos)
     _painel_papeis(df, ret)
+    _painel_recomendacoes(df, ret, pesos, alvos, alocacao.get("total_brl"))

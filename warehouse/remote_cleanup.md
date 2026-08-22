@@ -90,3 +90,55 @@ finanças pessoais.
 Depois do `DROP`, aguardar o Supabase atualizar o uso e executar novamente o
 diagnóstico. A operação é destrutiva no banco remoto; este arquivo documenta o
 procedimento executado após a validação do backup local.
+
+## Índices mortos — 14,6 MB (levantado em 2026-08-16)
+
+Seis índices com `idx_scan = 0`. As estatísticas são confiáveis: `stats_reset` é
+NULL (nunca foram zeradas) e o índice mais usado do banco acumula 1,49 mi de
+scans. Cada um foi verificado por raciocínio, não só pelo contador:
+
+| índice | MB | por que não serve |
+|---|---|---|
+| `idx_metric_vintages_lookup` | 9,4 | duplicata **exata** de `uq_metric_vintage_artifact` (mesma lista de colunas), que tem 214.080 scans |
+| `idx_calcmetric_conf` | 2,9 | `confidence_score` tem 2 valores distintos em 66.848 linhas; o planejador nunca escolhe |
+| `idx_chunks_ticker_date` | 0,8 | o RAG filtra por `LEFT(UPPER(ticker),4)`; `EXPLAIN` confirma Seq Scan |
+| `docs_chunks_ix_ticker` | 0,7 | idem — btree em `ticker` puro não atende a expressão |
+| `idx_dul_job_name` | 0,5 | `data_update_logs` tem 2,4 MB; varredura é trivial |
+| `idx_dul_started_at` | 0,3 | idem |
+
+`CONCURRENTLY` para não travar a tabela (não roda dentro de transação):
+
+```sql
+DROP INDEX CONCURRENTLY IF EXISTS market.idx_metric_vintages_lookup;
+DROP INDEX CONCURRENTLY IF EXISTS market.idx_calcmetric_conf;
+DROP INDEX CONCURRENTLY IF EXISTS public.idx_chunks_ticker_date;
+DROP INDEX CONCURRENTLY IF EXISTS public.docs_chunks_ix_ticker;
+DROP INDEX CONCURRENTLY IF EXISTS public.idx_dul_job_name;
+DROP INDEX CONCURRENTLY IF EXISTS public.idx_dul_started_at;
+```
+
+Reversão, se algum fizer falta:
+
+```sql
+CREATE INDEX idx_metric_vintages_lookup ON market.calculated_metric_vintages
+    USING btree (ticker, period, year, quarter, metric_name, available_at, recorded_at);
+CREATE INDEX idx_calcmetric_conf ON market.calculated_metrics USING btree (confidence_score);
+CREATE INDEX idx_chunks_ticker_date ON public.docs_corporativos_chunks
+    USING btree (ticker, document_date DESC);
+CREATE INDEX docs_chunks_ix_ticker ON public.docs_corporativos_chunks USING btree (ticker);
+CREATE INDEX idx_dul_job_name ON public.data_update_logs USING btree (job_name, started_at DESC);
+CREATE INDEX idx_dul_started_at ON public.data_update_logs USING btree (started_at DESC);
+```
+
+Separado disso, `public.docs_corporativos` tem **três** índices únicos sobre a
+mesma coluna `doc_hash` — `docs_corporativos_uq_hash` e
+`docs_corporativos_doc_hash_uq` são idênticos, e `uq_docs_corporativos_doc_hash`
+é a versão parcial (`WHERE doc_hash IS NOT NULL`). São ~1,2 MB e três
+verificações de unicidade a cada inserção. Manter **um**; qual manter é decisão
+de quem conhece a intenção original, por isso não está no bloco acima.
+
+Nota de desempenho descoberta no caminho: como o RAG filtra por
+`LEFT(UPPER(ticker), 4)`, toda busca faz Seq Scan em 93.498 chunks. O índice que
+resolveria é de expressão — `ON public.docs_corporativos_chunks
+(LEFT(UPPER(ticker), 4))` — mas ele custa espaço, que é justamente o que se está
+tentando poupar. Decisão pendente.
