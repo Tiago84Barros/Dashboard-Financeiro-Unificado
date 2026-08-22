@@ -1,8 +1,11 @@
 """
 views/fiis.py — Seleção de FIIs (fundos imobiliários)
 
-Metodologia em abas (como Empresas B3, com as particularidades de FII):
-  1. Ranking        — score DY 12m · P/VP · liquidez (BRAPI + CVM).
+Abas (como Empresas B3, com as particularidades de FII):
+  1. FIIs Disponíveis — universo bruto, filtrável, com score DY 12m · P/VP ·
+                        liquidez (BRAPI + CVM). Só apresenta o que existe, sem
+                        aplicar elegibilidade — equivalente a "Empresas por
+                        Setor" nas vitrines B3/EUA.
   2. Busca de ativo — detalhe por FII: histórico (P/VP·VPA), vacância, composição
                       e carteira de imóveis com região (tijolo/logística).
   3. Carteira-modelo — seleção diversificada por tipo (tijolo/papel/fof/híbrido).
@@ -133,7 +136,7 @@ _CSS = """
 </style>
 """
 
-_TABS = ["📊 Diligência", "🔎 Busca de ativo", "🧺 Carteira-modelo",
+_TABS = ["📋 FIIs Disponíveis", "🔎 Busca de ativo", "🧺 Carteira-modelo",
          "📈 Retrospectiva", "🧾 Revisão de dados"]
 
 _SNAPSHOT_REQUIRED_FIELDS = (
@@ -175,17 +178,13 @@ def _snapshot_as_of(inputs: pd.DataFrame):
 def _selection_status_copy(*, validation_applicable: bool, can_publish: bool) -> dict[str, str]:
     approved = validation_applicable and can_publish
     return {
-        "title": (
-            "## Seleção de FIIs — Universo Validado"
-            if approved else "## Seleção de FIIs — Lista de Diligência"
-        ),
-        "tab": "📊 Seleção validada" if approved else "📊 Diligência",
         "footer": (
             "O universo bruto atende ao gate vigente; a Carteira-modelo ainda "
             "aplica elegibilidade e controles próprios."
             if approved else
-            "O universo bruto permanece em diligência; a Carteira-modelo usa "
-            "somente o subconjunto elegível e possui gate de publicação próprio."
+            "Esta aba mostra o universo bruto de FIIs disponíveis, antes de qualquer "
+            "filtro de elegibilidade; a Carteira-modelo usa somente o subconjunto "
+            "elegível e possui gate de publicação próprio."
         ),
     }
 
@@ -200,7 +199,7 @@ def render(show_header: bool = True) -> None:
     if show_header:
         container_pagina(
             "Seleção de FIIs",
-            "Ranking, diligência, carteira-modelo e backtest de fundos imobiliários.",
+            "Universo disponível, busca de ativo, carteira-modelo e retrospectiva de fundos imobiliários.",
             "🏬",
             metadados=[
                 ("Metodologia", METHODOLOGY_VERSION),
@@ -251,23 +250,16 @@ def render(show_header: bool = True) -> None:
         snapshot_as_of=_snapshot_as_of(inputs),
     )
     st.session_state["fii_raw_publication_gate"] = gate
-    status_copy = _selection_status_copy(
-        validation_applicable=validation_applicable,
-        can_publish=gate.can_publish_recommendation,
-    )
     ranked = df[df["Score"].notna()].sort_values(
         "Score", ascending=False
     ).reset_index(drop=True)
     health_metrics = _fii_data_health_metrics(df, ranked, inputs, scored_v4, gate)
     # O banner de "universo bruto em diligência" saiu: ele repetia, em quatro
-    # linhas e em TODAS as abas, o que o rótulo da própria aba já diz — que
-    # alterna entre "Seleção validada" e "Diligência" conforme o mesmo gate.
-    # Na Carteira-modelo era pior que redundante: o texto existia para avisar
-    # que NÃO se aplicava ali.
-    #
-    # O sinal não se perdeu. O estado do gate continua no rótulo da aba, e os
-    # números que o sustentam seguem em "Qualidade dos dados", logo abaixo.
-    # A aprovação continua sendo anunciada, porque aí é notícia, não rótulo.
+    # linhas e em TODAS as abas, o que "Qualidade dos dados" já mostra logo
+    # abaixo. A primeira aba não é mais rotulada por esse estado — ela só
+    # lista o universo disponível, como a mesma aba faz nas outras vitrines
+    # (Empresas por Setor). O sinal do gate segue vivo em "Qualidade dos
+    # dados" e na aprovação abaixo, porque aí é notícia, não rótulo de aba.
     if gate.can_publish_recommendation:
         st.success("Cobertura, confiança e validação atendidas — "
                    "apta à publicação como Carteira Modelo.")
@@ -275,9 +267,8 @@ def render(show_header: bool = True) -> None:
 
     # Abas por botão (permitem trocar de aba programaticamente — ex.: card → Busca).
     active = st.session_state.get("fii_active_tab", 0)
-    tab_labels = [status_copy["tab"], *_TABS[1:]]
-    cols = st.columns(len(tab_labels))
-    for i, (c, lab) in enumerate(zip(cols, tab_labels)):
+    cols = st.columns(len(_TABS))
+    for i, (c, lab) in enumerate(zip(cols, _TABS)):
         with c:
             if st.button(lab, width="stretch", key=f"fii_tab{i}",
                          type="primary" if active == i else "secondary"):

@@ -43,19 +43,27 @@ def test_banner_de_diligencia_saiu_de_todas_as_abas():
 def test_estado_do_gate_continua_visivel():
     """O sinal não pode ter sumido junto com o banner."""
     corpo = inspect.getsource(fiis.render)
-    # O rótulo da aba alterna conforme o mesmo gate...
-    assert 'status_copy["tab"]' in corpo
-    # ...e os números seguem no painel de qualidade dos dados.
+    # O painel de qualidade dos dados segue mostrando o estado do gate.
     assert "_render_data_health_summary(health_metrics, gate)" in corpo
     # A aprovação continua sendo anunciada — aí é notícia, não rótulo.
     assert "apta à publicação como Carteira Modelo" in corpo
 
 
-def test_rotulo_da_aba_ainda_reflete_o_gate():
+def test_primeira_aba_e_estatica_e_nao_rotula_pelo_gate():
+    """A primeira aba só apresenta o universo disponível — não é diligência nem
+    seleção, então seu rótulo não pode mais alternar com o gate de publicação."""
+    assert fiis._TABS[0] == "📋 FIIs Disponíveis"
+    corpo = inspect.getsource(fiis.render)
+    assert "_TABS[1:]" not in corpo
+    assert 'status_copy["tab"]' not in corpo
+
+
+def test_rodape_da_primeira_aba_ainda_reflete_o_gate():
+    """O estado do gate não sumiu: só saiu do rótulo do botão da aba."""
     copy_ok = fiis._selection_status_copy(validation_applicable=True, can_publish=True)
     copy_pendente = fiis._selection_status_copy(validation_applicable=False, can_publish=False)
-    assert copy_ok["tab"] == "📊 Seleção validada"
-    assert copy_pendente["tab"] == "📊 Diligência"
+    assert "atende ao gate vigente" in copy_ok["footer"]
+    assert "universo bruto de FIIs disponíveis" in copy_pendente["footer"]
 
 
 # ── 2. Ranking sem cards e sem medianas ──────────────────────────────────────
