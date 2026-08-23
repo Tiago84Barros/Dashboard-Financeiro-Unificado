@@ -32,8 +32,10 @@ FACTOR_TRACKS: dict[str, list[str]] = {
     "solidity": ["net_debt_ebitda", "interest_coverage", "current_ratio",
                  "debt_to_equity"],
     "capital_efficiency": ["roic"],
-    "valuation": ["earnings_yield", "ev_ebit", "ev_ebitda", "fcf_yield",
-                  "p_fcf", "p_s"],
+    # p_fcf saiu: é exatamente 1/fcf_yield, que já está na trilha — mantê-lo
+    # dobrava o peso do fluxo de caixa dentro de valuation. Mesmo motivo pelo
+    # qual `pe` nunca entrou aqui, só earnings_yield.
+    "valuation": ["earnings_yield", "ev_ebit", "ev_ebitda", "fcf_yield", "p_s"],
     # Recompra só cria valor se reduzir a base acionária: share_count_cagr_3y
     # é o contraponto ao shareholder_yield (buyback anulado por emissão SBC).
     "shareholder": ["shareholder_yield", "share_count_cagr_3y"],
@@ -57,6 +59,14 @@ SECTOR_TRACK_OVERRIDES: dict[str, dict[str, float]] = {
 NEUTRAL = 0.5
 _ALL_METRICS = [m for ms in FACTOR_TRACKS.values() for m in ms]
 
+# Múltiplos ranqueados pelo YIELD recíproco (achado A-101). EV/EBIT = -9 não é
+# mais barato que 5: o múltiplo deixa de ser monótono quando o denominador vira
+# negativo, e LOWER_IS_BETTER punha a empresa deficitária no topo da trilha de
+# valuation. EBIT/EV é monótono através do zero — rendimento negativo ranqueia
+# abaixo de qualquer rendimento positivo, que é a leitura econômica correta.
+# p_s fica de fora: receita não fica negativa, então P/S não tem o problema.
+_RANK_AS_RECIPROCAL = frozenset({"ev_ebit", "ev_ebitda", "p_fcf", "pe"})
+
 # Uma nota pode ser calculada com informação parcial, mas só é considerada
 # decision-grade quando as trilhas essenciais possuem cobertura mínima.
 CRITICAL_TRACK_MIN_COVERAGE = {
@@ -65,6 +75,23 @@ CRITICAL_TRACK_MIN_COVERAGE = {
     "solidity": 0.25,
     "valuation": 0.50,
 }
+
+
+def _impairment_flags_at(frame: pd.DataFrame, i: int) -> tuple[str, ...]:
+    """Marcas de balanço quebrado da linha, tolerando a coluna ausente.
+
+    A vitrine publicada pode estar num snapshot anterior à coluna (já houve
+    drift de schema aqui). Sem a coluna o comportamento é o de antes; com ela,
+    o grau de decisão é travado.
+    """
+    if "impairment_flags" not in frame.columns:
+        return ()
+    valor = frame.at[i, "impairment_flags"]
+    if valor is None or isinstance(valor, float):  # NaN
+        return ()
+    if isinstance(valor, str):
+        return (valor,) if valor else ()
+    return tuple(valor)
 
 
 def _sector_confidence_penalty(sector: object) -> float:
@@ -100,9 +127,15 @@ def _rank_within(df: pd.DataFrame, group_col: str, min_group: int) -> pd.DataFra
         if metric not in df.columns:
             out[metric] = NEUTRAL
             continue
-        col = df[metric]
+        col = pd.to_numeric(df[metric], errors="coerce")
+        reciproco = metric in _RANK_AS_RECIPROCAL
+        if reciproco:
+            # 1/0 seria infinito; o múltiplo zerado não diz nada sobre preço.
+            col = (1.0 / col.where(col != 0)).replace([float("inf"),
+                                                       float("-inf")], None)
+        base = df.assign(**{metric: col})
         if group_col in df.columns:
-            ranked = df.groupby(group_col)[metric].transform(_winsorized_percentile)
+            ranked = base.groupby(group_col)[metric].transform(_winsorized_percentile)
             # grupos pequenos: rank no universo inteiro
             small = counts < min_group
             if small.any():
@@ -110,7 +143,8 @@ def _rank_within(df: pd.DataFrame, group_col: str, min_group: int) -> pd.DataFra
                 ranked = ranked.where(~small, universe)
         else:
             ranked = _winsorized_percentile(col)
-        if metric in LOWER_IS_BETTER:
+        # O recíproco já inverteu o sentido: EBIT/EV maior é melhor.
+        if metric in LOWER_IS_BETTER and not reciproco:
             ranked = 1.0 - ranked
         out[metric] = ranked.fillna(NEUTRAL)
     return out
@@ -174,7 +208,13 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
         conf *= _sector_confidence_penalty(sector)
         conf = round(max(0.0, min(100.0, conf)), 1)
         confidence.append(conf)
-        if conf >= 75.0 and not missing:
+        # Patrimônio negativo, EBITDA não positivo ou capital investido negativo
+        # anulam várias razões de uma vez (A-101). Sem esta trava, a empresa em
+        # pior situação chega aqui apenas como "cobertura um pouco menor" e sai
+        # com selo de decisão. Balanço quebrado não é decision_grade.
+        if _impairment_flags_at(result, i):
+            statuses.append("screen_grade" if conf < 60.0 else "research_grade")
+        elif conf >= 75.0 and not missing:
             statuses.append("decision_grade")
         elif conf >= 60.0:
             statuses.append("research_grade")

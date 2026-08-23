@@ -23,9 +23,10 @@ FACTOR_TRACKS: dict[str, list[tuple[str, bool]]] = {
         ("Endividamento_Total", False), ("Liquidez_Corrente", True),
     ],
     "capital_efficiency": [("ROIC", True), ("ROE", True)],
+    # Ranqueados pelo YIELD recíproco (1/múltiplo), por isso "maior é melhor".
+    # Ver _numeric_metric e _RECIPROCO (achado A-101).
     "valuation": [
-        ("P/L", False), ("P/VP", False), ("EV_EBIT", False),
-        ("P_FCO", False),
+        ("P/L", True), ("P/VP", True), ("EV_EBIT", True), ("P_FCO", True),
     ],
     "shareholder": [("DY", True), ("Payout", True)],
 }
@@ -48,16 +49,21 @@ TRACK_LABELS: dict[str, str] = {
     "score_shareholder": "Retorno ao acionista",
 }
 
-_VALUATION = {"P/L", "P/VP", "EV_EBIT", "P_FCO"}
+# Múltiplos convertidos em yield antes de ranquear. Descartar o múltiplo
+# negativo (o que se fazia antes) transformava prejuízo em ausência, e ausência
+# vale o neutro 0,5 — a deficitária terminava na mediana da trilha, ou seja,
+# mais barata que metade do universo. O recíproco é monótono através do zero:
+# lucro/preço negativo ranqueia abaixo de qualquer lucro/preço positivo.
+_RECIPROCO = {"P/L", "P/VP", "EV_EBIT", "P_FCO"}
 _NEUTRAL = 0.5
 
 
 def _numeric_metric(df: pd.DataFrame, metric: str) -> pd.Series:
     values = (pd.to_numeric(df[metric], errors="coerce")
               if metric in df.columns else pd.Series(np.nan, index=df.index))
-    # Múltiplo negativo não representa barganha e não deve liderar o percentil.
-    if metric in _VALUATION:
-        values = values.where(values > 0)
+    if metric in _RECIPROCO:
+        # Múltiplo zero não informa preço; vira ausência em vez de infinito.
+        values = 1.0 / values.where(values != 0)
     return values.replace([np.inf, -np.inf], np.nan)
 
 

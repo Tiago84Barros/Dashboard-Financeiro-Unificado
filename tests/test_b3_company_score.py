@@ -50,11 +50,21 @@ def test_ausencia_e_neutra_mas_reduz_cobertura():
 
 
 def test_multiplos_negativos_nao_sao_tratados_como_barganha():
+    """Deficitária fica no fundo da trilha, não na mediana dela.
+
+    A versão anterior exigia coverage_valuation == 0 e score_valuation == 50,0 —
+    tratava o múltiplo negativo como dado ausente. Mas 50 é a mediana do corte,
+    então a empresa deficitária saía "mais barata" que metade do universo. Hoje
+    o múltiplo é ranqueado pelo yield recíproco, que é monótono através do zero:
+    o dado existe (cobertura cheia) e ranqueia embaixo. Ver
+    tests/test_score_sinal_de_denominador.py (achado A-101).
+    """
     universe = _universe()
     universe.loc[universe["Ticker"] == "FRA3", ["P/L", "P/VP", "EV_EBIT", "P_FCO"]] = -5
     scored = score_cross_section(universe).set_index("Ticker")
-    assert scored.loc["FRA3", "coverage_valuation"] == 0
-    assert scored.loc["FRA3", "score_valuation"] == 50.0
+    assert scored.loc["FRA3", "coverage_valuation"] == 100
+    assert scored.loc["FRA3", "score_valuation"] < 50.0
+    assert scored.loc["FRA3", "score_valuation"] < scored.loc["MED3", "score_valuation"]
 
 
 def test_classificacao_visual():

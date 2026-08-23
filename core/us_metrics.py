@@ -36,6 +36,26 @@ def safe_div(num: Any, den: Any) -> Optional[float]:
     return n / d
 
 
+def div_if_den_positive(num: Any, den: Any) -> Optional[float]:
+    """Como safe_div, mas exige denominador POSITIVO em vez de apenas != 0.
+
+    Razão cujo denominador troca de sinal deixa de ser ordenável: ROE de lucro
+    -50 sobre patrimônio -200 dá +25%, e passaria por rentabilidade boa; EV/EBIT
+    com EBIT negativo dá um número negativo, que o ranqueador lê como o múltiplo
+    mais barato do universo. Nesses casos o valor não é "ruim", é indefinido
+    (n/m) — e ausência é o que o score já sabe tratar, reduzindo cobertura e
+    confiança. Ver tests/test_score_sinal_de_denominador.py (achado A-101).
+
+    O prejuízo em si não fica impune: margem líquida, ROA e earnings yield têm
+    denominador sempre positivo (receita, ativo, valor de mercado) e continuam
+    marcando o resultado negativo com o sinal certo.
+    """
+    n, d = _f(num), _f(den)
+    if n is None or d is None or d <= 0:
+        return None
+    return n / d
+
+
 def cagr(first: Optional[float], last: Optional[float], years: int) -> Optional[float]:
     """CAGR entre first e last em `years` períodos. None se inválido.
 
@@ -158,10 +178,11 @@ def compute_company_metrics(
         "operating_margin": safe_div(op_income, revenue),
         "net_margin":       safe_div(net_income, revenue),
         "fcf_margin":       safe_div(fcf, revenue),
-        "cash_conversion":  safe_div(fcf, net_income),
-        "roe":              safe_div(net_income, equity),
+        # Denominador precisa ser positivo: ver div_if_den_positive (A-101).
+        "cash_conversion":  div_if_den_positive(fcf, net_income),
+        "roe":              div_if_den_positive(net_income, equity),
         "roa":              safe_div(net_income, total_assets),
-        "roic":             safe_div(nopat, invested_cap),
+        "roic":             div_if_den_positive(nopat, invested_cap),
         # Crescimento
         "revenue_cagr_3y":  _growth(income, "revenue", 3),
         "revenue_cagr_5y":  _growth(income, "revenue", 5),
@@ -169,10 +190,10 @@ def compute_company_metrics(
         "eps_cagr_3y":      _growth(income, "eps", 3),
         "fcf_cagr_3y":      _growth(cashflow, "free_cash_flow", 3),
         # Solidez
-        "net_debt_ebitda":  safe_div(net_debt, ebitda),
+        "net_debt_ebitda":  div_if_den_positive(net_debt, ebitda),
         "interest_coverage": safe_div(ebit, abs(interest)) if interest else None,
         "current_ratio":    safe_div(cur_assets, cur_liab),
-        "debt_to_equity":   safe_div(total_debt, equity),
+        "debt_to_equity":   div_if_den_positive(total_debt, equity),
         # Valuation
         "pe":            safe_div(market_cap, net_income),
         "earnings_yield": safe_div(net_income, market_cap),
@@ -197,6 +218,18 @@ def compute_company_metrics(
         # por SBC pode anular o buyback. Crescimento do share count: menor é
         # melhor (negativo = recompra líquida efetiva).
         "share_count_cagr_3y": _growth(balance, "shares_outstanding", 3),
+        # Balanço/geração estruturalmente quebrados. Sem isto, as razões
+        # anuladas por div_if_den_positive chegariam ao score como simples
+        # ausência — e ausência é puxada para o neutro, o que premiaria a
+        # empresa em pior situação. Ver us_score.score_cross_section (A-101).
+        "impairment_flags": tuple(
+            nome for nome, quebrado in (
+                ("patrimonio_liquido_negativo", equity is not None and equity <= 0),
+                ("ebitda_nao_positivo", ebitda is not None and ebitda <= 0),
+                ("capital_investido_negativo",
+                 invested_cap is not None and invested_cap <= 0),
+            ) if quebrado
+        ),
         # contexto (não entram no score, ajudam classificação/dossiê)
         "_revenue": revenue, "_net_income": net_income, "_fcf": fcf,
         "_equity": equity, "_net_debt": net_debt, "_market_cap": market_cap,
