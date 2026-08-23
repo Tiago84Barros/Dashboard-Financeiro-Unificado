@@ -49,7 +49,7 @@ from core.llm_fii import chat_com_fiis
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import container_pagina, rolar_para_topo
-from design.market_companies import render_company_logo
+from design.market_companies import company_logo_html
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
 _TIPO_META = {
@@ -87,6 +87,16 @@ _CSS = """
 .fii-card { background:#12151E;border:1px solid #1E2533;border-radius:12px;
             padding:12px 14px 10px;height:100%;transition:border-color .2s; }
 .fii-card:hover { border-color:rgba(0,200,150,.35); }
+.fii-head { display:flex;align-items:center;gap:10px;margin-bottom:6px; }
+/* min-width:0 é o que deixa o ellipsis do nome funcionar dentro do flex. */
+.fii-idt { min-width:0;overflow:hidden;flex:1; }
+.fii-logo {
+    width:34px;height:34px;border-radius:8px;background:rgba(255,255,255,.06);
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;
+    color:#718096;font-size:.72rem;font-weight:800;overflow:hidden;
+    /* Logo via background-image, não via <img>: ver company_logo_html (A-012). */
+    background-repeat:no-repeat;background-position:center;background-size:76% 76%;
+}
 .fii-top { display:flex;justify-content:space-between;align-items:center;margin-bottom:4px; }
 .fii-tk  { font-size:0.95rem;font-weight:800;color:#E2E8F0;letter-spacing:.02em; }
 .fii-score { font-size:0.66rem;font-weight:800;padding:2px 8px;border-radius:10px; }
@@ -1326,14 +1336,17 @@ def _fii_score_class(score: float) -> str:
     return "fii-sc-low"
 
 
-def _fii_available_card_html(row: "pd.Series") -> tuple[str, str]:
-    """HTML do card de um FII na aba Disponíveis, em duas partes.
+def _fii_available_card_html(row: "pd.Series") -> str:
+    """HTML completo do card de um FII na aba Disponíveis, num bloco só.
 
-    Devolve (head, body): `head` fica ao lado do logo (coluna estreita) e
-    `body` ocupa a largura toda do card abaixo — mesma divisão em colunas
-    [1, 4] usada por design.market_companies.render_sector_grid p/ B3/EUA.
+    Bloco único e com as tags fechadas de propósito: o Streamlit sanitiza cada
+    markdown isoladamente e fecha o que ficou aberto, então abrir a ``<div>``
+    do card num bloco e fechá-la em outro renderiza a moldura vazia, com o
+    conteúdo caindo fora dela. Por isso o logo entra como HTML
+    (``company_logo_html``) em vez de ``st.image``.
     """
-    ticker = escape(str(row.get("Ticker", "—")))
+    ticker_raw = str(row.get("Ticker") or "—")
+    ticker = escape(ticker_raw)
     nome = escape(str(row.get("Nome") or "—")[:26])
     segmento = escape(str(row.get("Segmento") or "—"))
     tipo_key = str(row.get("Tipo") or "").strip().lower()
@@ -1344,20 +1357,22 @@ def _fii_available_card_html(row: "pd.Series") -> tuple[str, str]:
     dy_txt = f"{dy * 100:.1f}%" if pd.notna(dy) else "—"
     pvp_txt = f"{pvp:.2f}" if pd.notna(pvp) else "—"
     liq_txt = f"R$ {liquidez / 1000:.0f}k" if pd.notna(liquidez) else "—"
-    head = (
+    logo = company_logo_html(ticker_raw, _fii_logo_url(ticker_raw), css_class="fii-logo")
+    return (
+        '<div class="fii-card" style="padding-bottom:10px;margin-bottom:0;'
+        'border-bottom:none;border-bottom-left-radius:0;border-bottom-right-radius:0;">'
+        f'<div class="fii-head">{logo}<div class="fii-idt">'
         f'<div class="fii-top"><span class="fii-tk">{ticker}</span>'
         f'<span class="fii-score {score_cls}">{score:.0f}</span></div>'
         f'<div class="fii-nome">{nome}</div>'
-    )
-    body = (
+        f'</div></div>'
         f'<div class="fii-seg">{segmento} · {tipo_label}</div>'
         f'<div class="fii-mini">'
         f'<div><span class="lbl">DY 12m</span><span class="val">{dy_txt}</span></div>'
         f'<div><span class="lbl">P/VP</span><span class="val">{pvp_txt}</span></div>'
         f'<div><span class="lbl">Liquidez</span><span class="val">{liq_txt}</span></div>'
-        f'</div>'
+        f'</div></div>'
     )
-    return head, body
 
 
 _FII_DISPONIVEIS_PAGE_SIZE = 80
@@ -1396,14 +1411,7 @@ def _cards_de_fiis_disponiveis(view: pd.DataFrame) -> None:
             for offset, (_, row) in enumerate(grupo.iloc[inicio:inicio + 4].iterrows()):
                 ticker = str(row["Ticker"])
                 with colunas[offset]:
-                    st.markdown('<div class="fii-card">', unsafe_allow_html=True)
-                    head, body = _fii_available_card_html(row)
-                    logo_col, info_col = st.columns([1, 4], gap="small")
-                    with logo_col:
-                        render_company_logo(ticker, _fii_logo_url(ticker), size=30)
-                    with info_col:
-                        st.markdown(head, unsafe_allow_html=True)
-                    st.markdown(body + "</div>", unsafe_allow_html=True)
+                    st.markdown(_fii_available_card_html(row), unsafe_allow_html=True)
                     if st.button(
                         "Analisar", key=f"fii_disp_analyze_{ticker}_{inicio}_{offset}",
                         width="stretch",

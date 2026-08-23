@@ -13,6 +13,61 @@ from core.market_companies import (
 )
 
 
+def _logo_html(monkeypatch, *, disponivel: bool, **kwargs) -> str:
+    """company_logo_html faz HEAD na CDN; o teste não pode depender de rede."""
+    import design.market_companies as mc
+    monkeypatch.setattr(mc, "_logo_disponivel_cached", lambda url: disponivel)
+    return mc.company_logo_html("PETR4", "https://cdn/x/PETR4.png", **kwargs)
+
+
+def test_logo_do_card_usa_background_e_nunca_tag_img(monkeypatch):
+    """<img> é o que o achado A-012 (React #231) proíbe; background-image
+    coloca o logo dentro do card sem ela."""
+    com_logo = _logo_html(monkeypatch, disponivel=True)
+    assert "<img" not in com_logo
+    assert "background-image:url('https://cdn/x/PETR4.png')" in com_logo
+    assert com_logo.count("<div") == com_logo.count("</div>") == 1
+
+
+def test_logo_nao_deixa_a_url_escapar_do_url_css(monkeypatch):
+    """Só entidade HTML não bastaria: o parser decodifica `&#x27;` de volta e a
+    aspa reaberta fecharia o url(...), abrindo espaço para injetar CSS."""
+    import design.market_companies as mc
+    monkeypatch.setattr(mc, "_logo_disponivel_cached", lambda url: True)
+    saida = mc.company_logo_html(
+        "X", "https://cdn/x.png');background:red;--a:url('",
+    )
+    estilo = saida.split('style="', 1)[1].rsplit('"', 1)[0]
+    assert estilo.startswith("background-image:url('") and estilo.endswith("');")
+    interior = estilo[len("background-image:url('"):-len("');")]
+    # Aspa e parêntese percent-encodados: a carga inteira fica presa dentro do
+    # literal CSS, onde `background:red` é texto inerte, não uma declaração.
+    assert "'" not in interior and ")" not in interior
+    assert "%27" in interior and "%29" in interior
+
+
+def test_logo_indisponivel_cai_na_inicial_do_ticker(monkeypatch):
+    sem_logo = _logo_html(monkeypatch, disponivel=False)
+    assert "background-image" not in sem_logo
+    assert ">P</div>" in sem_logo
+
+
+def test_card_de_empresa_sai_num_bloco_unico_com_as_tags_fechadas():
+    """O Streamlit fecha tag pendente a cada bloco de markdown: abrir a div do
+    card num bloco e fechá-la em outro renderizava a moldura vazia, com logo,
+    ticker e nome caindo fora dela."""
+    import inspect
+
+    import design.market_companies as mc
+    corpo = inspect.getsource(mc.render_sector_grid)
+    # Um só st.markdown monta o card — o de antes eram três, com a div aberta
+    # no primeiro e fechada no último.
+    trecho = corpo[corpo.index("with cols[offset]:"):corpo.index('if st.button(')]
+    assert trecho.count("st.markdown(") == 1
+    assert "company_logo_html(" in trecho
+    assert "render_company_logo(" not in trecho
+
+
 def test_normalize_us_preserva_classes_e_exclui_nao_acoes():
     source = pd.DataFrame([
         {"symbol": "GOOG", "name": "Alphabet Class C", "sector": "Technology",

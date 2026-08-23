@@ -38,13 +38,16 @@ MARKET_COMPANIES_CSS = """
 }
 .b3-card:hover { border-color:rgba(0,200,150,.35); }
 .b3-card-selected { border-color:rgba(0,200,150,.55); }
+.b3-card-head { display:flex;align-items:center;gap:10px;margin-bottom:8px; }
+/* min-width:0 é o que deixa o ellipsis do nome funcionar dentro do flex. */
+.b3-card-idt { min-width:0;overflow:hidden;flex:1; }
 .b3-card-logo-wrap {
     width:42px;height:42px;border-radius:9px;background:rgba(255,255,255,.06);
     display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;
     color:#718096;font-size:.80rem;font-weight:800;overflow:hidden;
+    /* Logo via background-image, não via <img>: ver company_logo_html (A-012). */
+    background-repeat:no-repeat;background-position:center;background-size:76% 76%;
 }
-.b3-card-logo { width:36px;height:36px;border-radius:8px;object-fit:contain;
-                background:rgba(255,255,255,.06);padding:3px;position:absolute;inset:3px; }
 .b3-card-ticker { font-size:0.88rem;font-weight:800;color:#E2E8F0; }
 .b3-card-nome   { font-size:0.70rem;color:#718096;margin-top:1px;
                   overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
@@ -150,6 +153,36 @@ def render_company_logo(ticker: str, url: str, *, size: int = 64) -> None:
     )
 
 
+def company_logo_html(ticker: str, url: str, *,
+                      css_class: str = "b3-card-logo-wrap") -> str:
+    """Logo como trecho de HTML embutível, para cards montados num só bloco.
+
+    ``render_company_logo`` usa ``st.image``, que é um elemento próprio do
+    Streamlit: não dá para colocá-lo dentro de uma ``<div>`` de card, porque
+    cada bloco de markdown é sanitizado isoladamente e tags não fechadas são
+    fechadas na hora — era isso que deixava a moldura do card vazia, com o
+    conteúdo caindo fora dela.
+
+    Aqui a imagem entra como ``background-image`` da própria div do logo. Sem
+    tag ``<img>``, o achado A-012 (React #231) continua respeitado, e uma URL
+    que responde 404 simplesmente não pinta nada — sem erro de console. A
+    inicial do ticker fica atrás como fallback visível quando não há logo.
+    """
+    inicial = html.escape((ticker or "?")[:1].upper())
+    if not (url and _logo_disponivel_cached(url)):
+        return f'<div class="{css_class}">{inicial}</div>'
+    # Percent-encode ANTES do html.escape: escapar aspas como entidade não
+    # bastaria, porque o parser as decodifica de volta e o `'` reaberto
+    # fecharia a string do url(...) — daria para injetar CSS pela URL.
+    limpa = url
+    for char, codigo in (("\\", "%5C"), ("'", "%27"), ('"', "%22"),
+                         ("(", "%28"), (")", "%29")):
+        limpa = limpa.replace(char, codigo)
+    limpa = html.escape(limpa, quote=True)
+    return (f'<div class="{css_class}" '
+            f"style=\"background-image:url('{limpa}');\"></div>")
+
+
 def render_sector_grid(
     companies: pd.DataFrame, *, key_prefix: str, selected_ticker: str | None,
     selected_state_key: str, active_state_key: str, page_size: int = 160,
@@ -195,24 +228,23 @@ def render_sector_grid(
                 selected = ticker == (selected_ticker or "")
                 selected_class = " b3-card-selected" if selected else ""
                 with cols[offset]:
+                    # Card inteiro num único markdown, com as tags fechadas: o
+                    # Streamlit sanitiza cada bloco isoladamente e fecha o que
+                    # ficou aberto, então abrir a <div> num bloco e fechá-la em
+                    # outro renderizava a moldura vazia e jogava logo, ticker e
+                    # nome para fora dela.
                     st.markdown(
-                        f'<div class="b3-card{selected_class}" style="padding-bottom:0;'
-                        'margin-bottom:0;border-bottom:none;">',
-                        unsafe_allow_html=True,
-                    )
-                    logo_col, text_col = st.columns([1, 4], gap="small")
-                    with logo_col:
-                        render_company_logo(ticker, logo, size=32)
-                    with text_col:
-                        st.markdown(
-                            f'<div style="overflow:hidden;">'
-                            f'<div class="b3-card-ticker">{html.escape(ticker)}</div>'
-                            f'<div class="b3-card-nome">{html.escape(name)}</div>'
-                            f'</div>',
-                            unsafe_allow_html=True,
-                        )
-                    st.markdown(
-                        f'<div class="b3-card-tag">{html.escape(tag)}</div></div>',
+                        f'<div class="b3-card{selected_class}" '
+                        'style="padding-bottom:0;margin-bottom:0;border-bottom:none;'
+                        'border-bottom-left-radius:0;border-bottom-right-radius:0;">'
+                        f'<div class="b3-card-head">'
+                        f'{company_logo_html(ticker, logo)}'
+                        f'<div class="b3-card-idt">'
+                        f'<div class="b3-card-ticker">{html.escape(ticker)}</div>'
+                        f'<div class="b3-card-nome">{html.escape(name)}</div>'
+                        f'</div></div>'
+                        f'<div class="b3-card-tag">{html.escape(tag)}</div>'
+                        f'</div>',
                         unsafe_allow_html=True,
                     )
                     if st.button(

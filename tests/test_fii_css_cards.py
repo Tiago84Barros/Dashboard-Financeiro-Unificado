@@ -1,5 +1,7 @@
 import pandas as pd
+import pytest
 
+import design.market_companies as market_companies
 from views.fiis import (
     _fii_available_card_html,
     _fii_logo_url,
@@ -8,6 +10,15 @@ from views.fiis import (
     _scenario_cards_html,
     _selection_card_html,
 )
+
+
+@pytest.fixture(autouse=True)
+def _sem_rede(monkeypatch):
+    """company_logo_html faz HEAD na CDN para decidir logo vs. inicial. Sem
+    isto o teste sai à rede e passa a depender de estar online."""
+    monkeypatch.setattr(
+        market_companies, "_logo_disponivel_cached", lambda url: False,
+    )
 
 
 def test_info_and_scenario_cards_render_compact_css_blocks():
@@ -48,15 +59,32 @@ def test_fii_available_card_html_escapa_e_mostra_metricas():
         "Score": 82.0, "DY_12m": 0.1234, "P/VP": 0.97,
         "Liquidez_Diaria": 1_500_000.0,
     })
-    head, body = _fii_available_card_html(row)
-    assert "TEST11&lt;script&gt;" in head
-    assert "Fundo Teste &lt;script&gt;" in head
-    assert '<script>' not in head and '<script>' not in body
-    assert "fii-sc-high" in head
-    assert "Multicategoria · Papel/CRI" in body
-    assert "12.3%" in body
-    assert "0.97" in body
-    assert "R$ 1500k" in body
+    card = _fii_available_card_html(row)
+    assert "TEST11&lt;script&gt;" in card
+    assert "Fundo Teste &lt;script&gt;" in card
+    assert "<script>" not in card
+    assert "fii-sc-high" in card
+    assert "Multicategoria · Papel/CRI" in card
+    assert "12.3%" in card
+    assert "0.97" in card
+    assert "R$ 1500k" in card
+
+
+def test_card_do_fii_sai_num_bloco_unico_com_as_tags_fechadas():
+    """O Streamlit fecha tag pendente a cada bloco de markdown: abrir a div do
+    card num bloco e fechá-la em outro renderizava a moldura vazia, com o
+    conteúdo caindo fora dela."""
+    card = _fii_available_card_html(pd.Series({
+        "Ticker": "HGLG11", "Nome": "CSHG Logistica", "Segmento": "Logistica",
+        "Tipo": "tijolo", "Score": 91.0, "DY_12m": .089,
+        "P/VP": 1.02, "Liquidez_Diaria": 4_100_000.0,
+    }))
+    assert card.count("<div") == card.count("</div>")
+    assert card.startswith('<div class="fii-card"') and card.endswith("</div>")
+    # Logo dentro do card e sem <img>: st.image não cabe num bloco de HTML, e
+    # a tag <img> é justamente o que o achado A-012 proíbe.
+    assert 'class="fii-logo"' in card
+    assert "<img" not in card
 
 
 def test_fii_logo_url_usa_cdn_b3_e_remove_sufixo_sa():
