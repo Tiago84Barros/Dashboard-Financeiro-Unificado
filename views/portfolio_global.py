@@ -30,8 +30,10 @@ from core.portfolio.repository import (
     load_allocation_targets,
     save_allocation_targets,
 )
+from core.market_companies import us_logo_url
 from core.rebalancing import CalendarRebalance
 from design.componentes import card_metrica
+from design.market_companies import render_company_logo
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +385,48 @@ def texto_de_apoio_do_ativo(nome: str | None, classe_label: str, setor_label: st
     return texto
 
 
+_B3_LOGO_CDN = "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones"
+
+
+def _logo_url_ativo(asset_class: str | None, symbol: str) -> str:
+    """URL pública do logo do ticker, por classe de origem.
+
+    B3 e FII compartilham o mesmo CDN (ambos negociados na B3, mesma
+    convenção de ticker já usada em `views/empresas_b3.py::_logo_url`); EUA
+    usa o provedor de `core.market_companies.us_logo_url`, já usado em
+    `views/empresas_americanas.py`. `render_company_logo` sempre cai no
+    placeholder com a inicial quando a URL não responde — nunca quebra a
+    página por logo ausente (achado A-012).
+    """
+    tk = (symbol or "").strip().upper()
+    if asset_class == "us":
+        return us_logo_url(tk)
+    tk = tk.replace(".SA", "")
+    return f"{_B3_LOGO_CDN}/{tk}.png"
+
+
+def _card_ativo(linha: dict) -> None:
+    """Um cartão de ativo: logo à esquerda, KPI de peso à direita — mesmo
+    padrão logo+card usado em `empresas_b3.py`/`empresas_americanas.py`.
+    """
+    symbol = linha.get("symbol", "—")
+    asset_class = linha.get("asset_class")
+    classe_label = rotulo_maior("asset_class", asset_class)
+    setor_label = rotulo_maior("sector", linha.get("sector"))
+    col_logo, col_info = st.columns([1, 4], gap="small")
+    with col_logo:
+        render_company_logo(symbol, _logo_url_ativo(asset_class, symbol), size=34)
+    with col_info:
+        card_metrica(
+            symbol,
+            _fmt(linha.get("weight_global", 0.0) * 100, "%", casas=2),
+            delta=texto_de_apoio_do_ativo(
+                linha.get("name"), classe_label, setor_label, linha.get("valor_brl"),
+            ),
+            accent="#5B8DEF",
+        )
+
+
 def _cards_de_ativos(df: pd.DataFrame, *, n_colunas: int = 4) -> None:
     """Grade de cartões 'Por ativo', na ordem de peso global (já vem de
     montar_posicoes ordenado decrescente) — um cartão por ativo em vez de
@@ -393,16 +437,31 @@ def _cards_de_ativos(df: pd.DataFrame, *, n_colunas: int = 4) -> None:
         colunas = st.columns(n_colunas, gap="small")
         for coluna, linha in zip(colunas, linhas[inicio:inicio + n_colunas]):
             with coluna:
-                classe_label = rotulo_maior("asset_class", linha.get("asset_class"))
-                setor_label = rotulo_maior("sector", linha.get("sector"))
-                card_metrica(
-                    linha.get("symbol", "—"),
-                    _fmt(linha.get("weight_global", 0.0) * 100, "%", casas=2),
-                    delta=texto_de_apoio_do_ativo(
-                        linha.get("name"), classe_label, setor_label, linha.get("valor_brl"),
-                    ),
-                    accent="#5B8DEF",
-                )
+                _card_ativo(linha)
+
+
+def _cards_de_ativos_por_classe(df: pd.DataFrame, *, n_colunas: int = 4) -> None:
+    """Grade 'Por ativo' separada em seções por classe de origem (B3, FIIs,
+    Empresas Americanas) — cada classe já é tipo e origem ao mesmo tempo no
+    registry (ver `core.portfolio.registry.SPECS`). Seções na ordem do maior
+    peso agregado para o menor.
+    """
+    if df.empty:
+        st.info("Nenhum ativo para exibir.")
+        return
+    peso_por_classe = (
+        df.groupby("asset_class")["weight_global"].sum().sort_values(ascending=False)
+    )
+    for classe in peso_por_classe.index:
+        sub = df[df["asset_class"] == classe]
+        label = rotulo_maior("asset_class", classe)
+        pct = peso_por_classe[classe] * 100
+        n = len(sub)
+        ativo_noun = "ativo" if n == 1 else "ativos"
+        st.markdown(
+            f"##### {label} · {pct:.1f}% do patrimônio · {n} {ativo_noun}"
+        )
+        _cards_de_ativos(sub, n_colunas=n_colunas)
 
 
 def _tabelas(df: pd.DataFrame) -> None:
@@ -410,7 +469,7 @@ def _tabelas(df: pd.DataFrame) -> None:
     aba_ativos, aba_setor, aba_pais = st.tabs(["Por ativo", "Por setor", "Por país"])
 
     with aba_ativos:
-        _cards_de_ativos(df)
+        _cards_de_ativos_por_classe(df)
 
     with aba_setor:
         setores = concentration.por_dimensao(df, "sector")

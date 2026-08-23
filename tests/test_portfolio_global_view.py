@@ -322,9 +322,23 @@ def test_aba_por_ativo_usa_cartoes_em_vez_de_dataframe():
     """
     import inspect
     fonte_tabelas = inspect.getsource(portfolio_global._tabelas)
-    assert "_cards_de_ativos(df)" in fonte_tabelas
+    assert "_cards_de_ativos_por_classe(df)" in fonte_tabelas
+    assert "st.dataframe" not in inspect.getsource(portfolio_global._cards_de_ativos_por_classe)
     assert "st.dataframe" not in inspect.getsource(portfolio_global._cards_de_ativos)
-    assert "card_metrica" in inspect.getsource(portfolio_global._cards_de_ativos)
+    assert "card_metrica" in inspect.getsource(portfolio_global._card_ativo)
+
+
+def test_logo_url_ativo_us_usa_provedor_americano():
+    url = portfolio_global._logo_url_ativo("us", "AAPL")
+    assert "AAPL" in url
+    assert "companiesmarketcap.com" in url
+
+
+def test_logo_url_ativo_b3_e_fii_usam_o_mesmo_cdn_b3():
+    url_b3 = portfolio_global._logo_url_ativo("b3", "PETR4.SA")
+    url_fii = portfolio_global._logo_url_ativo("fii", "KNHY11")
+    assert url_b3 == "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/PETR4.png"
+    assert url_fii == "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/KNHY11.png"
 
 
 def test_setores_sem_mapa_fica_silencioso_quando_tudo_mapeia():
