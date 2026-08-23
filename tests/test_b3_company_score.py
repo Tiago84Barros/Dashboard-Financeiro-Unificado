@@ -193,3 +193,36 @@ def test_sem_pares_apurados_nao_vira_veredito_de_empresa_mediana():
     assert _fmt_pontuacao(float("nan")) == "—"
     assert _fmt_pontuacao(None) == "—"
     assert _fmt_pontuacao(72.36) == "72.4/100"
+
+
+def test_prejuizo_apagado_pela_fonte_nao_vira_ausencia_neutra():
+    """A fonte apaga o P/L negativo; a margem sobrevive e diz o sinal.
+
+    Medido na vitrine em 23/08/2026: 76 das 79 empresas que deram prejuízo
+    estavam sem P/L, e as deficitárias terminavam a trilha de valuation acima
+    das lucrativas — porque ausência vale o neutro 0,5, que é a mediana do
+    corte. Sinal basta para ordenar, mesmo sem magnitude (achado A-105).
+    """
+    universe = _universe()
+    universe.loc[universe["Ticker"] == "FRA3", "Margem_Liquida"] = -0.15
+    universe.loc[universe["Ticker"] == "FRA3", "P/L"] = np.nan
+    scored = score_cross_section(universe).set_index("Ticker")
+
+    assert scored.loc["FRA3", "score_valuation"] < 50.0
+    assert scored.loc["FRA3", "score_valuation"] < scored.loc["MED3", "score_valuation"]
+    # O sinal é dado conhecido: a cobertura não pode registrar isso como lacuna.
+    assert scored.loc["FRA3", "coverage_valuation"] == 100
+
+
+def test_ausencia_sem_evidencia_de_prejuizo_continua_neutra():
+    """O piso só vale quando outra coluna comprova o prejuízo.
+
+    Sem margem negativa, P/L ausente é ausência de verdade — e ausência não
+    pode ser convertida em veredito de "caro".
+    """
+    universe = _universe()
+    universe.loc[universe["Ticker"] == "MED3", "P/L"] = np.nan
+    scored = score_cross_section(universe).set_index("Ticker")
+    assert scored.loc["MED3", "coverage_valuation"] == 75
+    assert scored.loc["MED3", "score_valuation"] > \
+        score_cross_section(_universe()).set_index("Ticker").loc["FRA3", "score_valuation"]

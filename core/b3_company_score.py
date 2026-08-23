@@ -64,6 +64,39 @@ TRACK_LABELS: dict[str, str] = {
 _RECIPROCO = {"P/L", "P/VP", "EV_EBIT", "P_FCO"}
 _NEUTRAL = 0.5
 
+# A fonte da B3 apaga o múltiplo negativo em vez de gravá-lo, então o prejuízo
+# chega aqui como AUSÊNCIA — e ausência vale o neutro. Medido na vitrine em
+# 23/08/2026: das 79 empresas que deram prejuízo, 76 estavam sem P/L, e as
+# deficitárias terminavam a trilha com 53,4 contra 48,8 do resto. Ou seja,
+# ranqueadas como mais baratas que quem deu lucro — o mesmo defeito do A-101,
+# por outra porta, e que o recíproco sozinho não alcança porque o número
+# negativo nunca chega ao ranqueador.
+#
+# A coluna de margem sobrevive ao apagamento e diz o SINAL, ainda que não diga a
+# magnitude. Sinal basta para ordenar: rendimento negativo vai ao fundo da
+# trilha. Não há proxy confiável para P/VP (ROE negativo tanto pode ser prejuízo
+# com patrimônio positivo quanto o contrário) nem para P_FCO, então esses dois
+# seguem virando ausência — limitação conhecida (achado A-105).
+_SINAL_DO_DENOMINADOR = {"P/L": "Margem_Liquida", "EV_EBIT": "Margem_Operacional"}
+
+
+def _piso_para_prejuizo_apagado(df: pd.DataFrame, metric: str,
+                                yields: pd.Series) -> pd.Series:
+    """Põe no fundo da trilha o yield que a fonte apagou por ser negativo."""
+    coluna = _SINAL_DO_DENOMINADOR.get(metric)
+    if coluna is None or coluna not in df.columns:
+        return yields
+    negativo = pd.to_numeric(df[coluna], errors="coerce") < 0
+    apagado = yields.isna() & negativo
+    if not apagado.any():
+        return yields
+    validos = yields.replace([np.inf, -np.inf], np.nan).dropna()
+    # Magnitude é desconhecida; só a posição é conhecida. Um valor abaixo do
+    # mínimo observado empata todos no piso depois da winsorização, que é
+    # exatamente o que a evidência sustenta — nem mais, nem menos.
+    piso = (float(validos.min()) if not validos.empty else 0.0) - 1.0
+    return yields.mask(apagado, piso)
+
 
 def _numeric_metric(df: pd.DataFrame, metric: str) -> pd.Series:
     values = (pd.to_numeric(df[metric], errors="coerce")
@@ -71,6 +104,7 @@ def _numeric_metric(df: pd.DataFrame, metric: str) -> pd.Series:
     if metric in _RECIPROCO:
         # Múltiplo zero não informa preço; vira ausência em vez de infinito.
         values = 1.0 / values.where(values != 0)
+        values = _piso_para_prejuizo_apagado(df, metric, values)
     return values.replace([np.inf, -np.inf], np.nan)
 
 
