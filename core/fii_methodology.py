@@ -20,9 +20,15 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
-METHODOLOGY_VERSION = "6.7.0"
-FORMULA_VERSION = "br-fii-integrated-income-resilience-6.7.0"
+# 6.8.0: o encolhimento por cobertura passou a mirar o neutro em vez do
+# zero (A-106). A fórmula mudou, então a versão muda junto — senão as
+# notas novas herdariam em silêncio o certificado PIT da 6.7.0.
+METHODOLOGY_VERSION = "6.8.0"
+FORMULA_VERSION = "br-fii-integrated-income-resilience-6.8.0"
 VALID_TYPES = ("tijolo", "papel", "fof", "hibrido")
+# Nota do par mediano na escala percentílica de 0 a 100. É para cá que a nota
+# encolhe quando falta cobertura — ver `final_score` em `score_fiis_by_type`.
+_NEUTRAL_SCORE = 50.0
 
 
 @dataclass(frozen=True)
@@ -183,6 +189,8 @@ def methodology_manifest() -> dict[str, Any]:
         "type_metrics": {key: [asdict(m) for m in value] for key, value in TYPE_METRICS.items()},
         "pvp_targets": PVP_TARGETS,
         "integrated_pipeline": {
+            # Continua 6.7: a elegibilidade e o otimizador não mudaram na
+            # 6.8.0, que mexeu só no encolhimento do type_score.
             "eligibility_version": "6.7.0",
             "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.7",
             "stages": ("eligibility", "type_score", "empirical_confidence",
@@ -389,8 +397,31 @@ def score_fiis_by_type(
             critical_coverage = (observed_critical_weight / total_critical_weight
                                  if total_critical_weight else 0.0)
             raw_score = 100.0 * weighted_score / observed_weight if observed_weight else 0.0
-            # A penalização evita que poucos indicadores produzam um falso 90/100.
-            final_score = raw_score * (.55 + .45 * coverage)
+            # Cobertura parcial reduz a CONVICÇÃO, não o mérito: a nota encolhe
+            # para o neutro, nunca para zero (achado A-106).
+            #
+            # Antes era `raw_score * (.55 + .45 * coverage)`, que encolhia para
+            # ZERO. Três consequências, todas medidas em 23/08/2026 sobre as 394
+            # linhas de `market.fii_selection_inputs`:
+            #
+            # 1. o ponto fixo saía do lugar. A escala é percentílica — 50 é o par
+            #    mediano —, mas um fundo mediano com 55% de cobertura recebia
+            #    39,9, abaixo da mediana que ele próprio define;
+            # 2. a punição era proporcional ao mérito. Com a MESMA lacuna, o
+            #    fundo bom perdia 18,2 pontos e o ruim apenas 4,0: não saber
+            #    custava 4,5x mais a quem parecia melhor;
+            # 3. por isso a ordem invertia. Entre os 258 fundos declarados
+            #    `ready` — os que a tela recomenda —, 3,4% a 5,1% dos pares
+            #    saíam com o pior na frente. GRUL11 (mérito 67,3, cobertura 68%)
+            #    caía para 57,5 e perdia para VILG11 (mérito 60,2, cobertura
+            #    92%), que subia para 57,9.
+            #
+            # É o mesmo mecanismo de `core/b3_company_score.py` e do motor
+            # americano, que já encolhiam para o neutro. Quem barra o fundo sem
+            # evidência é o gate (`critical_coverage`/`confidence`), não a nota:
+            # rebaixar por ausência é dizer "ruim" quando o certo é "não sei".
+            final_score = (_NEUTRAL_SCORE
+                           + (raw_score - _NEUTRAL_SCORE) * coverage ** .5)
             freshness = freshness_weighted / observed_weight if observed_weight else 0.0
             source_quality = source_weighted / observed_weight if observed_weight else 0.0
             raw_consistency = _number(row.get("data_consistency"))

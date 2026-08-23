@@ -127,8 +127,12 @@ def test_publication_ensures_methodology_before_validation_fk():
 
     _ensure_target_methodology(connection)
 
+    # Comparar com a constante, e não com um literal: fixar a versão aqui fazia
+    # este teste quebrar a cada bump de metodologia sem apontar defeito nenhum.
+    from core.fii_methodology import METHODOLOGY_VERSION
+
     assert "INSERT INTO market.fii_methodology_versions" in connection.statement
-    assert connection.parameters["version"] == "6.7.0"
+    assert connection.parameters["version"] == METHODOLOGY_VERSION
     assert "fii_integrated_robust_optimizer.v6.7" in connection.parameters["manifest"]
 
 

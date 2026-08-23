@@ -1114,7 +1114,16 @@ load_fii_methodology_inputs.clear = _clear_fii_methodology_inputs_cache
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def load_fii_validation_status(methodology_version: str = "6.7.0") -> dict:
+def load_fii_validation_status(methodology_version: str | None = None) -> dict:
+    """Última validação PIT registrada para a metodologia.
+
+    O default acompanha ``METHODOLOGY_VERSION``: fixá-lo como literal fazia
+    o bump da metodologia deixar esta consulta apontando para uma versão
+    antiga, devolvendo um certificado que não é o da fórmula em uso.
+    """
+    from core.fii_methodology import METHODOLOGY_VERSION
+    if methodology_version is None:
+        methodology_version = METHODOLOGY_VERSION
     df = _q("""
         SELECT status, metrics_json, blockers_json, as_of_date, finished_at
         FROM market.fii_validation_runs
