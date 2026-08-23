@@ -486,6 +486,16 @@ def retornos_mensais(df_posicoes: pd.DataFrame,
     # passar — faz risk.retorno_do_portfolio renormalizar os pesos mês a mês:
     # uma carteira 40% B3 / 60% EUA viraria 100% B3 nos meses sem FX, sem que
     # nada na tela mudasse. Aqui o mês sai e é declarado.
+    #
+    # Segunda consequencia, descoberta depois e igualmente importante: como o
+    # quadro publicado nao tem buraco, `_covariancia_confiavel` monta a matriz
+    # sobre casos completos e ela sai positiva semidefinida. Afrouxar esta
+    # janela devolve a covariancia par a par, que pode ter autovalor negativo —
+    # e ai a contribuicao marginal de risco continua fechando na identidade de
+    # Euler (o teste central de `risk.py`) exibindo parcela errada: medido em
+    # 23/08/2026, um ativo aparecia protegendo a carteira com -26,2% do risco
+    # onde a matriz corrigida dizia +3,5%. Ver
+    # `tests/test_global_covariancia_psd.py`.
     # ------------------------------------------------------------------
     retornos = retornos[sobreviventes] if sobreviventes else pd.DataFrame()
     meses_removidos: tuple[str, ...] = ()

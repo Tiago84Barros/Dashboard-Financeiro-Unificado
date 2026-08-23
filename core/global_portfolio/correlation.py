@@ -70,6 +70,11 @@ def _covariancia_confiavel(retornos: pd.DataFrame,
     resultado nao depender da ordem das colunas). Devolve quadro vazio quando
     nao sobra nenhum par confiavel.
     """
+    # `cov` par a par so e garantidamente positiva semidefinida quando o quadro
+    # nao tem buraco — cada entrada pode repousar sobre uma amostra diferente.
+    # Quem publica o quadro (`returns.retornos_mensais`, passo 2) so mantem os
+    # meses em que TODOS os ativos tem retorno, entao a garantia vale aqui.
+    # A dependencia e travada em `tests/test_global_covariancia_psd.py`.
     cov = retornos.cov(ddof=1, min_periods=min_obs)
     while cov.shape[0] >= 2 and bool(cov.isna().to_numpy().any()):
         reprovados = cov.isna().sum(axis=1)

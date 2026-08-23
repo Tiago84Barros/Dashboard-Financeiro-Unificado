@@ -32,7 +32,8 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-108 | FII: P/VP simétrico pune desconto como ágio | ⚪ **não procede** | Os extremos (0,019 e 18,34) já são barrados como `insufficient`; os 11 que passam ficam todos abaixo da mediana |
 | PIT-6.8 | Walk-forward revalidado para a metodologia 6.8.0 | 🟡 em andamento | O certificado da 6.7.0 não cobre a fórmula nova |
 | FII-Q | Passar a pergunta "a fórmula responde ao que se pergunta?" no motor de FIIs | 🟢 rodada feita | 2 defeitos achados e fechados (A-106, A-107), 1 descartado (A-108) |
-| GLOB-Q | Idem no Portfólio Global | 🔴 nunca feito | — |
+| A-109 | Global: covariância par a par pode não ser positiva semidefinida | ⚪ **não procede** (invariante travado) | `tests/test_global_covariancia_psd.py`; medido: 10% das carteiras com séries desalinhadas, pior caso −26,2% vs +3,5% de contribuição ao risco |
+| GLOB-Q | Idem no Portfólio Global | 🟢 rodada feita | 0 defeitos vivos, 1 descartado (A-109) com guarda de regressão |
 
 ## Por que a lista não é o critério
 
@@ -55,3 +56,30 @@ E confirmou também o contrário, que importa igual: o A-108 parecia o defeito
 mais grave dos três ao ler o código (um FII a P/VP 0,019 ranqueado como pior
 avaliação que um a 18,34) e **não procede**, porque o gate de prontidão já
 barra esses casos. Auditoria que só lê produz achado falso nas duas direções.
+
+## A rodada do Portfólio Global (GLOB-Q)
+
+Nenhum defeito vivo. O módulo já trata bem tudo o que quebrou os outros três:
+`valuation_agregado` descarta múltiplo não positivo e separa presença de
+usabilidade; `fields.py` marca não aplicável em vez de substituir por proxy;
+`qualidade_por_classe` recusa agregar entre classes; `_percentil_por_classe`
+ranqueia dentro da classe com correção de posição de plotagem; `returns.py` faz
+câmbio point-in-time com limite de defasagem e recusa explícita.
+
+O A-109 é o achado que **não procede, mas quase**. `_covariancia_confiavel`
+monta a matriz com `cov(min_periods=...)`, que é par a par: cada entrada pode
+repousar sobre uma amostra diferente, e matriz assim não é garantidamente
+positiva semidefinida. Alimentando o cálculo com séries desalinhadas do
+armazém, 10% das carteiras davam matriz não-PSD e, no pior caso, um ativo
+aparecia **protegendo** a carteira (−26,2% do risco) onde a matriz corrigida
+dizia que ele **adicionava** risco (+3,5%). A identidade de Euler continua
+fechando nesse caso — ou seja, o teste central de `risk.py` não enxerga nada.
+
+Em produção não acontece, e o motivo estava escondido em outro módulo: o passo
+2 de `retornos_mensais` só mantém os meses em que todos os ativos têm retorno,
+então o quadro publicado é de casos completos. A garantia era efeito colateral
+de uma decisão tomada por outro motivo (não renormalizar peso mês a mês), sem
+nada declarando a dependência — e o docstring de lá lamenta o truncamento de
+séries longas, que é exatamente o argumento que levaria alguém a afrouxar a
+janela. Fechado como invariante testado nos dois lados, não como correção de
+fórmula.
