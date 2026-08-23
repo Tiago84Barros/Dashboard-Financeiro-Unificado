@@ -20,6 +20,7 @@ from sqlalchemy import text
 from core.fii_methodology import (
     FORMULA_VERSION,
     METHODOLOGY_VERSION,
+    income_growth_3y,
     score_fiis_by_type,
 )
 from core.fii_portfolio_v4 import LIVE_PORTFOLIO_STRATEGY_ID
@@ -231,9 +232,15 @@ def _features_as_of(
             monthly_div = history_div.set_index("date")["amount"].resample("ME").sum().tail(24)
             if len(monthly_div) >= 12 and monthly_div.mean() > 0:
                 recurrence = max(0.0, 1.0 - float(monthly_div.std(ddof=0) / monthly_div.mean()))
-            annual = history_div.groupby(history_div["date"].dt.year)["amount"].sum()
-            if len(annual) >= 3 and annual.iloc[-3] > 0:
-                growth = float((annual.iloc[-1] / annual.iloc[-3]) ** .5 - 1.0)
+            # Mesma definição da ingestão. Agrupar por ano-calendário aqui
+            # fazia o validador medir uma métrica que a produção não calcula:
+            # o ano corrente entrava parcial, e o viés oscilava com o mês do
+            # rebalanceamento. Ver `income_growth_3y`.
+            por_mes = history_div.set_index("date")["amount"].resample("MS").sum()
+            growth = income_growth_3y(
+                {chave.date().replace(day=1): float(valor)
+                 for chave, valor in por_mes.items()},
+                cutoff.date().replace(day=1))
     return {
         "price": price, "dy_12m": dy, "liquidez_diaria": _num(liquidity),
         "history_months": history_months, "total_return_trend": trend,

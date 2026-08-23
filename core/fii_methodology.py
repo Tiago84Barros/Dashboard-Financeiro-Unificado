@@ -20,6 +20,48 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
+INCOME_GROWTH_FORMULA = "cagr(first12m,last12m),36m"
+INCOME_GROWTH_MIN_MONTHS = 24
+
+
+def income_growth_3y(monthly_income: "dict[date, float]", as_of: date) -> float | None:
+    """Crescimento anualizado da renda por cota, comparando os 12 meses mais
+    recentes com os 12 meses de dois anos atrás dentro de uma janela de 36.
+
+    Definição única, importada tanto pela ingestão quanto pelo walk-forward
+    point-in-time. Antes cada lado tinha a sua: a ingestão somava meses
+    corridos e limitava a [-1, 1]; o validador agrupava por **ano-calendário**
+    e não limitava. Medido em 23/08/2026 sobre 296 FIIs com histórico
+    comparável, as duas discordavam a ponto de o posto correlacionar apenas
+    0,765 — 16% dos fundos mudavam mais de 20 pontos percentuais de posição e
+    alguns trocavam de sinal (TRUE11: -99,8% no validador, +100% na ingestão).
+
+    O agrupamento por ano-calendário era o culpado: o ano corrente entra
+    parcial e o de dois anos atrás, inteiro. Com renda constante de 100/mês, um
+    corte em março media -50,0%; em junho, -29,3%; em agosto, -18,4%; só em
+    dezembro dava os 0,0% corretos. Como o walk-forward percorre meses, o viés
+    oscilava com a data de rebalanceamento — e o certificado PIT acabava
+    emitido sobre uma métrica que a produção não calculava, embora ela pese
+    0,100 e seja crítica.
+
+    Prevalece a fórmula da ingestão: janela de meses corridos, imune à fronteira
+    do calendário, com piso de meses povoados e limite em [-1, 1].
+    """
+    series = []
+    for offset in range(36):
+        year, month = as_of.year, as_of.month - offset
+        while month <= 0:
+            year -= 1
+            month += 12
+        series.append(float(monthly_income.get(date(year, month, 1), 0.0) or 0.0))
+    first_12, last_12 = sum(series[24:36]), sum(series[0:12])
+    if first_12 <= 0 or last_12 <= 0:
+        return None
+    if sum(value > 0 for value in series) < INCOME_GROWTH_MIN_MONTHS:
+        return None
+    return max(-1.0, min(1.0, (last_12 / first_12) ** .5 - 1.0))
+
+
 # 6.8.0: o encolhimento por cobertura passou a mirar o neutro em vez do
 # zero (A-106). A fórmula mudou, então a versão muda junto — senão as
 # notas novas herdariam em silêncio o certificado PIT da 6.7.0.

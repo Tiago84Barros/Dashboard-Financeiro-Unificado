@@ -16,6 +16,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
+from core.fii_methodology import INCOME_GROWTH_FORMULA, income_growth_3y
 from data_pipeline.market.fii_sources import metric_observation
 
 SOURCE = "brapi_fii_v2"
@@ -785,17 +786,14 @@ def income_metrics_from_monthly(monthly: dict[str, dict[date, float]], *,
                 month += 12
             series.append(float(values_by_month.get(date(year, month, 1), 0.0)))
         recurrence = _recurrence(list(reversed(series)))
-        first_12 = sum(series[24:36])
-        last_12 = sum(series[0:12])
         populated_months = sum(value > 0 for value in series)
-        growth = ((last_12 / first_12) ** .5 - 1.0
-                  if first_12 > 0 and last_12 > 0 and populated_months >= 24 else None)
-        if growth is not None:
-            growth = max(-1.0, min(1.0, growth))
+        # Definição única, compartilhada com o walk-forward PIT — ver
+        # `core.fii_methodology.income_growth_3y`.
+        growth = income_growth_3y(values_by_month, last_month)
         for metric, value, formula in (
             ("income_recurrence", recurrence, "positive_share/(1+cv),36m"),
             ("portfolio_income_recurrence", recurrence, "positive_share/(1+cv),36m"),
-            ("income_growth_per_share_3y", growth, "cagr(first12m,last12m),36m"),
+            ("income_growth_per_share_3y", growth, INCOME_GROWTH_FORMULA),
         ):
             observation = _observation(ticker, metric, value, as_of, available, None,
                                        endpoint="derived/dividends", vintage=f"derived:{as_of}",
