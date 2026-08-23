@@ -66,20 +66,22 @@ def test_rodape_da_primeira_aba_ainda_reflete_o_gate():
     assert "universo bruto de FIIs disponíveis" in copy_pendente["footer"]
 
 
-# ── 2. Ranking sem cards e sem medianas ──────────────────────────────────────
+# ── 2. Ranking sem medianas nem Top-N por medalha; universo em cards CSS ─────
 
-def test_ranking_nao_tem_mais_cards_nem_medianas():
+def test_ranking_nao_tem_medianas_nem_topn_por_medalha():
     corpo = inspect.getsource(fiis._tab_ranking)
     assert "DY 12m mediano" not in corpo
     assert "P/VP mediano" not in corpo
     assert "🏆 Top" not in corpo
     assert "_render_grupo" not in corpo
-    # O universo continua sendo apresentado — em tabela.
-    assert "st.dataframe(show" in corpo
+    # O universo é apresentado em cards CSS (padrão de Empresas B3/EUA), não
+    # em tabela — mas sem reintroduzir a antiga mediana/Top-N por medalha.
+    assert "_cards_de_fiis_disponiveis(view)" in corpo
+    assert "st.dataframe(show" not in corpo
 
 
-def test_helpers_dos_cards_foram_removidos():
-    """Código que só os cards usavam não pode ficar para trás."""
+def test_helpers_dos_cards_antigos_foram_removidos():
+    """Código que só os cards antigos (com mediana/medalha) usavam não pode ficar para trás."""
     for nome in ("_fii_card_html", "_render_grupo", "_score_cls"):
         assert not hasattr(fiis, nome), nome
         assert nome not in _FONTE, nome

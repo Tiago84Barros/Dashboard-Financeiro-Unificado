@@ -49,6 +49,7 @@ from core.llm_fii import chat_com_fiis
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import container_pagina, rolar_para_topo
+from design.market_companies import render_company_logo
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
 _TIPO_META = {
@@ -59,6 +60,16 @@ _TIPO_META = {
 }
 _TIPO_ORDER = ["tijolo", "papel", "fof", "hibrido"]
 _TIPO_OUTROS = ("🏦", "Outros", "#9CA3AF")
+
+# FII é sempre listado na B3 — mesmo CDN de logo usado em empresas_b3.py e
+# reaproveitado em views/portfolio_global.py (sem módulo central para essa
+# constante no projeto; cada vitrine mantém a própria cópia curta).
+_B3_LOGO_CDN = "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones"
+
+
+def _fii_logo_url(ticker: str) -> str:
+    tk = (ticker or "").strip().upper().replace(".SA", "")
+    return f"{_B3_LOGO_CDN}/{tk}.png"
 
 _CSS = """
 <style>
@@ -1306,6 +1317,112 @@ def _render_portfolio_table(slot, primary: pd.DataFrame | None,
     })
 
 
+def _fii_score_class(score: float) -> str:
+    """Mesmo limiar de badge usado em empresas_b3.py (score>=70 alto, >=40 médio)."""
+    if score >= 70:
+        return "fii-sc-high"
+    if score >= 40:
+        return "fii-sc-mid"
+    return "fii-sc-low"
+
+
+def _fii_available_card_html(row: "pd.Series") -> tuple[str, str]:
+    """HTML do card de um FII na aba Disponíveis, em duas partes.
+
+    Devolve (head, body): `head` fica ao lado do logo (coluna estreita) e
+    `body` ocupa a largura toda do card abaixo — mesma divisão em colunas
+    [1, 4] usada por design.market_companies.render_sector_grid p/ B3/EUA.
+    """
+    ticker = escape(str(row.get("Ticker", "—")))
+    nome = escape(str(row.get("Nome") or "—")[:26])
+    segmento = escape(str(row.get("Segmento") or "—"))
+    tipo_key = str(row.get("Tipo") or "").strip().lower()
+    tipo_label = escape(_TIPO_META.get(tipo_key, _TIPO_OUTROS)[1])
+    score = float(row.get("Score") or 0.0)
+    score_cls = _fii_score_class(score)
+    dy, pvp, liquidez = row.get("DY_12m"), row.get("P/VP"), row.get("Liquidez_Diaria")
+    dy_txt = f"{dy * 100:.1f}%" if pd.notna(dy) else "—"
+    pvp_txt = f"{pvp:.2f}" if pd.notna(pvp) else "—"
+    liq_txt = f"R$ {liquidez / 1000:.0f}k" if pd.notna(liquidez) else "—"
+    head = (
+        f'<div class="fii-top"><span class="fii-tk">{ticker}</span>'
+        f'<span class="fii-score {score_cls}">{score:.0f}</span></div>'
+        f'<div class="fii-nome">{nome}</div>'
+    )
+    body = (
+        f'<div class="fii-seg">{segmento} · {tipo_label}</div>'
+        f'<div class="fii-mini">'
+        f'<div><span class="lbl">DY 12m</span><span class="val">{dy_txt}</span></div>'
+        f'<div><span class="lbl">P/VP</span><span class="val">{pvp_txt}</span></div>'
+        f'<div><span class="lbl">Liquidez</span><span class="val">{liq_txt}</span></div>'
+        f'</div>'
+    )
+    return head, body
+
+
+_FII_DISPONIVEIS_PAGE_SIZE = 80
+
+
+def _cards_de_fiis_disponiveis(view: pd.DataFrame) -> None:
+    """Grade de cards CSS por FII, agrupada por Segmento — mesmo padrão visual
+    de "Empresas por Setor" nas vitrines B3/EUA (render_sector_grid): logo +
+    ticker + nome na coluna estreita, métricas do FII (DY, P/VP, liquidez,
+    score) no corpo do card, clique em "Analisar" leva à aba Busca de ativo.
+    Paginada (`_FII_DISPONIVEIS_PAGE_SIZE`) porque o universo tem centenas de
+    fundos — sem isso, 350+ cards renderizariam de uma vez.
+    """
+    df = view.copy()
+    df["_seg_sort"] = df["Segmento"].fillna("").astype(str).str.strip()
+    df["_seg_sort"] = df["_seg_sort"].where(df["_seg_sort"] != "", "￿")
+    df = df.sort_values(["_seg_sort", "Score"], ascending=[True, False], kind="stable")
+
+    limit_key = "fii_disponiveis_visible_limit"
+    visible_limit = int(st.session_state.get(limit_key, _FII_DISPONIVEIS_PAGE_SIZE))
+    visible = df.head(visible_limit)
+    total_por_segmento = df.groupby("Segmento", dropna=False)["Ticker"].size().to_dict()
+
+    for segmento, grupo in visible.groupby("Segmento", sort=False, dropna=False):
+        titulo = str(segmento).strip() if pd.notna(segmento) and str(segmento).strip() else "Sem segmento"
+        total = int(total_por_segmento.get(segmento, len(grupo)))
+        fundo_noun = "fundo" if total == 1 else "fundos"
+        st.markdown(
+            f'<div class="fii-hdr">{escape(titulo)}'
+            f'<span class="cnt">{total} {fundo_noun}</span></div>',
+            unsafe_allow_html=True,
+        )
+        grupo = grupo.reset_index(drop=True)
+        for inicio in range(0, len(grupo), 4):
+            colunas = st.columns(4, gap="small")
+            for offset, (_, row) in enumerate(grupo.iloc[inicio:inicio + 4].iterrows()):
+                ticker = str(row["Ticker"])
+                with colunas[offset]:
+                    st.markdown('<div class="fii-card">', unsafe_allow_html=True)
+                    head, body = _fii_available_card_html(row)
+                    logo_col, info_col = st.columns([1, 4], gap="small")
+                    with logo_col:
+                        render_company_logo(ticker, _fii_logo_url(ticker), size=30)
+                    with info_col:
+                        st.markdown(head, unsafe_allow_html=True)
+                    st.markdown(body + "</div>", unsafe_allow_html=True)
+                    if st.button(
+                        "Analisar", key=f"fii_disp_analyze_{ticker}_{inicio}_{offset}",
+                        width="stretch",
+                    ):
+                        st.session_state["fii_sel_ticker"] = ticker
+                        st.session_state["fii_active_tab"] = 1
+                        st.session_state["_fii_rolar_topo"] = True
+                        st.rerun()
+
+    if len(df) > visible_limit:
+        remaining = len(df) - visible_limit
+        if st.button(
+            f"Mostrar mais FIIs ({remaining} restantes)",
+            key="fii_disponiveis_show_more", width="stretch",
+        ):
+            st.session_state[limit_key] = visible_limit + _FII_DISPONIVEIS_PAGE_SIZE
+            st.rerun()
+
+
 def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
     fora = len(df) - len(ranked)
     c1, c2, c3, c4 = st.columns([2, 1.3, 1, 1])
@@ -1327,30 +1444,15 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
         view = view[view["Tipo"] == tipo]
     view = view[(view["DY_12m"].fillna(0) * 100 >= dy_min) & (view["P/VP"].fillna(99) <= pvp_max)]
 
-    # Sem cards por FII e sem KPIs medianos: o objetivo desta aba é apresentar
-    # o universo existente. Mediana de DY e de P/VP sobre um recorte filtrado
-    # não descreve nem o mercado nem uma carteira — quem decide alocação é a
-    # Carteira-modelo, que tem os próprios números.
+    # Sem KPIs medianos: mediana de DY e de P/VP sobre um recorte filtrado não
+    # descreve nem o mercado nem uma carteira — quem decide alocação é a
+    # Carteira-modelo, que tem os próprios números. Cards CSS (não tabela),
+    # mesmo padrão visual de "Empresas por Setor" nas vitrines B3/EUA.
     if view.empty:
         st.warning("Nenhum FII atende aos filtros.")
     else:
         st.caption(f"{len(view)} FIIs no universo com os filtros atuais.")
-        show = view[["Ticker", "Nome", "Segmento", "Tipo", "Preço", "DY_12m",
-                     "P/VP", "VPA", "Liquidez_Diaria", "Cotistas", "Score",
-                     "Confiança", "Cobertura", "Status_Publicação"]]
-        st.dataframe(show, width="stretch", hide_index=True, column_config={
-            "Nome": st.column_config.TextColumn("Nome", width="medium"),
-            "Preço": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
-            "DY_12m": st.column_config.NumberColumn("DY 12m", format="percent"),
-            "P/VP": st.column_config.NumberColumn("P/VP", format="%.2f"),
-            "VPA": st.column_config.NumberColumn("VPA", format="R$ %.2f"),
-            "Liquidez_Diaria": st.column_config.NumberColumn("Liquidez/dia", format="R$ %.0f"),
-            "Cotistas": st.column_config.NumberColumn("Cotistas", format="%d"),
-            "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
-            "Confiança": st.column_config.ProgressColumn("Confiança", min_value=0, max_value=1, format="percent"),
-            "Cobertura": st.column_config.ProgressColumn("Cobertura", min_value=0, max_value=1, format="percent"),
-            "Status_Publicação": "Status",
-        })
+        _cards_de_fiis_disponiveis(view)
     ts = df["updated_at"].max() if "updated_at" in df.columns else None
     raw_gate = st.session_state.get("fii_raw_publication_gate")
     status_copy = _selection_status_copy(
