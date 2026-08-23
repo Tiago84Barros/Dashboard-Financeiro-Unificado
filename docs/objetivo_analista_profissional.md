@@ -1,0 +1,57 @@
+# Objetivo: App 4 como analista profissional de portfólios
+
+> Aberto em 2026-08-23. Livro-razão vivo — atualizado a cada item fechado.
+> Critério herdado de `.claude/skills/profissionalizar-app4/SKILL.md` §6.
+
+## O que conta como "fechado"
+
+Não é "o código está correto". É **a fórmula responde à pergunta que o analista
+está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha quando:
+
+1. existe teste que falha sem a correção;
+2. a correção foi verificada **executando** contra dado real, não só em teste
+   sintético (o A-105 só apareceu assim);
+3. o efeito chega a **produção** — código na `main` não basta quando a tela lê
+   valor pré-computado de vitrine;
+4. a limitação que sobra está escrita onde o usuário do app a lê, não só no vault.
+
+## Estado dos itens
+
+| ID | Item | Estado | Prova |
+|---|---|---|---|
+| A-101 | Razão com denominador de sinal variável (B3 + EUA) | Código ✅ / Produção: B3 ✅, EUA ❌ | `tests/test_score_sinal_de_denominador.py`; medido: 32 das 100 "mais baratas" tinham EV/EBIT negativo |
+| A-102 | ROE em duas trilhas, premiando alavancagem | ✅ | `test_roe_nao_conta_duas_vezes_na_eficiencia_de_capital` |
+| A-103 | Cobertura parcial com convicção cheia; badge "Neutra" sem pares | ✅ | `test_trilha_com_meia_cobertura_...`, `test_sem_pares_apurados_...` |
+| A-105 | Prejuízo apagado pela fonte ranqueando como barato | ✅ | `test_prejuizo_apagado_pela_fonte_nao_vira_ausencia_neutra`; 53,4→42,5 |
+| SCORE-01 | Vitrine EUA republicada | 🔴 **aberto** | Vitrine viva é de 03/08, `score_version` 0.5.0, ranqueador antigo, 1.111 com `decision_grade` |
+| SCORE-02 | App não diz que os três motores não são comparáveis | 🔴 aberto | — |
+| SCORE-03 | A-104: correlação com janelas de 32 e 556 meses | 🟡 decisão do usuário | — |
+| SCORE-04 | `P/VP` e `P_FCO` sem proxy de sinal na B3 | 🟡 limitação aceita | documentada em `core/b3_company_score.py` |
+| A-106 | FII: cobertura parcial encolhia a nota para ZERO, não para o neutro | ✅ | `tests/test_fii_encolhimento_por_cobertura.py`; inversões entre os `ready` caíram de 3,8% para 0,54% |
+| A-107 | FII: ingestão e validador PIT calculavam o crescimento de renda por fórmulas diferentes | ✅ | `tests/test_fii_crescimento_de_renda_definicao_unica.py`; Spearman entre as duas era 0,765 |
+| A-108 | FII: P/VP simétrico pune desconto como ágio | ⚪ **não procede** | Os extremos (0,019 e 18,34) já são barrados como `insufficient`; os 11 que passam ficam todos abaixo da mediana |
+| PIT-6.8 | Walk-forward revalidado para a metodologia 6.8.0 | 🟡 em andamento | O certificado da 6.7.0 não cobre a fórmula nova |
+| FII-Q | Passar a pergunta "a fórmula responde ao que se pergunta?" no motor de FIIs | 🟢 rodada feita | 2 defeitos achados e fechados (A-106, A-107), 1 descartado (A-108) |
+| GLOB-Q | Idem no Portfólio Global | 🔴 nunca feito | — |
+
+## Por que a lista não é o critério
+
+Doze rodadas de auditoria com G1–G7 em "A" não pegaram A-101/102/103/105. A
+matriz pergunta se o cálculo está certo; `-9` está aritmeticamente certo. Quatro
+achados na primeira vez que alguém fez a outra pergunta é evidência de que
+existem mais — fechar esta lista não encerra o objetivo, só a rodada.
+
+Regra derivada: **revisor que executa acha o que revisor que lê não acha.**
+Nenhum item fecha sem rodar contra o armazém.
+
+A rodada de FIIs confirmou a regra duas vezes. O motor de FIIs era o mais
+rigoroso dos três e mesmo assim tinha dois defeitos que só apareceram medindo:
+o A-106 exigiu comparar `raw_score` com `type_score` par a par nos 258 fundos
+declarados `ready`, e o A-107 exigiu recalcular as duas fórmulas de crescimento
+sobre os dividendos reais de 296 fundos. Nenhum dos dois é visível lendo o
+arquivo — as duas expressões estão aritmeticamente corretas.
+
+E confirmou também o contrário, que importa igual: o A-108 parecia o defeito
+mais grave dos três ao ler o código (um FII a P/VP 0,019 ranqueado como pior
+avaliação que um a 18,34) e **não procede**, porque o gate de prontidão já
+barra esses casos. Auditoria que só lê produz achado falso nas duas direções.
