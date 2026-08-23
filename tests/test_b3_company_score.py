@@ -135,3 +135,61 @@ view._render_b3_score_dashboard('BOA3', universo.iloc[0], meta)
     assert "Pontuação fundamentalista" in rendered
     captions = "\n".join(item.value for item in app.caption)
     assert "Referência da comparação" in captions
+
+
+def test_roe_nao_conta_duas_vezes_na_eficiencia_de_capital():
+    """A trilha de eficiência de capital mede capital, não alavancagem.
+
+    ROE estava em quality E em capital_efficiency, somando peso 0,13 — mais que
+    qualquer outra métrica isolada, sem que a metodologia dissesse isso. Pior:
+    ROE é alavancado, então dívida inflava a "eficiência do capital" que o ROIC
+    existe justamente para medir sem esse efeito (achado A-102).
+    """
+    from core.b3_company_score import FACTOR_TRACKS
+
+    assert [nome for nome, _ in FACTOR_TRACKS["capital_efficiency"]] == ["ROIC"]
+    trilhas_com_roe = [t for t, ms in FACTOR_TRACKS.items()
+                       if any(nome == "ROE" for nome, _ in ms)]
+    assert trilhas_com_roe == ["quality"]
+
+
+def test_trilha_com_meia_cobertura_nao_produz_conviccao_de_trilha_cheia():
+    """Cobertura parcial encolhe a nota para o neutro (achado A-103).
+
+    Antes, apurar solidez sobre uma métrica de duas dava os mesmos pontos que
+    apurar sobre as duas; a diferença aparecia só na coluna de cobertura, ao
+    lado da nota — não dentro dela.
+    """
+    universe = _universe()
+    cheia = score_cross_section(universe).set_index("Ticker")
+    parcial_df = universe.copy()
+    parcial_df.loc[parcial_df["Ticker"] == "BOA3", "Liquidez_Corrente"] = np.nan
+    parcial = score_cross_section(parcial_df).set_index("Ticker")
+
+    assert parcial.loc["BOA3", "coverage_solidity"] < cheia.loc["BOA3", "coverage_solidity"]
+    # A nota cheia era boa; a parcial precisa estar mais perto do neutro.
+    assert cheia.loc["BOA3", "score_solidity"] > 50.0
+    assert abs(parcial.loc["BOA3", "score_solidity"] - 50.0) < \
+        abs(cheia.loc["BOA3", "score_solidity"] - 50.0)
+
+
+def test_cobertura_cheia_nao_e_penalizada_pelo_encolhimento():
+    """O encolhimento não pode mexer em quem tem todas as métricas."""
+    scored = score_cross_section(_universe()).set_index("Ticker")
+    assert scored.loc["BOA3", "coverage_solidity"] == 100
+    assert scored.loc["BOA3", "score_solidity"] > scored.loc["FRA3", "score_solidity"]
+
+
+def test_sem_pares_apurados_nao_vira_veredito_de_empresa_mediana():
+    """Ausência de nota é "Sem classificação", não "Neutra" (achado A-103).
+
+    O caminho de fallback devolvia score 50,0 — que é a mediana do corte, e que
+    classification() rotula "Neutra". A tela então afirmava, com 0% de
+    cobertura, que a empresa era mediana entre pares que nunca foram apurados.
+    """
+    from views.empresas_b3 import _fmt_pontuacao
+
+    assert classification(float("nan")) == ("Sem classificação", "neutro")
+    assert _fmt_pontuacao(float("nan")) == "—"
+    assert _fmt_pontuacao(None) == "—"
+    assert _fmt_pontuacao(72.36) == "72.4/100"

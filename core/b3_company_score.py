@@ -22,7 +22,14 @@ FACTOR_TRACKS: dict[str, list[tuple[str, bool]]] = {
     "solidity": [
         ("Endividamento_Total", False), ("Liquidez_Corrente", True),
     ],
-    "capital_efficiency": [("ROIC", True), ("ROE", True)],
+    # Só ROIC, como no motor americano. ROE estava aqui E em quality, o que
+    # lhe dava peso 0,22/4 + 0,15/2 = 0,13 — mais que qualquer outra métrica
+    # isolada, sem que a metodologia em lugar nenhum dissesse isso. Além da
+    # contagem dupla, ROE é alavancado: dívida infla o retorno sobre o
+    # patrimônio sem melhorar a eficiência do capital, que é justamente o que
+    # ROIC mede. Manter os dois na mesma trilha premiava alavancagem duas
+    # vezes (achado A-102).
+    "capital_efficiency": [("ROIC", True)],
     # Ranqueados pelo YIELD recíproco (1/múltiplo), por isso "maior é melhor".
     # Ver _numeric_metric e _RECIPROCO (achado A-101).
     "valuation": [
@@ -109,6 +116,14 @@ def score_cross_section(df: pd.DataFrame) -> pd.DataFrame:
         names = [name for name, _ in metrics]
         score = pd.concat([ranked[name] for name in names], axis=1).mean(axis=1)
         coverage = pd.concat([observed[name] for name in names], axis=1).mean(axis=1)
+        # Trilha esparsa não pode produzir convicção extrema. Antes, uma trilha
+        # apurada sobre uma única métrica de duas rendia os mesmos 90 pontos que
+        # uma apurada sobre as duas, e a diferença ficava só na coluna de
+        # cobertura — que a tela mostra ao lado, não dentro da nota. A nota é
+        # encolhida para o neutro conforme a raiz da cobertura observada, o mesmo
+        # mecanismo que o motor americano já usava (achado A-103). Cobertura
+        # cheia não muda nada; cobertura zero devolve o neutro, como antes.
+        score = _NEUTRAL + (score - _NEUTRAL) * coverage.pow(0.5)
         track_scores[track] = score
         result[f"score_{track}"] = (score * 100).round(1)
         result[f"coverage_{track}"] = (coverage * 100).round(0)

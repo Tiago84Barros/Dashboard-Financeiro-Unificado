@@ -3371,7 +3371,12 @@ def _b3_peer_scores(
     scored = score_cross_section(pares)
     linha = scored[scored["Ticker"] == ticker].copy()
     if linha.empty:
-        return pd.Series({"Ticker": ticker, "score": 50.0, "coverage": 0.0}), referencia
+        # NaN, não 50: 50 é a mediana do corte, e classification(50) devolve
+        # "Neutra" — um veredito de que a empresa é mediana. Sem nenhum par
+        # apurado não há veredito nenhum, e é isso que a tela precisa dizer
+        # (achado A-103).
+        return (pd.Series({"Ticker": ticker, "score": float("nan"), "coverage": 0.0}),
+                referencia)
 
     # A nota principal continua sendo calculada pelo motor oficial da B3. As
     # seis trilhas são uma decomposição diagnóstica para o radar, não um score
@@ -3403,6 +3408,15 @@ def _metric_decimal_pct(mult: pd.Series, key: str) -> str:
         return f"{display:.1f}%"
     except (TypeError, ValueError):
         return "—"
+
+
+def _fmt_pontuacao(valor: object) -> str:
+    """Nota em `x/100`, ou travessão quando não há nota — nunca "nan/100"."""
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return "—"
+    return f"{numero:.1f}/100" if np.isfinite(numero) else "—"
 
 
 def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> None:
@@ -3483,7 +3497,7 @@ def _render_b3_score_dashboard(
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        card_metrica("Pontuação fundamentalista", f"{float(score_row.get('score', 50)):.1f}/100")
+        card_metrica("Pontuação fundamentalista", _fmt_pontuacao(score_row.get("score")))
         badge_status(label, tipo)
     with c2:
         card_metrica("Cobertura", f"{float(score_row.get('coverage', 0)):.0f}%")
