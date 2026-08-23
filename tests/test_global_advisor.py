@@ -6,7 +6,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from core.global_portfolio.advisor import Acao, recomendar
+from core.global_portfolio.advisor import recomendar
 from core.global_portfolio.signals import Sinal
 from core.portfolio_constraints import project_capped_simplex
 from core.rebalancing import CalendarRebalance, ThresholdRebalance

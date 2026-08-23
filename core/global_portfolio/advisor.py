@@ -54,7 +54,12 @@ import pandas as pd
 from core.global_portfolio.signals import Sinal
 from core.portfolio_constraints import project_capped_simplex, project_class_capped
 from core.rebalancing import RebalancePolicy
-from core.transaction_costs import CostConfig, custo_compra, custo_por_classe, custo_venda
+from core.transaction_costs import (
+    CostConfig,
+    custo_compra,
+    custo_por_classe,
+    custo_venda,
+)
 
 # Score +-1 no maximo produz ate +-50% de variacao relativa sobre o peso
 # atual do ativo. Escolha de desenho (mesmo espirito de LIMITE_ATIVO_DEFAULT

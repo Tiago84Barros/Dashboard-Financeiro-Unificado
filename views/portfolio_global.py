@@ -19,18 +19,25 @@ import streamlit as st
 
 from core import transaction_costs
 from core.global_portfolio import (
-    advisor, concentration, correlation, factors, metrics, risk, roles, signals,
+    advisor,
+    concentration,
+    correlation,
+    factors,
+    metrics,
+    risk,
+    roles,
+    signals,
 )
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
 from core.global_portfolio.returns import Cobertura, retornos_mensais
 from core.global_portfolio.taxonomy import ROTULOS, nao_mapeados
+from core.market_companies import us_logo_url
 from core.portfolio.registry import asset_classes, get_spec
 from core.portfolio.repository import (
     load_active_snapshots,
     load_allocation_targets,
     save_allocation_targets,
 )
-from core.market_companies import us_logo_url
 from core.rebalancing import CalendarRebalance
 from design.componentes import card_metrica
 from design.market_companies import render_company_logo

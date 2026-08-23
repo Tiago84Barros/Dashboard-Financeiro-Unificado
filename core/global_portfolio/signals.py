@@ -365,7 +365,7 @@ def sinais_redundancia(pares: list[tuple[str, str, float]], df_posicoes: pd.Data
         return []
 
     linhas = df_posicoes.to_dict(orient="records")
-    pesos = {str(l["symbol"]): float(l.get("weight_global") or 0.0) for l in linhas}
+    pesos = {str(linha["symbol"]): float(linha.get("weight_global") or 0.0) for linha in linhas}
     scores, _classes = _scores_qualidade_brutos(df_posicoes)
 
     faixa = max(1.0 - limiar, 1e-9)
@@ -418,9 +418,9 @@ def sinais_concentracao(df_posicoes: pd.DataFrame, *,
         return []
 
     linhas = df_posicoes.to_dict(orient="records")
-    peso_ativo = {str(l["symbol"]): float(l.get("weight_global") or 0.0) for l in linhas}
-    setor_por_symbol = {str(l["symbol"]): l.get("sector") for l in linhas}
-    pais_por_symbol = {str(l["symbol"]): l.get("country") for l in linhas}
+    peso_ativo = {str(linha["symbol"]): float(linha.get("weight_global") or 0.0) for linha in linhas}
+    setor_por_symbol = {str(linha["symbol"]): linha.get("sector") for linha in linhas}
+    pais_por_symbol = {str(linha["symbol"]): linha.get("country") for linha in linhas}
 
     por_setor = concentration.por_dimensao(df_posicoes, "sector")
     peso_setor = dict(zip(por_setor["sector"], por_setor["peso"])) if not por_setor.empty else {}
@@ -504,10 +504,10 @@ def sinais_desvio_alvo(df_posicoes: pd.DataFrame, alvos: dict[str, float]) -> li
     linhas = df_posicoes.to_dict(orient="records")
     peso_por_classe: dict[str, float] = {}
     classe_por_symbol: dict[str, str] = {}
-    for l in linhas:
-        symbol = str(l["symbol"])
-        classe = str(l.get("asset_class") or "").strip().lower()
-        peso = float(l.get("weight_global") or 0.0)
+    for linha in linhas:
+        symbol = str(linha["symbol"])
+        classe = str(linha.get("asset_class") or "").strip().lower()
+        peso = float(linha.get("weight_global") or 0.0)
         peso_por_classe[classe] = peso_por_classe.get(classe, 0.0) + peso
         classe_por_symbol[symbol] = classe
 

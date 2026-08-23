@@ -21,7 +21,6 @@ from core.transaction_costs import (
     overhead_anual_estimado,
 )
 
-
 # ──────────────────────────────────────────────────────────────────────────
 # Pin: comportamento de b3 e identico ao de antes do Task 3
 # ──────────────────────────────────────────────────────────────────────────
