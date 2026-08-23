@@ -241,6 +241,23 @@ def card_metrica(
 # Badges e status
 # ══════════════════════════════════════════════════════════════════
 
+# Os três motores de score (B3, FIIs, Empresas Americanas) usam o mesmo cartão,
+# a mesma faixa 0–100 e o mesmo vocabulário de badge, mas são metodologias
+# independentes com rigor diferente: cada nota é um percentil DENTRO do próprio
+# universo comparável. Um 72 na B3 e um 72 em FIIs não dizem a mesma coisa, e a
+# casca visual comum sugere o contrário. Ver `docs/objetivo_analista_profissional.md`.
+AVISO_ESCALA_NAO_COMPARAVEL = (
+    "Nota relativa ao universo comparável desta aba, em escala própria. "
+    "Não é comparável às notas de outras abas (B3, FIIs e Empresas Americanas "
+    "usam metodologias independentes)."
+)
+
+
+def aviso_escala_do_score() -> None:
+    """Declara que a nota não vale fora da aba onde foi calculada."""
+    st.caption(AVISO_ESCALA_NAO_COMPARAVEL)
+
+
 def badge_status(texto: str, tipo: str = "info") -> None:
     """
     Badge colorido inline.

@@ -24,13 +24,13 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-103 | Cobertura parcial com convicção cheia; badge "Neutra" sem pares | ✅ | `test_trilha_com_meia_cobertura_...`, `test_sem_pares_apurados_...` |
 | A-105 | Prejuízo apagado pela fonte ranqueando como barato | ✅ | `test_prejuizo_apagado_pela_fonte_nao_vira_ausencia_neutra`; 53,4→42,5 |
 | SCORE-01 | Vitrine EUA republicada | 🔴 **aberto** | Vitrine viva é de 03/08, `score_version` 0.5.0, ranqueador antigo, 1.111 com `decision_grade` |
-| SCORE-02 | App não diz que os três motores não são comparáveis | 🔴 aberto | — |
+| SCORE-02 | App não diz que os três motores não são comparáveis | ✅ código / 🟡 produção | `tests/test_aviso_escala_do_score.py`; o painel Global já dizia, as três abas individuais não |
 | SCORE-03 | A-104: correlação com janelas de 32 e 556 meses | 🟡 decisão do usuário | — |
 | SCORE-04 | `P/VP` e `P_FCO` sem proxy de sinal na B3 | 🟡 limitação aceita | documentada em `core/b3_company_score.py` |
 | A-106 | FII: cobertura parcial encolhia a nota para ZERO, não para o neutro | ✅ | `tests/test_fii_encolhimento_por_cobertura.py`; inversões entre os `ready` caíram de 3,8% para 0,54% |
 | A-107 | FII: ingestão e validador PIT calculavam o crescimento de renda por fórmulas diferentes | ✅ | `tests/test_fii_crescimento_de_renda_definicao_unica.py`; Spearman entre as duas era 0,765 |
 | A-108 | FII: P/VP simétrico pune desconto como ágio | ⚪ **não procede** | Os extremos (0,019 e 18,34) já são barrados como `insufficient`; os 11 que passam ficam todos abaixo da mediana |
-| PIT-6.8 | Walk-forward revalidado para a metodologia 6.8.0 | 🟡 em andamento | O certificado da 6.7.0 não cobre a fórmula nova |
+| PIT-6.8 | Walk-forward revalidado para a metodologia 6.8.0 | ✅ local / 🔴 produção | Run 52 `passed`: 44 períodos, excesso médio +0,167% a.m., drawdown máx. −12,7%, zero bloqueadores. Gravado no armazém LOCAL; o Supabase ainda tem só o certificado 6.7.0 |
 | FII-Q | Passar a pergunta "a fórmula responde ao que se pergunta?" no motor de FIIs | 🟢 rodada feita | 2 defeitos achados e fechados (A-106, A-107), 1 descartado (A-108) |
 | A-109 | Global: covariância par a par pode não ser positiva semidefinida | ⚪ **não procede** (invariante travado) | `tests/test_global_covariancia_psd.py`; medido: 10% das carteiras com séries desalinhadas, pior caso −26,2% vs +3,5% de contribuição ao risco |
 | GLOB-Q | Idem no Portfólio Global | 🟢 rodada feita | 0 defeitos vivos, 1 descartado (A-109) com guarda de regressão |
@@ -83,3 +83,21 @@ nada declarando a dependência — e o docstring de lá lamenta o truncamento de
 séries longas, que é exatamente o argumento que levaria alguém a afrouxar a
 janela. Fechado como invariante testado nos dois lados, não como correção de
 fórmula.
+
+## O que trava a chegada em produção
+
+Três itens estão corretos no código e **não chegam à tela publicada** sem uma
+gravação remota, que exige autorização sua:
+
+1. **PIT-6.8** — a validação 6.8.0 passou (run 52) no armazém local. Enquanto
+   ela não for publicada, a aba de FIIs em produção consulta a 6.8.0 no
+   Supabase, não acha, e reporta `unvalidated` — ou seja, a tela fica MAIS
+   conservadora que a realidade, o que é o lado certo de errar.
+2. **SCORE-01** — a vitrine EUA viva é de 03/08, `score_version` 0.5.0, gerada
+   pelo ranqueador antigo, com 1.111 linhas marcadas `decision_grade`. As
+   correções A-101 e A-105 estão na `main` e não alcançam essas linhas. Este é
+   o único item em que a tela publicada está MENOS conservadora que a
+   realidade. O passo de ingestão local (`run_us_ingest.py snapshot
+   --warehouse`) segue barrado pelo classificador de permissões.
+3. **SCORE-02** — o aviso de escala está no código; chega à tela no próximo
+   deploy da `main`, sem gravação remota.

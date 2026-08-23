@@ -48,7 +48,11 @@ from core.llm_context_fii import build_fii_chat_context
 from core.llm_fii import chat_com_fiis
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
-from design.componentes import container_pagina, rolar_para_topo
+from design.componentes import (
+    aviso_escala_do_score,
+    container_pagina,
+    rolar_para_topo,
+)
 from design.market_companies import company_logo_html
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
@@ -1473,6 +1477,7 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
                f"{fora} fundos ficaram sem score por tipo ausente/inválido. "
                f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}. "
                + status_copy["footer"])
+    aviso_escala_do_score()
 
 
 # ── Tab 2: Busca de ativo (detalhe por FII) ───────────────────────────────────

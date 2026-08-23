@@ -30,6 +30,7 @@ import core.market_read as _mr  # séries do market.* (preços mensais ajustados
 from core.b3_methodology import SCORE_VERSION
 from core.market_companies import normalize_b3_companies
 from design.componentes import (
+    aviso_escala_do_score,
     badge_status,
     card_metrica,
     container_pagina,
@@ -3530,6 +3531,7 @@ def _render_b3_score_dashboard(
     )
     st.plotly_chart(fig, width="stretch", key=f"b3_radar_{ticker}")
     st.caption(f"Referência da comparação: {referencia}. Metodologia B3 {SCORE_VERSION}.")
+    aviso_escala_do_score()
 
     with st.expander("📄 Dossiê, classificação e critérios avançados"):
         _render_b3_dossie(ticker, score_row, referencia)

@@ -42,6 +42,7 @@ from core.us_company_analysis import (
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import (
+    aviso_escala_do_score,
     badge_status,
     card_metrica,
     container_pagina,
@@ -264,6 +265,7 @@ def _render_score_dashboard(row: pd.Series) -> None:
         card_metrica("ROIC", _fmt_pct(row.get("roic")))
     with c4:
         card_metrica("Retorno do fluxo de caixa livre", _fmt_pct(row.get("fcf_yield")))
+    aviso_escala_do_score()
     # SBC e diluição entraram no score v0.5.0 (auditoria 2026-07): a margem de
     # caixa GAAP soma a remuneração em ações de volta, e recompra só cria valor
     # se a base acionária realmente encolher.
@@ -1616,6 +1618,7 @@ def _tab_analise_fundamentalista(status: dict) -> None:
     secao_titulo("Pontuação fundamentalista — relativa por indústria", "🏆")
     st.caption("Winsorização + percentil intra-indústria nas 6 trilhas de fatores. "
                "Ausência = neutro. A pontuação não é garantia de retorno.")
+    aviso_escala_do_score()
     scored = localize_us_company_frame(scored)
     setores = ["(todos)"] + sorted(x for x in scored["sector"].dropna().unique())
     sel = st.selectbox("Setor", setores, key="us_score_sector")
