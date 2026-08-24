@@ -68,8 +68,17 @@ def forward_returns_from_monthly(monthly: pd.DataFrame) -> pd.DataFrame:
     if monthly is None or monthly.empty:
         return pd.DataFrame(columns=["symbol", "date", "fwd_return"])
     m = monthly.sort_values(["symbol", "month_end"]).copy()
+    m["month_end"] = pd.to_datetime(m["month_end"])
     m["next_close"] = m.groupby("symbol")["adjusted_close"].shift(-1)
+    m["next_month"] = m.groupby("symbol")["month_end"].shift(-1)
     m["fwd_return"] = m["next_close"] / m["adjusted_close"] - 1.0
+    # A-117: `shift(-1)` devolve a PRÓXIMA LINHA, não o próximo mês. Com um
+    # buraco na série (jan/2020 e depois dez/2020) o retorno de 11 meses saía
+    # rotulado como retorno mensal — +100% entrando numa série de vol mensal.
+    # Exige que a linha seguinte esteja mesmo no mês seguinte (45 dias de folga
+    # cobrem month_end de comprimentos diferentes).
+    salto = (m["next_month"] - m["month_end"]).dt.days
+    m.loc[~salto.between(20, 45), "fwd_return"] = float("nan")
     out = m.dropna(subset=["fwd_return"])[["symbol", "month_end", "fwd_return"]]
     return out.rename(columns={"month_end": "date"})
 
@@ -226,21 +235,59 @@ def compute_score_history(engine, as_of_dates: Iterable[date], *,
     return {"ok": True, "written": written, "dates": len(as_of_dates)}
 
 
+# Quanto o preço de saída pode estar além da data-alvo e o retorno ainda ser
+# chamado de retorno de `horizon_months`. Ver A-117 no docstring abaixo.
+TOLERANCIA_HORIZONTE_MESES = 3
+
+
 def build_annual_panel(vintages: pd.DataFrame, monthly: pd.DataFrame,
-                       horizon_months: int = 12) -> pd.DataFrame:
+                       horizon_months: int = 12,
+                       tolerancia_meses: int = TOLERANCIA_HORIZONTE_MESES) -> pd.DataFrame:
     """Painel do backtest: junta score (as_of) ao retorno futuro de `horizon_months`.
 
     vintages: ['as_of_date','symbol','score']; monthly: ['symbol','month_end',
     'adjusted_close']. Para cada (as_of, symbol) usa o preço no mês ≤ as_of e o
     preço ~horizon meses depois. Puro e testável.
+
+    Correções da auditoria 2026-08
+    ------------------------------
+    **A-116 — sobrevivência.** A versão anterior fazia ``if fut.empty: continue``:
+    a ação que parou de negociar sumia do painel. É o viés de sobrevivência na
+    forma mais pura — o perdedor que quebrou não conta, e o backtest fica melhor
+    do que a realidade. Medido: uma cesta de duas ações, uma +30% e outra que
+    caiu 80% e deslistou, aparecia como **+30,0%** em vez de −25,0%.
+
+    Agora distinguimos duas ausências que a versão antiga confundia:
+
+    * o **dado** acaba (as_of perto da borda do dataset) — aí o retorno é
+      genuinamente inobservável e a linha sai, como antes;
+    * a **ação** acaba, mas o dataset continua — aí ela deslistou. Usamos o
+      último preço negociado como saída (equivale a vender na última cotação) e
+      marcamos a linha em ``censored``. Continua otimista, porque deslistagem
+      real costuma liquidar perto de zero sem cotação — mas errar para o lado
+      otimista em alguns pontos percentuais é outra ordem de grandeza do que
+      apagar a perda inteira.
+
+    **A-117 — horizonte elástico.** ``fut.iloc[0]`` não tinha teto: se o próximo
+    preço disponível estava 7 anos além do alvo, os +300% daquele período eram
+    rotulados "retorno de 12 meses". Agora o preço de saída precisa cair dentro
+    de ``tolerancia_meses`` após o alvo; fora disso a linha é tratada como
+    censurada (a ação sumiu no meio do caminho), não como um retorno de horizonte.
+
+    ``df.attrs`` carrega ``n_censored`` e ``n_inobservavel`` para quem quiser
+    declarar a censura a jusante. Ver `tests/test_us_panel_sobrevivencia.py`.
     """
     cols = ["date", "symbol", "score", "fwd_return"]
+    vazio = pd.DataFrame(columns=cols)
+    vazio.attrs.update(n_censored=0, n_inobservavel=0)
     if vintages is None or vintages.empty or monthly is None or monthly.empty:
-        return pd.DataFrame(columns=cols)
+        return vazio
     m = monthly.dropna(subset=["adjusted_close"]).copy()
     m["month_end"] = pd.to_datetime(m["month_end"])
+    fim_do_dado = m["month_end"].max()
     price_by_symbol = {s: g.sort_values("month_end") for s, g in m.groupby("symbol")}
     rows = []
+    n_censored = n_inobservavel = 0
     for _, v in vintages.iterrows():
         sym = v["symbol"]
         g = price_by_symbol.get(sym)
@@ -251,14 +298,30 @@ def build_annual_panel(vintages: pd.DataFrame, monthly: pd.DataFrame,
         if past.empty:
             continue
         p0 = float(past.iloc[-1]["adjusted_close"])
-        target = as_of + pd.DateOffset(months=horizon_months)
-        fut = g[g["month_end"] >= target]
-        if fut.empty or p0 <= 0:
+        if p0 <= 0:
             continue
-        p1 = float(fut.iloc[0]["adjusted_close"])
+        target = as_of + pd.DateOffset(months=horizon_months)
+        limite = target + pd.DateOffset(months=int(tolerancia_meses))
+        fut = g[(g["month_end"] >= target) & (g["month_end"] <= limite)]
+        censurado = False
+        if not fut.empty:
+            p1 = float(fut.iloc[0]["adjusted_close"])
+        else:
+            ultimo = g.iloc[-1]
+            # A ação sumiu antes do dataset acabar => deslistou: sai na última
+            # cotação. O dataset é que acabou => inobservável: a linha sai.
+            if ultimo["month_end"] < fim_do_dado and ultimo["month_end"] > as_of:
+                p1, censurado = float(ultimo["adjusted_close"]), True
+                n_censored += 1
+            else:
+                n_inobservavel += 1
+                continue
         rows.append({"date": v["as_of_date"], "symbol": sym,
-                     "score": float(v["score"]), "fwd_return": p1 / p0 - 1.0})
-    return pd.DataFrame(rows, columns=cols)
+                     "score": float(v["score"]), "fwd_return": p1 / p0 - 1.0,
+                     "censored": censurado})
+    out = pd.DataFrame(rows, columns=cols + ["censored"])
+    out.attrs.update(n_censored=n_censored, n_inobservavel=n_inobservavel)
+    return out
 
 
 def annual_asof_dates(start_year: int, end_year: int, month: int = 6, day: int = 30) -> list[date]:

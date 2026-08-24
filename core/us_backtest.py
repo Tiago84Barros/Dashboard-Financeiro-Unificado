@@ -210,7 +210,14 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
     """
     if panel is None or panel.empty:
         return {"ok": False, "reason": "painel vazio"}
+    attrs = dict(getattr(panel, "attrs", {}) or {})
     panel = panel.copy()
+    # A-116: quantas posicoes do painel sairam na ultima cotacao porque a acao
+    # deslistou. Nao e detalhe de montagem -- e o unico numero que diz ao leitor
+    # o quanto do backtest repousa sobre saida forcada em vez de preco no
+    # horizonte. Zero aqui significa "nenhuma acao sumiu no meio", nao "nao medi".
+    n_censurado = int(pd.to_numeric(panel.get("censored", pd.Series(dtype=bool)),
+                                    errors="coerce").fillna(0).astype(bool).sum())         if "censored" in panel.columns else 0
     for coluna in ("score", "fwd_return"):
         panel[coluna] = pd.to_numeric(panel[coluna], errors="coerce")
     panel = panel.dropna(subset=["score", "fwd_return"])
@@ -285,6 +292,13 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
             "max_hhi": max_hhi,
             "violates_policy": violates_policy,
             "eligible_for_conclusion": not violates_policy,
+        },
+        "censura": {
+            "n_censurado": n_censurado,
+            "n_observacoes": int(len(panel)),
+            "fracao_censurada": (float(n_censurado / len(panel))
+                                 if len(panel) else None),
+            "n_inobservavel": int(attrs.get("n_inobservavel", 0)),
         },
         "transaction_cost_bps": float(transaction_cost_bps),
         "slippage_bps": float(slippage_bps),

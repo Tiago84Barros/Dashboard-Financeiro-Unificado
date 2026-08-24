@@ -2692,6 +2692,27 @@ def _tab_backtests(status: dict) -> None:
         st.caption("Comparação contra índice desativada explicitamente; pesos iguais "
                    "do universo continuam como baseline interno.")
 
+    # A-116: a fracao do painel que saiu na ultima cotacao porque a acao
+    # deslistou. Sem isso o leitor nao tem como saber quanto do resultado
+    # repousa sobre saida forcada -- e a versao anterior simplesmente apagava
+    # essas acoes, o que fazia o backtest parecer melhor do que foi.
+    censura = res.get("censura") or {}
+    if censura.get("n_censurado"):
+        st.info(
+            f"{censura['n_censurado']} de {censura['n_observacoes']} observações "
+            f"({censura.get('fracao_censurada', 0.0):.1%}) são de ações que "
+            "pararam de negociar antes do fim do horizonte: elas entram pela "
+            "última cotação, como se a posição tivesse sido vendida ali. "
+            "Deslistagem real costuma liquidar mais perto de zero, então o "
+            "retorno destas ainda tende a ficar otimista."
+        )
+    if censura.get("n_inobservavel"):
+        st.caption(
+            f"{censura['n_inobservavel']} pares (data, ação) ficaram de fora por "
+            "não haver preço no horizonte nem cotação de saída — retorno "
+            "inobservável, não retorno zero."
+        )
+
     concentration = res.get("concentration") or {}
     if concentration and not concentration.get("eligible_for_conclusion", True):
         st.warning(

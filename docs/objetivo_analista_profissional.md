@@ -39,6 +39,9 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-111 | Global: VaR e CVaR de 95% exibidos lado a lado repousando sobre 1 observação, com promessa de "1 a cada 20 meses" numa série de 18 | ✅ (declaração) | `tests/test_global_var_cauda_declarada.py`; no piso de 18 meses o CVaR é idêntico ao pior mês em 100% de 200 carteiras |
 | A-112 | Sortino usava a dispersão das perdas em torno da média delas, não o desvio contra o alvo | ✅ | `tests/test_sortino_downside_deviation.py`; 1,20× o padrão na mediana (até 1,75×), exagerado em 222 de 300 carteiras |
 | A-113 | "Sharpe" exibido com taxa livre de risco zero | ✅ (declaração) | cartão passa a dizer `Sharpe (rf = 0)`; correção real exige série de Treasury no pipeline |
+| A-116 | Backtest EUA apagava do painel a ação que parou de negociar — viés de sobrevivência puro | ✅ | `tests/test_us_panel_sobrevivencia.py`; cesta de duas ações (+30% e −80% com deslistagem) saía como **+30,0%** em vez de −25,0% |
+| A-117 | Horizonte elástico: o primeiro preço após o alvo, ainda que 7 anos depois, virava "retorno de 12 meses" | ✅ | idem; +300% de 84 meses rotulados como 12m, e +100% de 11 meses rotulados como retorno mensal |
+| BACKTEST-Q | Idem na evidência histórica — o retorno exibido era alcançável naquela data? | 🟢 rodada feita | 2 achados, **os primeiros que enviesavam para CIMA** |
 | A-114 | Rebalanceamento por banda e híbrido não enxergavam a saída de posição: o laço varria só o alvo, e o ticker que saiu não tem chave lá | ✅ | `tests/test_rebalancing_saida_de_posicao.py`; sair inteiro de 30% media desvio 0,0 e devolvia "não precisa mexer" |
 | A-115 | Advisor compara custo contra o **tamanho** da ordem, não contra o benefício dela | ⚠️ decisão sua | `core/global_portfolio/advisor.py`; aprova movimento grande de pouco valor e barra movimento pequeno de muito valor |
 | REBAL-Q | Idem na ação que o app recomenda — rebalanceamento e custos | 🟢 rodada feita | 2 achados (A-114 latente e corrigido, A-115 metodológico) |
@@ -195,6 +198,53 @@ um movimento pequeno que agrega muito é barrado. O teste correto exige um
 modelo de benefício que esta camada — deliberadamente pura — não possui. Fica
 registrado ao lado de SCORE-03/A-104 como decisão de metodologia sua, não como
 correção a aplicar em silêncio.
+
+## A rodada do backtest (BACKTEST-Q)
+
+A pergunta era se o retorno passado que a tela mostra teria sido alcançável por
+alguém em pé naquela data. `core/us_backtest.py` passou bem no que costuma
+falhar: o custo de transação é **de fato** deduzido (`portfolio` líquido convive
+com `portfolio_gross`), a concentração acima da política é sinalizada e marcada
+`eligible_for_conclusion: False`, a carteira é remedida na janela do benchmark
+antes de subtrair, e erro de benchmark **omite a chave** em vez de devolver
+`None` que a UI formataria como "0,00%". O `fwd_return` é do mês seguinte, não
+sobreposto — o t-stat do Rank-IC não está inflado por sobreposição.
+
+O defeito não estava no backtest. Estava em quem monta o painel que ele lê.
+
+**A-116, sobrevivência.** `build_annual_panel` fazia `if fut.empty: continue`.
+A ação que parou de negociar sumia do painel. É o viés de sobrevivência na forma
+mais pura: o perdedor que quebrou não conta. O comportamento estava até **fixado
+por teste** (`test_build_annual_panel_sem_preco_futuro`, "sem preço futuro → sem
+linha") — foi decisão, não descuido, e é a decisão errada para um backtest.
+Medido: uma cesta de duas ações, uma +30% e outra que caiu 80% e deslistou,
+aparecia como **+30,0%** contra os −25,0% que aconteceram.
+
+A correção separa duas ausências que o código confundia. Se o **dado** acaba
+(as_of perto da borda do dataset), o retorno é genuinamente inobservável e a
+linha sai — contada em `n_inobservavel`. Se a **ação** acaba mas o dataset
+continua, ela deslistou: sai pela última cotação, marcada `censored`. Continua
+otimista, porque deslistagem real costuma liquidar perto de zero sem cotação —
+mas errar alguns pontos percentuais é outra ordem de grandeza do que apagar a
+perda inteira.
+
+**A-117, horizonte elástico.** `fut.iloc[0]` não tinha teto. Se o próximo preço
+disponível estava 7 anos além do alvo, aqueles +300% eram rotulados "retorno de
+12 meses" (medido). O mesmo em `forward_returns_from_monthly`, onde `shift(-1)`
+devolve a próxima **linha**, não o próximo **mês**: um buraco na série punha
++100% de 11 meses entrando como retorno mensal, contaminando a volatilidade. O
+preço de saída agora precisa cair dentro de 3 meses após o alvo.
+
+**Estes são os dois primeiros achados da auditoria inteira que enviesavam o
+número exibido para CIMA.** A-101…A-115 erravam para o lado conservador ou eram
+neutros quanto ao resultado. Por isso a UI passou a declarar a censura: quantas
+observações saíram por cotação forçada, e quantas ficaram de fora por retorno
+inobservável — que não é retorno zero.
+
+**Magnitude em dado real: pendente.** `prices_monthly` mora no armazém local e o
+Docker está parado. O mecanismo está provado de forma exata e determinística; o
+*quanto* isso movia o backtest publicado do módulo EUA só pode ser medido com o
+container no ar.
 
 ## O que trava a chegada em produção
 
