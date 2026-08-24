@@ -42,6 +42,7 @@ from core.fii_portfolio_v4 import (
     optimize_diligence_portfolio,
 )
 from core.fii_selection_explanations import build_selection_reports
+from core.fii_taxonomy import categoria_fii
 from core.fii_validation import validation_supports_strategy
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_context_fii import build_fii_chat_context
@@ -186,7 +187,10 @@ def _methodology_inputs_to_vitrine(inputs: pd.DataFrame) -> pd.DataFrame:
     for column in (*mapping.values(), "updated_at", "cvm_ref_date", "vacancia_ref_date"):
         if column not in frame:
             frame[column] = pd.NA
-    return frame[[*mapping.values(), "updated_at", "cvm_ref_date", "vacancia_ref_date"]]
+    # Não usa o segmento bruto como classificação da vitrine: a fonte pode
+    # trazer atividade de inquilino/mandato (ex.: "Alimentação") nesse campo.
+    frame["Categoria"] = frame["Tipo"].map(categoria_fii)
+    return frame[[*mapping.values(), "Categoria", "updated_at", "cvm_ref_date", "vacancia_ref_date"]]
 
 
 def _snapshot_as_of(inputs: pd.DataFrame):
@@ -1352,9 +1356,7 @@ def _fii_available_card_html(row: "pd.Series") -> str:
     ticker_raw = str(row.get("Ticker") or "—")
     ticker = escape(ticker_raw)
     nome = escape(str(row.get("Nome") or "—")[:26])
-    segmento = escape(str(row.get("Segmento") or "—"))
-    tipo_key = str(row.get("Tipo") or "").strip().lower()
-    tipo_label = escape(_TIPO_META.get(tipo_key, _TIPO_OUTROS)[1])
+    categoria = escape(str(row.get("Categoria") or "Não classificado"))
     score = float(row.get("Score") or 0.0)
     score_cls = _fii_score_class(score)
     dy, pvp, liquidez = row.get("DY_12m"), row.get("P/VP"), row.get("Liquidez_Diaria")
@@ -1370,7 +1372,7 @@ def _fii_available_card_html(row: "pd.Series") -> str:
         f'<span class="fii-score {score_cls}">{score:.0f}</span></div>'
         f'<div class="fii-nome">{nome}</div>'
         f'</div></div>'
-        f'<div class="fii-seg">{segmento} · {tipo_label}</div>'
+        f'<div class="fii-seg">{categoria}</div>'
         f'<div class="fii-mini">'
         f'<div><span class="lbl">DY 12m</span><span class="val">{dy_txt}</span></div>'
         f'<div><span class="lbl">P/VP</span><span class="val">{pvp_txt}</span></div>'
@@ -1383,7 +1385,7 @@ _FII_DISPONIVEIS_PAGE_SIZE = 80
 
 
 def _cards_de_fiis_disponiveis(view: pd.DataFrame) -> None:
-    """Grade de cards CSS por FII, agrupada por Segmento — mesmo padrão visual
+    """Grade de cards CSS por FII, agrupada por categoria canônica — mesmo padrão visual
     de "Empresas por Setor" nas vitrines B3/EUA (render_sector_grid): logo +
     ticker + nome na coluna estreita, métricas do FII (DY, P/VP, liquidez,
     score) no corpo do card, clique em "Analisar" leva à aba Busca de ativo.
@@ -1391,18 +1393,18 @@ def _cards_de_fiis_disponiveis(view: pd.DataFrame) -> None:
     fundos — sem isso, 350+ cards renderizariam de uma vez.
     """
     df = view.copy()
-    df["_seg_sort"] = df["Segmento"].fillna("").astype(str).str.strip()
-    df["_seg_sort"] = df["_seg_sort"].where(df["_seg_sort"] != "", "￿")
-    df = df.sort_values(["_seg_sort", "Score"], ascending=[True, False], kind="stable")
+    df["_categoria_sort"] = df["Categoria"].fillna("").astype(str).str.strip()
+    df["_categoria_sort"] = df["_categoria_sort"].where(df["_categoria_sort"] != "", "￿")
+    df = df.sort_values(["_categoria_sort", "Score"], ascending=[True, False], kind="stable")
 
     limit_key = "fii_disponiveis_visible_limit"
     visible_limit = int(st.session_state.get(limit_key, _FII_DISPONIVEIS_PAGE_SIZE))
     visible = df.head(visible_limit)
-    total_por_segmento = df.groupby("Segmento", dropna=False)["Ticker"].size().to_dict()
+    total_por_categoria = df.groupby("Categoria", dropna=False)["Ticker"].size().to_dict()
 
-    for segmento, grupo in visible.groupby("Segmento", sort=False, dropna=False):
-        titulo = str(segmento).strip() if pd.notna(segmento) and str(segmento).strip() else "Sem segmento"
-        total = int(total_por_segmento.get(segmento, len(grupo)))
+    for categoria, grupo in visible.groupby("Categoria", sort=False, dropna=False):
+        titulo = str(categoria).strip() if pd.notna(categoria) and str(categoria).strip() else "Não classificado"
+        total = int(total_por_categoria.get(categoria, len(grupo)))
         fundo_noun = "fundo" if total == 1 else "fundos"
         st.markdown(
             f'<div class="fii-hdr">{escape(titulo)}'
@@ -1439,7 +1441,7 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
     fora = len(df) - len(ranked)
     c1, c2, c3, c4 = st.columns([2, 1.3, 1, 1])
     with c1:
-        seg = st.selectbox("Segmento", ["(todos)"] + _mr.load_fii_segmentos(), index=0)
+        categoria = st.selectbox("Categoria", ["(todas)"] + sorted(ranked["Categoria"].dropna().unique().tolist()), index=0)
     with c2:
         tipos = ["(todos)"] + sorted(ranked["Tipo"].dropna().unique().tolist())
         tipo = st.selectbox("Tipo", tipos, index=0,
@@ -1450,8 +1452,8 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
         pvp_max = st.slider("P/VP máx.", 0.5, 1.5, 1.3, 0.05)
 
     view = ranked.copy()
-    if seg != "(todos)":
-        view = view[view["Segmento"] == seg]
+    if categoria != "(todas)":
+        view = view[view["Categoria"] == categoria]
     if tipo != "(todos)":
         view = view[view["Tipo"] == tipo]
     view = view[(view["DY_12m"].fillna(0) * 100 >= dy_min) & (view["P/VP"].fillna(99) <= pvp_max)]

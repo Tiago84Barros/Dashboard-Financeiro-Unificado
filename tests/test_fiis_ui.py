@@ -87,10 +87,10 @@ def test_helpers_dos_cards_antigos_foram_removidos():
         assert nome not in _FONTE, nome
 
 
-def test_filtros_do_ranking_continuam_iguais():
-    """Nenhum filtro pode ter mudado: a alteração era só de exibição."""
+def test_filtros_do_ranking_mantem_tipo_e_metricas():
+    """A categoria canônica substitui o segmento bruto sem mudar os demais filtros."""
     corpo = inspect.getsource(fiis._tab_ranking)
-    for controle in ('st.selectbox("Segmento"', 'st.selectbox("Tipo"',
+    for controle in ('st.selectbox("Categoria"', 'st.selectbox("Tipo"',
                      'st.slider("DY 12m mín. (%)"', 'st.slider("P/VP máx."'):
         assert controle in corpo, controle
     assert 'view["DY_12m"].fillna(0) * 100 >= dy_min' in corpo

@@ -55,7 +55,7 @@ def test_fii_score_class_segue_os_limiares_de_empresas_b3():
 def test_fii_available_card_html_escapa_e_mostra_metricas():
     row = pd.Series({
         "Ticker": "TEST11<script>", "Nome": "Fundo Teste <script>",
-        "Segmento": "Multicategoria", "Tipo": "papel",
+        "Categoria": "Papel/CRI", "Tipo": "papel",
         "Score": 82.0, "DY_12m": 0.1234, "P/VP": 0.97,
         "Liquidez_Diaria": 1_500_000.0,
     })
@@ -64,7 +64,7 @@ def test_fii_available_card_html_escapa_e_mostra_metricas():
     assert "Fundo Teste &lt;script&gt;" in card
     assert "<script>" not in card
     assert "fii-sc-high" in card
-    assert "Multicategoria · Papel/CRI" in card
+    assert 'class="fii-seg">Papel/CRI</div>' in card
     assert "12.3%" in card
     assert "0.97" in card
     assert "R$ 1500k" in card
@@ -75,7 +75,7 @@ def test_card_do_fii_sai_num_bloco_unico_com_as_tags_fechadas():
     card num bloco e fechá-la em outro renderizava a moldura vazia, com o
     conteúdo caindo fora dela."""
     card = _fii_available_card_html(pd.Series({
-        "Ticker": "HGLG11", "Nome": "CSHG Logistica", "Segmento": "Logistica",
+        "Ticker": "HGLG11", "Nome": "CSHG Logistica", "Categoria": "Tijolo",
         "Tipo": "tijolo", "Score": 91.0, "DY_12m": .089,
         "P/VP": 1.02, "Liquidez_Diaria": 4_100_000.0,
     }))
