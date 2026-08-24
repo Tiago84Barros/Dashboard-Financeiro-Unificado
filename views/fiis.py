@@ -42,7 +42,7 @@ from core.fii_portfolio_v4 import (
     optimize_diligence_portfolio,
 )
 from core.fii_selection_explanations import build_selection_reports
-from core.fii_taxonomy import categoria_fii
+from core.fii_taxonomy import ORDEM_CATEGORIAS_FII, categoria_fii
 from core.fii_validation import validation_supports_strategy
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_context_fii import build_fii_chat_context
@@ -183,13 +183,23 @@ def _methodology_inputs_to_vitrine(inputs: pd.DataFrame) -> pd.DataFrame:
         "pct_imoveis": "Pct_Imoveis", "pct_papel": "Pct_Papel",
         "pct_caixa": "Pct_Caixa", "pct_fundos": "Pct_Fundos",
     }
+    classificacoes = inputs.apply(
+        lambda row: categoria_fii(
+            row.get("tipo"),
+            ticker=row.get("ticker"),
+            segmento=row.get("sector"),
+            nome=row.get("name"),
+            mandato=row.get("mandate"),
+        ),
+        axis=1,
+    )
     frame = inputs.rename(columns=mapping).copy()
     for column in (*mapping.values(), "updated_at", "cvm_ref_date", "vacancia_ref_date"):
         if column not in frame:
             frame[column] = pd.NA
-    # Não usa o segmento bruto como classificação da vitrine: a fonte pode
-    # trazer atividade de inquilino/mandato (ex.: "Alimentação") nesse campo.
-    frame["Categoria"] = frame["Tipo"].map(categoria_fii)
+    # Não usa o segmento bruto isoladamente: a fonte pode trazer atividade de
+    # locatário (ex.: "Alimentação") nesse campo.
+    frame["Categoria"] = classificacoes
     return frame[[*mapping.values(), "Categoria", "updated_at", "cvm_ref_date", "vacancia_ref_date"]]
 
 
@@ -1393,8 +1403,8 @@ def _cards_de_fiis_disponiveis(view: pd.DataFrame) -> None:
     fundos — sem isso, 350+ cards renderizariam de uma vez.
     """
     df = view.copy()
-    df["_categoria_sort"] = df["Categoria"].fillna("").astype(str).str.strip()
-    df["_categoria_sort"] = df["_categoria_sort"].where(df["_categoria_sort"] != "", "￿")
+    ordem = {categoria: indice for indice, categoria in enumerate(ORDEM_CATEGORIAS_FII)}
+    df["_categoria_sort"] = df["Categoria"].map(ordem).fillna(len(ordem)).astype(int)
     df = df.sort_values(["_categoria_sort", "Score"], ascending=[True, False], kind="stable")
 
     limit_key = "fii_disponiveis_visible_limit"
@@ -1441,7 +1451,9 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
     fora = len(df) - len(ranked)
     c1, c2, c3, c4 = st.columns([2, 1.3, 1, 1])
     with c1:
-        categoria = st.selectbox("Categoria", ["(todas)"] + sorted(ranked["Categoria"].dropna().unique().tolist()), index=0)
+        categorias_presentes = set(ranked["Categoria"].dropna().tolist())
+        categorias = [item for item in ORDEM_CATEGORIAS_FII if item in categorias_presentes]
+        categoria = st.selectbox("Categoria", ["(todas)"] + categorias, index=0)
     with c2:
         tipos = ["(todos)"] + sorted(ranked["Tipo"].dropna().unique().tolist())
         tipo = st.selectbox("Tipo", tipos, index=0,
