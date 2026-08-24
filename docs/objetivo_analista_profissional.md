@@ -34,6 +34,8 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | FII-Q | Passar a pergunta "a fórmula responde ao que se pergunta?" no motor de FIIs | 🟢 rodada feita | 2 defeitos achados e fechados (A-106, A-107), 1 descartado (A-108) |
 | A-109 | Global: covariância par a par pode não ser positiva semidefinida | ⚪ **não procede** (invariante travado) | `tests/test_global_covariancia_psd.py`; medido: 10% das carteiras com séries desalinhadas, pior caso −26,2% vs +3,5% de contribuição ao risco |
 | GLOB-Q | Idem no Portfólio Global | 🟢 rodada feita | 0 defeitos vivos, 1 descartado (A-109) com guarda de regressão |
+| A-110 | Markowitz: intensidade de shrinkage somava a diagonal no numerador e não no denominador, cravando α = 1 (correlações zeradas) | ✅ | `tests/test_markowitz_shrinkage_suporte.py`; medido em 178 cestas reais da B3: α cravado em 1,000 em 121 → 6; peso muda até 14,93 pp |
+| CONSTR-Q | Idem no módulo de construção e rebalanceamento de carteira | 🟢 rodada feita | 1 defeito achado e fechado (A-110); cadeia de solver e exibição de não-convergência já íntegras |
 
 ## Por que a lista não é o critério
 
@@ -83,6 +85,44 @@ nada declarando a dependência — e o docstring de lá lamenta o truncamento de
 séries longas, que é exatamente o argumento que levaria alguém a afrouxar a
 janela. Fechado como invariante testado nos dois lados, não como correção de
 fórmula.
+
+## A rodada da construção de carteira (CONSTR-Q)
+
+O módulo `core/markowitz.py` existe por um motivo declarado no próprio
+cabeçalho: impedir que o engine escolha BBAS3 + ITUB4 + SANB3 — todos bancos,
+ρ ≈ 0,85 — com pesos proporcionais ao score, tratando-os como se fossem
+independentes. O A-110 é o defeito que fazia exatamente isso, por dentro.
+
+A intensidade α do shrinkage é a razão b²/d². Com alvo `diag(S)`, o alvo
+preserva as variâncias: o único efeito do α é **encolher as correlações**, e
+α = 1 devolve uma matriz diagonal. O denominador d² = ‖S − F‖² já é zero na
+diagonal por construção — mede só a massa de fora. Mas o numerador b², o erro
+de amostragem de S, era somado sobre a matriz inteira. Numerador e denominador
+mediam suportes diferentes, e a variância das variâncias — que este alvo nem
+encolhe — decidia quanto encolher as correlações. Schäfer & Strimmer (2005),
+citado no docstring da própria função, restringe as duas somas às entradas
+fora da diagonal.
+
+O mecanismo isolado: seis ativos com ρ = 0,5 dão α = 0,055. Acrescentar **um**
+sétimo ativo independente com volatilidade 10× — que não adiciona correlação
+nenhuma — leva o α a 1,000. Cestas da B3 misturam blue chip com small cap, e é
+por isso que o efeito era generalizado: em 178 cestas de mesmo subsetor, o α
+cravava em 1,000 em 121 delas. Em 2 de cada 3 carteiras o otimizador recebia
+um mundo diagonal.
+
+O que a medição também disse, e que a honestidade exige registrar: **o risco
+realizado não piorava**. Vinte e quatro meses fora da amostra, os pesos do
+código defeituoso rendiam 5,596% de volatilidade mensal contra 5,618% da
+receita correta — empate. O dano se concentra onde a correlação é fraca, que é
+onde apagá-la custa pouco; nas cestas com ρ ≥ 0,45 o α nem cravava (0,242).
+O A-110 é defeito de estimador, não de resultado. Fica registrado como
+corrigido porque a UI exibe o número como "Ledoit-Wolf" e porque um estimador
+que contradiz a referência que cita não é auditável — não porque a carteira
+estivesse perdendo dinheiro.
+
+O resto do módulo passou: a cadeia de solver (cvxpy → SLSQP → projeção
+heurística) marca `converged=False` na degradação e `views/portfolio_b3.py`
+exibe isso ao usuário, então o padrão "degrada em silêncio" não ocorre aqui.
 
 ## O que trava a chegada em produção
 

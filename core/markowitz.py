@@ -54,6 +54,12 @@ def ledoit_wolf_shrinkage(
     ad hoc (var off-diagonal / var total) que não dependia de T e era
     exibida na UI como "Ledoit-Wolf" sem sê-lo.
 
+    Correção da auditoria 2026-08 (A-110): a receita de Schäfer & Strimmer
+    restringe b² e d² às entradas fora da diagonal quando o alvo é diag(S);
+    o código somava b² sobre a matriz inteira. Em 2 de cada 3 cestas reais da
+    B3 isso cravava α = 1, entregando ao otimizador uma covariância diagonal —
+    o oposto do propósito deste módulo.
+
     Args:
       returns: array (T × K) de retornos
       target:  "diagonal" (preserva variâncias, encolhe correlações) ou
@@ -75,13 +81,26 @@ def ledoit_wolf_shrinkage(
     else:  # identity escalada: F = m·I com m = variância média
         F = (np.trace(S) / K) * np.eye(K)
 
+    # Numerador e denominador precisam medir o MESMO suporte. Com alvo
+    # diagonal, F preserva diag(S): o α só encolhe correlações, e d² já é zero
+    # na diagonal por construção. Somar b̄² sobre a matriz inteira punha a
+    # variância das variâncias — que este alvo nem encolhe — decidindo o α.
+    # Schäfer & Strimmer (2005), citado acima, restringe as duas somas às
+    # entradas fora da diagonal. Medido em 24/08/2026 sobre 178 cestas reais da
+    # B3: o α cravava em 1,000 (correlações ZERADAS) em 121 delas contra 6 pela
+    # receita correta. Ver `tests/test_markowitz_shrinkage_suporte.py`.
+    # Para target="identity" F = m·I altera também a diagonal, então ali a
+    # fórmula original de LW04 soma a matriz inteira — e continua somando.
+    suporte = ~np.eye(K, dtype=bool) if target == "diagonal" else np.ones(
+        (K, K), dtype=bool
+    )
     # d² = ||S − F||²_F / K   (quanto a amostra difere do alvo)
-    d2 = float(((S - F) ** 2).sum()) / K
+    d2 = float(((S - F) ** 2)[suporte].sum()) / K
     # b̄² = (1/T²) Σ_t ||x_t x_tᵀ − S||²_F / K   (erro de estimação de S)
     b2_bar = 0.0
     for t in range(T):
         xt = X[t][:, None]
-        b2_bar += float(((xt @ xt.T - S) ** 2).sum())
+        b2_bar += float(((xt @ xt.T - S) ** 2)[suporte].sum())
     b2_bar /= (T ** 2) * K
     b2 = min(b2_bar, d2)
 
