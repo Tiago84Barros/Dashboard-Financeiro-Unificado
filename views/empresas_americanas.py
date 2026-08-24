@@ -2653,7 +2653,20 @@ def _tab_backtests(status: dict) -> None:
     with c2:
         card_metrica("Excesso sobre pesos iguais", _p(res.get("excess_ann_vs_ew")))
     with c3:
-        card_metrica("Sharpe", "—" if p["sharpe"] is None else f"{p['sharpe']:.2f}")
+        # `performance_stats` e chamada sem `rf`, entao a taxa livre de risco e
+        # ZERO: o numero e retorno sobre volatilidade, nao excesso sobre
+        # volatilidade. Com Treasury em digito unico isso ja desloca o valor de
+        # forma material, e o rotulo "Sharpe" promete a outra coisa. Enquanto
+        # nao houver serie de taxa livre de risco americana no pipeline, o
+        # cartao diz o que de fato calcula.
+        card_metrica(
+            "Sharpe (rf = 0)",
+            "—" if p["sharpe"] is None else f"{p['sharpe']:.2f}",
+            ajuda="Retorno anualizado dividido pela volatilidade anualizada. "
+                  "A taxa livre de risco não entra: sem série de Treasury no "
+                  "pipeline, descontá-la seria inventar o número. Um Sharpe "
+                  "com rf > 0 seria menor que este.",
+        )
     with c4:
         card_metrica("Queda máxima", _p(p["max_drawdown"]))
     c5, c6, c7, c8 = st.columns(4)

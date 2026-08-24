@@ -83,8 +83,19 @@ def performance_stats(returns: pd.Series, periods_per_year: int = 12,
     excess = r - rf_p
     sharpe = float(excess.mean() / r.std(ddof=1) * np.sqrt(periods_per_year)) \
         if n > 1 and r.std(ddof=1) > 0 else None
-    downside = r[r < 0]
-    dstd = float(downside.std(ddof=1)) if len(downside) > 1 else 0.0
+    # Downside deviation e a raiz da media dos quadrados dos deficits contra o
+    # alvo, sobre TODOS os periodos: sqrt( (1/N) * sum(min(r - MAR, 0)^2) ).
+    #
+    # A versao anterior usava `r[r < 0].std(ddof=1)`, que e a dispersao das
+    # perdas em torno da MEDIA DELAS, normalizada pela contagem de perdas. Dois
+    # erros somados: descentrar apaga o tamanho da perda (uma serie que perde
+    # exatamente -5% todo mes ruim tem dispersao ZERO e o Sortino saia como
+    # "nao medivel"), e dividir por k-1 em vez de N troca o denominador.
+    # Medido em 24/08/2026 sobre 300 carteiras reais de 60 meses: o Sortino
+    # exibido era 1,20x o padrao na mediana (ate 1,75x), exagerado em 222 das
+    # 300. Ver `tests/test_sortino_downside_deviation.py`.
+    deficit = np.minimum(excess.to_numpy(dtype=float), 0.0)
+    dstd = float(np.sqrt((deficit ** 2).mean())) if n > 0 else 0.0
     sortino = float(excess.mean() / dstd * np.sqrt(periods_per_year)) if dstd > 0 else None
     peak = curve.cummax()
     mdd = float(((curve - peak) / peak).min())

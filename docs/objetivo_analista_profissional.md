@@ -36,6 +36,10 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | GLOB-Q | Idem no Portfólio Global | 🟢 rodada feita | 0 defeitos vivos, 1 descartado (A-109) com guarda de regressão |
 | A-110 | Markowitz: intensidade de shrinkage somava a diagonal no numerador e não no denominador, cravando α = 1 (correlações zeradas) | ✅ | `tests/test_markowitz_shrinkage_suporte.py`; medido em 178 cestas reais da B3: α cravado em 1,000 em 121 → 6; peso muda até 14,93 pp |
 | CONSTR-Q | Idem no módulo de construção e rebalanceamento de carteira | 🟢 rodada feita | 1 defeito achado e fechado (A-110); cadeia de solver e exibição de não-convergência já íntegras |
+| A-111 | Global: VaR e CVaR de 95% exibidos lado a lado repousando sobre 1 observação, com promessa de "1 a cada 20 meses" numa série de 18 | ✅ (declaração) | `tests/test_global_var_cauda_declarada.py`; no piso de 18 meses o CVaR é idêntico ao pior mês em 100% de 200 carteiras |
+| A-112 | Sortino usava a dispersão das perdas em torno da média delas, não o desvio contra o alvo | ✅ | `tests/test_sortino_downside_deviation.py`; 1,20× o padrão na mediana (até 1,75×), exagerado em 222 de 300 carteiras |
+| A-113 | "Sharpe" exibido com taxa livre de risco zero | ✅ (declaração) | cartão passa a dizer `Sharpe (rf = 0)`; correção real exige série de Treasury no pipeline |
+| RISCO-Q | Idem nas métricas de risco e retorno apresentadas como conclusão | 🟢 rodada feita | 3 achados (A-111, A-112, A-113); 1 erro de fórmula, 2 de declaração |
 
 ## Por que a lista não é o critério
 
@@ -123,6 +127,39 @@ estivesse perdendo dinheiro.
 O resto do módulo passou: a cadeia de solver (cvxpy → SLSQP → projeção
 heurística) marca `converged=False` na degradação e `views/portfolio_b3.py`
 exibe isso ao usuário, então o padrão "degrada em silêncio" não ocorre aqui.
+
+## A rodada das métricas de risco (RISCO-Q)
+
+Três achados, e a diferença entre eles é o ponto: **um é erro de fórmula, dois
+são de declaração** — e os dois de declaração não viram cálculo novo porque
+inventar o número que falta seria pior que dizer que ele falta.
+
+**A-112, erro de fórmula.** `core/us_backtest.performance_stats` calculava o
+denominador do Sortino como `r[r < 0].std(ddof=1)` — a dispersão dos retornos
+negativos em torno da média *deles*. Downside deviation é outra coisa:
+`sqrt( (1/N) · Σ min(r − MAR, 0)² )`, sobre todos os períodos. Descentrar apaga
+o tamanho da perda: uma série que perde exatamente −5% em todo mês ruim tinha
+dispersão zero e o cartão exibia "—", isto é, *não mensurável*, para uma série
+cujo Sortino padrão é 0,400. Em 300 carteiras reais de 60 meses, o número
+exibido era 1,20× o padrão na mediana, até 1,75×, exagerado em 222 delas.
+
+**A-111, declaração.** VaR e CVaR de 95% são históricos — e isso está certo,
+pelo motivo que o docstring de `risk.py` já defende. O problema é o que
+sustenta a cauda. Com o piso de `MIN_OBS = 18`, o percentil 5 cai entre o pior
+e o segundo pior mês, a cauda fica com **um** elemento, e o CVaR passa a ser,
+por definição, o próprio pior mês — verificado em 100% de 200 carteiras. Dois
+cartões lado a lado exibiam a mesma observação única como se fossem medidas
+independentes, e o texto prometia "1 a cada 20 meses" sobre uma série de 18.
+Retirar um único mês move o CVaR em ~20% do próprio valor em qualquer tamanho
+de janela. A correção expõe `n_cauda` e faz a tela dizer sobre quantos meses o
+número repousa.
+
+**A-113, declaração.** `performance_stats` é sempre chamada sem `rf`, então a
+taxa livre de risco é zero: o número é retorno sobre volatilidade, não excesso
+sobre volatilidade. O cartão dizia "Sharpe". Agora diz `Sharpe (rf = 0)` e
+explica que descontar uma taxa que não está no pipeline seria inventá-la. A
+correção de verdade — série de Treasury para o módulo EUA — fica registrada
+como pendência de dado, não de código.
 
 ## O que trava a chegada em produção
 

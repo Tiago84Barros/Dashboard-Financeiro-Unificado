@@ -676,22 +676,45 @@ def _painel_risco(ret: pd.DataFrame, pesos: dict) -> None:
         )
         return
 
+    # A cauda e que sustenta VaR e CVaR, nao o total de meses. Com poucos meses
+    # ela encolhe ate um unico ponto, e ai as duas metricas sao o MESMO numero
+    # (o pior mes) exibido em dois cartoes. Isso e declarado, nao escondido.
+    plural = "meses" if r.n_cauda != 1 else "mês"
+    ajuda_cvar = (
+        f"Perda média dos {r.n_cauda} {plural} que ultrapassam o VaR 95% — "
+        "a cauda além do corte."
+    )
+    if r.n_cauda <= 1:
+        ajuda_cvar += (
+            " Com esta janela a cauda tem uma observação só: este número É o "
+            "pior mês da série, não uma média sobre vários."
+        )
+    ajuda_var = (
+        "Perda mensal no percentil histórico de 5%, sem supor distribuição "
+        "normal."
+    )
+    ajuda_var += (
+        f" A série tem {r.n_obs} meses: o corte é interpolado entre os piores, "
+        "não observado."
+    ) if r.n_obs < 20 else " Aproximadamente 1 a cada 20 meses."
+
     colunas = st.columns(4)
     cartoes = [
         ("Volatilidade anual", r.vol_anual, "#5B8DEF",
          "Desvio-padrão dos retornos mensais, anualizado (×√12)."),
-        ("VaR 95%", r.var_95, "#F97316",
-         "Perda mensal no percentil histórico de 5% — 1 a cada 20 meses, sem "
-         "supor distribuição normal."),
-        ("CVaR 95%", r.cvar_95, "#FC5C7D",
-         "Perda média nos meses que ultrapassam o VaR 95% — a cauda além do corte."),
+        ("VaR 95%", r.var_95, "#F97316", ajuda_var),
+        ("CVaR 95%", r.cvar_95, "#FC5C7D", ajuda_cvar),
         ("Drawdown máximo", r.drawdown_max, "#A78BFA",
-         "Maior queda do pico ao vale na série de retornos acumulados."),
+         "Maior queda do pico ao vale na série de retornos acumulados mensais "
+         "— quedas dentro do mês não aparecem."),
     ]
     for coluna, (rotulo, valor, cor, ajuda) in zip(colunas, cartoes):
         with coluna:
             card_metrica(rotulo, _fmt(valor * 100, "%", casas=1), accent=cor, ajuda=ajuda)
-    st.caption(f"Baseado em {r.n_obs} meses de retornos do patrimônio consolidado.")
+    st.caption(
+        f"Baseado em {r.n_obs} meses de retornos do patrimônio consolidado; "
+        f"VaR e CVaR repousam sobre {r.n_cauda} {plural} de cauda."
+    )
 
 
 # Rotulos de exibicao dos limiares de roles.LIMIARES: so texto, a mesma

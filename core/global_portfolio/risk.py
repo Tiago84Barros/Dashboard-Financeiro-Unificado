@@ -40,6 +40,7 @@ class Risco:
     cvar_95: float
     drawdown_max: float
     n_obs: int
+    n_cauda: int
 
 
 def retorno_do_portfolio(retornos: pd.DataFrame, pesos: dict) -> pd.Series | None:
@@ -77,6 +78,13 @@ def metricas_de_risco(retornos: pd.DataFrame, pesos: dict) -> Risco | None:
     if serie is None or len(serie) < MIN_OBS:
         return None
 
+    # Quantos meses sustentam a cauda importa mais que o total: no piso de
+    # MIN_OBS=18 observacoes, o percentil 5 cai entre o pior e o segundo pior
+    # mes, `cauda` fica com UM elemento e o CVaR 95% passa a ser, por
+    # definicao, o proprio pior mes -- verificado em 100% de 200 carteiras
+    # sorteadas em 24/08/2026. Duas metricas exibidas lado a lado repousando
+    # sobre a mesma unica observacao precisam dizer isso; `n_cauda` e o que a
+    # UI usa para declarar. Ver `tests/test_global_var_cauda_declarada.py`.
     vol_mensal = float(serie.std(ddof=1))
     valores = serie.to_numpy(dtype=float)
     corte = float(np.percentile(valores, PERCENTIL_VAR))
@@ -89,6 +97,7 @@ def metricas_de_risco(retornos: pd.DataFrame, pesos: dict) -> Risco | None:
         cvar_95=float(-cauda.mean()) if cauda.size else float(-corte),
         drawdown_max=_drawdown_maximo(serie),
         n_obs=len(serie),
+        n_cauda=int(cauda.size),
     )
 
 
