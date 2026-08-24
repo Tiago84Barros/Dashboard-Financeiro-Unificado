@@ -39,6 +39,9 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-111 | Global: VaR e CVaR de 95% exibidos lado a lado repousando sobre 1 observação, com promessa de "1 a cada 20 meses" numa série de 18 | ✅ (declaração) | `tests/test_global_var_cauda_declarada.py`; no piso de 18 meses o CVaR é idêntico ao pior mês em 100% de 200 carteiras |
 | A-112 | Sortino usava a dispersão das perdas em torno da média delas, não o desvio contra o alvo | ✅ | `tests/test_sortino_downside_deviation.py`; 1,20× o padrão na mediana (até 1,75×), exagerado em 222 de 300 carteiras |
 | A-113 | "Sharpe" exibido com taxa livre de risco zero | ✅ (declaração) | cartão passa a dizer `Sharpe (rf = 0)`; correção real exige série de Treasury no pipeline |
+| A-114 | Rebalanceamento por banda e híbrido não enxergavam a saída de posição: o laço varria só o alvo, e o ticker que saiu não tem chave lá | ✅ | `tests/test_rebalancing_saida_de_posicao.py`; sair inteiro de 30% media desvio 0,0 e devolvia "não precisa mexer" |
+| A-115 | Advisor compara custo contra o **tamanho** da ordem, não contra o benefício dela | ⚠️ decisão sua | `core/global_portfolio/advisor.py`; aprova movimento grande de pouco valor e barra movimento pequeno de muito valor |
+| REBAL-Q | Idem na ação que o app recomenda — rebalanceamento e custos | 🟢 rodada feita | 2 achados (A-114 latente e corrigido, A-115 metodológico) |
 | RISCO-Q | Idem nas métricas de risco e retorno apresentadas como conclusão | 🟢 rodada feita | 3 achados (A-111, A-112, A-113); 1 erro de fórmula, 2 de declaração |
 
 ## Por que a lista não é o critério
@@ -160,6 +163,38 @@ sobre volatilidade. O cartão dizia "Sharpe". Agora diz `Sharpe (rf = 0)` e
 explica que descontar uma taxa que não está no pipeline seria inventá-la. A
 correção de verdade — série de Treasury para o módulo EUA — fica registrada
 como pendência de dado, não de código.
+
+## A rodada do rebalanceamento (REBAL-Q)
+
+A pergunta desta rodada era se a **ação** que o app recomenda sobrevive aos
+custos. O `advisor` de Portfólio Global saiu limpo no essencial: quando o custo
+não está calibrado ele devolve `manter` com `custo_calibrado=False` em vez de
+adivinhar, não inventa Information Ratio que não tem como medir, e ordena de
+forma determinística. Dois pontos reais.
+
+**A-114, defeito latente, corrigido.** `ThresholdRebalance.deve_rebalancear` e
+`HybridRebalance` mediam o maior desvio iterando `pesos_meta.items()`. Um ticker
+que **entrou** era visto (a chave existe no alvo, e o peso atual sai de um
+`.get(tk, 0.0)`); um ticker que **saiu** era invisível, porque a chave dele
+sumiu justamente do dicionário que o laço varre. Sair inteiro de uma posição de
+30% — o maior desvio que existe — media 0,0 p.p. e devolvia "não precisa mexer".
+As duas classes passam a varrer a **união** dos dois conjuntos, via o helper
+`_maior_desvio`.
+
+Não houve decisão errada em produção: a tela usa `CalendarRebalance`
+(`views/portfolio_global.py:1031`), e `advisor._projetar` devolve todos os
+símbolos com peso 0,0 em vez de omitir a chave. Mas as duas classes são API
+pública e documentada, e o defeito estava exatamente na regra que promete
+"rebalanceia quando desviar da banda".
+
+**A-115, metodológico, sua decisão.** A guarda `if custo_fracao >= abs(delta):
+-> manter` compara o custo contra o **tamanho** da ordem. São grandezas
+diferentes: o que justifica pagar um custo é o benefício de voltar ao alvo, não
+o quanto se mexe. Do jeito atual, um movimento grande que agrega pouco passa, e
+um movimento pequeno que agrega muito é barrado. O teste correto exige um
+modelo de benefício que esta camada — deliberadamente pura — não possui. Fica
+registrado ao lado de SCORE-03/A-104 como decisão de metodologia sua, não como
+correção a aplicar em silêncio.
 
 ## O que trava a chegada em produção
 

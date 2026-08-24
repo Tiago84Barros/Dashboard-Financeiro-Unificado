@@ -45,6 +45,27 @@ class RebalancePolicy(Protocol):
 # Políticas concretas
 # ──────────────────────────────────────────────────────────────────────────
 
+def _maior_desvio(
+    pesos_atuais: dict[str, float],
+    pesos_meta:   dict[str, float],
+) -> tuple[float, str]:
+    """Maior |peso_atual - peso_meta| sobre a UNIAO dos dois conjuntos.
+
+    Iterar so `pesos_meta` deixa invisivel exatamente o maior desvio possivel:
+    uma posicao que o alvo mandou zerar some do dicionario de metas, e o ativo
+    nunca e examinado -- uma carteira com 30% num ticker que saiu da selecao
+    reportava desvio 0,0 e "nao precisa rebalancear". A assimetria era
+    unidirecional: entradas novas (`pesos_atuais.get(tk, 0.0)`) eram detectadas,
+    saidas nao. Ver `tests/test_rebalancing_saida_de_posicao.py`.
+    """
+    maior, critico = 0.0, ""
+    for tk in sorted(set(pesos_atuais) | set(pesos_meta)):
+        desvio = abs(pesos_atuais.get(tk, 0.0) - pesos_meta.get(tk, 0.0))
+        if desvio > maior:
+            maior, critico = desvio, tk
+    return maior, critico
+
+
 @dataclass
 class CalendarRebalance:
     """Política calendárica clássica — rebalanceia a cada N dias."""
@@ -76,17 +97,10 @@ class ThresholdRebalance:
                           ultimo_rebal):
         if ultimo_rebal is None and self.rebal_inicial:
             return True, "Primeira execução — alocação inicial"
-        if not pesos_meta:
+        if not pesos_meta and not pesos_atuais:
             return False, ""
 
-        max_desvio = 0.0
-        ticker_critico = ""
-        for tk, w_meta in pesos_meta.items():
-            w_atual = pesos_atuais.get(tk, 0.0)
-            desvio = abs(w_atual - w_meta)
-            if desvio > max_desvio:
-                max_desvio = desvio
-                ticker_critico = tk
+        max_desvio, ticker_critico = _maior_desvio(pesos_atuais, pesos_meta)
 
         if max_desvio > self.banda_abs:
             return True, (f"Threshold: {ticker_critico} desviou "
@@ -114,14 +128,8 @@ class HybridRebalance:
         if delta >= self.intervalo_dias_max:
             return True, f"Calendário max: {delta}d ≥ {self.intervalo_dias_max}d"
 
-        if pesos_meta:
-            max_desvio = 0.0
-            tk_crit = ""
-            for tk, w_meta in pesos_meta.items():
-                desvio = abs(pesos_atuais.get(tk, 0.0) - w_meta)
-                if desvio > max_desvio:
-                    max_desvio = desvio
-                    tk_crit = tk
+        if pesos_meta or pesos_atuais:
+            max_desvio, tk_crit = _maior_desvio(pesos_atuais, pesos_meta)
             if max_desvio > self.banda_abs:
                 return True, (f"Threshold: {tk_crit} desviou "
                               f"{max_desvio*100:.1f}p.p. (banda {self.banda_abs*100:.0f}p.p.)")
@@ -153,9 +161,17 @@ def reducao_turnover_estimada(
     Compara duas políticas em um histórico de pesos, retornando:
       n_rebal_legada:   quantos rebals a política legada dispararia
       n_rebal_nova:     quantos a política nova dispararia
-      reducao_pct:      redução de eventos em %
+      reducao_pct:      redução de EVENTOS em %
 
     Útil para calibrar banda_abs em ThresholdRebalance.
+
+    Atenção ao que esta função NÃO mede: turnover. Ela conta com que
+    frequência cada política dispara, não quanto volume cada disparo move.
+    Uma política que rebalanceia metade das vezes mas move o dobro em cada
+    vez tem `reducao_pct = 50%` e turnover idêntico — e portanto custo de
+    corretagem idêntico. Para a conclusão sobre custo, o volume precisa ser
+    somado (`0.5 * Σ|Δw|` por evento, como em `core.us_backtest.turnover`),
+    coisa que esta função não faz porque não recebe os pesos pós-rebal.
     """
     if not historico_pesos or not datas:
         return {"n_rebal_legada": 0, "n_rebal_nova": 0, "reducao_pct": 0.0}
