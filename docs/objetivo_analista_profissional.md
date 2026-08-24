@@ -55,6 +55,12 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-126 | Quatro módulos do parecer da banca (2026-05-23) escritos, **nenhum ligado e nenhum testado**: `correlations.py` (M2, EWMA), `copulas.py` (M2c), `survivorship_ingestion.py` (C3c), `survivorship_prices.py` (C3cc+) | ✅ medido e testado / ⚠️ ligar é decisão sua | `tests/test_modulos_banca_orfaos.py`; os quatro **rodam**; EWMA difere de Pearson em **0,184 na média e 0,557 no máximo** nos pares da carteira |
 | A-127 | `validation_readiness` lia `strict_available: False` **literal** para survivorship — ingerir deslistada jamais mudaria o veredito | ✅ | idem; o bloco `pit` do mesmo arquivo já era medido, o de survivorship não; gate segue não-estrito, mas agora diz **22 curados, 0 externos** |
 | BANCA-Q | Rodada dos órfãos: quem implementou o parecer e nunca foi consultado | 🟢 rodada feita | 2 achados; capacidade existe, porta de entrada não |
+| A-128 | **Devolução de capital contada como renda**: `AMORTIZAÇÃO` e `REST CAP DIN` entravam no provento anual e no DY | ✅ | `tests/test_proventos_renda_vs_capital.py`; **415 pares ticker-ano inflados em 234 tickers, média +139%**; RBRI11/2026 exibia 252,20 de "provento" com renda real **zero** |
+| A-129 | Eco de classe da brapi somado nas agregações anuais (`SUM(amount)` cru em duas rotas) | ✅ | idem; `MIN` dentro de (data, tipo) mata o eco sem apagar evento legítimo |
+| A-130 | `min` sobre a data **inteira** descartava dividendo+JCP legítimos — e a coluna `type`, selecionada, nunca era lida | ✅ | idem; **1.120 ocorrências** de DIVIDENDO+JCP na mesma data ex; BAZA3 12m passou de 3,77 para 11,27 |
+| A-131 | `market.dividends` guarda **duas safras do mesmo evento**: uma com data-ex sintética no dia 1º, outra com o calendário real da B3 | ⚠️ decisão sua | **379 tickers carregam as duas safras**; 2.831 pares mesmo tipo+valor a ≤5 dias em 220 tickers; PATL11 grava cada mensal duas vezes |
+| A-132 | Eventos de renda de magnitude implausível para pagamento periódico | ⚠️ decisão sua | **625 eventos em 45 FIIs** com rendimento único acima de 30% do preço; PATL11 tem `RENDIMENTO` de 66,33 num fundo de R$ 64,15 que paga 0,57/mês |
+| PROV-Q | Rodada dos proventos: o número de manchete do FII responde a "quanto isso rende?" | 🟢 rodada feita | 5 achados; 3 fechados, **os primeiros a enviesar para cima na métrica de decisão do FII** |
 | A-114 | Rebalanceamento por banda e híbrido não enxergavam a saída de posição: o laço varria só o alvo, e o ticker que saiu não tem chave lá | ✅ | `tests/test_rebalancing_saida_de_posicao.py`; sair inteiro de 30% media desvio 0,0 e devolvia "não precisa mexer" |
 | A-115 | Advisor compara custo contra o **tamanho** da ordem, não contra o benefício dela | ⚠️ decisão sua | `core/global_portfolio/advisor.py`; aprova movimento grande de pouco valor e barra movimento pequeno de muito valor |
 | REBAL-Q | Idem na ação que o app recomenda — rebalanceamento e custos | 🟢 rodada feita | 2 achados (A-114 latente e corrigido, A-115 metodológico) |
@@ -485,6 +491,68 @@ o gate é decisão sua. O que mudou é que o motivo diz o que foi medido —
 `22 tickers deslistados (22 curados, 0 de fontes externas)` — e que ingerir
 passa a aparecer no manifesto. Medir nunca afrouxou o gate; há teste travando
 isso.
+
+### O provento que não era renda — PROV-Q
+
+A camada de proventos nunca tinha sido varrida, e ela produz o número de
+manchete do FII: o DY. A pergunta da rodada foi a de sempre — *a fórmula
+responde ao que se pergunta?* Aqui a pergunta é "quanto isso rende?", e a
+resposta somava coisas que não rendem.
+
+**A-128 — devolução de capital contada como renda.** `market.dividends` tem
+cinco tipos. Três são renda (`RENDIMENTO`, `JCP`, `DIVIDENDO`); dois devolvem
+o principal do próprio cotista (`AMORTIZAÇÃO`, `REST CAP DIN`). Duas rotas de
+agregação — `core/market_read.py::load_dividendos_anuais`, fonte **primária**
+da aba "Análise de Empresa", e `core/portfolio/adapters/fii.py` — faziam
+`SUM(amount)` sem olhar o tipo.
+
+| medição (Supabase, 2026-08-24) | valor |
+|---|---|
+| pares ticker-ano inflados (≥2023) | **415** |
+| tickers afetados | **234** |
+| inflação média | **+139%** |
+| pior caso | RBRI11/2026: 252,20 de "provento", renda real **0,00** |
+
+Amortização tem 588 linhas mas soma 11.481 — média de 19,5 por evento contra
+2,1 do `RENDIMENTO`. É pouca linha com muito peso, exatamente o formato que
+passa despercebido numa conferência por amostragem.
+
+**A-129 — o eco de classe.** A mesma agregação somava o eco documentado da
+brapi (o mesmo evento sob CEBR5 e CEBR6). Dentro de um mesmo (data, tipo) o
+valor honesto é o **mínimo**.
+
+**A-130 — e o erro na direção contrária.** `core/dossie_b3.py::_dividendos`
+já era cuidadoso: mantinha um ramo conservador e um bruto, e sinalizava
+suspeita de duplicação. Mas agrupava só por **data** e tomava `min` sobre o
+dia inteiro. No Brasil dividendo e JCP saem na mesma data ex — **1.120
+ocorrências na base** — e o `min` descartava um evento verdadeiro. A coluna
+`type` era selecionada no SQL e **nunca lida**. BAZA3 nos últimos 12 meses
+passou de 3,77 para 11,27 por ação. Agrupar por (data, tipo) resolve os dois
+lados: mínimo dentro do tipo mata o eco, soma entre tipos preserva o evento.
+
+`core/dividend_types.py` centraliza a classificação, e tipo desconhecido conta
+como renda **de propósito** — um tipo novo aparece no yield em vez de sumir em
+silêncio. A-124 mostrou o que custa um sinal que ninguém vê.
+
+**O que o conserto NÃO alcança.** O `dy_12m` que pontua o score de FII (peso
+0,12, métrica crítica) não vem de `market.dividends`: é coluna armazenada em
+`market.fiis`, vinda da brapi. Meu conserto não a toca, e eu não tenho como
+afirmar daqui qual metodologia a brapi usa.
+
+**A-131 e A-132 — o que achei olhando e não vou consertar sozinho.** Ao
+conferir a divergência entre as duas fontes, o dado cru mostrou duas coisas:
+
+- `market.dividends` guarda **duas safras do mesmo evento** — uma com data-ex
+  sintética no dia 1º do mês, outra com o calendário real da B3. **379 tickers
+  carregam as duas.** PATL11 grava cada mensal de 0,57 duas vezes (29/08 e
+  01/09). Meu `min` por (data, tipo) não pega: as datas diferem. Qual safra
+  vence e com que janela é decisão de metodologia sua, e mexe em 18.873 linhas.
+- **625 eventos em 45 FIIs** têm rendimento único acima de 30% do preço.
+  PATL11 tem um `RENDIMENTO` de **66,33** num fundo de R$ 64,15 que paga
+  0,57/mês. É a mesma classe de A-122: valor impossível apresentado como
+  medição. Não filtrei porque, diferente de preço negativo, um provento grande
+  **pode** ser real (extraordinário, liquidação) — cortar por régua exigiria
+  escolher a régua.
 
 ## O que trava a chegada em produção
 

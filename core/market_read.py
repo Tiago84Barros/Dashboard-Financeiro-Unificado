@@ -1480,11 +1480,23 @@ def load_dividendos_anuais(ticker: str) -> pd.DataFrame:
     (achado A-011, 2026-08-19: antes a tela chamava yfinance incondicionalmente,
     mesmo com o dado governado disponível).
     """
+    from core.dividend_types import sql_apenas_renda
+
     tk = ticker.strip().upper().replace(".SA", "")
-    df = _q("""
-        SELECT EXTRACT(YEAR FROM event_date)::int AS ano, SUM(amount) AS total
-        FROM market.dividends
-        WHERE ticker = :t AND event_date IS NOT NULL
+    # A-128/A-129: amortizacao e restituicao de capital nao sao provento, e o
+    # eco de classe da brapi grava o mesmo evento sob varios tickers. Somar
+    # tudo cru inflava 234 tickers em 139% na media (medido em 2026-08-24).
+    # MIN dentro de (data, tipo) mata o eco; SUM entre tipos distintos preserva
+    # dividendo + JCP no mesmo dia, que sao dois eventos de verdade.
+    df = _q(f"""
+        SELECT ano, SUM(valor) AS total FROM (
+            SELECT EXTRACT(YEAR FROM event_date)::int AS ano,
+                   event_date, type, MIN(amount) AS valor
+            FROM market.dividends
+            WHERE ticker = :t AND event_date IS NOT NULL
+              AND {sql_apenas_renda()}
+            GROUP BY 1, 2, 3
+        ) AS renda
         GROUP BY 1
         ORDER BY 1
     """, {"t": tk})

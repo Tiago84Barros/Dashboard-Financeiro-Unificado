@@ -62,12 +62,20 @@ def _carregar_proventos(tickers: tuple[str, ...]) -> dict:
     """Proventos anuais por FII: mesma agregacao que load_demonstracoes_batch usa."""
     if not tickers:
         return {}
+    from core.dividend_types import sql_apenas_renda
     from core.market_read import _q
     tks = list(tickers)
+    # A-128/A-129: em FII o desvio e maior, porque amortizacao de cota e comum
+    # e o rendimento e a metrica de manchete da decisao. RBRI11/2026 exibia
+    # 252,20 de "provento" com renda real zero. Ver core.dividend_types.
     divs = _q(
-        "SELECT ticker, EXTRACT(YEAR FROM event_date)::int AS y, SUM(amount) AS d "
-        "FROM market.dividends WHERE ticker = ANY(:tks) AND event_date IS NOT NULL "
-        "GROUP BY 1, 2",
+        "SELECT ticker, y, SUM(valor) AS d FROM ("
+        "  SELECT ticker, EXTRACT(YEAR FROM event_date)::int AS y,"
+        "         event_date, type, MIN(amount) AS valor"
+        "  FROM market.dividends WHERE ticker = ANY(:tks) AND event_date IS NOT NULL"
+        f"   AND {sql_apenas_renda()}"
+        "  GROUP BY 1, 2, 3, 4"
+        ") AS renda GROUP BY 1, 2",
         {"tks": tks},
     )
     if divs.empty:

@@ -154,6 +154,18 @@ def _trimestres(tk: str, n: int = 6) -> dict:
 
 
 def _dividendos(tk: str, preco: float | None) -> dict:
+    """Provento por acao separando renda de devolucao de capital.
+
+    A-130: o agrupamento anterior era so por data, e o ramo conservador tomava
+    ``min`` sobre TODOS os valores do dia. Como dividendo e JCP saem na mesma
+    data ex (1.120 ocorrencias na base), isso descartava um evento legitimo e
+    subestimava o yield -- e a coluna ``type``, embora selecionada, nunca era
+    lida. Agrupar por (data, tipo) mata o eco de classe sem apagar o segundo
+    evento. A-128: amortizacao e restituicao de capital saem do yield e passam
+    a ser reportadas a parte.
+    """
+    from core.dividend_types import eh_renda
+
     rows = _rows(
         """
         SELECT COALESCE(ex_date, payment_date, event_date) AS dt, amount, type
@@ -163,31 +175,46 @@ def _dividendos(tk: str, preco: float | None) -> dict:
         """,
         t=tk,
     )
-    por_data: dict[str, list[float]] = defaultdict(list)
+    por_chave: dict[tuple[str, str], list[float]] = defaultdict(list)
+    capital: dict[str, list[float]] = defaultdict(list)
     for r in rows:
         v = _f(r["amount"])
-        if v:
-            por_data[str(r["dt"])].append(v)
+        if not v:
+            continue
+        dt, tipo = str(r["dt"]), str(r["type"] or "")
+        if eh_renda(r["type"]):
+            por_chave[(dt, tipo)].append(v)
+        else:
+            capital[dt].append(v)
 
     por_ano_bruto: dict[str, float] = defaultdict(float)
     por_ano_conserv: dict[str, float] = defaultdict(float)
     datas_duplicadas = 0
     hoje = date.today()
-    ult12_bruto = ult12_conserv = 0.0
-    for dt, vals in por_data.items():
+    ult12_bruto = ult12_conserv = ult12_capital = 0.0
+
+    def _recente(dt: str) -> bool:
+        try:
+            return (hoje - date.fromisoformat(dt)).days <= 365
+        except ValueError:
+            return False
+
+    for (dt, _tipo), vals in por_chave.items():
         ano = dt[:4]
+        # Dentro do mesmo (data, tipo), valores distintos so podem ser eco de
+        # classe: o minimo e o valor honesto da classe analisada.
         bruto, conserv = sum(vals), min(vals)
         por_ano_bruto[ano] += bruto
         por_ano_conserv[ano] += conserv
-        if len(set(round(v, 6) for v in vals)) > 1:
+        if len({round(v, 6) for v in vals}) > 1:
             datas_duplicadas += 1
-        try:
-            d = date.fromisoformat(dt)
-            if (hoje - d).days <= 365:
-                ult12_bruto += bruto
-                ult12_conserv += conserv
-        except ValueError:
-            pass
+        if _recente(dt):
+            ult12_bruto += bruto
+            ult12_conserv += conserv
+
+    for dt, vals in capital.items():
+        if _recente(dt):
+            ult12_capital += min(vals)
 
     suspeita_dup = datas_duplicadas >= 2 and ult12_bruto > ult12_conserv * 1.5
     def dy(v):
@@ -197,6 +224,7 @@ def _dividendos(tk: str, preco: float | None) -> dict:
         "ult_12m_ps": round(ult12_conserv, 4),
         "dy_12m_pct": dy(ult12_conserv),
         "dy_12m_bruto_pct": dy(ult12_bruto),
+        "devolucao_capital_12m_ps": round(ult12_capital, 4),
         "suspeita_duplicacao_classe": suspeita_dup,
         "n_eventos": len(rows),
     }
