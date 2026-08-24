@@ -1563,6 +1563,18 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
         mult_batch = _db.load_multiplos_historico_batch(tuple(tickers))
         dre_batch = _db.load_demonstracoes_batch(tuple(tickers))
 
+    # A-125: o indice de confianca de dados nao tinha consumidor nenhum desde
+    # que a pagina "Saude dos Dados" saiu (a7bbe35). Aqui ele fala sobre os
+    # tickers que o usuario esta prestes a comprar -- o unico lugar onde
+    # muda decisao. Falha de banco nunca derruba a secao.
+    try:
+        from core.data_confidence import alerta_confianca, compute_confidence
+        _alerta = alerta_confianca(compute_confidence(tickers=tickers))
+    except Exception:  # noqa: BLE001 - diagnostico nao pode quebrar a tela
+        _alerta = None
+    if _alerta:
+        st.warning(_alerta)
+
     st.markdown(
         """
         <div class="cf-header">

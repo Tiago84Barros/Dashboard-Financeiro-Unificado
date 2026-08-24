@@ -11,7 +11,8 @@ point-in-time de core.market_read — repurposá-la excluiria tickers do backtes
 Três pilares, cada um em [0,1], combinados por pesos fixos e transparentes:
   • Cobertura   — quanto das métricas-chave/demonstrações/preço o ticker tem;
   • Frescor     — quão recente é o último preço e a última demonstração anual;
-  • Integridade — ausência de flags abertas (warn/error) em market.data_quality_logs.
+  • Integridade — ausência de flags abertas (warn/error) em market.data_quality_logs
+                  E ausência de preço inválido (<= 0) na série histórica.
 
 Funções puras (score_ticker, confidence_label, *_factor) são testáveis sem banco;
 o IO fica em compute_confidence / confidence_summary.
@@ -52,6 +53,16 @@ _PRECO_VELHO_DIAS = 30
 
 # Penalidade por flag aberta (warn/error) distinta em data_quality_logs.
 _PENALIDADE_POR_FLAG = 0.34
+
+# A-124: preço <= 0 não é preço, e o pilar de integridade era cego para isso.
+# Medido no Supabase em 24/08/2026: 11 tickers com 1.406 observações inválidas
+# — PPAR3 com 266 de 287 (93%), NEMO3 com 224 de 226 (99%), MMAQ4 com 174 de
+# 242 (72%), e SANB3/SANB4 com 112 cada, que são bancos líquidos, não cascas.
+# ZERO flags registradas em data_quality_logs para qualquer um deles, então a
+# tela dava a MMAQ4 confiança 100,0 "Alta" enquanto ela exibia queda máxima de
+# -2.638% (ver A-122). A penalidade é proporcional à fração corrompida: quem
+# tem 3% de lixo perde pouco, quem tem 99% não pode aparecer como confiável.
+_PESO_PX_INVALIDA = 1.0
 
 
 def annual_recency_factor(ymax: int | None, current_year: int) -> float:
@@ -97,6 +108,7 @@ def score_ticker(signals: dict, current_year: int,
       ymax        — maior ano com demonstração anual (ou None)
       dias_preco  — dias desde o último preço (ou None)
       n_flags     — nº de issue_types warn/error abertas (janela recente)
+      frac_px_invalida — fração da série de preços com valor <= 0 (A-124)
     Retorna {score(0-100), label, cobertura, frescor, integridade} — pilares em %.
     """
     key_total = max(1, int(key_total))
@@ -112,18 +124,34 @@ def score_ticker(signals: dict, current_year: int,
                  + _COB_ANUAL * fator_anual
                  + _COB_PRECO * (1.0 if fator_preco > 0 else 0.0))
     frescor = _FR_PRECO * fator_preco + _FR_ANUAL * fator_anual
+    frac_px_invalida = float(signals.get("frac_px_invalida") or 0.0)
+    frac_px_invalida = min(1.0, max(0.0, frac_px_invalida))
     integridade = max(0.0, 1.0 - _PENALIDADE_POR_FLAG * n_flags)
+    integridade *= max(0.0, 1.0 - _PESO_PX_INVALIDA * frac_px_invalida)
 
     score = 100.0 * (W_COBERTURA * cobertura
                      + W_FRESCOR * frescor
                      + W_INTEGRIDADE * integridade)
     score = round(max(0.0, min(100.0, score)), 1)
+    # A-124: o rótulo não pode contradizer um pilar em colapso. Integridade
+    # pesa 25% do score, então MMAQ4 -- com 72% da série de preços inválida e
+    # integridade em 28% -- ainda somava 82,0 e aparecia como "Alta", porque
+    # cobertura e frescor estavam perfeitos. O score em si NÃO muda (quem o
+    # consome como número continua vendo o mesmo); só o rótulo deixa de
+    # afirmar confiança que o pilar mais fraco não sustenta.
+    # O cap é só sobre INTEGRIDADE, de propósito. Frescor está em 40,0 para
+    # todo ticker saudável do painel (PETR4, VALE3, WEGE3) porque a série
+    # mensal não é atualizada diariamente -- isso é defasagem conhecida do
+    # painel, não corrupção do ticker, e capar por ele rotularia o painel
+    # inteiro como "Baixa". Cobertura já responde por 45% do score.
+    label = confidence_label(min(score, 100.0 * integridade))
     return {
         "score": score,
-        "label": confidence_label(score),
+        "label": label,
         "cobertura": round(cobertura * 100, 1),
         "frescor": round(frescor * 100, 1),
         "integridade": round(integridade * 100, 1),
+        "px_invalida_pct": round(frac_px_invalida * 100, 1),
     }
 
 
@@ -149,6 +177,16 @@ px AS (
     SELECT ticker, (CURRENT_DATE - max(date))::int AS dias_preco
     FROM market.historical_prices WHERE close IS NOT NULL GROUP BY ticker
 ),
+-- A-124: preço <= 0 não é preço. Sem esta CTE o pilar de integridade era
+-- cego para 1.406 observações corrompidas em 11 tickers.
+pxbad AS (
+    SELECT ticker,
+           count(*) FILTER (WHERE COALESCE(adjusted_close, close) <= 0)::float
+             / NULLIF(count(*), 0) AS frac_px_invalida
+    FROM market.historical_prices
+    WHERE COALESCE(adjusted_close, close) IS NOT NULL
+    GROUP BY ticker
+),
 flags AS (
     SELECT ticker, count(DISTINCT issue_type) AS n_flags
     FROM market.data_quality_logs
@@ -160,11 +198,13 @@ SELECT a.ticker,
        COALESCE(t.n_key, 0)   AS n_key_ttm,
        an.ymax                AS ymax,
        p.dias_preco           AS dias_preco,
-       COALESCE(f.n_flags, 0) AS n_flags
+       COALESCE(f.n_flags, 0) AS n_flags,
+       COALESCE(pb.frac_px_invalida, 0) AS frac_px_invalida
 FROM ativos a
 LEFT JOIN ttm   t  ON t.ticker  = a.ticker
 LEFT JOIN ann   an ON an.ticker = a.ticker
 LEFT JOIN px    p  ON p.ticker  = a.ticker
+LEFT JOIN pxbad pb ON pb.ticker = a.ticker
 LEFT JOIN flags f  ON f.ticker  = a.ticker
 ORDER BY a.ticker
 """
@@ -210,10 +250,48 @@ def compute_confidence(engine=None, tickers: list[str] | None = None) -> list[di
     out: list[dict] = []
     for r in rows:
         sig = {"n_key_ttm": r.n_key_ttm, "ymax": r.ymax,
-               "dias_preco": r.dias_preco, "n_flags": r.n_flags}
+               "dias_preco": r.dias_preco, "n_flags": r.n_flags,
+               "frac_px_invalida": float(r.frac_px_invalida or 0.0)}
         out.append({"ticker": r.ticker, **score_ticker(sig, cy), **sig})
     out.sort(key=lambda d: d["score"])
     return out
+
+
+def alerta_confianca(scored: list[dict]) -> str | None:
+    """Frase única para o ponto de decisão, ou None se não há o que declarar.
+
+    A-125. `core.data_confidence` nasceu do achado de que `confidence_score` é
+    constante por método e não discrimina ticker bem coberto de mal coberto
+    (PR #60). Só que a página "Saúde dos Dados" foi removida em a7bbe35 e o
+    módulo ficou SEM NENHUM consumidor: o índice honesto existia, estava
+    correto, e não chegava a tela alguma. Motor de análise que ninguém
+    consulta na decisão é decoração.
+
+    Esta função é a porta de entrada. Ela fala sobre os tickers que o usuário
+    está prestes a comprar, não sobre o painel inteiro.
+    """
+    if not scored:
+        return None
+    corrompidos = [d for d in scored if float(d.get("px_invalida_pct") or 0) > 0]
+    baixos = [d for d in scored
+              if d.get("label") == "Baixa" and d not in corrompidos]
+    partes = []
+    if corrompidos:
+        corrompidos.sort(key=lambda d: -float(d["px_invalida_pct"]))
+        detalhe = ", ".join(f"{d['ticker']} ({d['px_invalida_pct']:.0f}%)"
+                            for d in corrompidos[:5])
+        partes.append(
+            f"Série de preços com observações inválidas (preço <= 0) em "
+            f"{detalhe} — retorno, volatilidade e queda máxima desses nomes "
+            f"repousam sobre menos histórico do que a janela sugere."
+        )
+    if baixos:
+        partes.append(
+            "Confiança de dados BAIXA em "
+            + ", ".join(sorted(d["ticker"] for d in baixos[:5]))
+            + "."
+        )
+    return " ".join(partes) if partes else None
 
 
 def summarize_confidence(scored: list[dict]) -> dict:

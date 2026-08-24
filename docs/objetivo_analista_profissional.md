@@ -50,6 +50,8 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-122 | Preço **negativo** entrava nos cálculos: 5 tickers, **463 observações** no painel real | ✅ | idem; MMAQ4 exibia queda máxima de **−2.638%**, RSUL3 **−104,2%**, NEMO3 volatilidade de **361%** |
 | A-123 | Card "Maior positiva"/"Inversa mais forte" mostrava a estimativa pontual sem o IC | ✅ | idem; **82% dos 3.610 pares medidos** têm IC 95% cruzando zero |
 | INTEG-Q | Rodada de integridade do preço e da correlação | 🟢 rodada feita | 3 achados (A-121 quebra em voz alta; A-122 e A-123 em silêncio) |
+| A-124 | Pilar de "Integridade" da confiança de dados era cego a preço inválido | ✅ | `tests/test_confianca_preco_invalido.py`; **11 tickers, 1.406 observações** no Supabase e **zero** flags registradas; MMAQ4 tinha nota **100,0 "Alta"** |
+| A-125 | `core.data_confidence` sem NENHUM consumidor desde a remoção da página (a7bbe35) | ✅ | idem; o índice honesto existia, correto, e não chegava a tela alguma |
 | A-114 | Rebalanceamento por banda e híbrido não enxergavam a saída de posição: o laço varria só o alvo, e o ticker que saiu não tem chave lá | ✅ | `tests/test_rebalancing_saida_de_posicao.py`; sair inteiro de 30% media desvio 0,0 e devolvia "não precisa mexer" |
 | A-115 | Advisor compara custo contra o **tamanho** da ordem, não contra o benefício dela | ⚠️ decisão sua | `core/global_portfolio/advisor.py`; aprova movimento grande de pouco valor e barra movimento pequeno de muito valor |
 | REBAL-Q | Idem na ação que o app recomenda — rebalanceamento e custos | 🟢 rodada feita | 2 achados (A-114 latente e corrigido, A-115 metodológico) |
@@ -374,6 +376,60 @@ cor de destaque. Abaixo, uma linha conta quantos pares da carteira estão nessa
 situação. A regra de ordenação **não** mudou: qual estatística deve rankear os
 pares é decisão de metodologia sua, não minha. O que mudou é que a incerteza
 deixou de ser invisível.
+
+### A confiança que ninguém via — A-124 e A-125
+
+Consultando o Supabase para dimensionar A-122, o número de produção veio pior
+que o do painel em cache: **11 tickers, 1.406 observações de preço <= 0**.
+
+| ticker | inválidas / total | |
+|---|---|---|
+| PPAR3 | 266 / 287 | 93% |
+| NEMO3 | 224 / 226 | 99% |
+| RSUL3 | 200 / 226 | 88% |
+| FIGE4 | 185 / 229 | 81% |
+| MMAQ4 | 174 / 242 | 72% |
+| SANB3 / SANB4 | 112 cada | 34% |
+
+SANB3 e SANB4 são bancos líquidos, não cascas deslistadas — isto alcança
+análise de verdade. E `market.data_quality_logs` tinha **zero** flags para
+qualquer um deles.
+
+**A-124.** O pilar "Integridade" de `core.data_confidence` só olhava flags
+abertas. Sem flag, integridade = 100%. Resultado antes da correção:
+
+| ticker | antes | depois |
+|---|---|---|
+| MMAQ4 | **100,0 · Alta** | 82,0 · Baixa |
+| PPAR3 | 81,2 · Alta | 58,0 · Baixa |
+| NEMO3 | 72,5 · Média | 47,7 · Baixa |
+| RSUL3 | 67,0 · Média | 44,9 · Baixa |
+| PETR4 / VALE3 / WEGE3 | 75,2 · Alta | 75,2 · Alta (inalterado) |
+
+O painel dava sua **nota máxima** ao ticker mais corrompido que ele tinha.
+
+A penalidade é proporcional à fração corrompida — 3% de lixo custa pouco, 99%
+não pode aparecer como confiável. E o **rótulo** passou a não poder contradizer
+o pilar: MMAQ4 ainda soma 82,0 pela fórmula (cobertura e frescor perfeitos, e
+integridade pesa só 25%), mas "Alta" não é leitura honesta com a integridade em
+28%. O score em si **não muda** — quem o consome como número vê o mesmo. O cap
+é só sobre integridade, de propósito: frescor está em 40,0 para todo ticker
+saudável do painel, o que é defasagem conhecida da série mensal, e capar por
+ele rotularia o painel inteiro como "Baixa".
+
+**A-125 — o defeito que estava por trás.** Ao procurar onde declarar isso,
+descobri que `core.data_confidence` **não tinha consumidor nenhum**. A página
+"Saúde dos Dados" foi removida em `a7bbe35` (20/07/2026) e o módulo virou
+código morto: nem `views/`, nem `pages/`, nem `app.py` o importam. O índice
+honesto — que nasceu justamente do achado de que `confidence_score` é constante
+por método — existia, estava correto, e não chegava a tela alguma. Motor de
+análise que ninguém consulta na decisão é decoração.
+
+Não ressuscitei a página: removê-la foi decisão sua. Liguei o sinal onde ele
+muda decisão — a seção "Qualidade das Empresas" da carteira B3, sobre os
+**finalistas**, os tickers que você está prestes a comprar. `alerta_confianca`
+é silencioso quando os dados estão bons e nomeia ticker e fração quando não
+estão. Falha de banco nunca derruba a seção.
 
 ## O que trava a chegada em produção
 
