@@ -24,6 +24,7 @@ from core.global_portfolio import (
     correlation,
     factors,
     metrics,
+    returns,
     risk,
     roles,
     signals,
@@ -492,6 +493,18 @@ def _tabelas(df: pd.DataFrame) -> None:
         st.dataframe(paises, width="stretch", hide_index=True)
 
 
+# Ordem deliberada: primeiro o que NÃO pede ação, para o usuário não ler a
+# lista inteira como defeito.
+_ROTULO_MOTIVO = {
+    returns.MOTIVO_CLASSE_SEM_PRECO: "sem preço por natureza (caixa, renda fixa)",
+    returns.MOTIVO_HISTORICO_INSUFICIENTE: "histórico curto demais",
+    returns.MOTIVO_FORA_DA_JANELA: "fora da janela comum",
+    returns.MOTIVO_SEM_PRECO: "preço ausente na ingestão",
+    returns.MOTIVO_SEM_FX: "câmbio ausente",
+    returns.MOTIVO_FX_STALE: "câmbio defasado",
+}
+
+
 def aviso_de_cobertura(cob: Cobertura) -> str | None:
     """Mensagem que nomeia os ativos sem série de preços mensal e o quanto do
     patrimônio fica de fora dos painéis de correlação, fatores e risco.
@@ -513,6 +526,16 @@ def aviso_de_cobertura(cob: Cobertura) -> str | None:
         ", ".join(cob.simbolos_sem_serie)
         if cob.simbolos_sem_serie else "nenhum símbolo identificado"
     )
+    # A lista acima nomeia QUEM ficou de fora; esta quebra diz o QUÊ fazer a
+    # respeito. Caixa e renda fixa não têm série mensal por natureza (nada a
+    # corrigir); um ativo de classe com preço que não veio é falha de ingestão.
+    # Sem separar os dois, a mesma frase pedia ação onde não havia nenhuma.
+    por_motivo = cob.simbolos_por_motivo()
+    quebra = [
+        f"{rotulo}: {', '.join(por_motivo[chave])}"
+        for chave, rotulo in _ROTULO_MOTIVO.items() if por_motivo.get(chave)
+    ]
+    detalhe_motivos = f" Por motivo — {'; '.join(quebra)}." if quebra else ""
     motivos: list[str] = []
     if cob.simbolos_sem_fx:
         motivos.append("câmbio ausente: " + ", ".join(cob.simbolos_sem_fx))
@@ -534,7 +557,7 @@ def aviso_de_cobertura(cob: Cobertura) -> str | None:
     return (
         f"Correlação, fatores e risco cobrem {pct_coberto:.0f}% do patrimônio "
         f"({pct_fora:.0f}% de fora, sem série mensal válida): {nomes}."
-        f"{detalhe}{janela}"
+        f"{detalhe_motivos}{detalhe}{janela}"
     )
 
 

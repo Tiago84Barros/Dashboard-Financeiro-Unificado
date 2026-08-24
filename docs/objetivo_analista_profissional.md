@@ -61,6 +61,8 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-131 | `market.dividends` guarda **duas safras do mesmo evento**: uma com data-ex sintética no dia 1º, outra com o calendário real da B3 | ⚠️ decisão sua | **379 tickers carregam as duas safras**; 2.831 pares mesmo tipo+valor a ≤5 dias em 220 tickers; PATL11 grava cada mensal duas vezes |
 | A-132 | Eventos de renda de magnitude implausível para pagamento periódico | ⚠️ decisão sua | **625 eventos em 45 FIIs** com rendimento único acima de 30% do preço; PATL11 tem `RENDIMENTO` de 66,33 num fundo de R$ 64,15 que paga 0,57/mês |
 | PROV-Q | Rodada dos proventos: o número de manchete do FII responde a "quanto isso rende?" | 🟢 rodada feita | 5 achados; 3 fechados, **os primeiros a enviesar para cima na métrica de decisão do FII** |
+| A-133 | Classe sem preço **por natureza** (caixa, renda fixa) recebia o mesmo motivo `sem_preco` de um ativo cuja série deveria existir e faltou — e o aviso da tela nem exibia motivo de preço | ✅ | `tests/test_cobertura_motivo_estrutural.py`; o comentário acima da linha 405 prometia "motivo próprio" que o código não dava; agora `classe_sem_preco` e a quebra por motivo aparecem no aviso |
+| EUA-Q | Rodada do módulo americano, o único dos quatro que DADO-Q nunca varreu | 🟢 rodada feita | Scores e subscores todos em [0,100]; `decision_grade` com filing mais antigo em FY2024; zero preço não-positivo; **3.040 das 3.052 empresas sem série de preço** (só 12 símbolos publicados) — a máquina de `Cobertura` declara essa ausência, não a esconde |
 | A-114 | Rebalanceamento por banda e híbrido não enxergavam a saída de posição: o laço varria só o alvo, e o ticker que saiu não tem chave lá | ✅ | `tests/test_rebalancing_saida_de_posicao.py`; sair inteiro de 30% media desvio 0,0 e devolvia "não precisa mexer" |
 | A-115 | Advisor compara custo contra o **tamanho** da ordem, não contra o benefício dela | ⚠️ decisão sua | `core/global_portfolio/advisor.py`; aprova movimento grande de pouco valor e barra movimento pequeno de muito valor |
 | REBAL-Q | Idem na ação que o app recomenda — rebalanceamento e custos | 🟢 rodada feita | 2 achados (A-114 latente e corrigido, A-115 metodológico) |
@@ -553,6 +555,42 @@ conferir a divergência entre as duas fontes, o dado cru mostrou duas coisas:
   medição. Não filtrei porque, diferente de preço negativo, um provento grande
   **pode** ser real (extraordinário, liquidação) — cortar por régua exigiria
   escolher a régua.
+
+### O módulo que nunca tinha sido varrido — EUA-Q
+
+DADO-Q cobriu B3 e FII. Os EUA — um dos quatro módulos mandatados — nunca
+tinham passado por uma rodada de dados. Abri EUA-Q por isso, não por suspeita.
+
+O que medi no Supabase:
+
+| Verificação | Resultado |
+|---|---|
+| Tabelas de `market_us` publicadas | só `company_snapshots` (3.052) e `prices_monthly` (4.720) |
+| Score e subscores fora de [0,100] | nenhum |
+| `decision_grade` com filing antigo | mais antigo é **FY2024** (5 linhas) — limpo |
+| Preço não-positivo (a falha de A-121/A-122) | **zero** |
+| Empresas **sem nenhuma** série de preço | **3.040 de 3.052**; publicados só 12 símbolos |
+
+O último número parece alarmante e não é o que aparenta: a vitrine americana
+publica fundamentos para 3.052 empresas e preços para 12. A pergunta que
+importa não é "faltam preços?", é **"o risco do Portfólio Global é calculado
+sobre um pedaço e apresentado como o todo?"** — que é exatamente o defeito de
+A-118 e A-119 noutra roupa. Fui atrás e a resposta é não: `Cobertura`
+(`core/global_portfolio/returns.py`) carrega `peso_coberto`, `simbolos_sem_serie`
+e `motivos` por símbolo, e a tela avisa que os painéis cobrem N% do patrimônio.
+A máquina declara a ausência em vez de escondê-la.
+
+**A-133 — a promessa no comentário que o código não cumpria.** Lendo esse
+contrato achei o defeito real. A linha que marca os símbolos de classe sem
+série trazia acima de si o comentário *"ausência estrutural, não defeito de
+ingestão — por isso motivo próprio desde o começo"*, e logo abaixo gravava
+`MOTIVO_SEM_PRECO` — a mesma constante das duas linhas seguintes, que tratam
+de preço que **deveria existir e faltou**. Um CDB, que nunca terá cotação
+mensal, saía com o mesmo rótulo de uma NVDA perdida na ingestão. Pior: o aviso
+da tela nem chegava a exibir motivo de preço — nomeava os símbolos numa lista
+só e detalhava apenas os motivos cambiais. Separei em `classe_sem_preco` e
+levei a quebra por motivo até o aviso, ordenada para o que **não** pede ação
+vir primeiro. Não muda número nenhum: muda o usuário saber onde agir.
 
 ## O que trava a chegada em produção
 

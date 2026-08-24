@@ -62,7 +62,11 @@ _FX_CONVENTIONS = {("USD", "BRL"): "BRL_per_USD"}
 # insuficiente` é dado íntegro e curto (nada a corrigir, só esperar);
 # `sem_fx`/`fx_stale` apontam a série cambial; `fora_da_janela_comum` diz que o
 # ativo tinha histórico suficiente e foi a janela COMUM que não sustentou.
+# `classe_sem_preco` é ausência ESTRUTURAL (caixa, renda fixa: não existe série
+# mensal de preço a ingerir) e não pede ação nenhuma — separá-lo de `sem_preco`
+# é o que permite ao usuário distinguir "normal" de "a ingestão falhou".
 MOTIVO_SEM_PRECO = "sem_preco"
+MOTIVO_CLASSE_SEM_PRECO = "classe_sem_preco"
 MOTIVO_HISTORICO_INSUFICIENTE = "historico_insuficiente"
 MOTIVO_SEM_FX = "sem_fx"
 MOTIVO_FX_STALE = "fx_stale"
@@ -401,9 +405,12 @@ def retornos_mensais(df_posicoes: pd.DataFrame,
         if str(linha.get("asset_class") or "").lower() in _CLASSES_COM_PRECO
     })
     # Classe sem série de preços (renda fixa, caixa): ausência estrutural, não
-    # defeito de ingestão — por isso motivo próprio desde o começo.
+    # defeito de ingestão — por isso motivo próprio. Até 24/08/2026 esta linha
+    # gravava MOTIVO_SEM_PRECO, o mesmo das linhas abaixo, e o comentário
+    # prometia uma distinção que o código não fazia: um CDB (que nunca terá
+    # série) e uma NVDA faltando na ingestão saíam com o mesmo rótulo.
     motivos: dict[str, str] = {
-        str(linha["symbol"]).upper(): MOTIVO_SEM_PRECO for linha in linhas
+        str(linha["symbol"]).upper(): MOTIVO_CLASSE_SEM_PRECO for linha in linhas
         if str(linha.get("asset_class") or "").lower() not in _CLASSES_COM_PRECO
     }
 
