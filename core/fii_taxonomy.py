@@ -132,10 +132,16 @@ def categoria_fii(
     if categoria:
         return categoria
 
+    tipo_normalizado = _texto_normalizado(tipo)
+    # Papel e FoF são classes estruturais. Quando o nome não traz evidência
+    # mais forte, não podem ser reclassificados pelo ramo de um imóvel/ocupante
+    # informado em ``segmento`` (caso real: MXRF11 aparecia como Logística).
+    if tipo_normalizado in {"papel", "fof"}:
+        return _CATEGORIA_POR_TIPO[tipo_normalizado]
+
     segmento_normalizado = _texto_normalizado(segmento)
     categoria = _primeira_regra(segmento_normalizado, _REGRAS_SEGMENTO)
     if categoria:
         return categoria
 
-    tipo_normalizado = _texto_normalizado(tipo)
     return _CATEGORIA_POR_TIPO.get(tipo_normalizado, "Não classificado")

@@ -22,6 +22,13 @@ def test_setor_de_locatario_nao_supera_nome_inequivoco_do_fundo():
                          nome="Edifício Corporate Offices FII") == "Lajes Corporativas"
 
 
+def test_tipo_estrutural_nao_e_sobrescrito_pelo_setor_bruto_do_provedor():
+    assert categoria_fii("papel", ticker="MXRF11", segmento="Logística",
+                         nome="Maxi Renda FII") == "Papel/CRI"
+    assert categoria_fii("fof", ticker="TEST11", segmento="Residencial",
+                         nome="FII sem indicação setorial") == "Fundo de Fundos"
+
+
 def test_categorias_amplas_sao_fallback_quando_nao_ha_evidencia_especifica():
     assert categoria_fii("tijolo", segmento="1", nome="FII Exemplo") == "Tijolo"
     assert categoria_fii("papel", segmento="Outros", nome="FII Exemplo") == "Papel/CRI"
