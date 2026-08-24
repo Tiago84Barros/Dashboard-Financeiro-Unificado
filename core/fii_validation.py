@@ -159,6 +159,18 @@ def point_in_time_backtest(
         coverage = len(valid) / len(weights) if len(weights) else 0
         if not len(valid):
             continue
+        # A-118: um fundo escolhido que NAO tem nenhum retorno no periodo saiu
+        # de campo -- liquidacao, incorporacao ou fim do dado. Renormalizar os
+        # pesos aqui redistribuia a fatia dele entre os sobreviventes, ou seja,
+        # fazia o dinheiro do fundo que sumiu render o que os OUTROS renderam.
+        # Medido em 24/08/2026: uma cesta de tres fundos com um caindo 2% ao dia
+        # rendia -6,46% com ele presente e +10,49% quando ele liquidava e sumia.
+        # Inversao de sinal. `coverage` ja caia para 67% e era reportado, mas
+        # como media agregada que ninguem traduz para "o retorno exclui um terco
+        # da carteira". A fatia ausente passa a render ZERO no periodo: nao
+        # inventa a perda (pode ser buraco de dado), e nao deixa o ganho dos
+        # sobreviventes ocupar o lugar dela.
+        peso_ausente = float(max(0.0, 1.0 - float(weights.loc[valid].sum())))
         weights = weights.loc[valid] / weights.loc[valid].sum()
         turn = portfolio_turnover(previous, weights) if not previous.empty else 1.0
         matrix = period_matrix[valid]
@@ -171,6 +183,7 @@ def point_in_time_backtest(
             continue
         daily = matrix.mul(weights, axis=1).sum(axis=1, skipna=True) / present_weight
         gross = float((1.0 + daily).prod() - 1.0)
+        gross = (1.0 - peso_ausente) * gross   # A-118: a fatia que sumiu rende 0
         net = gross - turn * (transaction_cost + slippage)
         benchmark_period = benchmark[(benchmark.index >= execution_date)]
         if next_execution is not None:
@@ -181,6 +194,7 @@ def point_in_time_backtest(
                              "portfolio_return": net,
                              "benchmark_return": benchmark_return,
                              "coverage": coverage, "turnover": turn,
+                             "peso_ausente": peso_ausente,
                              "holdings": {str(ticker): float(weight)
                                           for ticker, weight in weights.items()}})
         turnovers.append(turn)
@@ -206,6 +220,12 @@ def point_in_time_backtest(
         "mean_benchmark": float(result["benchmark_return"].mean()),
         "mean_excess": float(excess.mean()), "excess_bootstrap": bootstrap_mean_ci(excess),
         "mean_coverage": float(result["coverage"].mean()),
+        "saida_de_campo": {
+            "peso_ausente_medio": float(result["peso_ausente"].mean()),
+            "peso_ausente_maximo": float(result["peso_ausente"].max()),
+            "periodos_com_ausencia": int((result["peso_ausente"] > 1e-9).sum()),
+            "periodos": int(len(result)),
+        },
         "annualized_turnover": float(np.mean(turnovers) * 12),
         "rank_stability": float(np.mean(valid_stabilities)) if valid_stabilities else np.nan,
         "verified_snapshot_fraction": verified_snapshots / used_snapshots if used_snapshots else 0.0,

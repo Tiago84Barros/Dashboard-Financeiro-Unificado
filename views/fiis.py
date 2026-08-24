@@ -2011,6 +2011,21 @@ def _tab_backtest() -> None:
                                 sub="intervalo de 95%", sub_color="#4A5568",
                                 accent="#00C896" if float(ci.get("lower") or -1) > 0 else "#F6C90E"),
                       unsafe_allow_html=True)
+    # A-118: quanto da carteira saiu de campo (liquidação, incorporação ou fim
+    # do dado) em vez de ter retorno observado. A versão anterior redistribuía
+    # essa fatia entre os sobreviventes, então o número nem existia.
+    saida = pit.get("saida_de_campo") or {}
+    if float(saida.get("peso_ausente_medio") or 0) > 0:
+        st.info(
+            f"Em {saida.get('periodos_com_ausencia')} dos "
+            f"{saida.get('periodos')} períodos, parte da carteira ficou sem "
+            f"retorno observado — {float(saida['peso_ausente_medio']):.1%} do "
+            f"peso em média, até {float(saida.get('peso_ausente_maximo') or 0):.1%} "
+            "no pior período. Essa fatia rende **zero** no cálculo: não "
+            "inventamos a perda, que pode ser buraco de dado, mas ela também "
+            "não rende o que os fundos sobreviventes renderam."
+        )
+
     blockers = validation.get("blockers") or []
     if blockers:
         st.warning("Validação ainda bloqueada: " + " · ".join(str(item) for item in blockers))

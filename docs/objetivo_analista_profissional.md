@@ -42,6 +42,8 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-116 | Backtest EUA apagava do painel a ação que parou de negociar — viés de sobrevivência puro | ✅ | `tests/test_us_panel_sobrevivencia.py`; cesta de duas ações (+30% e −80% com deslistagem) saía como **+30,0%** em vez de −25,0% |
 | A-117 | Horizonte elástico: o primeiro preço após o alvo, ainda que 7 anos depois, virava "retorno de 12 meses" | ✅ | idem; +300% de 84 meses rotulados como 12m, e +100% de 11 meses rotulados como retorno mensal |
 | BACKTEST-Q | Idem na evidência histórica — o retorno exibido era alcançável naquela data? | 🟢 rodada feita | 2 achados, **os primeiros que enviesavam para CIMA** |
+| A-118 | FII: fundo escolhido que liquidou tinha o peso redistribuído entre os sobreviventes — o dinheiro do que sumiu rendia o que os OUTROS renderam | ✅ | `tests/test_fii_pit_saida_de_campo.py`; cesta de 3 fundos: **−6,46% virava +10,49%** quando o perdedor liquidava. Inversão de sinal |
+| DADO-Q | Idem na camada que alimenta B3 e FII | 🟡 em curso | A-118 fechado (FII); B3 em auditoria |
 | A-114 | Rebalanceamento por banda e híbrido não enxergavam a saída de posição: o laço varria só o alvo, e o ticker que saiu não tem chave lá | ✅ | `tests/test_rebalancing_saida_de_posicao.py`; sair inteiro de 30% media desvio 0,0 e devolvia "não precisa mexer" |
 | A-115 | Advisor compara custo contra o **tamanho** da ordem, não contra o benefício dela | ⚠️ decisão sua | `core/global_portfolio/advisor.py`; aprova movimento grande de pouco valor e barra movimento pequeno de muito valor |
 | REBAL-Q | Idem na ação que o app recomenda — rebalanceamento e custos | 🟢 rodada feita | 2 achados (A-114 latente e corrigido, A-115 metodológico) |
@@ -245,6 +247,40 @@ inobservável — que não é retorno zero.
 Docker está parado. O mecanismo está provado de forma exata e determinística; o
 *quanto* isso movia o backtest publicado do módulo EUA só pode ser medido com o
 container no ar.
+
+## A rodada da camada de dado (DADO-Q)
+
+Depois de A-116/A-117 no painel EUA, a pergunta natural era se o mesmo descarte
+silencioso existia no B3 e no FII.
+
+**A-118, FII.** `core/fii_validation.point_in_time_backtest` é, no geral, o
+código mais cuidadoso dos três módulos: mantém fundos encerrados no universo
+histórico por decisão explícita, cobra custo de transação e slippage, tem banda
+de permanência no ranking e reporta cobertura. Ainda assim tinha a porta aberta.
+
+`weights.loc[valid] / weights.loc[valid].sum()` renormalizava os pesos sobre os
+fundos com retorno no período. Um fundo escolhido que liquidou — sem nenhuma
+linha de retorno — tinha a fatia dele **redistribuída entre os sobreviventes**.
+O dinheiro do fundo que sumiu rendia o que os outros renderam.
+
+Medido em 24/08/2026 com uma cesta de três fundos, um caindo 2% ao dia:
+
+| | retorno médio | cobertura |
+|---|---|---|
+| o fundo que caía está presente | **−6,46%** | 100% |
+| o mesmo fundo liquida e some | **+10,49%** | 67% |
+
+Inversão de sinal. `coverage` já caía para 67% e era reportado — mas como média
+agregada, que ninguém traduz para "o retorno exclui um terço da carteira".
+
+A fatia ausente passa a render **zero** no período: não inventamos a perda, que
+pode ser buraco de dado, e o ganho dos sobreviventes deixa de ocupar aquele
+peso. O mesmo cenário agora devolve +6,99% com `peso_ausente_medio` de 33%
+declarado na aba de Backtest — um número sobre o qual dá para decidir.
+
+**Este é o terceiro achado que enviesava para cima, e o mais grave: inverte o
+sinal do resultado.** E estava no módulo que eu havia descrito como o mais
+rigoroso dos três.
 
 ## O que trava a chegada em produção
 
