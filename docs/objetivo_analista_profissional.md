@@ -52,6 +52,9 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | INTEG-Q | Rodada de integridade do preço e da correlação | 🟢 rodada feita | 3 achados (A-121 quebra em voz alta; A-122 e A-123 em silêncio) |
 | A-124 | Pilar de "Integridade" da confiança de dados era cego a preço inválido | ✅ | `tests/test_confianca_preco_invalido.py`; **11 tickers, 1.406 observações** no Supabase e **zero** flags registradas; MMAQ4 tinha nota **100,0 "Alta"** |
 | A-125 | `core.data_confidence` sem NENHUM consumidor desde a remoção da página (a7bbe35) | ✅ | idem; o índice honesto existia, correto, e não chegava a tela alguma |
+| A-126 | Quatro módulos do parecer da banca (2026-05-23) escritos, **nenhum ligado e nenhum testado**: `correlations.py` (M2, EWMA), `copulas.py` (M2c), `survivorship_ingestion.py` (C3c), `survivorship_prices.py` (C3cc+) | ✅ medido e testado / ⚠️ ligar é decisão sua | `tests/test_modulos_banca_orfaos.py`; os quatro **rodam**; EWMA difere de Pearson em **0,184 na média e 0,557 no máximo** nos pares da carteira |
+| A-127 | `validation_readiness` lia `strict_available: False` **literal** para survivorship — ingerir deslistada jamais mudaria o veredito | ✅ | idem; o bloco `pit` do mesmo arquivo já era medido, o de survivorship não; gate segue não-estrito, mas agora diz **22 curados, 0 externos** |
+| BANCA-Q | Rodada dos órfãos: quem implementou o parecer e nunca foi consultado | 🟢 rodada feita | 2 achados; capacidade existe, porta de entrada não |
 | A-114 | Rebalanceamento por banda e híbrido não enxergavam a saída de posição: o laço varria só o alvo, e o ticker que saiu não tem chave lá | ✅ | `tests/test_rebalancing_saida_de_posicao.py`; sair inteiro de 30% media desvio 0,0 e devolvia "não precisa mexer" |
 | A-115 | Advisor compara custo contra o **tamanho** da ordem, não contra o benefício dela | ⚠️ decisão sua | `core/global_portfolio/advisor.py`; aprova movimento grande de pouco valor e barra movimento pequeno de muito valor |
 | REBAL-Q | Idem na ação que o app recomenda — rebalanceamento e custos | 🟢 rodada feita | 2 achados (A-114 latente e corrigido, A-115 metodológico) |
@@ -430,6 +433,58 @@ muda decisão — a seção "Qualidade das Empresas" da carteira B3, sobre os
 **finalistas**, os tickers que você está prestes a comprar. `alerta_confianca`
 é silencioso quando os dados estão bons e nomeia ticker e fração quando não
 estão. Falha de banco nunca derruba a seção.
+
+### As recomendações que foram escritas e nunca ligadas — A-126 e A-127
+
+A-125 mostrou um motor correto sem porta de entrada. Isso levantou uma pergunta
+maior: **quantos outros existem?** Varri os 143 módulos de `core/` atrás de
+código que nada importa. Quatro são órfãos de verdade — e os quatro
+implementam recomendações do parecer da banca examinadora de 2026-05-23:
+
+| módulo | linhas | recomendação | consumidores |
+|---|---|---|---|
+| `core/survivorship_ingestion.py` | 478 | C3c — ingestão de deslistadas | 0 |
+| `core/copulas.py` | 251 | M2c — dependência de cauda | 0 |
+| `core/survivorship_prices.py` | 223 | C3cc+ — preço pós-delisting | 0 |
+| `core/correlations.py` | 158 | M2 — correlação EWMA | 0 |
+
+Nenhum tinha teste. Antes de afirmar que a capacidade existe, executei os
+quatro. **Os quatro rodam.** Duas falhas que encontrei na primeira tentativa
+eram minhas, não deles: passei `DataFrame` onde a assinatura pede `np.ndarray`,
+e retorno mensal com o default `periods_per_year=252`. Corrigido o contrato,
+o comportamento é o esperado. `tests/test_modulos_banca_orfaos.py` trava isso.
+
+**O que a medição diz que importa.** EWMA não é redundante com o Pearson
+estático que a tela mostra — nos seis papéis da carteira, a diferença média
+por par é **0,184** e a máxima **0,557**. Ou seja: SCORE-03/A-104 (janelas de
+correlação heterogêneas) tem resposta pronta no repositório, escrita há três
+meses, desligada. Ligá-la muda que estatística ordena os pares, e isso é
+decisão de metodologia sua — a mesma linha que segurei em A-123.
+
+`survivorship_prices.py` trata com princípio exatamente o que A-116/A-118/A-119
+corrigiram na mão: falência leva o resíduo a zero e a variação a −100%, nunca
+abaixo. O teste trava esse invariante.
+
+**A-127 — a porta pregada.** `core/b3_validation.py` montava o manifesto com
+
+```python
+"survivorship": {"strict_available": False, "reason": "... ainda nao integrado"}
+```
+
+literal no código. `validation_readiness` lê essa chave para decidir se um
+resultado pode ser promovido a validação estrita. Consequência: **por mais
+deslistadas que você ingerisse, o veredito nunca mudaria** — e os 478 linhas
+de `survivorship_ingestion.py` existem exatamente para essa ingestão. O
+contraste estava no mesmo arquivo: o bloco `pit` também começa `False`, mas é
+**sobrescrito por uma medição real** de `market.calculated_metric_vintages`.
+Assimetria, não decisão.
+
+Agora o bloco é medido. `strict_available` **continua `False`** de propósito:
+22 tickers curados não são universo histórico completo, e qual contagem promove
+o gate é decisão sua. O que mudou é que o motivo diz o que foi medido —
+`22 tickers deslistados (22 curados, 0 de fontes externas)` — e que ingerir
+passa a aparecer no manifesto. Medir nunca afrouxou o gate; há teste travando
+isso.
 
 ## O que trava a chegada em produção
 

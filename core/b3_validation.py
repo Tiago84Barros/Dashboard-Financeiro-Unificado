@@ -46,6 +46,50 @@ def _table_exists(conn, table: str) -> bool:
     return bool(conn.execute(text("SELECT to_regclass(:table) IS NOT NULL"), {"table": table}).scalar())
 
 
+def _survivorship_status() -> dict[str, Any]:
+    """Mede o universo de deslistadas em vez de declarar um literal.
+
+    A-126: este bloco era ``{"strict_available": False, "reason": "..."}`` fixo
+    no codigo. ``core/survivorship_ingestion.py`` (478 linhas, recomendacao C3c
+    da banca de 2026-05-23) existe exatamente para integrar esse universo, e
+    nenhum modulo o consultava -- de modo que ingerir deslistadas jamais mudaria
+    o veredito de ``validation_readiness``. O contraste estava no proprio
+    arquivo: o bloco ``pit`` comeca falso e e sobrescrito por uma medicao real.
+
+    ``strict_available`` continua ``False``: 22 tickers curados nao sao um
+    universo historico completo, e qual contagem promove o gate e decisao de
+    metodologia do usuario, nao deste modulo. O que muda e que o motivo agora
+    diz o que foi medido.
+    """
+    try:
+        from core.survivorship_ingestion import resumo_ingestao
+
+        resumo = resumo_ingestao()
+    except Exception:  # noqa: BLE001 - manifesto nao pode quebrar por diagnostico
+        logger.warning("survivorship: resumo_ingestao indisponivel", exc_info=True)
+        return {
+            "strict_available": False,
+            "reason": "universo historico de deslistadas nao pode ser medido",
+        }
+    fontes = {
+        "curados": int(resumo.get("curados") or 0),
+        "locais": int(resumo.get("locais") or 0),
+        "b3_cache": int(resumo.get("b3_cache") or 0),
+        "cvm_canceladas": int(resumo.get("cvm_canceladas") or 0),
+    }
+    total = int(resumo.get("total_unicos") or 0)
+    externos = fontes["locais"] + fontes["b3_cache"] + fontes["cvm_canceladas"]
+    return {
+        "strict_available": False,
+        "reason": (
+            f"universo historico incompleto: {total} tickers deslistados "
+            f"({fontes['curados']} curados, {externos} de fontes externas)"
+        ),
+        "delisted_total": total,
+        "delisted_por_fonte": fontes,
+    }
+
+
 def build_data_manifest(engine) -> dict[str, Any]:
     """Resume cobertura e qualidade de disponibilidade sem carregar dados brutos."""
     with engine.connect() as conn:
@@ -65,10 +109,7 @@ def build_data_manifest(engine) -> dict[str, Any]:
             "universe": int(base["universe"] or 0),
             "unmapped_company": int(base["unmapped_company"] or 0),
             "pit": {"strict_available": False, "reason": "published_at CVM ainda nao integrado"},
-            "survivorship": {
-                "strict_available": False,
-                "reason": "universo historico completo de deslistadas ainda nao integrado",
-            },
+            "survivorship": _survivorship_status(),
         }
         if _table_exists(conn, "market.calculated_metric_vintages"):
             vintages = conn.execute(text("""
