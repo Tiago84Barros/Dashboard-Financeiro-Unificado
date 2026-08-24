@@ -43,7 +43,9 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-117 | Horizonte elástico: o primeiro preço após o alvo, ainda que 7 anos depois, virava "retorno de 12 meses" | ✅ | idem; +300% de 84 meses rotulados como 12m, e +100% de 11 meses rotulados como retorno mensal |
 | BACKTEST-Q | Idem na evidência histórica — o retorno exibido era alcançável naquela data? | 🟢 rodada feita | 2 achados, **os primeiros que enviesavam para CIMA** |
 | A-118 | FII: fundo escolhido que liquidou tinha o peso redistribuído entre os sobreviventes — o dinheiro do que sumiu rendia o que os OUTROS renderam | ✅ | `tests/test_fii_pit_saida_de_campo.py`; cesta de 3 fundos: **−6,46% virava +10,49%** quando o perdedor liquidava. Inversão de sinal |
-| DADO-Q | Idem na camada que alimenta B3 e FII | 🟡 em curso | A-118 fechado (FII); B3 em auditoria |
+| A-119 | B3: o Rank-IC lia o preço de UMA data fixa em cada ponta; quem não negociou naquele pregão — e quem deslistou no meio do ano — saía do teste | ✅ | `tests/test_b3_ic_sobrevivencia.py`; **444 empresas-ano (7,5%)** descartadas no painel real, e as recuperadas rendem menos que as incluídas em 9 dos 11 anos |
+| A-120 | B3: `tail(12)` pega as 12 últimas *observações*, não os 12 últimos *meses* | ✅ | `tests/test_b3_retorno_12m_janela.py`; FSTU11 exibia **76 meses** rotulados "retorno 12m" |
+| DADO-Q | Idem na camada que alimenta B3 e FII | 🟢 rodada feita | 3 achados (A-118 FII, A-119/A-120 B3); **todos enviesavam para cima** |
 | A-114 | Rebalanceamento por banda e híbrido não enxergavam a saída de posição: o laço varria só o alvo, e o ticker que saiu não tem chave lá | ✅ | `tests/test_rebalancing_saida_de_posicao.py`; sair inteiro de 30% media desvio 0,0 e devolvia "não precisa mexer" |
 | A-115 | Advisor compara custo contra o **tamanho** da ordem, não contra o benefício dela | ⚠️ decisão sua | `core/global_portfolio/advisor.py`; aprova movimento grande de pouco valor e barra movimento pequeno de muito valor |
 | REBAL-Q | Idem na ação que o app recomenda — rebalanceamento e custos | 🟢 rodada feita | 2 achados (A-114 latente e corrigido, A-115 metodológico) |
@@ -281,6 +283,41 @@ declarado na aba de Backtest — um número sobre o qual dá para decidir.
 **Este é o terceiro achado que enviesava para cima, e o mais grave: inverte o
 sinal do resultado.** E estava no módulo que eu havia descrito como o mais
 rigoroso dos três.
+
+### B3 — A-119 e A-120
+
+O mesmo padrão, no teste com que o app afirma que o score prevê.
+
+**A-119.** Os pares `(ano, score, retorno)` do Rank-IC vinham de
+`end_rows.iloc[-1] / start_rows.iloc[0]`: o preço de **uma data fixa** em cada
+ponta. Quem não negociou naquele pregão exato saía por `NaN` no `dropna()` — e
+junto saía quem **deslistou** no meio do ano, que é o caso que importa.
+
+Medido sobre o painel real da B3 (1.089 tickers, 2015–2026):
+
+| | empresas-ano no Rank-IC |
+|---|---|
+| antes | 5.958 |
+| depois | 6.402 (**+7,5%**) |
+
+444 empresas-ano voltaram ao teste. E as recuperadas rendem **menos** que as que
+já entravam em 9 dos 11 anos — o que sumia era predominantemente o perdedor.
+A direção do viés sobre o IC em si depende de onde esses nomes estavam no
+ranking do score, o que exigiria o histórico de scores para medir; o que está
+medido é a exclusão e o perfil de retorno dela.
+
+A correção lê a primeira e a última cotação **efetivamente negociada** dentro da
+janela. Para quem deslistou, a última cotação é a saída — o mesmo tratamento de
+A-116. A lógica saiu da view para `core.b3_pooled_evidence.retornos_da_janela`,
+como manda o `CLAUDE.md`, e por isso passou a ser testável.
+
+**A-120.** `tail(12)` pega as 12 últimas **observações**, não os 12 últimos
+**meses**. Com buraco na série a janela estica e o rótulo não muda: FSTU11
+exibia **76 meses** como "retorno 12m" (−56%) e PSVM11, 33 meses. O recorte
+passou a ser por data. E o lado oposto também fecha: uma série com 2 pontos
+cobrindo 1 mês daria um retorno mensal rotulado "12m", então a janela precisa
+cobrir ao menos 10 meses — abaixo disso o número não existe, e "não há 12 meses
+de histórico" é resposta melhor do que um retorno curto com o rótulo errado.
 
 ## O que trava a chegada em produção
 

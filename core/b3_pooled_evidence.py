@@ -85,6 +85,42 @@ class UniverseEvidence:
     explicacao: str
 
 
+def retornos_da_janela(start_rows, end_rows):
+    """Retorno de cada empresa entre a PRIMEIRA e a ÚLTIMA cotação da janela.
+
+    ``start_rows``/``end_rows`` são recortes de um painel largo (datas × tickers)
+    com o preço no início e no fim do período de medição.
+
+    Correção da auditoria 2026-08 (A-119)
+    -------------------------------------
+    A versão anterior fazia ``end_rows.iloc[-1] / start_rows.iloc[0]``: lia UMA
+    data específica de cada ponta. Quem não negociou naquele pregão exato saía
+    por ``NaN`` no ``dropna()`` a jusante — e junto saía quem **deslistou** no
+    meio do ano, que é o caso que importa.
+
+    Medido em 24/08/2026 sobre o painel real da B3 (1.089 tickers, 2015–2026):
+    **444 empresas-ano, 7,5% do total, eram descartadas** do Rank-IC. E as
+    recuperadas rendem MENOS que as que já entravam em 9 dos 11 anos — ou seja,
+    o que sumia era predominantemente o perdedor. Sobrevivência dentro do
+    próprio teste com que o app afirma que o score prevê.
+
+    ``bfill``/``ffill`` dentro da janela devolvem a primeira e a última cotação
+    efetivamente negociada. Para quem deslistou, a última cotação é a saída —
+    mesmo tratamento dado em A-116 no painel dos EUA.
+
+    A direção do viés sobre o Rank-IC depende de onde esses nomes estavam no
+    ranking do score, o que exige o histórico de scores para medir; o que está
+    medido é a exclusão e o perfil de retorno dela.
+    """
+    import numpy as _np
+    if start_rows is None or end_rows is None or start_rows.empty or end_rows.empty:
+        return None
+    preco_inicio = start_rows.bfill().iloc[0]
+    preco_fim = end_rows.ffill().iloc[-1]
+    preco_inicio = preco_inicio.where(preco_inicio > 0)
+    return (preco_fim / preco_inicio - 1.0).replace([_np.inf, -_np.inf], _np.nan)
+
+
 def pooled_yearly_ics(pairs: list[tuple], *, min_ativos: int = MIN_ATIVOS_ANO
                       ) -> dict[int, float]:
     """Rank-IC por ano sobre o universo agrupado.

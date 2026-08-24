@@ -998,9 +998,10 @@ def _processar_segmento(
                 ]
                 if start_rows.empty or end_rows.empty:
                     continue
-                returns_year = (
-                    end_rows.iloc[-1] / start_rows.iloc[0] - 1.0
-                ).replace([np.inf, -np.inf], np.nan)
+                # A-119: primeira/ultima cotacao NEGOCIADA de cada empresa,
+                # nao o preco de uma data fixa -- ver core.b3_pooled_evidence.
+                from core.b3_pooled_evidence import retornos_da_janela
+                returns_year = retornos_da_janela(start_rows, end_rows)
                 aligned = pd.concat(
                     [scores_year.rename("score"), returns_year.rename("return")],
                     axis=1,
@@ -1460,9 +1461,22 @@ def _price_metrics(precos: pd.DataFrame, ticker: str) -> dict[str, float]:
         return {"ret_12m": np.nan, "price_growth_5y": np.nan, "vol_12m": np.nan, "max_drop_5y": np.nan}
 
     ret_12m = np.nan
-    janela_12 = s.tail(12)
+    # A-120: `tail(12)` pega as 12 ultimas OBSERVACOES, nao os 12 ultimos MESES.
+    # Com buraco na serie a janela estica e o numero continua rotulado "12m".
+    # Medido em 24/08/2026 no painel real da B3: 7 de 1.087 tickers (0,6%),
+    # mas FSTU11 exibia 76 MESES como "retorno 12m" (-56%) e PSVM11, 33 meses.
+    # Recortar por DATA resolve; a exigencia de 2 pontos continua valendo.
+    # O corte por data resolve a janela esticada; falta o lado oposto: uma
+    # serie que so tem 2 pontos cobrindo 1 mes daria um retorno MENSAL rotulado
+    # "12m" (PSVM11, +10%). Exigimos que a janela cubra ao menos 10 meses --
+    # abaixo disso o numero nao existe, e "nao ha 12 meses de historico" e uma
+    # resposta melhor do que um retorno curto com rotulo errado.
+    janela_12 = s[s.index >= s.index[-1] - pd.DateOffset(months=12)]
     if len(janela_12) >= 2 and float(janela_12.iloc[0]) > 0:
-        ret_12m = float(janela_12.iloc[-1] / janela_12.iloc[0] - 1.0)
+        _span = (janela_12.index[-1].to_period("M")
+                 - janela_12.index[0].to_period("M")).n
+        if _span >= 10:
+            ret_12m = float(janela_12.iloc[-1] / janela_12.iloc[0] - 1.0)
 
     rets = s.pct_change().dropna().tail(12)
     vol_12m = float(rets.std() * np.sqrt(12)) if len(rets) >= 3 else np.nan
