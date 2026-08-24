@@ -1452,7 +1452,11 @@ def _latest_debt_ratio(df: pd.DataFrame) -> tuple[float, str]:
 def _price_metrics(precos: pd.DataFrame, ticker: str) -> dict[str, float]:
     if precos is None or precos.empty or ticker not in precos.columns:
         return {"ret_12m": np.nan, "price_growth_5y": np.nan, "vol_12m": np.nan, "max_drop_5y": np.nan}
-    s = pd.to_numeric(precos[ticker], errors="coerce").dropna()
+    # A-122: preço <= 0 não é preço. O loader já filtra na origem; aqui a
+    # guarda cobre o caminho de fallback (yfinance ao vivo) e impede queda
+    # máxima de -2.638% ou volatilidade de 361% chegarem à tela.
+    s = pd.to_numeric(precos[ticker], errors="coerce")
+    s = s[s > 0].dropna()
     if s.empty:
         return {"ret_12m": np.nan, "price_growth_5y": np.nan, "vol_12m": np.nan, "max_drop_5y": np.nan}
     s.index = pd.to_datetime(s.index, errors="coerce")

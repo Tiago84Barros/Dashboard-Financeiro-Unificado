@@ -991,7 +991,8 @@ def load_precos_mensais_us(symbols: tuple[str, ...], *, engine=None) -> pd.DataF
         with eng.connect() as conn:
             df = pd.read_sql_query(
                 text(f"SELECT symbol, month_end, adjusted_close FROM {tabela} "
-                     "WHERE symbol IN :symbols AND adjusted_close IS NOT NULL "
+                     # A-122: preço <= 0 não é preço (ver core.market_read)
+                     "WHERE symbol IN :symbols AND adjusted_close > 0 "
                      "ORDER BY symbol, month_end").bindparams(
                          bindparam("symbols", expanding=True)),
                 conn, params={"symbols": syms})

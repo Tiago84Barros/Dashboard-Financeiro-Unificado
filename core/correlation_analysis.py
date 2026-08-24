@@ -86,11 +86,18 @@ def retornos_mensais(precos: pd.DataFrame, min_obs: int = MIN_CORR_MONTHS) -> pd
     base.index = pd.to_datetime(base.index, errors="coerce")
     base = base.loc[~base.index.isna()].sort_index()
     base = base.apply(pd.to_numeric, errors="coerce")
+    # A-122: preço <= 0 não é preço. Sem isto, a cotação zerada de MMAQ4
+    # produz retorno infinito e as cotações NEGATIVAS de NEMO3/PPAR3/RSUL3/
+    # FIGE4 produzem correlações calculadas sobre números impossíveis.
+    base = base.where(base > 0)
     if base.empty:
         return pd.DataFrame()
     mensal = base.resample("ME").last().dropna(how="all")
+    # A-121: `pd.NA` num quadro float o torna `object`, e `DataFrame.corr()`
+    # levanta TypeError -- a seção inteira de Correlação caía com UMA cotação
+    # zerada na carteira. `np.nan` preserva o dtype e o tratamento pairwise.
     retornos = mensal.pct_change(fill_method=None).replace(
-        [float("inf"), float("-inf")], pd.NA
+        [float("inf"), float("-inf")], float("nan")
     ).dropna(how="all")
     return retornos.dropna(axis=1, thresh=min_obs)
 

@@ -1449,9 +1449,15 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     if not tickers:
         return pd.DataFrame()
     tks = [t.strip().upper().replace(".SA", "") for t in tickers]
+    # A-122: preço <= 0 não é preço. O ajuste por proventos leva o
+    # adjusted_close a zero e a negativo em 5 tickers (463 observações no
+    # painel de 24/08/2026: NEMO3, PPAR3, RSUL3, FIGE4, MMAQ4), e daí saíam
+    # números impossíveis exibidos como medição -- queda máxima de -2.638%
+    # em MMAQ4, -104% em RSUL3, volatilidade de 361% em NEMO3. Descartar a
+    # observação devolve o mês como ausente, que todo consumidor já trata.
     df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c "
             "FROM market.historical_prices WHERE ticker = ANY(:t) "
-            "AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY ticker, date",
+            "AND COALESCE(adjusted_close, close) > 0 ORDER BY ticker, date",
             {"t": tks})
     if df.empty:
         return pd.DataFrame()

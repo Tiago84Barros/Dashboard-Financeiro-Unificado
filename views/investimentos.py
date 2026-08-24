@@ -1243,6 +1243,34 @@ def _corr_pairs(corr: pd.DataFrame, overlap: pd.DataFrame | None = None) -> pd.D
     return pd.DataFrame(rows).sort_values("|Correlação|", ascending=False)
 
 
+def _legenda_par(row) -> tuple[str, bool]:
+    """Legenda do card de destaque: par, nº de meses e se o IC cruza zero.
+
+    A-123. Medido em 24/08/2026 sobre 3.610 pares de 60 carteiras aleatórias
+    da B3: **82% têm IC 95% cruzando zero** — não são distinguíveis de
+    independência. E janela curta infla |corr| (média 0,188 com n<=34 contra
+    0,150 com n>60), então os pares de janela curta vencem 90% dos cards de
+    destaque sendo 75% dos pares. O card mostrava só a estimativa pontual, e
+    "inversa mais forte -0,34" lido sem o IC [-0,63; +0,07] afirma uma relação
+    que o dado não sustenta.
+    """
+    if row is None:
+        return "", False
+    par = str(row["Par"])
+    n = row.get("Observações")
+    if n is None or pd.isna(n):
+        return par, False
+    n = int(n)
+    ic = intervalo_confianca_correlacao(float(row["Correlação"]), n)
+    if ic is None:
+        return f"{par} · {n} meses", False
+    incerto = ic[0] < 0 < ic[1]
+    texto = f"{par} · {n} meses · IC 95% {ic[0]:.2f} a {ic[1]:.2f}"
+    if incerto:
+        texto += " — não distinguível de independência"
+    return texto, incerto
+
+
 @st.cache_data(ttl=1800)
 def _get_macro_dados() -> dict:
     """Busca indicadores macro: BCB (SELIC, IPCA) + yfinance (câmbio, bolsas)."""
@@ -1940,21 +1968,37 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                     "Média de |corr.| ponderada pelos pesos; diagnóstico, não nota",
                     _COR_INFO,
                 ), unsafe_allow_html=True)
+            sub_pos, pos_incerta = _legenda_par(maior_positiva)
+            sub_inv, inv_incerta = _legenda_par(maior_inversa)
             with ck2:
                 st.markdown(_kpi_macro(
                     "Maior positiva",
                     f"{maior_positiva['Correlação']:.2f}" if maior_positiva is not None else "—",
-                    maior_positiva["Par"] if maior_positiva is not None else "Nenhum par positivo",
-                    _COR_NEGATIVO if maior_positiva is not None
-                    and maior_positiva["Correlação"] >= 0.70 else _COR_ALERTA,
+                    sub_pos or "Nenhum par positivo",
+                    _COR_NEUTRO if pos_incerta
+                    else (_COR_NEGATIVO if maior_positiva is not None
+                          and maior_positiva["Correlação"] >= 0.70 else _COR_ALERTA),
                 ), unsafe_allow_html=True)
             with ck3:
                 st.markdown(_kpi_macro(
                     "Inversa mais forte",
                     f"{maior_inversa['Correlação']:.2f}" if maior_inversa is not None else "—",
-                    maior_inversa["Par"] if maior_inversa is not None else "Nenhum par inverso",
-                    _COR_POSITIVO if maior_inversa is not None else _COR_NEUTRO,
+                    sub_inv or "Nenhum par inverso",
+                    _COR_NEUTRO if inv_incerta or maior_inversa is None
+                    else _COR_POSITIVO,
                 ), unsafe_allow_html=True)
+            n_incertos = 0
+            for _, _r in pares.iterrows():
+                _, _inc = _legenda_par(_r)
+                n_incertos += int(_inc)
+            if n_incertos:
+                st.caption(
+                    f"{n_incertos} de {len(pares)} pares têm IC 95% cruzando "
+                    "zero: a correlação medida não é distinguível de "
+                    "independência, e a proteção que ela sugere pode não "
+                    "existir. Janela curta infla |correlação|, então o par de "
+                    "menos histórico tende a vencer o destaque."
+                )
 
         st.plotly_chart(
             _fig_corr_heatmap(corr),

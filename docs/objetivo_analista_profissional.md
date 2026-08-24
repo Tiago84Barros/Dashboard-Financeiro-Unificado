@@ -46,6 +46,10 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-119 | B3: o Rank-IC lia o preço de UMA data fixa em cada ponta; quem não negociou naquele pregão — e quem deslistou no meio do ano — saía do teste | ✅ | `tests/test_b3_ic_sobrevivencia.py`; **444 empresas-ano (7,5%)** descartadas no painel real, e as recuperadas rendem menos que as incluídas em 9 dos 11 anos |
 | A-120 | B3: `tail(12)` pega as 12 últimas *observações*, não os 12 últimos *meses* | ✅ | `tests/test_b3_retorno_12m_janela.py`; FSTU11 exibia **76 meses** rotulados "retorno 12m" |
 | DADO-Q | Idem na camada que alimenta B3 e FII | 🟢 rodada feita | 3 achados (A-118 FII, A-119/A-120 B3); **todos enviesavam para cima** |
+| A-121 | Uma única cotação zerada derrubava a seção "Correlação entre ativos" inteira (`TypeError`) | ✅ | `tests/test_preco_nao_positivo.py`; MMAQ4 tem 65 meses zerados no painel real |
+| A-122 | Preço **negativo** entrava nos cálculos: 5 tickers, **463 observações** no painel real | ✅ | idem; MMAQ4 exibia queda máxima de **−2.638%**, RSUL3 **−104,2%**, NEMO3 volatilidade de **361%** |
+| A-123 | Card "Maior positiva"/"Inversa mais forte" mostrava a estimativa pontual sem o IC | ✅ | idem; **82% dos 3.610 pares medidos** têm IC 95% cruzando zero |
+| INTEG-Q | Rodada de integridade do preço e da correlação | 🟢 rodada feita | 3 achados (A-121 quebra em voz alta; A-122 e A-123 em silêncio) |
 | A-114 | Rebalanceamento por banda e híbrido não enxergavam a saída de posição: o laço varria só o alvo, e o ticker que saiu não tem chave lá | ✅ | `tests/test_rebalancing_saida_de_posicao.py`; sair inteiro de 30% media desvio 0,0 e devolvia "não precisa mexer" |
 | A-115 | Advisor compara custo contra o **tamanho** da ordem, não contra o benefício dela | ⚠️ decisão sua | `core/global_portfolio/advisor.py`; aprova movimento grande de pouco valor e barra movimento pequeno de muito valor |
 | REBAL-Q | Idem na ação que o app recomenda — rebalanceamento e custos | 🟢 rodada feita | 2 achados (A-114 latente e corrigido, A-115 metodológico) |
@@ -318,6 +322,58 @@ passou a ser por data. E o lado oposto também fecha: uma série com 2 pontos
 cobrindo 1 mês daria um retorno mensal rotulado "12m", então a janela precisa
 cobrir ao menos 10 meses — abaixo disso o número não existe, e "não há 12 meses
 de histórico" é resposta melhor do que um retorno curto com o rótulo errado.
+
+## A rodada da integridade do preço (INTEG-Q)
+
+Depois de A-119 eu fui medir a heterogeneidade de janela da correlação — e o
+script **estourou**. O achado não estava onde eu procurava.
+
+**A-121 — quebra em voz alta.** `retornos_mensais` fazia
+`.replace([inf, -inf], pd.NA)`. `pd.NA` num quadro float o converte para
+`object`, e `DataFrame.corr()` levanta `TypeError`. Bastava **uma** cotação
+zerada em qualquer ativo da carteira para a seção "Correlação entre ativos"
+inteira cair. MMAQ4 tem 65 meses zerados no painel real, então isso não era
+hipótese.
+
+**A-122 — o mesmo dado, em silêncio.** Puxando o fio: o painel mensal da B3
+(1.089 tickers, 24/08/2026) tem **463 observações de preço NEGATIVO** em 5
+tickers — NEMO3 (132), PPAR3 (119), RSUL3 (108), FIGE4 (90), MMAQ4 (14). O
+ajuste por proventos empurra o `adjusted_close` abaixo de zero e nada barrava.
+O que chegava à tela:
+
+| ticker | exibido | correto |
+|---|---|---|
+| MMAQ4 · queda máxima 5a | **−2.638%** | −14,3% |
+| RSUL3 · queda máxima 5a | **−104,2%** | −100,0% |
+| NEMO3 · volatilidade 12m | **361%** | não existe (sem preço válido) |
+| RSUL3 × NEMO3 · correlação | **0,368** | não existe |
+
+Uma perda não passa de 100% e uma correlação sobre preços negativos não
+significa nada. Isto não é viés para cima nem para baixo: é **valor impossível
+apresentado como medição**, que é pior — um viés a gente desconta, um número
+impossível a gente não sabe em que direção corrigir.
+
+A correção barra na origem (`market.historical_prices` e
+`market_us.prices_monthly` passam a exigir preço > 0), e repete a guarda no
+caminho de fallback do yfinance. Preço inválido vira **mês ausente**, que todo
+consumidor já trata. Efeito colateral revelador: NEMO3, PPAR3 e RSUL3 saem da
+matriz de correlação por não alcançarem 24 meses válidos — quase todo o
+"histórico" deles era lixo.
+
+**A-123 — o que o card afirmava.** Com o dado limpo, medi 3.610 pares em 60
+carteiras aleatórias: **82% têm IC 95% cruzando zero**, ou seja, não são
+distinguíveis de independência. E janela curta infla |correlação| (média 0,188
+com n≤34 contra 0,150 com n>60), então os pares de menos histórico vencem
+**90% dos cards de destaque** sendo 75% dos pares. O card "Inversa mais forte"
+mostrava `−0,34` sozinho; o IC daquele par é `[−0,63; +0,07]`. Ele afirmava uma
+proteção que o dado não sustenta.
+
+O card passa a trazer o par, o número de meses e o IC 95%, e a dizer
+literalmente "não distinguível de independência" quando é o caso — perdendo a
+cor de destaque. Abaixo, uma linha conta quantos pares da carteira estão nessa
+situação. A regra de ordenação **não** mudou: qual estatística deve rankear os
+pares é decisão de metodologia sua, não minha. O que mudou é que a incerteza
+deixou de ser invisível.
 
 ## O que trava a chegada em produção
 
