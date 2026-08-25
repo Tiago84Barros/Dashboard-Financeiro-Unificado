@@ -325,6 +325,13 @@ def _sane_payment_date(pay, ex):
     return pay
 
 
+# Uma unidade da última casa de market.dividends.amount, numeric(18,6). Abaixo
+# disto o valor depende da regra de arredondamento do banco para sobreviver ao
+# CHECK de positividade, e nenhum provento real vale menos de um milionésimo de
+# real — o piso é uma unidade cheia, não meia, para não depender disso.
+AMOUNT_MINIMO = 0.000001
+
+
 def dividend_rows(quote: dict) -> list[dict]:
     tk = _ticker(quote)
     out: list[dict] = []
@@ -337,7 +344,13 @@ def dividend_rows(quote: dict) -> list[dict]:
         ((quote or {}).get("dividendsData") or {}).get("cashDividends") or [])
     for it in items:
         amount = _f(it.get("rate"))
-        if amount is None or amount <= 0:      # 0/negativo não é provento útil
+        # O piso é a precisão da COLUNA, não a do Python. market.dividends.amount
+        # é numeric(18,6): a brapi devolve resíduos como rate=1e-10, que passam
+        # em `> 0` aqui, chegam ao banco arredondados para 0.000000 e violam
+        # chk_dividends_amount_positive. Como ingest_ticker grava o ticker
+        # inteiro numa transação só, a violação derrubava também o PREÇO —
+        # PETR4 não atualizava por causa de um provento de 2006 valendo 1e-10.
+        if amount is None or amount < AMOUNT_MINIMO:
             continue
         ex = _as_date(it.get("lastDatePrior") or it.get("approvedOn"))
         out.append({
