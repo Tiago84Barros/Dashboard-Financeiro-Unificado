@@ -111,12 +111,20 @@ def universo_b3(engine=None) -> Universo:
     """B3: aptidao vem de ``core.data_confidence``, o indice que ja media
     cobertura/frescor/integridade por ticker e - ate A-125 - nao era lido por
     ninguem. Usa-lo como gate e o que finalmente lhe da um consumidor."""
-    from core.data_confidence import LIMIAR_MEDIA, compute_confidence
+    from core.data_confidence import (LIMIAR_MEDIA, _PRECO_VELHO_DIAS,
+                                      compute_confidence)
     scored = compute_confidence(engine)
     if not scored:
         return Universo("Empresas B3", 0, 0, 0,
                         notas=("indice de confianca indisponivel",))
-    investivel = [s for s in scored if s.get("dias_preco") is not None]
+    # A-134: "investivel" era so "tem algum preco na serie" - LUXM3, com o
+    # ultimo pregao em 2015, contava como ativo negociavel. Nao conta: sem
+    # preco recente o papel esta fora do mercado, e mante-lo no DENOMINADOR
+    # da abrangencia mede o modulo por uma cobertura que ninguem poderia
+    # usar. Sai do numerador e do denominador, nao de um so.
+    investivel = [s for s in scored
+                  if s.get("dias_preco") is not None
+                  and s["dias_preco"] <= _PRECO_VELHO_DIAS]
     aptos = [s for s in investivel
              if float(s.get("score") or 0) >= LIMIAR_MEDIA]
     nomes_aptos = {s["ticker"] for s in aptos}

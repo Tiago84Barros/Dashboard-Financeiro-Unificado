@@ -800,3 +800,67 @@ idempotente e não destrutivo: só define default para linhas futuras.
 A lição vale além deste caso: **teste que roda só contra o banco local não vê
 drift de schema**, e o sintoma chega disfarçado de "dado desatualizado" — uma
 categoria que convida a redescoberta em vez de diagnóstico.
+
+## O preço parado tinha três causas empilhadas, não uma
+
+O sintoma era um só — "o preço da B3 está velho" — e cada correção só revelava a
+próxima camada. Nenhuma das três apareceu lendo o código; todas apareceram
+rodando o pipeline contra o banco remoto.
+
+**1. Drift de schema (remoto ≠ local).** A migration 021 usava
+`CREATE TABLE IF NOT EXISTS`, então a tabela que já existia no Supabase nunca
+recebeu os defaults declarados. Resultado: `NotNullViolation` em
+`calculated_metric_vintages.recorded_at` para *todo* ticker. Como `ingest_ticker`
+grava tudo em uma transação só, a violação numa tabela periférica derrubava
+também o preço. Diagnosticado comparando `information_schema.columns` nos dois
+bancos: exatamente 2 de 437 colunas divergiam. Corrigido pela migration
+`050_metric_vintages_defaults.sql`, aplicada em 25/08/2026.
+
+**2. Piso de dividendo na precisão errada.** A brapi devolve resíduos como
+`rate=1e-10`. Em Python `1e-10 > 0` é verdadeiro; em `numeric(18,6)` o valor
+arredonda para `0.000000` e viola `chk_dividends_amount_positive` — e de novo
+derrubava o preço junto, pela mesma transação única. PETR4 não atualizava por
+causa de um provento de 2006 valendo um décimo de bilionésimo de real. A
+constraint está certa; o normalizador é que validava na precisão da linguagem
+em vez da precisão da coluna. O piso ficou em uma unidade cheia da última casa
+(`0.000001`), não meia, para não depender da regra de arredondamento — Python
+arredonda para o par, Postgres arredonda afastando do zero.
+
+**3. Granularidade errada, em silêncio.** `daily()` pedia `range=1mo` sem passar
+`interval`, e o default da brapi é `"1mo"`: voltavam as duas bordas do mês, não
+os ~22 pregões dele. Sem erro, sem ticker perdido, sem linha de log — só a idade
+mediana do preço parada perto de 30 dias com a ingestão aparentemente saudável.
+Esse é o modo de falha mais perigoso dos três, porque não produz nada para
+investigar. Pior: a limitação chegou a ser *documentada como aceita* em um
+comentário de `core/data_confidence.py` ("frescor fica em 40,0 porque a série
+mensal não é atualizada diariamente"), e o comentário protegeu o defeito de ser
+investigado por meses.
+
+**Resultado medido** (25/08/2026, 1.109 tickers, ~67 min, 19.473 preços):
+idade mediana do preço caiu de **34 dias para 0**; 927 tickers fecharam com
+preço do dia, 111 com o de ontem. 19 tickers falharam.
+
+## A-134: média ponderada deixa defeito eliminatório ser compensado
+
+Com o preço corrigido, um problema mais grave ficou visível. `data_confidence`
+combina cobertura (45%), frescor (30%) e integridade (25%) por média ponderada.
+O frescor *de preço* é 60% do pilar de frescor, ou seja 18% do score total — de
+modo que 82% da nota vem de pilares que não sabem se o papel ainda negocia.
+
+Medido: **LUXM3 marcava 75,2 com rótulo "Alta" e último pregão em 13/05/2015**
+(4.122 dias). Outros 17 tickers passavam no gate de aptidão (>= 55) com preço
+parado, incluindo NEOE3 (113 dias) e uma família inteira de 205 dias. Todos
+elegíveis a entrar numa recomendação com preço fóssil.
+
+Sem preço vivo não existe decisão: não dá para comprar, vender nem marcar a
+posição a mercado. Isso não é "menos confiável", é fora do mercado — e defeito
+eliminatório não se desconta, se elimina. O score passou a ser **tetado** abaixo
+do limiar de aptidão quando o fator de frescor de preço zera, reusando o
+`_PRECO_VELHO_DIAS = 30` que o próprio módulo já declarava, sem inventar limiar
+novo. O mesmo critério saiu também do **denominador** de abrangência em
+`universo_b3`: papel que não negocia não conta nem como acerto nem como falha
+de cobertura.
+
+Custo: 16 dos 415 aptos saíram (3,9%). A confiança de Empresas B3 **subiu**,
+de 86,2% para 86,8%, porque o que restou é medida sobre ativos que se pode
+realmente negociar.

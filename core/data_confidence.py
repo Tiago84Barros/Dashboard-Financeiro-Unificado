@@ -51,6 +51,20 @@ LIMIAR_MEDIA = 55.0
 _PRECO_FRESCO_DIAS = 3
 _PRECO_VELHO_DIAS = 30
 
+# A-134: sem preço vivo não existe decisão — não dá para comprar, vender nem
+# marcar a posição a mercado. A média ponderada, sozinha, permite que o
+# fundamento COMPENSE isso: frescor de preço pesa 0,30 x 0,60 = 18% do score,
+# então os outros 82% vêm de pilares que não sabem se o papel ainda negocia.
+# Medido no Supabase em 25/08/2026, depois do refresh diário: LUXM3 marcava
+# 75,2 com rótulo "Alta" e último preço de 13/05/2015 -- 4.122 dias --, e
+# outros 17 tickers passavam no gate de aptidão (>= 55) com preço parado há
+# mais de 3 dias, incluindo NEOE3 (113d) e a família de 205 dias.
+# Defeito eliminatório não se desconta, se elimina: o score é TETADO abaixo
+# do limiar de aptidão em vez de perder pontos. Isso mantém uma regra só --
+# quem consome o score já exclui esses tickers, sem precisar reimplementar a
+# checagem de negociabilidade em cada chamador.
+TETO_SEM_PRECO_NEGOCIAVEL = LIMIAR_MEDIA - 1.0
+
 # Penalidade por flag aberta (warn/error) distinta em data_quality_logs.
 _PENALIDADE_POR_FLAG = 0.34
 
@@ -133,17 +147,31 @@ def score_ticker(signals: dict, current_year: int,
                      + W_FRESCOR * frescor
                      + W_INTEGRIDADE * integridade)
     score = round(max(0.0, min(100.0, score)), 1)
+    # A-134: teto para quem não tem preço negociável. Ver a nota em
+    # TETO_SEM_PRECO_NEGOCIAVEL — o critério é o MESMO _PRECO_VELHO_DIAS que
+    # já define preço velho neste módulo, não um limiar novo: quando o fator
+    # de frescor de preço zera, o papel deixou de ser negociável para efeito
+    # de decisão. Aqui o score cai de verdade, e não só o rótulo, porque o
+    # gate de universo lê o score.
+    if fator_preco <= 0.0:
+        score = min(score, TETO_SEM_PRECO_NEGOCIAVEL)
     # A-124: o rótulo não pode contradizer um pilar em colapso. Integridade
     # pesa 25% do score, então MMAQ4 -- com 72% da série de preços inválida e
     # integridade em 28% -- ainda somava 82,0 e aparecia como "Alta", porque
     # cobertura e frescor estavam perfeitos. O score em si NÃO muda (quem o
     # consome como número continua vendo o mesmo); só o rótulo deixa de
     # afirmar confiança que o pilar mais fraco não sustenta.
-    # O cap é só sobre INTEGRIDADE, de propósito. Frescor está em 40,0 para
-    # todo ticker saudável do painel (PETR4, VALE3, WEGE3) porque a série
-    # mensal não é atualizada diariamente -- isso é defasagem conhecida do
-    # painel, não corrupção do ticker, e capar por ele rotularia o painel
-    # inteiro como "Baixa". Cobertura já responde por 45% do score.
+    # O cap do rótulo é só sobre INTEGRIDADE, de propósito -- frescor tem o
+    # seu próprio tratamento acima (A-134), que mexe no score.
+    # NOTA HISTÓRICA: até 25/08/2026 este comentário afirmava que frescor
+    # ficava em 40,0 para todo ticker saudável (PETR4, VALE3, WEGE3) porque
+    # "a série mensal não é atualizada diariamente". Aquilo não era uma
+    # defasagem aceita do painel: era um BUG de ingestão. `daily()` pedia
+    # range=1mo sem passar interval, e a brapi aplicava o default mensal,
+    # devolvendo as duas bordas do mês em vez dos ~22 pregões. Corrigido em
+    # data_pipeline/market/ingest.py; PETR4 hoje marca frescor 100,0. Fica
+    # aqui como aviso: limitação documentada por tempo demais vira folclore,
+    # e este comentário protegeu o defeito de ser investigado.
     label = confidence_label(min(score, 100.0 * integridade))
     return {
         "score": score,
