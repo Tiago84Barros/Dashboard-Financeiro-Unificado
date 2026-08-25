@@ -151,11 +151,19 @@ def _reconcile_ticker(data: dict, tk: str) -> str | None:
 
 
 def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
-                  cvm_map: dict[str, int], prog: dict) -> None:
-    """Busca 1 ticker na brapi e grava tudo em market.* (1 transação)."""
+                  cvm_map: dict[str, int], prog: dict,
+                  interval: str = "1mo") -> None:
+    """Busca 1 ticker na brapi e grava tudo em market.* (1 transação).
+
+    ``interval`` é a granularidade das velas e precisa acompanhar ``range_``.
+    O default da brapi é mensal: pedir range=1mo sem dizer o intervalo devolve
+    as duas bordas do mês, não os pregões dele — foi assim que o refresh
+    diário passou meses sem trazer preço novo.
+    """
     tk = ticker.upper().replace(".SA", "")
-    fetch = (lambda: brapi.fetch_quote_full(tk, range_=range_)) if full else \
-            (lambda: brapi.fetch_quote(tk, range_=range_, dividends=True, fundamental=True))
+    fetch = (lambda: brapi.fetch_quote_full(tk, range_=range_, interval=interval)) if full else \
+            (lambda: brapi.fetch_quote(tk, range_=range_, interval=interval,
+                                       dividends=True, fundamental=True))
     try:
         quote = sched.with_backoff(fetch, retries=3,
                                    base=float(os.getenv("MARKET_BACKOFF", "4.0")),
@@ -223,7 +231,8 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
 
 
 def _run(engine, tickers: list[str], *, range_: str, full: bool,
-         batch_label: str, delay: float | None = None) -> dict:
+         batch_label: str, delay: float | None = None,
+         interval: str = "1mo") -> dict:
     repo.reset_db_cols_cache()  # migração pode ter sido aplicada com processo vivo
     prog = _new_progress()
     delay = float(os.getenv("MARKET_DELAY", "1.5")) if delay is None else delay
@@ -238,7 +247,8 @@ def _run(engine, tickers: list[str], *, range_: str, full: bool,
     blocks = 0
     for i, tk in enumerate(tickers):
         try:
-            ingest_ticker(engine, tk, range_=range_, full=full, cvm_map=cvm_map, prog=prog)
+            ingest_ticker(engine, tk, range_=range_, full=full, cvm_map=cvm_map,
+                          prog=prog, interval=interval)
             blocks = 0
         except Exception as exc:
             if brapi.is_rate_limited(exc):
@@ -320,12 +330,20 @@ def bootstrap(tickers: list[str] | None = None, source: str = "setores",
 
 def daily(tickers: list[str] | None = None, source: str = "setores",
           limit: int | None = None) -> dict:
-    """Atualização leve: preços recentes + dividendos + indicadores spot."""
+    """Atualização leve: preços recentes + dividendos + indicadores spot.
+
+    ``interval="1d"`` é o ponto todo desta função. Sem ele a brapi aplica o
+    default mensal e devolve duas velas para o mês inteiro: o preço mais novo
+    do universo travava na última borda de mês, e a idade mediana do preço
+    ficava perto de 30 dias com a ingestão aparentemente saudável — nenhum
+    erro, nenhum ticker perdido, só granularidade errada.
+    """
     engine = _engine()
     if engine is None:
         return {**_new_progress(), "erros": -1}
     tks = tickers or _universe(engine, source, limit)
-    return _run(engine, tks, range_="1mo", full=False, batch_label="daily")
+    return _run(engine, tks, range_="1mo", full=False, batch_label="daily",
+                interval="1d")
 
 
 def annual(tickers: list[str] | None = None, source: str = "setores",
