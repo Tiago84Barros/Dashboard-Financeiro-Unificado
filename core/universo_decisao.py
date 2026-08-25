@@ -1,0 +1,227 @@
+# -*- coding: utf-8 -*-
+"""Universo de decisao: o que o app considera ao recomendar, e o que ele descarta.
+
+Um analista senior nao trava porque parte do cadastro esta suja. Ele descarta
+o que nao da para decidir e opera com o resto, dizendo com que confianca opera.
+Este modulo torna essa politica explicita e mensuravel, em vez de deixar cada
+tela decidir por conta propria o que faz com dado ruim.
+
+Tres populacoes, e a diferenca entre elas e o ponto do modulo:
+
+``nominal``      linhas no cadastro. Inclui casca: ticker que existe no
+                 registro e nunca negociou. Nao e universo de investimento.
+``investivel``   tem preco. Existe como ativo que alguem pode comprar.
+``apto``         tem o dado minimo para SUSTENTAR uma recomendacao.
+
+Descartar casca (``nominal`` -> ``investivel``) nao custa nada e nao pode
+baixar a confianca: nunca houve ativo ali. Descartar por dado faltando
+(``investivel`` -> ``apto``) custa: era ativo de verdade e ficamos sem opiniao
+sobre ele. So o segundo entra na conta de confianca.
+
+A decisao de descartar depende do que SOBRA, nao do que sai. Universo de 1.111
+acoes americanas e abundante mesmo representando 36% do cadastro; universo de
+12 nomes nao sustenta carteira nenhuma por mais limpo que esteja. Por isso o
+gate primario e ``MINIMO_ABSOLUTO``, e o percentual e reportado como o preco
+que se pagou, nao como o criterio.
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
+
+# Piso para que o universo remanescente ainda sustente uma carteira
+# diversificada. Abaixo disso, descartar deixaria de ser higiene e viraria
+# amostragem: a carteira passaria a ser consequencia do que sobrou de dado.
+MINIMO_ABSOLUTO = 40
+
+# Fatia do universo INVESTIVEL (nao do cadastro) que precisa estar apta para
+# que o descarte seja rotina e nao evento. Abaixo disso o descarte ainda
+# acontece, mas a secao passa a declarar ressalva.
+MARGEM_CONFORTAVEL = 0.60
+
+MODO_DESCARTAR = "descartar"
+MODO_RESSALVA = "ressalva"
+MODO_INSUFICIENTE = "insuficiente"
+
+
+@dataclass(frozen=True)
+class Universo:
+    """Fotografia do universo de um modulo e da politica aplicada a ele."""
+
+    modulo: str
+    nominal: int
+    investivel: int
+    apto: int
+    exemplos_descartados: tuple[str, ...] = ()
+    notas: tuple[str, ...] = field(default_factory=tuple)
+    minimo_absoluto: int = MINIMO_ABSOLUTO
+
+    @property
+    def casca(self) -> int:
+        """Linhas de cadastro que nunca foram ativo negociavel."""
+        return max(0, self.nominal - self.investivel)
+
+    @property
+    def sem_dado(self) -> int:
+        """Ativos reais sobre os quais o app nao consegue ter opiniao."""
+        return max(0, self.investivel - self.apto)
+
+    @property
+    def share_apto(self) -> float:
+        """Aptos sobre INVESTIVEIS. O denominador exclui casca de proposito:
+        medir contra o cadastro faria o app parecer pior por ter um registro
+        mais completo, o que inverte o incentivo."""
+        return (self.apto / self.investivel) if self.investivel else 0.0
+
+    @property
+    def share_nominal(self) -> float:
+        return (self.apto / self.nominal) if self.nominal else 0.0
+
+    @property
+    def modo(self) -> str:
+        if self.apto >= self.minimo_absoluto:
+            return (MODO_DESCARTAR if self.share_apto >= MARGEM_CONFORTAVEL
+                    else MODO_RESSALVA)
+        return MODO_INSUFICIENTE
+
+    @property
+    def descarta(self) -> bool:
+        """``True`` quando o app pode simplesmente ignorar o que nao e apto."""
+        return self.modo in (MODO_DESCARTAR, MODO_RESSALVA)
+
+    def resumo(self) -> str:
+        if self.modo == MODO_INSUFICIENTE:
+            return (f"{self.apto} ativos aptos - abaixo do piso de "
+                    f"{self.minimo_absoluto} para sustentar carteira")
+        preco = (f", {self.sem_dado} descartados por dado insuficiente"
+                 if self.sem_dado else "")
+        casca = f" ({self.casca} cascas de cadastro ignoradas)" if self.casca else ""
+        return (f"{self.apto} de {self.investivel} ativos negociaveis "
+                f"({self.share_apto * 100:.0f}%){preco}{casca}")
+
+
+def _scalar(conn, sql: str, params: dict | None = None) -> int:
+    from sqlalchemy import text
+    return int(conn.execute(text(sql), params or {}).scalar() or 0)
+
+
+def universo_b3(engine=None) -> Universo:
+    """B3: aptidao vem de ``core.data_confidence``, o indice que ja media
+    cobertura/frescor/integridade por ticker e - ate A-125 - nao era lido por
+    ninguem. Usa-lo como gate e o que finalmente lhe da um consumidor."""
+    from core.data_confidence import LIMIAR_MEDIA, compute_confidence
+    scored = compute_confidence(engine)
+    if not scored:
+        return Universo("Empresas B3", 0, 0, 0,
+                        notas=("indice de confianca indisponivel",))
+    investivel = [s for s in scored if s.get("dias_preco") is not None]
+    aptos = [s for s in investivel
+             if float(s.get("score") or 0) >= LIMIAR_MEDIA]
+    nomes_aptos = {s["ticker"] for s in aptos}
+    ruins = sorted(s["ticker"] for s in investivel
+                   if s["ticker"] not in nomes_aptos)
+    return Universo(
+        modulo="Empresas B3",
+        nominal=len(scored),
+        investivel=len(investivel),
+        apto=len(aptos),
+        exemplos_descartados=tuple(ruins[:8]),
+        notas=(f"gate: confianca de dados >= {LIMIAR_MEDIA:.0f}",),
+    )
+
+
+def universo_fii(engine=None) -> Universo:
+    """FII: casca de cadastro domina. ``market.fiis`` guarda mais de mil linhas
+    e a maioria nao tem preco - fundo encerrado, ticker de emissao, registro
+    CVM sem negociacao. Aptidao exige o quarteto que a decisao consome:
+    preco, DY, P/VP e liquidez."""
+    from sqlalchemy import text
+
+    from core.database import get_engine
+    eng = engine or get_engine()
+    with eng.connect() as conn:
+        nominal = _scalar(conn, "SELECT count(*) FROM market.fiis")
+        investivel = _scalar(conn,
+                             "SELECT count(*) FROM market.fiis WHERE price > 0")
+        apto = _scalar(conn, """
+            SELECT count(*) FROM market.fiis
+            WHERE price > 0 AND dy_12m IS NOT NULL
+              AND pvp IS NOT NULL AND pvp > 0
+              AND liquidez_diaria IS NOT NULL""")
+        ruins = tuple(r[0] for r in conn.execute(text("""
+            SELECT ticker FROM market.fiis
+            WHERE price > 0 AND (dy_12m IS NULL OR pvp IS NULL OR pvp <= 0
+                                 OR liquidez_diaria IS NULL)
+            ORDER BY ticker LIMIT 8""")).fetchall())
+    return Universo(
+        modulo="Selecao de FIIs",
+        nominal=nominal, investivel=investivel, apto=apto,
+        exemplos_descartados=ruins,
+        notas=("gate: preco, DY, P/VP e liquidez presentes",),
+    )
+
+
+def universo_us(engine=None) -> Universo:
+    """EUA: a vitrine ja classifica em faixas. ``decision_grade`` e a unica que
+    sustenta recomendacao; ``screen_grade`` e ``research_grade`` tem dado, mas
+    nao o bastante, e ``stale`` esta preso a uma versao antiga de score."""
+    from sqlalchemy import text
+
+    from core.database import get_engine
+    eng = engine or get_engine()
+    with eng.connect() as conn:
+        nominal = _scalar(conn,
+                          "SELECT count(*) FROM market_us.company_snapshots")
+        apto = _scalar(conn, """SELECT count(*) FROM market_us.company_snapshots
+                                WHERE score_status = 'decision_grade'""")
+        ruins = tuple(r[0] for r in conn.execute(text("""
+            SELECT symbol FROM market_us.company_snapshots
+            WHERE score_status = 'stale' ORDER BY symbol LIMIT 8""")).fetchall())
+    return Universo(
+        modulo="Empresas Americanas",
+        nominal=nominal, investivel=nominal, apto=apto,
+        exemplos_descartados=ruins,
+        notas=("gate: score_status = decision_grade",),
+    )
+
+
+def todos(engine=None) -> list[Universo]:
+    """Os tres universos de mercado. Uma fonte fora do ar vira universo vazio
+    com nota, nunca excecao: o relatorio de confianca precisa poder dizer
+    "nao consegui medir" em vez de nao existir."""
+    saida: list[Universo] = []
+    for nome, fn in (("Empresas B3", universo_b3),
+                     ("Selecao de FIIs", universo_fii),
+                     ("Empresas Americanas", universo_us)):
+        try:
+            saida.append(fn(engine))
+        except Exception as exc:  # noqa: BLE001 - relatorio nao pode quebrar
+            logger.warning("universo %s indisponivel: %s", nome, exc)
+            saida.append(Universo(
+                nome, 0, 0, 0,
+                notas=(f"fonte indisponivel: {type(exc).__name__}",)))
+    return saida
+
+
+def tickers_aptos_b3(engine=None) -> tuple[frozenset[str], Universo]:
+    """Tickers B3 que sustentam recomendacao, para uso COMO FILTRO nas telas.
+
+    Devolve tambem o ``Universo`` para que a tela declare o que descartou:
+    filtro silencioso e pior que filtro nenhum - o usuario deixa de ver o
+    ativo e nao sabe que deixou.
+
+    Conjunto vazio significa "nao aplique o filtro" (fonte indisponivel ou
+    universo remanescente abaixo do piso), nunca "descarte tudo".
+    """
+    u = universo_b3(engine)
+    if not u.descarta:
+        return frozenset(), u
+    from core.data_confidence import LIMIAR_MEDIA, compute_confidence
+    scored = compute_confidence(engine)
+    aptos = frozenset(
+        str(s["ticker"]).upper() for s in scored
+        if s.get("dias_preco") is not None
+        and float(s.get("score") or 0) >= LIMIAR_MEDIA)
+    return aptos, u

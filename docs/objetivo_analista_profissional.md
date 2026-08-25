@@ -609,3 +609,73 @@ gravação remota, que exige autorização sua:
    --warehouse`) segue barrado pelo classificador de permissões.
 3. **SCORE-02** — o aviso de escala está no código; chega à tela no próximo
    deploy da `main`, sem gravação remota.
+
+## A virada: de auditoria infinita para universo de decisão (24-25/08/2026)
+
+O critério que eu vinha usando estava errado, e o usuário nomeou isso: eu media
+o app contra um ideal **sem defeito**, então toda rodada terminava com "falta
+isso". Um analista sênior não trava porque 45 dos 363 FIIs têm dado sujo — ele
+descarta os 45, opera com os 318 e diz com que confiança opera.
+
+A instrução que destravou o impasse: *se a fatia de ativos de qualidade superior
+passar de uma margem aceitável, descarte os ruins ou torne-os irrelevantes.*
+Isso resolve de uma vez várias "decisões suas" que eu vinha devolvendo — a régua
+não é reparar o dado ruim, é **expulsá-lo do universo de decisão** quando o
+universo bom for grande o bastante.
+
+### `core/universo_decisao.py`
+
+Três populações, e a diferença entre elas é o ponto:
+
+| | nominal | investível | apto | modo |
+|---|---|---|---|---|
+| Empresas B3 | 447 | 443 | 412 (93%) | descartar |
+| Seleção de FIIs | 1.065 | 428 | 305 (71%) | descartar |
+| Empresas Americanas | 3.052 | 3.052 | 1.111 (36%) | ressalva |
+
+Descartar **casca de cadastro** (nominal → investível) não custa nada: nunca
+houve ativo ali. Os 637 FIIs sem preço são fundos encerrados e registros CVM sem
+negociação, não oportunidades perdidas. Descartar por **dado faltando**
+(investível → apto) custa, e só esse custo entra na conta de confiança.
+
+O gate primário é o **piso absoluto**, não o percentual: 1.111 ações americanas
+sustentam carteira mesmo sendo 36% do cadastro; 12 nomes não sustentam carteira
+por mais limpos que estejam. O percentual é reportado como o preço que se pagou,
+não como o critério. Medido: filtrar preferenciais e warrants do universo EUA
+move o share de 36,4% para só 38,2% — ele é mesmo ~38% `decision_grade`, e a
+resposta certa é reconhecer a abundância absoluta, não inflar o número.
+
+O gate da B3 é `core.data_confidence` com limiar de confiança média. Isso
+implementa a política **e** finalmente dá um consumidor ao motor órfão de A-125.
+
+### `core/confianca_secao.py` e a tela Grau de Confiança
+
+Dois eixos, separados porque o usuário age diferente em cada um:
+*confiabilidade* (integridade, frescor, metodologia validada) leva o peso;
+*abrangência* entra com 0,15 de propósito — punir cobertura baixa empurraria o
+app a inflar o universo com ativo ruim, o contrário do que se quer.
+
+Regra central, com teste que a trava: **o que não foi medido não vira 100%.**
+Componente sem medição sai da média ponderada e declara que saiu, e a seção
+informa que fração do peso sustenta o número. Assumir perfeição no que ninguém
+olhou é o mesmo defeito de A-124 com outra roupa.
+
+A tela `views/confianca.py` entrou no roteamento. Motor de confiança sem porta
+de entrada é decoração — foi exatamente o que aconteceu com A-125.
+
+### O descarte passou a valer onde a decisão acontece
+
+O filtro foi ligado no carregamento do universo da Criação de Portfólio da B3,
+com duas travas: só age quando o remanescente passa do piso (`Universo.descarta`),
+e sempre declara quantas empresas saíram. Filtro silencioso é pior que filtro
+nenhum, porque some com a empresa sem o usuário saber.
+
+### Achados que a medição produziu
+
+- **Ingestão de cotações da B3 parada há ~34 dias** e cadastro de FIIs há ~32.
+  A régua 3→30 dias é a do próprio projeto (`price_freshness_factor`), então o
+  zero não é calibração apertada: é o feed parado. É o item de maior efeito
+  sobre o número e depende de rodar a ingestão, não de código.
+- **Extrato bancário sem reimportação há 316 dias** (891 movimentos, todos
+  confirmados). Não é defeito do app — é ação do usuário — e por isso entra com
+  peso menor, mas medir só os lançamentos manuais dava 100% falso à seção.

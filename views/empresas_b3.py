@@ -4376,6 +4376,34 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         df_mult_todos = _db.load_multiplos_todos(ano_ref_max=_ano_base)
         anos_hist     = _db.load_historico_anos()
 
+    # Política de universo de decisão: empresa sem o dado mínimo não entra no
+    # ranking. Rankear no escuro produz recomendação que o dado não sustenta;
+    # descartar produz uma carteira menor e defensável. O filtro só age quando
+    # o que sobra ainda passa do piso (Universo.descarta) — abaixo dele o corte
+    # deixaria de ser higiene e a carteira viraria consequência do que sobrou
+    # de dado. E o descarte é sempre declarado: filtro silencioso é pior que
+    # filtro nenhum, porque some com a empresa sem o usuário saber.
+    try:
+        from core import universo_decisao as _ud
+        _aptos_b3, _uni_b3 = _ud.tickers_aptos_b3()
+        if _aptos_b3 and not df_mult_todos.empty and "Ticker" in df_mult_todos.columns:
+            _antes = len(df_mult_todos)
+            df_mult_todos = df_mult_todos[
+                df_mult_todos["Ticker"].astype(str).str.upper().isin(_aptos_b3)
+            ].copy()
+            _cortadas = _antes - len(df_mult_todos)
+            if _cortadas > 0:
+                st.caption(
+                    f"🎯 Universo de decisão: {len(df_mult_todos)} empresas. "
+                    f"{_cortadas} descartadas por dado insuficiente para "
+                    "sustentar recomendação (confiança de dados abaixo do "
+                    "mínimo). Veja a seção Grau de Confiança."
+                )
+    except Exception:  # noqa: BLE001 - filtro é melhoria, não pré-requisito
+        import logging
+        logging.getLogger(__name__).exception(
+            "filtro de universo de decisão indisponível")
+
     # Ano de referência efetivo dos dados carregados (pode ser < _ano_base se
     # a ingestão do ano anterior ainda não ocorreu para parte do universo).
     _ano_dados = None
