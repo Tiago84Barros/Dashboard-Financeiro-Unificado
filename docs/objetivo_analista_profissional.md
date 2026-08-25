@@ -765,3 +765,38 @@ em que foi escrito, a constante estava certa.
 **Efeito no relatório:** EUA 76,8% → **88,6%**; FIIs 52,8% → **65,3%**;
 Portfólio Global 76,5% → **80,3%**; geral 77,3% → **80,3%**. A pior seção
 deixou de ser FIIs e passou a ser Empresas B3, por frescor de preço.
+
+## Por que o preço da B3 estava parado: drift de schema, não falta de ingestão
+
+O componente `Frescor` de Empresas B3 marcava 0% com mediana de 34 dias. A
+leitura óbvia — "ninguém rodou a ingestão" — estava errada, e o dado mostrava
+isso: `market.historical_prices` no Supabase tem preço de ontem para 117
+tickers e nada há semanas para os outros ~970.
+
+Rodando a ingestão diária com log de progresso, **todo** ticker abortava na
+mesma exceção:
+
+```
+NotNullViolation: null value in column "recorded_at"
+of relation "calculated_metric_vintages"
+```
+
+Comparando as 437 colunas de `market.*` entre armazém local e Supabase,
+existem exatamente **duas** divergências, e são as duas desta exceção:
+
+| coluna | armazém local | Supabase |
+|---|---|---|
+| `calculated_metric_vintages.recorded_at` | `NOT NULL DEFAULT now()` | `NOT NULL`, sem default |
+| `calculated_metric_vintages.availability_quality` | `NOT NULL DEFAULT 'first_seen_proxy'` | `NOT NULL`, sem default |
+
+A migration `021_market_metric_vintages.sql` declara os dois defaults, mas usa
+`CREATE TABLE IF NOT EXISTS`: a tabela remota já existia de uma versão anterior
+e não foi alterada. O pipeline não escreve essas colunas — conta com o default,
+como funciona localmente. Local passa, remoto falha em 100% dos tickers.
+
+`supabase_unificado/schema/050_metric_vintages_defaults.sql` corrige. É
+idempotente e não destrutivo: só define default para linhas futuras.
+
+A lição vale além deste caso: **teste que roda só contra o banco local não vê
+drift de schema**, e o sintoma chega disfarçado de "dado desatualizado" — uma
+categoria que convida a redescoberta em vez de diagnóstico.
