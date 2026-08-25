@@ -181,6 +181,11 @@ def _chunk_is_relevant(texto_limpo: str) -> bool:
 # Engine
 # ─────────────────────────────────────────────────────────────────────────────
 
+from contextlib import contextmanager  # noqa: E402
+
+from core import rag_store  # noqa: E402  (apos as constantes, de proposito)
+
+
 def _get_b3_engine():
     try:
         from core.b3_db import _engine
@@ -195,44 +200,40 @@ def _get_b3_engine():
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_cobertura_docs(tickers: tuple[str, ...]) -> dict[str, int]:
-    """Retorna {ticker: n_chunks}. Zero = sem documentos CVM."""
+    """Retorna {ticker: n_chunks}. Zero = sem documentos CVM.
+
+    Conta por raiz do emissor (PETR3/PETR4 -> PETR) para que qualquer classe
+    enxergue os documentos da empresa.
+    """
     if not tickers:
         return {}
-    engine = _get_b3_engine()
-    if engine is None:
-        return {tk: 0 for tk in tickers}
+    roots = {tk: _ticker_root(tk) for tk in tickers}
     try:
-        with engine.connect() as conn:
-            exists = conn.execute(text("""
-                SELECT EXISTS (
-                    SELECT 1 FROM information_schema.tables
-                    WHERE table_schema = 'public'
-                    AND table_name = 'docs_corporativos_chunks'
-                )
-            """)).scalar()
-            if not exists:
+        if rag_store.usando_parquet():
+            by_root = rag_store.cobertura(tuple(roots.values()))
+        else:
+            engine = _get_b3_engine()
+            if engine is None:
                 return {tk: 0 for tk in tickers}
-
-            # Conta por raiz do emissor (PETR3/PETR4 → PETR) para que qualquer
-            # classe enxergue os documentos da empresa.
-            roots = {tk: _ticker_root(tk) for tk in tickers}
-            uniq = sorted(set(roots.values()))
-            ph = ", ".join(f":r{i}" for i in range(len(uniq)))
-            params = {f"r{i}": r for i, r in enumerate(uniq)}
-            rows = conn.execute(
-                text(f"""
-                    SELECT LEFT(UPPER(ticker), 4) AS root, COUNT(*) AS n
-                    FROM public.docs_corporativos_chunks
-                    WHERE LEFT(UPPER(ticker), 4) IN ({ph})
-                    GROUP BY LEFT(UPPER(ticker), 4)
-                """),
-                params,
-            ).fetchall()
-            by_root = {row[0]: int(row[1]) for row in rows}
-            return {tk: by_root.get(roots[tk], 0) for tk in tickers}
+            with engine.connect() as conn:
+                if not _tabela_existe(conn):
+                    return {tk: 0 for tk in tickers}
+                by_root = rag_store.cobertura(tuple(roots.values()), conn=conn)
     except Exception as exc:
         logger.warning("RAG: get_cobertura_docs falhou: %s", exc)
         return {tk: 0 for tk in tickers}
+    return {tk: by_root.get(roots[tk], 0) for tk in tickers}
+
+
+def _tabela_existe(conn) -> bool:
+    """So faz sentido no caminho Postgres; o Parquet se valida pelo manifesto."""
+    return bool(conn.execute(text("""
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = 'docs_corporativos_chunks'
+        )
+    """)).scalar())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -241,6 +242,12 @@ def get_cobertura_docs(tickers: tuple[str, ...]) -> dict[str, int]:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def _has_embeddings(ticker: str) -> bool:
+    # O corpus em Parquet nao carrega vetores, e o publicador FALHA se algum
+    # chunk tiver embedding (ver scripts/publish_rag_corpus_parquet.py). Entao
+    # aqui e False por construcao, nao por suposicao: se um dia houver vetor, o
+    # publish quebra antes de o app chegar a esta linha.
+    if rag_store.usando_parquet():
+        return False
     engine = _get_b3_engine()
     if engine is None:
         return False
@@ -304,54 +311,14 @@ def _search_temporal(
     """
     Retorna chunks recentes diversificados por tipo de documento.
     Prioriza: resultados > fatos relevantes > atas > comunicados > outros.
-    """
-    where_date = ""
-    if months_back > 0:
-        # Qualifica c.document_date — ambas as tabelas têm a coluna (ambígua sem prefixo).
-        where_date = """
-            AND (
-                c.document_date IS NULL
-                OR c.document_date >= (CURRENT_DATE - (:months_back || ' months')::interval)
-            )
-        """
 
-    # Título mora só na tabela-pai (docs_corporativos); categoria/data existem em
-    # ambas. Antes a query usava c.titulo (coluna inexistente) e falhava silenciosa
-    # → retornava 0 chunks para TODOS os tickers. Agora pega tipo/categoria/título
-    # do documento-pai e a data do chunk com fallback no pai.
-    # ROW_NUMBER por documento: sem esse teto NA RECUPERAÇÃO, um único arquivo
-    # longo (ITR 46 chunks + transcrição 74, caso WEGE3) consumia todo o LIMIT
-    # com os docs mais recentes e o Release de Resultados (mais antigo) nunca
-    # chegava ao formatador — que só escolhe entre o que foi recuperado.
-    sql = f"""
-        SELECT chunk_text, data_doc, tipo_doc, titulo, chunk_index, doc_id
-        FROM (
-            SELECT
-                c.chunk_text,
-                COALESCE(c.document_date, d.document_date, d.data)::text   AS data_doc,
-                COALESCE(NULLIF(d.tipo, ''), NULLIF(d.categoria, ''),
-                         NULLIF(c.categoria, ''), '')                      AS tipo_doc,
-                COALESCE(d.titulo, '')                                     AS titulo,
-                c.chunk_index,
-                c.doc_id,
-                COALESCE(c.document_date, d.document_date, d.data)         AS _dt,
-                ROW_NUMBER() OVER (PARTITION BY c.doc_id
-                                   ORDER BY c.chunk_index ASC)             AS _rn
-            FROM public.docs_corporativos_chunks c
-            JOIN public.docs_corporativos d ON d.id = c.doc_id
-            WHERE LEFT(UPPER(c.ticker), 4) = :root
-              {where_date}
-        ) s
-        WHERE _rn <= 8
-        ORDER BY _dt DESC NULLS LAST, chunk_index ASC
-        LIMIT :lim
+    A consulta em si mora em `core.rag_store`, que a executa sobre o Parquet
+    publicado ou, na falta dele, sobre o Postgres. `conn` e None quando o
+    Parquet esta em uso. Busca 4x o top_k porque o pos-processamento abaixo
+    ainda filtra (disclaimer, stub) e diversifica por tipo.
     """
-    params: dict = {"root": _ticker_root(ticker), "lim": top_k * 4}  # busca mais p/ filtrar+diversificar
-    if months_back > 0:
-        params["months_back"] = months_back
-
     try:
-        rows = conn.execute(text(sql), params).fetchall()
+        rows = rag_store.busca_temporal(ticker, top_k * 4, months_back, conn=conn)
     except Exception as exc:
         logger.warning("RAG: busca temporal falhou para %s: %s", ticker, exc)
         return []
@@ -470,48 +437,23 @@ def _search_semantic(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _search_anchor_recent(conn: Any, ticker: str, lim: int, months_back: int) -> list[dict]:
-    where_date = ""
-    if months_back > 0:
-        where_date = """
-            AND (
-                c.document_date IS NULL
-                OR c.document_date >= (CURRENT_DATE - (:months_back || ' months')::interval)
-            )
-        """
-    sql = f"""
-        SELECT
-            c.chunk_text,
-            COALESCE(c.document_date, d.document_date, d.data)::text   AS data_doc,
-            COALESCE(NULLIF(d.tipo, ''), NULLIF(d.categoria, ''),
-                     NULLIF(c.categoria, ''), '')                      AS tipo_doc,
-            COALESCE(d.titulo, '')                                     AS titulo,
-            c.doc_id
-        FROM public.docs_corporativos_chunks c
-        JOIN public.docs_corporativos d ON d.id = c.doc_id
-        WHERE LEFT(UPPER(c.ticker), 4) = :root
-          -- Só texto completo: o LIMIT por recência não pode ser consumido pelos
-          -- stubs de metadados (extraction_version 'ipe_meta_v1') do backfill.
-          AND COALESCE(d.extraction_version, '') <> 'ipe_meta_v1'
-          AND LOWER(COALESCE(d.tipo, '') || ' ' || COALESCE(d.categoria, '') || ' '
-                    || COALESCE(d.titulo, ''))
-              ~ 'fato relevante|econ[oô]mico-financ|guidance|capex|produ[çc][aã]o|dividend|provento|resultado'
-          {where_date}
-        ORDER BY COALESCE(c.document_date, d.document_date, d.data) DESC NULLS LAST,
-                 c.chunk_index ASC
-        LIMIT :lim
+    """Marcos operacionais de alto sinal (resultado, fato relevante, dividendo,
+    guidance, capex, producao), sempre mesclados ao resultado final.
+
+    O predicado que escolhia esses documentos era um regex `~`, exclusivo do
+    Postgres; hoje e a coluna booleana `eh_ancora`, calculada uma vez no
+    publish. Mesma expressao, mesmo resultado -- `tests/test_rag_store_paridade`
+    compara os dois motores com corpus real.
     """
-    params: dict = {"root": _ticker_root(ticker), "lim": lim}
-    if months_back > 0:
-        params["months_back"] = months_back
     try:
-        rows = conn.execute(text(sql), params).fetchall()
+        rows = rag_store.busca_ancora(ticker, lim, months_back, conn=conn)
     except Exception as exc:
-        logger.debug("RAG: busca âncora falhou para %s: %s", ticker, exc)
+        logger.debug("RAG: busca ancora falhou para %s: %s", ticker, exc)
         return []
     out: list[dict] = []
     for r in rows:
         texto = _clean_chunk_text(r[0] or "")
-        # Âncora só vale para texto REAL — stub de metadados não traz números.
+        # Ancora so vale para texto REAL - stub de metadados nao traz numeros.
         if _is_meta_stub(texto) or not _chunk_is_relevant(texto):
             continue
         out.append({"chunk_text": texto, "data_doc": r[1], "tipo_doc": r[2],
@@ -538,6 +480,26 @@ def _merge_dedup(primary: list[dict], secondary: list[dict], cap: int) -> list[d
 # Recuperação principal
 # ─────────────────────────────────────────────────────────────────────────────
 
+@contextmanager
+def _fonte_de_leitura():
+    """Cede ``(conn, disponivel)`` para as buscas do corpus.
+
+    ``conn`` e None quando o Parquet publicado esta em uso -- e o caso normal em
+    producao, e nesse caminho nenhuma conexao de banco chega a ser aberta. A
+    reserva em Postgres so entra quando nao ha Parquet (deploy sem a vitrine
+    publicada), e ai ainda precisa provar que a tabela existe.
+    """
+    if rag_store.usando_parquet():
+        yield None, True
+        return
+    engine = _get_b3_engine()
+    if engine is None:
+        yield None, False
+        return
+    with engine.connect() as conn:
+        yield conn, _tabela_existe(conn)
+
+
 def retrieve_chunks(
     ticker: str,
     top_k_total: int = 60,
@@ -550,23 +512,11 @@ def retrieve_chunks(
     Retorna (chunks, stats).
     """
     tk = ticker.strip().upper()
-    engine = _get_b3_engine()
     stats: dict = {"ticker": tk, "mode": "none", "total_hits": 0, "months_back": months_back}
 
-    if engine is None:
-        return [], stats
-
     try:
-        with engine.connect() as conn:
-            # Verifica tabela
-            exists = conn.execute(text("""
-                SELECT EXISTS (
-                    SELECT 1 FROM information_schema.tables
-                    WHERE table_schema = 'public'
-                    AND table_name = 'docs_corporativos_chunks'
-                )
-            """)).scalar()
-            if not exists:
+        with _fonte_de_leitura() as (conn, disponivel):
+            if not disponivel:
                 stats["mode"] = "no_table"
                 return [], stats
 

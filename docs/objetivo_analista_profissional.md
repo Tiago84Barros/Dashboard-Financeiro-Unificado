@@ -864,3 +864,56 @@ de cobertura.
 Custo: 16 dos 415 aptos saíram (3,9%). A confiança de Empresas B3 **subiu**,
 de 86,2% para 86,8%, porque o que restou é medida sobre ativos que se pode
 realmente negociar.
+
+## O corpus RAG saiu do banco: 162 MB viraram 25 MB de arquivo
+
+O Supabase está em 505,1 MB com teto de 500 MB — já em `EXCEEDING USAGE
+LIMITS`. Antes de discutir provedor, medi o que ali dentro é banco de verdade:
+**de 505 MB, ~3,3 MB são escritos pelo app em tempo de execução.** Os outros
+~502 MB são vitrine somente-leitura pagando preço de banco transacional (MVCC,
+WAL, índices, backup contínuo) para servir consulta que é filtro + ordenação.
+
+Trocar de provedor compraria seis meses. Separar por **mutabilidade** resolve a
+classe do problema: o que muda fica em Postgres, o que só é lido vira arquivo.
+
+O primeiro corte é o corpus CVM: `docs_corporativos_chunks`, 93.498 chunks,
+162 MB — 32% do banco. A coluna `embedding` está 100% nula, então `rag_b3`
+sempre usou a busca temporal; nenhuma capacidade relacional estava em uso.
+Em Parquet+zstd o mesmo corpus ocupa **24,9 MB em 24 partições** (6,5×), e o
+DuckDB roda o mesmo SQL por cima dos arquivos.
+
+Três coisas que a migração exigiu e que valem além dela:
+
+**Verificar por assinatura, não por contagem.** Contagem igual não é corpus
+igual. `md5(string_agg(chunk_hash, ORDER BY chunk_hash))` provou que armazém
+local e Supabase eram bit-idênticos (`3134197f…`), e o publicador recalcula a
+mesma assinatura sobre o Parquet. O manifesto grava as duas; se divergirem, o
+leitor cai para o Postgres em vez de responder com corpus parcial em silêncio.
+
+**Tirar o dialeto do caminho de leitura.** O regex `~` e
+`(:n || ' months')::interval` eram dívida de portabilidade. O regex classifica o
+DOCUMENTO, não a consulta: virou a coluna booleana `eh_ancora`, calculada no
+publish. O corte de data virou parâmetro `date` calculado em Python. O que
+sobrou é SQL comum aos dois motores — uma consulta, não duas versões dela.
+
+**Falhar alto no que falharia em silêncio.** O publicador não carrega vetores.
+Hoje isso é inofensivo, mas se alguém gerar embeddings e republicar, a busca
+semântica seria desligada sem erro e sem log — só respostas piores. O publicador
+agora recusa publicar se existir qualquer `embedding` não nulo.
+
+### O teste de paridade achou um defeito que nenhum motor sozinho acharia
+
+`tests/test_rag_store_paridade.py` roda a mesma consulta nos dois backends com
+dado real. Sete dos dezessete testes falharam de cara — e a causa não era a
+migração. Os conjuntos eram **idênticos**; a ordem, não.
+
+`ORDER BY data_doc DESC, chunk_index ASC` é ordenação **parcial**: dois
+documentos do mesmo dia empatam no mesmo `chunk_index`, e o desempate fica a
+cargo do motor. Como existe `LIMIT`, um empate na fronteira do corte não troca
+só a ordem — troca **quais chunks chegam ao contexto do LLM**. Mesmo ticker,
+mesmo dia, evidência diferente. O defeito era anterior a esta migração e estava
+lá desde que o RAG existe. Corrigido com `doc_id ASC` no fim do ORDER BY.
+
+Um teste que compara dois motores é mais barato que um revisor: ele torna
+observável a não-determinação que um único motor esconde ao ser consistente
+consigo mesmo.

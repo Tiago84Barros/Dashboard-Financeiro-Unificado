@@ -263,3 +263,6 @@ data/cache/
 data/test-*.xml
 data/us_refresh/
 backups/
+
+# Ambientes virtuais auxiliares de analise (ferramentas locais, nao dependencia do app)
+.venv-*/

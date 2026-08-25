@@ -7,6 +7,12 @@ pandas>=2.2.0,<3.0.0
 plotly>=5.24.0,<6.0.0
 sqlalchemy>=2.0.0,<3.0.0
 psycopg2-binary>=2.9.0,<3.0.0
+# Corpus RAG (93.498 chunks) mora em Parquet, nao no Postgres: ocupava 162 MB
+# dos 500 MB do Supabase para servir consultas que sao filtro + ordenacao. Em
+# Parquet+zstd sao 25 MB, e o DuckDB roda o MESMO SQL por cima dos arquivos.
+# Ver core/rag_store.py. Sem duckdb o app cai na reserva em Postgres.
+duckdb>=1.1.0,<2.0.0
+pyarrow>=16.0.0,<22.0.0  # escrita das particoes em scripts/publish_rag_corpus_parquet.py
 python-dotenv>=1.0.0,<2.0.0
 openai>=1.63.0,<2.0.0
 yfinance>=0.2.50,<0.3.0

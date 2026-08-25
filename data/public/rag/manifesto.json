@@ -1,0 +1,134 @@
+{
+  "linhas": 93498,
+  "chunks_distintos": 93498,
+  "roots": 292,
+  "ancoras": 39548,
+  "stubs": 0,
+  "bytes": 26110305,
+  "particoes": [
+    {
+      "arquivo": "chunks_A.parquet",
+      "linhas": 8345,
+      "bytes": 2311003
+    },
+    {
+      "arquivo": "chunks_B.parquet",
+      "linhas": 11332,
+      "bytes": 3077656
+    },
+    {
+      "arquivo": "chunks_C.parquet",
+      "linhas": 11830,
+      "bytes": 3261675
+    },
+    {
+      "arquivo": "chunks_D.parquet",
+      "linhas": 2474,
+      "bytes": 697890
+    },
+    {
+      "arquivo": "chunks_E.parquet",
+      "linhas": 7419,
+      "bytes": 2115899
+    },
+    {
+      "arquivo": "chunks_F.parquet",
+      "linhas": 1768,
+      "bytes": 475055
+    },
+    {
+      "arquivo": "chunks_G.parquet",
+      "linhas": 4832,
+      "bytes": 1373917
+    },
+    {
+      "arquivo": "chunks_H.parquet",
+      "linhas": 2363,
+      "bytes": 650333
+    },
+    {
+      "arquivo": "chunks_I.parquet",
+      "linhas": 2218,
+      "bytes": 687220
+    },
+    {
+      "arquivo": "chunks_J.parquet",
+      "linhas": 436,
+      "bytes": 138469
+    },
+    {
+      "arquivo": "chunks_K.parquet",
+      "linhas": 1001,
+      "bytes": 285825
+    },
+    {
+      "arquivo": "chunks_L.parquet",
+      "linhas": 3515,
+      "bytes": 950419
+    },
+    {
+      "arquivo": "chunks_M.parquet",
+      "linhas": 5078,
+      "bytes": 1426614
+    },
+    {
+      "arquivo": "chunks_N.parquet",
+      "linhas": 2705,
+      "bytes": 727832
+    },
+    {
+      "arquivo": "chunks_O.parquet",
+      "linhas": 2600,
+      "bytes": 748097
+    },
+    {
+      "arquivo": "chunks_P.parquet",
+      "linhas": 5527,
+      "bytes": 1516518
+    },
+    {
+      "arquivo": "chunks_Q.parquet",
+      "linhas": 800,
+      "bytes": 202046
+    },
+    {
+      "arquivo": "chunks_R.parquet",
+      "linhas": 3321,
+      "bytes": 972898
+    },
+    {
+      "arquivo": "chunks_S.parquet",
+      "linhas": 3952,
+      "bytes": 1108431
+    },
+    {
+      "arquivo": "chunks_T.parquet",
+      "linhas": 6727,
+      "bytes": 1871673
+    },
+    {
+      "arquivo": "chunks_U.parquet",
+      "linhas": 1250,
+      "bytes": 330820
+    },
+    {
+      "arquivo": "chunks_V.parquet",
+      "linhas": 2591,
+      "bytes": 774565
+    },
+    {
+      "arquivo": "chunks_W.parquet",
+      "linhas": 1098,
+      "bytes": 317973
+    },
+    {
+      "arquivo": "chunks_Y.parquet",
+      "linhas": 316,
+      "bytes": 87477
+    }
+  ],
+  "assinatura_chunk_hash": "3134197f52ba208220eecdaf558d099e",
+  "assinatura_origem": "3134197f52ba208220eecdaf558d099e",
+  "linhas_origem": 93498,
+  "confere": true
+}
