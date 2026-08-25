@@ -679,3 +679,58 @@ nenhum, porque some com a empresa sem o usuário saber.
 - **Extrato bancário sem reimportação há 316 dias** (891 movimentos, todos
   confirmados). Não é defeito do app — é ação do usuário — e por isso entra com
   peso menor, mas medir só os lançamentos manuais dava 100% falso à seção.
+
+## Publicação autorizada: o que foi feito e o que ficou pronto (25/08/2026)
+
+O usuário autorizou as pendências de gravação remota. O armazém local estava
+parado; subi o Docker (autorização permanente concedida na mesma ocasião) e o
+container `dfu_warehouse` voltou saudável.
+
+### Feito — recálculo local da vitrine EUA
+
+Descoberta que mudou o plano: o snapshot que estava no armazém era de **21/08**,
+anterior às correções A-101/A-102/A-103/A-105 de 23/08. Como A-105 altera o
+score gravado (53,4 → 42,5 no caso medido), publicar aquele snapshot teria
+levado dado mais fresco **sem** a correção — melhorando a data e mantendo o
+erro. Regerei com o código atual via `snapshot --warehouse --offline`
+(recálculo sobre fundamentos já ingeridos, sem rede): 2.831 linhas, 0 erros.
+
+O efeito das correções é exatamente o esperado, e é conservador:
+
+| | vitrine viva (03/08) | recalculada (25/08) |
+|---|---|---|
+| `decision_grade` | 1.111 | **903** |
+| média do score em `decision_grade` | 53,1 | **57,5** |
+| máximo | 75,2 | 81,2 |
+
+Duzentas e oito empresas eram classificadas como aptas a sustentar recomendação
+sem dado que as sustentasse; foram despromovidas a `research_grade`. A média
+sobe porque o que saiu estava embaixo. Isto fecha o diagnóstico de SCORE-01: a
+tela publicada era mesmo **menos conservadora que a realidade**, e o número de
+903 continua muito acima do piso de 40 — o universo segue abundante.
+
+Integridade do que ficou no armazém: 2.831 linhas, nenhum `score_confidence`
+nulo, nenhum score fora de [0,100].
+
+### Bloqueado — as duas gravações remotas
+
+Ambas passaram no ensaio seco e foram barradas na gravação pelo classificador
+de permissões do harness, que a autorização do usuário no chat não alcança:
+
+- **EUA** — `publish_us_snapshot_from_local.py`: seco confirmou 2.831 linhas
+  prontas para upsert.
+- **FII/PIT-6.8** — `publish_fii_selection_from_local.py`: seco retornou
+  `publication_ready: true`, `validation_status: "passed"`, 394 linhas,
+  `preflight_blockers: []`, cobertura média 92,9%. É esta publicação que leva o
+  certificado 6.8 e faz a produção parar de reportar `unvalidated`.
+
+Não contornei o bloqueio. As duas ficam prontas para execução do usuário.
+
+### Não resolvido — frescor de preços da B3
+
+O armazém tem preços até **31/07**; a Supabase até ~22/07. Publicar levaria o
+frescor de 34 para 25 dias — ganho pequeno, ainda dentro da faixa de decaimento.
+A correção de verdade é rodar a ingestão diária antes de publicar. O ensaio seco
+de `run_market_ingest.py daily --warehouse` ficou 20 minutos sem emitir saída e
+foi encerrado; é execução longa contra a BRAPI, não travamento diagnosticado.
+Fica como o item de maior efeito isolado sobre o número de confiança.
