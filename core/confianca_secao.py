@@ -248,12 +248,26 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
         notas.append(f"medicao parcial: {type(exc).__name__}")
 
     comps.append(_abrangencia(u))
-    # PIT 6.8 passou no armazem local e nao foi publicada; producao le
-    # 'unvalidated'. Errar para o lado conservador e o comportamento correto,
-    # mas a nota tem de refletir o que a PRODUCAO ve, nao o que o local sabe.
-    comps.append(Componente(
-        "Metodologia validada", 50.0, 0.25,
-        "certificado 6.8.0 existe no armazem local, producao le 'unvalidated'"))
+    # Le o certificado que a PRODUCAO enxerga, nao o que o armazem local sabe.
+    # Ate 25/08/2026 este componente era a constante 50.0 com o texto
+    # "producao le unvalidated" cravado; publicada a validacao, a constante
+    # passou a mentir na direcao oposta - conservadora, mas ainda errada.
+    # Numero cravado envelhece em silencio; medicao nao.
+    try:
+        from core.fii_methodology import METHODOLOGY_VERSION
+        from core.market_read import load_fii_validation_status
+        val = load_fii_validation_status()
+        st_val = str(val.get("status") or "unvalidated")
+        blockers = val.get("blockers") or []
+        comps.append(Componente(
+            "Metodologia validada", 100.0 if st_val == "passed" else 50.0, 0.25,
+            f"validacao PIT {METHODOLOGY_VERSION}: {st_val}"
+            + (f" ({'; '.join(map(str, blockers))[:70]})" if blockers else "")
+            + (f", referencia {val.get('as_of_date')}"
+               if val.get("as_of_date") else "")))
+    except Exception as exc:  # noqa: BLE001
+        comps.append(Componente("Metodologia validada", None, 0.25,
+                                f"nao medido: {type(exc).__name__}"))
     return ConfiancaSecao("Selecao de FIIs", tuple(comps), u, tuple(notas))
 
 
@@ -299,12 +313,35 @@ def confianca_us(engine=None) -> ConfiancaSecao:
         notas.append(f"medicao parcial: {type(exc).__name__}")
 
     comps.append(_abrangencia(u))
-    comps.append(Componente(
-        "Metodologia validada", 50.0, 0.25,
-        "vitrine publicada em 03/08/2026, score_version 0.5.0 - "
-        "republicacao pendente de autorizacao"))
-    notas.append("unico ponto do app em que a tela publicada esta MENOS "
-                 "conservadora que o codigo local")
+    # A pergunta nao e "a vitrine e velha?" e sim "ela foi gerada pelo
+    # ranqueador que esta no codigo hoje?". Vitrine de versao anterior carrega
+    # os defeitos ja corrigidos e mostra numero que o codigo nao produz mais.
+    try:
+        from sqlalchemy import text
+
+        from core.database import get_engine
+        from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION as _ver
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            row = conn.execute(text("""
+                SELECT max(generated_at), count(*) FILTER (WHERE score_version = :v)
+                FROM market_us.company_snapshots"""), {"v": _ver}).fetchone()
+        idade = _dias_desde(row[0] if row else None)
+        na_versao = int(row[1] or 0) if row else 0
+        if na_versao and idade is not None:
+            # Vitrine na versao corrente vale 100 e decai com a idade da
+            # geracao; fora da versao corrente e teto de 50 por construcao.
+            comps.append(Componente(
+                "Metodologia validada", _frescor_pct(idade, 30, 180), 0.25,
+                f"vitrine score_version {_ver} gerada ha {idade} dias, "
+                f"{na_versao} empresas"))
+        else:
+            comps.append(Componente(
+                "Metodologia validada", 50.0, 0.25,
+                f"nenhuma empresa na versao corrente {_ver}"))
+    except Exception as exc:  # noqa: BLE001
+        comps.append(Componente("Metodologia validada", None, 0.25,
+                                f"nao medido: {type(exc).__name__}"))
     return ConfiancaSecao("Empresas Americanas", tuple(comps), u, tuple(notas))
 
 

@@ -171,19 +171,27 @@ def universo_us(engine=None) -> Universo:
 
     from core.database import get_engine
     eng = engine or get_engine()
+    from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION as _ver
+    # So a geracao corrente conta. Republicar a vitrine nao apaga as linhas das
+    # versoes anteriores, e ate 25/08/2026 elas entravam no denominador: 221
+    # simbolos de julho, marcados 'stale', faziam o universo parecer maior e a
+    # abrangencia parecer pior do que e.
     with eng.connect() as conn:
-        nominal = _scalar(conn,
-                          "SELECT count(*) FROM market_us.company_snapshots")
+        nominal = _scalar(conn, """SELECT count(*) FROM market_us.company_snapshots
+                                   WHERE score_version = :v""", {"v": _ver})
         apto = _scalar(conn, """SELECT count(*) FROM market_us.company_snapshots
-                                WHERE score_status = 'decision_grade'""")
+                                WHERE score_version = :v
+                                  AND score_status = 'decision_grade'""",
+                       {"v": _ver})
         ruins = tuple(r[0] for r in conn.execute(text("""
             SELECT symbol FROM market_us.company_snapshots
-            WHERE score_status = 'stale' ORDER BY symbol LIMIT 8""")).fetchall())
+            WHERE score_version = :v AND score_status <> 'decision_grade'
+            ORDER BY symbol LIMIT 8"""), {"v": _ver}).fetchall())
     return Universo(
         modulo="Empresas Americanas",
         nominal=nominal, investivel=nominal, apto=apto,
         exemplos_descartados=ruins,
-        notas=("gate: score_status = decision_grade",),
+        notas=(f"gate: score_status = decision_grade na versao {_ver}",),
     )
 
 

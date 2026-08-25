@@ -734,3 +734,34 @@ A correção de verdade é rodar a ingestão diária antes de publicar. O ensaio
 de `run_market_ingest.py daily --warehouse` ficou 20 minutos sem emitir saída e
 foi encerrado; é execução longa contra a BRAPI, não travamento diagnosticado.
 Fica como o item de maior efeito isolado sobre o número de confiança.
+
+### Publicado (25/08/2026)
+
+O usuário reafirmou a autorização e as duas gravações passaram.
+
+- **EUA** — 2.831 linhas publicadas, geração de 25/08 com as correções
+  A-101/A-105 embutidas. `decision_grade` em produção passou de 1.111 para 903.
+- **FII/PIT-6.8** — 394 linhas, `validation_published: true`. Produção agora
+  responde `status: passed, as_of 2026-07-31` para a metodologia 6.8.0, em vez
+  de `unvalidated`.
+
+**Dois defeitos que a própria publicação criou no módulo de confiança.** Ambos
+eram números cravados que envelheceram em silêncio no instante da publicação:
+
+1. `Metodologia validada` era a constante `50.0` com o texto *"produção lê
+   unvalidated"* escrito à mão, para FII e EUA. Publicada a validação, a
+   constante passou a mentir na direção oposta — conservadora, mas errada. Os
+   dois componentes agora medem: o FII lê `load_fii_validation_status()`, o
+   mesmo leitor da tela; o EUA compara a `score_version` publicada com a do
+   código e decai pela idade da geração.
+2. `universo_us` contava as 221 linhas de julho nas versões 0.1.0/0.2.0.
+   Republicar não as apaga, e elas inflavam o denominador — a abrangência
+   parecia pior do que é. O universo agora é escopado à versão corrente.
+
+O primeiro é o mesmo erro que o módulo declara evitar, em outra roupa: assumir
+um valor em vez de medi-lo. Ele sobreviveu ao commit inicial porque, no momento
+em que foi escrito, a constante estava certa.
+
+**Efeito no relatório:** EUA 76,8% → **88,6%**; FIIs 52,8% → **65,3%**;
+Portfólio Global 76,5% → **80,3%**; geral 77,3% → **80,3%**. A pior seção
+deixou de ser FIIs e passou a ser Empresas B3, por frescor de preço.
