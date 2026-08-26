@@ -967,7 +967,7 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
             # politica era derrotado pela entrada em vez de pela regra.
             from core.liquidez import liquidez_para_decisao as _liq
             escolhas = [
-                _liq(declarada, observada, meses_observados=int(meses or 0))
+                _liq(declarada, observada, meses_observados=meses)
                 for declarada, observada, meses in zip(
                     base["Liquidez_Diaria"], base["Liquidity_Fallback"],
                     base.get("Liquidity_Months", pd.Series([0] * len(base))))

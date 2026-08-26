@@ -57,12 +57,26 @@ def _positivo_ou_zero(v) -> float | None:
     return f
 
 
+def _meses_validos(v) -> int:
+    """Contagem de meses de fita, tolerante ao que o merge do pandas entrega.
+
+    Ticker que nao aparece na fita sai do merge como NaN -- e NaN e truthy,
+    entao `int(v or 0)` estourava. Ausencia de contagem e ausencia de lastro.
+    """
+    try:
+        n = int(float(v))
+    except (TypeError, ValueError):
+        return 0
+    return max(n, 0)
+
+
 def liquidez_para_decisao(declarada, observada,
                           meses_observados: int = 0) -> LiquidezDecisao:
     """Escolhe o numero que pode sustentar decisao de investimento."""
     dec = _positivo_ou_zero(declarada)
     obs = _positivo_ou_zero(observada)
-    com_lastro = obs is not None and int(meses_observados or 0) >= MESES_MINIMOS
+    meses = _meses_validos(meses_observados)
+    com_lastro = obs is not None and meses >= MESES_MINIMOS
 
     if dec is None:
         if obs is None:
@@ -72,7 +86,7 @@ def liquidez_para_decisao(declarada, observada,
                                "cadastro sem liquidez; usada a fita oficial da B3")
     if not com_lastro:
         falta = "fita ausente" if obs is None else \
-                f"fita com apenas {int(meses_observados or 0)} meses"
+                f"fita com apenas {meses} meses"
         return LiquidezDecisao(dec, "declarada",
                                f"mantida a declarada ({falta}, sem lastro para desmentir)")
 

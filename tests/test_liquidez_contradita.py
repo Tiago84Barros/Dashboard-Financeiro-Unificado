@@ -112,3 +112,16 @@ def test_valor_negativo_e_descartado_como_invalido():
 def test_motivo_e_legivel_para_a_tela():
     r = liquidez_para_decisao(2_794_163.29, 721.34, meses_observados=6)
     assert "fita" in r.motivo.lower() and "3874" in r.motivo.replace(".", "")
+
+
+def test_meses_ausente_nao_explode_e_nao_da_lastro():
+    """O merge de `quality` deixa NaN em ticker que nao entrou na fita.
+
+    A primeira versao fazia `int(meses or 0)` -- e NaN e truthy, entao ia
+    inteiro para o `int()` e estourava `ValueError` na publicacao da vitrine.
+    Ausencia de contagem e ausencia de lastro, nao erro.
+    """
+    for vazio in (float("nan"), None, "", "abc"):
+        d = liquidez_para_decisao(2_794_163.0, 721.0, meses_observados=vazio)
+        assert d.origem == "declarada", vazio
+        assert "sem lastro" in d.motivo
