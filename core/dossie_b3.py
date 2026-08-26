@@ -164,13 +164,16 @@ def _dividendos(tk: str, preco: float | None) -> dict:
     evento. A-128: amortizacao e restituicao de capital saem do yield e passam
     a ser reportadas a parte.
     """
-    from core.dividend_types import eh_renda
+    from core.dividend_types import eh_renda, sql_safra_canonica
 
+    # A-131: a tabela guarda duas safras do mesmo pagamento e o dossie somava
+    # as duas. Ver core.dividend_types.
     rows = _rows(
-        """
+        f"""
         SELECT COALESCE(ex_date, payment_date, event_date) AS dt, amount, type
-        FROM market.dividends
+        FROM market.dividends d
         WHERE ticker = :t AND COALESCE(ex_date, payment_date, event_date) IS NOT NULL
+          AND {sql_safra_canonica('d')}
         ORDER BY 1
         """,
         t=tk,

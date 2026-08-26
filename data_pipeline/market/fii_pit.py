@@ -17,6 +17,7 @@ import pandas as pd
 import requests
 from sqlalchemy import text
 
+from core.dividend_types import descarta_safra_colapsada
 from core.fii_methodology import (
     FORMULA_VERSION,
     METHODOLOGY_VERSION,
@@ -401,9 +402,13 @@ def _load_frames(conn) -> tuple[pd.DataFrame, ...]:
         WHERE close IS NOT NULL AND ticker NOT IN ('XFIX11','IFIX')
     """), conn)
     dividends = pd.read_sql(text("""
-        SELECT ticker,payment_date,ex_date,event_date,amount
+        SELECT ticker,type,payment_date,ex_date,event_date,amount
         FROM market.dividends WHERE amount > 0
     """), conn)
+    # A-131: duas safras do mesmo pagamento inflavam a renda de 187 FIIs
+    # (mediana +35,8%). A validacao PIT mede metodologia -- se ela roda sobre a
+    # renda dobrada, valida o numero errado. Ver core.dividend_types.
+    dividends = descarta_safra_colapsada(dividends)
     observations = pd.read_sql(text("""
         SELECT ticker,metric_name,value_numeric,value_text,value_json,reference_date,
                knowledge_at,availability_quality,source

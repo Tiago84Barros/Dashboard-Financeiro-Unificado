@@ -58,7 +58,7 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-128 | **Devolução de capital contada como renda**: `AMORTIZAÇÃO` e `REST CAP DIN` entravam no provento anual e no DY | ✅ | `tests/test_proventos_renda_vs_capital.py`; **415 pares ticker-ano inflados em 234 tickers, média +139%**; RBRI11/2026 exibia 252,20 de "provento" com renda real **zero** |
 | A-129 | Eco de classe da brapi somado nas agregações anuais (`SUM(amount)` cru em duas rotas) | ✅ | idem; `MIN` dentro de (data, tipo) mata o eco sem apagar evento legítimo |
 | A-130 | `min` sobre a data **inteira** descartava dividendo+JCP legítimos — e a coluna `type`, selecionada, nunca era lida | ✅ | idem; **1.120 ocorrências** de DIVIDENDO+JCP na mesma data ex; BAZA3 12m passou de 3,77 para 11,27 |
-| A-131 | `market.dividends` guarda **duas safras do mesmo evento**: uma com data-ex sintética no dia 1º, outra com o calendário real da B3 | ⚠️ decisão sua | **379 tickers carregam as duas safras**; 2.831 pares mesmo tipo+valor a ≤5 dias em 220 tickers; PATL11 grava cada mensal duas vezes |
+| A-131 | `market.dividends` guarda **duas safras do mesmo pagamento**: uma com o calendário real da B3, outra colapsada (`payment_date = ex_date`) | ✅ resolvido 26/08 | Filtro de leitura em `core/dividend_types.py`; **187 FIIs saíam com renda inflada, mediana +35,8%, máx +90,9%**; escopo real ~5.000 linhas, não 18.873 |
 | A-132 | Eventos de renda de magnitude implausível para pagamento periódico | ⚠️ decisão sua | **625 eventos em 45 FIIs** com rendimento único acima de 30% do preço; PATL11 tem `RENDIMENTO` de 66,33 num fundo de R$ 64,15 que paga 0,57/mês |
 | PROV-Q | Rodada dos proventos: o número de manchete do FII responde a "quanto isso rende?" | 🟢 rodada feita | 5 achados; 3 fechados, **os primeiros a enviesar para cima na métrica de decisão do FII** |
 | A-133 | Classe sem preço **por natureza** (caixa, renda fixa) recebia o mesmo motivo `sem_preco` de um ativo cuja série deveria existir e faltou — e o aviso da tela nem exibia motivo de preço | ✅ | `tests/test_cobertura_motivo_estrutural.py`; o comentário acima da linha 405 prometia "motivo próprio" que o código não dava; agora `classe_sem_preco` e a quebra por motivo aparecem no aviso |
@@ -1019,3 +1019,60 @@ R$ 2.290 sobre um preço de R$ 12,85 (178x) e AROA11 paga ~R$ 6,60 sobre R$ 0,98
 errados na origem. FLRP11 e HGBS11 aparecem por outro motivo: são cotas de
 preço alto com pagamento anual/semestral concentrado, onde 0,30 × preço é um
 limiar apertado. Ficam registrados como pendência de investigação.
+
+## As duas safras do mesmo pagamento inflavam a renda de 187 FIIs (A-131)
+
+O item estava no backlog como "decisão sua" desde a rodada de dados, com a
+estimativa de 18.873 linhas afetadas e a hipótese de que as safras se
+distinguiam pela data-ex sintética no dia 1º. Fui medir antes de escolher a
+régua, e **as duas coisas estavam erradas**.
+
+**O escopo real é ~5.000 linhas, não 18.873.** Das 19.555 linhas com data-ex no
+dia 1º, só 4.496 têm gêmea próxima. As outras 15 mil são histórico antigo em
+que a brapi nunca forneceu as duas datas — apagá-las perderia evento de
+verdade.
+
+**E "dia 1º" não é o discriminador.** O que separa as safras é
+`payment_date = ex_date`. Nenhum evento real da B3 paga no dia em que fica ex:
+a mediana da defasagem na tabela é de **14 dias**. O dia colapsado não é uma
+data, é a ausência de uma. RELG11 mostra o par cru:
+
+```
+ex=2025-09-05  pay=2025-09-12  0,80  criada 27/06   <- calendário real
+ex=2025-09-01  pay=2025-09-01  0,80  criada 25/07   <- safra colapsada
+```
+
+A safra colapsada entrou em bloco entre 23 e 25/07/2026. RELG11 paga 0,80 por
+mês e carrega **11 linhas reais mais 10 cópias**.
+
+**Custo medido.** 187 FIIs investíveis com renda de 12 meses inflada; mediana
+**+35,8%**; 71 acima de +50%; máximo +90,9%. HGLG11 — um dos maiores fundos do
+país — saía **64,7% acima**.
+
+**O bug que se escondia atrás de um conserto.** `core/portfolio/adapters/fii.py`
+já fazia `MIN(amount) GROUP BY ticker, ano, event_date, type`, escrito
+justamente para matar eco de duplicata (A-129). Não pegava nada aqui, e o
+motivo é preciso: as duas safras **divergem no `event_date`** (01/09 contra
+12/09). Deduplicar pela coluna em que as cópias diferem não deduplica.
+
+**A régua: mês do pagamento, não valor.** Casar por valor parece natural e
+falha — HGLG11 tem cópias de 0,9574 e 1,0734 ao lado de reais de 1,1000. Uma
+tolerância apertada deixa as duas passarem; uma larga começa a apagar evento
+legítimo. Também não serve o mês do *ex*: o par de HGLG11 fica ex em 31/10 e
+paga em 14/11, e a cópia cai em 01/11 — pelo mês do ex, os dois nunca se
+encontrariam.
+
+**O que a regra não faz.** Não apaga linha: é filtro de leitura, em
+`core/dividend_types.py`, ao lado da classificação de tipo. A safra colapsada
+continua na tabela como evidência de que a ingestão a produziu. E uma cópia
+**sem** gêmea de calendário real sobrevive — a regra só age quando há o que
+preferir. Nenhuma gravação remota foi necessária.
+
+Ligado em quatro consumidores: o adapter de FII do Portfólio Global, o backtest
+(`load_fii_series`), o preenchimento de lacunas de DY em `core/market_read.py`
+e a validação PIT (`data_pipeline/market/fii_pit.py`).
+
+**Pendência que isso cria.** A validação PIT rodava sobre a renda dobrada. O
+componente "Metodologia validada" da Seção de FIIs vale 100,0 com base no run
+52 — que precisa ser refeito no armazém local com este filtro para continuar
+significando o que diz. Não é gravação remota; é reprocessamento local.

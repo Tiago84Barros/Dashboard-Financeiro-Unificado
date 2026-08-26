@@ -62,7 +62,7 @@ def _carregar_proventos(tickers: tuple[str, ...]) -> dict:
     """Proventos anuais por FII: mesma agregacao que load_demonstracoes_batch usa."""
     if not tickers:
         return {}
-    from core.dividend_types import sql_apenas_renda
+    from core.dividend_types import sql_apenas_renda, sql_safra_canonica
     from core.market_read import _q
     tks = list(tickers)
     # A-128/A-129: em FII o desvio e maior, porque amortizacao de cota e comum
@@ -72,8 +72,12 @@ def _carregar_proventos(tickers: tuple[str, ...]) -> dict:
         "SELECT ticker, y, SUM(valor) AS d FROM ("
         "  SELECT ticker, EXTRACT(YEAR FROM event_date)::int AS y,"
         "         event_date, type, MIN(amount) AS valor"
-        "  FROM market.dividends WHERE ticker = ANY(:tks) AND event_date IS NOT NULL"
+        "  FROM market.dividends d WHERE ticker = ANY(:tks) AND event_date IS NOT NULL"
         f"   AND {sql_apenas_renda()}"
+        # A-131: o MIN abaixo agrupa por event_date, e e justamente nele que as
+        # duas safras do mesmo pagamento DIVERGEM (01/09 contra 12/09). Este
+        # bloco achava que deduplicava e nao deduplicava nada.
+        f"   AND {sql_safra_canonica('d')}"
         "  GROUP BY 1, 2, 3, 4"
         ") AS renda GROUP BY 1, 2",
         {"tks": tks},

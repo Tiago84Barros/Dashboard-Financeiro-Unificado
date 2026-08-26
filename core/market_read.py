@@ -32,6 +32,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.data_quality import clean_multiples_frame
+from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 
 logger = logging.getLogger(__name__)
 
@@ -1148,8 +1149,11 @@ def load_fii_series(tickers: tuple[str, ...]) -> dict:
             "FROM market.historical_prices WHERE ticker = ANY(:t) "
             "AND COALESCE(adjusted_close, close) IS NOT NULL ORDER BY ticker, date",
             {"t": tks})
-    dv = _q("SELECT ticker, event_date, amount FROM market.dividends "
-            "WHERE ticker = ANY(:t) AND event_date IS NOT NULL ORDER BY ticker, event_date",
+    # A-131: sem este filtro o backtest recebe cada mensal duas vezes (safra de
+    # calendario real + copia colapsada no dia 1). Ver core.dividend_types.
+    dv = _q("SELECT ticker, event_date, amount FROM market.dividends d "
+            "WHERE ticker = ANY(:t) AND event_date IS NOT NULL "
+            f"AND {_sql_safra_canonica('d')} ORDER BY ticker, event_date",
             {"t": tks})
     ph = {tk: list(zip(g["date"], g["c"])) for tk, g in px.groupby("ticker")} if not px.empty else {}
     dh = {tk: list(zip(g["event_date"], g["amount"])) for tk, g in dv.groupby("ticker")} if not dv.empty else {}
@@ -1350,8 +1354,9 @@ def load_fii_quality() -> pd.DataFrame:
             ORDER BY ticker,trade_date,collected_at DESC,id DESC
         """, {"tickers": b3_candidates})
         dividends = _q("""
-            SELECT ticker,event_date,amount FROM market.dividends
+            SELECT ticker,event_date,amount FROM market.dividends d
             WHERE ticker=ANY(:tickers) AND event_date IS NOT NULL AND amount IS NOT NULL
+              AND """ + _sql_safra_canonica('d') + """
             ORDER BY ticker,event_date
         """, {"tickers": sorted(series_candidates)}) if series_candidates else pd.DataFrame()
         if not dividends.empty:
