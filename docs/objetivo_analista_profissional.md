@@ -917,3 +917,28 @@ lá desde que o RAG existe. Corrigido com `doc_id ASC` no fim do ORDER BY.
 Um teste que compara dois motores é mais barato que um revisor: ele torna
 observável a não-determinação que um único motor esconde ao ser consistente
 consigo mesmo.
+
+## A matriz de correlação media todos os pares na mesma janela (A-135)
+
+A legenda da matriz sempre disse "janela solicitada: 5y". Os dois caminhos que
+leem do banco — `asset_quotes` e `portfolio_position_snapshots` — nunca
+aplicaram essa janela: entregavam a série inteira a `DataFrame.corr()`, que é
+**pairwise**. Cada par usava toda a sobreposição que tivesse. Medido em
+produção, a mesma matriz misturava pares com 32 meses e pares com 556.
+
+Isso não é imprecisão de arredondamento; é comparar coisas que não são
+comparáveis. A matriz existe para o investidor ler a linha de um ativo e
+escolher o que diversifica. Uma correlação de 46 anos descreve um regime de
+mercado que não existe mais e, ao lado de uma de 2,7 anos, ainda aparenta ser
+"mais confiável" por ter mais observações.
+
+`JANELA_CORR_MESES = 60` trunca os retornos mensais **antes** do corte por
+cobertura mínima — um ativo só entra se tiver os 24 meses exigidos *dentro* da
+janela, e não emprestando história antiga. São os mesmos 5 anos que o caminho
+do yfinance já pedia, de modo que as três fontes passem a medir a mesma coisa.
+`janela_meses=None` preserva o comportamento antigo para quem precisa de
+história inteira.
+
+A legenda deixou de prometer: agora declara a janela comum e o período
+efetivamente medido (`periodo_medido`), lido do índice dos retornos que
+entraram no cálculo. Declaração e execução voltaram a coincidir.

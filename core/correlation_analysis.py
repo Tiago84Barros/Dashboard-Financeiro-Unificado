@@ -8,6 +8,21 @@ import pandas as pd
 
 MIN_CORR_MONTHS = 24
 DEFAULT_CORR_PERIOD = "5y"
+
+# A-135: janela COMUM a todos os pares, em meses. `DataFrame.corr()` e pairwise:
+# sem truncar antes, cada par usa toda a sobreposicao que tiver, e a mesma
+# matriz mistura pares de 32 meses com pares de 556. Duas correlacoes medidas em
+# janelas diferentes nao sao comparaveis -- e a matriz existe justamente para
+# comparar linhas entre si. Pior: a legenda ja declarava "janela solicitada: 5y"
+# enquanto os caminhos que leem do banco usavam a historia inteira; a execucao
+# estava em desacordo com o que o app dizia ao usuario.
+#
+# 60 meses = os mesmos 5 anos que DEFAULT_CORR_PERIOD ja pedia ao yfinance, de
+# modo que as tres fontes (yfinance, asset_quotes, snapshots) passem a medir a
+# MESMA coisa. Nao e escolha de gosto: correlacao de 46 anos descreve um regime
+# de mercado que nao existe mais, e ao lado de uma de 2,7 anos ela ainda parece
+# "mais confiavel" por ter mais observacoes.
+JANELA_CORR_MESES = 60
 MAX_FX_GAP_DAYS = 7
 
 
@@ -78,7 +93,20 @@ def converter_precos_para_brl(
     }
 
 
-def retornos_mensais(precos: pd.DataFrame, min_obs: int = MIN_CORR_MONTHS) -> pd.DataFrame:
+def _truncar_janela(retornos: pd.DataFrame, janela_meses: int | None) -> pd.DataFrame:
+    """Mantem apenas os ultimos ``janela_meses`` meses do quadro de retornos.
+
+    Corta por POSICAO no indice mensal ja resampleado, nao por data de corte:
+    o indice tem um ponto por mes, entao as ultimas N linhas sao os ultimos N
+    meses -- inclusive quando o ativo mais novo comecou depois.
+    """
+    if not janela_meses or janela_meses <= 0 or retornos.empty:
+        return retornos
+    return retornos.tail(int(janela_meses))
+
+
+def retornos_mensais(precos: pd.DataFrame, min_obs: int = MIN_CORR_MONTHS,
+                     janela_meses: int | None = None) -> pd.DataFrame:
     """Alinha preços por mês e calcula retornos simples sem preencher ausências."""
     if precos is None or precos.empty:
         return pd.DataFrame()
@@ -99,7 +127,18 @@ def retornos_mensais(precos: pd.DataFrame, min_obs: int = MIN_CORR_MONTHS) -> pd
     retornos = mensal.pct_change(fill_method=None).replace(
         [float("inf"), float("-inf")], float("nan")
     ).dropna(how="all")
+    # A janela e aplicada ANTES do corte por cobertura: um ativo so entra se
+    # tiver observacoes suficientes DENTRO da janela. Cortar depois deixaria
+    # passar quem cumpre o minimo so com dado antigo.
+    retornos = _truncar_janela(retornos, janela_meses)
     return retornos.dropna(axis=1, thresh=min_obs)
+
+
+def _periodo(retornos: pd.DataFrame) -> tuple | None:
+    """(primeiro, ultimo) mes efetivamente usado, ou None se nao houve dado."""
+    if retornos is None or retornos.empty:
+        return None
+    return (retornos.index.min(), retornos.index.max())
 
 
 def matriz_sobreposicao(retornos: pd.DataFrame) -> pd.DataFrame:
@@ -112,9 +151,16 @@ def matriz_sobreposicao(retornos: pd.DataFrame) -> pd.DataFrame:
 def calcular_correlacao_mensal(
     precos: pd.DataFrame,
     min_obs: int = MIN_CORR_MONTHS,
+    janela_meses: int | None = JANELA_CORR_MESES,
 ) -> dict[str, pd.DataFrame | int | str]:
-    """Retorna matriz Pearson pairwise e contagem de observações por par."""
-    retornos = retornos_mensais(precos, min_obs=min_obs)
+    """Matriz Pearson pairwise, contagem de observacoes e a janela medida.
+
+    ``janela_meses=None`` desliga o corte e volta ao comportamento de historia
+    inteira -- util para analise de regime, onde comparar janelas longas e
+    curtas e o objetivo, e errado para a tela de carteira, onde a matriz e lida
+    linha contra linha.
+    """
+    retornos = retornos_mensais(precos, min_obs=min_obs, janela_meses=janela_meses)
     if retornos.shape[1] < 2:
         return {
             "corr": pd.DataFrame(),
@@ -122,6 +168,8 @@ def calcular_correlacao_mensal(
             "overlap": matriz_sobreposicao(retornos),
             "frequency": "mensal",
             "min_obs": min_obs,
+            "janela_meses": janela_meses,
+            "periodo_medido": _periodo(retornos),
         }
     corr = retornos.corr(min_periods=min_obs)
     corr = corr.dropna(how="all").dropna(axis=1, how="all")
@@ -133,6 +181,9 @@ def calcular_correlacao_mensal(
         "overlap": overlap,
         "frequency": "mensal",
         "min_obs": min_obs,
+        "janela_meses": janela_meses,
+        # O que foi MEDIDO, para a legenda parar de prometer o que foi PEDIDO.
+        "periodo_medido": _periodo(retornos),
     }
 
 

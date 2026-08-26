@@ -25,6 +25,7 @@ import core.data_reconciliacao as _recon
 import core.fundamentus as _fund
 from core.correlation_analysis import (
     DEFAULT_CORR_PERIOD,
+    JANELA_CORR_MESES,
     MIN_CORR_MONTHS,
     calcular_correlacao_mensal,
     classificar_correlacao,
@@ -2056,9 +2057,19 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         cobertura_peso = valor_coberto / total_carteira * 100 if total_carteira > 0 else None
         convertidos = corr_data.get("converted", [])
         sem_cambio = corr_data.get("missing_fx", [])
+        # A-135: a legenda dizia "janela solicitada" e parava aí. Solicitar não é
+        # medir: os caminhos que leem do banco usavam a série inteira, e a mesma
+        # matriz misturava pares de 32 e de 556 meses. Agora a janela é comum e
+        # o período efetivamente medido é declarado ao lado dela.
+        jan = corr_data.get("janela_meses", JANELA_CORR_MESES)
+        medido = corr_data.get("periodo_medido")
+        janela_txt = (f"janela comum: últimos {jan} meses" if jan
+                      else "janela: histórico completo")
+        if medido:
+            janela_txt += (f" ({medido[0]:%m/%Y} a {medido[1]:%m/%Y})")
         st.caption(
             f"Correlação de Pearson sobre retornos mensais ({corr_data.get('return_kind', 'preço')}); "
-            f"janela solicitada: {corr_data.get('period', DEFAULT_CORR_PERIOD)}; "
+            f"{janela_txt}; "
             f"fonte: {corr_data.get('source', 'não identificada')}; moeda-base: "
             f"{corr_data.get('base_currency', 'não identificada')}; {faixa_obs}; mínimo exigido: "
             f"{corr_data.get('min_obs', MIN_CORR_MONTHS)} meses"
