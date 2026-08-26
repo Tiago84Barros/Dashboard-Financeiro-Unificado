@@ -963,3 +963,23 @@ telas. **Não elimina a heterogeneidade**: quem tem 24 meses continua medido em
 24. Homogeneidade completa exigiria interseção, que descartaria candidatos — e
 é justamente deles que a tela precisa para poder substituir. O limite fica
 declarado aqui em vez de virar promessa silenciosa.
+
+## O Supabase voltou para dentro do plano free (26/08/2026)
+
+Medido por `pg_database_size`: **532,8 MB → 247,2 MB**, de um limite de 500 MB.
+Estava acima do teto; agora sobra mais da metade.
+
+| ação | liberado |
+|---|---|
+| `market.brapi_raw_payloads` arquivado no armazém local e compactado | 99,0 MB |
+| `public.docs_corporativos_chunks` aposentada (corpus serve do Parquet) | 162,0 MB |
+
+`public.docs_corporativos` (4.368 documentos, 4,4 MB) foi preservada: é barata e
+serve a ingestão. Depois do drop, `rag_b3.retrieve_chunks` devolve 45–60 chunks
+para PETR4, WEGE3, ITUB4 e VALE3 e zero para ticker inexistente — sem abrir
+nenhuma conexão de banco.
+
+O que isso muda não é o número: é que a pressão de espaço vinha enquadrando
+decisões de arquitetura ("trocar de provedor", "pagar o Pro"). Restam ~181 MB de
+vitrine só-leitura que migram pelo mesmo padrão de Parquet — mas agora isso é
+escolha de engenharia, não urgência de fatura.
