@@ -140,6 +140,72 @@ def universo_b3(engine=None) -> Universo:
     )
 
 
+# A-134: o gate contava `market.fiis` cru. Depois do A-133 a liquidez pode vir
+# da fita oficial da B3, e a tela de FIIs consome `market.fii_selection_inputs`
+# -- a vitrine, nao o cadastro. Medir o cadastro subestimava: 306 de 432 (70,8%)
+# contra 349 (80,8%) no dado que a decisao realmente le.
+#
+# A vitrine e a fonte certa tambem por um motivo que a fita nao atende: fundo
+# que nao esta nela nao e decidivel, tenha fita ou nao. Contar pela fita daria
+# 84,2% incluindo 36 investiveis que a selecao nunca ve -- numero melhor e
+# falso. E, ao contrario da fita, a vitrine existe nos dois ambientes.
+
+_QUARTETO_VITRINE = """
+        SELECT 1 FROM market.fii_selection_inputs v
+        WHERE v.ticker = f.ticker
+          AND (v.payload_json::jsonb->>'liquidez_diaria') IS NOT NULL
+          AND (v.payload_json::jsonb->>'dy_12m') IS NOT NULL
+          AND (v.payload_json::jsonb->>'pvp')::numeric > 0"""
+
+
+def _sql_apto_fii(com_vitrine: bool) -> str:
+    """Contagem de FIIs aptos: quantos investiveis a decisao consegue ler."""
+    if not com_vitrine:
+        return """
+            SELECT count(*) FROM market.fiis
+            WHERE price > 0 AND dy_12m IS NOT NULL
+              AND pvp IS NOT NULL AND pvp > 0
+              AND liquidez_diaria IS NOT NULL"""
+    return f"""
+        SELECT count(*) FROM market.fiis f
+        WHERE f.price > 0 AND EXISTS ({_QUARTETO_VITRINE})"""
+
+
+def _sql_ruins_fii(com_vitrine: bool) -> str:
+    """Exemplos de investivel que a decisao nao le, sob o criterio do gate."""
+    if not com_vitrine:
+        return """
+            SELECT ticker FROM market.fiis
+            WHERE price > 0 AND (dy_12m IS NULL OR pvp IS NULL OR pvp <= 0
+                                 OR liquidez_diaria IS NULL)
+            ORDER BY ticker LIMIT 8"""
+    return f"""
+        SELECT f.ticker FROM market.fiis f
+        WHERE f.price > 0 AND NOT EXISTS ({_QUARTETO_VITRINE})
+        ORDER BY f.ticker LIMIT 8"""
+
+
+def _nota_gate_fii(com_vitrine: bool) -> str:
+    if com_vitrine:
+        return ("gate: preco, DY, P/VP e liquidez na vitrine que a tela le "
+                "(liquidez ja arbitrada contra a fita oficial da B3)")
+    return ("gate: preco, DY, P/VP e liquidez de cadastro "
+            "(vitrine indisponivel neste ambiente)")
+
+
+def _tem_vitrine_fii(conn) -> bool:
+    """Vitrine ausente ou vazia derruba a tela se a query a referenciar."""
+    from sqlalchemy import text
+    existe = conn.execute(text("""
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema='market' AND table_name='fii_selection_inputs'
+    """)).scalar()
+    if not existe:
+        return False
+    return bool(conn.execute(
+        text("SELECT count(*) FROM market.fii_selection_inputs")).scalar())
+
+
 def universo_fii(engine=None) -> Universo:
     """FII: casca de cadastro domina. ``market.fiis`` guarda mais de mil linhas
     e a maioria nao tem preco - fundo encerrado, ticker de emissao, registro
@@ -153,21 +219,17 @@ def universo_fii(engine=None) -> Universo:
         nominal = _scalar(conn, "SELECT count(*) FROM market.fiis")
         investivel = _scalar(conn,
                              "SELECT count(*) FROM market.fiis WHERE price > 0")
-        apto = _scalar(conn, """
-            SELECT count(*) FROM market.fiis
-            WHERE price > 0 AND dy_12m IS NOT NULL
-              AND pvp IS NOT NULL AND pvp > 0
-              AND liquidez_diaria IS NOT NULL""")
-        ruins = tuple(r[0] for r in conn.execute(text("""
-            SELECT ticker FROM market.fiis
-            WHERE price > 0 AND (dy_12m IS NULL OR pvp IS NULL OR pvp <= 0
-                                 OR liquidez_diaria IS NULL)
-            ORDER BY ticker LIMIT 8""")).fetchall())
+        com_vitrine = _tem_vitrine_fii(conn)
+        apto = _scalar(conn, _sql_apto_fii(com_vitrine))
+        # Os exemplos tem de obedecer ao mesmo criterio da contagem, senao a
+        # tela lista como descartado quem o gate acabou de aprovar.
+        ruins = tuple(r[0] for r in conn.execute(
+            text(_sql_ruins_fii(com_vitrine))).fetchall())
     return Universo(
         modulo="Selecao de FIIs",
         nominal=nominal, investivel=investivel, apto=apto,
         exemplos_descartados=ruins,
-        notas=("gate: preco, DY, P/VP e liquidez presentes",),
+        notas=(_nota_gate_fii(com_vitrine),),
     )
 
 

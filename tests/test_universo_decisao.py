@@ -67,3 +67,42 @@ def test_resumo_declara_o_preco_do_descarte():
     assert "305 de 428" in r
     assert "123" in r          # descartados por dado insuficiente
     assert "637" in r          # cascas ignoradas
+
+
+# --- Abrangencia FII: o gate lia a fonte errada (A-134) --------------------
+# A tela de FIIs consome `market.fii_selection_inputs` -- a vitrine, com a
+# liquidez ja arbitrada contra a fita oficial da B3 (A-133). O gate contava
+# `market.fiis` cru: 306 de 432 (70,8%) contra 349 (80,8%) no dado que a
+# decisao le. Motor que ninguem consulta e decoracao.
+#
+# A fita chegou a parecer a fonte certa e nao e: daria 84,2% contando 36
+# investiveis que a selecao nunca ve. Fundo fora da vitrine nao e decidivel.
+
+def test_gate_fii_mede_a_vitrine_que_a_tela_le():
+    from core.universo_decisao import _sql_apto_fii
+    sql = _sql_apto_fii(com_vitrine=True)
+    assert "fii_selection_inputs" in sql
+    assert "liquidez_diaria" in sql and "dy_12m" in sql and "pvp" in sql
+
+
+def test_gate_fii_degrada_sem_referenciar_vitrine_ausente():
+    """Vitrine ausente ou vazia derruba a tela se a query a referenciar."""
+    from core.universo_decisao import _sql_apto_fii
+    sql = _sql_apto_fii(com_vitrine=False)
+    assert "fii_selection_inputs" not in sql
+    assert "liquidez_diaria IS NOT NULL" in sql
+
+
+def test_a_nota_diz_de_onde_veio_a_aptidao():
+    """Sem isso o mesmo percentual significa coisas diferentes por ambiente."""
+    from core.universo_decisao import _nota_gate_fii
+    assert "vitrine" in _nota_gate_fii(com_vitrine=True).lower()
+    assert "cadastro" in _nota_gate_fii(com_vitrine=False).lower()
+
+
+def test_exemplos_descartados_seguem_o_mesmo_criterio_do_gate():
+    """Listar como descartado quem o gate aprovou seria contradicao na tela."""
+    from core.universo_decisao import _sql_ruins_fii
+    assert "fii_selection_inputs" in _sql_ruins_fii(com_vitrine=True)
+    assert "NOT EXISTS" in _sql_ruins_fii(com_vitrine=True)
+    assert "fii_selection_inputs" not in _sql_ruins_fii(com_vitrine=False)
