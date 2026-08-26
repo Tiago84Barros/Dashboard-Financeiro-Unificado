@@ -956,13 +956,25 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
                 "N_UFs", "Property_Diversification", "CAGR", "Max_Drawdown",
                 "Multi_Setorial", "Series_Source", "Series_AvailableAt",
                 "Liquidity_Fallback", "Liquidity_Source", "Liquidity_AvailableAt",
+                "Liquidity_Months",
             ) if column in quality.columns
         ]
         base = base.merge(quality[enrichment_columns], on="Ticker", how="left")
         if "Liquidity_Fallback" in base:
-            base["Liquidez_Diaria"] = base["Liquidez_Diaria"].fillna(
-                base["Liquidity_Fallback"]
-            )
+            # A-133: isto era um `fillna` -- a fita oficial da B3 so entrava
+            # quando o cadastro vinha vazio. Com numero preenchido, por mais
+            # absurdo que fosse, ninguem conferia, e o piso de liquidez da
+            # politica era derrotado pela entrada em vez de pela regra.
+            from core.liquidez import liquidez_para_decisao as _liq
+            escolhas = [
+                _liq(declarada, observada, meses_observados=int(meses or 0))
+                for declarada, observada, meses in zip(
+                    base["Liquidez_Diaria"], base["Liquidity_Fallback"],
+                    base.get("Liquidity_Months", pd.Series([0] * len(base))))
+            ]
+            base["Liquidez_Diaria"] = [e.valor for e in escolhas]
+            base["Liquidez_Origem"] = [e.origem for e in escolhas]
+            base["Liquidez_Motivo"] = [e.motivo for e in escolhas]
     observations = _q("""
         SELECT DISTINCT ON (ticker, metric_name)
                ticker, metric_name, value_numeric, value_text, value_json,
@@ -1339,12 +1351,16 @@ def load_fii_quality() -> pd.DataFrame:
         or dd_map.get(str(ticker)) is None
         or int(mes_map.get(str(ticker)) or 0) < 6
     }
-    liquidity_candidates = set(
-        base.loc[base["Liquidez_Diaria"].isna(), "Ticker"].dropna().astype(str)
-    )
+    # A-133: ate 26/08/2026 so entravam aqui os tickers SEM liquidez declarada
+    # -- a fita da B3 preenchia lacuna e nunca contradizia. SHPP11 declarava
+    # 2,79 mi/dia contra 721/dia na fita oficial e passava por qualquer piso.
+    # Agora todo ticker e medido; quem decide entre os dois numeros e
+    # core.liquidez.liquidez_para_decisao.
+    liquidity_candidates = set(base["Ticker"].dropna().astype(str))
     b3_candidates = sorted(series_candidates | liquidity_candidates)
     liquidity_map: dict[str, float] = {}
     liquidity_available: dict[str, object] = {}
+    liquidity_months: dict[str, int] = {}
     if b3_candidates:
         b3 = _q("""
             SELECT DISTINCT ON (ticker,trade_date)
@@ -1375,6 +1391,8 @@ def load_fii_quality() -> pd.DataFrame:
                     if liquidity.get("value") is not None:
                         liquidity_map[ticker] = float(liquidity["value"])
                         liquidity_available[ticker] = liquidity.get("available_at")
+                        liquidity_months[ticker] = int(
+                            liquidity.get("observed_months") or 0)
                 if ticker not in series_candidates:
                     continue
                 price_history = _fz.latest_contiguous_history(
@@ -1414,6 +1432,7 @@ def load_fii_quality() -> pd.DataFrame:
         if ticker in liquidity_map else None
     )
     base["Liquidity_AvailableAt"] = base["Ticker"].map(liquidity_available)
+    base["Liquidity_Months"] = base["Ticker"].map(liquidity_months)
     return base
 
 

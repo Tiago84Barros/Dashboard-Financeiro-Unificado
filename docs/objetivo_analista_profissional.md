@@ -58,6 +58,7 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-128 | **Devolução de capital contada como renda**: `AMORTIZAÇÃO` e `REST CAP DIN` entravam no provento anual e no DY | ✅ | `tests/test_proventos_renda_vs_capital.py`; **415 pares ticker-ano inflados em 234 tickers, média +139%**; RBRI11/2026 exibia 252,20 de "provento" com renda real **zero** |
 | A-129 | Eco de classe da brapi somado nas agregações anuais (`SUM(amount)` cru em duas rotas) | ✅ | idem; `MIN` dentro de (data, tipo) mata o eco sem apagar evento legítimo |
 | A-130 | `min` sobre a data **inteira** descartava dividendo+JCP legítimos — e a coluna `type`, selecionada, nunca era lida | ✅ | idem; **1.120 ocorrências** de DIVIDENDO+JCP na mesma data ex; BAZA3 12m passou de 3,77 para 11,27 |
+| A-133 | Liquidez declarada pela brapi contradiz a fita oficial da B3 (SHPP11: 2,79 mi/dia declarados contra **721/dia** negociados) | ✅ resolvido 26/08 | `core/liquidez.py` arbitra acima de 10x; o estimador já existia mas só preenchia lacuna, nunca contradizia; 6 de 306 aptos trocam de fonte, 2 deles para **mais** liquidez |
 | A-131 | `market.dividends` guarda **duas safras do mesmo pagamento** (origem: retrato degradado da brapi em 23–25/07 + chave natural insert-only): uma com o calendário real da B3, outra colapsada (`payment_date = ex_date`) | ✅ resolvido 26/08 | Filtro de leitura em `core/dividend_types.py`; **187 FIIs saíam com renda inflada, mediana +35,8%, máx +90,9%**; escopo real ~5.000 linhas, não 18.873 |
 | A-132 | Eventos de renda de magnitude implausível para pagamento periódico | ⚠️ decisão sua | **625 eventos em 45 FIIs** com rendimento único acima de 30% do preço; PATL11 tem `RENDIMENTO` de 66,33 num fundo de R$ 64,15 que paga 0,57/mês |
 | PROV-Q | Rodada dos proventos: o número de manchete do FII responde a "quanto isso rende?" | 🟢 rodada feita | 5 achados; 3 fechados, **os primeiros a enviesar para cima na métrica de decisão do FII** |
@@ -1117,3 +1118,49 @@ consegue superseder vintage. Se a brapi repetir um retrato degradado, o banco
 volta a acumular as duas safras — e a defesa é o filtro de leitura, não a
 ingestão. Por isso ele mora em `core/dividend_types.py` e não num script de
 limpeza pontual.
+
+## O piso de liquidez funcionava; o número que entrava nele é que não (A-133)
+
+**O que achei.** `market.fiis.liquidez_diaria` vem da brapi. A fita oficial da
+B3 — volume financeiro diário em `market.fii_b3_security_history` — conta outra
+história para alguns fundos, e a diferença não é de calibragem:
+
+| ticker | declarado | fita oficial da B3 | razão |
+|---|---|---|---|
+| SHPP11 | 2.794.163/dia | **721/dia** | 3.874x |
+| VVRI11 | 68.561/dia | 541/dia | 127x |
+| ZIFI11 | 3.861/dia | 86/dia | 45x |
+| BICE11 | 1.852/dia | 42/dia | 44x |
+
+**Por que passou despercebido.** O app já tinha o estimador certo, e ele é
+rigoroso: `liquidez_diaria_b3` usa mediana de seis meses fechados, exclui o mês
+incompleto e conta mês sem negócio como zero. O problema era onde ele era
+chamado — `liquidity_candidates` era o conjunto dos `Liquidez_Diaria` **nulos**.
+A fita preenchia lacuna e nunca contradizia. Com número preenchido, por mais
+absurdo que fosse, ninguém conferia.
+
+Isso importa porque o piso de liquidez existe e funciona: `min_daily_liquidity`
+é aplicado em quatro pontos de `core/fii_portfolio_v4.py`. O que o derrotava não
+era a regra, era a entrada. SHPP11 declarando 2,79 milhões passa por qualquer
+piso razoável — e o investidor lê que pode sair de uma posição que, na fita da
+bolsa, negocia setecentos reais por dia. Prometer saída inexistente é o pior
+erro que um número de liquidez pode cometer.
+
+**A regra.** `core/liquidez.py::liquidez_para_decisao` arbitra entre as duas
+fontes: acima de 10x de divergência, a fita ganha. Não por desconfiança do
+agregador, mas porque uma das fontes registra o negócio e a outra o interpreta.
+Exige lastro — sem três meses de observação, fita curta é lacuna de carga, não
+desmentido. E é **simétrica**: declarar liquidez de menos exclui do universo um
+fundo que negocia, erro mais barato mas ainda erro.
+
+**Efeito medido (306 aptos, 26/08/2026).** Seis fundos trocam de fonte. Dois
+deles — LASC11 (245 mil declarados contra 3,36 milhões na fita) e RSPD11 (1,1 mil
+contra 70 mil) — **ganham** liquidez: estavam subdeclarados e saíam penalizados
+sem motivo. O saldo em cada piso testado é de −1 fundo aprovado. A regra é
+bisturi, não machado.
+
+**Limitação que herdo e não escondo.** `market.fii_b3_security_history` **não
+existe no Supabase** — é tabela do armazém local. Na Streamlit Cloud a
+arbitragem não roda, e o app usa o declarado. A defesa real está na publicação
+da vitrine, que é feita do armazém local, onde a fita existe. Enquanto a vitrine
+não for republicada, os seis fundos acima seguem com o número antigo em produção.
