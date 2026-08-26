@@ -1164,3 +1164,48 @@ existe no Supabase** — é tabela do armazém local. Na Streamlit Cloud a
 arbitragem não roda, e o app usa o declarado. A defesa real está na publicação
 da vitrine, que é feita do armazém local, onde a fita existe. Enquanto a vitrine
 não for republicada, os seis fundos acima seguem com o número antigo em produção.
+
+## A Abrangência media o cadastro, não a vitrine que a tela lê (A-136)
+
+> Nota de rastreio: o commit `4b8c211` rotula este achado como "A-134" por
+> engano — esse identificador já pertence à média ponderada. O achado é o
+> A-136. O histórico publicado não foi reescrito.
+
+A tela de FIIs consome `load_fii_methodology_inputs()` com `prefer_snapshot=True`,
+isto é, `market.fii_selection_inputs` — a vitrine, com a liquidez já arbitrada
+contra a fita oficial da B3 pelo A-133. O gate de Abrangência contava
+`market.fiis` cru, que não enxerga nada disso.
+
+| fonte medida | aptos / investíveis | share |
+|---|---|---|
+| cadastro cru (`market.fiis`) | 306 / 432 | 70,8% |
+| **vitrine (o que a tela lê)** | **349 / 432** | **80,8%** |
+| fita da B3 no armazém local | 362 / 430 | 84,2% |
+
+O A-133 arbitrava e ninguém consultava. É o mesmo padrão já registrado em
+"diagnóstico precisa de porta de entrada": motor de análise que não é lido na
+decisão é decoração.
+
+**Por que a fita não é a fonte certa, apesar do número maior.** Contar por ela
+daria 84,2%, incluindo 36 investíveis que a seleção nunca vê. Fundo fora da
+vitrine não é decidível, tenha fita ou não — o número seria melhor e falso. A
+vitrine tem ainda a vantagem de existir nos dois ambientes, enquanto
+`market.fii_b3_security_history` é só do armazém local.
+
+**Degradação explícita.** Vitrine ausente ou vazia volta ao cadastro, e a nota
+do gate diz qual fonte foi usada. Sem isso o mesmo percentual significaria
+coisas diferentes em cada ambiente — no armazém local, que é a origem da
+vitrine e não o destino, o gate degrada para 69,1% e diz isso.
+
+**O que bloqueia os 83 restantes** (medido no Supabase, 26/08/2026):
+
+- **38 nem estão na vitrine.** Investíveis que a seleção não vê. Esse é o
+  bloqueador maior e não é falta de campo — é falta de linha.
+- **42 estão na vitrine sem liquidez** (`origem='ausente'`): nem cadastro nem
+  fita. Bate exatamente com os 42 que a arbitragem do A-133 classificou assim.
+- 5 sem DY, 1 sem P/VP. Ruído.
+
+Ou seja, liquidez continua sendo o bloqueador dominante entre os que a vitrine
+alcança — o A-133 resolveu contradição de valor, não ausência de fonte. E o
+caminho mais barato para subir Abrangência não é preencher campo: é entender
+por que 38 investíveis ficam de fora da vitrine.
