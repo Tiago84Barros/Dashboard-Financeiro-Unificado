@@ -27,6 +27,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
+from core.dividend_types import sql_apenas_renda
 from core.universo_decisao import Universo, universo_b3, universo_fii, universo_us
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,84 @@ class ConfiancaSecao:
 
 
 # ── auxiliares de medicao ────────────────────────────────────────────────────
+
+# --------------------------------------------------------------------------
+# A-132: provento de magnitude implausivel em FII.
+#
+# A versao anterior deste check media duas coisas erradas ao mesmo tempo.
+#
+# 1. O filtro de tipo era `upper(type) NOT IN ('AMORTIZACAO', 'REST CAP DIN')`
+#    escrito a mao. O dado grava `AMORTIZAÇÃO`, e `upper()` nao tira acento --
+#    a exclusao nunca disparou. As 588 amortizacoes do Supabase entravam como
+#    "provento implausivel", sendo que amortizacao devolve capital e e grande
+#    POR CONSTRUCAO. `core.dividend_types` ja existia dizendo exatamente isso;
+#    a regra foi duplicada em vez de importada, e a copia saiu errada.
+#
+# 2. Comparava `amount` com `f.price`, o preco de HOJE. Um fundo que amortizou
+#    quase todo o capital negocia hoje por uma fracao do que valia: RBDS11
+#    exibia rendimento de 2018 valendo 900% do preco de 2026 sem nada de errado
+#    no dado. O preco relevante e o da EPOCA do evento.
+#
+# Medido no Supabase em 26/08/2026: 66 fundos acusados viram 14.
+#
+# Eventos sem preco na epoca (10.018 de 38.416) NAO sao julgados -- nem limpos,
+# nem sujos. Conta-los como limpos infla a integridade com ausencia de
+# evidencia, que e o defeito A-124 em outra roupa.
+# --------------------------------------------------------------------------
+LIMIAR_PROVENTO_SOBRE_PRECO = 0.30
+
+#: Janela, em dias, para achar o preco negociado em torno do ex-date. Precisa
+#: cobrir feriado prolongado e fundo de baixissima liquidez sem passar perto de
+#: um mes, que ja seria outra safra de preco.
+JANELA_PRECO_EPOCA_DIAS = 10
+
+SQL_PROVENTO_IMPLAUSIVEL = f"""
+WITH ev AS (
+  SELECT d.ticker, d.amount,
+         (SELECT h.close FROM market.historical_prices h
+           WHERE h.ticker = d.ticker AND h.close > 0
+             AND h.date BETWEEN d.ex_date - {JANELA_PRECO_EPOCA_DIAS}
+                            AND d.ex_date + {JANELA_PRECO_EPOCA_DIAS}
+           ORDER BY abs(h.date - d.ex_date), h.date LIMIT 1) AS px_epoca
+    FROM market.dividends d
+    JOIN market.fiis f ON f.ticker = d.ticker
+   WHERE f.price > 0 AND d.amount > 0 AND d.ex_date IS NOT NULL
+     AND {sql_apenas_renda('d.type')})
+SELECT count(*) AS total,
+       count(*) FILTER (WHERE px_epoca IS NOT NULL) AS julgados,
+       count(DISTINCT ticker) FILTER (
+         WHERE px_epoca IS NOT NULL
+           AND amount > {LIMIAR_PROVENTO_SOBRE_PRECO} * px_epoca) AS tickers_flag
+  FROM ev
+"""
+
+
+def _provento_implausivel(amount: float | None,
+                          px_epoca: float | None) -> bool | None:
+    """``None`` quando nao ha preco da epoca: o evento nao pode ser julgado."""
+    if not px_epoca or px_epoca <= 0 or amount is None:
+        return None
+    return float(amount) > LIMIAR_PROVENTO_SOBRE_PRECO * float(px_epoca)
+
+
+def _componente_integridade_fii(investivel: int, tickers_flag: int,
+                                julgados: int, total: int) -> Componente:
+    """Fracao dos fundos investiveis sem evento implausivel JULGADO.
+
+    A cobertura do check entra na evidencia porque 96% apoiado em 74% dos
+    eventos nao vale o mesmo que 96% apoiado em todos, e o modulo inteiro
+    existe para nao esconder essa diferenca.
+    """
+    if not investivel or julgados <= 0:
+        return Componente("Integridade", None, 0.35,
+                          "sem evento julgavel: nenhum preco na epoca")
+    limpos = max(0, investivel - int(tickers_flag))
+    cob = 100.0 * julgados / total if total else 0.0
+    return Componente(
+        "Integridade", 100.0 * limpos / investivel, 0.35,
+        f"{tickers_flag} fundos com provento implausivel ante o preco da epoca "
+        f"(A-132); check cobre {cob:.0f}% dos {total} eventos de renda")
+
 
 def _dias_desde(valor) -> int | None:
     if valor is None:
@@ -231,18 +310,15 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
             # Integridade: proventos ja passam pelo filtro renda-vs-capital
             # (A-128) e pelo dedup de eco de classe (A-129). O que resta medir
             # e a fracao de aptos SEM evento de magnitude implausivel (A-132),
-            # que segue sinalizado e nao corrigido.
-            suspeitos = _scalar(conn, """
-                SELECT count(DISTINCT d.ticker)
-                FROM market.dividends d JOIN market.fiis f ON f.ticker = d.ticker
-                WHERE f.price > 0 AND d.amount > 0.30 * f.price
-                  AND upper(d.type) NOT IN ('AMORTIZACAO', 'REST CAP DIN')""")
+            # comparado ao preco da EPOCA -- ver SQL_PROVENTO_IMPLAUSIVEL.
+            from sqlalchemy import text as _text
+            linha = conn.execute(_text(SQL_PROVENTO_IMPLAUSIVEL)).mappings().one()
             if u and u.investivel:
-                limpos = max(0, u.investivel - int(suspeitos or 0))
-                comps.append(Componente(
-                    "Integridade", 100.0 * limpos / u.investivel, 0.35,
-                    f"{suspeitos} fundos com provento de magnitude implausivel "
-                    f"(A-132, sinalizado)"))
+                comps.append(_componente_integridade_fii(
+                    investivel=u.investivel,
+                    tickers_flag=int(linha["tickers_flag"] or 0),
+                    julgados=int(linha["julgados"] or 0),
+                    total=int(linha["total"] or 0)))
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca FII: %s", exc)
         notas.append(f"medicao parcial: {type(exc).__name__}")

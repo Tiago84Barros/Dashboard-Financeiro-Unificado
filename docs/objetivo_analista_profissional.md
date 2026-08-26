@@ -983,3 +983,39 @@ O que isso muda não é o número: é que a pressão de espaço vinha enquadrand
 decisões de arquitetura ("trocar de provedor", "pagar o Pro"). Restam ~181 MB de
 vitrine só-leitura que migram pelo mesmo padrão de Parquet — mas agora isso é
 escolha de engenharia, não urgência de fatura.
+
+## O check de "provento implausível" acusava 588 amortizações e comparava preços de épocas diferentes (A-132)
+
+A Integridade da Seção de FIIs media a fração de fundos investíveis **sem
+provento de magnitude implausível**. Ela marcava 49 fundos. Dois defeitos
+empilhados, e nenhum deles era o dado:
+
+**1. A regra foi reescrita à mão em vez de importada.** `core/dividend_types.py`
+é a fonte canônica e escreve `"AMORTIZAÇÃO"` com acento. `core/confianca_secao.py`
+tinha uma segunda cópia da lista, sem acento — e `upper()` no Postgres não tira
+acento. A exclusão nunca disparou: as 588 amortizações do banco entravam
+inteiras como se fossem rendimento. Devolver capital é, por construção, uma
+fração grande do preço; o check estava desenhado para acusá-las.
+
+**2. O valor histórico era comparado ao preço de hoje.** O check confrontava
+`d.amount` (de 2018, digamos) com `f.price` (de agora). Um fundo que amortizou
+a maior parte do capital negocia hoje a uma fração do preço antigo, então um
+pagamento normal de 2018 aparecia como 900% do preço de 2026. RBDS11 era o caso
+exemplar. Agora o preço vem de `market.historical_prices` numa janela de ±10
+dias em torno do ex-date — o preço **da época do evento**.
+
+Efeito medido contra o Supabase: 49 → 14 fundos sinalizados; Integridade
+84,6 → 96,7; Seleção de FIIs 65,3% → 69,5%; global 84,1% → 85,0%.
+
+**O que não foi inflado.** 10.018 dos 38.416 eventos de renda não têm preço na
+época e não podem ser julgados. Eles não viram "limpos": a evidência do
+componente declara a própria cobertura ("check cobre 74% dos 38.416 eventos").
+O que não foi medido não vira 100 — é a mesma regra que o módulo aplica em
+Frescor e Abrangência.
+
+Os 14 restantes são achados reais de dado, não ruído do check: HGAG11 pagou
+R$ 2.290 sobre um preço de R$ 12,85 (178x) e AROA11 paga ~R$ 6,60 sobre R$ 0,98
+(6,8x) mês após mês — valores que só fecham se a unidade ou o ticker estiverem
+errados na origem. FLRP11 e HGBS11 aparecem por outro motivo: são cotas de
+preço alto com pagamento anual/semestral concentrado, onde 0,30 × preço é um
+limiar apertado. Ficam registrados como pendência de investigação.
