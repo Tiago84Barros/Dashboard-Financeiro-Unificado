@@ -25,9 +25,34 @@ import pandas as pd
 DEFAULT_CORR_THRESHOLD = 0.65
 MIN_OBS_CORRELACAO = 18  # meses de sobreposição — mesmo piso do walk-forward
 
+# A-135, segunda frente. `correlation_matrix` é pairwise: cada par usa toda a
+# sobreposição que tiver. O quadro de preços desta tela vem de
+# `_batch_yf_precos_mensais(..., period="10y")`, então um par pode ser medido em
+# 120 meses e o par ao lado em 18 — e os dois são confrontados com o MESMO
+# limiar de 0,65 e somados na MESMA média por `average_pairwise_correlation`.
+#
+# Isso não é só imprecisão: a substituição por correlação compara `baseline_avg`
+# com `trial_avg` trocando um ativo por outro. Se o candidato tem história curta,
+# os pares dele são medidos noutra janela — o "ganho" de diversificação pode vir
+# da mudança de AMOSTRA, não da mudança de ativo. A decisão de trocar passa a
+# depender de quando o candidato abriu capital.
+#
+# O teto de 60 meses não elimina a heterogeneidade (quem tem 24 meses continua
+# medido em 24), mas reduz a faixa de 18–120 para 18–60 e alinha esta tela com
+# `core.correlation_analysis.JANELA_CORR_MESES`, que usa os mesmos 5 anos.
+# Homogeneidade completa exigiria interseção, que descartaria candidatos — é o
+# que `core.global_portfolio.returns` faz, onde o quadro é publicado e não há
+# candidato a preservar.
+JANELA_CORR_MESES = 60
 
-def monthly_returns_for(df_precos: pd.DataFrame, tickers: list[str]) -> pd.DataFrame:
-    """Retornos mensais (variação percentual) das colunas presentes em df_precos."""
+
+def monthly_returns_for(df_precos: pd.DataFrame, tickers: list[str],
+                        janela_meses: int | None = JANELA_CORR_MESES) -> pd.DataFrame:
+    """Retornos mensais (variação percentual) das colunas presentes em df_precos.
+
+    Trunca aos últimos ``janela_meses`` meses (ver ``JANELA_CORR_MESES``).
+    ``None`` devolve a série inteira, para quem precisa de história completa.
+    """
     if df_precos is None or df_precos.empty:
         return pd.DataFrame()
     cols = [t for t in dict.fromkeys(tickers) if t in df_precos.columns]
@@ -35,7 +60,10 @@ def monthly_returns_for(df_precos: pd.DataFrame, tickers: list[str]) -> pd.DataF
         return pd.DataFrame()
     precos = df_precos[cols].dropna(how="all")
     rets = precos.pct_change().replace([np.inf, -np.inf], np.nan)
-    return rets.iloc[1:]
+    rets = rets.iloc[1:]
+    if janela_meses and janela_meses > 0:
+        rets = rets.tail(int(janela_meses))
+    return rets
 
 
 def correlation_matrix(returns: pd.DataFrame, min_obs: int = MIN_OBS_CORRELACAO) -> pd.DataFrame:

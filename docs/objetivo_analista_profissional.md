@@ -942,3 +942,24 @@ história inteira.
 A legenda deixou de prometer: agora declara a janela comum e o período
 efetivamente medido (`periodo_medido`), lido do índice dos retornos que
 entraram no cálculo. Declaração e execução voltaram a coincidir.
+
+### Segunda frente: a mesma matriz decide substituição na Criação de Portfólio B3
+
+O caso do Portfólio Global já estava fechado por outro caminho:
+`core/global_portfolio/returns.py` publica apenas os meses em que **todos** os
+sobreviventes têm retorno, então o quadro não tem buraco e todo par é medido
+nos mesmos meses. Foi consequência da correção de covariância PSD de 23/08.
+
+O que restava era `core/b3_correlation_diversification.monthly_returns_for`,
+que entrega o quadro inteiro de `_batch_yf_precos_mensais(period="10y")` a
+`correlation_matrix`. Ali a heterogeneidade não é estética: a substituição por
+correlação compara `baseline_avg` com `trial_avg` trocando um ativo por outro.
+Com o candidato medido noutra janela, o "ganho" de diversificação pode vir da
+mudança de amostra, não da mudança de ativo — a decisão de trocar passava a
+depender de quando o candidato abriu capital.
+
+O teto de 60 meses reduz a faixa de 18–120 para 18–60 e iguala a janela às duas
+telas. **Não elimina a heterogeneidade**: quem tem 24 meses continua medido em
+24. Homogeneidade completa exigiria interseção, que descartaria candidatos — e
+é justamente deles que a tela precisa para poder substituir. O limite fica
+declarado aqui em vez de virar promessa silenciosa.
