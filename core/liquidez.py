@@ -105,3 +105,38 @@ def liquidez_para_decisao(declarada, observada,
     return LiquidezDecisao(dec, "declarada",
                            "cadastro e fita concordam dentro da tolerancia",
                            razao=razao)
+
+
+# Qualidade de fonte: a fita oficial da B3 registra o negocio; o agregador o
+# le. A diferenca de 0.95 para 0.80 e a mesma que ja existia no codigo antes
+# do A-133 -- o que mudou e QUANDO cada uma se aplica.
+QUALIDADE_FITA = 0.95
+QUALIDADE_CADASTRO = 0.80
+
+
+def procedencia_liquidez(origem: str, fonte_fita, fita_available_at,
+                         cadastro_available_at) -> dict:
+    """Procedencia do numero que a arbitragem escolheu.
+
+    Antes do A-133 so tinha fita quem nao tinha cadastro, entao "existe fita"
+    e "a fita foi usada" eram a mesma coisa e ler um campo pelo outro nao doia.
+    Ao medir todo ticker isso deixou de valer: 348 de 394 linhas publicadas
+    afirmaram origem B3 sem terem trocado de fonte. Aqui a procedencia segue a
+    DECISAO -- `origem` -- e nunca a mera disponibilidade do dado alternativo.
+    """
+    if origem == "fita_b3":
+        return {
+            "source": str(fonte_fita or "b3_cotahist_monthly_median_div_21_v1"),
+            "source_quality": QUALIDADE_FITA,
+            "available_at": str(fita_available_at or cadastro_available_at),
+        }
+    if origem == "declarada":
+        return {
+            "source": "brapi",
+            "source_quality": QUALIDADE_CADASTRO,
+            "available_at": str(cadastro_available_at),
+        }
+    # Sem liquidez nenhuma nao ha o que qualificar. Zero e honesto; herdar a
+    # qualidade do cadastro seria afirmar confianca sobre um vazio.
+    return {"source": "indisponivel", "source_quality": 0.0,
+            "available_at": str(cadastro_available_at)}

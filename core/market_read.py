@@ -33,6 +33,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.data_quality import clean_multiples_frame
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
+from core.liquidez import procedencia_liquidez
 
 logger = logging.getLogger(__name__)
 
@@ -1029,10 +1030,24 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
         liquidity_available = item.get("Liquidity_AvailableAt")
         if pd.isna(liquidity_available):
             liquidity_available = None
+        # A-133: `Liquidity_Source` diz que EXISTE fita, nao que a fita venceu.
+        # Quem decide a procedencia e a arbitragem.
+        liquidity_origin = item.get("Liquidez_Origem")
+        if pd.isna(liquidity_origin):
+            liquidity_origin = "declarada"
+        liquidity_reason = item.get("Liquidez_Motivo")
+        if pd.isna(liquidity_reason):
+            liquidity_reason = None
+        liquidity_provenance = procedencia_liquidez(
+            origem=str(liquidity_origin), fonte_fita=liquidity_source,
+            fita_available_at=liquidity_available,
+            cadastro_available_at=item.get("updated_at"))
         row = {
             "ticker": ticker, "name": item.get("Nome"), "tipo": item.get("Tipo"),
             "sector": item.get("Segmento"), "dy_12m": item.get("DY_12m"),
             "pvp": item.get("P/VP"), "liquidez_diaria": item.get("Liquidez_Diaria"),
+            "liquidez_origem": str(liquidity_origin),
+            "liquidez_motivo": liquidity_reason,
             "price": item.get("Preço"), "vpa": item.get("VPA"),
             "patrimonio_liquido": item.get("Patrimonio"),
             "num_cotistas": item.get("Cotistas"), "tipo_gestao": item.get("Gestao"),
@@ -1050,11 +1065,7 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
             "region_count": item.get("N_Regioes"),
             "metric_metadata": {
                 "dy_12m": {"available_at": str(item.get("updated_at")), "source": "brapi"},
-                "liquidez_diaria": {
-                    "available_at": str(liquidity_available or item.get("updated_at")),
-                    "source": str(liquidity_source or "brapi"),
-                    "source_quality": .95 if liquidity_source else .80,
-                },
+                "liquidez_diaria": liquidity_provenance,
                 "pvp": {"available_at": str(item.get("updated_at")), "source": "cvm_vpa+brapi_quote"},
                 "total_return_trend": {
                     "available_at": str(item.get("Series_AvailableAt") or item.get("updated_at")),

@@ -125,3 +125,40 @@ def test_meses_ausente_nao_explode_e_nao_da_lastro():
         d = liquidez_para_decisao(2_794_163.0, 721.0, meses_observados=vazio)
         assert d.origem == "declarada", vazio
         assert "sem lastro" in d.motivo
+
+
+# --- procedencia -----------------------------------------------------------
+# Ao tornar todo ticker candidato (A-133), `Liquidity_Source` passou a vir
+# preenchido para quem TEM fita, e nao para quem USA a fita. O metric_metadata
+# lia esse campo como procedencia: 348 das 394 linhas publicadas em 26/08/2026
+# afirmavam origem B3 -- com source_quality 0.95 -- quando so 6 fundos de fato
+# trocaram de fonte. Procedencia e consequencia da decisao, nao da existencia
+# do dado alternativo.
+
+def test_procedencia_segue_a_decisao_nao_a_disponibilidade():
+    from core.liquidez import procedencia_liquidez
+    p = procedencia_liquidez(
+        origem="declarada", fonte_fita="b3_cotahist_monthly_median_div_21_v1",
+        fita_available_at="2026-08-01", cadastro_available_at="2026-08-26")
+    assert p["source"] == "brapi"
+    assert p["source_quality"] == 0.80
+    assert p["available_at"] == "2026-08-26"
+
+
+def test_procedencia_da_fita_quando_a_fita_venceu():
+    from core.liquidez import procedencia_liquidez
+    p = procedencia_liquidez(
+        origem="fita_b3", fonte_fita="b3_cotahist_monthly_median_div_21_v1",
+        fita_available_at="2026-08-01", cadastro_available_at="2026-08-26")
+    assert p["source"] == "b3_cotahist_monthly_median_div_21_v1"
+    assert p["source_quality"] == 0.95
+    assert p["available_at"] == "2026-08-01"
+
+
+def test_procedencia_sem_liquidez_nao_inventa_qualidade():
+    from core.liquidez import procedencia_liquidez
+    p = procedencia_liquidez(origem="ausente", fonte_fita=None,
+                             fita_available_at=None,
+                             cadastro_available_at="2026-08-26")
+    assert p["source"] == "indisponivel"
+    assert p["source_quality"] == 0.0
