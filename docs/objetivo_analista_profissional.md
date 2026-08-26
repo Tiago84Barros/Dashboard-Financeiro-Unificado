@@ -58,7 +58,7 @@ está fazendo, e quem usa o app vê o resultado disso.** Um achado só fecha qua
 | A-128 | **Devolução de capital contada como renda**: `AMORTIZAÇÃO` e `REST CAP DIN` entravam no provento anual e no DY | ✅ | `tests/test_proventos_renda_vs_capital.py`; **415 pares ticker-ano inflados em 234 tickers, média +139%**; RBRI11/2026 exibia 252,20 de "provento" com renda real **zero** |
 | A-129 | Eco de classe da brapi somado nas agregações anuais (`SUM(amount)` cru em duas rotas) | ✅ | idem; `MIN` dentro de (data, tipo) mata o eco sem apagar evento legítimo |
 | A-130 | `min` sobre a data **inteira** descartava dividendo+JCP legítimos — e a coluna `type`, selecionada, nunca era lida | ✅ | idem; **1.120 ocorrências** de DIVIDENDO+JCP na mesma data ex; BAZA3 12m passou de 3,77 para 11,27 |
-| A-131 | `market.dividends` guarda **duas safras do mesmo pagamento**: uma com o calendário real da B3, outra colapsada (`payment_date = ex_date`) | ✅ resolvido 26/08 | Filtro de leitura em `core/dividend_types.py`; **187 FIIs saíam com renda inflada, mediana +35,8%, máx +90,9%**; escopo real ~5.000 linhas, não 18.873 |
+| A-131 | `market.dividends` guarda **duas safras do mesmo pagamento** (origem: retrato degradado da brapi em 23–25/07 + chave natural insert-only): uma com o calendário real da B3, outra colapsada (`payment_date = ex_date`) | ✅ resolvido 26/08 | Filtro de leitura em `core/dividend_types.py`; **187 FIIs saíam com renda inflada, mediana +35,8%, máx +90,9%**; escopo real ~5.000 linhas, não 18.873 |
 | A-132 | Eventos de renda de magnitude implausível para pagamento periódico | ⚠️ decisão sua | **625 eventos em 45 FIIs** com rendimento único acima de 30% do preço; PATL11 tem `RENDIMENTO` de 66,33 num fundo de R$ 64,15 que paga 0,57/mês |
 | PROV-Q | Rodada dos proventos: o número de manchete do FII responde a "quanto isso rende?" | 🟢 rodada feita | 5 achados; 3 fechados, **os primeiros a enviesar para cima na métrica de decisão do FII** |
 | A-133 | Classe sem preço **por natureza** (caixa, renda fixa) recebia o mesmo motivo `sem_preco` de um ativo cuja série deveria existir e faltou — e o aviso da tela nem exibia motivo de preço | ✅ | `tests/test_cobertura_motivo_estrutural.py`; o comentário acima da linha 405 prometia "motivo próprio" que o código não dava; agora `classe_sem_preco` e a quebra por motivo aparecem no aviso |
@@ -1072,7 +1072,48 @@ Ligado em quatro consumidores: o adapter de FII do Portfólio Global, o backtest
 (`load_fii_series`), o preenchimento de lacunas de DY em `core/market_read.py`
 e a validação PIT (`data_pipeline/market/fii_pit.py`).
 
-**Pendência que isso cria.** A validação PIT rodava sobre a renda dobrada. O
-componente "Metodologia validada" da Seção de FIIs vale 100,0 com base no run
-52 — que precisa ser refeito no armazém local com este filtro para continuar
-significando o que diz. Não é gravação remota; é reprocessamento local.
+**Correção do que escrevi antes.** Eu registrei aqui que "a validação PIT rodava
+sobre a renda dobrada" e que o run 52 estaria comprometido. Fui medir os dois
+bancos antes de mandar refazer, e não estava:
+
+| | linhas colapsadas com gêmea real | tickers |
+|---|---|---|
+| armazém local (onde o run 52 rodou) | 213 | 69 |
+| Supabase (vitrine publicada) | 5.818 | 307 |
+
+A safra colapsada é **quase só da vitrine**. O run 52 leu um banco praticamente
+limpo, e refazê-lo mexeria em 213 linhas de 39.170. Continua valendo refazer por
+higiene, mas é ajuste fino, não invalidação — a pendência que eu tinha declarado
+como bloqueante não é bloqueante.
+
+**De onde veio a safra colapsada.** Fui atrás do escritor, com pressa, porque eu
+tinha acabado de passar ao usuário um comando de ingestão e precisava saber se
+ele reabasteceria o defeito. O rastro:
+
+- as linhas colapsadas do Supabase têm `source='brapi.dev'` e nasceram em bloco
+  entre 23 e 25/07/2026 — 13.732 só no dia 25;
+- `source='brapi.dev'` é o caminho `normalize.dividend_rows`, alimentado pelo
+  endpoint `quote_fii_full`. Não é o v2 de FII, que grava `brapi_fii_v2`;
+- a chave natural de `market.dividends` é `(ticker, event_date, type, amount)`.
+  As duas safras divergem justamente no `event_date`, então a segunda **não
+  substitui** a primeira: entra ao lado. Insert-only não tem como superseder.
+
+Ou seja: a brapi serviu, naquela semana de julho, um retrato degradado em que
+`paymentDate` vinha igual a `lastDatePrior` no dia 1 do mês; o nosso código
+copiou fielmente; e o banco guardou as duas versões porque a chave não sabe que
+são o mesmo pagamento. O armazém local escapou porque sua carga de FII é de
+27/06, anterior ao episódio.
+
+**A ingestão de hoje é segura — verificado no dado, não no código.** A mesma
+rotina rodou hoje (644 payloads `quote_fii_full`) e o payload de RELG11 voltou
+com 58 proventos e **zero** colapsados, defasagem real de 7 dias em todos. Das
+24 linhas gravadas hoje em tickers terminados em 11, as 22 colapsadas são
+IGTI11 — que é unit de ação, não FII, em evento antigo no qual a brapi publica
+uma data só. Sem gêmea de calendário real, o filtro as mantém, que é o
+comportamento correto.
+
+**O que fica como risco residual.** A fonte é variável e a chave natural não
+consegue superseder vintage. Se a brapi repetir um retrato degradado, o banco
+volta a acumular as duas safras — e a defesa é o filtro de leitura, não a
+ingestão. Por isso ele mora em `core/dividend_types.py` e não num script de
+limpeza pontual.
