@@ -12,7 +12,9 @@ psycopg2-binary>=2.9.0,<3.0.0
 # Parquet+zstd sao 25 MB, e o DuckDB roda o MESMO SQL por cima dos arquivos.
 # Ver core/rag_store.py. Sem duckdb o app cai na reserva em Postgres.
 duckdb>=1.1.0,<2.0.0
-pyarrow>=16.0.0,<22.0.0  # escrita das particoes em scripts/publish_rag_corpus_parquet.py
+# PyArrow 22+ fornece wheel para Python 3.14; versões anteriores tentam compilar
+# do código-fonte no Streamlit Community Cloud, que não inclui cmake.
+pyarrow>=22.0.0,<26.0.0
 python-dotenv>=1.0.0,<2.0.0
 openai>=1.63.0,<2.0.0
 yfinance>=0.2.50,<0.3.0
