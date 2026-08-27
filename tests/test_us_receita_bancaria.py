@@ -107,8 +107,14 @@ def test_trimestral_segue_a_mesma_regra():
 
 
 def test_versao_do_parser_subiu():
-    """A mudanca reescreve receita ja ingerida: sem bump, a re-ingestao nao sabe."""
-    assert ef.PARSER_VERSION == "companyfacts-parser-v6"
+    """A mudanca reescreve receita ja ingerida: sem bump, a re-ingestao nao sabe.
+
+    Prende o piso, nao a versao exata: cravar "v6" fazia o teste quebrar em
+    todo bump seguinte e ser consertado editando o literal -- o que nao checa
+    nada. O A-138 exigiu chegar a v6; quem subir depois passa por aqui.
+    """
+    assert ef.PARSER_VERSION.startswith("companyfacts-parser-v")
+    assert int(ef.PARSER_VERSION.rsplit("v", 1)[1]) >= 6
 
 
 # ── A-142: a qualificacao do filer ───────────────────────────────────────────
