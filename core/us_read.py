@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 import pandas as pd
 from sqlalchemy import bindparam, text
 
+from core.us_instrumento import motivo_exclusao_ativo
+
 logger = logging.getLogger("us_read")
 
 _FACT_TABLES = ("income_statements", "balance_sheets", "cash_flow_statements",
@@ -554,6 +556,28 @@ def _parse_json_col(value):
         return None
 
 
+def _apenas_acoes(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove da vitrine o que não é ação (A-140).
+
+    O filtro roda na LEITURA, e não só na ingestão, porque a vitrine publicada é
+    anterior a esta regra: os 128 REITs já gravados continuariam na tela até a
+    próxima republicação. Depois dela o filtro vira idempotente -- não sobra o
+    que remover -- e continua sendo a rede de segurança se uma vitrine antiga
+    for restaurada.
+    """
+    if df.empty:
+        return df
+    fora = df.apply(
+        lambda r: motivo_exclusao_ativo(
+            r.get("symbol"), r.get("security_type"), r.get("sector"),
+            industry=r.get("industry"), name=r.get("name"),
+            is_reit=r.get("is_reit")) is not None,
+        axis=1)
+    if fora.any():
+        logger.info("vitrine EUA: %d linhas fora do universo de ações", int(fora.sum()))
+    return df.loc[~fora].reset_index(drop=True)
+
+
 def _snapshot_df(extra_json: str | None = None,
                  extra_jsons: tuple[str, ...] = ()) -> pd.DataFrame:
     eng = _engine()
@@ -565,12 +589,13 @@ def _snapshot_df(extra_json: str | None = None,
     cols.extend(c for c in extra_jsons if c not in cols)
     try:
         with eng.connect() as conn:
-            return pd.read_sql(text(
+            df = pd.read_sql(text(
                 f"SELECT {', '.join(cols)} FROM market_us.company_snapshots "
                 f"ORDER BY score DESC NULLS LAST"), conn)
     except Exception as exc:  # noqa: BLE001
         logger.warning("_snapshot_df falhou: %s", exc)
         return pd.DataFrame()
+    return _apenas_acoes(df)
 
 
 def load_snapshot_scored() -> pd.DataFrame:
@@ -732,7 +757,10 @@ def load_snapshot_overview() -> dict:
         return base
     base["companies"] = base["assets"] = base["with_statements"] = len(df)
     base["sectors"] = int(df["sector"].dropna().nunique())
-    base["reits"] = int(df["is_reit"].fillna(False).sum())
+    # A-140: REIT nao entra mais no universo de analise, entao contar `is_reit`
+    # no frame ja filtrado devolveria zero sempre. O numero que interessa ao
+    # usuario e quantos ficaram DE FORA -- medido na vitrine crua.
+    base["reits"] = _contagem_fora_do_universo()
     base["delisted"] = int((~df["is_active"].fillna(True)).sum())
     eng = _engine()
     try:
@@ -1008,3 +1036,30 @@ def load_precos_mensais_us(symbols: tuple[str, ...], *, engine=None) -> pd.DataF
     mensal = wide.resample("ME").last()           # último preço válido de cada mês
     mensal.columns = [str(c).strip().upper() for c in mensal.columns]
     return mensal.dropna(how="all")
+
+
+def _contagem_fora_do_universo() -> int:
+    """Quantas linhas da vitrine crua o filtro de ações remove (A-140).
+
+    Existe porque a Visão Geral mostrava "REITs: 128" lendo o frame já filtrado,
+    onde a resposta é sempre zero. Um zero ali leria como "não há REIT na base",
+    quando o certo é "128 REITs foram excluídos da análise".
+    """
+    eng = _engine()
+    if eng is None:
+        return 0
+    try:
+        with eng.connect() as conn:
+            bruto = pd.read_sql(text(
+                "SELECT symbol, name, sector, industry, security_type, is_reit "
+                "FROM market_us.company_snapshots"), conn)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_contagem_fora_do_universo falhou: %s", exc)
+        return 0
+    if bruto.empty:
+        return 0
+    return int(bruto.apply(
+        lambda r: motivo_exclusao_ativo(
+            r.get("symbol"), r.get("security_type"), r.get("sector"),
+            industry=r.get("industry"), name=r.get("name"),
+            is_reit=r.get("is_reit")) is not None, axis=1).sum())

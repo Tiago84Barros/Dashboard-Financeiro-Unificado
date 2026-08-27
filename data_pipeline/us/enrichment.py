@@ -6,42 +6,17 @@ brutos; nenhuma delas apaga observações históricas.
 """
 from __future__ import annotations
 
-import re
 from datetime import date
 
 from sqlalchemy import text
 
+from core.us_instrumento import motivo_exclusao_ativo
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 
-_NON_OPERATING_SECTORS = {"blank checks"}
-_EXPLICIT_NON_COMMON = re.compile(r"(?:-P[A-Z0-9]?|-WT|-WS|-UN)$")
-_NASDAQ_ISSUE_SUFFIX = re.compile(r"^[A-Z]{4,}[WRU]$")
-
-
-def instrument_exclusion_reason(symbol: str | None, security_type: str | None,
-                                sector: str | None,
-                                related_symbols: tuple[str, ...] = ()) -> str | None:
-    """Retorna motivo auditável quando o ativo não é ação operacional ordinária."""
-    sym = str(symbol or "").upper().strip()
-    sec = str(security_type or "common").lower().strip()
-    sector_norm = str(sector or "").lower().strip()
-    if sec in {"etf", "fund", "spac", "preferred", "warrant", "right", "unit"}:
-        return "instrumento sem ação operacional ordinária"
-    if sector_norm in _NON_OPERATING_SECTORS:
-        return "companhia de cheque em branco (SPAC)"
-    if _EXPLICIT_NON_COMMON.search(sym):
-        return "preferencial, warrant ou unit"
-    if _NASDAQ_ISSUE_SUFFIX.fullmatch(sym):
-        return "sufixo Nasdaq de warrant, right ou unit"
-    base = sym[:-1] if sym.endswith(("W", "R", "U")) else ""
-    if base and any(
-            str(other).upper() != sym
-            and len(str(other).upper()) == len(sym)
-            and str(other).upper()[:-1] == base
-            and str(other).upper()[-1] in "WRU"
-            for other in related_symbols):
-        return "classe acessória de companhia sem ação ordinária identificada"
-    return None
+# A-140: a regra de quem e ativo analisavel mora em core/us_instrumento.py --
+# a leitura da vitrine precisa da MESMA regra, e duplica-la aqui garantiria que
+# as duas divergissem na primeira alteracao.
+instrument_exclusion_reason = motivo_exclusao_ativo
 
 
 def classify_assets(engine) -> dict:
@@ -66,6 +41,7 @@ def classify_assets(engine) -> dict:
         matched = conn.execute(text(sql_match)).rowcount
         assets = conn.execute(text("""
             SELECT a.id,a.company_id,a.symbol,a.security_type,c.sector,
+              c.industry,c.name,c.is_reit,
               EXISTS (SELECT 1 FROM market_us.income_statements i
                       WHERE i.company_id=a.company_id) has_income,
               EXISTS (SELECT 1 FROM market_us.balance_sheets b
@@ -85,7 +61,9 @@ def classify_assets(engine) -> dict:
             cid = int(row["company_id"]) if row["company_id"] is not None else None
             reason = instrument_exclusion_reason(
                 row["symbol"], row["security_type"], row["sector"],
-                symbols_by_company.get(cid, ()))
+                symbols_by_company.get(cid, ()),
+                industry=row["industry"], name=row["name"],
+                is_reit=row["is_reit"])
             if reason:
                 status = "excluded"
             elif cid is None:

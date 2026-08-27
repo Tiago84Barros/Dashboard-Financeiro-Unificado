@@ -15,6 +15,8 @@ Puro (pandas em memória). Coberto por tests/test_us_score.py.
 """
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 
 from core.us_metrics import LOWER_IS_BETTER
@@ -46,11 +48,16 @@ DEFAULT_TRACK_WEIGHTS: dict[str, float] = {
     "capital_efficiency": 0.15, "valuation": 0.18, "shareholder": 0.12,
 }
 
-# Ajustes por setor (economicamente justificados). REIT: lucro/EBIT distorcem →
-# menos peso em qualidade contábil e valuation por lucro, mais em retorno/solidez.
+# Ajustes por setor (economicamente justificados). Banco: a alavancagem
+# contábil é o negócio, não um risco a punir — dívida/EBITDA e cobertura de
+# juros não significam para ele o que significam para uma indústria.
+#
+# A-140: o bloco "Real Estate" saiu daqui. Ele existia porque lucro e EBIT de
+# REIT são distorcidos pela depreciação de imóvel; a resposta a isso deixou de
+# ser reponderar e passou a ser excluir -- o módulo americano analisa ações, e
+# REIT não é ação (core/us_instrumento.py). Manter os pesos seria guardar um
+# ramo que nenhum dado alcança.
 SECTOR_TRACK_OVERRIDES: dict[str, dict[str, float]] = {
-    "Real Estate": {"quality": 0.15, "valuation": 0.12, "shareholder": 0.20,
-                    "solidity": 0.20, "growth": 0.18, "capital_efficiency": 0.15},
     "Financial Services": {"quality": 0.24, "valuation": 0.20, "solidity": 0.10,
                            "capital_efficiency": 0.16, "growth": 0.18,
                            "shareholder": 0.12},
@@ -94,15 +101,49 @@ def _impairment_flags_at(frame: pd.DataFrame, i: int) -> tuple[str, ...]:
     return tuple(valor)
 
 
+# A-139: `sector` na vitrine EUA guarda a DESCRIÇÃO SIC do formulário da SEC
+# ("State Commercial Banks", "National Commercial Banks"), não o rótulo GICS que
+# `SECTOR_TRACK_OVERRIDES` assume. Medido no armazém: "Financial Services" batia
+# em ZERO das 2.831 linhas — os pesos por setor e a penalidade de confiança
+# abaixo eram código economicamente justificado, documentado, e morto.
+#
+# Os padrões são ancorados por termo, não por substring solta: um regex ingênuo
+# com "dealer" arrasta "Retail-Auto Dealers & Gasoline Stations" para dentro do
+# setor financeiro.
+_SIC_FINANCEIRO = re.compile(
+    r"(?:^|[^a-z])(?:bank(?:s|ing)?|savings institutions?|insurance|"
+    r"security (?:&|and) commodity brokers|security brokers|"
+    r"commodity contracts brokers|investment advice|finance services|"
+    r"loan brokers|mortgage bankers|credit institutions?|credit agencies|"
+    r"investors, nec|consumer credit reporting|business credit)",
+    re.IGNORECASE,
+)
+
+def sector_group(sector: object) -> str | None:
+    """Traduz a descrição SIC para o rótulo que a metodologia por setor usa.
+
+    Devolve "Financial Services" ou o próprio setor quando nenhum grupo com
+    tratamento específico se aplica. REIT não aparece aqui: ele é excluído do
+    universo antes do score (core/us_instrumento.py), não reponderado.
+    """
+    texto = str(sector or "").strip()
+    if not texto:
+        return None
+    if _SIC_FINANCEIRO.search(texto):
+        return "Financial Services"
+    return texto
+
+
 def _sector_confidence_penalty(sector: object) -> float:
     """Penaliza categorias ainda atendidas por proxies contábeis genéricas."""
-    return 0.85 if str(sector or "") in {"Real Estate", "Financial Services"} else 1.0
+    return 0.85 if sector_group(sector) == "Financial Services" else 1.0
 
 
 def _weights_for(sector: str | None) -> dict[str, float]:
     w = dict(DEFAULT_TRACK_WEIGHTS)
-    if sector and sector in SECTOR_TRACK_OVERRIDES:
-        w.update(SECTOR_TRACK_OVERRIDES[sector])
+    grupo = sector_group(sector)
+    if grupo and grupo in SECTOR_TRACK_OVERRIDES:
+        w.update(SECTOR_TRACK_OVERRIDES[grupo])
     total = sum(w.values())
     return {k: v / total for k, v in w.items()}  # renormaliza
 

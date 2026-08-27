@@ -82,9 +82,11 @@ def test_industry_comparison():
 
 
 def test_weights_renormalizam_e_override_setor():
-    w = sc._weights_for("Real Estate")
+    # A-139/A-140: o override vivo e o do banco, chaveado pela descricao SIC.
+    # O de REIT foi removido -- REIT nao entra no universo de acoes.
+    w = sc._weights_for("State Commercial Banks")
     assert sum(w.values()) == pytest.approx(1.0)
-    assert w["shareholder"] > sc.DEFAULT_TRACK_WEIGHTS["shareholder"]  # REIT dá mais peso
+    assert w["solidity"] < sc.DEFAULT_TRACK_WEIGHTS["solidity"]
     w2 = sc._weights_for(None)
     assert sum(w2.values()) == pytest.approx(1.0)
 

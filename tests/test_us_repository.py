@@ -68,8 +68,14 @@ def test_exclui_spac_e_classes_nao_ordinarias():
 def test_preserva_ticker_comum_que_termina_em_w():
     assert instrument_exclusion_reason("HROW", "common", "Pharmaceuticals") is None
     assert instrument_exclusion_reason("LAW", "common", "Software") is None
+    # A-140: ABR e REIT e passou a ser EXCLUIDO -- o modulo analisa acoes.
+    # O que este teste guarda e o sufixo, entao o caso equivalente e uma acao
+    # comum cujo ticker termina em W/R/U convivendo com preferenciais.
     assert instrument_exclusion_reason(
-        "ABR", "reit", "Real Estate", ("ABR", "ABR-PD", "ABR-PE")) is None
+        "MTB", "common", "State Commercial Banks",
+        ("MTB", "MTB-PH", "MTB-PJ")) is None
+    assert instrument_exclusion_reason(
+        "ABR", "reit", "Real Estate", ("ABR", "ABR-PD", "ABR-PE")) is not None
 
 
 def test_exclui_unit_curta_quando_companhia_so_tem_classes_acessorias():
