@@ -140,17 +140,31 @@ def _ensure_schema(engine) -> str:
         for _mig in _MIGRATIONS:
             _exec_retry(engine, text(_mig.read_text(encoding="utf-8")))
         return "criado"
-    missing = {
-        "score_confidence": "NUMERIC(6,2)",
-        "score_status": "TEXT",
-        "critical_missing": "JSONB",
-    }
-    missing_columns = [column for column in missing if column not in columns]
+    # O que falta sai de `_COLS` -- a MESMA lista que monta o INSERT. Antes
+    # saia de um dicionario de tres colunas mantido a mao, e as duas listas
+    # divergiram: a migration 051 (is_investment_company) estava escrita e
+    # registrada em `_MIGRATIONS`, mas `_MIGRATIONS` so roda quando a tabela
+    # NAO existe. Na vitrine ja criada o upgrade consultava o dicionario, nao
+    # via a coluna nova, devolvia "verificado" -- e o upsert quebrava no
+    # primeiro lote contra uma coluna inexistente. Derivar do escritor faz as
+    # duas concordarem por construcao, e nao por memoria de quem edita.
+    missing_columns = [column for column in _COLS if column not in columns]
     if not missing_columns:
         # O primeiro upgrade já aplicou RLS/revogações. Evita adquirir lock DDL
         # novamente em cada retomada de uma carga grande.
         return "verificado"
-    for column, data_type in missing.items():
+    # As migrations sao idempotentes (ADD COLUMN IF NOT EXISTS, guardadas por
+    # to_regclass) e servem tanto a criacao quanto ao upgrade.
+    for _mig in _MIGRATIONS:
+        _exec_retry(engine, text(_mig.read_text(encoding="utf-8")))
+    # Colunas cuja migration de origem (045) toca tabelas que a vitrine remota
+    # nao carrega: ali a migration inteira falharia, entao vao por ALTER solto.
+    tipos_avulsos = {
+        "score_confidence": "NUMERIC(6,2)",
+        "score_status": "TEXT",
+        "critical_missing": "JSONB",
+    }
+    for column, data_type in tipos_avulsos.items():
         if column not in columns:
             _exec_retry(engine, text(
                 f"ALTER TABLE market_us.company_snapshots "
