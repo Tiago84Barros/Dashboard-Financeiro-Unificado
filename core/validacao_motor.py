@@ -31,11 +31,31 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["EstadoValidacao", "validacao_b3", "validacao_fii", "validacao_us"]
+__all__ = ["EstadoValidacao", "Portao", "validacao_b3", "validacao_fii",
+           "validacao_us"]
 
 
 _SEM_VINTAGES = ("vitrine publicada sem score_vintages e preços mensais: "
                  "nenhum retorno histórico foi simulado")
+
+
+@dataclass(frozen=True)
+class Portao:
+    """Uma condicao nomeada que a validacao temporal exige.
+
+    Existe para que "metodologia validada" deixe de ser um sim/nao. O indice de
+    confianca lia esse booleano e o publicava como `100.0 if ok else 50.0` -- e
+    o 50 era uma constante, nao uma medicao. Na pratica o numero nao se mexia:
+    marcava 50 antes de o PIT estrito ser liberado em producao e 50 depois,
+    incapaz de registrar que um bloqueador real havia caido.
+
+    Com os portoes declarados, a nota e a fracao vencida, e ela se move quando o
+    trabalho avanca. `ok=None` e nao apurado, e nunca conta como vencido.
+    """
+
+    nome: str
+    ok: bool | None
+    detalhe: str = ""
 
 
 @dataclass(frozen=True)
@@ -52,6 +72,22 @@ class EstadoValidacao:
     aprovada: bool | None
     bloqueadores: tuple[str, ...] = ()
     detalhe: str = ""
+    portoes: tuple[Portao, ...] = ()
+
+    @property
+    def fracao_aprovada(self) -> float | None:
+        """Fracao dos portoes APURADOS que foram vencidos. ``None`` = nao apurado.
+
+        Sem portoes declarados, cai no booleano -- 1.0 ou 0.0, nunca um meio
+        termo inventado. Reprovar em portao unico vale zero: credito parcial so
+        existe onde ha mais de uma condicao e uma delas foi de fato cumprida.
+        """
+        apurados = [p for p in self.portoes if p.ok is not None]
+        if apurados:
+            return sum(1.0 for p in apurados if p.ok) / len(apurados)
+        if self.aprovada is None:
+            return None
+        return 1.0 if self.aprovada else 0.0
 
     @property
     def rotulo(self) -> str:
@@ -73,6 +109,13 @@ class EstadoValidacao:
                 f"ela ainda não foi verificada fora da amostra.")
 
 
+def _detalhe(bloqueadores: tuple[str, ...], marca: str) -> str:
+    for b in bloqueadores:
+        if marca in b:
+            return b[:90]
+    return ""
+
+
 def _falha(classe: str, versao: str, exc: Exception) -> EstadoValidacao:
     logger.warning("validacao_motor %s: %s", classe, exc)
     return EstadoValidacao(classe, versao, None,
@@ -87,8 +130,12 @@ def validacao_b3(engine=None) -> EstadoValidacao:
         from core.database import get_engine
         pronto = validation_readiness(build_data_manifest(engine or get_engine()))
         bloq = tuple(str(b) for b in (pronto.get("blockers") or []))
+        portoes = tuple(
+            Portao(nome, not any(marca in b for b in bloq), _detalhe(bloq, marca))
+            for nome, marca in (("PIT estrito", "PIT estrito"),
+                                ("Universo de deslistadas", "deslistadas")))
         return EstadoValidacao("Empresas B3", SCORE_VERSION,
-                               bool(pronto.get("ready")), bloq)
+                               bool(pronto.get("ready")), bloq, portoes=portoes)
     except Exception as exc:  # noqa: BLE001
         return _falha("Empresas B3", SCORE_VERSION, exc)
 
@@ -100,10 +147,52 @@ def validacao_fii() -> EstadoValidacao:
         from core.market_read import load_fii_validation_status
         val = load_fii_validation_status(METHODOLOGY_VERSION) or {}
         bloq = tuple(str(b) for b in (val.get("blockers") or []))
+        passou = str(val.get("status")) == "passed"
+        # Portao unico: o certificado PIT ou existe e aprovou, ou nao. Aqui nao
+        # cabe credito parcial -- e por isso que reprovar vale zero, e nao a
+        # metade que a formula antiga concedia de graca.
+        portoes = (Portao("Certificado PIT", passou,
+                          "; ".join(bloq)[:90] if bloq else ""),)
         return EstadoValidacao("Seleção de FIIs", METHODOLOGY_VERSION,
-                               str(val.get("status")) == "passed", bloq)
+                               passou, bloq, portoes=portoes)
     except Exception as exc:  # noqa: BLE001
         return _falha("Seleção de FIIs", METHODOLOGY_VERSION, exc)
+
+
+def _deslistadas_us() -> Portao:
+    """O universo historico americano observa empresas que pararam de negociar?
+
+    Medido em 27/08/2026: `delisted_date` era NULL nos 7.654 registros de
+    `market_us.assets`, e nenhuma empresa deslistada entrava em
+    `score_vintages`. A coluna existe e o pipeline a le em
+    `data_pipeline/us/scoring_history.py`; ninguem nunca a preencheu.
+
+    Ate aqui o motor americano tinha UM portao -- "existe painel PIT" -- enquanto
+    a B3 tinha dois, e o segundo da B3 era justamente sobrevivencia. O resultado
+    era o defeito do A-153 repetido em outro eixo: a classe que MEDE a limitacao
+    pontuava pior que a classe que nao a mede. O EUA nao estava melhor; estava
+    sem regua.
+
+    Devolve `ok=None` quando a fonte nao e alcancavel -- na producao publicada o
+    schema so tem `company_snapshots` e `prices_monthly`. Nao apurado nao vira
+    reprovado nem aprovado; some da fracao e declara que sumiu.
+    """
+    from sqlalchemy import text
+    try:
+        from core.database import get_engine
+        with get_engine().connect() as conn:
+            n = conn.execute(text(
+                "SELECT count(*) FROM market_us.assets "
+                "WHERE delisted_date IS NOT NULL")).scalar()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("deslistadas_us nao apurado: %s", type(exc).__name__)
+        return Portao("Universo de deslistadas", None,
+                      "fonte de deslistagem nao alcancavel nesta base")
+    n = int(n or 0)
+    return Portao(
+        "Universo de deslistadas", n > 0,
+        f"{n} deslistagens no universo" if n
+        else "nenhuma deslistagem ingerida: o historico so tem sobreviventes")
 
 
 def validacao_us(history_available: object = None) -> EstadoValidacao:
@@ -119,13 +208,19 @@ def validacao_us(history_available: object = None) -> EstadoValidacao:
         pronto = bool(history_available)
         return EstadoValidacao(
             "Empresas Americanas", v, pronto,
-            () if pronto else (_SEM_VINTAGES,))
+            () if pronto else (_SEM_VINTAGES,),
+            portoes=(Portao("Painel PIT", pronto,
+                            "" if pronto else _SEM_VINTAGES),
+                     _deslistadas_us()))
     try:
         import core.us_data as us
         painel = us.score_panel()
         pronto = painel is not None and not painel.empty
         return EstadoValidacao(
             "Empresas Americanas", v, pronto,
-            () if pronto else (_SEM_VINTAGES,))
+            () if pronto else (_SEM_VINTAGES,),
+            portoes=(Portao("Painel PIT", pronto,
+                            "" if pronto else _SEM_VINTAGES),
+                     _deslistadas_us()))
     except Exception as exc:  # noqa: BLE001
         return _falha("Empresas Americanas", v, exc)

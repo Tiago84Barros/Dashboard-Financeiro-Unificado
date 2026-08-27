@@ -41,11 +41,17 @@ def test_a_soma_dos_pesos_continua_um():
 
 
 def test_vitrine_fresca_nao_afirma_mais_metodologia_validada(monkeypatch):
-    """Vitrine gerada hoje com PIT pendente: um componente alto, outro baixo."""
+    """Vitrine gerada hoje com PIT pendente: um componente alto, outro ZERO.
+
+    Ate 27/08/2026 este teste exigia 50.0, herdado da formula
+    ``100.0 if ok else 50.0``. O 50 nunca foi medicao: era credito concedido a
+    uma validacao que nao aconteceu. Com um unico portao e ele reprovado, a
+    resposta honesta e zero -- credito parcial exige que alguma condicao real
+    tenha sido cumprida, e aqui nenhuma foi.
+    """
     s = _us(monkeypatch, EstadoValidacao("Empresas Americanas", "0.5.0", False,
                                          ("sem score_vintages",)))
-    assert _comp(s, "Metodologia validada").pct == 50.0
-    assert "score_vintages" in _comp(s, "Metodologia validada").evidencia
+    assert _comp(s, "Metodologia validada").pct == 0.0
 
 
 def test_pit_aprovado_vale_cem(monkeypatch):
@@ -62,7 +68,51 @@ def test_nao_apurado_nao_vira_zero_nem_cem(monkeypatch):
 
 
 def test_b3_e_eua_medem_a_mesma_coisa_sob_o_mesmo_rotulo():
-    """Era o defeito: mesmo nome, uma lia PIT e a outra lia idade de vitrine."""
+    """Era o defeito: mesmo nome, uma lia PIT e a outra lia idade de vitrine.
+
+    O valor deixou de ser do conjunto {None, 50, 100}: agora e a fracao dos
+    portoes vencidos, entao qualquer percentual e legitimo. O que este teste
+    protege e a origem -- as duas secoes leem `core.validacao_motor`, e a
+    evidencia diz quantos portoes foram apurados em vez de afirmar sem mostrar.
+    """
     for secao in (cs.confianca_b3(), cs.confianca_us()):
         c = _comp(secao, "Metodologia validada")
-        assert c is not None and c.pct in (None, 50.0, 100.0)
+        assert c is not None
+        assert c.pct is None or 0.0 <= c.pct <= 100.0
+        assert c.pct is None or "portoes" in c.evidencia
+
+
+def test_credito_parcial_so_com_portao_de_fato_vencido(monkeypatch):
+    """Dois portoes, um vencido: 50 -- agora medido, nao cravado."""
+    from core.validacao_motor import Portao
+    s = _us(monkeypatch, EstadoValidacao(
+        "Empresas Americanas", "0.5.0", False, ("x",),
+        portoes=(Portao("Painel PIT", True), Portao("Universo de deslistadas", False))))
+    c = _comp(s, "Metodologia validada")
+    assert c.pct == 50.0
+    assert "1/2 portoes" in c.evidencia
+
+
+def test_portao_nao_apurado_sai_da_conta_e_se_declara(monkeypatch):
+    """Nao apurado nunca vira reprovado: some da fracao e e nomeado."""
+    from core.validacao_motor import Portao
+    s = _us(monkeypatch, EstadoValidacao(
+        "Empresas Americanas", "0.5.0", False, ("x",),
+        portoes=(Portao("Painel PIT", False),
+                 Portao("Universo de deslistadas", None, "fonte inalcancavel"))))
+    c = _comp(s, "Metodologia validada")
+    assert c.pct == 0.0
+    assert "0/1 portoes" in c.evidencia
+    assert "nao apurado: Universo de deslistadas" in c.evidencia
+
+
+def test_eua_tem_o_portao_de_sobrevivencia_que_so_a_b3_tinha():
+    """A-153 outra vez, em outro eixo: quem media a limitacao pontuava pior.
+
+    O motor americano tinha UM portao ("existe painel PIT") enquanto a B3 tinha
+    dois, e o segundo da B3 era sobrevivencia. O EUA nao estava melhor -- estava
+    sem regua, num universo onde `delisted_date` e NULL em todos os registros.
+    """
+    from core.validacao_motor import validacao_us
+    nomes = [p.nome for p in validacao_us().portoes]
+    assert "Universo de deslistadas" in nomes

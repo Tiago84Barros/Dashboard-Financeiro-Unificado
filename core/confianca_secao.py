@@ -32,6 +32,44 @@ from core.universo_decisao import Universo, universo_b3, universo_fii, universo_
 
 logger = logging.getLogger(__name__)
 
+def _metodologia(est, peso: float, sufixo: str = "") -> "Componente":
+    """Componente "Metodologia validada" a partir do estado do motor.
+
+    Ate 27/08/2026 os tres blocos abaixo montavam este componente cada um do seu
+    jeito, e todos com a mesma formula: ``100.0 if ok else 50.0``. O 50 era uma
+    constante apresentada como percentual -- credito nao merecido por uma
+    validacao que nao aconteceu. E, pior, ela nao se movia: a B3 marcava 50 antes
+    de o PIT estrito ser liberado em producao e 50 depois, incapaz de registrar
+    que um dos dois bloqueadores tinha caido de verdade.
+
+    Agora a nota e a fracao dos portoes declarados que foram vencidos. Portao nao
+    apurado sai da conta e declara que saiu -- a mesma regra que vale para todo
+    componente deste modulo. Uma classe com portao unico reprovado tira zero:
+    credito parcial exige que alguma condicao real tenha sido cumprida.
+    """
+    frac = est.fracao_aprovada
+    if frac is None:
+        return Componente("Metodologia validada", None, peso,
+                          est.detalhe or "nao apurado")
+    apurados = [p for p in est.portoes if p.ok is not None]
+    if apurados:
+        venc = [p.nome for p in apurados if p.ok]
+        falt = [f"{p.nome} ({p.detalhe[:60]})" if p.detalhe else p.nome
+                for p in apurados if not p.ok]
+        partes = [f"{len(venc)}/{len(apurados)} portoes"]
+        if venc:
+            partes.append("ok: " + ", ".join(venc))
+        if falt:
+            partes.append("pendente: " + "; ".join(falt))
+        nao_apurados = [p.nome for p in est.portoes if p.ok is None]
+        if nao_apurados:
+            partes.append("nao apurado: " + ", ".join(nao_apurados))
+        evid = " - ".join(partes)[:220]
+    else:
+        evid = "validacao aprovada" if frac >= 1.0 else "validacao pendente"
+    return Componente("Metodologia validada", frac * 100.0, peso, evid + sufixo)
+
+
 FAIXA_ALTA = 75.0
 FAIXA_MEDIA = 55.0
 
@@ -271,15 +309,8 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
     comps.append(_abrangencia(u))
 
     try:
-        from core.b3_validation import build_data_manifest, validation_readiness
-        from core.database import get_engine
-        pronto = validation_readiness(build_data_manifest(engine or get_engine()))
-        ok = bool(pronto.get("ready"))
-        bloq = pronto.get("blockers") or []
-        comps.append(Componente(
-            "Metodologia validada", 100.0 if ok else 50.0, 0.25,
-            "validacao estrita liberada" if ok
-            else f"gate nao-estrito: {'; '.join(bloq)[:90]}"))
+        from core.validacao_motor import validacao_b3
+        comps.append(_metodologia(validacao_b3(engine=engine), 0.25))
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
@@ -330,17 +361,12 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     # passou a mentir na direcao oposta - conservadora, mas ainda errada.
     # Numero cravado envelhece em silencio; medicao nao.
     try:
-        from core.fii_methodology import METHODOLOGY_VERSION
         from core.market_read import load_fii_validation_status
-        val = load_fii_validation_status()
-        st_val = str(val.get("status") or "unvalidated")
-        blockers = val.get("blockers") or []
-        comps.append(Componente(
-            "Metodologia validada", 100.0 if st_val == "passed" else 50.0, 0.25,
-            f"validacao PIT {METHODOLOGY_VERSION}: {st_val}"
-            + (f" ({'; '.join(map(str, blockers))[:70]})" if blockers else "")
-            + (f", referencia {val.get('as_of_date')}"
-               if val.get("as_of_date") else "")))
+        from core.validacao_motor import validacao_fii
+        ref = (load_fii_validation_status() or {}).get("as_of_date")
+        comps.append(_metodologia(
+            validacao_fii(), 0.25,
+            sufixo=f", referencia {ref}" if ref else ""))
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
@@ -428,15 +454,7 @@ def confianca_us(engine=None) -> ConfiancaSecao:
     # permanece, repartido entre as duas perguntas que ele conflatava.
     try:
         from core.validacao_motor import validacao_us
-        est = validacao_us()
-        if est.aprovada is None:
-            comps.append(Componente("Metodologia validada", None, 0.15,
-                                    est.detalhe or "nao apurado"))
-        else:
-            comps.append(Componente(
-                "Metodologia validada", 100.0 if est.aprovada else 50.0, 0.15,
-                "validacao PIT aprovada" if est.aprovada
-                else f"PIT pendente: {'; '.join(est.bloqueadores)[:90]}"))
+        comps.append(_metodologia(validacao_us(), 0.15))
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.15,
                                 f"nao medido: {type(exc).__name__}"))
