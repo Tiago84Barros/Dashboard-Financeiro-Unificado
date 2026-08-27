@@ -52,18 +52,33 @@ def garantir_tabela(conn) -> None:
 
 def gravar(conn, entregas) -> int:
     """Upsert idempotente. Reapresentacao posterior sobrescreve a data anterior;
-    e o ponto: a versao mais recente e a que o banco guarda."""
+    e o ponto: a versao mais recente e a que o banco guarda.
+
+    O INSERT passa por ``unnest`` em vez de uma lista de dicionarios porque o
+    ``executemany`` do psycopg2 faz uma viagem de rede POR LINHA. Contra o
+    Postgres local isso e invisivel; contra o Supabase, os ~10.800 exercicios de
+    2010-2025 levavam mais de dez minutos e a gravacao remota estourava o tempo
+    antes de commitar qualquer coisa. Aqui e um statement so -- 13 segundos.
+    """
     from sqlalchemy import text
     if not entregas:
         return 0
-    payload = [{"cd": e.codigo_cvm, "ex": e.exercicio, "cat": e.categoria,
-                "disp": e.disponivel_em, "prim": e.primeira_entrega_em,
-                "v": e.versoes} for e in entregas]
+    params = {
+        "cod": [e.codigo_cvm for e in entregas],
+        "exe": [e.exercicio for e in entregas],
+        "cat": [e.categoria for e in entregas],
+        "dis": [e.disponivel_em for e in entregas],
+        "pri": [e.primeira_entrega_em for e in entregas],
+        "ver": [e.versoes for e in entregas],
+    }
     conn.execute(text("""
         INSERT INTO market.cvm_filing_publications (
             codigo_cvm, exercicio, categoria, disponivel_em,
             primeira_entrega_em, versoes)
-        VALUES (:cd, :ex, :cat, :disp, :prim, :v)
+        SELECT * FROM unnest(
+            CAST(:cod AS integer[]), CAST(:exe AS integer[]),
+            CAST(:cat AS text[]),   CAST(:dis AS date[]),
+            CAST(:pri AS date[]),   CAST(:ver AS integer[]))
         ON CONFLICT (codigo_cvm, exercicio, categoria) DO UPDATE SET
             disponivel_em = EXCLUDED.disponivel_em,
             primeira_entrega_em = LEAST(
@@ -72,8 +87,8 @@ def gravar(conn, entregas) -> int:
             versoes = GREATEST(market.cvm_filing_publications.versoes,
                                EXCLUDED.versoes),
             atualizado_em = now()
-    """), payload)
-    return len(payload)
+    """), params)
+    return len(entregas)
 
 
 # A UPDATE abaixo reescreve `available_at` de linhas ja gravadas. E deliberado e
