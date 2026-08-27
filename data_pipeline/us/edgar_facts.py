@@ -21,10 +21,13 @@ Puro (sem rede/DB). Coberto por tests/test_us_edgar_facts.py.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any, Optional
 
 from data_pipeline.us.normalize import content_hash, parse_date, to_float
+
+logger = logging.getLogger(__name__)
 
 _USD = "USD"
 _SHARES = "shares"
@@ -40,7 +43,7 @@ _EXCEL_EPOCH = date(1899, 12, 30)
 # Duração aceita como "anual" (10-K com exercícios de ~12 meses).
 _ANNUAL_MIN_DAYS, _ANNUAL_MAX_DAYS = 350, 380
 _QUARTERLY_MIN_DAYS, _QUARTERLY_MAX_DAYS = 70, 110
-PARSER_VERSION = "companyfacts-parser-v5"
+PARSER_VERSION = "companyfacts-parser-v6"
 
 # ── Mapas de conceitos (ordem = prioridade) ───────────────────────────────────
 INCOME_CONCEPTS: dict[str, list[str]] = {
@@ -82,9 +85,39 @@ BANK_REVENUE_CONCEPTS: dict[str, list[str]] = {
 }
 _BANK_AUX_FIELDS = tuple(BANK_REVENUE_CONCEPTS)
 
+# A-142: tags que SO um intermediario financeiro publica. O A-138 qualificava o
+# filer por `InterestIncomeExpenseNet`, e essa tag nao discrimina nada: e a linha
+# de resultado financeiro liquido, publicada por qualquer empresa com caixa ou
+# divida. Medido contra a SEC em 20 companhias, ela aparece em 10 das 12
+# NAO-financeiras (AMD, ADSK, MDT, CNP, YUMC, GME, MANH, JKHY, CASY, SIG); as
+# tres tags abaixo aparecem em 8 de 8 bancos e em 0 das 12 nao-financeiras.
+#
+# O estrago era do tamanho do erro de qualificacao: a AMD ficou com receita de
+# US$ 215 milhoes (a real e ~US$ 25,8 bilhoes -- o numero gravado era o juro do
+# caixa) e a Autodesk com receita NEGATIVA de US$ 82,4 milhoes, que e despesa
+# financeira liquida. Nao e receita subestimada; e outra grandeza no lugar dela.
+_BANK_MARKER_TAGS = (
+    "RevenuesNetOfInterestExpense",
+    "NoninterestIncome",
+    "InterestIncomeExpenseAfterProvisionForLoanLoss",
+    "InterestAndDividendIncomeOperating",
+)
+
+
+def _e_intermediario_financeiro(cf: dict) -> bool:
+    """Qualifica o filer pelo XBRL, no nivel da COMPANHIA, nao da linha.
+
+    Por companhia e nao por exercicio de proposito: um banco que num ano nao
+    reporta `NoninterestIncome` continua banco, e alternar a definicao de receita
+    ao longo da serie produziria CAGR e margens comparando grandezas diferentes.
+    """
+    return any(_entries(cf, tag, _USD) for tag in _BANK_MARKER_TAGS)
+
 
 def _bank_revenue(row: dict[str, Any]) -> Optional[float]:
-    """Receita da intermediacao financeira, ou None se o filer nao for um.
+    """Receita da intermediacao financeira, ou None se a linha nao a sustenta.
+
+    So e chamada para filer ja qualificado por `_e_intermediario_financeiro`.
 
     Substitui a receita generica em vez de so preencher lacuna: metade das
     financeiras JA tinha um numero, e era ele o defeito. Preencher o vazio e
@@ -99,6 +132,24 @@ def _bank_revenue(row: dict[str, Any]) -> Optional[float]:
     if juros is None and tarifas is None:
         return None
     return (juros or 0.0) + (tarifas or 0.0)
+
+
+def _aplicar_receita_bancaria(rows: list[dict], cf: dict, symbol: str | None) -> None:
+    """Substitui a receita nas linhas, so quando o filer e um banco."""
+    banco = _e_intermediario_financeiro(cf)
+    for r in rows:
+        substituta = _bank_revenue(r) if banco else None
+        if substituta is not None and substituta < 0:
+            # Receita negativa nao existe. Se a formula chega la, o insumo nao e
+            # o que se supos -- manter a generica e menos errado que publicar
+            # um denominador negativo em p_s e nas margens.
+            logger.warning("edgar_facts: %s receita bancaria negativa (%s); "
+                           "mantendo a receita generica", symbol or "?", substituta)
+            substituta = None
+        if substituta is not None:
+            r["revenue"] = substituta
+        for aux in _BANK_AUX_FIELDS:
+            r.pop(aux, None)
 
 
 INCOME_SHARE_CONCEPTS = {
@@ -310,6 +361,31 @@ def _collect_quarterly_units(cf: dict, concepts: dict, *, instant: bool = False)
     return out
 
 
+def _exercicio_publicavel(ano: int, symbol: str | None, referencia: Any) -> bool:
+    """Descarta o periodo cujo ano fiscal esta fora do dominio das tabelas.
+
+    A-141: `_FY_MIN.._FY_MAX` ja replicava aqui o CHECK das tres tabelas de
+    demonstracoes, mas nenhum dos dois construtores aplicava a faixa a linha que
+    emitia -- so `_sane_fiscal_year` a usava, e a partir do campo `fy`, nao da
+    data do periodo. Um fato XBRL com `end` em 1980 (SRPT tem um) gerava linha
+    valida para o parser e recusada pelo banco, e como o lote e gravado numa
+    transacao a empresa INTEIRA ficava sem fundamentos. Nao e caso de corrigir o
+    valor: um exercicio de 1980 no companyfacts e ruido de tagueamento, e as
+    linhas afetadas vinham sem nenhum valor financeiro.
+
+    O descarte e registrado em WARNING de proposito. Filtro silencioso aqui
+    viraria "a empresa nao tem esse ano" na leitura, que e afirmacao diferente.
+    """
+    if _FY_MIN <= ano <= _FY_MAX:
+        return True
+    logger.warning(
+        "edgar_facts: %s descartando periodo fora da faixa publicavel "
+        "(ano=%s, referencia=%s, faixa=%s..%s)",
+        symbol or "?", ano, referencia, _FY_MIN, _FY_MAX,
+    )
+    return False
+
+
 def _build_rows(collected: dict[str, dict], symbol: str | None = None) -> list[dict]:
     """Monta uma linha por período, com available_at conservador (filing mais tardio)."""
     ends: set[str] = set()
@@ -320,6 +396,8 @@ def _build_rows(collected: dict[str, dict], symbol: str | None = None) -> list[d
     for end in sorted(ends):
         d = parse_date(end)
         if d is None:
+            continue
+        if not _exercicio_publicavel(d.year, symbol, end):
             continue
         row: dict[str, Any] = {}
         filings: list[str] = []
@@ -357,6 +435,8 @@ def _build_quarterly_rows(collected: dict[str, dict], symbol: str | None = None)
         periods.update(per_field.keys())
     rows = []
     for fy, fq in sorted(periods):
+        if not _exercicio_publicavel(fy, symbol, f"{fy}Q{fq}"):
+            continue
         row: dict[str, Any] = {}
         filings: list[str] = []
         ends: list[str] = []
@@ -402,11 +482,7 @@ def build_income_rows(cf: dict, symbol: str | None = None) -> list[dict]:
         # EBIT não é tag XBRL: usa o resultado operacional (mesma definição do projeto)
         r["ebit"] = r.get("operating_income")
         r["ebitda"] = None        # exigiria D&A do fluxo; ausente > inventado
-        banco = _bank_revenue(r)
-        if banco is not None:
-            r["revenue"] = banco
-        for aux in _BANK_AUX_FIELDS:
-            r.pop(aux, None)
+    _aplicar_receita_bancaria(rows, cf, symbol)
     return rows
 
 
@@ -443,11 +519,9 @@ def build_income_quarterly_rows(cf: dict, symbol: str | None = None) -> list[dic
     for r in rows:
         r["ebit"] = r.get("operating_income")
         r["ebitda"] = None
-        banco = _bank_revenue(r)      # mesma regra do anual, sob pena de a serie
-        if banco is not None:         # trimestral contradizer o exercicio fechado
-            r["revenue"] = banco
-        for aux in _BANK_AUX_FIELDS:
-            r.pop(aux, None)
+    # mesma regra do anual, sob pena de a serie trimestral contradizer o
+    # exercicio fechado
+    _aplicar_receita_bancaria(rows, cf, symbol)
     return rows
 
 

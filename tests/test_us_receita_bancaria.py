@@ -69,8 +69,18 @@ def test_quem_nao_e_banco_mantem_a_receita_generica():
 
 
 def test_so_uma_das_duas_pernas_ainda_produz_receita():
-    """Banco sem receita nao-juros nao pode voltar a valer a tarifa de ASC 606."""
-    rows = ef.build_income_rows(_ano(InterestIncomeExpenseNet=10_793_928), "HYNE")
+    """Banco sem receita nao-juros nao pode voltar a valer a tarifa de ASC 606.
+
+    A-142: a versao original deste teste passava so `InterestIncomeExpenseNet`,
+    e com isso fixava o defeito -- essa tag sozinha nao identifica um banco
+    (10 de 12 nao-financeiras medidas na SEC a publicam). O que o teste quer
+    afirmar continua valendo, mas o filer precisa estar qualificado: aqui pelo
+    `InterestAndDividendIncomeOperating`, que so intermediario financeiro usa.
+    """
+    rows = ef.build_income_rows(_ano(
+        InterestAndDividendIncomeOperating=14_000_000,
+        InterestIncomeExpenseNet=10_793_928,
+    ), "HYNE")
     assert rows[0]["revenue"] == 10_793_928
 
 
@@ -98,4 +108,66 @@ def test_trimestral_segue_a_mesma_regra():
 
 def test_versao_do_parser_subiu():
     """A mudanca reescreve receita ja ingerida: sem bump, a re-ingestao nao sabe."""
-    assert ef.PARSER_VERSION == "companyfacts-parser-v5"
+    assert ef.PARSER_VERSION == "companyfacts-parser-v6"
+
+
+# ── A-142: a qualificacao do filer ───────────────────────────────────────────
+# O A-138 tratava como banco quem reportasse `InterestIncomeExpenseNet`. Medido
+# contra a SEC, essa tag aparece em 10 de 12 companhias NAO-financeiras -- ela e
+# a linha de resultado financeiro liquido, nao um marcador de intermediacao. A
+# AMD ficou com receita de US$ 215 milhoes (juro do caixa) e a Autodesk com
+# receita negativa de US$ 82,4 milhoes (despesa financeira liquida).
+def test_empresa_de_tecnologia_com_juros_de_caixa_mantem_a_receita_propria():
+    """O caso AMD: receita real preservada, juro do caixa fora do denominador."""
+    from data_pipeline.us.edgar_facts import build_income_rows
+    linhas = build_income_rows(_ano(**{
+        "RevenueFromContractWithCustomerExcludingAssessedTax": 25_785_000_000.0,
+        "InterestIncomeExpenseNet": 215_000_000.0,
+        "NetIncomeLoss": 1_641_000_000.0,
+    }), "AMD")
+    assert linhas and linhas[0]["revenue"] == 25_785_000_000.0
+    assert linhas[0]["revenue"] > linhas[0]["net_income"], "margem >100% e impossivel"
+
+
+def test_despesa_financeira_liquida_nunca_vira_receita_negativa():
+    """O caso ADSK: `InterestIncomeExpenseNet` negativo nao e receita."""
+    from data_pipeline.us.edgar_facts import build_income_rows
+    linhas = build_income_rows(_ano(**{
+        "RevenueFromContractWithCustomerExcludingAssessedTax": 5_497_000_000.0,
+        "InterestIncomeExpenseNet": -82_400_000.0,
+        "NetIncomeLoss": 906_000_000.0,
+    }), "ADSK")
+    assert linhas and linhas[0]["revenue"] == 5_497_000_000.0
+    assert linhas[0]["revenue"] > 0
+
+
+def test_banco_continua_com_a_receita_de_intermediacao():
+    """A correcao do A-138 nao pode ser desfeita pela do A-142."""
+    from data_pipeline.us.edgar_facts import build_income_rows
+    linhas = build_income_rows(_ano(**{
+        "RevenueFromContractWithCustomerExcludingAssessedTax": 619_000.0,
+        "InterestIncomeExpenseNet": 30_000_000.0,
+        "NoninterestIncome": 4_000_000.0,
+        "NetIncomeLoss": 7_200_000.0,
+    }), "AUBN")
+    assert linhas and linhas[0]["revenue"] == 34_000_000.0
+    assert linhas[0]["revenue"] > linhas[0]["net_income"]
+
+
+def test_marcador_de_banco_qualifica_a_serie_inteira():
+    """Um ano sem `NoninterestIncome` nao muda a definicao de receita do banco."""
+    from data_pipeline.us.edgar_facts import _e_intermediario_financeiro
+    assert _e_intermediario_financeiro(_ano(**{"NoninterestIncome": 1.0}))
+    assert _e_intermediario_financeiro(_ano(**{"InterestAndDividendIncomeOperating": 1.0}))
+    assert not _e_intermediario_financeiro(_ano(**{"InterestIncomeExpenseNet": 1.0}))
+
+
+def test_receita_bancaria_negativa_nao_substitui(caplog):
+    import logging
+    from data_pipeline.us import edgar_facts as ef
+    cf = _ano(**{"RevenueFromContractWithCustomerExcludingAssessedTax": 1_000_000.0,
+              "NoninterestIncome": -5_000_000.0, "NetIncomeLoss": 100_000.0})
+    with caplog.at_level(logging.WARNING, logger=ef.__name__):
+        linhas = ef.build_income_rows(cf, "X")
+    assert linhas[0]["revenue"] == 1_000_000.0
+    assert "negativa" in caplog.text
