@@ -73,15 +73,55 @@ _CIK_OVERRIDES = {
 # corretamente deixou passar.
 _FORMS_COMPANHIA_INVESTIMENTO = ("N-54A", "N-2", "N-CSR", "NPORT", "N-6F", "N-23C")
 
+# A eleicao de BDC nao e permanente: a companhia pode RETIRA-LA arquivando um
+# N-54C, e a partir dai volta a ser operacional. `filings.recent` guarda anos de
+# historico, entao a simples presenca de um N-54A antigo diz o que a empresa
+# FOI, nao o que ela e. Medido em 27/08/2026, tres das 50 marcadas eram isso:
+# NewtekOne (retirada em 2023, hoje holding bancaria, SIC 6021), Medallion
+# Financial (retirada em 2018, SIC 6199) e MacKenzie Realty (retirada em 2020,
+# SIC 6798). Excluir essas do universo seria o espelho exato do defeito que o
+# A-147 veio consertar. O SIC confirma por fora: companhia de investimento
+# ativa nao tem SIC nenhum na SEC, e as tres recuperaram o seu ao sair.
+_FORM_RETIRADA_ELEICAO = ("N-54C",)
+
+
+def _ultima_data_de_forma(recentes: dict, prefixos: tuple[str, ...]) -> str | None:
+    """Data do filing mais recente entre os formularios com estes prefixos.
+
+    Datas ISO comparam corretamente como texto. Devolve None quando nenhum
+    formulario casa OU quando a lista de datas nao acompanha a de formularios.
+    """
+    formularios = recentes.get("form") or []
+    datas = recentes.get("filingDate") or []
+    achadas = [
+        str(datas[i]) for i, form in enumerate(formularios)
+        if i < len(datas) and str(form or "").upper().strip().startswith(prefixos)
+        and datas[i]
+    ]
+    return max(achadas) if achadas else None
+
+
+def _tem_forma(recentes: dict, prefixos: tuple[str, ...]) -> bool:
+    return any(str(f or "").upper().strip().startswith(prefixos)
+               for f in (recentes.get("form") or []))
+
 
 def _e_companhia_de_investimento(sub: dict) -> bool:
-    """True quando os filings identificam BDC ou fundo fechado registrado."""
-    formularios = ((sub or {}).get("filings", {}) or {}).get("recent", {}) or {}
-    for form in formularios.get("form", []) or []:
-        nome = str(form or "").upper().strip()
-        if nome.startswith(_FORMS_COMPANHIA_INVESTIMENTO):
-            return True
-    return False
+    """True quando os filings identificam BDC ou fundo fechado registrado HOJE."""
+    recentes = ((sub or {}).get("filings", {}) or {}).get("recent", {}) or {}
+    if not _tem_forma(recentes, _FORMS_COMPANHIA_INVESTIMENTO):
+        return False
+    if not _tem_forma(recentes, _FORM_RETIRADA_ELEICAO):
+        return True
+    eleicao = _ultima_data_de_forma(recentes, _FORMS_COMPANHIA_INVESTIMENTO)
+    retirada = _ultima_data_de_forma(recentes, _FORM_RETIRADA_ELEICAO)
+    if eleicao is None or retirada is None:
+        # Sem data para comparar, a retirada existente e a evidencia mais
+        # especifica: marcar como veiculo quem arquivou saida seria afirmar o
+        # contrario do unico documento que fala do assunto.
+        return False
+    # Reeleicao depois da saida volta a valer: compara, nao assume ordem.
+    return eleicao > retirada
 
 
 class EdgarProvider(FundamentalsProvider):

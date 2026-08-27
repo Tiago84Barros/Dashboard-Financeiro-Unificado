@@ -98,3 +98,55 @@ def test_gestora_de_recursos_continua_dentro():
     assert motivo_exclusao_ativo(
         "BX", "common", "Investment Advice", (), name="Blackstone Inc.",
         is_investment_company=False) is None
+
+
+# ── A-147b: a eleicao de BDC pode ser retirada (N-54C) ──────────────────────
+#
+# `filings.recent` guarda anos. A presenca de um N-54A antigo diz o que a
+# empresa FOI. Tres das 50 marcadas no backfill de 27/08/2026 eram isso, e
+# exclui-las do universo seria o espelho do defeito que o A-147 consertou.
+
+def _sub_datado(pares):
+    """pares = [(form, filingDate), ...]"""
+    return {"filings": {"recent": {
+        "form": [f for f, _ in pares],
+        "filingDate": [d for _, d in pares],
+    }}}
+
+
+def test_retirada_posterior_a_eleicao_devolve_a_empresa_ao_universo():
+    """NewtekOne: N-54A em 2022-03-31, N-54C em 2023-01-06, hoje SIC 6021."""
+    sub = _sub_datado([("N-54A", "2022-03-31"), ("10-K", "2024-02-28"),
+                       ("N-54C", "2023-01-06")])
+    assert _e_companhia_de_investimento(sub) is False
+
+
+def test_bdc_ativa_sem_retirada_continua_marcada():
+    """FS KKR: N-2 em 2025-02-14, nenhum N-54C."""
+    sub = _sub_datado([("N-2", "2025-02-14"), ("NPORT-P", "2025-05-30")])
+    assert _e_companhia_de_investimento(sub) is True
+
+
+def test_reeleicao_depois_da_saida_volta_a_valer():
+    """Compara datas; nao assume que retirada e sempre a ultima palavra."""
+    sub = _sub_datado([("N-54C", "2019-04-02"), ("N-54A", "2023-08-15")])
+    assert _e_companhia_de_investimento(sub) is True
+
+
+def test_retirada_sem_nenhuma_eleicao_nao_marca():
+    assert _e_companhia_de_investimento(
+        _sub_datado([("N-54C", "2020-12-31"), ("10-K", "2024-03-01")])) is False
+
+
+def test_sem_datas_a_retirada_e_a_evidencia_mais_especifica():
+    """Marcar como veiculo quem arquivou saida seria afirmar o contrario do
+    unico documento que fala do assunto."""
+    sub = {"filings": {"recent": {"form": ["N-54A", "N-54C"]}}}
+    assert _e_companhia_de_investimento(sub) is False
+
+
+def test_sem_retirada_a_ausencia_de_datas_nao_desmarca():
+    """Regressao: o caminho antigo (so presenca) continua valendo quando nao
+    ha N-54C nenhum -- foi assim que as 47 legitimas foram marcadas."""
+    sub = {"filings": {"recent": {"form": ["N-2", "NPORT-P"]}}}
+    assert _e_companhia_de_investimento(sub) is True
