@@ -408,15 +408,37 @@ def confianca_us(engine=None) -> ConfiancaSecao:
             # Vitrine na versao corrente vale 100 e decai com a idade da
             # geracao; fora da versao corrente e teto de 50 por construcao.
             comps.append(Componente(
-                "Metodologia validada", _frescor_pct(idade, 30, 180), 0.25,
+                "Vitrine na versao corrente", _frescor_pct(idade, 30, 180), 0.10,
                 f"vitrine score_version {_ver} gerada ha {idade} dias, "
                 f"{na_versao} empresas"))
         else:
             comps.append(Componente(
-                "Metodologia validada", 50.0, 0.25,
+                "Vitrine na versao corrente", 50.0, 0.10,
                 f"nenhuma empresa na versao corrente {_ver}"))
     except Exception as exc:  # noqa: BLE001
-        comps.append(Componente("Metodologia validada", None, 0.25,
+        comps.append(Componente("Vitrine na versao corrente", None, 0.10,
+                                f"nao medido: {type(exc).__name__}"))
+
+    # A-153: ate 27/08/2026 o componente ACIMA se chamava "Metodologia
+    # validada" e media a idade da vitrine. Sao perguntas diferentes: "foi
+    # gerada pelo ranqueador de hoje?" nao e "a formula foi verificada fora da
+    # amostra?". Sob o rotulo errado o EUA tirava 100 nesse item enquanto a B3,
+    # que le a validacao PIT de verdade, tirava 50 -- a classe que TEM a
+    # medicao pontuava pior que a que nao tinha. O peso do bloco (0,25)
+    # permanece, repartido entre as duas perguntas que ele conflatava.
+    try:
+        from core.validacao_motor import validacao_us
+        est = validacao_us()
+        if est.aprovada is None:
+            comps.append(Componente("Metodologia validada", None, 0.15,
+                                    est.detalhe or "nao apurado"))
+        else:
+            comps.append(Componente(
+                "Metodologia validada", 100.0 if est.aprovada else 50.0, 0.15,
+                "validacao PIT aprovada" if est.aprovada
+                else f"PIT pendente: {'; '.join(est.bloqueadores)[:90]}"))
+    except Exception as exc:  # noqa: BLE001
+        comps.append(Componente("Metodologia validada", None, 0.15,
                                 f"nao medido: {type(exc).__name__}"))
     return ConfiancaSecao("Empresas Americanas", tuple(comps), u, tuple(notas))
 

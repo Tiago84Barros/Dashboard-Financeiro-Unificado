@@ -40,6 +40,7 @@ from core.us_company_analysis import (
     regression_cagr,
 )
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
+from core.validacao_motor import validacao_us
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import (
     aviso_escala_do_score,
@@ -1619,6 +1620,10 @@ def _tab_analise_fundamentalista(status: dict) -> None:
     st.caption("Winsorização + percentil intra-indústria nas 6 trilhas de fatores. "
                "Ausência = neutro. A pontuação não é garantia de retorno.")
     aviso_escala_do_score()
+    # A-152: a nota aparece aqui, entao a evidencia que a sustenta tambem
+    # precisa aparecer aqui. Ficava so num expander colapsado da aba de
+    # Criacao de Portfolio, e so sobre o painel de backtest.
+    st.caption(validacao_us().texto)
     scored = localize_us_company_frame(scored)
     setores = ["(todos)"] + sorted(x for x in scored["sector"].dropna().unique())
     sel = st.selectbox("Setor", setores, key="us_score_sector")

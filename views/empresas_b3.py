@@ -28,6 +28,7 @@ import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
+from core.validacao_motor import validacao_b3
 from core.market_companies import normalize_b3_companies
 from design.componentes import (
     aviso_escala_do_score,
@@ -3532,6 +3533,10 @@ def _render_b3_score_dashboard(
     st.plotly_chart(fig, width="stretch", key=f"b3_radar_{ticker}")
     st.caption(f"Referência da comparação: {referencia}. Metodologia B3 {SCORE_VERSION}.")
     aviso_escala_do_score()
+    # A-152: `validation_readiness` ja apurava o estado e NOMEAVA os
+    # bloqueadores; o unico chamador era o relatorio de confianca, que o
+    # usuario nao le. Motor de diagnostico sem porta de entrada e decoracao.
+    st.caption(validacao_b3().texto)
 
     with st.expander("📄 Dossiê, classificação e critérios avançados"):
         _render_b3_dossie(ticker, score_row, referencia)
