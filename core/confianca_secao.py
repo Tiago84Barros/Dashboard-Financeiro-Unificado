@@ -527,9 +527,25 @@ def confianca_controle_financeiro(engine=None) -> ConfiancaSecao:
                 conf = int(_scalar(conn, """
                     SELECT count(*) FROM bank_statement_movements
                     WHERE status_classificacao = 'confirmada'""") or 0)
+                # A-145: o frescor decide o PESO, nao o valor.
+                #
+                # Antes, extrato velho valia 0% com peso cheio, e extrato
+                # inexistente valia None -- que sai da media renormalizada e
+                # nao penaliza nada. Quem conciliou 891 movimentos ha dez meses
+                # tirava nota MENOR do que quem nunca conciliou: a medicao
+                # punia a existencia da evidencia.
+                #
+                # Conciliacao velha nao esta errada, esta menos relevante: os
+                # 891 movimentos de 2024-01 a 2025-10 conferem aquele periodo e
+                # continuam conferindo. O que envelhece e o quanto ela fala do
+                # mes corrente. Com peso zero o caso limite reencontra
+                # exatamente o "nunca importou", que e a unica ancoragem
+                # monotona possivel aqui.
+                relevancia = (_frescor_pct(dias, 30, 240) or 0.0) / 100.0
                 comps.append(Componente(
-                    "Extrato importado", _frescor_pct(dias, 30, 240), 0.20,
-                    f"{n} movimentos, {conf} confirmados, ultimo ha {dias} dias"))
+                    "Conciliacao bancaria", 100.0 * conf / n, 0.20 * relevancia,
+                    f"{conf} de {n} movimentos conferidos; ultimo ha {dias} "
+                    f"dias, entao pesa {relevancia:.0%} do previsto"))
                 if dias is not None and dias > 90:
                     notas.append("extrato bancario nao e reimportado ha "
                                  f"{dias} dias - o fluxo manual segue atual")

@@ -50,6 +50,11 @@ class CompositeProvider:
     def get_profile(self, symbol):
         return self._f.get_profile(symbol)
 
+    def set_cik_hints(self, hints):
+        setter = getattr(self._f, "set_cik_hints", None)
+        if setter is not None:
+            setter(hints)
+
     def get_income_statements(self, *a, **k):
         return self._f.get_income_statements(*a, **k)
 
@@ -149,6 +154,13 @@ def ingest_symbol(provider: FmpProvider, engine, symbol: str, *,
     result = {"symbol": sym, "ok": False, "reason": None}
     profile_raw = provider.get_profile(sym)
     if not profile_raw:
+        # A-146: este ramo somava ao contador `errors` e nao deixava rastro.
+        # A varredura fechou com "errors = 23" e so 2 estavam em
+        # ingestion_errors; os outros 21 eram exatamente estes, invisiveis.
+        with engine.begin() as conn:
+            repo.log_error(conn, run_id, symbol=sym, domain="profiles",
+                           error_type="empty_profile",
+                           message="perfil vazio (ticker sem CIK resolvido na SEC)")
         result["reason"] = "perfil vazio"
         return result
 
@@ -207,6 +219,30 @@ def ingest_symbol(provider: FmpProvider, engine, symbol: str, *,
     return result
 
 
+def load_cik_hints(provider, engine) -> int:
+    """Alimenta o provider com o ticker->CIK que o armazem ja conhece (A-146).
+
+    Nao substitui a SEC: e o ultimo recurso para o ticker que sumiu de
+    `company_tickers.json`. Sem isso a empresa fica congelada num parser antigo
+    sem parar de ser elegivel -- pior que sair do universo, porque ninguem ve.
+    """
+    setter = getattr(provider, "set_cik_hints", None)
+    if setter is None or engine is None:
+        return 0
+    try:
+        with engine.begin() as conn:
+            hints = {r[0]: r[1] for r in conn.execute(text(f"""
+                SELECT a.symbol, c.cik
+                FROM {repo.SCHEMA}.assets a
+                JOIN {repo.SCHEMA}.companies c ON c.id = a.company_id
+                WHERE c.cik IS NOT NULL"""))}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("cik_hints indisponivel: %s", exc)
+        return 0
+    setter(hints)
+    return len(hints)
+
+
 def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
                    run_key="bootstrap", years=20, resume=True,
                    with_prices=True, workers: int = 1) -> dict:
@@ -216,6 +252,7 @@ def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
     todo sem o gargalo do yfinance; os preços entram numa passagem incremental.
     """
     symbols = [identity.normalize_symbol(s) for s in symbols if s]
+    load_cik_hints(provider, engine)
     with engine.begin() as conn:
         open_run = repo.get_open_run(conn, run_key, "profiles")
         run_id = repo.start_run(conn, run_key, "profiles", {"years": years,

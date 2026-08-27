@@ -76,6 +76,9 @@ class EdgarProvider(FundamentalsProvider):
         self.limiter = RateLimiter(rate=rate, per=per, time_fn=time_fn, sleep_fn=sleep_fn)
         self.calls_made = 0
         self._ticker_map: dict[str, str] | None = None
+        # A-146: CIK conhecido localmente, para o ticker que o arquivo da SEC
+        # deixou de listar. Ver `set_cik_hints`.
+        self._cik_hints: dict[str, str] = {}
         self._facts_cache: dict[str, dict | None] = {}
         self._cache_lock = threading.Lock()
 
@@ -165,11 +168,28 @@ class EdgarProvider(FundamentalsProvider):
                             "exchangeShortName": exch})
         return out
 
+    def set_cik_hints(self, hints: dict) -> None:
+        """Registra ticker→CIK ja conhecido, como ultimo recurso (A-146).
+
+        `company_tickers.json` nao lista todo registrante: 21 empresas ativas do
+        universo (CPRX, TMHC, AVNS, NFBK...) sumiram das duas listagens da SEC e
+        por isso `get_profile` devolvia vazio, a ingestao abortava o simbolo e a
+        empresa ficava congelada num parser antigo -- continuando elegível e
+        disputando ranking com dado velho. O CIK delas ja estava em
+        `market_us.companies`, obtido quando a SEC ainda as listava.
+
+        A ordem importa: o arquivo oficial vem primeiro porque reflete
+        reestruturacao recente; a dica so entra quando ele nao responde.
+        """
+        self._cik_hints = {normalize_symbol(k) or "": normalize_cik(v)
+                           for k, v in (hints or {}).items()
+                           if normalize_symbol(k) and normalize_cik(v)}
+
     def _cik_for(self, symbol: str) -> Optional[str]:
         sym = normalize_symbol(symbol) or ""
         if sym in _CIK_OVERRIDES:      # reestruturação conhecida → CIK operacional
             return _CIK_OVERRIDES[sym]
-        return self.ticker_map().get(sym)
+        return self.ticker_map().get(sym) or self._cik_hints.get(sym)
 
     def get_profile(self, symbol: str) -> dict | None:
         cik = self._cik_for(symbol)
