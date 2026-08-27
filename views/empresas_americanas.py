@@ -77,6 +77,25 @@ _WEIGHTING_LABELS = {
     "inverse_vol": "Inverso da volatilidade",
 }
 
+# Toda evidência histórica desta tela (Rank-IC, curva do backtest, auditoria por
+# indústria) sai de `market_us.score_vintages`, cujo universo é montado a partir
+# de `market_us.assets` com `analysis_status='eligible'`. Medido em 27/08/2026:
+# `delisted_date` é NULL nos 7.654 registros de `assets` — nenhuma empresa que
+# deixou de ser negociada entrou no painel. O texto de Metodologia afirmava o
+# contrário até esta correção.
+#
+# Não é um detalhe de cobertura. Nunca observar uma deslistagem faz a
+# probabilidade estimada de perda permanente de capital ser ZERO por construção,
+# e o Rank-IC medido só sobre quem chegou vivo até hoje é otimista por
+# definição. O efeito é maior em recortes de valor e de dividendo alto, onde a
+# empresa barata que quebrou é exatamente a observação que falta.
+_AVISO_SOBREVIVENCIA = (
+    "⚠️ **Viés de sobrevivência:** o histórico usado aqui contém apenas empresas "
+    "ainda negociadas. Nenhuma deslistagem foi ingerida, então o poder preditivo "
+    "medido é otimista e o risco de perda permanente de capital não é observável "
+    "nesta série. Use como evidência direcional, não como estimativa de retorno."
+)
+
 
 def _render_company_analysis_css() -> None:
     st.markdown("""
@@ -1353,6 +1372,7 @@ def _render_us_lab_backtest() -> None:
             with cols[idx]:
                 text = "—" if value is None else (f"{value*100:.2f}%" if percent else f"{value:.3f}")
                 card_metrica(label, text)
+        st.caption(_AVISO_SOBREVIVENCIA)
         curve = list(result.get("equity_curve") or [])
         dates = list(result.get("dates") or [])
         if curve:
@@ -2359,7 +2379,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
         st.caption(
             "A aprovação atual combina tamanho de amostra, score dos líderes, "
             "vantagem relativa e resiliência opcional. Rank‑IC aparece somente "
-            "quando existe histórico ponto-no-tempo."
+            "quando existe histórico ponto-no-tempo — medido sobre empresas "
+            "ainda negociadas, sem nenhuma deslistagem no universo."
         )
         audit_show = audit.copy()
         audit_show["Indústria"] = audit_show["industry_group"].map(translate_us_industry)
@@ -2655,6 +2676,7 @@ def _tab_backtests(status: dict) -> None:
         card_metrica("p-valor", "—" if ic["p_value"] is None else f"{ic['p_value']:.3f}")
     with c4:
         card_metrica("Taxa de acerto", _p(ic["hit_rate"]))
+    st.caption(_AVISO_SOBREVIVENCIA)
 
     secao_titulo("Desempenho da carteira versus pesos iguais", "📈")
     c1, c2, c3, c4 = st.columns(4)
@@ -2870,8 +2892,10 @@ o histórico de uma empresa **não é apagado** ao trocar de ticker.
 **Ponto no tempo.** Cada fato financeiro guarda `reference_date` (fim do período),
 `published_date` (protocolo) e `available_at` (quando era conhecível). Os testes
 históricos filtram por `available_at` — nunca por data de ingestão — para evitar
-antecipação indevida. Empresas **deslistadas** permanecem no universo histórico,
-evitando o viés de sobrevivência.
+antecipação indevida. **Limite conhecido:** o universo histórico é formado só por
+empresas ainda negociadas — nenhuma deslistagem foi ingerida (`delisted_date` está
+vazio em todos os registros de `market_us.assets`). O backtest e o Rank-IC são,
+portanto, otimistas, e a série não observa perda permanente de capital.
 
 **Normalização.** Ausência nunca vira zero; unidades e períodos (anual/trimestral/
 TTM) são rotulados explicitamente; divergência entre ticker solicitado e retornado
