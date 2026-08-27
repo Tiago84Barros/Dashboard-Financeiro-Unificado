@@ -54,7 +54,14 @@ def check_market_cap_coherence(market_cap: Optional[float], price: Optional[floa
 
 def check_margin_plausible(value: Optional[float], lo: float = -1.0,
                            hi: float = 1.0) -> Optional[bool]:
-    """Margem (ratio) dentro de [lo, hi]. None se ausente."""
+    """Margem (ratio) dentro de [lo, hi]. None se ausente.
+
+    Contraparte por linha do gate agregado `revenue_sign` em `run_audit`. Sobre
+    o historico inteiro esta faixa nao serve de gate: 12% das linhas anuais
+    estouram [-1, 1] legitimamente -- micro-cap com receita de US$ 50 mil e
+    prejuizo de US$ 10 milhoes tem margem -200 e nenhum defeito. Quem separa
+    defeito de cauda longa e o SINAL da receita, medido abaixo.
+    """
     if value is None:
         return None
     return lo <= value <= hi
@@ -138,6 +145,38 @@ def run_audit(engine, limit: int = 100000) -> dict:
         """)).one()
         add("pit_dates_and_hash_usable", "financial_statements", d[0], d[2], d[1],
             severity="critical", threshold=0.0)
+
+        # A-143: nenhum check da auditoria olhava a RECEITA, e foi exatamente
+        # por ali que o A-142 passou -- a receita de banco substituindo a de
+        # qualquer empresa com caixa aplicado deu receita negativa em 1.816
+        # linhas anuais (9,2% das que tinham receita) sem que a auditoria
+        # dissesse nada. Receita negativa nao existe: e sempre parser lendo a
+        # tag errada. O gate mede o sinal, nao a magnitude.
+        r = conn.execute(text("""
+          SELECT COUNT(*) total,
+            COUNT(*) FILTER (WHERE revenue IS NULL) skipped,
+            COUNT(*) FILTER (WHERE revenue < 0) failed
+          FROM market_us.income_statements
+          WHERE period='annual' AND quality_status IN ('raw','validated')
+        """)).one()
+        add("revenue_sign", "income_statements", r[0], r[2], r[1],
+            severity="critical", threshold=0.01)
+
+        # Lucro maior que a receita acontece de verdade (venda de divisao,
+        # reversao de imposto diferido): 0,38% das linhas com receita material
+        # no parser limpo, contra 0,67% no defeituoso. A separacao e pequena
+        # demais para gate -- fica como serie a acompanhar, nao como veredito.
+        m = conn.execute(text("""
+          SELECT COUNT(*) total,
+            COUNT(*) FILTER (WHERE net_income IS NULL) skipped,
+            COUNT(*) FILTER (WHERE net_income IS NOT NULL
+                               AND net_income > revenue) failed
+          FROM market_us.income_statements
+          WHERE period='annual' AND revenue >= 50000000
+            AND quality_status IN ('raw','validated')
+        """)).one()
+        add("net_income_exceeds_revenue", "income_statements", m[0], m[2], m[1],
+            severity="info", gate=False)
 
         p = conn.execute(text("""
           SELECT COUNT(*), COUNT(*) FILTER (WHERE COALESCE(adjusted_close,close) IS NULL
