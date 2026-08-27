@@ -130,8 +130,11 @@ def test_manifesto_mede_o_universo_de_deslistadas_em_vez_de_declarar():
 
     st = _survivorship_status()
     assert st["delisted_total"] >= 20
+    # A-137: `cvm_canceladas` virou `cvm_mapeadas` (as que viraram ticker) e
+    # `cvm_canceladas_registro` (o cadastro bruto, que nao e universo de bolsa).
     assert set(st["delisted_por_fonte"]) == {
-        "curados", "locais", "b3_cache", "cvm_canceladas"
+        "curados", "locais", "b3_cache", "cvm_mapeadas",
+        "cvm_canceladas_registro",
     }
     assert str(st["delisted_total"]) in st["reason"]
 

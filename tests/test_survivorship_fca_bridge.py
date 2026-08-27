@@ -115,3 +115,25 @@ def test_resumo_reporta_o_que_a_ponte_produziu(tmp_path, monkeypatch):
     assert resumo["fca_aliases"] == 3
     assert resumo["cvm_canceladas"] == 2
     assert resumo["cvm_mapeadas"] == 3  # SAIU3, SAIU4, CURA3
+
+
+def test_manifesto_nao_soma_fontes_que_se_sobrepoem(tmp_path, monkeypatch):
+    """`cvm_canceladas` sao 1.912 registros de cadastro, nao 1.912 deslistadas.
+
+    A maioria nunca teve acao em bolsa (Categoria B, registro so para divida) e
+    o CSV exportado e lido por dois caminhos. Somar produzia um numero de
+    "fontes externas" maior que o proprio universo.
+    """
+    import core.b3_validation as bv
+
+    monkeypatch.setattr(bv, "_survivorship_status", bv._survivorship_status)
+    monkeypatch.setattr(
+        "core.survivorship_ingestion.resumo_ingestao",
+        lambda **kw: {"curados": 22, "locais": 150, "b3_cache": 0,
+                      "cvm_canceladas": 1912, "cvm_mapeadas": 150,
+                      "total_unicos": 147},
+    )
+    status = bv._survivorship_status()
+    assert status["delisted_total"] == 147
+    assert "1912" not in status["reason"] and "300" not in status["reason"]
+    assert status["delisted_por_fonte"]["cvm_canceladas_registro"] == 1912

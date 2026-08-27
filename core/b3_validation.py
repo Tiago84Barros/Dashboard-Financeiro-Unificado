@@ -79,19 +79,29 @@ def _survivorship_status() -> dict[str, Any]:
             "strict_available": False,
             "reason": "universo historico de deslistadas nao pode ser medido",
         }
+    # A-137: `cvm_canceladas` e o registro bruto do cadastro (1.912 companhias,
+    # a maioria sem acao em bolsa -- Categoria B, registro so para divida, ou
+    # cancelada antes de o FCA existir). Somar isso a "fontes externas" produzia
+    # um numero maior que o proprio total de deslistadas. Quem entra no universo
+    # e o mapeado para ticker.
     fontes = {
         "curados": int(resumo.get("curados") or 0),
         "locais": int(resumo.get("locais") or 0),
         "b3_cache": int(resumo.get("b3_cache") or 0),
-        "cvm_canceladas": int(resumo.get("cvm_canceladas") or 0),
+        "cvm_mapeadas": int(resumo.get("cvm_mapeadas") or 0),
+        "cvm_canceladas_registro": int(resumo.get("cvm_canceladas") or 0),
     }
+    # Somar as fontes seria inflar: o CSV exportado pelo script aparece tanto em
+    # `locais` quanto em `cvm_mapeadas` (e o mesmo conjunto, lido por dois
+    # caminhos), e parte dos curados reaparece no cadastro da CVM. So
+    # `total_unicos`, que vem do merge deduplicado, e somavel.
     total = int(resumo.get("total_unicos") or 0)
-    externos = fontes["locais"] + fontes["b3_cache"] + fontes["cvm_canceladas"]
     return {
         "strict_available": False,
         "reason": (
-            f"universo historico incompleto: {total} tickers deslistados "
-            f"({fontes['curados']} curados, {externos} de fontes externas)"
+            f"universo historico incompleto: {total} tickers deslistados unicos "
+            f"(base curada de {fontes['curados']}, ampliada pelo cadastro CVM "
+            f"com ticker resolvido pelo FCA)"
         ),
         "delisted_total": total,
         "delisted_por_fonte": fontes,
