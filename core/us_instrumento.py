@@ -17,7 +17,9 @@ republicação.
 
 O que este módulo NÃO faz: excluir operadora imobiliária. Corretora (JLL,
 RE/MAX, Compass), incorporadora e administradora são companhias operacionais
-com lucro e EBIT legíveis. Só o veículo sai.
+com lucro e EBIT legíveis. Só o veículo sai. Pelo mesmo motivo, gestora de
+recursos (Blackstone) e corretora (StoneX, LPL) ficam: administram o veículo,
+não são o veículo. Ver `e_veiculo_agrupado` (A-144).
 """
 from __future__ import annotations
 
@@ -47,6 +49,45 @@ _SETOR_IMOBILIARIO_GENERICO = re.compile(r"^\s*real estate\s*$", re.IGNORECASE)
 _EXPLICIT_NON_COMMON = re.compile(r"(?:-P[A-Z0-9]?|-WT|-WS|-UN)$")
 _NASDAQ_ISSUE_SUFFIX = re.compile(r"^[A-Z]{4,}[WRU]$")
 
+# ── A-144: ETF e trust de commodity chegando como `security_type='common'` ──
+#
+# O tipo do ativo vem do cadastro e o cadastro erra: iShares Gold Trust,
+# Grayscale Bitcoin Trust, ProShares Trust II e os CurrencyShares estavam todos
+# `security_type='common'`, `analysis_status='eligible'`, disputando ranking com
+# companhia operacional. São 45 no universo medido em 27/08/2026. `TIPOS_FORA`
+# não os pega porque ninguém os classificou como 'etf' ou 'fund'.
+#
+# O que os identifica de fato é o SIC da SEC: quase todo veículo de commodity,
+# metal, moeda ou cripto declara "Commodity Contracts Brokers & Dealers".
+_SIC_VEICULO_AGRUPADO = frozenset({
+    "commodity contracts brokers & dealers",
+    "unit investment trusts",
+    "unit investment trusts, face amount certificate offices, and closed-end "
+    "management investment offices",
+    "management investment offices, open-end",
+    "face-amount certificate offices",
+})
+
+# ETF declarado no nome vale por si, sem depender do SIC -- o Bitwise Ethereum
+# ETF está catalogado como "Finance Services". A borda de palavra não é
+# decoração: `%etf%` casaria com NETFLIX.
+_NOME_ETF = re.compile(r"(?:^|[^A-Za-z])ETFs?(?:$|[^A-Za-z])")
+
+# Escape para a companhia operacional que caiu no mesmo SIC: dentro de
+# "Commodity Contracts Brokers & Dealers" convivem 45 veículos e 2 empresas
+# (AIB Data Centers Inc., AI Financial Corp). Quem tem forma societária de
+# companhia e nenhum substantivo de veículo no nome fica.
+_NOME_VEICULO = re.compile(
+    r"(?:^|[^A-Za-z])(?:trust|fund|funds)(?:$|[^A-Za-z])", re.IGNORECASE)
+_FORMA_OPERACIONAL = re.compile(
+    r"(?:^|[^A-Za-z])(?:inc|corp|corporation|company|co|holdings|group|plc|"
+    r"n\.?v|s\.?a|ltd|limited|technologies|systems)\.?(?:$|[^A-Za-z])",
+    re.IGNORECASE)
+
+MOTIVO_VEICULO_AGRUPADO = (
+    "veículo agrupado (ETF, trust de commodity, moeda ou cripto), não é ação"
+)
+
 MOTIVO_REIT = "REIT: veículo imobiliário, fora do universo de ações"
 MOTIVO_TIPO_NAO_CONFIRMADO = (
     "tipo de ativo não confirmado: setor genérico 'Real Estate' sem SIC"
@@ -72,6 +113,25 @@ def e_reit(*, security_type: object = None, sector: object = None,
     return bool(_NOME_REIT.search(str(name or "")))
 
 
+def e_veiculo_agrupado(*, name: object = None, sector: object = None,
+                       industry: object = None) -> bool:
+    """True quando o ativo é ETF, trust de commodity/moeda/cripto ou fundo.
+
+    Duas evidências independentes, porque nenhuma cobre sozinha: o SIC pega os
+    40 que se declaram corretora de contratos de commodity mas são o fundo em
+    si, e o nome pega os 5 cujo SIC genérico ('Finance Services') não diz nada.
+    """
+    nome = str(name or "")
+    if _NOME_ETF.search(nome):
+        return True
+    for texto in (sector, industry):
+        if str(texto or "").lower().strip() in _SIC_VEICULO_AGRUPADO:
+            # A empresa operacional que caiu no mesmo SIC não é veículo.
+            return not (_FORMA_OPERACIONAL.search(nome)
+                        and not _NOME_VEICULO.search(nome))
+    return False
+
+
 def motivo_exclusao_ativo(symbol: str | None, security_type: str | None,
                           sector: str | None,
                           related_symbols: tuple[str, ...] = (),
@@ -85,6 +145,8 @@ def motivo_exclusao_ativo(symbol: str | None, security_type: str | None,
     if e_reit(security_type=sec, sector=sector, industry=industry,
               name=name, is_reit=is_reit):
         return MOTIVO_REIT
+    if e_veiculo_agrupado(name=name, sector=sector, industry=industry):
+        return MOTIVO_VEICULO_AGRUPADO
     if sec in TIPOS_FORA:
         return "instrumento sem ação operacional ordinária"
     if sector_norm in _SETORES_NAO_OPERACIONAIS:
