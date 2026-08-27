@@ -48,6 +48,24 @@ CVM_CAD_CIA_ABERTA_URL = (
 CVM_CACHE_DEFAULT = "data/cache/cvm/cad_cia_aberta.csv"
 CVM_ALIAS_DEFAULT = "data_imports/delisted/cvm_ticker_aliases.csv"
 
+# A-137: o alias CNPJ->ticker nao precisava ser escrito a mao.
+#
+# `load_cvm_cancelamentos` sabe mapear cancelamento -> ticker desde que alguem
+# lhe entregue o alias, e o docstring dizia que a CVM "nao expoe o ticker".
+# Expoe, em outro dataset: o FCA (Formulario Cadastral) traz
+# `Codigo_Negociacao` por CNPJ, e `core.cvm_cadastro.parse_fca_valmob` ja o
+# extrai -- funcao usada ha tempos pela ingestao de acoes.
+#
+# Eram duas pecas prontas, no mesmo repositorio, que nunca se falaram: a lista
+# de deslistadas ficou em 22 tickers curados nao porque a fonte fosse paga ou
+# inexistente, mas porque a ponte entre elas nunca foi construida.
+#
+# O ano importa: a empresa some do FCA depois de deslistar, entao o alias de
+# quem saiu em 2015 so existe nos formularios ATE 2015. Por isso varremos a
+# serie inteira em vez de baixar so o ano corrente.
+FCA_CACHE_DIR_DEFAULT = "data/cache/cvm/fca"
+FCA_ANO_INICIAL = 2010
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # 1. Ingestão via JSON/CSV local
@@ -237,9 +255,20 @@ def load_cvm_cancelamentos_raw(
     cache_path: Path | str = CVM_CACHE_DEFAULT,
     ttl_days: int = 7,
     url: str = CVM_CAD_CIA_ABERTA_URL,
+    permitir_download: bool = True,
 ) -> list[dict[str, str]]:
-    """Loads CVM companies with cancelled registration from official CSV."""
-    path = download_cvm_cadastro(cache_path=cache_path, ttl_days=ttl_days, url=url)
+    """Loads CVM companies with cancelled registration from official CSV.
+
+    ``permitir_download=False`` le apenas o cache. A Saude dos Dados consome
+    este caminho: tela nao baixa arquivo.
+    """
+    if not permitir_download:
+        path = Path(cache_path)
+        if not path.exists():
+            return []
+    else:
+        path = download_cvm_cadastro(cache_path=cache_path, ttl_days=ttl_days,
+                                     url=url)
     if path is None or not Path(path).exists():
         return []
 
@@ -261,6 +290,61 @@ def load_cvm_cancelamentos_raw(
             logger.warning("Falha ao ler cadastro CVM %s: %s", path, exc)
             return []
     return rows
+
+
+def _anos_fca(ano_final: int | None = None) -> range:
+    fim = ano_final if ano_final is not None else date.today().year
+    return range(FCA_ANO_INICIAL, max(fim, FCA_ANO_INICIAL) + 1)
+
+
+def load_fca_aliases(
+    anos: range | list[int] | None = None,
+    cache_dir: Path | str = FCA_CACHE_DIR_DEFAULT,
+    ttl_days: int = 365,
+    permitir_download: bool = True,
+) -> list[dict[str, str]]:
+    """Alias CNPJ->ticker derivado do FCA da CVM, no formato que o alias exige.
+
+    Devolve ``[{"ticker": ..., "cnpj_cia": ..., "fonte": "fca_cvm_<ano>"}]``.
+    Um CNPJ pode ter varios tickers (ON/PN/UNIT) e todos entram: o alias casa
+    por CNPJ e cada ticker vira um evento de deslistagem proprio.
+
+    Anos historicos nao mudam mais, entao o TTL e longo. Sem rede e sem cache
+    a funcao devolve lista vazia -- degradar em silencio aqui e correto, porque
+    quem consome ja trata ausencia de alias como "nao mapeado".
+    """
+    from core.cvm_cadastro import fetch_fca_valmob, parse_fca_valmob
+
+    pasta = Path(cache_dir)
+    vistos: set[tuple[str, str]] = set()
+    out: list[dict[str, str]] = []
+    for ano in (anos if anos is not None else _anos_fca()):
+        alvo = pasta / f"fca_valmob_{ano}.csv"
+        conteudo: bytes | None = None
+        if _cache_fresh(alvo, ttl_days):
+            try:
+                conteudo = alvo.read_bytes()
+            except OSError as exc:
+                logger.warning("FCA %s: cache ilegivel (%s)", ano, exc)
+        if conteudo is None and permitir_download:
+            conteudo = fetch_fca_valmob(ano)
+            if conteudo:
+                try:
+                    pasta.mkdir(parents=True, exist_ok=True)
+                    alvo.write_bytes(conteudo)
+                except OSError as exc:
+                    logger.warning("FCA %s: cache nao gravado (%s)", ano, exc)
+        if not conteudo:
+            continue
+        for linha in parse_fca_valmob(conteudo):
+            cnpj = _clean_id(linha.get("cnpj"))
+            ticker = str(linha.get("ticker") or "").upper()
+            if not cnpj or not ticker or (cnpj, ticker) in vistos:
+                continue
+            vistos.add((cnpj, ticker))
+            out.append({"ticker": ticker, "cnpj_cia": cnpj,
+                        "fonte": f"fca_cvm_{ano}"})
+    return out
 
 
 def load_cvm_ticker_aliases(
@@ -319,15 +403,33 @@ def load_cvm_cancelamentos(
     cache_path: Path | str = CVM_CACHE_DEFAULT,
     alias_path: Path | str = CVM_ALIAS_DEFAULT,
     ttl_days: int = 7,
+    usar_fca: bool = True,
+    fca_cache_dir: Path | str = FCA_CACHE_DIR_DEFAULT,
+    permitir_download: bool = True,
 ) -> list[DelistedTicker]:
     """Maps official CVM cancelled registries to tickers using aliases.
 
-    CVM's public company registry does not expose the B3 ticker. The official
-    data is therefore used as the event source, while alias_path provides the
-    auditable ticker mapping (CNPJ/CD_CVM/regex -> ticker).
+    O registro de companhia aberta da CVM nao traz o ticker, mas o FCA traz
+    (A-137): o alias curado em ``alias_path`` continua valendo e tem
+    precedencia, e o FCA entra como fonte automatica para o que ele nao cobre.
+
+    A precedencia importa: o curado carrega ``data_delisting``, ``motivo`` e
+    ``ultimo_preco`` revisados a mao. O FCA so resolve a identidade -- as datas
+    saem do proprio cadastro (``DT_CANCEL``).
     """
-    raw_rows = load_cvm_cancelamentos_raw(cache_path=cache_path, ttl_days=ttl_days)
+    raw_rows = load_cvm_cancelamentos_raw(cache_path=cache_path, ttl_days=ttl_days,
+                                          permitir_download=permitir_download)
     aliases = load_cvm_ticker_aliases(alias_path)
+    if usar_fca:
+        curados = {
+            _clean_id(_row_first(a, "cnpj_cia", "cnpj", "CNPJ_CIA"))
+            for a in aliases
+        } - {""}
+        aliases = aliases + [
+            a for a in load_fca_aliases(cache_dir=fca_cache_dir,
+                                        permitir_download=permitir_download)
+            if a["cnpj_cia"] not in curados
+        ]
     if not raw_rows or not aliases:
         return []
 
@@ -445,19 +547,29 @@ def resumo_ingestao(
     b3_cache_dir: Path | str = B3_CACHE_DIR_DEFAULT,
     cvm_cache_path: Path | str = CVM_CACHE_DEFAULT,
     cvm_alias_path: Path | str = CVM_ALIAS_DEFAULT,
+    fca_cache_dir: Path | str = FCA_CACHE_DIR_DEFAULT,
+    permitir_download: bool = True,
 ) -> dict:
     """Sumário das fontes carregadas para diagnóstico."""
     locais = load_all_local(dir_local)
     b3 = try_fetch_b3_delisted_recent(b3_cache_dir) if incluir_b3 else []
     cvm_raw = (
-        load_cvm_cancelamentos_raw(cache_path=cvm_cache_path)
+        load_cvm_cancelamentos_raw(cache_path=cvm_cache_path,
+                                   permitir_download=permitir_download)
         if incluir_cvm else []
     )
     cvm = (
         load_cvm_cancelamentos(
             cache_path=cvm_cache_path,
             alias_path=cvm_alias_path,
+            fca_cache_dir=fca_cache_dir,
+            permitir_download=permitir_download,
         )
+        if incluir_cvm else []
+    )
+    fca = (
+        load_fca_aliases(cache_dir=fca_cache_dir,
+                         permitir_download=permitir_download)
         if incluir_cvm else []
     )
     todos = merge_delisted_sources(locais=locais, b3=b3, cvm=cvm)
@@ -467,6 +579,7 @@ def resumo_ingestao(
         "b3_cache":      len(b3),
         "cvm_canceladas": len(cvm_raw),
         "cvm_mapeadas":  len(cvm),
+        "fca_aliases":   len(fca),
         "total_unicos":  len(todos),
         "dir_local":     str(Path(dir_local)),
         "dir_b3_cache":  str(Path(b3_cache_dir)),
@@ -474,5 +587,7 @@ def resumo_ingestao(
         "cvm_aliases":   str(Path(cvm_alias_path)),
         "nota":          ("Para extensao manual, crie data_imports/delisted/"
                           "extras.json ou data_imports/delisted/b3/*.csv. "
-                          "CVM baixa cadastro oficial, mas ticker exige alias."),
+                          "O ticker do cancelamento CVM sai do FCA (A-137); "
+                          "rode scripts/atualizar_universo_deslistadas.py para "
+                          "popular o cache que a tela le sem tocar a rede."),
     }

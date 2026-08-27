@@ -64,7 +64,15 @@ def _survivorship_status() -> dict[str, Any]:
     try:
         from core.survivorship_ingestion import resumo_ingestao
 
-        resumo = resumo_ingestao()
+        # A-137: `incluir_cvm` era False, entao o manifesto reportava zero
+        # cancelamentos da CVM mesmo depois de a ponte FCA existir -- o gate
+        # media uma fonte que nunca chegava a ser consultada.
+        #
+        # `permitir_download=False` e deliberado: este manifesto e renderizado
+        # na Saude dos Dados, e tela nao baixa nada. Le o que
+        # scripts/atualizar_universo_deslistadas.py deixou em cache; sem cache,
+        # devolve zero e o motivo diz que a fonte nao foi populada.
+        resumo = resumo_ingestao(incluir_cvm=True, permitir_download=False)
     except Exception:  # noqa: BLE001 - manifesto nao pode quebrar por diagnostico
         logger.warning("survivorship: resumo_ingestao indisponivel", exc_info=True)
         return {
