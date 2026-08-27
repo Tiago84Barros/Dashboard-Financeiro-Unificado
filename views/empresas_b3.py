@@ -31,6 +31,7 @@ from core.b3_methodology import SCORE_VERSION
 from core.validacao_motor import validacao_b3
 from core.market_companies import normalize_b3_companies
 from design.componentes import (
+    aviso_cobertura_do_universo,
     aviso_escala_do_score,
     badge_status,
     card_metrica,
@@ -3537,6 +3538,8 @@ def _render_b3_score_dashboard(
     # bloqueadores; o unico chamador era o relatorio de confianca, que o
     # usuario nao le. Motor de diagnostico sem porta de entrada e decoracao.
     st.caption(validacao_b3().texto)
+    # A-154: por quantos ativos esta nota fala.
+    aviso_cobertura_do_universo("b3")
 
     with st.expander("📄 Dossiê, classificação e critérios avançados"):
         _render_b3_dossie(ticker, score_row, referencia)

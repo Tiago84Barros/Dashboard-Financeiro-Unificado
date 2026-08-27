@@ -258,6 +258,48 @@ def aviso_escala_do_score() -> None:
     st.caption(AVISO_ESCALA_NAO_COMPARAVEL)
 
 
+# ── A-154: cobertura declarada na tela onde a recomendacao aparece ──────────
+# `core.universo_decisao` ja media as tres populacoes (nominal, investivel,
+# apto) e o preco pago pelo descarte. Como em A-152, o unico consumidor era o
+# relatorio de confianca, que o usuario nao le: quem via o ranking dos EUA nao
+# tinha como saber que ele fala por 874 dos 2.831 ativos negociaveis. Filtro
+# silencioso e pior que filtro nenhum -- o ativo some da tela e o usuario nao
+# sabe que sumiu.
+
+_UNIVERSO_FN = {
+    "b3": "universo_b3",
+    "fii": "universo_fii",
+    "us": "universo_us",
+}
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _universo_cacheado(modulo: str):
+    """Cache curto: `universo_b3` recalcula o indice de confianca inteiro, e
+    isso nao pode rodar a cada interacao de widget da aba."""
+    import core.universo_decisao as ud
+    return getattr(ud, _UNIVERSO_FN[modulo])()
+
+
+def aviso_cobertura_do_universo(modulo: str) -> None:
+    """Declara por quantos ativos a nota desta aba fala, e o que ficou de fora.
+
+    Falha em silencio de proposito: cobertura e contexto da recomendacao, nao a
+    recomendacao. Fonte fora do ar nao pode derrubar a tela que o usuario abriu
+    para ver o ranking.
+    """
+    try:
+        u = _universo_cacheado(modulo)
+    except Exception:  # noqa: BLE001 - contexto nao derruba a tela
+        return
+    if not u.investivel:
+        return
+    # `.capitalize()` minusculiza o RESTO: "DY", "P/VP" e "B3" viravam
+    # "dy", "p/vp" e "b3" no meio da nota do gate.
+    nota = f" {u.notas[0][:1].upper()}{u.notas[0][1:]}." if u.notas else ""
+    st.caption(f"Cobertura da recomendacao: {u.resumo()}.{nota}")
+
+
 def badge_status(texto: str, tipo: str = "info") -> None:
     """
     Badge colorido inline.

@@ -50,6 +50,7 @@ from core.llm_fii import chat_com_fiis
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import (
+    aviso_cobertura_do_universo,
     aviso_escala_do_score,
     container_pagina,
     rolar_para_topo,
@@ -1492,6 +1493,8 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
                f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}. "
                + status_copy["footer"])
     aviso_escala_do_score()
+    # A-154: por quantos fundos esta nota fala.
+    aviso_cobertura_do_universo("fii")
 
 
 # ── Tab 2: Busca de ativo (detalhe por FII) ───────────────────────────────────

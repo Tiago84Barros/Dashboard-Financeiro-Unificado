@@ -43,6 +43,7 @@ from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 from core.validacao_motor import validacao_us
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import (
+    aviso_cobertura_do_universo,
     aviso_escala_do_score,
     badge_status,
     card_metrica,
@@ -1624,6 +1625,8 @@ def _tab_analise_fundamentalista(status: dict) -> None:
     # precisa aparecer aqui. Ficava so num expander colapsado da aba de
     # Criacao de Portfolio, e so sobre o painel de backtest.
     st.caption(validacao_us().texto)
+    # A-154: por quantos ativos esta nota fala.
+    aviso_cobertura_do_universo("us")
     scored = localize_us_company_frame(scored)
     setores = ["(todos)"] + sorted(x for x in scored["sector"].dropna().unique())
     sel = st.selectbox("Setor", setores, key="us_score_sector")
