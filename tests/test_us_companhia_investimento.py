@@ -150,3 +150,46 @@ def test_sem_retirada_a_ausencia_de_datas_nao_desmarca():
     ha N-54C nenhum -- foi assim que as 47 legitimas foram marcadas."""
     sub = {"filings": {"recent": {"form": ["N-2", "NPORT-P"]}}}
     assert _e_companhia_de_investimento(sub) is True
+
+
+# ── registro nao e status (NPK) ──────────────────────────────────────────────
+# A regra original marcava qualquer um que tivesse arquivado N-2 alguma vez.
+# N-2 e REGISTRO de fundo fechado; quem opera como fundo arquiva relatorio
+# PERIODICO (N-CSR, NPORT). A National Presto tem um unico N-2 de 2006, do
+# litigio que ela venceu, e SIC 3480 (Ordnance) -- e fabricante, nao fundo.
+
+def _sub_sic(forms_e_datas, sic=""):
+    return {"sic": sic,
+            "filings": {"recent": {"form": [f for f, _ in forms_e_datas],
+                                   "filingDate": [d for _, d in forms_e_datas]}}}
+
+
+def test_registro_antigo_com_sic_operacional_nao_e_companhia_de_investimento():
+    """O caso National Presto: um N-2 de 2006 e vinte anos fabricando municao."""
+    from data_pipeline.us.edgar import _e_companhia_de_investimento
+    assert _e_companhia_de_investimento(
+        _sub_sic([("N-2", "2006-03-27"), ("10-K", "2025-06-20")], sic="3480")) is False
+
+
+def test_registro_sem_sic_continua_marcado():
+    """Equus Total Return: BDC de verdade, so registro visivel e SIC vazio.
+
+    A duvida nao libera ninguem -- sem a segunda evidencia a marca permanece.
+    """
+    from data_pipeline.us.edgar import _e_companhia_de_investimento
+    assert _e_companhia_de_investimento(
+        _sub_sic([("N-2/A", "2010-12-16")], sic="")) is True
+
+
+def test_relatorio_periodico_marca_mesmo_com_sic_operacional():
+    """SIC nao revoga periodica: quem entrega N-CSR esta operando como fundo."""
+    from data_pipeline.us.edgar import _e_companhia_de_investimento
+    assert _e_companhia_de_investimento(
+        _sub_sic([("N-CSR", "2025-03-01")], sic="6021")) is True
+
+
+def test_sic_de_veiculo_nao_libera_o_registro():
+    """SIC 6726 e de fundo: nao serve de evidencia contraria."""
+    from data_pipeline.us.edgar import _e_companhia_de_investimento
+    assert _e_companhia_de_investimento(
+        _sub_sic([("N-2", "2019-01-02")], sic="6726")) is True

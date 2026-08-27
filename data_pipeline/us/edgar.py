@@ -70,8 +70,28 @@ _CIK_OVERRIDES = {
 # empresa operacional os arquiva: medido em 15 suspeitos contra 10 controles
 # (Exxon, Morgan Stanley, HCA, Unisys...), a separacao foi 14x0 -- e o unico
 # suspeito sem marca era o Central Bancompany, banco de verdade, que o sinal
-# corretamente deixou passar.
+# corretamente deixou passar. Aquele "nenhuma" era forte demais para 10
+# controles: ver a ressalva do registro logo abaixo.
 _FORMS_COMPANHIA_INVESTIMENTO = ("N-54A", "N-2", "N-CSR", "NPORT", "N-6F", "N-23C")
+
+# Nem todo formulario da lista prova a mesma coisa. N-CSR, NPORT e N-23C sao
+# relatorios PERIODICOS: quem os arquiva esta operando como companhia de
+# investimento agora. N-2 e N-6F sao REGISTRO -- dizem que alguem pediu para
+# ser um, nao que seja. A distincao apareceu no controle que faltava aos 10
+# originais: a National Presto (NPK) arquivou um unico N-2 em 2006, no
+# litigio em que a SEC a acusou de ser companhia de investimento nao
+# registrada -- processo que a empresa venceu -- e desde entao nunca mais
+# arquivou nada do genero. E fabricante de panelas de pressao e municao 40mm,
+# SIC 3480. Marcada, sairia do universo como "fundo".
+_FORMS_PERIODICAS_INVESTIMENTO = ("N-54A", "N-CSR", "NPORT", "N-23C")
+_FORMS_REGISTRO_INVESTIMENTO = ("N-2", "N-6F")
+
+# SIC da SEC para veiculos de investimento. Serve de segunda evidencia, nao de
+# criterio isolado: das 62 marcadas em 27/08/2026 so duas tinham registro sem
+# nenhuma periodica, e o SIC as separou -- a Equus Total Return (EQS), BDC de
+# verdade, nao tem SIC nenhum; a National Presto tem 3480. Exigir as duas
+# evidencias juntas move exatamente uma empresa.
+_SIC_INVESTIMENTO = ("6722", "6726", "6770", "6799")
 
 # A eleicao de BDC nao e permanente: a companhia pode RETIRA-LA arquivando um
 # N-54C, e a partir dai volta a ser operacional. `filings.recent` guarda anos de
@@ -106,10 +126,22 @@ def _tem_forma(recentes: dict, prefixos: tuple[str, ...]) -> bool:
                for f in (recentes.get("form") or []))
 
 
+def _sic_operacional(sub: dict) -> bool:
+    """True quando a SEC atribui um SIC de atividade operacional a empresa."""
+    sic = str((sub or {}).get("sic") or "").strip()
+    return bool(sic) and not sic.startswith(_SIC_INVESTIMENTO)
+
+
 def _e_companhia_de_investimento(sub: dict) -> bool:
     """True quando os filings identificam BDC ou fundo fechado registrado HOJE."""
     recentes = ((sub or {}).get("filings", {}) or {}).get("recent", {}) or {}
     if not _tem_forma(recentes, _FORMS_COMPANHIA_INVESTIMENTO):
+        return False
+    # Registro antigo sem nenhum relatorio periodico, em empresa com SIC
+    # operacional, diz o que ela quase foi -- nao o que e. Sem o SIC (ou com
+    # SIC de veiculo) a marca continua valendo: a duvida nao libera ninguem.
+    if (not _tem_forma(recentes, _FORMS_PERIODICAS_INVESTIMENTO)
+            and _sic_operacional(sub)):
         return False
     if not _tem_forma(recentes, _FORM_RETIRADA_ELEICAO):
         return True
