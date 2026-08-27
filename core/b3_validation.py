@@ -56,10 +56,18 @@ def _survivorship_status() -> dict[str, Any]:
     o veredito de ``validation_readiness``. O contraste estava no proprio
     arquivo: o bloco ``pit`` comeca falso e e sobrescrito por uma medicao real.
 
-    ``strict_available`` continua ``False``: 22 tickers curados nao sao um
-    universo historico completo, e qual contagem promove o gate e decisao de
-    metodologia do usuario, nao deste modulo. O que muda e que o motivo agora
-    diz o que foi medido.
+    27/08/2026: ``strict_available`` deixou de ser o literal ``False``. Ele era
+    inalcancavel por construcao -- nenhuma ingestao, por melhor que fosse, mudava
+    o veredito -- e um gate que so pode reprovar nunca e revisto. Agora ele
+    compara a cobertura MEDIDA contra ``SURVIVORSHIP_SHARE_MINIMA``.
+
+    A cobertura e medida na unidade certa e contra o denominador certo: das 133
+    companhias Categoria A que negociavam em BOLSA e tiveram registro cancelado
+    de 2010 em diante, quantas tem ao menos um ticker resolvido. Hoje sao 59 --
+    44,4%. Os 147 tickers do universo bruto pareciam cobrir as 133 companhias,
+    mas ticker e companhia sao unidades diferentes (ON, PN e UNIT da mesma
+    empresa), e a comparacao direta e a mesma troca de casca por descarte que o
+    A-154 corrigiu no denominador de cobertura.
     """
     try:
         from core.survivorship_ingestion import resumo_ingestao
@@ -96,15 +104,33 @@ def _survivorship_status() -> dict[str, Any]:
     # caminhos), e parte dos curados reaparece no cadastro da CVM. So
     # `total_unicos`, que vem do merge deduplicado, e somavel.
     total = int(resumo.get("total_unicos") or 0)
+    try:
+        from core.survivorship_ingestion import cobertura_relevante
+        cob = cobertura_relevante(permitir_download=False)
+    except Exception:  # noqa: BLE001
+        logger.warning("survivorship: cobertura nao medida", exc_info=True)
+        cob = {"relevantes": 0, "cobertas": 0, "share": None, "tickers": 0}
+    share = cob.get("share")
+    ok = share is not None and share >= SURVIVORSHIP_SHARE_MINIMA
+    if share is None:
+        motivo = (f"universo historico nao medido: {total} tickers deslistados "
+                  f"unicos, sem cadastro CVM em cache para estratificar")
+    elif ok:
+        motivo = (f"universo historico completo: {cob['cobertas']} de "
+                  f"{cob['relevantes']} companhias deslistadas relevantes "
+                  f"({share * 100:.0f}%)")
+    else:
+        motivo = (
+            f"universo historico de deslistadas incompleto: so {share * 100:.0f}% "
+            f"das companhias relevantes tem ticker resolvido "
+            f"({cob['cobertas']} de {cob['relevantes']}, minimo "
+            f"{SURVIVORSHIP_SHARE_MINIMA * 100:.0f}%)")
     return {
-        "strict_available": False,
-        "reason": (
-            f"universo historico incompleto: {total} tickers deslistados unicos "
-            f"(base curada de {fontes['curados']}, ampliada pelo cadastro CVM "
-            f"com ticker resolvido pelo FCA)"
-        ),
+        "strict_available": ok,
+        "reason": motivo,
         "delisted_total": total,
         "delisted_por_fonte": fontes,
+        "cobertura_relevante": cob,
     }
 
 
@@ -115,6 +141,18 @@ def _survivorship_status() -> dict[str, Any]:
 # existissem, e o gate nunca sairia do lugar -- que e como ele passou os
 # ultimos meses.
 PIT_SHARE_MINIMA = 0.90
+
+# Fatia das companhias deslistadas RELEVANTES (Categoria A, negociadas em bolsa,
+# canceladas de 2010 em diante) que precisa ter ticker resolvido para o universo
+# historico contar como completo.
+#
+# Igual ao piso do PIT, e de proposito. No PIT os 10% que faltam sao
+# estruturalmente indisponiveis -- a base da CVM comeca em 2010 e BDR nao
+# entrega DFP. Aqui nao ha fonte faltando: o FCA cobre Categoria A, e a companhia
+# que nao resolve nao resolveu por lacuna de ingestao. Baixar o piso seria
+# rebaixar a regua para o gate passar, e o gate existe para dizer que ainda nao
+# passou. Medido em 27/08/2026: 44,4%.
+SURVIVORSHIP_SHARE_MINIMA = 0.90
 
 
 def build_data_manifest(engine) -> dict[str, Any]:
@@ -200,7 +238,8 @@ def validation_readiness(manifest: dict[str, Any]) -> dict[str, Any]:
     """
     pit = manifest.get("pit") or {}
     pit_ok = bool(pit.get("strict_available"))
-    survivorship_ok = bool((manifest.get("survivorship") or {}).get("strict_available"))
+    surv = manifest.get("survivorship") or {}
+    survivorship_ok = bool(surv.get("strict_available"))
     blockers: list[str] = []
     if not pit_ok:
         share = pit.get("annual_published_share")
@@ -209,7 +248,11 @@ def validation_readiness(manifest: dict[str, Any]) -> dict[str, Any]:
             f"PIT estrito: so {share * 100:.0f}% da serie anual tem data de "
             f"protocolo na CVM (minimo {PIT_SHARE_MINIMA * 100:.0f}%)")
     if not survivorship_ok:
-        blockers.append("universo historico de deslistadas incompleto")
+        # O motivo MEDIDO, nao o rotulo generico: "so 44% das companhias
+        # relevantes tem ticker resolvido" diz ao usuario o tamanho da lacuna e
+        # se ela esta diminuindo. "incompleto" nao diz nem uma coisa nem outra.
+        blockers.append(str(surv.get("reason")
+                            or "universo historico de deslistadas incompleto"))
     return {"ready": not blockers, "blockers": blockers}
 
 

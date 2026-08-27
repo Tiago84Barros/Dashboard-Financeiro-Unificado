@@ -136,7 +136,15 @@ def test_manifesto_mede_o_universo_de_deslistadas_em_vez_de_declarar():
         "curados", "locais", "b3_cache", "cvm_mapeadas",
         "cvm_canceladas_registro",
     }
-    assert str(st["delisted_total"]) in st["reason"]
+    # 27/08/2026: o motivo deixou de citar `delisted_total` (147 tickers unicos).
+    # Aquele numero comparava tickers com companhias e fazia a cobertura parecer
+    # quase completa; estratificado, sao 59 de 133 companhias relevantes. O
+    # payload continua carregando o total, mas o texto mostra a medicao que
+    # decide o gate.
+    cob = st["cobertura_relevante"]
+    assert st["delisted_total"] >= cob["cobertas"]
+    if cob["share"] is not None:
+        assert f"{cob['cobertas']} de {cob['relevantes']}" in st["reason"]
 
 
 def test_survivorship_permanece_nao_estrito_com_apenas_o_pool_curado():

@@ -540,6 +540,70 @@ def universo_delisted_total(
     return [d for d in todos if d.data_delisting <= data_ref]
 
 
+# Ano em que o cadastro da CVM passa a ser utilizavel para reconstruir o
+# universo. Antes disso o registro existe, mas sem FCA nao ha como resolver o
+# ticker -- o que produziria "empresa nao coberta" por ausencia de fonte, e nao
+# por lacuna de ingestao.
+ANO_INICIAL_RELEVANTE = 2010
+
+
+def _empresa_relevante(row: dict) -> bool:
+    """A companhia chegou a negociar ACAO em bolsa e saiu no periodo util?
+
+    O denominador ingenuo -- 1.912 cancelamentos de registro -- e a casca, nao o
+    descarte: a maioria e Categoria B (registro so para divida), companhia que
+    nunca teve acao negociada, ou baixa anterior a 2010. Medir cobertura contra
+    ele faz o trabalho parecer muito menor do que e. Estratificado, a populacao
+    que de fato importa para o vies de sobrevivencia sao 133 companhias.
+    """
+    d = _parse_date_flex(_row_first(row, "DT_CANCEL"))
+    return (d is not None and d.year >= ANO_INICIAL_RELEVANTE
+            and _row_first(row, "CATEG_REG").strip().upper().startswith("CATEGORIA A")
+            and "BOLSA" in _row_first(row, "TP_MERC").upper())
+
+
+def cobertura_relevante(
+    cvm_cache_path: Path | str = CVM_CACHE_DEFAULT,
+    cvm_alias_path: Path | str = CVM_ALIAS_DEFAULT,
+    fca_cache_dir: Path | str = FCA_CACHE_DIR_DEFAULT,
+    permitir_download: bool = False,
+) -> dict:
+    """Fracao das companhias deslistadas relevantes com ticker resolvido.
+
+    Mede na unidade certa. Contar tickers contra companhias inflaria: uma
+    companhia tem ON, PN e UNIT, entao 95 tickers resolvidos nao sao 95
+    empresas cobertas -- sao 59. Uma empresa conta como coberta quando ao menos
+    um de seus tickers foi resolvido, que e o suficiente para ela existir no
+    universo historico.
+    """
+    vazio = {"relevantes": 0, "cobertas": 0, "share": None, "tickers": 0}
+    try:
+        raw = load_cvm_cancelamentos_raw(cache_path=cvm_cache_path,
+                                         permitir_download=permitir_download)
+        aliases = load_cvm_ticker_aliases(cvm_alias_path)
+        curados = {_clean_id(_row_first(a, "cnpj_cia", "cnpj", "CNPJ_CIA"))
+                   for a in aliases} - {""}
+        aliases = aliases + [
+            a for a in load_fca_aliases(cache_dir=fca_cache_dir,
+                                        permitir_download=permitir_download)
+            if a["cnpj_cia"] not in curados]
+    except Exception:  # noqa: BLE001
+        logger.warning("cobertura_relevante indisponivel", exc_info=True)
+        return vazio
+    relevantes = [r for r in raw if _empresa_relevante(r)]
+    if not relevantes or not aliases:
+        return vazio
+    cobertas, tickers = 0, set()
+    for row in relevantes:
+        achados = {_row_first(a, "ticker", "Ticker", "TICKER").upper()
+                   for a in aliases if _alias_matches_cvm_row(a, row)} - {""}
+        if achados:
+            cobertas += 1
+            tickers |= achados
+    return {"relevantes": len(relevantes), "cobertas": cobertas,
+            "share": cobertas / len(relevantes), "tickers": len(tickers)}
+
+
 def resumo_ingestao(
     dir_local: Path | str = INGESTION_DIR_DEFAULT,
     incluir_b3: bool = False,
