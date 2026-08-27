@@ -43,13 +43,20 @@ _EXCEL_EPOCH = date(1899, 12, 30)
 # Duração aceita como "anual" (10-K com exercícios de ~12 meses).
 _ANNUAL_MIN_DAYS, _ANNUAL_MAX_DAYS = 350, 380
 _QUARTERLY_MIN_DAYS, _QUARTERLY_MAX_DAYS = 70, 110
-PARSER_VERSION = "companyfacts-parser-v6"
+PARSER_VERSION = "companyfacts-parser-v7"
 
 # ── Mapas de conceitos (ordem = prioridade) ───────────────────────────────────
 INCOME_CONCEPTS: dict[str, list[str]] = {
+    # `SalesRevenueGoodsNet`/`ServicesNet` sao pre-ASC 606 e fecham a lacuna que
+    # sobrou do A-148: a Compass Minerals publica `Revenues` = 0 de 2011 a 2013 e
+    # nenhum dos quatro aliases seguintes -- o valor real (US$ 1.105,7 mi em 2011)
+    # so existe sob `SalesRevenueGoodsNet`. Com a regra do zero que cede, entram
+    # apenas onde os anteriores faltam ou vem zerados. O corte de duracao anual
+    # descarta o Q4 que compartilha o mesmo `end` do exercicio.
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax",
                 "Revenues", "SalesRevenueNet",
-                "RevenueFromContractWithCustomerIncludingAssessedTax"],
+                "RevenueFromContractWithCustomerIncludingAssessedTax",
+                "SalesRevenueGoodsNet", "SalesRevenueServicesNet"],
     "cost_of_revenue": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
     "gross_profit": ["GrossProfit"],
     "rnd_expenses": ["ResearchAndDevelopmentExpense"],

@@ -76,3 +76,38 @@ def test_receita_negativa_na_preferida_nao_e_tratada_como_vazio():
     cf = _cf(Revenues=[("2015-01-01", "2015-12-31", -82_400_000)],
              SalesRevenueNet=[("2015-01-01", "2015-12-31", 20_000_000_000)])
     assert _receita(cf) == -82_400_000
+
+
+# ── Lacuna que sobrou: a regra estava certa, a lista de aliases e que era curta ─
+#
+# A re-ingestao do A-148 corrigiu a Flowserve e nao corrigiu a Compass Minerals.
+# A causa nao era a regra do zero que cede: a CMP publica `Revenues` = 0 de 2011
+# a 2013 e NENHUM dos quatro aliases da lista -- os US$ 1.105,7 milhoes de 2011
+# so existem sob `SalesRevenueGoodsNet`, a tag pre-ASC 606. Sem ela, ceder o
+# zero nao tinha para quem ceder.
+
+
+def test_o_caso_compass_a_receita_so_existe_sob_a_tag_pre_606():
+    cf = _cf(Revenues=[("2011-01-01", "2011-12-31", 0)],
+             SalesRevenueGoodsNet=[("2011-01-01", "2011-12-31", 1_105_700_000)])
+    assert _receita(cf, "2011-12-31") == 1_105_700_000
+
+
+def test_tag_de_servico_pre_606_tambem_entra():
+    cf = _cf(Revenues=[("2011-01-01", "2011-12-31", 0)],
+             SalesRevenueServicesNet=[("2011-01-01", "2011-12-31", 42_000_000)])
+    assert _receita(cf, "2011-12-31") == 42_000_000
+
+
+def test_as_tags_pre_606_ficam_no_fim_da_prioridade():
+    """Elas cobrem lacuna historica; nao podem vencer a tag vigente com valor."""
+    cf = _cf(RevenueFromContractWithCustomerExcludingAssessedTax=[
+                 ("2011-01-01", "2011-12-31", 800_000_000)],
+             SalesRevenueGoodsNet=[("2011-01-01", "2011-12-31", 1_105_700_000)])
+    assert _receita(cf, "2011-12-31") == 800_000_000
+
+
+def test_a_versao_do_parser_subiu_junto_com_a_lista():
+    """Dado gravado nao muda quando o parser muda; a versao e o que permite
+    saber qual leitura produziu cada linha e o que precisa ser relido."""
+    assert ef.PARSER_VERSION == "companyfacts-parser-v7"
