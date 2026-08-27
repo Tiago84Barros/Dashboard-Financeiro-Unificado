@@ -97,6 +97,20 @@ _AVISO_SOBREVIVENCIA = (
 )
 
 
+def _aviso_sobrevivencia() -> str:
+    """O aviso com o tamanho do viés medido, quando há medição.
+
+    Avisar que o viés existe não diz ao usuário se ele é pequeno ou se invalida
+    a evidência. `core.us_survivorship` mede isso pelo painel: entradas contra
+    saídas de empresas entre safras. Sem medição disponível o texto volta ao
+    aviso qualitativo -- número que ninguém apurou não se afirma.
+    """
+    from core.us_survivorship import frase_turnover
+
+    frase = frase_turnover()
+    return _AVISO_SOBREVIVENCIA if not frase else f"{_AVISO_SOBREVIVENCIA} {frase}"
+
+
 def _render_company_analysis_css() -> None:
     st.markdown("""
     <style>
@@ -1372,7 +1386,7 @@ def _render_us_lab_backtest() -> None:
             with cols[idx]:
                 text = "—" if value is None else (f"{value*100:.2f}%" if percent else f"{value:.3f}")
                 card_metrica(label, text)
-        st.caption(_AVISO_SOBREVIVENCIA)
+        st.caption(_aviso_sobrevivencia())
         curve = list(result.get("equity_curve") or [])
         dates = list(result.get("dates") or [])
         if curve:
@@ -2676,7 +2690,7 @@ def _tab_backtests(status: dict) -> None:
         card_metrica("p-valor", "—" if ic["p_value"] is None else f"{ic['p_value']:.3f}")
     with c4:
         card_metrica("Taxa de acerto", _p(ic["hit_rate"]))
-    st.caption(_AVISO_SOBREVIVENCIA)
+    st.caption(_aviso_sobrevivencia())
 
     secao_titulo("Desempenho da carteira versus pesos iguais", "📈")
     c1, c2, c3, c4 = st.columns(4)

@@ -39,7 +39,9 @@ def test_aviso_existe_e_diz_o_que_o_usuario_precisa_decidir(fonte: str) -> None:
 
 
 def test_aviso_acompanha_toda_evidencia_historica_exibida(fonte: str) -> None:
-    # backtest do Laboratorio e tela de backtest dedicada.
-    assert fonte.count("st.caption(_AVISO_SOBREVIVENCIA)") == 2
+    # backtest do Laboratorio e tela de backtest dedicada. Passou a chamar a
+    # funcao em vez da constante quando o aviso ganhou o tamanho medido do vies
+    # (2.692 entradas, zero saidas); a constante segue sendo o texto base.
+    assert fonte.count("st.caption(_aviso_sobrevivencia())") == 2
     # auditoria por industria traz a ressalva no proprio texto da secao.
     assert "sem nenhuma deslistagem no universo" in fonte

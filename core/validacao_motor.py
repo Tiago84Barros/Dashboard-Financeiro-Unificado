@@ -159,6 +159,34 @@ def validacao_fii() -> EstadoValidacao:
         return _falha("Seleção de FIIs", METHODOLOGY_VERSION, exc)
 
 
+def _deslistadas_us_pelo_painel() -> Portao:
+    """Mesmo portao, medido pelo turnover do painel quando `assets` nao existe.
+
+    Na base publicada o schema `market_us` so tem `company_snapshots` e
+    `prices_monthly`, entao a contagem de `delisted_date` nao roda -- e o portao
+    virava "nao apurado" justamente em producao, que e onde o usuario decide.
+    Mas o painel ja responde a pergunta por outro caminho: se nenhuma empresa
+    saiu do universo entre safras, o universo e 100% sobrevivente. A medicao
+    vem de `core.us_survivorship`, gravada por quem alcanca o armazem.
+
+    Sem medicao gravada, continua nao apurado. Ausencia nao vira zero.
+    """
+    from core.us_survivorship import carregar_medicao
+
+    med = carregar_medicao()
+    if not med:
+        return Portao("Universo de deslistadas", None,
+                      "fonte de deslistagem nao alcancavel nesta base")
+    saidas = int(med.get("saidas") or 0)
+    safras = int(med.get("safras") or 0)
+    if saidas:
+        return Portao("Universo de deslistadas", True,
+                      f"{saidas} saidas de empresas em {safras} safras do painel")
+    return Portao(
+        "Universo de deslistadas", False,
+        f"nenhuma saida de empresa em {safras} safras: o painel so tem sobreviventes")
+
+
 def _deslistadas_us() -> Portao:
     """O universo historico americano observa empresas que pararam de negociar?
 
@@ -185,9 +213,8 @@ def _deslistadas_us() -> Portao:
                 "SELECT count(*) FROM market_us.assets "
                 "WHERE delisted_date IS NOT NULL")).scalar()
     except Exception as exc:  # noqa: BLE001
-        logger.info("deslistadas_us nao apurado: %s", type(exc).__name__)
-        return Portao("Universo de deslistadas", None,
-                      "fonte de deslistagem nao alcancavel nesta base")
+        logger.info("deslistadas_us sem market_us.assets: %s", type(exc).__name__)
+        return _deslistadas_us_pelo_painel()
     n = int(n or 0)
     return Portao(
         "Universo de deslistadas", n > 0,
