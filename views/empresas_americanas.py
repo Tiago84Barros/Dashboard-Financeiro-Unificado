@@ -2059,7 +2059,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
     st.caption(
         "A aplicação americana é feita em duas etapas para comportar milhares de "
         "empresas: filtro institucional vetorizado e revisão apenas dos líderes por "
-        "indústria. O score respeita particularidades de financeiras e REITs."
+        "indústria. O universo é de **ações**: REITs, fundos, SPACs, preferenciais "
+        "e units ficam de fora, e financeiras usam pesos setoriais próprios."
     )
 
     snapshot_mode = status.get("mode") == "snapshot"
@@ -2204,8 +2205,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
         require_resilience = st.checkbox(
             "Exigir resiliência (ROIC/ROE/FCF yield acima do Treasury)",
             value=False, key="us_create_resilience",
-            help="Usa ROIC nas empresas operacionais, ROE em financeiras e FCF "
-                 "yield no setor imobiliário/REITs.",
+            help="Usa ROIC nas empresas operacionais e ROE em financeiras. "
+                 "REITs não entram no universo (só ações).",
         )
         resilience_spread = st.number_input(
             "Spread mínimo sobre o Treasury (p.p.)", min_value=-10.0,
@@ -2339,9 +2340,10 @@ def _tab_criacao_portfolio(status: dict) -> None:
                 ], hide_index=True, width="stretch",
             )
         st.markdown(
-            "**Tratamento setorial:** empresas operacionais usam ROIC; financeiras "
-            "usam ROE; imobiliárias e REITs usam geração de caixa. Múltiplos e "
-            "fundamentos seguem SEC/US GAAP."
+            "**Tratamento setorial:** empresas operacionais usam ROIC e financeiras "
+            "usam ROE. O universo é de ações — REIT, fundo, SPAC, preferencial, "
+            "warrant e unit são excluídos, porque não se comparam a uma companhia "
+            "operacional no mesmo ranking. Múltiplos e fundamentos seguem SEC/US GAAP."
         )
 
     if not audit.empty:
@@ -2531,7 +2533,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
 - segmentos B3 → indústrias SEC/SIC consolidadas em setores americanos;
 - liquidez em reais → valor de mercado em dólares;
 - DRE societária brasileira → demonstrações anuais SEC/US GAAP;
-- ROIC único → ROIC para operacionais, ROE para financeiras e FCF yield para REITs;
+- ROIC único → ROIC para operacionais e ROE para financeiras (REIT não entra no universo);
 - seleção pequena → pré-filtro vetorizado e revisão apenas dos líderes por indústria;
 - limite por setor → limites simultâneos por ativo, indústria e setor, com cap adaptativo auditável.
 
@@ -2880,8 +2882,12 @@ simulação, nunca apresentados como cotações oficiais em tempo real.
 
 **Regulação, contabilidade e tributação.** A interpretação segue US GAAP e as
 divulgações à SEC, incluindo relevância de recompras, remuneração baseada em ações,
-diluição, redução ao valor recuperável e ativos intangíveis. Fundos imobiliários
-americanos (REITs) e instituições financeiras usam pesos setoriais próprios.
+diluição, redução ao valor recuperável e ativos intangíveis. Instituições
+financeiras usam pesos setoriais próprios: alavancagem contábil é o negócio de um
+banco, não um risco a punir. Fundos imobiliários americanos (REITs) não são
+analisados aqui — a seção cobre ações, e o REIT distribui por obrigação legal e
+deprecia imóvel contra o lucro, o que o faz parecer barato e alavancado pelos dois
+motivos errados dentro de um ranking relativo.
 Retenção de imposto na fonte, residência fiscal, imposto sucessório e tratados
 dependem do investidor e não alteram automaticamente a pontuação da companhia. Risco
 político, fiscal, antitruste e mudanças regulatórias entram como contexto de

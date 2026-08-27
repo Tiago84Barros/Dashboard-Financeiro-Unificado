@@ -120,6 +120,10 @@ def build_entry_scores(scored: pd.DataFrame,
     # onde UNIP6 distribuía 318%). REITs ficam de fora: distribuem FFO por
     # exigência legal e a depreciação deprime o lucro contábil — payout > 1 ali
     # é estrutural, não alerta.
+    #
+    # A-140 tirou o REIT do universo, mas esta guarda NÃO virou código morto: o
+    # caminho local lê `analysis_status`, que só exclui o REIT depois de
+    # `classify_assets` rodar de novo. Até lá ele ainda chega aqui.
     if "payout_ratio" in out:
         _reit = (out["is_reit"].astype(bool) if "is_reit" in out
                  else pd.Series(False, index=out.index))
