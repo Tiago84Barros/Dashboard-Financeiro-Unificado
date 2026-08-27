@@ -62,11 +62,18 @@ def _mask(url: str) -> str:
     except Exception:  # noqa: BLE001
         return "(url ilegível)"
 
-_MIGRATION = ROOT / "supabase_unificado" / "schema" / "044_market_us_snapshot.sql"
+# A vitrine ganha coluna ao longo do tempo; aplicar so a criacao original
+# publicaria linhas contra um schema velho e a leitura cairia inteira. Cada
+# migration que toca company_snapshots entra aqui, em ordem.
+_MIGRATIONS = [
+    ROOT / "supabase_unificado" / "schema" / "044_market_us_snapshot.sql",
+    ROOT / "supabase_unificado" / "schema" / "051_market_us_investment_company.sql",
+]
 # Colunas da vitrine (ordem estável para o upsert).
 _COLS = [
     "symbol", "cik", "name", "sector", "industry", "exchange", "security_type",
-    "is_reit", "is_active", "score", "score_quality", "score_growth",
+    "is_reit", "is_active", "is_investment_company",
+    "score", "score_quality", "score_growth",
     "score_solidity", "score_capital_efficiency", "score_valuation",
     "score_shareholder", "coverage", "score_confidence", "score_status",
     "critical_missing", "metrics", "asymmetry", "advanced", "dossie",
@@ -130,7 +137,8 @@ def _ensure_schema(engine) -> str:
             WHERE table_schema='market_us' AND table_name='company_snapshots'
         """)).scalars()) if exists else set()
     if not exists:
-        _exec_retry(engine, text(_MIGRATION.read_text(encoding="utf-8")))
+        for _mig in _MIGRATIONS:
+            _exec_retry(engine, text(_mig.read_text(encoding="utf-8")))
         return "criado"
     missing = {
         "score_confidence": "NUMERIC(6,2)",

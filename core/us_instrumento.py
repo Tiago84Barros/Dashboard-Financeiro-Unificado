@@ -2,7 +2,7 @@
 """Quem entra no universo de análise americano (A-140).
 
 Regra do usuário, explícita: **o módulo de Empresas Americanas analisa AÇÕES**.
-REIT, fundo, ETF, SPAC, preferencial, warrant, right e unit não são ação e não
+REIT, fundo, ETF, SPAC, BDC, preferencial, warrant, right e unit não são ação e não
 podem disputar ranking com uma companhia operacional — a comparação relativa
 por indústria pressupõe que os concorrentes tenham a mesma estrutura econômica.
 O REIT distribui o resultado por obrigação legal, deprecia imóvel contra o lucro
@@ -20,6 +20,10 @@ RE/MAX, Compass), incorporadora e administradora são companhias operacionais
 com lucro e EBIT legíveis. Só o veículo sai. Pelo mesmo motivo, gestora de
 recursos (Blackstone) e corretora (StoneX, LPL) ficam: administram o veículo,
 não são o veículo. Ver `e_veiculo_agrupado` (A-144).
+
+A BDC (fundo de crédito fechado) sai pelo mesmo argumento, mas por outra fonte:
+a SEC não lhe atribui SIC nenhum, então a evidência vem do formulário arquivado
+e chega por `is_investment_company`. Ver `MOTIVO_COMPANHIA_INVESTIMENTO` (A-147).
 """
 from __future__ import annotations
 
@@ -88,6 +92,22 @@ MOTIVO_VEICULO_AGRUPADO = (
     "veículo agrupado (ETF, trust de commodity, moeda ou cripto), não é ação"
 )
 
+# ── A-147: companhia de investimento (BDC, fundo fechado) ────────────────────
+#
+# Mesmo argumento do REIT, outra fonte de evidência. Uma BDC é um fundo de
+# crédito: não tem receita operacional (tem investment income), distribui ~90%
+# do resultado por obrigação legal de RIC e opera alavancada como fundo. Medidas
+# lado a lado com companhia operacional, as 40 que estavam na vitrine apareciam
+# sem receita e com "lucro" recorrente -- barato e sólido pelos dois motivos
+# errados, exatamente como o REIT ficava barato em P/L.
+#
+# Aqui a evidência NÃO pode vir do SIC: a SEC devolve `sic` vazio para todas
+# elas. Vem do formulário arquivado, apurado em `data_pipeline/us/edgar.py` e
+# gravado em `companies.is_investment_company`.
+MOTIVO_COMPANHIA_INVESTIMENTO = (
+    "companhia de investimento (BDC ou fundo fechado), não é ação operacional"
+)
+
 MOTIVO_REIT = "REIT: veículo imobiliário, fora do universo de ações"
 MOTIVO_TIPO_NAO_CONFIRMADO = (
     "tipo de ativo não confirmado: setor genérico 'Real Estate' sem SIC"
@@ -137,7 +157,8 @@ def motivo_exclusao_ativo(symbol: str | None, security_type: str | None,
                           related_symbols: tuple[str, ...] = (),
                           *, industry: str | None = None,
                           name: str | None = None,
-                          is_reit: object = None) -> str | None:
+                          is_reit: object = None,
+                          is_investment_company: object = None) -> str | None:
     """Motivo auditável quando o ativo não é ação operacional ordinária."""
     sym = str(symbol or "").upper().strip()
     sec = str(security_type or "common").lower().strip()
@@ -145,6 +166,8 @@ def motivo_exclusao_ativo(symbol: str | None, security_type: str | None,
     if e_reit(security_type=sec, sector=sector, industry=industry,
               name=name, is_reit=is_reit):
         return MOTIVO_REIT
+    if bool(is_investment_company):
+        return MOTIVO_COMPANHIA_INVESTIMENTO
     if e_veiculo_agrupado(name=name, sector=sector, industry=industry):
         return MOTIVO_VEICULO_AGRUPADO
     if sec in TIPOS_FORA:

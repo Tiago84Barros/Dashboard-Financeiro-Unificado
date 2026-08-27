@@ -56,6 +56,34 @@ _CIK_OVERRIDES = {
 }
 
 
+# ── A-147: BDC e fundo fechado, que a SEC nao classifica ──────────────────────
+#
+# `sic` e `sicDescription` voltam VAZIOS no submissions de toda BDC (medido em
+# FS KKR, Hercules, Goldman Sachs BDC, Oaktree, Sixth Street e mais 51). Sem SIC
+# a regra de `core/us_instrumento.py` fica cega -- ela reconhece a descricao
+# "closed-end management investment offices", que nunca chega. O resultado eram
+# 40 fundos de credito disputando ranking com companhia operacional.
+#
+# O que a SEC fornece de fato e o FORMULARIO. N-54A e a eleicao formal de virar
+# BDC sob o Investment Company Act; N-2 e o registro de fundo fechado; N-CSR e
+# NPORT sao os relatorios periodicos de companhia de investimento. Nenhuma
+# empresa operacional os arquiva: medido em 15 suspeitos contra 10 controles
+# (Exxon, Morgan Stanley, HCA, Unisys...), a separacao foi 14x0 -- e o unico
+# suspeito sem marca era o Central Bancompany, banco de verdade, que o sinal
+# corretamente deixou passar.
+_FORMS_COMPANHIA_INVESTIMENTO = ("N-54A", "N-2", "N-CSR", "NPORT", "N-6F", "N-23C")
+
+
+def _e_companhia_de_investimento(sub: dict) -> bool:
+    """True quando os filings identificam BDC ou fundo fechado registrado."""
+    formularios = ((sub or {}).get("filings", {}) or {}).get("recent", {}) or {}
+    for form in formularios.get("form", []) or []:
+        nome = str(form or "").upper().strip()
+        if nome.startswith(_FORMS_COMPANHIA_INVESTIMENTO):
+            return True
+    return False
+
+
 class EdgarProvider(FundamentalsProvider):
     """Fundamentos via SEC EDGAR. Sem chave; exige User-Agent de contato."""
 
@@ -219,6 +247,7 @@ class EdgarProvider(FundamentalsProvider):
             "description": sub.get("sicDescription"),
             "website": sub.get("website"),
             "isActivelyTrading": not bool(sub.get("formerNames") and not exchanges),
+            "_investment_company": _e_companhia_de_investimento(sub),
             "_sic": sub.get("sic"),
             "_former_names": sub.get("formerNames") or [],
             "_source": "sec_edgar",

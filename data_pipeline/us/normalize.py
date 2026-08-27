@@ -266,6 +266,8 @@ def map_profile(row: dict) -> dict:
         "ipo_date":  parse_date(row.get("ipoDate")),
         "security_type": sec_type,
         "is_reit":   sec_type == "reit",
+        # A-147: BDC/fundo fechado, deduzido do formulario (a SEC nao da SIC).
+        "is_investment_company": bool(row.get("_investment_company")),
         "is_adr":    bool(row.get("isAdr")),
         "is_active": not bool(row.get("isActivelyTrading") is False),
         "source":    row.get("_source") or row.get("source") or "fmp",

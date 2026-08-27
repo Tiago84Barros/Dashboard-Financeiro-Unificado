@@ -76,6 +76,7 @@ def upsert_company(conn, profile: dict) -> int:
         "description": profile.get("description"), "website": profile.get("website"),
         "ceo": profile.get("ceo"), "employees": profile.get("employees"),
         "ipo_date": profile.get("ipo_date"), "is_reit": bool(profile.get("is_reit")),
+        "is_investment_company": bool(profile.get("is_investment_company")),
         "is_adr": bool(profile.get("is_adr")), "is_active": bool(profile.get("is_active", True)),
         "source": profile.get("source") or "fmp",
     }

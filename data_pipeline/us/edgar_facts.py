@@ -313,14 +313,41 @@ def _quarterly_points(entries: list[dict], *, instant: bool = False) -> dict[tup
     return out
 
 
+# ── A-148: zero na tag preferida bloqueava a tag que tinha o valor ───────────
+#
+# A prioridade entre aliases era "primeiro que TIVER dado", e um `val: 0` conta
+# como ter dado. A Eaton publica `Revenues` = 0 nos exercicios de 2014 a 2016 --
+# uma linha de rollup vazia, ao lado de `SalesRevenueNet` = US$ 20,9 bilhoes, o
+# numero real. O parser parava no zero: cinco anos de receita zero para uma
+# industria de US$ 24 bilhoes, e o mesmo em Flowserve, Compass Minerals e
+# Assured Guaranty (que publica a tag de ASC 606 zerada porque sua receita e de
+# premios de seguro, nao de contrato com cliente). Sao 573 linhas anuais.
+#
+# A regra abaixo e deliberadamente estreita: o zero so cede quando um alias
+# POSTERIOR traz valor diferente de zero para o mesmo periodo. A biotech que
+# realmente nao fatura nao tem alias nenhum com valor, e continua zerada -- a
+# correcao nao inventa receita, so deixa de preferir o vazio ao cheio.
+_CAMPOS_ONDE_ZERO_CEDE = frozenset({"revenue"})
+
+
+def _mesclar_alias(merged: dict, end, point, *, zero_cede: bool) -> None:
+    atual = merged.get(end)
+    if atual is None:
+        merged[end] = point
+        return
+    if zero_cede and not atual.get("val") and point.get("val"):
+        merged[end] = point
+
+
 def _collect(cf: dict, concepts: dict[str, list[str]], unit: str = _USD) -> dict[str, dict]:
     """{field: {end: {val, filed}}} — primeiro alias que tiver dado para o período."""
     out: dict[str, dict] = {}
     for field, tags in concepts.items():
         merged: dict[str, dict] = {}
+        zero_cede = field in _CAMPOS_ONDE_ZERO_CEDE
         for tag in tags:
             for end, point in _annual_points(_entries(cf, tag, unit)).items():
-                merged.setdefault(end, point)   # alias anterior tem prioridade
+                _mesclar_alias(merged, end, point, zero_cede=zero_cede)
         out[field] = merged
     return out
 
@@ -341,10 +368,11 @@ def _collect_quarterly(cf: dict, concepts: dict[str, list[str]], unit: str = _US
     out: dict[str, dict] = {}
     for field, tags in concepts.items():
         merged: dict[tuple[int, int], dict] = {}
+        zero_cede = field in _CAMPOS_ONDE_ZERO_CEDE
         for tag in tags:
             for key, point in _quarterly_points(
                     _entries(cf, tag, unit), instant=instant).items():
-                merged.setdefault(key, point)
+                _mesclar_alias(merged, key, point, zero_cede=zero_cede)
         out[field] = merged
     return out
 

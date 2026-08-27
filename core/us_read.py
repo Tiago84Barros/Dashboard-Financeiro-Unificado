@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from functools import lru_cache
 
 import pandas as pd
 from sqlalchemy import bindparam, text
@@ -539,7 +540,30 @@ def load_asymmetry_frame(limit_companies: int | None = None) -> pd.DataFrame:
 
 # ── Vitrine (snapshot) — leitura no deploy/Supabase ───────────────────────────
 _SNAP_IDENTITY = ("symbol", "cik", "name", "sector", "industry", "exchange",
-                  "security_type", "is_reit", "is_active")
+                  "security_type", "is_reit", "is_active",
+                  "is_investment_company")
+
+# Colunas que podem faltar numa vitrine publicada antes da migration que as
+# criou. Pedi-las incondicionalmente derruba a consulta inteira e a tela fica
+# vazia -- foi assim que a ausencia de `score_confidence` zerou o ranking uma
+# vez. A leitura descobre o que existe antes de pedir.
+_SNAP_OPCIONAIS = frozenset({"is_investment_company"})
+
+
+@lru_cache(maxsize=4)
+def _colunas_da_vitrine() -> frozenset:
+    eng = _engine()
+    if eng is None:
+        return frozenset()
+    try:
+        with eng.connect() as conn:
+            return frozenset(r[0] for r in conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema='market_us' "
+                "AND table_name='company_snapshots'")))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_colunas_da_vitrine falhou: %s", exc)
+        return frozenset()
 _SNAP_SCORES = ("score", "score_quality", "score_growth", "score_solidity",
                  "score_capital_efficiency", "score_valuation", "score_shareholder",
                  "coverage", "score_confidence", "score_status", "critical_missing")
@@ -571,7 +595,8 @@ def _apenas_acoes(df: pd.DataFrame) -> pd.DataFrame:
         lambda r: motivo_exclusao_ativo(
             r.get("symbol"), r.get("security_type"), r.get("sector"),
             industry=r.get("industry"), name=r.get("name"),
-            is_reit=r.get("is_reit")) is not None,
+            is_reit=r.get("is_reit"),
+            is_investment_company=r.get("is_investment_company")) is not None,
         axis=1)
     if fora.any():
         logger.info("vitrine EUA: %d linhas fora do universo de ações", int(fora.sum()))
@@ -583,7 +608,9 @@ def _snapshot_df(extra_json: str | None = None,
     eng = _engine()
     if eng is None:
         return pd.DataFrame()
-    cols = list(_SNAP_IDENTITY) + list(_SNAP_SCORES)
+    presentes = _colunas_da_vitrine()
+    cols = [c for c in list(_SNAP_IDENTITY) + list(_SNAP_SCORES)
+            if c not in _SNAP_OPCIONAIS or not presentes or c in presentes]
     if extra_json:
         cols.append(extra_json)
     cols.extend(c for c in extra_jsons if c not in cols)
@@ -1050,9 +1077,11 @@ def _contagem_fora_do_universo() -> int:
         return 0
     try:
         with eng.connect() as conn:
+            extra = (", is_investment_company"
+                     if "is_investment_company" in _colunas_da_vitrine() else "")
             bruto = pd.read_sql(text(
-                "SELECT symbol, name, sector, industry, security_type, is_reit "
-                "FROM market_us.company_snapshots"), conn)
+                "SELECT symbol, name, sector, industry, security_type, is_reit"
+                f"{extra} FROM market_us.company_snapshots"), conn)
     except Exception as exc:  # noqa: BLE001
         logger.warning("_contagem_fora_do_universo falhou: %s", exc)
         return 0
@@ -1062,4 +1091,6 @@ def _contagem_fora_do_universo() -> int:
         lambda r: motivo_exclusao_ativo(
             r.get("symbol"), r.get("security_type"), r.get("sector"),
             industry=r.get("industry"), name=r.get("name"),
-            is_reit=r.get("is_reit")) is not None, axis=1).sum())
+            is_reit=r.get("is_reit"),
+            is_investment_company=r.get("is_investment_company")) is not None,
+        axis=1).sum())
