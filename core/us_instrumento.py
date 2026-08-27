@@ -114,6 +114,59 @@ MOTIVO_TIPO_NAO_CONFIRMADO = (
 )
 
 
+# ── A-151: uma companhia, uma linha no ranking ───────────────────────────────
+#
+# Medido em 27/08/2026: 54 tickers elegíveis são classe adicional de uma empresa
+# que já está no universo por outro ticker -- SOJC/SOJD/SOJF/SOMN contra SO,
+# HBANL/HBANP/HBANZ contra HBAN, NEWTH/NEWTI/NEWTP contra NEWT, HOVNP contra HOV.
+#
+# Nenhum deles chegava à vitrine, mas por acidente e não por regra: ninguém
+# tinha ingerido demonstração sob esses símbolos. O EDGAR é por CIK, então a
+# próxima ingestão sobre a lista de elegíveis buscaria o CIK da Newtek e
+# gravaria as MESMAS demonstrações sob NEWTP -- e a companhia passaria a ocupar
+# quatro linhas do ranking com fundamento idêntico e preço de outro papel.
+#
+# A lista tem duas naturezas, e afirmar uma só seria mentira. A maioria é baby
+# bond ou preferencial (HBANL, SOJC, HOVNP): não é ação, e o P/L calculado com
+# preço de título de dívida contra o lucro da ordinária não significa nada. Mas
+# há classe ordinária legítima também -- ZG contra Z (Zillow), HEI-A contra HEI
+# (Heico), AGM-A contra AGM (Farmer Mac): são ação de verdade. Marcar essas como
+# "não é ação" repetiria exatamente o defeito do A-147, que lia um documento e
+# afirmava outra coisa.
+#
+# O que vale para as duas naturezas, e é o que o motivo declara: é a MESMA
+# companhia, e ela já está representada. A tela chama-se Empresas Americanas --
+# ela ranqueia companhia, não papel. Uma companhia, uma linha.
+#
+# A evidência exigida é dupla e verificável no cadastro, não heurística de
+# sufixo: mesmo `company_id` E o símbolo base é prefixo estrito deste. Sufixo
+# solto não serve -- as letras de baby bond (L, P, Z, C, D, N, O) são as mesmas
+# de ticker legítimo, e cortar por letra derrubaria empresa operacional.
+MOTIVO_CLASSE_ADICIONAL = (
+    "classe adicional da mesma companhia: a análise já é representada por {base}"
+)
+
+
+def classe_adicional_da_mesma_companhia(
+        symbol: str | None, related_symbols: tuple[str, ...] = ()) -> str | None:
+    """Símbolo base quando este ticker é classe adicional da mesma companhia.
+
+    Devolve o base (mais curto e prefixo estrito) ou None. O base precisa
+    sobreviver por si: se ele mesmo for warrant, unit ou preferencial explícita,
+    excluir os dois deixaria a companhia sem nenhuma linha.
+    """
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return None
+    bases = sorted({str(o or "").upper().strip() for o in related_symbols}, key=len)
+    for base in bases:
+        if (base and base != sym and len(base) < len(sym) and sym.startswith(base)
+                and not _EXPLICIT_NON_COMMON.search(base)
+                and not _NASDAQ_ISSUE_SUFFIX.fullmatch(base)):
+            return base
+    return None
+
+
 def e_reit(*, security_type: object = None, sector: object = None,
            industry: object = None, name: object = None,
            is_reit: object = None) -> bool:
@@ -180,6 +233,9 @@ def motivo_exclusao_ativo(symbol: str | None, security_type: str | None,
         return "preferencial, warrant ou unit"
     if _NASDAQ_ISSUE_SUFFIX.fullmatch(sym):
         return "sufixo Nasdaq de warrant, right ou unit"
+    base_classe = classe_adicional_da_mesma_companhia(sym, related_symbols)
+    if base_classe:
+        return MOTIVO_CLASSE_ADICIONAL.format(base=base_classe)
     base = sym[:-1] if sym.endswith(("W", "R", "U")) else ""
     if base and any(
             str(other).upper() != sym
