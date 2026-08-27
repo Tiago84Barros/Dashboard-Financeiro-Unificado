@@ -108,6 +108,15 @@ def _survivorship_status() -> dict[str, Any]:
     }
 
 
+# Fatia da serie ANUAL que precisa ter data de protocolo da CVM para que o
+# resultado possa ser tratado como validacao estrita. Nao e 100%: a base da CVM
+# comeca em 2010, o exercicio corrente ainda nao foi protocolado, e BDR nao
+# entrega DFP no Brasil. Exigir 100% seria exigir que fontes inexistentes
+# existissem, e o gate nunca sairia do lugar -- que e como ele passou os
+# ultimos meses.
+PIT_SHARE_MINIMA = 0.90
+
+
 def build_data_manifest(engine) -> dict[str, Any]:
     """Resume cobertura e qualidade de disponibilidade sem carregar dados brutos."""
     with engine.connect() as conn:
@@ -137,11 +146,31 @@ def build_data_manifest(engine) -> dict[str, Any]:
             """)).mappings().all()
             quality = {str(r["availability_quality"]): int(r["n"] or 0) for r in vintages}
             manifest["metric_vintages"] = quality
+            # A-155: o denominador e ANUAL de proposito. `ttm` e `spot` nao
+            # derivam de uma DFP e nunca poderao ter data de protocolo; conta-los
+            # faria a cobertura parecer eternamente incompleta por uma lacuna que
+            # nao existe.
+            anual = conn.execute(text("""
+                SELECT count(*) AS n,
+                       count(*) FILTER (WHERE availability_quality='published_at') AS p
+                FROM market.calculated_metric_vintages WHERE period='annual'
+            """)).mappings().one()
+            anual_n, anual_p = int(anual["n"] or 0), int(anual["p"] or 0)
+            share = (anual_p / anual_n) if anual_n else 0.0
             manifest["pit"] = {
-                "strict_available": int(quality.get("published_at", 0)) > 0,
+                # Ate 27/08/2026 este gate era `published_at_rows > 0`. Enquanto
+                # a terceira qualidade nao existia, isso era inofensivo: dava
+                # False sempre. Agora que ela existe, UMA linha promoveria a
+                # base inteira a "PIT estrito" -- um gate que o primeiro dado
+                # bom desarma nao e gate. O criterio passa a ser a FATIA da
+                # serie anual que tem data de protocolo real.
+                "strict_available": anual_p > 0 and share >= PIT_SHARE_MINIMA,
                 "published_at_rows": int(quality.get("published_at", 0)),
                 "first_seen_proxy_rows": int(quality.get("first_seen_proxy", 0)),
                 "migration_baseline_rows": int(quality.get("migration_baseline", 0)),
+                "annual_rows": anual_n,
+                "annual_published_rows": anual_p,
+                "annual_published_share": round(share, 4),
             }
         for table, key in (
             ("market.income_statements", "income"),
@@ -169,11 +198,16 @@ def validation_readiness(manifest: dict[str, Any]) -> dict[str, Any]:
     analise exploratoria; apenas impede que ela seja promovida a recomendacao
     estatisticamente validada.
     """
-    pit_ok = bool((manifest.get("pit") or {}).get("strict_available"))
+    pit = manifest.get("pit") or {}
+    pit_ok = bool(pit.get("strict_available"))
     survivorship_ok = bool((manifest.get("survivorship") or {}).get("strict_available"))
     blockers: list[str] = []
     if not pit_ok:
-        blockers.append("PIT estrito sem published_at/revisoes CVM")
+        share = pit.get("annual_published_share")
+        blockers.append(
+            "PIT estrito sem published_at/revisoes CVM" if not share else
+            f"PIT estrito: so {share * 100:.0f}% da serie anual tem data de "
+            f"protocolo na CVM (minimo {PIT_SHARE_MINIMA * 100:.0f}%)")
     if not survivorship_ok:
         blockers.append("universo historico de deslistadas incompleto")
     return {"ready": not blockers, "blockers": blockers}

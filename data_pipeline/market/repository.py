@@ -298,13 +298,54 @@ def upsert(conn, table: str, rows: list[dict]) -> int:
     return _upsert(conn, table, rows)
 
 
+def _publicacao_cvm(conn, tickers: list[str]) -> dict[tuple[str, int], object]:
+    """(ticker, exercício) -> quando a DFP daquele exercício foi protocolada.
+
+    A-155. Tabela ausente devolve dicionário vazio: banco sem a migration 052
+    continua operando com o proxy, e a qualidade declarada continua dizendo a
+    verdade sobre ele.
+
+    O ``JOIN`` passa por ``market.companies.codigo_cvm`` porque é o que amarra
+    ticker a companhia na CVM. Uma companhia com várias classes (ON/PN/UNIT)
+    recebe a mesma data nas três, e está certo: a DFP é da companhia.
+    """
+    if not tickers:
+        return {}
+    existe = conn.execute(text("""
+        SELECT to_regclass('market.cvm_filing_publications') IS NOT NULL
+    """)).scalar()
+    if not existe:
+        return {}
+    linhas = conn.execute(text("""
+        SELECT a.ticker, p.exercicio, p.disponivel_em
+        FROM market.cvm_filing_publications p
+        JOIN market.companies c ON c.codigo_cvm = p.codigo_cvm
+        JOIN market.assets a ON a.company_id = c.id
+        WHERE p.categoria = 'DFP' AND a.ticker = ANY(:tickers)
+    """), {"tickers": tickers}).fetchall()
+    return {(str(t), int(y)): d for t, y, d in linhas}
+
+
 def append_metric_vintages(conn, rows: list[dict]) -> int:
     """Acrescenta versões imutáveis quando uma métrica efetivamente muda.
 
-    Bancos sem a migration 021 continuam operando, mas retornam zero. Para
-    demonstrações anuais, ``available_at`` usa o maior ``first_seen_at`` das
-    três demonstrações do exercício; isso é um proxy conservador da data em
-    que o conjunto necessário ao cálculo estava disponível.
+    Bancos sem a migration 021 continuam operando, mas retornam zero.
+
+    Para demonstrações anuais há duas fontes de ``available_at``, e a ordem
+    importa (A-155):
+
+    1. ``market.cvm_filing_publications`` — o ``DT_RECEB`` da DFP, isto é o dia
+       em que a companhia protocolou e o mercado passou a poder saber. É a
+       única que sustenta backtest, e marca ``availability_quality`` como
+       ``published_at``.
+    2. o maior ``first_seen_at`` das três demonstrações do exercício — proxy do
+       dia em que o ETL viu. Se o ETL rodou hoje, ele afirma que o balanço de
+       2019 ficou disponível hoje. Serve de fallback, nunca de evidência.
+
+    O fallback nunca contradiz a fonte 1 porque só é consultado quando ela não
+    tem a linha; e a fonte 1 é usada mesmo quando é MAIS TARDIA que o proxy,
+    que é o caso das reapresentações — adiantar a disponibilidade é justamente
+    o erro que a validação PIT existe para pegar.
     """
     if not rows:
         return 0
@@ -334,6 +375,8 @@ def append_metric_vintages(conn, rows: list[dict]) -> int:
         """), {"tickers": tickers}).fetchall()
         availability = {(str(t), int(y)): value for t, y, value in available_rows}
 
+    publicacao = _publicacao_cvm(conn, tickers)
+
     has_cutover = conn.execute(text("""
         SELECT to_regclass('market.pipeline_cutovers') IS NOT NULL
     """)).scalar()
@@ -349,12 +392,16 @@ def append_metric_vintages(conn, rows: list[dict]) -> int:
         ticker = str(row.get("ticker") or "")
         period = str(row.get("period") or "")
         year = int(row.get("year") or 0)
-        available_at = availability.get((ticker, year)) if period == "annual" else None
-        quality = (
-            "first_seen_proxy"
-            if available_at is not None and cutoff is not None and available_at > cutoff
-            else "migration_baseline"
-        )
+        publicado = publicacao.get((ticker, year)) if period == "annual" else None
+        if publicado is not None:
+            available_at, quality = publicado, "published_at"
+        else:
+            available_at = availability.get((ticker, year)) if period == "annual" else None
+            quality = (
+                "first_seen_proxy"
+                if available_at is not None and cutoff is not None and available_at > cutoff
+                else "migration_baseline"
+            )
         incoming.append({
             **row,
             "quarter": int(row.get("quarter") or 0),
