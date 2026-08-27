@@ -40,7 +40,7 @@ _EXCEL_EPOCH = date(1899, 12, 30)
 # Duração aceita como "anual" (10-K com exercícios de ~12 meses).
 _ANNUAL_MIN_DAYS, _ANNUAL_MAX_DAYS = 350, 380
 _QUARTERLY_MIN_DAYS, _QUARTERLY_MAX_DAYS = 70, 110
-PARSER_VERSION = "companyfacts-parser-v4"
+PARSER_VERSION = "companyfacts-parser-v5"
 
 # ── Mapas de conceitos (ordem = prioridade) ───────────────────────────────────
 INCOME_CONCEPTS: dict[str, list[str]] = {
@@ -57,6 +57,50 @@ INCOME_CONCEPTS: dict[str, list[str]] = {
     "income_tax": ["IncomeTaxExpenseBenefit"],
     "net_income": ["NetIncomeLoss", "ProfitLoss"],
 }
+# ── Receita de instituicao financeira ────────────────────────────────────────
+# `RevenueFromContractWithCustomerExcludingAssessedTax` encabeca a lista acima e,
+# para um banco, captura APENAS as tarifas sob ASC 606 -- nao a receita de juros,
+# que e a maior parte. O resultado nao era ausencia, era numero errado: 48 das 83
+# financeiras com receita gravada tinham margem liquida acima de 100% (AUBN com
+# receita de US$ 619 mil e lucro de US$ 7,2 milhoes). Isso alimentava p_s e as
+# margens da trilha de qualidade com um denominador minusculo.
+#
+# A convencao do setor -- e a que os proprios grandes bancos publicam como "total
+# revenue, net of interest expense" -- e juros LIQUIDOS mais receita nao-juros.
+# Verificado contra a SEC: RBB 6,18x -> 0,24x, MRBK 3,46x -> 0,19x, TCBK 2,27x ->
+# 0,29x, e no Citigroup, onde a receita gravada ja estava correta, a formula
+# chega ao mesmo numero (0,18x contra 0,17x).
+#
+# A deteccao e estrutural, pelo proprio XBRL, e nao pelo cadastro de setor: quem
+# reporta juros liquidos ou receita nao-juros e intermediario financeiro. Uma
+# processadora de pagamentos (USIO) nao reporta, e mantem a receita generica.
+BANK_REVENUE_CONCEPTS: dict[str, list[str]] = {
+    "_revenues_net_of_interest": ["RevenuesNetOfInterestExpense"],
+    "_net_interest_income": ["InterestIncomeExpenseNet",
+                             "InterestIncomeExpenseAfterProvisionForLoanLoss"],
+    "_noninterest_income": ["NoninterestIncome"],
+}
+_BANK_AUX_FIELDS = tuple(BANK_REVENUE_CONCEPTS)
+
+
+def _bank_revenue(row: dict[str, Any]) -> Optional[float]:
+    """Receita da intermediacao financeira, ou None se o filer nao for um.
+
+    Substitui a receita generica em vez de so preencher lacuna: metade das
+    financeiras JA tinha um numero, e era ele o defeito. Preencher o vazio e
+    deixar o errado produziria duas definicoes de receita dentro do mesmo grupo
+    de ranking -- o percentil de p_s e calculado intra-industria.
+    """
+    explicita = row.get("_revenues_net_of_interest")
+    if explicita is not None:
+        return explicita
+    juros = row.get("_net_interest_income")
+    tarifas = row.get("_noninterest_income")
+    if juros is None and tarifas is None:
+        return None
+    return (juros or 0.0) + (tarifas or 0.0)
+
+
 INCOME_SHARE_CONCEPTS = {
     "eps": (["EarningsPerShareBasic"], _USD_PER_SHARE),
     "eps_diluted": (["EarningsPerShareDiluted"], _USD_PER_SHARE),
@@ -349,11 +393,20 @@ def _build_quarterly_rows(collected: dict[str, dict], symbol: str | None = None)
 def build_income_rows(cf: dict, symbol: str | None = None) -> list[dict]:
     collected = _collect(cf, INCOME_CONCEPTS, _USD)
     collected.update(_collect_units(cf, INCOME_SHARE_CONCEPTS))
+    # Os auxiliares entram ANTES de _build_rows para que o content_hash reflita
+    # os insumos da receita: se o filer passa a reportar juros liquidos, o hash
+    # muda e a re-ingestao detecta. Sao removidos depois -- nao existem no schema.
+    collected.update(_collect(cf, BANK_REVENUE_CONCEPTS, _USD))
     rows = _build_rows(collected, symbol)
     for r in rows:
         # EBIT não é tag XBRL: usa o resultado operacional (mesma definição do projeto)
         r["ebit"] = r.get("operating_income")
         r["ebitda"] = None        # exigiria D&A do fluxo; ausente > inventado
+        banco = _bank_revenue(r)
+        if banco is not None:
+            r["revenue"] = banco
+        for aux in _BANK_AUX_FIELDS:
+            r.pop(aux, None)
     return rows
 
 
@@ -385,10 +438,16 @@ def build_cashflow_rows(cf: dict, symbol: str | None = None) -> list[dict]:
 def build_income_quarterly_rows(cf: dict, symbol: str | None = None) -> list[dict]:
     collected = _collect_quarterly(cf, INCOME_CONCEPTS, _USD)
     collected.update(_collect_quarterly_units(cf, INCOME_SHARE_CONCEPTS))
+    collected.update(_collect_quarterly(cf, BANK_REVENUE_CONCEPTS, _USD))
     rows = _build_quarterly_rows(collected, symbol)
     for r in rows:
         r["ebit"] = r.get("operating_income")
         r["ebitda"] = None
+        banco = _bank_revenue(r)      # mesma regra do anual, sob pena de a serie
+        if banco is not None:         # trimestral contradizer o exercicio fechado
+            r["revenue"] = banco
+        for aux in _BANK_AUX_FIELDS:
+            r.pop(aux, None)
     return rows
 
 
