@@ -560,6 +560,38 @@ Responda somente JSON válido com este schema. Preserve os campos legados porque
 """
 
 
+# ── A-149: "sem receita" é um fato da empresa, não uma lacuna do dado ────────
+#
+# Uma biotech em fase clínica não tem receita porque não vende nada ainda; o
+# dado não está faltando, o valor é zero e a SEC o publica. Medido em
+# 27/08/2026: 209 empresas elegíveis nunca registraram receita em nenhum
+# exercício, e a tela dizia a todas "cobertura insuficiente" -- que o leitor lê
+# como "não sabemos", quando o correto é "sabemos, e não há receita". A
+# distinção muda a conduta: lacuna se resolve buscando dado, ausência de
+# receita se analisa por caixa, runway e pipeline.
+#
+# O piso de três exercícios existe porque uma empresa recém-listada com um
+# único ano pode simplesmente não ter tido o filing lido ainda -- aí é lacuna
+# mesmo. Depende do A-148: enquanto o parser aceitava a tag de rollup vazia,
+# `revenue = 0` também aparecia em empresa com receita, e esta regra chamaria
+# a Eaton de pré-receita se todos os anos dela fossem zero (não são).
+_MIN_ANOS_PRE_RECEITA = 3
+
+
+def e_pre_receita(df_fin: pd.DataFrame | None) -> bool:
+    """True quando a empresa nunca registrou receita em nenhum exercício lido."""
+    if df_fin is None or getattr(df_fin, "empty", True):
+        return False
+    if "revenue" not in df_fin.columns or "fiscal_year" not in df_fin.columns:
+        return False
+    anos = pd.to_numeric(df_fin["fiscal_year"], errors="coerce")
+    receita = pd.to_numeric(df_fin["revenue"], errors="coerce")
+    validos = anos.notna()
+    if int(validos.sum()) < _MIN_ANOS_PRE_RECEITA:
+        return False
+    return bool((receita[validos].fillna(0.0) == 0).all())
+
+
 def build_company_provenance(
     df_fin: pd.DataFrame | None,
     score_row: Any = None,
@@ -583,7 +615,16 @@ def build_company_provenance(
     if confianca is not None:
         parte += f" (confiança {confianca:.0%})"
     linhas.append(parte + ".")
-    if grau != "decision_grade":
+    pre_receita = e_pre_receita(df_fin)
+    if pre_receita:
+        linhas.append(
+            "  EMPRESA PRÉ-RECEITA: não registrou receita em nenhum exercício "
+            "lido. Isso é um fato apurado, não um dado ausente -- margem, "
+            "múltiplo de receita e crescimento não existem aqui, e a nota baixa "
+            "de cobertura reflete isso. Analise por caixa, queima, runway e "
+            "estágio do pipeline; não conclua valuation por múltiplo."
+        )
+    elif grau != "decision_grade":
         linhas.append(
             "  ATENÇÃO: cobertura insuficiente para conclusão fundamentalista "
             "firme. Descreva a lacuna, rebaixe a confiança e evite veredicto de "
@@ -595,7 +636,9 @@ def build_company_provenance(
             lambda k, d=None: getattr(score_row, k, d))
         faltando = getter("critical_missing", None)
     if faltando is not None and len(faltando) > 0:
-        linhas.append(f"  Trilhas sem cobertura mínima: {', '.join(map(str, faltando))}.")
+        rotulo_falta = ("Trilhas indefinidas por ausência de receita"
+                        if pre_receita else "Trilhas sem cobertura mínima")
+        linhas.append(f"  {rotulo_falta}: {', '.join(map(str, faltando))}.")
     return "\n".join(linhas)
 
 
@@ -898,6 +941,7 @@ __all__ = [
     "build_advanced_context",
     "build_company_prompt",
     "build_company_provenance",
+    "e_pre_receita",
     "build_concentration_context",
     "build_confidence_context",
     "build_data_provenance_context",
