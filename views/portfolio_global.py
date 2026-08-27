@@ -1044,10 +1044,16 @@ def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
                 s: factors.betas_do_ativo(ret[s], serie_fatores) for s in ret.columns
             }
 
+    # A-150: `sinais_qualidade` ponderava pela confianca do dado desde que foi
+    # escrito, e ninguem nunca passou o argumento -- todo ativo entrava com
+    # conviccao plena, o de dado ruim junto com o de dado impecavel.
+    from core.global_portfolio.confianca_ativos import confianca_por_ativo
+
     sinais = signals.gerar_sinais(
         df, contribuicoes=contribuicoes, pares_redundantes=pares, papeis=papeis,
         alvos=alvos, exposicao_portfolio=exposicao_portfolio,
         exposicoes_ativos=exposicoes_ativos,
+        confianca=confianca_por_ativo(df),
     )
 
     return advisor.recomendar(
