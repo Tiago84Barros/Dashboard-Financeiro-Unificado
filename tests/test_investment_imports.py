@@ -289,6 +289,14 @@ def test_nomad_is_monthly_statement_descarta_notas_negociacao():
 # XP Consolidado — helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Tesouro Direto — Extrato Consolidado
+# ─────────────────────────────────────────────────────────────────────────────
+from data_pipeline.importers.investments.tesouro_direto import (  # noqa: E402
+    _parse_rows,
+    filter_redundant_against_b3,
+    tesouro_security_key,
+)
 from data_pipeline.importers.investments.xp_consolidado import (  # noqa: E402
     _extract_ticker_name,
     _insert_snapshot,
@@ -296,17 +304,6 @@ from data_pipeline.importers.investments.xp_consolidado import (  # noqa: E402
     _map_asset_type,
     _parse_report_date,
     _tesouro_ticker,
-)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tesouro Direto — Extrato Consolidado
-# ─────────────────────────────────────────────────────────────────────────────
-
-from data_pipeline.importers.investments.tesouro_direto import (  # noqa: E402
-    _parse_rows,
-    filter_redundant_against_b3,
-    tesouro_security_key,
 )
 
 

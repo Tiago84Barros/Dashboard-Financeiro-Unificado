@@ -11,7 +11,7 @@ import calendar
 import io
 import re
 import unicodedata
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Iterable
 
 import openpyxl
@@ -22,13 +22,12 @@ from core.config import settings
 
 from .common import (
     ensure_external_id_columns,
+    finalize_summary,
     get_or_create_asset,
     make_external_id,
     make_summary,
-    finalize_summary,
     safe_error,
 )
-from .positions import PORTFOLIO_NAME, PORTFOLIO_TYPE
 from .xp_consolidado import _ensure_portfolio, _insert_snapshot
 
 SOURCE = "tesouro_direto"
