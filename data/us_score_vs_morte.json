@@ -1,0 +1,137 @@
+{
+  "medido_em": "2026-08-28",
+  "ano_coorte": 2012,
+  "ano_desfecho": 2025,
+  "as_of": "2013-06-30",
+  "coorte_inteira": {
+    "empresas": 2913,
+    "indefinido": 793,
+    "sobreviveu": 1857,
+    "adquirida": 866,
+    "sumiu": 190,
+    "auc_nao_sumiu": 0.6885,
+    "score_medio": {
+      "adquirida": 50.55,
+      "sobreviveu": 51.78,
+      "sumiu": 46.99
+    },
+    "taxa_sumiu_por_decil": [
+      {
+        "decil": 1,
+        "empresas": 292,
+        "sumiu_pct": 17.8
+      },
+      {
+        "decil": 2,
+        "empresas": 291,
+        "sumiu_pct": 10.3
+      },
+      {
+        "decil": 3,
+        "empresas": 291,
+        "sumiu_pct": 7.2
+      },
+      {
+        "decil": 4,
+        "empresas": 291,
+        "sumiu_pct": 7.2
+      },
+      {
+        "decil": 5,
+        "empresas": 292,
+        "sumiu_pct": 6.8
+      },
+      {
+        "decil": 6,
+        "empresas": 291,
+        "sumiu_pct": 5.5
+      },
+      {
+        "decil": 7,
+        "empresas": 291,
+        "sumiu_pct": 2.7
+      },
+      {
+        "decil": 8,
+        "empresas": 291,
+        "sumiu_pct": 1.7
+      },
+      {
+        "decil": 9,
+        "empresas": 291,
+        "sumiu_pct": 3.8
+      },
+      {
+        "decil": 10,
+        "empresas": 292,
+        "sumiu_pct": 2.1
+      }
+    ]
+  },
+  "apenas_exibiveis": {
+    "empresas": 1251,
+    "indefinido": 70,
+    "sobreviveu": 839,
+    "adquirida": 357,
+    "sumiu": 55,
+    "auc_nao_sumiu": 0.6966,
+    "score_medio": {
+      "adquirida": 52.94,
+      "sobreviveu": 54.6,
+      "sumiu": 48.22
+    },
+    "taxa_sumiu_por_decil": [
+      {
+        "decil": 1,
+        "empresas": 126,
+        "sumiu_pct": 12.7
+      },
+      {
+        "decil": 2,
+        "empresas": 125,
+        "sumiu_pct": 7.2
+      },
+      {
+        "decil": 3,
+        "empresas": 125,
+        "sumiu_pct": 8.0
+      },
+      {
+        "decil": 4,
+        "empresas": 125,
+        "sumiu_pct": 4.0
+      },
+      {
+        "decil": 5,
+        "empresas": 125,
+        "sumiu_pct": 0.8
+      },
+      {
+        "decil": 6,
+        "empresas": 125,
+        "sumiu_pct": 2.4
+      },
+      {
+        "decil": 7,
+        "empresas": 125,
+        "sumiu_pct": 1.6
+      },
+      {
+        "decil": 8,
+        "empresas": 125,
+        "sumiu_pct": 4.0
+      },
+      {
+        "decil": 9,
+        "empresas": 125,
+        "sumiu_pct": 0.8
+      },
+      {
+        "decil": 10,
+        "empresas": 125,
+        "sumiu_pct": 2.4
+      }
+    ]
+  },
+  "visibilidade": "campo"
+}

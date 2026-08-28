@@ -297,12 +297,12 @@ def frase_score_vs_morte(resultado: dict[str, Any] | None = None) -> str | None:
     except Exception:  # noqa: BLE001
         return None
     pct = f"{100 * auc:.0f}".replace(".", ",")
-    fora = (f" Outras {indefinidos} saíram da bolsa sem deixar registro de "
+    fora = (f" Outras {_mil(indefinidos)} saíram da bolsa sem deixar registro de "
             f"falência nem de fusão e ficaram fora da conta." if indefinidos
             else "")
     base = (f"Teste do ranking contra o desfecho pior de todos: o score "
-            f"calculado com os dados de {coorte}, sobre {n} empresas dessa "
-            f"safra ({sumiu} delas pediram falência ou recuperação judicial "
+            f"calculado com os dados de {coorte}, sobre {_mil(n)} empresas "
+            f"dessa safra ({_mil(sumiu)} delas pediram falência ou recuperação judicial "
             f"até {desfecho}), acerta {pct}% dos pares ao apontar quem NÃO "
             f"iria quebrar.{fora}")
     if auc < 0.55:
