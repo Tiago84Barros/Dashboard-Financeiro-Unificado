@@ -453,6 +453,8 @@ def _insert_snapshot(
     report_date: date,
     institution: str,
     source_id: str,
+    *,
+    source_table: str = "xp_consolidado",
 ) -> str | None:
     """Insere uma posição em portfolio_position_snapshots (idempotente)."""
     from sqlalchemy import text
@@ -467,7 +469,7 @@ def _insert_snapshot(
                 (:uid, :pid, :aid, :rd,
                  :qty, :mp, :mv, :iv,
                  :an, :at, :il, :inst,
-                 :ccy, :country, 'app4', 'xp_consolidado', :sid)
+                 :ccy, :country, 'app4', :source_table, :sid)
             ON CONFLICT (portfolio_id, asset_id, report_date,
                          source_system, source_table, source_id)
             DO UPDATE SET
@@ -497,6 +499,7 @@ def _insert_snapshot(
             "inst":    institution[:150] if institution else None,
             "ccy":     pos.get("currency", "BRL"),
             "country": "BR",
+            "source_table": source_table,
             "sid":     source_id,
         },
     ).fetchone()

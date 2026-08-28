@@ -154,7 +154,11 @@ def _snapshot_exists(
         SELECT 1
         FROM portfolio_position_snapshots
         WHERE portfolio_id = :pid AND asset_id = :aid AND report_date = :report_date
-          AND source_system = 'app4' AND source_table = 'tesouro_direto'
+          AND source_system = 'app4'
+          AND (
+              source_table = 'tesouro_direto'
+              OR source_id LIKE 'td-snap-%'
+          )
         LIMIT 1
     """), {"pid": portfolio_id, "aid": asset_id, "report_date": report_date}).fetchone() is not None
 
@@ -214,6 +218,7 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                 _insert_snapshot(
                     conn, user_id, portfolio_id, asset_id, position, report_date,
                     "Tesouro Direto", source_id,
+                    source_table="tesouro_direto",
                 )
                 summary["positions_imported"] += 1
     except Exception as exc:  # noqa: BLE001

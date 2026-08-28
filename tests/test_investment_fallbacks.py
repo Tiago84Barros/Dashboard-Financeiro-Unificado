@@ -2,6 +2,24 @@ import core.investimentos as investimentos
 import core.proventos as proventos
 
 
+def test_snapshot_tesouro_legado_nao_substitui_consolidado_xp():
+    sql = investimentos._SQL_POSICOES_SNAPSHOT.lower()
+
+    assert "td-snap-%" in sql
+    assert "tesouro_direto" in sql
+    assert "effective_source_table" in sql
+    assert "dense_rank()" in sql
+    assert "partition by pps.asset_id" in sql
+    assert "asset_source_rank = 1" in sql
+
+
+def test_evolucao_xp_ignora_linhas_tesouro_rotuladas_como_xp():
+    sql = investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower()
+
+    assert "td-snap-%" in sql
+    assert "not like" in sql
+
+
 def test_falha_da_carteira_real_nao_retorna_mock(monkeypatch):
     monkeypatch.setattr(investimentos.settings, "MOCK_MODE", False)
     monkeypatch.setattr(

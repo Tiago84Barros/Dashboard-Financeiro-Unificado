@@ -271,11 +271,52 @@ _SQL_POSICOES = """
 """
 
 _SQL_POSICOES_SNAPSHOT = """
-    WITH latest_source AS (
-        SELECT source_system, source_table, MAX(report_date) AS report_date
-        FROM portfolio_position_snapshots
-        WHERE user_id = :uid
-        GROUP BY source_system, source_table
+    -- Compatibilidade: a primeira versao do importador do Tesouro reutilizou
+    -- o insert da XP e rotulou seis linhas como xp_consolidado. A origem real
+    -- continua identificavel pelo prefixo imutavel td-snap- do source_id.
+    WITH normalized_snapshots AS (
+        SELECT
+            pps.*,
+            CASE
+                WHEN pps.source_id LIKE 'td-snap-%' THEN 'tesouro_direto'
+                ELSE pps.source_table
+            END AS effective_source_table
+        FROM portfolio_position_snapshots pps
+        WHERE pps.user_id = :uid
+    ),
+    latest_source AS (
+        SELECT
+            source_system,
+            effective_source_table,
+            MAX(report_date) AS report_date
+        FROM normalized_snapshots
+        GROUP BY source_system, effective_source_table
+    ),
+    latest_rows AS (
+        SELECT pps.*
+        FROM normalized_snapshots pps
+        JOIN latest_source ls
+          ON ls.source_system = pps.source_system
+         AND ls.effective_source_table = pps.effective_source_table
+         AND ls.report_date = pps.report_date
+    ),
+    ranked_snapshots AS (
+        SELECT
+            pps.*,
+            DENSE_RANK() OVER (
+                PARTITION BY pps.asset_id
+                ORDER BY
+                    pps.report_date DESC,
+                    CASE pps.effective_source_table
+                        WHEN 'tesouro_direto' THEN 0
+                        WHEN 'xp_consolidado' THEN 1
+                        WHEN 'xp_positions' THEN 2
+                        ELSE 3
+                    END,
+                    pps.source_system,
+                    pps.effective_source_table
+            ) AS asset_source_rank
+        FROM latest_rows pps
     ),
     pp_base AS (
         SELECT
@@ -311,11 +352,7 @@ _SQL_POSICOES_SNAPSHOT = """
         aq_live.timestamp    AS live_timestamp,
         fx.close             AS usd_brl_rate,
         fx.timestamp         AS usd_brl_timestamp
-    FROM portfolio_position_snapshots pps
-    JOIN latest_source ls
-      ON ls.source_system = pps.source_system
-     AND ls.source_table = pps.source_table
-     AND ls.report_date = pps.report_date
+    FROM ranked_snapshots pps
     JOIN assets a ON a.id = pps.asset_id
     LEFT JOIN pp_base
       ON pp_base.base_ticker = REGEXP_REPLACE(a.ticker, 'F$', '')
@@ -335,6 +372,7 @@ _SQL_POSICOES_SNAPSHOT = """
         LIMIT  1
     ) fx ON true
     WHERE pps.user_id = :uid
+      AND pps.asset_source_rank = 1
     ORDER BY pps.market_value DESC
 """
 
@@ -1262,6 +1300,7 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
         FROM portfolio_position_snapshots
         WHERE user_id = :uid
           AND source_table IN ('xp_consolidado', 'xp_positions')
+          AND COALESCE(source_id, '') NOT LIKE 'td-snap-%'
           AND COALESCE(is_loaned, false) = false
         ORDER BY report_date,
                  CASE source_table

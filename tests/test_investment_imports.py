@@ -291,6 +291,7 @@ def test_nomad_is_monthly_statement_descarta_notas_negociacao():
 
 from data_pipeline.importers.investments.xp_consolidado import (  # noqa: E402
     _extract_ticker_name,
+    _insert_snapshot,
     _is_fundo_rf,
     _map_asset_type,
     _parse_report_date,
@@ -355,6 +356,44 @@ def test_tesouro_filter_redundant_against_b3_rejeita_apenas_mesmo_titulo():
 
     assert kept == [{"ticker": "TSELIC2031"}]
     assert duplicates == 1
+
+
+def test_insert_snapshot_preserva_a_fonte_informada():
+    class _Result:
+        @staticmethod
+        def fetchone():
+            return ("snapshot-id",)
+
+    class _Connection:
+        params = None
+
+        def execute(self, _statement, params):
+            self.params = params
+            return _Result()
+
+    conn = _Connection()
+    position = {
+        "name": "Tesouro Selic 2031",
+        "asset_type": "fixed_income",
+        "quantity": 1.0,
+        "market_value": 1000.0,
+        "invested_value": 900.0,
+        "currency": "BRL",
+    }
+
+    _insert_snapshot(
+        conn,
+        "user-id",
+        "portfolio-id",
+        "asset-id",
+        position,
+        date(2026, 8, 31),
+        "Tesouro Direto",
+        "td-snap-123",
+        source_table="tesouro_direto",
+    )
+
+    assert conn.params["source_table"] == "tesouro_direto"
 
 
 def test_xp_report_date_mensal():
