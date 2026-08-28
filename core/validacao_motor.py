@@ -182,9 +182,21 @@ def _deslistadas_us_pelo_painel() -> Portao:
     if saidas:
         return Portao("Universo de deslistadas", True,
                       f"{saidas} saidas de empresas em {safras} safras do painel")
+    # "zero saidas" reprova, mas nao diz de quanto e o buraco. A coorte medida
+    # no indice da SEC diz, e e o numero que permite descontar o resultado.
+    coorte = med.get("coorte") or {}
+    tamanho = ""
+    try:
+        tamanho = (f"; no mercado real {float(coorte['mortalidade_pct']):.0f}% das "
+                   f"{int(coorte['universo_base'])} empresas de "
+                   f"{int(coorte['ano_base'])} sumiram ate "
+                   f"{int(coorte['ano_final'])}")
+    except Exception:  # noqa: BLE001
+        pass
     return Portao(
         "Universo de deslistadas", False,
-        f"nenhuma saida de empresa em {safras} safras: o painel so tem sobreviventes")
+        f"nenhuma saida de empresa em {safras} safras: o painel so tem "
+        f"sobreviventes{tamanho}")
 
 
 def _deslistadas_us() -> Portao:

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,15 @@ def carregar_medicao(caminho: Path | str = CAMINHO_MEDICAO) -> dict[str, Any] | 
     return dados if isinstance(dados, dict) and "saidas" in dados else None
 
 
+def _mil(n: int) -> str:
+    """Separador de milhar pt-BR.
+
+    Trocar vírgula por ponto na frase inteira já comeu a vírgula da prosa e
+    virou ponto final no meio de uma oração; a troca tem de ser no número.
+    """
+    return f"{int(n):,}".replace(",", ".")
+
+
 def frase_turnover(medicao: dict[str, Any] | None = None) -> str | None:
     """Frase pronta com o tamanho do viés, ou None se não houver medição."""
     medicao = carregar_medicao() if medicao is None else medicao
@@ -117,10 +127,120 @@ def frase_turnover(medicao: dict[str, Any] | None = None) -> str | None:
         return None
     if saidas == 0:
         return (f"Medido: em {safras} safras de {ini} a {fim} o painel registrou "
-                f"{entradas:,} entradas e **nenhuma saída** -- as {n_ini} empresas "
-                f"da primeira safra continuam todas na última. Num mercado real "
-                f"isso não acontece; a amostra é 100% sobrevivente."
-                ).replace(",", ".")
+                f"{_mil(entradas)} entradas e **nenhuma saída** -- as {n_ini} "
+                f"empresas da primeira safra continuam todas na última. Num "
+                f"mercado real isso não acontece; a amostra é 100% sobrevivente.")
     return (f"Medido: em {safras} safras de {ini} a {fim} o painel registrou "
-            f"{entradas:,} entradas e {saidas:,} saídas de empresas."
-            ).replace(",", ".")
+            f"{_mil(entradas)} entradas e {_mil(saidas)} saídas de empresas.")
+
+
+# ── Mortalidade da coorte: o viés medido FORA do painel (A-157) ──────────────
+#
+# `medir_turnover` responde "o painel tem saídas?" e a resposta foi zero. Isso
+# diz que a amostra é sobrevivente, mas não diz de QUANTO -- e sem o tamanho o
+# usuário não consegue descontar nada. O tamanho não está no painel, por
+# construção: quem morreu nunca entrou nele.
+#
+# A fonte independente é o índice de arquivamentos da SEC (`full-index`), que é
+# ponto-no-tempo de verdade: lista quem arquivou relatório anual naquele
+# trimestre, vivo ou não. Uma empresa que arquivava em 2010 e não arquiva mais
+# saiu do mercado por falência, fechamento de capital ou aquisição.
+#
+# Medido em 27/08/2026 (`scripts/medir_mortalidade_us.py`): 9.686 empresas
+# arquivaram relatório anual em 2010 e 2.899 ainda arquivavam em 2025 --
+# **70,1% desapareceram**; a queda é contínua (57,9% vivas em 2015, 39,0% em
+# 2020). O painel tem 106 empresas na safra de 2010, 1,09% do universo real
+# daquele ano, e nenhuma delas morreu. Não é um painel com poucas mortes: é um
+# painel construído a partir dos 30% que sobreviveram, e por isso todo retorno
+# histórico que sai dele é teto, não expectativa.
+#
+# As formas incluem `10-K405` e `10-KSB`, extintas depois de 2003 e 2008: quem
+# só contasse `10-K` leria como morte a empresa que apenas trocou de formulário.
+FORMAS_RELATORIO_ANUAL_IDX = ("10-K", "10-K405", "10-KSB", "20-F")
+
+_LINHA_IDX = re.compile(r"^(?P<forma>\S[^ ]*(?: [^ ]+)?)\s{2,}.*?edgar/data/(?P<cik>\d+)/")
+
+
+def ciks_com_relatorio_anual(texto_idx: str) -> set[int]:
+    """CIKs que arquivaram relatório anual, lidos de um `form.idx` da SEC.
+
+    O CIK sai do caminho do arquivo (`edgar/data/<cik>/`) e não da coluna de
+    largura fixa: a coluna desalinha em nome societário longo, e a versão que
+    lia por posição colheu um `CIK 0` de linha de cabeçalho.
+    """
+    achados: set[int] = set()
+    for linha in str(texto_idx or "").splitlines():
+        m = _LINHA_IDX.match(linha)
+        if not m:
+            continue
+        if m.group("forma").strip().upper() not in FORMAS_RELATORIO_ANUAL_IDX:
+            continue
+        cik = int(m.group("cik"))
+        if cik:
+            achados.add(cik)
+    return achados
+
+
+def medir_mortalidade(por_ano: dict[int, set[int]],
+                      painel_por_ano: dict[int, set[int]] | None = None
+                      ) -> dict[str, Any]:
+    """Curva de sobrevivência da coorte mais antiga, e o que o painel viu dela.
+
+    `por_ano` é {ano: CIKs que arquivaram relatório anual}, e `painel_por_ano`
+    é o mesmo recorte visto pelo nosso painel. A comparação entre os dois é o
+    número que interessa: cobertura do universo real e mortes observadas.
+    """
+    anos = sorted(a for a, ciks in (por_ano or {}).items() if ciks)
+    if len(anos) < 2:
+        raise ValueError("mortalidade exige ao menos dois anos com filiais")
+    base_ano, ultimo = anos[0], anos[-1]
+    base = por_ano[base_ano]
+    curva = {
+        str(ano): {
+            "vivas": len(base & por_ano[ano]),
+            "universo_do_ano": len(por_ano[ano]),
+            "sobrevivencia_pct": round(100.0 * len(base & por_ano[ano]) / len(base), 2),
+        }
+        for ano in anos
+    }
+    painel_base = (painel_por_ano or {}).get(base_ano, set())
+    medicao: dict[str, Any] = {
+        "medido_em": datetime.now(timezone.utc).date().isoformat(),
+        "ano_base": base_ano,
+        "ano_final": ultimo,
+        "universo_base": len(base),
+        "sobreviventes": len(base & por_ano[ultimo]),
+        "mortalidade_pct": round(100.0 * (1 - len(base & por_ano[ultimo]) / len(base)), 2),
+        "curva": curva,
+    }
+    if painel_por_ano is not None:
+        medicao.update({
+            "painel_no_ano_base": len(painel_base),
+            "cobertura_pct": round(100.0 * len(painel_base & base) / len(base), 2),
+            "mortes_no_painel": len(painel_base - por_ano[ultimo]),
+        })
+    return medicao
+
+
+def frase_mortalidade(medicao: dict[str, Any] | None = None) -> str | None:
+    """Frase com o tamanho do viés medido fora do painel, ou None sem medição."""
+    medicao = carregar_medicao() if medicao is None else medicao
+    coorte = (medicao or {}).get("coorte")
+    if not coorte:
+        return None
+    try:
+        base_ano, final = int(coorte["ano_base"]), int(coorte["ano_final"])
+        universo, mortalidade = int(coorte["universo_base"]), float(coorte["mortalidade_pct"])
+    except Exception:  # noqa: BLE001
+        return None
+    frase = (f"Tamanho do viés, medido no índice de arquivamentos da SEC: das "
+             f"{_mil(universo)} empresas que publicaram relatório anual em "
+             f"{base_ano}, {mortalidade:.0f}% não publicam mais em {final}.")
+    cobertura = coorte.get("cobertura_pct")
+    painel = coorte.get("painel_no_ano_base")
+    if cobertura is not None and painel is not None:
+        pct = f"{float(cobertura):.1f}".replace(".", ",")
+        frase += (f" O painel cobre {pct}% daquele universo ({int(painel)} "
+                  f"empresas) e nenhuma delas desapareceu. O retorno histórico "
+                  f"exibido é teto, não expectativa.")
+    return frase

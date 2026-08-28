@@ -101,14 +101,19 @@ def _aviso_sobrevivencia() -> str:
     """O aviso com o tamanho do viés medido, quando há medição.
 
     Avisar que o viés existe não diz ao usuário se ele é pequeno ou se invalida
-    a evidência. `core.us_survivorship` mede isso pelo painel: entradas contra
-    saídas de empresas entre safras. Sem medição disponível o texto volta ao
-    aviso qualitativo -- número que ninguém apurou não se afirma.
-    """
-    from core.us_survivorship import frase_turnover
+    a evidência. `core.us_survivorship` mede isso por dois caminhos que se
+    completam: o painel diz quantas empresas saíram dele (zero), e o índice de
+    arquivamentos da SEC diz quantas saíram do mercado real no mesmo período
+    (70%). O primeiro mostra que a amostra é sobrevivente; só o segundo dá o
+    tamanho do que ficou de fora, que é o que permite descontar.
 
-    frase = frase_turnover()
-    return _AVISO_SOBREVIVENCIA if not frase else f"{_AVISO_SOBREVIVENCIA} {frase}"
+    Sem medição disponível o texto volta ao aviso qualitativo -- número que
+    ninguém apurou não se afirma.
+    """
+    from core.us_survivorship import frase_mortalidade, frase_turnover
+
+    partes = [_AVISO_SOBREVIVENCIA, frase_turnover(), frase_mortalidade()]
+    return " ".join(p for p in partes if p)
 
 
 def _render_company_analysis_css() -> None:

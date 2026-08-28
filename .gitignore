@@ -266,3 +266,6 @@ backups/
 
 # Ambientes virtuais auxiliares de analise (ferramentas locais, nao dependencia do app)
 .venv-*/
+
+# indices full-index da SEC baixados por scripts/medir_mortalidade_us.py (~40 MB/trimestre)
+.cache/
