@@ -140,7 +140,17 @@ def test_pesos_continuam_somando_um_com_o_banco_fora(monkeypatch):
     medida por menos da metade do proprio peso e a porcentagem exibida nao se
     movia. Foi o CI, sem banco, que mostrou isso -- localmente a soma sempre
     dava 1,0 porque o banco sempre respondia.
+
+    O patch em `get_engine` nao e zelo excessivo: `validacao_fii()`,
+    `validacao_us()` e `load_fii_validation_status()` NAO recebem o engine
+    injetado e abrem o de producao por conta propria. Sem o patch este teste
+    tentava conectar no Supabase de dentro do CI e ficou pendurado ate o runner
+    ser cancelado -- 19 minutos numa suite de 2. Que essas tres chamadas
+    ignorem o engine tambem significa que quem passa `engine=X` recebe uma nota
+    medida em parte sobre X e em parte sobre producao; fica anotado aqui porque
+    e onde o proximo leitor tropeca nisso.
     """
+    monkeypatch.setattr("core.database.get_engine", lambda *a, **k: _EngineMorta())
     for secao in (cs.confianca_b3, cs.confianca_fii, cs.confianca_us):
         s = secao(engine=_EngineMorta())
         assert abs(sum(c.peso for c in s.componentes) - 1.0) < 1e-9, s.nome
