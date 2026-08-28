@@ -75,6 +75,82 @@ def _card(sec: ConfiancaSecao) -> str:
     )
 
 
+_SIMBOLO = {True: ("✓", "#16a34a"), False: ("✗", "#dc2626"),
+            None: ("—", "#64748b")}
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _rigor() -> dict:
+    """As três notas na mesma lista de perguntas (A-162).
+
+    Cacheado porque cada motor consulta o banco; o dado muda quando uma safra
+    ou um certificado é republicado, não a cada clique.
+    """
+    from core.validacao_motor import DIMENSOES, comparacao_de_rigor
+    comp = comparacao_de_rigor()
+    return {"dimensoes": list(DIMENSOES),
+            "motores": {classe: {d: (None if p is None else (p.ok, p.detalhe))
+                                 for d, p in dims.items()}
+                        for classe, dims in comp.items()}}
+
+
+def _tabela_rigor() -> None:
+    """Por que as três notas não são comparáveis entre si.
+
+    A casca visual é a mesma nas três abas, e isso sugere que 80 no FII vale o
+    mesmo que 80 nos EUA. Não vale: cada motor venceu um conjunto diferente de
+    condições. Até 28/08/2026 cada um declarava só as perguntas que respondia,
+    e o que menos perguntava marcava a melhor nota de metodologia.
+    """
+    try:
+        dados = _rigor()
+    except Exception:  # noqa: BLE001
+        return
+    motores = dados.get("motores") or {}
+    if not motores:
+        return
+    st.markdown("### Rigor dos três motores de score")
+    st.caption(
+        "As notas de FII, Empresas B3 e Empresas Americanas saem de motores "
+        "independentes e **não são comparáveis entre si**: 80 num não é o 80 "
+        "do outro. Abaixo, as mesmas perguntas feitas aos três — ✓ vencida, "
+        "✗ reprovada, — não apurada."
+    )
+    cabecalho = "".join(
+        f'<th style="text-align:center;padding:8px 10px;font-weight:600;'
+        f'font-size:.82rem">{html.escape(c)}</th>' for c in motores)
+    linhas = []
+    for dim in dados["dimensoes"]:
+        celulas = []
+        for classe in motores:
+            item = motores[classe].get(dim)
+            ok, detalhe = (None, "não declarada") if item is None else item
+            simbolo, cor = _SIMBOLO[ok]
+            celulas.append(
+                f'<td style="text-align:center;padding:8px 10px;vertical-align:top">'
+                f'<div style="color:{cor};font-weight:700;font-size:1.1rem">{simbolo}</div>'
+                f'<div style="color:#94a3b8;font-size:.72rem;line-height:1.25">'
+                f'{html.escape(str(detalhe)[:150])}</div></td>')
+        linhas.append(
+            '<tr style="border-top:1px solid rgba(148,163,184,.18)">'
+            f'<td style="padding:8px 10px;font-weight:600;font-size:.85rem">'
+            f'{html.escape(dim)}</td>' + "".join(celulas) + '</tr>')
+    st.markdown(
+        '<div style="border:1px solid rgba(148,163,184,.25);border-radius:12px;'
+        'padding:8px 10px;background:rgba(148,163,184,.06);overflow-x:auto">'
+        '<table style="width:100%;border-collapse:collapse">'
+        f'<tr><th style="text-align:left;padding:8px 10px"></th>{cabecalho}</tr>'
+        + "".join(linhas) + '</table></div>',
+        unsafe_allow_html=True)
+    st.caption(
+        "Uma pergunta **não apurada** não conta como vencida nem como "
+        "reprovada — ela sai da média e continua escrita. Foi o contrário disso "
+        "que inflou a nota do motor de FIIs: enquanto ele declarava uma "
+        "pergunta e os outros dois declaravam duas, medir menos rendia nota "
+        "maior."
+    )
+
+
 def render() -> None:
     st.title("🎯 Grau de Confiança")
     st.caption(
@@ -105,6 +181,8 @@ def render() -> None:
     for i, sec in enumerate(secoes):
         (col_esq if i % 2 == 0 else col_dir).markdown(
             _card(sec), unsafe_allow_html=True)
+
+    _tabela_rigor()
 
     st.markdown("### Como ler")
     st.markdown(

@@ -31,8 +31,27 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["EstadoValidacao", "Portao", "validacao_b3", "validacao_fii",
-           "validacao_us"]
+__all__ = ["DIMENSOES", "EstadoValidacao", "Portao", "comparacao_de_rigor",
+           "validacao_b3", "validacao_fii", "validacao_us"]
+
+
+# A-162: a lista de perguntas que os TRES motores respondem.
+#
+# Ate 28/08/2026 cada motor declarava os portoes que lhe convinham -- B3 dois,
+# EUA dois, FII um -- e `fracao_aprovada` dividia pelo que cada um tinha
+# declarado. O resultado: o FII marcava 100% em "metodologia validada" enquanto
+# a B3 marcava 50% e os EUA, 0%. Nao porque o FII fosse mais rigoroso, e sim
+# porque ele nunca havia sido perguntado sobre sobrevivencia nem sobre vantagem
+# fora da amostra. Quem mede menos ganha nota maior e mede a propria omissao
+# como virtude -- a mesma familia de defeito de `medicao-que-pune-a-evidencia`.
+#
+# Com a lista comum, cada motor responde as tres perguntas ou declara que nao
+# apurou. Nao apurado continua fora do denominador, mas agora aparece nomeado
+# em vez de simplesmente nao existir.
+DIM_PIT = "Visibilidade point-in-time"
+DIM_SAIDAS = "Universo com saidas"
+DIM_VANTAGEM = "Vantagem fora da amostra"
+DIMENSOES = (DIM_PIT, DIM_SAIDAS, DIM_VANTAGEM)
 
 
 _SEM_VINTAGES = ("vitrine publicada sem score_vintages e preços mensais: "
@@ -56,6 +75,7 @@ class Portao:
     nome: str
     ok: bool | None
     detalhe: str = ""
+    dimensao: str = ""
 
 
 @dataclass(frozen=True)
@@ -122,6 +142,101 @@ def _falha(classe: str, versao: str, exc: Exception) -> EstadoValidacao:
                            detalhe=f"não apurado: {type(exc).__name__}")
 
 
+def _vantagem_nao_apurada(motivo: str) -> Portao:
+    """A pergunta existe para os tres motores; a resposta, so onde foi medida.
+
+    Nao apurado nao vira reprovado nem aprovado: sai do denominador e continua
+    escrito. O que nao pode acontecer e a pergunta desaparecer para o motor que
+    nao a responde -- foi assim que o FII chegou a 100% de "metodologia
+    validada" com uma pergunta a menos que os outros dois.
+    """
+    return Portao("Vantagem fora da amostra", None, motivo, dimensao=DIM_VANTAGEM)
+
+
+def _saidas_fii() -> Portao:
+    """O universo historico de FIIs observa fundos que deixaram de existir?
+
+    Fundo imobiliario tambem acaba: liquida, incorpora, sai da negociacao. Se o
+    historico so contem quem esta listado hoje, o backtest mede a carteira de
+    quem sobreviveu -- e `core/fii_validation.py` chega a exigir cobertura de
+    retornos alta, que e justamente o que um painel sem saidas entrega de graca.
+
+    Medido em 28/08/2026 no Supabase: `market.fii_universe_history` tinha 1.029
+    tickers, TODOS com `active_status = 'listed'`, em 2 datas de referencia.
+    """
+    from sqlalchemy import text
+    try:
+        from core.database import get_engine
+        with get_engine().connect() as conn:
+            linha = conn.execute(text(
+                "SELECT count(DISTINCT ticker) FILTER "
+                "  (WHERE active_status NOT IN ('listed','active')), "
+                "       count(DISTINCT ticker), count(DISTINCT reference_date) "
+                "FROM market.fii_universe_history")).first()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("saidas_fii sem fii_universe_history: %s", type(exc).__name__)
+        return Portao("Universo com saidas", None,
+                      "historico de universo nao alcancavel nesta base",
+                      dimensao=DIM_SAIDAS)
+    saidas, total, datas = (int(v or 0) for v in linha)
+    if saidas:
+        return Portao("Universo com saidas", True,
+                      f"{saidas} de {total} fundos ja sairam do universo",
+                      dimensao=DIM_SAIDAS)
+    return Portao(
+        "Universo com saidas", False,
+        f"nenhum dos {total} fundos consta como encerrado em {datas} data(s) de "
+        f"referencia: o historico so tem quem continua listado",
+        dimensao=DIM_SAIDAS)
+
+
+def _vantagem_fii(metrics: dict) -> Portao:
+    """O excesso sobre o IFIX e distinguivel de zero?
+
+    `validate_methodology` exige que o intervalo bootstrap EXISTA -- nunca que
+    ele exclua o zero. Um certificado pode entao sair "passed" com o excesso
+    medio dentro de um intervalo que atravessa o zero, e a tela mostra
+    "Validacao PIT: Aprovada" em verde ao lado da nota. O usuario le isso como
+    "bate o indice"; o portao nunca testou isso.
+
+    Aqui a pergunta e feita explicitamente. O certificado continua valendo pelo
+    que ele de fato atesta -- integridade do protocolo point-in-time --, e a
+    vantagem economica vira um portao separado, com o intervalo no detalhe.
+    """
+    ci = ((metrics or {}).get("backtest") or {}).get("excess_bootstrap") or {}
+    low, high = ci.get("lower"), ci.get("upper")
+    try:
+        low, high = float(low), float(high)
+    except (TypeError, ValueError):
+        return _vantagem_nao_apurada(
+            "certificado sem intervalo bootstrap do excesso")
+    if low != low or high != high:  # NaN
+        return _vantagem_nao_apurada(
+            "certificado sem intervalo bootstrap do excesso")
+    faixa = f"IC 95% do excesso por periodo: {low:+.2%} a {high:+.2%}"
+    if low > 0:
+        return Portao("Vantagem fora da amostra", True, faixa,
+                      dimensao=DIM_VANTAGEM)
+    return Portao("Vantagem fora da amostra", False,
+                  f"{faixa} -- atravessa o zero, entao a vantagem sobre o "
+                  f"indice nao e distinguivel de acaso", dimensao=DIM_VANTAGEM)
+
+
+def comparacao_de_rigor(estados: "tuple[EstadoValidacao, ...] | None" = None
+                        ) -> dict[str, dict[str, Portao | None]]:
+    """As tres notas lado a lado na MESMA lista de perguntas.
+
+    Sem isto a comparacao entre os motores fica por conta do usuario, e a casca
+    visual unica sugere que as tres notas se equivalem. Devolve
+    ``{classe: {dimensao: Portao | None}}``; ``None`` significa que o motor nao
+    declara aquela dimensao -- diferente de declarar e nao apurar.
+    """
+    if estados is None:
+        estados = (validacao_b3(), validacao_fii(), validacao_us())
+    return {e.classe: {d: next((p for p in e.portoes if p.dimensao == d), None)
+                       for d in DIMENSOES} for e in estados}
+
+
 def validacao_b3(engine=None) -> EstadoValidacao:
     """Lê `core.b3_validation.validation_readiness` -- os bloqueadores são dele."""
     from core.b3_methodology import SCORE_VERSION
@@ -131,9 +246,14 @@ def validacao_b3(engine=None) -> EstadoValidacao:
         pronto = validation_readiness(build_data_manifest(engine or get_engine()))
         bloq = tuple(str(b) for b in (pronto.get("blockers") or []))
         portoes = tuple(
-            Portao(nome, not any(marca in b for b in bloq), _detalhe(bloq, marca))
-            for nome, marca in (("PIT estrito", "PIT estrito"),
-                                ("Universo de deslistadas", "deslistadas")))
+            Portao(nome, not any(marca in b for b in bloq), _detalhe(bloq, marca),
+                   dimensao=dim)
+            for nome, marca, dim in (
+                ("PIT estrito", "PIT estrito", DIM_PIT),
+                ("Universo de deslistadas", "deslistadas", DIM_SAIDAS)))
+        portoes += (_vantagem_nao_apurada(
+            "nenhum backtest fora da amostra da B3 e publicado: o Rank-IC da "
+            "selecao nunca foi persistido para a tela ler"),)
         return EstadoValidacao("Empresas B3", SCORE_VERSION,
                                bool(pronto.get("ready")), bloq, portoes=portoes)
     except Exception as exc:  # noqa: BLE001
@@ -152,7 +272,10 @@ def validacao_fii() -> EstadoValidacao:
         # cabe credito parcial -- e por isso que reprovar vale zero, e nao a
         # metade que a formula antiga concedia de graca.
         portoes = (Portao("Certificado PIT", passou,
-                          "; ".join(bloq)[:90] if bloq else ""),)
+                          "; ".join(bloq)[:90] if bloq else "",
+                          dimensao=DIM_PIT),
+                   _saidas_fii(),
+                   _vantagem_fii(val.get("metrics") or {}))
         return EstadoValidacao("Seleção de FIIs", METHODOLOGY_VERSION,
                                passou, bloq, portoes=portoes)
     except Exception as exc:  # noqa: BLE001
@@ -176,12 +299,14 @@ def _deslistadas_us_pelo_painel() -> Portao:
     med = carregar_medicao()
     if not med:
         return Portao("Universo de deslistadas", None,
-                      "fonte de deslistagem nao alcancavel nesta base")
+                      "fonte de deslistagem nao alcancavel nesta base",
+                      dimensao=DIM_SAIDAS)
     saidas = int(med.get("saidas") or 0)
     safras = int(med.get("safras") or 0)
     if saidas:
         return Portao("Universo de deslistadas", True,
-                      f"{saidas} saidas de empresas em {safras} safras do painel")
+                      f"{saidas} saidas de empresas em {safras} safras do painel",
+                      dimensao=DIM_SAIDAS)
     # "zero saidas" reprova, mas nao diz de quanto e o buraco. A coorte medida
     # no indice da SEC diz, e e o numero que permite descontar o resultado.
     coorte = med.get("coorte") or {}
@@ -196,7 +321,7 @@ def _deslistadas_us_pelo_painel() -> Portao:
     return Portao(
         "Universo de deslistadas", False,
         f"nenhuma saida de empresa em {safras} safras: o painel so tem "
-        f"sobreviventes{tamanho}")
+        f"sobreviventes{tamanho}", dimensao=DIM_SAIDAS)
 
 
 def _deslistadas_us() -> Portao:
@@ -231,7 +356,8 @@ def _deslistadas_us() -> Portao:
     return Portao(
         "Universo de deslistadas", n > 0,
         f"{n} deslistagens no universo" if n
-        else "nenhuma deslistagem ingerida: o historico so tem sobreviventes")
+        else "nenhuma deslistagem ingerida: o historico so tem sobreviventes",
+        dimensao=DIM_SAIDAS)
 
 
 def validacao_us(history_available: object = None) -> EstadoValidacao:
@@ -249,8 +375,11 @@ def validacao_us(history_available: object = None) -> EstadoValidacao:
             "Empresas Americanas", v, pronto,
             () if pronto else (_SEM_VINTAGES,),
             portoes=(Portao("Painel PIT", pronto,
-                            "" if pronto else _SEM_VINTAGES),
-                     _deslistadas_us()))
+                            "" if pronto else _SEM_VINTAGES, dimensao=DIM_PIT),
+                     _deslistadas_us(),
+                     _vantagem_nao_apurada(
+                         "o Rank-IC fora da amostra so existe no armazem "
+                         "local; a vitrine publicada nao carrega o resultado")))
     try:
         import core.us_data as us
         painel = us.score_panel()
@@ -259,7 +388,10 @@ def validacao_us(history_available: object = None) -> EstadoValidacao:
             "Empresas Americanas", v, pronto,
             () if pronto else (_SEM_VINTAGES,),
             portoes=(Portao("Painel PIT", pronto,
-                            "" if pronto else _SEM_VINTAGES),
-                     _deslistadas_us()))
+                            "" if pronto else _SEM_VINTAGES, dimensao=DIM_PIT),
+                     _deslistadas_us(),
+                     _vantagem_nao_apurada(
+                         "o Rank-IC fora da amostra so existe no armazem "
+                         "local; a vitrine publicada nao carrega o resultado")))
     except Exception as exc:  # noqa: BLE001
         return _falha("Empresas Americanas", v, exc)

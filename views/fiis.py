@@ -1739,9 +1739,14 @@ def _carteira_integrada(preferences: dict):
         "Confiança mediana elegível", f"{investable_gate.median_confidence:.1%}",
         sub="mínimo de 75%", accent="#00C896" if investable_gate.median_confidence >= .75 else "#FC5C7D",
     ), unsafe_allow_html=True)
+    # A-162: "Validação PIT: Aprovada" em verde ao lado da nota era lido como
+    # "a estratégia bate o índice". O gate de `core/fii_validation.py` não testa
+    # isso -- ele exige que o intervalo bootstrap do excesso EXISTA, nunca que
+    # ele exclua o zero. O rótulo passa a dizer o que o certificado atesta.
     gate_cards[2].markdown(_kpi_html(
-        "Validação PIT", "Aprovada" if validation_status == "passed" else "Pendente",
-        sub=f"metodologia {METHODOLOGY_VERSION}",
+        "Protocolo PIT", "Aprovado" if validation_status == "passed" else "Pendente",
+        sub=f"integridade temporal, metodologia {METHODOLOGY_VERSION}; "
+            f"não afere vantagem sobre o IFIX",
         accent="#00C896" if validation_status == "passed" else "#FC5C7D",
     ), unsafe_allow_html=True)
 
@@ -2048,6 +2053,24 @@ def _tab_backtest() -> None:
         st.warning("Validação ainda bloqueada: " + " · ".join(str(item) for item in blockers))
     else:
         st.success("Backtest PIT, cobertura, estabilidade, regimes e custos atenderam aos gates.")
+        # O que os gates NÃO perguntam. Sem isto, "atenderam aos gates" é lido
+        # como "a estratégia funciona": nenhum dos critérios acima exige que o
+        # excesso sobre o índice seja distinguível de zero.
+        _ci = pit.get("excess_bootstrap") or {}
+        try:
+            _low, _high = float(_ci["lower"]), float(_ci["upper"])
+        except (KeyError, TypeError, ValueError):
+            _low = _high = None
+        if _low is not None and pd.notna(_low) and _low <= 0:
+            st.warning(
+                f"Os gates aferem **integridade do protocolo**, não vantagem. O "
+                f"excesso médio sobre o IFIX tem intervalo de 95% de "
+                f"{_low:+.2%} a {_high:+.2%} por período: ele **atravessa o "
+                f"zero**, então a vantagem observada não é distinguível de "
+                f"acaso nesta amostra. A carteira segue sustentada por "
+                f"diversificação e por qualidade do ativo, não por evidência "
+                f"de que supera o índice."
+            )
 
     st.markdown("#### Retrospectiva da seleção atual")
     weights = st.session_state.get("fii_port")
