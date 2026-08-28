@@ -23,6 +23,11 @@ import pandas as pd
 # acima disso continua auditável, mas não é elegível para conclusão de estratégia.
 BACKTEST_POLICY_MAX_WEIGHT = 0.10
 
+# Anos de painel a partir dos quais "nenhuma acao parou de negociar" deixa de
+# ser plausivel e vira indicio de universo sobrevivente. Tres anos de bolsa
+# americana sem uma unica saida ja seria notavel; dezesseis, impossivel.
+ANOS_PARA_ESPERAR_SAIDA = 3
+
 
 def rank_ic(scores: pd.Series, fwd: pd.Series) -> float | None:
     """Spearman rank correlation entre score e retorno futuro (um período)."""
@@ -215,7 +220,14 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
     # A-116: quantas posicoes do painel sairam na ultima cotacao porque a acao
     # deslistou. Nao e detalhe de montagem -- e o unico numero que diz ao leitor
     # o quanto do backtest repousa sobre saida forcada em vez de preco no
-    # horizonte. Zero aqui significa "nenhuma acao sumiu no meio", nao "nao medi".
+    # horizonte.
+    #
+    # A-161 corrige a leitura que estava aqui. Dizia-se que zero significa
+    # "nenhuma acao sumiu no meio". Medido em 28/08/2026 sobre o painel
+    # reconstruido (22.290 observacoes, 16 anos): zero censura. Nenhuma acao
+    # some porque o universo do painel e montado a partir de quem sobreviveu
+    # ate hoje. Zero censura em 16 anos nao e um painel limpo -- e a assinatura
+    # de um painel sem saidas, e precisa aparecer na tela em vez de calar.
     n_censurado = int(pd.to_numeric(panel.get("censored", pd.Series(dtype=bool)),
                                     errors="coerce").fillna(0).astype(bool).sum())         if "censored" in panel.columns else 0
     for coluna in ("score", "fwd_return"):
@@ -223,6 +235,7 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
     panel = panel.dropna(subset=["score", "fwd_return"])
     if panel.empty:
         return {"ok": False, "reason": "sem períodos utilizáveis"}
+    anos_do_painel = int(pd.to_datetime(panel["date"]).dt.year.nunique())
     if not np.isfinite(panel[["score", "fwd_return"]].to_numpy(dtype=float)).all():
         # Um +/-inf não é uma observação extrema: é dado inválido. Não o
         # removemos silenciosamente porque a seleção e o retorno do período
@@ -299,6 +312,9 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
             "fracao_censurada": (float(n_censurado / len(panel))
                                  if len(panel) else None),
             "n_inobservavel": int(attrs.get("n_inobservavel", 0)),
+            "anos": anos_do_painel,
+            "sem_saida": bool(n_censurado == 0
+                              and anos_do_painel >= ANOS_PARA_ESPERAR_SAIDA),
         },
         "transaction_cost_bps": float(transaction_cost_bps),
         "slippage_bps": float(slippage_bps),

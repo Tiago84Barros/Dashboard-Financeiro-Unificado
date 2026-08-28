@@ -97,6 +97,26 @@ _AVISO_SOBREVIVENCIA = (
 )
 
 
+def _motivo_sem_painel(painel, snapshot_mode: bool) -> str:
+    """Por que não há painel PIT -- a causa medida, não a causa presumida.
+
+    A mensagem antiga afirmava sempre "a vitrine publicada não contém
+    score_vintages". No warehouse local, com 55 mil safras gravadas, isso era
+    falso: faltava a versão CORRENTE da metodologia, e a tela mandava rodar um
+    comando que o usuário já tinha rodado. `core.us_read` carimba a causa real
+    em `attrs["motivo"]`.
+    """
+    if snapshot_mode:
+        return ("a vitrine publicada não carrega score_vintages nem preços "
+                "mensais; o backtest permanece local.")
+    motivo = None
+    try:
+        motivo = (painel.attrs or {}).get("motivo")
+    except AttributeError:
+        motivo = None
+    return str(motivo) + "." if motivo else "causa não registrada pela camada de leitura."
+
+
 def _aviso_sobrevivencia() -> str:
     """O aviso com o tamanho do viés medido, quando há medição.
 
@@ -2279,8 +2299,9 @@ def _tab_criacao_portfolio(status: dict) -> None:
         )
         if not history_available:
             st.caption(
-                "ℹ️ Painel histórico PIT não está disponível nesta vitrine. A aprovação "
-                "usa o sinal institucional atual SEC/GAAP; backtests permanecem locais."
+                "ℹ️ Painel histórico PIT indisponível: "
+                + _motivo_sem_painel(score_panel, snapshot_mode)
+                + " A aprovação usa o sinal institucional atual SEC/GAAP."
             )
 
     market_caps = {
@@ -2566,9 +2587,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
             _tab_backtests(status)
         else:
             st.info(
-                "A vitrine publicada não contém score_vintages e preços mensais. "
-                "Por integridade metodológica, nenhum retorno histórico foi simulado. "
-                "No warehouse local, rode `score-history` para habilitar esta camada."
+                "Nenhum retorno histórico foi simulado, por integridade "
+                "metodológica. " + _motivo_sem_painel(score_panel, snapshot_mode)
             )
 
     with st.expander("📚 Metodologia e equivalências B3 × Estados Unidos"):
@@ -2754,6 +2774,17 @@ def _tab_backtests(status: dict) -> None:
     # repousa sobre saida forcada -- e a versao anterior simplesmente apagava
     # essas acoes, o que fazia o backtest parecer melhor do que foi.
     censura = res.get("censura") or {}
+    if censura.get("sem_saida"):
+        # A-161: o silencio de antes era lido como "nao houve deslistagem".
+        st.warning(
+            f"Nenhuma das {censura.get('n_observacoes', 0)} observações, ao "
+            f"longo de {censura.get('anos', 0)} anos, é de ação que parou de "
+            "negociar. Isso não é ausência de deslistagem no mercado: é "
+            "ausência dela **neste painel**, cujo universo é montado a partir "
+            "de quem sobreviveu até hoje. O resultado abaixo é o de uma "
+            "carteira que nunca teve uma posição quebrar. "
+            + _aviso_sobrevivencia()
+        )
     if censura.get("n_censurado"):
         st.info(
             f"{censura['n_censurado']} de {censura['n_observacoes']} observações "

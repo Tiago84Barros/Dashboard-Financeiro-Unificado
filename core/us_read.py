@@ -800,21 +800,37 @@ def load_snapshot_overview() -> dict:
     return base
 
 
+def _painel_vazio(motivo: str) -> pd.DataFrame:
+    """Painel vazio que diz POR QUE está vazio.
+
+    Sem isto, três causas muito diferentes -- não há banco, não há safra
+    nenhuma, e há safras mas gravadas sob outra versão de metodologia --
+    chegam à tela como o mesmo quadro vazio, e a tela escolhe uma explicação.
+    Escolheu a errada: a mensagem culpava a vitrine publicada enquanto o
+    warehouse local tinha 55 mil linhas de safra sob 0.3.0/0.4.0 enquanto o
+    código já pedia 0.5.0. O backtest, o Rank-IC por indústria e a caixa
+    "exigir validação histórica" ficaram desligados em silêncio.
+    """
+    vazio = pd.DataFrame(columns=["date", "symbol", "score", "fwd_return"])
+    vazio.attrs["motivo"] = motivo
+    return vazio
+
+
 def load_score_panel(score_version: str | None = None,
                      horizon_months: int = 12) -> pd.DataFrame:
     """Painel PIT (date, symbol, score, fwd_return) para o backtest da Fase 6.
 
     Junta market_us.score_vintages (histórico PIT) a prices_monthly. Vazio até o
-    histórico de scores ser computado (run_us_ingest.py score-history).
+    histórico de scores ser computado (run_us_ingest.py score-history). Quando
+    vazio, `attrs["motivo"]` nomeia a causa -- ver `_painel_vazio`.
     """
     from data_pipeline.us.scoring_history import build_annual_panel
     if score_version is None:
         from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
         score_version = US_FUNDAMENTAL_SCORE_VERSION
-    cols = ["date", "symbol", "score", "fwd_return"]
     eng = _engine()
     if eng is None or not schema_ready():
-        return pd.DataFrame(columns=cols)
+        return _painel_vazio("sem banco de dados com o schema market_us")
     try:
         with eng.connect() as conn:
             vq = ("SELECT as_of_date, symbol, score FROM market_us.score_vintages "
@@ -824,14 +840,33 @@ def load_score_panel(score_version: str | None = None,
             params["v"] = score_version
             vintages = pd.read_sql(text(vq), conn, params=params)
             if vintages.empty:
-                return pd.DataFrame(columns=cols)
+                return _painel_vazio(_motivo_sem_safra(conn, score_version))
             monthly = pd.read_sql(text(
                 "SELECT symbol, month_end, adjusted_close "
                 "FROM market_us.prices_monthly"), conn)
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_score_panel falhou: %s", exc)
-        return pd.DataFrame(columns=cols)
-    return build_annual_panel(vintages, monthly, horizon_months=horizon_months)
+        return _painel_vazio(f"consulta ao histórico falhou: {exc}")
+    painel = build_annual_panel(vintages, monthly, horizon_months=horizon_months)
+    if painel.empty:
+        return _painel_vazio(
+            "há {} safras da versão {}, mas nenhuma casou com preço mensal".format(
+                len(vintages), score_version))
+    return painel
+
+
+def _motivo_sem_safra(conn, score_version: str) -> str:
+    """Distingue "não há histórico" de "há histórico de outra versão"."""
+    try:
+        outras = [str(r[0]) for r in conn.execute(text(
+            "SELECT DISTINCT score_version FROM market_us.score_vintages "
+            "WHERE track='fundamental' ORDER BY 1"))]
+    except Exception:  # noqa: BLE001
+        outras = []
+    if not outras:
+        return "não há safras gravadas (rode score-history)"
+    return ("há safras gravadas, mas nas versões {} -- a metodologia corrente é "
+            "{}. Reconstrua com score-history.".format(", ".join(outras), score_version))
 
 
 def load_ingestion_runs() -> pd.DataFrame:
