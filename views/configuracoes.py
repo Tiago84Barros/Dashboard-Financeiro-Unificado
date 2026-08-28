@@ -1132,6 +1132,18 @@ _INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
         "multi_file":  True,
     },
     {
+        "key":         "tesouro_direto",
+        "label":       "Tesouro Direto — Extrato Consolidado (.xlsx)",
+        "help":        "Extrato Consolidado mensal do Tesouro Direto. "
+                       "Títulos já cobertos por operações importadas da B3 "
+                       "são recusados para evitar duplicidade.",
+        "file_types":  "xlsx",
+        "parser_attr": "parse_tesouro_direto",
+        "job_name":    "import_tesouro_direto",
+        "table_name":  "portfolio_position_snapshots",
+        "source_name": "Tesouro Direto — Extrato Consolidado (manual)",
+    },
+    {
         "key":         "nomad",
         "label":       "Nomad — Notas (.pdf)",
         "help":        "PDFs de negociação exportados pela Nomad. Aceita "
@@ -1293,6 +1305,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
         parse_b3_movimentacao,
         parse_b3_negociacao,
         parse_nomad_pdf,
+        parse_tesouro_direto,
         parse_xp_consolidado,
     )
     from data_pipeline.utils.logging_utils import (
@@ -1305,6 +1318,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
         "parse_b3_negociacao":   parse_b3_negociacao,
         "parse_b3_movimentacao": parse_b3_movimentacao,
         "parse_xp_consolidado":  parse_xp_consolidado,
+        "parse_tesouro_direto":  parse_tesouro_direto,
         "parse_nomad_pdf":       parse_nomad_pdf,
     }
     parser = parsers[cfg["parser_attr"]]

@@ -25,6 +25,7 @@ __all__ = [
     "parse_b3_negociacao",
     "parse_b3_movimentacao",
     "parse_xp_consolidado",
+    "parse_tesouro_direto",
     "parse_nomad_pdf",
 ]
 
@@ -48,6 +49,12 @@ def parse_xp_consolidado(
     """
     from .xp_consolidado import parse
     return parse(payload, engine)
+
+
+def parse_tesouro_direto(file_bytes: bytes, engine) -> dict[str, Any]:
+    """Tesouro Direto aceita o Extrato Consolidado mensal (.xlsx)."""
+    from .tesouro_direto import parse
+    return parse(file_bytes, engine)
 
 
 def parse_nomad_pdf(

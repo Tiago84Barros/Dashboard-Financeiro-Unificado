@@ -298,6 +298,65 @@ from data_pipeline.importers.investments.xp_consolidado import (  # noqa: E402
 )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Tesouro Direto — Extrato Consolidado
+# ─────────────────────────────────────────────────────────────────────────────
+
+from data_pipeline.importers.investments.tesouro_direto import (  # noqa: E402
+    _parse_rows,
+    filter_redundant_against_b3,
+    tesouro_security_key,
+)
+
+
+def test_tesouro_security_key_distingue_titulos_com_juros_semestreis():
+    assert tesouro_security_key("Tesouro IPCA+ 2032", "15/08/2032") == "TIPCA2032"
+    assert (
+        tesouro_security_key("Tesouro IPCA+ com Juros Semestrais 2032", "15/08/2032")
+        == "TIPCAJ2032"
+    )
+    assert tesouro_security_key("TIPCA2029", "TIPCA2029") == "TIPCA2029"
+
+
+def test_tesouro_parse_rows_extrai_posicoes_e_data_do_extrato():
+    rows = [
+        ("EXTRATO CONSOLIDADO - 08/2026",),
+        ("Tit́ulo", "Vencimento", "Investido", "Bruto", "Líquido", "Total"),
+        ("Tesouro IPCA+ 2029", date(2029, 5, 15), 1606.28, 1770.14, 1734.58, 0.46),
+        ("Total", "Total", 1606.28, 1770.14, 1734.58, 0.46),
+    ]
+
+    report_date, positions, skipped = _parse_rows(rows)
+
+    assert report_date == date(2026, 8, 31)
+    assert skipped == 1
+    assert positions == [{
+        "ticker": "TIPCA2029",
+        "name": "Tesouro IPCA+ 2029",
+        "asset_type": "fixed_income",
+        "quantity": 0.46,
+        "market_price": None,
+        "market_value": 1734.58,
+        "invested_value": 1606.28,
+        "is_loaned": False,
+        "currency": "BRL",
+    }]
+
+
+def test_tesouro_filter_redundant_against_b3_rejeita_apenas_mesmo_titulo():
+    positions = [
+        {"ticker": "TIPCA2029"},
+        {"ticker": "TSELIC2031"},
+    ]
+
+    kept, duplicates = filter_redundant_against_b3(
+        positions, ["Tesouro IPCA+ 2029"]
+    )
+
+    assert kept == [{"ticker": "TSELIC2031"}]
+    assert duplicates == 1
+
+
 def test_xp_report_date_mensal():
     assert _parse_report_date("relatorio-consolidado-mensal-2026-janeiro.xlsx") == date(2026, 1, 31)
     assert _parse_report_date("relatorio-consolidado-mensal-2025-fevereiro.xlsx") == date(2025, 2, 28)
