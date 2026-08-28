@@ -2,7 +2,8 @@
 core/llm_b3.py
 Módulo LLM para análise de portfólio B3.
 
-Provider: OpenAI. Dois tiers de modelo:
+Provedores em cadeia: OpenRouter (Nemotron) → OpenAI → Gemini. Dois tiers de
+modelo no lado da OpenAI:
   - _MODEL_DEFAULT (gpt-4o-mini): interações rápidas/baratas (chat).
   - _REPORT_MODEL_DEFAULT (gpt-4o): Relatórios por Empresa/Portfólio — síntese
     de 10 anos de fundamentos + peers + documentos CVM exige um modelo forte;
@@ -36,6 +37,8 @@ def _report_model() -> str:
     except Exception:
         pass
     return os.getenv("LLM_REPORT_MODEL", "").strip() or _REPORT_MODEL_DEFAULT
+_OPENROUTER_MODEL_DEFAULT = "nvidia/nemotron-3-super-120b-a12b:free"
+_OPENROUTER_BASE_URL_DEFAULT = "https://openrouter.ai/api/v1"
 _GEMINI_MODEL_DEFAULT = "gemini-3.6-flash"
 _GEMINI_BASE_URL_DEFAULT = "https://generativelanguage.googleapis.com/v1beta/openai/"
 _TEMPERATURE   = 0.2
@@ -83,6 +86,43 @@ def _get_gemini_client():
         return None
 
 
+@st.cache_resource
+def _get_openrouter_client():
+    try:
+        from openai import OpenAI
+
+        from core.config import settings
+        key = (getattr(settings, "OPENROUTER_API_KEY", None)
+               or os.environ.get("OPENROUTER_API_KEY", ""))
+        if not key:
+            return None
+        base = (getattr(settings, "OPENROUTER_BASE_URL", None)
+                or _OPENROUTER_BASE_URL_DEFAULT)
+        return OpenAI(api_key=key, base_url=base, timeout=_TIMEOUT)
+    except Exception as exc:
+        logger.warning("OpenRouter client init falhou: %s", exc)
+        return None
+
+
+def _openrouter_model(primary_model: str | None) -> str:
+    """Modelo do OpenRouter, respeitando o tier pedido pelo chamador.
+
+    `primary_model` chega com nome da OpenAI (gpt-4o para relatório, gpt-4o-mini
+    para chat) e NÃO pode ser repassado ao OpenRouter — o que ele carrega é o
+    tier, não o identificador. Mandar o nome cru daria 404 e a tela cairia no
+    fallback sem que nada no log dissesse por quê.
+    """
+    try:
+        from core.config import settings as _s
+    except Exception:
+        _s = None
+    campo = ("OPENROUTER_REPORT_MODEL"
+             if primary_model and primary_model != _MODEL_DEFAULT
+             else "OPENROUTER_MODEL")
+    return (getattr(_s, campo, None) or os.environ.get(campo, "").strip()
+            or _OPENROUTER_MODEL_DEFAULT)
+
+
 def _gemini_model() -> str:
     try:
         from core.config import settings
@@ -93,10 +133,19 @@ def _gemini_model() -> str:
 
 def _provider_chain(primary_model: str | None = None) -> list[tuple]:
     """
-    Lista de (nome, client, modelo) na ordem de preferência: OpenAI → Gemini.
+    Lista de (nome, client, modelo) na ordem: OpenRouter → OpenAI → Gemini.
     Inclui apenas os provedores com chave configurada.
+
+    O OpenRouter vai na frente por medição, não por preferência: no teste de
+    `scripts/avaliar_provedor_llm.py` o Nemotron super-120b acertou o julgamento
+    nos dois casos-armadilha em todas as repetições, com schema íntegro e dentro
+    do timeout. A OpenAI continua na cadeia porque provedor gratuito cai, e
+    cadeia de um elo só transforma indisponibilidade em tela sem análise.
     """
     chain: list[tuple] = []
+    rc = _get_openrouter_client()
+    if rc is not None:
+        chain.append(("openrouter", rc, _openrouter_model(primary_model)))
     oc = _get_openai_client()
     if oc is not None:
         chain.append(("openai", oc, primary_model or _MODEL_DEFAULT))

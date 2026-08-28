@@ -65,6 +65,22 @@ class Settings:
     AI_TIMEOUT_S: int = int(_get_secret("AI_TIMEOUT_S", "45"))
     AI_MAX_RETRIES: int = int(_get_secret("AI_MAX_RETRIES", "2"))
 
+    # ── OpenRouter / Nemotron (provedor primário) ─────────────────────────────
+    # Substitui a OpenAI como primeiro da cadeia. A troca não foi feita por
+    # reputação do modelo: `scripts/avaliar_provedor_llm.py` rodou o prompt de
+    # produção contra dois casos-armadilha com resposta certa conhecida e o
+    # `nemotron-3-super-120b` acertou o julgamento em 6/6, manteve o schema JSON
+    # em 6/6 e respondeu em 17–48 s. O `ultra-550b` também acerta o julgamento,
+    # mas leva 97–212 s e estouraria o timeout de 90 s da tela — por isso o
+    # padrão é o super, e não o modelo maior.
+    OPENROUTER_API_KEY: str = _get_secret("OPENROUTER_API_KEY")
+    OPENROUTER_MODEL: str = _get_secret(
+        "OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+    OPENROUTER_REPORT_MODEL: str = _get_secret(
+        "OPENROUTER_REPORT_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+    OPENROUTER_BASE_URL: str = _get_secret(
+        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+
     # ── Gemini (provedor de fallback) ─────────────────────────────────────────
     # Usado automaticamente quando a OpenAI falha (ex.: cota 429). Acessado via
     # endpoint compatível com a API da OpenAI, então reaproveita o mesmo SDK.
@@ -182,9 +198,14 @@ class Settings:
         return bool(self.GEMINI_API_KEY)
 
     @property
+    def has_openrouter(self) -> bool:
+        return bool(self.OPENROUTER_API_KEY)
+
+    @property
     def has_llm(self) -> bool:
-        """True se houver ao menos um provedor LLM configurado (OpenAI ou Gemini)."""
-        return bool(self.OPENAI_API_KEY or self.GEMINI_API_KEY)
+        """True se houver ao menos um provedor LLM configurado."""
+        return bool(self.OPENROUTER_API_KEY or self.OPENAI_API_KEY
+                    or self.GEMINI_API_KEY)
 
     @property
     def has_owner(self) -> bool:
@@ -219,8 +240,13 @@ class Settings:
                 "Banco de dados nao configurado — defina SUPABASE_UNIFICADO_URL "
                 "no .env local ou em Streamlit Secrets (Settings > Secrets)."
             )
-        if not self.has_openai:
-            warnings.append("OPENAI_API_KEY nao configurada — IA desativada.")
+        if not self.has_llm:
+            # Avisar pela ausencia de OPENAI_API_KEY especificamente diria "IA
+            # desativada" para quem roda so com OpenRouter — um alarme falso que
+            # convida a comprar credito sem necessidade.
+            warnings.append(
+                "Nenhum provedor LLM configurado (OPENROUTER_API_KEY, "
+                "OPENAI_API_KEY ou GEMINI_API_KEY) — IA desativada.")
         if self.MOCK_MODE:
             warnings.append("MOCK_MODE=true — dados mockados em uso.")
         if not self.has_owner and not self.MOCK_MODE:
