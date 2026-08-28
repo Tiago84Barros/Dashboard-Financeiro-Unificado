@@ -244,3 +244,75 @@ def frase_mortalidade(medicao: dict[str, Any] | None = None) -> str | None:
                   f"empresas) e nenhuma delas desapareceu. O retorno histórico "
                   f"exibido é teto, não expectativa.")
     return frase
+
+
+# ── O score protege contra perda permanente de capital? (A-158) ──────────────
+#
+# `frase_mortalidade` diz o tamanho do que ficou de fora, mas não diz se o
+# ranking exibido teria evitado essas empresas. Corrigir o backtest exigiria o
+# retorno futuro das mortas, que não existe em fonte nossa -- o yfinance não
+# serve deslistada e chega a devolver a série de OUTRO papel que herdou o
+# ticker. O que é observável sem cotação é o desfecho extremo: a empresa sumiu
+# sem ninguém comprar.
+#
+# `scripts/testar_score_prediz_morte_us.py` calcula o score de produção sobre a
+# coorte de 2012 com dados visíveis em 2013-06-30 e confere o desfecho em 2025.
+# Aquisição é desfecho SEPARADO de desaparecimento: empresa boa é comprada com
+# prêmio, e contar fusão como morte já inverteu a leitura uma vez. Quem sai sem
+# deixar marca de falência nem de fusão fica FORA da conta, e o seu tamanho é
+# publicado junto -- é a maior parte das saídas, e escondê-la faria o número
+# parecer mais completo do que é.
+CAMINHO_TESTE_MORTE = (Path(__file__).resolve().parents[1]
+                       / "data" / "us_score_vs_morte.json")
+
+
+def carregar_teste_morte(caminho: Path | str = CAMINHO_TESTE_MORTE
+                         ) -> dict[str, Any] | None:
+    try:
+        dados = json.loads(Path(caminho).read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        logger.info("teste de morte indisponivel: %s", type(exc).__name__)
+        return None
+    return dados if isinstance(dados, dict) and "apenas_exibiveis" in dados else None
+
+
+def frase_score_vs_morte(resultado: dict[str, Any] | None = None) -> str | None:
+    """Frase com o poder medido do score de separar quem sumiu, ou None.
+
+    A frase muda de sentido conforme o número: AUC perto de 0,50 é confissão de
+    que o ranking não protege, e tem de aparecer com a mesma clareza de um
+    resultado bom. Frase que só sabe elogiar não é medição.
+    """
+    resultado = carregar_teste_morte() if resultado is None else resultado
+    bloco = (resultado or {}).get("apenas_exibiveis") or {}
+    if not bloco or bloco.get("insuficiente"):
+        return None
+    try:
+        auc = float(bloco["auc_nao_sumiu"])
+        n = int(bloco["empresas"])
+        sumiu = int(bloco["sumiu"])
+        indefinidos = int(bloco.get("indefinido") or 0)
+        coorte = int(resultado["ano_coorte"])
+        desfecho = int(resultado["ano_desfecho"])
+    except Exception:  # noqa: BLE001
+        return None
+    pct = f"{100 * auc:.0f}".replace(".", ",")
+    fora = (f" Outras {indefinidos} saíram da bolsa sem deixar registro de "
+            f"falência nem de fusão e ficaram fora da conta." if indefinidos
+            else "")
+    base = (f"Teste do ranking contra o desfecho pior de todos: o score "
+            f"calculado com os dados de {coorte}, sobre {n} empresas dessa "
+            f"safra ({sumiu} delas pediram falência ou recuperação judicial "
+            f"até {desfecho}), acerta {pct}% dos pares ao apontar quem NÃO "
+            f"iria quebrar.{fora}")
+    if auc < 0.55:
+        return base + (" Sorte pura seria 50%: **o ranking não protege contra "
+                       "perda permanente de capital** e não deve ser lido como "
+                       "se protegesse.")
+    if auc < 0.65:
+        return base + (" Sorte pura seria 50%: há sinal, mas fraco -- serve "
+                       "para inclinar a carteira, não para dispensar análise "
+                       "de solvência.")
+    return base + (" Sorte pura seria 50%, de modo que o ranking carrega sinal "
+                   "real sobre sobrevivência -- ainda assim é probabilidade "
+                   "sobre um universo, não garantia sobre uma empresa.")

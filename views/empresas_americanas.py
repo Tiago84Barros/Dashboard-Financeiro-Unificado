@@ -107,12 +107,18 @@ def _aviso_sobrevivencia() -> str:
     (70%). O primeiro mostra que a amostra é sobrevivente; só o segundo dá o
     tamanho do que ficou de fora, que é o que permite descontar.
 
+    O terceiro trecho responde o que os dois primeiros deixam em aberto: o
+    ranking exibido teria evitado quem sumiu? Isso é medido fora do painel, na
+    coorte de 2012 da SEC, porque dentro dele ninguém some.
+
     Sem medição disponível o texto volta ao aviso qualitativo -- número que
     ninguém apurou não se afirma.
     """
-    from core.us_survivorship import frase_mortalidade, frase_turnover
+    from core.us_survivorship import (frase_mortalidade, frase_score_vs_morte,
+                                      frase_turnover)
 
-    partes = [_AVISO_SOBREVIVENCIA, frase_turnover(), frase_mortalidade()]
+    partes = [_AVISO_SOBREVIVENCIA, frase_turnover(), frase_mortalidade(),
+              frase_score_vs_morte()]
     return " ".join(p for p in partes if p)
 
 

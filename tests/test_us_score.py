@@ -137,3 +137,25 @@ def test_ausencia_de_sbc_nao_penaliza_nem_premia():
     scored = sc.score_cross_section(df, min_group=2)
     pesada = scored[scored["symbol"] == "PESADA"].iloc[0]
     assert pesada["coverage_quality"] < 100
+
+
+def test_cross_section_volta_ordenado_por_nota() -> None:
+    """Contrato explícito: quem consome NÃO pode colar coluna por posição.
+
+    A função termina em `sort_values("score").reset_index(drop=True)`, então o
+    quadro devolvido não está na ordem de entrada. Colar um vetor externo por
+    posição não levanta erro, não deixa NaN e não muda o tamanho -- só troca os
+    valores entre empresas. Foi exatamente assim que um experimento desta base
+    concluiu que empresas quebradas pontuavam mais que as sobreviventes.
+    """
+    import pandas as pd
+
+    entrada = pd.DataFrame([
+        {"symbol": "RUIM", "industry": "35", "sector": "x", "net_margin": -0.4,
+         "roe": -0.5, "roa": -0.3},
+        {"symbol": "BOA", "industry": "35", "sector": "x", "net_margin": 0.25,
+         "roe": 0.30, "roa": 0.12},
+    ])
+    saida = sc.score_cross_section(entrada, min_group=2)
+    assert list(saida["symbol"]) == ["BOA", "RUIM"]
+    assert list(saida["score"]) == sorted(saida["score"], reverse=True)
