@@ -138,3 +138,42 @@ def cobertura_por_regra(linhas: Sequence[dict], as_of: date,
         cheios = sum(1 for r in vis for c in campos if r.get(c) is not None)
         out[regra] = (cheios / total) if total else 0.0
     return out
+
+
+# Tabelas anuais cujas linhas alimentam a safra; `filed_at` so existe a partir
+# da migration 054.
+_TABELAS_PIT = ("income_statements", "balance_sheets", "cash_flow_statements")
+
+
+def cobertura_procedencia(engine) -> dict[str, float | int | str]:
+    """Quanto da base ja tem procedencia por campo -- a regra REALMENTE em vigor.
+
+    A tela nao pode afirmar "point-in-time por campo" porque o codigo passou a
+    saber fazer isso: linha sem `filed_at` cai no fallback e continua sob a
+    regra antiga. Afirmacao de rigor que ninguem mediu e a mesma armadilha de
+    `us_survivorship` -- por isso o numero sai do banco, nao de uma constante.
+
+    Devolve `{"linhas": n, "com_procedencia": k, "fracao": k/n, "regra": ...}`.
+    `regra` e "campo" so quando a base inteira tem procedencia; qualquer mistura
+    e reportada como tal.
+    """
+    from sqlalchemy import text
+
+    total = com = 0
+    for tabela in _TABELAS_PIT:
+        try:
+            with engine.connect() as conn:
+                linha = conn.execute(text(
+                    f"SELECT COUNT(*), COUNT(filed_at) "
+                    f"FROM market_us.{tabela} WHERE period = 'annual'")).first()
+        except Exception:  # noqa: BLE001
+            # Vitrine publicada nao tem a coluna: e informacao, nao falha.
+            return {"linhas": 0, "com_procedencia": 0, "fracao": 0.0,
+                    "regra": "indisponivel"}
+        total += int(linha[0] or 0)
+        com += int(linha[1] or 0)
+    fracao = (com / total) if total else 0.0
+    regra = REGRA_CAMPO if total and com == total else (
+        "mista" if com else REGRA_LINHA)
+    return {"linhas": total, "com_procedencia": com, "fracao": fracao,
+            "regra": regra}

@@ -141,8 +141,42 @@ def _aviso_sobrevivencia() -> str:
     )
 
     partes = [_AVISO_SOBREVIVENCIA, frase_turnover(), frase_mortalidade(),
-              frase_score_vs_morte()]
+              frase_score_vs_morte(), _frase_regra_pit()]
     return " ".join(p for p in partes if p)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _frase_regra_pit() -> str:
+    """Qual regra de visibilidade produziu a safra -- medida, nao declarada.
+
+    A regra antiga carimbava a linha com o arquivamento MAIS TARDIO entre seus
+    campos, o que faz a visibilidade depender do futuro da empresa: um campo que
+    so estreou anos depois apagava o exercicio inteiro de toda safra anterior, e
+    so quem sobreviveu teve anos seguintes em que estrear tag nova. A regra por
+    campo corrige isso, mas so vale para a linha que tem procedencia gravada --
+    e a que nao tem cai no fallback, em silencio. Por isso a frase sai de uma
+    contagem no banco: afirmar rigor que ninguem apurou e o defeito que a propria
+    tela ja documenta no viés de sobrevivência.
+    """
+    try:
+        from core.database import get_engine
+        from core.us_pit import cobertura_procedencia
+        c = cobertura_procedencia(get_engine())
+    except Exception:  # noqa: BLE001
+        return ""
+    if c["regra"] == "indisponivel" or not c["linhas"]:
+        return ""
+    if c["regra"] == "campo":
+        return ("A visibilidade point-in-time e por campo: cada dado entra na "
+                "safra a partir do proprio arquivamento na SEC.")
+    if c["regra"] == "mista":
+        return (f"A visibilidade point-in-time e por campo em "
+                f"{c['fracao']:.0%} das linhas anuais; o restante ainda usa a "
+                "regra por linha, que espera o campo mais tardio e por isso "
+                "esconde exercicios de quem tem historico mais longo.")
+    return ("A visibilidade point-in-time ainda e por linha: o exercicio so "
+            "entra na safra quando o ultimo de seus campos foi arquivado, o "
+            "que subestima o dado disponivel de quem seguiu arquivando.")
 
 
 def _render_company_analysis_css() -> None:
