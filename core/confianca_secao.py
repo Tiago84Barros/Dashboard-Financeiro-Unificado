@@ -70,6 +70,32 @@ def _metodologia(est, peso: float, sufixo: str = "") -> "Componente":
     return Componente("Metodologia validada", frac * 100.0, peso, evid + sufixo)
 
 
+# Peso dos dois componentes que TODA secao de mercado mede. Declarado fora das
+# funcoes de proposito: a estrutura de pesos de uma secao nao pode depender de a
+# fonte ter respondido. Quando o banco cai, o componente simplesmente sumia da
+# lista e a media se renormalizava sobre o que sobrou -- a secao passava a ser
+# medida por 40% do proprio peso e o numero nao se mexia. O usuario lia
+# "confianca" de uma tela que ninguem tinha medido.
+PESOS_MEDICAO = {"Integridade": 0.35, "Frescor": 0.25}
+
+
+def _declarar_nao_medidos(comps: list["Componente"], motivo: str,
+                          pesos: dict[str, float] | None = None
+                          ) -> list["Componente"]:
+    """Faz o componente sem medicao APARECER, em vez de sumir da lista.
+
+    A regra do modulo -- "o que nao foi medido nao vira 100" -- so se sustenta
+    se o componente continuar visivel declarando que saiu. Sumir e pior que
+    zerar: zerar puniria de menos ou de mais, sumir esconde que a pergunta
+    deixou de ser feita.
+    """
+    presentes = {c.nome for c in comps}
+    for nome, peso in (pesos or PESOS_MEDICAO).items():
+        if nome not in presentes:
+            comps.append(Componente(nome, None, peso, motivo))
+    return comps
+
+
 FAIXA_ALTA = 75.0
 FAIXA_MEDIA = 55.0
 
@@ -305,6 +331,8 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca B3: %s", exc)
         notas.append(f"indice de confianca indisponivel: {type(exc).__name__}")
+        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}")
+    _declarar_nao_medidos(comps, "nao medido: sem ticker apto no indice")
 
     comps.append(_abrangencia(u))
 
@@ -353,6 +381,8 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca FII: %s", exc)
         notas.append(f"medicao parcial: {type(exc).__name__}")
+        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}")
+    _declarar_nao_medidos(comps, "nao medido: universo investivel vazio")
 
     comps.append(_abrangencia(u))
     # Le o certificado que a PRODUCAO enxerga, nao o que o armazem local sabe.
@@ -413,6 +443,7 @@ def confianca_us(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca EUA: %s", exc)
         notas.append(f"medicao parcial: {type(exc).__name__}")
+        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}")
 
     comps.append(_abrangencia(u))
     # A pergunta nao e "a vitrine e velha?" e sim "ela foi gerada pelo

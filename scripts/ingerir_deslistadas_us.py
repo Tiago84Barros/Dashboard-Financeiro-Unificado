@@ -32,6 +32,7 @@ import json
 import sys
 import time
 import urllib.request
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +40,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.us_delistings import (  # noqa: E402
+    FONTE,
     derivar_saidas,
     resumo,
 )
@@ -74,11 +76,22 @@ def ciks_do_ano(ano: int, agente: str, cache: Path | None) -> tuple[set[int], in
     falhas = 0
     for q in (1, 2, 3, 4):
         try:
-            ciks |= ciks_com_relatorio_anual(
+            do_q = ciks_com_relatorio_anual(
                 _texto_do_trimestre(ano, q, agente, cache))
         except Exception as exc:  # noqa: BLE001
             falhas += 1
             print(f"   {ano}Q{q}: indisponivel ({type(exc).__name__})")
+            continue
+        # Trimestre que responde 200 e nao traz UM relatorio anual nao e um
+        # trimestre calmo: e um indice que nao foi lido. A SEC serve o futuro
+        # assim -- 2026Q4 devolve 200 com 459 bytes de cabecalho -- e contar
+        # isso como "zero arquivadores" faz o ano inteiro parecer uma extincao.
+        if not do_q:
+            falhas += 1
+            print(f"   {ano}Q{q}: indice sem nenhum relatorio anual -- "
+                  f"tratado como trimestre ausente")
+            continue
+        ciks |= do_q
     return ciks, falhas
 
 
@@ -95,7 +108,12 @@ def _mapa_cik_para_empresa(url: str) -> dict[int, tuple[int, str | None]]:
     return {int(cik): (int(cid), sym) for cik, cid, sym in linhas}
 
 
-def _gravar(url: str, saidas, mapa) -> int:
+def _gravar(url: str, saidas, mapa) -> tuple[int, int]:
+    """Grava a derivacao e RECONCILIA: quem nao esta mais no conjunto derivado
+    perde a linha. Sem isso, uma empresa que volta a arquivar -- ou uma saida
+    inventada por indice truncado -- fica marcada como deslistada para sempre,
+    porque upsert nunca apaga. O registro precisa ser a derivacao corrente, nao
+    a uniao de todas as derivacoes ja feitas."""
     from sqlalchemy import create_engine, text
     eng = create_engine(url.replace("postgresql://", "postgresql+psycopg2://"))
     sql = text(
@@ -111,6 +129,10 @@ def _gravar(url: str, saidas, mapa) -> int:
         "  delisted_date = EXCLUDED.delisted_date, derived_at = now()")
     gravadas = 0
     with eng.begin() as conn:
+        removidas = conn.execute(
+            text("DELETE FROM market_us.delistings "
+                 "WHERE source = :fonte AND NOT (cik = ANY(:ciks))"),
+            {"fonte": FONTE, "ciks": [s.cik for s in saidas]}).rowcount or 0
         for s in saidas:
             cid, sym = mapa.get(s.cik, (None, None))
             conn.execute(sql, {
@@ -119,7 +141,7 @@ def _gravar(url: str, saidas, mapa) -> int:
                 "ausencia": s.ano_da_ausencia, "data": s.data_saida,
                 "motivo": s.motivo, "fonte": s.fonte})
             gravadas += 1
-    return gravadas
+    return gravadas, int(removidas)
 
 
 def main(argv=None) -> int:
@@ -141,19 +163,21 @@ def main(argv=None) -> int:
     incompletos: list[int] = []
     for ano in anos:
         ciks, falhas = ciks_do_ano(ano, args.agente, cache)
+        por_ano[ano] = ciks
         if falhas:
-            # Ano com trimestre faltando sai da janela em vez de entrar torto:
-            # ele so pode inventar mortes, nunca desmentir uma.
+            # Ano com trimestre faltando nao DATA saida -- ele so poderia
+            # inventar mortes. Mas continua entrando na janela, porque quem ele
+            # mostrou arquivando esta vivo, e essa metade da evidencia e boa.
             incompletos.append(ano)
             print(f"{ano}: {len(ciks)} empresas, {falhas} trimestre(s) "
-                  f"faltando -- ano DESCARTADO")
+                  f"faltando -- nao data saida, so desmente", flush=True)
             continue
-        por_ano[ano] = ciks
         print(f"{ano}: {len(ciks)} empresas com relatorio anual", flush=True)
 
-    diag = derivar_saidas(por_ano)
+    diag = derivar_saidas(por_ano, ano_corrente=date.today().year,
+                          anos_incompletos=set(incompletos))
     rel = resumo(diag)
-    rel["anos_incompletos_descartados"] = incompletos
+    rel["anos_incompletos"] = incompletos
     print("\n" + json.dumps(rel, indent=2, ensure_ascii=False))
 
     destino = ROOT / args.saida
@@ -176,7 +200,9 @@ def main(argv=None) -> int:
     no_cadastro = sum(1 for s in diag.saidas if s.cik in mapa)
     print(f"\ncruzamento: {no_cadastro} das {len(diag.saidas)} saidas tem "
           f"cadastro em market_us.companies")
-    print(f"gravadas: {_gravar(url, diag.saidas, mapa)}")
+    gravadas, removidas = _gravar(url, diag.saidas, mapa)
+    print(f"gravadas: {gravadas}; removidas por nao estarem mais na "
+          f"derivacao: {removidas}")
     return 0
 
 

@@ -73,3 +73,32 @@ def test_causa_nunca_e_inventada():
     fotos = {date(2026, 1, 1): _foto(20, extras=["ZZZZ11"]),
              date(2026, 2, 1): _foto(20)}
     assert {s["active_status"] for s in derivar_saidas(fotos).saidas} == {"delisted"}
+
+
+def test_foto_truncada_nao_data_saida_mas_desmente_uma():
+    """Assimetria: a coleta parcial nao sabe quem falta, entao nao pode declarar
+    encerramento -- mas quem ela mostra listado esta vivo. Sem isso, o fundo que
+    reaparece numa coleta parcial fica encerrado para sempre."""
+    fotos = {
+        date(2026, 1, 1): _foto(100, extras=["XPTO11"]),
+        date(2026, 2, 1): _foto(100),                 # XPTO11 some
+        date(2026, 3, 1): _foto(30, extras=["XPTO11"]),  # parcial: reaparece
+    }
+    diag = derivar_saidas(fotos)
+    assert [d for d, _n, _c in diag.descartadas] == [date(2026, 3, 1)]
+    assert diag.saidas == []
+
+
+def test_visto_por_ultimo_considera_a_foto_truncada():
+    """A coleta parcial nao data a saida, mas e prova de vida: usar a foto
+    comparavel anterior encurtaria a vida do fundo em um periodo inteiro."""
+    fotos = {
+        date(2026, 1, 1): _foto(100, extras=["XPTO11"]),
+        date(2026, 2, 1): _foto(30, extras=["XPTO11"]),   # parcial, com XPTO11
+        date(2026, 3, 1): _foto(100),                     # XPTO11 some
+    }
+    diag = derivar_saidas(fotos)
+    assert [s["ticker"] for s in diag.saidas] == ["XPTO11"]
+    s = diag.saidas[0]
+    assert s["reference_date"] == date(2026, 3, 1)
+    assert s["visto_por_ultimo_em"] == date(2026, 2, 1)

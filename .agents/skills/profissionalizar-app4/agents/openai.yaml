@@ -1,0 +1,4 @@
+interface:
+  display_name: "Profissionalizar App 4"
+  short_description: "Auditoria economica e verificavel do App 4"
+  default_prompt: "Use $profissionalizar-app4 para retomar o checkpoint e executar uma rodada sequencial de implementacao e auditoria."

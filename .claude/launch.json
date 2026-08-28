@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "app4-dev-preview",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["-3.12", "scripts/dev_preview_server.py"],
+      "port": 8623
+    }
+  ]
+}

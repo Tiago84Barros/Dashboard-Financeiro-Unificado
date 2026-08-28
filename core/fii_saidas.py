@@ -104,15 +104,24 @@ def derivar_saidas(fotos: dict[date, set[str]]) -> Diagnostico:
             f"cobertura: {cortadas}")
         return diag
 
+    # A foto truncada nao DATA saida -- ela nao sabe quem falta. Mas quem ela
+    # mostra listado esta vivo, e essa metade da evidencia e boa. Ignora-la
+    # datava o "visto por ultimo" cedo demais e, pior, mantinha como encerrado
+    # o fundo que reaparecia numa coleta parcial posterior.
+    todas = sorted(fotos)
     for anterior, atual in zip(comparaveis, comparaveis[1:]):
         for ticker in sorted(fotos[anterior] - fotos[atual]):
+            if any(ticker in fotos[d] for d in todas if d > atual):
+                continue  # reapareceu depois: a saida esta desmentida
+            visto = max((d for d in todas
+                         if d < atual and ticker in fotos[d]), default=anterior)
             diag.saidas.append({
                 "ticker": ticker,
                 "reference_date": atual,
                 "active_status": STATUS_SAIDA,
                 "successor_ticker": None,
                 "source": FONTE_DERIVADA,
-                "visto_por_ultimo_em": anterior,
+                "visto_por_ultimo_em": visto,
             })
     if not diag.saidas:
         diag.motivo = (
