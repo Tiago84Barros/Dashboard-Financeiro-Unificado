@@ -116,3 +116,33 @@ def test_eua_tem_o_portao_de_sobrevivencia_que_so_a_b3_tinha():
     from core.validacao_motor import validacao_us
     nomes = [p.nome for p in validacao_us().portoes]
     assert "Universo de deslistadas" in nomes
+
+
+# --- A-163: a secao que perdia 60% do proprio peso sem o numero se mexer ----
+
+
+class _EngineMorta:
+    """Banco fora do ar: qualquer uso levanta, como no CI sem Postgres."""
+
+    def connect(self):
+        raise RuntimeError("sem banco")
+
+    def begin(self):
+        raise RuntimeError("sem banco")
+
+
+def test_pesos_continuam_somando_um_com_o_banco_fora(monkeypatch):
+    """Componente sem medicao tem de APARECER declarando que saiu.
+
+    Ate 28/08/2026 o bloco de Integridade e Frescor vivia dentro de um `try`
+    que, ao falhar, so escrevia uma nota. Os dois componentes sumiam da lista e
+    a media se renormalizava sobre os 40% restantes: a secao passava a ser
+    medida por menos da metade do proprio peso e a porcentagem exibida nao se
+    movia. Foi o CI, sem banco, que mostrou isso -- localmente a soma sempre
+    dava 1,0 porque o banco sempre respondia.
+    """
+    for secao in (cs.confianca_b3, cs.confianca_fii, cs.confianca_us):
+        s = secao(engine=_EngineMorta())
+        assert abs(sum(c.peso for c in s.componentes) - 1.0) < 1e-9, s.nome
+        faltantes = {c.nome for c in s.componentes if c.pct is None}
+        assert {"Integridade", "Frescor"} <= faltantes, s.nome

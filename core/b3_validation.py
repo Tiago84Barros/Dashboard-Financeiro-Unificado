@@ -113,8 +113,13 @@ def _survivorship_status() -> dict[str, Any]:
     share = cob.get("share")
     ok = share is not None and share >= SURVIVORSHIP_SHARE_MINIMA
     if share is None:
-        motivo = (f"universo historico nao medido: {total} tickers deslistados "
-                  f"unicos, sem cadastro CVM em cache para estratificar")
+        # O texto nomeia o portao ("deslistadas") em TODOS os ramos. Quem le o
+        # bloqueio -- tela e teste -- so tem a prosa para saber qual gate falou,
+        # e este ramo era o unico que nao se identificava: quando o cache some,
+        # o bloqueador virava uma frase sobre "universo historico" que podia ser
+        # de qualquer coisa.
+        motivo = (f"universo historico de deslistadas nao medido: {total} "
+                  f"tickers unicos, sem cadastro CVM em cache para estratificar")
     elif ok:
         motivo = (f"universo historico completo: {cob['cobertas']} de "
                   f"{cob['relevantes']} companhias deslistadas relevantes "

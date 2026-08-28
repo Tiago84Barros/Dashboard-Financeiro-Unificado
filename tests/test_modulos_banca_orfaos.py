@@ -169,3 +169,26 @@ def test_status_nao_quebra_o_manifesto_quando_a_ingestao_falha(monkeypatch):
     st = _survivorship_status()
     assert st["strict_available"] is False
     assert "nao pode ser medido" in st["reason"]
+
+
+def test_o_bloqueio_nomeia_o_portao_mesmo_sem_cache(monkeypatch):
+    """Sem cache da CVM o motivo nao dizia de que universo estava falando.
+
+    `validation_readiness` devolve bloqueadores como prosa -- e quem le so tem
+    a prosa para saber qual portao falou. O ramo "nao medido" era o unico que
+    nao se identificava, entao no CI, sem cache, o bloqueio do survivorship
+    virava uma frase sobre "universo historico" indistinguivel de qualquer
+    outra. Quem depende de reconhecer o portao ficava cego exatamente quando a
+    medicao falhava.
+    """
+    import core.survivorship_ingestion as si
+    from core.b3_validation import _survivorship_status, validation_readiness
+
+    monkeypatch.setattr(si, "cobertura_relevante",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("sem cache")))
+    st = _survivorship_status()
+    assert st["cobertura_relevante"]["share"] is None
+    assert "deslistadas" in st["reason"]
+    pronto = validation_readiness({"pit": {"strict_available": True},
+                                   "survivorship": st})
+    assert any("deslistadas" in b for b in pronto["blockers"])
