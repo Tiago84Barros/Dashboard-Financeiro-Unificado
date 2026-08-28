@@ -17,22 +17,28 @@ import json
 import logging
 from bisect import bisect_right
 from datetime import date
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
 import pandas as pd
 from sqlalchemy import bindparam, text
 
+from core import us_pit
 from core.us_metrics import compute_company_metrics
 from core.us_score import score_cross_section
+from data_pipeline.us.edgar_facts import (
+    derivar_balance,
+    derivar_cashflow,
+    derivar_income,
+)
 
 logger = logging.getLogger("us_scoring_history")
 
-_INCOME = ("company_id", "fiscal_year", "available_at", "revenue", "gross_profit",
+_INCOME = ("company_id", "fiscal_year", "available_at", "filed_at", "revenue", "gross_profit",
            "operating_income", "ebit", "ebitda", "net_income", "interest_expense", "eps")
-_BALANCE = ("company_id", "fiscal_year", "available_at", "total_assets", "total_equity",
+_BALANCE = ("company_id", "fiscal_year", "available_at", "filed_at", "total_assets", "total_equity",
             "total_debt", "net_debt", "cash_and_equivalents", "current_assets",
             "current_liabilities", "invested_capital", "shares_outstanding")
-_CASHFLOW = ("company_id", "fiscal_year", "available_at", "operating_cash_flow",
+_CASHFLOW = ("company_id", "fiscal_year", "available_at", "filed_at", "operating_cash_flow",
              "capex", "free_cash_flow", "dividends_paid", "stock_repurchase",
              "stock_issuance", "depreciation_and_amortization",
              # SBC entra no score v0.5.0; sem esta coluna o histórico PIT
@@ -40,22 +46,22 @@ _CASHFLOW = ("company_id", "fiscal_year", "available_at", "operating_cash_flow",
              "stock_based_compensation")
 
 
-def visible_rows(rows: Sequence[dict], as_of: date) -> list[dict]:
-    """Filtra as observações conhecíveis em `as_of` (available_at ≤ as_of).
+def visible_rows(rows: Sequence[dict], as_of: date,
+                 derivar: Callable[[dict], None] | None = None) -> list[dict]:
+    """Observacoes conheciveis em `as_of`, pela regra por campo quando ha `filed_at`.
 
-    Sem available_at, a linha é considerada NÃO conhecível (conservador — evita
-    look-ahead). Puro e testável.
+    A regra por linha (`available_at <= as_of`) parecia a escolha conservadora e
+    era a unica que existia. Ela depende do futuro: um campo que so estreou anos
+    depois esconde a linha inteira em toda safra anterior, e so quem sobreviveu
+    tem anos seguintes em que estrear tags. `core.us_pit` responde a mesma
+    pergunta sem consultar nada posterior a `as_of`; linhas sem `filed_at`
+    (ingeridas antes da migration 054) continuam sob a regra antiga.
+
+    `derivar` recalcula os campos que saem de outros campos da mesma linha
+    depois da mascara -- sem ele, `total_debt` ou `free_cash_flow` atravessariam
+    carregando o valor calculado sobre um insumo que ainda nao era publico.
     """
-    out = []
-    for r in rows:
-        av = r.get("available_at")
-        if av is None:
-            continue
-        if hasattr(av, "date"):
-            av = av.date()
-        if av <= as_of:
-            out.append(r)
-    return out
+    return us_pit.visiveis(rows, as_of, regra=us_pit.REGRA_CAMPO, derivar=derivar)
 
 
 def forward_returns_from_monthly(monthly: pd.DataFrame) -> pd.DataFrame:
@@ -191,9 +197,9 @@ def compute_score_history(engine, as_of_dates: Iterable[date], *,
                     continue
                 if pd.notna(delisted) and pd.to_datetime(delisted).date() < as_of:
                     continue
-                inc_vis = visible_rows(inc_g.get(cid, []), as_of)
-                bal_vis = visible_rows(bal_g.get(cid, []), as_of)
-                cfw_vis = visible_rows(cfw_g.get(cid, []), as_of)
+                inc_vis = visible_rows(inc_g.get(cid, []), as_of, derivar_income)
+                bal_vis = visible_rows(bal_g.get(cid, []), as_of, derivar_balance)
+                cfw_vis = visible_rows(cfw_g.get(cid, []), as_of, derivar_cashflow)
                 m = compute_company_metrics(
                     inc_vis, bal_vis, cfw_vis,
                     market_cap=_asof_value(mcap_g.get(str(c["symbol"]), []), as_of))

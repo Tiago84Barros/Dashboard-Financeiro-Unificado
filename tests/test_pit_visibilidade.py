@@ -32,8 +32,8 @@ def test_campo_tagueado_depois_nao_apaga_o_exercicio_inteiro() -> None:
                                 "operating_income": "2013-02-01",
                                 "sbc": "2016-02-01"},
                available_at="2016-02-01")
-    assert aplicar([r], AS_OF, REGRA_LINHA) == []
-    campo = aplicar([r], AS_OF, REGRA_CAMPO)
+    assert aplicar([r], AS_OF, REGRA_LINHA, "inc") == []
+    campo = aplicar([r], AS_OF, REGRA_CAMPO, "inc")
     assert len(campo) == 1
     assert campo[0]["revenue"] == 100.0
     assert campo[0]["sbc"] is None      # ausente, e ausente não é zero
@@ -42,19 +42,19 @@ def test_campo_tagueado_depois_nao_apaga_o_exercicio_inteiro() -> None:
 def test_campo_publicado_depois_nao_vaza_valor() -> None:
     """Deixar o número entrar antes da data seria olhar o futuro -- o vício oposto."""
     r = _linha(sbc=5.0, _filed={"revenue": "2013-02-01", "sbc": "2016-02-01"})
-    assert aplicar([r], AS_OF, REGRA_CAMPO)[0]["sbc"] is None
+    assert aplicar([r], AS_OF, REGRA_CAMPO, "inc")[0]["sbc"] is None
 
 
 def test_exercicio_sem_nenhum_campo_conhecido_continua_invisivel() -> None:
     r = _linha(_filed={"revenue": "2014-02-01", "operating_income": "2014-02-01"},
                available_at="2014-02-01")
-    assert aplicar([r], AS_OF, REGRA_CAMPO) == []
-    assert aplicar([r], AS_OF, REGRA_LINHA) == []
+    assert aplicar([r], AS_OF, REGRA_CAMPO, "inc") == []
+    assert aplicar([r], AS_OF, REGRA_LINHA, "inc") == []
 
 
 def test_regra_linha_reproduz_a_producao() -> None:
     dentro, fora = _linha(), _linha(available_at="2014-02-01")
-    assert len(aplicar([dentro, fora], AS_OF, REGRA_LINHA)) == 1
+    assert len(aplicar([dentro, fora], AS_OF, REGRA_LINHA, "inc")) == 1
 
 
 def test_derivado_acompanha_a_ausencia_do_insumo() -> None:
@@ -64,7 +64,14 @@ def test_derivado_acompanha_a_ausencia_do_insumo() -> None:
          "total_debt": 30.0, "net_debt": 25.0, "available_at": "2016-01-01",
          "_filed": {"short_term_debt": "2013-02-01", "long_term_debt": "2013-02-01",
                     "cash_and_equivalents": "2016-01-01"}}
-    v = aplicar([r], AS_OF, REGRA_CAMPO)[0]
+    v = aplicar([r], AS_OF, REGRA_CAMPO, "bal")[0]
     assert v["total_debt"] == 30.0
     assert v["cash_and_equivalents"] is None
     assert v["net_debt"] is None
+
+
+def test_demonstracao_errada_falha_em_vez_de_nao_derivar() -> None:
+    """Sem derivacao o numero derivado sobrevive a mascara: falhar e mais seguro."""
+    import pytest
+    with pytest.raises(ValueError):
+        aplicar([_linha()], AS_OF, REGRA_CAMPO, "balanco")

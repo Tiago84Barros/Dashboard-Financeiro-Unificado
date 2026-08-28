@@ -436,6 +436,7 @@ def _build_rows(collected: dict[str, dict], symbol: str | None = None) -> list[d
             continue
         row: dict[str, Any] = {}
         filings: list[str] = []
+        filed_por_campo: dict[str, str] = {}
         for field, per_field in collected.items():
             point = per_field.get(end)
             if point is None:
@@ -446,6 +447,7 @@ def _build_rows(collected: dict[str, dict], symbol: str | None = None) -> list[d
                 val = -val                    # pagamento (XBRL +) → saída (projeto −)
             row[field] = val
             filings.append(str(point["filed"]))
+            filed_por_campo[field] = str(point["filed"])
         if not filings:
             continue
         # conservador: só é conhecível quando o ÚLTIMO insumo da linha foi arquivado
@@ -460,6 +462,10 @@ def _build_rows(collected: dict[str, dict], symbol: str | None = None) -> list[d
         if symbol:
             row["symbol"] = symbol
         row["content_hash"] = content_hash(row)
+        # Depois do hash de proposito: o hash identifica os INSUMOS
+        # financeiros da linha, e contaminá-lo com metadado de procedencia
+        # faria toda a base parecer alterada na proxima ingestao.
+        row["filed_at"] = dict(filed_por_campo)
         rows.append(row)
     return rows
 
@@ -505,6 +511,39 @@ def _build_quarterly_rows(collected: dict[str, dict], symbol: str | None = None)
 
 
 # ── API pública ───────────────────────────────────────────────────────────────
+# Estes campos nao existem no XBRL: saem de outros campos da MESMA linha. Ficam
+# em funcoes proprias porque ha DOIS momentos em que precisam ser calculados: na
+# montagem da linha e depois de a regra point-in-time esconder um insumo que
+# ainda nao havia sido arquivado (`core.us_pit`). Enquanto a segunda copia vivia
+# num script a parte, ela derivava MENOS campos que esta -- `invested_capital` e
+# `free_cash_flow` sobreviviam a mascara com o valor calculado sobre o insumo
+# invisivel, que e look-ahead dentro da propria correcao de look-ahead.
+def derivar_income(r: dict) -> None:
+    # EBIT nao e tag XBRL: usa o resultado operacional (mesma definicao do projeto)
+    r["ebit"] = r.get("operating_income")
+    r["ebitda"] = None        # exigiria D&A do fluxo; ausente > inventado
+
+
+def derivar_balance(r: dict) -> None:
+    std, ltd = r.get("short_term_debt"), r.get("long_term_debt")
+    r["total_debt"] = None if std is None and ltd is None else (std or 0) + (ltd or 0)
+    cash = r.get("cash_and_equivalents")
+    r["net_debt"] = None if r["total_debt"] is None or cash is None         else r["total_debt"] - cash
+    eq = r.get("total_equity")
+    r["invested_capital"] = None if eq is None or r["total_debt"] is None         else eq + r["total_debt"] - (cash or 0.0)
+
+
+def derivar_cashflow(r: dict) -> None:
+    ocf, capex = r.get("operating_cash_flow"), r.get("capex")
+    # FCF nao existe no XBRL: derivado (capex ja esta negativo aqui)
+    r["free_cash_flow"] = None if ocf is None or capex is None else ocf + capex
+
+
+DERIVADORES = {"income_statements": derivar_income,
+               "balance_sheets": derivar_balance,
+               "cash_flow_statements": derivar_cashflow}
+
+
 def build_income_rows(cf: dict, symbol: str | None = None) -> list[dict]:
     collected = _collect(cf, INCOME_CONCEPTS, _USD)
     collected.update(_collect_units(cf, INCOME_SHARE_CONCEPTS))
@@ -514,9 +553,7 @@ def build_income_rows(cf: dict, symbol: str | None = None) -> list[dict]:
     collected.update(_collect(cf, BANK_REVENUE_CONCEPTS, _USD))
     rows = _build_rows(collected, symbol)
     for r in rows:
-        # EBIT não é tag XBRL: usa o resultado operacional (mesma definição do projeto)
-        r["ebit"] = r.get("operating_income")
-        r["ebitda"] = None        # exigiria D&A do fluxo; ausente > inventado
+        derivar_income(r)
     _aplicar_receita_bancaria(rows, cf, symbol)
     return rows
 
@@ -526,23 +563,14 @@ def build_balance_rows(cf: dict, symbol: str | None = None) -> list[dict]:
     collected.update(_collect_units(cf, BALANCE_SHARE_CONCEPTS))
     rows = _build_rows(collected, symbol)
     for r in rows:
-        std, ltd = r.get("short_term_debt"), r.get("long_term_debt")
-        r["total_debt"] = None if std is None and ltd is None else (std or 0) + (ltd or 0)
-        cash = r.get("cash_and_equivalents")
-        r["net_debt"] = None if r["total_debt"] is None or cash is None \
-            else r["total_debt"] - cash
-        eq = r.get("total_equity")
-        r["invested_capital"] = None if eq is None or r["total_debt"] is None \
-            else eq + r["total_debt"] - (cash or 0.0)
+        derivar_balance(r)
     return rows
 
 
 def build_cashflow_rows(cf: dict, symbol: str | None = None) -> list[dict]:
     rows = _build_rows(_collect(cf, CASHFLOW_CONCEPTS, _USD), symbol)
     for r in rows:
-        ocf, capex = r.get("operating_cash_flow"), r.get("capex")
-        # FCF não existe no XBRL: derivado (capex já está negativo aqui)
-        r["free_cash_flow"] = None if ocf is None or capex is None else ocf + capex
+        derivar_cashflow(r)
     return rows
 
 

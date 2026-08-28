@@ -1,79 +1,48 @@
 # -*- coding: utf-8 -*-
-"""Duas regras de visibilidade point-in-time, para poder compará-las (A-159).
+"""Adaptador de medição para a regra point-in-time por campo (A-159).
 
-A regra em produção (`_build_rows`) carimba a linha inteira com
-`available_at = max(filings)`: o exercício só é conhecível quando o ÚLTIMO de
-seus campos foi arquivado. Parece conservador, e é -- mas conservador de um
-jeito que depende do FUTURO da empresa.
+A regra em si mudou de lugar: mora em `core.us_pit`, porque é regra de decisão
+— `data_pipeline.us.scoring_history` a consulta ao reconstruir as safras. Este
+módulo continua existindo porque a medição offline (`medir_mortalidade_us.py`,
+`testar_score_prediz_morte_us.py`) trabalha com o `companyfacts` cru baixado da
+SEC, sem passar por banco nenhum, e precisa das linhas anuais em JSON.
 
-Se um campo do exercício de 2012 só passou a ser tagueado no 10-K de 2015, a
-linha de 2012 inteira vira invisível para qualquer safra anterior a 2015. Quem
-continuou arquivando até hoje teve dez anos de chances de estrear uma tag nova;
-quem morreu em 2013 não teve nenhuma. O resultado é que **o painel enxerga menos
-dado justamente de quem sobreviveu** -- medido na coorte de 2012: cobertura
-média 36% para sobreviventes contra 51% para as que sumiram.
-
-Isso não é detalhe de parser: contamina toda safra histórica, porque muda quem
-tem fundamento suficiente para ser pontuado em cada data.
-
-A alternativa aqui chamada `campo` responde a mesma pergunta sem consultar o
-futuro: cada campo aparece a partir do seu próprio arquivamento, e o que ainda
-não existia na data fica ausente -- que é o que o analista de 2013 via na tela.
-A linha só some quando NENHUM campo era conhecível.
+Enquanto a regra tinha duas implementações, a deste lado derivava menos campos
+que a da ingestão: `invested_capital` e `free_cash_flow` atravessavam a máscara
+com o valor calculado sobre o insumo invisível — look-ahead dentro da própria
+correção de look-ahead. Agora há uma implementação só, e as derivações são
+literalmente as funções que montam a linha na ingestão.
 """
 from __future__ import annotations
 
 from datetime import date
 from typing import Any
 
-REGRA_LINHA = "linha"
-REGRA_CAMPO = "campo"
+from core.us_pit import REGRA_CAMPO, REGRA_LINHA, visiveis
+from data_pipeline.us.edgar_facts import DERIVADORES
 
-# Campos que `_build_rows` acrescenta depois da coleta: nao tem arquivamento
-# proprio porque derivam dos que tem, e por isso sao recalculados apos a
-# mascara -- manter o derivado quando o insumo ficou invisivel publicaria um
-# numero que ninguem tinha na data.
+__all__ = ["REGRA_CAMPO", "REGRA_LINHA", "linhas_anuais", "aplicar"]
 
-
-def _patch_build_rows():
-    """Faz `_build_rows` anotar o arquivamento de cada campo, sem mudar o hash.
-
-    A anotação entra DEPOIS do `content_hash`: o hash identifica os insumos
-    financeiros da linha, e contaminá-lo com metadado de proveniência faria toda
-    a base parecer alterada na próxima ingestão.
-    """
-    from data_pipeline.us import edgar_facts as ef
-
-    if getattr(ef._build_rows, "_anota_filed", False):
-        return
-    original = ef._build_rows
-
-    def _com_filed(collected: dict, symbol: str | None = None) -> list[dict]:
-        linhas = original(collected, symbol)
-        for linha in linhas:
-            ref = linha.get("reference_date")
-            chave = ref.isoformat() if hasattr(ref, "isoformat") else str(ref)
-            filed: dict[str, str] = {}
-            for campo, por_periodo in collected.items():
-                ponto = (por_periodo or {}).get(chave)
-                if ponto and ponto.get("filed"):
-                    filed[campo] = str(ponto["filed"])
-            linha["_filed"] = filed
-        return linhas
-
-    _com_filed._anota_filed = True
-    ef._build_rows = _com_filed
+# `linhas_anuais` devolve as três demonstrações sob estas chaves; a derivação de
+# cada uma é a mesma da ingestão, buscada pelo nome da tabela correspondente.
+_TABELA = {"inc": "income_statements", "bal": "balance_sheets",
+           "cash": "cash_flow_statements"}
 
 
 def linhas_anuais(fatos: dict) -> dict[str, list[dict]]:
-    """Linhas anuais cruas, com `available_at` e `_filed` por campo, em ISO."""
+    """Linhas anuais cruas, com `available_at` e `filed_at` por campo, em ISO.
+
+    Guardar o `companyfacts` inteiro estourou a memória: há blobs de dezenas de
+    MB e o processo retém centenas deles. Aqui ficam só as linhas anuais — duas
+    ordens de grandeza menores — e já com a procedência por campo, sem a qual
+    não dá para comparar as duas regras de visibilidade.
+    """
     from data_pipeline.us.edgar_facts import (
         build_balance_rows,
         build_cashflow_rows,
         build_income_rows,
     )
 
-    _patch_build_rows()
     out: dict[str, list[dict]] = {}
     for nome, fn in (("inc", build_income_rows), ("bal", build_balance_rows),
                      ("cash", build_cashflow_rows)):
@@ -82,52 +51,30 @@ def linhas_anuais(fatos: dict) -> dict[str, list[dict]]:
 
 
 def _serializar(linha: dict) -> dict:
-    """Números + as duas datas, em ISO. `date` e hash não sobrevivem ao JSON."""
+    """Números + as datas, em ISO. `date` e hash não sobrevivem ao JSON."""
     out: dict[str, Any] = {k: v for k, v in linha.items()
                            if v is None or isinstance(v, (int, float))}
     for k in ("available_at", "reference_date"):
         v = linha.get(k)
         if v is not None:
             out[k] = v.isoformat() if hasattr(v, "isoformat") else str(v)
-    out["_filed"] = dict(linha.get("_filed") or {})
+    out["filed_at"] = {c: str(d) for c, d in (linha.get("filed_at") or {}).items()}
     return out
 
 
-def aplicar(linhas: list[dict], as_of: date, regra: str) -> list[dict]:
+def aplicar(linhas: list[dict], as_of: date, regra: str,
+            demonstracao: str) -> list[dict]:
     """Aplica a regra de visibilidade e devolve as linhas como o analista via.
 
-    `linha`: reproduz a produção -- a linha existe inteira ou não existe.
-    `campo`: cada campo entra a partir do próprio arquivamento; o que ainda não
-    havia sido publicado fica ausente, e ausente não é zero.
+    `demonstracao` e `inc`, `bal` ou `cash`, e e OBRIGATORIA: ela escolhe qual
+    derivacao recalcular depois da mascara. Omiti-la nao pode ser um default
+    silencioso -- sem recalcular, `net_debt` e `free_cash_flow` atravessam a
+    mascara com o valor calculado sobre o insumo que ainda era invisivel, que e
+    exatamente o look-ahead que esta regra existe para eliminar. Errar aqui
+    devolve numero plausivel, nao erro; por isso a assinatura obriga.
     """
-    corte = as_of.isoformat()
-    if regra == REGRA_LINHA:
-        return [dict(r) for r in linhas
-                if str(r.get("available_at") or "9999") <= corte]
-
-    visiveis = []
-    for r in linhas:
-        filed = r.get("_filed") or {}
-        conhecidos = {c for c, f in filed.items() if str(f) <= corte}
-        if not conhecidos:
-            continue
-        nova = {k: v for k, v in r.items() if k not in filed or k in conhecidos}
-        for campo in filed:
-            nova.setdefault(campo, None)
-        _recalcular_derivados(nova)
-        visiveis.append(nova)
-    return visiveis
-
-
-def _recalcular_derivados(linha: dict) -> None:
-    if "ebit" in linha:
-        linha["ebit"] = linha.get("operating_income")
-    if "ebitda" in linha:
-        linha["ebitda"] = None
-    if "total_debt" in linha:
-        std, ltd = linha.get("short_term_debt"), linha.get("long_term_debt")
-        linha["total_debt"] = None if std is None and ltd is None else (std or 0) + (ltd or 0)
-    if "net_debt" in linha:
-        caixa = linha.get("cash_and_equivalents")
-        td = linha.get("total_debt")
-        linha["net_debt"] = None if td is None or caixa is None else td - caixa
+    tabela = _TABELA.get(demonstracao)
+    if tabela is None:
+        raise ValueError(
+            f"demonstracao invalida: {demonstracao!r}; use {sorted(_TABELA)}")
+    return visiveis(linhas, as_of, regra=regra, derivar=DERIVADORES.get(tabela))

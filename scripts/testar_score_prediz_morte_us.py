@@ -112,7 +112,7 @@ def _compactar(fatos: dict) -> dict:
 
     Guardar o blob cru estourou a memoria: ha companyfacts de dezenas de MB e o
     processo retem os 1.400. Aqui ficam so as linhas anuais -- duas ordens de
-    grandeza menores -- e com `_filed` por campo, sem o qual nao da para
+    grandeza menores -- e com `filed_at` por campo, sem o qual nao da para
     comparar as duas regras de visibilidade.
     """
     from scripts._pit_visibilidade import linhas_anuais
@@ -220,9 +220,9 @@ def _metricas(pacote: dict, cik: int, regra: str = "linha") -> dict | None:
     from core.us_metrics import compute_company_metrics
     from scripts._pit_visibilidade import aplicar
 
-    inc, bal, cash = (aplicar(pacote.get("inc") or [], AS_OF, regra),
-                      aplicar(pacote.get("bal") or [], AS_OF, regra),
-                      aplicar(pacote.get("cash") or [], AS_OF, regra))
+    inc, bal, cash = (aplicar(pacote.get("inc") or [], AS_OF, regra, "inc"),
+                      aplicar(pacote.get("bal") or [], AS_OF, regra, "bal"),
+                      aplicar(pacote.get("cash") or [], AS_OF, regra, "cash"))
     if not (inc or bal):
         return None
     m = compute_company_metrics(inc, bal, cash)

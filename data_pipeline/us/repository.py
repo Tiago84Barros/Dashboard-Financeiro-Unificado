@@ -115,7 +115,18 @@ _STMT_CONFLICT = ["company_id", "period", "fiscal_year", "fiscal_quarter"]
 
 def upsert_statements(conn, table: str, company_id: int, symbol: str,
                       rows: list[dict]) -> int:
-    payload = [{**r, "company_id": company_id, "symbol": symbol} for r in rows]
+    """Grava as linhas anuais/trimestrais. `filed_at` vira JSON (coluna JSONB).
+
+    A serializacao acontece aqui, e nao no parser, porque `_build_rows` tambem
+    alimenta a medicao offline, que quer o dict. Sem isto o bind manda um dict
+    Python para uma coluna JSONB e o driver levanta -- ou pior, grava a repr.
+    """
+    payload = []
+    for r in rows:
+        linha = {**r, "company_id": company_id, "symbol": symbol}
+        if "filed_at" in linha:
+            linha["filed_at"] = _json(linha["filed_at"]) if linha["filed_at"] else None
+        payload.append(linha)
     return _exec_many(conn, table, payload, conflict=_STMT_CONFLICT)
 
 
