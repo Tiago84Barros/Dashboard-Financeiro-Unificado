@@ -28,8 +28,8 @@ import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
-from core.validacao_motor import validacao_b3
 from core.market_companies import normalize_b3_companies
+from core.validacao_motor import validacao_b3
 from design.componentes import (
     aviso_cobertura_do_universo,
     aviso_escala_do_score,

@@ -134,8 +134,11 @@ def _aviso_sobrevivencia() -> str:
     Sem medição disponível o texto volta ao aviso qualitativo -- número que
     ninguém apurou não se afirma.
     """
-    from core.us_survivorship import (frase_mortalidade, frase_score_vs_morte,
-                                      frase_turnover)
+    from core.us_survivorship import (
+        frase_mortalidade,
+        frase_score_vs_morte,
+        frase_turnover,
+    )
 
     partes = [_AVISO_SOBREVIVENCIA, frase_turnover(), frase_mortalidade(),
               frase_score_vs_morte()]

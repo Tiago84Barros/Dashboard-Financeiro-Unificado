@@ -11,11 +11,18 @@ revogacao da Seritage e a mencao a REIT de terceiro.
 """
 from __future__ import annotations
 
-from core.us_instrumento import (ELEICAO_REIT_AUSENTE, ELEICAO_REIT_DECLARADA,
-                                 MOTIVO_REIT, MOTIVO_TIPO_NAO_CONFIRMADO,
-                                 motivo_exclusao_ativo)
-from data_pipeline.us.reit_eleicao import (apurar_eleicao, eleicao_no_texto,
-                                           url_relatorio_anual)
+from core.us_instrumento import (
+    ELEICAO_REIT_AUSENTE,
+    ELEICAO_REIT_DECLARADA,
+    MOTIVO_REIT,
+    MOTIVO_TIPO_NAO_CONFIRMADO,
+    motivo_exclusao_ativo,
+)
+from data_pipeline.us.reit_eleicao import (
+    apurar_eleicao,
+    eleicao_no_texto,
+    url_relatorio_anual,
+)
 
 
 def _sub(forma="10-K", doc="form10-k.htm", cik="1677576"):

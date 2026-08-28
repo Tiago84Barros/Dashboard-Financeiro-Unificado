@@ -13,7 +13,6 @@ Medido em 24/08/2026 sobre o painel real da B3 (1.089 tickers, 2015-2026):
 entravam em 9 dos 11 anos -- o que sumia era predominantemente o perdedor.
 Sobrevivencia dentro do proprio teste com que o app afirma que o score preve.
 """
-import numpy as np
 import pandas as pd
 import pytest
 

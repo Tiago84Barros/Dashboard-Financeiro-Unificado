@@ -17,7 +17,6 @@ from datetime import date
 import pytest
 
 from core.us_survivorship import (
-    CAMINHO_MEDICAO,
     carregar_medicao,
     frase_turnover,
     gravar_medicao,

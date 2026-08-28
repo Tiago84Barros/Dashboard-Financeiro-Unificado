@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 import unicodedata
 
-
 ORDEM_CATEGORIAS_FII = (
     "Logística",
     "Shoppings",

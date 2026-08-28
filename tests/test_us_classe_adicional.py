@@ -9,9 +9,11 @@ linhas com fundamento identico e preco de outro papel.
 """
 from __future__ import annotations
 
-from core.us_instrumento import (MOTIVO_CLASSE_ADICIONAL,
-                                 classe_adicional_da_mesma_companhia,
-                                 motivo_exclusao_ativo)
+from core.us_instrumento import (
+    MOTIVO_CLASSE_ADICIONAL,
+    classe_adicional_da_mesma_companhia,
+    motivo_exclusao_ativo,
+)
 
 _SOUTHERN = ("SO", "SOJC", "SOJD", "SOJF", "SOMN")
 _NEWTEK = ("NEWT", "NEWTH", "NEWTI", "NEWTP")

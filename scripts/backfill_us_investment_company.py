@@ -26,9 +26,11 @@ if str(ROOT) not in sys.path:
 
 from sqlalchemy import create_engine, text  # noqa: E402
 
-from data_pipeline.us.edgar import (SUBMISSIONS_URL,  # noqa: E402
-                                    _e_companhia_de_investimento,
-                                    build_edgar_provider)
+from data_pipeline.us.edgar import (  # noqa: E402
+    SUBMISSIONS_URL,
+    _e_companhia_de_investimento,
+    build_edgar_provider,
+)
 
 
 def _engine():

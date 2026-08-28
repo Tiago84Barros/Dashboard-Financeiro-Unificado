@@ -35,7 +35,7 @@ def test_valor_no_piso_sobrevive():
 def test_piso_nao_derruba_provento_de_centavo():
     """Guard apertado demais silenciaria provento pequeno porém real."""
     linhas = dividend_rows(_quote(0.01))
-    assert [l["amount"] for l in linhas] == [0.01]
+    assert [ln["amount"] for ln in linhas] == [0.01]
 
 
 def test_negativo_e_zero_continuam_fora():

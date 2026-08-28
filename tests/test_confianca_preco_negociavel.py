@@ -6,8 +6,7 @@ O caso que originou estes testes e real e foi medido no Supabase em
 frescor de preco -- os 18% restantes -- nao tinha peso para derrubar. O papel
 entrava no universo de decisao (gate >= 55) como se fosse comprIavel.
 """
-from core.data_confidence import (LIMIAR_MEDIA, TETO_SEM_PRECO_NEGOCIAVEL,
-                                  score_ticker)
+from core.data_confidence import LIMIAR_MEDIA, TETO_SEM_PRECO_NEGOCIAVEL, score_ticker
 
 ANO = 2026
 

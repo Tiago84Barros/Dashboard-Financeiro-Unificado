@@ -43,8 +43,11 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from core.dividend_types import (descarta_safra_colapsada, eh_safra_colapsada,
-                                 sql_safra_canonica)
+from core.dividend_types import (
+    descarta_safra_colapsada,
+    eh_safra_colapsada,
+    sql_safra_canonica,
+)
 
 
 def _linha(ex, pay, amount, ticker="RELG11", tipo="RENDIMENTO"):

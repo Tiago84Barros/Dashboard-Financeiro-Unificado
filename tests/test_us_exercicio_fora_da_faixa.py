@@ -28,7 +28,7 @@ def test_periodo_de_1980_nao_entra_e_o_resto_da_empresa_entra():
         ("2023-01-01", "2023-12-31", "2024-02-20", 5_000_000.0),
     ])
     linhas = ef.build_balance_rows(cf, "SRPT")
-    anos = {l["fiscal_year"] for l in linhas}
+    anos = {ln["fiscal_year"] for ln in linhas}
     assert 1980 not in anos, "ano fora do CHECK do banco nao pode ser emitido"
     assert 2023 in anos, "descartar o ruido nao pode descartar a empresa"
 

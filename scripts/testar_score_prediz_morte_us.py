@@ -218,7 +218,6 @@ def _itens(recentes: dict) -> dict:
 
 def _metricas(pacote: dict, cik: int, regra: str = "linha") -> dict | None:
     from core.us_metrics import compute_company_metrics
-
     from scripts._pit_visibilidade import aplicar
 
     inc, bal, cash = (aplicar(pacote.get("inc") or [], AS_OF, regra),
@@ -306,6 +305,7 @@ def main(argv=None) -> int:
         return 1
 
     import pandas as pd
+
     from core.us_score import score_cross_section
     marcado = pd.DataFrame(linhas)
     df = juntar_desfecho(score_cross_section(marcado), marcado)

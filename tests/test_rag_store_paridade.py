@@ -25,6 +25,7 @@ pytestmark = pytest.mark.skipif(
 def conn():
     """Conexao com o armazem local (a origem do Parquet)."""
     from sqlalchemy import create_engine
+
     from scripts.publish_fii_selection_from_local import _warehouse_url
     try:
         eng = create_engine(

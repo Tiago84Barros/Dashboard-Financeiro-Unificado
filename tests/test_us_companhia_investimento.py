@@ -14,8 +14,7 @@ marca era o Central Bancompany -- banco de verdade, que o sinal deixou passar.
 """
 from __future__ import annotations
 
-from core.us_instrumento import (MOTIVO_COMPANHIA_INVESTIMENTO,
-                                 motivo_exclusao_ativo)
+from core.us_instrumento import MOTIVO_COMPANHIA_INVESTIMENTO, motivo_exclusao_ativo
 from data_pipeline.us.edgar import _e_companhia_de_investimento
 from data_pipeline.us.normalize import map_profile
 

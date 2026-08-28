@@ -10,9 +10,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from core.b3_correlation_diversification import (JANELA_CORR_MESES,
-                                                 correlation_coverage,
-                                                 monthly_returns_for)
+from core.b3_correlation_diversification import (
+    JANELA_CORR_MESES,
+    correlation_coverage,
+    monthly_returns_for,
+)
 
 
 def _quadro(n_meses: int, tickers: list[str]) -> pd.DataFrame:

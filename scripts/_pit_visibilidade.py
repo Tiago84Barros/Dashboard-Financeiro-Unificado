@@ -67,9 +67,11 @@ def _patch_build_rows():
 
 def linhas_anuais(fatos: dict) -> dict[str, list[dict]]:
     """Linhas anuais cruas, com `available_at` e `_filed` por campo, em ISO."""
-    from data_pipeline.us.edgar_facts import (build_balance_rows,
-                                              build_cashflow_rows,
-                                              build_income_rows)
+    from data_pipeline.us.edgar_facts import (
+        build_balance_rows,
+        build_cashflow_rows,
+        build_income_rows,
+    )
 
     _patch_build_rows()
     out: dict[str, list[dict]] = {}

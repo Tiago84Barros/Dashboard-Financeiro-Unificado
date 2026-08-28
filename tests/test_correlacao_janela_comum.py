@@ -17,8 +17,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from core.correlation_analysis import (JANELA_CORR_MESES, MIN_CORR_MONTHS,
-                                       calcular_correlacao_mensal)
+from core.correlation_analysis import (
+    JANELA_CORR_MESES,
+    MIN_CORR_MONTHS,
+    calcular_correlacao_mensal,
+)
 
 
 def _precos(n_meses: int, semente: int, inicio="1980-01-31") -> pd.Series:

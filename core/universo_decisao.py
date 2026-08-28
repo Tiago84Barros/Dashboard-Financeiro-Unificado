@@ -111,8 +111,7 @@ def universo_b3(engine=None) -> Universo:
     """B3: aptidao vem de ``core.data_confidence``, o indice que ja media
     cobertura/frescor/integridade por ticker e - ate A-125 - nao era lido por
     ninguem. Usa-lo como gate e o que finalmente lhe da um consumidor."""
-    from core.data_confidence import (LIMIAR_MEDIA, _PRECO_VELHO_DIAS,
-                                      compute_confidence)
+    from core.data_confidence import _PRECO_VELHO_DIAS, LIMIAR_MEDIA, compute_confidence
     scored = compute_confidence(engine)
     if not scored:
         return Universo("Empresas B3", 0, 0, 0,

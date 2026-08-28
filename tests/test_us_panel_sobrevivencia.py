@@ -16,7 +16,9 @@ import pytest
 
 from core.us_backtest import walk_forward
 from data_pipeline.us.scoring_history import (
-    build_annual_panel, forward_returns_from_monthly)
+    build_annual_panel,
+    forward_returns_from_monthly,
+)
 
 
 def _meses(sym, pares):

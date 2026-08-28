@@ -44,7 +44,6 @@ from core.survivorship_ingestion import (  # noqa: E402
     resumo_ingestao,
 )
 
-
 EXPORT_DEFAULT = "data_imports/delisted/cvm_cancelamentos_fca.csv"
 
 

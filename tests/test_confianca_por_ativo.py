@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 import core.global_portfolio.confianca_ativos as ca
 from core.global_portfolio import signals

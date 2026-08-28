@@ -9,8 +9,6 @@ seja de metodologia e nao refem de um modulo que ninguem sabe se roda.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
-import pytest
 
 
 def _retornos(n: int = 140, k: int = 4, seed: int = 7) -> np.ndarray:

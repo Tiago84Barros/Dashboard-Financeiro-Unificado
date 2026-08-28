@@ -170,6 +170,7 @@ def test_marcador_de_banco_qualifica_a_serie_inteira():
 
 def test_receita_bancaria_negativa_nao_substitui(caplog):
     import logging
+
     from data_pipeline.us import edgar_facts as ef
     cf = _ano(**{"RevenueFromContractWithCustomerExcludingAssessedTax": 1_000_000.0,
               "NoninterestIncome": -5_000_000.0, "NetIncomeLoss": 100_000.0})

@@ -25,9 +25,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.us_survivorship import (CAMINHO_MEDICAO, carregar_medicao,  # noqa: E402
-                                  ciks_com_relatorio_anual, gravar_medicao,
-                                  medir_mortalidade)
+from core.us_survivorship import (  # noqa: E402
+    CAMINHO_MEDICAO,
+    carregar_medicao,
+    ciks_com_relatorio_anual,
+    gravar_medicao,
+    medir_mortalidade,
+)
 
 URL_IDX = "https://www.sec.gov/Archives/edgar/full-index/{ano}/QTR{q}/form.idx"
 
