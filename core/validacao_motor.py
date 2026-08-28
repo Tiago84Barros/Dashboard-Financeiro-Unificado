@@ -153,6 +153,22 @@ def _vantagem_nao_apurada(motivo: str) -> Portao:
     return Portao("Vantagem fora da amostra", None, motivo, dimensao=DIM_VANTAGEM)
 
 
+def _vantagem_persistida(motor: str, versao: str) -> Portao:
+    """Le a medicao gravada por `scripts/medir_vantagem_oos.py` (SCORE-05).
+
+    B3 e EUA calculam a vantagem dentro da propria tela e a esquecem no fim do
+    rerun; sem persistencia, a tela de Grau de Confianca -- que roda em outra
+    sessao -- so podia dizer "nao apurado". A leitura e do arquivo, nunca um
+    recalculo aqui: a medicao depende do armazem local, que a nuvem nao alcanca.
+    """
+    from core.vantagem_oos import avaliar
+    veredito, detalhe = avaliar(motor, versao)
+    if veredito is None:
+        return _vantagem_nao_apurada(detalhe)
+    return Portao("Vantagem fora da amostra", veredito, detalhe,
+                  dimensao=DIM_VANTAGEM)
+
+
 def _saidas_fii() -> Portao:
     """O universo historico de FIIs observa fundos que deixaram de existir?
 
@@ -251,9 +267,7 @@ def validacao_b3(engine=None) -> EstadoValidacao:
             for nome, marca, dim in (
                 ("PIT estrito", "PIT estrito", DIM_PIT),
                 ("Universo de deslistadas", "deslistadas", DIM_SAIDAS)))
-        portoes += (_vantagem_nao_apurada(
-            "nenhum backtest fora da amostra da B3 e publicado: o Rank-IC da "
-            "selecao nunca foi persistido para a tela ler"),)
+        portoes += (_vantagem_persistida("b3", SCORE_VERSION),)
         return EstadoValidacao("Empresas B3", SCORE_VERSION,
                                bool(pronto.get("ready")), bloq, portoes=portoes)
     except Exception as exc:  # noqa: BLE001
@@ -377,9 +391,7 @@ def validacao_us(history_available: object = None) -> EstadoValidacao:
             portoes=(Portao("Painel PIT", pronto,
                             "" if pronto else _SEM_VINTAGES, dimensao=DIM_PIT),
                      _deslistadas_us(),
-                     _vantagem_nao_apurada(
-                         "o Rank-IC fora da amostra so existe no armazem "
-                         "local; a vitrine publicada nao carrega o resultado")))
+                     _vantagem_persistida("us", v)))
     try:
         import core.us_data as us
         painel = us.score_panel()
@@ -390,8 +402,6 @@ def validacao_us(history_available: object = None) -> EstadoValidacao:
             portoes=(Portao("Painel PIT", pronto,
                             "" if pronto else _SEM_VINTAGES, dimensao=DIM_PIT),
                      _deslistadas_us(),
-                     _vantagem_nao_apurada(
-                         "o Rank-IC fora da amostra so existe no armazem "
-                         "local; a vitrine publicada nao carrega o resultado")))
+                     _vantagem_persistida("us", v)))
     except Exception as exc:  # noqa: BLE001
         return _falha("Empresas Americanas", v, exc)

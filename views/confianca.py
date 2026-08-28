@@ -94,6 +94,18 @@ def _rigor() -> dict:
                         for classe, dims in comp.items()}}
 
 
+def _resumo(detalhe: object, limite: int = 420) -> str:
+    """Encurta o detalhe do portão SEM apagar a ressalva em silêncio.
+
+    O corte anterior era em 150 caracteres e sem marca: a justificativa dos EUA
+    reprova pelo intervalo e ressalva na sequência que o score ainda ordena o
+    universo -- exatamente a metade que sumia. Truncar é aceitável; truncar sem
+    o leitor perceber transforma uma meia-verdade em conclusão.
+    """
+    texto = str(detalhe)
+    return texto if len(texto) <= limite else texto[:limite - 1].rstrip() + "…"
+
+
 def _tabela_rigor() -> None:
     """Por que as três notas não são comparáveis entre si.
 
@@ -130,7 +142,7 @@ def _tabela_rigor() -> None:
                 f'<td style="text-align:center;padding:8px 10px;vertical-align:top">'
                 f'<div style="color:{cor};font-weight:700;font-size:1.1rem">{simbolo}</div>'
                 f'<div style="color:#94a3b8;font-size:.72rem;line-height:1.25">'
-                f'{html.escape(str(detalhe)[:150])}</div></td>')
+                f'{html.escape(_resumo(detalhe))}</div></td>')
         linhas.append(
             '<tr style="border-top:1px solid rgba(148,163,184,.18)">'
             f'<td style="padding:8px 10px;font-weight:600;font-size:.85rem">'

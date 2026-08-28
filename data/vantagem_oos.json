@@ -1,0 +1,61 @@
+{
+  "b3": {
+    "configuracao": "defaults da aba: {\"pb3_thr_selic_hist\": 15.0, \"pb3_teto_setor\": 100, \"pb3_teto_ciclico\": 100, \"pb3_criterio_aprov2\": \"Econômico (Brasil)\", \"pb3_min_empresas\": 5, \"pb3_cheapness\": 0, \"pb3_roic_spread\": 0.0}",
+    "extras": {
+      "bootstrap_amostras": 2000,
+      "ic_por_ano": {
+        "2016": 0.1013,
+        "2017": -0.047,
+        "2018": -0.1337,
+        "2019": 0.3129,
+        "2020": 0.0387,
+        "2021": 0.168,
+        "2022": 0.1904,
+        "2023": -0.0845,
+        "2024": 0.1808,
+        "2025": 0.1028
+      },
+      "n_medio_ativos_ano": 116.6,
+      "n_pares": 1166
+    },
+    "fonte": "aba de Criacao de Portfolio B3 sobre banco publicado do App 1 (nuvem)",
+    "formato": "coeficiente",
+    "ic_confianca": 0.95,
+    "ic_high": 0.1644255822618159,
+    "ic_low": -0.00037248747195574734,
+    "janela": {
+      "fim": "2025",
+      "inicio": "2016"
+    },
+    "media": 0.08297375287811523,
+    "medido_em": "2026-08-28",
+    "metrica": "Rank-IC anual do universo (score de t vs retorno t->t+1)",
+    "motor": "b3",
+    "n_periodos": 10,
+    "versao_metodologia": "2.25.0"
+  },
+  "us": {
+    "configuracao": "walk-forward anual, top_n=20, pesos=score",
+    "extras": {
+      "bootstrap_amostras": 2000,
+      "rank_ic_medio": 0.09585918758584838,
+      "rank_ic_n": 16,
+      "rank_ic_t": 3.728665694511625
+    },
+    "fonte": "armazem local, market_us.score_vintages + prices_monthly",
+    "formato": "percentual",
+    "ic_confianca": 0.95,
+    "ic_high": 0.07372865321091154,
+    "ic_low": -0.09930922388514032,
+    "janela": {
+      "fim": "2025-06-30",
+      "inicio": "2010-06-30"
+    },
+    "media": -0.0014650387936687229,
+    "medido_em": "2026-08-28",
+    "metrica": "excesso por periodo sobre o equal-weight do universo",
+    "motor": "us",
+    "n_periodos": 16,
+    "versao_metodologia": "0.5.0"
+  }
+}
