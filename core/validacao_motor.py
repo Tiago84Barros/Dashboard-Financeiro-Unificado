@@ -194,16 +194,34 @@ def _saidas_fii() -> Portao:
         return Portao("Universo com saidas", None,
                       "historico de universo nao alcancavel nesta base",
                       dimensao=DIM_SAIDAS)
-    saidas, total, datas = (int(v or 0) for v in linha)
+    saidas, total, _datas = (int(v or 0) for v in linha)
     if saidas:
         return Portao("Universo com saidas", True,
                       f"{saidas} de {total} fundos ja sairam do universo",
                       dimensao=DIM_SAIDAS)
-    return Portao(
-        "Universo com saidas", False,
-        f"nenhum dos {total} fundos consta como encerrado em {datas} data(s) de "
-        f"referencia: o historico so tem quem continua listado",
-        dimensao=DIM_SAIDAS)
+    return Portao("Universo com saidas", False,
+                  f"nenhum dos {total} fundos consta como encerrado; "
+                  + _porque_sem_saidas_fii(), dimensao=DIM_SAIDAS)
+
+
+def _porque_sem_saidas_fii() -> str:
+    """Distingue "nao houve saida" de "nao havia como haver saida".
+
+    A frase anterior -- "o historico so tem quem continua listado" -- sugeria
+    que saidas foram procuradas e nao encontradas. Com uma unica foto completa
+    do universo, ausencia nao e sequer observavel: o portao so podia dar False,
+    e um criterio inalcancavel nunca e revisto. `core.fii_saidas` sabe qual dos
+    dois casos e o atual e a frase passa a dizer.
+    """
+    try:
+        from core.database import get_engine
+        from core.fii_saidas import derivar_saidas, fotos_do_banco
+        with get_engine().connect() as conn:
+            diag = derivar_saidas(fotos_do_banco(conn))
+    except Exception as exc:  # noqa: BLE001
+        logger.info("diagnostico de saidas FII indisponivel: %s", type(exc).__name__)
+        return "historico de universo nao diagnosticavel nesta base"
+    return diag.motivo or "sem diagnostico"
 
 
 def _vantagem_fii(metrics: dict) -> Portao:

@@ -1144,7 +1144,16 @@ def _refresh_pro_universe(engine, *, limit: int | None = None) -> dict:
                 "available_at": response.collected_at, "knowledge_at": response.collected_at,
                 "availability_quality": "first_observed_proxy", "active_status": "listed",
                 "successor_ticker": None, "source": "brapi_fii_v2_list",
-                "metadata_json": json.dumps({"prospective_snapshot": True}, ensure_ascii=False),
+                # `limitado` separa foto de teste de foto do universo. Sem essa
+                # marca, uma execucao com --limit grava um recorte que fica
+                # indistinguivel de uma onda de encerramentos: foi assim que a
+                # base ganhou uma foto de 393 tickers ao lado de uma de 1.029,
+                # e derivar saidas dali marcaria 636 fundos saudaveis como
+                # encerrados (ver core/fii_saidas.py).
+                "metadata_json": json.dumps(
+                    {"prospective_snapshot": True,
+                     "limitado": bool(limit), "n_symbols": len(symbols)},
+                    ensure_ascii=False),
             } for ticker in symbols]
             counts["universo"] = repo.upsert(conn, "fii_universe_history", listed_rows)
     return {"symbols": symbols, **counts}
