@@ -133,3 +133,93 @@ def test_saida_exige_ausencia_em_todos_os_anos_posteriores():
     """Reaparecer depois de dois anos ainda desmente a saida."""
     por_ano = {2010: {1, 2}, 2011: {1}, 2012: {1}, 2013: {1, 2}}
     assert derivar_saidas(por_ano).saidas == []
+
+
+def test_ano_em_curso_nao_vira_deslistagem_em_massa():
+    """O defeito real de 28/08/2026: o indice de 2026 tinha tres trimestres, o
+    quarto respondeu HTTP 200 com arquivo vazio, e 1.240 empresas vivas foram
+    gravadas como deslistadas. Nenhuma contagem de trimestre pega isso -- a
+    leitura foi bem-sucedida. So a data pega."""
+    cheio = _universo(1000)
+    parcial = set(list(cheio)[:800])   # 80% do maior: passa em qualquer piso
+    por_ano = {2024: cheio, 2025: cheio, 2026: parcial}
+    diag = derivar_saidas(por_ano, ano_corrente=2026)
+    assert diag.anos_em_curso == [2026]
+    assert 2026 not in diag.anos_comparaveis
+    assert diag.saidas == []
+
+
+def test_ano_em_curso_e_descartado_mesmo_parecendo_completo():
+    """Se o ano corrente tivesse ate MAIS arquivadores que o anterior, o piso
+    de cobertura o aprovaria com folga. A regra e de calendario, nao de volume:
+    quem nao arquivou ate agosto pode arquivar em novembro."""
+    por_ano = {2024: _universo(900), 2025: _universo(900),
+               2026: _universo(950)}
+    diag = derivar_saidas(por_ano, ano_corrente=2026)
+    assert diag.anos_em_curso == [2026]
+    assert diag.anos_comparaveis == [2024, 2025]
+
+
+def test_ano_corrente_ausente_preserva_o_comportamento_antigo():
+    """Sem `ano_corrente` nada e cortado por data -- a janela historica fechada
+    continua sendo derivada como antes."""
+    por_ano = {2010: {1, 2, 3}, 2011: {1, 2, 3}, 2012: {1, 2}, 2013: {1, 2}}
+    assert [s.cik for s in derivar_saidas(por_ano).saidas] == [3]
+
+
+def test_resumo_declara_o_ano_em_curso_descartado():
+    """Descartar em silencio esconderia que a janela e mais curta do que se
+    pediu; o relatorio precisa carregar o motivo."""
+    por_ano = {2024: _universo(900), 2025: _universo(900), 2026: _universo(600)}
+    rel = resumo(derivar_saidas(por_ano, ano_corrente=2026))
+    assert rel["anos_em_curso_sem_datar_saida"] == [2026]
+
+
+def test_presenca_no_ano_em_curso_desmente_a_saida():
+    """Assimetria deliberada: o ano em curso nao pode DATAR uma saida, mas pode
+    DESMENTIR uma. Quem arquivou em 2026 esta vivo, e nao ha ganho em manter
+    como morta empresa que acabou de dar sinal de vida."""
+    vivas = _universo(500, base=10_000)
+    por_ano = {
+        2023: {7} | vivas,
+        2024: vivas,          # 7 some
+        2025: vivas,          # e continua sumido
+        2026: {7} | vivas,    # ano em curso: 7 reaparece
+    }
+    diag = derivar_saidas(por_ano, ano_corrente=2026)
+    assert diag.anos_em_curso == [2026]
+    assert diag.anos_comparaveis == [2023, 2024, 2025]
+    assert diag.saidas == []
+
+
+def test_ausencia_no_ano_em_curso_nao_confirma_nem_apaga_saida_anterior():
+    """A saida datada em ano fechado continua valendo: o ano em curso so
+    acrescenta desmentidos, nunca confirmacoes nem apagamentos."""
+    vivas = _universo(500, base=10_000)
+    por_ano = {
+        2023: {7} | vivas,
+        2024: vivas,
+        2025: vivas,
+        2026: vivas,          # 7 nao reaparece
+    }
+    diag = derivar_saidas(por_ano, ano_corrente=2026)
+    assert [s.cik for s in diag.saidas] == [7]
+    assert diag.saidas[0].ano_da_ausencia == 2024
+
+
+def test_ano_incompleto_desmente_saida_em_vez_de_ser_ignorado():
+    """Ano truncado por falha de rede recebe o mesmo tratamento do ano em curso:
+    nao data saida, mas a presenca nele continua provando vida. Descartar o ano
+    inteiro manteria como morta empresa que o proprio indice mostrou viva."""
+    vivas = _universo(500, base=10_000)
+    por_ano = {
+        2020: {7} | vivas,
+        2021: vivas,
+        2022: {7} | vivas,       # indice deste ano veio com um trimestre so
+        2023: vivas,
+    }
+    diag = derivar_saidas(por_ano, anos_incompletos={2022})
+    assert diag.anos_em_curso == [2022]
+    assert 2022 not in diag.anos_comparaveis
+    # sem o desmentido, 7 sairia em 2021; com ele, 7 sai em 2023.
+    assert [(s.cik, s.ano_da_ausencia) for s in diag.saidas] == [(7, 2023)]

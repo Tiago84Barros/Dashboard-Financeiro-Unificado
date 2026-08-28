@@ -12,7 +12,7 @@ lista quem arquivou relatorio anual em cada trimestre. Uma empresa que arquivava
 em 2012 e nunca mais arquivou saiu do mercado -- por falencia, fechamento de
 capital ou aquisicao.
 
-Tres regras que decidem se o registro presta:
+Quatro regras que decidem se o registro presta:
 
 1. **Sair exige ausencia em TODOS os anos seguintes.** Empresa que atrasa um
    10-K e volta no ano seguinte nao morreu. A regra "ultimo ano presente" sem
@@ -26,7 +26,25 @@ Tres regras que decidem se o registro presta:
    nele. E a mesma armadilha que quase marcou 636 FIIs saudaveis como
    encerrados em 28/08/2026.
 
-3. **A data e a do primeiro ano em que a ausencia e CONHECIDA**, nao a do
+3. **Ano em curso nunca e comparavel.** Em 28/08/2026 o indice de 2026 tem
+   tres trimestres, e o quarto responde HTTP 200 com um arquivo vazio -- a SEC
+   serve o futuro como leitura bem-sucedida, nao como erro. Contar trimestre
+   perdido nao pega isso; so a data pega. Sem essa regra o ano corrente marcou
+   1.240 empresas vivas como deslistadas, que e o mesmo defeito da foto truncada
+   do FII, agora vindo do calendario em vez da rede.
+
+   O descarte, porem, e ASSIMETRICO, e de proposito. Um arquivamento em 2026 e
+   prova positiva de que a empresa esta viva; a falta dele nao e prova de morte.
+   Entao o ano em curso nao data nenhuma saida -- e desmente as que puder.
+   Jogar o ano fora por inteiro seria descartar tambem a metade boa da
+   evidencia, e manteria como "morta" empresa que acabou de arquivar.
+
+   A mesma assimetria vale para o ano cujo indice veio incompleto por falha de
+   rede: incompleto e motivo para nao DATAR saida nele, nunca para ignorar quem
+   ele mostrou vivo. Ano em curso e ano truncado sao o mesmo caso -- "nao se
+   sabe quem falta" -- e recebem o mesmo tratamento.
+
+4. **A data e a do primeiro ano em que a ausencia e CONHECIDA**, nao a do
    ultimo ano presente. Datar a saida no ultimo relatorio anual afirmaria saber
    que a empresa morreu antes de haver qualquer evidencia disso; a evidencia so
    existe quando o ano seguinte fecha sem arquivamento. Datar depois e
@@ -79,6 +97,7 @@ class Diagnostico:
     saidas: list[Saida] = field(default_factory=list)
     anos_comparaveis: list[int] = field(default_factory=list)
     anos_descartados: dict[int, int] = field(default_factory=dict)
+    anos_em_curso: list[int] = field(default_factory=list)
     motivo: str = ""
 
     @property
@@ -86,14 +105,28 @@ class Diagnostico:
         return bool(self.saidas)
 
 
-def _anos_comparaveis(por_ano: dict[int, set[int]]
-                      ) -> tuple[list[int], dict[int, int]]:
+def _anos_comparaveis(por_ano: dict[int, set[int]], ano_corrente: int | None,
+                      incompletos: set[int] | None = None
+                      ) -> tuple[list[int], dict[int, int], list[int]]:
     """Separa os anos cujo indice parece completo dos que vieram truncados.
 
     O piso e relativo ao maior universo ja visto ATE aquele ano, e nao ao ano
     anterior: dois anos truncados em sequencia se aprovariam um ao outro, e a
     consequencia seria declarar morta metade do mercado.
+
+    O corte por `ano_corrente` vem ANTES do piso e nao depende de tamanho: um
+    ano em curso costuma ter arquivadores suficientes para passar em qualquer
+    piso -- a maioria dos 10-K sai no primeiro trimestre -- e ainda assim nao
+    terminou. Quem nao arquivou ate agosto nao morreu: pode arquivar em
+    novembro. Nenhuma medida de volume distingue esses dois casos; so a data.
     """
+    sem_datar = set(incompletos or ())
+    if ano_corrente is not None:
+        sem_datar |= {a for a in por_ano if a >= ano_corrente}
+    sem_datar &= set(por_ano)
+    em_curso = sorted(sem_datar)
+    if em_curso:
+        por_ano = {a: v for a, v in por_ano.items() if a not in sem_datar}
     comparaveis, descartados, maior = [], {}, 0
     for ano in sorted(por_ano):
         n = len(por_ano[ano] or ())
@@ -102,36 +135,49 @@ def _anos_comparaveis(por_ano: dict[int, set[int]]
             continue
         maior = max(maior, n)
         comparaveis.append(ano)
-    return comparaveis, descartados
+    return comparaveis, descartados, em_curso
 
 
-def derivar_saidas(por_ano: dict[int, set[int]]) -> Diagnostico:
+def derivar_saidas(por_ano: dict[int, set[int]],
+                   ano_corrente: int | None = None,
+                   anos_incompletos: set[int] | None = None) -> Diagnostico:
     """Quem arquivava relatorio anual e parou de arquivar, e em que ano.
 
     `por_ano` e {ano: CIKs que arquivaram relatorio anual naquele ano}. Uma
     saida so e declarada quando o CIK esta ausente em TODOS os anos comparaveis
     posteriores ao ultimo em que apareceu.
+
+    `ano_corrente` marca o ano ainda em curso e `anos_incompletos` os anos cujo
+    indice nao pode ser lido inteiro. Nenhum dos dois data saida; ambos ainda
+    desmentem saidas de quem aparece neles.
     """
-    anos, descartados = _anos_comparaveis(por_ano or {})
+    por_ano = por_ano or {}
+    anos, descartados, em_curso = _anos_comparaveis(
+        por_ano, ano_corrente, anos_incompletos)
     if len(anos) < 2:
         return Diagnostico(
             anos_comparaveis=anos, anos_descartados=descartados,
+            anos_em_curso=em_curso,
             motivo=(f"apenas {len(anos)} ano(s) de indice comparavel: sem dois "
                     f"anos completos nao ha como observar ausencia"))
 
-    # ultimo ano em que cada CIK aparece; quem aparece no ultimo ano da janela
-    # esta vivo ate onde a evidencia alcanca.
+    # Ultimo ano em que cada CIK aparece -- contando TAMBEM os anos que nao
+    # datam saida. Um ano truncado ou em curso nao serve de data, mas o
+    # arquivamento que ele mostra e prova de vida como qualquer outro, e
+    # ignora-lo dataria a saida antes da ultima evidencia de que a empresa
+    # existia.
     ultimo: dict[int, int] = {}
-    for ano in anos:
-        for cik in por_ano[ano]:
+    for ano, ciks in por_ano.items():
+        for cik in ciks or ():
             if ano > ultimo.get(cik, 0):
                 ultimo[cik] = ano
     fim = anos[-1]
 
     saidas = []
     for cik, ano_visto in ultimo.items():
-        if ano_visto >= fim:
-            continue
+        # So os anos DATAVEIS posteriores contam: a saida e declarada no
+        # primeiro deles, e a ausencia em todos e implicita, porque `ano_visto`
+        # ja e o maior ano em que o CIK aparece.
         posteriores = [a for a in anos if a > ano_visto]
         if not posteriores:
             continue
@@ -145,7 +191,8 @@ def derivar_saidas(por_ano: dict[int, set[int]]) -> Diagnostico:
                   f"resultado impossivel num mercado real, entao o indice lido "
                   f"provavelmente nao e o universo completo")
     return Diagnostico(saidas=saidas, anos_comparaveis=anos,
-                       anos_descartados=descartados, motivo=motivo)
+                       anos_descartados=descartados, anos_em_curso=em_curso,
+                       motivo=motivo)
 
 
 def resumo(diag: Diagnostico) -> dict[str, Any]:
@@ -157,6 +204,7 @@ def resumo(diag: Diagnostico) -> dict[str, Any]:
         "total_saidas": len(diag.saidas),
         "anos_comparaveis": diag.anos_comparaveis,
         "anos_descartados": {str(a): n for a, n in diag.anos_descartados.items()},
+        "anos_em_curso_sem_datar_saida": diag.anos_em_curso,
         "saidas_por_ano": por_ano,
         "motivo": diag.motivo,
         "fonte": FONTE,
