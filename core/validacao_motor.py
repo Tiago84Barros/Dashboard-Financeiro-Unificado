@@ -356,6 +356,32 @@ def _deslistadas_us_pelo_painel() -> Portao:
         f"sobreviventes{tamanho}", dimensao=DIM_SAIDAS)
 
 
+def _registro_de_saidas_us() -> tuple[int, int] | None:
+    """(saidas registradas, quantas dessas o painel de backtest enxerga).
+
+    As duas contagens andam juntas de proposito. Registrar a saida e o passo
+    barato; o que corrige o vies e o backtest CONSUMIR a saida. Enquanto o
+    painel nao enxergar nenhuma delas, o resultado medido continua sendo o de
+    uma amostra sobrevivente, por maior que seja o registro -- e aprovar o
+    portao pelo tamanho do registro seria declarar um rigor que a medicao nao
+    tem, exatamente o defeito que a tela dos EUA ja cometeu uma vez.
+    """
+    from sqlalchemy import text
+    try:
+        from core.database import get_engine
+        with get_engine().connect() as conn:
+            total = int(conn.execute(text(
+                "SELECT count(*) FROM market_us.delistings")).scalar() or 0)
+            no_painel = int(conn.execute(text(
+                "SELECT count(DISTINCT d.cik) FROM market_us.delistings d "
+                "JOIN market_us.score_vintages v ON v.company_id = d.company_id "
+                "WHERE d.company_id IS NOT NULL")).scalar() or 0)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("registro de saidas US indisponivel: %s", type(exc).__name__)
+        return None
+    return total, no_painel
+
+
 def _deslistadas_us() -> Portao:
     """O universo historico americano observa empresas que pararam de negociar?
 
@@ -374,6 +400,20 @@ def _deslistadas_us() -> Portao:
     schema so tem `company_snapshots` e `prices_monthly`. Nao apurado nao vira
     reprovado nem aprovado; some da fracao e declara que sumiu.
     """
+    reg = _registro_de_saidas_us()
+    if reg is not None and reg[0]:
+        total, no_painel = reg
+        if no_painel:
+            return Portao(
+                "Universo de deslistadas", True,
+                f"{no_painel} das {total} saidas registradas entram no painel "
+                f"de backtest", dimensao=DIM_SAIDAS)
+        return Portao(
+            "Universo de deslistadas", False,
+            f"{total} saidas registradas em market_us.delistings, mas nenhuma "
+            f"chega ao painel: o backtest continua medindo so sobreviventes",
+            dimensao=DIM_SAIDAS)
+
     from sqlalchemy import text
     try:
         from core.database import get_engine
