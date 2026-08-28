@@ -541,13 +541,13 @@ def load_asymmetry_frame(limit_companies: int | None = None) -> pd.DataFrame:
 # ── Vitrine (snapshot) — leitura no deploy/Supabase ───────────────────────────
 _SNAP_IDENTITY = ("symbol", "cik", "name", "sector", "industry", "exchange",
                   "security_type", "is_reit", "is_active",
-                  "is_investment_company")
+                  "is_investment_company", "reit_election")
 
 # Colunas que podem faltar numa vitrine publicada antes da migration que as
 # criou. Pedi-las incondicionalmente derruba a consulta inteira e a tela fica
 # vazia -- foi assim que a ausencia de `score_confidence` zerou o ranking uma
 # vez. A leitura descobre o que existe antes de pedir.
-_SNAP_OPCIONAIS = frozenset({"is_investment_company"})
+_SNAP_OPCIONAIS = frozenset({"is_investment_company", "reit_election"})
 
 
 @lru_cache(maxsize=4)
@@ -596,7 +596,8 @@ def _apenas_acoes(df: pd.DataFrame) -> pd.DataFrame:
             r.get("symbol"), r.get("security_type"), r.get("sector"),
             industry=r.get("industry"), name=r.get("name"),
             is_reit=r.get("is_reit"),
-            is_investment_company=r.get("is_investment_company")) is not None,
+            is_investment_company=r.get("is_investment_company"),
+            reit_election=r.get("reit_election")) is not None,
         axis=1)
     if fora.any():
         logger.info("vitrine EUA: %d linhas fora do universo de ações", int(fora.sum()))
@@ -1077,8 +1078,10 @@ def _contagem_fora_do_universo() -> int:
         return 0
     try:
         with eng.connect() as conn:
-            extra = (", is_investment_company"
-                     if "is_investment_company" in _colunas_da_vitrine() else "")
+            disponiveis = _colunas_da_vitrine()
+            extra = "".join(
+                f", {c}" for c in ("is_investment_company", "reit_election")
+                if c in disponiveis)
             bruto = pd.read_sql(text(
                 "SELECT symbol, name, sector, industry, security_type, is_reit"
                 f"{extra} FROM market_us.company_snapshots"), conn)
@@ -1092,5 +1095,6 @@ def _contagem_fora_do_universo() -> int:
             r.get("symbol"), r.get("security_type"), r.get("sector"),
             industry=r.get("industry"), name=r.get("name"),
             is_reit=r.get("is_reit"),
-            is_investment_company=r.get("is_investment_company")) is not None,
+            is_investment_company=r.get("is_investment_company"),
+            reit_election=r.get("reit_election")) is not None,
         axis=1).sum())

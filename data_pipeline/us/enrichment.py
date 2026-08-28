@@ -41,7 +41,7 @@ def classify_assets(engine) -> dict:
         matched = conn.execute(text(sql_match)).rowcount
         assets = conn.execute(text("""
             SELECT a.id,a.company_id,a.symbol,a.security_type,c.sector,
-              c.industry,c.name,c.is_reit,c.is_investment_company,
+              c.industry,c.name,c.is_reit,c.is_investment_company,c.reit_election,
               EXISTS (SELECT 1 FROM market_us.income_statements i
                       WHERE i.company_id=a.company_id) has_income,
               EXISTS (SELECT 1 FROM market_us.balance_sheets b
@@ -64,7 +64,8 @@ def classify_assets(engine) -> dict:
                 symbols_by_company.get(cid, ()),
                 industry=row["industry"], name=row["name"],
                 is_reit=row["is_reit"],
-                is_investment_company=row["is_investment_company"])
+                is_investment_company=row["is_investment_company"],
+                reit_election=row["reit_election"])
             if reason:
                 status = "excluded"
             elif cid is None:

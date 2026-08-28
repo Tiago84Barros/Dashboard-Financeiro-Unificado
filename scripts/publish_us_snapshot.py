@@ -68,11 +68,12 @@ def _mask(url: str) -> str:
 _MIGRATIONS = [
     ROOT / "supabase_unificado" / "schema" / "044_market_us_snapshot.sql",
     ROOT / "supabase_unificado" / "schema" / "051_market_us_investment_company.sql",
+    ROOT / "supabase_unificado" / "schema" / "053_market_us_reit_election.sql",
 ]
 # Colunas da vitrine (ordem estável para o upsert).
 _COLS = [
     "symbol", "cik", "name", "sector", "industry", "exchange", "security_type",
-    "is_reit", "is_active", "is_investment_company",
+    "is_reit", "is_active", "is_investment_company", "reit_election",
     "score", "score_quality", "score_growth",
     "score_solidity", "score_capital_efficiency", "score_valuation",
     "score_shareholder", "coverage", "score_confidence", "score_status",

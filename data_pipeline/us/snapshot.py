@@ -180,6 +180,7 @@ def serialize_row(*, identity: dict, scored_row: dict, metrics: dict,
         "security_type": identity.get("security_type"),
         "is_reit": bool(identity.get("is_reit")),
         "is_investment_company": bool(identity.get("is_investment_company")),
+        "reit_election": identity.get("reit_election"),
         "is_active": bool(identity.get("is_active", True)),
         "metrics": dumps(metrics),
         "asymmetry": dumps(asymmetry),
@@ -218,7 +219,8 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
     with engine.connect() as conn:
         ident_rows = conn.execute(text(
             "SELECT a.symbol, c.cik, c.name, c.sector, c.industry, a.exchange, "
-            "a.security_type, c.is_reit, c.is_active, c.is_investment_company "
+            "a.security_type, c.is_reit, c.is_active, c.is_investment_company, "
+            "c.reit_election "
             "FROM market_us.assets a JOIN market_us.companies c ON c.id=a.company_id "
             "WHERE a.analysis_status='eligible'"
         )).fetchall()
@@ -226,7 +228,8 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
     identity_by = {r[0]: {"symbol": r[0], "cik": r[1], "name": r[2], "sector": r[3],
                           "industry": r[4], "exchange": r[5], "security_type": r[6],
                           "is_reit": r[7], "is_active": r[8],
-                          "is_investment_company": r[9]} for r in ident_rows}
+                          "is_investment_company": r[9],
+                          "reit_election": r[10]} for r in ident_rows}
 
     # Negociabilidade e travessia de recessão vivem em prices_daily e
     # income_statements — tabelas que a vitrine NÃO carrega. Sem gravá-las aqui,

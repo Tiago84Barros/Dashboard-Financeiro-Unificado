@@ -43,12 +43,24 @@ _NOME_REIT = re.compile(
     r"(?:^|[^a-z])reits?(?:$|[^a-z])|real estate investment trust|"
     r"realty trust|property trust|properties trust", re.IGNORECASE)
 
-# Rótulo genérico "Real Estate" (sem SIC): nesse conjunto convivem REIT
-# declarado e incorporadora operacional, e o cadastro não distingue os dois.
-# Medido em 26/08/2026: 20 linhas, das quais ao menos 13 são REIT. Marcar como
-# não confirmado é o que o dado sustenta -- afirmar "é REIT" seria inventar
+# Rótulo genérico "Real Estate": nesse conjunto convivem REIT declarado e
+# incorporadora operacional, e o cadastro não distingue os dois. Medido em
+# 26/08/2026: 20 linhas, das quais ao menos 13 são REIT. Marcar como não
+# confirmado é o que o dado sustenta -- afirmar "é REIT" seria inventar
 # identidade, e deixar passar contaminaria o ranking com metade REIT.
+#
+# A-156: o SIC não desempata. Medido em 27/08/2026, os 22 ativos do rótulo
+# chegam TODOS com SIC 6500 -- Innovative Industrial Properties (REIT) e
+# Forestar Group (incorporadora) com o mesmo código. Quem desempata é a eleição
+# fiscal declarada no 10-K, apurada em `data_pipeline/us/reit_eleicao.py` e
+# gravada em `companies.reit_election`. São três estados de propósito:
+# 'declarada' é REIT, 'ausente' é operadora **verificada**, e None é não
+# apurado -- que continua fora. Sem o terceiro estado, falha de rede viraria
+# promoção silenciosa, que é o defeito de [[fallback-nunca-contradiz]].
 _SETOR_IMOBILIARIO_GENERICO = re.compile(r"^\s*real estate\s*$", re.IGNORECASE)
+
+ELEICAO_REIT_DECLARADA = "declarada"
+ELEICAO_REIT_AUSENTE = "ausente"
 
 _EXPLICIT_NON_COMMON = re.compile(r"(?:-P[A-Z0-9]?|-WT|-WS|-UN)$")
 _NASDAQ_ISSUE_SUFFIX = re.compile(r"^[A-Z]{4,}[WRU]$")
@@ -110,7 +122,8 @@ MOTIVO_COMPANHIA_INVESTIMENTO = (
 
 MOTIVO_REIT = "REIT: veículo imobiliário, fora do universo de ações"
 MOTIVO_TIPO_NAO_CONFIRMADO = (
-    "tipo de ativo não confirmado: setor genérico 'Real Estate' sem SIC"
+    "tipo de ativo não confirmado: setor genérico 'Real Estate' e eleição "
+    "REIT não apurada"
 )
 
 
@@ -169,13 +182,15 @@ def classe_adicional_da_mesma_companhia(
 
 def e_reit(*, security_type: object = None, sector: object = None,
            industry: object = None, name: object = None,
-           is_reit: object = None) -> bool:
+           is_reit: object = None, reit_election: object = None) -> bool:
     """True quando alguma evidência do cadastro identifica um REIT.
 
     Aceita as quatro fontes porque nenhuma delas é completa sozinha: a flag
     `is_reit` cobre 128 dos ~148 do universo medido, o SIC cobre os mesmos 128,
     e o nome resgata um que as duas perdem (Angel Oak Mortgage REIT).
     """
+    if str(reit_election or "").strip().lower() == ELEICAO_REIT_DECLARADA:
+        return True
     if bool(is_reit):
         return True
     if str(security_type or "").lower().strip() == "reit":
@@ -211,13 +226,14 @@ def motivo_exclusao_ativo(symbol: str | None, security_type: str | None,
                           *, industry: str | None = None,
                           name: str | None = None,
                           is_reit: object = None,
-                          is_investment_company: object = None) -> str | None:
+                          is_investment_company: object = None,
+                          reit_election: object = None) -> str | None:
     """Motivo auditável quando o ativo não é ação operacional ordinária."""
     sym = str(symbol or "").upper().strip()
     sec = str(security_type or "common").lower().strip()
     sector_norm = str(sector or "").lower().strip()
     if e_reit(security_type=sec, sector=sector, industry=industry,
-              name=name, is_reit=is_reit):
+              name=name, is_reit=is_reit, reit_election=reit_election):
         return MOTIVO_REIT
     if bool(is_investment_company):
         return MOTIVO_COMPANHIA_INVESTIMENTO
@@ -227,7 +243,8 @@ def motivo_exclusao_ativo(symbol: str | None, security_type: str | None,
         return "instrumento sem ação operacional ordinária"
     if sector_norm in _SETORES_NAO_OPERACIONAIS:
         return "companhia de cheque em branco (SPAC)"
-    if _SETOR_IMOBILIARIO_GENERICO.match(str(sector or "")):
+    if (_SETOR_IMOBILIARIO_GENERICO.match(str(sector or ""))
+            and str(reit_election or "").strip().lower() != ELEICAO_REIT_AUSENTE):
         return MOTIVO_TIPO_NAO_CONFIRMADO
     if _EXPLICIT_NON_COMMON.search(sym):
         return "preferencial, warrant ou unit"
