@@ -326,30 +326,45 @@ def _deslistadas_us_pelo_painel() -> Portao:
 
     Sem medicao gravada, continua nao apurado. Ausencia nao vira zero.
     """
-    from core.us_survivorship import carregar_medicao
+    from core.us_survivorship import (
+        carregar_medicao,
+        medicao_turnover_verificada,
+        selecionar_coorte_mortalidade,
+    )
 
     med = carregar_medicao()
     if not med:
         return Portao("Universo de deslistadas", None,
                       "fonte de deslistagem nao alcancavel nesta base",
                       dimensao=DIM_SAIDAS)
-    saidas = int(med.get("saidas") or 0)
-    safras = int(med.get("safras") or 0)
+    if not medicao_turnover_verificada(med):
+        return Portao(
+            "Universo de deslistadas", None,
+            "turnover do painel **NÃO VERIFICADO**: agregado sem "
+            "contrato auditável", dimensao=DIM_SAIDAS)
+    saidas = med["saidas"]
+    safras = med["safras"]
     if saidas:
         return Portao("Universo de deslistadas", True,
                       f"{saidas} saidas de empresas em {safras} safras do painel",
                       dimensao=DIM_SAIDAS)
-    # "zero saidas" reprova, mas nao diz de quanto e o buraco. A coorte medida
-    # no indice da SEC diz, e e o numero que permite descontar o resultado.
-    coorte = med.get("coorte") or {}
+    # "zero saidas" reprova, mas não diz de quanto é o buraco. A seleção é o
+    # mesmo contrato usado pela frase: operacional válida vence a ampla; uma
+    # operacional inválida nunca cai para ampla.
+    coorte, invalida = selecionar_coorte_mortalidade(med)
+    if invalida:
+        return Portao(
+            "Universo de deslistadas", None,
+            f"coorte {invalida} **NÃO VERIFICADO**: não há tamanho auditável "
+            "do viés de sobrevivência", dimensao=DIM_SAIDAS)
     tamanho = ""
-    try:
+    if coorte is not None:
+        populacao = ("companhias operacionais" if coorte.get("populacao") == "operacional"
+                     else "empresas")
         tamanho = (f"; no mercado real {float(coorte['mortalidade_pct']):.0f}% das "
-                   f"{int(coorte['universo_base'])} empresas de "
+                   f"{int(coorte['universo_base'])} {populacao} de "
                    f"{int(coorte['ano_base'])} sumiram ate "
                    f"{int(coorte['ano_final'])}")
-    except Exception:  # noqa: BLE001
-        pass
     return Portao(
         "Universo de deslistadas", False,
         f"nenhuma saida de empresa em {safras} safras: o painel so tem "
