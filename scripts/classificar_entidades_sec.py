@@ -150,7 +150,7 @@ def gravar(linhas: list[dict]) -> int:
              "estado_incorporacao": None}
     with _engine().begin() as conn:
         for i in range(0, len(linhas), 500):
-            conn.execute(sql, [{**vazio, **l} for l in linhas[i:i + 500]])
+            conn.execute(sql, [{**vazio, **linha} for linha in linhas[i:i + 500]])
     return len(linhas)
 
 
