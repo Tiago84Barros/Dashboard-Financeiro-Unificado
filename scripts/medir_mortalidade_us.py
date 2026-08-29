@@ -29,6 +29,7 @@ from core.us_survivorship import (  # noqa: E402
     CAMINHO_MEDICAO,
     carregar_medicao,
     ciks_com_relatorio_anual,
+    coorte_ampla_verificada,
     gravar_medicao,
     medir_mortalidade,
 )
@@ -109,6 +110,9 @@ def main(argv=None) -> int:
     if args.dry_run:
         print("[dry-run] nada gravado.")
         return 0
+    if not coorte_ampla_verificada(coorte):
+        print("[bloqueado] coorte ampla fora do contrato; nada gravado.")
+        return 2
     medicao = dict(carregar_medicao() or {})
     if not medicao:
         print("AVISO: medicao de turnover ausente; gravando so a coorte.")

@@ -110,13 +110,21 @@ def test_portao_us_apura_pelo_painel_quando_assets_nao_existe(monkeypatch) -> No
     import core.us_survivorship as us
     from core.validacao_motor import _deslistadas_us_pelo_painel as portao
 
+    def turnover_valido(saidas: int) -> dict:
+        return {
+            "medido_em": "2026-08-27", "safras": 16,
+            "primeira_safra": "2010-06-30", "ultima_safra": "2025-06-30",
+            "empresas_primeira": 106, "empresas_ultima": 2798,
+            "entradas": 2692, "saidas": saidas,
+        }
+
     monkeypatch.setattr(us, "carregar_medicao",
-                        lambda *a, **k: {"saidas": 0, "safras": 16})
+                        lambda *a, **k: turnover_valido(0))
     p = portao()
     assert p.ok is False and "16 safras" in p.detalhe
 
     monkeypatch.setattr(us, "carregar_medicao",
-                        lambda *a, **k: {"saidas": 31, "safras": 16})
+                        lambda *a, **k: turnover_valido(31))
     assert portao().ok is True
 
     monkeypatch.setattr(us, "carregar_medicao", lambda *a, **k: None)

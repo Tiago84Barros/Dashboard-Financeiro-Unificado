@@ -39,5 +39,47 @@
     "painel_no_ano_base": 106,
     "cobertura_pct": 1.09,
     "mortes_no_painel": 0
+  },
+  "coorte_operacional": {
+    "medido_em": "2026-08-29",
+    "ano_base": 2010,
+    "ano_final": 2025,
+    "universo_base": 7814,
+    "sobreviventes": 2354,
+    "mortalidade_pct": 69.87,
+    "curva": {
+      "2010": {
+        "vivas": 7814,
+        "universo_do_ano": 7814,
+        "sobrevivencia_pct": 100.0
+      },
+      "2015": {
+        "vivas": 4576,
+        "universo_do_ano": 5886,
+        "sobrevivencia_pct": 58.56
+      },
+      "2020": {
+        "vivas": 3051,
+        "universo_do_ano": 3947,
+        "sobrevivencia_pct": 39.05
+      },
+      "2025": {
+        "vivas": 2354,
+        "universo_do_ano": 2367,
+        "sobrevivencia_pct": 30.13
+      }
+    },
+    "painel_no_ano_base": 185,
+    "cobertura_pct": 2.37,
+    "mortes_no_painel": 0,
+    "populacao": "operacional",
+    "regra": "core.us_universo_sec.classificar",
+    "veiculos_excluidos": 1030,
+    "nao_classificados": 111,
+    "sem_identidade_apurada": 0,
+    "cobertura_identidade_pct": 98.76,
+    "estrangeiros_20f_excluidos": 731,
+    "mortalidade_pct_min": 69.87,
+    "mortalidade_pct_max": 70.03
   }
 }
