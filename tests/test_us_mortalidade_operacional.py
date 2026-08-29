@@ -8,9 +8,9 @@ from decimal import Decimal
 import pytest
 
 from core.us_survivorship import (
-    coorte_operacional_verificada,
     ciks_com_relatorio_anual,
     ciks_com_relatorio_anual_operacional,
+    coorte_operacional_verificada,
     frase_mortalidade,
 )
 from scripts import medir_mortalidade_operacional_us as operacional

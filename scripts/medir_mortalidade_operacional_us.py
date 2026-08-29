@@ -102,7 +102,6 @@ def main(argv=None) -> int:
     identidade = set().union(*part.values())
     sem_identidade = base - identidade
     nao_classificados = base & part["nao_classificados"]
-    desconhecidos = sem_identidade | nao_classificados
     # Cobertura é a fração CLASSIFICADA, não a consultada: a consultada já é
     # dita por `sem_identidade_apurada`, e repetir o mesmo fato em dois campos
     # deixaria o limiar sem nada para medir.
