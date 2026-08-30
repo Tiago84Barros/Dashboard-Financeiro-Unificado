@@ -222,14 +222,37 @@ def frase_turnover(medicao: dict[str, Any] | None = None) -> str | None:
 # A coorte ampla responde por todo arquivador anual da SEC e, portanto, inclui
 # 20-F. A operacional/doméstica é outro contrato e deliberadamente não herda
 # esse formulário estrangeiro (ver `ciks_com_relatorio_anual_operacional`).
+# Coorte AMPLA e coorte OPERACIONAL/DOMESTICA definem POPULACOES medidas -- os
+# denominadores da mortalidade ja publicada. Ficam como estao: alargar uma
+# definicao de populacao move um numero divulgado sem que a medicao tenha sido
+# refeita.
 FORMAS_RELATORIO_ANUAL_IDX = ("10-K", "10-K405", "10-KSB", "20-F")
 FORMAS_RELATORIO_ANUAL_OPERACIONAL_IDX = ("10-K", "10-K405", "10-KSB")
+
+# EVIDENCIA DE REPORTE e outra pergunta. Nao e "quem pertence a coorte", e
+# "existe prova de que este registrante ainda reporta" -- a pergunta que decide
+# SAIDA, onde o erro nao e classificar mal e sim inventar uma morte.
+#
+# Por isso ela e mais larga: inclui `10-KT` (relatorio de transicao, de quem
+# muda de exercicio social), `40-F` (relatorio anual do emissor canadense sob o
+# MJDS, que arquiva 40-F a vida inteira e jamais um 10-K -- sem ele esse emissor
+# aparece ausente em TODOS os anos da janela) e o sufixo de emenda `/A`, que
+# prova que o registrante existe e reporta ainda que nao seja exercicio novo.
+FORMAS_EVIDENCIA_REPORTE_IDX = ("10-K", "10-K405", "10-KSB", "10-KT",
+                                "20-F", "40-F")
 
 _LINHA_IDX = re.compile(r"^(?P<forma>\S[^ ]*(?: [^ ]+)?)\s{2,}.*?edgar/data/(?P<cik>\d+)/")
 
 
+def _forma_base(forma: str) -> str:
+    """Forma sem o sufixo de emenda: `10-K/A` -> `10-K`."""
+    texto = str(forma or "").strip().upper()
+    return texto[:-2] if texto.endswith("/A") else texto
+
+
 def _ciks_com_formas_relatorio_anual(texto_idx: str,
-                                     formas: tuple[str, ...]) -> set[int]:
+                                     formas: tuple[str, ...],
+                                     *, com_emenda: bool = False) -> set[int]:
     """CIKs de um contrato anual, lidos de um `form.idx` da SEC.
 
     O CIK sai do caminho do arquivo (`edgar/data/<cik>/`) e não da coluna de
@@ -241,7 +264,8 @@ def _ciks_com_formas_relatorio_anual(texto_idx: str,
         m = _LINHA_IDX.match(linha)
         if not m:
             continue
-        if m.group("forma").strip().upper() not in formas:
+        forma = m.group("forma").strip().upper()
+        if (_forma_base(forma) if com_emenda else forma) not in formas:
             continue
         cik_texto = m.group("cik")
         # O regex aceita qualquer sequência de dígitos; recusar pelo tamanho
@@ -255,8 +279,27 @@ def _ciks_com_formas_relatorio_anual(texto_idx: str,
 
 
 def ciks_com_relatorio_anual(texto_idx: str) -> set[int]:
-    """CIKs da coorte AMPLA: todo arquivador de relatório anual, inclusive 20-F."""
+    """CIKs da coorte AMPLA: todo arquivador de relatório anual, inclusive 20-F.
+
+    Isto é uma POPULAÇÃO, não um teste de vida: é o denominador da mortalidade
+    publicada. Para decidir saída use `ciks_com_evidencia_de_reporte`, que é
+    deliberadamente mais larga.
+    """
     return _ciks_com_formas_relatorio_anual(texto_idx, FORMAS_RELATORIO_ANUAL_IDX)
+
+
+def ciks_com_evidencia_de_reporte(texto_idx: str) -> set[int]:
+    """CIKs com QUALQUER prova de reporte anual no trimestre.
+
+    Usada para decidir SAÍDA, e não para formar coorte. A assimetria é
+    deliberada: deixar de fora uma forma anual válida não torna a medição um
+    pouco menos precisa -- ela fabrica uma morte. O emissor canadense sob o
+    MJDS arquiva `40-F` a vida inteira; sob a lista da coorte ele nunca aparece
+    e a derivação o declara morto no primeiro ano da janela, enquanto ele
+    publica balanço.
+    """
+    return _ciks_com_formas_relatorio_anual(
+        texto_idx, FORMAS_EVIDENCIA_REPORTE_IDX, com_emenda=True)
 
 
 def ciks_com_relatorio_anual_operacional(texto_idx: str) -> set[int]:
