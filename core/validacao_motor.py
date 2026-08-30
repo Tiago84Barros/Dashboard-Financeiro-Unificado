@@ -371,6 +371,24 @@ def _deslistadas_us_pelo_painel() -> Portao:
         f"sobreviventes{tamanho}", dimensao=DIM_SAIDAS)
 
 
+def _tem_coluna(conn, tabela: str, coluna: str) -> bool:
+    """A coluna existe em `market_us.<tabela>` neste banco?
+
+    Warehouse local e vitrine nao andam no mesmo passo: a migration 058 pode
+    ter rodado num e nao no outro. Perguntar antes custa uma consulta ao
+    catalogo; nao perguntar aborta a transacao e derruba a contagem seguinte
+    por arrasto, reportando a causa errada.
+    """
+    from sqlalchemy import text
+    try:
+        return bool(conn.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = 'market_us' AND table_name = :t "
+            "  AND column_name = :c"), {"t": tabela, "c": coluna}).first())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _registro_de_saidas_us() -> tuple[int, int] | None:
     """(saidas registradas, quantas dessas o painel de backtest enxerga).
 
@@ -385,12 +403,25 @@ def _registro_de_saidas_us() -> tuple[int, int] | None:
     try:
         from core.database import get_engine
         with get_engine().connect() as conn:
+            # A saida refutada -- relatorio anual arquivado em ano igual ou
+            # posterior ao da ausencia -- nao conta como saida. Ela e artefato
+            # de uma lista de formas que nao continha 40-F nem emenda, e somar
+            # morte inventada ao registro inflaria justamente o numero que este
+            # portao usa para julgar se o vies foi corrigido.
+            onde = ("WHERE refuted_form IS NULL"
+                    if _tem_coluna(conn, "delistings", "refuted_form") else "")
             total = int(conn.execute(text(
-                "SELECT count(*) FROM market_us.delistings")).scalar() or 0)
+                f"SELECT count(*) FROM market_us.delistings {onde}")).scalar() or 0)
+            # A juncao e por SIMBOLO, nao por `company_id`: a esmagadora maioria
+            # das saidas nunca teve linha em `companies` (elas sairam antes de
+            # o cadastro existir), e a `score_vintages` publicada na vitrine nem
+            # carrega `company_id`. Juntar pela chave do cadastro so encontrava
+            # quem sobreviveu o bastante para ser cadastrado.
             no_painel = int(conn.execute(text(
                 "SELECT count(DISTINCT d.cik) FROM market_us.delistings d "
-                "JOIN market_us.score_vintages v ON v.company_id = d.company_id "
-                "WHERE d.company_id IS NOT NULL")).scalar() or 0)
+                "JOIN market_us.score_vintages v "
+                "  ON upper(v.symbol) = upper(d.symbol) "
+                f"{onde or 'WHERE 1=1'} AND d.symbol IS NOT NULL")).scalar() or 0)
     except Exception as exc:  # noqa: BLE001
         logger.info("registro de saidas US indisponivel: %s", type(exc).__name__)
         return None

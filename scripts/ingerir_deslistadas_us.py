@@ -44,7 +44,7 @@ from core.us_delistings import (  # noqa: E402
     derivar_saidas,
     resumo,
 )
-from core.us_survivorship import ciks_com_relatorio_anual  # noqa: E402
+from core.us_survivorship import ciks_com_evidencia_de_reporte  # noqa: E402
 
 URL_IDX = "https://www.sec.gov/Archives/edgar/full-index/{ano}/QTR{q}/form.idx"
 
@@ -66,7 +66,11 @@ def _texto_do_trimestre(ano: int, q: int, agente: str,
 
 
 def ciks_do_ano(ano: int, agente: str, cache: Path | None) -> tuple[set[int], int]:
-    """CIKs com relatorio anual no ano, e quantos trimestres falharam.
+    """CIKs com PROVA de reporte anual no ano, e quantos trimestres falharam.
+
+    A prova e mais larga que a coorte da mortalidade de proposito: aqui a
+    ausencia condena, e uma forma anual esquecida (40-F do emissor canadense,
+    10-KT de quem mudou de exercicio, emenda) vira morte inventada.
 
     O numero de falhas volta junto porque um ano com trimestre faltando nao e
     um ano pequeno: e um ano que NAO SE SABE. Tratar os dois igual e o caminho
@@ -76,7 +80,7 @@ def ciks_do_ano(ano: int, agente: str, cache: Path | None) -> tuple[set[int], in
     falhas = 0
     for q in (1, 2, 3, 4):
         try:
-            do_q = ciks_com_relatorio_anual(
+            do_q = ciks_com_evidencia_de_reporte(
                 _texto_do_trimestre(ano, q, agente, cache))
         except Exception as exc:  # noqa: BLE001
             falhas += 1
