@@ -97,7 +97,7 @@ _AVISO_SOBREVIVENCIA = (
 )
 
 
-def _motivo_sem_painel(painel, snapshot_mode: bool) -> str:
+def _motivo_sem_painel(painel) -> str:
     """Por que não há painel PIT -- a causa medida, não a causa presumida.
 
     A mensagem antiga afirmava sempre "a vitrine publicada não contém
@@ -105,10 +105,11 @@ def _motivo_sem_painel(painel, snapshot_mode: bool) -> str:
     falso: faltava a versão CORRENTE da metodologia, e a tela mandava rodar um
     comando que o usuário já tinha rodado. `core.us_read` carimba a causa real
     em `attrs["motivo"]`.
+
+    O modo de operação (vitrine ou warehouse) deixou de entrar aqui: ele
+    respondia a pergunta antes de a consulta ser feita, e a resposta ficou
+    errada no dia em que a vitrine passou a carregar a safra.
     """
-    if snapshot_mode:
-        return ("a vitrine publicada não carrega score_vintages nem preços "
-                "mensais; o backtest permanece local.")
     motivo = None
     try:
         motivo = (painel.attrs or {}).get("motivo")
@@ -2173,8 +2174,12 @@ def _tab_criacao_portfolio(status: dict) -> None:
         "e units ficam de fora, e financeiras usam pesos setoriais próprios."
     )
 
-    snapshot_mode = status.get("mode") == "snapshot"
-    score_panel = pd.DataFrame() if snapshot_mode else us.score_panel()
+    # Modo vitrine não implica ausência de histórico. Implicava enquanto a
+    # vitrine só carregava `company_snapshots`; desde que a safra PIT e o preço
+    # mensal passaram a ser publicados, este curto-circuito desligava o painel
+    # justamente no ambiente para o qual ele foi publicado. Quem responde se há
+    # histórico é a consulta -- que já devolve o motivo quando não há.
+    score_panel = us.score_panel()
     history_available = score_panel is not None and not score_panel.empty
 
     # Semear ANTES de instanciar qualquer widget: depois de instanciado, o
@@ -2337,7 +2342,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
         if not history_available:
             st.caption(
                 "ℹ️ Painel histórico PIT indisponível: "
-                + _motivo_sem_painel(score_panel, snapshot_mode)
+                + _motivo_sem_painel(score_panel)
                 + " A aprovação usa o sinal institucional atual SEC/GAAP."
             )
 
@@ -2625,7 +2630,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
         else:
             st.info(
                 "Nenhum retorno histórico foi simulado, por integridade "
-                "metodológica. " + _motivo_sem_painel(score_panel, snapshot_mode)
+                "metodológica. " + _motivo_sem_painel(score_panel)
             )
 
     with st.expander("📚 Metodologia e equivalências B3 × Estados Unidos"):

@@ -800,6 +800,35 @@ def load_snapshot_overview() -> dict:
     return base
 
 
+def _tabelas_ausentes(conn, *nomes: str) -> list[str]:
+    """Quais de `nomes` não existem em market_us, na ordem pedida.
+
+    O painel PIT verificava prontidão por `market_us.companies`, que ele não lê.
+    Na vitrine publicada `companies` nunca existiu -- ela publica
+    `company_snapshots` -- então o painel se declarava sem schema mesmo depois
+    de a safra e o preço mensal chegarem lá, e a tela culpava a ausência errada.
+    Verificador e escritor lendo listas diferentes é o defeito; a checagem tem
+    de nomear exatamente as tabelas da consulta que vem logo abaixo.
+
+    A sonda é um SELECT que não devolve linha, e não `to_regclass`, porque a
+    suíte exercita este caminho em SQLite.
+    """
+    ausentes = []
+    for nome in nomes:
+        try:
+            conn.execute(text(f"SELECT 1 FROM market_us.{nome} WHERE 1=0"))
+        except Exception:  # noqa: BLE001
+            ausentes.append(nome)
+            # No PostgreSQL o erro aborta a transação inteira: sem o rollback,
+            # a tabela seguinte -- e a consulta de verdade -- falhariam por
+            # arrasto e a causa reportada seria a errada.
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+    return ausentes
+
+
 def _painel_vazio(motivo: str) -> pd.DataFrame:
     """Painel vazio que diz POR QUE está vazio.
 
@@ -829,10 +858,16 @@ def load_score_panel(score_version: str | None = None,
         from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
         score_version = US_FUNDAMENTAL_SCORE_VERSION
     eng = _engine()
-    if eng is None or not schema_ready():
-        return _painel_vazio("sem banco de dados com o schema market_us")
+    if eng is None:
+        return _painel_vazio("sem banco de dados configurado")
     try:
         with eng.connect() as conn:
+            faltando = _tabelas_ausentes(conn, "score_vintages", "prices_monthly")
+            if faltando:
+                return _painel_vazio(
+                    "a vitrine não tem market_us.{} -- publique com "
+                    "scripts/publish_us_score_vintages.py --apply".format(
+                        " nem market_us.".join(faltando)))
             vq = ("SELECT as_of_date, symbol, score FROM market_us.score_vintages "
                   "WHERE track='fundamental'")
             params: dict = {}

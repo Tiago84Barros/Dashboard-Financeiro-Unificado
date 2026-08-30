@@ -74,5 +74,8 @@ def test_tela_nao_inventa_causa_quando_a_camada_nao_registra(monkeypatch):
     import pandas as pd
 
     from views.empresas_americanas import _motivo_sem_painel
-    assert "vitrine publicada" in _motivo_sem_painel(pd.DataFrame(), True)
-    assert "não registrada" in _motivo_sem_painel(pd.DataFrame(), False)
+    # Mesmo em vitrine, a causa vem do carimbo da leitura -- nunca do modo.
+    marcado = pd.DataFrame()
+    marcado.attrs["motivo"] = "não há safras gravadas (rode score-history)"
+    assert "score-history" in _motivo_sem_painel(marcado)
+    assert "não registrada" in _motivo_sem_painel(pd.DataFrame())

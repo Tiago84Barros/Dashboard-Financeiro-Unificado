@@ -251,9 +251,33 @@ python scripts/publish_us_snapshot.py `
 `core/us_data` roteia sozinho: com as tabelas completas (warehouse) calcula ao
 vivo; só com a vitrine (deploy) lê os produtos publicados. A migration 044 é
 **autossuficiente** (cria o schema e não tem FK), pois no Supabase as demais
-tabelas `market_us` não existem — é a única `market_us` que vai à nuvem. O
-**backtest PIT** continua local-only: exige o histórico completo, que não é
-publicado.
+tabelas `market_us` não existem.
+
+### Painel PIT na vitrine (2026-08-29)
+
+O **backtest PIT** era local-only, e por isso não existia: o portão "Painel PIT"
+nunca abria no ambiente publicado, o Rank-IC fora da amostra ficava preso à
+janela que já estava medida (−9,93% a +7,37%) e a caixa "exigir validação
+histórica" vinha desabilitada. Ele não exige o histórico completo — exige duas
+tabelas, que agora vão à nuvem junto da vitrine:
+
+```powershell
+python -m scripts.publish_us_score_vintages           # simula
+python -m scripts.publish_us_score_vintages --apply   # grava
+```
+
+O script publica **só a safra da metodologia corrente** (publicar outra encheria
+a vitrine de linhas que o leitor filtra fora) e o **preço mensal inteiro** dos
+símbolos dessa safra — não só os meses de rebalanço, porque é o fim da série de
+cada símbolo que distingue "o dado acabou" de "a ação acabou"; numa grade só de
+junhos, quem quebrou em setembro sairia pelo preço de junho e o backtest voltaria
+a ser otimista. Migration `057_market_us_score_vintages_vitrine.sql`; o script
+também cria o que grava, para não depender de a migration ter sido executada.
+
+Duas presunções foram removidas junto, porque as duas respondiam antes de
+perguntar: o painel declarava prontidão por `market_us.companies` — tabela que
+ele não lê e que a vitrine nunca teve — e a tela zerava o painel sempre que o
+modo era vitrine.
 
 ## Modo offline
 
