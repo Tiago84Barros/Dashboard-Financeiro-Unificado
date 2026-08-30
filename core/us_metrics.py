@@ -87,7 +87,35 @@ def _series_values(series: Sequence[dict], field: str) -> list[tuple[int, float]
     return out
 
 
-def _growth(series: Sequence[dict], field: str, window: int) -> Optional[float]:
+def symmetric_growth(first: Optional[float], last: Optional[float],
+                     years: int) -> Optional[float]:
+    """Crescimento anualizado definido também através do zero.
+
+    ``(last - first) / (média dos módulos) / anos`` -- a taxa simétrica de
+    Davis-Haltiwanger-Schuh, usada na literatura de dinâmica de firmas
+    justamente porque atravessa a mudança de sinal. Fica limitada a
+    ``±2/anos``, é monótona na melhora e não explode com base minúscula.
+
+    Ela existe porque o CAGR APAGA a evidência em vez de pontuá-la. Lucro
+    operacional, LPA e fluxo de caixa ficam negativos com frequência, e o
+    CAGR não é definido com base ou ponta <= 0: a empresa que perdeu dinheiro
+    quatro anos seguidos saía daqui como ``None``. Medido no armazém, isso
+    atingia 1.159 das 1.976 empresas com par de anos para lucro operacional e
+    1.289 das 2.271 para LPA -- a maioria, não a exceção. E ``None`` não é
+    "cresceu pouco": é "não há dado", que derruba a COBERTURA e, por ela, a
+    confiança. O prejuízo persistente é o dado mais eloquente que a empresa
+    produziu, e era exatamente ele que sumia.
+    """
+    if first is None or last is None or years <= 0:
+        return None
+    escala = (abs(first) + abs(last)) / 2.0
+    if escala == 0:
+        return None
+    return (last - first) / escala / years
+
+
+def _janela(series: Sequence[dict], field: str, window: int):
+    """Par (base, ponta) e o vão em anos, ou None se a série não sustenta."""
     vals = _series_values(series, field)
     if len(vals) < 2:
         return None
@@ -103,7 +131,24 @@ def _growth(series: Sequence[dict], field: str, window: int) -> Optional[float]:
     span = last_year - base[0]
     if span <= 0:
         return None
-    return cagr(base[1], last_val, span)
+    return base[1], last_val, span
+
+
+def _growth(series: Sequence[dict], field: str, window: int) -> Optional[float]:
+    janela = _janela(series, field, window)
+    if janela is None:
+        return None
+    primeiro, ultimo, span = janela
+    return cagr(primeiro, ultimo, span)
+
+
+def _growth_simetrico(series: Sequence[dict], field: str,
+                      window: int) -> Optional[float]:
+    janela = _janela(series, field, window)
+    if janela is None:
+        return None
+    primeiro, ultimo, span = janela
+    return symmetric_growth(primeiro, ultimo, span)
 
 
 def compute_company_metrics(
@@ -183,12 +228,15 @@ def compute_company_metrics(
         "roe":              div_if_den_positive(net_income, equity),
         "roa":              safe_div(net_income, total_assets),
         "roic":             div_if_den_positive(nopat, invested_cap),
-        # Crescimento
+        # Crescimento. Receita continua em CAGR: ela não fica negativa, a taxa
+        # composta é definida e é a leitura que o usuário reconhece. As três
+        # abaixo ficam, e por isso mudaram de medida e de NOME -- ler "CAGR"
+        # onde a conta é outra seria pior que a lacuna que isto corrige.
         "revenue_cagr_3y":  _growth(income, "revenue", 3),
         "revenue_cagr_5y":  _growth(income, "revenue", 5),
-        "op_income_cagr_3y": _growth(income, "operating_income", 3),
-        "eps_cagr_3y":      _growth(income, "eps", 3),
-        "fcf_cagr_3y":      _growth(cashflow, "free_cash_flow", 3),
+        "op_income_growth_3y": _growth_simetrico(income, "operating_income", 3),
+        "eps_growth_3y":    _growth_simetrico(income, "eps", 3),
+        "fcf_growth_3y":    _growth_simetrico(cashflow, "free_cash_flow", 3),
         # Solidez
         "net_debt_ebitda":  div_if_den_positive(net_debt, ebitda),
         "interest_coverage": safe_div(ebit, abs(interest)) if interest else None,

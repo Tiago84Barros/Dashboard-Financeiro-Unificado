@@ -68,7 +68,7 @@ def _positive_signals(m: dict, t: dict) -> list[tuple[str, float, bool]]:
         ("Crescimento persistente (5a ≥ 15%)", 1.2, g5 is not None and g5 >= 0.15),
         ("Aceleração (3a > 5a)", 0.8, g3 is not None and g5 is not None and g3 > g5),
         ("FCF positivo e crescente", 1.0,
-         (m.get("_fcf") or 0) > 0 and (m.get("fcf_cagr_3y") or -1) > 0),
+         (m.get("_fcf") or 0) > 0 and (m.get("fcf_growth_3y") or -1) > 0),
         ("Expansão de margem operacional", 1.0,
          t.get("op_margin_trend") is not None and t["op_margin_trend"] > 0.01),
         ("ROIC alto (≥ 15%)", 1.2, m.get("roic") is not None and m["roic"] >= 0.15),

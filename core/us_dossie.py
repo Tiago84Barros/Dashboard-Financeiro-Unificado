@@ -163,9 +163,12 @@ def dossie_to_text(d: dict) -> str:
             pct(m.get("gross_margin")), pct(m.get("operating_margin")),
             pct(m.get("net_margin")), pct(m.get("fcf_margin")),
             pct(m.get("roe")), pct(m.get("roic"))),
-        "CRESCIMENTO — receita 3a {} | 5a {} | EPS 3a {} | FCF 3a {}".format(
+        # LPA e FCL vem em taxa SIMETRICA, nao em CAGR: rotular "3a" sem mais
+        # nada faria o leitor ler taxa composta onde a conta e outra.
+        "CRESCIMENTO — receita 3a {} | 5a {} | LPA 3a (simétrica) {} | "
+        "FCL 3a (simétrica) {}".format(
             pct(m.get("revenue_cagr_3y")), pct(m.get("revenue_cagr_5y")),
-            pct(m.get("eps_cagr_3y")), pct(m.get("fcf_cagr_3y"))),
+            pct(m.get("eps_growth_3y")), pct(m.get("fcf_growth_3y"))),
         "SOLIDEZ — dív.líq/EBITDA {} | cobertura juros {} | liquidez corrente {}".format(
             num(m.get("net_debt_ebitda"), True), num(m.get("interest_coverage"), True),
             num(m.get("current_ratio"), True)),

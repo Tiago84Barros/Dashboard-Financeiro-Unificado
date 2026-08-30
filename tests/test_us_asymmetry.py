@@ -23,7 +23,7 @@ def test_build_trajectory():
 
 def test_score_asymmetry_alta():
     m = {"revenue_cagr_3y": 0.28, "revenue_cagr_5y": 0.20, "roic": 0.22,
-         "net_debt_ebitda": 0.5, "_fcf": 180, "fcf_cagr_3y": 0.30, "_market_cap": 1e9}
+         "net_debt_ebitda": 0.5, "_fcf": 180, "fcf_growth_3y": 0.30, "_market_cap": 1e9}
     t = {"op_margin_trend": 0.06, "revenue_growth_persistence": 1.0,
          "shares_change": -0.05, "sbc_to_revenue": 0.05, "fcf_positive_ratio": 1.0}
     r = ua.score_asymmetry(m, t)
@@ -38,7 +38,7 @@ def test_score_asymmetry_alta():
 
 def test_score_asymmetry_baixa_com_riscos():
     m = {"revenue_cagr_3y": 0.30, "revenue_cagr_5y": 0.10, "roic": 0.03,
-         "net_debt_ebitda": 4.0, "_fcf": -50, "fcf_cagr_3y": None, "_market_cap": 5e8}
+         "net_debt_ebitda": 4.0, "_fcf": -50, "fcf_growth_3y": None, "_market_cap": 5e8}
     t = {"op_margin_trend": -0.05, "revenue_growth_persistence": 0.5,
          "shares_change": 0.30, "sbc_to_revenue": 0.25, "fcf_positive_ratio": 0.0}
     r = ua.score_asymmetry(m, t)
