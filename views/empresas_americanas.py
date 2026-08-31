@@ -79,22 +79,21 @@ _WEIGHTING_LABELS = {
 
 # Toda evidência histórica desta tela (Rank-IC, curva do backtest, auditoria por
 # indústria) sai de `market_us.score_vintages`, cujo universo é montado a partir
-# de `market_us.assets` com `analysis_status='eligible'`. Medido em 27/08/2026:
-# `delisted_date` é NULL nos 7.654 registros de `assets` — nenhuma empresa que
-# deixou de ser negociada entrou no painel. O texto de Metodologia afirmava o
-# contrário até esta correção.
+# de `market_us.assets` com `analysis_status='eligible'`. Em 27/08/2026
+# `delisted_date` era NULL nos 7.654 registros de `assets`: nenhuma empresa que
+# deixou de ser negociada entrava no painel, e o texto de Metodologia afirmava o
+# contrário.
 #
-# Não é um detalhe de cobertura. Nunca observar uma deslistagem faz a
-# probabilidade estimada de perda permanente de capital ser ZERO por construção,
-# e o Rank-IC medido só sobre quem chegou vivo até hoje é otimista por
-# definição. O efeito é maior em recortes de valor e de dividendo alto, onde a
-# empresa barata que quebrou é exatamente a observação que falta.
-_AVISO_SOBREVIVENCIA = (
-    "⚠️ **Viés de sobrevivência:** o histórico usado aqui contém apenas empresas "
-    "ainda negociadas. Nenhuma deslistagem foi ingerida, então o poder preditivo "
-    "medido é otimista e o risco de perda permanente de capital não é observável "
-    "nesta série. Use como evidência direcional, não como estimativa de retorno."
-)
+# Em 31/08/2026 isso deixou de ser verdade -- 1.603 empresas mortas foram
+# ingeridas e o painel passou a registrar 702 saídas em 16 safras. O aviso NÃO
+# some por isso: o viés mudou de lugar. O universo do ranking está corrigido; a
+# medição de retorno não, porque não há cotação de ticker morto em fonte
+# acessível, e sem retorno futuro a empresa que morreu entra no ranking e sai da
+# apuração de excesso. A probabilidade de perda permanente de capital continua
+# subobservada.
+#
+# Por isso o aviso é derivado da medição em `core.us_survivorship`, não escrito
+# aqui: frase fixa sobre estado de dado envelhece continuando a soar como rigor.
 
 
 def _motivo_sem_painel(painel) -> str:
@@ -139,9 +138,10 @@ def _aviso_sobrevivencia() -> str:
         frase_mortalidade,
         frase_score_vs_morte,
         frase_turnover,
+        frase_universo,
     )
 
-    partes = [_AVISO_SOBREVIVENCIA, frase_turnover(), frase_mortalidade(),
+    partes = [frase_universo(), frase_turnover(), frase_mortalidade(),
               frase_score_vs_morte(), _frase_regra_pit()]
     return " ".join(p for p in partes if p)
 
@@ -2467,8 +2467,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
         st.caption(
             "A aprovação atual combina tamanho de amostra, score dos líderes, "
             "vantagem relativa e resiliência opcional. Rank‑IC aparece somente "
-            "quando existe histórico ponto-no-tempo — medido sobre empresas "
-            "ainda negociadas, sem nenhuma deslistagem no universo."
+            "quando existe histórico ponto-no-tempo — cujo universo inclui as "
+            "empresas que saíram da bolsa, nas safras em que estavam vivas."
         )
         audit_show = audit.copy()
         audit_show["Indústria"] = audit_show["industry_group"].map(translate_us_industry)
@@ -2797,6 +2797,10 @@ def _tab_backtests(status: dict) -> None:
         card_metrica("Volatilidade", _p(p["volatility"]))
     with c8:
         card_metrica("Giro médio da carteira", _p(res.get("avg_turnover")))
+    from core.us_survivorship import frase_medicao_de_retorno
+    _frase_retorno = frase_medicao_de_retorno()
+    if _frase_retorno:
+        st.caption(_frase_retorno)
 
     benchmark_state = res.get("benchmark") or {}
     if benchmark_state.get("modo") == "indice" and benchmark_state.get("ok"):
@@ -2990,10 +2994,12 @@ o histórico de uma empresa **não é apagado** ao trocar de ticker.
 **Ponto no tempo.** Cada fato financeiro guarda `reference_date` (fim do período),
 `published_date` (protocolo) e `available_at` (quando era conhecível). Os testes
 históricos filtram por `available_at` — nunca por data de ingestão — para evitar
-antecipação indevida. **Limite conhecido:** o universo histórico é formado só por
-empresas ainda negociadas — nenhuma deslistagem foi ingerida (`delisted_date` está
-vazio em todos os registros de `market_us.assets`). O backtest e o Rank-IC são,
-portanto, otimistas, e a série não observa perda permanente de capital.
+antecipação indevida. **Limite conhecido:** o universo histórico já inclui empresas
+deslistadas (1.603 marcadas com `delisted_date`, 702 saídas ao longo das safras), e
+cada uma entra apenas nas safras anteriores à própria saída. O que ainda falta é o
+RETORNO delas: não há fonte acessível de cotação para ticker morto, então essas
+linhas saem da apuração de excesso. O Rank-IC já é medido em universo com mortes; o
+retorno realizado ainda não observa a perda permanente de capital.
 
 **Normalização.** Ausência nunca vira zero; unidades e períodos (anual/trimestral/
 TTM) são rotulados explicitamente; divergência entre ticker solicitado e retornado

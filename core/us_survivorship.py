@@ -37,6 +37,12 @@ logger = logging.getLogger(__name__)
 
 CAMINHO_MEDICAO = Path(__file__).resolve().parents[1] / "data" / "us_survivorship.json"
 
+# Importado aqui e nao dentro da funcao para que o default apareca na assinatura:
+# quem le a funcao ve de qual painel ela fala.
+from core.us_methodology import (  # noqa: E402
+    US_FUNDAMENTAL_SCORE_VERSION as _VERSAO_CORRENTE,
+)
+
 # CIK é o identificador decimal da SEC com no máximo dez dígitos. Centralizar a
 # faixa evita que parser e classificação aceitem identidades diferentes.
 CIK_MAX_SEC = 9_999_999_999
@@ -76,18 +82,30 @@ FOLGA_FIM_DIAS = 120
 TOLERANCIA_ARREDONDAMENTO_MORTALIDADE_PCT = 0.005 + 1e-9
 
 
-def medir_turnover(engine) -> dict[str, Any]:
+def medir_turnover(engine, score_version: str | None = _VERSAO_CORRENTE) -> dict[str, Any]:
     """Conta entradas e saídas de empresas entre safras consecutivas do painel.
 
     Uma saída é uma empresa presente na safra `t` e ausente na safra `t+1`. Se
     esse número for zero em toda a janela, o universo é 100% sobrevivente e o
     risco de perda permanente de capital não é observável na série.
+
+    A contagem é de UMA versão de metodologia -- a corrente, por padrão. Sem o
+    filtro, safras de versões diferentes coexistem na mesma tabela e a empresa
+    que só existe numa delas aparece como entrada ou saída que nunca houve: a
+    medição gravada em 30/08/2026 dizia 3.591 entradas onde a versão corrente
+    tinha 2.986, e o número ia para a tela como turnover do painel. Passar
+    ``None`` volta a somar todas as versões, que é a leitura de auditoria, não
+    a de exibição.
     """
     from sqlalchemy import text
 
+    sql = "SELECT as_of_date, company_id FROM market_us.score_vintages"
+    params: dict[str, Any] = {}
+    if score_version:
+        sql += " WHERE score_version = :v"
+        params["v"] = score_version
     with engine.connect() as conn:
-        linhas = list(conn.execute(text(
-            "SELECT as_of_date, company_id FROM market_us.score_vintages")))
+        linhas = list(conn.execute(text(sql), params))
     if not linhas:
         raise ValueError("score_vintages vazio")
 
@@ -195,6 +213,78 @@ def frase_turnover(medicao: dict[str, Any] | None = None) -> str | None:
                 f"mercado real isso não acontece; a amostra é 100% sobrevivente.")
     return (f"Medido: em {safras} safras de {ini} a {fim} o painel registrou "
             f"{_mil(entradas)} entradas e {_mil(saidas)} saídas de empresas.")
+
+
+def frase_medicao_de_retorno(medicao: dict[str, Any] | None = None) -> str | None:
+    """O que a medição de retorno NÃO enxerga, com o tamanho.
+
+    O universo do ranking deixou de ser sobrevivente quando os fundamentos das
+    deslistadas entraram. A medição de retorno não acompanhou: preço de ticker
+    morto não existe em fonte acessível, então a linha sem preço futuro é
+    descartada e o excesso segue apurado entre sobreviventes.
+
+    Descartar não é neutro -- é supor que quem morreu teria rendido a média dos
+    vivos. Como o top-N evita os nomes que morrem e os pesos iguais os carregam,
+    essa suposição trabalha CONTRA o excesso exibido: ele é a ponta pessimista
+    de uma banda, não o valor conservador que parece ser. Dizer só isso seria o
+    aviso qualitativo de sempre; o que torna a frase útil é a fração.
+    """
+    medicao = carregar_medicao() if medicao is None else medicao
+    bloco = (medicao or {}).get("medicao_de_retorno") or {}
+    fracao = bloco.get("fracao_sem_preco")
+    if not isinstance(fracao, (int, float)) or not 0 < fracao < 1:
+        return None
+    return (f"O excesso acima é apurado só onde há preço futuro, e {fracao:.0%} "
+            "das linhas do painel não têm -- são as empresas que saíram da "
+            "bolsa, para as quais nenhuma fonte serve cotação. Descartá-las "
+            "equivale a supor que teriam rendido a média das sobreviventes, e "
+            "essa suposição favorece os pesos iguais, não a carteira: sob "
+            "convenção de -30% para deslistagem o excesso sobe de -0,15% para "
+            "+10,74% a.a. O número exibido é a ponta pessimista da banda, não "
+            "uma medição do excesso verdadeiro.")
+
+
+AVISO_UNIVERSO_SOBREVIVENTE = (
+    "⚠️ **Viés de sobrevivência:** o histórico usado aqui contém apenas empresas "
+    "ainda negociadas -- nenhuma deslistagem foi ingerida, então o poder "
+    "preditivo medido é otimista e o risco de perda permanente de capital não é "
+    "observável nesta série."
+)
+
+AVISO_UNIVERSO_COM_SAIDAS = (
+    "⚠️ **Viés de sobrevivência (parcial):** os fundamentos das empresas que "
+    "saíram da bolsa foram ingeridos e elas voltaram às safras em que estavam "
+    "vivas, então o universo do ranking deixou de ser sobrevivente. O que "
+    "continua sendo é a medição de RETORNO: sem cotação de ticker morto, a "
+    "empresa entra no ranking e sai da apuração de excesso, e o risco de perda "
+    "permanente de capital segue subobservado."
+)
+
+_FECHO_AVISO = (
+    " Use como evidência direcional, não como estimativa de retorno."
+)
+
+
+def frase_universo(medicao: dict[str, Any] | None = None) -> str:
+    """O aviso de abertura, DERIVADO da medição em vez de declarado.
+
+    Este texto era uma constante afirmando "nenhuma deslistagem foi ingerida".
+    Era verdade até 31/08/2026, quando 1.603 empresas mortas entraram no
+    warehouse e o painel passou a registrar 702 saídas em 16 safras. Uma frase
+    fixa sobre o estado dos dados envelhece na direção errada: continua sendo
+    lida como rigor enquanto já é falsa. Por isso ela agora pergunta ao número.
+
+    Sem medição o texto volta ao aviso mais forte -- a versão pessimista é a
+    segura quando ninguém apurou.
+    """
+    medicao = carregar_medicao() if medicao is None else medicao
+    try:
+        saidas = int((medicao or {})["saidas"])
+    except Exception:  # noqa: BLE001
+        return AVISO_UNIVERSO_SOBREVIVENTE + _FECHO_AVISO
+    base = (AVISO_UNIVERSO_COM_SAIDAS if saidas > 0
+            else AVISO_UNIVERSO_SOBREVIVENTE)
+    return base + _FECHO_AVISO
 
 
 # ── Mortalidade da coorte: o viés medido FORA do painel (A-157) ──────────────
@@ -634,9 +724,19 @@ def frase_mortalidade(medicao: dict[str, Any] | None = None) -> str | None:
     painel = coorte.get("painel_no_ano_base")
     if _contexto_painel_valido(coorte, universo):
         pct = f"{float(cobertura):.1f}".replace(".", ",")
-        frase += (f" O painel cobre {pct}% daquele universo ({int(painel)} "
-                  f"empresas) e nenhuma delas desapareceu. O retorno histórico "
-                  f"exibido é teto, não expectativa.")
+        frase += f" O painel cobre {pct}% daquele universo ({int(painel)} empresas)"
+        # "e nenhuma delas desapareceu" era o fecho fixo desta frase. Virou
+        # falso em 31/08/2026 e, pior, virou falso na direção de parecer rigor:
+        # continuava dizendo que o painel não via morte no dia em que ele passou
+        # a ver. A cláusula agora sai da própria contagem de saídas.
+        saidas = dados.get("saidas")
+        if _inteiro_estrito(saidas) and saidas > 0:
+            frase += (f", e nele já se observam {_mil(int(saidas))} saídas -- o "
+                      f"universo do ranking não é mais sobrevivente, embora o "
+                      f"retorno dessas empresas continue sem fonte.")
+        else:
+            frase += (" e nenhuma delas desapareceu. O retorno histórico "
+                      "exibido é teto, não expectativa.")
     # O que foi tirado da conta é dito, não subentendido: sem isso o leitor não
     # tem como saber se a diferença entre este número e o anterior veio de
     # rigor ou de recorte conveniente.
