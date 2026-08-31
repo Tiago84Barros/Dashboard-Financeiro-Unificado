@@ -256,11 +256,27 @@ def universo_us(engine=None) -> Universo:
             SELECT symbol FROM market_us.company_snapshots
             WHERE score_version = :v AND score_status <> 'decision_grade'
             ORDER BY symbol LIMIT 8"""), {"v": _ver}).fetchall())
+        # A-158: contar so a geracao corrente e certo, mas zero por CARIMBO e
+        # indistinguivel de zero por AUSENCIA DE EMPRESA -- e so o primeiro tem
+        # conserto. Em 31/08/2026 a versao subiu para 0.7.2 por uma correcao
+        # que so tocou o painel PIT; a vitrine transversal, cujos numeros a
+        # correcao nao muda, seguiu carimbada 0.7.1, e a abrangencia americana
+        # exibiu 0 de 0 com as 2.626 empresas publicadas. O zero continua zero:
+        # a nota nao inventa cobertura, so nomeia o que precisa ser republicado.
+        outras = tuple(conn.execute(text("""
+            SELECT score_version, count(*) FROM market_us.company_snapshots
+            GROUP BY score_version ORDER BY count(*) DESC LIMIT 3""")).fetchall()
+        ) if not nominal else ()
+    notas = [f"gate: score_status = decision_grade na versao {_ver}"]
+    if outras:
+        publicado = ", ".join(f"{v} ({n})" for v, n in outras)
+        notas.append(f"nenhuma linha publicada na versao {_ver}; a vitrine "
+                     f"tem {publicado} -- republique o snapshot")
     return Universo(
         modulo="Empresas Americanas",
         nominal=nominal, investivel=nominal, apto=apto,
         exemplos_descartados=ruins,
-        notas=(f"gate: score_status = decision_grade na versao {_ver}",),
+        notas=tuple(notas),
     )
 
 
