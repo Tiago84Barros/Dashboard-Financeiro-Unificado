@@ -255,7 +255,9 @@ TOLERANCIA_HORIZONTE_MESES = 3
 
 def build_annual_panel(vintages: pd.DataFrame, monthly: pd.DataFrame,
                        horizon_months: int = 12,
-                       tolerancia_meses: int = TOLERANCIA_HORIZONTE_MESES) -> pd.DataFrame:
+                       tolerancia_meses: int = TOLERANCIA_HORIZONTE_MESES,
+                       saidas: dict | None = None,
+                       cenario: str | None = None) -> pd.DataFrame:
     """Painel do backtest: junta score (as_of) ao retorno futuro de `horizon_months`.
 
     vintages: ['as_of_date','symbol','score']; monthly: ['symbol','month_end',
@@ -287,12 +289,39 @@ def build_annual_panel(vintages: pd.DataFrame, monthly: pd.DataFrame,
     de ``tolerancia_meses`` após o alvo; fora disso a linha é tratada como
     censurada (a ação sumiu no meio do caminho), não como um retorno de horizonte.
 
-    ``df.attrs`` carrega ``n_censored`` e ``n_inobservavel`` para quem quiser
-    declarar a censura a jusante. Ver `tests/test_us_panel_sobrevivencia.py`.
+    **Saida sem cotacao nenhuma (2026-08).** As duas ausencias acima ainda
+    supunham que a acao TEM preco em algum momento. 994 dos 3.145 simbolos das
+    safras nao tem nenhum: sao empresas mortas, e nenhuma fonte acessivel serve
+    cotacao de ticker morto. Elas caiam no ``if g is None: continue`` -- 8.287
+    linhas, 28,5% do painel -- e sair da conta equivale a supor que renderam a
+    media das sobreviventes.
+
+    Com ``saidas`` (``{symbol: {"delisted_date": ..., "cause": ...}}``) e um
+    ``cenario`` de `core.us_convencao_saida`, a linha passa a receber retorno
+    convencionado por DESFECHO, nao um numero unico para desfechos opostos. A
+    convencao entra em dois pontos:
+
+    * sem preco de saida observavel e com saida dentro do horizonte, ela E o
+      retorno;
+    * com preco de saida observavel, ela so substitui quando a causa e falencia
+      -- ai a ultima cotacao superestima, porque a acao ainda negociava a
+      caminho do zero. Em aquisicao a ultima cotacao e o preco do negocio e fica
+      como esta.
+
+    Sem ``saidas`` o comportamento e identico ao anterior, de proposito: a
+    correcao nao pode entrar por padrao em quem chama sem saber dela.
+
+    ``df.attrs`` carrega ``n_censored``, ``n_inobservavel`` e ``n_convencionado``
+    para quem quiser declarar a censura a jusante. Ver
+    `tests/test_us_panel_sobrevivencia.py`.
     """
+    from core.us_convencao_saida import CENARIO_PADRAO, retorno_de_saida
+    from core.us_saida_causa import SUMIU
+    cenario = CENARIO_PADRAO if cenario is None else cenario
+    saidas = saidas or {}
     cols = ["date", "symbol", "score", "fwd_return"]
     vazio = pd.DataFrame(columns=cols)
-    vazio.attrs.update(n_censored=0, n_inobservavel=0)
+    vazio.attrs.update(n_censored=0, n_inobservavel=0, n_convencionado=0)
     if vintages is None or vintages.empty or monthly is None or monthly.empty:
         return vazio
     m = monthly.dropna(subset=["adjusted_close"]).copy()
@@ -300,13 +329,41 @@ def build_annual_panel(vintages: pd.DataFrame, monthly: pd.DataFrame,
     fim_do_dado = m["month_end"].max()
     price_by_symbol = {s: g.sort_values("month_end") for s, g in m.groupby("symbol")}
     rows = []
-    n_censored = n_inobservavel = 0
+    n_censored = n_inobservavel = n_convencionado = 0
+
+    def _saiu_no_horizonte(sym, as_of, limite):
+        """A saida caiu dentro da janela do retorno que estamos medindo?
+
+        Fora dela a convencao nao se aplica: quem saiu DEPOIS estava viva o
+        horizonte inteiro (e a falta de preco e outro problema), e quem saiu
+        ANTES nem devia estar nesta safra.
+        """
+        s = saidas.get(sym) or {}
+        d = s.get("delisted_date")
+        if d is None:
+            return None
+        d = pd.to_datetime(d)
+        if d < as_of or d > limite:
+            return None
+        return retorno_de_saida(s.get("cause"), cenario)
+
     for _, v in vintages.iterrows():
         sym = v["symbol"]
+        as_of = pd.to_datetime(v["as_of_date"])
         g = price_by_symbol.get(sym)
         if g is None:
+            # Sem cotacao nenhuma: a convencao E o retorno, quando ha causa.
+            limite = (as_of + pd.DateOffset(months=horizon_months)
+                      + pd.DateOffset(months=int(tolerancia_meses)))
+            conv = _saiu_no_horizonte(sym, as_of, limite)
+            if conv is None:
+                n_inobservavel += 1
+                continue
+            n_convencionado += 1
+            rows.append({"date": v["as_of_date"], "symbol": sym,
+                         "score": float(v["score"]), "fwd_return": float(conv),
+                         "censored": True})
             continue
-        as_of = pd.to_datetime(v["as_of_date"])
         past = g[g["month_end"] <= as_of]
         if past.empty:
             continue
@@ -329,11 +386,22 @@ def build_annual_panel(vintages: pd.DataFrame, monthly: pd.DataFrame,
             else:
                 n_inobservavel += 1
                 continue
+        retorno = p1 / p0 - 1.0
+        if censurado and (saidas.get(sym) or {}).get("cause") == SUMIU:
+            # A ultima cotacao superestima a falencia: a acao ainda negociava a
+            # caminho do zero. Em aquisicao ela e o preco do negocio e vale --
+            # comparar por "o menor dos dois" apagaria o ganho de quem foi
+            # comprada com premio, que foi o que este teste pegou.
+            conv = _saiu_no_horizonte(sym, as_of, limite)
+            if conv is not None and conv < retorno:
+                retorno = float(conv)
+                n_convencionado += 1
         rows.append({"date": v["as_of_date"], "symbol": sym,
-                     "score": float(v["score"]), "fwd_return": p1 / p0 - 1.0,
+                     "score": float(v["score"]), "fwd_return": retorno,
                      "censored": censurado})
     out = pd.DataFrame(rows, columns=cols + ["censored"])
-    out.attrs.update(n_censored=n_censored, n_inobservavel=n_inobservavel)
+    out.attrs.update(n_censored=n_censored, n_inobservavel=n_inobservavel,
+                     n_convencionado=n_convencionado)
     return out
 
 
