@@ -189,6 +189,69 @@ def _gravar_em_lotes(destino, sql: str, linhas: list[tuple], *,
     return gravadas
 
 
+DDL_DESFECHOS = """
+CREATE TABLE IF NOT EXISTS market_us.delisting_outcomes (
+    symbol         TEXT PRIMARY KEY,
+    delisted_date  DATE NOT NULL,
+    cause          TEXT NOT NULL,
+    published_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""
+
+# Um simbolo com DUAS vidas (ticker reciclado) tem duas datas de saida e a chave
+# aqui e o simbolo. Escolhemos a mais RECENTE: e a que pode cair dentro do
+# horizonte de uma safra do painel. A antiga pertence a uma empresa que ja nao e
+# esta, e nunca foi ingerida sob este simbolo -- ver a guarda em
+# scripts/ingest_us_delisted.py.
+_SQL_DESFECHOS = """
+  SELECT DISTINCT ON (a.symbol)
+         a.symbol, a.delisted_date, a.delisting_cause
+  FROM market_us.assets a
+  WHERE a.delisted_date IS NOT NULL AND a.delisting_cause IS NOT NULL
+  ORDER BY a.symbol, a.delisted_date DESC
+"""
+
+
+def publicar_desfechos(*, local, remoto) -> dict:
+    """Leva a causa da saida para a vitrine, que e onde o painel a le.
+
+    A causa mora em `market_us.assets`, tabela que so existe no armazem local --
+    a Streamlit Cloud nao o alcanca. Sem este passo a convencao de retorno de
+    deslistagem existe no codigo e nao muda numero nenhum na tela, que e o
+    defeito que este projeto ja registrou como "registrar saida nao e consumir
+    saida".
+
+    Simetrico de proposito: apaga o desfecho que o local nao tem mais. Publicar
+    so por upsert deixa a vitrine desfazer, em silencio, uma decisao do filtro
+    local -- foi assim que FGN ficou no ar depois de sair do universo.
+    """
+    with local.connect() as conn:
+        linhas = [(r[0], _iso(r[1]), str(r[2]))
+                  for r in conn.execute(text(_SQL_DESFECHOS))]
+    with remoto.begin() as conn:
+        conn.exec_driver_sql(DDL_DESFECHOS)
+    sql = ("INSERT INTO market_us.delisting_outcomes "
+           "(symbol, delisted_date, cause) VALUES %s "
+           "ON CONFLICT (symbol) DO UPDATE SET "
+           "delisted_date = EXCLUDED.delisted_date, cause = EXCLUDED.cause, "
+           "published_at = NOW()")
+    gravadas = _gravar_em_lotes(remoto, sql, linhas, rotulo="desfechos")
+    locais = {linha[0] for linha in linhas}
+    with remoto.connect() as conn:
+        remotos = [r[0] for r in conn.execute(text(
+            "SELECT symbol FROM market_us.delisting_outcomes"))]
+    sobras = [s for s in remotos if s not in locais]
+    if sobras:
+        with remoto.begin() as conn:
+            for sym in sobras:
+                conn.execute(text("DELETE FROM market_us.delisting_outcomes "
+                                  "WHERE symbol = :s"), {"s": sym})
+    from collections import Counter
+    return {"desfechos_gravados": gravadas,
+            "desfechos_removidos": len(sobras),
+            "por_causa": dict(Counter(linha[2] for linha in linhas))}
+
+
 def _remover_sobras(remoto, safras: list[tuple], versao: str) -> int:
     """Apaga da vitrine a safra que o local não tem mais.
 
@@ -274,6 +337,7 @@ def publicar(*, local, remoto, aplicar: bool, versao: str | None = None) -> dict
     resumo["gravado"] = True
 
     resumo["safras_removidas"] = _remover_sobras(remoto, safras, versao)
+    resumo.update(publicar_desfechos(local=local, remoto=remoto))
 
     with remoto.connect() as conn:
         remotas = int(conn.execute(text(

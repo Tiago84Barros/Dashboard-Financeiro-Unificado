@@ -2832,14 +2832,33 @@ def _tab_backtests(status: dict) -> None:
             + _aviso_sobrevivencia()
         )
     if censura.get("n_censurado"):
-        st.info(
+        # "Elas entram pela última cotação" era o fecho FIXO desta frase. Com a
+        # convenção de retorno de deslistagem ligada, parte destas linhas não
+        # entra mais assim -- e uma frase fixa sobre o estado do dado envelhece
+        # na direção de continuar soando como rigor depois de virar falsa.
+        convencionado = int(censura.get("n_convencionado") or 0)
+        texto = (
             f"{censura['n_censurado']} de {censura['n_observacoes']} observações "
             f"({censura.get('fracao_censurada', 0.0):.1%}) são de ações que "
-            "pararam de negociar antes do fim do horizonte: elas entram pela "
-            "última cotação, como se a posição tivesse sido vendida ali. "
-            "Deslistagem real costuma liquidar mais perto de zero, então o "
-            "retorno destas ainda tende a ficar otimista."
-        )
+            "pararam de negociar antes do fim do horizonte. ")
+        if convencionado:
+            from core.us_convencao_saida import frase_convencao
+            texto += (
+                f"Destas, {convencionado} receberam retorno por convenção "
+                "declarada em vez da última cotação, porque a causa da saída "
+                f"é conhecida. {frase_convencao()} As demais entram pela última "
+                "cotação, que para uma falência ainda tende a ficar otimista.")
+        else:
+            texto += (
+                "Elas entram pela última cotação, como se a posição tivesse "
+                "sido vendida ali. Deslistagem real costuma liquidar mais perto "
+                "de zero, então o retorno destas ainda tende a ficar otimista.")
+            if not censura.get("n_desfechos"):
+                texto += (
+                    " A causa de cada saída ainda não foi publicada na vitrine "
+                    "(`scripts/classificar_saidas_us.py` e republicação), então "
+                    "a convenção por desfecho não está valendo aqui.")
+        st.info(texto)
     if censura.get("n_inobservavel"):
         st.caption(
             f"{censura['n_inobservavel']} pares (data, ação) ficaram de fora por "

@@ -986,15 +986,39 @@ def load_score_panel(score_version: str | None = None,
             monthly = pd.read_sql(text(
                 "SELECT symbol, month_end, adjusted_close "
                 "FROM market_us.prices_monthly"), conn)
+            saidas = _ler_desfechos(conn)
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_score_panel falhou: %s", exc)
         return _painel_vazio(f"consulta ao histórico falhou: {exc}")
-    painel = build_annual_panel(vintages, monthly, horizon_months=horizon_months)
+    painel = build_annual_panel(vintages, monthly, horizon_months=horizon_months,
+                                saidas=saidas)
     if painel.empty:
         return _painel_vazio(
             "há {} safras da versão {}, mas nenhuma casou com preço mensal".format(
                 len(vintages), score_version))
+    # Quantos desfechos a leitura enxergou. Sem isto, "a convenção não mudou
+    # nada" e "a tabela não foi publicada" são indistinguíveis na tela.
+    painel.attrs["n_desfechos"] = len(saidas)
     return painel
+
+
+def _ler_desfechos(conn) -> dict:
+    """Desfecho de cada saída, para a convenção de retorno de deslistagem.
+
+    Vazio quando a tabela ainda não foi publicada -- e vazio é o comportamento
+    ANTIGO do painel, não uma falha: a empresa sem cotação volta a sair da conta.
+    Silenciar a exceção aqui é deliberado, porque o painel inteiro não pode cair
+    por causa de uma tabela acessória; o que não pode é a ausência passar por
+    presença, e por isso o número de desfechos carregados vai para `attrs`.
+    """
+    try:
+        linhas = conn.execute(text(
+            "SELECT symbol, delisted_date, cause "
+            "FROM market_us.delisting_outcomes")).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("sem desfechos de saída publicados: %s", exc)
+        return {}
+    return {r[0]: {"delisted_date": r[1], "cause": r[2]} for r in linhas}
 
 
 def _motivo_sem_safra(conn, score_version: str) -> str:

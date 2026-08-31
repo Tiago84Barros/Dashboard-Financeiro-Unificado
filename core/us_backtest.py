@@ -312,6 +312,12 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
             "fracao_censurada": (float(n_censurado / len(panel))
                                  if len(panel) else None),
             "n_inobservavel": int(attrs.get("n_inobservavel", 0)),
+            # Quantas linhas receberam retorno por CONVENCAO em vez de preco, e
+            # quantos desfechos a leitura enxergou. Sem os dois, "a convencao
+            # nao mudou nada" e "a tabela de desfechos nao foi publicada" viram
+            # a mesma tela.
+            "n_convencionado": int(attrs.get("n_convencionado", 0)),
+            "n_desfechos": int(attrs.get("n_desfechos", 0)),
             "anos": anos_do_painel,
             "sem_saida": bool(n_censurado == 0
                               and anos_do_painel >= ANOS_PARA_ESPERAR_SAIDA),
