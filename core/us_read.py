@@ -658,6 +658,33 @@ def _apenas_ativas(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[~fora].reset_index(drop=True)
 
 
+def _concat_sem_colidir(blocos: list[pd.DataFrame]) -> pd.DataFrame:
+    """Junta coluna da vitrine com bloco JSON sem gerar rótulo repetido.
+
+    `metrics` guarda o mesmo dicionário que originou colunas físicas da
+    vitrine. Quando uma delas é promovida a coluna -- foi o caso de
+    `impairment_flags` na migration 061 -- o `concat` cru passa a devolver
+    DUAS colunas com o mesmo nome, e aí `linha["impairment_flags"]` deixa de
+    ser uma lista e vira uma Series com as duas. O consumidor não quebra: ele
+    imprime. A tela chegou a mostrar
+    "o que trava o selo de decisão é o balanço: ['patrimonio_liquido_negativo'],
+    ['patrimonio_liquido_negativo']" -- o nome cru, duplicado, no lugar do
+    rótulo em português.
+
+    A coluna física ganha, e não o eco do JSON: é ela que a publicação escreve
+    e que o restante do projeto consulta.
+    """
+    vistas: set[str] = set()
+    limpos: list[pd.DataFrame] = []
+    for bloco in blocos:
+        repetidas = [c for c in bloco.columns if c in vistas]
+        if repetidas:
+            bloco = bloco.drop(columns=repetidas)
+        vistas.update(bloco.columns)
+        limpos.append(bloco)
+    return pd.concat(limpos, axis=1)
+
+
 def load_snapshot_scored() -> pd.DataFrame:
     """Frame equivalente ao scored_universe, lido da vitrine (métricas incluídas).
 
@@ -686,7 +713,7 @@ def load_snapshot_scored() -> pd.DataFrame:
     if "advanced" in df.columns:
         avancado = [(_parse_json_col(v) or {}) for v in blocos[0].pop("advanced")]
         blocos.append(pd.DataFrame(avancado, index=df.index))
-    out = pd.concat(blocos, axis=1)
+    out = _concat_sem_colidir(blocos)
 
     # payout_ratio passou a ser calculado em core.us_metrics, mas uma vitrine
     # gerada antes disso não o tem. Derivar de `financials` (que traz
