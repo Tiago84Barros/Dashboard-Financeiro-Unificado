@@ -20,7 +20,7 @@ from scripts.publish_us_delistings import ler_saidas, publicar
 
 
 def _banco(*saidas):
-    """`saidas`: tuplas (cik, symbol, refuted_form)."""
+    """`saidas`: tuplas (cik, symbol, refuted_by)."""
     eng = create_engine("sqlite:///:memory:", poolclass=StaticPool,
                         connect_args={"check_same_thread": False})
     with eng.begin() as c:
@@ -30,12 +30,12 @@ def _banco(*saidas):
             "symbol_source TEXT, symbol_as_of TEXT, "
             "last_annual_report_year INTEGER, absence_year INTEGER, "
             "delisted_date TEXT, reason TEXT, source TEXT, refuted_form TEXT, "
-            "refuted_date TEXT, checked_at TEXT)"))
+            "refuted_by TEXT, refuted_date TEXT, checked_at TEXT)"))
         for cik, symbol, refutada in saidas:
             c.execute(text(
                 "INSERT INTO market_us.delistings VALUES (:cik, :s, "
                 "'dei:TradingSymbol', '2020-03-01', 2019, 2020, '2020-12-31', "
-                "'ausencia_de_relatorio_anual', 'sec_full_index', :r, NULL, "
+                "'ausencia_de_relatorio_anual', 'sec_full_index', NULL, :r, NULL, "
                 "'2026-08-29')"), {"cik": cik, "s": symbol, "r": refutada})
     return eng
 
@@ -48,13 +48,14 @@ def test_recusa_publicar_tabela_vazia():
 
 
 def test_refutada_e_sem_simbolo_viajam_e_aparecem_separadas():
-    local = _banco((1, "AKRX", None), (2, None, None), (3, "BNS", "40-F"))
+    local = _banco((1, "AKRX", None), (2, None, None),
+                   (3, "BLK", "ticker_negociado_apos_saida"))
     with local.connect() as conn:
         assert len(ler_saidas(conn)) == 3
     resumo = publicar(local=local, remoto=None, aplicar=False)
     assert resumo["saidas"] == 3
     assert resumo["refutadas"] == 1
-    # `com_simbolo` conta só entre as não refutadas: BNS tem símbolo e não é
+    # `com_simbolo` conta só entre as não refutadas: BLK tem símbolo e não é
     # saída nenhuma, somá-la contaria uma empresa viva como entrada no painel.
     assert resumo["com_simbolo"] == 1
     assert resumo["gravado"] is False

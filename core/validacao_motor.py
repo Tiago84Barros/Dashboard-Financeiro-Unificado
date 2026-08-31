@@ -408,7 +408,14 @@ def _registro_de_saidas_us() -> tuple[int, int] | None:
             # de uma lista de formas que nao continha 40-F nem emenda, e somar
             # morte inventada ao registro inflaria justamente o numero que este
             # portao usa para julgar se o vies foi corrigido.
-            onde = ("WHERE refuted_form IS NULL"
+            # `refuted_by` cobre as duas portas: relatorio anual posterior
+            # sob o mesmo CIK, e papel que seguiu negociando depois da
+            # saida (sucessao de registrante -- BlackRock, Bunge, Noble,
+            # Ferguson). A segunda e a que pega o caso comum: a primeira
+            # sozinha derrubava 1 de 60 saidas ja nomeadas com cotacao.
+            onde = ("WHERE refuted_by IS NULL"
+                    if _tem_coluna(conn, "delistings", "refuted_by") else
+                    "WHERE refuted_form IS NULL"
                     if _tem_coluna(conn, "delistings", "refuted_form") else "")
             total = int(conn.execute(text(
                 f"SELECT count(*) FROM market_us.delistings {onde}")).scalar() or 0)

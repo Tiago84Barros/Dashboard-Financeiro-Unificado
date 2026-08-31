@@ -14,7 +14,7 @@ Três escolhas de escopo:
 **A linha refutada viaja junto.** Ela é a prova de que aquela saída foi
 conferida e negada -- se ficasse de fora, a vitrine não distinguiria "não
 conferida" de "conferida e falsa", e a próxima republicação teria de confiar
-na memória de quem publicou. Quem lê filtra por `refuted_form IS NULL`.
+na memória de quem publicou. Quem lê filtra por `refuted_by IS NULL`.
 
 **A junção é por símbolo.** `company_id` está preenchido em 2 das 12.107
 saídas, e `score_vintages` na vitrine não tem essa coluna. Publicar sem
@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS market_us.delistings (
     reason                    TEXT        NOT NULL DEFAULT 'ausencia_de_relatorio_anual',
     source                    TEXT        NOT NULL DEFAULT 'sec_full_index',
     refuted_form              TEXT        NULL,
+    refuted_by                TEXT        NULL,
     refuted_date              DATE        NULL,
     checked_at                TIMESTAMPTZ NULL,
     derived_at                TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -76,7 +77,8 @@ CREATE INDEX IF NOT EXISTS delistings_absence_year_idx
 
 COLS = ("cik", "symbol", "symbol_source", "symbol_as_of",
         "last_annual_report_year", "absence_year", "delisted_date",
-        "reason", "source", "refuted_form", "refuted_date", "checked_at")
+        "reason", "source", "refuted_form", "refuted_by", "refuted_date",
+        "checked_at")
 
 SQL_LER = ("SELECT " + ", ".join(COLS) + " FROM market_us.delistings "
            "ORDER BY absence_year, cik")
@@ -94,7 +96,10 @@ def publicar(*, local, remoto, aplicar: bool) -> dict:
                 "motivo": ("o warehouse local não tem `market_us.delistings`"
                            " povoada; rode scripts/ingerir_deslistadas_us.py")}
 
-    i_sym, i_ref = COLS.index("symbol"), COLS.index("refuted_form")
+    # `refuted_by` e o filtro, nao `refuted_form`: a refutacao por
+    # continuidade do papel (sucessao de registrante) nao tem forma de
+    # relatorio para citar, e e ela que pega o caso comum.
+    i_sym, i_ref = COLS.index("symbol"), COLS.index("refuted_by")
     vivas = [r for r in linhas if r[i_ref] is None]
     resumo = {"ok": True, "saidas": len(linhas), "refutadas": len(linhas) - len(vivas),
               "com_simbolo": sum(1 for r in vivas if r[i_sym]),
