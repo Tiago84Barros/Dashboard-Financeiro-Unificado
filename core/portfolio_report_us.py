@@ -624,13 +624,19 @@ def build_company_provenance(
             "de cobertura reflete isso. Analise por caixa, queima, runway e "
             "estágio do pipeline; não conclua valuation por múltiplo."
         )
-    elif grau != "decision_grade":
+    else:
         motivo = motivo_do_grau(score_row)
-        if motivo["tipo"] in ("balanco", "ambos"):
+        if motivo["marcas"]:
             # A instrução antiga dizia ao analista "cobertura baixa não é
             # empresa ruim" -- e a dizia justamente para quem tem patrimônio
             # negativo. Mandar rebaixar a convicção onde o dado é completo e
             # ruim é pedir que a reprovação saia como dúvida.
+            #
+            # Desde 0.8.0 a marca não derruba mais o selo, então este aviso sai
+            # também para empresa `decision_grade`: Lowe's tem patrimônio
+            # negativo por recompra, cobertura 100% e opinião firme -- o que ela
+            # NÃO tem é um P/VP que signifique alguma coisa. Silenciar a marca
+            # junto com o portão jogaria fora a parte que sempre foi verdadeira.
             legiveis = ", ".join(MARCA_LABEL.get(m, m) for m in motivo["marcas"])
             linhas.append(
                 f"  ATENÇÃO: balanço estruturalmente quebrado ({legiveis}). "
@@ -638,12 +644,20 @@ def build_company_provenance(
                 "lacuna. NÃO trate como incerteza: diga o que o balanço mostra, "
                 "e trate múltiplo sobre base negativa como não significativo."
             )
-        else:
-            linhas.append(
-                "  ATENÇÃO: cobertura insuficiente para conclusão fundamentalista "
-                "firme. Descreva a lacuna, rebaixe a confiança e evite veredicto de "
-                "valuation. Cobertura baixa não é empresa ruim."
-            )
+        if grau != "decision_grade":
+            if motivo["mudas"]:
+                linhas.append(
+                    "  ATENÇÃO: trilha muda -- a maioria das métricas de "
+                    f"{', '.join(motivo['mudas'])} não é DEFINÍVEL para esta "
+                    "empresa, não é dado que se perdeu. Diga o que sobrou de "
+                    "respondível e não conclua a trilha pela minoria."
+                )
+            else:
+                linhas.append(
+                    "  ATENÇÃO: cobertura insuficiente para conclusão fundamentalista "
+                    "firme. Descreva a lacuna, rebaixe a confiança e evite veredicto de "
+                    "valuation. Cobertura baixa não é empresa ruim."
+                )
     faltando = None
     if score_row is not None:
         getter = score_row.get if hasattr(score_row, "get") else (
@@ -758,36 +772,48 @@ MARCA_LABEL = {
 
 
 def motivo_do_grau(row: Any) -> dict:
-    """Por que o selo de decisão faltou: lacuna de dado ou veredito de balanço.
+    """Por que o selo de decisão faltou — e o que é apenas divulgação.
 
-    As duas coisas chegavam à tela sob a mesma frase — "a leitura abaixo é
-    limitada pelo que falta" — e para a maioria isso era falso. Medido em
-    31/08/2026 sobre as 2.626 empresas ativas, 731 estavam em `research_grade`
-    com TODAS as trilhas críticas cobertas e confiança >= 75: não faltava nada.
-    O que havia era patrimônio líquido negativo, EBITDA não positivo ou capital
-    investido negativo — um veredito SOBRE a empresa, e o oposto de uma lacuna.
+    Duas coisas chegavam à tela sob a mesma frase, "a leitura abaixo é limitada
+    pelo que falta", e para a maioria isso era falso. Medido em 31/08/2026 sobre
+    as 2.626 empresas ativas, 731 estavam em `research_grade` com TODAS as
+    trilhas críticas cobertas e confiança >= 75: não faltava nada. O que havia
+    era patrimônio líquido negativo, EBITDA não positivo ou capital investido
+    negativo — um veredito SOBRE a empresa, e o oposto de uma lacuna.
 
     Dizer "não sei" onde a análise diz "sei, e é ruim" é o erro mais caro que
     esta tela pode cometer: ele transforma reprovação em dúvida, e dúvida o
     investidor resolve sozinho, para o lado que ele já queria.
+
+    Desde 0.8.0 (A-160) a marca de balanço deixou de derrubar o selo por si só —
+    Lowe's, Altria e Cardinal Health têm patrimônio negativo por recompra
+    acumulada, cobertura 100% e confiança 100%, e negar opinião sobre elas era o
+    mesmo erro com o sinal trocado. A marca continua saindo daqui, sempre, mas
+    como DIVULGAÇÃO: quem lê precisa saber que o múltiplo sobre base negativa
+    não significa nada. Por isso `marcas` volta preenchida mesmo quando o selo
+    está lá, e `tipo` passa a nomear só o que de fato o travou.
     """
     if row is None:
-        return {"tipo": "lacuna", "faltando": [], "marcas": [], "texto": ""}
+        return {"tipo": "lacuna", "faltando": [], "marcas": [], "mudas": [],
+                "texto": ""}
     getter = row.get if hasattr(row, "get") else (
         lambda k, d=None: getattr(row, k, d))
     faltando = [str(x) for x in (getter("critical_missing", None) or [])]
     marcas = [str(x) for x in (getter("impairment_flags", None) or [])]
-    legiveis = [MARCA_LABEL.get(m, m) for m in marcas]
-    if marcas and faltando:
+    mudas = [str(x) for x in (getter("unanswerable_tracks", None) or [])]
+    if faltando and mudas:
         tipo = "ambos"
-        texto = (f"O balanço está quebrado ({', '.join(legiveis)}) E há trilhas "
-                 f"sem cobertura mínima ({', '.join(faltando)}). O selo de "
-                 "decisão cai pelas duas razões, e a primeira já basta.")
-    elif marcas:
-        tipo = "balanco"
-        texto = (f"Os dados estão completos. O que trava o selo de decisão é o "
-                 f"balanço: {', '.join(legiveis)}. Isto é veredito sobre a "
-                 "empresa, não falta de informação.")
+        texto = (f"Trilhas sem cobertura mínima ({', '.join(faltando)}) e "
+                 f"trilhas que a metodologia mal consegue perguntar "
+                 f"({', '.join(mudas)}). São coisas diferentes: a primeira é "
+                 "resposta que faltou, a segunda é pergunta que não cabe nesta "
+                 "empresa.")
+    elif mudas:
+        tipo = "muda"
+        texto = (f"O que trava o selo não é o que falta, é o que não dá para "
+                 f"perguntar: {', '.join(mudas)} — a maioria das métricas da "
+                 "trilha não é definível para esta empresa. Uma trilha julgada "
+                 "pela minoria das próprias perguntas não foi julgada.")
     elif faltando:
         tipo = "lacuna"
         texto = (f"Trilhas sem cobertura mínima: {', '.join(faltando)}. A "
@@ -795,10 +821,11 @@ def motivo_do_grau(row: Any) -> dict:
                  "sobre a empresa, é o que os dados disponíveis sustentam.")
     else:
         tipo = "suficiente"
-        texto = ("Nenhuma trilha crítica ficou descoberta e o balanço não tem "
-                 "marca estrutural; a confiança fica abaixo do selo de decisão "
-                 "pela cobertura geral das métricas.")
-    return {"tipo": tipo, "faltando": faltando, "marcas": marcas, "texto": texto}
+        texto = ("Nenhuma trilha crítica ficou descoberta e nenhuma ficou muda; "
+                 "a confiança fica abaixo do selo de decisão pela cobertura "
+                 "geral das métricas.")
+    return {"tipo": tipo, "faltando": faltando, "marcas": marcas,
+            "mudas": mudas, "texto": texto}
 
 
 def build_data_provenance_context(

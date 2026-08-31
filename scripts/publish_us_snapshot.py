@@ -77,11 +77,12 @@ _COLS = [
     "score", "score_quality", "score_growth",
     "score_solidity", "score_capital_efficiency", "score_valuation",
     "score_shareholder", "coverage", "score_confidence", "score_status",
-    "critical_missing", "impairment_flags",
+    "critical_missing", "impairment_flags", "unanswerable_tracks",
     "metrics", "asymmetry", "advanced", "dossie",
     "financials", "last_fiscal_year", "score_version", "generated_at",
 ]
-_JSON_COLS = {"critical_missing", "impairment_flags", "metrics", "asymmetry",
+_JSON_COLS = {"critical_missing", "impairment_flags", "unanswerable_tracks",
+              "metrics", "asymmetry",
               "advanced", "dossie", "financials"}
 
 
@@ -167,6 +168,7 @@ def _ensure_schema(engine) -> str:
         "score_status": "TEXT",
         "critical_missing": "JSONB",
         "impairment_flags": "JSONB",
+        "unanswerable_tracks": "JSONB",
     }
     for column, data_type in tipos_avulsos.items():
         if column not in columns:

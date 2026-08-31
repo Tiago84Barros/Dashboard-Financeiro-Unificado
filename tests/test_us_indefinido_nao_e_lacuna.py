@@ -8,10 +8,13 @@ derruba COBERTURA, que é o número que barra `decision_grade`. A empresa
 deficitária apanhava duas vezes pelo mesmo prejuízo: uma no rank, puxada ao
 neutro, e outra na cobertura, por um dado que ela entregou.
 
-O que NÃO pode acontecer com a correção: a empresa de balanço quebrado sair com
-selo de decisão porque suas indefinições foram perdoadas. Quem impede isso é o
-portão A-101, que voltou a disparar em 0.7.0. O último teste deste arquivo é a
-trava que garante que a isenção de cobertura não abriu esse buraco.
+O que NÃO pode acontecer com a correção: a empresa sair com selo de decisão
+porque suas indefinições foram perdoadas até não sobrar trilha para julgar. Até
+0.7.2 quem impedia isso era o portão A-101 (marca de balanço quebrado), por
+coincidência: ele travava justamente quem produz estas indefinições. Desde
+0.8.0 quem impede é o piso de RESPONDIBILIDADE, que mede a coisa certa — a
+fração das perguntas da trilha que ainda cabem na empresa. O último teste deste
+arquivo é a trava, e ela continua valendo pelo motivo novo.
 """
 from __future__ import annotations
 
@@ -126,8 +129,13 @@ def test_trilha_inteiramente_indefinida_nao_vira_cobertura_cheia():
     assert scored.loc["PREJU", "coverage_solidity"] == 0.0
 
 
-def test_isentar_cobertura_nao_promove_balanco_quebrado():
-    """A trava: quem produz a indefinição é justamente quem o portão segura."""
+def test_isentar_cobertura_nao_promove_trilha_quase_muda():
+    """A trava: 2 das 4 métricas de Solidez anuladas = 50%, não é maioria.
+
+    Antes de 0.8.0 este teste passava pela marca de balanço quebrado. Ela
+    continua na linha — e continua sendo divulgada —, mas não é mais o que
+    segura o selo. O que segura é a trilha ter deixado de ser perguntável.
+    """
     quadro = _quadro(_ANULADAS)
     i = quadro.index[quadro["symbol"] == "PREJU"][0]
     quadro.at[i, "impairment_flags"] = ("patrimonio_liquido_negativo",

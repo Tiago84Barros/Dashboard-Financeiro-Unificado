@@ -196,6 +196,10 @@ def serialize_row(*, identity: dict, scored_row: dict, metrics: dict,
         # esta completo e o balanco esta quebrado" -- e dizia a primeira
         # coisa para 731 empresas em que a verdade era a segunda.
         "impairment_flags": dumps(list(scored_row.get("impairment_flags") or [])),
+        # A-160: qual trilha critica ficou MUDA. Sem isto a tela volta a
+        # explicar o selo ausente por cobertura -- que e outra coisa.
+        "unanswerable_tracks": dumps(
+            list(scored_row.get("unanswerable_tracks") or [])),
     }
     for col in _SCORE_COLS:
         v = scored_row.get(col)

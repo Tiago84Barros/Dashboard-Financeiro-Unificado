@@ -293,10 +293,18 @@ def compute_company_metrics(
         # por SBC pode anular o buyback. Crescimento do share count: menor é
         # melhor (negativo = recompra líquida efetiva).
         "share_count_cagr_3y": _growth(balance, "shares_outstanding", 3),
-        # Balanço/geração estruturalmente quebrados. Sem isto, as razões
-        # anuladas por div_if_den_positive chegariam ao score como simples
-        # ausência — e ausência é puxada para o neutro, o que premiaria a
-        # empresa em pior situação. Ver us_score.score_cross_section (A-101).
+        # Balanço/geração estruturalmente quebrados. Nasceu (A-101) como
+        # portão: sem ele, as razões anuladas por div_if_den_positive chegavam
+        # ao score como simples ausência, e ausência é puxada para o neutro.
+        #
+        # Desde 0.7.1 a indefinição sai do numerador E do denominador da
+        # cobertura, então esse caminho não existe mais — e a marca deixou de
+        # ser eliminatória em 0.8.0 (A-160). Ela mede estrutura de capital, não
+        # defeito de dado: Lowe's, Altria e Cardinal Health têm patrimônio
+        # negativo por recompra acumulada, cobertura 100% e confiança 100%, e
+        # ficavam sem opinião por isso. O que a marca continua fazendo — e é a
+        # parte que sempre foi verdadeira — é DIVULGAR que múltiplo sobre base
+        # negativa não significa nada. Ver core/portfolio_report_us.py.
         "impairment_flags": tuple(
             nome for nome, quebrado in (
                 ("patrimonio_liquido_negativo", equity is not None and equity <= 0),
