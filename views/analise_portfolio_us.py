@@ -40,6 +40,7 @@ from core.portfolio_report_us import (
     analyze_us_portfolio_report,
     generate_company_us_report,
     grau_de_confianca,
+    motivo_do_grau,
 )
 from core.us_macro import (
     FONTE_OBSERVADO,
@@ -469,23 +470,26 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
     # O grau vai no TÍTULO do expander: quem só bate o olho na lista precisa
     # saber que aquele veredicto veio de cobertura de triagem antes de abrir.
     grau = str(it.get("score_status") or "")
-    selo_grau = {"research_grade": " · ⚠️ cobertura parcial",
-                 "screen_grade": " · ⛔ só triagem"}.get(grau, "")
+    motivo = motivo_do_grau(it)
+    # O selo do título muda com o MOTIVO, não só com o grau: chamar de
+    # "cobertura parcial" uma empresa de dados completos e balanço quebrado
+    # anuncia dúvida onde a análise tem veredito.
+    if motivo["tipo"] in ("balanco", "ambos"):
+        selo_grau = " · 🩹 balanço quebrado"
+    else:
+        selo_grau = {"research_grade": " · ⚠️ cobertura parcial",
+                     "screen_grade": " · ⛔ só triagem"}.get(grau, "")
 
     with st.expander(
         f"{icone} {tk}  —  {faixa}  •  {w_novo*100:.1f}%  [{persp.upper()}]{selo_grau}",
         expanded=False,
     ):
         if grau and grau != "decision_grade":
-            faltando = it.get("critical_missing") or []
-            st.warning(
-                f"**Cobertura de dados: {GRAU_LABEL.get(grau, grau)}.** "
-                + (f"Trilhas sem cobertura mínima: {', '.join(map(str, faltando))}. "
-                   if faltando else "")
-                + "A leitura abaixo é limitada pelo que falta — não é veredicto "
-                  "sobre a empresa, é o que os dados disponíveis sustentam.",
-                icon="⚠️",
-            )
+            cabecalho = ("**Balanço estruturalmente quebrado.** "
+                         if motivo["tipo"] in ("balanco", "ambos")
+                         else f"**Cobertura de dados: {GRAU_LABEL.get(grau, grau)}.** ")
+            st.warning(cabecalho + motivo["texto"],
+                       icon="🩹" if motivo["tipo"] in ("balanco", "ambos") else "⚠️")
 
         resumo = an.get("resumo", "")
         if resumo:
@@ -785,10 +789,12 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 )
 
         grau, _rotulo, confianca_score = grau_de_confianca(linha_score)
-        faltando = []
+        faltando, marcas = [], []
         if linha_score is not None:
             bruto = linha_score.get("critical_missing") if hasattr(linha_score, "get") else None
             faltando = list(bruto) if bruto is not None else []
+            bruto_m = linha_score.get("impairment_flags") if hasattr(linha_score, "get") else None
+            marcas = list(bruto_m) if bruto_m is not None else []
         items_analisados.append({
             "ticker": tk,
             "nome": nome,
@@ -805,6 +811,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
             "score_status": grau,
             "score_confidence": confianca_score,
             "critical_missing": faltando,
+            "impairment_flags": marcas,
         })
         progresso.progress((idx + 1) / len(items), text=f"Analisado: {tk}")
 

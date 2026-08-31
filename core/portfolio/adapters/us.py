@@ -15,7 +15,11 @@ from core.portfolio.registry import get_spec
 SPEC = get_spec("us")
 
 # Campos da vitrine que entram como classificacao, e nao como fundamento.
-_CAMPOS_CLASSIFICACAO = ("score_confidence", "score_status", "critical_missing")
+# `impairment_flags` viaja junto de `critical_missing` porque so as duas
+# juntas dizem POR QUE o selo de decisao faltou: lacuna de dado ou
+# veredito sobre o balanco. Separadas, a tela chama veredito de lacuna.
+_CAMPOS_CLASSIFICACAO = ("score_confidence", "score_status",
+                         "critical_missing", "impairment_flags")
 
 
 def _default_loaders() -> dict:
