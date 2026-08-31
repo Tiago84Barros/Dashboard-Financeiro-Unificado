@@ -198,6 +198,14 @@ def main() -> int:
                   f"sem_fatos={resultado['sem_fatos']} "
                   f"({time.time() - t0:.0f}s)", flush=True)
 
+    # Sem este passo a ingestao nao serve para nada: `assets.analysis_status`
+    # nasce 'pending', e o universo de scoring_history so aceita 'eligible'.
+    # A primeira execucao gravou 1.607 empresas mortas que ficaram FORA de todas
+    # as 16 safras -- o painel continuou com zero saidas e parecia que a
+    # ingestao nao tinha funcionado. Quem promove pending -> eligible e o
+    # enriquecimento, e ele fica aqui dentro para nao depender de lembranca.
+    from data_pipeline.us.enrichment import enrich_warehouse
+    resultado["classificacao"] = enrich_warehouse(engine).get("statuses")
     resultado["segundos"] = round(time.time() - t0, 1)
     print(json.dumps(resultado, default=str))
     return 0
