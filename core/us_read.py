@@ -627,7 +627,34 @@ def _snapshot_df(extra_json: str | None = None,
     except Exception as exc:  # noqa: BLE001
         logger.warning("_snapshot_df falhou: %s", exc)
         return pd.DataFrame()
-    return _apenas_acoes(df)
+    return _apenas_acoes(_apenas_ativas(df))
+
+
+def _apenas_ativas(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove o que a própria publicação já tinha marcado como fora do universo.
+
+    A publicação faz `is_active = FALSE, score_status = 'stale'` em toda linha
+    ausente do snapshot novo (`_build_deactivate_stale`), justamente para
+    preservar o histórico sem manter a empresa em análise. A leitura ignorava
+    essa marca — escritor e leitor liam listas diferentes sobre a mesma linha.
+
+    Passou despercebido porque `_apenas_acoes` varria quase todos os restos: em
+    31/08/2026 eram 205 linhas desativadas, das quais 166 REITs caíam nele. As
+    outras 39 eram BDCs (fundos fechados de crédito: FS KKR, Goldman Sachs BDC,
+    Gladstone Capital) — não são REIT, então passavam pelo filtro de ações e
+    chegavam à tela com nota de seis dias antes, dentro de um módulo que declara
+    analisar só ações.
+
+    Só o FALSE explícito remove: vitrine antiga pode ter a coluna nula, e nulo
+    ali significa "nunca foi desativada", não "inativa".
+    """
+    if df.empty or "is_active" not in df.columns:
+        return df
+    fora = df["is_active"].map(lambda v: v is False or v == 0).astype(bool)
+    if fora.any():
+        logger.info("vitrine EUA: %d linha(s) desativadas na publicação",
+                    int(fora.sum()))
+    return df.loc[~fora].reset_index(drop=True)
 
 
 def load_snapshot_scored() -> pd.DataFrame:
@@ -793,7 +820,10 @@ def load_snapshot_overview() -> dict:
     # no frame ja filtrado devolveria zero sempre. O numero que interessa ao
     # usuario e quantos ficaram DE FORA -- medido na vitrine crua.
     base["reits"] = _contagem_fora_do_universo()
-    base["delisted"] = int((~df["is_active"].fillna(True)).sum())
+    # Mesmo motivo do `reits` acima: `df` já saiu de `_apenas_ativas`, então
+    # contar desativadas nele devolveria zero sempre. O número que interessa é
+    # quantas ficaram DE FORA — medido na vitrine crua.
+    base["delisted"] = _contagem_desativadas()
     eng = _engine()
     try:
         with eng.connect() as conn:
@@ -1138,6 +1168,26 @@ def load_precos_mensais_us(symbols: tuple[str, ...], *, engine=None) -> pd.DataF
     mensal = wide.resample("ME").last()           # último preço válido de cada mês
     mensal.columns = [str(c).strip().upper() for c in mensal.columns]
     return mensal.dropna(how="all")
+
+
+def _contagem_desativadas() -> int:
+    """Quantas linhas da vitrine crua a publicação marcou como inativas.
+
+    Medido na vitrine crua pelo mesmo motivo de `_contagem_fora_do_universo`:
+    a leitura já as removeu (ver `_apenas_ativas`), então perguntar ao frame
+    filtrado devolveria zero e leria como "nenhuma empresa saiu".
+    """
+    eng = _engine()
+    if eng is None:
+        return 0
+    try:
+        with eng.connect() as conn:
+            return int(conn.execute(text(
+                "SELECT count(*) FROM market_us.company_snapshots "
+                "WHERE is_active IS FALSE")).scalar() or 0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_contagem_desativadas falhou: %s", exc)
+        return 0
 
 
 def _contagem_fora_do_universo() -> int:
