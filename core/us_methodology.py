@@ -38,7 +38,22 @@ US_SCHEMA_VERSION = 1
 #     numero que os demonstrativos ja continham.
 # Efeito medido sobre as mesmas 2.626 empresas: decision_grade 974 -> 1.061,
 # screen_grade 673 -> 388, cobertura media 68,2 -> 77,7.
-US_FUNDAMENTAL_SCORE_VERSION = "0.7.0"
+# 0.7.1 (2026-08-31): razao que NAO EXISTE deixa de contar como dado que falta.
+# ROE, ROIC, conversao de caixa, divida/EBITDA e divida/PL sao anuladas quando o
+# denominador foi MEDIDO e veio <= 0 -- e isso continua certo, porque razao com
+# denominador que troca de sinal nao e ordenavel. O erro era o passo seguinte: a
+# razao anulada chegava ao score como ausencia, e ausencia derruba COBERTURA,
+# que e o numero que barra decision_grade. A empresa deficitaria apanhava duas
+# vezes pelo mesmo prejuizo -- uma no rank, puxada ao neutro, e outra na
+# cobertura, por um dado que ela entregou. Agora a indefinicao sai do numerador
+# E do denominador da cobertura.
+# So ficou seguro fazer isto depois de 0.7.0: o portao A-101 voltou a disparar,
+# e ele trava exatamente a empresa que produz estas indefinicoes. A medicao
+# confirma que o buraco nao abriu -- sobre as mesmas 2.626 empresas,
+# decision_grade 1.061 -> 1.062. O ganho e outro e e honesto: screen_grade
+# 388 -> 373, cobertura media 77,7 -> 80,4, confianca media 80,3 -> 82,2.
+# 1.218 empresas carregavam pelo menos uma razao indefinida (2.163 no total).
+US_FUNDAMENTAL_SCORE_VERSION = "0.7.1"
 
 # Score de assimetria da aba "Empresas Fora da Curva".
 US_ASYMMETRY_SCORE_VERSION = "0.1.0"

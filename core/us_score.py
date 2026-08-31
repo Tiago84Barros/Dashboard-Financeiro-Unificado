@@ -88,6 +88,32 @@ CRITICAL_TRACK_MIN_COVERAGE = {
 }
 
 
+def _nm_mask(df: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
+    """Quais métricas da linha são INDEFINIDAS, e não ausentes.
+
+    `nm_metrics` chega de core.us_metrics: são as razões anuladas porque o
+    denominador foi MEDIDO e veio <= 0 (prejuízo, patrimônio negativo, capital
+    investido negativo). Não há dado faltando ali — a razão simplesmente não
+    existe, e cobrar cobertura por ela é cobrar a empresa por uma pergunta que
+    não tem resposta possível.
+
+    Tolera a coluna ausente: a vitrine publicada pode estar num snapshot
+    anterior a ela (já houve drift de schema aqui), e sem a coluna o
+    comportamento volta a ser exatamente o de antes.
+    """
+    vazio = pd.DataFrame(False, index=df.index, columns=metrics)
+    if "nm_metrics" not in df.columns or not metrics:
+        return vazio
+    for i in df.index:
+        valor = df.at[i, "nm_metrics"]
+        if valor is None or isinstance(valor, float):
+            continue
+        for nome in valor:
+            if nome in vazio.columns:
+                vazio.at[i, nome] = True
+    return vazio
+
+
 def _impairment_flags_at(frame: pd.DataFrame, i: int) -> tuple[str, ...]:
     """Marcas de balanço quebrado da linha, tolerando a coluna ausente.
 
@@ -214,8 +240,13 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
         present = [m for m in metrics if m in df.columns]
         if present:
             track_scores[track] = pct[present].mean(axis=1)
-            # cobertura real = fração de métricas não-ausentes na trilha
-            cov = df[present].notna().mean(axis=1)
+            # cobertura real = fração de métricas não-ausentes na trilha,
+            # sobre as que PODIAM existir. Uma razão indefinida por medida
+            # (ver _nm_mask) sai do numerador E do denominador: não é lacuna.
+            nm = _nm_mask(df, present)
+            denom = (~nm).sum(axis=1)
+            cov = ((df[present].notna() & ~nm).sum(axis=1)
+                   .div(denom.where(denom > 0)).fillna(0.0))
         else:
             track_scores[track] = pd.Series(NEUTRAL, index=df.index)
             cov = pd.Series(0.0, index=df.index)
@@ -235,8 +266,14 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
     result["score"] = [_row_score(i) for i in range(len(df))]
     # cobertura global (quantas métricas a empresa tinha, de todas)
     metric_cols = [m for m in _ALL_METRICS if m in df.columns]
-    result["coverage"] = (df[metric_cols].notna().mean(axis=1) * 100).round(0) \
-        if metric_cols else 0.0
+    if metric_cols:
+        nm_all = _nm_mask(df, metric_cols)
+        denom_all = (~nm_all).sum(axis=1)
+        cov_all = ((df[metric_cols].notna() & ~nm_all).sum(axis=1)
+                   .div(denom_all.where(denom_all > 0)).fillna(0.0))
+        result["coverage"] = (cov_all * 100).round(0)
+    else:
+        result["coverage"] = 0.0
     critical_missing: list[list[str]] = []
     confidence: list[float] = []
     statuses: list[str] = []
