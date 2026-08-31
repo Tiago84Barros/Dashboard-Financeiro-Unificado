@@ -305,6 +305,36 @@ def compute_company_metrics(
                  invested_cap is not None and invested_cap <= 0),
             ) if quebrado
         ),
+        # Razoes que NAO EXISTEM, em vez de faltar. `div_if_den_positive`
+        # anula a razao quando o denominador MEDIDO e <= 0 -- e isso esta
+        # certo, porque razao cujo denominador troca de sinal deixa de ser
+        # ordenavel. O problema era o que acontecia depois: o resultado chegava
+        # ao score como ausencia, e ausencia derruba COBERTURA, que e o numero
+        # que barra decision_grade. A empresa deficitaria era punida duas vezes
+        # pelo mesmo prejuizo -- uma no rank, puxada ao neutro, e outra na
+        # cobertura, por um dado que ela ENTREGOU.
+        #
+        # E a mesma correcao que a trilha de crescimento recebeu em 0.6.0
+        # (prejuizo persistente entrava como falta de dado). So ficou seguro
+        # fazer aqui depois de 0.7.0: o portao de balanco quebrado (A-101)
+        # voltou a disparar, e ele trava exatamente a empresa que produz estas
+        # indefinicoes. Com o portao morto, isentar a cobertura teria aberto
+        # caminho para a pior empresa sair com selo de decisao.
+        "nm_metrics": tuple(
+            nome for nome, indefinida in (
+                ("cash_conversion",
+                 fcf is not None and net_income is not None and net_income <= 0),
+                ("roe",
+                 net_income is not None and equity is not None and equity <= 0),
+                ("roic",
+                 nopat is not None and invested_cap is not None
+                 and invested_cap <= 0),
+                ("net_debt_ebitda",
+                 net_debt is not None and ebitda is not None and ebitda <= 0),
+                ("debt_to_equity",
+                 total_debt is not None and equity is not None and equity <= 0),
+            ) if indefinida
+        ),
         # contexto (não entram no score, ajudam classificação/dossiê)
         "_revenue": revenue, "_net_income": net_income, "_fcf": fcf,
         "_equity": equity, "_net_debt": net_debt, "_market_cap": market_cap,
