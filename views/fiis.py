@@ -45,10 +45,12 @@ from core.fii_selection_explanations import build_selection_reports
 from core.fii_taxonomy import ORDEM_CATEGORIAS_FII, categoria_fii
 from core.fii_validation import validation_supports_strategy
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
+from core.llm_context_ativo import build_fii_ativo_context
 from core.llm_context_fii import build_fii_chat_context
 from core.llm_fii import chat_com_fiis
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
+from design.chat_ativo import render_chat_ativo
 from design.componentes import (
     aviso_cobertura_do_universo,
     aviso_escala_do_score,
@@ -1612,35 +1614,43 @@ def _tab_busca(df: pd.DataFrame) -> None:
 
     # ── Imóveis do fundo ──────────────────────────────────────────────────────
     st.markdown("#### 🏢 Imóveis do fundo")
+    imoveis = pd.DataFrame()
     if tipo and tipo not in _TIPOS_TIJOLO:
         st.info(f"Este FII é do tipo **{tipo}** — não detém imóveis diretamente "
                 "(carteira de papel/cotas). Sem lista de imóveis.")
-        return
-    imoveis = _mr.load_fii_imoveis(tk)
-    n = d.get("Num_Imoveis")
-    n_val = int(n) if pd.notna(n) else (len(imoveis) if not imoveis.empty else 0)
-    regioes = imoveis["Região"].dropna().nunique() if not imoveis.empty else 0
-    area_tot = (f"{imoveis['Área_m2'].sum():,.0f}".replace(",", ".")
-                if (not imoveis.empty and imoveis["Área_m2"].notna().any()) else "—")
-    cols = st.columns(3)
-    cols[0].markdown(_kpi_html("Nº de imóveis", n_val, accent="#00C896"), unsafe_allow_html=True)
-    cols[1].markdown(_kpi_html("Regiões", regioes or "—", accent="#B084F6"), unsafe_allow_html=True)
-    cols[2].markdown(_kpi_html("Área total (m²)", area_tot, accent="#4A9EFF"), unsafe_allow_html=True)
-    if not imoveis.empty:
-        st.dataframe(imoveis, width="stretch", hide_index=True, column_config={
-            "Imóvel": st.column_config.TextColumn("Imóvel", width="medium"),
-            "Área_m2": st.column_config.NumberColumn("Área (m²)", format="%.0f"),
-            "Vacância": st.column_config.NumberColumn("Vacância", format="percent"),
-            "Pct_Receita": st.column_config.NumberColumn("% Receita", format="percent"),
-        })
-        # resumo por região (relevante p/ logística/tijolo)
-        if imoveis["Região"].notna().any():
-            por_reg = imoveis.groupby("Região").size().sort_values(ascending=False)
-            st.caption("Imóveis por região")
-            st.bar_chart(por_reg)
     else:
-        st.info("Ainda não há imóveis coletados para este FII. Rode "
-                "`python run_market_ingest.py fiis-imoveis` (coleta best-effort por scraping).")
+        imoveis = _mr.load_fii_imoveis(tk)
+        n = d.get("Num_Imoveis")
+        n_val = int(n) if pd.notna(n) else (len(imoveis) if not imoveis.empty else 0)
+        regioes = imoveis["Região"].dropna().nunique() if not imoveis.empty else 0
+        area_tot = (f"{imoveis['Área_m2'].sum():,.0f}".replace(",", ".")
+                    if (not imoveis.empty and imoveis["Área_m2"].notna().any()) else "—")
+        cols = st.columns(3)
+        cols[0].markdown(_kpi_html("Nº de imóveis", n_val, accent="#00C896"), unsafe_allow_html=True)
+        cols[1].markdown(_kpi_html("Regiões", regioes or "—", accent="#B084F6"), unsafe_allow_html=True)
+        cols[2].markdown(_kpi_html("Área total (m²)", area_tot, accent="#4A9EFF"), unsafe_allow_html=True)
+        if not imoveis.empty:
+            st.dataframe(imoveis, width="stretch", hide_index=True, column_config={
+                "Imóvel": st.column_config.TextColumn("Imóvel", width="medium"),
+                "Área_m2": st.column_config.NumberColumn("Área (m²)", format="%.0f"),
+                "Vacância": st.column_config.NumberColumn("Vacância", format="percent"),
+                "Pct_Receita": st.column_config.NumberColumn("% Receita", format="percent"),
+            })
+            # resumo por região (relevante p/ logística/tijolo)
+            if imoveis["Região"].notna().any():
+                por_reg = imoveis.groupby("Região").size().sort_values(ascending=False)
+                st.caption("Imóveis por região")
+                st.bar_chart(por_reg)
+        else:
+            st.info("Ainda não há imóveis coletados para este FII. Rode "
+                    "`python run_market_ingest.py fiis-imoveis` (coleta best-effort por scraping).")
+
+    render_chat_ativo(
+        mercado="fii", ticker=tk, nome=str(d.get("Nome") or ""), accent="#B084F6",
+        build_context=lambda pergunta: build_fii_ativo_context(
+            tk, user_question=pergunta, dados=d, universo=df, imoveis=imoveis,
+        ),
+    )
 
 
 # ── Tab 3: Carteira-modelo ────────────────────────────────────────────────────

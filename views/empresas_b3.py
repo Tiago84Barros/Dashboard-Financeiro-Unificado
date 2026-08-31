@@ -28,8 +28,10 @@ import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
+from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
 from core.validacao_motor import validacao_b3
+from design.chat_ativo import render_chat_ativo
 from design.componentes import (
     aviso_cobertura_do_universo,
     aviso_escala_do_score,
@@ -3942,6 +3944,16 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 
     _sec_hdr("🏆 Score e critérios de avaliação")
     _render_b3_score_dashboard(tk, mult, df_set)
+
+    render_chat_ativo(
+        mercado="b3", ticker=tk, nome=str(nome_emp or ""), accent="#4A9EFF",
+        build_context=lambda pergunta: build_b3_ativo_context(
+            tk, user_question=pergunta, nome=str(nome_emp or ""),
+            setor=str(setor or ""), subsetor=str(subsetor or ""),
+            preco=preco, preco_status=preco_status, mult=mult, df_fin=df_fin,
+            fontes=fontes_recon,
+        ),
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
