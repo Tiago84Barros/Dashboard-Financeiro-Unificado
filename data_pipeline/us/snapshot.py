@@ -192,6 +192,10 @@ def serialize_row(*, identity: dict, scored_row: dict, metrics: dict,
         "generated_at": generated_at,
         "score_status": scored_row.get("score_status") or "screen_grade",
         "critical_missing": dumps(scored_row.get("critical_missing") or []),
+        # Sem isto a tela nao consegue distinguir "falta dado" de "o dado
+        # esta completo e o balanco esta quebrado" -- e dizia a primeira
+        # coisa para 731 empresas em que a verdade era a segunda.
+        "impairment_flags": dumps(list(scored_row.get("impairment_flags") or [])),
     }
     for col in _SCORE_COLS:
         v = scored_row.get(col)

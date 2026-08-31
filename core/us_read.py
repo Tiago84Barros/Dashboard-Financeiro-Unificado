@@ -570,7 +570,8 @@ def _colunas_da_vitrine() -> frozenset:
         return frozenset()
 _SNAP_SCORES = ("score", "score_quality", "score_growth", "score_solidity",
                  "score_capital_efficiency", "score_valuation", "score_shareholder",
-                 "coverage", "score_confidence", "score_status", "critical_missing")
+                 "coverage", "score_confidence", "score_status", "critical_missing",
+                 "impairment_flags")
 
 
 def _parse_json_col(value):
