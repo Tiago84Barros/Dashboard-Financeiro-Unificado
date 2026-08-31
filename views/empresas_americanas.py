@@ -22,6 +22,7 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 import core.us_data as us
+from core.llm_context_ativo import build_us_ativo_context
 from core.market_companies import (
     filter_market_companies,
     localize_us_company_frame,
@@ -42,6 +43,7 @@ from core.us_company_analysis import (
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 from core.validacao_motor import validacao_us
 from data_pipeline.utils.date_utils import fmt_datetime_br
+from design.chat_ativo import render_chat_ativo
 from design.componentes import (
     aviso_cobertura_do_universo,
     aviso_escala_do_score,
@@ -716,6 +718,15 @@ def _tab_empresa(status: dict) -> None:
     _render_score_dashboard(row)
     with st.expander("📄 Dossiê, classificação e critérios avançados"):
         _render_dossie_for(symbol)
+
+    render_chat_ativo(
+        mercado="us", ticker=symbol, nome=str(row.get("name", "") or ""),
+        accent="#00C896",
+        build_context=lambda pergunta: build_us_ativo_context(
+            symbol, user_question=pergunta, row=row, financials=financials,
+            current_price=current_price,
+        ),
+    )
 
 
 def _render_dossie_for(symbol: str) -> None:
