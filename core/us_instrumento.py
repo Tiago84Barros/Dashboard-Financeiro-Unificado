@@ -62,6 +62,40 @@ _SETOR_IMOBILIARIO_GENERICO = re.compile(r"^\s*real estate\s*$", re.IGNORECASE)
 ELEICAO_REIT_DECLARADA = "declarada"
 ELEICAO_REIT_AUSENTE = "ausente"
 
+# ── A-157: SPAC que declara o SIC do alvo, e nao "Blank Checks" ──
+#
+# `_SETORES_NAO_OPERACIONAIS` pega o SPAC que se declara cheque em branco --
+# 336 dos 346 ativos com nome de aquisicao, medido em 31/08/2026. Os outros 10
+# declaram o SIC da INDUSTRIA QUE PRETENDEM COMPRAR, e por isso apareciam na
+# tela como companhia daquele setor: Eureka Acquisition Corp em "Water
+# Transportation", Digital Asset Acquisition Corp em "State Commercial Banks".
+# Casca sem operacao disputando ranking com transportadora e com banco.
+#
+# Nome sozinho nao basta -- ha operadora com "Acquisition" na razao social. O
+# que fecha a identificacao e a conjuncao com a AUSENCIA DE RECEITA em todos os
+# exercicios arquivados: os 10 tem zero, e as unicas duas companhias de nome
+# parecido que declaram receita ja saem por outro motivo. Empresa pre-receita
+# de verdade (biotecnologia, mineracao junior) nao se chama "Acquisition Corp":
+# eram 160 elegiveis sem receita e o nome separa as 10 do resto.
+#
+# `tem_receita=None` NAO exclui: quem nao apurou receita nao produziu evidencia
+# de que ela falta. Ver [[fallback-nunca-contradiz]] e o portao de estreia.
+_NOME_AQUISICAO = re.compile(
+    r"(?:^|[^a-z])acquisition(?:s)?(?:$|[^a-z])|blank check", re.IGNORECASE)
+
+MOTIVO_SPAC_SEM_OPERACAO = (
+    "veículo de aquisição sem receita em nenhum exercício (SPAC)")
+
+
+def e_spac_sem_operacao(*, name: object = None,
+                        tem_receita: object = None) -> bool:
+    """True só quando o nome diz veículo de aquisição E a receita foi apurada
+    como inexistente. Dúvida (``tem_receita is None``) não exclui."""
+    if tem_receita is None or bool(tem_receita):
+        return False
+    return bool(_NOME_AQUISICAO.search(str(name or "")))
+
+
 _EXPLICIT_NON_COMMON = re.compile(r"(?:-P[A-Z0-9]?|-WT|-WS|-UN)$")
 _NASDAQ_ISSUE_SUFFIX = re.compile(r"^[A-Z]{4,}[WRU]$")
 
@@ -227,7 +261,8 @@ def motivo_exclusao_ativo(symbol: str | None, security_type: str | None,
                           name: str | None = None,
                           is_reit: object = None,
                           is_investment_company: object = None,
-                          reit_election: object = None) -> str | None:
+                          reit_election: object = None,
+                          tem_receita: object = None) -> str | None:
     """Motivo auditável quando o ativo não é ação operacional ordinária."""
     sym = str(symbol or "").upper().strip()
     sec = str(security_type or "common").lower().strip()
@@ -243,6 +278,8 @@ def motivo_exclusao_ativo(symbol: str | None, security_type: str | None,
         return "instrumento sem ação operacional ordinária"
     if sector_norm in _SETORES_NAO_OPERACIONAIS:
         return "companhia de cheque em branco (SPAC)"
+    if e_spac_sem_operacao(name=name, tem_receita=tem_receita):
+        return MOTIVO_SPAC_SEM_OPERACAO
     if (_SETOR_IMOBILIARIO_GENERICO.match(str(sector or ""))
             and str(reit_election or "").strip().lower() != ELEICAO_REIT_AUSENTE):
         return MOTIVO_TIPO_NAO_CONFIRMADO

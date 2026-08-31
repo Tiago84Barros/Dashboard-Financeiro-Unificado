@@ -585,6 +585,39 @@ def _parse_json_col(value):
         return None
 
 
+def _receita_apurada(row) -> bool | None:
+    """Receita observada na linha da vitrine — tri-estado (A-157).
+
+    True quando há receita positiva em algum exercício, False quando o bloco de
+    métricas existe e não achou nenhuma, e None quando não há bloco de métricas
+    para consultar. O terceiro estado importa: sem ele, uma vitrine antiga (ou
+    uma consulta que não trouxe `metrics`) faria toda companhia com "Acquisition"
+    no nome sumir da tela por falta de apuração, e não por evidência.
+    """
+    if hasattr(row, "get") and "_receita_json" in getattr(row, "index", ()):
+        cru = row.get("_receita_json")
+        # NULL aqui é "não há bloco de métricas" -- não apurado. String vazia é
+        # "apurado e não achou receita". A diferença é a que separa dúvida de
+        # evidência, e só a segunda exclui.
+        if cru is None or (isinstance(cru, float) and cru != cru):
+            return None
+        if str(cru).strip() == "":
+            return False
+        try:
+            return float(cru) > 0
+        except (TypeError, ValueError):
+            return False
+    bruto = row.get("metrics") if hasattr(row, "get") else None
+    metricas = _parse_json_col(bruto)
+    if not isinstance(metricas, dict) or "_revenue" not in metricas:
+        return None
+    valor = metricas.get("_revenue")
+    try:
+        return valor is not None and float(valor) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _apenas_acoes(df: pd.DataFrame) -> pd.DataFrame:
     """Remove da vitrine o que não é ação (A-140).
 
@@ -602,7 +635,8 @@ def _apenas_acoes(df: pd.DataFrame) -> pd.DataFrame:
             industry=r.get("industry"), name=r.get("name"),
             is_reit=r.get("is_reit"),
             is_investment_company=r.get("is_investment_company"),
-            reit_election=r.get("reit_election")) is not None,
+            reit_election=r.get("reit_election"),
+            tem_receita=_receita_apurada(r)) is not None,
         axis=1)
     if fora.any():
         logger.info("vitrine EUA: %d linhas fora do universo de ações", int(fora.sum()))
@@ -620,15 +654,26 @@ def _snapshot_df(extra_json: str | None = None,
     if extra_json:
         cols.append(extra_json)
     cols.extend(c for c in extra_jsons if c not in cols)
+    # A-157 precisa saber se a receita foi apurada, e o filtro roda em TODA
+    # leitura -- inclusive nas que não trazem `metrics` (a tela por setor é
+    # uma delas). Buscar só o escalar `metrics->>'_revenue'` custa um campo de
+    # texto por linha em vez dos 24 MB do bloco inteiro.
+    escalares = ("CASE WHEN metrics IS NULL THEN NULL "
+                 "ELSE coalesce(metrics->>'_revenue', '') END AS _receita_json",) if (
+        not presentes or "metrics" in presentes) else ()
     try:
         with eng.connect() as conn:
             df = pd.read_sql(text(
-                f"SELECT {', '.join(cols)} FROM market_us.company_snapshots "
+                f"SELECT {', '.join([*cols, *escalares])} "
+                f"FROM market_us.company_snapshots "
                 f"ORDER BY score DESC NULLS LAST"), conn)
     except Exception as exc:  # noqa: BLE001
         logger.warning("_snapshot_df falhou: %s", exc)
         return pd.DataFrame()
-    return _apenas_acoes(_apenas_ativas(df))
+    out = _apenas_acoes(_apenas_ativas(df))
+    # Coluna de trabalho: sai antes de chegar a quem consome, para não virar
+    # rótulo repetido na junção com o bloco `metrics`.
+    return out.drop(columns=["_receita_json"], errors="ignore")
 
 
 def _apenas_ativas(df: pd.DataFrame) -> pd.DataFrame:

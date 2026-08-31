@@ -47,7 +47,18 @@ def classify_assets(engine) -> dict:
               EXISTS (SELECT 1 FROM market_us.balance_sheets b
                       WHERE b.company_id=a.company_id) has_balance,
               EXISTS (SELECT 1 FROM market_us.cash_flow_statements f
-                      WHERE f.company_id=a.company_id) has_cashflow
+                      WHERE f.company_id=a.company_id) has_cashflow,
+              -- A-157: tri-estado. NULL quando nao ha demonstracao de resultado
+              -- para apurar (duvida nao exclui); FALSE quando ha exercicio
+              -- arquivado e nenhum traz receita positiva.
+              CASE WHEN NOT EXISTS (SELECT 1 FROM market_us.income_statements i
+                                     WHERE i.company_id=a.company_id
+                                       AND i.period='annual') THEN NULL
+                   ELSE EXISTS (SELECT 1 FROM market_us.income_statements i
+                                 WHERE i.company_id=a.company_id
+                                   AND i.period='annual'
+                                   AND i.revenue IS NOT NULL AND i.revenue > 0)
+              END has_revenue
             FROM market_us.assets a
             LEFT JOIN market_us.companies c ON c.id=a.company_id
         """)).mappings().all()
@@ -65,7 +76,8 @@ def classify_assets(engine) -> dict:
                 industry=row["industry"], name=row["name"],
                 is_reit=row["is_reit"],
                 is_investment_company=row["is_investment_company"],
-                reit_election=row["reit_election"])
+                reit_election=row["reit_election"],
+                tem_receita=row["has_revenue"])
             if reason:
                 status = "excluded"
             elif cid is None:
