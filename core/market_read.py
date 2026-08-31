@@ -576,7 +576,14 @@ _FII_SELECTION_SNAPSHOT_PAGE_SQL = """
 """
 
 _FII_SNAPSHOT_SCHEMA = "fii_selection_inputs.v2"
+# Frescor da vitrine em duas camadas. `MAX_AGE` e o alvo de publicacao: acima
+# dele a tela avisa que o dado envelheceu. `HARD_MAX_AGE` e onde a vitrine
+# deixa de valer. Ate 30/08/2026 havia so um limite, e estourar os 4 dias
+# derrubava a leitura inteira -- os 394 fundos apareciam sem liquidez, sem DY
+# e sem P/VP, e a tela creditava isso aos filtros do usuario. Idade nao e
+# ausencia de dado: vira banda de incerteza, nao portao.
 _FII_SNAPSHOT_MAX_AGE_DAYS = 4
+_FII_SNAPSHOT_HARD_MAX_AGE_DAYS = 30
 _FII_SNAPSHOT_MEMORY_TTL_SECONDS = 900
 _FII_SNAPSHOT_MAX_ATTEMPTS = 2
 _FII_SNAPSHOT_DEADLINE_SECONDS = 12.0
@@ -659,7 +666,7 @@ def _fii_snapshot_integrity_error(frame: pd.DataFrame) -> str | None:
     if as_of.isna().any() or as_of.nunique() != 1:
         return "snapshot_as_of_invalid"
     age_days = (_utcnow().date() - as_of.iloc[0]).days
-    if age_days < 0 or age_days > _FII_SNAPSHOT_MAX_AGE_DAYS:
+    if age_days < 0 or age_days > _FII_SNAPSHOT_HARD_MAX_AGE_DAYS:
         return "snapshot_stale"
 
     for payload, expected in zip(frame["payload_json"], frame["payload_sha256"]):
@@ -863,6 +870,30 @@ def _wait_for_fii_snapshot_job(
     return result
 
 
+def _annotate_fii_snapshot_freshness(frame: pd.DataFrame) -> pd.DataFrame:
+    """Carimba a idade da vitrine nos attrs para a tela poder dizer o motivo.
+
+    Sem isto a tela so sabe que "deu erro" ou que "esta tudo bem"; nao consegue
+    diferenciar dado velho de dado ausente, que foi exatamente a confusao que
+    fez 394 fundos aparecerem como inelegiveis por falta de metrica.
+    """
+    if frame.empty or "as_of_date" not in frame.columns:
+        return frame
+    as_of = pd.to_datetime(frame["as_of_date"], errors="coerce").dt.date.dropna()
+    if as_of.empty:
+        return frame
+    referencia = as_of.iloc[0]
+    idade = (_utcnow().date() - referencia).days
+    frame.attrs.update({
+        "snapshot_as_of": referencia.isoformat(),
+        "snapshot_age_days": int(idade),
+        "snapshot_max_age_days": _FII_SNAPSHOT_MAX_AGE_DAYS,
+        "snapshot_hard_max_age_days": _FII_SNAPSHOT_HARD_MAX_AGE_DAYS,
+        "snapshot_stale_warning": bool(idade > _FII_SNAPSHOT_MAX_AGE_DAYS),
+    })
+    return frame
+
+
 def _load_fii_selection_snapshot(page_size: int = 500) -> pd.DataFrame:
     """Lê a vitrine v2 sob prazo total e fallback verificado de 15 minutos."""
     eng = _fii_snapshot_engine()
@@ -870,22 +901,22 @@ def _load_fii_selection_snapshot(page_size: int = 500) -> pd.DataFrame:
     if not artifact.empty:
         if eng is not None:
             _wait_for_fii_snapshot_job(eng, int(page_size), timeout_seconds=0)
-        return artifact
+        return _annotate_fii_snapshot_freshness(artifact)
     if eng is None:
         fallback = _fresh_fii_snapshot_fallback("database_unavailable", 0)
         if fallback is not None:
-            return fallback
+            return _annotate_fii_snapshot_freshness(fallback)
         frame = pd.DataFrame()
         frame.attrs["load_error"] = "database_unavailable"
         return frame
 
     result = _wait_for_fii_snapshot_job(eng, int(page_size))
     if result is not None:
-        return result
+        return _annotate_fii_snapshot_freshness(result)
 
     fallback = _fresh_fii_snapshot_fallback("snapshot_deadline_exceeded", 0)
     if fallback is not None:
-        return fallback
+        return _annotate_fii_snapshot_freshness(fallback)
     frame = pd.DataFrame()
     frame.attrs.update({
         "load_error": "snapshot_deadline_exceeded",
@@ -906,7 +937,15 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
     if prefer_snapshot and snapshot.attrs.get("load_error"):
         # Falhe de forma explícita: reconstruir dezenas de tabelas após timeout
         # mascara a indisponibilidade e pode manter a tela pendurada por minutos.
-        return snapshot
+        #
+        # Devolver VAZIO, não as linhas cruas. O quadro cru tem uma linha por
+        # fundo e nenhuma coluna de métrica; quem só checasse `.empty` — e havia
+        # quem checasse — lia centenas de fundos sem liquidez, sem DY e sem P/VP
+        # e concluía que eram inelegíveis. Falha de leitura tem que parecer
+        # falha de leitura, não resultado de análise.
+        vazio = pd.DataFrame()
+        vazio.attrs.update(snapshot.attrs)
+        return vazio
     if prefer_snapshot and not snapshot.empty:
         records: list[dict] = []
         seen: set[str] = set()

@@ -183,14 +183,28 @@ def test_fii_snapshot_rejects_expired_memory_fallback(monkeypatch):
 
 def test_fii_snapshot_rejects_stale_or_corrupted_publication(monkeypatch):
     market_read._reset_fii_snapshot_memory_cache()
-    stale = _snapshot_frame(age_days=5)
+    # Acima do alvo de publicação a vitrine ainda vale: o dado envelhece, não
+    # some. Recusá-la aqui apagava as métricas dos 394 fundos e a tela creditava
+    # a perda aos filtros de elegibilidade.
+    envelhecida = _snapshot_frame(age_days=5)
     monkeypatch.setattr(market_read, "_fii_snapshot_engine", lambda: _Engine())
+    monkeypatch.setattr(
+        market_read.pd, "read_sql_query", lambda *args, **kwargs: envelhecida,
+    )
+    result = market_read._load_fii_selection_snapshot()
+    assert "load_error" not in result.attrs
+    assert result.attrs["snapshot_stale_warning"] is True
+    assert result.attrs["snapshot_age_days"] == 5
+
+    market_read._reset_fii_snapshot_memory_cache()
+    stale = _snapshot_frame(age_days=market_read._FII_SNAPSHOT_HARD_MAX_AGE_DAYS + 1)
     monkeypatch.setattr(
         market_read.pd, "read_sql_query", lambda *args, **kwargs: stale,
     )
     result = market_read._load_fii_selection_snapshot()
     assert result.attrs["load_error"] == "snapshot_stale"
 
+    market_read._reset_fii_snapshot_memory_cache()
     corrupted = _snapshot_frame()
     corrupted.loc[0, "payload_sha256"] = "0" * 64
     monkeypatch.setattr(

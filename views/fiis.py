@@ -356,6 +356,107 @@ def _info_card_html(title: str, body: str, *, accent: str = "#4A9EFF") -> str:
             f'<div class="title">{escape(title)}</div>{escape(body)}</div>')
 
 
+_MOTIVO_DE_FALHA = {
+    "snapshot_stale": ("a vitrine publicada passou do prazo de validade",
+                       "Republique a vitrine a partir do armazém local "
+                       "(`python scripts/publish_fii_selection_from_local.py`)."),
+    "snapshot_deadline_exceeded": ("a leitura da vitrine estourou o prazo da tela",
+                                   "Recarregue a página em alguns instantes."),
+    "snapshot_query_failed": ("a consulta à vitrine falhou",
+                              "Recarregue a página em alguns instantes."),
+    "snapshot_worker_failed": ("a leitura da vitrine não retornou",
+                               "Recarregue a página em alguns instantes."),
+    "database_unavailable": ("o banco não respondeu",
+                             "Verifique a conexão e recarregue a página."),
+    "snapshot_hash_invalid": ("a vitrine publicada não confere com o próprio hash",
+                              "Republique a vitrine a partir do armazém local."),
+}
+
+
+def _falha_de_leitura_da_vitrine(inputs: pd.DataFrame) -> bool:
+    """Separa 'não consegui ler o dado' de 'os fundos reprovaram nos filtros'.
+
+    Sem esta separação uma falha de leitura chegava intacta ao motor de
+    elegibilidade: cada fundo sem métrica era reprovado por ausência, e a tela
+    mandava o usuário relaxar filtros que não tinham reprovado ninguém.
+    """
+    erro = inputs.attrs.get("load_error")
+    if not erro and not inputs.empty:
+        return False
+    causa, saida = _MOTIVO_DE_FALHA.get(
+        str(erro or ""), ("o universo de FIIs não pôde ser carregado",
+                          "Recarregue a página em alguns instantes."))
+    idade = inputs.attrs.get("snapshot_age_days")
+    as_of = inputs.attrs.get("snapshot_as_of")
+    detalhe = ""
+    if as_of:
+        detalhe = f" A última publicação é de {as_of}"
+        if idade is not None:
+            detalhe += f", há {int(idade)} dia(s)"
+        detalhe += "."
+    st.markdown(_info_card_html(
+        "Sem carteira: falha ao ler os dados, não reprovação dos fundos",
+        f"A seleção não rodou porque {causa}.{detalhe} Nenhum fundo foi avaliado "
+        f"e nenhum filtro reprovou nada — não relaxe os critérios por causa "
+        f"desta tela. {saida}",
+        accent="#FC5C7D",
+    ), unsafe_allow_html=True)
+    return True
+
+
+def _aviso_de_idade_da_vitrine(inputs: pd.DataFrame) -> None:
+    """Vitrine velha mas válida vira banda declarada, não bloqueio silencioso."""
+    if not inputs.attrs.get("snapshot_stale_warning"):
+        return
+    idade = inputs.attrs.get("snapshot_age_days")
+    alvo = inputs.attrs.get("snapshot_max_age_days")
+    limite = inputs.attrs.get("snapshot_hard_max_age_days")
+    st.markdown(_info_card_html(
+        "Vitrine fora do prazo de publicação",
+        f"Os dados são de {inputs.attrs.get('snapshot_as_of', 'data desconhecida')}, "
+        f"há {idade} dia(s) — o alvo de publicação é {alvo} dia(s) e a vitrine deixa "
+        f"de valer aos {limite}. Fundamentos e carteira dos fundos mudam pouco nesse "
+        f"intervalo; preço, liquidez e P/VP mudam. Trate a seleção como indicativa "
+        f"até a próxima publicação.",
+        accent="#FFB454",
+    ), unsafe_allow_html=True)
+
+
+def _diagnostico_de_exclusao(eligibility: dict, *, expandido: bool) -> None:
+    """Mostra por que cada fundo ficou de fora, em ordem de frequência."""
+    contagem = eligibility.get("exclusion_counts") or {}
+    if not contagem:
+        return
+    ausencias = sum(v for k, v in contagem.items() if "ausente" in str(k))
+    total = eligibility.get("universe_count") or 0
+    with st.expander("Por que os fundos ficaram de fora", expanded=expandido):
+        if total and ausencias >= total:
+            st.warning(
+                "Toda exclusão foi por métrica ausente, e não por reprovação em "
+                "critério. Isso é sintoma de dado faltando, não de filtro apertado: "
+                "relaxar os limites não devolveria nenhum fundo."
+            )
+        st.dataframe(
+            pd.DataFrame(
+                [{"Motivo": motivo, "Fundos": int(qtd)}
+                 for motivo, qtd in contagem.items()]
+            ),
+            hide_index=True, width="stretch",
+        )
+
+
+def _mensagem_de_universo_vazio(eligibility: dict) -> str:
+    """A saída sugerida tem que corresponder ao que de fato reprovou."""
+    contagem = eligibility.get("exclusion_counts") or {}
+    total = eligibility.get("universe_count") or 0
+    ausencias = sum(v for k, v in contagem.items() if "ausente" in str(k))
+    if total and ausencias >= total:
+        return ("Nenhum FII foi avaliado: todos foram excluídos por métrica ausente. "
+                "O problema é de dado, não de filtro — relaxar os critérios não "
+                "mudaria o resultado.")
+    return "Nenhum FII atende à combinação escolhida. Relaxe os filtros de elegibilidade."
+
+
 def _fii_data_health_metrics(
     vitrine: pd.DataFrame,
     ranked: pd.DataFrame,
@@ -1707,8 +1808,13 @@ def _carteira_integrada(preferences: dict):
     ), unsafe_allow_html=True)
 
     inputs = _mr.load_fii_methodology_inputs()
+    if _falha_de_leitura_da_vitrine(inputs):
+        st.session_state.pop("fii_port", None)
+        return None
+
     eligible_rows, eligibility = apply_integrated_eligibility(
         inputs.to_dict("records") if not inputs.empty else [], eligibility_policy)
+    _aviso_de_idade_da_vitrine(inputs)
     st.markdown(_info_card_html(
         "Universo elegível",
         f"{eligibility['eligible_count']} de {eligibility['universe_count']} FIIs passaram "
@@ -1716,11 +1822,12 @@ def _carteira_integrada(preferences: dict):
         "nota neutra.",
         accent="#4A9EFF" if eligible_rows else "#FC5C7D",
     ), unsafe_allow_html=True)
-    # "Diagnóstico dos filtros de elegibilidade" removido: era a contagem de
-    # quem NÃO entrou, e a linha "Universo elegível" acima já dá o total que
-    # importa. A elegibilidade em si não mudou.
+    # A contagem por motivo volta à tela: sem ela, "0 de 394" foi lido como
+    # "todos os fundos são ruins" quando a causa era leitura de dado. Um número
+    # de exclusão sem o motivo não é diagnóstico, é veredito sem processo.
+    _diagnostico_de_exclusao(eligibility, expandido=not eligible_rows)
     if not eligible_rows:
-        st.error("Nenhum FII atende à combinação escolhida. Relaxe os filtros de elegibilidade.")
+        st.error(_mensagem_de_universo_vazio(eligibility))
         st.session_state.pop("fii_port", None)
         return None
 
