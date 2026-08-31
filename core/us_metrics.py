@@ -69,20 +69,36 @@ def cagr(first: Optional[float], last: Optional[float], years: int) -> Optional[
 
 
 def _latest(series: Sequence[dict], field: str) -> Optional[float]:
+    """Ultimo ano com valor para o campo -- e NaN conta como ausencia.
+
+    O `is not None` sozinho nao bastava, e a diferenca nao era teorica. O quadro
+    de pontuacao chega por pandas (`load_scoring_frame` le em lote e faz
+    `to_dict("records")`), onde NULL do Postgres vira `float('nan')`, nao
+    `None`. O dossie chega por `dict(r._mapping)`, onde vira `None`. Com o
+    guarda antigo, o mesmo CIK saia com `ebitda=nan` de um lado e derivado do
+    outro -- e como `nan is None` e falso, TODA derivacao guardada por
+    `is None` (EBITDA, FCL, divida liquida, capital investido, lucro bruto)
+    ficava desligada no caminho que decide a nota.
+
+    O efeito visivel: o portao de balanco quebrado (A-101) nunca disparava no
+    snapshot. Medido em 30/08/2026, 21 empresas saiam `decision_grade` com
+    `impairment_flags` gravado na propria linha -- o verificador e o escritor
+    liam a mesma empresa e discordavam.
+    """
     for row in reversed(series):
-        v = row.get(field)
+        v = _f(row.get(field))
         if v is not None:
-            return float(v)
+            return v
     return None
 
 
 def _series_values(series: Sequence[dict], field: str) -> list[tuple[int, float]]:
     out = []
     for row in series:
-        v = row.get(field)
+        v = _f(row.get(field))          # NaN e ausencia; ver _latest
         y = row.get("fiscal_year")
-        if v is not None and y is not None:
-            out.append((int(y), float(v)))
+        if v is not None and y is not None and y == y:
+            out.append((int(y), v))
     out.sort()
     return out
 
@@ -166,6 +182,17 @@ def compute_company_metrics(
     price, market_cap, shares = _f(price), _f(market_cap), _f(shares)
     revenue     = _latest(income, "revenue")
     gross       = _latest(income, "gross_profit")
+    cogs        = _latest(income, "cost_of_revenue")
+    gross_derived = False
+    if gross is None and revenue is not None and cogs is not None:
+        # Lucro bruto NAO e estimativa aqui: e receita menos custo, por
+        # definicao. Quem tagueia os dois extremos e nao o subtotal deixava a
+        # margem bruta ausente -- e ausencia nao e nota baixa, e queda de
+        # COBERTURA da trilha de Qualidade, que barra a empresa por um numero
+        # que os proprios demonstrativos dela ja continham. Medido no armazem:
+        # 406 empresas cairam assim.
+        gross = revenue - abs(cogs)
+        gross_derived = True
     op_income   = _latest(income, "operating_income")
     ebit        = _latest(income, "ebit") or op_income
     ebitda      = _latest(income, "ebitda")
@@ -282,6 +309,7 @@ def compute_company_metrics(
         "_revenue": revenue, "_net_income": net_income, "_fcf": fcf,
         "_equity": equity, "_net_debt": net_debt, "_market_cap": market_cap,
         "_ebit": ebit, "_ebitda": ebitda, "_ebitda_derived": ebitda_derived,
+        "_gross_derived": gross_derived,
         "_years": len(_series_values(income, "revenue")),
     }
     return m
