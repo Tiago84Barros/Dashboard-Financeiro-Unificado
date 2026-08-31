@@ -151,7 +151,13 @@ SQL_GRAVAR = (
     "  symbol_source = COALESCE(:symbol_source, symbol_source), "
     "  symbol_as_of = COALESCE(CAST(:symbol_as_of AS DATE), symbol_as_of), "
     "  refuted_form = :refuted_form, "
-    "  refuted_date = CAST(:refuted_date AS DATE), "
+    # `refuted_by` nomeia QUAL evidencia derrubou a saida. Esta porta e a da
+    # SEC; a do papel (sucessao de registrante) fica em
+    # scripts/refutar_saidas_us_por_continuidade.py e grava outro valor.
+    "  refuted_by = CASE WHEN :refuted_form IS NULL THEN refuted_by "
+    "                    ELSE 'relatorio_anual_posterior' END, "
+    "  refuted_date = CASE WHEN :refuted_form IS NULL THEN refuted_date "
+    "                      ELSE CAST(:refuted_date AS DATE) END, "
     "  checked_at = now() "
     "WHERE cik = :cik")
 

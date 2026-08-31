@@ -124,3 +124,56 @@ def extrair_trading_symbol(documento: str) -> str | None:
         if simbolo:
             return simbolo
     return None
+
+
+#: Meses de folga depois da saida antes de exigir prova de vida. A saida e
+#: datada em 31/12 do ano da ausencia; um papel que morreu de verdade pode ter
+#: uma ultima barra mensal ainda dentro desse mes.
+FOLGA_MESES = 3
+
+#: Meses antes da saida em que se exige negociacao para aceitar a prova. Sem
+#: isso, um ticker RECICLADO por outra empresa anos depois refutaria a saida
+#: verdadeira do dono anterior -- e o papel reciclado tem justamente um buraco
+#: em volta da data.
+JANELA_ANTES_MESES = 12
+
+
+def _mais(d, meses: int):
+    """Soma meses a uma data sem depender de pandas nem de dateutil."""
+    ano, mes = d.year + (d.month - 1 + meses) // 12, (d.month - 1 + meses) % 12 + 1
+    return d.replace(year=ano, month=mes, day=1)
+
+
+def refuta_por_continuidade(delisted_date, negociacoes) -> dict | None:
+    """Evidencia de vida no PAPEL, quando a evidencia de vida no REGISTRANTE falhou.
+
+    `refuta_saida` procura relatorio anual posterior sob o MESMO CIK, e nunca
+    encontra na reorganizacao societaria: o registrante antigo de fato para de
+    arquivar para sempre. Medido no armazem, das 60 saidas nomeadas que tinham
+    cotacao, 60 seguiam negociando -- BlackRock (CIK 1364742 -> 2012383), Bunge
+    (1144519 -> 1996862), Ferguson (1832433 -> 2011641), Noble (1169055 ->
+    1895262), Apollo (1411494). O CIK morreu; a empresa nao, e o acionista
+    trocou de papel um-para-um sem perder nada. Publicar isso como saida
+    gravaria no backtest uma perda que nunca houve.
+
+    A prova aqui e a do papel, e ela exige CONTINUIDADE, nao so negociacao
+    posterior: cotacao depois da saida E cotacao no ano anterior a ela. Ticker
+    reciclado por outra empresa tem buraco em volta da data e nao passa.
+
+    Assimetrica de proposito: encontrar vida refuta a saida; nao encontrar nao
+    a confirma -- o armazem so tem preco de quem sobreviveu, entao a ausencia
+    de cotacao aqui e ausencia de dado, e nao evidencia de morte.
+    """
+    if delisted_date is None or not negociacoes:
+        return None
+    datas = sorted(d for d in negociacoes if d is not None)
+    if not datas:
+        return None
+    depois = [d for d in datas if d >= _mais(delisted_date, FOLGA_MESES)]
+    if not depois:
+        return None
+    inicio = _mais(delisted_date, -JANELA_ANTES_MESES)
+    antes = [d for d in datas if inicio <= d <= delisted_date]
+    if not antes:
+        return None
+    return {"motivo": "ticker_negociado_apos_saida", "data": depois[0]}
