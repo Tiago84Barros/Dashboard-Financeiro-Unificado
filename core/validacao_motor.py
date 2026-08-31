@@ -391,6 +391,27 @@ def _tem_coluna(conn, tabela: str, coluna: str) -> bool:
         return False
 
 
+# A-159: quanto do registro de saidas o painel precisa consumir para que o
+# portao possa dizer que o vies foi corrigido.
+#
+# O criterio anterior era `if no_painel:` -- qualquer numero acima de zero
+# aprovava. Enquanto a tabela so existia no armazem local isso nunca aparecia,
+# porque a resposta em producao era sempre None. Em 31/08/2026, no dia em que
+# `publish_us_delistings --apply` levou as 12.107 linhas para a vitrine, o
+# portao passou a aprovar com SETE saidas de 11.793 (0,06%) -- e a aprovacao
+# significaria que o backtest americano deixou de medir sobreviventes. E o
+# `gate-que-so-dava-false` pelo avesso: o criterio inalcancavel nunca foi
+# revisto, e no dia em que a fonte chegou ele promoveu a base inteira.
+#
+# O piso e uma escolha declarada, nao uma medida: abaixo dele o portao reprova
+# NOMEANDO a fracao, que e o numero de que o leitor precisa. Sete de 11.793 nao
+# e um comeco de correcao -- 1.882 das 1.889 saidas com simbolo resolvido nao
+# tem nenhuma linha em `score_vintages`, porque as safras sao construidas a
+# partir do universo vivo. Registrar a saida nao a coloca no painel; e o painel
+# que precisa ser reconstruido incluindo quem saiu.
+_PISO_SAIDAS_NO_PAINEL = 0.10
+
+
 def _registro_de_saidas_us(engine=None) -> tuple[int, int] | None:
     """(saidas registradas, quantas dessas o painel de backtest enxerga).
 
@@ -458,11 +479,18 @@ def _deslistadas_us(engine=None) -> Portao:
     reg = _registro_de_saidas_us(engine)
     if reg is not None and reg[0]:
         total, no_painel = reg
-        if no_painel:
+        fracao = no_painel / total
+        if fracao >= _PISO_SAIDAS_NO_PAINEL:
             return Portao(
                 "Universo de deslistadas", True,
-                f"{no_painel} das {total} saidas registradas entram no painel "
-                f"de backtest", dimensao=DIM_SAIDAS)
+                f"{no_painel} das {total} saidas registradas ({fracao:.0%}) "
+                f"entram no painel de backtest", dimensao=DIM_SAIDAS)
+        if no_painel:
+            return Portao(
+                "Universo de deslistadas", False,
+                f"so {no_painel} das {total} saidas registradas ({fracao:.1%}) "
+                f"chegam ao painel: o backtest segue medindo, na pratica, um "
+                f"universo sobrevivente", dimensao=DIM_SAIDAS)
         return Portao(
             "Universo de deslistadas", False,
             f"{total} saidas registradas em market_us.delistings, mas nenhuma "
