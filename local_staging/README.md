@@ -95,3 +95,50 @@ apertado, publique com menos history:
 ```powershell
 python scripts/sync_docs_to_supabase.py --per-ticker 15 --apply
 ```
+
+---
+
+## Republicação diária da vitrine de FIIs
+
+A vitrine de FIIs tem prazo de validade e a publicação **precisa rodar nesta
+máquina**: o armazém local (Docker, porta 5433) não é alcançável pelo GitHub
+Actions, então não existe workflow remoto que substitua isto.
+
+Deixar envelhecer não é inofensivo. Em 31/08/2026 a vitrine chegou a 5 dias, a
+leitura foi recusada e a tela de Seleção de FIIs reprovou os 394 fundos por
+métrica ausente, creditando a falha aos filtros de elegibilidade (PR #190). O
+código agora falha de forma visível, mas o remédio é a vitrine não vencer.
+
+Tarefa agendada no Windows — **DFU - Republicar vitrine de FIIs**, diária às
+19:30 (depois do fechamento da B3), com `StartWhenAvailable` para recuperar o
+dia caso o computador esteja desligado no horário.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\republicar_vitrine_fii_diario.ps1
+```
+
+O runner sobe o container se estiver parado, espera ficar saudável, publica e
+**confere o resultado pelo mesmo caminho que a tela usa** — publicar sem
+verificar seria repetir o defeito de origem. Log em
+`local_staging/logs/republicacao_fii.log` (stderr em `.stderr.log`).
+
+Para conferir a vitrine a qualquer momento, sem republicar:
+
+```bash
+python scripts/verificar_frescor_vitrine_fii.py --max-idade-dias 4
+```
+
+Sai com código 1 quando a vitrine não pode ser lida, vem vazia, ou perde as
+colunas que a elegibilidade consulta — a checagem é pelas **colunas de
+decisão**, não por `.empty`: foi um quadro cheio de linhas e vazio de métricas
+que reprovou os 394 fundos.
+
+Gerenciar a tarefa:
+
+```powershell
+Get-ScheduledTask -TaskName "DFU - Republicar vitrine de FIIs"
+Start-ScheduledTask -TaskName "DFU - Republicar vitrine de FIIs"   # rodar agora
+Disable-ScheduledTask -TaskName "DFU - Republicar vitrine de FIIs" # suspender
+```
+
+As vitrines de B3 e EUA continuam manuais; só a de FIIs tem portão de idade.
