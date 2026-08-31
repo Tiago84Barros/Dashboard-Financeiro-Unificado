@@ -24,6 +24,7 @@ from sqlalchemy import bindparam, text
 
 from core import us_pit
 from core.us_metrics import compute_company_metrics
+from core.us_primeira_negociacao import ja_negociava
 from core.us_score import score_cross_section
 from data_pipeline.us.edgar_facts import (
     derivar_balance,
@@ -193,7 +194,13 @@ def compute_score_history(engine, as_of_dates: Iterable[date], *,
                 cid = int(c["id"])
                 first_trade = c.get("first_trade_date")
                 delisted = c.get("delisted_date")
-                if pd.notna(first_trade) and pd.to_datetime(first_trade).date() > as_of:
+                # `ja_negociava` responde True para NULL de proposito: duvida
+                # nao exclui. O portao so passou a valer em 0.7.2 -- ate ali a
+                # coluna estava NULL nas 7.654 linhas e ~10% de cada safra era
+                # empresa que ainda nao havia estreado na data.
+                if not ja_negociava(
+                        pd.to_datetime(first_trade).date()
+                        if pd.notna(first_trade) else None, as_of):
                     continue
                 if pd.notna(delisted) and pd.to_datetime(delisted).date() < as_of:
                     continue

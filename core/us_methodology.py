@@ -53,7 +53,21 @@ US_SCHEMA_VERSION = 1
 # decision_grade 1.061 -> 1.062. O ganho e outro e e honesto: screen_grade
 # 388 -> 373, cobertura media 77,7 -> 80,4, confianca media 80,3 -> 82,2.
 # 1.218 empresas carregavam pelo menos uma razao indefinida (2.163 no total).
-US_FUNDAMENTAL_SCORE_VERSION = "0.7.1"
+# 0.7.2 (2026-08-31): o painel PIT deixa de pontuar empresa que ainda nao
+# existia na data. O portao de estreia sempre esteve escrito em
+# scoring_history, mas lia `market_us.assets.first_trade_date` -- NULL nas
+# 7.654 linhas, porque nenhum passo do projeto escrevia nessa coluna. Portao
+# sem escritor e codigo morto com cara de protecao. A demonstracao anual de um
+# ano pre-IPO chega ao EDGAR junto do S-1; sem `filed_at` ela cai na regra
+# antiga (fim do periodo mais folga) e entra na safra. Medido antes da
+# correcao, sobre as 16 safras da 0.7.1: 2.695 das 23.522 linhas -- 11,5% --
+# eram empresa que ainda nao havia negociado na data (20 de 163 em 2010, 205
+# de 2.354 em 2025). Como o score e por RANK, cada
+# intrusa deslocava a posicao de todas as outras. `first_trade_date` passa a
+# ser derivada da primeira barra observada em prices_monthly (7.577 de 7.654
+# ativos); onde nao ha serie, continua NULL e NAO exclui ninguem -- nao saber
+# quando o papel estreou nao e evidencia de que ele nao existia.
+US_FUNDAMENTAL_SCORE_VERSION = "0.7.2"
 
 # Score de assimetria da aba "Empresas Fora da Curva".
 US_ASYMMETRY_SCORE_VERSION = "0.1.0"
