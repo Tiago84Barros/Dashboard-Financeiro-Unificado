@@ -29,8 +29,12 @@ FACTOR_TRACKS: dict[str, list[str]] = {
     "quality": ["gross_margin", "operating_margin", "net_margin", "fcf_margin",
                 "cash_conversion", "roe", "roa", "sbc_to_revenue",
                 "fcf_ex_sbc_margin"],
-    "growth": ["revenue_cagr_3y", "revenue_cagr_5y", "op_income_cagr_3y",
-               "eps_cagr_3y", "fcf_cagr_3y"],
+    # `*_growth_3y` sao taxas SIMETRICAS, nao CAGR (core/us_metrics.py). O CAGR
+    # nao e definido com base ou ponta <= 0, e devolvia None para a maioria das
+    # empresas -- prejuizo persistente entrava aqui como falta de dado, o que
+    # derruba a cobertura da trilha em vez de ranquear a empresa por baixo.
+    "growth": ["revenue_cagr_3y", "revenue_cagr_5y", "op_income_growth_3y",
+               "eps_growth_3y", "fcf_growth_3y"],
     "solidity": ["net_debt_ebitda", "interest_coverage", "current_ratio",
                  "debt_to_equity"],
     "capital_efficiency": ["roic"],
