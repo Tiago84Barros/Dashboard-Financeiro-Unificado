@@ -59,10 +59,26 @@ def _exec_many(conn, table: str, rows: list[dict], conflict: Sequence[str],
                update: Optional[Sequence[str]] = None) -> int:
     if not rows:
         return 0
-    columns = list(rows[0].keys())
+    # A-161: as colunas sao a UNIAO das chaves, nao as da primeira linha.
+    # As linhas nao vem homogeneas -- `filed_at` so existe onde a SEC datou o
+    # arquivamento --, e decidir pela primeira falhava dos dois lados: primeira
+    # linha SEM a chave levantava InvalidRequestError e abortava a empresa
+    # inteira; primeira linha COM a chave e as demais sem gravava a coluna
+    # apenas para algumas, sem erro. O segundo caso e o perigoso: some do INSERT
+    # e ninguem ve. A chave que falta vira NULL explicito -- nao herda o valor
+    # antigo de proposito, porque preencher lacuna sem nunca contradizer e como
+    # dado errado sobrevive a uma releitura correta.
+    columns: list[str] = []
+    vistas: set[str] = set()
+    for r in rows:
+        for c in r:
+            if c not in vistas:
+                vistas.add(c)
+                columns.append(c)
+    payload = [{c: r.get(c) for c in columns} for r in rows]
     sql = build_upsert(table, columns, conflict, update)
-    conn.execute(text(sql), rows)
-    return len(rows)
+    conn.execute(text(sql), payload)
+    return len(payload)
 
 
 # ── Empresa / ativo (identidade) ──────────────────────────────────────────────
