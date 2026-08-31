@@ -186,17 +186,53 @@ def test_empresa_estruturalmente_comprometida_nunca_e_decision_grade():
     Anular as razões sem mais nada deixava a empresa em pior situação passando
     por "cobertura um pouco menor" — 5 métricas a menos de 22 ainda davam 84 de
     confiança e selo decision_grade.
+
+    O invariante é o mesmo; o mecanismo mudou duas vezes. Em 0.7.0 quem segurava
+    era a marca de balanço quebrado (A-101). Desde 0.8.0 (A-160) quem segura é o
+    piso de RESPONDIBILIDADE, e ele mede a coisa mais direta: das 4 métricas de
+    Solidez, patrimônio negativo anula `debt_to_equity` e EBITDA não positivo
+    anula `net_debt_ebitda` — sobram 2 de 4, metade, e metade não é maioria.
+
+    O fixture teve de mudar junto. Ele marcava `impairment_flags` sem marcar
+    `nm_metrics`, combinação que `compute_company_metrics` nunca produz: as duas
+    saem do mesmo denominador medido. Testar o portão contra uma linha que a
+    produção não gera era testar outra coisa.
     """
     df = _us_universo()
     df["impairment_flags"] = [() for _ in range(len(df))]
-    for coluna in ("roe", "roic", "cash_conversion", "net_debt_ebitda",
-                   "debt_to_equity"):
+    df["nm_metrics"] = [() for _ in range(len(df))]
+    anuladas = ("roe", "roic", "cash_conversion", "net_debt_ebitda",
+                "debt_to_equity")
+    for coluna in anuladas:
         df.loc[df["symbol"] == "PREJU", coluna] = None
-    df.at[df.index[df["symbol"] == "PREJU"][0], "impairment_flags"] = (
-        "patrimonio_liquido_negativo", "ebitda_nao_positivo")
+    i = df.index[df["symbol"] == "PREJU"][0]
+    df.at[i, "impairment_flags"] = ("patrimonio_liquido_negativo",
+                                    "ebitda_nao_positivo")
+    df.at[i, "nm_metrics"] = anuladas
     scored = sc.score_cross_section(df, min_group=2).set_index("symbol")
     assert scored.loc["PREJU", "score_status"] != "decision_grade"
+    assert list(scored.loc["PREJU", "unanswerable_tracks"]) == ["solidity"]
     assert scored.loc["BARATA", "score_status"] == "decision_grade"
+
+
+def test_patrimonio_negativo_sozinho_nao_tira_a_opiniao():
+    """O outro lado do mesmo piso, e a razão de A-160 existir.
+
+    Patrimônio negativo por recompra acumulada anula `debt_to_equity` e mais
+    nada: sobram 3 das 4 métricas de Solidez, maioria estrita, trilha julgada.
+    É o caso de Lowe's, Altria e Cardinal Health -- cobertura 100%, confiança
+    100% -- que o portão antigo deixava sem opinião nenhuma.
+    """
+    df = _us_universo()
+    df["impairment_flags"] = [() for _ in range(len(df))]
+    df["nm_metrics"] = [() for _ in range(len(df))]
+    i = df.index[df["symbol"] == "PREJU"][0]
+    df.loc[df["symbol"] == "PREJU", "debt_to_equity"] = None
+    df.at[i, "impairment_flags"] = ("patrimonio_liquido_negativo",)
+    df.at[i, "nm_metrics"] = ("debt_to_equity",)
+    scored = sc.score_cross_section(df, min_group=2).set_index("symbol")
+    assert scored.loc["PREJU", "answerability_solidity"] == 75.0
+    assert scored.loc["PREJU", "score_status"] == "decision_grade"
 
 
 def test_coluna_de_comprometimento_ausente_nao_quebra_o_score():

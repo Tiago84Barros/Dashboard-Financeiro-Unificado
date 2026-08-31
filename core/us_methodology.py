@@ -67,7 +67,29 @@ US_SCHEMA_VERSION = 1
 # ser derivada da primeira barra observada em prices_monthly (7.577 de 7.654
 # ativos); onde nao ha serie, continua NULL e NAO exclui ninguem -- nao saber
 # quando o papel estreou nao e evidencia de que ele nao existia.
-US_FUNDAMENTAL_SCORE_VERSION = "0.7.2"
+# 0.8.0 (2026-08-31): a marca de balanco quebrado deixa de ser eliminatoria, e
+# entra no lugar um piso de RESPONDIBILIDADE. A marca nasceu em A-101 para
+# impedir que razao anulada chegasse ao score como ausencia -- caminho que 0.7.1
+# fechou na raiz, tirando a indefinicao do numerador E do denominador da
+# cobertura. O portao sobreviveu ao proprio motivo e virou outra coisa: travava
+# 1.023 das 2.618 empresas da vitrine, entre elas Lowe's, Altria, Cardinal
+# Health e Bath & Body Works com cobertura 100% e confianca 100%. Patrimonio
+# negativo ali e estrutura de capital escolhida (recompra acumulada), nao
+# defeito de dado; negar opiniao sobre a Lowe's era o erro de A-101 com o sinal
+# trocado. A marca continua saindo na tela e no prompt como DIVULGACAO --
+# multiplo sobre base negativa nao significa nada --, e nunca mais como motivo
+# para nao ter opiniao.
+# O que entra no lugar fecha um buraco real de 0.7.1: `coverage` responde "das
+# perguntas RESPONDIVEIS, quantas foram respondidas", entao a trilha em que
+# sobrou uma unica pergunta respondivel, respondida, marca 100%. E "quem
+# pergunta menos tira nota maior" uma camada abaixo. `answerability` mede a
+# fracao das metricas que a METODOLOGIA define e a empresa consegue ter, e o
+# piso e a maioria estrita: trilha julgada pela minoria das proprias perguntas
+# nao foi julgada. O piso morde -- 83 empresas tem alguma trilha critica em 50%,
+# 68 delas passariam por todos os outros criterios.
+# Efeito medido sobre as mesmas 2.618 empresas: decision_grade 1.062 -> 1.727,
+# abrangencia dos EUA 41% -> 66%.
+US_FUNDAMENTAL_SCORE_VERSION = "0.8.0"
 
 # Score de assimetria da aba "Empresas Fora da Curva".
 US_ASYMMETRY_SCORE_VERSION = "0.1.0"

@@ -37,6 +37,7 @@ from core.market_companies import (
 )
 from core.portfolio_report_us import (
     GRAU_LABEL,
+    MARCA_LABEL,
     analyze_us_portfolio_report,
     generate_company_us_report,
     grau_de_confianca,
@@ -474,7 +475,12 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
     # O selo do título muda com o MOTIVO, não só com o grau: chamar de
     # "cobertura parcial" uma empresa de dados completos e balanço quebrado
     # anuncia dúvida onde a análise tem veredito.
-    if motivo["tipo"] in ("balanco", "ambos"):
+    #
+    # Desde 0.8.0 a marca de balanço não derruba mais o selo, e por isso ela
+    # aparece no título INDEPENDENTE do grau -- inclusive em `decision_grade`.
+    # Quem bate o olho na lista precisa saber que o P/VP daquela linha não
+    # significa nada, e isso continua verdadeiro quando a opinião é firme.
+    if motivo["marcas"]:
         selo_grau = " · 🩹 balanço quebrado"
     else:
         selo_grau = {"research_grade": " · ⚠️ cobertura parcial",
@@ -484,12 +490,17 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
         f"{icone} {tk}  —  {faixa}  •  {w_novo*100:.1f}%  [{persp.upper()}]{selo_grau}",
         expanded=False,
     ):
+        if motivo["marcas"]:
+            legiveis = ", ".join(MARCA_LABEL.get(m, m) for m in motivo["marcas"])
+            st.warning(
+                f"**Balanço estruturalmente quebrado:** {legiveis}. O dado está "
+                "completo — isto é veredito sobre a empresa, não lacuna. "
+                "Múltiplo sobre base negativa não significa nada aqui.",
+                icon="🩹")
         if grau and grau != "decision_grade":
-            cabecalho = ("**Balanço estruturalmente quebrado.** "
-                         if motivo["tipo"] in ("balanco", "ambos")
-                         else f"**Cobertura de dados: {GRAU_LABEL.get(grau, grau)}.** ")
-            st.warning(cabecalho + motivo["texto"],
-                       icon="🩹" if motivo["tipo"] in ("balanco", "ambos") else "⚠️")
+            st.warning(
+                f"**Cobertura de dados: {GRAU_LABEL.get(grau, grau)}.** "
+                + motivo["texto"], icon="⚠️")
 
         resumo = an.get("resumo", "")
         if resumo:
@@ -789,12 +800,17 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 )
 
         grau, _rotulo, confianca_score = grau_de_confianca(linha_score)
-        faltando, marcas = [], []
+        faltando, marcas, mudas = [], [], []
         if linha_score is not None:
             bruto = linha_score.get("critical_missing") if hasattr(linha_score, "get") else None
             faltando = list(bruto) if bruto is not None else []
             bruto_m = linha_score.get("impairment_flags") if hasattr(linha_score, "get") else None
             marcas = list(bruto_m) if bruto_m is not None else []
+            # Vitrine antiga não tem a coluna; ausência vira lista vazia e o
+            # item continua sendo montado -- drift de schema já esvaziou esta
+            # tela uma vez, e não pode voltar a esvaziar por uma coluna nova.
+            bruto_u = linha_score.get("unanswerable_tracks") if hasattr(linha_score, "get") else None
+            mudas = list(bruto_u) if bruto_u is not None else []
         items_analisados.append({
             "ticker": tk,
             "nome": nome,
@@ -812,6 +828,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
             "score_confidence": confianca_score,
             "critical_missing": faltando,
             "impairment_flags": marcas,
+            "unanswerable_tracks": mudas,
         })
         progresso.progress((idx + 1) / len(items), text=f"Analisado: {tk}")
 

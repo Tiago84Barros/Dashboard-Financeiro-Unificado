@@ -42,13 +42,19 @@ def test_sem_colisao_nada_muda():
     assert list(_concat_sem_colidir([a, b]).columns) == ["symbol", "roe"]
 
 
-def test_o_texto_da_tela_volta_a_ser_o_rotulo_e_nao_o_nome_cru():
-    """O sintoma visível é aqui: sem a correção, a marca chegava aninhada."""
+def test_a_marca_chega_plana_e_nao_aninhada():
+    """O sintoma visível é aqui: sem a correção, a marca chegava aninhada.
+
+    Desde 0.8.0 a marca não compõe mais o `texto` do motivo (ela é divulgação,
+    não explicação do selo ausente), então a asserção vale sobre a lista que a
+    tela formata — que é onde o eco duplicado se manifestava.
+    """
     fisica = pd.DataFrame({"critical_missing": [[]],
                            "impairment_flags": [["patrimonio_liquido_negativo"]]})
     do_json = pd.DataFrame({"impairment_flags": [["patrimonio_liquido_negativo"]]})
     linha = _concat_sem_colidir([fisica, do_json]).iloc[0]
-    texto = motivo_do_grau({"critical_missing": list(linha["critical_missing"]),
-                            "impairment_flags": list(linha["impairment_flags"])})["texto"]
-    assert "patrimônio líquido negativo" in texto
-    assert "[" not in texto
+    marcas = motivo_do_grau(
+        {"critical_missing": list(linha["critical_missing"]),
+         "impairment_flags": list(linha["impairment_flags"])})["marcas"]
+    assert marcas == ["patrimonio_liquido_negativo"]
+    assert "[" not in marcas[0]

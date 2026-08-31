@@ -87,6 +87,25 @@ CRITICAL_TRACK_MIN_COVERAGE = {
     "valuation": 0.50,
 }
 
+# A-160: quantas das perguntas da trilha ainda PODEM ser feitas.
+#
+# `coverage` responde "das perguntas respondíveis, quantas foram respondidas" —
+# a razão indefinida sai do numerador e do denominador desde 0.7.1, e isso está
+# certo. Mas sozinha ela deixa um buraco: a trilha em que sobrou UMA pergunta
+# respondível, e ela foi respondida, marca cobertura de 100%. É o mesmo defeito
+# de "quem pergunta menos tira nota maior", uma camada abaixo — no nível da
+# métrica em vez do motor.
+#
+# Respondibilidade é a fração das métricas DEFINIDAS pela metodologia que a
+# empresa consegue ter. O piso é a maioria estrita: uma trilha avaliada pela
+# minoria das próprias perguntas não foi avaliada. Com as 4 métricas de
+# Solidez, 2 respondíveis reprovam e 3 passam.
+#
+# O piso morde de verdade — 83 das 2.618 empresas da vitrine de 31/08/2026 têm
+# alguma trilha crítica em 50%, e 68 delas passariam por todos os outros
+# critérios. Um piso que não reprova ninguém seria carimbo, não portão.
+PISO_RESPONDIBILIDADE_CRITICA = 0.5
+
 
 def _nm_mask(df: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
     """Quais métricas da linha são INDEFINIDAS, e não ausentes.
@@ -114,21 +133,21 @@ def _nm_mask(df: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
     return vazio
 
 
-def _impairment_flags_at(frame: pd.DataFrame, i: int) -> tuple[str, ...]:
-    """Marcas de balanço quebrado da linha, tolerando a coluna ausente.
+def _answerability(df: pd.DataFrame, metrics: list[str]) -> pd.Series:
+    """Fração das métricas da trilha que a empresa consegue ter, 0–1.
 
-    A vitrine publicada pode estar num snapshot anterior à coluna (já houve
-    drift de schema aqui). Sem a coluna o comportamento é o de antes; com ela,
-    o grau de decisão é travado.
+    Diferente de `coverage`: o denominador aqui é o que a METODOLOGIA define,
+    não o que a empresa conseguiu definir. Métrica que a metodologia pede e a
+    vitrine nem publica conta como não respondível — a pergunta continua sem
+    resposta, e omiti-la do denominador repetiria o erro que este piso corrige.
     """
-    if "impairment_flags" not in frame.columns:
-        return ()
-    valor = frame.at[i, "impairment_flags"]
-    if valor is None or isinstance(valor, float):  # NaN
-        return ()
-    if isinstance(valor, str):
-        return (valor,) if valor else ()
-    return tuple(valor)
+    if not metrics:
+        return pd.Series(0.0, index=df.index)
+    presentes = [m for m in metrics if m in df.columns]
+    if not presentes:
+        return pd.Series(0.0, index=df.index)
+    nm = _nm_mask(df, presentes)
+    return (~nm).sum(axis=1).div(len(metrics))
 
 
 # A-139: `sector` na vitrine EUA guarda a DESCRIÇÃO SIC do formulário da SEC
@@ -256,6 +275,8 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
         track_scores[track] = NEUTRAL + (track_scores[track] - NEUTRAL) * reliability
         result[f"score_{track}"] = (track_scores[track] * 100).round(1)
         result[f"coverage_{track}"] = (cov * 100).round(0)
+        result[f"answerability_{track}"] = (
+            _answerability(df, metrics) * 100).round(0)
 
     # score final: soma ponderada por setor (pesos por linha, pois variam)
     def _row_score(i: int) -> float:
@@ -275,6 +296,7 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
     else:
         result["coverage"] = 0.0
     critical_missing: list[list[str]] = []
+    unanswerable: list[list[str]] = []
     confidence: list[float] = []
     statuses: list[str] = []
     for i in range(len(result)):
@@ -283,6 +305,12 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
             if float(result.at[i, f"coverage_{track}"] or 0) / 100.0 < minimum
         ]
         critical_missing.append(missing)
+        mudas = [
+            track for track in CRITICAL_TRACK_MIN_COVERAGE
+            if float(result.at[i, f"answerability_{track}"] or 0) / 100.0
+            <= PISO_RESPONDIBILIDADE_CRITICA
+        ]
+        unanswerable.append(mudas)
         overall = float(result.at[i, "coverage"] or 0) / 100.0
         critical_ratio = 1.0 - len(missing) / len(CRITICAL_TRACK_MIN_COVERAGE)
         sector = df.at[i, "sector"] if "sector" in df.columns else None
@@ -290,13 +318,40 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
         conf *= _sector_confidence_penalty(sector)
         conf = round(max(0.0, min(100.0, conf)), 1)
         confidence.append(conf)
-        # Patrimônio negativo, EBITDA não positivo ou capital investido negativo
-        # anulam várias razões de uma vez (A-101). Sem esta trava, a empresa em
-        # pior situação chega aqui apenas como "cobertura um pouco menor" e sai
-        # com selo de decisão. Balanço quebrado não é decision_grade.
-        if _impairment_flags_at(result, i):
-            statuses.append("screen_grade" if conf < 60.0 else "research_grade")
-        elif conf >= 75.0 and not missing:
+        # A-160: a marca de balanço estruturalmente quebrado deixa de ser
+        # eliminatória por si só.
+        #
+        # A trava nasceu em A-101 contra um risco real: patrimônio negativo,
+        # EBITDA não positivo ou capital investido negativo anulam várias razões
+        # de uma vez, e naquela versão a empresa em pior situação chegava aqui
+        # apenas como "cobertura um pouco menor". Duas correções depois esse
+        # caminho não existe mais — 0.7.1 tirou a razão indefinida do numerador
+        # E do denominador da cobertura, e `mudas` abaixo barra a trilha que
+        # ficou sem a maioria das próprias perguntas.
+        #
+        # O que a trava passou a fazer não era o que ela foi escrita para
+        # fazer. Ela bloqueava 1.023 das 2.618 empresas da vitrine de
+        # 31/08/2026 — entre elas Lowe's, Altria, Cardinal Health e Bath & Body
+        # Works, todas com cobertura 100% e confiança 100%. Patrimônio líquido
+        # negativo nessas empresas é estrutura de capital escolhida (recompra
+        # acumulada acima do lucro retido), não avaria de dado nem sinal de
+        # insolvência. Recusar opinião sobre a Lowe's porque ela recomprou
+        # ações é erro de categoria: o portão responde "consigo sustentar uma
+        # recomendação?" e a resposta ali é sim.
+        #
+        # As 710 empresas de EBITDA não positivo também não são indecidíveis:
+        # os múltiplos de valor são ranqueados pelo YIELD recíproco, que é
+        # monótono através do zero, e as margens negativas ranqueiam no fundo.
+        # A empresa deficitária tem de sair com nota BAIXA, não sem nota —
+        # excluí-la do universo decidível devolvia ao usuário um cross-section
+        # só de lucrativas, enquanto a evidência de que o score ordena (Rank-IC
+        # em 16 safras) foi medida no cross-section inteiro, deficitárias
+        # incluídas. O painel media um universo e a tela agia sobre outro.
+        #
+        # A marca continua gravada e continua sendo exibida: é informação
+        # material sobre a empresa. Ela deixou de ser motivo para o app não ter
+        # opinião; nunca deixou de ser motivo para o usuário olhar.
+        if conf >= 75.0 and not missing and not mudas:
             statuses.append("decision_grade")
         elif conf >= 60.0:
             statuses.append("research_grade")
@@ -305,6 +360,7 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
     result["score_confidence"] = confidence
     result["score_status"] = statuses
     result["critical_missing"] = critical_missing
+    result["unanswerable_tracks"] = unanswerable
     return result.sort_values("score", ascending=False).reset_index(drop=True)
 
 
