@@ -189,6 +189,43 @@ def _gravar_em_lotes(destino, sql: str, linhas: list[tuple], *,
     return gravadas
 
 
+def _remover_sobras(remoto, safras: list[tuple], versao: str) -> int:
+    """Apaga da vitrine a safra que o local não tem mais.
+
+    A publicação é upsert e, até 31/08/2026, só escrevia. Empresa que saía do
+    universo -- por exclusão de instrumento, por reclassificação, por qualquer
+    motivo -- deixava as linhas antigas na vitrine para sempre, e o app publicado
+    seguia rankeando com elas. Foi assim que FGN (F&G Annuities, `excluded` no
+    local por não ser ação ordinária) continuou com as safras de 2024 e 2025 no
+    ar depois de sair do universo.
+
+    Duas linhas nesse dia, mas o mecanismo não tem teto e trabalha na direção
+    errada: quem some do local é justamente quem um filtro decidiu tirar, e a
+    vitrine desfazia a decisão em silêncio.
+
+    A conferência antiga também não pegava, porque comparava `remotas < local` --
+    e sobra é o caso em que remoto é MAIOR. Assimetria nessa checagem é cegueira
+    para metade dos defeitos possíveis; agora ela exige igualdade.
+    """
+    locais = {(linha[0], _iso(linha[2])) for linha in safras}
+    with remoto.connect() as conn:
+        remotas = [(r[0], _iso(r[1])) for r in conn.execute(text(
+            "SELECT symbol, as_of_date FROM market_us.score_vintages "
+            "WHERE score_version = :v AND track = :t"),
+            {"v": versao, "t": TRACK})]
+    sobras = [k for k in remotas if k not in locais]
+    if not sobras:
+        return 0
+    with remoto.begin() as conn:
+        for sym, data in sobras:
+            conn.execute(text(
+                "DELETE FROM market_us.score_vintages "
+                "WHERE symbol = :s AND as_of_date = :d "
+                "  AND score_version = :v AND track = :t"),
+                {"s": sym, "d": data, "v": versao, "t": TRACK})
+    return len(sobras)
+
+
 def publicar(*, local, remoto, aplicar: bool, versao: str | None = None) -> dict:
     versao = versao or versao_corrente()
     with local.connect() as conn:
@@ -236,6 +273,8 @@ def publicar(*, local, remoto, aplicar: bool, versao: str | None = None) -> dict
         remoto, sql_p, precos, rotulo="preços")
     resumo["gravado"] = True
 
+    resumo["safras_removidas"] = _remover_sobras(remoto, safras, versao)
+
     with remoto.connect() as conn:
         remotas = int(conn.execute(text(
             "SELECT count(*) FROM market_us.score_vintages "
@@ -245,9 +284,9 @@ def publicar(*, local, remoto, aplicar: bool, versao: str | None = None) -> dict
     # Conferência contra o local, não contra o que este processo julga ter
     # gravado: é a única checagem que pega gravação parcial de uma execução
     # anterior interrompida.
-    if remotas < len(safras):
+    if remotas != len(safras):
         resumo["ok"] = False
-        resumo["motivo"] = (f"publicação incompleta: local={len(safras)}, "
+        resumo["motivo"] = (f"vitrine diverge do local: local={len(safras)}, "
                             f"vitrine={remotas}")
     return resumo
 
