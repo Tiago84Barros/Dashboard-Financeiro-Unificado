@@ -50,7 +50,7 @@ import json
 import random
 import sys
 import urllib.request
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,26 +64,24 @@ URL_IDX = "https://www.sec.gov/Archives/edgar/full-index/{ano}/QTR{q}/form.idx"
 URL_FACTS = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
 URL_SUB = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
 
-# Proxy de fusao/fechamento de capital arquivado pela PROPRIA empresa comprada.
-FORMAS_FUSAO = ("DEFM14A", "PREM14A", "DEFM14C", "PREM14C", "SC 13E3")
-# Recomendacao de resposta a oferta hostil: quem arquiva e o ALVO.
-FORMAS_ALVO = ("SC 14D9",)
-ITEM_FALENCIA = "1.03"       # 8-K: pedido de falencia ou concordata
-ITEM_AQUISICAO = "2.01"      # 8-K: conclusao de aquisicao ou alienacao de ativos
-# Janela final da historia de arquivamento em que um 2.01 fala da PROPRIA
-# empresa sendo comprada, e nao dela comprando algo no curso normal.
-DIAS_FIM = 365
+# Formas, itens e janela vivem em `core.us_saida_causa`: a mesma decisao passou
+# a ser tomada tambem ao classificar as saidas ja ingeridas, e regra de negocio
+# duplicada em dois scripts diverge no dia em que so um deles e corrigido.
+from core.us_saida_causa import (  # noqa: E402
+    ADQUIRIDA,
+    DIAS_FIM,
+    INDEFINIDO,
+    SUMIU,
+    classificar_pacote,
+    itens_de_8k,
+)
 
 # Abaixo disto a AUC e ruido: a falencia comprovada e evento raro (3 em 60
 # saidas amostradas), e uma amostra pequena de casos raros produz numero
 # convincente e errado.
 MINIMO_SUMIU = 30
 
-SOBREVIVEU, ADQUIRIDA, SUMIU = "sobreviveu", "adquirida", "sumiu"
-# Saida sem evidencia de qual foi: fica FORA da comparacao. Empurra-la para o
-# grupo ruim foi o erro que inverteu a primeira medicao -- 34 de 60 saidas
-# amostradas carregam 8-K 2.01 e so 3 carregam 1.03.
-INDEFINIDO = "indefinido"
+SOBREVIVEU = "sobreviveu"
 
 
 def _get(url: str, timeout: int = 90) -> bytes:
@@ -189,31 +187,8 @@ def _completar_submissions(pacote: dict, cik: int) -> None:
 
 
 def _itens(recentes: dict) -> dict:
-    """Itens de 8-K, separando os do fim da historia dos do curso normal.
-
-    O item e o que discrimina: o tipo de formulario `8-K` cobre desde troca de
-    auditor ate falencia. `2.01` no meio da vida costuma ser a empresa comprando
-    algo; `2.01` nos ultimos meses de arquivamento e ela sendo comprada.
-    """
-    datas = [str(d) for d in (recentes.get("filingDate") or [])]
-    itens = [str(i or "") for i in (recentes.get("items") or [])]
-    if not datas:
-        return {"itens_finais": [], "itens_todos": []}
-    itens += [""] * (len(datas) - len(itens))
-    fim = max(datas)
-    try:
-        corte = (date.fromisoformat(fim) - timedelta(days=DIAS_FIM)).isoformat()
-    except ValueError:
-        corte = fim
-    todos: set[str] = set()
-    finais: set[str] = set()
-    for data, item in zip(datas, itens):
-        codigos = {c.strip() for c in item.split(",") if c.strip()}
-        todos |= codigos
-        if data >= corte:
-            finais |= codigos
-    return {"itens_finais": sorted(finais), "itens_todos": sorted(todos),
-            "ultimo_arquivamento": fim}
+    """Ver `core.us_saida_causa.itens_de_8k` -- a regra e la."""
+    return itens_de_8k(recentes, DIAS_FIM)
 
 
 def _metricas(pacote: dict, cik: int, regra: str = "linha") -> dict | None:
@@ -233,30 +208,8 @@ def _metricas(pacote: dict, cik: int, regra: str = "linha") -> dict | None:
 
 
 def classificar_saida(pacote: dict) -> str:
-    """Adquirida, quebrou, ou -- o caso mais comum -- nao da para saber.
-
-    A primeira versao chamava de morte toda saida sem proxy de fusao. Medido na
-    coorte de 2012 isso estava errado na maioria dos casos, e a conclusao saiu
-    invertida. Aqui `SUMIU` exige EVIDENCIA de falencia (8-K item 1.03), e o que
-    nao se consegue classificar vira `INDEFINIDO`, que sai da comparacao.
-
-    Excluir e melhor que chutar para o lado conservador: o indefinido nao e uma
-    minoria residual, e o grupo majoritario -- deixa-lo no grupo ruim nao
-    subestima o score, apaga o que a medicao tenta medir.
-    """
-    formas = pacote.get("formas") or []
-    finais = set(pacote.get("itens_finais") or [])
-    todos = set(pacote.get("itens_todos") or [])
-    # Falencia vem antes: venda de ativos DENTRO da recuperacao judicial tambem
-    # arquiva 2.01, e chamar isso de aquisicao esconderia justamente o caso que
-    # o investidor precisa ver.
-    if ITEM_FALENCIA in todos:
-        return SUMIU
-    if any(f.startswith(FORMAS_FUSAO) or f.startswith(FORMAS_ALVO) for f in formas):
-        return ADQUIRIDA
-    if ITEM_AQUISICAO in finais:
-        return ADQUIRIDA
-    return INDEFINIDO
+    """Ver `core.us_saida_causa.classificar` -- a regra e la."""
+    return classificar_pacote(pacote)
 
 
 def main(argv=None) -> int:
