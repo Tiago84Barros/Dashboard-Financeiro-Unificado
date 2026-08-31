@@ -169,7 +169,7 @@ def _vantagem_persistida(motor: str, versao: str) -> Portao:
                   dimensao=DIM_VANTAGEM)
 
 
-def _saidas_fii() -> Portao:
+def _saidas_fii(engine=None) -> Portao:
     """O universo historico de FIIs observa fundos que deixaram de existir?
 
     Fundo imobiliario tambem acaba: liquida, incorpora, sai da negociacao. Se o
@@ -183,7 +183,7 @@ def _saidas_fii() -> Portao:
     from sqlalchemy import text
     try:
         from core.database import get_engine
-        with get_engine().connect() as conn:
+        with (engine or get_engine()).connect() as conn:
             linha = conn.execute(text(
                 "SELECT count(DISTINCT ticker) FILTER "
                 "  (WHERE active_status NOT IN ('listed','active')), "
@@ -201,10 +201,10 @@ def _saidas_fii() -> Portao:
                       dimensao=DIM_SAIDAS)
     return Portao("Universo com saidas", False,
                   f"nenhum dos {total} fundos consta como encerrado; "
-                  + _porque_sem_saidas_fii(), dimensao=DIM_SAIDAS)
+                  + _porque_sem_saidas_fii(engine), dimensao=DIM_SAIDAS)
 
 
-def _porque_sem_saidas_fii() -> str:
+def _porque_sem_saidas_fii(engine=None) -> str:
     """Distingue "nao houve saida" de "nao havia como haver saida".
 
     A frase anterior -- "o historico so tem quem continua listado" -- sugeria
@@ -216,7 +216,7 @@ def _porque_sem_saidas_fii() -> str:
     try:
         from core.database import get_engine
         from core.fii_saidas import derivar_saidas, fotos_do_banco
-        with get_engine().connect() as conn:
+        with (engine or get_engine()).connect() as conn:
             diag = derivar_saidas(fotos_do_banco(conn))
     except Exception as exc:  # noqa: BLE001
         logger.info("diagnostico de saidas FII indisponivel: %s", type(exc).__name__)
@@ -256,7 +256,8 @@ def _vantagem_fii(metrics: dict) -> Portao:
                   f"indice nao e distinguivel de acaso", dimensao=DIM_VANTAGEM)
 
 
-def comparacao_de_rigor(estados: "tuple[EstadoValidacao, ...] | None" = None
+def comparacao_de_rigor(estados: "tuple[EstadoValidacao, ...] | None" = None,
+                        engine=None
                         ) -> dict[str, dict[str, Portao | None]]:
     """As tres notas lado a lado na MESMA lista de perguntas.
 
@@ -266,7 +267,8 @@ def comparacao_de_rigor(estados: "tuple[EstadoValidacao, ...] | None" = None
     declara aquela dimensao -- diferente de declarar e nao apurar.
     """
     if estados is None:
-        estados = (validacao_b3(), validacao_fii(), validacao_us())
+        estados = (validacao_b3(engine), validacao_fii(engine),
+                   validacao_us(engine=engine))
     return {e.classe: {d: next((p for p in e.portoes if p.dimensao == d), None)
                        for d in DIMENSOES} for e in estados}
 
@@ -292,12 +294,12 @@ def validacao_b3(engine=None) -> EstadoValidacao:
         return _falha("Empresas B3", SCORE_VERSION, exc)
 
 
-def validacao_fii() -> EstadoValidacao:
+def validacao_fii(engine=None) -> EstadoValidacao:
     """Lê o certificado PIT persistido para a metodologia em uso."""
     from core.fii_methodology import METHODOLOGY_VERSION
     try:
         from core.market_read import load_fii_validation_status
-        val = load_fii_validation_status(METHODOLOGY_VERSION) or {}
+        val = load_fii_validation_status(METHODOLOGY_VERSION, engine=engine) or {}
         bloq = tuple(str(b) for b in (val.get("blockers") or []))
         passou = str(val.get("status")) == "passed"
         # Portao unico: o certificado PIT ou existe e aprovou, ou nao. Aqui nao
@@ -306,7 +308,7 @@ def validacao_fii() -> EstadoValidacao:
         portoes = (Portao("Certificado PIT", passou,
                           "; ".join(bloq)[:90] if bloq else "",
                           dimensao=DIM_PIT),
-                   _saidas_fii(),
+                   _saidas_fii(engine),
                    _vantagem_fii(val.get("metrics") or {}))
         return EstadoValidacao("Seleção de FIIs", METHODOLOGY_VERSION,
                                passou, bloq, portoes=portoes)
@@ -389,7 +391,7 @@ def _tem_coluna(conn, tabela: str, coluna: str) -> bool:
         return False
 
 
-def _registro_de_saidas_us() -> tuple[int, int] | None:
+def _registro_de_saidas_us(engine=None) -> tuple[int, int] | None:
     """(saidas registradas, quantas dessas o painel de backtest enxerga).
 
     As duas contagens andam juntas de proposito. Registrar a saida e o passo
@@ -402,7 +404,7 @@ def _registro_de_saidas_us() -> tuple[int, int] | None:
     from sqlalchemy import text
     try:
         from core.database import get_engine
-        with get_engine().connect() as conn:
+        with (engine or get_engine()).connect() as conn:
             # A saida refutada -- relatorio anual arquivado em ano igual ou
             # posterior ao da ausencia -- nao conta como saida. Ela e artefato
             # de uma lista de formas que nao continha 40-F nem emenda, e somar
@@ -435,7 +437,7 @@ def _registro_de_saidas_us() -> tuple[int, int] | None:
     return total, no_painel
 
 
-def _deslistadas_us() -> Portao:
+def _deslistadas_us(engine=None) -> Portao:
     """O universo historico americano observa empresas que pararam de negociar?
 
     Medido em 27/08/2026: `delisted_date` era NULL nos 7.654 registros de
@@ -453,7 +455,7 @@ def _deslistadas_us() -> Portao:
     schema so tem `company_snapshots` e `prices_monthly`. Nao apurado nao vira
     reprovado nem aprovado; some da fracao e declara que sumiu.
     """
-    reg = _registro_de_saidas_us()
+    reg = _registro_de_saidas_us(engine)
     if reg is not None and reg[0]:
         total, no_painel = reg
         if no_painel:
@@ -470,7 +472,7 @@ def _deslistadas_us() -> Portao:
     from sqlalchemy import text
     try:
         from core.database import get_engine
-        with get_engine().connect() as conn:
+        with (engine or get_engine()).connect() as conn:
             n = conn.execute(text(
                 "SELECT count(*) FROM market_us.assets "
                 "WHERE delisted_date IS NOT NULL")).scalar()
@@ -485,7 +487,7 @@ def _deslistadas_us() -> Portao:
         dimensao=DIM_SAIDAS)
 
 
-def validacao_us(history_available: object = None) -> EstadoValidacao:
+def validacao_us(history_available: object = None, engine=None) -> EstadoValidacao:
     """Estado do motor americano.
 
     Sem `score_vintages` e preços mensais na vitrine não há Rank-IC fora da
@@ -501,7 +503,7 @@ def validacao_us(history_available: object = None) -> EstadoValidacao:
             () if pronto else (_SEM_VINTAGES,),
             portoes=(Portao("Painel PIT", pronto,
                             "" if pronto else _SEM_VINTAGES, dimensao=DIM_PIT),
-                     _deslistadas_us(),
+                     _deslistadas_us(engine),
                      _vantagem_persistida("us", v)))
     try:
         import core.us_data as us
@@ -512,7 +514,7 @@ def validacao_us(history_available: object = None) -> EstadoValidacao:
             () if pronto else (_SEM_VINTAGES,),
             portoes=(Portao("Painel PIT", pronto,
                             "" if pronto else _SEM_VINTAGES, dimensao=DIM_PIT),
-                     _deslistadas_us(),
+                     _deslistadas_us(engine),
                      _vantagem_persistida("us", v)))
     except Exception as exc:  # noqa: BLE001
         return _falha("Empresas Americanas", v, exc)

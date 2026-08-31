@@ -60,8 +60,11 @@ def _engine():
         return None
 
 
-def _q(sql: str, params: dict | None = None) -> pd.DataFrame:
-    eng = _engine()
+def _q(sql: str, params: dict | None = None, engine=None) -> pd.DataFrame:
+    # `engine` existe para quem precisa MEDIR uma base especifica (o relatorio
+    # de confianca compara tres modulos e nao pode ler dois bancos). Omitido,
+    # continua sendo a base de producao -- o default nao muda.
+    eng = engine if engine is not None else _engine()
     if eng is None:
         frame = pd.DataFrame()
         frame.attrs["load_error"] = "database_unavailable"
@@ -1137,14 +1140,31 @@ def _clear_fii_methodology_inputs_cache() -> None:
 load_fii_methodology_inputs.clear = _clear_fii_methodology_inputs_cache
 
 
-@st.cache_data(ttl=900, show_spinner=False)
-def load_fii_validation_status(methodology_version: str | None = None) -> dict:
+def load_fii_validation_status(methodology_version: str | None = None,
+                               engine=None) -> dict:
     """Última validação PIT registrada para a metodologia.
 
     O default acompanha ``METHODOLOGY_VERSION``: fixá-lo como literal fazia
     o bump da metodologia deixar esta consulta apontando para uma versão
     antiga, devolvendo um certificado que não é o da fórmula em uso.
+
+    ``engine`` serve a quem precisa MEDIR uma base específica. Ele NÃO passa
+    pelo cache: `st.cache_data` chaveia pelos argumentos, e um engine é
+    inhashável -- ou o Streamlit recusa a chamada, ou (com `_engine`) ignora o
+    argumento e devolve a resposta da OUTRA base sob a mesma chave. Medir a
+    fonte errada em silêncio é pior do que não cachear.
     """
+    if engine is not None:
+        return _fii_validation_status(methodology_version, engine)
+    return _load_fii_validation_status_cached(methodology_version)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _load_fii_validation_status_cached(methodology_version: str | None) -> dict:
+    return _fii_validation_status(methodology_version, None)
+
+
+def _fii_validation_status(methodology_version: str | None, engine) -> dict:
     from core.fii_methodology import METHODOLOGY_VERSION
     if methodology_version is None:
         methodology_version = METHODOLOGY_VERSION
@@ -1153,7 +1173,7 @@ def load_fii_validation_status(methodology_version: str | None = None) -> dict:
         FROM market.fii_validation_runs
         WHERE methodology_version = :version
         ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1
-    """, {"version": methodology_version})
+    """, {"version": methodology_version}, engine=engine)
     if df.empty:
         return {"status": "unvalidated", "blockers": ["nenhuma validação PIT persistida"]}
     row = df.iloc[0].to_dict()

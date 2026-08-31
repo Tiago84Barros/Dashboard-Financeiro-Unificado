@@ -393,9 +393,9 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     try:
         from core.market_read import load_fii_validation_status
         from core.validacao_motor import validacao_fii
-        ref = (load_fii_validation_status() or {}).get("as_of_date")
+        ref = (load_fii_validation_status(engine=engine) or {}).get("as_of_date")
         comps.append(_metodologia(
-            validacao_fii(), 0.25,
+            validacao_fii(engine=engine), 0.25,
             sufixo=f", referencia {ref}" if ref else ""))
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.25,
@@ -485,7 +485,7 @@ def confianca_us(engine=None) -> ConfiancaSecao:
     # permanece, repartido entre as duas perguntas que ele conflatava.
     try:
         from core.validacao_motor import validacao_us
-        comps.append(_metodologia(validacao_us(), 0.15))
+        comps.append(_metodologia(validacao_us(engine=engine), 0.15))
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.15,
                                 f"nao medido: {type(exc).__name__}"))
