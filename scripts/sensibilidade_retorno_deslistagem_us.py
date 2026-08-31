@@ -1,29 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Mede quanto o excesso dos EUA depende da convencao de retorno de deslistagem.
+"""Mede quanto o excesso dos EUA ainda depende de convencao, depois da correcao.
 
-O universo do ranking deixou de ser sobrevivente: 971 dos 3.145 simbolos do
-painel PIT sao empresas que morreram. A MEDICAO de retorno nao acompanhou --
-nenhuma fonte acessivel serve preco de ticker morto (yfinance devolve zero
-barra, Stooq responde desafio de bot), entao a linha sem preco futuro e
-descartada pelo backtest e o excesso continua sendo apurado entre sobreviventes.
+O painel PIT ja NAO descarta toda linha sem preco futuro. Quem tem data de
+saida e causa apurada (item do 8-K, ver core/us_saida_causa.py) entra pela
+convencao declarada em core/us_convencao_saida.py -- 841 linhas em 21.592 na
+apuracao de 31/08/2026. O que sobra sem medicao sao 7.446 linhas: saidas
+anteriores a cobertura da ingestao, tickers reciclados e simbolos ambiguos.
 
-Nao da para inventar o preco que nao existe. Da para dizer de quanto o numero
-publicado depende do que se supoe sobre quem morreu, e e isso que este script
-faz: reexecuta o walk-forward atribuindo as linhas sem preco futuro um retorno
-por CONVENCAO, e devolve a banda. Incerteza com tamanho vira banda declarada,
-nao portao que trava.
+Este script mede a banda que RESTA. Ele mantem a convencao por causa ligada e
+varia o retorno atribuido as linhas que continuam invisiveis:
 
-As convencoes cobrem o intervalo defensavel:
-
-  descartar : o que o app publica hoje -- a linha sai da conta (equivale a supor
-              que quem morreu teria rendido o mesmo que a media dos vivos)
-  0%        : saida neutra, o caso da aquisicao pelo valor de tela
+  descartar : sai da conta -- supoe que a invisivel rendeu a media das visiveis
+  0%        : saida neutra
   -30%      : convencao de deslistagem por desempenho da literatura (CRSP)
-  -100%     : perda total, o caso da falencia
+  -100%     : perda total
 
-O numero honesto nao e um ponto: e a banda entre -100% e 0%, com o valor
-publicado hoje ("descartar") dito como o que e -- uma suposicao, nao uma
-medicao.
+A pergunta que ele responde nao e "qual e o numero", e sim "de quanto o numero
+publicado ainda depende do que se supoe sobre quem nao deu para medir".
 
     python scripts/sensibilidade_retorno_deslistagem_us.py
 """
@@ -58,16 +51,29 @@ def main() -> int:
         monthly = pd.read_sql(text(
             "SELECT symbol, month_end, adjusted_close FROM market_us.prices_monthly"),
             conn)
-    vivo = build_annual_panel(vintages, monthly, horizon_months=12)
-    # `build_annual_panel` ja descartou quem nao tem preco futuro; a diferenca
-    # entre as duas chaves e exatamente a populacao invisivel a medicao.
+        desfechos = pd.read_sql(text(
+            "SELECT DISTINCT ON (a.symbol) a.symbol, a.delisted_date, "
+            "       a.delisting_cause "
+            "FROM market_us.assets a "
+            "WHERE a.delisted_date IS NOT NULL AND a.delisting_cause IS NOT NULL "
+            "ORDER BY a.symbol, a.delisted_date DESC"), conn)
+    saidas = {linha.symbol: {"delisted_date": linha.delisted_date,
+                             "cause": linha.delisting_cause}
+              for linha in desfechos.itertuples()}
+    # A base ja e a corrigida: quem tem causa apurada entra pela convencao por
+    # causa. Medir a sensibilidade sobre o painel ANTIGO responderia a pergunta
+    # de antes da correcao e daria uma banda que o app nao publica mais.
+    vivo = build_annual_panel(vintages, monthly, horizon_months=12,
+                              saidas=saidas)
     medidos = set(zip(pd.to_datetime(vivo["date"]).dt.date, vivo["symbol"]))
     todos = set(zip(vintages["as_of_date"], vintages["symbol"]))
     faltam = todos - medidos
     print(f"linhas do painel        : {len(todos)}")
-    print(f"com preco futuro        : {len(medidos)}")
-    print(f"SEM preco futuro        : {len(faltam)} "
+    print(f"medidas ou convencionadas: {len(medidos)} "
+          f"(sendo {vivo.attrs.get('n_convencionado', 0)} por causa apurada)")
+    print(f"SEM medicao possivel    : {len(faltam)} "
           f"({len(faltam) / len(todos):.1%} do painel)")
+    print(f"desfechos conhecidos    : {len(saidas)}")
     print()
     ausentes = pd.DataFrame(sorted(faltam), columns=["date", "symbol"])
     ausentes = ausentes.merge(
