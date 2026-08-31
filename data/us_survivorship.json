@@ -1,12 +1,18 @@
 {
-  "medido_em": "2026-08-27",
+  "medido_em": "2026-08-31",
   "safras": 16,
   "primeira_safra": "2010-06-30",
   "ultima_safra": "2025-06-30",
-  "empresas_primeira": 106,
-  "empresas_ultima": 2798,
-  "entradas": 2692,
-  "saidas": 0,
+  "empresas_primeira": 159,
+  "empresas_ultima": 2443,
+  "entradas": 2986,
+  "saidas": 702,
+  "medicao_de_retorno": {
+    "linhas_do_painel": 29086,
+    "com_preco_futuro": 20799,
+    "sem_preco_futuro": 8287,
+    "fracao_sem_preco": 0.2849
+  },
   "coorte": {
     "medido_em": "2026-08-28",
     "ano_base": 2010,

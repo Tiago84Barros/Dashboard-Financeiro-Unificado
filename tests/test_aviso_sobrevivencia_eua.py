@@ -1,15 +1,19 @@
-"""A tela dos EUA afirmava evitar o viés de sobrevivência; a medição diz o oposto.
+"""O aviso de sobrevivência da tela dos EUA tem de acompanhar o dado, não o texto.
 
-Em 27/08/2026, `delisted_date` era NULL nos 7.654 registros de `market_us.assets`
-e nenhuma empresa deslistada entrava no universo de `score_vintages` -- que é a
-fonte de todo Rank-IC e de todo backtest exibidos. A Metodologia, no entanto,
-dizia ao usuário que "empresas deslistadas permanecem no universo histórico,
-evitando o viés de sobrevivência".
+Primeira versão (27/08/2026): a Metodologia dizia que "empresas deslistadas
+permanecem no universo histórico, evitando o viés de sobrevivência" enquanto
+`delisted_date` era NULL nos 7.654 registros de `market_us.assets`. Os testes
+travaram a correção e deixaram escrito que, no dia em que a ingestão existisse,
+falhariam -- e que falhar ali significava reescrever o aviso, nunca removê-lo.
 
-Estes testes travam a correção pelo texto, não pelo banco: eles precisam passar
-em CI, sem warehouse. O dia em que a ingestão de deslistadas existir de verdade,
-estes testes falham -- e falhar aqui é o sinal certo de que o aviso deve ser
-reescrito, não removido em silêncio.
+Esse dia foi 31/08/2026: 1.603 empresas mortas ingeridas, 702 saídas em 16
+safras. O aviso foi reescrito, e o que estes testes travam agora é o inverso do
+que travavam antes -- que a tela não volte a afirmar ausência de deslistagem
+(passou a ser falso) e que não declare o viés resolvido (continua sendo falso do
+lado do RETORNO, onde não há cotação de ticker morto).
+
+Continuam sendo testes de texto, para rodar em CI sem warehouse. O que depende
+do banco é a própria medição, checada em outro lugar.
 """
 from __future__ import annotations
 
@@ -25,23 +29,34 @@ def fonte() -> str:
     return VIEW.read_text(encoding="utf-8")
 
 
-def test_metodologia_nao_afirma_universo_livre_de_sobrevivencia(fonte: str) -> None:
+def test_metodologia_nao_afirma_nenhum_dos_dois_extremos(fonte: str) -> None:
+    """Nem "viés evitado" (nunca foi) nem "nada ingerido" (deixou de ser)."""
     assert "evitando o viés de sobrevivência" not in fonte
-    assert "nenhuma deslistagem foi ingerida" in fonte
+    assert "nenhuma deslistagem foi ingerida" not in fonte
+    assert "sem nenhuma deslistagem no universo" not in fonte
 
 
-def test_aviso_existe_e_diz_o_que_o_usuario_precisa_decidir(fonte: str) -> None:
-    from views.empresas_americanas import _AVISO_SOBREVIVENCIA as aviso
+def test_aviso_nomeia_o_que_a_ingestao_nao_resolveu(fonte: str) -> None:
+    from core.us_survivorship import AVISO_UNIVERSO_COM_SAIDAS as aviso
 
     assert "sobrevivência" in aviso
-    # o ponto nao e "falta dado": e que o risco de ruina nao e observavel.
+    # o vies mudou de lugar: universo corrigido, medicao de retorno nao.
+    assert "RETORNO" in aviso
+    # e o ponto nunca foi "falta dado": e que o risco de ruina fica subobservado.
     assert "perda permanente de capital" in aviso
 
 
+def test_aviso_e_derivado_da_medicao_e_nao_declarado(fonte: str) -> None:
+    """A frase fixa foi o defeito das duas vezes -- ela agora pergunta ao número."""
+    from core.us_survivorship import frase_universo
+
+    assert frase_universo({"saidas": 702}).startswith("⚠️ **Viés de sobrevivência (parcial):**")
+    assert "nenhuma deslistagem foi ingerida" in frase_universo({"saidas": 0})
+    # sem medição, a versão pessimista: número que ninguém apurou não se afirma.
+    assert "nenhuma deslistagem foi ingerida" in frase_universo({})
+
+
 def test_aviso_acompanha_toda_evidencia_historica_exibida(fonte: str) -> None:
-    # backtest do Laboratorio e tela de backtest dedicada. Passou a chamar a
-    # funcao em vez da constante quando o aviso ganhou o tamanho medido do vies
-    # (2.692 entradas, zero saidas); a constante segue sendo o texto base.
+    # backtest do Laboratorio e tela de backtest dedicada.
     assert fonte.count("st.caption(_aviso_sobrevivencia())") == 2
-    # auditoria por industria traz a ressalva no proprio texto da secao.
-    assert "sem nenhuma deslistagem no universo" in fonte
+    assert "_AVISO_SOBREVIVENCIA" not in fonte, "constante virou derivação"
