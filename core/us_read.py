@@ -287,8 +287,12 @@ def load_quality_audit(limit: int = 200) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
 
-_INCOME_COLS = ("fiscal_year", "revenue", "gross_profit", "operating_income",
-                "ebit", "ebitda", "net_income", "interest_expense", "eps")
+# `cost_of_revenue` entra porque lucro bruto E receita menos custo: quando a
+# empresa tagueia os dois extremos e nao o meio, a margem bruta era registrada
+# como ausente -- e ausencia derruba a cobertura da trilha de Qualidade.
+_INCOME_COLS = ("fiscal_year", "revenue", "gross_profit", "cost_of_revenue",
+                "operating_income", "ebit", "ebitda", "net_income",
+                "interest_expense", "eps")
 _BALANCE_COLS = ("fiscal_year", "total_assets", "total_equity", "total_debt",
                  "net_debt", "cash_and_equivalents", "current_assets",
                  "current_liabilities", "invested_capital", "shares_outstanding",
