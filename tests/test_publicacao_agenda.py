@@ -38,6 +38,78 @@ def test_cadencia_vencida_deve_publicar():
     assert motivo is not None and "8d" in motivo
 
 
+def test_diaria_publicada_ontem_a_noite_esta_devendo_hoje():
+    """O defeito real de 01/09/2026: a vitrine diária pulava dia sim, dia não.
+
+    A publicação saiu 31/08 às 20:03 locais e o gatilho seguinte é 01/09 às
+    19:30 locais -- 23h27 de idade. Com a régua em horas corridas o alvo era
+    pulado por 33 minutos, publicava só no dia 02, e o log não acusava nada:
+    pular estava certo pela regra que estava escrita.
+    """
+    alvo = POR_CHAVE["fii_selection"]
+    local = datetime.now().astimezone().tzinfo
+    ontem_a_noite = datetime(2026, 8, 31, 20, 3, tzinfo=local)
+    gatilho = datetime(2026, 9, 1, 19, 30, tzinfo=local)
+    registro = {"ultima_publicacao": ontem_a_noite.isoformat(), "ultimo_status": "ok"}
+
+    assert gatilho - ontem_a_noite < timedelta(days=1)  # a armadilha
+    motivo = motivo_para_publicar(alvo, registro, gatilho)
+    assert motivo is not None and "1d" in motivo
+
+
+def test_regime_estavel_nao_depende_do_jitter_do_agendador():
+    """Publicando todo dia no mesmo horário, a idade é exatamente 24h.
+
+    Ficar acima ou abaixo do limite passaria a ser decidido por segundos de
+    atraso do agendador -- e um atraso de dois segundos apagaria a publicação
+    do dia inteiro. Dia de calendário não tem essa borda.
+    """
+    alvo = POR_CHAVE["fii_selection"]
+    local = datetime.now().astimezone().tzinfo
+    ontem = datetime(2026, 8, 31, 19, 30, tzinfo=local)
+    for atraso in (timedelta(seconds=-2), timedelta(0), timedelta(seconds=2)):
+        gatilho = datetime(2026, 9, 1, 19, 30, tzinfo=local) + atraso
+        registro = {"ultima_publicacao": ontem.isoformat(), "ultimo_status": "ok"}
+        assert motivo_para_publicar(alvo, registro, gatilho) is not None
+
+
+def test_publicado_hoje_mais_cedo_nao_republica():
+    """Dia de calendário afrouxa a régua; não pode afrouxar a ponto de repetir.
+
+    Duas rodadas no mesmo dia -- o gatilho de logon de manhã e o das 19:30 --
+    não podem republicar a mesma vitrine diária.
+    """
+    alvo = POR_CHAVE["fii_selection"]
+    local = datetime.now().astimezone().tzinfo
+    manha = datetime(2026, 9, 1, 8, 15, tzinfo=local)
+    noite = datetime(2026, 9, 1, 19, 30, tzinfo=local)
+    registro = {"ultima_publicacao": manha.isoformat(), "ultimo_status": "ok"}
+    assert motivo_para_publicar(alvo, registro, noite) is None
+
+
+def test_o_dia_e_o_local_e_nao_o_utc():
+    """O gatilho é local; a régua tem de ser da mesma grandeza.
+
+    Em UTC-3 a virada do dia UTC cai às 21:00 locais. Uma publicação que termine
+    depois disso divide o mesmo dia UTC com o gatilho da noite seguinte -- e a
+    cadeia de FIIs leva perto de uma hora, então começar às 19:30 e fechar às
+    21:10 não é hipótese remota. Uma régua em UTC pularia esse dia: o mesmo
+    defeito, só que mais raro, e por isso mais difícil de enxergar.
+
+    O par é construído no fuso da máquina, então o teste se anula onde a
+    distinção não existe (em UTC ela não existe). Pular é honesto; fixar um fuso
+    testaria uma máquina imaginária em vez desta.
+    """
+    local = datetime.now().astimezone().tzinfo
+    ultima = datetime(2026, 8, 31, 21, 10, tzinfo=local)
+    gatilho = datetime(2026, 9, 1, 19, 30, tzinfo=local)
+    if ultima.astimezone(timezone.utc).date() != gatilho.astimezone(timezone.utc).date():
+        pytest.skip("o fuso da máquina não separa dia local de dia UTC neste par")
+
+    registro = {"ultima_publicacao": ultima.isoformat(), "ultimo_status": "ok"}
+    assert motivo_para_publicar(POR_CHAVE["fii_selection"], registro, gatilho) is not None
+
+
 def test_falha_anterior_ignora_a_cadencia():
     """Sem isso, um alvo mensal que falhou espera um mês pela nova tentativa.
 
