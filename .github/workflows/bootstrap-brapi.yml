@@ -2,8 +2,13 @@ name: Bootstrap BRAPI (retomável)
 
 # Baixa 16 anos de histórico da BRAPI Pro para market.* em LOTES retomáveis.
 # Cada execução processa `batch` empresas pendentes (carteira primeiro) e marca
-# o estado em market.bootstrap_state. Re-execute (ou deixe o agendamento diário
-# drenar) até RESTANTES=0. Quando não há pendentes, o run é um no-op rápido.
+# o estado em market.bootstrap_state. Re-execute até RESTANTES=0.
+#
+# O agendamento diário (03:00 BRT) saiu em 01/09/2026: o universo já drenou.
+# Medido nesse dia, market.bootstrap_state tinha 566 linhas, TODAS com status
+# 'ok' e nenhuma pendente — o cron era um no-op diário desde que o bootstrap
+# terminou. Para um universo novo, dispare pelo workflow_dispatch; se voltar a
+# fazer sentido drenar sozinho, recoloque `schedule: - cron: "0 6 * * *"`.
 on:
   workflow_dispatch:
     inputs:
@@ -18,8 +23,6 @@ on:
         # setores = universo do app (tickers-B3). ticker_cvm continha símbolos
         # brapi divergentes (AXIA3/EMBJ3…) que criavam assets órfãos invisíveis.
         default: "setores"
-  schedule:
-    - cron: "0 6 * * *"   # 03:00 BRT — drena o universo aos poucos
 
 permissions:
   contents: read

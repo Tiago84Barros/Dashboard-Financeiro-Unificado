@@ -89,6 +89,42 @@ def _ensure_methodology_version(conn) -> None:
              "manifest": json.dumps(methodology_manifest(), ensure_ascii=False)})
 
 
+# Tabelas que cada rotina v4 LE ou ESCREVE. O teste
+# test_fii_v4_portao.py deriva estes nomes do proprio SQL das funcoes:
+# acrescentar uma tabela na consulta sem acrescentar o nome aqui reprova, para
+# o portao nao voltar a ficar defasado do que a funcao de fato usa.
+TABELAS_SNAPSHOT_V4 = (
+    "market.fii_methodology_versions",
+    "market.fii_metric_observations",
+    "market.fii_score_snapshots",
+    "market.fii_universe_history",
+    "market.fii_validation_runs",
+    "market.fiis",
+    "market.historical_prices",
+)
+TABELAS_RECONCILIACAO = (
+    "market.fii_metric_observations",
+    "market.fii_metrics_monthly",
+    "market.fii_reconciliation_issues",
+)
+
+
+def _tabelas_ausentes(conn, tabelas: tuple[str, ...]) -> list[str]:
+    """Quais das tabelas exigidas nao existem NESTE banco.
+
+    O portao tem de perguntar pelas tabelas que a funcao le, e nao por uma
+    representante delas. Ate 01/09/2026 `snapshot_methodology_v4` checava
+    `fii_score_snapshots` -- que existe no Supabase -- e lia
+    `fii_metric_observations`, que mora so no armazem local desde a migracao
+    local-first. Passava no portao e morria na consulta seguinte: o job
+    "Atualizacao FIIs" do Actions falhava todos os dias e levava junto o passo
+    do benchmark, pulado sem que ninguem visse.
+    """
+    return [nome for nome in tabelas
+            if not conn.execute(text("SELECT to_regclass(:nome) IS NOT NULL"),
+                                {"nome": nome}).scalar()]
+
+
 def snapshot_methodology_v4() -> dict:
     """Calcula e persiste snapshots v4 sem substituir o score legado de market.fiis."""
     from core.fii_methodology import (
@@ -102,15 +138,17 @@ def snapshot_methodology_v4() -> dict:
     if engine is None:
         result["blockers"].append("banco indisponível")
         return result
+    with engine.connect() as conn:
+        ausentes = _tabelas_ausentes(conn, TABELAS_SNAPSHOT_V4)
+    if ausentes:
+        # Antes do _ensure_methodology_version: nao se grava metadado de
+        # metodologia num banco que nao tem como calcular a metodologia.
+        result["blockers"].extend(f"tabela ausente neste banco: {nome}"
+                                  for nome in ausentes)
+        return result
     with engine.begin() as conn:
         _ensure_methodology_version(conn)
     with engine.connect() as conn:
-        ready = bool(conn.execute(text(
-            "SELECT to_regclass('market.fii_score_snapshots') IS NOT NULL"
-        )).scalar())
-        if not ready:
-            result["blockers"].append("migração 023_fii_methodology_v4.sql pendente")
-            return result
         validation = conn.execute(text("""
             SELECT status FROM market.fii_validation_runs
             WHERE methodology_version=:version ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1
@@ -218,10 +256,11 @@ def reconcile_brapi_cvm() -> dict:
     engine = _engine()
     if engine is None:
         return {"status": "failed", "issues": 0}
+    with engine.connect() as conn:
+        ausentes = _tabelas_ausentes(conn, TABELAS_RECONCILIACAO)
+    if ausentes:
+        return {"status": "skipped", "issues": 0, "tabelas_ausentes": ausentes}
     with engine.begin() as conn:
-        if not conn.execute(text(
-                "SELECT to_regclass('market.fii_reconciliation_issues') IS NOT NULL")).scalar():
-            return {"status": "skipped", "issues": 0}
         result = conn.execute(text("""
             WITH brapi AS (
                 SELECT DISTINCT ON (ticker, metric_name, date_trunc('month', reference_date))
