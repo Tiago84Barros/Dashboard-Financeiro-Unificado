@@ -46,6 +46,47 @@ def _table_exists(conn, table: str) -> bool:
     return bool(conn.execute(text("SELECT to_regclass(:table) IS NOT NULL"), {"table": table}).scalar())
 
 
+def lineage_counts(conn, table: str) -> dict[str, int]:
+    """Procedencia VERIFICADA das demonstracoes anuais, nao ponteiro nao-nulo.
+
+    `raw_payload_id IS NOT NULL` mede que existe um ponteiro, nao que ele leva a
+    algum lugar. `market.brapi_raw_payloads.id` e um BIGSERIAL e a compactacao
+    remota fazia DROP/CREATE: a sequencia REINICIA em 1 e os ponteiros antigos
+    passam a resolver para payloads de outra geracao -- com o endpoint certo e o
+    conteudo de outra empresa, de modo que nada parece errado.
+
+    Medido no Supabase em 01/09/2026: das 85.889 linhas com ponteiro, 84.116
+    apontavam para um payload coletado DEPOIS da propria linha. A causa nao pode
+    ser posterior ao efeito; esse e o teste barato que separa procedencia de
+    coincidencia. `traced_rows` passa a exigir que o payload exista E seja
+    anterior a linha; `dangling_rows` e `impossible_rows` deixam o resto visivel
+    em vez de somar como linhagem.
+    """
+    row = conn.execute(text(f"""
+        SELECT count(*) AS rows,
+               count(*) FILTER (WHERE d.raw_payload_id IS NOT NULL) AS pointed,
+               count(*) FILTER (
+                   WHERE d.raw_payload_id IS NOT NULL AND p.id IS NULL)
+                   AS dangling,
+               count(*) FILTER (
+                   WHERE p.id IS NOT NULL AND p.fetched_at > d.first_seen_at)
+                   AS impossible,
+               count(*) FILTER (
+                   WHERE p.id IS NOT NULL AND p.fetched_at <= d.first_seen_at)
+                   AS traced
+        FROM {table} d
+        LEFT JOIN market.brapi_raw_payloads p ON p.id = d.raw_payload_id
+        WHERE d.period='annual'
+    """)).mappings().one()
+    return {
+        "rows": int(row["rows"] or 0),
+        "traced_rows": int(row["traced"] or 0),
+        "pointer_rows": int(row["pointed"] or 0),
+        "dangling_rows": int(row["dangling"] or 0),
+        "impossible_rows": int(row["impossible"] or 0),
+    }
+
+
 def _survivorship_status() -> dict[str, Any]:
     """Mede o universo de deslistadas em vez de declarar um literal.
 
@@ -221,16 +262,7 @@ def build_data_manifest(engine) -> dict[str, Any]:
             ("market.cash_flow_statements", "cashflow"),
         ):
             if _table_exists(conn, table):
-                row = conn.execute(text(f"""
-                    SELECT count(*) AS rows,
-                           count(*) FILTER (WHERE raw_payload_id IS NOT NULL) AS traced
-                    FROM {table}
-                    WHERE period='annual'
-                """)).mappings().one()
-                manifest.setdefault("lineage", {})[key] = {
-                    "rows": int(row["rows"] or 0),
-                    "traced_rows": int(row["traced"] or 0),
-                }
+                manifest.setdefault("lineage", {})[key] = lineage_counts(conn, table)
     return manifest
 
 
