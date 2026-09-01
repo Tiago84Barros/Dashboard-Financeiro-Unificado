@@ -247,9 +247,16 @@ local_staging/fii_cvm/
 local_staging/fii_cvm_cri/
 local_staging/fii_cvm_registry/
 local_staging/fii_b3_cotahist/
+# Respostas da SEC guardadas pelo publicador de saídas: 1.607 arquivos, 5 MB,
+# reconstruíveis a partir da fonte. Versionar cache é versionar a rede.
+local_staging/cache_us_saidas/
 local_staging/logs/
 local_staging/fii_document_backfill.pid
 local_staging/fii_document_backfill.stop
+# Estado da rotina de publicação: é de MÁQUINA, não de repositório. Versionar
+# faria um `git pull` sobrescrever o histórico local de publicações -- e um
+# estado vindo de outra máquina diria "em dia" para vitrines vencidas aqui.
+local_staging/estado_publicacao.json
 
 # Saídas de teste locais (lixo)
 _testout.txt

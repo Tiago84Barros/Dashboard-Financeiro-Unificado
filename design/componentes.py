@@ -300,6 +300,53 @@ def aviso_cobertura_do_universo(modulo: str) -> None:
     st.caption(f"Cobertura da recomendacao: {u.resumo()}.{nota}")
 
 
+# ── Selo de frescor: de quando e o dado que esta tela esta mostrando ────────
+# A tela de FIIs declarava a idade da vitrine desde o PR #190; EUA e B3 nao
+# declaravam nada. As tres leem vitrine publicada a partir do armazem local e as
+# tres podem estar lendo dado de semanas atras -- um ranking sobre preco velho
+# tem a mesma aparencia de um sobre preco de ontem.
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _carimbo_cacheado(modulo: str):
+    """Cache curto: o carimbo da B3 sai de `market_health_summary`, que varre a
+    tabela de metricas, e isso nao pode rodar a cada interacao de widget."""
+    from core.frescor import carimbo_do_modulo
+    return carimbo_do_modulo(modulo)
+
+
+def frescor_da_vitrine(modulo: str) -> dict | None:
+    """Selo do modulo, ou ``None`` se nao deu para medir.
+
+    Falha em silencio de proposito, como `aviso_cobertura_do_universo`: frescor
+    e contexto do ranking, nao o ranking. Banco fora do ar nao pode derrubar a
+    tela que o usuario abriu para ver a recomendacao.
+    """
+    try:
+        from core.frescor import selo
+        return selo(modulo, _carimbo_cacheado(modulo))
+    except Exception:  # noqa: BLE001 - contexto nao derruba a tela
+        return None
+
+
+def selo_de_frescor(modulo: str, dados: dict | None = None) -> None:
+    """Declara a idade da vitrine: discreto no prazo, alto quando vence.
+
+    A gradacao e o ponto. Um card de alerta em todo carregamento treina a pessoa
+    a nao ler o card -- e ai o aviso que importa some junto com os outros.
+    """
+    dados = dados if dados is not None else frescor_da_vitrine(modulo)
+    if not dados:
+        return
+    if dados.get("vencida"):
+        mensagem_aviso("Vitrine fora do prazo de publicação", dados["texto"])
+    elif dados.get("idade") is None or dados.get("idade", 0) < 0:
+        st.caption(f"Frescor dos dados: {dados['texto']}")
+    else:
+        st.caption(f"Vitrine publicada em {dados['as_of']} "
+                   f"(alvo de atualização: {dados['alvo']} dia(s)).")
+
+
 def badge_status(texto: str, tipo: str = "info") -> None:
     """
     Badge colorido inline.
