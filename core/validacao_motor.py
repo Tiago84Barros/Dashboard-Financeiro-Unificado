@@ -447,11 +447,21 @@ def _registro_de_saidas_us(engine=None) -> tuple[int, int] | None:
             # o cadastro existir), e a `score_vintages` publicada na vitrine nem
             # carrega `company_id`. Juntar pela chave do cadastro so encontrava
             # quem sobreviveu o bastante para ser cadastrado.
+            # E a juncao e com a safra da metodologia CORRENTE, nao com a
+            # tabela inteira. `score_vintages` guarda safra de versoes mortas,
+            # que nenhuma tela le -- o painel filtra por `score_version` --, e
+            # sem este filtro o portao media uma fonte que a decisao nao le:
+            # 999 saidas contra as 996 do painel de verdade, em 31/08/2026.
+            # Diferenca pequena hoje, mas ela cresce com cada metodologia
+            # aposentada e sempre na direcao de declarar mais rigor do que ha.
+            from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
             no_painel = int(conn.execute(text(
                 "SELECT count(DISTINCT d.cik) FROM market_us.delistings d "
                 "JOIN market_us.score_vintages v "
                 "  ON upper(v.symbol) = upper(d.symbol) "
-                f"{onde or 'WHERE 1=1'} AND d.symbol IS NOT NULL")).scalar() or 0)
+                "  AND v.score_version = :sv AND v.track = 'fundamental' "
+                f"{onde or 'WHERE 1=1'} AND d.symbol IS NOT NULL"),
+                {"sv": US_FUNDAMENTAL_SCORE_VERSION}).scalar() or 0)
     except Exception as exc:  # noqa: BLE001
         logger.info("registro de saidas US indisponivel: %s", type(exc).__name__)
         return None

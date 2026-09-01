@@ -11,11 +11,21 @@ que nunca foi ampliada porque o histórico nunca chegou ao ar.
 
 Duas escolhas de escopo, ambas deliberadas:
 
-**Só a versão corrente.** Publicar safra de outra metodologia encheria a vitrine
-com linhas que o leitor filtra fora -- ele consulta por `score_version` -- e o
-painel continuaria vazio, agora com espaço gasto. Se o local não tem safra da
-versão corrente, este script recusa e manda rodar `score-history`, em vez de
-publicar o que existe e deixar a tela explicar a ausência errada.
+**Só a versão corrente, e a vitrine também não GUARDA outra.** Publicar safra de
+outra metodologia encheria a vitrine com linhas que o leitor filtra fora -- ele
+consulta por `score_version` -- e o painel continuaria vazio, agora com espaço
+gasto. Se o local não tem safra da versão corrente, este script recusa e manda
+rodar `score-history`, em vez de publicar o que existe e deixar a tela explicar
+a ausência errada.
+
+Não escrever a versão antiga nunca foi o mesmo que apagá-la, e até 01/09/2026 a
+remoção só varria DENTRO da versão corrente. Quando `US_FUNDAMENTAL_SCORE_VERSION`
+subia, a safra anterior ficava fora do alcance da varredura para sempre: em
+31/08/2026 eram 99.425 linhas na vitrine, 70.339 delas de 0.5.0, 0.7.1 e 0.7.2 --
+70% de um banco de plano free que é o único que a Streamlit Cloud alcança. Por
+isso a remoção passou a partir do INVENTÁRIO da tabela (`_inventario_versoes`) e
+não da lista que a versão corrente escreve, e a janela do que se preserva é
+explícita (`janela_de_retencao`, ajustável por `--reter`).
 
 **Preço mensal inteiro dos símbolos da safra, não só os meses de rebalanço.**
 Seria mais barato publicar junho de cada ano, que é onde as safras caem. Mas o
@@ -269,6 +279,11 @@ def _remover_sobras(remoto, safras: list[tuple], versao: str) -> int:
     A conferência antiga também não pegava, porque comparava `remotas < local` --
     e sobra é o caso em que remoto é MAIOR. Assimetria nessa checagem é cegueira
     para metade dos defeitos possíveis; agora ela exige igualdade.
+
+    Esta função reconcilia DENTRO de uma versão. A sobra entre versões -- a
+    metodologia inteira que ninguém lê mais -- é de `_remover_versoes_obsoletas`,
+    porque o filtro `score_version = :v` que torna esta busca correta é o mesmo
+    que a tornava cega para o resto da tabela.
     """
     locais = {(linha[0], _iso(linha[2])) for linha in safras}
     with remoto.connect() as conn:
@@ -289,8 +304,66 @@ def _remover_sobras(remoto, safras: list[tuple], versao: str) -> int:
     return len(sobras)
 
 
-def publicar(*, local, remoto, aplicar: bool, versao: str | None = None) -> dict:
+def _inventario_versoes(remoto) -> list[dict]:
+    """Enumera o que a tabela CONTÉM: (versão, trilha) → linhas e símbolos.
+
+    Enumerar em vez de supor é o ponto. A remoção antiga listava o que a versão
+    corrente escreve e deletava dentro dessa lista, então tudo que estivesse
+    fora dela era invisível -- e o invisível cresceu para 70.339 linhas de três
+    metodologias mortas, num banco de plano free que é o único que a Streamlit
+    Cloud alcança.
+
+    Pela mesma razão o inventário é a fonte da decisão e do relatório: uma
+    lista branca escrita à mão já apagou em silêncio, neste projeto, a coorte
+    que ela deveria preservar (ver `lista-branca-perde-a-chave-nao-prevista`).
+    """
+    with remoto.connect() as conn:
+        linhas = conn.execute(text(
+            "SELECT score_version, track, count(*), count(DISTINCT symbol) "
+            "FROM market_us.score_vintages GROUP BY 1, 2 ORDER BY 1, 2")).all()
+    return [{"score_version": str(r[0]), "track": str(r[1]),
+             "linhas": int(r[2]), "simbolos": int(r[3])} for r in linhas]
+
+
+def janela_de_retencao(versao: str, extras=None) -> set[str]:
+    """Versões de metodologia que a vitrine mantém: janela explícita, não implícita.
+
+    A corrente entra sempre, inclusive quando `--versao` publica outra: publicar
+    uma safra antiga para comparar não pode apagar a que o app publicado lê.
+    """
+    reter = {versao, versao_corrente()}
+    reter.update(str(v).strip() for v in (extras or []) if str(v).strip())
+    return reter
+
+
+def _remover_versoes_obsoletas(remoto, reter: set[str]) -> dict:
+    """Apaga da vitrine as safras de metodologia fora da janela de retenção.
+
+    Só a trilha `fundamental`, que é a que este script publica. Linha de outra
+    trilha é enumerada e devolvida em `trilhas_intocadas` em vez de apagada:
+    apagar o que não se publica é como a remoção se torna destrutiva por
+    surpresa. Aparecer no resumo é o que impede que ela fique invisível para
+    sempre, que era exatamente o defeito original.
+    """
+    inventario = _inventario_versoes(remoto)
+    alvos = [i for i in inventario
+             if i["track"] == TRACK and i["score_version"] not in reter]
+    intocadas = [i for i in inventario if i["track"] != TRACK]
+    removidas: dict[str, int] = {}
+    for item in alvos:
+        with remoto.begin() as conn:
+            conn.execute(text("DELETE FROM market_us.score_vintages "
+                              "WHERE score_version = :v AND track = :t"),
+                         {"v": item["score_version"], "t": TRACK})
+        removidas[item["score_version"]] = item["linhas"]
+    return {"linhas": sum(removidas.values()), "por_versao": removidas,
+            "trilhas_intocadas": intocadas}
+
+
+def publicar(*, local, remoto, aplicar: bool, versao: str | None = None,
+             reter=None) -> dict:
     versao = versao or versao_corrente()
+    reter = janela_de_retencao(versao, reter)
     with local.connect() as conn:
         safras = ler_safras(conn, versao)
         if not safras:
@@ -313,7 +386,24 @@ def publicar(*, local, remoto, aplicar: bool, versao: str | None = None) -> dict
     resumo = {"ok": True, "versao": versao, "safras": len(safras),
               "precos": len(precos), "simbolos": len(simbolos_safra),
               "simbolos_sem_preco": len(sem_preco),
-              "exemplos_sem_preco": sem_preco[:10], "gravado": False}
+              "exemplos_sem_preco": sem_preco[:10],
+              "reter_versoes": sorted(reter), "gravado": False}
+
+    # A contagem por versão entra no resumo em SIMULAÇÃO, não só depois de
+    # gravar: a decisão de apagar 70 mil linhas de um banco que a Streamlit
+    # Cloud lê tem de ser tomada olhando o inventário, e não conferida depois.
+    if remoto is not None:
+        try:
+            inventario = _inventario_versoes(remoto)
+        except Exception as exc:  # noqa: BLE001
+            resumo["vitrine_por_versao_erro"] = f"{type(exc).__name__}: {exc}"
+        else:
+            resumo["vitrine_por_versao"] = inventario
+            obsoletas = [i for i in inventario if i["track"] == TRACK
+                         and i["score_version"] not in reter]
+            resumo["versoes_obsoletas"] = {i["score_version"]: i["linhas"]
+                                           for i in obsoletas}
+            resumo["linhas_obsoletas"] = sum(i["linhas"] for i in obsoletas)
     if not aplicar:
         return resumo
 
@@ -337,6 +427,11 @@ def publicar(*, local, remoto, aplicar: bool, versao: str | None = None) -> dict
     resumo["gravado"] = True
 
     resumo["safras_removidas"] = _remover_sobras(remoto, safras, versao)
+    purga = _remover_versoes_obsoletas(remoto, reter)
+    resumo["versoes_removidas"] = purga["por_versao"]
+    resumo["linhas_de_versoes_removidas"] = purga["linhas"]
+    if purga["trilhas_intocadas"]:
+        resumo["trilhas_intocadas"] = purga["trilhas_intocadas"]
     resumo.update(publicar_desfechos(local=local, remoto=remoto))
 
     with remoto.connect() as conn:
@@ -361,6 +456,9 @@ def main(argv=None) -> int:
                     help="grava de fato (sem esta flag, apenas simula)")
     ap.add_argument("--versao", default=None,
                     help="publica outra versão de metodologia (padrão: a corrente)")
+    ap.add_argument("--reter", default="",
+                    help="versões de metodologia a PRESERVAR na vitrine além da "
+                         "corrente, separadas por vírgula; as demais são apagadas")
     args = ap.parse_args(argv)
 
     from core.config import settings
@@ -375,7 +473,8 @@ def main(argv=None) -> int:
     remoto = _engine(settings.db_url)
     try:
         resumo = publicar(local=local, remoto=remoto, aplicar=args.aplicar,
-                          versao=args.versao)
+                          versao=args.versao,
+                          reter=[v for v in args.reter.split(",") if v.strip()])
     finally:
         local.dispose()
         remoto.dispose()
