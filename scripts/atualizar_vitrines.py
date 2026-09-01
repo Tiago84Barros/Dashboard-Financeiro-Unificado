@@ -337,8 +337,8 @@ def verificar(modulos: set[str], ambiente: dict) -> tuple[bool, str]:
         [_python(), "scripts/verificar_frescor_vitrines.py", *argumentos],
         cwd=str(ROOT), env=ambiente, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=1800, check=False)
-    saida = "\n".join(l for l in (proc.stdout or "").splitlines()
-                      if l.startswith(("OK", "REPROVOU")))
+    saida = "\n".join(linha for linha in (proc.stdout or "").splitlines()
+                      if linha.startswith(("OK", "REPROVOU")))
     return proc.returncode == 0, saida
 
 
