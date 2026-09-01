@@ -23,6 +23,22 @@ desde que passou a chamar um Python sem as dependências) e o job de FIIs do
 `market-refresh.yml` (10 execuções diárias seguidas em erro, consultando no
 Supabase tabelas que a migração local-first deixou só no armazém).
 
+**"Diário" é dia de calendário local, não 24 horas corridas.** A diferença
+parece cosmética e não é: com um gatilho fixo às 19:30 e a régua em horas, uma
+vitrine publicada às 20:03 tem 23h27 na hora do gatilho seguinte, é pulada, e só
+sai no dia seguinte -- a rotina publica dia sim, dia não e o log não acusa nada,
+porque pular estava certo pela regra. Pior no regime estável: publicando todo
+dia às 19:30, a idade no gatilho seguinte é exatamente 24h, e ficar acima ou
+abaixo do limite passa a depender do jitter do agendador, em segundos. Dia de
+calendário elimina a borda -- publicou ontem, está devendo hoje.
+
+O dia é o **local**, e não o UTC, porque o gatilho é local. Em UTC-3 a virada
+do dia UTC cai às 21:00 locais: uma publicação que termine depois disso -- e a
+cadeia de FIIs leva perto de uma hora, então começar às 19:30 e fechar às 21:10
+não é hipótese remota -- cairia no mesmo dia UTC do gatilho da noite seguinte.
+Uma régua em UTC pularia esse dia, que é o defeito de novo, só que mais raro e
+por isso mais difícil de enxergar.
+
 **Safra PIT não tem cadência de calendário.** `market_us.score_vintages` é
 história point-in-time: republicar a mesma versão todo dia grava exatamente as
 mesmas linhas. O gatilho dela é a versão da metodologia mudar. Manter isso como
@@ -196,14 +212,15 @@ def motivo_para_publicar(
             )
         return None
 
-    idade = agora - ultima
-    if idade < timedelta(0):
+    if agora - ultima < timedelta(0):
         # Registro no futuro: relógio mexido ou estado adulterado. Publicar é a
         # saída conservadora -- a alternativa é confiar num carimbo impossível.
         return "registro com data futura"
-    if idade >= timedelta(days=alvo.cadencia_dias):
-        return "{}d desde a última (cadência {}d)".format(
-            idade.days, alvo.cadencia_dias
+
+    dias = (agora.astimezone().date() - ultima.astimezone().date()).days
+    if dias >= alvo.cadencia_dias:
+        return "{}d de calendário desde a última (cadência {}d)".format(
+            dias, alvo.cadencia_dias
         )
     return None
 
