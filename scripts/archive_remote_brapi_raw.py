@@ -19,6 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Rótulo de procedência, não chave: a cobertura é verificada por
+# `chaves_sem_manifesto` sobre TODAS as linhas do manifesto, qualquer que seja
+# a fonte. As 35.877 linhas gravadas até 26/08/2026 mantêm o rótulo antigo.
+ARCHIVE_SOURCE = "supabase"
+
 def _engine(url: str, remote: bool = False):
     parsed = make_url(url)
     if parsed.drivername in {"postgresql", "postgres"}:
@@ -52,18 +57,37 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def ids_sem_manifesto(ids_remotos, ids_no_manifesto) -> set:
-    """Ids do remoto que o manifesto local nao cobre. Vazio = pode compactar.
+def chave_de_payload(row) -> tuple:
+    """Identidade do payload que NAO depende do id remoto.
 
-    Cobertura e questao de CONJUNTO, nao de total. A checagem anterior comparava
-    contagens (`manifest_rows != len(metadata)`) e por isso so passava na
-    primeira execucao: o manifesto e chaveado por (archive_source, remote_id) e
-    ACUMULA entre rodadas, enquanto a tabela remota e podada. Em 16/08/2026 ele
-    tinha 26.481 linhas para 19.115 remotas -- 7.366 ids de julho que ja nao
-    existem la -- e o portao acusava "manifesto incompleto" justamente quando
-    havia dado a MAIS preservado, travando a compactacao para sempre.
+    `market.brapi_raw_payloads.id` e uma sequencia de identidade: a compactacao
+    faz DROP/CREATE da tabela e ela REINICIA em 1. Chavear o manifesto por
+    (archive_source, remote_id) faz a geracao nova colidir com a antiga --
+    medido em 01/09/2026: 6.851 dos 8.996 ids remotos ja existiam no manifesto
+    apontando para payloads de julho completamente diferentes. O `ON CONFLICT
+    DO NOTHING` descartava a metadata nova em silencio e o portao dava
+    "coberto" lendo a procedencia errada. A chave abaixo e a mesma tupla que o
+    INSERT do payload usa no NOT EXISTS, e nao reinicia com a sequencia.
     """
-    return set(ids_remotos) - set(ids_no_manifesto)
+    return (
+        str(row["endpoint"]),
+        row["fetched_at"],
+        str(row["request_status"]),
+        str(row.get("ticker") or ""),
+        str(row.get("content_sha256") or ""),
+    )
+
+
+def chaves_sem_manifesto(linhas_remotas, chaves_no_manifesto) -> set:
+    """Payloads do remoto que o manifesto local nao cobre. Vazio = pode compactar.
+
+    Cobertura e questao de CONJUNTO, nao de total: o manifesto ACUMULA entre
+    rodadas enquanto a tabela remota e podada. Em 16/08/2026 a checagem por
+    contagem (`manifest_rows != len(metadata)`) acusava "manifesto incompleto"
+    justamente quando havia dado a MAIS preservado, travando a compactacao para
+    sempre. Ver `chave_de_payload` para por que a comparacao nao usa o id.
+    """
+    return {chave_de_payload(r) for r in linhas_remotas} - set(chaves_no_manifesto)
 
 
 def archive() -> dict:
@@ -107,22 +131,38 @@ def archive() -> dict:
             PRIMARY KEY (archive_source,remote_id)
         )
     """)
+    # Migração 01/09/2026: o id remoto reinicia a cada compactação, então ele não
+    # pode ser chave. A PK sai e a identidade passa a ser a do payload.
+    manifest_migracao = [
+        text("ALTER TABLE market.brapi_remote_archive_manifest "
+             "DROP CONSTRAINT IF EXISTS brapi_remote_archive_manifest_pkey"),
+        text("CREATE UNIQUE INDEX IF NOT EXISTS uq_brapi_manifest_chave "
+             "ON market.brapi_remote_archive_manifest "
+             "(endpoint, fetched_at, request_status, "
+             " coalesce(ticker,''), coalesce(content_sha256,''))"),
+    ]
     manifest_insert = text("""
         INSERT INTO market.brapi_remote_archive_manifest (
             archive_source,remote_id,ticker,endpoint,fetched_at,source,
             request_status,error_message,request_fingerprint,content_sha256,
             http_status,source_published_at,collected_at,revision_detected
         ) VALUES (
-            'supabase_pre_compaction_2026_07',:id,:ticker,:endpoint,:fetched_at,
+            :archive_source,:id,:ticker,:endpoint,:fetched_at,
             :source,:request_status,:error_message,:request_fingerprint,
             :content_sha256,:http_status,:source_published_at,:collected_at,
             :revision_detected
-        ) ON CONFLICT (archive_source,remote_id) DO NOTHING
+        ) ON CONFLICT (endpoint, fetched_at, request_status,
+                       coalesce(ticker,''), coalesce(content_sha256,''))
+          DO NOTHING
     """)
     with local.begin() as conn:
         conn.execute(manifest_ddl)
+        for ddl in manifest_migracao:
+            conn.execute(ddl)
         for start in range(0, len(metadata), 1000):
-            conn.execute(manifest_insert, metadata[start:start + 1000])
+            conn.execute(manifest_insert,
+                         [{**row, "archive_source": ARCHIVE_SOURCE}
+                          for row in metadata[start:start + 1000]])
 
     first_id_by_missing_hash: dict[str, int] = {}
     for row in metadata:
@@ -189,10 +229,13 @@ def archive() -> dict:
 
     with local.connect() as conn:
         final_local_hashes = set(conn.execute(hash_sql).scalars())
-        manifest_ids = set(conn.execute(text("""
-            SELECT remote_id FROM market.brapi_remote_archive_manifest
-            WHERE archive_source='supabase_pre_compaction_2026_07'
-        """)).scalars())
+        # Sem filtro por archive_source: o rótulo é procedência, não escopo.
+        manifest_keys = {
+            chave_de_payload(row) for row in conn.execute(text("""
+                SELECT endpoint, fetched_at, request_status, ticker, content_sha256
+                FROM market.brapi_remote_archive_manifest
+            """)).mappings()
+        }
     remote.dispose()
     local.dispose()
     remote_hashes = {
@@ -201,10 +244,10 @@ def archive() -> dict:
     missing_after = len(remote_hashes - final_local_hashes)
     if missing_after:
         raise RuntimeError(f"arquivo local incompleto: {missing_after} hashes ausentes")
-    sem_manifesto = ids_sem_manifesto((int(row["id"]) for row in metadata), manifest_ids)
+    sem_manifesto = chaves_sem_manifesto(metadata, manifest_keys)
     if sem_manifesto:
         raise RuntimeError(
-            f"manifesto incompleto: {len(sem_manifesto)} ids remotos sem registro"
+            f"manifesto incompleto: {len(sem_manifesto)} payloads remotos sem registro"
         )
     return {
         "remote_rows": len(metadata),
@@ -214,8 +257,8 @@ def archive() -> dict:
         ),
         "read": read,
         "inserted": inserted,
-        "manifest_rows": len(manifest_ids),
-        "remote_ids_sem_manifesto": len(sem_manifesto),
+        "manifest_rows": len(manifest_keys),
+        "remote_payloads_sem_manifesto": len(sem_manifesto),
         "remote_unique_hashes": len(remote_hashes),
         "local_unique_hashes": len(final_local_hashes),
         "remote_hashes_missing_local": missing_after,

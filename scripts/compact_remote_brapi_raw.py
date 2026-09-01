@@ -12,7 +12,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
 from core.config import settings
-from scripts.archive_remote_brapi_raw import ids_sem_manifesto
+from scripts.archive_remote_brapi_raw import chave_de_payload, chaves_sem_manifesto
 from scripts.publish_fii_selection_from_local import _warehouse_url
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,8 +79,10 @@ def audit() -> dict:
     """)
     with remote.connect() as conn:
         remote_keys = set(conn.execute(query).scalars())
-        remote_ids = set(conn.execute(
-            text("SELECT id FROM market.brapi_raw_payloads")).scalars())
+        remote_rows = [dict(r) for r in conn.execute(text("""
+            SELECT endpoint, fetched_at, request_status, ticker, content_sha256
+            FROM market.brapi_raw_payloads
+        """)).mappings()]
         before = dict(conn.execute(text("""
             SELECT count(*) rows,pg_total_relation_size('market.brapi_raw_payloads') bytes,
                    pg_database_size(current_database()) database_bytes
@@ -88,10 +90,12 @@ def audit() -> dict:
         """)).mappings().one())
     with local.connect() as conn:
         local_keys = set(conn.execute(query).scalars())
-        manifest_ids = set(conn.execute(text("""
-            SELECT remote_id FROM market.brapi_remote_archive_manifest
-            WHERE archive_source='supabase_pre_compaction_2026_07'
-        """)).scalars())
+        manifest_keys = {
+            chave_de_payload(row) for row in conn.execute(text("""
+                SELECT endpoint, fetched_at, request_status, ticker, content_sha256
+                FROM market.brapi_remote_archive_manifest
+            """)).mappings()
+        }
     remote.dispose()
     local.dispose()
     return {
@@ -99,11 +103,13 @@ def audit() -> dict:
         "remote_unique_hashes": len(remote_keys),
         "local_unique_hashes": len(local_keys),
         "remote_hashes_missing_local": len(remote_keys - local_keys),
-        "local_manifest_rows": len(manifest_ids),
-        # Cobertura por conjunto: o manifesto acumula entre rodadas e guarda ids
-        # que a tabela remota ja podou, entao comparar totais acusaria falta onde
-        # ha sobra. Ver ids_sem_manifesto em archive_remote_brapi_raw.
-        "remote_ids_sem_manifesto": len(ids_sem_manifesto(remote_ids, manifest_ids)),
+        "local_manifest_rows": len(manifest_keys),
+        # Cobertura por conjunto: o manifesto acumula entre rodadas e guarda
+        # payloads que a tabela remota ja podou, entao comparar totais acusaria
+        # falta onde ha sobra. A chave nao pode ser o id remoto -- ele reinicia a
+        # cada compactacao. Ver chave_de_payload em archive_remote_brapi_raw.
+        "remote_payloads_sem_manifesto": len(
+            chaves_sem_manifesto(remote_rows, manifest_keys)),
     }
 
 
@@ -111,7 +117,7 @@ def compact() -> dict:
     before = audit()
     if before["remote_hashes_missing_local"]:
         raise RuntimeError("compactação bloqueada: payloads remotos ausentes no local")
-    if before["remote_ids_sem_manifesto"]:
+    if before["remote_payloads_sem_manifesto"]:
         raise RuntimeError("compactação bloqueada: manifesto remoto incompleto")
     engine = _engine(settings.db_url, True)
     with engine.begin() as conn:
