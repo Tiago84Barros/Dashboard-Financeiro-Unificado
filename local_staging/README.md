@@ -98,47 +98,162 @@ python scripts/sync_docs_to_supabase.py --per-ticker 15 --apply
 
 ---
 
-## Republicação diária da vitrine de FIIs
+## Atualização automática das vitrines (FII, B3, EUA)
 
-A vitrine de FIIs tem prazo de validade e a publicação **precisa rodar nesta
-máquina**: o armazém local (Docker, porta 5433) não é alcançável pelo GitHub
-Actions, então não existe workflow remoto que substitua isto.
-
-Deixar envelhecer não é inofensivo. Em 31/08/2026 a vitrine chegou a 5 dias, a
-leitura foi recusada e a tela de Seleção de FIIs reprovou os 394 fundos por
-métrica ausente, creditando a falha aos filtros de elegibilidade (PR #190). O
-código agora falha de forma visível, mas o remédio é a vitrine não vencer.
-
-Tarefa agendada no Windows — **DFU - Republicar vitrine de FIIs**, diária às
-19:30 (depois do fechamento da B3), com `StartWhenAvailable` para recuperar o
-dia caso o computador esteja desligado no horário.
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\republicar_vitrine_fii_diario.ps1
-```
-
-O runner sobe o container se estiver parado, espera ficar saudável, publica e
-**confere o resultado pelo mesmo caminho que a tela usa** — publicar sem
-verificar seria repetir o defeito de origem. Log em
-`local_staging/logs/republicacao_fii.log` (stderr em `.stderr.log`).
-
-Para conferir a vitrine a qualquer momento, sem republicar:
+Tudo o que precisa ser publicado passa por um ponto só:
 
 ```bash
-python scripts/verificar_frescor_vitrine_fii.py --max-idade-dias 4
+python scripts/atualizar_vitrines.py
 ```
 
-Sai com código 1 quando a vitrine não pode ser lida, vem vazia, ou perde as
-colunas que a elegibilidade consulta — a checagem é pelas **colunas de
-decisão**, não por `.empty`: foi um quadro cheio de linhas e vazio de métricas
-que reprovou os 394 fundos.
+Ele lê a agenda de `core/publicacao_agenda.py`, publica **o que está vencido**,
+confere o resultado pelo leitor que a tela usa e avisa no Telegram quando falha.
 
-Gerenciar a tarefa:
+**Roda nesta máquina, e não tem alternativa remota.** Das 22 tabelas
+`market.fii*`, 18 existem só no armazém local (`fii_source_releases`,
+`fii_metric_observations`, `fii_parser_calibrations`...). Foi tentar rodar a
+cadeia de FIIs contra o Supabase que quebrou o `market-refresh.yml` em dez
+execuções diárias seguidas, sempre no mesmo ponto -- e o `market.fiis` do
+armazém ficou 20 dias parado enquanto a vitrine era republicada diariamente em
+cima de um cadastro de três semanas.
+
+### Registrar as tarefas agendadas
+
+Uma vez só, num PowerShell qualquer (não precisa de administrador):
 
 ```powershell
-Get-ScheduledTask -TaskName "DFU - Republicar vitrine de FIIs"
-Start-ScheduledTask -TaskName "DFU - Republicar vitrine de FIIs"   # rodar agora
-Disable-ScheduledTask -TaskName "DFU - Republicar vitrine de FIIs" # suspender
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts
+egistrar_tarefas.ps1
 ```
 
-As vitrines de B3 e EUA continuam manuais; só a de FIIs tem portão de idade.
+Isso cria **DFU - Atualizar vitrines** com dois gatilhos:
+
+| Gatilho | Quando | Para quê |
+|---|---|---|
+| Diário | 19:30, depois do fechamento da B3 | o caso normal |
+| Ao entrar na sessão | logon + 3 min (folga do Docker Desktop) | recuperar o que venceu com a máquina desligada |
+
+O gatilho de logon não é redundância: é o único caminho pelo qual um dia perdido
+é recuperado. Ele funciona porque **a cadência é medida contra a última
+publicação bem-sucedida, nunca contra um horário**. Ligar o computador depois de
+uma semana fora publica o que venceu, na ordem; ligar duas vezes no mesmo dia não
+publica nada de novo. Um agendador puramente horário perderia o dia em silêncio e
+no dia seguinte publicaria como se nada tivesse acontecido.
+
+Também registra **DFU - Backfill documentos FII** (sábados às 09:00) e remove as
+tarefas obsoletas `DashboardFinanceiro-FII-Backfill` e
+`DFU - Republicar vitrine de FIIs`.
+
+### O que ele publica, e com que cadência
+
+| Alvo | Cadência | O que é |
+|---|---|---|
+| `fii_ingest` | 1 dia | cadeia de 7 etapas de ingestão de FIIs **no armazém** |
+| `fii_selection` | 1 dia | vitrine de seleção de FIIs no Supabase |
+| `b3_metrics` | 7 dias | `market.calculated_metrics` |
+| `b3_vintages` | 7 dias | safras PIT da B3 |
+| `us_snapshot` | 7 dias | `market_us.company_snapshots` |
+| `us_vintages` | por versão | safras PIT dos EUA (gatilho: `US_FUNDAMENTAL_SCORE_VERSION` mudar) |
+| `us_delistings` | 30 dias | saídas de bolsa |
+| `us_prices` | 30 dias | preços mensais |
+
+Duas regras que existem por incidente:
+
+- **Falha não vira silêncio.** Um alvo cujo último desfecho foi erro está sempre
+  devendo, seja qual for a cadência -- sem isso, uma falha em alvo mensal
+  esperaria um mês pela próxima tentativa.
+- **Safra PIT não tem cadência de calendário.** Republicar a mesma versão de
+  metodologia todo dia grava exatamente as mesmas linhas; o gatilho é a versão
+  mudar.
+
+### Estado, log e verificação
+
+O estado fica em `local_staging/estado_publicacao.json`, gravado **depois de cada
+alvo** (hibernar no meio não desfaz o que já foi publicado). Na primeira execução
+ele é semeado com a data real da última publicação lida dos próprios bancos --
+sem isso um arquivo vazio republicaria tudo, inclusive as 346 mil linhas de
+`prices_monthly`:
+
+```bash
+python scripts/atualizar_vitrines.py --semear --listar
+```
+
+Log em `local_staging/logs/atualizacao_vitrines.log`.
+
+Para conferir as vitrines a qualquer momento, sem publicar:
+
+```bash
+python scripts/verificar_frescor_vitrines.py
+```
+
+Sai com código 1 quando uma vitrine não pode ser lida, vem vazia, perde as
+colunas que a decisão consulta ou passa da idade máxima do módulo (FII 4 dias,
+B3 e EUA 10). A checagem é pelas **colunas de decisão**, não por `.empty`: foi um
+quadro cheio de linhas e vazio de métricas que reprovou os 394 fundos em
+31/08/2026, com a tela creditando a falha aos filtros de elegibilidade (PR #190).
+
+A idade da B3 **não** sai da coluna `data` do quadro -- ali `data` é 31/12 do
+exercício de referência, uma data contábil que fica no futuro o ano inteiro e
+faria o portão aprovar para sempre. Quem sabe quando a vitrine foi escrita é
+`updated_at` de `market.calculated_metrics`.
+
+### Avisos
+
+`scripts/notificar.py` manda pelo Telegram via Hermes. Avisa quando falha, e
+quando publicou algo. **Não** avisa "está tudo bem" num dia sem publicação:
+aviso diário de rotina treina a pessoa a ignorar a notificação, e aí o aviso de
+falha some junto.
+
+### Quando o Docker é que não sobe
+
+A rotina abre o Docker Desktop sozinha antes de tentar o container. Motor fora
+do ar e container parado são camadas diferentes: com o motor morto, `docker
+start` devolve erro de conexão e a espera por saúde gasta os 600s perguntando
+por um serviço que não existe -- o log culparia o armazém, que está intacto. Por
+isso `daemon_pronto()` vem antes, e o log diz qual das duas falhou.
+
+Se o log disser `o motor do Docker não subiu em 300s`, o problema é do Docker
+Desktop, não da rotina. Em 01/09/2026 ele morria 20s depois de abrir com:
+
+```
+starting services: initializing Inference manager:
+  listening on unix://.../AppData/Local/Docker/run/dockerInference:
+  remove ...: The file cannot be accessed by the system.
+```
+
+Eram três *soquetes órfãos* de comprimento zero em `%LOCALAPPDATA%\Dockerun`
+(`dockerInference`, `dockerEthernetVfkit`, `userAnalyticsOtlpHttp.sock`),
+deixados por um desligamento sujo: reparse points que o próprio Docker não
+consegue remover. A saída é aposentar a pasta inteira -- ele a recria vazia no
+próximo start:
+
+```powershell
+Rename-Item "$env:LOCALAPPDATA\Dockerun" "run.quebrado-AAAA-MM-DD"
+```
+
+Renomear, e não apagar: se o diagnóstico estiver errado, dá para voltar. O
+`docker_data.vhdx` não é tocado por isso -- confira o tamanho dele antes e
+depois se quiser a prova.
+
+### Outros modos
+
+```bash
+python scripts/atualizar_vitrines.py --listar                    # o que está devendo
+python scripts/atualizar_vitrines.py --apenas fii_selection --forcar
+python scripts/atualizar_vitrines.py --dry-run                   # decide e não executa
+```
+
+Gerenciar as tarefas:
+
+```powershell
+Get-ScheduledTask -TaskName "DFU - *"
+Start-ScheduledTask -TaskName "DFU - Atualizar vitrines"   # rodar agora
+Disable-ScheduledTask -TaskName "DFU - Atualizar vitrines" # suspender
+```
+
+### O que continua no GitHub Actions
+
+`market-refresh.yml` mantém o refresh da B3 e, dos FIIs, só as duas etapas que
+escrevem tabelas nativas do Supabase que o app lê direto (`run_market_ingest.py
+fiis` e `benchmark`). Elas ficam remotas de propósito: rodam mesmo com esta
+máquina desligada. Todo o resto da cadeia de FIIs saiu de lá.

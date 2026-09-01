@@ -51,7 +51,9 @@ from design.componentes import (
     card_metrica,
     container_pagina,
     estado_vazio,
+    frescor_da_vitrine,
     secao_titulo,
+    selo_de_frescor,
 )
 from design.market_companies import (
     render_company_logo,
@@ -197,12 +199,21 @@ def _render_company_analysis_css() -> None:
 
 def render() -> None:
     render_market_css()
+    # A idade da vitrine entra no cabeçalho junto com o mercado: o ranking desta
+    # tela sai de um snapshot publicado do armazém local, e até 31/08/2026 nada
+    # aqui dizia de quando ele era. Score sobre preço de três semanas atrás tem a
+    # mesma aparência de score sobre preço de ontem.
+    frescor = frescor_da_vitrine("us")
+    from core.frescor import resumo_curto
+
     container_pagina(
         "Empresas Americanas",
         "Análise fundamentalista e portfólios com dados corporativos SEC/GAAP.",
         "🌎",
-        metadados=[("Mercado", "NYSE · Nasdaq · AMEX")],
+        metadados=[("Mercado", "NYSE · Nasdaq · AMEX"),
+                   ("Vitrine", resumo_curto(frescor) if frescor else "")],
     )
+    selo_de_frescor("us", frescor)
 
     status = us.data_status()
     active = render_market_tabs(state_key="us_active_tab", key_prefix="us")

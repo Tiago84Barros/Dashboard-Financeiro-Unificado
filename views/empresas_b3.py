@@ -38,6 +38,8 @@ from design.componentes import (
     badge_status,
     card_metrica,
     container_pagina,
+    frescor_da_vitrine,
+    selo_de_frescor,
 )  # KPIs em cards CSS (visual coeso)
 from design.market_companies import (
     render_company_logo,
@@ -6614,12 +6616,21 @@ def render() -> None:
     render_market_css()
     st.markdown(_CSS, unsafe_allow_html=True)
 
+    # A idade sai de `updated_at` de `market.calculated_metrics`, NÃO da coluna
+    # `data` do quadro de múltiplos: ali `data` é 31/12 do exercício de
+    # referência, uma data contábil que fica no futuro o ano corrente inteiro --
+    # medir por ela deu -121 dias e aprovaria qualquer atraso para sempre.
+    frescor = frescor_da_vitrine("b3")
+    from core.frescor import resumo_curto
+
     container_pagina(
         "Empresas B3",
         "Análise fundamentalista e construção quantitativa de portfólios brasileiros.",
         "🏢",
-        metadados=[("Mercado", "B3 · Brasil")],
+        metadados=[("Mercado", "B3 · Brasil"),
+                   ("Vitrine", resumo_curto(frescor) if frescor else "")],
     )
+    selo_de_frescor("b3", frescor)
 
     with st.spinner("Carregando lista de empresas…"):
         df_set = _db.load_setores()

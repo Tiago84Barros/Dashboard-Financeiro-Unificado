@@ -358,8 +358,9 @@ def _info_card_html(title: str, body: str, *, accent: str = "#4A9EFF") -> str:
 
 _MOTIVO_DE_FALHA = {
     "snapshot_stale": ("a vitrine publicada passou do prazo de validade",
-                       "Republique a vitrine a partir do armazém local "
-                       "(`python scripts/publish_fii_selection_from_local.py`)."),
+                       "Rode a atualização a partir do armazém local "
+                       "(`python scripts/atualizar_vitrines.py`), que reingere o "
+                       "cadastro e republica a vitrine na ordem certa."),
     "snapshot_deadline_exceeded": ("a leitura da vitrine estourou o prazo da tela",
                                    "Recarregue a página em alguns instantes."),
     "snapshot_query_failed": ("a consulta à vitrine falhou",
@@ -369,7 +370,8 @@ _MOTIVO_DE_FALHA = {
     "database_unavailable": ("o banco não respondeu",
                              "Verifique a conexão e recarregue a página."),
     "snapshot_hash_invalid": ("a vitrine publicada não confere com o próprio hash",
-                              "Republique a vitrine a partir do armazém local."),
+                              "Republique a vitrine a partir do armazém local "
+                              "(`python scripts/atualizar_vitrines.py`)."),
 }
 
 

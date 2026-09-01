@@ -1,6 +1,22 @@
-"""Aplica, de forma idempotente, as migrations necessárias à metodologia FII v6."""
+"""Aplica, de forma idempotente, as migrations necessárias à metodologia FII v6.
+
+**Estas migrations são do ARMAZÉM LOCAL, não do Supabase.** Das nove, quatro
+criam tabelas de trabalho do pipeline -- `fii_cvm_archive_loads`,
+`fii_cri_archive_loads`, os checkpoints de parser, o índice de
+`fii_document_versions` -- que a arquitetura local-first deliberadamente tirou
+do Supabase. No armazém as nove já existem e este script é um no-op; no Supabase
+ele quebra em `relation "market.fii_source_releases" does not exist`, e o
+sucesso seria pior que a falha: repovoaria o Supabase com as tabelas que a
+migração local-first esvaziou.
+
+Foi rodá-lo contra o Supabase que derrubou o job de FIIs do `market-refresh.yml`
+em dez execuções diárias seguidas, sempre no mesmo ponto. Por isso o
+``--warehouse``: quem chama declara o destino em vez de herdar o que estiver no
+`.env`.
+"""
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -64,5 +80,20 @@ def apply() -> dict[str, list[str]]:
     return report
 
 
-if __name__ == "__main__":
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--warehouse", action="store_true",
+                   help="Aplica no armazém local (127.0.0.1:5433), que é o destino "
+                        "correto destas migrations.")
+    args = p.parse_args(argv)
+    if args.warehouse:
+        from run_market_ingest import _point_to_warehouse
+        if not _point_to_warehouse():
+            print("armazém local indisponível")
+            return 1
     print(apply())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

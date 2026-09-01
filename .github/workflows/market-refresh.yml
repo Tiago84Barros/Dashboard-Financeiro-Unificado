@@ -110,27 +110,25 @@ jobs:
             if [ "${{ github.event.schedule }}" = "0 8 * * 6" ]; then M="annual"; else M="daily"; fi
           fi
           echo "mode=$M" >> "$GITHUB_OUTPUT"
-      - name: Garantir schema FII v6
-        if: steps.mode.outputs.mode != 'schema'
-        run: python -m scripts.apply_fii_schema
+      # As etapas de CVM (fiis-cvm, fiis-entities, fiis-confidence, fiis-series),
+      # o monitoramento e o `apply_fii_schema` SAIRAM daqui em 01/09/2026 e
+      # rodam agora em `scripts/atualizar_vitrines.py`, na maquina local.
+      #
+      # Nao foi arrumar o que quebrou: elas nao podiam funcionar aqui. Das 22
+      # tabelas `market.fii*`, 18 existem so no armazem local depois da migracao
+      # local-first -- `fii_source_releases`, `fii_metric_observations`,
+      # `fii_parser_calibrations` e companhia. O job falhava em dez execucoes
+      # diarias seguidas sempre no mesmo ponto, e o `apply_fii_schema` teria sido
+      # pior se tivesse dado certo: recriaria no Supabase justamente as tabelas
+      # que a migracao tirou de la.
+      #
+      # Ficaram aqui as duas etapas que escrevem tabelas que o app le no
+      # Supabase (`market.fiis`, benchmark IFIX) e que nao dependem do armazem.
+      # Ficam remotas de proposito: rodam mesmo com o computador do usuario
+      # desligado.
       - name: Ranking FIIs
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py fiis --json
-      - name: Enriquecimento CVM de FIIs
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-cvm --json
-      - name: Resolver entidades FII
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-entities --json
-      - name: Calibrar parsers FII
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-confidence --json
-      - name: Series historicas FII
-        if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
-        run: python run_market_ingest.py fiis-series --json
       - name: Benchmark IFIX
         if: steps.mode.outputs.mode == 'daily' || steps.mode.outputs.mode == 'both'
         run: python run_market_ingest.py benchmark --json
-      - name: Monitoramento FII
-        if: always() && steps.mode.outputs.mode != 'schema'
-        run: python run_market_ingest.py fiis-monitor --json
