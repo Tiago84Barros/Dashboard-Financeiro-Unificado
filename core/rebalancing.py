@@ -9,11 +9,13 @@ da meta). Reduz custos sem comprometer tracking error.
 Referência: Kritzman, Page & Turkington (2009), "What Practitioners
 Need to Know... About Rebalancing", Financial Analysts Journal, 65(2).
 
-Três políticas disponíveis:
+Quatro políticas disponíveis:
 
   • CalendarRebalance   — rebalanceia em intervalos fixos (1m, 3m, 6m, 1a)
   • ThresholdRebalance  — rebalanceia quando |desvio| > banda
   • HybridRebalance     — calendário + threshold (rebal no mais cedo)
+  • AporteRebalance     — nunca negocia para convergir; a convergência vem
+                          do aporte, calculada em `core.aporte`
 
 Função pura — recebe estado atual e meta, decide se deve rebalancear.
 """
@@ -133,6 +135,47 @@ class HybridRebalance:
             if max_desvio > self.banda_abs:
                 return True, (f"Threshold: {tk_crit} desviou "
                               f"{max_desvio*100:.1f}p.p. (banda {self.banda_abs*100:.0f}p.p.)")
+        return False, ""
+
+
+@dataclass
+class AporteRebalance:
+    """Convergência por aporte — nunca vende para se readequar ao alvo.
+
+    É a política de quem está formando patrimônio: o desvio de peso não
+    dispara ordem nenhuma, porque a correção vem do próximo aporte
+    direcionado (`core.aporte.plano_de_aporte`), não de girar a carteira.
+
+    Por que ela existe como `RebalancePolicy` em vez de ficar só em
+    `core.aporte`: o motor de `global_portfolio.advisor` já consulta uma
+    política antes de emitir ação, e é exatamente ali que "reduzir" e
+    "vender" nascem. Devolvendo `False`, todo ativo cai em `manter` com o
+    `peso_sugerido` preservado — o alvo continua visível, a ordem de venda
+    não é emitida. Sem isto, escolher aporte dirigido na tela e continuar
+    recebendo "vender BBAS3" do motor seriam duas respostas contraditórias
+    para a mesma carteira.
+
+    `alocacao_inicial`: numa carteira que ainda não existe (`ultimo_rebal is
+    None`) não há o que vender, então montar a posição inicial não fere a
+    regra. Mantido `True` por default para o comportamento casar com as
+    outras três políticas; quem simula a partir de carteira já existente
+    passa `False`.
+
+    A regra vem de `memória: backtest-teorico-nao-e-alcancavel` — não do
+    fato de vender ser errado. Tese quebrada continua sendo motivo de venda,
+    e isso é decisão de análise, não de política de rebalanceamento.
+    """
+    alocacao_inicial: bool = True
+
+    def deve_rebalancear(self, pesos_atuais, pesos_meta, data_atual,
+                          ultimo_rebal):
+        if ultimo_rebal is None and self.alocacao_inicial:
+            return True, "Primeira execução — alocação inicial"
+        max_desvio, tk_crit = _maior_desvio(pesos_atuais, pesos_meta)
+        if max_desvio > 0:
+            return False, (f"Convergência por aporte: {tk_crit} desviou "
+                           f"{max_desvio*100:.1f}p.p., a ser corrigido pelos "
+                           f"próximos aportes, sem venda")
         return False, ""
 
 

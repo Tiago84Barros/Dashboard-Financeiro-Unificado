@@ -18,6 +18,7 @@ import pandas as pd
 import streamlit as st
 
 from core import transaction_costs
+from core.aporte import com_convergencia, plano_de_aporte
 from core.global_portfolio import (
     advisor,
     concentration,
@@ -1136,6 +1137,140 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
                 st.dataframe(_linha_de_componentes(acao), use_container_width=True, hide_index=True)
 
 
+_CHAVE_APORTE = "portfolio_global_aporte_mensal"
+
+# Premissa do numero de convergencia, e ela precisa aparecer na tela junto
+# com o numero — `memoria: declaracao-de-rigor-nao-verificada`.
+_PREMISSA_CONVERGENCIA = (
+    "Convergência calculada a preços constantes: responde “quantos aportes "
+    "iguais fecham a diferença se nada se mover”, não é projeção de mercado."
+)
+
+
+def valores_por_classe(df: pd.DataFrame, total_brl: float | None) -> dict[str, float]:
+    """{classe: valor em R$} agregado das posições.
+
+    Função pura, separada do painel para o teste não precisar do Streamlit.
+    Sem `total_brl` devolve `{}` — o plano de aporte é em reais, e derivar
+    reais de peso sem patrimônio seria inventar a base.
+    """
+    if df is None or df.empty or not total_brl or float(total_brl) <= 0:
+        return {}
+    agrupado = df.groupby("asset_class")["weight_global"].sum()
+    return {str(c): float(p) * float(total_brl) for c, p in agrupado.items()}
+
+
+def _painel_aporte(df: pd.DataFrame, alvos: dict, total_brl: float | None) -> None:
+    """Painel 'Plano de aporte' — para onde vai o próximo aporte, sem vender.
+
+    Responde a pergunta que o motor de movimentação não responde. O motor
+    decide se é dia de mexer e emite "reduzir"/"vender"; este painel assume
+    que nada será vendido e distribui dinheiro novo entre as classes abaixo
+    do alvo. As duas leituras convivem de propósito: são políticas
+    diferentes para a mesma carteira, e a tela mostra as duas em vez de
+    escolher por quem lê.
+
+    Trabalha no nível de CLASSE porque é nesse nível que a alocação-alvo
+    desta tela é definida (`load_allocation_targets`). O motor por trás
+    (`core.aporte`) não sabe disso e funciona igual por ticker.
+    """
+    st.markdown("#### Plano de aporte")
+
+    valores = valores_por_classe(df, total_brl)
+    if not valores:
+        st.info(
+            "Informe o patrimônio total em R$ na alocação-alvo para o plano de "
+            "aporte sair em reais."
+        )
+        return
+    if not alvos:
+        st.info("Defina a alocação-alvo por classe para calcular o plano de aporte.")
+        return
+
+    aporte = st.number_input(
+        "Aporte a distribuir (R$)",
+        min_value=0.0, step=500.0, value=float(st.session_state.get(_CHAVE_APORTE, 0.0)),
+        key=_CHAVE_APORTE,
+        help="Quanto entra de dinheiro novo. O plano nunca vende: distribui "
+             "entre as classes abaixo do peso-alvo.",
+    )
+
+    plano = plano_de_aporte(valores, alvos, aporte)
+    if aporte > 0:
+        plano = com_convergencia(plano, valores, alvos, aporte)
+
+    colunas = st.columns(4)
+    with colunas[0]:
+        card_metrica("Aporte", f"R$ {plano.aporte:,.2f}".replace(",", "."))
+    with colunas[1]:
+        card_metrica(
+            "Desvio da carteira",
+            f"{plano.desvio_antes * 100:.1f}% → {plano.desvio_depois * 100:.1f}%",
+            positivo=plano.desvio_depois <= plano.desvio_antes,
+            ajuda="Fração do patrimônio fora do peso-alvo (soma |peso − alvo| ÷ 2), "
+                  "antes e depois deste aporte.",
+        )
+    with colunas[2]:
+        if not plano.convergencia_avaliada:
+            texto, positivo = "—", None
+        elif plano.meses_para_convergir is None:
+            texto, positivo = "não converge", False
+        else:
+            texto, positivo = f"{plano.meses_para_convergir} mês(es)", True
+        card_metrica("Aportes até o alvo", texto, positivo=positivo,
+                     ajuda=_PREMISSA_CONVERGENCIA)
+    with colunas[3]:
+        card_metrica(
+            "Não alocado", f"R$ {plano.sobra:,.2f}".replace(",", "."),
+            positivo=(plano.sobra <= 0.005),
+            ajuda="Dinheiro que o plano não conseguiu direcionar. Deve ser zero "
+                  "no nível de classe; diferente de zero indica alvo mal definido.",
+        )
+
+    if plano.convergencia_avaliada and plano.meses_para_convergir is None:
+        st.warning(
+            "⚠️ Com este aporte a carteira não chega ao alvo dentro do horizonte "
+            "avaliado. Aumentar o aporte ou revisar a alocação-alvo são as duas "
+            "saídas — vender não é a única, e não é a assumida aqui."
+        )
+    elif plano.convergencia_avaliada and (plano.meses_para_convergir or 0) > 24:
+        st.info(
+            f"Convergência lenta: {plano.meses_para_convergir} aportes. "
+            "O plano continua válido, mas o alvo demora a ser atingido só com "
+            "dinheiro novo."
+        )
+
+    linhas = [
+        {
+            "Classe": get_spec(a.symbol).label if a.symbol in asset_classes() else a.symbol,
+            "Peso atual": a.peso_atual * 100.0,
+            "Alvo": a.peso_alvo * 100.0,
+            "Diferença até o alvo (R$)": a.deficit,
+            "Aportar (R$)": a.valor_aportado,
+            "Peso depois": a.peso_depois * 100.0,
+        }
+        for a in plano.alocacoes
+    ]
+    tabela = pd.DataFrame(linhas).sort_values(
+        ["Aportar (R$)", "Classe"], ascending=[False, True]
+    )
+    st.dataframe(
+        tabela, hide_index=True, use_container_width=True,
+        column_config={
+            "Peso atual": st.column_config.NumberColumn(format="%.2f%%"),
+            "Alvo": st.column_config.NumberColumn(format="%.2f%%"),
+            "Peso depois": st.column_config.NumberColumn(format="%.2f%%"),
+            "Diferença até o alvo (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Aportar (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+        },
+    )
+    st.caption(
+        "Diferença negativa = classe **acima** do alvo. Ela não recebe aporte e "
+        "também não é vendida: o peso se corrige sozinho conforme as outras "
+        "crescem. " + _PREMISSA_CONVERGENCIA
+    )
+
+
 def render() -> None:
     st.markdown("## 🌐 Portfólio Global")
     st.caption("As três carteiras lidas como um único patrimônio.")
@@ -1203,3 +1338,4 @@ def render() -> None:
     _painel_risco(ret, pesos)
     _painel_papeis(df, ret)
     _painel_recomendacoes(df, ret, pesos, alvos, alocacao.get("total_brl"))
+    _painel_aporte(df, alvos, alocacao.get("total_brl"))
