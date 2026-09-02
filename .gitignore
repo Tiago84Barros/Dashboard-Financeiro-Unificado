@@ -276,3 +276,7 @@ backups/
 
 # indices full-index da SEC baixados por scripts/medir_mortalidade_us.py (~40 MB/trimestre)
 .cache/
+
+# Motor Conjuntural de noticias: cache, cota e carimbo de coleta sao estado
+# de maquina, nao codigo.
+local_staging/noticias/
