@@ -73,6 +73,12 @@ class Alvo:
     ``precisa_armazem`` diz se o alvo depende do Docker local. Vale para todos os
     de hoje, e é o motivo estrutural de nada disto poder ser um GitHub Action:
     as 18 tabelas de trabalho do pipeline de FIIs existem só no armazém.
+
+    ``artefatos`` são os arquivos DO REPOSITÓRIO que a publicação reescreve --
+    hoje só o fallback offline da vitrine de FIIs. Ficam declarados aqui, e não
+    descobertos por varredura de diretório, porque `data/public/` também guarda
+    25 MB de parquets do corpus RAG: uma varredura levaria o corpus junto no dia
+    em que ele fosse reconstruído. Quem os commita é `core.publicacao_git`.
     """
 
     chave: str
@@ -82,6 +88,7 @@ class Alvo:
     modulo: str
     versao_de: str | None = None
     precisa_armazem: bool = True
+    artefatos: tuple[str, ...] = ()
 
     @property
     def por_versao(self) -> bool:
@@ -118,6 +125,10 @@ ALVOS: tuple[Alvo, ...] = (
         passos=(("scripts/publish_fii_selection_from_local.py",),),
         cadencia_dias=1,
         modulo="fii",
+        # O app publicado lê este arquivo do repositório quando o Supabase não
+        # responde; ele vence por `as_of_date`, então republicar sem commitar
+        # deixa a `main` com um fallback que vai expirar.
+        artefatos=("data/public/fii_selection_snapshot_v2.json.gz",),
     ),
     Alvo(
         chave="b3_metrics",

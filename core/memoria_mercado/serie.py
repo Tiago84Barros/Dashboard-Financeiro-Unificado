@@ -8,20 +8,30 @@ tabela                                        linhas     datas    leitura
 ===========================================  =========  =======  ==============
 ``market_us.prices_daily``                   13.342.783  16.267   diária de fato
 ``market.fii_b3_security_history``              606.552   4.099   diária de fato
-``market.historical_prices`` (ações B3)         137.735   1.542   **não é diária**
+``market.b3_security_history`` (ações B3)     1.627.752   4.134   diária de fato
 ===========================================  =========  =======  ==============
 
-1.542 datas distintas cobrindo 2000-2026 dá ~24 pregões por ano até 2013. Uma
-função que receba essa série, some um índice e chame o resultado de "retorno em
-1 pregão" devolve, na prática, o retorno de duas semanas -- sem erro, sem aviso,
-com o rótulo errado. É o modo de falha registrado em
+A terceira linha era ``market.historical_prices``: 137.735 linhas em 1.542
+datas cobrindo 2000-2026, ou ~24 pregões por ano até 2013 -- série mensal, não
+diária. Uma função que receba essa série, some um índice e chame o resultado de
+"retorno em 1 pregão" devolve, na prática, o retorno de duas semanas -- sem
+erro, sem aviso, com o rótulo errado. É o modo de falha registrado em
 ``memoria: defeito-silencioso-vs-erro``.
 
 A defesa é :meth:`SeriePrecos.densidade`: a janela sabe quantos pregões
 observados ela tem e quantos deveria ter no mesmo intervalo de calendário. Uma
 janela de 5 pregões que ocupa 70 dias corridos não é uma janela de 5 pregões, e
-:func:`janela_valida` devolve ``False`` -- o que faz a métrica sair ``None`` lá
-na frente, em vez de sair errada.
+:meth:`SeriePrecos.janela_valida` devolve ``False`` -- o que faz a métrica sair
+``None`` lá na frente, em vez de sair errada.
+
+Em 02/09/2026 a série diária de ações da B3 passou a existir, ingerida do
+COTAHIST oficial (``data_pipeline/market/b3_precos.py``), e a Memória de Mercado
+foi repontada para ela. **O portão não foi afrouxado por causa disso** -- os
+limiares abaixo continuam onde estavam; foi a série que melhorou. Medido nos
+mesmos parâmetros, um evento de 2024 em PETR4/VALE3/ITUB4/WEGE3/MGLU3 saía não
+medido até 63 pregões na série antiga e passa em 1, 5, 21 e 63 na nova. O portão
+segue valendo para qualquer símbolo cuja cobertura seja rala, que é o caso de
+papel recém-listado ou com longa suspensão.
 
 Módulo puro: sem SQL, sem rede, sem Streamlit.
 """

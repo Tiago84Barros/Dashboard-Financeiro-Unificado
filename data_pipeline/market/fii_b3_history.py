@@ -7,15 +7,14 @@ retornos com proventos separadamente quando disponíveis e reporta a cobertura.
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import logging
-import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import text
 
+from data_pipeline.market import b3_cotahist
 from data_pipeline.market.repository import save_raw_payload
 from data_pipeline.utils.db_utils import get_pipeline_engine
 
@@ -30,22 +29,6 @@ PARSER_VERSION = "1.1.0"
 PARSER_SCHEMA_VERSION = "cotahist-layout-2020-r2"
 _LOGGER = logging.getLogger(__name__)
 _BATCH_SIZE = 1_000
-
-
-def _money(line: str, start: int, end: int) -> float | None:
-    raw = line[start:end].strip()
-    try:
-        return int(raw) / 100.0 if raw else None
-    except ValueError:
-        return None
-
-
-def _integer(line: str, start: int, end: int) -> int | None:
-    raw = line[start:end].strip()
-    try:
-        return int(raw) if raw else None
-    except ValueError:
-        return None
 
 
 def fetch_year(year: int, timeout: int = 180) -> tuple[bytes, str, dict[str, str]]:
@@ -85,41 +68,32 @@ def fetch_year(year: int, timeout: int = 180) -> tuple[bytes, str, dict[str, str
 
 
 def parse_cotahist(content: bytes) -> list[dict]:
-    with zipfile.ZipFile(io.BytesIO(content)) as zipped:
-        names = [name for name in zipped.namelist() if name.upper().endswith(".TXT")]
-        if not names:
-            return []
-        raw_lines = zipped.read(names[0]).decode("latin-1").splitlines()
-    rows: list[dict] = []
-    for line in raw_lines:
-        if len(line) < 242 or line[0:2] != "01":
-            continue
-        bdi, market = line[10:12], line[24:27]
-        ticker = line[12:24].strip().upper()
-        # BDI 12 identifica cotas de fundos imobiliários no arquivo oficial.
-        if bdi != "12" or market != "010" or not ticker:
-            continue
-        raw_date = line[2:10]
-        try:
-            trade_date = datetime.strptime(raw_date, "%Y%m%d").date().isoformat()
-        except ValueError:
-            continue
-        rows.append({
-            "ticker": ticker, "trade_date": trade_date,
-            "issuer_short_name": line[27:39].strip() or None,
-            "specification": line[39:49].strip() or None,
-            "isin": line[230:242].strip() or None,
-            "open": _money(line, 56, 69), "high": _money(line, 69, 82),
-            "low": _money(line, 82, 95), "average": _money(line, 95, 108),
-            "close": _money(line, 108, 121),
-            "trades": _integer(line, 147, 152), "quantity": _integer(line, 152, 170),
-            "financial_volume": _money(line, 170, 188),
-        })
-    return rows
+    """Cotas de FII (BDI 12, mercado a vista) do COTAHIST.
+
+    A leitura do layout mora em :mod:`data_pipeline.market.b3_cotahist`, que le
+    o arquivo inteiro e recebe o filtro por parametro. Aqui so se diz qual
+    filtro. As chaves devolvidas sao as mesmas de antes da separacao -- `bdi` e
+    `fator_cotacao`, que o leitor generico traz, nao entram porque
+    `market.fii_b3_security_history` nao tem essas colunas e carregar campo
+    morto em 606 mil linhas de payload JSON nao e de graca.
+    """
+    linhas = b3_cotahist.ler_linhas(content, bdi_codes=(b3_cotahist.BDI_FII,))
+    return [{chave: valor for chave, valor in linha.items()
+             if chave not in ("bdi", "fator_cotacao")}
+            for linha in linhas]
 
 
 def _parser_hash() -> str:
-    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    """Impressao do codigo que realmente le o arquivo.
+
+    O layout de 245 colunas saiu deste modulo para `b3_cotahist`. Continuar
+    hasheando so este arquivo registraria em `market.fii_parser_versions` uma
+    impressao que nao cobre o parser: mudar uma posicao de coluna la deixaria
+    o `code_sha256` daqui intacto, e a procedencia diria que nada mudou.
+    """
+    partes = b"".join(Path(arquivo).read_bytes()
+                      for arquivo in (__file__, b3_cotahist.__file__))
+    return hashlib.sha256(partes).hexdigest()
 
 
 def _register_parser(conn) -> None:

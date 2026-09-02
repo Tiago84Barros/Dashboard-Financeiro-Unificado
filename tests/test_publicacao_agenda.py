@@ -221,3 +221,27 @@ def test_toda_chave_e_unica_e_tem_cadencia_coerente():
             assert alvo.versao_de, f"{alvo.chave} sem fonte de versão"
         else:
             assert alvo.cadencia_dias and alvo.cadencia_dias > 0
+
+
+def test_artefato_declarado_e_rastreavel_pelo_git():
+    """Artefato ignorado pelo git seria recusado por `git add` toda madrugada.
+
+    E o modo de falhar é ruim: a vitrine vai para o Supabase, a rotina reclama
+    do commit, e o caminho declarado parece certo -- o `.gitignore` é o último
+    lugar em que se procura. `data/public/` já foi ignorado inteiro uma vez.
+    """
+    import subprocess
+    from pathlib import Path
+
+    raiz = Path(__file__).resolve().parents[1]
+    declarados = sorted({caminho for alvo in ALVOS for caminho in alvo.artefatos})
+    assert declarados, "nenhum alvo declara artefato; o teste perdeu o objeto"
+
+    for caminho in declarados:
+        assert (raiz / caminho).exists(), f"{caminho} não existe em disco"
+        proc = subprocess.run(["git", "check-ignore", "-q", caminho],
+                              cwd=str(raiz), capture_output=True, check=False)
+        assert proc.returncode != 0, f"{caminho} está no .gitignore"
+        rastreado = subprocess.run(["git", "ls-files", "--error-unmatch", caminho],
+                                   cwd=str(raiz), capture_output=True, check=False)
+        assert rastreado.returncode == 0, f"{caminho} não está commitado na main"

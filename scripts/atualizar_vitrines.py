@@ -53,6 +53,7 @@ from core.publicacao_agenda import (  # noqa: E402
     alvos_devidos,
     registrar_resultado,
 )
+from core.publicacao_git import publicar_artefatos  # noqa: E402
 
 ESTADO = ROOT / "local_staging" / "estado_publicacao.json"
 LOG_DIR = ROOT / "local_staging" / "logs"
@@ -342,6 +343,39 @@ def verificar(modulos: set[str], ambiente: dict) -> tuple[bool, str]:
     return proc.returncode == 0, saida
 
 
+def levar_artefatos_ao_repositorio(alvos_ok: list) -> list[str]:
+    """Commita e empurra os artefatos dos alvos que publicaram com sucesso.
+
+    Existe porque a vitrine de FIIs escreve um arquivo DENTRO do repositório --
+    o fallback offline que o app lê quando o Supabase não responde. Ele não pode
+    ir para o `.gitignore` (o app lê o arquivo commitado) nem ficar sem commit
+    (ele vence por `as_of_date`). Até 02/09/2026 a rotina o deixava sujo na
+    árvore de trabalho e alguém commitava à mão, quando lembrava -- foi o que
+    aconteceu em 31/08/2026, depois de a vitrine vencer e a tela reprovar os 394
+    fundos como se fossem ruins.
+
+    Só entram artefatos de alvo que publicou. Alvo que falhou pode ter deixado o
+    arquivo pela metade, e commitar isso publicaria a metade.
+    """
+    avisos: list[str] = []
+    for alvo in alvos_ok:
+        if not alvo.artefatos:
+            continue
+        mensagem = (
+            f"chore({alvo.modulo}): republica {alvo.titulo.lower()}\n\n"
+            "Commit automatico de scripts/atualizar_vitrines.py. O app publicado\n"
+            "le este artefato do repositorio quando o Supabase nao responde, e\n"
+            "ele vence por as_of_date: republicar sem commitar deixa a main com\n"
+            "um fallback que vai expirar.\n\n"
+            "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+        )
+        resultado = publicar_artefatos(ROOT, alvo.artefatos, mensagem)
+        registrar(f"  {alvo.chave}: artefato -> {resultado.resumo()}")
+        if not resultado.ok:
+            avisos.append(f"{alvo.chave}: {resultado.resumo()}")
+    return avisos
+
+
 def notificar(texto: str, assunto: str) -> None:
     try:
         from scripts.notificar import notificar as enviar
@@ -407,6 +441,7 @@ def main(argv=None) -> int:
 
     falhas: list[str] = []
     publicados: list[str] = []
+    publicados_alvos: list = []
     modulos: set[str] = set()
 
     for alvo, motivo in devidos:
@@ -419,17 +454,26 @@ def main(argv=None) -> int:
         gravar_estado(estado)
         if ok:
             publicados.append(alvo.chave)
+            publicados_alvos.append(alvo)
             modulos.add(alvo.modulo)
             registrar(f"  {alvo.chave}: OK")
         else:
             falhas.append(f"{alvo.chave}: {detalhe}")
             registrar(f"  {alvo.chave}: FALHOU -- {detalhe}")
 
+    # Antes de verificar, porque a verificação lê a vitrine e não o repositório:
+    # a ordem entre as duas não muda o resultado de nenhuma, mas um artefato que
+    # não foi commitado tem de entrar na mesma notificação que o resto.
+    avisos_git = levar_artefatos_ao_repositorio(publicados_alvos)
+
     verificacao_ok, verificacao = verificar(modulos, ambiente)
     if verificacao:
         registrar("verificação:\n" + verificacao)
     if not verificacao_ok:
         falhas.append("verificação de frescor reprovou:\n" + verificacao)
+    # Artefato não commitado é falha desta rotina, ainda que a vitrine tenha
+    # chegado ao Supabase: o fallback que o app lê continua o velho e vai vencer.
+    falhas.extend(f"artefato não publicado -- {aviso}" for aviso in avisos_git)
 
     registrar("=== fim: "
               f"{len(publicados)} publicado(s), {len(falhas)} falha(s).")
