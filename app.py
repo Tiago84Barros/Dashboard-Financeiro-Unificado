@@ -49,6 +49,7 @@ _ROTAS: dict[str, str] = {
     "🌎 Empresas Americanas": "empresas_americanas",
     "🏬 Seleção de FIIs":      "fiis",
     "🌐 Portfólio Global":    "portfolio_global",
+    "🧭 Inteligência de Mercado": "inteligencia_mercado",
     "🎯 Grau de Confiança":  "confianca",
     "📚 Documentação":        "documentacao",
     "⚙️ Configurações":       "configuracoes",
@@ -82,7 +83,8 @@ with st.sidebar:
         opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3",
                          "🌎 Empresas Americanas",
                          "🏬 Seleção de FIIs",
-                         "🌐 Portfólio Global"]
+                         "🌐 Portfólio Global",
+                         "🧭 Inteligência de Mercado"]
         opcoes_sistema = ["📚 Documentação", "⚙️ Configurações"]
         opcoes_menu = opcoes_visao + opcoes_financas + opcoes_invest + opcoes_sistema
 
