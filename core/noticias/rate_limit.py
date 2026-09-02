@@ -5,11 +5,17 @@ dia, Marketaux 100. Descobrir o limite pelo 429 do servidor é caro -- a
 requisição que leva o 429 já consumiu cota em vários provedores, e a janela de
 reposição é de 24 horas. Por isso o freio é local e *anterior* à chamada.
 
-O estado mora em arquivo, não em memória de processo: o job agendado, o script
-manual e a sessão Streamlit são processos diferentes disputando a mesma cota.
-Um contador em memória deixaria cada um achar que tem 25 chamadas só para si.
-Segue a mesma doutrina de ``local_staging/estado_publicacao.json`` -- é estado
-de MÁQUINA, fica fora do versionamento.
+O estado não pode viver em memória de processo: o job agendado, o script manual
+e a sessão Streamlit são processos diferentes disputando a mesma cota, e um
+contador em memória deixaria cada um achar que tem 25 chamadas só para si.
+
+Por omissão o estado vai para arquivo, na doutrina de
+``local_staging/estado_publicacao.json`` -- estado de MÁQUINA, fora do
+versionamento. Isso basta na máquina do desenvolvedor e **não basta em
+produção**: o runner do GitHub Actions começa cada execução com disco limpo, e
+com o cron de meia em meia hora o teto diário nunca chegaria a ser atingido no
+papel enquanto o provedor devolve 429 na prática. Para esse caso o orçamento
+aceita um ``armazem`` compartilhado (ver ``estado_coleta.ConsumoBanco``).
 
 O relógio é injetado. Sem isso, testar "a janela virou" custaria esperar a
 janela virar.
@@ -80,16 +86,42 @@ class Orcamento:
     def __init__(self, limites: dict[str, Limite] | None = None,
                  caminho: Path | str | None = CAMINHO_PADRAO,
                  agora: Callable[[], datetime] = _agora_utc,
-                 persistir: bool = True):
+                 persistir: bool = True, armazem=None):
+        """``armazem`` substitui o arquivo por um meio compartilhado.
+
+        O arquivo é estado de máquina e some com a máquina. Num runner de CI,
+        que nasce com disco limpo a cada execução, o teto diário deixa de
+        existir: cada execução se acha a primeira do dia. Quem roda em produção
+        passa um armazém -- ``estado_coleta.ConsumoBanco`` -- e o contador passa
+        a ser o mesmo para os três processos. O objeto precisa apenas de
+        ``carregar() -> dict | None`` e ``salvar(dict)``.
+        """
         self._limites = dict(limites or LIMITES_PADRAO)
         self._caminho = Path(caminho) if caminho is not None else None
         self._agora = agora
-        self._persistir = persistir and self._caminho is not None
+        self._armazem = armazem
+        self._persistir = persistir and (
+            armazem is not None or self._caminho is not None)
         self._registros: dict[str, list[float]] = {}
         self._carregar()
 
     # -- persistência -----------------------------------------------------
     def _carregar(self) -> None:
+        if self._armazem is not None:
+            try:
+                dados = self._armazem.carregar()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("armazem de cota ilegivel (%s)", exc)
+                dados = None
+            # ``None`` é "não consegui ler", e aí o correto é NÃO concluir que
+            # a cota está livre. Sem leitura, o orçamento em memória continua
+            # zerado apenas para esta execução -- e o job declara a limitação.
+            if isinstance(dados, dict):
+                for provedor, marcas in dados.items():
+                    self._registros[str(provedor)] = [
+                        float(m) for m in (marcas or [])
+                        if isinstance(m, (int, float))]
+            return
         if not self._caminho or not self._caminho.exists():
             return
         try:
@@ -108,7 +140,15 @@ class Orcamento:
                     ]
 
     def _salvar(self) -> None:
-        if not self._persistir or self._caminho is None:
+        if not self._persistir:
+            return
+        if self._armazem is not None:
+            try:
+                self._armazem.salvar(self._registros)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("consumo de cota nao gravado (%s)", exc)
+            return
+        if self._caminho is None:
             return
         try:
             self._caminho.parent.mkdir(parents=True, exist_ok=True)

@@ -147,6 +147,14 @@ _DEFAULT_REGISTRY: list[dict] = [
         # INATIVO POR PADRÃO, de propósito: consome cota de APIs gratuitas
         # (Alpha Vantage: 25 chamadas/dia; Marketaux: 100/dia). Para ligar,
         # configure ao menos uma chave e troque is_active para True.
+        #
+        # E continua inativo AQUI mesmo depois de ligado em produção. Quem
+        # sustenta a cadência é o workflow dedicado
+        # (`.github/workflows/noticias.yml`, meia em meia hora), porque o
+        # pipeline noturno roda uma vez por dia -- frequência que não serve a
+        # nenhum dos três modos. Ativar nos dois lugares faria a coleta noturna
+        # disputar cota com o ciclo do modo corrente sem trazer frescor nenhum.
+        # Ver docs/noticias_atualizacao_continua.md.
         "table_name":   "noticias_itens, noticias_avaliacoes",
         "source_name":  "Motor Conjuntural (Alpha Vantage / Marketaux / RSS)",
         "job_name":     "update_noticias",

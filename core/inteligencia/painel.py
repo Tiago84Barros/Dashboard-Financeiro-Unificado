@@ -197,6 +197,79 @@ def item_de_avaliada(avaliada, *, classes: tuple[str, ...] = ()) -> ItemNoticia:
         impacto=v_impacto, horizonte=v_horizonte)
 
 
+def _tupla(entidades: dict, chave: str) -> tuple[str, ...]:
+    valor = (entidades or {}).get(chave) or ()
+    return tuple(str(v) for v in valor)
+
+
+def item_de_linha(linha: dict, *, classes: tuple[str, ...] = ()) -> ItemNoticia:
+    """Traduz uma linha do acervo (``noticias_itens`` + ``noticias_avaliacoes``).
+
+    É o caminho que a tela usa quando a coleta foi feita por outro processo --
+    o job do cron -- e a sessão atual não presenciou nada. O que o banco não
+    guardou entra como ausente, com o motivo: reconstruir por padrão o que não
+    foi gravado apresentaria omissão como medição.
+    """
+    import json as _json
+
+    ent = linha.get("entidades") or {}
+    if isinstance(ent, str):
+        try:
+            ent = _json.loads(ent)
+        except ValueError:
+            ent = {}
+
+    nota = linha.get("nota")
+    v_relevancia = (fato("Relevância", round(float(nota), 1), unidade="/100",
+                         observacao=f"faixa: {linha.get('faixa') or '?'}")
+                    if nota is not None else
+                    ausente("Relevância", "não avaliada nesta versão"))
+
+    conf_fonte = linha.get("confiabilidade_fonte")
+    v_conf = (fato("Confiabilidade da fonte", round(float(conf_fonte), 2))
+              if conf_fonte is not None else
+              ausente("Confiabilidade da fonte", "fonte não cadastrada"))
+
+    v_min, v_max = linha.get("variacao_min"), linha.get("variacao_max")
+    if v_min is not None and v_max is not None:
+        v_impacto = estimativa(
+            "Impacto estimado", faixa=(float(v_min), float(v_max)),
+            unidade="%", confianca=(float(linha["confianca"])
+                                    if linha.get("confianca") is not None
+                                    else None),
+            observacao="base histórica gravada com a avaliação")
+    else:
+        v_impacto = ausente("Impacto estimado",
+                            "sem base histórica para este tipo de evento")
+
+    horizonte = str(linha.get("horizonte") or "")
+    v_horizonte = (ausente("Horizonte", "não determinado pelo classificador")
+                   if horizonte in ("", "indeterminado") else
+                   fato("Horizonte", horizonte))
+
+    confirmado = bool(linha.get("confirmado_por_primaria"))
+    return ItemNoticia(
+        id=str(linha.get("id_dedup") or ""),
+        titulo=str(linha.get("titulo") or ""),
+        resumo=str(linha.get("resumo") or ""),
+        url=str(linha.get("url_canonica") or linha.get("url") or ""),
+        fonte=str(linha.get("dominio") or linha.get("veiculo")
+                  or linha.get("provedor") or "?"),
+        publicado_em=linha.get("publicado_em"),
+        coletado_em=linha.get("coletado_em"),
+        qualidade_conteudo=(qz.FATO if confirmado else qz.HIPOTESE),
+        estado_verificacao=str(linha.get("estado_verificacao")
+                               or "nao_verificada"),
+        n_fontes=int(linha.get("n_fontes_independentes") or 1),
+        tipo_evento=str(linha.get("tipo_evento") or ""),
+        tickers=_tupla(ent, "tickers"), empresas=_tupla(ent, "empresas"),
+        setores=_tupla(ent, "setores"), paises=_tupla(ent, "paises"),
+        moedas=_tupla(ent, "moedas"), classes=classes,
+        relevancia=v_relevancia, confiabilidade=v_conf,
+        direcao=_direcao_valor(linha.get("direcao"), confirmado=confirmado),
+        impacto=v_impacto, horizonte=v_horizonte)
+
+
 def item_de_evento(evento, *, relevancia: float | None = None,
                    classes: tuple[str, ...] = ()) -> ItemNoticia:
     """Traduz :class:`core.noticias.eventos.Evento` (matérias agrupadas)."""
