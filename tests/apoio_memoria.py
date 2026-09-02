@@ -1,11 +1,16 @@
 """Séries e painéis sintéticos para os testes da Memória de Mercado.
 
-Por que séries construídas e não dados reais: o armazém local tem preço diário
-para EUA e FII e **não** tem para ações da B3 (1.542 datas distintas em 26
-anos). Um teste apoiado no dado real mediria a cobertura do armazém, não o
-comportamento do código -- e mudaria de resultado a cada ingestão. Aqui a
-cobertura é um parâmetro, o que permite exercitar de propósito os dois lados do
-portão de densidade.
+Por que séries construídas e não dados reais: um teste apoiado no dado real
+mediria a cobertura do armazém, não o comportamento do código -- e mudaria de
+resultado a cada ingestão. Aqui a cobertura é um parâmetro, o que permite
+exercitar de propósito os dois lados do portão de densidade.
+
+O motivo original era mais estreito e já não vale: o armazém tinha preço diário
+para EUA e FII e não para ações da B3 (1.542 datas em 26 anos). Desde 02/09/2026
+as três fontes são diárias (`market.b3_security_history`, 4.134 pregões). A
+razão de construir a série sobreviveu à correção da cobertura, e é bom que
+tenha: é justamente por não depender do armazém que estes testes seguiram
+valendo quando ele mudou.
 
 Nada de aleatório: o ruído diário vem de ``sin`` sobre o índice do pregão. É
 determinístico entre execuções e entre máquinas, que é o requisito de

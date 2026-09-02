@@ -10,16 +10,20 @@ Instrucao explicita desta entrega, e o motivo dela: o Supabase estava em 425 MB
 de 500 MB. Um evento medido gera dezenas de campos por horizonte, por versao de
 metodologia. Isso nao cabe la, e derrubar o Supabase derruba o app publicado.
 
-Cobertura de precos, medida antes de escrever qualquer linha
-------------------------------------------------------------
+Cobertura de precos, medida em 02/09/2026
+----------------------------------------
     market_us.prices_daily             13.342.783 linhas / 16.267 datas -> diaria
     market.fii_b3_security_history        606.552 linhas /  4.099 datas -> diaria
-    market.historical_prices (acoes B3)   137.735 linhas /  1.542 datas -> NAO
+    market.b3_security_history          1.627.752 linhas /  4.134 datas -> diaria
 
-1.542 datas distintas em 26 anos dao ~24 pregoes por ano ate 2013. Por isso o
-portao de densidade de `core.memoria_mercado.serie` existe: para acoes da B3 os
-horizontes de 1 e 5 pregoes saem NAO MEDIDOS, e nao estimados a partir de uma
-serie que nao e diaria.
+A terceira linha era `market.historical_prices`, com 137.735 linhas em 1.542
+datas -- ~24 pregoes por ano ate 2013. Nela os horizontes de 1 e 5 pregoes de
+acoes da B3 saiam NAO MEDIDOS, porque o portao de densidade de
+`core.memoria_mercado.serie` recusa chamar de "1 pregao" o intervalo entre duas
+observacoes mensais. A serie diaria veio do COTAHIST oficial em 02/09/2026
+(`data_pipeline/market/b3_precos.py`); o portao continua onde estava, e agora
+aprova. Leia-se `close_unitario`, nao `close`: o COTAHIST cota lotes, e o
+fechamento cru erra por 1000x nos papeis com FATCOT=1000.
 
 Nao existe serie utilizavel de indice no armazem (SPY e QQQ tem 9 linhas cada;
 BOVA11 tem 220). O indice de referencia default e o equiponderado sintetico
@@ -64,38 +68,69 @@ logger = logging.getLogger("memoria_mercado.construir")
 FONTES = {
     "us": {
         "sql": """
-            SELECT ticker AS simbolo, price_date AS data,
-                   close_price AS fechamento, volume
+            SELECT symbol AS simbolo, date AS data,
+                   close AS fechamento, volume
               FROM market_us.prices_daily
-             WHERE ticker = ANY(:simbolos)
-             ORDER BY ticker, price_date
+             WHERE symbol = ANY(:simbolos)
+             ORDER BY symbol, date
         """,
         "descricao": "market_us.prices_daily",
         "diaria": True,
     },
     "fii": {
         "sql": """
-            SELECT ticker AS simbolo, reference_date AS data,
-                   close_price AS fechamento, volume
+            SELECT ticker AS simbolo, trade_date AS data,
+                   close AS fechamento, quantity AS volume
               FROM market.fii_b3_security_history
              WHERE ticker = ANY(:simbolos)
-             ORDER BY ticker, reference_date
+             ORDER BY ticker, trade_date
         """,
         "descricao": "market.fii_b3_security_history",
         "diaria": True,
     },
     "b3": {
         "sql": """
-            SELECT ticker AS simbolo, price_date AS data,
-                   close_price AS fechamento, volume
-              FROM market.historical_prices
+            SELECT ticker AS simbolo, trade_date AS data,
+                   close_unitario AS fechamento, quantity AS volume
+              FROM market.b3_security_history
              WHERE ticker = ANY(:simbolos)
-             ORDER BY ticker, price_date
+             ORDER BY ticker, trade_date
         """,
-        "descricao": "market.historical_prices",
-        "diaria": False,
+        "descricao": "market.b3_security_history",
+        "diaria": True,
     },
 }
+
+
+#: Colunas que :func:`carregar_series` le de qualquer FONTE. A consulta pode
+#: mudar de tabela; os quatro apelidos, nao.
+COLUNAS_EXIGIDAS = ("simbolo", "data", "fechamento", "volume")
+
+
+def verificar_fonte(engine, mercado: str) -> dict:
+    """Executa a consulta da fonte contra o banco antes de usa-la.
+
+    Existe por um defeito real: as tres consultas de :data:`FONTES` nasceram
+    escritas de memoria e **nenhuma das tres rodava** -- `price_date`,
+    `close_price` e `reference_date` nao existem em lugar nenhum do armazem.
+    O erro so apareceria na primeira execucao de verdade, depois de baixar
+    eventos e montar o indice.
+
+    A checagem custa uma consulta com lista vazia de simbolos: nao devolve
+    linha, mas o Postgres resolve tabela e colunas na hora de planejar. Se a
+    tabela sumiu ou uma coluna trocou de nome, falha aqui, com o nome do
+    mercado no erro.
+    """
+    fonte = FONTES[mercado]
+    with engine.begin() as conn:
+        resultado = conn.execute(text(fonte["sql"]), {"simbolos": []})
+        entregues = set(resultado.keys())
+    faltando = [c for c in COLUNAS_EXIGIDAS if c not in entregues]
+    if faltando:
+        raise RuntimeError(
+            f"fonte de precos de '{mercado}' ({fonte['descricao']}) nao "
+            f"entrega {', '.join(faltando)}; entrega {sorted(entregues)}")
+    return {"fonte": fonte["descricao"], "colunas": sorted(entregues)}
 
 
 def warehouse_url() -> str:
@@ -266,6 +301,11 @@ def main() -> int:
 
     engine = create_engine(warehouse_url(), pool_pre_ping=True)
     repo.exigir_local(engine)   # cinto e suspensorio: recusa destino remoto
+    try:
+        verificar_fonte(engine, args.mercado)
+    except Exception as erro:
+        logger.error("%s", erro)
+        return 3
 
     resultado = construir(engine, mercado=args.mercado, eventos=eventos,
                           modelo=args.modelo)

@@ -157,3 +157,61 @@ def test_armazem_nao_e_culpado_quando_quem_esta_fora_e_o_motor(monkeypatch):
     monkeypatch.setattr(av, "daemon_pronto", lambda: False)
     monkeypatch.setattr(av.subprocess, "run", _nunca)
     assert av.armazem_pronto() is False
+
+
+class _AlvoFalso:
+    def __init__(self, chave, artefatos, modulo="fii", titulo="Vitrine de FIIs"):
+        self.chave = chave
+        self.artefatos = artefatos
+        self.modulo = modulo
+        self.titulo = titulo
+
+
+class _ResultadoFalso:
+    def __init__(self, ok, resumo):
+        self.ok = ok
+        self._resumo = resumo
+
+    def resumo(self):
+        return self._resumo
+
+
+def test_so_alvo_com_artefato_declarado_chega_ao_git(monkeypatch):
+    """Alvo que publica só no Supabase não pode disparar commit nenhum.
+
+    Chamar `git` para cada alvo custaria um `git status` por publicação e, pior,
+    tornaria plausível o dia em que alguém varresse o diretório em vez de ler a
+    lista declarada -- e `data/public/` também guarda 25 MB de parquets do RAG.
+    """
+    chamados = []
+    monkeypatch.setattr(av, "registrar", lambda _: None)
+    monkeypatch.setattr(av, "publicar_artefatos",
+                        lambda raiz, caminhos, msg: chamados.append(caminhos)
+                        or _ResultadoFalso(True, "ok"))
+
+    avisos = av.levar_artefatos_ao_repositorio([
+        _AlvoFalso("us_prices", ()),
+        _AlvoFalso("fii_selection", ("data/public/vitrine.json.gz",)),
+    ])
+
+    assert chamados == [("data/public/vitrine.json.gz",)]
+    assert avisos == []
+
+
+def test_recusa_do_git_vira_falha_e_nao_some_no_log(monkeypatch):
+    """A vitrine chegou ao Supabase, mas o fallback do repositório não.
+
+    Se isto só fosse ao log, o artefato pararia de ser commitado e ninguém
+    saberia até a tela reprovar os 394 fundos por vencimento -- que é o defeito
+    de 31/08/2026 voltando pela porta dos fundos.
+    """
+    monkeypatch.setattr(av, "registrar", lambda _: None)
+    monkeypatch.setattr(
+        av, "publicar_artefatos",
+        lambda *_: _ResultadoFalso(False, "ramo atual é trabalho, não main"))
+
+    avisos = av.levar_artefatos_ao_repositorio(
+        [_AlvoFalso("fii_selection", ("data/public/vitrine.json.gz",))])
+
+    assert len(avisos) == 1
+    assert "fii_selection" in avisos[0] and "não main" in avisos[0]

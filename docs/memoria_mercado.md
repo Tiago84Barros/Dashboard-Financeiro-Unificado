@@ -55,11 +55,20 @@ Medição feita no armazém local **antes** de qualquer linha de código:
 |---|---:|---:|---|
 | `market_us.prices_daily` | 13.342.783 | 16.267 | diária de fato |
 | `market.fii_b3_security_history` | 606.552 | 4.099 | diária de fato |
-| `market.historical_prices` (ações B3) | 137.735 | **1.542** | **não é diária** |
+| `market.b3_security_history` (ações B3) | 1.627.752 | 4.134 | diária de fato |
 
-1.542 datas cobrindo 2000–2026 dá ~24 pregões por ano até 2013. Somar um índice
-nessa série e chamar o resultado de "retorno em 1 pregão" devolve, na prática, o
-retorno de duas semanas — sem erro, sem aviso, com o rótulo errado.
+A terceira linha era `market.historical_prices`: 137.735 linhas em **1.542**
+datas cobrindo 2000–2026, ou ~24 pregões por ano até 2013 — série mensal. Somar
+um índice nessa série e chamar o resultado de "retorno em 1 pregão" devolve, na
+prática, o retorno de duas semanas — sem erro, sem aviso, com o rótulo errado.
+
+Em **02/09/2026** a série diária de ações da B3 passou a existir, ingerida do
+COTAHIST oficial da bolsa (`data_pipeline/market/b3_precos.py`), e a Memória de
+Mercado foi repontada para ela. O portão continua com os mesmos limiares: quem
+mudou foi a série, não o critério. Medido em PETR4, VALE3, ITUB4, WEGE3 e MGLU3
+num evento de 15/03/2024, a série antiga reprovava até 63 pregões; a nova aprova
+1, 5, 21 e 63. O portão segue reprovando símbolo de cobertura rala — papel
+recém-listado ou com suspensão longa —, que é para o que ele serve.
 
 ```
 densidade(i, h) = pregões observados na janela
@@ -439,10 +448,15 @@ Esta seção existe para envelhecer bem. Todo item aqui foi medido; nenhum é
 precaução genérica. `memoria: aviso-que-envelhece-invertido` registra o custo de
 um aviso de limitação que virou falso e continuou soando como rigor.
 
-1. **Ações da B3 não têm horizonte curto.** Com 1.542 datas em 26 anos, o portão
-   de densidade reprova 1 e 5 pregões e frequentemente 20. Para a B3 o módulo
-   hoje responde pouco, e responde `None` — não um número errado. Resolve-se
-   ingerindo preço diário da B3 no armazém, não mexendo no portão.
+1. ~~**Ações da B3 não têm horizonte curto.**~~ **Resolvido em 02/09/2026.** Era
+   a limitação mais cara da lista: com 1.542 datas em 26 anos, o portão de
+   densidade reprovava 1, 5 e frequentemente 20 pregões, e para a B3 o módulo
+   respondia `None` quase sempre. Foi resolvida como a própria nota previa —
+   ingerindo preço diário no armazém, **sem tocar no portão**: 1.627.752 linhas
+   e 4.134 pregões (2010-01-04 a 2026-09-01) vindas do COTAHIST oficial. Fica
+   registrada em vez de apagada, porque a série começa em **2010**: evento
+   anterior a isso continua sem horizonte curto, e aí o `None` é a resposta
+   certa. Cobertura de anos anteriores exige baixar os arquivos de 1986-2009.
 2. **O índice de referência é sintético.** Não há série de índice utilizável no
    armazém (SPY/QQQ: 9 linhas; BOVA11: 220; IFIX: 133). O equiponderado do
    próprio painel é uma aproximação: ele não é o índice que o mercado olha, e
