@@ -144,6 +144,19 @@ _DEFAULT_REGISTRY: list[dict] = [
         "description":  "Demonstrações financeiras de empresas EUA (implementação pendente)",
     },
     {
+        # INATIVO POR PADRÃO, de propósito: consome cota de APIs gratuitas
+        # (Alpha Vantage: 25 chamadas/dia; Marketaux: 100/dia). Para ligar,
+        # configure ao menos uma chave e troque is_active para True.
+        "table_name":   "noticias_itens, noticias_avaliacoes",
+        "source_name":  "Motor Conjuntural (Alpha Vantage / Marketaux / RSS)",
+        "job_name":     "update_noticias",
+        "update_type":  "incremental",
+        "frequency":    "diario",
+        "priority":     8,
+        "is_active":    False,
+        "description":  "Coleta, deduplica e avalia noticias de mercado (relevancia, sentimento, impacto provavel). Desativado por padrao para nao gastar a cota gratuita sem pedido explicito.",
+    },
+    {
         "table_name":   "multiplos, data_quality_scores, data_quality_reports",
         "source_name":  "Data Quality (Banco x Fundamentus x Status Invest)",
         "job_name":     "audit_and_heal",

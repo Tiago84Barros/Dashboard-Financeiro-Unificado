@@ -62,6 +62,19 @@ HORIZONTE_MAXIMO_MESES = 600
 MOTIVO_ACIMA_DO_TETO = "preco acima do teto de compra"
 MOTIVO_LOTE_NAO_FECHA = "aporte insuficiente para um lote"
 
+# Motivo padrao quando o Score Conjuntural suspende aporte novo e o chamador
+# nao informa um texto proprio. Suspender aporte NAO e vender: a posicao
+# existente fica intacta e so o dinheiro novo e desviado para os demais.
+MOTIVO_SUSPENSAO_CONJUNTURAL = "aporte suspenso pelo score conjuntural"
+
+# Faixa em que uma prioridade e aceita. Prioridade nunca bloqueia: um ativo com
+# prioridade baixissima ainda recebe alguma coisa se houver deficit e dinheiro.
+# Bloquear e outra operacao, com outro parametro e outro motivo declarado —
+# manter as duas distinguiveis e o que impede "prioridade zero" de virar uma
+# suspensao silenciosa que ninguem consegue ler no plano.
+PRIORIDADE_MINIMA_APORTE = 0.01
+PRIORIDADE_MAXIMA_APORTE = 100.0
+
 
 @dataclass(frozen=True)
 class Alocacao:
@@ -167,6 +180,8 @@ def plano_de_aporte(
     precos: dict[str, float] | None = None,
     tetos_preco: dict[str, float] | None = None,
     lote: dict[str, int] | int = 1,
+    bloqueios_conjunturais: dict[str, str] | None = None,
+    prioridades: dict[str, float] | None = None,
 ) -> PlanoAporte:
     """Distribui `aporte` entre os ativos abaixo do peso-alvo, sem vender.
 
@@ -180,6 +195,15 @@ def plano_de_aporte(
                     excede o teto e BLOQUEADO e seu deficit e redistribuido
                     entre os demais. Ausente = sem teto (nunca bloqueia).
     lote:           tamanho do lote por ticker, ou int unico para todos.
+    bloqueios_conjunturais: {ticker: motivo}. Vem de
+                    `core.memoria_mercado.scores.para_aporte`. Trata o ativo
+                    exatamente como o teto de preco trata: ele sai do rateio de
+                    dinheiro NOVO e seu deficit vai para os demais. A posicao ja
+                    existente nao e tocada — este modulo continua sem vender.
+    prioridades:    {ticker: multiplicador}. Reordena quem recebe mais dentro de
+                    quem continua elegivel, multiplicando o peso do deficit no
+                    rateio. Ausente = 1,0. Nao cria nem destroi dinheiro: o que
+                    um ativo deixa de receber outro recebe.
 
     Ordem das operacoes, e ela importa: teto de preco bloqueia ANTES da
     distribuicao (o deficit do bloqueado vai para os outros, nao vira
@@ -190,6 +214,12 @@ def plano_de_aporte(
     metas = _normalizar_alvos(alvos or {})
     precos = {tk: _num(p) for tk, p in (precos or {}).items()}
     tetos_preco = {tk: _num(t) for tk, t in (tetos_preco or {}).items() if _num(t) > 0}
+    conjunturais = {tk: (str(m) or MOTIVO_SUSPENSAO_CONJUNTURAL)
+                    for tk, m in (bloqueios_conjunturais or {}).items()}
+    pesos_prioridade = {
+        tk: min(PRIORIDADE_MAXIMA_APORTE, max(PRIORIDADE_MINIMA_APORTE, _num(v)))
+        for tk, v in (prioridades or {}).items() if _num(v) > 0
+    }
 
     universo = sorted(set(atuais) | set(metas))
     patrimonio = sum(atuais.get(tk, 0.0) for tk in universo)
@@ -225,6 +255,10 @@ def plano_de_aporte(
     for tk in universo:
         if deficits[tk] <= 0:
             continue
+        motivo_conjuntural = conjunturais.get(tk)
+        if motivo_conjuntural:
+            bloqueios[tk] = motivo_conjuntural
+            continue
         teto = tetos_preco.get(tk)
         preco = precos.get(tk, 0.0)
         if teto is not None and preco > 0 and preco > teto:
@@ -235,11 +269,36 @@ def plano_de_aporte(
 
     bruto: dict[str, float] = dict.fromkeys(universo, 0.0)
     if aporte > 0 and soma_deficits > 0:
-        for tk in elegiveis:
-            # `min` com o proprio deficit e a guarda para o caso em que os
-            # bloqueios tiraram tanta gente do rateio que o aporte excede a
-            # soma dos deficits restantes: ninguem recebe mais do que precisava.
-            bruto[tk] = min(deficits[tk], aporte * deficits[tk] / soma_deficits)
+        # Cascata: reparte proporcionalmente ao deficit ponderado pela
+        # prioridade, devolve ao bolo o que exceder o deficit de cada um e
+        # reparte de novo entre quem ainda cabe. Sem a cascata, elevar a
+        # prioridade de um ativo o faria estourar o proprio deficit, o `min`
+        # cortaria a diferenca e o troco viraria `sobra` — dinheiro sumindo do
+        # plano por causa de um parametro que so deveria ter reordenado quem
+        # recebe primeiro. Com todas as prioridades em 1,0 a cascata converge na
+        # primeira rodada e o resultado e identico ao anterior.
+        restante = aporte
+        capacidade = {tk: deficits[tk] for tk in elegiveis}
+        abertos = [tk for tk in elegiveis if capacidade[tk] > 0]
+        for _ in range(len(elegiveis) + 1):
+            if restante <= 1e-9 or not abertos:
+                break
+            pesos_rodada = {tk: capacidade[tk] * pesos_prioridade.get(tk, 1.0)
+                            for tk in abertos}
+            soma_rodada = sum(pesos_rodada.values())
+            if soma_rodada <= 0:
+                break
+            distribuido = 0.0
+            for tk in abertos:
+                fatia = min(capacidade[tk],
+                            restante * pesos_rodada[tk] / soma_rodada)
+                bruto[tk] += fatia
+                capacidade[tk] -= fatia
+                distribuido += fatia
+            if distribuido <= 1e-12:
+                break
+            restante -= distribuido
+            abertos = [tk for tk in abertos if capacidade[tk] > 1e-9]
 
     # Arredondamento por lote, depois da distribuicao.
     alocado: dict[str, float] = {}

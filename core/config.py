@@ -41,6 +41,23 @@ def _get_secret(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
+def _para_num(valor: str, padrao: float, minimo: float | None = None) -> float:
+    """
+    Converte texto de configuracao em numero, caindo no padrao quando ilegivel.
+
+    Um valor invalido nao pode derrubar o app na importacao do modulo: config
+    e lida no import, e uma excecao aqui deixaria a aplicacao inteira sem subir
+    por causa de um typo numa variavel opcional.
+    """
+    try:
+        numero = float(str(valor).strip())
+    except (TypeError, ValueError):
+        return padrao
+    if minimo is not None and numero < minimo:
+        return padrao
+    return numero
+
+
 class Settings:
     # ── Banco unificado (Dashboard Financeiro — banco central do App 4) ───────
     # Connection string do pooler Supabase (Transaction Mode, porta 6543).
@@ -110,6 +127,38 @@ class Settings:
 
     # Fonte de fundamentos: 'edgar' (padrão) | 'fmp'
     US_FUNDAMENTALS_SOURCE: str = _get_secret("US_FUNDAMENTALS_SOURCE", "edgar")
+
+    # ── Motor Conjuntural de notícias ─────────────────────────────────────────
+    # Chaves dos provedores. TODAS opcionais: sem nenhuma delas o motor ainda
+    # funciona pelos feeds RSS, que não exigem credencial. A chave viaja em
+    # query string nas duas APIs, então nada em core/noticias registra a URL
+    # montada — só o nome do provedor e o status (ver transporte.Redator).
+    ALPHAVANTAGE_API_KEY: str = _get_secret("ALPHAVANTAGE_API_KEY") or _get_secret(
+        "ALPHA_VANTAGE_API_KEY")
+    MARKETAUX_API_KEY: str = _get_secret("MARKETAUX_API_KEY")
+    FINNHUB_API_KEY: str = _get_secret("FINNHUB_API_KEY")
+
+    # Ordem de tentativa. O primeiro que responder atende; os seguintes só
+    # entram quando o anterior falha ou está sem cota.
+    NOTICIAS_PROVEDORES: str = _get_secret(
+        "NOTICIAS_PROVEDORES", "alphavantage,marketaux,rss")
+
+    # Validade do cache de resposta, em minutos.
+    NOTICIAS_CACHE_TTL_MIN: str = _get_secret("NOTICIAS_CACHE_TTL_MIN", "15")
+
+    # Cadência de coleta: normal e em regime de emergência (crise detectada).
+    NOTICIAS_FREQ_NORMAL_MIN: str = _get_secret("NOTICIAS_FREQ_NORMAL_MIN", "240")
+    NOTICIAS_FREQ_EMERGENCIA_MIN: str = _get_secret(
+        "NOTICIAS_FREQ_EMERGENCIA_MIN", "30")
+
+    # Idade a partir da qual a notícia deixa de ser tratada como corrente.
+    # Ela continua no acervo; o que muda é que passa a ser exibida como
+    # histórico datado, nunca como notícia atual.
+    NOTICIAS_IDADE_MAX_HORAS: str = _get_secret("NOTICIAS_IDADE_MAX_HORAS", "72")
+
+    # Itens pedidos por consulta a cada provedor.
+    NOTICIAS_LIMITE_POR_CONSULTA: str = _get_secret(
+        "NOTICIAS_LIMITE_POR_CONSULTA", "50")
 
     # ── Ambiente ──────────────────────────────────────────────────────────────
     APP_ENV: str = _get_secret("APP_ENV", "development")
@@ -229,6 +278,49 @@ class Settings:
     def has_source_app3(self) -> bool:
         return bool(self.SOURCE_DB_APP3)
 
+    # ── Motor Conjuntural: derivadas ──────────────────────────────────────────
+
+    @property
+    def provedores_noticias(self) -> list[str]:
+        """Ordem de fallback dos provedores, já normalizada."""
+        return [p.strip().lower()
+                for p in (self.NOTICIAS_PROVEDORES or "").split(",")
+                if p.strip()]
+
+    @property
+    def has_noticias_com_chave(self) -> bool:
+        """True se ao menos um provedor com credencial estiver configurado."""
+        return bool(self.ALPHAVANTAGE_API_KEY or self.MARKETAUX_API_KEY
+                    or self.FINNHUB_API_KEY)
+
+    @property
+    def noticias_cache_ttl_s(self) -> float:
+        return _para_num(self.NOTICIAS_CACHE_TTL_MIN, 15.0, minimo=0.0) * 60.0
+
+    @property
+    def noticias_freq_normal_min(self) -> float:
+        return _para_num(self.NOTICIAS_FREQ_NORMAL_MIN, 240.0, minimo=1.0)
+
+    @property
+    def noticias_freq_emergencia_min(self) -> float:
+        return _para_num(self.NOTICIAS_FREQ_EMERGENCIA_MIN, 30.0, minimo=1.0)
+
+    @property
+    def noticias_idade_max_horas(self) -> float:
+        return _para_num(self.NOTICIAS_IDADE_MAX_HORAS, 72.0, minimo=1.0)
+
+    @property
+    def noticias_limite(self) -> int:
+        return int(_para_num(self.NOTICIAS_LIMITE_POR_CONSULTA, 50.0, minimo=1.0))
+
+    def chave_noticias(self, provedor: str) -> str:
+        """Credencial do provedor, ou string vazia para quem não usa chave."""
+        return {
+            "alphavantage": self.ALPHAVANTAGE_API_KEY,
+            "marketaux": self.MARKETAUX_API_KEY,
+            "finnhub": self.FINNHUB_API_KEY,
+        }.get((provedor or "").split(":", 1)[0].lower(), "")
+
     def validate(self) -> list[str]:
         """
         Retorna lista de avisos sobre variaveis ausentes.
@@ -251,6 +343,14 @@ class Settings:
             warnings.append("MOCK_MODE=true — dados mockados em uso.")
         if not self.has_owner and not self.MOCK_MODE:
             warnings.append("OWNER_USER_ID nao configurado — filtro de usuario inativo.")
+        if not self.has_noticias_com_chave:
+            # Aviso, nao erro: sem chave o Motor Conjuntural ainda coleta pelos
+            # feeds RSS. O que se perde e o sentimento e a cobertura dos EUA, e
+            # a tela precisa poder dizer isso em vez de mostrar lista curta sem
+            # explicacao.
+            warnings.append(
+                "Nenhuma chave de noticias configurada (ALPHAVANTAGE_API_KEY ou "
+                "MARKETAUX_API_KEY) — Motor Conjuntural limitado aos feeds RSS.")
         return warnings
 
 
