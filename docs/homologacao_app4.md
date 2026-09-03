@@ -312,9 +312,13 @@ pela fase, e a tela de Homologação as mostra com o motivo.
    e essa é uma decisão de quem opera — não do código.
 3. **Sem controle de acesso por papel.** É o motivo de a tela de administração
    ser de leitura (seção 8).
-4. **Duas travas sem fonte de dados.** `modelo_fora_dos_limites` e
-   `auditoria_falhou` só são alimentadas por quem chama `avaliar()` diretamente;
-   `do_painel()` ainda as reporta como *não verificadas*, e não como `False`.
+4. ~~**Duas travas sem fonte de dados.**~~ **Resolvido em 03/09/2026.**
+   `modelo_fora_dos_limites` sai de `travas.fora_dos_limites` (domínio das
+   saídas do motor) e `auditoria_falhou` de `trilha.sonda`. O motor também
+   ganhou porta de entrada: `views/inteligencia_mercado.py` avalia as seis e
+   `design.inteligencia.barra_travas` as publica. Continua valendo o que falta:
+   enquanto o motor de crise não for ligado à tela, o `veredito` é `None` e a
+   trava do modelo confere só o índice de antifragilidade — e diz isso.
 5. **Três tipos de evento faltam na taxonomia** (pandemia, quebra de banco,
    evento climático). Adicioná-los exige subir `TAXONOMIA_VERSAO` e incluí-los
    em `catalogo.SEM_FONTE`, sob pena de `cobertura()` levantar erro.

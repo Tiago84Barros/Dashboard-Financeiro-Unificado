@@ -279,3 +279,37 @@ def expurgar(*, engine=None, dias: int = RETENCAO_DIAS,
              alcance, corte.date(), "" if aplicar else " (simulação)")
     return {"aplicado": bool(aplicar), "recusado": None, "alcance": alcance,
             "removidos": removidos, "corte": corte.isoformat()}
+
+
+_SQL_SONDA = text(f"SELECT 1 FROM {TABELA} LIMIT 1")
+
+
+def sonda(*, engine=None) -> tuple[bool | None, str]:
+    """Falha da trilha observável **por leitura**. Nunca declara gravação boa.
+
+    Devolve ``(True, motivo)`` quando a trilha não responde -- e aí a trava
+    ``auditoria_falhou`` dispara com antecedência, antes de alguém propor uma
+    mudança que não poderia ser registrada.
+
+    Devolve ``(None, ...)`` quando a leitura funciona, e **não** ``False``. Ler
+    não prova gravar: a tabela pode existir e o INSERT falhar por permissão,
+    por coluna nova, por disco cheio. Marcar ``False`` aqui seria a nota que
+    quem pergunta menos tira maior -- uma pergunta barata respondendo por uma
+    cara. Só ``registrar`` observa gravação, e só ele pode dizer ``False``.
+    """
+    if engine is None:
+        try:
+            from core.database import get_engine
+            engine = get_engine()
+        except Exception as exc:  # noqa: BLE001
+            return True, f"banco inacessível: {exc}"[:200]
+    if engine is None:
+        return True, "sem conexão com o banco"
+    try:
+        with engine.connect() as conn:
+            conn.execute(_SQL_SONDA)
+    except Exception as exc:  # noqa: BLE001 - qualquer falha aqui é a resposta
+        log.warning("sonda da trilha de auditoria falhou: %s", exc)
+        return True, str(exc)[:200]
+    return None, ("a trilha responde à leitura; se a gravação funciona só se "
+                  "sabe ao gravar")

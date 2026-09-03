@@ -419,9 +419,9 @@ Resultado em 03/09/2026: **126 passed**, antes do teste 12 ser acrescentado;
 Escrito aqui porque o requisito manda: *"não considere concluído enquanto houver
 falhas críticas"*.
 
-- `travas.do_painel` ainda não tem fonte para `modelo_fora_dos_limites` nem para
-  `auditoria_falhou` — as duas saem como **não verificadas**, e é isso que a
-  tela mostra.
+- ~~`travas.do_painel` ainda não tem fonte para `modelo_fora_dos_limites` nem
+  para `auditoria_falhou`.~~ **Resolvido em 03/09/2026.** As duas ganharam fonte
+  e o motor ganhou porta de entrada — ver seção 10.1.
 - A trilha (`067_*.sql`) foi executada no Supabase em **03/09/2026** e está
   verificada de ida e volta. O expurgo foi agendado (`update_retencao`, diário) e
   **simula por omissão**: ele conta e reporta o que a janela alcança, mas só
@@ -432,3 +432,42 @@ falhas críticas"*.
 - O controle de acesso e o isolamento entre usuários continuam sendo os do app
   (`settings.OWNER_USER_ID`); este trabalho não os alterou, e a trilha herda o
   mesmo escopo de usuário único.
+
+### 10.1 As travas ganharam porta de entrada (03/09/2026)
+
+Até aqui o motor das seis travas era **decoração**: `travas.do_painel` não tinha
+um único chamador em `views/`, `core/` ou `data_pipeline/`. Ele avaliava, e
+nenhuma tela lia o resultado — exatamente o defeito que o docstring do próprio
+módulo citava (`memoria: diagnostico-precisa-porta-de-entrada`). Duas das seis
+travas, além disso, não tinham de onde tirar sinal.
+
+**O que mudou**
+
+| peça | onde | o que faz |
+|---|---|---|
+| `travas.fora_dos_limites` | `core/seguranca/travas.py` | confere o domínio das saídas do modelo: `Indice.valor/bruto/cobertura`, cada `Parte.nota`, `severidade`, `confianca` e o código de nível |
+| `trilha.sonda` | `core/auditoria/trilha.py` | pergunta ao banco, por leitura, se a trilha responde |
+| `V.montar_tudo` / `V.avaliar_travas` | `views/inteligencia_mercado.py` | leva as saídas cruas às travas e desenha o resultado |
+| `ui.barra_travas` | `design/inteligencia.py` | publica as seis com símbolo, palavra e cor |
+
+**Três decisões que valem registro**
+
+1. **A sonda nunca declara gravação boa.** `trilha.sonda` devolve `(True, motivo)`
+   quando a trilha não responde e `(None, …)` quando responde — **jamais**
+   `False`. Ler não prova gravar: a tabela pode existir e o `INSERT` falhar por
+   permissão, por coluna nova ou por disco cheio. Uma pergunta barata respondendo
+   pela cara é `memoria: quem-pergunta-menos-tira-nota-maior`. Só `registrar`,
+   que observa uma gravação de verdade, pode dizer `False` — e quando ele fala,
+   sobrepõe a sonda.
+2. **NaN tem teste próprio.** Toda comparação com `NaN` é falsa, então
+   `0 <= valor <= 1` escrito do jeito óbvio **aprova NaN** — a saída mais
+   corrompida de todas seria a única a passar. `_fora` testa `valor != valor`
+   explicitamente.
+3. **A conferência é sobre a saída do motor, não sobre o painel.** O `Bloco`
+   guarda o número já arredondado e formatado; conferi-lo seria conferir a
+   formatação. Por isso `montar_tudo` devolve o `Indice` cru junto com o painel.
+
+**Não verificada continua aparecendo como não verificada.** Com o motor de crise
+ainda desligado da tela, `veredito` é `None` e o painel diz isso — em vez de
+publicar um `ok` que ninguém mediu.
+

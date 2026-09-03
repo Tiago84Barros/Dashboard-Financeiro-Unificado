@@ -214,3 +214,76 @@ def cartao_alerta(alerta: al.Alerta) -> None:
 
 def aviso_sem_garantia() -> None:
     st.caption(AVISO_SEM_GARANTIA)
+
+
+# ── Travas de circuito ───────────────────────────────────────────────────────
+#: Rótulo curto de cada trava. O nome interno (``dados_vencidos``) é chave de
+#: código, não frase de tela.
+ROTULO_TRAVA: dict[str, str] = {
+    "dados_vencidos": "Dados vencidos",
+    "provedores_divergem": "Fontes divergem",
+    "preco_indisponivel": "Preço indisponível",
+    "modelo_fora_dos_limites": "Modelo fora dos limites",
+    "llm_inventou_numero": "LLM inventou número",
+    "auditoria_falhou": "Auditoria não gravou",
+}
+
+#: Três estados, três símbolos, três palavras -- nunca só três cores. Quem não
+#: distingue verde de vermelho lê ``⊘``, ``✓`` e ``·``, e lê também o rótulo
+#: "disparada" / "ok" / "não verificada" no ``title``.
+APARENCIA_TRAVA: dict[str, tuple[str, str, str]] = {
+    "disparada": ("⊘", "#D9534F", "trava disparada"),
+    "ok": ("✓", "#4CAF50", "verificada, não disparou"),
+    "nao_verificada": ("·", "#8A8A8A", "não verificada nesta execução"),
+}
+
+
+def _situacao_trava(trava) -> str:
+    if trava.disparada is None:
+        return "nao_verificada"
+    return "disparada" if trava.disparada else "ok"
+
+
+def selo_trava(trava) -> str:
+    icone, cor, ajuda = APARENCIA_TRAVA[_situacao_trava(trava)]
+    rotulo = ROTULO_TRAVA.get(trava.nome, trava.nome)
+    detalhe = f"{ajuda}: {trava.descrever()}"
+    return _selo(icone, rotulo, cor, detalhe)
+
+
+def barra_travas(estado) -> None:
+    """As seis travas, o que cada uma desligou e o que ninguém verificou.
+
+    O motor de travas existia sem porta de entrada -- avaliava e não era lido
+    por tela nenhuma (``memoria: diagnostico-precisa-porta-de-entrada``). Esta
+    é a porta. Ela publica as três situações separadamente porque "não
+    disparou" e "não verifiquei" não são a mesma notícia, e mostrar as duas
+    como silêncio seria publicar uma segurança que ninguém mediu.
+    """
+    if estado is None:
+        return
+    selos = "".join(selo_trava(t) for t in estado.travas)
+    verificadas = len(estado.travas) - len(estado.nao_verificadas)
+    bloqueios = estado.bloqueios
+    resumo = f"{verificadas} de {len(estado.travas)} verificadas"
+    if bloqueios:
+        resumo += f" · {len(bloqueios)} recurso(s) bloqueado(s)"
+    cor = "#D9534F" if bloqueios else "#4A9EFF"
+    # Card inteiro num st.markdown só: div aberta num bloco e fechada em outro
+    # vira moldura vazia (``memoria: card-css-bloco-unico-streamlit``).
+    st.markdown(
+        f'<div class="app-kpi-card" style="--app-kpi-accent:{cor}">'
+        '<div class="app-kpi-label">Travas de segurança</div>'
+        f'<div class="app-kpi-value">{escape(resumo)}</div>{selos}</div>',
+        unsafe_allow_html=True)
+
+    for trava in estado.disparadas:
+        st.warning(f"⊘ **{ROTULO_TRAVA.get(trava.nome, trava.nome)}** — "
+                   f"{trava.descrever()}")
+    if estado.nao_verificadas:
+        nomes = ", ".join(ROTULO_TRAVA.get(t.nome, t.nome)
+                          for t in estado.nao_verificadas)
+        st.caption(
+            f"· Não verificadas nesta execução: {nomes}. Não verificada não é "
+            "o mesmo que em ordem -- é ausência de medição, e nada aqui "
+            "autoriza tratá-la como sinal de que está tudo bem.")

@@ -27,6 +27,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import logging
+import typing
 
 import pandas as pd
 import streamlit as st
@@ -37,6 +38,7 @@ from core.inteligencia import alertas as al
 from core.inteligencia import llm as intel_llm
 from core.inteligencia import painel as P
 from core.inteligencia import qualificacao as qz
+from core.seguranca import travas as tv
 from design import inteligencia as ui
 from design.componentes import abas_secao, container_pagina, estado_vazio, secao_titulo
 
@@ -170,7 +172,27 @@ def carregar_acervo(limite: int = 50):
     return tuple(itens), (max(carimbos) if carimbos else None), ""
 
 
+class Montagem(typing.NamedTuple):
+    """O painel e as saídas cruas que o produziram.
+
+    As travas conferem o domínio do que o motor calculou -- ``Indice.valor``,
+    ``Parte.nota``, ``severidade`` -- e nenhuma dessas grandezas sobrevive à
+    montagem do painel: o ``Bloco`` guarda o número já arredondado e formatado.
+    Conferir o Bloco seria conferir a formatação, não o modelo. Por isso a
+    montagem devolve as duas coisas.
+    """
+
+    painel: P.Painel
+    indice: object | None = None
+    veredito: object | None = None
+
+
 def montar_painel(*, agora: dt.datetime | None = None) -> P.Painel:
+    """Compatibilidade: só o painel, para quem não precisa das fontes."""
+    return montar_tudo(agora=agora).painel
+
+
+def montar_tudo(*, agora: dt.datetime | None = None) -> Montagem:
     """Reúne o que existir e entrega o painel. Nada aqui é obrigatório."""
     agora = agora or dt.datetime.now(dt.timezone.utc)
     posicoes, motivo_carteira = carregar_posicoes()
@@ -224,7 +246,37 @@ def montar_painel(*, agora: dt.datetime | None = None) -> P.Painel:
                   frescor=frescor, agora=agora)
     if extras:
         pn = dataclasses.replace(pn, limitacoes=pn.limitacoes + tuple(extras))
-    return pn
+    # ``veredito`` fica ``None`` enquanto o motor de crise não for ligado à
+    # tela: declarar ``None`` é dizer "não houve saída", e a trava responde
+    # "não verificada" -- que é a verdade, e não "está tudo bem".
+    return Montagem(painel=pn, indice=indice, veredito=None)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def sonda_auditoria() -> tuple[bool | None, str]:
+    """Pergunta ao banco se a trilha responde. Cacheada por 5 minutos.
+
+    Sem cache isto abriria conexão a cada rerun do Streamlit -- e rerun aqui é
+    cada clique. Cinco minutos é curto o bastante para uma trilha que caiu
+    aparecer na tela e longo o bastante para o clique não pagar ida ao banco.
+    """
+    from core.auditoria import trilha
+    try:
+        return trilha.sonda()
+    except Exception as exc:  # noqa: BLE001 - a tela não cai por causa da sonda
+        logger.warning("sonda da trilha falhou: %s", exc)
+        return True, str(exc)[:200]
+
+
+def avaliar_travas(montagem: Montagem):
+    """As seis travas a partir do que esta execução realmente mediu."""
+    try:
+        return tv.do_painel(montagem.painel, indice=montagem.indice,
+                            veredito=montagem.veredito,
+                            auditoria=sonda_auditoria())
+    except Exception:  # noqa: BLE001
+        logger.exception("falha ao avaliar as travas de circuito")
+        return None
 
 
 # ── Seções ───────────────────────────────────────────────────────────────────
@@ -528,8 +580,10 @@ def render() -> None:
     st.caption(
         f"🚦 {hom.NOME_FASE[estado.fase]} — {hom.DESCRICAO_FASE[estado.fase]}")
 
-    pn = montar_painel()
+    montagem = montar_tudo()
+    pn = montagem.painel
     render_atualizacao(pn)
+    ui.barra_travas(avaliar_travas(montagem))
 
     secao = abas_secao(
         [ABA_NOTICIAS, ABA_CRISE, ABA_ANTIFRAGIL, ABA_MEMORIA, ABA_EMPRESAS,

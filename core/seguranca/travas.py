@@ -165,6 +165,71 @@ class Estado:
         }
 
 
+# ── Domínio declarado das saídas do modelo ───────────────────────────────────
+#: Grandezas normalizadas do motor: índice, cobertura, notas, severidade e
+#: confiança. Todas foram definidas em 0..1 pelos módulos que as produzem.
+DOMINIO_UNITARIO = (0.0, 1.0)
+
+
+def _fora(valor, faixa: tuple[float, float] = DOMINIO_UNITARIO) -> bool:
+    """``True`` para o que caiu fora da faixa -- e para NaN e infinito.
+
+    ``NaN`` merece o teste explícito: toda comparação com ele é falsa, então um
+    ``minimo <= valor <= maximo`` escrito do jeito óbvio **aprova NaN**. Sem
+    ``valor != valor``, a saída mais corrompida de todas seria a única a passar.
+    """
+    if valor is None:
+        return False          # não medido não é fora dos limites
+    try:
+        num = float(valor)
+    except (TypeError, ValueError):
+        return True
+    if num != num or num in (float("inf"), float("-inf")):
+        return True
+    return not (faixa[0] <= num <= faixa[1])
+
+
+def fora_dos_limites(*, indice=None, veredito=None) -> tuple[bool | None, str]:
+    """Confere o domínio das saídas do modelo. ``None`` se não houve saída.
+
+    Não julga se o número está *certo* -- julga se ele é sequer representável
+    como aquilo que diz ser. Índice de antifragilidade 1,4 ou severidade ``NaN``
+    não são análises ruins: são saída corrompida, e exibi-las com duas casas
+    decimais lhes daria a mesma aparência de qualquer outra.
+
+    Duck typing de propósito: esta camada não importa ``antifragilidade`` nem
+    ``transicao``. O módulo é puro, e continuar puro é o que o mantém testável
+    sem banco e sem o motor inteiro de pé.
+    """
+    achados: list[str] = []
+    olhou = False
+
+    if indice is not None:
+        olhou = True
+        for campo in ("valor", "bruto", "cobertura"):
+            if _fora(getattr(indice, campo, None)):
+                achados.append(f"índice.{campo} = {getattr(indice, campo)!r}")
+        for parte in getattr(indice, "partes", ()) or ():
+            if _fora(getattr(parte, "nota", None)):
+                achados.append(
+                    f"componente {getattr(parte, 'chave', '?')} = "
+                    f"{getattr(parte, 'nota', None)!r}")
+
+    if veredito is not None:
+        olhou = True
+        for campo in ("severidade", "confianca"):
+            if _fora(getattr(veredito, campo, None)):
+                achados.append(
+                    f"veredito.{campo} = {getattr(veredito, campo)!r}")
+        codigo = getattr(getattr(veredito, "nivel", None), "codigo", None)
+        if _fora(codigo, (0.0, 4.0)):
+            achados.append(f"nível = {codigo!r}")
+
+    if not olhou:
+        return None, "nenhuma saída de modelo foi produzida nesta execução"
+    return bool(achados), "; ".join(achados)
+
+
 def avaliar(
     *,
     dados_vencidos: bool | None = None,
@@ -197,7 +262,8 @@ def avaliar(
     ))
 
 
-def do_painel(pn, *, validacao=None, auditoria_ok: bool | None = None) -> Estado:
+def do_painel(pn, *, validacao=None, auditoria_ok: bool | None = None,
+              indice=None, veredito=None, auditoria=None) -> Estado:
     """Deriva as travas de um :class:`~core.inteligencia.painel.Painel`.
 
     Ligar as travas ao painel importa: motor que ninguém consulta na decisão é
@@ -218,10 +284,25 @@ def do_painel(pn, *, validacao=None, auditoria_ok: bool | None = None) -> Estado
     if validacao is not None:
         inventou = bool(validacao.numeros_inventados)
 
+    fora, detalhe_limites = fora_dos_limites(indice=indice, veredito=veredito)
+
+    # Ordem deliberada: gravação observada manda sobre sonda de leitura.
+    # ``auditoria_ok`` vem de quem tentou gravar de verdade; ``auditoria`` é a
+    # sonda de ``trilha.sonda``, que só sabe dizer "não responde" -- nunca
+    # "gravou bem". Por isso a sonda entra primeiro e a observação a sobrepõe.
+    falhou, detalhe_auditoria = None, ""
+    if auditoria is not None:
+        falhou, detalhe_auditoria = auditoria
+    if auditoria_ok is not None:
+        falhou = not auditoria_ok
+
     return avaliar(
         dados_vencidos=vencidos,
         provedores_divergem=divergem,
         preco_indisponivel=sem_preco,
+        modelo_fora_dos_limites=fora,
         llm_inventou_numero=inventou,
-        auditoria_falhou=None if auditoria_ok is None else not auditoria_ok,
+        auditoria_falhou=falhou,
+        detalhes={MODELO_FORA_DOS_LIMITES: detalhe_limites,
+                  AUDITORIA_FALHOU: detalhe_auditoria},
     )
