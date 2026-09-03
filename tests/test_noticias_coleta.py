@@ -309,20 +309,25 @@ def test_o_motor_aceita_um_provedor_que_ele_nunca_viu():
 
 # ── o job do pipeline respeita a cadência sem gastar requisição ───────────
 
-def test_dentro_da_cadencia_o_job_nao_consulta_ninguem(tmp_path, monkeypatch):
+def test_dentro_da_cadencia_o_job_nao_consulta_ninguem(monkeypatch):
+    """O freio de cadência lê o estado compartilhado, e não o JSON local.
+
+    A versão anterior deste teste escrevia o carimbo em
+    ``frescor_noticias.CAMINHO_PADRAO`` e o job frearia por ele. Em produção
+    isso nunca funcionou: runner do Actions, container do Streamlit e máquina do
+    desenvolvedor não compartilham disco, cada processo encontrava o arquivo
+    vazio e se via como a primeira execução do dia. O carimbo passou para
+    ``estado_coleta`` -- que é o que os três alcançam --, e é ele que este teste
+    exercita.
+    """
+    from core.noticias import cadencia as cad
+    from core.noticias import estado_coleta as ec
     from data_pipeline.jobs import update_noticias
 
-    caminho = tmp_path / "coleta.json"
-    agora = frescor_noticias.agora_utc().isoformat()
-    caminho.write_text(json.dumps({
-        update_noticias.JOB_NAME: {
-            "ultimo_sucesso": agora,
-            "ultima_tentativa": agora,
-            "itens": 7,
-            "ultimo_erro": None,
-        }
-    }), encoding="utf-8")
-    monkeypatch.setattr(frescor_noticias, "CAMINHO_PADRAO", caminho)
+    agora = frescor_noticias.agora_utc()
+    monkeypatch.setattr(ec, "ler", lambda **kw: ec.EstadoGlobal(
+        modo=cad.MODO_NORMAL, ultima_tentativa=agora, ultimo_sucesso=agora,
+        disponivel=True))
 
     def _explode(*a, **kw):  # pragma: no cover - só roda se o job furar a cadência
         raise AssertionError("o job nao podia montar provedor nenhum")
@@ -330,10 +335,10 @@ def test_dentro_da_cadencia_o_job_nao_consulta_ninguem(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "core.noticias.provedores.registro.construir", _explode)
 
-    resultado = update_noticias.run()
+    resultado = update_noticias.run(agora=agora)
 
     assert resultado["status"] == "skipped"
-    assert "Dentro da cadencia" in resultado["error_message"]
+    assert "desde a última tentativa" in resultado["error_message"]
     assert resultado["records_inserted"] == 0
 
 

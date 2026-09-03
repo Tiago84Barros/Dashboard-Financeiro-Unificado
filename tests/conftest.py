@@ -27,6 +27,8 @@ Escape para investigacao pontual, nunca para o CI:
 import os
 import socket
 
+import pytest
+
 _ORIGINAL_CONNECT = socket.socket.connect
 _ORIGINAL_CREATE_CONNECTION = socket.create_connection
 
@@ -68,3 +70,26 @@ def _create_connection(endereco, *args, **kwargs):
 if os.getenv("DFU_TESTES_PERMITEM_REDE", "").strip().lower() not in {"1", "true", "yes"}:
     socket.socket.connect = _connect
     socket.create_connection = _create_connection
+
+
+# ── O armazem local e loopback, e loopback estava liberado ───────────────────
+# O guarda acima persegue trafego para fora da maquina. O contexto macro sai
+# pela porta 5433, que e loopback, e por isso passava.
+#
+# Medido em 03/09/2026: com `MACRO_LOCAL_DB_URL` configurada no .env,
+# `contexto_segregado` de um painel de teste passou de 956 para 4.167 caracteres
+# e de 7 para 68 numeros -- lidos do banco, dentro de um teste cujo docstring diz
+# que nenhum cenario toca banco. E o efeito nao era so de higiene: com 68 numeros
+# no lastro, a aritmetica de ancoragem passou a "derivar" 37,4 e o cenario C13
+# (guarda do A-148) ficou verde sem guardar nada.
+#
+# A fixture zera a fonte, nao o resultado: quem quiser exercitar o contexto macro
+# passa `macro_facts=` explicitamente, que e o caminho que a producao usa quando
+# ja tem os fatos em maos.
+@pytest.fixture(autouse=True)
+def _sem_armazem_macro(monkeypatch):
+    try:
+        from core.macro_data import database as macro_db
+    except Exception:  # o modulo pode nao existir neste checkout
+        return
+    monkeypatch.setattr(macro_db, "get_local_macro_engine", lambda: None)

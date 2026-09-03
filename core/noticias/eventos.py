@@ -50,12 +50,23 @@ MAPA_CATEGORIA: dict[str, str] = {
 # lista está ordenada da consequência mais grave para a mais leve. Uma matéria
 # que fala de fraude E de resultado é, para efeito de decisão, sobre a fraude.
 PALAVRAS_POR_TIPO: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Antes de `recuperacao_judicial` de propósito: "falencia do banco" casaria
+    # com "falencia" e a matéria viraria um evento de um ativo só. Quebra de
+    # banco não é a falência de uma empresa qualquer -- é o tipo de fato que o
+    # Motor de Eventos Extremos precisa ver como candidato a contágio.
+    ("quebra_bancaria", ("quebra do banco", "quebra de banco", "bank failure",
+                         "liquidacao extrajudicial", "intervencao do banco central",
+                         "regime de resolucao", "socorro ao banco", "bailout",
+                         "fdic", "banco quebrou", "insolvencia do banco")),
     ("recuperacao_judicial", ("recuperacao judicial", "falencia", "bankruptcy",
                               "chapter 11", "liquidacao")),
     ("fraude_governanca", ("fraude", "fraud", "escandalo", "scandal",
                            "manipulacao", "irregularidade", "delacao")),
     ("crise_sistemica", ("crise sistemica", "contagio", "pane no sistema",
                          "corrida bancaria", "bank run", "credit crunch")),
+    ("pandemia", ("pandemia", "epidemia", "surto de", "covid", "coronavirus",
+                  "quarentena", "lockdown", "emergencia sanitaria",
+                  "emergencia de saude publica", "outbreak", "gripe aviaria")),
     ("deslistagem", ("deslistagem", "delisting", "fechamento de capital",
                      "opa de fechamento")),
     ("fusao_aquisicao", ("fusao", "aquisicao", "incorporacao", "merger",
@@ -90,6 +101,15 @@ PALAVRAS_POR_TIPO: tuple[tuple[str, tuple[str, ...]], ...] = (
                          "deficit primario", "eleicao", "congresso aprova")),
     ("atividade_emprego", ("pib", "desemprego", "payroll", "atividade economica",
                            "caged")),
+    # Antes de `commodity`: uma seca que quebra a safra é, para efeito de
+    # decisão, o desastre -- e não a variação de preço que ele produziu. A
+    # ordem inversa transformaria todo evento climático agrícola em "preço de
+    # commodity" e apagaria a causa do registro.
+    ("evento_climatico", ("enchente", "inundacao", "seca severa", "estiagem",
+                          "furacao", "hurricane", "tufao", "terremoto",
+                          "earthquake", "desastre natural", "incendio florestal",
+                          "wildfire", "queimada", "geada", "el nino", "la nina",
+                          "evento climatico", "catastrofe natural")),
     ("commodity", ("petroleo", "brent", "minerio de ferro", "commodity",
                    "safra", "opep")),
     ("geopolitica", ("guerra", "sancao", "tarifa", "conflito", "embargo",

@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 
@@ -275,3 +276,51 @@ def gravar(resultado: ResultadoColeta, *, engine=None,
 
     return {"gravado": True, "itens": itens, "avaliacoes": avaliacoes,
             "versao": versao}
+
+
+_SELECT_RECENTES = text("""
+    SELECT i.id_dedup, i.titulo, i.resumo, i.url, i.url_canonica, i.dominio,
+           i.veiculo, i.confiabilidade_fonte, i.publicado_em, i.coletado_em,
+           i.provedor, i.entidades, i.tipo_evento, i.evento_id,
+           i.rotulo_sentimento,
+           a.nota, a.faixa, a.cobertura, a.direcao, a.probabilidade,
+           a.variacao_min, a.variacao_max, a.horizonte, a.confianca,
+           a.estado_verificacao, a.n_fontes_independentes,
+           a.confirmado_por_primaria, a.limitacoes, a.avaliado_em
+      FROM noticias_itens i
+      JOIN noticias_avaliacoes a
+        ON a.id_dedup = i.id_dedup AND a.versao_metodologia = :versao
+     WHERE COALESCE(i.publicado_em, i.coletado_em) >= :corte
+     ORDER BY COALESCE(i.publicado_em, i.coletado_em) DESC
+     LIMIT :limite
+""")
+
+
+def ler_recentes(limite: int = 50, *, dias: float = 7.0, engine=None,
+                 versao: str = VERSAO_METODOLOGIA) -> tuple[dict, ...]:
+    """Acervo recente já avaliado, para a tela abrir sem ter coletado nada.
+
+    Existe porque a coleta e a exibição são processos diferentes. O job do cron
+    grava; a sessão do Streamlit nasce depois e não presenciou nada. Sem esta
+    leitura a tela diria "nenhuma coleta nesta sessão" com o acervo cheio --
+    apresentando trabalho feito como trabalho ausente.
+
+    O ``JOIN`` é pela versão de metodologia, e é restritivo de propósito: item
+    avaliado sob outra versão não é comparável com estes e some da lista em vez
+    de entrar sem nota. Subir ``VERSAO_METODOLOGIA`` sem reavaliar o acervo
+    esvazia a tela, e isso é visível -- o contrário seria silencioso.
+    """
+    motor = engine if engine is not None else get_engine()
+    if motor is None:
+        return ()
+    corte = datetime.now(timezone.utc) - timedelta(days=float(dias))
+    try:
+        with motor.begin() as conn:
+            garantir_schema(conn)
+            linhas = conn.execute(_SELECT_RECENTES, {
+                "versao": versao, "corte": corte,
+                "limite": int(limite)}).mappings().all()
+    except Exception as exc:  # noqa: BLE001 - tela não pode quebrar por leitura
+        logger.warning("Acervo de noticias ilegivel: %s", exc)
+        return ()
+    return tuple(dict(linha) for linha in linhas)

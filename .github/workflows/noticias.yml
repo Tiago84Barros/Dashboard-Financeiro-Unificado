@@ -1,0 +1,90 @@
+# Coleta de notícias do Motor Conjuntural.
+#
+# Este workflow é o que mantém as notícias frescas sem ninguém com o Streamlit
+# aberto. O container do Streamlit Cloud só executa código enquanto responde a
+# uma requisição: fechada a aba, nada roda. Quem sustenta a cadência é o cron.
+#
+# NASCE DESLIGADO. O `if:` do job checa uma variável de repositório
+# (`NOTICIAS_COLETA_ATIVA`) que não existe até alguém criá-la. Sem ela o cron
+# dispara, o job é pulado e nenhuma cota é gasta -- o mesmo espírito do
+# `is_active: False` no registro do pipeline. Para ligar:
+#   Settings > Secrets and variables > Actions > Variables > New:
+#   NOTICIAS_COLETA_ATIVA = true
+#
+# HORÁRIOS. Os :17 e :47 não são estética. Os outros crons do repositório
+# ocupam a virada da hora (:00, :30) e a convenção existente é isolá-los para
+# não saturar CPU/IO do compute Nano do Supabase com escrita concorrente.
+name: Coleta de noticias
+
+on:
+  schedule:
+    # A cada 30 min. É a granularidade do modo mais fino (Crise); o freio de
+    # cadência no banco descarta as execuções que o modo corrente não pede,
+    # gastando um runner ocioso em vez de cota de provedor. Cron do GitHub não
+    # é pontual e pode atrasar em fila -- por isso o gatilho tem tolerância.
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Forcar coleta (ignorar o freio de cadencia)"
+        type: boolean
+        default: false
+      nivel:
+        description: "Nivel de crise a assumir (0-4); vazio usa o gravado"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# Uma execução por vez também no lado do agendador. O advisory lock no banco
+# continua sendo a trava real (protege contra o disparo manual e contra outra
+# máquina); isto aqui só evita gastar runner para descobrir isso.
+concurrency:
+  group: noticias-coleta
+  cancel-in-progress: false
+
+jobs:
+  coletar:
+    if: vars.NOTICIAS_COLETA_ATIVA == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_ENV: production
+      MOCK_MODE: "false"
+      SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
+      DATABASE_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
+      NOTICIAS_PROVEDORES: ${{ vars.NOTICIAS_PROVEDORES }}
+      NOTICIAS_ALPHAVANTAGE_KEY: ${{ secrets.NOTICIAS_ALPHAVANTAGE_KEY }}
+      NOTICIAS_MARKETAUX_KEY: ${{ secrets.NOTICIAS_MARKETAUX_KEY }}
+      NOTICIAS_FREQ_NORMAL_MIN: ${{ vars.NOTICIAS_FREQ_NORMAL_MIN }}
+      NOTICIAS_FREQ_VIGILANCIA_MIN: ${{ vars.NOTICIAS_FREQ_VIGILANCIA_MIN }}
+      NOTICIAS_FREQ_CRISE_MIN: ${{ vars.NOTICIAS_FREQ_CRISE_MIN }}
+      NOTICIAS_MAX_SEM_ATUALIZACAO_MIN: ${{ vars.NOTICIAS_MAX_SEM_ATUALIZACAO_MIN }}
+      NOTICIAS_MAX_RETENTATIVAS: ${{ vars.NOTICIAS_MAX_RETENTATIVAS }}
+      NOTICIAS_BACKOFF_S: ${{ vars.NOTICIAS_BACKOFF_S }}
+      NOTICIAS_TIMEOUT_S: ${{ vars.NOTICIAS_TIMEOUT_S }}
+      NOTICIAS_LIMITES_DIARIOS: ${{ vars.NOTICIAS_LIMITES_DIARIOS }}
+      NOTICIAS_RETENCAO_DIAS: ${{ vars.NOTICIAS_RETENCAO_DIAS }}
+      NOTICIAS_TIMEZONE: ${{ vars.NOTICIAS_TIMEZONE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-pipeline.txt
+
+      - run: pip install -r requirements-pipeline.txt
+
+      - name: Coletar noticias
+        env:
+          FORCAR: ${{ inputs.force }}
+          NIVEL: ${{ inputs.nivel }}
+        run: python -m data_pipeline.cli_noticias
+
+      - name: Saude dos servicos
+        # Roda mesmo quando a coleta falha: é aí que a saúde é interessante.
+        if: always()
+        run: python -m data_pipeline.cli_noticias --saude

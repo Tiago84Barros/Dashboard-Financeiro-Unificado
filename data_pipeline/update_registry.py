@@ -147,6 +147,14 @@ _DEFAULT_REGISTRY: list[dict] = [
         # INATIVO POR PADRÃO, de propósito: consome cota de APIs gratuitas
         # (Alpha Vantage: 25 chamadas/dia; Marketaux: 100/dia). Para ligar,
         # configure ao menos uma chave e troque is_active para True.
+        #
+        # E continua inativo AQUI mesmo depois de ligado em produção. Quem
+        # sustenta a cadência é o workflow dedicado
+        # (`.github/workflows/noticias.yml`, meia em meia hora), porque o
+        # pipeline noturno roda uma vez por dia -- frequência que não serve a
+        # nenhum dos três modos. Ativar nos dois lugares faria a coleta noturna
+        # disputar cota com o ciclo do modo corrente sem trazer frescor nenhum.
+        # Ver docs/noticias_atualizacao_continua.md.
         "table_name":   "noticias_itens, noticias_avaliacoes",
         "source_name":  "Motor Conjuntural (Alpha Vantage / Marketaux / RSS)",
         "job_name":     "update_noticias",
@@ -168,6 +176,20 @@ _DEFAULT_REGISTRY: list[dict] = [
                         "Invest) sobre a tabela legada `multiplos`, que foi DROPADA (2026-07). "
                         "Fundamentos vêm exclusivamente do market.* (brapi); não há mais o que "
                         "sanear por scraping. Mantido inativo.",
+    },
+    {
+        "table_name":   "recomendacao_auditoria",
+        "source_name":  "Retenção da trilha de auditoria",
+        "job_name":     "update_retencao",
+        "update_type":  "incremental",
+        "frequency":    "diario",
+        "priority":     11,
+        "is_active":    True,
+        "description":  "Varredura de retenção (365 dias) da trilha de recomendações. "
+                        "Simula por omissão: só apaga com AUDITORIA_EXPURGO_APLICAR=true. "
+                        "Ativo mesmo simulando, porque o alcance da janela precisa ser "
+                        "medido todo dia — dívida que ninguém conta vira surpresa de "
+                        "banco cheio.",
     },
     # ── Importações manuais de investimentos ─────────────────────────────────
     # frequency='manual' garante que NUNCA são executadas pelo

@@ -150,6 +150,36 @@ class Settings:
     NOTICIAS_FREQ_NORMAL_MIN: str = _get_secret("NOTICIAS_FREQ_NORMAL_MIN", "240")
     NOTICIAS_FREQ_EMERGENCIA_MIN: str = _get_secret(
         "NOTICIAS_FREQ_EMERGENCIA_MIN", "30")
+    # Vigilância (níveis 1-2) e crise (níveis 3-4). A de crise cai para o mesmo
+    # valor de EMERGENCIA quando esta é configurada e aquela não, para que quem
+    # já tinha a variável antiga não perca o ajuste ao atualizar.
+    NOTICIAS_FREQ_VIGILANCIA_MIN: str = _get_secret(
+        "NOTICIAS_FREQ_VIGILANCIA_MIN", "60")
+    NOTICIAS_FREQ_CRISE_MIN: str = _get_secret("NOTICIAS_FREQ_CRISE_MIN", "")
+
+    # Teto absoluto de tempo sem atualização, em minutos. "0" desliga o teto e
+    # deixa cada modo com o seu próprio SLA (intervalo x folga). O teto só
+    # aperta o SLA do modo, nunca o afrouxa.
+    NOTICIAS_MAX_SEM_ATUALIZACAO_MIN: str = _get_secret(
+        "NOTICIAS_MAX_SEM_ATUALIZACAO_MIN", "0")
+
+    # Retentativa dentro de uma execução: quantas vezes e com que espera.
+    NOTICIAS_MAX_RETENTATIVAS: str = _get_secret("NOTICIAS_MAX_RETENTATIVAS", "2")
+    NOTICIAS_BACKOFF_S: str = _get_secret("NOTICIAS_BACKOFF_S", "5")
+    NOTICIAS_TIMEOUT_S: str = _get_secret("NOTICIAS_TIMEOUT_S", "12")
+
+    # Teto diário de requisições por provedor, no formato "nome:limite,...".
+    # Vazio mantém os limites que cada provedor já declara em rate_limit.
+    NOTICIAS_LIMITES_DIARIOS: str = _get_secret("NOTICIAS_LIMITES_DIARIOS", "")
+
+    # Retenção do acervo, em dias. O expurgo roda no fim da coleta e é o que
+    # impede o banco de crescer sem limite no plano free.
+    NOTICIAS_RETENCAO_DIAS: str = _get_secret("NOTICIAS_RETENCAO_DIAS", "180")
+
+    # Fuso APENAS de apresentação. Todo carimbo é gravado e comparado em UTC;
+    # converter na gravação já produziu, neste projeto, série que muda de dia
+    # conforme o horário de verão de quem gravou.
+    NOTICIAS_TIMEZONE: str = _get_secret("NOTICIAS_TIMEZONE", "America/Sao_Paulo")
 
     # Idade a partir da qual a notícia deixa de ser tratada como corrente.
     # Ela continua no acervo; o que muda é que passa a ser exibida como
@@ -304,6 +334,57 @@ class Settings:
     @property
     def noticias_freq_emergencia_min(self) -> float:
         return _para_num(self.NOTICIAS_FREQ_EMERGENCIA_MIN, 30.0, minimo=1.0)
+
+    @property
+    def noticias_freq_vigilancia_min(self) -> float:
+        return _para_num(self.NOTICIAS_FREQ_VIGILANCIA_MIN, 60.0, minimo=1.0)
+
+    @property
+    def noticias_freq_crise_min(self) -> float:
+        """Cadência de crise. Herda EMERGENCIA quando não configurada.
+
+        Sem a herança, quem já tinha ``NOTICIAS_FREQ_EMERGENCIA_MIN`` ajustada
+        veria o valor ser ignorado em silêncio no dia em que os modos passaram
+        a ser três -- que é exatamente como uma configuração some sem erro.
+        """
+        if str(self.NOTICIAS_FREQ_CRISE_MIN or "").strip():
+            return _para_num(self.NOTICIAS_FREQ_CRISE_MIN, 15.0, minimo=1.0)
+        return self.noticias_freq_emergencia_min
+
+    @property
+    def noticias_max_sem_atualizacao_min(self) -> float:
+        return _para_num(self.NOTICIAS_MAX_SEM_ATUALIZACAO_MIN, 0.0, minimo=0.0)
+
+    @property
+    def noticias_max_retentativas(self) -> int:
+        return int(_para_num(self.NOTICIAS_MAX_RETENTATIVAS, 2.0, minimo=0.0))
+
+    @property
+    def noticias_backoff_s(self) -> float:
+        return _para_num(self.NOTICIAS_BACKOFF_S, 5.0, minimo=0.0)
+
+    @property
+    def noticias_timeout_s(self) -> float:
+        return _para_num(self.NOTICIAS_TIMEOUT_S, 12.0, minimo=1.0)
+
+    @property
+    def noticias_retencao_dias(self) -> int:
+        return int(_para_num(self.NOTICIAS_RETENCAO_DIAS, 180.0, minimo=1.0))
+
+    @property
+    def noticias_limites_diarios(self) -> dict[str, int]:
+        """Tetos por provedor, no formato ``nome:limite``. Item ilegível é
+        ignorado -- um typo não pode derrubar o motor inteiro na importação."""
+        limites: dict[str, int] = {}
+        for parte in (self.NOTICIAS_LIMITES_DIARIOS or "").split(","):
+            nome, _, valor = parte.partition(":")
+            nome = nome.strip().lower()
+            try:
+                if nome and valor.strip():
+                    limites[nome] = max(0, int(float(valor.strip())))
+            except ValueError:
+                continue
+        return limites
 
     @property
     def noticias_idade_max_horas(self) -> float:

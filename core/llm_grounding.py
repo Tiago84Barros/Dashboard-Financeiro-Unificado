@@ -164,8 +164,54 @@ def _is_trivial(value: float) -> bool:
             # fosse dado gerava falso positivo em TODO cálculo de percentual —
             # o caso mais comum do chat. Valor monetário real vem formatado com
             # centavos ("R$ 100,00"), que é outro token.
+            #
+            # A isenção tinha preço, medido em 03/09/2026 (A-147): a frase
+            # "O score foi alterado para 100." ancorava com razão 1,00 e zero
+            # inventados. O 100 solto não é fator de conversão — é afirmação de
+            # dado, e era exatamente a afirmação que a regra "a LLM não pode
+            # alterar scores" existe para pegar. Quem chama por
+            # ``check_grounding`` decide pelo contexto (:func:`_cem_e_sempre_
+            # fator`); aqui, sem texto ao redor, a isenção continua valendo —
+            # esta função também filtra POOLS de números, onde não há frase.
             return True
     return False
+
+
+#: Onde um "100" pode estar sem ser afirmação: multiplicando, dividindo ou
+#: colado ao símbolo de porcentagem.
+#: ``(?![.,]\d)`` e não ``(?![.,])``: o ponto final da frase faz parte do texto,
+#: não do número. A primeira versão usava ``(?![\d.,])`` e por isso não achava
+#: ocorrência nenhuma em "o score foi alterado para 100." -- devolvia "sempre
+#: fator" por vacuidade e deixava o defeito exatamente onde estava.
+_CEM_SOLTO = re.compile(r"(?<![\d.,])100(?!\d)(?![.,]\d)")
+_OPERADOR = re.compile(
+    r"(?i)(?:[×x*/÷:%=]|\b(?:multiplicad[oa]s?|multiplicando|multiplicar|"
+    r"dividid[oa]s?|dividindo|dividir|vezes)\s+(?:por\s+)?)\s*$")
+_OPERADOR_DEPOIS = re.compile(r"^\s*[×x*/÷%)\]}]")
+
+
+def _cem_e_sempre_fator(text: str) -> bool:
+    """``True`` se todo ``100`` do texto está encostado num operador.
+
+    A isenção do 100 em :func:`_is_trivial` foi criada para não cobrar o fator
+    de conversão que aparece em ``(3.100 / 12.500) × 100``. Ela vale enquanto o
+    100 for isso. Um ``100`` sozinho numa frase -- "o score foi alterado para
+    100" -- é afirmação de dado e tem de ser cobrada como qualquer outra.
+
+    A pergunta é feita sobre o texto INTEIRO e de forma conservadora: basta um
+    100 solto para nenhum deles ser dispensado. Julgar ocorrência por ocorrência
+    seria mais preciso e abriria a porta de volta -- bastaria à resposta trazer
+    um ``× 100`` decorativo para o 100 inventado passar junto.
+    """
+    ocorrencias = list(_CEM_SOLTO.finditer(text or ""))
+    if not ocorrencias:
+        return True
+    for m in ocorrencias:
+        antes = text[max(0, m.start() - 24):m.start()]
+        depois = text[m.end():m.end() + 3]
+        if not (_OPERADOR.search(antes) or _OPERADOR_DEPOIS.search(depois)):
+            return False
+    return True
 
 
 # Piso da folga, mesmo para número escrito com todas as casas. Existe porque
@@ -316,8 +362,10 @@ def check_grounding(response: str, context: str, *,
     # texto sair aprovado numa leitura e reprovado noutra. Ancorar sob qualquer
     # leitura que o token admite basta.
     ocorrencias: dict[str, dict] = {}
+    # A isenção do 100 só vale enquanto ele for fator de conversão (A-147).
+    cem_dispensado = _cem_e_sempre_fator(response)
     for value, raw, is_percent in extract_numbers_typed(response):
-        if _is_trivial(value):
+        if _is_trivial(value) and not (value == 100 and not cem_dispensado):
             continue
         registro = ocorrencias.setdefault(
             raw, {"raw": raw, "leituras": [], "percent": False, "abs": False})

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import pytest
+
 from core.memoria_mercado import amostra as am
 from core.memoria_mercado import estimativa as est
 from core.memoria_mercado import ponte_noticias as ponte
@@ -226,7 +228,11 @@ def test_ponte_converte_fracao_para_pontos_percentuais():
     assert base is not None
     assert abs(base.p10 - a.principal.p10 * 100.0) < 1e-9
     assert abs(base.p90 - a.principal.p90 * 100.0) < 1e-9
-    assert base.limiar_relevante == 3.0          # 0,03 em fração
+    # O limiar deixou de ser um número absoluto único: sem classe informada,
+    # a ponte usa o prior da classe desconhecida de core.calibracao.limiar
+    # (era 3,0 fixo para todo ativo, o que é ~4 desvios num FII).
+    assert base.limiar_relevante == pytest.approx(
+        ponte.LIMIAR_RELEVANTE_PADRAO * 100.0)
     assert base.p10 < -1.0                       # pontos percentuais, não fração
     assert base.n_observacoes == a.n_eventos
     assert base.fonte == "memoria_mercado:retorno_anormal"
