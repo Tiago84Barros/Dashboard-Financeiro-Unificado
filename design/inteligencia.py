@@ -27,6 +27,7 @@ import streamlit as st
 from core.inteligencia import alertas as al
 from core.inteligencia import painel as P
 from core.inteligencia import qualificacao as qz
+from core.seguranca import travas as tv
 
 __all__ = [
     "selo_qualidade", "linha_valor", "card_valor", "grade_valores",
@@ -41,12 +42,29 @@ AVISO_SEM_GARANTIA = (
 )
 
 
+def _linha(texto: object, *, aspas: bool = False) -> str:
+    """Escapa **e** achata. A quebra de linha aqui não é cosmética.
+
+    ``escape`` cobre ``<``, ``&`` e ``"``. O canal que ninguém guardava era o
+    espaço em branco: o markdown do Streamlit encerra o bloco HTML na primeira
+    linha em branco, e a partir dali a própria tag vai para a tela como texto.
+    Uma mensagem do psycopg2 -- que vem com quebras e um parágrafo em branco
+    antes do ``[SQL:`` -- bastava para imprimir
+    ``" style="--badge-color:#D9534F...>`` no meio do card das travas.
+
+    Rótulo constante nunca tem quebra, então o defeito só aparece com texto que
+    vem de fora: erro de banco, título de notícia, motivo de alerta. É
+    exatamente o texto que este módulo existe para mostrar.
+    """
+    return escape(" ".join(str(texto).split()), quote=aspas)
+
+
 def _selo(icone: str, rotulo: str, cor: str, ajuda: str = "") -> str:
-    ajuda_attr = f' title="{escape(ajuda, quote=True)}"' if ajuda else ""
+    ajuda_attr = f' title="{_linha(ajuda, aspas=True)}"' if ajuda else ""
     return (f'<span class="app-status-badge"{ajuda_attr} '
             f'style="--badge-color:{cor};--badge-bg:rgba(0,0,0,0.06)">'
-            f'<span aria-hidden="true">{escape(icone)}</span> '
-            f'{escape(rotulo)}</span>')
+            f'<span aria-hidden="true">{_linha(icone)}</span> '
+            f'{_linha(rotulo)}</span>')
 
 
 def selo_qualidade(qualidade: str) -> str:
@@ -84,12 +102,12 @@ def linha_valor(valor: qz.Valor) -> str:
     if valor.observacao:
         extras.append(valor.observacao)
     rodape = (f'<div class="app-kpi-delta" style="color:#9CA3AF">'
-              f'{escape(" · ".join(extras))}</div>' if extras else "")
+              f'{_linha(" · ".join(extras))}</div>' if extras else "")
     return (
         '<div class="app-kpi-card" style="--app-kpi-accent:'
         f'{valor.aparencia["cor"]}">'
-        f'<div class="app-kpi-label">{escape(valor.rotulo)}</div>'
-        f'<div class="app-kpi-value">{escape(valor.texto)}</div>'
+        f'<div class="app-kpi-label">{_linha(valor.rotulo)}</div>'
+        f'<div class="app-kpi-value">{_linha(valor.texto)}</div>'
         f'{selo_qualidade(valor.qualidade)}{rodape}</div>')
 
 
@@ -125,7 +143,7 @@ def barra_frescor(pn: P.Painel) -> None:
         '<div class="app-kpi-card" style="--app-kpi-accent:#4A9EFF">'
         '<div class="app-kpi-label">Última atualização (fonte mais antiga)'
         '</div>'
-        f'<div class="app-kpi-value">{escape(texto)}</div>{selos}</div>',
+        f'<div class="app-kpi-value">{_linha(texto)}</div>{selos}</div>',
         unsafe_allow_html=True)
 
     if pn.desatualizados or pn.provedores_fora:
@@ -137,7 +155,7 @@ def barra_frescor(pn: P.Painel) -> None:
 
 
 def cabecalho_bloco(bloco: qz.Bloco, agora: dt.datetime | None = None) -> None:
-    partes = [f'<span class="app-section-title">{escape(bloco.titulo)}</span>']
+    partes = [f'<span class="app-section-title">{_linha(bloco.titulo)}</span>']
     partes.append(_selo("◑", f"cobertura {bloco.cobertura:.0%}", "#4A9EFF",
                         "fração dos componentes que foi possível medir"))
     if bloco.frescor is not None:
@@ -186,14 +204,14 @@ def cartao_noticia(item: P.ItemNoticia) -> None:
     marcas = ""
     for v in item.valores():
         marcas += (f'<div class="app-kpi-delta" style="color:#9CA3AF">'
-                   f'{escape(v.descrever())}</div>')
-    link = (f'<div class="app-kpi-delta"><a href="{escape(item.url, quote=True)}"'
+                   f'{_linha(v.descrever())}</div>')
+    link = (f'<div class="app-kpi-delta"><a href="{_linha(item.url, aspas=True)}"'
             ' target="_blank" rel="noopener">abrir na fonte</a></div>'
             if item.url else "")
     st.markdown(
         '<div class="app-kpi-card" style="--app-kpi-accent:#4A9EFF">'
-        f'<div class="app-kpi-value">{escape(item.titulo)}</div>'
-        f'<div class="app-kpi-label">{escape(item.carimbo)}</div>'
+        f'<div class="app-kpi-value">{_linha(item.titulo)}</div>'
+        f'<div class="app-kpi-label">{_linha(item.carimbo)}</div>'
         f'{selo}{verif}{marcas}{link}</div>',
         unsafe_allow_html=True)
 
@@ -204,11 +222,11 @@ def cartao_alerta(alerta: al.Alerta) -> None:
            3: "#FC5C7D", 4: "#FC5C7D"}.get(alerta.nivel_codigo, "#9CA3AF")
     st.markdown(
         f'<div class="app-kpi-card" style="--app-kpi-accent:{cor}">'
-        f'<div class="app-kpi-value">{escape(alerta.titulo)}</div>'
-        f'<div class="app-kpi-label">{escape(alerta.corpo)}</div>'
+        f'<div class="app-kpi-value">{_linha(alerta.titulo)}</div>'
+        f'<div class="app-kpi-label">{_linha(alerta.corpo)}</div>'
         + _selo(ap["icone"], ap["rotulo"], cor, alerta.motivo_canal)
         + f'<div class="app-kpi-delta" style="color:#9CA3AF">'
-          f'{escape(alerta.motivo_canal)}</div></div>',
+          f'{_linha(alerta.motivo_canal)}</div></div>',
         unsafe_allow_html=True)
 
 
@@ -251,6 +269,20 @@ def selo_trava(trava) -> str:
     return _selo(icone, rotulo, cor, detalhe)
 
 
+def _aviso_de_trava(trava) -> str:
+    """O texto da trava em markdown; o detalhe técnico, em código.
+
+    O detalhe é a mensagem do banco, e ela vem cheia de ``[...]`` e ``(...)``.
+    Solta no markdown ela vira sintaxe de link e chega truncada à tela -- o
+    aviso da auditoria terminava em ``[SQL: SELECT 1 FROM public)``, perdendo
+    justamente o nome da tabela que falta. Dentro de crase ela chega inteira, e
+    fica visualmente separada do texto que o APP4 escreveu.
+    """
+    corpo = " ".join(tv.TEXTO.get(trava.nome, trava.nome).split())
+    detalhe = " ".join(str(trava.detalhe).split()).replace("`", "'")
+    return f"{corpo} `{detalhe}`" if detalhe else corpo
+
+
 def barra_travas(estado) -> None:
     """As seis travas, o que cada uma desligou e o que ninguém verificou.
 
@@ -274,12 +306,12 @@ def barra_travas(estado) -> None:
     st.markdown(
         f'<div class="app-kpi-card" style="--app-kpi-accent:{cor}">'
         '<div class="app-kpi-label">Travas de segurança</div>'
-        f'<div class="app-kpi-value">{escape(resumo)}</div>{selos}</div>',
+        f'<div class="app-kpi-value">{_linha(resumo)}</div>{selos}</div>',
         unsafe_allow_html=True)
 
     for trava in estado.disparadas:
         st.warning(f"⊘ **{ROTULO_TRAVA.get(trava.nome, trava.nome)}** — "
-                   f"{trava.descrever()}")
+                   f"{_aviso_de_trava(trava)}")
     if estado.nao_verificadas:
         nomes = ", ".join(ROTULO_TRAVA.get(t.nome, t.nome)
                           for t in estado.nao_verificadas)

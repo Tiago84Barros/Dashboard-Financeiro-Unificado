@@ -86,7 +86,14 @@ with st.sidebar:
                          "🏬 Seleção de FIIs",
                          "🌐 Portfólio Global",
                          "🧭 Inteligência de Mercado"]
-        opcoes_sistema = ["📚 Documentação", "⚙️ Configurações"]
+        # "Grau de Confiança" e "Homologação" tinham rota em ``_ROTAS`` e não
+        # tinham entrada aqui: nasceram inalcançáveis pela sidebar, cada uma
+        # no próprio commit que a criou. Motor de diagnóstico que ninguém
+        # consulta é decoração (``memoria: diagnostico-precisa-porta-de-entrada``),
+        # e é a tela de Homologação que diz em que fase o APP4 está --
+        # exatamente o que não podia ficar escondido.
+        opcoes_sistema = ["🎯 Grau de Confiança", "🚦 Homologação",
+                          "📚 Documentação", "⚙️ Configurações"]
         opcoes_menu = opcoes_visao + opcoes_financas + opcoes_invest + opcoes_sistema
 
     menu = st.radio(
