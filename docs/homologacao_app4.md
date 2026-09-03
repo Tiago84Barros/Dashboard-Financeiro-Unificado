@@ -241,10 +241,10 @@ fazer", "Decidir depois").
 **4. Toda decisão automática é auditável?** As que a trilha cobre, sim:
 `core/auditoria/trilha.py` responde por escrito "por que o APP4 recomendou essa
 mudança naquele momento", com motor, versão de modelo, versão de dados, frescor
-e evidências. **Pendência:** a tabela `public.recomendacao_auditoria` (SQL 067)
-ainda **não foi executada no Supabase** — enquanto não for, `registrar()` levanta
-`AuditoriaIndisponivel` e a trava `auditoria_falhou` bloqueia mudança
-estratégica. O comportamento é o correto; a instalação está incompleta.
+e evidências. A tabela `public.recomendacao_auditoria` (SQL 067) foi executada
+no Supabase em **03/09/2026**: 20 colunas, 2 constraints de domínio, 2 índices,
+tamanho do banco inalterado em 427 MB. Verificada com uma gravação e uma leitura
+de ida e volta, e a linha de teste foi apagada em seguida — a tabela está vazia.
 
 **5. A LLM pode inventar número?** Ela pode gerar; o número não passa.
 `validar()` ancora a resposta no **`texto_backend`** — o prompt sem o bloco de
@@ -292,8 +292,11 @@ pela fase, e a tela de Homologação as mostra com o motivo.
    existem, o motor de avaliação existe e está testado; quem preenche `medidas`
    ainda é uma pessoa. Enquanto isso, `pode_avancar` é `False` por
    `nao_medidos`, que é o lado seguro.
-2. **SQL 067 não executado no Supabase.** A trilha de auditoria não grava; a
-   trava `auditoria_falhou` bloqueia mudança estratégica, como projetado.
+2. ~~SQL 067 não executado no Supabase.~~ **Resolvido em 03/09/2026** — a
+   tabela existe e a trilha grava. O que continua faltando é o *expurgo*
+   rodando sozinho: `trilha.expurgar` existe e ninguém o agenda, e uma tabela
+   que só cresce é dívida com data marcada num banco que opera em 427 MB de
+   500 MB.
 3. **Sem controle de acesso por papel.** É o motivo de a tela de administração
    ser de leitura (seção 8).
 4. **Duas travas sem fonte de dados.** `modelo_fora_dos_limites` e

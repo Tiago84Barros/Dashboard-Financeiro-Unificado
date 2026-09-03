@@ -359,10 +359,9 @@ falhas críticas"*.
 - `travas.do_painel` ainda não tem fonte para `modelo_fora_dos_limites` nem para
   `auditoria_falhou` — as duas saem como **não verificadas**, e é isso que a
   tela mostra.
-- A trilha (`067_*.sql`) **não foi executada no Supabase**. Enquanto a tabela não
-  existir, `registrar` levanta `AuditoriaIndisponivel`, e a trava
-  `auditoria_falhou` bloqueia mudanças estratégicas — que é o comportamento
-  correto, não uma falha.
+- A trilha (`067_*.sql`) foi executada no Supabase em **03/09/2026** e está
+  verificada de ida e volta. Falta agendar `trilha.expurgar`: a retenção de 365
+  dias está escrita no código e não roda sozinha.
 - A tela de confirmação existe como modelo (`core/auditoria/confirmacao.py`);
   a view que a desenha entra no Prompt 5, atrás de feature flag.
 - O controle de acesso e o isolamento entre usuários continuam sendo os do app
