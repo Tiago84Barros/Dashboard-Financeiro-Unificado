@@ -188,6 +188,16 @@ SEM_FONTE: dict[str, str] = {
         "definivel a partir da propria serie de precos, nao de um cadastro; "
         "fica para o Motor de Eventos Extremos, que ja mede regime de mercado",
     "geopolitica": "sem fonte de evento geopolitico datavel",
+    "pandemia":
+        "sem fonte datavel no armazem; a declaracao da OMS e publica mas nao "
+        "esta ingerida, e derivar a data do crash de precos seria datar o "
+        "efeito e chamar de causa",
+    "quebra_bancaria":
+        "sem cadastro de intervencao ou liquidacao do Banco Central no "
+        "armazem; market_us.delistings nao separa banco de empresa",
+    "evento_climatico":
+        "sem serie de desastre no armazem; a base publica do EM-DAT nao foi "
+        "ingerida e datar pela cobertura jornalistica mediria a manchete",
     "indefinido": "residuo da taxonomia: nao e um tipo a calibrar",
 }
 

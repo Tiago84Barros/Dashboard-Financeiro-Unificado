@@ -47,11 +47,21 @@ LINHAS = [
 
 
 def test_cobertura_recusa_tipo_da_taxonomia_sem_declaracao(monkeypatch):
-    """Subir a taxonomia sem declarar a fonte tem que doer na hora."""
-    novo = tax.TipoEvento(chave="pandemia", rotulo="Pandemia", materialidade=0.9,
-                          persistencia=0.9, horizonte="longo", escopo="sistemico")
+    """Subir a taxonomia sem declarar a fonte tem que doer na hora.
+
+    A chave falsa precisa ser uma que nunca vá existir. Este teste usava
+    ``pandemia``, e em 03/09/2026 ``pandemia`` virou tipo de verdade -- com
+    declaracao em ``SEM_FONTE``. A partir dali o teste passaria a montar uma
+    taxonomia com o tipo duplicado, ``cobertura()`` nao acharia buraco nenhum e
+    o teste falharia sem que houvesse defeito. Fixture que colide com a
+    realidade envelhece calada.
+    """
+    novo = tax.TipoEvento(chave="tipo_hipotetico_de_teste", rotulo="Hipotetico",
+                          materialidade=0.9, persistencia=0.9,
+                          horizonte="longo", escopo="macro")
     monkeypatch.setattr(tax, "TIPOS", tax.TIPOS + (novo,))
-    monkeypatch.setattr(tax, "POR_CHAVE", {**tax.POR_CHAVE, "pandemia": novo})
+    monkeypatch.setattr(tax, "POR_CHAVE",
+                        {**tax.POR_CHAVE, novo.chave: novo})
 
     with pytest.raises(RuntimeError, match="sem declaracao de fonte"):
         cat.cobertura()

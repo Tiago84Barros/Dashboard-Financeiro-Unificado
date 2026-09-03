@@ -377,8 +377,19 @@ pela fase, e a tela de Homologação as mostra com o motivo.
    `design.inteligencia.barra_travas` as publica. Continua valendo o que falta:
    enquanto o motor de crise não for ligado à tela, o `veredito` é `None` e a
    trava do modelo confere só o índice de antifragilidade — e diz isso.
-5. **Três tipos de evento faltam na taxonomia** (pandemia, quebra de banco,
-   evento climático). Adicioná-los exige subir `TAXONOMIA_VERSAO` e incluí-los
-   em `catalogo.SEM_FONTE`, sob pena de `cobertura()` levantar erro.
+5. ~~**Três tipos de evento faltam na taxonomia**~~ — **resolvido em
+   03/09/2026.** `pandemia`, `quebra_bancaria` e `evento_climatico` entraram na
+   taxonomia (v1.1.0), no classificador por palavra-chave e em
+   `catalogo.SEM_FONTE`. Três consequências ficam registradas porque nenhuma
+   delas é obviamente boa: (a) a cobertura da calibração **caiu** de 3/25 para
+   3/28 — o denominador cresceu e o numerador não; (b) a calibração publicada
+   continua carimbada com `taxonomia_versao` 1.0.0 e **não** foi refeita, então
+   os três carregam prior declarado e nunca medido; (c) `evento_climatico`
+   ficou deliberadamente **fora** de `TIPOS_EMERGENCIAIS` — enchente e seca são
+   frequentes e locais, e um gatilho de cadência por manchete climática seria
+   pago em falso alarme, que é justamente o critério de Fase 4 com limiar zero.
+   `quebra_bancaria` é setorial e distinta de `crise_sistemica`: quebrar não é
+   contagiar, e quem decide se escalou é o motor de mercado — não o título da
+   notícia.
 6. **Alertas externos e recomendação emergencial nunca foram exercitados em
    produção** — estão barrados pela Fase 4 e não há medição de campo.

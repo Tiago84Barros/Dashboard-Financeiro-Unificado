@@ -1,6 +1,14 @@
 # Calibração quantitativa do Motor Conjuntural
 
 Data da medição: 02/09/2026 · `calibracao_versao` 1.0.0 · `taxonomia_versao` 1.0.0
+
+> **A taxonomia subiu para 1.1.0 em 03/09/2026 e esta medição não foi refeita.**
+> Os três tipos acrescentados — `pandemia`, `quebra_bancaria`,
+> `evento_climatico` — carregam **prior declarado, nunca medido**, e nenhum
+> deles tem fonte histórica ponto-no-tempo. Os números abaixo continuam
+> válidos para os tipos que já existiam; o que mudou é o denominador da
+> cobertura, que **caiu**. Carimbar a versão nova numa medição feita com a
+> antiga é o defeito de `memoria: versao-de-metodologia-sem-safra`.
 Fonte: armazém local (`dfu_warehouse`, Postgres 16, porta 5433). Nada foi gravado.
 
 Reprodução:
@@ -34,7 +42,8 @@ no armazém, declarado em `core/calibracao/catalogo.py`:
 | `fato_relevante` | `market.fii_documents` | `source_published_at` | só FII; o título não é classificado |
 | `deslistagem` | `market_us.delistings` | `delisted_date` | só EUA |
 
-**Cobertura honesta: 3 de 25 tipos (12%).** O número sai na primeira linha da
+**Cobertura honesta: 3 de 28 tipos (11%)** — eram 3 de 25 (12%) na medição de
+02/09; os três tipos novos entraram sem fonte e baixaram a fração. O número sai na primeira linha da
 execução, não no rodapé. `catalogo.cobertura()` levanta `RuntimeError` se alguém
 acrescentar um tipo à taxonomia sem declarar a fonte **ou** o motivo da ausência
 — é o remédio direto para `memoria: verificador-e-escritor-listas-diferentes`.
@@ -170,7 +179,7 @@ Nada foi ligado em produção por esta rodada.
 
 | pedido | situação |
 |---|---|
-| 15 tipos de evento | 3 (12%). Sem corpus histórico de notícias. |
+| 15 tipos de evento | 3 de 28 (11%). Sem corpus histórico de notícias. |
 | segmentação por setor | não medida: os eventos do catálogo não trazem setor point-in-time |
 | segmentação por tamanho | não medida: não há capitalização histórica no armazém |
 | segmentação por regime de mercado | não medida: fica para o Motor de Eventos Extremos |

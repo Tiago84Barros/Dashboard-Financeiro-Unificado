@@ -130,8 +130,9 @@ e é promovido a limitação declarada do painel.
 3. **Os pesos não foram calibrados contra histórico.** Os valores atuais são
    sugestões iniciais, não resultados de validação.
 4. **`core/eventos_extremos/plano.py`, `armazenamento.py` e `ponte.py` não
-   existem** ainda; a taxonomia não cobre pandemia, quebra de banco e evento
-   climático.
+   existem** ainda. ~~A taxonomia não cobre pandemia, quebra de banco e evento
+   climático~~ — cobre desde 03/09/2026 (v1.1.0), com prior declarado e sem
+   fonte histórica; ver `docs/homologacao_app4.md`, item 5.
 5. **Nada aqui prevê cisne negro.** O motor classifica evidência já observável e
    publica faixa, com amostra declarada; abaixo de
    `amostra.N_MINIMO_EXPERIMENTAL = 8` nenhuma faixa é publicada.

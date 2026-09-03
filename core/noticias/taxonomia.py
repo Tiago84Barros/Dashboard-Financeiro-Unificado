@@ -8,15 +8,24 @@ a materialidade financeira e a persistência que o índice de relevância usa, p
 que esses dois números tenham uma origem auditável em vez de sair de um `if`
 espalhado pelo código.
 
-``TAXONOMIA_VERSAO`` sobe quando qualquer peso muda. Sem isso, um índice
-recalculado com pesos novos fica indistinguível de um calculado com os antigos,
-e a comparação histórica passa a somar maçãs com laranjas.
+``TAXONOMIA_VERSAO`` sobe quando qualquer peso muda **ou quando o vocabulário
+muda**. Sem isso, um índice recalculado com pesos novos fica indistinguível de um
+calculado com os antigos, e a comparação histórica passa a somar maçãs com
+laranjas. Tipo novo também muda o resultado: uma notícia que antes caía em
+``indefinido`` (materialidade 0,25) passa a cair no tipo certo, e o índice dela
+muda sem que peso nenhum tenha sido tocado.
+
+1.1.0 (03/09/2026) acrescentou ``pandemia``, ``quebra_bancaria`` e
+``evento_climatico``. A calibração publicada em ``docs/calibracao_conjuntural.md``
+continua carimbada com 1.0.0: ela **não** foi refeita, e os três tipos novos
+carregam prior declarado, nunca medido. Subir a versão sem refazer a medição e
+não dizer isso é o defeito de ``memoria: versao-de-metodologia-sem-safra``.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-TAXONOMIA_VERSAO = "1.0.0"
+TAXONOMIA_VERSAO = "1.1.0"
 
 
 @dataclass(frozen=True)
@@ -116,6 +125,15 @@ TIPOS: tuple[TipoEvento, ...] = (
                HORIZONTE_MEDIO, ESCOPO_SETOR),
     TipoEvento("concorrencia", "Movimento competitivo", 0.50, 0.60,
                HORIZONTE_MEDIO, ESCOPO_SETOR),
+    # Quebra de banco é de escopo setorial, não macro: ela pode parar no
+    # próprio banco (Banco Master, 2025) ou virar crise sistêmica (2008). Quem
+    # decide qual dos dois foi é o Motor de Eventos Extremos, olhando o
+    # mercado -- não a taxonomia, olhando o título da notícia. Separar os dois
+    # tipos é o que permite ao motor observar a escalada em vez de assumi-la.
+    TipoEvento("quebra_bancaria", "Quebra de instituição financeira", 0.92, 0.80,
+               HORIZONTE_MEDIO, ESCOPO_SETOR),
+    TipoEvento("evento_climatico", "Evento climático ou desastre natural",
+               0.65, 0.60, HORIZONTE_MEDIO, ESCOPO_SETOR),
     # ── Escopo macro ──────────────────────────────────────────────────────────
     TipoEvento("juros_politica_monetaria", "Juros / política monetária", 0.75, 0.70,
                HORIZONTE_MEDIO, ESCOPO_MACRO),
@@ -130,6 +148,13 @@ TIPOS: tuple[TipoEvento, ...] = (
     TipoEvento("crise_sistemica", "Crise sistêmica", 0.95, 0.85,
                HORIZONTE_LONGO, ESCOPO_MACRO),
     TipoEvento("geopolitica", "Geopolítica / conflito", 0.75, 0.75,
+               HORIZONTE_LONGO, ESCOPO_MACRO),
+    # Persistência alta e horizonte longo com materialidade abaixo de
+    # `crise_sistemica`: 2020 mostrou que o choque de preço se desfez em meses
+    # e o de comportamento (trabalho remoto, cadeia de suprimentos, escritório
+    # vago) durou anos. Um prior que só olhasse o crash de março diria o
+    # contrário.
+    TipoEvento("pandemia", "Pandemia ou emergência sanitária", 0.90, 0.85,
                HORIZONTE_LONGO, ESCOPO_MACRO),
     # ── Resíduo ───────────────────────────────────────────────────────────────
     TipoEvento("indefinido", "Não classificado", 0.25, 0.30,
@@ -149,7 +174,20 @@ TIPOS_EMERGENCIAIS: frozenset[str] = frozenset({
     "fraude_governanca",
     "recuperacao_judicial",
     "juros_politica_monetaria",
+    "pandemia",
+    "quebra_bancaria",
 })
+
+#: ``evento_climatico`` ficou **fora** de :data:`TIPOS_EMERGENCIAIS` de
+#: propósito. Enchente, seca e furacão são frequentes e quase sempre locais: se
+#: cada um encurtasse a cadência de coleta, o gatilho dispararia dezenas de
+#: vezes por ano e o custo de mantê-lo seria pago em falso alarme -- o dano mais
+#: caro deste sistema. Quando um evento climático for grande o bastante para
+#: importar, ele aparece nas classes de evidência de mercado e da carteira, que
+#: medem tamanho em vez de contar manchete.
+CLIMATICO_NAO_E_EMERGENCIAL = (
+    "frequente e local demais para encurtar cadencia; o tamanho, quando houver, "
+    "aparece na evidencia de mercado")
 
 
 def tipo(chave: str | None) -> TipoEvento:
