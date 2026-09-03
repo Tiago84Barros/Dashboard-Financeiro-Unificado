@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import pandas as pd
 import pytest
@@ -59,10 +59,18 @@ def test_carimbo_ilegivel_vira_none_em_vez_de_explodir(valor):
 
 
 def test_idade_conta_a_partir_de_datas_e_textos():
+    """A idade é a mesma a qualquer hora do dia -- ver ``core.frescor``.
+
+    Este teste falhava de forma determinística das 21h à meia-noite no fuso do
+    usuário, quando o dia em UTC já tinha virado e o dia local não. O verificador
+    de vitrines roda no fim do dia; era exatamente ali que ele reportava tudo um
+    dia mais velho do que era.
+    """
     ontem = datetime.now(timezone.utc) - timedelta(days=1)
     assert _idade_em_dias(ontem) == 1
     assert _idade_em_dias(ontem.isoformat()) == 1
     assert _idade_em_dias(date.today()) == 0
+    assert _idade_em_dias(datetime.combine(date.today(), time(23, 30))) == 0
 
 
 def test_limite_definido_para_todo_modulo_verificado():

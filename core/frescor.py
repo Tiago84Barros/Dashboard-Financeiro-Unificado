@@ -19,7 +19,7 @@ todo dia 11, para sempre, sobre uma vitrine perfeitamente no prazo.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 
 from core.publicacao_agenda import POR_CHAVE
 
@@ -56,6 +56,21 @@ def idade_em_dias(valor) -> int | None:
     Devolver ``None`` em vez de zero é deliberado: zero é uma afirmação de
     frescor, e um carimbo ilegível não afirma nada. Um selo que diz "publicada
     hoje" porque não conseguiu ler a data é pior do que selo nenhum.
+
+    **Os dois lados da subtração ficam no mesmo calendário -- o local.** A versão
+    anterior comparava o dia em UTC contra uma data vinda do relógio local, e
+    das 21h à meia-noite no fuso do usuário (UTC-3) o dia em UTC já tinha virado:
+    vitrine publicada agora saía com um dia de idade. Não é falha de teste, é
+    alarme de dado vencido disparando sem dado vencido.
+
+    Converter a data nua para UTC não resolveria: uma ``date`` não tem hora, ela
+    cobre dois dias em UTC, e ancorá-la à meia-noite escolheria um dos dois por
+    conveniência. O calendário local é o único referencial que todo carimbo
+    aceita sem que se invente precisão -- e é também o que a frase "publicada
+    hoje" significa para quem lê a tela.
+
+    Em produção isso não muda nada: na Streamlit Cloud o relógio local é UTC.
+    Muda na máquina do usuário, que é onde o publicador roda.
     """
     if valor is None or valor == "":
         return None
@@ -65,10 +80,12 @@ def idade_em_dias(valor) -> int | None:
         except ValueError:
             return None
     if isinstance(valor, datetime):
-        valor = valor.astimezone(timezone.utc).date() if valor.tzinfo else valor.date()
+        # Carimbo com fuso (todo TIMESTAMPTZ do armazém) vira hora local; sem
+        # fuso, já se assume que o relógio que o escreveu era este.
+        valor = valor.astimezone().date() if valor.tzinfo else valor.date()
     if not isinstance(valor, date):
         return None
-    return (datetime.now(timezone.utc).date() - valor).days
+    return (date.today() - valor).days
 
 
 def selo(modulo: str, carimbo) -> dict:
