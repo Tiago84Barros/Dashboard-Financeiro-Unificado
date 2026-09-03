@@ -358,10 +358,16 @@ pela fase, e a tela de Homologação as mostra com o motivo.
 
 ## 10. O que ainda não está pronto
 
-1. **A medição dos dez critérios de avanço não está automatizada.** Os limiares
-   existem, o motor de avaliação existe e está testado; quem preenche `medidas`
-   ainda é uma pessoa. Enquanto isso, `pode_avancar` é `False` por
-   `nao_medidos`, que é o lado seguro.
+1. **A medição dos dez critérios de avanço está automatizada em 1 de 10.**
+   Melhorou em 03/09/2026 e continua longe de pronta.
+   `core/homologacao/medicoes.py` é o registro dos medidores e a tela passou a
+   mostrar valor medido em vez de um "não medido nesta instalação" fixo; hoje
+   só `cenarios_historicos_reproduzidos` tem medidor (lê 11). Dois dos que
+   faltam — `falsos_positivos_nivel_3_ou_4` e `tempo_ate_rebaixar_nivel_h` —
+   **não terão medidor automático**: são "menor melhor", e um medidor que
+   devolvesse 0,0 por não ter achado nada aprovaria o critério exatamente por
+   não o ter testado. Os demais dependem de operação real. Enquanto isso,
+   `pode_avancar` é `False` por `nao_medidos`, que é o lado seguro.
 2. ~~SQL 067 não executado no Supabase.~~ **Resolvido em 03/09/2026** — a
    tabela existe e a trilha grava. ~~Falta agendar o expurgo.~~ **Agendado em
    03/09/2026** (`update_retencao`, diário, `priority` 11). Ele **simula por
@@ -390,6 +396,10 @@ pela fase, e a tela de Homologação as mostra com o motivo.
    pago em falso alarme, que é justamente o critério de Fase 4 com limiar zero.
    `quebra_bancaria` é setorial e distinta de `crise_sistemica`: quebrar não é
    contagiar, e quem decide se escalou é o motor de mercado — não o título da
-   notícia.
+   notícia. `noticias.tipo_evento` é `TEXT` sem enum nem `CHECK`, então não há
+   migration a rodar — mas as notícias já gravadas continuam com a
+   classificação de 1.0.0 e **não** são reclassificadas: quem quiser comparar
+   séries que atravessam 03/09/2026 tem que olhar o carimbo de versão, não
+   supor continuidade.
 6. **Alertas externos e recomendação emergencial nunca foram exercitados em
    produção** — estão barrados pela Fase 4 e não há medição de campo.
