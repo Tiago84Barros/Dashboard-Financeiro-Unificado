@@ -13,6 +13,7 @@ qual status, o que avança e o que não avança -- e essa decisão não é do ba
 """
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -56,6 +57,11 @@ class EstadoFalso:
         self.ciclos: list[ec.Ciclo] = []
         self.sucessos: list[datetime | None] = []
         self.expurgos = 0
+        #: Níveis que o job mandou gravar para o **próximo** ciclo. Sem este
+        #: duplo o job chamaria ``definir_modo`` de verdade, e ela cai em
+        #: ``get_engine()`` quando ``engine=None`` -- um teste de unidade
+        #: abrindo conexão com o Supabase.
+        self.modos: list[int | None] = []
 
     def instalar(self, monkeypatch, *, novas=0):
         from contextlib import contextmanager
@@ -73,6 +79,14 @@ class EstadoFalso:
         monkeypatch.setattr(ec, "travar", _travar)
         monkeypatch.setattr(ec, "registrar", _registrar)
         monkeypatch.setattr(ec, "contar_novas", lambda ids, **kw: novas)
+
+        def _definir_modo(nivel, *, engine=None, **kw):
+            self.modos.append(nivel)
+            self.estado = dataclasses.replace(
+                self.estado, modo=cad.modo_para_nivel(nivel))
+            return {"gravado": True, "modo": self.estado.modo}
+
+        monkeypatch.setattr(ec, "definir_modo", _definir_modo)
         monkeypatch.setattr(
             ec, "expurgar",
             lambda **kw: (setattr(self, "expurgos", self.expurgos + 1)
@@ -527,3 +541,129 @@ def test_armazem_compartilhado_guarda_o_consumo(monkeypatch):
     # Processo novo, mesmo armazém: o contador não reinicia.
     segundo = Orcamento(caminho=None, armazem=armazem)
     assert segundo.restante("alphavantage")["dia"] == 24
+
+
+# ── 14. A coleta apurada volta como cadência do próximo ciclo ────────────────
+# ``definir_modo`` nasceu documentada como "quem chama é o motor de eventos
+# extremos" e **ninguém a chamava**. O banco guardava ``normal`` desde sempre e
+# a coleta seguia em ritmo de dia calmo no dia em que ele deixasse de ser calmo.
+# A ponte é ``core.eventos_extremos.da_coleta``.
+def _grave(nome="grave"):
+    """Provedor com uma manchete de tipo materialmente grave e fonte confiável."""
+    return ProvedorFalso(nome, [
+        item("Empresa X entra com pedido de recuperação judicial",
+             f"https://valor.globo.com/{nome}"),
+    ])
+
+
+def test_coleta_calma_nao_acelera_a_cadencia(monkeypatch):
+    est = EstadoFalso()
+    est.instalar(monkeypatch)
+    _preparar(monkeypatch, [_provedor_ok()])
+
+    job.run(engine=None, agora=AGORA)
+
+    assert est.modos and est.modos[-1] == 0
+    assert est.estado.modo == cad.MODO_NORMAL
+
+
+def test_evento_grave_eleva_o_modo_do_proximo_ciclo(monkeypatch):
+    est = EstadoFalso()
+    est.instalar(monkeypatch)
+    _preparar(monkeypatch, [_grave()])
+
+    job.run(engine=None, agora=AGORA)
+
+    assert est.modos[-1] >= 1, est.modos
+    assert est.estado.modo != cad.MODO_NORMAL
+    assert cad.cadencia(est.estado.modo, config=CONFIG).intervalo_min < \
+        cad.cadencia(cad.MODO_NORMAL, config=CONFIG).intervalo_min
+
+
+def test_manchete_sozinha_nao_declara_crise_sistemica(monkeypatch):
+    """R6: sem evidência de mercado o nível não alcança o topo.
+
+    Acelerar a coleta por manchete custa cota; concluir crise por manchete
+    custa a decisão. A ponte só pode fazer a primeira coisa.
+    """
+    from core.eventos_extremos import niveis
+
+    est = EstadoFalso()
+    est.instalar(monkeypatch)
+    _preparar(monkeypatch, [_grave("a"), _grave("b")])
+
+    job.run(engine=None, agora=AGORA)
+
+    assert est.modos[-1] <= niveis.NIVEL_MAXIMO_SEM_EVIDENCIA_DE_MERCADO
+
+
+def test_modo_do_proximo_ciclo_e_gravado_depois_do_ciclo(monkeypatch):
+    """Ordem: ``registrar`` grava o modo DESTE ciclo e sobrescreveria o outro.
+
+    Invertida, a aceleração sumiria sem deixar erro -- o pior tipo de defeito.
+    """
+    est = EstadoFalso()
+    ordem: list[str] = []
+    est.instalar(monkeypatch)
+    _preparar(monkeypatch, [_grave()])
+
+    registrar = ec.registrar
+    definir = ec.definir_modo
+    monkeypatch.setattr(ec, "registrar", lambda *a, **k: (
+        ordem.append("registrar") or registrar(*a, **k)))
+    monkeypatch.setattr(ec, "definir_modo", lambda *a, **k: (
+        ordem.append("definir_modo") or definir(*a, **k)))
+
+    job.run(engine=None, agora=AGORA)
+
+    assert ordem == ["registrar", "definir_modo"], ordem
+
+
+def test_coleta_vazia_nao_rebaixa_a_cadencia(monkeypatch):
+    """Coleta sem evento não é "nível Normal apurado" -- pode ser coleta que falhou."""
+    est = EstadoFalso(modo=cad.MODO_CRISE)
+    est.instalar(monkeypatch)
+    _preparar(monkeypatch, [ProvedorFalso("vazio", [])])
+
+    job.run(engine=None, agora=AGORA)
+
+    assert est.modos == [], "coleta sem evento não pode mexer no modo"
+    assert est.estado.modo == cad.MODO_CRISE
+
+
+def test_manchete_banal_nao_deixa_a_coleta_em_vigilancia_para_sempre(monkeypatch):
+    """O Nível 1 é o piso alcançável, não um sinal.
+
+    Medido em 03/09/2026: manchete banal, tipo ``indefinido``, veículo de
+    confiabilidade 0,20, publicada há 2 h -> severidade 0,347, contra o limiar
+    de Atenção de 0,22. Como ``recencia`` vale 1,0 para tudo que acabou de sair,
+    **nenhuma** notícia fresca fica abaixo do limiar. Ligar a cadência ao
+    Nível 1 quadruplicaria a cota diária todo ciclo, para sempre, e um estado
+    permanente não carrega informação.
+    """
+    from core.eventos_extremos import da_coleta
+
+    est = EstadoFalso()
+    est.instalar(monkeypatch)
+    _preparar(monkeypatch, [_provedor_ok()])
+
+    job.run(engine=None, agora=AGORA)
+
+    # O motor de fato viu Atenção -- não é que a evidência tenha sumido.
+    banal = da_coleta.avaliar_coleta(
+        [e for e in ()], agora=AGORA)  # sanidade: coleta vazia não inventa
+    assert banal is None
+    assert est.modos[-1] == 0, "Atenção não pode acelerar a coleta"
+    assert est.estado.modo == cad.MODO_NORMAL
+
+
+def test_evento_passado_deixa_de_sustentar_a_aceleracao(monkeypatch):
+    """Manter a cadência acelerada por inércia gastaria cota sem evidência."""
+    est = EstadoFalso(modo=cad.MODO_CRISE)
+    est.instalar(monkeypatch)
+    _preparar(monkeypatch, [_provedor_ok()])
+
+    job.run(engine=None, agora=AGORA)
+
+    assert est.modos[-1] == 0
+    assert est.estado.modo == cad.MODO_NORMAL

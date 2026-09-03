@@ -82,6 +82,7 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
         engine: injetável para teste.
     """
     from core.config import settings
+    from core.eventos_extremos import da_coleta
     from core.noticias import cadencia as cad
     from core.noticias import estado_coleta as ec
     from core.noticias import universo_coleta as uni
@@ -124,16 +125,21 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
                          settings=settings, cad=cad, ec=ec, uni=uni,
                          gravar=gravar, Cache=Cache, coletar=coletar,
                          RegistroColeta=RegistroColeta, Consulta=Consulta,
-                         construir=construir, Orcamento=Orcamento)
+                         construir=construir, Orcamento=Orcamento,
+                         da_coleta=da_coleta)
 
 
 def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
               gravar, Cache, coletar, RegistroColeta, Consulta, construir,
-              Orcamento) -> dict:
+              Orcamento, da_coleta) -> dict:
     """O ciclo em si, já sob o lock. Sempre grava o ciclo antes de retornar."""
     erros: list[str] = []
     limitacoes: list[str] = []
     sucesso_em = None
+    # Nível que a coleta apurou, para o **próximo** ciclo. Lista de um elemento
+    # porque ``_encerrar`` é um fecho: reatribuir o nome lá dentro criaria uma
+    # variável local nova e o nível nunca sairia daqui.
+    nivel_apurado: list[int] = []
 
     def _encerrar(status: str) -> dict:
         ciclo.status = status
@@ -146,6 +152,14 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
             ec.registrar(ciclo, engine=engine, sucesso_em=sucesso_em)
         except Exception as exc:  # noqa: BLE001 - registro não pode derrubar
             logger.warning("Ciclo de coleta nao registrado: %s", exc)
+        # Depois de ``registrar``, e nunca antes: ``registrar`` grava o modo
+        # deste ciclo, e escrever o modo do próximo antes dele seria escrever
+        # para ser sobrescrito -- a aceleração sumiria sem deixar erro.
+        if nivel_apurado:
+            gravado = ec.definir_modo(nivel_apurado[0], engine=engine)
+            if not gravado.get("gravado"):
+                logger.warning("Modo do proximo ciclo nao gravado: %s",
+                               gravado.get("motivo"))
         if erros and result["error_message"] is None:
             result["error_message"] = "; ".join(erros)
         return result
@@ -208,6 +222,23 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     ciclo.coletadas = len(resultado.avaliadas)
     ciclo.duplicadas = resultado.duplicatas_removidas
     ciclo.eventos = len(resultado.eventos)
+
+    # A cadência do próximo ciclo sai daqui. Sem isto, ``estado.modo`` fica em
+    # ``normal`` para sempre e a coleta segue no ritmo de dia calmo justamente
+    # no dia em que ele deixa de ser calmo.
+    try:
+        veredito = da_coleta.avaliar_coleta(resultado.eventos)
+    except Exception as exc:  # noqa: BLE001 - a coleta não cai por causa disto
+        logger.warning("Nivel da coleta nao apurado: %s", exc)
+        veredito = None
+    nivel_cadencia = da_coleta.nivel_para_cadencia(veredito)
+    if nivel_cadencia is not None:
+        nivel_apurado.append(nivel_cadencia)
+        if nivel_cadencia > 0:
+            limitacoes.append(
+                f"cadência do próximo ciclo elevada para "
+                f"{cad.modo_para_nivel(nivel_cadencia)} (nível "
+                f"{veredito.nivel.codigo}): {da_coleta.LIMITACAO_SEM_MERCADO}")
     ciclo.provedores_ok = tuple(resultado.provedores_ok)
     ciclo.provedores_falha = tuple(
         f.provedor for f in resultado.falhas

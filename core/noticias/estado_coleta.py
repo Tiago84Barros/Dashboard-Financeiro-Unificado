@@ -317,7 +317,14 @@ def definir_modo(nivel: int | None, *, engine=None,
 
     Quem chama é o motor de eventos extremos, e só ele: o modo é consequência
     do nível avaliado, e deixar a coleta escolher o próprio ritmo criaria um
-    segundo juiz de crise (ver o docstring de ``cadencia``).
+    segundo juiz de crise (ver o docstring de ``cadencia``). Concretamente, a
+    chamada vem de ``update_noticias`` via
+    :func:`core.eventos_extremos.da_coleta.nivel_para_cadencia` -- o job carrega
+    a evidência, mas quem decide o nível continua sendo ``transicao``.
+
+    Por dois anos esta função não teve chamador nenhum, e o efeito não era um
+    erro: era silêncio. O banco guardava ``normal`` desde sempre e a coleta
+    seguia em ritmo de dia calmo justamente no dia em que ele deixasse de ser.
 
     Escreve apenas ``modo``. Nenhum carimbo é tocado -- mudar de modo não é
     coletar, e avançar ``ultima_tentativa`` aqui faria o próximo ciclo pular.

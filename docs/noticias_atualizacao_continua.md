@@ -324,9 +324,35 @@ não avança — e essa decisão não é do banco.
 ## 14. O que esta camada não faz
 
 * **Não decide o nível de crise.** Recebe. Quem avalia é
-  `core/eventos_extremos/`, que ainda não tem chamador em produção — enquanto
-  isso o modo gravado é sempre Normal, e `estado_coleta.definir_modo()` é a
-  costura que espera esse chamador.
+  `core/eventos_extremos/transicao`, e a costura passou a existir:
+  `core/eventos_extremos/da_coleta.py` traduz os eventos agrupados em evidência
+  informacional, pede o nível ao motor e o job grava o modo do **próximo** ciclo
+  com `estado_coleta.definir_modo()`. Três coisas que essa ponte deliberadamente
+  não faz:
+  * **Não mede preço.** Só a classe informacional entra. Pedir mercado ao job de
+    coleta criaria uma segunda leitura do mesmo pregão ao lado de
+    `eventos_extremos.mercado`, e duas leituras divergentes são pior que uma
+    ausente. O motor já cobra isso: sem evidência de mercado, a regra R6 põe teto
+    em `NIVEL_MAXIMO_SEM_EVIDENCIA_DE_MERCADO`. A manchete acelera a coleta e não
+    declara crise — acelerar por manchete custa cota, concluir por manchete custa
+    a decisão.
+  * **Não trata `macro` como `global`.** O escopo da taxonomia diz de que *tipo*
+    de fato se trata, não que tamanho ele teve; traduzir para `global` deixaria o
+    teto sistêmico ao alcance de uma manchete.
+  * **Não acelera no Nível 1.** Medido em 03/09/2026: manchete banal, tipo
+    `indefinido`, veículo de confiabilidade 0,20, publicada há 2 h → severidade
+    **0,347**, contra o limiar de Atenção de **0,22**. Como `recencia` vale 1,0
+    para tudo que acabou de sair e `materialidade` tem piso 0,25, *nenhuma*
+    notícia fresca fica abaixo do limiar — o Nível 1 é o piso alcançável, não um
+    sinal. Ligado à cadência, deixaria a coleta em Vigilância para sempre (240
+    min viram 60, quatro vezes a cota diária), e estado permanente não carrega
+    informação. `da_coleta.PISO_PARA_ACELERAR` é Vigilância, o que também é
+    coerente com a R1: fonte isolada e fraca tem teto em Atenção justamente por
+    ainda não ser evidência.
+
+  A ordem importa: `definir_modo` é chamado **depois** de `registrar`, que grava
+  o modo *deste* ciclo. Invertida, a aceleração seria sobrescrita e sumiria sem
+  deixar erro.
 * **Não notifica ninguém.** Canal externo de alerta é assunto do Prompt 5, atrás
   de feature flag.
 * **Não garante pontualidade.** Garante cadência média e, quando ela não é
