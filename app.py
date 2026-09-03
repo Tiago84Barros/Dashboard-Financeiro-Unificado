@@ -51,6 +51,7 @@ _ROTAS: dict[str, str] = {
     "🌐 Portfólio Global":    "portfolio_global",
     "🧭 Inteligência de Mercado": "inteligencia_mercado",
     "🎯 Grau de Confiança":  "confianca",
+    "🚦 Homologação":         "homologacao",
     "📚 Documentação":        "documentacao",
     "⚙️ Configurações":       "configuracoes",
 }

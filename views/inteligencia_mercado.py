@@ -32,6 +32,7 @@ import pandas as pd
 import streamlit as st
 
 from core.eventos_extremos import antifragilidade as af
+from core.homologacao import flags as hom
 from core.inteligencia import alertas as al
 from core.inteligencia import llm as intel_llm
 from core.inteligencia import painel as P
@@ -58,6 +59,34 @@ ABA_MEMORIA = "🕰️ Memória de mercado"
 ABA_EMPRESAS = "🏢 Fundamentos + Cenário"
 ABA_EXPLICACAO = "💬 Explicação"
 ABA_ALERTAS = "🔔 Alertas"
+
+
+# ── Liberação gradual ────────────────────────────────────────────────────────
+def fase_atual() -> hom.Estado:
+    """Lê a fase e as flags uma vez por execução da tela.
+
+    Sem cache do Streamlit de propósito: mudar a fase é a operação de segurança
+    do sistema, e ela precisa valer no próximo rerun -- não depois de alguém
+    lembrar de limpar o cache.
+    """
+    return hom.carregar()
+
+
+def secao_desligada(nome: str, estado: hom.Estado) -> None:
+    """Explica por que a seção não está aqui, em vez de mostrar tela vazia.
+
+    Sumiço silencioso é o pior desfecho possível numa liberação gradual: o
+    usuário não distingue "desligado de propósito" de "quebrado". Aqui a tela
+    diz qual das duas travas está atuando -- a flag ou a fase -- e o que muda
+    quando ela for liberada.
+    """
+    chave = hom.CHAVES[nome]
+    estado_vazio(
+        f"**{chave.rotulo}** ainda não foi liberado nesta instalação.", "🚧")
+    st.caption(
+        f"Motivo: {estado.motivo(nome)}. Enquanto isso, {chave.efeito}. "
+        f"Fase corrente: {hom.NOME_FASE[estado.fase]} — "
+        f"{hom.DESCRICAO_FASE[estado.fase]}")
 
 
 # ── Carregamento ─────────────────────────────────────────────────────────────
@@ -96,8 +125,16 @@ def situacao_dos_provedores() -> tuple[qz.Provedor, ...]:
             detalhe=f"registro indisponível: {type(exc).__name__}"),)
 
 
-def coletar_noticias(tickers: tuple[str, ...]):
-    """Executa a coleta. Só é chamada pelo botão de atualização manual."""
+def coletar_noticias(tickers: tuple[str, ...], estado: hom.Estado | None = None):
+    """Executa a coleta. Só é chamada pelo botão de atualização manual.
+
+    A flag da coleta é verificada **aqui**, e não só no botão: o botão é uma
+    das portas, e uma checagem que mora apenas na tela deixa qualquer outro
+    chamador passando por baixo dela.
+    """
+    estado = estado or fase_atual()
+    if not estado.ativo(hom.COLETA):
+        return None, f"a coleta está desligada ({estado.motivo(hom.COLETA)})"
     try:
         from core.noticias import coleta
         from core.noticias.provedores import registro
@@ -289,7 +326,10 @@ def render_noticias(pn: P.Painel) -> None:
                     ui.cartao_noticia(item)
 
 
-def render_crise(pn: P.Painel) -> None:
+def render_crise(pn: P.Painel, estado: hom.Estado) -> None:
+    if not estado.ativo(hom.MODO_CRISE):
+        secao_desligada(hom.MODO_CRISE, estado)
+        return
     if pn.crise is None:
         estado_vazio("Nenhuma avaliação de crise disponível.", "🛡️")
         return
@@ -299,7 +339,10 @@ def render_crise(pn: P.Painel) -> None:
                "executada automaticamente, e nenhuma sugestão vira ordem.")
 
 
-def render_antifragilidade(pn: P.Painel) -> None:
+def render_antifragilidade(pn: P.Painel, estado: hom.Estado) -> None:
+    if not estado.ativo(hom.ANTIFRAGILIDADE):
+        secao_desligada(hom.ANTIFRAGILIDADE, estado)
+        return
     if pn.antifragilidade is None:
         estado_vazio("Índice de antifragilidade não calculado.", "🧱")
         return
@@ -308,7 +351,10 @@ def render_antifragilidade(pn: P.Painel) -> None:
     ui.aviso_sem_garantia()
 
 
-def render_memoria(pn: P.Painel) -> None:
+def render_memoria(pn: P.Painel, estado: hom.Estado) -> None:
+    if not estado.ativo(hom.IMPACTO_HISTORICO):
+        secao_desligada(hom.IMPACTO_HISTORICO, estado)
+        return
     if pn.memoria is None:
         estado_vazio("Sem memória de mercado para o evento atual.", "🕰️")
         return
@@ -318,10 +364,22 @@ def render_memoria(pn: P.Painel) -> None:
                "observada, não previsão.")
 
 
-def render_explicacao(pn: P.Painel, *, simbolo: str | None = None) -> None:
-    """A explicação em linguagem simples, com a área técnica ao lado."""
+def render_explicacao(pn: P.Painel, estado: hom.Estado,
+                      *, simbolo: str | None = None) -> None:
+    """A explicação em linguagem simples, com a área técnica ao lado.
+
+    Com a flag da LLM desligada a seção **não some**: o backend já produz a
+    explicação determinística, e ela é a mesma que a LLM receberia como lastro.
+    Esconder a seção inteira seria punir o usuário por uma decisão de
+    liberação, quando o conteúdo verificável existe de qualquer forma.
+    """
     secao_titulo("O que isso quer dizer", "💬")
-    exp = intel_llm.explicar(pn, simbolo=simbolo)
+    if estado.ativo(hom.LLM):
+        exp = intel_llm.explicar(pn, simbolo=simbolo)
+    else:
+        exp = intel_llm.explicacao_deterministica(pn, simbolo=simbolo)
+        st.caption(f"⚙ Explicação por LLM desligada: {estado.motivo(hom.LLM)}. "
+                   "O texto abaixo é o do backend.")
     origem = ("gerada por LLM e validada contra o painel"
               if exp.gerada_por_llm else "gerada pelo backend, sem LLM")
     st.caption(f"Explicação {origem}.")
@@ -467,6 +525,10 @@ def render() -> None:
         "Nada aqui é recomendação de compra ou venda.",
         icone="🧭")
 
+    estado = fase_atual()
+    st.caption(
+        f"🚦 {hom.NOME_FASE[estado.fase]} — {hom.DESCRICAO_FASE[estado.fase]}")
+
     pn = montar_painel()
     render_atualizacao(pn)
 
@@ -478,14 +540,14 @@ def render() -> None:
     if secao == ABA_NOTICIAS:
         render_noticias(pn)
     elif secao == ABA_CRISE:
-        render_crise(pn)
+        render_crise(pn, estado)
     elif secao == ABA_ANTIFRAGIL:
-        render_antifragilidade(pn)
+        render_antifragilidade(pn, estado)
     elif secao == ABA_MEMORIA:
-        render_memoria(pn)
+        render_memoria(pn, estado)
     elif secao == ABA_EMPRESAS:
         render_empresas(pn)
     elif secao == ABA_EXPLICACAO:
-        render_explicacao(pn)
+        render_explicacao(pn, estado)
     elif secao == ABA_ALERTAS:
         render_configuracao_de_alertas()
