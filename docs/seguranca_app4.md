@@ -345,10 +345,29 @@ Três decisões:
   `auditoria_falhou` viraria um `pass`.
 - **Retenção de 365 dias** com `expurgar(aplicar=False)` por omissão. Um ano
   cabe um ciclo de mercado; e uma tabela que só cresce é dívida com data marcada
-  num Supabase que opera em 425 MB de 500 MB.
+  num Supabase que opera em 427 MB de 500 MB.
+- **A varredura tem quem a execute**: `update_retencao` roda todo dia pelo
+  orquestrador. Escrever a política e não agendá-la deixava um parágrafo de
+  documentação em cima de uma tabela que só crescia.
+  - **Simula por omissão.** Só apaga com `AUDITORIA_EXPURGO_APLICAR=true`.
+    Apagar auditoria é irreversível, e o lado seguro por omissão vale aqui como
+    vale nas travas.
+  - **Simular não é não fazer nada**: o alcance da janela é contado toda noite e
+    sai no `error_message` do job (*"N registro(s) além de 365 dias; nada
+    removido porque AUDITORIA_EXPURGO_APLICAR não está ligado"*). Dívida que
+    ninguém conta vira surpresa de banco cheio.
+  - **Piso de 30 dias na entrada** (`MINIMO_DIAS`). `dias=0` chegando por
+    configuração não é retenção mais rigorosa: apagaria a trilha inteira,
+    inclusive as linhas que explicariam por que ela sumiu. O guarda é sobre a
+    *entrada*, e não sobre o tamanho do resultado — um teto de saída recusaria
+    também a fatia legitimamente grande (o job dormiu meses e voltou), e a
+    dívida ficaria de pé sem ninguém ver.
+  - **`expurgar` devolve dicionário, não inteiro.** `alcance` (quantas linhas a
+    janela alcança) e `removidos` (quantas saíram) são grandezas diferentes; um
+    inteiro só valeria o alcance em simulação e pareceria remoção.
 
-Mascaramento verificado: `postgresql://dfu:S3nh4Secreta@localhost:5433/wh` entra
-na trilha como `postgresql://dfu:[oculto:url_com_senha]@localhost:5433/wh` —
+Mascaramento verificado: uma URL local com senha definida em variável de ambiente entra
+na trilha como `postgresql://dfu:<x>@localhost:5433/wh` —
 a senha some, `localhost:5433` sobrevive, e o diagnóstico continua possível.
 
 ---
@@ -404,8 +423,10 @@ falhas críticas"*.
   `auditoria_falhou` — as duas saem como **não verificadas**, e é isso que a
   tela mostra.
 - A trilha (`067_*.sql`) foi executada no Supabase em **03/09/2026** e está
-  verificada de ida e volta. Falta agendar `trilha.expurgar`: a retenção de 365
-  dias está escrita no código e não roda sozinha.
+  verificada de ida e volta. O expurgo foi agendado (`update_retencao`, diário) e
+  **simula por omissão**: ele conta e reporta o que a janela alcança, mas só
+  apaga com `AUDITORIA_EXPURGO_APLICAR=true`. Ligar a remoção de verdade é
+  decisão de quem opera, não do código.
 - A tela de confirmação existe como modelo (`core/auditoria/confirmacao.py`);
   a view que a desenha entra no Prompt 5, atrás de feature flag.
 - O controle de acesso e o isolamento entre usuários continuam sendo os do app

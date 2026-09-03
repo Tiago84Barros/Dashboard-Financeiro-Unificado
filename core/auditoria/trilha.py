@@ -233,24 +233,49 @@ def historico(*, engine=None, ativo: str = "", limite: int = 200) -> list[dict]:
         return [dict(r._mapping) for r in conn.execute(sql, params)]
 
 
+#: Piso da janela de retenção. ``dias`` pequeno demais não é uma política mais
+#: rigorosa: é a assinatura de valor errado chegando por configuração, e o
+#: efeito seria apagar a trilha inteira -- justamente as linhas que responderiam
+#: por que ela foi apagada. Guardar a **entrada** e não o tamanho do resultado é
+#: deliberado: uma fatia legitimamente grande (o job dormiu meses e voltou)
+#: seria recusada por um teto de saída, e a dívida ficaria de pé sem ninguém ver.
+MINIMO_DIAS = 30
+
+
 def expurgar(*, engine=None, dias: int = RETENCAO_DIAS,
-             agora: dt.datetime | None = None, aplicar: bool = False) -> int:
+             agora: dt.datetime | None = None, aplicar: bool = False) -> dict:
     """Remove registros mais velhos que ``dias``. Simula por omissão.
 
     Simulação por omissão é o padrão do projeto para script que apaga. Quem
     quiser apagar de verdade escreve ``aplicar=True`` e assume o ato.
+
+    Devolve um dicionário, e não o número: ``alcance`` (quantas linhas a janela
+    alcança) e ``removidos`` (quantas saíram de fato) são grandezas diferentes,
+    e um inteiro só as confundiria -- em simulação ele valeria o alcance e
+    pareceria remoção.
     """
     if engine is None:
         from core.database import get_engine
         engine = get_engine()
-    corte = (agora or dt.datetime.now(dt.timezone.utc)) - dt.timedelta(days=dias)
+    agora = agora or dt.datetime.now(dt.timezone.utc)
+    if int(dias) < MINIMO_DIAS:
+        motivo = (f"janela de {int(dias)} dia(s) abaixo do piso de "
+                  f"{MINIMO_DIAS}; expurgo recusado")
+        log.warning("expurgo da trilha recusado: %s", motivo)
+        return {"aplicado": False, "recusado": motivo,
+                "alcance": 0, "removidos": 0, "corte": None}
+
+    corte = agora - dt.timedelta(days=int(dias))
     with engine.begin() as conn:
-        n = conn.execute(
+        alcance = int(conn.execute(
             text(f"SELECT COUNT(*) FROM {TABELA} WHERE momento < :corte"),
-            {"corte": corte}).scalar_one()
-        if aplicar and n:
-            conn.execute(text(f"DELETE FROM {TABELA} WHERE momento < :corte"),
-                         {"corte": corte})
+            {"corte": corte}).scalar_one())
+        removidos = 0
+        if aplicar and alcance:
+            removidos = int(conn.execute(
+                text(f"DELETE FROM {TABELA} WHERE momento < :corte"),
+                {"corte": corte}).rowcount or 0)
     log.info("expurgo da trilha: %s linha(s) anteriores a %s%s",
-             n, corte.date(), "" if aplicar else " (simulação)")
-    return int(n)
+             alcance, corte.date(), "" if aplicar else " (simulação)")
+    return {"aplicado": bool(aplicar), "recusado": None, "alcance": alcance,
+            "removidos": removidos, "corte": corte.isoformat()}

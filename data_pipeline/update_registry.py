@@ -177,6 +177,20 @@ _DEFAULT_REGISTRY: list[dict] = [
                         "Fundamentos vêm exclusivamente do market.* (brapi); não há mais o que "
                         "sanear por scraping. Mantido inativo.",
     },
+    {
+        "table_name":   "recomendacao_auditoria",
+        "source_name":  "Retenção da trilha de auditoria",
+        "job_name":     "update_retencao",
+        "update_type":  "incremental",
+        "frequency":    "diario",
+        "priority":     11,
+        "is_active":    True,
+        "description":  "Varredura de retenção (365 dias) da trilha de recomendações. "
+                        "Simula por omissão: só apaga com AUDITORIA_EXPURGO_APLICAR=true. "
+                        "Ativo mesmo simulando, porque o alcance da janela precisa ser "
+                        "medido todo dia — dívida que ninguém conta vira surpresa de "
+                        "banco cheio.",
+    },
     # ── Importações manuais de investimentos ─────────────────────────────────
     # frequency='manual' garante que NUNCA são executadas pelo
     # orquestrador automático (run_data_updates --all / GitHub Actions).

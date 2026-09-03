@@ -305,10 +305,11 @@ pela fase, e a tela de Homologação as mostra com o motivo.
    ainda é uma pessoa. Enquanto isso, `pode_avancar` é `False` por
    `nao_medidos`, que é o lado seguro.
 2. ~~SQL 067 não executado no Supabase.~~ **Resolvido em 03/09/2026** — a
-   tabela existe e a trilha grava. O que continua faltando é o *expurgo*
-   rodando sozinho: `trilha.expurgar` existe e ninguém o agenda, e uma tabela
-   que só cresce é dívida com data marcada num banco que opera em 427 MB de
-   500 MB.
+   tabela existe e a trilha grava. ~~Falta agendar o expurgo.~~ **Agendado em
+   03/09/2026** (`update_retencao`, diário, `priority` 11). Ele **simula por
+   omissão**: conta e reporta quantas linhas a janela de 365 dias alcança, e só
+   apaga com `AUDITORIA_EXPURGO_APLICAR=true`. Apagar auditoria é irreversível,
+   e essa é uma decisão de quem opera — não do código.
 3. **Sem controle de acesso por papel.** É o motivo de a tela de administração
    ser de leitura (seção 8).
 4. **Duas travas sem fonte de dados.** `modelo_fora_dos_limites` e
