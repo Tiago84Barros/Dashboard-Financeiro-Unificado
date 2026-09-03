@@ -111,7 +111,8 @@ moviam o erro médio de 2,9% para 13,1%.**
 | erro de calibração | 3,6 pp | 2,3 pp | 1,4 pp |
 | MAE | 5,22% | 2,64% | 2,40% |
 | MAE da referência ingênua ("nada acontece") | 5,51% | 2,63% | 2,41% |
-| **ganho sobre a referência** | **+0,29 pp** | **−0,02 pp** | **+0,03 pp** |
+| **ganho sobre a referência — absoluto (pp de MAE)** | **+0,29 pp** | **−0,02 pp** | **+0,03 pp** |
+| **ganho sobre a referência — relativo (`ganho_sobre_referencia`)** | **+5,28%** | ≈ 0 ¹ | ≈ 0 ¹ |
 | cobertura da faixa (alvo 80%) | 78,8% | 78,8% | 77,0% |
 | acerto de direção | 67,4% | **50,0%** | 52,6% |
 | concentrado num período | não | **sim** | não |
@@ -126,9 +127,24 @@ Leitura sem suavizar:
   o silêncio.
 - **A magnitude não supera "nada acontece".** O ganho é de centésimos de ponto
   percentual em dois mercados e negativo no FII.
+- **Duas linhas para o mesmo ganho, e elas não são intercambiáveis.** A primeira
+  é a diferença de MAE em pontos percentuais (5,51 − 5,22 = 0,29 pp); a segunda
+  é a fração do erro removida, que é o que o código publica em
+  `Magnitude.ganho_sobre_referencia` — 0,29 / 5,51 = 5,28%, gravado no JSON como
+  `0,05277`. Publicá-las sob o mesmo rótulo faria "0,29" e "0,05" parecerem
+  divergência de medição quando são a mesma medição em duas unidades. **+5,28%
+  soa maior que +0,29 pp e não é melhor notícia**: 5,28% de um erro de 5,51%
+  ainda deixa 5,22% de erro, e a conclusão da linha acima não muda.
 - **A direção é cara-ou-coroa no FII** (50,03%). Na B3, 67,4% — mas o evento é
   data-ex de provento, cuja direção é mecânica e conhecida sem modelo nenhum.
 - **A faixa é estreita demais**: cobre 77–79% onde deveria cobrir 80%.
+
+¹ Só a B3 tem o valor relativo publicado na saída da calibração. Para FII e EUA
+a linha absoluta (−0,02 pp e +0,03 pp) foi apurada com MAE não arredondado e não
+fecha com os MAE arredondados desta tabela na segunda casa, então dividir um
+pelo outro produziria um número com aparência de medida e precisão de palpite.
+Fica ``≈ 0`` até a calibração ser reexecutada — e ``≈ 0`` é a leitura correta
+nos dois casos de qualquer forma.
 
 ## 5. Portões de promoção
 

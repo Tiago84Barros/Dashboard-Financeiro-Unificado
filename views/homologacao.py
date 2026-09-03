@@ -30,6 +30,7 @@ import streamlit as st
 
 from core.homologacao import criterios as C
 from core.homologacao import flags as F
+from core.homologacao import medicoes as M
 from design.componentes import (
     badge_status,
     card_metrica,
@@ -104,18 +105,27 @@ def render_avanco(estado: F.Estado) -> None:
         "precisam estar **medidos** e atendidos. Critério não medido não "
         "avança a fase e também não reprova o sistema: ele diz que o teste "
         "ainda não foi feito.")
+    medidas = M.medir()
+    avaliacao = C.avaliar(estado.fase, medidas)
     for c in C.EXIGIDO[alvo]:
         alvo_txt = "≥" if c.sentido == C.MAIOR_MELHOR else "≤"
+        veredito = c.avalia(medidas.get(c.nome))
+        # Símbolo, palavra e cor -- nunca a cor sozinha.
+        icone = {True: "✓", False: "⊘", None: "·"}[veredito]
+        rotulo = {True: "atendido", False: "reprovado",
+                  None: "não medido"}[veredito]
         with st.container(border=True):
             st.markdown(f"**{c.nome}** — exigido {alvo_txt} {c.limiar}"
-                        f"{c.unidade}")
+                        f"{c.unidade} · {icone} {rotulo}")
             st.caption(f"Por quê: {c.justificativa}.")
-            st.caption("Situação: não medido nesta instalação.")
-    st.caption(
-        "A medição destes critérios ainda não está automatizada: ela sai dos "
-        "testes e das rotinas de calibração, e é registrada manualmente antes "
-        "de mudar a fase. Enquanto isso, a fase só muda por quem tem acesso "
-        "aos secrets do deploy.")
+            st.caption(f"Situação: {M.situacao(c.nome, medidas)}.")
+    if avaliacao.nao_medidos:
+        st.caption(
+            "Os critérios sem medidor automático saem dos testes e das "
+            "rotinas de calibração, e são registrados manualmente antes de "
+            "mudar a fase. Critério não medido não avança e não reprova — ele "
+            "diz que o teste não foi feito. A fase só muda por quem tem "
+            "acesso aos secrets do deploy.")
 
 
 def render_rollback(estado: F.Estado) -> None:

@@ -162,6 +162,64 @@ Cada critério foi testado nos dois sentidos: todos podem atender e todos podem
 reprovar. Portão que só sabe dar um resultado é decoração (`memoria:
 gate-que-so-dava-false`).
 
+### 5.1 Quem mede (03/09/2026)
+
+Até aqui **nenhum critério tinha medidor**. Todos saíam `None`, a tela escrevia
+"não medido nesta instalação" para os dez, e nenhuma fase podia avançar por
+*ausência de medição* — não por reprovação. `core/homologacao/medicoes.py` é o
+registro dos medidores, e a tela passa a mostrar o valor medido, o veredito
+(`✓ atendido` / `⊘ reprovado` / `· não medido`) e, quando não há medidor, **o
+motivo**.
+
+| critério | medidor | situação |
+|---|---|---|
+| `cenarios_historicos_reproduzidos` | `stress_tests.cenarios_reproduzidos` | **medido: 11** |
+| `falsos_positivos_nivel_3_ou_4` | — | exige operação real; a Fase 4 nunca rodou |
+| `tempo_ate_rebaixar_nivel_h` | — | exige ciclo completo de subida e rebaixamento em produção |
+
+**Os dois sem medidor continuam sem medidor de propósito.** Ambos são "menor
+melhor": um medidor que devolvesse `0.0` por não ter encontrado nada aprovaria o
+critério exatamente por não tê-lo testado. É o pior defeito possível neste
+lugar, e a Fase 4 segue bloqueada por medição ausente — que é a verdade.
+
+### 5.2 Os 11 cenários históricos
+
+O módulo tinha 5. Os seis novos foram escolhidos por **mecanismo distinto**, não
+por número redondo: onze repetições de "bolsa cai e dólar sobe" mediriam o mesmo
+evento onze vezes.
+
+| cenário | referência | IBOV observado | USD/BRL | mecanismo |
+|---|---|---|---|---|
+| Crise CDS 2002 | abr–out/2002 | −34% | +52% | risco-país |
+| Subprime 2008 | set/2008–fev/2009 | −41% | +30% | crise financeira global |
+| Janeiro Vermelho 2015 | jan–jul/2015 | −13% | +12% | fiscal e downgrade |
+| Joesley Day 2017 | 18/mai/2017 | −9% | +8% | choque político de um pregão |
+| COVID Crash 2020 | fev–mar/2020 | −29% | +25% | pandemia |
+| **Crise Asiática 1997** | out–nov/1997 | −25% | +1% | contágio com câmbio ancorado |
+| **Moratória Russa 1998** | ago–set/1998 | −40% | +2% | fuga de capital, câmbio ainda ancorado |
+| **Maxidesvalorização 1999** | jan–mar/1999 | −10% | **+64%** | choque cambial puro |
+| **Zona do Euro 2011** | jul–dez/2011 | −18% | +13% | contágio soberano |
+| **Taper Tantrum 2013** | mai–ago/2013 | −20% | +17% | fluxo saindo de emergentes (IFIX −18%) |
+| **Aperto Global 2022** | jan–out/2022 | **+5%** | **−5%** | exterior cai e bolsa BR resiste |
+
+O de 2022 é deliberado: sem ele o conjunto afirmaria que crise é sempre bolsa
+brasileira caindo com dólar subindo, e uma carteira que passasse nos onze
+estaria protegida contra um cenário, não contra onze.
+
+**Contar não é medir.** `cenarios_reproduzidos()` **não** devolve
+`len(SCENARIOS)` — isso fecharia o critério sem conferir nada. Cada cenário é
+aplicado a uma carteira canônica pelo caminho de código real (mapa de classe →
+atributo de choque → agregação) e o resultado é comparado ao retorno observado
+no índice, com tolerância de 0,1 pp. Um choque adulterado reprova, e há teste
+que prova isso (`test_cenario_com_choque_adulterado_reprova`).
+
+**O que a conferência não prova:** que os números estão historicamente certos,
+que os choques das outras classes estão calibrados, ou que a modelagem (choque
+uniforme por classe, sem correlação cross-asset) descreve o evento. O docstring
+do módulo já diz que não descreve; para análise rigorosa a recomendação continua
+sendo cópulas (M2 do parecer). Cenário sem observado declarado sai **não
+conferido**, nunca reprovado — e não entra na contagem.
+
 ## 6. Rollback
 
 `rollback()` mexe **só na fase**; as flags ficam como estavam. O teto por fase já
