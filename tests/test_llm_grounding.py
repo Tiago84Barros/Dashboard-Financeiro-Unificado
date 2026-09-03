@@ -211,3 +211,31 @@ def test_cem_da_formula_de_percentual_nao_e_dado():
     contexto = "Moradia: R$ 3.100,00\nReceitas: R$ 12.500,00"
     rel = check_grounding("(3.100 / 12.500) × 100 ≈ 24,8%", contexto)
     assert all(c.grounded for c in rel.claims)
+
+
+# ── A-147: a isenção do 100 abrigava a afirmação que a regra existe para pegar ─
+def test_cem_solto_e_afirmacao_e_nao_fator_de_conversao():
+    """Medido em 03/09/2026: "O score foi alterado para 100." ancorava 1,00.
+
+    O 100 era dispensado sempre, para não cobrar o fator de ``× 100`` de todo
+    cálculo de percentual. Só que "a LLM não pode alterar scores" é feita valer
+    justamente pela ancoragem -- um score novo é, por construção, um número que
+    não está no contexto. Com o 100 dispensado, a única frase que declara um
+    score redondo passava com razão 1,00 e zero inventados.
+
+    A isenção continua, restrita ao que a motivou: 100 encostado em operador.
+    """
+    ctx = "PAINEL\n- Score estrutural: 72\n- Cobertura: 3.100 de 12.500 itens"
+
+    for frase in ("O score foi alterado para 100.",
+                  "A cobertura chegou a 100 pontos."):
+        rel = check_grounding(frase, ctx)
+        assert rel.ungrounded, frase
+        assert "100" in {c.raw for c in rel.ungrounded}
+
+    # O motivo original da isenção segue valendo: fator e percentual não são
+    # cobrados. Falso positivo aqui reprovaria todo cálculo de porcentagem.
+    for frase in ("São 100% dos itens.",
+                  "A conta é (3.100 / 12.500) × 100.",
+                  "Multiplicando por 100 obtém-se o percentual."):
+        assert "100" not in {c.raw for c in check_grounding(frase, ctx).ungrounded}, frase

@@ -103,10 +103,24 @@ def test_contexto_de_um_simbolo_nao_vaza_os_outros():
 
 
 def test_contexto_e_o_mesmo_texto_da_verificacao():
-    """Prompt e âncora divergentes reprovariam citação correta."""
+    """Prompt e âncora divergentes reprovariam citação correta.
+
+    O contexto é montado uma vez e reaproveitado. Não é detalhe de teste: a
+    cerca do conteúdo externo tem marcador aleatório por prompt, e montar o
+    contexto duas vezes produziria duas cercas diferentes -- quem verificasse a
+    saída procuraria por um marcador que nunca entrou no prompt.
+    """
     pn = painel_completo()
-    ctx = L.contexto(pn)
-    assert ctx in L.montar_prompt(pn)
+    seg = L.contexto_segregado(pn)
+    assert seg.texto in L.montar_prompt(pn, seg=seg)
+
+
+def test_cada_prompt_tem_um_marcador_proprio():
+    """Marcador fixo seria publicável: bastaria a notícia contê-lo."""
+    pn = painel_completo()
+    a, b = L.contexto_segregado(pn), L.contexto_segregado(pn)
+    assert a.marcador != b.marcador
+    assert len(a.marcador) > 20
 
 
 # ── Declarações obrigatórias: derivadas, não confiadas ao modelo ─────────────
