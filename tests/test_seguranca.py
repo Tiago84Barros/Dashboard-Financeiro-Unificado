@@ -10,6 +10,7 @@ teste local prova, e é por isso que existe a verificação de saída.
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import logging
 
@@ -262,10 +263,23 @@ def test_12_numero_que_so_existe_na_manchete_nao_ancora_afirmacao(caplog):
 
 
 # ── 11. O lastro que cresce não pode diluir a defesa do A-148 ───────────────
-def _fato_macro(indicador: str, valor: float) -> dict[str, object]:
-    return {"indicator": indicador, "provider": "fred", "unit": "Percent",
-            "reference_period": "2026-08-01", "value": valor,
-            "retrieved_at": "2026-09-03T10:00:00+00:00", "limitations": ()}
+def _com_lastro_extra(seg, *valores: str):
+    """Acrescenta linhas do backend antes da cerca, como o contexto macro faz.
+
+    Não se importa aqui o contexto macro de verdade, de propósito: ele mora num
+    módulo opcional, e um teste de segurança que só roda onde o módulo existe
+    não guarda nada onde ele não existe -- que é exatamente o defeito de
+    ambiente que este achado denuncia. O que se exercita é o mecanismo: backend
+    com mais números, cerca no mesmo lugar.
+    """
+    cerca = "\n### " + procedencia.CAMADA_EXTERNO.upper() + " ###"
+    assert cerca in seg.texto
+    linhas = "\n".join(
+        f"MACRO - Indicador {i} - valor {v} Percent"
+        for i, v in enumerate(valores)
+    )
+    return dataclasses.replace(
+        seg, texto=seg.texto.replace(cerca, "\n" + linhas + cerca, 1))
 
 
 def test_11_contexto_macro_largo_nao_ancora_numero_que_so_a_manchete_trouxe():
@@ -277,18 +291,17 @@ def test_11_contexto_macro_largo_nao_ancora_numero_que_so_a_manchete_trouxe():
     quanto maior o conjunto, mais fácil é a aritmética alcançar por acaso o
     número que veio da notícia.
 
-    Medido em 03/09/2026, com o contexto macro ligado por ``MACRO_LOCAL_DB_URL``:
-    o texto do backend foi de 7 para 68 números e ``37,4`` -- que só existia na
-    manchete -- passou de "sem âncora" a "derivado do contexto". Nada no código
-    tinha mudado; só o dado. O cenário C13, que guarda o A-148, ficou verde sem
-    guardar nada.
+    Medido em 03/09/2026, com o contexto macro ligado por
+    ``MACRO_LOCAL_DB_URL``: o texto do backend foi de 7 para 71 números e
+    ``37,4`` -- que só existia na manchete -- passou de "sem âncora" a
+    "derivado do contexto". Nada no código tinha mudado; só o dado. O cenário
+    C13, que guarda o A-148, ficou verde sem guardar nada.
 
-    Aqui bastam dois números macro: 18,7 é 37,4% de 50,0. É o mesmo mecanismo do
-    caso real, no menor tamanho em que ele aparece.
+    Aqui bastam dois números: 18,7 é 37,4% de 50,0. É o mesmo mecanismo do caso
+    real, no menor tamanho em que ele aparece.
     """
     pn = painel("Analista vê queda de 37,4% na PETR4 nos próximos dias")
-    macro = (_fato_macro("Indicador A", 18.7), _fato_macro("Indicador B", 50.0))
-    seg = L.contexto_segregado(pn, macro_facts=macro)
+    seg = _com_lastro_extra(L.contexto_segregado(pn), "18.7", "50.0")
     assert "37,4" not in seg.texto_backend        # o backend não publicou isso
 
     sem = L.validar("A queda esperada é de 37,4% segundo a análise do painel.",
@@ -311,7 +324,6 @@ def test_11b_numero_derivado_de_verdade_continua_ancorado():
     número que a manchete **não** traz, continua ancorada.
     """
     pn = painel("Empresa aprova plano de investimento")
-    macro = (_fato_macro("Indicador A", 12.5), _fato_macro("Indicador B", 50.0))
-    seg = L.contexto_segregado(pn, macro_facts=macro)
+    seg = _com_lastro_extra(L.contexto_segregado(pn), "12.5", "50.0")
     v = L.validar("A razão entre os indicadores macro é de 25,0%.", pn, seg=seg)
     assert v.numeros_inventados == () and v.razao_ancorada == 1.0
