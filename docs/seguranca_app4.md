@@ -139,6 +139,48 @@ apagaria a evidência de que a notícia o trazia — o erro de
 painel" **não** conta como atribuição: atribuir ao painel um número da manchete
 é justamente a confusão a evitar.
 
+### A-149 — a defesa do A-148 diluiu sozinha quando o lastro cresceu
+
+Encontrado em 03/09/2026 e mais incômodo que o A-148, porque **nenhuma linha de
+código mudou entre o teste verde e o teste inútil**. Mudou o dado.
+
+A ancoragem aceita, por desenho, número *derivado* do contexto: `242` ancora
+porque é 20% de `1.210`, que está lá. O preço disso está escrito em
+`core/llm_grounding.py` — cada operação a mais aumenta a chance de um número
+inventado casar por acaso. O que não estava medido é como esse preço cresce com
+o tamanho do lastro.
+
+Com `MACRO_LOCAL_DB_URL` configurada, `contexto_segregado` anexa o contexto
+macro lido do armazém local. Medido, mesmo painel de teste:
+
+| | caracteres em `texto_backend` | números distintos | veredito sobre "37,4" |
+|---|---|---|---|
+| sem contexto macro | 956 | 7 | `sem âncora no contexto` |
+| com contexto macro | 4.167 | 71 | `derivado do contexto` |
+
+Com 71 números, `18,7 / 50,0` já dá 37,4%. A resposta `"A queda esperada é de
+37,4% segundo a análise do painel."` voltou a passar com **ancoragem 1,00 e zero
+números inventados** — o cenário C13, que guarda o A-148, ficou verde sem
+guardar nada.
+
+A correção não desliga a derivação: um número que aparece **literalmente dentro
+da cerca** deixa de poder ser absolvido por ela (`llm._nao_literais`). Ali a
+explicação mais simples é que o modelo copiou da notícia, e a decisão volta a
+ser a atribuição — citação aprovada, afirmação reprovada. Derivação legítima de
+número que a manchete não traz continua ancorando (`test_11b`).
+
+Medido depois, no caso real com os 71 números do banco: `aprovada=False`,
+`inventados=('37,4',)`, ancoragem `0,00`. E `razao_ancorada` passou a refletir o
+portão: antes a auditoria lia `1,00` ao lado da própria reprovação.
+
+**Segundo defeito, no mesmo achado: a suíte lia o banco.** `tests/conftest.py`
+bloqueia tráfego para fora da máquina e libera loopback de propósito — e o
+armazém macro é loopback, porta 5433. Testes cujo docstring afirma que nenhum
+cenário toca rede, banco ou provedor liam 71 números do Postgres, e por isso o
+resultado dependia de quem rodava. Uma fixture `autouse` zera a fonte; quem
+quiser exercitar o contexto macro passa `macro_facts=` explicitamente, que é o
+caminho que a produção usa quando já tem os fatos em mãos.
+
 Como este achado apareceu: ao rodar `travas.do_painel` contra um painel de
 verdade, o `100` da resposta hostil aparecia como *ancorado* — e a origem era a
 linha macro `Index 1982-1984=100`, do FRED. O rótulo de base de índice de uma
@@ -186,6 +228,8 @@ parametrizados).
 | 10 | ordem de operação e credencial na saída reprovam | nenhuma operação automática |
 | 11 | texto normal não dispara nenhum portão | contrapeso de falso positivo |
 | 12 | número que só existe na manchete não ancora | A-148 |
+| 13 | contexto macro largo não ancora número da manchete | A-149 |
+| 13b | derivação legítima continua ancorada | contrapeso do A-149 |
 
 **As sete categorias proibidas** (`injecao.PADROES`) cobrem português e inglês —
 metade das notícias coletadas está em inglês, e um detector só em português

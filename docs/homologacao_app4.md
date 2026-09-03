@@ -204,6 +204,15 @@ docstring o que aconteceria em produção se ele falhasse.
 | C16 | auditoria indisponível | `bloqueios=('mudanca_estrategica',)` |
 | C17 | limite de notificação externa estourado | `permitido=False`, `espera=3600s`, com motivo |
 
+C13 merece uma nota que só apareceu ao rodar de novo em 03/09/2026: ele passou
+a ficar verde **sem guardar nada**. Com o contexto macro ligado, o lastro do
+backend foi de 7 para 71 números, e com esse tamanho a aritmética da ancoragem
+"deriva" 37,4 sozinha. O cenário não tinha mudado; o dado tinha. Está corrigido
+e documentado como A-149 em `docs/seguranca_app4.md`, com dois testes novos —
+um que reprova sem a correção e um que prova que derivação legítima continua
+ancorada. A lição para este relatório: **cenário verde não é evidência se a
+entrada dele depende do ambiente de quem roda.**
+
 C15 merece destaque: divergência entre provedores **rebaixa confiança e não
 bloqueia**. Incerteza com tamanho vira banda, não portão (`memoria:
 incerteza-com-tamanho-nao-bloqueia`).
@@ -250,7 +259,10 @@ de ida e volta, e a linha de teste foi apagada em seguida — a tabela está vaz
 `validar()` ancora a resposta no **`texto_backend`** — o prompt sem o bloco de
 conteúdo recuperado. Antes dessa correção (A-148), uma manchete plantada
 ancorava qualquer afirmação: medido, `aprovada=True, ancoragem=1.00` para um
-número que só existia na manchete do atacante.
+número que só existia na manchete do atacante. Em 03/09/2026 a mesma defesa
+foi encontrada **diluída** pelo crescimento do lastro (A-149): com 71 números no
+contexto, o número da manchete voltou a ancorar por derivação. Corrigido; medido
+depois: `aprovada=False, inventados=('37,4',), ancoragem=0,00`.
 
 **6. A LLM pode alterar score?** Não. Ela não escreve em lugar nenhum; a resposta
 é texto validado contra o painel, e a tentativa de instrução vinda de notícia é
