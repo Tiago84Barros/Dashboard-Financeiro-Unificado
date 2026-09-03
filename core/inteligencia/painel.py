@@ -29,12 +29,18 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from core.inteligencia import qualificacao as qz
-from core.inteligencia.qualificacao import (AUSENTE, Bloco, Frescor, Provedor,
-                                            Valor, ausente, estimativa, fato,
-                                            hipotese)
+from core.inteligencia.qualificacao import (
+    Bloco,
+    Frescor,
+    Provedor,
+    Valor,
+    ausente,
+    estimativa,
+    fato,
+)
 
 logger = logging.getLogger(__name__)
 

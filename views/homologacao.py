@@ -30,8 +30,12 @@ import streamlit as st
 
 from core.homologacao import criterios as C
 from core.homologacao import flags as F
-from design.componentes import (badge_status, card_metrica, container_pagina,
-                                secao_titulo)
+from design.componentes import (
+    badge_status,
+    card_metrica,
+    container_pagina,
+    secao_titulo,
+)
 
 SIMBOLO_LIGADA = "✓"
 SIMBOLO_DESLIGADA = "·"

@@ -42,7 +42,7 @@ def test_o_prior_nasce_declarado_como_nao_calibrado():
     assert p.PRIOR.calibrado is False
     assert p.PRIOR.origem == "prior_declarado"
     assert p.PRIOR.validar() == []
-    assert any("nunca medidos" in l for l in p.PRIOR.limitacoes)
+    assert any("nunca medidos" in lim for lim in p.PRIOR.limitacoes)
 
 
 def test_prior_reproduz_exatamente_os_pesos_de_relevancia_em_uso():

@@ -10,7 +10,6 @@ from __future__ import annotations
 import datetime as dt
 
 import pandas as pd
-import pytest
 
 from core.eventos_extremos import antifragilidade as af
 from core.inteligencia import llm as L

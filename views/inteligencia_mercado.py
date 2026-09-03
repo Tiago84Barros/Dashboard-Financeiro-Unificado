@@ -38,8 +38,7 @@ from core.inteligencia import llm as intel_llm
 from core.inteligencia import painel as P
 from core.inteligencia import qualificacao as qz
 from design import inteligencia as ui
-from design.componentes import (abas_secao, container_pagina, estado_vazio,
-                                secao_titulo)
+from design.componentes import abas_secao, container_pagina, estado_vazio, secao_titulo
 
 logger = logging.getLogger(__name__)
 

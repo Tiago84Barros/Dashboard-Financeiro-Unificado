@@ -12,8 +12,6 @@ import datetime as dt
 import inspect
 from pathlib import Path
 
-import pytest
-
 from core.inteligencia import llm as L
 from core.inteligencia import painel as P
 from core.inteligencia import qualificacao as qz

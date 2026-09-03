@@ -32,7 +32,7 @@ verdadeiro-negativo não foi contado.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import isfinite, sqrt
+from math import isfinite
 
 #: Fronteiras dos baldes de probabilidade. Dez baldes com poucas observações
 #: cada produzem ruído com cara de descalibração; cinco é o compromisso usado

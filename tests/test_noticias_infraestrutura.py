@@ -21,11 +21,10 @@ from core.noticias import cadencia as cad
 from core.noticias import estado_coleta as ec
 from core.noticias import saude
 from core.noticias import universo_coleta as uni
-from data_pipeline.jobs import update_noticias as job
-from tests.apoio_noticias import AGORA, ProvedorFalso, item
-
 from core.noticias.provedores.base import ProvedorIndisponivel
 from core.noticias.rate_limit import LimiteExcedido
+from data_pipeline.jobs import update_noticias as job
+from tests.apoio_noticias import AGORA, ProvedorFalso, item
 
 
 class ConfigFalsa:

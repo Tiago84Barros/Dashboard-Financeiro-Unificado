@@ -97,9 +97,9 @@ def test_montar_declara_a_ressalva_de_cada_fonte_e_a_ausencia_das_outras():
     limitacoes = resultado["limitacoes"]
 
     assert resultado["eventos"], "as fontes declaradas precisam render eventos"
-    assert any("sem fonte historica" in l for l in limitacoes)
+    assert any("sem fonte historica" in lim for lim in limitacoes)
     # 'indefinido' é resíduo da taxonomia e não vira limitação anunciada.
-    assert not any(l.startswith("indefinido:") for l in limitacoes)
+    assert not any(lim.startswith("indefinido:") for lim in limitacoes)
     # Toda fonte com ressalva aparece nomeada.
     for fonte in cat.FONTES:
         for ressalva in fonte.ressalvas:
