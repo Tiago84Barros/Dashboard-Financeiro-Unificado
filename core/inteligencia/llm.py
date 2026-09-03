@@ -492,6 +492,60 @@ _ATRIBUICAO = re.compile(
     r"t[íi]tulo|headline|veicul\w*|publicad\w*\s+pel[ao])\b")
 
 
+def _bloco_externo(seg) -> str:
+    """O texto cercado, exatamente como o modelo o recebe. "" se não houver."""
+    if seg is None or not seg.itens:
+        return ""
+    inicio = seg.texto.find(f"<<<INICIO {seg.marcador}>>>")
+    fim = seg.texto.find(f"<<<FIM {seg.marcador}>>>", max(inicio, 0))
+    return seg.texto[inicio:fim] if inicio >= 0 and fim > inicio else ""
+
+
+def _literal_na_cerca(raw: str, externo: str) -> bool:
+    """O número aparece na notícia como número, não como pedaço de outro."""
+    return bool(raw) and bool(
+        re.search(rf"(?<![\d.,]){re.escape(raw)}(?![\d.,])", externo))
+
+
+def _nao_literais(rel, seg, ctx):
+    """Números sem lastro **literal** no que o backend publicou.
+
+    A ancoragem por derivação existe para não reprovar conta correta: ``242``
+    ancora porque é 20% de ``1.210``, que está no contexto. O preço dela é
+    conhecido e está escrito em :mod:`core.llm_grounding` -- cada operação a mais
+    aumenta a chance de um número inventado casar por acaso.
+
+    O que não estava medido é como esse preço cresce com o lastro. Em
+    03/09/2026, ligar o contexto macro levou o texto do backend de 7 para 68
+    números; com esse tamanho, a aritmética passou a "derivar" **37,4** -- o
+    número que existia só na manchete ``Analista vê queda de 37,4% na PETR4``. A
+    defesa do A-148 não foi removida: ela foi diluída por dado legítimo, e ficou
+    verde sem guardar nada.
+
+    Então um número que aparece literalmente dentro da cerca não pode ser
+    absolvido por derivação. Ali a explicação mais simples é que o modelo o
+    copiou da notícia, e cabe a :func:`_separar_por_origem` decidir entre
+    citação (com atribuição) e invenção (sem) -- não a reprovação direta, que
+    apagaria a evidência de que a notícia trazia o número.
+
+    Ancoragem literal continua absolvendo: se o backend publicou o valor, ele é
+    do backend, ainda que a manchete o repita.
+    """
+    nao_ancorados = list(rel.ungrounded)
+    if ctx is not None:
+        return nao_ancorados
+    externo = _bloco_externo(seg)
+    if not externo:
+        return nao_ancorados
+    ja = {c.raw for c in rel.ungrounded}
+    nao_ancorados.extend(
+        c for c in rel.claims
+        if c.grounded and c.reason.startswith("derivado")
+        and c.raw not in ja and _literal_na_cerca(c.raw, externo)
+    )
+    return nao_ancorados
+
+
 def _separar_por_origem(nao_ancorados, seg, ctx, resposta: str):
     """Divide os números sem lastro em inventados e citados da notícia.
 
@@ -507,9 +561,7 @@ def _separar_por_origem(nao_ancorados, seg, ctx, resposta: str):
     brutos = tuple(c.raw for c in nao_ancorados)
     if ctx is not None or seg is None or not seg.itens:
         return brutos, ()
-    inicio = seg.texto.find(f"<<<INICIO {seg.marcador}>>>")
-    fim = seg.texto.find(f"<<<FIM {seg.marcador}>>>", max(inicio, 0))
-    externo = seg.texto[inicio:fim] if inicio >= 0 and fim > inicio else ""
+    externo = _bloco_externo(seg)
     if not externo:
         return brutos, ()
     atribuiu = bool(_ATRIBUICAO.search(resposta or ""))
@@ -560,7 +612,13 @@ def validar(
     # escrevia a manchete escolhia que números o modelo podia afirmar.
     texto_ctx = ctx if ctx is not None else seg.texto_backend
     rel = llm_grounding.check_grounding(resposta, texto_ctx)
-    inventados, externos = _separar_por_origem(rel.ungrounded, seg, ctx, resposta)
+    nao_literais = _nao_literais(rel, seg, ctx)
+    inventados, externos = _separar_por_origem(nao_literais, seg, ctx, resposta)
+    # A razão publicada é a que o portão usou. Deixá-la em ``rel.ratio`` faria a
+    # auditoria ler "ancoragem 1,00" ao lado de uma reprovação por número sem
+    # lastro -- e quem lesse acreditaria no número, não na reprovação.
+    razao = (1.0 if not rel.checked
+             else (rel.checked - len(nao_literais)) / rel.checked)
     proibidas = _frases_proibidas(resposta)
     faltando = _declaracoes_faltando(
         resposta, declaracoes_obrigatorias(pn, simbolo=simbolo)
@@ -582,7 +640,7 @@ def validar(
     return Validacao(
         numeros_de_conteudo_externo=externos,
         aprovada=not inventados and not proibidas and not obediencia,
-        razao_ancorada=rel.ratio,
+        razao_ancorada=razao,
         numeros_inventados=inventados,
         frases_proibidas=proibidas,
         declaracoes_faltando=faltando,

@@ -259,3 +259,59 @@ def test_12_numero_que_so_existe_na_manchete_nao_ancora_afirmacao(caplog):
     assert atribuindo.aprovada, atribuindo.motivo
     assert atribuindo.numeros_de_conteudo_externo == ("37,4",)
     assert any("fonte externa" in d for d in atribuindo.descrever())
+
+
+# ── 11. O lastro que cresce não pode diluir a defesa do A-148 ───────────────
+def _fato_macro(indicador: str, valor: float) -> dict[str, object]:
+    return {"indicator": indicador, "provider": "fred", "unit": "Percent",
+            "reference_period": "2026-08-01", "value": valor,
+            "retrieved_at": "2026-09-03T10:00:00+00:00", "limitations": ()}
+
+
+def test_11_contexto_macro_largo_nao_ancora_numero_que_so_a_manchete_trouxe():
+    """Item: a LLM não pode inventar números (A-149).
+
+    O A-148 pôs a ancoragem para medir contra ``texto_backend``. O que ninguém
+    tinha medido é que essa defesa enfraquece sozinha à medida que o backend
+    publica mais números: a ancoragem aceita valor **derivado** do contexto, e
+    quanto maior o conjunto, mais fácil é a aritmética alcançar por acaso o
+    número que veio da notícia.
+
+    Medido em 03/09/2026, com o contexto macro ligado por ``MACRO_LOCAL_DB_URL``:
+    o texto do backend foi de 7 para 68 números e ``37,4`` -- que só existia na
+    manchete -- passou de "sem âncora" a "derivado do contexto". Nada no código
+    tinha mudado; só o dado. O cenário C13, que guarda o A-148, ficou verde sem
+    guardar nada.
+
+    Aqui bastam dois números macro: 18,7 é 37,4% de 50,0. É o mesmo mecanismo do
+    caso real, no menor tamanho em que ele aparece.
+    """
+    pn = painel("Analista vê queda de 37,4% na PETR4 nos próximos dias")
+    macro = (_fato_macro("Indicador A", 18.7), _fato_macro("Indicador B", 50.0))
+    seg = L.contexto_segregado(pn, macro_facts=macro)
+    assert "37,4" not in seg.texto_backend        # o backend não publicou isso
+
+    sem = L.validar("A queda esperada é de 37,4% segundo a análise do painel.",
+                    pn, seg=seg)
+    assert not sem.aprovada, sem.motivo
+    assert sem.numeros_inventados == ("37,4",)
+    assert sem.razao_ancorada < 1.0               # e a auditoria não lê 1,00
+
+    # Com atribuição continua passando: relatar a notícia é o esperado.
+    com = L.validar("A notícia relata uma queda de 37,4%; o painel não mediu "
+                    "esse número.", pn, seg=seg)
+    assert com.aprovada and com.numeros_de_conteudo_externo == ("37,4",)
+
+
+def test_11b_numero_derivado_de_verdade_continua_ancorado():
+    """O guarda do A-149 não pode reprovar conta correta.
+
+    Se reprovasse, a saída seria afrouxá-lo de novo -- e a defesa morreria pelo
+    excesso, não pela falta. A mesma derivação (12,5 é 25,0% de 50,0), com um
+    número que a manchete **não** traz, continua ancorada.
+    """
+    pn = painel("Empresa aprova plano de investimento")
+    macro = (_fato_macro("Indicador A", 12.5), _fato_macro("Indicador B", 50.0))
+    seg = L.contexto_segregado(pn, macro_facts=macro)
+    v = L.validar("A razão entre os indicadores macro é de 25,0%.", pn, seg=seg)
+    assert v.numeros_inventados == () and v.razao_ancorada == 1.0
