@@ -260,12 +260,15 @@ def sonda_auditoria() -> tuple[bool | None, str]:
     cada clique. Cinco minutos é curto o bastante para uma trilha que caiu
     aparecer na tela e longo o bastante para o clique não pagar ida ao banco.
     """
+    # Import fora do ``try``: se ele próprio falhasse, o ``except`` chamaria
+    # ``trilha.motivo_curto`` num nome que não existe e trocaria a falha da
+    # sonda por um NameError sem relação com ela.
     from core.auditoria import trilha
     try:
         return trilha.sonda()
     except Exception as exc:  # noqa: BLE001 - a tela não cai por causa da sonda
         logger.warning("sonda da trilha falhou: %s", exc)
-        return True, str(exc)[:200]
+        return True, trilha.motivo_curto(exc)
 
 
 def avaliar_travas(montagem: Montagem):

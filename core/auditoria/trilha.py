@@ -281,6 +281,24 @@ def expurgar(*, engine=None, dias: int = RETENCAO_DIAS,
             "removidos": removidos, "corte": corte.isoformat()}
 
 
+def motivo_curto(exc: object, limite: int = 200) -> str:
+    """A mensagem do banco em uma linha, e o corte declarado quando houver.
+
+    Duas coisas que ``str(exc)[:200]`` fazia calado:
+
+    * mantinha as quebras de linha do psycopg2 -- e um parágrafo em branco no
+      meio encerra o bloco HTML do card, imprimindo a própria tag na tela;
+    * cortava em 200 caracteres sem dizer, e o aviso terminava em
+      ``[SQL: SELECT 1 FROM public`` parecendo a mensagem inteira.
+
+    O ``[...]`` no fim é a diferença entre uma mensagem completa e uma
+    mensagem cortada, que é justamente o que quem lê o aviso precisa saber
+    antes de concluir que o erro é esse e mais nenhum.
+    """
+    texto = " ".join(str(exc).split())
+    return texto if len(texto) <= limite else texto[:limite].rstrip() + " [...]"
+
+
 _SQL_SONDA = text(f"SELECT 1 FROM {TABELA} LIMIT 1")
 
 
@@ -302,7 +320,7 @@ def sonda(*, engine=None) -> tuple[bool | None, str]:
             from core.database import get_engine
             engine = get_engine()
         except Exception as exc:  # noqa: BLE001
-            return True, f"banco inacessível: {exc}"[:200]
+            return True, motivo_curto(f"banco inacessível: {exc}")
     if engine is None:
         return True, "sem conexão com o banco"
     try:
@@ -310,6 +328,6 @@ def sonda(*, engine=None) -> tuple[bool | None, str]:
             conn.execute(_SQL_SONDA)
     except Exception as exc:  # noqa: BLE001 - qualquer falha aqui é a resposta
         log.warning("sonda da trilha de auditoria falhou: %s", exc)
-        return True, str(exc)[:200]
+        return True, motivo_curto(exc)
     return None, ("a trilha responde à leitura; se a gravação funciona só se "
                   "sabe ao gravar")
