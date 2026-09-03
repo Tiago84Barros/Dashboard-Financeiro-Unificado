@@ -24,15 +24,23 @@ lado. Os dois módulos mantêm cada um o seu piso, e a diferença fica explícit
 """
 from __future__ import annotations
 
+from core.calibracao import limiar as lim
 from core.memoria_mercado.amostra import AmostraHistorica
 from core.noticias import taxonomia
 from core.noticias.impacto import BaseHistorica
 
-#: Limiar de "movimento relevante" padrão, em fração. 3% é o valor a partir do
-#: qual um movimento de um dia deixa de ser ruído para a maioria dos ativos
-#: líquidos. Ele viaja para a saída e é impresso junto da probabilidade, para
-#: que "72%" nunca apareça sem o "de variação acima de 3%".
-LIMIAR_RELEVANTE_PADRAO = 0.03
+#: Limiar de "movimento relevante" quando nada se sabe sobre o ativo, em fração.
+#:
+#: Era 0,03 fixo para tudo, e essa era a versão errada: 3% é quase quatro desvios
+#: num FII (o motor ficava mudo) e é uma terça-feira comum numa small cap (o
+#: motor virava alarme). Quem define o limiar agora é
+#: :mod:`core.calibracao.limiar`, por classe de ativo e pela volatilidade medida
+#: do próprio ativo antes do evento. Este valor sobrou como último recurso: é o
+#: prior da classe desconhecida, e sai marcado como não estimado.
+#:
+#: O número continua viajando para a saída e continua sendo impresso junto da
+#: probabilidade, para que "72%" nunca apareça sem o "de variação acima de X%".
+LIMIAR_RELEVANTE_PADRAO = lim.PARAMETROS[lim.CLASSE_DESCONHECIDA].prior(1)
 
 #: Pregões -> horizonte qualitativo da taxonomia de notícias. Um pregão é
 #: intradia do ponto de vista da notícia; 60 pregões são ~3 meses, que a
@@ -61,19 +69,32 @@ def horizonte_qualitativo(pregoes: int) -> str:
 
 
 def para_base_historica(amostra: AmostraHistorica, *,
-                        limiar_relevante: float = LIMIAR_RELEVANTE_PADRAO,
+                        limiar_relevante: float | None = None,
+                        limiar: lim.Limiar | None = None,
                         fonte: str | None = None) -> BaseHistorica | None:
     """Traduz a amostra. Devolve ``None`` quando não há o que traduzir.
 
     ``None`` -- e não uma base vazia -- porque ``estimar`` do motor de notícias
     trata ``base=None`` como "sem base", que é a leitura correta. Uma base com
     ``n_observacoes=0`` atravessaria os portões dele carregando zeros.
+
+    ``limiar`` é o caminho preferido: um :class:`core.calibracao.limiar.Limiar`
+    calculado com a volatilidade do próprio ativo na janela anterior ao evento.
+    ``limiar_relevante`` continua aceito como número solto para quem já tem o
+    valor pronto; sem nenhum dos dois, entra o prior da classe desconhecida --
+    que é pior que os dois e por isso vira uma limitação declarada em
+    :func:`descrever`.
     """
     if amostra is None or amostra.n_eventos <= 0:
         return None
     principal = amostra.principal
     if principal is None:
         return None
+
+    if limiar is not None:
+        limiar_relevante = limiar.valor
+    elif limiar_relevante is None:
+        limiar_relevante = LIMIAR_RELEVANTE_PADRAO
 
     prob = amostra.prob_movimento_relevante(limiar_relevante)
     procedencia = fonte or (
@@ -96,7 +117,8 @@ def para_base_historica(amostra: AmostraHistorica, *,
     )
 
 
-def descrever(amostra: AmostraHistorica, base: BaseHistorica | None) -> tuple[str, ...]:
+def descrever(amostra: AmostraHistorica, base: BaseHistorica | None,
+              limiar: lim.Limiar | None = None) -> tuple[str, ...]:
     """Limitações que só existem por causa da travessia entre os dois módulos.
 
     Elas não pertencem a nenhum dos dois lados: pertencem à junção. Ficam aqui
@@ -122,4 +144,14 @@ def descrever(amostra: AmostraHistorica, base: BaseHistorica | None) -> tuple[st
     if amostra.experimental:
         itens.append(
             "base marcada como experimental pela Memoria de Mercado")
+    if limiar is None:
+        itens.append(
+            "limiar de movimento relevante do prior da classe desconhecida: a "
+            "volatilidade do ativo nao foi medida, e a probabilidade publicada "
+            "vale para um ativo tipico, nao para este")
+    else:
+        if not limiar.estimado:
+            itens.append(
+                f"limiar de movimento relevante nao estimado: {limiar.descrever()}")
+        itens.extend(limiar.limitacoes)
     return tuple(itens)
