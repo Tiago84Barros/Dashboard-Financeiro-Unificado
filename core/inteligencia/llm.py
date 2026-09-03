@@ -519,7 +519,8 @@ def _nao_literais(rel, seg, ctx):
     03/09/2026, ligar o contexto macro levou o texto do backend de 7 para 68
     números; com esse tamanho, a aritmética passou a "derivar" **37,4** -- o
     número que existia só na manchete ``Analista vê queda de 37,4% na PETR4``. A
-    defesa do A-148 não foi removida: ela foi diluída por dado legítimo, e ficou
+    defesa do A-148 não foi removida: ela foi diluída por dado legítimo (A-161),
+    e ficou
     verde sem guardar nada.
 
     Então um número que aparece literalmente dentro da cerca não pode ser

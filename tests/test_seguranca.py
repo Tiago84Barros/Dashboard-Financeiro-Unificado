@@ -262,7 +262,7 @@ def test_12_numero_que_so_existe_na_manchete_nao_ancora_afirmacao(caplog):
     assert any("fonte externa" in d for d in atribuindo.descrever())
 
 
-# ── 11. O lastro que cresce não pode diluir a defesa do A-148 ───────────────
+# ── 13. O lastro que cresce não pode diluir a defesa do A-148 ───────────────
 def _com_lastro_extra(seg, *valores: str):
     """Acrescenta linhas do backend antes da cerca, como o contexto macro faz.
 
@@ -282,8 +282,8 @@ def _com_lastro_extra(seg, *valores: str):
         seg, texto=seg.texto.replace(cerca, "\n" + linhas + cerca, 1))
 
 
-def test_11_contexto_macro_largo_nao_ancora_numero_que_so_a_manchete_trouxe():
-    """Item: a LLM não pode inventar números (A-149).
+def test_13_backend_com_mais_numeros_nao_ancora_numero_da_manchete():
+    """Item: a LLM não pode inventar números (A-161).
 
     O A-148 pôs a ancoragem para medir contra ``texto_backend``. O que ninguém
     tinha medido é que essa defesa enfraquece sozinha à medida que o backend
@@ -316,8 +316,8 @@ def test_11_contexto_macro_largo_nao_ancora_numero_que_so_a_manchete_trouxe():
     assert com.aprovada and com.numeros_de_conteudo_externo == ("37,4",)
 
 
-def test_11b_numero_derivado_de_verdade_continua_ancorado():
-    """O guarda do A-149 não pode reprovar conta correta.
+def test_13b_numero_derivado_de_verdade_continua_ancorado():
+    """O guarda do A-161 não pode reprovar conta correta.
 
     Se reprovasse, a saída seria afrouxá-lo de novo -- e a defesa morreria pelo
     excesso, não pela falta. A mesma derivação (12,5 é 25,0% de 50,0), com um

@@ -139,7 +139,7 @@ apagaria a evidência de que a notícia o trazia — o erro de
 painel" **não** conta como atribuição: atribuir ao painel um número da manchete
 é justamente a confusão a evitar.
 
-### A-149 — a defesa do A-148 diluiu sozinha quando o lastro cresceu
+### A-161 — a defesa do A-148 diluiu sozinha quando o lastro cresceu
 
 Encontrado em 03/09/2026 e mais incômodo que o A-148, porque **nenhuma linha de
 código mudou entre o teste verde e o teste inútil**. Mudou o dado.
@@ -211,7 +211,7 @@ ordem; `test_10` cobre três redações.
 
 ## 4. Os dez testes de segurança
 
-`tests/test_seguranca.py` — 19 casos executados (os 8 hostis de injeção são
+`tests/test_seguranca.py` — 21 casos executados (os 8 hostis de injeção são
 parametrizados).
 
 | # | teste | item do requisito |
@@ -228,8 +228,8 @@ parametrizados).
 | 10 | ordem de operação e credencial na saída reprovam | nenhuma operação automática |
 | 11 | texto normal não dispara nenhum portão | contrapeso de falso positivo |
 | 12 | número que só existe na manchete não ancora | A-148 |
-| 13 | contexto macro largo não ancora número da manchete | A-149 |
-| 13b | derivação legítima continua ancorada | contrapeso do A-149 |
+| 13 | backend com mais números não ancora número da manchete | A-161 |
+| 13b | derivação legítima continua ancorada | contrapeso do A-161 |
 
 **As sete categorias proibidas** (`injecao.PADROES`) cobrem português e inglês —
 metade das notícias coletadas está em inglês, e um detector só em português
