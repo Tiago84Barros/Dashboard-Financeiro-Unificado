@@ -105,7 +105,11 @@ def render_avanco(estado: F.Estado) -> None:
         "precisam estar **medidos** e atendidos. Critério não medido não "
         "avança a fase e também não reprova o sistema: ele diz que o teste "
         "ainda não foi feito.")
-    medidas = M.medir()
+    # Mede uma vez e usa duas: ``criterios`` decide sobre o valor, a tela
+    # escreve o motivo. Chamar ``medir()`` de novo para a segunda leitura
+    # dobraria as consultas e ainda abriria a chance de as duas discordarem.
+    detalhes = M.medir_detalhado()
+    medidas = {nome: m.valor for nome, m in detalhes.items()}
     avaliacao = C.avaliar(estado.fase, medidas)
     for c in C.EXIGIDO[alvo]:
         alvo_txt = "≥" if c.sentido == C.MAIOR_MELHOR else "≤"
@@ -118,7 +122,7 @@ def render_avanco(estado: F.Estado) -> None:
             st.markdown(f"**{c.nome}** — exigido {alvo_txt} {c.limiar}"
                         f"{c.unidade} · {icone} {rotulo}")
             st.caption(f"Por quê: {c.justificativa}.")
-            st.caption(f"Situação: {M.situacao(c.nome, medidas)}.")
+            st.caption(f"Situação: {M.situacao(c.nome, detalhes)}.")
     if avaliacao.nao_medidos:
         st.caption(
             "Os critérios sem medidor automático saem dos testes e das "
