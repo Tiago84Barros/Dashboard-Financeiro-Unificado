@@ -137,6 +137,7 @@ def coletar_noticias(tickers: tuple[str, ...], estado: hom.Estado | None = None)
     if not estado.ativo(hom.COLETA):
         return None, f"a coleta está desligada ({estado.motivo(hom.COLETA)})"
     try:
+        from core.noticias import bases_historicas as bases_mod
         from core.noticias import coleta
         from core.noticias import perfil_carteira as perfil_mod
         from core.noticias import universo_entidades as ent_uni
@@ -154,8 +155,9 @@ def coletar_noticias(tickers: tuple[str, ...], estado: hom.Estado | None = None)
         # item, e a da tela era a degradada.
         universo, _ = ent_uni.carregar()
         perfil, _ = perfil_mod.carregar()
+        bases, _ = bases_mod.carregar()
         return coleta.coletar(consulta, provedores, universo=universo,
-                              perfil=perfil), ""
+                              perfil=perfil, bases=bases), ""
     except Exception as exc:  # noqa: BLE001
         logger.exception("coleta de notícias falhou")
         return None, f"a coleta falhou: {type(exc).__name__}"

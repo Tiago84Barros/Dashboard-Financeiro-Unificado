@@ -86,6 +86,7 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
     from core.noticias import cadencia as cad
     from core.noticias import estado_coleta as ec
     from core.noticias import universo_coleta as uni
+    from core.noticias import bases_historicas as bases_mod
     from core.noticias import perfil_carteira as perfil_mod
     from core.noticias import universo_entidades as ent_uni
     from core.noticias.armazenamento import gravar
@@ -126,6 +127,7 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
         return _executar(result, ciclo, ritmo, tickers, engine=engine,
                          settings=settings, cad=cad, ec=ec, uni=uni,
                          ent_uni=ent_uni, perfil_mod=perfil_mod,
+                         bases_mod=bases_mod,
                          gravar=gravar, Cache=Cache, coletar=coletar,
                          RegistroColeta=RegistroColeta, Consulta=Consulta,
                          construir=construir, Orcamento=Orcamento,
@@ -133,7 +135,8 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
 
 
 def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
-              ent_uni, perfil_mod, gravar, Cache, coletar, RegistroColeta,
+              ent_uni, perfil_mod, bases_mod, gravar, Cache, coletar,
+              RegistroColeta,
               Consulta, construir, Orcamento, da_coleta) -> dict:
     """O ciclo em si, já sob o lock. Sempre grava o ciclo antes de retornar."""
     erros: list[str] = []
@@ -218,6 +221,14 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     perfil_carteira, lim_perfil = perfil_mod.carregar()
     limitacoes.extend(lim_perfil)
 
+    # Terceira entrada que faltava (A-141). O portao quantitativo saia
+    # ``indeterminado`` em 12 de 12 cenarios da revisao de 02/09 porque ninguem
+    # preenchia ``bases`` -- e ``None`` nao aprova. A base vem do armazem
+    # local; quando ela nao existe, a limitacao diz isso em vez de o portao
+    # falhar em silencio.
+    bases, lim_bases = bases_mod.carregar()
+    limitacoes.extend(lim_bases)
+
     consulta = Consulta(tickers=tuple(tickers)[:uni.LIMITE_TICKERS],
                         limite=settings.noticias_limite)
     # ``persistir=False``: o carimbo compartilhado passou a ser o do banco, e
@@ -232,7 +243,7 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     for tentativa in range(1, tentativas + 1):
         resultado = coletar(consulta, provedores, registro=registro,
                             universo=universo_entidades,
-                            perfil=perfil_carteira)
+                            perfil=perfil_carteira, bases=bases)
         if not resultado.sem_fonte:
             break
         if tentativa < tentativas:
