@@ -171,16 +171,50 @@ registro dos medidores, e a tela passa a mostrar o valor medido, o veredito
 (`✓ atendido` / `⊘ reprovado` / `· não medido`) e, quando não há medidor, **o
 motivo**.
 
-| critério | medidor | situação |
-|---|---|---|
-| `cenarios_historicos_reproduzidos` | `stress_tests.cenarios_reproduzidos` | **medido: 11** |
-| `falsos_positivos_nivel_3_ou_4` | — | exige operação real; a Fase 4 nunca rodou |
-| `tempo_ate_rebaixar_nivel_h` | — | exige ciclo completo de subida e rebaixamento em produção |
+São **6 medidores para 10 critérios**. Os quatro restantes não têm medidor de
+propósito, e o motivo de cada um aparece na tela.
 
-**Os dois sem medidor continuam sem medidor de propósito.** Ambos são "menor
-melhor": um medidor que devolvesse `0.0` por não ter encontrado nada aprovaria o
-critério exatamente por não tê-lo testado. É o pior defeito possível neste
-lugar, e a Fase 4 segue bloqueada por medição ausente — que é a verdade.
+| critério | fase | medidor | situação em 03/09/2026 |
+|---|---|---|---|
+| `cobertura_de_frescor` | 2 | `_acervo` (`noticias_itens`) | amostra insuficiente: 0 de 30 |
+| `itens_sem_fonte` | 2 | `_acervo` (mesma varredura) | amostra insuficiente: 0 de 30 |
+| `taxa_de_erro_da_coleta` | 2 | `_taxa_de_erro_da_coleta` (`noticias_coleta_ciclos`) | amostra insuficiente: 0 de 20 |
+| `cobertura_da_trilha` | 3 | `_trilha` (`recomendacao_auditoria`) | amostra insuficiente: 0 de 20 |
+| `respostas_llm_reprovadas` | 3 | `_trilha` (denominador próprio) | amostra insuficiente: 0 de 20 |
+| `cenarios_historicos_reproduzidos` | 4 | `stress_tests.cenarios_reproduzidos` | **medido: 11** |
+| `erro_de_calibracao_probabilidade` | 3 | — | exige o desfecho realizado de cada probabilidade publicada |
+| `alarmes_por_semana` | 3 | — | o alerta é montado por render e não fica guardado |
+| `falsos_positivos_nivel_3_ou_4` | 4 | — | exige operação real; a Fase 4 nunca rodou |
+| `tempo_ate_rebaixar_nivel_h` | 4 | — | exige ciclo completo de subida e rebaixamento em produção |
+
+**Amostra pequena é ausência, não aprovação.** Cinco dos seis medidores têm piso
+de amostra (`MINIMO_ITENS=30`, `MINIMO_CICLOS=20`, `MINIMO_REGISTROS=20`), e o
+motivo é o defeito mais fácil de cometer aqui: `taxa_de_erro_da_coleta` sobre
+zero ciclos dá zero erros, `itens_sem_fonte` sobre zero notícias dá zero itens
+sem fonte. Os dois são "menor melhor", os dois passariam — e passariam
+exatamente por não terem sido testados (`memoria: zero-censura-e-assinatura`).
+Abaixo do piso o medidor devolve `None` **com o tamanho da amostra no motivo**,
+que é o que a tabela acima mostra hoje.
+
+**`respostas_llm_reprovadas` divide pelas explicações julgadas, não pelo total.**
+Dividir pelo total faria a taxa cair sozinha nos períodos em que a LLM esteve
+desligada: o critério melhoraria por não ter sido exercido.
+
+**`itens_sem_fonte` é contagem, não taxa.** O limiar é zero, e uma taxa
+arredondaria para zero um punhado de itens sem fonte num acervo grande —
+justamente os que a tela promete não exibir.
+
+**Os quatro sem medidor continuam sem medidor de propósito.** Não é lacuna de
+implementação: `alarmes_por_semana` contado numa janela com o Modo Crise
+desligado daria zero, e `erro_de_calibracao_probabilidade` sem o desfecho
+realizado é a estimativa comparada consigo mesma. A Fase 4 segue bloqueada por
+medição ausente — que é a verdade.
+
+**Falha de leitura parece falha.** Quando a consulta quebra (tabela ausente,
+banco fora do ar), o critério vira `None` com `a medição falhou: <erro>` — nunca
+zero (`memoria: quadro-sem-coluna-passa-por-empty`). E o erro de um lote não
+carimba os critérios do outro: `_EM_LOTE` carrega a lista de chaves de cada
+medidor justamente para o motivo na tela não apontar a tabela errada.
 
 ### 5.2 Os 11 cenários históricos
 
@@ -358,16 +392,23 @@ pela fase, e a tela de Homologação as mostra com o motivo.
 
 ## 10. O que ainda não está pronto
 
-1. **A medição dos dez critérios de avanço está automatizada em 1 de 10.**
-   Melhorou em 03/09/2026 e continua longe de pronta.
-   `core/homologacao/medicoes.py` é o registro dos medidores e a tela passou a
-   mostrar valor medido em vez de um "não medido nesta instalação" fixo; hoje
-   só `cenarios_historicos_reproduzidos` tem medidor (lê 11). Dois dos que
-   faltam — `falsos_positivos_nivel_3_ou_4` e `tempo_ate_rebaixar_nivel_h` —
-   **não terão medidor automático**: são "menor melhor", e um medidor que
-   devolvesse 0,0 por não ter achado nada aprovaria o critério exatamente por
-   não o ter testado. Os demais dependem de operação real. Enquanto isso,
-   `pode_avancar` é `False` por `nao_medidos`, que é o lado seguro.
+1. **Seis dos dez critérios têm medidor; nenhum tem amostra ainda.** Esta é a
+   distinção que importa e que a frase anterior desta seção não fazia. Em
+   03/09/2026 os medidores dos seis foram escritos e testados contra um
+   Postgres de verdade (seção 5.1), mas o acervo de notícias e a trilha de
+   auditoria estão abaixo do piso de amostra nesta instalação — os cinco que
+   leem banco devolvem *amostra insuficiente*, com o número. Só
+   `cenarios_historicos_reproduzidos` tem valor (11).
+   Os quatro restantes — `falsos_positivos_nivel_3_ou_4`,
+   `tempo_ate_rebaixar_nivel_h`, `alarmes_por_semana` e
+   `erro_de_calibracao_probabilidade` — **não terão medidor automático**, e o
+   motivo de cada um está na seção 5.1 e na tela. Enquanto isso, `pode_avancar`
+   é `False` por `nao_medidos`, que é o lado seguro.
+
+   O que falta, então, não é código: é **deixar o sistema rodar**. Trinta dias
+   de coleta enchem os três critérios da Fase 2; a trilha só enche depois que a
+   Fase 3 estiver ligada, o que é a ordem correta — um critério da Fase 3 não
+   pode ser medido antes de existir Fase 3.
 2. ~~SQL 067 não executado no Supabase.~~ **Resolvido em 03/09/2026** — a
    tabela existe e a trilha grava. ~~Falta agendar o expurgo.~~ **Agendado em
    03/09/2026** (`update_retencao`, diário, `priority` 11). Ele **simula por

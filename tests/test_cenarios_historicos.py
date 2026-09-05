@@ -128,7 +128,7 @@ def test_os_dois_criterios_de_operacao_real_continuam_sem_medidor():
     impede de reaparecer.
     """
     for nome in ("falsos_positivos_nivel_3_ou_4", "tempo_ate_rebaixar_nivel_h"):
-        assert nome not in M.MEDIDORES
+        assert nome not in M.COBERTOS
         assert nome in M.SEM_MEDIDOR
         assert "não medido" in M.situacao(nome)
 
@@ -147,9 +147,9 @@ def test_medidor_que_explode_vira_nao_medido_e_nao_zero(monkeypatch):
 
     monkeypatch.setattr(M, "MEDIDORES",
                         {"cenarios_historicos_reproduzidos": explode})
-    assert M.medir() == {"cenarios_historicos_reproduzidos": None}
+    assert M.medir()["cenarios_historicos_reproduzidos"] is None
 
 
 def test_todo_criterio_da_fase_4_tem_medidor_ou_motivo_declarado():
     for c in C.EXIGIDO[4]:
-        assert c.nome in M.MEDIDORES or c.nome in M.SEM_MEDIDOR, c.nome
+        assert c.nome in M.COBERTOS or c.nome in M.SEM_MEDIDOR, c.nome

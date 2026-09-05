@@ -13,6 +13,13 @@
       "runtimeArgs": ["-3.12", "scripts/dev_preview_server.py",
                       "--fase", "3", "--port", "8624"],
       "port": 8624
+    },
+    {
+      "name": "app4-preview-fase2",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["-3.12", "scripts/dev_preview_server.py",
+                      "--fase", "2", "--port", "8625"],
+      "port": 8625
     }
   ]
 }
