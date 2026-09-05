@@ -687,6 +687,21 @@ def build_llm_context_for_portfolio_chat(
     if "creation" in intent or "compare_outside" in intent:
         parts += ["", get_creation_context(model)]
 
+    # Conjuntura (macro + noticiario) dos ativos em foco. Entra depois de todos
+    # os blocos fundamentalistas de proposito: e leitura de contexto, nao de
+    # qualidade da empresa, e a LLM precisa ler nessa ordem para nao trocar uma
+    # pela outra. Ausencia aqui aparece como ausencia, nunca como calmaria.
+    setores = {}
+    for _it in (model or {}).get("items", []):
+        _tk = _norm_tk(str(_it.get("ticker") or ""))
+        if _tk:
+            setores[_tk] = str(_it.get("setor") or _it.get("segmento") or "")
+    foco = {t: setores.get(t, "") for t in dict.fromkeys(port_tks + q_tickers) if t}
+    if foco:
+        from core.conjuntura import bloco_para_prompt
+
+        parts += ["", bloco_para_prompt(asset_class="b3", ativos=foco)]
+
     context = "\n".join(p for p in parts if p is not None)
 
     meta = {

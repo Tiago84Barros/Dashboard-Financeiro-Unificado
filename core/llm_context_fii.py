@@ -202,6 +202,14 @@ def build_fii_chat_context(
             if facts:
                 lines.append(f"  {ticker}: " + " | ".join(map(str, facts[:10])))
 
+    foco = {str(row.get("ticker") or "").strip().upper():
+            str(row.get("segmento") or row.get("tipo") or "")
+            for row in selected if row.get("ticker")}
+    if foco:
+        from core.conjuntura import bloco_para_prompt
+
+        lines += ["", bloco_para_prompt(asset_class="fii", ativos=foco)]
+
     lines += ["", _correlation_context(prices, selected_tickers), "",
               "LIMITAÇÕES GERAIS:",
               "  Métricas ausentes não foram imputadas. Correlações são retrospectivas. ",
