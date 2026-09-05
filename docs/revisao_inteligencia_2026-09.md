@@ -569,6 +569,44 @@ rodaria e seria descartada, gastando cota de provedor sem persistir nada (exit 1
 
 ---
 
+### Guarda de destino local — três cópias, duas divergências, uma delas perigosa
+
+Reportada em sessões anteriores e nunca fechada. **CORRIGIDA em 05/09/2026.**
+
+A regra "isto não pode ser gravado na nuvem" existia **três** vezes:
+`core/destino_local.py`, `core/memoria_mercado/repositorio.py` e
+`data_pipeline/market/b3_precos.py`. Medido antes da unificação, com engines
+reais:
+
+| destino | `b3_precos` | as outras duas |
+|---|---|---|
+| `dfu_warehouse` (host de dentro do Docker) | **RECUSA** | aceita |
+| `localhost` | aceita | aceita |
+| Supabase, host na URL | RECUSA | RECUSA |
+| Supabase, host na **query string** | **aceita** | RECUSA |
+
+A primeira linha é falso negativo — chato, seguro. A última é o problema:
+`b3_precos` só olhava `url.host` e tratava host vazio como local, então
+`postgresql://u:s@/p?host=/cloudsql/db.abc.supabase.co` passava. São **~1 GB**
+de preço diário apontados para uma instância com **23 MB** de folga, contra a
+instrução permanente de nunca gravar o pesado no Supabase.
+
+As três agora usam `core/destino_local.py`; as outras duas apenas reexportam os
+nomes, e `DestinoRemotoRecusado` é literalmente a mesma classe — com três
+classes distintas, cada `except` pegava um terço dos casos, em silêncio.
+Unificar **apertou** a guarda do preço diário; não a afrouxou.
+
+**O teste defende a unicidade, não só o comportamento.** Foi a duplicação que
+produziu o defeito, não o algoritmo: um teste de comportamento passaria feliz no
+dia em que alguém colasse a quarta cópia. `tests/test_destino_local_unico.py`
+percorre a AST de `core/`, `data_pipeline/`, `scripts/`, `views/`, `etl/` e
+`design/` procurando redefinições de `e_local`, `HOSTS_LOCAIS` e
+`FRAGMENTOS_REMOTOS`, e falha nomeando arquivo e linha. Mais um teste verifica
+que as duas guardas **concordam** em dez destinos, que é a propriedade que a
+divergência quebrava.
+
+---
+
 ## 6. Critérios em vigor
 
 **Modo Crise** — severidade ponderada (informacional x1,0, mercado x1,2, carteira
@@ -644,7 +682,11 @@ evidências — os harnesses vivem no scratchpad da sessão.
    metade — dizer que algo "já está precificado" — **continua aberta e vai
    continuar** até a memória de mercado ter safra, porque ela exige observar o
    preço depois do evento e não o relógio (mesmo bloqueio do A-141).
-10. ~~**Prompt 2** — agendador; hoje a periodicidade real é zero.~~
+10. ~~**Guarda de destino local divergente**~~ — FEITA em 05/09/2026. Eram
+    três cópias, não duas; a do `b3_precos` **aceitava** destino Supabase com
+    o host na query string. Unificadas em `core/destino_local.py`, com teste
+    estrutural contra a quarta cópia.
+11. ~~**Prompt 2** — agendador; hoje a periodicidade real é zero.~~
    **CORRIGIDO em 05/09/2026, com uma ressalva que não é minha para fechar.**
    O agendador existia (`noticias.yml`, cron de 30 min) e não teria funcionado:
    o runner não alcança o acervo local. Foram adicionados `saude.checar_acervo`,
