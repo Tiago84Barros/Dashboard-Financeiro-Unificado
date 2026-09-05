@@ -283,6 +283,19 @@ def historical_macro_weight_path(
     assets = dict(zip(
         holdings[symbol_column].astype(str), holdings[sector_column].astype(str)
     ))
+    # As tres telas que chamam isto passam a tabela que ja esta na tela -- e a
+    # tabela da tela ja passou pelo tilt de hoje. Reaplicar por cima compoe dois
+    # tilts: com impacto maximo, 0,500 vira 0,575 na tela e 0,639 na trajetoria,
+    # +27,8% sobre o fundamental quando `max_relative_weight_tilt` vale 0,15.
+    # O teto nao e violado por chamada nenhuma; e contornado pela composicao.
+    # Pior que o numero, o rotulo: `weight_fundamental` recebia a base recebida,
+    # que nesse caso e o peso ja inclinado -- a linha "fundamental" do grafico
+    # nao era fundamental (memoria: procedencia-segue-a-decisao).
+    #
+    # Entao a trajetoria parte sempre do peso anterior ao macro quando ele veio
+    # junto. Ausente a coluna, `weight` ja e o fundamental e nada muda.
+    if "weight_before_macro" in holdings.columns:
+        holdings = holdings.assign(weight=holdings["weight_before_macro"])
     rows: list[dict[str, object]] = []
     for cutoff in sorted(set(cutoffs)):
         snapshot = load_portfolio_macro_snapshot(
