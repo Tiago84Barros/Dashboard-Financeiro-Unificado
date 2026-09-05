@@ -20,6 +20,44 @@ A defesa é dupla e está inteira aqui:
 
 Zero medido continua valendo zero: uma fonte de confiabilidade baixíssima
 recebe nota baixa e isso é medição, não ausência.
+
+**Teto de evidência (A-146, 05/09/2026).** Média ponderada tem um segundo modo
+de falha, e ele é o oposto do primeiro: componentes altos *compensam* um déficit
+eliminatório em outro. Medido antes da correção, com o motor real:
+
+    fabricada  nota=77,8  (dominio desconhecido, fonte unica)
+    pandemia   nota=78,3  (Reuters, tres fontes)
+    guerra     nota=73,1  (Reuters, tres fontes)
+
+*"URGENTE: Petrobras vai a falencia amanha, dizem fontes"*, publicada num
+domínio que nunca vimos, empatava com a pandemia e ganhava da guerra. E não por
+acaso: dos sete componentes, **cinco são declarados pela própria notícia**.
+Quem a escreve escolhe o tipo de evento (materialidade 0,25 e persistência
+0,10), cita um ticker da carteira (relação 0,20), publica agora (novidade 0,10)
+e diz respeito a quanto do patrimônio quiser (exposição 0,10) -- 0,75 do peso
+total sob controle de quem quer ser lido. Sobram 0,25 para confiabilidade e
+confirmação, os dois únicos componentes que o autor **não** controla, e 0,25 de
+peso não segura 0,75.
+
+Este projeto já viveu a mesma forma em outro motor: um ativo marcava "Alta"
+usando preço de 2015, porque os demais critérios compensavam a falta de preço
+vivo (``memoria: media-ponderada-compensa-defeito-eliminatorio``). A lição foi
+que evidência ausente não é um componente a mais na média -- é um **limite** ao
+que a média pode afirmar.
+
+Então a evidência externa vira teto, e não parcela: a nota é calculada como
+sempre e depois **limitada** por ``TETO_BASE + (100 - TETO_BASE) * evidência``.
+A nota bruta não some -- fica em ``nota_bruta`` e o rebaixamento aparece escrito
+em ``limitacoes``, porque convenção não pode apagar o observado.
+
+A propriedade que isso compra, e que é o ponto todo: **a faixa de revisão
+estratégica passa a ser inalcançável sem evidência externa**. Chegar a 80 exige
+evidência de 0,67, que nenhum domínio desconhecido sozinho alcança, escreva ele
+o que escrever.
+
+Não há detector de sensacionalismo aqui, e a ausência é deliberada. Classificar
+vocabulário é uma corrida contra quem escolhe as palavras -- e o teto não
+depende das palavras dele.
 """
 from __future__ import annotations
 
@@ -32,6 +70,12 @@ from core.noticias.modelos import Noticia
 #: Abaixo desta cobertura a notícia não pode ser promovida à faixa de revisão.
 COBERTURA_MINIMA_REVISAO = 0.70
 
+#: Piso do teto de evidência. Notícia sem nenhuma corroboração externa não é
+#: zerada -- ela pode ser verdadeira, e o índice não julga veracidade. Ela fica
+#: presa abaixo de ``LIMITE_OBSERVACAO`` (60), que é o que "informativa"
+#: significa: registre, não decida por isso.
+TETO_BASE = 40.0
+
 MATERIALIDADE = "materialidade"
 RELACAO_ATIVO = "relacao_ativo"
 CONFIABILIDADE = "confiabilidade"
@@ -39,6 +83,12 @@ NOVIDADE = "novidade"
 CONFIRMACAO = "confirmacao"
 PERSISTENCIA = "persistencia"
 EXPOSICAO = "exposicao"
+
+#: Os únicos componentes que o autor da notícia não escolhe. Materialidade,
+#: persistência e relação saem do texto que ele escreveu; novidade, do instante
+#: em que ele publicou; exposição, do ticker que ele resolveu citar. Confiar em
+#: quem publica e ter sido publicado por mais de um veículo, não.
+COMPONENTES_DE_EVIDENCIA = (CONFIABILIDADE, CONFIRMACAO)
 
 ROTULO_COMPONENTE = {
     MATERIALIDADE: "Materialidade financeira",
@@ -102,6 +152,15 @@ class Relevancia:
     pesos: dict[str, float] = field(default_factory=dict)
     cobertura: float = 0.0
     limitacoes: tuple[str, ...] = ()
+    #: A nota antes do teto de evidência. Igual a ``nota`` quando não houve
+    #: rebaixamento. Guardada porque o teto é convenção deste motor e o número
+    #: que ele limitou é observação -- apagar o segundo para exibir o primeiro
+    #: seria perder a evidência de que o rebaixamento aconteceu.
+    nota_bruta: float = 0.0
+    #: O teto aplicado, em 0..100. ``None`` quando nenhum componente de
+    #: evidência pôde ser medido, e aí não há teto -- inventar um seria punir
+    #: ausência de medição, que é o defeito que o módulo inteiro evita.
+    teto_evidencia: float | None = None
 
     @property
     def medidos(self) -> tuple[str, ...]:
@@ -193,6 +252,42 @@ def _relacao(noticia: Noticia, tickers_alvo: frozenset[str]) -> float | None:
     return 0.20
 
 
+def _evidencia_externa(componentes: dict[str, float | None],
+                       mapa_pesos: dict[str, float]) -> float | None:
+    """Média dos componentes de evidência, renormalizada pelos medidos.
+
+    ``None`` quando nenhum deles foi medido. Não é zero: "não sei se a fonte é
+    confiável" não é "a fonte não é confiável", e tratar os dois como o mesmo
+    número faria o teto punir a ausência de medição.
+    """
+    peso = sum(mapa_pesos.get(k, 0.0) for k in COMPONENTES_DE_EVIDENCIA
+               if componentes.get(k) is not None)
+    if peso <= 0:
+        return None
+    soma = sum(mapa_pesos.get(k, 0.0) * componentes[k]
+               for k in COMPONENTES_DE_EVIDENCIA
+               if componentes.get(k) is not None)
+    return max(0.0, min(1.0, soma / peso))
+
+
+def teto_de_evidencia(evidencia: float | None) -> float | None:
+    """Quanto uma notícia pode afirmar, dada a evidência externa que ela tem.
+
+    Linear de propósito, entre ``TETO_BASE`` e 100. Curva com joelho pareceria
+    mais sofisticada e seria mais um parâmetro sem proveniência medida; a reta
+    tem duas âncoras que dá para defender uma a uma:
+
+    * evidência 1,00 (regulador, ou fonte primária) -> teto 100: não limita.
+    * evidência 0,67 -> teto 80: é exatamente o mínimo para a faixa de revisão
+      estratégica. Abaixo disso, nenhuma notícia é candidata a mexer em
+      carteira -- e ``0,67`` não é alcançável por veículo desconhecido nenhum,
+      porque o piso de confiabilidade da classe desconhecida é 0,20.
+    """
+    if evidencia is None:
+        return None
+    return TETO_BASE + (100.0 - TETO_BASE) * float(evidencia)
+
+
 def _faixa(nota: float) -> str:
     if nota >= taxonomia.LIMITE_REVISAO:
         return taxonomia.FAIXA_REVISAO
@@ -251,15 +346,31 @@ def calcular(
             pesos=mapa_pesos,
             cobertura=0.0,
             limitacoes=("nenhum componente pode ser medido",),
+            nota_bruta=0.0,
         )
 
     soma = sum(mapa_pesos[k] * v for k, v in componentes.items()
                if v is not None)
-    nota = max(0.0, min(100.0, (soma / peso_medido) * 100.0))
+    nota_bruta = max(0.0, min(100.0, (soma / peso_medido) * 100.0))
     cobertura = peso_medido / total
 
-    faixa = _faixa(nota)
     limitacoes: list[str] = []
+
+    # O teto entra ANTES da faixa: rebaixar a nota e classificar pela nota
+    # antiga devolveria o defeito inteiro por outro caminho -- a faixa é o que
+    # os portões e a ordenação leem.
+    evidencia = _evidencia_externa(componentes, mapa_pesos)
+    teto = teto_de_evidencia(evidencia)
+    nota = nota_bruta
+    if teto is not None and nota_bruta > teto:
+        nota = teto
+        limitacoes.append(
+            f"nota {nota_bruta:.0f} limitada a {teto:.0f} pela evidencia "
+            f"externa ({evidencia * 100:.0f}%): materialidade, relacao e "
+            "novidade sao declaradas pela propria noticia, e sozinhas nao "
+            "sustentam a nota")
+
+    faixa = _faixa(nota)
     if componentes[EXPOSICAO] is None:
         limitacoes.append("sem carteira cadastrada: exposicao nao entrou na nota")
     if componentes[NOVIDADE] is None:
@@ -281,4 +392,6 @@ def calcular(
         pesos=mapa_pesos,
         cobertura=round(cobertura, 4),
         limitacoes=tuple(limitacoes),
+        nota_bruta=round(nota_bruta, 1),
+        teto_evidencia=None if teto is None else round(teto, 1),
     )

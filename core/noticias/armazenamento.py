@@ -37,7 +37,18 @@ logger = logging.getLogger(__name__)
 #: Versão do conjunto relevância + impacto + portões. Subir isto significa que
 #: as avaliações antigas não são comparáveis com as novas -- e por isso elas
 #: convivem, em vez de uma sobrescrever a outra.
-VERSAO_METODOLOGIA = "1.0.0"
+#:
+#: 1.1.0 (05/09/2026) -- o índice de relevância ganhou teto de evidência
+#: (A-146). A nota de uma notícia sem corroboração externa mudou, e mudou
+#: bastante: o caso medido caiu de 77,8 para 54,4. Comparar as duas versões
+#: como se fossem a mesma escala misturaria régua velha com régua nova.
+#:
+#: **Subir isto esvazia a tela até a safra nova existir.** É visível de
+#: propósito -- ``ler_recentes`` faz ``JOIN`` pela versão --, mas continua
+#: sendo uma tela vazia. Quem fecha a distância é
+#: ``scripts/reavaliar_acervo.py``, que reconstrói as avaliações a partir do
+#: fato observado, sem re-coletar nada e sem gastar cota de provedor.
+VERSAO_METODOLOGIA = "1.1.0"
 
 
 class AcervoIlegivel(RuntimeError):
@@ -363,6 +374,32 @@ def gravar(resultado: ResultadoColeta, *, engine=None,
 
     return {"gravado": True, "itens": itens, "avaliacoes": avaliacoes,
             "versao": versao}
+
+
+def gravar_avaliacoes(avaliadas, *, engine=None, vereditos=None,
+                      versao: str = VERSAO_METODOLOGIA) -> dict:
+    """Grava **só** a camada de conclusão, deixando o fato observado intocado.
+
+    É o que uma reavaliação precisa e é tudo o que ela pode fazer: mudar a
+    metodologia não muda o que a fonte publicou. Reescrever ``noticias_itens``
+    aqui apagaria a evidência contra a qual a metodologia nova está sendo
+    conferida.
+    """
+    motor = engine if engine is not None else engine_acervo()
+    if motor is None:
+        return {"gravado": False, "motivo": "sem banco configurado",
+                "avaliacoes": 0}
+    exigir_local(motor, o_que=O_QUE)
+
+    vereditos = vereditos or {}
+    n = 0
+    with motor.begin() as conn:
+        garantir_schema(conn)
+        for avaliada in avaliadas:
+            conn.execute(_UPSERT_AVALIACAO, linha_avaliacao(
+                avaliada, versao, vereditos.get(avaliada.noticia.id_dedup)))
+            n += 1
+    return {"gravado": True, "avaliacoes": n, "versao": versao}
 
 
 _SELECT_RECENTES = text("""

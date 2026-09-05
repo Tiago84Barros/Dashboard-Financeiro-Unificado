@@ -123,7 +123,7 @@ tickers que a notícia macro não carrega. Efeito em cadeia:
 duas agências. A deduplicação em si funciona (cenário 2: `dup_removidas=1` entre
 Valor e UOL com o mesmo título e domínios diferentes).
 
-### A-146 — notícia fabricada de domínio desconhecido tira 71,8 (médio)
+### A-146 — notícia fabricada de domínio desconhecido tira 71,8 (médio) — CORRIGIDO
 
 *"URGENTE: Petrobras vai a falencia amanha, dizem fontes"*, fonte única, domínio
 desconhecido (confiabilidade 0,20), linguagem sensacionalista: **nota 71,8, faixa
@@ -132,6 +132,134 @@ desconhecido (confiabilidade 0,20), linguagem sensacionalista: **nota 71,8, faix
 Não vira ação — o portão de confirmação reprova e a ação fica `observar` — mas
 qualquer lista ordenada por nota a coloca no topo. O piso de 0,20 de
 confiabilidade pesa apenas 0,15 no índice.
+
+**Correção (05/09/2026).**
+
+Primeiro, a remedição — os números do achado foram obtidos com outro perfil de
+carteira e não se reproduzem como escritos. Com o motor de 05/09/2026:
+
+```
+fabricada  77,8  (dominio desconhecido, fonte unica)
+pandemia   78,3  (Reuters, tres fontes)
+guerra     73,1  (Reuters, tres fontes)
+```
+
+O achado fica **mais forte** remedido, não mais fraco: a fabricada empata com a
+pandemia e ganha da guerra, com 0,20 de confiabilidade contra 0,95.
+
+O defeito não é o peso de 0,15. É a forma da média. Dos sete componentes, **cinco
+são declarados pela própria notícia**: quem a escreve escolhe o tipo de evento
+(materialidade 0,25 e persistência 0,10), cita um ticker da carteira (relação
+0,20), publica agora (novidade 0,10) e fala do que quiser (exposição 0,10). São
+**0,75 do peso sob controle de quem quer ser lido**, contra 0,25 de
+confiabilidade e confirmação — os únicos dois que ele não controla. Aumentar
+0,15 para 0,25 não resolveria; 0,25 continua não segurando 0,75.
+
+É a mesma forma de defeito já registrada no motor de preços, onde um ativo
+marcava "Alta" com preço de 2015 porque os demais critérios compensavam a falta
+de preço vivo (`memoria: media-ponderada-compensa-defeito-eliminatorio`).
+
+**Evidência externa vira teto, não parcela.** A nota é calculada como sempre e
+depois limitada por `TETO_BASE + (100 - TETO_BASE) * evidência`, com
+`TETO_BASE = 40`. Duas âncoras defensáveis: evidência 1,00 → teto 100 (não
+limita); evidência 0,67 → teto 80, exatamente o mínimo da faixa de revisão
+estratégica. Como o piso de confiabilidade da classe desconhecida é 0,20,
+**0,67 é inalcançável por veículo desconhecido** — e a faixa de revisão fica
+fechada para quem não tem corroboração externa, escreva ele o que escrever.
+
+O teto é aplicado **antes** da faixa: rebaixar a nota e classificar pela antiga
+devolveria o defeito por outro caminho, já que é a faixa que os portões e a
+ordenação leem. A nota bruta não some — fica em `Relevancia.nota_bruta`, o teto
+em `teto_evidencia`, e o rebaixamento sai escrito em `limitacoes`, que já é
+persistido em `noticias_avaliacoes` (sem migration). Convenção não pode apagar o
+observado.
+
+Depois:
+
+```
+fabricada  54,4  informativa   (bruta 77,8, teto 54,4)
+pandemia   78,3  observacao    (nao tocada)
+guerra     73,1  observacao    (nao tocada)
+```
+
+**O preço, declarado.** Teto que só morde o atacante seria bom demais para ser
+verdade. Ele morde por falta de corroboração, e notícia legítima de fonte única
+tem pouca corroboração:
+
+| caso | antes | depois |
+|---|---|---|
+| CVM, fonte primária | 92,5 | 92,5 |
+| Reuters, 3 fontes | 89,7 | 89,7 |
+| InfoMoney, 3 fontes | 87,2 | 87,2 |
+| **Reuters, fonte única** | 83,1 | **79,6 — perde a faixa de revisão** |
+| InfoMoney, fonte única | 80,6 | 74,2 |
+| G1, fonte única | 81,7 | 68,8 |
+| Seeking Alpha, 3 fontes | 82,5 | 70,6 |
+| desconhecido, 3 fontes | 81,7 | 68,8 |
+
+A linha em negrito é o falso positivo real: uma matéria verdadeira da Reuters,
+ainda não replicada, sai da faixa de revisão. É o custo aceito — e é reversível
+por dado, não por opinião: assim que um segundo veículo publica, ela volta.
+
+**Sensacionalismo não é detectado, e a ausência é deliberada.** Classificar
+vocabulário é uma corrida contra quem escolhe as palavras. O teto não depende
+das palavras dele.
+
+**Versão de metodologia.** A escala mudou, então `VERSAO_METODOLOGIA` foi de
+`1.0.0` para `1.1.0`. Isso **esvazia a tela** até existir safra nova
+(`ler_recentes` faz `JOIN` pela versão) — visível de propósito, mas ainda assim
+uma tela vazia (`memoria: versao-de-metodologia-sem-safra`). Quem fecha a
+distância é `scripts/reavaliar_acervo.py`, que reconstrói a camada de avaliação
+a partir do fato já observado: **não re-coleta** (o fato não muda e a cota é
+finita) e **não re-agrupa eventos** (re-agrupar sobre a janela sobrevivente
+mediria a janela, não o evento — `memoria: foto-truncada-vira-evidencia`).
+
+Duas armadilhas encontradas ao construí-lo, ambas medidas:
+
+1. *Reavaliar com o relógio de hoje.* A primeira execução acusou "48 de 48 notas
+   mudaram" com o teto sem encostar em nenhuma: a referência era `now`, então
+   `_novidade` reenvelhecia cada matéria pela idade real. Reavaliar é trocar a
+   régua sobre a **mesma foto** — a referência passou a ser o `coletado_em` do
+   próprio item.
+2. *Atribuição da mudança.* Corrigida a referência, as 48 continuaram se
+   movendo — e não pelo teto: as linhas gravadas em 1.0.0 têm `exposicao: None`
+   (cobertura 0,90) e a reavaliação roda com perfil real (30 ativos), então
+   `exposicao` passa a ser medida, a cobertura sobe para 1,00 e a nota
+   renormalizada cai. Isso é **o A-142 chegando, não o A-146**. O relatório do
+   script separa as duas causas; sem separar, a correção levaria crédito por
+   efeito alheio.
+
+Estado medido do acervo local (48 itens): `notas que mudam: 48 (menores que
+antes: 48; limitadas pelo teto de evidencia: 0)`. **Nenhum item do acervo atual
+é limitado pelo teto** — os domínios desconhecidos que lá estão já tiravam nota
+abaixo do teto deles. O teto é preventivo aqui, e dizer o contrário seria
+inflar o resultado.
+
+**Onde a correção chega, e onde ela não chega.** O efeito chega à produção: a
+nota rebaixada entra na agregação por símbolo e muda o `valor` de
+`noticias_vitrine`. A **justificativa** não chega — a vitrine carrega três itens
+por ativo com título, veículo, URL e data, e nada mais, por aritmética de
+Supabase (`core/noticias/vitrine.py`). O rebaixamento fica auditável em
+`noticias_avaliacoes.limitacoes`, no armazém local, de onde o job roda. É a
+mesma fronteira já declarada para a trilha do Item 25.
+
+**Uma guarda antiga virou inalcançável, e isso importa.** A suíte completa
+acusou uma falha: `test_fonte_unica_sem_confirmacao_nao_abre_revisao` exigia
+`nota >= 80` como pré-condição, "para o teste significar alguma coisa". Com o
+teto, nota ≥ 80 de fonte única é estruturalmente impossível — a guarda passou a
+só poder dar `False`, que é a forma de defeito de `memoria:
+gate-que-so-dava-false`. Baixá-la para 79 teria escondido isso. Ela passou a
+cobrar `relevancia.nota_bruta >= 80`, que preserva a intenção original ("este
+caso seria candidato se o teto não existisse") — é exatamente para isto que a
+nota bruta foi guardada. A alegação central do teste sobrevive intacta: o
+portão de confirmação continua sendo o único reprovado, e agora a defesa é
+dupla.
+
+Testes: `tests/test_noticias_teto_evidencia.py` (13 casos), incluindo o par
+fabricada-vs-pandemia, o pior caso do atacante (evento mais material da
+taxonomia + ticker da carteira + publicado agora) e a checagem cruzada de que o
+piso da classe desconhecida em `fontes.py` fica abaixo da âncora de 0,67 — um
+acoplamento entre dois módulos que ninguém releria junto.
 
 ### A-147 — a validação da LLM não barra instrução embutida (médio) — CORRIGIDO
 
@@ -407,11 +535,19 @@ evidências — os harnesses vivem no scratchpad da sessão.
    do *veículo* entrava em `entidades.paises` (procedência tratada como
    entidade do fato) e a notícia macro não tinha chave de agrupamento nenhuma.
    Ver `tests/test_noticias_evento_macro_sem_ticker.py`.
-6. ~~**A-147**~~ — FEITO em 05/09/2026. Quarto portão em `llm.validar`
+6. ~~**A-146**~~ — FEITO em 05/09/2026. A evidência externa virou **teto**, não
+   parcela: os 0,75 de peso que o autor da notícia controla não compensam mais
+   os 0,25 que ele não controla. A faixa de revisão estratégica ficou
+   inalcançável sem corroboração externa. Preço declarado: uma matéria
+   verdadeira de fonte única perde a faixa de revisão até um segundo veículo
+   publicar. `VERSAO_METODOLOGIA` subiu para `1.1.0` e
+   `scripts/reavaliar_acervo.py` reconstrói a safra sem re-coletar.
+
+7. ~~**A-147**~~ — FEITO em 05/09/2026. Quarto portão em `llm.validar`
    (`instrucoes_ecoadas`): instrução reconhecida **na própria resposta**
    reprova e cai no texto determinístico do backend. A metade do `100` já
    estava fechada por `_cem_e_sempre_fator`.
-7. ~~**Item 25**~~ — FEITO em 05/09/2026. A decisão sobre **notícia** já era
+8. ~~**Item 25**~~ — FEITO em 05/09/2026. A decisão sobre **notícia** já era
    persistida (`noticias_avaliacoes.acao`/`.portoes`, `3176a53`); a decisão
    sobre **nível** não era. `core/eventos_extremos/trilha.py` grava o veredito
    inteiro — nível bruto, nível final, teto aplicado, severidade, confiança,
@@ -427,7 +563,7 @@ evidências — os harnesses vivem no scratchpad da sessão.
    **Limitação declarada:** a trilha mora no armazém local, então a produção
    continua vendo apenas `estado.modo`. A justificativa é consultável de onde o
    job roda, não da Streamlit Cloud.
-8. ~~**Prompt 2** — agendador; hoje a periodicidade real é zero.~~
+9. ~~**Prompt 2** — agendador; hoje a periodicidade real é zero.~~
    **CORRIGIDO em 05/09/2026, com uma ressalva que não é minha para fechar.**
    O agendador existia (`noticias.yml`, cron de 30 min) e não teria funcionado:
    o runner não alcança o acervo local. Foram adicionados `saude.checar_acervo`,

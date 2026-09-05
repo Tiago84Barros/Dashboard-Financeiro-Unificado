@@ -181,8 +181,12 @@ def para_noticia(item: ItemBruto, provedor: str, *,
     )
 
 
-def _exposicao(noticia: Noticia, perfil: Perfil) -> float | None:
+def exposicao_de_carteira(noticia: Noticia, perfil: Perfil) -> float | None:
     """Fração da carteira exposta ao que a notícia toca.
+
+    Pública -- e não ``_exposicao`` como nasceu -- porque a reavaliação do
+    acervo precisa da mesma conta. Duas implementações da mesma fração seriam
+    duas notas para a mesma notícia conforme quem a calculou.
 
     ``None`` sem carteira cadastrada. Devolver ``0.0`` faria toda notícia
     perder pontos por uma carteira que o usuário nunca informou.
@@ -261,7 +265,7 @@ def avaliar_evento(evento: ev_mod.Evento, *, agora: datetime | None = None,
             confirmado_por_primaria=evento.confirmado_por_primaria,
             primeiro_em=evento.primeiro_em,
             tickers_alvo=perfil.tickers,
-            exposicao_carteira=_exposicao(noticia, perfil),
+            exposicao_carteira=exposicao_de_carteira(noticia, perfil),
         )
         impacto = imp_mod.estimar(
             tipo_evento=noticia.tipo_evento,
