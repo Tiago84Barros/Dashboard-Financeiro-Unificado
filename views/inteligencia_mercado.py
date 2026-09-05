@@ -163,7 +163,10 @@ def carregar_acervo(limite: int = 50):
     except Exception as exc:  # noqa: BLE001
         return (), None, f"acervo indisponível ({type(exc).__name__})"
 
-    linhas = ler_recentes(limite=limite)
+    try:
+        linhas = ler_recentes(limite=limite)
+    except Exception as exc:  # noqa: BLE001 - falha de leitura não é acervo vazio
+        return (), None, f"o acervo não pôde ser lido: {exc}"
     if not linhas:
         return (), None, ""
     itens = [P.item_de_linha(linha) for linha in linhas]

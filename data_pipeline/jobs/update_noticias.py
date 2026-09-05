@@ -276,6 +276,14 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
         result["status"] = "partial_success"
         return _encerrar(cad.STATUS_DEGRADADO)
 
+    if not gravacao.get("gravado", False):
+        # Coletar e não gravar tem de doer. O acervo mora no armazém local, e
+        # sem ele configurado o job coletava, descartava tudo e reportava
+        # sucesso com zero linhas -- indistinguível de "não havia notícia".
+        erros.append("coleta não persistida: "
+                     f"{gravacao.get('motivo', 'destino não configurado')}")
+        result["status"] = "partial_success"
+
     result["records_inserted"] = gravacao.get("itens", 0)
     result["records_updated"] = gravacao.get("avaliacoes", 0)
 

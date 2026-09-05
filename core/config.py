@@ -63,6 +63,10 @@ class Settings:
     # ── Dados macro internacionais (todos opt-in; segredo nunca chega à UI) ──
     # Banco exclusivo do Docker local. Sem fallback ao Supabase por desenho.
     MACRO_LOCAL_DB_URL: str = _get_secret("MACRO_LOCAL_DB_URL")
+    # Acervo de noticias: mora no armazem local por tamanho, nao por gosto.
+    # ~11 mil itens por janela de 30 dias a ~2 KB dao ~22 MB/mes acumulando,
+    # contra 71 MB de folga no Supabase. Para a producao vai a vitrine.
+    NOTICIAS_LOCAL_DB_URL: str = _get_secret("NOTICIAS_LOCAL_DB_URL")
     FRED_API_KEY: str = _get_secret("FRED_API_KEY")
     TRADING_ECONOMICS_API_KEY: str = _get_secret("TRADING_ECONOMICS_API_KEY")
     MACRO_FRED_ENABLED: str = _get_secret("MACRO_FRED_ENABLED", "false")
