@@ -276,6 +276,14 @@ def _normalizar_precos(precos: pd.DataFrame) -> pd.DataFrame:
     idx = pd.to_datetime(base.index, errors="coerce", utc=True)
     base.index = idx.tz_convert(None)
     base = base.loc[~base.index.isna()].sort_index().groupby(level=0).last()
+    # A conversão UTC acima remove o ``freq`` do DatetimeIndex. Recuperá-lo
+    # quando a série é regularmente mensal mantém a semântica temporal dos
+    # retornos e evita que consumidores confundam uma janela mensal com datas
+    # irregulares. Para índices irregulares, deixamos ``freq`` ausente.
+    if len(base.index) >= 3:
+        inferred = pd.infer_freq(base.index)
+        if inferred:
+            base.index = pd.DatetimeIndex(base.index, freq=inferred)
     base.columns = [str(c).strip().upper() for c in base.columns]
     numerico = base.apply(pd.to_numeric, errors="coerce")
     if numerico.empty:
