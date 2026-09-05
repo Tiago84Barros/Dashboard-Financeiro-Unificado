@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from math import isfinite
 from statistics import mean, stdev
 from typing import Sequence
 
 from core.macro_data.models import MacroObservation
+
+# Tolerância desde o período de referência (inclui atraso usual de divulgação).
+MAX_REFERENCE_AGE_DAYS = {
+    "intraday": 3, "daily": 10, "weekly": 21, "monthly": 100,
+    "quarterly": 220, "annual": 800,
+}
 
 
 @dataclass(frozen=True)
@@ -30,7 +37,24 @@ def evaluate_observation(
     importance: float = 0.5,
     surprise: float | None = None,
     z_window: int = 24,
+    as_of: datetime | None = None,
+    frequency: str | None = None,
 ) -> MacroSignal:
+    # Escolhe a última versão de cada período ANTES de contar a amostra.
+    distinct = {}
+    for obs in sorted(observations, key=lambda o: (
+        o.reference_period, o.vintage_date or o.reference_period, o.retrieved_at
+    )):
+        distinct[obs.reference_period] = obs
+    observations = [distinct[key] for key in sorted(distinct)]
+    freshness = 1.0
+    if as_of is not None and observations:
+        max_age = MAX_REFERENCE_AGE_DAYS.get(str(frequency))
+        age = (as_of.date() - observations[-1].reference_period).days
+        if max_age is None or age < 0 or age > max_age:
+            return MacroSignal("unknown", 0, 0, 0, importance * 100, 0,
+                               "informativo", {}, ("série vencida ou frequência sem política de frescor",))
+        freshness = max(0.0, 1.0 - age / max_age)
     values = [
         float(o.value)
         for o in observations
@@ -55,7 +79,6 @@ def evaluate_observation(
     zscore = (latest - mean(window)) / sigma if sigma else 0.0
     magnitude = min(abs(zscore) / 3, 1.0)
     surprise_score = min(abs(surprise or 0.0) / 3, 1.0)
-    freshness = 1.0  # o repositório aplica a idade real na consulta contextual.
     impact = min(
         100.0, 100 * (0.55 * magnitude + 0.25 * surprise_score + 0.20 * importance)
     )

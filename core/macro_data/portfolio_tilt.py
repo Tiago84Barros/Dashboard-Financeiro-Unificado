@@ -20,6 +20,27 @@ class MacroTiltConfig:
     max_turnover: float = 0.10
 
 
+def bound_macro_weights(base: pd.Series, proposed: pd.Series,
+                        config: MacroTiltConfig = MacroTiltConfig()) -> pd.Series:
+    """Segmento convexo entre duas carteiras factíveis preserva seus tetos lineares.
+
+    Limita 0,5*sum(abs(delta)) e abs(delta_i)/base_i após TODAS as projeções.
+    Uma posição com peso-base zero não pode ser criada pelo overlay macro.
+    """
+    if not base.index.equals(proposed.index):
+        raise ValueError("pesos macro desalinhados")
+    for weights in (base, proposed):
+        if not np.isfinite(weights).all() or (weights < 0).any() or not np.isclose(weights.sum(), 1):
+            raise ValueError("pesos inválidos para limite macro")
+    if config.max_relative_weight_tilt < 0 or config.max_turnover < 0:
+        raise ValueError("limites macro negativos")
+    delta = proposed - base
+    ratios = (base * config.max_relative_weight_tilt / delta.abs()).where(delta.abs() > 1e-14, 1)
+    turnover = float(.5 * delta.abs().sum())
+    alpha = min(1.0, float(ratios.min()), config.max_turnover / turnover if turnover else 1.0)
+    return base + max(alpha, 0.0) * delta
+
+
 def apply_macro_scores(
     frame: pd.DataFrame,
     impacts: Mapping[str, float],
@@ -36,8 +57,9 @@ def apply_macro_scores(
         raise ValueError("modo macro inválido")
     result = frame.copy()
     raw = result[symbol_column].astype(str).map(impacts)
+    raw = pd.to_numeric(raw, errors="coerce").replace([np.inf, -np.inf], np.nan)
     result["macro_covered"] = raw.notna()
-    result["macro_impact"] = pd.to_numeric(raw, errors="coerce")
+    result["macro_impact"] = raw
     capped = result["macro_impact"].clip(-100, 100)
     scale = 0.0 if mode == "fundamental" else (1.0 if mode == "moderate" else 1.5)
     adjustment = (capped / 100 * config.max_score_adjustment * scale).clip(
@@ -70,7 +92,7 @@ def apply_macro_tilt(
         raise ValueError("modo macro inválido")
     result = holdings.copy()
     weights = pd.to_numeric(result["weight"], errors="coerce")
-    if weights.isna().any() or (weights < 0).any() or float(weights.sum()) <= 0:
+    if not np.isfinite(weights).all() or (weights < 0).any() or float(weights.sum()) <= 0:
         raise ValueError("pesos inválidos para tilt macro")
     weights = weights / float(weights.sum())
     result = apply_macro_scores(
@@ -86,7 +108,7 @@ def apply_macro_tilt(
     if turnover > config.max_turnover and turnover > 0:
         proposed = weights + (proposed - weights) * (config.max_turnover / turnover)
     result["weight_before_macro"] = weights
-    result["weight"] = proposed / float(proposed.sum())
+    result["weight"] = bound_macro_weights(weights, proposed / float(proposed.sum()), config)
     result.attrs["macro_mode"] = mode
     result.attrs["macro_coverage"] = float(result["macro_covered"].mean())
     result.attrs["macro_turnover"] = float(0.5 * np.abs(result["weight"] - weights).sum())
