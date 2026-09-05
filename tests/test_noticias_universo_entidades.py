@@ -343,7 +343,18 @@ class _EcFalso:
             return False
 
 
-def _rodar_ate_a_coleta(job, ent_uni, coletar):
+def _rodar_ate_a_coleta(job, ent_uni, coletar, perfil_mod=None):
+    """Harness compartilhado: ``tests/test_noticias_perfil_carteira.py`` o
+    importa para o teste espelhado do perfil. ``perfil_mod`` é opcional aqui
+    porque este arquivo mede o universo; quem mede o perfil injeta o seu."""
+    from core.noticias import portoes as _portoes
+
+    if perfil_mod is None:
+        class perfil_mod:  # noqa: N801 - dublê mínimo
+            @staticmethod
+            def carregar():
+                return _portoes.PERFIL_VAZIO, ()
+
     class _Uni:
         LIMITE_TICKERS = 20
 
@@ -354,7 +365,8 @@ def _rodar_ate_a_coleta(job, ent_uni, coletar):
     return job._executar(
         job._resultado_base(), _CicloFalso(), object(), (), engine=None,
         settings=_SettingsFalso(), cad=_CadFalso(), ec=_EcFalso(),
-        uni=_Uni, ent_uni=ent_uni, gravar=lambda r: {"gravado": True},
+        uni=_Uni, ent_uni=ent_uni, perfil_mod=perfil_mod,
+        gravar=lambda r: {"gravado": True},
         Cache=lambda **kw: None, coletar=coletar,
         RegistroColeta=lambda **kw: None, Consulta=_ConsultaFalsa,
         construir=lambda **kw: [object()], Orcamento=_OrcamentoFalso,

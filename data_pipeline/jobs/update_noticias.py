@@ -86,6 +86,7 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
     from core.noticias import cadencia as cad
     from core.noticias import estado_coleta as ec
     from core.noticias import universo_coleta as uni
+    from core.noticias import perfil_carteira as perfil_mod
     from core.noticias import universo_entidades as ent_uni
     from core.noticias.armazenamento import gravar
     from core.noticias.cache import Cache
@@ -124,7 +125,7 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
             return result
         return _executar(result, ciclo, ritmo, tickers, engine=engine,
                          settings=settings, cad=cad, ec=ec, uni=uni,
-                         ent_uni=ent_uni,
+                         ent_uni=ent_uni, perfil_mod=perfil_mod,
                          gravar=gravar, Cache=Cache, coletar=coletar,
                          RegistroColeta=RegistroColeta, Consulta=Consulta,
                          construir=construir, Orcamento=Orcamento,
@@ -132,8 +133,8 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
 
 
 def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
-              ent_uni, gravar, Cache, coletar, RegistroColeta, Consulta,
-              construir, Orcamento, da_coleta) -> dict:
+              ent_uni, perfil_mod, gravar, Cache, coletar, RegistroColeta,
+              Consulta, construir, Orcamento, da_coleta) -> dict:
     """O ciclo em si, já sob o lock. Sempre grava o ciclo antes de retornar."""
     erros: list[str] = []
     limitacoes: list[str] = []
@@ -207,6 +208,16 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     universo_entidades, lim_entidades = ent_uni.carregar(engine=engine)
     limitacoes.extend(lim_entidades)
 
+    # O perfil tem o mesmo defeito de origem que o universo tinha: existia,
+    # tinha teste, e nunca chegava aqui. Sem ele, o sexto portao devolve None
+    # ("sem carteira cadastrada") em toda coleta -- e None nao aprova, entao a
+    # acao ``sugerir_revisao`` era inalcancavel no pipeline. Alem da trava,
+    # ``perfil.tickers`` entra em ``relevancia`` como ``tickers_alvo``: sem
+    # perfil, noticia sobre ativo que o usuario tem pontuava igual a noticia
+    # sobre ativo que ele nunca teve.
+    perfil_carteira, lim_perfil = perfil_mod.carregar()
+    limitacoes.extend(lim_perfil)
+
     consulta = Consulta(tickers=tuple(tickers)[:uni.LIMITE_TICKERS],
                         limite=settings.noticias_limite)
     # ``persistir=False``: o carimbo compartilhado passou a ser o do banco, e
@@ -220,7 +231,8 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     resultado = None
     for tentativa in range(1, tentativas + 1):
         resultado = coletar(consulta, provedores, registro=registro,
-                            universo=universo_entidades)
+                            universo=universo_entidades,
+                            perfil=perfil_carteira)
         if not resultado.sem_fonte:
             break
         if tentativa < tentativas:

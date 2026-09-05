@@ -138,6 +138,8 @@ def coletar_noticias(tickers: tuple[str, ...], estado: hom.Estado | None = None)
         return None, f"a coleta está desligada ({estado.motivo(hom.COLETA)})"
     try:
         from core.noticias import coleta
+        from core.noticias import perfil_carteira as perfil_mod
+        from core.noticias import universo_entidades as ent_uni
         from core.noticias.provedores import registro
         from core.noticias.provedores.base import Consulta
 
@@ -145,7 +147,15 @@ def coletar_noticias(tickers: tuple[str, ...], estado: hom.Estado | None = None)
         if not provedores:
             return None, "nenhum provedor de notícias configurado"
         consulta = Consulta(tickers=tuple(tickers)[:20], limite=50)
-        return coleta.coletar(consulta, provedores), ""
+        # O botão de atualização manual é a segunda porta para a mesma coleta.
+        # Enquanto ela passava sem ``universo`` e sem ``perfil``, a mesma
+        # notícia era resolvida e pontuada de um jeito pelo coletor automático
+        # e de outro por quem clicasse aqui -- duas verdades sobre o mesmo
+        # item, e a da tela era a degradada.
+        universo, _ = ent_uni.carregar()
+        perfil, _ = perfil_mod.carregar()
+        return coleta.coletar(consulta, provedores, universo=universo,
+                              perfil=perfil), ""
     except Exception as exc:  # noqa: BLE001
         logger.exception("coleta de notícias falhou")
         return None, f"a coleta falhou: {type(exc).__name__}"
