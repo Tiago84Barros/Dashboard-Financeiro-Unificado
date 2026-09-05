@@ -27,7 +27,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 
 from core.database import get_engine
+from core.destino_local import exigir_local
 from core.noticias.coleta import ResultadoColeta
+from core.noticias.destino import O_QUE, engine_acervo
 from core.noticias.modelos import NoticiaAvaliada
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,15 @@ logger = logging.getLogger(__name__)
 #: as avaliações antigas não são comparáveis com as novas -- e por isso elas
 #: convivem, em vez de uma sobrescrever a outra.
 VERSAO_METODOLOGIA = "1.0.0"
+
+
+class AcervoIlegivel(RuntimeError):
+    """A leitura do acervo falhou -- o que não é o mesmo que acervo vazio.
+
+    Devolver tupla vazia aqui publicaria "nada relevante aconteceu" toda vez
+    que o banco caísse ou a tabela faltasse. Quem chama tem de poder dizer na
+    tela qual dos dois é.
+    """
 
 DDL_SQL = [
     """
@@ -249,12 +260,19 @@ def gravar(resultado: ResultadoColeta, *, engine=None,
 
     Idempotente: rodar duas vezes a mesma coleta não duplica linha nenhuma --
     a chave é o ``id_dedup``, que sai da URL canônica.
+
+    **O destino é o armazém local, e não é preferência: é aritmética.** São
+    ~22 MB por janela de 30 dias, acumulando, contra 71 MB de folga no
+    Supabase. Por isso ``exigir_local`` roda antes de qualquer ``INSERT`` --
+    um ``engine=`` distraído não pode ser suficiente para encher o banco de que
+    a produção depende. Para a produção vai a vitrine, não o acervo.
     """
-    motor = engine if engine is not None else get_engine()
+    motor = engine if engine is not None else engine_acervo()
     if motor is None:
-        logger.info("Sem DATABASE_URL: coleta mantida apenas em memoria")
+        logger.info("Sem acervo local configurado: coleta mantida em memoria")
         return {"gravado": False, "motivo": "sem banco configurado",
                 "itens": 0, "avaliacoes": 0}
+    exigir_local(motor, o_que=O_QUE)
 
     # Mapa notícia -> evento, para a linha do fato registrar a que evento ela
     # pertence sem que o agrupamento precise ser refeito na leitura.
@@ -310,17 +328,21 @@ def ler_recentes(limite: int = 50, *, dias: float = 7.0, engine=None,
     de entrar sem nota. Subir ``VERSAO_METODOLOGIA`` sem reavaliar o acervo
     esvazia a tela, e isso é visível -- o contrário seria silencioso.
     """
-    motor = engine if engine is not None else get_engine()
+    motor = engine if engine is not None else engine_acervo() or get_engine()
     if motor is None:
         return ()
     corte = datetime.now(timezone.utc) - timedelta(days=float(dias))
     try:
-        with motor.begin() as conn:
-            garantir_schema(conn)
+        # Sem ``garantir_schema``: ler não cria tabela. Criar no caminho de
+        # leitura fazia duas coisas erradas de uma vez -- gastava espaço do
+        # Supabase numa consulta, e transformava "as tabelas não existem" em
+        # "não há notícias", que é o mesmo texto de um acervo legitimamente
+        # vazio.
+        with motor.connect() as conn:
             linhas = conn.execute(_SELECT_RECENTES, {
                 "versao": versao, "corte": corte,
                 "limite": int(limite)}).mappings().all()
-    except Exception as exc:  # noqa: BLE001 - tela não pode quebrar por leitura
+    except Exception as exc:  # noqa: BLE001 - vira falha declarada, não vazio
         logger.warning("Acervo de noticias ilegivel: %s", exc)
-        return ()
+        raise AcervoIlegivel(str(exc).splitlines()[0].strip()) from exc
     return tuple(dict(linha) for linha in linhas)
