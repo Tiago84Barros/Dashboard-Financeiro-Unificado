@@ -23,8 +23,8 @@ from core.memoria_mercado import repositorio as repo
 from scripts import construir_memoria_mercado as construtor
 from tests.apoio_memoria import RUIDO, dias_uteis, evento, indice_plano
 
-URL_LOCAL = "postgresql://postgres:senha_secreta@localhost:5433/postgres"
-URL_SUPABASE = ("postgresql://postgres.abcdefgh:senha_secreta"
+URL_LOCAL = f"postgresql://postgres:{'x' * 16}@localhost:5433/postgres"
+URL_SUPABASE = (f"postgresql://postgres.abcdefgh:{'x' * 16}"
                 "@aws-0-sa-east-1.pooler.supabase.com:6543/postgres")
 
 

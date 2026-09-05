@@ -195,10 +195,11 @@ def test_registro_sem_acao_e_recusado_na_origem():
 
 def test_segredo_nao_chega_ao_banco_pela_trilha():
     """A trilha é o lugar mais fácil de esquecer que existe."""
+    senha_teste = "x" * 16
     linha = registro(
-        motivo="falha em postgresql://dfu:S3nh4Secreta@localhost:5433/wh",
+        motivo=f"falha em postgresql://dfu:{senha_teste}@localhost:5433/wh",
         explicacao_llm="contato: fulano@exemplo.com").para_linha()
-    assert "S3nh4Secreta" not in linha["motivo"]
+    assert senha_teste not in linha["motivo"]
     assert "[oculto:url_com_senha]" in linha["motivo"]
     assert "localhost:5433" in linha["motivo"]          # diagnóstico sobrevive
     assert "fulano@exemplo.com" not in linha["explicacao_llm"]
