@@ -376,7 +376,7 @@ def _rodar_ate_a_coleta(job, ent_uni, coletar, perfil_mod=None, bases_mod=None):
         Cache=lambda **kw: None, coletar=coletar,
         RegistroColeta=lambda **kw: None, Consulta=_ConsultaFalsa,
         construir=lambda **kw: [object()], Orcamento=_OrcamentoFalso,
-        da_coleta=None)
+        da_coleta=None, trilha=None)
 
 
 def test_o_job_entrega_o_universo_a_coleta():

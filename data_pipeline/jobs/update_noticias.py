@@ -83,6 +83,7 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
     """
     from core.config import settings
     from core.eventos_extremos import da_coleta
+    from core.eventos_extremos import trilha
     from core.noticias import cadencia as cad
     from core.noticias import estado_coleta as ec
     from core.noticias import universo_coleta as uni
@@ -131,13 +132,13 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
                          gravar=gravar, Cache=Cache, coletar=coletar,
                          RegistroColeta=RegistroColeta, Consulta=Consulta,
                          construir=construir, Orcamento=Orcamento,
-                         da_coleta=da_coleta)
+                         da_coleta=da_coleta, trilha=trilha)
 
 
 def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
               ent_uni, perfil_mod, bases_mod, gravar, Cache, coletar,
               RegistroColeta,
-              Consulta, construir, Orcamento, da_coleta) -> dict:
+              Consulta, construir, Orcamento, da_coleta, trilha) -> dict:
     """O ciclo em si, já sob o lock. Sempre grava o ciclo antes de retornar."""
     erros: list[str] = []
     limitacoes: list[str] = []
@@ -265,6 +266,21 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     except Exception as exc:  # noqa: BLE001 - a coleta não cai por causa disto
         logger.warning("Nivel da coleta nao apurado: %s", exc)
         veredito = None
+    # A justificativa da transicao e persistida **antes** de virar cadencia.
+    # ``definir_modo`` grava so o numero; sem esta linha, "por que estamos no
+    # Nivel 3?" deixa de ter resposta assim que o processo morre -- decisao
+    # automatica sem trilha e auditavel so enquanto o job esta vivo.
+    #
+    # Vai para o armazem local (``engine=`` omitido de proposito: ``engine``
+    # aqui e o do Supabase). Nunca levanta: uma trilha indisponivel nao pode
+    # derrubar a coleta que ela documenta -- mas tambem nao cala, e o motivo
+    # entra nas limitacoes do ciclo.
+    reg_trilha = trilha.registrar(veredito, ciclo_em=ciclo.iniciado_em)
+    if veredito is not None and not reg_trilha.get("gravado"):
+        limitacoes.append(
+            f"trilha de auditoria da transicao nao persistida: "
+            f"{reg_trilha.get('motivo')}")
+
     nivel_cadencia = da_coleta.nivel_para_cadencia(veredito)
     if nivel_cadencia is not None:
         nivel_apurado.append(nivel_cadencia)

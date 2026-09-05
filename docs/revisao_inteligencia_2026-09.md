@@ -293,7 +293,7 @@ calibrada para o Prompt 3 medir** enquanto a ponte não for ligada.
 | 22 | nada executado automaticamente | SIM — 12/12 |
 | 23 | LLM apenas explica | SIM — número inventado, alteração de score e eco de instrução barrados desde 05/09 (A-147) |
 | 24 | frontend mostra as evidências | SIM |
-| 25 | alterações auditáveis | PARCIAL — `RegraAplicada` e versões existem; **nada é persistido** |
+| 25 | alterações auditáveis | SIM — notícia em `noticias_avaliacoes.acao`/`.portoes`; transição de nível em `eventos_extremos_trilha` desde 05/09 (armazém local) |
 
 ---
 
@@ -364,6 +364,20 @@ evidências — os harnesses vivem no scratchpad da sessão.
    (`instrucoes_ecoadas`): instrução reconhecida **na própria resposta**
    reprova e cai no texto determinístico do backend. A metade do `100` já
    estava fechada por `_cem_e_sempre_fator`.
-7. **Item 25** — trilha de auditoria persistida (Prompt 4) — parcialmente
-   atendido pelas colunas `acao`/`portoes` de `3176a53`.
+7. ~~**Item 25**~~ — FEITO em 05/09/2026. A decisão sobre **notícia** já era
+   persistida (`noticias_avaliacoes.acao`/`.portoes`, `3176a53`); a decisão
+   sobre **nível** não era. `core/eventos_extremos/trilha.py` grava o veredito
+   inteiro — nível bruto, nível final, teto aplicado, severidade, confiança,
+   cobertura por classe de evidência e uma linha por `RegraAplicada`, com
+   `chave`/`efeito`/`motivo`/`de`/`para` em campos, não em frase.
+
+   Verificado contra o Postgres local em 05/09/2026: o DDL roda, o índice único
+   parcial deduplica o mesmo ciclo (duas chamadas → uma linha), e a linha
+   gravada carrega `nivel_bruto=4` barrado para `nivel=2` pela regra
+   `crise_localizada_nao_e_sistemica` — que é exatamente o "o 4 foi avaliado e
+   barrado" que a trilha existe para poder responder.
+
+   **Limitação declarada:** a trilha mora no armazém local, então a produção
+   continua vendo apenas `estado.modo`. A justificativa é consultável de onde o
+   job roda, não da Streamlit Cloud.
 8. **Prompt 2** — agendador; hoje a periodicidade real é zero.
