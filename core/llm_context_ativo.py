@@ -44,6 +44,29 @@ def _series_block(dados, campos: list[tuple[str, str]], titulo: str) -> str:
     return "\n".join(linhas)
 
 
+def _local_macro_block(asset_class: str, symbol: str, sector: str) -> str:
+    """Recorte mínimo por ativo; falha local nunca bloqueia a análise-base."""
+    if not symbol or not sector:
+        return ""
+    try:
+        from core.macro_data.database import get_local_macro_engine
+        from core.macro_data.portfolio_context import (
+            format_portfolio_macro_context,
+            load_portfolio_macro_snapshot,
+        )
+
+        engine = get_local_macro_engine()
+        if engine is None:
+            return ""
+        snapshot = load_portfolio_macro_snapshot(
+            engine, asset_class=asset_class, assets={symbol: sector},
+        )
+        return format_portfolio_macro_context(snapshot)
+    except Exception:
+        logger.exception("contexto macro local de %s indisponível", symbol)
+        return ""
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # B3
 # ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +134,9 @@ def build_b3_ativo_context(
             blocos.append("\n" + macro)
     except Exception:
         logger.exception("macro indisponível")
+    local_macro = _local_macro_block("b3", tk, setor)
+    if local_macro:
+        blocos.append("\n" + local_macro)
     return _cap("\n".join(blocos))
 
 
@@ -160,6 +186,15 @@ def build_us_ativo_context(
         setor = str(row.get("sector")) if row is not None else ""
     except Exception:
         setor = ""
+    try:
+        from core.market_companies import translate_us_sector
+
+        setor_macro = translate_us_sector(
+            row.get("sector") if row is not None else "",
+            row.get("industry") if row is not None else "",
+        )
+    except Exception:
+        setor_macro = setor
     if setor and setor.lower() not in ("none", "nan", ""):
         try:
             texto = get_sector_context([setor])
@@ -183,6 +218,9 @@ def build_us_ativo_context(
                 blocos.append("\nDOSSIÊ DA EMPRESA: " + "; ".join(itens[:30]))
     except Exception:
         logger.exception("dossiê de %s indisponível", sym)
+    local_macro = _local_macro_block("us", sym, setor_macro)
+    if local_macro:
+        blocos.append("\n" + local_macro)
     return _cap("\n".join(blocos))
 
 
@@ -249,4 +287,7 @@ def build_fii_ativo_context(
                 linhas.append("  " + " | ".join(f"{c}={_fmt(r.get(c))}" for c in cols))
             if len(linhas) > 1:
                 blocos.append("\n".join(linhas))
+    local_macro = _local_macro_block("fii", tk, tipo.lower())
+    if local_macro:
+        blocos.append("\n" + local_macro)
     return _cap("\n".join(blocos))

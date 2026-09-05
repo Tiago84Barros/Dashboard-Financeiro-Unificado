@@ -117,7 +117,8 @@ def _model_from_connection(conn, owner: str, *,
         return {}
     rows = conn.execute(
         text("""
-            SELECT ticker, nome, tipo, segmento, weight, dy_12m, pvp, score
+            SELECT ticker, nome, tipo, segmento, weight, dy_12m, pvp, score,
+                   meta_json
             FROM fii_portfolio_model_items
             WHERE model_id = :mid
             ORDER BY weight DESC, score DESC, ticker
@@ -130,6 +131,18 @@ def _model_from_connection(conn, owner: str, *,
         for key in ("weight", "dy_12m", "pvp", "score"):
             item[key] = float(item[key]) if item[key] is not None else None
         item["peso"] = item.get("weight") or 0.0
+        meta = item.pop("meta_json", {}) or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except json.JSONDecodeError:
+                meta = {}
+        if isinstance(meta, dict):
+            item.update({
+                key: meta.get(key)
+                for key in ("macro_impact", "macro_score_adjustment")
+                if key in meta
+            })
         items.append(item)
     model = dict(header)
     model["items"] = items
@@ -270,7 +283,10 @@ def save_fii_portfolio_model(
                     "dy_12m": _num(item.get("dy_12m")),
                     "pvp": _num(item.get("pvp")),
                     "score": _num(item.get("score")),
-                    "meta_json": _safe_json({}, {}),
+                    "meta_json": _safe_json({
+                        "macro_impact": item.get("macro_impact"),
+                        "macro_score_adjustment": item.get("macro_score_adjustment"),
+                    }, {}),
                 },
             )
 

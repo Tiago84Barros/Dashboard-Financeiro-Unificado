@@ -165,6 +165,11 @@ def build_fii_chat_context(
         "",
         "DETALHES DOS FUNDOS:",
     ]
+    macro_snapshot = portfolio_result.get("macro_snapshot")
+    if macro_snapshot is not None:
+        from core.macro_data.portfolio_context import format_portfolio_macro_context
+
+        lines[0:0] = [format_portfolio_macro_context(macro_snapshot), ""]
     selected_set = set(selected_tickers)
     for ticker in detail_tickers:
         row = {**all_by_ticker.get(ticker, {}),

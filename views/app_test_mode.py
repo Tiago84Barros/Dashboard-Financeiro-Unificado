@@ -73,5 +73,8 @@ def render() -> None:
         {"Símbolo": f"{symbol}-B", "Status": "Parcial" if state == "partial" else "Disponível", "Cobertura": "Sintética"},
         {"Símbolo": f"{symbol}-C", "Status": "Disponível", "Cobertura": "Sintética"},
     ]
-    st.dataframe(rows, hide_index=True, width="stretch")
+    st.dataframe(
+        rows, hide_index=True, width="stretch",
+        key=f"app_test_table_{route}_{state}",
+    )
     st.caption("Período: demonstração sem data de mercado · unidade: itens · premissa: teste visual.")
