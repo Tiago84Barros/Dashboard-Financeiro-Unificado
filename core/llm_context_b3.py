@@ -545,6 +545,13 @@ def get_creation_context(model: dict, max_rejected: int = 12) -> str:
         motivos = _parse_json_field(it.get("motivos_json") or it.get("motivos"), [])
         if isinstance(motivos, list) and motivos:
             lines.append(f"  {_norm_tk(it.get('ticker',''))}: {'; '.join(str(m) for m in motivos[:3])}")
+        if it.get("macro_impact") is not None:
+            lines.append(
+                f"  {_norm_tk(it.get('ticker',''))}: impacto_macro="
+                f"{float(it['macro_impact']):+.2f}/100; peso_fundamental="
+                f"{float(it.get('peso_fundamental') or 0):.2%}; peso_contextual="
+                f"{float(it.get('peso') or it.get('weight') or 0):.2%}"
+            )
 
     # Rejeitadas/não selecionadas — universo dos setores da carteira menos as selecionadas
     rejected_done = False

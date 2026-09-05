@@ -50,6 +50,7 @@ _ROTAS: dict[str, str] = {
     "🏬 Seleção de FIIs":      "fiis",
     "🌐 Portfólio Global":    "portfolio_global",
     "🧭 Inteligência de Mercado": "inteligencia_mercado",
+    "🌍 Macro Internacional": "macro_internacional",
     "🎯 Grau de Confiança":  "confianca",
     "🚦 Homologação":         "homologacao",
     "📚 Documentação":        "documentacao",
@@ -85,7 +86,7 @@ with st.sidebar:
                          "🌎 Empresas Americanas",
                          "🏬 Seleção de FIIs",
                          "🌐 Portfólio Global",
-                         "🧭 Inteligência de Mercado"]
+                         "🧭 Inteligência de Mercado", "🌍 Macro Internacional"]
         # "Grau de Confiança" e "Homologação" tinham rota em ``_ROTAS`` e não
         # tinham entrada aqui: nasceram inalcançáveis pela sidebar, cada uma
         # no próprio commit que a criou. Motor de diagnóstico que ninguém

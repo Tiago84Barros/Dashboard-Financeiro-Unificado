@@ -48,6 +48,8 @@ from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_context_ativo import build_fii_ativo_context
 from core.llm_context_fii import build_fii_chat_context
 from core.llm_fii import chat_com_fiis
+from core.macro_data.database import get_local_macro_engine
+from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.chat_ativo import render_chat_ativo
@@ -1212,6 +1214,19 @@ def _integrated_preference_controls() -> dict:
                                   key="fii_pref_integrated_vacancy") / 100
         credit_event = s2.slider("Eventos de crédito (%)", 0.0, 10.0, 3.0, .5,
                                  key="fii_pref_integrated_credit") / 100
+        macro_mode = st.selectbox(
+            "Uso do histórico macro nos pesos",
+            ["fundamental", "moderate", "scenario"],
+            index=1,
+            format_func={
+                "fundamental": "Somente fundamentos",
+                "moderate": "Contextual moderado (recomendado)",
+                "scenario": "Cenário ampliado",
+            }.get,
+            key="fii_pref_macro_mode",
+            help=("Usa séries do PostgreSQL Docker local e sensibilidades por tipo "
+                  "de FII. Lacunas permanecem explicitamente sem cobertura."),
+        )
 
     return {
         "scenario": MacroScenario(
@@ -1232,6 +1247,7 @@ def _integrated_preference_controls() -> dict:
             require_multicategory=require_multicategory,
         ),
         "correlation_penalty": correlation_penalty,
+        "macro_mode": macro_mode,
     }
 
 
@@ -1395,6 +1411,7 @@ def _merge_portfolio_views(primary: pd.DataFrame | None,
                 merged = merged.rename(columns={column: base})
     preferred = [
         "Ticker", "Tipo", "Segmento", "Peso", "Score", "Peso v4", "Peso complementar",
+        "Ajuste macro", "Impacto macro",
         "Score v4", "Score complementar", "Confiança", "Cobertura", "DY 12m",
         "P/VP", "Liquidez/dia", "Qtd. ativos", "Vacância", "Imóveis",
         "Divers. imóveis", "Regiões", "Divers. regiões", "Qtd. papéis",
@@ -1424,6 +1441,8 @@ def _render_portfolio_table(slot, primary: pd.DataFrame | None,
         "Score v4": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.1f"),
         "Score complementar": st.column_config.ProgressColumn(
             min_value=0, max_value=100, format="%.1f"),
+        "Ajuste macro": st.column_config.NumberColumn(format="%+.1f"),
+        "Impacto macro": st.column_config.NumberColumn(format="%+.1f"),
         "Confiança": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
         "Cobertura": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
         "DY 12m": st.column_config.NumberColumn(format="percent"),
@@ -1839,6 +1858,20 @@ def _carteira_integrada(preferences: dict):
         else "unvalidated"
     )
     scored = score_fiis_by_type(eligible_rows, validation_status=validation_status)
+    macro_snapshot = None
+    local_macro_engine = get_local_macro_engine()
+    if local_macro_engine is not None:
+        try:
+            macro_snapshot = load_portfolio_macro_snapshot(
+                local_macro_engine,
+                asset_class="fii",
+                assets={
+                    str(row.get("ticker") or ""): str(row.get("tipo") or "")
+                    for row in scored
+                },
+            )
+        except (SQLAlchemyError, ValueError):
+            macro_snapshot = None
     investable_gate = evaluate_publication_gate(
         scored, expected_universe=len(eligible_rows),
         validation_status=validation_status,
@@ -1899,7 +1932,10 @@ def _carteira_integrada(preferences: dict):
                             if not candidate_correlation.empty else None),
         correlation_penalty=float(preferences["correlation_penalty"]),
         previous_weights=previous_weights,
+        macro_impacts=(macro_snapshot.impacts if macro_snapshot else {}),
+        macro_mode=str(preferences["macro_mode"]),
     )
+    result["macro_snapshot"] = macro_snapshot
     if not result.get("items"):
         st.error("Não foi possível construir uma carteira factível: " +
                  " · ".join(result.get("blockers") or []))
@@ -1914,6 +1950,26 @@ def _carteira_integrada(preferences: dict):
         blockers = list(result.get("blockers") or []) + list(investable_gate.reasons)
         st.warning("Rascunho não publicável: " + " · ".join(dict.fromkeys(blockers)))
     items = result["items"]
+    if macro_snapshot is None:
+        st.warning(
+            "Camada macro do Docker local indisponível; a carteira mantém a "
+            "metodologia estrutural e os cenários informados acima."
+        )
+    else:
+        st.info(
+            f"Macro local · corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
+            f"cobertura da seleção {result.get('macro_coverage', 0):.0%} · "
+            f"{macro_snapshot.source_count} séries. O ajuste é limitado e não é previsão."
+        )
+        from design.macro_portfolio import render_historical_macro_path
+
+        render_historical_macro_path(
+            asset_class="fii",
+            holdings=pd.DataFrame(items).rename(columns={"ticker": "symbol"}),
+            symbol_column="symbol", sector_column="tipo",
+            score_column="type_score", mode=str(result.get("macro_mode")),
+            key="fii_portfolio_macro_history",
+        )
     # "Monitoramento operacional" removido da interface. O cálculo saiu junto:
     # o resultado só alimentava aquele expander (a chave de sessão não era lida
     # por ninguém), então mantê-lo seria trabalho sem leitor. O gate de
@@ -1923,6 +1979,8 @@ def _carteira_integrada(preferences: dict):
         "Ticker": item["ticker"], "Tipo": item["tipo"],
         "Segmento": item.get("sector"), "Peso": item["weight"],
         "Score": item["type_score"], "Confiança": item["confidence"],
+        "Ajuste macro": item.get("macro_score_adjustment"),
+        "Impacto macro": item.get("macro_impact"),
         "Cobertura": item["coverage"], "DY 12m": item.get("dy_12m"),
         "P/VP": item.get("pvp"), "Liquidez/dia": item.get("liquidez_diaria"),
         "Status": item["publication_status"],
@@ -2004,7 +2062,9 @@ def _carteira_integrada(preferences: dict):
                         unsafe_allow_html=True)
     port = [{"ticker": item["ticker"], "peso": item["weight"], "tipo": item["tipo"],
              "score": item["type_score"], "dy_12m": item.get("dy_12m"),
-             "pvp": item.get("pvp"), "segmento": item.get("sector")}
+             "pvp": item.get("pvp"), "segmento": item.get("sector"),
+             "macro_impact": item.get("macro_impact"),
+             "macro_score_adjustment": item.get("macro_score_adjustment")}
             for item in items]
     st.session_state["fii_port"] = weights
     _render_portfolio_history_diagnostics(weights, returns)
@@ -2023,6 +2083,11 @@ def _carteira_integrada(preferences: dict):
                "methodology_version": METHODOLOGY_VERSION,
                "formula_version": FORMULA_VERSION,
                "regime": classify_macro_regime(scenario),
+               "macro_mode": result.get("macro_mode"),
+               "macro_as_of": (
+                   macro_snapshot.as_of.isoformat() if macro_snapshot else None
+               ),
+               "macro_coverage": result.get("macro_coverage"),
                "scenario": scenario.__dict__, "policy": result.get("policy"),
                "eligibility": eligibility.get("policy"),
                "correlation_penalty": result.get("correlation_penalty")},

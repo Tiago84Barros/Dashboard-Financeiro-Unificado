@@ -508,9 +508,14 @@ def optimize_diligence_portfolio(
     correlation_matrix: dict[str, dict[str, float]] | None = None,
     correlation_penalty: float = 0.0,
     previous_weights: dict[str, float] | None = None,
+    macro_impacts: dict[str, float] | None = None,
+    macro_mode: str = "fundamental",
 ) -> dict[str, Any]:
     """Maximiza qualidade/confiança e penaliza perdas de cenários adversos."""
     policy = policy or PortfolioPolicy()
+    macro_mode = str(macro_mode or "fundamental")
+    if macro_mode not in {"fundamental", "moderate", "scenario"}:
+        raise ValueError("modo macro inválido")
     original_bands = tactical_type_bands(scenario)
     ranked = sorted((dict(r) for r in scored_rows if _num(r.get("confidence")) > 0),
                     key=lambda r: (_num(r.get("type_score")), _num(r.get("confidence"))), reverse=True)
@@ -585,6 +590,20 @@ def optimize_diligence_portfolio(
         - .35 * adverse
         - policy.uncertainty_penalty * uncertainty
     )
+    macro_scale = {
+        "fundamental": 0.0,
+        "moderate": 0.08,
+        "scenario": 0.12,
+    }[macro_mode]
+    impact_map = {
+        str(symbol).strip().upper(): min(max(_num(value), -100.0), 100.0)
+        for symbol, value in (macro_impacts or {}).items()
+    }
+    macro_vector = np.array([
+        impact_map.get(str(row.get("ticker") or "").strip().upper(), np.nan)
+        for row in rows
+    ])
+    utility = utility + np.nan_to_num(macro_vector / 100.0, nan=0.0) * macro_scale
     correlation_risk, correlation_info = _correlation_risk_matrix(rows, correlation_matrix)
 
     constraints: list[dict] = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
@@ -684,7 +703,19 @@ def optimize_diligence_portfolio(
     # podia elevar os pesos restantes e quebrar limites aprovados pelo solver.
     weights = np.where(result.x >= 1e-8, result.x, 0.0)
     weights = weights / weights.sum()
-    items = [{**rows[i], "weight": float(weights[i])} for i in range(n) if weights[i] > 0]
+    items = [{
+        **rows[i],
+        "weight": float(weights[i]),
+        "macro_covered": bool(np.isfinite(macro_vector[i])),
+        "macro_impact": (
+            float(macro_vector[i]) if np.isfinite(macro_vector[i]) else None
+        ),
+        "macro_score_adjustment": (
+            float(np.clip(macro_vector[i] / 10.0, -10.0, 10.0))
+            * (0.0 if macro_mode == "fundamental" else 1.0)
+            if np.isfinite(macro_vector[i]) else None
+        ),
+    } for i in range(n) if weights[i] > 0]
     scenario_returns = {
         s: round(sum(item["weight"] * asset_scenario_return(item, s) for item in items), 6)
         for s in SCENARIOS
@@ -735,6 +766,11 @@ def optimize_diligence_portfolio(
         "expected_yield": round(sum(item["weight"] * (_num(item.get("dy_12m")) / (100 if _num(item.get("dy_12m")) > 1 else 1)) for item in items), 6),
         "effective_assets": round(1 / sum(item["weight"] ** 2 for item in items), 2),
         "macro_bands": bands, "band_adaptation": band_adaptation,
+        "macro_mode": macro_mode,
+        "macro_coverage": (
+            sum(bool(item["macro_covered"]) for item in items) / len(items)
+            if items else 0.0
+        ),
         "candidate_pool": candidate_pool_info,
         "turnover_penalty": policy.turnover_penalty,
         "policy": asdict(policy), "solver": str(result.message),

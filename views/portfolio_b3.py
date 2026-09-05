@@ -23,6 +23,8 @@ from core.b3_portfolio_model import (
     save_b3_portfolio_model,
 )
 from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
+from core.macro_data.database import get_local_macro_engine
+from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import card_metrica
 from design.market_companies import render_company_logo
@@ -2602,6 +2604,19 @@ def render(show_header: bool = True) -> None:
                  "pontuou melhor, mas encolhe quem carrega risco redundante.",
         )
         corr_alpha = float(corr_alpha_pct) / 100.0
+        macro_mode = st.selectbox(
+            "Uso do histórico macro nos pesos",
+            ["fundamental", "moderate", "scenario"],
+            index=1,
+            format_func={
+                "fundamental": "Somente fundamentos",
+                "moderate": "Contextual moderado (recomendado)",
+                "scenario": "Cenário ampliado",
+            }.get,
+            key="pb3_macro_mode",
+            help=("Sensibilidades explícitas por setor e séries guardadas no "
+                  "PostgreSQL Docker local. Ausência não é tratada como zero."),
+        )
         if criterio_modo == "economico":
             if usar_ew_como_criterio:
                 st.caption(
@@ -3682,6 +3697,97 @@ def render(show_header: bool = True) -> None:
             "porém o salvamento fica bloqueado."
         )
 
+    # ── CAMADA MACRO LOCAL ────────────────────────────────────────────────
+    # É aplicada depois da correlação e novamente projetada nos mesmos tetos.
+    # Assim, o contexto não escolhe empresas nem enfraquece restrições.
+    macro_snapshot = None
+    macro_turnover = 0.0
+    if proximos_uniq and _portfolio_viavel:
+        local_macro_engine = get_local_macro_engine()
+        if local_macro_engine is not None:
+            try:
+                macro_snapshot = load_portfolio_macro_snapshot(
+                    local_macro_engine,
+                    asset_class="b3",
+                    assets={item["tk"]: item["setor"] for item in proximos_uniq},
+                )
+            except (SQLAlchemyError, ValueError):
+                macro_snapshot = None
+        if macro_snapshot is not None:
+            from core.macro_data.portfolio_tilt import apply_macro_tilt
+
+            base_weights = {
+                item["tk"]: float(item.get("peso") or 0.0)
+                for item in proximos_uniq
+            }
+            macro_frame = apply_macro_tilt(
+                pd.DataFrame([{
+                    "tk": item["tk"], "weight": item["peso"],
+                    "score": item.get("score", 0.0),
+                } for item in proximos_uniq]),
+                macro_snapshot.impacts,
+                symbol_column="tk",
+                score_column="score",
+                mode=macro_mode,
+            )
+            proposed = dict(zip(macro_frame["tk"], macro_frame["weight"]))
+            groups = {item["tk"]: item["setor"] for item in proximos_uniq}
+            if teto_setor < 1.0 or teto_ciclico < 1.0:
+                from core.b3_holdings_health import classify_cycle
+
+                cyclical = {
+                    ticker: classify_cycle(groups[ticker]) == "ciclico"
+                    for ticker in groups
+                }
+                proposed, macro_projection_warnings = project_dual_capped(
+                    proposed, groups, cyclical, cap,
+                    float(teto_setor), float(teto_ciclico),
+                )
+                for warning in macro_projection_warnings:
+                    st.warning("Projeção macro: " + warning)
+            else:
+                proposed = project_capped_simplex(proposed, cap)
+            macro_turnover = 0.5 * sum(
+                abs(float(proposed[ticker]) - base_weights[ticker])
+                for ticker in base_weights
+            )
+            metadata = macro_frame.set_index("tk").to_dict("index")
+            for item in proximos_uniq:
+                item["peso_fundamental"] = base_weights[item["tk"]]
+                item["peso"] = float(proposed[item["tk"]])
+                item["macro_impact"] = metadata[item["tk"]].get("macro_impact")
+                item["macro_score_adjustment"] = metadata[item["tk"]].get(
+                    "macro_score_adjustment"
+                )
+                item["score_contextual"] = metadata[item["tk"]].get(
+                    "contextual_score"
+                )
+        st.session_state["pb3_macro_snapshot"] = macro_snapshot
+
+    if proximos_uniq:
+        if macro_snapshot is None:
+            st.warning(
+                "Camada macro do Docker local indisponível; os pesos permanecem "
+                "fundamentalistas."
+            )
+        else:
+            st.info(
+                f"Macro local · corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
+                f"cobertura {macro_snapshot.coverage:.0%} · "
+                f"turnover macro {macro_turnover:.1%}. O ajuste não é previsão."
+            )
+            from design.macro_portfolio import render_historical_macro_path
+
+            render_historical_macro_path(
+                asset_class="b3",
+                holdings=pd.DataFrame(proximos_uniq).rename(columns={
+                    "tk": "symbol", "setor": "sector", "peso": "weight",
+                }),
+                symbol_column="symbol", sector_column="sector",
+                score_column="score", mode=macro_mode,
+                key="b3_portfolio_macro_history",
+            )
+
     _constraint_warnings = sorted({
         warning
         for result in resultados
@@ -3947,6 +4053,14 @@ def render(show_header: bool = True) -> None:
             "correlation_threshold": float(corr_threshold),
             "correlation_score_alpha": float(corr_alpha),
             "correlation_substituicoes": corr_log,
+            "macro_mode": macro_mode,
+            "macro_as_of": (
+                macro_snapshot.as_of.isoformat() if macro_snapshot else None
+            ),
+            "macro_coverage": (
+                macro_snapshot.coverage if macro_snapshot else 0.0
+            ),
+            "macro_turnover": macro_turnover,
         }
         metrics_modelo = {
             "num_empresas": len(proximos_uniq),
@@ -3960,6 +4074,10 @@ def render(show_header: bool = True) -> None:
             )),
             "correlacao_media_final": corr_diag.get("avg_corr_apos_substituicao"),
             "indice_diversificacao_final": corr_diag.get("div_index_depois"),
+            "macro_turnover": macro_turnover,
+            "macro_coverage": (
+                macro_snapshot.coverage if macro_snapshot else 0.0
+            ),
         }
         c_save, c_info = st.columns([1, 3], gap="medium")
         with c_save:

@@ -4655,12 +4655,79 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     # Barganha (cheapness): mistura múltiplos de preço ao score de qualidade —
     # mesma lógica da Criação de Portfólio. 0% preserva o comportamento atual.
     pesos_v2 = _aplicar_cheapness(pesos_v2, cheapness_weight_av)
+    macro_mode_av = st.selectbox(
+        "Camada macro internacional no ranking avançado",
+        ["fundamental", "moderate", "scenario"],
+        index=1,
+        format_func={
+            "fundamental": "Somente macro doméstico já incorporado",
+            "moderate": "Internacional moderado (recomendado)",
+            "scenario": "Cenário internacional ampliado",
+        }.get,
+        key="b3_advanced_macro_mode",
+        help=("O score já usa Selic/IPCA domésticos por data. Esta camada acrescenta "
+              "somente fatores internacionais aplicáveis, sem duplicar o doméstico."),
+    )
     df_scored = _score_universo(
         df_mult_enrich, tks_uni, pesos_v2,
         df_hist_batch=hist_batch,
         group_col_prefer=group_prefer,
         macro_context=_macro_for_year(macro_history),
     )
+    macro_snapshot_av = None
+    if df_scored is not None and not df_scored.empty:
+        try:
+            from core.macro_data.database import get_local_macro_engine
+            from core.macro_data.portfolio_context import (
+                aggregate_impact_rows,
+                load_portfolio_macro_snapshot,
+            )
+            from core.macro_data.portfolio_tilt import apply_macro_scores
+
+            sector_map = {
+                str(row["ticker"]).upper(): str(row.get("SETOR") or "")
+                for _, row in df_set.iterrows()
+                if row.get("ticker")
+            }
+            local_engine = get_local_macro_engine()
+            if local_engine is not None:
+                macro_snapshot_av = load_portfolio_macro_snapshot(
+                    local_engine,
+                    asset_class="b3",
+                    assets={
+                        str(ticker): sector_map.get(str(ticker).upper(), "")
+                        for ticker in df_scored["Ticker"]
+                    },
+                )
+                international_impacts = aggregate_impact_rows(
+                    row for row in macro_snapshot_av.details
+                    if row.get("provider") != "app4_domestic"
+                )
+                df_scored = apply_macro_scores(
+                    df_scored,
+                    international_impacts,
+                    symbol_column="Ticker",
+                    score_column="score",
+                    mode=macro_mode_av,
+                )
+                df_scored["score_domestic_context"] = df_scored["score"]
+                df_scored["score"] = df_scored["contextual_score"].clip(0, 100).round(1)
+                df_scored["ranking"] = df_scored["score"].rank(
+                    ascending=False, method="min"
+                ).astype(int)
+                df_scored = df_scored.sort_values(
+                    ["score", "Ticker"], ascending=[False, True]
+                ).reset_index(drop=True)
+        except Exception:
+            macro_snapshot_av = None
+    if macro_snapshot_av is None:
+        st.caption("Macro internacional local indisponível; ranking doméstico preservado.")
+    else:
+        st.caption(
+            f"Macro Docker local: corte {macro_snapshot_av.as_of:%d/%m/%Y} · "
+            f"cobertura {macro_snapshot_av.coverage:.0%}. O ajuste internacional "
+            "é separado do macro doméstico e limitado a ±10 pontos."
+        )
     # A relação nominal das reprovadas por completude saiu da tela: quem chega
     # aqui quer o ranking, e a lista de quem não entrou não muda decisão alguma.
     # A contagem permanece no cabeçalho do universo, para o número de empresas

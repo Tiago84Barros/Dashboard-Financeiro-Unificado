@@ -576,6 +576,7 @@ def _effective_caps(
 def allocate_weights(
     candidates: pd.DataFrame,
     params: USPortfolioCreationParams,
+    target_weights: dict[str, float] | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Projeta pesos próximos ao alvo sob restrições lineares via SLSQP."""
     if candidates is None or candidates.empty:
@@ -586,6 +587,11 @@ def allocate_weights(
         return pd.DataFrame(), warnings
 
     target = _base_target(candidates, params.weighting)
+    if target_weights:
+        proposed = candidates["symbol"].astype(str).map(target_weights)
+        if proposed.notna().all() and float(proposed.sum()) > 0:
+            target = proposed.to_numpy(dtype=float)
+            target = target / target.sum()
     n = len(candidates)
     constraints: list[dict[str, Any]] = [{
         "type": "eq", "fun": lambda w: float(np.sum(w) - 1.0)
@@ -686,6 +692,8 @@ def build_portfolio_creation(
     scored: pd.DataFrame,
     params: USPortfolioCreationParams | None = None,
     score_panel: pd.DataFrame | None = None,
+    macro_impacts: dict[str, float] | None = None,
+    macro_mode: str = "fundamental",
 ) -> dict[str, Any]:
     """Executa a criação completa e retorna payload pronto para a interface."""
     params = params or USPortfolioCreationParams()
@@ -694,6 +702,59 @@ def build_portfolio_creation(
     candidates = select_industry_leaders(eligible, audit, params)
     floor_log = dict(candidates.attrs.get("quality_floor_log") or {})
     holdings, warnings = allocate_weights(candidates, params)
+    macro_mode = str(macro_mode or "fundamental")
+    if macro_mode not in {"fundamental", "moderate", "scenario"}:
+        raise ValueError("modo macro inválido")
+    if not holdings.empty:
+        from core.macro_data.portfolio_tilt import apply_macro_tilt
+
+        provisional = apply_macro_tilt(
+            holdings,
+            macro_impacts or {},
+            symbol_column="symbol",
+            score_column="entry_score",
+            mode=macro_mode,
+        )
+        if macro_mode != "fundamental" and macro_impacts:
+            target_by_symbol = dict(zip(
+                provisional["symbol"].astype(str), provisional["weight"]
+            ))
+            constrained, macro_warnings = allocate_weights(
+                candidates, params, target_weights=target_by_symbol,
+            )
+            warnings.extend(macro_warnings)
+            if not constrained.empty:
+                base_weights = holdings.set_index("symbol")["weight"]
+                aligned_base = constrained["symbol"].map(base_weights).astype(float)
+                turnover = float(
+                    0.5 * (constrained["weight"] - aligned_base).abs().sum()
+                )
+                if turnover > 0.10:
+                    constrained["weight"] = aligned_base + (
+                        constrained["weight"] - aligned_base
+                    ) * (0.10 / turnover)
+                metadata = provisional.set_index("symbol")[[
+                    "macro_covered", "macro_impact", "macro_score_adjustment",
+                    "contextual_score", "weight_before_macro",
+                ]]
+                holdings = constrained.join(metadata, on="symbol")
+                holdings.attrs["macro_mode"] = macro_mode
+                holdings.attrs["macro_coverage"] = float(
+                    holdings["macro_covered"].mean()
+                )
+                holdings.attrs["macro_turnover"] = float(
+                    0.5 * (holdings["weight"] - aligned_base).abs().sum()
+                )
+            else:
+                holdings = provisional
+        else:
+            holdings = provisional
+        holdings["allocation_usd"] = (
+            holdings["weight"] * float(params.capital_usd)
+        )
+        holdings["monthly_contribution_usd"] = (
+            holdings["weight"] * float(params.monthly_contribution_usd)
+        )
     history_available = score_panel is not None and not score_panel.empty
 
     # Os avisos do piso de negociabilidade nascem em prepare_eligible_universe,
@@ -772,6 +833,11 @@ def build_portfolio_creation(
         "quality_floor_log": floor_log,
         "holdings": holdings,
         "metrics": portfolio_metrics(holdings, params),
+        "macro": {
+            "mode": macro_mode,
+            "coverage": float(holdings.attrs.get("macro_coverage", 0.0)),
+            "turnover": float(holdings.attrs.get("macro_turnover", 0.0)),
+        },
         "warnings": warnings,
         "history_available": bool(history_available),
         "history_required_unavailable": bool(params.require_historical_signal and not history_available),

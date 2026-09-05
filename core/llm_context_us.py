@@ -187,6 +187,18 @@ def get_creation_context(model: dict) -> str:
         "  Método: líderes por indústria sobre o universo elegível, com pisos de "
         "negociabilidade e qualidade e tetos simultâneos por ativo, indústria e setor."
     )
+    contextual = []
+    for item in model.get("items") or []:
+        if item.get("macro_impact") is None:
+            continue
+        contextual.append(
+            f"{item.get('symbol') or item.get('ticker')} impacto="
+            f"{float(item['macro_impact']):+.2f}/100, peso_base="
+            f"{float(item.get('weight_before_macro') or 0):.2%}, peso_final="
+            f"{float(item.get('weight') or 0):.2%}"
+        )
+    if contextual:
+        linhas.append("  Ajustes macro determinísticos: " + " | ".join(contextual[:20]))
     return "\n".join(linhas)
 
 

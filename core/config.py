@@ -13,6 +13,7 @@ Estrategia de banco (Fase 4.0):
   - SUPABASE_ORIGEM_CONTROLE_URL: projeto Supabase Controle Financeiro (migracao)
   - SOURCE_DB_APP2              : SQLite do Dashboard-Investimentos (migracao)
 """
+import json
 import os
 
 from dotenv import load_dotenv
@@ -59,6 +60,68 @@ def _para_num(valor: str, padrao: float, minimo: float | None = None) -> float:
 
 
 class Settings:
+    # ── Dados macro internacionais (todos opt-in; segredo nunca chega à UI) ──
+    # Banco exclusivo do Docker local. Sem fallback ao Supabase por desenho.
+    MACRO_LOCAL_DB_URL: str = _get_secret("MACRO_LOCAL_DB_URL")
+    FRED_API_KEY: str = _get_secret("FRED_API_KEY")
+    TRADING_ECONOMICS_API_KEY: str = _get_secret("TRADING_ECONOMICS_API_KEY")
+    MACRO_FRED_ENABLED: str = _get_secret("MACRO_FRED_ENABLED", "false")
+    MACRO_WORLD_BANK_ENABLED: str = _get_secret("MACRO_WORLD_BANK_ENABLED", "false")
+    MACRO_IMF_ENABLED: str = _get_secret("MACRO_IMF_ENABLED", "false")
+    MACRO_OECD_ENABLED: str = _get_secret("MACRO_OECD_ENABLED", "false")
+    MACRO_BIS_ENABLED: str = _get_secret("MACRO_BIS_ENABLED", "false")
+    MACRO_ECB_ENABLED: str = _get_secret("MACRO_ECB_ENABLED", "false")
+    MACRO_EUROSTAT_ENABLED: str = _get_secret("MACRO_EUROSTAT_ENABLED", "false")
+    MACRO_TRADING_ECONOMICS_ENABLED: str = _get_secret("MACRO_TRADING_ECONOMICS_ENABLED", "false")
+
+    def macro_enabled(self, provider: str) -> bool:
+        return str(_get_secret(f"MACRO_{provider.upper()}_ENABLED", "false")).lower() in {"1", "true", "yes"}
+
+    def macro_series(self) -> dict[str, tuple[dict[str, str], ...]]:
+        """Séries são configuradas por env e não recebem código inventado pelo app.
+
+        Formato: MACRO_FRED_SERIES=FEDFUNDS:US,CPIAUCSL:US
+        """
+        result: dict[str, tuple[dict[str, str], ...]] = {}
+        for provider in ("fred", "world_bank", "imf", "oecd", "bis", "ecb", "eurostat"):
+            specs = []
+            for item in _get_secret(f"MACRO_{provider.upper()}_SERIES", "").split(","):
+                code, _, country = item.strip().partition(":")
+                if code:
+                    specs.append(
+                        {
+                            "code": code,
+                            **({"country": country.upper()} if country else {}),
+                        }
+                    )
+            result[provider] = tuple(specs)
+        return result
+
+    def macro_calendar_countries(self) -> tuple[str, ...]:
+        """Países explícitos do calendário opcional; não cria cobertura implícita."""
+        countries = []
+        for code in _get_secret("MACRO_TRADING_ECONOMICS_COUNTRIES", "").split(","):
+            normalized = code.strip().upper()
+            if normalized.isalpha() and len(normalized) in {2, 3}:
+                countries.append(normalized)
+        return tuple(dict.fromkeys(countries))
+
+    def macro_indicator_mappings(self) -> dict[str, dict[str, str]]:
+        """Lê somente mapeamentos explícitos, descartando JSON malformado."""
+        try:
+            raw = json.loads(_get_secret("MACRO_INDICATOR_MAPPINGS", "{}"))
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(key): {
+                "canonical_code": str(value.get("canonical_code", "")),
+                "category": str(value.get("category", "")),
+            }
+            for key, value in raw.items()
+            if isinstance(value, dict)
+        }
     # ── Banco unificado (Dashboard Financeiro — banco central do App 4) ───────
     # Connection string do pooler Supabase (Transaction Mode, porta 6543).
     # Formato: postgresql://app4_reader:SENHA@HOST.pooler.supabase.com:6543/postgres
