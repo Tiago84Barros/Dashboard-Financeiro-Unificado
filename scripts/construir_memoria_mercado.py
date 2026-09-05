@@ -287,8 +287,19 @@ def main() -> int:
     if args.eventos:
         eventos.extend(carregar_eventos_de_arquivo(args.eventos))
     if args.do_banco_de_noticias:
-        from core.database import get_engine
-        engine_noticias = get_engine()
+        # O acervo mudou de casa em 04/09/2026 (commit 61c39e8): ele nao cabe
+        # no Supabase -- sao ~22 MB por janela contra 23 MB de folga -- e
+        # passou a morar no armazem local. Este script continuava lendo
+        # ``get_engine()``, que aponta para a producao: media a fonte errada e
+        # devolvia zero eventos sem erro nenhum. O Supabase fica como fallback
+        # porque a safra antiga ainda pode estar la.
+        from core.noticias.destino import engine_acervo
+
+        engine_noticias = engine_acervo()
+        if engine_noticias is None:
+            from core.database import get_engine
+            engine_noticias = get_engine()
+            logger.warning("acervo local indisponivel: lendo o banco remoto")
         if engine_noticias is None:
             logger.error("banco de noticias nao configurado")
             return 2

@@ -87,10 +87,26 @@ def test_fonte_unica_sem_confirmacao_nao_abre_revisao():
                 publicado_em=quando(2))
     a = _avaliada(n, tickers_alvo=("ALFA3",), exposicao_carteira=0.4)
 
-    assert a.nota >= 80.0, "o teste precisa de nota alta para significar algo"
+    # A guarda cobrava ``a.nota >= 80`` e passou a ser inalcançável em
+    # 05/09/2026: com o teto de evidência (A-146), nota >= 80 exige evidência
+    # externa de 0,67, que fonte única não alcança por construção. Guarda que
+    # só pode dar False não guarda nada -- ela vira um segundo critério, e
+    # calado (``memoria: gate-que-so-dava-false``).
+    #
+    # A intenção original se preserva na nota bruta: este é um caso que seria
+    # candidato à revisão se o teto não existisse, e por isso o portão de
+    # confirmação continua sendo o que decide. É para isto que ``nota_bruta``
+    # foi guardada.
+    assert a.relevancia.nota_bruta >= 80.0, (
+        "o teste precisa de um caso que seria candidato para significar algo")
     v = _cai(avaliada=a)
     assert v.acao == portoes.ACAO_OBSERVAR
     assert [p.chave for p in v.reprovados] == [portoes.PORTAO_CONFIRMACAO]
+
+    # E a defesa agora é dupla, de propósito: o teto já teria barrado sozinho.
+    # As duas expressam a mesma falta -- corroboração externa -- e nenhuma
+    # depende da outra.
+    assert a.nota < 80.0 and a.nota < a.relevancia.nota_bruta
 
 
 def test_apuracao_independente_substitui_a_fonte_primaria():

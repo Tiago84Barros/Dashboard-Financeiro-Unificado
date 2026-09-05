@@ -28,6 +28,7 @@ from core.noticias import estado_coleta as ec
 logger = logging.getLogger(__name__)
 
 SERVICO_BANCO = "banco"
+SERVICO_ACERVO = "acervo"
 SERVICO_PROVEDORES = "provedores"
 SERVICO_AGENDADOR = "agendador"
 SERVICO_WORKER = "worker"
@@ -62,6 +63,12 @@ def _agora() -> datetime:
 
 
 def checar_banco(*, engine=None) -> Verificacao:
+    """O banco de produção -- estado do ciclo, cadência e vitrine.
+
+    **Não é onde o acervo é gravado.** Desde que a coleta passou a morar no
+    armazém local, este banco responder "no ar" não diz nada sobre a coleta
+    conseguir ser persistida; quem responde por isso é :func:`checar_acervo`.
+    """
     motor = engine if engine is not None else get_engine()
     if motor is None:
         return Verificacao(SERVICO_BANCO, None,
@@ -72,6 +79,51 @@ def checar_banco(*, engine=None) -> Verificacao:
         return Verificacao(SERVICO_BANCO, True, "conexão respondeu", _agora())
     except Exception as exc:
         return Verificacao(SERVICO_BANCO, False, str(exc)[:200], _agora())
+
+
+def checar_acervo(*, engine=None) -> Verificacao:
+    """O armazém local, que é **o destino real da coleta**.
+
+    Por que esta verificação existe
+    -------------------------------
+    Até aqui a saúde media ``DATABASE_URL`` e chamava isso de "banco". Depois
+    que o acervo mudou de casa, essa medição passou a responder pela vitrine e
+    não pelo destino da gravação: num agendador remoto o Supabase responde
+    "no ar", o painel fica todo verde e **toda notícia coletada é descartada**,
+    porque ``noticias_itens`` mora num Postgres que aquela máquina não alcança.
+    É o formato de "medir a fonte que a decisão lê" -- a decisão aqui é gravar.
+
+    Ausência é ``False``, e não ``None``
+    ------------------------------------
+    Em toda a saúde, não-verificado é ``None``. Aqui não: a configuração do
+    destino é lida localmente e sempre pode ser lida, então "não há destino" é
+    uma medição, não uma ausência de medição. E o efeito dela é a coleta gastar
+    cota de provedor para jogar fora o resultado -- o oposto de saudável.
+    """
+    from core.noticias.destino import engine_acervo, url_acervo
+
+    if engine is None and not url_acervo():
+        return Verificacao(
+            SERVICO_ACERVO, False,
+            "sem NOTICIAS_LOCAL_DB_URL nem MACRO_LOCAL_DB_URL: a coleta rodaria "
+            "e seria descartada, gastando cota de provedor sem persistir nada",
+            _agora())
+    try:
+        motor = engine if engine is not None else engine_acervo()
+    except Exception as exc:  # noqa: BLE001 - resolver o destino já é falível
+        return Verificacao(SERVICO_ACERVO, False,
+                           f"destino não resolvido: {str(exc)[:160]}", _agora())
+    if motor is None:
+        return Verificacao(SERVICO_ACERVO, False,
+                           "destino do acervo não configurado", _agora())
+    try:
+        with motor.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return Verificacao(SERVICO_ACERVO, True,
+                           "armazém local respondeu: a coleta tem onde ser "
+                           "gravada", _agora())
+    except Exception as exc:  # noqa: BLE001
+        return Verificacao(SERVICO_ACERVO, False, str(exc)[:200], _agora())
 
 
 def checar_provedores(*, config=None) -> Verificacao:
@@ -193,9 +245,15 @@ def checar_llm(*, config=None) -> Verificacao:
 
 def checar_tudo(*, engine=None, cache=None, config=None,
                 agora: datetime | None = None) -> tuple[Verificacao, ...]:
-    """As sete verificações, na ordem em que uma falha explica a seguinte."""
+    """As oito verificações, na ordem em que uma falha explica a seguinte.
+
+    ``acervo`` vem logo depois de ``banco`` porque as duas se parecem e não são
+    a mesma coisa: a primeira é a vitrine que a produção lê, a segunda é o
+    destino em que a coleta é gravada.
+    """
     return (
         checar_banco(engine=engine),
+        checar_acervo(),
         checar_provedores(config=config),
         checar_agendador(engine=engine, agora=agora, config=config),
         checar_worker(engine=engine, agora=agora),

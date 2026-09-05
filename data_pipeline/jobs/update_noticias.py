@@ -82,9 +82,11 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
         engine: injetável para teste.
     """
     from core.config import settings
-    from core.eventos_extremos import da_coleta
+    from core.eventos_extremos import da_coleta, trilha
+    from core.noticias import bases_historicas as bases_mod
     from core.noticias import cadencia as cad
     from core.noticias import estado_coleta as ec
+    from core.noticias import perfil_carteira as perfil_mod
     from core.noticias import universo_coleta as uni
     from core.noticias import universo_entidades as ent_uni
     from core.noticias.armazenamento import gravar
@@ -124,16 +126,18 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
             return result
         return _executar(result, ciclo, ritmo, tickers, engine=engine,
                          settings=settings, cad=cad, ec=ec, uni=uni,
-                         ent_uni=ent_uni,
+                         ent_uni=ent_uni, perfil_mod=perfil_mod,
+                         bases_mod=bases_mod,
                          gravar=gravar, Cache=Cache, coletar=coletar,
                          RegistroColeta=RegistroColeta, Consulta=Consulta,
                          construir=construir, Orcamento=Orcamento,
-                         da_coleta=da_coleta)
+                         da_coleta=da_coleta, trilha=trilha)
 
 
 def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
-              ent_uni, gravar, Cache, coletar, RegistroColeta, Consulta,
-              construir, Orcamento, da_coleta) -> dict:
+              ent_uni, perfil_mod, bases_mod, gravar, Cache, coletar,
+              RegistroColeta,
+              Consulta, construir, Orcamento, da_coleta, trilha) -> dict:
     """O ciclo em si, já sob o lock. Sempre grava o ciclo antes de retornar."""
     erros: list[str] = []
     limitacoes: list[str] = []
@@ -207,6 +211,24 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     universo_entidades, lim_entidades = ent_uni.carregar(engine=engine)
     limitacoes.extend(lim_entidades)
 
+    # O perfil tem o mesmo defeito de origem que o universo tinha: existia,
+    # tinha teste, e nunca chegava aqui. Sem ele, o sexto portao devolve None
+    # ("sem carteira cadastrada") em toda coleta -- e None nao aprova, entao a
+    # acao ``sugerir_revisao`` era inalcancavel no pipeline. Alem da trava,
+    # ``perfil.tickers`` entra em ``relevancia`` como ``tickers_alvo``: sem
+    # perfil, noticia sobre ativo que o usuario tem pontuava igual a noticia
+    # sobre ativo que ele nunca teve.
+    perfil_carteira, lim_perfil = perfil_mod.carregar()
+    limitacoes.extend(lim_perfil)
+
+    # Terceira entrada que faltava (A-141). O portao quantitativo saia
+    # ``indeterminado`` em 12 de 12 cenarios da revisao de 02/09 porque ninguem
+    # preenchia ``bases`` -- e ``None`` nao aprova. A base vem do armazem
+    # local; quando ela nao existe, a limitacao diz isso em vez de o portao
+    # falhar em silencio.
+    bases, lim_bases = bases_mod.carregar()
+    limitacoes.extend(lim_bases)
+
     consulta = Consulta(tickers=tuple(tickers)[:uni.LIMITE_TICKERS],
                         limite=settings.noticias_limite)
     # ``persistir=False``: o carimbo compartilhado passou a ser o do banco, e
@@ -220,7 +242,8 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     resultado = None
     for tentativa in range(1, tentativas + 1):
         resultado = coletar(consulta, provedores, registro=registro,
-                            universo=universo_entidades)
+                            universo=universo_entidades,
+                            perfil=perfil_carteira, bases=bases)
         if not resultado.sem_fonte:
             break
         if tentativa < tentativas:
@@ -242,6 +265,21 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     except Exception as exc:  # noqa: BLE001 - a coleta não cai por causa disto
         logger.warning("Nivel da coleta nao apurado: %s", exc)
         veredito = None
+    # A justificativa da transicao e persistida **antes** de virar cadencia.
+    # ``definir_modo`` grava so o numero; sem esta linha, "por que estamos no
+    # Nivel 3?" deixa de ter resposta assim que o processo morre -- decisao
+    # automatica sem trilha e auditavel so enquanto o job esta vivo.
+    #
+    # Vai para o armazem local (``engine=`` omitido de proposito: ``engine``
+    # aqui e o do Supabase). Nunca levanta: uma trilha indisponivel nao pode
+    # derrubar a coleta que ela documenta -- mas tambem nao cala, e o motivo
+    # entra nas limitacoes do ciclo.
+    reg_trilha = trilha.registrar(veredito, ciclo_em=ciclo.iniciado_em)
+    if veredito is not None and not reg_trilha.get("gravado"):
+        limitacoes.append(
+            f"trilha de auditoria da transicao nao persistida: "
+            f"{reg_trilha.get('motivo')}")
+
     nivel_cadencia = da_coleta.nivel_para_cadencia(veredito)
     if nivel_cadencia is not None:
         nivel_apurado.append(nivel_cadencia)

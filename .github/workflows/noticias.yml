@@ -1,8 +1,20 @@
 # Coleta de notícias do Motor Conjuntural.
 #
-# Este workflow é o que mantém as notícias frescas sem ninguém com o Streamlit
-# aberto. O container do Streamlit Cloud só executa código enquanto responde a
-# uma requisição: fechada a aba, nada roda. Quem sustenta a cadência é o cron.
+# Este workflow mantém as notícias frescas sem ninguém com o Streamlit aberto:
+# o container do Streamlit Cloud só executa código enquanto responde a uma
+# requisição, e fechada a aba nada roda.
+#
+# ELE NÃO É MAIS O AGENDADOR PRINCIPAL. Desde que o acervo passou a morar no
+# armazém local, um runner do GitHub não alcança `noticias_itens`: ele coletaria,
+# gastaria requisição de provedor e descartaria tudo. O job avisa ("coleta não
+# persistida"), mas a cota já foi paga -- gastar para jogar fora é o defeito.
+# É o mesmo motivo estrutural que tirou a cadeia de FIIs daqui.
+#
+# Quem sustenta a cadência é a tarefa local `DFU - Coleta de noticias`, na
+# máquina que tem o armazém, registrada por `scripts/registrar_tarefas.ps1`.
+# Este workflow segue válido apenas quando existir um destino que o runner
+# alcance -- o secret `NOTICIAS_LOCAL_DB_URL`. Sem ele, o passo de destino
+# reprova o job ANTES da primeira requisição, em vez de depois dela.
 #
 # NASCE DESLIGADO. O `if:` do job checa uma variável de repositório
 # (`NOTICIAS_COLETA_ATIVA`) que não existe até alguém criá-la. Sem ela o cron
@@ -54,6 +66,11 @@ jobs:
       MOCK_MODE: "false"
       SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
       DATABASE_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
+      # Destino do acervo. Não tem valor por omissão de propósito: sem ele o
+      # passo "Destino do acervo" reprova o job antes de gastar cota, e é isso
+      # que se quer -- não um fallback silencioso para o Supabase, que é
+      # exatamente o banco que o acervo não pode ocupar.
+      NOTICIAS_LOCAL_DB_URL: ${{ secrets.NOTICIAS_LOCAL_DB_URL }}
       NOTICIAS_PROVEDORES: ${{ vars.NOTICIAS_PROVEDORES }}
       NOTICIAS_ALPHAVANTAGE_KEY: ${{ secrets.NOTICIAS_ALPHAVANTAGE_KEY }}
       NOTICIAS_MARKETAUX_KEY: ${{ secrets.NOTICIAS_MARKETAUX_KEY }}
@@ -77,6 +94,11 @@ jobs:
           cache-dependency-path: requirements-pipeline.txt
 
       - run: pip install -r requirements-pipeline.txt
+
+      # Antes da cota, nunca depois. Sai com 1 quando não há onde gravar, e o
+      # job para aqui sem ter consultado nenhum provedor.
+      - name: Destino do acervo
+        run: python -m data_pipeline.cli_noticias --destino
 
       - name: Coletar noticias
         env:

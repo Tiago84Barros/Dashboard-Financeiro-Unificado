@@ -111,6 +111,22 @@ def carregar_posicoes() -> tuple[pd.DataFrame, str]:
         return pd.DataFrame(), f"carteira indisponível: {type(exc).__name__}"
 
 
+def carregar_retornos(posicoes):
+    """Retornos mensais da carteira, ou ``None`` se nao houver.
+
+    Isolado em funcao propria porque e a unica parte da montagem que toca
+    preco: quando ela falha, o indice perde um componente e a tela abre.
+    """
+    try:
+        from core.global_portfolio.returns import retornos_mensais
+
+        ret, _ = retornos_mensais(posicoes)
+        return ret
+    except Exception as exc:  # noqa: BLE001 - a tela abre sem correlacao
+        logger.warning("retornos da carteira indisponiveis: %s", exc)
+        return None
+
+
 def situacao_dos_provedores() -> tuple[qz.Provedor, ...]:
     """Estado dos provedores sem tocar a rede e sem revelar chave."""
     try:
@@ -137,7 +153,10 @@ def coletar_noticias(tickers: tuple[str, ...], estado: hom.Estado | None = None)
     if not estado.ativo(hom.COLETA):
         return None, f"a coleta está desligada ({estado.motivo(hom.COLETA)})"
     try:
+        from core.noticias import bases_historicas as bases_mod
         from core.noticias import coleta
+        from core.noticias import perfil_carteira as perfil_mod
+        from core.noticias import universo_entidades as ent_uni
         from core.noticias.provedores import registro
         from core.noticias.provedores.base import Consulta
 
@@ -145,7 +164,16 @@ def coletar_noticias(tickers: tuple[str, ...], estado: hom.Estado | None = None)
         if not provedores:
             return None, "nenhum provedor de notícias configurado"
         consulta = Consulta(tickers=tuple(tickers)[:20], limite=50)
-        return coleta.coletar(consulta, provedores), ""
+        # O botão de atualização manual é a segunda porta para a mesma coleta.
+        # Enquanto ela passava sem ``universo`` e sem ``perfil``, a mesma
+        # notícia era resolvida e pontuada de um jeito pelo coletor automático
+        # e de outro por quem clicasse aqui -- duas verdades sobre o mesmo
+        # item, e a da tela era a degradada.
+        universo, _ = ent_uni.carregar()
+        perfil, _ = perfil_mod.carregar()
+        bases, _ = bases_mod.carregar()
+        return coleta.coletar(consulta, provedores, universo=universo,
+                              perfil=perfil, bases=bases), ""
     except Exception as exc:  # noqa: BLE001
         logger.exception("coleta de notícias falhou")
         return None, f"a coleta falhou: {type(exc).__name__}"
@@ -201,9 +229,19 @@ def montar_tudo(*, agora: dt.datetime | None = None) -> Montagem:
     posicoes, motivo_carteira = carregar_posicoes()
 
     indice = None
+    lim_choque: tuple[str, ...] = ()
     if not posicoes.empty:
         try:
-            indice = af.calcular(posicoes)
+            # Ate 05/09/2026 esta chamada era ``af.calcular(posicoes)`` seca, e
+            # o indice saia ``None`` em toda execucao: sem nenhum componente de
+            # resistencia a choque medido, o motor se recusa a publicar --
+            # "diversificacao sozinha nao responde antifragilidade" -- e a
+            # recusa estava certa. O que faltava eram as fontes (A-143).
+            from core.eventos_extremos import insumos_choque as ic
+
+            insumos = ic.medir(posicoes, retornos=carregar_retornos(posicoes))
+            lim_choque = insumos.limitacoes
+            indice = af.calcular(posicoes, **insumos.como_kwargs())
         except Exception:  # noqa: BLE001
             logger.exception("falha ao calcular antifragilidade")
 
@@ -214,7 +252,10 @@ def montar_tudo(*, agora: dt.datetime | None = None) -> Montagem:
 
     coletado = st.session_state.get(CHAVE_COLETA)
     noticias: list[P.ItemNoticia] = []
-    extras: list[str] = []
+    # Os motivos de cada insumo de choque nao medido sobem para a tela junto
+    # com as demais limitacoes: componente ausente sem motivo visivel e
+    # exatamente o que fazia o indice sair ``None`` sem ninguem saber por que.
+    extras: list[str] = list(lim_choque)
     if coletado is None:
         # A sessão não coletou -- mas o job do cron pode ter coletado horas
         # atrás. Ler o acervo é o que impede a tela de apresentar trabalho

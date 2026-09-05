@@ -37,7 +37,18 @@ logger = logging.getLogger(__name__)
 #: Versão do conjunto relevância + impacto + portões. Subir isto significa que
 #: as avaliações antigas não são comparáveis com as novas -- e por isso elas
 #: convivem, em vez de uma sobrescrever a outra.
-VERSAO_METODOLOGIA = "1.0.0"
+#:
+#: 1.1.0 (05/09/2026) -- o índice de relevância ganhou teto de evidência
+#: (A-146). A nota de uma notícia sem corroboração externa mudou, e mudou
+#: bastante: o caso medido caiu de 77,8 para 54,4. Comparar as duas versões
+#: como se fossem a mesma escala misturaria régua velha com régua nova.
+#:
+#: **Subir isto esvazia a tela até a safra nova existir.** É visível de
+#: propósito -- ``ler_recentes`` faz ``JOIN`` pela versão --, mas continua
+#: sendo uma tela vazia. Quem fecha a distância é
+#: ``scripts/reavaliar_acervo.py``, que reconstrói as avaliações a partir do
+#: fato observado, sem re-coletar nada e sem gastar cota de provedor.
+VERSAO_METODOLOGIA = "1.1.0"
 
 
 class AcervoIlegivel(RuntimeError):
@@ -114,9 +125,31 @@ DDL_SQL = [
     CREATE INDEX IF NOT EXISTS idx_noticias_avaliacoes_nota
     ON noticias_avaliacoes (versao_metodologia, nota DESC)
     """,
+    # ── veredito dos seis portoes (A-140, 05/09/2026) ─────────────────────
+    #
+    # Aditivo e idempotente: ``ADD COLUMN IF NOT EXISTS`` nao toca em linha
+    # existente. Avaliacao gravada antes desta data fica com ``acao`` NULL, e
+    # NULL aqui significa "os portoes nao rodaram nesta linha" -- que e o fato.
+    # Preencher com ``informar`` faria a safra antiga parecer avaliada por um
+    # motor que nao existia quando ela foi escrita.
+    """
+    ALTER TABLE noticias_avaliacoes
+      ADD COLUMN IF NOT EXISTS acao TEXT
+    """,
+    """
+    ALTER TABLE noticias_avaliacoes
+      ADD COLUMN IF NOT EXISTS portoes JSONB
+    """,
 ]
 
-_schema_pronto = False
+#: Destinos em que o DDL já rodou **neste processo**, por identidade da
+#: conexão-fonte. Era um booleano único até 05/09/2026, e o booleano tinha um
+#: defeito silencioso: bastava um ``garantir_schema`` anterior para que toda
+#: migration adicionada depois nunca mais rodasse naquele processo -- e também
+#: para que um segundo destino (outro schema, outro banco) fosse dado como
+#: pronto sem nunca ter sido tocado. É o padrão que a memória do projeto
+#: registra como *migration certa, registrada e nunca executada*.
+_schema_pronto: set = set()
 _lock = threading.Lock()
 
 _UPSERT_ITEM = text("""
@@ -156,13 +189,14 @@ _UPSERT_AVALIACAO = text("""
         id_dedup, versao_metodologia, nota, faixa, cobertura, componentes,
         pesos, direcao, probabilidade, variacao_min, variacao_max, horizonte,
         confianca, n_observacoes, estado_verificacao, n_fontes_independentes,
-        confirmado_por_primaria, limitacoes
+        confirmado_por_primaria, limitacoes, acao, portoes
     ) VALUES (
         :id_dedup, :versao_metodologia, :nota, :faixa, :cobertura,
         CAST(:componentes AS JSONB), CAST(:pesos AS JSONB), :direcao,
         :probabilidade, :variacao_min, :variacao_max, :horizonte, :confianca,
         :n_observacoes, :estado_verificacao, :n_fontes_independentes,
-        :confirmado_por_primaria, CAST(:limitacoes AS JSONB)
+        :confirmado_por_primaria, CAST(:limitacoes AS JSONB), :acao,
+        CAST(:portoes AS JSONB)
     )
     ON CONFLICT (id_dedup, versao_metodologia) DO UPDATE SET
         nota = EXCLUDED.nota,
@@ -181,21 +215,37 @@ _UPSERT_AVALIACAO = text("""
         n_fontes_independentes = EXCLUDED.n_fontes_independentes,
         confirmado_por_primaria = EXCLUDED.confirmado_por_primaria,
         limitacoes = EXCLUDED.limitacoes,
+        -- ``COALESCE`` na direcao contraria das demais: uma regravacao que nao
+        -- trouxe veredito (chamador antigo, ou coleta sem portoes) nao pode
+        -- apagar o veredito que ja estava la. Sobrescrever com NULL seria
+        -- perder evidencia por omissao de quem regravou.
+        acao = COALESCE(EXCLUDED.acao, noticias_avaliacoes.acao),
+        portoes = COALESCE(EXCLUDED.portoes, noticias_avaliacoes.portoes),
         avaliado_em = NOW()
 """)
 
 
+def _chave_destino(conn) -> object:
+    """Identidade do destino: o engine da conexão, ou a própria conexão.
+
+    Nunca a URL: dois engines para a mesma URL com ``search_path`` diferente
+    apontam para schemas diferentes, e tratá-los como o mesmo destino foi
+    exatamente o defeito que o booleano único tinha.
+    """
+    return id(getattr(conn, "engine", None) or conn)
+
+
 def garantir_schema(conn) -> None:
     """Cria as tabelas se faltarem. Idempotente e não destrutivo."""
-    global _schema_pronto
-    if _schema_pronto:
+    chave = _chave_destino(conn)
+    if chave in _schema_pronto:
         return
     with _lock:
-        if _schema_pronto:
+        if chave in _schema_pronto:
             return
         for ddl in DDL_SQL:
             conn.execute(text(ddl))
-        _schema_pronto = True
+        _schema_pronto.add(chave)
 
 
 def linha_item(avaliada: NoticiaAvaliada, evento_id: str | None = None) -> dict:
@@ -235,12 +285,31 @@ def linha_item(avaliada: NoticiaAvaliada, evento_id: str | None = None) -> dict:
     }
 
 
+def _portoes_json(veredito) -> str | None:
+    """Serializa os seis portões como trilha de auditoria.
+
+    ``satisfeito`` sai como ``true``/``false``/``null`` -- os três estados,
+    preservados. Colapsar ``null`` em ``false`` no armazenamento apagaria a
+    diferença entre "medimos e não passou" e "não medimos", que é a distinção
+    de que o motor inteiro depende.
+    """
+    if veredito is None:
+        return None
+    return json.dumps([
+        {"chave": p.chave, "rotulo": p.rotulo, "satisfeito": p.satisfeito,
+         "evidencia": p.evidencia}
+        for p in veredito.portoes], ensure_ascii=False)
+
+
 def linha_avaliacao(avaliada: NoticiaAvaliada,
-                    versao: str = VERSAO_METODOLOGIA) -> dict:
+                    versao: str = VERSAO_METODOLOGIA,
+                    veredito=None) -> dict:
     """Monta a linha da conclusão. ``None`` permanece ``None`` em toda coluna."""
     rel = avaliada.relevancia
     imp = avaliada.impacto
     return {
+        "acao": getattr(veredito, "acao", None),
+        "portoes": _portoes_json(veredito),
         "id_dedup": avaliada.noticia.id_dedup,
         "versao_metodologia": versao,
         "nota": rel.nota,
@@ -298,11 +367,39 @@ def gravar(resultado: ResultadoColeta, *, engine=None,
             conn.execute(_UPSERT_ITEM, linha_item(
                 avaliada, evento_de.get(avaliada.noticia.id_dedup)))
             itens += 1
-            conn.execute(_UPSERT_AVALIACAO, linha_avaliacao(avaliada, versao))
+            conn.execute(_UPSERT_AVALIACAO, linha_avaliacao(
+                avaliada, versao,
+                resultado.vereditos.get(avaliada.noticia.id_dedup)))
             avaliacoes += 1
 
     return {"gravado": True, "itens": itens, "avaliacoes": avaliacoes,
             "versao": versao}
+
+
+def gravar_avaliacoes(avaliadas, *, engine=None, vereditos=None,
+                      versao: str = VERSAO_METODOLOGIA) -> dict:
+    """Grava **só** a camada de conclusão, deixando o fato observado intocado.
+
+    É o que uma reavaliação precisa e é tudo o que ela pode fazer: mudar a
+    metodologia não muda o que a fonte publicou. Reescrever ``noticias_itens``
+    aqui apagaria a evidência contra a qual a metodologia nova está sendo
+    conferida.
+    """
+    motor = engine if engine is not None else engine_acervo()
+    if motor is None:
+        return {"gravado": False, "motivo": "sem banco configurado",
+                "avaliacoes": 0}
+    exigir_local(motor, o_que=O_QUE)
+
+    vereditos = vereditos or {}
+    n = 0
+    with motor.begin() as conn:
+        garantir_schema(conn)
+        for avaliada in avaliadas:
+            conn.execute(_UPSERT_AVALIACAO, linha_avaliacao(
+                avaliada, versao, vereditos.get(avaliada.noticia.id_dedup)))
+            n += 1
+    return {"gravado": True, "avaliacoes": n, "versao": versao}
 
 
 _SELECT_RECENTES = text("""
@@ -313,7 +410,8 @@ _SELECT_RECENTES = text("""
            a.nota, a.faixa, a.cobertura, a.direcao, a.probabilidade,
            a.variacao_min, a.variacao_max, a.horizonte, a.confianca,
            a.estado_verificacao, a.n_fontes_independentes,
-           a.confirmado_por_primaria, a.limitacoes, a.avaliado_em
+           a.confirmado_por_primaria, a.limitacoes, a.avaliado_em,
+           a.acao, a.portoes
       FROM noticias_itens i
       JOIN noticias_avaliacoes a
         ON a.id_dedup = i.id_dedup AND a.versao_metodologia = :versao

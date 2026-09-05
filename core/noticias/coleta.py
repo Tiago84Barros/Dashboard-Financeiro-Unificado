@@ -23,12 +23,13 @@ from core.noticias import dedup, fontes, normalizacao, taxonomia
 from core.noticias import entidades as ent_mod
 from core.noticias import eventos as ev_mod
 from core.noticias import impacto as imp_mod
+from core.noticias import portoes as pt_mod
 from core.noticias import relevancia as rel_mod
 from core.noticias import sentimento as sent_mod
 from core.noticias.entidades import UNIVERSO_VAZIO, Universo
 from core.noticias.frescor_noticias import RegistroColeta
 from core.noticias.modelos import Noticia, NoticiaAvaliada
-from core.noticias.portoes import PERFIL_VAZIO, Perfil
+from core.noticias.portoes import PERFIL_VAZIO, Perfil, Veredito
 from core.noticias.provedores.base import (
     ORIGEM_CACHE_VENCIDO,
     Consulta,
@@ -81,6 +82,11 @@ class ResultadoColeta:
     """O que a coleta produziu, com a procedência de cada parte."""
 
     avaliadas: tuple[NoticiaAvaliada, ...] = ()
+    #: Veredito dos seis portões por ``noticia.id_dedup``. Até 05/09/2026 o
+    #: motor de portões não tinha chamador em produção (A-140): ele existia,
+    #: passava nos testes, e nenhuma coleta o consultava. Motor de análise que
+    #: não é consultado na decisão é decoração.
+    vereditos: dict[str, Veredito] = field(default_factory=dict)
     eventos: tuple[ev_mod.Evento, ...] = ()
     provedores_consultados: tuple[str, ...] = ()
     provedores_ok: tuple[str, ...] = ()
@@ -136,7 +142,16 @@ def para_noticia(item: ItemBruto, provedor: str, *,
         titulo, resumo,
         tickers_declarados=item.tickers,
         empresas_declaradas=item.empresas,
-        pais_declarado=item.pais or (fonte.pais if fonte else None),
+        # O país do VEÍCULO não entra: ele é procedência, não entidade do
+        # fato. Enquanto entrava, uma matéria da Reuters sobre o Brasil saía
+        # com ``paises=("GB",)`` e a mesma matéria no Valor com ``("BR",)`` --
+        # e o agrupamento por evento, que usa país como chave de último
+        # recurso, separava o mesmo fato pela nacionalidade de quem publicou
+        # (A-145). O efeito não parava ali: ``exposicao`` lia o país do
+        # veículo como exposição da carteira e ``relevancia`` premiava a
+        # matéria por um vínculo macro que ela não tinha. A procedência
+        # continua registrada em ``Noticia.pais``, que é o lugar dela.
+        pais_declarado=item.pais,
         universo=universo,
     )
 
@@ -166,8 +181,12 @@ def para_noticia(item: ItemBruto, provedor: str, *,
     )
 
 
-def _exposicao(noticia: Noticia, perfil: Perfil) -> float | None:
+def exposicao_de_carteira(noticia: Noticia, perfil: Perfil) -> float | None:
     """Fração da carteira exposta ao que a notícia toca.
+
+    Pública -- e não ``_exposicao`` como nasceu -- porque a reavaliação do
+    acervo precisa da mesma conta. Duas implementações da mesma fração seriam
+    duas notas para a mesma notícia conforme quem a calculou.
 
     ``None`` sem carteira cadastrada. Devolver ``0.0`` faria toda notícia
     perder pontos por uma carteira que o usuário nunca informou.
@@ -179,6 +198,46 @@ def _exposicao(noticia: Noticia, perfil: Perfil) -> float | None:
         return 0.0  # medido: a carteira existe e não tem relação com a matéria
     return min(1.0, sum(peso for t, peso in perfil.exposicao_por_ativo.items()
                         if t in tickers))
+
+
+#: Mínimo de ocorrências passadas para a base histórica valer como indicador.
+#: Abaixo disso a probabilidade é ruído com três casas decimais, e o portão
+#: continua em "não medido" -- que não aprova.
+MIN_OBSERVACOES_QUANTITATIVO = 8
+
+#: Acima deste valor a base histórica corrobora. É a fronteira do "mais provável
+#: que não": em mais da metade das ocorrências passadas deste tipo de evento o
+#: preço se moveu além do limiar de relevância.
+PROB_CORROBORA = 0.5
+
+
+def confirmacao_quantitativa(base) -> bool | None:
+    """Traduz a base histórica na entrada do portão quantitativo.
+
+    Devolve ``None`` -- e nunca ``False`` -- quando não há base, quando ela é
+    pequena demais, ou quando a probabilidade não foi apurada. ``False`` é uma
+    medição ("os indicadores disponíveis não corroboram"); ``None`` é a ausência
+    dela. Confundir os dois é o modo de falha que o projeto já pagou caro: em
+    média renormalizada ``None`` é neutro e ``0.0`` é punitivo.
+
+    O portão continuava estruturalmente indeterminado (A-141) porque ninguém o
+    preenchia. Preencher com otimismo seria pior que deixar vazio -- é o
+    *fallback que só preenche lacuna e nunca contradiz*: regra certa, entrada
+    errada, aprovação confiante. Por isso a entrada é uma medição de fora, com
+    procedência declarada em ``base.fonte``, e não uma heurística local.
+    """
+    if base is None:
+        return None
+    n = getattr(base, "n_observacoes", 0) or 0
+    if n < MIN_OBSERVACOES_QUANTITATIVO:
+        return None
+    prob = getattr(base, "prob_movimento_relevante", None)
+    if prob is None:
+        return None
+    try:
+        return float(prob) >= PROB_CORROBORA
+    except (TypeError, ValueError):
+        return None
 
 
 def avaliar_evento(evento: ev_mod.Evento, *, agora: datetime | None = None,
@@ -206,7 +265,7 @@ def avaliar_evento(evento: ev_mod.Evento, *, agora: datetime | None = None,
             confirmado_por_primaria=evento.confirmado_por_primaria,
             primeiro_em=evento.primeiro_em,
             tickers_alvo=perfil.tickers,
-            exposicao_carteira=_exposicao(noticia, perfil),
+            exposicao_carteira=exposicao_de_carteira(noticia, perfil),
         )
         impacto = imp_mod.estimar(
             tipo_evento=noticia.tipo_evento,
@@ -316,9 +375,18 @@ def coletar(
     eventos = ev_mod.agrupar(clusters, janela_evento_h)
 
     avaliadas: list[NoticiaAvaliada] = []
+    vereditos: dict[str, Veredito] = {}
     for evento in eventos:
-        avaliadas.extend(avaliar_evento(evento, agora=referencia, perfil=perfil,
-                                        pesos=pesos, bases=bases))
+        do_evento = avaliar_evento(evento, agora=referencia, perfil=perfil,
+                                   pesos=pesos, bases=bases)
+        # Os portões passam a rodar aqui, e não em lugar nenhum. A saída máxima
+        # possível continua sendo ``sugerir_revisao``: nenhum veredito compra,
+        # vende ou emite ordem. O que muda é que agora existe veredito.
+        conf = confirmacao_quantitativa((bases or {}).get(evento.tipo))
+        for avaliada in do_evento:
+            vereditos[avaliada.noticia.id_dedup] = pt_mod.avaliar(
+                avaliada, perfil=perfil, confirmacao_quantitativa=conf)
+        avaliadas.extend(do_evento)
 
     # Ordem estável e útil: nota desce, e o desempate é pelo identificador, não
     # pela ordem de chegada dos provedores -- senão a mesma coleta produz telas
@@ -336,6 +404,7 @@ def coletar(
 
     return ResultadoColeta(
         avaliadas=tuple(avaliadas),
+        vereditos=vereditos,
         eventos=tuple(eventos),
         provedores_consultados=tuple(consultados),
         provedores_ok=tuple(ok),
