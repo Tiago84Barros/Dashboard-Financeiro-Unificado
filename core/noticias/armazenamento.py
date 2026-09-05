@@ -48,7 +48,13 @@ logger = logging.getLogger(__name__)
 #: sendo uma tela vazia. Quem fecha a distância é
 #: ``scripts/reavaliar_acervo.py``, que reconstrói as avaliações a partir do
 #: fato observado, sem re-coletar nada e sem gastar cota de provedor.
-VERSAO_METODOLOGIA = "1.1.0"
+#:
+#: 1.2.0 (05/09/2026) -- a novidade passou a decair por pregões encerrados, e
+#: não por horas corridas (A-148). Notícia de fim de semana e de madrugada
+#: deixa de nascer velha: sábado 03:00 lido na segunda 12:00 tinha 57 horas e
+#: caía para 0,25; tem zero pregões e volta para 1,00. Os patamares não
+#: mudaram -- mudou a unidade --, mas a nota muda, e por isso a safra é outra.
+VERSAO_METODOLOGIA = "1.2.0"
 
 
 class AcervoIlegivel(RuntimeError):
