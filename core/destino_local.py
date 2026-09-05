@@ -1,17 +1,30 @@
 """Uma guarda só para "isto não pode ser gravado na nuvem".
 
-Existia duas vezes -- ``core.memoria_mercado.repositorio`` e
-``data_pipeline.market.b3_precos`` -- e as duas cópias **divergiram**. Sobre o
-host ``dfu_warehouse``, que é como se alcança o armazém de dentro do Docker,
-uma diz "local" e a outra diz "recusado"; e só uma delas olha a URL inteira
-atrás de fragmento de nuvem, então a outra deixa passar destino com host vazio.
-Guarda duplicada não fica igual: ela envelhece em direções diferentes, e a
-divergência só aparece no dia em que alguém depende da metade errada.
+Existia **três** vezes -- aqui, em ``core.memoria_mercado.repositorio`` e em
+``data_pipeline.market.b3_precos`` -- e as cópias divergiram. Guarda duplicada
+não fica igual: ela envelhece em direções diferentes, e a divergência só
+aparece no dia em que alguém depende da metade errada.
 
-Este módulo carrega a versão estrita, que é a do ``memoria_mercado``. O
-``b3_precos`` continua com a sua cópia por ora -- afrouxar a guarda do preço
-diário é mudança de segurança que merece o seu próprio PR, não carona no de
-notícias.
+A divergência foi medida em 05/09/2026, e ela tinha as **duas** direções:
+
+============================  ==========  ===============
+destino                       b3_precos   as outras duas
+============================  ==========  ===============
+``dfu_warehouse`` (Docker)    RECUSA      aceita
+``localhost``                 aceita      aceita
+Supabase, host na URL         RECUSA      RECUSA
+Supabase, host na query       **aceita**  RECUSA
+============================  ==========  ===============
+
+A primeira linha é falso negativo: chato, seguro. A última é o problema --
+``b3_precos`` só olhava ``url.host`` e desistia quando ele vinha vazio, então
+uma URL como ``postgresql://u:s@/p?host=/x/db.a.supabase.co`` passava. São ~1 GB
+de linhas apontados para uma instância com 23 MB de folga.
+
+Desde 05/09/2026 as três usam esta implementação, e as outras duas apenas
+reexportam os nomes para não quebrar quem já os importava de lá. Unificar
+**apertou** a guarda do preço diário em vez de afrouxá-la, que é a única
+direção em que valia fazer isso sem PR próprio.
 
 A regra é uma frase: **local por lista branca de host, remoto por qualquer
 sinal de nuvem na URL**, e a URL nunca sai daqui com senha dentro.

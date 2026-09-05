@@ -37,6 +37,18 @@ import threading
 
 from sqlalchemy import text
 
+# Reexportados de proposito: quem escreve
+# ``except repositorio.DestinoRemotoRecusado`` nao deveria precisar saber que a
+# implementacao se mudou de casa. E a classe e a mesma, entao o ``except``
+# continua pegando exatamente o que sempre pegou.
+from core.destino_local import (  # noqa: F401
+    FRAGMENTOS_REMOTOS,
+    HOSTS_LOCAIS,
+    DestinoRemotoRecusado,
+    e_local,
+    url_da_engine,
+)
+from core.destino_local import exigir_local as _exigir_local
 from core.memoria_mercado import MEMORIA_MERCADO_VERSAO
 from core.memoria_mercado.retornos import EventoMedido
 
@@ -44,21 +56,6 @@ logger = logging.getLogger(__name__)
 
 ESQUEMA = "memoria_mercado"
 
-#: Hosts aceitos como armazém local. O armazém do projeto é o container Docker
-#: ``dfu_warehouse`` publicado em ``localhost:5433``.
-HOSTS_LOCAIS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0",
-                          "host.docker.internal", "dfu_warehouse"})
-
-#: Fragmentos que denunciam um destino gerenciado na nuvem. A lista é
-#: conservadora de propósito: na dúvida entre gravar num lugar errado e recusar
-#: um lugar certo, recusar custa um parâmetro a mais e a outra opção custa o app.
-FRAGMENTOS_REMOTOS = ("supabase.co", "supabase.com", "pooler.supabase",
-                      "neon.tech", "amazonaws.com", "render.com",
-                      "azure.com", "gcp.")
-
-
-class DestinoRemotoRecusado(RuntimeError):
-    """Tentativa de gravar a Memória de Mercado fora do armazém local."""
 
 
 DDL_SQL = [
@@ -117,35 +114,15 @@ _schema_pronto = False
 _lock = threading.Lock()
 
 
-def url_da_engine(engine) -> str:
-    """URL da engine sem a senha. Nunca devolve credencial -- nem para log."""
-    try:
-        return str(engine.url.render_as_string(hide_password=True))
-    except AttributeError:
-        return str(getattr(engine, "url", ""))
-
-
-def e_local(engine) -> bool:
-    """``True`` apenas quando o host da engine está em :data:`HOSTS_LOCAIS`."""
-    url = getattr(engine, "url", None)
-    host = (getattr(url, "host", None) or "").strip().lower()
-    texto = url_da_engine(engine).lower()
-    if any(fragmento in texto for fragmento in FRAGMENTOS_REMOTOS):
-        return False
-    if not host:
-        # SQLite em arquivo ou memória: local por construção.
-        return True
-    return host in HOSTS_LOCAIS
-
-
 def exigir_local(engine) -> None:
-    """Levanta :class:`DestinoRemotoRecusado` se o destino não for local."""
-    if engine is None:
-        raise DestinoRemotoRecusado("nenhuma engine informada")
-    if not e_local(engine):
-        raise DestinoRemotoRecusado(
-            "a Memoria de Mercado so pode ser gravada no armazem local; "
-            f"destino recusado: {url_da_engine(engine)}")
+    """Levanta :class:`DestinoRemotoRecusado` se o destino não for local.
+
+    A decisão em si mora em :mod:`core.destino_local`. Este invólucro existe só
+    para preservar a assinatura de uma linha que os chamadores já usam e para
+    dizer *o quê* está sendo recusado, que é o que falta num log de
+    "destino recusado" sem contexto.
+    """
+    _exigir_local(engine, o_que="a Memoria de Mercado")
 
 
 def garantir_schema(conn) -> None:

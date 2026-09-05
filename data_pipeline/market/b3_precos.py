@@ -55,6 +55,11 @@ from pathlib import Path
 
 from sqlalchemy import text
 
+# Reexportados: era uma copia local, e a copia tinha divergido (faltavam
+# ``dfu_warehouse`` e ``0.0.0.0``). Mantidos como nome deste modulo para nao
+# quebrar quem ja os importa daqui.
+from core.destino_local import HOSTS_LOCAIS, DestinoRemotoRecusado  # noqa: F401
+from core.destino_local import exigir_local as _exigir_local
 from data_pipeline.market import b3_cotahist
 from data_pipeline.market.fii_b3_history import fetch_year
 from data_pipeline.market.repository import save_raw_payload
@@ -68,9 +73,6 @@ PRIMEIRO_ANO = 2010
 _LOGGER = logging.getLogger(__name__)
 _BATCH_SIZE = 5_000
 
-#: Hosts aceitos como armazem local. Mesma lista de
-#: `core.memoria_mercado.repositorio`, pelo mesmo motivo.
-HOSTS_LOCAIS = {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
 
 # A identidade de um preco é `(ticker, trade_date)`, nao `(ticker, trade_date,
 # archive_sha256)`. A diferenca nao é cosmetica: o COTAHIST do ano corrente muda
@@ -134,24 +136,28 @@ DDL = (
 )
 
 
-class DestinoRemotoRecusado(RuntimeError):
-    """Gravacao pedida em banco que nao é o armazem local."""
-
-
 def exigir_local(engine) -> None:
     """Recusa qualquer destino que nao seja o armazem local.
 
     Sao ~1 GB de linhas. O Supabase free tem 500 MB e o app publicado depende
     dele; um `--destino` distraido nao pode ser suficiente para derrubar a
     producao.
+
+    A decisao mora em :mod:`core.destino_local` desde 05/09/2026. Antes disso
+    esta era a terceira copia da mesma guarda, e ela **tinha divergido nas duas
+    direcoes** -- medido:
+
+    * ``dfu_warehouse`` (o host de dentro do Docker) era **recusado** aqui e
+      aceito nas outras. Falso negativo: chato, seguro.
+    * URL de nuvem com o host na query string (``?host=/x/db.a.supabase.co``)
+      era **aceita** aqui, porque a guarda so olhava ``url.host`` e desistia
+      quando ele vinha vazio. Falso positivo: ~1 GB apontados para uma
+      instancia com 23 MB de folga.
+
+    Guarda duplicada nao fica igual -- ela envelhece em direcoes diferentes, e
+    a divergencia so aparece no dia em que alguem depende da metade errada.
     """
-    if engine is None:
-        raise DestinoRemotoRecusado("nenhuma engine informada")
-    host = (engine.url.host or "").lower()
-    if host and host not in HOSTS_LOCAIS:
-        raise DestinoRemotoRecusado(
-            f"preco diario da B3 so pode ser gravado no armazem local; "
-            f"destino recusado: {host}")
+    _exigir_local(engine, o_que="o preco diario da B3")
 
 
 def _parser_hash() -> str:
