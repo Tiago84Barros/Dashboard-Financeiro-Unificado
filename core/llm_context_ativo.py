@@ -71,6 +71,20 @@ def _local_macro_block(asset_class: str, symbol: str, sector: str) -> str:
 # B3
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+def _conjuntura_block(asset_class: str, symbol: str, sector: str) -> str:
+    """Bloco conjuntural do ativo: noticias com procedencia e o nao medido.
+
+    Fica ao lado de :func:`_local_macro_block` e nao o repete -- o macro detalha
+    seus numeros la, e aqui entram o noticiario, a cobertura dos componentes e
+    as decisoes que essa cobertura autoriza (nenhuma delas vende).
+    """
+    from core.conjuntura import bloco_para_prompt
+
+    return bloco_para_prompt(asset_class=asset_class, ativos={symbol: sector},
+                             max_itens=8)
+
+
 def build_b3_ativo_context(
     ticker: str, *, user_question: str = "", nome: str = "", setor: str = "",
     subsetor: str = "", preco=None, preco_status: str = "", mult=None,
@@ -137,6 +151,9 @@ def build_b3_ativo_context(
     local_macro = _local_macro_block("b3", tk, setor)
     if local_macro:
         blocos.append("\n" + local_macro)
+    conjuntura = _conjuntura_block("b3", tk, setor)
+    if conjuntura:
+        blocos.append("\n" + conjuntura)
     return _cap("\n".join(blocos))
 
 
@@ -221,6 +238,9 @@ def build_us_ativo_context(
     local_macro = _local_macro_block("us", sym, setor_macro)
     if local_macro:
         blocos.append("\n" + local_macro)
+    conjuntura = _conjuntura_block("us", sym, setor_macro)
+    if conjuntura:
+        blocos.append("\n" + conjuntura)
     return _cap("\n".join(blocos))
 
 
@@ -290,4 +310,7 @@ def build_fii_ativo_context(
     local_macro = _local_macro_block("fii", tk, tipo.lower())
     if local_macro:
         blocos.append("\n" + local_macro)
+    conjuntura = _conjuntura_block("fii", tk, tipo.lower())
+    if conjuntura:
+        blocos.append("\n" + conjuntura)
     return _cap("\n".join(blocos))
