@@ -5,7 +5,8 @@ qualquer um passar do piso de três itens numa janela de 30 dias, o acervo
 precisa de ~11 mil itens por janela. Com ``titulo``, ``resumo``, duas URLs,
 ``entidades`` em JSONB e três índices, a linha efetiva fica perto de 2 KB --
 ~22 MB por janela, **acumulando**, porque notícia é histórico e não foto.
-O Supabase tem 71 MB de folga (429 de 500). O acervo estoura isso em pouco mais
+O Supabase tem 23 MB de folga (477 de 500, medidos em 05/09/2026 --
+eram 429 em agosto; a folga encolhe sozinha). O acervo estoura isso em pouco mais
 de três meses e não para.
 
 Então o acervo inteiro mora no armazém local, e para a produção vai uma vitrine

@@ -86,6 +86,7 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
     from core.noticias import cadencia as cad
     from core.noticias import estado_coleta as ec
     from core.noticias import universo_coleta as uni
+    from core.noticias import universo_entidades as ent_uni
     from core.noticias.armazenamento import gravar
     from core.noticias.cache import Cache
     from core.noticias.coleta import coletar
@@ -123,6 +124,7 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
             return result
         return _executar(result, ciclo, ritmo, tickers, engine=engine,
                          settings=settings, cad=cad, ec=ec, uni=uni,
+                         ent_uni=ent_uni,
                          gravar=gravar, Cache=Cache, coletar=coletar,
                          RegistroColeta=RegistroColeta, Consulta=Consulta,
                          construir=construir, Orcamento=Orcamento,
@@ -130,8 +132,8 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
 
 
 def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
-              gravar, Cache, coletar, RegistroColeta, Consulta, construir,
-              Orcamento, da_coleta) -> dict:
+              ent_uni, gravar, Cache, coletar, RegistroColeta, Consulta,
+              construir, Orcamento, da_coleta) -> dict:
     """O ciclo em si, já sob o lock. Sempre grava o ciclo antes de retornar."""
     erros: list[str] = []
     limitacoes: list[str] = []
@@ -197,6 +199,14 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
         result["status"] = "failed"
         return _encerrar(cad.STATUS_INDISPONIVEL)
 
+    # O universo de ENTIDADES é outro do universo de CONSULTA: aquele diz a quem
+    # a notícia pode ser atribuída, este diz por quem se pergunta. Enquanto este
+    # bloco não existia, ``coletar`` rodava com ``UNIVERSO_VAZIO`` e o motor de
+    # resolução ficava no ramo degradado -- só ticker declarado pelo provedor.
+    # Na coleta de 04/09/2026 isso deu 43 notícias e 2 ativos resolvidos.
+    universo_entidades, lim_entidades = ent_uni.carregar(engine=engine)
+    limitacoes.extend(lim_entidades)
+
     consulta = Consulta(tickers=tuple(tickers)[:uni.LIMITE_TICKERS],
                         limite=settings.noticias_limite)
     # ``persistir=False``: o carimbo compartilhado passou a ser o do banco, e
@@ -209,7 +219,8 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     tentativas = max(1, int(settings.noticias_max_retentativas) + 1)
     resultado = None
     for tentativa in range(1, tentativas + 1):
-        resultado = coletar(consulta, provedores, registro=registro)
+        resultado = coletar(consulta, provedores, registro=registro,
+                            universo=universo_entidades)
         if not resultado.sem_fonte:
             break
         if tentativa < tentativas:
@@ -261,9 +272,11 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
     # Contado ANTES de gravar. Depois do upsert todo id ja existe no acervo e
     # a resposta seria zero em qualquer cenario -- um numero estavel, plausivel
     # e sempre errado.
+    # Sem ``engine=``: ``engine`` aqui e o do Supabase, e ``noticias_itens``
+    # mora no armazem local. Passa-lo fazia a consulta procurar o acervo no
+    # banco que nunca vai te-lo, e a resposta era ``None`` todo ciclo.
     novas = ec.contar_novas(
-        [getattr(a.noticia, "id_dedup", "") for a in resultado.avaliadas],
-        engine=engine)
+        [getattr(a.noticia, "id_dedup", "") for a in resultado.avaliadas])
     if novas is None:
         limitacoes.append("quantas noticias eram ineditas: nao apurado")
     else:
@@ -304,6 +317,13 @@ def _executar(result, ciclo, ritmo, tickers, *, engine, settings, cad, ec, uni,
             limitacoes.append(
                 f"retencao: {expurgo['itens']} noticias e {expurgo['ciclos']} "
                 f"ciclos alem de {settings.noticias_retencao_dias} dias")
+        else:
+            # O expurgo e o freio do crescimento do acervo. Quando ele nao roda,
+            # o silencio e pior que o erro: o banco cresce e o ciclo segue
+            # dizendo "success". Vira limitacao escrita, com o motivo.
+            limitacoes.append(
+                "retencao nao aplicada por completo: "
+                f"{expurgo.get('motivo') or 'motivo nao informado'}")
     except Exception as exc:  # noqa: BLE001
         logger.info("Expurgo de retencao nao executado (%s)", exc)
 

@@ -52,6 +52,7 @@ CONJUNTURA_VERSAO = "1.0.0"
 
 from core.conjuntura.ponte import (  # noqa: E402
     AcervoIndisponivel,
+    CarimboVitrine,
     ContextoConjuntural,
     GraoIncompativel,
     LeituraNoticias,
@@ -64,6 +65,7 @@ from core.conjuntura.ponte import (  # noqa: E402
 __all__ = [
     "CONJUNTURA_VERSAO",
     "AcervoIndisponivel",
+    "CarimboVitrine",
     "ContextoConjuntural",
     "GraoIncompativel",
     "LeituraNoticias",

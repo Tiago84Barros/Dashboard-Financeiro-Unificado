@@ -119,7 +119,14 @@ def para_noticia(item: ItemBruto, provedor: str, *,
     """
     canonica = normalizacao.url_canonica(item.url)
     titulo = normalizacao.limpar_html(item.titulo) or ""
-    resumo = normalizacao.limpar_html(item.resumo)
+    # O corte do rodape mora aqui, e nao no provedor de RSS onde nasceu:
+    # este e o funil unico por onde todo provedor passa, e a assinatura de
+    # plugin ("The post X appeared first on Y") chega por agregador tambem.
+    # Sai antes de ``hash_conteudo`` e ``simhash`` de proposito -- rodape
+    # identico em materias diferentes as aproximaria sem que o texto se
+    # parecesse.
+    resumo = normalizacao.sem_rodape_de_feed(
+        normalizacao.limpar_html(item.resumo)) or None
     publicado = normalizacao.para_utc(item.publicado_em)
 
     fonte = fontes.classificar(item.url, item.veiculo)
