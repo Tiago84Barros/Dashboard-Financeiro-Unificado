@@ -64,6 +64,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from core import pregao
 from core.noticias import taxonomia
 from core.noticias.modelos import Noticia
 
@@ -181,29 +182,66 @@ class Relevancia:
         return f"{base}; sem medicao de: {faltando}" if faltando else base
 
 
+#: Decaimento da novidade por pregões encerrados desde a publicação. A chave é
+#: o piso do intervalo: 0 pregão -> 1,00; 1 -> 0,85; 2 ou 3 -> 0,55; 4 ou 5 ->
+#: 0,25; daí em diante 0,05.
+#:
+#: Os patamares são os mesmos de antes -- a mudança do A-148 é a **unidade**, e
+#: só ela. Trocar régua e patamares no mesmo commit tornaria impossível dizer
+#: qual dos dois moveu a nota. A tradução é direta porque a escala antiga já
+#: tentava aproximar pregões com horas: 24 h continham cerca de uma sessão,
+#: 72 h cerca de três, 168 h (uma semana) cerca de cinco.
+DECAIMENTO_POR_PREGAO = ((0, 1.0), (1, 0.85), (3, 0.55), (5, 0.25))
+DECAIMENTO_MINIMO = 0.05
+
+
 def _novidade(noticia: Noticia, agora: datetime,
               primeiro_em: datetime | None = None) -> float | None:
     """Quão nova é a informação. ``None`` sem data de publicação.
 
-    Decai com a idade absoluta e leva desconto quando o evento já vinha sendo
-    noticiado antes desta matéria: a quinta reportagem sobre o mesmo fato não
-    traz informação nova, mesmo tendo saído há dez minutos.
+    Decai com a **oportunidade de precificação** -- pregões encerrados desde a
+    publicação -- e leva desconto quando o evento já vinha sendo noticiado
+    antes desta matéria: a quinta reportagem sobre o mesmo fato não traz
+    informação nova, mesmo tendo saído há dez minutos.
+
+    Por que pregões e não horas (A-148, 05/09/2026)
+    -----------------------------------------------
+    Até aqui a idade era medida em horas corridas, e hora corrida não é chance
+    de reagir. Uma intervenção publicada às 03:00 de sábado tinha 57 horas
+    quando a segunda-feira abria -- e caía para 0,25, a faixa de notícia de
+    quase uma semana --, tendo tido **zero** pregões para ser precificada. Ela
+    era tão acionável quanto no instante em que saiu.
+
+    O erro tinha sinal: rebaixava sistematicamente notícia de fim de semana e
+    de madrugada, que é justamente quando banco central, regulador e conselho
+    de administração publicam o que não querem no meio do pregão. Sob a regra
+    nova esse caso volta para 1,00, que é o que ele sempre foi.
+
+    Praça
+    -----
+    Conta-se pelo calendário da B3, inclusive para notícia americana. As duas
+    praças abrem de segunda a sexta e diferem em uma hora no fechamento e nos
+    feriados -- e feriado nenhum dos dois calendários modela (ver
+    `core/pregao.py`). Ramificar por país aqui compraria uma hora de precisão
+    ao preço de duas idades possíveis para a mesma notícia conforme quem
+    pergunta, e a diferença some inteira dentro do primeiro patamar.
     """
+    if noticia.publicado_em is None:
+        return None
     idade_min = noticia.idade_em_minutos(agora)
     if idade_min is None:
         return None
-    horas = max(0.0, idade_min / 60.0)
-    if horas <= 6:
-        base = 1.0
-    elif horas <= 24:
-        base = 0.85
-    elif horas <= 72:
-        base = 0.55
-    elif horas <= 168:
-        base = 0.25
-    else:
-        base = 0.05
+    n_pregoes = pregao.pregoes_encerrados_entre(noticia.publicado_em, agora)
+    base = DECAIMENTO_MINIMO
+    for limite, valor in DECAIMENTO_POR_PREGAO:
+        if n_pregoes <= limite:
+            base = valor
+            break
 
+    # O desconto por atraso continua em horas, de propósito: ele não mede
+    # oportunidade de precificação, e sim quanto esta matéria chegou depois da
+    # primeira sobre o mesmo fato. Isso se decide dentro de um pregão, e uma
+    # régua de sessões não teria resolução para enxergá-lo.
     if primeiro_em is not None and noticia.publicado_em is not None:
         atraso_h = (noticia.publicado_em - primeiro_em).total_seconds() / 3600.0
         if atraso_h > 6:

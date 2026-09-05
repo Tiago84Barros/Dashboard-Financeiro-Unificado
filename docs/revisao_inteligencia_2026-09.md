@@ -309,12 +309,87 @@ regras…"*) casa `ignorar_regras` e é trocada pelo texto do backend — que
 continua relatando a tentativa via `injecoes_no_contexto`. O falso negativo
 publicaria a ordem do atacante. A assimetria escolhe o portão.
 
-### A-148 — sem noção de "já precificado" e sem consciência de pregão (baixo)
+### A-148 — sem noção de "já precificado" e sem consciência de pregão (baixo) — METADE CORRIGIDA
 
 Cenário 2 (queda de lucro de 12 dias, já replicada): **60,8 / observação**.
 Cenário 10 (intervenção do BC com mercado fechado, sábado 03:00 UTC): nenhuma
 marca de horário aparece na saída, e o evento ainda foi classificado como
 `juros_politica_monetaria`.
+
+**Correção aplicada em 05/09/2026 — e o achado era um eixo só, não dois.**
+
+As duas metades que a revisão listou separadas são a mesma grandeza medida na
+unidade errada: o motor contava **horas corridas** onde precisava contar
+**pregões decorridos**. Hora corrida não é oportunidade de reagir.
+
+Medido no motor real, antes:
+
+```
+sabado 03:00 UTC lido na segunda 12:00  ->  57 horas  ->  novidade 0,25
+```
+
+0,25 é a faixa de notícia de quase uma semana. Pregões decorridos: **zero**. O
+mercado não teve chance nenhuma de precificar aquilo, e a notícia era tão
+acionável quanto no instante em que saiu.
+
+E o erro tinha **sinal**, que é o que o tornava caro: ele rebaixava
+sistematicamente notícia de fim de semana e de madrugada — justamente quando
+banco central, regulador e conselho de administração publicam o que não querem
+no meio do pregão. Depois:
+
+```
+sabado 03:00 UTC lido na segunda 12:00  ->  0 pregoes  ->  novidade 1,00
+12 dias corridos                        -> 10 pregoes  ->  novidade 0,05 (inalterado)
+```
+
+`core/pregao.py` é o calendário: `pregoes_encerrados_entre` conta sessões que
+**fecharam** no intervalo — fechadas, não abertas, porque o que se mede é
+oportunidade *completa* de precificação. Notícia das 11:00 com o pregão em
+curso ainda não teve o dia inteiro para ser digerida, e contar esse dia inteiro
+seria arredondar a favor da conclusão de que ela já é velha.
+
+**Os patamares não mudaram; mudou a unidade.** 0 pregão → 1,00; 1 → 0,85; 2–3 →
+0,55; 4–5 → 0,25; daí 0,05. A tradução é direta porque a escala antiga já
+tentava aproximar pregões com horas (24 h ≈ 1 sessão, 72 h ≈ 3, 168 h ≈ 5).
+Trocar régua e patamares no mesmo commit tornaria impossível dizer qual dos
+dois moveu a nota.
+
+**Duas lacunas declaradas, as duas com direção conhecida:**
+
+*Feriado não é modelado.* Tabela de feriados embutida no código envelhece em
+silêncio e passa a mentir com a mesma cara de quem acerta — este projeto já
+viveu um aviso que envelheceu invertido e seguiu soando como rigor. O que salva
+a lacuna é a **direção única do erro**: sem feriados a contagem só pode
+*superestimar* sessões, nunca subestimar. Superestimar envelhece a notícia mais
+rápido. Ou seja, o módulo pode fazer notícia nova parecer velha e **nunca** pode
+fazer notícia velha parecer fresca. `tests/test_pregao.py` fixa isso como
+propriedade, não como comentário: a contagem nunca supera os dias corridos, é
+monótona no tempo, e o feriado de 07/09/2026 aparece num teste que documenta o
+custo exato (conta 2 sessões onde houve 1).
+
+*Uma praça só.* Conta-se pelo calendário da B3, inclusive para notícia
+americana. As duas abrem de segunda a sexta e diferem em uma hora no fechamento
+— e a diferença some inteira dentro do primeiro patamar. Ramificar por país
+compraria uma hora de precisão ao preço de duas idades possíveis para a mesma
+notícia conforme quem pergunta.
+
+**A outra metade do achado continua aberta, de propósito.** O motor *não* diz
+"já precificado", e não vai dizer a partir do calendário. Afirmar isso exige
+observar o preço depois do evento contra a memória de mercado — que segue sem
+safra construída, o mesmo bloqueio do A-141. O que o calendário sustenta é a
+frase menor e verdadeira: *o mercado teve N pregões para reagir*. Derivar
+"precificado" do relógio seria inventar a conclusão.
+
+**Um defeito real apareceu ao escrever o teste**, e vale registrar porque é o
+padrão de sempre: `pregoes_encerrados_entre` comparava os carimbos antes de
+convertê-los, e estourava com `offset-naive and offset-aware` quando um deles
+vinha ingênuo do provedor. A convenção "ingênuo é UTC" estava declarada em
+`Praca.local` e o código não passava por lá primeiro. Corrigido — converte,
+depois compara.
+
+`VERSAO_METODOLOGIA` foi para **1.2.0**: a escala mudou, então as notas das
+duas safras não são comparáveis e elas convivem em vez de uma sobrescrever a
+outra.
 
 ---
 
@@ -563,7 +638,13 @@ evidências — os harnesses vivem no scratchpad da sessão.
    **Limitação declarada:** a trilha mora no armazém local, então a produção
    continua vendo apenas `estado.modo`. A justificativa é consultável de onde o
    job roda, não da Streamlit Cloud.
-9. ~~**Prompt 2** — agendador; hoje a periodicidade real é zero.~~
+9. ~~**A-148**~~ — METADE FEITA em 05/09/2026. A novidade passou a decair por
+   pregões encerrados, e não por horas corridas: sábado 03:00 lido na segunda
+   12:00 saiu de 0,25 para 1,00, e notícia de 12 dias seguiu em 0,05. A outra
+   metade — dizer que algo "já está precificado" — **continua aberta e vai
+   continuar** até a memória de mercado ter safra, porque ela exige observar o
+   preço depois do evento e não o relógio (mesmo bloqueio do A-141).
+10. ~~**Prompt 2** — agendador; hoje a periodicidade real é zero.~~
    **CORRIGIDO em 05/09/2026, com uma ressalva que não é minha para fechar.**
    O agendador existia (`noticias.yml`, cron de 30 min) e não teria funcionado:
    o runner não alcança o acervo local. Foram adicionados `saude.checar_acervo`,
