@@ -142,7 +142,16 @@ def para_noticia(item: ItemBruto, provedor: str, *,
         titulo, resumo,
         tickers_declarados=item.tickers,
         empresas_declaradas=item.empresas,
-        pais_declarado=item.pais or (fonte.pais if fonte else None),
+        # O país do VEÍCULO não entra: ele é procedência, não entidade do
+        # fato. Enquanto entrava, uma matéria da Reuters sobre o Brasil saía
+        # com ``paises=("GB",)`` e a mesma matéria no Valor com ``("BR",)`` --
+        # e o agrupamento por evento, que usa país como chave de último
+        # recurso, separava o mesmo fato pela nacionalidade de quem publicou
+        # (A-145). O efeito não parava ali: ``exposicao`` lia o país do
+        # veículo como exposição da carteira e ``relevancia`` premiava a
+        # matéria por um vínculo macro que ela não tinha. A procedência
+        # continua registrada em ``Noticia.pais``, que é o lugar dela.
+        pais_declarado=item.pais,
         universo=universo,
     )
 

@@ -248,7 +248,7 @@ calibrada para o Prompt 3 medir** enquanto a ponte não for ligada.
 | 6 | fallback e falhas | SIM — cache vencido, provedor isolado |
 | 7 | chaves só em variável de ambiente | SIM |
 | 8 | duplicadas removidas | SIM — cascata URL, hash, simhash |
-| 9 | eventos iguais agrupados | PARCIAL — falha em evento macro (A-145) |
+| 9 | eventos iguais agrupados | SIM — macro incluído desde 05/09 (A-145) |
 | 10 | fontes classificadas | SIM — 8 classes |
 | 11 | fato / hipótese / estimativa | SIM — selo em 3 canais |
 | 12 | sentimento diferente de impacto | SIM — dimensões separadas |
@@ -315,12 +315,23 @@ evidências — os harnesses vivem no scratchpad da sessão.
 
 ## 8. Pendências, em ordem
 
-1. **A-140** — ligar `portoes`, `transicao`, `scores` e `ponte_noticias` ao
-   caminho de decisão. Sem isso, os demais achados são acadêmicos.
-2. **A-141** — dar entrada ao portão quantitativo, ou tirá-lo da conjunção.
-3. **A-142 / A-143** — passar `perfil`, `bases` e os quatro insumos de choque.
-4. **A-144** — três tipos novos na taxonomia, com `TAXONOMIA_VERSAO` nova.
-5. **A-145** — chave de agrupamento que funcione sem ticker.
+1. ~~**A-140**~~ — FEITO em 05/09/2026 (`3176a53`): os portões ganharam
+   chamador e entrada.
+2. ~~**A-141**~~ — caminho de código FEITO (`3176a53`,
+   `core/noticias/bases_historicas.py`). **A fonte ainda não existe**: a
+   memória de mercado não tem safra construída, então o portão quantitativo
+   segue em "não medido" em produção e `sugerir_revisao` continua inalcançável
+   *de fato*, ainda que não mais *estruturalmente*.
+3. ~~**A-142 / A-143**~~ — FEITO (`4586a65`, `9d066e6`).
+4. ~~**A-144**~~ — já estava FEITO em 03/09/2026, antes desta lista ser
+   escrita: `TAXONOMIA_VERSAO = "1.1.0"` com `pandemia`, `quebra_bancaria` e
+   `evento_climatico`, cobertos por `tests/test_taxonomia_tipos_novos.py`. A
+   pendência era falsa.
+5. ~~**A-145**~~ — FEITO em 05/09/2026. Duas causas, as duas corrigidas: o país
+   do *veículo* entrava em `entidades.paises` (procedência tratada como
+   entidade do fato) e a notícia macro não tinha chave de agrupamento nenhuma.
+   Ver `tests/test_noticias_evento_macro_sem_ticker.py`.
 6. **A-147** — barrar eco de instrução na saída da LLM (Prompt 4).
-7. **Item 25** — trilha de auditoria persistida (Prompt 4).
+7. **Item 25** — trilha de auditoria persistida (Prompt 4) — parcialmente
+   atendido pelas colunas `acao`/`portoes` de `3176a53`.
 8. **Prompt 2** — agendador; hoje a periodicidade real é zero.
