@@ -67,11 +67,12 @@ def test_1_credencial_nao_sai_em_log(caplog):
     """
     logger = logging.getLogger("teste.segredos")
     logger.addFilter(segredos.FiltroDeSegredos())
-    url = "postgresql://dfu:S3nh4Secreta@localhost:5433/warehouse"
+    senha_teste = "x" * 16
+    url = f"postgresql://dfu:{senha_teste}@localhost:5433/warehouse"
     with caplog.at_level(logging.WARNING, logger="teste.segredos"):
         logger.warning("falha ao conectar em %s", url)
     saida = caplog.text
-    assert "S3nh4Secreta" not in saida
+    assert senha_teste not in saida
     assert "[oculto:url_com_senha]" in saida
     # E o diagnóstico sobrevive: host e porta continuam legíveis.
     assert "localhost:5433" in saida
