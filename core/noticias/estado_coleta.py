@@ -108,6 +108,32 @@ DDL_SQL = [
 _schema_pronto = False
 
 
+@contextmanager
+def _acervo(engine=None):
+    """Cede a engine do acervo local -- **não** a do Supabase.
+
+    O estado da coleta, os ciclos e o consumo por provedor moram no banco da
+    produção; ``noticias_itens`` mora no armazém local, por aritmética de espaço
+    (ver :mod:`core.noticias.destino`). Este módulo fala com os dois, e resolver
+    os dois com ``get_engine`` fazia as consultas do acervo procurarem a tabela
+    no único banco onde ela nunca vai existir.
+
+    A engine do acervo não é cacheada -- quem a cria, descarta. Por isso o
+    descarte mora aqui, e não em cada chamador.
+    """
+    if engine is not None:      # injetada (testes): quem passou é o dono
+        yield engine
+        return
+    from core.noticias.destino import engine_acervo
+
+    motor = engine_acervo()
+    try:
+        yield motor
+    finally:
+        if motor is not None:
+            motor.dispose()
+
+
 def _agora() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -525,46 +551,80 @@ def contar_novas(ids: list[str], *, engine=None) -> int | None:
     """
     if not ids:
         return 0
-    motor = engine if engine is not None else get_engine()
-    if motor is None:
-        return None
-    try:
-        with motor.begin() as conn:
-            existentes = conn.execute(text("""
-                SELECT COUNT(*) FROM noticias_itens WHERE id_dedup = ANY(:ids)
-            """), {"ids": list(ids)}).scalar() or 0
-    except Exception as exc:
-        logger.warning("Contagem de novas indisponivel: %s", exc)
-        return None
+    # ``noticias_itens`` mora no armazém local; o estado da coleta e os ciclos
+    # moram no Supabase. Resolver os dois com ``get_engine`` fazia esta consulta
+    # procurar o acervo no banco que nunca vai tê-lo, e a resposta era sempre
+    # ``None`` -- ausência de medição com cara de banco fora do ar.
+    with _acervo(engine) as motor:
+        if motor is None:
+            return None
+        try:
+            with motor.begin() as conn:
+                existentes = conn.execute(text("""
+                    SELECT COUNT(*) FROM noticias_itens
+                     WHERE id_dedup = ANY(:ids)
+                """), {"ids": list(ids)}).scalar() or 0
+        except Exception as exc:
+            logger.warning("Contagem de novas indisponivel: %s", exc)
+            return None
     return max(0, len(ids) - int(existentes))
 
 
-def expurgar(*, dias: int | None = None, engine=None) -> dict:
+def expurgar(*, dias: int | None = None, engine=None,
+             engine_acervo=None) -> dict:
     """Apaga acervo e ciclos além da retenção. É o freio do crescimento.
 
     Notícia sai por **data de publicação**, não por data de coleta: uma matéria
     de 2019 recoletada hoje não vira acervo recente. O ciclo sai por data de
     execução, que é o que ele mede.
+
+    São dois bancos e duas transações, e isso não é detalhe de implementação.
+    Os ciclos moram no Supabase; o acervo, no armazém local. Enquanto os dois
+    ``DELETE`` compartilhavam uma transação só, o do acervo falhava (tabela
+    inexistente naquele host), a exceção era engolida com ``itens = 0`` e o
+    freio do crescimento ficava desligado sem nunca reclamar -- exatamente o
+    modo de falha que o cálculo de espaço do acervo pressupõe que não existe.
+
+    ``itens`` e ``ciclos`` vêm ``None`` quando o expurgo correspondente não
+    pôde ser feito. ``0`` significa "varri e não havia o que apagar", que é uma
+    afirmação diferente.
     """
-    motor = engine if engine is not None else get_engine()
-    if motor is None:
-        return {"expurgado": False, "motivo": "sem banco configurado"}
     if dias is None:
         from core.config import settings
         dias = settings.noticias_retencao_dias
-
     corte = _agora() - timedelta(days=int(dias))
-    with motor.begin() as conn:
-        garantir_schema(conn)
-        ciclos = conn.execute(text(
-            "DELETE FROM noticias_coleta_ciclos WHERE iniciado_em < :c"),
-            {"c": corte}).rowcount
+
+    ciclos: int | None = None
+    motivos: list[str] = []
+    motor = engine if engine is not None else get_engine()
+    if motor is None:
+        motivos.append("ciclos: sem banco configurado")
+    else:
         try:
-            itens = conn.execute(text(
-                "DELETE FROM noticias_itens WHERE publicado_em < :c"),
-                {"c": corte}).rowcount
-        except Exception as exc:
-            logger.info("Acervo nao expurgado (%s)", exc)
-            itens = 0
-    return {"expurgado": True, "corte": corte.isoformat(),
-            "ciclos": int(ciclos or 0), "itens": int(itens or 0)}
+            with motor.begin() as conn:
+                garantir_schema(conn)
+                ciclos = conn.execute(text(
+                    "DELETE FROM noticias_coleta_ciclos WHERE iniciado_em < :c"
+                ), {"c": corte}).rowcount
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Ciclos nao expurgados: %s", exc)
+            motivos.append(f"ciclos: {str(exc).splitlines()[0][:200]}")
+
+    itens: int | None = None
+    with _acervo(engine_acervo) as motor_acervo:
+        if motor_acervo is None:
+            motivos.append("itens: acervo local nao configurado")
+        else:
+            try:
+                with motor_acervo.begin() as conn:
+                    itens = conn.execute(text(
+                        "DELETE FROM noticias_itens WHERE publicado_em < :c"
+                    ), {"c": corte}).rowcount
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Acervo nao expurgado: %s", exc)
+                motivos.append(f"itens: {str(exc).splitlines()[0][:200]}")
+
+    return {"expurgado": not motivos, "corte": corte.isoformat(),
+            "ciclos": (None if ciclos is None else int(ciclos)),
+            "itens": (None if itens is None else int(itens)),
+            "motivo": "; ".join(motivos)}

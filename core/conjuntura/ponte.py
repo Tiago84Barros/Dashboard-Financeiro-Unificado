@@ -73,6 +73,19 @@ MINIMO_ITENS_ATIVO = 3
 #: vive em −1..+1 e o componente em −100..+100.
 ESCALA_SENTIMENTO = 100.0
 
+#: Idade máxima da vitrine para que ela ainda possa **mover peso**.
+#:
+#: Duas rodadas noturnas perdidas. O número não é o ponto; o ponto é que exista
+#: um, porque a vitrine é substituída e não acumula — ela sai do publicador com
+#: a mesma cara todo dia, e uma que parou de ser publicada em julho chega à tela
+#: idêntica à de hoje. Passado o prazo, os itens continuam aparecendo (cada um
+#: com sua data, que é verificável) mas ``valor`` vira ``None``: o componente
+#: sai do denominador em vez de entrar como leitura corrente. Vitrine velha não
+#: é vitrine errada — é vitrine de outro dia, e dizer qual dia é a única forma
+#: de não deixar acervo velho virar conjuntura silenciosamente atual
+#: (``memoria: aviso-que-envelhece-invertido``).
+MAX_IDADE_VITRINE_HORAS = 48.0
+
 _TABELAS_NOTICIAS = ("noticias_itens", "noticias_avaliacoes")
 
 _SQL_NOTICIAS = """
@@ -154,6 +167,43 @@ class LeituraNoticias:
 
 
 @dataclass(frozen=True)
+class CarimboVitrine:
+    """Quando a vitrine foi gerada, e se isso ainda vale como leitura de hoje."""
+
+    gerada_em: datetime | None
+    janela_dias: int
+    versao: str
+    ativos: int
+    ativos_medidos: int
+    origem: str = ""
+
+    @property
+    def idade_horas(self) -> float | None:
+        if self.gerada_em is None:
+            return None
+        quando = (self.gerada_em.replace(tzinfo=timezone.utc)
+                  if self.gerada_em.tzinfo is None else self.gerada_em)
+        return (datetime.now(timezone.utc) - quando).total_seconds() / 3600.0
+
+    @property
+    def fresca(self) -> bool:
+        idade = self.idade_horas
+        return idade is not None and idade <= MAX_IDADE_VITRINE_HORAS
+
+    @property
+    def texto(self) -> str:
+        """A frase que a tela e o prompt exibem. Nunca omitida."""
+        if self.gerada_em is None:
+            return "vitrine sem carimbo de geração"
+        quando = f"vitrine de {self.gerada_em:%d/%m às %H:%M} UTC"
+        idade = self.idade_horas
+        if idade is None:
+            return quando
+        return (f"{quando} ({idade:.0f} h atrás"
+                f"{'' if self.fresca else '; velha demais para mover peso'})")
+
+
+@dataclass(frozen=True)
 class ContextoConjuntural:
     """O que a conjuntura autoriza, e tudo o que ela não pôde medir."""
 
@@ -170,6 +220,13 @@ class ContextoConjuntural:
     #: A leitura do acervo falhou (distinto de acervo vazio). Sem este campo, a
     #: tela e o prompt escreveriam "não houve notícias" para um banco fora do ar.
     acervo_falhou: bool = False
+    #: ``"acervo"`` (armazém local, grão de item) ou ``"vitrine"`` (Supabase,
+    #: grão de ativo). Em produção só a segunda existe, e a diferença precisa
+    #: chegar à tela: uma é a leitura de agora, a outra é a leitura de quando
+    #: alguém publicou.
+    fonte_noticias: str = ""
+    #: Preenchido só quando ``fonte_noticias == "vitrine"``.
+    carimbo_vitrine: CarimboVitrine | None = None
 
     @property
     def move_prioridade(self) -> bool:
@@ -313,6 +370,103 @@ def _ler_noticias(engine, *, simbolos: Sequence[str], as_of: datetime,
     return leituras
 
 
+def leituras_do_acervo(engine, *, simbolos: Sequence[str], as_of: datetime,
+                       janela_dias: int = JANELA_NOTICIAS_DIAS
+                       ) -> dict[str, LeituraNoticias]:
+    """A agregação do acervo, publicada para quem gera a vitrine.
+
+    Existe para que o publicador **não** tenha fórmula própria. Duas
+    implementações do mesmo cálculo envelhecem em direções diferentes e passam a
+    discordar sem que nada quebre — e aqui a discordância seria invisível, já que
+    a tela em produção lê o resultado da outra.
+    """
+    return _ler_noticias(engine, simbolos=simbolos, as_of=as_of,
+                         janela_dias=janela_dias)
+
+
+def _item_da_vitrine(simbolo: str, bruto: Mapping) -> ItemNoticiaBruto:
+    """Reconstrói o item citável a partir do JSON da vitrine."""
+    publicado = bruto.get("publicado_em")
+    if isinstance(publicado, str):
+        try:
+            publicado = datetime.fromisoformat(publicado)
+        except ValueError:
+            publicado = None
+    return ItemNoticiaBruto(
+        simbolo=simbolo,
+        titulo=str(bruto.get("titulo") or ""),
+        veiculo=(str(bruto["veiculo"]) if bruto.get("veiculo") else None),
+        url=(str(bruto["url"]) if bruto.get("url") else None),
+        publicado_em=publicado if isinstance(publicado, datetime) else None,
+        tipo_evento=None, nota=None, direcao=None, confianca=None,
+        sentimento=None,
+    )
+
+
+def _ler_vitrine(engine, *, simbolos: Sequence[str],
+                 ) -> tuple[dict[str, LeituraNoticias], CarimboVitrine | None]:
+    """Lê a vitrine publicada. Levanta em falha; devolve vazio em vazio.
+
+    A vitrine já vem agregada por ativo — este leitor **não** recalcula nada,
+    apenas veste o mesmo :class:`LeituraNoticias` que o acervo produz, para que
+    tudo abaixo daqui não saiba de qual das duas fontes veio. O que ele
+    acrescenta é o carimbo, e o carimbo tem consequência: passada
+    :data:`MAX_IDADE_VITRINE_HORAS`, ``valor`` é zerado para ``None`` e o motivo
+    passa a dizer a idade. Os itens ficam — eles carregam data própria e
+    continuam citáveis; o que deixa de valer é o agregado.
+    """
+    from core.noticias.vitrine import VitrineIlegivel, ler
+
+    try:
+        linhas, meta = ler(engine, simbolos)
+    except VitrineIlegivel as exc:
+        raise AcervoIndisponivel(
+            f"vitrine de notícias não pôde ser lida "
+            f"(noticias_vitrine): {exc}") from exc
+
+    carimbo = None
+    if meta is not None:
+        carimbo = CarimboVitrine(
+            gerada_em=meta.get("gerada_em"),
+            janela_dias=int(meta.get("janela_dias") or 0),
+            versao=str(meta.get("versao_metodologia") or ""),
+            ativos=int(meta.get("ativos") or 0),
+            ativos_medidos=int(meta.get("ativos_medidos") or 0),
+            origem=str(meta.get("origem") or ""),
+        )
+    fresca = carimbo is not None and carimbo.fresca
+
+    leituras: dict[str, LeituraNoticias] = {}
+    for linha in linhas:
+        simbolo = str(linha["simbolo"]).strip().upper()
+        itens = linha.get("itens") or []
+        if isinstance(itens, str):
+            import json as _json
+
+            try:
+                itens = _json.loads(itens)
+            except ValueError:
+                itens = []
+        motivo = str(linha.get("motivo") or "")
+        valor = _num(linha.get("valor"))
+        if valor is not None and not fresca:
+            idade = carimbo.idade_horas if carimbo is not None else None
+            valor = None
+            motivo = ("vitrine de "
+                      + (f"{idade:.0f} h atrás" if idade is not None
+                         else "idade desconhecida")
+                      + f": acima do limite de {MAX_IDADE_VITRINE_HORAS:.0f} h "
+                      "para valer como leitura corrente")
+        leituras[simbolo] = LeituraNoticias(
+            simbolo=simbolo, valor=valor,
+            n_itens=int(linha.get("n_itens") or 0),
+            itens=tuple(_item_da_vitrine(simbolo, i) for i in itens
+                        if isinstance(i, Mapping)),
+            motivo=motivo,
+        )
+    return leituras, carimbo
+
+
 def carregar(
     *,
     asset_class: str,
@@ -322,6 +476,7 @@ def carregar(
     knowledge_mode: str = "strict",
     macro_engine=None,
     noticias_engine=None,
+    vitrine_engine=None,
     quedas: Mapping[str, float] | None = None,
     fundamentos_deteriorados: Mapping[str, bool] | None = None,
     janela_noticias_dias: int = JANELA_NOTICIAS_DIAS,
@@ -374,19 +529,50 @@ def carregar(
         ausentes.append("macro")
 
     # ── notícias ─────────────────────────────────────────────────────────────
+    # A escolha entre acervo e vitrine é por DISPONIBILIDADE, não por qual está
+    # mais cheia. O acervo tem grão de item e é recalculado no corte pedido; a
+    # vitrine traz o agregado de quando alguém publicou. Havendo acervo, ele
+    # ganha — inclusive quando volta vazio, porque acervo local vazio é um fato
+    # sobre esta máquina, e cair na vitrine ali dentro misturaria a coleta de
+    # outra máquina com a desta sem que nada na tela dissesse isso.
     leituras: dict[str, LeituraNoticias] = {}
     acervo_falhou = False
+    fonte_noticias = ""
+    carimbo_vitrine: CarimboVitrine | None = None
     if noticias_engine is not None and simbolos:
         try:
             leituras = _ler_noticias(
                 noticias_engine, simbolos=simbolos, as_of=momento,
                 janela_dias=janela_noticias_dias)
+            fonte_noticias = "acervo"
         except AcervoIndisponivel as exc:
             acervo_falhou = True
             limitacoes.append(str(exc))
             logger.warning("acervo de notícias indisponível: %s", exc)
     elif noticias_engine is None:
         limitacoes.append("acervo de notícias não consultado: engine ausente")
+
+    if not leituras and vitrine_engine is not None and simbolos:
+        try:
+            leituras, carimbo_vitrine = _ler_vitrine(
+                vitrine_engine, simbolos=simbolos)
+            fonte_noticias = "vitrine"
+            acervo_falhou = False
+            if carimbo_vitrine is None:
+                limitacoes.append(
+                    "vitrine de notícias nunca foi publicada (a tabela existe e "
+                    "não tem carimbo): isto é ausência de publicação, não "
+                    "ausência de notícias")
+            else:
+                limitacoes.append(
+                    f"notícias vindas da vitrine, não do acervo — "
+                    f"{carimbo_vitrine.texto}, janela de "
+                    f"{carimbo_vitrine.janela_dias} dias, metodologia "
+                    f"{carimbo_vitrine.versao}")
+        except AcervoIndisponivel as exc:
+            acervo_falhou = True
+            limitacoes.append(str(exc))
+            logger.warning("vitrine de notícias indisponível: %s", exc)
 
     medidas = [lt for lt in leituras.values() if lt.medida]
     if medidas:
@@ -448,6 +634,8 @@ def carregar(
         cobertura_macro=cobertura_macro,
         limitacoes=tuple(dict.fromkeys(limitacoes)),
         acervo_falhou=acervo_falhou,
+        fonte_noticias=fonte_noticias,
+        carimbo_vitrine=carimbo_vitrine,
     )
 
 
@@ -522,6 +710,17 @@ def para_llm(contexto: ContextoConjuntural, *, max_itens: int = 12) -> str:
                 f"{', aporte novo bloqueado' if d.bloqueia_aporte else ''}) "
                 f"— {d.motivo}")
 
+    if contexto.fonte_noticias == "vitrine":
+        # O carimbo não é enfeite de rodapé: sem ele a LLM escreveria "o
+        # noticiário recente indica..." sobre uma leitura que pode ser de
+        # semanas atrás, e a frase estaria errada sem nenhum número errado.
+        carimbo = contexto.carimbo_vitrine
+        linhas.append(
+            "  Origem das notícias: VITRINE publicada — "
+            + (carimbo.texto if carimbo is not None
+               else "sem carimbo de geração")
+            + ". Não a apresente como o noticiário de agora; diga a data.")
+
     citaveis = [lt for lt in contexto.leituras.values() if lt.itens]
     if citaveis:
         linhas.append("  Notícias no corte (cite sempre veículo e data):")
@@ -554,15 +753,24 @@ def para_llm(contexto: ContextoConjuntural, *, max_itens: int = 12) -> str:
     return "\n".join(linhas)
 
 
-def _engines() -> tuple[object | None, object | None]:
-    """Resolve os dois bancos, cada falha virando ausência declarada.
+def _engines() -> tuple[object | None, object | None, object | None]:
+    """Resolve os três bancos, cada falha virando ausência declarada.
 
-    São bancos diferentes de propósito: o macro mora no armazém local
-    (``macro_staging``, porta 5433) e o acervo de notícias mora no Supabase, que
-    é o único que o app publicado alcança. No deploy o primeiro não existe — e
-    isso precisa aparecer como componente ausente, não como conjuntura calma.
+    São três de propósito, e a assimetria entre eles é o desenho:
+
+    ``macro``     armazém local (``macro_staging``, porta 5433).
+    ``acervo``    armazém local (banco ``noticias``) — grão de item, acumula.
+                  **Não existe no deploy**, e não é para existir: ~22 MB por
+                  janela de 30 dias, acumulando, contra 23 MB de folga no
+                  Supabase.
+    ``vitrine``   Supabase — grão de ativo, substituída, ~1,5 MB fixos. É o que
+                  a produção enxerga, porque é o único banco que ela alcança.
+
+    Em desenvolvimento os três respondem e o acervo ganha; em produção só o
+    terceiro responde. Nos dois casos a ausência sai nomeada em vez de virar
+    conjuntura calma.
     """
-    macro = noticias = None
+    macro = acervo = vitrine = None
     try:
         from core.macro_data.database import get_local_macro_engine
 
@@ -570,12 +778,18 @@ def _engines() -> tuple[object | None, object | None]:
     except Exception as exc:  # noqa: BLE001 - ausência declarada, não silêncio
         logger.info("banco macro local indisponível: %s", exc)
     try:
+        from core.noticias.destino import engine_acervo
+
+        acervo = engine_acervo()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("acervo local de notícias indisponível: %s", exc)
+    try:
         from core.database import get_engine
 
-        noticias = get_engine()
+        vitrine = get_engine()
     except Exception as exc:  # noqa: BLE001
-        logger.info("banco de notícias indisponível: %s", exc)
-    return macro, noticias
+        logger.info("vitrine de notícias indisponível: %s", exc)
+    return macro, acervo, vitrine
 
 
 def bloco_para_prompt(
@@ -595,23 +809,26 @@ def bloco_para_prompt(
     """
     if not ativos:
         return ""
-    macro, noticias = _engines()
+    macro, acervo, vitrine = _engines()
     try:
         contexto = carregar(
             asset_class=asset_class, ativos=ativos, estruturais=estruturais,
             as_of=as_of, knowledge_mode=knowledge_mode,
-            macro_engine=macro, noticias_engine=noticias)
+            macro_engine=macro, noticias_engine=acervo,
+            vitrine_engine=vitrine)
     except Exception as exc:  # noqa: BLE001
         logger.exception("contexto conjuntural indisponível")
         return ("CONTEXTO CONJUNTURAL: não foi possível montá-lo "
                 f"({str(exc).splitlines()[0].strip()}). Não trate isso como "
                 "ausência de notícias nem como conjuntura neutra.")
     finally:
-        # O engine macro nasce nesta funcao a cada chamada
-        # (``get_local_macro_engine`` nao e cacheado) e um prompt pode monta-lo
-        # varias vezes por turno. Sem este dispose, cada montagem deixa um pool
-        # aberto no Postgres local. O engine do Supabase vem de
-        # ``st.cache_resource`` e e compartilhado: fecha-lo derrubaria o app.
-        if macro is not None:
-            macro.dispose()
+        # Os engines locais nascem nesta funcao a cada chamada
+        # (``get_local_macro_engine`` e ``engine_acervo`` nao sao cacheados) e um
+        # prompt pode monta-los varias vezes por turno. Sem este dispose, cada
+        # montagem deixa dois pools abertos no Postgres local. O engine do
+        # Supabase -- o da vitrine -- vem de ``st.cache_resource`` e e
+        # compartilhado: fecha-lo derrubaria o app, e por isso ele nao entra aqui.
+        for local in (macro, acervo):
+            if local is not None:
+                local.dispose()
     return para_llm(contexto, max_itens=max_itens)

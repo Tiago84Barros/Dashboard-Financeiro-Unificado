@@ -135,6 +135,15 @@ _UPSERT_ITEM = text("""
         :metodo_sentimento
     )
     ON CONFLICT (id_dedup) DO UPDATE SET
+        -- ``resumo`` entra aqui porque o que gravamos nao e o texto cru da
+        -- fonte: ja passou por ``limpar_html`` e ``sem_rodape_de_feed``. Se a
+        -- normalizacao de entrada melhorar, congelar a versao que rodou na
+        -- primeira coleta deixa o acervo com duas gramaticas -- foi o que
+        -- aconteceu em 05/09/2026, quando 21 linhas ficaram com o rodape de
+        -- plugin que as novas ja nao tinham. O ``NULLIF`` existe porque
+        -- provedor as vezes devolve o mesmo item sem descricao numa passada
+        -- seguinte, e perder texto bom para um vazio seria pior que o rodape.
+        resumo = COALESCE(NULLIF(EXCLUDED.resumo, ''), noticias_itens.resumo),
         evento_id = EXCLUDED.evento_id,
         entidades = EXCLUDED.entidades,
         tipo_evento = EXCLUDED.tipo_evento,
@@ -262,7 +271,7 @@ def gravar(resultado: ResultadoColeta, *, engine=None,
     a chave é o ``id_dedup``, que sai da URL canônica.
 
     **O destino é o armazém local, e não é preferência: é aritmética.** São
-    ~22 MB por janela de 30 dias, acumulando, contra 71 MB de folga no
+    ~22 MB por janela de 30 dias, acumulando, contra 23 MB de folga no
     Supabase. Por isso ``exigir_local`` roda antes de qualquer ``INSERT`` --
     um ``engine=`` distraído não pode ser suficiente para encher o banco de que
     a produção depende. Para a produção vai a vitrine, não o acervo.

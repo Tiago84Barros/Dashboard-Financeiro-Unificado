@@ -1,7 +1,7 @@
 """O acervo de notícias não pode ir para o Supabase, e ler não pode criar tabela.
 
 A restrição é de tamanho, não de gosto: ~11 mil itens por janela de 30 dias a
-~2 KB dão ~22 MB por janela, acumulando, contra 71 MB de folga no Supabase.
+~2 KB dão ~22 MB por janela, acumulando, contra 23 MB de folga no Supabase.
 Um ``engine=`` distraído não pode ser suficiente para encher o banco de que a
 produção depende -- e por isso a recusa é testada, não só documentada.
 """
