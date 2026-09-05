@@ -4,6 +4,30 @@ Como o APP4 mantém as notícias frescas **sem ninguém com uma página do Strea
 aberta**, o que isso custa em cota de plano gratuito, e o que precisa ser
 configurado para valer em produção.
 
+> **Correção de 05/09/2026 — o agendador mudou de casa.**
+>
+> Este documento foi escrito quando o acervo de notícias morava no Supabase, e a
+> resposta certa para "quem sustenta a cadência" era o cron do GitHub Actions.
+> Depois do commit 61c39e8 ela deixou de ser: o acervo mora no **armazém local**
+> (~22 MB por janela, acumulando, contra 23 MB de folga no Supabase), e um runner
+> do Actions não alcança `noticias_itens`. Ligado lá, o job coletaria, gastaria
+> requisição de Alpha Vantage e Marketaux e **descartaria o resultado inteiro** —
+> ele avisa (`partial_success`, "coleta não persistida"), mas depois de a cota ter
+> sido paga.
+>
+> Quem sustenta a cadência hoje é a tarefa local **`DFU - Coleta de noticias`**
+> (`scripts/registrar_tarefas.ps1`), a cada 30 minutos e ao entrar na sessão, na
+> máquina que tem o armazém — pelo mesmo motivo estrutural que já tinha tirado a
+> cadeia de FIIs do `market-refresh.yml`. Ver `local_staging/README.md`.
+>
+> O workflow continua no repositório e continua nascendo desligado. Ele só é
+> válido se existir um destino que o runner alcance (secret
+> `NOTICIAS_LOCAL_DB_URL`); sem ele, o passo `cli_noticias --destino` reprova o
+> job **antes** da primeira requisição, de propósito. Onde as seções abaixo
+> disserem que o cron é o agendador, leia-as como o desenho original: o mecanismo
+> (freio de cadência no banco, advisory lock, carimbo compartilhado) vale
+> igual — só o gatilho mudou de lugar.
+
 ---
 
 ## 1. Onde o APP4 roda, e o que isso permite
@@ -270,8 +294,20 @@ continua exibindo os dados da última coleta bem-sucedida.
 
 ## 11. Saúde dos serviços
 
-Sete verificações, nenhuma delas na rede: banco, provedores, agendador, worker,
-cache, serviço de preços, serviço de LLM.
+Oito verificações, nenhuma delas na rede: banco, **acervo**, provedores,
+agendador, worker, cache, serviço de preços, serviço de LLM.
+
+`acervo` foi acrescentada em 05/09/2026 e é a que faltava. `banco` mede
+`DATABASE_URL` — a vitrine que a produção lê. Não é onde a coleta é gravada, e
+enquanto ela era a única medição de banco um agendador sem acesso ao armazém
+deixava o painel inteiramente verde com toda notícia sendo descartada: medir a
+fonte errada para a decisão em questão, que aqui é gravar.
+
+Nela, ausência de destino sai `ok=False` e **não** `None`, contra a regra geral
+do módulo. A regra existe porque não-verificado não é defeito; aqui a
+configuração é lida localmente e sempre pode ser lida, então "não há destino" é
+uma medição — e o efeito dela é a coleta gastar cota para jogar fora o
+resultado.
 
 Um health check que gasta cota transforma o painel de saúde num consumidor de
 requisições — abrir a tela cinco vezes gastaria um quinto da cota diária do
@@ -283,6 +319,13 @@ pôde ser verificado não é serviço com defeito. Marcar desconhecido como falh
 encheria a tela de alarme falso; marcar como saudável esconderia risco.
 
 Na linha de comando: `python -m data_pipeline.cli_noticias --saude`.
+
+E o pré-voo do agendador, que verifica só o destino e **reprova o passo** quando
+não há onde gravar (`--saude` informa e nunca reprova; este decide):
+
+```bash
+python -m data_pipeline.cli_noticias --destino
+```
 
 ---
 

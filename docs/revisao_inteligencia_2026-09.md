@@ -269,7 +269,7 @@ calibrada para o Prompt 3 medir** enquanto a ponte não for ligada.
 
 | # | item | situação |
 |---|---|---|
-| 1 | notícias atualizadas automaticamente | NÃO — job existe, `is_active=False`, sem agendador (Prompt 2) |
+| 1 | notícias atualizadas automaticamente | PARCIAL — agendador local registrado em 05/09 (`DFU - Coleta de noticias`, 30 min); depende de o usuário rodar `registrar_tarefas.ps1` e configurar as chaves |
 | 2 | atualização manual | SIM — botão na tela |
 | 3 | última atualização exibida | SIM — fonte **mais antiga**, por desenho |
 | 4 | dados antigos sinalizados | SIM — `Frescor` e `st.warning` |
@@ -313,9 +313,56 @@ calibrada para o Prompt 3 medir** enquanto a ponte não for ligada.
 Cotas dos planos gratuitos, como estão no freio: **Alpha Vantage 25 chamadas por
 dia, Marketaux 100 por dia**; RSS sem cota declarada. Custo monetário hoje: zero.
 
-**Periodicidade real hoje: nenhuma.** O único caminho que coleta é o botão da
-tela. O job está registrado com `is_active=False` e não há agendador. É
-exatamente o objeto do Prompt 2.
+**Periodicidade (corrigido em 05/09/2026).** A leitura anterior — "não há
+agendador" — estava errada em código e certa no efeito, e as duas metades
+importam.
+
+O `.github/workflows/noticias.yml` já existia desde a entrega do motor, com
+`cron: "17,47 * * * *"` e um `if: vars.NOTICIAS_COLETA_ATIVA == 'true'` que o
+mantém desligado até alguém criar a variável. Só que **ligá-lo não teria
+produzido cadência**: desde o commit 61c39e8 o acervo mora no armazém local, e
+um runner do GitHub não alcança `noticias_itens`. Ele coletaria, gastaria
+requisição de Alpha Vantage e Marketaux e descartaria tudo. O job avisa
+(`partial_success`, "coleta não persistida") — mas depois de a cota ter sido
+paga. É o mesmo motivo estrutural que já tinha tirado a cadeia de FIIs do
+`market-refresh.yml`.
+
+Duas correções foram aplicadas:
+
+1. **A saúde passou a medir o banco em que a coleta é gravada.** Havia só
+   `checar_banco`, e ela mede `DATABASE_URL` — a vitrine. Num agendador remoto
+   o painel ficaria inteiramente verde com o acervo inalcançável. `checar_acervo`
+   mede o armazém local, e ausência de destino sai `ok=False` e não `None`: a
+   configuração é lida localmente e sempre pode ser lida, então "não há destino"
+   é uma medição, não uma ausência de medição.
+2. **O gasto passou a ser barrado antes da cota.** `cli_noticias --destino`
+   verifica o destino sem tocar em nenhuma API e sai com `1` quando não há onde
+   gravar; ele roda como passo do workflow **antes** da coleta.
+
+E a cadência real mudou de casa: `scripts/registrar_tarefas.ps1` passou a
+registrar **`DFU - Coleta de noticias`** — a cada 30 minutos (:17 e :47) e ao
+entrar na sessão —, na máquina que tem o armazém. Trinta minutos é a
+granularidade do modo mais fino (Crise); o freio de cadência mora no banco e
+descarta a execução que o modo corrente não pede, então disparar de mais custa
+um processo ocioso e disparar de menos custa notícia atrasada no dia em que ela
+importa.
+
+**O que continua sendo do usuário, e não pode ser feito por mim:** rodar
+`registrar_tarefas.ps1` uma vez, e configurar as chaves dos provedores. Ligar
+coleta externa contra a cota do usuário é decisão dele. O workflow do GitHub
+segue válido apenas se existir um destino que o runner alcance (secret
+`NOTICIAS_LOCAL_DB_URL`); sem ele o passo de destino reprova o job de propósito.
+
+Evidência medida nesta máquina, com o container de pé:
+
+```
+$ python -m data_pipeline.cli_noticias --destino
+acervo: no ar — armazém local respondeu: a coleta tem onde ser gravada   (exit 0)
+
+$ (mesma chamada sem NOTICIAS_LOCAL_DB_URL nem MACRO_LOCAL_DB_URL)
+acervo: com falha — sem NOTICIAS_LOCAL_DB_URL nem MACRO_LOCAL_DB_URL: a coleta
+rodaria e seria descartada, gastando cota de provedor sem persistir nada (exit 1)
+```
 
 ---
 
@@ -380,4 +427,11 @@ evidências — os harnesses vivem no scratchpad da sessão.
    **Limitação declarada:** a trilha mora no armazém local, então a produção
    continua vendo apenas `estado.modo`. A justificativa é consultável de onde o
    job roda, não da Streamlit Cloud.
-8. **Prompt 2** — agendador; hoje a periodicidade real é zero.
+8. ~~**Prompt 2** — agendador; hoje a periodicidade real é zero.~~
+   **CORRIGIDO em 05/09/2026, com uma ressalva que não é minha para fechar.**
+   O agendador existia (`noticias.yml`, cron de 30 min) e não teria funcionado:
+   o runner não alcança o acervo local. Foram adicionados `saude.checar_acervo`,
+   o passo `cli_noticias --destino` (que reprova **antes** de gastar cota) e a
+   tarefa local `DFU - Coleta de noticias`. Falta o usuário rodar
+   `scripts/registrar_tarefas.ps1` e configurar as chaves dos provedores —
+   ligar coleta contra a cota dele é decisão dele.

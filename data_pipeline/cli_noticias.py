@@ -9,6 +9,15 @@ Código de saída
 ``0`` para ``success``, ``partial_success`` e ``skipped``. Coleta pulada por
 cadência é o comportamento correto e marcar o job como vermelho por isso
 treinaria qualquer um a ignorar a cor. ``1`` só para ``failed``.
+
+``--destino``: a checagem que tem de vir antes da cota
+------------------------------------------------------
+O acervo mora no armazém local. Um agendador que não o alcança coleta, gasta
+requisição de provedor e descarta tudo -- o job **avisa** (vira
+``partial_success`` com "coleta não persistida"), mas a cota já foi. Gastar
+para jogar fora é o defeito, e ele é evitável antes da primeira requisição:
+``--destino`` verifica o destino sem tocar em nenhuma API e sai com ``1``
+quando não há onde gravar. É o passo que roda antes da coleta no agendador.
 """
 from __future__ import annotations
 
@@ -46,7 +55,20 @@ def main(argv: list[str] | None = None) -> int:
                         help="nivel de crise a assumir (0-4)")
     parser.add_argument("--saude", action="store_true",
                         help="so verifica a saude dos servicos e sai")
+    parser.add_argument("--destino", action="store_true",
+                        help="so verifica se ha onde gravar o acervo e sai; "
+                             "sai com 1 quando nao ha")
     args = parser.parse_args(argv)
+
+    if args.destino:
+        from core.noticias import saude
+
+        v = saude.checar_acervo()
+        print(v.descrever())
+        # Este SIM reprova o passo, ao contrario de `--saude`: sem destino, a
+        # coleta seguinte gastaria cota para descartar o resultado. O agendador
+        # tem de parar aqui, e nao depois de pagar por isso.
+        return 0 if v.ok else 1
 
     if args.saude:
         from core.noticias import saude
