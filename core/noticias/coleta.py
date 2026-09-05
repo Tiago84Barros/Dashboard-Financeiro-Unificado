@@ -23,12 +23,12 @@ from core.noticias import dedup, fontes, normalizacao, taxonomia
 from core.noticias import entidades as ent_mod
 from core.noticias import eventos as ev_mod
 from core.noticias import impacto as imp_mod
+from core.noticias import portoes as pt_mod
 from core.noticias import relevancia as rel_mod
 from core.noticias import sentimento as sent_mod
 from core.noticias.entidades import UNIVERSO_VAZIO, Universo
 from core.noticias.frescor_noticias import RegistroColeta
 from core.noticias.modelos import Noticia, NoticiaAvaliada
-from core.noticias import portoes as pt_mod
 from core.noticias.portoes import PERFIL_VAZIO, Perfil, Veredito
 from core.noticias.provedores.base import (
     ORIGEM_CACHE_VENCIDO,

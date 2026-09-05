@@ -82,13 +82,12 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
         engine: injetável para teste.
     """
     from core.config import settings
-    from core.eventos_extremos import da_coleta
-    from core.eventos_extremos import trilha
+    from core.eventos_extremos import da_coleta, trilha
+    from core.noticias import bases_historicas as bases_mod
     from core.noticias import cadencia as cad
     from core.noticias import estado_coleta as ec
-    from core.noticias import universo_coleta as uni
-    from core.noticias import bases_historicas as bases_mod
     from core.noticias import perfil_carteira as perfil_mod
+    from core.noticias import universo_coleta as uni
     from core.noticias import universo_entidades as ent_uni
     from core.noticias.armazenamento import gravar
     from core.noticias.cache import Cache

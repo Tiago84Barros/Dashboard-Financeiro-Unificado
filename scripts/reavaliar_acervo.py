@@ -156,8 +156,7 @@ def reavaliar(conn, *, de: str, agora=None):
     from core.noticias import perfil_carteira as perfil_mod
     from core.noticias import portoes as pt_mod
     from core.noticias import relevancia as rel_mod
-    from core.noticias.coleta import (confirmacao_quantitativa,
-                                      exposicao_de_carteira)
+    from core.noticias.coleta import confirmacao_quantitativa, exposicao_de_carteira
     from core.noticias.modelos import NoticiaAvaliada
 
     perfil, lim_perfil = perfil_mod.carregar()
@@ -234,8 +233,7 @@ def reavaliar(conn, *, de: str, agora=None):
 
 
 def main(argv: list[str] | None = None) -> int:
-    from core.noticias.armazenamento import (VERSAO_METODOLOGIA,
-                                             gravar_avaliacoes)
+    from core.noticias.armazenamento import VERSAO_METODOLOGIA, gravar_avaliacoes
     from core.noticias.destino import engine_acervo
 
     parser = argparse.ArgumentParser(description=__doc__)

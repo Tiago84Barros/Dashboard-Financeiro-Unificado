@@ -26,7 +26,6 @@ import pytest
 
 from core.noticias import bases_historicas as bh
 
-
 # ─────────────────────────── o horizonte pedido ──────────────────────────────
 
 def test_o_horizonte_pedido_e_um_dos_horizontes_medidos():

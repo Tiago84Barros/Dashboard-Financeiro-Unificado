@@ -108,7 +108,10 @@ def test_o_job_entrega_o_perfil_a_coleta():
     """
     from data_pipeline.jobs import update_noticias as job
     from tests.test_noticias_universo_entidades import (
-        _Parar, _rodar_ate_a_coleta, _universo)
+        _Parar,
+        _rodar_ate_a_coleta,
+        _universo,
+    )
 
     recebido: dict = {}
     u, _ = _universo()

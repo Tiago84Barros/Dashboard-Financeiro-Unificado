@@ -34,9 +34,9 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger(__name__)
-
 from core.memoria_mercado.retornos import HORIZONTES as _HORIZONTES_MEDIDOS
+
+logger = logging.getLogger(__name__)
 
 #: Horizonte, em pregões, em que a base é lida. Trocar este número troca o
 #: significado da probabilidade publicada, e por isso ele é constante nomeada e

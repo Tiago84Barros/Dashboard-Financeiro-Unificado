@@ -238,9 +238,9 @@ def test_a_tarefa_local_nao_usa_a_duracao_maxima():
     """``[TimeSpan]::MaxValue`` é aceito por umas versões do agendador e
     recusado por outras -- e a recusa aconteceria na máquina do usuário.
     """
-    codigo = [l for l in _texto(TAREFAS).splitlines()
-              if not l.lstrip().startswith("#")]
-    assert not any("MaxValue" in l for l in codigo)
+    codigo = [linha for linha in _texto(TAREFAS).splitlines()
+              if not linha.lstrip().startswith("#")]
+    assert not any("MaxValue" in linha for linha in codigo)
 
 
 def test_o_script_de_tarefas_continua_valido_para_o_powershell():
