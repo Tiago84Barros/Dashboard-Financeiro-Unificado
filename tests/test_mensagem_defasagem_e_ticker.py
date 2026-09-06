@@ -129,6 +129,11 @@ def test_nenhuma_tela_manda_configurar_a_variavel_aposentada():
     assert not ofensores, f"texto de tela citando variável aposentada: {ofensores}"
 
 
+def _limpa_cache_universo(tela) -> None:
+    """No CI o cache do Streamlit e desligado e a funcao nao tem ``.clear``."""
+    getattr(tela._universo_b3_tickers, "clear", lambda: None)()
+
+
 def test_universo_uni_as_duas_fontes(monkeypatch):
     """Fundamentos publicados fora do cadastro de setores não podem sumir.
 
@@ -145,9 +150,9 @@ def test_universo_uni_as_duas_fontes(monkeypatch):
         tela._db, "load_multiplos_todos",
         lambda *a, **k: pd.DataFrame({"Ticker": ["ENAT3", "petr4 "]}),
     )
-    tela._universo_b3_tickers.clear()
+    _limpa_cache_universo(tela)
     assert tela._universo_b3_tickers() == ("ENAT3", "PETR4")
-    tela._universo_b3_tickers.clear()
+    _limpa_cache_universo(tela)
 
 
 def test_falha_de_banco_nao_vira_ticker_inexistente(monkeypatch):
@@ -159,12 +164,12 @@ def test_falha_de_banco_nao_vira_ticker_inexistente(monkeypatch):
 
     monkeypatch.setattr(tela._db, "load_setores", explode)
     monkeypatch.setattr(tela._db, "load_multiplos_todos", explode)
-    tela._universo_b3_tickers.clear()
+    _limpa_cache_universo(tela)
     universo = tela._universo_b3_tickers()
     assert universo == ()
     # a guarda na view é `if universo and tk not in universo`
     assert not (universo and "BBAS3" not in universo)
-    tela._universo_b3_tickers.clear()
+    _limpa_cache_universo(tela)
 
 
 def test_sugestao_encontra_o_ticker_certo_para_erro_de_digitacao():
