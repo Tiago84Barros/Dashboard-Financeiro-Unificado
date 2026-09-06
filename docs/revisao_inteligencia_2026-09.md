@@ -694,3 +694,54 @@ evidências — os harnesses vivem no scratchpad da sessão.
    tarefa local `DFU - Coleta de noticias`. Falta o usuário rodar
    `scripts/registrar_tarefas.ps1` e configurar as chaves dos provedores —
    ligar coleta contra a cota dele é decisão dele.
+12. ~~**Backtest da camada macro**~~ — MEDIDO em 05/09/2026, e o resultado é
+    assimétrico. `scripts/backtest_macro_tilt.py` roda 188 cortes mensais
+    (2011-01 a 2026-08) nas três classes, reusando
+    `load_portfolio_macro_snapshot` — nunca uma segunda implementação de
+    point-in-time.
+
+    **Não há ordenação.** Rank-IC de um mês: B3 +0,0065 (t_NW +0,25), FII
+    +0,0487 (+1,07), US −0,0048 (−0,21). O único t que passou de 2 em qualquer
+    horizonte foi o de 12 meses nos EUA (−3,58) e é artefato de janela
+    sobreposta: Newey-West o leva a −1,61, e as doze subamostras
+    não-sobrepostas vão de −2,30 a +0,54.
+
+    **`max_relative_weight_tilt = 0,15` nunca mordeu.** O multiplicador é
+    `1 + impacto/100 × 0,15` e o teto exigiria `|impacto| = 100`. O máximo
+    observado em 188 cortes foi 31,3. Efeito na carteira: ±0,01%/ano, t_NW
+    abaixo de 1,1 nas três classes. Mexer nesse número não muda nada
+    mensurável — o que limita a magnitude é a escala do impacto, não o teto.
+
+    **`max_score_adjustment = 10` não é inerte, e é aí que está o problema.**
+    Contra a distribuição real de nota da safra corrente da vitrine dos EUA
+    (2.443 empresas, gap mediano entre posições adjacentes = 0,00), o ajuste no
+    p95 do impacto vale 1,76 pt no modo `moderate` — 216 posições, 8,8% da
+    tabela — e no teto (`10 × 1,5`) vale 15 pt, **1.161 posições, 47,5% do
+    ranking**. O mesmo par de priors que é inofensivo no peso atravessa metade
+    da ordenação.
+
+    **A conclusão que isso obriga:** o limite a revisar para baixo é o da nota,
+    não o do peso. E `max_score_adjustment` **não é validável contra desfecho**
+    — não existe série histórica de nota fundamentalista para comparar "com
+    macro" contra "sem macro". O que está medido é tamanho do efeito, não
+    acerto; chamar isso de validação seria inventar a conclusão.
+
+    **A cadeia de priors é maior que os dois tetos.** As 28 linhas de
+    `macro_sector_exposures` foram aprovadas num único instante (2026-09-04
+    00:14), a `sensitivity` são 19 valores redondos em passo de 0,05, e a
+    `confidence` é **constante 0,55 nas 28 linhas** — ela não discrimina nada.
+
+    **Limitações declaradas**, todas no docstring do script e em
+    `docs/conjuntura_porta_de_entrada.md`: não existe vintage real
+    (`retrieved_at` só cobre 2026, então cortes históricos leem valores já
+    revisados); universo 100% sobrevivente, o que inflaria um resultado
+    positivo e não salva um nulo; camada doméstica anual com 17 pontos, que é
+    de onde vem o N efetivo baixo; nove linhas com `reference_period =
+    2026-12-31` e `is_forecast = false` em `macro_observations`; e preço da B3
+    só a partir de 2011, porque antes disso a série tem meses inteiros com
+    retorno exatamente zero (LEVE3: 85% dos meses em 2000).
+
+    **N efetivo não é o número de cortes.** O script conta vetores de impacto
+    *distintos*: B3 185 de 188, FII 40, US **17**. Insumo anual lido todo mês
+    repete o mesmo vetor doze vezes, e reportar 188 observações ali seria
+    inflar a amostra por acidente de cadência.
