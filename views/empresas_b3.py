@@ -3560,6 +3560,32 @@ def _render_b3_score_dashboard(
         _render_b3_dossie(ticker, score_row, referencia)
 
 
+def _universo_b3_de(carrega_setores, carrega_multiplos) -> tuple[str, ...]:
+    """Une as duas fontes de universo, tolerando falha de qualquer uma delas.
+
+    Separada do wrapper cacheado de proposito: assim o teste exercita a regra
+    passando as leituras como argumento, sem depender de monkeypatch em modulo
+    compartilhado (que vaza entre testes) nem do cache do Streamlit (que o CI
+    desliga).
+    """
+    universo: set[str] = set()
+    try:
+        df_set = carrega_setores()
+        if not df_set.empty and "ticker" in df_set.columns:
+            universo |= {str(t).strip().upper() for t in df_set["ticker"].dropna()}
+    except Exception as exc:  # noqa: BLE001 — leitura opcional
+        logger.warning("universo B3: load_setores falhou (%s)", exc)
+    try:
+        df_mult = carrega_multiplos()
+        col = next((c for c in df_mult.columns if c.lower() == "ticker"), None)
+        if col:
+            universo |= {str(t).strip().upper() for t in df_mult[col].dropna()}
+    except Exception as exc:  # noqa: BLE001 — leitura opcional
+        logger.warning("universo B3: load_multiplos_todos falhou (%s)", exc)
+    universo.discard("")
+    return tuple(sorted(universo))
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _universo_b3_tickers() -> tuple[str, ...]:
     """Tickers que este módulo sabe analisar: cadastro de setores ∪ fundamentos.
@@ -3570,22 +3596,7 @@ def _universo_b3_tickers() -> tuple[str, ...]:
     universo volta vazio e a validação se desliga — um problema de banco não
     pode virar "ticker inexistente".
     """
-    universo: set[str] = set()
-    try:
-        df_set = _db.load_setores()
-        if not df_set.empty and "ticker" in df_set.columns:
-            universo |= {str(t).strip().upper() for t in df_set["ticker"].dropna()}
-    except Exception as exc:  # noqa: BLE001 — leitura opcional
-        logger.warning("universo B3: load_setores falhou (%s)", exc)
-    try:
-        df_mult = _db.load_multiplos_todos()
-        col = next((c for c in df_mult.columns if c.lower() == "ticker"), None)
-        if col:
-            universo |= {str(t).strip().upper() for t in df_mult[col].dropna()}
-    except Exception as exc:  # noqa: BLE001 — leitura opcional
-        logger.warning("universo B3: load_multiplos_todos falhou (%s)", exc)
-    universo.discard("")
-    return tuple(sorted(universo))
+    return _universo_b3_de(_db.load_setores, _db.load_multiplos_todos)
 
 
 def _tab_analise(df_set: pd.DataFrame) -> None:

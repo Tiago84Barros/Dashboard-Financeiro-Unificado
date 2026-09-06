@@ -129,47 +129,46 @@ def test_nenhuma_tela_manda_configurar_a_variavel_aposentada():
     assert not ofensores, f"texto de tela citando variável aposentada: {ofensores}"
 
 
-def _limpa_cache_universo(tela) -> None:
-    """No CI o cache do Streamlit e desligado e a funcao nao tem ``.clear``."""
-    getattr(tela._universo_b3_tickers, "clear", lambda: None)()
-
-
-def test_universo_uni_as_duas_fontes(monkeypatch):
+def test_universo_une_as_duas_fontes():
     """Fundamentos publicados fora do cadastro de setores não podem sumir.
 
     Em 06/09/2026 eram 3: ENAT3, NATU3 e PETZ3.
     """
     import pandas as pd
 
-    import views.empresas_b3 as tela
+    from views.empresas_b3 import _universo_b3_de
 
-    monkeypatch.setattr(
-        tela._db, "load_setores", lambda *a, **k: pd.DataFrame({"ticker": ["PETR4"]})
+    universo = _universo_b3_de(
+        lambda: pd.DataFrame({"ticker": ["PETR4"]}),
+        lambda: pd.DataFrame({"Ticker": ["ENAT3", "petr4 "]}),
     )
-    monkeypatch.setattr(
-        tela._db, "load_multiplos_todos",
-        lambda *a, **k: pd.DataFrame({"Ticker": ["ENAT3", "petr4 "]}),
-    )
-    _limpa_cache_universo(tela)
-    assert tela._universo_b3_tickers() == ("ENAT3", "PETR4")
-    _limpa_cache_universo(tela)
+    assert universo == ("ENAT3", "PETR4")
 
 
-def test_falha_de_banco_nao_vira_ticker_inexistente(monkeypatch):
+def test_falha_de_banco_nao_vira_ticker_inexistente():
     """Universo vazio desliga a guarda em vez de acusar o ticker."""
-    import views.empresas_b3 as tela
+    from views.empresas_b3 import _universo_b3_de
 
-    def explode(*a, **k):
+    def explode():
         raise RuntimeError("conexão caiu")
 
-    monkeypatch.setattr(tela._db, "load_setores", explode)
-    monkeypatch.setattr(tela._db, "load_multiplos_todos", explode)
-    _limpa_cache_universo(tela)
-    universo = tela._universo_b3_tickers()
+    universo = _universo_b3_de(explode, explode)
     assert universo == ()
     # a guarda na view é `if universo and tk not in universo`
     assert not (universo and "BBAS3" not in universo)
-    _limpa_cache_universo(tela)
+
+
+def test_uma_fonte_de_pe_ainda_serve_de_universo():
+    import pandas as pd
+
+    from views.empresas_b3 import _universo_b3_de
+
+    def explode():
+        raise RuntimeError("conexão caiu")
+
+    assert _universo_b3_de(
+        explode, lambda: pd.DataFrame({"Ticker": ["VALE3"]})
+    ) == ("VALE3",)
 
 
 def test_sugestao_encontra_o_ticker_certo_para_erro_de_digitacao():
