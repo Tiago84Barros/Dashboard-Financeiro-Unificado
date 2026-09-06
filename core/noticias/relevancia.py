@@ -221,10 +221,15 @@ def _novidade(noticia: Noticia, agora: datetime,
     -----
     Conta-se pelo calendário da B3, inclusive para notícia americana. As duas
     praças abrem de segunda a sexta e diferem em uma hora no fechamento e nos
-    feriados -- e feriado nenhum dos dois calendários modela (ver
-    `core/pregao.py`). Ramificar por país aqui compraria uma hora de precisão
-    ao preço de duas idades possíveis para a mesma notícia conforme quem
-    pergunta, e a diferença some inteira dentro do primeiro patamar.
+    feriados -- e desde 06/09/2026 `core/pregao.py` modela os dois calendários
+    a partir de feriado **observado** (213 datas da B3, 156 da NYSE). Escolher
+    a B3 para tudo continua sendo a decisão certa: ramificar por país compraria
+    uma hora de precisão e alguns feriados ao preço de duas idades possíveis
+    para a mesma notícia conforme quem pergunta, e a diferença some inteira
+    dentro do primeiro patamar de decaimento.
+
+    Quem quiser publicar a limitação do calendário chama
+    :func:`core.pregao.cobertura` -- a frase sai da medição, e não daqui.
     """
     if noticia.publicado_em is None:
         return None

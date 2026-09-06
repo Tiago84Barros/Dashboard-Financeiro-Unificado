@@ -18,38 +18,64 @@ precificação. Contar pregões dá nome à mesma grandeza nas duas pontas.
 
 O que este módulo não faz, e por que
 ------------------------------------
-**Não afirma que algo já está precificado.** Para isso seria preciso observar o
-preço depois do evento, contra a memória de mercado -- que ainda não tem safra
-construída. Dizer "já precificado" a partir do calendário seria inventar a
-conclusão a partir do relógio. O que o calendário sustenta é a frase menor e
-verdadeira: *o mercado teve N pregões para reagir*.
+**Não afirma que algo já está precificado.** Isso exige observar o preço depois
+do evento, contra a memória de mercado -- e desde 06/09/2026 essa safra existe
+(``core/memoria_mercado``). O que continua não existindo é o julgamento aqui: o
+calendário não ganha acesso à safra por ela ter passado a existir, e derivar
+"já precificado" do relógio seria inventar a conclusão do mesmo jeito. O que o
+calendário sustenta é a frase menor e verdadeira: *o mercado teve N pregões
+para reagir*.
 
-**Não modela feriado.** Isto é uma lacuna declarada, não um esquecimento, e a
-alternativa era pior: tabela de feriados embutida no código envelhece em
-silêncio e passa a mentir com a mesma cara de quem acerta -- o projeto já viveu
-um aviso que envelheceu invertido e seguiu soando como rigor.
+**Não afirma feriado fora da janela observada.** Até 06/09/2026 a contagem era
+dia útil puro, e a lacuna era declarada com a alternativa nomeada:
+tabela escrita à mão envelhece em silêncio e passa a mentir com a mesma cara de
+quem acerta (``memoria: aviso-que-envelhece-invertido``).
 
-O que salva a lacuna é a **direção do erro**, que é única e conhecida: sem
-feriados, a contagem só pode **superestimar** o número de pregões, nunca
-subestimar. Superestimar oportunidade de reação envelhece a notícia mais rápido,
-nunca mais devagar. Ou seja: o módulo pode fazer uma notícia parecer mais velha
-do que é, e **nunca** pode fazer notícia velha parecer fresca. O erro cabe em
-até uma dúzia de dias por ano e cai sempre para o lado conservador.
+O que fechou a lacuna não foi uma tabela, foi o **complemento observado** da
+série de preços do armazém local: dia útil em que a bolsa inteira não negociou
+nenhum papel não é opinião sobre o calendário, é o calendário. Ele chega aqui
+como artefato publicado por ``scripts/publicar_calendario_pregao.py`` -- 213
+feriados da B3 e 156 da NYSE desde 2010 -- e não por conexão, porque a produção
+não alcança o armazém e **duas implementações da mesma contagem dariam duas
+idades para a mesma notícia conforme quem perguntou**.
 
-Quem quiser fechar a lacuna fecha com dado observado -- as datas distintas da
-série de preços no armazém local são o calendário de pregão de verdade, sem
-tabela para manter. Não está aqui porque a produção não alcança o armazém, e
-duas implementações da mesma contagem dariam duas idades para a mesma notícia
-conforme quem perguntou.
+A lacuna que sobra é a ponta do futuro, e ela é a mesma de antes: **além da
+última data observada**, a contagem volta a ser dia útil puro. Isso é
+inevitável -- feriado que ainda não aconteceu não pode ter sido observado -- e a
+direção do erro continua única e conhecida: sem feriados, a contagem só pode
+**superestimar** o número de pregões, nunca subestimar; ela pode fazer uma
+notícia parecer mais velha do que é, e nunca fazer notícia velha parecer fresca.
+
+Por isso :func:`cobertura` existe e é pública: a frase que descreve a limitação
+tem de ser **derivada da medição**, e não escrita à mão em algum lugar onde ela
+possa continuar dizendo "nenhum feriado é modelado" um ano depois de deixarem
+de ser verdade.
+
+Ausência do artefato **não é erro**. Sem ele o módulo roda como rodava, e
+:func:`cobertura` diz que roda assim. Um ``FileNotFoundError` aqui derrubaria a
+coleta inteira por causa de uma melhoria de precisão de meia dúzia de dias por
+ano, que é a troca errada.
 """
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 __all__ = ["Praca", "B3", "NYSE", "esta_aberto", "pregoes_encerrados_entre",
-           "proximo_fechamento"]
+           "proximo_fechamento", "cobertura", "ARTEFATO_CALENDARIO"]
+
+logger = logging.getLogger(__name__)
+
+#: Onde mora o calendário observado. Fica em ``data/public/`` junto do snapshot
+#: de FII porque é a mesma natureza de coisa: artefato gerado do armazém local,
+#: versionado, lido pela produção que não alcança o armazém.
+ARTEFATO_CALENDARIO = (Path(__file__).resolve().parents[1]
+                       / "data" / "public" / "calendario_pregao.json")
 
 
 @dataclass(frozen=True)
@@ -91,15 +117,87 @@ B3 = Praca("B3", "America/Sao_Paulo", time(10, 0), time(17, 0))
 NYSE = Praca("NYSE", "America/New_York", time(9, 30), time(16, 0))
 
 
-def _e_dia_util(dia: date) -> bool:
-    """Segunda a sexta. Feriado não entra -- ver a lacuna declarada no topo."""
-    return dia.weekday() < 5
+@lru_cache(maxsize=1)
+def _calendario() -> dict[str, tuple[frozenset[date], date | None, date | None]]:
+    """Feriados observados por praça, com a janela em que foram observados.
+
+    Cacheado porque é arquivo imutável em disco lido a cada notícia avaliada, e
+    ``lru_cache`` sem argumento é o cache mais barato que existe. Quem publicar
+    um artefato novo reinicia o processo -- como já acontece com o snapshot.
+    """
+    try:
+        bruto = json.loads(ARTEFATO_CALENDARIO.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        logger.info("calendario de pregao observado ausente em %s: a contagem "
+                    "usa dia util puro", ARTEFATO_CALENDARIO)
+        return {}
+    except (OSError, ValueError):
+        # Artefato ilegível é ausência, não exceção: ver o docstring do módulo.
+        logger.warning("calendario de pregao ilegivel em %s: a contagem usa "
+                       "dia util puro", ARTEFATO_CALENDARIO)
+        return {}
+
+    saida = {}
+    for nome, dados in (bruto.get("pracas") or {}).items():
+        try:
+            feriados = frozenset(date.fromisoformat(d)
+                                 for d in dados.get("feriados") or ())
+            inicio = date.fromisoformat(dados["inicio"])
+            fim = date.fromisoformat(dados["fim"])
+        except (KeyError, TypeError, ValueError):
+            logger.warning("praca %s no calendario esta malformada: ignorada",
+                           nome)
+            continue
+        saida[nome] = (feriados, inicio, fim)
+    return saida
+
+
+def cobertura(praca: Praca = B3) -> dict:
+    """O que o calendário desta praça **de fato** cobre, para quem declara.
+
+    Devolve ``{"observado": bool, "inicio": date|None, "fim": date|None,
+    "feriados": int, "limitacao": str}``.
+
+    Existe porque a frase que descreve a limitação tem de sair da medição. Um
+    texto fixo dizendo "feriado não é modelado" continuaria soando como rigor
+    depois de deixar de ser verdade -- é ``memoria:
+    aviso-que-envelhece-invertido``, e este projeto já pagou por ele.
+    """
+    feriados, inicio, fim = _calendario().get(praca.nome, (frozenset(), None, None))
+    if not fim:
+        return {"observado": False, "inicio": None, "fim": None, "feriados": 0,
+                "limitacao": (f"calendario de pregao da {praca.nome} nao "
+                              "observado: a contagem usa dia util puro e so "
+                              "pode superestimar pregoes, nunca subestimar")}
+    return {"observado": True, "inicio": inicio, "fim": fim,
+            "feriados": len(feriados),
+            "limitacao": (f"feriados da {praca.nome} observados de {inicio} a "
+                          f"{fim} ({len(feriados)} datas); depois de {fim} a "
+                          "contagem volta a dia util puro e so pode "
+                          "superestimar pregoes, nunca subestimar")}
+
+
+def _e_dia_util(dia: date, praca: Praca = B3) -> bool:
+    """Segunda a sexta, menos feriado observado da praça.
+
+    Fora da janela observada o feriado não é *assumido ausente*: ele é
+    **desconhecido**, e a contagem devolve ao comportamento anterior. A
+    distinção importa porque o erro tem direção única só nesse recuo -- dentro
+    da janela não há erro a compensar, há calendário.
+    """
+    if dia.weekday() >= 5:
+        return False
+    feriados, inicio, fim = _calendario().get(praca.nome,
+                                              (frozenset(), None, None))
+    if fim is None or not (inicio <= dia <= fim):
+        return True
+    return dia not in feriados
 
 
 def esta_aberto(quando: datetime, praca: Praca = B3) -> bool:
     """Se o pregão da praça estava aberto naquele instante."""
     local = praca.local(quando)
-    if not _e_dia_util(local.date()):
+    if not _e_dia_util(local.date(), praca):
         return False
     return praca.abertura <= local.time() < praca.fechamento
 
@@ -114,7 +212,7 @@ def proximo_fechamento(quando: datetime, praca: Praca = B3) -> datetime:
     local = praca.local(quando)
     dia = local.date()
     for _ in range(15):  # cobre recesso longo emendado com fim de semana
-        if _e_dia_util(dia):
+        if _e_dia_util(dia, praca):
             fecha = datetime.combine(dia, praca.fechamento,
                                      tzinfo=ZoneInfo(praca.fuso))
             if fecha >= local:
@@ -150,7 +248,7 @@ def pregoes_encerrados_entre(inicio: datetime, fim: datetime,
     n = 0
     dia = ini_local.date()
     while dia <= fim_local.date():
-        if _e_dia_util(dia):
+        if _e_dia_util(dia, praca):
             fecha = datetime.combine(dia, praca.fechamento,
                                      tzinfo=ZoneInfo(praca.fuso))
             if ini_local < fecha <= fim_local:
