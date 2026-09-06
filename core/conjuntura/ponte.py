@@ -590,13 +590,32 @@ def carregar(
                 f"{MINIMO_ITENS_ATIVO} notícias em {janela_noticias_dias} dias")
 
     # ── memória de mercado e técnico ─────────────────────────────────────────
-    # Sem estimativa de evento e sem série técnica ligadas aqui, os dois ficam
-    # fora do denominador. Nomeados, para que a cobertura baixa tenha causa
-    # legível na tela em vez de virar um número sem explicação.
+    # Os dois ficam fora do denominador, mas por motivos DIFERENTES, e a
+    # distinção é o que impede alguém de "consertar" o primeiro somando o
+    # mesmo dado duas vezes.
+    #
+    # `tecnico` não tem fonte ligada: não há série técnica nesta porta.
+    #
+    # `memoria_mercado` TEM safra desde 06/09/2026, e ela já age -- só que
+    # dentro do componente `noticias`. A safra entra por
+    # `core.noticias.bases_historicas`, que alimenta o portão quantitativo do
+    # motor de notícias; a leitura por ativo que chega aqui já foi filtrada por
+    # ela. Preencher também o slot `memoria_mercado` a partir da mesma
+    # evidência colocaria o mesmo fato em dois componentes da mesma média
+    # ponderada, com peso somado de 0,65 -- e o número subiria sem que nada
+    # novo tivesse sido medido.
+    #
+    # O slot só deve ser preenchido no dia em que houver estimativa de evento
+    # INDEPENDENTE da notícia (`scores.componente_de_estimativa`) -- por
+    # exemplo, um evento datado do calendário que ainda não virou manchete.
     ausentes.extend(["memoria_mercado", "tecnico"])
     limitacoes.append(
-        "componentes 'memoria_mercado' e 'tecnico' não têm fonte ligada nesta "
-        "porta de entrada: ficam fora do denominador, não entram como neutros")
+        "componente 'tecnico' não tem fonte ligada nesta porta de entrada: "
+        "fica fora do denominador, não entra como neutro")
+    limitacoes.append(
+        "componente 'memoria_mercado' fica fora do denominador de propósito: a "
+        "safra histórica já age dentro de 'noticias' (portão quantitativo); "
+        "contá-la também aqui somaria a mesma evidência duas vezes")
 
     # ── encaixe nos motores que já existem ───────────────────────────────────
     notas_estruturais = {str(k).strip().upper(): _num(v)

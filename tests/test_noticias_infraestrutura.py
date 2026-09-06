@@ -116,9 +116,17 @@ class ConsumoFalso:
 
 def _preparar(monkeypatch, provedores, *, universo=("PETR4",)):
     """Isola o job de tudo que não é a decisão sob teste."""
+    from core.memoria_mercado import destino as mm_destino
     from core.noticias.provedores import registro as reg
 
     monkeypatch.setattr("core.config.settings", CONFIG, raising=False)
+    # A safra da Memoria de Mercado e resolvida por `engine_memoria`, e nao
+    # mais pelo acervo. Sem este ponto de costura, o job resolveria o endereco
+    # pela `settings` real e um teste de unidade abriria conexao com o armazem
+    # local de verdade -- exatamente o que `test_a_leitura_nunca_toca_o_supabase`
+    # existe para impedir. `None` e ausencia declarada: a base historica sai
+    # vazia com limitacao, que e o estado correto num teste sem banco.
+    monkeypatch.setattr(mm_destino, "engine_memoria", lambda: None)
     monkeypatch.setattr(ec, "ConsumoBanco", lambda engine=None: ConsumoFalso())
     monkeypatch.setattr(reg, "construir", lambda **kw: list(provedores))
     monkeypatch.setattr(uni, "montar", lambda modo, **kw: (universo, ()))

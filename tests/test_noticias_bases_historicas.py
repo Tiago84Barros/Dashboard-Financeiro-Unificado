@@ -83,9 +83,9 @@ def test_sem_armazem_a_ausencia_e_declarada(monkeypatch):
     ``({}, ())`` diria "medimos e nao ha base historica nenhuma", que e uma
     afirmacao sobre o mundo que ninguem apurou.
     """
-    from core.noticias import destino
+    from core.memoria_mercado import destino as mm_destino
 
-    monkeypatch.setattr(destino, "engine_acervo", lambda: None)
+    monkeypatch.setattr(mm_destino, "engine_memoria", lambda: None)
     bases, limitacoes = bh.carregar()
 
     assert bases == {}
