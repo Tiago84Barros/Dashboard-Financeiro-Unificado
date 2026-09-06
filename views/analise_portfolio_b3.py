@@ -17,7 +17,6 @@ import streamlit as st
 import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_reconciliacao as _recon
 from core.b3_portfolio_model import load_active_b3_portfolio_model
-from core.portfolio_staleness import texto_defasagem
 from core.llm_b3 import (
     chat_com_portfolio,
     llm_disponivel,
@@ -37,6 +36,7 @@ from core.portfolio_report_b3 import (
     analyze_portfolio_report,
     generate_company_portfolio_report,
 )
+from core.portfolio_staleness import texto_defasagem
 from core.rag_b3 import (
     format_rag_context,
     get_cobertura_docs,

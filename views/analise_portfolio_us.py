@@ -43,13 +43,13 @@ from core.portfolio_report_us import (
     grau_de_confianca,
     motivo_do_grau,
 )
+from core.portfolio_staleness import texto_defasagem
 from core.us_macro import (
     FONTE_OBSERVADO,
     FONTE_PREMISSA,
     USMacroSnapshot,
     evaluate_macro,
 )
-from core.portfolio_staleness import texto_defasagem
 from core.us_portfolio_model import load_active_us_portfolio_model
 from design.market_companies import render_company_logo
 
