@@ -9,9 +9,11 @@ Logos:           thefintz/icones-b3 CDN (público, sem auth)
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import html
 import json
+import logging
 import re
 from dataclasses import dataclass
 
@@ -23,7 +25,7 @@ import requests
 import streamlit as st
 import yfinance as yf
 
-import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
+import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
@@ -46,6 +48,15 @@ from design.market_companies import (
     render_market_css,
     render_market_tabs,
     render_sector_grid,
+)
+
+logger = logging.getLogger(__name__)
+
+# Variável que realmente resolve a conexão desde o cutover de 2026-07;
+# `SUPABASE_DB_URL_B3` só alimenta o fallback legado de `core/b3_db.py`.
+VAR_CONEXAO = (
+    "`SUPABASE_UNIFICADO_URL` (ou `DATABASE_URL` / `SUPABASE_DB_URL`) "
+    "no `.env` ou nos secrets do Streamlit Cloud"
 )
 
 # ── Constantes ────────────────────────────────────────────────────────────────
@@ -650,8 +661,8 @@ def _so_acoes(df_set: pd.DataFrame) -> pd.DataFrame:
 def _tab_empresas(df_set: pd.DataFrame) -> None:
     if df_set.empty:
         st.warning(
-            "Tabela `setores` não encontrada no banco configurado. "
-            "Configure `SUPABASE_DB_URL_B3` no `.env` ou nos secrets do Streamlit Cloud."
+            "O cadastro de setores voltou vazio — o app não conseguiu ler o "
+            "banco. Confira " + VAR_CONEXAO + "."
         )
         return
     # Card mostra só AÇÕES — remove FIIs, ETFs, BDRs e subscrições.
@@ -3549,6 +3560,34 @@ def _render_b3_score_dashboard(
         _render_b3_dossie(ticker, score_row, referencia)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _universo_b3_tickers() -> tuple[str, ...]:
+    """Tickers que este módulo sabe analisar: cadastro de setores ∪ fundamentos.
+
+    A união importa. Em 06/09/2026 havia 3 tickers com fundamentos publicados
+    (ENAT3, NATU3, PETZ3) ausentes do cadastro de setores; validar só pelo
+    cadastro bloquearia empresas que têm dado. Se as duas leituras falharem, o
+    universo volta vazio e a validação se desliga — um problema de banco não
+    pode virar "ticker inexistente".
+    """
+    universo: set[str] = set()
+    try:
+        df_set = _db.load_setores()
+        if not df_set.empty and "ticker" in df_set.columns:
+            universo |= {str(t).strip().upper() for t in df_set["ticker"].dropna()}
+    except Exception as exc:  # noqa: BLE001 — leitura opcional
+        logger.warning("universo B3: load_setores falhou (%s)", exc)
+    try:
+        df_mult = _db.load_multiplos_todos()
+        col = next((c for c in df_mult.columns if c.lower() == "ticker"), None)
+        if col:
+            universo |= {str(t).strip().upper() for t in df_mult[col].dropna()}
+    except Exception as exc:  # noqa: BLE001 — leitura opcional
+        logger.warning("universo B3: load_multiplos_todos falhou (%s)", exc)
+    universo.discard("")
+    return tuple(sorted(universo))
+
+
 def _tab_analise(df_set: pd.DataFrame) -> None:
     # ── Input ─────────────────────────────────────────────────────────────────
     default_tk = st.session_state.get("b3_ticker_sel", "")
@@ -3571,6 +3610,22 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     tk = st.session_state.get("b3_ticker_sel", "").strip().upper().replace(".SA", "")
     if not tk:
         st.info("Digite um ticker acima e clique em **Analisar**.", icon="🔍")
+        return
+
+    # ── Ticker conhecido? ─────────────────────────────────────────────────────
+    # Sem esta checagem qualquer texto digitado virava um cabeçalho de empresa
+    # ("BBSA3 — BBSA3") e a ausência de dados era reportada depois como falha de
+    # configuração de banco. Erro de digitação tem que parecer erro de digitação.
+    universo = _universo_b3_tickers()
+    if universo and tk not in universo:
+        sugestoes = difflib.get_close_matches(tk, universo, n=4, cutoff=0.6)
+        st.error(
+            f"**{tk}** não está entre os {len(universo)} papéis da B3 que este "
+            "módulo cobre. O banco está acessível — o que não existe é o ticker.",
+            icon="🚫",
+        )
+        if sugestoes:
+            st.caption("Talvez você queira: " + " · ".join(f"`{x}`" for x in sugestoes))
         return
 
     # ── Header ────────────────────────────────────────────────────────────────
@@ -3916,9 +3971,20 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                 "configuração de banco — tente novamente em instantes.",
                 icon="⚠️",
             )
+        elif sem_banco:
+            st.warning(
+                f"**{tk}** é um ticker conhecido, mas não há preço nem "
+                "fundamentos publicados para ele. Costuma ser papel de baixa "
+                "liquidez ou recém-listado, ainda sem safra de dados.",
+                icon="⚠️",
+            )
         else:
-            st.warning("Dados financeiros não encontrados. Configure `SUPABASE_DB_URL_B3`.",
-                       icon="⚠️")
+            st.warning(
+                f"Sem histórico de preços para **{tk}** na yfinance. Os "
+                "fundamentos abaixo seguem vindo do banco — só o gráfico de "
+                "preço ficou vazio.",
+                icon="⚠️",
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # SEÇÃO 3 — Múltiplos Fundamentalistas (agrupados)
@@ -4221,7 +4287,10 @@ def _render_calibracao_segmento(calib) -> None:
 
 def _tab_avancada(df_set: pd.DataFrame) -> None:
     if df_set.empty:
-        st.warning("Banco não configurado. Configure `SUPABASE_DB_URL_B3`.")
+        st.warning(
+            "O cadastro de setores voltou vazio — sem ele a análise avançada "
+            "não tem universo. Confira " + VAR_CONEXAO + "."
+        )
         return
 
     st.markdown(
@@ -6708,8 +6777,8 @@ def render() -> None:
 
     if df_set.empty:
         st.caption(
-            "⚠️ Banco não configurado — configure `SUPABASE_DB_URL_B3` "
-            "no `.env` ou nos secrets do Streamlit Cloud."
+            "⚠️ Cadastro de setores vazio — o app não conseguiu ler o banco. "
+            "Confira " + VAR_CONEXAO + "."
         )
     elif fallback_legado:
         st.caption(

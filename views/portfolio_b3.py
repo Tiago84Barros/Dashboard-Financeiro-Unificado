@@ -2680,7 +2680,12 @@ def render(show_header: bool = True) -> None:
         df_mult_todos = _db.load_multiplos_todos()
 
     if df_set.empty:
-        st.warning("Banco não configurado. Configure `SUPABASE_DB_URL_B3`.")
+        st.warning(
+            "O cadastro de setores voltou vazio — sem ele não há universo para "
+            "montar carteira. Confira `SUPABASE_UNIFICADO_URL` (ou "
+            "`DATABASE_URL` / `SUPABASE_DB_URL`) no `.env` ou nos secrets do "
+            "Streamlit Cloud."
+        )
         return
 
     # Filtro de LIQUIDEZ (negociabilidade): remove micro-caps e nomes sem valor de

@@ -291,14 +291,31 @@ v.render(show_header=True)
 
 
 def test_tela_bloqueia_carteira_com_metodologia_antiga():
+    """Bloqueia — e diz quais versões divergem, não só que uma é "antiga"."""
     from streamlit.testing.v1 import AppTest
 
     app = AppTest.from_string("""
+import datetime as dt
+
 import views.analise_portfolio_us as v
-v.load_active_us_portfolio_model = lambda: {
-    "items": [{"ticker": "AAPL", "weight": 1.0}], "is_stale": True,
+from core.portfolio_staleness import marcar_defasagem
+
+modelo = {
+    "items": [{"ticker": "AAPL", "weight": 1.0}],
+    "created_at": dt.datetime(2026, 8, 3),
 }
+marcar_defasagem(
+    modelo, {"score_version": "0.9.0", "model_schema_version": 3},
+    score_version="1.0.0", schema_version=3,
+)
+v.load_active_us_portfolio_model = lambda: modelo
 v.render(show_header=False)
 """).run(timeout=60)
     assert not app.exception
-    assert any("versão antiga da metodologia" in e.value for e in app.error)
+    erros = chr(10).join(e.value for e in app.error)
+    assert "ficou para trás da metodologia atual" in erros
+    # A evidência concreta: as duas versões e a data, não só o adjetivo.
+    assert "0.9.0" in erros and "1.0.0" in erros
+    assert "03/08/2026" in erros
+    assert "Criação de Portfólio" in erros
+

@@ -20,6 +20,7 @@ from sqlalchemy import text
 from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
 from core.config import settings
 from core.database import get_engine
+from core.portfolio_staleness import marcar_defasagem
 
 _REQUIRED_TABLES = ("b3_portfolio_models", "b3_portfolio_model_items")
 _SCHEMA_MIGRATIONS = (
@@ -420,11 +421,11 @@ def load_active_b3_portfolio_model() -> dict:
     model["items"] = items
     model["num_items"] = len(items)
     params = model.get("params_json") or {}
-    model["is_stale"] = (
-        params.get("score_version") != SCORE_VERSION
-        or int(params.get("model_schema_version") or 0) != MODEL_SCHEMA_VERSION
+    marcar_defasagem(
+        model, params,
+        score_version=SCORE_VERSION,
+        schema_version=MODEL_SCHEMA_VERSION,
     )
-    model["current_score_version"] = SCORE_VERSION
     return model
 
 

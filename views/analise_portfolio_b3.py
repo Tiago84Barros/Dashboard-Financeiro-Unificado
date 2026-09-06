@@ -14,9 +14,10 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
+import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_reconciliacao as _recon
 from core.b3_portfolio_model import load_active_b3_portfolio_model
+from core.portfolio_staleness import texto_defasagem
 from core.llm_b3 import (
     chat_com_portfolio,
     llm_disponivel,
@@ -1383,10 +1384,7 @@ def render(show_header: bool = True) -> None:
         )
         return
     if model.get("is_stale"):
-        st.error(
-            "O portfólio salvo usa uma versão antiga da metodologia. Recalcule "
-            "e salve uma nova carteira na aba Criação de Portfólio antes da análise."
-        )
+        st.error(texto_defasagem(model), icon="🕓")
         return
 
     items = model["items"]

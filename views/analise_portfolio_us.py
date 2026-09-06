@@ -49,6 +49,7 @@ from core.us_macro import (
     USMacroSnapshot,
     evaluate_macro,
 )
+from core.portfolio_staleness import texto_defasagem
 from core.us_portfolio_model import load_active_us_portfolio_model
 from design.market_companies import render_company_logo
 
@@ -1036,10 +1037,7 @@ def render(show_header: bool = True) -> None:
         )
         return
     if model.get("is_stale"):
-        st.error(
-            "O portfólio salvo usa uma versão antiga da metodologia. Recalcule "
-            "e salve uma nova carteira na aba Criação de Portfólio antes da análise."
-        )
+        st.error(texto_defasagem(model), icon="🕓")
         return
 
     items = model["items"]
