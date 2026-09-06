@@ -179,6 +179,117 @@ def _nomes_proprios(texto: str) -> frozenset[str]:
     return frozenset(achados)
 
 
+#: Acima disto o trecho e titulo em Title Case e a capitalizacao dos vizinhos
+#: deixa de significar qualquer coisa. Medido nas manchetes reais do acervo:
+#: "Recent News From Nvidia and SK Hynix Reveals" tem 8 de 8 capitalizadas, e
+#: "Dados da Quantum Finance mostram que shoppings caem" tem 2 de 8.
+_FRACAO_TITLE_CASE = 0.7
+
+_SEGMENTO = re.compile(r"[.!?|—–]")
+
+
+def _fragmento_de_nome_maior(texto: str, nome: str, universo) -> bool:
+    """O nome de um termo aparece so como pedaco de um nome maior?
+
+    Chave de uma palavra e o ponto fraco do casamento por nome, e a poda de
+    sufixo juridico cria muitas: ``NEWS CORP`` vira ``news``, ``QUANTUM CORP``
+    vira ``quantum``. Medido no acervo em 06/09/2026, ``NWS`` apareceu em
+    "Fox News host", "Breakfast News" e "Recent News From Nvidia" -- e ``QMCO``
+    em "Dados da Quantum Finance", que e uma casa de dados brasileira sem
+    relacao nenhuma com a Quantum Corp americana.
+
+    O que separa esses casos de "Vale reduz producao" nao e o nome: e o
+    **vizinho**. Quando o termo vem colado a outra palavra capitalizada e a
+    dupla nao e nome conhecido, o texto esta nomeando outra coisa, e o casamento
+    pegou um pedaco.
+
+    A excecao e Title Case: em manchete inglesa tudo vem capitalizado e a
+    vizinhanca deixa de informar. Ali a regra se cala de proposito -- perder
+    "Recent News From Nvidia" para matar "Breakfast News" seria trocar um falso
+    positivo por um falso negativo do mesmo tamanho.
+    """
+    ocorrencias = 0
+    for casa in re.finditer(rf"(?<![^\W\d_]){re.escape(nome)}(?![^\W\d_])",
+                            texto, re.IGNORECASE):
+        ocorrencias += 1
+        # Vizinho so e vizinho quando **so ha espaco** entre ele e o nome:
+        # virgula, parentese ou ponto separam nomes distintos. Sem isso,
+        # "Segundo a Reuters, Vale negocia" leria "Reuters Vale" como um nome
+        # so e perderia a Vale -- falso negativo trocado por falso positivo.
+        colado_atras = texto[:casa.start()].endswith(" ")
+        antes = texto[:casa.start()].rstrip()
+        anterior = antes.rsplit(" ", 1)[-1] if colado_atras and antes else ""
+        depois = texto[casa.end():]
+        seguinte = (depois.lstrip().split(" ", 1)[0]
+                    if depois[:1] == " " else "")
+        seguinte = seguinte.rstrip(".,;:!?")
+        # Maiuscula no inicio de frase e gramatica, nao nome: em "A Vale
+        # anunciou", o "A" nao indica que o nome continua para tras. E vizinho
+        # de ate dois caracteres nao carrega nome de empresa ("De", "Na").
+        if anterior and _inicio_de_segmento(texto, len(antes) - len(anterior)):
+            anterior = ""
+        colados = [v for v in (anterior, seguinte)
+                   if len(v) >= 3 and v[:1].isupper() and v.isalpha()
+                   and not _forma_juridica(v)]
+        if not colados:
+            return False
+        # A dupla so isenta se ela mesma for nome conhecido -- "banco do brasil"
+        # nao pode ser barrado por "banco" vir grudado em "do". Vizinho vazio
+        # nao forma dupla: `" " + nome` normaliza para o proprio nome e a
+        # checagem se auto-isentaria.
+        duplas = ([f"{anterior} {nome}"] if anterior else []) +                  ([f"{nome} {seguinte}"] if seguinte else [])
+        if any(normalizar_texto(d) in universo.por_nome for d in duplas):
+            return False
+        if _title_case(texto, casa.start()):
+            return False
+    return ocorrencias > 0
+
+
+def _forma_juridica(palavra: str) -> bool:
+    """O vizinho e sufixo societario, e nao outro nome?
+
+    "Adobe Inc (ADBE)" e o caso: a chave e ``adobe`` porque a poda de sufixo
+    removeu ``inc``, e o texto traz de volta exatamente o que foi podado. Sem
+    esta isencao a regra de vizinhanca leria "Adobe Inc" como nome maior e
+    perderia a propria empresa que a materia tem por assunto -- medido em 3
+    itens do acervo em 06/09/2026, mais "Versant Corporation", "CVS Health
+    Corporation" e "Teledyne Technologies Incorporated".
+
+    A lista consultada e a mesma ``NOMES_GENERICOS`` que a poda usa, importada
+    aqui dentro porque ``universo_entidades`` depende deste modulo. Duas copias
+    divergiriam, e a divergencia seria muda.
+    """
+    from core.noticias.universo_entidades import NOMES_GENERICOS
+
+    normal = normalizar_texto(palavra)
+    return bool(normal) and (normal in NOMES_GENERICOS
+                             or normal.rstrip("d") in NOMES_GENERICOS)
+
+
+def _inicio_de_segmento(texto: str, posicao: int) -> bool:
+    """Nao ha nada antes desta posicao alem de pontuacao de fim de frase."""
+    antes = texto[:posicao].strip()
+    return not antes or antes[-1] in ".!?|—–:;"
+
+
+def _title_case(texto: str, posicao: int) -> bool:
+    """O trecho em volta e titulo com todas as iniciais em maiuscula?"""
+    ini = 0
+    fim = len(texto)
+    for casa in _SEGMENTO.finditer(texto):
+        if casa.end() <= posicao:
+            ini = casa.end()
+        else:
+            fim = casa.start()
+            break
+    palavras = [p for p in texto[ini:fim].split()
+                if len(p) > 3 and p[:1].isalpha()]
+    if len(palavras) < 4:
+        return False
+    maiusculas = sum(1 for p in palavras if p[:1].isupper())
+    return maiusculas >= _FRACAO_TITLE_CASE * len(palavras)
+
+
 def resolver_tickers(declarados, texto: str,
                      universo: Universo = UNIVERSO_VAZIO) -> tuple[str, ...]:
     """Tickers da notícia, em ordem estável.
@@ -225,8 +336,11 @@ def resolver_tickers(declarados, texto: str,
                 continue
             # Ver :func:`_nomes_proprios`: nome de um termo so exige evidencia
             # de nome proprio no original; dois ou mais dispensam.
-            if " " not in nome and nome not in proprios:
-                continue
+            if " " not in nome:
+                if nome not in proprios:
+                    continue
+                if _fragmento_de_nome_maior(texto, nome, universo):
+                    continue
             if re.search(rf"(?<![a-z0-9]){re.escape(nome)}(?![a-z0-9])",
                          normalizado):
                 for ticker in universo.por_nome[nome]:
