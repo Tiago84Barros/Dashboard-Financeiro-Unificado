@@ -67,6 +67,8 @@ import views.empresas_b3 as view
 view._preco_atual_com_status = lambda tk: (None, "falha_rede")
 view._dividendos_anuais_market_first = lambda tk: (pd.DataFrame(), "yfinance")
 view._yf_precos = lambda tk: pd.DataFrame()
+# Ticker fictício: neutraliza a guarda de universo, que consulta o banco.
+view._universo_b3_tickers = lambda: ()
 db.market_active = lambda: True
 db.load_demonstracoes = lambda *a, **k: pd.DataFrame()
 db.load_multiplos_historico = lambda *a, **k: pd.DataFrame()
@@ -104,6 +106,8 @@ df_divs = pd.DataFrame({
 view._preco_atual_com_status = lambda tk: (10.0, "ok")
 view._dividendos_anuais_market_first = lambda tk: (df_divs, "market.dividends")
 view._yf_precos = lambda tk: pd.DataFrame()
+# Ticker fictício: neutraliza a guarda de universo, que consulta o banco.
+view._universo_b3_tickers = lambda: ()
 db.market_active = lambda: True
 db.load_demonstracoes = lambda *a, **k: pd.DataFrame()
 db.load_multiplos_historico = lambda *a, **k: pd.DataFrame()

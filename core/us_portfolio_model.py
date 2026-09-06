@@ -24,6 +24,7 @@ from sqlalchemy import text
 
 from core.config import settings
 from core.database import get_engine
+from core.portfolio_staleness import marcar_defasagem
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION, US_SCHEMA_VERSION
 
 _REQUIRED_TABLES = ("us_portfolio_models", "us_portfolio_model_items")
@@ -452,11 +453,11 @@ def load_active_us_portfolio_model() -> dict:
     model["items"] = items
     model["num_items"] = len(items)
     params = model.get("params_json") or {}
-    model["is_stale"] = (
-        params.get("score_version") != US_FUNDAMENTAL_SCORE_VERSION
-        or int(params.get("model_schema_version") or 0) != US_SCHEMA_VERSION
+    marcar_defasagem(
+        model, params,
+        score_version=US_FUNDAMENTAL_SCORE_VERSION,
+        schema_version=US_SCHEMA_VERSION,
     )
-    model["current_score_version"] = US_FUNDAMENTAL_SCORE_VERSION
     return model
 
 

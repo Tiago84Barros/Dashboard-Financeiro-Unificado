@@ -5,8 +5,13 @@ from datetime import date
 import pytest
 
 from core.destino_local import DestinoRemotoRecusado
-from scripts.backfill_cvm_ipe import (BUCKETS_ANALITICOS, _bucket, _engine,
-                                     filtrar_buckets, select_balanced)
+from scripts.backfill_cvm_ipe import (
+    BUCKETS_ANALITICOS,
+    _bucket,
+    _engine,
+    filtrar_buckets,
+    select_balanced,
+)
 
 
 def _doc(ticker, categoria, dia):
