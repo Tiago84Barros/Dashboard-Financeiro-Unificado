@@ -14,6 +14,7 @@ qual status, o que avança e o que não avança -- e essa decisão não é do ba
 from __future__ import annotations
 
 import dataclasses
+import math
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -444,10 +445,86 @@ def test_truncagem_do_universo_e_declarada(monkeypatch):
     monkeypatch.setattr(uni, "da_carteira", lambda **kw: (muitos, ""))
     monkeypatch.setattr(uni, "dos_candidatos", lambda **kw: ((), ""))
 
-    tickers, limitacoes = uni.montar(cad.MODO_NORMAL, limite=5)
+    tickers, limitacoes = uni.montar(cad.MODO_NORMAL, limite=5, janela=0)
 
     assert len(tickers) == 5
-    assert any("truncado" in linha for linha in limitacoes)
+    assert any("truncada" in linha for linha in limitacoes)
+
+
+def test_a_janela_gira_e_o_universo_inteiro_acaba_perguntado(monkeypatch):
+    """Corte fixo em lista alfabética é ponto cego determinístico.
+
+    Até 06/09/2026 o corte era ``tickers[:limite]`` e a limitação dizia que "a
+    prioridade do modo decidiu quem ficou". Não decidiu -- decidiu o alfabeto.
+    Medido contra a carteira real (32 ativos, teto 20): a consulta saía sempre
+    com ``A..LIFE11`` e ``PETR4``, ``SBSP3``, ``VIVT3``, ``WEGE3``, ``TJX``,
+    ``PGR`` e ``PODD`` não eram perguntados em ciclo nenhum, nunca.
+
+    O que este teste guarda não é a rotação: é a **cobertura**. Qualquer
+    esquema que cubra o universo em ``ceil(n/limite)`` ciclos passa.
+    """
+    muitos = tuple(f"AAA{i:02d}3" for i in range(30))
+    monkeypatch.setattr(uni, "da_carteira", lambda **kw: (muitos, ""))
+    monkeypatch.setattr(uni, "dos_candidatos", lambda **kw: ((), ""))
+
+    ciclos = math.ceil(len(muitos) / 7)
+    visto: set[str] = set()
+    for janela in range(ciclos):
+        tickers, _ = uni.montar(cad.MODO_NORMAL, limite=7, janela=janela)
+        assert len(tickers) == 7
+        visto.update(tickers)
+
+    assert visto == set(muitos), "nenhum ativo pode ficar fora de todo ciclo"
+
+
+def test_o_recorte_e_estavel_dentro_do_mesmo_ciclo(monkeypatch):
+    """Duas leituras do mesmo ciclo têm de dar a mesma consulta.
+
+    Sem isso o histórico de ciclos deixa de ser comparável -- e a mesma
+    configuração produziria universos diferentes, que é o defeito que
+    ``sorted()`` existia para evitar e que a rotação não pode reintroduzir.
+    """
+    muitos = tuple(f"AAA{i:02d}3" for i in range(30))
+    monkeypatch.setattr(uni, "da_carteira", lambda **kw: (muitos, ""))
+    monkeypatch.setattr(uni, "dos_candidatos", lambda **kw: ((), ""))
+
+    agora = datetime(2026, 9, 6, 12, 34, tzinfo=timezone.utc)
+    um, _ = uni.montar(cad.MODO_NORMAL, limite=7, agora=agora)
+    outro, _ = uni.montar(cad.MODO_NORMAL, limite=7, agora=agora)
+
+    assert um == outro
+
+
+def test_o_giro_nao_promove_candidato_na_frente_da_carteira(monkeypatch):
+    """A janela anda dentro do nível, nunca sobre a lista concatenada.
+
+    Girar o concatenado faria a vaga da carteira ser ocupada por candidato em
+    algumas janelas -- prioridade que só vale em metade dos ciclos não é
+    prioridade.
+    """
+    carteira = tuple(f"CART{i:02d}3" for i in range(9))
+    candidatos = tuple(f"CAND{i:02d}3" for i in range(9))
+    monkeypatch.setattr(uni, "da_carteira", lambda **kw: (carteira, ""))
+    monkeypatch.setattr(uni, "dos_candidatos", lambda **kw: (candidatos, ""))
+
+    for janela in range(6):
+        tickers, _ = uni.montar(cad.MODO_NORMAL, limite=5, janela=janela)
+        assert set(tickers) <= set(carteira), (
+            "com a carteira maior que o teto, candidato não pode entrar")
+
+
+def test_carteira_que_enche_o_teto_dispensa_ler_candidatos(monkeypatch):
+    """Não perguntar é decisão, e ela também vira texto."""
+    carteira = tuple(f"CART{i:02d}3" for i in range(9))
+    chamou = []
+    monkeypatch.setattr(uni, "da_carteira", lambda **kw: (carteira, ""))
+    monkeypatch.setattr(uni, "dos_candidatos",
+                        lambda **kw: (chamou.append(1), ((), ""))[1])
+
+    _, limitacoes = uni.montar(cad.MODO_NORMAL, limite=5, janela=0)
+
+    assert not chamou, "ler candidatos custaria banco para uma lista sem vaga"
+    assert any("candidatos não consultados" in linha for linha in limitacoes)
 
 
 def test_carteira_ilegivel_nao_derruba_a_coleta(monkeypatch):
