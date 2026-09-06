@@ -167,6 +167,15 @@ class ProvedorRSS(ProvedorBase):
 #: Feeds públicos usados como cobertura de base do mercado brasileiro. São
 #: veículos já catalogados em ``core/noticias/fontes.py``; acrescentar um feed
 #: sem catalogar o domínio faz a fonte cair no piso de confiabilidade.
+#: Feeds padrão. Todos foram medidos pelo pipeline real em 06/09/2026 antes de
+#: entrar: os doze responderam, com **100% dos itens datados**, e nenhum caiu em
+#: ``CLASSE_DESCONHECIDA`` -- ``suno.com.br``, ``seudinheiro.com`` e
+#: ``investors.com`` (que aparece via Yahoo) foram catalogados em
+#: :mod:`core.noticias.fontes` no mesmo commit, porque feed sem domínio
+#: catalogado entra pelo piso de confiabilidade e o piso é silencioso.
+#:
+#: Recusados na medição, e por quê: Clube FII devolve 403 ao nosso User-Agent,
+#: o feed da Reuters não resolve DNS e o da Nasdaq estoura o tempo limite.
 FEEDS_PADRAO: tuple[dict[str, str], ...] = (
     {"feed": "https://www.infomoney.com.br/feed/",
      "rotulo": "InfoMoney", "idioma": "pt", "pais": "BR"},
@@ -176,6 +185,25 @@ FEEDS_PADRAO: tuple[dict[str, str], ...] = (
      "rotulo": "Brazil Journal", "idioma": "pt", "pais": "BR"},
     {"feed": "https://neofeed.com.br/feed/",
      "rotulo": "NeoFeed", "idioma": "pt", "pais": "BR"},
+    {"feed": "https://valorinveste.globo.com/rss/valorinveste/",
+     "rotulo": "Valor Investe", "idioma": "pt", "pais": "BR"},
+    {"feed": "https://exame.com/feed/",
+     "rotulo": "Exame", "idioma": "pt", "pais": "BR"},
+    {"feed": "https://br.investing.com/rss/news.rss",
+     "rotulo": "Investing BR", "idioma": "pt", "pais": "BR"},
+    {"feed": "https://www.suno.com.br/noticias/feed/",
+     "rotulo": "Suno Noticias", "idioma": "pt", "pais": "BR"},
+    {"feed": "https://www.seudinheiro.com/feed/",
+     "rotulo": "Seu Dinheiro", "idioma": "pt", "pais": "BR"},
+    # Cobertura dos EUA. Entra aqui, e não por mais chamada de API, porque RSS
+    # não tem cota: é a única ampliação que não disputa o teto diário do Alpha
+    # Vantage nem o de itens por resposta do Marketaux.
+    {"feed": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+     "rotulo": "CNBC", "idioma": "en", "pais": "US"},
+    {"feed": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+     "rotulo": "MarketWatch", "idioma": "en", "pais": "US"},
+    {"feed": "https://finance.yahoo.com/news/rssindex",
+     "rotulo": "Yahoo Finance", "idioma": "en", "pais": "US"},
 )
 
 

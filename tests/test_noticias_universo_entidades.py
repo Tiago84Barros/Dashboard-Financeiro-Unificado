@@ -249,6 +249,52 @@ def test_poda_de_sufixo_nao_inventa_apelido():
         "AXIA Energia"
 
 
+def test_barra_do_edgar_nao_congela_a_poda():
+    """``TJX COMPANIES INC /DE/`` tem de virar "TJX COMPANIES", não a string inteira.
+
+    A poda anda do fim para o começo e para no primeiro token que não
+    reconhece. O cadastro da SEC termina o nome com o estado de constituição
+    entre barras, e a barra não é removida por ``strip(" ,.-")`` nem casada por
+    ``endswith(" inc")`` — então ``INC`` e ``CORP``, um token atrás, nunca eram
+    alcançados e a chave gravada não aparecia em manchete nenhuma.
+
+    Os três formatos observados no cadastro estão aqui de propósito: com espaço
+    antes da barra, sem espaço nenhum, e a barra órfã sem estado — esta última
+    é a que uma lista de UFs deixaria passar.
+    """
+    assert ue._limpar_nome("TJX COMPANIES INC /DE/") == "TJX COMPANIES"
+    assert ue._limpar_nome("PROGRESSIVE CORP/OH/") == "PROGRESSIVE"
+    assert ue._limpar_nome("FEDERAL SIGNAL CORP /DE/") == "FEDERAL SIGNAL"
+    assert ue._limpar_nome("AMETEK INC/") == "AMETEK"
+
+
+def test_virgula_antes_da_forma_juridica_nao_impede_a_poda():
+    """``AGILENT TECHNOLOGIES, INC.`` e ``Leidos Holdings, Inc.`` também podam.
+
+    Mesma família do defeito da barra: era a pontuação, não o sufixo. ``COPART
+    INC`` podava e ``AMETEK INC/`` não, com um caractere de diferença.
+    """
+    assert ue._limpar_nome("AGILENT TECHNOLOGIES, INC.") == "AGILENT TECHNOLOGIES"
+    assert ue._limpar_nome("Leidos Holdings, Inc.") == "Leidos"
+    assert ue._limpar_nome("BRINKER INTERNATIONAL, INC") == "BRINKER INTERNATIONAL"
+
+
+def test_a_poda_pela_barra_nao_alcanca_nome_brasileiro():
+    """Nenhum nome sem a barra do EDGAR pode se mover.
+
+    O corte é ancorado na barra justamente para isso: "de" é preposição
+    corrente em português e um corte cego de duas letras no fim comeria nome
+    real. Estes quatro vêm do cadastro da B3 e têm de sair inalterados.
+    """
+    for nome in (
+        "M DIAS BRANCO SA INDUSTRIA E COMERCIO DE ALIMENTOS",
+        "BANCO DO ESTADO DE SERGIPE SA BANESE",
+        "CIA SANEAMENTO BASICO DE SAO PAULO",
+        "DTCOM DIRECT TO CO",
+    ):
+        assert ue._limpar_nome(nome) == nome
+
+
 def test_apelido_nao_inventa_ticker():
     """``APELIDOS`` é chave a mais em ``por_nome``, nunca ativo a mais.
 

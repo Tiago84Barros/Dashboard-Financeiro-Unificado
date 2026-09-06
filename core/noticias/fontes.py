@@ -110,6 +110,15 @@ _CATALOGO: tuple[Fonte, ...] = (
     _f("barrons.com", "Barrons", CLASSE_ESPECIALIZADA, "US", "en"),
     _f("fundsexplorer.com.br", "Funds Explorer", CLASSE_ESPECIALIZADA, "BR", "pt"),
     _f("clubefii.com.br", "Clube FII", CLASSE_ESPECIALIZADA, "BR", "pt"),
+    _f("investors.com", "Investor's Business Daily", CLASSE_ESPECIALIZADA,
+       "US", "en"),
+    # Casas de análise com braço editorial. Ficam em "especializada" porque o
+    # texto é jornalismo financeiro profissional, mas o conflito é real e está
+    # declarado aqui de propósito: as duas **vendem** a recomendação sobre a
+    # qual escrevem. Rebaixar para blog subestimaria a apuração; deixar sem
+    # catálogo as jogaria no piso de desconhecida, que é pior e mudo.
+    _f("suno.com.br", "Suno Notícias", CLASSE_ESPECIALIZADA, "BR", "pt"),
+    _f("seudinheiro.com", "Seu Dinheiro", CLASSE_ESPECIALIZADA, "BR", "pt"),
     # Imprensa geral
     _f("g1.globo.com", "G1", CLASSE_GERAL, "BR", "pt"),
     _f("folha.uol.com.br", "Folha de S.Paulo", CLASSE_GERAL, "BR", "pt"),
