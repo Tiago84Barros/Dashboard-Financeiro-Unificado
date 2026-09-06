@@ -21,7 +21,7 @@ import json
 
 import pytest
 
-from core.noticias import coleta, frescor_noticias, portoes, taxonomia
+from core.noticias import coleta, frescor_noticias, portoes, rate_limit, taxonomia
 from core.noticias.provedores.base import (
     ORIGEM_CACHE_VENCIDO,
     Consulta,
@@ -99,6 +99,13 @@ def test_provedor_que_responde_vazio_nao_e_provedor_indisponivel():
 @pytest.mark.parametrize(("erro", "tipo", "rotulo"), [
     (LimiteExcedido("provedor_x"),
      coleta.FALHA_LIMITE, "limite de requisicoes atingido"),
+    # Mesma excecao, leituras opostas: aqui ainda ha saldo no dia e o provedor
+    # so esta sendo racionado para durar as 24h. Chamar isso de "limite
+    # atingido" faria a tela declarar esgotado um provedor que nao esta.
+    (LimiteExcedido("provedor_x",
+                    motivo=rate_limit.MOTIVO_ESPACAMENTO),
+     coleta.FALHA_ESPACAMENTO,
+     "espacado para a cota diaria cobrir as 24h (ainda ha saldo)"),
     (ProvedorIndisponivel("p", "401"), coleta.FALHA_INDISPONIVEL,
      "fonte indisponivel"),
     (RespostaInvalida("p", "json quebrado"), coleta.FALHA_INVALIDA,

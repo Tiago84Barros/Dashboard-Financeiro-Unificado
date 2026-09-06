@@ -37,6 +37,15 @@ logger = logging.getLogger(__name__)
 
 CAMINHO_PADRAO = Path("local_staging") / "noticias" / "rate_limit.json"
 
+#: Motivos de :class:`LimiteExcedido`. São constantes, e não literais no ponto
+#: de levantamento, porque o consumidor (``coleta._classificar_erro``) precisa
+#: distinguir os dois para rotular a limitação na tela -- e comparar contra o
+#: **texto** faria a reescrita de uma mensagem virar mudança silenciosa de
+#: classificação: o rótulo pararia de separar "acabou" de "está racionado" sem
+#: nenhum teste quebrar.
+MOTIVO_COTA = "cota local esgotada"
+MOTIVO_ESPACAMENTO = "espacado para o teto diario cobrir as 24h"
+
 
 class LimiteExcedido(ErroTransporte):
     """Cota local esgotada. Não é retentável: esperar aqui é esperar horas."""
@@ -287,9 +296,9 @@ class Orcamento:
         sobra = self.restante(provedor)
         if any(v == 0 for v in sobra.values() if v is not None):
             raise LimiteExcedido(provedor, self.liberado_em(provedor),
-                                 motivo="cota local esgotada")
+                                 motivo=MOTIVO_COTA)
         espera = self.espera_de_espacamento(provedor)
         if espera is not None:
             raise LimiteExcedido(
                 provedor, espera,
-                motivo="espacado para o teto diario cobrir as 24h")
+                motivo=MOTIVO_ESPACAMENTO)
