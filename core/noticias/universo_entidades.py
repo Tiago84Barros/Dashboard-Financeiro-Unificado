@@ -108,8 +108,30 @@ def _limpar_nome(nome: str) -> str:
     que é como a imprensa escreve. A poda **não** inventa apelido: "Petroleo
     Brasileiro SA Pfd" vira "Petroleo Brasileiro", e não "Petrobras". Apelido de
     marca é outra coisa e mora em :data:`APELIDOS`, declarado à mão.
+
+    **Um token desconhecido na cauda congela a poda inteira.** A poda anda do
+    fim para o começo e para no primeiro sufixo que não reconhece -- e o
+    cadastro da SEC termina o nome com o estado de constituição entre barras:
+    ``TJX COMPANIES INC /DE/``, ``PROGRESSIVE CORP/OH/`` (sem espaço nenhum),
+    ``AMETEK INC/`` (barra órfã, sem estado). O ``INC`` e o ``CORP`` estão um
+    token atrás e nunca eram alcançados, então a chave gravada era a string
+    inteira -- que não aparece em manchete nenhuma. Era ausência que não parecia
+    falha: o resolvedor devolvia tupla vazia, que é resposta legítima para
+    notícia macro.
+
+    Quem trava não é a sigla, é a **pontuação**. ``strip(" ,.-")`` não remove
+    barra, e ``endswith(" inc")`` não casa com ``INC/`` nem com ``CORP/OH/``.
+    Foi por isso que ``COPART INC`` podava certo e ``AMETEK INC/`` não -- mesmo
+    sufixo, um caractere de diferença.
+
+    O corte é pelo marcador do EDGAR (``/DE/``, ``/OH/``, ou a barra órfã de
+    ``AMETEK INC/``), não por lista de estados: a barra cobre os três formatos
+    observados com uma regra só, e uma lista de UFs deixaria a barra sozinha de
+    fora. ``de`` também é preposição corrente em português, e cortar duas letras
+    no fim sem a âncora da barra comeria nome real.
     """
     texto = _CORTES.sub("", " ".join(str(nome or "").split())).strip(" ,.-")
+    texto = _SEDE.sub("", texto).strip(" ,./-")
     mudou = True
     while mudou and texto:
         mudou = False
@@ -130,6 +152,17 @@ _CORTES = re.compile(
     r"\s+(?:non-cum|units?\s+cons|ctf\s+de\s+deposito|conv\s+pfd|"
     r"registered\s+shs|cons\s+of|sponsored|perp\s+pfd|shs).*$",
     re.IGNORECASE)
+
+#: Marcador de sede do EDGAR no fim do nome. O cadastro da SEC termina o nome
+#: com o estado de constituição entre barras -- ``TJX COMPANIES INC /DE/``,
+#: ``PROGRESSIVE CORP/OH/`` (sem espaço), ``AMETEK INC/`` (barra sozinha, sem
+#: estado). Quem trava a poda é a **barra**, não a sigla: ``strip(" ,.-")`` não
+#: a remove, e ``endswith(" inc")`` não casa com ``INC/``.
+#:
+#: Recortar pela barra, e não por lista de UFs, é o que cobre os três formatos
+#: com uma regra só -- inclusive a barra órfã, que nenhuma lista de estados
+#: pegaria. O teto de três letras impede que o corte coma nome de verdade.
+_SEDE = re.compile(r"\s*/\s*[A-Za-z]{0,3}\s*/?\s*$")
 
 #: Apelidos de marca, **declarados à mão**. Nenhuma regra deriva "Petrobras" de
 #: "Petroleo Brasileiro" ou "Cemig" de "Companhia Energetica de Minas Gerais":

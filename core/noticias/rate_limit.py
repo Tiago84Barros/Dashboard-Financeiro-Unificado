@@ -41,16 +41,18 @@ CAMINHO_PADRAO = Path("local_staging") / "noticias" / "rate_limit.json"
 class LimiteExcedido(ErroTransporte):
     """Cota local esgotada. Não é retentável: esperar aqui é esperar horas."""
 
-    def __init__(self, provedor: str, liberado_em: datetime | None = None):
+    def __init__(self, provedor: str, liberado_em: datetime | None = None,
+                 motivo: str = "cota esgotada"):
         quando = (liberado_em.isoformat(timespec="minutes")
                   if liberado_em else "desconhecido")
         super().__init__(
-            f"cota local do provedor {provedor} esgotada (libera em {quando})",
+            f"provedor {provedor}: {motivo} (libera em {quando})",
             status=429,
             retentavel=False,
         )
         self.provedor = provedor
         self.liberado_em = liberado_em
+        self.motivo = motivo
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,28 @@ class Limite:
     @classmethod
     def sem_limite(cls) -> "Limite":
         return cls(None, None)
+
+    @property
+    def intervalo_minimo_s(self) -> float | None:
+        """Espaçamento mínimo entre chamadas, derivado do teto diário.
+
+        Teto diário sozinho não distribui: ele autoriza gastar as 25 chamadas
+        do Alpha Vantage nas primeiras horas e ficar mudo pelo resto do dia.
+        Isso não é hipótese -- é a aritmética do modo crise, que roda de 30 em
+        30 minutos e pede **48** ciclos por dia contra 25 disponíveis: o
+        provedor morre por volta das 12h30 de crise, que é justamente quando
+        ele importa mais.
+
+        O piso é ``86400 / por_dia``: 57,6 min para o Alpha Vantage, 14,4 min
+        para o Marketaux. Não morde em modo normal (240 min) nem em vigilância
+        (60 min) -- morde só na crise, e o efeito é o provedor responder em
+        ciclos alternados **o dia inteiro** em vez de meio dia seguido de
+        silêncio. Sem teto diário não há piso: ``rss`` e ``finnhub`` passam
+        direto.
+        """
+        if not self.por_dia:
+            return None
+        return 86400.0 / self.por_dia
 
 
 # Tetos dos planos gratuitos, conferidos na documentação pública de cada API.
@@ -186,9 +210,26 @@ class Orcamento:
                     else max(0, limite.por_dia - len(marcas))),
         }
 
+    def espera_de_espacamento(self, provedor: str) -> datetime | None:
+        """Quando o piso de espaçamento libera. ``None`` se já liberou.
+
+        Só olha a última chamada: o piso é sobre o intervalo, não sobre o
+        acumulado -- disso já cuidam as janelas de minuto e de dia.
+        """
+        piso = self.limite(provedor).intervalo_minimo_s
+        if piso is None:
+            return None
+        marcas = self._limpar(provedor)
+        if not marcas:
+            return None
+        proxima = datetime.fromtimestamp(max(marcas), tz=timezone.utc) +             timedelta(seconds=piso)
+        return proxima if proxima > self._agora() else None
+
     def permite(self, provedor: str) -> bool:
         sobra = self.restante(provedor)
-        return not any(v == 0 for v in sobra.values() if v is not None)
+        if any(v == 0 for v in sobra.values() if v is not None):
+            return False
+        return self.espera_de_espacamento(provedor) is None
 
     def liberado_em(self, provedor: str) -> datetime | None:
         """Quando a próxima chamada passa a ser permitida.
@@ -218,6 +259,9 @@ class Orcamento:
                 datetime.fromtimestamp(mais_antiga, tz=timezone.utc)
                 + timedelta(days=1)
             )
+        espaco = self.espera_de_espacamento(provedor)
+        if espaco is not None:
+            candidatos.append(espaco)
         return min(candidatos) if candidatos else None
 
     # -- registro ---------------------------------------------------------
@@ -233,6 +277,19 @@ class Orcamento:
         self._salvar()
 
     def exigir(self, provedor: str) -> None:
-        """Levanta ``LimiteExcedido`` quando a cota acabou."""
-        if not self.permite(provedor):
-            raise LimiteExcedido(provedor, self.liberado_em(provedor))
+        """Levanta ``LimiteExcedido`` quando a cota acabou ou é cedo demais.
+
+        Os dois motivos viram a mesma exceção porque a decisão de quem chama é
+        a mesma -- pular o provedor neste ciclo --, mas o texto os separa: quem
+        lê a limitação na tela precisa distinguir "acabou a cota do dia" de
+        "está sendo espaçado para durar o dia".
+        """
+        sobra = self.restante(provedor)
+        if any(v == 0 for v in sobra.values() if v is not None):
+            raise LimiteExcedido(provedor, self.liberado_em(provedor),
+                                 motivo="cota local esgotada")
+        espera = self.espera_de_espacamento(provedor)
+        if espera is not None:
+            raise LimiteExcedido(
+                provedor, espera,
+                motivo="espacado para o teto diario cobrir as 24h")
