@@ -19,7 +19,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from core.noticias import dedup, fontes, normalizacao, taxonomia
+from core.noticias import dedup, fontes, normalizacao, rate_limit, taxonomia
 from core.noticias import entidades as ent_mod
 from core.noticias import eventos as ev_mod
 from core.noticias import impacto as imp_mod
@@ -44,12 +44,20 @@ logger = logging.getLogger(__name__)
 
 FALHA_INDISPONIVEL = "indisponivel"
 FALHA_LIMITE = "limite"
+#: Cota ainda tem saldo; o provedor foi pulado pelo piso de espaçamento
+#: (``rate_limit.Limite.intervalo_minimo_s``) para o teto diário cobrir as 24h.
+#: Separado de :data:`FALHA_LIMITE` de propósito: quem lê a limitação na tela
+#: precisa distinguir "acabou" de "esta sendo racionado para durar" -- são a
+#: mesma decisão para o coletor e leituras opostas para quem interpreta.
+FALHA_ESPACAMENTO = "espacamento"
 FALHA_INVALIDA = "resposta_invalida"
 FALHA_REDE = "rede"
 
 ROTULO_FALHA = {
     FALHA_INDISPONIVEL: "fonte indisponivel",
     FALHA_LIMITE: "limite de requisicoes atingido",
+    FALHA_ESPACAMENTO: ("espacado para a cota diaria cobrir as 24h "
+                        "(ainda ha saldo)"),
     FALHA_INVALIDA: "resposta invalida da fonte",
     FALHA_REDE: "falha de comunicacao com a fonte",
 }
@@ -289,6 +297,8 @@ def avaliar_evento(evento: ev_mod.Evento, *, agora: datetime | None = None,
 
 def _classificar_erro(exc: Exception) -> str:
     if isinstance(exc, LimiteExcedido):
+        if getattr(exc, "motivo", None) == rate_limit.MOTIVO_ESPACAMENTO:
+            return FALHA_ESPACAMENTO
         return FALHA_LIMITE
     if isinstance(exc, ProvedorIndisponivel):
         return FALHA_INDISPONIVEL
