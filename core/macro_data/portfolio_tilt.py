@@ -15,7 +15,51 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class MacroTiltConfig:
-    max_score_adjustment: float = 10.0
+    """Limites da camada macro, dimensionados por medição e não por intuição.
+
+    ``max_score_adjustment`` é **inclinação, não teto**
+    ---------------------------------------------------
+    O ``clip(±max_score_adjustment)`` em :func:`apply_macro_scores` só morde
+    quando ``|impacto| * escala >= 100`` -- ou seja, ``|impacto| >= 67`` no modo
+    ``scenario``. O maior ``|impacto|`` observado em 188 cortes mensais
+    (2011-2026, ``scripts/backtest_macro_tilt.py``) foi **31,3**. O corte nunca
+    aconteceu e não vai acontecer: o que este número faz na prática é
+    multiplicar o impacto, não limitá-lo.
+
+    Por que 4,0, e não os 10,0 originais
+    ------------------------------------
+    Este parâmetro **não é validável contra desfecho**. Não existe série
+    histórica de notas fundamentalistas para medir se a nota ajustada acerta
+    mais que a nota crua, e o backtest não achou Rank-IC em classe nenhuma:
+    t_NW entre -0,21 (US, 1m) e +1,07 (FII, 1m), com o horizonte de 12 meses dos
+    EUA em -1,61. O efeito na carteira fica em +0,01%/ano. Sem poder discriminar
+    por acerto, o único critério honesto é **tamanho de efeito**: quanto de
+    reordenação um sinal não validado pode causar.
+
+    A régua adotada é declarada e verificável -- *no seu extremo observado, a
+    camada macro não pode mover um nome mais de um decil da tabela de notas*.
+    Medido contra a safra ``0.8.0 @ 2025-06-30`` (2 443 notas, mediana 51,70):
+
+    ======  ===================  =========================
+      M     ajuste alcançável    posições deslocadas
+    ======  ===================  =========================
+     10,0          4,70 pt              21,6%
+      5,0          2,35 pt              11,2%
+      **4,0**      **1,88 pt**          **9,3%**
+      3,0          1,41 pt               7,2%
+    ======  ===================  =========================
+
+    4,0 é o maior valor que mantém o extremo observado dentro de um decil
+    (244 nomes). Ele **não** foi escolhido por prever melhor -- não há evidência
+    disso -- e sim por limitar o estrago de um sinal que ainda não se provou.
+
+    ``max_relative_weight_tilt`` fica em 0,15 porque nunca mordeu: com
+    ``|impacto|`` máximo de 31,3 o peso relativo se move no máximo 4,7%.
+    Apertá-lo não mudaria uma carteira sequer, e um limite que não morde não
+    ganha rigor por ser reescrito.
+    """
+
+    max_score_adjustment: float = 4.0
     max_relative_weight_tilt: float = 0.15
     max_turnover: float = 0.10
 

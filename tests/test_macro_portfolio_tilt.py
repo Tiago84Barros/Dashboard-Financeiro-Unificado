@@ -38,13 +38,22 @@ def test_invalid_weights_are_rejected():
 
 
 def test_score_context_keeps_missing_as_missing_and_does_not_create_weights():
+    """Ausência de impacto é ausência, não zero -- e a nota não vira peso.
+
+    O valor esperado sai de ``MacroTiltConfig``, e não escrito à mão. A versão
+    anterior cravava ``75.0``, que era ``50 * 10 / 100`` com o teto da época.
+    Recalibrar o teto para 4,0 em 06/09/2026 quebrou este teste sem que nada do
+    que ele defende tivesse mudado -- ele reprovava a calibração, não o
+    comportamento. Teto é parâmetro; o que o teste guarda é a regra.
+    """
     frame = pd.DataFrame({"symbol": ["A", "B"], "score": [70.0, 60.0]})
 
     result = apply_macro_scores(
         frame, {"A": 50.0}, symbol_column="symbol", score_column="score"
     )
 
-    assert result.loc[0, "contextual_score"] == 75.0
+    esperado = 70.0 + 50.0 / 100 * MacroTiltConfig().max_score_adjustment
+    assert result.loc[0, "contextual_score"] == pytest.approx(esperado)
     assert result.loc[1, "contextual_score"] == 60.0
     assert pd.isna(result.loc[1, "macro_impact"])
     assert "weight" not in result
