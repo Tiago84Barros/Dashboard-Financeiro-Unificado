@@ -308,22 +308,42 @@ def efeito_do_ajuste_de_nota(painel: pd.DataFrame,
     mediana = float(notas.iloc[len(notas) // 2])
 
     impacto_p95 = float(painel.stack().abs().quantile(0.95))
+    impacto_max = float(painel.stack().abs().max())
+
+    def _ajuste(impacto: float, escala: float) -> float:
+        """A mesma conta de ``apply_macro_scores``, **inclusive o clip**.
+
+        Sem o ``min`` esta função reportava 15,00 pt como teto do ajuste com
+        ``max_score_adjustment=10`` -- 50% acima do que o motor consegue
+        produzir, porque ele corta em ``±max_score_adjustment`` depois de
+        multiplicar pela escala. Medida de limite que ignora o limite não é
+        medida: ela superestimava o risco do parâmetro que existia para
+        dimensionar.
+        """
+        return min(impacto / 100 * config.max_score_adjustment * escala,
+                   config.max_score_adjustment)
+
     deslocamentos = {}
     for modo, escala in (("moderate", 1.0), ("scenario", 1.5)):
-        ajuste = impacto_p95 / 100 * config.max_score_adjustment * escala
+        ajuste = _ajuste(impacto_p95, escala)
         movidas = int(((notas > mediana) & (notas <= mediana + ajuste)).sum())
         deslocamentos[modo] = {
             "ajuste_em_pontos": ajuste,
             "posicoes_deslocadas": movidas,
             "fracao_da_tabela": movidas / len(notas),
         }
-    teto = config.max_score_adjustment * 1.5
+    # O teto reportado é o **alcançável** com o maior impacto já observado, e
+    # não o teto nominal: o clip exige |impacto| >= 67 no modo scenario, e o
+    # painel inteiro de 188 cortes nunca passou de 31,3. Publicar o nominal
+    # descreveria um estado que os dados não produzem.
+    teto = _ajuste(impacto_max, 1.5)
     no_teto = int(((notas > mediana) & (notas <= mediana + teto)).sum())
     return {
         "safra": f"{versao[0]} @ {versao[1]}",
         "empresas": int(len(notas)),
         "gap_mediano_entre_posicoes": float((-notas.diff().dropna()).median()),
         "impacto_p95": impacto_p95,
+        "impacto_max": impacto_max,
         "no_p95_do_impacto": deslocamentos,
         "no_teto_do_ajuste": {
             "ajuste_em_pontos": teto,
@@ -406,8 +426,9 @@ def _imprimir(res: dict[str, Any]) -> None:
                   f"-> {v['posicoes_deslocadas']} posicoes "
                   f"({v['fracao_da_tabela']:.1%} da tabela de {aj['empresas']})")
         v = aj["no_teto_do_ajuste"]
-        print(f"  ajuste de nota (no teto): {v['ajuste_em_pontos']:.2f} pt -> "
-              f"{v['posicoes_deslocadas']} posicoes ({v['fracao_da_tabela']:.1%} da tabela)")
+        print(f"  ajuste de nota (maximo ALCANCAVEL, |impacto|={aj['impacto_max']:.1f}): "
+              f"{v['ajuste_em_pontos']:.2f} pt -> {v['posicoes_deslocadas']} posicoes "
+              f"({v['fracao_da_tabela']:.1%} da tabela)")
 
 
 def main(argv: list[str] | None = None) -> int:
