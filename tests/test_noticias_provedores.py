@@ -141,6 +141,42 @@ def test_a_chave_vai_nos_parametros_e_nao_no_caminho_da_url():
     assert params["topics"] == "earnings"
 
 
+def test_varios_tickers_nao_viram_intersecao_vazia_no_alphavantage():
+    """A API cruza tickers com E; pedir a carteira inteira devolve zero.
+
+    Medido contra a API real em 06/09/2026: ``ADBE`` sozinho rende 50 itens,
+    ``AAPL,MSFT`` rende 50, ``AAPL,PETR4`` rende **0** e o universo de 20 nomes
+    da carteira rende **0**. Um único símbolo que a API não cobre zera a
+    resposta inteira -- e ela responde ``200`` com ``feed`` vazio, que nenhuma
+    camada distingue de "não houve notícia". Foi assim que este provedor
+    entregou zero itens ao acervo desde que existe, com chave válida.
+
+    Com mais de um ticker a consulta sai ampla, e a troca **tem** de aparecer
+    nas limitações: filtro silenciosamente não aplicado faz a tela prometer um
+    recorte que os dados não têm.
+    """
+    transporte = TransporteFalso([_ok(CARGA_AV)])
+    consulta = Consulta(tickers=("PETR4", "ADBE", "GGRC11"))
+
+    resposta = _av(transporte).buscar(consulta)
+
+    _, params = transporte.chamadas[0]
+    assert "tickers" not in params, "a interseção de 3 símbolos devolveria zero"
+    assert resposta.itens, "sem o filtro a consulta ampla rende itens"
+    assert any("interseção" in lim for lim in resposta.limitacoes)
+
+
+def test_um_unico_ticker_continua_filtrando_no_alphavantage():
+    """Interseção de um elemento é o próprio elemento: aí o filtro funciona."""
+    transporte = TransporteFalso([_ok(CARGA_AV)])
+
+    resposta = _av(transporte).buscar(Consulta(tickers=("ADBE",)))
+
+    _, params = transporte.chamadas[0]
+    assert params["tickers"] == "ADBE"
+    assert not any("interseção" in lim for lim in resposta.limitacoes)
+
+
 def test_filtro_nao_suportado_vira_limitacao_declarada():
     """Filtro ignorado em silêncio faz a tela prometer um recorte inexistente."""
     transporte = TransporteFalso([_ok(CARGA_AV)])
