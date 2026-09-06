@@ -195,7 +195,13 @@ def test_gravar_cria_o_schema_e_faz_upsert_no_destino_local():
     sql = e.sql_executado()
     assert f"CREATE SCHEMA IF NOT EXISTS {repo.ESQUEMA}" in sql
     assert "CREATE TABLE IF NOT EXISTS" in sql
-    assert "ON CONFLICT (versao_metodologia, chave) DO UPDATE" in sql
+    # O alvo do conflito e a identidade do FATO, e nao a `chave` de texto: ate
+    # 06/09/2026 o UNIQUE recaia sobre a chave composta pelo chamador, e trocar
+    # o formato dela re-admitia o acervo inteiro (8.923 linhas para 4.463
+    # eventos). Ver a migracao `ux_mm_eventos_fato` -- `memoria:
+    # chave-de-texto-nao-e-identidade-do-fato`.
+    assert ("ON CONFLICT (versao_metodologia, tipo_evento, simbolo, "
+            "data_evento) DO UPDATE") in sql
 
 
 def test_gravar_sem_eventos_nao_abre_conexao_nem_finge_que_gravou():

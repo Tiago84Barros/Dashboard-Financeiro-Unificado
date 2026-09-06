@@ -186,6 +186,90 @@ seria inventar a conclusao.
   retorno exatamente zero (LEVE3: 85% dos meses em 2000) — serie parada, nao
   ativo sem volatilidade.
 
+## A safra da Memória de Mercado (06/09/2026)
+
+O componente `memoria_mercado` tinha peso 0,30 no prior e nenhuma safra. Agora
+tem — e continua **fora do denominador desta porta de entrada**, de propósito.
+
+### Onde a safra mora, e o defeito que obrigou a decidir isso
+
+O construtor gravava em `localhost:5433/postgres` (o armazém, de onde saem os
+preços) e o leitor procurava em `localhost:5433/noticias` (o acervo). Bancos
+diferentes, mesmo container. Resultado: 4.463 eventos medidos convivendo com a
+mensagem *"memoria de mercado sem safra construida"* — uma frase verdadeira
+sobre o lugar errado, indistinguível de "ainda não foi construída".
+
+A correção não foi acertar o endereço nos dois lados (eles voltariam a
+divergir): é `core/memoria_mercado/destino.py`, **uma função que responde onde
+a safra mora**, chamada pelos dois. O teste que defende isso lê a AST dos dois
+arquivos e exige que ambos chamem `engine_memoria`.
+
+A mensagem de limitação passou a nomear o banco consultado. Sem isso ela fica
+correta sobre o lugar errado — foi assim que o defeito sobreviveu um dia.
+
+### O que a safra mede hoje
+
+| tipo | n | janela | prob. de mover >3,5% em 20 pregões | p10 | p90 |
+|---|---|---|---|---|---|
+| `resultado_anual` (DFP/CVM) | 3.698 | 2011-01-31 a 2026-05-29 | 0,7485 | −21,83% | +13,07% |
+| `fato_relevante` (FII)      | 3.023 | 2022-01-04 a 2026-06-16 | 0,4046 | −14,34% | +4,60% |
+
+Fonte de eventos: `core/calibracao/catalogo.py`, e só ele. O construtor não tem
+consulta própria — uma segunda cópia divergiria na primeira correção aplicada
+em um só lugar.
+
+### Três recusas nesta rodada
+
+**1. DFP é anual.** Chamar a entrega de DFP de `resultado_trimestral` para
+preencher uma linha da tabela trocaria o tipo do evento pelo tipo que havia.
+`resultado_anual` entrou na taxonomia como tipo próprio, com palavras-chave
+antes das do trimestral (`balanco anual` casa com `balanco`), e
+`resultado_trimestral` **continua declarado sem fonte** — que é a descrição
+correta do armazém: o ITR não foi ingerido.
+
+**2. `primeira_entrega_em`, nunca `disponivel_em`.** As duas divergem quando o
+arquivo teve versão revisada, e `disponivel_em` é a data da **última**. Usá-la
+dataria o evento depois de o mercado já poder ter reagido, e a medição chamaria
+de reação um movimento anterior ao "evento". Silencioso e sempre a favor da
+conclusão.
+
+**3. Nem toda coluna de data é a data do anúncio.** `ex_date` data a aritmética
+do provento; `delisted_date` data o fim da evidência. Uma base construída sobre
+elas responde outra pergunta com a mesma cara, e o portão quantitativo
+compararia a notícia contra a população errada sem nada quebrar. As fontes
+ficam no catálogo (elas calibram o efeito que de fato medem) marcadas com
+`data_e_do_anuncio=False`, e a safra as exclui por padrão — **registrando a
+exclusão como limitação**, nunca em silêncio.
+
+### A identidade do fato não é a chave de texto
+
+`chave` é composta pelo chamador. Enquanto o `UNIQUE` recaísse só sobre ela,
+mudar o formato re-admitia o acervo inteiro: o mesmo resultado da BBDC4 entrou
+como `cvm:BBDC4:2010` e como `resultado_anual:BBDC4:2011-01-31`. Nenhum erro,
+**8.923 linhas para 4.463 eventos**, e a base publicando `n` dobrado.
+
+O `UNIQUE` passou a ser `(versao, tipo_evento, simbolo, data_evento)` — a
+identidade do fato. A migração deduplica o que já estava lá (mantendo a linha
+mais recente) e limpa cenários órfãos; a limpeza de órfãos virou invariante de
+`gravar`, não faxina de uma vez.
+
+Efeito colateral honesto: o relatório passou a contar **fatos**, não linhas
+enviadas. Dizia "4.463 gravados" onde existem 4.460 — três emissores entregaram
+duas DFP no mesmo dia.
+
+### Por que o componente segue fora do denominador
+
+A safra **já age**: ela entra por `core.noticias.bases_historicas` no portão
+quantitativo do motor de notícias, e a leitura por ativo que chega a
+`ponte.py` já passou por ela. Preencher também o slot `memoria_mercado` a
+partir da mesma evidência colocaria o mesmo fato em dois componentes da mesma
+média ponderada — peso somado de 0,65 — e o score subiria sem que nada novo
+tivesse sido medido.
+
+O slot só deve ser preenchido quando houver estimativa de evento **independente
+da notícia** (`scores.componente_de_estimativa`): um evento datado de calendário
+que ainda não virou manchete, por exemplo.
+
 ## O custo de ligar: um engine por montagem
 
 `core.macro_data.database.get_local_macro_engine()` **não** é cacheado — ao

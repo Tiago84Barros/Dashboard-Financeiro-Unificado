@@ -85,6 +85,14 @@ PALAVRAS_POR_TIPO: tuple[tuple[str, tuple[str, ...]], ...] = (
                    "dividend", "payout", "rendimento mensal")),
     ("guidance", ("guidance", "projecao", "perspectiva para", "outlook",
                   "revisa estimativa")),
+    # Antes de `resultado_trimestral` porque "balanco anual" casa com "balanco"
+    # e a materia viraria um trimestre que nao existiu. A lista e curta de
+    # proposito: cada palavra aqui e uma que o trimestral perde.
+    ("resultado_anual", ("balanco anual", "resultado anual", "resultado do ano",
+                         "resultado do exercicio", "exercicio social",
+                         "demonstracoes financeiras padronizadas", "dfp",
+                         "lucro do ano", "annual results", "full year results",
+                         "fiscal year results")),
     ("resultado_trimestral", ("balanco", "resultado do", "trimestre",
                               "quarterly", "earnings", "lucro liquido",
                               "receita liquida", "ebitda")),

@@ -92,6 +92,15 @@ TIPOS: tuple[TipoEvento, ...] = (
     # ── Escopo do ativo ───────────────────────────────────────────────────────
     TipoEvento("resultado_trimestral", "Resultado trimestral", 0.75, 0.55,
                HORIZONTE_CURTO, ESCOPO_ATIVO),
+    # Prior IDENTICO ao trimestral, e de proposito. A unica fonte historica
+    # ponto-no-tempo do repositorio e a entrega de DFP a CVM (anual), e ela
+    # nao autoriza afirmar que o resultado anual e mais material ou mais
+    # persistente que o trimestral -- inventar a diferenca aqui daria a dois
+    # numeros identicos a aparencia de terem sido medidos separadamente. O
+    # tipo existe separado porque o EVENTO e outro: chamar DFP de resultado
+    # trimestral trocaria o tipo do evento pelo tipo que havia.
+    TipoEvento("resultado_anual", "Resultado anual (DFP)", 0.75, 0.55,
+               HORIZONTE_CURTO, ESCOPO_ATIVO),
     TipoEvento("guidance", "Projeção da companhia", 0.70, 0.70,
                HORIZONTE_MEDIO, ESCOPO_ATIVO),
     TipoEvento("fato_relevante", "Fato relevante", 0.85, 0.70,

@@ -16,7 +16,10 @@ formato que o motor de notícias já sabe consumir.
 
 De onde vem, e de onde **não** vem
 ----------------------------------
-Vem de ``memoria_mercado.eventos_medidos``, no armazém local. Nunca do Supabase:
+Vem de ``memoria_mercado.eventos_medidos``, no endereço que
+:func:`core.memoria_mercado.destino.url_memoria` resolve -- a mesma função que o
+construtor da safra chama, para que leitor e escritor não possam mais apontar
+para bancos diferentes do mesmo container. Nunca do Supabase:
 a instrução do usuário é literal, e o Supabase estava em 477 MB de 500 em
 05/09/2026. :func:`core.memoria_mercado.repositorio.carregar_eventos` chama
 ``exigir_local`` por conta própria, então um destino remoto aqui vira exceção,
@@ -95,10 +98,12 @@ def carregar(engine=None, *, horizonte: int = HORIZONTE_PREGOES
     sem armazém, sem safra, ou safra que não cobre o horizonte. Nenhum desses
     casos vira base vazia silenciosa.
     """
+    from core.memoria_mercado.destino import engine_memoria, rotulo_do_destino
+
+    onde = rotulo_do_destino()
     if engine is None:
         try:
-            from core.noticias.destino import engine_acervo
-            engine = engine_acervo()
+            engine = engine_memoria()
         except Exception as exc:  # noqa: BLE001 - coleta não cai por isto
             return {}, (f"base historica nao lida ({exc}): o portao "
                         f"quantitativo fica em 'nao medido'",)
@@ -120,8 +125,11 @@ def carregar(engine=None, *, horizonte: int = HORIZONTE_PREGOES
                     f"quantitativo fica em 'nao medido'",)
 
     if not linhas:
-        return {}, ("memoria de mercado sem safra construida: o portao "
-                    "quantitativo fica em 'nao medido' em toda noticia. "
+        # A mensagem nomeia o banco consultado de proposito. Sem isso ela
+        # ficaria verdadeira sobre o lugar errado -- foi assim que a safra de
+        # 4.463 eventos conviveu com "sem safra construida" por um dia inteiro.
+        return {}, (f"memoria de mercado sem safra construida em {onde}: o "
+                    "portao quantitativo fica em 'nao medido' em toda noticia. "
                     "Construir com scripts/construir_memoria_mercado.py",)
 
     por_tipo: dict[str, list] = {}

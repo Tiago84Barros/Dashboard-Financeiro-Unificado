@@ -41,12 +41,15 @@ significa:
 
 O que não tem fonte, e por quê
 ------------------------------
-``resultado_trimestral`` é o caso mais frustrante: ``market.cvm_filing_publications``
-tem 10.829 linhas com ``primeira_entrega_em`` -- data de entrega de verdade, que
-é exatamente o carimbo ponto-no-tempo que se quer -- e **todas** são categoria
-``DFP``, que é anual. O ITR não foi ingerido. Chamar DFP de resultado trimestral
-para preencher a linha da tabela seria trocar o tipo de evento pelo tipo que
-havia.
+``resultado_trimestral`` continua sem fonte, e a razão virou um tipo novo.
+``market.cvm_filing_publications`` tem 10.829 linhas com ``primeira_entrega_em``
+-- data de entrega de verdade, que é exatamente o carimbo ponto-no-tempo que se
+quer -- e **todas** são categoria ``DFP``, que é anual. O ITR não foi ingerido.
+Chamar DFP de resultado trimestral para preencher a linha da tabela seria trocar
+o tipo de evento pelo tipo que havia; o que se fez em 06/09/2026 foi o oposto:
+``resultado_anual`` entrou na taxonomia com a sua própria fonte
+(:data:`SQL_RESULTADO_ANUAL_B3`), e a linha do trimestral seguiu vazia, que é a
+descrição correta do armazém.
 
 Macro (``inflacao``, ``juros_politica_monetaria``, ``cambio``) tem série em
 ``public.info_economica_mensal``, e ela **não serve**: só há a data de
@@ -113,6 +116,24 @@ SQL_DESLISTAGEM = """
 """
 
 
+#: Entrega de DFP a CVM: a data em que o mercado pode ter lido o numero pela
+#: primeira vez. ``primeira_entrega_em`` e nunca ``disponivel_em`` -- as duas
+#: divergem quando o arquivo teve versao revisada, e ``disponivel_em`` e a data
+#: da ULTIMA versao. Usa-la dataria o evento DEPOIS de o mercado ja poder ter
+#: reagido, e a medicao chamaria de reacao um movimento anterior ao "evento".
+#: O erro seria silencioso e sempre a favor da conclusao.
+SQL_RESULTADO_ANUAL_B3 = """
+    SELECT t.ticker AS simbolo, f.primeira_entrega_em AS data,
+           f.exercicio::text AS subtipo
+      FROM market.cvm_filing_publications f
+      JOIN market.ticker_cvm t USING (codigo_cvm)
+     WHERE f.categoria = 'DFP'
+       AND f.primeira_entrega_em IS NOT NULL
+       AND f.primeira_entrega_em <= :ate
+     ORDER BY f.primeira_entrega_em
+"""
+
+
 @dataclass(frozen=True)
 class Fonte:
     """Uma origem de eventos datáveis, com o que ela não consegue provar."""
@@ -123,6 +144,23 @@ class Fonte:
     descricao: str
     coluna_pit: str
     ressalvas: tuple[str, ...] = ()
+    #: A data desta fonte e a data em que a INFORMACAO ficou disponivel?
+    #:
+    #: Falso quando a coluna data um efeito mecanico ou o fim de uma evidencia,
+    #: e nao o instante em que o mercado pode ter sabido. `ex_date` cai aqui: a
+    #: queda do preco na data-ex e aritmetica do provento, e o anuncio -- que e
+    #: o que uma noticia de dividendo relata -- aconteceu semanas antes.
+    #: `delisted_date` tambem: e a data em que a evidencia acabou.
+    #:
+    #: A distincao importa porque a safra da Memoria de Mercado responde "como
+    #: o mercado reagiu a uma noticia deste tipo". Uma base construida sobre
+    #: data-ex responde outra pergunta, com a mesma cara, e o portao
+    #: quantitativo compararia a noticia contra a populacao errada sem que
+    #: nada quebrasse. Ver `memoria: medir-a-fonte-que-a-decisao-le`.
+    #:
+    #: A fonte NAO e removida do catalogo por isso: ela continua valida para
+    #: calibrar o efeito que de fato mede. O que muda e quem a pede.
+    data_e_do_anuncio: bool = True
 
     @property
     def rotulo(self) -> str:
@@ -132,20 +170,32 @@ class Fonte:
 FONTES: tuple[Fonte, ...] = (
     Fonte("dividendo", "b3", SQL_DIVIDENDO_B3, "market.dividends", "ex_date",
           ("data-ex, nao data do anuncio: mede a queda mecanica do provento",
-           "tipos misturados (DIVIDENDO, JCP, RENDIMENTO, AMORTIZACAO)")),
+           "tipos misturados (DIVIDENDO, JCP, RENDIMENTO, AMORTIZACAO)"),
+          data_e_do_anuncio=False),
     Fonte("dividendo", "us", SQL_DIVIDENDO_US, "market_us.dividends", "ex_date",
           ("declaration_date nula em 100% das linhas: nao ha data de anuncio",
-           "data-ex mede a queda mecanica do provento")),
+           "data-ex mede a queda mecanica do provento"),
+          data_e_do_anuncio=False),
     Fonte("fato_relevante", "fii", SQL_FATO_RELEVANTE_FII,
           "market.fii_documents", "source_published_at",
           ("cobertura comeca em 2022: a amostra nao viu crise sistemica",
            "so FII; nao ha fato relevante de acao ingerido",
            "o tipo do documento nao diz a direcao do fato")),
+    Fonte("resultado_anual", "b3", SQL_RESULTADO_ANUAL_B3,
+          "market.cvm_filing_publications", "primeira_entrega_em",
+          ("so DFP (anual): o ITR nao foi ingerido, entao esta fonte nao sabe "
+           "nada sobre trimestre",
+           "market.ticker_cvm e o mapa de HOJE (526 tickers para 1.223 codigos "
+           "com publicacao): o universo herda vies de sobrevivencia e isso "
+           "inflaria um resultado positivo",
+           "a data e a da primeira entrega, nao a do fato: o conselho aprovou "
+           "antes")),
     Fonte("deslistagem", "us", SQL_DESLISTAGEM, "market_us.delistings",
           "delisted_date",
           ("saida derivada por ausencia de relatorio, nao por item de 8-K",
            "aquisicao e falencia ficam indistinguiveis na mesma linha",
-           "a data e a do fim da evidencia, nao a do anuncio")),
+           "a data e a do fim da evidencia, nao a do anuncio"),
+          data_e_do_anuncio=False),
 )
 
 #: Motivo declarado para cada tipo da taxonomia que **não** tem fonte. A chave é
@@ -281,7 +331,8 @@ def carregar(engine, fonte: Fonte, *, ate: date | None = None,
 
 
 def montar(engine, *, tipos=None, ate: date | None = None,
-           limite_por_fonte: int | None = None) -> dict:
+           limite_por_fonte: int | None = None,
+           so_data_de_anuncio: bool = False) -> dict:
     """Conjunto de validação inteiro, com as ressalvas de cada pedaço.
 
     Devolve ``eventos`` e ``limitacoes``. As limitações não são decoração: são o
@@ -295,6 +346,13 @@ def montar(engine, *, tipos=None, ate: date | None = None,
 
     for fonte in FONTES:
         if alvo is not None and fonte.tipo_evento not in alvo:
+            continue
+        if so_data_de_anuncio and not fonte.data_e_do_anuncio:
+            # Exclusao registrada como limitacao, nunca em silencio: quem le o
+            # relatorio precisa ver que o tipo ficou de fora e por que.
+            limitacoes.append(
+                f"{fonte.rotulo}: EXCLUIDA -- a coluna nao data o anuncio, e "
+                "sim um efeito mecanico ou o fim da evidencia")
             continue
         lidos = carregar(engine, fonte, ate=ate, limite=limite_por_fonte)
         eventos.extend(lidos)

@@ -33,7 +33,13 @@ Uso
 ---
     python scripts/construir_memoria_mercado.py --mercado us --eventos eventos.json
     python scripts/construir_memoria_mercado.py --mercado fii --do-banco-de-noticias
-    python scripts/construir_memoria_mercado.py --mercado b3 --dry-run
+    python scripts/construir_memoria_mercado.py --mercado b3 --do-catalogo --dry-run
+
+`--do-banco-de-noticias` nao produz safra hoje, e nao e defeito: em 05/09/2026 o
+acervo local tinha 48 itens, todos de 03 a 05/09/2026. Medir reacao exige preco
+DEPOIS do evento. `--do-catalogo` existe para isso: as fontes historicas datadas de
+`core.calibracao.catalogo`, entre elas as 10.829 publicacoes DFP da CVM entre
+2011 e 2026 -- data de entrega real e preco diario ao lado.
 
 O arquivo de eventos e uma lista JSON de objetos com, no minimo:
     {"chave": "...", "simbolo": "AAPL", "tipo_evento": "resultado_trimestral",
@@ -55,8 +61,11 @@ from sqlalchemy import create_engine, text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.calibracao import catalogo as cat  # noqa: E402
 from core.memoria_mercado import benchmark as bmk  # noqa: E402
+from core.memoria_mercado import destino as dst  # noqa: E402
 from core.memoria_mercado import repositorio as repo  # noqa: E402
+from core.memoria_mercado import similaridade as sim  # noqa: E402
 from core.memoria_mercado.retornos import HORIZONTES, medir_evento  # noqa: E402
 from core.memoria_mercado.serie import SeriePrecos  # noqa: E402
 
@@ -185,6 +194,48 @@ def carregar_eventos_do_banco_de_noticias(engine_noticias) -> list[dict]:
     return saida
 
 
+def carregar_eventos_do_catalogo(engine, *, mercado: str,
+                                 tipos: tuple[str, ...] | None = None,
+                                 so_data_de_anuncio: bool = True
+                                 ) -> tuple[list[dict], tuple[str, ...]]:
+    """Eventos historicos datados, lidos de :mod:`core.calibracao.catalogo`.
+
+    Este script nao tem consulta propria a fonte de evento, e isso e desenho.
+    O catalogo ja e o lugar onde mora "que tabela do armazem da um evento com
+    data ponto-no-tempo, e o que ela nao consegue provar" -- ele inclusive
+    recusa, em :func:`catalogo.cobertura`, um tipo da taxonomia que nao esteja
+    declarado nem como fonte nem como ausencia. Uma segunda copia da mesma
+    consulta aqui seria ``memoria: guarda-duplicada-diverge``: duas listas de
+    fontes que comecam iguais e divergem na primeira correcao aplicada so numa
+    delas.
+
+    ``so_data_de_anuncio`` e True por padrao, e e o oposto do padrao do
+    catalogo. A safra responde "como o mercado reagiu a uma noticia deste
+    tipo", e uma fonte datada por `ex_date` responde "quanto o preco caiu no
+    dia em que o provento saiu do preco" -- aritmetica, nao reacao. As duas
+    bases teriam a mesma cara e o portao quantitativo compararia a noticia
+    contra a populacao errada sem nada quebrar. O catalogo mantem essas fontes
+    porque elas calibram o efeito que de fato medem; quem muda e o pedido.
+
+    As ressalvas da fonte sobem junto como limitacoes. Elas nao sao decoracao:
+    e o que impede alguem de ler a safra como se todas as linhas valessem o
+    mesmo -- a fonte anual da B3, por exemplo, herda o vies de sobrevivencia de
+    ``market.ticker_cvm``, que e o mapa de hoje.
+    """
+    montado = cat.montar(engine, tipos=set(tipos) if tipos else None,
+                         so_data_de_anuncio=so_data_de_anuncio)
+    eventos = [e for e in montado["eventos"] if e.get("mercado") == mercado]
+    for evento in eventos:
+        # So a dimensao que esta fonte realmente conhece. As demais de
+        # ``similaridade.DIMENSOES`` (juros, cambio, valuation...) ficam
+        # ausentes de proposito: ``None`` significa nao medido, e inventar aqui
+        # um valor plausivel faria a busca por evento parecido casar por um
+        # numero que ninguem observou.
+        evento["cenario"] = {sim.DIM_TIPO_EVENTO: evento["tipo_evento"]}
+    logger.info("catalogo: %d eventos do mercado '%s'", len(eventos), mercado)
+    return eventos, tuple(montado["limitacoes"])
+
+
 def carregar_series(engine, mercado: str, simbolos) -> dict[str, SeriePrecos]:
     fonte = FONTES[mercado]
     alvo = sorted({str(s).upper() for s in simbolos})
@@ -275,6 +326,13 @@ def main() -> int:
                         help="arquivo JSON com a lista de eventos")
     parser.add_argument("--do-banco-de-noticias", action="store_true",
                         help="le eventos das tabelas do Motor Conjuntural")
+    parser.add_argument("--do-catalogo", action="store_true",
+                        help="le as fontes historicas de core.calibracao.catalogo")
+    parser.add_argument("--tipos", default=None,
+                        help="tipos de evento do catalogo, separados por virgula")
+    parser.add_argument("--incluir-data-mecanica", action="store_true",
+                        help="inclui fontes datadas por efeito mecanico "
+                             "(ex_date, delisted_date); fora por padrao")
     parser.add_argument("--modelo", choices=list(bmk.MODELOS),
                         default=bmk.MODELO_DIFERENCA)
     parser.add_argument("--limpar-tipo", default=None,
@@ -283,9 +341,39 @@ def main() -> int:
                         help="mede e relata, sem gravar")
     args = parser.parse_args()
 
+    if args.tipos and not args.do_catalogo:
+        logger.error("--tipos so faz sentido com --do-catalogo")
+        return 2
+
+    # A engine do armazem sobe antes da coleta de eventos porque o catalogo le
+    # do MESMO armazem de onde sairao os precos. Abrir uma segunda engine para
+    # a mesma URL seria pedir duas vezes a senha ao container e dobrar conexao
+    # sem ganhar nada.
+    engine = create_engine(warehouse_url(), pool_pre_ping=True)
+    repo.exigir_local(engine)   # cinto e suspensorio: recusa destino remoto
+
+    # A safra NAO e gravada necessariamente onde o preco e lido. Quem decide o
+    # endereco e `core.memoria_mercado.destino.url_memoria` -- a mesma funcao
+    # que `core.noticias.bases_historicas` chama para ler. Foi a divergencia
+    # entre os dois (armazem `postgres` na gravacao, banco `noticias` na
+    # leitura) que fez 4.463 eventos medidos conviverem com "sem safra
+    # construida". Ver o docstring daquele modulo.
+    destino = dst.engine_memoria() or engine
+    repo.exigir_local(destino)
+    if str(destino.url) != str(engine.url):
+        logger.info("precos lidos de %s; safra gravada em %s",
+                    engine.url.database, destino.url.database)
+
     eventos: list[dict] = []
     if args.eventos:
         eventos.extend(carregar_eventos_de_arquivo(args.eventos))
+    limitacoes_da_fonte: tuple[str, ...] = ()
+    if args.do_catalogo:
+        tipos = tuple(t.strip() for t in args.tipos.split(",")) if args.tipos else None
+        do_catalogo, limitacoes_da_fonte = carregar_eventos_do_catalogo(
+            engine, mercado=args.mercado, tipos=tipos,
+            so_data_de_anuncio=not args.incluir_data_mecanica)
+        eventos.extend(do_catalogo)
     if args.do_banco_de_noticias:
         # O acervo mudou de casa em 04/09/2026 (commit 61c39e8): ele nao cabe
         # no Supabase -- sao ~22 MB por janela contra 23 MB de folga -- e
@@ -306,12 +394,10 @@ def main() -> int:
         eventos.extend(carregar_eventos_do_banco_de_noticias(engine_noticias))
 
     if not eventos:
-        logger.error("nenhum evento informado: use --eventos ou "
-                     "--do-banco-de-noticias")
+        logger.error("nenhum evento informado: use --eventos, --do-catalogo "
+                     "ou --do-banco-de-noticias")
         return 2
 
-    engine = create_engine(warehouse_url(), pool_pre_ping=True)
-    repo.exigir_local(engine)   # cinto e suspensorio: recusa destino remoto
     try:
         verificar_fonte(engine, args.mercado)
     except Exception as erro:
@@ -321,15 +407,20 @@ def main() -> int:
     resultado = construir(engine, mercado=args.mercado, eventos=eventos,
                           modelo=args.modelo)
     relatorio = resultado["relatorio"]
+    if limitacoes_da_fonte:
+        # As ressalvas viajam no relatorio, e nao so no docstring do catalogo:
+        # quem le o JSON da rodada precisa ver que o universo desta safra e
+        # sobrevivente antes de citar o numero.
+        relatorio["limitacoes_da_fonte"] = list(limitacoes_da_fonte)
 
     if args.dry_run:
         relatorio["gravado"] = False
         logger.info("dry-run: nada gravado")
     else:
         if args.limpar_tipo:
-            relatorio["linhas_removidas"] = repo.limpar_tipo(engine,
+            relatorio["linhas_removidas"] = repo.limpar_tipo(destino,
                                                              args.limpar_tipo)
-        relatorio.update(repo.gravar(resultado["medidos"], engine,
+        relatorio.update(repo.gravar(resultado["medidos"], destino,
                                      cenarios=resultado["cenarios"]))
 
     logger.info("%s", json.dumps(relatorio, ensure_ascii=False, sort_keys=True,

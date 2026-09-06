@@ -16,6 +16,8 @@ faltar:
 """
 from __future__ import annotations
 
+import pytest
+
 from core.calibracao import catalogo as cat
 from core.calibracao import pesos as pw
 from core.noticias import eventos as ev
@@ -147,10 +149,27 @@ def test_a_cobertura_caiu_e_o_numero_publicado_e_o_de_agora():
 
     Arredondar para cima aqui seria publicar a cobertura que se gostaria de
     ter. O denominador cresceu e o numerador não.
+
+    A asserção original era ``fracao < 3/25`` -- o número absoluto do dia em que
+    os três entraram. Ela quebrou em 06/09/2026 quando ``resultado_anual``
+    ganhou uma quarta fonte **de verdade**, e quebrou dizendo a coisa errada:
+    acusava de regressão um aumento legítimo de cobertura. Um teste que congela
+    o número de hoje transforma toda melhoria futura numa falha, e a resposta
+    barata -- afrouxar o literal a cada rodada -- apaga o que ele defendia.
+
+    O que ele defende de fato é uma **propriedade**: a fração publicada é a
+    medida, e os três tipos novos continuam puxando-a para baixo. Isso segue
+    verdadeiro com quatro fontes ou com quarenta.
     """
     cob = cat.cobertura()
     assert cob.total_tipos == len(tax.TIPOS) >= 28
-    assert cob.fracao < 3 / 25   # menor do que era antes dos três
+    # A fração publicada é a razão medida, não um número escrito à mão.
+    assert cob.fracao == pytest.approx(len(cob.com_fonte) / cob.total_tipos)
+    # Nenhum dos três novos entrou pela porta dos fundos como "com fonte".
+    assert not set(NOVOS) & set(cob.com_fonte)
+    # E eles baixam a cobertura: sem eles no denominador, ela seria maior.
+    sem_os_tres = len(cob.com_fonte) / (cob.total_tipos - len(NOVOS))
+    assert cob.fracao < sem_os_tres
 
 def test_o_prior_de_pesos_herda_os_tres_sem_avisos():
     assert set(pw.PRIOR.notas_tipo) == set(tax.POR_CHAVE)
