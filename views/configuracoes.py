@@ -2,11 +2,13 @@
 views/configuracoes.py
 Configurações do sistema — cinco abas organizadas por finalidade.
 
-  💳 Atualizar Controle Financeiro — fatura do cartão + extratos bancários
-  📈 Atualizar Investimentos       — importações B3, XP, Nomad
-  🔄 Atualizar Dados Financeiros   — CVM, YFinance, Banco Central, macro (Empresas B3)
-  🗄️ Informações do BD             — conexão, schema e diagnóstico técnico
-  🔒 Segurança                     — sessão e autenticação
+  🔁 Atualização de dados — o que o usuário sobe de arquivo, em duas sub-abas:
+       💳 Controle Financeiro — fatura do cartão + extratos bancários
+       📈 Investimentos       — importações B3, XP, Nomad
+  🔄 Dados de mercado     — CVM, YFinance, Banco Central, macro (orquestração)
+  🗄️ Banco de dados       — conexão, capacidade, schema e diagnóstico técnico
+  🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
+  🔒 Segurança            — sessão e autenticação
 """
 from __future__ import annotations
 
@@ -29,40 +31,22 @@ def render() -> None:
         "Central de Configurações",
         "Importações, atualização de dados e integridade do ambiente em um único lugar.",
         "⚙️",
-        metadados=[("Áreas", "6 fluxos"), ("Operação", "Revisão antes de gravar")],
+        metadados=[("Áreas", "5 fluxos"), ("Operação", "Revisão antes de gravar")],
         eyebrow="Administração do app",
     )
     st.markdown(_CONFIG_CSS + _CARD_CSS, unsafe_allow_html=True)
     _render_settings_overview()
 
-    tab_controle, tab_invest, tab_dados, tab_banco, tab_conf, tab_seg = st.tabs([
-        "💳 Controle",
-        "📈 Investimentos",
+    tab_atualizacao, tab_dados, tab_banco, tab_conf, tab_seg = st.tabs([
+        "🔁 Atualização de dados",
         "🔄 Dados de mercado",
         "🗄️ Banco de dados",
         "🎯 Grau de Confiança",
         "🔒 Segurança",
     ])
 
-    with tab_controle:
-        _render_tab_intro(
-            "ENTRADAS FINANCEIRAS",
-            "Controle Financeiro",
-            "Importe faturas e extratos com prévia, classificação e proteção contra duplicidades.",
-            "CSV + PDF",
-            "#00C896",
-        )
-        _render_controle_financeiro()
-
-    with tab_invest:
-        _render_tab_intro(
-            "POSIÇÕES E MOVIMENTAÇÕES",
-            "Investimentos",
-            "Centralize arquivos da B3, XP e Nomad antes de atualizar posições e proventos.",
-            "B3 · XP · Nomad",
-            "#B084F6",
-        )
-        _render_investimentos()
+    with tab_atualizacao:
+        _render_atualizacao_de_dados()
 
     with tab_dados:
         _render_tab_intro(
@@ -104,6 +88,45 @@ def render() -> None:
             "#FC5C7D",
         )
         _render_seguranca()
+
+
+def _render_atualizacao_de_dados() -> None:
+    """Aba única para o que o usuário atualiza a partir de arquivo dele.
+
+    Controle Financeiro e Investimentos eram duas abas irmãs no topo. Viraram
+    sub-abas de uma só porque são o mesmo gesto -- subir arquivo, conferir a
+    prévia, gravar -- e disputavam espaço com abas de diagnóstico, que são
+    outro tipo de tarefa.
+
+    As duas continuam separadas por dentro, e é de propósito: lançamento manual
+    é o fluxo do mês e a fatura do cartão é fluxo futuro; misturar as duas
+    entradas numa lista só já foi o caminho para somar o que não se soma
+    (``memoria: fluxo-caixa-vs-cartao-independentes``).
+    """
+    sub_controle, sub_invest = st.tabs([
+        "💳 Controle Financeiro",
+        "📈 Investimentos",
+    ])
+
+    with sub_controle:
+        _render_tab_intro(
+            "ENTRADAS FINANCEIRAS",
+            "Controle Financeiro",
+            "Importe faturas e extratos com prévia, classificação e proteção contra duplicidades.",
+            "CSV + PDF",
+            "#00C896",
+        )
+        _render_controle_financeiro()
+
+    with sub_invest:
+        _render_tab_intro(
+            "POSIÇÕES E MOVIMENTAÇÕES",
+            "Investimentos",
+            "Centralize arquivos da B3, XP e Nomad antes de atualizar posições e proventos.",
+            "B3 · XP · Nomad",
+            "#B084F6",
+        )
+        _render_investimentos()
 
 
 def _render_confianca() -> None:
