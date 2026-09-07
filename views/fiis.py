@@ -1682,10 +1682,15 @@ def _tab_busca(df: pd.DataFrame) -> None:
     else:
         c1, c2 = st.columns(2)
         with c1:
-            st.caption("P/VP mensal (preço bruto ÷ VPA)")
+            st.caption("P/VP mensal (fechamento da B3 ÷ VPA)")
             pvp_serie = met.dropna(subset=["P/VP"])[["Data", "P/VP"]]
             if pvp_serie.empty:
-                st.caption("— sem preço bruto casado com o VPA.")
+                # A-134: separar "não deu para ler" de "não há pregão casado
+                # com o VPA" -- a falha de leitura não pode passar por ausência.
+                if met.attrs.get("pvp_load_error"):
+                    st.caption("— preço indisponível: falha ao ler a fita da B3.")
+                else:
+                    st.caption("— sem pregão da B3 casado com o VPA.")
             else:
                 st.line_chart(pvp_serie.set_index("Data"))
         with c2:

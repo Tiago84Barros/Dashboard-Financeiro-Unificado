@@ -190,9 +190,32 @@ class ConfiancaSecao:
 #
 # Medido no Supabase em 26/08/2026: 66 fundos acusados viram 14.
 #
-# Eventos sem preco na epoca (10.018 de 38.416) NAO sao julgados -- nem limpos,
-# nem sujos. Conta-los como limpos infla a integridade com ausencia de
-# evidencia, que e o defeito A-124 em outra roupa.
+# 3. (A-134, 02/09/2026) O preco da epoca saia de `market.historical_prices`,
+#    que NAO e preco negociado: e preco retroajustado por split. Comparar
+#    `amount` -- R$/cota do dia do evento, bruto -- com um preco reescalado por
+#    um grupamento posterior compara duas moedas diferentes. Onde o fundo
+#    grupou, o denominador encolhe e o rendimento parece enorme; onde
+#    desdobrou, cresce e o rendimento some. Agora o preco vem da fita oficial
+#    da B3 (`market.fii_b3_security_history`), a mesma serie que
+#    `core.liquidez` usa para contraditar o cadastro.
+#
+#    Medido no armazem local em 02/09/2026, sobre 21.151 eventos: 9 fundos
+#    acusados viram 6, e so DOIS sao os mesmos. Saem sete falsos positivos
+#    (BLMO11, CFII11, FYTO11, HGAG11, HGBS11, MCRE11, RDLI11) e entram quatro
+#    que o preco ajustado escondia (BBFI11, HGPO11, PRSN11, TSNC11); ficam
+#    FAMB11 e KNRE11. Onze dos treze fundos distintos estavam errados.
+#
+#    A troca CUSTA cobertura: 74,7% dos eventos julgados contra 79,5%, ou 1.029
+#    eventos a menos. Nao e o candle mensal que se perde por estar fora da
+#    janela de +-10 dias -- ele quase sempre cai dentro dela, porque ex-date de
+#    FII se concentra na virada do mes. O que se perde e fundo que
+#    `historical_prices` cobre e a fita da B3 nao. Julgar menos eventos com o
+#    preco certo vale mais do que julgar mais com a moeda errada, e a cobertura
+#    entra na evidencia justamente para esse desconto aparecer.
+#
+# Eventos sem preco na epoca NAO sao julgados -- nem limpos, nem sujos.
+# Conta-los como limpos infla a integridade com ausencia de evidencia, que e o
+# defeito A-124 em outra roupa.
 # --------------------------------------------------------------------------
 LIMIAR_PROVENTO_SOBRE_PRECO = 0.30
 
@@ -204,11 +227,12 @@ JANELA_PRECO_EPOCA_DIAS = 10
 SQL_PROVENTO_IMPLAUSIVEL = f"""
 WITH ev AS (
   SELECT d.ticker, d.amount,
-         (SELECT h.close FROM market.historical_prices h
+         (SELECT h.close FROM market.fii_b3_security_history h
            WHERE h.ticker = d.ticker AND h.close > 0
-             AND h.date BETWEEN d.ex_date - {JANELA_PRECO_EPOCA_DIAS}
-                            AND d.ex_date + {JANELA_PRECO_EPOCA_DIAS}
-           ORDER BY abs(h.date - d.ex_date), h.date LIMIT 1) AS px_epoca
+             AND h.trade_date BETWEEN d.ex_date - {JANELA_PRECO_EPOCA_DIAS}
+                                  AND d.ex_date + {JANELA_PRECO_EPOCA_DIAS}
+           ORDER BY abs(h.trade_date - d.ex_date), h.trade_date,
+                    h.collected_at DESC, h.id DESC LIMIT 1) AS px_epoca
     FROM market.dividends d
     JOIN market.fiis f ON f.ticker = d.ticker
    WHERE f.price > 0 AND d.amount > 0 AND d.ex_date IS NOT NULL

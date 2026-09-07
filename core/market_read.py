@@ -1274,8 +1274,26 @@ def load_fii_one(ticker: str) -> pd.Series:
 def load_fii_metrics_mensal(ticker: str) -> pd.DataFrame:
     """
     Série MENSAL de fundamentos do FII (market.fii_metrics_monthly) + P/VP histórico
-    = preço de fechamento BRUTO de fim de mês (market.historical_prices.close) ÷ VPA.
+    = fechamento do último pregão do mês na fita oficial da B3
+    (market.fii_b3_security_history.close) ÷ VPA.
     Colunas: Data, VPA, P/VP, Patrimonio, Cotistas, DY_Patrimonial, Pct_*.
+
+    A-134: até 02/09/2026 o preço vinha de ``market.historical_prices.close``,
+    e tanto esta docstring quanto o comentário abaixo o chamavam de "bruto".
+    Não é: aquela coluna é retroajustada por split. Onde o fundo grupou ou
+    desdobrou cotas, o P/VP histórico saía com a escala do ajuste -- FLRP11
+    exibia 0,0090 no mesmo mês em que o preço da B3 dava 0,9038, e SJAU11
+    chegava a 206 no lugar de 20,6. Medido em 02/09/2026: 351 pares
+    (fundo, mês) em 47 dos 284 fundos. Não era só o gráfico de views/fiis.py:
+    core/portfolio/adapters/fii.py entrega esta série a
+    core/global_portfolio/signals.py, que compara o P/VP de hoje contra o
+    próprio histórico -- histórico cem vezes menor crava percentil 1,0 e vira
+    o sinal máximo de "reduzir".
+
+    A fita da B3 cobre 7.446 dos 8.483 meses com VPA (87,8%). Os 1.037
+    restantes ficam com P/VP nulo em vez de herdar ``historical_prices``:
+    são exatamente os meses em que não há como saber de que lado de um
+    grupamento o preço ajustado está.
     """
     tk = ticker.strip().upper().replace(".SA", "")
     met = _q("""
@@ -1292,16 +1310,26 @@ def load_fii_metrics_mensal(ticker: str) -> pd.DataFrame:
     for c in ("VPA", "Patrimonio", "Cotistas", "DY_Patrimonial",
               "Pct_Imoveis", "Pct_Papel", "Pct_Caixa", "Pct_Fundos"):
         met[c] = pd.to_numeric(met[c], errors="coerce")
-    # preço bruto (NÃO ajustado) de fim de mês → P/VP histórico = preço ÷ VPA
-    px = _q("SELECT date, close FROM market.historical_prices "
-            "WHERE ticker = :tk AND close IS NOT NULL ORDER BY date", {"tk": tk})
+    # Fechamento do último pregão de cada mês na fita oficial da B3 -- preço
+    # efetivamente negociado, não retroajustado. DISTINCT ON pega a coleta mais
+    # recente do mesmo pregão, como em load_fiis_completo.
+    px = _q("""
+        SELECT DISTINCT ON (trade_date) trade_date AS date, close
+        FROM market.fii_b3_security_history
+        WHERE ticker = :tk AND close > 0
+        ORDER BY trade_date, collected_at DESC, id DESC
+    """, {"tk": tk})
     met["P/VP"] = pd.NA
+    if px.attrs.get("load_error"):
+        # Leitura falhou: P/VP ausente aqui não é "fundo sem preço". Sem esta
+        # marca a tela mostraria série vazia com a mesma cara de dado faltante.
+        met.attrs["pvp_load_error"] = px.attrs["load_error"]
     if not px.empty:
         px["date"] = pd.to_datetime(px["date"], errors="coerce")
         px = px.dropna(subset=["date"])
         px_m = (pd.to_numeric(px.set_index("date")["close"], errors="coerce")
                 .resample("ME").last())
-        # casa cada ref_month (1º dia) ao fechamento bruto do mesmo mês
+        # casa cada ref_month (1º dia) ao fechamento do mesmo mês
         close_by_month = {ts.to_period("M"): v for ts, v in px_m.items()}
         met["_close"] = met["Data"].dt.to_period("M").map(close_by_month)
         met["P/VP"] = (met["_close"] / met["VPA"]).where(met["VPA"] > 0)
