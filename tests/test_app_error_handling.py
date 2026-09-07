@@ -60,6 +60,10 @@ class _FakeStreamlit(ModuleType):
         self.selected_menu = selected_menu
         self.sidebar = nullcontext()
         self.errors_shown: list[str] = []
+        # Tudo que o app escreveu na tela por qualquer via. O A-013 e sobre
+        # texto VISIVEL: um canal novo (expander, code) que o dublê nao
+        # conhecesse sairia da vigilancia sem ninguem notar.
+        self.texto_visivel: list[str] = []
 
     def set_page_config(self, **_kwargs):
         pass
@@ -73,8 +77,15 @@ class _FakeStreamlit(ModuleType):
     def divider(self):
         pass
 
-    def caption(self, *_args, **_kwargs):
-        pass
+    def caption(self, *args, **_kwargs):
+        self.texto_visivel.extend(str(a) for a in args)
+
+    def code(self, *args, **_kwargs):
+        self.texto_visivel.extend(str(a) for a in args)
+
+    def expander(self, label, *_args, **_kwargs):
+        self.texto_visivel.append(str(label))
+        return nullcontext()
 
     def warning(self, *_args, **_kwargs):
         pass
@@ -132,6 +143,15 @@ def test_excecao_ao_carregar_modulo_nao_vaza_para_a_tela_e_log_recebe_detalhe(
     assert _SEGREDO_TECNICO not in titulo
     assert _SEGREDO_TECNICO not in detalhe
     assert fake_st.errors_shown == []
+
+    # (b2) o diagnostico tecnico existe na tela e identifica o defeito, mas
+    # nao carrega a mensagem da excecao — que e onde moram senha e host.
+    visivel = chr(10).join(fake_st.texto_visivel)
+    assert "RuntimeError" in visivel, "a identidade do erro sumiu da tela"
+    assert "tests/test_app_error_handling.py:" in visivel
+    assert _SEGREDO_TECNICO not in visivel
+    assert "SECRET_PASSWORD_XYZ" not in visivel
+    assert "db.internal" not in visivel
 
     # (c) o log recebe o detalhe tecnico completo, incluindo o marcador. O
     # texto do RuntimeError só aparece no traceback formatado (exc_info),
