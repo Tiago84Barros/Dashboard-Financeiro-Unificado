@@ -311,7 +311,8 @@ incerteza-com-tamanho-nao-bloqueia`).
 
 ## 8. A tela de administração — e por que ela não liga nada
 
-`views/homologacao.py` (rota **🚦 Homologação**) mostra a fase, as nove chaves
+`views/homologacao.py` (sem rota na sidebar desde 06/09/2026 — a tela existe e
+roda, mas não é navegável pelo menu) mostra a fase, as nove chaves
 com símbolo textual além do badge (`✓` ligada, `·` desligada, `⊘` barrada pela
 fase — a leitura não pode depender de distinguir verde de vermelho), o que falta
 medir para avançar, o efeito de um rollback e o estado bruto lido da

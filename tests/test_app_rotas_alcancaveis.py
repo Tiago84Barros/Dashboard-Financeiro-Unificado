@@ -116,3 +116,33 @@ def test_o_modulo_de_cada_rota_existe_em_views():
     for valor in dic.values:
         assert isinstance(valor, ast.Constant)
         assert Path(f"views/{valor.value}.py").exists(), valor.value
+
+
+def test_documentacao_nao_cita_rota_que_o_menu_nao_tem():
+    """Texto que descreve a navegação envelhece invertido.
+
+    Tirar as três telas da sidebar não tocou em ``docs/``: dois arquivos seguiam
+    afirmando ``Rota `🧭 Inteligência de Mercado``` e ``rota **🚦 Homologação**``
+    como se o menu ainda as tivesse. A frase não quebra nada e continua soando
+    como documentação em dia (``memoria: aviso-que-envelhece-invertido``).
+
+    O conjunto de rotas vem de ``app.py``, nunca de lista escrita aqui.
+    """
+    import re
+
+    rotas = _rotas()
+    citacao = re.compile(r"[Rr]ota\s+[`*]{1,2}([^`*\n]{3,40})[`*]{1,2}")
+    orfas: list[str] = []
+    for doc in sorted(Path("docs").glob("*.md")):
+        texto = doc.read_text(encoding="utf-8")
+        for achado in citacao.finditer(texto):
+            alvo = achado.group(1).strip()
+            if alvo not in rotas:
+                linha = texto[:achado.start()].count("\n") + 1
+                orfas.append(f"{doc}:{linha} cita a rota {alvo!r}")
+
+    assert not orfas, (
+        "documentação cita rota que não existe no menu de app.py; a tela pode "
+        "ter saído da navegação sem que o texto acompanhasse:\n  "
+        + "\n  ".join(orfas)
+    )
