@@ -2400,6 +2400,10 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
         st.info("Nenhuma posição encontrada. Execute o ETL de posições.", icon="💼")
         return
 
+    from design.portfolio_valuations import render_portfolio_valuations
+
+    render_portfolio_valuations(posicoes)
+
     # Busca logos em lote (cache 24h) — falha silenciosa
     tickers_tuple = tuple(p["ticker"] for p in posicoes)
     logos = _get_logos(tickers_tuple)
@@ -2775,6 +2779,82 @@ def _kpi_classe(cls: dict) -> str:
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Trio comum às sub-abas da Análise: médias da classe, confronto com o banco
+# e chat. Cada sub-aba passa a SUA lista de posições e os fundamentos que ela
+# própria já buscou — recarregar aqui daria média de um snapshot e cards de
+# outro, e a lista de "ações" da aba não é a mesma que um classificador
+# genérico produziria (ela não exclui o exterior; a aba Exterior sim).
+# ══════════════════════════════════════════════════════════════════════════
+
+def _fundamentos_exterior(ext_pos) -> dict:
+    """Indicadores do universo dos EUA na unidade em que a tela publica.
+
+    A fonte americana entrega ROE, margens e yields como fração decimal; sem a
+    conversão, a média sairia como "0,12%" de margem líquida. ETF não aparece
+    aqui: fundo de índice não tem demonstração de companhia, e a cobertura
+    baixa que sobra é o escopo do módulo, não falha de ingestão.
+    """
+    from core.portfolio_valuations import para_percentual
+    from design.portfolio_db_analysis import carregar_db
+
+    chaves = tuple(sorted({str(p.get("ticker") or "").strip().upper()
+                           for p in ext_pos if p.get("ticker")}))
+    bruto = (carregar_db("exterior", chaves) or {}).get("fundamentos") or {}
+    saida: dict = {}
+    for simbolo, campos in bruto.items():
+        convertidos = {}
+        for chave, valor in (campos or {}).items():
+            numero = para_percentual(chave, valor)
+            if numero is not None:
+                convertidos[chave] = numero
+        if convertidos:
+            saida[simbolo] = convertidos
+    return saida
+
+
+def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
+                          ano_atual=None) -> None:
+    from core.llm_context_carteira import build_carteira_classe_context
+    from design.chat_carteira import render_chat_carteira
+    from design.portfolio_db_analysis import (
+        carregar_db,
+        carregar_macro,
+        render_db_analysis,
+        render_db_macro,
+    )
+    from design.portfolio_valuations import (
+        render_valuations_classe,
+        render_valuations_tesouro,
+    )
+
+    if not posicoes_classe:
+        return
+    tickers = [p["ticker"] for p in posicoes_classe]
+    chaves = tuple(sorted({str(t or "").strip().upper() for t in tickers if t}))
+
+    st.markdown("---")
+    valuations = tesouro = macro = db = None
+    if classe == "tesouro":
+        tesouro = render_valuations_tesouro(posicoes_classe, ano_atual)
+        macro = carregar_macro()
+        render_db_macro(macro)
+    else:
+        valuations = render_valuations_classe(classe, posicoes_classe, fundamentos)
+        st.markdown("---")
+        db = carregar_db(classe, chaves)
+        render_db_analysis(classe, db)
+
+    render_chat_carteira(
+        classe=classe,
+        tickers=tickers,
+        build_context=lambda _pergunta: build_carteira_classe_context(
+            classe, posicoes_classe, valuations=valuations, db=db,
+            tesouro=tesouro, macro=macro, fundamentos=fundamentos,
+        ),
+    )
+
+
 def _tab_analise(carteira: dict, proventos: dict) -> None:
     posicoes   = carteira.get("posicoes", [])
     por_classe = carteira.get("por_classe", [])
@@ -3064,6 +3144,11 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         st.markdown(_stock_card_html(pos, fd, pi, alts),
                                     unsafe_allow_html=True)
 
+            _bloco_analise_classe(
+                "acoes", acoes,
+                {p["ticker"]: fd_all.get(_base(p["ticker"]), {}) for p in acoes},
+            )
+
     # ══════════════════════════════════════════════════════════════════════════
     # FIIs — cards fundamentalistas
     # ══════════════════════════════════════════════════════════════════════════
@@ -3094,6 +3179,11 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     with cols[j]:
                         st.markdown(_fii_card_html(pos, fd, pi, renda, alts),
                                     unsafe_allow_html=True)
+
+            _bloco_analise_classe(
+                "fiis", fiis,
+                {p["ticker"]: fd_fiis.get(p["ticker"], {}) for p in fiis},
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Tesouro Direto — retorno acumulado e suficiência para MtM
@@ -3248,6 +3338,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 "IR líquido também está indisponível sem a data de liquidação de cada compra."
             )
 
+            _bloco_analise_classe("tesouro", tesouros, {}, ano_atual=ano_atual)
+
     # ══════════════════════════════════════════════════════════════════════════
     # Exterior — ativos fora do Brasil (Nomad: SPY, IEFA, etc.)
     # ══════════════════════════════════════════════════════════════════════════
@@ -3360,6 +3452,10 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 "💡 Posições exterior vêm do PDF Nomad consolidado. "
                 "Valores em BRL são convertidos usando USD/BRL do dia do snapshot. "
                 "Cotações diárias via yfinance."
+            )
+
+            _bloco_analise_classe(
+                "exterior", ext_pos, _fundamentos_exterior(ext_pos),
             )
 
     # ══════════════════════════════════════════════════════════════════════════
