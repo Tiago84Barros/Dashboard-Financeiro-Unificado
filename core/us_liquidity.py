@@ -144,6 +144,40 @@ def _timestamp_atual(timestamp: object, *, now: datetime) -> bool:
             measured_at >= reference - timedelta(days=LIQUIDITY_MAX_AGE_DAYS))
 
 
+def medicao_mais_recente(
+    timestamps: Mapping[str, object] | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[datetime, int] | None:
+    """Data da medicao de giro mais nova e sua idade em dias corridos.
+
+    Existe para que a tela consiga dizer POR QUE bloqueou. A mensagem antiga
+    dizia so "nao ha nenhuma medicao com data de referencia atual" — verdade
+    que nao distingue "a vitrine nunca teve data" de "a vitrine tem data de 18
+    dias atras". Sao causas diferentes, com remedios diferentes, e quem le
+    precisa saber qual dos dois esta vendo.
+
+    Devolve ``None`` quando nenhum timestamp e legivel.
+    """
+    if not timestamps:
+        return None
+    referencia = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    melhor: datetime | None = None
+    for bruto in timestamps.values():
+        try:
+            parsed = datetime.fromisoformat(str(bruto).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if parsed.tzinfo is None:
+            continue
+        medido = parsed.astimezone(timezone.utc)
+        if melhor is None or medido > melhor:
+            melhor = medido
+    if melhor is None:
+        return None
+    return melhor, max(0, (referencia - melhor).days)
+
+
 def classificar(
     valor: object,
     piso_usd: float,

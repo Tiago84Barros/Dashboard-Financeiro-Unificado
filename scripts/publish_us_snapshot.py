@@ -19,6 +19,7 @@ idempotente: cria o schema/tabela via migration 044 e faz upsert por symbol.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -190,6 +191,72 @@ def _ensure_schema(engine) -> str:
     return "atualizado"
 
 
+def idade_do_giro(rows, *, now=None):
+    """Idade, em dias, da medicao de giro mais recente que se vai publicar.
+
+    O publicador nao aplicava a regra de frescor de quem consome. A vitrine de
+    31/08/2026 saiu carregando medicao de 20/08 — 11 dias, contra o teto de 7
+    de ``core.us_liquidity`` — ou seja, nasceu incapaz de passar no proprio
+    portao, e a Criacao de Portfolio dos EUA bloqueou 2.612 empresas sem que
+    ninguem tivesse sido avisado na publicacao.
+
+    Devolve ``None`` quando nenhuma linha traz data legivel.
+    """
+    from datetime import datetime, timezone
+
+    referencia = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    melhor = None
+    for row in rows:
+        metrics = row.get("metrics")
+        if isinstance(metrics, str):
+            try:
+                metrics = json.loads(metrics)
+            except (TypeError, ValueError):
+                continue
+        if not isinstance(metrics, dict):
+            continue
+        bruto = metrics.get("giro_diario_usd_at")
+        if not bruto:
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(bruto).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if parsed.tzinfo is None:
+            continue
+        medido = parsed.astimezone(timezone.utc)
+        if melhor is None or medido > melhor:
+            melhor = medido
+    if melhor is None:
+        return None
+    return max(0, (referencia - melhor).days)
+
+
+def veredito_de_frescor(idade, *, permitir_velho: bool = False):
+    """(pode_publicar, recado) para a idade do giro que se vai publicar.
+
+    Funcao pura de proposito: a decisao de barrar tem que ser testavel sem
+    banco, senao ela vira comentario. Ver ``idade_do_giro``.
+    """
+    from core.us_liquidity import LIQUIDITY_MAX_AGE_DAYS
+
+    if idade is None:
+        return permitir_velho, (
+            "ERRO: nenhuma linha da vitrine traz `giro_diario_usd_at` legivel. Sem "
+            "data de referencia o giro nao e evidencia de liquidez, e a Criacao de "
+            "Portfolio bloqueia o universo inteiro. Rode "
+            "`python run_us_ingest.py snapshot --warehouse` depois do `daily`."
+        )
+    if idade > LIQUIDITY_MAX_AGE_DAYS:
+        return permitir_velho, (
+            f"ERRO: a medicao de giro mais recente tem {idade} dia(s) e o teto e "
+            f"{LIQUIDITY_MAX_AGE_DAYS}. Esta vitrine nasceria reprovada no portao de "
+            f"negociabilidade. Rode `python run_us_ingest.py daily --warehouse` e "
+            f"depois `snapshot --warehouse` antes de publicar."
+        )
+    return True, f"frescor do giro: {idade} dia(s) (teto {LIQUIDITY_MAX_AGE_DAYS})."
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Publica a vitrine EUA no Supabase")
     p.add_argument("--source-url", default=os.getenv("US_WAREHOUSE_URL",
@@ -199,6 +266,9 @@ def main() -> int:
                    help="Supabase (default: SUPABASE_UNIFICADO_URL do .env). Use a "
                         "conexão com privilégio de escrita/DDL.")
     p.add_argument("--dry-run", action="store_true", help="não grava no target")
+    p.add_argument("--permitir-giro-velho", action="store_true",
+                   help="publica mesmo com giro além do teto de frescor (o portão "
+                        "de negociabilidade vai reprovar tudo do outro lado)")
     p.add_argument("--batch", type=int, default=150,
                    help="linhas por transação (lotes pequenos p/ o pooler do Supabase)")
     args = p.parse_args()
@@ -229,8 +299,16 @@ def main() -> int:
     if not rows:
         return 1
 
+    # Frescor do giro ANTES de gravar. Publicar medicao vencida gera uma vitrine
+    # que o portao de negociabilidade reprova inteira, e o custo so aparece dias
+    # depois, na tela do usuario, como "nenhuma carteira e publicada".
+    pode, recado = veredito_de_frescor(idade_do_giro(rows),
+                                       permitir_velho=args.permitir_giro_velho)
+    print(recado)
+    if not pode:
+        return 1
+
     # JSONB vem como dict do psycopg2; reserializa para texto no bind.
-    import json
     for r in rows:
         for c in _JSON_COLS:
             if isinstance(r.get(c), (dict, list)):
