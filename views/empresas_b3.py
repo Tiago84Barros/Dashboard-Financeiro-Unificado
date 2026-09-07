@@ -30,6 +30,7 @@ import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
+from core.b3_slopes import SLOPE_COLS, compute_slope_log, enrich_com_slopes
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
 from core.validacao_motor import validacao_b3
@@ -784,9 +785,7 @@ _COLS_COMP: list[tuple[str, str]] = [
 ]
 _INV_LABELS: set[str] = {"Endiv.", "P/L", "P/VP", "EV/EBIT"}
 
-_SLOPE_COLS: tuple[str, ...] = (
-    "ROE", "ROIC", "Margem_Liquida", "Margem_Operacional",
-)
+_SLOPE_COLS: tuple[str, ...] = SLOPE_COLS
 
 _FUND_FALLBACK_MAP: dict[str, str] = {
     "pl": "P/L",
@@ -811,48 +810,18 @@ _PCT_SCORE_FIELDS: set[str] = {
 _SCORE_RANGES = _dq.CANONICAL_RANGES
 
 
-def _compute_slope_log(s: pd.Series) -> float | None:
-    """Slope da regressão log-linear — proxy de crescimento anualizado do indicador."""
-    s = pd.to_numeric(s, errors="coerce").dropna()
-    s = s[s > 0]
-    if len(s) < 3:
-        return None
-    x = np.arange(len(s), dtype=float)
-    try:
-        slope, _ = np.polyfit(x, np.log(s.values), 1)
-        return float(slope) if np.isfinite(slope) else None
-    except Exception:
-        return None
+# Definidos em core.b3_slopes para que a Análise do Portfólio calcule o MESMO
+# crescimento; duplicar a fórmula já produziu notas divergentes para a mesma
+# empresa em telas diferentes.
+_compute_slope_log = compute_slope_log
 
 
 def _enrich_com_slopes(
     df_mult: pd.DataFrame,
     hist_batch: dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
-    """
-    Acrescenta colunas {col}_slope_log ao df_mult calculadas do histórico.
-    Colunas ausentes são silenciosamente ignoradas pelo scoring.
-    """
-    if not hist_batch or df_mult.empty:
-        return df_mult
-    slope_data: dict[str, dict[str, float]] = {}
-    for tk, df_h in hist_batch.items():
-        if df_h.empty:
-            continue
-        row: dict[str, float] = {}
-        for c in _SLOPE_COLS:
-            if c not in df_h.columns:
-                continue
-            v = _compute_slope_log(df_h[c])
-            if v is not None:
-                row[f"{c}_slope_log"] = v
-        if row:
-            slope_data[tk] = row
-    if not slope_data:
-        return df_mult
-    df_sl = pd.DataFrame.from_dict(slope_data, orient="index")
-    df_sl.index.name = "Ticker"
-    return df_mult.merge(df_sl.reset_index(), on="Ticker", how="left")
+    """Acrescenta colunas {col}_slope_log ao df_mult calculadas do histórico."""
+    return enrich_com_slopes(df_mult, hist_batch)
 
 
 def _score_value_usable(field: str, value: object) -> bool:
