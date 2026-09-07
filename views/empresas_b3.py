@@ -4499,7 +4499,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     f"🎯 Universo de decisão: {len(df_mult_todos)} empresas. "
                     f"{_cortadas} descartadas por dado insuficiente para "
                     "sustentar recomendação (confiança de dados abaixo do "
-                    "mínimo). Veja a seção Grau de Confiança."
+                    "mínimo). Veja Configurações → Grau de Confiança."
                 )
     except Exception:  # noqa: BLE001 - filtro é melhoria, não pré-requisito
         import logging

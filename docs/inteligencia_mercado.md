@@ -25,7 +25,12 @@ prompt não é garantia.
 
 ## A tela
 
-Rota `🧭 Inteligência de Mercado` no grupo Investimentos de `app.py`.
+Desde 06/09/2026 **não há rota na sidebar**. A tela existe em
+`views/inteligencia_mercado.py` e continua funcionando, mas saiu da navegação
+a pedido do dono do app: é retaguarda analítica, não tela de consumo. O que os
+motores desta camada produzem chega ao usuário dentro de Empresas B3, Empresas
+Americanas, Seleção de FIIs e Criação de Portfólio, que importam
+`core.inteligencia` e `core.macro_data` diretamente.
 
 Ordem fixa: **barra de frescor primeiro**, abas depois. A barra publica a última
 atualização pela **fonte mais antiga** — publicar a mais recente faria metade dos
