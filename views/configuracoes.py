@@ -29,17 +29,18 @@ def render() -> None:
         "Central de Configurações",
         "Importações, atualização de dados e integridade do ambiente em um único lugar.",
         "⚙️",
-        metadados=[("Áreas", "5 fluxos"), ("Operação", "Revisão antes de gravar")],
+        metadados=[("Áreas", "6 fluxos"), ("Operação", "Revisão antes de gravar")],
         eyebrow="Administração do app",
     )
     st.markdown(_CONFIG_CSS + _CARD_CSS, unsafe_allow_html=True)
     _render_settings_overview()
 
-    tab_controle, tab_invest, tab_dados, tab_banco, tab_seg = st.tabs([
+    tab_controle, tab_invest, tab_dados, tab_banco, tab_conf, tab_seg = st.tabs([
         "💳 Controle",
         "📈 Investimentos",
         "🔄 Dados de mercado",
         "🗄️ Banco de dados",
+        "🎯 Grau de Confiança",
         "🔒 Segurança",
     ])
 
@@ -83,6 +84,17 @@ def render() -> None:
         )
         _render_banco()
 
+    with tab_conf:
+        _render_tab_intro(
+            "QUALIDADE DO DADO",
+            "Grau de Confiança",
+            "Quanto o app confia em cada seção, e a evidência por trás de cada "
+            "nota. Apoio analítico — não é recomendação.",
+            "Medição por seção",
+            "#00C896",
+        )
+        _render_confianca()
+
     with tab_seg:
         _render_tab_intro(
             "ACESSO E SESSÃO",
@@ -92,6 +104,19 @@ def render() -> None:
             "#FC5C7D",
         )
         _render_seguranca()
+
+
+def _render_confianca() -> None:
+    """Aba do Grau de Confiança.
+
+    Import tardio de propósito: a medição arrasta ``core.confianca_secao`` e as
+    leituras que ela faz. Quem abre Configurações para importar um extrato não
+    deve pagar por isso; a aba só carrega quando é aberta. O erro fica preso
+    aqui em vez de derrubar a página inteira de Configurações.
+    """
+    from views.confianca import render_corpo
+
+    render_corpo()
 
 
 def _render_settings_overview() -> None:

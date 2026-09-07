@@ -3,8 +3,12 @@
 Duas telas nasceram inalcançáveis: ``🎯 Grau de Confiança`` (commit 76902ff) e
 ``🚦 Homologação`` (commit e7bd34b). As duas entraram em ``_ROTAS``, as duas
 foram esquecidas em ``opcoes_menu``, e nenhuma das duas deu erro: o roteamento
-por dicionário aceita chave que ninguém escolhe. A de Homologação é a que diz
-em que fase de liberação o APP4 está.
+por dicionário aceita chave que ninguém escolhe.
+
+Em 06/09/2026 as duas saíram da sidebar, por caminhos opostos: Homologação foi
+retirada junto com Inteligência de Mercado e Macro Internacional (retaguarda,
+não tela), e Grau de Confiança virou aba de Configurações. O invariante segue
+o mesmo -- rota e porta de entrada andam juntas.
 
 O teste não lista as rotas à mão -- ele as **deriva do próprio app.py**. Lista
 escrita à parte envelhece junto com o defeito que deveria pegar
@@ -73,11 +77,37 @@ def test_todo_item_do_menu_tem_rota():
     assert not orfas, f"item de menu sem rota em _ROTAS: {sorted(orfas)}"
 
 
-def test_as_duas_telas_esquecidas_estao_no_menu():
-    """Nomeadas de propósito: foram o defeito, e um dia foram removidas."""
-    menu = _menu_de_producao()
-    assert "🚦 Homologação" in menu
-    assert "🎯 Grau de Confiança" in menu
+_RETIRADAS = ("🧭 Inteligência de Mercado", "🌍 Macro Internacional",
+              "🚦 Homologação")
+
+
+def test_telas_retiradas_da_sidebar_nao_voltam_como_rota_orfa():
+    """Retirar da sidebar sem tirar de ``_ROTAS`` recria a tela inalcançável.
+
+    As três saíram da navegação a pedido do dono do app: são retaguarda
+    analítica, não tela de consumo. O módulo continua em ``views/`` -- o que
+    não pode voltar é a chave de rota que ninguém escolhe.
+    """
+    rotas = _rotas()
+    for label in _RETIRADAS:
+        assert label not in rotas, f"{label} voltou a _ROTAS sem porta de entrada"
+
+
+def test_grau_de_confianca_e_aba_de_configuracoes():
+    """A tela não sumiu: mudou de porta de entrada.
+
+    Ela deixou de ser rota da sidebar e virou aba dentro de Configurações. O
+    teste lê a view real: se a aba for renomeada ou o corpo deixar de ser
+    chamado, a tela vira decoração de novo
+    (``memoria: diagnostico-precisa-porta-de-entrada``).
+    """
+    assert "🎯 Grau de Confiança" not in _rotas()
+    fonte = Path("views/configuracoes.py").read_text(encoding="utf-8")
+    assert "🎯 Grau de Confiança" in fonte
+    assert "from views.confianca import render_corpo" in fonte
+    assert "render_corpo()" in fonte
+    assert hasattr(__import__("views.confianca", fromlist=["render_corpo"]),
+                   "render_corpo")
 
 
 def test_o_modulo_de_cada_rota_existe_em_views():

@@ -163,13 +163,13 @@ def _tabela_rigor() -> None:
     )
 
 
-def render() -> None:
-    st.title("🎯 Grau de Confiança")
-    st.caption(
-        "Qualidade do dado que sustenta cada seção. Apoio analítico — não é "
-        "previsão, recomendação nem substituto de decisão humana."
-    )
+def render_corpo() -> None:
+    """O conteúdo da tela, sem título nem legenda.
 
+    Quem embute isto numa aba (``views/configuracoes.py``) já desenhou o
+    próprio cabeçalho; repetir ``st.title`` dentro da aba duplicaria o título
+    da página.
+    """
     with st.spinner("Medindo cada seção..."):
         secoes = relatorio()
     geral = confianca_global(secoes)
@@ -209,3 +209,12 @@ def render() -> None:
         "Ativos sem dado suficiente são descartados do universo de decisão, "
         "não corrigidos no escuro."
     )
+
+
+def render() -> None:
+    st.title("🎯 Grau de Confiança")
+    st.caption(
+        "Qualidade do dado que sustenta cada seção. Apoio analítico — não é "
+        "previsão, recomendação nem substituto de decisão humana."
+    )
+    render_corpo()

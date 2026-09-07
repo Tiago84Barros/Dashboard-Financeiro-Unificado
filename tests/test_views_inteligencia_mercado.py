@@ -181,11 +181,18 @@ def test_filtro_de_verificacao_separa_confirmada_de_rumor():
 
 
 # ── Registro no app ──────────────────────────────────────────────────────────
-def test_rota_registrada_no_app():
-    app = Path(V.__file__).parent.parent / "app.py"
-    texto = app.read_text(encoding="utf-8")
-    assert '"inteligencia_mercado"' in texto
-    assert texto.count("🧭 Inteligência de Mercado") >= 2
+def test_tela_saiu_da_navegacao_e_nao_deixou_rota_orfa():
+    """Retirada da sidebar em 06/09/2026 a pedido do dono do app.
+
+    A Inteligência de Mercado passou a ser retaguarda: seus motores em
+    ``core/inteligencia`` e ``core/noticias`` continuam alimentando as telas de
+    análise, mas ela deixou de ser destino de navegação. Rota que sobrevive à
+    remoção do item de menu é tela inalcançável -- o defeito que
+    ``tests/test_app_rotas_alcancaveis.py`` existe para pegar.
+    """
+    texto = (Path(V.__file__).parent.parent / "app.py").read_text(encoding="utf-8")
+    assert '"inteligencia_mercado"' not in texto
+    assert "🧭 Inteligência de Mercado" not in texto
 
 
 def test_view_expoe_render():
