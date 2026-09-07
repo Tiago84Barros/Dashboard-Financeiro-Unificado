@@ -1192,6 +1192,22 @@ _INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
         "source_name": "Tesouro Direto — Extrato Consolidado (manual)",
     },
     {
+        "key":         "tesouro_analitico",
+        "label":       "Tesouro Direto — Extrato Analítico (.xlsx)",
+        "help":        "Extrato Analítico por título (um arquivo por título; "
+                       "aceita vários de uma vez). É o único documento que traz "
+                       "a taxa contratada e a data de liquidação de cada "
+                       "aplicação — sem ele o app não consegue marcar a "
+                       "mercado, só repetir a rentabilidade que o extrato já "
+                       "imprime.",
+        "file_types":  "xlsx",
+        "parser_attr": "parse_tesouro_analitico",
+        "job_name":    "import_tesouro_analitico",
+        "table_name":  "tesouro_lots",
+        "source_name": "Tesouro Direto — Extrato Analítico (manual)",
+        "multi_file":  True,
+    },
+    {
         "key":         "nomad",
         "label":       "Nomad — Notas (.pdf)",
         "help":        "PDFs de negociação exportados pela Nomad. Aceita "
@@ -1353,6 +1369,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
         parse_b3_movimentacao,
         parse_b3_negociacao,
         parse_nomad_pdf,
+        parse_tesouro_analitico,
         parse_tesouro_direto,
         parse_xp_consolidado,
     )
@@ -1367,6 +1384,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
         "parse_b3_movimentacao": parse_b3_movimentacao,
         "parse_xp_consolidado":  parse_xp_consolidado,
         "parse_tesouro_direto":  parse_tesouro_direto,
+        "parse_tesouro_analitico": parse_tesouro_analitico,
         "parse_nomad_pdf":       parse_nomad_pdf,
     }
     parser = parsers[cfg["parser_attr"]]
