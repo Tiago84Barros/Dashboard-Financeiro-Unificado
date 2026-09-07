@@ -129,10 +129,12 @@ def _apply_liquidity_gate(
     e nesse estado não se publica carteira.
     """
     from core.us_liquidity import (
+        LIQUIDITY_MAX_AGE_DAYS,
         PISO_INVALIDO_MESSAGE,
         LiquidityPolicy,
         aplicar_piso,
         formata_usd_curto,
+        medicao_mais_recente,
     )
 
     policy = LiquidityPolicy(piso_diario_usd=params.min_daily_turnover_usd)
@@ -192,11 +194,33 @@ def _apply_liquidity_gate(
                 "a coluna `giro_diario_usd` existe mas nenhuma empresa do "
                 "recorte tem giro medido") if not giro else (
                 "não há nenhuma medição de giro com data de referência atual")
+        # A idade da medição é a diferença entre "a vitrine nunca teve data" e
+        # "a vitrine tem data de 18 dias atrás". A mensagem antiga dava as duas
+        # com a mesma frase, e quem lia não tinha como saber o que fazer.
+        recente = medicao_mais_recente(timestamps)
+        if recente is not None:
+            quando, idade = recente
+            meta["liquidity_last_measured_at"] = quando.isoformat()
+            meta["liquidity_last_measured_age_days"] = idade
+            observado = (
+                f" A medição de giro mais recente desta vitrine é de "
+                f"{quando.strftime('%d/%m/%Y')} — {idade} dia(s) atrás, e a regra "
+                f"aceita no máximo {LIQUIDITY_MAX_AGE_DAYS}. A vitrine está "
+                f"desatualizada; não é o universo que não tem giro."
+            )
+        else:
+            meta["liquidity_last_measured_at"] = None
+            meta["liquidity_last_measured_age_days"] = None
+            observado = (
+                " Nenhuma data de referência legível veio junto com o giro, "
+                "então nem a idade da medição pôde ser apurada."
+            )
         meta["liquidity_block"] = (
             f"Negociabilidade não verificada: {onde}, e a negociabilidade mínima "
             f"está em US$ {formata_usd_curto(piso)}/dia. Nenhuma empresa pôde ser "
             f"verificada, então nenhuma carteira é publicada — comprar sem medir "
-            f"negociabilidade é assumir risco não verificado. " + _INGESTAO_GIRO
+            f"negociabilidade é assumir risco não verificado." + observado + " "
+            + _INGESTAO_GIRO
         )
     return work, meta
 
@@ -688,6 +712,26 @@ def portfolio_metrics(holdings: pd.DataFrame, params: USPortfolioCreationParams)
     }
 
 
+def apply_us_macro(holdings: pd.DataFrame, impacts: dict, mode: str,
+                   params: USPortfolioCreationParams) -> pd.DataFrame:
+    """Mesmo overlay e projeção usados na criação e na sensibilidade histórica."""
+    from core.macro_data.portfolio_tilt import apply_macro_tilt, bound_macro_weights
+
+    result = apply_macro_tilt(holdings, impacts, symbol_column="symbol",
+                              score_column="entry_score", mode=mode)
+    if mode != "fundamental" and impacts:
+        target = dict(zip(result["symbol"], result["weight"]))
+        constrained, warnings = allocate_weights(holdings, params, target_weights=target)
+        if constrained.empty:
+            result["weight"] = result["weight_before_macro"]
+            result.attrs["macro_warnings"] = warnings + ["Projeção macro inviável; base preservada."]
+        else:
+            proposed = result["symbol"].map(constrained.set_index("symbol")["weight"])
+            result["weight"] = bound_macro_weights(result["weight_before_macro"], proposed)
+    result.attrs["macro_turnover"] = float(.5 * (result["weight"] - result["weight_before_macro"]).abs().sum())
+    return result
+
+
 def build_portfolio_creation(
     scored: pd.DataFrame,
     params: USPortfolioCreationParams | None = None,
@@ -706,49 +750,8 @@ def build_portfolio_creation(
     if macro_mode not in {"fundamental", "moderate", "scenario"}:
         raise ValueError("modo macro inválido")
     if not holdings.empty:
-        from core.macro_data.portfolio_tilt import apply_macro_tilt
-
-        provisional = apply_macro_tilt(
-            holdings,
-            macro_impacts or {},
-            symbol_column="symbol",
-            score_column="entry_score",
-            mode=macro_mode,
-        )
-        if macro_mode != "fundamental" and macro_impacts:
-            target_by_symbol = dict(zip(
-                provisional["symbol"].astype(str), provisional["weight"]
-            ))
-            constrained, macro_warnings = allocate_weights(
-                candidates, params, target_weights=target_by_symbol,
-            )
-            warnings.extend(macro_warnings)
-            if not constrained.empty:
-                base_weights = holdings.set_index("symbol")["weight"]
-                aligned_base = constrained["symbol"].map(base_weights).astype(float)
-                turnover = float(
-                    0.5 * (constrained["weight"] - aligned_base).abs().sum()
-                )
-                if turnover > 0.10:
-                    constrained["weight"] = aligned_base + (
-                        constrained["weight"] - aligned_base
-                    ) * (0.10 / turnover)
-                metadata = provisional.set_index("symbol")[[
-                    "macro_covered", "macro_impact", "macro_score_adjustment",
-                    "contextual_score", "weight_before_macro",
-                ]]
-                holdings = constrained.join(metadata, on="symbol")
-                holdings.attrs["macro_mode"] = macro_mode
-                holdings.attrs["macro_coverage"] = float(
-                    holdings["macro_covered"].mean()
-                )
-                holdings.attrs["macro_turnover"] = float(
-                    0.5 * (holdings["weight"] - aligned_base).abs().sum()
-                )
-            else:
-                holdings = provisional
-        else:
-            holdings = provisional
+        holdings = apply_us_macro(holdings, macro_impacts or {}, macro_mode, params)
+        warnings.extend(holdings.attrs.get("macro_warnings", []))
         holdings["allocation_usd"] = (
             holdings["weight"] * float(params.capital_usd)
         )
