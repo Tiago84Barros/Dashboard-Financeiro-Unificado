@@ -49,10 +49,6 @@ _ROTAS: dict[str, str] = {
     "🌎 Empresas Americanas": "empresas_americanas",
     "🏬 Seleção de FIIs":      "fiis",
     "🌐 Portfólio Global":    "portfolio_global",
-    "🧭 Inteligência de Mercado": "inteligencia_mercado",
-    "🌍 Macro Internacional": "macro_internacional",
-    "🎯 Grau de Confiança":  "confianca",
-    "🚦 Homologação":         "homologacao",
     "📚 Documentação":        "documentacao",
     "⚙️ Configurações":       "configuracoes",
 }
@@ -85,16 +81,16 @@ with st.sidebar:
         opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3",
                          "🌎 Empresas Americanas",
                          "🏬 Seleção de FIIs",
-                         "🌐 Portfólio Global",
-                         "🧭 Inteligência de Mercado", "🌍 Macro Internacional"]
-        # "Grau de Confiança" e "Homologação" tinham rota em ``_ROTAS`` e não
-        # tinham entrada aqui: nasceram inalcançáveis pela sidebar, cada uma
-        # no próprio commit que a criou. Motor de diagnóstico que ninguém
-        # consulta é decoração (``memoria: diagnostico-precisa-porta-de-entrada``),
-        # e é a tela de Homologação que diz em que fase o APP4 está --
-        # exatamente o que não podia ficar escondido.
-        opcoes_sistema = ["🎯 Grau de Confiança", "🚦 Homologação",
-                          "📚 Documentação", "⚙️ Configurações"]
+                         "🌐 Portfólio Global"]
+        # Inteligência de Mercado, Macro Internacional e Homologação saíram da
+        # sidebar a pedido do dono do app: são retaguarda analítica que alimenta
+        # os módulos, não tela de consumo. Os módulos em ``views/`` continuam no
+        # repositório e seus motores em ``core/`` seguem sendo consultados pelas
+        # telas que dependem deles -- só a porta de entrada foi retirada.
+        # "Grau de Confiança" deixou de ser rota própria e virou aba dentro de
+        # Configurações (``views/configuracoes.py``); a porta de entrada existe,
+        # mudou de lugar (``memoria: diagnostico-precisa-porta-de-entrada``).
+        opcoes_sistema = ["📚 Documentação", "⚙️ Configurações"]
         opcoes_menu = opcoes_visao + opcoes_financas + opcoes_invest + opcoes_sistema
 
     menu = st.radio(
