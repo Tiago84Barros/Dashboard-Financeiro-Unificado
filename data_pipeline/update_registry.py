@@ -43,6 +43,16 @@ _DEFAULT_REGISTRY: list[dict] = [
         "description":  "Selic, IPCA, câmbio, PIB, balança comercial — API SGS do BCB",
     },
     {
+        "table_name":   "tesouro_market_rates",
+        "source_name":  "Tesouro Transparente (dados abertos)",
+        "job_name":     "update_tesouro_curva",
+        "update_type":  "incremental",
+        "frequency":    "diario",
+        "priority":     2,
+        "is_active":    True,
+        "description":  "Taxas e PUs diários de compra/venda de cada título do Tesouro Direto. É a ponta de mercado da marcação a mercado: sem ela o app só repetiria a rentabilidade acumulada impressa no extrato.",
+    },
+    {
         # LEGADO (app1): sincronizava public.macro do banco do App1. Desativado —
         # a tabela `macro` já é alimentada diretamente pela fonte primária via
         # update_bcb (Banco Central / SGS). App1 descontinuado.

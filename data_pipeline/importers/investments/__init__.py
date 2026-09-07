@@ -7,6 +7,7 @@ Fontes suportadas:
   - b3_negociacao   B3 Área do Investidor → Negociação (.xlsx)
   - b3_movimentacao B3 Área do Investidor → Movimentação (.xlsx)
   - xp_consolidado  XP Investimentos → Posição Consolidada (.xlsx) — stub
+  - tesouro_analitico Tesouro Direto → Extrato Analítico por título (.xlsx)
   - nomad_pdf       Nomad → notas de corretagem (.pdf) — stub
 
 Cada parser expõe `parse(file_bytes: bytes, engine) -> dict`. O dict de retorno
@@ -26,6 +27,7 @@ __all__ = [
     "parse_b3_movimentacao",
     "parse_xp_consolidado",
     "parse_tesouro_direto",
+    "parse_tesouro_analitico",
     "parse_nomad_pdf",
 ]
 
@@ -55,6 +57,18 @@ def parse_tesouro_direto(file_bytes: bytes, engine) -> dict[str, Any]:
     """Tesouro Direto aceita o Extrato Consolidado mensal (.xlsx)."""
     from .tesouro_direto import parse
     return parse(file_bytes, engine)
+
+
+def parse_tesouro_analitico(
+    files: "list[tuple[str, bytes]] | tuple[str, bytes] | bytes", engine,
+) -> dict[str, Any]:
+    """Extrato Analítico do Tesouro Direto — um arquivo por título.
+
+    Aceita vários de uma vez porque o portal exporta um arquivo por título, e
+    quem tem quatro títulos exportaria quatro arquivos.
+    """
+    from .tesouro_analitico import parse
+    return parse(files, engine)
 
 
 def parse_nomad_pdf(

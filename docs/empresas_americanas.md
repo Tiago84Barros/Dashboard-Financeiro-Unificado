@@ -223,13 +223,52 @@ python run_us_ingest.py estimate    --tickers AAPL MSFT    # dry-run (sem rede)
 python run_us_ingest.py universe    --warehouse --limit 200
 python run_us_ingest.py bootstrap   --warehouse --tickers AAPL MSFT --years 20 --json
 python run_us_ingest.py resume      --warehouse            # retoma do checkpoint
-python run_us_ingest.py daily       --warehouse --tickers AAPL MSFT
+python run_us_ingest.py daily       --warehouse            # universo elegível
+python run_us_ingest.py daily       --warehouse --completo # refaz o histórico
 python run_us_ingest.py validate    --warehouse --json     # auditoria de qualidade
 ```
 
 A atualização busca só o que é novo (upsert por chave natural; dividendos/splits
 com dedup). O estado por domínio fica em `market_us.ingestion_runs` (retomável);
 erros em `market_us.ingestion_errors` (reprocessáveis).
+
+### Por que o `daily` é incremental (07/09/2026)
+
+Esta frase acima — "busca só o que é novo" — descrevia o upsert, não o
+download. Até 07/09/2026 o `daily` chamava o yfinance **sem janela**, e sem
+`start` o provedor baixa `period="max"`: toda execução rebaixava ~20 anos de
+histórico por símbolo e reescrevia a série inteira no armazém. Medido no dia:
+
+| caminho | tempo por símbolo |
+| --- | --- |
+| `history(period="max")` + upsert de ~16 mil linhas | ~13 s |
+| `history(start=<última data − 7d>)` | ~0,4 s |
+
+São ~4 h para atualizar 1.100 empresas — e rotina diária de 4 h não termina. Foi
+assim que a série parou em 20/08, a vitrine saiu velha e a **Criação de
+Portfólio bloqueou o universo inteiro** por negociabilidade não verificada. O
+custo não apareceu como erro: apareceu como tela bloqueada dias depois.
+
+Agora `daily` monta `{símbolo: última data}` do armazém e desce só a janela,
+com **7 dias de sobreposição** — o Yahoo revisa a barra recente (volume
+consolidado, fechamento corrigido), e pedir a partir do dia seguinte gravaria a
+primeira versão para sempre. Medido depois: **144 símbolos/min contra 4,7**.
+
+Duas condições que a janela não pode violar:
+
+- **Split dentro da janela devolve o símbolo ao histórico completo.** O Yahoo
+  retroajusta a série toda após um desdobramento; uma janela de dias deixaria as
+  barras antigas com o preço da era anterior. O resultado do comando reporta
+  `historico_refeito` — na passagem de 07/09/2026 foram 17 símbolos.
+- **Preço, provento e split pedem a mesma janela.** A memoização do provedor é
+  por `(símbolo, start, end)`; divergir aqui faria duas descidas por símbolo, o
+  oposto do pretendido. Por isso `get_dividends`/`get_splits` passaram a aceitar
+  `start`/`end` no contrato de `MarketDataProvider`.
+
+`--completo` restaura a descida integral, para reparar série — não para o dia a
+dia. Coberto por `tests/test_us_daily_incremental.py`, que verifica a **janela
+pedida ao provedor**, não tempo de parede: lentidão não falha um teste, ela
+aparece dias depois como série parada.
 
 ## Vitrine no Supabase (deploy)
 
