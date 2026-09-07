@@ -87,6 +87,69 @@ def nova_medicao(*, motor: str, versao_metodologia: str, metrica: str,
     return registro
 
 
+def versao_corrente(motor: str) -> str:
+    """A versão de metodologia que o motor roda AGORA.
+
+    Existe para que a checagem de "a medição envelheceu?" leia a mesma
+    constante que o motor lê, e não uma cópia. Uma lista escrita à parte
+    envelhece junto com o defeito que deveria pegar: o dia em que um quarto
+    motor entrar, ele ficaria de fora da conferência e de fora do teste pelo
+    mesmo descuido (``memoria: verificador-e-escritor-listas-diferentes``).
+
+    Import tardio e por motor: ``core.us_methodology`` e ``core.fii_methodology``
+    arrastam dependências que nada têm a ver com quem só quer ler a medição da
+    B3.
+    """
+    if motor == "b3":
+        from core.b3_methodology import SCORE_VERSION
+        return str(SCORE_VERSION)
+    if motor == "fii":
+        from core.fii_methodology import METHODOLOGY_VERSION
+        return str(METHODOLOGY_VERSION)
+    if motor == "us":
+        from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
+        return str(US_FUNDAMENTAL_SCORE_VERSION)
+    raise ValueError(f"motor desconhecido: {motor!r}")
+
+
+def medicoes_vencidas(caminho: Path | str | None = None) -> dict[str, tuple[str, str]]:
+    """Motores cuja medição gravada é de uma versão que o motor não roda mais.
+
+    Devolve ``{motor: (versao_medida, versao_atual)}``; vazio é o estado são.
+
+    Por que isto merece uma função própria, e não só o portão: quando a versão
+    diverge, o portão devolve "não apurado" -- corretamente, porque resultado de
+    outra versão não atesta esta. Só que "não apurado" **sai do denominador da
+    nota**. Em 06/09/2026 os EUA marcavam 50% de rigor contra 33% dos outros
+    dois motores, e a diferença inteira era esta: a medição tinha ficado na
+    metodologia 0.5.0 enquanto o motor passara para a 0.8.0. Remedida na versão
+    certa, a vantagem foi reprovada e a nota caiu para os mesmos 33%.
+
+    Ou seja: parar de responder a pergunta subia a nota. O portão está certo; o
+    que faltava era alguém notar que a medição envelheceu
+    (``memoria: quem-pergunta-menos-tira-nota-maior``).
+    """
+    try:
+        dados = json.loads(_caminho(caminho).read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        logger.info("medicoes indisponiveis: %s", type(exc).__name__)
+        return {}
+    if not isinstance(dados, dict):
+        return {}
+    vencidas: dict[str, tuple[str, str]] = {}
+    for motor, registro in dados.items():
+        if not isinstance(registro, dict):
+            continue
+        medida = str(registro.get("versao_metodologia") or "")
+        try:
+            atual = versao_corrente(motor)
+        except ValueError:
+            continue
+        if medida and atual and medida != atual:
+            vencidas[motor] = (medida, atual)
+    return vencidas
+
+
 def _caminho(caminho: Path | str | None) -> Path:
     """Resolve o caminho na CHAMADA, nunca no import.
 
