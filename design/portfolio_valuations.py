@@ -20,58 +20,6 @@ def _load(stocks, fiis):
     return data, unavailable, datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')
 
 
-def render_portfolio_valuations(positions):
-    st.subheader('Valuation médio do portfólio')
-    stocks, fiis, aliases = set(), set(), {}
-    for pos in positions:
-        ticker = str(pos.get('ticker') or '').strip().upper()
-        cls = str(pos.get('classe') or '').lower()
-        if str(pos.get('moeda') or 'BRL').upper() != 'BRL' or str(
-            pos.get('pais') or pos.get('country') or 'BR'
-        ).upper() not in ('BR', ''):
-            continue
-        if 'fii' in cls or 'fundo imob' in cls:
-            fiis.add(ticker)
-            aliases[ticker] = ticker
-        elif any(term in cls for term in ('ação', 'ações', 'acoes', 'acao')):
-            base = ticker[:-1] if ticker.endswith('F') and len(ticker) > 4 else ticker
-            stocks.add(base)
-            aliases[ticker] = base
-    with st.spinner('Consolidando valuations disponíveis…'):
-        data, unavailable, consulted = _load(tuple(sorted(stocks)), tuple(sorted(fiis)))
-    fundamentals = {ticker: data.get(base, {}) for ticker, base in aliases.items()}
-    result = aggregate_valuations(positions, fundamentals)
-    for offset in range(0, len(METRICS), 4):
-        for col, (key, label) in zip(st.columns(4), list(METRICS.items())[offset:offset + 4]):
-            item = result[key]
-            suffix = '%' if key == 'dy' else 'x'
-            with col:
-                st.metric(label, f"{item['value']:.2f}{suffix}" if item['value'] is not None else '—')
-                st.caption(f"{item['assets']} ativos · {item['coverage']:.1%} do valor da carteira")
-    if unavailable:
-        st.warning('Fonte indisponível para: ' + ', '.join(unavailable))
-    st.caption('Médias aritméticas ponderadas pelo valor de mercado em BRL dos ativos com dado válido. '
-               'Cobertura sobre o valor positivo conhecido da carteira, incluindo renda fixa. '
-               'Sem dado não significa zero; DY zero é incluído. Múltiplos nulos ou negativos são excluídos.')
-    with st.expander('Fontes e limitações dos valuations'):
-        st.write('Fontes: reconciliação B3/Fundamentus para ações e Fundamentus para FIIs, '
-                 'as mesmas da aba Análise. DY em percentual informado pela fonte, não yield on cost '
-                 'nem renda efetivamente recebida. Tesouro, renda fixa, ETFs, BDRs e exterior não '
-                 'entram enquanto não houver indicadores comparáveis integrados neste painel.')
-        st.write('Média dos múltiplos não equivale a preço total dividido por lucro ou patrimônio '
-                 'consolidado. EV/EBIT e EV/EBITDA são médias descritivas ponderadas por posição, '
-                 'não agregações de enterprise value. As fontes podem ter datas e janelas distintas; '
-                 'não se trata de uma fotografia contábil sincronizada nem previsão de retorno.')
-        st.caption(f'Consulta: {consulted} · cache de até 1 hora. '
-                   'Data-base contábil individual não disponível neste resumo.')
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Painéis por classe — usados nas sub-abas da Análise do Portfólio.
-# Os fundamentos chegam JÁ carregados pela aba: refazer a busca aqui daria
-# médias de uma foto e cards de outra, e a divergência não apareceria na tela.
-# ══════════════════════════════════════════════════════════════════════════════
-
 _FUNDO_CARD = '#12151E'
 _BORDA_CARD = '#1E2533'
 
@@ -97,6 +45,70 @@ def _cor_cobertura(coverage: float) -> str:
         return '#F6C90E'
     return '#9CA3AF'
 
+
+def render_portfolio_valuations(positions):
+    st.subheader('Valuation médio do portfólio')
+    stocks, fiis, aliases = set(), set(), {}
+    for pos in positions:
+        ticker = str(pos.get('ticker') or '').strip().upper()
+        cls = str(pos.get('classe') or '').lower()
+        if str(pos.get('moeda') or 'BRL').upper() != 'BRL' or str(
+            pos.get('pais') or pos.get('country') or 'BR'
+        ).upper() not in ('BR', ''):
+            continue
+        if 'fii' in cls or 'fundo imob' in cls:
+            fiis.add(ticker)
+            aliases[ticker] = ticker
+        elif any(term in cls for term in ('ação', 'ações', 'acoes', 'acao')):
+            base = ticker[:-1] if ticker.endswith('F') and len(ticker) > 4 else ticker
+            stocks.add(base)
+            aliases[ticker] = base
+    with st.spinner('Consolidando valuations disponíveis…'):
+        data, unavailable, consulted = _load(tuple(sorted(stocks)), tuple(sorted(fiis)))
+    fundamentals = {ticker: data.get(base, {}) for ticker, base in aliases.items()}
+    result = aggregate_valuations(positions, fundamentals)
+    # Mesmos cards CSS dos painéis por classe: a cor do número é a cobertura,
+    # não enfeite. Aqui o denominador é a carteira INTEIRA — renda fixa e
+    # exterior incluídos —, então cobertura baixa é o estado normal, e o
+    # cinza é a informação: essa média descreve uma fatia, não o portfólio.
+    itens = list(METRICS.items())
+    for offset in range(0, len(itens), 4):
+        for col, (key, label) in zip(st.columns(4), itens[offset:offset + 4]):
+            item = result[key]
+            valor = item['value']
+            sufixo = '%' if key == 'dy' else 'x'
+            with col:
+                st.markdown(_card(
+                    label,
+                    '—' if valor is None else f'{valor:.2f}{sufixo}',
+                    f"{item['assets']} ativo(s) · {item['coverage']:.1%} do valor da carteira",
+                    _cor_cobertura(item['coverage']),
+                ), unsafe_allow_html=True)
+    if unavailable:
+        st.warning('Fonte indisponível para: ' + ', '.join(unavailable))
+    st.caption('Médias aritméticas ponderadas pelo valor de mercado em BRL dos ativos com dado válido. '
+               'Cobertura sobre o valor positivo conhecido da carteira, incluindo renda fixa. '
+               'Sem dado não significa zero; DY zero é incluído. Múltiplos nulos ou negativos são excluídos. '
+               'A cor do número acompanha a cobertura: branco acima de 80%, amarelo entre 50% e 80%, '
+               'cinza abaixo disso.')
+    with st.expander('Fontes e limitações dos valuations'):
+        st.write('Fontes: reconciliação B3/Fundamentus para ações e Fundamentus para FIIs, '
+                 'as mesmas da aba Análise. DY em percentual informado pela fonte, não yield on cost '
+                 'nem renda efetivamente recebida. Tesouro, renda fixa, ETFs, BDRs e exterior não '
+                 'entram enquanto não houver indicadores comparáveis integrados neste painel.')
+        st.write('Média dos múltiplos não equivale a preço total dividido por lucro ou patrimônio '
+                 'consolidado. EV/EBIT e EV/EBITDA são médias descritivas ponderadas por posição, '
+                 'não agregações de enterprise value. As fontes podem ter datas e janelas distintas; '
+                 'não se trata de uma fotografia contábil sincronizada nem previsão de retorno.')
+        st.caption(f'Consulta: {consulted} · cache de até 1 hora. '
+                   'Data-base contábil individual não disponível neste resumo.')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Painéis por classe — usados nas sub-abas da Análise do Portfólio.
+# Os fundamentos chegam JÁ carregados pela aba: refazer a busca aqui daria
+# médias de uma foto e cards de outra, e a divergência não apareceria na tela.
+# ══════════════════════════════════════════════════════════════════════════════
 
 def render_valuations_classe(classe, positions, fundamentals, *, colunas: int = 4):
     """Médias da classe a partir dos fundamentos que a aba já buscou.
