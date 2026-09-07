@@ -74,8 +74,8 @@ Uso
   python scripts/medir_ajuste_historical_prices.py --apply --csv
 
 Grava SOMENTE no armazem local (``dfu_warehouse``); o alvo sai de
-``scripts/publish_fii_selection_from_local::_warehouse_url`` e o script recusa
-qualquer outro destino.
+``scripts/publish_fii_selection_from_local::_warehouse_url`` e quem recusa
+qualquer outro destino e ``core.destino_local.exigir_local``, a guarda unica.
 """
 from __future__ import annotations
 
@@ -85,7 +85,6 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,14 +93,17 @@ if str(ROOT) not in sys.path:
 
 from sqlalchemy import create_engine, text  # noqa: E402
 
+from core.destino_local import exigir_local  # noqa: E402
 from scripts.publish_fii_selection_from_local import _warehouse_url  # noqa: E402
 
 BACKUP_DIR = ROOT / "migration" / "backup" / "ajuste_historical_prices"
 
-# Hosts aceitos como armazem local. A tabela derivada nao vai para o Supabase:
-# e insumo de correcao, nao vitrine, e o plano free ja aperta.
-HOSTS_LOCAIS = {"localhost", "127.0.0.1", "::1"}
-PORTA_ARMAZEM = 5433
+# O destino e conferido por `core.destino_local`, que e a guarda unica do
+# repositorio. Este script nao repete a regra: guarda duplicada nao fica igual,
+# e a copia daqui ja divergia da oficial -- exigia a porta 5433 e teria recusado
+# o proprio `dfu_warehouse:5432`, que e como o armazem se chama de dentro do
+# Docker. A tabela derivada nao vai para o Supabase: e insumo de correcao, nao
+# vitrine, e o plano free ja aperta.
 
 # Tolerancia para chamar o fator de "unitario". Dois centavos num papel de
 # R$ 1,00 ja dao 2%; abaixo disso e arredondamento da fonte, nao ajuste.
@@ -158,17 +160,6 @@ FONTES = (
     ("b3_security_history", "market.b3_security_history", "close_unitario"),
     ("fii_b3_security_history", "market.fii_b3_security_history", "close"),
 )
-
-
-def _valida_alvo(url: str) -> None:
-    alvo = urlparse(url)
-    host = alvo.hostname or ""
-    porta = alvo.port or 5432
-    if host not in HOSTS_LOCAIS or porta != PORTA_ARMAZEM:
-        raise SystemExit(
-            f"alvo recusado ({host}:{porta}): este script grava somente no "
-            f"armazem local (porta {PORTA_ARMAZEM})"
-        )
 
 
 def _coletar(conn) -> tuple[list[dict], dict]:
@@ -291,9 +282,8 @@ def main() -> int:
                     help="exporta o fator medido para migration/backup/")
     args = ap.parse_args()
 
-    url = _warehouse_url()
-    _valida_alvo(url)
-    engine = create_engine(url)
+    engine = create_engine(_warehouse_url())
+    exigir_local(engine, o_que="market.price_adjustment_factor")
 
     with engine.connect() as conn:
         registros, resumo = _coletar(conn)
