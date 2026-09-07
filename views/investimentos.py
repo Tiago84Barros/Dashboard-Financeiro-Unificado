@@ -3242,7 +3242,18 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 ), unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
-            tem_mtm = _bloco_tesouro_mtm()
+            titulos_mtm = _bloco_tesouro_mtm()
+            tem_mtm = bool(titulos_mtm)
+            # A marcação medida ali em cima alimenta a "Análise por Título" logo
+            # abaixo. Antes ela chamava `analise_suficiencia_tesouro(tipo, None)`
+            # com o None fixo no código: o painel dizia "MTM INDISPONÍVEL" mesmo
+            # com o Extrato Analítico importado, porque a pergunta nunca chegava
+            # a ser feita.
+            mtm_por_chave = {
+                t.security_key: t.mtm_pct
+                for t in titulos_mtm
+                if getattr(t, "mtm_pct", None) is not None
+            }
             if not tem_mtm:
                 st.warning(
                     "**MtM real indisponível:** o banco não tem a taxa contratada nem a data de "
@@ -3273,7 +3284,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 retorno = retorno_mercado_sobre_custo(mv, vi)
                 retorno_pct = retorno * 100 if retorno is not None else None
                 anos_ref = (meta.ano_referencia - ano_atual) if meta.ano_referencia else None
-                rec = analise_suficiencia_tesouro(meta.tipo, None)
+                mtm_titulo = mtm_por_chave.get(str(p["ticker"]).upper())
+                rec = analise_suficiencia_tesouro(meta.tipo, mtm_titulo)
                 rec_cor = {
                     "info": _COR_INFO,
                     "alerta": _COR_ALERTA,
@@ -3291,6 +3303,23 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         prazo_str = f"{papel_data} em {meta.ano_referencia} já ocorreu"
                 else:
                     prazo_str = "Data de referência não identificada"
+
+                # A coluna de marcação só existe quando há marcação: uma célula
+                # com "—" em toda linha pareceria dado faltando, quando o que
+                # falta é o extrato.
+                if tem_mtm:
+                    cor_mtm_col = (
+                        _COR_NEUTRO if mtm_titulo is None
+                        else (_COR_POSITIVO if mtm_titulo >= 0 else _COR_NEGATIVO)
+                    )
+                    celula_mtm = (
+                        f'  <div><div style="font-size:0.65rem;color:#718096;">MARCAÇÃO</div>'
+                        f'    <div style="font-size:0.85rem;font-weight:700;color:{cor_mtm_col};">'
+                        f'{"—" if mtm_titulo is None else f"{mtm_titulo * 100:+.2f}%"}</div></div>'
+                    )
+                else:
+                    celula_mtm = ""
+                colunas_grid = 5 if tem_mtm else 4
 
                 # Card individual
                 st.markdown(
@@ -3318,7 +3347,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     f'  </div>'
                     f'</div>'
                     # Grid 4 colunas
-                    f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;'
+                    f'<div style="display:grid;grid-template-columns:repeat({colunas_grid},1fr);gap:10px;'
                     f'  padding:8px 0;border-top:1px solid #1E2533;margin-bottom:8px;">'
                     f'  <div><div style="font-size:0.65rem;color:#718096;">CUSTO</div>'
                     f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{fmt_moeda(vi)}</div></div>'
@@ -3328,6 +3357,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     f'    <div style="font-size:0.85rem;font-weight:700;color:{cor_resultado};">{"+" if resultado_abs >= 0 else ""}{fmt_moeda(resultado_abs)}</div></div>'
                     f'  <div><div style="font-size:0.65rem;color:#718096;">% NA CARTEIRA</div>'
                     f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{p["pct_carteira"]:.2f}%</div></div>'
+                    f'{celula_mtm}'
                     f'</div>'
                     # Análise de suficiência, sem recomendação automática.
                     f'<div style="font-size:0.80rem;color:#9CA3AF;line-height:1.5;">'
@@ -3828,8 +3858,13 @@ def _vertices_prefixados(ofertados, hoje):
     return linhas[0], linhas[-1]
 
 
-def _bloco_tesouro_mtm() -> bool:
-    """Renderiza a seção de MtM. Devolve False quando não há dado para ela."""
+def _bloco_tesouro_mtm() -> list:
+    """Renderiza a seção de MtM e devolve os títulos avaliados.
+
+    Devolve a lista — e não um booleano — porque a "Análise por Título" logo
+    abaixo precisa da MESMA avaliação. Carregar de novo lá daria dois números
+    para o mesmo título, e a divergência não apareceria na tela.
+    """
     from datetime import date as _date_hoje
 
     try:
@@ -3844,16 +3879,16 @@ def _bloco_tesouro_mtm() -> bool:
         from core.tesouro_posicao import carregar_titulos
         from design import tesouro_mtm_cards as _cards
     except Exception:
-        return False
+        return []
 
     engine = get_engine()
     owner = getattr(settings, "OWNER_USER_ID", None)
     if engine is None or not owner:
-        return False
+        return []
 
     titulos = carregar_titulos(engine, owner)
     if not titulos:
-        return False
+        return []
 
     hoje = _date_hoje.today()
     data_curva = curva_disponivel(engine)
@@ -3990,4 +4025,4 @@ def _bloco_tesouro_mtm() -> bool:
                 "daquele dia, que ninguém sabe hoje."
             )
 
-    return True
+    return titulos
