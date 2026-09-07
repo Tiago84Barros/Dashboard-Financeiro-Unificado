@@ -43,6 +43,16 @@ _DEFAULT_REGISTRY: list[dict] = [
         "description":  "Selic, IPCA, câmbio, PIB, balança comercial — API SGS do BCB",
     },
     {
+        "table_name":   "tesouro_market_rates",
+        "source_name":  "Tesouro Transparente (dados abertos)",
+        "job_name":     "update_tesouro_curva",
+        "update_type":  "incremental",
+        "frequency":    "diario",
+        "priority":     2,
+        "is_active":    True,
+        "description":  "Taxas e PUs diários de compra/venda de cada título do Tesouro Direto. É a ponta de mercado da marcação a mercado: sem ela o app só repetiria a rentabilidade acumulada impressa no extrato.",
+    },
+    {
         # LEGADO (app1): sincronizava public.macro do banco do App1. Desativado —
         # a tabela `macro` já é alimentada diretamente pela fonte primária via
         # update_bcb (Banco Central / SGS). App1 descontinuado.
@@ -147,6 +157,22 @@ _DEFAULT_REGISTRY: list[dict] = [
         # INATIVO POR PADRÃO, de propósito: consome cota de APIs gratuitas
         # (Alpha Vantage: 25 chamadas/dia; Marketaux: 100/dia). Para ligar,
         # configure ao menos uma chave e troque is_active para True.
+        #
+        # E continua inativo AQUI mesmo depois de ligado em produção, por
+        # dois motivos independentes.
+        #
+        # Frequência: o pipeline noturno roda uma vez por dia, o que não serve
+        # a nenhum dos três modos. Ativar nos dois lugares faria a coleta
+        # noturna disputar cota com o ciclo do modo corrente sem trazer
+        # frescor nenhum.
+        #
+        # Alcance: `run_data_updates.py --all` roda no GitHub Actions, e desde
+        # que o acervo passou a morar no armazém local um runner não alcança
+        # `noticias_itens`. Ligado ali, o job coletaria, gastaria cota e
+        # descartaria tudo. Quem sustenta a cadência é a tarefa local
+        # `DFU - Coleta de noticias` (`scripts/registrar_tarefas.ps1`), a cada
+        # 30 minutos, na máquina que tem o armazém.
+        # Ver docs/noticias_atualizacao_continua.md e local_staging/README.md.
         "table_name":   "noticias_itens, noticias_avaliacoes",
         "source_name":  "Motor Conjuntural (Alpha Vantage / Marketaux / RSS)",
         "job_name":     "update_noticias",
@@ -168,6 +194,20 @@ _DEFAULT_REGISTRY: list[dict] = [
                         "Invest) sobre a tabela legada `multiplos`, que foi DROPADA (2026-07). "
                         "Fundamentos vêm exclusivamente do market.* (brapi); não há mais o que "
                         "sanear por scraping. Mantido inativo.",
+    },
+    {
+        "table_name":   "recomendacao_auditoria",
+        "source_name":  "Retenção da trilha de auditoria",
+        "job_name":     "update_retencao",
+        "update_type":  "incremental",
+        "frequency":    "diario",
+        "priority":     11,
+        "is_active":    True,
+        "description":  "Varredura de retenção (365 dias) da trilha de recomendações. "
+                        "Simula por omissão: só apaga com AUDITORIA_EXPURGO_APLICAR=true. "
+                        "Ativo mesmo simulando, porque o alcance da janela precisa ser "
+                        "medido todo dia — dívida que ninguém conta vira surpresa de "
+                        "banco cheio.",
     },
     # ── Importações manuais de investimentos ─────────────────────────────────
     # frequency='manual' garante que NUNCA são executadas pelo

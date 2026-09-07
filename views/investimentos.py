@@ -2400,6 +2400,10 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
         st.info("Nenhuma posição encontrada. Execute o ETL de posições.", icon="💼")
         return
 
+    from design.portfolio_valuations import render_portfolio_valuations
+
+    render_portfolio_valuations(posicoes)
+
     # Busca logos em lote (cache 24h) — falha silenciosa
     tickers_tuple = tuple(p["ticker"] for p in posicoes)
     logos = _get_logos(tickers_tuple)
@@ -2775,6 +2779,82 @@ def _kpi_classe(cls: dict) -> str:
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Trio comum às sub-abas da Análise: médias da classe, confronto com o banco
+# e chat. Cada sub-aba passa a SUA lista de posições e os fundamentos que ela
+# própria já buscou — recarregar aqui daria média de um snapshot e cards de
+# outro, e a lista de "ações" da aba não é a mesma que um classificador
+# genérico produziria (ela não exclui o exterior; a aba Exterior sim).
+# ══════════════════════════════════════════════════════════════════════════
+
+def _fundamentos_exterior(ext_pos) -> dict:
+    """Indicadores do universo dos EUA na unidade em que a tela publica.
+
+    A fonte americana entrega ROE, margens e yields como fração decimal; sem a
+    conversão, a média sairia como "0,12%" de margem líquida. ETF não aparece
+    aqui: fundo de índice não tem demonstração de companhia, e a cobertura
+    baixa que sobra é o escopo do módulo, não falha de ingestão.
+    """
+    from core.portfolio_valuations import para_percentual
+    from design.portfolio_db_analysis import carregar_db
+
+    chaves = tuple(sorted({str(p.get("ticker") or "").strip().upper()
+                           for p in ext_pos if p.get("ticker")}))
+    bruto = (carregar_db("exterior", chaves) or {}).get("fundamentos") or {}
+    saida: dict = {}
+    for simbolo, campos in bruto.items():
+        convertidos = {}
+        for chave, valor in (campos or {}).items():
+            numero = para_percentual(chave, valor)
+            if numero is not None:
+                convertidos[chave] = numero
+        if convertidos:
+            saida[simbolo] = convertidos
+    return saida
+
+
+def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
+                          ano_atual=None) -> None:
+    from core.llm_context_carteira import build_carteira_classe_context
+    from design.chat_carteira import render_chat_carteira
+    from design.portfolio_db_analysis import (
+        carregar_db,
+        carregar_macro,
+        render_db_analysis,
+        render_db_macro,
+    )
+    from design.portfolio_valuations import (
+        render_valuations_classe,
+        render_valuations_tesouro,
+    )
+
+    if not posicoes_classe:
+        return
+    tickers = [p["ticker"] for p in posicoes_classe]
+    chaves = tuple(sorted({str(t or "").strip().upper() for t in tickers if t}))
+
+    st.markdown("---")
+    valuations = tesouro = macro = db = None
+    if classe == "tesouro":
+        tesouro = render_valuations_tesouro(posicoes_classe, ano_atual)
+        macro = carregar_macro()
+        render_db_macro(macro)
+    else:
+        valuations = render_valuations_classe(classe, posicoes_classe, fundamentos)
+        st.markdown("---")
+        db = carregar_db(classe, chaves)
+        render_db_analysis(classe, db)
+
+    render_chat_carteira(
+        classe=classe,
+        tickers=tickers,
+        build_context=lambda _pergunta: build_carteira_classe_context(
+            classe, posicoes_classe, valuations=valuations, db=db,
+            tesouro=tesouro, macro=macro, fundamentos=fundamentos,
+        ),
+    )
+
+
 def _tab_analise(carteira: dict, proventos: dict) -> None:
     posicoes   = carteira.get("posicoes", [])
     por_classe = carteira.get("por_classe", [])
@@ -3064,6 +3144,11 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         st.markdown(_stock_card_html(pos, fd, pi, alts),
                                     unsafe_allow_html=True)
 
+            _bloco_analise_classe(
+                "acoes", acoes,
+                {p["ticker"]: fd_all.get(_base(p["ticker"]), {}) for p in acoes},
+            )
+
     # ══════════════════════════════════════════════════════════════════════════
     # FIIs — cards fundamentalistas
     # ══════════════════════════════════════════════════════════════════════════
@@ -3094,6 +3179,11 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     with cols[j]:
                         st.markdown(_fii_card_html(pos, fd, pi, renda, alts),
                                     unsafe_allow_html=True)
+
+            _bloco_analise_classe(
+                "fiis", fiis,
+                {p["ticker"]: fd_fiis.get(p["ticker"], {}) for p in fiis},
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Tesouro Direto — retorno acumulado e suficiência para MtM
@@ -3151,12 +3241,28 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     cor_resultado if retorno_total_pct is not None else _COR_NEUTRO,
                 ), unsafe_allow_html=True)
 
-            st.warning(
-                "**MtM real indisponível:** o banco não possui a taxa contratada e a data de "
-                "liquidação de cada lote. Até esses dados existirem, esta tela não emite sinal "
-                "automático de venda.",
-                icon="⚠️",
-            )
+            st.markdown("<br>", unsafe_allow_html=True)
+            titulos_mtm = _bloco_tesouro_mtm()
+            tem_mtm = bool(titulos_mtm)
+            # A marcação medida ali em cima alimenta a "Análise por Título" logo
+            # abaixo. Antes ela chamava `analise_suficiencia_tesouro(tipo, None)`
+            # com o None fixo no código: o painel dizia "MTM INDISPONÍVEL" mesmo
+            # com o Extrato Analítico importado, porque a pergunta nunca chegava
+            # a ser feita.
+            mtm_por_chave = {
+                t.security_key: t.mtm_pct
+                for t in titulos_mtm
+                if getattr(t, "mtm_pct", None) is not None
+            }
+            if not tem_mtm:
+                st.warning(
+                    "**MtM real indisponível:** o banco não tem a taxa contratada nem a data de "
+                    "liquidação de cada lote, e sem elas a diferença entre mercado e custo mistura "
+                    "carrego com marcação. Importe o **Extrato Analítico** em Configurações → "
+                    "Importar dados de investimentos para liberar a marcação a mercado e o "
+                    "veredito de manter × trocar.",
+                    icon="⚠️",
+                )
 
             # Tabela com analise por titulo
             st.markdown("<br>", unsafe_allow_html=True)
@@ -3178,7 +3284,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 retorno = retorno_mercado_sobre_custo(mv, vi)
                 retorno_pct = retorno * 100 if retorno is not None else None
                 anos_ref = (meta.ano_referencia - ano_atual) if meta.ano_referencia else None
-                rec = analise_suficiencia_tesouro(meta.tipo, None)
+                mtm_titulo = mtm_por_chave.get(str(p["ticker"]).upper())
+                rec = analise_suficiencia_tesouro(meta.tipo, mtm_titulo)
                 rec_cor = {
                     "info": _COR_INFO,
                     "alerta": _COR_ALERTA,
@@ -3196,6 +3303,23 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         prazo_str = f"{papel_data} em {meta.ano_referencia} já ocorreu"
                 else:
                     prazo_str = "Data de referência não identificada"
+
+                # A coluna de marcação só existe quando há marcação: uma célula
+                # com "—" em toda linha pareceria dado faltando, quando o que
+                # falta é o extrato.
+                if tem_mtm:
+                    cor_mtm_col = (
+                        _COR_NEUTRO if mtm_titulo is None
+                        else (_COR_POSITIVO if mtm_titulo >= 0 else _COR_NEGATIVO)
+                    )
+                    celula_mtm = (
+                        f'  <div><div style="font-size:0.65rem;color:#718096;">MARCAÇÃO</div>'
+                        f'    <div style="font-size:0.85rem;font-weight:700;color:{cor_mtm_col};">'
+                        f'{"—" if mtm_titulo is None else f"{mtm_titulo * 100:+.2f}%"}</div></div>'
+                    )
+                else:
+                    celula_mtm = ""
+                colunas_grid = 5 if tem_mtm else 4
 
                 # Card individual
                 st.markdown(
@@ -3223,7 +3347,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     f'  </div>'
                     f'</div>'
                     # Grid 4 colunas
-                    f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;'
+                    f'<div style="display:grid;grid-template-columns:repeat({colunas_grid},1fr);gap:10px;'
                     f'  padding:8px 0;border-top:1px solid #1E2533;margin-bottom:8px;">'
                     f'  <div><div style="font-size:0.65rem;color:#718096;">CUSTO</div>'
                     f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{fmt_moeda(vi)}</div></div>'
@@ -3233,6 +3357,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     f'    <div style="font-size:0.85rem;font-weight:700;color:{cor_resultado};">{"+" if resultado_abs >= 0 else ""}{fmt_moeda(resultado_abs)}</div></div>'
                     f'  <div><div style="font-size:0.65rem;color:#718096;">% NA CARTEIRA</div>'
                     f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{p["pct_carteira"]:.2f}%</div></div>'
+                    f'{celula_mtm}'
                     f'</div>'
                     # Análise de suficiência, sem recomendação automática.
                     f'<div style="font-size:0.80rem;color:#9CA3AF;line-height:1.5;">'
@@ -3243,10 +3368,16 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 )
 
             st.caption(
+                "💡 Retorno mercado/custo inclui carrego, juros e variação de preço — não é marcação a "
+                "mercado. A marcação isolada, o IR/IOF por lote e o veredito de manter × trocar vivem na "
+                "seção acima e dependem do Extrato Analítico importado."
+                if tem_mtm else
                 "💡 Retorno mercado/custo inclui carrego, juros e variação de preço. MtM real exige comparar "
-                "o preço de mercado de hoje com o preço teórico de hoje pela taxa contratada em cada lote. "
-                "IR líquido também está indisponível sem a data de liquidação de cada compra."
+                "o preço de mercado de hoje com o preço teórico de hoje pela taxa contratada em cada lote — "
+                "que é o que o Extrato Analítico traz."
             )
+
+            _bloco_analise_classe("tesouro", tesouros, {}, ano_atual=ano_atual)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Exterior — ativos fora do Brasil (Nomad: SPY, IEFA, etc.)
@@ -3360,6 +3491,10 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 "💡 Posições exterior vêm do PDF Nomad consolidado. "
                 "Valores em BRL são convertidos usando USD/BRL do dia do snapshot. "
                 "Cotações diárias via yfinance."
+            )
+
+            _bloco_analise_classe(
+                "exterior", ext_pos, _fundamentos_exterior(ext_pos),
             )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -3698,3 +3833,196 @@ def render() -> None:
 
     with tab4:
         _tab_analise(carteira, proventos)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tesouro Direto — marcação a mercado a partir do Extrato Analítico
+#
+# Este bloco só aparece quando existem lotes importados. Sem o Extrato
+# Analítico não há taxa contratada por lote, e sem ela qualquer "MtM" seria a
+# diferença entre mercado e custo — que mistura carrego com marcação. A recusa
+# anterior da tela estava certa; o que mudou foi a entrada de dado, não a régua.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _vertices_prefixados(ofertados, hoje):
+    """Prefixados zero-cupom vivos: o vértice mais curto e o mais longo."""
+    if ofertados is None or ofertados.empty:
+        return None, None
+    nomes = ofertados["title_name"].astype(str).str.lower()
+    vivos = ofertados[nomes.str.startswith("tesouro prefixado")
+                      & ~nomes.str.contains("juros semestrais")
+                      & (ofertados["maturity_date"] > hoje)]
+    if vivos.empty:
+        return None, None
+    linhas = sorted(vivos.to_dict("records"), key=lambda r: r["maturity_date"])
+    return linhas[0], linhas[-1]
+
+
+def _bloco_tesouro_mtm() -> list:
+    """Renderiza a seção de MtM e devolve os títulos avaliados.
+
+    Devolve a lista — e não um booleano — porque a "Análise por Título" logo
+    abaixo precisa da MESMA avaliação. Carregar de novo lá daria dois números
+    para o mesmo título, e a divergência não apareceria na tela.
+    """
+    from datetime import date as _date_hoje
+
+    try:
+        from core.config import settings
+        from core.database import get_engine
+        from core.tesouro_curva import (
+            curva_disponivel,
+            indexador_do_titulo,
+            indice_implicito,
+            titulos_ofertados,
+        )
+        from core.tesouro_posicao import carregar_titulos
+        from design import tesouro_mtm_cards as _cards
+    except Exception:
+        return []
+
+    engine = get_engine()
+    owner = getattr(settings, "OWNER_USER_ID", None)
+    if engine is None or not owner:
+        return []
+
+    titulos = carregar_titulos(engine, owner)
+    if not titulos:
+        return []
+
+    hoje = _date_hoje.today()
+    data_curva = curva_disponivel(engine)
+    ofertados = titulos_ofertados(engine)
+
+    _secao_titulo_orig(
+        "🎯", "Marcação a Mercado — Extrato Analítico",
+        f"{len(titulos)} título{'s' if len(titulos) != 1 else ''} com taxa contratada por lote"
+        + (f" · curva de {data_curva.strftime('%d/%m/%Y')}" if data_curva
+           else " · curva ainda não ingerida")
+    )
+
+    if data_curva is None:
+        st.warning(
+            "A curva oficial do Tesouro ainda não foi ingerida: os valores abaixo são os do "
+            "extrato, na data em que ele foi gerado. Rode a atualização `update_tesouro_curva` "
+            "para marcar a mercado com o preço de hoje.",
+            icon="⚠️",
+        )
+    elif (hoje - data_curva).days > 5:
+        st.warning(
+            f"A curva mais recente é de {data_curva.strftime('%d/%m/%Y')} — "
+            f"{(hoje - data_curva).days} dias atrás. A marcação abaixo é dessa data, não de hoje.",
+            icon="🕒",
+        )
+
+    bruto = sum(t.valor_bruto or 0.0 for t in titulos)
+    investido = sum(t.valor_investido for t in titulos)
+    liquido = sum(t.valor_liquido or 0.0 for t in titulos)
+    ganho_mtm = sum(t.ganho_mtm_reais or 0.0 for t in titulos if t.ganho_mtm_reais is not None)
+    marcados = [t for t in titulos if t.marcado_a_mercado]
+    base_mtm = sum((t.valor_bruto or 0.0) - (t.ganho_mtm_reais or 0.0) for t in marcados)
+    mtm_pct = (ganho_mtm / base_mtm) if base_mtm > 0 else None
+    cor_mtm = _COR_NEUTRO if mtm_pct is None else (_COR_POSITIVO if mtm_pct >= 0 else _COR_NEGATIVO)
+
+    k1, k2, k3, k4 = st.columns(4, gap="small")
+    with k1:
+        st.markdown(_kpi("Bruto Hoje", fmt_moeda(bruto),
+                         f"Custo de {fmt_moeda(investido)}", "#E2E8F0"),
+                    unsafe_allow_html=True)
+    with k2:
+        st.markdown(_kpi("Líquido se Resgatar Hoje", fmt_moeda(liquido),
+                         f"Já sem {fmt_moeda(bruto - liquido)} de IR, IOF e taxas",
+                         _COR_INFO), unsafe_allow_html=True)
+    with k3:
+        st.markdown(_kpi("Ganho de Marcação",
+                         f"{'+' if ganho_mtm >= 0 else ''}{fmt_moeda(ganho_mtm)}",
+                         f"{len(marcados)} de {len(titulos)} títulos com preço de mercado",
+                         cor_mtm), unsafe_allow_html=True)
+    with k4:
+        st.markdown(_kpi("MtM da Posição",
+                         f"{mtm_pct * 100:+.2f}%" if mtm_pct is not None else "Indisponível",
+                         "Preço de hoje ÷ preço pela taxa contratada − 1",
+                         cor_mtm), unsafe_allow_html=True)
+
+    st.caption(
+        "A marcação isola o efeito da **taxa**: é o preço de mercado de hoje contra o preço que "
+        "o mesmo título teria hoje pela taxa que você contratou. Ela não é o seu retorno — o "
+        "carrego já corrido está no bruto, não aqui."
+    )
+
+    # ── Conjuntura, datada ────────────────────────────────────────────────────
+    pre_curto, pre_longo = _vertices_prefixados(ofertados, hoje)
+    inflacao = indice_implicito(ofertados, "IPCA", pre_longo["maturity_date"]) if pre_longo else None
+
+    # `public.macro` é **anual**: serve de referência rotulada pelo ano, nunca
+    # como leitura de hoje. Só a Selic entra — `load_macro_history` normaliza
+    # essa coluna para fração e o resto vem do banco como está gravado, então
+    # exibir IPCA aqui seria adivinhar a unidade.
+    macro_ano = None
+    try:
+        from core.b3_db import load_macro_history
+        historico = load_macro_history()
+        if historico:
+            ano = max(historico)
+            selic = historico[ano].get("selic")
+            macro_ano = {"ano": ano,
+                         "selic": selic * 100 if selic is not None else None}
+    except Exception:
+        macro_ano = None
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(_cards.card_conjuntura_html(
+        data_curva=data_curva, pre_curto=pre_curto, pre_longo=pre_longo,
+        inflacao_implicita=inflacao, macro_ano=macro_ano,
+    ), unsafe_allow_html=True)
+
+    # ── Um card por título, com veredito contra alternativa nomeada ───────────
+    for titulo in titulos:
+        st.markdown(_cards.card_titulo_html(titulo), unsafe_allow_html=True)
+
+        candidatos = []
+        if ofertados is not None and not ofertados.empty:
+            for linha in ofertados.to_dict("records"):
+                if linha.get("security_key") == titulo.security_key:
+                    continue
+                if indexador_do_titulo(linha.get("title_name")) != titulo.indexador:
+                    continue
+                venc_alt = linha.get("maturity_date")
+                if not venc_alt or venc_alt < titulo.vencimento:
+                    continue
+                if linha.get("buy_rate_dec") is None or pd.isna(linha["buy_rate_dec"]):
+                    continue
+                candidatos.append(linha)
+        candidatos.sort(key=lambda r: r["maturity_date"])
+
+        rotulos = ["— escolha uma alternativa —"] + [
+            f"{c['title_name']} {c['maturity_date'].strftime('%d/%m/%Y')} "
+            f"({c['buy_rate_dec'] * 100:.2f}% na compra)" for c in candidatos
+        ]
+        escolha = st.selectbox(
+            f"Comparar {titulo.titulo} com:", rotulos,
+            key=f"tesouro_alt_{titulo.security_key}",
+            help=("Só entram títulos do mesmo indexador e com vencimento igual ou posterior: "
+                  "comparar ágio de Selic com taxa cheia de prefixado somaria grandezas "
+                  "diferentes, e pernas que terminam em datas diferentes não se comparam."),
+        )
+        posicao = rotulos.index(escolha) - 1
+        alternativa = candidatos[posicao] if posicao >= 0 else None
+
+        comparacao = titulo.comparar(
+            alternativa["buy_rate_dec"] if alternativa is not None else None,
+            data_avaliacao=data_curva or hoje,
+        )
+        st.markdown(_cards.card_veredito_html(
+            titulo, comparacao, alternativa=(escolha if alternativa is not None else None),
+        ), unsafe_allow_html=True)
+
+        if alternativa is not None and alternativa["maturity_date"] > titulo.vencimento:
+            st.caption(
+                f"A alternativa vence em {alternativa['maturity_date'].strftime('%d/%m/%Y')}, "
+                f"depois deste título. A conta a leva até {titulo.vencimento.strftime('%d/%m/%Y')} "
+                "pela taxa de hoje — na prática seria uma venda antecipada, sujeita à marcação "
+                "daquele dia, que ninguém sabe hoje."
+            )
+
+    return titulos

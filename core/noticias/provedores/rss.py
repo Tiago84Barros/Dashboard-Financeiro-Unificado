@@ -48,6 +48,68 @@ def _slug(texto: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", texto.lower()).strip("_") or "feed"
 
 
+#: Um crédito só é crédito se **repete**. Os limiares são altos de propósito:
+#: abaixo deles a cauda comum pode ser coincidência de linguagem e cortar texto
+#: de verdade é pior que deixar o crédito passar.
+_MIN_ITENS_RODAPE = 6
+_MIN_REPETICOES = 3
+_MAX_RODAPE = 40
+
+
+def _rodapes_repetidos(resumos: list[str]) -> tuple[str, ...]:
+    """Créditos de imagem que o feed cola no fim da ``description``.
+
+    Existe por causa do crédito de foto. O feed do Valor Investe encerra a
+    ``description`` com o crédito da imagem da matéria, e o resolvedor de
+    entidades lê o resumo inteiro: em 06/09/2026 ``GETY`` virou o ticker mais
+    citado do acervo -- **24 itens, mais que VALE3** -- e os 24 eram o crédito
+    da foto, não a Getty Images como assunto.
+
+    Atribuição não é sujeito. Mas a diferença não está no nome (Getty Images é
+    companhia listada de verdade), e sim em **onde** ele aparece e no fato de
+    **repetir**. Repetição é o que dá para medir, e por isso decide aqui em vez
+    de uma lista de agências de imagem -- essa envelheceria calada, e o próximo
+    feed traria outro crédito.
+
+    A primeira tentativa foi sufixo comum a todos os itens, e não funciona: o
+    crédito varia por foto (``Getty Images``, ``Reprodução/site``) e nem toda
+    matéria tem um. O que se repete é a **cauda como valor**, não como sufixo
+    universal.
+
+    Duas exigências além da repetição: a cauda tem de vir capitalizada, porque
+    crédito é nome próprio e prosa em português termina em minúscula ou
+    pontuação; e tem de ser curta. Juntas, elas são o que separa ``Getty
+    Images`` de ``conclui Caffaro``.
+    """
+    validos = [r.strip() for r in resumos if r and r.strip()]
+    if len(validos) < _MIN_ITENS_RODAPE:
+        return ()
+    contagem: dict[str, int] = {}
+    for texto in validos:
+        palavras = texto.split()
+        for k in (1, 2, 3):
+            if len(palavras) <= k:
+                continue
+            cauda = " ".join(palavras[-k:])
+            if len(cauda) > _MAX_RODAPE or not _credito_plausivel(cauda):
+                continue
+            contagem[cauda] = contagem.get(cauda, 0) + 1
+    achados = [c for c, n in contagem.items() if n >= _MIN_REPETICOES]
+    # Mais longo primeiro: cortar "Getty Images" antes de "Images" evita deixar
+    # "Getty" para trás, que casaria do mesmo jeito.
+    return tuple(sorted(achados, key=len, reverse=True))
+
+
+def _credito_plausivel(cauda: str) -> bool:
+    """Cauda com cara de crédito: nome próprio, sem pontuação de frase."""
+    if cauda.endswith((".", "!", "?", ":", ";", ",")):
+        return False
+    palavras = cauda.split()
+    if not all(p[:1].isupper() for p in palavras if p[:1].isalpha()):
+        return False
+    return any(c.isalpha() for c in cauda) and len(cauda) >= 5
+
+
 class ProvedorRSS(ProvedorBase):
     """Um feed RSS 2.0 ou Atom."""
 
@@ -131,10 +193,22 @@ class ProvedorRSS(ProvedorBase):
                 return href.strip()
         return _texto(no.findtext("guid"))
 
+    @staticmethod
+    def _sem_rodape(bruto, rodapes: tuple[str, ...]) -> str | None:
+        texto = (limpar_html(bruto) or "").strip()
+        for cauda in rodapes:
+            if texto.endswith(cauda):
+                texto = texto[: -len(cauda)]
+                break
+        return texto.strip("  .,;:-") or None
+
     def _extrair(self, carga: object) -> list[ItemBruto]:
         if not isinstance(carga, dict) or not isinstance(carga.get("itens"), list):
             raise RespostaInvalida(self.nome, "carga de feed inesperada")
         itens: list[ItemBruto] = []
+        resumos = [limpar_html(c.get("resumo")) or "" for c in carga["itens"]
+                   if isinstance(c, dict)]
+        rodapes = _rodapes_repetidos(resumos)
         for cru in carga["itens"]:
             if not isinstance(cru, dict):
                 continue
@@ -146,7 +220,7 @@ class ProvedorRSS(ProvedorBase):
             itens.append(ItemBruto(
                 titulo=limpar_html(titulo),
                 url=url,
-                resumo=limpar_html(cru.get("resumo")) or None,
+                resumo=self._sem_rodape(cru.get("resumo"), rodapes),
                 veiculo=_texto(carga.get("rotulo")) or self._rotulo,
                 autor=_texto(cru.get("autor")),
                 publicado_em=_texto(cru.get("data")),
@@ -167,6 +241,15 @@ class ProvedorRSS(ProvedorBase):
 #: Feeds públicos usados como cobertura de base do mercado brasileiro. São
 #: veículos já catalogados em ``core/noticias/fontes.py``; acrescentar um feed
 #: sem catalogar o domínio faz a fonte cair no piso de confiabilidade.
+#: Feeds padrão. Todos foram medidos pelo pipeline real em 06/09/2026 antes de
+#: entrar: os doze responderam, com **100% dos itens datados**, e nenhum caiu em
+#: ``CLASSE_DESCONHECIDA`` -- ``suno.com.br``, ``seudinheiro.com`` e
+#: ``investors.com`` (que aparece via Yahoo) foram catalogados em
+#: :mod:`core.noticias.fontes` no mesmo commit, porque feed sem domínio
+#: catalogado entra pelo piso de confiabilidade e o piso é silencioso.
+#:
+#: Recusados na medição, e por quê: Clube FII devolve 403 ao nosso User-Agent,
+#: o feed da Reuters não resolve DNS e o da Nasdaq estoura o tempo limite.
 FEEDS_PADRAO: tuple[dict[str, str], ...] = (
     {"feed": "https://www.infomoney.com.br/feed/",
      "rotulo": "InfoMoney", "idioma": "pt", "pais": "BR"},
@@ -176,6 +259,25 @@ FEEDS_PADRAO: tuple[dict[str, str], ...] = (
      "rotulo": "Brazil Journal", "idioma": "pt", "pais": "BR"},
     {"feed": "https://neofeed.com.br/feed/",
      "rotulo": "NeoFeed", "idioma": "pt", "pais": "BR"},
+    {"feed": "https://valorinveste.globo.com/rss/valorinveste/",
+     "rotulo": "Valor Investe", "idioma": "pt", "pais": "BR"},
+    {"feed": "https://exame.com/feed/",
+     "rotulo": "Exame", "idioma": "pt", "pais": "BR"},
+    {"feed": "https://br.investing.com/rss/news.rss",
+     "rotulo": "Investing BR", "idioma": "pt", "pais": "BR"},
+    {"feed": "https://www.suno.com.br/noticias/feed/",
+     "rotulo": "Suno Noticias", "idioma": "pt", "pais": "BR"},
+    {"feed": "https://www.seudinheiro.com/feed/",
+     "rotulo": "Seu Dinheiro", "idioma": "pt", "pais": "BR"},
+    # Cobertura dos EUA. Entra aqui, e não por mais chamada de API, porque RSS
+    # não tem cota: é a única ampliação que não disputa o teto diário do Alpha
+    # Vantage nem o de itens por resposta do Marketaux.
+    {"feed": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+     "rotulo": "CNBC", "idioma": "en", "pais": "US"},
+    {"feed": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+     "rotulo": "MarketWatch", "idioma": "en", "pais": "US"},
+    {"feed": "https://finance.yahoo.com/news/rssindex",
+     "rotulo": "Yahoo Finance", "idioma": "en", "pais": "US"},
 )
 
 

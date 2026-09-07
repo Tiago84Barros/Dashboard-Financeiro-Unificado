@@ -22,11 +22,14 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 
 from core.database import get_engine
+from core.destino_local import exigir_local
 from core.noticias.coleta import ResultadoColeta
+from core.noticias.destino import O_QUE, engine_acervo
 from core.noticias.modelos import NoticiaAvaliada
 
 logger = logging.getLogger(__name__)
@@ -34,7 +37,33 @@ logger = logging.getLogger(__name__)
 #: Versão do conjunto relevância + impacto + portões. Subir isto significa que
 #: as avaliações antigas não são comparáveis com as novas -- e por isso elas
 #: convivem, em vez de uma sobrescrever a outra.
-VERSAO_METODOLOGIA = "1.0.0"
+#:
+#: 1.1.0 (05/09/2026) -- o índice de relevância ganhou teto de evidência
+#: (A-146). A nota de uma notícia sem corroboração externa mudou, e mudou
+#: bastante: o caso medido caiu de 77,8 para 54,4. Comparar as duas versões
+#: como se fossem a mesma escala misturaria régua velha com régua nova.
+#:
+#: **Subir isto esvazia a tela até a safra nova existir.** É visível de
+#: propósito -- ``ler_recentes`` faz ``JOIN`` pela versão --, mas continua
+#: sendo uma tela vazia. Quem fecha a distância é
+#: ``scripts/reavaliar_acervo.py``, que reconstrói as avaliações a partir do
+#: fato observado, sem re-coletar nada e sem gastar cota de provedor.
+#:
+#: 1.2.0 (05/09/2026) -- a novidade passou a decair por pregões encerrados, e
+#: não por horas corridas (A-148). Notícia de fim de semana e de madrugada
+#: deixa de nascer velha: sábado 03:00 lido na segunda 12:00 tinha 57 horas e
+#: caía para 0,25; tem zero pregões e volta para 1,00. Os patamares não
+#: mudaram -- mudou a unidade --, mas a nota muda, e por isso a safra é outra.
+VERSAO_METODOLOGIA = "1.2.0"
+
+
+class AcervoIlegivel(RuntimeError):
+    """A leitura do acervo falhou -- o que não é o mesmo que acervo vazio.
+
+    Devolver tupla vazia aqui publicaria "nada relevante aconteceu" toda vez
+    que o banco caísse ou a tabela faltasse. Quem chama tem de poder dizer na
+    tela qual dos dois é.
+    """
 
 DDL_SQL = [
     """
@@ -102,9 +131,31 @@ DDL_SQL = [
     CREATE INDEX IF NOT EXISTS idx_noticias_avaliacoes_nota
     ON noticias_avaliacoes (versao_metodologia, nota DESC)
     """,
+    # ── veredito dos seis portoes (A-140, 05/09/2026) ─────────────────────
+    #
+    # Aditivo e idempotente: ``ADD COLUMN IF NOT EXISTS`` nao toca em linha
+    # existente. Avaliacao gravada antes desta data fica com ``acao`` NULL, e
+    # NULL aqui significa "os portoes nao rodaram nesta linha" -- que e o fato.
+    # Preencher com ``informar`` faria a safra antiga parecer avaliada por um
+    # motor que nao existia quando ela foi escrita.
+    """
+    ALTER TABLE noticias_avaliacoes
+      ADD COLUMN IF NOT EXISTS acao TEXT
+    """,
+    """
+    ALTER TABLE noticias_avaliacoes
+      ADD COLUMN IF NOT EXISTS portoes JSONB
+    """,
 ]
 
-_schema_pronto = False
+#: Destinos em que o DDL já rodou **neste processo**, por identidade da
+#: conexão-fonte. Era um booleano único até 05/09/2026, e o booleano tinha um
+#: defeito silencioso: bastava um ``garantir_schema`` anterior para que toda
+#: migration adicionada depois nunca mais rodasse naquele processo -- e também
+#: para que um segundo destino (outro schema, outro banco) fosse dado como
+#: pronto sem nunca ter sido tocado. É o padrão que a memória do projeto
+#: registra como *migration certa, registrada e nunca executada*.
+_schema_pronto: set = set()
 _lock = threading.Lock()
 
 _UPSERT_ITEM = text("""
@@ -123,6 +174,15 @@ _UPSERT_ITEM = text("""
         :metodo_sentimento
     )
     ON CONFLICT (id_dedup) DO UPDATE SET
+        -- ``resumo`` entra aqui porque o que gravamos nao e o texto cru da
+        -- fonte: ja passou por ``limpar_html`` e ``sem_rodape_de_feed``. Se a
+        -- normalizacao de entrada melhorar, congelar a versao que rodou na
+        -- primeira coleta deixa o acervo com duas gramaticas -- foi o que
+        -- aconteceu em 05/09/2026, quando 21 linhas ficaram com o rodape de
+        -- plugin que as novas ja nao tinham. O ``NULLIF`` existe porque
+        -- provedor as vezes devolve o mesmo item sem descricao numa passada
+        -- seguinte, e perder texto bom para um vazio seria pior que o rodape.
+        resumo = COALESCE(NULLIF(EXCLUDED.resumo, ''), noticias_itens.resumo),
         evento_id = EXCLUDED.evento_id,
         entidades = EXCLUDED.entidades,
         tipo_evento = EXCLUDED.tipo_evento,
@@ -135,13 +195,14 @@ _UPSERT_AVALIACAO = text("""
         id_dedup, versao_metodologia, nota, faixa, cobertura, componentes,
         pesos, direcao, probabilidade, variacao_min, variacao_max, horizonte,
         confianca, n_observacoes, estado_verificacao, n_fontes_independentes,
-        confirmado_por_primaria, limitacoes
+        confirmado_por_primaria, limitacoes, acao, portoes
     ) VALUES (
         :id_dedup, :versao_metodologia, :nota, :faixa, :cobertura,
         CAST(:componentes AS JSONB), CAST(:pesos AS JSONB), :direcao,
         :probabilidade, :variacao_min, :variacao_max, :horizonte, :confianca,
         :n_observacoes, :estado_verificacao, :n_fontes_independentes,
-        :confirmado_por_primaria, CAST(:limitacoes AS JSONB)
+        :confirmado_por_primaria, CAST(:limitacoes AS JSONB), :acao,
+        CAST(:portoes AS JSONB)
     )
     ON CONFLICT (id_dedup, versao_metodologia) DO UPDATE SET
         nota = EXCLUDED.nota,
@@ -160,21 +221,37 @@ _UPSERT_AVALIACAO = text("""
         n_fontes_independentes = EXCLUDED.n_fontes_independentes,
         confirmado_por_primaria = EXCLUDED.confirmado_por_primaria,
         limitacoes = EXCLUDED.limitacoes,
+        -- ``COALESCE`` na direcao contraria das demais: uma regravacao que nao
+        -- trouxe veredito (chamador antigo, ou coleta sem portoes) nao pode
+        -- apagar o veredito que ja estava la. Sobrescrever com NULL seria
+        -- perder evidencia por omissao de quem regravou.
+        acao = COALESCE(EXCLUDED.acao, noticias_avaliacoes.acao),
+        portoes = COALESCE(EXCLUDED.portoes, noticias_avaliacoes.portoes),
         avaliado_em = NOW()
 """)
 
 
+def _chave_destino(conn) -> object:
+    """Identidade do destino: o engine da conexão, ou a própria conexão.
+
+    Nunca a URL: dois engines para a mesma URL com ``search_path`` diferente
+    apontam para schemas diferentes, e tratá-los como o mesmo destino foi
+    exatamente o defeito que o booleano único tinha.
+    """
+    return id(getattr(conn, "engine", None) or conn)
+
+
 def garantir_schema(conn) -> None:
     """Cria as tabelas se faltarem. Idempotente e não destrutivo."""
-    global _schema_pronto
-    if _schema_pronto:
+    chave = _chave_destino(conn)
+    if chave in _schema_pronto:
         return
     with _lock:
-        if _schema_pronto:
+        if chave in _schema_pronto:
             return
         for ddl in DDL_SQL:
             conn.execute(text(ddl))
-        _schema_pronto = True
+        _schema_pronto.add(chave)
 
 
 def linha_item(avaliada: NoticiaAvaliada, evento_id: str | None = None) -> dict:
@@ -214,12 +291,31 @@ def linha_item(avaliada: NoticiaAvaliada, evento_id: str | None = None) -> dict:
     }
 
 
+def _portoes_json(veredito) -> str | None:
+    """Serializa os seis portões como trilha de auditoria.
+
+    ``satisfeito`` sai como ``true``/``false``/``null`` -- os três estados,
+    preservados. Colapsar ``null`` em ``false`` no armazenamento apagaria a
+    diferença entre "medimos e não passou" e "não medimos", que é a distinção
+    de que o motor inteiro depende.
+    """
+    if veredito is None:
+        return None
+    return json.dumps([
+        {"chave": p.chave, "rotulo": p.rotulo, "satisfeito": p.satisfeito,
+         "evidencia": p.evidencia}
+        for p in veredito.portoes], ensure_ascii=False)
+
+
 def linha_avaliacao(avaliada: NoticiaAvaliada,
-                    versao: str = VERSAO_METODOLOGIA) -> dict:
+                    versao: str = VERSAO_METODOLOGIA,
+                    veredito=None) -> dict:
     """Monta a linha da conclusão. ``None`` permanece ``None`` em toda coluna."""
     rel = avaliada.relevancia
     imp = avaliada.impacto
     return {
+        "acao": getattr(veredito, "acao", None),
+        "portoes": _portoes_json(veredito),
         "id_dedup": avaliada.noticia.id_dedup,
         "versao_metodologia": versao,
         "nota": rel.nota,
@@ -248,12 +344,19 @@ def gravar(resultado: ResultadoColeta, *, engine=None,
 
     Idempotente: rodar duas vezes a mesma coleta não duplica linha nenhuma --
     a chave é o ``id_dedup``, que sai da URL canônica.
+
+    **O destino é o armazém local, e não é preferência: é aritmética.** São
+    ~22 MB por janela de 30 dias, acumulando, contra 23 MB de folga no
+    Supabase. Por isso ``exigir_local`` roda antes de qualquer ``INSERT`` --
+    um ``engine=`` distraído não pode ser suficiente para encher o banco de que
+    a produção depende. Para a produção vai a vitrine, não o acervo.
     """
-    motor = engine if engine is not None else get_engine()
+    motor = engine if engine is not None else engine_acervo()
     if motor is None:
-        logger.info("Sem DATABASE_URL: coleta mantida apenas em memoria")
+        logger.info("Sem acervo local configurado: coleta mantida em memoria")
         return {"gravado": False, "motivo": "sem banco configurado",
                 "itens": 0, "avaliacoes": 0}
+    exigir_local(motor, o_que=O_QUE)
 
     # Mapa notícia -> evento, para a linha do fato registrar a que evento ela
     # pertence sem que o agrupamento precise ser refeito na leitura.
@@ -270,8 +373,89 @@ def gravar(resultado: ResultadoColeta, *, engine=None,
             conn.execute(_UPSERT_ITEM, linha_item(
                 avaliada, evento_de.get(avaliada.noticia.id_dedup)))
             itens += 1
-            conn.execute(_UPSERT_AVALIACAO, linha_avaliacao(avaliada, versao))
+            conn.execute(_UPSERT_AVALIACAO, linha_avaliacao(
+                avaliada, versao,
+                resultado.vereditos.get(avaliada.noticia.id_dedup)))
             avaliacoes += 1
 
     return {"gravado": True, "itens": itens, "avaliacoes": avaliacoes,
             "versao": versao}
+
+
+def gravar_avaliacoes(avaliadas, *, engine=None, vereditos=None,
+                      versao: str = VERSAO_METODOLOGIA) -> dict:
+    """Grava **só** a camada de conclusão, deixando o fato observado intocado.
+
+    É o que uma reavaliação precisa e é tudo o que ela pode fazer: mudar a
+    metodologia não muda o que a fonte publicou. Reescrever ``noticias_itens``
+    aqui apagaria a evidência contra a qual a metodologia nova está sendo
+    conferida.
+    """
+    motor = engine if engine is not None else engine_acervo()
+    if motor is None:
+        return {"gravado": False, "motivo": "sem banco configurado",
+                "avaliacoes": 0}
+    exigir_local(motor, o_que=O_QUE)
+
+    vereditos = vereditos or {}
+    n = 0
+    with motor.begin() as conn:
+        garantir_schema(conn)
+        for avaliada in avaliadas:
+            conn.execute(_UPSERT_AVALIACAO, linha_avaliacao(
+                avaliada, versao, vereditos.get(avaliada.noticia.id_dedup)))
+            n += 1
+    return {"gravado": True, "avaliacoes": n, "versao": versao}
+
+
+_SELECT_RECENTES = text("""
+    SELECT i.id_dedup, i.titulo, i.resumo, i.url, i.url_canonica, i.dominio,
+           i.veiculo, i.confiabilidade_fonte, i.publicado_em, i.coletado_em,
+           i.provedor, i.entidades, i.tipo_evento, i.evento_id,
+           i.rotulo_sentimento,
+           a.nota, a.faixa, a.cobertura, a.direcao, a.probabilidade,
+           a.variacao_min, a.variacao_max, a.horizonte, a.confianca,
+           a.estado_verificacao, a.n_fontes_independentes,
+           a.confirmado_por_primaria, a.limitacoes, a.avaliado_em,
+           a.acao, a.portoes
+      FROM noticias_itens i
+      JOIN noticias_avaliacoes a
+        ON a.id_dedup = i.id_dedup AND a.versao_metodologia = :versao
+     WHERE COALESCE(i.publicado_em, i.coletado_em) >= :corte
+     ORDER BY COALESCE(i.publicado_em, i.coletado_em) DESC
+     LIMIT :limite
+""")
+
+
+def ler_recentes(limite: int = 50, *, dias: float = 7.0, engine=None,
+                 versao: str = VERSAO_METODOLOGIA) -> tuple[dict, ...]:
+    """Acervo recente já avaliado, para a tela abrir sem ter coletado nada.
+
+    Existe porque a coleta e a exibição são processos diferentes. O job do cron
+    grava; a sessão do Streamlit nasce depois e não presenciou nada. Sem esta
+    leitura a tela diria "nenhuma coleta nesta sessão" com o acervo cheio --
+    apresentando trabalho feito como trabalho ausente.
+
+    O ``JOIN`` é pela versão de metodologia, e é restritivo de propósito: item
+    avaliado sob outra versão não é comparável com estes e some da lista em vez
+    de entrar sem nota. Subir ``VERSAO_METODOLOGIA`` sem reavaliar o acervo
+    esvazia a tela, e isso é visível -- o contrário seria silencioso.
+    """
+    motor = engine if engine is not None else engine_acervo() or get_engine()
+    if motor is None:
+        return ()
+    corte = datetime.now(timezone.utc) - timedelta(days=float(dias))
+    try:
+        # Sem ``garantir_schema``: ler não cria tabela. Criar no caminho de
+        # leitura fazia duas coisas erradas de uma vez -- gastava espaço do
+        # Supabase numa consulta, e transformava "as tabelas não existem" em
+        # "não há notícias", que é o mesmo texto de um acervo legitimamente
+        # vazio.
+        with motor.connect() as conn:
+            linhas = conn.execute(_SELECT_RECENTES, {
+                "versao": versao, "corte": corte,
+                "limite": int(limite)}).mappings().all()
+    except Exception as exc:  # noqa: BLE001 - vira falha declarada, não vazio
+        logger.warning("Acervo de noticias ilegivel: %s", exc)
+        raise AcervoIlegivel(str(exc).splitlines()[0].strip()) from exc
+    return tuple(dict(linha) for linha in linhas)

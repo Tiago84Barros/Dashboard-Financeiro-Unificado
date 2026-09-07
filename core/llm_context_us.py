@@ -187,6 +187,18 @@ def get_creation_context(model: dict) -> str:
         "  Método: líderes por indústria sobre o universo elegível, com pisos de "
         "negociabilidade e qualidade e tetos simultâneos por ativo, indústria e setor."
     )
+    contextual = []
+    for item in model.get("items") or []:
+        if item.get("macro_impact") is None:
+            continue
+        contextual.append(
+            f"{item.get('symbol') or item.get('ticker')} impacto="
+            f"{float(item['macro_impact']):+.2f}/100, peso_base="
+            f"{float(item.get('weight_before_macro') or 0):.2%}, peso_final="
+            f"{float(item.get('weight') or 0):.2%}"
+        )
+    if contextual:
+        linhas.append("  Ajustes macro determinísticos: " + " | ".join(contextual[:20]))
     return "\n".join(linhas)
 
 
@@ -246,6 +258,17 @@ def build_llm_context_for_us_portfolio_chat(
 
     if macro:
         partes += ["", format_us_macro(macro)]
+
+    setores = {}
+    for _it in (model or {}).get("items", []):
+        _tk = _norm_tk(str(_it.get("ticker") or ""))
+        if _tk:
+            setores[_tk] = str(_it.get("setor") or _it.get("industria") or "")
+    foco = {t: setores.get(t, "") for t in dict.fromkeys(port_tks + citados) if t}
+    if foco:
+        from core.conjuntura import bloco_para_prompt
+
+        partes += ["", bloco_para_prompt(asset_class="us", ativos=foco)]
 
     meta = {
         "mentioned_tickers": citados,

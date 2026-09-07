@@ -15,6 +15,29 @@ Duas armadilhas desta API, ambas tratadas aqui:
 2. **``time_published`` sem fuso.** Vem como ``20260901T1230``, sem
    deslocamento. Tratamos como UTC e isso está registrado nas limitações -- é
    suposição, não fato documentado pelo provedor.
+
+3. **``tickers`` cruza com E, não com OU.** A documentação não diz, e a
+   intuição diz o contrário. Medido contra a API em 06/09/2026:
+
+   ===============================  =======
+   consulta                         itens
+   ===============================  =======
+   sem ticker                          50
+   ``ADBE``                            50
+   ``AAPL``                            50
+   ``AAPL,MSFT``                       50
+   ``AAPL,PETR4``                    **0**
+   ``PETR4``                         **0**
+   universo de 20 da carteira        **0**
+   só os 9 americanos da carteira    **0**
+   ===============================  =======
+
+   Ou seja: a API devolve a **interseção**, e um único símbolo que ela não
+   cobre zera a resposta inteira. Foi por isso que este provedor entregou
+   **zero itens** ao acervo desde que existe, com chave válida e sem levantar
+   erro nenhum -- ele respondia ``200`` com ``feed`` vazio, que é a resposta
+   correta para a pergunta errada. Ausência que não parece falha é o modo de
+   falha mais caro deste projeto.
 """
 from __future__ import annotations
 
@@ -49,6 +72,17 @@ class AlphaVantage(ProvedorBase):
     def disponivel(self) -> bool:
         return bool(self._chave)
 
+    def limitacoes(self, consulta: Consulta) -> tuple[str, ...]:
+        """As do contrato, mais a interseção de tickers desta API."""
+        saida = list(super().limitacoes(consulta))
+        if len(consulta.tickers) > 1:
+            saida.append(
+                f"filtro tickers não aplicado por {self.nome}: a API cruza os "
+                f"símbolos com E (interseção), e os {len(consulta.tickers)} "
+                f"pedidos juntos devolvem zero; a consulta saiu ampla e a "
+                f"atribuição ficou com o resolvedor de entidades")
+        return tuple(saida)
+
     def _requisicao(self, consulta: Consulta) -> tuple[str, dict[str, object]]:
         if not self._chave:
             raise ProvedorIndisponivel(self.nome, "ALPHAVANTAGE_API_KEY ausente")
@@ -60,8 +94,19 @@ class AlphaVantage(ProvedorBase):
             "limit": max(1, min(int(consulta.limite or 50), 1000)),
             "apikey": self._chave,
         }
-        if consulta.tickers:
-            params["tickers"] = ",".join(consulta.tickers)
+        # Um só ticker é pergunta legítima; dois já são interseção, e a
+        # carteira inteira é interseção vazia garantida. Com mais de um, a
+        # consulta sai **ampla** e a atribuição fica com o resolvedor de
+        # entidades, que já roda em ``coleta`` com o universo carregado. Feed
+        # amplo com atribuição a jusante rende notícia; interseção de 20 nomes
+        # rende zero. A troca vai declarada em ``limitacoes``, nunca calada.
+        #
+        # A alternativa -- uma requisição por ticker -- foi medida e recusada:
+        # a cota gratuita é de 25 chamadas por dia (``rate_limit.LIMITES_PADRAO``)
+        # e o ciclo roda a cada 30 a 60 min. Vinte chamadas por ciclo esgotariam
+        # o dia na primeira hora e deixariam o provedor fora do ar no resto.
+        if len(consulta.tickers) == 1:
+            params["tickers"] = consulta.tickers[0]
         if consulta.temas:
             params["topics"] = ",".join(consulta.temas)
         if consulta.desde is not None:

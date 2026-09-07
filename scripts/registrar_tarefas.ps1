@@ -83,6 +83,39 @@ Registrar-Tarefa -Nome "DFU - Atualizar vitrines" `
     -Gatilhos @($diario, $logon) `
     -Argumentos "`"$repo\scripts\atualizar_vitrines.py`""
 
+# --- Coleta de noticias -------------------------------------------------------
+# Este e o agendador REAL da coleta, e ele mora aqui e nao no GitHub Actions.
+# O motivo e estrutural, o mesmo das vitrines: desde que o acervo passou a
+# morar no armazem local, um runner na nuvem nao alcanca `noticias_itens`.
+# Ligar o cron de la faria a coleta gastar cota de provedor e descartar tudo --
+# o job avisa ("coleta nao persistida"), mas a requisicao ja foi paga.
+#
+# A CADA 30 MINUTOS, e nao a cada hora: 30 min e a granularidade do modo mais
+# fino (Crise). O freio de cadencia mora no banco e descarta a execucao que o
+# modo corrente nao pede, entao disparar de mais custa um processo ocioso, e
+# disparar de menos custa noticia atrasada justamente no dia em que ela importa.
+#
+# Os :17 e :47 herdam a convencao do workflow: a virada da hora ja esta ocupada
+# pelas outras rotinas, e escrita concorrente no compute Nano do Supabase foi
+# problema antes.
+$noticias = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(17)
+$noticias.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+    -RepetitionInterval (New-TimeSpan -Minutes 30) `
+    -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
+# Duracao finita e longa em vez de [TimeSpan]::MaxValue: o valor maximo e
+# aceito por algumas versoes do agendador e recusado por outras, e a recusa
+# aconteceria na maquina do usuario, meses depois deste script.
+
+$logonNoticias = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$logonNoticias.Delay = "PT3M"
+
+Registrar-Tarefa -Nome "DFU - Coleta de noticias" `
+    -Descricao ("Coleta noticias dos provedores e grava o acervo no armazem " +
+                "local. Verifica o destino ANTES de gastar cota; o freio de " +
+                "cadencia no banco descarta o que o modo corrente nao pede.") `
+    -Gatilhos @($noticias, $logonNoticias) `
+    -Argumentos "-m data_pipeline.cli_noticias"
+
 # --- Backfill de documentos FII ----------------------------------------------
 # Semanal, e nao diario: e enriquecimento incremental de PDFs, pesado e sem
 # prazo de validade. Diario disputaria CPU e rede com a publicacao sem que a

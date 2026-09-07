@@ -389,3 +389,25 @@ def test_portfolio_matrix_remains_feasible_across_macro_regimes(macro):
     assert result["constraint_violations"] == []
     assert abs(sum(item["weight"] for item in result["items"]) - 1) < 1e-6
     assert 0 < result["effective_assets"] <= 12
+
+
+def test_macro_context_changes_utility_without_breaking_constraints():
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    impacts = {
+        row["ticker"]: (100.0 if index % 2 else -100.0)
+        for index, row in enumerate(rows)
+    }
+
+    result = optimize_diligence_portfolio(
+        rows, MacroScenario(selic=12, ipca=5),
+        policy=PortfolioPolicy(max_assets=12, max_asset=.15),
+        macro_impacts=impacts, macro_mode="moderate",
+    )
+
+    assert result["items"]
+    assert result["constraint_violations"] == []
+    assert result["macro_mode"] == "moderate"
+    assert result["macro_coverage"] == 1.0
+    assert abs(sum(item["weight"] for item in result["items"]) - 1) < 1e-6
+    assert max(abs(item["macro_score_adjustment"]) for item in result["items"]) <= 10

@@ -13,6 +13,7 @@ Estrategia de banco (Fase 4.0):
   - SUPABASE_ORIGEM_CONTROLE_URL: projeto Supabase Controle Financeiro (migracao)
   - SOURCE_DB_APP2              : SQLite do Dashboard-Investimentos (migracao)
 """
+import json
 import os
 
 from dotenv import load_dotenv
@@ -59,6 +60,76 @@ def _para_num(valor: str, padrao: float, minimo: float | None = None) -> float:
 
 
 class Settings:
+    # ── Dados macro internacionais (todos opt-in; segredo nunca chega à UI) ──
+    # Banco exclusivo do Docker local. Sem fallback ao Supabase por desenho.
+    MACRO_LOCAL_DB_URL: str = _get_secret("MACRO_LOCAL_DB_URL")
+    # Acervo de noticias: mora no armazem local por tamanho, nao por gosto.
+    # ~11 mil itens por janela de 30 dias a ~2 KB dao ~22 MB/mes acumulando,
+    # contra 23 MB de folga no Supabase. Para a producao vai a vitrine.
+    NOTICIAS_LOCAL_DB_URL: str = _get_secret("NOTICIAS_LOCAL_DB_URL")
+    # Safra da Memoria de Mercado. Vazia = mora junto do acervo (ver
+    # core.memoria_mercado.destino). Existe para separar os dois bancos
+    # depois sem tocar em chamador nenhum.
+    MEMORIA_LOCAL_DB_URL: str = _get_secret("MEMORIA_LOCAL_DB_URL")
+    FRED_API_KEY: str = _get_secret("FRED_API_KEY")
+    TRADING_ECONOMICS_API_KEY: str = _get_secret("TRADING_ECONOMICS_API_KEY")
+    MACRO_FRED_ENABLED: str = _get_secret("MACRO_FRED_ENABLED", "false")
+    MACRO_WORLD_BANK_ENABLED: str = _get_secret("MACRO_WORLD_BANK_ENABLED", "false")
+    MACRO_IMF_ENABLED: str = _get_secret("MACRO_IMF_ENABLED", "false")
+    MACRO_OECD_ENABLED: str = _get_secret("MACRO_OECD_ENABLED", "false")
+    MACRO_BIS_ENABLED: str = _get_secret("MACRO_BIS_ENABLED", "false")
+    MACRO_ECB_ENABLED: str = _get_secret("MACRO_ECB_ENABLED", "false")
+    MACRO_EUROSTAT_ENABLED: str = _get_secret("MACRO_EUROSTAT_ENABLED", "false")
+    MACRO_TRADING_ECONOMICS_ENABLED: str = _get_secret("MACRO_TRADING_ECONOMICS_ENABLED", "false")
+
+    def macro_enabled(self, provider: str) -> bool:
+        return str(_get_secret(f"MACRO_{provider.upper()}_ENABLED", "false")).lower() in {"1", "true", "yes"}
+
+    def macro_series(self) -> dict[str, tuple[dict[str, str], ...]]:
+        """Séries são configuradas por env e não recebem código inventado pelo app.
+
+        Formato: MACRO_FRED_SERIES=FEDFUNDS:US,CPIAUCSL:US
+        """
+        result: dict[str, tuple[dict[str, str], ...]] = {}
+        for provider in ("fred", "world_bank", "imf", "oecd", "bis", "ecb", "eurostat"):
+            specs = []
+            for item in _get_secret(f"MACRO_{provider.upper()}_SERIES", "").split(","):
+                code, _, country = item.strip().partition(":")
+                if code:
+                    specs.append(
+                        {
+                            "code": code,
+                            **({"country": country.upper()} if country else {}),
+                        }
+                    )
+            result[provider] = tuple(specs)
+        return result
+
+    def macro_calendar_countries(self) -> tuple[str, ...]:
+        """Países explícitos do calendário opcional; não cria cobertura implícita."""
+        countries = []
+        for code in _get_secret("MACRO_TRADING_ECONOMICS_COUNTRIES", "").split(","):
+            normalized = code.strip().upper()
+            if normalized.isalpha() and len(normalized) in {2, 3}:
+                countries.append(normalized)
+        return tuple(dict.fromkeys(countries))
+
+    def macro_indicator_mappings(self) -> dict[str, dict[str, str]]:
+        """Lê somente mapeamentos explícitos, descartando JSON malformado."""
+        try:
+            raw = json.loads(_get_secret("MACRO_INDICATOR_MAPPINGS", "{}"))
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(key): {
+                "canonical_code": str(value.get("canonical_code", "")),
+                "category": str(value.get("category", "")),
+            }
+            for key, value in raw.items()
+            if isinstance(value, dict)
+        }
     # ── Banco unificado (Dashboard Financeiro — banco central do App 4) ───────
     # Connection string do pooler Supabase (Transaction Mode, porta 6543).
     # Formato: postgresql://app4_reader:SENHA@HOST.pooler.supabase.com:6543/postgres
@@ -150,6 +221,36 @@ class Settings:
     NOTICIAS_FREQ_NORMAL_MIN: str = _get_secret("NOTICIAS_FREQ_NORMAL_MIN", "240")
     NOTICIAS_FREQ_EMERGENCIA_MIN: str = _get_secret(
         "NOTICIAS_FREQ_EMERGENCIA_MIN", "30")
+    # Vigilância (níveis 1-2) e crise (níveis 3-4). A de crise cai para o mesmo
+    # valor de EMERGENCIA quando esta é configurada e aquela não, para que quem
+    # já tinha a variável antiga não perca o ajuste ao atualizar.
+    NOTICIAS_FREQ_VIGILANCIA_MIN: str = _get_secret(
+        "NOTICIAS_FREQ_VIGILANCIA_MIN", "60")
+    NOTICIAS_FREQ_CRISE_MIN: str = _get_secret("NOTICIAS_FREQ_CRISE_MIN", "")
+
+    # Teto absoluto de tempo sem atualização, em minutos. "0" desliga o teto e
+    # deixa cada modo com o seu próprio SLA (intervalo x folga). O teto só
+    # aperta o SLA do modo, nunca o afrouxa.
+    NOTICIAS_MAX_SEM_ATUALIZACAO_MIN: str = _get_secret(
+        "NOTICIAS_MAX_SEM_ATUALIZACAO_MIN", "0")
+
+    # Retentativa dentro de uma execução: quantas vezes e com que espera.
+    NOTICIAS_MAX_RETENTATIVAS: str = _get_secret("NOTICIAS_MAX_RETENTATIVAS", "2")
+    NOTICIAS_BACKOFF_S: str = _get_secret("NOTICIAS_BACKOFF_S", "5")
+    NOTICIAS_TIMEOUT_S: str = _get_secret("NOTICIAS_TIMEOUT_S", "12")
+
+    # Teto diário de requisições por provedor, no formato "nome:limite,...".
+    # Vazio mantém os limites que cada provedor já declara em rate_limit.
+    NOTICIAS_LIMITES_DIARIOS: str = _get_secret("NOTICIAS_LIMITES_DIARIOS", "")
+
+    # Retenção do acervo, em dias. O expurgo roda no fim da coleta e é o que
+    # impede o banco de crescer sem limite no plano free.
+    NOTICIAS_RETENCAO_DIAS: str = _get_secret("NOTICIAS_RETENCAO_DIAS", "180")
+
+    # Fuso APENAS de apresentação. Todo carimbo é gravado e comparado em UTC;
+    # converter na gravação já produziu, neste projeto, série que muda de dia
+    # conforme o horário de verão de quem gravou.
+    NOTICIAS_TIMEZONE: str = _get_secret("NOTICIAS_TIMEZONE", "America/Sao_Paulo")
 
     # Idade a partir da qual a notícia deixa de ser tratada como corrente.
     # Ela continua no acervo; o que muda é que passa a ser exibida como
@@ -304,6 +405,57 @@ class Settings:
     @property
     def noticias_freq_emergencia_min(self) -> float:
         return _para_num(self.NOTICIAS_FREQ_EMERGENCIA_MIN, 30.0, minimo=1.0)
+
+    @property
+    def noticias_freq_vigilancia_min(self) -> float:
+        return _para_num(self.NOTICIAS_FREQ_VIGILANCIA_MIN, 60.0, minimo=1.0)
+
+    @property
+    def noticias_freq_crise_min(self) -> float:
+        """Cadência de crise. Herda EMERGENCIA quando não configurada.
+
+        Sem a herança, quem já tinha ``NOTICIAS_FREQ_EMERGENCIA_MIN`` ajustada
+        veria o valor ser ignorado em silêncio no dia em que os modos passaram
+        a ser três -- que é exatamente como uma configuração some sem erro.
+        """
+        if str(self.NOTICIAS_FREQ_CRISE_MIN or "").strip():
+            return _para_num(self.NOTICIAS_FREQ_CRISE_MIN, 15.0, minimo=1.0)
+        return self.noticias_freq_emergencia_min
+
+    @property
+    def noticias_max_sem_atualizacao_min(self) -> float:
+        return _para_num(self.NOTICIAS_MAX_SEM_ATUALIZACAO_MIN, 0.0, minimo=0.0)
+
+    @property
+    def noticias_max_retentativas(self) -> int:
+        return int(_para_num(self.NOTICIAS_MAX_RETENTATIVAS, 2.0, minimo=0.0))
+
+    @property
+    def noticias_backoff_s(self) -> float:
+        return _para_num(self.NOTICIAS_BACKOFF_S, 5.0, minimo=0.0)
+
+    @property
+    def noticias_timeout_s(self) -> float:
+        return _para_num(self.NOTICIAS_TIMEOUT_S, 12.0, minimo=1.0)
+
+    @property
+    def noticias_retencao_dias(self) -> int:
+        return int(_para_num(self.NOTICIAS_RETENCAO_DIAS, 180.0, minimo=1.0))
+
+    @property
+    def noticias_limites_diarios(self) -> dict[str, int]:
+        """Tetos por provedor, no formato ``nome:limite``. Item ilegível é
+        ignorado -- um typo não pode derrubar o motor inteiro na importação."""
+        limites: dict[str, int] = {}
+        for parte in (self.NOTICIAS_LIMITES_DIARIOS or "").split(","):
+            nome, _, valor = parte.partition(":")
+            nome = nome.strip().lower()
+            try:
+                if nome and valor.strip():
+                    limites[nome] = max(0, int(float(valor.strip())))
+            except ValueError:
+                continue
+        return limites
 
     @property
     def noticias_idade_max_horas(self) -> float:

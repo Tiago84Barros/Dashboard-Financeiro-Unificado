@@ -117,6 +117,38 @@ def test_carteira_respeita_limites_e_soma_um():
     assert result["metrics"]["effective_assets"] > 10
 
 
+def test_macro_tilt_is_bounded_and_fundamental_mode_is_backward_compatible():
+    params = USPortfolioCreationParams(
+        top_n=15, leaders_per_industry=2, min_companies_per_industry=4,
+        min_entry_score=50, min_score_edge=0, max_weight=.10,
+        max_industry_weight=.18, max_sector_weight=.40,
+    )
+    baseline = build_portfolio_creation(_universe(), params)
+    impacts = {
+        symbol: (100.0 if index % 2 else -100.0)
+        for index, symbol in enumerate(baseline["holdings"]["symbol"])
+    }
+    fundamental = build_portfolio_creation(
+        _universe(), params, macro_impacts=impacts, macro_mode="fundamental")
+    contextual = build_portfolio_creation(
+        _universe(), params, macro_impacts=impacts, macro_mode="moderate")
+
+    assert fundamental["holdings"]["weight"].tolist() == pytest.approx(
+        baseline["holdings"]["weight"].tolist())
+    assert contextual["holdings"]["weight"].sum() == pytest.approx(1.0)
+    assert contextual["macro"]["turnover"] <= .10 + 1e-9
+    assert contextual["holdings"]["macro_score_adjustment"].abs().max() <= 10
+    assert contextual["holdings"]["weight"].max() <= .10 + 1e-7
+    assert (
+        contextual["holdings"].groupby("industry_group")["weight"].sum().max()
+        <= .18 + 1e-7
+    )
+    assert (
+        contextual["holdings"].groupby("sector_group")["weight"].sum().max()
+        <= .40 + 1e-7
+    )
+
+
 def test_cap_adaptativo_documenta_ajuste_matematico():
     params = USPortfolioCreationParams(
         top_n=10, leaders_per_industry=2, min_companies_per_industry=4,

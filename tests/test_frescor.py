@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 
@@ -53,10 +53,41 @@ def test_carimbo_ilegivel_vira_none_em_vez_de_zero(valor):
 
 
 def test_idade_aceita_datetime_texto_e_date():
+    """As quatro formas de carimbo que chegam aqui, todas no mesmo calendário."""
     assert frescor.idade_em_dias(_dias_atras(3)) == 3
     assert frescor.idade_em_dias(_dias_atras(3).isoformat()) == 3
     assert frescor.idade_em_dias(date.today()) == 0
-    assert frescor.idade_em_dias(_dias_atras(1).replace(tzinfo=None)) == 1
+    assert frescor.idade_em_dias(datetime.now() - timedelta(days=1)) == 1
+
+
+@pytest.mark.parametrize("hora", range(24))
+def test_carimbo_de_hoje_tem_idade_zero_a_qualquer_hora(hora):
+    """O defeito que este teste fixa tinha janela, e por isso demorou a aparecer.
+
+    A versão anterior subtraía uma data do relógio local do dia corrente em UTC.
+    No fuso do usuário (UTC-3) o dia em UTC vira às 21h; das 21h à meia-noite,
+    vitrine publicada naquele instante saía com **um dia** de idade. Não é
+    incômodo de teste: é o alarme de dado vencido disparando sem dado vencido,
+    justamente no horário em que o publicador roda.
+
+    Rodar a suíte às 22h não pode dar resultado diferente de rodar às 10h --
+    então o teste varre o dia inteiro em vez de confiar na hora do relógio.
+    """
+    hoje = date.today()
+    naive = datetime.combine(hoje, time(hora, 30))
+    assert frescor.idade_em_dias(naive) == 0
+    assert frescor.idade_em_dias(naive.astimezone()) == 0
+    assert frescor.idade_em_dias(naive.isoformat()) == 0
+
+
+def test_carimbo_em_utc_e_carimbo_local_do_mesmo_instante_dao_a_mesma_idade():
+    """Fuso é representação, não idade. O mesmo instante tem uma idade só."""
+    agora = datetime.now(timezone.utc)
+    for dias in (0, 1, 5):
+        instante = agora - timedelta(days=dias)
+        assert (frescor.idade_em_dias(instante)
+                == frescor.idade_em_dias(instante.astimezone())
+                == dias)
 
 
 def test_no_prazo_nao_e_atrasada_nem_vencida():

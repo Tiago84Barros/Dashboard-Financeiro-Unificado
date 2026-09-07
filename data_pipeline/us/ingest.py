@@ -15,8 +15,9 @@ Este módulo é usado pela CLI (run_us_ingest.py). A view não o importa.
 from __future__ import annotations
 
 import logging
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 
 from sqlalchemy import text
 
@@ -300,28 +301,74 @@ def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
             "calls": provider.calls_made, "rows": rows_written, "workers": int(workers)}
 
 
-def ingest_prices_only(provider, engine, symbols: Iterable[str]) -> dict:
+OVERLAP_DIAS = 7
+
+
+def _janela(desde, sym, *, overlap_dias: int = OVERLAP_DIAS):
+    """Data inicial da descida para ``sym``, ou ``None`` para histórico inteiro.
+
+    O recuo de ``overlap_dias`` sobre a última data guardada existe porque o
+    Yahoo corrige barra recente (volume consolidado, fechamento revisado) depois
+    de publicá-la. Pedir a partir do dia seguinte gravaria a primeira versão e
+    nunca mais voltaria nela; o upsert é por (symbol, date), então reescrever a
+    semana é barato e idempotente.
+    """
+    if not desde:
+        return None
+    ultima = desde.get(sym)
+    if ultima is None:
+        return None
+    return (ultima - timedelta(days=max(0, int(overlap_dias)))).isoformat()
+
+
+def ingest_prices_only(provider, engine, symbols: Iterable[str], *,
+                       desde: Mapping[str, date] | None = None) -> dict:
     """Passagem incremental de PREÇOS (yfinance) para símbolos já com fundamentos.
 
     Desacopla o gargalo do yfinance da carga de fundamentos (EDGAR). Uma falha de
     preço não afeta os outros; nada de fundamentos é tocado aqui.
+
+    ``desde`` mapeia símbolo → última data já guardada e transforma a passagem em
+    incremental de verdade. Sem ele, cada execução rebaixava ``period="max"`` e
+    reescrevia o histórico inteiro: medido em 07/09/2026, ~13 s por símbolo
+    contra ~0,4 s da janela, ou seja quatro horas para atualizar 1.100 empresas.
+    Uma rotina diária que leva quatro horas não termina — e foi exatamente assim
+    que a vitrine ficou parada em 20/08 e a Criação de Portfólio bloqueou o
+    universo inteiro por negociabilidade não verificada.
+
+    Split dentro da janela devolve o símbolo ao histórico completo: o Yahoo
+    retroajusta a série toda depois de um desdobramento, e uma janela de dias
+    deixaria as barras antigas com o preço da era anterior — o defeito que este
+    projeto já conhece como "preço bilionário é retroajuste, não lixo".
     """
     symbols = [identity.normalize_symbol(s) for s in symbols if s]
     ok = err = rows = 0
+    completos = 0
     for sym in symbols:
         try:
+            start = _janela(desde, sym)
+            splits = provider.get_splits(sym, start, None) if start else None
+            if start and splits:
+                # Retroajuste: a janela não corrige as barras anteriores.
+                logger.info("prices %s: split na janela, refazendo histórico", sym)
+                start, splits, completos = None, None, completos + 1
             with engine.begin() as conn:
-                n = repo.upsert_prices_daily(conn, sym, provider.get_prices_daily(sym))
+                n = repo.upsert_prices_daily(
+                    conn, sym, provider.get_prices_daily(sym, start, None))
                 if n:
-                    n += repo.upsert_dividends(conn, sym, provider.get_dividends(sym))
-                    n += repo.upsert_splits(conn, sym, provider.get_splits(sym))
+                    n += repo.upsert_dividends(
+                        conn, sym, provider.get_dividends(sym, start, None))
+                    if splits is None:
+                        splits = provider.get_splits(sym, start, None)
+                    n += repo.upsert_splits(conn, sym, splits)
             rows += n
             ok += 1 if n else 0
             err += 0 if n else 1
         except Exception as exc:  # noqa: BLE001
             err += 1
             logger.warning("prices %s falhou: %s", sym, exc)
-    return {"processed": len(symbols), "with_prices": ok, "empty": err, "rows": rows}
+    return {"processed": len(symbols), "with_prices": ok, "empty": err,
+            "rows": rows, "historico_refeito": completos}
 
 
 # ── Estimativa (dry-run) ──────────────────────────────────────────────────────

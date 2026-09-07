@@ -545,6 +545,13 @@ def get_creation_context(model: dict, max_rejected: int = 12) -> str:
         motivos = _parse_json_field(it.get("motivos_json") or it.get("motivos"), [])
         if isinstance(motivos, list) and motivos:
             lines.append(f"  {_norm_tk(it.get('ticker',''))}: {'; '.join(str(m) for m in motivos[:3])}")
+        if it.get("macro_impact") is not None:
+            lines.append(
+                f"  {_norm_tk(it.get('ticker',''))}: impacto_macro="
+                f"{float(it['macro_impact']):+.2f}/100; peso_fundamental="
+                f"{float(it.get('peso_fundamental') or 0):.2%}; peso_contextual="
+                f"{float(it.get('peso') or it.get('weight') or 0):.2%}"
+            )
 
     # Rejeitadas/não selecionadas — universo dos setores da carteira menos as selecionadas
     rejected_done = False
@@ -679,6 +686,21 @@ def build_llm_context_for_portfolio_chat(
 
     if "creation" in intent or "compare_outside" in intent:
         parts += ["", get_creation_context(model)]
+
+    # Conjuntura (macro + noticiario) dos ativos em foco. Entra depois de todos
+    # os blocos fundamentalistas de proposito: e leitura de contexto, nao de
+    # qualidade da empresa, e a LLM precisa ler nessa ordem para nao trocar uma
+    # pela outra. Ausencia aqui aparece como ausencia, nunca como calmaria.
+    setores = {}
+    for _it in (model or {}).get("items", []):
+        _tk = _norm_tk(str(_it.get("ticker") or ""))
+        if _tk:
+            setores[_tk] = str(_it.get("setor") or _it.get("segmento") or "")
+    foco = {t: setores.get(t, "") for t in dict.fromkeys(port_tks + q_tickers) if t}
+    if foco:
+        from core.conjuntura import bloco_para_prompt
+
+        parts += ["", bloco_para_prompt(asset_class="b3", ativos=foco)]
 
     context = "\n".join(p for p in parts if p is not None)
 

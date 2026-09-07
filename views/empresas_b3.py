@@ -9,9 +9,11 @@ Logos:           thefintz/icones-b3 CDN (público, sem auth)
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import html
 import json
+import logging
 import re
 from dataclasses import dataclass
 
@@ -23,11 +25,12 @@ import requests
 import streamlit as st
 import yfinance as yf
 
-import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
+import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
+from core.b3_slopes import SLOPE_COLS, compute_slope_log, enrich_com_slopes
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
 from core.validacao_motor import validacao_b3
@@ -46,6 +49,15 @@ from design.market_companies import (
     render_market_css,
     render_market_tabs,
     render_sector_grid,
+)
+
+logger = logging.getLogger(__name__)
+
+# Variável que realmente resolve a conexão desde o cutover de 2026-07;
+# `SUPABASE_DB_URL_B3` só alimenta o fallback legado de `core/b3_db.py`.
+VAR_CONEXAO = (
+    "`SUPABASE_UNIFICADO_URL` (ou `DATABASE_URL` / `SUPABASE_DB_URL`) "
+    "no `.env` ou nos secrets do Streamlit Cloud"
 )
 
 # ── Constantes ────────────────────────────────────────────────────────────────
@@ -650,8 +662,8 @@ def _so_acoes(df_set: pd.DataFrame) -> pd.DataFrame:
 def _tab_empresas(df_set: pd.DataFrame) -> None:
     if df_set.empty:
         st.warning(
-            "Tabela `setores` não encontrada no banco configurado. "
-            "Configure `SUPABASE_DB_URL_B3` no `.env` ou nos secrets do Streamlit Cloud."
+            "O cadastro de setores voltou vazio — o app não conseguiu ler o "
+            "banco. Confira " + VAR_CONEXAO + "."
         )
         return
     # Card mostra só AÇÕES — remove FIIs, ETFs, BDRs e subscrições.
@@ -773,9 +785,7 @@ _COLS_COMP: list[tuple[str, str]] = [
 ]
 _INV_LABELS: set[str] = {"Endiv.", "P/L", "P/VP", "EV/EBIT"}
 
-_SLOPE_COLS: tuple[str, ...] = (
-    "ROE", "ROIC", "Margem_Liquida", "Margem_Operacional",
-)
+_SLOPE_COLS: tuple[str, ...] = SLOPE_COLS
 
 _FUND_FALLBACK_MAP: dict[str, str] = {
     "pl": "P/L",
@@ -800,48 +810,18 @@ _PCT_SCORE_FIELDS: set[str] = {
 _SCORE_RANGES = _dq.CANONICAL_RANGES
 
 
-def _compute_slope_log(s: pd.Series) -> float | None:
-    """Slope da regressão log-linear — proxy de crescimento anualizado do indicador."""
-    s = pd.to_numeric(s, errors="coerce").dropna()
-    s = s[s > 0]
-    if len(s) < 3:
-        return None
-    x = np.arange(len(s), dtype=float)
-    try:
-        slope, _ = np.polyfit(x, np.log(s.values), 1)
-        return float(slope) if np.isfinite(slope) else None
-    except Exception:
-        return None
+# Definidos em core.b3_slopes para que a Análise do Portfólio calcule o MESMO
+# crescimento; duplicar a fórmula já produziu notas divergentes para a mesma
+# empresa em telas diferentes.
+_compute_slope_log = compute_slope_log
 
 
 def _enrich_com_slopes(
     df_mult: pd.DataFrame,
     hist_batch: dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
-    """
-    Acrescenta colunas {col}_slope_log ao df_mult calculadas do histórico.
-    Colunas ausentes são silenciosamente ignoradas pelo scoring.
-    """
-    if not hist_batch or df_mult.empty:
-        return df_mult
-    slope_data: dict[str, dict[str, float]] = {}
-    for tk, df_h in hist_batch.items():
-        if df_h.empty:
-            continue
-        row: dict[str, float] = {}
-        for c in _SLOPE_COLS:
-            if c not in df_h.columns:
-                continue
-            v = _compute_slope_log(df_h[c])
-            if v is not None:
-                row[f"{c}_slope_log"] = v
-        if row:
-            slope_data[tk] = row
-    if not slope_data:
-        return df_mult
-    df_sl = pd.DataFrame.from_dict(slope_data, orient="index")
-    df_sl.index.name = "Ticker"
-    return df_mult.merge(df_sl.reset_index(), on="Ticker", how="left")
+    """Acrescenta colunas {col}_slope_log ao df_mult calculadas do histórico."""
+    return enrich_com_slopes(df_mult, hist_batch)
 
 
 def _score_value_usable(field: str, value: object) -> bool:
@@ -3549,6 +3529,45 @@ def _render_b3_score_dashboard(
         _render_b3_dossie(ticker, score_row, referencia)
 
 
+def _universo_b3_de(carrega_setores, carrega_multiplos) -> tuple[str, ...]:
+    """Une as duas fontes de universo, tolerando falha de qualquer uma delas.
+
+    Separada do wrapper cacheado de proposito: assim o teste exercita a regra
+    passando as leituras como argumento, sem depender de monkeypatch em modulo
+    compartilhado (que vaza entre testes) nem do cache do Streamlit (que o CI
+    desliga).
+    """
+    universo: set[str] = set()
+    try:
+        df_set = carrega_setores()
+        if not df_set.empty and "ticker" in df_set.columns:
+            universo |= {str(t).strip().upper() for t in df_set["ticker"].dropna()}
+    except Exception as exc:  # noqa: BLE001 — leitura opcional
+        logger.warning("universo B3: load_setores falhou (%s)", exc)
+    try:
+        df_mult = carrega_multiplos()
+        col = next((c for c in df_mult.columns if c.lower() == "ticker"), None)
+        if col:
+            universo |= {str(t).strip().upper() for t in df_mult[col].dropna()}
+    except Exception as exc:  # noqa: BLE001 — leitura opcional
+        logger.warning("universo B3: load_multiplos_todos falhou (%s)", exc)
+    universo.discard("")
+    return tuple(sorted(universo))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _universo_b3_tickers() -> tuple[str, ...]:
+    """Tickers que este módulo sabe analisar: cadastro de setores ∪ fundamentos.
+
+    A união importa. Em 06/09/2026 havia 3 tickers com fundamentos publicados
+    (ENAT3, NATU3, PETZ3) ausentes do cadastro de setores; validar só pelo
+    cadastro bloquearia empresas que têm dado. Se as duas leituras falharem, o
+    universo volta vazio e a validação se desliga — um problema de banco não
+    pode virar "ticker inexistente".
+    """
+    return _universo_b3_de(_db.load_setores, _db.load_multiplos_todos)
+
+
 def _tab_analise(df_set: pd.DataFrame) -> None:
     # ── Input ─────────────────────────────────────────────────────────────────
     default_tk = st.session_state.get("b3_ticker_sel", "")
@@ -3571,6 +3590,22 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     tk = st.session_state.get("b3_ticker_sel", "").strip().upper().replace(".SA", "")
     if not tk:
         st.info("Digite um ticker acima e clique em **Analisar**.", icon="🔍")
+        return
+
+    # ── Ticker conhecido? ─────────────────────────────────────────────────────
+    # Sem esta checagem qualquer texto digitado virava um cabeçalho de empresa
+    # ("BBSA3 — BBSA3") e a ausência de dados era reportada depois como falha de
+    # configuração de banco. Erro de digitação tem que parecer erro de digitação.
+    universo = _universo_b3_tickers()
+    if universo and tk not in universo:
+        sugestoes = difflib.get_close_matches(tk, universo, n=4, cutoff=0.6)
+        st.error(
+            f"**{tk}** não está entre os {len(universo)} papéis da B3 que este "
+            "módulo cobre. O banco está acessível — o que não existe é o ticker.",
+            icon="🚫",
+        )
+        if sugestoes:
+            st.caption("Talvez você queira: " + " · ".join(f"`{x}`" for x in sugestoes))
         return
 
     # ── Header ────────────────────────────────────────────────────────────────
@@ -3916,9 +3951,20 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                 "configuração de banco — tente novamente em instantes.",
                 icon="⚠️",
             )
+        elif sem_banco:
+            st.warning(
+                f"**{tk}** é um ticker conhecido, mas não há preço nem "
+                "fundamentos publicados para ele. Costuma ser papel de baixa "
+                "liquidez ou recém-listado, ainda sem safra de dados.",
+                icon="⚠️",
+            )
         else:
-            st.warning("Dados financeiros não encontrados. Configure `SUPABASE_DB_URL_B3`.",
-                       icon="⚠️")
+            st.warning(
+                f"Sem histórico de preços para **{tk}** na yfinance. Os "
+                "fundamentos abaixo seguem vindo do banco — só o gráfico de "
+                "preço ficou vazio.",
+                icon="⚠️",
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # SEÇÃO 3 — Múltiplos Fundamentalistas (agrupados)
@@ -4221,7 +4267,10 @@ def _render_calibracao_segmento(calib) -> None:
 
 def _tab_avancada(df_set: pd.DataFrame) -> None:
     if df_set.empty:
-        st.warning("Banco não configurado. Configure `SUPABASE_DB_URL_B3`.")
+        st.warning(
+            "O cadastro de setores voltou vazio — sem ele a análise avançada "
+            "não tem universo. Confira " + VAR_CONEXAO + "."
+        )
         return
 
     st.markdown(
@@ -4419,7 +4468,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     f"🎯 Universo de decisão: {len(df_mult_todos)} empresas. "
                     f"{_cortadas} descartadas por dado insuficiente para "
                     "sustentar recomendação (confiança de dados abaixo do "
-                    "mínimo). Veja a seção Grau de Confiança."
+                    "mínimo). Veja Configurações → Grau de Confiança."
                 )
     except Exception:  # noqa: BLE001 - filtro é melhoria, não pré-requisito
         import logging
@@ -4655,12 +4704,79 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     # Barganha (cheapness): mistura múltiplos de preço ao score de qualidade —
     # mesma lógica da Criação de Portfólio. 0% preserva o comportamento atual.
     pesos_v2 = _aplicar_cheapness(pesos_v2, cheapness_weight_av)
+    macro_mode_av = st.selectbox(
+        "Camada macro internacional no ranking avançado",
+        ["fundamental", "moderate", "scenario"],
+        index=1,
+        format_func={
+            "fundamental": "Somente macro doméstico já incorporado",
+            "moderate": "Internacional moderado (recomendado)",
+            "scenario": "Cenário internacional ampliado",
+        }.get,
+        key="b3_advanced_macro_mode",
+        help=("O score já usa Selic/IPCA domésticos por data. Esta camada acrescenta "
+              "somente fatores internacionais aplicáveis, sem duplicar o doméstico."),
+    )
     df_scored = _score_universo(
         df_mult_enrich, tks_uni, pesos_v2,
         df_hist_batch=hist_batch,
         group_col_prefer=group_prefer,
         macro_context=_macro_for_year(macro_history),
     )
+    macro_snapshot_av = None
+    if df_scored is not None and not df_scored.empty:
+        try:
+            from core.macro_data.database import get_local_macro_engine
+            from core.macro_data.portfolio_context import (
+                aggregate_impact_rows,
+                load_portfolio_macro_snapshot,
+            )
+            from core.macro_data.portfolio_tilt import apply_macro_scores
+
+            sector_map = {
+                str(row["ticker"]).upper(): str(row.get("SETOR") or "")
+                for _, row in df_set.iterrows()
+                if row.get("ticker")
+            }
+            local_engine = get_local_macro_engine()
+            if local_engine is not None:
+                macro_snapshot_av = load_portfolio_macro_snapshot(
+                    local_engine,
+                    asset_class="b3",
+                    assets={
+                        str(ticker): sector_map.get(str(ticker).upper(), "")
+                        for ticker in df_scored["Ticker"]
+                    },
+                )
+                international_impacts = aggregate_impact_rows(
+                    row for row in macro_snapshot_av.details
+                    if row.get("provider") != "app4_domestic"
+                )
+                df_scored = apply_macro_scores(
+                    df_scored,
+                    international_impacts,
+                    symbol_column="Ticker",
+                    score_column="score",
+                    mode=macro_mode_av,
+                )
+                df_scored["score_domestic_context"] = df_scored["score"]
+                df_scored["score"] = df_scored["contextual_score"].clip(0, 100).round(1)
+                df_scored["ranking"] = df_scored["score"].rank(
+                    ascending=False, method="min"
+                ).astype(int)
+                df_scored = df_scored.sort_values(
+                    ["score", "Ticker"], ascending=[False, True]
+                ).reset_index(drop=True)
+        except Exception:
+            macro_snapshot_av = None
+    if macro_snapshot_av is None:
+        st.caption("Macro internacional local indisponível; ranking doméstico preservado.")
+    else:
+        st.caption(
+            f"Macro Docker local: corte {macro_snapshot_av.as_of:%d/%m/%Y} · "
+            f"cobertura {macro_snapshot_av.coverage:.0%}. O ajuste internacional "
+            "é separado do macro doméstico e limitado a ±10 pontos."
+        )
     # A relação nominal das reprovadas por completude saiu da tela: quem chega
     # aqui quer o ranking, e a lista de quem não entrou não muda decisão alguma.
     # A contagem permanece no cabeçalho do universo, para o número de empresas
@@ -6641,8 +6757,8 @@ def render() -> None:
 
     if df_set.empty:
         st.caption(
-            "⚠️ Banco não configurado — configure `SUPABASE_DB_URL_B3` "
-            "no `.env` ou nos secrets do Streamlit Cloud."
+            "⚠️ Cadastro de setores vazio — o app não conseguiu ler o banco. "
+            "Confira " + VAR_CONEXAO + "."
         )
     elif fallback_legado:
         st.caption(

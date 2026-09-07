@@ -2,11 +2,13 @@
 views/configuracoes.py
 Configurações do sistema — cinco abas organizadas por finalidade.
 
-  💳 Atualizar Controle Financeiro — fatura do cartão + extratos bancários
-  📈 Atualizar Investimentos       — importações B3, XP, Nomad
-  🔄 Atualizar Dados Financeiros   — CVM, YFinance, Banco Central, macro (Empresas B3)
-  🗄️ Informações do BD             — conexão, schema e diagnóstico técnico
-  🔒 Segurança                     — sessão e autenticação
+  🔁 Atualização de dados — o que o usuário sobe de arquivo, em duas sub-abas:
+       💳 Controle Financeiro — fatura do cartão + extratos bancários
+       📈 Investimentos       — importações B3, XP, Nomad
+  🔄 Dados de mercado     — CVM, YFinance, Banco Central, macro (orquestração)
+  🗄️ Banco de dados       — conexão, capacidade, schema e diagnóstico técnico
+  🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
+  🔒 Segurança            — sessão e autenticação
 """
 from __future__ import annotations
 
@@ -35,33 +37,16 @@ def render() -> None:
     st.markdown(_CONFIG_CSS + _CARD_CSS, unsafe_allow_html=True)
     _render_settings_overview()
 
-    tab_controle, tab_invest, tab_dados, tab_banco, tab_seg = st.tabs([
-        "💳 Controle",
-        "📈 Investimentos",
+    tab_atualizacao, tab_dados, tab_banco, tab_conf, tab_seg = st.tabs([
+        "🔁 Atualização de dados",
         "🔄 Dados de mercado",
         "🗄️ Banco de dados",
+        "🎯 Grau de Confiança",
         "🔒 Segurança",
     ])
 
-    with tab_controle:
-        _render_tab_intro(
-            "ENTRADAS FINANCEIRAS",
-            "Controle Financeiro",
-            "Importe faturas e extratos com prévia, classificação e proteção contra duplicidades.",
-            "CSV + PDF",
-            "#00C896",
-        )
-        _render_controle_financeiro()
-
-    with tab_invest:
-        _render_tab_intro(
-            "POSIÇÕES E MOVIMENTAÇÕES",
-            "Investimentos",
-            "Centralize arquivos da B3, XP e Nomad antes de atualizar posições e proventos.",
-            "B3 · XP · Nomad",
-            "#B084F6",
-        )
-        _render_investimentos()
+    with tab_atualizacao:
+        _render_atualizacao_de_dados()
 
     with tab_dados:
         _render_tab_intro(
@@ -83,6 +68,17 @@ def render() -> None:
         )
         _render_banco()
 
+    with tab_conf:
+        _render_tab_intro(
+            "QUALIDADE DO DADO",
+            "Grau de Confiança",
+            "Quanto o app confia em cada seção, e a evidência por trás de cada "
+            "nota. Apoio analítico — não é recomendação.",
+            "Medição por seção",
+            "#00C896",
+        )
+        _render_confianca()
+
     with tab_seg:
         _render_tab_intro(
             "ACESSO E SESSÃO",
@@ -92,6 +88,58 @@ def render() -> None:
             "#FC5C7D",
         )
         _render_seguranca()
+
+
+def _render_atualizacao_de_dados() -> None:
+    """Aba única para o que o usuário atualiza a partir de arquivo dele.
+
+    Controle Financeiro e Investimentos eram duas abas irmãs no topo. Viraram
+    sub-abas de uma só porque são o mesmo gesto -- subir arquivo, conferir a
+    prévia, gravar -- e disputavam espaço com abas de diagnóstico, que são
+    outro tipo de tarefa.
+
+    As duas continuam separadas por dentro, e é de propósito: lançamento manual
+    é o fluxo do mês e a fatura do cartão é fluxo futuro; misturar as duas
+    entradas numa lista só já foi o caminho para somar o que não se soma
+    (``memoria: fluxo-caixa-vs-cartao-independentes``).
+    """
+    sub_controle, sub_invest = st.tabs([
+        "💳 Controle Financeiro",
+        "📈 Investimentos",
+    ])
+
+    with sub_controle:
+        _render_tab_intro(
+            "ENTRADAS FINANCEIRAS",
+            "Controle Financeiro",
+            "Importe faturas e extratos com prévia, classificação e proteção contra duplicidades.",
+            "CSV + PDF",
+            "#00C896",
+        )
+        _render_controle_financeiro()
+
+    with sub_invest:
+        _render_tab_intro(
+            "POSIÇÕES E MOVIMENTAÇÕES",
+            "Investimentos",
+            "Centralize arquivos da B3, XP e Nomad antes de atualizar posições e proventos.",
+            "B3 · XP · Nomad",
+            "#B084F6",
+        )
+        _render_investimentos()
+
+
+def _render_confianca() -> None:
+    """Aba do Grau de Confiança.
+
+    Import tardio de propósito: a medição arrasta ``core.confianca_secao`` e as
+    leituras que ela faz. Quem abre Configurações para importar um extrato não
+    deve pagar por isso; a aba só carrega quando é aberta. O erro fica preso
+    aqui em vez de derrubar a página inteira de Configurações.
+    """
+    from views.confianca import render_corpo
+
+    render_corpo()
 
 
 def _render_settings_overview() -> None:
@@ -1144,6 +1192,22 @@ _INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
         "source_name": "Tesouro Direto — Extrato Consolidado (manual)",
     },
     {
+        "key":         "tesouro_analitico",
+        "label":       "Tesouro Direto — Extrato Analítico (.xlsx)",
+        "help":        "Extrato Analítico por título (um arquivo por título; "
+                       "aceita vários de uma vez). É o único documento que traz "
+                       "a taxa contratada e a data de liquidação de cada "
+                       "aplicação — sem ele o app não consegue marcar a "
+                       "mercado, só repetir a rentabilidade que o extrato já "
+                       "imprime.",
+        "file_types":  "xlsx",
+        "parser_attr": "parse_tesouro_analitico",
+        "job_name":    "import_tesouro_analitico",
+        "table_name":  "tesouro_lots",
+        "source_name": "Tesouro Direto — Extrato Analítico (manual)",
+        "multi_file":  True,
+    },
+    {
         "key":         "nomad",
         "label":       "Nomad — Notas (.pdf)",
         "help":        "PDFs de negociação exportados pela Nomad. Aceita "
@@ -1305,6 +1369,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
         parse_b3_movimentacao,
         parse_b3_negociacao,
         parse_nomad_pdf,
+        parse_tesouro_analitico,
         parse_tesouro_direto,
         parse_xp_consolidado,
     )
@@ -1319,6 +1384,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
         "parse_b3_movimentacao": parse_b3_movimentacao,
         "parse_xp_consolidado":  parse_xp_consolidado,
         "parse_tesouro_direto":  parse_tesouro_direto,
+        "parse_tesouro_analitico": parse_tesouro_analitico,
         "parse_nomad_pdf":       parse_nomad_pdf,
     }
     parser = parsers[cfg["parser_attr"]]

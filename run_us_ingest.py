@@ -81,6 +81,47 @@ def _is_local_target() -> bool:
     return "127.0.0.1" in url or "localhost" in url
 
 
+def simbolos_para_refresco(conn, *, limit: int | None = None) -> list[str]:
+    """Ativos elegiveis que JA tem serie de precos, do mais parado ao mais fresco.
+
+    `prices` cobre o caso oposto — quem nunca teve preco — com um NOT EXISTS,
+    e por isso nunca reatualiza uma serie parada. Sem esta consulta, `daily`
+    sem --tickers nao tinha universo nenhum.
+    """
+    from sqlalchemy import text
+
+    q = (
+        "SELECT a.symbol FROM market_us.assets a "
+        "JOIN (SELECT symbol, max(date) AS ultima "
+        "      FROM market_us.prices_daily GROUP BY symbol) p "
+        "  ON p.symbol = a.symbol "
+        "WHERE a.is_active AND a.company_id IS NOT NULL "
+        "AND a.analysis_status IN ('eligible','pending') "
+        "AND a.security_type IN ('common','reit') "
+        "ORDER BY p.ultima ASC, a.symbol"
+    )
+    if limit:
+        q += f" LIMIT {int(limit)}"
+    return [r[0] for r in conn.execute(text(q)).fetchall()]
+
+
+def ultima_data_por_simbolo(conn, symbols) -> dict:
+    """{símbolo: última data já guardada} para a descida incremental.
+
+    Só entra quem já tem série: símbolo ausente deste mapa recebe o histórico
+    completo, que é o comportamento correto para quem nunca foi ingerido.
+    """
+    from sqlalchemy import text
+
+    alvo = [s for s in {str(x).strip().upper() for x in symbols or []} if s]
+    if not alvo:
+        return {}
+    linhas = conn.execute(text(
+        "SELECT symbol, max(date) FROM market_us.prices_daily "
+        "WHERE symbol = ANY(:syms) GROUP BY symbol"), {"syms": alvo}).fetchall()
+    return {str(r[0]).upper(): r[1] for r in linhas if r[1] is not None}
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão FMP → market_us.* (warehouse local)")
     p.add_argument("command", choices=[
@@ -90,6 +131,9 @@ def main() -> int:
     p.add_argument("--tickers", nargs="*", help="símbolos específicos")
     p.add_argument("--exchanges", nargs="*", default=None, help="NYSE NASDAQ AMEX")
     p.add_argument("--limit", type=int, default=None, help="limita o universo/lote")
+    p.add_argument("--completo", action="store_true",
+                   help="daily: rebaixa o histórico inteiro em vez da janela "
+                        "incremental (use para reparar série, não no dia a dia)")
     p.add_argument("--years", type=int, default=20, help="anos de histórico anual")
     p.add_argument("--budget", type=int, default=None, help="teto de chamadas na execução")
     p.add_argument("--start-year", type=int, default=None, help="score-history: ano inicial")
@@ -370,12 +414,44 @@ def main() -> int:
         return out({"ok": True, **ingest.ingest_prices_only(provider, engine, symbols)})
 
     if args.command == "daily":
-        symbols = args.tickers or []
-        n = 0
-        for sym in symbols:
-            r = ingest.ingest_symbol(provider, engine, sym, years=1, with_prices=True)
-            n += r.get("rows", 0)
-        return out({"ok": True, "symbols": len(symbols), "rows": n})
+        # Sem --tickers este comando iterava sobre lista VAZIA e devolvia
+        # {"ok": true, "symbols": 0} — sucesso. E era exatamente a forma
+        # documentada no cabecalho deste arquivo, e a que a Criacao de
+        # Portfolio dos EUA manda rodar quando bloqueia por negociabilidade
+        # nao verificada. Rodar a receita da propria tela nao atualizava nada
+        # e nao reclamava; a serie ficou 18 dias parada sem ninguem ver.
+        #
+        # Todos os outros comandos (bootstrap, fundamentals, resume, prices)
+        # ja resolviam o universo do banco quando --tickers falta. Este era o
+        # unico que nao resolvia.
+        symbols = args.tickers
+        if not symbols:
+            with engine.connect() as conn:
+                symbols = simbolos_para_refresco(conn, limit=args.limit)
+        if not symbols:
+            # Zero simbolo nao e trabalho concluido: e universo vazio ou
+            # filtro que nao casou. Sucesso aqui e o defeito que esta funcao
+            # acabou de deixar de ter.
+            return out({
+                "ok": False, "symbols": 0, "rows": 0,
+                "erro": "nenhum simbolo para atualizar: o universo ativo esta "
+                        "vazio ou nenhum ativo elegivel tem serie de precos. "
+                        "Rode `universe` e `prices` antes do `daily`.",
+            })
+        # Incremental: sem a janela, cada execucao rebaixava o historico inteiro
+        # (~13 s/simbolo contra ~0,4 s), o que dava ~4 h para 1.100 empresas.
+        # Rotina diaria que leva 4 h nao termina — e foi assim que a vitrine
+        # ficou parada em 20/08. `--completo` refaz tudo quando se quer reparar
+        # a serie, e nao para o uso diario.
+        desde = {}
+        if not args.completo:
+            with engine.connect() as conn:
+                desde = ultima_data_por_simbolo(conn, symbols)
+        resultado = ingest.ingest_prices_only(provider, engine, symbols,
+                                              desde=desde or None)
+        return out({"ok": True, "symbols": len(symbols),
+                    "modo": "completo" if args.completo else "incremental",
+                    **resultado})
 
     if args.command == "validate":
         from data_pipeline.us import quality

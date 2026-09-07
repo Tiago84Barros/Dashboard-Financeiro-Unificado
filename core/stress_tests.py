@@ -49,6 +49,13 @@ class StressScenario:
     shock_fundo_rf:   float  # Fundos RF — exposição parcial via DI
     cambio_usd_brl:   float  # Variação USD/BRL (positivo = BRL desvaloriza)
     tempo_recuperacao_meses: int
+    #: Índice de referência do choque de ações e o retorno observado nele.
+    #: É o que torna o cenário *conferível*: sem o observado ao lado do
+    #: parâmetro, "reproduzir um cenário histórico" não passa de declarar
+    #: um número numa lista.
+    indice_referencia: str = "IBOVESPA"
+    retorno_indice_observado: float | None = None
+    fonte: str = ""
 
 
 # Cenários calibrados em dados públicos
@@ -61,6 +68,8 @@ SCENARIOS: list[StressScenario] = [
         shock_etf_intl=-0.38, shock_renda_fixa=-0.05,
         shock_tesouro=0.00, shock_fundo_rf=-0.03,
         cambio_usd_brl=+0.30, tempo_recuperacao_meses=22,
+        retorno_indice_observado=-0.41,
+        fonte="IBOV set/2008-fev/2009 (B3, fechamento nominal)",
     ),
     StressScenario(
         nome="Janeiro Vermelho 2015",
@@ -70,6 +79,8 @@ SCENARIOS: list[StressScenario] = [
         shock_etf_intl=-0.03, shock_renda_fixa=-0.08,
         shock_tesouro=-0.02, shock_fundo_rf=-0.04,
         cambio_usd_brl=+0.12, tempo_recuperacao_meses=14,
+        retorno_indice_observado=-0.13,
+        fonte="IBOV jan/2015-jul/2015 (B3)",
     ),
     StressScenario(
         nome="Joesley Day 2017",
@@ -79,6 +90,8 @@ SCENARIOS: list[StressScenario] = [
         shock_etf_intl=0.00, shock_renda_fixa=-0.05,
         shock_tesouro=0.00, shock_fundo_rf=-0.02,
         cambio_usd_brl=+0.08, tempo_recuperacao_meses=2,
+        retorno_indice_observado=-0.09,
+        fonte="IBOV 18/mai/2017, pregão único (B3)",
     ),
     StressScenario(
         nome="COVID Crash 2020",
@@ -88,6 +101,8 @@ SCENARIOS: list[StressScenario] = [
         shock_etf_intl=-0.20, shock_renda_fixa=-0.06,
         shock_tesouro=-0.01, shock_fundo_rf=-0.04,
         cambio_usd_brl=+0.25, tempo_recuperacao_meses=6,
+        retorno_indice_observado=-0.29,
+        fonte="IBOV fev/2020-mar/2020 (B3)",
     ),
     StressScenario(
         nome="Crise CDS 2002",
@@ -97,6 +112,77 @@ SCENARIOS: list[StressScenario] = [
         shock_etf_intl=-0.10, shock_renda_fixa=-0.15,
         shock_tesouro=-0.05, shock_fundo_rf=-0.10,
         cambio_usd_brl=+0.52, tempo_recuperacao_meses=18,
+        retorno_indice_observado=-0.34,
+        fonte="IBOV abr/2002-out/2002 (B3)",
+    ),
+    # ── Os seis que faltavam para os 11 do requisito ────────────────────
+    StressScenario(
+        nome="Crise Asiática 1997",
+        descricao="Contágio do sudeste asiático; Copom sobe juros para 43%",
+        data_ref="out/1997 – nov/1997",
+        shock_stock_br=-0.25, shock_fii=-0.05,
+        shock_etf_intl=-0.06, shock_renda_fixa=-0.12,
+        shock_tesouro=-0.01, shock_fundo_rf=-0.06,
+        cambio_usd_brl=+0.01, tempo_recuperacao_meses=8,
+        retorno_indice_observado=-0.25,
+        fonte="IBOV out/1997 (B3); câmbio sob banda deslizante, daí +1%",
+    ),
+    StressScenario(
+        nome="Moratória Russa 1998",
+        descricao="Default russo e colapso do LTCM; fuga de capital do BR",
+        data_ref="ago/1998 – set/1998",
+        shock_stock_br=-0.40, shock_fii=-0.08,
+        shock_etf_intl=-0.15, shock_renda_fixa=-0.18,
+        shock_tesouro=-0.02, shock_fundo_rf=-0.08,
+        cambio_usd_brl=+0.02, tempo_recuperacao_meses=16,
+        retorno_indice_observado=-0.40,
+        fonte="IBOV ago-set/1998 (B3); câmbio ainda ancorado",
+    ),
+    StressScenario(
+        nome="Maxidesvalorização 1999",
+        descricao="Fim da âncora cambial; o real flutua e o dólar dispara",
+        data_ref="jan/1999 – mar/1999",
+        shock_stock_br=-0.10, shock_fii=-0.10,
+        shock_etf_intl=0.00, shock_renda_fixa=-0.20,
+        shock_tesouro=-0.03, shock_fundo_rf=-0.12,
+        cambio_usd_brl=+0.64, tempo_recuperacao_meses=6,
+        retorno_indice_observado=-0.10,
+        fonte="IBOV e PTAX jan/1999 (B3/BCB); o choque aqui é cambial",
+    ),
+    StressScenario(
+        nome="Crise da Zona do Euro 2011",
+        descricao="Contágio soberano europeu; aversão global a risco",
+        data_ref="jul/2011 – dez/2011",
+        shock_stock_br=-0.18, shock_fii=-0.03,
+        shock_etf_intl=-0.12, shock_renda_fixa=-0.04,
+        shock_tesouro=-0.01, shock_fundo_rf=-0.02,
+        cambio_usd_brl=+0.13, tempo_recuperacao_meses=12,
+        retorno_indice_observado=-0.18,
+        fonte="IBOV 2011 (B3)",
+    ),
+    StressScenario(
+        nome="Taper Tantrum 2013",
+        descricao="Fed sinaliza fim do QE; saída de fluxo de emergentes",
+        data_ref="mai/2013 – ago/2013",
+        shock_stock_br=-0.20, shock_fii=-0.18,
+        shock_etf_intl=-0.05, shock_renda_fixa=-0.12,
+        shock_tesouro=-0.01, shock_fundo_rf=-0.05,
+        cambio_usd_brl=+0.17, tempo_recuperacao_meses=10,
+        retorno_indice_observado=-0.20,
+        fonte="IBOV e IFIX mai-ago/2013 (B3); o IFIX foi o mais atingido",
+    ),
+    StressScenario(
+        nome="Aperto Monetário Global 2022",
+        descricao="Inflação e juros altos no mundo; bolsa BR resiste, exterior cai",
+        data_ref="jan/2022 – out/2022",
+        shock_stock_br=+0.05, shock_fii=-0.02,
+        shock_etf_intl=-0.19, shock_renda_fixa=-0.10,
+        shock_tesouro=0.00, shock_fundo_rf=-0.03,
+        cambio_usd_brl=-0.05, tempo_recuperacao_meses=9,
+        retorno_indice_observado=+0.05,
+        fonte="IBOV 2022 (B3) e S&P 500 2022; cenário deliberadamente "
+              "assimétrico -- sem ele, os 11 diriam que crise é sempre "
+              "bolsa brasileira caindo com dólar subindo",
     ),
 ]
 
@@ -192,7 +278,7 @@ def aplicar_stress(
 
 
 def aplicar_todos_cenarios(posicoes: list[dict]) -> list[dict]:
-    """Roda todos os 5 cenários históricos e retorna lista de resultados."""
+    """Roda os 11 cenários históricos e retorna lista de resultados."""
     return [aplicar_stress(posicoes, s) for s in SCENARIOS]
 
 
@@ -200,3 +286,82 @@ def cenario_pior_caso(posicoes: list[dict]) -> dict:
     """Retorna o cenário com maior perda percentual (worst-case stress)."""
     resultados = aplicar_todos_cenarios(posicoes)
     return min(resultados, key=lambda r: r["perda_pct"]) if resultados else {}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Conferência: quantos cenários o motor **reproduz**, e não quantos declara
+# ──────────────────────────────────────────────────────────────────────────
+#: Tolerância da conferência, em fração do retorno. Um décimo de ponto
+#: percentual: os choques são publicados com duas casas, então qualquer
+#: divergência real aparece bem acima disto.
+TOLERANCIA_REPRODUCAO = 0.001
+
+#: Carteira canônica da conferência: uma posição, uma classe, em BRL. É o
+#: mínimo que exercita o caminho real -- mapa de classe, atributo de choque
+#: e agregação -- sem misturar câmbio, que é outro efeito e mereceria outro
+#: teste.
+CARTEIRA_CANONICA = [{"classe": "Ações BR", "valor_mercado": 100_000.0,
+                      "moeda": "BRL"}]
+
+
+def conferir_cenario(scenario: StressScenario) -> tuple[bool | None, str]:
+    """O cenário reproduz o retorno observado no índice de referência?
+
+    ``None`` quando o cenário não declara observado -- não medido, nunca
+    ``False``. Um cenário sem referência não é um cenário reprovado: é um
+    cenário que ninguém conferiu, e chamá-lo de reprovado ou de aprovado
+    seria inventar o resultado do teste que não foi feito.
+
+    O que isto **prova**: que o choque de ações declarado chega íntegro à
+    carteira pelo caminho de código real -- mapa de classe, atributo, e
+    agregação. Erro de digitação, choque no campo errado e classe fora do
+    mapa aparecem aqui.
+
+    O que isto **não prova**: que o número está historicamente certo, nem
+    que os choques das outras classes estão calibrados, nem que a
+    modelagem (choque uniforme por classe, sem correlação) descreve o
+    evento. O docstring do módulo já diz que ela não descreve.
+    """
+    esperado = scenario.retorno_indice_observado
+    if esperado is None:
+        return None, "cenário sem retorno observado declarado"
+    if not scenario.fonte:
+        return None, "cenário sem fonte declarada para o observado"
+    obtido = aplicar_stress(CARTEIRA_CANONICA, scenario)["perda_pct"]
+    if abs(obtido - esperado) > TOLERANCIA_REPRODUCAO:
+        return False, (f"aplicou {obtido:+.4f} onde o observado é "
+                       f"{esperado:+.4f}")
+    return True, ""
+
+
+def cenarios_reproduzidos() -> int:
+    """Quantos cenários passam na conferência. É a medida da homologação.
+
+    O critério ``cenarios_historicos_reproduzidos`` existia com limiar 11 e
+    **sem ninguém que o medisse** -- ficava eternamente ``None``, e a Fase 4
+    nunca poderia avançar por ausência de medição, não por reprovação.
+
+    Contar ``len(SCENARIOS)`` teria fechado o critério sem medir nada: seria
+    o portão que só pode dar o mesmo resultado, aprovando por existir uma
+    lista (``memoria: gate-que-so-dava-false``). Aqui só conta o cenário que
+    passa por :func:`conferir_cenario`.
+    """
+    return sum(1 for c in SCENARIOS if conferir_cenario(c)[0] is True)
+
+
+def diagnostico_cenarios() -> dict:
+    """Detalhe da conferência, para a tela e para a trilha de auditoria."""
+    linhas = []
+    for c in SCENARIOS:
+        ok, motivo = conferir_cenario(c)
+        linhas.append({"cenario": c.nome, "data_ref": c.data_ref,
+                       "indice": c.indice_referencia,
+                       "observado": c.retorno_indice_observado,
+                       "fonte": c.fonte, "reproduz": ok, "motivo": motivo})
+    return {
+        "declarados": len(SCENARIOS),
+        "reproduzidos": sum(1 for x in linhas if x["reproduz"] is True),
+        "nao_conferidos": sum(1 for x in linhas if x["reproduz"] is None),
+        "reprovados": sum(1 for x in linhas if x["reproduz"] is False),
+        "cenarios": linhas,
+    }

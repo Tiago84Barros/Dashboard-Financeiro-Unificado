@@ -23,6 +23,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import core.us_data as us
 from core.llm_context_ativo import build_us_ativo_context
+from core.macro_data.database import get_local_macro_engine
+from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from core.market_companies import (
     filter_market_companies,
     localize_us_company_frame,
@@ -1031,11 +1033,54 @@ def _tab_avancada_unificada(status: dict) -> None:
                 custom_weights[track] = st.slider(
                     weight_labels[track], 0, 50, int(default * 100), 1,
                     key=f"us_lab_weight_{track}")
+        macro_mode_lab = st.selectbox(
+            "Camada macro no score de entrada",
+            ["fundamental", "moderate", "scenario"],
+            index=1,
+            format_func={
+                "fundamental": "Somente fundamentos",
+                "moderate": "Contextual moderado (recomendado)",
+                "scenario": "Cenário ampliado",
+            }.get,
+            key="us_lab_macro_mode",
+        )
 
     coverage = pd.to_numeric(filtered.get("coverage"), errors="coerce").fillna(0)
     excluded = filtered[coverage < min_coverage].copy()
     eligible = filtered[coverage >= min_coverage].copy()
     entry = build_entry_scores(eligible, custom_weights)
+    macro_snapshot_lab = None
+    if not entry.empty:
+        local_macro_engine = get_local_macro_engine()
+        if local_macro_engine is not None:
+            try:
+                macro_snapshot_lab = load_portfolio_macro_snapshot(
+                    local_macro_engine,
+                    asset_class="us",
+                    assets={
+                        str(row.get("symbol") or ""): translate_us_sector(
+                            row.get("sector"), row.get("industry")
+                        )
+                        for _, row in entry.iterrows()
+                    },
+                )
+            except (SQLAlchemyError, ValueError):
+                macro_snapshot_lab = None
+        if macro_snapshot_lab is not None:
+            from core.macro_data.portfolio_tilt import apply_macro_scores
+
+            entry = apply_macro_scores(
+                entry,
+                macro_snapshot_lab.impacts,
+                symbol_column="symbol",
+                score_column="entry_score",
+                mode=macro_mode_lab,
+            )
+            entry["entry_score_fundamental"] = entry["entry_score"]
+            entry["entry_score"] = entry["contextual_score"].clip(0, 100)
+            entry = entry.sort_values(
+                ["entry_score", "symbol"], ascending=[False, True]
+            ).reset_index(drop=True)
 
     # ── Qualidade, incerteza e análises opcionais ─────────────────────────
     with st.expander("🩺 Qualidade & saneamento dos dados (antes do ranking)"):
@@ -1058,6 +1103,14 @@ def _tab_avancada_unificada(status: dict) -> None:
         if track_cov:
             st.dataframe(pd.DataFrame(track_cov), hide_index=True, width="stretch")
         st.caption("Ausência não vira zero: recebe posição neutra no score e reduz a cobertura.")
+        if macro_snapshot_lab is None:
+            st.caption("Camada macro local indisponível; score de entrada preservado.")
+        else:
+            st.caption(
+                f"Macro Docker local: corte {macro_snapshot_lab.as_of:%d/%m/%Y} · "
+                f"cobertura {macro_snapshot_lab.coverage:.0%}. Score contextual "
+                "é exibido separadamente e limitado a ±10 pontos."
+            )
 
     with st.expander("Empresas excluídas por completude de dados"):
         if excluded.empty:
@@ -1365,6 +1418,10 @@ def _entry_detail_card(row: pd.Series) -> str:
     color = colors.get(status, _COR_NEU)
     base = float(row.get("score_base_adv", 0) or 0)
     entry = float(row.get("entry_score", 0) or 0)
+    fundamental_entry = float(row.get("entry_score_fundamental", entry) or entry)
+    macro_adjustment = pd.to_numeric(
+        row.get("macro_score_adjustment"), errors="coerce"
+    )
     quality = float(row.get("score_quality", 50) or 50)
     growth = float(row.get("score_growth", 50) or 50)
     cash = float(row.get("cash_quality", 50) or 50)
@@ -1385,7 +1442,11 @@ def _entry_detail_card(row: pd.Series) -> str:
         f'<span style="background:{color}18;color:{color};border:1px solid {color}66;'
         f'border-radius:7px;padding:4px 10px;font-size:.69rem;font-weight:800">{status}</span></div>'
         f'<div style="font-size:.65rem;color:#52627D;margin:5px 0 12px">'
-        f'Base: {base:.0f} → Entrada: <b style="color:#E2E8F0">{entry:.0f}</b></div>'
+        f'Base: {base:.0f} → Entrada fundamental: {fundamental_entry:.0f} → '
+        f'Contextual: <b style="color:#E2E8F0">{entry:.0f}</b>'
+        + (f' ({macro_adjustment:+.1f} macro)' if pd.notna(macro_adjustment) else
+           ' (macro sem cobertura)')
+        + '</div>'
         + bar("Qualidade", quality, _COR_INFO)
         + bar("Consistência", growth, _COR_POS)
         + bar("Caixa", cash, "#9B51E0")
@@ -1994,6 +2055,7 @@ def _render_us_portfolio_cards(holdings: pd.DataFrame) -> None:
             weight = float(row.get("weight", 0.0) or 0.0)
             entry = float(row.get("entry_score", 0.0) or 0.0)
             allocation = float(row.get("allocation_usd", 0.0) or 0.0)
+            macro_impact = pd.to_numeric(row.get("macro_impact"), errors="coerce")
             giro = pd.to_numeric(row.get("giro_diario_usd"), errors="coerce")
             # "não medido" é diferente de "não negocia": o card diz qual dos dois.
             giro_txt = ("—" if pd.isna(giro) else
@@ -2020,6 +2082,12 @@ def _render_us_portfolio_cards(holdings: pd.DataFrame) -> None:
                         f'<strong>{entry:.1f}</strong></div>'
                         f'<div class="us-pf-row"><span>Peso</span>'
                         f'<strong>{weight:.1%}</strong></div>'
+                        + (f'<div class="us-pf-row"><span>Impacto macro</span>'
+                           f'<strong>{macro_impact:+.1f}/100</strong></div>'
+                           if pd.notna(macro_impact) else
+                           '<div class="us-pf-row"><span>Impacto macro</span>'
+                           '<strong>sem cobertura</strong></div>')
+                        +
                         f'<div class="us-pf-row"><span>Giro diário</span>'
                         f'<strong>{giro_txt}</strong></div>'
                         f'<div class="us-pf-row"><span>Capital simulado</span>'
@@ -2401,12 +2469,49 @@ def _tab_criacao_portfolio(status: dict) -> None:
         require_historical_signal=bool(require_history),
     )
 
+    macro_labels = {
+        "fundamental": "Somente fundamentos",
+        "moderate": "Contextual moderado (recomendado)",
+        "scenario": "Cenário ampliado",
+    }
+    macro_mode = st.selectbox(
+        "Uso da camada macro nos pesos",
+        list(macro_labels),
+        index=1,
+        format_func=macro_labels.get,
+        key="us_create_macro_mode",
+        help=("O cálculo é determinístico e usa apenas o PostgreSQL do Docker local. "
+              "Ausência de cobertura mantém o peso fundamental."),
+    )
+
     if st.button("🚀 Rodar Criação de Portfólio", type="primary", key="us_create_run"):
         with st.spinner("Aplicando filtros, auditando indústrias e otimizando pesos…"):
-            st.session_state["us_portfolio_creation_result"] = build_portfolio_creation(
+            baseline = build_portfolio_creation(scored, params, score_panel)
+            snapshot = None
+            holdings_base = baseline.get("holdings", pd.DataFrame())
+            local_engine = get_local_macro_engine()
+            if local_engine is not None and not holdings_base.empty:
+                try:
+                    snapshot = load_portfolio_macro_snapshot(
+                        local_engine,
+                        asset_class="us",
+                        assets=dict(zip(
+                            holdings_base["symbol"].astype(str),
+                            holdings_base["sector_group"].astype(str),
+                        )),
+                    )
+                except (SQLAlchemyError, ValueError):
+                    snapshot = None
+            result = build_portfolio_creation(
                 scored, params, score_panel,
+                macro_impacts=(snapshot.impacts if snapshot else {}),
+                macro_mode=macro_mode,
             )
-            st.session_state["us_portfolio_creation_params"] = params_to_dict(params)
+            result["macro_snapshot"] = snapshot
+            st.session_state["us_portfolio_creation_result"] = result
+            st.session_state["us_portfolio_creation_params"] = {
+                **params_to_dict(params), "macro_mode": macro_mode,
+            }
 
     result = st.session_state.get("us_portfolio_creation_result")
     if not result:
@@ -2414,7 +2519,9 @@ def _tab_criacao_portfolio(status: dict) -> None:
             "Configure os parâmetros acima e clique **🚀 Rodar Criação de Portfólio**."
         )
         return
-    if st.session_state.get("us_portfolio_creation_params") != params_to_dict(params):
+    if st.session_state.get("us_portfolio_creation_params") != {
+        **params_to_dict(params), "macro_mode": macro_mode,
+    }:
         st.warning(
             "Os parâmetros foram alterados depois da última execução. Os resultados "
             "abaixo ainda correspondem à configuração anterior; rode novamente para atualizar."
@@ -2436,6 +2543,28 @@ def _tab_criacao_portfolio(status: dict) -> None:
     exclusions = result.get("exclusions", pd.DataFrame())
     holdings = result.get("holdings", pd.DataFrame())
     metrics = result.get("metrics", {})
+    macro_info = result.get("macro") or {}
+    snapshot = result.get("macro_snapshot")
+    if snapshot is None:
+        st.warning(
+            "Camada macro local indisponível nesta execução; a composição mantém "
+            "os pesos fundamentalistas."
+        )
+    else:
+        st.info(
+            f"Macro no Docker local · corte {snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
+            f"cobertura {macro_info.get('coverage', 0):.0%} · "
+            f"turnover atribuído ao macro {macro_info.get('turnover', 0):.1%}. "
+            "Impactos são contexto histórico, não previsão de retorno."
+        )
+        from design.macro_portfolio import render_historical_macro_path
+
+        render_historical_macro_path(
+            asset_class="us", holdings=holdings,
+            symbol_column="symbol", sector_column="sector_group",
+            score_column="entry_score", mode=str(macro_info.get("mode")),
+            key="us_portfolio_macro_history",
+        )
     approved = int(audit["status"].eq("Aprovada").sum()) if not audit.empty else 0
     observation = int(audit["status"].eq("Observação").sum()) if not audit.empty else 0
     excluded = int(audit["status"].eq("Excluída").sum()) if not audit.empty else 0
@@ -2595,8 +2724,15 @@ def _tab_criacao_portfolio(status: dict) -> None:
                 from core.us_portfolio_model import save_us_portfolio_model
                 model_id = save_us_portfolio_model(
                     holdings.to_dict("records"),
-                    params=result.get("params") or {},
-                    metrics=metrics,
+                    params={
+                        **(result.get("params") or {}),
+                        "macro_mode": macro_info.get("mode"),
+                        "macro_as_of": (
+                            snapshot.as_of.isoformat() if snapshot else None
+                        ),
+                        "macro_coverage": macro_info.get("coverage"),
+                    },
+                    metrics={**metrics, "macro_turnover": macro_info.get("turnover")},
                     name=f"Portfolio EUA Modelo {pd.Timestamp.today().year}",
                 )
                 st.success(

@@ -144,6 +144,26 @@ def limpar_html(texto: str | None) -> str:
     return _ESPACOS.sub(" ", html.unescape(limpo)).strip()
 
 
+#: Rodape que varios CMS anexam a descricao do item no RSS: "The post <titulo>
+#: appeared first on <veiculo>." Nao e conteudo -- e assinatura de plugin.
+#:
+#: Sai porque o texto do item alimenta a resolucao de entidades, e o cadastro
+#: americano tem uma empresa chamada Post (POST, Post Holdings). Na coleta de
+#: 05/09/2026 esse rodape sozinho atribuiu POST a 30 dos 48 itens do acervo,
+#: quase todos sobre assunto nenhum ligado a empresa. Cortar aqui, na entrada,
+#: e melhor que filtrar POST na saida: o problema nao e a empresa, e o ruido.
+_RODAPE_FEED = re.compile(
+    r"\s*the\s+post\s+.*?\s+appeared\s+first\s+on\b.*$",
+    re.IGNORECASE | re.DOTALL)
+
+
+def sem_rodape_de_feed(texto: str | None) -> str:
+    """Remove a assinatura de plugin do fim da descricao de um item RSS."""
+    if not texto:
+        return ""
+    return _ESPACOS.sub(" ", _RODAPE_FEED.sub("", str(texto))).strip()
+
+
 def normalizar_texto(texto: str | None) -> str:
     """Minuscula, sem acento, sem pontuacao, espacos colapsados.
 

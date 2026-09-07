@@ -93,8 +93,11 @@ class YFinanceProvider(MarketDataProvider):
             })
         return out
 
-    def get_dividends(self, symbol: str) -> list[dict]:
-        df = self._history(symbol)
+    def get_dividends(self, symbol: str, start=None, end=None) -> list[dict]:
+        # Mesma janela que `get_prices_daily` de propósito: a memoização é por
+        # (símbolo, start, end), então divergir aqui baixaria o histórico duas
+        # vezes por símbolo.
+        df = self._history(symbol, start, end)
         if df is None or getattr(df, "empty", True) or "Dividends" not in df:
             return []
         out = []
@@ -105,8 +108,8 @@ class YFinanceProvider(MarketDataProvider):
                 out.append({"date": str(d), "dividend": v})
         return out
 
-    def get_splits(self, symbol: str) -> list[dict]:
-        df = self._history(symbol)
+    def get_splits(self, symbol: str, start=None, end=None) -> list[dict]:
+        df = self._history(symbol, start, end)
         if df is None or getattr(df, "empty", True) or "Stock Splits" not in df:
             return []
         out = []

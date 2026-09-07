@@ -129,10 +129,12 @@ def _apply_liquidity_gate(
     e nesse estado não se publica carteira.
     """
     from core.us_liquidity import (
+        LIQUIDITY_MAX_AGE_DAYS,
         PISO_INVALIDO_MESSAGE,
         LiquidityPolicy,
         aplicar_piso,
         formata_usd_curto,
+        medicao_mais_recente,
     )
 
     policy = LiquidityPolicy(piso_diario_usd=params.min_daily_turnover_usd)
@@ -192,11 +194,33 @@ def _apply_liquidity_gate(
                 "a coluna `giro_diario_usd` existe mas nenhuma empresa do "
                 "recorte tem giro medido") if not giro else (
                 "não há nenhuma medição de giro com data de referência atual")
+        # A idade da medição é a diferença entre "a vitrine nunca teve data" e
+        # "a vitrine tem data de 18 dias atrás". A mensagem antiga dava as duas
+        # com a mesma frase, e quem lia não tinha como saber o que fazer.
+        recente = medicao_mais_recente(timestamps)
+        if recente is not None:
+            quando, idade = recente
+            meta["liquidity_last_measured_at"] = quando.isoformat()
+            meta["liquidity_last_measured_age_days"] = idade
+            observado = (
+                f" A medição de giro mais recente desta vitrine é de "
+                f"{quando.strftime('%d/%m/%Y')} — {idade} dia(s) atrás, e a regra "
+                f"aceita no máximo {LIQUIDITY_MAX_AGE_DAYS}. A vitrine está "
+                f"desatualizada; não é o universo que não tem giro."
+            )
+        else:
+            meta["liquidity_last_measured_at"] = None
+            meta["liquidity_last_measured_age_days"] = None
+            observado = (
+                " Nenhuma data de referência legível veio junto com o giro, "
+                "então nem a idade da medição pôde ser apurada."
+            )
         meta["liquidity_block"] = (
             f"Negociabilidade não verificada: {onde}, e a negociabilidade mínima "
             f"está em US$ {formata_usd_curto(piso)}/dia. Nenhuma empresa pôde ser "
             f"verificada, então nenhuma carteira é publicada — comprar sem medir "
-            f"negociabilidade é assumir risco não verificado. " + _INGESTAO_GIRO
+            f"negociabilidade é assumir risco não verificado." + observado + " "
+            + _INGESTAO_GIRO
         )
     return work, meta
 
@@ -576,6 +600,7 @@ def _effective_caps(
 def allocate_weights(
     candidates: pd.DataFrame,
     params: USPortfolioCreationParams,
+    target_weights: dict[str, float] | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Projeta pesos próximos ao alvo sob restrições lineares via SLSQP."""
     if candidates is None or candidates.empty:
@@ -586,6 +611,11 @@ def allocate_weights(
         return pd.DataFrame(), warnings
 
     target = _base_target(candidates, params.weighting)
+    if target_weights:
+        proposed = candidates["symbol"].astype(str).map(target_weights)
+        if proposed.notna().all() and float(proposed.sum()) > 0:
+            target = proposed.to_numpy(dtype=float)
+            target = target / target.sum()
     n = len(candidates)
     constraints: list[dict[str, Any]] = [{
         "type": "eq", "fun": lambda w: float(np.sum(w) - 1.0)
@@ -682,10 +712,32 @@ def portfolio_metrics(holdings: pd.DataFrame, params: USPortfolioCreationParams)
     }
 
 
+def apply_us_macro(holdings: pd.DataFrame, impacts: dict, mode: str,
+                   params: USPortfolioCreationParams) -> pd.DataFrame:
+    """Mesmo overlay e projeção usados na criação e na sensibilidade histórica."""
+    from core.macro_data.portfolio_tilt import apply_macro_tilt, bound_macro_weights
+
+    result = apply_macro_tilt(holdings, impacts, symbol_column="symbol",
+                              score_column="entry_score", mode=mode)
+    if mode != "fundamental" and impacts:
+        target = dict(zip(result["symbol"], result["weight"]))
+        constrained, warnings = allocate_weights(holdings, params, target_weights=target)
+        if constrained.empty:
+            result["weight"] = result["weight_before_macro"]
+            result.attrs["macro_warnings"] = warnings + ["Projeção macro inviável; base preservada."]
+        else:
+            proposed = result["symbol"].map(constrained.set_index("symbol")["weight"])
+            result["weight"] = bound_macro_weights(result["weight_before_macro"], proposed)
+    result.attrs["macro_turnover"] = float(.5 * (result["weight"] - result["weight_before_macro"]).abs().sum())
+    return result
+
+
 def build_portfolio_creation(
     scored: pd.DataFrame,
     params: USPortfolioCreationParams | None = None,
     score_panel: pd.DataFrame | None = None,
+    macro_impacts: dict[str, float] | None = None,
+    macro_mode: str = "fundamental",
 ) -> dict[str, Any]:
     """Executa a criação completa e retorna payload pronto para a interface."""
     params = params or USPortfolioCreationParams()
@@ -694,6 +746,18 @@ def build_portfolio_creation(
     candidates = select_industry_leaders(eligible, audit, params)
     floor_log = dict(candidates.attrs.get("quality_floor_log") or {})
     holdings, warnings = allocate_weights(candidates, params)
+    macro_mode = str(macro_mode or "fundamental")
+    if macro_mode not in {"fundamental", "moderate", "scenario"}:
+        raise ValueError("modo macro inválido")
+    if not holdings.empty:
+        holdings = apply_us_macro(holdings, macro_impacts or {}, macro_mode, params)
+        warnings.extend(holdings.attrs.get("macro_warnings", []))
+        holdings["allocation_usd"] = (
+            holdings["weight"] * float(params.capital_usd)
+        )
+        holdings["monthly_contribution_usd"] = (
+            holdings["weight"] * float(params.monthly_contribution_usd)
+        )
     history_available = score_panel is not None and not score_panel.empty
 
     # Os avisos do piso de negociabilidade nascem em prepare_eligible_universe,
@@ -772,6 +836,11 @@ def build_portfolio_creation(
         "quality_floor_log": floor_log,
         "holdings": holdings,
         "metrics": portfolio_metrics(holdings, params),
+        "macro": {
+            "mode": macro_mode,
+            "coverage": float(holdings.attrs.get("macro_coverage", 0.0)),
+            "turnover": float(holdings.attrs.get("macro_turnover", 0.0)),
+        },
         "warnings": warnings,
         "history_available": bool(history_available),
         "history_required_unavailable": bool(params.require_historical_signal and not history_available),

@@ -215,9 +215,36 @@ def test_noticia_sem_ticker_mas_com_macro_tem_relacao_medida():
     macro = noticia("Banco Central eleva a taxa Selic em reuniao do Copom",
                     "https://valor.globo.com/macro/1", publicado_em=quando(2))
     assert macro.entidades.tickers == ()
-    assert macro.entidades.paises == ("BR",)
+    assert "selic" in macro.entidades.ativos
     r = _calc(macro)
     assert r.componentes[relevancia.RELACAO_ATIVO] == pytest.approx(0.35)
+
+
+def test_o_pais_do_veiculo_nao_paga_bonus_de_relacao_macro():
+    """A procedência saiu de ``entidades``, e este teste é o motivo (A-145).
+
+    Enquanto o país do veículo entrava em ``entidades.paises``, qualquer
+    matéria de qualquer jornal chegava aqui com um país -- e ``_relacao``
+    devolve 0,35 para ``paises or moedas or ativos``. O bônus de vínculo macro
+    era pago pela nacionalidade de quem publicou, não pelo assunto da matéria.
+    O mesmo país falso ia para ``exposicao`` como exposição da carteira e para
+    o agrupamento por evento como chave de último recurso.
+    """
+    from core.noticias import fontes
+
+    generica = noticia("Diretoria aprova mudanca no calendario de reunioes",
+                       "https://www.reuters.com/geral/1", publicado_em=quando(2))
+
+    assert fontes.classificar("https://www.reuters.com/geral/1").pais == "GB", (
+        "cenario invalido: a fonte perdeu o pais, e ai o teste passa sozinho")
+    assert generica.pais == "GB", "a procedencia deixou de ser registrada"
+    assert generica.entidades.paises == (), (
+        "o pais do veiculo voltou a entrar nas entidades do fato")
+    r = _calc(generica)
+    assert r.componentes[relevancia.RELACAO_ATIVO] is None, (
+        "sem ticker e sem entidade macro, a relacao e 'nao medida'; o 0,35 "
+        "que saia antes era o pais do veiculo")
+    assert relevancia.RELACAO_ATIVO in r.nao_medidos
 
 
 # ── ausência de carteira ────────────────────────────────────────────────────

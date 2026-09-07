@@ -23,11 +23,20 @@ def test_configuracoes_has_responsive_professional_layout():
     assert ".cfg-tab-intro" in source
     assert ".cfg-workflow-header" in source
     assert "@media (max-width: 760px)" in source
-    assert '"💳 Controle"' in source
+    # Abas de topo. "Controle" e "Investimentos" deixaram de ser abas irmãs
+    # aqui em 06/09/2026: viraram sub-abas de "Atualização de dados", porque
+    # são o mesmo gesto (subir arquivo, conferir, gravar) e disputavam a barra
+    # com abas de diagnóstico.
+    for rotulo in ('"🔁 Atualização de dados"', '"🔄 Dados de mercado"',
+                   '"🗄️ Banco de dados"', '"🎯 Grau de Confiança"',
+                   '"🔒 Segurança"'):
+        assert rotulo in source, f"aba de topo sumiu: {rotulo}"
+
+    # As duas continuam existindo por dentro -- agrupar não podia virar perder.
+    assert '"💳 Controle Financeiro"' in source
     assert '"📈 Investimentos"' in source
-    assert '"🔄 Dados de mercado"' in source
-    assert '"🗄️ Banco de dados"' in source
-    assert '"🔒 Segurança"' in source
+    assert "_render_controle_financeiro()" in source
+    assert "_render_investimentos()" in source
 
 
 def test_tab_intro_escapes_dynamic_content(monkeypatch):

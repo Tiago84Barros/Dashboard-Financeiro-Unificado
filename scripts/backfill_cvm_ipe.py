@@ -20,10 +20,29 @@ Estratégia:
 
 Seguro: dry-run por padrão (mostra o que faria). Use --apply para gravar.
 
+DESTINO: o armazém local (Docker `dfu_warehouse`), verificado por `exigir_local`.
+O corpus e seus chunks não cabem no Supabase — `docs_corporativos_chunks` foi
+eliminada de lá para liberar 162 MB, e a produção lê o corpus do Parquet
+publicado por `scripts/publish_rag_corpus_parquet.py`, não do Postgres. Passar
+`--destino remoto` existe para depuração e grava no Supabase.
+
+RECORTE: por padrão só as categorias analíticas (`--categorias resultado,fato,
+provento`). Sem recorte, subir o teto por empresa enche a cota com Assembleia e
+Comunicado ao Mercado, que juntos têm mais documentos disponíveis do que todas
+as categorias analíticas somadas.
+
+ANO A ANO: `select_balanced` ordena por recência dentro de cada categoria. Rodar
+2023..2026 de uma vez com teto alto entrega quase só o ano corrente — foi assim
+que o corpus original ficou 71% de 2026. Rode um ano por execução com teto
+pequeno; a dedup por URL faz as execuções se somarem.
+
 Exemplos:
-  python scripts/backfill_cvm_ipe.py --years 2024,2025,2026            # dry-run
-  python scripts/backfill_cvm_ipe.py --years 2024,2025,2026 --apply    # grava
-  python scripts/backfill_cvm_ipe.py --years 2023 --per-ticker 20 --apply --clean-previous
+  python scripts/backfill_cvm_ipe.py --years 2025                       # dry-run
+  for y in 2023 2024 2025 2026; do       python scripts/backfill_cvm_ipe.py --years $y --per-ticker 4 --apply; done
+  python scripts/backfill_cvm_ipe.py --years 2023 --categorias todas --per-ticker 20 --apply
+
+Depois de inserir, drene a extração de texto com
+`python scripts/drenar_cvm_fulltext.py` e republique o Parquet.
 """
 from __future__ import annotations
 
@@ -42,6 +61,7 @@ if str(ROOT) not in sys.path:
 
 import core.cvm_ipe as ipe  # noqa: E402
 from core.b3_db import _resolve_url  # noqa: E402
+from core.destino_local import exigir_local  # noqa: E402
 from data_pipeline.jobs.update_cvm_ipe import _codigo_to_ticker  # noqa: E402
 
 logger = logging.getLogger("backfill_cvm_ipe")
@@ -49,6 +69,29 @@ logger = logging.getLogger("backfill_cvm_ipe")
 # Round-robin entre categorias: ordem dá leve prioridade ao mais analítico.
 _BUCKET_ORDER = ["resultado", "fato", "comunicado", "provento",
                  "assembleia", "capital", "critico", "outro"]
+
+#: Recorte analítico: o que um leitor de RI procura (release de resultados,
+#: apresentação a analistas, fato relevante, provento). Medido no IPE de 2025
+#: para as 292 empresas do corpus: `Assembleia` tinha 4.511 documentos
+#: disponíveis e `Comunicado ao Mercado` 4.322, contra 2.977 de
+#: `Dados Econômico-Financeiros`. Subir o teto por empresa SEM recorte enche a
+#: cota com convocação de assembleia e aviso de data -- volume que afoga o RAG
+#: sem acrescentar leitura. O default desta lista é o recorte; passar
+#: ``--categorias todas`` restaura o comportamento antigo.
+BUCKETS_ANALITICOS = ("resultado", "fato", "provento")
+
+
+def filtrar_buckets(docs: list[dict], buckets: tuple[str, ...]) -> list[dict]:
+    """Mantém só os documentos cujos buckets foram pedidos.
+
+    Filtra ANTES de :func:`select_balanced` de propósito: o round-robin
+    distribui a cota entre os buckets presentes, então tirar os volumosos aqui
+    faz a mesma cota render documento analítico em vez de administrativo.
+    """
+    if not buckets:
+        return docs
+    alvo = set(buckets)
+    return [d for d in docs if _bucket(d.get("categoria")) in alvo]
 
 
 def _bucket(cat: str) -> str:
@@ -101,13 +144,39 @@ def select_balanced(docs: list[dict], per_ticker: int) -> list[dict]:
     return sel
 
 
-def run(years: list[int], per_ticker: int, apply: bool, clean_previous: bool) -> int:
-    url = _resolve_url()
-    if not url:
-        logger.error("Banco não configurado (SUPABASE_DB_URL_B3 / SUPABASE_DB_URL).")
-        return 1
+def _engine(destino: str):
+    """Resolve o banco de destino. Default: armazém local.
+
+    O corpus e seus chunks NÃO cabem no Supabase — `docs_corporativos_chunks`
+    foi eliminada de lá justamente para liberar 162 MB, e o plano free vive
+    perto do teto de 500 MB. Gravar chunk de backfill no Supabase recriaria a
+    tabela derrubada. Por isso o destino local é o default e é verificado por
+    `exigir_local` antes de qualquer escrita, e não apenas prometido no help.
+    """
+    if destino == "local":
+        from scripts.publish_fii_selection_from_local import _warehouse_url
+        url = _warehouse_url()
+        if not url:
+            logger.error("Armazém local indisponível (container dfu_warehouse no ar?).")
+            return None
+    else:
+        url = _resolve_url()
+        if not url:
+            logger.error("Banco não configurado (SUPABASE_DB_URL_B3 / SUPABASE_DB_URL).")
+            return None
     _ssl = {} if ("localhost" in url or "127.0.0.1" in url) else {"sslmode": "require"}
     eng = create_engine(url, connect_args={"connect_timeout": 20, **_ssl})
+    if destino == "local":
+        exigir_local(eng, o_que="backfill CVM/IPE (docs + chunks)")
+    return eng
+
+
+def run(years: list[int], per_ticker: int, apply: bool, clean_previous: bool,
+        buckets: tuple[str, ...] = BUCKETS_ANALITICOS, destino: str = "local") -> int:
+    eng = _engine(destino)
+    if eng is None:
+        return 1
+    logger.info("destino: %s", "armazém local (dfu_warehouse)" if destino == "local" else "REMOTO")
 
     with eng.connect() as conn:
         cod_map = _codigo_to_ticker(conn)
@@ -129,6 +198,12 @@ def run(years: list[int], per_ticker: int, apply: bool, clean_previous: bool) ->
             if d["url"] not in existing:
                 docs.append(d)
     logger.info("documentos novos (todos): %d", len(docs))
+
+    if buckets:
+        antes = len(docs)
+        docs = filtrar_buckets(docs, buckets)
+        logger.info("recorte por categoria (%s): %d de %d",
+                    ",".join(buckets), len(docs), antes)
 
     sel = select_balanced(docs, per_ticker)
     cats = Counter(d.get("categoria", "") for d in sel)
@@ -225,6 +300,12 @@ def main() -> int:
                     help="Grava no banco. Sem isso, roda em dry-run.")
     ap.add_argument("--clean-previous", action="store_true",
                     help="Remove backfills anteriores (ingestion_run_id 'cvm_ipe_backfill_%%') antes de inserir.")
+    ap.add_argument("--categorias", default=",".join(BUCKETS_ANALITICOS),
+                    help=("Buckets de categoria a coletar, separados por vírgula "
+                          f"(default: {','.join(BUCKETS_ANALITICOS)}). "
+                          f"Valores: {','.join(_BUCKET_ORDER)}. Use 'todas' para não recortar."))
+    ap.add_argument("--destino", choices=["local", "remoto"], default="local",
+                    help="Banco de destino (default: local — o armazém Docker; 'remoto' grava no Supabase).")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -232,7 +313,16 @@ def main() -> int:
     if not years:
         logger.error("Nenhum ano válido em --years.")
         return 1
-    return run(years, args.per_ticker, args.apply, args.clean_previous)
+    if str(args.categorias).strip().lower() in ("todas", "todos", ""):
+        buckets: tuple[str, ...] = ()
+    else:
+        buckets = tuple(b.strip().lower() for b in str(args.categorias).split(",") if b.strip())
+        invalidos = [b for b in buckets if b not in _BUCKET_ORDER]
+        if invalidos:
+            logger.error("Categorias inválidas em --categorias: %s (válidas: %s)",
+                         ",".join(invalidos), ",".join(_BUCKET_ORDER))
+            return 1
+    return run(years, args.per_ticker, args.apply, args.clean_previous, buckets, args.destino)
 
 
 if __name__ == "__main__":

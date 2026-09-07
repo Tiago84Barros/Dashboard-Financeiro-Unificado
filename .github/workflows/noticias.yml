@@ -1,0 +1,112 @@
+# Coleta de notícias do Motor Conjuntural.
+#
+# Este workflow mantém as notícias frescas sem ninguém com o Streamlit aberto:
+# o container do Streamlit Cloud só executa código enquanto responde a uma
+# requisição, e fechada a aba nada roda.
+#
+# ELE NÃO É MAIS O AGENDADOR PRINCIPAL. Desde que o acervo passou a morar no
+# armazém local, um runner do GitHub não alcança `noticias_itens`: ele coletaria,
+# gastaria requisição de provedor e descartaria tudo. O job avisa ("coleta não
+# persistida"), mas a cota já foi paga -- gastar para jogar fora é o defeito.
+# É o mesmo motivo estrutural que tirou a cadeia de FIIs daqui.
+#
+# Quem sustenta a cadência é a tarefa local `DFU - Coleta de noticias`, na
+# máquina que tem o armazém, registrada por `scripts/registrar_tarefas.ps1`.
+# Este workflow segue válido apenas quando existir um destino que o runner
+# alcance -- o secret `NOTICIAS_LOCAL_DB_URL`. Sem ele, o passo de destino
+# reprova o job ANTES da primeira requisição, em vez de depois dela.
+#
+# NASCE DESLIGADO. O `if:` do job checa uma variável de repositório
+# (`NOTICIAS_COLETA_ATIVA`) que não existe até alguém criá-la. Sem ela o cron
+# dispara, o job é pulado e nenhuma cota é gasta -- o mesmo espírito do
+# `is_active: False` no registro do pipeline. Para ligar:
+#   Settings > Secrets and variables > Actions > Variables > New:
+#   NOTICIAS_COLETA_ATIVA = true
+#
+# HORÁRIOS. Os :17 e :47 não são estética. Os outros crons do repositório
+# ocupam a virada da hora (:00, :30) e a convenção existente é isolá-los para
+# não saturar CPU/IO do compute Nano do Supabase com escrita concorrente.
+name: Coleta de noticias
+
+on:
+  schedule:
+    # A cada 30 min. É a granularidade do modo mais fino (Crise); o freio de
+    # cadência no banco descarta as execuções que o modo corrente não pede,
+    # gastando um runner ocioso em vez de cota de provedor. Cron do GitHub não
+    # é pontual e pode atrasar em fila -- por isso o gatilho tem tolerância.
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Forcar coleta (ignorar o freio de cadencia)"
+        type: boolean
+        default: false
+      nivel:
+        description: "Nivel de crise a assumir (0-4); vazio usa o gravado"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# Uma execução por vez também no lado do agendador. O advisory lock no banco
+# continua sendo a trava real (protege contra o disparo manual e contra outra
+# máquina); isto aqui só evita gastar runner para descobrir isso.
+concurrency:
+  group: noticias-coleta
+  cancel-in-progress: false
+
+jobs:
+  coletar:
+    if: vars.NOTICIAS_COLETA_ATIVA == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_ENV: production
+      MOCK_MODE: "false"
+      SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
+      DATABASE_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
+      # Destino do acervo. Não tem valor por omissão de propósito: sem ele o
+      # passo "Destino do acervo" reprova o job antes de gastar cota, e é isso
+      # que se quer -- não um fallback silencioso para o Supabase, que é
+      # exatamente o banco que o acervo não pode ocupar.
+      NOTICIAS_LOCAL_DB_URL: ${{ secrets.NOTICIAS_LOCAL_DB_URL }}
+      NOTICIAS_PROVEDORES: ${{ vars.NOTICIAS_PROVEDORES }}
+      NOTICIAS_ALPHAVANTAGE_KEY: ${{ secrets.NOTICIAS_ALPHAVANTAGE_KEY }}
+      NOTICIAS_MARKETAUX_KEY: ${{ secrets.NOTICIAS_MARKETAUX_KEY }}
+      NOTICIAS_FREQ_NORMAL_MIN: ${{ vars.NOTICIAS_FREQ_NORMAL_MIN }}
+      NOTICIAS_FREQ_VIGILANCIA_MIN: ${{ vars.NOTICIAS_FREQ_VIGILANCIA_MIN }}
+      NOTICIAS_FREQ_CRISE_MIN: ${{ vars.NOTICIAS_FREQ_CRISE_MIN }}
+      NOTICIAS_MAX_SEM_ATUALIZACAO_MIN: ${{ vars.NOTICIAS_MAX_SEM_ATUALIZACAO_MIN }}
+      NOTICIAS_MAX_RETENTATIVAS: ${{ vars.NOTICIAS_MAX_RETENTATIVAS }}
+      NOTICIAS_BACKOFF_S: ${{ vars.NOTICIAS_BACKOFF_S }}
+      NOTICIAS_TIMEOUT_S: ${{ vars.NOTICIAS_TIMEOUT_S }}
+      NOTICIAS_LIMITES_DIARIOS: ${{ vars.NOTICIAS_LIMITES_DIARIOS }}
+      NOTICIAS_RETENCAO_DIAS: ${{ vars.NOTICIAS_RETENCAO_DIAS }}
+      NOTICIAS_TIMEZONE: ${{ vars.NOTICIAS_TIMEZONE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-pipeline.txt
+
+      - run: pip install -r requirements-pipeline.txt
+
+      # Antes da cota, nunca depois. Sai com 1 quando não há onde gravar, e o
+      # job para aqui sem ter consultado nenhum provedor.
+      - name: Destino do acervo
+        run: python -m data_pipeline.cli_noticias --destino
+
+      - name: Coletar noticias
+        env:
+          FORCAR: ${{ inputs.force }}
+          NIVEL: ${{ inputs.nivel }}
+        run: python -m data_pipeline.cli_noticias
+
+      - name: Saude dos servicos
+        # Roda mesmo quando a coleta falha: é aí que a saúde é interessante.
+        if: always()
+        run: python -m data_pipeline.cli_noticias --saude

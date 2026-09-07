@@ -43,6 +43,7 @@ from core.portfolio_report_us import (
     grau_de_confianca,
     motivo_do_grau,
 )
+from core.portfolio_staleness import texto_defasagem
 from core.us_macro import (
     FONTE_OBSERVADO,
     FONTE_PREMISSA,
@@ -1036,10 +1037,7 @@ def render(show_header: bool = True) -> None:
         )
         return
     if model.get("is_stale"):
-        st.error(
-            "O portfólio salvo usa uma versão antiga da metodologia. Recalcule "
-            "e salve uma nova carteira na aba Criação de Portfólio antes da análise."
-        )
+        st.error(texto_defasagem(model), icon="🕓")
         return
 
     items = model["items"]

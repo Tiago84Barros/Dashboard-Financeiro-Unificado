@@ -15,6 +15,21 @@ from html import escape
 import streamlit as st
 import streamlit.components.v1 as components
 
+
+def _linha(texto: object, *, aspas: bool = False) -> str:
+    """Escapa **e** achata o texto que vai para dentro de uma tag.
+
+    ``escape`` já cobria ``<``, ``&`` e ``"``. Faltava o espaço em branco: o
+    markdown do Streamlit fecha o bloco HTML na primeira linha em branco, e daí
+    em diante a própria tag aparece na tela como texto. Uma mensagem de erro de
+    banco em ``ajuda`` -- ela vem com quebras e um parágrafo vazio -- bastava
+    para imprimir ``" style="--app-kpi-accent:...>`` no meio do card.
+
+    Vale a mesma lição de ``str(delta)``: converter no componente, e não pedir
+    que os chamadores lembrem de formatar.
+    """
+    return escape(" ".join(str(texto).split()), quote=aspas)
+
 # ══════════════════════════════════════════════════════════════════
 # Estrutura de página
 # ══════════════════════════════════════════════════════════════════
@@ -32,17 +47,17 @@ def container_pagina(
     """
     meta_html = "".join(
         '<span class="app-page-meta">'
-        f'<small>{escape(str(label))}</small>{escape(str(valor))}'
+        f'<small>{_linha(str(label))}</small>{_linha(str(valor))}'
         "</span>"
         for label, valor in (metadados or [])
         if valor not in (None, "")
     )
     icon_html = (
-        f'<span class="app-page-icon" aria-hidden="true">{escape(icone)}</span>'
+        f'<span class="app-page-icon" aria-hidden="true">{_linha(icone)}</span>'
         if icone else ""
     )
     subtitle_html = (
-        f'<p class="app-page-subtitle">{escape(subtitulo)}</p>'
+        f'<p class="app-page-subtitle">{_linha(subtitulo)}</p>'
         if subtitulo else ""
     )
     meta_group = (
@@ -52,9 +67,9 @@ def container_pagina(
     st.markdown(
         '<section class="app-page-hero">'
         '<div class="app-page-copy">'
-        f'<div class="app-page-eyebrow">{escape(eyebrow)}</div>'
+        f'<div class="app-page-eyebrow">{_linha(eyebrow)}</div>'
         '<div class="app-page-title-row">'
-        f'{icon_html}<h1>{escape(titulo)}</h1>'
+        f'{icon_html}<h1>{_linha(titulo)}</h1>'
         "</div>"
         f"{subtitle_html}</div>{meta_group}</section>",
         unsafe_allow_html=True,
@@ -170,16 +185,16 @@ def abas_secao(
 def secao_titulo(titulo: str, icone: str = "", subtitulo: str = "") -> None:
     """Cabeçalho de seção dentro de uma página."""
     icon_html = (
-        f'<span class="app-section-icon" aria-hidden="true">{escape(icone)}</span>'
+        f'<span class="app-section-icon" aria-hidden="true">{_linha(icone)}</span>'
         if icone else ""
     )
     subtitle_html = (
-        f'<div class="app-section-subtitle">{escape(subtitulo)}</div>'
+        f'<div class="app-section-subtitle">{_linha(subtitulo)}</div>'
         if subtitulo else ""
     )
     st.markdown(
         '<div class="app-section-heading">'
-        f'{icon_html}<div><div class="app-section-title">{escape(titulo)}</div>'
+        f'{icon_html}<div><div class="app-section-title">{_linha(titulo)}</div>'
         f"{subtitle_html}</div></div>",
         unsafe_allow_html=True,
     )
@@ -223,15 +238,15 @@ def card_metrica(
     accent = accent or ("#00C896" if positivo is True
                         else "#FC5C7D" if positivo is False else "#4A9EFF")
     delta_html = (
-        f'<div class="app-kpi-delta" style="color:{cor_delta}">{escape(str(delta))}</div>'
+        f'<div class="app-kpi-delta" style="color:{cor_delta}">{_linha(str(delta))}</div>'
         if delta is not None and str(delta) != "" else ""
     )
-    ajuda_attr = (f' title="{escape(str(ajuda), quote=True)}"'
+    ajuda_attr = (f' title="{_linha(str(ajuda), aspas=True)}"'
                   if ajuda is not None and str(ajuda) != "" else "")
     st.markdown(
         f'<div class="app-kpi-card"{ajuda_attr} style="--app-kpi-accent:{accent}">'
-        f'<div class="app-kpi-label">{escape(str(titulo))}</div>'
-        f'<div class="app-kpi-value">{escape(str(valor))}</div>'
+        f'<div class="app-kpi-label">{_linha(str(titulo))}</div>'
+        f'<div class="app-kpi-value">{_linha(str(valor))}</div>'
         f'{delta_html}</div>',
         unsafe_allow_html=True,
     )
@@ -362,7 +377,7 @@ def badge_status(texto: str, tipo: str = "info") -> None:
     cor_texto, cor_fundo = paleta.get(tipo, paleta["info"])
     st.markdown(
         f'<span class="app-status-badge" style="--badge-color:{cor_texto};'
-        f'--badge-bg:{cor_fundo}">{escape(texto)}</span>',
+        f'--badge-bg:{cor_fundo}">{_linha(texto)}</span>',
         unsafe_allow_html=True,
     )
 

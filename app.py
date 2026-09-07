@@ -49,7 +49,6 @@ _ROTAS: dict[str, str] = {
     "🌎 Empresas Americanas": "empresas_americanas",
     "🏬 Seleção de FIIs":      "fiis",
     "🌐 Portfólio Global":    "portfolio_global",
-    "🎯 Grau de Confiança":  "confianca",
     "📚 Documentação":        "documentacao",
     "⚙️ Configurações":       "configuracoes",
 }
@@ -83,6 +82,14 @@ with st.sidebar:
                          "🌎 Empresas Americanas",
                          "🏬 Seleção de FIIs",
                          "🌐 Portfólio Global"]
+        # Inteligência de Mercado, Macro Internacional e Homologação saíram da
+        # sidebar a pedido do dono do app: são retaguarda analítica que alimenta
+        # os módulos, não tela de consumo. Os módulos em ``views/`` continuam no
+        # repositório e seus motores em ``core/`` seguem sendo consultados pelas
+        # telas que dependem deles -- só a porta de entrada foi retirada.
+        # "Grau de Confiança" deixou de ser rota própria e virou aba dentro de
+        # Configurações (``views/configuracoes.py``); a porta de entrada existe,
+        # mudou de lugar (``memoria: diagnostico-precisa-porta-de-entrada``).
         opcoes_sistema = ["📚 Documentação", "⚙️ Configurações"]
         opcoes_menu = opcoes_visao + opcoes_financas + opcoes_invest + opcoes_sistema
 
@@ -120,5 +127,26 @@ if modulo_nome:
                 f'Erro ao carregar o módulo "{menu}"',
                 MSG_ERRO_GENERICO_AO_CARREGAR_MODULO,
             )
+            # A-013 tirou a excecao crua da tela, e com ela sumiu qualquer
+            # pista: em producao o traceback vive so no log da nuvem, que a
+            # pessoa usuaria nao alcanca. Isto devolve a IDENTIDADE do defeito
+            # (tipo + arquivo:linha deste repositorio) sem devolver a
+            # mensagem, que e onde moram driver, host, porta e credencial.
+            # Envolvido no proprio try: um diagnostico que falha nao pode
+            # derrubar o tratamento do erro que ele veio explicar.
+            try:
+                from core.erro_diagnostico import (
+                    identidade_do_erro,
+                    relatorio_tecnico,
+                )
+
+                with st.expander(f"Detalhes tecnicos - {identidade_do_erro(exc)}"):
+                    st.caption(
+                        "Copie este bloco ao reportar. Ele nao contem dados, "
+                        "credenciais nem endereco de banco."
+                    )
+                    st.code(relatorio_tecnico(exc), language="text")
+            except Exception:  # noqa: BLE001 - diagnostico e extra, nunca requisito
+                logger.exception("falha ao montar o diagnostico da rota")
 else:
     st.warning(f'Rota não encontrada para "{menu}".')

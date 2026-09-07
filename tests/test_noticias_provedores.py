@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import timedelta
 
 import pytest
 
@@ -141,6 +142,42 @@ def test_a_chave_vai_nos_parametros_e_nao_no_caminho_da_url():
     assert params["topics"] == "earnings"
 
 
+def test_varios_tickers_nao_viram_intersecao_vazia_no_alphavantage():
+    """A API cruza tickers com E; pedir a carteira inteira devolve zero.
+
+    Medido contra a API real em 06/09/2026: ``ADBE`` sozinho rende 50 itens,
+    ``AAPL,MSFT`` rende 50, ``AAPL,PETR4`` rende **0** e o universo de 20 nomes
+    da carteira rende **0**. Um único símbolo que a API não cobre zera a
+    resposta inteira -- e ela responde ``200`` com ``feed`` vazio, que nenhuma
+    camada distingue de "não houve notícia". Foi assim que este provedor
+    entregou zero itens ao acervo desde que existe, com chave válida.
+
+    Com mais de um ticker a consulta sai ampla, e a troca **tem** de aparecer
+    nas limitações: filtro silenciosamente não aplicado faz a tela prometer um
+    recorte que os dados não têm.
+    """
+    transporte = TransporteFalso([_ok(CARGA_AV)])
+    consulta = Consulta(tickers=("PETR4", "ADBE", "GGRC11"))
+
+    resposta = _av(transporte).buscar(consulta)
+
+    _, params = transporte.chamadas[0]
+    assert "tickers" not in params, "a interseção de 3 símbolos devolveria zero"
+    assert resposta.itens, "sem o filtro a consulta ampla rende itens"
+    assert any("interseção" in lim for lim in resposta.limitacoes)
+
+
+def test_um_unico_ticker_continua_filtrando_no_alphavantage():
+    """Interseção de um elemento é o próprio elemento: aí o filtro funciona."""
+    transporte = TransporteFalso([_ok(CARGA_AV)])
+
+    resposta = _av(transporte).buscar(Consulta(tickers=("ADBE",)))
+
+    _, params = transporte.chamadas[0]
+    assert params["tickers"] == "ADBE"
+    assert not any("interseção" in lim for lim in resposta.limitacoes)
+
+
 def test_filtro_nao_suportado_vira_limitacao_declarada():
     """Filtro ignorado em silêncio faz a tela prometer um recorte inexistente."""
     transporte = TransporteFalso([_ok(CARGA_AV)])
@@ -234,21 +271,101 @@ def test_marketaux_traduz_o_codigo_de_cota_da_propria_api():
 
 
 def test_o_freio_local_bloqueia_antes_de_gastar_a_requisicao():
-    """Descobrir o limite pelo 429 do servidor custa a cota que já foi gasta."""
+    """Descobrir o limite pelo 429 do servidor custa a cota que já foi gasta.
+
+    O relógio anda entre as chamadas porque o teto diário agora traz junto um
+    piso de espaçamento (``Limite.intervalo_minimo_s``): com ``por_dia=2`` esse
+    piso é de 12 horas, e um relógio congelado barraria a segunda chamada pelo
+    espaçamento antes de a cota acabar -- que é outro teste, logo abaixo.
+    """
+    relogio = {"agora": AGORA}
     orcamento = Orcamento(
         limites={"alphavantage": Limite(por_minuto=None, por_dia=2)},
-        caminho=None, agora=lambda: AGORA, persistir=False)
+        caminho=None, agora=lambda: relogio["agora"], persistir=False)
     transporte = TransporteFalso([_ok(CARGA_AV), _ok(CARGA_AV), _ok(CARGA_AV)])
     provedor = _av(transporte, orcamento=orcamento)
 
     provedor.buscar(Consulta(tickers=("A",)))
+    relogio["agora"] = AGORA + timedelta(hours=13)
     provedor.buscar(Consulta(tickers=("B",)))
+    relogio["agora"] = AGORA + timedelta(hours=23)
     with pytest.raises(LimiteExcedido) as erro:
         provedor.buscar(Consulta(tickers=("C",)))
 
     assert len(transporte.chamadas) == 2, "a terceira nao pode chegar a rede"
     assert erro.value.retentavel is False, "esperar aqui seria esperar horas"
     assert erro.value.liberado_em is not None
+
+
+def test_o_teto_diario_traz_junto_um_piso_de_espacamento():
+    """25 chamadas por dia não distribuem sozinhas: autorizam gastar tudo cedo.
+
+    O modo crise roda de 30 em 30 minutos e pede 48 ciclos por dia contra 25
+    disponíveis no Alpha Vantage. Sem piso, o provedor gasta a cota nas
+    primeiras 12h30 e fica mudo no resto do dia -- justamente a metade em que a
+    crise ainda está acontecendo.
+    """
+    relogio = {"agora": AGORA}
+    o = Orcamento(limites={"alphavantage": Limite(por_minuto=5, por_dia=25)},
+                  caminho=None, persistir=False,
+                  agora=lambda: relogio["agora"])
+    aceitos = []
+    for i in range(48):                       # 48 ciclos de 30 min = 24 h
+        relogio["agora"] = AGORA + timedelta(minutes=30 * i)
+        if o.permite("alphavantage"):
+            o.registrar("alphavantage")
+            aceitos.append(i)
+
+    assert len(aceitos) == 24, "tem de caber sob o teto de 25"
+    assert aceitos[-1] >= 44, "a ultima chamada precisa cair no fim do dia"
+    # 57,6 min de piso: em ciclos de 30 min sai um sim, um nao.
+    assert all(b - a == 2 for a, b in zip(aceitos, aceitos[1:]))
+
+
+def test_o_espacamento_nao_morde_em_modo_normal_nem_em_vigilancia():
+    """O piso só pode aparecer quando a cadência é mais rápida que ele.
+
+    57,6 min contra ciclos de 240 min (normal) e de 60 min (vigilância): o
+    provedor responde em todos. Se este teste falhar, o piso deixou de ser um
+    freio de crise e virou um freio de todo dia.
+    """
+    for minutos, ciclos in ((240, 6), (60, 24)):
+        relogio = {"agora": AGORA}
+        o = Orcamento(limites={"alphavantage": Limite(por_minuto=5, por_dia=25)},
+                      caminho=None, persistir=False,
+                      agora=lambda: relogio["agora"])
+        aceitos = 0
+        for i in range(ciclos):
+            relogio["agora"] = AGORA + timedelta(minutes=minutos * i)
+            if o.permite("alphavantage"):
+                o.registrar("alphavantage")
+                aceitos += 1
+        assert aceitos == ciclos, f"o piso mordeu com ciclo de {minutos} min"
+
+
+def test_provedor_sem_teto_diario_nao_ganha_piso():
+    """``rss`` e ``finnhub`` não têm ``por_dia``; o piso não pode existir."""
+    assert Limite(por_minuto=30, por_dia=None).intervalo_minimo_s is None
+    assert Limite(por_minuto=5, por_dia=25).intervalo_minimo_s == 86400 / 25
+
+
+def test_a_limitacao_separa_cota_esgotada_de_espacamento():
+    """Quem lê a tela precisa distinguir "acabou" de "esta sendo espacado"."""
+    relogio = {"agora": AGORA}
+    o = Orcamento(limites={"alphavantage": Limite(por_dia=25)}, caminho=None,
+                  persistir=False, agora=lambda: relogio["agora"])
+    o.registrar("alphavantage")
+    with pytest.raises(LimiteExcedido) as espacado:
+        o.exigir("alphavantage")
+    assert "espacado" in espacado.value.motivo
+
+    for i in range(1, 25):                    # completa o teto, ja espacado
+        relogio["agora"] = AGORA + timedelta(minutes=58 * i)
+        o.registrar("alphavantage")
+    relogio["agora"] = AGORA + timedelta(hours=23, minutes=59)
+    with pytest.raises(LimiteExcedido) as esgotado:
+        o.exigir("alphavantage")
+    assert "esgotada" in esgotado.value.motivo
 
 
 def test_o_orcamento_conta_a_familia_e_nao_a_instancia():

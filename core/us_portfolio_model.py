@@ -24,6 +24,7 @@ from sqlalchemy import text
 
 from core.config import settings
 from core.database import get_engine
+from core.portfolio_staleness import marcar_defasagem
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION, US_SCHEMA_VERSION
 
 _REQUIRED_TABLES = ("us_portfolio_models", "us_portfolio_model_items")
@@ -199,7 +200,7 @@ def _model_from_connection(conn, owner: str, *,
     rows = conn.execute(
         text("""
             SELECT symbol, nome, setor, industria, weight, entry_score,
-                   fundamental_score, coverage, rank_score
+                   fundamental_score, coverage, rank_score, meta_json
             FROM us_portfolio_model_items
             WHERE model_id = :mid
             ORDER BY weight DESC, entry_score DESC, symbol
@@ -212,6 +213,21 @@ def _model_from_connection(conn, owner: str, *,
         for key in ("weight", "entry_score", "fundamental_score", "coverage"):
             item[key] = float(item[key]) if item[key] is not None else None
         item["ticker"] = item["symbol"]
+        meta = item.pop("meta_json", {}) or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except json.JSONDecodeError:
+                meta = {}
+        if isinstance(meta, dict):
+            item.update({
+                key: meta.get(key)
+                for key in (
+                    "weight_before_macro", "macro_impact",
+                    "macro_score_adjustment", "contextual_score",
+                )
+                if key in meta
+            })
         items.append(item)
     model = dict(header)
     model["items"] = items
@@ -346,6 +362,16 @@ def save_us_portfolio_model(
                             "rank_visual": idx,
                             "params_hash": plan_hash,
                             "allocation_usd": _num(item.get("allocation_usd"), None),
+                            "weight_before_macro": _num(
+                                item.get("weight_before_macro"), None
+                            ),
+                            "macro_impact": _num(item.get("macro_impact"), None),
+                            "macro_score_adjustment": _num(
+                                item.get("macro_score_adjustment"), None
+                            ),
+                            "contextual_score": _num(
+                                item.get("contextual_score"), None
+                            ),
                         },
                         {},
                     ),
@@ -427,11 +453,11 @@ def load_active_us_portfolio_model() -> dict:
     model["items"] = items
     model["num_items"] = len(items)
     params = model.get("params_json") or {}
-    model["is_stale"] = (
-        params.get("score_version") != US_FUNDAMENTAL_SCORE_VERSION
-        or int(params.get("model_schema_version") or 0) != US_SCHEMA_VERSION
+    marcar_defasagem(
+        model, params,
+        score_version=US_FUNDAMENTAL_SCORE_VERSION,
+        schema_version=US_SCHEMA_VERSION,
     )
-    model["current_score_version"] = US_FUNDAMENTAL_SCORE_VERSION
     return model
 
 

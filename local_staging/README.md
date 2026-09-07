@@ -140,6 +140,29 @@ uma semana fora publica o que venceu, na ordem; ligar duas vezes no mesmo dia n�
 publica nada de novo. Um agendador puramente horário perderia o dia em silêncio e
 no dia seguinte publicaria como se nada tivesse acontecido.
 
+Também registra **DFU - Coleta de noticias**, a cada 30 minutos (:17 e :47) e
+ao entrar na sessão. Ela roda `python -m data_pipeline.cli_noticias`.
+
+**A coleta também não tem alternativa remota, e pelo mesmo motivo das vitrines.**
+O `.github/workflows/noticias.yml` existe e tem cron de 30 minutos, mas desde que
+o acervo passou a morar no armazém local um runner do GitHub não alcança
+`noticias_itens`: ele coletaria, gastaria requisição de Alpha Vantage e Marketaux
+e descartaria tudo. O job avisa (`partial_success`, "coleta não persistida") --
+só que depois de a cota ter sido paga. Por isso o workflow ganhou um passo de
+destino que reprova **antes** da primeira requisição, e a cadência real mudou de
+casa para cá.
+
+Para conferir o destino sem coletar nada (não toca em nenhuma API):
+
+```bash
+python -m data_pipeline.cli_noticias --destino
+```
+
+`0` quando há onde gravar, `1` quando não há. O freio de cadência mora no banco e
+é medido contra a última coleta bem-sucedida, então disparar a cada 30 minutos
+não significa coletar a cada 30 minutos: o modo corrente (Normal a Sistêmico)
+decide, e a execução que ele não pede é descartada de graça.
+
 Também registra **DFU - Backfill documentos FII** (sábados às 09:00) e remove as
 tarefas obsoletas `DashboardFinanceiro-FII-Backfill` e
 `DFU - Republicar vitrine de FIIs`.
@@ -221,14 +244,16 @@ starting services: initializing Inference manager:
   remove ...: The file cannot be accessed by the system.
 ```
 
-Eram três *soquetes órfãos* de comprimento zero em `%LOCALAPPDATA%\Dockerun`
+Eram três *soquetes órfãos* de comprimento zero em `%LOCALAPPDATA%\Docker
+un`
 (`dockerInference`, `dockerEthernetVfkit`, `userAnalyticsOtlpHttp.sock`),
 deixados por um desligamento sujo: reparse points que o próprio Docker não
 consegue remover. A saída é aposentar a pasta inteira -- ele a recria vazia no
 próximo start:
 
 ```powershell
-Rename-Item "$env:LOCALAPPDATA\Dockerun" "run.quebrado-AAAA-MM-DD"
+Rename-Item "$env:LOCALAPPDATA\Docker
+un" "run.quebrado-AAAA-MM-DD"
 ```
 
 Renomear, e não apagar: se o diagnóstico estiver errado, dá para voltar. O

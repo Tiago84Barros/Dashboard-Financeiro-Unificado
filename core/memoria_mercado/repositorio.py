@@ -37,6 +37,18 @@ import threading
 
 from sqlalchemy import text
 
+# Reexportados de proposito: quem escreve
+# ``except repositorio.DestinoRemotoRecusado`` nao deveria precisar saber que a
+# implementacao se mudou de casa. E a classe e a mesma, entao o ``except``
+# continua pegando exatamente o que sempre pegou.
+from core.destino_local import (  # noqa: F401
+    FRAGMENTOS_REMOTOS,
+    HOSTS_LOCAIS,
+    DestinoRemotoRecusado,
+    e_local,
+    url_da_engine,
+)
+from core.destino_local import exigir_local as _exigir_local
 from core.memoria_mercado import MEMORIA_MERCADO_VERSAO
 from core.memoria_mercado.retornos import EventoMedido
 
@@ -44,21 +56,6 @@ logger = logging.getLogger(__name__)
 
 ESQUEMA = "memoria_mercado"
 
-#: Hosts aceitos como armazém local. O armazém do projeto é o container Docker
-#: ``dfu_warehouse`` publicado em ``localhost:5433``.
-HOSTS_LOCAIS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0",
-                          "host.docker.internal", "dfu_warehouse"})
-
-#: Fragmentos que denunciam um destino gerenciado na nuvem. A lista é
-#: conservadora de propósito: na dúvida entre gravar num lugar errado e recusar
-#: um lugar certo, recusar custa um parâmetro a mais e a outra opção custa o app.
-FRAGMENTOS_REMOTOS = ("supabase.co", "supabase.com", "pooler.supabase",
-                      "neon.tech", "amazonaws.com", "render.com",
-                      "azure.com", "gcp.")
-
-
-class DestinoRemotoRecusado(RuntimeError):
-    """Tentativa de gravar a Memória de Mercado fora do armazém local."""
 
 
 DDL_SQL = [
@@ -111,41 +108,61 @@ DDL_SQL = [
         PRIMARY KEY (versao_metodologia, chave)
     )
     """,
+    # ── Migracao 06/09/2026: a identidade do fato deixa de ser a `chave` ─────
+    #
+    # `chave` e um TEXTO COMPOSTO PELO CHAMADOR. Enquanto o UNIQUE recaia so
+    # sobre ela, trocar o formato da chave re-admitia o acervo inteiro: em
+    # 06/09/2026 o mesmo resultado anual da BBDC4 entrou duas vezes, como
+    # `cvm:BBDC4:2010` e como `resultado_anual:BBDC4:2011-01-31`. Nenhum erro,
+    # 8.923 linhas para 4.463 eventos, e a base historica com n dobrado --
+    # `memoria: procedencia-na-chave-aceita-o-fato-de-novo`.
+    #
+    # A identidade real do evento medido e (versao, tipo, simbolo, data). Dois
+    # eventos do mesmo tipo, no mesmo ativo, no mesmo dia sao o mesmo evento --
+    # se a fonte devolver dois, o segundo e duplicata, nao observacao nova.
+    #
+    # O bloco so age quando o indice ainda nao existe, e nesse caso limpa as
+    # duplicatas mantendo a linha mais recente. Depois disso e no-op.
+    f"""
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                        WHERE schemaname = '{ESQUEMA}'
+                          AND indexname = 'ux_mm_eventos_fato') THEN
+            DELETE FROM {ESQUEMA}.eventos_medidos a
+             USING {ESQUEMA}.eventos_medidos b
+             WHERE a.versao_metodologia = b.versao_metodologia
+               AND a.tipo_evento = b.tipo_evento
+               AND a.simbolo = b.simbolo
+               AND a.data_evento = b.data_evento
+               AND (a.atualizado_em, a.chave) < (b.atualizado_em, b.chave);
+            CREATE UNIQUE INDEX ux_mm_eventos_fato
+                ON {ESQUEMA}.eventos_medidos
+                   (versao_metodologia, tipo_evento, simbolo, data_evento);
+            -- Cenario cuja chave nao aponta mais para nenhum evento e lixo de
+            -- geracao anterior: manteria dimensoes de um fato ja substituido.
+            DELETE FROM {ESQUEMA}.cenarios c
+             WHERE NOT EXISTS (SELECT 1 FROM {ESQUEMA}.eventos_medidos e
+                                WHERE e.versao_metodologia = c.versao_metodologia
+                                  AND e.chave = c.chave);
+        END IF;
+    END $$;
+    """,
 ]
 
 _schema_pronto = False
 _lock = threading.Lock()
 
 
-def url_da_engine(engine) -> str:
-    """URL da engine sem a senha. Nunca devolve credencial -- nem para log."""
-    try:
-        return str(engine.url.render_as_string(hide_password=True))
-    except AttributeError:
-        return str(getattr(engine, "url", ""))
-
-
-def e_local(engine) -> bool:
-    """``True`` apenas quando o host da engine está em :data:`HOSTS_LOCAIS`."""
-    url = getattr(engine, "url", None)
-    host = (getattr(url, "host", None) or "").strip().lower()
-    texto = url_da_engine(engine).lower()
-    if any(fragmento in texto for fragmento in FRAGMENTOS_REMOTOS):
-        return False
-    if not host:
-        # SQLite em arquivo ou memória: local por construção.
-        return True
-    return host in HOSTS_LOCAIS
-
-
 def exigir_local(engine) -> None:
-    """Levanta :class:`DestinoRemotoRecusado` se o destino não for local."""
-    if engine is None:
-        raise DestinoRemotoRecusado("nenhuma engine informada")
-    if not e_local(engine):
-        raise DestinoRemotoRecusado(
-            "a Memoria de Mercado so pode ser gravada no armazem local; "
-            f"destino recusado: {url_da_engine(engine)}")
+    """Levanta :class:`DestinoRemotoRecusado` se o destino não for local.
+
+    A decisão em si mora em :mod:`core.destino_local`. Este invólucro existe só
+    para preservar a assinatura de uma linha que os chamadores já usam e para
+    dizer *o quê* está sendo recusado, que é o que falta num log de
+    "destino recusado" sem contexto.
+    """
+    _exigir_local(engine, o_que="a Memoria de Mercado")
 
 
 def garantir_schema(conn) -> None:
@@ -234,10 +251,12 @@ INSERT INTO {ESQUEMA}.eventos_medidos (
     :recuperacao_observada, :persistencia, :deriva_pre_evento,
     CAST(:janelas AS JSONB), CAST(:limitacoes AS JSONB), NOW()
 )
-ON CONFLICT (versao_metodologia, chave) DO UPDATE SET
-    simbolo = EXCLUDED.simbolo,
-    tipo_evento = EXCLUDED.tipo_evento,
-    data_evento = EXCLUDED.data_evento,
+-- O alvo do conflito e a identidade do FATO, nao a chave de texto: ver a
+-- migracao `ux_mm_eventos_fato` em DDL_SQL. `chave` entra no UPDATE porque o
+-- formato novo deve substituir o antigo na linha que sobreviveu.
+ON CONFLICT (versao_metodologia, tipo_evento, simbolo, data_evento)
+DO UPDATE SET
+    chave = EXCLUDED.chave,
     data_pregao_zero = EXCLUDED.data_pregao_zero,
     setor = EXCLUDED.setor,
     benchmark = EXCLUDED.benchmark,
@@ -292,9 +311,34 @@ def gravar(eventos, engine, *, versao: str = MEMORIA_MERCADO_VERSAO,
             """), [{"versao_metodologia": versao, "chave": k,
                     "dimensoes": json.dumps(v)} for k, v in sorted(cenarios.items())])
 
+        # Invariante, nao limpeza pontual: `cenarios` e chaveado pela `chave`
+        # do evento, e a `chave` e texto composto pelo chamador. Quando o
+        # formato muda, o upsert de eventos atualiza a linha do fato e a
+        # entrada antiga de cenario fica orfa -- carregando as dimensoes de um
+        # fato que ja foi substituido. Rodar isto a cada gravacao e barato e
+        # impede que a orfandade acumule em silencio.
+        orfaos = conn.execute(text(f"""
+            DELETE FROM {ESQUEMA}.cenarios c
+             WHERE c.versao_metodologia = :versao
+               AND NOT EXISTS (SELECT 1 FROM {ESQUEMA}.eventos_medidos e
+                                WHERE e.versao_metodologia = c.versao_metodologia
+                                  AND e.chave = c.chave)
+        """), {"versao": versao}).rowcount or 0
+    if orfaos:
+        logger.info("memoria de mercado: %d cenarios orfaos removidos", orfaos)
+
+    # `linhas` conta FATOS distintos, nao linhas enviadas. As duas divergem
+    # quando a fonte devolve o mesmo (tipo, simbolo, data) mais de uma vez --
+    # duas DFP entregues no mesmo dia pelo mesmo emissor, por exemplo. Relatar
+    # o tamanho do lote diria "4.463 gravados" onde existem 4.460, e a
+    # diferenca so apareceria para quem fosse contar no banco.
+    fatos = {(x["tipo_evento"], x["simbolo"], x["data_evento"]) for x in linhas}
     logger.info("memoria de mercado: %d eventos gravados no armazem local "
-                "(versao %s)", len(linhas), versao)
-    return {"gravado": True, "linhas": len(linhas),
+                "(versao %s; %d linhas enviadas)",
+                len(fatos), versao, len(linhas))
+    return {"gravado": True, "linhas": len(fatos),
+            "linhas_enviadas": len(linhas),
+            "fatos_repetidos_no_lote": len(linhas) - len(fatos),
             "cenarios": len(cenarios), "versao": versao,
             "destino": url_da_engine(engine)}
 

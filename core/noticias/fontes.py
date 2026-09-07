@@ -110,6 +110,15 @@ _CATALOGO: tuple[Fonte, ...] = (
     _f("barrons.com", "Barrons", CLASSE_ESPECIALIZADA, "US", "en"),
     _f("fundsexplorer.com.br", "Funds Explorer", CLASSE_ESPECIALIZADA, "BR", "pt"),
     _f("clubefii.com.br", "Clube FII", CLASSE_ESPECIALIZADA, "BR", "pt"),
+    _f("investors.com", "Investor's Business Daily", CLASSE_ESPECIALIZADA,
+       "US", "en"),
+    # Casas de análise com braço editorial. Ficam em "especializada" porque o
+    # texto é jornalismo financeiro profissional, mas o conflito é real e está
+    # declarado aqui de propósito: as duas **vendem** a recomendação sobre a
+    # qual escrevem. Rebaixar para blog subestimaria a apuração; deixar sem
+    # catálogo as jogaria no piso de desconhecida, que é pior e mudo.
+    _f("suno.com.br", "Suno Notícias", CLASSE_ESPECIALIZADA, "BR", "pt"),
+    _f("seudinheiro.com", "Seu Dinheiro", CLASSE_ESPECIALIZADA, "BR", "pt"),
     # Imprensa geral
     _f("g1.globo.com", "G1", CLASSE_GERAL, "BR", "pt"),
     _f("folha.uol.com.br", "Folha de S.Paulo", CLASSE_GERAL, "BR", "pt"),
@@ -125,6 +134,25 @@ _CATALOGO: tuple[Fonte, ...] = (
     _f("news.google.com", "Google Notícias", CLASSE_AGREGADOR, None, None),
     _f("benzinga.com", "Benzinga", CLASSE_AGREGADOR, "US", "en"),
     _f("zacks.com", "Zacks", CLASSE_AGREGADOR, "US", "en"),
+    # Medidos no acervo em 06/09/2026: 65 de 391 itens caíam em
+    # `CLASSE_DESCONHECIDA`, e **52 deles num domínio só** -- marketbeat.com,
+    # que sozinho responde por 87% do que o alphavantage entrega. O piso de
+    # 0,20 existe para quem não se identifica; aplicá-lo ao veículo dominante
+    # de um provedor é medir o catálogo, não a fonte.
+    _f("marketbeat.com", "MarketBeat", CLASSE_AGREGADOR, "US", "en"),
+    _f("tradingview.com", "TradingView", CLASSE_AGREGADOR, "US", "en"),
+    _f("gurufocus.com", "GuruFocus", CLASSE_AGREGADOR, "US", "en"),
+    _f("insidermonkey.com", "Insider Monkey", CLASSE_AGREGADOR, "US", "en"),
+    _f("ad-hoc-news.de", "ad-hoc-news", CLASSE_AGREGADOR, "DE", "de"),
+    _f("thehindubusinessline.com", "The Hindu BusinessLine",
+       CLASSE_ESPECIALIZADA, "IN", "en"),
+    _f("cleveland.com", "Cleveland.com", CLASSE_GERAL, "US", "en"),
+    _f("thesmartinvestor.com.sg", "The Smart Investor", CLASSE_BLOG,
+       "SG", "en"),
+    # Os que sobram no piso ficam nele de propósito: `hyougaki.xyz` e
+    # `bruchoufunes.com` são domínios sem identidade, e `chowhound.com` e
+    # `bestlifeonline.com` são lifestyle que o provedor devolve por engano.
+    # Nenhum dos quatro deve ganhar confiabilidade por ter aparecido uma vez.
     _f("seekingalpha.com", "Seeking Alpha", CLASSE_BLOG, "US", "en"),
     _f("fool.com", "Motley Fool", CLASSE_BLOG, "US", "en"),
 )

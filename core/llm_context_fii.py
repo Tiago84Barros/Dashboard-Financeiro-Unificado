@@ -165,6 +165,11 @@ def build_fii_chat_context(
         "",
         "DETALHES DOS FUNDOS:",
     ]
+    macro_snapshot = portfolio_result.get("macro_snapshot")
+    if macro_snapshot is not None:
+        from core.macro_data.portfolio_context import format_portfolio_macro_context
+
+        lines[0:0] = [format_portfolio_macro_context(macro_snapshot), ""]
     selected_set = set(selected_tickers)
     for ticker in detail_tickers:
         row = {**all_by_ticker.get(ticker, {}),
@@ -196,6 +201,14 @@ def build_fii_chat_context(
             facts = list(report.get("facts") or []) + list(report.get("structure") or [])
             if facts:
                 lines.append(f"  {ticker}: " + " | ".join(map(str, facts[:10])))
+
+    foco = {str(row.get("ticker") or "").strip().upper():
+            str(row.get("segmento") or row.get("tipo") or "")
+            for row in selected if row.get("ticker")}
+    if foco:
+        from core.conjuntura import bloco_para_prompt
+
+        lines += ["", bloco_para_prompt(asset_class="fii", ativos=foco)]
 
     lines += ["", _correlation_context(prices, selected_tickers), "",
               "LIMITAÇÕES GERAIS:",

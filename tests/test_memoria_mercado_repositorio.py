@@ -23,8 +23,8 @@ from core.memoria_mercado import repositorio as repo
 from scripts import construir_memoria_mercado as construtor
 from tests.apoio_memoria import RUIDO, dias_uteis, evento, indice_plano
 
-URL_LOCAL = "postgresql://postgres:senha_secreta@localhost:5433/postgres"
-URL_SUPABASE = ("postgresql://postgres.abcdefgh:senha_secreta"
+URL_LOCAL = f"postgresql://postgres:{'x' * 16}@localhost:5433/postgres"
+URL_SUPABASE = (f"postgresql://postgres.abcdefgh:{'x' * 16}"
                 "@aws-0-sa-east-1.pooler.supabase.com:6543/postgres")
 
 
@@ -195,7 +195,13 @@ def test_gravar_cria_o_schema_e_faz_upsert_no_destino_local():
     sql = e.sql_executado()
     assert f"CREATE SCHEMA IF NOT EXISTS {repo.ESQUEMA}" in sql
     assert "CREATE TABLE IF NOT EXISTS" in sql
-    assert "ON CONFLICT (versao_metodologia, chave) DO UPDATE" in sql
+    # O alvo do conflito e a identidade do FATO, e nao a `chave` de texto: ate
+    # 06/09/2026 o UNIQUE recaia sobre a chave composta pelo chamador, e trocar
+    # o formato dela re-admitia o acervo inteiro (8.923 linhas para 4.463
+    # eventos). Ver a migracao `ux_mm_eventos_fato` -- `memoria:
+    # chave-de-texto-nao-e-identidade-do-fato`.
+    assert ("ON CONFLICT (versao_metodologia, tipo_evento, simbolo, "
+            "data_evento) DO UPDATE") in sql
 
 
 def test_gravar_sem_eventos_nao_abre_conexao_nem_finge_que_gravou():
@@ -311,17 +317,40 @@ def test_painel_estreito_nao_produz_indice_e_o_aviso_sai_no_relatorio():
     assert all(not ev.tem_retorno_anormal for ev in saida["medidos"])
 
 
-def test_mercado_b3_carrega_o_aviso_de_serie_nao_diaria():
-    """A assimetria medida no armazém: EUA e FII têm preço diário, ações da B3
-    têm 1.542 datas em 26 anos. O relatório precisa dizer isso."""
+def test_as_tres_fontes_sao_diarias_e_a_b3_nao_carrega_mais_o_aviso():
+    """A assimetria acabou em 02/09/2026, e o relatório tem de acompanhar.
+
+    Este teste afirmava o contrário: que ações da B3 tinham 1.542 datas em 26
+    anos e que o relatório precisava avisar. A ingestão do COTAHIST
+    (`data_pipeline/market/b3_precos.py`) trocou a fonte por
+    `market.b3_security_history` -- 1.627.752 linhas em 4.134 pregões, 2010 a
+    2026. Manter a asserção velha guardaria uma limitação que já não existe, e
+    o aviso apareceria na tela dizendo que o horizonte de 1 dia sai não medido
+    quando ele passa a ser medido.
+    """
+    e = FalsaEngine(linhas=[])
+    saida = construtor.construir(e, mercado="b3", eventos=[
+        {"chave": "k", "simbolo": "PETR4", "tipo_evento": "resultado",
+         "data": "2020-01-02"}])
+    assert saida["relatorio"]["serie_diaria"] is True
+    assert "aviso_densidade" not in saida["relatorio"]
+    assert all(fonte["diaria"] for fonte in construtor.FONTES.values())
+
+
+def test_fonte_nao_diaria_ainda_carrega_o_aviso(monkeypatch):
+    """O mecanismo continua necessário, mesmo sem nenhuma fonte usando-o hoje.
+
+    Sem este teste, o aviso viraria código morto no dia em que a B3 passou a
+    ser diária -- e a próxima fonte esparsa entraria calada, com os horizontes
+    curtos saindo `None` sem que a tela dissesse por quê.
+    """
+    monkeypatch.setitem(construtor.FONTES["b3"], "diaria", False)
     e = FalsaEngine(linhas=[])
     saida = construtor.construir(e, mercado="b3", eventos=[
         {"chave": "k", "simbolo": "PETR4", "tipo_evento": "resultado",
          "data": "2020-01-02"}])
     assert saida["relatorio"]["serie_diaria"] is False
     assert "horizontes curtos" in saida["relatorio"]["aviso_densidade"]
-    assert construtor.FONTES["us"]["diaria"] is True
-    assert construtor.FONTES["fii"]["diaria"] is True
 
 
 def test_o_script_le_a_senha_do_container_e_nunca_de_uma_constante():

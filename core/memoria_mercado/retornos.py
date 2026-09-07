@@ -60,6 +60,23 @@ SEM_MOVIMENTO = "sem_movimento"
 MOTIVO_FORA_DA_SERIE = "historico insuficiente"
 MOTIVO_ESPARSA = "serie sem densidade diaria"
 
+#: Distância máxima, em dias corridos, entre a data do evento e o pregão zero.
+#: ``SeriePrecos.indice_do_pregao`` devolve o primeiro pregão *em ou após* a
+#: data, e essa convenção está certa para um fato de sábado ou de feriado. Ela
+#: não tem fundo, porém: um evento anterior ao início da série casa com a
+#: primeira linha existente, a quatorze anos de distância, e sai daqui um
+#: ``EventoMedido`` completo, confiante e sobre outro dia.
+#:
+#: Medido: das 3.000 datas-ex mais antigas de ``market.dividends`` (1995-2005),
+#: 2.067 recebiam ``data_pregao_zero = 2010-01-04`` -- o primeiro pregão de
+#: ``market.b3_security_history`` -- e todas eram "medidas" na mesma janela.
+#: É ``memoria: fallback-nunca-contradiz``: o preenchimento só tapa buraco, e
+#: por isso nunca aparece como erro.
+#:
+#: Onze dias cobrem feriado longo emendado com fim de semana e recesso; acima
+#: disso não é calendário, é ausência de série.
+TOLERANCIA_PREGAO_ZERO_DIAS = 11
+
 
 @dataclass(frozen=True)
 class MetricasJanela:
@@ -222,6 +239,12 @@ def medir_evento(
     """
     i0 = ativo.indice_do_pregao(data_evento)
     if i0 is None:
+        return None
+
+    # O pregão zero precisa ser o pregão *daquele* evento. Ver
+    # TOLERANCIA_PREGAO_ZERO_DIAS: sem este corte, evento anterior ao início da
+    # série vira medição da primeira linha que existir.
+    if (ativo.datas[i0] - _data(data_evento)).days > TOLERANCIA_PREGAO_ZERO_DIAS:
         return None
 
     limitacoes: list[str] = []

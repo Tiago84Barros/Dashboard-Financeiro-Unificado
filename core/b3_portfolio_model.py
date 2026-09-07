@@ -20,6 +20,7 @@ from sqlalchemy import text
 from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
 from core.config import settings
 from core.database import get_engine
+from core.portfolio_staleness import marcar_defasagem
 
 _REQUIRED_TABLES = ("b3_portfolio_models", "b3_portfolio_model_items")
 _SCHEMA_MIGRATIONS = (
@@ -165,7 +166,8 @@ def _model_from_connection(conn, owner: str, *,
     rows = conn.execute(
         text("""
             SELECT ticker, nome, setor, subsetor, segmento, weight, score,
-                   alpha_selic, alpha_ew, rank_score, ano_lider, motivos_json
+                   alpha_selic, alpha_ew, rank_score, ano_lider, motivos_json,
+                   meta_json
             FROM b3_portfolio_model_items
             WHERE model_id = :mid
             ORDER BY weight DESC, score DESC, ticker
@@ -177,6 +179,21 @@ def _model_from_connection(conn, owner: str, *,
         item = dict(row)
         for key in ("weight", "score", "alpha_selic", "alpha_ew"):
             item[key] = float(item[key]) if item[key] is not None else None
+        meta = item.pop("meta_json", {}) or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except json.JSONDecodeError:
+                meta = {}
+        if isinstance(meta, dict):
+            item.update({
+                key: meta.get(key)
+                for key in (
+                    "peso_fundamental", "macro_impact",
+                    "macro_score_adjustment", "score_contextual",
+                )
+                if key in meta
+            })
         items.append(item)
     model = dict(header)
     model["items"] = items
@@ -293,6 +310,12 @@ def save_b3_portfolio_model(
             # de Portfolio exibe isso junto ao relatorio completo da empresa.
             if item.get("quali"):
                 meta["quali"] = item["quali"]
+            meta.update({
+                "peso_fundamental": item.get("peso_fundamental"),
+                "macro_impact": item.get("macro_impact"),
+                "macro_score_adjustment": item.get("macro_score_adjustment"),
+                "score_contextual": item.get("score_contextual"),
+            })
             conn.execute(
                 text("""
                     INSERT INTO b3_portfolio_model_items (
@@ -398,11 +421,11 @@ def load_active_b3_portfolio_model() -> dict:
     model["items"] = items
     model["num_items"] = len(items)
     params = model.get("params_json") or {}
-    model["is_stale"] = (
-        params.get("score_version") != SCORE_VERSION
-        or int(params.get("model_schema_version") or 0) != MODEL_SCHEMA_VERSION
+    marcar_defasagem(
+        model, params,
+        score_version=SCORE_VERSION,
+        schema_version=MODEL_SCHEMA_VERSION,
     )
-    model["current_score_version"] = SCORE_VERSION
     return model
 
 

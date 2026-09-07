@@ -117,11 +117,17 @@ class MarketDataProvider(ABC):
     def get_prices_daily(self, symbol: str, start: str | None = None,
                          end: str | None = None) -> list[dict]: ...
 
+    # `start`/`end` existem nos três porque o provedor do yfinance baixa UM
+    # DataFrame por (símbolo, janela) e serve preço, provento e split do mesmo
+    # download. Sem a janela aqui, pedir preço incremental e provento completo
+    # geraria duas descidas por símbolo — o oposto do que a janela pretende.
     @abstractmethod
-    def get_dividends(self, symbol: str) -> list[dict]: ...
+    def get_dividends(self, symbol: str, start: str | None = None,
+                      end: str | None = None) -> list[dict]: ...
 
     @abstractmethod
-    def get_splits(self, symbol: str) -> list[dict]: ...
+    def get_splits(self, symbol: str, start: str | None = None,
+                   end: str | None = None) -> list[dict]: ...
 
 
 class FundamentalsProvider(ABC):
@@ -282,12 +288,15 @@ class FmpProvider(MarketDataProvider, FundamentalsProvider):
         data = self._get(f"historical-price-full/{symbol}", self.STABLE_V3, params) or {}
         return data.get("historical", []) if isinstance(data, dict) else []
 
-    def get_dividends(self, symbol):
+    def get_dividends(self, symbol, start=None, end=None):
+        # A janela é aceita e ignorada: estes endpoints da FMP não a recebem, e
+        # o upsert de proventos é idempotente por chave natural. Ignorar aqui
+        # custa banda, não correção.
         data = self._get(f"historical-price-full/stock_dividend/{symbol}",
                          self.STABLE_V3) or {}
         return data.get("historical", []) if isinstance(data, dict) else []
 
-    def get_splits(self, symbol):
+    def get_splits(self, symbol, start=None, end=None):
         data = self._get(f"historical-price-full/stock_split/{symbol}",
                          self.STABLE_V3) or {}
         return data.get("historical", []) if isinstance(data, dict) else []

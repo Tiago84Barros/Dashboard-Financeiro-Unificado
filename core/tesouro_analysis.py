@@ -96,8 +96,15 @@ def ganho_liquido_estimado(
     return ganho_bruto * (1.0 - aliquota)
 
 
-def analise_suficiencia_tesouro(tipo: str, mtm: float | None) -> dict[str, str]:
-    """Retorna orientação neutra baseada em suficiência, nunca sinal de venda."""
+def analise_suficiencia_tesouro(tipo: str, mtm: float | None = None) -> dict[str, str]:
+    """Retorna orientação neutra baseada em suficiência, nunca sinal de venda.
+
+    ``mtm`` é a marcação decimal do título (0,0123 = +1,23%), a mesma que a
+    seção de Marcação a Mercado exibe. Enquanto ela chegar como ``None``, o
+    painel devolve "MTM INDISPONÍVEL" — o que é verdade quando o Extrato
+    Analítico não foi importado, e mentira quando o chamador simplesmente não
+    perguntou.
+    """
     if tipo == "Selic":
         return {
             "icone": "⚪",
@@ -130,10 +137,12 @@ def analise_suficiencia_tesouro(tipo: str, mtm: float | None) -> dict[str, str]:
         }
     return {
         "icone": "🟡",
-        "label": "REVISÃO HUMANA",
+        "label": "MTM APURADO",
         "nivel": "alerta",
         "msg": (
-            "O MtM foi calculado, mas não há limiares de decisão validados. Considere "
-            "imposto, custos, liquidez, objetivo e alternativa de reinvestimento."
+            f"Marcação de {mtm * 100:+.2f}% contra a taxa contratada em cada lote — é "
+            "efeito de taxa, já sem o carrego. O veredito de manter × trocar está na seção "
+            "de Marcação a Mercado, acima, e exige uma alternativa nomeada: comparar o "
+            "título com ele mesmo não mede nada."
         ),
     }

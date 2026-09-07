@@ -53,7 +53,8 @@ PISO_RELACAO = 0.35
 # Tipos de evento que mexem com fundamento por definição. Um resultado
 # trimestral muda números do balanço; uma oscilação de câmbio, por si só, não.
 TIPOS_DE_FUNDAMENTO = frozenset({
-    "resultado_trimestral", "guidance", "dividendo", "divida_rating",
+    "resultado_trimestral", "resultado_anual", "guidance", "dividendo",
+    "divida_rating",
     "fusao_aquisicao", "emissao_capital", "recuperacao_judicial",
     "fraude_governanca", "litigio_regulatorio", "regulacao_setorial",
     "vacancia_locacao", "deslistagem", "mudanca_gestao", "concorrencia",
