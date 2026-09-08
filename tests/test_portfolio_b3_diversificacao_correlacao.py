@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from core.b3_correlation_diversification import correlation_matrix
 from views.portfolio_b3 import _aplicar_diversificacao_correlacao
 
 
@@ -177,3 +178,57 @@ def test_respeita_limite_de_substituicoes():
     )
 
     assert len(log) <= 1
+
+
+def test_nao_substitui_quando_o_ganho_so_existe_em_janelas_diferentes():
+    """A/B são correlacionados nos 60 meses, mas não nos 18 do candidato.
+
+    Antes de A-135, o motor comparava a média A/B de 60 meses à média A/NOVO
+    de 18 e chamava a diferença de diversificação. A comparação agora fica
+    indisponível porque, na janela comum, o par que motivou a troca não é alto.
+    """
+    rng = np.random.default_rng(41)
+    idx = pd.date_range("2021-01-31", periods=60, freq="ME")
+    factor = rng.normal(0, 0.05, 42)
+    returns = pd.DataFrame({
+        "A": np.r_[factor, rng.normal(0, 0.05, 18)],
+        "B": np.r_[factor, rng.normal(0, 0.05, 18)],
+        "NOVO": np.r_[[np.nan] * 42, rng.normal(0, 0.05, 18)],
+    }, index=idx)
+    items = [
+        _item("A", 0.80, setor="S1", subsetor="Sub1", segmento="Seg1"),
+        _item("B", 0.60, setor="S2", subsetor="Sub2", segmento="Seg2"),
+    ]
+    aprovados = [
+        {"setor": "S1", "subsetor": "Sub1", "segmento": "Seg1", "score_proximo": {"A": 0.80}},
+        {"setor": "S2", "subsetor": "Sub2", "segmento": "Seg2", "score_proximo": {"B": 0.60, "NOVO": 0.55}},
+    ]
+
+    result, log = _aplicar_diversificacao_correlacao(
+        items, aprovados, returns, entry_guard={}, threshold=0.65,
+    )
+
+    assert correlation_matrix(returns[["A", "B"]]).loc["A", "B"] > 0.65
+    assert correlation_matrix(returns.iloc[-18:][["A", "B"]]).loc["A", "B"] < 0.65
+    assert {it["tk"] for it in result} == {"A", "B"}
+    assert log == []
+
+
+def test_nao_substitui_quando_ativo_da_carteira_base_nao_tem_serie():
+    """B sem coluna não pode ser removido da base para justificar B→X."""
+    items = [
+        _item("A", 0.80, setor="S1", subsetor="Sub1", segmento="Seg1"),
+        _item("B", 0.60, setor="S2", subsetor="Sub2", segmento="Seg2"),
+    ]
+    aprovados = [
+        {"setor": "S1", "subsetor": "Sub1", "segmento": "Seg1", "score_proximo": {"A": 0.80}},
+        {"setor": "S2", "subsetor": "Sub2", "segmento": "Seg2", "score_proximo": {"B": 0.60, "X": 0.55}},
+    ]
+    returns = _returns_com_fator_comum(["A"], ["X"])
+
+    result, log = _aplicar_diversificacao_correlacao(
+        items, aprovados, returns, entry_guard={}, threshold=0.5,
+    )
+
+    assert [item["tk"] for item in result] == ["A", "B"]
+    assert log == []

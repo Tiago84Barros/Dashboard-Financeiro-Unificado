@@ -25,24 +25,12 @@ import pandas as pd
 DEFAULT_CORR_THRESHOLD = 0.65
 MIN_OBS_CORRELACAO = 18  # meses de sobreposição — mesmo piso do walk-forward
 
-# A-135, segunda frente. `correlation_matrix` é pairwise: cada par usa toda a
-# sobreposição que tiver. O quadro de preços desta tela vem de
-# `_batch_yf_precos_mensais(..., period="10y")`, então um par pode ser medido em
-# 120 meses e o par ao lado em 18 — e os dois são confrontados com o MESMO
-# limiar de 0,65 e somados na MESMA média por `average_pairwise_correlation`.
-#
-# Isso não é só imprecisão: a substituição por correlação compara `baseline_avg`
-# com `trial_avg` trocando um ativo por outro. Se o candidato tem história curta,
-# os pares dele são medidos noutra janela — o "ganho" de diversificação pode vir
-# da mudança de AMOSTRA, não da mudança de ativo. A decisão de trocar passa a
-# depender de quando o candidato abriu capital.
-#
-# O teto de 60 meses não elimina a heterogeneidade (quem tem 24 meses continua
-# medido em 24), mas reduz a faixa de 18–120 para 18–60 e alinha esta tela com
-# `core.correlation_analysis.JANELA_CORR_MESES`, que usa os mesmos 5 anos.
-# Homogeneidade completa exigiria interseção, que descartaria candidatos — é o
-# que `core.global_portfolio.returns` faz, onde o quadro é publicado e não há
-# candidato a preservar.
+# A-135. `correlation_matrix` é pairwise, mas a substituição de um ativo não
+# pode comparar uma base de 60 meses a uma tentativa de 18: o suposto ganho
+# poderia ser só uma mudança de amostra. A janela de 60 meses define o
+# horizonte recente; `common_returns_for_comparison` aplica a interseção única
+# de base e candidato no ponto em que há decisão. Sem 18 meses conjuntos, não
+# há substituição por correlação.
 JANELA_CORR_MESES = 60
 
 
@@ -71,6 +59,33 @@ def correlation_matrix(returns: pd.DataFrame, min_obs: int = MIN_OBS_CORRELACAO)
     if returns is None or returns.empty or returns.shape[1] < 2:
         return pd.DataFrame()
     return returns.corr(min_periods=min_obs)
+
+
+def common_returns_for_comparison(
+    returns: pd.DataFrame,
+    tickers: list[str],
+    min_obs: int = MIN_OBS_CORRELACAO,
+) -> pd.DataFrame:
+    """Retornos em interseção temporal única, ou vazio se a evidência é insuficiente.
+
+    Uma média de correlações só é comparável quando todos os pares foram
+    estimados nas mesmas observações. Para uma troca, ``tickers`` deve conter
+    tanto a carteira-base quanto o candidato: assim base e cenário testado
+    usam exatamente os mesmos meses. Dados ausentes não são preenchidos nem
+    convertidos em zero; abaixo de ``min_obs`` a decisão fica indisponível.
+    """
+    if returns is None or returns.empty:
+        return pd.DataFrame()
+    cols = list(dict.fromkeys(tickers))
+    # Não silencie o ativo sem retorno: a decisão só é válida para a carteira
+    # completa solicitada. Excluí-lo aqui faria a troca parecer diversificar
+    # uma base que, na realidade, não foi toda medida.
+    if len(cols) < 2 or any(ticker not in returns.columns for ticker in cols):
+        return pd.DataFrame()
+    common = returns.loc[:, cols].dropna(how="any")
+    if len(common) < min_obs:
+        return pd.DataFrame()
+    return common
 
 
 def average_pairwise_correlation(corr: pd.DataFrame) -> float:
