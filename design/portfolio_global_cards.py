@@ -47,7 +47,12 @@ def _moldura(accent: str, miolo: str) -> str:
     )
 
 
-def _cabecalho(symbol: str, rotulo: str, cor: str) -> str:
+def _cabecalho(symbol: str, rotulo: str, cor: str,
+               subtitulo: str = "") -> str:
+    sub = (
+        f'<div style="font-size:0.63rem;color:{_TEXTO4};'
+        f'margin:-4px 0 8px 0;">{_t(subtitulo)}</div>' if subtitulo else ""
+    )
     return (
         f'<div style="display:flex;justify-content:space-between;'
         f'align-items:baseline;gap:8px;margin-bottom:8px;">'
@@ -55,7 +60,27 @@ def _cabecalho(symbol: str, rotulo: str, cor: str) -> str:
         f'letter-spacing:-0.01em;">{_t(symbol)}</div>'
         f'<div style="font-size:0.62rem;font-weight:800;text-transform:uppercase;'
         f'letter-spacing:0.08em;color:{cor};">{_t(rotulo)}</div></div>'
+        f'{sub}'
     )
+
+
+def _procedencia(classe_label: str | None, peso: float | None) -> str:
+    """Linha 'de onde vem e quanto pesa', sob o ticker.
+
+    O card dizia só o ticker. Fora da seção da classe, PETR4, MXRF11 e AAPL
+    ficam indistinguíveis quanto à origem, e nada na tela diz se o papel
+    atribuído vale para 0,4% ou para 12% do patrimônio. Peso ausente não vira
+    0,0%: omitir é diferente de afirmar que a posição é irrelevante.
+    """
+    partes: list[str] = []
+    if classe_label:
+        partes.append(str(classe_label))
+    try:
+        if peso is not None and not (isinstance(peso, float) and peso != peso):
+            partes.append(f"{float(peso) * 100:.2f}% do patrimônio")
+    except (TypeError, ValueError):
+        pass
+    return " · ".join(partes)
 
 
 def _linha_papel(icone: str, titulo: str, detalhe: str, cor: str) -> str:
@@ -70,7 +95,9 @@ def _linha_papel(icone: str, titulo: str, detalhe: str, cor: str) -> str:
     )
 
 
-def card_papel_html(entrada: roles.PapelDoAtivo) -> str:
+def card_papel_html(entrada: roles.PapelDoAtivo, *,
+                    classe_label: str | None = None,
+                    peso: float | None = None) -> str:
     """Card de um `roles.PapelDoAtivo` — o mesmo conteúdo da tabela antiga.
 
     A tabela tinha uma linha por papel, sete no total, e para a maioria dos
@@ -80,6 +107,11 @@ def card_papel_html(entrada: roles.PapelDoAtivo) -> str:
     (sem dado para avaliar) nunca se mistura com "não cumpre" (regra avaliada e
     negada) — dizer "não cumpre" onde o certo é "não sabemos" afirmaria algo
     que o dado não sustenta.
+
+    `classe_label` e `peso` são opcionais e só compõem a linha de procedência
+    sob o ticker: origem e importância no patrimônio. Ausentes, o card é o que
+    sempre foi — quem chama de fora do painel (teste, chat) não fica obrigado
+    a inventar um peso.
     """
     evidencia_por_papel = {e.papel: e for e in entrada.evidencias}
     cumpridos = [p for p in roles.PAPEIS if p in entrada.papeis]
@@ -95,7 +127,8 @@ def card_papel_html(entrada: roles.PapelDoAtivo) -> str:
         else f"{len(cumpridos)} papéis" if cumpridos
         else "nenhum papel"
     )
-    partes = [_cabecalho(entrada.symbol, rotulo, accent)]
+    partes = [_cabecalho(entrada.symbol, rotulo, accent,
+                         _procedencia(classe_label, peso))]
 
     for papel in cumpridos:
         evidencia = evidencia_por_papel.get(papel)

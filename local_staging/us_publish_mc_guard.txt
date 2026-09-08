@@ -1,0 +1,31 @@
+source: localhost:5433/postgres  ->  target: aws-1-sa-east-1.pooler.supabase.com:5432/postgres
+vitrine no source: 3701 empresa(s)
+frescor do giro: 4 dia(s) (teto 7).
+schema market_us.company_snapshots verificado no Supabase.
+já confirmadas: 0; pendentes: 3701
+  ... 150/3701 pendentes
+  ... 300/3701 pendentes
+  ... 450/3701 pendentes
+  ... 600/3701 pendentes
+  ... 750/3701 pendentes
+  ... 900/3701 pendentes
+  ... 1050/3701 pendentes
+  ... 1200/3701 pendentes
+  ... 1350/3701 pendentes
+  ... 1500/3701 pendentes
+  ... 1650/3701 pendentes
+  ... 1800/3701 pendentes
+  ... 1950/3701 pendentes
+  ... 2100/3701 pendentes
+  ... 2250/3701 pendentes
+  ... 2400/3701 pendentes
+  ... 2550/3701 pendentes
+  ... 2700/3701 pendentes
+  ... 2850/3701 pendentes
+  ... 3000/3701 pendentes
+  ... 3150/3701 pendentes
+  ... 3300/3701 pendentes
+  ... 3450/3701 pendentes
+  ... 3600/3701 pendentes
+  ... 3701/3701 pendentes
+publicado nesta execução: 3701; snapshot confirmado: 3701 empresa(s) em market_us.company_snapshots (Supabase).

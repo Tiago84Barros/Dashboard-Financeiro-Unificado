@@ -1,5 +1,6 @@
 """Secao Portfolio Global: roteamento, estado vazio e montagem."""
 import pandas as pd
+import pytest
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from core.global_portfolio.aggregate import montar_posicoes
@@ -997,3 +998,105 @@ def test_card_mantem_a_frase_generica_para_indeterminado_sem_causa():
     html = card_papel_html(PapelDoAtivo("XPTO3", (), (), ("crescimento",), ""))
 
     assert "sem dado suficiente" in html
+
+
+# ---------------------------------------------------------------------------
+# Ordem dos paineis por ativo: classe (tipo/origem) e peso, nao alfabeto
+# ---------------------------------------------------------------------------
+
+def _quadro_de_posicoes() -> pd.DataFrame:
+    """Carteira minima com as tres classes e pesos deliberadamente fora da
+    ordem alfabetica — se a ordenacao regredir para o alfabeto, o teste ve."""
+    return pd.DataFrame([
+        {"symbol": "AAPL", "asset_class": "us", "weight_global": 0.02},
+        {"symbol": "ZZZZ3", "asset_class": "b3", "weight_global": 0.30},
+        {"symbol": "MXRF11", "asset_class": "fii", "weight_global": 0.10},
+        {"symbol": "PETR4", "asset_class": "b3", "weight_global": 0.12},
+        {"symbol": "ABEV3", "asset_class": "b3", "weight_global": 0.12},
+        {"symbol": "NVDA", "asset_class": "us", "weight_global": 0.34},
+    ])
+
+
+def test_secoes_saem_da_classe_mais_pesada_para_a_mais_leve():
+    """Classe e tipo e origem ao mesmo tempo no registry: agrupar por ela e o
+    que impede o painel de intercalar acao brasileira, FII e empresa
+    americana. A ordem das SECOES e a participacao agregada, nao o alfabeto —
+    'b3' viria antes de 'us' por acaso, e 'fii' antes de 'us' tambem."""
+    secoes = portfolio_global.secoes_por_classe(_quadro_de_posicoes())
+    assert [c for c, _, _ in secoes] == ["b3", "us", "fii"]
+    pesos = {c: p for c, p, _ in secoes}
+    assert pesos["b3"] == pytest.approx(0.54)
+    assert pesos["us"] == pytest.approx(0.36)
+    assert pesos["fii"] == pytest.approx(0.10)
+
+
+def test_dentro_da_classe_a_ordem_e_o_peso_e_o_desempate_e_o_ticker():
+    """Peso decrescente responde 'o que importa mais nesta carteira'. Com peso
+    igual o desempate e o ticker: ordenacao parcial ja produziu resultado
+    diferente para a mesma carteira neste projeto, e um painel que troca de
+    ordem entre renderizacoes nao e legivel."""
+    secoes = dict((c, sub) for c, _, sub in
+                  portfolio_global.secoes_por_classe(_quadro_de_posicoes()))
+    assert list(secoes["b3"]["symbol"]) == ["ZZZZ3", "ABEV3", "PETR4"]
+    assert list(secoes["us"]["symbol"]) == ["NVDA", "AAPL"]
+
+
+def test_secoes_por_classe_com_quadro_vazio_devolve_lista_vazia():
+    assert portfolio_global.secoes_por_classe(pd.DataFrame()) == []
+    assert portfolio_global.secoes_por_classe(None) == []
+
+
+def test_composicao_e_papel_estrategico_usam_a_mesma_ordenacao():
+    """Duas ordens para o mesmo patrimonio na mesma pagina e o que confunde de
+    fato: o ativo que aparece em terceiro na Composicao tem que ser o terceiro
+    no Papel estrategico. A garantia e as duas chamarem a MESMA funcao."""
+    import inspect
+    for painel in (portfolio_global._cards_de_ativos_por_classe,
+                   portfolio_global._painel_papeis):
+        assert "secoes_por_classe(" in inspect.getsource(painel), (
+            f"{painel.__name__} voltou a ordenar por conta propria"
+        )
+    # E o criterio antigo — sem-papel primeiro, depois alfabetico — saiu.
+    # (`e.symbol` sozinho nao serve de sonda: ele segue no `sem_papel_symbols`,
+    # que nomeia os ativos no aviso e nao tem nada a ver com ordenacao.)
+    assert "(bool(e.papeis), e.symbol)" not in inspect.getsource(
+        portfolio_global._painel_papeis)
+
+
+def test_recomendacoes_desempatam_por_peso_dentro_da_mesma_acao():
+    """A ordem das acoes segue o fluxo de decisao; o que muda e o desempate.
+    Reduzir 12% do patrimonio e reduzir 0,4% apareciam lado a lado com o
+    alfabeto decidindo qual vinha primeiro."""
+    import inspect
+    fonte = inspect.getsource(portfolio_global._painel_recomendacoes)
+    assert "-(a.peso_atual or 0.0)" in fonte
+    assert "a.symbol" in fonte      # desempate deterministico continua
+
+
+def test_card_de_papel_diz_a_origem_e_quanto_pesa():
+    """Fora da secao da classe, PETR4, MXRF11 e AAPL sao indistinguiveis quanto
+    a origem, e nada dizia se o papel vale para 0,4% ou para 12% do
+    patrimonio."""
+    from core.global_portfolio.roles import PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
+
+    html = card_papel_html(
+        PapelDoAtivo("AAPL", (), (), (), ""),
+        classe_label="Empresas Americanas", peso=0.0234,
+    )
+    assert "Empresas Americanas" in html
+    assert "2.34% do patrim" in html
+    assert html.count("<div") == html.count("</div>")
+
+
+def test_peso_ausente_nao_vira_zero_por_cento_no_card():
+    """Omitir e diferente de afirmar que a posicao e irrelevante — o card sem
+    peso informado nao pode imprimir '0.00% do patrimonio'."""
+    from core.global_portfolio.roles import PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
+
+    html = card_papel_html(PapelDoAtivo("AAPL", (), (), (), ""),
+                           classe_label="Empresas Americanas", peso=None)
+    assert "Empresas Americanas" in html
+    assert "do patrim" not in html
+    assert html.count("<div") == html.count("</div>")
