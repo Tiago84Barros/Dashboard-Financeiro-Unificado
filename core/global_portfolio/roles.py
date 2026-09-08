@@ -18,11 +18,21 @@ core.global_portfolio.returns); sem essa serie os dois papeis ficam
 indeterminados para a classe `us`.
 
 Indeterminado sem causa nomeada e uma lacuna que ninguem consegue fechar:
-`motivos_indeterminado` carrega, quando a causa e estrutural e conhecida,
-a frase que diz POR QUE o dado falta. Hoje esta vazio — o unico caso que
+`motivos_indeterminado` carrega a frase que diz POR QUE o dado falta. Sao
+duas causas, e elas se fecham de formas opostas. A estrutural, por (classe,
+papel), esta em `_MOTIVOS_INDETERMINADO` e hoje esta vazia — o unico caso que
 havia, renda da classe `us`, deixou de existir em 08/09/2026, quando o
 dividend yield americano passou a ser derivado do `dividends_paid` do
 EDGAR (us_metrics) em vez de ficar ausente da vitrine.
+
+A outra e por ATIVO: o snapshot da carteira e mais antigo que o campo. Nesse
+caso o dado ESTA publicado e a frase generica ("sem dado suficiente para
+avaliar") e simplesmente falsa. Aconteceu no mesmo 08/09: o crescimento
+americano passou a ser medido por `revenue_trend_5y` e os 30 ativos da carteira
+ativa, com snapshot de 07/09, voltaram todos a indeterminado. Quem le precisa
+saber que a saida e regravar o modelo, nao esperar dado que ja chegou. Ver
+`fields.ausente_do_snapshot`, que separa chave gravada-com-nulo de chave nunca
+gravada.
 
 Crescimento tem uma fonte e uma MEDIDA por classe, e a evidencia na tela
 diz as duas: `b3` usa CAGR de LPA anual, `fii` usa CAGR de VPA mensal e
@@ -50,6 +60,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from core.global_portfolio.fields import ausente_do_snapshot
 from core.global_portfolio.fields import valor as campo_valor
 
 PAPEIS: tuple[str, ...] = (
@@ -150,6 +161,22 @@ class PapelDoAtivo:
 # ("us", "renda") saiu em 08/09/2026, quando o dividend yield passou a ser
 # derivado do EDGAR e o papel virou avaliavel.
 _MOTIVOS_INDETERMINADO: dict[tuple[str, str], str] = {}
+
+# Campos canonicos de que cada papel depende diretamente. So entram papeis
+# decididos por campo de `fundamentals`; volatilidade e correlacao vem de serie
+# de precos e nao tem endereco aqui.
+_CAMPOS_DO_PAPEL: dict[str, tuple[str, ...]] = {
+    "renda": ("dy",),
+    "crescimento": ("crescimento_receita",),
+}
+
+# Motivo dinamico, por ATIVO e nao por classe: o snapshot da carteira e mais
+# antigo que o campo. Diferente das entradas de _MOTIVOS_INDETERMINADO, que
+# descrevem lacuna estrutural da fonte, esta se fecha regravando o modelo.
+_MOTIVO_SNAPSHOT_DEFASADO = (
+    "o snapshot desta carteira foi gravado antes de o campo existir na vitrine "
+    "— o dado existe; recrie o modelo para este papel voltar a ser avaliado"
+)
 
 
 def _asset_class(linha: dict) -> str:
@@ -581,6 +608,10 @@ def classificar(df_posicoes: pd.DataFrame, *,
             if cumpre is None:
                 indeterminados.append(papel)
                 motivo = _MOTIVOS_INDETERMINADO.get((classe, papel))
+                if motivo is None and any(
+                        ausente_do_snapshot(linha.get("payload"), classe, c)
+                        for c in _CAMPOS_DO_PAPEL.get(papel, ())):
+                    motivo = _MOTIVO_SNAPSHOT_DEFASADO
                 if motivo:
                     motivos.append((papel, motivo))
             elif cumpre:

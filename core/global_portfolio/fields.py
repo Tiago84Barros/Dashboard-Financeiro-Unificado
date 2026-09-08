@@ -69,6 +69,31 @@ def valor(payload: dict, asset_class: str, campo: str) -> float | None:
         return None
 
 
+def ausente_do_snapshot(payload: dict, asset_class: str, campo: str) -> bool:
+    """True quando a classe TEM endereco para o campo e o snapshot nao o traz.
+
+    Sao duas ausencias que a tela mostrava igual e que se resolvem de formas
+    opostas: a chave gravada com valor nulo -- a EMPRESA nao respondeu, e
+    esperar nao adianta -- e a chave que nunca foi gravada, porque o snapshot
+    e de uma geracao anterior ao campo existir na vitrine. A segunda nao e
+    falta de dado: o dado esta publicado, o snapshot e que envelheceu, e
+    regravar o modelo a fecha.
+
+    Aconteceu em 08/09/2026: o crescimento americano passou de `revenue_cagr_5y`
+    para `revenue_trend_5y` (inclinacao da regressao) e o dividend yield passou
+    a existir na vitrine. Os 30 ativos da carteira ativa tinham snapshot de
+    07/09 e voltaram todos a "indeterminado: sem dado suficiente para avaliar" —
+    uma frase falsa, porque o dado estava la.
+    """
+    if campo not in _ORIGEM:
+        raise KeyError(f"campo canonico desconhecido: {campo!r}")
+
+    chave = _ORIGEM[campo].get(str(asset_class or "").strip().lower())
+    if not chave:
+        return False
+    return chave not in ((payload or {}).get("fundamentals") or {})
+
+
 def disponivel(payload: dict, asset_class: str, campo: str) -> bool:
     """True quando o campo tem valor numerico utilizavel."""
     return valor(payload, asset_class, campo) is not None
