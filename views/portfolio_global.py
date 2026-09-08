@@ -45,6 +45,7 @@ from core.portfolio.repository import (
 from core.rebalancing import CalendarRebalance
 from design.componentes import card_metrica
 from design.market_companies import render_company_logo
+from design.portfolio_global_cards import card_papel_html, card_recomendacao_html
 
 logger = logging.getLogger(__name__)
 
@@ -793,42 +794,6 @@ def _resumo_de_papeis(entradas: list[roles.PapelDoAtivo]) -> dict:
     return {"por_papel": contagem, "sem_papel": sem_papel}
 
 
-def _tabela_de_papeis_do_ativo(entrada: roles.PapelDoAtivo) -> pd.DataFrame:
-    """Uma linha por papel para um ativo: cumpre (com a evidência numérica),
-    indeterminado (sem dado suficiente) ou não cumpre (regra avaliada e
-    negada).
-
-    "Indeterminado" e "não cumpre" recebem rótulos de status diferentes de
-    propósito — são coisas diferentes ("não sabemos" vs. "sabemos e não
-    cumpre"), e uma tabela que os tratasse igual diria ao leitor algo que os
-    dados não sustentam.
-    """
-    evidencia_por_papel = {e.papel: e for e in entrada.evidencias}
-    linhas = []
-    for papel in roles.PAPEIS:
-        rotulo = roles.ROTULOS_PAPEL[papel]
-        if papel in entrada.papeis:
-            evidencia = evidencia_por_papel.get(papel)
-            linhas.append({
-                "Papel": rotulo,
-                "Status": "✅ Cumpre",
-                "Evidência": evidencia.texto if evidencia else "—",
-            })
-        elif papel in entrada.indeterminados:
-            linhas.append({
-                "Papel": rotulo,
-                "Status": "❔ Indeterminado",
-                "Evidência": "sem dado suficiente para avaliar",
-            })
-        else:
-            linhas.append({
-                "Papel": rotulo,
-                "Status": "— Não cumpre",
-                "Evidência": "—",
-            })
-    return pd.DataFrame(linhas)
-
-
 def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> list[roles.PapelDoAtivo]:
     """Painel 'Papel estratégico': para que serve cada ativo do patrimônio.
 
@@ -882,20 +847,21 @@ def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> list[roles.PapelDoAti
             + ", ".join(sem_papel_symbols)
         )
 
+    # Cards abertos, duas colunas — não um expander por ativo. Com 13 posições
+    # o painel exigia 13 cliques para ser lido, e a informação que custa um
+    # clique cada não entra em decisão nenhuma. Os ativos sem papel vêm
+    # primeiro: são o número acionável do painel, e ordem alfabética os
+    # espalhava no meio dos demais.
     por_symbol = {e.symbol: e for e in entradas}
-    for _, linha in df.iterrows():
-        symbol = linha["symbol"]
-        entrada = por_symbol.get(symbol)
-        if entrada is None:
-            continue
-        titulo = (
-            f"🔴 {symbol} — nenhum papel identificado" if not entrada.papeis
-            else symbol
-        )
-        with st.expander(titulo):
-            st.dataframe(_tabela_de_papeis_do_ativo(entrada),
-                        width="stretch", hide_index=True)
-            st.caption(entrada.justificativa)
+    ordenados = [
+        entrada for entrada in (por_symbol.get(s) for s in df["symbol"])
+        if entrada is not None
+    ]
+    ordenados.sort(key=lambda e: (bool(e.papeis), e.symbol))
+    for inicio in range(0, len(ordenados), 2):
+        for coluna, entrada in zip(st.columns(2), ordenados[inicio:inicio + 2]):
+            with coluna:
+                st.markdown(card_papel_html(entrada), unsafe_allow_html=True)
 
     return entradas
 
@@ -971,14 +937,6 @@ def _resumo_de_acoes(acoes: list[advisor.Acao]) -> dict[str, int]:
     return contagem
 
 
-def _linha_de_componentes(acao: advisor.Acao) -> pd.DataFrame:
-    """Tabela de decomposicao numerica do score: um sinal por linha, ordenada
-    por nome para exibicao deterministica."""
-    linhas = [{"Sinal": nome, "Valor": round(valor, 3)}
-              for nome, valor in sorted(acao.componentes.items())]
-    return pd.DataFrame(linhas, columns=["Sinal", "Valor"])
-
-
 def _texto_de_limiares_motor() -> str:
     """Ressalva do motor de movimentacao — mesmo tom e lugar de
     `_texto_de_limiares` (papel estrategico, Fase 3a): os limiares abaixo
@@ -1020,7 +978,7 @@ def _custos_por_classe() -> dict[str, transaction_costs.CostConfig]:
 
 def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
                          alvos: dict, total_brl: float | None, *,
-                         loader=None) -> list[advisor.Acao]:
+                         loader=None, macro_impacts=None) -> list[advisor.Acao]:
     """Monta os sinais (Fase 3b Task 2) a partir dos analisadores de verdade
     e chama o motor (Task 4). Função pura, sem Streamlit — a fronteira de
     isolamento contra falha do motor fica em `_painel_recomendacoes`, que a
@@ -1069,6 +1027,7 @@ def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
         df, sinais, alvos=alvos, politica=CalendarRebalance(),
         custos=_custos_por_classe(), patrimonio_total=float(total_brl or 0.0),
         data_atual=date.today(),
+        macro_impacts=macro_impacts,
     )
 
 
@@ -1084,8 +1043,23 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
     """
     st.markdown("#### Recomendações do motor de movimentação")
 
+    macro_changes = {}
     try:
-        acoes = _gerar_recomendacoes(df, ret, pesos, alvos, total_brl)
+        from core.macro_data.database import get_local_macro_engine
+        from core.macro_data.global_context import load_global_macro_context
+        from core.macro_data.portfolio_context import format_portfolio_macro_context
+        snapshots, macro_changes, macro_limits = load_global_macro_context(get_local_macro_engine(), df)
+        with st.expander("Contexto macro das carteiras", expanded=False):
+            for snapshot in snapshots.values():
+                st.text(format_portfolio_macro_context(snapshot))
+            for limitation in macro_limits:
+                st.caption(limitation)
+            st.caption("O ajuste global considera a mudança desde a criação, com limites e custos; requer revisão humana.")
+    except Exception:
+        st.caption("Contexto macro local indisponível nesta consulta.")
+
+    try:
+        acoes = _gerar_recomendacoes(df, ret, pesos, alvos, total_brl, macro_impacts=macro_changes)
     except Exception:  # noqa: BLE001 - fronteira de isolamento do motor de recomendacao
         st.warning(
             "⚠️ Não foi possível gerar as recomendações do motor de movimentação. "
@@ -1128,21 +1102,26 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
             + ", ".join(a.symbol for a in nao_calibrados)
         )
 
-    for acao in acoes:
-        titulo = f"{acao.symbol} — {_ROTULO_ACAO.get(acao.acao, acao.acao)}"
-        with st.expander(titulo):
-            card_metrica(
-                "Peso atual → sugerido",
-                f"{acao.peso_atual * 100:.2f}% → {acao.peso_sugerido * 100:.2f}%",
-                delta=texto_de_custo(acao),
-                accent=_ACCENT_ACAO.get(acao.acao, "#9CA3AF"),
-            )
-            if acao.analisadores:
-                st.caption("Analisadores que dispararam: " + ", ".join(sorted(acao.analisadores)))
-            else:
-                st.caption("Nenhum analisador produziu sinal para este ativo.")
-            if acao.componentes:
-                st.dataframe(_linha_de_componentes(acao), use_container_width=True, hide_index=True)
+    # Cards abertos, duas colunas — não um expander por recomendação. Na
+    # carteira real são 41 recomendações: lê-las custava 41 cliques, e o que
+    # não se lê não influencia decisão nenhuma. A ordem segue o fluxo de
+    # decisão (_ORDEM_RESUMO_ACOES), não o alfabeto: quem precisa de ação vem
+    # antes de quem não precisa, e "manter" ocupando o topo empurrava para
+    # baixo justamente o que exige leitura.
+    ordem = {chave: i for i, chave in enumerate(_ORDEM_RESUMO_ACOES)}
+    ordenadas = sorted(acoes, key=lambda a: (ordem.get(a.acao, 99), a.symbol))
+    for inicio in range(0, len(ordenadas), 2):
+        for coluna, acao in zip(st.columns(2), ordenadas[inicio:inicio + 2]):
+            with coluna:
+                st.markdown(
+                    card_recomendacao_html(
+                        acao,
+                        _ROTULO_ACAO.get(acao.acao, acao.acao),
+                        _ACCENT_ACAO.get(acao.acao, "#9CA3AF"),
+                        texto_de_custo(acao),
+                    ),
+                    unsafe_allow_html=True,
+                )
 
     return acoes
 

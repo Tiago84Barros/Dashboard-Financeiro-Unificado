@@ -7,10 +7,22 @@ texto, este módulo renderiza as páginas e roda OCR (Tesseract via pytesseract)
 devolvendo o texto em linhas — no mesmo formato que o parser C6 espera
 ("DD/MM DD/MM Tipo Descrição Valor").
 
-Tesseract é leve e instala bem no Streamlit Cloud via packages.txt
-(tesseract-ocr, tesseract-ocr-por). Tudo aqui é opcional: se as dependências
-não estiverem disponíveis, `ocr_extract_text` devolve ("", 0) e o chamador
-mantém o comportamento atual.
+DISPONÍVEL SÓ LOCALMENTE desde 08/09/2026. O binário do Tesseract vinha de
+`packages.txt`, e a mera existência desse arquivo faz a Streamlit Cloud rodar
+`apt-get update` antes de instalar qualquer coisa. A imagem deles (Debian
+trixie) carrega uma entrada obsoleta de `bullseye-security` cujo Release
+expirou; o `apt-get` devolve código diferente de zero e o deploy inteiro morre
+em "Error installing requirements" — sem relação com o requirements.txt. Como
+não se edita a sources.list da nuvem, a única saída no nosso lado foi remover
+o `packages.txt` e pular o passo de apt.
+
+Consequência: em produção, extrato C6 só-imagem não é lido (o importador marca
+`scanned=True` e avisa). Para restaurar quando a Streamlit corrigir a imagem,
+basta recriar o `packages.txt` com tesseract-ocr e tesseract-ocr-por.
+
+Tudo aqui é opcional: se as dependências não estiverem disponíveis,
+`ocr_available()` devolve False, `ocr_extract_text` devolve ("", 0) e o
+chamador mantém o comportamento atual.
 """
 from __future__ import annotations
 
