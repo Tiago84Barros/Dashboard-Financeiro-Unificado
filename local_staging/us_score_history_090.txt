@@ -1,0 +1,6 @@
+2026-09-08 13:23:44.659 No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:23:46.202 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+13:32:03  INFO     ok = True
+13:32:03  INFO     written = 29086
+13:32:03  INFO     dates = 16
+13:32:03  INFO     prices_monthly_rows = 716397

@@ -452,27 +452,56 @@ def _cards_de_ativos(df: pd.DataFrame, *, n_colunas: int = 4) -> None:
                 _card_ativo(linha)
 
 
+def secoes_por_classe(df: pd.DataFrame) -> list[tuple[str, float, pd.DataFrame]]:
+    """Quebra o quadro de posições em seções `(classe, peso agregado, sub)`.
+
+    Classe é tipo e origem ao mesmo tempo no registry (ver
+    `core.portfolio.registry.SPECS`), então agrupar por ela responde as duas
+    perguntas de uma vez. Seções da maior participação para a menor, e DENTRO
+    de cada uma o peso do ativo, decrescente — ordem alfabética intercalava
+    ação brasileira, FII e empresa americana e dava o mesmo destaque a uma
+    posição de 0,4% e a uma de 12%.
+
+    O desempate é o `symbol`, não a ordem de chegada: dois ativos com o mesmo
+    peso arredondado trocariam de lugar entre renderizações, e este projeto já
+    perdeu tempo com ordenação parcial em carteira (ver a decisão de
+    determinismo da seleção B3).
+
+    Função pura, sem Streamlit: é ela que garante que a Composição e o Papel
+    estratégico mostrem a MESMA carteira na MESMA ordem. Duas ordens para o
+    mesmo patrimônio na mesma página é o que confunde de fato.
+    """
+    if df is None or df.empty:
+        return []
+    peso_por_classe = (
+        df.groupby("asset_class")["weight_global"].sum().sort_values(ascending=False)
+    )
+    secoes: list[tuple[str, float, pd.DataFrame]] = []
+    for classe in peso_por_classe.index:
+        sub = (
+            df[df["asset_class"] == classe]
+            .sort_values(["weight_global", "symbol"], ascending=[False, True])
+            .reset_index(drop=True)
+        )
+        secoes.append((classe, float(peso_por_classe[classe]), sub))
+    return secoes
+
+
+def _titulo_de_classe(classe: str, peso: float, n: int) -> str:
+    ativo_noun = "ativo" if n == 1 else "ativos"
+    label = rotulo_maior("asset_class", classe)
+    return f"##### {label} · {peso * 100:.1f}% do patrimônio · {n} {ativo_noun}"
+
+
 def _cards_de_ativos_por_classe(df: pd.DataFrame, *, n_colunas: int = 4) -> None:
     """Grade 'Por ativo' separada em seções por classe de origem (B3, FIIs,
-    Empresas Americanas) — cada classe já é tipo e origem ao mesmo tempo no
-    registry (ver `core.portfolio.registry.SPECS`). Seções na ordem do maior
-    peso agregado para o menor.
+    Empresas Americanas), na ordem de `secoes_por_classe`.
     """
     if df.empty:
         st.info("Nenhum ativo para exibir.")
         return
-    peso_por_classe = (
-        df.groupby("asset_class")["weight_global"].sum().sort_values(ascending=False)
-    )
-    for classe in peso_por_classe.index:
-        sub = df[df["asset_class"] == classe]
-        label = rotulo_maior("asset_class", classe)
-        pct = peso_por_classe[classe] * 100
-        n = len(sub)
-        ativo_noun = "ativo" if n == 1 else "ativos"
-        st.markdown(
-            f"##### {label} · {pct:.1f}% do patrimônio · {n} {ativo_noun}"
-        )
+    for classe, peso, sub in secoes_por_classe(df):
+        st.markdown(_titulo_de_classe(classe, peso, len(sub)))
         _cards_de_ativos(sub, n_colunas=n_colunas)
 
 
@@ -849,19 +878,36 @@ def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> list[roles.PapelDoAti
 
     # Cards abertos, duas colunas — não um expander por ativo. Com 13 posições
     # o painel exigia 13 cliques para ser lido, e a informação que custa um
-    # clique cada não entra em decisão nenhuma. Os ativos sem papel vêm
-    # primeiro: são o número acionável do painel, e ordem alfabética os
-    # espalhava no meio dos demais.
+    # clique cada não entra em decisão nenhuma.
+    #
+    # A ordem é a de `secoes_por_classe`, a MESMA da Composição: classe (que é
+    # tipo e origem) da maior participação para a menor, e o peso do ativo
+    # dentro dela. O critério anterior — sem-papel primeiro, depois alfabético —
+    # tinha uma razão boa (o sem-papel é o número acionável) e um efeito ruim:
+    # misturava as três classes e dava a mesma altura de tela a uma posição de
+    # 0,4% e a uma de 12%. O sem-papel não perdeu destaque: continua no
+    # `st.warning` acima, que o nomeia, e o card sai com borda vermelha e
+    # "Nenhum papel identificado". Ordenar por peso ainda o traz para cima
+    # quando ele de fato importa — um ativo irrelevante sem papel é menos
+    # urgente que um relevante sem papel, e a ordem antiga não distinguia.
     por_symbol = {e.symbol: e for e in entradas}
-    ordenados = [
-        entrada for entrada in (por_symbol.get(s) for s in df["symbol"])
-        if entrada is not None
-    ]
-    ordenados.sort(key=lambda e: (bool(e.papeis), e.symbol))
-    for inicio in range(0, len(ordenados), 2):
-        for coluna, entrada in zip(st.columns(2), ordenados[inicio:inicio + 2]):
-            with coluna:
-                st.markdown(card_papel_html(entrada), unsafe_allow_html=True)
+    for classe, peso, sub in secoes_por_classe(df):
+        st.markdown(_titulo_de_classe(classe, peso, len(sub)))
+        linhas = [
+            linha for linha in sub.to_dict(orient="records")
+            if por_symbol.get(str(linha.get("symbol"))) is not None
+        ]
+        for inicio in range(0, len(linhas), 2):
+            for coluna, linha in zip(st.columns(2), linhas[inicio:inicio + 2]):
+                with coluna:
+                    st.markdown(
+                        card_papel_html(
+                            por_symbol[str(linha["symbol"])],
+                            classe_label=rotulo_maior("asset_class", classe),
+                            peso=linha.get("weight_global"),
+                        ),
+                        unsafe_allow_html=True,
+                    )
 
     return entradas
 
@@ -1109,8 +1155,13 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
     # decisão (_ORDEM_RESUMO_ACOES), não o alfabeto: quem precisa de ação vem
     # antes de quem não precisa, e "manter" ocupando o topo empurrava para
     # baixo justamente o que exige leitura.
+    # Dentro de cada ação, o peso atual decrescente, não o alfabeto: reduzir
+    # uma posição de 12% e reduzir uma de 0,4% aparecem lado a lado, e o
+    # alfabeto decidia qual vinha primeiro. Desempate pelo symbol para a ordem
+    # não variar entre renderizações com pesos iguais.
     ordem = {chave: i for i, chave in enumerate(_ORDEM_RESUMO_ACOES)}
-    ordenadas = sorted(acoes, key=lambda a: (ordem.get(a.acao, 99), a.symbol))
+    ordenadas = sorted(
+        acoes, key=lambda a: (ordem.get(a.acao, 99), -(a.peso_atual or 0.0), a.symbol))
     for inicio in range(0, len(ordenadas), 2):
         for coluna, acao in zip(st.columns(2), ordenadas[inicio:inicio + 2]):
             with coluna:
