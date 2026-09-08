@@ -1961,7 +1961,17 @@ def _carteira_integrada(preferences: dict):
             f"cobertura da seleção {result.get('macro_coverage', 0):.0%} · "
             f"{macro_snapshot.source_count} séries. O ajuste é limitado e não é previsão."
         )
+        from functools import partial
+
+        from core.macro_data.fii_history import rebuild_fii_macro_history
         from design.macro_portfolio import render_historical_macro_path
+
+        rebuild_fii = partial(
+            rebuild_fii_macro_history, scenario=scenario, policy=portfolio_policy,
+            correlation_matrix=(candidate_correlation.to_dict() if not candidate_correlation.empty else None),
+            correlation_penalty=float(preferences["correlation_penalty"]),
+            previous_weights=previous_weights,
+        )
 
         render_historical_macro_path(
             asset_class="fii",
@@ -1969,6 +1979,11 @@ def _carteira_integrada(preferences: dict):
             symbol_column="symbol", sector_column="tipo",
             score_column="type_score", mode=str(result.get("macro_mode")),
             key="fii_portfolio_macro_history",
+            rebuild=rebuild_fii,
+            signature_context={"preferences": preferences, "previous": previous_weights,
+                               "policy": str(portfolio_policy), "scenario": str(scenario),
+                               "snapshot": macro_snapshot.snapshot_id,
+                               "scored": scored, "correlation": candidate_correlation.to_dict()},
         )
     # "Monitoramento operacional" removido da interface. O cálculo saiu junto:
     # o resultado só alimentava aquele expander (a chave de sessão não era lida
@@ -2064,7 +2079,8 @@ def _carteira_integrada(preferences: dict):
              "score": item["type_score"], "dy_12m": item.get("dy_12m"),
              "pvp": item.get("pvp"), "segmento": item.get("sector"),
              "macro_impact": item.get("macro_impact"),
-             "macro_score_adjustment": item.get("macro_score_adjustment")}
+             "macro_score_adjustment": item.get("macro_score_adjustment"),
+             "weight_before_macro": item.get("weight_before_macro")}
             for item in items]
     st.session_state["fii_port"] = weights
     _render_portfolio_history_diagnostics(weights, returns)
@@ -2084,6 +2100,7 @@ def _carteira_integrada(preferences: dict):
                "formula_version": FORMULA_VERSION,
                "regime": classify_macro_regime(scenario),
                "macro_mode": result.get("macro_mode"),
+               "macro_snapshot": macro_snapshot.to_payload() if macro_snapshot else None,
                "macro_as_of": (
                    macro_snapshot.as_of.isoformat() if macro_snapshot else None
                ),

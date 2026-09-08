@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -19,14 +21,25 @@ def render_historical_macro_path(
     mode: str,
     key: str,
     start_year: int = 2010,
+    rebuild=None,
+    signature_context: dict | None = None,
 ) -> None:
     """Exibe pesos contrafactuais; cálculo só ocorre após ação explícita."""
+    signature = hashlib.sha256(json.dumps({
+        "class": asset_class, "mode": mode, "start": start_year,
+        "holdings": holdings.to_dict("records"), "context": signature_context,
+        "date": datetime.now(timezone.utc).date().isoformat(),
+    }, sort_keys=True, default=str).encode()).hexdigest()
+    if st.session_state.get(f"{key}_signature") != signature:
+        st.session_state.pop(f"{key}_result", None)
+        st.session_state[f"{key}_signature"] = signature
     with st.expander("🕰️ Sensibilidade dos pesos ao histórico macro", expanded=False):
         st.caption(
             "Reaplica a composição atual aos dados macro de cada fim de ano. "
             "É uma reconstrução ex post para testar sensibilidade — não é backtest "
             "dos constituintes, não elimina viés de sobrevivência e não prevê retorno."
         )
+        st.caption("Sensibilidades setoriais iniciais. A calibração exige treino móvel e evidência fora da amostra com dados conhecidos na época.")
         if st.button("Calcular trajetória desde 2010", key=f"{key}_calculate"):
             from core.macro_data.database import get_local_macro_engine
             from core.macro_data.portfolio_context import historical_macro_weight_path
@@ -51,10 +64,11 @@ def render_historical_macro_path(
                         score_column=score_column,
                         cutoffs=cutoffs,
                         mode=mode,
+                        rebuild=rebuild,
                     )
-                except (SQLAlchemyError, ValueError) as exc:
+                except (SQLAlchemyError, ValueError):
                     st.session_state.pop(f"{key}_result", None)
-                    st.error(f"Trajetória macro indisponível: {exc}")
+                    st.error("Trajetória macro indisponível; verifique dados e restrições da carteira.")
 
         path = st.session_state.get(f"{key}_result")
         if not isinstance(path, pd.DataFrame) or path.empty:

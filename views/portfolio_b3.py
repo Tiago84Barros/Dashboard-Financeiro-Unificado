@@ -3754,44 +3754,29 @@ def render(show_header: bool = True) -> None:
             except (SQLAlchemyError, ValueError):
                 macro_snapshot = None
         if macro_snapshot is not None:
-            from core.macro_data.portfolio_tilt import apply_macro_tilt
+            from core.macro_data.b3_weights import apply_b3_macro
 
             base_weights = {
                 item["tk"]: float(item.get("peso") or 0.0)
                 for item in proximos_uniq
             }
-            macro_frame = apply_macro_tilt(
+            macro_frame = apply_b3_macro(
                 pd.DataFrame([{
-                    "tk": item["tk"], "weight": item["peso"],
+                    "symbol": item["tk"], "sector": item["setor"], "weight": item["peso"],
                     "score": item.get("score", 0.0),
                 } for item in proximos_uniq]),
                 macro_snapshot.impacts,
-                symbol_column="tk",
-                score_column="score",
                 mode=macro_mode,
+                cap=cap, sector_cap=float(teto_setor), cyclical_cap=float(teto_ciclico),
             )
-            proposed = dict(zip(macro_frame["tk"], macro_frame["weight"]))
-            groups = {item["tk"]: item["setor"] for item in proximos_uniq}
-            if teto_setor < 1.0 or teto_ciclico < 1.0:
-                from core.b3_holdings_health import classify_cycle
-
-                cyclical = {
-                    ticker: classify_cycle(groups[ticker]) == "ciclico"
-                    for ticker in groups
-                }
-                proposed, macro_projection_warnings = project_dual_capped(
-                    proposed, groups, cyclical, cap,
-                    float(teto_setor), float(teto_ciclico),
-                )
-                for warning in macro_projection_warnings:
-                    st.warning("Projeção macro: " + warning)
-            else:
-                proposed = project_capped_simplex(proposed, cap)
+            proposed = dict(zip(macro_frame["symbol"], macro_frame["weight"]))
+            for warning in macro_frame.attrs.get("macro_warnings", []):
+                st.warning("Projeção macro: " + warning)
             macro_turnover = 0.5 * sum(
                 abs(float(proposed[ticker]) - base_weights[ticker])
                 for ticker in base_weights
             )
-            metadata = macro_frame.set_index("tk").to_dict("index")
+            metadata = macro_frame.set_index("symbol").to_dict("index")
             for item in proximos_uniq:
                 item["peso_fundamental"] = base_weights[item["tk"]]
                 item["peso"] = float(proposed[item["tk"]])
@@ -3816,6 +3801,9 @@ def render(show_header: bool = True) -> None:
                 f"cobertura {macro_snapshot.coverage:.0%} · "
                 f"turnover macro {macro_turnover:.1%}. O ajuste não é previsão."
             )
+            from functools import partial
+
+            from core.macro_data.b3_weights import apply_b3_macro
             from design.macro_portfolio import render_historical_macro_path
 
             render_historical_macro_path(
@@ -3826,6 +3814,10 @@ def render(show_header: bool = True) -> None:
                 symbol_column="symbol", sector_column="sector",
                 score_column="score", mode=macro_mode,
                 key="b3_portfolio_macro_history",
+                rebuild=partial(apply_b3_macro, cap=cap, sector_cap=float(teto_setor),
+                                cyclical_cap=float(teto_ciclico)),
+                signature_context={"caps": [cap, teto_setor, teto_ciclico],
+                                   "snapshot": macro_snapshot.snapshot_id},
             )
 
     _constraint_warnings = sorted({
@@ -4094,6 +4086,7 @@ def render(show_header: bool = True) -> None:
             "correlation_score_alpha": float(corr_alpha),
             "correlation_substituicoes": corr_log,
             "macro_mode": macro_mode,
+            "macro_snapshot": macro_snapshot.to_payload() if macro_snapshot else None,
             "macro_as_of": (
                 macro_snapshot.as_of.isoformat() if macro_snapshot else None
             ),

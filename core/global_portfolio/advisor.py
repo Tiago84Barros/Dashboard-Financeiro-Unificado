@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 import pandas as pd
@@ -113,6 +113,7 @@ class Acao:
     analisadores: frozenset[str]
     custo_estimado: float
     custo_calibrado: bool
+    macro_delta: float | None = None
 
 
 def _coletar_posicoes(df_posicoes: pd.DataFrame) -> tuple[dict[str, float], dict[str, str]]:
@@ -224,6 +225,7 @@ def recomendar(
     cap_ativo: float = CAP_ATIVO_DEFAULT,
     sensibilidade: float = SENSIBILIDADE_SCORE_DEFAULT,
     limiar_venda: float = LIMIAR_VENDA_DEFAULT,
+    macro_impacts: Mapping[str, float] | None = None,
 ) -> list[Acao]:
     """Combina `sinais` em `Acao` por ativo. Ver o docstring do modulo para as
     duas regras (custo nao calibrado -> `manter`; sinal ausente -> `indeterminado`).
@@ -249,6 +251,22 @@ def recomendar(
 
     pesos_bruto = _pesos_alvo_brutos(symbols, peso_atual, scores, sensibilidade)
     peso_projetado = _projetar(symbols, pesos_bruto, classe_por_symbol, alvos, cap_ativo)
+
+    relevant = {}
+    if macro_impacts:
+        from core.macro_data.portfolio_tilt import apply_macro_tilt, bound_macro_weights
+        # Só ajusta alvos com evidência de base; custo/calendário continuam abaixo.
+        relevant = {s: float(v) for s, v in macro_impacts.items()
+                    if s in scores and scores[s] is not None and math.isfinite(float(v)) and abs(float(v)) > 1e-12}
+        if relevant:
+            base = pd.Series(peso_projetado).reindex(symbols)
+            frame = pd.DataFrame({"symbol": symbols, "weight": base.to_numpy(), "score": 0.0})
+            tilted = apply_macro_tilt(frame, relevant, symbol_column="symbol", score_column="score")
+            projected = _projetar(symbols, dict(zip(symbols, tilted.weight)), classe_por_symbol, alvos, cap_ativo)
+            bounded = bound_macro_weights(base, pd.Series(projected).reindex(symbols))
+            peso_projetado = bounded.to_dict()
+            for s, value in relevant.items():
+                analisadores[s].add("macro_data")
 
     deve_rebalancear, _motivo = politica.deve_rebalancear(
         peso_atual, peso_projetado, data_atual, ultimo_rebal)
@@ -306,4 +324,4 @@ def recomendar(
                           peso_sugerido=sugerido, score=score, componentes=comp,
                           analisadores=analis, custo_estimado=custo, custo_calibrado=True))
 
-    return sorted(acoes, key=lambda a: a.symbol)
+    return [replace(a, macro_delta=relevant.get(a.symbol)) for a in sorted(acoes, key=lambda a: a.symbol)]

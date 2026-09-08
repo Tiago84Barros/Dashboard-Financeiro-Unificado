@@ -2526,6 +2526,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
             "Os parâmetros foram alterados depois da última execução. Os resultados "
             "abaixo ainda correspondem à configuração anterior; rode novamente para atualizar."
         )
+        # Não misturar composição anterior com limites novos no histórico ou salvamento.
+        return
 
     for warning in result.get("warnings", []):
         st.warning(warning)
@@ -2557,6 +2559,9 @@ def _tab_criacao_portfolio(status: dict) -> None:
             f"turnover atribuído ao macro {macro_info.get('turnover', 0):.1%}. "
             "Impactos são contexto histórico, não previsão de retorno."
         )
+        from functools import partial
+
+        from core.us_portfolio_creation import apply_us_macro
         from design.macro_portfolio import render_historical_macro_path
 
         render_historical_macro_path(
@@ -2564,6 +2569,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
             symbol_column="symbol", sector_column="sector_group",
             score_column="entry_score", mode=str(macro_info.get("mode")),
             key="us_portfolio_macro_history",
+            rebuild=partial(apply_us_macro, params=params),
+            signature_context={"params": params_to_dict(params), "snapshot": snapshot.snapshot_id},
         )
     approved = int(audit["status"].eq("Aprovada").sum()) if not audit.empty else 0
     observation = int(audit["status"].eq("Observação").sum()) if not audit.empty else 0
@@ -2727,6 +2734,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
                     params={
                         **(result.get("params") or {}),
                         "macro_mode": macro_info.get("mode"),
+                        "macro_snapshot": snapshot.to_payload() if snapshot else None,
                         "macro_as_of": (
                             snapshot.as_of.isoformat() if snapshot else None
                         ),

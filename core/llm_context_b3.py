@@ -532,6 +532,9 @@ def get_creation_context(model: dict, max_rejected: int = 12) -> str:
     params = _parse_json_field((model or {}).get("params_json"), {})
 
     lines = ["CRIAÇÃO DE PORTFÓLIO (seleção):"]
+    from core.macro_data.portfolio_context import format_saved_macro_context
+    if isinstance(params, dict) and params.get("macro_snapshot"):
+        lines.append(format_saved_macro_context(params["macro_snapshot"]))
     lines.append(f"  Selecionadas (na carteira): {', '.join(sel_tks) or '—'}")
     if isinstance(params, dict) and params:
         for k in ("segmentos_analisados", "segmentos_aprovados", "min_anos_dre"):

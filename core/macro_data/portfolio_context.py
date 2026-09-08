@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import json
+import math
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 import pandas as pd
 from sqlalchemy import text
@@ -26,6 +29,18 @@ class PortfolioMacroSnapshot:
     knowledge_mode: str = "strict"
 
     @property
+    def snapshot_id(self) -> str:
+        """Identidade dos insumos, independente da hora de abertura da tela."""
+        payload = asdict(self)
+        payload.pop("as_of")
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str,
+                                        ensure_ascii=False).encode()).hexdigest()[:24]
+
+    def to_payload(self) -> dict:
+        return json.loads(json.dumps({**asdict(self), "snapshot_id": self.snapshot_id,
+                                     "method_version": "macro-integration-v2"}, default=str))
+
+    @property
     def coverage(self) -> float:
         return self.covered_assets / self.asset_count if self.asset_count else 0.0
 
@@ -45,6 +60,8 @@ def aggregate_impact_rows(
             intensity = min(max(float(row.get("intensity") or 0.0), 0.0), 100.0)
             confidence = min(max(float(row.get("confidence") or 0.0), 0.0), 100.0)
         except (TypeError, ValueError):
+            continue
+        if not math.isfinite(intensity) or not math.isfinite(confidence):
             continue
         grouped.setdefault(symbol, []).append((sign * intensity, confidence))
 
@@ -99,7 +116,7 @@ def load_portfolio_macro_snapshot(
     normalized_assets = {
         str(symbol).strip().upper(): str(sector).strip()
         for symbol, sector in assets.items()
-        if str(symbol).strip() and str(sector).strip()
+        if str(symbol).strip()
     }
     if not normalized_assets:
         return PortfolioMacroSnapshot(
@@ -117,17 +134,17 @@ def load_portfolio_macro_snapshot(
         ).mappings().all()
         observations = conn.execute(
             text("""
-                WITH ranked AS (
+                WITH versions AS (
                     SELECT i.provider, i.provider_code, i.country_code, i.category,
+                           i.frequency, i.unit, i.source_url,
                            o.reference_period, o.value, o.retrieved_at, o.released_at,
                            o.is_preliminary, o.is_forecast, o.vintage_date,
                            ROW_NUMBER() OVER (
                              PARTITION BY i.provider, i.provider_code,
-                                          COALESCE(i.country_code, '')
-                             ORDER BY o.reference_period DESC,
-                                      COALESCE(o.vintage_date, o.reference_period) DESC,
-                                      o.retrieved_at DESC
-                           ) AS position
+                                          COALESCE(i.country_code, ''), o.reference_period
+                             ORDER BY COALESCE(o.vintage_date, o.reference_period) DESC,
+                                      o.retrieved_at DESC, o.id DESC
+                           ) AS version_position
                       FROM macro_indicators i
                       JOIN macro_observations o
                         ON o.provider=i.provider
@@ -148,6 +165,11 @@ def load_portfolio_macro_snapshot(
                             CAST(o.reference_period AS timestamp)
                           ) <= :as_of)
                        )
+                ), ranked AS (
+                    SELECT *, ROW_NUMBER() OVER (
+                        PARTITION BY provider, provider_code, COALESCE(country_code, '')
+                        ORDER BY reference_period DESC
+                    ) AS position FROM versions WHERE version_position = 1
                 )
                 SELECT * FROM ranked WHERE position <= 24
                 ORDER BY provider, provider_code, country_code, reference_period
@@ -170,6 +192,8 @@ def load_portfolio_macro_snapshot(
         grouped_observations.setdefault(key, []).append(row)
 
     details: list[dict[str, object]] = []
+    limitations = ["sensibilidades setoriais iniciais; não são coeficientes historicamente calibrados"]
+    usable_series = 0
     for (provider, provider_code, country_code, factor), series in grouped_observations.items():
         observations_typed = [
             MacroObservation(
@@ -185,9 +209,12 @@ def load_portfolio_macro_snapshot(
             )
             for row in series
         ]
-        signal = evaluate_observation(observations_typed, desirability=1)
+        signal = evaluate_observation(observations_typed, desirability=1,
+                                      as_of=as_of, frequency=str(series[-1].get("frequency", "irregular")))
         if signal.direction == "unknown":
+            limitations.append(f"{provider}.{provider_code}: " + "; ".join(signal.limitations))
             continue
+        usable_series += 1
         for symbol, sector in normalized_assets.items():
             exposure = exposure_by_sector_factor.get((sector, factor))
             if exposure is None:
@@ -214,10 +241,18 @@ def load_portfolio_macro_snapshot(
                 "confidence": impact.confidence,
                 "channel": impact.channel,
                 "reference_period": series[-1]["reference_period"],
+                "retrieved_at": series[-1]["retrieved_at"],
+                "released_at": series[-1]["released_at"],
+                "vintage_date": series[-1]["vintage_date"],
+                "value": series[-1]["value"],
+                "unit": series[-1].get("unit"),
+                "source_url": series[-1].get("source_url"),
+                "sensitivity": float(exposure["sensitivity"]),
+                "calibration_status": "initial_prior",
+                "signal_score": signal.impact_score * (1 if signal.direction == "favorable" else -1 if signal.direction == "adverse" else 0) / 100,
             })
 
     impacts = aggregate_impact_rows(details)
-    limitations = []
     if knowledge_mode == "reconstructed":
         limitations.append(
             "histórico reconstruído ex post; não equivale a captura disponível no dia"
@@ -232,7 +267,7 @@ def load_portfolio_macro_snapshot(
         as_of=as_of,
         asset_count=len(normalized_assets),
         covered_assets=len(impacts),
-        source_count=len(grouped_observations),
+        source_count=usable_series,
         limitations=tuple(limitations),
         knowledge_mode=knowledge_mode,
     )
@@ -245,15 +280,43 @@ def format_portfolio_macro_context(snapshot: PortfolioMacroSnapshot) -> str:
         f"  data de corte={snapshot.as_of.isoformat()}; cobertura="
         f"{snapshot.coverage:.1%}; séries={snapshot.source_count}; "
         f"modo={snapshot.knowledge_mode}",
+        f"  snapshot={snapshot.snapshot_id}; método=macro-integration-v2",
     ]
-    for symbol, score in sorted(snapshot.impacts.items()):
-        lines.append(f"  {symbol}: impacto agregado={score:+.2f}/100")
     if snapshot.limitations:
         lines.append("  limitações: " + "; ".join(snapshot.limitations))
+    for symbol, score in sorted(snapshot.impacts.items()):
+        lines.append(f"  {symbol}: impacto agregado={score:+.2f}/100")
+        drivers = sorted((r for r in snapshot.details if r.get("symbol") == symbol),
+                         key=lambda r: float(r.get("intensity") or 0), reverse=True)
+        for row in drivers[:3]:
+            lines.append(
+                f"    {row.get('provider')}.{row.get('provider_code')}: "
+                f"{row.get('value', 'ausente')} {row.get('unit') or ''}; "
+                f"período={row.get('reference_period')}; divulgação={row.get('released_at') or 'não informada'}; "
+                f"efeito={row.get('direction')}, intensidade={row.get('intensity')}, "
+                f"confiança={row.get('confidence')}; canal={row.get('channel')}; "
+                f"fonte={row.get('source_url') or row.get('provider')}"
+            )
     lines.append(
         "  O impacto é contextual, não previsão; a LLM apenas explica e não calcula pesos."
     )
-    return "\n".join(lines)
+    content = "\n".join(lines)
+    return content if len(content) <= 16000 else content[:15700] + "\n[drivers truncados; impacto contextual, não previsão; pesos calculados em Python]"
+
+
+def format_saved_macro_context(payload: dict | None) -> str:
+    """Mesma evidência da criação; não substitui snapshot salvo por dados de hoje."""
+    if not payload:
+        return ""
+    try:
+        return format_portfolio_macro_context(PortfolioMacroSnapshot(
+            impacts=payload["impacts"], details=tuple(payload["details"]),
+            as_of=datetime.fromisoformat(payload["as_of"]), asset_count=payload["asset_count"],
+            covered_assets=payload["covered_assets"], source_count=payload["source_count"],
+            limitations=tuple(payload.get("limitations", ())),
+            knowledge_mode=payload.get("knowledge_mode", "strict")))
+    except (KeyError, TypeError, ValueError):
+        return "Snapshot macro salvo incompleto; evidência indisponível."
 
 
 def historical_macro_weight_path(
@@ -266,6 +329,7 @@ def historical_macro_weight_path(
     score_column: str,
     cutoffs: Iterable[datetime],
     mode: str = "moderate",
+    rebuild: Callable | None = None,
 ) -> pd.DataFrame:
     """Reaplica a composição atual aos regimes passados, sem alegar backtest.
 
@@ -296,6 +360,8 @@ def historical_macro_weight_path(
     # junto. Ausente a coluna, `weight` ja e o fundamental e nada muda.
     if "weight_before_macro" in holdings.columns:
         holdings = holdings.assign(weight=holdings["weight_before_macro"])
+    elif "peso_fundamental" in holdings.columns:
+        holdings = holdings.assign(weight=holdings["peso_fundamental"])
     rows: list[dict[str, object]] = []
     for cutoff in sorted(set(cutoffs)):
         snapshot = load_portfolio_macro_snapshot(
@@ -305,13 +371,17 @@ def historical_macro_weight_path(
             as_of=cutoff,
             knowledge_mode="reconstructed",
         )
-        tilted = apply_macro_tilt(
+        tilted = rebuild(holdings.copy(), snapshot.impacts, mode) if rebuild else apply_macro_tilt(
             holdings,
             snapshot.impacts,
             symbol_column=symbol_column,
             score_column=score_column,
             mode=mode,
         )
+        if (symbol_column not in tilted.columns
+                or tilted[symbol_column].astype(str).duplicated().any()
+                or set(tilted[symbol_column].astype(str)) != set(assets)):
+            raise ValueError("Reconstrução alterou a composição solicitada da carteira.")
         for _, item in tilted.iterrows():
             rows.append({
                 "as_of": cutoff,

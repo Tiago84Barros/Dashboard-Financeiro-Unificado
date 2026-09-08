@@ -175,9 +175,12 @@ def get_creation_context(model: dict) -> str:
     params = model.get("params_json") or {}
     metrics = model.get("metrics_json") or {}
     linhas = ["LÓGICA DA SELEÇÃO (gravada na Criação de Portfólio):"]
+    from core.macro_data.portfolio_context import format_saved_macro_context
+    if params.get("macro_snapshot"):
+        linhas.append(format_saved_macro_context(params["macro_snapshot"]))
     if params:
         linhas.append("  Parâmetros: " + " | ".join(
-            f"{k}={v}" for k, v in list(params.items())[:14] if v is not None
+            f"{k}={v}" for k, v in list(params.items())[:14] if v is not None and k != "macro_snapshot"
         ))
     if metrics:
         linhas.append("  Métricas da carteira: " + " | ".join(

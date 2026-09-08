@@ -140,7 +140,7 @@ def _model_from_connection(conn, owner: str, *,
         if isinstance(meta, dict):
             item.update({
                 key: meta.get(key)
-                for key in ("macro_impact", "macro_score_adjustment")
+                for key in ("macro_impact", "macro_score_adjustment", "weight_before_macro")
                 if key in meta
             })
         items.append(item)
@@ -286,6 +286,7 @@ def save_fii_portfolio_model(
                     "meta_json": _safe_json({
                         "macro_impact": item.get("macro_impact"),
                         "macro_score_adjustment": item.get("macro_score_adjustment"),
+                        "weight_before_macro": item.get("weight_before_macro"),
                     }, {}),
                 },
             )

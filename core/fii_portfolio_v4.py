@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
 import numpy as np
+import pandas as pd
 
 from core.fii_lookthrough import (
     dimension_is_applicable,
@@ -603,6 +604,7 @@ def optimize_diligence_portfolio(
         impact_map.get(str(row.get("ticker") or "").strip().upper(), np.nan)
         for row in rows
     ])
+    fundamental_utility = utility.copy()
     utility = utility + np.nan_to_num(macro_vector / 100.0, nan=0.0) * macro_scale
     correlation_risk, correlation_info = _correlation_risk_matrix(rows, correlation_matrix)
 
@@ -666,7 +668,7 @@ def optimize_diligence_portfolio(
         # iliquidez. Primeiro encontra-se uma solução linear factível; depois o
         # SLSQP otimiza concentração e perdas de cauda a partir dela.
         feasible = linprog(
-            c=-utility,
+            c=-fundamental_utility,
             A_ub=np.vstack([row for row, _ in linear_ub]) if linear_ub else None,
             b_ub=np.array([limit for _, limit in linear_ub]) if linear_ub else None,
             A_eq=np.ones((1, n)), b_eq=np.array([1.0]),
@@ -686,7 +688,16 @@ def optimize_diligence_portfolio(
                         "minimum_weighted_confidence":
                             1.0 - policy.max_weighted_uncertainty,
                     }}
-        result = minimize(objective, feasible.x, method="SLSQP",
+        contextual_utility = utility.copy()
+        utility = fundamental_utility
+        baseline = minimize(objective, feasible.x, method="SLSQP",
+                            bounds=[(policy.min_asset_weight, policy.max_asset)] * n,
+                            constraints=constraints, options={"maxiter": 1000, "ftol": 1e-10})
+        if not baseline.success:
+            return {"items": [], "status": "blocked", "can_publish": False,
+                    "blockers": ["Não foi possível estabelecer a carteira fundamental de referência."]}
+        utility = contextual_utility
+        result = baseline if macro_scale == 0 else minimize(objective, baseline.x, method="SLSQP",
                           bounds=[(policy.min_asset_weight, policy.max_asset)] * n,
                           constraints=constraints,
                           options={"maxiter": 1000, "ftol": 1e-10})
@@ -703,16 +714,27 @@ def optimize_diligence_portfolio(
     # podia elevar os pesos restantes e quebrar limites aprovados pelo solver.
     weights = np.where(result.x >= 1e-8, result.x, 0.0)
     weights = weights / weights.sum()
+    from core.macro_data.portfolio_tilt import apply_macro_scores, bound_macro_weights
+
+    base_weights = np.maximum(baseline.x, 0)
+    base_weights = base_weights / base_weights.sum()
+    weights = bound_macro_weights(pd.Series(base_weights), pd.Series(weights)).to_numpy()
+    # Pontos exibidos e persistidos seguem a mesma convenção B3/US, inclusive
+    # o fator 1,5 do cenário. A utilidade do otimizador permanece separada.
+    score_adjustments = apply_macro_scores(
+        pd.DataFrame(rows), impact_map, symbol_column="ticker",
+        score_column="type_score", mode=macro_mode,
+    )["macro_score_adjustment"].to_numpy()
     items = [{
         **rows[i],
         "weight": float(weights[i]),
+        "weight_before_macro": float(base_weights[i]),
         "macro_covered": bool(np.isfinite(macro_vector[i])),
         "macro_impact": (
             float(macro_vector[i]) if np.isfinite(macro_vector[i]) else None
         ),
         "macro_score_adjustment": (
-            float(np.clip(macro_vector[i] / 10.0, -10.0, 10.0))
-            * (0.0 if macro_mode == "fundamental" else 1.0)
+            float(score_adjustments[i])
             if np.isfinite(macro_vector[i]) else None
         ),
     } for i in range(n) if weights[i] > 0]
@@ -767,6 +789,7 @@ def optimize_diligence_portfolio(
         "effective_assets": round(1 / sum(item["weight"] ** 2 for item in items), 2),
         "macro_bands": bands, "band_adaptation": band_adaptation,
         "macro_mode": macro_mode,
+        "macro_turnover": float(.5 * np.abs(weights - base_weights).sum()),
         "macro_coverage": (
             sum(bool(item["macro_covered"]) for item in items) / len(items)
             if items else 0.0
