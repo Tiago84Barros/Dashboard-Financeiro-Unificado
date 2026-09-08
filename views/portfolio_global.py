@@ -1045,8 +1045,9 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
 
     macro_changes = {}
     try:
-        from core.macro_data.database import get_local_macro_engine
         from core.macro_data.global_context import load_global_macro_context
+
+        from core.macro_data.database import get_local_macro_engine
         from core.macro_data.portfolio_context import format_portfolio_macro_context
         snapshots, macro_changes, macro_limits = load_global_macro_context(get_local_macro_engine(), df)
         with st.expander("Contexto macro das carteiras", expanded=False):
