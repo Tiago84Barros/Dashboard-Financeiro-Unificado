@@ -586,12 +586,15 @@ def test_resumo_de_papeis_inclui_papel_com_zero_ativos():
     assert resumo["por_papel"]["crescimento"] == 1
 
 
-def test_tabela_de_papeis_do_ativo_distingue_indeterminado_de_nao_cumpre():
+def test_card_de_papel_distingue_indeterminado_de_nao_cumpre():
     """Regra de honestidade do painel: 'indeterminado' (sem dado) e 'nao
-    cumpre' (regra avaliada e negada) precisam ter status visivelmente
-    diferentes — nunca o mesmo rotulo, senao o painel diria 'nao cumpre'
-    quando na verdade e so 'nao sabemos'."""
+    cumpre' (regra avaliada e negada) precisam continuar visivelmente
+    diferentes — dizer 'nao cumpre' onde o certo e 'nao sabemos' afirmaria algo
+    que o dado nao sustenta. A tabela virou card (o expander por ativo custava
+    um clique cada), e a distincao tinha que atravessar a mudanca de formato.
+    """
     from core.global_portfolio.roles import ROTULOS_PAPEL, Evidencia, PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
 
     ev = Evidencia("hedge_cambial", 1.0, 0.0, "Moeda de referencia USD, fora do BRL")
     entrada = PapelDoAtivo(
@@ -601,23 +604,32 @@ def test_tabela_de_papeis_do_ativo_distingue_indeterminado_de_nao_cumpre():
         indeterminados=("baixa_volatilidade", "diversificacao"),
         justificativa="Hedge cambial — Moeda de referencia USD, fora do BRL",
     )
-    tabela = portfolio_global._tabela_de_papeis_do_ativo(entrada)
-    status_por_papel = dict(zip(tabela["Papel"], tabela["Status"]))
+    html = card_papel_html(entrada)
 
-    status_cumpre = status_por_papel[ROTULOS_PAPEL["hedge_cambial"]]
-    status_indeterminado = status_por_papel[ROTULOS_PAPEL["baixa_volatilidade"]]
-    status_nao_cumpre = status_por_papel[ROTULOS_PAPEL["renda"]]
+    assert "AAPL" in html
+    # A evidencia numerica acompanha o papel cumprido, nao some no resumo.
+    assert "USD" in html
+    # Os tres estados aparecem, cada um com seu proprio rotulo.
+    assert "Indeterminado:" in html
+    assert "Não cumpre:" in html
+    assert ROTULOS_PAPEL["baixa_volatilidade"] in html   # indeterminado
+    assert ROTULOS_PAPEL["renda"] in html                # nao cumpre
+    assert "sem dado suficiente" in html
+    # Card CSS sai num bloco so: div aberta num st.markdown e fechada em outro
+    # ja produziu moldura vazia neste projeto.
+    assert html.count("<div") == html.count("</div>")
 
-    assert status_cumpre != status_indeterminado
-    assert status_indeterminado != status_nao_cumpre
-    assert status_cumpre != status_nao_cumpre
-    # A evidencia so acompanha o papel que de fato foi cumprido.
-    assert "USD" in dict(zip(tabela["Papel"], tabela["Evidência"]))[ROTULOS_PAPEL["hedge_cambial"]]
 
+def test_card_de_papel_marca_o_ativo_sem_papel_algum():
+    """Sem papel identificado e o numero acionavel do painel: o card precisa
+    dize-lo, nao apenas deixar de listar papeis."""
+    from core.global_portfolio.roles import PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
 
-# ---------------------------------------------------------------------------
-# Fase 3b, Task 6: painel "Recomendações do motor de movimentação"
-# ---------------------------------------------------------------------------
+    html = card_papel_html(PapelDoAtivo("XPTO3", (), (), (), ""))
+    assert "Nenhum papel identificado" in html
+    assert html.count("<div") == html.count("</div>")
+
 
 def _acao(symbol="ADBE", acao="manter", peso_atual=0.05, peso_sugerido=0.03,
          score=-0.4, componentes=None, analisadores=frozenset(),
@@ -817,3 +829,81 @@ def test_painel_de_recomendacoes_conta_e_nomeia_as_nao_calibradas():
     fonte = inspect.getsource(portfolio_global._painel_recomendacoes)
     assert "custo_calibrado" in fonte
     assert "st.warning" in fonte
+
+
+def _acao_de_teste(**kwargs):
+    from core.global_portfolio.advisor import Acao
+
+    base = dict(
+        symbol="PETR4", acao="reduzir", peso_atual=0.12, peso_sugerido=0.08,
+        score=-0.412, componentes={"concentracao": -0.8, "risco": -0.02},
+        analisadores=frozenset({"concentration", "risk"}),
+        custo_estimado=31.4, custo_calibrado=True, macro_delta=-2.5,
+    )
+    base.update(kwargs)
+    return Acao(**base)
+
+
+def test_card_de_recomendacao_abre_o_conteudo_que_estava_atras_do_clique():
+    """O expander escondia peso, custo, sinais e analisadores atras de um
+    clique por ativo — 41 cliques na carteira real. Tudo isso precisa estar
+    no card, aberto."""
+    from design.portfolio_global_cards import card_recomendacao_html
+
+    acao = _acao_de_teste()
+    html = card_recomendacao_html(acao, "Reduzir", "#F97316", "custo: R$ 31,40")
+
+    assert "PETR4" in html and "Reduzir" in html
+    assert "12.00%" in html and "8.00%" in html      # peso atual -> sugerido
+    assert "R$ 31,40" in html
+    assert "concentracao" in html and "-0.800" in html   # decomposicao do score
+    assert "concentration, risk" in html                 # analisadores
+    assert "-2.50/100" in html                           # macro delta
+    assert html.count("<div") == html.count("</div>")
+
+
+def test_card_de_recomendacao_nunca_imprime_o_nan_da_classe_sem_calibracao():
+    """`custo_estimado` e math.nan exatamente quando a classe nao tem custo
+    calibrado, e `texto_de_custo` existe para interceptar isso ANTES de
+    qualquer formatacao. O card recebe o texto pronto justamente para nao
+    reabrir esse buraco: formatar o numero aqui imprimiria 'nan' onde a regra
+    manda dizer 'nao calibrado'."""
+    import math
+
+    from design.portfolio_global_cards import card_recomendacao_html
+
+    acao = _acao_de_teste(custo_estimado=math.nan, custo_calibrado=False)
+    texto = portfolio_global.texto_de_custo(acao)
+    html = card_recomendacao_html(acao, "Manter", "#9CA3AF", texto)
+
+    assert "nan" not in html.lower()
+    assert "não calibrado" in html
+    assert "mantida em vez de executada" in html
+
+
+def test_paineis_por_ativo_nao_escondem_o_conteudo_atras_de_expander():
+    """Regressao do pedido de 07/09/2026: um expander por ativo obrigava a
+    clicar um por um para ler o painel. Informacao que custa um clique cada
+    nao entra em decisao nenhuma — os dois paineis por ativo saem em cards
+    abertos."""
+    import ast
+    import inspect
+    import textwrap
+
+    for painel in (portfolio_global._painel_papeis,
+                   portfolio_global._painel_recomendacoes):
+        arvore = ast.parse(textwrap.dedent(inspect.getsource(painel)))
+        # Expander DENTRO de um laco e o padrao que obrigava a clicar um por
+        # um. Fora dele ainda e legitimo (o "Contexto macro das carteiras" e
+        # um bloco unico, opcional, nao um item por ativo).
+        for laco in [n for n in ast.walk(arvore) if isinstance(n, ast.For)]:
+            chamadas = {
+                getattr(c.func, "attr", None)
+                for c in ast.walk(laco) if isinstance(c, ast.Call)
+            }
+            assert "expander" not in chamadas, (
+                f"{painel.__name__} voltou a esconder ativo atras de expander"
+            )
+    assert "card_papel_html(" in inspect.getsource(portfolio_global._painel_papeis)
+    assert "card_recomendacao_html(" in inspect.getsource(
+        portfolio_global._painel_recomendacoes)
