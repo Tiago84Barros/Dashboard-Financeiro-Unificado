@@ -408,3 +408,68 @@ def test_papeis_de_b3_e_fii_nao_ganham_motivo_de_us():
     df = pd.DataFrame([_linha("ITSA4", classe="b3", fundamentals={"DY": 0.09})])
 
     assert classificar(df)[0].motivos_indeterminado == ()
+
+
+# --- Snapshot mais antigo que o campo -----------------------------------
+# Em 08/09/2026 o crescimento americano passou de `revenue_cagr_5y` para
+# `revenue_trend_5y` e o dividend yield passou a existir na vitrine. Os 30
+# ativos da carteira ativa tinham snapshot de 07/09 e voltaram todos para
+# "sem dado suficiente para avaliar" -- frase falsa: o dado estava publicado,
+# o snapshot e que envelheceu. O que faltava nao era o dado, era a CAUSA.
+
+_VOCABULARIO_ANTIGO = {"revenue_cagr_5y": 0.30, "revenue_cagr_3y": 0.25,
+                       "payout_ratio": None}
+
+
+def test_ausente_do_snapshot_separa_chave_nula_de_chave_nunca_gravada():
+    from core.global_portfolio.fields import ausente_do_snapshot
+
+    nunca_gravada = {"fundamentals": dict(_VOCABULARIO_ANTIGO)}
+    gravada_nula = {"fundamentals": {"dividend_yield": None,
+                                     "revenue_trend_5y": None}}
+    assert ausente_do_snapshot(nunca_gravada, "us", "dy") is True
+    assert ausente_do_snapshot(nunca_gravada, "us", "crescimento_receita") is True
+    assert ausente_do_snapshot(gravada_nula, "us", "dy") is False
+    assert ausente_do_snapshot(gravada_nula, "us", "crescimento_receita") is False
+
+
+def test_campo_sem_endereco_na_classe_nao_e_snapshot_defasado():
+    """`crescimento_receita` so tem endereco em `us`; b3 e fii medem por serie.
+
+    Sem esta guarda o motivo apareceria em todo FII e toda acao da B3, que e o
+    oposto de nomear a causa: seria nomear a causa errada.
+    """
+    from core.global_portfolio.fields import ausente_do_snapshot
+
+    for classe in ("b3", "fii"):
+        assert ausente_do_snapshot({"fundamentals": {}}, classe,
+                                   "crescimento_receita") is False
+
+
+def test_snapshot_antigo_declara_a_causa_em_vez_de_dizer_falta_de_dado():
+    df = pd.DataFrame([_linha("HRMY", classe="us", currency="USD",
+                              fundamentals=dict(_VOCABULARIO_ANTIGO))])
+    [res] = classificar(df)
+
+    assert "crescimento" in res.indeterminados
+    assert "renda" in res.indeterminados
+    motivos = dict(res.motivos_indeterminado)
+    assert "recrie o modelo" in motivos["crescimento"]
+    assert "recrie o modelo" in motivos["renda"]
+
+
+def test_empresa_sem_dividendo_fica_indeterminada_sem_culpar_o_snapshot():
+    """Chave gravada e nula: quem nao respondeu foi a empresa, nao o snapshot.
+
+    Mandar recriar o modelo aqui seria mandar o usuario refazer trabalho que
+    nao muda nada -- pior que a frase generica, porque promete solucao.
+    """
+    df = pd.DataFrame([_linha("ITRI", classe="us", currency="USD",
+                              fundamentals={"dividend_yield": None,
+                                            "revenue_trend_5y": 0.30,
+                                            "revenue_trend_r2_5y": 0.94})])
+    [res] = classificar(df)
+
+    assert "renda" in res.indeterminados
+    assert "crescimento" not in res.indeterminados
+    assert dict(res.motivos_indeterminado).get("renda") is None
