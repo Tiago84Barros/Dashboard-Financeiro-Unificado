@@ -33,6 +33,8 @@ from core.global_portfolio import (
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
 from core.global_portfolio.returns import Cobertura, retornos_mensais
 from core.global_portfolio.taxonomy import ROTULOS, nao_mapeados
+from core.llm_context_global import build_global_portfolio_context
+from core.llm_global import chat_com_portfolio_global
 from core.market_companies import us_logo_url
 from core.portfolio.registry import asset_classes, get_spec
 from core.portfolio.repository import (
@@ -792,25 +794,29 @@ def _resumo_de_papeis(entradas: list[roles.PapelDoAtivo]) -> dict:
     return {"por_papel": contagem, "sem_papel": sem_papel}
 
 
-def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> None:
+def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> list[roles.PapelDoAtivo]:
     """Painel 'Papel estratégico': para que serve cada ativo do patrimônio.
 
     So formata o que `roles.classificar` ja decidiu — nenhum calculo entra
     aqui. `correlacao_media_por_ativo` reduz a matriz de correlacao ja
     calculada pelo painel de correlacao (Task 1 da Fase 3a); nao chama
     `retornos_mensais` de novo, reaproveita o `ret` que `render()` ja tem.
+
+    Devolve as entradas classificadas para o chat (`_painel_chat`) ler o
+    MESMO resultado que a tela mostrou, em vez de classificar de novo por
+    outro caminho e poder divergir em silencio.
     """
     st.markdown("#### Papel estratégico por ativo")
 
     if df.empty:
         st.info("Sem posições para classificar por papel estratégico.")
-        return
+        return []
 
     correlacoes = correlation.correlacao_media_por_ativo(ret)
     entradas = roles.classificar(df, retornos=ret, correlacoes=correlacoes)
     if not entradas:
         st.info("Sem posições para classificar por papel estratégico.")
-        return
+        return []
 
     st.caption(_texto_de_limiares())
 
@@ -856,6 +862,8 @@ def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> None:
         for coluna, entrada in zip(st.columns(2), ordenados[inicio:inicio + 2]):
             with coluna:
                 st.markdown(card_papel_html(entrada), unsafe_allow_html=True)
+
+    return entradas
 
 
 # ---------------------------------------------------------------------------
@@ -1024,7 +1032,7 @@ def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
 
 
 def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
-                          alvos: dict, total_brl: float | None) -> None:
+                          alvos: dict, total_brl: float | None) -> list[advisor.Acao]:
     """Painel 'Recomendações do motor de movimentação' (Fase 3b, Task 6).
 
     Cartões CSS (`card_metrica`), nunca informação solta — mesma regra do
@@ -1057,14 +1065,14 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
             "⚠️ Não foi possível gerar as recomendações do motor de movimentação. "
             "As demais seções do Portfólio Global continuam válidas."
         )
-        return
+        return []
 
     if not acoes:
         st.info(
             "Sem série mensal suficiente para o motor combinar sinais e "
             "recomendar movimentos."
         )
-        return
+        return []
 
     st.caption(_texto_de_limiares_motor())
 
@@ -1114,6 +1122,8 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
                     ),
                     unsafe_allow_html=True,
                 )
+
+    return acoes
 
 
 _CHAVE_APORTE = "portfolio_global_aporte_mensal"
@@ -1250,6 +1260,75 @@ def _painel_aporte(df: pd.DataFrame, alvos: dict, total_brl: float | None) -> No
     )
 
 
+# ---------------------------------------------------------------------------
+# Chat com a LLM sobre o Portfolio Global
+# ---------------------------------------------------------------------------
+
+_CHAVE_CHAT = "portfolio_global_chat_historico"
+
+
+def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
+                 ret: pd.DataFrame, cob: Cobertura | None, pesos: dict,
+                 papeis: list, acoes: list) -> None:
+    """Caixa de texto para conversar com a LLM sobre o patrimonio consolidado.
+
+    O contexto e montado a partir do que ESTA TELA ja calculou — `df`, `ret`,
+    `cob`, `pesos`, os papeis de `_painel_papeis` e as recomendacoes de
+    `_painel_recomendacoes`. Nada e recalculado por outro caminho: se a tela
+    mostra um numero, o chat le o mesmo numero (`memoria:
+    medir-a-fonte-que-a-decisao-le`).
+
+    Falha do provedor de LLM nunca derruba o Portfolio Global: cai numa
+    mensagem dentro da propria conversa, mesma fronteira de isolamento de
+    `_painel_recomendacoes`.
+    """
+    st.markdown("#### 💬 Converse com a IA sobre este patrimônio")
+    st.caption(
+        "As perguntas são respondidas apenas com os dados desta tela — "
+        "composição, alvo x real, concentração, múltiplos, risco, correlação, "
+        "papel estratégico e as recomendações do motor. O modelo não busca "
+        "cotação nem notícia; onde o dado falta, ele deve dizer que falta."
+    )
+
+    _, coluna_limpar = st.columns([5, 1])
+    with coluna_limpar:
+        if st.button("🗑️ Limpar chat", key="pg_chat_clear", width="stretch"):
+            st.session_state.pop(_CHAVE_CHAT, None)
+            st.rerun()
+
+    historico: list[dict] = st.session_state.get(_CHAVE_CHAT, [])
+    for mensagem in historico:
+        with st.chat_message(mensagem["role"]):
+            st.markdown(mensagem["content"])
+
+    pergunta = st.chat_input(
+        "Pergunte sobre a alocação, o risco ou as recomendações…",
+        key="pg_chat_input",
+    )
+    if not pergunta:
+        return
+
+    historico.append({"role": "user", "content": pergunta})
+    with st.chat_message("user"):
+        st.markdown(pergunta)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Consultando os dados do patrimônio consolidado…"):
+            try:
+                contexto = build_global_portfolio_context(
+                    df, alvos=alvos, total_brl=total_brl, retornos=ret,
+                    cobertura=cob, pesos=pesos, papeis=papeis, acoes=acoes,
+                )
+                resposta = chat_com_portfolio_global(contexto, historico[:-1], pergunta)
+            except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
+                logger.exception("Falha no chat do portfolio global")
+                resposta = f"Erro ao consultar a LLM: {exc}"
+        st.markdown(resposta)
+
+    historico.append({"role": "assistant", "content": resposta})
+    st.session_state[_CHAVE_CHAT] = historico
+
+
 def render() -> None:
     st.markdown("## 🌐 Portfólio Global")
     st.caption("As três carteiras lidas como um único patrimônio.")
@@ -1315,6 +1394,11 @@ def render() -> None:
     _painel_correlacao(ret, pesos)
     _painel_fatores(ret, pesos)
     _painel_risco(ret, pesos)
-    _painel_papeis(df, ret)
-    _painel_recomendacoes(df, ret, pesos, alvos, alocacao.get("total_brl"))
+    papeis = _painel_papeis(df, ret)
+    acoes = _painel_recomendacoes(df, ret, pesos, alvos, alocacao.get("total_brl"))
     _painel_aporte(df, alvos, alocacao.get("total_brl"))
+    # O chat fica por ultimo de proposito: `st.chat_input` toma o foco quando
+    # renderiza, e no meio da tela ele empurraria a rolagem para longe dos
+    # paineis (mesmo efeito ja anotado em views/fiis.py).
+    _painel_chat(df, alvos=alvos, total_brl=alocacao.get("total_brl"),
+                 ret=ret, cob=cob, pesos=pesos, papeis=papeis, acoes=acoes)
