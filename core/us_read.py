@@ -332,29 +332,43 @@ def _latest_shares(balance_rows) -> float | None:
     return None
 
 
-def _latest_market_cap(conn, symbol: str, balance_rows=None):
-    """Market cap: da market_cap_history se houver; senão preço×ações (derivado).
+def _latest_market_cap(conn, symbol: str, balance_rows=None, income_rows=None):
+    """Valor de mercado validado: publicado (market_cap_history) x derivado.
 
-    A ingestão atual não popula market_cap_history (EDGAR não dá cotação); então
-    derivamos do último preço (yfinance) × ações em circulação (balanço). Sem isso
-    valuation e Altman Z ficariam vazios.
+    A ingestao atual nao popula market_cap_history para todo mundo (EDGAR nao da
+    cotacao), entao na falta dele derivamos do ultimo preco (yfinance) x acoes em
+    circulacao (balanco). Sem isso valuation e Altman Z ficariam vazios.
+
+    O que faltava aqui era a checagem: saia o publicado cru, e `market_cap_history`
+    tem 54 simbolos (2,1%) com escala errada. Este e o valor que vai para o dossie
+    e para a **vitrine publicada** -- a PSKY chegava ao app com dividend yield de
+    13.508% ao ano. A cross-section (`load_scoring_frame`) ja confrontava as duas
+    fontes com `market_cap_confiavel` e saia com 0,52 de maximo; o dossie e a
+    vitrine, nao. Mesma pergunta, duas respostas, e a que o usuario le era a
+    errada. A guarda passa a morar no unico lugar que produz
+    `bundle["market_cap"]`, em vez de ser repetida em cada consumidor.
     """
+    from core.us_metrics import _latest, market_cap_confiavel
+
     try:
-        mc = conn.execute(text(
+        publicado = conn.execute(text(
             "SELECT market_cap FROM market_us.market_cap_history "
             "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).scalar()
-        if mc is not None:
-            return mc
     except Exception:  # noqa: BLE001
-        pass
+        publicado = None
     close = _latest_close(conn, symbol)
     shares = _latest_shares(balance_rows)
-    if close is not None and shares:
-        try:
-            return float(close) * shares
-        except (TypeError, ValueError):
-            return None
-    return None
+    try:
+        preco = float(close) if close is not None else None
+    except (TypeError, ValueError):
+        preco = None
+    derivado = preco * shares if preco and shares else None
+    try:
+        publicado = float(publicado) if publicado is not None else None
+    except (TypeError, ValueError):
+        publicado = None
+    return market_cap_confiavel(
+        publicado, derivado, preco, _latest(income_rows or [], "revenue"))
 
 
 def load_company_bundle(symbol: str) -> dict | None:
@@ -381,12 +395,13 @@ def load_company_bundle(symbol: str) -> dict | None:
                 return [dict(r._mapping) for r in conn.execute(text(q), {"c": cid})]
 
             balance = _series("balance_sheets", _BALANCE_COLS)
+            income = _series("income_statements", _INCOME_COLS)
             return {
                 "name": ident[1], "sector": ident[2], "industry": ident[3],
-                "income": _series("income_statements", _INCOME_COLS),
+                "income": income,
                 "balance": balance,
                 "cashflow": _series("cash_flow_statements", _CASHFLOW_COLS),
-                "market_cap": _latest_market_cap(conn, sym, balance),
+                "market_cap": _latest_market_cap(conn, sym, balance, income),
                 "price": None,
             }
     except Exception as exc:  # noqa: BLE001
