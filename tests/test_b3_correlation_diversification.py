@@ -4,6 +4,7 @@ import pytest
 
 from core.b3_correlation_diversification import (
     average_pairwise_correlation,
+    common_returns_for_comparison,
     correlation_coverage,
     correlation_matrix,
     diversification_index,
@@ -61,6 +62,24 @@ def test_correlation_matrix_exige_sobreposicao_minima():
     rets = pd.DataFrame({"A": [0.01, 0.02, None], "B": [0.01, None, 0.02]})
     corr = correlation_matrix(rets, min_obs=5)
     assert pd.isna(corr.loc["A", "B"])
+
+
+def test_janela_comum_nao_inventa_evidencia_quando_candidato_e_curto():
+    returns = pd.DataFrame({
+        "A": [0.01] * 18,
+        "B": [0.02] * 18,
+        "NOVO": [np.nan] * 17 + [0.03],
+    })
+    common = common_returns_for_comparison(returns, ["A", "B", "NOVO"], min_obs=18)
+    assert common.empty
+
+
+def test_janela_comum_rejeita_ticker_solicitado_sem_coluna():
+    returns = pd.DataFrame({"A": [0.01] * 18, "B": [0.02] * 18})
+
+    common = common_returns_for_comparison(returns, ["A", "B", "AUSENTE"], min_obs=18)
+
+    assert common.empty
 
 
 def test_average_pairwise_correlation_ignora_diagonal():

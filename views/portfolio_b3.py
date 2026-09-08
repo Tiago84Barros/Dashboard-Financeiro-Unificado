@@ -612,6 +612,7 @@ def _aplicar_diversificacao_correlacao(
     """
     from core.b3_correlation_diversification import (
         average_pairwise_correlation,
+        common_returns_for_comparison,
         correlation_matrix,
         high_correlation_pairs,
     )
@@ -626,14 +627,21 @@ def _aplicar_diversificacao_correlacao(
         # Ordem canônica das colunas: a matriz de correlação é simétrica, então
         # ordenar não muda valor nenhum — mas fixa a enumeração dos pares, que
         # de outro modo herda a ordem de montagem da carteira.
-        cols = sorted(it["tk"] for it in items if it["tk"] in returns.columns)
+        # A base é a carteira inteira, inclusive quando algum ticker não tem
+        # série. O helper é estrito e interrompe a decisão nesse caso; filtrar
+        # antes daqui permitiria trocar B por X sem evidência para B.
+        cols = sorted({str(it["tk"]) for it in items})
         if len(cols) < 2:
             break
-        corr = correlation_matrix(returns[cols])
+        # A matriz que elege o par também é complete-case: os pares da
+        # carteira são comparados na mesma janela, sem misturar históricos.
+        current_returns = common_returns_for_comparison(returns, cols)
+        if current_returns.empty:
+            break
+        corr = correlation_matrix(current_returns)
         pairs = high_correlation_pairs(corr, threshold)
         if not pairs:
             break
-        baseline_avg = average_pairwise_correlation(corr)
         existing = {it["tk"] for it in items}
 
         troca = None  # (idx_do_fraco, cand_tk, cand_score, rho, seg_label)
@@ -664,10 +672,24 @@ def _aplicar_diversificacao_correlacao(
                 if _entry_guard_exclui(entry_guard, cand_tk):
                     continue
                 trial_cols = [cand_tk if c == fraco["tk"] else c for c in cols]
-                trial_corr = correlation_matrix(returns[trial_cols])
+                # A-135: base e tentativa precisam usar a MESMA interseção.
+                # Sem o candidato no quadro comum, uma aparente melhora pode
+                # ser apenas o efeito de trocar 60 meses por 18 de histórico.
+                comparison_returns = common_returns_for_comparison(
+                    returns, cols + [cand_tk]
+                )
+                if comparison_returns.empty:
+                    continue
+                baseline_corr = correlation_matrix(comparison_returns[cols])
+                baseline_pairs = high_correlation_pairs(baseline_corr, threshold)
+                if not any({a, b} == {tk_a, tk_b} for a, b, _ in baseline_pairs):
+                    continue
+                baseline_avg = average_pairwise_correlation(baseline_corr)
+                trial_corr = correlation_matrix(comparison_returns[trial_cols])
                 trial_avg = average_pairwise_correlation(trial_corr)
                 if trial_avg < baseline_avg - 1e-6:
-                    troca = (fraco_idx, cand_tk, float(cand_score), rho,
+                    rho_comparavel = float(baseline_corr.loc[tk_a, tk_b])
+                    troca = (fraco_idx, cand_tk, float(cand_score), rho_comparavel,
                              f"{fraco['setor']} › {fraco['segmento']}")
                     break
             if troca:
@@ -3540,6 +3562,7 @@ def render(show_header: bool = True) -> None:
     from core.b3_correlation_diversification import (
         MIN_OBS_CORRELACAO,
         average_pairwise_correlation,
+        common_returns_for_comparison,
         correlation_coverage,
         correlation_matrix,
         diversification_index,
@@ -3554,83 +3577,95 @@ def render(show_header: bool = True) -> None:
             str(tk) for res in aprovados for tk in res["score_proximo"]
         ]
         _returns_universo = monthly_returns_for(df_precos_all, _universo_tickers)
-        _cols_antes = [it["tk"] for it in proximos_uniq if it["tk"] in _returns_universo.columns]
+        # O diagnóstico usa a mesma carteira integral da decisão. Um ticker
+        # sem série torna a evidência insuficiente, em vez de desaparecer da
+        # métrica de correlação exibida.
+        _cols_antes = [it["tk"] for it in proximos_uniq]
         if len(_cols_antes) < 2:
-            corr_diag["motivo_pulado"] = "menos de 2 ativos com série de preço disponível"
+            corr_diag["motivo_pulado"] = "menos de 2 ativos na carteira para comparar"
         else:
-            _ok_pares, _tot_pares = correlation_coverage(
-                _returns_universo[_cols_antes], MIN_OBS_CORRELACAO
+            _returns_antes = common_returns_for_comparison(
+                _returns_universo, _cols_antes, MIN_OBS_CORRELACAO
             )
-            if _tot_pares and (_ok_pares / _tot_pares) < _MIN_CORR_PAIR_COVERAGE:
+            if _returns_antes.empty:
                 corr_diag["motivo_pulado"] = (
-                    f"sobreposição de preço insuficiente entre os ativos "
-                    f"({_ok_pares}/{_tot_pares} pares com ≥{MIN_OBS_CORRELACAO} "
-                    "meses em comum)"
+                    "sem janela comum suficiente para comparar a carteira "
+                    f"(mínimo de {MIN_OBS_CORRELACAO} retornos mensais)"
                 )
             else:
-                _corr_antes = correlation_matrix(_returns_universo[_cols_antes])
-                avg_antes = average_pairwise_correlation(_corr_antes)
-                div_antes = diversification_index(
-                    {it["tk"]: float(it.get("peso") or 0.0) for it in proximos_uniq}
+                _ok_pares, _tot_pares = correlation_coverage(
+                    _returns_universo[_cols_antes], MIN_OBS_CORRELACAO
                 )
+                if _tot_pares and (_ok_pares / _tot_pares) < _MIN_CORR_PAIR_COVERAGE:
+                    corr_diag["motivo_pulado"] = (
+                        f"sobreposição de preço insuficiente entre os ativos "
+                        f"({_ok_pares}/{_tot_pares} pares com ≥{MIN_OBS_CORRELACAO} "
+                        "meses em comum)"
+                    )
+                else:
+                    _corr_antes = correlation_matrix(_returns_antes)
+                    avg_antes = average_pairwise_correlation(_corr_antes)
+                    div_antes = diversification_index(
+                        {it["tk"]: float(it.get("peso") or 0.0) for it in proximos_uniq}
+                    )
 
-                proximos_uniq, corr_log = _aplicar_diversificacao_correlacao(
-                    proximos_uniq, aprovados, _returns_universo, entry_guard,
-                    threshold=corr_threshold,
-                )
+                    proximos_uniq, corr_log = _aplicar_diversificacao_correlacao(
+                        proximos_uniq, aprovados, _returns_universo, entry_guard,
+                        threshold=corr_threshold,
+                    )
 
-                _cols_dep = [it["tk"] for it in proximos_uniq if it["tk"] in _returns_universo.columns]
-                _corr_depois = (
-                    correlation_matrix(_returns_universo[_cols_dep])
-                    if len(_cols_dep) >= 2 else pd.DataFrame()
-                )
-                avg_depois_subst = average_pairwise_correlation(_corr_depois)
+                    _cols_dep = [it["tk"] for it in proximos_uniq]
+                    _returns_depois = common_returns_for_comparison(
+                        _returns_universo, _cols_dep, MIN_OBS_CORRELACAO
+                    )
+                    _corr_depois = (
+                        correlation_matrix(_returns_depois)
+                        if len(_cols_dep) >= 2 and not _returns_depois.empty else pd.DataFrame()
+                    )
+                    avg_depois_subst = average_pairwise_correlation(_corr_depois)
 
-                _mk_res = None
-                _ret_final = (
-                    _returns_universo[_cols_dep].dropna(how="any")
-                    if len(_cols_dep) >= 2 else pd.DataFrame()
-                )
-                if len(_cols_dep) >= 2 and len(_ret_final) >= MIN_OBS_CORRELACAO:
-                    try:
-                        from core.markowitz import (
-                            min_variance_capped,
-                            pesos_hibridos_score_markowitz,
-                        )
-                        _mk_res = min_variance_capped(
-                            _cols_dep, _ret_final[_cols_dep].to_numpy(),
-                            cap=cap, shrinkage=True,
-                        )
-                        _score_weights = {
-                            it["tk"]: float(it.get("peso") or 0.0) for it in proximos_uniq
-                        }
-                        _blended = pesos_hibridos_score_markowitz(
-                            _score_weights, _mk_res, alpha=corr_alpha, cap=cap,
-                        )
-                        for item in proximos_uniq:
-                            if item["tk"] in _blended:
-                                item["peso"] = _blended[item["tk"]]
-                    except Exception as exc:
-                        corr_diag["reponderacao_pulada"] = (
-                            f"otimização min-variance falhou ({type(exc).__name__})"
-                        )
+                    _mk_res = None
+                    _ret_final = _returns_depois
+                    if len(_cols_dep) >= 2 and len(_ret_final) >= MIN_OBS_CORRELACAO:
+                        try:
+                            from core.markowitz import (
+                                min_variance_capped,
+                                pesos_hibridos_score_markowitz,
+                            )
+                            _mk_res = min_variance_capped(
+                                _cols_dep, _ret_final[_cols_dep].to_numpy(),
+                                cap=cap, shrinkage=True,
+                            )
+                            _score_weights = {
+                                it["tk"]: float(it.get("peso") or 0.0) for it in proximos_uniq
+                            }
+                            _blended = pesos_hibridos_score_markowitz(
+                                _score_weights, _mk_res, alpha=corr_alpha, cap=cap,
+                            )
+                            for item in proximos_uniq:
+                                if item["tk"] in _blended:
+                                    item["peso"] = _blended[item["tk"]]
+                        except Exception as exc:
+                            corr_diag["reponderacao_pulada"] = (
+                                f"otimização min-variance falhou ({type(exc).__name__})"
+                            )
 
-                div_depois = diversification_index(
-                    {it["tk"]: float(it.get("peso") or 0.0) for it in proximos_uniq}
-                )
-                corr_diag.update({
-                    "aplicado": True,
-                    "avg_corr_antes": avg_antes,
-                    "avg_corr_apos_substituicao": avg_depois_subst,
-                    "div_index_antes": div_antes,
-                    "div_index_depois": div_depois,
-                    "markowitz_method": _mk_res.method if _mk_res else None,
-                    "markowitz_convergiu": _mk_res.converged if _mk_res else None,
-                    "pares_alta_correlacao_restantes": (
-                        high_correlation_pairs(_corr_depois, corr_threshold)
-                        if len(_cols_dep) >= 2 else []
-                    ),
-                })
+                    div_depois = diversification_index(
+                        {it["tk"]: float(it.get("peso") or 0.0) for it in proximos_uniq}
+                    )
+                    corr_diag.update({
+                        "aplicado": True,
+                        "avg_corr_antes": avg_antes,
+                        "avg_corr_apos_substituicao": avg_depois_subst,
+                        "div_index_antes": div_antes,
+                        "div_index_depois": div_depois,
+                        "markowitz_method": _mk_res.method if _mk_res else None,
+                        "markowitz_convergiu": _mk_res.converged if _mk_res else None,
+                        "pares_alta_correlacao_restantes": (
+                            high_correlation_pairs(_corr_depois, corr_threshold)
+                            if len(_cols_dep) >= 2 else []
+                        ),
+                    })
 
     from core.portfolio_constraints import (
         minimum_assets_for_cap,
