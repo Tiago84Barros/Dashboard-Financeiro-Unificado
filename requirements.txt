@@ -1,35 +1,54 @@
 # Dashboard Financeiro Unificado — dependências
-# Versões fixadas em 2026-05-13 com base no ambiente de desenvolvimento.
-# Para atualizar: testar em ambiente limpo antes de ampliar os limites superiores.
+#
+# VERSÕES TRAVADAS EM ==. Não é preciosismo: a Streamlit Cloud reinstala tudo a
+# cada reboot, e com faixa aberta (`>=x,<major`) ela re-resolve as versões toda
+# vez. Um deploy que funcionava passa a falhar sem nenhum commit no repositório,
+# e a faixa também deixava a nuvem rodar um SDK diferente do que a suíte testa:
+# em 07/09/2026 o ambiente publicado tinha openai 1.109, pypdf 5.9 e pypdfium2
+# 4.30 enquanto o desenvolvimento (onde os testes passam) tinha 2.37, 6.12 e 5.8.
+#
+# Estas são as versões do ambiente em que a suíte passa. Para atualizar: subir
+# uma por vez, rodar a suíte e conferir que existe wheel para a versão de Python
+# da nuvem — sem wheel, o pip tenta compilar do código-fonte e o Streamlit
+# Community Cloud não tem cmake.
 
-streamlit>=1.39.0,<2.0.0
-pandas>=2.2.0,<3.0.0
-plotly>=5.24.0,<6.0.0
-sqlalchemy>=2.0.0,<3.0.0
-psycopg2-binary>=2.9.0,<3.0.0
+streamlit==1.57.0
+pandas==2.3.3
+# Importado diretamente por 43 módulos; estava implícito, vindo de carona no
+# pandas, e portanto flutuava sem ninguém decidir a versão.
+numpy==2.4.4
+plotly==5.24.1
+sqlalchemy==2.0.49
+psycopg2-binary==2.9.12
 # Corpus RAG (93.498 chunks) mora em Parquet, nao no Postgres: ocupava 162 MB
 # dos 500 MB do Supabase para servir consultas que sao filtro + ordenacao. Em
 # Parquet+zstd sao 25 MB, e o DuckDB roda o MESMO SQL por cima dos arquivos.
 # Ver core/rag_store.py. Sem duckdb o app cai na reserva em Postgres.
-duckdb>=1.1.0,<2.0.0
+duckdb==1.5.5
 # PyArrow 22+ fornece wheel para Python 3.14; versões anteriores tentam compilar
 # do código-fonte no Streamlit Community Cloud, que não inclui cmake.
-pyarrow>=22.0.0,<26.0.0
-python-dotenv>=1.0.0,<2.0.0
-openai>=1.63.0,<2.0.0
-yfinance>=0.2.50,<0.3.0
-requests>=2.32.0,<3.0.0
-beautifulsoup4>=4.12.0,<5.0.0
-matplotlib>=3.8.0,<4.0.0
-pdfplumber>=0.11.0,<1.0.0
-pypdf>=4.0.0,<6.0.0  # extrator primário (rápido) de texto CVM
-openpyxl>=3.1.0,<4.0.0
+pyarrow==24.0.0
+python-dotenv==1.2.2
+# O mesmo SDK atende OpenAI, OpenRouter e Gemini (endpoint compatível) —
+# ver core/llm_b3.py.
+openai==2.37.0
+yfinance==0.2.66
+requests==2.34.2
+beautifulsoup4==4.14.3
+pdfplumber==0.11.9
+pypdf==6.12.1  # extrator primário (rápido) de texto CVM
+openpyxl==3.1.5
 # Solver exato (SLSQP) do min-variance restrito em core/markowitz.py.
 # Sem scipy o módulo caía em heurística de projeção rotulada como ótima.
-scipy>=1.11.0,<2.0.0
+scipy==1.17.1
 
 # OCR de extratos C6 em PDF só-imagem (fallback quando não há texto pesquisável).
 # Tesseract via pytesseract — leve; o binário e o idioma vêm do packages.txt
 # (tesseract-ocr, tesseract-ocr-por). pypdfium2 renderiza as páginas.
-pypdfium2>=4.20.0,<5.0.0
-pytesseract>=0.3.10,<0.4.0
+pypdfium2==5.8.0
+pytesseract==0.3.13
+
+# matplotlib foi removido em 07/09/2026: nenhum módulo do app o importava (a
+# única ocorrência no repositório está em artifacts/.../.notebook_deps, código
+# de terceiros). Custava a compilação de contourpy, kiwisolver e fonttools em
+# toda instalação, sem nada consumi-lo.
