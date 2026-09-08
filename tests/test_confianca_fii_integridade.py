@@ -12,8 +12,15 @@ Defeito 2 — safra. O check comparava `amount` (evento de 2018) com `f.price`
 uma fracao do que valia; RBDS11 exibia rendimento de 2018 em 900% do preco de
 2026 sem nada de errado no dado. Preco precisa ser o da EPOCA do evento.
 
+Defeito 3 (A-134) — moeda. O preco da epoca vinha de
+``market.historical_prices``, que NAO e preco negociado: e preco retroajustado
+por split. `amount` e R$/cota bruto do dia do evento. Onde o fundo grupou, o
+denominador encolhe e o rendimento parece enorme; onde desdobrou, some. Medido
+no armazem local em 02/09/2026: 9 fundos acusados viram 6, e so DOIS coincidem
+— saem sete falsos positivos e entram quatro que o ajuste escondia.
+
 Medido no Supabase em 26/08/2026: o check antigo acusava 66 fundos; com as duas
-correcoes sobram 14, dos quais nenhum e amortizacao.
+primeiras correcoes sobram 14, dos quais nenhum e amortizacao.
 """
 from __future__ import annotations
 
@@ -44,11 +51,27 @@ def test_sql_nao_reescreve_a_lista_de_tipos_a_mao():
 
 
 def test_sql_compara_com_o_preco_da_epoca_do_evento():
-    """O defeito 2. Sem historical_prices na consulta, a comparacao e entre
-    safras diferentes e o resultado nao significa nada."""
+    """O defeito 2. Sem serie de preco datada, a comparacao e entre safras
+    diferentes e o resultado nao significa nada."""
     sql = cs.SQL_PROVENTO_IMPLAUSIVEL
-    assert "market.historical_prices" in sql
     assert re.search(r"ex_date\s*-\s*\d+", sql), "precisa de janela em torno do ex_date"
+    assert "f.price" not in sql.split("px_epoca")[0], (
+        "o preco de hoje nao pode ser o denominador do evento")
+
+
+def test_sql_usa_o_preco_negociado_e_nao_o_retroajustado():
+    """O defeito 3. `historical_prices.close` e retroajustado por split; usa-lo
+    como denominador de um `amount` bruto compara duas moedas.
+
+    A checagem e pelo nome da tabela de proposito: o valor certo e o errado sao
+    ambos numeros plausiveis, entao nao existe assercao de comportamento que
+    separe os dois sem replicar o banco inteiro. O que se pode fixar e de qual
+    serie o preco sai.
+    """
+    sql = cs.SQL_PROVENTO_IMPLAUSIVEL
+    assert "market.fii_b3_security_history" in sql, "preco tem que vir da fita da B3"
+    assert "market.historical_prices" not in sql, (
+        "serie retroajustada por split de volta ao denominador")
 
 
 @pytest.mark.parametrize("amount, px, esperado", [

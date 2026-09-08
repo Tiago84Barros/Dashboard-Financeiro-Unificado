@@ -33,6 +33,8 @@ from core.global_portfolio import (
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
 from core.global_portfolio.returns import Cobertura, retornos_mensais
 from core.global_portfolio.taxonomy import ROTULOS, nao_mapeados
+from core.llm_context_global import build_global_portfolio_context
+from core.llm_global import chat_com_portfolio_global
 from core.market_companies import us_logo_url
 from core.portfolio.registry import asset_classes, get_spec
 from core.portfolio.repository import (
@@ -43,6 +45,7 @@ from core.portfolio.repository import (
 from core.rebalancing import CalendarRebalance
 from design.componentes import card_metrica
 from design.market_companies import render_company_logo
+from design.portfolio_global_cards import card_papel_html, card_recomendacao_html
 
 logger = logging.getLogger(__name__)
 
@@ -449,27 +452,56 @@ def _cards_de_ativos(df: pd.DataFrame, *, n_colunas: int = 4) -> None:
                 _card_ativo(linha)
 
 
+def secoes_por_classe(df: pd.DataFrame) -> list[tuple[str, float, pd.DataFrame]]:
+    """Quebra o quadro de posições em seções `(classe, peso agregado, sub)`.
+
+    Classe é tipo e origem ao mesmo tempo no registry (ver
+    `core.portfolio.registry.SPECS`), então agrupar por ela responde as duas
+    perguntas de uma vez. Seções da maior participação para a menor, e DENTRO
+    de cada uma o peso do ativo, decrescente — ordem alfabética intercalava
+    ação brasileira, FII e empresa americana e dava o mesmo destaque a uma
+    posição de 0,4% e a uma de 12%.
+
+    O desempate é o `symbol`, não a ordem de chegada: dois ativos com o mesmo
+    peso arredondado trocariam de lugar entre renderizações, e este projeto já
+    perdeu tempo com ordenação parcial em carteira (ver a decisão de
+    determinismo da seleção B3).
+
+    Função pura, sem Streamlit: é ela que garante que a Composição e o Papel
+    estratégico mostrem a MESMA carteira na MESMA ordem. Duas ordens para o
+    mesmo patrimônio na mesma página é o que confunde de fato.
+    """
+    if df is None or df.empty:
+        return []
+    peso_por_classe = (
+        df.groupby("asset_class")["weight_global"].sum().sort_values(ascending=False)
+    )
+    secoes: list[tuple[str, float, pd.DataFrame]] = []
+    for classe in peso_por_classe.index:
+        sub = (
+            df[df["asset_class"] == classe]
+            .sort_values(["weight_global", "symbol"], ascending=[False, True])
+            .reset_index(drop=True)
+        )
+        secoes.append((classe, float(peso_por_classe[classe]), sub))
+    return secoes
+
+
+def _titulo_de_classe(classe: str, peso: float, n: int) -> str:
+    ativo_noun = "ativo" if n == 1 else "ativos"
+    label = rotulo_maior("asset_class", classe)
+    return f"##### {label} · {peso * 100:.1f}% do patrimônio · {n} {ativo_noun}"
+
+
 def _cards_de_ativos_por_classe(df: pd.DataFrame, *, n_colunas: int = 4) -> None:
     """Grade 'Por ativo' separada em seções por classe de origem (B3, FIIs,
-    Empresas Americanas) — cada classe já é tipo e origem ao mesmo tempo no
-    registry (ver `core.portfolio.registry.SPECS`). Seções na ordem do maior
-    peso agregado para o menor.
+    Empresas Americanas), na ordem de `secoes_por_classe`.
     """
     if df.empty:
         st.info("Nenhum ativo para exibir.")
         return
-    peso_por_classe = (
-        df.groupby("asset_class")["weight_global"].sum().sort_values(ascending=False)
-    )
-    for classe in peso_por_classe.index:
-        sub = df[df["asset_class"] == classe]
-        label = rotulo_maior("asset_class", classe)
-        pct = peso_por_classe[classe] * 100
-        n = len(sub)
-        ativo_noun = "ativo" if n == 1 else "ativos"
-        st.markdown(
-            f"##### {label} · {pct:.1f}% do patrimônio · {n} {ativo_noun}"
-        )
+    for classe, peso, sub in secoes_por_classe(df):
+        st.markdown(_titulo_de_classe(classe, peso, len(sub)))
         _cards_de_ativos(sub, n_colunas=n_colunas)
 
 
@@ -791,61 +823,29 @@ def _resumo_de_papeis(entradas: list[roles.PapelDoAtivo]) -> dict:
     return {"por_papel": contagem, "sem_papel": sem_papel}
 
 
-def _tabela_de_papeis_do_ativo(entrada: roles.PapelDoAtivo) -> pd.DataFrame:
-    """Uma linha por papel para um ativo: cumpre (com a evidência numérica),
-    indeterminado (sem dado suficiente) ou não cumpre (regra avaliada e
-    negada).
-
-    "Indeterminado" e "não cumpre" recebem rótulos de status diferentes de
-    propósito — são coisas diferentes ("não sabemos" vs. "sabemos e não
-    cumpre"), e uma tabela que os tratasse igual diria ao leitor algo que os
-    dados não sustentam.
-    """
-    evidencia_por_papel = {e.papel: e for e in entrada.evidencias}
-    linhas = []
-    for papel in roles.PAPEIS:
-        rotulo = roles.ROTULOS_PAPEL[papel]
-        if papel in entrada.papeis:
-            evidencia = evidencia_por_papel.get(papel)
-            linhas.append({
-                "Papel": rotulo,
-                "Status": "✅ Cumpre",
-                "Evidência": evidencia.texto if evidencia else "—",
-            })
-        elif papel in entrada.indeterminados:
-            linhas.append({
-                "Papel": rotulo,
-                "Status": "❔ Indeterminado",
-                "Evidência": "sem dado suficiente para avaliar",
-            })
-        else:
-            linhas.append({
-                "Papel": rotulo,
-                "Status": "— Não cumpre",
-                "Evidência": "—",
-            })
-    return pd.DataFrame(linhas)
-
-
-def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> None:
+def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> list[roles.PapelDoAtivo]:
     """Painel 'Papel estratégico': para que serve cada ativo do patrimônio.
 
     So formata o que `roles.classificar` ja decidiu — nenhum calculo entra
     aqui. `correlacao_media_por_ativo` reduz a matriz de correlacao ja
     calculada pelo painel de correlacao (Task 1 da Fase 3a); nao chama
     `retornos_mensais` de novo, reaproveita o `ret` que `render()` ja tem.
+
+    Devolve as entradas classificadas para o chat (`_painel_chat`) ler o
+    MESMO resultado que a tela mostrou, em vez de classificar de novo por
+    outro caminho e poder divergir em silencio.
     """
     st.markdown("#### Papel estratégico por ativo")
 
     if df.empty:
         st.info("Sem posições para classificar por papel estratégico.")
-        return
+        return []
 
     correlacoes = correlation.correlacao_media_por_ativo(ret)
     entradas = roles.classificar(df, retornos=ret, correlacoes=correlacoes)
     if not entradas:
         st.info("Sem posições para classificar por papel estratégico.")
-        return
+        return []
 
     st.caption(_texto_de_limiares())
 
@@ -876,20 +876,40 @@ def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> None:
             + ", ".join(sem_papel_symbols)
         )
 
+    # Cards abertos, duas colunas — não um expander por ativo. Com 13 posições
+    # o painel exigia 13 cliques para ser lido, e a informação que custa um
+    # clique cada não entra em decisão nenhuma.
+    #
+    # A ordem é a de `secoes_por_classe`, a MESMA da Composição: classe (que é
+    # tipo e origem) da maior participação para a menor, e o peso do ativo
+    # dentro dela. O critério anterior — sem-papel primeiro, depois alfabético —
+    # tinha uma razão boa (o sem-papel é o número acionável) e um efeito ruim:
+    # misturava as três classes e dava a mesma altura de tela a uma posição de
+    # 0,4% e a uma de 12%. O sem-papel não perdeu destaque: continua no
+    # `st.warning` acima, que o nomeia, e o card sai com borda vermelha e
+    # "Nenhum papel identificado". Ordenar por peso ainda o traz para cima
+    # quando ele de fato importa — um ativo irrelevante sem papel é menos
+    # urgente que um relevante sem papel, e a ordem antiga não distinguia.
     por_symbol = {e.symbol: e for e in entradas}
-    for _, linha in df.iterrows():
-        symbol = linha["symbol"]
-        entrada = por_symbol.get(symbol)
-        if entrada is None:
-            continue
-        titulo = (
-            f"🔴 {symbol} — nenhum papel identificado" if not entrada.papeis
-            else symbol
-        )
-        with st.expander(titulo):
-            st.dataframe(_tabela_de_papeis_do_ativo(entrada),
-                        width="stretch", hide_index=True)
-            st.caption(entrada.justificativa)
+    for classe, peso, sub in secoes_por_classe(df):
+        st.markdown(_titulo_de_classe(classe, peso, len(sub)))
+        linhas = [
+            linha for linha in sub.to_dict(orient="records")
+            if por_symbol.get(str(linha.get("symbol"))) is not None
+        ]
+        for inicio in range(0, len(linhas), 2):
+            for coluna, linha in zip(st.columns(2), linhas[inicio:inicio + 2]):
+                with coluna:
+                    st.markdown(
+                        card_papel_html(
+                            por_symbol[str(linha["symbol"])],
+                            classe_label=rotulo_maior("asset_class", classe),
+                            peso=linha.get("weight_global"),
+                        ),
+                        unsafe_allow_html=True,
+                    )
+
+    return entradas
 
 
 # ---------------------------------------------------------------------------
@@ -963,14 +983,6 @@ def _resumo_de_acoes(acoes: list[advisor.Acao]) -> dict[str, int]:
     return contagem
 
 
-def _linha_de_componentes(acao: advisor.Acao) -> pd.DataFrame:
-    """Tabela de decomposicao numerica do score: um sinal por linha, ordenada
-    por nome para exibicao deterministica."""
-    linhas = [{"Sinal": nome, "Valor": round(valor, 3)}
-              for nome, valor in sorted(acao.componentes.items())]
-    return pd.DataFrame(linhas, columns=["Sinal", "Valor"])
-
-
 def _texto_de_limiares_motor() -> str:
     """Ressalva do motor de movimentacao — mesmo tom e lugar de
     `_texto_de_limiares` (papel estrategico, Fase 3a): os limiares abaixo
@@ -1012,7 +1024,7 @@ def _custos_por_classe() -> dict[str, transaction_costs.CostConfig]:
 
 def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
                          alvos: dict, total_brl: float | None, *,
-                         loader=None) -> list[advisor.Acao]:
+                         loader=None, macro_impacts=None) -> list[advisor.Acao]:
     """Monta os sinais (Fase 3b Task 2) a partir dos analisadores de verdade
     e chama o motor (Task 4). Função pura, sem Streamlit — a fronteira de
     isolamento contra falha do motor fica em `_painel_recomendacoes`, que a
@@ -1061,11 +1073,12 @@ def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
         df, sinais, alvos=alvos, politica=CalendarRebalance(),
         custos=_custos_por_classe(), patrimonio_total=float(total_brl or 0.0),
         data_atual=date.today(),
+        macro_impacts=macro_impacts,
     )
 
 
 def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
-                          alvos: dict, total_brl: float | None) -> None:
+                          alvos: dict, total_brl: float | None) -> list[advisor.Acao]:
     """Painel 'Recomendações do motor de movimentação' (Fase 3b, Task 6).
 
     Cartões CSS (`card_metrica`), nunca informação solta — mesma regra do
@@ -1076,21 +1089,36 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
     """
     st.markdown("#### Recomendações do motor de movimentação")
 
+    macro_changes = {}
     try:
-        acoes = _gerar_recomendacoes(df, ret, pesos, alvos, total_brl)
+        from core.macro_data.database import get_local_macro_engine
+        from core.macro_data.global_context import load_global_macro_context
+        from core.macro_data.portfolio_context import format_portfolio_macro_context
+        snapshots, macro_changes, macro_limits = load_global_macro_context(get_local_macro_engine(), df)
+        with st.expander("Contexto macro das carteiras", expanded=False):
+            for snapshot in snapshots.values():
+                st.text(format_portfolio_macro_context(snapshot))
+            for limitation in macro_limits:
+                st.caption(limitation)
+            st.caption("O ajuste global considera a mudança desde a criação, com limites e custos; requer revisão humana.")
+    except Exception:
+        st.caption("Contexto macro local indisponível nesta consulta.")
+
+    try:
+        acoes = _gerar_recomendacoes(df, ret, pesos, alvos, total_brl, macro_impacts=macro_changes)
     except Exception:  # noqa: BLE001 - fronteira de isolamento do motor de recomendacao
         st.warning(
             "⚠️ Não foi possível gerar as recomendações do motor de movimentação. "
             "As demais seções do Portfólio Global continuam válidas."
         )
-        return
+        return []
 
     if not acoes:
         st.info(
             "Sem série mensal suficiente para o motor combinar sinais e "
             "recomendar movimentos."
         )
-        return
+        return []
 
     st.caption(_texto_de_limiares_motor())
 
@@ -1120,21 +1148,33 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
             + ", ".join(a.symbol for a in nao_calibrados)
         )
 
-    for acao in acoes:
-        titulo = f"{acao.symbol} — {_ROTULO_ACAO.get(acao.acao, acao.acao)}"
-        with st.expander(titulo):
-            card_metrica(
-                "Peso atual → sugerido",
-                f"{acao.peso_atual * 100:.2f}% → {acao.peso_sugerido * 100:.2f}%",
-                delta=texto_de_custo(acao),
-                accent=_ACCENT_ACAO.get(acao.acao, "#9CA3AF"),
-            )
-            if acao.analisadores:
-                st.caption("Analisadores que dispararam: " + ", ".join(sorted(acao.analisadores)))
-            else:
-                st.caption("Nenhum analisador produziu sinal para este ativo.")
-            if acao.componentes:
-                st.dataframe(_linha_de_componentes(acao), use_container_width=True, hide_index=True)
+    # Cards abertos, duas colunas — não um expander por recomendação. Na
+    # carteira real são 41 recomendações: lê-las custava 41 cliques, e o que
+    # não se lê não influencia decisão nenhuma. A ordem segue o fluxo de
+    # decisão (_ORDEM_RESUMO_ACOES), não o alfabeto: quem precisa de ação vem
+    # antes de quem não precisa, e "manter" ocupando o topo empurrava para
+    # baixo justamente o que exige leitura.
+    # Dentro de cada ação, o peso atual decrescente, não o alfabeto: reduzir
+    # uma posição de 12% e reduzir uma de 0,4% aparecem lado a lado, e o
+    # alfabeto decidia qual vinha primeiro. Desempate pelo symbol para a ordem
+    # não variar entre renderizações com pesos iguais.
+    ordem = {chave: i for i, chave in enumerate(_ORDEM_RESUMO_ACOES)}
+    ordenadas = sorted(
+        acoes, key=lambda a: (ordem.get(a.acao, 99), -(a.peso_atual or 0.0), a.symbol))
+    for inicio in range(0, len(ordenadas), 2):
+        for coluna, acao in zip(st.columns(2), ordenadas[inicio:inicio + 2]):
+            with coluna:
+                st.markdown(
+                    card_recomendacao_html(
+                        acao,
+                        _ROTULO_ACAO.get(acao.acao, acao.acao),
+                        _ACCENT_ACAO.get(acao.acao, "#9CA3AF"),
+                        texto_de_custo(acao),
+                    ),
+                    unsafe_allow_html=True,
+                )
+
+    return acoes
 
 
 _CHAVE_APORTE = "portfolio_global_aporte_mensal"
@@ -1271,6 +1311,75 @@ def _painel_aporte(df: pd.DataFrame, alvos: dict, total_brl: float | None) -> No
     )
 
 
+# ---------------------------------------------------------------------------
+# Chat com a LLM sobre o Portfolio Global
+# ---------------------------------------------------------------------------
+
+_CHAVE_CHAT = "portfolio_global_chat_historico"
+
+
+def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
+                 ret: pd.DataFrame, cob: Cobertura | None, pesos: dict,
+                 papeis: list, acoes: list) -> None:
+    """Caixa de texto para conversar com a LLM sobre o patrimonio consolidado.
+
+    O contexto e montado a partir do que ESTA TELA ja calculou — `df`, `ret`,
+    `cob`, `pesos`, os papeis de `_painel_papeis` e as recomendacoes de
+    `_painel_recomendacoes`. Nada e recalculado por outro caminho: se a tela
+    mostra um numero, o chat le o mesmo numero (`memoria:
+    medir-a-fonte-que-a-decisao-le`).
+
+    Falha do provedor de LLM nunca derruba o Portfolio Global: cai numa
+    mensagem dentro da propria conversa, mesma fronteira de isolamento de
+    `_painel_recomendacoes`.
+    """
+    st.markdown("#### 💬 Converse com a IA sobre este patrimônio")
+    st.caption(
+        "As perguntas são respondidas apenas com os dados desta tela — "
+        "composição, alvo x real, concentração, múltiplos, risco, correlação, "
+        "papel estratégico e as recomendações do motor. O modelo não busca "
+        "cotação nem notícia; onde o dado falta, ele deve dizer que falta."
+    )
+
+    _, coluna_limpar = st.columns([5, 1])
+    with coluna_limpar:
+        if st.button("🗑️ Limpar chat", key="pg_chat_clear", width="stretch"):
+            st.session_state.pop(_CHAVE_CHAT, None)
+            st.rerun()
+
+    historico: list[dict] = st.session_state.get(_CHAVE_CHAT, [])
+    for mensagem in historico:
+        with st.chat_message(mensagem["role"]):
+            st.markdown(mensagem["content"])
+
+    pergunta = st.chat_input(
+        "Pergunte sobre a alocação, o risco ou as recomendações…",
+        key="pg_chat_input",
+    )
+    if not pergunta:
+        return
+
+    historico.append({"role": "user", "content": pergunta})
+    with st.chat_message("user"):
+        st.markdown(pergunta)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Consultando os dados do patrimônio consolidado…"):
+            try:
+                contexto = build_global_portfolio_context(
+                    df, alvos=alvos, total_brl=total_brl, retornos=ret,
+                    cobertura=cob, pesos=pesos, papeis=papeis, acoes=acoes,
+                )
+                resposta = chat_com_portfolio_global(contexto, historico[:-1], pergunta)
+            except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
+                logger.exception("Falha no chat do portfolio global")
+                resposta = f"Erro ao consultar a LLM: {exc}"
+        st.markdown(resposta)
+
+    historico.append({"role": "assistant", "content": resposta})
+    st.session_state[_CHAVE_CHAT] = historico
+
+
 def render() -> None:
     st.markdown("## 🌐 Portfólio Global")
     st.caption("As três carteiras lidas como um único patrimônio.")
@@ -1336,6 +1445,11 @@ def render() -> None:
     _painel_correlacao(ret, pesos)
     _painel_fatores(ret, pesos)
     _painel_risco(ret, pesos)
-    _painel_papeis(df, ret)
-    _painel_recomendacoes(df, ret, pesos, alvos, alocacao.get("total_brl"))
+    papeis = _painel_papeis(df, ret)
+    acoes = _painel_recomendacoes(df, ret, pesos, alvos, alocacao.get("total_brl"))
     _painel_aporte(df, alvos, alocacao.get("total_brl"))
+    # O chat fica por ultimo de proposito: `st.chat_input` toma o foco quando
+    # renderiza, e no meio da tela ele empurraria a rolagem para longe dos
+    # paineis (mesmo efeito ja anotado em views/fiis.py).
+    _painel_chat(df, alvos=alvos, total_brl=alocacao.get("total_brl"),
+                 ret=ret, cob=cob, pesos=pesos, papeis=papeis, acoes=acoes)

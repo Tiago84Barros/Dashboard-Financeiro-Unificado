@@ -128,13 +128,16 @@ def test_sbc_negativo_no_cf_e_tratado_em_modulo():
 
 def test_diluicao_pela_contagem_de_acoes():
     inc, _bal, cf = _synthetic()
-    # emissão líquida: 100 -> 121 em 2 anos = +10% a.a.
-    bal = [{"fiscal_year": 2021, "shares_outstanding": 100},
-           {"fiscal_year": 2023, "shares_outstanding": 121, "total_equity": 1000}]
+    # emissão líquida: 100M -> 121M em 2 anos = +10% a.a. A escala é de milhões
+    # porque `crescimento_de_acoes` recusa contagem abaixo de 100 mil: 121 ações
+    # é uma unidade errada, não uma empresa pequena.
+    bal = [{"fiscal_year": 2021, "shares_outstanding": 100_000_000},
+           {"fiscal_year": 2023, "shares_outstanding": 121_000_000,
+            "total_equity": 1000}]
     m = um.compute_company_metrics(inc, bal, cf, market_cap=3000)
     assert m["share_count_cagr_3y"] == pytest.approx(0.10)
     # recompra efetiva devolve valor negativo (menor é melhor no ranking)
-    bal[1]["shares_outstanding"] = 81
+    bal[1]["shares_outstanding"] = 81_000_000
     m2 = um.compute_company_metrics(inc, bal, cf, market_cap=3000)
     assert m2["share_count_cagr_3y"] == pytest.approx(-0.10)
 

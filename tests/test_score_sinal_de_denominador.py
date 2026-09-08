@@ -78,12 +78,22 @@ _US_OPERACIONAL = {
     "gross_margin": .30, "operating_margin": .10, "net_margin": .06,
     "fcf_margin": .08, "cash_conversion": 1.0, "roe": .12, "roa": .06,
     "sbc_to_revenue": .02, "fcf_ex_sbc_margin": .06,
-    "revenue_cagr_3y": .05, "revenue_cagr_5y": .05, "op_income_growth_3y": .05,
-    "eps_growth_3y": .05, "fcf_growth_3y": .05,
     "net_debt_ebitda": 2.0, "interest_coverage": 6.0, "current_ratio": 1.5,
     "debt_to_equity": .8, "roic": .10,
     "shareholder_yield": .02, "share_count_cagr_3y": -.01,
 }
+
+# As métricas de crescimento entram derivadas de `sc.FACTOR_TRACKS`, não
+# escritas à mão. Elas trocaram de nome quando a trilha passou do CAGR de ponta
+# a ponta para a inclinação da regressão, e uma lista fixa aqui deixaria a
+# empresa do fixture sem nenhuma métrica de Crescimento — a trilha viraria "não
+# respondível" e o selo cairia para research_grade por defeito do teste, não do
+# motor. Só o crescimento é derivado: as demais trilhas têm valores escolhidos
+# para produzir a ordem que cada teste afirma.
+_US_OPERACIONAL.update(
+    {campo: .05 for campo in sc.FACTOR_TRACKS["growth"]
+     if campo not in _US_OPERACIONAL}
+)
 
 
 def _us_universo() -> pd.DataFrame:

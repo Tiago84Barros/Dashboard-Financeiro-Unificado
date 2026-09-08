@@ -218,7 +218,13 @@ def load_company_financials(symbol: str) -> pd.DataFrame:
         "THEN NULL ELSE COALESCE(cf.capex, 0) + COALESCE(cf.acquisitions, 0) + "
         "COALESCE(cf.investments, 0) END AS investing_cash_flow, "
         "cf.capex, cf.free_cash_flow, cf.dividends_paid, "
-        "CASE WHEN b.shares_outstanding IS NOT NULL AND b.shares_outstanding <> 0 "
+        # O piso repete `ACOES_IMPLICITAS_MINIMAS`: o exercício que publica 26,70
+        # ou 100 ações traz a contagem em milhões, ou não a traz. Dividir por ele
+        # dava 254 mil dólares de dividendo por ação — e este valor vai para o
+        # gráfico anual da tela, não só para o score. Fica de fora a troca de
+        # escala só no último exercício (FLS): essa precisa da série ao lado, que
+        # `acoes_em_circulacao` confronta no caminho das métricas.
+        "CASE WHEN b.shares_outstanding >= 100000 "
         "THEN ABS(cf.dividends_paid) / b.shares_outstanding END AS dividends_per_share "
         "FROM market_us.income_statements i "
         "LEFT JOIN market_us.balance_sheets b "
@@ -326,29 +332,43 @@ def _latest_shares(balance_rows) -> float | None:
     return None
 
 
-def _latest_market_cap(conn, symbol: str, balance_rows=None):
-    """Market cap: da market_cap_history se houver; senão preço×ações (derivado).
+def _latest_market_cap(conn, symbol: str, balance_rows=None, income_rows=None):
+    """Valor de mercado validado: publicado (market_cap_history) x derivado.
 
-    A ingestão atual não popula market_cap_history (EDGAR não dá cotação); então
-    derivamos do último preço (yfinance) × ações em circulação (balanço). Sem isso
-    valuation e Altman Z ficariam vazios.
+    A ingestao atual nao popula market_cap_history para todo mundo (EDGAR nao da
+    cotacao), entao na falta dele derivamos do ultimo preco (yfinance) x acoes em
+    circulacao (balanco). Sem isso valuation e Altman Z ficariam vazios.
+
+    O que faltava aqui era a checagem: saia o publicado cru, e `market_cap_history`
+    tem 54 simbolos (2,1%) com escala errada. Este e o valor que vai para o dossie
+    e para a **vitrine publicada** -- a PSKY chegava ao app com dividend yield de
+    13.508% ao ano. A cross-section (`load_scoring_frame`) ja confrontava as duas
+    fontes com `market_cap_confiavel` e saia com 0,52 de maximo; o dossie e a
+    vitrine, nao. Mesma pergunta, duas respostas, e a que o usuario le era a
+    errada. A guarda passa a morar no unico lugar que produz
+    `bundle["market_cap"]`, em vez de ser repetida em cada consumidor.
     """
+    from core.us_metrics import _latest, market_cap_confiavel
+
     try:
-        mc = conn.execute(text(
+        publicado = conn.execute(text(
             "SELECT market_cap FROM market_us.market_cap_history "
             "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).scalar()
-        if mc is not None:
-            return mc
     except Exception:  # noqa: BLE001
-        pass
+        publicado = None
     close = _latest_close(conn, symbol)
     shares = _latest_shares(balance_rows)
-    if close is not None and shares:
-        try:
-            return float(close) * shares
-        except (TypeError, ValueError):
-            return None
-    return None
+    try:
+        preco = float(close) if close is not None else None
+    except (TypeError, ValueError):
+        preco = None
+    derivado = preco * shares if preco and shares else None
+    try:
+        publicado = float(publicado) if publicado is not None else None
+    except (TypeError, ValueError):
+        publicado = None
+    return market_cap_confiavel(
+        publicado, derivado, preco, _latest(income_rows or [], "revenue"))
 
 
 def load_company_bundle(symbol: str) -> dict | None:
@@ -375,12 +395,13 @@ def load_company_bundle(symbol: str) -> dict | None:
                 return [dict(r._mapping) for r in conn.execute(text(q), {"c": cid})]
 
             balance = _series("balance_sheets", _BALANCE_COLS)
+            income = _series("income_statements", _INCOME_COLS)
             return {
                 "name": ident[1], "sector": ident[2], "industry": ident[3],
-                "income": _series("income_statements", _INCOME_COLS),
+                "income": income,
                 "balance": balance,
                 "cashflow": _series("cash_flow_statements", _CASHFLOW_COLS),
-                "market_cap": _latest_market_cap(conn, sym, balance),
+                "market_cap": _latest_market_cap(conn, sym, balance, income),
                 "price": None,
             }
     except Exception as exc:  # noqa: BLE001
@@ -394,7 +415,7 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
     Puxa as séries anuais em lote e calcula as métricas em Python (core.us_metrics).
     Retorna vazio se não houver dados — a UI trata offline.
     """
-    from core.us_metrics import compute_company_metrics
+    from core.us_metrics import _latest, compute_company_metrics, market_cap_confiavel
     cols = ["symbol", "name", "sector", "industry"]
     eng = _engine()
     if eng is None or not schema_ready():
@@ -451,12 +472,18 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
     for _, c in comp.iterrows():
         cid = int(c["id"])
         bal_rows = bal_g.get(cid, [])
-        mcap = mcap_by_symbol.get(c["symbol"])
-        if mcap is None:  # deriva: último preço × ações em circulação
-            shares = _latest_shares(bal_rows)
-            px = close_by_symbol.get(c["symbol"])
-            if px is not None and shares:
-                mcap = float(px) * shares
+        # Valor de mercado: as duas fontes se conferem uma à outra. Antes
+        # o derivado era só reserva para quando o histórico faltava, e um
+        # histórico presente porém absurdo passava direto — ver
+        # market_cap_confiavel.
+        shares = _latest_shares(bal_rows)
+        px = close_by_symbol.get(c["symbol"])
+        derivado = float(px) * shares if px is not None and shares else None
+        publicado = mcap_by_symbol.get(c["symbol"])
+        mcap = market_cap_confiavel(
+            float(publicado) if publicado is not None else None, derivado,
+            float(px) if px is not None else None,
+            _latest(inc_g.get(cid, []), "revenue"))
         m = compute_company_metrics(
             inc_g.get(cid, []), bal_rows, cfw_g.get(cid, []), market_cap=mcap)
         rows.append({"symbol": c["symbol"], "name": c["name"],

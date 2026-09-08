@@ -1765,15 +1765,21 @@ def _tab_comparacao_empresas(status: dict) -> None:
         st.info("Selecione ao menos duas empresas.")
         return
     peers = localize_us_company_frame(scored[scored["symbol"].isin(selected)])
+    # "Cresc. receita" é a INCLINAÇÃO da regressão log-linear de 5 anos, não o
+    # CAGR de ponta a ponta: duas receitas com a mesma ponta e meios opostos
+    # recebiam a mesma taxa, e a tabela de pares existe justamente para separá-las.
     table_cols = [c for c in ("symbol", "name", "sector", "industry", "score",
-        "gross_margin", "operating_margin", "roic", "revenue_cagr_3y",
-        "net_debt_ebitda", "pe", "ev_ebitda", "fcf_yield", "shareholder_yield") if c in peers]
+        "gross_margin", "operating_margin", "roic", "revenue_trend_5y",
+        "net_debt_ebitda", "pe", "ev_ebitda", "fcf_yield", "shareholder_yield",
+        "dividend_yield") if c in peers]
     st.dataframe(peers[table_cols].rename(columns={
         "symbol": "Ticker", "name": "Nome", "sector": "Setor", "industry": "Indústria",
         "score": "Pontuação", "gross_margin": "Margem bruta", "operating_margin": "Margem op.",
-        "roic": "ROIC", "revenue_cagr_3y": "Cresc. receita 3a", "net_debt_ebitda": "DL/EBITDA",
+        "roic": "ROIC", "revenue_trend_5y": "Cresc. receita 5a (regressão)",
+        "net_debt_ebitda": "DL/EBITDA",
         "pe": "P/L", "ev_ebitda": "EV/EBITDA", "fcf_yield": "Retorno do FCL",
-        "shareholder_yield": "Retorno ao acionista"}), hide_index=True, width="stretch")
+        "shareholder_yield": "Retorno ao acionista",
+        "dividend_yield": "DY (últ. exercício)"}), hide_index=True, width="stretch")
     tracks = peers[["symbol", *_TRACK_LABELS]].melt(
         "symbol", var_name="Trilha", value_name="Pontuação")
     tracks["Trilha"] = tracks["Trilha"].map(_TRACK_LABELS)
@@ -1918,14 +1924,15 @@ def _tab_comparacao_industria(status: dict) -> None:
     secao_titulo(f"{translate_us_industry(ind)} — {len(peers)} empresa(s)", "🏭")
     show_cols = ["symbol", "name", "score", "score_quality", "score_growth",
                  "score_valuation", "gross_margin", "roic", "net_debt_ebitda",
-                 "revenue_cagr_3y"]
+                 "revenue_trend_5y", "dividend_yield"]
     show_cols = [c for c in show_cols if c in peers.columns]
     st.dataframe(peers[show_cols].rename(columns={
         "symbol": "Ticker", "name": "Nome", "score": "Pontuação",
         "score_quality": "Qualidade", "score_growth": "Crescimento",
         "score_valuation": "Avaliação", "gross_margin": "Margem bruta",
         "roic": "ROIC", "net_debt_ebitda": "DL/EBITDA",
-        "revenue_cagr_3y": "Cresc.Rec 3a"}),
+        "revenue_trend_5y": "Cresc.Rec 5a (reg.)",
+        "dividend_yield": "DY (últ. exerc.)"}),
         hide_index=True, width="stretch")
 
 
@@ -1978,7 +1985,12 @@ def _tab_dossie(status: dict) -> None:
         v = m.get("net_debt_ebitda")
         card_metrica("Dív.líq/EBITDA", "—" if v is None else f"{v:.1f}×")
     with c4:
-        card_metrica("Cresc. receita 3a", _p(m.get("revenue_cagr_3y")))
+        # O R² acompanha a taxa: inclinação sem aderência é reta ajustada a
+        # ruído, e o cartão sem ele apresentaria as duas como a mesma coisa.
+        _r2 = m.get("revenue_trend_r2_5y")
+        card_metrica(
+            "Cresc. receita 5a (regressão)", _p(m.get("revenue_trend_5y")),
+            None if _r2 is None else f"R² {_r2:.2f}")
 
     if d.get("red_flags"):
         secao_titulo("Sinais de alerta", "🚩")

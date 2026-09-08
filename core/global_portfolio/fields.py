@@ -11,7 +11,10 @@ Coberto por tests/test_global_fields.py.
 """
 from __future__ import annotations
 
-CAMPOS: tuple[str, ...] = ("dy", "market_cap", "pe", "pvp", "roe")
+CAMPOS: tuple[str, ...] = (
+    "crescimento_r2", "crescimento_receita", "dy", "market_cap", "payout",
+    "pe", "pvp", "roe",
+)
 
 # campo canonico -> {classe: chave dentro de payload["fundamentals"]}
 # Ausencia da classe no dicionario interno significa "nao aplicavel".
@@ -20,9 +23,27 @@ _ORIGEM: dict[str, dict[str, str]] = {
     "pe": {"b3": "P/L", "us": "pe"},
     # us ausente: us_metrics nao calcula P/B.
     "pvp": {"b3": "P/VP", "fii": "pvp"},
-    # us ausente: us_metrics nao calcula dividend yield. payout_ratio e
-    # shareholder_yield existem, mas sao outra coisa — nao servem de proxy.
-    "dy": {"b3": "DY", "fii": "dy_12m"},
+    # us: dividendo DESEMBOLSADO no ultimo exercicio (EDGAR) sobre o valor
+    # de mercado — defasa ate um ano e nao capta mudanca recente de politica.
+    # A ausencia da linha no EDGAR vira None, nunca 0: medido em 08/09/2026,
+    # 42% dos que nao tinham a linha pagavam dividendo. Ver us_metrics.
+    "dy": {"b3": "DY", "fii": "dy_12m", "us": "dividend_yield"},
+    # Crescimento medido sobre RECEITA, nao lucro. So a classe us: b3 e fii
+    # tem serie historica no payload e calculam a taxa na propria regra
+    # (LPA anual e VPA mensal).
+    #
+    # A chave e `revenue_trend_5y` — a INCLINACAO da regressao de ln(receita)
+    # no ano, nao o CAGR de ponta a ponta que estava aqui antes. CAGR le dois
+    # pontos e ignora o caminho entre eles; a regressao usa a janela inteira.
+    # O R2 que a acompanha (`revenue_trend_r2_5y`) diz se a reta descreve a
+    # serie, e entra no texto da evidencia — sem ele, uma taxa de 12% com R2
+    # de 0,05 seria lida como tendencia quando e ruido.
+    "crescimento_receita": {"us": "revenue_trend_5y"},
+    "crescimento_r2": {"us": "revenue_trend_r2_5y"},
+    # us: fracao do lucro distribuida no ultimo exercicio. b3 ausente de
+    # proposito — la o payout vem como SERIE (multiplos_anuais), e a regra de
+    # renda mede o desvio dela, nao o nivel de um ano.
+    "payout": {"us": "payout_ratio"},
     "roe": {"b3": "ROE", "us": "roe"},
     # b3 ausente: "Valor de mercado" nao esta em _MULT_COLS.
     # us: a chave real leva underscore (campo de contexto em us_metrics).
@@ -46,6 +67,31 @@ def valor(payload: dict, asset_class: str, campo: str) -> float | None:
         return float(bruto)
     except (TypeError, ValueError):
         return None
+
+
+def ausente_do_snapshot(payload: dict, asset_class: str, campo: str) -> bool:
+    """True quando a classe TEM endereco para o campo e o snapshot nao o traz.
+
+    Sao duas ausencias que a tela mostrava igual e que se resolvem de formas
+    opostas: a chave gravada com valor nulo -- a EMPRESA nao respondeu, e
+    esperar nao adianta -- e a chave que nunca foi gravada, porque o snapshot
+    e de uma geracao anterior ao campo existir na vitrine. A segunda nao e
+    falta de dado: o dado esta publicado, o snapshot e que envelheceu, e
+    regravar o modelo a fecha.
+
+    Aconteceu em 08/09/2026: o crescimento americano passou de `revenue_cagr_5y`
+    para `revenue_trend_5y` (inclinacao da regressao) e o dividend yield passou
+    a existir na vitrine. Os 30 ativos da carteira ativa tinham snapshot de
+    07/09 e voltaram todos a "indeterminado: sem dado suficiente para avaliar" —
+    uma frase falsa, porque o dado estava la.
+    """
+    if campo not in _ORIGEM:
+        raise KeyError(f"campo canonico desconhecido: {campo!r}")
+
+    chave = _ORIGEM[campo].get(str(asset_class or "").strip().lower())
+    if not chave:
+        return False
+    return chave not in ((payload or {}).get("fundamentals") or {})
 
 
 def disponivel(payload: dict, asset_class: str, campo: str) -> bool:

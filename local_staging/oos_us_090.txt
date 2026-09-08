@@ -1,0 +1,42 @@
+2026-09-08 13:33:05.436 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.437 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.438 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.438 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.439 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.440 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.440 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.441 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.441 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.442 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.442 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.443 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.447 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:33:05.659 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+armazem local: localhost:5433/postgres
+
+== medindo us ==
+{
+  "motor": "us",
+  "medido_em": "2026-09-08",
+  "versao_metodologia": "0.9.0",
+  "metrica": "excesso por periodo sobre o equal-weight do universo",
+  "media": -0.04045620597460763,
+  "ic_low": -0.13836758560136103,
+  "ic_high": 0.05101277108719286,
+  "ic_confianca": 0.95,
+  "formato": "percentual",
+  "n_periodos": 16,
+  "configuracao": "walk-forward anual, top_n=20, pesos=score",
+  "fonte": "armazem local, market_us.score_vintages + prices_monthly",
+  "janela": {
+    "inicio": "2010-06-30",
+    "fim": "2025-06-30"
+  },
+  "extras": {
+    "rank_ic_medio": 0.10687500235233253,
+    "rank_ic_t": 3.961154049955521,
+    "rank_ic_n": 16,
+    "bootstrap_amostras": 2000
+  }
+}
+gravado em C:\Users\Tiago Barros\AppData\Local\Temp\claude\us-dy\data\vantagem_oos.json

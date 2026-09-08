@@ -1,5 +1,6 @@
 """Secao Portfolio Global: roteamento, estado vazio e montagem."""
 import pandas as pd
+import pytest
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from core.global_portfolio.aggregate import montar_posicoes
@@ -586,12 +587,15 @@ def test_resumo_de_papeis_inclui_papel_com_zero_ativos():
     assert resumo["por_papel"]["crescimento"] == 1
 
 
-def test_tabela_de_papeis_do_ativo_distingue_indeterminado_de_nao_cumpre():
+def test_card_de_papel_distingue_indeterminado_de_nao_cumpre():
     """Regra de honestidade do painel: 'indeterminado' (sem dado) e 'nao
-    cumpre' (regra avaliada e negada) precisam ter status visivelmente
-    diferentes — nunca o mesmo rotulo, senao o painel diria 'nao cumpre'
-    quando na verdade e so 'nao sabemos'."""
+    cumpre' (regra avaliada e negada) precisam continuar visivelmente
+    diferentes — dizer 'nao cumpre' onde o certo e 'nao sabemos' afirmaria algo
+    que o dado nao sustenta. A tabela virou card (o expander por ativo custava
+    um clique cada), e a distincao tinha que atravessar a mudanca de formato.
+    """
     from core.global_portfolio.roles import ROTULOS_PAPEL, Evidencia, PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
 
     ev = Evidencia("hedge_cambial", 1.0, 0.0, "Moeda de referencia USD, fora do BRL")
     entrada = PapelDoAtivo(
@@ -601,23 +605,32 @@ def test_tabela_de_papeis_do_ativo_distingue_indeterminado_de_nao_cumpre():
         indeterminados=("baixa_volatilidade", "diversificacao"),
         justificativa="Hedge cambial — Moeda de referencia USD, fora do BRL",
     )
-    tabela = portfolio_global._tabela_de_papeis_do_ativo(entrada)
-    status_por_papel = dict(zip(tabela["Papel"], tabela["Status"]))
+    html = card_papel_html(entrada)
 
-    status_cumpre = status_por_papel[ROTULOS_PAPEL["hedge_cambial"]]
-    status_indeterminado = status_por_papel[ROTULOS_PAPEL["baixa_volatilidade"]]
-    status_nao_cumpre = status_por_papel[ROTULOS_PAPEL["renda"]]
+    assert "AAPL" in html
+    # A evidencia numerica acompanha o papel cumprido, nao some no resumo.
+    assert "USD" in html
+    # Os tres estados aparecem, cada um com seu proprio rotulo.
+    assert "Indeterminado:" in html
+    assert "Não cumpre:" in html
+    assert ROTULOS_PAPEL["baixa_volatilidade"] in html   # indeterminado
+    assert ROTULOS_PAPEL["renda"] in html                # nao cumpre
+    assert "sem dado suficiente" in html
+    # Card CSS sai num bloco so: div aberta num st.markdown e fechada em outro
+    # ja produziu moldura vazia neste projeto.
+    assert html.count("<div") == html.count("</div>")
 
-    assert status_cumpre != status_indeterminado
-    assert status_indeterminado != status_nao_cumpre
-    assert status_cumpre != status_nao_cumpre
-    # A evidencia so acompanha o papel que de fato foi cumprido.
-    assert "USD" in dict(zip(tabela["Papel"], tabela["Evidência"]))[ROTULOS_PAPEL["hedge_cambial"]]
 
+def test_card_de_papel_marca_o_ativo_sem_papel_algum():
+    """Sem papel identificado e o numero acionavel do painel: o card precisa
+    dize-lo, nao apenas deixar de listar papeis."""
+    from core.global_portfolio.roles import PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
 
-# ---------------------------------------------------------------------------
-# Fase 3b, Task 6: painel "Recomendações do motor de movimentação"
-# ---------------------------------------------------------------------------
+    html = card_papel_html(PapelDoAtivo("XPTO3", (), (), (), ""))
+    assert "Nenhum papel identificado" in html
+    assert html.count("<div") == html.count("</div>")
+
 
 def _acao(symbol="ADBE", acao="manter", peso_atual=0.05, peso_sugerido=0.03,
          score=-0.4, componentes=None, analisadores=frozenset(),
@@ -817,3 +830,273 @@ def test_painel_de_recomendacoes_conta_e_nomeia_as_nao_calibradas():
     fonte = inspect.getsource(portfolio_global._painel_recomendacoes)
     assert "custo_calibrado" in fonte
     assert "st.warning" in fonte
+
+
+def _acao_de_teste(**kwargs):
+    from core.global_portfolio.advisor import Acao
+
+    base = dict(
+        symbol="PETR4", acao="reduzir", peso_atual=0.12, peso_sugerido=0.08,
+        score=-0.412, componentes={"concentracao": -0.8, "risco": -0.02},
+        analisadores=frozenset({"concentration", "risk"}),
+        custo_estimado=31.4, custo_calibrado=True, macro_delta=-2.5,
+    )
+    base.update(kwargs)
+    return Acao(**base)
+
+
+def test_card_de_recomendacao_abre_o_conteudo_que_estava_atras_do_clique():
+    """O expander escondia peso, custo, sinais e analisadores atras de um
+    clique por ativo — 41 cliques na carteira real. Tudo isso precisa estar
+    no card, aberto."""
+    from design.portfolio_global_cards import card_recomendacao_html
+
+    acao = _acao_de_teste()
+    html = card_recomendacao_html(acao, "Reduzir", "#F97316", "custo: R$ 31,40")
+
+    assert "PETR4" in html and "Reduzir" in html
+    assert "12.00%" in html and "8.00%" in html      # peso atual -> sugerido
+    assert "R$ 31,40" in html
+    assert "concentracao" in html and "-0.800" in html   # decomposicao do score
+    assert "concentration, risk" in html                 # analisadores
+    assert "-2.50/100" in html                           # macro delta
+    assert html.count("<div") == html.count("</div>")
+
+
+def test_card_de_recomendacao_nunca_imprime_o_nan_da_classe_sem_calibracao():
+    """`custo_estimado` e math.nan exatamente quando a classe nao tem custo
+    calibrado, e `texto_de_custo` existe para interceptar isso ANTES de
+    qualquer formatacao. O card recebe o texto pronto justamente para nao
+    reabrir esse buraco: formatar o numero aqui imprimiria 'nan' onde a regra
+    manda dizer 'nao calibrado'."""
+    import math
+
+    from design.portfolio_global_cards import card_recomendacao_html
+
+    acao = _acao_de_teste(custo_estimado=math.nan, custo_calibrado=False)
+    texto = portfolio_global.texto_de_custo(acao)
+    html = card_recomendacao_html(acao, "Manter", "#9CA3AF", texto)
+
+    assert "nan" not in html.lower()
+    assert "não calibrado" in html
+    assert "mantida em vez de executada" in html
+
+
+def test_paineis_por_ativo_nao_escondem_o_conteudo_atras_de_expander():
+    """Regressao do pedido de 07/09/2026: um expander por ativo obrigava a
+    clicar um por um para ler o painel. Informacao que custa um clique cada
+    nao entra em decisao nenhuma — os dois paineis por ativo saem em cards
+    abertos."""
+    import ast
+    import inspect
+    import textwrap
+
+    for painel in (portfolio_global._painel_papeis,
+                   portfolio_global._painel_recomendacoes):
+        arvore = ast.parse(textwrap.dedent(inspect.getsource(painel)))
+        # Expander DENTRO de um laco e o padrao que obrigava a clicar um por
+        # um. Fora dele ainda e legitimo (o "Contexto macro das carteiras" e
+        # um bloco unico, opcional, nao um item por ativo).
+        for laco in [n for n in ast.walk(arvore) if isinstance(n, ast.For)]:
+            chamadas = {
+                getattr(c.func, "attr", None)
+                for c in ast.walk(laco) if isinstance(c, ast.Call)
+            }
+            assert "expander" not in chamadas, (
+                f"{painel.__name__} voltou a esconder ativo atras de expander"
+            )
+    assert "card_papel_html(" in inspect.getsource(portfolio_global._painel_papeis)
+    assert "card_recomendacao_html(" in inspect.getsource(
+        portfolio_global._painel_recomendacoes)
+
+
+# ---------------------------------------------------------------------------
+# Chat com a LLM sobre o Portfolio Global
+# ---------------------------------------------------------------------------
+
+
+def test_o_chat_e_chamado_no_render_e_e_o_ultimo_painel():
+    """Duas regressoes num teste. (1) Motor que ninguem consulta e decoracao
+    -- mesmo risco de 'Diagnostico precisa de porta de entrada'. (2) st.chat_input
+    toma o foco quando renderiza; no meio da tela ele empurraria a rolagem
+    para longe dos paineis (efeito ja anotado em views/fiis.py)."""
+    import ast
+    import inspect
+    import textwrap
+
+    fonte = textwrap.dedent(inspect.getsource(portfolio_global.render))
+    arvore = ast.parse(fonte)
+    chamadas = [
+        n.func.id for n in ast.walk(arvore)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        and n.func.id.startswith("_painel_")
+    ]
+    assert "_painel_chat" in chamadas
+    assert chamadas[-1] == "_painel_chat"
+
+
+def test_o_chat_le_o_resultado_dos_paineis_em_vez_de_recalcular():
+    """O chat precisa ler os MESMOS papeis e recomendacoes que a tela mostrou.
+    Recalcular por outro caminho e como o gate que lia o cadastro cru enquanto
+    a tela lia a vitrine: diverge em silencio, sem erro em lugar nenhum."""
+    import inspect
+
+    fonte = inspect.getsource(portfolio_global.render)
+    assert "papeis = _painel_papeis(" in fonte
+    assert "acoes = _painel_recomendacoes(" in fonte
+    assert "papeis=papeis" in fonte and "acoes=acoes" in fonte
+
+    chat = inspect.getsource(portfolio_global._painel_chat)
+    assert "roles.classificar" not in chat
+    assert "_gerar_recomendacoes" not in chat
+
+
+def test_paineis_devolvem_lista_vazia_quando_nao_ha_o_que_mostrar():
+    """A assinatura passou a devolver valor; os caminhos de saida antecipada
+    precisam devolver lista, nunca None -- `list(None)` explodiria no chat."""
+    import ast
+    import inspect
+    import textwrap
+
+    for funcao in (portfolio_global._painel_papeis, portfolio_global._painel_recomendacoes):
+        arvore = ast.parse(textwrap.dedent(inspect.getsource(funcao)))
+        retornos = [n for n in ast.walk(arvore) if isinstance(n, ast.Return)]
+        assert retornos, f"{funcao.__name__} nao devolve nada"
+        assert all(n.value is not None for n in retornos), (
+            f"{funcao.__name__} tem um 'return' nu que viraria None no chat"
+        )
+
+
+def test_falha_do_provedor_de_llm_nao_derruba_o_portfolio_global():
+    """Fronteira de isolamento, mesmo padrao de _painel_recomendacoes."""
+    import inspect
+    fonte = inspect.getsource(portfolio_global._painel_chat)
+    assert "except Exception" in fonte
+    assert "Erro ao consultar a LLM" in fonte
+
+
+def test_card_mostra_a_causa_do_indeterminado_quando_ela_e_conhecida():
+    from core.global_portfolio.roles import PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
+
+    entrada = PapelDoAtivo(
+        "EW", (), (), ("renda",), "",
+        motivos_indeterminado=(("renda", "a vitrine EUA nao publica dividend yield"),),
+    )
+
+    html = card_papel_html(entrada)
+
+    assert "dividend yield" in html
+    assert "sem dado suficiente" not in html, \
+        "com causa conhecida, a frase generica so dilui"
+
+
+def test_card_mantem_a_frase_generica_para_indeterminado_sem_causa():
+    from core.global_portfolio.roles import PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
+
+    html = card_papel_html(PapelDoAtivo("XPTO3", (), (), ("crescimento",), ""))
+
+    assert "sem dado suficiente" in html
+
+
+# ---------------------------------------------------------------------------
+# Ordem dos paineis por ativo: classe (tipo/origem) e peso, nao alfabeto
+# ---------------------------------------------------------------------------
+
+def _quadro_de_posicoes() -> pd.DataFrame:
+    """Carteira minima com as tres classes e pesos deliberadamente fora da
+    ordem alfabetica — se a ordenacao regredir para o alfabeto, o teste ve."""
+    return pd.DataFrame([
+        {"symbol": "AAPL", "asset_class": "us", "weight_global": 0.02},
+        {"symbol": "ZZZZ3", "asset_class": "b3", "weight_global": 0.30},
+        {"symbol": "MXRF11", "asset_class": "fii", "weight_global": 0.10},
+        {"symbol": "PETR4", "asset_class": "b3", "weight_global": 0.12},
+        {"symbol": "ABEV3", "asset_class": "b3", "weight_global": 0.12},
+        {"symbol": "NVDA", "asset_class": "us", "weight_global": 0.34},
+    ])
+
+
+def test_secoes_saem_da_classe_mais_pesada_para_a_mais_leve():
+    """Classe e tipo e origem ao mesmo tempo no registry: agrupar por ela e o
+    que impede o painel de intercalar acao brasileira, FII e empresa
+    americana. A ordem das SECOES e a participacao agregada, nao o alfabeto —
+    'b3' viria antes de 'us' por acaso, e 'fii' antes de 'us' tambem."""
+    secoes = portfolio_global.secoes_por_classe(_quadro_de_posicoes())
+    assert [c for c, _, _ in secoes] == ["b3", "us", "fii"]
+    pesos = {c: p for c, p, _ in secoes}
+    assert pesos["b3"] == pytest.approx(0.54)
+    assert pesos["us"] == pytest.approx(0.36)
+    assert pesos["fii"] == pytest.approx(0.10)
+
+
+def test_dentro_da_classe_a_ordem_e_o_peso_e_o_desempate_e_o_ticker():
+    """Peso decrescente responde 'o que importa mais nesta carteira'. Com peso
+    igual o desempate e o ticker: ordenacao parcial ja produziu resultado
+    diferente para a mesma carteira neste projeto, e um painel que troca de
+    ordem entre renderizacoes nao e legivel."""
+    secoes = dict((c, sub) for c, _, sub in
+                  portfolio_global.secoes_por_classe(_quadro_de_posicoes()))
+    assert list(secoes["b3"]["symbol"]) == ["ZZZZ3", "ABEV3", "PETR4"]
+    assert list(secoes["us"]["symbol"]) == ["NVDA", "AAPL"]
+
+
+def test_secoes_por_classe_com_quadro_vazio_devolve_lista_vazia():
+    assert portfolio_global.secoes_por_classe(pd.DataFrame()) == []
+    assert portfolio_global.secoes_por_classe(None) == []
+
+
+def test_composicao_e_papel_estrategico_usam_a_mesma_ordenacao():
+    """Duas ordens para o mesmo patrimonio na mesma pagina e o que confunde de
+    fato: o ativo que aparece em terceiro na Composicao tem que ser o terceiro
+    no Papel estrategico. A garantia e as duas chamarem a MESMA funcao."""
+    import inspect
+    for painel in (portfolio_global._cards_de_ativos_por_classe,
+                   portfolio_global._painel_papeis):
+        assert "secoes_por_classe(" in inspect.getsource(painel), (
+            f"{painel.__name__} voltou a ordenar por conta propria"
+        )
+    # E o criterio antigo — sem-papel primeiro, depois alfabetico — saiu.
+    # (`e.symbol` sozinho nao serve de sonda: ele segue no `sem_papel_symbols`,
+    # que nomeia os ativos no aviso e nao tem nada a ver com ordenacao.)
+    assert "(bool(e.papeis), e.symbol)" not in inspect.getsource(
+        portfolio_global._painel_papeis)
+
+
+def test_recomendacoes_desempatam_por_peso_dentro_da_mesma_acao():
+    """A ordem das acoes segue o fluxo de decisao; o que muda e o desempate.
+    Reduzir 12% do patrimonio e reduzir 0,4% apareciam lado a lado com o
+    alfabeto decidindo qual vinha primeiro."""
+    import inspect
+    fonte = inspect.getsource(portfolio_global._painel_recomendacoes)
+    assert "-(a.peso_atual or 0.0)" in fonte
+    assert "a.symbol" in fonte      # desempate deterministico continua
+
+
+def test_card_de_papel_diz_a_origem_e_quanto_pesa():
+    """Fora da secao da classe, PETR4, MXRF11 e AAPL sao indistinguiveis quanto
+    a origem, e nada dizia se o papel vale para 0,4% ou para 12% do
+    patrimonio."""
+    from core.global_portfolio.roles import PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
+
+    html = card_papel_html(
+        PapelDoAtivo("AAPL", (), (), (), ""),
+        classe_label="Empresas Americanas", peso=0.0234,
+    )
+    assert "Empresas Americanas" in html
+    assert "2.34% do patrim" in html
+    assert html.count("<div") == html.count("</div>")
+
+
+def test_peso_ausente_nao_vira_zero_por_cento_no_card():
+    """Omitir e diferente de afirmar que a posicao e irrelevante — o card sem
+    peso informado nao pode imprimir '0.00% do patrimonio'."""
+    from core.global_portfolio.roles import PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
+
+    html = card_papel_html(PapelDoAtivo("AAPL", (), (), (), ""),
+                           classe_label="Empresas Americanas", peso=None)
+    assert "Empresas Americanas" in html
+    assert "do patrim" not in html
+    assert html.count("<div") == html.count("</div>")

@@ -14,8 +14,40 @@ Ativo sem dado suficiente para julgar um papel entra em `indeterminados`,
 nunca e simplesmente negado — "nao sabemos" e "nao cumpre" sao coisas
 diferentes. Volatilidade e correlacao dependem de serie de precos mensal,
 que hoje so existe para as classes `b3` e `fii` (ver
-core.global_portfolio.returns); o restante do patrimonio (~38%, a classe
-`us`) fica indeterminado nesses dois papeis ate a serie americana entrar.
+core.global_portfolio.returns); sem essa serie os dois papeis ficam
+indeterminados para a classe `us`.
+
+Indeterminado sem causa nomeada e uma lacuna que ninguem consegue fechar:
+`motivos_indeterminado` carrega a frase que diz POR QUE o dado falta. Sao
+duas causas, e elas se fecham de formas opostas. A estrutural, por (classe,
+papel), esta em `_MOTIVOS_INDETERMINADO` e hoje esta vazia — o unico caso que
+havia, renda da classe `us`, deixou de existir em 08/09/2026, quando o
+dividend yield americano passou a ser derivado do `dividends_paid` do
+EDGAR (us_metrics) em vez de ficar ausente da vitrine.
+
+A outra e por ATIVO: o snapshot da carteira e mais antigo que o campo. Nesse
+caso o dado ESTA publicado e a frase generica ("sem dado suficiente para
+avaliar") e simplesmente falsa. Aconteceu no mesmo 08/09: o crescimento
+americano passou a ser medido por `revenue_trend_5y` e os 30 ativos da carteira
+ativa, com snapshot de 07/09, voltaram todos a indeterminado. Quem le precisa
+saber que a saida e regravar o modelo, nao esperar dado que ja chegou. Ver
+`fields.ausente_do_snapshot`, que separa chave gravada-com-nulo de chave nunca
+gravada.
+
+Crescimento tem uma fonte e uma MEDIDA por classe, e a evidencia na tela
+diz as duas: `b3` usa CAGR de LPA anual, `fii` usa CAGR de VPA mensal e
+`us` usa a inclinacao da regressao de ln(receita) em 5 anos
+(revenue_trend_5y), acompanhada do R2. CAGR compara duas pontas e nao ve o
+caminho entre elas; a regressao usa a janela toda, e o R2 avisa quando nao
+ha tendencia que taxa nenhuma resuma. A serie anual americana
+(history.financials_anuais) chega vazia na nuvem — ela vem de
+market_us.income_statements, que so existe no armazem local —, entao
+perguntar por LPA ali deixava 30 de 30 ativos indeterminados por endereco
+errado, nao por falta de dado.
+
+O limiar de crescimento (LIMIARES["cagr_minimo"]) segue com esse nome
+apesar de `us` nao usar mais CAGR: e o mesmo piso de 8% ao ano para as tres
+classes, e renomea-lo mudaria a chave que b3 e fii tambem leem.
 
 Camada pura: sem SQL, sem Streamlit, sem I/O. Coberto por
 tests/test_global_roles.py.
@@ -28,6 +60,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from core.global_portfolio.fields import ausente_do_snapshot
 from core.global_portfolio.fields import valor as campo_valor
 
 PAPEIS: tuple[str, ...] = (
@@ -58,9 +91,16 @@ LIMIARES: dict[str, float] = {
     # disponiveis. Acima disto o payout e tratado como erratico demais
     # para sustentar o papel de renda, mesmo com DY alto.
     "payout_instavel": 0.30,
-    # CAGR minimo de LPA nos ultimos anos disponiveis para justificar
-    # "crescimento" (8% ao ano).
+    # CAGR minimo nos ultimos anos disponiveis para justificar
+    # "crescimento" (8% ao ano). Mesmo limiar para as tres classes; o que
+    # muda entre elas e a base medida (LPA, VPA ou receita).
     "cagr_minimo": 0.08,
+    # Teto do payout nos EUA (100% do lucro). Nao e o mesmo criterio das
+    # acoes brasileiras: la se mede o DESVIO de uma serie de payout, aqui so
+    # existe o nivel de um exercicio. Distribuir acima do lucro pode durar um
+    # ano, nao uma tese de renda — entao entra como veto, nunca como
+    # requisito. Ver _avaliar_renda_us.
+    "payout_maximo_us": 1.00,
     # Volatilidade anualizada abaixo da qual o ativo conta como estabilizador
     # da carteira (15% ao ano).
     "vol_baixa": 0.15,
@@ -104,6 +144,39 @@ class PapelDoAtivo:
     evidencias: tuple[Evidencia, ...]
     indeterminados: tuple[str, ...]
     justificativa: str
+    # (papel, motivo) para os indeterminados de causa estrutural conhecida.
+    # Default vazio: indeterminado sem causa nomeada continua valido — a
+    # maioria e falta pontual de dado, nao lacuna de fonte.
+    motivos_indeterminado: tuple[tuple[str, str], ...] = ()
+
+
+# (asset_class, papel) -> por que o dado nao existe. So entra aqui causa
+# estrutural: lacuna da FONTE, que nenhuma reingestao deste ativo resolve.
+# Falta pontual de historico nao entra — ela varia por ativo e a frase
+# generica do card ja a descreve.
+# Motivo declarado para um papel que ficou indeterminado, por (classe, papel).
+# So entra aqui a lacuna cuja CAUSA e conhecida: sem isso a tela diz "sem dado
+# suficiente" e quem le nao sabe se o dado falta na fonte, no adaptador ou na
+# empresa. Fica vazio quando toda lacuna conhecida foi fechada -- a entrada
+# ("us", "renda") saiu em 08/09/2026, quando o dividend yield passou a ser
+# derivado do EDGAR e o papel virou avaliavel.
+_MOTIVOS_INDETERMINADO: dict[tuple[str, str], str] = {}
+
+# Campos canonicos de que cada papel depende diretamente. So entram papeis
+# decididos por campo de `fundamentals`; volatilidade e correlacao vem de serie
+# de precos e nao tem endereco aqui.
+_CAMPOS_DO_PAPEL: dict[str, tuple[str, ...]] = {
+    "renda": ("dy",),
+    "crescimento": ("crescimento_receita",),
+}
+
+# Motivo dinamico, por ATIVO e nao por classe: o snapshot da carteira e mais
+# antigo que o campo. Diferente das entradas de _MOTIVOS_INDETERMINADO, que
+# descrevem lacuna estrutural da fonte, esta se fecha regravando o modelo.
+_MOTIVO_SNAPSHOT_DEFASADO = (
+    "o snapshot desta carteira foi gravado antes de o campo existir na vitrine "
+    "— o dado existe; recrie o modelo para este papel voltar a ser avaliado"
+)
 
 
 def _asset_class(linha: dict) -> str:
@@ -208,6 +281,8 @@ def _avaliar_renda(linha: dict, mediana_classe: float | None) -> tuple[bool | No
 
     if classe == "fii":
         return _avaliar_renda_fii(payload, dy, mediana_classe)
+    if classe == "us":
+        return _avaliar_renda_us(payload, dy, mediana_classe)
 
     payout_valores = _janela_recente(_serie_historica(payload, "multiplos_anuais"), "Payout")
     desvio_rel = _desvio_relativo(payout_valores)
@@ -256,6 +331,8 @@ def _avaliar_crescimento(linha: dict) -> tuple[bool | None, Evidencia | None]:
 
     if classe == "fii":
         return _avaliar_crescimento_fii(payload)
+    if classe == "us":
+        return _avaliar_crescimento_us(payload)
 
     lpa_valores = _janela_recente(_serie_historica(payload, "demonstracoes_anuais"), "LPA")
     cagr = _cagr(lpa_valores)
@@ -268,6 +345,85 @@ def _avaliar_crescimento(linha: dict) -> tuple[bool | None, Evidencia | None]:
         f"(minimo {LIMIARES['cagr_minimo'] * 100:.2f}%)"
     )
     evidencia = Evidencia("crescimento", cagr, LIMIARES["cagr_minimo"], texto) if cumpre else None
+    return cumpre, evidencia
+
+
+def _avaliar_renda_us(payload: dict, dy: float,
+                      mediana_classe: float) -> tuple[bool | None, Evidencia | None]:
+    """Renda nos EUA: DY acima da mediana da classe, com payout como veto.
+
+    As acoes brasileiras exigem DY acima da mediana E payout estavel, medido
+    pelo desvio relativo da serie `multiplos_anuais`. A vitrine EUA nao tem
+    essa serie -- `payout_ratio` chega como um numero so, do ultimo
+    exercicio, sem historico de onde tirar desvio.
+
+    Exigir a serie que nao existe deixaria o papel indeterminado em 100% dos
+    ativos americanos, que e o defeito que este ramo veio corrigir. Exigir o
+    `payout_ratio` presente tambem nao serve: ele falta em boa parte da base,
+    e um criterio que so a metade consegue responder pune quem tem menos
+    dado, nao quem tem pior fundamento.
+
+    Entao o payout entra como VETO, nao como requisito: quando ele existe e
+    passa de 100% do lucro, a distribuicao nao se sustenta e o papel e
+    negado, por mais alto que o DY esteja. Quando falta, o papel e decidido
+    so pelo DY e o texto da evidencia diz que a sustentacao nao foi
+    verificada -- quem le fica sabendo o que nao foi olhado.
+    """
+    payout = campo_valor(payload, "us", "payout")
+    if payout is not None and payout > LIMIARES["payout_maximo_us"]:
+        return False, None
+
+    cumpre = dy >= mediana_classe
+    if payout is not None:
+        sustentacao = (f"payout de {payout * 100:.1f}% do lucro "
+                       f"(teto {LIMIARES['payout_maximo_us'] * 100:.0f}%)")
+    else:
+        sustentacao = ("sem payout publicado, entao a sustentacao da "
+                       "distribuicao nao foi verificada")
+    texto = (
+        f"DY {dy * 100:.2f}% (mediana da classe {mediana_classe * 100:.2f}%), "
+        f"{sustentacao} — o DY vem do dividendo desembolsado no ultimo "
+        f"exercicio, entao defasa ate um ano"
+    )
+    evidencia = Evidencia("renda", dy, mediana_classe, texto) if cumpre else None
+    return cumpre, evidencia
+
+
+def _avaliar_crescimento_us(payload: dict) -> tuple[bool | None, Evidencia | None]:
+    """Crescimento nos EUA: inclinacao da regressao da RECEITA em 5 anos.
+
+    A regra das acoes brasileiras pede LPA de history.demonstracoes_anuais.
+    Para `us` esse bloco chega vazio na nuvem (o adaptador o preenche de
+    market_us.income_statements, que so existe no armazem local), e o papel
+    saia indeterminado em 30 de 30 ativos — por endereco errado, nao por
+    falta de dado: o crescimento ja esta publicado em fundamentals.
+
+    Duas ressalvas entram no texto da evidencia em vez de ficar so aqui,
+    porque quem le a tela decide com elas:
+
+    1. A base e RECEITA, nao lucro. Uma empresa pode crescer receita
+       comprimindo margem, e o papel de crescimento nao veria diferenca.
+    2. A taxa e a inclinacao de uma regressao sobre a janela inteira, e o
+       R2 diz o quanto a reta descreve a serie. Uma taxa de 12% com R2 de
+       0,05 nao e crescimento de 12%: e uma serie sem tendencia a que se
+       ajustou uma reta. O limiar de 8% olha so a taxa — por isso o R2 vai
+       escrito ao lado, para quem le nao confundir ajuste com trajetoria.
+    """
+    taxa = campo_valor(payload, "us", "crescimento_receita")
+    if taxa is None:
+        return None, None
+
+    cumpre = taxa >= LIMIARES["cagr_minimo"]
+    r2 = campo_valor(payload, "us", "crescimento_r2")
+    ajuste = (f"R2 de {r2:.2f}" if r2 is not None
+              else "sem R2 publicado, entao a aderencia da reta e desconhecida")
+    texto = (
+        f"receita crescendo {taxa * 100:.2f}% ao ano pela inclinacao da "
+        f"regressao de 5 anos (minimo {LIMIARES['cagr_minimo'] * 100:.2f}%), "
+        f"{ajuste} — a base e receita, nao LPA: a vitrine EUA nao publica "
+        f"serie de lucro por acao"
+    )
+    evidencia = Evidencia("crescimento", taxa, LIMIARES["cagr_minimo"], texto) if cumpre else None
     return cumpre, evidencia
 
 
@@ -447,9 +603,17 @@ def classificar(df_posicoes: pd.DataFrame, *,
             ("diversificacao", *_avaliar_diversificacao(symbol, correlacoes)),
         ]
 
+        motivos: list[tuple[str, str]] = []
         for papel, cumpre, evidencia in avaliacoes:
             if cumpre is None:
                 indeterminados.append(papel)
+                motivo = _MOTIVOS_INDETERMINADO.get((classe, papel))
+                if motivo is None and any(
+                        ausente_do_snapshot(linha.get("payload"), classe, c)
+                        for c in _CAMPOS_DO_PAPEL.get(papel, ())):
+                    motivo = _MOTIVO_SNAPSHOT_DEFASADO
+                if motivo:
+                    motivos.append((papel, motivo))
             elif cumpre:
                 papeis.append(papel)
                 if evidencia is not None:
@@ -470,6 +634,9 @@ def classificar(df_posicoes: pd.DataFrame, *,
             evidencias=evidencias_ordenadas,
             indeterminados=indeterminados_ordenados,
             justificativa=_justificativa(papeis_ordenados, evidencias_ordenadas),
+            motivos_indeterminado=tuple(
+                (p, m) for p in PAPEIS for pp, m in motivos if pp == p
+            ),
         ))
 
     return saida

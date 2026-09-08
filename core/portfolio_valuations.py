@@ -49,6 +49,9 @@ SPECS: dict[str, MetricSpec] = {
     'fcf_yield':         MetricSpec('FCF yield', _PCT, None, False),
     'earnings_yield':    MetricSpec('Earnings yield', _PCT, None, False),
     'shareholder_yield': MetricSpec('Retorno ao acionista', _PCT, None, False),
+    # Não negativo: dividendo desembolsado é saída de caixa, e o sinal do EDGAR
+    # já é tratado em us_metrics. Um DY negativo aqui seria erro de fonte.
+    'dividend_yield':    MetricSpec('Dividend yield', _PCT, 0., False),
     # Razões não negativas.
     'div_brut_patrim': MetricSpec('Dív. bruta/Patrim.', _X, 0., False),
     'liq_corr':        MetricSpec('Liquidez corrente', _X, 0., False),
@@ -63,15 +66,21 @@ METRICS_BY_CLASS: dict[str, tuple[str, ...]] = {
     'acoes': ('dy', 'pl', 'pvp', 'psr', 'ev_ebitda', 'ev_ebit',
               'roe', 'roic', 'marg_liq', 'cresc_rec_5a', 'div_brut_patrim'),
     'fiis': ('dy', 'pvp', 'vacancia_media', 'vacancia_financ'),
+    # `dividend_yield` do exterior é derivado do EDGAR e se refere ao último
+    # exercício fechado; ele NÃO entra na mesma média que o 'dy' de ações e FIIs
+    # brasileiros, que é de 12 meses corridos. Por isso o nome do campo é outro:
+    # a separação por classe é justamente o que impede a média indevida.
     'exterior': ('pe', 'p_s', 'ev_ebitda', 'ev_ebit', 'p_fcf', 'roe',
-                 'net_margin', 'fcf_yield', 'shareholder_yield'),
+                 'net_margin', 'fcf_yield', 'shareholder_yield',
+                 'dividend_yield'),
 }
 
 # Indicadores do universo dos EUA que a fonte entrega como fração decimal
 # (0,12 = 12%). Convertê-los na leitura evita publicar "0,12%" de margem.
 _FRACAO_PARA_PCT = {'roe', 'roic', 'roa', 'net_margin', 'operating_margin',
                     'gross_margin', 'fcf_yield', 'earnings_yield',
-                    'shareholder_yield', 'payout_ratio'}
+                    'shareholder_yield', 'payout_ratio',
+                    'dividend_yield'}
 
 CLASS_LABELS = {'acoes': 'Ações', 'fiis': 'FIIs',
                 'tesouro': 'Tesouro Direto', 'exterior': 'Exterior'}
