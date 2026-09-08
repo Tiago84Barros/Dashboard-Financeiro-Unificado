@@ -110,12 +110,29 @@ def _bloco_posicoes(df: pd.DataFrame) -> list[str]:
         )
         ordenado = ordenado.head(_MAX_POSICOES)
 
+    # O DY não é a mesma medida nas três classes e a LLM não tem como saber:
+    # em ações e FIIs brasileiros ele é de 12 meses corridos; no exterior é
+    # derivado do dividendo desembolsado no ÚLTIMO EXERCÍCIO FECHADO do EDGAR,
+    # e portanto defasa até um ano. Comparar os dois números como se fossem o
+    # mesmo é o erro que esta linha existe para impedir.
+    linhas.append(
+        "Leitura do DY: ações e FIIs do Brasil = 12 meses corridos; exterior = "
+        "último exercício fechado (defasa até um ano). 'DY' ausente no exterior "
+        "é lacuna de dado, NÃO é não-pagamento de dividendo."
+    )
+
     for registro in ordenado.to_dict(orient="records"):
         payload = registro.get("payload") or {}
         classe = registro.get("asset_class")
         fundamentos = []
+        # `crescimento_receita` hoje só existe para `us` — em b3 e fii o campo
+        # canônico não tem endereço e `campo_valor` devolve None, que o laço
+        # pula. Ele entra aqui porque o modelo precisa do crescimento para
+        # discutir papel de crescimento sem inventar número.
         for campo, rotulo, pct in (("pe", "P/L", False), ("pvp", "P/VP", False),
-                                   ("dy", "DY", True), ("roe", "ROE", True)):
+                                   ("dy", "DY", True), ("roe", "ROE", True),
+                                   ("crescimento_receita",
+                                    "cresc. receita 5a (regressão)", True)):
             bruto = campo_valor(payload, classe, campo)
             if bruto is None:
                 continue

@@ -55,10 +55,25 @@ _PEER_METRICS: tuple[tuple[str, str, str], ...] = (
     ("roe", "ROE", "%"),
     ("roic", "ROIC", "%"),
     ("net_margin", "Margem líquida", "%"),
-    ("revenue_cagr_3y", "Cresc. receita 3a", "%"),
+    ("revenue_trend_5y", "Cresc. receita 5a (regressão)", "%"),
     ("net_debt_ebitda", "Dív.líq/EBITDA", "x"),
     ("shareholder_yield", "Retorno ao acionista", "%"),
+    ("dividend_yield", "Div. yield (EDGAR)", "%"),
 )
+
+# Duas trocas deliberadas nesta tupla, e ela é a única alavanca: o mesmo
+# `_PEER_METRICS` alimenta a comparação por pares, as medianas por indústria e
+# os contextos de universo e setor que vão para a LLM.
+#
+# 1. `revenue_cagr_3y` → `revenue_trend_5y`. O CAGR só enxerga as duas pontas:
+#    uma receita que sobe, despenca e volta ao mesmo ponto de uma que sobe todo
+#    ano recebem a mesma taxa. A inclinação da regressão log-linear usa os cinco
+#    pontos. O CAGR continua publicado em `core.us_metrics` — só não é mais o
+#    que a LLM lê ao falar de crescimento.
+# 2. `dividend_yield` entra. Ele é derivado de `cash_flow_statements.dividends_paid`
+#    do EDGAR sobre o valor de mercado, não da tabela FMP (cujos termos proíbem
+#    armazenamento). Cobre ~24% do universo e ausência é `None`, nunca 0.0 —
+#    `_fmt_metric` imprime "N/D", que é o que a LLM deve dizer.
 
 
 def _fmt_metric(value: Any, unit: str) -> str:

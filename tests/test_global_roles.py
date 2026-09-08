@@ -272,7 +272,8 @@ def _us(symbol, fundamentals=None, history=None):
 
 
 def test_crescimento_de_us_vem_da_receita_e_nao_do_lpa_ausente():
-    df = pd.DataFrame([_us("ADBE", fundamentals={"revenue_cagr_5y": 0.1306})])
+    df = pd.DataFrame([_us("ADBE", fundamentals={"revenue_trend_5y": 0.1241,
+                                                 "revenue_trend_r2_5y": 0.978})])
 
     p = classificar(df)[0]
 
@@ -280,18 +281,46 @@ def test_crescimento_de_us_vem_da_receita_e_nao_do_lpa_ausente():
     assert "crescimento" not in p.indeterminados
     ev = next(e for e in p.evidencias if e.papel == "crescimento")
     assert "receita" in ev.texto.lower(), "a base medida precisa aparecer na tela"
-    assert "13.06%" in ev.texto
+    assert "12.41%" in ev.texto
+
+
+def test_crescimento_de_us_usa_regressao_e_nao_o_cagr_de_ponta_a_ponta():
+    """O CAGR continua publicado em us_metrics, mas nao decide mais o papel.
+
+    Se a regra ainda lesse `revenue_cagr_5y`, este ativo — que tem CAGR alto
+    e nenhuma inclinacao — seria promovido a crescimento.
+    """
+    df = pd.DataFrame([_us("XYZ", fundamentals={"revenue_cagr_5y": 0.42})])
+
+    assert "crescimento" in classificar(df)[0].indeterminados
+
+
+def test_crescimento_de_us_publica_o_r2_junto_da_taxa():
+    """Taxa sem aderencia e reta ajustada a ruido; quem le precisa ver as duas."""
+    df = pd.DataFrame([_us("ITRI", fundamentals={"revenue_trend_5y": 0.12,
+                                                 "revenue_trend_r2_5y": 0.05})])
+
+    ev = next(e for e in classificar(df)[0].evidencias if e.papel == "crescimento")
+
+    assert "0.05" in ev.texto and "R2" in ev.texto
+
+
+def test_crescimento_de_us_sem_r2_diz_que_a_aderencia_e_desconhecida():
+    df = pd.DataFrame([_us("ABC", fundamentals={"revenue_trend_5y": 0.12})])
+
+    ev = next(e for e in classificar(df)[0].evidencias if e.papel == "crescimento")
+
+    assert "desconhecida" in ev.texto
 
 
 def test_crescimento_de_us_abaixo_do_limiar_e_negado_nao_indeterminado():
     baixo = LIMIARES["cagr_minimo"] / 2
-    df = pd.DataFrame([_us("FFIV", fundamentals={"revenue_cagr_5y": baixo})])
+    df = pd.DataFrame([_us("FFIV", fundamentals={"revenue_trend_5y": baixo})])
 
     p = classificar(df)[0]
 
     assert "crescimento" not in p.papeis
-    assert "crescimento" not in p.indeterminados, \
-        "avaliado e negado nao e o mesmo que sem dado"
+    assert "crescimento" not in p.indeterminados,         "avaliado e negado nao e o mesmo que sem dado"
 
 
 def test_crescimento_de_us_sem_o_campo_continua_indeterminado():
@@ -301,29 +330,71 @@ def test_crescimento_de_us_sem_o_campo_continua_indeterminado():
 
 
 def test_crescimento_de_us_ignora_eps_growth_como_substituto():
-    """eps_growth_3y nao e CAGR e nao pode ser lido contra o limiar de 8%."""
+    """eps_growth_3y nao e a mesma medida e nao pode valer contra o limiar."""
     df = pd.DataFrame([_us("GNTX", fundamentals={"eps_growth_3y": 0.99,
                                                  "shareholder_yield": 0.05})])
 
     assert "crescimento" in classificar(df)[0].indeterminados
 
 
-def test_renda_de_us_fica_indeterminada_com_a_causa_nomeada():
+def test_renda_de_us_e_avaliada_pelo_dividend_yield():
+    """Era indeterminada em 30 de 30 ativos ate o DY passar a ser derivado."""
+    df = pd.DataFrame([
+        _us("MDT", fundamentals={"dividend_yield": 0.031, "payout_ratio": 0.6}),
+        _us("GNTX", fundamentals={"dividend_yield": 0.021, "payout_ratio": 0.3}),
+        _us("ADBE", fundamentals={"dividend_yield": 0.0}),
+    ])
+
+    ps = {p.symbol: p for p in classificar(df)}
+
+    assert "renda" in ps["MDT"].papeis
+    assert "renda" not in ps["ADBE"].papeis
+    assert "renda" not in ps["ADBE"].indeterminados,         "zero publicado pelo EDGAR e valor observado, nao lacuna"
+    ev = next(e for e in ps["MDT"].evidencias if e.papel == "renda")
+    assert "defasa" in ev.texto, "a defasagem de ate um ano precisa ir para a tela"
+
+
+def test_renda_de_us_sem_dividend_yield_continua_indeterminada():
     df = pd.DataFrame([_us("EW", fundamentals={"payout_ratio": 0.2,
                                                "shareholder_yield": 0.03})])
 
     p = classificar(df)[0]
 
     assert "renda" in p.indeterminados
-    motivos = dict(p.motivos_indeterminado)
-    assert "renda" in motivos
-    assert "dividend yield" in motivos["renda"]
+    assert "renda" not in p.papeis
+
+
+def test_renda_de_us_e_vetada_por_payout_acima_do_lucro():
+    """DY alto sustentado por payout de 180% nao e tese de renda."""
+    df = pd.DataFrame([
+        _us("A", fundamentals={"dividend_yield": 0.09, "payout_ratio": 1.8}),
+        _us("B", fundamentals={"dividend_yield": 0.01, "payout_ratio": 0.4}),
+    ])
+
+    ps = {p.symbol: p for p in classificar(df)}
+
+    assert "renda" not in ps["A"].papeis
+    assert "renda" not in ps["A"].indeterminados, "vetado e negado, nao ignorado"
+
+
+def test_renda_de_us_sem_payout_decide_pelo_dy_e_declara_o_que_nao_viu():
+    """Exigir payout presente puniria quem tem menos dado, nao pior fundamento."""
+    df = pd.DataFrame([
+        _us("A", fundamentals={"dividend_yield": 0.05}),
+        _us("B", fundamentals={"dividend_yield": 0.01}),
+    ])
+
+    p = {x.symbol: x for x in classificar(df)}["A"]
+
+    assert "renda" in p.papeis
+    ev = next(e for e in p.evidencias if e.papel == "renda")
+    assert "nao foi verificada" in ev.texto
 
 
 def test_motivo_so_existe_para_indeterminado():
     """Motivo colado num papel cumprido seria contradicao na mesma linha."""
     df = pd.DataFrame([
-        _us("ADBE", fundamentals={"revenue_cagr_5y": 0.13}),
+        _us("ADBE", fundamentals={"revenue_trend_5y": 0.13}),
         _linha("ITSA4", classe="b3", fundamentals={"DY": 0.09}),
     ])
 

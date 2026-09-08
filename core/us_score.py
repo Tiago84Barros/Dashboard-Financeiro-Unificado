@@ -29,12 +29,26 @@ FACTOR_TRACKS: dict[str, list[str]] = {
     "quality": ["gross_margin", "operating_margin", "net_margin", "fcf_margin",
                 "cash_conversion", "roe", "roa", "sbc_to_revenue",
                 "fcf_ex_sbc_margin"],
-    # `*_growth_3y` sao taxas SIMETRICAS, nao CAGR (core/us_metrics.py). O CAGR
-    # nao e definido com base ou ponta <= 0, e devolvia None para a maioria das
-    # empresas -- prejuizo persistente entrava aqui como falta de dado, o que
-    # derruba a cobertura da trilha em vez de ranquear a empresa por baixo.
-    "growth": ["revenue_cagr_3y", "revenue_cagr_5y", "op_income_growth_3y",
-               "eps_growth_3y", "fcf_growth_3y"],
+    # Crescimento medido pela INCLINACAO DA REGRESSAO, nao por ponta contra
+    # ponta. CAGR e taxa simetrica olham dois pontos e descartam o meio: uma
+    # receita 100, 180, 190, 200, 205 e outra 100, 102, 105, 110, 205 saem com
+    # o mesmo numero e nao tem nada em comum. A regressao usa todos os pontos
+    # da janela, e o R2 que a acompanha diz se a reta descreve a serie --
+    # medido em 08/09/2026, um quarto das empresas tem R2 abaixo de 0,3, isto
+    # e, nao tem tendencia que qualquer taxa unica pudesse resumir.
+    #
+    # `*_trend_3y` de lucro, EBIT e FCL sao inclinacoes SIMETRICAS
+    # (normalizadas pela escala), porque essas series atravessam o zero e
+    # taxa composta nao existe ali. Receita usa a composta, sobre ln.
+    #
+    # Custo medido da troca: a regressao exige tres pontos, entao a cobertura
+    # cai ~5% por campo (eps: 3.449 -> 3.254). O efeito no ranking e real mas
+    # contido -- Spearman 0,9947 no score total, 0,9421 nesta trilha, e 8 dos
+    # 100 primeiros trocam de lugar. As chaves `*_cagr_*`/`*_growth_*` seguem
+    # publicadas em us_metrics: sao a serie que o historico e o backtest ja
+    # gravaram, e apaga-las reescreveria o passado.
+    "growth": ["revenue_trend_3y", "revenue_trend_5y", "op_income_trend_3y",
+               "eps_trend_3y", "fcf_trend_3y"],
     "solidity": ["net_debt_ebitda", "interest_coverage", "current_ratio",
                  "debt_to_equity"],
     "capital_efficiency": ["roic"],
@@ -44,6 +58,14 @@ FACTOR_TRACKS: dict[str, list[str]] = {
     "valuation": ["earnings_yield", "ev_ebit", "ev_ebitda", "fcf_yield", "p_s"],
     # Recompra só cria valor se reduzir a base acionária: share_count_cagr_3y
     # é o contraponto ao shareholder_yield (buyback anulado por emissão SBC).
+    #
+    # `dividend_yield` NAO entra aqui, e a omissao e deliberada:
+    # shareholder_yield ja e dividendo + recompra sobre o valor de mercado,
+    # entao somar o dividendo de novo pagaria duas vezes pelo mesmo fato e
+    # daria a quem distribui caixa uma vantagem que a trilha nao quis dar.
+    # O dividend yield existe para responder outra pergunta -- "este ativo
+    # paga renda?" -- e e por isso que ele alimenta o papel de renda no
+    # portfolio global, o dossie e o contexto do LLM, sem tocar na nota.
     "shareholder": ["shareholder_yield", "share_count_cagr_3y"],
 }
 
