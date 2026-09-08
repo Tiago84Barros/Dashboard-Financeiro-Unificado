@@ -12,7 +12,8 @@ Coberto por tests/test_global_fields.py.
 from __future__ import annotations
 
 CAMPOS: tuple[str, ...] = (
-    "crescimento_receita", "dy", "market_cap", "pe", "pvp", "roe",
+    "crescimento_r2", "crescimento_receita", "dy", "market_cap", "payout",
+    "pe", "pvp", "roe",
 )
 
 # campo canonico -> {classe: chave dentro de payload["fundamentals"]}
@@ -22,16 +23,27 @@ _ORIGEM: dict[str, dict[str, str]] = {
     "pe": {"b3": "P/L", "us": "pe"},
     # us ausente: us_metrics nao calcula P/B.
     "pvp": {"b3": "P/VP", "fii": "pvp"},
-    # us ausente: us_metrics nao calcula dividend yield. payout_ratio e
-    # shareholder_yield existem, mas sao outra coisa — nao servem de proxy.
-    "dy": {"b3": "DY", "fii": "dy_12m"},
+    # us: dividendo DESEMBOLSADO no ultimo exercicio (EDGAR) sobre o valor
+    # de mercado — defasa ate um ano e nao capta mudanca recente de politica.
+    # A ausencia da linha no EDGAR vira None, nunca 0: medido em 08/09/2026,
+    # 42% dos que nao tinham a linha pagavam dividendo. Ver us_metrics.
+    "dy": {"b3": "DY", "fii": "dy_12m", "us": "dividend_yield"},
     # Crescimento medido sobre RECEITA, nao lucro. So a classe us: b3 e fii
-    # tem serie historica no payload e calculam o CAGR na propria regra
-    # (LPA anual e VPA mensal). Dos campos de crescimento que us_metrics
-    # publica, revenue_cagr_5y e o unico que e taxa composta de verdade —
-    # os demais (eps_growth_3y, op_income_growth_3y) mudaram de medida e de
-    # nome de proposito, e le-los como CAGR seria pior que a lacuna.
-    "crescimento_receita": {"us": "revenue_cagr_5y"},
+    # tem serie historica no payload e calculam a taxa na propria regra
+    # (LPA anual e VPA mensal).
+    #
+    # A chave e `revenue_trend_5y` — a INCLINACAO da regressao de ln(receita)
+    # no ano, nao o CAGR de ponta a ponta que estava aqui antes. CAGR le dois
+    # pontos e ignora o caminho entre eles; a regressao usa a janela inteira.
+    # O R2 que a acompanha (`revenue_trend_r2_5y`) diz se a reta descreve a
+    # serie, e entra no texto da evidencia — sem ele, uma taxa de 12% com R2
+    # de 0,05 seria lida como tendencia quando e ruido.
+    "crescimento_receita": {"us": "revenue_trend_5y"},
+    "crescimento_r2": {"us": "revenue_trend_r2_5y"},
+    # us: fracao do lucro distribuida no ultimo exercicio. b3 ausente de
+    # proposito — la o payout vem como SERIE (multiplos_anuais), e a regra de
+    # renda mede o desvio dela, nao o nivel de um ano.
+    "payout": {"us": "payout_ratio"},
     "roe": {"b3": "ROE", "us": "roe"},
     # b3 ausente: "Valor de mercado" nao esta em _MULT_COLS.
     # us: a chave real leva underscore (campo de contexto em us_metrics).

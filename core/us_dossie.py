@@ -22,6 +22,28 @@ logger = logging.getLogger("us_dossie")
 _CYCLICAL_SECTORS = frozenset({"Energy", "Basic Materials", "Materials", "Industrials"})
 
 
+def _crescimento_de_receita(m: dict) -> tuple[float | None, str]:
+    """Taxa de crescimento da receita e o nome da conta que a produziu.
+
+    Preferência pela inclinação da regressão log-linear de 3 anos: o CAGR só
+    olha as duas pontas, então uma receita que sobe, despenca e volta recebe a
+    mesma taxa de uma que sobe todo ano — e a classe da empresa muda com isso.
+
+    O CAGR fica como recuo quando a regressão não sai (série com valor não
+    positivo, que o log não aceita). O recuo não é silencioso: o motivo exibido
+    e o texto do dossiê dizem qual das duas contas respondeu, porque os limiares
+    de 25% e 12% foram calibrados na taxa composta e as duas não são a mesma
+    grandeza.
+    """
+    t = m.get("revenue_trend_3y")
+    if t is not None:
+        return t, "inclinação da regressão de 3 anos"
+    c = m.get("revenue_cagr_3y")
+    if c is not None:
+        return c, "CAGR de 3 anos, sem regressão disponível"
+    return None, "sem série de receita"
+
+
 def classify_company(m: dict, sector: str | None = None) -> tuple[str, str]:
     """Classifica a empresa a partir do snapshot de métricas. (classe, motivo)."""
     years = m.get("_years") or 0
@@ -34,7 +56,7 @@ def classify_company(m: dict, sector: str | None = None) -> tuple[str, str]:
     if equity < 0:
         return "inadequada", "patrimônio líquido negativo"
 
-    g = m.get("revenue_cagr_3y")
+    g, base_g = _crescimento_de_receita(m)
     op_margin = m.get("operating_margin")
     net_margin = m.get("net_margin")
     ndte = m.get("net_debt_ebitda")
@@ -43,7 +65,8 @@ def classify_company(m: dict, sector: str | None = None) -> tuple[str, str]:
     # Assimétrica: crescimento alto e persistente + rentabilidade operacional + baixa alavancagem
     if (g is not None and g >= 0.25 and (op_margin is None or op_margin > 0)
             and (ndte is None or ndte < 3)):
-        return "assimetrica", f"crescimento de receita ~{g*100:.0f}%/ano com operação rentável"
+        return "assimetrica", (f"crescimento de receita ~{g*100:.0f}%/ano "
+                               f"({base_g}) com operação rentável")
 
     # Turnaround: prejuízo recente virando (margem líquida negativa ou muito baixa,
     # mas FCF ou operação melhorando)
@@ -54,7 +77,8 @@ def classify_company(m: dict, sector: str | None = None) -> tuple[str, str]:
 
     # Crescimento: crescimento sólido, rentável
     if g is not None and g >= 0.12 and (net_margin is None or net_margin > 0):
-        return "crescimento", f"crescimento de receita ~{g*100:.0f}%/ano rentável"
+        return "crescimento", (f"crescimento de receita ~{g*100:.0f}%/ano "
+                               f"({base_g}) rentável")
 
     # Cíclica: setor cíclico e margem/retorno voláteis (proxy: baixo ROIC atual)
     if sector in _CYCLICAL_SECTORS and (roic is None or roic < 0.10):
@@ -163,12 +187,17 @@ def dossie_to_text(d: dict) -> str:
             pct(m.get("gross_margin")), pct(m.get("operating_margin")),
             pct(m.get("net_margin")), pct(m.get("fcf_margin")),
             pct(m.get("roe")), pct(m.get("roic"))),
-        # LPA e FCL vem em taxa SIMETRICA, nao em CAGR: rotular "3a" sem mais
-        # nada faria o leitor ler taxa composta onde a conta e outra.
-        "CRESCIMENTO — receita 3a {} | 5a {} | LPA 3a (simétrica) {} | "
-        "FCL 3a (simétrica) {}".format(
-            pct(m.get("revenue_cagr_3y")), pct(m.get("revenue_cagr_5y")),
-            pct(m.get("eps_growth_3y")), pct(m.get("fcf_growth_3y"))),
+        # Cada taxa carrega a conta que a produziu. Regressão, CAGR e taxa
+        # simétrica respondem à mesma pergunta com aritméticas diferentes, e um
+        # rótulo só de horizonte ("3a") faria o leitor — humano ou LLM —
+        # comparar números que não são comparáveis.
+        "CRESCIMENTO — receita 3a (regressão) {} | receita 5a (regressão) {} "
+        "[R²={}] | receita 5a (CAGR ponta a ponta) {} | lucro op. 3a (simétrica) "
+        "{} | LPA 3a (simétrica) {} | FCL 3a (simétrica) {}".format(
+            pct(m.get("revenue_trend_3y")), pct(m.get("revenue_trend_5y")),
+            num(m.get("revenue_trend_r2_5y")), pct(m.get("revenue_cagr_5y")),
+            pct(m.get("op_income_trend_3y")), pct(m.get("eps_trend_3y")),
+            pct(m.get("fcf_trend_3y"))),
         "SOLIDEZ — dív.líq/EBITDA {} | cobertura juros {} | liquidez corrente {}".format(
             num(m.get("net_debt_ebitda"), True), num(m.get("interest_coverage"), True),
             num(m.get("current_ratio"), True)),
@@ -176,8 +205,16 @@ def dossie_to_text(d: dict) -> str:
             num(m.get("pe"), True), num(m.get("ev_ebit"), True),
             num(m.get("ev_ebitda"), True), num(m.get("p_fcf"), True),
             pct(m.get("fcf_yield"))),
-        "RETORNO AO ACIONISTA — retorno total ao acionista {}".format(
-            pct(m.get("shareholder_yield"))),
+        # O dividend yield é derivado do `dividends_paid` do EDGAR sobre o valor
+        # de mercado — não da tabela FMP, cujos termos proíbem armazenamento.
+        # Ele se refere ao ÚLTIMO EXERCÍCIO FECHADO: defasa até um ano do
+        # dividendo corrente, e a LLM precisa disso para não datar errado.
+        # "N/D" aqui é ausência de dado, nunca não-pagamento: dos símbolos sem
+        # a linha no último exercício, 42% pagaram dividendo nos 12 meses.
+        "RETORNO AO ACIONISTA — retorno total ao acionista {} | dividend yield "
+        "do último exercício {} | dividendo por ação {} | payout {}".format(
+            pct(m.get("shareholder_yield")), pct(m.get("dividend_yield")),
+            num(m.get("dividends_per_share")), pct(m.get("payout_ratio"))),
     ]
     if d.get("red_flags"):
         L.append("\nSINAIS DE ALERTA:")

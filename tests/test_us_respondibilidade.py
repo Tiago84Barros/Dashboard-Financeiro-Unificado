@@ -29,25 +29,43 @@ _SOLIDEZ = ("net_debt_ebitda", "interest_coverage", "current_ratio",
             "debt_to_equity")
 
 
+# Valor plausível por métrica onde o sinal importa; o resto recebe o default.
+# As colunas NÃO são listadas à mão: elas saem de `sc.FACTOR_TRACKS`, que é a
+# mesma estrutura que o motor percorre para medir respondibilidade. Enquanto a
+# lista era escrita aqui, trocar uma métrica de trilha em `us_score` deixava a
+# empresa boa do fixture sem a coluna — e o teste acusava trilha "não
+# respondível" que só existia no fixture. Derivar do escritor faz as duas
+# concordarem por construção, não por memória de quem edita.
+_VALORES = {
+    "net_debt_ebitda": 1.5, "interest_coverage": 8.0, "current_ratio": 2.0,
+    "debt_to_equity": 0.5, "roe": 0.15, "roa": 0.08, "roic": 0.12,
+    "earnings_yield": 0.06, "ev_ebit": 12.0, "ev_ebitda": 9.0, "p_s": 2.0,
+    "cash_conversion": 1.0, "operating_margin": 0.2, "share_count_cagr_3y": -0.01,
+    "sbc_to_revenue": 0.02,
+}
+_PADRAO = 0.1
+
+
+def _metricas_da_metodologia() -> tuple[str, ...]:
+    vistas: dict[str, None] = {}
+    for campos in sc.FACTOR_TRACKS.values():
+        for campo in campos:
+            vistas.setdefault(campo, None)
+    return tuple(vistas)
+
+
 def _quadro() -> pd.DataFrame:
     linhas = []
     for i, sym in enumerate(("BOA1", "BOA2", "BOA3", "ALVO")):
-        linhas.append({
+        linha = {campo: _VALORES.get(campo, _PADRAO)
+                 for campo in _metricas_da_metodologia()}
+        linha.update({
             "symbol": sym, "sector": "Tech", "industry": "Tech",
-            "gross_margin": 0.4 + i / 100, "operating_margin": 0.2,
-            "net_margin": 0.1, "fcf_margin": 0.1, "cash_conversion": 1.0,
-            "roe": 0.15, "roa": 0.08, "sbc_to_revenue": 0.02,
-            "fcf_ex_sbc_margin": 0.08,
-            "revenue_cagr_3y": 0.1, "revenue_cagr_5y": 0.1,
-            "op_income_growth_3y": 0.1, "eps_growth_3y": 0.1,
-            "fcf_growth_3y": 0.1,
-            "net_debt_ebitda": 1.5, "interest_coverage": 8.0,
-            "current_ratio": 2.0, "debt_to_equity": 0.5, "roic": 0.12,
-            "earnings_yield": 0.06, "ev_ebit": 12.0, "ev_ebitda": 9.0,
-            "fcf_yield": 0.05, "p_s": 2.0,
-            "shareholder_yield": 0.03, "share_count_cagr_3y": -0.01,
+            # dispersão só na margem bruta: é o que ordena as boas entre si.
+            "gross_margin": 0.4 + i / 100,
             "impairment_flags": (), "nm_metrics": (),
         })
+        linhas.append(linha)
     return pd.DataFrame(linhas)
 
 

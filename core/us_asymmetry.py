@@ -60,12 +60,30 @@ def build_trajectory(income: Sequence[dict], balance: Sequence[dict],
     return traj
 
 
+def _taxas_de_receita(m: dict) -> tuple[float | None, float | None, str]:
+    """(3 anos, 5 anos, conta usada) — as duas SEMPRE da mesma aritmética.
+
+    A preferida é a inclinação da regressão log-linear, que usa todos os pontos;
+    o CAGR de ponta a ponta é o recuo para quando a regressão não sai. Elas são
+    escolhidas em bloco de propósito: o sinal "Aceleração (3a > 5a)" compara os
+    dois horizontes, e comparar uma inclinação com um CAGR é comparar contas
+    diferentes — a aceleração apareceria ou sumiria por causa da mistura, não
+    por causa da empresa.
+    """
+    t3, t5 = m.get("revenue_trend_3y"), m.get("revenue_trend_5y")
+    if t3 is not None or t5 is not None:
+        return t3, t5, "regressão"
+    return m.get("revenue_cagr_3y"), m.get("revenue_cagr_5y"), "CAGR"
+
+
 # ── Sinais (nome, peso, predicado) ────────────────────────────────────────────
 def _positive_signals(m: dict, t: dict) -> list[tuple[str, float, bool]]:
-    g3, g5 = m.get("revenue_cagr_3y"), m.get("revenue_cagr_5y")
+    g3, g5, base = _taxas_de_receita(m)
     return [
-        ("Crescimento de receita elevado (3a ≥ 20%)", 1.5, g3 is not None and g3 >= 0.20),
-        ("Crescimento persistente (5a ≥ 15%)", 1.2, g5 is not None and g5 >= 0.15),
+        (f"Crescimento de receita elevado (3a ≥ 20%, {base})", 1.5,
+         g3 is not None and g3 >= 0.20),
+        (f"Crescimento persistente (5a ≥ 15%, {base})", 1.2,
+         g5 is not None and g5 >= 0.15),
         ("Aceleração (3a > 5a)", 0.8, g3 is not None and g5 is not None and g3 > g5),
         ("FCF positivo e crescente", 1.0,
          (m.get("_fcf") or 0) > 0 and (m.get("fcf_growth_3y") or -1) > 0),
@@ -85,7 +103,7 @@ def _positive_signals(m: dict, t: dict) -> list[tuple[str, float, bool]]:
 
 
 def _negative_signals(m: dict, t: dict) -> list[tuple[str, bool]]:
-    g3 = m.get("revenue_cagr_3y")
+    g3 = _taxas_de_receita(m)[0]
     return [
         ("FCF persistentemente negativo",
          t.get("fcf_positive_ratio") is not None and t["fcf_positive_ratio"] < 0.34),
@@ -102,11 +120,21 @@ def _negative_signals(m: dict, t: dict) -> list[tuple[str, bool]]:
     ]
 
 
-_INPUTS = ("revenue_cagr_3y", "revenue_cagr_5y", "roic", "net_debt_ebitda", "_fcf")
+# Insumos da confiança, cada um com as chaves que o satisfazem. Crescimento
+# aceita regressão OU CAGR: exigir a regressão rebaixaria a confiança de quem
+# tem a série completa mas com um ano não positivo, que é limitação do log e
+# não falta de dado.
+_INPUTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("crescimento 3a", ("revenue_trend_3y", "revenue_cagr_3y")),
+    ("crescimento 5a", ("revenue_trend_5y", "revenue_cagr_5y")),
+    ("roic", ("roic",)),
+    ("net_debt_ebitda", ("net_debt_ebitda",)),
+    ("fcf", ("_fcf",)),
+)
 
 
 def classify_stage(m: dict, t: dict) -> str:
-    g3 = m.get("revenue_cagr_3y") or 0
+    g3 = _taxas_de_receita(m)[0] or 0
     mcap = m.get("_market_cap")
     fcf = m.get("_fcf") or 0
     if g3 >= 0.30 and (mcap is None or mcap < 2e9):
@@ -130,7 +158,8 @@ def score_asymmetry(m: dict, trajectory: dict | None = None) -> dict:
     neg_count = sum(1 for _, ok in neg if ok)
     score = max(0.0, min(100.0, pos_score - neg_count * 9.0))
 
-    missing = [k.lstrip("_") for k in _INPUTS if m.get(k) is None]
+    missing = [rotulo for rotulo, chaves in _INPUTS
+               if all(m.get(k) is None for k in chaves)]
     confidence = round(100 * (1 - len(missing) / len(_INPUTS)), 0)
 
     risk_class = "muito alta" if neg_count >= 3 else "alta" if neg_count >= 1 else "média"

@@ -218,7 +218,13 @@ def load_company_financials(symbol: str) -> pd.DataFrame:
         "THEN NULL ELSE COALESCE(cf.capex, 0) + COALESCE(cf.acquisitions, 0) + "
         "COALESCE(cf.investments, 0) END AS investing_cash_flow, "
         "cf.capex, cf.free_cash_flow, cf.dividends_paid, "
-        "CASE WHEN b.shares_outstanding IS NOT NULL AND b.shares_outstanding <> 0 "
+        # O piso repete `ACOES_IMPLICITAS_MINIMAS`: o exercício que publica 26,70
+        # ou 100 ações traz a contagem em milhões, ou não a traz. Dividir por ele
+        # dava 254 mil dólares de dividendo por ação — e este valor vai para o
+        # gráfico anual da tela, não só para o score. Fica de fora a troca de
+        # escala só no último exercício (FLS): essa precisa da série ao lado, que
+        # `acoes_em_circulacao` confronta no caminho das métricas.
+        "CASE WHEN b.shares_outstanding >= 100000 "
         "THEN ABS(cf.dividends_paid) / b.shares_outstanding END AS dividends_per_share "
         "FROM market_us.income_statements i "
         "LEFT JOIN market_us.balance_sheets b "
@@ -394,7 +400,7 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
     Puxa as séries anuais em lote e calcula as métricas em Python (core.us_metrics).
     Retorna vazio se não houver dados — a UI trata offline.
     """
-    from core.us_metrics import compute_company_metrics
+    from core.us_metrics import _latest, compute_company_metrics, market_cap_confiavel
     cols = ["symbol", "name", "sector", "industry"]
     eng = _engine()
     if eng is None or not schema_ready():
@@ -451,12 +457,18 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
     for _, c in comp.iterrows():
         cid = int(c["id"])
         bal_rows = bal_g.get(cid, [])
-        mcap = mcap_by_symbol.get(c["symbol"])
-        if mcap is None:  # deriva: último preço × ações em circulação
-            shares = _latest_shares(bal_rows)
-            px = close_by_symbol.get(c["symbol"])
-            if px is not None and shares:
-                mcap = float(px) * shares
+        # Valor de mercado: as duas fontes se conferem uma à outra. Antes
+        # o derivado era só reserva para quando o histórico faltava, e um
+        # histórico presente porém absurdo passava direto — ver
+        # market_cap_confiavel.
+        shares = _latest_shares(bal_rows)
+        px = close_by_symbol.get(c["symbol"])
+        derivado = float(px) * shares if px is not None and shares else None
+        publicado = mcap_by_symbol.get(c["symbol"])
+        mcap = market_cap_confiavel(
+            float(publicado) if publicado is not None else None, derivado,
+            float(px) if px is not None else None,
+            _latest(inc_g.get(cid, []), "revenue"))
         m = compute_company_metrics(
             inc_g.get(cid, []), bal_rows, cfw_g.get(cid, []), market_cap=mcap)
         rows.append({"symbol": c["symbol"], "name": c["name"],

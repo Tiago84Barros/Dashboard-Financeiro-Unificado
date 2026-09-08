@@ -53,8 +53,31 @@ def test_confidence_reflete_dados_faltantes():
          "net_debt_ebitda": None, "_fcf": None}
     r = ua.score_asymmetry(m, {})
     assert r["confidence"] == 0
-    assert set(r["missing_data"]) == {"revenue_cagr_3y", "revenue_cagr_5y",
+    assert set(r["missing_data"]) == {"crescimento 3a", "crescimento 5a",
                                       "roic", "net_debt_ebitda", "fcf"}
+
+
+def test_confidence_aceita_regressao_no_lugar_do_cagr():
+    """Crescimento é um insumo com duas contas possíveis, não duas chaves.
+
+    Exigir a chave do CAGR rebaixaria a confiança de quem tem a série inteira
+    medida por regressão — que é a conta preferida, não um substituto pior.
+    """
+    m = {"revenue_trend_3y": 0.18, "revenue_trend_5y": 0.15, "roic": 0.2,
+         "net_debt_ebitda": 1.0, "_fcf": 10}
+
+    assert ua.score_asymmetry(m, {})["missing_data"] == []
+
+
+def test_aceleracao_nao_mistura_regressao_com_cagr():
+    """Se o 3a viesse da regressão e o 5a do CAGR, "3a > 5a" mediria a troca de
+    aritmética, não a aceleração da empresa."""
+    m = {"revenue_trend_3y": 0.10, "revenue_cagr_5y": 0.90}
+
+    sinais = {nome: ok for nome, _peso, ok in ua._positive_signals(m, {})}
+    acelera = [k for k in sinais if "Acelera" in k]
+
+    assert len(acelera) == 1 and sinais[acelera[0]] is False
 
 
 def test_classify_stage():
