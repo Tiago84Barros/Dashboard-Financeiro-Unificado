@@ -255,3 +255,85 @@ def test_renda_de_fii_formata_dy_em_pontos_percentuais_no_texto():
     assert ev.valor == pytest.approx(0.1497), "Evidencia.valor continua fracao crua"
     assert "14." in ev.texto or "15." in ev.texto, "texto precisa mostrar ~14,97%, nao 0,15%"
     assert "0.15%" not in ev.texto and "0,15%" not in ev.texto
+
+
+# --- Classe us: crescimento pela receita e renda com a causa nomeada ---------
+
+
+def _us(symbol, fundamentals=None, history=None):
+    """Ativo americano como ele chega na nuvem.
+
+    `history` vazio nao e simplificacao de fixture: o adaptador preenche
+    history.financials_anuais a partir de market_us.income_statements, que so
+    existe no armazem local. Em producao os 30 ativos chegam assim.
+    """
+    return _linha(symbol, classe="us", currency="USD",
+                  fundamentals=fundamentals, history=history)
+
+
+def test_crescimento_de_us_vem_da_receita_e_nao_do_lpa_ausente():
+    df = pd.DataFrame([_us("ADBE", fundamentals={"revenue_cagr_5y": 0.1306})])
+
+    p = classificar(df)[0]
+
+    assert "crescimento" in p.papeis
+    assert "crescimento" not in p.indeterminados
+    ev = next(e for e in p.evidencias if e.papel == "crescimento")
+    assert "receita" in ev.texto.lower(), "a base medida precisa aparecer na tela"
+    assert "13.06%" in ev.texto
+
+
+def test_crescimento_de_us_abaixo_do_limiar_e_negado_nao_indeterminado():
+    baixo = LIMIARES["cagr_minimo"] / 2
+    df = pd.DataFrame([_us("FFIV", fundamentals={"revenue_cagr_5y": baixo})])
+
+    p = classificar(df)[0]
+
+    assert "crescimento" not in p.papeis
+    assert "crescimento" not in p.indeterminados, \
+        "avaliado e negado nao e o mesmo que sem dado"
+
+
+def test_crescimento_de_us_sem_o_campo_continua_indeterminado():
+    df = pd.DataFrame([_us("XYZ", fundamentals={"pe": 20.0})])
+
+    assert "crescimento" in classificar(df)[0].indeterminados
+
+
+def test_crescimento_de_us_ignora_eps_growth_como_substituto():
+    """eps_growth_3y nao e CAGR e nao pode ser lido contra o limiar de 8%."""
+    df = pd.DataFrame([_us("GNTX", fundamentals={"eps_growth_3y": 0.99,
+                                                 "shareholder_yield": 0.05})])
+
+    assert "crescimento" in classificar(df)[0].indeterminados
+
+
+def test_renda_de_us_fica_indeterminada_com_a_causa_nomeada():
+    df = pd.DataFrame([_us("EW", fundamentals={"payout_ratio": 0.2,
+                                               "shareholder_yield": 0.03})])
+
+    p = classificar(df)[0]
+
+    assert "renda" in p.indeterminados
+    motivos = dict(p.motivos_indeterminado)
+    assert "renda" in motivos
+    assert "dividend yield" in motivos["renda"]
+
+
+def test_motivo_so_existe_para_indeterminado():
+    """Motivo colado num papel cumprido seria contradicao na mesma linha."""
+    df = pd.DataFrame([
+        _us("ADBE", fundamentals={"revenue_cagr_5y": 0.13}),
+        _linha("ITSA4", classe="b3", fundamentals={"DY": 0.09}),
+    ])
+
+    for p in classificar(df):
+        for papel, _motivo in p.motivos_indeterminado:
+            assert papel in p.indeterminados
+            assert papel not in p.papeis
+
+
+def test_papeis_de_b3_e_fii_nao_ganham_motivo_de_us():
+    df = pd.DataFrame([_linha("ITSA4", classe="b3", fundamentals={"DY": 0.09})])
+
+    assert classificar(df)[0].motivos_indeterminado == ()

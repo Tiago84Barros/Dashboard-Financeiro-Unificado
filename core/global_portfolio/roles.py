@@ -14,8 +14,22 @@ Ativo sem dado suficiente para julgar um papel entra em `indeterminados`,
 nunca e simplesmente negado — "nao sabemos" e "nao cumpre" sao coisas
 diferentes. Volatilidade e correlacao dependem de serie de precos mensal,
 que hoje so existe para as classes `b3` e `fii` (ver
-core.global_portfolio.returns); o restante do patrimonio (~38%, a classe
-`us`) fica indeterminado nesses dois papeis ate a serie americana entrar.
+core.global_portfolio.returns); sem essa serie os dois papeis ficam
+indeterminados para a classe `us`.
+
+Indeterminado sem causa nomeada e uma lacuna que ninguem consegue fechar:
+`motivos_indeterminado` carrega, quando a causa e estrutural e conhecida,
+a frase que diz POR QUE o dado falta. Hoje ha um caso — renda da classe
+`us`, porque a vitrine americana nao publica dividend yield (fields.py
+recusa payout_ratio e shareholder_yield como proxy: medem outra coisa).
+
+Crescimento tem uma fonte por classe, e a evidencia na tela diz qual:
+`b3` usa CAGR de LPA anual, `fii` usa CAGR de VPA mensal e `us` usa CAGR de
+RECEITA em 5 anos (revenue_cagr_5y da vitrine). A serie anual americana
+(history.financials_anuais) chega vazia na nuvem — ela vem de
+market_us.income_statements, que so existe no armazem local —, entao
+perguntar por LPA ali deixava 30 de 30 ativos indeterminados por endereco
+errado, nao por falta de dado.
 
 Camada pura: sem SQL, sem Streamlit, sem I/O. Coberto por
 tests/test_global_roles.py.
@@ -58,8 +72,9 @@ LIMIARES: dict[str, float] = {
     # disponiveis. Acima disto o payout e tratado como erratico demais
     # para sustentar o papel de renda, mesmo com DY alto.
     "payout_instavel": 0.30,
-    # CAGR minimo de LPA nos ultimos anos disponiveis para justificar
-    # "crescimento" (8% ao ano).
+    # CAGR minimo nos ultimos anos disponiveis para justificar
+    # "crescimento" (8% ao ano). Mesmo limiar para as tres classes; o que
+    # muda entre elas e a base medida (LPA, VPA ou receita).
     "cagr_minimo": 0.08,
     # Volatilidade anualizada abaixo da qual o ativo conta como estabilizador
     # da carteira (15% ao ano).
@@ -104,6 +119,23 @@ class PapelDoAtivo:
     evidencias: tuple[Evidencia, ...]
     indeterminados: tuple[str, ...]
     justificativa: str
+    # (papel, motivo) para os indeterminados de causa estrutural conhecida.
+    # Default vazio: indeterminado sem causa nomeada continua valido — a
+    # maioria e falta pontual de dado, nao lacuna de fonte.
+    motivos_indeterminado: tuple[tuple[str, str], ...] = ()
+
+
+# (asset_class, papel) -> por que o dado nao existe. So entra aqui causa
+# estrutural: lacuna da FONTE, que nenhuma reingestao deste ativo resolve.
+# Falta pontual de historico nao entra — ela varia por ativo e a frase
+# generica do card ja a descreve.
+_MOTIVOS_INDETERMINADO: dict[tuple[str, str], str] = {
+    ("us", "renda"): (
+        "a vitrine EUA nao publica dividend yield; payout_ratio cobre menos "
+        "da metade dos ativos e shareholder_yield soma recompra, entao "
+        "nenhum dos dois serve de substituto"
+    ),
+}
 
 
 def _asset_class(linha: dict) -> str:
@@ -256,6 +288,8 @@ def _avaliar_crescimento(linha: dict) -> tuple[bool | None, Evidencia | None]:
 
     if classe == "fii":
         return _avaliar_crescimento_fii(payload)
+    if classe == "us":
+        return _avaliar_crescimento_us(payload)
 
     lpa_valores = _janela_recente(_serie_historica(payload, "demonstracoes_anuais"), "LPA")
     cagr = _cagr(lpa_valores)
@@ -266,6 +300,36 @@ def _avaliar_crescimento(linha: dict) -> tuple[bool | None, Evidencia | None]:
     texto = (
         f"CAGR de LPA em {len(lpa_valores) - 1} anos de {cagr * 100:.2f}% "
         f"(minimo {LIMIARES['cagr_minimo'] * 100:.2f}%)"
+    )
+    evidencia = Evidencia("crescimento", cagr, LIMIARES["cagr_minimo"], texto) if cumpre else None
+    return cumpre, evidencia
+
+
+def _avaliar_crescimento_us(payload: dict) -> tuple[bool | None, Evidencia | None]:
+    """Crescimento nos EUA: CAGR de RECEITA em 5 anos, da vitrine.
+
+    A regra das acoes brasileiras pede LPA de history.demonstracoes_anuais.
+    Para `us` esse bloco chega vazio na nuvem (o adaptador o preenche de
+    market_us.income_statements, que so existe no armazem local), e o papel
+    saia indeterminado em 30 de 30 ativos — por endereco errado, nao por
+    falta de dado: o crescimento ja esta publicado em fundamentals.
+
+    Receita nao e lucro. Uma empresa pode crescer receita comprimindo
+    margem, e essa diferenca importa o bastante para entrar no texto da
+    evidencia em vez de ficar so aqui no comentario. revenue_cagr_5y e o
+    unico campo de crescimento de us_metrics que e taxa composta de verdade
+    — os outros mudaram de medida e de nome, e compara-los com o mesmo
+    limiar de 8% seria comparar coisas diferentes.
+    """
+    cagr = campo_valor(payload, "us", "crescimento_receita")
+    if cagr is None:
+        return None, None
+
+    cumpre = cagr >= LIMIARES["cagr_minimo"]
+    texto = (
+        f"CAGR de receita em 5 anos de {cagr * 100:.2f}% "
+        f"(minimo {LIMIARES['cagr_minimo'] * 100:.2f}%) — a base e receita, "
+        f"nao LPA: a vitrine EUA nao publica serie de lucro por acao"
     )
     evidencia = Evidencia("crescimento", cagr, LIMIARES["cagr_minimo"], texto) if cumpre else None
     return cumpre, evidencia
@@ -447,9 +511,13 @@ def classificar(df_posicoes: pd.DataFrame, *,
             ("diversificacao", *_avaliar_diversificacao(symbol, correlacoes)),
         ]
 
+        motivos: list[tuple[str, str]] = []
         for papel, cumpre, evidencia in avaliacoes:
             if cumpre is None:
                 indeterminados.append(papel)
+                motivo = _MOTIVOS_INDETERMINADO.get((classe, papel))
+                if motivo:
+                    motivos.append((papel, motivo))
             elif cumpre:
                 papeis.append(papel)
                 if evidencia is not None:
@@ -470,6 +538,9 @@ def classificar(df_posicoes: pd.DataFrame, *,
             evidencias=evidencias_ordenadas,
             indeterminados=indeterminados_ordenados,
             justificativa=_justificativa(papeis_ordenados, evidencias_ordenadas),
+            motivos_indeterminado=tuple(
+                (p, m) for p in PAPEIS for pp, m in motivos if pp == p
+            ),
         ))
 
     return saida

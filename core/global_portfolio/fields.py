@@ -11,7 +11,9 @@ Coberto por tests/test_global_fields.py.
 """
 from __future__ import annotations
 
-CAMPOS: tuple[str, ...] = ("dy", "market_cap", "pe", "pvp", "roe")
+CAMPOS: tuple[str, ...] = (
+    "crescimento_receita", "dy", "market_cap", "pe", "pvp", "roe",
+)
 
 # campo canonico -> {classe: chave dentro de payload["fundamentals"]}
 # Ausencia da classe no dicionario interno significa "nao aplicavel".
@@ -23,6 +25,13 @@ _ORIGEM: dict[str, dict[str, str]] = {
     # us ausente: us_metrics nao calcula dividend yield. payout_ratio e
     # shareholder_yield existem, mas sao outra coisa — nao servem de proxy.
     "dy": {"b3": "DY", "fii": "dy_12m"},
+    # Crescimento medido sobre RECEITA, nao lucro. So a classe us: b3 e fii
+    # tem serie historica no payload e calculam o CAGR na propria regra
+    # (LPA anual e VPA mensal). Dos campos de crescimento que us_metrics
+    # publica, revenue_cagr_5y e o unico que e taxa composta de verdade —
+    # os demais (eps_growth_3y, op_income_growth_3y) mudaram de medida e de
+    # nome de proposito, e le-los como CAGR seria pior que a lacuna.
+    "crescimento_receita": {"us": "revenue_cagr_5y"},
     "roe": {"b3": "ROE", "us": "roe"},
     # b3 ausente: "Valor de mercado" nao esta em _MULT_COLS.
     # us: a chave real leva underscore (campo de contexto em us_metrics).
