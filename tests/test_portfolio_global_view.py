@@ -817,3 +817,68 @@ def test_painel_de_recomendacoes_conta_e_nomeia_as_nao_calibradas():
     fonte = inspect.getsource(portfolio_global._painel_recomendacoes)
     assert "custo_calibrado" in fonte
     assert "st.warning" in fonte
+
+
+# ---------------------------------------------------------------------------
+# Chat com a LLM sobre o Portfolio Global
+# ---------------------------------------------------------------------------
+
+
+def test_o_chat_e_chamado_no_render_e_e_o_ultimo_painel():
+    """Duas regressoes num teste. (1) Motor que ninguem consulta e decoracao
+    -- mesmo risco de 'Diagnostico precisa de porta de entrada'. (2) st.chat_input
+    toma o foco quando renderiza; no meio da tela ele empurraria a rolagem
+    para longe dos paineis (efeito ja anotado em views/fiis.py)."""
+    import ast
+    import inspect
+    import textwrap
+
+    fonte = textwrap.dedent(inspect.getsource(portfolio_global.render))
+    arvore = ast.parse(fonte)
+    chamadas = [
+        n.func.id for n in ast.walk(arvore)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        and n.func.id.startswith("_painel_")
+    ]
+    assert "_painel_chat" in chamadas
+    assert chamadas[-1] == "_painel_chat"
+
+
+def test_o_chat_le_o_resultado_dos_paineis_em_vez_de_recalcular():
+    """O chat precisa ler os MESMOS papeis e recomendacoes que a tela mostrou.
+    Recalcular por outro caminho e como o gate que lia o cadastro cru enquanto
+    a tela lia a vitrine: diverge em silencio, sem erro em lugar nenhum."""
+    import inspect
+
+    fonte = inspect.getsource(portfolio_global.render)
+    assert "papeis = _painel_papeis(" in fonte
+    assert "acoes = _painel_recomendacoes(" in fonte
+    assert "papeis=papeis" in fonte and "acoes=acoes" in fonte
+
+    chat = inspect.getsource(portfolio_global._painel_chat)
+    assert "roles.classificar" not in chat
+    assert "_gerar_recomendacoes" not in chat
+
+
+def test_paineis_devolvem_lista_vazia_quando_nao_ha_o_que_mostrar():
+    """A assinatura passou a devolver valor; os caminhos de saida antecipada
+    precisam devolver lista, nunca None -- `list(None)` explodiria no chat."""
+    import ast
+    import inspect
+    import textwrap
+
+    for funcao in (portfolio_global._painel_papeis, portfolio_global._painel_recomendacoes):
+        arvore = ast.parse(textwrap.dedent(inspect.getsource(funcao)))
+        retornos = [n for n in ast.walk(arvore) if isinstance(n, ast.Return)]
+        assert retornos, f"{funcao.__name__} nao devolve nada"
+        assert all(n.value is not None for n in retornos), (
+            f"{funcao.__name__} tem um 'return' nu que viraria None no chat"
+        )
+
+
+def test_falha_do_provedor_de_llm_nao_derruba_o_portfolio_global():
+    """Fronteira de isolamento, mesmo padrao de _painel_recomendacoes."""
+    import inspect
+    fonte = inspect.getsource(portfolio_global._painel_chat)
+    assert "except Exception" in fonte
+    assert "Erro ao consultar a LLM" in fonte
