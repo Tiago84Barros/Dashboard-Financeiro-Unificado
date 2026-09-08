@@ -89,7 +89,39 @@ US_SCHEMA_VERSION = 1
 # 68 delas passariam por todos os outros criterios.
 # Efeito medido sobre as mesmas 2.618 empresas: decision_grade 1.062 -> 1.727,
 # abrangencia dos EUA 41% -> 66%.
-US_FUNDAMENTAL_SCORE_VERSION = "0.8.0"
+# 0.9.0 (2026-09-08): a trilha de crescimento passa a perguntar pela INCLINACAO
+# DA REGRESSAO log-linear da serie, e nao mais pelo CAGR de ponta a ponta. O
+# CAGR le dois numeros -- primeiro e ultimo -- e chama de taxa o que sobra;
+# tudo que aconteceu no meio e invisivel para ele, inclusive o fato de a serie
+# nao ter tendencia nenhuma. Medido sobre as mesmas 3.701 empresas: as duas
+# aritmeticas concordam (correlacao 0,9365, divergencia mediana 1,47 pp), ou
+# seja, a regressao REFINA em vez de inverter -- mas 1.109 das 3.145 taxas
+# (35%) tem R2 abaixo de 0,5, e essa e exatamente a informacao que o CAGR
+# escondia. O R2 passa a ser publicado ao lado de cada taxa, na tela, no
+# dossie e no contexto da LLM. Series que cruzam zero (lucro operacional, LPA,
+# FCL) usam crescimento simetrico Davis-Haltiwanger-Schuh, onde o CAGR e
+# indefinido.
+# O piso de respondibilidade cobra o preco: a regressao exige tres pontos onde
+# o CAGR se contentava com duas pontas, entao quem tem serie curta deixa de
+# responder a trilha. decision_grade 1.742 -> 1.668 (-74), screen_grade
+# 657 -> 740. Nenhuma empresa passa a ter `growth` como trilha irrespondivel
+# (a unica que aparece continua sendo `solidity`, 206): a perda esta na
+# cobertura dentro da trilha, nao na trilha inteira. Uma taxa ajustada em dois
+# pontos e o CAGR com outro nome e sem R2 -- perder 74 opinioes de grau de
+# decisao e o custo de nao dar opiniao sobre serie que nao suporta a pergunta.
+# Entra junto o DIVIDEND YIELD derivado do EDGAR (dividends_paid sobre valor de
+# mercado, 23,7% do universo). Ele NAO entra na trilha `shareholder`: ja esta
+# dentro de `shareholder_yield` e seria contado duas vezes. Ausencia e `None`,
+# nunca 0.0 -- lacuna de dado nao e nao-pagamento de dividendo.
+# Tres guardas de dado nascem da mesma medicao. `shares_outstanding` publica a
+# contagem em escala errada: FLS com 176.793 em 2025 contra 176.793.000 nos
+# quatro anos anteriores, GBL com 26,70 em TODA a serie (milhoes, coerente
+# consigo mesma), HY sem contagem nenhuma e um divisor de 100 chegando por
+# fora. O dividendo por acao chegava a 303.854 dolares; o maximo agora e 19,34.
+# Em `share_count_cagr_3y` o mesmo defeito PREMIAVA -- a queda de escala virava
+# recompra liquida de -99,89%, o melhor valor do universo. Ia de -0,9989 a
+# +2.339.999; agora vai de -0,85 a +3,22, ao custo de 190 leituras (6%).
+US_FUNDAMENTAL_SCORE_VERSION = "0.9.0"
 
 # Score de assimetria da aba "Empresas Fora da Curva".
 US_ASYMMETRY_SCORE_VERSION = "0.1.0"
