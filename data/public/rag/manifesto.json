@@ -1,134 +1,134 @@
 {
-  "linhas": 93498,
-  "chunks_distintos": 93498,
+  "linhas": 162282,
+  "chunks_distintos": 162282,
   "roots": 292,
-  "ancoras": 39548,
-  "stubs": 0,
-  "bytes": 26110305,
+  "ancoras": 74454,
+  "stubs": 2600,
+  "bytes": 46275244,
   "particoes": [
     {
       "arquivo": "chunks_A.parquet",
-      "linhas": 8345,
-      "bytes": 2311003
+      "linhas": 13171,
+      "bytes": 3682966
     },
     {
       "arquivo": "chunks_B.parquet",
-      "linhas": 11332,
-      "bytes": 3077656
+      "linhas": 21538,
+      "bytes": 6094337
     },
     {
       "arquivo": "chunks_C.parquet",
-      "linhas": 11830,
-      "bytes": 3261675
+      "linhas": 20383,
+      "bytes": 5819031
     },
     {
       "arquivo": "chunks_D.parquet",
-      "linhas": 2474,
-      "bytes": 697890
+      "linhas": 5005,
+      "bytes": 1396410
     },
     {
       "arquivo": "chunks_E.parquet",
-      "linhas": 7419,
-      "bytes": 2115899
+      "linhas": 12217,
+      "bytes": 3607374
     },
     {
       "arquivo": "chunks_F.parquet",
-      "linhas": 1768,
-      "bytes": 475055
+      "linhas": 3042,
+      "bytes": 836283
     },
     {
       "arquivo": "chunks_G.parquet",
-      "linhas": 4832,
-      "bytes": 1373917
+      "linhas": 7922,
+      "bytes": 2232378
     },
     {
       "arquivo": "chunks_H.parquet",
-      "linhas": 2363,
-      "bytes": 650333
+      "linhas": 3710,
+      "bytes": 1060228
     },
     {
       "arquivo": "chunks_I.parquet",
-      "linhas": 2218,
-      "bytes": 687220
+      "linhas": 3992,
+      "bytes": 1181901
     },
     {
       "arquivo": "chunks_J.parquet",
-      "linhas": 436,
-      "bytes": 138469
+      "linhas": 878,
+      "bytes": 219593
     },
     {
       "arquivo": "chunks_K.parquet",
-      "linhas": 1001,
-      "bytes": 285825
+      "linhas": 1501,
+      "bytes": 435108
     },
     {
       "arquivo": "chunks_L.parquet",
-      "linhas": 3515,
-      "bytes": 950419
+      "linhas": 5670,
+      "bytes": 1588262
     },
     {
       "arquivo": "chunks_M.parquet",
-      "linhas": 5078,
-      "bytes": 1426614
+      "linhas": 8748,
+      "bytes": 2584120
     },
     {
       "arquivo": "chunks_N.parquet",
-      "linhas": 2705,
-      "bytes": 727832
+      "linhas": 4141,
+      "bytes": 1124426
     },
     {
       "arquivo": "chunks_O.parquet",
-      "linhas": 2600,
-      "bytes": 748097
+      "linhas": 4106,
+      "bytes": 1178632
     },
     {
       "arquivo": "chunks_P.parquet",
-      "linhas": 5527,
-      "bytes": 1516518
+      "linhas": 11083,
+      "bytes": 3133463
     },
     {
       "arquivo": "chunks_Q.parquet",
-      "linhas": 800,
-      "bytes": 202046
+      "linhas": 1091,
+      "bytes": 292675
     },
     {
       "arquivo": "chunks_R.parquet",
-      "linhas": 3321,
-      "bytes": 972898
+      "linhas": 5572,
+      "bytes": 1624767
     },
     {
       "arquivo": "chunks_S.parquet",
-      "linhas": 3952,
-      "bytes": 1108431
+      "linhas": 6646,
+      "bytes": 1940638
     },
     {
       "arquivo": "chunks_T.parquet",
-      "linhas": 6727,
-      "bytes": 1871673
+      "linhas": 10802,
+      "bytes": 3067529
     },
     {
       "arquivo": "chunks_U.parquet",
-      "linhas": 1250,
-      "bytes": 330820
+      "linhas": 2498,
+      "bytes": 696257
     },
     {
       "arquivo": "chunks_V.parquet",
-      "linhas": 2591,
-      "bytes": 774565
+      "linhas": 5072,
+      "bytes": 1519122
     },
     {
       "arquivo": "chunks_W.parquet",
-      "linhas": 1098,
-      "bytes": 317973
+      "linhas": 2947,
+      "bytes": 817902
     },
     {
       "arquivo": "chunks_Y.parquet",
-      "linhas": 316,
-      "bytes": 87477
+      "linhas": 547,
+      "bytes": 141842
     }
   ],
-  "assinatura_chunk_hash": "3134197f52ba208220eecdaf558d099e",
-  "assinatura_origem": "3134197f52ba208220eecdaf558d099e",
-  "linhas_origem": 93498,
+  "assinatura_chunk_hash": "c51504c1a031098d60b4c70004abe111",
+  "assinatura_origem": "c51504c1a031098d60b4c70004abe111",
+  "linhas_origem": 162282,
   "confere": true
 }
