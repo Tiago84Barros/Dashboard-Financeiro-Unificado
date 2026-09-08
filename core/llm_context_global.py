@@ -297,6 +297,10 @@ def _bloco_papeis(papeis: Sequence[Any]) -> list[str]:
             f"{', '.join(nomes) if nomes else 'NENHUM papel com evidência suficiente'}"
             + (f" | indeterminado: {', '.join(indeterminados)}" if indeterminados else "")
         )
+        # A causa da lacuna, quando conhecida, entra junto: sem ela o modelo
+        # tende a ler "indeterminado" como "o ativo nao cumpre".
+        for papel, motivo in getattr(entrada, "motivos_indeterminado", ()) or ():
+            linhas.append(f"    motivo ({rotulos.get(papel, papel)}): {motivo}")
     return linhas
 
 

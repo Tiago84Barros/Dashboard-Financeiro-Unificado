@@ -108,10 +108,21 @@ def card_papel_html(entrada: roles.PapelDoAtivo) -> str:
             "🔴", "Nenhum papel identificado",
             "nenhuma regra teve evidência suficiente para este ativo", NEGATIVO,
         ))
-    if indeterminados:
+    # Indeterminado com causa conhecida ganha linha própria com a causa:
+    # "sem dado suficiente" descreve o sintoma e não diz o que falta buscar.
+    # Os demais continuam agrupados sob a frase genérica, que ali é honesta —
+    # a falta é pontual do ativo, não uma lacuna de fonte.
+    motivos = dict(getattr(entrada, "motivos_indeterminado", ()) or ())
+    for papel in [p for p in indeterminados if p in motivos]:
+        partes.append(_linha_papel(
+            "❔", f"Indeterminado: {roles.ROTULOS_PAPEL[papel]}",
+            motivos[papel], ALERTA,
+        ))
+    restantes = [p for p in indeterminados if p not in motivos]
+    if restantes:
         partes.append(_linha_papel(
             "❔", "Indeterminado: " + ", ".join(
-                roles.ROTULOS_PAPEL[p] for p in indeterminados),
+                roles.ROTULOS_PAPEL[p] for p in restantes),
             "sem dado suficiente para avaliar — não é o mesmo que não cumprir",
             ALERTA,
         ))

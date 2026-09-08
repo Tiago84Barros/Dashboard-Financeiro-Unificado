@@ -972,3 +972,28 @@ def test_falha_do_provedor_de_llm_nao_derruba_o_portfolio_global():
     fonte = inspect.getsource(portfolio_global._painel_chat)
     assert "except Exception" in fonte
     assert "Erro ao consultar a LLM" in fonte
+
+
+def test_card_mostra_a_causa_do_indeterminado_quando_ela_e_conhecida():
+    from core.global_portfolio.roles import PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
+
+    entrada = PapelDoAtivo(
+        "EW", (), (), ("renda",), "",
+        motivos_indeterminado=(("renda", "a vitrine EUA nao publica dividend yield"),),
+    )
+
+    html = card_papel_html(entrada)
+
+    assert "dividend yield" in html
+    assert "sem dado suficiente" not in html, \
+        "com causa conhecida, a frase generica so dilui"
+
+
+def test_card_mantem_a_frase_generica_para_indeterminado_sem_causa():
+    from core.global_portfolio.roles import PapelDoAtivo
+    from design.portfolio_global_cards import card_papel_html
+
+    html = card_papel_html(PapelDoAtivo("XPTO3", (), (), ("crescimento",), ""))
+
+    assert "sem dado suficiente" in html
