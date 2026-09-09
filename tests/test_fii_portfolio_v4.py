@@ -411,3 +411,99 @@ def test_macro_context_changes_utility_without_breaking_constraints():
     assert result["macro_coverage"] == 1.0
     assert abs(sum(item["weight"] for item in result["items"]) - 1) < 1e-6
     assert max(abs(item["macro_score_adjustment"]) for item in result["items"]) <= 10
+
+
+def test_fundo_sem_protecao_divulgada_nao_passa_de_metade_do_teto():
+    """A verificação incide sobre o peso FINAL: já houve teto de 15%
+    respeitado em toda chamada e violado em 27,8% no acumulado."""
+    import numpy as np
+    from core.fii_portfolio_v4 import _teto_por_ativo, PortfolioPolicy
+
+    policy = PortfolioPolicy(max_asset=.15)
+    rows = [
+        {"ticker": "OPACO11", "tipo": "tijolo"},
+        {"ticker": "ABERTO11", "tipo": "tijolo",
+         "tenant_concentration": .10, "lease_expiry_concentration_24m": .10},
+        {"ticker": "PAPEL11", "tipo": "papel"},
+    ]
+    assert np.allclose(_teto_por_ativo(rows, policy), [.075, .15, .15])
+
+
+def test_violacao_de_teto_por_ativo_e_reportada_para_o_fundo_opaco():
+    from core.fii_portfolio_v4 import PortfolioPolicy, portfolio_constraint_violations
+
+    policy = PortfolioPolicy(max_asset=.15)
+    itens = [
+        {"ticker": "OPACO11", "tipo": "tijolo", "weight": .12, "confidence": .8},
+        {"ticker": "PAPEL11", "tipo": "papel", "weight": .88, "confidence": .8},
+    ]
+    violacoes = portfolio_constraint_violations(itens, {}, policy)
+    assert any("OPACO11" in v for v in violacoes)
+
+
+def test_carteira_reporta_o_yield_recorrente_alem_do_divulgado():
+    from core.fii_portfolio_v4 import _resumo_de_renda
+
+    itens = [
+        {"weight": .5, "dy_12m": .1817, "income_recurrence": .5825},
+        {"weight": .5, "dy_12m": .1379, "income_recurrence": .8886},
+    ]
+    resumo = _resumo_de_renda(itens)
+    assert resumo["trailing_yield_12m"] == round((.1817 + .1379) / 2, 6)
+    assert resumo["recurrent_yield_12m"] == round((.1058 + .1225) / 2, 6)
+
+
+def test_opacidade_cede_quando_inviabilizaria_a_banda_do_tipo():
+    """Custo que zera a carteira deixou de ser custo e virou veto.
+
+    Precedente no próprio arquivo: max_weighted_uncertainty foi de .30 para .35
+    porque tornava o LP inviável no universo real.
+    """
+    import numpy as np
+    from core.fii_portfolio_v4 import (
+        PortfolioPolicy, _afrouxa_teto_por_viabilidade, _teto_por_ativo)
+
+    policy = PortfolioPolicy(max_asset=.15)
+    # Cinco tijolos, todos opacos: 5 x .075 = .375 contra um piso de banda .40.
+    rows = [{"ticker": f"T{i}11", "tipo": "tijolo"} for i in range(5)]
+    rows += [{"ticker": "P11", "tipo": "papel"}]
+    bands = {"tijolo": (.40, .60), "papel": (.15, .35)}
+
+    caps, notas = _afrouxa_teto_por_viabilidade(
+        _teto_por_ativo(rows, policy), rows, policy, bands)
+    assert caps[:5].sum() >= .40
+    assert caps.max() <= policy.max_asset
+    assert any("tijolo" in nota for nota in notas)
+
+
+def test_afrouxamento_nao_ocorre_quando_ha_folga():
+    """Com folga, a opacidade continua custando: relaxar sempre apagaria a regra."""
+    import numpy as np
+    from core.fii_portfolio_v4 import (
+        PortfolioPolicy, _afrouxa_teto_por_viabilidade, _teto_por_ativo)
+
+    policy = PortfolioPolicy(max_asset=.15)
+    rows = [{"ticker": "OPACO11", "tipo": "tijolo"}]
+    rows += [{"ticker": f"OK{i}11", "tipo": "tijolo",
+              "tenant_concentration": .10,
+              "lease_expiry_concentration_24m": .10} for i in range(4)]
+    bands = {"tijolo": (.40, .60)}
+
+    caps, notas = _afrouxa_teto_por_viabilidade(
+        _teto_por_ativo(rows, policy), rows, policy, bands)
+    assert caps[0] == .075
+    assert notas == []
+
+
+def test_teto_por_ativo_sempre_comporta_uma_carteira_inteira():
+    """Soma dos tetos abaixo de 1 devolve carteira vazia sem dizer por quê."""
+    import numpy as np
+    from core.fii_portfolio_v4 import (
+        PortfolioPolicy, _afrouxa_teto_por_viabilidade, _teto_por_ativo)
+
+    policy = PortfolioPolicy(max_asset=.15, max_assets=12)
+    rows = [{"ticker": f"T{i}11", "tipo": "tijolo"} for i in range(12)]
+    caps, notas = _afrouxa_teto_por_viabilidade(
+        _teto_por_ativo(rows, policy), rows, policy, {})
+    assert np.sort(caps)[::-1][:policy.max_assets].sum() >= 1.0
+    assert notas
