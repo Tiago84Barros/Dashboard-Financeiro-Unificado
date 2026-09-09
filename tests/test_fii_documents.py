@@ -670,3 +670,34 @@ def test_prazo_medio_nao_captura_numero_sem_contexto_de_prazo():
     padrao = _METRIC_PATTERNS["wault_anos"]
     assert padrao.search("prazo médio de pagamento dos fornecedores: 45 dias") is None
     assert padrao.search("o fundo tem 12 anos de história") is None
+
+
+def test_prazo_medio_ponderado_sem_qualificador_de_contrato_nao_e_wault():
+    """Achado Critical: "prazo médio ponderado da dívida" é métrica de fundo de
+    papel/CRI, não WAULT (que mede prazo de locação de contratos de aluguel).
+    Sem "contrato(s)"/"locação" qualificando o gatilho, não deve casar."""
+    from data_pipeline.market.fii_documents import _METRIC_PATTERNS
+
+    padrao = _METRIC_PATTERNS["wault_anos"]
+    assert padrao.search("prazo médio ponderado da dívida: 4,5 anos") is None
+    assert padrao.search("prazo médio ponderado dos recebíveis: 3,2 anos") is None
+    assert padrao.search("prazo médio ponderado de amortização: 6 anos") is None
+
+
+def test_prazo_medio_ponderado_rejeita_unidade_diferente_de_anos():
+    """Achado Critical: sufixo de unidade opcional não pode ignorar "meses"/
+    "dias" e capturar o número como se fosse anos. 18 meses != 18 anos."""
+    from data_pipeline.market.fii_documents import _METRIC_PATTERNS
+
+    padrao = _METRIC_PATTERNS["wault_anos"]
+    assert padrao.search("prazo médio ponderado do contrato: 18 meses") is None
+    assert padrao.search("prazo médio remanescente dos contratos: 40 dias") is None
+
+
+def test_prazo_medio_ponderado_rejeita_numero_solto_sem_contexto_de_anos():
+    """Achado Important: número perto do rótulo sem ser prazo em anos (aqui,
+    percentual de exposição) não deve casar, mesmo com qualificador ausente."""
+    from data_pipeline.market.fii_documents import _METRIC_PATTERNS
+
+    padrao = _METRIC_PATTERNS["wault_anos"]
+    assert padrao.search("prazo médio ponderado de exposição: 45%") is None

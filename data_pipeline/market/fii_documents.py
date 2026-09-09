@@ -100,10 +100,21 @@ _METRIC_PATTERNS = {
     # inviabilizava qualquer regra sobre prazo de locação. Gestoras brasileiras
     # escrevem "prazo médio remanescente/ponderado dos contratos", e publicam a
     # sigla em tabela com o "(anos)" no cabeçalho, longe do número.
+    #
+    # "Prazo médio ponderado/remanescente" sozinho NÃO é gatilho suficiente: a
+    # mesma frase descreve prazo de dívida, de recebíveis ou de amortização em
+    # fundos de papel/CRI, que não é WAULT. Fora da sigla, exigimos que o
+    # gatilho seja qualificado por "contrato(s)" ou "locação" (o objeto que o
+    # WAULT mede). E quando um substantivo de unidade segue o número, ele
+    # precisa ser anos/years — "meses", "dias" ou "%" fazem o casamento
+    # falhar em vez de serem ignorados, para não capturar 18 meses como 18
+    # anos.
     "wault_anos": re.compile(
-        r"(?:\bWAULT\b|prazo\s+m[eé]dio\s+(?:remanescente|ponderado)"
-        r"(?:\s+dos?\s+contratos?)?)"
-        r"[^\d]{0,40}(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:anos?|years?)?",
+        r"(?:\bWAULT\b|prazo\s+m[eé]dio\s+(?:remanescente|ponderado)\s+"
+        r"(?:dos?\s+contratos?|d[ae]\s+loca[çc][aã]o))"
+        r"[^\d]{0,40}(\d{1,2}(?:[.,]\d{1,2})?)(?!\d)"
+        r"\s*(?:anos?|years?)?"
+        r"(?!\s*(?:m[êe]s(?:es)?|dias?|%|por\s*cento))",
         re.I,
     ),
     "vacancia_fisica": re.compile(r"vac[aâ]ncia\s+f[ií]sica[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
