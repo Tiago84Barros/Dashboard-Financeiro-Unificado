@@ -20,6 +20,7 @@
 - **Versões:** ao fim, `METHODOLOGY_VERSION` 6.8.0 → 6.9.0, `FORMULA_VERSION` acompanha, `INTEGRATED_MODEL_VERSION` 6.7.0 → 6.8.0. Subir versão obriga a reconstruir a safra PIT (Task 8) — sem isso o backtest desliga em silêncio.
 - **Branch:** `fii-protecao-investidor`, já criado. A rotina noturna que commita o snapshot de FII na main recusa enquanto um branch de trabalho está em uso; não deixar aberto por dias.
 - **Efeito esperado ao final:** universo elegível 220 → 98 (50 papel, 23 tijolo, 22 FoF, 2 híbrido).
+- **A proteção não pode inviabilizar a carteira.** `tactical_type_bands` impõe **piso** de tijolo (25% a 40% conforme o regime). Se os tetos reduzidos pela opacidade não comportarem o piso de uma banda, o custo da opacidade cede — e o afrouxamento é **reportado**, nunca silencioso. Medição de 09/09/2026: 10 dos 25 tijolo/híbrido elegíveis são opacos; os 14 tijolo transparentes sozinhos comportam 90% de peso contra um piso de 40%. A folga existe hoje e é circunstancial: a guarda é o que a torna permanente.
 
 ## File Structure
 
@@ -786,7 +787,144 @@ Em `portfolio_constraint_violations`, troque a checagem escalar da linha 474:
 
 Ajuste o nome da lista de violações ao que já existe na função. Nos itens montados na linha ~730, acrescente `"protecao_nao_divulgada": protecao_nao_divulgada(rows[i])`. Nas linhas 786-788, substitua o cálculo inline pelos valores de `_resumo_de_renda(items)`, mantendo `trailing_yield_12m` e `expected_yield` como estão e acrescentando `recurrent_yield_12m`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Write the failing test for feasibility**
+
+O teto reduzido é um custo, não um veto — e um custo que zera a carteira virou veto.
+`tactical_type_bands` impõe piso de tijolo de 25% a 40%. Acrescente a
+`tests/test_fii_portfolio_v4.py`:
+
+```python
+def test_opacidade_cede_quando_inviabilizaria_a_banda_do_tipo():
+    """Custo que zera a carteira deixou de ser custo e virou veto.
+
+    Precedente no próprio arquivo: max_weighted_uncertainty foi de .30 para .35
+    porque tornava o LP inviável no universo real.
+    """
+    import numpy as np
+    from core.fii_portfolio_v4 import (
+        PortfolioPolicy, _afrouxa_teto_por_viabilidade, _teto_por_ativo)
+
+    policy = PortfolioPolicy(max_asset=.15)
+    # Cinco tijolos, todos opacos: 5 x .075 = .375 contra um piso de banda .40.
+    rows = [{"ticker": f"T{i}11", "tipo": "tijolo"} for i in range(5)]
+    rows += [{"ticker": "P11", "tipo": "papel"}]
+    bands = {"tijolo": (.40, .60), "papel": (.15, .35)}
+
+    caps, notas = _afrouxa_teto_por_viabilidade(
+        _teto_por_ativo(rows, policy), rows, policy, bands)
+    assert caps[:5].sum() >= .40
+    assert caps.max() <= policy.max_asset
+    assert any("tijolo" in nota for nota in notas)
+
+
+def test_afrouxamento_nao_ocorre_quando_ha_folga():
+    """Com folga, a opacidade continua custando: relaxar sempre apagaria a regra."""
+    import numpy as np
+    from core.fii_portfolio_v4 import (
+        PortfolioPolicy, _afrouxa_teto_por_viabilidade, _teto_por_ativo)
+
+    policy = PortfolioPolicy(max_asset=.15)
+    rows = [{"ticker": "OPACO11", "tipo": "tijolo"}]
+    rows += [{"ticker": f"OK{i}11", "tipo": "tijolo",
+              "tenant_concentration": .10,
+              "lease_expiry_concentration_24m": .10} for i in range(4)]
+    bands = {"tijolo": (.40, .60)}
+
+    caps, notas = _afrouxa_teto_por_viabilidade(
+        _teto_por_ativo(rows, policy), rows, policy, bands)
+    assert caps[0] == .075
+    assert notas == []
+
+
+def test_teto_por_ativo_sempre_comporta_uma_carteira_inteira():
+    """Soma dos tetos abaixo de 1 devolve carteira vazia sem dizer por quê."""
+    import numpy as np
+    from core.fii_portfolio_v4 import (
+        PortfolioPolicy, _afrouxa_teto_por_viabilidade, _teto_por_ativo)
+
+    policy = PortfolioPolicy(max_asset=.15, max_assets=12)
+    rows = [{"ticker": f"T{i}11", "tipo": "tijolo"} for i in range(12)]
+    caps, notas = _afrouxa_teto_por_viabilidade(
+        _teto_por_ativo(rows, policy), rows, policy, {})
+    assert np.sort(caps)[::-1][:policy.max_assets].sum() >= 1.0
+    assert notas
+```
+
+- [ ] **Step 5: Run test to verify it fails**
+
+```bash
+"$LOCALAPPDATA/Programs/Python/Python312/python.exe" -m pytest tests/test_fii_portfolio_v4.py -k "opacidade_cede or afrouxamento or carteira_inteira" -v
+```
+
+Expected: FAIL com `ImportError: cannot import name '_afrouxa_teto_por_viabilidade'`.
+
+- [ ] **Step 6: Implement the feasibility guard**
+
+Em `core/fii_portfolio_v4.py`, logo abaixo de `_teto_por_ativo`:
+
+```python
+def _afrouxa_teto_por_viabilidade(
+    caps: np.ndarray,
+    rows: list[dict],
+    policy: PortfolioPolicy,
+    bands: dict[str, tuple[float, float]],
+) -> tuple[np.ndarray, list[str]]:
+    """Devolve o custo da opacidade ao patamar mínimo que mantém a carteira viável.
+
+    O teto reduzido é um custo, não um veto. Quando a perna de um tipo não
+    comporta o piso da própria banda — ou quando os tetos somados não chegam a
+    100% — o desconto cede pelo mínimo necessário, até no máximo
+    ``policy.max_asset``. O afrouxamento entra em ``notas`` porque proteção que
+    cede em silêncio deixa de ser proteção verificável.
+    """
+    caps = np.asarray(caps, dtype=float).copy()
+    tipos = np.array([str(row.get("tipo") or "").strip().lower() for row in rows])
+    notas: list[str] = []
+
+    def _eleva(mascara: np.ndarray, necessario: float, motivo: str) -> None:
+        indices = np.flatnonzero(mascara)
+        if not indices.size:
+            return
+        # Capacidade dos que efetivamente cabem na carteira.
+        usaveis = indices[np.argsort(caps[indices])[::-1]][:policy.max_assets]
+        if caps[usaveis].sum() >= necessario - 1e-9:
+            return
+        descontados = usaveis[caps[usaveis] < policy.max_asset - 1e-9]
+        if not descontados.size:
+            return
+        folga = necessario - caps[usaveis].sum()
+        # Distribui o mínimo necessário igualmente entre os descontados.
+        caps[descontados] = np.minimum(
+            caps[descontados] + folga / descontados.size, policy.max_asset)
+        notas.append(motivo)
+
+    for tipo, (piso, _teto) in (bands or {}).items():
+        _eleva(tipos == tipo, float(piso),
+               f"custo da opacidade reduzido em {tipo}: os tetos não "
+               f"comportavam o piso de banda de {piso:.0%}")
+
+    _eleva(np.ones(len(rows), dtype=bool), 1.0,
+           "custo da opacidade reduzido: os tetos somados não comportavam "
+           "uma carteira inteira")
+    return caps, notas
+```
+
+Nos três pontos que consomem `_teto_por_ativo` (MILP, linprog e os dois SLSQP),
+troque a chamada crua por:
+
+```python
+    tetos, notas_de_viabilidade = _afrouxa_teto_por_viabilidade(
+        _teto_por_ativo(rows, policy), rows, policy, bands)
+```
+
+usando as `bands` já calculadas por `_adaptive_type_bands` no escopo. Anexe
+`notas_de_viabilidade` à lista de avisos que o resultado já devolve à tela, do
+mesmo modo que os bloqueios de cobertura — a Task 7 a exibe.
+
+`portfolio_constraint_violations` passa a usar os tetos **afrouxados**: cobrar
+do resultado um limite que o solver não recebeu produziria violação fantasma.
+
+- [ ] **Step 7: Run test to verify it passes**
 
 ```bash
 "$LOCALAPPDATA/Programs/Python/Python312/python.exe" -m pytest tests/test_fii_portfolio_v4.py tests/test_fii_v4_portao.py -v
@@ -794,11 +932,11 @@ Ajuste o nome da lista de violações ao que já existe na função. Nos itens m
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add core/fii_portfolio_v4.py tests/test_fii_portfolio_v4.py
-git commit -m "feat(fii): teto de peso por ativo cobra a opacidade e prende o tilt macro"
+git commit -m "feat(fii): teto de peso por ativo cobra a opacidade sem inviabilizar a carteira"
 ```
 
 ---
@@ -847,6 +985,10 @@ Em `views/fiis.py`, linha 1187, troque o rótulo mantendo a chave de sessão int
 ```
 
 Na construção da política (linha ~1273), troque `min_dy_12m=min_dy` por `min_recurrent_dy_12m=min_dy`.
+
+Onde a tela já exibe os bloqueios de cobertura da carteira, exiba também as
+notas de viabilidade devolvidas pela Task 5 — se o custo da opacidade cedeu para
+manter a banda de um tipo, o investidor precisa ler isso junto com a carteira.
 
 Na tabela de resultados, acrescente a coluna "DY recorrente" imediatamente antes da coluna de DY existente e renomeie o rótulo da existente para "DY divulgado", formatando ambas como percentual — siga o padrão de `st.column_config` já usado no bloco das linhas 1460-1490.
 
@@ -995,11 +1137,22 @@ Rode o validador point-in-time da metodologia de FIIs e confirme que a safra gra
 
 Confirme o universo elegível resultante: esperado 98 fundos (50 papel, 23 tijolo, 22 FoF, 2 híbrido). Divergência maior que 5 fundos significa que alguma regra não está lendo o que se supõe — investigar antes de seguir.
 
-- [ ] **Step 6: Verificar na aplicação publicada**
+- [ ] **Step 6: Confirmar que a carteira continua sendo construída**
+
+Na página, gere a carteira de diligência nos regimes extremos — Selic alta e
+`easing`, que é o de piso de tijolo mais alto (40%). Confirme que sai carteira
+com 12 ativos nos dois, que a banda de tijolo é respeitada, e que
+`portfolio_constraint_violations` volta vazia. Se aparecer nota de afrouxamento,
+ela é resultado válido: registre qual tipo cedeu e por quanto.
+
+Carteira vazia aqui é falha de aceitação da entrega, não um "universo apertado":
+o reforço da proteção não pode inviabilizar a criação do portfólio.
+
+- [ ] **Step 7: Verificar na aplicação publicada**
 
 Faça à LLM a mesma pergunta que originou este trabalho (por que um fundo negocia com desconto patrimonial) e confirme que a resposta cita o DY recorrente, não o divulgado sozinho, e que nenhuma proteção desconhecida é apresentada como ausência de risco.
 
-- [ ] **Step 7: Commit, PR e merge**
+- [ ] **Step 8: Commit, PR e merge**
 
 ```bash
 git add -A
