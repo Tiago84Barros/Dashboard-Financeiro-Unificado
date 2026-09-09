@@ -97,12 +97,19 @@ def _compact_payload(record: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         return payload
     from core.fii_methodology import COMMON_METRICS, TYPE_METRICS
+    from core.fii_renda_recorrente import DY_RECORRENTE_INPUT_KEYS
 
     fii_type = str(payload.get("tipo") or "").strip().lower()
     definitions = (*COMMON_METRICS, *TYPE_METRICS.get(fii_type, ()))
     relevant_metrics = {definition.key for definition in definitions}
     for definition in definitions:
         relevant_metrics.update(definition.fallback_keys)
+    # dy_12m e income_recurrence são os insumos de dy_recorrente (a métrica
+    # pontuada). Não têm MetricDefinition própria — dy_12m de propósito, para
+    # o ranking não voltar a ler o yield bruto (ver core/fii_renda_recorrente.py)
+    # — mas a proveniência dos dois continua sendo evidência que o motor usa
+    # indiretamente e não pode sumir do snapshot publicado.
+    relevant_metrics.update(DY_RECORRENTE_INPUT_KEYS)
     compact: dict[str, list[Any]] = {}
     for metric, details in metadata.items():
         if str(metric) not in relevant_metrics or not isinstance(details, dict):

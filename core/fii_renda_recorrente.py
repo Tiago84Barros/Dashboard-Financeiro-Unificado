@@ -14,6 +14,17 @@ from typing import Any, Mapping
 
 DY_RECORRENTE_FORMULA = "dy_12m * income_recurrence"
 
+#: Insumos brutos de ``dy_recorrente``. ``dy_12m`` deixou de ser chave
+#: pontuada (Task 4 de 2026-09-09-fii-protecao-investidor) e não tem
+#: ``fallback_keys`` própria — de propósito, para o ranking não voltar a ler
+#: o yield bruto. Isso apagaria a proveniência dos insumos de quem deriva
+#: "chaves relevantes" a partir das definições de métrica pontuada (ex.:
+#: ``scripts/publish_fii_selection_snapshot.py::_compact_payload``). Quem
+#: precisa preservar a trilha de auditoria dos dois fatores da renda
+#: recorrente deve unir este conjunto ao dele, em vez de listar os nomes
+#: soltos de novo.
+DY_RECORRENTE_INPUT_KEYS = frozenset({"dy_12m", "income_recurrence"})
+
 TETO_LOCATARIO = .40
 TETO_VENCIMENTO_24M = .25
 
