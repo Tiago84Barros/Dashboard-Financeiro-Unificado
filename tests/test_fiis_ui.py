@@ -136,7 +136,7 @@ def test_nenhum_parametro_de_selecao_mudou():
         '"Máx. por FII (%)", 5, 25, 15, 1',
         '"Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, .5',
         '"Histórico mín. (meses)", 0, 60, 24, 6',
-        '"DY 12m mín. (%)", 0.0, 20.0, 8.0, .5',
+        '"DY recorrente 12m mín. (%)", 0.0, 20.0, 8.0, .5',
         '"Drawdown máx. tolerado (%)", 10, 60, 35, 5',
         '"Penalização por correlação", 0.0, .30, .12, .02',
         '"Incerteza ponderada máxima da carteira (%)", 20, 50, 35, 1',
@@ -144,6 +144,21 @@ def test_nenhum_parametro_de_selecao_mudou():
         '"Eventos de crédito (%)", 0.0, 10.0, 3.0, .5',
     ):
         assert default in corpo, default
+
+
+def test_carteira_exibe_o_yield_recorrente_que_decide_ao_lado_do_divulgado():
+    """A mesma renda usada no gate precisa ser visível para quem avalia a carteira."""
+    corpo = inspect.getsource(fiis._carteira_integrada)
+    tabela = inspect.getsource(fiis._render_portfolio_table)
+    assert '"DY recorrente": dy_recorrente(item)' in corpo
+    assert '"DY divulgado": item.get("dy_12m")' in corpo
+    assert '"DY recorrente"' in tabela
+    assert '"DY divulgado"' in tabela
+
+
+def test_nota_de_viabilidade_da_opacidade_e_exibida():
+    corpo = inspect.getsource(fiis._carteira_integrada)
+    assert 'result.get("viability_notes")' in corpo
 
 
 def test_selic_e_ipca_partem_da_observacao_e_nao_de_literal():

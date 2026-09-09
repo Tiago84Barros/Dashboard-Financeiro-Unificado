@@ -7,8 +7,10 @@ from typing import Any, Iterable
 
 import pandas as pd
 
+from core.fii_renda_recorrente import dy_recorrente, protecao_nao_divulgada
+
 _DETAIL_METRICS = (
-    "vacancia_fisica", "vacancia_financeira", "wault_anos",
+    "dy_recorrente", "vacancia_fisica", "vacancia_financeira", "wault_anos",
     "tenant_concentration", "lease_expiry_concentration_24m", "leverage",
     "duration_anos", "ltv", "credit_spread", "rating_quality",
     "subordination_protection", "delinquency",
@@ -70,7 +72,9 @@ def _fund_block(row: dict, selected: bool) -> str:
         f"tipo={row.get('tipo') or 'ausente'} | segmento={row.get('sector') or 'ausente'}",
         "  mercado: "
         f"score={_fmt(row.get('type_score'))}; confiança={_fmt(row.get('confidence'), percent=True)}; "
-        f"cobertura={_fmt(row.get('coverage'), percent=True)}; DY12m={_fmt(row.get('dy_12m'), percent=True)}; "
+        f"cobertura={_fmt(row.get('coverage'), percent=True)}; "
+        f"DY recorrente={_fmt(dy_recorrente(row), percent=True)}; "
+        f"DY divulgado={_fmt(row.get('dy_12m'), percent=True)}; "
         f"P/VP={_fmt(row.get('pvp'))}; liquidez_dia={_fmt(row.get('liquidez_diaria'))}; "
         f"PL={_fmt(row.get('patrimonio_liquido'))}; cotistas={_fmt(row.get('num_cotistas'))}",
         "  patrimônio: "
@@ -81,10 +85,14 @@ def _fund_block(row: dict, selected: bool) -> str:
         f"pct_caixa={_fmt(row.get('pct_caixa'), percent=True)}",
     ]
     observed = []
+    protection_missing = set(protecao_nao_divulgada(row))
     for metric in _DETAIL_METRICS:
-        if _num(row.get(metric)) is not None:
+        value = dy_recorrente(row) if metric == "dy_recorrente" else row.get(metric)
+        if _num(value) is not None:
             percent = metric not in ("wault_anos", "duration_anos")
-            observed.append(f"{metric}={_fmt(row.get(metric), percent=percent)}")
+            observed.append(f"{metric}={_fmt(value, percent=percent)}")
+        elif metric in protection_missing:
+            observed.append(f"{metric}=não divulgado pelo gestor")
     lines.append("  métricas específicas observadas: " + ("; ".join(observed) or "nenhuma"))
     for label, key in (("locatários", "tenants"), ("devedores", "debtors"),
                        ("emissores", "issuers"), ("indexadores", "indexers"),
@@ -153,7 +161,8 @@ def build_fii_chat_context(
         "STATUS E ESCOPO:",
         f"  Saída atual: {current_output}",
         f"  FIIs selecionados={len(selected)}; elegíveis={len(scored)}; "
-        f"renda esperada={_fmt(portfolio_result.get('expected_yield'), percent=True)}; "
+        f"renda recorrente={_fmt(portfolio_result.get('recurrent_yield_12m'), percent=True)}; "
+        f"DY divulgado={_fmt(portfolio_result.get('trailing_yield_12m', portfolio_result.get('expected_yield')), percent=True)}; "
         f"número efetivo={_fmt(portfolio_result.get('effective_assets'))}; "
         f"publicável={'sim' if portfolio_result.get('can_publish') else 'não'}",
         "  bloqueios: " + ("; ".join(portfolio_result.get("blockers") or []) or "nenhum"),
@@ -201,7 +210,8 @@ def build_fii_chat_context(
         rows.sort(key=lambda row: _num(row.get("type_score")) or -1, reverse=True)
         summary = ", ".join(
             f"{row.get('ticker')}(score={_fmt(row.get('type_score'))}, "
-            f"DY={_fmt(row.get('dy_12m'), percent=True)}, P/VP={_fmt(row.get('pvp'))}, "
+            f"DY recorrente={_fmt(dy_recorrente(row), percent=True)}, "
+            f"DY divulgado={_fmt(row.get('dy_12m'), percent=True)}, P/VP={_fmt(row.get('pvp'))}, "
             f"conf={_fmt(row.get('confidence'), percent=True)})" for row in rows[:8]
         )
         lines.append(f"  {fii_type}: {summary or 'nenhum'}")

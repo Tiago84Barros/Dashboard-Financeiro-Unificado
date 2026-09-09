@@ -41,6 +41,7 @@ from core.fii_portfolio_v4 import (
     PortfolioPolicy,
     optimize_diligence_portfolio,
 )
+from core.fii_renda_recorrente import dy_recorrente
 from core.fii_selection_explanations import build_selection_reports
 from core.fii_taxonomy import ORDEM_CATEGORIAS_FII, categoria_fii
 from core.fii_validation import validation_supports_strategy
@@ -1185,7 +1186,7 @@ def _integrated_preference_controls() -> dict:
                                 key="fii_pref_integrated_history")
 
         c5, c6, c7, c8 = st.columns(4)
-        min_dy = c5.slider("DY 12m mín. (%)", 0.0, 20.0, 8.0, .5,
+        min_dy = c5.slider("DY recorrente 12m mín. (%)", 0.0, 20.0, 8.0, .5,
                            key="fii_pref_integrated_dy") / 100
         max_drawdown = c6.slider("Drawdown máx. tolerado (%)", 10, 60, 35, 5,
                                  key="fii_pref_integrated_drawdown") / 100
@@ -1443,7 +1444,7 @@ def _merge_portfolio_views(primary: pd.DataFrame | None,
     preferred = [
         "Ticker", "Tipo", "Segmento", "Peso", "Score", "Peso v4", "Peso complementar",
         "Ajuste macro", "Impacto macro",
-        "Score v4", "Score complementar", "Confiança", "Cobertura", "DY 12m",
+        "Score v4", "Score complementar", "Confiança", "Cobertura", "DY recorrente", "DY divulgado",
         "P/VP", "Liquidez/dia", "Qtd. ativos", "Vacância", "Imóveis",
         "Divers. imóveis", "Regiões", "Divers. regiões", "Qtd. papéis",
         "Divers. papel", "Qtd. fundos", "Divers. FoF", "Cresc. a.a.",
@@ -1476,7 +1477,8 @@ def _render_portfolio_table(slot, primary: pd.DataFrame | None,
         "Impacto macro": st.column_config.NumberColumn(format="%+.1f"),
         "Confiança": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
         "Cobertura": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
-        "DY 12m": st.column_config.NumberColumn(format="percent"),
+        "DY recorrente": st.column_config.NumberColumn(format="percent"),
+        "DY divulgado": st.column_config.NumberColumn(format="percent"),
         "P/VP": st.column_config.NumberColumn(format="%.2f"),
         "Liquidez/dia": st.column_config.NumberColumn(format="R$ %.0f"),
         "Qtd. ativos": st.column_config.NumberColumn(format="%d", help="Total de itens declarado na carteira do fundo."),
@@ -2033,7 +2035,8 @@ def _carteira_integrada(preferences: dict):
         "Score": item["type_score"], "Confiança": item["confidence"],
         "Ajuste macro": item.get("macro_score_adjustment"),
         "Impacto macro": item.get("macro_impact"),
-        "Cobertura": item["coverage"], "DY 12m": item.get("dy_12m"),
+        "Cobertura": item["coverage"], "DY recorrente": dy_recorrente(item),
+        "DY divulgado": item.get("dy_12m"),
         "P/VP": item.get("pvp"), "Liquidez/dia": item.get("liquidez_diaria"),
         "Status": item["publication_status"],
     } for item in items])
@@ -2053,8 +2056,8 @@ def _carteira_integrada(preferences: dict):
                           sub=f"{eligibility['eligible_count']} elegíveis",
                           accent="#4A9EFF"),
                 unsafe_allow_html=True)
-    k2.markdown(_kpi_html("DY histórico ponderado", f"{result['trailing_yield_12m']:.1%}",
-                          sub="distribuições dos últimos 12 meses; não é previsão"),
+    k2.markdown(_kpi_html("DY recorrente ponderado", f"{result['recurrent_yield_12m']:.1%}",
+                          sub=f"DY divulgado: {result['trailing_yield_12m']:.1%}; não é previsão"),
                 unsafe_allow_html=True)
     k3.markdown(_kpi_html("P/VP ponderado",
                           f"{weighted_pvp:.2f}" if weighted_pvp is not None else "—",
@@ -2075,6 +2078,11 @@ def _carteira_integrada(preferences: dict):
             + ", ".join(result["unresolved_dimensions"])
             + ". Esses limites só são aplicados quando observáveis; setor e "
               "emissor possuem histórico point-in-time obrigatório."
+        )
+    if result.get("viability_notes"):
+        st.warning(
+            "Proteção por opacidade ajustada para preservar a viabilidade da carteira: "
+            + " ".join(result["viability_notes"])
         )
     weights = {item["ticker"]: item["weight"] for item in items}
     fii_types = {item["ticker"]: item["tipo"] for item in items}

@@ -81,3 +81,31 @@ def test_fii_chat_uses_specialized_guardrails_and_bounded_history(monkeypatch):
     assert "CONTEXTO TESTE" in system
     assert captured["kwargs"]["primary_model"] == "modelo-teste"
     assert captured["kwargs"]["json_mode"] is False
+
+
+def test_contexto_entrega_yield_recorrente_e_declara_protecao_nao_divulgada():
+    row = _fii()
+    row["tenant_concentration"] = None
+    row["income_recurrence"] = .75
+    context = build_fii_chat_context(
+        user_question="Avalie TEST11",
+        selected_items=[row], scored_rows=[row], methodology_rows=[row],
+        portfolio_result={"expected_yield": .12, "recurrent_yield_12m": .09,
+                          "effective_assets": 1, "can_publish": False},
+        scenario=MacroScenario(selic=14, ipca=4.5), prices=pd.DataFrame(),
+    )
+    assert "DY recorrente=9.00%" in context
+    assert "DY divulgado=12.00%" in context
+    assert "tenant_concentration=não divulgado pelo gestor" in context
+
+
+def test_prompt_exige_declarar_protecao_nao_divulgada(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        llm_fii, "_chat_complete",
+        lambda messages, **kwargs: captured.setdefault("messages", messages) and "ok",
+    )
+    assert llm_fii.chat_com_fiis("CONTEXTO", [], "pergunta") == "ok"
+    system = captured["messages"][0]["content"].lower()
+    assert "renda recorrente" in system
+    assert "não divulgado pelo gestor" in system
