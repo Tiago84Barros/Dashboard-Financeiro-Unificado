@@ -89,6 +89,8 @@ def test_robust_optimizer_backtest_uses_v63_weights_without_constraint_violation
                 "ticker": f"F{index:03d}11", "tipo": fii_type,
                 "type_score": 80 - index + decision_index, "confidence": .90,
                 "coverage": .95, "dy_12m": .10, "pvp": .90,
+                # .10 * .90 = .09 recorrente, acima do piso de elegibilidade.
+                "income_recurrence": .90,
                 "liquidez_diaria": 3_000_000, "history_months": 36,
                 "max_drawdown": -.15, "duration_anos": 3.0, "leverage": .05,
                 "vacancia_fisica": .05, "delinquency": .01, "ltv": .55,

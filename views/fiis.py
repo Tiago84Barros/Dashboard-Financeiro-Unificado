@@ -1270,7 +1270,7 @@ def _integrated_preference_controls() -> dict:
             max_weighted_uncertainty=uncertainty_cap,
         ),
         "eligibility_policy": IntegratedEligibilityPolicy(
-            min_daily_liquidity=min_liquidity, min_dy_12m=min_dy,
+            min_daily_liquidity=min_liquidity, min_recurrent_dy_12m=min_dy,
             min_history_months=min_history, max_drawdown=max_drawdown,
             require_pvp_below_one=pvp_below_one,
             require_multi_region=require_regions,

@@ -56,7 +56,10 @@ def test_ausencia_generalizada_nao_e_diagnosticada_como_filtro_apertado():
 def test_reprovacao_real_continua_pedindo_para_relaxar_os_filtros():
     reprovados = [
         {"ticker": f"AAAA{i}11", "liquidez_diaria": 1_000.0, "dy_12m": .01,
-         "pvp": .90, "history_months": 60, "max_drawdown": .10}
+         "pvp": .90, "history_months": 60, "max_drawdown": .10,
+         # Presente e computável: a reprovação é por valor abaixo do piso,
+         # não por ausência de métrica — é isso que o teste exercita.
+         "income_recurrence": .90}
         for i in range(20)
     ]
     _, relatorio = apply_integrated_eligibility(

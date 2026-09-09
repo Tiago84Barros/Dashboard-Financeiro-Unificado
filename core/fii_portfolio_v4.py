@@ -18,6 +18,7 @@ from core.fii_lookthrough import (
     supplementary_evidence_score,
 )
 from core.fii_methodology import MacroScenario, tactical_type_bands
+from core.fii_renda_recorrente import dy_recorrente, protecao_nao_divulgada
 from core.fii_scenarios import asset_scenario_return
 
 SCENARIOS = ("base", "selic_alta", "queda_selic", "inflacao_alta", "vacancia", "credito")
@@ -73,6 +74,85 @@ def _num(value: Any, default: float = 0.0) -> float:
         return value if np.isfinite(value) else default
     except (TypeError, ValueError):
         return default
+
+
+def _teto_por_ativo(rows: list[dict], policy: PortfolioPolicy) -> np.ndarray:
+    """Teto de peso individual, reduzido à metade para quem não divulga proteção.
+
+    Excluir o fundo opaco apagaria metade do universo de tijolo; deixá-lo
+    passar sem custo premiaria quem cala. O meio-termo é o peso.
+    """
+    return np.array([
+        policy.max_asset * (.5 if protecao_nao_divulgada(row) else 1.0)
+        for row in rows
+    ])
+
+
+def _afrouxa_teto_por_viabilidade(
+    caps: np.ndarray,
+    rows: list[dict],
+    policy: PortfolioPolicy,
+    bands: dict[str, tuple[float, float]],
+) -> tuple[np.ndarray, list[str]]:
+    """Devolve o custo da opacidade ao patamar mínimo que mantém a carteira viável.
+
+    O teto reduzido é um custo, não um veto. Quando a perna de um tipo não
+    comporta o piso da própria banda — ou quando os tetos somados não chegam a
+    100% — o desconto cede pelo mínimo necessário, até no máximo
+    ``policy.max_asset``. O afrouxamento entra em ``notas`` porque proteção que
+    cede em silêncio deixa de ser proteção verificável.
+    """
+    caps = np.asarray(caps, dtype=float).copy()
+    tipos = np.array([str(row.get("tipo") or "").strip().lower() for row in rows])
+    notas: list[str] = []
+
+    def _eleva(mascara: np.ndarray, necessario: float, motivo: str) -> None:
+        indices = np.flatnonzero(mascara)
+        if not indices.size:
+            return
+        # Capacidade dos que efetivamente cabem na carteira.
+        usaveis = indices[np.argsort(caps[indices])[::-1]][:policy.max_assets]
+        if caps[usaveis].sum() >= necessario - 1e-9:
+            return
+        descontados = usaveis[caps[usaveis] < policy.max_asset - 1e-9]
+        if not descontados.size:
+            return
+        folga = necessario - caps[usaveis].sum()
+        # Distribui o mínimo necessário igualmente entre os descontados.
+        caps[descontados] = np.minimum(
+            caps[descontados] + folga / descontados.size, policy.max_asset)
+        notas.append(motivo)
+
+    for tipo, (piso, _teto) in (bands or {}).items():
+        _eleva(tipos == tipo, float(piso),
+               f"custo da opacidade reduzido em {tipo}: os tetos não "
+               f"comportavam o piso de banda de {piso:.0%}")
+
+    if not bands:
+        # Sem bandas por tipo, a única garantia de que a carteira soma 100% é
+        # esta checagem global. Com bandas, ``_adaptive_type_bands`` já
+        # garante que a soma dos pisos cabe em 100% e a soma dos tetos por
+        # tipo alcança 100% — reaplicar a exigência de 100% aqui penalizaria
+        # um tipo isolado que folga pela contribuição de outros tipos que não
+        # estão neste subconjunto de linhas.
+        _eleva(np.ones(len(rows), dtype=bool), 1.0,
+               "custo da opacidade reduzido: os tetos somados não comportavam "
+               "uma carteira inteira")
+    return caps, notas
+
+
+def _resumo_de_renda(items: list[dict]) -> dict[str, float]:
+    """Yield divulgado e yield recorrente da carteira, lado a lado."""
+    def _yield(row: dict) -> float:
+        valor = _num(row.get("dy_12m"))
+        return valor / 100 if valor > 1 else valor
+
+    return {
+        "trailing_yield_12m": round(
+            sum(item["weight"] * _yield(item) for item in items), 6),
+        "recurrent_yield_12m": round(
+            sum(item["weight"] * (dy_recorrente(item) or 0.0) for item in items), 6),
+    }
 
 
 def _adaptive_type_bands(
@@ -220,20 +300,8 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
     uncertainty = 1.0 - np.clip(confidence, 0.0, 1.0)
     constraint(uncertainty, -np.inf, policy.max_weighted_uncertainty)
 
-    # Ligação peso_i <= teto_ativo * selecionado_i.
-    for index in range(n):
-        row = np.zeros(2 * n)
-        row[index] = 1.0
-        row[n + index] = -policy.max_asset
-        matrix_rows.append(row)
-        lower_bounds.append(-np.inf)
-        upper_bounds.append(0.0)
-        row = np.zeros(2 * n)
-        row[index] = 1.0
-        row[n + index] = -policy.min_asset_weight
-        matrix_rows.append(row)
-        lower_bounds.append(0.0)
-        upper_bounds.append(np.inf)
+    tetos, notas_de_viabilidade = _afrouxa_teto_por_viabilidade(
+        _teto_por_ativo(pool, policy), pool, policy, bands)
 
     for dimension in policy.required_dimensions:
         known, applicable = _dimension_observation_masks(pool, dimension)
@@ -251,18 +319,63 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
     lower_bounds.append(-np.inf)
     upper_bounds.append(float(policy.max_assets))
 
-    try:
+    def _linking_rows(caps: np.ndarray) -> tuple[list[np.ndarray], list[float], list[float]]:
+        # Ligação peso_i <= teto_ativo * selecionado_i.
+        rows_: list[np.ndarray] = []
+        lower_: list[float] = []
+        upper_: list[float] = []
+        for index in range(n):
+            row = np.zeros(2 * n)
+            row[index] = 1.0
+            row[n + index] = -float(caps[index])
+            rows_.append(row)
+            lower_.append(-np.inf)
+            upper_.append(0.0)
+            row = np.zeros(2 * n)
+            row[index] = 1.0
+            row[n + index] = -policy.min_asset_weight
+            rows_.append(row)
+            lower_.append(0.0)
+            upper_.append(np.inf)
+        return rows_, lower_, upper_
+
+    def _resolve(caps: np.ndarray):
         from scipy.optimize import Bounds, LinearConstraint, milp
+        rows_, lower_, upper_ = _linking_rows(caps)
         objective = np.concatenate([-utility, np.full(n, 1e-6)])
-        solution = milp(
+        return milp(
             c=objective,
             integrality=np.concatenate([np.zeros(n), np.ones(n)]),
             bounds=Bounds(np.zeros(2 * n),
-                          np.concatenate([np.full(n, policy.max_asset), np.ones(n)])),
+                          np.concatenate([caps, np.ones(n)])),
             constraints=LinearConstraint(
-                np.vstack(matrix_rows), np.array(lower_bounds), np.array(upper_bounds)),
+                np.vstack(matrix_rows + rows_),
+                np.array(lower_bounds + lower_),
+                np.array(upper_bounds + upper_),
+            ),
             options={"time_limit": 20},
         )
+
+    try:
+        solution = _resolve(tetos)
+        if not (solution.success and solution.x is not None):
+            # O desconto de opacidade é custo, não veto: se o teto reduzido
+            # (já afrouxado pelo piso de banda) ainda assim esvazia a
+            # carteira — por interação com outros limites, como
+            # concentração por devedor/emissor —, o afrouxamento cede por
+            # completo antes de aceitar carteira vazia.
+            tetos_sem_desconto = np.full(n, policy.max_asset)
+            if np.any(tetos_sem_desconto > tetos + 1e-9):
+                solucao_sem_desconto = _resolve(tetos_sem_desconto)
+                if solucao_sem_desconto.success and solucao_sem_desconto.x is not None:
+                    solution = solucao_sem_desconto
+                    tetos = tetos_sem_desconto
+                    notas_de_viabilidade = list(notas_de_viabilidade) + [
+                        "custo da opacidade desligado: o teto reduzido "
+                        "esvaziava a carteira mesmo após o afrouxamento de "
+                        "banda, provavelmente por interação com outro limite "
+                        "(devedor, emissor, tenant ou similar)"
+                    ]
         if solution.success and solution.x is not None:
             selected = [
                 pool[index] for index, weight in enumerate(solution.x[:n])
@@ -283,11 +396,13 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
                 },
                 "universe_dimension_coverage": universe_dimension_coverage,
                 "selected_dimension_coverage": selected_coverage,
+                "viability_notes": notas_de_viabilidade,
             }
         return [], {
             "status": "data_prerequisites_missing",
             "reason": str(solution.message),
             "universe_dimension_coverage": universe_dimension_coverage,
+            "viability_notes": notas_de_viabilidade,
         }
     except Exception as exc:
         fallback_reason = str(exc)
@@ -308,7 +423,16 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
     for fii_type in ("tijolo", "papel", "fof", "hibrido"):
         candidates = [row for row in ranked if str(row.get("tipo")) == fii_type]
         lower = bands[fii_type][0]
-        required = max(1, int(np.ceil(lower / policy.max_asset)))
+        # O caminho guloso também precisa do vetor de tetos: um fundo opaco
+        # comporta metade do peso, então preencher a banda exige mais
+        # candidatos do que a conta escalar sugeria.
+        candidate_caps = _teto_por_ativo(candidates, policy) if candidates else np.array([])
+        if candidate_caps.size:
+            cumulative = np.cumsum(np.sort(candidate_caps)[::-1])
+            required = int(np.searchsorted(cumulative, lower - 1e-9) + 1)
+            required = min(max(required, 1), len(candidates))
+        else:
+            required = max(1, int(np.ceil(lower / policy.max_asset)))
         sector_groups = max(1, int(np.ceil(lower / policy.max_sector)))
         manager_groups = max(1, int(np.ceil(lower / policy.max_manager)))
         chosen: list[dict] = []
@@ -372,6 +496,7 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
             "reason": "fallback sem cobertura obrigatória: " + ", ".join(missing_required),
             "universe_dimension_coverage": universe_dimension_coverage,
             "selected_dimension_coverage": selected_coverage,
+            "viability_notes": notas_de_viabilidade,
         }
     return selected, {
         "status": "deterministic_fallback",
@@ -379,6 +504,7 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
         "selected_count": len(selected),
         "universe_dimension_coverage": universe_dimension_coverage,
         "selected_dimension_coverage": selected_coverage,
+        "viability_notes": notas_de_viabilidade,
     }
 
 
@@ -462,8 +588,17 @@ def _correlation_risk_matrix(
 def portfolio_constraint_violations(
     items: Iterable[dict], bands: dict[str, tuple[float, float]],
     policy: PortfolioPolicy, *, tolerance: float = 1e-6,
+    caps: dict[str, float] | None = None,
 ) -> tuple[str, ...]:
-    """Revalida a carteira exatamente como será exibida e persistida."""
+    """Revalida a carteira exatamente como será exibida e persistida.
+
+    ``caps`` é o teto por ativo (ticker -> teto) já afrouxado que o solver
+    efetivamente recebeu. Sem ele, recai no teto por ativo cru — cobrar do
+    resultado um limite que o solver nunca viu produziria violação fantasma,
+    mas a checagem isolada (sem contexto do afrouxamento real) precisa de um
+    teto determinístico, não de uma nova rodada de afrouxamento sobre um
+    subconjunto pequeno da carteira já publicada.
+    """
     rows = [dict(item) for item in items if _num(item.get("weight")) > 0]
     violations: list[str] = []
     total = sum(_num(row.get("weight")) for row in rows)
@@ -471,8 +606,18 @@ def portfolio_constraint_violations(
         violations.append("pesos não somam 100%")
     if len(rows) > policy.max_assets:
         violations.append("quantidade de ativos acima do limite")
-    if any(_num(row.get("weight")) > policy.max_asset + tolerance for row in rows):
+    if caps is not None:
+        tetos = np.array([
+            float(caps.get(str(row.get("ticker")), policy.max_asset)) for row in rows
+        ])
+    else:
+        tetos = _teto_por_ativo(rows, policy)
+    excedentes = [str(row.get("ticker")) for row, teto in zip(rows, tetos)
+                  if _num(row.get("weight")) > teto + tolerance]
+    if excedentes:
         violations.append("peso individual acima do limite")
+        violations.append(
+            "peso acima do teto individual: " + ", ".join(sorted(excedentes)))
     if any(_num(row.get("weight")) < policy.min_asset_weight - tolerance for row in rows):
         violations.append("peso individual abaixo do mínimo econômico")
     for fii_type, (lower, upper) in bands.items():
@@ -562,6 +707,12 @@ def optimize_diligence_portfolio(
                 "failure_stage": "data_prerequisites"}
 
     n = len(rows)
+    tetos, notas_de_viabilidade = _afrouxa_teto_por_viabilidade(
+        _teto_por_ativo(rows, policy), rows, policy, bands)
+    limites = [(policy.min_asset_weight, float(teto)) for teto in tetos]
+    caps_por_ticker = {
+        str(rows[i].get("ticker")): float(tetos[i]) for i in range(n)
+    }
     quality = np.array([_num(r.get("type_score")) / 100 for r in rows])
     confidence = np.array([_num(r.get("confidence")) for r in rows])
     dy = np.array([_num(r.get("dy_12m")) for r in rows])
@@ -664,16 +815,65 @@ def optimize_diligence_portfolio(
 
     try:
         from scipy.optimize import linprog, minimize
-        # O ponto de pesos iguais frequentemente viola bandas ou o teto de
-        # iliquidez. Primeiro encontra-se uma solução linear factível; depois o
-        # SLSQP otimiza concentração e perdas de cauda a partir dela.
-        feasible = linprog(
-            c=-fundamental_utility,
-            A_ub=np.vstack([row for row, _ in linear_ub]) if linear_ub else None,
-            b_ub=np.array([limit for _, limit in linear_ub]) if linear_ub else None,
-            A_eq=np.ones((1, n)), b_eq=np.array([1.0]),
-            bounds=[(policy.min_asset_weight, policy.max_asset)] * n, method="highs",
-        )
+
+        def _resolve_continuo(limites_param):
+            # O ponto de pesos iguais frequentemente viola bandas ou o teto de
+            # iliquidez. Primeiro encontra-se uma solução linear factível; depois
+            # o SLSQP otimiza concentração e perdas de cauda a partir dela.
+            nonlocal utility
+            feasible_ = linprog(
+                c=-fundamental_utility,
+                A_ub=np.vstack([row for row, _ in linear_ub]) if linear_ub else None,
+                b_ub=np.array([limit for _, limit in linear_ub]) if linear_ub else None,
+                A_eq=np.ones((1, n)), b_eq=np.array([1.0]),
+                bounds=limites_param, method="highs",
+            )
+            if not feasible_.success:
+                return feasible_, None, None
+            contextual_utility_ = utility.copy()
+            utility = fundamental_utility
+            baseline_ = minimize(objective, feasible_.x, method="SLSQP",
+                                bounds=limites_param,
+                                constraints=constraints, options={"maxiter": 1000, "ftol": 1e-10})
+            if not baseline_.success:
+                utility = contextual_utility_
+                return feasible_, baseline_, None
+            utility = contextual_utility_
+            result_ = baseline_ if macro_scale == 0 else minimize(
+                objective, baseline_.x, method="SLSQP",
+                bounds=limites_param,
+                constraints=constraints,
+                options={"maxiter": 1000, "ftol": 1e-10})
+            return feasible_, baseline_, result_
+
+        feasible, baseline, result = _resolve_continuo(limites)
+        if not (feasible.success and baseline is not None and baseline.success
+                and result is not None and result.success):
+            # O desconto de opacidade é custo, não veto: se o teto reduzido
+            # (já afrouxado pelo piso de banda) ainda assim esvazia a carteira
+            # no otimizador contínuo — por interação com outros limites, como
+            # concentração por devedor/emissor —, o afrouxamento cede por
+            # completo antes de aceitar carteira vazia.
+            tetos_sem_desconto = np.full(n, policy.max_asset)
+            if np.any(tetos_sem_desconto > tetos + 1e-9):
+                limites_sem_desconto = [
+                    (policy.min_asset_weight, float(teto)) for teto in tetos_sem_desconto
+                ]
+                feasible2, baseline2, result2 = _resolve_continuo(limites_sem_desconto)
+                if (feasible2.success and baseline2 is not None and baseline2.success
+                        and result2 is not None and result2.success):
+                    feasible, baseline, result = feasible2, baseline2, result2
+                    tetos = tetos_sem_desconto
+                    limites = limites_sem_desconto
+                    caps_por_ticker = {
+                        str(rows[i].get("ticker")): float(tetos[i]) for i in range(n)
+                    }
+                    notas_de_viabilidade = list(notas_de_viabilidade) + [
+                        "custo da opacidade desligado: o teto reduzido "
+                        "esvaziava a carteira mesmo após o afrouxamento de "
+                        "banda, provavelmente por interação com outro limite "
+                        "(devedor, emissor, tenant ou similar)"
+                    ]
         if not feasible.success:
             return {"items": [], "status": "blocked", "can_publish": False,
                     "blockers": [f"restrições lineares inviáveis: {feasible.message}"],
@@ -688,27 +888,16 @@ def optimize_diligence_portfolio(
                         "minimum_weighted_confidence":
                             1.0 - policy.max_weighted_uncertainty,
                     }}
-        contextual_utility = utility.copy()
-        utility = fundamental_utility
-        baseline = minimize(objective, feasible.x, method="SLSQP",
-                            bounds=[(policy.min_asset_weight, policy.max_asset)] * n,
-                            constraints=constraints, options={"maxiter": 1000, "ftol": 1e-10})
-        if not baseline.success:
+        if baseline is None or not baseline.success:
             return {"items": [], "status": "blocked", "can_publish": False,
                     "blockers": ["Não foi possível estabelecer a carteira fundamental de referência."]}
-        utility = contextual_utility
-        result = baseline if macro_scale == 0 else minimize(objective, baseline.x, method="SLSQP",
-                          bounds=[(policy.min_asset_weight, policy.max_asset)] * n,
-                          constraints=constraints,
-                          options={"maxiter": 1000, "ftol": 1e-10})
+        if result is None or not result.success:
+            return {"items": [], "status": "blocked", "can_publish": False,
+                    "blockers": [f"otimização inviável: {result.message if result is not None else 'sem solução'}"],
+                    "unresolved_dimensions": sorted(set(unresolved)), "policy": asdict(policy)}
     except Exception as exc:  # pragma: no cover - ambiente sem scipy
         return {"items": [], "status": "blocked", "can_publish": False,
                 "blockers": [f"otimizador indisponível: {exc}"], "unresolved_dimensions": unresolved}
-
-    if not result.success:
-        return {"items": [], "status": "blocked", "can_publish": False,
-                "blockers": [f"otimização inviável: {result.message}"],
-                "unresolved_dimensions": sorted(set(unresolved)), "policy": asdict(policy)}
 
     # Elimine apenas ruído numérico. Cortar posições de 0,5% e renormalizar
     # podia elevar os pesos restantes e quebrar limites aprovados pelo solver.
@@ -719,6 +908,10 @@ def optimize_diligence_portfolio(
     base_weights = np.maximum(baseline.x, 0)
     base_weights = base_weights / base_weights.sum()
     weights = bound_macro_weights(pd.Series(base_weights), pd.Series(weights)).to_numpy()
+    # O tilt macro roda depois do solver e já elevou peso acima de teto
+    # aprovado neste projeto. O limite tem de prender o resultado final.
+    weights = np.minimum(weights, tetos)
+    weights = weights / weights.sum()
     # Pontos exibidos e persistidos seguem a mesma convenção B3/US, inclusive
     # o fator 1,5 do cenário. A utilidade do otimizador permanece separada.
     score_adjustments = apply_macro_scores(
@@ -737,6 +930,7 @@ def optimize_diligence_portfolio(
             float(score_adjustments[i])
             if np.isfinite(macro_vector[i]) else None
         ),
+        "protecao_nao_divulgada": protecao_nao_divulgada(rows[i]),
     } for i in range(n) if weights[i] > 0]
     scenario_returns = {
         s: round(sum(item["weight"] * asset_scenario_return(item, s) for item in items), 6)
@@ -747,7 +941,8 @@ def optimize_diligence_portfolio(
     tail_count = max(1, int(np.ceil(len(adverse_losses) * .40))) if adverse_losses else 1
     scenario_cvar = (sum(adverse_losses[-tail_count:]) / tail_count if adverse_losses else 0.0)
     validation_block = any(item.get("publication_status") != "validated" for item in items)
-    constraint_violations = portfolio_constraint_violations(items, bands, policy)
+    constraint_violations = portfolio_constraint_violations(
+        items, bands, policy, caps=caps_por_ticker)
     blockers = []
     unresolved_critical = sorted(
         set(unresolved).intersection(policy.required_dimensions)
@@ -766,6 +961,10 @@ def optimize_diligence_portfolio(
             f"{policy.min_correlation_coverage:.0%}"
         )
     blockers.extend(constraint_violations)
+    renda = _resumo_de_renda(items)
+    viability_notes = list(dict.fromkeys(
+        list(candidate_pool_info.get("viability_notes") or []) + notas_de_viabilidade
+    ))
     return {
         "items": items, "status": "publishable" if not blockers else "diligence_only",
         "can_publish": not blockers, "blockers": blockers,
@@ -783,9 +982,10 @@ def optimize_diligence_portfolio(
         "correlation_info": correlation_info,
         "correlation_penalty": max(float(correlation_penalty), 0.0),
         "constraint_violations": list(constraint_violations),
-        "trailing_yield_12m": round(sum(item["weight"] * (_num(item.get("dy_12m")) / (100 if _num(item.get("dy_12m")) > 1 else 1)) for item in items), 6),
+        "trailing_yield_12m": renda["trailing_yield_12m"],
         # Compatibilidade de leitura com modelos salvos antes da correção do rótulo.
-        "expected_yield": round(sum(item["weight"] * (_num(item.get("dy_12m")) / (100 if _num(item.get("dy_12m")) > 1 else 1)) for item in items), 6),
+        "expected_yield": renda["trailing_yield_12m"],
+        "recurrent_yield_12m": renda["recurrent_yield_12m"],
         "effective_assets": round(1 / sum(item["weight"] ** 2 for item in items), 2),
         "macro_bands": bands, "band_adaptation": band_adaptation,
         "macro_mode": macro_mode,
@@ -796,6 +996,8 @@ def optimize_diligence_portfolio(
         ),
         "candidate_pool": candidate_pool_info,
         "turnover_penalty": policy.turnover_penalty,
+        "asset_caps": caps_por_ticker,
+        "viability_notes": viability_notes,
         "policy": asdict(policy), "solver": str(result.message),
     }
 
