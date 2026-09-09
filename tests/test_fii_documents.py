@@ -645,3 +645,28 @@ def test_qualitative_findings_do_not_treat_risk_word_as_material_event():
     assert [row["claim_text"] for row in rows] == [
         "O cenário ficou mais difícil, com risco de pressão cambial e aumento de custos."
     ]
+
+
+def test_prazo_medio_de_locacao_e_reconhecido_sem_a_sigla():
+    """A sigla literal cobria 3% do universo; gestoras escrevem por extenso."""
+    from data_pipeline.market.fii_documents import _METRIC_PATTERNS
+
+    padrao = _METRIC_PATTERNS["wault_anos"]
+    casos = {
+        "WAULT de 4,2 anos": "4,2",
+        "prazo médio remanescente dos contratos: 5,1 anos": "5,1",
+        "Prazo Médio Ponderado dos Contratos (anos) 3,80": "3,80",
+        "WAULT (anos): 6,4": "6,4",
+    }
+    for texto, esperado in casos.items():
+        encontrado = padrao.search(texto)
+        assert encontrado, f"não reconheceu: {texto}"
+        assert encontrado.group(1) == esperado
+
+
+def test_prazo_medio_nao_captura_numero_sem_contexto_de_prazo():
+    from data_pipeline.market.fii_documents import _METRIC_PATTERNS
+
+    padrao = _METRIC_PATTERNS["wault_anos"]
+    assert padrao.search("prazo médio de pagamento dos fornecedores: 45 dias") is None
+    assert padrao.search("o fundo tem 12 anos de história") is None

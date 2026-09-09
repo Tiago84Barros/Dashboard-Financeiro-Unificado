@@ -96,7 +96,16 @@ class _HostCircuitBreaker:
         return False
 
 _METRIC_PATTERNS = {
-    "wault_anos": re.compile(r"\bWAULT\b[^\d]{0,40}(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:anos?|years?)", re.I),
+    # A sigla literal cobria 3,0% do universo e 5,0% de tijolo/híbrido, o que
+    # inviabilizava qualquer regra sobre prazo de locação. Gestoras brasileiras
+    # escrevem "prazo médio remanescente/ponderado dos contratos", e publicam a
+    # sigla em tabela com o "(anos)" no cabeçalho, longe do número.
+    "wault_anos": re.compile(
+        r"(?:\bWAULT\b|prazo\s+m[eé]dio\s+(?:remanescente|ponderado)"
+        r"(?:\s+dos?\s+contratos?)?)"
+        r"[^\d]{0,40}(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:anos?|years?)?",
+        re.I,
+    ),
     "vacancia_fisica": re.compile(r"vac[aâ]ncia\s+f[ií]sica[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "vacancia_financeira": re.compile(r"vac[aâ]ncia\s+financeira[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
     "ltv": re.compile(r"\bLTV\b[^\d]{0,35}(\d{1,3}(?:[.,]\d{1,2})?)\s*%", re.I),
