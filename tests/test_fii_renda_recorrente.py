@@ -65,3 +65,40 @@ def test_tijolo_com_uma_metrica_declara_so_a_outra():
 def test_tetos_sao_os_valores_aprovados_no_spec():
     assert TETO_LOCATARIO == .40
     assert TETO_VENCIMENTO_24M == .25
+
+
+def test_elegibilidade_e_score_derivam_o_mesmo_numero():
+    """Regra certa em um consumidor só já publicou yield errado na vitrine."""
+    from core.fii_integrated_model import (
+        IntegratedEligibilityPolicy, apply_integrated_eligibility)
+    from core.fii_methodology import score_fiis_by_type
+
+    linhas = [
+        {"ticker": "AAA11", "tipo": "papel", "liquidez_diaria": 5e6, "pvp": .95,
+         "history_months": 60, "max_drawdown": -.2,
+         "dy_12m": .1817, "income_recurrence": .5825},
+        {"ticker": "BBB11", "tipo": "papel", "liquidez_diaria": 5e6, "pvp": .98,
+         "history_months": 60, "max_drawdown": -.2,
+         "dy_12m": .1261, "income_recurrence": .6483},
+    ]
+    eleg, _ = apply_integrated_eligibility(linhas, IntegratedEligibilityPolicy())
+    pontuadas = score_fiis_by_type(eleg)
+    por_ticker = {row["ticker"]: row for row in pontuadas}
+    assert por_ticker["AAA11"]["dy_recorrente"] == dy_recorrente(linhas[0])
+    assert por_ticker["BBB11"]["dy_recorrente"] == dy_recorrente(linhas[1])
+
+
+def test_a_metodologia_pontua_a_renda_recorrente_e_nao_a_divulgada():
+    from core.fii_methodology import COMMON_METRICS
+
+    chaves = {definicao.key: definicao for definicao in COMMON_METRICS}
+    assert "dy_12m" not in chaves
+    renda = chaves["dy_recorrente"]
+    assert (renda.weight, renda.critical, renda.max_age_days) == (.12, True, 15)
+
+
+def test_versao_da_metodologia_subiu_com_a_formula():
+    from core.fii_methodology import FORMULA_VERSION, METHODOLOGY_VERSION
+
+    assert METHODOLOGY_VERSION == "6.9.0"
+    assert "6.9.0" in FORMULA_VERSION
