@@ -140,12 +140,19 @@ def test_nenhum_parametro_de_selecao_mudou():
         '"Drawdown máx. tolerado (%)", 10, 60, 35, 5',
         '"Penalização por correlação", 0.0, .30, .12, .02',
         '"Incerteza ponderada máxima da carteira (%)", 20, 50, 35, 1',
-        '"Selic (%)", 0.0, 30.0, 15.0, .25',
-        '"IPCA (%)", -2.0, 20.0, 4.5, .25',
         '"Choque de vacância (%)", 0.0, 20.0, 8.0, 1.0',
         '"Eventos de crédito (%)", 0.0, 10.0, 3.0, .5',
     ):
         assert default in corpo, default
+
+
+def test_selic_e_ipca_partem_da_observacao_e_nao_de_literal():
+    """O literal 15,0% sobreviveu ao ciclo de corte e virou premissa falsa."""
+    corpo = inspect.getsource(fiis._integrated_preference_controls)
+    assert '"Selic (%)", 0.0, 30.0, observado.padrao_selic, .25' in corpo
+    assert 'observado.ipca if observado.ipca is not None' in corpo
+    assert 'observado.selic_change_12m or 0.0' in corpo
+    assert '30.0, 15.0' not in corpo and '20.0, 4.5' not in corpo
 
 
 def test_chaves_de_sessao_dos_controles_preservadas():

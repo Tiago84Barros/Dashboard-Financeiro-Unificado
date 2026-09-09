@@ -123,6 +123,7 @@ def build_fii_chat_context(
     *, user_question: str, selected_items: Iterable[dict], scored_rows: Iterable[dict],
     methodology_rows: Iterable[dict], portfolio_result: dict, scenario: Any,
     reports: Iterable[dict] | None = None, prices: pd.DataFrame | None = None,
+    scenario_provenance: dict[str, str] | None = None,
 ) -> str:
     """Compila carteira, fundos citados, pares, macro e rastreabilidade."""
     selected = [dict(row) for row in selected_items]
@@ -142,6 +143,12 @@ def build_fii_chat_context(
         if portfolio_result.get("can_publish")
         else "lista de diligência; há gates ou pré-requisitos pendentes."
     )
+
+    def _origem(field: str) -> str:
+        """Sem procedência declarada o contexto cala; não atribui ao usuário."""
+        label = (scenario_provenance or {}).get(field)
+        return f" [{label}]" if label else ""
+
     lines = [
         "STATUS E ESCOPO:",
         f"  Saída atual: {current_output}",
@@ -151,11 +158,12 @@ def build_fii_chat_context(
         f"publicável={'sim' if portfolio_result.get('can_publish') else 'não'}",
         "  bloqueios: " + ("; ".join(portfolio_result.get("blockers") or []) or "nenhum"),
         "",
-        "CENÁRIO INFORMADO PELO USUÁRIO:",
-        f"  Selic={_fmt(getattr(scenario, 'selic', None), percent=False)}%; "
-        f"IPCA={_fmt(getattr(scenario, 'ipca', None), percent=False)}%; "
-        f"CDI={_fmt(getattr(scenario, 'cdi', None), percent=False)}%; "
-        f"ΔSelic12m={_fmt(getattr(scenario, 'selic_change_12m', None))} p.p.; "
+        "CENÁRIO MACRO APLICADO:",
+        f"  Selic={_fmt(getattr(scenario, 'selic', None), percent=False)}%{_origem('selic')}; "
+        f"IPCA={_fmt(getattr(scenario, 'ipca', None), percent=False)}%{_origem('ipca')}; "
+        f"CDI={_fmt(getattr(scenario, 'cdi', None), percent=False)}%{_origem('cdi')}; "
+        f"ΔSelic12m={_fmt(getattr(scenario, 'selic_change_12m', None))} p.p."
+        f"{_origem('selic_change_12m')}; "
         f"choque_vacância={_fmt(getattr(scenario, 'vacancy_shock', None), percent=True)}; "
         f"evento_crédito={_fmt(getattr(scenario, 'credit_event_rate', None), percent=True)}",
         "",
@@ -218,5 +226,8 @@ def build_fii_chat_context(
     lines += ["", _correlation_context(prices, selected_tickers), "",
               "LIMITAÇÕES GERAIS:",
               "  Métricas ausentes não foram imputadas. Correlações são retrospectivas. ",
-              "  Scores são relativos ao universo elegível e não substituem leitura dos relatórios gerenciais."]
+              "  Scores são relativos ao universo elegível.",
+              "  As métricas acima já foram extraídas dos informes e relatórios das "
+              "administradoras: cite o valor observado em vez de pedir a leitura do "
+              "documento. Só indique consulta externa para métrica listada como ausente."]
     return "\n".join(lines)

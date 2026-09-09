@@ -48,6 +48,7 @@ from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_context_ativo import build_fii_ativo_context
 from core.llm_context_fii import build_fii_chat_context
 from core.llm_fii import chat_com_fiis
+from core.macro_cenario import CenarioObservado, cenario_macro_observado
 from core.macro_data.database import get_local_macro_engine
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from data_pipeline.market import fii as _fz
@@ -942,7 +943,8 @@ def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
 
 def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows: list[dict],
                      result: dict, scenario: MacroScenario, reports: list[dict],
-                     prices: pd.DataFrame) -> None:
+                     prices: pd.DataFrame,
+                     scenario_provenance: dict[str, str] | None = None) -> None:
     """Chat contextual da carteira de FIIs, inspirado na Avaliação de Portfólio B3."""
     st.markdown("---")
     st.markdown("#### 💬 Tire dúvidas sobre os FIIs e a seleção")
@@ -1019,6 +1021,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                     scenario=scenario,
                     reports=reports,
                     prices=prices,
+                    scenario_provenance=scenario_provenance,
                 )
                 answer = chat_com_fiis(context, history[:-1], user_input)
             except Exception as exc:
@@ -1153,6 +1156,16 @@ def _quality_portfolio_view(pf: pd.DataFrame) -> pd.DataFrame:
         "Score"]]
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cenario_macro_observado() -> CenarioObservado:
+    """Selic e IPCA observados; falha de leitura vira indisponibilidade, não literal."""
+    from core.b3_db import load_macro_history
+    try:
+        return cenario_macro_observado(load_macro_history())
+    except (SQLAlchemyError, OSError, ValueError) as exc:
+        return CenarioObservado(indisponivel=f"leitura de public.macro falhou: {exc}")
+
+
 def _integrated_preference_controls() -> dict:
     """Controles globais da seleção integrada; todos afetam a mesma carteira.
 
@@ -1202,12 +1215,24 @@ def _integrated_preference_controls() -> dict:
         ) / 100
 
     with st.expander("🌐 Cenário macroeconômico e estresse", expanded=False):
+        observado = _cenario_macro_observado()
+        if observado.indisponivel:
+            st.caption(
+                f"Sem Selic observada ({observado.indisponivel}); os campos abaixo "
+                "partem de um valor arbitrário e são tratados como premissa, não "
+                "como dado.")
+        else:
+            st.caption(
+                f"Padrões observados em {observado.fonte}, ano {observado.ano}. "
+                "Alterar um campo passa a valer como premissa sua.")
         m1, m2, m3 = st.columns(3)
-        selic = m1.number_input("Selic (%)", 0.0, 30.0, 15.0, .25,
+        selic = m1.number_input("Selic (%)", 0.0, 30.0, observado.padrao_selic, .25,
                                 key="fii_pref_integrated_selic")
-        ipca = m2.number_input("IPCA (%)", -2.0, 20.0, 4.5, .25,
+        ipca = m2.number_input("IPCA (%)", -2.0, 20.0,
+                               observado.ipca if observado.ipca is not None else 4.5, .25,
                                key="fii_pref_integrated_ipca")
-        delta = m3.number_input("Δ Selic 12m (p.p.)", -15.0, 15.0, 0.0, .25,
+        delta = m3.number_input("Δ Selic 12m (p.p.)", -15.0, 15.0,
+                                observado.selic_change_12m or 0.0, .25,
                                 key="fii_pref_integrated_delta")
         s1, s2 = st.columns(2)
         vacancy_shock = s1.slider("Choque de vacância (%)", 0.0, 20.0, 8.0, 1.0,
@@ -1233,6 +1258,12 @@ def _integrated_preference_controls() -> dict:
             selic=selic, ipca=ipca, selic_change_12m=delta,
             vacancy_shock=vacancy_shock, credit_event_rate=credit_event,
         ),
+        "scenario_provenance": {
+            "selic": observado.procedencia(selic != observado.padrao_selic),
+            "ipca": observado.procedencia(observado.ipca is None or ipca != observado.ipca),
+            "selic_change_12m": observado.procedencia(
+                delta != (observado.selic_change_12m or 0.0)),
+        },
         "portfolio_policy": PortfolioPolicy(
             max_assets=n_assets, max_asset=max_asset,
             min_daily_liquidity=min_liquidity,
@@ -1825,6 +1856,7 @@ def _carteira_integrada(preferences: dict):
     # de quem lê a carteira. A lógica de seleção é a mesma.
     st.subheader("Resultado da seleção")
     scenario = preferences["scenario"]
+    scenario_provenance = preferences.get("scenario_provenance") or {}
     portfolio_policy = preferences["portfolio_policy"]
     eligibility_policy = preferences["eligibility_policy"]
     st.markdown(_info_card_html(
@@ -2097,6 +2129,7 @@ def _carteira_integrada(preferences: dict):
         scenario=scenario,
         reports=explanations,
         prices=report_prices,
+        scenario_provenance=scenario_provenance,
     )
     _render_save_portfolio(
         port, {"metodo": "fii_integrated_v6_5", "model_version": INTEGRATED_MODEL_VERSION,
