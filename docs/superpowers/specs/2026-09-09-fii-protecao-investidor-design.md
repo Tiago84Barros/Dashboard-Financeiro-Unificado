@@ -155,6 +155,37 @@ implementação inclui rodar o walk-forward PIT e republicar a vitrine como
 etapa, não como pendência: subir versão sem reconstruir safra já desligou
 backtest em silêncio neste projeto.
 
+### 7. Prazo de locação (tijolo): ampliar a fonte antes de criar a regra
+
+Locação curta é risco maior que locação longa, e `wault_anos` deveria ser a
+terceira regra de proteção do tijolo. Ela não entra neste ciclo como veto
+porque a base não a sustenta: **cobertura de 3,0% no universo e 5,0% em
+tijolo/híbrido** — 2 dos 25 fundos de tijolo/híbrido que sobram elegíveis. Um
+piso de 3 anos não excluiria ninguém hoje, e tratar a ausência como não
+divulgada rebaixaria o peso de 23 dos 25, isto é, da perna inteira de tijolo.
+
+A cobertura baixa parece ser limitação do extrator, não ausência de
+divulgação. `data_pipeline/market/fii_documents.py:99` exige a sigla literal:
+
+```
+\bWAULT\b[^\d]{0,40}(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:anos?|years?)
+```
+
+Gestoras brasileiras escrevem com frequência "prazo médio remanescente dos
+contratos", "prazo médio ponderado dos contratos", ou publicam a sigla em
+tabela sem a palavra "anos" adjacente. Um casamento de texto rígido demais já
+congelou métrica neste projeto antes.
+
+O plano de implementação começa, portanto, por ampliar a extração e **medir** a
+cobertura resultante. Só com a distribuição em mãos o piso é escolhido — do
+mesmo modo que 40% e 25% foram escolhidos olhando os quantis. Se a cobertura
+continuar baixa depois da ampliação, a conclusão a registrar é que a fonte não
+publica o dado, e o piso não entra: critério que nunca dispara nunca é revisto,
+e morde sozinho no dia em que a fonte chega.
+
+Enquanto isso, `wault_anos` permanece no score de tijolo com peso 0,05,
+inalterado.
+
 ## Efeito medido
 
 Universo elegível pelo piso de DY: 220 → **98** fundos.
@@ -195,11 +226,16 @@ Os cinco fundos que originaram a reclamação:
    divulgada em vez de omiti-la.
 7. `METHODOLOGY_VERSION` mudou, logo nenhuma safra da 6.8.0 é aceita como
    validação da 6.9.0.
+8. O extrator ampliado reconhece "prazo médio remanescente" e "prazo médio
+   ponderado" além da sigla, e continua rejeitando texto que não traga um
+   número de anos plausível.
 
 ## Fora de escopo
 
 - Recalcular `income_recurrence` (a janela de 36 meses e a fórmula
   `positive_share/(1+cv)` ficam como estão).
 - Ampliar a cobertura de `tenant_concentration` além dos 48,2% atuais.
+- Fixar o piso de `wault_anos` neste ciclo: ele depende da medição descrita na
+  seção 7 e só é decidido depois dela.
 - Regras de proteção específicas para papel e FoF além do piso de renda
   recorrente.
