@@ -78,6 +78,30 @@ class LiquidezDataError(RuntimeError):
     """A série de volume negociado não pôde ser consultada com segurança."""
 
 
+def _enrich_decision_universe(
+    df_mult_todos: pd.DataFrame,
+    hist_batch: dict[str, pd.DataFrame],
+    all_tickers: tuple[str, ...],
+) -> pd.DataFrame:
+    """Inclui evidência histórica no quadro lido pelas decisões de carteira.
+
+    O piso de qualidade, a Saúde da Carteira e a Rota de Valor consomem
+    ``df_mult_todos``. Portanto, a sustentabilidade não pode ficar apenas no
+    quadro reconciliado de entrada: lacunas continuam ``NaN`` e são tratadas
+    como ausência pelos consumidores, nunca como uma nota ou risco zero.
+    """
+    from core.b3_renda_sustentavel import (
+        enrich_com_historico_patrimonial,
+        enrich_com_renda_sustentavel,
+    )
+    from core.dossie_b3 import load_pl_lucro_anual_batch
+
+    enriched = enrich_com_renda_sustentavel(df_mult_todos, hist_batch)
+    return enrich_com_historico_patrimonial(
+        enriched, load_pl_lucro_anual_batch(all_tickers)
+    )
+
+
 def _ticker_key(value: object) -> str:
     return str(value or "").upper().replace(".SA", "").strip()
 
@@ -326,6 +350,25 @@ def _build_entry_guard(
             "risk_penalty": float(row.get("r_penalty", 0.0) or 0.0),
         }
     return guard, df_entry
+
+
+def _prepare_entry_guard(
+    df_mult_recon: pd.DataFrame,
+    df_set: pd.DataFrame,
+    hist_batch_guard: dict[str, pd.DataFrame],
+    anos_hist: dict[str, int] | None,
+    all_tickers: tuple[str, ...],
+) -> tuple[dict[str, dict], pd.DataFrame]:
+    """Enriquece e calcula o guard da decisão corrente.
+
+    ``hist_batch_guard`` pode conter o overlay reconciliado da fotografia
+    corrente. Ele é deliberadamente exclusivo deste guard: o backtest continua
+    recebendo ``hist_clean`` sem dados posteriores ao seu cutoff.
+    """
+    df_guard = _enrich_decision_universe(
+        df_mult_recon, hist_batch_guard, all_tickers
+    )
+    return _build_entry_guard(df_guard, df_set, hist_batch_guard, anos_hist)
 
 
 def _render_data_quality_box(summary: dict, audit: pd.DataFrame, hist_audit: pd.DataFrame) -> None:
@@ -2862,8 +2905,16 @@ def render(show_header: bool = True) -> None:
             # anos alcançáveis pelos cutoffs (look-ahead).
             hist_batch_guard = _overlay_current_reconciled_row(hist_clean, df_mult_recon)
             hist_batch = hist_clean
-            entry_guard, df_entry_guard = _build_entry_guard(
-                df_mult_recon, df_set, hist_batch_guard, anos_hist
+            entry_guard, df_entry_guard = _prepare_entry_guard(
+                df_mult_recon, df_set, hist_batch_guard, anos_hist, all_tickers
+            )
+
+        # O score, o piso de qualidade, a Saúde da Carteira e a Rota de Valor
+        # leem este quadro, não ``df_mult_recon``. Enriquecer aqui mantém a
+        # mesma evidência histórica em toda decisão de criação de carteira.
+        with st.spinner("Calculando sustentabilidade histórica da seleção…"):
+            df_mult_todos = _enrich_decision_universe(
+                df_mult_todos, hist_batch, all_tickers
             )
 
         with st.spinner("Carregando preços mensais ajustados…"):
