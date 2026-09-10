@@ -417,7 +417,8 @@ def test_fundo_sem_protecao_divulgada_nao_passa_de_metade_do_teto():
     """A verificação incide sobre o peso FINAL: já houve teto de 15%
     respeitado em toda chamada e violado em 27,8% no acumulado."""
     import numpy as np
-    from core.fii_portfolio_v4 import _teto_por_ativo, PortfolioPolicy
+
+    from core.fii_portfolio_v4 import PortfolioPolicy, _teto_por_ativo
 
     policy = PortfolioPolicy(max_asset=.15)
     rows = [
@@ -435,7 +436,10 @@ def test_excesso_de_opacidade_e_reportado_para_o_fundo_sem_bloquear():
     de ``opacidade_excedente``, contra o valor absoluto ``max_asset * .5``,
     nunca contra o teto que o afrouxamento por viabilidade tenha alargado."""
     from core.fii_portfolio_v4 import (
-        PortfolioPolicy, opacidade_excedente, portfolio_constraint_violations)
+        PortfolioPolicy,
+        opacidade_excedente,
+        portfolio_constraint_violations,
+    )
 
     policy = PortfolioPolicy(max_asset=.15)
     itens = [
@@ -536,9 +540,11 @@ def test_opacidade_cede_quando_inviabilizaria_a_banda_do_tipo():
     Precedente no próprio arquivo: max_weighted_uncertainty foi de .30 para .35
     porque tornava o LP inviável no universo real.
     """
-    import numpy as np
     from core.fii_portfolio_v4 import (
-        PortfolioPolicy, _afrouxa_teto_por_viabilidade, _teto_por_ativo)
+        PortfolioPolicy,
+        _afrouxa_teto_por_viabilidade,
+        _teto_por_ativo,
+    )
 
     policy = PortfolioPolicy(max_asset=.15)
     # Cinco tijolos, todos opacos: 5 x .075 = .375 contra um piso de banda .40.
@@ -555,9 +561,11 @@ def test_opacidade_cede_quando_inviabilizaria_a_banda_do_tipo():
 
 def test_afrouxamento_nao_ocorre_quando_ha_folga():
     """Com folga, a opacidade continua custando: relaxar sempre apagaria a regra."""
-    import numpy as np
     from core.fii_portfolio_v4 import (
-        PortfolioPolicy, _afrouxa_teto_por_viabilidade, _teto_por_ativo)
+        PortfolioPolicy,
+        _afrouxa_teto_por_viabilidade,
+        _teto_por_ativo,
+    )
 
     policy = PortfolioPolicy(max_asset=.15)
     rows = [{"ticker": "OPACO11", "tipo": "tijolo"}]
@@ -575,8 +583,12 @@ def test_afrouxamento_nao_ocorre_quando_ha_folga():
 def test_teto_por_ativo_sempre_comporta_uma_carteira_inteira():
     """Soma dos tetos abaixo de 1 devolve carteira vazia sem dizer por quê."""
     import numpy as np
+
     from core.fii_portfolio_v4 import (
-        PortfolioPolicy, _afrouxa_teto_por_viabilidade, _teto_por_ativo)
+        PortfolioPolicy,
+        _afrouxa_teto_por_viabilidade,
+        _teto_por_ativo,
+    )
 
     policy = PortfolioPolicy(max_asset=.15, max_assets=12)
     rows = [{"ticker": f"T{i}11", "tipo": "tijolo"} for i in range(12)]
