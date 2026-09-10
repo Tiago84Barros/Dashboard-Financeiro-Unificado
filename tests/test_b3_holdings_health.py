@@ -69,6 +69,68 @@ def test_payout_alto_sem_aperto_de_caixa_e_apenas_atencao():
     assert any("extraordin" in a.lower() for a in h.alertas)
 
 
+def _linha_payout_alto(**extras) -> pd.DataFrame:
+    """Empresa com payout TTM acima do crítico e sem aperto de caixa TTM."""
+    base = {
+        "Ticker": "XPTO3", "Payout": 1.80, "DY": 0.12,
+        "Endividamento_Total": 0.5, "Margem_Operacional": 0.20,
+        "FCO_Negativo": 0.0,
+    }
+    base.update(extras)
+    return pd.DataFrame([base])
+
+
+def test_veto_exige_a_e_b():
+    """A confirmação histórica exige payout persistente E erosão patrimonial."""
+    df = _linha_payout_alto(payout_mediano_hist=1.95, n_anos_payout=7,
+                            pl_queda_com_lucro_frac=0.10, n_pares_pl=6)
+    (holding,) = check_holdings(df, ["XPTO3"])
+    assert holding.nivel != CRITICO
+
+
+def test_veto_quando_a_e_b_convergem():
+    df = _linha_payout_alto(payout_mediano_hist=1.61, n_anos_payout=6,
+                            pl_queda_com_lucro_frac=0.67, n_pares_pl=6)
+    (holding,) = check_holdings(df, ["XPTO3"])
+    assert holding.nivel == CRITICO
+    assert any("persistente" in alerta for alerta in holding.alertas)
+
+
+def test_historico_curto_nao_confirma():
+    df = _linha_payout_alto(payout_mediano_hist=1.61, n_anos_payout=4,
+                            pl_queda_com_lucro_frac=0.90, n_pares_pl=4)
+    (holding,) = check_holdings(df, ["XPTO3"])
+    assert holding.nivel != CRITICO
+
+
+def test_flag_desligada_ignora_a_confirmacao_historica():
+    df = _linha_payout_alto(payout_mediano_hist=1.61, n_anos_payout=6,
+                            pl_queda_com_lucro_frac=0.67, n_pares_pl=6)
+    (holding,) = check_holdings(
+        df, ["XPTO3"], persistencia_historica=False,
+    )
+    assert holding.nivel != CRITICO
+
+
+@pytest.mark.parametrize("campo", [
+    "payout_mediano_hist", "n_anos_payout",
+    "pl_queda_com_lucro_frac", "n_pares_pl",
+])
+@pytest.mark.parametrize("valor", [np.nan, np.inf, -np.inf])
+def test_evidencia_historica_nao_finita_e_ausencia(campo, valor):
+    """Infinitos e NaN não confirmam veto nem chegam à formatação percentual."""
+    dados = {
+        "payout_mediano_hist": 1.61,
+        "n_anos_payout": 6,
+        "pl_queda_com_lucro_frac": 0.67,
+        "n_pares_pl": 6,
+    }
+    dados[campo] = valor
+    (holding,) = check_holdings(_linha_payout_alto(**dados), ["XPTO3"])
+    assert holding.nivel != CRITICO
+    assert not any("padrão persistente" in alerta for alerta in holding.alertas)
+
+
 def test_falha_estrutural_isolada_e_atencao_nao_critico():
     """Calibração contra caso real (28/07/2026): PETR4 tinha liquidez corrente
     0,74 e virava crítica, apesar de margem operacional de 29%, ROIC de 14% e

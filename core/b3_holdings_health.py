@@ -24,6 +24,7 @@ Puro (sem banco, sem rede). Coberto por tests/test_b3_holdings_health.py.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -47,6 +48,13 @@ CRITICO = "critico"
 # lucro não se sustenta por definição (UNIP6: 318%).
 PAYOUT_ATENCAO = 1.00
 PAYOUT_CRITICO = 1.50
+
+# Confirmação histórica da insustentabilidade por convergência de duas
+# evidências independentes. Cada critério isolado é insuficiente para veto.
+PAYOUT_MEDIANO_CRITICO = 1.00
+MIN_ANOS_PAYOUT_HIST = 5
+FRACAO_PL_QUEDA_CRITICA = 0.50
+MIN_PARES_PL_HIST = 5
 
 # Taxonomia B3 → sensibilidade ao ciclo. Curada e explícita: a alternativa seria
 # inferir de correlação de preços, que numa janela curta confunde regime com
@@ -126,16 +134,18 @@ def _parece_holding(linha) -> bool:
 
 
 def _num(valor) -> float:
+    """Número finito ou ``NaN`` para que dado inválido permaneça ausente."""
     try:
         numero = float(valor)
     except (TypeError, ValueError):
         return float("nan")
-    return numero
+    return numero if math.isfinite(numero) else float("nan")
 
 
 def check_holdings(df_mult: pd.DataFrame, tickers: list[str], *,
                    policy: ValuePolicy | None = None,
-                   selic: float | None = None) -> list[HoldingHealth]:
+                   selic: float | None = None,
+                   persistencia_historica: bool = True) -> list[HoldingHealth]:
     """Diagnostica as empresas selecionadas cruzando as duas rotas.
 
     Args:
@@ -143,6 +153,9 @@ def check_holdings(df_mult: pd.DataFrame, tickers: list[str], *,
         tickers: empresas efetivamente escolhidas pela carteira.
         policy: limites de solvência (padrões da rota de valor).
         selic: risco-livre em fração, para o alerta de ROIC.
+        persistencia_historica: quando False, não considera a quarta
+            confirmação: payout mediano alto e patrimônio em queda persistente.
+            Usado apenas pela guarda de viabilidade do piso de qualidade.
     """
     policy = policy or ValuePolicy()
     alvos = [str(t).upper().replace(".SA", "") for t in (tickers or [])]
@@ -215,6 +228,32 @@ def check_holdings(df_mult: pd.DataFrame, tickers: list[str], *,
                     f"endividamento {endividamento:.2f}× > {policy.max_endividamento:g}×")
             if margem_op == margem_op and margem_op < 0:
                 confirmacoes.append("margem operacional negativa")
+
+            # Quarta confirmação: a persistência na janela anual diferencia um
+            # evento TTM extraordinário de uma política de distribuição que não
+            # se sustenta. Exige A E B; ausência ou série curta não confirmam.
+            payout_med = _num(linha_base.get("payout_mediano_hist"))
+            n_anos_pay = _num(linha_base.get("n_anos_payout"))
+            frac_pl = _num(linha_base.get("pl_queda_com_lucro_frac"))
+            n_pares = _num(linha_base.get("n_pares_pl"))
+            crit_a = (
+                payout_med == payout_med
+                and n_anos_pay == n_anos_pay
+                and payout_med > PAYOUT_MEDIANO_CRITICO
+                and n_anos_pay >= MIN_ANOS_PAYOUT_HIST
+            )
+            crit_b = (
+                frac_pl == frac_pl
+                and n_pares == n_pares
+                and frac_pl >= FRACAO_PL_QUEDA_CRITICA
+                and n_pares >= MIN_PARES_PL_HIST
+            )
+            if persistencia_historica and crit_a and crit_b:
+                confirmacoes.append(
+                    f"padrão persistente: payout mediano de {payout_med:.0%} em "
+                    f"{int(n_anos_pay)} anos com patrimônio caindo em "
+                    f"{frac_pl:.0%} dos {int(n_pares)} pares"
+                )
 
             if payout == payout and payout >= PAYOUT_CRITICO and confirmacoes:
                 nivel = CRITICO

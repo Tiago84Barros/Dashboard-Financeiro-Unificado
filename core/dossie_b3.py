@@ -125,6 +125,41 @@ def _series_anuais(tk: str, max_anos: int = 12) -> list[dict]:
     return out
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_pl_lucro_anual_batch(
+    tickers: tuple[str, ...],
+    max_anos: int = 12,
+) -> dict[str, list[dict]]:
+    """PL e lucro anuais de vários tickers para o critério histórico do piso.
+
+    Esta consulta fica no dossiê, que já concentra este join e o engine
+    singleton. O histórico de múltiplos não traz patrimônio nem lucro.
+    """
+    alvos = sorted({str(ticker).upper().replace(".SA", "")
+                    for ticker in (tickers or ()) if ticker})
+    if not alvos:
+        return {}
+    rows = _rows(
+        """
+        SELECT i.ticker, i.year, i.net_income, b.equity
+        FROM market.income_statements i
+        LEFT JOIN market.balance_sheets b
+          ON b.ticker = i.ticker AND b.period = i.period AND b.year = i.year
+        WHERE i.ticker = ANY(:tks) AND i.period = 'annual'
+        ORDER BY i.ticker, i.year
+        """,
+        tks=alvos,
+    )
+    por_ticker: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        por_ticker[str(row["ticker"])].append({
+            "ano": int(row["year"]),
+            "pl_mi": _mi(row["equity"]),
+            "lucro_mi": _mi(row["net_income"]),
+        })
+    return {ticker: serie[-max_anos:] for ticker, serie in por_ticker.items()}
+
+
 def _trimestres(tk: str, n: int = 6) -> dict:
     rows = _rows(
         """

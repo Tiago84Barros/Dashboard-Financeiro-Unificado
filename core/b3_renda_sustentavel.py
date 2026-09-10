@@ -33,6 +33,7 @@ PAYOUT_MAX_COERENCIA = 0.01
 __all__ = [
     "JANELA_ANOS", "MIN_ANOS", "PISO", "OTIMO_LO", "OTIMO_HI", "TETO",
     "sustentabilidade_do_ano", "leitura_da_serie", "enrich_com_renda_sustentavel",
+    "fracao_pl_em_queda_com_lucro", "enrich_com_historico_patrimonial",
 ]
 
 
@@ -63,6 +64,10 @@ def _anos_observados(df_hist: pd.DataFrame) -> list[float]:
     payout = pd.to_numeric(df["Payout"], errors="coerce")
     dy = (pd.to_numeric(df["DY"], errors="coerce") if "DY" in df.columns
           else pd.Series(np.nan, index=df.index))
+    # Infinitos não são observações financeiras válidas; como qualquer lacuna,
+    # não contam para a janela nem participam da mediana.
+    payout = payout.where(np.isfinite(payout))
+    dy = dy.where(np.isfinite(dy))
     incoerente = (dy > DY_MIN_COERENCIA) & (payout <= PAYOUT_MAX_COERENCIA)
     payout = payout[~incoerente].dropna()
     return [float(v) for v in payout.tolist()[-JANELA_ANOS:]]
@@ -111,3 +116,57 @@ def enrich_com_renda_sustentavel(
     out["dy_sustentavel"] = dy * pd.to_numeric(
         out["payout_sustentabilidade"], errors="coerce")
     return out
+
+
+def _num_ou_none(valor) -> float | None:
+    """Número finito, preservando ausência como ``None``."""
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return None
+    return numero if np.isfinite(numero) else None
+
+
+def fracao_pl_em_queda_com_lucro(serie: list[dict]) -> tuple[float | None, int]:
+    """Fração dos pares consecutivos com PL caindo e lucro positivo.
+
+    PL e lucro ausentes em qualquer ponta necessária tornam o par ausente, e
+    não zero. Assim não se fabrica uma queda patrimonial a partir de lacuna da
+    fonte. O lucro avaliado é o do exercício mais recente do par.
+    """
+    linhas = sorted(serie or [], key=lambda linha: linha.get("ano") or 0)
+    pares = 0
+    quedas_com_lucro = 0
+    for anterior, atual in zip(linhas, linhas[1:]):
+        pl_anterior = _num_ou_none(anterior.get("pl_mi"))
+        pl_atual = _num_ou_none(atual.get("pl_mi"))
+        lucro_atual = _num_ou_none(atual.get("lucro_mi"))
+        if pl_anterior is None or pl_atual is None or lucro_atual is None:
+            continue
+        pares += 1
+        if pl_atual < pl_anterior and lucro_atual > 0:
+            quedas_com_lucro += 1
+    if pares == 0:
+        return None, 0
+    return quedas_com_lucro / pares, pares
+
+
+def enrich_com_historico_patrimonial(
+    df_mult: pd.DataFrame,
+    series_batch: dict[str, list[dict]],
+) -> pd.DataFrame:
+    """Acrescenta a fração histórica de PL em queda ao cross-section."""
+    if df_mult is None or df_mult.empty or not series_batch:
+        return df_mult
+    dados: dict[str, dict] = {}
+    for ticker, serie in series_batch.items():
+        fracao, n_pares = fracao_pl_em_queda_com_lucro(serie)
+        dados[str(ticker)] = {
+            "pl_queda_com_lucro_frac": fracao,
+            "n_pares_pl": n_pares,
+        }
+    if not dados:
+        return df_mult
+    df_pl = pd.DataFrame.from_dict(dados, orient="index")
+    df_pl.index.name = "Ticker"
+    return df_mult.merge(df_pl.reset_index(), on="Ticker", how="left")
