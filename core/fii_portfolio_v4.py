@@ -244,9 +244,9 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
     n = len(pool)
     quality = np.array([_num(row.get("type_score")) / 100 for row in pool])
     confidence = np.array([_num(row.get("confidence")) for row in pool])
-    dy = np.array([_num(row.get("dy_12m")) for row in pool])
-    if np.nanmax(dy, initial=0) > 1:
-        dy = dy / 100
+    # A função objetivo precisa usar a mesma renda que o gate: premiar o DY
+    # divulgado aqui recolocaria um evento não recorrente na decisão final.
+    dy = np.array([_num(dy_recorrente(row)) for row in pool])
     adverse = np.array([
         np.mean([max(-asset_scenario_return(row, name), 0) for name in SCENARIOS[1:]])
         for row in pool
@@ -715,9 +715,8 @@ def optimize_diligence_portfolio(
     }
     quality = np.array([_num(r.get("type_score")) / 100 for r in rows])
     confidence = np.array([_num(r.get("confidence")) for r in rows])
-    dy = np.array([_num(r.get("dy_12m")) for r in rows])
-    if np.nanmax(dy, initial=0) > 1.0:
-        dy = dy / 100.0
+    # Mantém pesos, ranking e o piso de renda na mesma definição recorrente.
+    dy = np.array([_num(dy_recorrente(row)) for row in rows])
     scenario_values_by_asset = np.array([
         [asset_scenario_return(r, s) for s in SCENARIOS] for r in rows
     ], dtype=float)
