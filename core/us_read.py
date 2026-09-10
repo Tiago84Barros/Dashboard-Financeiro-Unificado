@@ -878,6 +878,70 @@ def load_snapshot_financials(symbol: str) -> pd.DataFrame:
             if rows else pd.DataFrame(columns=_COMPANY_FINANCIAL_COLS))
 
 
+def load_snapshot_financials_for_symbols(symbols) -> dict[str, list[dict]]:
+    """Lê ``financials`` somente para os símbolos pedidos pela carteira.
+
+    O histórico anual compactado ocupa a maior parte da vitrine EUA. Por isso
+    esta função não é chamada por ``load_snapshot_scored``: a criação de
+    carteira a aciona depois de ter decidido quais símbolos precisa avaliar.
+    A lista é normalizada e vinculada como parâmetro expandido; não há SQL
+    construído a partir de ticker.
+    """
+    candidatos = [] if symbols is None else symbols
+    normalizados = list(dict.fromkeys(
+        str(symbol).strip().upper() for symbol in candidatos
+        if symbol is not None and str(symbol).strip()))
+    if not normalizados:
+        return {}
+    eng = _engine()
+    if eng is None:
+        return {}
+    consulta = text(
+        "SELECT symbol, financials FROM market_us.company_snapshots "
+        "WHERE symbol IN :symbols"
+    ).bindparams(bindparam("symbols", expanding=True))
+    try:
+        with eng.connect() as conn:
+            frame = pd.read_sql(consulta, conn, params={"symbols": normalizados})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("histórico anual sob demanda indisponível: %s", exc)
+        return {}
+    if frame.empty or not {"symbol", "financials"}.issubset(frame.columns):
+        return {}
+    resultado: dict[str, list[dict]] = {}
+    for _, row in frame.iterrows():
+        dados = _parse_json_col(row["financials"])
+        if isinstance(dados, list):
+            resultado[str(row["symbol"]).strip().upper()] = dados
+    return resultado
+
+
+def enrich_with_renda_sustentavel(frame: pd.DataFrame) -> pd.DataFrame:
+    """Anexa evidência histórica de renda ao frame da criação de carteira.
+
+    Ausência do bloco ``financials`` permanece ausência na nota de
+    sustentabilidade; jamais é convertida em payout nulo ou risco inexistente.
+    A consulta pesada fica limitada aos símbolos do próprio ``frame``.
+    """
+    if frame is None or frame.empty or "symbol" not in frame.columns:
+        return frame.copy() if frame is not None else pd.DataFrame()
+    from core.us_renda_sustentavel import leitura_da_serie
+
+    out = frame.copy()
+    symbols = out["symbol"].astype(str).str.strip().str.upper()
+    historicos = load_snapshot_financials_for_symbols(symbols.tolist())
+    leituras = []
+    for (_, row), symbol in zip(out.iterrows(), symbols):
+        reit = row.get("is_reit", False)
+        is_reit = bool(reit) if not pd.isna(reit) else False
+        leituras.append(leitura_da_serie(historicos.get(symbol, []), is_reit=is_reit))
+    metricas = pd.DataFrame(leituras, index=out.index).drop(columns=["is_reit"])
+    # Campos preexistentes no frame são substituídos pela leitura pedida agora;
+    # isso evita usar uma métrica de safra diferente sem deixar colunas duplicadas.
+    out = out.drop(columns=[c for c in metricas if c in out], errors="ignore")
+    return pd.concat([out, metricas], axis=1)
+
+
 def load_snapshot_company_market_data(symbol: str) -> dict:
     """Históricos compactos publicados dentro do dossiê da vitrine."""
     dossie = load_snapshot_dossie(symbol) or {}
