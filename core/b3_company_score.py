@@ -35,7 +35,16 @@ FACTOR_TRACKS: dict[str, list[tuple[str, bool]]] = {
     "valuation": [
         ("P/L", True), ("P/VP", True), ("EV_EBIT", True), ("P_FCO", True),
     ],
-    "shareholder": [("DY", True), ("Payout", True)],
+    # `Payout` saiu: monotônico e crescente, ele premiava distribuir acima do
+    # lucro. Entram as leituras históricas: `dy_sustentavel` mede o nível da
+    # renda sustentável e `payout_sustentabilidade`, a qualidade da política.
+    # `DY` permanece para não premiar quem quase não distribui. A ausência das
+    # colunas novas é neutra e tem sua cobertura explicitamente reduzida.
+    "shareholder": [
+        ("dy_sustentavel", True),
+        ("payout_sustentabilidade", True),
+        ("DY", True),
+    ],
 }
 
 DEFAULT_TRACK_WEIGHTS: dict[str, float] = {
