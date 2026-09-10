@@ -151,3 +151,68 @@ def test_enrich_patrimonial_acrescenta_colunas():
     assert linha["n_pares_pl"] == 1
     vazia = out[out["Ticker"] == "SEMDADO3"].iloc[0]
     assert np.isnan(vazia["pl_queda_com_lucro_frac"])
+
+
+def test_criacao_de_portfolio_enriquece_frame_decisorio_sem_fabricar_zero(
+    monkeypatch,
+):
+    """O piso e a rota leem o mesmo quadro, inclusive quando há lacuna."""
+    import core.dossie_b3 as dossie
+    from views.portfolio_b3 import _enrich_decision_universe
+
+    df_mult = pd.DataFrame({
+        "Ticker": ["COMHIST3", "SEMHIST3"],
+        "DY": [0.08, 0.09],
+    })
+    hist = {"COMHIST3": _serie([0.40, 0.50, 0.60])}
+    monkeypatch.setattr(dossie, "load_pl_lucro_anual_batch", lambda _tickers: {
+        "COMHIST3": _anual([(2021, 100.0, 10.0), (2022, 90.0, 8.0)]),
+    })
+
+    out = _enrich_decision_universe(df_mult, hist, ("COMHIST3", "SEMHIST3"))
+    com_hist = out.set_index("Ticker").loc["COMHIST3"]
+    sem_hist = out.set_index("Ticker").loc["SEMHIST3"]
+
+    assert com_hist["payout_sustentabilidade"] == pytest.approx(1.0)
+    assert com_hist["pl_queda_com_lucro_frac"] == pytest.approx(1.0)
+    assert np.isnan(sem_hist["payout_sustentabilidade"])
+    assert np.isnan(sem_hist["dy_sustentavel"])
+    assert np.isnan(sem_hist["pl_queda_com_lucro_frac"])
+
+
+def test_entry_guard_recebe_sustentabilidade_historica_sem_fabricar_zero(
+    monkeypatch,
+):
+    """O guard da carteira recebe o quadro enriquecido, não o snapshot cru."""
+    import core.dossie_b3 as dossie
+    import views.portfolio_b3 as portfolio_b3
+
+    df_mult = pd.DataFrame({
+        "Ticker": ["COMHIST3", "SEMHIST3"],
+        "DY": [0.08, 0.09],
+    })
+    df_set = pd.DataFrame({
+        "ticker": ["COMHIST3", "SEMHIST3"],
+        "SETOR": ["Teste", "Teste"],
+        "SUBSETOR": ["Teste", "Teste"],
+        "SEGMENTO": ["Teste", "Teste"],
+    })
+    hist_guard = {"COMHIST3": _serie([0.40, 0.50, 0.60])}
+    monkeypatch.setattr(dossie, "load_pl_lucro_anual_batch", lambda _tickers: {})
+
+    received: dict[str, pd.DataFrame] = {}
+
+    def fake_build(frame, *_args):
+        received["frame"] = frame
+        return {}, pd.DataFrame()
+
+    monkeypatch.setattr(portfolio_b3, "_build_entry_guard", fake_build)
+    portfolio_b3._prepare_entry_guard(
+        df_mult, df_set, hist_guard, None, ("COMHIST3", "SEMHIST3")
+    )
+
+    frame = received["frame"].set_index("Ticker")
+    assert frame.loc["COMHIST3", "payout_sustentabilidade"] == pytest.approx(1.0)
+    assert frame.loc["COMHIST3", "dy_sustentavel"] == pytest.approx(0.08)
+    assert np.isnan(frame.loc["SEMHIST3", "payout_sustentabilidade"])
+    assert np.isnan(frame.loc["SEMHIST3", "dy_sustentavel"])
