@@ -132,8 +132,8 @@ def test_nenhum_parametro_de_selecao_mudou():
     """Os defaults definem a carteira — mudá-los mudaria o resultado."""
     corpo = inspect.getsource(fiis._integrated_preference_controls)
     for default in (
-        '"Nº máximo de FIIs", 8, 20, 12',
-        '"Máx. por FII (%)", 5, 25, 15, 1',
+        '"Nº máximo de FIIs", 8, 20, 14',
+        '"Máx. por FII (%)", 5, 25, 10, 1',
         '"Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, .5',
         '"Histórico mín. (meses)", 0, 60, 24, 6',
         '"DY 12m mín. (%)", 0.0, 20.0, 8.0, .5',

@@ -1176,8 +1176,8 @@ def _integrated_preference_controls() -> dict:
     """
     with st.expander("⚙️ Carteira e elegibilidade", expanded=False):
         c1, c2, c3, c4 = st.columns(4)
-        n_assets = c1.slider("Nº máximo de FIIs", 8, 20, 12, key="fii_pref_integrated_assets")
-        max_asset = c2.slider("Máx. por FII (%)", 5, 25, 15, 1,
+        n_assets = c1.slider("Nº máximo de FIIs", 8, 20, 14, key="fii_pref_integrated_assets")
+        max_asset = c2.slider("Máx. por FII (%)", 5, 25, 10, 1,
                               key="fii_pref_integrated_max_asset") / 100
         min_liquidity = c3.slider("Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, .5,
                                   key="fii_pref_integrated_liquidity") * 1e6
