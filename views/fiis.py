@@ -1187,7 +1187,10 @@ def _integrated_preference_controls() -> dict:
 
         c5, c6, c7, c8 = st.columns(4)
         min_dy = c5.slider("DY recorrente 12m mín. (%)", 0.0, 20.0, 8.0, .5,
-                           key="fii_pref_integrated_dy") / 100
+                           key="fii_pref_integrated_dy",
+                           help="Incide sobre dy_12m × income_recurrence: a "
+                                "parcela do yield sustentada por resultado "
+                                "recorrente.") / 100
         max_drawdown = c6.slider("Drawdown máx. tolerado (%)", 10, 60, 35, 5,
                                  key="fii_pref_integrated_drawdown") / 100
         correlation_penalty = c7.slider(
@@ -2083,6 +2086,19 @@ def _carteira_integrada(preferences: dict):
         st.warning(
             "Proteção por opacidade ajustada para preservar a viabilidade da carteira: "
             + " ".join(result["viability_notes"])
+        )
+    if result.get("protecao_excedida"):
+        # opacidade_excedente (core/fii_portfolio_v4.py) mede contra o teto do
+        # spec, nunca contra o teto já afrouxado — a cessão de proteção por
+        # viabilidade tem que ficar visível a quem lê a carteira, ticker a
+        # ticker, e não só como nota agregada.
+        st.warning(
+            "Proteção por opacidade cedida além do custo normal do spec: "
+            + " ".join(
+                f"{item['ticker']} — peso final {item['peso_final']:.1%} "
+                f"acima do teto do spec de {item['teto_spec']:.1%}."
+                for item in result["protecao_excedida"]
+            )
         )
     weights = {item["ticker"]: item["weight"] for item in items}
     fii_types = {item["ticker"]: item["tipo"] for item in items}

@@ -161,6 +161,78 @@ def test_nota_de_viabilidade_da_opacidade_e_exibida():
     assert 'result.get("viability_notes")' in corpo
 
 
+def test_o_piso_da_tela_e_o_da_renda_recorrente():
+    """A coluna que decide e a que aparece têm de ser a mesma."""
+    corpo = inspect.getsource(fiis._integrated_preference_controls)
+    assert '"DY recorrente 12m mín. (%)"' in corpo
+    assert "min_recurrent_dy_12m=min_dy" in corpo
+    assert "min_dy_12m=" not in corpo
+
+
+def test_slider_de_dy_recorrente_explica_o_que_incide():
+    corpo = inspect.getsource(fiis._integrated_preference_controls)
+    assert "Incide sobre dy_12m × income_recurrence" in corpo
+
+
+def test_protecao_excedida_e_exibida_ticker_a_ticker():
+    """O campo que a Task 5 passou a devolver não pode ficar enterrado.
+
+    ``opacidade_excedente`` nomeia fundo, teto do spec, peso obtido e motivo;
+    a tela precisa ler exatamente esses campos, não uma nota agregada.
+    """
+    corpo = inspect.getsource(fiis._carteira_integrada)
+    assert 'result.get("protecao_excedida")' in corpo
+    assert 'result["protecao_excedida"]' in corpo
+    for campo in ("ticker", "peso_final", "teto_spec"):
+        assert f"item['{campo}']" in corpo or f'item["{campo}"]' in corpo
+
+
+def test_relatorio_de_exclusao_da_tela_e_generico_quanto_ao_motivo():
+    """A tela não pode filtrar por uma lista fixa de razões conhecidas.
+
+    As quatro razões da Task 2 (renda recorrente ausente/abaixo do mínimo,
+    concentração de locatário e vencimentos em 24m acima do teto) só chegam à
+    tela se ``_diagnostico_de_exclusao`` renderizar qualquer chave presente em
+    ``exclusion_counts`` — o mecanismo já é genérico, e este teste prova que
+    continua sendo.
+    """
+    corpo = inspect.getsource(fiis._diagnostico_de_exclusao)
+    assert 'eligibility.get("exclusion_counts")' in corpo
+    assert "for motivo, qtd in contagem.items()" in corpo
+
+
+def test_as_quatro_razoes_novas_chegam_com_contagem_ao_relatorio_da_tela():
+    """Prova de ponta a ponta: o que o motor conta é o que a tela recebe.
+
+    ``_diagnostico_de_exclusao`` lê ``eligibility["exclusion_counts"]`` sem
+    filtrar por nome (teste acima); falta provar que o motor de fato preenche
+    essa chave com as quatro razões novas, cada uma com sua contagem.
+    """
+    from core.fii_integrated_model import (
+        IntegratedEligibilityPolicy,
+        apply_integrated_eligibility,
+    )
+
+    base = {
+        "tipo": "tijolo", "liquidez_diaria": 5e6, "pvp": .95,
+        "history_months": 60, "max_drawdown": -.20,
+        "dy_12m": .12, "income_recurrence": .90,
+        "tenant_concentration": .10, "lease_expiry_concentration_24m": .10,
+    }
+    linhas = [
+        {**base, "ticker": "A11", "income_recurrence": None},
+        {**base, "ticker": "B11", "income_recurrence": .20},
+        {**base, "ticker": "C11", "tenant_concentration": .90},
+        {**base, "ticker": "D11", "lease_expiry_concentration_24m": .90},
+    ]
+    _, eligibility = apply_integrated_eligibility(linhas, IntegratedEligibilityPolicy())
+    contagem = eligibility["exclusion_counts"]
+    assert contagem["renda recorrente ausente"] == 1
+    assert contagem["renda recorrente abaixo do mínimo"] == 1
+    assert contagem["concentração de locatário acima do teto"] == 1
+    assert contagem["vencimentos em 24m acima do teto"] == 1
+
+
 def test_selic_e_ipca_partem_da_observacao_e_nao_de_literal():
     """O literal 15,0% sobreviveu ao ciclo de corte e virou premissa falsa."""
     corpo = inspect.getsource(fiis._integrated_preference_controls)
