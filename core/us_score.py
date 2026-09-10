@@ -66,7 +66,11 @@ FACTOR_TRACKS: dict[str, list[str]] = {
     # O dividend yield existe para responder outra pergunta -- "este ativo
     # paga renda?" -- e e por isso que ele alimenta o papel de renda no
     # portfolio global, o dossie e o contexto do LLM, sem tocar na nota.
-    "shareholder": ["shareholder_yield", "share_count_cagr_3y"],
+    # A nota de sustentabilidade compara dividendos anuais ao lucro e ao FCL
+    # em até oito exercícios. É evidência complementar: quando não há série
+    # suficiente, não pune nem premia o retorno ao acionista já observado.
+    "shareholder": ["shareholder_yield", "share_count_cagr_3y",
+                    "payout_sustentabilidade"],
 }
 
 DEFAULT_TRACK_WEIGHTS: dict[str, float] = {
@@ -91,6 +95,11 @@ SECTOR_TRACK_OVERRIDES: dict[str, dict[str, float]] = {
 
 NEUTRAL = 0.5
 _ALL_METRICS = [m for ms in FACTOR_TRACKS.values() for m in ms]
+
+# Métricas históricas facultativas podem refinar a ordem quando existem, mas
+# não mudam score/cobertura de uma empresa cujo histórico não foi publicado.
+# Isso é diferente de uma lacuna das métricas fundamentais obrigatórias.
+_OPTIONAL_METRICS = frozenset({"payout_sustentabilidade"})
 
 # Múltiplos ranqueados pelo YIELD recíproco (achado A-101). EV/EBIT = -9 não é
 # mais barato que 5: o múltiplo deixa de ser monótono quando o denominador vira
@@ -258,7 +267,11 @@ def _rank_within(df: pd.DataFrame, group_col: str, min_group: int) -> pd.DataFra
         # O recíproco já inverteu o sentido: EBIT/EV maior é melhor.
         if metric in LOWER_IS_BETTER and not reciproco:
             ranked = 1.0 - ranked
-        out[metric] = ranked.fillna(NEUTRAL)
+        # Na métrica facultativa, NaN precisa continuar NaN para que ``mean``
+        # a ignore. Preenchê-lo com 50 alteraria uma trilha já calculável e
+        # transformaria ausência de histórico em uma penalidade disfarçada.
+        out[metric] = ranked.where(col.notna()) if metric in _OPTIONAL_METRICS \
+            else ranked.fillna(NEUTRAL)
     return out
 
 
@@ -279,14 +292,15 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
     track_scores: dict[str, pd.Series] = {}
     for track, metrics in FACTOR_TRACKS.items():
         present = [m for m in metrics if m in df.columns]
+        metricas_cobertura = [m for m in present if m not in _OPTIONAL_METRICS]
         if present:
             track_scores[track] = pct[present].mean(axis=1)
             # cobertura real = fração de métricas não-ausentes na trilha,
             # sobre as que PODIAM existir. Uma razão indefinida por medida
             # (ver _nm_mask) sai do numerador E do denominador: não é lacuna.
-            nm = _nm_mask(df, present)
+            nm = _nm_mask(df, metricas_cobertura)
             denom = (~nm).sum(axis=1)
-            cov = ((df[present].notna() & ~nm).sum(axis=1)
+            cov = ((df[metricas_cobertura].notna() & ~nm).sum(axis=1)
                    .div(denom.where(denom > 0)).fillna(0.0))
         else:
             track_scores[track] = pd.Series(NEUTRAL, index=df.index)
@@ -298,7 +312,7 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
         result[f"score_{track}"] = (track_scores[track] * 100).round(1)
         result[f"coverage_{track}"] = (cov * 100).round(0)
         result[f"answerability_{track}"] = (
-            _answerability(df, metrics) * 100).round(0)
+            _answerability(df, metricas_cobertura) * 100).round(0)
 
     # score final: soma ponderada por setor (pesos por linha, pois variam)
     def _row_score(i: int) -> float:
@@ -308,7 +322,8 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
 
     result["score"] = [_row_score(i) for i in range(len(df))]
     # cobertura global (quantas métricas a empresa tinha, de todas)
-    metric_cols = [m for m in _ALL_METRICS if m in df.columns]
+    metric_cols = [m for m in _ALL_METRICS
+                   if m in df.columns and m not in _OPTIONAL_METRICS]
     if metric_cols:
         nm_all = _nm_mask(df, metric_cols)
         denom_all = (~nm_all).sum(axis=1)

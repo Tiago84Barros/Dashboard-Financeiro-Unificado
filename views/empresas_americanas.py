@@ -2498,7 +2498,13 @@ def _tab_criacao_portfolio(status: dict) -> None:
 
     if st.button("🚀 Rodar Criação de Portfólio", type="primary", key="us_create_run"):
         with st.spinner("Aplicando filtros, auditando indústrias e otimizando pesos…"):
-            baseline = build_portfolio_creation(scored, params, score_panel)
+            # O histórico anual é carregado somente depois dos filtros de
+            # elegibilidade. A vitrine normal não lê esse JSON pesado; esta é
+            # a única rota que recalcula o score com a evidência de renda.
+            portfolio_scored = us.portfolio_candidates_with_renda_sustentavel(
+                scored, params,
+            )
+            baseline = build_portfolio_creation(portfolio_scored, params, score_panel)
             snapshot = None
             holdings_base = baseline.get("holdings", pd.DataFrame())
             local_engine = get_local_macro_engine()
@@ -2515,7 +2521,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
                 except (SQLAlchemyError, ValueError):
                     snapshot = None
             result = build_portfolio_creation(
-                scored, params, score_panel,
+                portfolio_scored, params, score_panel,
                 macro_impacts=(snapshot.impacts if snapshot else {}),
                 macro_mode=macro_mode,
             )
