@@ -16,7 +16,14 @@ from core.fii_methodology import COMMON_METRICS, TYPE_METRICS, score_fiis_by_typ
 _DEFINICOES = COMMON_METRICS + TYPE_METRICS["tijolo"]
 _CHAVES = tuple(d.fallback_keys[0] if d.fallback_keys else d.key for d in _DEFINICOES)
 # Preenchidas para todo mundo; as demais são as que o fundo opaco perde.
-_ESSENCIAIS = ("dy_12m", "pvp", "liquidez_diaria")
+# ``dy_recorrente`` (não ``dy_12m``, nome antigo pré-Task 4) é o nome que
+# aparece em ``_CHAVES`` e por isso o único capaz de tirar a renda da lista
+# de descartáveis abaixo. ``score_fiis_by_type`` sobrescreve
+# ``linha["dy_recorrente"]`` com ``dy_recorrente(row)`` — calculado a partir
+# dos insumos brutos ``dy_12m``/``income_recurrence`` (core/fii_renda_recorrente.py)
+# —, então é nesses dois insumos que ``_fundo`` precisa escrever para a renda
+# aparecer de fato.
+_ESSENCIAIS = ("dy_recorrente", "pvp", "liquidez_diaria")
 
 
 def _fundo(ticker: str, nivel: float, *, manter: float = 1.0) -> dict:
@@ -33,6 +40,14 @@ def _fundo(ticker: str, nivel: float, *, manter: float = 1.0) -> dict:
     omitidas = set(descartaveis[corte:])
     for definicao, chave in zip(_DEFINICOES, _CHAVES):
         if chave in omitidas:
+            continue
+        if chave == "dy_recorrente":
+            # ``dy_recorrente`` não é lida da linha: é derivada por
+            # ``score_fiis_by_type`` a partir de ``dy_12m`` e
+            # ``income_recurrence`` (core/fii_renda_recorrente.dy_recorrente).
+            # Gravar direto em ``linha["dy_recorrente"]`` seria sobrescrito e
+            # deixaria a renda sempre ausente — o próprio achado desta rodada.
+            linha["dy_12m"] = nivel
             continue
         if definicao.direction == "lower":
             linha[chave] = 1.0 - nivel          # menor é melhor

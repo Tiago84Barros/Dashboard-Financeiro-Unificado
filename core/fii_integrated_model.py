@@ -11,17 +11,30 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
-INTEGRATED_MODEL_VERSION = "6.7.0"
+from core.fii_renda_recorrente import (
+    TETO_LOCATARIO,
+    TETO_VENCIMENTO_24M,
+    dy_recorrente,
+    estado_concentracao,
+)
+
+INTEGRATED_MODEL_VERSION = "6.8.0"
 
 
 @dataclass(frozen=True)
 class IntegratedEligibilityPolicy:
     min_daily_liquidity: float = 1_000_000.0
-    min_dy_12m: float = .08
+    # O piso incide sobre a renda recorrente, não sobre a divulgada: sobre o DY
+    # bruto ele selecionava ativamente o yield inflado por evento não
+    # recorrente. O rename é deliberado — impede que um chamador passe a
+    # semântica antiga em silêncio.
+    min_recurrent_dy_12m: float = .08
     min_history_months: int = 24
     max_drawdown: float = .35
     pvp_min: float = .55
     pvp_max: float = 1.30
+    max_tenant_concentration: float = TETO_LOCATARIO
+    max_lease_expiry_24m: float = TETO_VENCIMENTO_24M
     require_pvp_below_one: bool = False
     require_multi_region: bool = False
     require_min_properties: bool = False
@@ -57,12 +70,16 @@ def _eligibility_reasons(row: dict, policy: IntegratedEligibilityPolicy) -> list
         reasons.append("liquidez ausente")
     elif liquidity < policy.min_daily_liquidity:
         reasons.append("liquidez abaixo do mínimo")
+    recorrente = dy_recorrente(row)
     if dy is None:
         reasons.append("DY 12m ausente")
-    elif dy < policy.min_dy_12m:
-        reasons.append("DY 12m abaixo do mínimo")
     elif dy > .20:
+        # Teto de sanidade da fonte, deliberadamente sobre o DY bruto.
         reasons.append("DY 12m acima do limite de plausibilidade")
+    elif recorrente is None:
+        reasons.append("renda recorrente ausente")
+    elif recorrente < policy.min_recurrent_dy_12m:
+        reasons.append("renda recorrente abaixo do mínimo")
     if pvp is None:
         reasons.append("P/VP ausente")
     elif not policy.pvp_min <= pvp <= policy.pvp_max:
@@ -91,6 +108,12 @@ def _eligibility_reasons(row: dict, policy: IntegratedEligibilityPolicy) -> list
             reasons.append(f"menos de {policy.min_properties} imóveis identificados")
         if policy.require_multicategory and not bool(row.get("multi_category")):
             reasons.append("não classificado como multicategoria/híbrido")
+        if estado_concentracao(row, "tenant_concentration",
+                               policy.max_tenant_concentration) == "acima_do_teto":
+            reasons.append("concentração de locatário acima do teto")
+        if estado_concentracao(row, "lease_expiry_concentration_24m",
+                               policy.max_lease_expiry_24m) == "acima_do_teto":
+            reasons.append("vencimentos em 24m acima do teto")
     return reasons
 
 

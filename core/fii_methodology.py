@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
+from core.fii_renda_recorrente import dy_recorrente
+
 INCOME_GROWTH_FORMULA = "cagr(first12m,last12m),36m"
 INCOME_GROWTH_MIN_MONTHS = 24
 
@@ -62,11 +64,12 @@ def income_growth_3y(monthly_income: "dict[date, float]", as_of: date) -> float 
     return max(-1.0, min(1.0, (last_12 / first_12) ** .5 - 1.0))
 
 
-# 6.8.0: o encolhimento por cobertura passou a mirar o neutro em vez do
-# zero (A-106). A fórmula mudou, então a versão muda junto — senão as
-# notas novas herdariam em silêncio o certificado PIT da 6.7.0.
-METHODOLOGY_VERSION = "6.8.0"
-FORMULA_VERSION = "br-fii-integrated-income-resilience-6.8.0"
+# 6.9.0: o piso e a nota passaram a incidir sobre a renda recorrente
+# (dy_12m * income_recurrence) e a concentração virou veto. A fórmula mudou,
+# então a versão muda junto — senão as notas novas herdariam em silêncio o
+# certificado PIT da 6.8.0.
+METHODOLOGY_VERSION = "6.9.0"
+FORMULA_VERSION = "br-fii-integrated-income-resilience-6.9.0"
 VALID_TYPES = ("tijolo", "papel", "fof", "hibrido")
 # Nota do par mediano na escala percentílica de 0 a 100. É para cá que a nota
 # encolhe quando falta cobertura — ver `final_score` em `score_fiis_by_type`.
@@ -110,7 +113,20 @@ class MacroScenario:
 
 
 COMMON_METRICS = (
-    MetricDefinition("dy_12m", "income", .12, "higher", critical=True, max_age_days=15),
+    # A renda que ordena é a recorrente. Sobre o DY divulgado, a média
+    # ponderada deixava o yield inflado compensar a renda não recorrente.
+    #
+    # Sem ``fallback_keys``, de propósito: ``_metric_key_and_value`` usa
+    # ``fallback_keys or (definition.key,)`` para resolver TANTO o valor
+    # pontuado quanto a chave de proveniência lida por ``_freshness_for_metric``.
+    # Declarar ``fallback_keys=("dy_12m",)`` aqui não afetaria só o frescor —
+    # o ranking do grupo inteiro passaria a ler ``dy_12m`` bruto em vez de
+    # ``dy_recorrente``, reintroduzindo exatamente o yield inflado que esta
+    # métrica existe para excluir. O frescor continua coberto pelo fallback
+    # genérico de ``_freshness_for_metric`` para ``metrics_fetched_at``/
+    # ``updated_at`` quando não há metadado específico da chave.
+    MetricDefinition("dy_recorrente", "income", .12, "higher", critical=True,
+                     max_age_days=15),
     MetricDefinition("income_growth_per_share_3y", "income", .10, "higher", critical=True),
     MetricDefinition("income_recurrence", "income", .08, "higher", critical=True),
     MetricDefinition("pvp", "valuation", .10, "target", critical=True, max_age_days=45),
@@ -384,6 +400,9 @@ def score_fiis_by_type(
     faltantes são excluídas do numerador e reduzem cobertura/confiança.
     """
     today = as_of or datetime.now(timezone.utc).date()
+    # Derivada antes de qualquer leitura de métrica: nenhum chamador precisa
+    # lembrar de calcular a renda recorrente por conta própria.
+    rows = [{**row, "dy_recorrente": dy_recorrente(row)} for row in rows]
     clean = [dict(row) for row in rows if str(row.get("tipo") or "").lower() in VALID_TYPES]
     output: list[dict] = []
 

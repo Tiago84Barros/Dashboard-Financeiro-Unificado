@@ -11,6 +11,8 @@ def _row(ticker="AAAA11", fii_type="tijolo"):
         "liquidez_diaria": 2_000_000, "history_months": 48,
         "max_drawdown": -.25, "region_count": 3, "property_count": 12,
         "multi_category": True,
+        # .10 * .90 = .09 recorrente, acima do piso padrão de .08.
+        "income_recurrence": .90,
     }
 
 
