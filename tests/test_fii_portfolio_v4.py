@@ -429,16 +429,93 @@ def test_fundo_sem_protecao_divulgada_nao_passa_de_metade_do_teto():
     assert np.allclose(_teto_por_ativo(rows, policy), [.075, .15, .15])
 
 
-def test_violacao_de_teto_por_ativo_e_reportada_para_o_fundo_opaco():
-    from core.fii_portfolio_v4 import PortfolioPolicy, portfolio_constraint_violations
+def test_excesso_de_opacidade_e_reportado_para_o_fundo_sem_bloquear():
+    """Peso acima da metade do teto do spec não é violação bloqueante
+    (portfolio_constraint_violations): é consequência explícita e nomeada
+    de ``opacidade_excedente``, contra o valor absoluto ``max_asset * .5``,
+    nunca contra o teto que o afrouxamento por viabilidade tenha alargado."""
+    from core.fii_portfolio_v4 import (
+        PortfolioPolicy, opacidade_excedente, portfolio_constraint_violations)
 
     policy = PortfolioPolicy(max_asset=.15)
     itens = [
-        {"ticker": "OPACO11", "tipo": "tijolo", "weight": .12, "confidence": .8},
-        {"ticker": "PAPEL11", "tipo": "papel", "weight": .88, "confidence": .8},
+        {"ticker": "OPACO11", "tipo": "tijolo", "weight": .12, "confidence": .8,
+         "protecao_nao_divulgada": True},
+        {"ticker": "PAPEL11", "tipo": "papel", "weight": .88, "confidence": .8,
+         "protecao_nao_divulgada": False},
     ]
+
+    excedentes = opacidade_excedente(itens, policy)
+    assert len(excedentes) == 1
+    assert excedentes[0]["ticker"] == "OPACO11"
+    assert excedentes[0]["teto_spec"] == policy.max_asset / 2
+    assert excedentes[0]["peso_final"] == .12
+
+    # .12 < .15 (o teto absoluto do ativo): não é violação bloqueante.
     violacoes = portfolio_constraint_violations(itens, {}, policy)
-    assert any("OPACO11" in v for v in violacoes)
+    assert not any("OPACO11" in v for v in violacoes)
+
+
+def test_pesos_finais_de_fundos_opacos_respeitam_a_metade_do_teto_absoluto():
+    """Requisito 4 (teste 5, reescrito): os PESOS FINAIS do otimizador contra
+    o valor absoluto ``policy.max_asset / 2``, num universo viável com o
+    teto reduzido — sem precisar de nenhum afrouxamento por viabilidade."""
+    policy = PortfolioPolicy(max_assets=12)
+    rows = [_candidate(i, "tijolo") for i in range(6)]
+    rows += [_candidate(i, "papel") for i in range(6, 9)]
+    rows += [_candidate(9, "fof")]
+    rows.append(_candidate(10, "hibrido") | {
+        "tenant_concentration": .10, "lease_expiry_concentration_24m": .10,
+    })
+
+    result = optimize_diligence_portfolio(
+        rows, MacroScenario(selic=12, ipca=5), policy=policy)
+
+    assert result["items"]
+    assert result["can_publish"]
+    assert result["protecao_excedida"] == []
+    assert not any("afrouxado" in nota for nota in (result.get("viability_notes") or []))
+    opacos = [item for item in result["items"] if item["protecao_nao_divulgada"]]
+    assert opacos
+    for item in opacos:
+        assert item["weight"] <= policy.max_asset / 2 + 1e-6
+
+
+def test_afrouxamento_por_interacao_com_outro_limite_e_minimo_e_aparece_no_resultado():
+    """Requisito 4 (teste separado): num universo apertado em que a
+    interação do desconto de opacidade com outro limite pré-existente
+    (aqui, devedor/emissor únicos por papel) inviabilizaria a carteira, o
+    afrouxamento (``_afrouxa_ate_viavel``) cede pelo mínimo necessário — não
+    desliga o desconto inteiro — e essa consequência aparece de forma
+    legível no resultado (``viability_notes``). Nenhuma assertiva aqui se
+    compara ao teto afrouxado em si: só confirma que o afrouxamento foi
+    parcial (pesos ficam entre a metade e o teto cheio, nunca travados
+    exatamente no teto cheio de .15 para todos os ativos)."""
+    from core.fii_portfolio_v4 import _candidate_pool
+
+    policy = PortfolioPolicy(max_assets=12)
+    papel_rows = [_candidate(i, "papel") for i in range(3)]
+    tijolo_rows = [_candidate(i, "tijolo") for i in range(10, 18)]
+    bands = {"papel": (.30, .50), "tijolo": (.50, .90)}
+
+    selected, info = _candidate_pool(
+        papel_rows + tijolo_rows, bands, policy, MacroScenario(selic=12, ipca=5))
+
+    assert selected
+    assert info["status"] == "milp_feasible"
+    notas = info.get("viability_notes") or []
+    assert any("afrouxado" in nota for nota in notas)
+
+    pesos_tijolo = [
+        weight for ticker, weight in info["selected_weights"].items()
+        if ticker.startswith("F0") and int(ticker[1:4]) >= 10
+    ]
+    assert pesos_tijolo
+    # Afrouxamento minimo: os pesos ultrapassam a metade do teto (.075) mas
+    # nao ficam presos no teto cheio (.15) — sinal de que o desconto cedeu
+    # parcialmente, nao foi desligado por completo.
+    assert all(peso > .075 + 1e-6 for peso in pesos_tijolo)
+    assert not all(peso >= .15 - 1e-6 for peso in pesos_tijolo)
 
 
 def test_carteira_reporta_o_yield_recorrente_alem_do_divulgado():

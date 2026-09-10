@@ -141,6 +141,64 @@ def _afrouxa_teto_por_viabilidade(
     return caps, notas
 
 
+def _afrouxa_ate_viavel(
+    tetos_base: np.ndarray,
+    resolver: Any,
+    policy: PortfolioPolicy,
+    *,
+    iteracoes: int = 8,
+) -> tuple[np.ndarray, Any, float | None]:
+    """Busca binária pelo menor afrouxamento do teto de opacidade que resolve.
+
+    ``_afrouxa_teto_por_viabilidade`` só modela a interação do desconto com o
+    piso da própria banda de tipo. Quando o desconto interage com outros
+    limites pré-existentes (concentração por devedor, emissor, tenant...) e
+    ainda assim esvazia a carteira, o afrouxamento tem que ceder na medida
+    exata que a viabilidade exigir — nunca "desligar" o desconto inteiro de
+    uma só vez — e nunca passar de ``policy.max_asset``.
+
+    ``resolver(caps)`` recebe o vetor de tetos e devolve um objeto com
+    ``.success`` (bool) e ``.x`` (solução, quando houver). Devolve
+    ``(caps_finais, solucao_final, fracao)``: ``fracao`` é ``0.0`` quando o
+    teto com desconto já resolve (nada a fazer aqui), um valor em ``(0, 1]``
+    para o quanto do intervalo até o teto cheio foi necessário, ou ``None``
+    quando nem o teto cheio resolve — nesse caso a inviabilidade não vem da
+    opacidade, e quem chamou decide o que fazer com a falha original.
+    """
+    tetos_base = np.asarray(tetos_base, dtype=float)
+    descontados = tetos_base < policy.max_asset - 1e-9
+
+    def _caps(fracao: float) -> np.ndarray:
+        caps = tetos_base.copy()
+        caps[descontados] = tetos_base[descontados] + fracao * (
+            policy.max_asset - tetos_base[descontados])
+        return caps
+
+    def _ok(sol: Any) -> bool:
+        return bool(getattr(sol, "success", False)) and getattr(sol, "x", None) is not None
+
+    solucao = resolver(tetos_base)
+    if _ok(solucao) or not descontados.any():
+        return tetos_base, solucao, 0.0
+
+    solucao_cheia = resolver(_caps(1.0))
+    if not _ok(solucao_cheia):
+        # Nem o teto cheio resolve: a inviabilidade não vem da opacidade.
+        return tetos_base, solucao, None
+
+    baixo, alto = 0.0, 1.0
+    melhor_solucao, melhor_caps = solucao_cheia, _caps(1.0)
+    for _ in range(iteracoes):
+        meio = (baixo + alto) / 2
+        candidata = resolver(_caps(meio))
+        if _ok(candidata):
+            alto = meio
+            melhor_solucao, melhor_caps = candidata, _caps(meio)
+        else:
+            baixo = meio
+    return melhor_caps, melhor_solucao, alto
+
+
 def _resumo_de_renda(items: list[dict]) -> dict[str, float]:
     """Yield divulgado e yield recorrente da carteira, lado a lado."""
     def _yield(row: dict) -> float:
@@ -153,6 +211,39 @@ def _resumo_de_renda(items: list[dict]) -> dict[str, float]:
         "recurrent_yield_12m": round(
             sum(item["weight"] * (dy_recorrente(item) or 0.0) for item in items), 6),
     }
+
+
+def opacidade_excedente(
+    items: Iterable[dict], policy: PortfolioPolicy, *, tolerance: float = 1e-6,
+) -> tuple[dict, ...]:
+    """Ativos opacos cujo peso final ultrapassou a metade do teto do spec.
+
+    Mede contra o valor absoluto ``policy.max_asset * .5`` — nunca contra um
+    teto que o afrouxamento de viabilidade tenha alargado — porque um
+    verificador que recebe do produtor o limite contra o qual verificar não
+    é um verificador. Não bloqueia a publicação: a carteira precisa existir
+    mesmo quando a proteção cede pelo mínimo necessário. É a consequência
+    explícita e legível desse afrouxamento — ticker, teto do spec, peso
+    obtido e o motivo —, não uma nota de texto solta.
+    """
+    limite = policy.max_asset * .5
+    excedentes: list[dict] = []
+    for item in items:
+        peso = _num(item.get("weight"))
+        if peso <= 0 or not item.get("protecao_nao_divulgada"):
+            continue
+        if peso > limite + tolerance:
+            excedentes.append({
+                "ticker": str(item.get("ticker")),
+                "teto_spec": round(limite, 6),
+                "peso_final": round(peso, 6),
+                "motivo": (
+                    "peso final acima da metade do teto do spec: o "
+                    "afrouxamento mínimo necessário para a carteira existir "
+                    "cedeu além do custo normal da opacidade"
+                ),
+            })
+    return tuple(excedentes)
 
 
 def _adaptive_type_bands(
@@ -362,20 +453,24 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
             # O desconto de opacidade é custo, não veto: se o teto reduzido
             # (já afrouxado pelo piso de banda) ainda assim esvazia a
             # carteira — por interação com outros limites, como
-            # concentração por devedor/emissor —, o afrouxamento cede por
-            # completo antes de aceitar carteira vazia.
-            tetos_sem_desconto = np.full(n, policy.max_asset)
-            if np.any(tetos_sem_desconto > tetos + 1e-9):
-                solucao_sem_desconto = _resolve(tetos_sem_desconto)
-                if solucao_sem_desconto.success and solucao_sem_desconto.x is not None:
-                    solution = solucao_sem_desconto
-                    tetos = tetos_sem_desconto
-                    notas_de_viabilidade = list(notas_de_viabilidade) + [
-                        "custo da opacidade desligado: o teto reduzido "
-                        "esvaziava a carteira mesmo após o afrouxamento de "
-                        "banda, provavelmente por interação com outro limite "
-                        "(devedor, emissor, tenant ou similar)"
-                    ]
+            # concentração por devedor/emissor —, o afrouxamento cede pelo
+            # mínimo necessário para existir, nunca de uma vez só.
+            tetos_afrouxados, solucao_afrouxada, fracao = _afrouxa_ate_viavel(
+                tetos, _resolve, policy)
+            if fracao is not None:
+                solution = solucao_afrouxada
+                tickers_afetados = sorted({
+                    str(pool[index].get("ticker")) for index in range(n)
+                    if tetos[index] < policy.max_asset - 1e-9
+                    and tetos_afrouxados[index] > tetos[index] + 1e-9
+                })
+                tetos = tetos_afrouxados
+                notas_de_viabilidade = list(notas_de_viabilidade) + [
+                    f"custo da opacidade afrouxado em {fracao:.0%} do "
+                    "intervalo até o teto cheio para viabilizar a carteira "
+                    "(interação provável com outro limite: devedor, emissor, "
+                    "tenant ou similar): " + ", ".join(tickers_afetados)
+                ]
         if solution.success and solution.x is not None:
             selected = [
                 pool[index] for index, weight in enumerate(solution.x[:n])
@@ -588,16 +683,17 @@ def _correlation_risk_matrix(
 def portfolio_constraint_violations(
     items: Iterable[dict], bands: dict[str, tuple[float, float]],
     policy: PortfolioPolicy, *, tolerance: float = 1e-6,
-    caps: dict[str, float] | None = None,
 ) -> tuple[str, ...]:
     """Revalida a carteira exatamente como será exibida e persistida.
 
-    ``caps`` é o teto por ativo (ticker -> teto) já afrouxado que o solver
-    efetivamente recebeu. Sem ele, recai no teto por ativo cru — cobrar do
-    resultado um limite que o solver nunca viu produziria violação fantasma,
-    mas a checagem isolada (sem contexto do afrouxamento real) precisa de um
-    teto determinístico, não de uma nova rodada de afrouxamento sobre um
-    subconjunto pequeno da carteira já publicada.
+    O teto individual é cobrado contra ``policy.max_asset`` — o valor
+    absoluto do spec, nunca afrouxado — para qualquer ativo, opaco ou não.
+    Um verificador que recebesse do produtor o teto contra o qual verificar
+    (o mesmo vetor já afrouxado que o solver usou) não seria um verificador:
+    a comparação ficaria matematicamente impossível de disparar. O excesso
+    específico de opacidade (acima da metade do teto, tolerado quando é o
+    mínimo necessário para a carteira existir) é responsabilidade de
+    ``opacidade_excedente`` — não bloqueia, e por isso não entra aqui.
     """
     rows = [dict(item) for item in items if _num(item.get("weight")) > 0]
     violations: list[str] = []
@@ -606,14 +702,8 @@ def portfolio_constraint_violations(
         violations.append("pesos não somam 100%")
     if len(rows) > policy.max_assets:
         violations.append("quantidade de ativos acima do limite")
-    if caps is not None:
-        tetos = np.array([
-            float(caps.get(str(row.get("ticker")), policy.max_asset)) for row in rows
-        ])
-    else:
-        tetos = _teto_por_ativo(rows, policy)
-    excedentes = [str(row.get("ticker")) for row, teto in zip(rows, tetos)
-                  if _num(row.get("weight")) > teto + tolerance]
+    excedentes = [str(row.get("ticker")) for row in rows
+                  if _num(row.get("weight")) > policy.max_asset + tolerance]
     if excedentes:
         violations.append("peso individual acima do limite")
         violations.append(
@@ -846,34 +936,45 @@ def optimize_diligence_portfolio(
                 options={"maxiter": 1000, "ftol": 1e-10})
             return feasible_, baseline_, result_
 
+        def _tentar_continuo(caps: np.ndarray) -> Any:
+            from types import SimpleNamespace
+            limites_param = [(policy.min_asset_weight, float(c)) for c in caps]
+            feasible_, baseline_, result_ = _resolve_continuo(limites_param)
+            ok = bool(feasible_.success and baseline_ is not None and baseline_.success
+                      and result_ is not None and result_.success)
+            return SimpleNamespace(
+                success=ok, x=(result_.x if ok else None),
+                _triple=(feasible_, baseline_, result_),
+            )
+
         feasible, baseline, result = _resolve_continuo(limites)
         if not (feasible.success and baseline is not None and baseline.success
                 and result is not None and result.success):
             # O desconto de opacidade é custo, não veto: se o teto reduzido
             # (já afrouxado pelo piso de banda) ainda assim esvazia a carteira
             # no otimizador contínuo — por interação com outros limites, como
-            # concentração por devedor/emissor —, o afrouxamento cede por
-            # completo antes de aceitar carteira vazia.
-            tetos_sem_desconto = np.full(n, policy.max_asset)
-            if np.any(tetos_sem_desconto > tetos + 1e-9):
-                limites_sem_desconto = [
-                    (policy.min_asset_weight, float(teto)) for teto in tetos_sem_desconto
+            # concentração por devedor/emissor —, o afrouxamento cede pelo
+            # mínimo necessário para existir, nunca de uma vez só.
+            tetos_afrouxados, solucao_afrouxada, fracao = _afrouxa_ate_viavel(
+                tetos, _tentar_continuo, policy)
+            if fracao is not None:
+                feasible, baseline, result = solucao_afrouxada._triple
+                tickers_afetados = sorted({
+                    str(rows[i].get("ticker")) for i in range(n)
+                    if tetos[i] < policy.max_asset - 1e-9
+                    and tetos_afrouxados[i] > tetos[i] + 1e-9
+                })
+                tetos = tetos_afrouxados
+                limites = [(policy.min_asset_weight, float(c)) for c in tetos]
+                caps_por_ticker = {
+                    str(rows[i].get("ticker")): float(tetos[i]) for i in range(n)
+                }
+                notas_de_viabilidade = list(notas_de_viabilidade) + [
+                    f"custo da opacidade afrouxado em {fracao:.0%} do "
+                    "intervalo até o teto cheio para viabilizar a carteira "
+                    "(interação provável com outro limite: devedor, emissor, "
+                    "tenant ou similar): " + ", ".join(tickers_afetados)
                 ]
-                feasible2, baseline2, result2 = _resolve_continuo(limites_sem_desconto)
-                if (feasible2.success and baseline2 is not None and baseline2.success
-                        and result2 is not None and result2.success):
-                    feasible, baseline, result = feasible2, baseline2, result2
-                    tetos = tetos_sem_desconto
-                    limites = limites_sem_desconto
-                    caps_por_ticker = {
-                        str(rows[i].get("ticker")): float(tetos[i]) for i in range(n)
-                    }
-                    notas_de_viabilidade = list(notas_de_viabilidade) + [
-                        "custo da opacidade desligado: o teto reduzido "
-                        "esvaziava a carteira mesmo após o afrouxamento de "
-                        "banda, provavelmente por interação com outro limite "
-                        "(devedor, emissor, tenant ou similar)"
-                    ]
         if not feasible.success:
             return {"items": [], "status": "blocked", "can_publish": False,
                     "blockers": [f"restrições lineares inviáveis: {feasible.message}"],
@@ -941,8 +1042,12 @@ def optimize_diligence_portfolio(
     tail_count = max(1, int(np.ceil(len(adverse_losses) * .40))) if adverse_losses else 1
     scenario_cvar = (sum(adverse_losses[-tail_count:]) / tail_count if adverse_losses else 0.0)
     validation_block = any(item.get("publication_status") != "validated" for item in items)
-    constraint_violations = portfolio_constraint_violations(
-        items, bands, policy, caps=caps_por_ticker)
+    constraint_violations = portfolio_constraint_violations(items, bands, policy)
+    # O afrouxamento mínimo por viabilidade pode deixar um ativo opaco acima
+    # da metade do teto do spec. Isso não bloqueia a publicação — a carteira
+    # precisa existir —, mas é reportado de forma explícita e nomeada, não
+    # apenas como nota de texto solta.
+    protecao_excedida = opacidade_excedente(items, policy)
     blockers = []
     unresolved_critical = sorted(
         set(unresolved).intersection(policy.required_dimensions)
@@ -998,6 +1103,7 @@ def optimize_diligence_portfolio(
         "turnover_penalty": policy.turnover_penalty,
         "asset_caps": caps_por_ticker,
         "viability_notes": viability_notes,
+        "protecao_excedida": list(protecao_excedida),
         "policy": asdict(policy), "solver": str(result.message),
     }
 
