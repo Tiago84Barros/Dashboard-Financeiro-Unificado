@@ -462,6 +462,71 @@ def _mensagem_de_universo_vazio(eligibility: dict) -> str:
     return "Nenhum FII atende à combinação escolhida. Relaxe os filtros de elegibilidade."
 
 
+def _linhas_de_factibilidade(result: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Converte a evidência do otimizador em tabelas legíveis e testáveis.
+
+    Não infere uma causa nova nem altera a política: preserva na interface as
+    bandas e os limites que o motor já aplicou nesta tentativa.
+    """
+    diagnostics = result.get("feasibility_diagnostics") or {}
+    available = diagnostics.get("available_by_type") or {}
+    bands = diagnostics.get("effective_type_bands") or {}
+    labels = {
+        "tijolo": "Tijolo", "papel": "Papel", "fof": "FoF", "hibrido": "Híbrido",
+    }
+    categories = pd.DataFrame([
+        {
+            "Categoria": labels.get(str(fii_type), str(fii_type).title()),
+            "FIIs elegíveis": int(available.get(fii_type) or 0),
+            "Piso da alocação": float((bands.get(fii_type) or {}).get("min") or 0),
+            "Teto da alocação": float((bands.get(fii_type) or {}).get("max") or 0),
+        }
+        for fii_type in ("tijolo", "papel", "fof", "hibrido")
+        if fii_type in available or fii_type in bands
+    ])
+    limits = diagnostics.get("portfolio_limits") or {}
+    controls = pd.DataFrame([
+        {"Limite aplicado": "Máximo de FIIs", "Valor": limits.get("max_assets")},
+        {"Limite aplicado": "Peso mínimo por FII", "Valor": limits.get("min_asset_weight")},
+        {"Limite aplicado": "Peso máximo por FII", "Valor": limits.get("max_asset")},
+        {"Limite aplicado": "Liquidez diária mínima", "Valor": limits.get("min_daily_liquidity")},
+        {"Limite aplicado": "Máximo em FIIs ilíquidos", "Valor": limits.get("max_illiquid")},
+        {"Limite aplicado": "Incerteza ponderada máxima", "Valor": limits.get("max_weighted_uncertainty")},
+    ])
+    return categories, controls
+
+
+def _diagnostico_de_factibilidade(result: dict) -> None:
+    """Expõe a evidência de inviabilidade antes de encerrar a seleção."""
+    diagnostics = result.get("feasibility_diagnostics") or {}
+    candidate_pool = diagnostics.get("candidate_pool") or {}
+    categories, controls = _linhas_de_factibilidade(result)
+    with st.expander("Detalhamento da inviabilidade da carteira", expanded=True):
+        st.info(
+            "Nenhum limite de proteção foi relaxado automaticamente. A tabela mostra "
+            "os parâmetros aplicados pelo otimizador nesta tentativa."
+        )
+        if not categories.empty:
+            st.caption("Oferta elegível e bandas efetivamente aplicadas")
+            st.dataframe(
+                categories,
+                column_config={
+                    "Piso da alocação": st.column_config.NumberColumn(format="%.0%%"),
+                    "Teto da alocação": st.column_config.NumberColumn(format="%.0%%"),
+                },
+                hide_index=True,
+                width="stretch",
+            )
+        if not controls.empty:
+            st.caption("Limites que precisam coexistir com as bandas")
+            st.dataframe(controls, hide_index=True, width="stretch")
+        solver_reason = candidate_pool.get("reason") or candidate_pool.get("solver_message")
+        if solver_reason:
+            st.caption(f"Retorno técnico da pré-seleção: {solver_reason}")
+        for note in candidate_pool.get("viability_notes") or []:
+            st.caption(f"Nota de viabilidade: {note}")
+
+
 def _fii_data_health_metrics(
     vitrine: pd.DataFrame,
     ranked: pd.DataFrame,
@@ -1976,6 +2041,7 @@ def _carteira_integrada(preferences: dict):
     if not result.get("items"):
         st.error("Não foi possível construir uma carteira factível: " +
                  " · ".join(result.get("blockers") or []))
+        _diagnostico_de_factibilidade(result)
         return None
     portfolio_can_publish = bool(
         result.get("can_publish") and investable_gate.can_publish_recommendation

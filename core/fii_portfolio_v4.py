@@ -694,6 +694,23 @@ def optimize_diligence_portfolio(
                 "feasibility_diagnostics": {
                     "available_by_type": available_by_type,
                     "candidate_count": len(ranked),
+                    # A tela precisa mostrar os limites efetivamente usados.
+                    # Sem essa evidência, um bloqueio parece veto opaco e
+                    # incentiva relaxamentos sem revisão humana.
+                    "effective_type_bands": {
+                        fii_type: {"min": float(lower), "max": float(upper)}
+                        for fii_type, (lower, upper) in bands.items()
+                    },
+                    "portfolio_limits": {
+                        "max_assets": int(policy.max_assets),
+                        "min_asset_weight": float(policy.min_asset_weight),
+                        "max_asset": float(policy.max_asset),
+                        "min_daily_liquidity": float(policy.min_daily_liquidity),
+                        "max_illiquid": float(policy.max_illiquid),
+                        "max_weighted_uncertainty": float(
+                            policy.max_weighted_uncertainty
+                        ),
+                    },
                     "minimum_weighted_confidence":
                         1.0 - policy.max_weighted_uncertainty,
                     "candidate_pool": candidate_pool_info,
