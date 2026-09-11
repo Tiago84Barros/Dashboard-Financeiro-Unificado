@@ -2430,10 +2430,9 @@ def _tab_criacao_portfolio(status: dict) -> None:
             max_value=30.0, value=0.0, step=0.5,
             disabled=not require_resilience, key="us_create_resilience_spread",
         )
-        adaptive_caps = st.checkbox(
-            "Cap adaptativo quando a combinação de limites for inviável",
-            value=True, key="us_create_adaptive_caps",
-        )
+        adaptive_caps = False
+        st.caption("Quando os tetos não comportarem 100%, a composição mostrará "
+                   "o capital não alocado e os ativos selecionados dentro dos limites.")
         require_history = st.checkbox(
             "Exigir validação histórica ponto-no-tempo por indústria",
             value=False, disabled=not history_available,
@@ -2549,6 +2548,11 @@ def _tab_criacao_portfolio(status: dict) -> None:
 
     for warning in result.get("warnings", []):
         st.warning(warning)
+    if result.get("review_portfolio") is not None:
+        from design.portfolio_review import render_portfolio_review
+
+        render_portfolio_review(result["review_portfolio"], key="us_review")
+        return
     # Bloqueio antes de qualquer número: sem liquidez verificada não existe
     # carteira publicável, e mostrar auditoria de indústria abaixo faria parecer
     # que só faltou afrouxar um parâmetro.

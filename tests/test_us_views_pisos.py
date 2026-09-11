@@ -124,7 +124,8 @@ def test_universo_sem_a_coluna_de_giro_bloqueia_a_publicacao():
     # Zerar o piso é a decisão explícita de explorar sem validar liquidez.
     sem_piso = build_portfolio_creation(
         u, _params_frouxos(USPortfolioCreationParams, min_daily_turnover_usd=0.0))
-    assert not sem_piso["holdings"].empty
+    assert sem_piso["review_portfolio"]["items"]
+    assert not sem_piso["can_publish"]
     assert sem_piso["blocking_error"] is None
 
 

@@ -149,7 +149,7 @@ def test_macro_tilt_is_bounded_and_fundamental_mode_is_backward_compatible():
     )
 
 
-def test_cap_adaptativo_documenta_ajuste_matematico():
+def test_cap_pequeno_produz_composicao_parcial_sem_ampliar_tetos():
     params = USPortfolioCreationParams(
         top_n=10, leaders_per_industry=2, min_companies_per_industry=4,
         min_entry_score=50, min_score_edge=0, max_weight=.05,
@@ -157,9 +157,12 @@ def test_cap_adaptativo_documenta_ajuste_matematico():
         adaptive_caps=True,
     )
     result = build_portfolio_creation(_universe(), params)
-    assert result["ok"] is True
-    assert any("ajustado" in warning for warning in result["warnings"])
-    assert result["holdings"]["weight"].sum() == pytest.approx(1.0, abs=1e-8)
+    proposal = result["review_portfolio"]
+    assert proposal["items"]
+    assert not result["can_publish"]
+    assert all(item["weight"] <= .05+1e-7 for item in proposal["items"])
+    assert proposal["unallocated_weight"] > 0
+    assert proposal["allocated_weight"] + proposal["unallocated_weight"] == pytest.approx(1)
 
 
 def test_coluna_de_giro_ausente_bloqueia_a_carteira_em_vez_de_aprovar_todos():
@@ -191,7 +194,7 @@ def test_giro_ausente_com_piso_zerado_segue_em_modo_exploratorio():
     result = build_portfolio_creation(universo, params)
 
     assert result["blocking_error"] is None
-    assert not result["holdings"].empty
+    assert result["review_portfolio"]["items"]
     assert any("exploratório" in w for w in result["warnings"])
 
 
@@ -210,7 +213,7 @@ def test_modo_exploratorio_permite_analise_mas_nao_publicacao_sem_liquidez():
             min_entry_score=50, min_score_edge=0, min_daily_turnover_usd=0.0),
     )
 
-    assert not result["holdings"].empty
+    assert result["review_portfolio"]["items"]
     assert result["blocked"] is False
     assert result["can_publish"] is False
     assert "não verificada" in result["publication_blocking_error"]
@@ -275,7 +278,7 @@ def test_criacao_exige_timestamp_atual_para_giro_medido(timestamp):
 
     if isinstance(timestamp, pd.Timestamp) and timestamp >= pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=1):
         assert result["blocked"] is False
-        assert not result["holdings"].empty
+        assert result["review_portfolio"]["items"]
     else:
         assert result["blocked"] is True
         assert result["holdings"].empty

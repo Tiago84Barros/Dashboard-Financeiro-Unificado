@@ -503,7 +503,8 @@ def _diagnostico_de_factibilidade(result: dict) -> None:
     categories, controls = _linhas_de_factibilidade(result)
     with st.expander("Detalhamento da inviabilidade da carteira", expanded=True):
         st.info(
-            "Nenhum limite de proteção foi relaxado automaticamente. A tabela mostra "
+            "Este diagnóstico registra os limites solicitados e as notas de "
+            "viabilidade da tentativa original. A tabela mostra "
             "os parâmetros aplicados pelo otimizador nesta tentativa."
         )
         if not categories.empty:
@@ -1950,8 +1951,12 @@ def _carteira_integrada(preferences: dict):
     # de exclusão sem o motivo não é diagnóstico, é veredito sem processo.
     _diagnostico_de_exclusao(eligibility, expandido=not eligible_rows)
     if not eligible_rows:
-        st.error(_mensagem_de_universo_vazio(eligibility))
+        from core.portfolio_review_routes import fii_review
+        from design.portfolio_review import render_portfolio_review
+
+        render_portfolio_review(fii_review([], portfolio_policy, scenario), key="fii_review")
         st.session_state.pop("fii_port", None)
+        st.session_state["fii_portfolio_can_publish"] = False
         return None
 
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
@@ -2039,9 +2044,15 @@ def _carteira_integrada(preferences: dict):
     )
     result["macro_snapshot"] = macro_snapshot
     if not result.get("items"):
-        st.error("Não foi possível construir uma carteira factível: " +
-                 " · ".join(result.get("blockers") or []))
-        _diagnostico_de_factibilidade(result)
+        from core.portfolio_review_routes import fii_review
+        from design.portfolio_review import render_portfolio_review
+
+        proposal = fii_review(scored, portfolio_policy, scenario)
+        st.session_state.pop("fii_port", None)
+        st.session_state["fii_portfolio_can_publish"] = False
+        render_portfolio_review(proposal, key="fii_review")
+        with st.expander("Diagnóstico da tentativa com metas originais"):
+            _diagnostico_de_factibilidade(result)
         return None
     portfolio_can_publish = bool(
         result.get("can_publish") and investable_gate.can_publish_recommendation
