@@ -3771,6 +3771,25 @@ def render(show_header: bool = True) -> None:
                 _pesos_ini, _grupos, _eh_ciclico, cap,
                 float(teto_setor), float(teto_ciclico),
             )
+            # A projeção legada pode devolver pesos normalizados com excesso
+            # quando os grupos não comportam 100%. Usar capital residual.
+            exceeds = (
+                any(weight > cap+1e-6 for weight in _pesos_fin.values())
+                or any(sum(_pesos_fin[tk] for tk in _pesos_fin if _grupos[tk] == sector)
+                       > float(teto_setor)+1e-6 for sector in set(_grupos.values()))
+                or sum(_pesos_fin[tk] for tk in _pesos_fin if _eh_ciclico[tk])
+                > float(teto_ciclico)+1e-6
+            )
+            if exceeds:
+                from core.portfolio_review_routes import b3_review
+                from design.portfolio_review import render_portfolio_review
+
+                proposal = b3_review(resultados, df_mult_todos, entry_guard, cap=cap,
+                                    sector_cap=float(teto_setor), cycle_cap=float(teto_ciclico),
+                                    selic=float(taxa_selic_aa),
+                                    vetoed={item["tk"] for item in quali_log["vetados"]})
+                render_portfolio_review(proposal, key="b3_review")
+                return
             for item in proximos_uniq:
                 item["peso"] = _pesos_fin[item["tk"]]
             _n_ciclicos = sum(1 for v in _eh_ciclico.values() if v)
@@ -3781,12 +3800,26 @@ def render(show_header: bool = True) -> None:
                            "SELEÇÃO, não na ponderação.")
                 st.warning(_aviso + _sufixo, icon="⚠️")
     elif proximos_uniq:
-        st.error(
-            f"Carteira não pode respeitar o cap global de {cap:.0%}: "
-            f"há {len(proximos_uniq)} ativo(s), mas são necessários ao menos "
-            f"{_required_global}. Os líderes são exibidos para auditoria, "
-            "porém o salvamento fica bloqueado."
-        )
+        from core.portfolio_review_routes import b3_review
+        from design.portfolio_review import render_portfolio_review
+
+        proposal = b3_review(resultados, df_mult_todos, entry_guard, cap=cap,
+                            sector_cap=float(teto_setor), cycle_cap=float(teto_ciclico),
+                            selic=float(taxa_selic_aa),
+                            vetoed={item["tk"] for item in quali_log["vetados"]})
+        render_portfolio_review(proposal, key="b3_review")
+        return
+
+    if not proximos_uniq:
+        from core.portfolio_review_routes import b3_review
+        from design.portfolio_review import render_portfolio_review
+
+        proposal = b3_review(resultados, df_mult_todos, entry_guard, cap=cap,
+                            sector_cap=float(teto_setor), cycle_cap=float(teto_ciclico),
+                            selic=float(taxa_selic_aa),
+                            vetoed={item["tk"] for item in quali_log["vetados"]})
+        render_portfolio_review(proposal, key="b3_review")
+        return
 
     # ── CAMADA MACRO LOCAL ────────────────────────────────────────────────
     # É aplicada depois da correlação e novamente projetada nos mesmos tetos.
