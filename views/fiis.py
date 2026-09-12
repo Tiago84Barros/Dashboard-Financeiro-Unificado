@@ -23,8 +23,10 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 import core.market_read as _mr
+from core.fii_carteira_protegida import montar_carteira_com_concessao
 from core.fii_integrated_model import (
     INTEGRATED_MODEL_VERSION,
+    ColunasDeElegibilidadeAusentes,
     IntegratedEligibilityPolicy,
     apply_integrated_eligibility,
 )
@@ -39,7 +41,6 @@ from core.fii_methodology import (
 from core.fii_portfolio_v4 import (
     LIVE_PORTFOLIO_STRATEGY_ID,
     PortfolioPolicy,
-    optimize_diligence_portfolio,
 )
 from core.fii_renda_recorrente import dy_recorrente
 from core.fii_selection_explanations import build_selection_reports
@@ -1875,8 +1876,21 @@ def _carteira_integrada(preferences: dict):
         st.session_state.pop("fii_port", None)
         return None
 
-    eligible_rows, eligibility = apply_integrated_eligibility(
-        inputs.to_dict("records") if not inputs.empty else [], eligibility_policy)
+    try:
+        eligible_rows, eligibility = apply_integrated_eligibility(
+            inputs.to_dict("records") if not inputs.empty else [], eligibility_policy)
+    except ColunasDeElegibilidadeAusentes as erro:
+        # Coluna ausente era lida como métrica ausente e reprovava todo mundo:
+        # a tela mostrava "0 elegíveis" com cara de veredito. Aqui a falha de
+        # leitura aparece como falha de leitura.
+        st.error(
+            "Sem carteira: a leitura do universo veio incompleta, e nenhum "
+            "fundo foi avaliado. Colunas exigidas pela política que não vieram "
+            "no quadro: " + ", ".join(erro.missing_columns) + ". Não relaxe os "
+            "critérios por causa desta tela — nenhum filtro reprovou nada."
+        )
+        st.session_state.pop("fii_port", None)
+        return None
     _aviso_de_idade_da_vitrine(inputs)
     st.markdown(_info_card_html(
         "Universo elegível",
@@ -1946,16 +1960,20 @@ def _carteira_integrada(preferences: dict):
 
     # O universo de correlação replica o pool máximo do otimizador e evita
     # consultar séries de centenas de fundos a cada alteração dos controles.
-    per_type = max(int(portfolio_policy.max_assets), 12)
-    correlation_candidates: list[str] = []
-    for fii_type in _TIPO_ORDER:
-        correlation_candidates.extend([
-            str(row["ticker"]) for row in scored if row.get("tipo") == fii_type
-        ][:per_type])
-    correlation_candidates = list(dict.fromkeys(correlation_candidates))
-    candidate_prices = _mr.load_precos_mensais(tuple(sorted(correlation_candidates)))
-    _, candidate_correlation = _portfolio_return_correlation(
-        candidate_prices, correlation_candidates, min_months=12)
+    def _correlacao_dos_candidatos(pontuadas: list[dict]):
+        per_type = max(int(portfolio_policy.max_assets), 12)
+        candidatos: list[str] = []
+        for fii_type in _TIPO_ORDER:
+            candidatos.extend([
+                str(row["ticker"]) for row in pontuadas if row.get("tipo") == fii_type
+            ][:per_type])
+        candidatos = list(dict.fromkeys(candidatos))
+        precos = _mr.load_precos_mensais(tuple(sorted(candidatos)))
+        _, correlacao = _portfolio_return_correlation(
+            precos, candidatos, min_months=12)
+        return correlacao
+
+    candidate_correlation = _correlacao_dos_candidatos(scored)
     previous_weights: dict[str, float] = {}
     active_model: dict = {}
     try:
@@ -1968,14 +1986,27 @@ def _carteira_integrada(preferences: dict):
         }
     except (RuntimeError, ValueError, TypeError, SQLAlchemyError):
         previous_weights = {}
-    result = optimize_diligence_portfolio(
-        scored, scenario, policy=portfolio_policy,
-        correlation_matrix=(candidate_correlation.to_dict()
-                            if not candidate_correlation.empty else None),
-        correlation_penalty=float(preferences["correlation_penalty"]),
-        previous_weights=previous_weights,
-        macro_impacts=(macro_snapshot.impacts if macro_snapshot else {}),
-        macro_mode=str(preferences["macro_mode"]),
+    def _kwargs_do_otimizador(pontuadas: list[dict]) -> dict:
+        correlacao = _correlacao_dos_candidatos(pontuadas)
+        return {
+            "correlation_matrix": (correlacao.to_dict()
+                                   if not correlacao.empty else None),
+            "correlation_penalty": float(preferences["correlation_penalty"]),
+            "previous_weights": previous_weights,
+            "macro_impacts": (macro_snapshot.impacts if macro_snapshot else {}),
+            "macro_mode": str(preferences["macro_mode"]),
+        }
+
+    # O orquestrador tenta o universo estrito primeiro e só readmite candidatos
+    # da concessão de proteção — em ordem crescente de severidade e no menor
+    # número que viabilize — quando o estrito não fecha a carteira. A regra é
+    # única (core/fii_carteira_protegida.py); a tela não a reimplementa.
+    result = montar_carteira_com_concessao(
+        eligible_rows, eligibility.get("concession_candidates") or (), scenario,
+        policy=portfolio_policy,
+        score=lambda linhas: score_fiis_by_type(
+            linhas, validation_status=validation_status),
+        optimizer_kwargs=_kwargs_do_otimizador,
     )
     result["macro_snapshot"] = macro_snapshot
     if not result.get("items"):
@@ -2084,8 +2115,21 @@ def _carteira_integrada(preferences: dict):
         )
     if result.get("viability_notes"):
         st.warning(
-            "Proteção por opacidade ajustada para preservar a viabilidade da carteira: "
+            "Proteção ajustada para preservar a viabilidade da carteira: "
             + " ".join(result["viability_notes"])
+        )
+    if result.get("protecao_cedida_na_elegibilidade"):
+        # A concessão de elegibilidade tem de aparecer ticker a ticker, com o
+        # portão que cada fundo reprovou: proteção cedida não é ausência de
+        # risco, e nota agregada não diz de quem é o risco.
+        st.warning(
+            "Fundos readmitidos com proteção cedida na elegibilidade (o "
+            "universo estrito não fechava a carteira): "
+            + " · ".join(
+                f"{item['ticker']} — {', '.join(item['motivos'])}"
+                + ("" if item["na_carteira"] else " (fora da carteira final)")
+                for item in result["protecao_cedida_na_elegibilidade"]
+            )
         )
     if result.get("protecao_excedida"):
         # opacidade_excedente (core/fii_portfolio_v4.py) mede contra o teto do

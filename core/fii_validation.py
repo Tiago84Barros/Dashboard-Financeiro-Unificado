@@ -251,7 +251,9 @@ def robust_optimizer_point_in_time_backtest(
     naquela data, o cenário macro então observável e correlações calculadas
     exclusivamente com retornos anteriores à decisão.
     """
+    from core.fii_carteira_protegida import montar_carteira_com_concessao
     from core.fii_integrated_model import (
+        ColunasDeElegibilidadeAusentes,
         IntegratedEligibilityPolicy,
         apply_integrated_eligibility,
     )
@@ -349,9 +351,22 @@ def robust_optimizer_point_in_time_backtest(
                 "publication_status": "validated",
             })
             rows.append(row)
-        eligible, eligibility = apply_integrated_eligibility(
-            rows, IntegratedEligibilityPolicy(),
-        )
+        try:
+            eligible, eligibility = apply_integrated_eligibility(
+                rows, IntegratedEligibilityPolicy(),
+            )
+        except ColunasDeElegibilidadeAusentes as erro:
+            # Safra sem as colunas que a política lê é falha de insumo, não
+            # universo vazio: registrar como skip nomeado impede que o
+            # backtest conte um período inteiro como "ninguém elegível".
+            optimizer_input_skips += 1
+            optimizer_failures.append({
+                "decision_date": decision.date().isoformat(),
+                "reason": str(erro),
+                "missing_columns": list(erro.missing_columns),
+                "failure_stage": "data_prerequisites",
+            })
+            continue
         eligible_counts.append(int(eligibility["eligible_count"]))
         if not eligible:
             optimizer_input_skips += 1
@@ -372,21 +387,30 @@ def robust_optimizer_point_in_time_backtest(
         history_matrix = history.pivot_table(
             index="date", columns="ticker", values="total_return", aggfunc="last",
         ).tail(max(int(correlation_lookback_months), int(correlation_min_months)))
-        tickers = [str(row["ticker"]) for row in eligible]
-        usable = [
-            ticker for ticker in tickers if ticker in history_matrix.columns
-            and int(history_matrix[ticker].notna().sum()) >= correlation_min_months
-        ]
-        correlation = (
-            history_matrix[usable].corr(min_periods=correlation_min_months).to_dict()
-            if len(usable) >= 2 else None
-        )
-        optimized = optimize_diligence_portfolio(
-            eligible, scenario,
+        def _optimizer_kwargs(pool: list[dict], _matrix=history_matrix) -> dict:
+            # A correlação acompanha o pool da tentativa: readmitir um fundo
+            # sem incluí-lo na matriz rebaixaria a cobertura em silêncio.
+            tickers = [str(row["ticker"]) for row in pool]
+            usable = [
+                ticker for ticker in tickers if ticker in _matrix.columns
+                and int(_matrix[ticker].notna().sum()) >= correlation_min_months
+            ]
+            return {
+                "correlation_matrix": (
+                    _matrix[usable].corr(min_periods=correlation_min_months).to_dict()
+                    if len(usable) >= 2 else None
+                ),
+                "correlation_penalty": float(correlation_penalty),
+                "previous_weights": previous.to_dict(),
+            }
+
+        # Mesmo orquestrador da tela: o backtest PIT não pode ter uma regra de
+        # concessão própria, ou passa a medir uma estratégia que não existe.
+        optimized = montar_carteira_com_concessao(
+            eligible, eligibility.get("concession_candidates") or (), scenario,
             policy=PortfolioPolicy(max_assets=int(top_n)),
-            correlation_matrix=correlation,
-            correlation_penalty=float(correlation_penalty),
-            previous_weights=previous.to_dict(),
+            optimizer_kwargs=_optimizer_kwargs,
+            optimizer=optimize_diligence_portfolio,
         )
         if not optimized.get("items") or not optimized.get("can_publish"):
             failure_stage = str(optimized.get("failure_stage") or "optimizer")

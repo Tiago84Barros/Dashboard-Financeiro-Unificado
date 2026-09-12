@@ -23,6 +23,7 @@ def main() -> int:
     from core import market_read
     from core.config import settings
     from core.database import get_engine, get_session_factory
+    from core.fii_carteira_protegida import montar_carteira_com_concessao
     from core.fii_integrated_model import (
         IntegratedEligibilityPolicy,
         apply_integrated_eligibility,
@@ -77,23 +78,34 @@ def main() -> int:
         validation_status=validation_status,
         snapshot_as_of=max(snapshot_dates) if snapshot_dates else None,
     )
-    candidates: list[str] = []
-    for fii_type in ("tijolo", "papel", "fof", "hibrido"):
-        candidates.extend([
-            str(row["ticker"]) for row in scored if row.get("tipo") == fii_type
-        ][:12])
-    candidates = list(dict.fromkeys(candidates))
-    prices = market_read.load_precos_mensais(tuple(sorted(candidates)))
-    returns = prices.pct_change(fill_method=None) if not prices.empty else prices
-    usable = [
-        ticker for ticker in candidates
-        if ticker in returns.columns and int(returns[ticker].notna().sum()) >= 12
-    ]
-    correlation = (
-        returns[usable].corr(min_periods=12).to_dict() if len(usable) >= 2 else None
-    )
-    result = optimize_diligence_portfolio(
-        scored,
+
+    def correlacao_do_pool(pontuadas: list[dict]) -> dict:
+        candidates: list[str] = []
+        for fii_type in ("tijolo", "papel", "fof", "hibrido"):
+            candidates.extend([
+                str(row["ticker"]) for row in pontuadas if row.get("tipo") == fii_type
+            ][:12])
+        candidates = list(dict.fromkeys(candidates))
+        prices = market_read.load_precos_mensais(tuple(sorted(candidates)))
+        returns = prices.pct_change(fill_method=None) if not prices.empty else prices
+        usable = [
+            ticker for ticker in candidates
+            if ticker in getattr(returns, "columns", [])
+            and int(returns[ticker].notna().sum()) >= 12
+        ]
+        return {
+            "correlation_matrix": (
+                returns[usable].corr(min_periods=12).to_dict()
+                if len(usable) >= 2 else None
+            ),
+            "correlation_penalty": .12,
+        }
+
+    # Mesmo orquestrador da tela e do backtest: a concessão de proteção não
+    # pode ter uma versão só deste script.
+    result = montar_carteira_com_concessao(
+        eligible,
+        eligibility.get("concession_candidates") or (),
         MacroScenario(
             selic=15.0,
             ipca=4.5,
@@ -102,8 +114,10 @@ def main() -> int:
             credit_event_rate=.03,
         ),
         policy=PortfolioPolicy(),
-        correlation_matrix=correlation,
-        correlation_penalty=.12,
+        score=lambda linhas: score_fiis_by_type(
+            linhas, validation_status=validation_status),
+        optimizer_kwargs=correlacao_do_pool,
+        optimizer=optimize_diligence_portfolio,
     )
     summary = {
         "universe_count": eligibility.get("universe_count"),
@@ -136,6 +150,10 @@ def main() -> int:
         "correlation_info": result.get("correlation_info") or {},
         "constraint_violations": result.get("constraint_violations") or [],
         "candidate_pool": result.get("candidate_pool") or {},
+        "viability_notes": result.get("viability_notes") or [],
+        "concessao_de_elegibilidade": result.get("concessao_de_elegibilidade") or {},
+        "protecao_cedida_na_elegibilidade":
+            result.get("protecao_cedida_na_elegibilidade") or [],
     }
     print(json.dumps(summary, ensure_ascii=False, default=str, sort_keys=True))
     return 0 if result.get("items") and (
