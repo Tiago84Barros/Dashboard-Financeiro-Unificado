@@ -109,3 +109,49 @@ def test_prompt_exige_declarar_protecao_nao_divulgada(monkeypatch):
     system = captured["messages"][0]["content"].lower()
     assert "renda recorrente" in system
     assert "não divulgado pelo gestor" in system
+
+
+def test_contexto_declara_a_cessao_de_protecao_na_elegibilidade():
+    """A IA não pode responder sobre a carteira sem saber o que foi cedido."""
+    selecionado = _fii()
+    readmitido = _fii("REND11")
+    context = build_fii_chat_context(
+        user_question="A carteira está dentro da metodologia?",
+        selected_items=[selecionado, readmitido],
+        scored_rows=[selecionado],
+        methodology_rows=[selecionado, readmitido],
+        portfolio_result={
+            "can_publish": False,
+            "blockers": [],
+            "viability_notes": [
+                "proteção ao investidor cedida na elegibilidade para viabilizar "
+                "a carteira (1 de 3 candidatos readmitidos, na ordem crescente "
+                "de severidade): REND11 — renda recorrente abaixo do mínimo. "
+                "Proteção cedida não é ausência de risco."
+            ],
+            "protecao_cedida_na_elegibilidade": [{
+                "ticker": "REND11",
+                "motivos": ["renda recorrente abaixo do mínimo"],
+                "severidade": 1, "na_carteira": True,
+            }],
+        },
+        scenario=MacroScenario(selic=14, ipca=4.5),
+        prices=pd.DataFrame(),
+    )
+
+    assert "REND11 — renda recorrente abaixo do mínimo" in context
+    assert "não é ausência de risco" in context
+    assert "elegíveis no universo estrito=1 (+1 readmitidos" in context
+    assert "notas de viabilidade: proteção ao investidor cedida" in context
+
+
+def test_contexto_sem_cessao_diz_nenhuma():
+    selecionado = _fii()
+    context = build_fii_chat_context(
+        user_question="ok?", selected_items=[selecionado],
+        scored_rows=[selecionado], methodology_rows=[selecionado],
+        portfolio_result={"can_publish": True, "blockers": []},
+        scenario=MacroScenario(selic=14, ipca=4.5), prices=pd.DataFrame(),
+    )
+
+    assert "proteção ao investidor cedida na elegibilidade: nenhuma" in context

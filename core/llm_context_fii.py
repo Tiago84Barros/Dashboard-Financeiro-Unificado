@@ -145,6 +145,10 @@ def build_fii_chat_context(
     cited = re.findall(r"\b[A-Z]{4}11\b", (user_question or "").upper())
     detail_tickers = list(dict.fromkeys(selected_tickers + cited))
 
+    cedidos = [dict(item) for item
+               in (portfolio_result.get("protecao_cedida_na_elegibilidade") or [])]
+    notas_de_viabilidade = list(portfolio_result.get("viability_notes") or [])
+
     current_output = (
         "Carteira Modelo aprovada pelos gates vigentes; resultado quantitativo "
         "não constitui garantia de retorno."
@@ -160,12 +164,29 @@ def build_fii_chat_context(
     lines = [
         "STATUS E ESCOPO:",
         f"  Saída atual: {current_output}",
-        f"  FIIs selecionados={len(selected)}; elegíveis={len(scored)}; "
+        f"  FIIs selecionados={len(selected)}; elegíveis no universo estrito="
+        f"{len(scored)} (+{len(cedidos)} readmitidos por cessão de proteção); "
         f"renda recorrente={_fmt(portfolio_result.get('recurrent_yield_12m'), percent=True)}; "
         f"DY divulgado={_fmt(portfolio_result.get('trailing_yield_12m', portfolio_result.get('expected_yield')), percent=True)}; "
         f"número efetivo={_fmt(portfolio_result.get('effective_assets'))}; "
         f"publicável={'sim' if portfolio_result.get('can_publish') else 'não'}",
         "  bloqueios: " + ("; ".join(portfolio_result.get("blockers") or []) or "nenhum"),
+        # A cessão de proteção precisa chegar à IA no mesmo vocabulário da tela
+        # e do verificador. Sem esta linha o canal de IA respondia sobre uma
+        # carteira que só existe porque portões foram cedidos como se todos os
+        # fundos tivessem passado — proteção cedida virando ausência de risco.
+        "  proteção ao investidor cedida na elegibilidade: " + (
+            "; ".join(
+                f"{item.get('ticker')} — "
+                + (", ".join(item.get("motivos") or []) or "motivo não registrado")
+                + ("" if item.get("na_carteira") else " (fora da carteira final)")
+                for item in cedidos
+            ) + ". Proteção cedida não é ausência de risco: o portão reprovou e "
+            "a carteira o dispensou para existir."
+            if cedidos else "nenhuma"
+        ),
+        "  notas de viabilidade: " + (
+            " | ".join(str(nota) for nota in notas_de_viabilidade) or "nenhuma"),
         "",
         "CENÁRIO MACRO APLICADO:",
         f"  Selic={_fmt(getattr(scenario, 'selic', None), percent=False)}%{_origem('selic')}; "
