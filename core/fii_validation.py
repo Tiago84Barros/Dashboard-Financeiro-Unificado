@@ -298,6 +298,8 @@ def robust_optimizer_point_in_time_backtest(
     successful_optimizer = 0
     constraint_violation_periods = 0
     constraint_violation_details: list[dict[str, Any]] = []
+    concession_periods = 0
+    concession_details: list[dict[str, Any]] = []
     missing_macro_periods = 0
     optimizer_input_skips = 0
     optimizer_failures: list[dict[str, Any]] = []
@@ -368,14 +370,18 @@ def robust_optimizer_point_in_time_backtest(
             })
             continue
         eligible_counts.append(int(eligibility["eligible_count"]))
-        if not eligible:
+        candidatos_da_concessao = eligibility.get("concession_candidates") or ()
+        if not eligible and not candidatos_da_concessao:
             optimizer_input_skips += 1
             optimizer_failures.append({
                 "decision_date": decision.date().isoformat(),
-                "reason": "universo elegível vazio",
+                "reason": "universo elegível vazio e sem candidatos à concessão",
                 "failure_stage": "data_prerequisites",
             })
             continue
+        # Estrito vazio COM candidatos não é safra perdida: é exatamente o caso
+        # em que a concessão existe. Pular aqui era desligar o mecanismo na
+        # única situação em que ele é necessário.
 
         scenario_values = macro_scenarios.get(decision.date().isoformat())
         if not scenario_values:
@@ -407,7 +413,7 @@ def robust_optimizer_point_in_time_backtest(
         # Mesmo orquestrador da tela: o backtest PIT não pode ter uma regra de
         # concessão própria, ou passa a medir uma estratégia que não existe.
         optimized = montar_carteira_com_concessao(
-            eligible, eligibility.get("concession_candidates") or (), scenario,
+            eligible, candidatos_da_concessao, scenario,
             policy=PortfolioPolicy(max_assets=int(top_n)),
             optimizer_kwargs=_optimizer_kwargs,
             optimizer=optimize_diligence_portfolio,
@@ -438,6 +444,19 @@ def robust_optimizer_point_in_time_backtest(
             constraint_violation_details.append({
                 "decision_date": decision.date().isoformat(),
                 "violations": list(optimized["constraint_violations"]),
+            })
+        # A cessão de proteção tem de sobreviver à persistência. Uma safra cuja
+        # carteira só existe porque fundos tiveram o portão cedido gravava
+        # histórico limpo em metrics_json — proteção cedida apresentada como
+        # ausência de risco no artefato que sustenta a estratégia.
+        cessao = list(optimized.get("protecao_cedida_na_elegibilidade") or [])
+        notas_de_viabilidade = list(optimized.get("viability_notes") or [])
+        if cessao:
+            concession_periods += 1
+            concession_details.append({
+                "decision_date": decision.date().isoformat(),
+                "protecao_cedida": cessao,
+                "viability_notes": notas_de_viabilidade,
             })
         correlation_coverages.append(float(
             (optimized.get("correlation_info") or {}).get("coverage") or 0.0
@@ -492,11 +511,23 @@ def robust_optimizer_point_in_time_backtest(
             "holdings": {
                 str(ticker): float(weight) for ticker, weight in weights.items()
             },
+            "protecao_cedida": cessao,
+            "viability_notes": notas_de_viabilidade,
         })
         turnovers.append(turn)
-        ranks.append(pd.Series({
+        # Rank e carteira precisam falar do mesmo universo: com readmissão, o
+        # `eligible` estrito não contém os fundos que a carteira comprou, e a
+        # estabilidade de ranking saía medida sobre uma lista que não decidiu a
+        # carteira. Score ausente não recebe zero — zero seria punição inventada.
+        universo_do_rank = {
             str(row["ticker"]): float(row["type_score"]) for row in eligible
-        }))
+        }
+        for item in optimized["items"]:
+            ticker = str(item.get("ticker") or "")
+            if ticker and ticker not in universo_do_rank and (
+                    item.get("type_score") is not None):
+                universo_do_rank[ticker] = float(item["type_score"])
+        ranks.append(pd.Series(universo_do_rank, dtype=float))
         previous = weights
 
     failure_summary: dict[str, int] = {}
@@ -555,6 +586,11 @@ def robust_optimizer_point_in_time_backtest(
         "optimizer_input_skipped_periods": optimizer_input_skips,
         "constraint_violation_periods": constraint_violation_periods,
         "constraint_violation_details": constraint_violation_details,
+        "concession_periods": concession_periods,
+        "concession_period_fraction": (
+            concession_periods / len(result) if len(result) else 0.0
+        ),
+        "concession_details": concession_details[:100],
         "mean_correlation_coverage": (
             float(np.mean(correlation_coverages)) if correlation_coverages else 0.0
         ),
