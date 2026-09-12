@@ -1903,10 +1903,25 @@ def _carteira_integrada(preferences: dict):
     # "todos os fundos são ruins" quando a causa era leitura de dado. Um número
     # de exclusão sem o motivo não é diagnóstico, é veredito sem processo.
     _diagnostico_de_exclusao(eligibility, expandido=not eligible_rows)
-    if not eligible_rows:
+    candidatos_da_concessao = eligibility.get("concession_candidates") or ()
+    if not eligible_rows and not candidatos_da_concessao:
         st.error(_mensagem_de_universo_vazio(eligibility))
         st.session_state.pop("fii_port", None)
         return None
+    if not eligible_rows:
+        # Estrito vazio COM candidatos de concessão não é "universo vazio": é o
+        # caso extremo em que a regra permanente (nenhuma criação de portfólio
+        # termina zerada) tem de valer. Sair aqui desligava a concessão
+        # exatamente quando ela é necessária — e basta o usuário subir o piso de
+        # renda recorrente na barra lateral para cair neste caminho.
+        st.warning(
+            "Nenhum FII passou pelos filtros estritos. A carteira será montada "
+            f"cedendo proteção ao investidor: {len(candidatos_da_concessao)} "
+            "candidatos foram reprovados apenas nos portões de proteção e podem "
+            "ser readmitidos, no menor número que viabilize a carteira. Cada "
+            "readmissão aparece nomeada abaixo — proteção cedida não é ausência "
+            "de risco."
+        )
 
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
     validation_status = (
@@ -1960,6 +1975,12 @@ def _carteira_integrada(preferences: dict):
 
     # O universo de correlação replica o pool máximo do otimizador e evita
     # consultar séries de centenas de fundos a cada alteração dos controles.
+    # Cada tentativa do orquestrador repete quase o mesmo pool; sem memória, o
+    # render fazia uma consulta de séries mensais por tentativa. A chave é o
+    # próprio pool, então readmitir um fundo recalcula, e só então.
+    _correlacoes: dict[tuple[str, ...], pd.DataFrame] = {}
+    _correlacao_da_ultima_tentativa: list[pd.DataFrame] = []
+
     def _correlacao_dos_candidatos(pontuadas: list[dict]):
         per_type = max(int(portfolio_policy.max_assets), 12)
         candidatos: list[str] = []
@@ -1968,12 +1989,16 @@ def _carteira_integrada(preferences: dict):
                 str(row["ticker"]) for row in pontuadas if row.get("tipo") == fii_type
             ][:per_type])
         candidatos = list(dict.fromkeys(candidatos))
-        precos = _mr.load_precos_mensais(tuple(sorted(candidatos)))
-        _, correlacao = _portfolio_return_correlation(
-            precos, candidatos, min_months=12)
+        chave = tuple(sorted(candidatos))
+        if chave not in _correlacoes:
+            precos = _mr.load_precos_mensais(chave)
+            _, _correlacoes[chave] = _portfolio_return_correlation(
+                precos, candidatos, min_months=12)
+        correlacao = _correlacoes[chave]
+        _correlacao_da_ultima_tentativa.clear()
+        _correlacao_da_ultima_tentativa.append(correlacao)
         return correlacao
 
-    candidate_correlation = _correlacao_dos_candidatos(scored)
     previous_weights: dict[str, float] = {}
     active_model: dict = {}
     try:
@@ -2002,7 +2027,7 @@ def _carteira_integrada(preferences: dict):
     # número que viabilize — quando o estrito não fecha a carteira. A regra é
     # única (core/fii_carteira_protegida.py); a tela não a reimplementa.
     result = montar_carteira_com_concessao(
-        eligible_rows, eligibility.get("concession_candidates") or (), scenario,
+        eligible_rows, candidatos_da_concessao, scenario,
         policy=portfolio_policy,
         score=lambda linhas: score_fiis_by_type(
             linhas, validation_status=validation_status),
@@ -2013,6 +2038,13 @@ def _carteira_integrada(preferences: dict):
         st.error("Não foi possível construir uma carteira factível: " +
                  " · ".join(result.get("blockers") or []))
         return None
+    # A correlação exibida e a do recálculo macro são a da tentativa que virou
+    # carteira — inclusive os readmitidos. Recomputá-la aqui era uma segunda
+    # consulta de séries para o mesmo pool.
+    candidate_correlation = (
+        _correlacao_da_ultima_tentativa[0] if _correlacao_da_ultima_tentativa
+        else pd.DataFrame()
+    )
     portfolio_can_publish = bool(
         result.get("can_publish") and investable_gate.can_publish_recommendation
     )
