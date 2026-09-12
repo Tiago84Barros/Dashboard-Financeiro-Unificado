@@ -31,6 +31,8 @@ from typing import Any, Callable, Iterable, Sequence
 
 from core.fii_portfolio_v4 import PortfolioPolicy, optimize_diligence_portfolio
 
+STATUS_READMITIDO = "readmitido_por_concessao"
+
 
 def _sem_pontuacao(rows: list[dict]) -> list[dict]:
     """Pontuação já vem pronta (backtest PIT lê ``type_score`` do snapshot)."""
@@ -75,8 +77,13 @@ def montar_carteira_com_concessao(
     fila: Sequence[dict] = [dict(row) for row in concessao]
 
     def _tentar(readmitidos: Sequence[dict]) -> dict:
+        # O readmitido entra na carteira como readmitido, não como "excluded":
+        # o status vinha da elegibilidade estrita e viajava até os itens
+        # publicados, onde dizia o contrário do que a carteira fez com ele.
+        # `protecao_cedivel` já viaja na linha e é o que a tela, a IA e as
+        # explicações leem — não há segunda chave com o mesmo assunto.
         linhas = estritos + [
-            {**row, "protecao_cedida": tuple(row.get("protecao_cedivel") or ())}
+            {**row, "eligibility_status": STATUS_READMITIDO}
             for row in readmitidos
         ]
         pontuadas = list(score(linhas))
@@ -85,17 +92,49 @@ def montar_carteira_com_concessao(
         return optimizer(pontuadas, scenario, policy=policy, **extras)
 
     tentativas: list[dict] = []
-    melhor: tuple[dict, Sequence[dict]] | None = None
-    for quantidade in range(len(fila) + 1):
-        readmitidos = fila[:quantidade]
-        resultado = _tentar(readmitidos)
+
+    def _registrar(readmitidos: Sequence[dict], resultado: dict) -> list[dict]:
         itens = resultado.get("items") or []
         tentativas.append({
             "readmitidos": _tickers(readmitidos),
             "assets": len(itens),
             "status": str(resultado.get("status") or ""),
         })
+        return itens
+
+    def _podar(
+        readmitidos: Sequence[dict], resultado: dict,
+    ) -> tuple[Sequence[dict], dict]:
+        """Devolve o menor conjunto readmitido que ainda viabiliza a carteira.
+
+        A varredura acha um PREFIXO viável da fila, e prefixo mínimo não é
+        conjunto mínimo: o otimizador pode usar o 3º e o 9º readmitidos e
+        ignorar os seis do meio, que teriam a proteção cedida sem necessidade
+        nenhuma. Aqui tiramos do conjunto quem a carteira resultante não usa e
+        re-rodamos; enquanto encolher e continuar viável, o menor conjunto vence.
+        """
+        atuais, atual = list(readmitidos), resultado
+        while atuais:
+            usados = {str(item.get("ticker") or "")
+                      for item in (atual.get("items") or [])}
+            menores = [row for row in atuais
+                       if str(row.get("ticker") or "") in usados]
+            if len(menores) == len(atuais):
+                return atuais, atual
+            candidato = _tentar(menores)
+            _registrar(menores, candidato)
+            if not _viavel(candidato, policy):
+                return atuais, atual
+            atuais, atual = menores, candidato
+        return atuais, atual
+
+    melhor: tuple[dict, Sequence[dict]] | None = None
+    for quantidade in range(len(fila) + 1):
+        readmitidos = fila[:quantidade]
+        resultado = _tentar(readmitidos)
+        itens = _registrar(readmitidos, resultado)
         if _viavel(resultado, policy):
+            readmitidos, resultado = _podar(readmitidos, resultado)
             return _anotar(resultado, readmitidos, fila, tentativas)
         # Mantém a tentativa com mais ativos: se nem a concessão inteira
         # viabilizar a cardinalidade cheia, a carteira ainda não pode voltar

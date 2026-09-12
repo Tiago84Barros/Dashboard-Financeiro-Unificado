@@ -53,6 +53,36 @@ def _otimizador_que_exige(minimo: int):
     return otimizar
 
 
+def _otimizador_que_usa_so(chave: str):
+    """Só viabiliza se ``chave`` estiver no pool, e só usa ``chave``.
+
+    Faz o prefixo mínimo e o conjunto mínimo divergirem: para alcançar a chave,
+    a varredura por prefixo readmite tudo o que vem antes dela na fila — e a
+    carteira resultante não usa nada disso. Quem aceita o prefixo cede proteção
+    de fundos que a carteira descartou.
+    """
+    chamadas: list[int] = []
+
+    def otimizar(rows, scenario, *, policy, **kwargs):
+        rows = list(rows)
+        chamadas.append(len(rows))
+        usaveis = [row for row in rows
+                   if str(row["ticker"]).startswith("EST")
+                   or str(row["ticker"]) == chave]
+        if not any(str(row["ticker"]) == chave for row in rows):
+            return {"items": [], "status": "blocked",
+                    "blockers": ["pré-seleção inviável"]}
+        peso = 1.0 / policy.max_assets
+        return {
+            "items": [{**row, "weight": peso}
+                      for row in usaveis[:policy.max_assets]],
+            "status": "diligence_only", "viability_notes": [],
+        }
+
+    otimizar.chamadas = chamadas
+    return otimizar
+
+
 # ── Parte 1: a concessão existe, é mínima e é visível ────────────────────────
 
 def test_relatorio_oferece_so_quem_reprovou_apenas_na_protecao():
@@ -145,7 +175,7 @@ def test_universo_estrito_inviavel_sai_com_carteira_cheia_e_notas_nomeadas():
     assert detalhe["LOCA11"]["na_carteira"] is True
 
 
-def test_a_concessao_e_minima():
+def test_a_concessao_para_no_primeiro_numero_que_viabiliza():
     """Com folga para readmitir 1, não readmite 2."""
     linhas = [_linha(f"EST{i:02d}11") for i in range(3)] + [
         _linha("REND11", income_recurrence=.20),
@@ -164,6 +194,56 @@ def test_a_concessao_e_minima():
     assert resultado["concessao_de_elegibilidade"]["readmitidos"] == ["REND11"]
     assert resultado["concessao_de_elegibilidade"]["disponiveis"] == 3
     assert otimizador.chamadas == [3, 4]
+
+
+def test_a_concessao_e_minima_em_conjunto_nao_so_em_prefixo():
+    """Readmitido que a carteira não usa tem a proteção devolvida.
+
+    A fila é REND11 (sev. 1), LOCA11 (3), AUSE11 (4) e só AUSE11 viabiliza.
+    O prefixo mínimo tem 3 fundos; o conjunto mínimo tem 1. Ceder os outros
+    dois seria afrouxar proteção sem que a carteira precisasse — e sem que
+    ninguém notasse, porque a carteira sai igual.
+    """
+    linhas = [_linha(f"EST{i:02d}11") for i in range(3)] + [
+        _linha("REND11", income_recurrence=.20),
+        _linha("LOCA11", tenant_concentration=.90),
+        _linha("AUSE11", income_recurrence=None),
+    ]
+    eligible, relatorio = apply_integrated_eligibility(
+        linhas, IntegratedEligibilityPolicy())
+    otimizador = _otimizador_que_usa_so("AUSE11")
+
+    resultado = montar_carteira_com_concessao(
+        eligible, relatorio["concession_candidates"], object(),
+        policy=PortfolioPolicy(max_assets=4), optimizer=otimizador,
+    )
+
+    assert len(resultado["items"]) == 4
+    assert resultado["concessao_de_elegibilidade"]["readmitidos"] == ["AUSE11"]
+    nota = " ".join(resultado["viability_notes"])
+    assert "REND11" not in nota and "LOCA11" not in nota
+    # 3 estritos; prefixos de 1, 2 e 3 readmitidos; e a re-rodada já podada.
+    assert otimizador.chamadas == [3, 4, 5, 6, 4]
+
+
+def test_readmitido_fora_da_carteira_nao_fica_com_protecao_cedida():
+    """A poda repete enquanto encolher: nenhum readmitido inútil sobrevive."""
+    linhas = [_linha(f"EST{i:02d}11") for i in range(3)] + [
+        _linha("REND11", income_recurrence=.20),
+        _linha("LOCA11", tenant_concentration=.90),
+    ]
+    eligible, relatorio = apply_integrated_eligibility(
+        linhas, IntegratedEligibilityPolicy())
+
+    resultado = montar_carteira_com_concessao(
+        eligible, relatorio["concession_candidates"], object(),
+        policy=PortfolioPolicy(max_assets=4),
+        optimizer=_otimizador_que_usa_so("LOCA11"),
+    )
+
+    detalhe = resultado["protecao_cedida_na_elegibilidade"]
+    assert [item["ticker"] for item in detalhe] == ["LOCA11"]
+    assert all(item["na_carteira"] for item in detalhe)
 
 
 def test_nem_a_concessao_inteira_viabiliza_mas_a_carteira_nao_volta_vazia():
