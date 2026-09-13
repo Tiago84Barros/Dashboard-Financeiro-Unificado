@@ -227,3 +227,26 @@ def test_giro_fresco_nao_bloqueia():
     restante, meta = _apply_liquidity_gate(work, params, [])
     assert meta["liquidity_block"] is None
     assert len(restante) == 2
+
+
+# --------------------------------------------------------------- defeito D
+def test_a_agenda_republica_antes_de_a_medicao_vencer():
+    """Os dois relógios não podem marcar o mesmo número.
+
+    A agenda de publicação promete um intervalo; o portão de negociabilidade
+    exige um frescor. Enquanto os dois foram 7 dias, a agenda só cobrava
+    republicação no dia em que o portão já havia começado a recusar — e a
+    recusa não é "giro baixo", é ``NAO_VERIFICADA``, que esvazia o universo
+    inteiro e leva a tela a "Alocado 0,0% / Não alocado 100,0%". Empresa
+    medida vira empresa nunca medida por diferença de relógio.
+    """
+    from core.publicacao_agenda import POR_CHAVE
+    from core.us_liquidity import LIQUIDITY_MAX_AGE_DAYS
+
+    cadencia = POR_CHAVE["us_snapshot"].cadencia_dias
+    assert cadencia is not None, "a vitrine dos EUA precisa de cadência"
+    assert cadencia < LIQUIDITY_MAX_AGE_DAYS, (
+        f"a vitrine dos EUA é republicada a cada {cadencia} dia(s), mas o portão "
+        f"de negociabilidade recusa medição com mais de {LIQUIDITY_MAX_AGE_DAYS}. "
+        "Sem margem entre os dois, qualquer atraso reprova o universo inteiro "
+        "por negociabilidade não verificada.")

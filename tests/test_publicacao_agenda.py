@@ -28,12 +28,16 @@ def test_nunca_publicado_esta_devendo():
 
 
 def test_dentro_da_cadencia_nao_deve_nada():
-    alvo = POR_CHAVE["us_snapshot"]  # semanal
+    # `b3_metrics` e nao `us_snapshot`: a vitrine dos EUA deixou de ser semanal
+    # quando se descobriu que a cadencia dela tem de sobrar sobre o teto de
+    # frescor do portao de negociabilidade (ver tests/test_us_giro_frescor).
+    alvo = POR_CHAVE["b3_metrics"]  # semanal
+    assert alvo.cadencia_dias == 7
     assert motivo_para_publicar(alvo, _registro(3), AGORA) is None
 
 
 def test_cadencia_vencida_deve_publicar():
-    alvo = POR_CHAVE["us_snapshot"]  # semanal
+    alvo = POR_CHAVE["b3_metrics"]  # semanal
     motivo = motivo_para_publicar(alvo, _registro(8), AGORA)
     assert motivo is not None and "8d" in motivo
 

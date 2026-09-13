@@ -148,7 +148,15 @@ ALVOS: tuple[Alvo, ...] = (
         chave="us_snapshot",
         titulo="Vitrine dos EUA (company_snapshots)",
         passos=(("scripts/publish_us_snapshot_from_local.py",),),
-        cadencia_dias=7,
+        # Tem de ser ESTRITAMENTE menor que `core.us_liquidity`.
+        # `LIQUIDITY_MAX_AGE_DAYS`, e não igual. Os dois eram 7: a agenda só
+        # cobrava republicação no dia em que o portão de negociabilidade já
+        # havia começado a recusar a medição, e um atraso de um fim de semana
+        # bastava para reprovar o universo inteiro por "não verificada" --
+        # empresa medida virando empresa nunca medida por diferença de relógio.
+        # Com 3 dias sobra margem para uma execução falhar e ser refeita antes
+        # de a medição vencer. Invariante coberta por tests/test_us_giro_frescor.
+        cadencia_dias=3,
         modulo="us",
     ),
     Alvo(

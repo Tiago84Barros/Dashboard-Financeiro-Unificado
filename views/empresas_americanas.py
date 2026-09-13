@@ -2047,6 +2047,42 @@ def _render_us_portfolio_creation_css() -> None:
     """, unsafe_allow_html=True)
 
 
+def _render_us_funil_exclusoes(result: dict) -> None:
+    """Por que o universo esvaziou -- em cards, e sem depender de expander.
+
+    Existe porque "Nenhuma carteira foi formada" não é acionável sozinho. O
+    funil sequencial reconcilia (universo = removidos + elegíveis), então ele
+    responde exatamente qual filtro consumiu o universo. Quando o portão de
+    negociabilidade reprova tudo, a linha campeã é sempre a mesma, e aí o
+    remédio não é afrouxar parâmetro: é republicar a vitrine.
+    """
+    universo = int(result.get("universe_count", 0) or 0)
+    elegiveis = int(result.get("eligible_count", 0) or 0)
+    exclusions = result.get("exclusions")
+    secao_titulo("Onde o universo se esvaziou", "🩺")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        card_metrica("Universo inicial", f"{universo:,}".replace(",", "."))
+    with c2:
+        card_metrica("Removidas pelos filtros",
+                     f"{max(universo - elegiveis, 0):,}".replace(",", "."))
+    with c3:
+        card_metrica("Elegíveis restantes", f"{elegiveis:,}".replace(",", "."))
+    if exclusions is not None and not exclusions.empty:
+        st.dataframe(
+            exclusions.rename(columns={"label": "Critério", "count": "Removidas"})[
+                ["Critério", "Removidas"]],
+            hide_index=True, width="stretch")
+        st.caption(
+            "A contagem é sequencial: cada linha remove do que sobrou da linha "
+            "anterior, e a soma reconcilia com o universo inicial. O critério de "
+            "maior contagem é o que decidiu o resultado.")
+    else:
+        st.caption(
+            "O universo chegou vazio a esta execução — nenhum filtro chegou a "
+            "ser aplicado. Verifique se a vitrine dos EUA foi publicada.")
+
+
 def _render_us_portfolio_cards(holdings: pd.DataFrame) -> None:
     if holdings is None or holdings.empty:
         return
@@ -2537,19 +2573,32 @@ def _tab_criacao_portfolio(status: dict) -> None:
 
     for warning in result.get("warnings", []):
         st.warning(warning)
+    # Bloqueio antes de qualquer número: sem liquidez verificada não existe
+    # carteira publicável, e mostrar auditoria de indústria abaixo faria parecer
+    # que só faltou afrouxar um parâmetro.
+    #
+    # A ORDEM aqui é o conserto. Antes, a composição de revisão vinha primeiro e
+    # dava `return`: quando o portão de negociabilidade esvaziava o universo, o
+    # usuário via "Alocado 0,0% / Não alocado 100,0%" e nada mais -- a causa
+    # existia, redigida e acionável, mas chegava como `st.caption` cinza no pé
+    # do componente, e o funil de exclusões que a comprovaria ficava atrás do
+    # `return`. Erro que interrompe a formação da carteira é erro na tela, não
+    # legenda embaixo de um zero.
+    if result.get("blocking_error"):
+        st.error(result["blocking_error"])
+    if result.get("history_required_unavailable"):
+        st.error("A validação histórica foi exigida, mas o painel PIT não está disponível.")
     if result.get("review_portfolio") is not None:
         from design.portfolio_review import render_portfolio_review
 
         render_portfolio_review(result["review_portfolio"], key="us_review")
+        # O funil continua visível mesmo sem carteira: é ele que diz QUAL filtro
+        # esvaziou o universo. Sem isso, "nenhuma carteira foi formada" não tem
+        # como virar uma ação do usuário.
+        _render_us_funil_exclusoes(result)
         return
-    # Bloqueio antes de qualquer número: sem liquidez verificada não existe
-    # carteira publicável, e mostrar auditoria de indústria abaixo faria parecer
-    # que só faltou afrouxar um parâmetro.
-    if result.get("blocking_error"):
-        st.error(result["blocking_error"])
-        return
-    if result.get("history_required_unavailable"):
-        st.error("A validação histórica foi exigida, mas o painel PIT não está disponível.")
+    if result.get("blocking_error") or result.get("history_required_unavailable"):
+        _render_us_funil_exclusoes(result)
         return
 
     audit = result.get("industry_audit", pd.DataFrame())
