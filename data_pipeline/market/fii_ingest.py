@@ -427,7 +427,8 @@ def audit_methodology_v4_data() -> dict:
                     WHERE quality_status <> 'rejected' AND (
                        (metric_name IN ('vacancia_fisica','property_delinquency',
                                            'holdings_overlap','income_recurrence',
-                                           'portfolio_income_recurrence')
+                                           'portfolio_income_recurrence',
+                                           'reported_dy_regularity')
                            AND (value_numeric < 0 OR value_numeric > 1))
                        OR (metric_name='leverage' AND value_numeric < 0)
                        OR (metric_name IN ('dy_12m','dy_1m')

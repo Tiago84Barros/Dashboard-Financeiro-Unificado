@@ -146,6 +146,19 @@ def infer_type_from_profile(*, mandate: Any = None, sector: Any = None,
         return "tijolo"
     return None
 
+#: A regularidade do yield RELATADO nos informes, que nao e a recorrencia da
+#: renda e por isso nao usa o nome dela.
+#:
+#: `monthlyDividendYield` e uma razao entre renda e preco: o coeficiente de
+#: variacao dessa serie carrega a variacao do preco junto, entao ela nao
+#: responde a pergunta que `core.fii_methodology.income_recurrence` define, por
+#: mais calendario que se lhe de. Ate 13/09/2026 as duas gravavam sob o MESMO
+#: `metric_name`, e para 9 tickers de `market.fiis` era esta que a decisao lia.
+#:
+#: Continua observavel de proposito: e evidencia publicada pelo gestor. So nao
+#: pontua -- nao ha `MetricDefinition` para ela.
+REPORTED_DY_REGULARITY_METRIC = "reported_dy_regularity"
+
 
 def _observation(ticker: str, metric: str, value: Any, reference_date: date,
                  available_at: datetime, raw_payload_id: int | None, *,
@@ -174,7 +187,8 @@ def _observation(ticker: str, metric: str, value: Any, reference_date: date,
         invalid = (
             metric in {"vacancia_fisica", "vacancia_financeira", "property_delinquency",
                        "holdings_overlap", "income_recurrence",
-                       "portfolio_income_recurrence", "ltv"} and not 0 <= number <= 1
+                       "portfolio_income_recurrence", REPORTED_DY_REGULARITY_METRIC,
+                       "ltv"} and not 0 <= number <= 1
         ) or (metric == "leverage" and number < 0) or (
             metric in {"dy_12m", "dy_1m"} and not 0 <= number <= .60) or (
             metric == "pvp" and not 0 < number <= 10)
@@ -339,7 +353,17 @@ def normalize_indicator_history(payload: dict, raw_payload_id: int | None = None
     return observations
 
 
+
 def _recurrence(values: list[float]) -> float | None:
+    """Regularidade da serie de `monthlyDividendYield`, sem calendario.
+
+    A lacuna nao existe para esta funcao: um mes sem informe, ou com informe
+    sem o campo, some da lista antes de chegar aqui em vez de entrar como
+    quebra. E o espelho do defeito R1 -- la a ausencia virava zero (punitivo),
+    aqui vira nada (absolvente) -- e `positive_share` e estruturalmente incapaz
+    de ve-la. Por isso a saida nao foi unificar a formula, e sim separar o nome:
+    a grandeza medida e outra e a evidencia disponivel tambem.
+    """
     if len(values) < 6:
         return None
     positive_share = sum(value > 0 for value in values) / len(values)
@@ -391,13 +415,14 @@ def normalize_reports(payload: dict, raw_payload_id: int | None = None) -> list[
         values = [value for value in yields if value is not None and value >= 0]
         recurrence = _recurrence(values)
         reference = _date(ordered[-1].get("referenceDate")) or available.date()
-        for metric in ("income_recurrence", "portfolio_income_recurrence"):
-            observation = _observation(ticker, metric, recurrence, reference, available,
-                                       raw_payload_id, endpoint="reports",
-                                       metadata={"formula": "positive_share/(1+coefficient_of_variation)",
-                                                 "months": len(values)})
-            if observation:
-                observations.append(observation)
+        observation = _observation(
+            ticker, REPORTED_DY_REGULARITY_METRIC, recurrence, reference, available,
+            raw_payload_id, endpoint="reports",
+            metadata={"formula": "positive_share/(1+coefficient_of_variation)",
+                      "serie": "monthlyDividendYield", "months": len(values),
+                      "sem_calendario": True})
+        if observation:
+            observations.append(observation)
     return observations
 
 
