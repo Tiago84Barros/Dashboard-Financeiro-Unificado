@@ -9,8 +9,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from core.macro_data import acesso
-from core.macro_data.vitrine import linhas_do_snapshot
 from core.macro_data.portfolio_context import PortfolioMacroSnapshot
+from core.macro_data.vitrine import linhas_do_snapshot
 
 AGORA = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)
 
@@ -51,8 +51,8 @@ def test_publicacao_nao_trunca_os_fatores():
     doméstica; truncar devolveria um número plausível e errado, sem sinal."""
     import json
 
-    linha = next(l for l in _linhas_publicadas(["Bancos", "Saneamento"])
-                 if l["simbolo"] == "BANCOS")
+    linha = next(row for row in _linhas_publicadas(["Bancos", "Saneamento"])
+                 if row["simbolo"] == "BANCOS")
     fatores = json.loads(linha["fatores"])
     assert len(fatores) == 2
     assert {f["provider"] for f in fatores} == {"bcb", "app4_domestic"}

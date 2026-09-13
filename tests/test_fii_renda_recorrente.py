@@ -70,7 +70,9 @@ def test_tetos_sao_os_valores_aprovados_no_spec():
 def test_elegibilidade_e_score_derivam_o_mesmo_numero():
     """Regra certa em um consumidor só já publicou yield errado na vitrine."""
     from core.fii_integrated_model import (
-        IntegratedEligibilityPolicy, apply_integrated_eligibility)
+        IntegratedEligibilityPolicy,
+        apply_integrated_eligibility,
+    )
     from core.fii_methodology import score_fiis_by_type
 
     linhas = [
