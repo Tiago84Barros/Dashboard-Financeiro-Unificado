@@ -27,8 +27,6 @@ import threading
 from pathlib import Path
 
 import pandas as pd
-
-from core.observacao_ausente import valor_observado
 import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -36,6 +34,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from core.data_quality import clean_multiples_frame
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 from core.liquidez import procedencia_liquidez
+from core.observacao_ausente import valor_observado
 
 logger = logging.getLogger(__name__)
 

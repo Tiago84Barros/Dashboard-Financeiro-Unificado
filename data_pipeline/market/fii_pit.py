@@ -19,7 +19,6 @@ import requests
 from sqlalchemy import text
 
 from core.dividend_types import apenas_renda, descarta_safra_colapsada
-from core.observacao_ausente import valor_observado
 from core.fii_methodology import (
     FORMULA_VERSION,
     METHODOLOGY_VERSION,
@@ -33,6 +32,7 @@ from core.fii_validation import (
     robust_optimizer_point_in_time_backtest,
     validate_methodology,
 )
+from core.observacao_ausente import valor_observado
 from data_pipeline.utils.db_utils import get_pipeline_engine
 
 _B3_IFIX_MONTHLY_URL = (

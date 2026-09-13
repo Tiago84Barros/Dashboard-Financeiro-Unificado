@@ -21,8 +21,8 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 from sqlalchemy import create_engine, text
 
-from data_pipeline.market import repository as repo
 from data_pipeline.market import fii_v2
+from data_pipeline.market import repository as repo
 from data_pipeline.market.fii_ingest import _latest_metric_rows
 
 TICKER = "ZZAUS11"
@@ -70,7 +70,7 @@ def _linha_de_ausencia(recuo_dias: int = 0):
     lido na transacao seguinte.
     """
     linhas = fii_v2.income_metrics_from_monthly({TICKER: {}}, as_of=date(2026, 9, 20))
-    linha = next(l for l in linhas if l["metric_name"] == "income_recurrence")
+    linha = next(item for item in linhas if item["metric_name"] == "income_recurrence")
     if recuo_dias:
         quando = (datetime.now(timezone.utc) - timedelta(days=recuo_dias)).isoformat()
         linha = {**linha, "available_at": quando, "knowledge_at": quando}
