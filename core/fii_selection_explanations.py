@@ -11,6 +11,8 @@ from typing import Any, Iterable
 
 import pandas as pd
 
+from core.fii_renda_recorrente import dy_recorrente
+
 COMPONENT_LABELS = {
     "income": "renda", "valuation": "valuation", "liquidity": "liquidez",
     "quality": "qualidade dos ativos/carteira", "risk": "controle de risco",
@@ -81,6 +83,18 @@ def _median(rows: list[dict], key: str) -> float | None:
     return median(clean) if clean else None
 
 
+def _mediana_recorrente(peers: list[dict]) -> float | None:
+    """Mediana da renda recorrente dos pares.
+
+    Não sai de ``_median``: ``dy_recorrente`` é derivada dos dois insumos e
+    devolve ``None`` quando falta qualquer um deles — quem não divulga
+    recorrência fica fora da mediana em vez de entrar como zero.
+    """
+    valores = [dy_recorrente(peer) for peer in peers]
+    limpos = [valor for valor in valores if valor is not None]
+    return median(limpos) if limpos else None
+
+
 def _relative_strengths(item: dict, peers: list[dict]) -> list[str]:
     score = _num(item.get("type_score")) or 0.0
     score_median = _median(peers, "type_score")
@@ -108,20 +122,21 @@ def _relative_strengths(item: dict, peers: list[dict]) -> list[str]:
                 f"{label} {value:.0%}, acima da mediana de {peer_median:.0%} dos pares"
             )
 
-    value, peer_median = _num(item.get("dy_12m")), _median(peers, "dy_12m")
-    if value is not None and peer_median is not None:
-        if value > 1:
-            value /= 100
-        if peer_median > 1:
-            peer_median /= 100
-        if value > peer_median + .005:
-            strengths.append(
-                f"DY de 12 meses {value:.1%}, acima da mediana de {peer_median:.1%} do tipo"
-            )
+    # A renda que decide a elegibilidade e o score é a recorrente
+    # (`dy_12m * income_recurrence`). Elogiar o DY divulgado listava como FORÇA
+    # exatamente o yield inflado por receita não recorrente que reprovou o fundo
+    # no piso de renda (KORE11). O DY divulgado fica ao lado, como contexto.
+    recorrente, mediana = dy_recorrente(item), _mediana_recorrente(peers)
+    divulgado = _percent(item.get("dy_12m"))
+    if recorrente is not None and mediana is not None and recorrente > mediana + .005:
+        texto = f"renda recorrente {recorrente:.1%}, acima da mediana de {mediana:.1%} do tipo"
+        if divulgado is not None:
+            texto += f" (DY divulgado {divulgado:.1%})"
+        strengths.append(texto)
     return strengths[:5]
 
 
-def _caveats(item: dict) -> list[str]:
+def _caveats(item: dict, peers: list[dict] | None = None) -> list[str]:
     caveats = []
     missing = list(item.get("missing_critical") or [])
     if missing:
@@ -134,6 +149,19 @@ def _caveats(item: dict) -> list[str]:
         caveats.append("dados ainda insuficientes" + (": " + "; ".join(reasons) if reasons else ""))
     if item.get("publication_status") != "validated":
         caveats.append("permanece candidato de diligência; metodologia PIT ainda não aprovada")
+    # Espelho da força acima: quando o yield bruto está acima do tipo e a parcela
+    # recorrente está abaixo, o número que o usuário vê no site do fundo é o que
+    # menos descreve a renda que ele vai receber. Dizer isso é a ressalva.
+    recorrente = dy_recorrente(item)
+    mediana = _mediana_recorrente(list(peers or ()))
+    divulgado = _percent(item.get("dy_12m"))
+    if (recorrente is not None and mediana is not None and divulgado is not None
+            and recorrente < mediana < divulgado):
+        caveats.append(
+            f"renda recorrente {recorrente:.1%}, abaixo da mediana de {mediana:.1%} "
+            f"do tipo: o DY divulgado de {divulgado:.1%} está inflado por receita "
+            "não recorrente"
+        )
     return caveats
 
 
@@ -167,7 +195,7 @@ def build_selection_explanations(
             "ticker": ticker, "tipo": fii_type, "weight": _num(item.get("weight")) or 0.0,
             "rank": rank, "peer_count": peer_count, "top_percent": top_percent,
             "strengths": _relative_strengths(item, peers), "role": role,
-            "caveats": _caveats(item),
+            "caveats": _caveats(item, peers),
         })
     return output
 
@@ -292,7 +320,7 @@ def build_selection_reports(
         row = {**source_by_ticker.get(ticker, {}), **selected_item}
         fii_type = str(row.get("tipo") or "").lower()
         peers = [peer for peer in universe if str(peer.get("tipo") or "").lower() == fii_type]
-        dy, peer_dy = _percent(row.get("dy_12m")), _percent(_median(peers, "dy_12m"))
+        dy = _percent(row.get("dy_12m"))
         pvp = _num(row.get("pvp"))
         liquidity = _num(row.get("liquidez_diaria"))
         relationship = _market_relationships(ticker, prices)
@@ -300,9 +328,20 @@ def build_selection_reports(
         if pvp is not None:
             valuation = (f"P/VP {pvp:.2f} · desconto patrimonial de {1-pvp:.1%}"
                          if pvp <= 1 else f"P/VP {pvp:.2f} · prêmio patrimonial de {pvp-1:.1%}")
-        income = f"DY 12m {dy:.1%}" if dy is not None else "DY 12m indisponível"
-        if dy is not None and peer_dy is not None:
-            income += f" · {dy-peer_dy:+.1%} vs. mediana do tipo ({peer_dy:.1%})"
+        # O fato de renda é a parcela recorrente; o DY divulgado vem citado ao
+        # lado para o leitor reconciliar com o que o gestor publica, sem que a
+        # comparação com o tipo seja feita sobre o yield bruto.
+        recorrente = dy_recorrente(row)
+        mediana_recorrente = _mediana_recorrente(peers)
+        if recorrente is None:
+            income = "renda recorrente indisponível"
+        else:
+            income = f"renda recorrente {recorrente:.1%}"
+            if mediana_recorrente is not None:
+                income += (f" · {recorrente-mediana_recorrente:+.1%} vs. mediana "
+                           f"do tipo ({mediana_recorrente:.1%})")
+        income += (f" · DY 12m divulgado {dy:.1%}" if dy is not None
+                   else " · DY 12m divulgado indisponível")
         facts = [valuation, income,
                  f"liquidez diária {_money(liquidity)}",
                  f"patrimônio líquido {_money(row.get('patrimonio_liquido'))}"]

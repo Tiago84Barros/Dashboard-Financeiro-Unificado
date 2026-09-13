@@ -93,3 +93,52 @@ def test_readmitido_fora_do_ranking_nao_recebe_ultima_posicao():
     assert resultado["rank"] is None
     assert resultado["top_percent"] is None
     assert resultado["peer_count"] == 2
+
+
+def _com_renda(ticker, dy, recorrencia, score=70):
+    """Par de insumos da renda recorrente sobre o mesmo esqueleto dos demais."""
+    return {**_row(ticker, score, dy=dy), "income_recurrence": recorrencia}
+
+
+def test_yield_inflado_nao_entra_como_forca():
+    """O caso KORE11: DY alto sustentado por receita não recorrente.
+
+    O fundo reprova no piso de renda recorrente e era readmitido por cessão de
+    proteção; o relatório então o elogiava pelo yield bruto, contradizendo a
+    regra que o reprovou.
+    """
+    kore = _com_renda("KORE11", .182, .30)
+    pares = [kore, _com_renda("AAAA11", .09, .95), _com_renda("BBBB11", .095, .92)]
+
+    resultado = build_selection_explanations([kore], pares)[0]
+    forcas = " ".join(resultado["strengths"])
+    ressalvas = " ".join(resultado["caveats"])
+
+    assert "DY de 12 meses" not in forcas
+    assert "renda recorrente" in ressalvas
+    # O DY divulgado continua citado — ao lado, como contexto, não como mérito.
+    assert "18.2%" in ressalvas
+
+
+def test_renda_recorrente_acima_da_mediana_e_forca_com_o_dy_ao_lado():
+    forte = _com_renda("FORT11", .11, .98)
+    pares = [forte, _com_renda("AAAA11", .09, .60), _com_renda("BBBB11", .085, .55)]
+
+    forcas = " ".join(build_selection_explanations([forte], pares)[0]["strengths"])
+
+    assert "renda recorrente" in forcas
+    assert "10.8%" in forcas
+    assert "DY divulgado 11.0%" in forcas
+
+
+def test_relatorio_detalhado_mede_a_renda_pela_parcela_recorrente():
+    kore = {**_com_renda("KORE11", .182, .30), "pvp": .95}
+    pares = [kore, _com_renda("AAAA11", .09, .95)]
+
+    relatorio = build_selection_reports([kore], pares)[0]
+    fatos = " ".join(relatorio["facts"])
+
+    assert "renda recorrente 5.5%" in fatos
+    assert "DY 12m divulgado 18.2%" in fatos
+    # A comparação com o tipo é da renda recorrente, não do yield bruto.
+    assert "-1.5% vs. mediana do tipo" in fatos
