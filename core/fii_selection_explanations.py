@@ -151,10 +151,15 @@ def build_selection_explanations(
             _num(row.get("type_score")) or 0.0, _num(row.get("confidence")) or 0.0
         ), reverse=True)
         ticker = str(item.get("ticker") or "")
+        # Fundo readmitido pela cessão de proteção não está no universo estrito
+        # que produziu o ranking. O fallback antigo lhe dava a ÚLTIMA posição e
+        # top_percent=100: o usuário lia "pior do seu tipo" como medição, quando
+        # é ausência de medição. Sem posição, dizemos que não há posição.
         rank = next((index for index, row in enumerate(ordered, 1)
-                     if str(row.get("ticker") or "") == ticker), len(ordered) or 1)
+                     if str(row.get("ticker") or "") == ticker), None)
         peer_count = len(ordered)
-        top_percent = max(1, ceil(rank / max(peer_count, 1) * 100))
+        top_percent = (max(1, ceil(rank / max(peer_count, 1) * 100))
+                       if rank is not None else None)
         role = TYPE_ROLES.get(fii_type, "Contribui para a diversificação da seleção.")
         if regime:
             role += f" Banda definida para o regime quantitativo “{regime}”."

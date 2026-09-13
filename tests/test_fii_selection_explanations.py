@@ -81,3 +81,15 @@ def test_detailed_report_does_not_invent_missing_category_metrics():
     report = build_selection_reports([selected], [selected])[0]
     assert report["structure"] == []
     assert all("LTV" not in text for text in report["facts"])
+
+
+def test_readmitido_fora_do_ranking_nao_recebe_ultima_posicao():
+    """Ausência de medição não pode ser publicada como a pior medição."""
+    readmitido = _row("REND11", 55)
+    pares = [_row("TOP11", 90), _row("MID11", 60)]
+
+    resultado = build_selection_explanations([readmitido], pares)[0]
+
+    assert resultado["rank"] is None
+    assert resultado["top_percent"] is None
+    assert resultado["peer_count"] == 2

@@ -157,8 +157,47 @@ def test_carteira_exibe_o_yield_recorrente_que_decide_ao_lado_do_divulgado():
 
 
 def test_nota_de_viabilidade_da_opacidade_e_exibida():
-    corpo = inspect.getsource(fiis._carteira_integrada)
-    assert 'result.get("viability_notes")' in corpo
+    """Comportamento, não texto-fonte: a nota tem de sair no aviso.
+
+    A versão anterior afirmava sobre o código-fonte do render, e isso continua
+    passando mesmo se o aviso deixar de aparecer na tela.
+    """
+    avisos = fiis._avisos_de_cessao_de_protecao({
+        "viability_notes": ["custo da opacidade afrouxado em 40% do intervalo"],
+    })
+
+    assert avisos == [
+        "Proteção ajustada para preservar a viabilidade da carteira: "
+        "custo da opacidade afrouxado em 40% do intervalo"
+    ]
+    assert fiis._avisos_de_cessao_de_protecao({}) == []
+
+
+def test_readmitido_aparece_ticker_a_ticker_com_o_portao_reprovado():
+    avisos = fiis._avisos_de_cessao_de_protecao({
+        "protecao_cedida_na_elegibilidade": [
+            {"ticker": "REND11", "motivos": ["renda recorrente abaixo do mínimo"],
+             "na_carteira": True},
+            {"ticker": "LOCA11", "motivos": ["concentração de locatário acima do teto"],
+             "na_carteira": False},
+        ],
+    })
+
+    assert len(avisos) == 1
+    assert "REND11 — renda recorrente abaixo do mínimo" in avisos[0]
+    assert ("LOCA11 — concentração de locatário acima do teto "
+            "(fora da carteira final)") in avisos[0]
+
+
+def test_readmitido_nao_recebe_posicao_inventada_no_card():
+    """O card publica ausência de posição, nunca a última posição."""
+    sem_posicao = fiis._posicao_no_ranking(
+        {"rank": None, "peer_count": 7, "top_percent": None})
+    com_posicao = fiis._posicao_no_ranking(
+        {"rank": 2, "peer_count": 7, "top_percent": 29})
+
+    assert sem_posicao == "sem posição no ranking do tipo"
+    assert com_posicao == "#2 de 7 · top 29%"
 
 
 def test_o_piso_da_tela_e_o_da_renda_recorrente():

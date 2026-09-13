@@ -886,6 +886,48 @@ def _scenario_cards_html(values: dict[str, float]) -> str:
     return '<div class="fii-scenario-grid">' + "".join(cards) + "</div>"
 
 
+def _avisos_de_cessao_de_protecao(result: dict) -> list[str]:
+    """Avisos derivados do resultado da carteira — regra pura, sem Streamlit.
+
+    Fora da tela para poder ser testada pelo comportamento: o teste anterior
+    checava o TEXTO-FONTE do render, e texto-fonte passa a valer mesmo quando a
+    mensagem deixa de aparecer. A concessão de elegibilidade aparece ticker a
+    ticker, com o portão que cada fundo reprovou — proteção cedida não é
+    ausência de risco, e nota agregada não diz de quem é o risco.
+    """
+    avisos: list[str] = []
+    if result.get("viability_notes"):
+        avisos.append(
+            "Proteção ajustada para preservar a viabilidade da carteira: "
+            + " ".join(str(nota) for nota in result["viability_notes"])
+        )
+    if result.get("protecao_cedida_na_elegibilidade"):
+        avisos.append(
+            "Fundos readmitidos com proteção cedida na elegibilidade (o "
+            "universo estrito não fechava a carteira): "
+            + " · ".join(
+                f"{item['ticker']} — {', '.join(item['motivos'])}"
+                + ("" if item["na_carteira"] else " (fora da carteira final)")
+                for item in result["protecao_cedida_na_elegibilidade"]
+            )
+        )
+    return avisos
+
+
+def _posicao_no_ranking(explanation: dict) -> str:
+    """Sem posição no ranking do tipo, diz isso — não inventa a última.
+
+    Readmitido pela cessão de proteção não foi pontuado contra os pares do seu
+    tipo. Publicar "#N de N · top 100%" apresentaria ausência de medição como a
+    pior medição possível.
+    """
+    rank = explanation.get("rank")
+    pares = int(explanation.get("peer_count") or 0)
+    if rank is None:
+        return "sem posição no ranking do tipo"
+    return f"#{int(rank)} de {pares} · top {int(explanation.get('top_percent') or 0)}%"
+
+
 def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
     ticker = escape(str(explanation.get("ticker") or "—"))
     fii_type = str(explanation.get("tipo") or "").lower()
@@ -916,12 +958,12 @@ def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
             ) + "</div>"
         )
     open_attr = " open" if expanded else ""
+
     return (
         f'<details class="fii-selection-card" style="border-top-color:{color};"{open_attr}>'
         '<summary><div class="fii-selection-head">'
         f'<span class="fii-selection-ticker">{ticker}</span>'
-        f'<span class="fii-selection-rank">#{int(explanation.get("rank") or 0)} de '
-        f'{int(explanation.get("peer_count") or 0)} · top {int(explanation.get("top_percent") or 0)}%</span>'
+        f'<span class="fii-selection-rank">{escape(_posicao_no_ranking(explanation))}</span>'
         '</div>'
         f'<div class="fii-selection-meta">{escape(type_label)} · peso '
         f'{float(explanation.get("weight") or 0):.1%}</div></summary>'
@@ -2145,24 +2187,8 @@ def _carteira_integrada(preferences: dict):
             + ". Esses limites só são aplicados quando observáveis; setor e "
               "emissor possuem histórico point-in-time obrigatório."
         )
-    if result.get("viability_notes"):
-        st.warning(
-            "Proteção ajustada para preservar a viabilidade da carteira: "
-            + " ".join(result["viability_notes"])
-        )
-    if result.get("protecao_cedida_na_elegibilidade"):
-        # A concessão de elegibilidade tem de aparecer ticker a ticker, com o
-        # portão que cada fundo reprovou: proteção cedida não é ausência de
-        # risco, e nota agregada não diz de quem é o risco.
-        st.warning(
-            "Fundos readmitidos com proteção cedida na elegibilidade (o "
-            "universo estrito não fechava a carteira): "
-            + " · ".join(
-                f"{item['ticker']} — {', '.join(item['motivos'])}"
-                + ("" if item["na_carteira"] else " (fora da carteira final)")
-                for item in result["protecao_cedida_na_elegibilidade"]
-            )
-        )
+    for aviso in _avisos_de_cessao_de_protecao(result):
+        st.warning(aviso)
     if result.get("protecao_excedida"):
         # opacidade_excedente (core/fii_portfolio_v4.py) mede contra o teto do
         # spec, nunca contra o teto já afrouxado — a cessão de proteção por
