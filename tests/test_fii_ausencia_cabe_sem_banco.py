@@ -96,3 +96,26 @@ def test_a_marca_gravada_e_reconhecida_pelo_dono_unico():
                        if linha["metric_name"] == "income_recurrence")
     assert valor_observado(recorrencia) is None
     assert motivo_da_ausencia(recorrencia["value_json"]) == "sem_provento_observado"
+
+
+def test_o_portao_do_leitor_nao_usa_o_relogio_da_transacao():
+    """Achado C, na forma que o CI enxerga sem banco.
+
+    ``_latest_metric_rows`` roda dentro do mesmo ``engine.begin()`` que grava
+    as observacoes. Em Postgres, ``now()`` devolve o instante em que a
+    transacao COMECOU, entao esse portao esconde do consumidor tudo o que a
+    propria rodada acabou de gravar -- inclusive as ausencias. O relogio certo
+    para um leitor que corre junto do escritor e ``statement_timestamp()``, que
+    ainda barra conhecimento do futuro sem apagar o presente.
+    """
+    import inspect
+
+    from data_pipeline.market.fii_ingest import _latest_metric_rows
+
+    fonte = inspect.getsource(_latest_metric_rows)
+    assert "knowledge_at <= now()" not in fonte, (
+        "o portao voltou para now(): dentro da transacao da derivacao ele "
+        "esconde as observacoes que a propria rodada gravou")
+    assert "statement_timestamp()" in fonte, (
+        "o leitor precisa de um portao de conhecimento; sem nenhum, "
+        "observacao com knowledge_at no futuro entraria na decisao")

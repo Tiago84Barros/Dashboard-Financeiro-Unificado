@@ -969,6 +969,13 @@ def _latest_metric_rows(conn, metrics: list[str]) -> list[dict]:
     -- o numero velho, ou o do endpoint `reports` -- voltava a vencer como se
     fosse a leitura corrente. Era assim que a ausencia virava silencio, e
     silencio nesta tabela significa "use o numero anterior".
+
+    O portao de conhecimento e `statement_timestamp()`, nao `now()`. Este
+    leitor roda dentro do mesmo `engine.begin()` que grava as observacoes, e
+    em Postgres `now()` e o instante em que a TRANSACAO comecou: com ele, tudo
+    o que a propria rodada acabou de gravar ficava invisivel, e o consumidor
+    do look-through de FoF decidia com o numero que a rodada tinha acabado de
+    negar. `statement_timestamp()` continua barrando conhecimento do futuro.
     """
     return [dict(row) for row in conn.execute(text("""
         SELECT * FROM (
@@ -978,7 +985,7 @@ def _latest_metric_rows(conn, metrics: list[str]) -> list[dict]:
             FROM market.fii_metric_observations
             WHERE metric_name = ANY(CAST(:metrics AS text[]))
               AND quality_status IN ('observed','accepted')
-              AND knowledge_at <= now()
+              AND knowledge_at <= statement_timestamp()
             ORDER BY ticker, metric_name, knowledge_at DESC,
                      reference_date DESC, observed_at DESC
         ) mais_recente

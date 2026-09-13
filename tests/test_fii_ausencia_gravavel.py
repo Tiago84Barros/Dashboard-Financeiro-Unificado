@@ -129,3 +129,31 @@ def test_a_derivacao_real_nao_derruba_a_rodada(conexao):
            AND metadata_json ? 'absence_reason'
     """)).scalar()
     assert ausentes > 0, "a rodada nao gravou nenhuma ausencia"
+
+
+def test_a_ausencia_do_proprio_ciclo_chega_ao_look_through(conexao):
+    """Achado C: o consumidor le a ausencia que a MESMA transacao acabou de
+    gravar, ou nao le nada dela.
+
+    ``_derive_public_quality_observations`` roda no mesmo ``engine.begin()``
+    que ``_derive_income_observations`` e consulta ``_latest_metric_rows``.
+    Com o portao em ``now()`` -- que dentro de uma transacao e o instante em
+    que ela COMECOU -- a ausencia gravada segundos antes fica invisivel, e o
+    numero velho volta a vencer para o look-through de FoF. Medido no armazem:
+    386 linhas de ``income_recurrence`` com o portao contra 363 sem ele, e os
+    45 FoFs com ``holdings_quality`` saindo com valor diferente (erro absoluto
+    maximo 0,2588, mediana 0,0279, sempre para baixo).
+    """
+    velho = fii_v2.metric_observation(
+        ticker=TICKER, metric_name="income_recurrence", value=0.9,
+        reference_date=date(2026, 7, 1),
+        available_at=datetime.now(timezone.utc) - timedelta(days=60),
+        source="brapi_fii_v2_derived", vintage="derived:2026-07-01")
+    repo.upsert(conexao, "fii_metric_observations", [velho])
+    assert TICKER in {r["ticker"] for r in _latest_metric_rows(conexao, ["income_recurrence"])}
+
+    repo.upsert(conexao, "fii_metric_observations", [_linha_de_ausencia()])
+    depois = {r["ticker"] for r in _latest_metric_rows(conexao, ["income_recurrence"])}
+    assert TICKER not in depois, (
+        "a ausencia gravada nesta transacao nao chegou ao leitor: o consumidor "
+        "do mesmo ciclo decide com o numero que esta rodada acabou de negar")
