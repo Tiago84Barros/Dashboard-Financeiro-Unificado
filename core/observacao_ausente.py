@@ -1,11 +1,17 @@
 """Como a ausencia de uma metrica se escreve e se le em ``market.*_observations``.
 
-A tabela exige ``num_nonnulls(value_numeric, value_text, value_json) = 1``, e a
-exigencia e deliberada: ``fii_resilient_fallback`` conta linhas com os tres
-nulos como ``empty_value_rows``, isto e, como defeito de ingestao. Gravar a
-ausencia como tres nulos briga com esse invariante e, medido em 13/09/2026
-contra o armazem local, nem chega a ser gravada -- levanta ``CheckViolation``,
-o fallback linha-a-linha do repositorio re-levanta e a rodada inteira aborta.
+A tabela exige ``num_nonnulls(value_numeric, value_text, value_json) = 1``
+(``supabase_unificado/schema/023_fii_methodology_v4.sql:30``). Gravar a ausencia
+como tres nulos nao e uma discordancia de estilo: medido em 13/09/2026 contra o
+armazem local, a linha nem chega a ser gravada -- levanta ``CheckViolation``, o
+fallback linha-a-linha do repositorio re-levanta e a rodada inteira aborta.
+
+A medida que acompanha isso e a contagem GLOBAL de linhas com os tres campos
+nulos na tabela (hoje 0, inclusive depois de uma derivacao de 3204 linhas).
+Nao confundir com ``empty_value_rows`` de ``fii_resilient_fallback``: aquela
+consulta e escopada em ``source='cvm_informe_mensal'`` e nunca contaria estas
+linhas, que vem de ``brapi_fii_v2``. Uma versao anterior deste comentario
+citava ``empty_value_rows`` como justificativa -- estava errada.
 
 Entao a ausencia ocupa o campo estruturado: ``value_json`` carrega o MOTIVO.
 Isso satisfaz a constraint sem afrouxa-la (afrouxar exigiria migration nos dois

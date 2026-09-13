@@ -5,9 +5,10 @@ dicionario e liam SQL por AST. Nenhum tocava o banco. A linha de ausencia
 tinha os tres campos de valor nulos e viola
 ``CHECK (num_nonnulls(value_numeric, value_text, value_json) = 1)``, de modo
 que a derivacao levantava ``IntegrityError``, o fallback do SAVEPOINT em
-``repository._upsert`` re-levantava, e o ``engine.begin()`` que envolve as tres
-derivacoes mais auditoria, validacao e snapshot derrubava a rodada inteira --
-nem os 376 valores validos eram gravados. O regime piorou de "numero errado
+``repository._upsert`` re-levantava, e o ``engine.begin()`` unico que envolve
+as tres derivacoes (``fii_ingest.py:1417-1421``; auditoria, validacao e
+snapshot vem depois, fora dele) derrubava a rodada inteira -- nem os valores
+validos eram gravados. O regime piorou de "numero errado
 publicado" para "pipeline caido".
 
 Este arquivo exercita a gravacao contra o armazem local, sempre em transacao
