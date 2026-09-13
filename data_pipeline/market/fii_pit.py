@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import math
+from collections.abc import Iterator
 from datetime import date, datetime, time, timezone
 from typing import Any
 
@@ -544,9 +545,45 @@ def _macro_scenarios(conn, dates: list[pd.Timestamp]) -> dict[str, dict[str, flo
     return scenarios
 
 
+# O Postgres recusa um array jsonb acima de 256 MB num único parâmetro. Dez anos
+# de safra passam disso — a gravação vai em lotes limitados por bytes, não por
+# contagem de linhas, porque `inputs_json` varia de tamanho por fundo.
+_SNAPSHOT_BATCH_MAX_BYTES = 32 * 1024 ** 2
+
+
+def _snapshot_batches(
+    snapshots: list[dict], max_bytes: int = _SNAPSHOT_BATCH_MAX_BYTES,
+) -> Iterator[list[dict]]:
+    """Divide as safras em lotes cujo JSON serializado caiba em `max_bytes`.
+
+    Uma linha maior que o limite sai sozinha: recusá-la perderia a safra em
+    silêncio, e o limite do Postgres é ordens de grandeza acima de uma linha.
+    """
+    lote: list[dict] = []
+    tamanho = 0
+    for linha in snapshots:
+        bytes_da_linha = len(
+            json.dumps(linha, ensure_ascii=False).encode("utf-8")
+        ) + 1
+        if lote and tamanho + bytes_da_linha > max_bytes:
+            yield lote
+            lote, tamanho = [], 0
+        lote.append(linha)
+        tamanho += bytes_da_linha
+    if lote:
+        yield lote
+
+
 def _persist_snapshots(conn, snapshots: list[dict]) -> int:
     if not snapshots:
         return 0
+    gravadas = 0
+    for lote in _snapshot_batches(_json_safe(snapshots)):
+        gravadas += _persist_snapshot_batch(conn, lote)
+    return gravadas
+
+
+def _persist_snapshot_batch(conn, snapshots: list[dict]) -> int:
     result = conn.execute(text("""
         INSERT INTO market.fii_pit_score_snapshots (
             ticker,reference_date,available_at,methodology_version,formula_version,
@@ -569,7 +606,7 @@ def _persist_snapshots(conn, snapshots: list[dict]) -> int:
                       missing_metrics_json=EXCLUDED.missing_metrics_json,
                       data_readiness_status=EXCLUDED.data_readiness_status,
                       reconstructed_at=now()
-    """), {"rows": json.dumps(_json_safe(snapshots), ensure_ascii=False)})
+    """), {"rows": json.dumps(snapshots, ensure_ascii=False)})
     return max(int(result.rowcount or 0), 0)
 
 
