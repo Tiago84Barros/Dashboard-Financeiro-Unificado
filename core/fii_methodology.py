@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
-from core.fii_renda_recorrente import dy_recorrente
+from core.fii_renda_recorrente import DY_RECORRENTE_INPUT_KEYS, dy_recorrente
 
 INCOME_GROWTH_FORMULA = "cagr(first12m,last12m),36m"
 INCOME_GROWTH_MIN_MONTHS = 24
@@ -86,6 +86,12 @@ class MetricDefinition:
     critical: bool = False
     max_age_days: int = 120
     fallback_keys: tuple[str, ...] = ()
+    #: Chaves cuja PROCEDÊNCIA responde pela métrica, para quando ela é
+    #: derivada e não existe na fonte. Lido só pelo frescor; a resolução do
+    #: valor pontuado continua exclusivamente em ``fallback_keys``. São duas
+    #: finalidades distintas de propósito — confundi-las é o que deixava a
+    #: métrica derivada sem idade própria (ver ``dy_recorrente``).
+    provenance_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -122,11 +128,19 @@ COMMON_METRICS = (
     # Declarar ``fallback_keys=("dy_12m",)`` aqui não afetaria só o frescor —
     # o ranking do grupo inteiro passaria a ler ``dy_12m`` bruto em vez de
     # ``dy_recorrente``, reintroduzindo exatamente o yield inflado que esta
-    # métrica existe para excluir. O frescor continua coberto pelo fallback
-    # genérico de ``_freshness_for_metric`` para ``metrics_fetched_at``/
-    # ``updated_at`` quando não há metadado específico da chave.
+    # métrica existe para excluir.
+    #
+    # O frescor, porém, NÃO podia ficar no fallback genérico para
+    # ``metrics_fetched_at``/``updated_at``: essa é a data em que a LINHA foi
+    # tocada, não a idade do insumo, e com ela os 15 dias desta métrica nunca
+    # mordiam. Medido sobre as 394 linhas reais, RZAK11 entrava como ``ready``
+    # com ``dy_12m`` de 2026-05-01 (~135 dias) só porque o pipeline reescreveu
+    # a linha na véspera. ``provenance_keys`` separa as duas finalidades:
+    # procedência dos dois fatores da renda recorrente para o frescor, sem
+    # nenhum efeito sobre a chave pontuada.
     MetricDefinition("dy_recorrente", "income", .12, "higher", critical=True,
-                     max_age_days=15),
+                     max_age_days=15,
+                     provenance_keys=tuple(sorted(DY_RECORRENTE_INPUT_KEYS))),
     MetricDefinition("income_growth_per_share_3y", "income", .10, "higher", critical=True),
     MetricDefinition("income_recurrence", "income", .08, "higher", critical=True),
     MetricDefinition("pvp", "valuation", .10, "target", critical=True, max_age_days=45),
@@ -361,9 +375,9 @@ def _metric_metadata_for(row: dict, metric_key: str) -> dict[str, Any]:
     return {}
 
 
-def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date,
-                          *, source_key: str | None = None) -> float:
-    metadata = _metric_metadata_for(row, source_key or definition.key)
+def _freshness_for_key(row: dict, definition: MetricDefinition, today: date,
+                       metric_key: str) -> float:
+    metadata = _metric_metadata_for(row, metric_key)
     available = _date(metadata.get("available_at") or row.get("metrics_fetched_at") or row.get("updated_at"))
     if available is None:
         return .50
@@ -371,6 +385,20 @@ def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date,
     if age <= definition.max_age_days:
         return 1.0
     return max(0.0, 1.0 - (age - definition.max_age_days) / max(definition.max_age_days * 2, 1))
+
+
+def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date,
+                          *, source_key: str | None = None) -> float:
+    """Idade da métrica pela procedência dos seus INSUMOS.
+
+    Uma métrica derivada não existe na fonte e nunca terá metadado próprio;
+    sem ``provenance_keys`` ela caía no carimbo da linha, que é recente por
+    construção, e o prazo curto que a define nunca era exercido. Quando há
+    mais de um insumo vale o pior deles: a renda recorrente é tão velha
+    quanto o mais atrasado dos dois fatores que a compõem.
+    """
+    keys = definition.provenance_keys or (source_key or definition.key,)
+    return min(_freshness_for_key(row, definition, today, key) for key in keys)
 
 
 def _source_quality_for_metric(row: dict, definition: MetricDefinition,
