@@ -191,3 +191,15 @@ def test_bloco_do_fundo_cedido_declara_o_portao_reprovado():
 
     bloco_limpo = context.split("FII TEST11 |", 1)[1].split("\nFII ", 1)[0]
     assert "cedid" not in bloco_limpo.lower(), "fundo aprovado não carrega cessão"
+
+
+def test_contexto_de_ia_declara_a_cobertura_da_renda_recorrente():
+    contexto = build_fii_chat_context(
+        user_question="Avalie", selected_items=[], scored_rows=[],
+        methodology_rows=[],
+        portfolio_result={"recurrent_yield_12m": .09, "trailing_yield_12m": .12,
+                          "recurrent_yield_coverage": .5, "effective_assets": 1,
+                          "can_publish": False},
+        scenario=MacroScenario(selic=14, ipca=4.5), prices=pd.DataFrame(),
+    )
+    assert "cobertura 50.00% do peso" in contexto

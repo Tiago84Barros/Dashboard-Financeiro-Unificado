@@ -436,3 +436,24 @@ def test_kpis_de_prontidao_medem_o_universo_exibido():
     gate = corpo.index("investable_gate = evaluate_publication_gate(")
     montagem = corpo.index("result = montar_carteira_com_concessao(")
     assert gate > montagem, "o gate precisa conhecer a carteira que a tela exibe"
+
+
+def test_card_de_renda_recorrente_declara_cobertura_parcial():
+    """Ponderado sobre metade da carteira precisa dizer que é metade."""
+    card = fiis._card_de_renda_recorrente({
+        "recurrent_yield_12m": .108, "recurrent_yield_coverage": .5,
+        "trailing_yield_12m": .12,
+    })
+    assert "10.8%" in card
+    assert "50%" in card
+    assert card.count("<div") == card.count("</div>")
+
+
+def test_card_de_renda_recorrente_sem_dado_nao_mostra_zero():
+    card = fiis._card_de_renda_recorrente({
+        "recurrent_yield_12m": None, "recurrent_yield_coverage": 0.0,
+        "trailing_yield_12m": .12,
+    })
+    assert "0.0%" not in card
+    assert "—" in card
+

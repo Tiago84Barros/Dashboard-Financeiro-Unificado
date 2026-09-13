@@ -596,3 +596,31 @@ def test_teto_por_ativo_sempre_comporta_uma_carteira_inteira():
         _teto_por_ativo(rows, policy), rows, policy, {})
     assert np.sort(caps)[::-1][:policy.max_assets].sum() >= 1.0
     assert notas
+
+
+def test_renda_recorrente_ausente_sai_do_calculo_em_vez_de_entrar_como_zero():
+    """Fundo sem `income_recurrence` rebaixava a renda da carteira com 0%.
+
+    O readmitido por "renda recorrente ausente" entrava no ponderado valendo
+    zero, sem renormalizar o peso dos que têm o dado e sem avisar. Ausência de
+    medição não é medição de ausência.
+    """
+    from core.fii_portfolio_v4 import _resumo_de_renda
+
+    itens = [
+        {"weight": .5, "dy_12m": .12, "income_recurrence": .90},
+        {"weight": .5, "dy_12m": .12},
+    ]
+    resumo = _resumo_de_renda(itens)
+
+    assert resumo["recurrent_yield_12m"] == .108
+    assert resumo["recurrent_yield_coverage"] == .5
+
+
+def test_carteira_sem_nenhuma_recorrencia_nao_publica_zero_por_cento():
+    from core.fii_portfolio_v4 import _resumo_de_renda
+
+    resumo = _resumo_de_renda([{"weight": 1.0, "dy_12m": .12}])
+
+    assert resumo["recurrent_yield_12m"] is None
+    assert resumo["recurrent_yield_coverage"] == 0.0

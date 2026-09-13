@@ -199,17 +199,31 @@ def _afrouxa_ate_viavel(
     return melhor_caps, melhor_solucao, alto
 
 
-def _resumo_de_renda(items: list[dict]) -> dict[str, float]:
-    """Yield divulgado e yield recorrente da carteira, lado a lado."""
+def _resumo_de_renda(items: list[dict]) -> dict[str, float | None]:
+    """Yield divulgado e yield recorrente da carteira, lado a lado.
+
+    O recorrente é média ponderada SÓ entre quem tem os dois insumos, com os
+    pesos renormalizados. ``dy_recorrente(item) or 0.0`` fazia o fundo sem
+    recorrência divulgada — justamente o readmitido por "renda recorrente
+    ausente" — entrar valendo 0% e rebaixar a renda de toda a carteira por
+    falta de dado, sem renormalizar nem avisar. Sem nenhum fundo medido o
+    resultado é ``None``, não zero, e ``recurrent_yield_coverage`` diz sobre
+    que fração do peso a média foi tirada.
+    """
     def _yield(row: dict) -> float:
         valor = _num(row.get("dy_12m"))
         return valor / 100 if valor > 1 else valor
 
+    medidos = [(item["weight"], dy_recorrente(item)) for item in items]
+    medidos = [(peso, valor) for peso, valor in medidos if valor is not None]
+    cobertura = sum(peso for peso, _ in medidos)
     return {
         "trailing_yield_12m": round(
             sum(item["weight"] * _yield(item) for item in items), 6),
-        "recurrent_yield_12m": round(
-            sum(item["weight"] * (dy_recorrente(item) or 0.0) for item in items), 6),
+        "recurrent_yield_12m": (
+            round(sum(peso * valor for peso, valor in medidos) / cobertura, 6)
+            if cobertura > 0 else None),
+        "recurrent_yield_coverage": round(cobertura, 6),
     }
 
 
@@ -1091,6 +1105,7 @@ def optimize_diligence_portfolio(
         # Compatibilidade de leitura com modelos salvos antes da correção do rótulo.
         "expected_yield": renda["trailing_yield_12m"],
         "recurrent_yield_12m": renda["recurrent_yield_12m"],
+        "recurrent_yield_coverage": renda["recurrent_yield_coverage"],
         "effective_assets": round(1 / sum(item["weight"] ** 2 for item in items), 2),
         "macro_bands": bands, "band_adaptation": band_adaptation,
         "macro_mode": macro_mode,

@@ -914,6 +914,29 @@ def _avisos_de_cessao_de_protecao(result: dict) -> list[str]:
     return avisos
 
 
+def _card_de_renda_recorrente(result: dict) -> str:
+    """Card do DY recorrente ponderado, com a cobertura do cálculo declarada.
+
+    O ponderado só vale para quem divulgou recorrência: se o número sai de
+    metade do peso da carteira, o card diz metade. E sem nenhum fundo medido
+    ele mostra traço — imprimir 0,0% publicaria ausência de dado como renda
+    inexistente.
+    """
+    recorrente = result.get("recurrent_yield_12m")
+    cobertura = float(result.get("recurrent_yield_coverage") or 0.0)
+    divulgado = f"DY divulgado: {result['trailing_yield_12m']:.1%}; não é previsão"
+    if recorrente is None:
+        return _kpi_html("DY recorrente ponderado", "—",
+                         sub=f"nenhum fundo da carteira divulgou recorrência · {divulgado}",
+                         sub_color="#F6C90E", accent="#F6C90E")
+    if cobertura < .999:
+        return _kpi_html("DY recorrente ponderado", f"{recorrente:.1%}",
+                         sub=(f"ponderado sobre {cobertura:.0%} do peso — o restante "
+                              f"não divulgou recorrência · {divulgado}"),
+                         sub_color="#F6C90E", accent="#F6C90E")
+    return _kpi_html("DY recorrente ponderado", f"{recorrente:.1%}", sub=divulgado)
+
+
 def _universo_exibido(estritos, candidatos, result: dict) -> list[dict]:
     """Universo que a tela realmente apresenta: estrito mais os readmitidos.
 
@@ -2236,9 +2259,7 @@ def _carteira_integrada(preferences: dict):
                           sub=f"{eligibility['eligible_count']} elegíveis",
                           accent="#4A9EFF"),
                 unsafe_allow_html=True)
-    k2.markdown(_kpi_html("DY recorrente ponderado", f"{result['recurrent_yield_12m']:.1%}",
-                          sub=f"DY divulgado: {result['trailing_yield_12m']:.1%}; não é previsão"),
-                unsafe_allow_html=True)
+    k2.markdown(_card_de_renda_recorrente(result), unsafe_allow_html=True)
     k3.markdown(_kpi_html("P/VP ponderado",
                           f"{weighted_pvp:.2f}" if weighted_pvp is not None else "—",
                           accent="#B084F6"), unsafe_allow_html=True)

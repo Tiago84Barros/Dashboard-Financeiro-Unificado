@@ -181,7 +181,12 @@ def build_fii_chat_context(
         f"  Saída atual: {current_output}",
         f"  FIIs selecionados={len(selected)}; elegíveis no universo estrito="
         f"{len(scored)} (+{len(cedidos)} readmitidos por cessão de proteção); "
-        f"renda recorrente={_fmt(portfolio_result.get('recurrent_yield_12m'), percent=True)}; "
+        # A cobertura vai junto do número: média tirada de metade da carteira
+        # não é a renda recorrente da carteira, e sem o denominador a IA lia
+        # ausência de dado como renda baixa.
+        f"renda recorrente={_fmt(portfolio_result.get('recurrent_yield_12m'), percent=True)}"
+        f" (cobertura {_fmt(portfolio_result.get('recurrent_yield_coverage'), percent=True)}"
+        " do peso); "
         f"DY divulgado={_fmt(portfolio_result.get('trailing_yield_12m', portfolio_result.get('expected_yield')), percent=True)}; "
         f"número efetivo={_fmt(portfolio_result.get('effective_assets'))}; "
         f"publicável={'sim' if portfolio_result.get('can_publish') else 'não'}",
