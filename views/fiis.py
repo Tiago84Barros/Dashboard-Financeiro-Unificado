@@ -49,8 +49,7 @@ from core.llm_context_ativo import build_fii_ativo_context
 from core.llm_context_fii import build_fii_chat_context
 from core.llm_fii import chat_com_fiis
 from core.macro_cenario import CenarioObservado, cenario_macro_observado
-from core.macro_data.database import get_local_macro_engine
-from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
+from core.macro_data.acesso import resolver_macro
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.chat_ativo import render_chat_ativo
@@ -1965,20 +1964,17 @@ def _carteira_integrada(preferences: dict):
         else "unvalidated"
     )
     scored = score_fiis_by_type(eligible_rows, validation_status=validation_status)
-    macro_snapshot = None
-    local_macro_engine = get_local_macro_engine()
-    if local_macro_engine is not None:
-        try:
-            macro_snapshot = load_portfolio_macro_snapshot(
-                local_macro_engine,
-                asset_class="fii",
-                assets={
-                    str(row.get("ticker") or ""): str(row.get("tipo") or "")
-                    for row in scored
-                },
-            )
-        except (SQLAlchemyError, ValueError):
-            macro_snapshot = None
+    # A origem do macro (armazém local ou vitrine publicada) é resolvida em
+    # `core.macro_data.acesso`: fora da máquina do Docker o dado continua
+    # existindo, publicado, e deixar de usá-lo era desperdício, não prudência.
+    macro_fonte = resolver_macro(
+        asset_class="fii",
+        assets={
+            str(row.get("ticker") or ""): str(row.get("tipo") or "")
+            for row in scored
+        },
+    )
+    macro_snapshot = macro_fonte.snapshot
     investable_gate = evaluate_publication_gate(
         scored, expected_universe=len(eligible_rows),
         validation_status=validation_status,
@@ -2066,12 +2062,13 @@ def _carteira_integrada(preferences: dict):
     items = result["items"]
     if macro_snapshot is None:
         st.warning(
-            "Camada macro do Docker local indisponível; a carteira mantém a "
-            "metodologia estrutural e os cenários informados acima."
+            f"Camada macro indisponível ({macro_fonte.rotulo()}); a carteira "
+            "mantém a metodologia estrutural e os cenários informados acima."
         )
     else:
         st.info(
-            f"Macro local · corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
+            f"{macro_fonte.rotulo().capitalize()} · "
+            f"corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
             f"cobertura da seleção {result.get('macro_coverage', 0):.0%} · "
             f"{macro_snapshot.source_count} séries. O ajuste é limitado e não é previsão."
         )

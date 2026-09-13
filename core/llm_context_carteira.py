@@ -194,6 +194,8 @@ def build_carteira_classe_context(
         "- Cobertura abaixo de 100% significa que parte da classe ficou de fora "
         "da média. Não trate o resultado como se descrevesse a classe inteira.",
         "- Ausência de dado nunca equivale a zero, a valor neutro ou a risco baixo.",
-        "- Não há neste contexto preço-alvo, projeção de lucro nem recomendação.",
+        "- Não há neste contexto preço-alvo nem projeção de lucro: concluir um "
+        "preço justo a partir daqui seria inventar. Recomendar troca, reforço ou "
+        "redução com base nas evidências acima, ao contrário, é o que se espera.",
     ]
     return "\n".join(blocos)

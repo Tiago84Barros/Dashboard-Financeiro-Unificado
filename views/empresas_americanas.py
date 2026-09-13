@@ -23,8 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import core.us_data as us
 from core.llm_context_ativo import build_us_ativo_context
-from core.macro_data.database import get_local_macro_engine
-from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
+from core.macro_data.acesso import resolver_macro
 from core.market_companies import (
     filter_market_companies,
     localize_us_company_frame,
@@ -1051,21 +1050,15 @@ def _tab_avancada_unificada(status: dict) -> None:
     entry = build_entry_scores(eligible, custom_weights)
     macro_snapshot_lab = None
     if not entry.empty:
-        local_macro_engine = get_local_macro_engine()
-        if local_macro_engine is not None:
-            try:
-                macro_snapshot_lab = load_portfolio_macro_snapshot(
-                    local_macro_engine,
-                    asset_class="us",
-                    assets={
-                        str(row.get("symbol") or ""): translate_us_sector(
-                            row.get("sector"), row.get("industry")
-                        )
-                        for _, row in entry.iterrows()
-                    },
+        macro_snapshot_lab = resolver_macro(
+            asset_class="us",
+            assets={
+                str(row.get("symbol") or ""): translate_us_sector(
+                    row.get("sector"), row.get("industry")
                 )
-            except (SQLAlchemyError, ValueError):
-                macro_snapshot_lab = None
+                for _, row in entry.iterrows()
+            },
+        ).snapshot
         if macro_snapshot_lab is not None:
             from core.macro_data.portfolio_tilt import apply_macro_scores
 
@@ -1104,10 +1097,11 @@ def _tab_avancada_unificada(status: dict) -> None:
             st.dataframe(pd.DataFrame(track_cov), hide_index=True, width="stretch")
         st.caption("Ausência não vira zero: recebe posição neutra no score e reduz a cobertura.")
         if macro_snapshot_lab is None:
-            st.caption("Camada macro local indisponível; score de entrada preservado.")
+            st.caption("Camada macro indisponível; score de entrada preservado.")
         else:
             st.caption(
-                f"Macro Docker local: corte {macro_snapshot_lab.as_of:%d/%m/%Y} · "
+                f"Macro (armazém local ou vitrine publicada): "
+                f"corte {macro_snapshot_lab.as_of:%d/%m/%Y} · "
                 f"cobertura {macro_snapshot_lab.coverage:.0%}. Score contextual "
                 "é exibido separadamente e limitado a ±10 pontos."
             )
@@ -2506,19 +2500,14 @@ def _tab_criacao_portfolio(status: dict) -> None:
             baseline = build_portfolio_creation(portfolio_scored, params, score_panel)
             snapshot = None
             holdings_base = baseline.get("holdings", pd.DataFrame())
-            local_engine = get_local_macro_engine()
-            if local_engine is not None and not holdings_base.empty:
-                try:
-                    snapshot = load_portfolio_macro_snapshot(
-                        local_engine,
-                        asset_class="us",
-                        assets=dict(zip(
-                            holdings_base["symbol"].astype(str),
-                            holdings_base["sector_group"].astype(str),
-                        )),
-                    )
-                except (SQLAlchemyError, ValueError):
-                    snapshot = None
+            if not holdings_base.empty:
+                snapshot = resolver_macro(
+                    asset_class="us",
+                    assets=dict(zip(
+                        holdings_base["symbol"].astype(str),
+                        holdings_base["sector_group"].astype(str),
+                    )),
+                ).snapshot
             result = build_portfolio_creation(
                 portfolio_scored, params, score_panel,
                 macro_impacts=(snapshot.impacts if snapshot else {}),
@@ -2571,12 +2560,13 @@ def _tab_criacao_portfolio(status: dict) -> None:
     snapshot = result.get("macro_snapshot")
     if snapshot is None:
         st.warning(
-            "Camada macro local indisponível nesta execução; a composição mantém "
+            "Camada macro indisponível nesta execução; a composição mantém "
             "os pesos fundamentalistas."
         )
     else:
         st.info(
-            f"Macro no Docker local · corte {snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
+            f"Macro (armazém local ou vitrine publicada) · "
+            f"corte {snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
             f"cobertura {macro_info.get('coverage', 0):.0%} · "
             f"turnover atribuído ao macro {macro_info.get('turnover', 0):.1%}. "
             "Impactos são contexto histórico, não previsão de retorno."

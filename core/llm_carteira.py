@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from core.llm_b3 import _chat_complete, _report_model
+from core.llm_mandato import MANDATO
 
 _ESCOPOS = {
     "acoes": (
@@ -49,13 +50,14 @@ def chat_com_carteira(context: str, history: Iterable[dict], user_message: str,
         "5. Ausência de dado não é zero, não é neutro e não é risco baixo. "
         "Ativo sem nota no universo não é ativo mediano.\n"
         "6. Concentração, correlação e desempenho passado não são previsão.\n"
-        "7. Não emita recomendação personalizada de compra, venda ou alocação, "
-        "nem preço-alvo. A saída é apoio à análise, e o usuário decide.\n"
-        "8. Se a pergunta não puder ser respondida com o contexto, diga qual "
+        "7. Se a pergunta não puder ser respondida com o contexto, diga qual "
         "dado falta e como ele mudaria a conclusão.\n\n"
+        f"{MANDATO}\n\n"
         "FORMATO: responda diretamente à pergunta. Quando útil, use as seções "
-        "**Resposta objetiva**, **Evidências**, **Riscos e contrapontos** e "
-        "**Dados ausentes**. Evite texto genérico de manual.\n\n"
+        "**Resposta objetiva**, **O que eu faria** (substituições, reforços e "
+        "reduções, em ordem de prioridade), **Evidências**, "
+        "**Riscos e contrapontos** e **Dados ausentes**. Evite texto genérico "
+        "de manual.\n\n"
         f"=== CONTEXTO DA CLASSE ===\n{context}"
     )
     messages = [{"role": "system", "content": system}]

@@ -47,6 +47,7 @@ from core.controle import (
     get_transacoes_filtradas,
     inserir_transacao,
 )
+from core.fluxo_caixa_mes import cor_comprometimento, fluxo_do_mes
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import (
@@ -491,20 +492,14 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                    investido_mes: float = 0.0) -> None:
     receitas     = d["receitas"]
     despesas     = d["despesas"]
-    # Saldo = receitas - despesas - investimentos (alinhado com isolado)
-    saldo        = round(receitas - despesas - investido_mes, 2)
-    # Comprometida = (despesas + investimentos) / receitas (alinhado com isolado)
-    comprometido = round((despesas + investido_mes) / receitas * 100, 1) if receitas > 0 else 0.0
-    cor_saldo    = _COR_RECEITA if saldo >= 0 else _COR_DESPESA
-    cor_comp     = (
-        _COR_RECEITA if comprometido < 60 else
-        "#F6C90E"    if comprometido < 80 else
-        _COR_DESPESA
-    )
-
-    desc_saldo = f"{'Sobrou' if saldo >= 0 else 'Déficit'} dinheiro este mês."
-    if investido_mes > 0:
-        desc_saldo += f" Investido no mês: {fmt_moeda(investido_mes)}"
+    # Investimento é patrimônio, não despesa: a regra única mora em
+    # core.fluxo_caixa_mes e é a mesma em todas as telas que mostram saldo.
+    fluxo        = fluxo_do_mes(receitas, despesas, investido_mes)
+    saldo        = fluxo.total_retido if fluxo.investimentos > 0 else fluxo.saldo_caixa
+    comprometido = fluxo.renda_comprometida_pct
+    cor_saldo    = fluxo.cor_saldo
+    cor_comp     = cor_comprometimento(comprometido)
+    desc_saldo   = fluxo.descricao_saldo(fmt_moeda)
 
     # 4 KPI cards
     c1, c2, c3, c4 = st.columns(4, gap="small")
@@ -529,8 +524,9 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
     with c4:
         st.markdown(_kpi_card(
             "Renda Comprometida",
-            fmt_percentual(comprometido, sinal=False),
-            "Considera despesas + investimentos em relação à renda do mês.",
+            "—" if comprometido is None else fmt_percentual(comprometido, sinal=False),
+            "Somente despesas em relação à renda do mês; aportes não comprometem renda."
+            if comprometido is not None else "Sem receita no período para calcular.",
             cor_comp,
         ), unsafe_allow_html=True)
 
@@ -814,18 +810,21 @@ def _tab_analises(
     despesas = d["despesas"]
     cats     = d["categorias"]
 
-    # saldo e taxa de poupança subtraem investimentos (igual ao isolado)
-    saldo         = round(receitas - despesas - investido_mes, 2)
-    taxa_poupanca = round((receitas - despesas - investido_mes) / receitas * 100, 1) \
-                    if receitas > 0 else 0.0
+    # Investimento não é despesa: saldo de caixa e taxa de poupança saem de
+    # core.fluxo_caixa_mes, o mesmo motor da aba Dashboard.
+    fluxo         = fluxo_do_mes(receitas, despesas, investido_mes)
+    saldo         = fluxo.total_retido if fluxo.investimentos > 0 else fluxo.saldo_caixa
+    taxa_poupanca = fluxo.taxa_poupanca_pct
     maior_cat     = cats[0] if cats else None
 
     col_m1, col_m2, col_m3, col_m4 = st.columns(4, gap="small")
     with col_m1:
         st.markdown(_kpi_card(
             "Taxa de Poupança",
-            fmt_percentual(taxa_poupanca, sinal=False),
-            "Meta recomendada: 30% da renda.",
+            "—" if taxa_poupanca is None else fmt_percentual(taxa_poupanca, sinal=False),
+            "Sobra de caixa sobre a renda. Meta recomendada: 30%."
+            if taxa_poupanca is not None else "Sem receita no período para calcular.",
+            _COR_NEUTRO if taxa_poupanca is None else
             _COR_RECEITA if taxa_poupanca >= 30 else
             "#F6C90E" if taxa_poupanca >= 15 else _COR_DESPESA,
         ), unsafe_allow_html=True)
@@ -850,8 +849,8 @@ def _tab_analises(
         st.markdown(_kpi_card(
             "Saldo Acumulado",
             fmt_moeda(saldo),
-            "Receitas − Despesas − Investimentos no período selecionado.",
-            _COR_RECEITA if saldo >= 0 else _COR_DESPESA,
+            fluxo.descricao_saldo(fmt_moeda),
+            fluxo.cor_saldo,
         ), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)

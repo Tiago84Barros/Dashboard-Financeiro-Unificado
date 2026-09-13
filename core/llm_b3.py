@@ -21,6 +21,8 @@ import re
 import pandas as pd
 import streamlit as st
 
+from core.llm_mandato import MANDATO
+
 logger = logging.getLogger(__name__)
 
 _MODEL_DEFAULT = "gpt-4o-mini"
@@ -632,7 +634,9 @@ def chat_com_portfolio(
         "Criação de Portfólio).\n"
         "4. Aponte limitações dos dados; só afirme que algo não existe se REALMENTE não "
         "constar no contexto. Cite a fonte interna ('carteira', 'banco', 'setor', 'documentos CVM').\n"
-        "5. Sugira substituições/inclusões SOMENTE com evidência quantitativa explícita.\n"
+        "5. Sugira substituições, inclusões, reforços e reduções sempre que a "
+        "pergunta pedir uma decisão — cada uma ancorada em evidência quantitativa "
+        "explícita do contexto, com o dado que a derrubaria e o risco de segui-la.\n"
         "6. Separe claramente DADO OBJETIVO de OPINIÃO analítica.\n"
         "7. DOCUMENTOS CVM/IPE: os trechos vêm com data no cabeçalho [AAAA-MM-DD | tipo | título] "
         "e em ordem cronológica. Ao analisar uma empresa (esteja ela DENTRO ou FORA da carteira), "
@@ -643,6 +647,7 @@ def chat_com_portfolio(
         "**Resumo** · **Dados utilizados** · **Comparação dentro da carteira** · "
         "**Comparação com empresas fora** · **Pontos fortes** · **Pontos de atenção** · "
         "**Possíveis substituições/inclusões** · **Conclusão prática**.\n\n"
+        f"{MANDATO}\n\n"
         "GRÁFICOS: quando um gráfico ajudar (comparação, ranking, composição, dividendos, "
         "correlação, desempenho de preço, receita×lucro), TERMINE a resposta com UM bloco de "
         "código ```charts contendo um array JSON. Cada item: {\"tipo\", \"metrica\", \"tickers\", "

@@ -55,8 +55,15 @@ def test_kpi_grid_uses_deterministic_financial_inputs(monkeypatch):
     assert "R$ 342.924,59" in html
     assert "R$ 688.080,92" not in html
     assert "Valor de mercado consolidado · 33 ativos" in html
-    assert "R$ 3.000,00" in html
-    assert "30,00%" in html
+    # Aporte não é despesa: o saldo do mês é receitas - despesas (5.000) mais
+    # os 2.000 que ficaram retidos em patrimônio. Subtrair o aporte -- que é o
+    # que esta asserção cobrava -- fazia o investidor parecer 3.000 mais pobre
+    # por ter investido.
+    assert "R$ 7.000,00" in html
+    assert "mais aportes retidos" in html
+    # Taxa de poupança é sobra de caixa sobre a renda -- 5.000/10.000 --, não
+    # sobra depois de descontar o que foi aportado.
+    assert "50,00%" in html
     assert "+7.25%" in html
     assert "atingida" in html
 
@@ -73,8 +80,10 @@ def test_kpi_grid_handles_zero_revenue_without_division_error(monkeypatch):
     )
 
     html = "\n".join(rendered)
-    assert "0,00%" in html
-    assert "em acompanhamento" in html
+    # Sem receita não há taxa de poupança: 0% afirmaria que o investidor poupou
+    # nada de algo, quando não houve algo. O card declara a ausência.
+    assert "—" in html
+    assert "Sem receita no período" in html
     assert "N/D" in html
 
 

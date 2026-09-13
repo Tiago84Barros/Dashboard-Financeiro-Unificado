@@ -21,6 +21,8 @@ from __future__ import annotations
 import unicodedata
 from datetime import date as _date
 
+from core.fluxo_caixa_mes import fluxo_do_mes
+
 _MESES_PT = {
     1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
     7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
@@ -106,8 +108,14 @@ def build_financas_chat_context(
     categorias = dados_mes.get("categorias", []) or []
     fonte = dados_mes.get("data_source", "mock")
 
-    saldo = round(receitas - despesas - float(investido_mes or 0), 2)
-    taxa_poupanca = round(saldo / receitas * 100, 1) if receitas > 0 else 0.0
+    # Aporte não é despesa (core.fluxo_caixa_mes). O contexto leva as duas
+    # leituras separadas para que a LLM não descreva mês superavitário como
+    # déficit só porque o usuário investiu.
+    _fluxo = fluxo_do_mes(receitas, despesas, investido_mes)
+    saldo = _fluxo.saldo_caixa
+    total_retido = _fluxo.total_retido
+    taxa_poupanca = _fluxo.taxa_poupanca_pct or 0.0
+    renda_comprometida = _fluxo.renda_comprometida_pct
 
     # ── Essencial vs não essencial (mês selecionado) ─────────────────────────
     ess = {"essencial": 0.0, "nao_essencial": 0.0, "nao_classificada": 0.0}
@@ -180,8 +188,14 @@ def build_financas_chat_context(
     L.append(f"  Receitas: {_brl(receitas)}")
     L.append(f"  Despesas (exclui compras no cartão de crédito): {_brl(despesas)}")
     L.append(f"  Investimentos/aportes no mês: {_brl(investido_mes)}")
-    L.append(f"  Saldo do mês (Receitas − Despesas − Investimentos): {_brl(saldo)}")
-    L.append(f"  Taxa de poupança: {_pct(taxa_poupanca)} (meta de referência: 30%)")
+    L.append(f"  Saldo de caixa do mês (Receitas − Despesas): {_brl(saldo)}")
+    L.append(f"  Total retido no mês (saldo de caixa + aportes): {_brl(total_retido)}")
+    L.append("  Aporte NÃO é despesa: ele é patrimônio que mudou de lugar. O mês "
+             "só é deficitário quando a despesa supera a receita.")
+    L.append(f"  Renda comprometida (só despesas / receitas): "
+             f"{'não medida' if renda_comprometida is None else _pct(renda_comprometida)}")
+    L.append(f"  Taxa de poupança (sobra de caixa / receitas): {_pct(taxa_poupanca)} "
+             f"(meta de referência: 30%)")
     L.append(f"  Nº de lançamentos: {dados_mes.get('num_transacoes', 0)}")
 
     L.append("")

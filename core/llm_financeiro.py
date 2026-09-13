@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from core.llm_b3 import _chat_complete, parse_chart_directives  # noqa: F401 (reexport)
+from core.llm_mandato import MANDATO_CURTO
 
 _MODEL_CHAT_DEFAULT = "gpt-4o-mini"
 
@@ -52,9 +53,12 @@ os DADOS considerados, as PREMISSAS adotadas, as LIMITAÇÕES e os IMPACTOS espe
 das recomendações.
 6. Ao sugerir cortes, priorize despesas NÃO ESSENCIAIS e de menor impacto na \
 qualidade de vida; nunca recomende cortar saúde, moradia ou dívidas sem ressalva.
-7. Você é apoio à decisão e educação financeira, NÃO recomendação de investimento \
-específico nem garantia de resultado.
+7. Investimento NÃO é despesa. O mês só é deficitário quando a despesa supera a \
+receita; aporte é patrimônio que mudou de lugar. "Renda comprometida" considera \
+apenas despesas. Nunca descreva um mês superavitário como negativo por causa do aporte.
 8. Seja conciso. Responda à pergunta primeiro; detalhe só o necessário.
+
+""" + MANDATO_CURTO + """
 
 FORMATO: responda em markdown. Quando útil, use seções curtas como \
 **Resposta**, **Números**, **Cálculo**, **Riscos**, **Recomendações**, \
@@ -136,8 +140,10 @@ parcelas já lançadas; não inclui compras novas) — deixe isso explícito.
 PREMISSAS, LIMITAÇÕES e IMPACTOS esperados das recomendações.
 6. Ao sugerir cortes, priorize NÃO ESSENCIAIS e assinaturas de baixo uso; nunca \
 recomende cortar saúde/essenciais sem ressalva.
-7. Apoio à decisão e educação financeira — não é recomendação de investimento nem garantia.
+7. Investimento não é despesa: aporte é patrimônio que mudou de lugar, não saída de renda.
 8. Seja conciso. Responda primeiro; detalhe só o necessário.
+
+""" + MANDATO_CURTO + """
 
 FORMATO: markdown, com seções curtas quando útil (**Resposta**, **Números**, \
 **Cálculo**, **Riscos**, **Recomendações**, **Premissas e limitações**).

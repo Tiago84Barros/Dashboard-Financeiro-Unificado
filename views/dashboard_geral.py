@@ -22,6 +22,7 @@ from core.b3_portfolio_model import load_active_b3_portfolio_model
 from core.config import settings
 from core.controle import get_gastos_categoria_anual, get_historico_anual
 from core.financeiro import get_visao_geral, patrimonio_investido_confiavel
+from core.fluxo_caixa_mes import fluxo_do_mes
 from core.investimentos import (
     get_carteira,
     get_cashflow_mensal,
@@ -401,13 +402,16 @@ def _render_kpi_grid(
     carteira: dict,
 ) -> None:
     """Quatro indicadores essenciais, em CSS Grid responsivo."""
-    saldo = receitas - despesas - investimentos
-    taxa = (saldo / receitas * 100) if receitas > 0 else 0.0
+    # Aporte é patrimônio, não saída: regra única em core.fluxo_caixa_mes.
+    fluxo = fluxo_do_mes(receitas, despesas, investimentos)
+    saldo = fluxo.total_retido if fluxo.investimentos > 0 else fluxo.saldo_caixa
+    taxa = fluxo.taxa_poupanca_pct
     rentab = float(carteira.get("rentabilidade_total_pct") or 0)
     patrimonio_investido = patrimonio_investido_confiavel(carteira, pat)
     num_ativos = int(carteira.get("num_ativos") or 0)
-    saldo_cor = _COR_FLUXO if saldo >= 0 else _COR_NEGATIVO
-    taxa_cor = _COR_FLUXO if taxa >= 30 else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO
+    saldo_cor = fluxo.cor_saldo
+    taxa_cor = (_COR_NEUTRO if taxa is None else _COR_FLUXO if taxa >= 30
+                else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO)
     rentab_cor = _COR_FLUXO if rentab >= 0 else _COR_NEGATIVO
     patrimonio_valor = (
         fmt_moeda(patrimonio_investido)
@@ -431,15 +435,18 @@ def _render_kpi_grid(
         _kpi_html(
             "Saldo líquido do mês",
             fmt_moeda(saldo),
-            f'Receitas menos despesas e aportes · <strong style="color:{saldo_cor}">'
-            f'{"positivo" if saldo >= 0 else "negativo"}</strong>',
-            "↗" if saldo >= 0 else "↘",
+            f'Receitas menos despesas{" mais aportes retidos" if fluxo.investimentos > 0 else ""}'
+            f' · <strong style="color:{saldo_cor}">'
+            f'{"déficit de caixa" if fluxo.deficit else "acima da renda pelo aporte" if fluxo.acima_da_receita else "positivo"}'
+            f'</strong>',
+            "↘" if fluxo.deficit else "↗",
             saldo_cor,
         ),
         _kpi_html(
             "Taxa de poupança",
-            fmt_percentual(taxa, sinal=False),
-            f'Meta de referência: 30% · <strong style="color:{taxa_cor}">'
+            "—" if taxa is None else fmt_percentual(taxa, sinal=False),
+            'Sem receita no período para calcular.' if taxa is None else
+            f'Sobra de caixa sobre a renda · meta 30% · <strong style="color:{taxa_cor}">'
             f'{"atingida" if taxa >= 30 else "em acompanhamento"}</strong>',
             "%",
             taxa_cor,
@@ -947,8 +954,10 @@ def _secao_resumo_modulos(
     fiis_port: list[dict],
     fiis_salvo: bool,
 ) -> None:
-    saldo_mes = receitas_mes - despesas_mes - investimentos_mes
-    taxa_poupanca = (saldo_mes / receitas_mes * 100) if receitas_mes > 0 else 0.0
+    fluxo_mes = fluxo_do_mes(receitas_mes, despesas_mes, investimentos_mes)
+    saldo_mes = (fluxo_mes.total_retido if fluxo_mes.investimentos > 0
+                 else fluxo_mes.saldo_caixa)
+    taxa_poupanca = fluxo_mes.taxa_poupanca_pct
     rentab = float(carteira.get("rentabilidade_total_pct") or 0)
     b3_status, b3_status_cor, b3_linhas = _resumo_modelo_b3(modelo_b3)
     us_status, us_status_cor, us_linhas = _resumo_modelo_us(modelo_us)
@@ -968,12 +977,16 @@ def _secao_resumo_modulos(
                 "Controle Financeiro",
                 "Fluxo do mês, despesas por categoria e comparação anual.",
                 "Mensal",
-                _COR_FLUXO if saldo_mes >= 0 else _COR_NEGATIVO,
+                fluxo_mes.cor_saldo,
                 [
                     ("Receitas", fmt_moeda(receitas_mes), _COR_FLUXO),
                     ("Despesas", fmt_moeda(despesas_mes), _COR_NEGATIVO),
-                    ("Saldo líquido", fmt_moeda(saldo_mes), _COR_FLUXO if saldo_mes >= 0 else _COR_NEGATIVO),
-                    ("Taxa de poupança", fmt_percentual(taxa_poupanca, sinal=False), _COR_ALERTA if taxa_poupanca < 30 else _COR_FLUXO),
+                    ("Saldo líquido", fmt_moeda(saldo_mes), fluxo_mes.cor_saldo),
+                    ("Investido no mês", fmt_moeda(investimentos_mes), _COR_INVEST),
+                    ("Taxa de poupança",
+                     "—" if taxa_poupanca is None else fmt_percentual(taxa_poupanca, sinal=False),
+                     _COR_NEUTRO if taxa_poupanca is None
+                     else _COR_ALERTA if taxa_poupanca < 30 else _COR_FLUXO),
                 ],
                 _COR_FLUXO,
             ),

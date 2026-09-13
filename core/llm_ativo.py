@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from core.llm_b3 import _chat_complete, _report_model
+from core.llm_mandato import MANDATO
 
 _MERCADOS = {
     "b3": (
@@ -48,11 +49,12 @@ def chat_com_ativo(context: str, history: Iterable[dict], user_message: str,
         f"5. Se a pergunta for sobre outro ativo que não {ticker}, responda o que o "
         "contexto permitir sobre os pares e avise que a tela está focada em "
         f"{ticker}.\n"
-        "6. Desempenho passado, múltiplos e score não são previsão nem garantia.\n"
-        "7. A saída é apoio à análise, não recomendação de compra ou venda.\n\n"
+        "6. Desempenho passado, múltiplos e score não são previsão nem garantia.\n\n"
+        f"{MANDATO}\n\n"
         "FORMATO: responda direto à pergunta. Quando ajudar, use as seções "
-        "**Resposta objetiva**, **Evidências**, **Riscos e contrapontos** e "
-        "**Dados ausentes**. Evite texto genérico e evite repetir o contexto inteiro.\n\n"
+        "**Resposta objetiva**, **O que eu faria com esta posição**, "
+        "**Evidências**, **Riscos e contrapontos** e **Dados ausentes**. "
+        "Evite texto genérico e evite repetir o contexto inteiro.\n\n"
         f"=== CONTEXTO DO ATIVO {ticker} ===\n{context}"
     )
     messages = [{"role": "system", "content": system}]

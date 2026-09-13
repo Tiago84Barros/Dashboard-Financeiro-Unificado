@@ -173,6 +173,17 @@ ALVOS: tuple[Alvo, ...] = (
         cadencia_dias=30,
         modulo="us",
     ),
+    Alvo(
+        chave="macro_vitrine",
+        titulo="Vitrine macro por setor (b3/us/fii)",
+        passos=(("scripts/publish_macro_vitrine.py", "--apply"),),
+        # As séries macro são majoritariamente mensais, mas Selic, câmbio e
+        # juros americanos se movem dentro da semana -- e é justamente delas que
+        # vem o ajuste de peso das carteiras. Uma vitrine macro de 30 dias
+        # ajustaria a carteira de hoje pelo mundo do mês passado.
+        cadencia_dias=3,
+        modulo="macro",
+    ),
 )
 
 POR_CHAVE = {a.chave: a for a in ALVOS}
