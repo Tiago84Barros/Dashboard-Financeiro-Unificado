@@ -16,7 +16,13 @@ from datetime import date, datetime, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
-from core.fii_methodology import INCOME_GROWTH_FORMULA, income_growth_3y
+from core.fii_methodology import (
+    INCOME_GROWTH_FORMULA,
+    INCOME_RECURRENCE_FORMULA,
+    income_growth_3y,
+    income_recurrence,
+    income_recurrence_months,
+)
 from data_pipeline.market.fii_sources import metric_observation
 
 SOURCE = "brapi_fii_v2"
@@ -776,23 +782,21 @@ def income_metrics_from_monthly(monthly: dict[str, dict[date, float]], *,
         if not values_by_month:
             continue
         last_month = date(as_of.year, as_of.month, 1)
-        series: list[float] = []
-        cursor = last_month
-        for offset in range(36):
-            year = cursor.year
-            month = cursor.month - offset
-            while month <= 0:
-                year -= 1
-                month += 12
-            series.append(float(values_by_month.get(date(year, month, 1), 0.0)))
-        recurrence = _recurrence(list(reversed(series)))
-        populated_months = sum(value > 0 for value in series)
         # Definição única, compartilhada com o walk-forward PIT — ver
-        # `core.fii_methodology.income_growth_3y`.
+        # `core.fii_methodology.income_recurrence` e `income_growth_3y`. A
+        # janela é recortada na vida observada do fundo: preencher com zero os
+        # meses anteriores ao primeiro provento subestimava 128 dos 396 fundos.
+        recurrence = income_recurrence(values_by_month, last_month)
+        # Evidência da observação: meses COM pagamento dentro da janela medida.
+        # Continua sendo a contagem de sempre — contar a vida inteira mudaria
+        # em silêncio o sentido de um campo já publicado.
+        janela = income_recurrence_months(values_by_month, last_month)
+        populated_months = sum(
+            1 for mes in janela if float(values_by_month.get(mes, 0.0) or 0.0) > 0)
         growth = income_growth_3y(values_by_month, last_month)
         for metric, value, formula in (
-            ("income_recurrence", recurrence, "positive_share/(1+cv),36m"),
-            ("portfolio_income_recurrence", recurrence, "positive_share/(1+cv),36m"),
+            ("income_recurrence", recurrence, INCOME_RECURRENCE_FORMULA),
+            ("portfolio_income_recurrence", recurrence, INCOME_RECURRENCE_FORMULA),
             ("income_growth_per_share_3y", growth, INCOME_GROWTH_FORMULA),
         ):
             observation = _observation(ticker, metric, value, as_of, available, None,

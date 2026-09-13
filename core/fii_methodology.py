@@ -64,6 +64,108 @@ def income_growth_3y(monthly_income: "dict[date, float]", as_of: date) -> float 
     return max(-1.0, min(1.0, (last_12 / first_12) ** .5 - 1.0))
 
 
+def month_start_before(anchor: date, offset_months: int) -> date:
+    """Primeiro dia do mês ``offset_months`` meses antes de ``anchor``.
+
+    A aritmética de mês estava copiada em quatro lugares (ingestão, PIT e as
+    duas métricas de renda). Copiada, ela diverge — e divergência de janela é
+    exatamente o defeito que a definição única existe para impedir.
+    """
+    year, month = anchor.year, anchor.month - offset_months
+    while month <= 0:
+        year -= 1
+        month += 12
+    while month > 12:
+        year += 1
+        month -= 12
+    return date(year, month, 1)
+
+
+INCOME_RECURRENCE_WINDOW_MONTHS = 36
+#: Mínimo de meses OBSERVADOS para a recorrência existir. É o ciclo anual que
+#: ``dy_12m`` — o outro fator de ``dy_recorrente`` — também cobre, e era o piso
+#: que o walk-forward PIT já exigia. Medido em 13/09/2026 no armazém local:
+#: custa 20 dos 381 fundos com provento (5,2%); subir para 18 custaria 47
+#: (12,3%) e para 24, 61 (16,0%), sem que a medida fique mais informativa —
+#: doze meses já contêm todos os pagamentos de um ciclo completo.
+INCOME_RECURRENCE_MIN_MONTHS = 12
+INCOME_RECURRENCE_FORMULA = "positive_share/(1+cv),vida_observada<=36m"
+
+
+def income_recurrence_from_series(values: "Iterable[float]") -> float | None:
+    """Regularidade do pagamento sobre meses EFETIVAMENTE observados.
+
+    Núcleo compartilhado: recebe a série já recortada e não sabe nada sobre
+    calendário. Quem entrega meses que o fundo não viveu obtém a resposta
+    errada — ver ``income_recurrence``.
+    """
+    serie = [float(value or 0.0) for value in values]
+    if len(serie) < INCOME_RECURRENCE_MIN_MONTHS:
+        return None
+    mean = sum(serie) / len(serie)
+    if mean <= 0:
+        return None
+    positive_share = sum(value > 0 for value in serie) / len(serie)
+    variance = sum((value - mean) ** 2 for value in serie) / len(serie)
+    cv = math.sqrt(variance) / mean
+    return max(0.0, min(1.0, positive_share / (1.0 + cv)))
+
+
+def income_recurrence(monthly_income: "dict[date, float]", as_of: date) -> float | None:
+    """Recorrência da renda nos até 36 meses mais recentes, recortada na vida
+    observada do fundo.
+
+    Definição única, importada tanto pela ingestão quanto pelo walk-forward
+    point-in-time — o mesmo tratamento que ``income_growth_3y`` recebeu em
+    23/08/2026. Antes cada lado tinha a sua: a produção fazia
+    ``positive_share/(1+cv)`` sobre 36 meses com ``get(mes, 0.0)``; a safra PIT
+    fazia ``max(0, 1 - std/mean)`` sobre 24, sem ``positive_share``. O
+    certificado validava uma metodologia que a produção não executava.
+
+    O recorte é o coração da correção. Preencher com zero os meses anteriores
+    ao primeiro provento do fundo ataca os dois fatores ao mesmo tempo:
+    ``positive_share`` cai e o coeficiente de variação sobe. Medido em
+    13/09/2026 sobre as 396 linhas do armazém local, 128 fundos tinham a
+    recorrência subestimada por esse artefato e 89 caíam abaixo de 0,45, faixa
+    em que o piso de 8% de renda recorrente reprova qualquer DY típico de FII.
+    RBVA11 pagou em todos os 16 meses em que existiu e marcava 0,210.
+
+    O início do recorte é o primeiro provento de TODA a série, não o primeiro
+    da janela: o silêncio que vem DEPOIS do primeiro pagamento é evidência de
+    quebra de recorrência, não ausência de histórico. As duas causas opostas
+    da ausência precisam continuar distinguíveis — senão um fundo que ficou
+    dois anos mudo e voltou a pagar há doze meses sairia com nota perfeita.
+
+    Abaixo de ``INCOME_RECURRENCE_MIN_MONTHS`` meses observados a métrica não
+    existe. Devolver o número lisonjeiro (RBFM11, com 8 meses, daria 0,994)
+    seria trocar um viés por outro; a ausência reduz cobertura e o caminho de
+    métrica crítica ausente já sabe lidar com ela.
+    """
+    return income_recurrence_from_series(
+        float(monthly_income.get(mes, 0.0) or 0.0)
+        for mes in income_recurrence_months(monthly_income, as_of))
+
+
+def income_recurrence_months(monthly_income: "dict[date, float]",
+                             as_of: date) -> "list[date]":
+    """Os meses que a recorrência de fato mede: a interseção entre a janela de
+    36 e a vida observada do fundo.
+
+    Exposto porque quem publica a métrica precisa declarar sobre quantos meses
+    ela foi medida, e recontar isso por fora é como as janelas divergem.
+    """
+    inicio_vida = min(
+        (mes for mes, valor in monthly_income.items() if valor and float(valor) > 0),
+        default=None,
+    )
+    if inicio_vida is None:
+        return []
+    return [mes for mes in (
+        month_start_before(as_of, offset)
+        for offset in reversed(range(INCOME_RECURRENCE_WINDOW_MONTHS)))
+        if mes >= inicio_vida]
+
+
 # 6.9.0: o piso e a nota passaram a incidir sobre a renda recorrente
 # (dy_12m * income_recurrence) e a concentração virou veto. A fórmula mudou,
 # então a versão muda junto — senão as notas novas herdariam em silêncio o
