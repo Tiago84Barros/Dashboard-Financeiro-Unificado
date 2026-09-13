@@ -23,14 +23,34 @@ import pathlib
 
 from core.dividend_types import TIPOS_DEVOLUCAO_CAPITAL, eh_renda, sql_apenas_renda
 
-_FONTE = pathlib.Path(__file__).resolve().parents[1] / "data_pipeline/market/fii_ingest.py"
+_RAIZ = pathlib.Path(__file__).resolve().parents[1]
+_FONTE = _RAIZ / "data_pipeline/market/fii_ingest.py"
+_FONTE_PIT = _RAIZ / "data_pipeline/market/fii_pit.py"
+
+#: Os dois consumidores da mesma definicao: a ingestao de producao e a safra
+#: PIT. Travar so um deles foi como o defeito sobreviveu a primeira correcao --
+#: a formula ficou unica e a ENTRADA continuou divergente.
+CONSUMIDORES = (
+    (_FONTE, "_derive_income_observations"),
+    (_FONTE_PIT, "_monthly_market_features"),
+)
+
+
+def _funcao(fonte: pathlib.Path, nome: str) -> ast.FunctionDef:
+    arvore = ast.parse(fonte.read_text(encoding="utf-8"))
+    return next(
+        no for no in ast.walk(arvore)
+        if isinstance(no, ast.FunctionDef) and no.name == nome)
 
 
 def _funcao_de_derivacao() -> ast.FunctionDef:
-    arvore = ast.parse(_FONTE.read_text(encoding="utf-8"))
-    return next(
-        no for no in ast.walk(arvore)
-        if isinstance(no, ast.FunctionDef) and no.name == "_derive_income_observations")
+    return _funcao(_FONTE, "_derive_income_observations")
+
+
+def _chamadas(funcao: ast.FunctionDef) -> set[str]:
+    """Nomes de funcoes chamadas em qualquer lugar do corpo."""
+    return {no.func.id for no in ast.walk(funcao)
+            if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
 
 
 def _texto_literal(funcao: ast.FunctionDef) -> str:
@@ -86,3 +106,46 @@ def test_definicao_unica_concorda_com_o_predicado_sql():
     for tipo in ("RENDIMENTO", "DIVIDENDO", "JCP"):
         assert eh_renda(tipo)
         assert f"'{tipo}'" not in sql_apenas_renda()
+
+
+def test_os_dois_consumidores_aplicam_a_definicao_unica():
+    """Producao e safra PIT leem ``market.dividends`` para a MESMA metrica.
+
+    O `fii_pit` selecionava ``type`` e nunca o filtrava: 71 de 401 FIIs
+    recebiam numero diferente dos dois lados mesmo depois de a formula ter
+    sido unificada. Cada um filtra no seu meio -- a producao com
+    ``sql_apenas_renda`` no SQL, o PIT com ``apenas_renda`` em pandas --, mas
+    a regra sai do mesmo dono nos dois.
+    """
+    donos = {"sql_apenas_renda", "apenas_renda", "eh_renda"}
+    for fonte, nome in CONSUMIDORES:
+        funcao = _funcao(fonte, nome)
+        usadas = _chamadas(funcao) | _chamadas_interpoladas(funcao)
+        assert usadas & donos, (
+            f"{fonte.name}:{nome} le market.dividends sem aplicar "
+            f"core.dividend_types; a entrada da metrica volta a divergir")
+
+
+def test_nenhum_consumidor_reescreve_a_lista_de_tipos():
+    for fonte, nome in CONSUMIDORES:
+        literal = _texto_literal(_funcao(fonte, nome)).upper()
+        assert "AMORT" not in literal, f"{fonte.name}:{nome} reescreve a regra a mao"
+        assert "REST CAP" not in literal, f"{fonte.name}:{nome} copia a lista de tipos"
+
+
+def test_os_dois_consumidores_descartam_a_safra_colapsada():
+    """A-131: o mesmo pagamento gravado duas vezes inflava a renda de 187 FIIs.
+
+    O PIT ja descartava a copia; a producao, nao. Com o tipo filtrado dos dois
+    lados sobravam 8 FIIs divergentes (medido em 13/09/2026 no armazem local,
+    |delta| mediano 0,0728, maximo 0,1882 em PLAG11) -- e a producao era o lado
+    errado: 436 linhas colapsadas de FII entravam duas vezes na serie mensal.
+    Com o descarte aplicado nos dois, a divergencia vai a zero.
+    """
+    donos = {"sql_safra_canonica", "descarta_safra_colapsada", "eh_safra_colapsada"}
+    for fonte, nome in ((_FONTE, "_derive_income_observations"),
+                        (_FONTE_PIT, "_load_frames")):
+        funcao = _funcao(fonte, nome)
+        usadas = _chamadas(funcao) | _chamadas_interpoladas(funcao)
+        assert usadas & donos, (
+            f"{fonte.name}:{nome} soma a safra colapsada; a renda sai dobrada")

@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text
 
 import core.brapi as brapi
-from core.dividend_types import sql_apenas_renda
+from core.dividend_types import sql_apenas_renda, sql_safra_canonica
 from data_pipeline.market import fii as fz
 from data_pipeline.market import repository as repo
 from data_pipeline.quality import scheduler as sched
@@ -831,14 +831,30 @@ def _derive_income_observations(conn) -> int:
     # impacto corrente e zero e o defeito e latente: a filiacao muda a cada
     # ingestao. Guarda duplicada nao fica igual -- a consulta monta o
     # predicado a partir da definicao unica.
+    # A-131 faltava aqui, e so aqui: a safra PIT ja descartava a copia
+    # colapsada do mesmo pagamento e a producao a somava. Medido em 13/09/2026
+    # no armazem local, sao 436 linhas de FII, e com o tipo ja filtrado dos
+    # dois lados elas eram a ULTIMA divergencia entre producao e certificado --
+    # 8 fundos, |delta| mediano 0,0728, maximo 0,1882 (PLAG11). Com o descarte,
+    # os 396 fundos passam a receber o mesmo numero nos dois caminhos.
+    #
+    # O `COALESCE` das datas alinha a producao ao PIT (que ja caia para `ex_date`
+    # e `payment_date`): perder o evento porque um campo de data faltou e
+    # descartar evidencia. Hoje sao zero linhas de FII -- e uma equivalencia de
+    # regra, nao uma mudanca de numero.
     rows = conn.execute(text(f"""
-        SELECT ticker, date_trunc('month', event_date)::date AS month,
-               sum(amount)::float AS amount
-        FROM market.dividends
-        WHERE event_date IS NOT NULL
-          AND {sql_apenas_renda('type')}
-          AND ticker IN (SELECT ticker FROM market.fiis)
-        GROUP BY ticker, date_trunc('month', event_date)::date
+        SELECT d.ticker,
+               date_trunc('month', COALESCE(d.event_date, d.ex_date,
+                                            d.payment_date))::date AS month,
+               sum(d.amount)::float AS amount
+        FROM market.dividends d
+        WHERE COALESCE(d.event_date, d.ex_date, d.payment_date) IS NOT NULL
+          AND d.amount > 0
+          AND {sql_apenas_renda('d.type')}
+          AND {sql_safra_canonica('d')}
+          AND d.ticker IN (SELECT ticker FROM market.fiis)
+        GROUP BY d.ticker, date_trunc('month', COALESCE(d.event_date, d.ex_date,
+                                                        d.payment_date))::date
     """)).fetchall()
     monthly: dict[str, dict[date, float]] = defaultdict(dict)
     for ticker, month, amount in rows:

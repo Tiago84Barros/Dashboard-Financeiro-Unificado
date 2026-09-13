@@ -31,12 +31,19 @@ def _precos(fim: str, meses: int) -> pd.DataFrame:
                          "volume": 1_000_000.0})
 
 
-def _dividendos(pagamentos: dict[pd.Timestamp, float]) -> pd.DataFrame:
-    return pd.DataFrame([
+def _dividendos(pagamentos: dict[pd.Timestamp, float],
+                amortizacoes: dict[pd.Timestamp, float] | None = None) -> pd.DataFrame:
+    linhas = [
         {"ticker": "TEST11", "event_date": quando, "ex_date": quando,
-         "payment_date": quando, "amount": valor}
+         "payment_date": quando, "amount": valor, "type": "RENDIMENTO"}
         for quando, valor in pagamentos.items() if valor > 0
-    ])
+    ]
+    linhas += [
+        {"ticker": "TEST11", "event_date": quando, "ex_date": quando,
+         "payment_date": quando, "amount": valor, "type": "AMORTIZAÇÃO"}
+        for quando, valor in (amortizacoes or {}).items() if valor > 0
+    ]
+    return pd.DataFrame(linhas)
 
 
 def _mensal(fim: pd.Timestamp, meses: int, valor: float = 1.0) -> dict:
@@ -52,9 +59,9 @@ def _mensal(fim: pd.Timestamp, meses: int, valor: float = 1.0) -> dict:
 CUTOFF = pd.Timestamp("2026-09-30")
 
 
-def _recorrencia_pit(pagamentos: dict) -> float | None:
+def _recorrencia_pit(pagamentos: dict, amortizacoes: dict | None = None) -> float | None:
     bundle = _monthly_market_features(_precos("2026-09-30", 130),
-                                      _dividendos(pagamentos))["TEST11"]
+                                      _dividendos(pagamentos, amortizacoes))["TEST11"]
     return _features_as_of(bundle, CUTOFF)["income_recurrence"]
 
 
@@ -122,3 +129,26 @@ def test_historico_curto_no_pit_nao_produz_metrica():
 
 def test_fundo_sem_dividendo_nenhum_nao_produz_metrica():
     assert _recorrencia_pit({}) is None
+
+
+def test_pit_nao_conta_amortizacao_como_renda():
+    """R3 só foi aplicado de um lado. ``fii_pit._load_frames`` seleciona
+    ``type`` e nunca o filtra, então ``AMORTIZAÇÃO`` — devolução do principal
+    do cotista, não renda — entra na série de renda do PIT e não na da
+    produção. Medido em 13/09/2026 no armazém local: 71 de 401 FIIs recebiam
+    número diferente nos dois lados depois da "definição única", 64 deles com
+    linha de amortização, |Δ| mediano 0,0501 e máximo 0,5245 (BMLC11: produção
+    0,8269 x PIT 0,3024).
+
+    O fundo aqui paga renda em 24 meses, pulando um a cada três, e devolve
+    capital exatamente nos meses pulados. Para a produção há oito meses sem
+    renda; para o PIT, 24 meses de pagamento ininterrupto.
+    """
+    todos = _mensal(pd.Timestamp("2026-09-01"), 24)
+    ordenados = sorted(todos)
+    renda = {quando: 1.0 for indice, quando in enumerate(ordenados) if indice % 3}
+    devolucao = {quando: 1.0 for indice, quando in enumerate(ordenados) if not indice % 3}
+    pit = _recorrencia_pit(renda, devolucao)
+    producao = _recorrencia_producao(renda)
+    assert pit == producao, (
+        f"amortização entra só no PIT: {pit} x produção {producao}")

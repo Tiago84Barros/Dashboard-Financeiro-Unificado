@@ -18,7 +18,7 @@ import pandas as pd
 import requests
 from sqlalchemy import text
 
-from core.dividend_types import descarta_safra_colapsada
+from core.dividend_types import apenas_renda, descarta_safra_colapsada
 from core.fii_methodology import (
     FORMULA_VERSION,
     METHODOLOGY_VERSION,
@@ -166,7 +166,18 @@ def _monthly_market_features(prices: pd.DataFrame, dividends: pd.DataFrame) -> d
     # e tratamos proventos separadamente.
     frame["price"] = frame["close_raw"]
     frame["volume"] = pd.to_numeric(frame.get("volume"), errors="coerce")
-    div = dividends.copy()
+    # A-128 tambem vale aqui: `_load_frames` trazia a coluna `type` e nunca a
+    # filtrava, entao devolucao de capital entrava na serie de RENDA do PIT e
+    # nao na da producao. Medido em 13/09/2026 no armazem local, 71 de 401 FIIs
+    # divergiam depois da unificacao da formula -- 64 deles com linha de
+    # amortizacao, |delta| mediano 0,0501 e maximo 0,5245 (BMLC11). Unificar a
+    # formula e deixar a entrada divergente so troca o motivo pelo qual o
+    # certificado valida uma metodologia que a producao nao executa.
+    #
+    # O corte fica aqui, e nao no SQL, porque este e o unico ponto por onde
+    # passam tanto `_load_frames` quanto quem monta a serie em memoria: assim a
+    # guarda e provavel por execucao, nao so por leitura.
+    div = apenas_renda(dividends).copy()
     if not div.empty:
         div["date"] = pd.to_datetime(div["event_date"], errors="coerce").fillna(
             pd.to_datetime(div["ex_date"], errors="coerce")).fillna(
