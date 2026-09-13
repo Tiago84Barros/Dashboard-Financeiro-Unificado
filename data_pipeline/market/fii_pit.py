@@ -19,6 +19,7 @@ import requests
 from sqlalchemy import text
 
 from core.dividend_types import apenas_renda, descarta_safra_colapsada
+from core.observacao_ausente import valor_observado
 from core.fii_methodology import (
     FORMULA_VERSION,
     METHODOLOGY_VERSION,
@@ -385,11 +386,7 @@ def reconstruct_snapshots(
                         "source_quality": metric_quality,
                     }
             for obs in observations_by_ticker.get(ticker, []):
-                value = obs.get("value_numeric")
-                if pd.isna(value):
-                    value = obs.get("value_text")
-                if value is None or (isinstance(value, float) and pd.isna(value)):
-                    value = obs.get("value_json")
+                value = valor_observado(obs)
                 row[str(obs["metric_name"])] = value
                 quality = str(obs.get("availability_quality") or "first_observed_proxy")
                 row["metric_metadata"][str(obs["metric_name"])] = {

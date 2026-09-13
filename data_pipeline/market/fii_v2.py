@@ -23,6 +23,7 @@ from core.fii_methodology import (
     income_recurrence_com_motivo,
     income_recurrence_months,
 )
+from core.observacao_ausente import CHAVE_AUSENCIA, marca_de_ausencia
 from data_pipeline.market.fii_sources import metric_observation
 
 SOURCE = "brapi_fii_v2"
@@ -189,7 +190,14 @@ def _observation(ticker: str, metric: str, value: Any, reference_date: date,
         # continua valendo, agora com cara de recem-medido.
         if not absence_reason:
             return None
-        metadata = {**(metadata or {}), "absence_reason": absence_reason}
+        metadata = {**(metadata or {}), CHAVE_AUSENCIA: absence_reason}
+        # A marca ocupa `value_json` porque a tabela exige exatamente um campo
+        # de valor preenchido -- com os tres nulos a linha nao entra, e a
+        # rodada inteira cai junto. Quem le passa por
+        # `core.observacao_ausente.valor_observado`, que devolve None.
+        normalized = marca_de_ausencia(absence_reason,
+                                       **{k: v for k, v in (metadata or {}).items()
+                                          if k in {"months_observed", "populated_months"}})
     quality = availability_quality or (
         "retrospective_backfill" if endpoint.endswith("/history") else "first_observed_proxy")
     row = metric_observation(

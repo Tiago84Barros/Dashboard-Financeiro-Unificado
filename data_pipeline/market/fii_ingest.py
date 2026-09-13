@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 import core.brapi as brapi
 from core.dividend_types import sql_apenas_renda, sql_safra_canonica
+from core.observacao_ausente import valor_observado
 from data_pipeline.market import fii as fz
 from data_pipeline.market import repository as repo
 from data_pipeline.quality import scheduler as sched
@@ -195,11 +196,7 @@ def snapshot_methodology_v4() -> dict:
         }
         for observation in by_ticker.get(str(row["ticker"]), []):
             key = str(observation["metric_name"])
-            value = observation.get("value_numeric")
-            if value is None:
-                value = observation.get("value_text")
-            if value is None:
-                value = observation.get("value_json")
+            value = valor_observado(observation)
             row[key] = value
             row["metric_metadata"][key] = {
                 "reference_date": observation.get("reference_date"),

@@ -129,3 +129,35 @@ def test_o_outro_leitor_nao_filtra_o_nulo_na_escolha():
             continue
         assert "value_numeric IS NOT NULL" not in bloco, (
             "market_read descarta o nulo antes do DISTINCT ON")
+
+
+def test_o_valor_da_ausencia_nao_vaza_como_valor():
+    """A marca mora em ``value_json`` para caber na constraint. O risco dessa
+    escolha é exatamente este: os leitores resolvem ``value_numeric →
+    value_text → value_json``, e sem saber o que a marca significa entregariam
+    uma string onde a decisão espera número."""
+    from core.observacao_ausente import marca_de_ausencia, valor_observado
+
+    ausencia = {"value_numeric": None, "value_text": None,
+                "value_json": marca_de_ausencia("sem_provento_observado")}
+    assert valor_observado(ausencia) is None
+    assert valor_observado({"value_numeric": 0.5}) == 0.5
+    # E o oposto: um `value_json` que é valor de verdade continua passando.
+    assert valor_observado({"value_numeric": None, "value_text": None,
+                            "value_json": {"a": 1}}) == {"a": 1}
+
+
+def test_todo_leitor_resolve_o_valor_pelo_dono_unico():
+    """Guarda duplicada não fica igual: o leitor que montar a própria cadeia
+    de resolução volta a entregar a marca como valor."""
+    leitores = (
+        (_RAIZ / "core/market_read.py", "_read_fii_scoring_rows"),
+        (_RAIZ / "data_pipeline/market/fii_pit.py", None),
+        (_RAIZ / "data_pipeline/market/fii_ingest.py", None),
+    )
+    for caminho, _ in leitores:
+        texto = caminho.read_text(encoding="utf-8")
+        assert "valor_observado" in texto, f"{caminho.name} não usa o dono único"
+        assert 'value = obs.get("value_json")' not in texto, (
+            f"{caminho.name} voltou a resolver o valor por conta própria")
+        assert 'value = observation.get("value_json")' not in texto
