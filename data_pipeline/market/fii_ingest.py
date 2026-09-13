@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text
 
 import core.brapi as brapi
+from core.dividend_types import sql_apenas_renda
 from data_pipeline.market import fii as fz
 from data_pipeline.market import repository as repo
 from data_pipeline.quality import scheduler as sched
@@ -821,12 +822,21 @@ def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
 
 def _derive_income_observations(conn) -> int:
     from data_pipeline.market import fii_v2
-    rows = conn.execute(text("""
+    # A regra de "o que e renda" tem um dono unico desde o A-128:
+    # `core.dividend_types`. Aqui ela estava reescrita a mao como
+    # `NOT LIKE '%AMORT%'`, que deixa passar `REST CAP DIN` inteira --
+    # restituicao de capital em dinheiro e devolucao do principal do cotista,
+    # nao renda recorrente. Medido em 13/09/2026 no armazem local, as 73
+    # linhas desse tipo estao hoje em tickers fora de `market.fiis`, entao o
+    # impacto corrente e zero e o defeito e latente: a filiacao muda a cada
+    # ingestao. Guarda duplicada nao fica igual -- a consulta monta o
+    # predicado a partir da definicao unica.
+    rows = conn.execute(text(f"""
         SELECT ticker, date_trunc('month', event_date)::date AS month,
                sum(amount)::float AS amount
         FROM market.dividends
         WHERE event_date IS NOT NULL
-          AND upper(COALESCE(type,'')) NOT LIKE '%AMORT%'
+          AND {sql_apenas_renda('type')}
           AND ticker IN (SELECT ticker FROM market.fiis)
         GROUP BY ticker, date_trunc('month', event_date)::date
     """)).fetchall()
