@@ -452,7 +452,12 @@ def robust_optimizer_point_in_time_backtest(
         cessao = list(optimized.get("protecao_cedida_na_elegibilidade") or [])
         notas_de_viabilidade = list(optimized.get("viability_notes") or [])
         if cessao:
-            concession_periods += 1
+            # A CONTAGEM da fração só entra depois que o período vira
+            # observação — ver adiante. Aqui só se registra a evidência: os
+            # `continue` abaixo descartam períodos sem retorno, e contar a
+            # cessão antes deles colocava no numerador um período que o
+            # denominador (`len(result)`) nunca veria. A fração passava de
+            # 1,0 comparando populações diferentes.
             concession_details.append({
                 "decision_date": decision.date().isoformat(),
                 "protecao_cedida": cessao,
@@ -514,6 +519,8 @@ def robust_optimizer_point_in_time_backtest(
             "protecao_cedida": cessao,
             "viability_notes": notas_de_viabilidade,
         })
+        if cessao:
+            concession_periods += 1
         turnovers.append(turn)
         # Rank e carteira precisam falar do mesmo universo: com readmissão, o
         # `eligible` estrito não contém os fundos que a carteira comprou, e a
@@ -589,6 +596,13 @@ def robust_optimizer_point_in_time_backtest(
         "concession_periods": concession_periods,
         "concession_period_fraction": (
             concession_periods / len(result) if len(result) else 0.0
+        ),
+        # Períodos que cederam proteção e foram descartados por falta de
+        # retorno. Ficam fora da fração porque não estão no denominador, mas
+        # não somem: cessão que desaparece do relatório é proteção cedida
+        # apresentada como ausência de risco.
+        "concession_periods_discarded": max(
+            len(concession_details) - concession_periods, 0
         ),
         "concession_details": concession_details[:100],
         "mean_correlation_coverage": (

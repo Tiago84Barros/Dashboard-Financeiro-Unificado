@@ -143,3 +143,80 @@ def test_robust_optimizer_backtest_uses_v63_weights_without_constraint_violation
     for observation in result["observations"]:
         assert sum(observation["holdings"].values()) == pytest.approx(1.0)
         assert max(observation["holdings"].values()) <= .15 + 1e-6
+
+
+def _snapshots_com_concessao(decisions: tuple[str, ...]) -> list[dict]:
+    """Universo em que todo fundo só reprova na proteção.
+
+    Com o estrito vazio, toda safra fecha carteira por concessão — é a
+    condição em que o numerador da fração de cessão cresce.
+    """
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    snapshots = []
+    for decision_index, decision in enumerate(decisions):
+        for index, fii_type in enumerate(types):
+            row = {
+                "ticker": f"F{index:03d}11", "tipo": fii_type,
+                "type_score": 80 - index + decision_index, "confidence": .90,
+                "coverage": .95, "dy_12m": .10, "pvp": .90,
+                # Reprova só no piso de renda recorrente: readmissível.
+                "income_recurrence": .20,
+                "liquidez_diaria": 3_000_000, "history_months": 36,
+                "max_drawdown": -.15, "duration_anos": 3.0, "leverage": .05,
+                "vacancia_fisica": .05, "delinquency": .01, "ltv": .55,
+                "manager": f"manager-{index}", "sector": f"sector-{index}",
+            }
+            if fii_type in {"tijolo", "hibrido"}:
+                row.update(tenants={f"tenant-{index}": 1.0},
+                           regions={f"region-{index}": 1.0})
+            if fii_type in {"papel", "hibrido"}:
+                row.update(debtors={f"debtor-{index}": 1.0},
+                           issuers={f"issuer-{index}": 1.0},
+                           indexers={f"indexer-{index}": 1.0})
+            snapshots.append({
+                "reference_date": decision, "available_at": decision,
+                "ticker": row["ticker"], "fii_type": fii_type,
+                "score": row["type_score"], "confidence": row["confidence"],
+                "coverage": row["coverage"],
+                "availability_quality": "verified_publication",
+                "portfolio_input_json": row,
+            })
+    return snapshots
+
+
+def test_fracao_de_cessao_nao_conta_periodo_que_perdeu_o_retorno():
+    """Numerador e denominador têm de medir a mesma população.
+
+    A cessão era contada antes dos `continue` que descartam o período por
+    falta de retorno, mas o denominador era `len(result)` — só os períodos
+    observados. Um período que cedeu proteção e depois perdeu o retorno
+    entrava só no numerador, e a fração podia passar de 1,0: proteção cedida
+    contabilizada contra uma população que nunca a viveu.
+    """
+    snapshots = _snapshots_com_concessao(("2025-01-31", "2025-02-28"))
+    return_dates = pd.date_range("2023-01-31", "2025-03-31", freq="ME")
+    returns = pd.DataFrame([
+        {"date": date, "ticker": f"F{index:03d}11",
+         "total_return": .006 + index / 100_000 + (date.month % 3) / 1_000_000}
+        for date in return_dates for index in range(12)
+        # O último pregão existe no calendário, mas não para os fundos da
+        # carteira: a safra de fevereiro cede proteção e não rende observação.
+        if date < pd.Timestamp("2025-03-31")
+    ] + [{"date": pd.Timestamp("2025-03-31"), "ticker": "ZZZZ11", "total_return": .0}])
+    benchmark = pd.Series(.005, index=return_dates)
+    scenarios = {"2025-01-31": {"selic": 12.0, "ipca": 4.5},
+                 "2025-02-28": {"selic": 12.0, "ipca": 4.5}}
+
+    result = robust_optimizer_point_in_time_backtest(
+        pd.DataFrame(snapshots), returns, benchmark, scenarios,
+        transaction_cost=0, slippage=0,
+    )
+
+    assert result["status"] == "calculated", result
+    assert result["periods"] == 1
+    assert result["concession_periods"] <= result["periods"]
+    assert 0.0 <= result["concession_period_fraction"] <= 1.0
+    # A evidência do período descartado não pode sumir: ela é registrada à
+    # parte, fora da fração.
+    assert result["concession_periods_discarded"] == 1
+    assert len(result["concession_details"]) == 2
