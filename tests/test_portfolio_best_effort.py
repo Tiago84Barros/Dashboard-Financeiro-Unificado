@@ -127,7 +127,13 @@ render_portfolio_review(result, key="synthetic")
 render_portfolio_review(allocate_partial([], []), key="empty")
 ''').run(timeout=20)
     assert not app.exception
-    assert app.metric[0].value == "10.0%"
-    assert app.metric[1].value == "90.0%"
-    assert app.metric[3].value == "100.0%"
+    # Os KPIs deixaram de ser `st.metric`: passaram a `card_metrica`, que e
+    # markdown/CSS como o resto do app. A assercao segue o mesmo contrato --
+    # 10% alocado, 90% de saldo, e a tela vazia mostrando 100% nao alocado --
+    # so que lida do HTML renderizado.
+    corpo = "".join(bloco.value for bloco in app.markdown)
+    assert "10.0%" in corpo and "90.0%" in corpo and "100.0%" in corpo
+    # E a distincao que motivou a reescrita: universo vazio nao e veredito sobre
+    # os ativos, e ausencia de candidatos -- a tela precisa dizer isso.
+    assert "Nenhum candidato chegou ao otimizador" in corpo
     assert app.dataframe[0].value.iloc[0]["Ativo"] == "SYNTH"

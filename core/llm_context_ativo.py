@@ -49,19 +49,20 @@ def _local_macro_block(asset_class: str, symbol: str, sector: str) -> str:
     if not symbol or not sector:
         return ""
     try:
-        from core.macro_data.database import get_local_macro_engine
+        from core.macro_data.acesso import resolver_macro
         from core.macro_data.portfolio_context import (
             format_portfolio_macro_context,
-            load_portfolio_macro_snapshot,
         )
 
-        engine = get_local_macro_engine()
-        if engine is None:
+        # Fora da máquina do Docker o macro vem da vitrine publicada. Devolver
+        # "" ali era o defeito: a LLM respondia "não tenho dados macro" com o
+        # dado publicado e disponível a uma consulta de distância.
+        resolvido = resolver_macro(
+            asset_class=asset_class, assets={symbol: sector})
+        if not resolvido.disponivel:
             return ""
-        snapshot = load_portfolio_macro_snapshot(
-            engine, asset_class=asset_class, assets={symbol: sector},
-        )
-        return format_portfolio_macro_context(snapshot)
+        return (format_portfolio_macro_context(resolvido.snapshot)
+                + f"\n  origem={resolvido.rotulo()}")
     except Exception:
         logger.exception("contexto macro local de %s indisponível", symbol)
         return ""

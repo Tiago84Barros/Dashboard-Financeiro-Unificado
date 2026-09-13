@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from core.llm_b3 import _chat_complete, _report_model
+from core.llm_mandato import MANDATO
 
 _HISTORICO_MAX = 10
 
@@ -60,10 +61,13 @@ def chat_com_portfolio_global(
         "dos dados em vez de escondê-las.\n"
         "8. Não emita blocos de código com diretivas de gráfico: esta tela não "
         "os desenha.\n\n"
+        f"{MANDATO}\n\n"
         "FORMATO (use só as seções aplicáveis, em markdown):\n"
         "**Resumo** · **Dados utilizados** · **Leitura por classe** · "
-        "**Concentração e risco** · **Pontos de atenção** · "
-        "**O que os dados não permitem afirmar** · **Conclusão prática**.\n\n"
+        "**Concentração e risco** · **O que eu faria** (rebalanceamento entre "
+        "classes, trocas e reforços, em ordem de prioridade) · "
+        "**Pontos de atenção** · **O que os dados não permitem afirmar** · "
+        "**Conclusão prática**.\n\n"
         f"=== CONTEXTO DO PORTFÓLIO GLOBAL ===\n{context}"
     )
 

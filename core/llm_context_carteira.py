@@ -139,6 +139,36 @@ def _bloco_tesouro(tesouro, macro) -> list[str]:
     return linhas
 
 
+def _setores(db, pesos) -> dict[str, str]:
+    """``{ticker: setor}`` para a conjuntura, com setor vazio quando não se sabe.
+
+    A comparação com o universo do banco já traz setor (ações) ou tipo (FIIs) por
+    ativo; é a única fonte de setor que esta tela carrega. Quem não aparece ali
+    entra mesmo assim com setor vazio: sem setor o impacto macro setorial não
+    sai, mas o noticiário por símbolo sai, e excluir o ativo o apagaria dos dois.
+    """
+    conhecidos: dict[str, str] = {}
+    for linha in (db or {}).get("linhas") or ():
+        ticker = str(linha.get("ticker") or "").strip().upper()
+        if ticker:
+            conhecidos[ticker] = str(linha.get("setor") or linha.get("tipo") or "")
+    return {ticker: conhecidos.get(ticker, "") for ticker, _ in pesos}
+
+
+def _bloco_mercado(classe: str, db, pesos) -> list[str]:
+    """Noticiário, impacto macro por ativo e regime macro do país.
+
+    Existe porque a ausência dele era visível na tela: perguntado sobre a
+    carteira, o app respondia que o contexto "não continha notícias recentes nem
+    dados macroeconômicos" — com o noticiário publicado e ``public.macro``
+    preenchida. O contexto estava pobre, não o banco.
+    """
+    from core.llm_context_mercado import bloco_mercado
+
+    texto = bloco_mercado(classe=classe, ativos=_setores(db, pesos))
+    return ["", texto] if texto else []
+
+
 def build_carteira_classe_context(
     classe: str,
     posicoes,
@@ -186,6 +216,8 @@ def build_carteira_classe_context(
             if campos:
                 blocos.append(f"- {ticker}: " + ", ".join(campos[:14]))
 
+    blocos += _bloco_mercado(classe, db, pesos)
+
     blocos += [
         "",
         "REGRAS DE LEITURA DESTE CONTEXTO:",
@@ -194,6 +226,12 @@ def build_carteira_classe_context(
         "- Cobertura abaixo de 100% significa que parte da classe ficou de fora "
         "da média. Não trate o resultado como se descrevesse a classe inteira.",
         "- Ausência de dado nunca equivale a zero, a valor neutro ou a risco baixo.",
-        "- Não há neste contexto preço-alvo, projeção de lucro nem recomendação.",
+        "- Não há neste contexto preço-alvo nem projeção de lucro: concluir um "
+        "preço justo a partir daqui seria inventar. Recomendar troca, reforço ou "
+        "redução com base nas evidências acima, ao contrário, é o que se espera.",
+        "- Quando os blocos de conjuntura e de macro do país estiverem acima, "
+        "eles FAZEM PARTE deste contexto: use-os para correlacionar a carteira "
+        "com o cenário. Não responda que o contexto é apenas quantitativo sem "
+        "antes ler o que há neles.",
     ]
     return "\n".join(blocos)

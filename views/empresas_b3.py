@@ -4726,11 +4726,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     macro_snapshot_av = None
     if df_scored is not None and not df_scored.empty:
         try:
-            from core.macro_data.database import get_local_macro_engine
-            from core.macro_data.portfolio_context import (
-                aggregate_impact_rows,
-                load_portfolio_macro_snapshot,
-            )
+            from core.macro_data.acesso import resolver_macro
+            from core.macro_data.portfolio_context import aggregate_impact_rows
             from core.macro_data.portfolio_tilt import apply_macro_scores
 
             sector_map = {
@@ -4738,16 +4735,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 for _, row in df_set.iterrows()
                 if row.get("ticker")
             }
-            local_engine = get_local_macro_engine()
-            if local_engine is not None:
-                macro_snapshot_av = load_portfolio_macro_snapshot(
-                    local_engine,
-                    asset_class="b3",
-                    assets={
-                        str(ticker): sector_map.get(str(ticker).upper(), "")
-                        for ticker in df_scored["Ticker"]
-                    },
-                )
+            macro_snapshot_av = resolver_macro(
+                asset_class="b3",
+                assets={
+                    str(ticker): sector_map.get(str(ticker).upper(), "")
+                    for ticker in df_scored["Ticker"]
+                },
+            ).snapshot
+            if macro_snapshot_av is not None:
                 international_impacts = aggregate_impact_rows(
                     row for row in macro_snapshot_av.details
                     if row.get("provider") != "app4_domestic"
@@ -4770,10 +4765,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         except Exception:
             macro_snapshot_av = None
     if macro_snapshot_av is None:
-        st.caption("Macro internacional local indisponível; ranking doméstico preservado.")
+        st.caption("Macro internacional indisponível; ranking doméstico preservado.")
     else:
         st.caption(
-            f"Macro Docker local: corte {macro_snapshot_av.as_of:%d/%m/%Y} · "
+            f"Macro (armazém local ou vitrine publicada): "
+            f"corte {macro_snapshot_av.as_of:%d/%m/%Y} · "
             f"cobertura {macro_snapshot_av.coverage:.0%}. O ajuste internacional "
             "é separado do macro doméstico e limitado a ±10 pontos."
         )

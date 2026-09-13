@@ -500,28 +500,42 @@ def carregar(
     ausentes: list[str] = []
 
     # ── macro ────────────────────────────────────────────────────────────────
+    # Quem responde é :func:`core.macro_data.acesso.resolver_macro`, e não mais
+    # o armazém local direto. A diferença é o comportamento em produção: ali
+    # ``macro_engine`` é ``None`` em toda chamada, e a versão anterior deste
+    # bloco registrava "banco macro local não configurado" e seguia sem macro
+    # nenhum -- mesmo com a vitrine macro publicada e a uma consulta de
+    # distância. O componente saía do denominador por um motivo de topologia,
+    # não por ausência de dado, e a LLM respondia que não tinha macro.
+    #
+    # ``as_of`` vai como o chamador o passou, não como ``momento``: a vitrine
+    # guarda um retrato só, e ``resolver_macro`` recusa servi-lo a uma data
+    # histórica. Trocar ``None`` pelo instante de agora apagaria essa recusa e
+    # faria todo backtest passar a ler a vitrine de hoje.
     impactos: dict[str, float] = {}
     cobertura_macro = 0.0
-    if macro_engine is not None and simbolos:
+    if simbolos:
         try:
-            from core.macro_data.portfolio_context import (
-                load_portfolio_macro_snapshot,
-            )
+            from core.macro_data.acesso import resolver_macro
 
-            snapshot = load_portfolio_macro_snapshot(
-                macro_engine, asset_class=asset_class,
+            resolvido = resolver_macro(
+                asset_class=asset_class,
                 assets={s: str(ativos.get(s) or ativos.get(s.upper()) or "")
                         for s in simbolos},
-                as_of=momento, knowledge_mode=knowledge_mode,
+                as_of=as_of, knowledge_mode=knowledge_mode,
+                engine_local=macro_engine,
             )
-            impactos = dict(snapshot.impacts)
-            cobertura_macro = snapshot.coverage
-            limitacoes.extend(snapshot.limitations)
+            if resolvido.snapshot is not None:
+                impactos = dict(resolvido.snapshot.impacts)
+                cobertura_macro = resolvido.snapshot.coverage
+                limitacoes.extend(resolvido.snapshot.limitations)
+                if resolvido.envelhecida:
+                    limitacoes.append(resolvido.rotulo())
+            else:
+                limitacoes.append(f"camada macro ausente: {resolvido.rotulo()}")
         except (SQLAlchemyError, ValueError) as exc:
             limitacoes.append(f"contexto macro indisponível: {exc}")
             logger.warning("contexto macro indisponível em %s", momento)
-    elif macro_engine is None:
-        limitacoes.append("banco macro local não configurado")
 
     if impactos:
         disponiveis.append("macro")

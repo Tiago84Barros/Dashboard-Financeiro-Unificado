@@ -357,6 +357,44 @@ def _bloco_recomendacoes(acoes: Sequence[Any]) -> list[str]:
     return linhas
 
 
+def _bloco_mercado(df: pd.DataFrame) -> list[str]:
+    """Conjuntura das três classes e regime macro do país, num bloco só.
+
+    O Portfólio Global é o único chat que enxerga as três carteiras juntas, e
+    era o que menos tinha para dizer sobre o cenário: o contexto descrevia
+    composição, risco e papéis, e nenhuma linha de noticiário ou macro. A
+    pergunta natural desta tela — "o que no cenário ameaça este patrimônio" —
+    não tinha como ser respondida com o que chegava ao modelo.
+
+    A chamada é uma por classe porque a conjuntura é indexada por classe: o
+    mesmo setor "Bancos" tem sensibilidade macro diferente na B3 e nos EUA, e
+    achatar as três num pedido só devolveria o impacto de uma delas para todas.
+    """
+    if df is None or df.empty or "asset_class" not in df.columns:
+        return []
+    from core.llm_context_mercado import bloco_conjuntura, bloco_macro_pais
+
+    linhas = ["", "=== CONJUNTURA (noticiário e macro por ativo) ==="]
+    houve = False
+    for classe in sorted({str(c) for c in df["asset_class"].dropna()}):
+        recorte = df[df["asset_class"].astype(str) == classe]
+        ativos = {str(r.get("symbol") or "").strip().upper():
+                  str(r.get("sector") or "")
+                  for r in recorte.to_dict(orient="records")
+                  if str(r.get("symbol") or "").strip()}
+        texto = bloco_conjuntura(asset_class=classe, ativos=ativos)
+        if texto:
+            houve = True
+            linhas += [f"-- {_classe(classe)} --", texto]
+    if not houve:
+        linhas.append("Nenhuma classe respondeu conjuntura nesta sessão. "
+                      "Ausência de leitura não é cenário calmo.")
+    macro = bloco_macro_pais()
+    if macro:
+        linhas += ["", macro]
+    return linhas
+
+
 def build_global_portfolio_context(
     df: pd.DataFrame | None,
     *,
@@ -392,4 +430,5 @@ def build_global_portfolio_context(
     partes += _bloco_risco(retornos, pesos)
     partes += _bloco_papeis(list(papeis))
     partes += _bloco_recomendacoes(list(acoes))
+    partes += _bloco_mercado(df)
     return "\n".join(partes)

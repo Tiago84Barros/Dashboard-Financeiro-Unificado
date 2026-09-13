@@ -23,8 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import core.us_data as us
 from core.llm_context_ativo import build_us_ativo_context
-from core.macro_data.database import get_local_macro_engine
-from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
+from core.macro_data.acesso import resolver_macro
 from core.market_companies import (
     filter_market_companies,
     localize_us_company_frame,
@@ -1051,21 +1050,15 @@ def _tab_avancada_unificada(status: dict) -> None:
     entry = build_entry_scores(eligible, custom_weights)
     macro_snapshot_lab = None
     if not entry.empty:
-        local_macro_engine = get_local_macro_engine()
-        if local_macro_engine is not None:
-            try:
-                macro_snapshot_lab = load_portfolio_macro_snapshot(
-                    local_macro_engine,
-                    asset_class="us",
-                    assets={
-                        str(row.get("symbol") or ""): translate_us_sector(
-                            row.get("sector"), row.get("industry")
-                        )
-                        for _, row in entry.iterrows()
-                    },
+        macro_snapshot_lab = resolver_macro(
+            asset_class="us",
+            assets={
+                str(row.get("symbol") or ""): translate_us_sector(
+                    row.get("sector"), row.get("industry")
                 )
-            except (SQLAlchemyError, ValueError):
-                macro_snapshot_lab = None
+                for _, row in entry.iterrows()
+            },
+        ).snapshot
         if macro_snapshot_lab is not None:
             from core.macro_data.portfolio_tilt import apply_macro_scores
 
@@ -1104,10 +1097,11 @@ def _tab_avancada_unificada(status: dict) -> None:
             st.dataframe(pd.DataFrame(track_cov), hide_index=True, width="stretch")
         st.caption("Ausência não vira zero: recebe posição neutra no score e reduz a cobertura.")
         if macro_snapshot_lab is None:
-            st.caption("Camada macro local indisponível; score de entrada preservado.")
+            st.caption("Camada macro indisponível; score de entrada preservado.")
         else:
             st.caption(
-                f"Macro Docker local: corte {macro_snapshot_lab.as_of:%d/%m/%Y} · "
+                f"Macro (armazém local ou vitrine publicada): "
+                f"corte {macro_snapshot_lab.as_of:%d/%m/%Y} · "
                 f"cobertura {macro_snapshot_lab.coverage:.0%}. Score contextual "
                 "é exibido separadamente e limitado a ±10 pontos."
             )
@@ -2053,6 +2047,42 @@ def _render_us_portfolio_creation_css() -> None:
     """, unsafe_allow_html=True)
 
 
+def _render_us_funil_exclusoes(result: dict) -> None:
+    """Por que o universo esvaziou -- em cards, e sem depender de expander.
+
+    Existe porque "Nenhuma carteira foi formada" não é acionável sozinho. O
+    funil sequencial reconcilia (universo = removidos + elegíveis), então ele
+    responde exatamente qual filtro consumiu o universo. Quando o portão de
+    negociabilidade reprova tudo, a linha campeã é sempre a mesma, e aí o
+    remédio não é afrouxar parâmetro: é republicar a vitrine.
+    """
+    universo = int(result.get("universe_count", 0) or 0)
+    elegiveis = int(result.get("eligible_count", 0) or 0)
+    exclusions = result.get("exclusions")
+    secao_titulo("Onde o universo se esvaziou", "🩺")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        card_metrica("Universo inicial", f"{universo:,}".replace(",", "."))
+    with c2:
+        card_metrica("Removidas pelos filtros",
+                     f"{max(universo - elegiveis, 0):,}".replace(",", "."))
+    with c3:
+        card_metrica("Elegíveis restantes", f"{elegiveis:,}".replace(",", "."))
+    if exclusions is not None and not exclusions.empty:
+        st.dataframe(
+            exclusions.rename(columns={"label": "Critério", "count": "Removidas"})[
+                ["Critério", "Removidas"]],
+            hide_index=True, width="stretch")
+        st.caption(
+            "A contagem é sequencial: cada linha remove do que sobrou da linha "
+            "anterior, e a soma reconcilia com o universo inicial. O critério de "
+            "maior contagem é o que decidiu o resultado.")
+    else:
+        st.caption(
+            "O universo chegou vazio a esta execução — nenhum filtro chegou a "
+            "ser aplicado. Verifique se a vitrine dos EUA foi publicada.")
+
+
 def _render_us_portfolio_cards(holdings: pd.DataFrame) -> None:
     if holdings is None or holdings.empty:
         return
@@ -2506,19 +2536,14 @@ def _tab_criacao_portfolio(status: dict) -> None:
             baseline = build_portfolio_creation(portfolio_scored, params, score_panel)
             snapshot = None
             holdings_base = baseline.get("holdings", pd.DataFrame())
-            local_engine = get_local_macro_engine()
-            if local_engine is not None and not holdings_base.empty:
-                try:
-                    snapshot = load_portfolio_macro_snapshot(
-                        local_engine,
-                        asset_class="us",
-                        assets=dict(zip(
-                            holdings_base["symbol"].astype(str),
-                            holdings_base["sector_group"].astype(str),
-                        )),
-                    )
-                except (SQLAlchemyError, ValueError):
-                    snapshot = None
+            if not holdings_base.empty:
+                snapshot = resolver_macro(
+                    asset_class="us",
+                    assets=dict(zip(
+                        holdings_base["symbol"].astype(str),
+                        holdings_base["sector_group"].astype(str),
+                    )),
+                ).snapshot
             result = build_portfolio_creation(
                 portfolio_scored, params, score_panel,
                 macro_impacts=(snapshot.impacts if snapshot else {}),
@@ -2548,19 +2573,40 @@ def _tab_criacao_portfolio(status: dict) -> None:
 
     for warning in result.get("warnings", []):
         st.warning(warning)
-    if result.get("review_portfolio") is not None:
-        from design.portfolio_review import render_portfolio_review
-
-        render_portfolio_review(result["review_portfolio"], key="us_review")
-        return
     # Bloqueio antes de qualquer número: sem liquidez verificada não existe
     # carteira publicável, e mostrar auditoria de indústria abaixo faria parecer
     # que só faltou afrouxar um parâmetro.
+    #
+    # A ORDEM aqui é o conserto. Antes, a composição de revisão vinha primeiro e
+    # dava `return`: quando o portão de negociabilidade esvaziava o universo, o
+    # usuário via "Alocado 0,0% / Não alocado 100,0%" e nada mais -- a causa
+    # existia, redigida e acionável, mas chegava como `st.caption` cinza no pé
+    # do componente, e o funil de exclusões que a comprovaria ficava atrás do
+    # `return`. Erro que interrompe a formação da carteira é erro na tela, não
+    # legenda embaixo de um zero.
     if result.get("blocking_error"):
         st.error(result["blocking_error"])
-        return
     if result.get("history_required_unavailable"):
         st.error("A validação histórica foi exigida, mas o painel PIT não está disponível.")
+    if result.get("review_portfolio") is not None:
+        from design.portfolio_review import render_portfolio_review
+
+        # O bloqueio também entra em card dentro do componente: acima ele é um
+        # `st.error` solto, e a causa precisa estar colada ao 0% que ela explica.
+        render_portfolio_review(
+            result["review_portfolio"], key="us_review",
+            diagnostico=[texto for texto in (
+                result.get("blocking_error"),
+                "A validação histórica foi exigida, mas o painel PIT não está disponível."
+                if result.get("history_required_unavailable") else None,
+            ) if texto])
+        # O funil continua visível mesmo sem carteira: é ele que diz QUAL filtro
+        # esvaziou o universo. Sem isso, "nenhuma carteira foi formada" não tem
+        # como virar uma ação do usuário.
+        _render_us_funil_exclusoes(result)
+        return
+    if result.get("blocking_error") or result.get("history_required_unavailable"):
+        _render_us_funil_exclusoes(result)
         return
 
     audit = result.get("industry_audit", pd.DataFrame())
@@ -2571,12 +2617,13 @@ def _tab_criacao_portfolio(status: dict) -> None:
     snapshot = result.get("macro_snapshot")
     if snapshot is None:
         st.warning(
-            "Camada macro local indisponível nesta execução; a composição mantém "
+            "Camada macro indisponível nesta execução; a composição mantém "
             "os pesos fundamentalistas."
         )
     else:
         st.info(
-            f"Macro no Docker local · corte {snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
+            f"Macro (armazém local ou vitrine publicada) · "
+            f"corte {snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
             f"cobertura {macro_info.get('coverage', 0):.0%} · "
             f"turnover atribuído ao macro {macro_info.get('turnover', 0):.1%}. "
             "Impactos são contexto histórico, não previsão de retorno."

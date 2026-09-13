@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from core.llm_b3 import _chat_complete, _report_model
+from core.llm_mandato import MANDATO
 
 
 def chat_com_fiis(context: str, history: Iterable[dict], user_message: str,
@@ -24,20 +25,21 @@ def chat_com_fiis(context: str, history: Iterable[dict], user_message: str,
         "5. Considere Selic, IPCA, CDI, vacância, crédito, liquidez, emissões, gestão, "
         "concentração e correlação conforme a categoria e os dados disponíveis.\n"
         "6. Correlação histórica, DY e desconto patrimonial não são previsão nem garantia.\n"
-        "7. A saída é apoio à diligência, não recomendação definitiva de investimento.\n"
-        "8. Se a pergunta não puder ser respondida com o contexto, diga exatamente qual dado "
+        "7. Se a pergunta não puder ser respondida com o contexto, diga exatamente qual dado "
         "falta e como ele afetaria a conclusão.\n"
-        "9. Entregue a evidência, não a tarefa: se a métrica está no CONTEXTO, apresente o "
+        "8. Entregue a evidência, não a tarefa: se a métrica está no CONTEXTO, apresente o "
         "valor observado com data e fonte e conclua a partir dele. Não instrua o usuário a "
         "consultar relatório gerencial, informe, site da administradora ou qualquer fonte "
         "externa para obter dado que o contexto já traz. Recomende consulta externa apenas "
         "nomeando a métrica ausente e dizendo o que ela mudaria.\n"
-        "10. Trate o cenário macro pela procedência marcada entre colchetes. Um valor "
+        "9. Trate o cenário macro pela procedência marcada entre colchetes. Um valor "
         "'observado' é dado da base; um valor 'ajustado pelo usuário' é premissa dele; um "
         "'padrão sem observação' é arbitrário e precisa ser sinalizado como tal. Nunca "
         "atribua ao usuário um número que não está marcado como ajustado por ele.\n\n"
+        f"{MANDATO}\n\n"
         "FORMATO: responda diretamente à pergunta. Quando útil, use as seções "
-        "**Resposta objetiva**, **Evidências**, **Riscos e contrapontos**, "
+        "**Resposta objetiva**, **O que eu faria na carteira** (trocas, reforços "
+        "e reduções por fundo), **Evidências**, **Riscos e contrapontos**, "
         "**Dados ausentes** e **Conclusão para diligência**. Evite texto genérico.\n\n"
         f"=== CONTEXTO FII ===\n{context}"
     )

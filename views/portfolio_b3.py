@@ -23,8 +23,7 @@ from core.b3_portfolio_model import (
     save_b3_portfolio_model,
 )
 from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
-from core.macro_data.database import get_local_macro_engine
-from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
+from core.macro_data.acesso import MacroResolvido, resolver_macro
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import card_metrica
 from design.market_companies import render_company_logo
@@ -3821,22 +3820,21 @@ def render(show_header: bool = True) -> None:
         render_portfolio_review(proposal, key="b3_review")
         return
 
-    # ── CAMADA MACRO LOCAL ────────────────────────────────────────────────
+    # ── CAMADA MACRO ──────────────────────────────────────────────────────
     # É aplicada depois da correlação e novamente projetada nos mesmos tetos.
     # Assim, o contexto não escolhe empresas nem enfraquece restrições.
+    # A origem (armazém local ou vitrine publicada) é resolvida por
+    # `core.macro_data.acesso`; a tela só precisa saber qual respondeu e há
+    # quanto tempo -- e dizer isso ao investidor.
     macro_snapshot = None
+    macro_fonte = MacroResolvido(None, None, motivo="carteira ainda não formada")
     macro_turnover = 0.0
     if proximos_uniq and _portfolio_viavel:
-        local_macro_engine = get_local_macro_engine()
-        if local_macro_engine is not None:
-            try:
-                macro_snapshot = load_portfolio_macro_snapshot(
-                    local_macro_engine,
-                    asset_class="b3",
-                    assets={item["tk"]: item["setor"] for item in proximos_uniq},
-                )
-            except (SQLAlchemyError, ValueError):
-                macro_snapshot = None
+        macro_fonte = resolver_macro(
+            asset_class="b3",
+            assets={item["tk"]: item["setor"] for item in proximos_uniq},
+        )
+        macro_snapshot = macro_fonte.snapshot
         if macro_snapshot is not None:
             from core.macro_data.b3_weights import apply_b3_macro
 
@@ -3876,12 +3874,13 @@ def render(show_header: bool = True) -> None:
     if proximos_uniq:
         if macro_snapshot is None:
             st.warning(
-                "Camada macro do Docker local indisponível; os pesos permanecem "
-                "fundamentalistas."
+                f"Camada macro indisponível ({macro_fonte.rotulo()}); os pesos "
+                "permanecem fundamentalistas."
             )
         else:
             st.info(
-                f"Macro local · corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
+                f"{macro_fonte.rotulo().capitalize()} · "
+                f"corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
                 f"cobertura {macro_snapshot.coverage:.0%} · "
                 f"turnover macro {macro_turnover:.1%}. O ajuste não é previsão."
             )

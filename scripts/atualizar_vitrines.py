@@ -221,6 +221,10 @@ CARIMBO = {
     "us_vintages": ("supabase", "SELECT max(created_at) FROM market_us.score_vintages"),
     "us_delistings": ("supabase", "SELECT max(derived_at) FROM market_us.delistings"),
     "us_prices": ("supabase", "SELECT max(ingested_at) FROM market_us.prices_monthly"),
+    # `min`, não `max`: a vitrine macro tem uma linha de meta por classe, e a
+    # classe mais atrasada é que diz se a publicação está em dia. Com `max`,
+    # publicar só a B3 faria FIIs e EUA parecerem recém-publicados.
+    "macro_vitrine": ("supabase", "SELECT min(gerada_em) FROM macro_vitrine_meta"),
 }
 
 

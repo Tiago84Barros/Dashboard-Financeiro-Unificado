@@ -276,7 +276,7 @@ def load_portfolio_macro_snapshot(
 def format_portfolio_macro_context(snapshot: PortfolioMacroSnapshot) -> str:
     """Texto factual limitado para LLM; decisões e pesos continuam em Python."""
     lines = [
-        "CAMADA MACRO DETERMINÍSTICA (Docker local):",
+        "CAMADA MACRO DETERMINÍSTICA:",
         f"  data de corte={snapshot.as_of.isoformat()}; cobertura="
         f"{snapshot.coverage:.1%}; séries={snapshot.source_count}; "
         f"modo={snapshot.knowledge_mode}",
