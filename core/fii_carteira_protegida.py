@@ -104,14 +104,22 @@ def montar_carteira_com_concessao(
 
     def _podar(
         readmitidos: Sequence[dict], resultado: dict,
+        aceita: Callable[[dict], bool],
     ) -> tuple[Sequence[dict], dict]:
-        """Devolve o menor conjunto readmitido que ainda viabiliza a carteira.
+        """Devolve o menor conjunto readmitido que ainda serve.
 
         A varredura acha um PREFIXO viável da fila, e prefixo mínimo não é
         conjunto mínimo: o otimizador pode usar o 3º e o 9º readmitidos e
         ignorar os seis do meio, que teriam a proteção cedida sem necessidade
         nenhuma. Aqui tiramos do conjunto quem a carteira resultante não usa e
-        re-rodamos; enquanto encolher e continuar viável, o menor conjunto vence.
+        re-rodamos; enquanto encolher e `aceita` continuar verdadeiro, o menor
+        conjunto vence.
+
+        `aceita` é parâmetro porque a poda também precisa valer no caminho em
+        que NENHUMA tentativa alcança a cardinalidade cheia. Ali o critério não
+        pode ser `_viavel` — ele é falso por definição — e sim "não perde
+        ativo". Sem isso, o regime que mais precisa da concessão era justamente
+        o que a publicava inteira, sem poda nenhuma.
         """
         atuais, atual = list(readmitidos), resultado
         while atuais:
@@ -123,7 +131,7 @@ def montar_carteira_com_concessao(
                 return atuais, atual
             candidato = _tentar(menores)
             _registrar(menores, candidato)
-            if not _viavel(candidato, policy):
+            if not aceita(candidato):
                 return atuais, atual
             atuais, atual = menores, candidato
         return atuais, atual
@@ -134,7 +142,8 @@ def montar_carteira_com_concessao(
         resultado = _tentar(readmitidos)
         itens = _registrar(readmitidos, resultado)
         if _viavel(resultado, policy):
-            readmitidos, resultado = _podar(readmitidos, resultado)
+            readmitidos, resultado = _podar(
+                readmitidos, resultado, lambda r: _viavel(r, policy))
             return _anotar(resultado, readmitidos, fila, tentativas)
         # Mantém a tentativa com mais ativos: se nem a concessão inteira
         # viabilizar a cardinalidade cheia, a carteira ainda não pode voltar
@@ -143,6 +152,15 @@ def montar_carteira_com_concessao(
         if melhor is None or len(itens) > len(melhor[0].get("items") or []):
             melhor = (resultado, readmitidos)
     resultado, readmitidos = melhor if melhor else ({}, ())
+    if readmitidos and (resultado.get("items") or []):
+        # Nenhuma tentativa fechou a cardinalidade cheia. A carteira não volta
+        # vazia, mas também não publica cessão inútil: poda contra "não perder
+        # ativo", que é o que ainda dá para exigir aqui.
+        alvo = len(resultado.get("items") or [])
+        readmitidos, resultado = _podar(
+            readmitidos, resultado,
+            lambda r: len(r.get("items") or []) >= alvo,
+        )
     return _anotar(resultado, readmitidos, fila, tentativas)
 
 

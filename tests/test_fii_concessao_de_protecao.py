@@ -304,3 +304,33 @@ def test_valor_ausente_na_coluna_presente_segue_sendo_reprovacao():
 
     assert eligible == []
     assert relatorio["exclusion_counts"]["renda recorrente ausente"] == 1
+
+
+def test_poda_tambem_vale_quando_nenhuma_tentativa_fecha_a_carteira():
+    """O regime que mais precisa da concessão era o que cedia tudo.
+
+    Aqui nenhuma tentativa alcança ``max_assets`` — a saída é pelo melhor
+    resultado parcial. Sem poda nesse caminho, a carteira publicava a fila
+    inteira como proteção cedida, embora só um fundo tenha sido usado: e é
+    exatamente esse o caminho do regime `easing` na medição real.
+    """
+    linhas = [_linha(f"EST{i:02d}11") for i in range(3)] + [
+        _linha("REND11", income_recurrence=.20),
+        _linha("LOCA11", tenant_concentration=.90),
+        _linha("AUSE11", income_recurrence=None),
+    ]
+    eligible, relatorio = apply_integrated_eligibility(
+        linhas, IntegratedEligibilityPolicy())
+
+    resultado = montar_carteira_com_concessao(
+        eligible, relatorio["concession_candidates"], object(),
+        policy=PortfolioPolicy(max_assets=6),
+        optimizer=_otimizador_que_usa_so("AUSE11"),
+    )
+
+    assert len(resultado["items"]) == 4, "não fecha a carteira cheia"
+    assert resultado["concessao_de_elegibilidade"]["readmitidos"] == ["AUSE11"]
+    nota = " ".join(resultado["viability_notes"])
+    assert "REND11" not in nota and "LOCA11" not in nota
+    assert [item["ticker"] for item in
+            resultado["protecao_cedida_na_elegibilidade"]] == ["AUSE11"]
