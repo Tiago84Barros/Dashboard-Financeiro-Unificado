@@ -355,3 +355,41 @@ def test_score_do_universo_continua_igual():
     assert "score_fiis_by_type(" in corpo
     assert 'df["Score"] = df["Ticker"].map' in corpo
     assert 'ranked = df[df["Score"].notna()].sort_values(' in corpo
+
+
+# ── Cessão de proteção registrada na safra PIT ───────────────────────────────
+
+def test_protocolo_pit_declara_a_protecao_cedida_na_safra():
+    """O certificado grava a cessão e ninguém lia.
+
+    Na safra real, 42 dos 70 períodos só tiveram carteira porque a proteção
+    foi cedida, e o card dizia "Aprovado" em verde sem uma palavra sobre
+    isso — veredito de protocolo lido como ausência de risco.
+    """
+    card = fiis._card_do_protocolo_pit("passed", {"backtest": {
+        "periods": 70, "concession_periods": 42,
+        "concession_period_fraction": .6,
+    }})
+
+    assert "42 de 70" in card
+    assert "60%" in card
+    assert "não é ausência de risco" in card
+    # Verde é o vocabulário de "sem ressalva" nesta tela.
+    assert "#00C896" not in card
+
+
+def test_protocolo_pit_sem_cessao_continua_aprovado_sem_ressalva():
+    card = fiis._card_do_protocolo_pit("passed", {"backtest": {
+        "periods": 70, "concession_periods": 0,
+        "concession_period_fraction": 0.0,
+    }})
+
+    assert "#00C896" in card
+    assert "cedida" not in card
+
+
+def test_card_do_protocolo_pit_sai_num_bloco_unico():
+    """Div aberta num bloco e fechada em outro vira moldura vazia."""
+    card = fiis._card_do_protocolo_pit("passed", {})
+    assert card.count("<div") == card.count("</div>")
+    assert card.startswith("<div") and card.endswith("</div>")

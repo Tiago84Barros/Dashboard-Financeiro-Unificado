@@ -914,6 +914,43 @@ def _avisos_de_cessao_de_protecao(result: dict) -> list[str]:
     return avisos
 
 
+def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> str:
+    """Card do veredito do protocolo PIT, com a cessão de proteção da safra.
+
+    `robust_optimizer_point_in_time_backtest` grava `concession_periods` e
+    `concession_period_fraction` no `metrics_json` desde que a concessão
+    existe, e nenhum consumidor os lia. Na safra real, 42 dos 70 períodos só
+    tiveram carteira porque a proteção foi cedida — e o card dizia "Aprovado"
+    em verde, sem uma palavra sobre isso. Veredito de integridade temporal
+    apresentado como ausência de risco é exatamente o defeito que este branch
+    inteiro existe para impedir.
+
+    Função pura de propósito: o teste do texto-fonte do render continua
+    passando quando a mensagem some da tela.
+    """
+    aprovado = validation_status == "passed"
+    pit = validation_metrics.get("backtest") or {}
+    periodos = int(pit.get("periods") or 0)
+    cedidos = int(pit.get("concession_periods") or 0)
+    fracao = float(pit.get("concession_period_fraction") or 0.0)
+    # A-162: o gate não afere vantagem sobre o IFIX; o rótulo diz o que o
+    # certificado realmente atesta.
+    sub = (f"integridade temporal, metodologia {METHODOLOGY_VERSION}; "
+           "não afere vantagem sobre o IFIX")
+    valor = "Aprovado" if aprovado else "Pendente"
+    accent = sub_color = "#00C896" if aprovado else "#FC5C7D"
+    if cedidos > 0:
+        valor = f"{valor} com cessão"
+        sub += (f" · {cedidos} de {periodos} safras ({fracao:.0%}) só tiveram "
+                "carteira porque a proteção foi cedida na elegibilidade — "
+                "proteção cedida não é ausência de risco")
+        # Âmbar mesmo aprovado, na borda E no subtítulo: o verde desta tela
+        # significa "sem ressalva", e a ressalva é justamente o subtítulo.
+        accent = sub_color = "#F6C90E"
+    return _kpi_html("Protocolo PIT", valor, sub=sub, sub_color=sub_color,
+                     accent=accent)
+
+
 def _posicao_no_ranking(explanation: dict) -> str:
     """Sem posição no ranking do tipo, diz isso — não inventa a última.
 
@@ -2007,13 +2044,11 @@ def _carteira_integrada(preferences: dict):
     # A-162: "Validação PIT: Aprovada" em verde ao lado da nota era lido como
     # "a estratégia bate o índice". O gate de `core/fii_validation.py` não testa
     # isso -- ele exige que o intervalo bootstrap do excesso EXISTA, nunca que
-    # ele exclua o zero. O rótulo passa a dizer o que o certificado atesta.
-    gate_cards[2].markdown(_kpi_html(
-        "Protocolo PIT", "Aprovado" if validation_status == "passed" else "Pendente",
-        sub=f"integridade temporal, metodologia {METHODOLOGY_VERSION}; "
-            f"não afere vantagem sobre o IFIX",
-        accent="#00C896" if validation_status == "passed" else "#FC5C7D",
-    ), unsafe_allow_html=True)
+    # ele exclua o zero. O rótulo diz o que o certificado atesta, e agora
+    # declara junto quantas safras só tiveram carteira com proteção cedida.
+    gate_cards[2].markdown(
+        _card_do_protocolo_pit(validation_status, validation.get("metrics") or {}),
+        unsafe_allow_html=True)
 
     # O universo de correlação replica o pool máximo do otimizador e evita
     # consultar séries de centenas de fundos a cada alteração dos controles.
