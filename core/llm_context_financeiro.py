@@ -22,6 +22,7 @@ import unicodedata
 from datetime import date as _date
 
 from core.fluxo_caixa_mes import fluxo_do_mes
+from core.llm_context_mercado import bloco_macro_pais
 
 _MESES_PT = {
     1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
@@ -267,10 +268,26 @@ def build_financas_chat_context(
                  f"mercado {_brl(ult.get('valor_mercado', 0))}")
 
     L.append("")
+    # Macro de país entra aqui, e só ela: não há ativo nesta tela para carregar
+    # impacto setorial, mas juro e inflação atravessam o orçamento doméstico
+    # inteiro — dívida cara, poder de compra do salário, custo de oportunidade
+    # do dinheiro parado. Sem este bloco a LLM respondia que não tinha "dados
+    # macroeconômicos do cenário brasileiro" com public.macro preenchida.
+    _macro = bloco_macro_pais()
+    if _macro:
+        L.append("")
+        L.append(_macro)
+        L.append("")
+
     L.append("DEFINIÇÕES IMPORTANTES:")
     L.append("  - 'Despesas' do mês EXCLUEM compras no cartão de crédito (elas viram")
     L.append("    fatura futura e vivem em outra aba). Não confunda fluxo do mês com fatura.")
-    L.append("  - 'Saldo do mês' já subtrai os investimentos/aportes.")
+    L.append("  - 'Saldo de caixa' do mês é receitas menos despesas e NÃO subtrai")
+    L.append("    aporte: investir é patrimônio mudando de lugar, não saída de caixa.")
+    L.append("    'Total retido' é o saldo de caixa mais o aporte do período.")
+    L.append("  - O bloco de macro do país acima FAZ PARTE deste contexto: use-o para")
+    L.append("    relacionar juro e inflação ao orçamento antes de dizer que não há")
+    L.append("    dados de cenário.")
     L.append("  - Valores em Reais (BRL).")
 
     return "\n".join(L), chart_meta
