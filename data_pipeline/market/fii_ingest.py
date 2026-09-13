@@ -821,6 +821,22 @@ def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
     return counts
 
 
+def _serie_mensal_por_ticker(universo, rows) -> "dict[str, dict[date, float]]":
+    """Semeia a serie mensal com TODOS os FIIs, nao so com os que tem provento.
+
+    Fundo sem uma linha em `market.dividends` era o caso mudo por excelencia:
+    nao entrava no laco, nao gerava observacao nenhuma, e a ultima leitura
+    conhecida -- em nove tickers, a regularidade do yield relatado que ate hoje
+    gravava sob o nome da recorrencia -- seguia decidindo sem prazo de
+    validade. Semeado, ele recebe a linha de ausencia com motivo, e a linha
+    nova vence o `DISTINCT ON` por `knowledge_at`.
+    """
+    monthly: dict[str, dict[date, float]] = {str(ticker): {} for ticker in universo}
+    for ticker, month, amount in rows:
+        monthly.setdefault(str(ticker), {})[month] = float(amount or 0)
+    return monthly
+
+
 def _derive_income_observations(conn) -> int:
     from data_pipeline.market import fii_v2
     # A regra de "o que e renda" tem um dono unico desde o A-128:
@@ -857,9 +873,9 @@ def _derive_income_observations(conn) -> int:
         GROUP BY d.ticker, date_trunc('month', COALESCE(d.event_date, d.ex_date,
                                                         d.payment_date))::date
     """)).fetchall()
-    monthly: dict[str, dict[date, float]] = defaultdict(dict)
-    for ticker, month, amount in rows:
-        monthly[str(ticker)][month] = float(amount or 0)
+    universo = [str(linha[0]) for linha in
+                conn.execute(text("SELECT ticker FROM market.fiis")).fetchall()]
+    monthly = _serie_mensal_por_ticker(universo, rows)
     observations = fii_v2.income_metrics_from_monthly(monthly, as_of=datetime.now(timezone.utc).date())
     return repo.upsert(conn, "fii_metric_observations", observations)
 
@@ -948,17 +964,28 @@ def _governance_alignment_score(values: dict[str, float]) -> tuple[float | None,
 
 
 def _latest_metric_rows(conn, metrics: list[str]) -> list[dict]:
+    """A observacao mais recente de cada metrica -- e nada, quando a mais
+    recente e uma ausencia.
+
+    O descarte do nulo tem de vir DEPOIS do `DISTINCT ON`. Dentro do `WHERE`
+    ele removia a linha de ausencia antes da escolha, e a observacao anterior
+    -- o numero velho, ou o do endpoint `reports` -- voltava a vencer como se
+    fosse a leitura corrente. Era assim que a ausencia virava silencio, e
+    silencio nesta tabela significa "use o numero anterior".
+    """
     return [dict(row) for row in conn.execute(text("""
-        SELECT DISTINCT ON (ticker, metric_name)
-               ticker, metric_name, value_numeric::float AS value,
-               reference_date, available_at, knowledge_at
-        FROM market.fii_metric_observations
-        WHERE metric_name = ANY(CAST(:metrics AS text[]))
-          AND quality_status IN ('observed','accepted')
-          AND value_numeric IS NOT NULL
-          AND knowledge_at <= now()
-        ORDER BY ticker, metric_name, knowledge_at DESC,
-                 reference_date DESC, observed_at DESC
+        SELECT * FROM (
+            SELECT DISTINCT ON (ticker, metric_name)
+                   ticker, metric_name, value_numeric::float AS value,
+                   reference_date, available_at, knowledge_at
+            FROM market.fii_metric_observations
+            WHERE metric_name = ANY(CAST(:metrics AS text[]))
+              AND quality_status IN ('observed','accepted')
+              AND knowledge_at <= now()
+            ORDER BY ticker, metric_name, knowledge_at DESC,
+                     reference_date DESC, observed_at DESC
+        ) mais_recente
+        WHERE value IS NOT NULL
     """), {"metrics": metrics}).mappings().all()]
 
 

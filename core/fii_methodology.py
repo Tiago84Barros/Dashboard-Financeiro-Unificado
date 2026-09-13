@@ -92,6 +92,40 @@ INCOME_RECURRENCE_MIN_MONTHS = 12
 INCOME_RECURRENCE_FORMULA = "positive_share/(1+cv),vida_observada<=36m"
 
 
+#: Por que a recorrência não existe. A ausência precisa CHEGAR a quem decide,
+#: e chegar dizendo o que é: os leitores escolhem a observação mais recente por
+#: ``knowledge_at``, então "não gravar linha" não derruba o valor anterior — só
+#: o deixa parecer fresco. Medido em 13/09/2026, era isso que acontecia com os
+#: 19 fundos sem recorrência: doze passavam a publicar o número do endpoint
+#: ``reports`` e sete mantinham o valor de julho.
+SEM_PROVENTO_OBSERVADO = "sem_provento_observado"
+VIDA_MENOR_QUE_MINIMO = "vida_observada_menor_que_minimo"
+MEDIA_DE_RENDA_NAO_POSITIVA = "media_de_renda_nao_positiva"
+
+
+def income_recurrence_from_series_com_motivo(
+        values: "Iterable[float]") -> "tuple[float | None, str | None]":
+    """Regularidade do pagamento sobre meses EFETIVAMENTE observados, com o
+    motivo quando ela não existe.
+
+    Os dois portões moram aqui e só aqui: recontá-los do lado de fora é como
+    motivo e valor passam a discordar — a linha sairia com número e motivo, ou
+    nula e muda. ``income_recurrence_from_series`` é a projeção no valor.
+    """
+    serie = [float(value or 0.0) for value in values]
+    if not serie:
+        return None, SEM_PROVENTO_OBSERVADO
+    if len(serie) < INCOME_RECURRENCE_MIN_MONTHS:
+        return None, VIDA_MENOR_QUE_MINIMO
+    mean = sum(serie) / len(serie)
+    if mean <= 0:
+        return None, MEDIA_DE_RENDA_NAO_POSITIVA
+    positive_share = sum(value > 0 for value in serie) / len(serie)
+    variance = sum((value - mean) ** 2 for value in serie) / len(serie)
+    cv = math.sqrt(variance) / mean
+    return max(0.0, min(1.0, positive_share / (1.0 + cv))), None
+
+
 def income_recurrence_from_series(values: "Iterable[float]") -> float | None:
     """Regularidade do pagamento sobre meses EFETIVAMENTE observados.
 
@@ -99,16 +133,7 @@ def income_recurrence_from_series(values: "Iterable[float]") -> float | None:
     calendário. Quem entrega meses que o fundo não viveu obtém a resposta
     errada — ver ``income_recurrence``.
     """
-    serie = [float(value or 0.0) for value in values]
-    if len(serie) < INCOME_RECURRENCE_MIN_MONTHS:
-        return None
-    mean = sum(serie) / len(serie)
-    if mean <= 0:
-        return None
-    positive_share = sum(value > 0 for value in serie) / len(serie)
-    variance = sum((value - mean) ** 2 for value in serie) / len(serie)
-    cv = math.sqrt(variance) / mean
-    return max(0.0, min(1.0, positive_share / (1.0 + cv)))
+    return income_recurrence_from_series_com_motivo(values)[0]
 
 
 def income_recurrence(monthly_income: "dict[date, float]", as_of: date) -> float | None:
@@ -141,7 +166,19 @@ def income_recurrence(monthly_income: "dict[date, float]", as_of: date) -> float
     seria trocar um viés por outro; a ausência reduz cobertura e o caminho de
     métrica crítica ausente já sabe lidar com ela.
     """
-    return income_recurrence_from_series(
+    return income_recurrence_com_motivo(monthly_income, as_of)[0]
+
+
+def income_recurrence_com_motivo(monthly_income: "dict[date, float]",
+                                 as_of: date) -> "tuple[float | None, str | None]":
+    """``income_recurrence`` dizendo POR QUE não existe, quando não existe.
+
+    Quem publica a métrica precisa disso: a ausência tem de ser gravada como
+    observação, não omitida. Fundo sem nenhum provento e fundo com oito meses
+    de vida são ausências diferentes, e quem lê a tabela não tem como
+    distingui-las depois se o motivo não viajar junto.
+    """
+    return income_recurrence_from_series_com_motivo(
         float(monthly_income.get(mes, 0.0) or 0.0)
         for mes in income_recurrence_months(monthly_income, as_of))
 

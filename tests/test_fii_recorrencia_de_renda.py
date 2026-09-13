@@ -124,8 +124,15 @@ def test_ingestao_publica_a_recorrencia_da_vida_observada():
         {"RBVA11": _renda(FIM, 16), "RBFM11": _renda(FIM, 8)}, as_of=date(2026, 9, 20))
     por_chave = {(linha["ticker"], linha["metric_name"]): linha for linha in linhas}
     assert por_chave[("RBVA11", "income_recurrence")]["value_numeric"] > .99
-    assert ("RBFM11", "income_recurrence") not in por_chave, (
-        "8 meses de vida não sustentam a métrica; a observação não deve existir")
+    # Este assert dizia "a observação não deve existir" -- e era o defeito.
+    # Não gravar linha não apaga a anterior: os leitores escolhem a mais
+    # recente por `knowledge_at`, então a omissão deixava de pé o valor velho
+    # (ou o do endpoint `reports`) com aparência de recém-medido. A métrica
+    # continua não existindo; a OBSERVAÇÃO de que ela não existe, sim.
+    ausencia = por_chave[("RBFM11", "income_recurrence")]
+    assert ausencia["value_numeric"] is None
+    assert json.loads(ausencia["metadata_json"])["absence_reason"] == (
+        "vida_observada_menor_que_minimo")
     metadados = json.loads(por_chave[("RBVA11", "income_recurrence")]["metadata_json"])
     assert metadados["formula"] == INCOME_RECURRENCE_FORMULA
     # A fórmula publicada tem de dizer que a janela é recortada: o consumidor
