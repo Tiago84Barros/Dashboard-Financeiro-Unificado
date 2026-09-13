@@ -23,6 +23,7 @@ from core.fii_methodology import (
     FORMULA_VERSION,
     METHODOLOGY_VERSION,
     income_growth_3y,
+    income_recurrence,
     score_fiis_by_type,
 )
 from core.fii_portfolio_v4 import LIVE_PORTFOLIO_STRATEGY_ID
@@ -230,10 +231,25 @@ def _features_as_of(
     if not div.empty:
         history_div = div[(div["date"] <= cutoff) &
                           (div["date"] > cutoff - pd.Timedelta(days=3 * 365 + 31))].copy()
+        # Recorrência: mesma definição única da ingestão, pelo mesmo motivo que
+        # o crescimento abaixo. O PIT fazia `max(0, 1 - std/mean)` sobre os 24
+        # últimos meses COM pagamento — sem `positive_share` e sobre outra
+        # janela —, então o certificado validava uma metodologia que a produção
+        # não executava.
+        #
+        # A série vem do histórico INTEIRO até o cutoff, não de `history_div`:
+        # a janela é recortada no primeiro provento de toda a série, e um corte
+        # de três anos na origem esconderia justamente o começo da vida de um
+        # fundo que ficou mudo. Isso não é olhar o futuro — tudo aqui é
+        # anterior ao cutoff.
+        todos_ate_cutoff = div[div["date"] <= cutoff].dropna(subset=["date", "amount"])
+        if not todos_ate_cutoff.empty:
+            por_mes_total = todos_ate_cutoff.set_index("date")["amount"].resample("MS").sum()
+            recurrence = income_recurrence(
+                {chave.date().replace(day=1): float(valor)
+                 for chave, valor in por_mes_total.items()},
+                cutoff.date().replace(day=1))
         if not history_div.empty:
-            monthly_div = history_div.set_index("date")["amount"].resample("ME").sum().tail(24)
-            if len(monthly_div) >= 12 and monthly_div.mean() > 0:
-                recurrence = max(0.0, 1.0 - float(monthly_div.std(ddof=0) / monthly_div.mean()))
             # Mesma definição da ingestão. Agrupar por ano-calendário aqui
             # fazia o validador medir uma métrica que a produção não calcula:
             # o ano corrente entrava parcial, e o viés oscilava com o mês do
