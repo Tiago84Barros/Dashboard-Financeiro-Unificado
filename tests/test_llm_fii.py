@@ -155,3 +155,39 @@ def test_contexto_sem_cessao_diz_nenhuma():
     )
 
     assert "proteção ao investidor cedida na elegibilidade: nenhuma" in context
+
+
+def test_bloco_do_fundo_cedido_declara_o_portao_reprovado():
+    """A declaração agregada no topo não chega onde a IA lê o fundo.
+
+    Medido no passo 7: perguntado sobre o desconto patrimonial de um fundo
+    readmitido por cessão, o modelo apresentou o vencimento concentrado como
+    risco comum — "concentração moderada" — porque o bloco DETALHES DOS FUNDOS
+    trazia a métrica sem dizer que ela reprovou o portão. Duas linhas de
+    agregado no topo não se ligam sozinhas ao fundo lá embaixo: é a própria
+    proteção cedida voltando a parecer ausência de risco.
+    """
+    selecionado = _fii()
+    readmitido = _fii("REND11")
+    context = build_fii_chat_context(
+        user_question="Por que REND11 negocia com desconto?",
+        selected_items=[selecionado, readmitido],
+        scored_rows=[selecionado],
+        methodology_rows=[selecionado, readmitido],
+        portfolio_result={
+            "can_publish": False, "blockers": [],
+            "protecao_cedida_na_elegibilidade": [{
+                "ticker": "REND11",
+                "motivos": ["vencimentos em 24m acima do teto"],
+                "severidade": 1, "na_carteira": True,
+            }],
+        },
+        scenario=MacroScenario(selic=14, ipca=4.5), prices=pd.DataFrame(),
+    )
+
+    bloco = context.split("FII REND11 |", 1)[1].split("\nFII ", 1)[0]
+    assert "vencimentos em 24m acima do teto" in bloco
+    assert "cedid" in bloco.lower()
+
+    bloco_limpo = context.split("FII TEST11 |", 1)[1].split("\nFII ", 1)[0]
+    assert "cedid" not in bloco_limpo.lower(), "fundo aprovado não carrega cessão"

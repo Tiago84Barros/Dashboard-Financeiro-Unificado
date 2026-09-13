@@ -66,10 +66,23 @@ def _reference_summary(row: dict) -> str:
     return "; ".join(refs[:12]) or f"snapshot:{str(row.get('updated_at') or 'não informado')[:10]}"
 
 
-def _fund_block(row: dict, selected: bool) -> str:
+def _fund_block(row: dict, selected: bool, cessao: dict | None = None) -> str:
     lines = [
         f"FII {row.get('ticker')} | selecionado={'sim' if selected else 'não'} | "
         f"tipo={row.get('tipo') or 'ausente'} | segmento={row.get('sector') or 'ausente'}",
+    ]
+    # A cessão declarada só no agregado do topo não chega até aqui: a IA lê a
+    # métrica reprovada no meio das outras e a descreve como risco comum. O
+    # portão que reprovou tem de estar ao lado do número que o reprovou.
+    if cessao:
+        lines.append(
+            "  proteção cedida na elegibilidade: reprovou em "
+            + (", ".join(cessao.get("motivos") or []) or "motivo não registrado")
+            + ("; permanece na carteira porque o portão foi cedido, não porque passou."
+               if cessao.get("na_carteira")
+               else "; readmitido à disputa por cessão, mas fora da carteira final.")
+        )
+    lines += [
         "  mercado: "
         f"score={_fmt(row.get('type_score'))}; confiança={_fmt(row.get('confidence'), percent=True)}; "
         f"cobertura={_fmt(row.get('coverage'), percent=True)}; "
@@ -148,6 +161,8 @@ def build_fii_chat_context(
     cedidos = [dict(item) for item
                in (portfolio_result.get("protecao_cedida_na_elegibilidade") or [])]
     notas_de_viabilidade = list(portfolio_result.get("viability_notes") or [])
+    cessao_por_ticker = {str(item.get("ticker") or ""): item
+                         for item in cedidos}
 
     current_output = (
         "Carteira Modelo aprovada pelos gates vigentes; resultado quantitativo "
@@ -218,7 +233,8 @@ def build_fii_chat_context(
         row = {**all_by_ticker.get(ticker, {}),
                **next((item for item in selected if item.get("ticker") == ticker), {})}
         if row:
-            lines.append(_fund_block(row, ticker in selected_set))
+            lines.append(_fund_block(row, ticker in selected_set,
+                                     cessao_por_ticker.get(ticker)))
         else:
             lines.append(f"FII {ticker}: não localizado no contexto carregado.")
 
