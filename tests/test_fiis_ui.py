@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 import views.fiis as fiis
+from core.fii_carteira_protegida import STATUS_READMITIDO
 
 _RAIZ = Path(__file__).resolve().parents[1]
 _BRUTO = (_RAIZ / "views" / "fiis.py").read_text(encoding="utf-8")
@@ -393,3 +394,45 @@ def test_card_do_protocolo_pit_sai_num_bloco_unico():
     card = fiis._card_do_protocolo_pit("passed", {})
     assert card.count("<div") == card.count("</div>")
     assert card.startswith("<div") and card.endswith("</div>")
+
+
+# ── Prontidão medida sobre quem a tela exibe ─────────────────────────────────
+
+def test_universo_exibido_inclui_o_readmitido_quando_o_estrito_esta_vazio():
+    """Com estrito vazio e candidatos, a tela publicava "0/0" de prontidão ao
+    lado de uma carteira cheia: os KPIs mediam o universo estrito e a carteira
+    exibia readmitidos."""
+    candidatos = [{"ticker": "REND11", "tipo": "tijolo"},
+                  {"ticker": "LOCA11", "tipo": "tijolo"}]
+    result = {"protecao_cedida_na_elegibilidade": [
+        {"ticker": "REND11", "motivos": ["renda recorrente abaixo do mínimo"],
+         "na_carteira": True},
+    ]}
+
+    universo = fiis._universo_exibido([], candidatos, result)
+
+    assert [row["ticker"] for row in universo] == ["REND11"]
+    # A distinção não some: o readmitido continua marcado como readmitido.
+    assert universo[0]["eligibility_status"] == STATUS_READMITIDO
+
+
+def test_universo_exibido_preserva_o_estrito_e_nao_duplica():
+    estritos = [{"ticker": "OK0011", "tipo": "tijolo"}]
+    candidatos = [{"ticker": "REND11", "tipo": "tijolo"}]
+    sem_cessao = fiis._universo_exibido(estritos, candidatos, {})
+
+    assert [row["ticker"] for row in sem_cessao] == ["OK0011"]
+    assert "eligibility_status" not in sem_cessao[0]
+
+    com_cessao = fiis._universo_exibido(estritos, candidatos, {
+        "protecao_cedida_na_elegibilidade": [{"ticker": "REND11"}]})
+    assert [row["ticker"] for row in com_cessao] == ["OK0011", "REND11"]
+
+
+def test_kpis_de_prontidao_medem_o_universo_exibido():
+    """O gate e os dois KPIs não podem sair de `scored`, que é só o estrito."""
+    corpo = inspect.getsource(fiis._carteira_integrada)
+    assert "_universo_exibido(" in corpo
+    gate = corpo.index("investable_gate = evaluate_publication_gate(")
+    montagem = corpo.index("result = montar_carteira_com_concessao(")
+    assert gate > montagem, "o gate precisa conhecer a carteira que a tela exibe"

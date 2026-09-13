@@ -914,6 +914,28 @@ def _avisos_de_cessao_de_protecao(result: dict) -> list[str]:
     return avisos
 
 
+def _universo_exibido(estritos, candidatos, result: dict) -> list[dict]:
+    """Universo que a tela realmente apresenta: estrito mais os readmitidos.
+
+    Os KPIs de prontidão e confiança saíam de `scored`, calculado só sobre o
+    universo estrito, enquanto a carteira ao lado podia estar cheia de
+    readmitidos pela cessão de proteção. Com o estrito vazio e candidatos, a
+    tela publicava "0/0" de prontidão junto de uma carteira montada — número
+    de um universo medindo outro.
+
+    A distinção não se apaga: o readmitido entra marcado com
+    ``STATUS_READMITIDO``, o mesmo carimbo que o orquestrador usa.
+    """
+    from core.fii_carteira_protegida import STATUS_READMITIDO
+
+    readmitidos = {str(item.get("ticker") or "")
+                   for item in (result.get("protecao_cedida_na_elegibilidade") or ())}
+    return list(estritos) + [
+        {**row, "eligibility_status": STATUS_READMITIDO}
+        for row in candidatos if str(row.get("ticker") or "") in readmitidos
+    ]
+
+
 def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> str:
     """Card do veredito do protocolo PIT, com a cessão de proteção da safra.
 
@@ -2022,34 +2044,6 @@ def _carteira_integrada(preferences: dict):
             )
         except (SQLAlchemyError, ValueError):
             macro_snapshot = None
-    investable_gate = evaluate_publication_gate(
-        scored, expected_universe=len(eligible_rows),
-        validation_status=validation_status,
-        snapshot_as_of=_snapshot_as_of(inputs),
-    )
-    st.session_state["fii_investable_publication_gate"] = investable_gate
-    investable_ready = sum(
-        row.get("data_readiness_status") == "ready" for row in scored
-    )
-    gate_cards = st.columns(3)
-    gate_cards[0].markdown(_kpi_html(
-        "Prontidão do universo elegível",
-        f"{investable_ready}/{len(scored)}",
-        sub="mínimo de 80% para publicação", accent="#F6C90E",
-    ), unsafe_allow_html=True)
-    gate_cards[1].markdown(_kpi_html(
-        "Confiança mediana elegível", f"{investable_gate.median_confidence:.1%}",
-        sub="mínimo de 75%", accent="#00C896" if investable_gate.median_confidence >= .75 else "#FC5C7D",
-    ), unsafe_allow_html=True)
-    # A-162: "Validação PIT: Aprovada" em verde ao lado da nota era lido como
-    # "a estratégia bate o índice". O gate de `core/fii_validation.py` não testa
-    # isso -- ele exige que o intervalo bootstrap do excesso EXISTA, nunca que
-    # ele exclua o zero. O rótulo diz o que o certificado atesta, e agora
-    # declara junto quantas safras só tiveram carteira com proteção cedida.
-    gate_cards[2].markdown(
-        _card_do_protocolo_pit(validation_status, validation.get("metrics") or {}),
-        unsafe_allow_html=True)
-
     # O universo de correlação replica o pool máximo do otimizador e evita
     # consultar séries de centenas de fundos a cada alteração dos controles.
     # Cada tentativa do orquestrador repete quase o mesmo pool; sem memória, o
@@ -2122,6 +2116,49 @@ def _carteira_integrada(preferences: dict):
         _correlacao_da_ultima_tentativa[0] if _correlacao_da_ultima_tentativa
         else pd.DataFrame()
     )
+    # Prontidão, confiança e gate medem o universo que a tela EXIBE, não o
+    # estrito: a carteira acima pode conter readmitidos pela cessão de
+    # proteção, e com o estrito vazio esta faixa publicava "0/0" ao lado de
+    # uma carteira cheia. Por isso o bloco só roda depois da montagem — é ela
+    # que diz quem foi readmitido.
+    universo_exibido = _universo_exibido(
+        eligible_rows, candidatos_da_concessao, result)
+    readmitidos_exibidos = len(universo_exibido) - len(eligible_rows)
+    scored_exibido = (scored if not readmitidos_exibidos
+                      else score_fiis_by_type(universo_exibido,
+                                              validation_status=validation_status))
+    investable_gate = evaluate_publication_gate(
+        scored_exibido, expected_universe=len(universo_exibido),
+        validation_status=validation_status,
+        snapshot_as_of=_snapshot_as_of(inputs),
+    )
+    st.session_state["fii_investable_publication_gate"] = investable_gate
+    investable_ready = sum(
+        row.get("data_readiness_status") == "ready" for row in scored_exibido
+    )
+    composicao = (f"{len(eligible_rows)} estritos + {readmitidos_exibidos} "
+                  "readmitidos por cessão de proteção" if readmitidos_exibidos
+                  else f"{len(eligible_rows)} elegíveis estritos")
+    gate_cards = st.columns(3)
+    gate_cards[0].markdown(_kpi_html(
+        "Prontidão do universo da carteira",
+        f"{investable_ready}/{len(scored_exibido)}",
+        sub=f"mínimo de 80% para publicação · {composicao}", accent="#F6C90E",
+    ), unsafe_allow_html=True)
+    gate_cards[1].markdown(_kpi_html(
+        "Confiança mediana do universo", f"{investable_gate.median_confidence:.1%}",
+        sub=f"mínimo de 75% · {composicao}",
+        accent="#00C896" if investable_gate.median_confidence >= .75 else "#FC5C7D",
+    ), unsafe_allow_html=True)
+    # A-162: "Validação PIT: Aprovada" em verde ao lado da nota era lido como
+    # "a estratégia bate o índice". O gate de `core/fii_validation.py` não testa
+    # isso -- ele exige que o intervalo bootstrap do excesso EXISTA, nunca que
+    # ele exclua o zero. O rótulo diz o que o certificado atesta, e agora
+    # declara junto quantas safras só tiveram carteira com proteção cedida.
+    gate_cards[2].markdown(
+        _card_do_protocolo_pit(validation_status, validation.get("metrics") or {}),
+        unsafe_allow_html=True)
+
     portfolio_can_publish = bool(
         result.get("can_publish") and investable_gate.can_publish_recommendation
     )
