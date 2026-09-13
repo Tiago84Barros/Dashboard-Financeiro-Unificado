@@ -426,6 +426,52 @@ def _aviso_de_idade_da_vitrine(inputs: pd.DataFrame) -> None:
     ), unsafe_allow_html=True)
 
 
+def _diagnostico_da_vitrine(inputs: pd.DataFrame, eligibility: dict) -> list[str]:
+    """Causas que só esta aba conhece, para o card de diagnóstico da revisão.
+
+    ``design/portfolio_review.py`` sabe distinguir "não havia candidato" de "não
+    coube nos tetos", mas não sabe nada sobre vitrine de FIIs. Estas frases são a
+    parte do diagnóstico que depende da fonte -- idade do snapshot e exclusão
+    dominada por métrica ausente -- e sobem para o topo da tela em card, em vez
+    de ficarem só dentro do expander de exclusões.
+    """
+    linhas: list[str] = []
+    if inputs is not None and inputs.attrs.get("snapshot_stale_warning"):
+        linhas.append(
+            f"Vitrine de FIIs publicada em {inputs.attrs.get('snapshot_as_of', 'data desconhecida')}"
+            f", há {inputs.attrs.get('snapshot_age_days')} dia(s) — o alvo de publicação é "
+            f"{inputs.attrs.get('snapshot_max_age_days')} dia(s). Republicar a vitrine é o "
+            f"primeiro passo antes de mexer em qualquer parâmetro."
+        )
+    contagem = (eligibility or {}).get("exclusion_counts") or {}
+    ausencias = sum(valor for chave, valor in contagem.items() if "ausente" in str(chave))
+    total = (eligibility or {}).get("universe_count") or 0
+    if total and ausencias >= total:
+        linhas.append(
+            f"Os {total} fundos do universo saíram por métrica ausente, nenhum por reprovação "
+            "em critério. Afrouxar filtros não devolve fundo nenhum: falta dado, não folga."
+        )
+    return linhas
+
+
+def _recorte_de_correlacao(corr: pd.DataFrame, scored: list[dict], *,
+                           limite: int = 16) -> pd.DataFrame:
+    """Mantém o heatmap legível: os melhores candidatos por nota, não todos.
+
+    O universo candidato chega com dezenas de fundos; uma matriz 48×48 é ruído,
+    não informação. O recorte segue a nota de tipo, que é a mesma ordem que o
+    otimizador enxerga.
+    """
+    if corr is None or corr.empty:
+        return pd.DataFrame()
+    ordem = [
+        str(row.get("ticker") or "")
+        for row in sorted(scored, key=lambda item: -float(item.get("type_score") or 0))
+    ]
+    mantidos = [ticker for ticker in ordem if ticker in corr.columns][:limite]
+    return corr.loc[mantidos, mantidos] if len(mantidos) >= 2 else pd.DataFrame()
+
+
 def _diagnostico_de_exclusao(eligibility: dict, *, expandido: bool) -> None:
     """Mostra por que cada fundo ficou de fora, em ordem de frequência."""
     contagem = eligibility.get("exclusion_counts") or {}
@@ -1370,13 +1416,31 @@ def _render_portfolio_correlation(weights: dict[str, float],
     )
     prices = _mr.load_precos_mensais(tuple(sorted(weights)))
     returns, corr = _portfolio_return_correlation(prices, order)
-    st.markdown("#### Correlação entre os FIIs selecionados")
-    if corr.empty or corr.notna().to_numpy().sum() <= len(corr):
-        st.info("Não há pelo menos dois FIIs com 12 meses coincidentes para calcular a correlação.")
-        return returns
+    _render_matriz_correlacao(
+        corr, key="fii_selected_correlation",
+        titulo="Correlação entre os FIIs selecionados",
+        vazio="Não há pelo menos dois FIIs com 12 meses coincidentes para calcular a correlação.")
+    return returns
+
+
+def _render_matriz_correlacao(corr: pd.DataFrame, *, key: str, titulo: str,
+                              vazio: str, contexto: str = "") -> None:
+    """Heatmap de correlação reaproveitável.
+
+    Extraído de ``_render_portfolio_correlation`` porque a tela de carteira
+    vazia passou a mostrar a correlação do universo *candidato*: quando nenhuma
+    composição se forma, saber como os candidatos se movem entre si é
+    exatamente o que ajuda a decidir qual parâmetro afrouxar. Duplicar o
+    plotly seria a alternativa, e não há razão para duas verdades visuais.
+    """
+    st.markdown(f"#### {titulo}")
+    if corr is None or corr.empty or corr.notna().to_numpy().sum() <= len(corr):
+        st.info(vazio)
+        return
     avg_correlation = _fz.mean_correlation(corr)
     st.caption(
-        "Correlação dos retornos totais mensais, com mínimo de 12 observações por par. "
+        (contexto + " " if contexto else "")
+        + "Correlação dos retornos totais mensais, com mínimo de 12 observações por par. "
         + (f"Média entre os pares: **{avg_correlation:.2f}**. "
            if avg_correlation is not None else "")
         + "Azul indica menor correlação; rosa indica maior correlação."
@@ -1393,69 +1457,60 @@ def _render_portfolio_correlation(weights: dict[str, float],
         font_color="#CBD5E0", coloraxis_colorbar=dict(title="Correlação"),
     )
     fig.update_xaxes(side="bottom", tickangle=-45)
-    st.plotly_chart(fig, width="stretch", key="fii_selected_correlation")
-    return returns
+    st.plotly_chart(fig, width="stretch", key=key)
 
 
-def _render_portfolio_history_diagnostics(weights: dict[str, float],
-                                          returns: pd.DataFrame) -> None:
-    """Preserva comparação com o mercado e curva de diversificação histórica."""
+def _anualizado(series) -> float | None:
+    """Retorno anualizado com piso amostral; None quando a janela é curta demais."""
+    clean = series.dropna()
+    if len(clean) < 6:
+        return None
+    years = len(clean) / 12.0
+    cumulative = float((1 + clean).prod() - 1)
+    return (1 + cumulative) ** (1 / years) - 1 if years > .5 else None
+
+
+def _vol_anual(series) -> float | None:
+    clean = series.dropna()
+    return float(clean.std(ddof=0) * (12 ** .5)) if len(clean) >= 6 else None
+
+
+def _comparacao_com_mercado(weights: dict[str, float],
+                            returns: pd.DataFrame) -> pd.DataFrame:
+    """Série da carteira alinhada a IFIX e universo, na janela comum aos três.
+
+    Extraída de ``_render_portfolio_history_diagnostics`` porque dois blocos
+    passaram a precisar dela: a retrospectiva e a curva de risco, que subiu na
+    tela. Antes, a volatilidade do IFIX só existia como variável local da
+    retrospectiva -- a linha tracejada do gráfico dependia de a retrospectiva ter
+    sido desenhada primeiro, acoplamento invisível que este recorte desfaz.
+    """
     port_cols = [ticker for ticker in weights if ticker in getattr(returns, "columns", [])]
     common = returns[port_cols].dropna() if port_cols else pd.DataFrame()
+    if len(common) < 6:
+        return pd.DataFrame()
+    total = sum(weights[ticker] for ticker in port_cols) or 1.0
+    portfolio_return = sum(common[ticker] * (weights[ticker] / total) for ticker in port_cols)
+    comparison = portfolio_return.rename("Carteira").to_frame()
     market = _mr.load_mercado_retorno_mensal()
+    if not market.empty:
+        comparison = comparison.join(market[["IFIX", "Universo"]], how="inner")
+    return comparison.dropna(how="any")
 
-    def annualized(series):
-        clean = series.dropna()
-        if len(clean) < 6:
-            return None
-        years = len(clean) / 12.0
-        cumulative = float((1 + clean).prod() - 1)
-        return (1 + cumulative) ** (1 / years) - 1 if years > .5 else None
 
-    def volatility(series):
-        clean = series.dropna()
-        return float(clean.std(ddof=0) * (12 ** .5)) if len(clean) >= 6 else None
+def _render_risk_curve(weights: dict[str, float], returns: pd.DataFrame) -> None:
+    """Volatilidade da carteira × nº de fundos, com o IFIX como régua.
 
-    ifix_volatility = None
-    if len(common) >= 6:
-        total = sum(weights[ticker] for ticker in port_cols) or 1.0
-        portfolio_return = sum(
-            common[ticker] * (weights[ticker] / total) for ticker in port_cols)
-        comparison = portfolio_return.rename("Carteira").to_frame()
-        if not market.empty:
-            comparison = comparison.join(market[["IFIX", "Universo"]], how="inner")
-        comparison = comparison.dropna(how="any")
-        portfolio_annual = annualized(comparison["Carteira"]) if not comparison.empty else None
-        ifix_annual = annualized(comparison["IFIX"]) if "IFIX" in comparison else None
-        universe_annual = annualized(comparison["Universo"]) if "Universo" in comparison else None
-        ifix_volatility = volatility(comparison["IFIX"]) if "IFIX" in comparison else None
-        alpha = (portfolio_annual - ifix_annual
-                 if portfolio_annual is not None and ifix_annual is not None else None)
-        st.markdown("#### Retrospectiva da seleção vs. mercado")
-        cards = st.columns(4)
-        cards[0].markdown(_kpi_html(
-            "Seleção atual", f"{portfolio_annual:.1%}" if portfolio_annual is not None else "—",
-            accent="#00C896", sub=f"a.a. · {len(comparison)} meses", sub_color="#4A5568"),
-            unsafe_allow_html=True)
-        cards[1].markdown(_kpi_html(
-            "IFIX", f"{ifix_annual:.1%}" if ifix_annual is not None else "—",
-            accent="#9CA3AF", sub="índice de FIIs", sub_color="#4A5568"),
-            unsafe_allow_html=True)
-        cards[2].markdown(_kpi_html(
-            "Mercado (mediana)", f"{universe_annual:.1%}" if universe_annual is not None else "—",
-            accent="#9CA3AF", sub="universo de FIIs", sub_color="#4A5568"),
-            unsafe_allow_html=True)
-        cards[3].markdown(_kpi_html(
-            "vs. IFIX", f"{alpha:+.1%}" if alpha is not None else "—",
-            accent="#00C896" if (alpha or 0) >= 0 else "#FC5C7D",
-            sub="retorno anualizado relativo", sub_color="#4A5568"),
-            unsafe_allow_html=True)
-        st.caption(
-            "Diagnóstico in-sample das posições atuais na mesma janela. Como estabilidade "
-            "histórica participa da seleção, este resultado não é evidência preditiva nem "
-            "substitui o backtest point-in-time.")
+    Este gráfico responde à pergunta "a carteira oscila mais ou menos que o
+    índice?", e estava no fim da aba, dentro do bloco de diagnósticos
+    históricos, depois de todos os cards de seleção. Ele sobe para logo após a
+    correlação: é onde a pergunta nasce, e um comparativo com o IFIX que ninguém
+    rola até o fim para ver não cumpre função nenhuma.
+    """
+    comparison = _comparacao_com_mercado(weights, returns)
+    ifix_volatility = _vol_anual(comparison["IFIX"]) if "IFIX" in comparison else None
 
-    st.markdown("#### Risco × número de fundos")
+    st.markdown("#### Volatilidade da carteira vs. IFIX")
     curve = _fz.risk_curve(returns, weights) if not returns.empty else []
     if len(curve) < 2:
         st.caption("Sem histórico suficiente entre os fundos selecionados para traçar a curva.")
@@ -1480,10 +1535,49 @@ def _render_portfolio_history_diagnostics(weights: dict[str, float],
     months = int(curve_frame["meses"].iloc[0]) if "meses" in curve_frame else 0
     effective = _fz.effective_n(weights)
     st.caption(
-        f"Efeito incremental da diversificação na mesma janela comum de {months} meses. "
-        f"Número efetivo: {effective:.1f} de {len(weights)}." if effective else
-        f"Efeito incremental da diversificação na mesma janela comum de {months} meses.")
+        (f"Cada ponto é a volatilidade anualizada da carteira com os N fundos de maior peso, "
+         f"na janela comum de {months} meses. A linha tracejada é a volatilidade do IFIX no "
+         f"mesmo período: abaixo dela, a carteira oscilou menos que o índice. "
+         f"Número efetivo de fundos: {effective:.1f} de {len(weights)}.") if effective else
+        (f"Cada ponto é a volatilidade anualizada da carteira com os N fundos de maior peso, "
+         f"na janela comum de {months} meses. A linha tracejada é a volatilidade do IFIX."))
     st.plotly_chart(figure, width="stretch", key="fii_integrated_risk_curve")
+
+
+def _render_portfolio_history_diagnostics(weights: dict[str, float],
+                                          returns: pd.DataFrame) -> None:
+    """Retrospectiva in-sample da seleção contra IFIX e universo."""
+    comparison = _comparacao_com_mercado(weights, returns)
+    if comparison.empty:
+        return
+    portfolio_annual = _anualizado(comparison["Carteira"])
+    ifix_annual = _anualizado(comparison["IFIX"]) if "IFIX" in comparison else None
+    universe_annual = _anualizado(comparison["Universo"]) if "Universo" in comparison else None
+    alpha = (portfolio_annual - ifix_annual
+             if portfolio_annual is not None and ifix_annual is not None else None)
+    st.markdown("#### Retrospectiva da seleção vs. mercado")
+    cards = st.columns(4)
+    cards[0].markdown(_kpi_html(
+        "Seleção atual", f"{portfolio_annual:.1%}" if portfolio_annual is not None else "—",
+        accent="#00C896", sub=f"a.a. · {len(comparison)} meses", sub_color="#4A5568"),
+        unsafe_allow_html=True)
+    cards[1].markdown(_kpi_html(
+        "IFIX", f"{ifix_annual:.1%}" if ifix_annual is not None else "—",
+        accent="#9CA3AF", sub="índice de FIIs", sub_color="#4A5568"),
+        unsafe_allow_html=True)
+    cards[2].markdown(_kpi_html(
+        "Mercado (mediana)", f"{universe_annual:.1%}" if universe_annual is not None else "—",
+        accent="#9CA3AF", sub="universo de FIIs", sub_color="#4A5568"),
+        unsafe_allow_html=True)
+    cards[3].markdown(_kpi_html(
+        "vs. IFIX", f"{alpha:+.1%}" if alpha is not None else "—",
+        accent="#00C896" if (alpha or 0) >= 0 else "#FC5C7D",
+        sub="retorno anualizado relativo", sub_color="#4A5568"),
+        unsafe_allow_html=True)
+    st.caption(
+        "Diagnóstico in-sample das posições atuais na mesma janela. Como estabilidade "
+        "histórica participa da seleção, este resultado não é evidência preditiva nem "
+        "substitui o backtest point-in-time.")
 
 
 def _merge_portfolio_views(primary: pd.DataFrame | None,
@@ -1953,9 +2047,20 @@ def _carteira_integrada(preferences: dict):
         from core.portfolio_review_routes import fii_review
         from design.portfolio_review import render_portfolio_review
 
-        render_portfolio_review(fii_review([], portfolio_policy, scenario), key="fii_review")
+        proposta = fii_review([], portfolio_policy, scenario)
+        render_portfolio_review(
+            proposta, key="fii_review",
+            diagnostico=_diagnostico_da_vitrine(inputs, eligibility))
         st.session_state.pop("fii_port", None)
         st.session_state["fii_portfolio_can_publish"] = False
+        # A caixa de chat não depende de a carteira ter se formado -- e é aqui
+        # que ela mais serve: com zero elegíveis, a pergunta do usuário é "por
+        # que nada passou?", e a LLM recebe o universo inteiro da metodologia
+        # para responder. Antes, o `return None` levava o chat junto.
+        _render_fii_chat(
+            items=[], scored=[], methodology_rows=inputs.to_dict("records"),
+            result=proposta, scenario=scenario, reports=[],
+            prices=pd.DataFrame(), scenario_provenance=scenario_provenance)
         return None
 
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
@@ -2046,9 +2151,27 @@ def _carteira_integrada(preferences: dict):
         proposal = fii_review(scored, portfolio_policy, scenario)
         st.session_state.pop("fii_port", None)
         st.session_state["fii_portfolio_can_publish"] = False
-        render_portfolio_review(proposal, key="fii_review")
+        render_portfolio_review(
+            proposal, key="fii_review",
+            diagnostico=_diagnostico_da_vitrine(inputs, eligibility))
         with st.expander("Diagnóstico da tentativa com metas originais"):
             _diagnostico_de_factibilidade(result)
+        # Havia candidatos; só não coube composição. A correlação entre eles é
+        # justamente o que informa qual teto afrouxar -- mostrar o universo
+        # candidato aqui custa nada (a matriz já foi calculada acima para o
+        # otimizador) e substitui um beco sem saída por um diagnóstico.
+        _render_matriz_correlacao(
+            _recorte_de_correlacao(candidate_correlation, scored),
+            key="fii_candidate_correlation",
+            titulo="Correlação entre os candidatos avaliados",
+            contexto="Nenhuma composição se formou; estes são os candidatos que o "
+                     "otimizador tinha à disposição.",
+            vazio="Não há pelo menos dois candidatos com 12 meses coincidentes "
+                  "para calcular a correlação.")
+        _render_fii_chat(
+            items=[], scored=scored, methodology_rows=inputs.to_dict("records"),
+            result=proposal, scenario=scenario, reports=[],
+            prices=candidate_prices, scenario_provenance=scenario_provenance)
         return None
     portfolio_can_publish = bool(
         result.get("can_publish") and investable_gate.can_publish_recommendation
@@ -2153,6 +2276,10 @@ def _carteira_integrada(preferences: dict):
     weights = {item["ticker"]: item["weight"] for item in items}
     fii_types = {item["ticker"]: item["tipo"] for item in items}
     returns = _render_portfolio_correlation(weights, fii_types)
+    # A curva de risco sobe para junto da correlação: as duas respondem a
+    # "quanto esta carteira oscila", e separá-las por toda a lista de cards de
+    # seleção fazia a comparação com o IFIX morrer no fim da rolagem.
+    _render_risk_curve(weights, returns)
     comp_left, comp_right = st.columns([2, 1])
     with comp_left:
         st.markdown(_info_card_html(

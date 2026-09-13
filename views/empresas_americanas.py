@@ -2591,7 +2591,15 @@ def _tab_criacao_portfolio(status: dict) -> None:
     if result.get("review_portfolio") is not None:
         from design.portfolio_review import render_portfolio_review
 
-        render_portfolio_review(result["review_portfolio"], key="us_review")
+        # O bloqueio também entra em card dentro do componente: acima ele é um
+        # `st.error` solto, e a causa precisa estar colada ao 0% que ela explica.
+        render_portfolio_review(
+            result["review_portfolio"], key="us_review",
+            diagnostico=[texto for texto in (
+                result.get("blocking_error"),
+                "A validação histórica foi exigida, mas o painel PIT não está disponível."
+                if result.get("history_required_unavailable") else None,
+            ) if texto])
         # O funil continua visível mesmo sem carteira: é ele que diz QUAL filtro
         # esvaziou o universo. Sem isso, "nenhuma carteira foi formada" não tem
         # como virar uma ação do usuário.
