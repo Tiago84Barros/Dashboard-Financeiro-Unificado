@@ -99,23 +99,25 @@ def test_pit_e_producao_concordam_em_pagamento_irregular():
 def test_pit_enxerga_o_primeiro_provento_fora_da_janela_de_tres_anos():
     """O recorte de ``3*365+31`` dias na origem é a divergência que sobra.
 
-    Fundo que pagou 2019-2023, ficou mudo dois anos e voltou a pagar há doze
-    meses: a produção lê o histórico inteiro, acha o primeiro provento em 2019
-    e pune os 24 meses mudos, dando 0,138. Medido antes da unificação, o PIT
-    dava 0,0 no mesmo fundo — mais severo, não mais leniente, porque
-    ``1 - std/mean`` satura em zero assim que o desvio passa a média.
+    O silêncio tem de ser maior que a janela de ``3*365+31`` dias, senão o
+    último pagamento anterior a ele sobrevive ao corte e o teste passa
+    igualzinho com e sem a correção — foi o que este teste fazia quando o
+    fundo ficava mudo por 24 meses. Com 36 meses de silêncio o corte aparece:
+    revertido o pedaço, o PIT dá 1,0 (só vê os 12 meses recentes, todos pagos)
+    contra 0,138 da produção.
 
-    A direção não é o ponto: duas notas diferentes para o mesmo fato é que
-    invalida o certificado. O recorte de origem é a metade da correção que não
-    se vê na fórmula, e é por isso que a série vem inteira do histórico.
+    Fundo que pagou 2018-2022, ficou mudo três anos e voltou a pagar há doze
+    meses: a produção lê o histórico inteiro, acha o primeiro provento em 2018
+    e pune os 36 meses mudos. O recorte de origem é a metade da correção que
+    não se vê na fórmula, e é por isso que a série vem inteira do histórico.
     """
-    pagamentos = _mensal(pd.Timestamp("2023-09-01"), 48)          # 2019-2023
+    pagamentos = _mensal(pd.Timestamp("2022-09-01"), 48)          # 2018-2022
     pagamentos.update(_mensal(pd.Timestamp("2026-09-01"), 12))    # voltou
     pit, producao = _recorrencia_pit(pagamentos), _recorrencia_producao(pagamentos)
     assert producao is not None and producao < .70, (
-        f"24 meses mudos têm de punir a produção, deu {producao}")
+        f"36 meses mudos têm de punir a produção, deu {producao}")
     assert pit == producao, (
-        f"o PIT premiaria o fundo mudo por não enxergar 2019: {pit} x {producao}")
+        f"o PIT premiaria o fundo mudo por não enxergar 2018: {pit} x {producao}")
 
 
 def test_historico_curto_no_pit_nao_produz_metrica():
