@@ -147,17 +147,74 @@ def test_o_valor_da_ausencia_nao_vaza_como_valor():
                             "value_json": {"a": 1}}) == {"a": 1}
 
 
+def _resolucoes_proprias(caminho: pathlib.Path) -> list[int]:
+    """Linhas em que o modulo pega `value_json` do dicionario por conta propria.
+
+    Pela AST, nao por substring: `obs.get("value_json")` e `obs["value_json"]`
+    sao as duas formas de remontar a cadeia de resolucao. O literal aparece
+    tambem dentro do SQL de cada leitor, e ali e legitimo -- a AST separa o
+    acesso ao dicionario do texto da consulta, o que a busca por substring nao
+    fazia.
+    """
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    linhas = []
+    for no in ast.walk(arvore):
+        if (isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+                and no.func.attr == "get" and no.args
+                and isinstance(no.args[0], ast.Constant)
+                and no.args[0].value == "value_json"):
+            linhas.append(no.lineno)
+        if (isinstance(no, ast.Subscript) and isinstance(no.slice, ast.Constant)
+                and no.slice.value == "value_json"):
+            linhas.append(no.lineno)
+    return sorted(linhas)
+
+
+def _chama(caminho: pathlib.Path, nome: str) -> bool:
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    return any(isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+               and no.func.id == nome for no in ast.walk(arvore))
+
+
 def test_todo_leitor_resolve_o_valor_pelo_dono_unico():
-    """Guarda duplicada não fica igual: o leitor que montar a própria cadeia
-    de resolução volta a entregar a marca como valor."""
+    """Guarda duplicada nao fica igual: o leitor que montar a propria cadeia
+    de resolucao volta a entregar a marca como valor.
+
+    A versao anterior deste teste procurava as substrings exatas
+    `value = obs.get("value_json")`; restaurar a cadeia antiga com qualquer
+    outra grafia passava, e quem quebrava era o `ruff F401` do import orfao --
+    uma trava por efeito colateral do linter, nao por desenho. Agora a
+    verificacao e pela AST e nao depende da forma do codigo.
+    """
     leitores = (
-        (_RAIZ / "core/market_read.py", "_read_fii_scoring_rows"),
-        (_RAIZ / "data_pipeline/market/fii_pit.py", None),
-        (_RAIZ / "data_pipeline/market/fii_ingest.py", None),
+        _RAIZ / "core/market_read.py",
+        _RAIZ / "data_pipeline/market/fii_pit.py",
+        _RAIZ / "data_pipeline/market/fii_ingest.py",
     )
-    for caminho, _ in leitores:
-        texto = caminho.read_text(encoding="utf-8")
-        assert "valor_observado" in texto, f"{caminho.name} não usa o dono único"
-        assert 'value = obs.get("value_json")' not in texto, (
-            f"{caminho.name} voltou a resolver o valor por conta própria")
-        assert 'value = observation.get("value_json")' not in texto
+    for caminho in leitores:
+        assert _chama(caminho, "valor_observado"), (
+            f"{caminho.name} nao chama o dono unico da resolucao")
+        proprias = _resolucoes_proprias(caminho)
+        assert not proprias, (
+            f"{caminho.name} volta a resolver `value_json` por conta propria "
+            f"nas linhas {proprias}; a marca de ausencia sairia como valor")
+    # O dono unico e o unico que pode faze-lo.
+    assert _resolucoes_proprias(_RAIZ / "core/observacao_ausente.py")
+
+
+def test_o_leitor_devolve_None_para_a_linha_que_a_producao_grava():
+    """Comportamento, nao forma: a linha real passada pelo resolvedor real.
+
+    Se a resolucao voltar a ser propria em qualquer leitor, o teste acima pega
+    a forma; este garante que o contrato que ela precisa cumprir continua
+    sendo o certo.
+    """
+    from core.observacao_ausente import valor_observado
+
+    linha = next(item for item in
+                 fii_v2.income_metrics_from_monthly({"ZZAUS11": {}},
+                                                    as_of=date(2026, 9, 20))
+                 if item["metric_name"] == "income_recurrence")
+    como_o_banco_devolve = {"value_numeric": None, "value_text": None,
+                            "value_json": linha["value_json"]}
+    assert valor_observado(como_o_banco_devolve) is None
