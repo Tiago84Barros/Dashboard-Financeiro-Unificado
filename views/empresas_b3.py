@@ -30,7 +30,7 @@ import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
-from core.b3_renda_sustentavel import enrich_com_renda_sustentavel
+from core.b3_renda_sustentavel import enrich_decision_universe
 from core.b3_slopes import SLOPE_COLS, compute_slope_log, enrich_com_slopes
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
@@ -823,6 +823,22 @@ def _enrich_com_slopes(
 ) -> pd.DataFrame:
     """Acrescenta colunas {col}_slope_log ao df_mult calculadas do histórico."""
     return enrich_com_slopes(df_mult, hist_batch)
+
+
+def _enrich_com_evidencia_historica(
+    df_mult: pd.DataFrame,
+    hist_batch: dict[str, pd.DataFrame],
+    tickers: tuple[str, ...],
+) -> pd.DataFrame:
+    """Sustentabilidade da distribuição + histórico patrimonial ao df_mult.
+
+    Extraída para ser testável isoladamente (mesmo padrão de
+    ``_enrich_com_slopes``): os dois pontos de Empresas B3 que montam um
+    quadro de decisão — o dossiê da Análise de Empresa e o ranking da
+    Análise Avançada — chamam a MESMA função de core sobre o mesmo
+    ``hist_batch``, em vez de reimplementar a composição cada um por si.
+    """
+    return enrich_decision_universe(df_mult, hist_batch, tickers)
 
 
 def _score_value_usable(field: str, value: object) -> bool:
@@ -3352,7 +3368,7 @@ def _b3_peer_scores(
     try:
         historicos = _db.load_multiplos_historico_batch(tickers)
         pares = _enrich_com_slopes(pares, historicos)
-        pares = enrich_com_renda_sustentavel(pares, historicos)
+        pares = _enrich_com_evidencia_historica(pares, historicos, tickers)
     except Exception:
         # O score continua válido com crescimento neutro e cobertura reduzida.
         pass
@@ -4597,7 +4613,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
     # Enriquecer com slope_log antes do scoring
     df_mult_enrich = _enrich_com_slopes(df_mult_enrich, hist_batch)
-    df_mult_enrich = enrich_com_renda_sustentavel(df_mult_enrich, hist_batch)
+    df_mult_enrich = _enrich_com_evidencia_historica(
+        df_mult_enrich, hist_batch, tuple(sorted(tks_uni))
+    )
 
     # ── Transparência + saneamento de dados (qualidade antes do ranking) ──────
     try:

@@ -323,3 +323,87 @@ def test_entry_guard_recebe_sustentabilidade_historica_sem_fabricar_zero(
     assert frame.loc["COMHIST3", "dy_sustentavel"] == pytest.approx(0.08)
     assert np.isnan(frame.loc["SEMHIST3", "payout_sustentabilidade"])
     assert np.isnan(frame.loc["SEMHIST3", "dy_sustentavel"])
+
+
+_COLUNAS_DECISAO = (
+    "payout_sustentabilidade", "payout_mediano_hist", "n_anos_payout",
+    "dy_sustentavel", "pl_queda_com_lucro_frac", "n_pares_pl",
+)
+
+
+def test_empresas_b3_enriquece_o_quadro_que_a_decisao_le(monkeypatch):
+    """Rodada de correção 1: a ligação nas duas telas de Empresas B3 (dossiê
+    da Análise de Empresa e ranking da Análise Avançada) tinha só leitura de
+    código para provar que a evidência chega ao quadro. As seis colunas
+    (renda + patrimonial) têm que aparecer com valor DERIVADO do histórico
+    injetado, não só a coluna existindo vazia — e ausência tem que ficar NaN,
+    nunca zero.
+    """
+    import core.dossie_b3 as dossie
+    from views.empresas_b3 import _enrich_com_evidencia_historica
+
+    df_mult = pd.DataFrame({
+        "Ticker": ["COMHIST3", "SEMHIST3"],
+        "DY": [0.08, 0.09],
+    })
+    hist = {"COMHIST3": _serie([0.40, 0.50, 0.60])}
+    monkeypatch.setattr(dossie, "load_pl_lucro_anual_batch", lambda _tickers: {
+        "COMHIST3": _anual([(2021, 100.0, 10.0), (2022, 90.0, 8.0)]),
+    })
+
+    out = _enrich_com_evidencia_historica(
+        df_mult, hist, ("COMHIST3", "SEMHIST3")
+    ).set_index("Ticker")
+
+    for coluna in _COLUNAS_DECISAO:
+        assert coluna in out.columns
+
+    com_hist = out.loc["COMHIST3"]
+    assert com_hist["payout_sustentabilidade"] == pytest.approx(1.0)
+    assert com_hist["dy_sustentavel"] == pytest.approx(0.08)
+    assert com_hist["pl_queda_com_lucro_frac"] == pytest.approx(1.0)
+    assert com_hist["n_pares_pl"] == 1
+
+    sem_hist = out.loc["SEMHIST3"]
+    for coluna in _COLUNAS_DECISAO:
+        assert np.isnan(sem_hist[coluna])
+
+
+def test_analise_do_portfolio_db_enriquece_o_universo_que_o_score_le(
+    monkeypatch,
+):
+    """Mesma cobertura para core.portfolio_db_analysis: a função extraída
+    (``_enriquece_universo_com_evidencia_historica``) roda sem Streamlit/
+    banco de verdade, então o teste exercita a composição real, não uma
+    reimplementação dela.
+    """
+    import core.dossie_b3 as dossie
+    from core.portfolio_db_analysis import (
+        _enriquece_universo_com_evidencia_historica,
+    )
+
+    universo = pd.DataFrame({
+        "Ticker": ["COMHIST3", "SEMHIST3"],
+        "DY": [0.08, 0.09],
+    })
+    historicos = {"COMHIST3": _serie([0.40, 0.50, 0.60])}
+    monkeypatch.setattr(dossie, "load_pl_lucro_anual_batch", lambda _tickers: {
+        "COMHIST3": _anual([(2021, 100.0, 10.0), (2022, 90.0, 8.0)]),
+    })
+
+    out = _enriquece_universo_com_evidencia_historica(
+        universo, historicos, ("COMHIST3", "SEMHIST3")
+    ).set_index("Ticker")
+
+    for coluna in _COLUNAS_DECISAO:
+        assert coluna in out.columns
+
+    com_hist = out.loc["COMHIST3"]
+    assert com_hist["payout_sustentabilidade"] == pytest.approx(1.0)
+    assert com_hist["dy_sustentavel"] == pytest.approx(0.08)
+    assert com_hist["pl_queda_com_lucro_frac"] == pytest.approx(1.0)
+    assert com_hist["n_pares_pl"] == 1
+
+    sem_hist = out.loc["SEMHIST3"]
+    for coluna in _COLUNAS_DECISAO:
+        assert np.isnan(sem_hist[coluna])

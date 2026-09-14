@@ -41,6 +41,25 @@ def _float(value):
     return value if value == value and abs(value) != float("inf") else None
 
 
+def _enriquece_universo_com_evidencia_historica(universo, historicos, tickers):
+    """Crescimento + sustentabilidade histórica sobre o mesmo quadro que o
+    score de ``analise_acoes_db`` consome.
+
+    Extraída para ser testável sem montar banco/Streamlit: recebe as
+    leituras já feitas (``historicos``, o batch de múltiplos por ticker; e
+    ``tickers``, usado por ``enrich_decision_universe`` para buscar PL/lucro
+    anual) e devolve o quadro enriquecido. ``core.b3_slopes.enrich_com_slopes``
+    e ``core.b3_renda_sustentavel.enrich_decision_universe`` são as MESMAS
+    funções que Empresas B3 e a Criação de Portfólio chamam — nenhuma regra
+    é reimplementada aqui.
+    """
+    from core.b3_renda_sustentavel import enrich_decision_universe
+    from core.b3_slopes import enrich_com_slopes
+
+    universo = enrich_com_slopes(universo, historicos)
+    return enrich_decision_universe(universo, historicos, tickers)
+
+
 def analise_acoes_db(tickers) -> dict:
     """Seis trilhas de ``core.b3_company_score`` contra o universo de public.multiplos.
 
@@ -63,8 +82,6 @@ def analise_acoes_db(tickers) -> dict:
             classification,
             score_cross_section,
         )
-        from core.b3_renda_sustentavel import enrich_com_renda_sustentavel
-        from core.b3_slopes import enrich_com_slopes
 
         universo = _db.load_multiplos_todos()
         if universo is None or universo.empty:
@@ -87,11 +104,11 @@ def analise_acoes_db(tickers) -> dict:
 
         crescimento_apurado = False
         try:
-            historicos = _db.load_multiplos_historico_batch(
-                tuple(universo["Ticker"].dropna().astype(str).tolist()))
+            tickers_universo = tuple(universo["Ticker"].dropna().astype(str).tolist())
+            historicos = _db.load_multiplos_historico_batch(tickers_universo)
             if historicos:
-                universo = enrich_com_slopes(universo, historicos)
-                universo = enrich_com_renda_sustentavel(universo, historicos)
+                universo = _enriquece_universo_com_evidencia_historica(
+                    universo, historicos, tickers_universo)
                 crescimento_apurado = True
         except Exception:
             # Sem histórico a trilha de crescimento fica sem cobertura e o

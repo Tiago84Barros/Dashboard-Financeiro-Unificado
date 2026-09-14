@@ -2888,9 +2888,8 @@ def render(show_header: bool = True) -> None:
                 df_mult_recon, df_set, hist_batch_guard, anos_hist, all_tickers
             )
 
-        # O score, o piso de qualidade, a Saúde da Carteira e a Rota de Valor
-        # leem este quadro, não ``df_mult_recon``. Enriquecer aqui mantém a
-        # mesma evidência histórica em toda decisão de criação de carteira.
+        # Sobre df_mult_todos, não df_mult_recon — ver o porquê no docstring
+        # de core.b3_renda_sustentavel.enrich_decision_universe.
         with st.spinner("Calculando sustentabilidade histórica da seleção…"):
             df_mult_todos = _enrich_decision_universe(
                 df_mult_todos, hist_batch, all_tickers
