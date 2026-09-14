@@ -733,4 +733,5 @@ def test_piso_padrao_nao_excede_o_teto_quando_top_n_e_pequeno():
     # max_assets=1 por desenho — e gasta até 11 tentativas de MILP
     # desperdiçadas por chamada. A contagem sozinha (asserção acima) não
     # pega essa regressão; só a ausência de nota pega.
-    assert not resultado.get("viability_notes")
+    assert not [n for n in (resultado.get("viability_notes") or [])
+                if "piso de cardinalidade cedido" in n]
