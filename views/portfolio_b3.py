@@ -607,6 +607,57 @@ def _aplicar_piso_qualidade(
     )
 
 
+def _motivo_afrouxamento_lider(tk: str, piso_log: dict) -> str | None:
+    """Etiqueta de ressalva quando o líder entrou pela guarda de viabilidade
+    da Task 5 (``core/b3_quality_floor.py``) — nenhum candidato do segmento
+    sobreviveu à confirmação histórica de payout, e o líder foi readmitido
+    marcado em vez de deixar a vaga vazia."""
+    _afrouxado = next(
+        (a for a in piso_log.get("afrouxado_por_viabilidade", []) if a["tk"] == tk),
+        None,
+    )
+    if not _afrouxado:
+        return None
+    return ("⚠️ Entrou com ressalva: distribuição historicamente "
+            "acima do lucro; nenhum candidato do segmento passou")
+
+
+def _motivos_dy_sustentavel(tk: str, df_mult_todos: pd.DataFrame) -> list[str]:
+    """Linha de DY sustentável (Task 6, ``core/b3_renda_sustentavel.py``) para
+    o card do líder. A coluna que decide é a coluna que aparece: nunca mostra
+    o DY divulgado sozinho quando a sustentabilidade está disponível, e nunca
+    omite a linha quando falta histórico — ausência de evidência não vira
+    0.0, vira uma frase que diz que faltou evidência."""
+    if df_mult_todos is None:
+        return []
+    _lin_rs = df_mult_todos[df_mult_todos["Ticker"] == tk]
+    if _lin_rs.empty or "payout_sustentabilidade" not in _lin_rs.columns:
+        return []
+    _sust = _lin_rs["payout_sustentabilidade"].iloc[0]
+    _dy_s = _lin_rs.get("dy_sustentavel", pd.Series([float("nan")])).iloc[0]
+    _n_anos = _lin_rs.get("n_anos_payout", pd.Series([0])).iloc[0]
+    if _sust == _sust:  # NaN != NaN
+        return [
+            f"DY sustentável {float(_dy_s):.1%} "
+            f"(divulgado {float(_lin_rs['DY'].iloc[0]):.1%} × "
+            f"sustentabilidade {float(_sust):.0%} em "
+            f"{int(_n_anos)} anos)"
+        ]
+    return ["DY sustentável indisponível — menos de 3 anos de payout observados"]
+
+
+def _avisos_afrouxamento_piso(piso_log: dict) -> list[str]:
+    """Mensagens da seção de transparência do piso para cada líder readmitido
+    pela guarda de viabilidade (Task 5) — a carteira não perde o segmento,
+    mas a distribuição da empresa deve ser tratada como não confirmada."""
+    return [
+        f"Segmento **{_afr['segmento']}**: **{_afr['tk']}** entrou "
+        f"MARCADO — {_afr['motivo']}. A carteira não perde o segmento, "
+        "mas trate a distribuição desta empresa como não confirmada."
+        for _afr in piso_log.get("afrouxado_por_viabilidade", [])
+    ]
+
+
 def _aplicar_diversificacao_correlacao(
     items: list[dict],
     aprovados: list[dict],
@@ -3373,7 +3424,8 @@ def render(show_header: bool = True) -> None:
     # Piso absoluto de qualidade (determinístico, sem rede). Ligado por padrão:
     # sem ele o app entrega o líder do segmento seja ele qual for, e a única
     # defesa é o usuário ler a seção de saúde.
-    piso_log: dict = {"reprovados": [], "substituicoes": [], "sem_substituto": []}
+    piso_log: dict = {"reprovados": [], "substituicoes": [], "sem_substituto": [],
+                "afrouxado_por_viabilidade": []}
     _piso_ativo = bool(st.session_state.get("pb3_piso_qualidade", True))
     if _gate_ativo and aprovados:
         _pend: list[str] = []
@@ -3463,6 +3515,10 @@ def render(show_header: bool = True) -> None:
                                   if s["entra"] == tk), None)
                 if _sub_piso:
                     motivos.append(f"Entrou por piso de qualidade sobre {_sub_piso}")
+                _motivo_afr = _motivo_afrouxamento_lider(tk, piso_log)
+                if _motivo_afr:
+                    motivos.append(_motivo_afr)
+            motivos.extend(_motivos_dy_sustentavel(tk, df_mult_todos))
             _aval_quali = (st.session_state.get("pb3_quali_cache", {}).get(tk)
                            if _gate_ativo else None)
             if _gate_ativo:
@@ -3924,7 +3980,8 @@ def render(show_header: bool = True) -> None:
         st.info("Nenhum líder identificado com os parâmetros atuais.")
 
     # ── TRANSPARÊNCIA DO PISO ABSOLUTO ───────────────────────────────────────
-    if _piso_ativo and (piso_log["reprovados"] or piso_log["sem_substituto"]):
+    if _piso_ativo and (piso_log["reprovados"] or piso_log["sem_substituto"]
+                        or piso_log["afrouxado_por_viabilidade"]):
         st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
                     unsafe_allow_html=True)
         _sec_hdr("🚧 Piso absoluto de qualidade — reprovações e substituições")
@@ -3956,6 +4013,8 @@ def render(show_header: bool = True) -> None:
                 "segmento passou no piso. A carteira perde este setor — é uma "
                 "informação sobre o segmento, não uma falha do filtro.",
                 icon="🕳️")
+        for _msg_afr in _avisos_afrouxamento_piso(piso_log):
+            st.warning(_msg_afr, icon="⚠️")
 
     # ── SAÚDE DAS SELECIONADAS (cruza as duas rotas) ─────────────────────────
     _render_saude_da_carteira(
