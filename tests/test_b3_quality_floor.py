@@ -135,3 +135,46 @@ def test_mesma_regua_da_secao_de_saude():
     reprovados = {t for t, v in evaluate(df, tickers, selic=SELIC).items()
                   if v.situacao == REPROVADO}
     assert reprovados == criticos
+
+
+def _df_segmento_todo_persistente():
+    """Líder e substitutos, todos reprovados SÓ pela persistência histórica."""
+    linhas = []
+    for tk in ("LIDER3", "SEG2", "SEG3"):
+        linhas.append({
+            "Ticker": tk, "Payout": 1.80, "DY": 0.12,
+            "Endividamento_Total": 0.5, "Margem_Operacional": 0.20,
+            "FCO_Negativo": 0.0,
+            "payout_mediano_hist": 1.61, "n_anos_payout": 6,
+            "pl_queda_com_lucro_frac": 0.67, "n_pares_pl": 6,
+        })
+    return pd.DataFrame(linhas)
+
+
+def test_lider_entra_marcado_quando_segmento_inteiro_reprova():
+    # Teste 9 do spec: a vaga não fica vazia; o líder entra com o motivo no log.
+    from core.b3_quality_floor import apply_with_substitution
+    df = _df_segmento_todo_persistente()
+    log = {}
+    finais = apply_with_substitution(
+        ["LIDER3"], [("SEG2", 1.0), ("SEG3", 0.9)], df,
+        seg_label="Utilidades › Domésticas", log=log,
+    )
+    assert finais == ["LIDER3"]
+    assert not log["sem_substituto"]
+    assert log["afrouxado_por_viabilidade"][0]["tk"] == "LIDER3"
+
+
+def test_guarda_nao_afrouxa_criterios_preexistentes():
+    # Teste 10 do spec: FCO negativo continua deixando a vaga vazia.
+    from core.b3_quality_floor import apply_with_substitution
+    df = _df_segmento_todo_persistente()
+    df["FCO_Negativo"] = 1.0
+    log = {}
+    finais = apply_with_substitution(
+        ["LIDER3"], [("SEG2", 1.0), ("SEG3", 0.9)], df,
+        seg_label="Utilidades › Domésticas", log=log,
+    )
+    assert finais == []
+    assert log["sem_substituto"][0]["tk"] == "LIDER3"
+    assert not log["afrouxado_por_viabilidade"]
