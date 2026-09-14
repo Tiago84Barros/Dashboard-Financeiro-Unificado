@@ -624,3 +624,82 @@ def test_carteira_sem_nenhuma_recorrencia_nao_publica_zero_por_cento():
 
     assert resumo["recurrent_yield_12m"] is None
     assert resumo["recurrent_yield_coverage"] == 0.0
+
+
+def test_sem_piso_o_desempate_do_objetivo_favorece_menos_ativos():
+    # Teto individual alto (.5) permite que a soma de 100% seja atingida com
+    # poucos ativos. O desempate `+1e-6` por ativo selecionado no objetivo
+    # (core/fii_portfolio_v4.py) empurra o solver para o mínimo que soma
+    # 100% respeitando as bandas — não para o teto de cardinalidade.
+    types = ["tijolo", "papel", "fof", "hibrido"] * 4
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    scenario = MacroScenario(selic=11, ipca=4, selic_change_12m=-2.5)
+    policy = PortfolioPolicy(max_assets=12, max_asset=.5, min_asset_weight=.02,
+                              min_assets=0)
+
+    resultado = optimize_diligence_portfolio(rows, scenario, policy=policy)
+
+    assert resultado["items"]
+    assert len(resultado["items"]) < 12
+
+
+def test_piso_de_cardinalidade_e_respeitado_quando_viavel():
+    types = ["tijolo", "papel", "fof", "hibrido"] * 4
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    scenario = MacroScenario(selic=11, ipca=4, selic_change_12m=-2.5)
+    policy = PortfolioPolicy(max_assets=12, max_asset=.5, min_asset_weight=.02,
+                              min_assets=8)
+
+    resultado = optimize_diligence_portfolio(rows, scenario, policy=policy)
+
+    assert len(resultado["items"]) >= 8
+    assert not resultado.get("blockers")
+
+
+def test_piso_de_cardinalidade_cede_em_degraus_quando_inviavel_e_nunca_zera():
+    # 6 líquidos (teto .2 cada, capacidade 1.2 — sobra sem precisar de
+    # ilíquido) e 8 ilíquidos (liquidez abaixo do piso, somados no máximo
+    # a max_illiquid=.10). Cada ilíquido selecionado carrega pelo menos
+    # min_asset_weight (.02), então o orçamento de .10 só comporta 5
+    # ilíquidos ao mesmo tempo. Um piso de 12 exige 6 ilíquidos (12 - 6
+    # líquidos) — estoura o orçamento e fica infactível; o piso tem que
+    # ceder em degraus até caber (11 = 5 ilíquidos, dentro do teto), nunca
+    # devolver carteira vazia.
+    rows = [_candidate(i, "tijolo") for i in range(14)]
+    for row in rows[6:]:
+        row["liquidez_diaria"] = 0
+    scenario = MacroScenario(selic=11, ipca=4, selic_change_12m=-2.5)
+    policy = PortfolioPolicy(max_assets=12, min_assets=12, min_distinct_types=1,
+                              max_single_type=1.0, max_asset=.2)
+
+    resultado = optimize_diligence_portfolio(rows, scenario, policy=policy)
+
+    assert resultado["items"]
+    assert len(resultado["items"]) < 12
+    assert any("piso de cardinalidade cedido" in nota
+               for nota in resultado.get("viability_notes") or [])
+
+
+def test_piso_padrao_nao_excede_o_teto_quando_top_n_e_pequeno():
+    # core/fii_validation.py:417 constrói PortfolioPolicy(max_assets=int(top_n))
+    # sem min_assets explícito — o piso default (10) não pode exigir mais
+    # ativos do que o próprio teto acabou de definir, ou o backtest com top_n
+    # pequeno (usado em testes e no PIT) fica infactível por construção.
+    # fof e tetos de concentração soltos isolam exatamente essa questão: sem
+    # eles, um único ativo já tropeça em max_manager/max_sector (cada linha
+    # tem gestor e setor próprios), o que teria nada a ver com o piso.
+    rows = [
+        {"ticker": f"F{i:03d}11", "tipo": "fof", "type_score": 80 - i,
+         "confidence": .9, "coverage": .95, "publication_status": "validated",
+         "dy_12m": .10, "liquidez_diaria": 3_000_000, "manager": f"gestor-{i}",
+         "sector": f"setor-{i}"}
+        for i in range(4)
+    ]
+    scenario = MacroScenario(selic=11, ipca=4, selic_change_12m=-2.5)
+    policy = PortfolioPolicy(max_assets=1, min_distinct_types=1, max_asset=1.0,
+                              max_single_type=1.0, max_manager=1.0, max_sector=1.0)
+
+    resultado = optimize_diligence_portfolio(rows, scenario, policy=policy)
+
+    assert resultado["items"]
+    assert len(resultado["items"]) <= 1

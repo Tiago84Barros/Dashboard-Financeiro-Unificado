@@ -41,6 +41,31 @@ class PortfolioPolicy:
     min_dimension_coverage: float = .80
     min_correlation_coverage: float = .80
     max_assets: int = 12
+    # Piso de cardinalidade. O objetivo do MILP soma um desempate mínimo por
+    # ativo selecionado (favorece MENOS ativos) e a cardinalidade só entrava
+    # como teto — sem piso, o solver entrega o menor número de ativos que
+    # maximiza utilidade, e diversificação nenhuma o obriga a ir além disso
+    # (achado-cardinalidade.md). O piso é cedente: `_candidate_pool` tenta
+    # primeiro `min(min_assets, max_assets)` e, se infactível sob as bandas e
+    # tetos do regime, baixa em degraus até a carteira existir — nunca
+    # bloqueia. "nunca deixar zerada a criação de qualquer portfólio" cobre
+    # o piso tanto quanto qualquer outro portão.
+    #
+    # Valor medido em 14/09/2026 contra o armazém local, nos dois regimes
+    # extremos (`local_staging/mede_piso_cardinalidade.py`):
+    #
+    #   piso  selic_alta  easing  utilidade(easing)
+    #      0          12      10            48,9681
+    #     10          12      10            48,9681
+    #     11          12      11            49,2186
+    #     12          12      12            48,8784
+    #
+    # Piso 10 é inerte: devolve exatamente o que a ausência de piso já
+    # devolvia, nos dois regimes — seria um portão calibrado no número que
+    # o defeito produzia. Piso 12 fecha os dois regimes sem precisar ceder
+    # em nenhum, ao custo de 0,0897 de utilidade no easing (0,18%). Duas
+    # posições a mais de diversificação por 0,18% é barato.
+    min_assets: int = 12
     uncertainty_penalty: float = .20
     cvar_penalty: float = .35
     turnover_penalty: float = .02
@@ -444,48 +469,85 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
             upper_.append(np.inf)
         return rows_, lower_, upper_
 
-    def _resolve(caps: np.ndarray):
+    def _resolve(caps: np.ndarray, floor: int = 0):
         from scipy.optimize import Bounds, LinearConstraint, milp
         rows_, lower_, upper_ = _linking_rows(caps)
         objective = np.concatenate([-utility, np.full(n, 1e-6)])
+        rows_todas = matrix_rows + rows_
+        lower_todas = lower_bounds + lower_
+        upper_todas = upper_bounds + upper_
+        if floor > 0:
+            # Piso de cardinalidade: sum(y) >= floor. Vive como restrição
+            # extra por tentativa, nunca no vetor fixo de `matrix_rows`,
+            # porque o floor cede em degraus — cada tentativa testa um piso
+            # diferente até a carteira existir.
+            rows_todas = rows_todas + [cardinality]
+            lower_todas = lower_todas + [float(floor)]
+            upper_todas = upper_todas + [np.inf]
         return milp(
             c=objective,
             integrality=np.concatenate([np.zeros(n), np.ones(n)]),
             bounds=Bounds(np.zeros(2 * n),
                           np.concatenate([caps, np.ones(n)])),
             constraints=LinearConstraint(
-                np.vstack(matrix_rows + rows_),
-                np.array(lower_bounds + lower_),
-                np.array(upper_bounds + upper_),
+                np.vstack(rows_todas),
+                np.array(lower_todas),
+                np.array(upper_todas),
             ),
             options={"time_limit": 20},
         )
 
+    floor_alvo = max(0, min(int(policy.min_assets), policy.max_assets, n))
+
     try:
-        solution = _resolve(tetos)
-        if not (solution.success and solution.x is not None):
-            # O desconto de opacidade é custo, não veto: se o teto reduzido
-            # (já afrouxado pelo piso de banda) ainda assim esvazia a
-            # carteira — por interação com outros limites, como
-            # concentração por devedor/emissor —, o afrouxamento cede pelo
-            # mínimo necessário para existir, nunca de uma vez só.
-            tetos_afrouxados, solucao_afrouxada, fracao = _afrouxa_ate_viavel(
-                tetos, _resolve, policy)
-            if fracao is not None:
-                solution = solucao_afrouxada
-                tickers_afetados = sorted({
-                    str(pool[index].get("ticker")) for index in range(n)
-                    if tetos[index] < policy.max_asset - 1e-9
-                    and tetos_afrouxados[index] > tetos[index] + 1e-9
-                })
-                tetos = tetos_afrouxados
-                notas_de_viabilidade = list(notas_de_viabilidade) + [
-                    f"custo da opacidade afrouxado em {fracao:.0%} do "
-                    "intervalo até o teto cheio para viabilizar a carteira "
-                    "(interação provável com outro limite: devedor, emissor, "
-                    "tenant ou similar): " + ", ".join(tickers_afetados)
-                ]
-        if solution.success and solution.x is not None:
+        solution = None
+        piso_cedido: int | None = None
+        tentativa = None
+        for floor in range(floor_alvo, -1, -1):
+            def _resolve_no_piso(caps: np.ndarray, _floor: int = floor) -> Any:
+                return _resolve(caps, _floor)
+
+            tentativa = _resolve_no_piso(tetos)
+            tetos_tentativa = tetos
+            notas_tentativa: list[str] = []
+            if not (tentativa.success and tentativa.x is not None):
+                # O desconto de opacidade é custo, não veto: se o teto reduzido
+                # (já afrouxado pelo piso de banda) ainda assim esvazia a
+                # carteira — por interação com outros limites, como
+                # concentração por devedor/emissor —, o afrouxamento cede pelo
+                # mínimo necessário para existir, nunca de uma vez só.
+                tetos_afrouxados, solucao_afrouxada, fracao = _afrouxa_ate_viavel(
+                    tetos, _resolve_no_piso, policy)
+                if fracao is not None:
+                    tentativa = solucao_afrouxada
+                    tickers_afetados = sorted({
+                        str(pool[index].get("ticker")) for index in range(n)
+                        if tetos[index] < policy.max_asset - 1e-9
+                        and tetos_afrouxados[index] > tetos[index] + 1e-9
+                    })
+                    tetos_tentativa = tetos_afrouxados
+                    notas_tentativa = [
+                        f"custo da opacidade afrouxado em {fracao:.0%} do "
+                        "intervalo até o teto cheio para viabilizar a carteira "
+                        "(interação provável com outro limite: devedor, emissor, "
+                        "tenant ou similar): " + ", ".join(tickers_afetados)
+                    ]
+            if tentativa.success and tentativa.x is not None:
+                solution = tentativa
+                tetos = tetos_tentativa
+                notas_de_viabilidade = list(notas_de_viabilidade) + notas_tentativa
+                if floor < floor_alvo:
+                    piso_cedido = floor
+                break
+        if piso_cedido is not None:
+            faltaram = floor_alvo - piso_cedido
+            notas_de_viabilidade = list(notas_de_viabilidade) + [
+                f"piso de cardinalidade cedido de {floor_alvo} para "
+                f"{piso_cedido} ativos ({faltaram} posição(ões) a menos que o "
+                "piso-alvo): bandas, tetos de concentração ou incerteza do "
+                "regime não comportavam a carteira com a cardinalidade cheia"
+            ]
+        if solution is not None and solution.success and solution.x is not None:
             selected = [
                 pool[index] for index, weight in enumerate(solution.x[:n])
                 if weight >= policy.min_asset_weight - 1e-8
@@ -507,9 +569,10 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
                 "selected_dimension_coverage": selected_coverage,
                 "viability_notes": notas_de_viabilidade,
             }
+        ultima = tentativa
         return [], {
             "status": "data_prerequisites_missing",
-            "reason": str(solution.message),
+            "reason": str(ultima.message) if ultima is not None else "sem solução",
             "universe_dimension_coverage": universe_dimension_coverage,
             "viability_notes": notas_de_viabilidade,
         }
@@ -708,6 +771,14 @@ def portfolio_constraint_violations(
     específico de opacidade (acima da metade do teto, tolerado quando é o
     mínimo necessário para a carteira existir) é responsabilidade de
     ``opacidade_excedente`` — não bloqueia, e por isso não entra aqui.
+
+    Deliberadamente NÃO cobra ``policy.min_assets``. O piso é cedente por
+    desenho (``_candidate_pool`` já baixa em degraus e declara a cessão em
+    ``viability_notes``); um verificador que reprovasse a carteira por ter
+    cedido do piso converteria cessão em bloqueio — exatamente o que
+    "nunca deixar zerada a criação de qualquer portfólio" proíbe. Quem
+    precisa saber que o piso foi cedido lê ``viability_notes``, não este
+    retorno.
     """
     rows = [dict(item) for item in items if _num(item.get("weight")) > 0]
     violations: list[str] = []
