@@ -726,3 +726,11 @@ def test_piso_padrao_nao_excede_o_teto_quando_top_n_e_pequeno():
 
     assert resultado["items"]
     assert len(resultado["items"]) <= 1
+    # O que o clamp em core/fii_portfolio_v4.py:500 realmente evita: sem ele,
+    # o laço de degraus ainda chega à mesma contagem final (o clamp não é
+    # necessário para a CONTAGEM), mas grava uma nota de cessão falsa —
+    # "piso cedido de 12 para 1" quando não houve cessão nenhuma, foi
+    # max_assets=1 por desenho — e gasta até 11 tentativas de MILP
+    # desperdiçadas por chamada. A contagem sozinha (asserção acima) não
+    # pega essa regressão; só a ausência de nota pega.
+    assert not resultado.get("viability_notes")
