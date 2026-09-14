@@ -135,19 +135,30 @@ def medir_us() -> dict:
 def _desligar_llm() -> None:
     """Corta as chamadas de LLM da aba durante a medicao.
 
-    A tese narrativa nao entra em nenhuma conta desta medicao, mas a aba a pede
-    por empresa; com a cota da OpenAI esgotada, cada pedido vira 429 com
-    backoff e a medicao trava sem nunca falhar -- o pior dos dois mundos. A
-    chave nao pode ser apagada por variavel de ambiente porque `llm_b3` le
-    `settings.OPENAI_API_KEY` primeiro; entao zeramos os clientes.
+    A tese narrativa nao entra em nenhuma conta desta medicao (`ic_pairs` sai de
+    `Score_Ajustado` contra retorno de preco), mas a aba a pede por empresa; cada
+    pedido que sai pela rede custa segundos, e a medicao trava sem nunca falhar
+    -- o pior dos dois mundos.
+
+    Desligamos pelo DESPACHANTE, nao por uma lista de clientes. A versao anterior
+    zerava `_get_openai_client` e `_get_gemini_client` por nome; quando o
+    OpenRouter entrou na cadeia ele nao estava na lista, seguiu respondendo, e a
+    medicao da 2.26.0 estourou os 1800s sem gravar nada. Lista branca so cobre o
+    que alguem lembrou de escrever nela -- `_provider_chain` e a unica coisa que
+    `_chat_complete` consulta, entao esvazia-la cobre todo provedor presente e
+    futuro. Sem cadeia, `_chat_complete` levanta de imediato e
+    `dossie_b3` cai no parecer de fallback, caminho que ele ja exercita.
     """
     try:
         import core.llm_b3 as llm
     except Exception:  # noqa: BLE001 -- sem LLM disponivel, nada a desligar
         return
-    for nome in ("_get_openai_client", "_get_gemini_client"):
-        if hasattr(llm, nome):
-            setattr(llm, nome, lambda *a, **k: None)
+    if not hasattr(llm, "_provider_chain"):
+        raise SystemExit(
+            "core.llm_b3._provider_chain sumiu: o desligamento do LLM nao tem "
+            "mais onde acoplar e a medicao travaria na rede. Reveja "
+            "_desligar_llm antes de medir.")
+    llm._provider_chain = lambda *a, **k: []
 
 
 _SCRIPT_B3 = """
