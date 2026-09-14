@@ -132,6 +132,28 @@ def scored_universe(limit_companies: int | None = None):
     return _anexa_negociabilidade_e_ciclo(_score.score_cross_section(frame))
 
 
+def portfolio_candidates_with_renda_sustentavel(scored, params):
+    """Recalcula somente os candidatos da carteira com renda histórica.
+
+    A vitrine e as abas de consulta continuam usando ``scored_universe``: o
+    JSON anual do EDGAR só é lido depois dos filtros institucionais da criação
+    de carteira. A nota histórica é então incluída no mesmo cross-section que
+    vai para a auditoria por indústria; ausência continua ``NaN`` e não reduz
+    a cobertura fundamentalista.
+    """
+    import core.us_score as _score
+    from core.us_portfolio_creation import prepare_eligible_universe
+
+    candidates, _ = prepare_eligible_universe(scored, params)
+    if candidates is None or candidates.empty:
+        return candidates
+    enriched = _read.enrich_with_renda_sustentavel(candidates)
+    return _score.score_cross_section(
+        enriched,
+        min_group=int(params.min_companies_per_industry),
+    )
+
+
 def dossie(symbol: str) -> dict:
     if _use_snapshot():
         d = _read.load_snapshot_dossie(symbol)

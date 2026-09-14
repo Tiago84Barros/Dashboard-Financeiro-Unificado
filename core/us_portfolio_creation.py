@@ -7,7 +7,7 @@ opcional porque a vitrine publicada pode conter apenas o snapshot SEC/GAAP.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from math import ceil
 from typing import Any
 
@@ -745,12 +745,15 @@ def build_portfolio_creation(
     audit = build_industry_audit(eligible, params, score_panel)
     candidates = select_industry_leaders(eligible, audit, params)
     floor_log = dict(candidates.attrs.get("quality_floor_log") or {})
-    holdings, warnings = allocate_weights(candidates, params)
+    # Capital residual substitui a antiga ampliação automática de tetos para
+    # caber 100% num universo pequeno. A política solicitada continua auditável.
+    allocation_params = replace(params, adaptive_caps=False)
+    holdings, warnings = allocate_weights(candidates, allocation_params)
     macro_mode = str(macro_mode or "fundamental")
     if macro_mode not in {"fundamental", "moderate", "scenario"}:
         raise ValueError("modo macro inválido")
     if not holdings.empty:
-        holdings = apply_us_macro(holdings, macro_impacts or {}, macro_mode, params)
+        holdings = apply_us_macro(holdings, macro_impacts or {}, macro_mode, allocation_params)
         warnings.extend(holdings.attrs.get("macro_warnings", []))
         holdings["allocation_usd"] = (
             holdings["weight"] * float(params.capital_usd)
@@ -810,9 +813,19 @@ def build_portfolio_creation(
                 warnings = list(warnings) + [
                     f"Nenhuma indústria aprovada: o piso de score de entrada está "
                     f"em {float(params.min_entry_score):.0f} e a melhor indústria "
-                    f"do universo alcança {float(teto):.1f}. Baixe o piso para "
-                    "obter carteira."]
+                    f"do universo alcança {float(teto):.1f}. A composição alternativa "
+                    "considera o mérito individual sem declarar a indústria aprovada."]
+    review_portfolio = None
+    if holdings.empty or (params.require_historical_signal and not history_available):
+        from core.portfolio_review_routes import us_review
+
+        review_portfolio = us_review(eligible, params)
+        if liquidity_block:
+            review_portfolio["reasons"].append(str(liquidity_block))
+        if publication_blocking_error:
+            review_portfolio["reasons"].append(str(publication_blocking_error))
     return {
+        "review_portfolio": review_portfolio,
         "ok": bool(not holdings.empty and not liquidity_block),
         "blocked": bool(liquidity_block),
         "blocking_error": liquidity_block,
@@ -820,7 +833,8 @@ def build_portfolio_creation(
         # No modo exploratório, holdings sem giro validado continuam visíveis
         # para investigação, mas não podem chegar à avaliação/persistência.
         "can_publish": bool(
-            not liquidity_block and not exploratory_unverified and not holdings.empty),
+            not liquidity_block and not exploratory_unverified and not holdings.empty
+            and review_portfolio is None),
         "publication_blocking_error": publication_blocking_error,
         "liquidity_unverified": liquidity_unverified,
         "liquidity_floor_usd": exclusions.attrs.get("liquidity_floor_usd"),

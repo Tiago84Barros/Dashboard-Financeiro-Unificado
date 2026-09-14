@@ -392,9 +392,9 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
     n = len(pool)
     quality = np.array([_num(row.get("type_score")) / 100 for row in pool])
     confidence = np.array([_num(row.get("confidence")) for row in pool])
-    dy = np.array([_num(row.get("dy_12m")) for row in pool])
-    if np.nanmax(dy, initial=0) > 1:
-        dy = dy / 100
+    # A função objetivo precisa usar a mesma renda que o gate: premiar o DY
+    # divulgado aqui recolocaria um evento não recorrente na decisão final.
+    dy = np.array([_num(dy_recorrente(row)) for row in pool])
     adverse = np.array([
         np.mean([max(-asset_scenario_return(row, name), 0) for name in SCENARIOS[1:]])
         for row in pool
@@ -887,6 +887,27 @@ def optimize_diligence_portfolio(
                 "feasibility_diagnostics": {
                     "available_by_type": available_by_type,
                     "candidate_count": len(ranked),
+                    # A tela precisa mostrar os limites efetivamente usados.
+                    # Sem essa evidência, um bloqueio parece veto opaco e
+                    # incentiva relaxamentos sem revisão humana.
+                    "effective_type_bands": {
+                        fii_type: {"min": float(lower), "max": float(upper)}
+                        for fii_type, (lower, upper) in bands.items()
+                    },
+                    "portfolio_limits": {
+                        "max_assets": int(policy.max_assets),
+                        # O piso de cardinalidade passou a ser um limite que
+                        # morde: omiti-lo aqui faria a tela listar "os limites
+                        # efetivamente usados" sem o que pode estar bloqueando.
+                        "min_assets": int(policy.min_assets),
+                        "min_asset_weight": float(policy.min_asset_weight),
+                        "max_asset": float(policy.max_asset),
+                        "min_daily_liquidity": float(policy.min_daily_liquidity),
+                        "max_illiquid": float(policy.max_illiquid),
+                        "max_weighted_uncertainty": float(
+                            policy.max_weighted_uncertainty
+                        ),
+                    },
                     "minimum_weighted_confidence":
                         1.0 - policy.max_weighted_uncertainty,
                     "candidate_pool": candidate_pool_info,
@@ -908,9 +929,8 @@ def optimize_diligence_portfolio(
     }
     quality = np.array([_num(r.get("type_score")) / 100 for r in rows])
     confidence = np.array([_num(r.get("confidence")) for r in rows])
-    dy = np.array([_num(r.get("dy_12m")) for r in rows])
-    if np.nanmax(dy, initial=0) > 1.0:
-        dy = dy / 100.0
+    # Mantém pesos, ranking e o piso de renda na mesma definição recorrente.
+    dy = np.array([_num(dy_recorrente(row)) for row in rows])
     scenario_values_by_asset = np.array([
         [asset_scenario_return(r, s) for s in SCENARIOS] for r in rows
     ], dtype=float)

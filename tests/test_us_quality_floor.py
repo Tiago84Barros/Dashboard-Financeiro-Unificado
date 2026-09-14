@@ -177,5 +177,6 @@ def test_guarda_nao_dispara_quando_ha_carteira():
     })
     r = build_portfolio_creation(
         universo, USPortfolioCreationParams(min_entry_score=0.0, min_score_edge=0.0))
-    assert not r["holdings"].empty
+    assert r["review_portfolio"]["items"]
+    assert r["review_portfolio"]["unallocated_weight"] > 0
     assert not any("Nenhuma indústria aprovada" in w for w in r["warnings"])

@@ -464,6 +464,73 @@ def _mensagem_de_universo_vazio(eligibility: dict) -> str:
     return "Nenhum FII atende à combinação escolhida. Relaxe os filtros de elegibilidade."
 
 
+def _linhas_de_factibilidade(result: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Converte a evidência do otimizador em tabelas legíveis e testáveis.
+
+    Não infere uma causa nova nem altera a política: preserva na interface as
+    bandas e os limites que o motor já aplicou nesta tentativa.
+    """
+    diagnostics = result.get("feasibility_diagnostics") or {}
+    available = diagnostics.get("available_by_type") or {}
+    bands = diagnostics.get("effective_type_bands") or {}
+    labels = {
+        "tijolo": "Tijolo", "papel": "Papel", "fof": "FoF", "hibrido": "Híbrido",
+    }
+    categories = pd.DataFrame([
+        {
+            "Categoria": labels.get(str(fii_type), str(fii_type).title()),
+            "FIIs elegíveis": int(available.get(fii_type) or 0),
+            "Piso da alocação": float((bands.get(fii_type) or {}).get("min") or 0),
+            "Teto da alocação": float((bands.get(fii_type) or {}).get("max") or 0),
+        }
+        for fii_type in ("tijolo", "papel", "fof", "hibrido")
+        if fii_type in available or fii_type in bands
+    ])
+    limits = diagnostics.get("portfolio_limits") or {}
+    controls = pd.DataFrame([
+        {"Limite aplicado": "Máximo de FIIs", "Valor": limits.get("max_assets")},
+        {"Limite aplicado": "Mínimo de FIIs", "Valor": limits.get("min_assets")},
+        {"Limite aplicado": "Peso mínimo por FII", "Valor": limits.get("min_asset_weight")},
+        {"Limite aplicado": "Peso máximo por FII", "Valor": limits.get("max_asset")},
+        {"Limite aplicado": "Liquidez diária mínima", "Valor": limits.get("min_daily_liquidity")},
+        {"Limite aplicado": "Máximo em FIIs ilíquidos", "Valor": limits.get("max_illiquid")},
+        {"Limite aplicado": "Incerteza ponderada máxima", "Valor": limits.get("max_weighted_uncertainty")},
+    ])
+    return categories, controls
+
+
+def _diagnostico_de_factibilidade(result: dict) -> None:
+    """Expõe a evidência de inviabilidade antes de encerrar a seleção."""
+    diagnostics = result.get("feasibility_diagnostics") or {}
+    candidate_pool = diagnostics.get("candidate_pool") or {}
+    categories, controls = _linhas_de_factibilidade(result)
+    with st.expander("Detalhamento da inviabilidade da carteira", expanded=True):
+        st.info(
+            "Este diagnóstico registra os limites solicitados e as notas de "
+            "viabilidade da tentativa original. A tabela mostra "
+            "os parâmetros aplicados pelo otimizador nesta tentativa."
+        )
+        if not categories.empty:
+            st.caption("Oferta elegível e bandas efetivamente aplicadas")
+            st.dataframe(
+                categories,
+                column_config={
+                    "Piso da alocação": st.column_config.NumberColumn(format="%.0%%"),
+                    "Teto da alocação": st.column_config.NumberColumn(format="%.0%%"),
+                },
+                hide_index=True,
+                width="stretch",
+            )
+        if not controls.empty:
+            st.caption("Limites que precisam coexistir com as bandas")
+            st.dataframe(controls, hide_index=True, width="stretch")
+        solver_reason = candidate_pool.get("reason") or candidate_pool.get("solver_message")
+        if solver_reason:
+            st.caption(f"Retorno técnico da pré-seleção: {solver_reason}")
+        for note in candidate_pool.get("viability_notes") or []:
+            st.caption(f"Nota de viabilidade: {note}")
+
+
 def _fii_data_health_metrics(
     vitrine: pd.DataFrame,
     ranked: pd.DataFrame,
@@ -1302,8 +1369,8 @@ def _integrated_preference_controls() -> dict:
     """
     with st.expander("⚙️ Carteira e elegibilidade", expanded=False):
         c1, c2, c3, c4 = st.columns(4)
-        n_assets = c1.slider("Nº máximo de FIIs", 8, 20, 12, key="fii_pref_integrated_assets")
-        max_asset = c2.slider("Máx. por FII (%)", 5, 25, 15, 1,
+        n_assets = c1.slider("Nº máximo de FIIs", 8, 20, 14, key="fii_pref_integrated_assets")
+        max_asset = c2.slider("Máx. por FII (%)", 5, 25, 10, 1,
                               key="fii_pref_integrated_max_asset") / 100
         min_liquidity = c3.slider("Liquidez mín. (R$ mi/dia)", 0.0, 20.0, 1.0, .5,
                                   key="fii_pref_integrated_liquidity") * 1e6
@@ -2029,8 +2096,19 @@ def _carteira_integrada(preferences: dict):
     _diagnostico_de_exclusao(eligibility, expandido=not eligible_rows)
     candidatos_da_concessao = eligibility.get("concession_candidates") or ()
     if not eligible_rows and not candidatos_da_concessao:
+        # Duas coisas diferentes, e as duas precisam aparecer: a causa da
+        # exclusão (dado ausente x filtro apertado) e a revisão de composição
+        # que a main passou a renderizar no lugar de uma tela morta. Sem
+        # candidatos de concessão não há o que readmitir, então aqui é o único
+        # caminho em que a criação de portfólio de fato termina sem carteira —
+        # e ainda assim termina explicando, não em branco.
+        from core.portfolio_review_routes import fii_review
+        from design.portfolio_review import render_portfolio_review
+
         st.error(_mensagem_de_universo_vazio(eligibility))
+        render_portfolio_review(fii_review([], portfolio_policy, scenario), key="fii_review")
         st.session_state.pop("fii_port", None)
+        st.session_state["fii_portfolio_can_publish"] = False
         return None
     if not eligible_rows:
         # Estrito vazio COM candidatos de concessão não é "universo vazio": é o
@@ -2129,8 +2207,15 @@ def _carteira_integrada(preferences: dict):
     )
     result["macro_snapshot"] = macro_snapshot
     if not result.get("items"):
-        st.error("Não foi possível construir uma carteira factível: " +
-                 " · ".join(result.get("blockers") or []))
+        from core.portfolio_review_routes import fii_review
+        from design.portfolio_review import render_portfolio_review
+
+        proposal = fii_review(scored, portfolio_policy, scenario)
+        st.session_state.pop("fii_port", None)
+        st.session_state["fii_portfolio_can_publish"] = False
+        render_portfolio_review(proposal, key="fii_review")
+        with st.expander("Diagnóstico da tentativa com metas originais"):
+            _diagnostico_de_factibilidade(result)
         return None
     # A correlação exibida e a do recálculo macro são a da tentativa que virou
     # carteira — inclusive os readmitidos. Recomputá-la aqui era uma segunda

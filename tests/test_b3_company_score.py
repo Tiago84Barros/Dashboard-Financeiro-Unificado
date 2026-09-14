@@ -7,6 +7,42 @@ import pytest
 from core.b3_company_score import TRACK_LABELS, classification, score_cross_section
 
 
+def test_trilha_shareholder_le_sustentabilidade():
+    from core.b3_company_score import FACTOR_TRACKS
+
+    metricas = [m for m, _ in FACTOR_TRACKS["shareholder"]]
+    assert metricas == ["dy_sustentavel", "payout_sustentabilidade", "DY"]
+    assert "Payout" not in metricas
+
+
+def test_peso_da_trilha_shareholder_inalterado():
+    from core.b3_company_score import DEFAULT_TRACK_WEIGHTS
+
+    assert DEFAULT_TRACK_WEIGHTS["shareholder"] == 0.12
+
+
+def test_ausencia_de_sustentabilidade_vai_para_o_neutro():
+    """Sem histórico, a trilha fica neutra — nunca em zero."""
+    df = pd.DataFrame({
+        "Ticker": ["COMHIST3", "SEMHIST3"],
+        "DY": [0.08, 0.08],
+        "dy_sustentavel": [0.07, float("nan")],
+        "payout_sustentabilidade": [0.9, float("nan")],
+        "ROIC": [0.15, 0.15],
+    })
+    scored = score_cross_section(df)
+    sem = scored[scored["Ticker"] == "SEMHIST3"].iloc[0]
+    assert sem["score_shareholder"] > 0.0
+
+
+def test_score_version_2_26_0():
+    """A composição da trilha mudou; a versão a acompanha."""
+    from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
+
+    assert SCORE_VERSION == "2.26.0"
+    assert MODEL_SCHEMA_VERSION == 3
+
+
 def _universe() -> pd.DataFrame:
     return pd.DataFrame([
         {"Ticker": "BOA3", "ROE": .24, "ROA": .12, "ROIC": .20,
