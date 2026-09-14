@@ -293,6 +293,11 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
     for track, metrics in FACTOR_TRACKS.items():
         present = [m for m in metrics if m in df.columns]
         metricas_cobertura = [m for m in present if m not in _OPTIONAL_METRICS]
+        # Denominador da respondibilidade é a trilha que a METODOLOGIA pede,
+        # não a que a vitrine conseguiu entregar. Usar `metricas_cobertura`
+        # aqui encolhia o denominador junto com as colunas ausentes e devolvia
+        # 100% de rigor para quem tinha deixado de perguntar.
+        metricas_metodologia = [m for m in metrics if m not in _OPTIONAL_METRICS]
         if present:
             track_scores[track] = pct[present].mean(axis=1)
             # cobertura real = fração de métricas não-ausentes na trilha,
@@ -312,7 +317,7 @@ def score_cross_section(df: pd.DataFrame, *, group_col: str = "industry",
         result[f"score_{track}"] = (track_scores[track] * 100).round(1)
         result[f"coverage_{track}"] = (cov * 100).round(0)
         result[f"answerability_{track}"] = (
-            _answerability(df, metricas_cobertura) * 100).round(0)
+            _answerability(df, metricas_metodologia) * 100).round(0)
 
     # score final: soma ponderada por setor (pesos por linha, pois variam)
     def _row_score(i: int) -> float:
