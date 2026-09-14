@@ -30,6 +30,7 @@ import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
+from core.b3_renda_sustentavel import enrich_com_renda_sustentavel
 from core.b3_slopes import SLOPE_COLS, compute_slope_log, enrich_com_slopes
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
@@ -3351,6 +3352,7 @@ def _b3_peer_scores(
     try:
         historicos = _db.load_multiplos_historico_batch(tickers)
         pares = _enrich_com_slopes(pares, historicos)
+        pares = enrich_com_renda_sustentavel(pares, historicos)
     except Exception:
         # O score continua válido com crescimento neutro e cobertura reduzida.
         pass
@@ -4595,6 +4597,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
     # Enriquecer com slope_log antes do scoring
     df_mult_enrich = _enrich_com_slopes(df_mult_enrich, hist_batch)
+    df_mult_enrich = enrich_com_renda_sustentavel(df_mult_enrich, hist_batch)
 
     # ── Transparência + saneamento de dados (qualidade antes do ranking) ──────
     try:

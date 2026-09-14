@@ -45,6 +45,7 @@ __all__ = [
     "JANELA_ANOS", "MIN_ANOS", "PISO", "OTIMO_LO", "OTIMO_HI", "TETO",
     "sustentabilidade_do_ano", "leitura_da_serie", "enrich_com_renda_sustentavel",
     "fracao_pl_em_queda_com_lucro", "enrich_com_historico_patrimonial",
+    "enrich_decision_universe",
 ]
 
 
@@ -199,3 +200,25 @@ def enrich_com_historico_patrimonial(
     df_pl = pd.DataFrame.from_dict(dados, orient="index")
     df_pl.index.name = "Ticker"
     return df_mult.merge(df_pl.reset_index(), on="Ticker", how="left")
+
+
+def enrich_decision_universe(
+    df_mult_todos: pd.DataFrame,
+    hist_batch: dict[str, pd.DataFrame],
+    all_tickers: tuple[str, ...],
+) -> pd.DataFrame:
+    """Inclui evidência histórica no quadro lido pelas decisões de carteira.
+
+    Promovida de ``views/portfolio_b3.py`` (task 6) para existir num único
+    lugar: o piso de qualidade, a Saúde da Carteira e a Rota de Valor
+    consomem ``df_mult_todos``. Portanto, a sustentabilidade não pode ficar
+    apenas no quadro reconciliado de entrada: lacunas continuam ``NaN`` e são
+    tratadas como ausência pelos consumidores, nunca como uma nota ou risco
+    zero.
+    """
+    from core.dossie_b3 import load_pl_lucro_anual_batch
+
+    enriched = enrich_com_renda_sustentavel(df_mult_todos, hist_batch)
+    return enrich_com_historico_patrimonial(
+        enriched, load_pl_lucro_anual_batch(all_tickers)
+    )

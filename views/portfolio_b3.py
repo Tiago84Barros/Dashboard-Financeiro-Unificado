@@ -22,6 +22,9 @@ from core.b3_portfolio_model import (
     restore_b3_portfolio_model,
     save_b3_portfolio_model,
 )
+from core.b3_renda_sustentavel import (
+    enrich_decision_universe as _enrich_decision_universe,
+)
 from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
 from core.macro_data.database import get_local_macro_engine
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
@@ -76,30 +79,6 @@ class MarketCapDataError(RuntimeError):
 
 class LiquidezDataError(RuntimeError):
     """A série de volume negociado não pôde ser consultada com segurança."""
-
-
-def _enrich_decision_universe(
-    df_mult_todos: pd.DataFrame,
-    hist_batch: dict[str, pd.DataFrame],
-    all_tickers: tuple[str, ...],
-) -> pd.DataFrame:
-    """Inclui evidência histórica no quadro lido pelas decisões de carteira.
-
-    O piso de qualidade, a Saúde da Carteira e a Rota de Valor consomem
-    ``df_mult_todos``. Portanto, a sustentabilidade não pode ficar apenas no
-    quadro reconciliado de entrada: lacunas continuam ``NaN`` e são tratadas
-    como ausência pelos consumidores, nunca como uma nota ou risco zero.
-    """
-    from core.b3_renda_sustentavel import (
-        enrich_com_historico_patrimonial,
-        enrich_com_renda_sustentavel,
-    )
-    from core.dossie_b3 import load_pl_lucro_anual_batch
-
-    enriched = enrich_com_renda_sustentavel(df_mult_todos, hist_batch)
-    return enrich_com_historico_patrimonial(
-        enriched, load_pl_lucro_anual_batch(all_tickers)
-    )
 
 
 def _ticker_key(value: object) -> str:

@@ -63,6 +63,7 @@ def analise_acoes_db(tickers) -> dict:
             classification,
             score_cross_section,
         )
+        from core.b3_renda_sustentavel import enrich_com_renda_sustentavel
         from core.b3_slopes import enrich_com_slopes
 
         universo = _db.load_multiplos_todos()
@@ -90,6 +91,7 @@ def analise_acoes_db(tickers) -> dict:
                 tuple(universo["Ticker"].dropna().astype(str).tolist()))
             if historicos:
                 universo = enrich_com_slopes(universo, historicos)
+                universo = enrich_com_renda_sustentavel(universo, historicos)
                 crescimento_apurado = True
         except Exception:
             # Sem histórico a trilha de crescimento fica sem cobertura e o

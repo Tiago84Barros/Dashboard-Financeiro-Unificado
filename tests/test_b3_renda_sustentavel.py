@@ -119,6 +119,24 @@ def test_dy_sustentavel_nunca_cai_no_dy_bruto():
     assert boa["dy_sustentavel"] == pytest.approx(0.08 * boa["payout_sustentabilidade"])
 
 
+def test_mesma_derivacao_para_as_mesmas_linhas():
+    # Teste 7 do spec: tela e Análise do Portfólio derivam o MESMO valor.
+    # Regra certa num consumidor só já publicou número errado neste projeto.
+    hist = {
+        "XPTO3": _serie([0.30, 0.45, 0.60, 0.75, 0.90]),
+        "OUTRO4": _serie([1.40, 1.50, 1.60, 1.70]),
+    }
+    df_tela = pd.DataFrame({"Ticker": ["XPTO3", "OUTRO4"], "DY": [0.08, 0.11]})
+    df_analise = pd.DataFrame({"Ticker": ["OUTRO4", "XPTO3"], "DY": [0.11, 0.08]})
+    a = enrich_com_renda_sustentavel(df_tela, hist).set_index("Ticker")
+    b = enrich_com_renda_sustentavel(df_analise, hist).set_index("Ticker")
+    for tk in ("XPTO3", "OUTRO4"):
+        assert a.loc[tk, "payout_sustentabilidade"] == pytest.approx(
+            b.loc[tk, "payout_sustentabilidade"])
+        assert a.loc[tk, "dy_sustentavel"] == pytest.approx(
+            b.loc[tk, "dy_sustentavel"])
+
+
 _COLUNAS_CONTRATO_RS = (
     "payout_sustentabilidade", "payout_mediano_hist", "n_anos_payout",
     "dy_sustentavel",
