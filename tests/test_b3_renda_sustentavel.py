@@ -407,3 +407,150 @@ def test_analise_do_portfolio_db_enriquece_o_universo_que_o_score_le(
     sem_hist = out.loc["SEMHIST3"]
     for coluna in _COLUNAS_DECISAO:
         assert np.isnan(sem_hist[coluna])
+
+
+def test_b3_peer_scores_liga_evidencia_no_quadro_que_o_score_cross_section_le(
+    monkeypatch,
+):
+    """Rodada de correção 2: o teste anterior batia só no helper
+    ``_enrich_com_evidencia_historica`` — removendo a linha de ligação dentro
+    de ``_b3_peer_scores`` (o call site real, em ``pares =
+    _enrich_com_evidencia_historica(...)``) esse teste continuava passando.
+    Aqui chamamos ``_b3_peer_scores`` de verdade, com as leituras de banco
+    trocadas por dublês, e capturamos o quadro exatamente como ele chega em
+    ``score_cross_section`` — a mesma função que o painel individual usa
+    para pontuar. Se a linha de ligação sumir do call site, a captura fica
+    sem as colunas e o teste quebra (confirmado manualmente: comentando a
+    linha `pares = _enrich_com_evidencia_historica(...)` em
+    views/empresas_b3.py faz este teste falhar com KeyError).
+    """
+    import core.b3_company_score as score_mod
+    import core.b3_data as _db
+    import core.dossie_b3 as dossie
+    import views.empresas_b3 as b3
+
+    df_universo = pd.DataFrame({
+        "Ticker": ["COMHIST3", "SEMHIST3"],
+        "DY": [0.08, 0.09],
+    })
+    monkeypatch.setattr(_db, "load_multiplos_todos", lambda: df_universo.copy())
+    monkeypatch.setattr(
+        _db, "load_multiplos_historico_batch",
+        lambda _tickers: {"COMHIST3": _serie([0.40, 0.50, 0.60])},
+    )
+    monkeypatch.setattr(dossie, "load_pl_lucro_anual_batch", lambda _tickers: {
+        "COMHIST3": _anual([(2021, 100.0, 10.0), (2022, 90.0, 8.0)]),
+    })
+
+    captured: dict[str, pd.DataFrame] = {}
+
+    def _fake_score_cross_section(df):
+        captured["pares"] = df.copy()
+        out = df.copy()
+        out["score"] = 50.0
+        out["coverage"] = 1.0
+        return out
+
+    monkeypatch.setattr(score_mod, "score_cross_section", _fake_score_cross_section)
+
+    df_set = pd.DataFrame({"ticker": ["COMHIST3", "SEMHIST3"]})
+    mult = pd.Series({"DY": 0.08})
+    b3._b3_peer_scores("COMHIST3", mult, df_set)
+
+    assert "pares" in captured, "score_cross_section não foi chamado"
+    pares = captured["pares"].set_index("Ticker")
+
+    for coluna in _COLUNAS_DECISAO:
+        assert coluna in pares.columns
+
+    com_hist = pares.loc["COMHIST3"]
+    assert com_hist["payout_sustentabilidade"] == pytest.approx(1.0)
+    assert com_hist["dy_sustentavel"] == pytest.approx(0.08)
+    assert com_hist["pl_queda_com_lucro_frac"] == pytest.approx(1.0)
+
+    sem_hist = pares.loc["SEMHIST3"]
+    for coluna in _COLUNAS_DECISAO:
+        assert np.isnan(sem_hist[coluna])
+
+
+def test_analise_acoes_db_liga_evidencia_no_universo_que_o_score_le(monkeypatch):
+    """Mesma cobertura para core.portfolio_db_analysis.analise_acoes_db — o
+    call site real (``universo = _enriquece_universo_com_evidencia_historica(
+    ...)`` dentro do ``if historicos:``), não só o helper extraído. Captura o
+    quadro exatamente como chega em ``score_cross_section``.
+    """
+    import core.b3_company_score as score_mod
+    import core.b3_data as _db
+    import core.dossie_b3 as dossie
+    from core.portfolio_db_analysis import analise_acoes_db
+
+    df_universo = pd.DataFrame({
+        "Ticker": ["COMHIST3", "SEMHIST3"],
+        "DY": [0.08, 0.09],
+    })
+    monkeypatch.setattr(_db, "load_multiplos_todos", lambda: df_universo.copy())
+    monkeypatch.setattr(_db, "load_setores", lambda: pd.DataFrame())
+    monkeypatch.setattr(
+        _db, "load_multiplos_historico_batch",
+        lambda _tickers: {"COMHIST3": _serie([0.40, 0.50, 0.60])},
+    )
+    monkeypatch.setattr(dossie, "load_pl_lucro_anual_batch", lambda _tickers: {
+        "COMHIST3": _anual([(2021, 100.0, 10.0), (2022, 90.0, 8.0)]),
+    })
+
+    captured: dict[str, pd.DataFrame] = {}
+
+    def _fake_score_cross_section(df):
+        captured["universo"] = df.copy()
+        out = df.copy()
+        out["score"] = 50.0
+        out["coverage"] = 1.0
+        return out
+
+    monkeypatch.setattr(score_mod, "score_cross_section", _fake_score_cross_section)
+
+    resultado = analise_acoes_db(["COMHIST3", "SEMHIST3"])
+
+    assert resultado["erro"] is None
+    assert resultado.get("crescimento_apurado") is True
+    assert "universo" in captured, "score_cross_section não foi chamado"
+    universo = captured["universo"].set_index("Ticker")
+
+    for coluna in _COLUNAS_DECISAO:
+        assert coluna in universo.columns
+
+    com_hist = universo.loc["COMHIST3"]
+    assert com_hist["payout_sustentabilidade"] == pytest.approx(1.0)
+    assert com_hist["dy_sustentavel"] == pytest.approx(0.08)
+    assert com_hist["pl_queda_com_lucro_frac"] == pytest.approx(1.0)
+
+    sem_hist = universo.loc["SEMHIST3"]
+    for coluna in _COLUNAS_DECISAO:
+        assert np.isnan(sem_hist[coluna])
+
+
+def test_tab_avancada_liga_evidencia_historica_no_df_mult_enrich():
+    """``_tab_avancada`` exige widgets Streamlit (st.columns/selectbox com
+    session_state) antes de chegar no ranking — inexequível isolada, mesmo
+    padrão já registrado nesta suíte para essa função (ver
+    test_empresas_b3_abas_ui.py, que também usa inspect.getsource para provar
+    comportamento de ``_tab_avancada`` sem executá-la). Prova por inspeção
+    que o call site real atribui a evidência histórica a
+    ``df_mult_enrich`` — se a linha for removida ou o alvo/args mudarem, a
+    regex não casa e o teste quebra (confirmado manualmente: comentar a
+    chamada em views/empresas_b3.py faz este teste falhar).
+    """
+    import inspect
+    import re
+
+    import views.empresas_b3 as b3
+
+    corpo = inspect.getsource(b3._tab_avancada)
+    padrao = re.compile(
+        r"df_mult_enrich\s*=\s*_enrich_com_evidencia_historica\(\s*"
+        r"df_mult_enrich,\s*hist_batch,\s*tuple\(sorted\(tks_uni\)\)\s*\)"
+    )
+    assert padrao.search(corpo), (
+        "o call site de _tab_avancada não liga mais a evidência histórica "
+        "a df_mult_enrich"
+    )
