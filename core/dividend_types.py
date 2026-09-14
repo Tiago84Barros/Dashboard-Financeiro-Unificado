@@ -72,6 +72,28 @@ def sql_apenas_renda(col: str = "type") -> str:
 # tabela como evidencia de que a ingestao a produziu.
 
 
+def apenas_renda(df):
+    """Mantem so as linhas de renda de um quadro de ``market.dividends``.
+
+    Irma em pandas de :func:`sql_apenas_renda`, para os consumidores que leem a
+    tabela inteira e filtram em memoria (a safra PIT). O predicado sai de
+    :func:`eh_renda`, entao a regra continua tendo um dono so -- guarda
+    duplicada nao fica igual, e foi exatamente assim que o PIT passou a comer
+    ``AMORTIZACAO`` na serie de renda enquanto a producao ja a excluia.
+
+    Quadro sem a coluna ``type`` volta intacto: pela mesma escolha de
+    :func:`eh_renda`, o que nao se sabe classificar conta como renda e fica
+    visivel, em vez de sumir em silencio.
+    """
+    import pandas as pd
+
+    if df is None or len(df) == 0:
+        return df if df is not None else pd.DataFrame()
+    if "type" not in df.columns:
+        return df
+    return df.loc[df["type"].map(eh_renda)]
+
+
 def eh_safra_colapsada(ex_date, payment_date) -> bool:
     """``True`` quando o pagamento cai no proprio dia da data-ex.
 

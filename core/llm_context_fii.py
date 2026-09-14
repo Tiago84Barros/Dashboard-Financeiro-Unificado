@@ -7,8 +7,10 @@ from typing import Any, Iterable
 
 import pandas as pd
 
+from core.fii_renda_recorrente import dy_recorrente, protecao_nao_divulgada
+
 _DETAIL_METRICS = (
-    "vacancia_fisica", "vacancia_financeira", "wault_anos",
+    "dy_recorrente", "vacancia_fisica", "vacancia_financeira", "wault_anos",
     "tenant_concentration", "lease_expiry_concentration_24m", "leverage",
     "duration_anos", "ltv", "credit_spread", "rating_quality",
     "subordination_protection", "delinquency",
@@ -64,13 +66,28 @@ def _reference_summary(row: dict) -> str:
     return "; ".join(refs[:12]) or f"snapshot:{str(row.get('updated_at') or 'não informado')[:10]}"
 
 
-def _fund_block(row: dict, selected: bool) -> str:
+def _fund_block(row: dict, selected: bool, cessao: dict | None = None) -> str:
     lines = [
         f"FII {row.get('ticker')} | selecionado={'sim' if selected else 'não'} | "
         f"tipo={row.get('tipo') or 'ausente'} | segmento={row.get('sector') or 'ausente'}",
+    ]
+    # A cessão declarada só no agregado do topo não chega até aqui: a IA lê a
+    # métrica reprovada no meio das outras e a descreve como risco comum. O
+    # portão que reprovou tem de estar ao lado do número que o reprovou.
+    if cessao:
+        lines.append(
+            "  proteção cedida na elegibilidade: reprovou em "
+            + (", ".join(cessao.get("motivos") or []) or "motivo não registrado")
+            + ("; permanece na carteira porque o portão foi cedido, não porque passou."
+               if cessao.get("na_carteira")
+               else "; readmitido à disputa por cessão, mas fora da carteira final.")
+        )
+    lines += [
         "  mercado: "
         f"score={_fmt(row.get('type_score'))}; confiança={_fmt(row.get('confidence'), percent=True)}; "
-        f"cobertura={_fmt(row.get('coverage'), percent=True)}; DY12m={_fmt(row.get('dy_12m'), percent=True)}; "
+        f"cobertura={_fmt(row.get('coverage'), percent=True)}; "
+        f"DY recorrente={_fmt(dy_recorrente(row), percent=True)}; "
+        f"DY divulgado={_fmt(row.get('dy_12m'), percent=True)}; "
         f"P/VP={_fmt(row.get('pvp'))}; liquidez_dia={_fmt(row.get('liquidez_diaria'))}; "
         f"PL={_fmt(row.get('patrimonio_liquido'))}; cotistas={_fmt(row.get('num_cotistas'))}",
         "  patrimônio: "
@@ -81,10 +98,14 @@ def _fund_block(row: dict, selected: bool) -> str:
         f"pct_caixa={_fmt(row.get('pct_caixa'), percent=True)}",
     ]
     observed = []
+    protection_missing = set(protecao_nao_divulgada(row))
     for metric in _DETAIL_METRICS:
-        if _num(row.get(metric)) is not None:
+        value = dy_recorrente(row) if metric == "dy_recorrente" else row.get(metric)
+        if _num(value) is not None:
             percent = metric not in ("wault_anos", "duration_anos")
-            observed.append(f"{metric}={_fmt(row.get(metric), percent=percent)}")
+            observed.append(f"{metric}={_fmt(value, percent=percent)}")
+        elif metric in protection_missing:
+            observed.append(f"{metric}=não divulgado pelo gestor")
     lines.append("  métricas específicas observadas: " + ("; ".join(observed) or "nenhuma"))
     for label, key in (("locatários", "tenants"), ("devedores", "debtors"),
                        ("emissores", "issuers"), ("indexadores", "indexers"),
@@ -137,6 +158,12 @@ def build_fii_chat_context(
     cited = re.findall(r"\b[A-Z]{4}11\b", (user_question or "").upper())
     detail_tickers = list(dict.fromkeys(selected_tickers + cited))
 
+    cedidos = [dict(item) for item
+               in (portfolio_result.get("protecao_cedida_na_elegibilidade") or [])]
+    notas_de_viabilidade = list(portfolio_result.get("viability_notes") or [])
+    cessao_por_ticker = {str(item.get("ticker") or ""): item
+                         for item in cedidos}
+
     current_output = (
         "Carteira Modelo aprovada pelos gates vigentes; resultado quantitativo "
         "não constitui garantia de retorno."
@@ -152,11 +179,34 @@ def build_fii_chat_context(
     lines = [
         "STATUS E ESCOPO:",
         f"  Saída atual: {current_output}",
-        f"  FIIs selecionados={len(selected)}; elegíveis={len(scored)}; "
-        f"renda esperada={_fmt(portfolio_result.get('expected_yield'), percent=True)}; "
+        f"  FIIs selecionados={len(selected)}; elegíveis no universo estrito="
+        f"{len(scored)} (+{len(cedidos)} readmitidos por cessão de proteção); "
+        # A cobertura vai junto do número: média tirada de metade da carteira
+        # não é a renda recorrente da carteira, e sem o denominador a IA lia
+        # ausência de dado como renda baixa.
+        f"renda recorrente={_fmt(portfolio_result.get('recurrent_yield_12m'), percent=True)}"
+        f" (cobertura {_fmt(portfolio_result.get('recurrent_yield_coverage'), percent=True)}"
+        " do peso); "
+        f"DY divulgado={_fmt(portfolio_result.get('trailing_yield_12m', portfolio_result.get('expected_yield')), percent=True)}; "
         f"número efetivo={_fmt(portfolio_result.get('effective_assets'))}; "
         f"publicável={'sim' if portfolio_result.get('can_publish') else 'não'}",
         "  bloqueios: " + ("; ".join(portfolio_result.get("blockers") or []) or "nenhum"),
+        # A cessão de proteção precisa chegar à IA no mesmo vocabulário da tela
+        # e do verificador. Sem esta linha o canal de IA respondia sobre uma
+        # carteira que só existe porque portões foram cedidos como se todos os
+        # fundos tivessem passado — proteção cedida virando ausência de risco.
+        "  proteção ao investidor cedida na elegibilidade: " + (
+            "; ".join(
+                f"{item.get('ticker')} — "
+                + (", ".join(item.get("motivos") or []) or "motivo não registrado")
+                + ("" if item.get("na_carteira") else " (fora da carteira final)")
+                for item in cedidos
+            ) + ". Proteção cedida não é ausência de risco: o portão reprovou e "
+            "a carteira o dispensou para existir."
+            if cedidos else "nenhuma"
+        ),
+        "  notas de viabilidade: " + (
+            " | ".join(str(nota) for nota in notas_de_viabilidade) or "nenhuma"),
         "",
         "CENÁRIO MACRO APLICADO:",
         f"  Selic={_fmt(getattr(scenario, 'selic', None), percent=False)}%{_origem('selic')}; "
@@ -188,7 +238,8 @@ def build_fii_chat_context(
         row = {**all_by_ticker.get(ticker, {}),
                **next((item for item in selected if item.get("ticker") == ticker), {})}
         if row:
-            lines.append(_fund_block(row, ticker in selected_set))
+            lines.append(_fund_block(row, ticker in selected_set,
+                                     cessao_por_ticker.get(ticker)))
         else:
             lines.append(f"FII {ticker}: não localizado no contexto carregado.")
 
@@ -201,7 +252,8 @@ def build_fii_chat_context(
         rows.sort(key=lambda row: _num(row.get("type_score")) or -1, reverse=True)
         summary = ", ".join(
             f"{row.get('ticker')}(score={_fmt(row.get('type_score'))}, "
-            f"DY={_fmt(row.get('dy_12m'), percent=True)}, P/VP={_fmt(row.get('pvp'))}, "
+            f"DY recorrente={_fmt(dy_recorrente(row), percent=True)}, "
+            f"DY divulgado={_fmt(row.get('dy_12m'), percent=True)}, P/VP={_fmt(row.get('pvp'))}, "
             f"conf={_fmt(row.get('confidence'), percent=True)})" for row in rows[:8]
         )
         lines.append(f"  {fii_type}: {summary or 'nenhum'}")

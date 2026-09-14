@@ -16,7 +16,14 @@ from datetime import date, datetime, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
-from core.fii_methodology import INCOME_GROWTH_FORMULA, income_growth_3y
+from core.fii_methodology import (
+    INCOME_GROWTH_FORMULA,
+    INCOME_RECURRENCE_FORMULA,
+    income_growth_3y,
+    income_recurrence_com_motivo,
+    income_recurrence_months,
+)
+from core.observacao_ausente import CHAVE_AUSENCIA, marca_de_ausencia
 from data_pipeline.market.fii_sources import metric_observation
 
 SOURCE = "brapi_fii_v2"
@@ -140,19 +147,57 @@ def infer_type_from_profile(*, mandate: Any = None, sector: Any = None,
         return "tijolo"
     return None
 
+#: A regularidade do yield RELATADO nos informes, que nao e a recorrencia da
+#: renda e por isso nao usa o nome dela.
+#:
+#: `monthlyDividendYield` e uma razao entre renda e preco: o coeficiente de
+#: variacao dessa serie carrega a variacao do preco junto, entao ela nao
+#: responde a pergunta que `core.fii_methodology.income_recurrence` define, por
+#: mais calendario que se lhe de. Ate 13/09/2026 as duas gravavam sob o MESMO
+#: `metric_name`, e para 9 tickers de `market.fiis` era esta que a decisao lia.
+#:
+#: Continua observavel de proposito: e evidencia publicada pelo gestor. So nao
+#: pontua -- nao ha `MetricDefinition` para ela.
+REPORTED_DY_REGULARITY_METRIC = "reported_dy_regularity"
+
+#: A ausencia de crescimento nao tem os dois motivos distintos que a da
+#: recorrencia tem (`core.fii_methodology` e dona daqueles); aqui o que se pode
+#: afirmar com honestidade e que a serie observada nao permitiu calcular. O
+#: `months_observed` viaja junto para quem precisar do tamanho.
+SEM_VALOR_CALCULAVEL = "sem_valor_calculavel"
+
 
 def _observation(ticker: str, metric: str, value: Any, reference_date: date,
                  available_at: datetime, raw_payload_id: int | None, *,
                  endpoint: str, vintage: str | None = None,
                  metadata: dict | None = None,
                  source_published_at: datetime | None = None,
-                 availability_quality: str | None = None) -> dict | None:
+                 availability_quality: str | None = None,
+                 absence_reason: str | None = None) -> dict | None:
     number = _num(value)
     normalized: Any = number
     if number is None and isinstance(value, str) and value.strip():
         normalized = value.strip()
-    if not ticker or normalized is None:
+    if not ticker:
         return None
+    if normalized is None:
+        # Sem `absence_reason` o comportamento e o de sempre: nao ha o que
+        # observar, nao se grava. COM motivo, a ausencia vira observacao --
+        # linha gravada, todas as colunas de valor nulas, o motivo no
+        # `metadata_json`. E a unica forma de ela alcancar quem decide: os
+        # leitores escolhem a observacao mais recente por `knowledge_at`, e
+        # ausencia que nao e gravada nao derruba presenca; o valor velho
+        # continua valendo, agora com cara de recem-medido.
+        if not absence_reason:
+            return None
+        metadata = {**(metadata or {}), CHAVE_AUSENCIA: absence_reason}
+        # A marca ocupa `value_json` porque a tabela exige exatamente um campo
+        # de valor preenchido -- com os tres nulos a linha nao entra, e a
+        # rodada inteira cai junto. Quem le passa por
+        # `core.observacao_ausente.valor_observado`, que devolve None.
+        normalized = marca_de_ausencia(absence_reason,
+                                       **{k: v for k, v in (metadata or {}).items()
+                                          if k in {"months_observed", "populated_months"}})
     quality = availability_quality or (
         "retrospective_backfill" if endpoint.endswith("/history") else "first_observed_proxy")
     row = metric_observation(
@@ -168,7 +213,8 @@ def _observation(ticker: str, metric: str, value: Any, reference_date: date,
         invalid = (
             metric in {"vacancia_fisica", "vacancia_financeira", "property_delinquency",
                        "holdings_overlap", "income_recurrence",
-                       "portfolio_income_recurrence", "ltv"} and not 0 <= number <= 1
+                       "portfolio_income_recurrence", REPORTED_DY_REGULARITY_METRIC,
+                       "ltv"} and not 0 <= number <= 1
         ) or (metric == "leverage" and number < 0) or (
             metric in {"dy_12m", "dy_1m"} and not 0 <= number <= .60) or (
             metric == "pvp" and not 0 < number <= 10)
@@ -333,7 +379,17 @@ def normalize_indicator_history(payload: dict, raw_payload_id: int | None = None
     return observations
 
 
+
 def _recurrence(values: list[float]) -> float | None:
+    """Regularidade da serie de `monthlyDividendYield`, sem calendario.
+
+    A lacuna nao existe para esta funcao: um mes sem informe, ou com informe
+    sem o campo, some da lista antes de chegar aqui em vez de entrar como
+    quebra. E o espelho do defeito R1 -- la a ausencia virava zero (punitivo),
+    aqui vira nada (absolvente) -- e `positive_share` e estruturalmente incapaz
+    de ve-la. Por isso a saida nao foi unificar a formula, e sim separar o nome:
+    a grandeza medida e outra e a evidencia disponivel tambem.
+    """
     if len(values) < 6:
         return None
     positive_share = sum(value > 0 for value in values) / len(values)
@@ -385,13 +441,14 @@ def normalize_reports(payload: dict, raw_payload_id: int | None = None) -> list[
         values = [value for value in yields if value is not None and value >= 0]
         recurrence = _recurrence(values)
         reference = _date(ordered[-1].get("referenceDate")) or available.date()
-        for metric in ("income_recurrence", "portfolio_income_recurrence"):
-            observation = _observation(ticker, metric, recurrence, reference, available,
-                                       raw_payload_id, endpoint="reports",
-                                       metadata={"formula": "positive_share/(1+coefficient_of_variation)",
-                                                 "months": len(values)})
-            if observation:
-                observations.append(observation)
+        observation = _observation(
+            ticker, REPORTED_DY_REGULARITY_METRIC, recurrence, reference, available,
+            raw_payload_id, endpoint="reports",
+            metadata={"formula": "positive_share/(1+coefficient_of_variation)",
+                      "serie": "monthlyDividendYield", "months": len(values),
+                      "sem_calendario": True})
+        if observation:
+            observations.append(observation)
     return observations
 
 
@@ -773,32 +830,35 @@ def income_metrics_from_monthly(monthly: dict[str, dict[date, float]], *,
     available = datetime.now(timezone.utc)
     observations: list[dict] = []
     for ticker, values_by_month in monthly.items():
-        if not values_by_month:
-            continue
+        # Quadro vazio NAO e mais motivo para pular: fundo sem uma linha
+        # sequer em `market.dividends` era o pior caso da ausencia muda --
+        # nada era gravado e o ultimo valor conhecido (ou o do endpoint
+        # `reports`) decidia para sempre.
         last_month = date(as_of.year, as_of.month, 1)
-        series: list[float] = []
-        cursor = last_month
-        for offset in range(36):
-            year = cursor.year
-            month = cursor.month - offset
-            while month <= 0:
-                year -= 1
-                month += 12
-            series.append(float(values_by_month.get(date(year, month, 1), 0.0)))
-        recurrence = _recurrence(list(reversed(series)))
-        populated_months = sum(value > 0 for value in series)
         # Definição única, compartilhada com o walk-forward PIT — ver
-        # `core.fii_methodology.income_growth_3y`.
+        # `core.fii_methodology.income_recurrence` e `income_growth_3y`. A
+        # janela é recortada na vida observada do fundo: preencher com zero os
+        # meses anteriores ao primeiro provento subestimava 128 dos 396 fundos.
+        recurrence, motivo = income_recurrence_com_motivo(values_by_month, last_month)
+        # Evidência da observação: meses COM pagamento dentro da janela medida.
+        # Continua sendo a contagem de sempre — contar a vida inteira mudaria
+        # em silêncio o sentido de um campo já publicado.
+        janela = income_recurrence_months(values_by_month, last_month)
+        populated_months = sum(
+            1 for mes in janela if float(values_by_month.get(mes, 0.0) or 0.0) > 0)
         growth = income_growth_3y(values_by_month, last_month)
-        for metric, value, formula in (
-            ("income_recurrence", recurrence, "positive_share/(1+cv),36m"),
-            ("portfolio_income_recurrence", recurrence, "positive_share/(1+cv),36m"),
-            ("income_growth_per_share_3y", growth, INCOME_GROWTH_FORMULA),
+        for metric, value, formula, ausencia in (
+            ("income_recurrence", recurrence, INCOME_RECURRENCE_FORMULA, motivo),
+            ("portfolio_income_recurrence", recurrence, INCOME_RECURRENCE_FORMULA, motivo),
+            ("income_growth_per_share_3y", growth, INCOME_GROWTH_FORMULA,
+             None if growth is not None else SEM_VALOR_CALCULAVEL),
         ):
             observation = _observation(ticker, metric, value, as_of, available, None,
                                        endpoint="derived/dividends", vintage=f"derived:{as_of}",
                                        metadata={"formula": formula,
-                                                 "populated_months": populated_months})
+                                                 "populated_months": populated_months,
+                                                 "months_observed": len(janela)},
+                                       absence_reason=ausencia)
             if observation:
                 observation["source"] = "brapi_fii_v2_derived"
                 observations.append(observation)

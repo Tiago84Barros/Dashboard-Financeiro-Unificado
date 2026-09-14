@@ -44,7 +44,14 @@ def test_vitrine_envelhecida_ainda_entrega_as_metricas():
 
 
 def test_ausencia_generalizada_nao_e_diagnosticada_como_filtro_apertado():
-    sem_metrica = [{"ticker": f"AAAA{i}11"} for i in range(20)]
+    # As colunas existem (leitura íntegra), os VALORES não vieram: é ausência
+    # de dado, não filtro apertado. Coluna faltando é outro caso — hoje levanta
+    # ColunasDeElegibilidadeAusentes, porque falha de leitura tem que parecer
+    # falha, e não "0 elegíveis".
+    sem_metrica = [{"ticker": f"AAAA{i}11", "liquidez_diaria": None,
+                    "dy_12m": None, "income_recurrence": None, "pvp": None,
+                    "history_months": None, "max_drawdown": None}
+                   for i in range(20)]
     _, relatorio = apply_integrated_eligibility(
         sem_metrica, IntegratedEligibilityPolicy())
     assert relatorio["eligible_count"] == 0

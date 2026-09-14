@@ -30,6 +30,7 @@ def test_bloqueio_da_pre_selecao_conserva_bandas_e_limites_aplicados(monkeypatch
     assert diagnostics["effective_type_bands"]
     assert diagnostics["portfolio_limits"] == {
         "max_assets": 14,
+        "min_assets": 12,
         "min_asset_weight": .02,
         "max_asset": .10,
         "min_daily_liquidity": 1_000_000.0,
@@ -56,6 +57,11 @@ def test_tabelas_de_factibilidade_exibem_parametros_sem_inventar_dados():
         {"Categoria": "Papel", "FIIs elegíveis": 4,
          "Piso da alocação": .20, "Teto da alocação": .40},
     ]
-    assert controls.loc[0, "Valor"] == 14
-    assert controls.loc[2, "Valor"] == .10
-    assert pd.isna(controls.loc[3, "Valor"])
+    # Por rótulo, não por posição: a tabela ganha linhas quando a política
+    # ganha limites, e um índice fixo transforma isso em falha sem defeito.
+    valores = dict(zip(controls["Limite aplicado"], controls["Valor"]))
+    assert valores["Máximo de FIIs"] == 14
+    assert valores["Peso máximo por FII"] == .10
+    # Limite ausente do payload continua saindo vazio, e não inventado.
+    assert pd.isna(valores["Liquidez diária mínima"])
+    assert pd.isna(valores["Mínimo de FIIs"])

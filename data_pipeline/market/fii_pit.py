@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import math
+from collections.abc import Iterator
 from datetime import date, datetime, time, timezone
 from typing import Any
 
@@ -17,11 +18,12 @@ import pandas as pd
 import requests
 from sqlalchemy import text
 
-from core.dividend_types import descarta_safra_colapsada
+from core.dividend_types import apenas_renda, descarta_safra_colapsada
 from core.fii_methodology import (
     FORMULA_VERSION,
     METHODOLOGY_VERSION,
     income_growth_3y,
+    income_recurrence,
     score_fiis_by_type,
 )
 from core.fii_portfolio_v4 import LIVE_PORTFOLIO_STRATEGY_ID
@@ -30,6 +32,7 @@ from core.fii_validation import (
     robust_optimizer_point_in_time_backtest,
     validate_methodology,
 )
+from core.observacao_ausente import valor_observado
 from data_pipeline.utils.db_utils import get_pipeline_engine
 
 _B3_IFIX_MONTHLY_URL = (
@@ -164,7 +167,18 @@ def _monthly_market_features(prices: pd.DataFrame, dividends: pd.DataFrame) -> d
     # e tratamos proventos separadamente.
     frame["price"] = frame["close_raw"]
     frame["volume"] = pd.to_numeric(frame.get("volume"), errors="coerce")
-    div = dividends.copy()
+    # A-128 tambem vale aqui: `_load_frames` trazia a coluna `type` e nunca a
+    # filtrava, entao devolucao de capital entrava na serie de RENDA do PIT e
+    # nao na da producao. Medido em 13/09/2026 no armazem local, 71 de 401 FIIs
+    # divergiam depois da unificacao da formula -- 64 deles com linha de
+    # amortizacao, |delta| mediano 0,0501 e maximo 0,5245 (BMLC11). Unificar a
+    # formula e deixar a entrada divergente so troca o motivo pelo qual o
+    # certificado valida uma metodologia que a producao nao executa.
+    #
+    # O corte fica aqui, e nao no SQL, porque este e o unico ponto por onde
+    # passam tanto `_load_frames` quanto quem monta a serie em memoria: assim a
+    # guarda e provavel por execucao, nao so por leitura.
+    div = apenas_renda(dividends).copy()
     if not div.empty:
         div["date"] = pd.to_datetime(div["event_date"], errors="coerce").fillna(
             pd.to_datetime(div["ex_date"], errors="coerce")).fillna(
@@ -229,10 +243,25 @@ def _features_as_of(
     if not div.empty:
         history_div = div[(div["date"] <= cutoff) &
                           (div["date"] > cutoff - pd.Timedelta(days=3 * 365 + 31))].copy()
+        # Recorrência: mesma definição única da ingestão, pelo mesmo motivo que
+        # o crescimento abaixo. O PIT fazia `max(0, 1 - std/mean)` sobre os 24
+        # últimos meses COM pagamento — sem `positive_share` e sobre outra
+        # janela —, então o certificado validava uma metodologia que a produção
+        # não executava.
+        #
+        # A série vem do histórico INTEIRO até o cutoff, não de `history_div`:
+        # a janela é recortada no primeiro provento de toda a série, e um corte
+        # de três anos na origem esconderia justamente o começo da vida de um
+        # fundo que ficou mudo. Isso não é olhar o futuro — tudo aqui é
+        # anterior ao cutoff.
+        todos_ate_cutoff = div[div["date"] <= cutoff].dropna(subset=["date", "amount"])
+        if not todos_ate_cutoff.empty:
+            por_mes_total = todos_ate_cutoff.set_index("date")["amount"].resample("MS").sum()
+            recurrence = income_recurrence(
+                {chave.date().replace(day=1): float(valor)
+                 for chave, valor in por_mes_total.items()},
+                cutoff.date().replace(day=1))
         if not history_div.empty:
-            monthly_div = history_div.set_index("date")["amount"].resample("ME").sum().tail(24)
-            if len(monthly_div) >= 12 and monthly_div.mean() > 0:
-                recurrence = max(0.0, 1.0 - float(monthly_div.std(ddof=0) / monthly_div.mean()))
             # Mesma definição da ingestão. Agrupar por ano-calendário aqui
             # fazia o validador medir uma métrica que a produção não calcula:
             # o ano corrente entrava parcial, e o viés oscilava com o mês do
@@ -357,11 +386,7 @@ def reconstruct_snapshots(
                         "source_quality": metric_quality,
                     }
             for obs in observations_by_ticker.get(ticker, []):
-                value = obs.get("value_numeric")
-                if pd.isna(value):
-                    value = obs.get("value_text")
-                if value is None or (isinstance(value, float) and pd.isna(value)):
-                    value = obs.get("value_json")
+                value = valor_observado(obs)
                 row[str(obs["metric_name"])] = value
                 quality = str(obs.get("availability_quality") or "first_observed_proxy")
                 row["metric_metadata"][str(obs["metric_name"])] = {
@@ -544,9 +569,45 @@ def _macro_scenarios(conn, dates: list[pd.Timestamp]) -> dict[str, dict[str, flo
     return scenarios
 
 
+# O Postgres recusa um array jsonb acima de 256 MB num único parâmetro. Dez anos
+# de safra passam disso — a gravação vai em lotes limitados por bytes, não por
+# contagem de linhas, porque `inputs_json` varia de tamanho por fundo.
+_SNAPSHOT_BATCH_MAX_BYTES = 32 * 1024 ** 2
+
+
+def _snapshot_batches(
+    snapshots: list[dict], max_bytes: int = _SNAPSHOT_BATCH_MAX_BYTES,
+) -> Iterator[list[dict]]:
+    """Divide as safras em lotes cujo JSON serializado caiba em `max_bytes`.
+
+    Uma linha maior que o limite sai sozinha: recusá-la perderia a safra em
+    silêncio, e o limite do Postgres é ordens de grandeza acima de uma linha.
+    """
+    lote: list[dict] = []
+    tamanho = 0
+    for linha in snapshots:
+        bytes_da_linha = len(
+            json.dumps(linha, ensure_ascii=False).encode("utf-8")
+        ) + 1
+        if lote and tamanho + bytes_da_linha > max_bytes:
+            yield lote
+            lote, tamanho = [], 0
+        lote.append(linha)
+        tamanho += bytes_da_linha
+    if lote:
+        yield lote
+
+
 def _persist_snapshots(conn, snapshots: list[dict]) -> int:
     if not snapshots:
         return 0
+    gravadas = 0
+    for lote in _snapshot_batches(_json_safe(snapshots)):
+        gravadas += _persist_snapshot_batch(conn, lote)
+    return gravadas
+
+
+def _persist_snapshot_batch(conn, snapshots: list[dict]) -> int:
     result = conn.execute(text("""
         INSERT INTO market.fii_pit_score_snapshots (
             ticker,reference_date,available_at,methodology_version,formula_version,
@@ -569,7 +630,7 @@ def _persist_snapshots(conn, snapshots: list[dict]) -> int:
                       missing_metrics_json=EXCLUDED.missing_metrics_json,
                       data_readiness_status=EXCLUDED.data_readiness_status,
                       reconstructed_at=now()
-    """), {"rows": json.dumps(_json_safe(snapshots), ensure_ascii=False)})
+    """), {"rows": json.dumps(snapshots, ensure_ascii=False)})
     return max(int(result.rowcount or 0), 0)
 
 

@@ -104,6 +104,9 @@ def _compact_payload(record: dict[str, Any]) -> dict[str, Any]:
     relevant_metrics = {definition.key for definition in definitions}
     for definition in definitions:
         relevant_metrics.update(definition.fallback_keys)
+        # Procedência de métrica derivada: é ela que dá idade ao insumo e
+        # precisa sobreviver à compactação mesmo sem ser chave pontuada.
+        relevant_metrics.update(definition.provenance_keys)
     # dy_12m e income_recurrence são os insumos de dy_recorrente (a métrica
     # pontuada). Não têm MetricDefinition própria — dy_12m de propósito, para
     # o ranking não voltar a ler o yield bruto (ver core/fii_renda_recorrente.py)

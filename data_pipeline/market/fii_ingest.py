@@ -21,6 +21,8 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text
 
 import core.brapi as brapi
+from core.dividend_types import sql_apenas_renda, sql_safra_canonica
+from core.observacao_ausente import valor_observado
 from data_pipeline.market import fii as fz
 from data_pipeline.market import repository as repo
 from data_pipeline.quality import scheduler as sched
@@ -194,11 +196,7 @@ def snapshot_methodology_v4() -> dict:
         }
         for observation in by_ticker.get(str(row["ticker"]), []):
             key = str(observation["metric_name"])
-            value = observation.get("value_numeric")
-            if value is None:
-                value = observation.get("value_text")
-            if value is None:
-                value = observation.get("value_json")
+            value = valor_observado(observation)
             row[key] = value
             row["metric_metadata"][key] = {
                 "reference_date": observation.get("reference_date"),
@@ -426,7 +424,8 @@ def audit_methodology_v4_data() -> dict:
                     WHERE quality_status <> 'rejected' AND (
                        (metric_name IN ('vacancia_fisica','property_delinquency',
                                            'holdings_overlap','income_recurrence',
-                                           'portfolio_income_recurrence')
+                                           'portfolio_income_recurrence',
+                                           'reported_dy_regularity')
                            AND (value_numeric < 0 OR value_numeric > 1))
                        OR (metric_name='leverage' AND value_numeric < 0)
                        OR (metric_name IN ('dy_12m','dy_1m')
@@ -819,20 +818,61 @@ def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
     return counts
 
 
+def _serie_mensal_por_ticker(universo, rows) -> "dict[str, dict[date, float]]":
+    """Semeia a serie mensal com TODOS os FIIs, nao so com os que tem provento.
+
+    Fundo sem uma linha em `market.dividends` era o caso mudo por excelencia:
+    nao entrava no laco, nao gerava observacao nenhuma, e a ultima leitura
+    conhecida -- em nove tickers, a regularidade do yield relatado que ate hoje
+    gravava sob o nome da recorrencia -- seguia decidindo sem prazo de
+    validade. Semeado, ele recebe a linha de ausencia com motivo, e a linha
+    nova vence o `DISTINCT ON` por `knowledge_at`.
+    """
+    monthly: dict[str, dict[date, float]] = {str(ticker): {} for ticker in universo}
+    for ticker, month, amount in rows:
+        monthly.setdefault(str(ticker), {})[month] = float(amount or 0)
+    return monthly
+
+
 def _derive_income_observations(conn) -> int:
     from data_pipeline.market import fii_v2
-    rows = conn.execute(text("""
-        SELECT ticker, date_trunc('month', event_date)::date AS month,
-               sum(amount)::float AS amount
-        FROM market.dividends
-        WHERE event_date IS NOT NULL
-          AND upper(COALESCE(type,'')) NOT LIKE '%AMORT%'
-          AND ticker IN (SELECT ticker FROM market.fiis)
-        GROUP BY ticker, date_trunc('month', event_date)::date
+    # A regra de "o que e renda" tem um dono unico desde o A-128:
+    # `core.dividend_types`. Aqui ela estava reescrita a mao como
+    # `NOT LIKE '%AMORT%'`, que deixa passar `REST CAP DIN` inteira --
+    # restituicao de capital em dinheiro e devolucao do principal do cotista,
+    # nao renda recorrente. Medido em 13/09/2026 no armazem local, as 73
+    # linhas desse tipo estao hoje em tickers fora de `market.fiis`, entao o
+    # impacto corrente e zero e o defeito e latente: a filiacao muda a cada
+    # ingestao. Guarda duplicada nao fica igual -- a consulta monta o
+    # predicado a partir da definicao unica.
+    # A-131 faltava aqui, e so aqui: a safra PIT ja descartava a copia
+    # colapsada do mesmo pagamento e a producao a somava. Medido em 13/09/2026
+    # no armazem local, sao 436 linhas de FII, e com o tipo ja filtrado dos
+    # dois lados elas eram a ULTIMA divergencia entre producao e certificado --
+    # 8 fundos, |delta| mediano 0,0728, maximo 0,1882 (PLAG11). Com o descarte,
+    # os 396 fundos passam a receber o mesmo numero nos dois caminhos.
+    #
+    # O `COALESCE` das datas alinha a producao ao PIT (que ja caia para `ex_date`
+    # e `payment_date`): perder o evento porque um campo de data faltou e
+    # descartar evidencia. Hoje sao zero linhas de FII -- e uma equivalencia de
+    # regra, nao uma mudanca de numero.
+    rows = conn.execute(text(f"""
+        SELECT d.ticker,
+               date_trunc('month', COALESCE(d.event_date, d.ex_date,
+                                            d.payment_date))::date AS month,
+               sum(d.amount)::float AS amount
+        FROM market.dividends d
+        WHERE COALESCE(d.event_date, d.ex_date, d.payment_date) IS NOT NULL
+          AND d.amount > 0
+          AND {sql_apenas_renda('d.type')}
+          AND {sql_safra_canonica('d')}
+          AND d.ticker IN (SELECT ticker FROM market.fiis)
+        GROUP BY d.ticker, date_trunc('month', COALESCE(d.event_date, d.ex_date,
+                                                        d.payment_date))::date
     """)).fetchall()
-    monthly: dict[str, dict[date, float]] = defaultdict(dict)
-    for ticker, month, amount in rows:
-        monthly[str(ticker)][month] = float(amount or 0)
+    universo = [str(linha[0]) for linha in
+                conn.execute(text("SELECT ticker FROM market.fiis")).fetchall()]
+    monthly = _serie_mensal_por_ticker(universo, rows)
     observations = fii_v2.income_metrics_from_monthly(monthly, as_of=datetime.now(timezone.utc).date())
     return repo.upsert(conn, "fii_metric_observations", observations)
 
@@ -921,17 +961,35 @@ def _governance_alignment_score(values: dict[str, float]) -> tuple[float | None,
 
 
 def _latest_metric_rows(conn, metrics: list[str]) -> list[dict]:
+    """A observacao mais recente de cada metrica -- e nada, quando a mais
+    recente e uma ausencia.
+
+    O descarte do nulo tem de vir DEPOIS do `DISTINCT ON`. Dentro do `WHERE`
+    ele removia a linha de ausencia antes da escolha, e a observacao anterior
+    -- o numero velho, ou o do endpoint `reports` -- voltava a vencer como se
+    fosse a leitura corrente. Era assim que a ausencia virava silencio, e
+    silencio nesta tabela significa "use o numero anterior".
+
+    O portao de conhecimento e `statement_timestamp()`, nao `now()`. Este
+    leitor roda dentro do mesmo `engine.begin()` que grava as observacoes, e
+    em Postgres `now()` e o instante em que a TRANSACAO comecou: com ele, tudo
+    o que a propria rodada acabou de gravar ficava invisivel, e o consumidor
+    do look-through de FoF decidia com o numero que a rodada tinha acabado de
+    negar. `statement_timestamp()` continua barrando conhecimento do futuro.
+    """
     return [dict(row) for row in conn.execute(text("""
-        SELECT DISTINCT ON (ticker, metric_name)
-               ticker, metric_name, value_numeric::float AS value,
-               reference_date, available_at, knowledge_at
-        FROM market.fii_metric_observations
-        WHERE metric_name = ANY(CAST(:metrics AS text[]))
-          AND quality_status IN ('observed','accepted')
-          AND value_numeric IS NOT NULL
-          AND knowledge_at <= now()
-        ORDER BY ticker, metric_name, knowledge_at DESC,
-                 reference_date DESC, observed_at DESC
+        SELECT * FROM (
+            SELECT DISTINCT ON (ticker, metric_name)
+                   ticker, metric_name, value_numeric::float AS value,
+                   reference_date, available_at, knowledge_at
+            FROM market.fii_metric_observations
+            WHERE metric_name = ANY(CAST(:metrics AS text[]))
+              AND quality_status IN ('observed','accepted')
+              AND knowledge_at <= statement_timestamp()
+            ORDER BY ticker, metric_name, knowledge_at DESC,
+                     reference_date DESC, observed_at DESC
+        ) mais_recente
+        WHERE value IS NOT NULL
     """), {"metrics": metrics}).mappings().all()]
 
 

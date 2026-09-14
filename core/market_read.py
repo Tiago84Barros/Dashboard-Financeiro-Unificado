@@ -34,6 +34,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from core.data_quality import clean_multiples_frame
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 from core.liquidez import procedencia_liquidez
+from core.observacao_ausente import valor_observado
 
 logger = logging.getLogger(__name__)
 
@@ -1121,9 +1122,10 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
         }
         if not observations.empty:
             for obs in observations[observations["ticker"] == ticker].to_dict("records"):
-                value = obs.get("value_numeric")
-                if pd.isna(value):
-                    value = obs.get("value_text") if pd.notna(obs.get("value_text")) else obs.get("value_json")
+                # Dono unico da resolucao: sem ele a linha de ausencia
+                # chegaria aqui como a marca em `value_json`, isto e, uma
+                # string onde a decisao espera numero.
+                value = valor_observado(obs)
                 raw_metric = str(obs["metric_name"])
                 metric = metric_aliases.get(raw_metric, raw_metric)
                 if raw_metric != metric and metric in row:

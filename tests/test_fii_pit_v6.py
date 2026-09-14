@@ -1,7 +1,11 @@
+import json
+
+import numpy as np
 import pandas as pd
 
 from data_pipeline.market.fii_pit import (
     _features_as_of,
+    _json_safe,
     _monthly_market_features,
     reconstruct_snapshots,
 )
@@ -75,3 +79,68 @@ def test_pit_liquidity_keeps_daily_b3_volume_in_daily_unit():
 
     assert result["liquidez_diaria"] == 210_000.0
     assert result["liquidity_method"] == "daily_financial_volume_median_63"
+
+
+def test_snapshot_batches_respeita_limite_de_bytes_do_postgres():
+    """O parâmetro jsonb tem teto de 256 MB; a safra de 10 anos passa disso."""
+    from data_pipeline.market.fii_pit import _snapshot_batches
+
+    linhas = [{"ticker": f"AAA{i}11", "inputs_json": {"pad": "x" * 900}}
+              for i in range(40)]
+    lotes = list(_snapshot_batches(linhas, max_bytes=4_000))
+    assert len(lotes) > 1
+    assert [linha for lote in lotes for linha in lote] == linhas
+    for lote in lotes:
+        serializado = json.dumps(lote, ensure_ascii=False).encode("utf-8")
+        assert len(serializado) <= 4_000
+
+
+def test_snapshot_batches_nao_descarta_linha_maior_que_o_lote():
+    """Recusar a linha gigante perderia a safra em silêncio."""
+    from data_pipeline.market.fii_pit import _snapshot_batches
+
+    gigante = {"ticker": "BBB11", "inputs_json": {"pad": "y" * 5_000}}
+    pequena = {"ticker": "CCC11"}
+    lotes = list(_snapshot_batches([pequena, gigante, pequena], max_bytes=1_000))
+    assert [linha for lote in lotes for linha in lote] == [pequena, gigante, pequena]
+    assert any(lote == [gigante] for lote in lotes)
+
+
+def test_cessao_de_protecao_sobrevive_a_serializacao_do_metrics_json():
+    """A proteção cedida tem de chegar inteira ao artefato persistido.
+
+    O escritor grava `json.dumps(_json_safe(backtest))` sem lista branca, mas
+    "sem lista branca" não basta: `_json_safe` converte tipo a tipo, e uma
+    safra cuja carteira só existe porque fundos tiveram o portão cedido não
+    pode gravar histórico limpo. Aqui a estrutura é a que o backtest emite,
+    com os tipos que ele realmente produz (numpy, Timestamp).
+    """
+    backtest = {
+        "concession_periods": np.int64(2),
+        "concession_period_fraction": np.float64(0.5),
+        "concession_details": [{
+            "decision_date": pd.Timestamp("2026-08-31").date(),
+            "protecao_cedida": [{
+                "ticker": "SNEL11",
+                "motivos": ["renda recorrente abaixo do mínimo"],
+                "severidade": np.int64(1),
+                "na_carteira": True,
+            }],
+            "viability_notes": [
+                "proteção ao investidor cedida na elegibilidade para "
+                "viabilizar a carteira. Proteção cedida não é ausência de risco."
+            ],
+        }],
+    }
+
+    gravado = json.loads(json.dumps(_json_safe(backtest)))
+
+    assert gravado["concession_periods"] == 2
+    assert gravado["concession_period_fraction"] == 0.5
+    cedido = gravado["concession_details"][0]
+    assert cedido["decision_date"] == "2026-08-31"
+    assert cedido["protecao_cedida"][0]["ticker"] == "SNEL11"
+    assert cedido["protecao_cedida"][0]["motivos"] == [
+        "renda recorrente abaixo do mínimo"]
+    assert cedido["protecao_cedida"][0]["na_carteira"] is True
+    assert "não é ausência de risco" in cedido["viability_notes"][0]
