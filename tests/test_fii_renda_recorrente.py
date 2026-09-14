@@ -102,5 +102,5 @@ def test_a_metodologia_pontua_a_renda_recorrente_e_nao_a_divulgada():
 def test_versao_da_metodologia_subiu_com_a_formula():
     from core.fii_methodology import FORMULA_VERSION, METHODOLOGY_VERSION
 
-    assert METHODOLOGY_VERSION == "6.9.0"
-    assert "6.9.0" in FORMULA_VERSION
+    assert METHODOLOGY_VERSION == "6.10.0"
+    assert "6.10.0" in FORMULA_VERSION

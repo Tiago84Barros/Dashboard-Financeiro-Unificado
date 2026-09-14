@@ -207,8 +207,16 @@ def income_recurrence_months(monthly_income: "dict[date, float]",
 # (dy_12m * income_recurrence) e a concentração virou veto. A fórmula mudou,
 # então a versão muda junto — senão as notas novas herdariam em silêncio o
 # certificado PIT da 6.8.0.
-METHODOLOGY_VERSION = "6.9.0"
-FORMULA_VERSION = "br-fii-integrated-income-resilience-6.9.0"
+#
+# 6.10.0: pelo mesmo motivo, de novo. Depois que a safra 6.9.0 foi certificada
+# em 12/09/2026, três mudanças alteraram a nota: o frescor da recorrência
+# passou a medir o insumo e não a linha, a recorrência passou a contar a vida
+# observada em vez de 36 meses fixos, e a ausência de recorrência virou
+# observação em vez de silêncio. Some-se o piso de cardinalidade, que muda a
+# carteira que o walk-forward mede. Manter o rótulo 6.9.0 faria a nota nova
+# herdar um certificado que ela não prestou.
+METHODOLOGY_VERSION = "6.10.0"
+FORMULA_VERSION = "br-fii-integrated-income-resilience-6.10.0"
 VALID_TYPES = ("tijolo", "papel", "fof", "hibrido")
 # Nota do par mediano na escala percentílica de 0 a 100. É para cá que a nota
 # encolhe quando falta cobertura — ver `final_score` em `score_fiis_by_type`.
