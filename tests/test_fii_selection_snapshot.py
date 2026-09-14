@@ -133,7 +133,7 @@ def test_publication_ensures_methodology_before_validation_fk():
 
     assert "INSERT INTO market.fii_methodology_versions" in connection.statement
     assert connection.parameters["version"] == METHODOLOGY_VERSION
-    assert "fii_integrated_robust_optimizer.v6.7" in connection.parameters["manifest"]
+    assert "fii_integrated_robust_optimizer.v6.8" in connection.parameters["manifest"]
 
 
 def test_publication_promotes_only_passed_methodology():
@@ -180,7 +180,7 @@ def test_publication_preflight_accepts_current_approved_validation():
     validation = {
         "status": "passed",
         "metrics_json": {
-            "strategy_id": "fii_integrated_robust_optimizer.v6.7",
+            "strategy_id": "fii_integrated_robust_optimizer.v6.8",
             "backtest": {"periods": 65},
         },
         "blockers_json": [],

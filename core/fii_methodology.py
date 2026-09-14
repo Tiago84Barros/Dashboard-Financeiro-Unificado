@@ -408,10 +408,12 @@ def methodology_manifest() -> dict[str, Any]:
         "type_metrics": {key: [asdict(m) for m in value] for key, value in TYPE_METRICS.items()},
         "pvp_targets": PVP_TARGETS,
         "integrated_pipeline": {
-            # Continua 6.7: a elegibilidade e o otimizador não mudaram na
-            # 6.8.0, que mexeu só no encolhimento do type_score.
-            "eligibility_version": "6.7.0",
-            "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.7",
+            # Os dois deixaram de "continuar 6.7" na 6.10.0: a elegibilidade
+            # ganhou portão de renda recorrente, veto de concentração e a
+            # lista de candidatos à concessão; o otimizador ganhou piso de
+            # cardinalidade e trocou a renda da função objetivo.
+            "eligibility_version": "6.10.0",
+            "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.8",
             "stages": ("eligibility", "type_score", "empirical_confidence",
                        "pit_walk_forward", "robust_scenario_optimization"),
             "correlation_min_months": 12,

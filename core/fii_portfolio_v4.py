@@ -22,7 +22,13 @@ from core.fii_renda_recorrente import dy_recorrente, protecao_nao_divulgada
 from core.fii_scenarios import asset_scenario_return
 
 SCENARIOS = ("base", "selic_alta", "queda_selic", "inflacao_alta", "vacancia", "credito")
-LIVE_PORTFOLIO_STRATEGY_ID = "fii_integrated_robust_optimizer.v6.7"
+# v6.8: o motor que roda hoje não é mais o v6.7. Duas coisas mudaram a
+# carteira que ele devolve — a função objetivo passou a premiar renda
+# recorrente em vez do DY divulgado, e a cardinalidade ganhou piso cedente.
+# `validation_supports_strategy` só aceita certificado do motor em execução;
+# manter o rótulo antigo faria a carteira nova passar com o certificado da
+# anterior, que é exatamente o que essa comparação existe para impedir.
+LIVE_PORTFOLIO_STRATEGY_ID = "fii_integrated_robust_optimizer.v6.8"
 
 
 @dataclass(frozen=True)
