@@ -65,6 +65,24 @@ class PortfolioPolicy:
     # o defeito produzia. Piso 12 fecha os dois regimes sem precisar ceder
     # em nenhum, ao custo de 0,0897 de utilidade no easing (0,18%). Duas
     # posições a mais de diversificação por 0,18% é barato.
+    #
+    # A utilidade não é o custo inteiro, e os outros dois foram medidos em
+    # 14/09/2026 em vez de supostos:
+    #
+    # * Tempo: NEGATIVO. No walk-forward PIT de 24 datas, piso 12 leva 31,1 s
+    #   contra 259,2 s sem piso (-88,0%), com o otimizador comprovadamente
+    #   executado nos dois braços (`optimizer_feasible_fraction` 1,0). A causa
+    #   está em `concession_periods`: 0 com piso, 3 sem. Sem piso a carteira
+    #   sai pequena demais e o orquestrador dispara rodadas de concessão, e
+    #   cada rodada reexecuta o orquestrador inteiro. O laço de degraus é
+    #   barato; o que é caro é a concessão que ele evita
+    #   (`correcao-cardinalidade-r1.md`, `local_staging/pit_piso_24datas.txt`).
+    #
+    # * Proteção: POSITIVO e real. No regime de easing o piso 12 faz o
+    #   afrouxamento readmitir 5 candidatos em vez de 3 — GGRC11 e ITRI11
+    #   entram com renda recorrente abaixo do mínimo. Mais diversificação
+    #   comprada com mais cessão de proteção, e a cessão fica declarada
+    #   ticker a ticker na tela. Este é o custo que sobra; não é zero.
     min_assets: int = 12
     uncertainty_penalty: float = .20
     cvar_penalty: float = .35
