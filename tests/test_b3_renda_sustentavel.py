@@ -35,6 +35,18 @@ def test_fronteiras_da_faixa():
     assert sustentabilidade_do_ano(0.80) == 1.0
 
 
+def test_sustentabilidade_do_ano_ausencia_nunca_pune():
+    # Rodada de correção 1, C-1: antes desta rodada a cópia do B3 devolvia
+    # 0.0 (nota pior possível) para ausência, divergindo da cópia dos EUA
+    # (que já devolvia None) e contradizendo a Global Constraint do plano
+    # ("Ausência nunca pune"). Agora as duas importam a mesma banda
+    # compartilhada (core/renda_sustentavel_banda.py) e a política é None.
+    assert sustentabilidade_do_ano(None) is None
+    assert sustentabilidade_do_ano(np.nan) is None
+    assert sustentabilidade_do_ano(np.inf) is None
+    assert sustentabilidade_do_ano("abc") is None
+
+
 def test_episodio_isolado_nao_condena():
     # Teste 2: um ano de 300% em oito, os outros sete dentro da faixa.
     leitura = leitura_da_serie(_serie([0.50] * 7 + [3.00]))
@@ -71,6 +83,27 @@ def test_payouts_nao_finitos_saem_da_serie_como_ausencia():
     assert leitura["payout_mediano_hist"] == pytest.approx(0.50)
 
 
+def test_janela_desliza_sobre_exercicios_nao_sobre_observacoes_validas():
+    """I-1: a janela recorta os últimos JANELA_ANOS EXERCÍCIOS, não as
+    últimas JANELA_ANOS observações válidas.
+
+    Cenário do revisor: 14 exercícios, os 8 mais antigos ótimos e os 6 mais
+    recentes incoerentes (DY alto com payout quase nulo — saem como
+    ausência). Antes da correção, o corte de [-JANELA_ANOS:] era aplicado
+    DEPOIS de remover os incoerentes, então a janela "deslizava" para trás e
+    pontuava 1.0 com os 8 anos antigos, sem nenhum sinal dos últimos 6 anos.
+    Depois da correção, os últimos 8 exercícios são recortados PRIMEIRO;
+    deles, só os 2 mais antigos (ainda ótimos) sobram coerentes — 2 anos,
+    abaixo de MIN_ANOS — então o resultado é ausência (neutro), não nota
+    cheia.
+    """
+    payouts = [0.50] * 8 + [0.005] * 6  # 8 exercícios antigos ótimos, 6 recentes incoerentes
+    dys = [0.05] * 8 + [0.06] * 6
+    leitura = leitura_da_serie(_serie(payouts, dys))
+    assert leitura["n_anos_payout"] == 2
+    assert leitura["payout_sustentabilidade"] is None
+
+
 def test_dy_sustentavel_nunca_cai_no_dy_bruto():
     # Teste 6: sem sustentabilidade, dy_sustentavel é NaN — nunca o DY cru.
     df_mult = pd.DataFrame({"Ticker": ["XPTO3", "CURTA3"], "DY": [0.08, 0.09]})
@@ -86,10 +119,66 @@ def test_dy_sustentavel_nunca_cai_no_dy_bruto():
     assert boa["dy_sustentavel"] == pytest.approx(0.08 * boa["payout_sustentabilidade"])
 
 
+_COLUNAS_CONTRATO_RS = (
+    "payout_sustentabilidade", "payout_mediano_hist", "n_anos_payout",
+    "dy_sustentavel",
+)
+
+
 def test_enrich_preserva_quadro_sem_historico():
+    # I-3, caminho "hist_batch vazio": a saída antecipada não pode devolver
+    # o quadro sem as quatro colunas de contrato — esse é justamente o
+    # caminho alcançável em produção quando o loader devolve {} (ex.:
+    # core/b3_data.py::_financeiro engolindo uma exceção do banco).
     df_mult = pd.DataFrame({"Ticker": ["XPTO3"], "DY": [0.08]})
     out = enrich_com_renda_sustentavel(df_mult, {})
     assert list(out["Ticker"]) == ["XPTO3"]
+    for coluna in _COLUNAS_CONTRATO_RS:
+        assert coluna in out.columns
+        assert np.isnan(out[coluna].iloc[0])
+
+
+def test_enrich_preserva_colunas_de_contrato_com_df_mult_vazio():
+    # I-3, caminho "df_mult vazio": mesmo sem nenhuma linha, o contrato de
+    # colunas de saída deve existir (0 linhas, 4 colunas a mais).
+    df_mult = pd.DataFrame({"Ticker": pd.Series(dtype=str), "DY": pd.Series(dtype=float)})
+    out = enrich_com_renda_sustentavel(df_mult, {"XPTO3": _serie([0.40, 0.50, 0.60])})
+    assert out.empty
+    for coluna in _COLUNAS_CONTRATO_RS:
+        assert coluna in out.columns
+
+
+def test_enrich_preserva_colunas_de_contrato_com_historico_sem_payout():
+    # I-3: hist_batch não é vazio, mas o histórico não tem coluna Payout —
+    # _anos_observados descarta a chave em silêncio. `dados` ainda é
+    # preenchido por chave (o laço sempre insere uma entrada), então este
+    # caso segue para o merge; o contrato de colunas precisa se manter de
+    # qualquer forma, com todas as quatro colunas em NaN.
+    df_mult = pd.DataFrame({"Ticker": ["XPTO3"], "DY": [0.08]})
+    hist_sem_payout = {"XPTO3": pd.DataFrame({"Data": pd.to_datetime(["2023-12-31"])})}
+    out = enrich_com_renda_sustentavel(df_mult, hist_sem_payout)
+    assert list(out["Ticker"]) == ["XPTO3"]
+    for coluna in _COLUNAS_CONTRATO_RS:
+        assert coluna in out.columns
+    # n_anos_payout é 0 (contagem real), não NaN; as demais são ausência.
+    assert out["n_anos_payout"].iloc[0] == 0
+    assert pd.isna(out["payout_sustentabilidade"].iloc[0])
+    assert pd.isna(out["payout_mediano_hist"].iloc[0])
+    assert pd.isna(out["dy_sustentavel"].iloc[0])
+
+
+def test_com_colunas_de_contrato_anexa_as_quatro_colunas_em_nan():
+    # I-3, unidade do helper usado pelas duas saídas antecipadas de
+    # enrich_com_renda_sustentavel (inclusive o ramo "dados vazio", hoje
+    # inalcançável a partir de hist_batch mas coberto pelo mesmo helper).
+    from core.b3_renda_sustentavel import _com_colunas_de_contrato
+
+    df_mult = pd.DataFrame({"Ticker": ["XPTO3"], "DY": [0.08]})
+    out = _com_colunas_de_contrato(df_mult)
+    assert list(out["Ticker"]) == ["XPTO3"]
+    for coluna in _COLUNAS_CONTRATO_RS:
+        assert coluna in out.columns
+        assert np.isnan(out[coluna].iloc[0])
 
 
 def _anual(pares):
