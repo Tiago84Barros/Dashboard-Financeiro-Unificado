@@ -644,13 +644,36 @@ def test_sem_piso_o_desempate_do_objetivo_favorece_menos_ativos():
 
 
 def test_piso_de_cardinalidade_e_respeitado_quando_viavel():
+    # Reaproveita a estrutura de
+    # test_sem_piso_o_desempate_do_objetivo_favorece_menos_ativos, mas afrouxa
+    # todos os tetos de concentração por dimensão (só max_asset=.3 segue
+    # ativo) para dar ao desempate do objetivo espaço de sobra para escolher
+    # poucos ativos. A versão anterior deste teste (min_assets=8, tetos
+    # default) passava com o piso completamente desligado — o cenário
+    # devolvia 9 ativos por conta própria — e não provava nada sobre o piso
+    # (achado CRÍTICO da revisão de 8982e0c). Por isso a primeira asserção
+    # abaixo roda o MESMO cenário com min_assets=0 e confirma, por execução,
+    # que ele devolve menos que o piso exigido a seguir: só então o piso=8
+    # é uma prova de que a restrição é quem produz o resultado.
     types = ["tijolo", "papel", "fof", "hibrido"] * 4
     rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
     scenario = MacroScenario(selic=11, ipca=4, selic_change_12m=-2.5)
-    policy = PortfolioPolicy(max_assets=12, max_asset=.5, min_asset_weight=.02,
-                              min_assets=8)
+    tetos_afrouxados = dict(
+        max_assets=12, min_asset_weight=.02, max_asset=.3,
+        max_manager=1.0, max_sector=1.0, max_tenant=1.0, max_debtor=1.0,
+        max_issuer=1.0, max_indexer=1.0, max_region=1.0, max_illiquid=1.0,
+        min_dimension_coverage=0.0, min_distinct_types=1, max_single_type=1.0,
+    )
 
-    resultado = optimize_diligence_portfolio(rows, scenario, policy=policy)
+    sem_piso = optimize_diligence_portfolio(
+        rows, scenario, policy=PortfolioPolicy(**tetos_afrouxados, min_assets=0))
+    assert len(sem_piso["items"]) < 8, (
+        "cenário não serve para provar o piso: sem piso já devolve "
+        f"{len(sem_piso['items'])} ativos, que já é >= 8"
+    )
+
+    resultado = optimize_diligence_portfolio(
+        rows, scenario, policy=PortfolioPolicy(**tetos_afrouxados, min_assets=8))
 
     assert len(resultado["items"]) >= 8
     assert not resultado.get("blockers")
