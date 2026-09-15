@@ -507,16 +507,17 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # `_checks` emite três coisas diferentes na MESMA lista: risco confirmado
-# (linha em CAIXA ALTA, `DADOS:`, `MOMENTUM:`), observação de contexto medida
+# (linha em CAIXA ALTA), observação de contexto medida
 # sobre amostra suficiente e já descartada como padrão (`CONTEXTO:`) e
 # limitação de amostra/fonte (`COBERTURA:`, prefixo que já existia antes deste
 # ramo para "sem DFC", "sem EBITDA", "sem documento CVM" e "histórico curto" —
-# nenhuma delas é risco confirmado). Medido no armazém local: das 423 empresas
-# com série anual, 423 emitem alguma linha, mas só 191 emitem alguma linha de
-# risco confirmado; da linha patrimonial, 8 são risco, 222 contexto e 3
-# cobertura. Imprimir as três sob "RED FLAGS DETERMINÍSTICAS" é o que dilui o
-# sinal para quem decide — uma bandeira que acende para todos não distingue
-# ninguém.
+# nenhuma delas é risco confirmado). Medido no armazém local sobre 426
+# empresas: 190 emitiam alguma linha sob "risco confirmado", mas só 8 tinham
+# risco em CAIXA ALTA — 94 estavam em vermelho SÓ por `MOMENTUM:` (um
+# trimestre isolado) e 50 SÓ por `DADOS:` (defeito do nosso próprio banco).
+# Imprimir as três categorias sob "RED FLAGS DETERMINÍSTICAS" é o que dilui o
+# sinal para quem decide — uma bandeira que acende para 190 e só descreve 8
+# não distingue ninguém.
 #
 # A regra mora AQUI e só aqui. Este projeto já teve três cópias da mesma
 # guarda com duas divergências entre elas; `tests/test_dossie_severidade.py`
@@ -535,6 +536,18 @@ SEVERIDADES = (SEVERIDADE_RISCO, SEVERIDADE_CONTEXTO, SEVERIDADE_COBERTURA)
 _PREFIXO_SEVERIDADE: dict[str, str] = {
     "CONTEXTO:": SEVERIDADE_CONTEXTO,
     "COBERTURA:": SEVERIDADE_COBERTURA,
+    # `MOMENTUM:` olha UM trimestre a/a. Condenar por um período isolado é o
+    # oposto do que este ramo existe para fazer — a pergunta é a qualidade
+    # histórica. Medido no armazém: 94 das 426 empresas estavam em bandeira
+    # vermelha SÓ por esta linha. Ela continua visível e continua chegando ao
+    # parecer; o que muda é o cabeçalho sob o qual chega.
+    "MOMENTUM:": SEVERIDADE_CONTEXTO,
+    # `DADOS:` descreve defeito do NOSSO banco (provento divergente na mesma
+    # data-ex, DY do banco em desacordo com o recomputado). É o que não
+    # conseguimos verificar, não risco da empresa: marcar a companhia de
+    # perigosa por bug de ingestão nossa é a ponderação indevida que este ramo
+    # existe para corrigir. Medido: 50 das 426 estavam em vermelho SÓ por ela.
+    "DADOS:": SEVERIDADE_COBERTURA,
 }
 
 #: Cabeçalhos de exibição, compartilhados pelas duas telas.

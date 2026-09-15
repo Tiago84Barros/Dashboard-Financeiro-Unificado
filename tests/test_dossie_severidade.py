@@ -28,10 +28,10 @@ from pathlib import Path
 import pandas as pd
 
 from core.dossie_b3 import (
+    _PROMPT_PARECER,
     SEVERIDADE_COBERTURA,
     SEVERIDADE_CONTEXTO,
     SEVERIDADE_RISCO,
-    _PROMPT_PARECER,
     agrupa_flags_por_severidade,
     dossie_to_text,
     severidade_flag,
@@ -77,9 +77,9 @@ def test_cobertura_que_ja_existia_antes_do_ramo_tambem_nao_e_risco():
 
 def test_prefixo_desconhecido_cai_no_lado_seguro():
     """Um prefixo novo tem de aparecer para quem decide, não sumir."""
-    assert severidade_flag("DADOS: DY do banco diverge do recomputado.") == SEVERIDADE_RISCO
-    assert severidade_flag("MOMENTUM: lucro do último trimestre caiu 40% a/a.") == SEVERIDADE_RISCO
     assert severidade_flag("NOVIDADE: qualquer coisa") == SEVERIDADE_RISCO
+    assert severidade_flag("PREJUÍZO CONTÁBIL EM 7 DOS 10 ANOS.") == SEVERIDADE_RISCO
+    assert severidade_flag("") == SEVERIDADE_RISCO
 
 
 def test_agrupamento_entrega_sempre_as_tres_chaves():
@@ -196,7 +196,7 @@ def test_regra_de_prefixo_existe_uma_unica_vez_no_repositorio():
         for no in ast.walk(arvore):
             if not isinstance(no, ast.Constant) or not isinstance(no.value, str):
                 continue
-            if no.value.strip() in ("CONTEXTO:", "COBERTURA:"):
+            if no.value.strip() in ("CONTEXTO:", "COBERTURA:", "MOMENTUM:", "DADOS:"):
                 culpados.append(f"{caminho.relative_to(_RAIZ)}:{no.lineno}")
     assert not culpados, f"prefixo comparado fora de core/dossie_b3.py: {culpados}"
 
@@ -215,3 +215,39 @@ def test_n_anos_payout_ausente_nao_derruba_a_criacao_de_carteira():
         assert linhas, "a linha nunca pode sumir"
         assert "nan" not in linhas[0].lower()
         assert "não informado" in linhas[0]
+
+
+# ── (7) período isolado e defeito do nosso banco não são risco da empresa ──
+
+def test_momentum_de_um_trimestre_nao_e_risco_confirmado():
+    """`MOMENTUM:` olha UM trimestre a/a. A instrução que governa este ramo é
+    julgar a qualidade histórica, não condenar por um período isolado — e 94
+    das 426 empresas do armazém estavam em bandeira vermelha só por esta
+    linha. Ela permanece visível, sob o cabeçalho honesto."""
+    flag = "MOMENTUM: lucro do último trimestre caiu -40.0% a/a (2026T2)."
+    assert severidade_flag(flag) == SEVERIDADE_CONTEXTO
+
+
+def test_defeito_do_nosso_banco_nao_marca_a_empresa_de_perigosa():
+    """`DADOS:` descreve inconsistência da NOSSA ingestão, não risco da
+    companhia. 50 das 426 estavam em vermelho só por isso."""
+    for flag in (
+        "DADOS: proventos com valores distintos na mesma data-ex — provável eco.",
+        "DADOS: métrica DY do banco (9.0%) diverge do recomputado (4.0%).",
+    ):
+        assert severidade_flag(flag) == SEVERIDADE_COBERTURA
+
+
+def test_linha_reclassificada_continua_chegando_ao_parecer():
+    """Reclassificar não pode virar silenciar: silêncio no dossiê lê-se como
+    "nada encontrado"."""
+    texto = dossie_to_text({
+        "ticker": "XPTO3",
+        "red_flags": [
+            "MOMENTUM: lucro do último trimestre caiu -40.0% a/a (2026T2).",
+            "DADOS: métrica DY do banco (9.0%) diverge do recomputado (4.0%).",
+        ],
+    })
+    assert "MOMENTUM: lucro do último trimestre caiu -40.0%" in texto
+    assert "DADOS: métrica DY do banco" in texto
+    assert "RED FLAGS DETERMINÍSTICAS" not in texto
