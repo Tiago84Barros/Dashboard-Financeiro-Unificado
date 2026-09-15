@@ -245,6 +245,19 @@ def get_company_fundamentals_context(tickers: list[str], max_n: int = 15) -> str
     for _, row in sub.iterrows():
         setor = row.get("SETOR") or row.get("SEGMENTO") or ""
         inds = " | ".join(f"{_LABEL.get(c, c)}={_fmt_val(c, row.get(c))}" for c in cols)
+        # Ausência declarada, não linha omitida: a LLM precisa distinguir "não
+        # sustentável" de "não observado" para não terceirizar a evidência ao
+        # usuário — ela já mandou ler relatório gerencial de dado que estava no
+        # próprio prompt.
+        _sust = row.get("payout_sustentabilidade")
+        _n_anos = row.get("n_anos_payout")
+        if _sust is not None and _sust == _sust:
+            inds += (f" | Sustentabilidade da distribuição={float(_sust):.0%}"
+                     f" (payout mediano={_fmt_val('Payout', row.get('payout_mediano_hist'))},"
+                     f" {int(_n_anos or 0)} anos observados)")
+        else:
+            inds += (" | Sustentabilidade da distribuição=não observada "
+                     "(menos de 3 anos de payout no banco)")
         lines.append(f"  {row['Ticker']} [{setor}]: {inds}")
     return _cap("\n".join(lines), _CAP_FUND)
 

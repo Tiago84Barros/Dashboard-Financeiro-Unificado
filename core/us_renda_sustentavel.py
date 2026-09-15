@@ -7,53 +7,33 @@ magnitude, mas preservam lacunas e valores não finitos como ausência.
 Esta fundação não decide elegibilidade. ``is_reit`` é devolvido somente como
 metadado para que uma etapa futura aplique uma política própria a REITs, cuja
 distribuição é normalmente analisada por FFO/AFFO, não por lucro GAAP.
+
+As constantes da banda e ``sustentabilidade_do_ano`` moraram aqui até a
+rodada de correção 1 da task 1, quando a mesma faixa duplicada em
+``core/b3_renda_sustentavel.py`` foi encontrada já divergente na política de
+ausência (C-1). Ambas agora importam de ``core/renda_sustentavel_banda.py``;
+este módulo não muda de comportamento — já devolvia ``None`` para ausência.
 """
 from __future__ import annotations
 
-import math
 from collections.abc import Iterable, Mapping
 from statistics import median
 
-JANELA_ANOS = 8
-MIN_ANOS = 3
-
-# Faixa bilateral: a distribuição quase nula e a persistentemente superior ao
-# lucro são ambas pouco representativas de uma política sustentável de renda.
-PISO, OTIMO_LO, OTIMO_HI, TETO = 0.05, 0.25, 0.80, 1.30
+from core.renda_sustentavel_banda import (
+    JANELA_ANOS,
+    MIN_ANOS,
+    OTIMO_HI,
+    OTIMO_LO,
+    PISO,
+    TETO,
+    _numero_finito,
+    sustentabilidade_do_ano,
+)
 
 __all__ = [
     "JANELA_ANOS", "MIN_ANOS", "PISO", "OTIMO_LO", "OTIMO_HI", "TETO",
     "sustentabilidade_do_ano", "leitura_da_serie",
 ]
-
-
-def _numero_finito(valor: object) -> float | None:
-    """Converte somente observações numéricas finitas; ausência continua ausência."""
-    if isinstance(valor, bool):
-        return None
-    try:
-        numero = float(valor)
-    except (TypeError, ValueError):
-        return None
-    return numero if math.isfinite(numero) else None
-
-
-def sustentabilidade_do_ano(payout: object) -> float | None:
-    """Nota ``[0, 1]`` de um payout anual, ou ``None`` se ele é ausente.
-
-    Os trechos externos são lineares: 5%--25% sobe de zero a um e
-    80%--130% cai de um a zero. Payout é uma razão decimal, não percentual.
-    """
-    valor = _numero_finito(payout)
-    if valor is None:
-        return None
-    if valor <= PISO or valor >= TETO:
-        return 0.0
-    if OTIMO_LO <= valor <= OTIMO_HI:
-        return 1.0
-    if valor < OTIMO_LO:
-        return (valor - PISO) / (OTIMO_LO - PISO)
-    return (TETO - valor) / (TETO - OTIMO_HI)
 
 
 def _anos_unicos(serie_anual: Iterable[Mapping[str, object]] | None) -> list[Mapping[str, object]]:

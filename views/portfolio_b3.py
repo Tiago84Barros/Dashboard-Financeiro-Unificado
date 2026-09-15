@@ -22,6 +22,9 @@ from core.b3_portfolio_model import (
     restore_b3_portfolio_model,
     save_b3_portfolio_model,
 )
+from core.b3_renda_sustentavel import (
+    enrich_decision_universe as _enrich_decision_universe,
+)
 from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
 from core.macro_data.database import get_local_macro_engine
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
@@ -76,30 +79,6 @@ class MarketCapDataError(RuntimeError):
 
 class LiquidezDataError(RuntimeError):
     """A série de volume negociado não pôde ser consultada com segurança."""
-
-
-def _enrich_decision_universe(
-    df_mult_todos: pd.DataFrame,
-    hist_batch: dict[str, pd.DataFrame],
-    all_tickers: tuple[str, ...],
-) -> pd.DataFrame:
-    """Inclui evidência histórica no quadro lido pelas decisões de carteira.
-
-    O piso de qualidade, a Saúde da Carteira e a Rota de Valor consomem
-    ``df_mult_todos``. Portanto, a sustentabilidade não pode ficar apenas no
-    quadro reconciliado de entrada: lacunas continuam ``NaN`` e são tratadas
-    como ausência pelos consumidores, nunca como uma nota ou risco zero.
-    """
-    from core.b3_renda_sustentavel import (
-        enrich_com_historico_patrimonial,
-        enrich_com_renda_sustentavel,
-    )
-    from core.dossie_b3 import load_pl_lucro_anual_batch
-
-    enriched = enrich_com_renda_sustentavel(df_mult_todos, hist_batch)
-    return enrich_com_historico_patrimonial(
-        enriched, load_pl_lucro_anual_batch(all_tickers)
-    )
 
 
 def _ticker_key(value: object) -> str:
@@ -626,6 +605,83 @@ def _aplicar_piso_qualidade(
         selecionados, ranked_prox, df_mult, seg_label=seg_label,
         selic=selic, pesos=pesos_p, log=log,
     )
+
+
+def _motivo_afrouxamento_lider(tk: str, piso_log: dict) -> str | None:
+    """Etiqueta de ressalva quando o líder entrou pela guarda de viabilidade
+    da Task 5 (``core/b3_quality_floor.py``) — nenhum candidato do segmento
+    sobreviveu à confirmação histórica de payout, e o líder foi readmitido
+    marcado em vez de deixar a vaga vazia."""
+    _afrouxado = next(
+        (a for a in piso_log.get("afrouxado_por_viabilidade", []) if a["tk"] == tk),
+        None,
+    )
+    if not _afrouxado:
+        return None
+    return ("⚠️ Entrou com ressalva: distribuição historicamente "
+            "acima do lucro; nenhum candidato do segmento passou")
+
+
+def _motivos_dy_sustentavel(tk: str, df_mult_todos: pd.DataFrame) -> list[str]:
+    """Linha de DY sustentável (Task 6, ``core/b3_renda_sustentavel.py``) para
+    o card do líder. A coluna que decide é a coluna que aparece: nunca mostra
+    o DY divulgado sozinho quando a sustentabilidade está disponível, e nunca
+    omite a linha quando falta histórico — ausência de evidência não vira
+    0.0, vira uma frase que diz que faltou evidência."""
+    if df_mult_todos is None:
+        return []
+    _lin_rs = df_mult_todos[df_mult_todos["Ticker"] == tk]
+    if _lin_rs.empty or "payout_sustentabilidade" not in _lin_rs.columns:
+        return []
+    _sust = _lin_rs["payout_sustentabilidade"].iloc[0]
+    _dy_s = _lin_rs.get("dy_sustentavel", pd.Series([float("nan")])).iloc[0]
+    _n_anos = _lin_rs.get("n_anos_payout", pd.Series([0])).iloc[0]
+    # A coluna "DY" é buscada, não pressuposta: esta função é chamada de forma
+    # INCONDICIONAL no caminho de criação de carteira, e um KeyError aqui
+    # zeraria o portfólio — a restrição inviolável do projeto. Hoje
+    # load_multiplos_todos() sempre entrega a coluna; o guard existe para que
+    # uma mudança de contrato do carregador vire "faltou evidência", não uma
+    # criação vazia.
+    _dy_div = _lin_rs.get("DY", pd.Series([float("nan")])).iloc[0]
+    # `int(nan)` levanta ValueError, e esta função roda INCONDICIONALMENTE no
+    # caminho de criação de carteira: a exceção zeraria o portfólio — a
+    # restrição inviolável do projeto. É a mesma classe do KeyError: 'DY'
+    # guardado acima, no mesmo caminho. Hoje `n_anos_payout` vem preenchida
+    # sempre que `payout_sustentabilidade` vem; a guarda existe para que uma
+    # mudança de contrato do carregador vire texto, não carteira vazia.
+    try:
+        _anos_txt = f"{int(_n_anos)} anos"
+    except (TypeError, ValueError):  # NaN, None, texto
+        _anos_txt = "número de anos não informado"
+    if _sust == _sust:  # NaN != NaN
+        # Sustentabilidade presente com DY ausente ocorre em 81 das 426 linhas
+        # do universo real (27 delas aprovadas pelo piso). Imprimir "nan%" ali
+        # é ausência virando ruído; a docstring promete o contrário.
+        if _dy_s == _dy_s and _dy_div == _dy_div:
+            return [
+                f"DY sustentável {float(_dy_s):.1%} "
+                f"(divulgado {float(_dy_div):.1%} × "
+                f"sustentabilidade {float(_sust):.0%} em "
+                f"{_anos_txt})"
+            ]
+        return [
+            "DY sustentável indisponível — sem DY divulgado para aplicar a "
+            f"sustentabilidade de {float(_sust):.0%} medida em "
+            f"{_anos_txt}"
+        ]
+    return ["DY sustentável indisponível — menos de 3 anos de payout observados"]
+
+
+def _avisos_afrouxamento_piso(piso_log: dict) -> list[str]:
+    """Mensagens da seção de transparência do piso para cada líder readmitido
+    pela guarda de viabilidade (Task 5) — a carteira não perde o segmento,
+    mas a distribuição da empresa deve ser tratada como não confirmada."""
+    return [
+        f"Segmento **{_afr['segmento']}**: **{_afr['tk']}** entrou "
+        f"MARCADO — {_afr['motivo']}. A carteira não perde o segmento, "
+        "mas trate a distribuição desta empresa como não confirmada."
+        for _afr in piso_log.get("afrouxado_por_viabilidade", [])
+    ]
 
 
 def _aplicar_diversificacao_correlacao(
@@ -2909,9 +2965,8 @@ def render(show_header: bool = True) -> None:
                 df_mult_recon, df_set, hist_batch_guard, anos_hist, all_tickers
             )
 
-        # O score, o piso de qualidade, a Saúde da Carteira e a Rota de Valor
-        # leem este quadro, não ``df_mult_recon``. Enriquecer aqui mantém a
-        # mesma evidência histórica em toda decisão de criação de carteira.
+        # Sobre df_mult_todos, não df_mult_recon — ver o porquê no docstring
+        # de core.b3_renda_sustentavel.enrich_decision_universe.
         with st.spinner("Calculando sustentabilidade histórica da seleção…"):
             df_mult_todos = _enrich_decision_universe(
                 df_mult_todos, hist_batch, all_tickers
@@ -3395,7 +3450,8 @@ def render(show_header: bool = True) -> None:
     # Piso absoluto de qualidade (determinístico, sem rede). Ligado por padrão:
     # sem ele o app entrega o líder do segmento seja ele qual for, e a única
     # defesa é o usuário ler a seção de saúde.
-    piso_log: dict = {"reprovados": [], "substituicoes": [], "sem_substituto": []}
+    piso_log: dict = {"reprovados": [], "substituicoes": [], "sem_substituto": [],
+                "afrouxado_por_viabilidade": []}
     _piso_ativo = bool(st.session_state.get("pb3_piso_qualidade", True))
     if _gate_ativo and aprovados:
         _pend: list[str] = []
@@ -3485,6 +3541,10 @@ def render(show_header: bool = True) -> None:
                                   if s["entra"] == tk), None)
                 if _sub_piso:
                     motivos.append(f"Entrou por piso de qualidade sobre {_sub_piso}")
+                _motivo_afr = _motivo_afrouxamento_lider(tk, piso_log)
+                if _motivo_afr:
+                    motivos.append(_motivo_afr)
+            motivos.extend(_motivos_dy_sustentavel(tk, df_mult_todos))
             _aval_quali = (st.session_state.get("pb3_quali_cache", {}).get(tk)
                            if _gate_ativo else None)
             if _gate_ativo:
@@ -3946,7 +4006,8 @@ def render(show_header: bool = True) -> None:
         st.info("Nenhum líder identificado com os parâmetros atuais.")
 
     # ── TRANSPARÊNCIA DO PISO ABSOLUTO ───────────────────────────────────────
-    if _piso_ativo and (piso_log["reprovados"] or piso_log["sem_substituto"]):
+    if _piso_ativo and (piso_log["reprovados"] or piso_log["sem_substituto"]
+                        or piso_log["afrouxado_por_viabilidade"]):
         st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
                     unsafe_allow_html=True)
         _sec_hdr("🚧 Piso absoluto de qualidade — reprovações e substituições")
@@ -3978,6 +4039,8 @@ def render(show_header: bool = True) -> None:
                 "segmento passou no piso. A carteira perde este setor — é uma "
                 "informação sobre o segmento, não uma falha do filtro.",
                 icon="🕳️")
+        for _msg_afr in _avisos_afrouxamento_piso(piso_log):
+            st.warning(_msg_afr, icon="⚠️")
 
     # ── SAÚDE DAS SELECIONADAS (cruza as duas rotas) ─────────────────────────
     _render_saude_da_carteira(
