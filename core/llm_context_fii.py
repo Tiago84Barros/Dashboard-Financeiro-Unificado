@@ -157,6 +157,8 @@ def build_fii_chat_context(
         f"número efetivo={_fmt(portfolio_result.get('effective_assets'))}; "
         f"publicável={'sim' if portfolio_result.get('can_publish') else 'não'}",
         "  bloqueios: " + ("; ".join(portfolio_result.get("blockers") or []) or "nenhum"),
+        "  escopo das métricas: " + str(portfolio_result.get("metrics_scope") or "carteira de FIIs"),
+        "  saldo não alocado: " + _fmt(portfolio_result.get("unallocated_weight"), percent=True),
         "",
         "CENÁRIO MACRO APLICADO:",
         f"  Selic={_fmt(getattr(scenario, 'selic', None), percent=False)}%{_origem('selic')}; "

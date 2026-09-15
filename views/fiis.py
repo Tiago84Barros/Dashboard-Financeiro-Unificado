@@ -2044,16 +2044,32 @@ def _carteira_integrada(preferences: dict):
     )
     result["macro_snapshot"] = macro_snapshot
     if not result.get("items"):
+        from core.fii_presentation import enrich_review_presentation
         from core.portfolio_review_routes import fii_review
         from design.portfolio_review import render_portfolio_review
 
         proposal = fii_review(scored, portfolio_policy, scenario)
         st.session_state.pop("fii_port", None)
         st.session_state["fii_portfolio_can_publish"] = False
-        render_portfolio_review(proposal, key="fii_review")
-        with st.expander("Diagnóstico da tentativa com metas originais"):
-            _diagnostico_de_factibilidade(result)
-        return None
+        if not proposal["items"]:
+            render_portfolio_review(proposal, key="fii_review")
+            return None
+        result = enrich_review_presentation(
+            proposal, portfolio_policy,
+            candidate_correlation.to_dict() if not candidate_correlation.empty else None)
+        # Mesmos ativos e pesos do motor de proteção; só completa o contrato
+        # de apresentação para reutilizar todo o painel detalhado abaixo.
+        macro_snapshot = None
+    partial_review = bool(result.get("is_partial_review"))
+    allocated_weight = sum(item["weight"] for item in result["items"])
+    if partial_review:
+        allocation_cols = st.columns(2)
+        allocation_cols[0].markdown(_kpi_html(
+            "Alocado em FIIs", f"{allocated_weight:.1%}",
+            sub="pesos sobre o capital total", accent="#4A9EFF"), unsafe_allow_html=True)
+        allocation_cols[1].markdown(_kpi_html(
+            "Capital não alocado", f"{result['unallocated_weight']:.1%}",
+            sub="sem rendimento presumido", accent="#F6C90E"), unsafe_allow_html=True)
     portfolio_can_publish = bool(
         result.get("can_publish") and investable_gate.can_publish_recommendation
     )
@@ -2124,13 +2140,15 @@ def _carteira_integrada(preferences: dict):
     weighted_pvp = (sum(value * weight for value, weight in valid_pvp) / pvp_weight
                     if pvp_weight else None)
     average_confidence = sum(float(item["confidence"]) * float(item["weight"])
-                             for item in items)
+                             for item in items) / allocated_weight
     k1, k2, k3 = st.columns(3)
     k1.markdown(_kpi_html("Ativos selecionados", len(items),
                           sub=f"{eligibility['eligible_count']} elegíveis",
                           accent="#4A9EFF"),
                 unsafe_allow_html=True)
-    k2.markdown(_kpi_html("DY histórico ponderado", f"{result['trailing_yield_12m']:.1%}",
+    income_label = (f"{result['trailing_yield_12m']:.1%}"
+                    if result['trailing_yield_12m'] is not None else "—")
+    k2.markdown(_kpi_html("DY histórico ponderado", income_label,
                           sub="distribuições dos últimos 12 meses; não é previsão"),
                 unsafe_allow_html=True)
     k3.markdown(_kpi_html("P/VP ponderado",
@@ -2154,6 +2172,10 @@ def _carteira_integrada(preferences: dict):
               "emissor possuem histórico point-in-time obrigatório."
         )
     weights = {item["ticker"]: item["weight"] for item in items}
+    if partial_review:
+        st.caption("DY, P/VP, confiança, número efetivo, cenários e retrospectiva referem-se "
+                   "à parcela investida em FIIs. Os pesos da tabela permanecem sobre o "
+                   "capital total; o saldo não alocado não tem retorno presumido.")
     fii_types = {item["ticker"]: item["tipo"] for item in items}
     returns = _render_portfolio_correlation(weights, fii_types)
     comp_left, comp_right = st.columns([2, 1])
@@ -2166,9 +2188,12 @@ def _carteira_integrada(preferences: dict):
         st.markdown(_scenario_cards_html(result["scenario_returns"]), unsafe_allow_html=True)
     with comp_right:
         st.caption("Composição por tipo (%)")
-        _comp_tipo_chart(pd.DataFrame([
+        composition = [
             {"tipo": item["tipo"], "peso": item["weight"]} for item in items
-        ]))
+        ]
+        if partial_review and result["unallocated_weight"] > 0:
+            composition.append({"tipo": "Não alocado", "peso": result["unallocated_weight"]})
+        _comp_tipo_chart(pd.DataFrame(composition))
     report_prices = _mr.load_precos_mensais(tuple(sorted(set(weights) | {"XFIX11", "BOVA11"})))
     explanations = build_selection_reports(items, scored, scenario=scenario, prices=report_prices)
     st.markdown("#### Por que estes FIIs avançaram para a seleção")
@@ -2176,9 +2201,11 @@ def _carteira_integrada(preferences: dict):
         "Critério de comparação",
         "Comparação exclusiva com fundos do mesmo tipo. O score já incorpora renda, P/VP, "
         "liquidez, estabilidade histórica, governança e métricas próprias da categoria. "
+        + ("A composição ajustada preserva os tetos de proteção e prioriza qualidade, "
+           "confiança e renda recorrente entre os ativos elegíveis. " if partial_review else
         "O otimizador combina score (45%), confiança (30%), renda (25%) e uma preferência "
         "moderada por evidência nominal observada, penalizando concentração, estresse e "
-        "correlação. "
+        "correlação. ")
         + ("Os destaques passaram pelos gates vigentes."
            if result.get("can_publish")
            else "Os destaques permanecem prioridades de diligência."),
