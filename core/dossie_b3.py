@@ -28,6 +28,16 @@ from datetime import date
 import streamlit as st
 from sqlalchemy import text
 
+# Fonte única dos limiares da confirmação histórica de patrimônio. `_checks`
+# repetia 0.50 e 5 como literais; o dossiê e a Saúde (quarta confirmação) têm
+# de virar juntos numa recalibração, senão passam a dar vereditos diferentes
+# sobre a mesma empresa sem produzir erro. Import de topo porque
+# `core.b3_holdings_health` não fecha ciclo com este módulo (ele só depende de
+# b3_value_route/valuation) — ao contrário de `core.b3_renda_sustentavel`, que
+# importa `load_pl_lucro_anual_batch` daqui e por isso segue importado dentro
+# da função.
+from core.b3_holdings_health import FRACAO_PL_QUEDA_CRITICA, MIN_PARES_PL_HIST
+
 logger = logging.getLogger(__name__)
 
 # Schema mínimo que o parecer LLM deve devolver — superset do schema usado por
@@ -420,24 +430,63 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
     # empresas, das quais 80 (91%) têm o padrão em menos da metade dos anos.
     # Vale a qualidade histórica, não o período isolado.
     #
-    # O ramo do episódio começa em UM par observado (medição da task 9): com
+    # A observação existe a partir de UM par (medição da task 9): com
     # `_pares >= 2` uma série de dois anos com PL caindo e lucro positivo saía
     # do dossiê em SILÊNCIO, e silêncio aqui se lê como "nada encontrado".
-    # A observação existe — o que falta é tamanho de amostra para chamá-la de
-    # padrão — então ela sai como episódio, com a fração à vista.
+    # Mas os três casos NÃO são o mesmo fato e não podem usar a mesma frase:
+    #
+    #   1. amostra suficiente + fração alta → padrão persistente (red flag);
+    #   2. amostra suficiente + fração baixa → episódio de verdade. "Episódio,
+    #      não padrão" só é honesto AQUI, onde há pares bastantes para
+    #      descartar o padrão. E é justamente por descartá-lo que NÃO é risco
+    #      confirmado: sai com prefixo `CONTEXTO:`. Medido no armazém local,
+    #      este é o ramo que inunda o gate — 222 das 423 empresas com série
+    #      anual (fração mediana 18%), todas hoje impressas sob "RED FLAGS
+    #      DETERMINÍSTICAS" e entregues a quem pode reprovar a empresa. Uma
+    #      bandeira que acende para a maioria não distingue ninguém;
+    #   3. amostra curta + qualquer fração → NÃO CONFIRMÁVEL. LAND3 tem 3 de 4
+    #      pares (75%) e recebia "episódio, não padrão": a limitação instruía a
+    #      LLM a DESCARTAR evidência real. Sai com o prefixo `COBERTURA:`, a
+    #      convenção que este mesmo `_checks` já usa para limitação de amostra
+    #      (distinta do risco confirmado): continua visível no dossiê e no
+    #      prompt — silêncio aqui se lê como "nada encontrado" —, diz o tamanho
+    #      da amostra e a fração, e não nega o que não pode descartar. São 3
+    #      empresas no armazém local (BRIT3, BRST3, LAND3).
+    #
+    # Os dois prefixos mantêm as observações VISÍVEIS — omitir se lê como
+    # "nada encontrado", defeito que a task 9 corrigiu — sem apresentá-las
+    # como risco confirmado. Só o caso 1 (8 empresas) segue red flag.
+    #
+    # Os limiares vêm de core/b3_holdings_health (import de topo: não há ciclo
+    # com aquele módulo, ao contrário de b3_renda_sustentavel abaixo). Cópia
+    # local dos números faria a quarta confirmação e o dossiê darem vereditos
+    # diferentes sobre a mesma empresa na primeira recalibração.
     from core.b3_renda_sustentavel import fracao_pl_em_queda_com_lucro
     _frac, _pares = fracao_pl_em_queda_com_lucro(serie)
-    if _frac is not None and _frac >= 0.50 and _pares >= 5:
+    if _frac is not None and _pares >= MIN_PARES_PL_HIST:
+        if _frac >= FRACAO_PL_QUEDA_CRITICA:
+            flags.append(
+                f"PATRIMÔNIO EM QUEDA COM LUCRO POSITIVO em "
+                f"{round(_frac * _pares)} de {_pares} pares de anos "
+                f"({_frac:.0%}): padrão persistente de distribuição acima do "
+                "lucro (dividendo extraordinário/reversão de reservas) — "
+                "dividendo atual pode não ser recorrente.")
+        elif _frac > 0:
+            flags.append(
+                f"CONTEXTO: patrimônio em queda com lucro positivo em "
+                f"{round(_frac * _pares)} de {_pares} pares de anos "
+                f"({_frac:.0%}): episódio, não padrão — com {_pares} pares "
+                "observados, a minoria de ocorrências NÃO caracteriza "
+                "política de distribuição da empresa. Observação medida, não "
+                "risco confirmado.")
+    elif _frac is not None and _frac > 0:
         flags.append(
-            f"PATRIMÔNIO EM QUEDA COM LUCRO POSITIVO em {round(_frac * _pares)} "
-            f"de {_pares} pares de anos ({_frac:.0%}): padrão persistente de "
-            "distribuição acima do lucro (dividendo extraordinário/reversão de "
-            "reservas) — dividendo atual pode não ser recorrente.")
-    elif _frac is not None and _frac > 0 and _pares >= 1:
-        flags.append(
-            f"Patrimônio em queda com lucro positivo em {round(_frac * _pares)} "
-            f"de {_pares} pares de anos ({_frac:.0%}): episódio, não padrão — "
-            "não trate como política de distribuição da empresa.")
+            f"COBERTURA: patrimônio em queda com lucro positivo em "
+            f"{round(_frac * _pares)} de {_pares} pares de anos ({_frac:.0%}), "
+            f"amostra abaixo dos {MIN_PARES_PL_HIST} pares exigidos para "
+            "distinguir padrão de episódio — observação NÃO CONFIRMÁVEL nesta "
+            "janela; não é evidência de política de distribuição nem prova de "
+            "que ela não exista.")
     if serie and all(s.get("fco_mi") is None for s in serie):
         flags.append("COBERTURA: sem demonstração de fluxo de caixa no banco — qualidade do lucro não verificável.")
     if serie and all(s.get("ebitda_mi") is None for s in serie):

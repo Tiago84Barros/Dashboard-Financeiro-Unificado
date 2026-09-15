@@ -97,6 +97,27 @@ _COLUNAS_CONTRATO = (
     "payout_sustentabilidade", "payout_mediano_hist", "n_anos_payout",
     "dy_sustentavel",
 )
+_COLUNAS_PATRIMONIAIS = ("pl_queda_com_lucro_frac", "n_pares_pl")
+
+
+def _com_colunas(df_mult: pd.DataFrame, colunas: tuple[str, ...]) -> pd.DataFrame:
+    """Implementação única do contrato de colunas dos dois enriquecedores.
+
+    Uma cópia por enriquecedor é o defeito "guarda duplicada não fica igual":
+    hoje as duas listas divergiriam em silêncio na primeira coluna nova.
+    """
+    if df_mult is None:
+        return df_mult
+    out = df_mult.copy()
+    for coluna in colunas:
+        if coluna not in out.columns:
+            out[coluna] = np.nan
+    return out
+
+
+def _com_colunas_patrimoniais(df_mult: pd.DataFrame) -> pd.DataFrame:
+    """Colunas de evidência patrimonial, mesmo sem série de PL/lucro."""
+    return _com_colunas(df_mult, _COLUNAS_PATRIMONIAIS)
 
 
 def _com_colunas_de_contrato(df_mult: pd.DataFrame) -> pd.DataFrame:
@@ -109,13 +130,7 @@ def _com_colunas_de_contrato(df_mult: pd.DataFrame) -> pd.DataFrame:
     `core/b3_data.py::_financeiro` engole exceção e devolve `{}`). O contrato
     do quadro de saída não pode depender de ter havido histórico.
     """
-    if df_mult is None:
-        return df_mult
-    out = df_mult.copy()
-    for coluna in _COLUNAS_CONTRATO:
-        if coluna not in out.columns:
-            out[coluna] = np.nan
-    return out
+    return _com_colunas(df_mult, _COLUNAS_CONTRATO)
 
 
 def enrich_com_renda_sustentavel(
@@ -185,9 +200,16 @@ def enrich_com_historico_patrimonial(
     df_mult: pd.DataFrame,
     series_batch: dict[str, list[dict]],
 ) -> pd.DataFrame:
-    """Acrescenta a fração histórica de PL em queda ao cross-section."""
+    """Acrescenta a fração histórica de PL em queda ao cross-section.
+
+    Como a irmã ``enrich_com_renda_sustentavel``, garante as colunas do
+    contrato também nas saídas antecipadas (M-β): devolver o quadro cru quando
+    não há histórico é o padrão "quadro sem coluna passa por ``.empty``". Hoje
+    os consumidores usam ``.get()`` e não quebram — o contrato do quadro de
+    saída é que não pode depender de ter havido histórico.
+    """
     if df_mult is None or df_mult.empty or not series_batch:
-        return df_mult
+        return _com_colunas_patrimoniais(df_mult)
     dados: dict[str, dict] = {}
     for ticker, serie in series_batch.items():
         fracao, n_pares = fracao_pl_em_queda_com_lucro(serie)
@@ -196,7 +218,7 @@ def enrich_com_historico_patrimonial(
             "n_pares_pl": n_pares,
         }
     if not dados:
-        return df_mult
+        return _com_colunas_patrimoniais(df_mult)
     df_pl = pd.DataFrame.from_dict(dados, orient="index")
     df_pl.index.name = "Ticker"
     return df_mult.merge(df_pl.reset_index(), on="Ticker", how="left")

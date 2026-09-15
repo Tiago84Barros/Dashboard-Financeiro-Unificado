@@ -52,20 +52,27 @@ def _serie_base():
 
 
 def test_check_pl_em_queda_com_lucro_positivo():
-    """UM par de anos é episódio, não padrão — e mesmo assim tem de aparecer.
+    """UM par de anos não confirma nem descarta padrão — e tem de aparecer.
 
     Até a proteção ao investidor (spec §3, Teste 2) a série de dois anos
-    recebia a red flag MAIÚSCULA de padrão insustentável. A regra nova
-    reserva o texto de padrão para quem repete na maioria de pelo menos 5
-    pares; o par isolado sai em minúscula, dizendo que é episódio. O que
-    não pode acontecer é sair nada: a observação existe e omiti-la se
-    lê como "nada encontrado".
+    recebia a red flag MAIÚSCULA de padrão insustentável. O texto de padrão
+    ficou reservado a quem repete na maioria de pelo menos MIN_PARES_PL_HIST
+    pares. A revisão final (I-E) corrigiu a outra ponta: com amostra curta,
+    chamar a observação de "episódio, não padrão" NEGA um padrão que os dados
+    não permitem descartar, e essa frase vai para o prompt que decide a
+    seleção. Um par isolado sai agora como afirmação de COBERTURA — não
+    confirmável. O que segue proibido é sair nada: a observação existe e
+    omiti-la se lê como "nada encontrado".
     """
     flags = _checks(_serie_base(), {}, {}, {}, {"n_docs": 3}, {})
     assert not [f for f in flags if "PATRIMÔNIO EM QUEDA" in f]
-    episodio = [f for f in flags if "Patrimônio em queda" in f]
-    assert episodio, flags
-    assert "1 de 1" in episodio[0] and "episódio" in episodio[0]
+    linha = [f for f in flags if "patrimônio em queda" in f.lower()]
+    assert linha, flags
+    assert linha[0].startswith("COBERTURA:")
+    assert "1 de 1" in linha[0] and "NÃO CONFIRMÁVEL" in linha[0]
+    # dizer que a amostra não distingue padrão de episódio é honesto; afirmar
+    # "episódio, não padrão" com 1 par é que nega o que não se pode descartar
+    assert "episódio, não padrão" not in linha[0]
 
 
 def test_check_duplicacao_dividendos():

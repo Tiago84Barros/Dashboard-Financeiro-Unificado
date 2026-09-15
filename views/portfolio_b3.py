@@ -636,12 +636,28 @@ def _motivos_dy_sustentavel(tk: str, df_mult_todos: pd.DataFrame) -> list[str]:
     _sust = _lin_rs["payout_sustentabilidade"].iloc[0]
     _dy_s = _lin_rs.get("dy_sustentavel", pd.Series([float("nan")])).iloc[0]
     _n_anos = _lin_rs.get("n_anos_payout", pd.Series([0])).iloc[0]
+    # A coluna "DY" é buscada, não pressuposta: esta função é chamada de forma
+    # INCONDICIONAL no caminho de criação de carteira, e um KeyError aqui
+    # zeraria o portfólio — a restrição inviolável do projeto. Hoje
+    # load_multiplos_todos() sempre entrega a coluna; o guard existe para que
+    # uma mudança de contrato do carregador vire "faltou evidência", não uma
+    # criação vazia.
+    _dy_div = _lin_rs.get("DY", pd.Series([float("nan")])).iloc[0]
     if _sust == _sust:  # NaN != NaN
+        # Sustentabilidade presente com DY ausente ocorre em 81 das 426 linhas
+        # do universo real (27 delas aprovadas pelo piso). Imprimir "nan%" ali
+        # é ausência virando ruído; a docstring promete o contrário.
+        if _dy_s == _dy_s and _dy_div == _dy_div:
+            return [
+                f"DY sustentável {float(_dy_s):.1%} "
+                f"(divulgado {float(_dy_div):.1%} × "
+                f"sustentabilidade {float(_sust):.0%} em "
+                f"{int(_n_anos)} anos)"
+            ]
         return [
-            f"DY sustentável {float(_dy_s):.1%} "
-            f"(divulgado {float(_lin_rs['DY'].iloc[0]):.1%} × "
-            f"sustentabilidade {float(_sust):.0%} em "
-            f"{int(_n_anos)} anos)"
+            "DY sustentável indisponível — sem DY divulgado para aplicar a "
+            f"sustentabilidade de {float(_sust):.0%} medida em "
+            f"{int(_n_anos)} anos"
         ]
     return ["DY sustentável indisponível — menos de 3 anos de payout observados"]
 

@@ -50,7 +50,10 @@ def test_sustentabilidade_do_ano_ausencia_nunca_pune():
 def test_episodio_isolado_nao_condena():
     # Teste 2: um ano de 300% em oito, os outros sete dentro da faixa.
     leitura = leitura_da_serie(_serie([0.50] * 7 + [3.00]))
-    assert leitura["payout_sustentabilidade"] >= 0.85
+    # Valor exatamente conhecido (7 anos em 1.0 e um em 0.0 = 0.875): a
+    # asserção frouxa `>= 0.85` deixava a banda inteira derivar sem o teste
+    # notar (M-3).
+    assert leitura["payout_sustentabilidade"] == pytest.approx(0.875)
 
 
 def test_padrao_persistente_zera():
@@ -634,3 +637,93 @@ def test_contexto_fundamentos_declara_ausencia_quando_sem_evidencia(monkeypatch)
         ctxmod._universe_with_sector.clear()
     block = ctxmod.get_company_fundamentals_context(["SEMHIST3"])
     assert "Sustentabilidade da distribuição=não observada" in block
+
+
+# ── Rodada de correção da revisão final ──────────────────────────────────────
+
+def _serie_pl_fix(pares):
+    return [{"ano": a, "pl_mi": pl, "lucro_mi": lu,
+             "fco_mi": 1.0, "ebitda_mi": 1.0} for a, pl, lu in pares]
+
+
+def test_amostra_curta_nao_e_chamada_de_episodio():
+    """I-E: LAND3 tem 3 de 4 pares (75%) e recebia 'episódio, não padrão'.
+    75% não é episódio — é amostra curta. A frase negava ativamente um padrão
+    que os dados não permitem descartar, e essas linhas vão para o prompt que
+    decide a classificação de seleção.
+    """
+    from core.b3_holdings_health import MIN_PARES_PL_HIST
+    from core.dossie_b3 import _checks
+
+    curta = _serie_pl_fix([(2021, 200.0, 9.0), (2022, 190.0, 9.0),
+                           (2023, 180.0, 9.0), (2024, 185.0, 9.0),
+                           (2025, 175.0, 9.0)])
+    flags = _checks(curta, {"yoy": {}}, {}, {}, {"n_docs": 1}, {})
+    linha = [f for f in flags if "patrimônio em queda" in f.lower()]
+    assert len(linha) == 1, "a observação sumiu — silêncio se lê como nada encontrado"
+    assert linha[0].startswith("COBERTURA:"), (
+        "amostra curta é afirmação de cobertura, não red flag de risco")
+    assert "NÃO CONFIRMÁVEL" in linha[0]
+    assert "episódio, não padrão" not in linha[0], (
+        "amostra curta não pode negar o padrão que não consegue descartar")
+    assert "3 de 4" in linha[0] and "75%" in linha[0], (
+        "o tamanho da amostra e a fração têm de aparecer")
+    assert str(MIN_PARES_PL_HIST) in linha[0]
+
+
+def test_episodio_so_com_amostra_suficiente_e_nao_e_risco_confirmado():
+    """I-E: com pares bastantes e fração baixa, 'episódio, não padrão' é
+    honesto — e é exatamente por descartar o padrão que a linha NÃO é risco
+    confirmado. Medido no armazém local, este ramo acende para 222 das 423
+    empresas com série anual; sob o cabeçalho "RED FLAGS DETERMINÍSTICAS" uma
+    bandeira que acende para a maioria não distingue ninguém e dilui o sinal
+    onde ele decide (avaliar_para_selecao pode reprovar a empresa).
+    """
+    from core.dossie_b3 import _checks
+
+    episodio = _serie_pl_fix([(2018, 100.0, 9.0), (2019, 110.0, 9.0),
+                              (2020, 120.0, 9.0), (2021, 130.0, 9.0),
+                              (2022, 140.0, 9.0), (2023, 150.0, 9.0),
+                              (2024, 160.0, 9.0), (2025, 150.0, 9.0)])
+    flags = _checks(episodio, {"yoy": {}}, {}, {}, {"n_docs": 1}, {})
+    linha = [f for f in flags if "atrimônio em queda" in f]
+    assert len(linha) == 1, "a observação não pode sumir"
+    assert "episódio, não padrão" in linha[0]
+    assert linha[0].startswith("CONTEXTO:"), (
+        "amostra suficiente que DESCARTA o padrão não é risco confirmado")
+    assert "não risco confirmado" in linha[0]
+    assert not linha[0].startswith("COBERTURA:"), (
+        "a amostra aqui é suficiente — não é limitação de cobertura")
+    assert "PATRIMÔNIO EM QUEDA" not in linha[0]
+
+
+def test_limiar_do_dossie_vem_de_holdings_health():
+    """I-D: os literais 0.50 e 5 em `_checks` eram uma segunda fonte do mesmo
+    limiar. Recalibrar a quarta confirmação sem recalibrar o dossiê produziria
+    dois vereditos sobre a mesma empresa, sem erro nenhum.
+    """
+    import inspect
+
+    import core.b3_holdings_health as hh
+    import core.dossie_b3 as dossie
+
+    assert dossie.FRACAO_PL_QUEDA_CRITICA is hh.FRACAO_PL_QUEDA_CRITICA
+    assert dossie.MIN_PARES_PL_HIST is hh.MIN_PARES_PL_HIST
+    corpo = inspect.getsource(dossie._checks)
+    assert "FRACAO_PL_QUEDA_CRITICA" in corpo and "MIN_PARES_PL_HIST" in corpo
+    assert "_frac >= 0.50" not in corpo and "_pares >= 5" not in corpo, (
+        "o limiar voltou a ser literal em _checks")
+
+
+def test_historico_patrimonial_entrega_o_contrato_sem_serie():
+    """M-β: a saída antecipada devolvia o quadro cru, sem
+    `pl_queda_com_lucro_frac` / `n_pares_pl`. Os consumidores de hoje usam
+    `.get()`, mas o contrato do quadro não pode depender de ter havido série.
+    """
+    from core.b3_renda_sustentavel import enrich_com_historico_patrimonial
+
+    df = pd.DataFrame({"Ticker": ["AAAA3"], "DY": [0.05]})
+    for vazio in ({}, {"AAAA3": []}):
+        out = enrich_com_historico_patrimonial(df, vazio)
+        assert "pl_queda_com_lucro_frac" in out.columns
+        assert "n_pares_pl" in out.columns
