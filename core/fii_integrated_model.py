@@ -20,6 +20,37 @@ from core.fii_renda_recorrente import (
 
 INTEGRATED_MODEL_VERSION = "6.8.0"
 
+#: Portões de proteção ao investidor e a severidade de cada um. São os únicos
+#: que admitem concessão por viabilidade: reprovar em qualquer outro portão
+#: (liquidez, histórico, drawdown, faixa de P/VP, teto de plausibilidade do DY)
+#: deixa o fundo fora em definitivo. A severidade ordena a readmissão — quanto
+#: maior, mais tarde o fundo volta, e a opacidade (métrica que o gestor não
+#: divulgou) é a pior das quatro porque não tem tamanho conhecido.
+PORTOES_DE_PROTECAO: dict[str, int] = {
+    "renda recorrente abaixo do mínimo": 1,
+    "vencimentos em 24m acima do teto": 2,
+    "concentração de locatário acima do teto": 3,
+    "renda recorrente ausente": 4,
+}
+
+
+class ColunasDeElegibilidadeAusentes(ValueError):
+    """O quadro não traz as colunas que a política lê.
+
+    Coluna ausente era lida como métrica ausente e reprovava o universo
+    inteiro: uma falha de leitura chegava à tela como "0 elegíveis", que é um
+    resultado legítimo de aparência. Erro tem que parecer erro.
+    """
+
+    def __init__(self, missing_columns: Iterable[str]) -> None:
+        self.missing_columns = tuple(missing_columns)
+        super().__init__(
+            "leitura incompleta do universo de FIIs: as colunas exigidas pela "
+            "política não existem no quadro ("
+            + ", ".join(self.missing_columns)
+            + "); nenhum fundo foi classificado"
+        )
+
 
 @dataclass(frozen=True)
 class IntegratedEligibilityPolicy:
@@ -117,15 +148,66 @@ def _eligibility_reasons(row: dict, policy: IntegratedEligibilityPolicy) -> list
     return reasons
 
 
+def colunas_exigidas(policy: IntegratedEligibilityPolicy) -> tuple[str, ...]:
+    """Colunas cuja AUSÊNCIA reprova o fundo sob esta política.
+
+    Deliberadamente não inclui ``tenant_concentration`` nem
+    ``lease_expiry_concentration_24m``: a ausência delas é ``nao_divulgado``,
+    que não reprova ninguém, e cobrá-las aqui transformaria opacidade do gestor
+    em falha do nosso pipeline.
+    """
+    exigidas = ["liquidez_diaria", "dy_12m", "income_recurrence", "pvp"]
+    if policy.min_history_months > 0:
+        exigidas.append("history_months")
+    if policy.max_drawdown > 0:
+        exigidas.append("max_drawdown")
+    return tuple(exigidas)
+
+
+def _colunas_ausentes(
+    source: list[dict], policy: IntegratedEligibilityPolicy,
+) -> tuple[str, ...]:
+    if not source:
+        return ()
+    presentes: set[str] = set()
+    for row in source:
+        presentes.update(row.keys())
+    return tuple(coluna for coluna in colunas_exigidas(policy)
+                 if coluna not in presentes)
+
+
+def severidade_da_concessao(reasons: Iterable[str]) -> tuple[int, int, int]:
+    """Chave de ordenação da readmissão: pior portão, quantidade, soma."""
+    pesos = [PORTOES_DE_PROTECAO[reason] for reason in reasons
+             if reason in PORTOES_DE_PROTECAO]
+    if not pesos:
+        return (0, 0, 0)
+    return (max(pesos), len(pesos), sum(pesos))
+
+
 def apply_integrated_eligibility(
     rows: Iterable[dict], policy: IntegratedEligibilityPolicy,
 ) -> tuple[list[dict], dict]:
-    """Aplica filtros determinísticos e devolve razões agregadas de exclusão."""
+    """Aplica filtros determinísticos e devolve razões agregadas de exclusão.
+
+    O relatório também devolve, em ``concession_candidates``, os fundos
+    reprovados EXCLUSIVAMENTE pelos portões de proteção ao investidor — o
+    material de que o orquestrador da carteira precisa quando o universo
+    estrito não comporta a carteira. O conjunto estrito e ``eligible_count``
+    não mudam por causa disso: a proteção só cede na composição da carteira, e
+    de forma nomeada, nunca no silêncio da contagem.
+    """
     source = [dict(row) for row in rows]
+    ausentes = _colunas_ausentes(source, policy)
+    if ausentes:
+        raise ColunasDeElegibilidadeAusentes(ausentes)
     eligible: list[dict] = []
+    concession: list[dict] = []
     exclusions: Counter[str] = Counter()
     for row in source:
         reasons = _eligibility_reasons(row, policy)
+        protecao = [reason for reason in reasons if reason in PORTOES_DE_PROTECAO]
+        duros = [reason for reason in reasons if reason not in PORTOES_DE_PROTECAO]
         enriched = {
             **row,
             "integrated_model_version": INTEGRATED_MODEL_VERSION,
@@ -134,14 +216,31 @@ def apply_integrated_eligibility(
         }
         if reasons:
             exclusions.update(reasons)
+            if protecao and not duros:
+                concession.append({
+                    **enriched,
+                    "protecao_cedivel": tuple(protecao),
+                    "severidade_da_concessao": severidade_da_concessao(protecao),
+                })
         else:
             eligible.append(enriched)
+    # Ordem crescente de severidade; ticker desempata para a carteira não
+    # depender da ordem de leitura da fonte.
+    concession.sort(key=lambda row: (row["severidade_da_concessao"],
+                                     str(row.get("ticker") or "")))
     report = {
         "model_version": INTEGRATED_MODEL_VERSION,
         "universe_count": len(source),
         "eligible_count": len(eligible),
         "eligible_fraction": len(eligible) / len(source) if source else 0.0,
         "exclusion_counts": dict(exclusions.most_common()),
+        "concession_candidates": tuple(concession),
+        "concession_count": len(concession),
+        "concession_summary": tuple({
+            "ticker": str(row.get("ticker") or ""),
+            "reasons": list(row["protecao_cedivel"]),
+            "severity": row["severidade_da_concessao"][0],
+        } for row in concession),
         "policy": asdict(policy),
     }
     return eligible, report

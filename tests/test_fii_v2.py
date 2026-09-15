@@ -144,7 +144,12 @@ def test_reports_derive_leverage_fee_and_recurrence():
     latest = {row["metric_name"]: row for row in observations}
     assert latest["leverage"]["value_numeric"] == .1
     assert latest["admin_fee_rate_annual"]["value_numeric"] == .012
-    assert latest["income_recurrence"]["value_numeric"] == 1.0
+    # O nome mudou de proposito: esta serie e de `monthlyDividendYield`, uma
+    # razao entre renda e preco, e o endpoint `reports` nao tem calendario --
+    # mes sem informe some da serie em vez de contar como quebra. Enquanto ela
+    # gravava sob `income_recurrence`, era ELA que a decisao lia em 9 tickers.
+    assert latest[fii_v2.REPORTED_DY_REGULARITY_METRIC]["value_numeric"] == 1.0
+    assert "income_recurrence" not in latest
 
 
 def test_income_growth_requires_real_three_year_window():

@@ -70,7 +70,9 @@ def test_tetos_sao_os_valores_aprovados_no_spec():
 def test_elegibilidade_e_score_derivam_o_mesmo_numero():
     """Regra certa em um consumidor só já publicou yield errado na vitrine."""
     from core.fii_integrated_model import (
-        IntegratedEligibilityPolicy, apply_integrated_eligibility)
+        IntegratedEligibilityPolicy,
+        apply_integrated_eligibility,
+    )
     from core.fii_methodology import score_fiis_by_type
 
     linhas = [
@@ -100,5 +102,5 @@ def test_a_metodologia_pontua_a_renda_recorrente_e_nao_a_divulgada():
 def test_versao_da_metodologia_subiu_com_a_formula():
     from core.fii_methodology import FORMULA_VERSION, METHODOLOGY_VERSION
 
-    assert METHODOLOGY_VERSION == "6.9.0"
-    assert "6.9.0" in FORMULA_VERSION
+    assert METHODOLOGY_VERSION == "6.10.0"
+    assert "6.10.0" in FORMULA_VERSION

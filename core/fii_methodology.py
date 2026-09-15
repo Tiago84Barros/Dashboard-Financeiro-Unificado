@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
-from core.fii_renda_recorrente import dy_recorrente
+from core.fii_renda_recorrente import DY_RECORRENTE_INPUT_KEYS, dy_recorrente
 
 INCOME_GROWTH_FORMULA = "cagr(first12m,last12m),36m"
 INCOME_GROWTH_MIN_MONTHS = 24
@@ -64,12 +64,159 @@ def income_growth_3y(monthly_income: "dict[date, float]", as_of: date) -> float 
     return max(-1.0, min(1.0, (last_12 / first_12) ** .5 - 1.0))
 
 
+def month_start_before(anchor: date, offset_months: int) -> date:
+    """Primeiro dia do mês ``offset_months`` meses antes de ``anchor``.
+
+    A aritmética de mês estava copiada em quatro lugares (ingestão, PIT e as
+    duas métricas de renda). Copiada, ela diverge — e divergência de janela é
+    exatamente o defeito que a definição única existe para impedir.
+    """
+    year, month = anchor.year, anchor.month - offset_months
+    while month <= 0:
+        year -= 1
+        month += 12
+    while month > 12:
+        year += 1
+        month -= 12
+    return date(year, month, 1)
+
+
+INCOME_RECURRENCE_WINDOW_MONTHS = 36
+#: Mínimo de meses OBSERVADOS para a recorrência existir. É o ciclo anual que
+#: ``dy_12m`` — o outro fator de ``dy_recorrente`` — também cobre, e era o piso
+#: que o walk-forward PIT já exigia. Medido em 13/09/2026 no armazém local:
+#: custa 20 dos 381 fundos com provento (5,2%); subir para 18 custaria 47
+#: (12,3%) e para 24, 61 (16,0%), sem que a medida fique mais informativa —
+#: doze meses já contêm todos os pagamentos de um ciclo completo.
+INCOME_RECURRENCE_MIN_MONTHS = 12
+INCOME_RECURRENCE_FORMULA = "positive_share/(1+cv),vida_observada<=36m"
+
+
+#: Por que a recorrência não existe. A ausência precisa CHEGAR a quem decide,
+#: e chegar dizendo o que é: os leitores escolhem a observação mais recente por
+#: ``knowledge_at``, então "não gravar linha" não derruba o valor anterior — só
+#: o deixa parecer fresco. Medido em 13/09/2026, era isso que acontecia com os
+#: 19 fundos sem recorrência: doze passavam a publicar o número do endpoint
+#: ``reports`` e sete mantinham o valor de julho.
+SEM_PROVENTO_OBSERVADO = "sem_provento_observado"
+VIDA_MENOR_QUE_MINIMO = "vida_observada_menor_que_minimo"
+MEDIA_DE_RENDA_NAO_POSITIVA = "media_de_renda_nao_positiva"
+
+
+def income_recurrence_from_series_com_motivo(
+        values: "Iterable[float]") -> "tuple[float | None, str | None]":
+    """Regularidade do pagamento sobre meses EFETIVAMENTE observados, com o
+    motivo quando ela não existe.
+
+    Os dois portões moram aqui e só aqui: recontá-los do lado de fora é como
+    motivo e valor passam a discordar — a linha sairia com número e motivo, ou
+    nula e muda. ``income_recurrence_from_series`` é a projeção no valor.
+    """
+    serie = [float(value or 0.0) for value in values]
+    if not serie:
+        return None, SEM_PROVENTO_OBSERVADO
+    if len(serie) < INCOME_RECURRENCE_MIN_MONTHS:
+        return None, VIDA_MENOR_QUE_MINIMO
+    mean = sum(serie) / len(serie)
+    if mean <= 0:
+        return None, MEDIA_DE_RENDA_NAO_POSITIVA
+    positive_share = sum(value > 0 for value in serie) / len(serie)
+    variance = sum((value - mean) ** 2 for value in serie) / len(serie)
+    cv = math.sqrt(variance) / mean
+    return max(0.0, min(1.0, positive_share / (1.0 + cv))), None
+
+
+def income_recurrence_from_series(values: "Iterable[float]") -> float | None:
+    """Regularidade do pagamento sobre meses EFETIVAMENTE observados.
+
+    Núcleo compartilhado: recebe a série já recortada e não sabe nada sobre
+    calendário. Quem entrega meses que o fundo não viveu obtém a resposta
+    errada — ver ``income_recurrence``.
+    """
+    return income_recurrence_from_series_com_motivo(values)[0]
+
+
+def income_recurrence(monthly_income: "dict[date, float]", as_of: date) -> float | None:
+    """Recorrência da renda nos até 36 meses mais recentes, recortada na vida
+    observada do fundo.
+
+    Definição única, importada tanto pela ingestão quanto pelo walk-forward
+    point-in-time — o mesmo tratamento que ``income_growth_3y`` recebeu em
+    23/08/2026. Antes cada lado tinha a sua: a produção fazia
+    ``positive_share/(1+cv)`` sobre 36 meses com ``get(mes, 0.0)``; a safra PIT
+    fazia ``max(0, 1 - std/mean)`` sobre 24, sem ``positive_share``. O
+    certificado validava uma metodologia que a produção não executava.
+
+    O recorte é o coração da correção. Preencher com zero os meses anteriores
+    ao primeiro provento do fundo ataca os dois fatores ao mesmo tempo:
+    ``positive_share`` cai e o coeficiente de variação sobe. Medido em
+    13/09/2026 sobre as 396 linhas do armazém local, 128 fundos tinham a
+    recorrência subestimada por esse artefato e 89 caíam abaixo de 0,45, faixa
+    em que o piso de 8% de renda recorrente reprova qualquer DY típico de FII.
+    RBVA11 pagou em todos os 16 meses em que existiu e marcava 0,210.
+
+    O início do recorte é o primeiro provento de TODA a série, não o primeiro
+    da janela: o silêncio que vem DEPOIS do primeiro pagamento é evidência de
+    quebra de recorrência, não ausência de histórico. As duas causas opostas
+    da ausência precisam continuar distinguíveis — senão um fundo que ficou
+    dois anos mudo e voltou a pagar há doze meses sairia com nota perfeita.
+
+    Abaixo de ``INCOME_RECURRENCE_MIN_MONTHS`` meses observados a métrica não
+    existe. Devolver o número lisonjeiro (RBFM11, com 8 meses, daria 0,994)
+    seria trocar um viés por outro; a ausência reduz cobertura e o caminho de
+    métrica crítica ausente já sabe lidar com ela.
+    """
+    return income_recurrence_com_motivo(monthly_income, as_of)[0]
+
+
+def income_recurrence_com_motivo(monthly_income: "dict[date, float]",
+                                 as_of: date) -> "tuple[float | None, str | None]":
+    """``income_recurrence`` dizendo POR QUE não existe, quando não existe.
+
+    Quem publica a métrica precisa disso: a ausência tem de ser gravada como
+    observação, não omitida. Fundo sem nenhum provento e fundo com oito meses
+    de vida são ausências diferentes, e quem lê a tabela não tem como
+    distingui-las depois se o motivo não viajar junto.
+    """
+    return income_recurrence_from_series_com_motivo(
+        float(monthly_income.get(mes, 0.0) or 0.0)
+        for mes in income_recurrence_months(monthly_income, as_of))
+
+
+def income_recurrence_months(monthly_income: "dict[date, float]",
+                             as_of: date) -> "list[date]":
+    """Os meses que a recorrência de fato mede: a interseção entre a janela de
+    36 e a vida observada do fundo.
+
+    Exposto porque quem publica a métrica precisa declarar sobre quantos meses
+    ela foi medida, e recontar isso por fora é como as janelas divergem.
+    """
+    inicio_vida = min(
+        (mes for mes, valor in monthly_income.items() if valor and float(valor) > 0),
+        default=None,
+    )
+    if inicio_vida is None:
+        return []
+    return [mes for mes in (
+        month_start_before(as_of, offset)
+        for offset in reversed(range(INCOME_RECURRENCE_WINDOW_MONTHS)))
+        if mes >= inicio_vida]
+
+
 # 6.9.0: o piso e a nota passaram a incidir sobre a renda recorrente
 # (dy_12m * income_recurrence) e a concentração virou veto. A fórmula mudou,
 # então a versão muda junto — senão as notas novas herdariam em silêncio o
 # certificado PIT da 6.8.0.
-METHODOLOGY_VERSION = "6.9.0"
-FORMULA_VERSION = "br-fii-integrated-income-resilience-6.9.0"
+#
+# 6.10.0: pelo mesmo motivo, de novo. Depois que a safra 6.9.0 foi certificada
+# em 12/09/2026, três mudanças alteraram a nota: o frescor da recorrência
+# passou a medir o insumo e não a linha, a recorrência passou a contar a vida
+# observada em vez de 36 meses fixos, e a ausência de recorrência virou
+# observação em vez de silêncio. Some-se o piso de cardinalidade, que muda a
+# carteira que o walk-forward mede. Manter o rótulo 6.9.0 faria a nota nova
+# herdar um certificado que ela não prestou.
+METHODOLOGY_VERSION = "6.10.0"
+FORMULA_VERSION = "br-fii-integrated-income-resilience-6.10.0"
 VALID_TYPES = ("tijolo", "papel", "fof", "hibrido")
 # Nota do par mediano na escala percentílica de 0 a 100. É para cá que a nota
 # encolhe quando falta cobertura — ver `final_score` em `score_fiis_by_type`.
@@ -86,6 +233,12 @@ class MetricDefinition:
     critical: bool = False
     max_age_days: int = 120
     fallback_keys: tuple[str, ...] = ()
+    #: Chaves cuja PROCEDÊNCIA responde pela métrica, para quando ela é
+    #: derivada e não existe na fonte. Lido só pelo frescor; a resolução do
+    #: valor pontuado continua exclusivamente em ``fallback_keys``. São duas
+    #: finalidades distintas de propósito — confundi-las é o que deixava a
+    #: métrica derivada sem idade própria (ver ``dy_recorrente``).
+    provenance_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -122,11 +275,19 @@ COMMON_METRICS = (
     # Declarar ``fallback_keys=("dy_12m",)`` aqui não afetaria só o frescor —
     # o ranking do grupo inteiro passaria a ler ``dy_12m`` bruto em vez de
     # ``dy_recorrente``, reintroduzindo exatamente o yield inflado que esta
-    # métrica existe para excluir. O frescor continua coberto pelo fallback
-    # genérico de ``_freshness_for_metric`` para ``metrics_fetched_at``/
-    # ``updated_at`` quando não há metadado específico da chave.
+    # métrica existe para excluir.
+    #
+    # O frescor, porém, NÃO podia ficar no fallback genérico para
+    # ``metrics_fetched_at``/``updated_at``: essa é a data em que a LINHA foi
+    # tocada, não a idade do insumo, e com ela os 15 dias desta métrica nunca
+    # mordiam. Medido sobre as 394 linhas reais, RZAK11 entrava como ``ready``
+    # com ``dy_12m`` de 2026-05-01 (~135 dias) só porque o pipeline reescreveu
+    # a linha na véspera. ``provenance_keys`` separa as duas finalidades:
+    # procedência dos dois fatores da renda recorrente para o frescor, sem
+    # nenhum efeito sobre a chave pontuada.
     MetricDefinition("dy_recorrente", "income", .12, "higher", critical=True,
-                     max_age_days=15),
+                     max_age_days=15,
+                     provenance_keys=tuple(sorted(DY_RECORRENTE_INPUT_KEYS))),
     MetricDefinition("income_growth_per_share_3y", "income", .10, "higher", critical=True),
     MetricDefinition("income_recurrence", "income", .08, "higher", critical=True),
     MetricDefinition("pvp", "valuation", .10, "target", critical=True, max_age_days=45),
@@ -247,10 +408,12 @@ def methodology_manifest() -> dict[str, Any]:
         "type_metrics": {key: [asdict(m) for m in value] for key, value in TYPE_METRICS.items()},
         "pvp_targets": PVP_TARGETS,
         "integrated_pipeline": {
-            # Continua 6.7: a elegibilidade e o otimizador não mudaram na
-            # 6.8.0, que mexeu só no encolhimento do type_score.
-            "eligibility_version": "6.7.0",
-            "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.7",
+            # Os dois deixaram de "continuar 6.7" na 6.10.0: a elegibilidade
+            # ganhou portão de renda recorrente, veto de concentração e a
+            # lista de candidatos à concessão; o otimizador ganhou piso de
+            # cardinalidade e trocou a renda da função objetivo.
+            "eligibility_version": "6.10.0",
+            "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.8",
             "stages": ("eligibility", "type_score", "empirical_confidence",
                        "pit_walk_forward", "robust_scenario_optimization"),
             "correlation_min_months": 12,
@@ -361,9 +524,9 @@ def _metric_metadata_for(row: dict, metric_key: str) -> dict[str, Any]:
     return {}
 
 
-def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date,
-                          *, source_key: str | None = None) -> float:
-    metadata = _metric_metadata_for(row, source_key or definition.key)
+def _freshness_for_key(row: dict, definition: MetricDefinition, today: date,
+                       metric_key: str) -> float:
+    metadata = _metric_metadata_for(row, metric_key)
     available = _date(metadata.get("available_at") or row.get("metrics_fetched_at") or row.get("updated_at"))
     if available is None:
         return .50
@@ -371,6 +534,20 @@ def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date,
     if age <= definition.max_age_days:
         return 1.0
     return max(0.0, 1.0 - (age - definition.max_age_days) / max(definition.max_age_days * 2, 1))
+
+
+def _freshness_for_metric(row: dict, definition: MetricDefinition, today: date,
+                          *, source_key: str | None = None) -> float:
+    """Idade da métrica pela procedência dos seus INSUMOS.
+
+    Uma métrica derivada não existe na fonte e nunca terá metadado próprio;
+    sem ``provenance_keys`` ela caía no carimbo da linha, que é recente por
+    construção, e o prazo curto que a define nunca era exercido. Quando há
+    mais de um insumo vale o pior deles: a renda recorrente é tão velha
+    quanto o mais atrasado dos dois fatores que a compõem.
+    """
+    keys = definition.provenance_keys or (source_key or definition.key,)
+    return min(_freshness_for_key(row, definition, today, key) for key in keys)
 
 
 def _source_quality_for_metric(row: dict, definition: MetricDefinition,

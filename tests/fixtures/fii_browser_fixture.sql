@@ -183,8 +183,8 @@ INSERT INTO market.fii_validation_runs
      started_at, finished_at)
 VALUES (
     '6.7.0', DATE '2026-07-29', 'passed',
-    '{"strategy_id":"fii_integrated_robust_optimizer.v6.7",
-      "backtest":{"strategy_id":"fii_integrated_robust_optimizer.v6.7",
+    '{"strategy_id":"fii_integrated_robust_optimizer.v6.8",
+      "backtest":{"strategy_id":"fii_integrated_robust_optimizer.v6.8",
                   "periods":65,"verified_snapshot_fraction":1,
                   "return_observation_coverage":1}}',
     '[]', TIMESTAMPTZ '2026-07-24 10:00:00+00',
@@ -208,13 +208,13 @@ VALUES
      '11111111-1111-1111-1111-111111111111',
      'Carteira sintética ativa','active','synthetic_test','fixture-active',
      '{"methodology_version":"6.7.0",
-       "strategy_id":"fii_integrated_robust_optimizer.v6.7"}',
+       "strategy_id":"fii_integrated_robust_optimizer.v6.8"}',
      '{}','2026-07-24 12:00:00+00','2026-07-24 12:00:00+00'),
     ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
      '11111111-1111-1111-1111-111111111111',
      'Carteira sintética arquivada','archived','synthetic_test','fixture-archived',
      '{"methodology_version":"6.7.0",
-       "strategy_id":"fii_integrated_robust_optimizer.v6.7"}',
+       "strategy_id":"fii_integrated_robust_optimizer.v6.8"}',
      '{}','2026-06-24 12:00:00+00','2026-06-24 12:00:00+00');
 
 INSERT INTO fii_portfolio_model_items

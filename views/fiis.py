@@ -23,8 +23,10 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 import core.market_read as _mr
+from core.fii_carteira_protegida import montar_carteira_com_concessao
 from core.fii_integrated_model import (
     INTEGRATED_MODEL_VERSION,
+    ColunasDeElegibilidadeAusentes,
     IntegratedEligibilityPolicy,
     apply_integrated_eligibility,
 )
@@ -39,8 +41,8 @@ from core.fii_methodology import (
 from core.fii_portfolio_v4 import (
     LIVE_PORTFOLIO_STRATEGY_ID,
     PortfolioPolicy,
-    optimize_diligence_portfolio,
 )
+from core.fii_renda_recorrente import dy_recorrente
 from core.fii_selection_explanations import build_selection_reports
 from core.fii_taxonomy import ORDEM_CATEGORIAS_FII, categoria_fii
 from core.fii_validation import validation_supports_strategy
@@ -487,6 +489,7 @@ def _linhas_de_factibilidade(result: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     limits = diagnostics.get("portfolio_limits") or {}
     controls = pd.DataFrame([
         {"Limite aplicado": "Máximo de FIIs", "Valor": limits.get("max_assets")},
+        {"Limite aplicado": "Mínimo de FIIs", "Valor": limits.get("min_assets")},
         {"Limite aplicado": "Peso mínimo por FII", "Valor": limits.get("min_asset_weight")},
         {"Limite aplicado": "Peso máximo por FII", "Valor": limits.get("max_asset")},
         {"Limite aplicado": "Liquidez diária mínima", "Valor": limits.get("min_daily_liquidity")},
@@ -950,6 +953,132 @@ def _scenario_cards_html(values: dict[str, float]) -> str:
     return '<div class="fii-scenario-grid">' + "".join(cards) + "</div>"
 
 
+def _avisos_de_cessao_de_protecao(result: dict) -> list[str]:
+    """Avisos derivados do resultado da carteira — regra pura, sem Streamlit.
+
+    Fora da tela para poder ser testada pelo comportamento: o teste anterior
+    checava o TEXTO-FONTE do render, e texto-fonte passa a valer mesmo quando a
+    mensagem deixa de aparecer. A concessão de elegibilidade aparece ticker a
+    ticker, com o portão que cada fundo reprovou — proteção cedida não é
+    ausência de risco, e nota agregada não diz de quem é o risco.
+    """
+    avisos: list[str] = []
+    if result.get("viability_notes"):
+        avisos.append(
+            "Proteção ajustada para preservar a viabilidade da carteira: "
+            + " ".join(str(nota) for nota in result["viability_notes"])
+        )
+    if result.get("protecao_cedida_na_elegibilidade"):
+        avisos.append(
+            "Fundos readmitidos com proteção cedida na elegibilidade (o "
+            "universo estrito não fechava a carteira): "
+            + " · ".join(
+                f"{item['ticker']} — {', '.join(item['motivos'])}"
+                + ("" if item["na_carteira"] else " (fora da carteira final)")
+                for item in result["protecao_cedida_na_elegibilidade"]
+            )
+        )
+    return avisos
+
+
+def _card_de_renda_recorrente(result: dict) -> str:
+    """Card do DY recorrente ponderado, com a cobertura do cálculo declarada.
+
+    O ponderado só vale para quem divulgou recorrência: se o número sai de
+    metade do peso da carteira, o card diz metade. E sem nenhum fundo medido
+    ele mostra traço — imprimir 0,0% publicaria ausência de dado como renda
+    inexistente.
+    """
+    recorrente = result.get("recurrent_yield_12m")
+    cobertura = float(result.get("recurrent_yield_coverage") or 0.0)
+    dy = result.get("trailing_yield_12m")
+    divulgado = (f"DY divulgado: {dy:.1%}; não é previsão" if dy is not None
+                 else "DY divulgado indisponível; não é previsão")
+    if recorrente is None:
+        return _kpi_html("DY recorrente ponderado", "—",
+                         sub=f"nenhum fundo da carteira divulgou recorrência · {divulgado}",
+                         sub_color="#F6C90E", accent="#F6C90E")
+    if cobertura < .999:
+        return _kpi_html("DY recorrente ponderado", f"{recorrente:.1%}",
+                         sub=(f"ponderado sobre {cobertura:.0%} do peso — o restante "
+                              f"não divulgou recorrência · {divulgado}"),
+                         sub_color="#F6C90E", accent="#F6C90E")
+    return _kpi_html("DY recorrente ponderado", f"{recorrente:.1%}", sub=divulgado)
+
+
+def _universo_exibido(estritos, candidatos, result: dict) -> list[dict]:
+    """Universo que a tela realmente apresenta: estrito mais os readmitidos.
+
+    Os KPIs de prontidão e confiança saíam de `scored`, calculado só sobre o
+    universo estrito, enquanto a carteira ao lado podia estar cheia de
+    readmitidos pela cessão de proteção. Com o estrito vazio e candidatos, a
+    tela publicava "0/0" de prontidão junto de uma carteira montada — número
+    de um universo medindo outro.
+
+    A distinção não se apaga: o readmitido entra marcado com
+    ``STATUS_READMITIDO``, o mesmo carimbo que o orquestrador usa.
+    """
+    from core.fii_carteira_protegida import STATUS_READMITIDO
+
+    readmitidos = {str(item.get("ticker") or "")
+                   for item in (result.get("protecao_cedida_na_elegibilidade") or ())}
+    return list(estritos) + [
+        {**row, "eligibility_status": STATUS_READMITIDO}
+        for row in candidatos if str(row.get("ticker") or "") in readmitidos
+    ]
+
+
+def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> str:
+    """Card do veredito do protocolo PIT, com a cessão de proteção da safra.
+
+    `robust_optimizer_point_in_time_backtest` grava `concession_periods` e
+    `concession_period_fraction` no `metrics_json` desde que a concessão
+    existe, e nenhum consumidor os lia. Na safra real, 42 dos 70 períodos só
+    tiveram carteira porque a proteção foi cedida — e o card dizia "Aprovado"
+    em verde, sem uma palavra sobre isso. Veredito de integridade temporal
+    apresentado como ausência de risco é exatamente o defeito que este branch
+    inteiro existe para impedir.
+
+    Função pura de propósito: o teste do texto-fonte do render continua
+    passando quando a mensagem some da tela.
+    """
+    aprovado = validation_status == "passed"
+    pit = validation_metrics.get("backtest") or {}
+    periodos = int(pit.get("periods") or 0)
+    cedidos = int(pit.get("concession_periods") or 0)
+    fracao = float(pit.get("concession_period_fraction") or 0.0)
+    # A-162: o gate não afere vantagem sobre o IFIX; o rótulo diz o que o
+    # certificado realmente atesta.
+    sub = (f"integridade temporal, metodologia {METHODOLOGY_VERSION}; "
+           "não afere vantagem sobre o IFIX")
+    valor = "Aprovado" if aprovado else "Pendente"
+    accent = sub_color = "#00C896" if aprovado else "#FC5C7D"
+    if cedidos > 0:
+        valor = f"{valor} com cessão"
+        sub += (f" · {cedidos} de {periodos} safras ({fracao:.0%}) só tiveram "
+                "carteira porque a proteção foi cedida na elegibilidade — "
+                "proteção cedida não é ausência de risco")
+        # Âmbar mesmo aprovado, na borda E no subtítulo: o verde desta tela
+        # significa "sem ressalva", e a ressalva é justamente o subtítulo.
+        accent = sub_color = "#F6C90E"
+    return _kpi_html("Protocolo PIT", valor, sub=sub, sub_color=sub_color,
+                     accent=accent)
+
+
+def _posicao_no_ranking(explanation: dict) -> str:
+    """Sem posição no ranking do tipo, diz isso — não inventa a última.
+
+    Readmitido pela cessão de proteção não foi pontuado contra os pares do seu
+    tipo. Publicar "#N de N · top 100%" apresentaria ausência de medição como a
+    pior medição possível.
+    """
+    rank = explanation.get("rank")
+    pares = int(explanation.get("peer_count") or 0)
+    if rank is None:
+        return "sem posição no ranking do tipo"
+    return f"#{int(rank)} de {pares} · top {int(explanation.get('top_percent') or 0)}%"
+
+
 def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
     ticker = escape(str(explanation.get("ticker") or "—"))
     fii_type = str(explanation.get("tipo") or "").lower()
@@ -980,12 +1109,12 @@ def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
             ) + "</div>"
         )
     open_attr = " open" if expanded else ""
+
     return (
         f'<details class="fii-selection-card" style="border-top-color:{color};"{open_attr}>'
         '<summary><div class="fii-selection-head">'
         f'<span class="fii-selection-ticker">{ticker}</span>'
-        f'<span class="fii-selection-rank">#{int(explanation.get("rank") or 0)} de '
-        f'{int(explanation.get("peer_count") or 0)} · top {int(explanation.get("top_percent") or 0)}%</span>'
+        f'<span class="fii-selection-rank">{escape(_posicao_no_ranking(explanation))}</span>'
         '</div>'
         f'<div class="fii-selection-meta">{escape(type_label)} · peso '
         f'{float(explanation.get("weight") or 0):.1%}</div></summary>'
@@ -1235,12 +1364,10 @@ def _cenario_macro_observado() -> CenarioObservado:
 def _integrated_preference_controls() -> dict:
     """Controles globais da seleção integrada; todos afetam a mesma carteira.
 
-    Tudo recolhido por padrão, como os painéis de apoio da seção Empresas B3:
-    os valores default já produzem a carteira, e quem entra aqui quer ver o
-    resultado primeiro. Os controles continuam a um clique — nenhum parâmetro,
-    limite ou filtro mudou.
+    Personalização visível antes do resultado; premissas macro a um clique.
+    Mantém os valores, limites e chaves da metodologia vigente.
     """
-    with st.expander("⚙️ Carteira e elegibilidade", expanded=False):
+    with st.expander("⚙️ Carteira e elegibilidade", expanded=True):
         c1, c2, c3, c4 = st.columns(4)
         n_assets = c1.slider("Nº máximo de FIIs", 8, 20, 14, key="fii_pref_integrated_assets")
         max_asset = c2.slider("Máx. por FII (%)", 5, 25, 10, 1,
@@ -1251,8 +1378,11 @@ def _integrated_preference_controls() -> dict:
                                 key="fii_pref_integrated_history")
 
         c5, c6, c7, c8 = st.columns(4)
-        min_dy = c5.slider("DY 12m mín. (%)", 0.0, 20.0, 8.0, .5,
-                           key="fii_pref_integrated_dy") / 100
+        min_dy = c5.slider("DY recorrente 12m mín. (%)", 0.0, 20.0, 8.0, .5,
+                           key="fii_pref_integrated_dy",
+                           help="Incide sobre dy_12m × income_recurrence: a "
+                                "parcela do yield sustentada por resultado "
+                                "recorrente.") / 100
         max_drawdown = c6.slider("Drawdown máx. tolerado (%)", 10, 60, 35, 5,
                                  key="fii_pref_integrated_drawdown") / 100
         correlation_penalty = c7.slider(
@@ -1509,7 +1639,7 @@ def _merge_portfolio_views(primary: pd.DataFrame | None,
     preferred = [
         "Ticker", "Tipo", "Segmento", "Peso", "Score", "Peso v4", "Peso complementar",
         "Ajuste macro", "Impacto macro",
-        "Score v4", "Score complementar", "Confiança", "Cobertura", "DY 12m",
+        "Score v4", "Score complementar", "Confiança", "Cobertura", "DY recorrente", "DY divulgado",
         "P/VP", "Liquidez/dia", "Qtd. ativos", "Vacância", "Imóveis",
         "Divers. imóveis", "Regiões", "Divers. regiões", "Qtd. papéis",
         "Divers. papel", "Qtd. fundos", "Divers. FoF", "Cresc. a.a.",
@@ -1542,7 +1672,8 @@ def _render_portfolio_table(slot, primary: pd.DataFrame | None,
         "Impacto macro": st.column_config.NumberColumn(format="%+.1f"),
         "Confiança": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
         "Cobertura": st.column_config.ProgressColumn(min_value=0, max_value=1, format="percent"),
-        "DY 12m": st.column_config.NumberColumn(format="percent"),
+        "DY recorrente": st.column_config.NumberColumn(format="percent"),
+        "DY divulgado": st.column_config.NumberColumn(format="percent"),
         "P/VP": st.column_config.NumberColumn(format="%.2f"),
         "Liquidez/dia": st.column_config.NumberColumn(format="R$ %.0f"),
         "Qtd. ativos": st.column_config.NumberColumn(format="%d", help="Total de itens declarado na carteira do fundo."),
@@ -1936,8 +2067,21 @@ def _carteira_integrada(preferences: dict):
         st.session_state.pop("fii_port", None)
         return None
 
-    eligible_rows, eligibility = apply_integrated_eligibility(
-        inputs.to_dict("records") if not inputs.empty else [], eligibility_policy)
+    try:
+        eligible_rows, eligibility = apply_integrated_eligibility(
+            inputs.to_dict("records") if not inputs.empty else [], eligibility_policy)
+    except ColunasDeElegibilidadeAusentes as erro:
+        # Coluna ausente era lida como métrica ausente e reprovava todo mundo:
+        # a tela mostrava "0 elegíveis" com cara de veredito. Aqui a falha de
+        # leitura aparece como falha de leitura.
+        st.error(
+            "Sem carteira: a leitura do universo veio incompleta, e nenhum "
+            "fundo foi avaliado. Colunas exigidas pela política que não vieram "
+            "no quadro: " + ", ".join(erro.missing_columns) + ". Não relaxe os "
+            "critérios por causa desta tela — nenhum filtro reprovou nada."
+        )
+        st.session_state.pop("fii_port", None)
+        return None
     _aviso_de_idade_da_vitrine(inputs)
     st.markdown(_info_card_html(
         "Universo elegível",
@@ -1950,14 +2094,36 @@ def _carteira_integrada(preferences: dict):
     # "todos os fundos são ruins" quando a causa era leitura de dado. Um número
     # de exclusão sem o motivo não é diagnóstico, é veredito sem processo.
     _diagnostico_de_exclusao(eligibility, expandido=not eligible_rows)
-    if not eligible_rows:
+    candidatos_da_concessao = eligibility.get("concession_candidates") or ()
+    if not eligible_rows and not candidatos_da_concessao:
+        # Duas coisas diferentes, e as duas precisam aparecer: a causa da
+        # exclusão (dado ausente x filtro apertado) e a revisão de composição
+        # que a main passou a renderizar no lugar de uma tela morta. Sem
+        # candidatos de concessão não há o que readmitir, então aqui é o único
+        # caminho em que a criação de portfólio de fato termina sem carteira —
+        # e ainda assim termina explicando, não em branco.
         from core.portfolio_review_routes import fii_review
         from design.portfolio_review import render_portfolio_review
 
+        st.error(_mensagem_de_universo_vazio(eligibility))
         render_portfolio_review(fii_review([], portfolio_policy, scenario), key="fii_review")
         st.session_state.pop("fii_port", None)
         st.session_state["fii_portfolio_can_publish"] = False
         return None
+    if not eligible_rows:
+        # Estrito vazio COM candidatos de concessão não é "universo vazio": é o
+        # caso extremo em que a regra permanente (nenhuma criação de portfólio
+        # termina zerada) tem de valer. Sair aqui desligava a concessão
+        # exatamente quando ela é necessária — e basta o usuário subir o piso de
+        # renda recorrente na barra lateral para cair neste caminho.
+        st.warning(
+            "Nenhum FII passou pelos filtros estritos. A carteira será montada "
+            f"cedendo proteção ao investidor: {len(candidatos_da_concessao)} "
+            "candidatos foram reprovados apenas nos portões de proteção e podem "
+            "ser readmitidos, no menor número que viabilize a carteira. Cada "
+            "readmissão aparece nomeada abaixo — proteção cedida não é ausência "
+            "de risco."
+        )
 
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
     validation_status = (
@@ -1979,48 +2145,32 @@ def _carteira_integrada(preferences: dict):
             )
         except (SQLAlchemyError, ValueError):
             macro_snapshot = None
-    investable_gate = evaluate_publication_gate(
-        scored, expected_universe=len(eligible_rows),
-        validation_status=validation_status,
-        snapshot_as_of=_snapshot_as_of(inputs),
-    )
-    st.session_state["fii_investable_publication_gate"] = investable_gate
-    investable_ready = sum(
-        row.get("data_readiness_status") == "ready" for row in scored
-    )
-    gate_cards = st.columns(3)
-    gate_cards[0].markdown(_kpi_html(
-        "Prontidão do universo elegível",
-        f"{investable_ready}/{len(scored)}",
-        sub="mínimo de 80% para publicação", accent="#F6C90E",
-    ), unsafe_allow_html=True)
-    gate_cards[1].markdown(_kpi_html(
-        "Confiança mediana elegível", f"{investable_gate.median_confidence:.1%}",
-        sub="mínimo de 75%", accent="#00C896" if investable_gate.median_confidence >= .75 else "#FC5C7D",
-    ), unsafe_allow_html=True)
-    # A-162: "Validação PIT: Aprovada" em verde ao lado da nota era lido como
-    # "a estratégia bate o índice". O gate de `core/fii_validation.py` não testa
-    # isso -- ele exige que o intervalo bootstrap do excesso EXISTA, nunca que
-    # ele exclua o zero. O rótulo passa a dizer o que o certificado atesta.
-    gate_cards[2].markdown(_kpi_html(
-        "Protocolo PIT", "Aprovado" if validation_status == "passed" else "Pendente",
-        sub=f"integridade temporal, metodologia {METHODOLOGY_VERSION}; "
-            f"não afere vantagem sobre o IFIX",
-        accent="#00C896" if validation_status == "passed" else "#FC5C7D",
-    ), unsafe_allow_html=True)
-
     # O universo de correlação replica o pool máximo do otimizador e evita
     # consultar séries de centenas de fundos a cada alteração dos controles.
-    per_type = max(int(portfolio_policy.max_assets), 12)
-    correlation_candidates: list[str] = []
-    for fii_type in _TIPO_ORDER:
-        correlation_candidates.extend([
-            str(row["ticker"]) for row in scored if row.get("tipo") == fii_type
-        ][:per_type])
-    correlation_candidates = list(dict.fromkeys(correlation_candidates))
-    candidate_prices = _mr.load_precos_mensais(tuple(sorted(correlation_candidates)))
-    _, candidate_correlation = _portfolio_return_correlation(
-        candidate_prices, correlation_candidates, min_months=12)
+    # Cada tentativa do orquestrador repete quase o mesmo pool; sem memória, o
+    # render fazia uma consulta de séries mensais por tentativa. A chave é o
+    # próprio pool, então readmitir um fundo recalcula, e só então.
+    _correlacoes: dict[tuple[str, ...], pd.DataFrame] = {}
+    _correlacao_da_ultima_tentativa: list[pd.DataFrame] = []
+
+    def _correlacao_dos_candidatos(pontuadas: list[dict]):
+        per_type = max(int(portfolio_policy.max_assets), 12)
+        candidatos: list[str] = []
+        for fii_type in _TIPO_ORDER:
+            candidatos.extend([
+                str(row["ticker"]) for row in pontuadas if row.get("tipo") == fii_type
+            ][:per_type])
+        candidatos = list(dict.fromkeys(candidatos))
+        chave = tuple(sorted(candidatos))
+        if chave not in _correlacoes:
+            precos = _mr.load_precos_mensais(chave)
+            _, _correlacoes[chave] = _portfolio_return_correlation(
+                precos, candidatos, min_months=12)
+        correlacao = _correlacoes[chave]
+        _correlacao_da_ultima_tentativa.clear()
+        _correlacao_da_ultima_tentativa.append(correlacao)
+        return correlacao
+
     previous_weights: dict[str, float] = {}
     active_model: dict = {}
     try:
@@ -2033,16 +2183,33 @@ def _carteira_integrada(preferences: dict):
         }
     except (RuntimeError, ValueError, TypeError, SQLAlchemyError):
         previous_weights = {}
-    result = optimize_diligence_portfolio(
-        scored, scenario, policy=portfolio_policy,
-        correlation_matrix=(candidate_correlation.to_dict()
-                            if not candidate_correlation.empty else None),
-        correlation_penalty=float(preferences["correlation_penalty"]),
-        previous_weights=previous_weights,
-        macro_impacts=(macro_snapshot.impacts if macro_snapshot else {}),
-        macro_mode=str(preferences["macro_mode"]),
+    def _kwargs_do_otimizador(pontuadas: list[dict]) -> dict:
+        correlacao = _correlacao_dos_candidatos(pontuadas)
+        return {
+            "correlation_matrix": (correlacao.to_dict()
+                                   if not correlacao.empty else None),
+            "correlation_penalty": float(preferences["correlation_penalty"]),
+            "previous_weights": previous_weights,
+            "macro_impacts": (macro_snapshot.impacts if macro_snapshot else {}),
+            "macro_mode": str(preferences["macro_mode"]),
+        }
+
+    # O orquestrador tenta o universo estrito primeiro e só readmite candidatos
+    # da concessão de proteção — em ordem crescente de severidade e no menor
+    # número que viabilize — quando o estrito não fecha a carteira. A regra é
+    # única (core/fii_carteira_protegida.py); a tela não a reimplementa.
+    result = montar_carteira_com_concessao(
+        eligible_rows, candidatos_da_concessao, scenario,
+        policy=portfolio_policy,
+        score=lambda linhas: score_fiis_by_type(
+            linhas, validation_status=validation_status),
+        optimizer_kwargs=_kwargs_do_otimizador,
     )
     result["macro_snapshot"] = macro_snapshot
+    candidate_correlation = (
+        _correlacao_da_ultima_tentativa[0] if _correlacao_da_ultima_tentativa
+        else pd.DataFrame()
+    )
     if not result.get("items"):
         from core.fii_presentation import enrich_review_presentation
         from core.portfolio_review_routes import fii_review
@@ -2053,6 +2220,8 @@ def _carteira_integrada(preferences: dict):
         st.session_state["fii_portfolio_can_publish"] = False
         if not proposal["items"]:
             render_portfolio_review(proposal, key="fii_review")
+            with st.expander("Diagnóstico da tentativa com metas originais"):
+                _diagnostico_de_factibilidade(result)
             return None
         result = enrich_review_presentation(
             proposal, portfolio_policy,
@@ -2070,6 +2239,49 @@ def _carteira_integrada(preferences: dict):
         allocation_cols[1].markdown(_kpi_html(
             "Capital não alocado", f"{result['unallocated_weight']:.1%}",
             sub="sem rendimento presumido", accent="#F6C90E"), unsafe_allow_html=True)
+    # Prontidão, confiança e gate medem o universo que a tela EXIBE, não o
+    # estrito: a carteira acima pode conter readmitidos pela cessão de
+    # proteção, e com o estrito vazio esta faixa publicava "0/0" ao lado de
+    # uma carteira cheia. Por isso o bloco só roda depois da montagem — é ela
+    # que diz quem foi readmitido.
+    universo_exibido = _universo_exibido(
+        eligible_rows, candidatos_da_concessao, result)
+    readmitidos_exibidos = len(universo_exibido) - len(eligible_rows)
+    scored_exibido = (scored if not readmitidos_exibidos
+                      else score_fiis_by_type(universo_exibido,
+                                              validation_status=validation_status))
+    investable_gate = evaluate_publication_gate(
+        scored_exibido, expected_universe=len(universo_exibido),
+        validation_status=validation_status,
+        snapshot_as_of=_snapshot_as_of(inputs),
+    )
+    st.session_state["fii_investable_publication_gate"] = investable_gate
+    investable_ready = sum(
+        row.get("data_readiness_status") == "ready" for row in scored_exibido
+    )
+    composicao = (f"{len(eligible_rows)} estritos + {readmitidos_exibidos} "
+                  "readmitidos por cessão de proteção" if readmitidos_exibidos
+                  else f"{len(eligible_rows)} elegíveis estritos")
+    gate_cards = st.columns(3)
+    gate_cards[0].markdown(_kpi_html(
+        "Prontidão do universo da carteira",
+        f"{investable_ready}/{len(scored_exibido)}",
+        sub=f"mínimo de 80% para publicação · {composicao}", accent="#F6C90E",
+    ), unsafe_allow_html=True)
+    gate_cards[1].markdown(_kpi_html(
+        "Confiança mediana do universo", f"{investable_gate.median_confidence:.1%}",
+        sub=f"mínimo de 75% · {composicao}",
+        accent="#00C896" if investable_gate.median_confidence >= .75 else "#FC5C7D",
+    ), unsafe_allow_html=True)
+    # A-162: "Validação PIT: Aprovada" em verde ao lado da nota era lido como
+    # "a estratégia bate o índice". O gate de `core/fii_validation.py` não testa
+    # isso -- ele exige que o intervalo bootstrap do excesso EXISTA, nunca que
+    # ele exclua o zero. O rótulo diz o que o certificado atesta, e agora
+    # declara junto quantas safras só tiveram carteira com proteção cedida.
+    gate_cards[2].markdown(
+        _card_do_protocolo_pit(validation_status, validation.get("metrics") or {}),
+        unsafe_allow_html=True)
+
     portfolio_can_publish = bool(
         result.get("can_publish") and investable_gate.can_publish_recommendation
     )
@@ -2080,7 +2292,13 @@ def _carteira_integrada(preferences: dict):
         blockers = list(result.get("blockers") or []) + list(investable_gate.reasons)
         st.warning("Rascunho não publicável: " + " · ".join(dict.fromkeys(blockers)))
     items = result["items"]
-    if macro_snapshot is None:
+    if partial_review:
+        st.caption(
+            "Composição ajustada pelos fundamentos e limites de proteção. "
+            "Os cenários macro abaixo contextualizam riscos; não foi aplicado "
+            "ajuste macro adicional aos pesos desta composição."
+        )
+    elif macro_snapshot is None:
         st.warning(
             "Camada macro do Docker local indisponível; a carteira mantém a "
             "metodologia estrutural e os cenários informados acima."
@@ -2126,7 +2344,8 @@ def _carteira_integrada(preferences: dict):
         "Score": item["type_score"], "Confiança": item["confidence"],
         "Ajuste macro": item.get("macro_score_adjustment"),
         "Impacto macro": item.get("macro_impact"),
-        "Cobertura": item["coverage"], "DY 12m": item.get("dy_12m"),
+        "Cobertura": item["coverage"], "DY recorrente": dy_recorrente(item),
+        "DY divulgado": item.get("dy_12m"),
         "P/VP": item.get("pvp"), "Liquidez/dia": item.get("liquidez_diaria"),
         "Status": item["publication_status"],
     } for item in items])
@@ -2146,11 +2365,7 @@ def _carteira_integrada(preferences: dict):
                           sub=f"{eligibility['eligible_count']} elegíveis",
                           accent="#4A9EFF"),
                 unsafe_allow_html=True)
-    income_label = (f"{result['trailing_yield_12m']:.1%}"
-                    if result['trailing_yield_12m'] is not None else "—")
-    k2.markdown(_kpi_html("DY histórico ponderado", income_label,
-                          sub="distribuições dos últimos 12 meses; não é previsão"),
-                unsafe_allow_html=True)
+    k2.markdown(_card_de_renda_recorrente(result), unsafe_allow_html=True)
     k3.markdown(_kpi_html("P/VP ponderado",
                           f"{weighted_pvp:.2f}" if weighted_pvp is not None else "—",
                           accent="#B084F6"), unsafe_allow_html=True)
@@ -2170,6 +2385,21 @@ def _carteira_integrada(preferences: dict):
             + ", ".join(result["unresolved_dimensions"])
             + ". Esses limites só são aplicados quando observáveis; setor e "
               "emissor possuem histórico point-in-time obrigatório."
+        )
+    for aviso in _avisos_de_cessao_de_protecao(result):
+        st.warning(aviso)
+    if result.get("protecao_excedida"):
+        # opacidade_excedente (core/fii_portfolio_v4.py) mede contra o teto do
+        # spec, nunca contra o teto já afrouxado — a cessão de proteção por
+        # viabilidade tem que ficar visível a quem lê a carteira, ticker a
+        # ticker, e não só como nota agregada.
+        st.warning(
+            "Proteção por opacidade cedida além do custo normal do spec: "
+            + " ".join(
+                f"{item['ticker']} — peso final {item['peso_final']:.1%} "
+                f"acima do teto do spec de {item['teto_spec']:.1%}."
+                for item in result["protecao_excedida"]
+            )
         )
     weights = {item["ticker"]: item["weight"] for item in items}
     if partial_review:
