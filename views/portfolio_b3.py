@@ -643,6 +643,16 @@ def _motivos_dy_sustentavel(tk: str, df_mult_todos: pd.DataFrame) -> list[str]:
     # uma mudança de contrato do carregador vire "faltou evidência", não uma
     # criação vazia.
     _dy_div = _lin_rs.get("DY", pd.Series([float("nan")])).iloc[0]
+    # `int(nan)` levanta ValueError, e esta função roda INCONDICIONALMENTE no
+    # caminho de criação de carteira: a exceção zeraria o portfólio — a
+    # restrição inviolável do projeto. É a mesma classe do KeyError: 'DY'
+    # guardado acima, no mesmo caminho. Hoje `n_anos_payout` vem preenchida
+    # sempre que `payout_sustentabilidade` vem; a guarda existe para que uma
+    # mudança de contrato do carregador vire texto, não carteira vazia.
+    try:
+        _anos_txt = f"{int(_n_anos)} anos"
+    except (TypeError, ValueError):  # NaN, None, texto
+        _anos_txt = "número de anos não informado"
     if _sust == _sust:  # NaN != NaN
         # Sustentabilidade presente com DY ausente ocorre em 81 das 426 linhas
         # do universo real (27 delas aprovadas pelo piso). Imprimir "nan%" ali
@@ -652,12 +662,12 @@ def _motivos_dy_sustentavel(tk: str, df_mult_todos: pd.DataFrame) -> list[str]:
                 f"DY sustentável {float(_dy_s):.1%} "
                 f"(divulgado {float(_dy_div):.1%} × "
                 f"sustentabilidade {float(_sust):.0%} em "
-                f"{int(_n_anos)} anos)"
+                f"{_anos_txt})"
             ]
         return [
             "DY sustentável indisponível — sem DY divulgado para aplicar a "
             f"sustentabilidade de {float(_sust):.0%} medida em "
-            f"{int(_n_anos)} anos"
+            f"{_anos_txt}"
         ]
     return ["DY sustentável indisponível — menos de 3 anos de payout observados"]
 

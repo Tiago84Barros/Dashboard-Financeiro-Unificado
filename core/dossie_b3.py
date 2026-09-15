@@ -502,6 +502,67 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
     return flags
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Severidade de uma linha de `red_flags` — FONTE ÚNICA
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# `_checks` emite três coisas diferentes na MESMA lista: risco confirmado
+# (linha em CAIXA ALTA, `DADOS:`, `MOMENTUM:`), observação de contexto medida
+# sobre amostra suficiente e já descartada como padrão (`CONTEXTO:`) e
+# limitação de amostra/fonte (`COBERTURA:`, prefixo que já existia antes deste
+# ramo para "sem DFC", "sem EBITDA", "sem documento CVM" e "histórico curto" —
+# nenhuma delas é risco confirmado). Medido no armazém local: das 423 empresas
+# com série anual, 423 emitem alguma linha, mas só 191 emitem alguma linha de
+# risco confirmado; da linha patrimonial, 8 são risco, 222 contexto e 3
+# cobertura. Imprimir as três sob "RED FLAGS DETERMINÍSTICAS" é o que dilui o
+# sinal para quem decide — uma bandeira que acende para todos não distingue
+# ninguém.
+#
+# A regra mora AQUI e só aqui. Este projeto já teve três cópias da mesma
+# guarda com duas divergências entre elas; `tests/test_dossie_severidade.py`
+# verifica por AST que nenhum outro módulo compara os prefixos por conta
+# própria.
+
+SEVERIDADE_RISCO = "risco_confirmado"
+SEVERIDADE_CONTEXTO = "contexto_observado"
+SEVERIDADE_COBERTURA = "limitacao_cobertura"
+
+SEVERIDADES = (SEVERIDADE_RISCO, SEVERIDADE_CONTEXTO, SEVERIDADE_COBERTURA)
+
+#: Prefixo emitido por `_checks` → severidade. Sem prefixo conhecido a linha é
+#: risco confirmado: o default tem de ser o lado seguro, senão um prefixo novo
+#: some do radar de quem decide.
+_PREFIXO_SEVERIDADE: dict[str, str] = {
+    "CONTEXTO:": SEVERIDADE_CONTEXTO,
+    "COBERTURA:": SEVERIDADE_COBERTURA,
+}
+
+#: Cabeçalhos de exibição, compartilhados pelas duas telas.
+TITULO_SEVERIDADE: dict[str, str] = {
+    SEVERIDADE_RISCO: "Red flags determinísticas — risco confirmado (verificadas em código)",
+    SEVERIDADE_CONTEXTO: "Observações de contexto — medidas em código, não são risco confirmado",
+    SEVERIDADE_COBERTURA: "Limitações de cobertura — o que os dados não permitem verificar",
+}
+
+
+def severidade_flag(flag: str) -> str:
+    """Severidade de UMA linha de ``red_flags``. Função pura, fonte única."""
+    texto = (flag or "").strip()
+    for prefixo, severidade in _PREFIXO_SEVERIDADE.items():
+        if texto.startswith(prefixo):
+            return severidade
+    return SEVERIDADE_RISCO
+
+
+def agrupa_flags_por_severidade(flags) -> dict[str, list[str]]:
+    """``red_flags`` → ``{severidade: [linhas]}``, com as três chaves sempre
+    presentes (na ordem de ``SEVERIDADES``), mesmo vazias."""
+    grupos: dict[str, list[str]] = {s: [] for s in SEVERIDADES}
+    for flag in flags or []:
+        grupos[severidade_flag(flag)].append(flag)
+    return grupos
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def build_dossie(ticker: str) -> dict:
     """Dossiê determinístico completo de um ticker (só banco, sem LLM)."""
@@ -584,9 +645,28 @@ def dossie_to_text(d: dict) -> str:
         for e in ev["eventos"]:
             L.append(f"  {e['data']} [{e['categoria']}] {e['titulo']}")
 
-    if d.get("red_flags"):
-        L.append("\nRED FLAGS DETERMINÍSTICAS (verificadas em código, não são opinião):")
-        for f in d["red_flags"]:
+    # As três categorias saem APARTADAS. Sob um cabeçalho único, as 222
+    # empresas cuja observação o próprio texto declara NÃO ser risco chegavam
+    # ao gate com a mesma cara das 8 que são — e quem decide é a LLM, que lê o
+    # cabeçalho antes da linha.
+    grupos = agrupa_flags_por_severidade(d.get("red_flags"))
+    if grupos[SEVERIDADE_RISCO]:
+        L.append("\nRED FLAGS DETERMINÍSTICAS — RISCO CONFIRMADO "
+                 "(verificadas em código, não são opinião):")
+        for f in grupos[SEVERIDADE_RISCO]:
+            L.append(f"  - {f}")
+    if grupos[SEVERIDADE_CONTEXTO]:
+        L.append("\nOBSERVAÇÕES DE CONTEXTO (medidas em código sobre amostra "
+                 "suficiente e JÁ DESCARTADAS como padrão — NÃO são red flags, "
+                 "NÃO são risco confirmado e NÃO justificam veto nem ressalva "
+                 "por si sós):")
+        for f in grupos[SEVERIDADE_CONTEXTO]:
+            L.append(f"  - {f}")
+    if grupos[SEVERIDADE_COBERTURA]:
+        L.append("\nLIMITAÇÕES DE COBERTURA (o que os dados NÃO permitem "
+                 "verificar — ausência de prova não é prova de risco; NÃO são "
+                 "red flags):")
+        for f in grupos[SEVERIDADE_COBERTURA]:
             L.append(f"  - {f}")
     return "\n".join(L)
 
@@ -628,6 +708,14 @@ essa fração ao afirmar insustentabilidade, e não afirme sem ela.
 5.3. Ausência de trechos CVM indexados NÃO é, sozinha, "dados insuficientes": o dossiê determinístico \
 acima já traz série anual, trimestres, dividendos e eventos. Só invoque dados insuficientes quando \
 faltar o que a TESE precisa (ex.: série anual curta demais, sem lucro nem patrimônio).
+5.4. O dossiê separa TRÊS blocos e eles NÃO valem o mesmo. Só "RED FLAGS \
+DETERMINÍSTICAS — RISCO CONFIRMADO" é red flag. "OBSERVAÇÕES DE CONTEXTO" são \
+medições que o próprio código já descartou como padrão, e "LIMITAÇÕES DE \
+COBERTURA" são lacunas de amostra ou de fonte: nenhum dos dois é motivo para \
+vetar nem para ressalvar, e nenhum dos dois pode ser chamado de red flag no \
+parecer. Use-os como contexto e como limite do que foi possível verificar — a \
+regra 4 vale para o primeiro bloco; as lacunas entram em qualidade_dados como \
+lacuna, não como risco.
 
 CONTEXTO DE PORTFÓLIO: {portfolio_ctx}
 PARES DO SEGMENTO: {peers_ctx}
