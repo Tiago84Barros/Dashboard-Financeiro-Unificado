@@ -419,6 +419,12 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
     # A leitura antiga comparava só o ÚLTIMO par e disparava em 88 de 426
     # empresas, das quais 80 (91%) têm o padrão em menos da metade dos anos.
     # Vale a qualidade histórica, não o período isolado.
+    #
+    # O ramo do episódio começa em UM par observado (medição da task 9): com
+    # `_pares >= 2` uma série de dois anos com PL caindo e lucro positivo saía
+    # do dossiê em SILÊNCIO, e silêncio aqui se lê como "nada encontrado".
+    # A observação existe — o que falta é tamanho de amostra para chamá-la de
+    # padrão — então ela sai como episódio, com a fração à vista.
     from core.b3_renda_sustentavel import fracao_pl_em_queda_com_lucro
     _frac, _pares = fracao_pl_em_queda_com_lucro(serie)
     if _frac is not None and _frac >= 0.50 and _pares >= 5:
@@ -427,7 +433,7 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
             f"de {_pares} pares de anos ({_frac:.0%}): padrão persistente de "
             "distribuição acima do lucro (dividendo extraordinário/reversão de "
             "reservas) — dividendo atual pode não ser recorrente.")
-    elif _frac is not None and _frac > 0 and _pares >= 2:
+    elif _frac is not None and _frac > 0 and _pares >= 1:
         flags.append(
             f"Patrimônio em queda com lucro positivo em {round(_frac * _pares)} "
             f"de {_pares} pares de anos ({_frac:.0%}): episódio, não padrão — "

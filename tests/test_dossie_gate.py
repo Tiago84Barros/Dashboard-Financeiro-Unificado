@@ -52,8 +52,20 @@ def _serie_base():
 
 
 def test_check_pl_em_queda_com_lucro_positivo():
+    """UM par de anos é episódio, não padrão — e mesmo assim tem de aparecer.
+
+    Até a proteção ao investidor (spec §3, Teste 2) a série de dois anos
+    recebia a red flag MAIÚSCULA de padrão insustentável. A regra nova
+    reserva o texto de padrão para quem repete na maioria de pelo menos 5
+    pares; o par isolado sai em minúscula, dizendo que é episódio. O que
+    não pode acontecer é sair nada: a observação existe e omiti-la se
+    lê como "nada encontrado".
+    """
     flags = _checks(_serie_base(), {}, {}, {}, {"n_docs": 3}, {})
-    assert any("PATRIMÔNIO EM QUEDA" in f for f in flags)
+    assert not [f for f in flags if "PATRIMÔNIO EM QUEDA" in f]
+    episodio = [f for f in flags if "Patrimônio em queda" in f]
+    assert episodio, flags
+    assert "1 de 1" in episodio[0] and "episódio" in episodio[0]
 
 
 def test_check_duplicacao_dividendos():
