@@ -469,3 +469,46 @@ melhora ele passa a morder a base inteira de uma vez. A cobertura de payout é
 justamente o que hoje mantém o número em zero. **Quando ela subir, a guarda
 entra em operação sem nunca ter sido exercitada.** Remedir nessa hora, antes de
 confiar no resultado.
+
+### 16.1 A bandeira que acendia para quase todo mundo (15/09/2026)
+
+O dossiê determinístico emite as suas observações numa lista só, `red_flags`, e
+os três consumidores dela — o texto que alimenta o parecer da LLM no gate de
+seleção, a tela de Empresas B3 e a de Análise de Portfólio — imprimiam todas sob
+o mesmo cabeçalho, "RED FLAGS DETERMINÍSTICAS (verificadas em código, não são
+opinião)". A lista, porém, carrega três coisas incomparáveis: risco confirmado,
+observação medida que o próprio texto já descarta como padrão, e lacuna de
+dados.
+
+Medido no armazém local sobre as **426 empresas** com fundamentos, antes da
+correção:
+
+| o que acendia a bandeira vermelha | empresas |
+|---|---|
+| risco confirmado de verdade (linha em CAIXA ALTA) | **8** |
+| só `MOMENTUM:` — lucro de **um** trimestre a/a abaixo de −25% | 94 |
+| só `DADOS:` — inconsistência da **nossa** ingestão de proventos | 50 |
+| combinações e demais casos | 38 |
+| **total sob "red flag"** | **190** |
+
+Três quartos das bandeiras vermelhas eram um período isolado ou um defeito do
+nosso próprio banco. Uma bandeira que acende para 190 e descreve 8 não distingue
+ninguém — e a LLM que decide `classificacao_selecao` lê o cabeçalho antes da
+linha. Marcar a companhia de perigosa porque *nós* gravamos dois valores de
+provento na mesma data-ex é a ponderação indevida na sua forma mais nítida.
+
+A correção não silenciou nada: as três categorias continuam impressas e
+continuam chegando ao parecer, agora apartadas em "RISCO CONFIRMADO",
+"OBSERVAÇÕES DE CONTEXTO" e "LIMITAÇÕES DE COBERTURA". Silêncio no dossiê
+lê-se como "nada encontrado", que seria pior que a diluição. O que mudou é o
+cabeçalho. Depois: **8 de 426** sob risco confirmado.
+
+A regra de classificação mora num único lugar (`core/dossie_b3.py`), e a
+unicidade é verificada por AST — este projeto já teve três cópias da mesma
+guarda com duas divergências entre elas. Cada um dos três consumidores tem um
+teste que morre se a separação for desfeita.
+
+**O limite desta correção**: a separação no texto é verificável; a obediência da
+LLM a ela não é. A regra 5.4 do prompt instrui que contexto e cobertura não
+reprovam, mas instrução não é portão. Medir isso exige rodar o gate com LLM
+ligada (`scripts/eval_gate_selecao.py`), o que não foi feito aqui.
