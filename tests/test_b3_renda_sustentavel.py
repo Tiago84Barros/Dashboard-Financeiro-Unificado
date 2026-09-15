@@ -554,3 +554,83 @@ def test_tab_avancada_liga_evidencia_historica_no_df_mult_enrich():
         "o call site de _tab_avancada não liga mais a evidência histórica "
         "a df_mult_enrich"
     )
+
+
+# ── Task 8: red flag histórica e contexto da LLM ─────────────────────────────
+
+def test_red_flag_de_patrimonio_cita_a_fracao_historica():
+    # Teste 11 do spec: 1 em 8 anos não recebe o mesmo texto que 5 em 8.
+    from core.dossie_b3 import _checks
+
+    def _serie_pl(pares):
+        return [{"ano": a, "pl_mi": pl, "lucro_mi": lu,
+                 "fco_mi": 1.0, "ebitda_mi": 1.0} for a, pl, lu in pares]
+
+    raro = _serie_pl([(2018, 100.0, 9.0), (2019, 110.0, 9.0), (2020, 120.0, 9.0),
+                      (2021, 130.0, 9.0), (2022, 140.0, 9.0), (2023, 150.0, 9.0),
+                      (2024, 160.0, 9.0), (2025, 150.0, 9.0)])
+    cronico = _serie_pl([(2018, 200.0, 9.0), (2019, 190.0, 9.0), (2020, 180.0, 9.0),
+                         (2021, 170.0, 9.0), (2022, 175.0, 9.0), (2023, 165.0, 9.0),
+                         (2024, 155.0, 9.0), (2025, 145.0, 9.0)])
+    vazio = {"yoy": {}}
+    f_raro = _checks(raro, vazio, {}, {}, {"n_docs": 1}, {})
+    f_cronico = _checks(cronico, vazio, {}, {}, {"n_docs": 1}, {})
+    assert not [f for f in f_raro if "PATRIMÔNIO EM QUEDA" in f]
+    pat = [f for f in f_cronico if "PATRIMÔNIO EM QUEDA" in f]
+    assert pat and "7" in pat[0]
+
+
+def test_prompt_parecer_traz_regra_episodio_vs_padrao():
+    """Exigência do controlador (item 3a): a regra 5.2 sobre não tratar
+    exercício isolado como padrão precisa estar literalmente no prompt que
+    vai para a LLM — é o texto que instrui o parecer a citar a fração dos
+    pares em vez de afirmar insustentabilidade sem ela.
+    """
+    from core.dossie_b3 import _PROMPT_PARECER
+
+    assert "NÃO TRATE EXERCÍCIO ISOLADO COMO PADRÃO" in _PROMPT_PARECER
+    assert "cite" in _PROMPT_PARECER.lower()
+    assert "fração" in _PROMPT_PARECER.lower()
+
+
+def test_contexto_fundamentos_traz_sustentabilidade_quando_ha_evidencia(monkeypatch):
+    """Exigência do controlador (item 3b): com payout_sustentabilidade
+    presente, o contexto da LLM tem de trazer o percentual — não apenas o
+    dado bruto do banco.
+    """
+    import core.llm_context_b3 as ctxmod
+
+    mock = pd.DataFrame({
+        "Ticker": ["ROMI3"], "P/L": [8.0], "P/VP": [1.1], "DY": [0.05],
+        "ROE": [0.12], "ROIC": [0.10], "Margem_Liquida": [0.08],
+        "Endividamento_Total": [0.9], "SETOR": ["Bens Industriais"],
+        "payout_sustentabilidade": [0.75], "payout_mediano_hist": [0.5],
+        "n_anos_payout": [5],
+    })
+    monkeypatch.setattr(ctxmod._db, "load_multiplos_todos", lambda: mock)
+    monkeypatch.setattr(ctxmod._db, "load_setores", lambda: pd.DataFrame())
+    if hasattr(ctxmod._universe_with_sector, "clear"):
+        ctxmod._universe_with_sector.clear()
+    block = ctxmod.get_company_fundamentals_context(["ROMI3"])
+    assert "Sustentabilidade da distribuição=75%" in block
+    assert "5 anos observados" in block
+
+
+def test_contexto_fundamentos_declara_ausencia_quando_sem_evidencia(monkeypatch):
+    """Exigência do controlador (item 3c): sem payout_sustentabilidade, a
+    linha tem de declarar "não observada" explicitamente — nunca ser
+    omitida, para a LLM não mandar o usuário buscar fora um dado ausente.
+    """
+    import core.llm_context_b3 as ctxmod
+
+    mock = pd.DataFrame({
+        "Ticker": ["SEMHIST3"], "P/L": [8.0], "P/VP": [1.1], "DY": [0.05],
+        "ROE": [0.12], "ROIC": [0.10], "Margem_Liquida": [0.08],
+        "Endividamento_Total": [0.9], "SETOR": ["Bens Industriais"],
+    })
+    monkeypatch.setattr(ctxmod._db, "load_multiplos_todos", lambda: mock)
+    monkeypatch.setattr(ctxmod._db, "load_setores", lambda: pd.DataFrame())
+    if hasattr(ctxmod._universe_with_sector, "clear"):
+        ctxmod._universe_with_sector.clear()
+    block = ctxmod.get_company_fundamentals_context(["SEMHIST3"])
+    assert "Sustentabilidade da distribuição=não observada" in block

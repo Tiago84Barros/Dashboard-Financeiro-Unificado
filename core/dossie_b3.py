@@ -416,13 +416,22 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
         flags.append(
             f"DADOS: métrica DY do banco ({dy_met*100:.1f}%) diverge do recomputado "
             f"({dy_re:.1f}%) — usar o recomputado.")
-    if len(serie) >= 2:
-        a, b = serie[-2], serie[-1]
-        if (b.get("pl_mi") or 0) < (a.get("pl_mi") or 0) and (b.get("lucro_mi") or 0) > 0:
-            flags.append(
-                f"PATRIMÔNIO EM QUEDA COM LUCRO POSITIVO ({a['ano']}→{b['ano']}: "
-                f"PL {a.get('pl_mi')}→{b.get('pl_mi')} R$ mi): distribuição acima do lucro "
-                "(dividendo extraordinário/reversão de reservas) — dividendo atual pode não ser recorrente.")
+    # A leitura antiga comparava só o ÚLTIMO par e disparava em 88 de 426
+    # empresas, das quais 80 (91%) têm o padrão em menos da metade dos anos.
+    # Vale a qualidade histórica, não o período isolado.
+    from core.b3_renda_sustentavel import fracao_pl_em_queda_com_lucro
+    _frac, _pares = fracao_pl_em_queda_com_lucro(serie)
+    if _frac is not None and _frac >= 0.50 and _pares >= 5:
+        flags.append(
+            f"PATRIMÔNIO EM QUEDA COM LUCRO POSITIVO em {round(_frac * _pares)} "
+            f"de {_pares} pares de anos ({_frac:.0%}): padrão persistente de "
+            "distribuição acima do lucro (dividendo extraordinário/reversão de "
+            "reservas) — dividendo atual pode não ser recorrente.")
+    elif _frac is not None and _frac > 0 and _pares >= 2:
+        flags.append(
+            f"Patrimônio em queda com lucro positivo em {round(_frac * _pares)} "
+            f"de {_pares} pares de anos ({_frac:.0%}): episódio, não padrão — "
+            "não trate como política de distribuição da empresa.")
     if serie and all(s.get("fco_mi") is None for s in serie):
         flags.append("COBERTURA: sem demonstração de fluxo de caixa no banco — qualidade do lucro não verificável.")
     if serie and all(s.get("ebitda_mi") is None for s in serie):
@@ -556,7 +565,12 @@ existe para encontrar. Vetar aí é opinião de preço, proibida pelo item 5. "L
 exige mascaramento: lucro que só existe por item não recorrente enquanto a OPERAÇÃO dá prejuízo, \
 ou distribuição muito acima do lucro recorrente. Na dúvida entre as duas leituras, use \
 "aprovar_com_ressalvas" e diga no motivo que o resultado depende do ciclo.
-5.2. Ausência de trechos CVM indexados NÃO é, sozinha, "dados insuficientes": o dossiê determinístico \
+5.2. NÃO TRATE EXERCÍCIO ISOLADO COMO PADRÃO. Payout acima do lucro em um ano, \
+ou patrimônio caindo num par de anos, é episódio — só é política de distribuição \
+insustentável quando o dossiê disser que o padrão se repete na MAIORIA dos anos \
+observados. As red flags já dizem em quantos dos N pares o padrão aparece: cite \
+essa fração ao afirmar insustentabilidade, e não afirme sem ela.
+5.3. Ausência de trechos CVM indexados NÃO é, sozinha, "dados insuficientes": o dossiê determinístico \
 acima já traz série anual, trimestres, dividendos e eventos. Só invoque dados insuficientes quando \
 faltar o que a TESE precisa (ex.: série anual curta demais, sem lucro nem patrimônio).
 
