@@ -640,7 +640,7 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
 
         # Observações determinísticas do dossiê, SEPARADAS por severidade.
         # O 🚩 só vale onde há risco confirmado: imprimi-lo em toda linha
-        # punha a bandeira vermelha em 423 de 423 empresas, das quais 232 não
+        # punha a bandeira vermelha em 426 de 426 empresas, das quais 418 não
         # têm risco confirmado nenhum. A classificação vem de core.dossie_b3
         # (fonte única) — não repetir o teste de prefixo aqui.
         _grupos = agrupa_flags_por_severidade(d.get("red_flags"))

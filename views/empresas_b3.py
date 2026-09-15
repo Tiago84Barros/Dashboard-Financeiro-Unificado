@@ -3447,8 +3447,8 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
         st.info(f"Dossiê determinístico indisponível: {dossie['erro']}")
     else:
         # `red_flags` carrega três coisas distintas; o componente tem de
-        # distinguir. `st.warning` para todas fazia 423 de 423 empresas
-        # abrirem a tela em amarelo, sendo que só 191 têm risco confirmado.
+        # distinguir. `st.warning` para todas fazia 426 de 426 empresas
+        # abrirem a tela em amarelo, sendo que só 8 têm risco confirmado.
         # A classificação vem de core.dossie_b3 (fonte única) — não repetir
         # o teste de prefixo aqui.
         _grupos = agrupa_flags_por_severidade(dossie.get("red_flags"))
