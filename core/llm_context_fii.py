@@ -191,6 +191,8 @@ def build_fii_chat_context(
         f"número efetivo={_fmt(portfolio_result.get('effective_assets'))}; "
         f"publicável={'sim' if portfolio_result.get('can_publish') else 'não'}",
         "  bloqueios: " + ("; ".join(portfolio_result.get("blockers") or []) or "nenhum"),
+        "  escopo das métricas: " + str(portfolio_result.get("metrics_scope") or "carteira de FIIs"),
+        "  saldo não alocado: " + _fmt(portfolio_result.get("unallocated_weight"), percent=True),
         # A cessão de proteção precisa chegar à IA no mesmo vocabulário da tela
         # e do verificador. Sem esta linha o canal de IA respondia sobre uma
         # carteira que só existe porque portões foram cedidos como se todos os
