@@ -7,7 +7,11 @@ import numpy as np
 
 
 def enrich_review_presentation(proposal, policy, correlation_matrix=None):
-    from core.fii_portfolio_v4 import SCENARIOS, _correlation_risk_matrix, _resumo_de_renda
+    from core.fii_portfolio_v4 import (
+        SCENARIOS,
+        _correlation_risk_matrix,
+        _resumo_de_renda,
+    )
     from core.fii_scenarios import asset_scenario_return
 
     items = [dict(row) for row in proposal["items"]]

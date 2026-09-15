@@ -1609,7 +1609,9 @@ def _render_portfolio_history_diagnostics(weights: dict[str, float],
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font_color="#CBD5E0")
     months = int(curve_frame["meses"].iloc[0]) if "meses" in curve_frame else 0
-    effective = _fz.effective_n(weights)
+    invested = sum(weights.values())
+    effective = (_fz.effective_n({ticker: weight / invested for ticker, weight in weights.items()})
+                 if invested > 0 else None)
     st.caption(
         f"Efeito incremental da diversificação na mesma janela comum de {months} meses. "
         f"Número efetivo: {effective:.1f} de {len(weights)}." if effective else
@@ -2218,10 +2220,10 @@ def _carteira_integrada(preferences: dict):
         proposal = fii_review(scored, portfolio_policy, scenario)
         st.session_state.pop("fii_port", None)
         st.session_state["fii_portfolio_can_publish"] = False
+        with st.expander("Diagnóstico da tentativa com metas originais"):
+            _diagnostico_de_factibilidade(result)
         if not proposal["items"]:
             render_portfolio_review(proposal, key="fii_review")
-            with st.expander("Diagnóstico da tentativa com metas originais"):
-                _diagnostico_de_factibilidade(result)
             return None
         result = enrich_review_presentation(
             proposal, portfolio_policy,
@@ -2426,6 +2428,14 @@ def _carteira_integrada(preferences: dict):
         _comp_tipo_chart(pd.DataFrame(composition))
     report_prices = _mr.load_precos_mensais(tuple(sorted(set(weights) | {"XFIX11", "BOVA11"})))
     explanations = build_selection_reports(items, scored, scenario=scenario, prices=report_prices)
+    if partial_review:
+        for explanation in explanations:
+            explanation["role"] = explanation["role"].replace(
+                "dentro da banda tática de", "na parcela investida em")
+            explanation["caveats"] = list(explanation.get("caveats") or []) + [
+                "Composição parcial: bandas por tipo são metas, não garantia de enquadramento; "
+                "saldo não alocado separado e publicação ainda bloqueada."
+            ]
     st.markdown("#### Por que estes FIIs avançaram para a seleção")
     st.markdown(_info_card_html(
         "Critério de comparação",
