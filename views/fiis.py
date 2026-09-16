@@ -23,6 +23,7 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 import core.market_read as _mr
+from core.chat_memory import clear_chat_history, conversation_key, load_chat_history, save_chat_history
 from core.fii_carteira_protegida import montar_carteira_com_concessao
 from core.fii_integrated_model import (
     INTEGRATED_MODEL_VERSION,
@@ -1164,6 +1165,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         tuple(sorted(scenario.__dict__.items())),
     ))
     previous_signature = st.session_state.get("fii_chat_context_signature")
+    memory_key = conversation_key("fii_portfolio", signature)
     if previous_signature is not None and previous_signature != signature:
         st.session_state.pop("fii_chat_history", None)
         st.caption("O histórico foi reiniciado porque a seleção ou o cenário mudou.")
@@ -1172,7 +1174,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
     _, clear_col = st.columns([5, 1])
     with clear_col:
         if st.button("🗑️ Limpar chat", key="fii_chat_clear", width="stretch"):
-            st.session_state.pop("fii_chat_history", None)
+            clear_chat_history(memory_key, session_key="fii_chat_history")
             st.rerun()
 
     suggestions = (
@@ -1188,7 +1190,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                          width="stretch"):
                 suggested_input = question
 
-    history: list[dict] = st.session_state.get("fii_chat_history", [])
+    history = load_chat_history(memory_key, session_key="fii_chat_history")
     for message in history:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -1222,7 +1224,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         st.markdown(answer)
         st.caption("Análise educacional baseada nos dados disponíveis; não constitui recomendação.")
     history.append({"role": "assistant", "content": answer})
-    st.session_state["fii_chat_history"] = history
+    save_chat_history(memory_key, history, session_key="fii_chat_history")
 
 
 def _comp_tipo_chart(pf: pd.DataFrame) -> None:

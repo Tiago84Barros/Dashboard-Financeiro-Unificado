@@ -12,6 +12,7 @@ from typing import Callable, Sequence
 
 import streamlit as st
 
+from core.chat_memory import clear_chat_history, conversation_key, load_chat_history, save_chat_history
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_carteira import chat_com_carteira
 
@@ -108,16 +109,16 @@ def render_chat_carteira(
     sig_key = f"chat_carteira_{classe}_signature"
     signature = f"{classe}:{','.join(presentes)}"
     anterior = st.session_state.get(sig_key)
+    memory_key = conversation_key("chat_carteira", signature)
     if anterior is not None and anterior != signature:
         st.session_state.pop(hist_key, None)
-        st.caption("O histórico foi reiniciado porque os ativos desta classe mudaram.")
     st.session_state[sig_key] = signature
 
     _, col_limpar = st.columns([5, 1])
     with col_limpar:
         if st.button("🗑️ Limpar chat", key=f"chat_carteira_{classe}_clear",
                      width="stretch"):
-            st.session_state.pop(hist_key, None)
+            clear_chat_history(memory_key, session_key=hist_key)
             st.rerun()
 
     perguntas = tuple(sugestoes) if sugestoes else _SUGESTOES.get(classe, ())
@@ -130,7 +131,7 @@ def render_chat_carteira(
                              width="stretch"):
                     sugerida = pergunta
 
-    historico: list[dict] = st.session_state.get(hist_key, [])
+    historico = load_chat_history(memory_key, session_key=hist_key)
     for mensagem in historico:
         with st.chat_message(mensagem["role"]):
             st.markdown(mensagem["content"])
@@ -158,4 +159,4 @@ def render_chat_carteira(
         st.caption("Análise educacional baseada nos dados disponíveis; "
                    "não constitui recomendação de compra ou venda.")
     historico.append({"role": "assistant", "content": resposta})
-    st.session_state[hist_key] = historico
+    save_chat_history(memory_key, historico, session_key=hist_key)

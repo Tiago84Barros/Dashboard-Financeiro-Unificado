@@ -18,6 +18,7 @@ import pandas as pd
 import streamlit as st
 
 from core import transaction_costs
+from core.chat_memory import clear_chat_history, conversation_key, load_chat_history, save_chat_history
 from core.aporte import com_convergencia, plano_de_aporte
 from core.global_portfolio import (
     advisor,
@@ -1344,10 +1345,12 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
     _, coluna_limpar = st.columns([5, 1])
     with coluna_limpar:
         if st.button("🗑️ Limpar chat", key="pg_chat_clear", width="stretch"):
-            st.session_state.pop(_CHAVE_CHAT, None)
+            clear_chat_history(conversation_key("portfolio_global", ",".join(sorted(df["symbol"].astype(str)))),
+                               session_key=_CHAVE_CHAT)
             st.rerun()
 
-    historico: list[dict] = st.session_state.get(_CHAVE_CHAT, [])
+    _memory_key = conversation_key("portfolio_global", ",".join(sorted(df["symbol"].astype(str))))
+    historico = load_chat_history(_memory_key, session_key=_CHAVE_CHAT)
     for mensagem in historico:
         with st.chat_message(mensagem["role"]):
             st.markdown(mensagem["content"])
@@ -1377,7 +1380,7 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
         st.markdown(resposta)
 
     historico.append({"role": "assistant", "content": resposta})
-    st.session_state[_CHAVE_CHAT] = historico
+    save_chat_history(_memory_key, historico, session_key=_CHAVE_CHAT)
 
 
 def render() -> None:
