@@ -270,6 +270,11 @@ class Settings:
     # Gerar hash: python -c "import hashlib; print(hashlib.sha256(b'senha').hexdigest())"
     APP_PASSWORD: str = _get_secret("APP_PASSWORD")
 
+    # Memória local dos chats: SQLite persistente entre reinícios do Streamlit.
+    # O arquivo é ignorado pelo Git; em hospedagem efêmera, configure um volume
+    # persistente explicitamente em CHAT_MEMORY_DB_PATH.
+    CHAT_MEMORY_DB_PATH: str = _get_secret("CHAT_MEMORY_DB_PATH", "data/chat_memory.sqlite3")
+
     # ── Usuario proprietario dos dados ────────────────────────────────────────
     # UUID do usuario na tabela `usuarios`. Todas as queries filtram por este ID.
     OWNER_USER_ID: str = _get_secret("OWNER_USER_ID")

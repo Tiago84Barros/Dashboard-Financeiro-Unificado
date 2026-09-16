@@ -16,6 +16,7 @@ import streamlit as st
 
 import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_reconciliacao as _recon
+from core.chat_memory import clear_chat_history, conversation_key, load_chat_history, save_chat_history
 from core.b3_portfolio_model import load_active_b3_portfolio_model
 from core.llm_b3 import (
     chat_com_portfolio,
@@ -1281,10 +1282,12 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
     col_chat_hdr, col_chat_clr = st.columns([5, 1])
     with col_chat_clr:
         if st.button("🗑️ Limpar chat", key="apb3_chat_clear", width="stretch"):
-            st.session_state.pop("apb3_chat_history", None)
+            clear_chat_history(conversation_key("apb3", ",".join(tickers_tuple)),
+                               session_key="apb3_chat_history")
             st.rerun()
 
-    history: list[dict] = st.session_state.get("apb3_chat_history", [])
+    _memory_key = conversation_key("apb3", ",".join(tickers_tuple))
+    history = load_chat_history(_memory_key, session_key="apb3_chat_history")
     for msg in history:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -1339,7 +1342,7 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
                     st.caption(f"⚠️ Não foi possível gerar os gráficos solicitados: {exc}")
 
         history.append({"role": "assistant", "content": resposta})
-        st.session_state["apb3_chat_history"] = history
+        save_chat_history(_memory_key, history, session_key="apb3_chat_history")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
