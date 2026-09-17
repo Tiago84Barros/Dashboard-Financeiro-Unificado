@@ -92,7 +92,8 @@ def test_actual_portfolio_route_keeps_rich_panels_and_chat(mode):
     assert "Explique os riscos" in app.session_state["fii_chat_history"][-1]["content"]
     app.slider(key="fii_pref_integrated_max_asset").set_value(5).run()
     assert not app.exception
-    assert "fii_chat_history" not in app.session_state
+    # O carregador persistente inicializa a lista do novo contexto como vazia.
+    assert app.session_state["fii_chat_history"] == []
 
 
 def test_no_history_and_no_provider_do_not_remove_details():

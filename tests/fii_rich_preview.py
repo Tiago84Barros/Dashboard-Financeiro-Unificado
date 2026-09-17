@@ -1,4 +1,5 @@
 """Cenário inteiramente sintético para AppTest e inspeção visual local."""
+import time
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -28,6 +29,10 @@ def synthetic_rows(mode="partial"):
 def render_preview(mode="partial", history=True, llm=True):
     import views.fiis as view
 
+    st.session_state["_app4_user"] = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "expires_at": time.time() + 600,
+    }
     rows = synthetic_rows(mode)
     eligible = rows if mode != "empty" else []
     dates = pd.date_range("2022-01-31", periods=36, freq="ME")
@@ -50,6 +55,9 @@ def render_preview(mode="partial", history=True, llm=True):
         def mocked(target, **kwargs):
             return stack.enter_context(patch(target, **kwargs))
 
+        mocked("core.chat_repository.load", return_value=[])
+        mocked("core.chat_repository.save", return_value=None)
+        mocked("core.chat_repository.clear", return_value=None)
         mocked("views.fiis._mr.load_fii_methodology_inputs", return_value=pd.DataFrame(rows))
         mocked("views.fiis._mr.load_fii_validation_status", return_value={})
         mocked("views.fiis._mr.load_precos_mensais", side_effect=lambda tickers:
