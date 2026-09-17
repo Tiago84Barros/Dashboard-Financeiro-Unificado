@@ -440,6 +440,13 @@ REGRAS ANALÍTICAS OBRIGATÓRIAS:
    dois estão publicados. Ausência de dado reduz confiança e nota, não autoriza invenção.
 4. Classifique cada tendência relevante como acelerando, desacelerando, estável ou deteriorando e
    explique o mecanismo. Não conclua tendência com apenas um exercício.
+4b. O dossiê separa TRÊS blocos de sinais e eles NÃO valem o mesmo. Só "SINAIS DE ALERTA —
+   RISCO CONFIRMADO NO HISTÓRICO" é sinal de alerta; cada linha dele já declara em quantos dos
+   N exercícios a condição foi observada, e essa fração deve ser citada ao afirmar o risco.
+   "OBSERVAÇÕES DE CONTEXTO" são medições que o próprio código já descartou como padrão e
+   "LIMITAÇÕES DE COBERTURA" são séries curtas demais para julgar: nenhum dos dois é motivo
+   para vetar nem para ressalvar, nenhum dos dois pode ser chamado de sinal de alerta na nota,
+   e as lacunas entram em qualidade_dados como lacuna, não como risco.
 5. Catalisadores e riscos devem ser específicos, ligados a uma métrica, evento, janela de evidência
    ou transmissão econômica. É proibido usar listas genéricas sem explicar o efeito.
 6. Não escreva "vale comprar", "compre", "venda", "substitua por" ou "pode entrar na carteira".

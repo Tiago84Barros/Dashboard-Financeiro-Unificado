@@ -34,6 +34,13 @@ from core.market_companies import (
     translate_us_sector,
     us_logo_url,
 )
+from core.severidade_flags import (
+    SEVERIDADE_COBERTURA,
+    SEVERIDADE_CONTEXTO,
+    SEVERIDADE_RISCO,
+    TITULO_SEVERIDADE,
+    agrupa_flags_por_severidade,
+)
 from core.us_company_analysis import (
     annual_dividends,
     annual_price_returns,
@@ -750,8 +757,18 @@ def _render_dossie_for(symbol: str) -> None:
     label, tipo = _CLASS_BADGE.get(d.get("classification"), ("—", "neutro"))
     badge_status(label, tipo)
     st.caption(d.get("classification_reason", ""))
-    for flag in d.get("red_flags", []):
+    # `red_flags` carrega três coisas distintas; o componente tem de
+    # distinguir. `st.warning` em todas punha 2.419 das 3.737 empresas
+    # (65%) em amarelo — inclusive as que o próprio texto declara não
+    # serem padrão. A classificação vem de core.severidade_flags (fonte
+    # única) — não repetir o teste de prefixo aqui.
+    _grupos = agrupa_flags_por_severidade(d.get("red_flags"))
+    for flag in _grupos[SEVERIDADE_RISCO]:
         st.warning(flag)
+    for flag in _grupos[SEVERIDADE_CONTEXTO]:
+        st.info(flag)
+    for flag in _grupos[SEVERIDADE_COBERTURA]:
+        st.caption(flag)
     notes = d.get("notes", {})
     c1, c2 = st.columns(2)
     with c1:
@@ -1992,10 +2009,25 @@ def _tab_dossie(status: dict) -> None:
             "Cresc. receita 5a (regressão)", _p(m.get("revenue_trend_5y")),
             None if _r2 is None else f"R² {_r2:.2f}")
 
-    if d.get("red_flags"):
+    # Só o bloco de risco confirmado é "sinal de alerta"; os outros dois
+    # saem sob o próprio título, porque a bandeira que aparece em tudo
+    # deixa de informar qualquer coisa.
+    _grupos = agrupa_flags_por_severidade(d.get("red_flags"))
+    if _grupos[SEVERIDADE_RISCO]:
         secao_titulo("Sinais de alerta", "🚩")
-        for f in d["red_flags"]:
+        st.caption(TITULO_SEVERIDADE[SEVERIDADE_RISCO])
+        for f in _grupos[SEVERIDADE_RISCO]:
             st.markdown(f"- {f}")
+    if _grupos[SEVERIDADE_CONTEXTO]:
+        secao_titulo("Observações de contexto", "ℹ️")
+        st.caption(TITULO_SEVERIDADE[SEVERIDADE_CONTEXTO])
+        for f in _grupos[SEVERIDADE_CONTEXTO]:
+            st.markdown(f"- {f}")
+    if _grupos[SEVERIDADE_COBERTURA]:
+        secao_titulo("Limitações de cobertura", "🔍")
+        st.caption(TITULO_SEVERIDADE[SEVERIDADE_COBERTURA])
+        for f in _grupos[SEVERIDADE_COBERTURA]:
+            st.caption(f"- {f}")
 
     notes = d.get("notes", {})
     if notes.get("tese") or notes.get("condicoes_invalidacao"):
@@ -2685,7 +2717,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
     _render_us_portfolio_cards(holdings)
 
     floor_log = result.get("quality_floor_log") or {}
-    if floor_log.get("reprovados"):
+    if any(floor_log.get(k) for k in
+           ("reprovados", "afrouxado_por_viabilidade", "carteira_preservada")):
         with st.expander("⛔ Empresas barradas pelo piso de qualidade"):
             st.caption(
                 "Eram as melhores da indústria pelo score, mas o laboratório "
@@ -2708,6 +2741,28 @@ def _tab_criacao_portfolio(status: dict) -> None:
                     f"{d['symbol']} ({d['grupo']})"
                     for d in floor_log["sem_substituto"][:12])
                 st.caption(f"Sem substituto aprovado na indústria: {vazias}.")
+            # A proteção que cede tem de dizer que cedeu. Sem estes dois
+            # blocos, a guarda de viabilidade e a rede final devolveriam
+            # empresa reprovada para a carteira sem deixar rastro na tela —
+            # que é justamente o defeito que o piso veio corrigir.
+            if floor_log.get("afrouxado_por_viabilidade"):
+                st.warning(
+                    "Guarda de viabilidade acionada: nenhum candidato destas "
+                    "indústrias passou no piso, e a exclusão vinha só da SOMA "
+                    "de sinais que o motor declara insuficientes sozinhos. O "
+                    "líder foi readmitido para a indústria não sumir da "
+                    "carteira — a reprovação segue registrada acima.")
+                st.dataframe(
+                    pd.DataFrame(floor_log["afrouxado_por_viabilidade"])
+                    .rename(columns={"symbol": "Ticker", "grupo": "Indústria",
+                                     "motivo": "Motivo", "cessao": "Cessão"}),
+                    hide_index=True, width="stretch")
+            if floor_log.get("carteira_preservada"):
+                st.error(
+                    "O piso de qualidade reprovaria TODAS as indústrias "
+                    "aprovadas. A carteira foi remontada sem ele para não sair "
+                    "vazia: nenhum nome abaixo passou no piso, e a leitura "
+                    "desta carteira exige ler os motivos acima antes.")
 
     secao_titulo("Travessia de Recessão", "🛡️")
     _render_us_ciclo(holdings)

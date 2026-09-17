@@ -51,6 +51,13 @@ from core.portfolio_report_us import (
     motivo_do_grau,
 )
 from core.portfolio_staleness import texto_defasagem
+from core.severidade_flags import (
+    SEVERIDADE_COBERTURA,
+    SEVERIDADE_CONTEXTO,
+    SEVERIDADE_RISCO,
+    TITULO_SEVERIDADE,
+    agrupa_flags_por_severidade,
+)
 from core.us_macro import (
     FONTE_OBSERVADO,
     FONTE_PREMISSA,
@@ -561,11 +568,23 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
                     unsafe_allow_html=True,
                 )
 
-        flags = dossie.get("red_flags") or []
-        if flags:
-            st.markdown("**Sinais de alerta determinísticos (verificados em código)**")
-            for f in flags:
+        # As três severidades saem apartadas: o 🚩 só vale onde há risco
+        # confirmado no histórico. Imprimi-lo em toda linha punha a
+        # bandeira vermelha em 65% do universo. Fonte única da
+        # classificação: core.severidade_flags.
+        _grupos = agrupa_flags_por_severidade(dossie.get("red_flags"))
+        if _grupos[SEVERIDADE_RISCO]:
+            st.markdown(f"**{TITULO_SEVERIDADE[SEVERIDADE_RISCO]}**")
+            for f in _grupos[SEVERIDADE_RISCO]:
                 st.markdown(f"🚩 {f}")
+        if _grupos[SEVERIDADE_CONTEXTO]:
+            st.markdown(f"**{TITULO_SEVERIDADE[SEVERIDADE_CONTEXTO]}**")
+            for f in _grupos[SEVERIDADE_CONTEXTO]:
+                st.markdown(f"ℹ️ {f}")
+        if _grupos[SEVERIDADE_COBERTURA]:
+            st.markdown(f"**{TITULO_SEVERIDADE[SEVERIDADE_COBERTURA]}**")
+            for f in _grupos[SEVERIDADE_COBERTURA]:
+                st.caption(f)
 
         c1, c2 = st.columns(2)
         with c1:

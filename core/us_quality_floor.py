@@ -32,7 +32,9 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-VERSION = "us-quality-floor-1.0.0"
+from core.us_advanced_lab import RISCOS_ACESSORIOS
+
+VERSION = "us-quality-floor-1.1.0"
 
 APROVADO = "aprovado"
 REPROVADO = "reprovado"
@@ -120,6 +122,28 @@ def evaluate(frame: pd.DataFrame, symbols: Sequence[str] | None = None, *,
     return veredito
 
 
+def _cede_por_viabilidade(v: FloorVerdict) -> bool:
+    """A reprovação pode ser cedida para o grupo não ficar sem representante?
+
+    Só quando TODOS os motivos são acessórios (`RISCOS_ACESSORIOS`): Altman em
+    aflição, payout acima de 1,5x, accruals elevados, Piotroski fraco. Cada um
+    deles pesa abaixo do corte de 10 — o próprio `build_entry_scores` declara
+    que nenhum exclui sozinho, só a soma. Ceder a soma quando a alternativa é
+    deixar o grupo inteiro de fora é a cessão MÍNIMA que a viabilidade exige.
+
+    Falha estrutural nunca é cedida: alavancagem, liquidez, margem líquida,
+    fluxo de caixa livre e cobertura de juros são o que o piso existe para
+    barrar, e "Excluída" por `entry_score < 30` não traz motivo acessório
+    nenhum — entra aqui como conjunto que não cabe em RISCOS_ACESSORIOS e
+    portanto NÃO é cedida.
+
+    A guarda se confina sozinha, sem lista de exceções por empresa: o mesmo
+    desenho de `core/b3_quality_floor.py`, e a razão é a regra do projeto de
+    nunca deixar zerada a criação de qualquer portfólio.
+    """
+    return bool(v.motivos) and set(v.motivos) <= RISCOS_ACESSORIOS
+
+
 def apply_with_substitution(
     selecionados: Sequence[str],
     ranked: Sequence[tuple[str, float]],
@@ -137,9 +161,10 @@ def apply_with_substitution(
     custaria diversificação, e a carteira ficaria menor toda vez que o piso
     agisse. Com a substituição, o grupo continua representado por outro nome.
 
-    Quando nenhum candidato do grupo passa, a vaga fica VAZIA e o caso entra em
-    ``log["sem_substituto"]`` — declarar é melhor que rebaixar em silêncio para
-    o segundo pior.
+    Quando nenhum candidato do grupo passa, entra a GUARDA DE VIABILIDADE
+    (ver `_cede_por_viabilidade`). Só se nem ela couber a vaga fica VAZIA, e
+    o caso entra em ``log["sem_substituto"]`` — declarar é melhor que
+    rebaixar em silêncio para o segundo pior.
     """
     policy = policy or FloorPolicy()
     universo = list(dict.fromkeys(
@@ -179,6 +204,15 @@ def apply_with_substitution(
             pesos[substituto] = pesos.get(substituto) or pesos.get(symbol, 0.0)
             log.setdefault("substituicoes", []).append({
                 "entra": substituto, "sai": symbol, "grupo": grupo_label})
+        elif _cede_por_viabilidade(v):
+            finais.append(symbol)
+            log.setdefault("afrouxado_por_viabilidade", []).append({
+                "symbol": symbol, "grupo": grupo_label,
+                "motivo": "; ".join(v.motivos),
+                "cessao": ("nenhum candidato do grupo sobreviveu ao piso "
+                           "e a exclusão vem só da SOMA de sinais "
+                           "acessórios — cada um deles, sozinho, o motor "
+                           "declara insuficiente para excluir")})
         else:
             log.setdefault("sem_substituto", []).append({
                 "symbol": symbol, "grupo": grupo_label})

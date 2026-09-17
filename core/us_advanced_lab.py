@@ -46,6 +46,36 @@ def _percentile(values: pd.Series, higher: bool = True) -> pd.Series:
     return score.fillna(50.0).clip(0, 100)
 
 
+# Rótulos gravados em `risk_driver`. São constantes porque
+# `core/us_quality_floor.py` decide a guarda de viabilidade LENDO estes
+# textos: literal repetido em dois módulos diverge com o tempo, e a vaga
+# da indústria passaria a ser cedida (ou negada) por erro de digitação.
+RISCO_ALAVANCAGEM = "dívida líquida/EBITDA elevada"
+RISCO_LIQUIDEZ = "liquidez corrente baixa"
+RISCO_MARGEM = "margem líquida negativa"
+RISCO_FCF = "fluxo de caixa livre negativo"
+RISCO_JUROS = "baixa cobertura de juros"
+RISCO_ALTMAN = "Altman Z em zona de aflição"
+RISCO_PAYOUT = "payout acima de 1,5× o lucro"
+RISCO_ACCRUALS = "accruals elevados (lucro pouco em caixa)"
+RISCO_PIOTROSKI = "Piotroski fraco (≤3 de 9)"
+
+#: Falha de balanço que basta por si. A guarda de viabilidade NUNCA
+#: readmite quem é barrado por uma delas — alavancagem, liquidez, margem,
+#: caixa e cobertura de juros são o que o piso existe para barrar.
+RISCOS_ESTRUTURAIS: frozenset[str] = frozenset({
+    RISCO_ALAVANCAGEM, RISCO_LIQUIDEZ, RISCO_MARGEM, RISCO_FCF,
+    RISCO_JUROS,
+})
+
+#: Sinais que o próprio motor declara não excluírem sozinhos (peso abaixo
+#: do corte de 10): só a SOMA deles exclui. É exatamente essa soma que a
+#: guarda de viabilidade pode ceder quando a indústria ficaria sem ninguém.
+RISCOS_ACESSORIOS: frozenset[str] = frozenset({
+    RISCO_ALTMAN, RISCO_PAYOUT, RISCO_ACCRUALS, RISCO_PIOTROSKI,
+})
+
+
 def build_entry_scores(scored: pd.DataFrame,
                        weights: dict[str, float] | None = None) -> pd.DataFrame:
     """Repondera as trilhas e calcula score de entrada + penalidades de risco."""
@@ -91,11 +121,11 @@ def build_entry_scores(scored: pd.DataFrame,
             risk_driver.loc[active].astype(str) + "; " + label,
         )
 
-    penalize("net_debt_ebitda", lambda s: s > 4, 10, "dívida líquida/EBITDA elevada")
-    penalize("current_ratio", lambda s: s < .8, 7, "liquidez corrente baixa")
-    penalize("net_margin", lambda s: s < 0, 8, "margem líquida negativa")
-    penalize("fcf_yield", lambda s: s < 0, 5, "fluxo de caixa livre negativo")
-    penalize("interest_coverage", lambda s: s < 1.5, 8, "baixa cobertura de juros")
+    penalize("net_debt_ebitda", lambda s: s > 4, 10, RISCO_ALAVANCAGEM)
+    penalize("current_ratio", lambda s: s < .8, 7, RISCO_LIQUIDEZ)
+    penalize("net_margin", lambda s: s < 0, 8, RISCO_MARGEM)
+    penalize("fcf_yield", lambda s: s < 0, 5, RISCO_FCF)
+    penalize("interest_coverage", lambda s: s < 1.5, 8, RISCO_JUROS)
 
     # ── Motores avançados que existiam mas nunca chegavam à carteira ────────
     # Altman e Piotroski eram calculados para TODAS as empresas e gravados na
@@ -114,8 +144,8 @@ def build_entry_scores(scored: pd.DataFrame,
         penalty.loc[_aflicao] += 8
         risk_driver.loc[_aflicao] = np.where(
             risk_driver.loc[_aflicao].eq("sem alerta crítico"),
-            "Altman Z em zona de aflição",
-            risk_driver.loc[_aflicao].astype(str) + "; Altman Z em zona de aflição")
+            RISCO_ALTMAN,
+            risk_driver.loc[_aflicao].astype(str) + "; " + RISCO_ALTMAN)
     # Payout acima de 1,5× o lucro não se sustenta (mesma calibração do B3,
     # onde UNIP6 distribuía 318%). REITs ficam de fora: distribuem FFO por
     # exigência legal e a depreciação deprime o lucro contábil — payout > 1 ali
@@ -134,8 +164,8 @@ def build_entry_scores(scored: pd.DataFrame,
         penalty.loc[_payout_alto] += 7
         risk_driver.loc[_payout_alto] = np.where(
             risk_driver.loc[_payout_alto].eq("sem alerta crítico"),
-            "payout acima de 1,5× o lucro",
-            risk_driver.loc[_payout_alto].astype(str) + "; payout acima de 1,5× o lucro")
+            RISCO_PAYOUT,
+            risk_driver.loc[_payout_alto].astype(str) + "; " + RISCO_PAYOUT)
 
     # Accruals de Sloan (1996): lucro que não vira caixa antecipa reversão. O
     # corte de 0,10 é a cauda de ~5% do universo real (p95 = 0,112; mediana
@@ -151,9 +181,9 @@ def build_entry_scores(scored: pd.DataFrame,
         penalty.loc[_accruals] += 5
         risk_driver.loc[_accruals] = np.where(
             risk_driver.loc[_accruals].eq("sem alerta crítico"),
-            "accruals elevados (lucro pouco em caixa)",
+            RISCO_ACCRUALS,
             risk_driver.loc[_accruals].astype(str)
-            + "; accruals elevados (lucro pouco em caixa)")
+            + "; " + RISCO_ACCRUALS)
 
     # Piotroski ≤ 3 de 9 é fraqueza fundamentalista ampla (cobertura ~100%).
     # Só conta quando houve critérios suficientes avaliados — ausência não pune.
@@ -166,8 +196,8 @@ def build_entry_scores(scored: pd.DataFrame,
         penalty.loc[_fraco] += 6
         risk_driver.loc[_fraco] = np.where(
             risk_driver.loc[_fraco].eq("sem alerta crítico"),
-            "Piotroski fraco (≤3 de 9)",
-            risk_driver.loc[_fraco].astype(str) + "; Piotroski fraco (≤3 de 9)")
+            RISCO_PIOTROSKI,
+            risk_driver.loc[_fraco].astype(str) + "; " + RISCO_PIOTROSKI)
     out["risk_penalty"] = penalty.clip(0, 25).round(1)
     out["risk_driver"] = risk_driver
 
