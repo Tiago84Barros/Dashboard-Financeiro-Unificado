@@ -14,6 +14,12 @@ from __future__ import annotations
 import logging
 from typing import Optional, Sequence
 
+from core.severidade_flags import (
+    SEVERIDADE_COBERTURA,
+    SEVERIDADE_CONTEXTO,
+    SEVERIDADE_RISCO,
+    agrupa_flags_por_severidade,
+)
 from core.us_metrics import compute_company_metrics
 
 logger = logging.getLogger("us_dossie")
@@ -92,27 +98,101 @@ def classify_company(m: dict, sector: str | None = None) -> tuple[str, str]:
     return "inadequada", "perfil não se encaixa em tese clara com os dados atuais"
 
 
-def red_flags(m: dict) -> list[str]:
-    """Sinais de alerta determinísticos (regra: nulo não gera flag)."""
+def _linha_de_persistencia(p, texto: str) -> str | None:
+    """Uma linha de red flag QUALIFICADA pela frequência medida no histórico.
+
+    A condição que nunca acendeu não vira linha. A que acendeu vira sempre —
+    nada é silenciado — mas dizendo em quantos exercícios acendeu, e sob qual
+    severidade (ver core/severidade_flags.py):
+
+      - maioria estrita da janela avaliável, com 3+ exercícios → risco confirmado;
+      - acendeu, sem maioria                                    → CONTEXTO:;
+      - menos de 3 exercícios avaliáveis                        → COBERTURA:.
+
+    O número do último exercício sai do texto de propósito: a grandeza aqui é
+    a frequência. O valor corrente continua no bloco de métricas do dossiê.
+    """
+    if p.acesos <= 0:
+        return None
+    quando = f"em {p.acesos} dos últimos {p.anos} exercícios"
+    if not p.julgavel:
+        return (f"COBERTURA: {texto} {quando} — série curta demais para "
+                f"separar episódio isolado de padrão.")
+    if p.maioria:
+        # Padrão que cessou é padrão observado; a ressalva vai junto, no lugar
+        # de virar silêncio — foi o defeito oposto que este módulo corrige.
+        if not p.acende_no_ultimo:
+            return f"{texto} {quando} (não no último exercício)."
+        return f"{texto} {quando}."
+    if p.acesos == 1 and p.acende_no_ultimo:
+        return f"CONTEXTO: {texto} apenas no último exercício, {quando}."
+    return f"CONTEXTO: {texto} {quando} — sem padrão na janela."
+
+
+def _acende_na_foto(nome: str, m: dict) -> bool:
+    """A condição acende na FOTO do dossiê (as métricas de `compute_company_metrics`)?
+
+    Esta é a regra que valia até 15/09/2026 para todas as linhas. Ela sobrevive
+    aqui com um papel estreito e específico: rede de segurança. `compute_company_metrics`
+    monta cada métrica com `_latest`, que aceita o valor não nulo mais recente
+    ainda que venha de um exercício anterior; a medição por ano, não. Quando
+    nenhum exercício da janela é avaliável e mesmo assim a foto acusa a
+    condição, a linha PRECISA aparecer — como limitação de cobertura, porque a
+    frequência é justamente o que não foi possível apurar.
+    """
+    if nome == "alavancagem":
+        v = m.get("net_debt_ebitda")
+        return v is not None and v > 4
+    if nome == "cobertura_juros":
+        v = m.get("interest_coverage")
+        return v is not None and v < 2
+    if nome == "fcf_negativo":
+        v = m.get("_fcf")
+        return v is not None and v < 0
+    if nome == "conversao_caixa":
+        v = m.get("cash_conversion")
+        return v is not None and v < 0.5 and (m.get("_net_income") or 0) > 0
+    if nome == "divida_patrimonio":
+        v = m.get("debt_to_equity")
+        return v is not None and v > 2
+    if nome == "patrimonio_negativo":
+        v = m.get("_equity")
+        return v is not None and v < 0
+    return False
+
+
+def red_flags(m: dict, income: Sequence[dict] = (),
+              balance: Sequence[dict] = (),
+              cashflow: Sequence[dict] = ()) -> list[str]:
+    """Sinais de alerta determinísticos, medidos no HISTÓRICO da empresa.
+
+    Até 15/09/2026 cada linha era uma leitura do último exercício em ``m`` e
+    saía idêntica — palavra por palavra — para quem teve um ano ruim em cinco e
+    para quem teve cinco em cinco. Quem decide qual dos dois é o caso agora é
+    `core.us_risco_historico`, sobre as séries anuais.
+
+    ``m`` continua entrando como rede de segurança (ver `_acende_na_foto`):
+    condição que a foto acusa e que nenhum exercício da janela conseguiu
+    avaliar sai como COBERTURA:, nunca como silêncio.
+
+    Regra preservada: condição sem dado nenhum não gera linha.
+    """
+    from core import us_risco_historico as hist
+
+    persistencias = hist.avalia(income, balance, cashflow)
     flags: list[str] = []
-    ndte = m.get("net_debt_ebitda")
-    if ndte is not None and ndte > 4:
-        flags.append(f"Alavancagem alta: dívida líquida/EBITDA = {ndte:.1f}×")
-    ic = m.get("interest_coverage")
-    if ic is not None and ic < 2:
-        flags.append(f"Cobertura de juros baixa: {ic:.1f}× (< 2×)")
-    fcf = m.get("_fcf")
-    if fcf is not None and fcf < 0:
-        flags.append("Fluxo de caixa livre negativo")
-    cc = m.get("cash_conversion")
-    if cc is not None and cc < 0.5 and (m.get("_net_income") or 0) > 0:
-        flags.append(f"Baixa conversão de lucro em caixa: {cc:.0%}")
-    de = m.get("debt_to_equity")
-    if de is not None and de > 2:
-        flags.append(f"Dívida/patrimônio elevada: {de:.1f}×")
-    eq = m.get("_equity")
-    if eq is not None and eq < 0:
-        flags.append("Patrimônio líquido negativo")
+    for nome, _cond, texto in hist.CONDICOES:
+        persistencia = persistencias.get(nome)
+        if persistencia is None:
+            if _acende_na_foto(nome, m):
+                flags.append(
+                    f"COBERTURA: {texto} no último dado disponível — nenhum "
+                    f"exercício da janela permitiu apurar com que frequência "
+                    f"a condição se repete.")
+            continue
+        linha = _linha_de_persistencia(persistencia, texto)
+        if linha:
+            flags.append(linha)
     return flags
 
 
@@ -155,7 +235,7 @@ def assemble_dossie(symbol: str, *, name: str | None, sector: str | None,
         "name": name, "sector": sector, "industry": industry,
         "classification": label, "classification_reason": motivo,
         "metrics": m,
-        "red_flags": red_flags(m),
+        "red_flags": red_flags(m, income, balance, cashflow),
         "notes": investment_notes(m, label),
         "score": (score_row or {}).get("score"),
         "series_years": m.get("_years"),
@@ -216,9 +296,26 @@ def dossie_to_text(d: dict) -> str:
             pct(m.get("shareholder_yield")), pct(m.get("dividend_yield")),
             num(m.get("dividends_per_share")), pct(m.get("payout_ratio"))),
     ]
-    if d.get("red_flags"):
-        L.append("\nSINAIS DE ALERTA:")
-        L.extend(f"  - {f}" for f in d["red_flags"])
+    # As três categorias saem APARTADAS. Sob um cabeçalho único, as 2.419 de
+    # 3.737 empresas que acendem alguma linha chegavam à LLM com a mesma cara
+    # — inclusive aquelas cujo próprio texto declara não ser padrão. Quem lê o
+    # cabeçalho antes da linha é quem decide.
+    grupos = agrupa_flags_por_severidade(d.get("red_flags"))
+    if grupos[SEVERIDADE_RISCO]:
+        L.append("\nSINAIS DE ALERTA — RISCO CONFIRMADO NO HISTÓRICO "
+                 "(verificados em código, não são opinião):")
+        L.extend(f"  - {f}" for f in grupos[SEVERIDADE_RISCO])
+    if grupos[SEVERIDADE_CONTEXTO]:
+        L.append("\nOBSERVAÇÕES DE CONTEXTO (a condição foi medida em código "
+                 "sobre janela suficiente e JÁ DESCARTADA como padrão — NÃO "
+                 "são sinais de alerta, NÃO são risco confirmado e NÃO "
+                 "justificam veto nem ressalva por si sós):")
+        L.extend(f"  - {f}" for f in grupos[SEVERIDADE_CONTEXTO])
+    if grupos[SEVERIDADE_COBERTURA]:
+        L.append("\nLIMITAÇÕES DE COBERTURA (série curta demais para separar "
+                 "episódio de padrão — ausência de prova não é prova de risco; "
+                 "entram em qualidade_dados como lacuna, nunca como risco):")
+        L.extend(f"  - {f}" for f in grupos[SEVERIDADE_COBERTURA])
     notes = d.get("notes", {})
     if notes.get("tese"):
         L.append("\nTESE:")

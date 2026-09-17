@@ -49,13 +49,26 @@ def test_classify_consolidada():
     assert label == "consolidada"
 
 
-def test_red_flags():
+def test_red_flags_sem_serie_cai_na_rede_da_foto():
+    """Sem séries anuais não há histórico para apurar: a foto ainda acusa.
+
+    Desde 15/09/2026 `red_flags` qualifica cada sinal pela persistência medida
+    (ver tests/test_us_severidade_historica.py). Chamada sem as séries — como
+    aqui —, ela exercita apenas a rede de segurança `_acende_na_foto`, e o que
+    sai é LIMITAÇÃO DE COBERTURA, não risco confirmado: o sinal aparece, mas
+    declarando que não pôde ser apurado no histórico. Sumir com ele seria pior;
+    carimbá-lo de risco confirmado, falso.
+    """
+    from core.severidade_flags import SEVERIDADE_COBERTURA, severidade_flag
+
     flags = ud.red_flags(_m(net_debt_ebitda=5, interest_coverage=1.5, _fcf=-10,
                             _equity=-5))
     joined = " ".join(flags)
     assert "Alavancagem alta" in joined
     assert "Cobertura de juros" in joined
     assert "negativo" in joined.lower()
+    assert flags and all(severidade_flag(f) == SEVERIDADE_COBERTURA
+                         for f in flags), flags
 
 
 def test_assemble_dossie_e_texto():
