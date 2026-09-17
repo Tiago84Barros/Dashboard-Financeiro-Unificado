@@ -55,6 +55,12 @@ _ROTAS: dict[str, str] = {
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
+    if not _APP_TEST_MODE:
+        from core.auth import encerrar_sessao
+        from core.user_context import principal
+        st.caption(f"Conectado como {principal().get('name', '')}")
+        if st.button("Sair / trocar usuário", key="app_sign_out"):
+            encerrar_sessao()
     st.markdown(
         '<div class="app-brand">'
         '<div class="app-brand-mark" aria-hidden="true">📊</div>'

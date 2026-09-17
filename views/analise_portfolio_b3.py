@@ -16,8 +16,14 @@ import streamlit as st
 
 import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_reconciliacao as _recon
-from core.chat_memory import clear_chat_history, conversation_key, load_chat_history, save_chat_history
 from core.b3_portfolio_model import load_active_b3_portfolio_model
+from core.chat_memory import (
+    clear_chat_history,
+    conversation_key,
+    load_chat_history,
+    save_chat_history,
+    visible_chat_history,
+)
 from core.llm_b3 import (
     chat_com_portfolio,
     llm_disponivel,
@@ -1288,7 +1294,7 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
 
     _memory_key = conversation_key("apb3", ",".join(tickers_tuple))
     history = load_chat_history(_memory_key, session_key="apb3_chat_history")
-    for msg in history:
+    for msg in visible_chat_history(history, "apb3_chat_history"):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 

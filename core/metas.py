@@ -34,9 +34,8 @@ import logging
 from datetime import date as _date
 from typing import Optional
 
-import streamlit as st
-
 from core.config import settings
+from core.user_context import user_cache_data
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +109,7 @@ _SQL_INSERT_META = """
 # API pública — leitura
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=60)
+@user_cache_data(ttl=60)
 def get_metas() -> dict:
     """
     Retorna dict com resumo + lista de metas.

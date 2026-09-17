@@ -1,15 +1,15 @@
 """Memória persistente, limitada e isolada para os chats do App4.
 
-O ``session_state`` do Streamlit desaparece quando o processo reinicia ou a
-sessão expira. Este repositório local complementa (não substitui) esse estado:
-guarda apenas as mensagens recentes, por proprietário e por contexto de chat.
-Não grava prompt, chaves, snapshots financeiros nem telemetria da LLM.
+O banco guarda as mensagens recentes por pessoa autenticada e contexto.
+Mensagens restauradas alimentam a LLM, mas ficam ocultas na tela. SQLite é
+usado somente quando um caminho explícito é fornecido (testes descartáveis).
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, MutableMapping
@@ -19,24 +19,10 @@ _MAX_CONTENT_CHARS = 12_000
 _RETENTION_DAYS = 30
 
 
-def _default_path() -> Path:
-    """Resolve um caminho local ignorado pelo Git, sem expor configurações."""
-    from core.config import settings
-    return Path(str(settings.CHAT_MEMORY_DB_PATH or "data/chat_memory.sqlite3"))
-
-
 def _owner_namespace() -> str:
-    """Cria uma chave estável sem persistir a senha de acesso em texto claro."""
-    from core.config import settings
-
-    owner = str(settings.OWNER_USER_ID or "").strip()
-    if owner:
-        return f"owner:{owner}"
-    password = str(settings.APP_PASSWORD or "").strip()
-    if password:
-        return "password:" + hashlib.sha256(password.encode("utf-8")).hexdigest()
-    # Modo local sem login já não distingue pessoas; não fingir que distingue.
-    return "local-no-auth"
+    """Identidade da pessoa; nenhuma reserva para a conta global antiga."""
+    from core.user_context import require_user
+    return "user-v2:" + require_user()
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -69,6 +55,8 @@ def _sanitize(messages: Any) -> list[dict[str, str]]:
         if role not in {"user", "assistant"} or not isinstance(content, str):
             continue
         cleaned.append({"role": role, "content": content[:_MAX_CONTENT_CHARS]})
+    while sum(len(message["content"]) for message in cleaned) > 100_000:
+        cleaned.pop(0)
     return cleaned
 
 
@@ -87,20 +75,33 @@ def load_chat_history(
         state = st.session_state
     state_key = session_key or conversation_key
     marker_key = f"_chat_memory_loaded_for:{state_key}"
-    existing = _sanitize(state.get(state_key, []))
-    if existing and state.get(marker_key) == conversation_key:
+    identity = owner_key or _owner_namespace()
+    marker = (identity, conversation_key)
+    existing = state.get(state_key, [])
+    if state.get(marker_key) == marker:
         return existing
     try:
-        with _connect(path or _default_path()) as conn:
-            row = conn.execute(
-                "SELECT messages_json FROM chat_memory WHERE owner_key = ? AND conversation_key = ?",
-                (owner_key or _owner_namespace(), conversation_key),
-            ).fetchone()
-        history = _sanitize(json.loads(row[0])) if row else []
-    except (OSError, sqlite3.Error, TypeError, ValueError, json.JSONDecodeError):
+        if path is None:
+            from core.chat_repository import load
+            history = _sanitize(load(conversation_key))
+        else:
+            with closing(_connect(path)) as conn:
+                row = conn.execute(
+                    "SELECT messages_json FROM chat_memory WHERE owner_key = ? AND conversation_key = ? "
+                    "AND julianday(updated_at) >= julianday('now', '-30 days')",
+                    (identity, conversation_key),
+                ).fetchone()
+            history = _sanitize(json.loads(row[0])) if row else []
+    except Exception:
         history = []
+        _persistence_warning()
+        # Falha de leitura não deve permitir sobrescrever a memória existente.
+        state[f"_chat_memory_read_failed:{state_key}"] = True
+    else:
+        state.pop(f"_chat_memory_read_failed:{state_key}", None)
     state[state_key] = history
-    state[marker_key] = conversation_key
+    state[marker_key] = marker
+    state[f"_chat_visible_start:{state_key}"] = len(history)
     return history
 
 
@@ -119,25 +120,42 @@ def save_chat_history(
     if state is None:
         import streamlit as st
         state = st.session_state
-    state[session_key or conversation_key] = history
-    state[f"_chat_memory_loaded_for:{session_key or conversation_key}"] = conversation_key
+    identity = owner_key or _owner_namespace()
+    state_key = session_key or conversation_key
+    marker = (identity, conversation_key)
+    previous = state.get(f"_chat_memory_loaded_for:{state_key}")
+    if previous is not None and previous != marker:
+        raise PermissionError("O usuário ou contexto da conversa mudou.")
+    # Mantém gráficos apenas na sessão atual, fora da memória durável.
+    state[state_key] = messages[-len(history):] if history else []
+    removed = max(0, len(messages) - len(history))
+    visible_key = f"_chat_visible_start:{state_key}"
+    state[visible_key] = max(0, state.get(visible_key, 0) - removed)
+    state[f"_chat_memory_loaded_for:{state_key}"] = marker
+    if state.get(f"_chat_memory_read_failed:{state_key}"):
+        _persistence_warning()
+        return history
     try:
+        if path is None:
+            from core.chat_repository import save
+            save(conversation_key, history)
+            return history
         now = datetime.now(UTC).isoformat()
-        with _connect(path or _default_path()) as conn:
+        with closing(_connect(path)) as conn, conn:
             conn.execute(
                 """INSERT INTO chat_memory (owner_key, conversation_key, messages_json, updated_at)
                    VALUES (?, ?, ?, ?)
                    ON CONFLICT(owner_key, conversation_key) DO UPDATE SET
                      messages_json = excluded.messages_json, updated_at = excluded.updated_at""",
-                (owner_key or _owner_namespace(), conversation_key,
+                (identity, conversation_key,
                  json.dumps(history, ensure_ascii=False), now),
             )
             conn.execute(
                 "DELETE FROM chat_memory WHERE owner_key = ? AND julianday(updated_at) < julianday('now', ?)",
-                (owner_key or _owner_namespace(), f"-{_RETENTION_DAYS} days"),
+                (identity, f"-{_RETENTION_DAYS} days"),
             )
-    except (OSError, sqlite3.Error, TypeError, ValueError):
-        pass
+    except Exception:
+        _persistence_warning()
     return history
 
 
@@ -155,16 +173,37 @@ def clear_chat_history(
         import streamlit as st
         state = st.session_state
     state_key = session_key or conversation_key
+    identity = owner_key or _owner_namespace()
+    try:
+        if path is None:
+            from core.chat_repository import clear
+            clear(conversation_key)
+        else:
+            with closing(_connect(path)) as conn, conn:
+                conn.execute(
+                    "DELETE FROM chat_memory WHERE owner_key = ? AND conversation_key = ?",
+                    (identity, conversation_key),
+                )
+    except Exception:
+        _persistence_warning()
+        raise RuntimeError("A memória não foi apagada. Tente novamente.") from None
     state.pop(state_key, None)
     state.pop(f"_chat_memory_loaded_for:{state_key}", None)
-    try:
-        with _connect(path or _default_path()) as conn:
-            conn.execute(
-                "DELETE FROM chat_memory WHERE owner_key = ? AND conversation_key = ?",
-                (owner_key or _owner_namespace(), conversation_key),
-            )
-    except (OSError, sqlite3.Error):
-        pass
+    state.pop(f"_chat_memory_read_failed:{state_key}", None)
+    state.pop(f"_chat_visible_start:{state_key}", None)
+
+
+def visible_chat_history(history: list, session_key: str, *, session_state=None) -> list:
+    """A LLM recebe a memória; a tela mostra só mensagens da sessão atual."""
+    if session_state is None:
+        import streamlit as st
+        session_state = st.session_state
+    return history[session_state.get(f"_chat_visible_start:{session_key}", len(history)):]
+
+
+def _persistence_warning():
+    import streamlit as st
+    st.warning("Memória de conversa indisponível. As novas mensagens podem não ser recuperadas ao sair.")
 
 
 def conversation_key(chat_name: str, context_signature: str = "") -> str:
