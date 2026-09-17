@@ -32,7 +32,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core.card_categorization import REVIEW_SENTINEL, categorias_disponiveis
-from core.chat_memory import clear_chat_history, conversation_key, load_chat_history, save_chat_history
+from core.chat_memory import (
+    clear_chat_history,
+    conversation_key,
+    load_chat_history,
+    save_chat_history,
+    visible_chat_history,
+)
 from core.controle import (
     add_card_category_rule,
     atualizar_transacao,
@@ -1106,7 +1112,7 @@ def _render_chat_financeiro(
             st.rerun()
 
     history = load_chat_history(_memory_key, session_key="cf_chat_history")
-    for msg in history:
+    for msg in visible_chat_history(history, "cf_chat_history"):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             for direc in msg.get("_charts", []) or []:
@@ -2967,7 +2973,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
             st.rerun()
 
     history = load_chat_history(_memory_key, session_key="cc_chat_history")
-    for msg in history:
+    for msg in visible_chat_history(history, "cc_chat_history"):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             for direc in msg.get("_charts", []) or []:

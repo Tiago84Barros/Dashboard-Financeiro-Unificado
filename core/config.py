@@ -266,18 +266,24 @@ class Settings:
     MOCK_MODE: bool = _get_secret("MOCK_MODE", "true").lower() == "true"
 
     # ── Autenticacao simples (Streamlit Cloud) ────────────────────────────────
-    # Texto simples ou hash SHA-256 da senha. Vazio = sem senha (dev local).
+    # Credencial inicial do administrador; vazio não desabilita o login.
     # Gerar hash: python -c "import hashlib; print(hashlib.sha256(b'senha').hexdigest())"
     APP_PASSWORD: str = _get_secret("APP_PASSWORD")
 
-    # Memória local dos chats: SQLite persistente entre reinícios do Streamlit.
-    # O arquivo é ignorado pelo Git; em hospedagem efêmera, configure um volume
-    # persistente explicitamente em CHAT_MEMORY_DB_PATH.
-    CHAT_MEMORY_DB_PATH: str = _get_secret("CHAT_MEMORY_DB_PATH", "data/chat_memory.sqlite3")
-
     # ── Usuario proprietario dos dados ────────────────────────────────────────
-    # UUID do usuario na tabela `usuarios`. Todas as queries filtram por este ID.
-    OWNER_USER_ID: str = _get_secret("OWNER_USER_ID")
+    # UUID original em profiles: administrador e proprietário dos jobs CLI.
+    ADMIN_USER_ID: str = _get_secret("OWNER_USER_ID")
+    _legacy_owner_id: str = ADMIN_USER_ID
+
+    @property
+    def OWNER_USER_ID(self) -> str:
+        from core.user_context import current_owner
+        return current_owner(self._legacy_owner_id)
+
+    @OWNER_USER_ID.setter
+    def OWNER_USER_ID(self, value: str) -> None:
+        # Compatibilidade com jobs e fixtures; sessões ignoram este valor.
+        self._legacy_owner_id = value
 
     # ── Fontes de importacao (apps originais — somente leitura) ──────────────
     SOURCE_DB_APP1: str = _get_secret("SOURCE_DB_APP1")  # Dashboard (PostgreSQL)

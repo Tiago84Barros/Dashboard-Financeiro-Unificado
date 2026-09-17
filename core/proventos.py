@@ -38,9 +38,8 @@ from collections import defaultdict
 from datetime import date as _date
 from datetime import timedelta as _timedelta
 
-import streamlit as st
-
 from core.config import settings
+from core.user_context import user_cache_data
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +155,7 @@ _SQL_PROVENTOS = """
 # API pública
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_proventos() -> dict:
     """
     Retorna o dicionário completo de dados para a página Proventos.

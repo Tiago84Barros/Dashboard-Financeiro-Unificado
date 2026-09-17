@@ -55,10 +55,9 @@ from collections import Counter
 from datetime import date as _date
 from typing import Optional
 
-import streamlit as st
-
 from core.config import settings
 from core.import_guard import acquire_transaction_import_lock
+from core.user_context import user_cache_data
 
 logger = logging.getLogger(__name__)
 
@@ -260,9 +259,10 @@ _SQL_INSERT_TX = """
     INSERT INTO transactions
         (user_id, account_id, category_id, description, amount,
          due_date, type, status, source)
-    VALUES
-        (:uid, :account_id, :category_id, :description, :amount,
-         :due_date, :type, 'settled', 'manual')
+    SELECT :uid, :account_id, :category_id, :description, :amount,
+           :due_date, :type, 'settled', 'manual'
+    WHERE EXISTS (SELECT 1 FROM accounts a WHERE a.id = CAST(:account_id AS uuid) AND a.user_id = CAST(:uid AS uuid))
+      AND (CAST(:category_id AS uuid) IS NULL OR EXISTS (SELECT 1 FROM categories c WHERE c.id = CAST(:category_id AS uuid) AND (c.user_id IS NULL OR c.user_id = CAST(:uid AS uuid))))
 """
 
 _SQL_INSERT_INVOICE_TX = """
@@ -287,6 +287,8 @@ _SQL_UPDATE_TX = """
            type        = :type
     WHERE  id       = CAST(:tx_id AS uuid)
       AND  user_id  = CAST(:uid AS uuid)
+      AND EXISTS (SELECT 1 FROM accounts a WHERE a.id = CAST(:account_id AS uuid) AND a.user_id = CAST(:uid AS uuid))
+      AND (CAST(:category_id AS uuid) IS NULL OR EXISTS (SELECT 1 FROM categories c WHERE c.id = CAST(:category_id AS uuid) AND (c.user_id IS NULL OR c.user_id = CAST(:uid AS uuid))))
 """
 
 # Edição de lançamentos da fatura de cartão (aba Cartão de Crédito). Atualiza os
@@ -305,6 +307,8 @@ _SQL_UPDATE_TX_CARTAO = """
            status              = :status
     WHERE  id       = CAST(:tx_id AS uuid)
       AND  user_id  = CAST(:uid AS uuid)
+      AND EXISTS (SELECT 1 FROM accounts a WHERE a.id = CAST(:account_id AS uuid) AND a.user_id = CAST(:uid AS uuid))
+      AND (CAST(:category_id AS uuid) IS NULL OR EXISTS (SELECT 1 FROM categories c WHERE c.id = CAST(:category_id AS uuid) AND (c.user_id IS NULL OR c.user_id = CAST(:uid AS uuid))))
 """
 
 _SQL_HISTORICO_ANUAL = f"""
@@ -466,7 +470,7 @@ _SQL_TRANSACOES_FILTRADAS = """
 # API pública — leitura
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=60)
+@user_cache_data(ttl=60)
 def get_controle(ano: int, mes: int) -> dict:
     """
     Retorna dados do mês (ano, mes) para a página Controle Financeiro.
@@ -482,6 +486,9 @@ def get_controle(ano: int, mes: int) -> dict:
         dados["data_source"] = "real"
         return dados
     except Exception as exc:
+        from core.user_context import principal
+        if principal():
+            raise RuntimeError("Não foi possível carregar seus lançamentos.") from None
         logger.warning(
             "[controle] Banco real falhou (%s: %s) — usando mock.",
             type(exc).__name__,
@@ -492,7 +499,7 @@ def get_controle(ano: int, mes: int) -> dict:
         return dados
 
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_opcoes_formulario() -> dict:
     """
     Retorna categorias e contas disponíveis para o formulário de nova transação.
@@ -506,10 +513,13 @@ def get_opcoes_formulario() -> dict:
         return _opcoes_real()
     except Exception as exc:
         logger.warning("[controle] Falha ao carregar opções do formulário: %s", exc)
+        from core.user_context import principal
+        if principal():
+            return {"categorias": [], "contas": []}
         return _opcoes_mock()
 
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_contas_cartao_credito() -> list[dict]:
     """Retorna contas do tipo cartão de crédito disponíveis para importação."""
     if settings.MOCK_MODE:
@@ -1145,7 +1155,7 @@ def inserir_transacao(
             if account.type == "credit_card":
                 return False, "Compras de cartão de crédito devem ser importadas pela fatura CSV."
 
-            conn.execute(
+            inserted = conn.execute(
                 text(_SQL_INSERT_TX),
                 {
                     "uid":          owner,
@@ -1157,6 +1167,8 @@ def inserir_transacao(
                     "type":         tipo,
                 },
             )
+            if inserted.rowcount == 0:
+                return False, "Conta ou categoria indisponível para este usuário."
 
         # Invalida caches para forçar reload nas abas afetadas.
         _clear_controle_caches()
@@ -1197,7 +1209,7 @@ def atualizar_transacao(
             return False, "OWNER_USER_ID não configurado."
 
         with engine.begin() as conn:
-            conn.execute(
+            updated = conn.execute(
                 text(_SQL_UPDATE_TX),
                 {
                     "tx_id":       tx_id,
@@ -1210,6 +1222,8 @@ def atualizar_transacao(
                     "type":        tipo,
                 },
             )
+            if updated.rowcount == 0:
+                return False, "Lançamento, conta ou categoria indisponível para este usuário."
 
         _clear_controle_caches()
         return True, ""
@@ -1259,7 +1273,7 @@ def atualizar_transacao_cartao(
         status_norm = (str(status or "settled").strip() or "settled")
 
         with engine.begin() as conn:
-            conn.execute(
+            updated = conn.execute(
                 text(_SQL_UPDATE_TX_CARTAO),
                 {
                     "tx_id":               tx_id,
@@ -1275,6 +1289,8 @@ def atualizar_transacao_cartao(
                     "status":              status_norm,
                 },
             )
+            if updated.rowcount == 0:
+                return False, "Transação, conta ou categoria indisponível para este usuário."
 
         _clear_controle_caches()
         return True, ""
@@ -1426,7 +1442,7 @@ def definir_categoria_transacao_cartao(tx_id: str, category_name: str) -> tuple[
         return False, str(exc)
 
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_historico_anual() -> dict:
     """
     Retorna receitas e despesas agrupadas por ano (todos os anos disponíveis).
@@ -1453,7 +1469,7 @@ def get_historico_anual() -> dict:
         return {"anos": [], "por_ano": {}, "data_source": "real_error", "error": str(exc)}
 
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_gastos_categoria_anual(ano: int) -> list:
     """
     Retorna lista de {nome, gasto} com despesas por categoria no ano informado.
@@ -1502,7 +1518,7 @@ def get_gastos_categoria_anual(ano: int) -> list:
         return []
 
 
-@st.cache_data(ttl=60)
+@user_cache_data(ttl=60)
 def get_transacoes_filtradas(
     tipo: str = "Todos",
     categoria: str = "Todas",
@@ -1535,7 +1551,7 @@ def get_transacoes_filtradas(
 # GASTOS COM PAGAMENTO DE CARTÃO (MENSAL) — mock + real
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_gastos_cartao_mensal(ano: int) -> list:
     """
     Retorna gastos mensais na categoria 'Pagamento de Cartão' para o ano dado.
@@ -1590,7 +1606,7 @@ def _gastos_cartao_real(ano: int) -> list:
     ]
 
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_gastos_cartao_fatura_mensal(ano: int) -> list:
     """
     Retorna gastos mensais de faturas de cartão importadas via CSV para o ano dado.
@@ -1634,7 +1650,7 @@ def get_gastos_cartao_fatura_mensal(ano: int) -> list:
 # HISTÓRICO CC + DÍVIDAS — API pública
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_historico_cc_mensal() -> list:
     """
     Retorna uso mensal das contas de cartão de crédito (account_type='credit_card').
@@ -1673,7 +1689,7 @@ def get_historico_cc_mensal() -> list:
         return []
 
 
-@st.cache_data(ttl=60)
+@user_cache_data(ttl=60)
 def get_transacoes_cartao_credito() -> list:
     """Retorna lancamentos de contas de cartao com metadados de fatura e parcela."""
     if settings.MOCK_MODE:
@@ -1730,7 +1746,7 @@ def get_transacoes_cartao_credito() -> list:
         return []
 
 
-@st.cache_data(ttl=60)
+@user_cache_data(ttl=60)
 def get_dividas_cc() -> list:
     """
     Retorna parcelamentos agrupados por installment_group (account_type='credit_card').

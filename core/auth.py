@@ -1,11 +1,9 @@
 """
 core/auth.py
-Autenticação simples por senha para o app Streamlit.
-
-Comportamento:
-  - APP_PASSWORD ausente ou vazia → acesso liberado (dev local sem senha)
-  - APP_PASSWORD definida         → exige senha antes de renderizar qualquer página
-  - Aceita texto simples OU hash SHA-256 pré-computado (mais seguro no secrets.toml)
+Autenticação individual no Streamlit, com perfis persistidos no banco.
+O administrador original mantém seu UUID e pode usar APP_PASSWORD durante a
+transição. Novas contas usam e-mail e senha scrypt. Ausência de senha global
+nunca libera dados financeiros anonimamente.
 
 Uso em app.py:
     from core.auth import verificar_autenticacao
@@ -21,6 +19,7 @@ import hashlib
 import streamlit as st
 
 from core.config import settings
+from core.user_context import principal
 
 # ── Pública ───────────────────────────────────────────────────────────────────
 
@@ -29,16 +28,18 @@ def verificar_autenticacao() -> None:
     Verifica se o usuário está autenticado.
     Para a execução com st.stop() se a senha estiver configurada e não foi informada.
 
-    Fluxo:
-      1. APP_PASSWORD vazio  → retorna (modo dev local, acesso liberado)
-      2. Já autenticado      → retorna
-      3. Caso contrário      → exibe tela de login e chama st.stop()
+    Valida conta ativa, versão da credencial e prazo antes de liberar as rotas.
     """
-    if not settings.APP_PASSWORD:
-        return  # Sem senha configurada — acesso liberado
-
-    if st.session_state.get("_auth_ok", False):
-        return  # Sessão já autenticada
+    from core.user_accounts import session_valid
+    user = principal()
+    if user:
+        try:
+            if session_valid(user):
+                return
+        except Exception:
+            st.error("Não foi possível validar sua sessão. Tente novamente.")
+            st.stop()
+        st.session_state.clear()
 
     _renderizar_login()
     st.stop()
@@ -46,13 +47,13 @@ def verificar_autenticacao() -> None:
 
 def encerrar_sessao() -> None:
     """Encerra a sessão autenticada e recarrega o app."""
-    st.session_state.pop("_auth_ok", None)
+    st.session_state.clear()
     st.rerun()
 
 
 def esta_autenticado() -> bool:
-    """Retorna True se autenticado ou se não há senha configurada."""
-    return not settings.APP_PASSWORD or st.session_state.get("_auth_ok", False)
+    """Retorna True somente para uma identidade individual válida na sessão."""
+    return bool(principal())
 
 
 # ── Interno ───────────────────────────────────────────────────────────────────
@@ -64,7 +65,11 @@ def _hash_sha256(texto: str) -> str:
 def _senha_correta(entrada: str) -> bool:
     """Aceita texto simples ou hash SHA-256 armazenado no secrets."""
     conf = settings.APP_PASSWORD
-    return entrada == conf or _hash_sha256(entrada) == conf
+    import hmac
+    import re
+    if re.fullmatch(r"[a-fA-F0-9]{64}", conf):
+        return hmac.compare_digest(_hash_sha256(entrada), conf.lower())
+    return bool(conf) and hmac.compare_digest(entrada, conf)
 
 
 def _renderizar_login() -> None:
@@ -82,6 +87,7 @@ def _renderizar_login() -> None:
         )
         st.markdown("<br>", unsafe_allow_html=True)
 
+        email = st.text_input("E-mail ou administrador", key="_auth_email_input")
         senha = st.text_input(
             "Senha de acesso",
             type="password",
@@ -92,8 +98,16 @@ def _renderizar_login() -> None:
         if st.button("Entrar", width="stretch", type="primary"):
             if not senha:
                 st.warning("Informe a senha.")
-            elif _senha_correta(senha):
-                st.session_state["_auth_ok"] = True
-                st.rerun()
             else:
-                st.error("Senha incorreta.")
+                from core.user_accounts import authenticate
+                try:
+                    user = authenticate(email, senha)
+                except Exception:
+                    st.error("Não foi possível acessar as contas. Tente novamente mais tarde.")
+                    return
+                if user:
+                    st.session_state.clear()
+                    st.session_state["_app4_user"] = user
+                    st.rerun()
+                else:
+                    st.error("Credenciais inválidas ou acesso temporariamente bloqueado.")

@@ -53,11 +53,10 @@ _SETOR_SCHEMA:   { nome, valor_mercado, pct_carteira }
 import logging
 from collections import defaultdict
 
-import streamlit as st
-
 from core.config import settings
 from core.currency_returns import retorno_moeda_origem
 from core.market_freshness import classificar_cotacao, intervalo_referencia
+from core.user_context import user_cache_data
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +138,7 @@ _MOCK_POSICOES_RAW: list[tuple] = [
 # API pública
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_carteira() -> dict:
     """
     Retorna o dicionário completo de dados para a página Carteira.
@@ -1132,7 +1131,7 @@ _SQL_CASHFLOW = f"""
 """
 
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_cashflow_mensal() -> list:
     """
     Retorna os últimos 12 meses de cashflow em ordem cronológica.
@@ -1332,7 +1331,7 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
 """
 
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_evolucao_patrimonial() -> dict:
     """
     Retorna série histórica mensal para o gráfico de Evolução Patrimonial.

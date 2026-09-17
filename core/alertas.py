@@ -23,9 +23,8 @@ Schema de cada alerta:
 import logging
 from datetime import date as _date
 
-import streamlit as st
-
 from core.config import settings
+from core.user_context import user_cache_data
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +109,7 @@ _SQL_CASHFLOW_MES = """
 # API pública
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=120)
+@user_cache_data(ttl=120)
 def get_alertas() -> dict:
     """
     Retorna {data_source, alertas[], contagem{sucesso, alerta, erro, info}}.

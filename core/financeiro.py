@@ -24,14 +24,13 @@ Padrão de uso nas páginas:
 import logging
 import math
 
-import streamlit as st
-
 from core.config import settings
+from core.user_context import user_cache_data
 
 logger = logging.getLogger(__name__)
 
 
-@st.cache_data(ttl=300)
+@user_cache_data(ttl=300)
 def get_visao_geral() -> dict:
     """
     Retorna o dicionário completo de dados para o Dashboard Geral.
@@ -59,6 +58,9 @@ def get_visao_geral() -> dict:
         dados["data_source"] = "real"
         return dados
     except Exception as exc:
+        from core.user_context import principal
+        if principal():
+            raise RuntimeError("Não foi possível carregar seus dados financeiros.") from None
         logger.warning(
             "[financeiro] Banco real falhou (%s: %s) — usando mock.",
             type(exc).__name__,
@@ -192,10 +194,8 @@ def _visao_geral_real() -> dict:
         ).fetchone()
 
         if nw_row is None:
-            raise RuntimeError(
-                "v_net_worth retornou vazio — sem dados para este usuário. "
-                "Verifique OWNER_USER_ID e as migrações."
-            )
+            from types import SimpleNamespace
+            nw_row = SimpleNamespace(bank_balance=0, investment_total=0, net_worth=0)
 
         bank_balance     = float(nw_row.bank_balance     or 0)
         investment_total = float(nw_row.investment_total or 0)

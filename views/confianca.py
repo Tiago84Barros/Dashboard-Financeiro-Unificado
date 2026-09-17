@@ -22,6 +22,7 @@ from core.confianca_secao import (
     confianca_global,
     relatorio,
 )
+from core.user_context import user_cache_data
 
 _COR = {"Alta": "#16a34a", "Media": "#d97706", "Baixa": "#dc2626",
         "Nao medido": "#64748b"}
@@ -79,7 +80,7 @@ _SIMBOLO = {True: ("✓", "#16a34a"), False: ("✗", "#dc2626"),
             None: ("—", "#64748b")}
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@user_cache_data(ttl=900, show_spinner=False)
 def _rigor() -> dict:
     """As três notas na mesma lista de perguntas (A-162).
 

@@ -23,7 +23,13 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 import core.market_read as _mr
-from core.chat_memory import clear_chat_history, conversation_key, load_chat_history, save_chat_history
+from core.chat_memory import (
+    clear_chat_history,
+    conversation_key,
+    load_chat_history,
+    save_chat_history,
+    visible_chat_history,
+)
 from core.fii_carteira_protegida import montar_carteira_com_concessao
 from core.fii_integrated_model import (
     INTEGRATED_MODEL_VERSION,
@@ -1193,7 +1199,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 suggested_input = question
 
     history = load_chat_history(memory_key, session_key="fii_chat_history")
-    for message in history:
+    for message in visible_chat_history(history, "fii_chat_history"):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 

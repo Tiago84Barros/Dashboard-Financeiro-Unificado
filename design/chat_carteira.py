@@ -12,7 +12,13 @@ from typing import Callable, Sequence
 
 import streamlit as st
 
-from core.chat_memory import clear_chat_history, conversation_key, load_chat_history, save_chat_history
+from core.chat_memory import (
+    clear_chat_history,
+    conversation_key,
+    load_chat_history,
+    save_chat_history,
+    visible_chat_history,
+)
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_carteira import chat_com_carteira
 
@@ -132,7 +138,7 @@ def render_chat_carteira(
                     sugerida = pergunta
 
     historico = load_chat_history(memory_key, session_key=hist_key)
-    for mensagem in historico:
+    for mensagem in visible_chat_history(historico, hist_key):
         with st.chat_message(mensagem["role"]):
             st.markdown(mensagem["content"])
 

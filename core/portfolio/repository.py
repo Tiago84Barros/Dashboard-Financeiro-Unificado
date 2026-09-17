@@ -15,6 +15,7 @@ from sqlalchemy import text
 from core.portfolio.models import AssetSnapshot
 from core.portfolio.registry import SPECS, get_spec
 from core.portfolio.snapshots import canonical_json
+from core.user_context import web_owner
 
 RETENTION_ARCHIVED = 5
 
@@ -32,6 +33,11 @@ def _resolve_engine(engine):
 
 
 def _resolve_owner(owner_id):
+    session_owner = web_owner()
+    if session_owner:
+        if owner_id and str(owner_id) != session_owner:
+            raise PermissionError("O proprietário não corresponde à sessão.")
+        return session_owner
     if owner_id:
         return str(owner_id)
     from core.config import settings
@@ -75,11 +81,16 @@ def save_snapshots(snapshots: list[AssetSnapshot], *, engine=None, owner_id=None
             as_of_date     = EXCLUDED.as_of_date,
             payload        = EXCLUDED.payload,
             payload_digest = EXCLUDED.payload_digest
+        WHERE {_TABELA}.user_id = EXCLUDED.user_id
     """)
 
     with eng.begin() as conn:
         for snap in snapshots:
-            get_spec(snap.asset_class)          # valida a classe antes de gravar
+            spec = get_spec(snap.asset_class)
+            if web_owner() and not conn.execute(text(
+                f"SELECT 1 FROM {spec.models_table} WHERE id = :mid AND user_id = :uid"
+            ), {"mid": str(snap.model_id), "uid": owner}).first():
+                raise PermissionError("Modelo indisponível para esta conta.")
             conn.execute(sql, {
                 "id": str(uuid.uuid4()),
                 "user_id": owner,
@@ -98,15 +109,17 @@ def load_snapshots(asset_class: str, model_id: str, *, engine=None) -> dict[str,
     """Devolve {simbolo: payload} dos snapshots de um modelo."""
     spec = get_spec(asset_class)
     eng = _resolve_engine(engine)
+    owner = web_owner()
+    scope = "AND user_id = :uid" if owner else ""
 
     with eng.connect() as conn:
         linhas = conn.execute(
             text(f"""
                 SELECT symbol, payload FROM {_TABELA}
-                WHERE asset_class = :ac AND model_id = :mid
+                WHERE asset_class = :ac AND model_id = :mid {scope}
                 ORDER BY symbol
             """),
-            {"ac": spec.key, "mid": str(model_id)},
+            {"ac": spec.key, "mid": str(model_id), "uid": owner},
         ).mappings().all()
 
     return {linha["symbol"]: _decode(linha["payload"]) for linha in linhas}
@@ -120,6 +133,8 @@ def prune_orphans(*, engine=None) -> int:
     """
     eng = _resolve_engine(engine)
     removidos = 0
+    owner = web_owner()
+    scope = "AND user_id = :uid" if owner else ""
 
     with eng.begin() as conn:
         for key in sorted(SPECS):
@@ -128,9 +143,10 @@ def prune_orphans(*, engine=None) -> int:
                 text(f"""
                     DELETE FROM {_TABELA}
                     WHERE asset_class = :ac
+                      {scope}
                       AND model_id NOT IN (SELECT id FROM {spec.models_table})
                 """),
-                {"ac": spec.key},
+                {"ac": spec.key, "uid": owner},
             )
             removidos += int(resultado.rowcount or 0)
     return removidos
@@ -143,15 +159,17 @@ def apply_retention(asset_class: str, *, engine=None, keep: int = RETENTION_ARCH
     """
     spec = get_spec(asset_class)
     eng = _resolve_engine(engine)
+    owner = web_owner()
+    scope = "AND user_id = :uid" if owner else ""
 
     with eng.begin() as conn:
         arquivadas = [
             linha["id"] for linha in conn.execute(
                 text(f"""
                     SELECT id FROM {spec.models_table}
-                    WHERE status = 'archived'
+                    WHERE status = 'archived' {scope}
                     ORDER BY created_at DESC, id DESC
-                """)
+                """), {"uid": owner}
             ).mappings().all()
         ]
         alvo = arquivadas[keep:]
