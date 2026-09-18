@@ -42,6 +42,7 @@ from design.componentes import (
     badge_status,
     card_metrica,
     container_pagina,
+    cor_token,
     frescor_da_vitrine,
     selo_de_frescor,
 )  # KPIs em cards CSS (visual coeso)
@@ -92,40 +93,40 @@ _COR_NEU = "#9CA3AF"
 _CSS = """
 <style>
 .b3-ind-card {
-    background:#12151E;border:1px solid #1E2533;border-radius:10px;
+    background:var(--app-surface);border:1px solid var(--app-border);border-radius:10px;
     padding:12px 14px;margin-bottom:6px;
 }
 .b3-ind-label { font-size:0.60rem;font-weight:700;text-transform:uppercase;
-                letter-spacing:.09em;color:#4A5568;margin-bottom:4px; }
+                letter-spacing:.09em;color:var(--app-subtle);margin-bottom:4px; }
 .b3-ind-value { font-size:1.35rem;font-weight:800;line-height:1.1; }
-.b3-ind-sub   { font-size:0.66rem;color:#4A5568;margin-top:3px; }
+.b3-ind-sub   { font-size:0.66rem;color:var(--app-subtle);margin-top:3px; }
 .b3-score-badge { display:inline-block;padding:2px 8px;border-radius:12px;
                   font-size:0.72rem;font-weight:700; }
-.b3-score-high  { background:rgba(0,200,150,.15);color:#00C896; }
-.b3-score-mid   { background:rgba(246,201,14,.15);color:#F6C90E; }
-.b3-score-low   { background:rgba(252,92,125,.15);color:#FC5C7D; }
+.b3-score-high  { background:rgba(0,200,150,.15);color:var(--app-primary); }
+.b3-score-mid   { background:rgba(246,201,14,.15);color:var(--app-warning); }
+.b3-score-low   { background:rgba(252,92,125,.15);color:var(--app-danger); }
 /* Score de Entrada */
 .b3-entrada-aprovada   { background:rgba(0,200,150,.12);border:1px solid rgba(0,200,150,.30);
-                          color:#00C896;border-radius:6px;padding:3px 10px;
+                          color:var(--app-primary);border-radius:6px;padding:3px 10px;
                           font-size:0.72rem;font-weight:800; }
 .b3-entrada-observacao { background:rgba(246,201,14,.12);border:1px solid rgba(246,201,14,.30);
-                          color:#F6C90E;border-radius:6px;padding:3px 10px;
+                          color:var(--app-warning);border-radius:6px;padding:3px 10px;
                           font-size:0.72rem;font-weight:800; }
 .b3-entrada-excluida   { background:rgba(252,92,125,.12);border:1px solid rgba(252,92,125,.30);
-                          color:#FC5C7D;border-radius:6px;padding:3px 10px;
+                          color:var(--app-danger);border-radius:6px;padding:3px 10px;
                           font-size:0.72rem;font-weight:800; }
 .b3-engine-row { display:flex;align-items:center;gap:6px;margin-bottom:4px;
                  font-size:0.74rem; }
-.b3-engine-bar-bg { flex:1;background:#1E2533;border-radius:4px;height:6px;overflow:hidden; }
+.b3-engine-bar-bg { flex:1;background:var(--app-border);border-radius:4px;height:6px;overflow:hidden; }
 .b3-engine-bar-fill { height:100%;border-radius:4px;transition:width .3s; }
-.b3-fator-pos { color:#00C896;font-size:0.68rem;font-weight:700; }
-.b3-fator-neg { color:#FC5C7D;font-size:0.68rem;font-weight:700; }
-.b3-fator-neu { color:#718096;font-size:0.68rem; }
+.b3-fator-pos { color:var(--app-primary);font-size:0.68rem;font-weight:700; }
+.b3-fator-neg { color:var(--app-danger);font-size:0.68rem;font-weight:700; }
+.b3-fator-neu { color:var(--app-subtle);font-size:0.68rem; }
 /* Declaração de disponibilidade contábil (point-in-time) */
-.b3-pit-card  { background:#12151E;border:1px solid #1E2533;border-radius:10px;
+.b3-pit-card  { background:var(--app-surface);border:1px solid var(--app-border);border-radius:10px;
                 padding:12px 14px;margin-bottom:6px; }
 .b3-pit-title { font-size:0.78rem;font-weight:800;line-height:1.25;margin-bottom:5px; }
-.b3-pit-text  { font-size:0.70rem;color:#9CA3AF;line-height:1.45; }
+.b3-pit-text  { font-size:0.70rem;color:var(--app-muted);line-height:1.45; }
 </style>
 """
 
@@ -176,14 +177,14 @@ def _logo_url(ticker: str) -> str:
 def _kpi_macro(titulo: str, valor: str, sub: str, cor: str) -> str:
     """Card compacto de KPI (mesmo visual de views/investimentos._kpi_macro)."""
     return (
-        f'<div style="background:#12151E;border:1px solid #1E2533;'
+        f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
         f'border-radius:8px;padding:13px 11px 9px;height:100%;">'
         f'<div style="font-size:0.54rem;font-weight:800;text-transform:uppercase;'
-        f'letter-spacing:0.11em;color:#4A5568;margin-bottom:5px;">{titulo}</div>'
-        f'<div style="font-size:1.15rem;font-weight:800;color:{cor};'
+        f'letter-spacing:0.11em;color:var(--app-subtle);margin-bottom:5px;">{titulo}</div>'
+        f'<div style="font-size:1.15rem;font-weight:800;color:{cor_token(cor)};'
         f'letter-spacing:-0.02em;line-height:1.1;margin-bottom:3px;'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{valor}</div>'
-        f'<div style="font-size:0.62rem;color:#4A5568;line-height:1.3;">{sub}</div>'
+        f'<div style="font-size:0.62rem;color:var(--app-subtle);line-height:1.3;">{sub}</div>'
         f'</div>'
     )
 
@@ -2543,14 +2544,14 @@ def _pit_card_html(cov: PITCoverage, contexto: str = "Backtest") -> str:
     """Card CSS com o rótulo, a cobertura e o risco residual (padrão do app)."""
     info = _pit_rotulo_resultado(cov, contexto)
     return (
-        f'<div class="b3-pit-card" style="border-left:4px solid {info["cor"]};">'
+        f'<div class="b3-pit-card" style="border-left:4px solid {cor_token(info["cor"])};">'
         f'<div class="b3-ind-label">Disponibilidade contábil (point-in-time)</div>'
-        f'<div class="b3-ind-value" style="color:{info["cor"]};">'
+        f'<div class="b3-ind-value" style="color:{cor_token(info["cor"])};">'
         f'{info["cobertura_pct"]} medida</div>'
         f'<div class="b3-ind-sub">cobertura point-in-time = snapshots com '
         f'vintage real ÷ snapshots usados ({cov.snapshots_medidos}/'
         f'{cov.snapshots})</div>'
-        f'<div class="b3-pit-title" style="color:{info["cor"]};margin-top:8px;">'
+        f'<div class="b3-pit-title" style="color:{cor_token(info["cor"])};margin-top:8px;">'
         f'{html.escape(info["titulo"])}</div>'
         f'<div class="b3-pit-text">{html.escape(info["detalhe"])}</div>'
         f'<div class="b3-pit-text" style="margin-top:6px;">'
@@ -3182,7 +3183,7 @@ def _ind_card(label: str, valor: str, sub: str, cor: str) -> str:
     return (
         f'<div class="b3-ind-card">'
         f'<div class="b3-ind-label">{label}</div>'
-        f'<div class="b3-ind-value" style="color:{cor};">{valor}</div>'
+        f'<div class="b3-ind-value" style="color:{cor_token(cor)};">{valor}</div>'
         f'<div class="b3-ind-sub">{sub}</div>'
         f'</div>'
     )
@@ -3289,7 +3290,7 @@ def _plot_layout(height: int = 340) -> dict:
 
 def _sec_hdr(titulo: str) -> None:
     st.markdown(
-        f'<div style="font-size:0.75rem;font-weight:700;color:#E2E8F0;'
+        f'<div style="font-size:0.75rem;font-weight:700;color:var(--app-text);'
         f'margin:18px 0 8px;">{titulo}</div>',
         unsafe_allow_html=True,
     )
@@ -3656,9 +3657,9 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         render_company_logo(tk, _logo_url(tk), size=64)
     with col_info:
         st.markdown(
-            f'<h2 style="font-size:1.60rem;font-weight:800;color:#E2E8F0;margin:0 0 4px;">'
+            f'<h2 style="font-size:1.60rem;font-weight:800;color:var(--app-text);margin:0 0 4px;">'
             f'{tk} — {nome_emp}</h2>'
-            f'<div style="font-size:0.78rem;color:#718096;">{setor} · {subsetor}</div>',
+            f'<div style="font-size:0.78rem;color:var(--app-subtle);">{setor} · {subsetor}</div>',
             unsafe_allow_html=True,
         )
     with col_preco:
@@ -3671,8 +3672,8 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             preco_legenda = "Cotação (yfinance)"
         st.markdown(
             f'<div style="text-align:right;padding-top:8px;">'
-            f'<div style="font-size:1.60rem;font-weight:800;color:{_COR_POS};">{preco_str}</div>'
-            f'<div style="font-size:0.68rem;color:#4A5568;">{preco_legenda}</div>'
+            f'<div style="font-size:1.60rem;font-weight:800;color:{cor_token(_COR_POS)};">{preco_str}</div>'
+            f'<div style="font-size:0.68rem;color:var(--app-subtle);">{preco_legenda}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -4310,7 +4311,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     st.markdown(
         '<div style="background:rgba(56,189,248,.06);border-left:3px solid #38BDF8;'
         'border-radius:6px;padding:12px 16px;margin-bottom:12px;font-size:0.84rem;'
-        'color:#CBD5E1;">'
+        'color:var(--app-muted);">'
         '<strong>🔬 Etapa 1 de 3 · Banco de testes por segmento.</strong> '
         'Escolha <strong>um segmento</strong> e valide de perto como cada filtro, '
         'indicador, cálculo e score se comporta dentro dele — identifique outliers, '
@@ -5838,7 +5839,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     )
 
     # ── SCORE DE ENTRADA — COMPOSIÇÃO AVANÇADA ──────────────────────────────
-    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:20px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
     _sec_hdr("🎯 Score de Entrada — Composição Avançada")
 
     if not df_scored.empty:
@@ -5859,11 +5860,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         ]:
             display = f"{avg_se:.1f}" if val is None else str(val)
             col.markdown(
-                f'<div style="background:#12151E;border:1px solid #1E2533;'
+                f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
                 f'border-radius:10px;padding:14px 16px;">'
                 f'<div style="font-size:0.58rem;font-weight:800;text-transform:uppercase;'
-                f'letter-spacing:.12em;color:#4A5568;margin-bottom:6px;">{label}</div>'
-                f'<div style="font-size:1.55rem;font-weight:800;color:{cor};'
+                f'letter-spacing:.12em;color:var(--app-subtle);margin-bottom:6px;">{label}</div>'
+                f'<div style="font-size:1.55rem;font-weight:800;color:{cor_token(cor)};'
                 f'line-height:1.1;">{display}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -5945,11 +5946,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     val_e = float(row.get(engine_col, 50))
                     engine_rows += (
                         f'<div class="b3-engine-row">'
-                        f'<span style="width:74px;color:#718096;font-size:0.66rem;">{lbl}</span>'
+                        f'<span style="width:74px;color:var(--app-subtle);font-size:0.66rem;">{lbl}</span>'
                         f'<div class="b3-engine-bar-bg">'
                         f'<div class="b3-engine-bar-fill" style="width:{val_e:.0f}%;'
                         f'background:{cor_fill};opacity:0.75;"></div></div>'
-                        f'<span style="width:26px;text-align:right;color:#CBD5E0;'
+                        f'<span style="width:26px;text-align:right;color:var(--app-muted);'
                         f'font-size:0.66rem;">{val_e:.0f}</span>'
                         f'</div>'
                     )
@@ -5959,15 +5960,15 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     css_f = f"b3-fator-{sinal}"
                     fatores_html += (
                         f'<span class="b3-score-badge" style="'
-                        f'background:rgba(30,37,51,1);border:1px solid #2D3748;'
+                        f'background:var(--app-surface-raised);border:1px solid var(--app-border);'
                         f'margin:2px 2px 0 0;font-size:0.60rem;">'
                         f'<span class="{css_f}">{valor}</span>'
-                        f' <span style="color:#4A5568;">{fator}</span>'
+                        f' <span style="color:var(--app-subtle);">{fator}</span>'
                         f'</span>'
                     )
 
                 pen_html = (
-                    f'<div style="font-size:0.64rem;color:#FC5C7D;margin-top:4px;">'
+                    f'<div style="font-size:0.64rem;color:var(--app-danger);margin-top:4px;">'
                     f'⚠ Penalidade: −{rp:.0f} pts</div>'
                     if rp > 0 else ""
                 )
@@ -5980,9 +5981,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                         f'<div style="display:flex;justify-content:space-between;'
                         f'align-items:flex-start;margin-bottom:8px;">'
                         f'<div>'
-                        f'<div style="font-size:0.90rem;font-weight:800;color:#E2E8F0;">{tk}</div>'
-                        f'<div style="font-size:0.62rem;color:#4A5568;margin-top:1px;">'
-                        f'Base: {sb:.0f}  →  Entrada: <b style="color:#E2E8F0;">{se:.0f}</b></div>'
+                        f'<div style="font-size:0.90rem;font-weight:800;color:var(--app-text);">{tk}</div>'
+                        f'<div style="font-size:0.62rem;color:var(--app-subtle);margin-top:1px;">'
+                        f'Base: {sb:.0f}  →  Entrada: <b style="color:var(--app-text);">{se:.0f}</b></div>'
                         f'</div>'
                         f'<span class="{css_stat}">{stat}</span>'
                         f'</div>'
@@ -5996,7 +5997,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.caption("Score de Entrada disponível após cálculo do Score v2.")
 
     # ── BACKTESTING ──────────────────────────────────────────────────────────
-    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:20px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
     _sec_hdr("📈 Simulação de Patrimônio — Aportes Mensais")
 
     bk1, bk2, bk3, bk4 = st.columns(4)
@@ -6434,7 +6435,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     "universo/período (mín. 5 empresas com score e retorno).")
 
     # ── COMPARAÇÃO DE MÚLTIPLOS ───────────────────────────────────────────────
-    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:20px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
     _sec_hdr("📊 Comparação de Múltiplos Históricos")
 
     cm1, cm2 = st.columns([3, 2])
@@ -6501,7 +6502,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.caption("Selecione empresas e indicador acima e clique **📈 Comparar Múltiplos**.")
 
     # ── COMPARAÇÃO DE DRE ────────────────────────────────────────────────────
-    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:20px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
     _sec_hdr("📋 Comparação de Demonstrações Financeiras")
 
     _dre_labels = {
@@ -6569,7 +6570,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.caption("Selecione empresas e item da DRE acima e clique **📋 Comparar DRE**.")
 
     # ── QUADRO COMPARATIVO ───────────────────────────────────────────────────
-    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:20px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
     _sec_hdr("📊 Quadro Comparativo — Indicadores por Empresa")
     st.caption("Verde = top 25% · Vermelho = bottom 25% (considerando direção do indicador).")
 
@@ -6585,6 +6586,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 rows_qc.append(row_d)
             df_tbl = pd.DataFrame(rows_qc).set_index("Empresa")
 
+            # Cores literais de propósito: a grade nativa é canvas e não resolve
+            # `var(--…)`. No tema claro quem converte é `design/tema_canvas.py`,
+            # que precisa do valor resolvido — um `var()` chegaria opaco lá.
             def _style_col(col: pd.Series) -> list[str]:
                 is_inv = col.name in _INV_LABELS
                 q25    = col.quantile(0.25)
@@ -6612,7 +6616,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.caption("Sem dados para o universo selecionado.")
 
     # ── SCATTER PLOT — 2 INDICADORES ─────────────────────────────────────────
-    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:20px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
     _sec_hdr("🔭 Scatter Plot — Correlação entre Indicadores")
     st.caption("Linhas pontilhadas = mediana. Cores por score v2.")
 
@@ -6664,7 +6668,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         st.caption("Indicadores insuficientes para scatter.")
 
     # ── FCO / LUCRO — QUALIDADE DO RESULTADO ─────────────────────────────────
-    st.markdown("<hr style='margin:20px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:20px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
     _sec_hdr("💵 FCO / Lucro Líquido — Qualidade do Resultado")
     st.caption(
         "Ratio > 1: caixa operacional supera o lucro contábil (sinal de qualidade). "

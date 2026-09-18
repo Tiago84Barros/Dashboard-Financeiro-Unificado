@@ -204,6 +204,24 @@ def secao_titulo(titulo: str, icone: str = "", subtitulo: str = "") -> None:
 # Indicadores / KPIs
 # ══════════════════════════════════════════════════════════════════
 
+# O Plotly não resolve `var(--…)`, então as telas guardam as cores semânticas
+# como literais. Ao virarem HTML elas passam por aqui e acompanham o tema.
+_TOKEN_POR_COR = {
+    "#00C896": "var(--app-primary)",
+    "#4A9EFF": "var(--app-info)",
+    "#FC5C7D": "var(--app-danger)",
+    "#F6C90E": "var(--app-warning)",
+    "#9CA3AF": "var(--app-muted)",
+    "#4A5568": "var(--app-subtle)",
+    "#E2E8F0": "var(--app-text)",
+}
+
+
+def cor_token(cor: str) -> str:
+    """Traduz a cor semântica literal para o token equivalente do tema."""
+    return _TOKEN_POR_COR.get(str(cor).upper(), cor)
+
+
 def card_metrica(
     titulo: object,
     valor: object,
@@ -234,17 +252,17 @@ def card_metrica(
     Converter no componente, e não pedir que 19 chamadores lembrem de formatar,
     é o que impede a falha de voltar pela vigésima chamada.
     """
-    cor_delta = "#00C896" if positivo is True else "#FC5C7D" if positivo is False else "#9CA3AF"
-    accent = accent or ("#00C896" if positivo is True
-                        else "#FC5C7D" if positivo is False else "#4A9EFF")
+    cor_delta = "var(--app-primary)" if positivo is True else "var(--app-danger)" if positivo is False else "var(--app-muted)"
+    accent = accent or ("var(--app-primary)" if positivo is True
+                        else "var(--app-danger)" if positivo is False else "var(--app-info)")
     delta_html = (
-        f'<div class="app-kpi-delta" style="color:{cor_delta}">{_linha(str(delta))}</div>'
+        f'<div class="app-kpi-delta" style="color:{cor_token(cor_delta)}">{_linha(str(delta))}</div>'
         if delta is not None and str(delta) != "" else ""
     )
     ajuda_attr = (f' title="{_linha(str(ajuda), aspas=True)}"'
                   if ajuda is not None and str(ajuda) != "" else "")
     st.markdown(
-        f'<div class="app-kpi-card"{ajuda_attr} style="--app-kpi-accent:{accent}">'
+        f'<div class="app-kpi-card"{ajuda_attr} style="--app-kpi-accent:{cor_token(accent)}">'
         f'<div class="app-kpi-label">{_linha(str(titulo))}</div>'
         f'<div class="app-kpi-value">{_linha(str(valor))}</div>'
         f'{delta_html}</div>',
@@ -368,11 +386,11 @@ def badge_status(texto: str, tipo: str = "info") -> None:
     tipo: 'sucesso' | 'alerta' | 'erro' | 'info' | 'neutro'
     """
     paleta = {
-        "sucesso": ("#00C896", "rgba(0,200,150,0.12)"),
-        "alerta":  ("#F6C90E", "rgba(246,201,14,0.12)"),
-        "erro":    ("#FC5C7D", "rgba(252,92,125,0.12)"),
-        "info":    ("#4A9EFF", "rgba(74,158,255,0.12)"),
-        "neutro":  ("#9CA3AF", "rgba(156,163,175,0.12)"),
+        "sucesso": ("var(--app-primary)", "rgba(0,200,150,0.12)"),
+        "alerta":  ("var(--app-warning)", "rgba(246,201,14,0.12)"),
+        "erro":    ("var(--app-danger)", "rgba(252,92,125,0.12)"),
+        "info":    ("var(--app-info)", "rgba(74,158,255,0.12)"),
+        "neutro":  ("var(--app-muted)", "rgba(156,163,175,0.12)"),
     }
     cor_texto, cor_fundo = paleta.get(tipo, paleta["info"])
     st.markdown(
@@ -385,7 +403,7 @@ def badge_status(texto: str, tipo: str = "info") -> None:
 def indicador_linha(
     label: str,
     valor: str,
-    cor_valor: str = "#F7FAFC",
+    cor_valor: str = "var(--app-text)",
     badge: str | None = None,
     tipo_badge: str = "info",
 ) -> None:
@@ -396,16 +414,16 @@ def indicador_linha(
     badge_html = ""
     if badge:
         paleta = {
-            "sucesso": "#00C896", "alerta": "#F6C90E",
-            "erro": "#FC5C7D", "info": "#4A9EFF", "neutro": "#9CA3AF",
+            "sucesso": "var(--app-primary)", "alerta": "var(--app-warning)",
+            "erro": "var(--app-danger)", "info": "var(--app-info)", "neutro": "var(--app-muted)",
         }
-        c = paleta.get(tipo_badge, "#4A9EFF")
+        c = paleta.get(tipo_badge, "var(--app-info)")
         badge_html = f'<span style="color:{c};font-size:0.75rem;font-weight:600;margin-left:8px">{badge}</span>'
 
     st.markdown(
         f"""<div style="display:flex;justify-content:space-between;
-            align-items:center;padding:6px 0;border-bottom:1px solid #1E2533;">
-            <span style="color:#9CA3AF;font-size:0.88rem">{label}</span>
+            align-items:center;padding:6px 0;border-bottom:1px solid var(--app-border);">
+            <span style="color:var(--app-muted);font-size:0.88rem">{label}</span>
             <span style="color:{cor_valor};font-weight:600;font-size:0.92rem">
                 {valor}{badge_html}
             </span>
@@ -487,13 +505,13 @@ def barra_progresso(
     col_label, col_pct = st.columns([3, 1])
     with col_label:
         st.markdown(
-            f'<span style="font-size:0.88rem;color:#CBD5E0">{label}</span>',
+            f'<span style="font-size:0.88rem;color:var(--app-muted)">{label}</span>',
             unsafe_allow_html=True,
         )
     with col_pct:
         st.markdown(
             f'<span style="font-size:0.88rem;font-weight:600;'
-            f'color:#00C896;float:right">{pct_display}</span>',
+            f'color:var(--app-primary);float:right">{pct_display}</span>',
             unsafe_allow_html=True,
         )
 
@@ -519,10 +537,10 @@ def card_alerta_resumo(
     tipo: 'sucesso' | 'alerta' | 'erro' | 'info'
     """
     paleta_borda = {
-        "sucesso": "#00C896",
-        "alerta":  "#F6C90E",
-        "erro":    "#FC5C7D",
-        "info":    "#4A9EFF",
+        "sucesso": "var(--app-primary)",
+        "alerta":  "var(--app-warning)",
+        "erro":    "var(--app-danger)",
+        "info":    "var(--app-info)",
     }
     paleta_fundo = {
         "sucesso": "rgba(0,200,150,0.06)",
@@ -530,10 +548,10 @@ def card_alerta_resumo(
         "erro":    "rgba(252,92,125,0.06)",
         "info":    "rgba(74,158,255,0.06)",
     }
-    borda = paleta_borda.get(tipo, "#4A9EFF")
+    borda = paleta_borda.get(tipo, "var(--app-info)")
     fundo = paleta_fundo.get(tipo, "rgba(74,158,255,0.06)")
     modulo_html = (
-        f'<div style="font-size:0.72rem;color:#4A5568;margin-top:4px">📁 {modulo}</div>'
+        f'<div style="font-size:0.72rem;color:var(--app-subtle);margin-top:4px">📁 {modulo}</div>'
         if modulo else ""
     )
     st.markdown(
@@ -544,10 +562,10 @@ def card_alerta_resumo(
             padding:10px 14px;
             margin-bottom:8px;
         ">
-            <div style="font-size:0.92rem;font-weight:600;color:#E2E8F0">
+            <div style="font-size:0.92rem;font-weight:600;color:var(--app-text)">
                 {icone} {titulo}
             </div>
-            <div style="font-size:0.80rem;color:#9CA3AF;margin-top:3px">
+            <div style="font-size:0.80rem;color:var(--app-muted);margin-top:3px">
                 {descricao}
             </div>
             {modulo_html}
@@ -573,13 +591,13 @@ def card_proximo_passo(
     urgencia: 'alta' | 'media' | 'baixa'
     """
     cores_urgencia = {
-        "alta":  ("#FC5C7D", "Alta"),
-        "media": ("#F6C90E", "Média"),
-        "baixa": ("#4A9EFF", "Baixa"),
+        "alta":  ("var(--app-danger)", "Alta"),
+        "media": ("var(--app-warning)", "Média"),
+        "baixa": ("var(--app-info)", "Baixa"),
     }
     cor, label_urgencia = cores_urgencia.get(urgencia, cores_urgencia["media"])
     modulo_html = (
-        f'<span style="color:#4A5568;font-size:0.72rem">→ {modulo}</span>'
+        f'<span style="color:var(--app-subtle);font-size:0.72rem">→ {modulo}</span>'
         if modulo else ""
     )
     st.markdown(
@@ -588,8 +606,8 @@ def card_proximo_passo(
             gap:14px;
             align-items:flex-start;
             padding:10px 14px;
-            background:#1A1F2E;
-            border:1px solid #2D3748;
+            background:var(--app-surface);
+            border:1px solid var(--app-border);
             border-radius:10px;
             margin-bottom:8px;
         ">
@@ -603,7 +621,7 @@ def card_proximo_passo(
                 flex-shrink:0;margin-top:2px;
             ">{numero}</div>
             <div>
-                <div style="font-size:0.92rem;font-weight:600;color:#E2E8F0">
+                <div style="font-size:0.92rem;font-weight:600;color:var(--app-text)">
                     {titulo}
                     <span style="
                         font-size:0.68rem;font-weight:600;
@@ -611,7 +629,7 @@ def card_proximo_passo(
                         vertical-align:middle;
                     ">{label_urgencia}</span>
                 </div>
-                <div style="font-size:0.80rem;color:#9CA3AF;margin-top:3px">
+                <div style="font-size:0.80rem;color:var(--app-muted);margin-top:3px">
                     {descricao}
                 </div>
                 {modulo_html}
@@ -635,24 +653,24 @@ def score_saude(score: int, label: str = "Saúde Financeira") -> None:
     80–100→ Ótimo    (verde)
     """
     if score >= 80:
-        cor, classificacao = "#00C896", "Ótimo"
+        cor, classificacao = "var(--app-primary)", "Ótimo"
     elif score >= 60:
-        cor, classificacao = "#4A9EFF", "Bom"
+        cor, classificacao = "var(--app-info)", "Bom"
     elif score >= 40:
-        cor, classificacao = "#F6C90E", "Atenção"
+        cor, classificacao = "var(--app-warning)", "Atenção"
     else:
-        cor, classificacao = "#FC5C7D", "Crítico"
+        cor, classificacao = "var(--app-danger)", "Crítico"
 
     st.markdown(
         f"""<div style="
             text-align:center;
-            background:#1A1F2E;
-            border:1px solid #2D3748;
+            background:var(--app-surface);
+            border:1px solid var(--app-border);
             border-radius:12px;
             padding:20px 16px;
         ">
             <div style="font-size:0.72rem;font-weight:600;text-transform:uppercase;
-                        letter-spacing:0.08em;color:#718096;margin-bottom:8px">
+                        letter-spacing:0.08em;color:var(--app-subtle);margin-bottom:8px">
                 {label}
             </div>
             <div style="font-size:3rem;font-weight:800;color:{cor};line-height:1">
@@ -662,7 +680,7 @@ def score_saude(score: int, label: str = "Saúde Financeira") -> None:
                 {classificacao}
             </div>
             <div style="
-                background:#2D3748;border-radius:4px;height:6px;
+                background:var(--app-border);border-radius:4px;height:6px;
                 margin-top:12px;overflow:hidden;
             ">
                 <div style="
