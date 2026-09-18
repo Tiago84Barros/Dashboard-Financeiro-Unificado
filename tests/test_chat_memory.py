@@ -1,4 +1,9 @@
-from core.chat_memory import clear_chat_history, conversation_key, load_chat_history, save_chat_history
+from core.chat_memory import (
+    clear_chat_history,
+    conversation_key,
+    load_chat_history,
+    save_chat_history,
+)
 
 
 def test_salva_e_restaura_mensagens_recentes_em_nova_sessao(tmp_path):

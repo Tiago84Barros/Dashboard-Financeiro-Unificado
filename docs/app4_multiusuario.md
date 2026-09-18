@@ -49,6 +49,8 @@ Dados sintéticos em PostgreSQL descartável, publicado somente em loopback. Nen
 
 Verificação pré-publicação: cópia isolada do índice Git, sem arquivos de credenciais locais, passou nos 166 testes do comando abaixo (PostgreSQL descartável), checks de qualidade, varredura de segredos, lint focalizado e inicialização do Streamlit. A validação visual completa continua pendente conforme descrito acima.
 
+Integração na main: merge sem conflitos sobre d32f1e6. A primeira execução encontrou dois testes antigos de FIIs incompatíveis com a sessão obrigatória; o cenário foi atualizado com identidade sintética e repositório de chat simulado. A asserção de troca de contexto agora exige histórico vazio, em vez da ausência da chave (o carregador inicializa a lista). Nenhum controle de autenticação foi relaxado. A execução final de `python -m pytest tests/test_multiuser.py tests/test_chat_memory.py tests/test_portfolio_repository.py tests/test_fii_rich_presentation.py tests/test_fiis_ui.py -q` passou com 72 testes em banco descartável. Checks de qualidade, lint, varredura de segredos e startup também passaram. Confirmação visual da hospedagem após deploy permanece pendente.
+
 Comando de regressão executado (definir `APP4_USERS_TEST_DATABASE_URL` para um PostgreSQL local descartável):
 
 ```powershell

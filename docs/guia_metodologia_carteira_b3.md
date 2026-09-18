@@ -428,3 +428,87 @@ Não são "carteira ótima". Isso não existe de forma verificável fora da
 amostra, e persegui-lo por iteração é sobreajuste — o erro que a §16 da
 auditoria corrigiu. São combinações **medidas e reprodutíveis**, com o custo
 de cada desvio declarado.
+
+## 16. Proteção ao investidor pelo histórico — e a guarda que ainda não foi exercitada (15/09/2026)
+
+A seleção passou a olhar a **qualidade histórica** da distribuição, não o
+exercício isolado: payout mediano, sustentabilidade em N anos observados e a
+fração dos pares de anos em que o patrimônio cai com lucro positivo. Um ano
+ruim não condena; um padrão que se repete na maioria dos anos, sim.
+
+### A regra que não pode ser quebrada
+
+Nenhuma dessas proteções pode deixar **zerada** a criação de um portfólio. Por
+isso a quarta confirmação (payout mediano alto **e** patrimônio em queda) vem
+acompanhada de uma guarda de viabilidade: se o critério novo for o único motivo
+para reprovar o representante de um segmento, o representante entra **marcado**,
+não excluído.
+
+### O que a medição encontrou — e o que ela não prova
+
+Medição de 15/09/2026, três pontos da linha do tempo rodados no mesmo instante
+contra o mesmo banco (pré-plano, base e ramo), sobre 426 empresas:
+
+| Grandeza | Antes | Depois |
+|---|---|---|
+| Empresas avaliadas pelo piso | 444 (248 aprovadas) | 444 (248 aprovadas) |
+| Segmentos com representante | 67 de 78 | 67 de 78 |
+| Carteira recomendado / conservador / amplo | — | 8 / 5 / 16 |
+
+Nenhuma carteira ficou vazia e nenhum segmento perdeu representante: os 11
+segmentos sem representante são a mesma lista antes e depois.
+
+**A ressalva honesta**: a quarta confirmação decisiva ocorre hoje em **0 das 426
+empresas**, e a guarda de viabilidade foi acionada **0 vezes** em todos os
+perfis. A promessa "nunca zera" está verificada, mas se sustenta **trivialmente**
+— a guarda nunca precisou salvar ninguém, logo não foi validada em produção.
+
+Isso importa porque este projeto já tropeçou no mesmo formato: um critério que
+só podia dar um resultado nunca é revisto, e no dia em que a fonte de dados
+melhora ele passa a morder a base inteira de uma vez. A cobertura de payout é
+justamente o que hoje mantém o número em zero. **Quando ela subir, a guarda
+entra em operação sem nunca ter sido exercitada.** Remedir nessa hora, antes de
+confiar no resultado.
+
+### 16.1 A bandeira que acendia para quase todo mundo (15/09/2026)
+
+O dossiê determinístico emite as suas observações numa lista só, `red_flags`, e
+os três consumidores dela — o texto que alimenta o parecer da LLM no gate de
+seleção, a tela de Empresas B3 e a de Análise de Portfólio — imprimiam todas sob
+o mesmo cabeçalho, "RED FLAGS DETERMINÍSTICAS (verificadas em código, não são
+opinião)". A lista, porém, carrega três coisas incomparáveis: risco confirmado,
+observação medida que o próprio texto já descarta como padrão, e lacuna de
+dados.
+
+Medido no armazém local sobre as **426 empresas** com fundamentos, antes da
+correção:
+
+| o que acendia a bandeira vermelha | empresas |
+|---|---|
+| risco confirmado de verdade (linha em CAIXA ALTA) | **8** |
+| só `MOMENTUM:` — lucro de **um** trimestre a/a abaixo de −25% | 94 |
+| só `DADOS:` — inconsistência da **nossa** ingestão de proventos | 50 |
+| combinações e demais casos | 38 |
+| **total sob "red flag"** | **190** |
+
+Três quartos das bandeiras vermelhas eram um período isolado ou um defeito do
+nosso próprio banco. Uma bandeira que acende para 190 e descreve 8 não distingue
+ninguém — e a LLM que decide `classificacao_selecao` lê o cabeçalho antes da
+linha. Marcar a companhia de perigosa porque *nós* gravamos dois valores de
+provento na mesma data-ex é a ponderação indevida na sua forma mais nítida.
+
+A correção não silenciou nada: as três categorias continuam impressas e
+continuam chegando ao parecer, agora apartadas em "RISCO CONFIRMADO",
+"OBSERVAÇÕES DE CONTEXTO" e "LIMITAÇÕES DE COBERTURA". Silêncio no dossiê
+lê-se como "nada encontrado", que seria pior que a diluição. O que mudou é o
+cabeçalho. Depois: **8 de 426** sob risco confirmado.
+
+A regra de classificação mora num único lugar (`core/dossie_b3.py`), e a
+unicidade é verificada por AST — este projeto já teve três cópias da mesma
+guarda com duas divergências entre elas. Cada um dos três consumidores tem um
+teste que morre se a separação for desfeita.
+
+**O limite desta correção**: a separação no texto é verificável; a obediência da
+LLM a ela não é. A regra 5.4 do prompt instrui que contexto e cobertura não
+reprovam, mas instrução não é portão. Medir isso exige rodar o gate com LLM
+ligada (`scripts/eval_gate_selecao.py`), o que não foi feito aqui.

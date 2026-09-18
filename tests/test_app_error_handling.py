@@ -14,10 +14,11 @@ import ast
 import importlib
 import logging
 import runpy
-import sys
 from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+
+from tests.app_bootstrap_stubs import instalar_stubs_de_bootstrap
 
 # Não importar `app` diretamente: o módulo executa efeitos de topo de nível
 # (st.set_page_config, autenticação) contra o Streamlit real assim que
@@ -74,15 +75,14 @@ class _FakeStreamlit(ModuleType):
     def radio(self, _label, options, **_kwargs):
         return self.selected_menu
 
-    def button(self, *_args, **_kwargs):
-        # Ninguém clica em "Sair" durante o teste do roteador.
-        return False
-
     def divider(self):
         pass
 
     def caption(self, *args, **_kwargs):
         self.texto_visivel.extend(str(a) for a in args)
+
+    def button(self, *_args, **_kwargs):
+        return False
 
     def code(self, *args, **_kwargs):
         self.texto_visivel.extend(str(a) for a in args)
@@ -117,32 +117,10 @@ def test_excecao_ao_carregar_modulo_nao_vaza_para_a_tela_e_log_recebe_detalhe(
             raise RuntimeError(_SEGREDO_TECNICO)
         raise AssertionError(f"import inesperado: {name}")
 
-    monkeypatch.setitem(sys.modules, "streamlit", fake_st)
-    monkeypatch.setitem(
-        sys.modules, "core.auth",
-        SimpleNamespace(verificar_autenticacao=lambda: None, encerrar_sessao=lambda: None)
-    )
-    monkeypatch.setitem(
-        sys.modules, "core.config", SimpleNamespace(settings=SimpleNamespace(validate=lambda: []))
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "design.componentes",
-        SimpleNamespace(mensagem_erro=fake_mensagem_erro),
-    )
-    monkeypatch.setitem(sys.modules, "design.tema", SimpleNamespace(aplicar_tema=lambda theme="dark": None))
-    # ``design.theme_selector`` também entra dublado: importado com o ``streamlit``
-    # falso em sys.modules, ele guardaria o módulo falso no próprio ``st`` e o
-    # vazaria para todos os testes seguintes ("no attribute 'session_state'").
-    # A barra lateral passou a saudar quem está logado; sem este dublê o
-    # roteador nem chega a ser exercitado.
-    monkeypatch.setitem(
-        sys.modules, "core.user_context",
-        SimpleNamespace(principal=lambda: {"id": "A", "name": "Teste"}, require_user=lambda: "A"),
-    )
-    monkeypatch.setitem(
-        sys.modules, "design.theme_selector",
-        SimpleNamespace(current_theme=lambda: "dark", render_theme_selector=lambda: None),
+    instalar_stubs_de_bootstrap(
+        monkeypatch,
+        fake_st,
+        design_componentes=SimpleNamespace(mensagem_erro=fake_mensagem_erro),
     )
     monkeypatch.setattr(importlib, "import_module", fake_import_module)
 
@@ -188,34 +166,14 @@ def test_modulo_carregado_com_sucesso_nao_aciona_o_handler_de_erro(monkeypatch, 
     mensagens_amigaveis: list[tuple[str, str]] = []
     fake_view = SimpleNamespace(render=lambda: None)
 
-    monkeypatch.setitem(sys.modules, "streamlit", fake_st)
-    monkeypatch.setitem(
-        sys.modules, "core.auth",
-        SimpleNamespace(verificar_autenticacao=lambda: None, encerrar_sessao=lambda: None)
-    )
-    monkeypatch.setitem(
-        sys.modules, "core.config", SimpleNamespace(settings=SimpleNamespace(validate=lambda: []))
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "design.componentes",
-        SimpleNamespace(mensagem_erro=lambda titulo, detalhe="": mensagens_amigaveis.append(
-            (titulo, detalhe)
-        )),
-    )
-    monkeypatch.setitem(sys.modules, "design.tema", SimpleNamespace(aplicar_tema=lambda theme="dark": None))
-    # ``design.theme_selector`` também entra dublado: importado com o ``streamlit``
-    # falso em sys.modules, ele guardaria o módulo falso no próprio ``st`` e o
-    # vazaria para todos os testes seguintes ("no attribute 'session_state'").
-    # A barra lateral passou a saudar quem está logado; sem este dublê o
-    # roteador nem chega a ser exercitado.
-    monkeypatch.setitem(
-        sys.modules, "core.user_context",
-        SimpleNamespace(principal=lambda: {"id": "A", "name": "Teste"}, require_user=lambda: "A"),
-    )
-    monkeypatch.setitem(
-        sys.modules, "design.theme_selector",
-        SimpleNamespace(current_theme=lambda: "dark", render_theme_selector=lambda: None),
+    instalar_stubs_de_bootstrap(
+        monkeypatch,
+        fake_st,
+        design_componentes=SimpleNamespace(
+            mensagem_erro=lambda titulo, detalhe="": mensagens_amigaveis.append(
+                (titulo, detalhe)
+            )
+        ),
     )
     monkeypatch.setattr(importlib, "import_module", lambda _name: fake_view)
 

@@ -30,6 +30,7 @@ import core.data_quality as _dq
 import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
+from core.b3_renda_sustentavel import enrich_decision_universe
 from core.b3_slopes import SLOPE_COLS, compute_slope_log, enrich_com_slopes
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
@@ -822,6 +823,22 @@ def _enrich_com_slopes(
 ) -> pd.DataFrame:
     """Acrescenta colunas {col}_slope_log ao df_mult calculadas do histórico."""
     return enrich_com_slopes(df_mult, hist_batch)
+
+
+def _enrich_com_evidencia_historica(
+    df_mult: pd.DataFrame,
+    hist_batch: dict[str, pd.DataFrame],
+    tickers: tuple[str, ...],
+) -> pd.DataFrame:
+    """Sustentabilidade da distribuição + histórico patrimonial ao df_mult.
+
+    Extraída para ser testável isoladamente (mesmo padrão de
+    ``_enrich_com_slopes``): os dois pontos de Empresas B3 que montam um
+    quadro de decisão — o dossiê da Análise de Empresa e o ranking da
+    Análise Avançada — chamam a MESMA função de core sobre o mesmo
+    ``hist_batch``, em vez de reimplementar a composição cada um por si.
+    """
+    return enrich_decision_universe(df_mult, hist_batch, tickers)
 
 
 def _score_value_usable(field: str, value: object) -> bool:
@@ -3351,6 +3368,7 @@ def _b3_peer_scores(
     try:
         historicos = _db.load_multiplos_historico_batch(tickers)
         pares = _enrich_com_slopes(pares, historicos)
+        pares = _enrich_com_evidencia_historica(pares, historicos, tickers)
     except Exception:
         # O score continua válido com crescimento neutro e cobertura reduzida.
         pass
@@ -3408,7 +3426,13 @@ def _fmt_pontuacao(valor: object) -> str:
 
 def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> None:
     from core.b3_company_score import FACTOR_TRACKS, TRACK_LABELS, classification
-    from core.dossie_b3 import build_dossie
+    from core.dossie_b3 import (
+        SEVERIDADE_COBERTURA,
+        SEVERIDADE_CONTEXTO,
+        SEVERIDADE_RISCO,
+        agrupa_flags_por_severidade,
+        build_dossie,
+    )
 
     dossie = build_dossie(ticker)
     label, tipo = classification(score_row.get("score"))
@@ -3422,8 +3446,18 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
     if dossie.get("erro"):
         st.info(f"Dossiê determinístico indisponível: {dossie['erro']}")
     else:
-        for flag in dossie.get("red_flags", []):
+        # `red_flags` carrega três coisas distintas; o componente tem de
+        # distinguir. `st.warning` para todas fazia 426 de 426 empresas
+        # abrirem a tela em amarelo, sendo que só 8 têm risco confirmado.
+        # A classificação vem de core.dossie_b3 (fonte única) — não repetir
+        # o teste de prefixo aqui.
+        _grupos = agrupa_flags_por_severidade(dossie.get("red_flags"))
+        for flag in _grupos[SEVERIDADE_RISCO]:
             st.warning(flag)
+        for flag in _grupos[SEVERIDADE_CONTEXTO]:
+            st.info(flag)
+        for flag in _grupos[SEVERIDADE_COBERTURA]:
+            st.caption(flag)
 
     fortes: list[str] = []
     invalidacoes: list[str] = []
@@ -4595,6 +4629,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
     # Enriquecer com slope_log antes do scoring
     df_mult_enrich = _enrich_com_slopes(df_mult_enrich, hist_batch)
+    df_mult_enrich = _enrich_com_evidencia_historica(
+        df_mult_enrich, hist_batch, tuple(sorted(tks_uni))
+    )
 
     # ── Transparência + saneamento de dados (qualidade antes do ranking) ──────
     try:
