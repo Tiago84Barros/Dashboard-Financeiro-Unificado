@@ -1,13 +1,13 @@
 """Contexto determinístico e auditável para o chat de FIIs."""
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from typing import Any, Iterable
 
 import pandas as pd
 
 from core.fii_renda_recorrente import dy_recorrente, protecao_nao_divulgada
+from core.fii_ticker import tickers_citados
 
 _DETAIL_METRICS = (
     "dy_recorrente", "vacancia_fisica", "vacancia_financeira", "wault_anos",
@@ -155,7 +155,7 @@ def build_fii_chat_context(
     for ticker, score_row in scored_by_ticker.items():
         all_by_ticker[ticker] = {**all_by_ticker.get(ticker, {}), **score_row}
     selected_tickers = [str(row.get("ticker") or "") for row in selected]
-    cited = re.findall(r"\b[A-Z]{4}11\b", (user_question or "").upper())
+    cited = tickers_citados(user_question)
     detail_tickers = list(dict.fromkeys(selected_tickers + cited))
 
     cedidos = [dict(item) for item
