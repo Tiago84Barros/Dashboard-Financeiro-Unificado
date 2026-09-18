@@ -74,11 +74,13 @@ class FloorVerdict:
 def evaluate(df_mult: pd.DataFrame, tickers: list[str], *,
              policy: FloorPolicy | None = None,
              value_policy: ValuePolicy | None = None,
-             selic: float | None = None) -> dict[str, FloorVerdict]:
+             selic: float | None = None,
+             persistencia_historica: bool = True) -> dict[str, FloorVerdict]:
     """Veredito do piso por ticker, na mesma régua de ``check_holdings``."""
     policy = policy or FloorPolicy()
     saude = check_holdings(df_mult, list(tickers or []),
-                           policy=value_policy, selic=selic)
+                           policy=value_policy, selic=selic,
+                           persistencia_historica=persistencia_historica)
     veredito: dict[str, FloorVerdict] = {}
     for h in saude:
         reprova = ((policy.reprovar_criticos and h.nivel == CRITICO)
@@ -127,6 +129,7 @@ def apply_with_substitution(
     log.setdefault("reprovados", [])
     log.setdefault("substituicoes", [])
     log.setdefault("sem_substituto", [])
+    log.setdefault("afrouxado_por_viabilidade", [])
     pesos = pesos if pesos is not None else {}
 
     universo = [str(t) for t in selecionados]
@@ -163,5 +166,26 @@ def apply_with_substitution(
             log["substituicoes"].append({"entra": substituto, "sai": tk,
                                          "segmento": seg_label})
         else:
-            log["sem_substituto"].append({"tk": tk, "segmento": seg_label})
+            # GUARDA DE VIABILIDADE. Se ninguém do segmento sobrevive, reavalia
+            # o líder SEM a confirmação de persistência histórica. Passando, ele
+            # entra marcado — a carteira nunca encolhe por causa do critério
+            # novo. Reprovando de novo, é porque algum critério PRÉ-EXISTENTE
+            # (FCO negativo, endividamento, margem) o condena, e aí a vaga
+            # continua vazia: o afrouxamento se confina sozinho, sem lista de
+            # exceções. Mesma razão declarada em core/us_quality_floor.py —
+            # reprovar todo mundo esvaziaria a carteira, não a tornaria mais
+            # seletiva.
+            sem_persistencia = evaluate(
+                df_mult, [tk], policy=policy, value_policy=value_policy,
+                selic=selic, persistencia_historica=False,
+            ).get(tk)
+            if sem_persistencia is not None and sem_persistencia.situacao != REPROVADO:
+                finais.append(tk)
+                motivo = ("nenhum candidato do segmento sobreviveu à confirmação "
+                          "histórica de payout — critério rebaixado de CRÍTICO "
+                          "para ATENÇÃO neste segmento")
+                log["afrouxado_por_viabilidade"].append(
+                    {"tk": tk, "segmento": seg_label, "motivo": motivo})
+            else:
+                log["sem_substituto"].append({"tk": tk, "segmento": seg_label})
     return finais

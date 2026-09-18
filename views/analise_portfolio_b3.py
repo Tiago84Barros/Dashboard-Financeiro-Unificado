@@ -24,6 +24,13 @@ from core.chat_memory import (
     save_chat_history,
     visible_chat_history,
 )
+from core.dossie_b3 import (
+    SEVERIDADE_COBERTURA,
+    SEVERIDADE_CONTEXTO,
+    SEVERIDADE_RISCO,
+    TITULO_SEVERIDADE,
+    agrupa_flags_por_severidade,
+)
 from core.llm_b3 import (
     chat_com_portfolio,
     llm_disponivel,
@@ -638,12 +645,24 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
                     unsafe_allow_html=True,
                 )
 
-        # Red flags determinísticas do dossiê (verificadas em código)
-        flags = d.get("red_flags") or []
-        if flags:
-            st.markdown("**Red flags determinísticas (verificadas em código)**")
-            for f_ in flags:
+        # Observações determinísticas do dossiê, SEPARADAS por severidade.
+        # O 🚩 só vale onde há risco confirmado: imprimi-lo em toda linha
+        # punha a bandeira vermelha em 426 de 426 empresas, das quais 418 não
+        # têm risco confirmado nenhum. A classificação vem de core.dossie_b3
+        # (fonte única) — não repetir o teste de prefixo aqui.
+        _grupos = agrupa_flags_por_severidade(d.get("red_flags"))
+        if _grupos[SEVERIDADE_RISCO]:
+            st.markdown(f"**{TITULO_SEVERIDADE[SEVERIDADE_RISCO]}**")
+            for f_ in _grupos[SEVERIDADE_RISCO]:
                 st.markdown(f"🚩 {f_}")
+        if _grupos[SEVERIDADE_CONTEXTO]:
+            st.markdown(f"**{TITULO_SEVERIDADE[SEVERIDADE_CONTEXTO]}**")
+            for f_ in _grupos[SEVERIDADE_CONTEXTO]:
+                st.markdown(f"ℹ️ {f_}")
+        if _grupos[SEVERIDADE_COBERTURA]:
+            st.markdown(f"**{TITULO_SEVERIDADE[SEVERIDADE_COBERTURA]}**")
+            for f_ in _grupos[SEVERIDADE_COBERTURA]:
+                st.caption(f_)
 
         c1, c2 = st.columns(2)
         # Riscos

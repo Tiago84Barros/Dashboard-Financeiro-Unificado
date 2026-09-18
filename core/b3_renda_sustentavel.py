@@ -10,19 +10,30 @@ O princípio que ele implementa: vale a qualidade histórica, não o período
 isolado. Um payout de 318% no TTM com mediana de 63,5% em oito anos é um
 exercício fora da curva, não uma política insustentável — 79% das empresas que
 o diagnóstico antigo condenava pelo TTM têm payout mediano abaixo de 100%.
+
+As constantes da banda e ``sustentabilidade_do_ano`` moraram aqui até a rodada
+de correção 1 da task 1, quando se descobriu que a mesma faixa estava
+duplicada, verbatim, em ``core/us_renda_sustentavel.py`` — e as duas cópias já
+haviam divergido na política de ausência (C-1). Ambas agora importam de
+``core/renda_sustentavel_banda.py``. ``leitura_da_serie`` só recebe payouts já
+filtrados como finitos por ``_anos_observados``, então este módulo não muda de
+comportamento observável: o ramo de ausência da banda compartilhada nunca era
+alcançável a partir daqui.
 """
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-JANELA_ANOS = 8
-MIN_ANOS = 3
-
-# Faixa de dois lados. Distribuir quase nada e distribuir muito acima do lucro
-# são as duas formas de o dividendo não ser um dividendo sustentável — por isso
-# a nota cai nas DUAS pontas, e não apenas acima do teto.
-PISO, OTIMO_LO, OTIMO_HI, TETO = 0.05, 0.25, 0.80, 1.30
+from core.renda_sustentavel_banda import (
+    JANELA_ANOS,
+    MIN_ANOS,
+    OTIMO_HI,
+    OTIMO_LO,
+    PISO,
+    TETO,
+    sustentabilidade_do_ano,
+)
 
 # Contradição interna da fonte: a empresa não pode distribuir (DY acima de
 # 0,5%) e não distribuir (payout de até 1%) no mesmo exercício. O ano sai do
@@ -34,33 +45,27 @@ __all__ = [
     "JANELA_ANOS", "MIN_ANOS", "PISO", "OTIMO_LO", "OTIMO_HI", "TETO",
     "sustentabilidade_do_ano", "leitura_da_serie", "enrich_com_renda_sustentavel",
     "fracao_pl_em_queda_com_lucro", "enrich_com_historico_patrimonial",
+    "enrich_decision_universe",
 ]
 
 
-def sustentabilidade_do_ano(payout) -> float:
-    """Nota [0,1] de sustentabilidade da distribuição de UM exercício."""
-    try:
-        p = float(payout)
-    except (TypeError, ValueError):
-        return 0.0
-    if not np.isfinite(p):
-        return 0.0
-    if p <= PISO or p >= TETO:
-        return 0.0
-    if OTIMO_LO <= p <= OTIMO_HI:
-        return 1.0
-    if p < OTIMO_LO:
-        return (p - PISO) / (OTIMO_LO - PISO)
-    return (TETO - p) / (TETO - OTIMO_HI)
-
-
 def _anos_observados(df_hist: pd.DataFrame) -> list[float]:
-    """Payouts anuais coerentes da janela, do mais antigo para o mais recente."""
+    """Payouts coerentes dos últimos JANELA_ANOS exercícios, do mais antigo
+    para o mais recente.
+
+    A janela é sobre EXERCÍCIOS, não sobre observações válidas: primeiro
+    recorta os últimos ``JANELA_ANOS`` exercícios da série ordenada, e só
+    então descarta incoerentes e lacunas dentro dessa janela (I-1). Cortar
+    depois de filtrar faz uma série com muitos anos incoerentes recentes
+    "empurrar" a janela para trás e pontuar com dados antigos, sem nenhum
+    sinal recente.
+    """
     if df_hist is None or df_hist.empty or "Payout" not in df_hist.columns:
         return []
     df = df_hist.copy()
     if "Data" in df.columns:
         df = df.sort_values("Data")
+    df = df.tail(JANELA_ANOS)
     payout = pd.to_numeric(df["Payout"], errors="coerce")
     dy = (pd.to_numeric(df["DY"], errors="coerce") if "DY" in df.columns
           else pd.Series(np.nan, index=df.index))
@@ -70,7 +75,7 @@ def _anos_observados(df_hist: pd.DataFrame) -> list[float]:
     dy = dy.where(np.isfinite(dy))
     incoerente = (dy > DY_MIN_COERENCIA) & (payout <= PAYOUT_MAX_COERENCIA)
     payout = payout[~incoerente].dropna()
-    return [float(v) for v in payout.tolist()[-JANELA_ANOS:]]
+    return [float(v) for v in payout.tolist()]
 
 
 def leitura_da_serie(df_hist: pd.DataFrame) -> dict:
@@ -88,13 +93,53 @@ def leitura_da_serie(df_hist: pd.DataFrame) -> dict:
     }
 
 
+_COLUNAS_CONTRATO = (
+    "payout_sustentabilidade", "payout_mediano_hist", "n_anos_payout",
+    "dy_sustentavel",
+)
+_COLUNAS_PATRIMONIAIS = ("pl_queda_com_lucro_frac", "n_pares_pl")
+
+
+def _com_colunas(df_mult: pd.DataFrame, colunas: tuple[str, ...]) -> pd.DataFrame:
+    """Implementação única do contrato de colunas dos dois enriquecedores.
+
+    Uma cópia por enriquecedor é o defeito "guarda duplicada não fica igual":
+    hoje as duas listas divergiriam em silêncio na primeira coluna nova.
+    """
+    if df_mult is None:
+        return df_mult
+    out = df_mult.copy()
+    for coluna in colunas:
+        if coluna not in out.columns:
+            out[coluna] = np.nan
+    return out
+
+
+def _com_colunas_patrimoniais(df_mult: pd.DataFrame) -> pd.DataFrame:
+    """Colunas de evidência patrimonial, mesmo sem série de PL/lucro."""
+    return _com_colunas(df_mult, _COLUNAS_PATRIMONIAIS)
+
+
+def _com_colunas_de_contrato(df_mult: pd.DataFrame) -> pd.DataFrame:
+    """Garante as quatro colunas do contrato de saída, mesmo sem histórico.
+
+    ``enrich_com_renda_sustentavel`` tinha saídas antecipadas que devolviam o
+    quadro cru, sem estas colunas (I-3). Isso não quebrava porque o scorer
+    caía no neutro na ausência, mas é justamente o caminho de "nenhum
+    histórico" — alcançável em produção quando o loader devolve vazio (ex.:
+    `core/b3_data.py::_financeiro` engole exceção e devolve `{}`). O contrato
+    do quadro de saída não pode depender de ter havido histórico.
+    """
+    return _com_colunas(df_mult, _COLUNAS_CONTRATO)
+
+
 def enrich_com_renda_sustentavel(
     df_mult: pd.DataFrame,
     hist_batch: dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """Acrescenta a sustentabilidade histórica ao cross-section de múltiplos."""
     if df_mult is None or df_mult.empty or not hist_batch:
-        return df_mult
+        return _com_colunas_de_contrato(df_mult)
     dados: dict[str, dict] = {}
     for tk, df_h in hist_batch.items():
         leitura = leitura_da_serie(df_h)
@@ -104,7 +149,7 @@ def enrich_com_renda_sustentavel(
             "n_anos_payout": leitura["n_anos_payout"],
         }
     if not dados:
-        return df_mult
+        return _com_colunas_de_contrato(df_mult)
     df_rs = pd.DataFrame.from_dict(dados, orient="index")
     df_rs.index.name = "Ticker"
     out = df_mult.merge(df_rs.reset_index(), on="Ticker", how="left")
@@ -155,9 +200,16 @@ def enrich_com_historico_patrimonial(
     df_mult: pd.DataFrame,
     series_batch: dict[str, list[dict]],
 ) -> pd.DataFrame:
-    """Acrescenta a fração histórica de PL em queda ao cross-section."""
+    """Acrescenta a fração histórica de PL em queda ao cross-section.
+
+    Como a irmã ``enrich_com_renda_sustentavel``, garante as colunas do
+    contrato também nas saídas antecipadas (M-β): devolver o quadro cru quando
+    não há histórico é o padrão "quadro sem coluna passa por ``.empty``". Hoje
+    os consumidores usam ``.get()`` e não quebram — o contrato do quadro de
+    saída é que não pode depender de ter havido histórico.
+    """
     if df_mult is None or df_mult.empty or not series_batch:
-        return df_mult
+        return _com_colunas_patrimoniais(df_mult)
     dados: dict[str, dict] = {}
     for ticker, serie in series_batch.items():
         fracao, n_pares = fracao_pl_em_queda_com_lucro(serie)
@@ -166,7 +218,29 @@ def enrich_com_historico_patrimonial(
             "n_pares_pl": n_pares,
         }
     if not dados:
-        return df_mult
+        return _com_colunas_patrimoniais(df_mult)
     df_pl = pd.DataFrame.from_dict(dados, orient="index")
     df_pl.index.name = "Ticker"
     return df_mult.merge(df_pl.reset_index(), on="Ticker", how="left")
+
+
+def enrich_decision_universe(
+    df_mult_todos: pd.DataFrame,
+    hist_batch: dict[str, pd.DataFrame],
+    all_tickers: tuple[str, ...],
+) -> pd.DataFrame:
+    """Inclui evidência histórica no quadro lido pelas decisões de carteira.
+
+    Promovida de ``views/portfolio_b3.py`` (task 6) para existir num único
+    lugar: o piso de qualidade, a Saúde da Carteira e a Rota de Valor
+    consomem ``df_mult_todos``. Portanto, a sustentabilidade não pode ficar
+    apenas no quadro reconciliado de entrada: lacunas continuam ``NaN`` e são
+    tratadas como ausência pelos consumidores, nunca como uma nota ou risco
+    zero.
+    """
+    from core.dossie_b3 import load_pl_lucro_anual_batch
+
+    enriched = enrich_com_renda_sustentavel(df_mult_todos, hist_batch)
+    return enrich_com_historico_patrimonial(
+        enriched, load_pl_lucro_anual_batch(all_tickers)
+    )
