@@ -81,6 +81,24 @@ _TIPO_META = {
 _TIPO_ORDER = ["tijolo", "papel", "fof", "hibrido"]
 _TIPO_OUTROS = ("🏦", "Outros", "#9CA3AF")
 
+# Os literais acima seguem para o Plotly, que não resolve `var(--…)`; em HTML os
+# mesmos papéis viram token, para acompanhar o tema claro.
+_TOKEN_POR_COR = {
+    "#00C896": "var(--app-primary)",
+    "#4A9EFF": "var(--app-info)",
+    "#FC5C7D": "var(--app-danger)",
+    "#F6C90E": "var(--app-warning)",
+    "#FFB454": "var(--app-warning)",
+    "#9CA3AF": "var(--app-muted)",
+    "#4A5568": "var(--app-subtle)",
+    "#E2E8F0": "var(--app-text)",
+}
+
+
+def _cor_texto(cor: str) -> str:
+    """Traduz a cor semântica para o token do tema (texto e bordas em HTML)."""
+    return _TOKEN_POR_COR.get(str(cor).upper(), cor)
+
 # FII é sempre listado na B3 — mesmo CDN de logo usado em empresas_b3.py e
 # reaproveitado em views/portfolio_global.py (sem módulo central para essa
 # constante no projeto; cada vitrine mantém a própria cópia curta).
@@ -94,84 +112,84 @@ def _fii_logo_url(ticker: str) -> str:
 _CSS = """
 <style>
 .fii-hdr { display:flex;align-items:baseline;gap:10px;font-size:1.25rem;font-weight:800;
-           text-transform:uppercase;letter-spacing:.04em;color:#E2E8F0;
-           border-bottom:2px solid #1E2533;padding-bottom:8px;margin:24px 0 14px; }
-.fii-hdr .cnt { font-size:0.74rem;color:#4A5568;font-weight:700;letter-spacing:.06em; }
+           text-transform:uppercase;letter-spacing:.04em;color:var(--app-text);
+           border-bottom:2px solid var(--app-border);padding-bottom:8px;margin:24px 0 14px; }
+.fii-hdr .cnt { font-size:0.74rem;color:var(--app-subtle);font-weight:700;letter-spacing:.06em; }
 /* KPIs do topo (cards CSS) */
-.fii-kpi { background:#12151E;border:1px solid #1E2533;border-radius:10px;
-           padding:12px 15px;margin-bottom:6px;border-left:3px solid #00C896; }
+.fii-kpi { background:var(--app-surface);border:1px solid var(--app-border);border-radius:10px;
+           padding:12px 15px;margin-bottom:6px;border-left:3px solid var(--app-primary); }
 .fii-kpi .lbl { font-size:0.62rem;font-weight:700;text-transform:uppercase;
-                letter-spacing:.08em;color:#4A5568;margin-bottom:5px; }
-.fii-kpi .val { font-size:1.6rem;font-weight:800;line-height:1.05;color:#E2E8F0; }
+                letter-spacing:.08em;color:var(--app-subtle);margin-bottom:5px; }
+.fii-kpi .val { font-size:1.6rem;font-weight:800;line-height:1.05;color:var(--app-text); }
 .fii-kpi .sub { font-size:0.68rem;font-weight:700;margin-top:4px; }
-.fii-card { background:#12151E;border:1px solid #1E2533;border-radius:12px;
+.fii-card { background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
             padding:12px 14px 10px;height:100%;transition:border-color .2s; }
 .fii-card:hover { border-color:rgba(0,200,150,.35); }
 .fii-head { display:flex;align-items:center;gap:10px;margin-bottom:6px; }
 /* min-width:0 é o que deixa o ellipsis do nome funcionar dentro do flex. */
 .fii-idt { min-width:0;overflow:hidden;flex:1; }
 .fii-logo {
-    width:34px;height:34px;border-radius:8px;background:rgba(255,255,255,.06);
+    width:34px;height:34px;border-radius:8px;background:var(--app-surface-raised);
     display:flex;align-items:center;justify-content:center;flex-shrink:0;
-    color:#718096;font-size:.72rem;font-weight:800;overflow:hidden;
+    color:var(--app-subtle);font-size:.72rem;font-weight:800;overflow:hidden;
     /* Logo via background-image, não via <img>: ver company_logo_html (A-012). */
     background-repeat:no-repeat;background-position:center;background-size:76% 76%;
 }
 .fii-top { display:flex;justify-content:space-between;align-items:center;margin-bottom:4px; }
-.fii-tk  { font-size:0.95rem;font-weight:800;color:#E2E8F0;letter-spacing:.02em; }
+.fii-tk  { font-size:0.95rem;font-weight:800;color:var(--app-text);letter-spacing:.02em; }
 .fii-score { font-size:0.66rem;font-weight:800;padding:2px 8px;border-radius:10px; }
-.fii-nome { font-size:0.68rem;color:#718096;margin-bottom:2px;
+.fii-nome { font-size:0.68rem;color:var(--app-subtle);margin-bottom:2px;
             overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.fii-seg  { font-size:0.62rem;color:#4A5568;margin-bottom:8px;
+.fii-seg  { font-size:0.62rem;color:var(--app-subtle);margin-bottom:8px;
             overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.fii-mini { display:flex;gap:12px;border-top:1px solid #1A2130;padding-top:7px; }
+.fii-mini { display:flex;gap:12px;border-top:1px solid var(--app-border);padding-top:7px; }
 .fii-mini .lbl { display:block;font-size:0.54rem;font-weight:700;text-transform:uppercase;
-                 letter-spacing:.06em;color:#4A5568; }
-.fii-mini .val { display:block;font-size:0.86rem;font-weight:800;color:#E2E8F0;line-height:1.2; }
-.fii-sc-high { background:rgba(0,200,150,.15);color:#00C896; }
-.fii-sc-mid  { background:rgba(246,201,14,.15);color:#F6C90E; }
-.fii-sc-low  { background:rgba(252,92,125,.15);color:#FC5C7D; }
-.fii-info-card { background:linear-gradient(145deg,#12151E,#10131B);border:1px solid #1E2533;
-                 border-left:3px solid #4A9EFF;border-radius:12px;padding:13px 15px;
-                 margin:8px 0 12px;color:#A0AEC0;font-size:.78rem;line-height:1.5; }
-.fii-info-card .title { color:#E2E8F0;font-size:.66rem;font-weight:800;
+                 letter-spacing:.06em;color:var(--app-subtle); }
+.fii-mini .val { display:block;font-size:0.86rem;font-weight:800;color:var(--app-text);line-height:1.2; }
+.fii-sc-high { background:rgba(0,200,150,.15);color:var(--app-primary); }
+.fii-sc-mid  { background:rgba(246,201,14,.15);color:var(--app-warning); }
+.fii-sc-low  { background:rgba(252,92,125,.15);color:var(--app-danger); }
+.fii-info-card { background:linear-gradient(145deg,var(--app-surface),var(--app-bg));border:1px solid var(--app-border);
+                 border-left:3px solid var(--app-info);border-radius:12px;padding:13px 15px;
+                 margin:8px 0 12px;color:var(--app-muted);font-size:.78rem;line-height:1.5; }
+.fii-info-card .title { color:var(--app-text);font-size:.66rem;font-weight:800;
                         text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px; }
 .fii-scenario-grid { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;
                      margin:5px 0 12px; }
-.fii-scenario { background:#12151E;border:1px solid #1E2533;border-radius:10px;
+.fii-scenario { background:var(--app-surface);border:1px solid var(--app-border);border-radius:10px;
                 padding:10px 12px; }
-.fii-scenario .name { color:#718096;font-size:.61rem;font-weight:750;text-transform:uppercase;
+.fii-scenario .name { color:var(--app-subtle);font-size:.61rem;font-weight:750;text-transform:uppercase;
                       letter-spacing:.06em;white-space:nowrap; }
-.fii-scenario .impact { color:#E2E8F0;font-size:1.02rem;font-weight:850;margin-top:3px; }
-.fii-scenario.pos { border-top:2px solid #00C896; }
-.fii-scenario.pos .impact { color:#00C896; }
-.fii-scenario.neg { border-top:2px solid #FC5C7D; }
-.fii-scenario.neg .impact { color:#FC5C7D; }
-.fii-selection-card { background:linear-gradient(145deg,#12151E,#10131B);border:1px solid #1E2533;
-                      border-top:3px solid #00C896;border-radius:12px;margin:7px 0 10px;
+.fii-scenario .impact { color:var(--app-text);font-size:1.02rem;font-weight:850;margin-top:3px; }
+.fii-scenario.pos { border-top:2px solid var(--app-primary); }
+.fii-scenario.pos .impact { color:var(--app-primary); }
+.fii-scenario.neg { border-top:2px solid var(--app-danger); }
+.fii-scenario.neg .impact { color:var(--app-danger); }
+.fii-selection-card { background:linear-gradient(145deg,var(--app-surface),var(--app-bg));border:1px solid var(--app-border);
+                      border-top:3px solid var(--app-primary);border-radius:12px;margin:7px 0 10px;
                       overflow:hidden; }
 .fii-selection-card summary { cursor:pointer;list-style:none;padding:13px 14px; }
 .fii-selection-card summary::-webkit-details-marker { display:none; }
-.fii-selection-card summary:hover { background:rgba(255,255,255,.018); }
+.fii-selection-card summary:hover { background:var(--app-surface-raised); }
 .fii-selection-head { display:flex;align-items:center;justify-content:space-between;gap:8px; }
-.fii-selection-ticker { color:#E2E8F0;font-size:1rem;font-weight:850; }
-.fii-selection-rank { color:#00C896;background:rgba(0,200,150,.12);border-radius:12px;
+.fii-selection-ticker { color:var(--app-text);font-size:1rem;font-weight:850; }
+.fii-selection-rank { color:var(--app-primary);background:rgba(0,200,150,.12);border-radius:12px;
                       padding:3px 8px;font-size:.64rem;font-weight:800;white-space:nowrap; }
-.fii-selection-meta { color:#718096;font-size:.68rem;margin-top:3px; }
-.fii-selection-body { border-top:1px solid #1E2533;padding:11px 14px 13px;color:#A0AEC0;
+.fii-selection-meta { color:var(--app-subtle);font-size:.68rem;margin-top:3px; }
+.fii-selection-body { border-top:1px solid var(--app-border);padding:11px 14px 13px;color:var(--app-muted);
                       font-size:.74rem;line-height:1.45; }
-.fii-selection-body .section { color:#CBD5E0;font-size:.62rem;font-weight:800;
+.fii-selection-body .section { color:var(--app-muted);font-size:.62rem;font-weight:800;
                                text-transform:uppercase;letter-spacing:.07em;margin:8px 0 3px; }
 .fii-selection-body ul { margin:3px 0 6px;padding-left:18px; }
 .fii-selection-body li { margin-bottom:3px; }
 .fii-selection-facts { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;
                        margin:5px 0 9px; }
-.fii-selection-fact { background:#0E1118;border:1px solid #1A2130;border-radius:7px;
-                      padding:6px 8px;color:#CBD5E0;font-size:.68rem; }
-.fii-selection-evidence { color:#718096;border-top:1px dashed #253047;margin-top:9px;
+.fii-selection-fact { background:var(--app-bg);border:1px solid var(--app-border);border-radius:7px;
+                      padding:6px 8px;color:var(--app-muted);font-size:.68rem; }
+.fii-selection-evidence { color:var(--app-subtle);border-top:1px dashed var(--app-border);margin-top:9px;
                           padding-top:7px;font-size:.64rem; }
 .fii-selection-caveat { background:rgba(246,201,14,.07);border:1px solid rgba(246,201,14,.18);
-                        border-radius:8px;padding:7px 9px;margin-top:7px;color:#D6C56E; }
+                        border-radius:8px;padding:7px 9px;margin-top:7px;color:var(--app-warning); }
 @media (max-width: 800px) { .fii-scenario-grid,.fii-selection-facts {
                             grid-template-columns:repeat(1,minmax(0,1fr)); } }
 </style>
@@ -329,7 +347,7 @@ def render(show_header: bool = True) -> None:
                 st.session_state["fii_active_tab"] = i
                 st.session_state["_fii_rolar_topo"] = True
                 st.rerun()
-    st.markdown("<hr style='margin:4px 0 16px;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:4px 0 16px;border-color:var(--app-border);'>", unsafe_allow_html=True)
     # Carteira-modelo abria no rodapé: o st.chat_input do assistente recebe foco
     # ao montar e o navegador rola até ele. Mesmo tratamento do trilho de abas
     # das vitrines B3/EUA. pop e não get: a rolagem vale para o rerun da troca —
@@ -356,15 +374,15 @@ def _kpi_html(label: str, value, sub: str | None = None,
     """Card CSS de KPI (rótulo, valor grande e sub opcional)."""
     label, value = escape(str(label)), escape(str(value))
     sub_html = (
-        f'<div class="sub" style="color:{sub_color};">{escape(str(sub))}</div>'
+        f'<div class="sub" style="color:{_cor_texto(sub_color)};">{escape(str(sub))}</div>'
         if sub else ""
     )
-    return (f'<div class="fii-kpi" style="border-left-color:{accent};">'
+    return (f'<div class="fii-kpi" style="border-left-color:{_cor_texto(accent)};">'
             f'<div class="lbl">{label}</div><div class="val">{value}</div>{sub_html}</div>')
 
 
 def _info_card_html(title: str, body: str, *, accent: str = "#4A9EFF") -> str:
-    return (f'<div class="fii-info-card" style="border-left-color:{accent};">'
+    return (f'<div class="fii-info-card" style="border-left-color:{_cor_texto(accent)};">'
             f'<div class="title">{escape(title)}</div>{escape(body)}</div>')
 
 
@@ -1118,7 +1136,7 @@ def _selection_card_html(explanation: dict, *, expanded: bool = False) -> str:
     open_attr = " open" if expanded else ""
 
     return (
-        f'<details class="fii-selection-card" style="border-top-color:{color};"{open_attr}>'
+        f'<details class="fii-selection-card" style="border-top-color:{_cor_texto(color)};"{open_attr}>'
         '<summary><div class="fii-selection-head">'
         f'<span class="fii-selection-ticker">{ticker}</span>'
         f'<span class="fii-selection-rank">{escape(_posicao_no_ranking(explanation))}</span>'
