@@ -129,6 +129,10 @@ def make_external_id(prefix: str, parts: Iterable[Any]) -> str:
     'b3neg-<hash16>'
     """
     raw = "|".join(str(p) for p in parts)
+    from core.config import settings
+    owner = settings.OWNER_USER_ID
+    if owner and owner != settings.ADMIN_USER_ID:
+        raw = f"{owner}|{raw}"
     return f"{prefix}-{hashlib.md5(raw.encode('utf-8')).hexdigest()[:16]}"
 
 

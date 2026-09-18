@@ -23,6 +23,13 @@ import pandas as pd
 import streamlit as st
 
 import core.us_data as us
+from core.chat_memory import (
+    clear_chat_history,
+    conversation_key,
+    load_chat_history,
+    save_chat_history,
+    visible_chat_history,
+)
 from core.llm_b3 import (
     chat_com_portfolio,
     llm_disponivel,
@@ -954,11 +961,14 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
     _, col_limpar = st.columns([5, 1])
     with col_limpar:
         if st.button("🗑️ Limpar chat", key="apus_chat_clear", width="stretch"):
-            st.session_state.pop(_CHAT, None)
+            clear_chat_history(conversation_key("apus", ",".join(
+                sorted(str(item.get("ticker") or "") for item in model.get("items", [])))), session_key=_CHAT)
             st.rerun()
 
-    historico: list[dict] = st.session_state.get(_CHAT, [])
-    for msg in historico:
+    _memory_key = conversation_key("apus", ",".join(
+        sorted(str(item.get("ticker") or "") for item in model.get("items", []))))
+    historico = load_chat_history(_memory_key, session_key=_CHAT)
+    for msg in visible_chat_history(historico, _CHAT):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
@@ -989,7 +999,7 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
         st.markdown(resposta)
 
     historico.append({"role": "assistant", "content": resposta})
-    st.session_state[_CHAT] = historico
+    save_chat_history(_memory_key, historico, session_key=_CHAT)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

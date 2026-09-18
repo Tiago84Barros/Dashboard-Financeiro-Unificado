@@ -32,6 +32,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core.card_categorization import REVIEW_SENTINEL, categorias_disponiveis
+from core.chat_memory import (
+    clear_chat_history,
+    conversation_key,
+    load_chat_history,
+    save_chat_history,
+    visible_chat_history,
+)
 from core.controle import (
     add_card_category_rule,
     atualizar_transacao,
@@ -1077,6 +1084,7 @@ def _render_chat_financeiro(
 
     # Reinicia o histórico quando o mês selecionado muda (o contexto muda junto).
     _ctx_sig = f"{ano_ref}-{mes_ref}-{d.get('data_source')}"
+    _memory_key = conversation_key("controle_financeiro", _ctx_sig)
     if st.session_state.get("cf_chat_ctx_sig") not in (None, _ctx_sig):
         st.session_state.pop("cf_chat_history", None)
     st.session_state["cf_chat_ctx_sig"] = _ctx_sig
@@ -1100,11 +1108,11 @@ def _render_chat_financeiro(
     _, _clr = st.columns([5, 1])
     with _clr:
         if st.button("🗑️ Limpar", key="cf_chat_clear", width="stretch"):
-            st.session_state.pop("cf_chat_history", None)
+            clear_chat_history(_memory_key, session_key="cf_chat_history")
             st.rerun()
 
-    history: list[dict] = st.session_state.get("cf_chat_history", [])
-    for msg in history:
+    history = load_chat_history(_memory_key, session_key="cf_chat_history")
+    for msg in visible_chat_history(history, "cf_chat_history"):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             for direc in msg.get("_charts", []) or []:
@@ -1168,7 +1176,7 @@ def _render_chat_financeiro(
         msg_assistant["_charts"] = chart_directives[:2]
         msg_assistant["_chart_meta"] = chart_meta
     history.append(msg_assistant)
-    st.session_state["cf_chat_history"] = history
+    save_chat_history(_memory_key, history, session_key="cf_chat_history")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2938,6 +2946,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                     + (f"; vencimentos {anos[0]}–{anos[-1]}" if anos else "")
                     + (f"; cartão final {filters.get('card')}" if filters.get("card") else ""))
     _ctx_sig = f"{filtro_label}|{round(float(df['valor_fatura'].sum()), 2)}"
+    _memory_key = conversation_key("cartao_credito", _ctx_sig)
     if st.session_state.get("cc_chat_ctx_sig") not in (None, _ctx_sig):
         st.session_state.pop("cc_chat_history", None)
     st.session_state["cc_chat_ctx_sig"] = _ctx_sig
@@ -2960,11 +2969,11 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
     _, _clr = st.columns([5, 1])
     with _clr:
         if st.button("🗑️ Limpar", key="cc_chat_clear", width="stretch"):
-            st.session_state.pop("cc_chat_history", None)
+            clear_chat_history(_memory_key, session_key="cc_chat_history")
             st.rerun()
 
-    history: list[dict] = st.session_state.get("cc_chat_history", [])
-    for msg in history:
+    history = load_chat_history(_memory_key, session_key="cc_chat_history")
+    for msg in visible_chat_history(history, "cc_chat_history"):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             for direc in msg.get("_charts", []) or []:
@@ -3027,7 +3036,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
         msg_assistant["_charts"] = chart_directives[:2]
         msg_assistant["_chart_meta"] = chart_meta
     history.append(msg_assistant)
-    st.session_state["cc_chat_history"] = history
+    save_chat_history(_memory_key, history, session_key="cc_chat_history")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

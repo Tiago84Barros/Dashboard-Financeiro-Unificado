@@ -44,6 +44,7 @@ from core.tesouro_analysis import (
     retorno_mercado_sobre_custo,
     tesouro_meta,
 )
+from core.user_context import user_cache_data
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
 
@@ -471,7 +472,7 @@ def _yf_symbol_for_pos(pos: dict) -> str | None:
     return None
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@user_cache_data(ttl=3600, show_spinner=False)
 def _load_corr_precos_db(
     symbol_map: tuple[tuple[str, str, str], ...],
     period: str = DEFAULT_CORR_PERIOD,
@@ -604,7 +605,7 @@ def _load_corr_precos_db(
     }
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@user_cache_data(ttl=3600, show_spinner=False)
 def _load_corr_precos(
     symbol_map: tuple[tuple[str, str, str], ...],
     period: str = DEFAULT_CORR_PERIOD,
@@ -1272,7 +1273,7 @@ def _legenda_par(row) -> tuple[str, bool]:
     return texto, incerto
 
 
-@st.cache_data(ttl=1800)
+@user_cache_data(ttl=1800)
 def _get_macro_dados() -> dict:
     """Busca indicadores macro: BCB (SELIC, IPCA) + yfinance (câmbio, bolsas)."""
     import requests  # já é dep do streamlit
@@ -1385,7 +1386,7 @@ def _select_top_n_acoes(posicoes: list, n: int = 10) -> list[dict]:
     return candidatas[:n]
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@user_cache_data(ttl=3600, show_spinner=False)
 def _load_performance_history(
     symbol_map: tuple[tuple[str, str], ...],
     period_key: str = "12M",

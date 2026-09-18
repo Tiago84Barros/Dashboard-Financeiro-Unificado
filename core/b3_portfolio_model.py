@@ -14,13 +14,13 @@ import uuid
 from datetime import date
 from typing import Any
 
-import streamlit as st
 from sqlalchemy import text
 
 from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
 from core.config import settings
 from core.database import get_engine
 from core.portfolio_staleness import marcar_defasagem
+from core.user_context import user_cache_data
 
 _REQUIRED_TABLES = ("b3_portfolio_models", "b3_portfolio_model_items")
 _SCHEMA_MIGRATIONS = (
@@ -369,7 +369,7 @@ def save_b3_portfolio_model(
     return model_id
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@user_cache_data(ttl=300, show_spinner=False)
 def load_active_b3_portfolio_model() -> dict:
     """Carrega o portfolio B3 modelo ativo do usuario. Retorna {} se nao existir."""
     engine = get_engine()
@@ -429,7 +429,7 @@ def load_active_b3_portfolio_model() -> dict:
     return model
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@user_cache_data(ttl=120, show_spinner=False)
 def list_b3_portfolio_model_versions(limit: int = 10) -> list[dict]:
     """Lista versoes do proprietario sem expor posicoes ou dados pessoais.
 

@@ -58,10 +58,24 @@ def test_ui_distingue_falha_de_rede_de_ausencia_real_na_cotacao():
 
     app = AppTest.from_string(
         """
+import time
+
 import pandas as pd
 import streamlit as st
 import core.b3_data as db
+import core.chat_repository as chat_repo
 import views.empresas_b3 as view
+
+# O chat do ativo exige pessoa autenticada (core.user_context.require_user).
+# Identidade sintetica + repositorio de chat neutralizado, mesmo padrao de
+# tests/fii_rich_preview.py: sem isso a aba inteira morre com PermissionError.
+st.session_state["_app4_user"] = {
+    "id": "11111111-1111-1111-1111-111111111111",
+    "expires_at": time.time() + 600,
+}
+chat_repo.load = lambda *a, **k: []
+chat_repo.save = lambda *a, **k: None
+chat_repo.clear = lambda *a, **k: None
 
 # Isola do banco/rede reais: monkeypatch dos pontos de I/O.
 view._preco_atual_com_status = lambda tk: (None, "falha_rede")
@@ -93,10 +107,24 @@ def test_ui_usa_fonte_market_first_para_dividendos_quando_disponivel():
 
     app = AppTest.from_string(
         """
+import time
+
 import pandas as pd
 import streamlit as st
 import core.b3_data as db
+import core.chat_repository as chat_repo
 import views.empresas_b3 as view
+
+# O chat do ativo exige pessoa autenticada (core.user_context.require_user).
+# Identidade sintetica + repositorio de chat neutralizado, mesmo padrao de
+# tests/fii_rich_preview.py: sem isso a aba inteira morre com PermissionError.
+st.session_state["_app4_user"] = {
+    "id": "11111111-1111-1111-1111-111111111111",
+    "expires_at": time.time() + 600,
+}
+chat_repo.load = lambda *a, **k: []
+chat_repo.save = lambda *a, **k: None
+chat_repo.clear = lambda *a, **k: None
 
 df_divs = pd.DataFrame({
     "Data": pd.to_datetime(["2023-12-31", "2024-12-31"]),

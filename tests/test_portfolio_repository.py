@@ -89,6 +89,27 @@ def test_round_trip_preserva_o_payload(engine):
     assert lidos["PETR4"]["schema_version"] == 1
 
 
+def test_sessao_web_nao_le_grava_ou_remove_snapshot_de_outro(engine, monkeypatch):
+    import core.portfolio.repository as repo
+
+    _modelo(engine, "m01", status="archived")
+    save_snapshots([_snap("m01", "AAAA3")], engine=engine, owner_id=OWNER)
+    stranger = "33333333-3333-3333-3333-333333333333"
+    monkeypatch.setattr(repo, "web_owner", lambda: stranger)
+    assert load_snapshots("b3", "m01", engine=engine) == {}
+    with pytest.raises(PermissionError):
+        save_snapshots([_snap("m01", "AAAA3")], engine=engine, owner_id=stranger)
+    with pytest.raises(PermissionError):
+        save_snapshots([_snap("m01", "AAAA3")], engine=engine, owner_id=OWNER)
+    assert apply_retention("b3", engine=engine, keep=0) == 0
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM b3_portfolio_models WHERE id = 'm01'"))
+    assert prune_orphans(engine=engine) == 0
+    monkeypatch.setattr(repo, "web_owner", lambda: OWNER)
+    assert "AAAA3" in load_snapshots("b3", "m01", engine=engine)
+    assert prune_orphans(engine=engine) == 1
+
+
 def test_regravar_o_mesmo_ativo_atualiza_em_vez_de_duplicar(engine):
     _modelo(engine, "m01")
     save_snapshots([_snap("m01", "PETR4", dy=1.0)], engine=engine, owner_id=OWNER)

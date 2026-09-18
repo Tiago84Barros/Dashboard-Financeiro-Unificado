@@ -27,6 +27,17 @@ from views.credit_card_invoice_upload import render_upload_fatura_cartao
 
 
 def render() -> None:
+    from core.user_context import is_admin, require_user
+    require_user()
+    if not is_admin():
+        from design.user_accounts import render_user_accounts
+        st.title("Minhas configurações")
+        personal, account = st.tabs(["Importar meus dados", "Minha conta"])
+        with personal:
+            _render_atualizacao_de_dados()
+        with account:
+            render_user_accounts()
+        return
     container_pagina(
         "Central de Configurações",
         "Importações, atualização de dados e integridade do ambiente em um único lugar.",
@@ -1551,6 +1562,8 @@ def _render_import_result(summary: dict) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _render_seguranca() -> None:
+    from design.user_accounts import render_user_accounts
+    render_user_accounts()
     with st.container(border=True, key="cfg_security_session"):
         _render_workflow_header(
             "01", "Proteção e sessão",

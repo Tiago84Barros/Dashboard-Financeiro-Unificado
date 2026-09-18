@@ -11,6 +11,13 @@ from typing import Callable, Sequence
 
 import streamlit as st
 
+from core.chat_memory import (
+    clear_chat_history,
+    conversation_key,
+    load_chat_history,
+    save_chat_history,
+    visible_chat_history,
+)
 from core.llm_ativo import chat_com_ativo
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 
@@ -99,16 +106,18 @@ def render_chat_ativo(
     sig_key = f"chat_ativo_{mercado}_signature"
     signature = f"{mercado}:{tk}"
     anterior = st.session_state.get(sig_key)
+    memory_key = conversation_key("chat_ativo", signature)
     if anterior is not None and anterior != signature:
+        # Cada ativo tem sua própria conversa persistida; trocar de ativo não
+        # apaga a anterior nem a mistura com o contexto atual.
         st.session_state.pop(hist_key, None)
-        st.caption("O histórico foi reiniciado porque o ativo analisado mudou.")
     st.session_state[sig_key] = signature
 
     _, col_limpar = st.columns([5, 1])
     with col_limpar:
         if st.button("🗑️ Limpar chat", key=f"chat_ativo_{mercado}_clear",
                      width="stretch"):
-            st.session_state.pop(hist_key, None)
+            clear_chat_history(memory_key, session_key=hist_key)
             st.rerun()
 
     perguntas = tuple(sugestoes) if sugestoes else _SUGESTOES_PADRAO.get(
@@ -122,8 +131,8 @@ def render_chat_ativo(
                              width="stretch"):
                     sugerida = pergunta
 
-    historico: list[dict] = st.session_state.get(hist_key, [])
-    for mensagem in historico:
+    historico = load_chat_history(memory_key, session_key=hist_key)
+    for mensagem in visible_chat_history(historico, hist_key):
         with st.chat_message(mensagem["role"]):
             st.markdown(mensagem["content"])
 
@@ -150,4 +159,4 @@ def render_chat_ativo(
         st.caption("Análise educacional baseada nos dados disponíveis; "
                    "não constitui recomendação de compra ou venda.")
     historico.append({"role": "assistant", "content": resposta})
-    st.session_state[hist_key] = historico
+    save_chat_history(memory_key, historico, session_key=hist_key)

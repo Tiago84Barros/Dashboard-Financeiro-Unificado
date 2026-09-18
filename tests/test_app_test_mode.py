@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import importlib
 import runpy
-import sys
 from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -14,6 +13,7 @@ from core.app_test_mode import (
     module_for_route,
     state_from_value,
 )
+from tests.app_bootstrap_stubs import instalar_stubs_de_bootstrap
 
 
 class _FakeStreamlit(ModuleType):
@@ -40,6 +40,9 @@ class _FakeStreamlit(ModuleType):
     def caption(self, *_args, **_kwargs):
         pass
 
+    def button(self, *_args, **_kwargs):
+        return False
+
     def warning(self, *_args, **_kwargs):
         pass
 
@@ -58,11 +61,7 @@ def _execute_app(monkeypatch, *, env_value: str | None, selected_menu: str | Non
     imported: list[str] = []
     fake_view = SimpleNamespace(render=lambda: None)
 
-    monkeypatch.setitem(sys.modules, "streamlit", fake_st)
-    monkeypatch.setitem(sys.modules, "core.auth", SimpleNamespace(verificar_autenticacao=lambda: None))
-    monkeypatch.setitem(sys.modules, "core.config", SimpleNamespace(settings=SimpleNamespace(validate=lambda: [])))
-    monkeypatch.setitem(sys.modules, "design.componentes", SimpleNamespace(mensagem_erro=lambda *_args: None))
-    monkeypatch.setitem(sys.modules, "design.tema", SimpleNamespace(aplicar_tema=lambda: None))
+    instalar_stubs_de_bootstrap(monkeypatch, fake_st)
 
     def fake_import_module(name: str):
         imported.append(name)

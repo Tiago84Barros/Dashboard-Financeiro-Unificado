@@ -12,13 +12,13 @@ import json
 import logging
 import uuid
 
-import streamlit as st
 from sqlalchemy import text
 
 # Reaproveita os helpers já testados do modelo B3 (mesma semântica).
 from core.b3_portfolio_model import _normalize_weight, _owner_id, _safe_json
 from core.config import settings
 from core.database import get_engine
+from core.user_context import user_cache_data
 
 _REQUIRED_TABLES = ("fii_portfolio_models", "fii_portfolio_model_items")
 _SCHEMA_MIGRATIONS = ("018_fiis_hardening.sql",)
@@ -319,7 +319,7 @@ def save_fii_portfolio_model(
     return model_id
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@user_cache_data(ttl=300, show_spinner=False)
 def load_active_fii_portfolio_model() -> dict:
     """Carrega a carteira-modelo de FIIs ativa do usuário. {} se não existir."""
     engine = get_engine()
@@ -341,7 +341,7 @@ def load_active_fii_portfolio_model() -> dict:
     return model
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@user_cache_data(ttl=120, show_spinner=False)
 def list_fii_portfolio_model_versions(limit: int = 10) -> list[dict]:
     """Lista versões do proprietário sem expor posições ou dados pessoais."""
     engine = get_engine()

@@ -23,6 +23,13 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 import core.market_read as _mr
+from core.chat_memory import (
+    clear_chat_history,
+    conversation_key,
+    load_chat_history,
+    save_chat_history,
+    visible_chat_history,
+)
 from core.fii_carteira_protegida import montar_carteira_com_concessao
 from core.fii_integrated_model import (
     INTEGRATED_MODEL_VERSION,
@@ -991,7 +998,9 @@ def _card_de_renda_recorrente(result: dict) -> str:
     """
     recorrente = result.get("recurrent_yield_12m")
     cobertura = float(result.get("recurrent_yield_coverage") or 0.0)
-    divulgado = f"DY divulgado: {result['trailing_yield_12m']:.1%}; não é previsão"
+    dy = result.get("trailing_yield_12m")
+    divulgado = (f"DY divulgado: {dy:.1%}; não é previsão" if dy is not None
+                 else "DY divulgado indisponível; não é previsão")
     if recorrente is None:
         return _kpi_html("DY recorrente ponderado", "—",
                          sub=f"nenhum fundo da carteira divulgou recorrência · {divulgado}",
@@ -1164,6 +1173,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         tuple(sorted(scenario.__dict__.items())),
     ))
     previous_signature = st.session_state.get("fii_chat_context_signature")
+    memory_key = conversation_key("fii_portfolio", signature)
     if previous_signature is not None and previous_signature != signature:
         st.session_state.pop("fii_chat_history", None)
         st.caption("O histórico foi reiniciado porque a seleção ou o cenário mudou.")
@@ -1172,7 +1182,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
     _, clear_col = st.columns([5, 1])
     with clear_col:
         if st.button("🗑️ Limpar chat", key="fii_chat_clear", width="stretch"):
-            st.session_state.pop("fii_chat_history", None)
+            clear_chat_history(memory_key, session_key="fii_chat_history")
             st.rerun()
 
     suggestions = (
@@ -1188,8 +1198,8 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                          width="stretch"):
                 suggested_input = question
 
-    history: list[dict] = st.session_state.get("fii_chat_history", [])
-    for message in history:
+    history = load_chat_history(memory_key, session_key="fii_chat_history")
+    for message in visible_chat_history(history, "fii_chat_history"):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
@@ -1222,7 +1232,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         st.markdown(answer)
         st.caption("Análise educacional baseada nos dados disponíveis; não constitui recomendação.")
     history.append({"role": "assistant", "content": answer})
-    st.session_state["fii_chat_history"] = history
+    save_chat_history(memory_key, history, session_key="fii_chat_history")
 
 
 def _comp_tipo_chart(pf: pd.DataFrame) -> None:
@@ -1362,12 +1372,10 @@ def _cenario_macro_observado() -> CenarioObservado:
 def _integrated_preference_controls() -> dict:
     """Controles globais da seleção integrada; todos afetam a mesma carteira.
 
-    Tudo recolhido por padrão, como os painéis de apoio da seção Empresas B3:
-    os valores default já produzem a carteira, e quem entra aqui quer ver o
-    resultado primeiro. Os controles continuam a um clique — nenhum parâmetro,
-    limite ou filtro mudou.
+    Personalização visível antes do resultado; premissas macro a um clique.
+    Mantém os valores, limites e chaves da metodologia vigente.
     """
-    with st.expander("⚙️ Carteira e elegibilidade", expanded=False):
+    with st.expander("⚙️ Carteira e elegibilidade", expanded=True):
         c1, c2, c3, c4 = st.columns(4)
         n_assets = c1.slider("Nº máximo de FIIs", 8, 20, 14, key="fii_pref_integrated_assets")
         max_asset = c2.slider("Máx. por FII (%)", 5, 25, 10, 1,
@@ -1609,7 +1617,9 @@ def _render_portfolio_history_diagnostics(weights: dict[str, float],
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font_color="#CBD5E0")
     months = int(curve_frame["meses"].iloc[0]) if "meses" in curve_frame else 0
-    effective = _fz.effective_n(weights)
+    invested = sum(weights.values())
+    effective = (_fz.effective_n({ticker: weight / invested for ticker, weight in weights.items()})
+                 if invested > 0 else None)
     st.caption(
         f"Efeito incremental da diversificação na mesma janela comum de {months} meses. "
         f"Número efetivo: {effective:.1f} de {len(weights)}." if effective else
@@ -2206,24 +2216,39 @@ def _carteira_integrada(preferences: dict):
         optimizer_kwargs=_kwargs_do_otimizador,
     )
     result["macro_snapshot"] = macro_snapshot
+    candidate_correlation = (
+        _correlacao_da_ultima_tentativa[0] if _correlacao_da_ultima_tentativa
+        else pd.DataFrame()
+    )
     if not result.get("items"):
+        from core.fii_presentation import enrich_review_presentation
         from core.portfolio_review_routes import fii_review
         from design.portfolio_review import render_portfolio_review
 
         proposal = fii_review(scored, portfolio_policy, scenario)
         st.session_state.pop("fii_port", None)
         st.session_state["fii_portfolio_can_publish"] = False
-        render_portfolio_review(proposal, key="fii_review")
         with st.expander("Diagnóstico da tentativa com metas originais"):
             _diagnostico_de_factibilidade(result)
-        return None
-    # A correlação exibida e a do recálculo macro são a da tentativa que virou
-    # carteira — inclusive os readmitidos. Recomputá-la aqui era uma segunda
-    # consulta de séries para o mesmo pool.
-    candidate_correlation = (
-        _correlacao_da_ultima_tentativa[0] if _correlacao_da_ultima_tentativa
-        else pd.DataFrame()
-    )
+        if not proposal["items"]:
+            render_portfolio_review(proposal, key="fii_review")
+            return None
+        result = enrich_review_presentation(
+            proposal, portfolio_policy,
+            candidate_correlation.to_dict() if not candidate_correlation.empty else None)
+        # Mesmos ativos e pesos do motor de proteção; só completa o contrato
+        # de apresentação para reutilizar todo o painel detalhado abaixo.
+        macro_snapshot = None
+    partial_review = bool(result.get("is_partial_review"))
+    allocated_weight = sum(item["weight"] for item in result["items"])
+    if partial_review:
+        allocation_cols = st.columns(2)
+        allocation_cols[0].markdown(_kpi_html(
+            "Alocado em FIIs", f"{allocated_weight:.1%}",
+            sub="pesos sobre o capital total", accent="#4A9EFF"), unsafe_allow_html=True)
+        allocation_cols[1].markdown(_kpi_html(
+            "Capital não alocado", f"{result['unallocated_weight']:.1%}",
+            sub="sem rendimento presumido", accent="#F6C90E"), unsafe_allow_html=True)
     # Prontidão, confiança e gate medem o universo que a tela EXIBE, não o
     # estrito: a carteira acima pode conter readmitidos pela cessão de
     # proteção, e com o estrito vazio esta faixa publicava "0/0" ao lado de
@@ -2277,7 +2302,13 @@ def _carteira_integrada(preferences: dict):
         blockers = list(result.get("blockers") or []) + list(investable_gate.reasons)
         st.warning("Rascunho não publicável: " + " · ".join(dict.fromkeys(blockers)))
     items = result["items"]
-    if macro_snapshot is None:
+    if partial_review:
+        st.caption(
+            "Composição ajustada pelos fundamentos e limites de proteção. "
+            "Os cenários macro abaixo contextualizam riscos; não foi aplicado "
+            "ajuste macro adicional aos pesos desta composição."
+        )
+    elif macro_snapshot is None:
         st.warning(
             "Camada macro do Docker local indisponível; a carteira mantém a "
             "metodologia estrutural e os cenários informados acima."
@@ -2338,7 +2369,7 @@ def _carteira_integrada(preferences: dict):
     weighted_pvp = (sum(value * weight for value, weight in valid_pvp) / pvp_weight
                     if pvp_weight else None)
     average_confidence = sum(float(item["confidence"]) * float(item["weight"])
-                             for item in items)
+                             for item in items) / allocated_weight
     k1, k2, k3 = st.columns(3)
     k1.markdown(_kpi_html("Ativos selecionados", len(items),
                           sub=f"{eligibility['eligible_count']} elegíveis",
@@ -2381,6 +2412,10 @@ def _carteira_integrada(preferences: dict):
             )
         )
     weights = {item["ticker"]: item["weight"] for item in items}
+    if partial_review:
+        st.caption("DY, P/VP, confiança, número efetivo, cenários e retrospectiva referem-se "
+                   "à parcela investida em FIIs. Os pesos da tabela permanecem sobre o "
+                   "capital total; o saldo não alocado não tem retorno presumido.")
     fii_types = {item["ticker"]: item["tipo"] for item in items}
     returns = _render_portfolio_correlation(weights, fii_types)
     comp_left, comp_right = st.columns([2, 1])
@@ -2393,19 +2428,32 @@ def _carteira_integrada(preferences: dict):
         st.markdown(_scenario_cards_html(result["scenario_returns"]), unsafe_allow_html=True)
     with comp_right:
         st.caption("Composição por tipo (%)")
-        _comp_tipo_chart(pd.DataFrame([
+        composition = [
             {"tipo": item["tipo"], "peso": item["weight"]} for item in items
-        ]))
+        ]
+        if partial_review and result["unallocated_weight"] > 0:
+            composition.append({"tipo": "Não alocado", "peso": result["unallocated_weight"]})
+        _comp_tipo_chart(pd.DataFrame(composition))
     report_prices = _mr.load_precos_mensais(tuple(sorted(set(weights) | {"XFIX11", "BOVA11"})))
     explanations = build_selection_reports(items, scored, scenario=scenario, prices=report_prices)
+    if partial_review:
+        for explanation in explanations:
+            explanation["role"] = explanation["role"].replace(
+                "dentro da banda tática de", "na parcela investida em")
+            explanation["caveats"] = list(explanation.get("caveats") or []) + [
+                "Composição parcial: bandas por tipo são metas, não garantia de enquadramento; "
+                "saldo não alocado separado e publicação ainda bloqueada."
+            ]
     st.markdown("#### Por que estes FIIs avançaram para a seleção")
     st.markdown(_info_card_html(
         "Critério de comparação",
         "Comparação exclusiva com fundos do mesmo tipo. O score já incorpora renda, P/VP, "
         "liquidez, estabilidade histórica, governança e métricas próprias da categoria. "
+        + ("A composição ajustada preserva os tetos de proteção e prioriza qualidade, "
+           "confiança e renda recorrente entre os ativos elegíveis. " if partial_review else
         "O otimizador combina score (45%), confiança (30%), renda (25%) e uma preferência "
         "moderada por evidência nominal observada, penalizando concentração, estresse e "
-        "correlação. "
+        "correlação. ")
         + ("Os destaques passaram pelos gates vigentes."
            if result.get("can_publish")
            else "Os destaques permanecem prioridades de diligência."),

@@ -19,13 +19,13 @@ import uuid
 from datetime import date
 from typing import Any
 
-import streamlit as st
 from sqlalchemy import text
 
 from core.config import settings
 from core.database import get_engine
 from core.portfolio_staleness import marcar_defasagem
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION, US_SCHEMA_VERSION
+from core.user_context import user_cache_data
 
 _REQUIRED_TABLES = ("us_portfolio_models", "us_portfolio_model_items")
 _SCHEMA_MIGRATIONS = ("047_us_portfolio_models.sql",)
@@ -398,7 +398,7 @@ def save_us_portfolio_model(
     return model_id
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@user_cache_data(ttl=300, show_spinner=False)
 def load_active_us_portfolio_model() -> dict:
     """Carrega o portfolio americano modelo ativo do usuario. {} se nao existir."""
     engine = get_engine()
@@ -461,7 +461,7 @@ def load_active_us_portfolio_model() -> dict:
     return model
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@user_cache_data(ttl=120, show_spinner=False)
 def list_us_portfolio_model_versions(limit: int = 10) -> list[dict]:
     """Lista versoes do proprietario sem expor posicoes ou dados pessoais.
 

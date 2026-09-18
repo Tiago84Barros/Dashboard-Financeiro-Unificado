@@ -121,9 +121,9 @@ def test_rolagem_e_pontual_e_nao_persistente():
 
 # ── 4. Carteira e elegibilidade recolhidos ───────────────────────────────────
 
-def test_controles_de_preferencia_nascem_recolhidos():
+def test_personalizacao_visivel_e_macro_recolhido():
     corpo = inspect.getsource(fiis._integrated_preference_controls)
-    assert 'st.expander("⚙️ Carteira e elegibilidade", expanded=False)' in corpo
+    assert 'st.expander("⚙️ Carteira e elegibilidade", expanded=True)' in corpo
     assert 'st.expander("🌐 Cenário macroeconômico e estresse", expanded=False)' in corpo
     # Sem cabeçalho solto fora do expander.
     assert 'st.markdown("**Carteira e elegibilidade**")' not in corpo
