@@ -519,61 +519,42 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
 # sinal para quem decide — uma bandeira que acende para 190 e só descreve 8
 # não distingue ninguém.
 #
-# A regra mora AQUI e só aqui. Este projeto já teve três cópias da mesma
-# guarda com duas divergências entre elas; `tests/test_dossie_severidade.py`
+# A regra mora em `core/severidade_flags.py`, importada abaixo. Este
+# projeto já teve três cópias da mesma guarda com duas divergências entre
+# elas, e esta foi a quarta; `tests/test_us_severidade_historica.py`
 # verifica por AST que nenhum outro módulo compara os prefixos por conta
-# própria.
+# própria, este inclusive.
 
-SEVERIDADE_RISCO = "risco_confirmado"
-SEVERIDADE_CONTEXTO = "contexto_observado"
-SEVERIDADE_COBERTURA = "limitacao_cobertura"
+# A tabela de prefixos, `severidade_flag` e `agrupa_flags_por_severidade`
+# moram em `core/severidade_flags.py` — e só lá. Este módulo mantinha uma
+# segunda cópia, que a checagem por AST do lado dos EUA isentava por nome de
+# arquivo; as duas divergiram em `MOMENTUM:` e `DADOS:` sem que nada quebrasse.
+from core.severidade_flags import (  # noqa: E402
+    SEVERIDADE_COBERTURA,
+    SEVERIDADE_CONTEXTO,
+    SEVERIDADE_RISCO,
+    SEVERIDADES,
+    agrupa_flags_por_severidade,
+    severidade_flag,
+)
 
-SEVERIDADES = (SEVERIDADE_RISCO, SEVERIDADE_CONTEXTO, SEVERIDADE_COBERTURA)
+__all__ = [  # re-exportados: as telas da B3 importam daqui há mais tempo
+    "SEVERIDADES",
+    "SEVERIDADE_COBERTURA",
+    "SEVERIDADE_CONTEXTO",
+    "SEVERIDADE_RISCO",
+    "TITULO_SEVERIDADE",
+    "agrupa_flags_por_severidade",
+    "severidade_flag",
+]
 
-#: Prefixo emitido por `_checks` → severidade. Sem prefixo conhecido a linha é
-#: risco confirmado: o default tem de ser o lado seguro, senão um prefixo novo
-#: some do radar de quem decide.
-_PREFIXO_SEVERIDADE: dict[str, str] = {
-    "CONTEXTO:": SEVERIDADE_CONTEXTO,
-    "COBERTURA:": SEVERIDADE_COBERTURA,
-    # `MOMENTUM:` olha UM trimestre a/a. Condenar por um período isolado é o
-    # oposto do que este ramo existe para fazer — a pergunta é a qualidade
-    # histórica. Medido no armazém: 94 das 426 empresas estavam em bandeira
-    # vermelha SÓ por esta linha. Ela continua visível e continua chegando ao
-    # parecer; o que muda é o cabeçalho sob o qual chega.
-    "MOMENTUM:": SEVERIDADE_CONTEXTO,
-    # `DADOS:` descreve defeito do NOSSO banco (provento divergente na mesma
-    # data-ex, DY do banco em desacordo com o recomputado). É o que não
-    # conseguimos verificar, não risco da empresa: marcar a companhia de
-    # perigosa por bug de ingestão nossa é a ponderação indevida que este ramo
-    # existe para corrigir. Medido: 50 das 426 estavam em vermelho SÓ por ela.
-    "DADOS:": SEVERIDADE_COBERTURA,
-}
-
-#: Cabeçalhos de exibição, compartilhados pelas duas telas.
+#: Cabeçalhos de exibição das telas da B3. A redação é da B3 e fica aqui de
+#: propósito: o que não pode divergir é a REGRA, não o título.
 TITULO_SEVERIDADE: dict[str, str] = {
     SEVERIDADE_RISCO: "Red flags determinísticas — risco confirmado (verificadas em código)",
     SEVERIDADE_CONTEXTO: "Observações de contexto — medidas em código, não são risco confirmado",
     SEVERIDADE_COBERTURA: "Limitações de cobertura — o que os dados não permitem verificar",
 }
-
-
-def severidade_flag(flag: str) -> str:
-    """Severidade de UMA linha de ``red_flags``. Função pura, fonte única."""
-    texto = (flag or "").strip()
-    for prefixo, severidade in _PREFIXO_SEVERIDADE.items():
-        if texto.startswith(prefixo):
-            return severidade
-    return SEVERIDADE_RISCO
-
-
-def agrupa_flags_por_severidade(flags) -> dict[str, list[str]]:
-    """``red_flags`` → ``{severidade: [linhas]}``, com as três chaves sempre
-    presentes (na ordem de ``SEVERIDADES``), mesmo vazias."""
-    grupos: dict[str, list[str]] = {s: [] for s in SEVERIDADES}
-    for flag in flags or []:
-        grupos[severidade_flag(flag)].append(flag)
-    return grupos
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
