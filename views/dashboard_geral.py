@@ -43,6 +43,15 @@ _COR_ALERTA     = "#F6C90E"
 _COR_NEGATIVO   = "#FC5C7D"
 _COR_NEUTRO     = "#9CA3AF"
 
+# Em HTML os mesmos papéis viram token, para acompanhar o tema claro.
+_TOKEN_POR_COR = {
+    _COR_PATRIMONIO: "var(--app-info)",
+    _COR_FLUXO: "var(--app-primary)",
+    _COR_ALERTA: "var(--app-warning)",
+    _COR_NEGATIVO: "var(--app-danger)",
+    _COR_NEUTRO: "var(--app-muted)",
+}
+
 _CORES_CAT = [
     "#4C9BE8", "#E84C9B", "#F5A623", "#2ECC71", "#A855F7",
     "#7C3AED", "#63cab7", "#E8C94C", "#4CE8D8", "#E8714C",
@@ -58,12 +67,12 @@ _DASHBOARD_STYLES = """
 <style>
 /* Dashboard Geral v4 — escopo próprio para permitir evolução/reversão isolada. */
 .dg-shell {
-    --dg-surface: rgba(18, 22, 33, 0.88);
-    --dg-surface-strong: rgba(22, 27, 41, 0.96);
-    --dg-border: rgba(148, 163, 184, 0.14);
-    --dg-text: #F8FAFC;
-    --dg-muted: #94A3B8;
-    --dg-subtle: #64748B;
+    --dg-surface: var(--app-surface);
+    --dg-surface-strong: var(--app-surface-raised);
+    --dg-border: var(--app-border);
+    --dg-text: var(--app-text);
+    --dg-muted: var(--app-muted);
+    --dg-subtle: var(--app-subtle);
     margin-bottom: 0.35rem;
 }
 .dg-hero {
@@ -80,7 +89,8 @@ _DASHBOARD_STYLES = """
     background:
         radial-gradient(circle at 88% 8%, rgba(74,158,255,.20), transparent 34%),
         radial-gradient(circle at 8% 105%, rgba(0,200,150,.13), transparent 36%),
-        linear-gradient(145deg, #171C2A 0%, #111620 58%, #10131C 100%);
+        linear-gradient(145deg, var(--app-surface-raised) 0%,
+            var(--app-surface) 58%, var(--app-bg) 100%);
     box-shadow: 0 18px 46px rgba(0,0,0,.27), inset 0 1px 0 rgba(255,255,255,.045);
 }
 .dg-hero::after {
@@ -94,7 +104,7 @@ _DASHBOARD_STYLES = """
     border-radius: 50%;
 }
 .dg-eyebrow {
-    color: #60A5FA;
+    color: var(--app-info);
     font-size: .68rem;
     font-weight: 800;
     letter-spacing: .16em;
@@ -133,8 +143,8 @@ _DASHBOARD_STYLES = """
     padding: .32rem .7rem;
     border: 1px solid var(--dg-border);
     border-radius: 999px;
-    background: rgba(15,23,42,.66);
-    color: #CBD5E1;
+    background: var(--app-surface);
+    color: var(--dg-text);
     font-size: .72rem;
     font-weight: 700;
     white-space: nowrap;
@@ -143,8 +153,8 @@ _DASHBOARD_STYLES = """
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--chip-color, #4A9EFF);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--chip-color, #4A9EFF) 16%, transparent);
+    background: var(--chip-color, var(--app-info));
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--chip-color, var(--app-info)) 16%, transparent);
 }
 .dg-kpi-grid {
     display: grid;
@@ -240,7 +250,7 @@ _DASHBOARD_STYLES = """
     font-size: .95rem;
 }
 .dg-section-title {
-    color: #E2E8F0;
+    color: var(--dg-text);
     font-size: 1rem;
     font-weight: 760;
     letter-spacing: -.015em;
@@ -268,16 +278,16 @@ _DASHBOARD_STYLES = """
     background: rgba(74,158,255,.055);
 }
 .dg-callout-icon {
-    color: #60A5FA;
+    color: var(--app-info);
     font-size: 1rem;
     line-height: 1.4;
 }
 .dg-callout-copy {
-    color: #94A3B8;
+    color: var(--dg-muted);
     font-size: .78rem;
     line-height: 1.5;
 }
-.dg-callout-copy strong { color: #E2E8F0; }
+.dg-callout-copy strong { color: var(--dg-text); }
 .dg-exec-detail {
     min-height: 246px;
     padding: .35rem .25rem .15rem;
@@ -304,10 +314,24 @@ _DASHBOARD_STYLES = """
 .st-key-dg_geography_chart,
 .st-key-dg_positions_chart,
 .st-key-dg_evolution_chart {
-    border-color: rgba(148,163,184,.14) !important;
+    border-color: var(--app-border) !important;
     border-radius: 16px !important;
+    box-shadow: var(--app-shadow);
+}
+/* Cards de texto seguem o tema; os de gráfico mantêm a superfície escura do
+   Plotly, que o CSS não recolore. */
+.st-key-dg_executive_card,
+.st-key-dg_investment_card {
+    background: linear-gradient(160deg, var(--app-surface-raised), var(--app-surface));
+}
+.st-key-dg_history_chart,
+.st-key-dg_categories_chart,
+.st-key-dg_yoy_chart,
+.st-key-dg_allocation_chart,
+.st-key-dg_geography_chart,
+.st-key-dg_positions_chart,
+.st-key-dg_evolution_chart {
     background: linear-gradient(160deg, rgba(20,25,38,.94), rgba(14,17,26,.96));
-    box-shadow: 0 8px 26px rgba(0,0,0,.18);
 }
 
 @media (max-width: 1100px) {
@@ -482,12 +506,21 @@ def _titulo_secao(icone: str, titulo: str, subtitulo: str, cor: str) -> None:
     )
 
 
-def _linha_kv(label: str, valor: str, cor_val: str = "#E2E8F0") -> str:
+def _cor_texto(cor: str) -> str:
+    """Traduz a cor semântica para o token do tema.
+
+    Os literais seguem existindo porque o Plotly não resolve `var(--…)`; em
+    texto HTML, porém, amarelo #F6C90E sobre fundo claro fica ilegível.
+    """
+    return _TOKEN_POR_COR.get(cor.upper(), cor)
+
+
+def _linha_kv(label: str, valor: str, cor_val: str = "var(--app-text)") -> str:
     return (
         '<div style="display:flex;justify-content:space-between;align-items:center;'
-        'gap:10px;padding:5px 0;border-bottom:1px solid #1A1F2E;">'
-        f'<span style="font-size:0.80rem;color:#9CA3AF;min-width:0;">{label}</span>'
-        f'<span style="font-size:0.88rem;font-weight:700;color:{cor_val};'
+        'gap:10px;padding:5px 0;border-bottom:1px solid var(--app-border);">'
+        f'<span style="font-size:0.80rem;color:var(--app-muted);min-width:0;">{label}</span>'
+        f'<span style="font-size:0.88rem;font-weight:700;color:{_cor_texto(cor_val)};'
         f'text-align:right;white-space:nowrap;">{valor}</span>'
         '</div>'
     )
@@ -496,7 +529,7 @@ def _linha_kv(label: str, valor: str, cor_val: str = "#E2E8F0") -> str:
 def _barra(pct: float, cor: str) -> str:
     w = min(pct, 100)
     return f"""
-    <div style="background:#1E2533;border-radius:4px;height:5px;overflow:hidden;margin-top:4px">
+    <div style="background:var(--app-surface-raised);border-radius:4px;height:5px;overflow:hidden;margin-top:4px">
         <div style="background:{cor};width:{w:.0f}%;height:100%;border-radius:4px"></div>
     </div>"""
 
@@ -514,14 +547,14 @@ def _label_card(texto: str, cor: str) -> str:
             f'letter-spacing:0.14em;color:{cor};margin-bottom:14px">{texto}</div>')
 
 
-def _titulo_valor(label: str, valor: str, cor: str = "#E2E8F0") -> str:
-    return (f'<div style="font-size:0.78rem;color:#718096;margin-bottom:2px">{label}</div>'
-            f'<div style="font-size:1.75rem;font-weight:800;color:{cor};'
+def _titulo_valor(label: str, valor: str, cor: str = "var(--app-text)") -> str:
+    return (f'<div style="font-size:0.78rem;color:var(--app-subtle);margin-bottom:2px">{label}</div>'
+            f'<div style="font-size:1.75rem;font-weight:800;color:{_cor_texto(cor)};'
             f'letter-spacing:0;margin-bottom:14px;line-height:1">{valor}</div>')
 
 
 def _divisor() -> str:
-    return '<div style="border-top:1px solid #1E2533;margin:12px 0"></div>'
+    return '<div style="border-top:1px solid var(--app-border);margin:12px 0"></div>'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -543,10 +576,10 @@ def _card_fluxo(receitas: float, despesas: float, investimentos: float) -> None:
         + _divisor()
         + _titulo_valor("Saldo do mês (líquido)", fmt_moeda(saldo), cor_saldo)
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
-        + '<span style="font-size:0.78rem;color:#718096">Taxa de poupança</span>'
+        + '<span style="font-size:0.78rem;color:var(--app-subtle)">Taxa de poupança</span>'
         + f'<span style="font-size:0.88rem;font-weight:700;color:{cor_taxa}">'
         + f'{fmt_percentual(taxa, sinal=False)} '
-        + '<span style="font-size:0.70rem;color:#4A5568">/ meta 30%</span></span></div>'
+        + '<span style="font-size:0.70rem;color:var(--app-subtle)">/ meta 30%</span></span></div>'
         + _barra(taxa_w, cor_taxa)
     )
     _card(_COR_FLUXO, corpo)
@@ -562,7 +595,7 @@ def _card_investimentos(pat: dict, classes: list, aportado_ano: float) -> None:
             f'<span style="display:inline-flex;align-items:center;gap:6px;">'
             f'<span style="width:7px;height:7px;border-radius:50%;background:{c["cor"]};'
             f'display:inline-block"></span>{c["nome"]}'
-            f'<span style="font-size:0.72rem;color:#4A5568">{c["pct_carteira"]:.1f}%</span></span>',
+            f'<span style="font-size:0.72rem;color:var(--app-subtle)">{c["pct_carteira"]:.1f}%</span></span>',
             fmt_moeda(c["valor"]),
         )
 
@@ -776,15 +809,15 @@ def _fig_evolucao_investimentos(evolucao: dict) -> go.Figure:
 
 def _mini_metric(label: str, valor: str, detalhe: str, cor: str) -> str:
     return f"""
-    <div style="background:linear-gradient(135deg,rgba(18,21,30,0.95) 0%,rgba(20,25,45,0.9) 100%);
-                border:1px solid rgba(255,255,255,0.06);border-left:4px solid {cor};
+    <div style="background:linear-gradient(135deg,var(--app-surface-raised) 0%,var(--app-surface) 100%);
+                border:1px solid var(--app-border);border-left:4px solid {cor};
                 border-radius:12px;padding:16px 16px;min-height:100px;
-                box-shadow:0 2px 12px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,255,255,0.03);">
+                box-shadow:var(--app-shadow);">
         <div style="font-size:0.64rem;text-transform:uppercase;letter-spacing:0.14em;
                     color:{cor};font-weight:800;margin-bottom:10px;opacity:0.85">{label}</div>
         <div style="font-size:1.45rem;font-weight:900;color:{cor};line-height:1;
                     text-shadow:0 0 18px {cor}55">{valor}</div>
-        <div style="font-size:0.74rem;color:#6B7280;margin-top:9px;line-height:1.3">{detalhe}</div>
+        <div style="font-size:0.74rem;color:var(--app-subtle);margin-top:9px;line-height:1.3">{detalhe}</div>
     </div>
     """
 
@@ -808,20 +841,20 @@ def _modulo_card(
 ) -> str:
     rows = "".join(_linha_kv(label, valor, valor_cor) for label, valor, valor_cor in linhas)
     return (
-        '<div style="background:linear-gradient(180deg,rgba(18,21,30,0.98) 0%,rgba(14,17,26,0.98) 100%);'
-        f'border:1px solid rgba(255,255,255,0.07);border-left:4px solid {cor};'
+        '<div style="background:linear-gradient(180deg,var(--app-surface-raised) 0%,var(--app-surface) 100%);'
+        f'border:1px solid var(--app-border);border-left:4px solid {cor};'
         'border-radius:12px;padding:18px 18px 16px;min-height:230px;'
-        'box-shadow:0 3px 16px rgba(0,0,0,0.32);">'
+        'box-shadow:var(--app-shadow);">'
         '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">'
         '<div style="display:flex;gap:10px;align-items:center;min-width:0;">'
         f'<div style="width:28px;height:28px;border-radius:8px;background:{cor}22;color:{cor};'
         f'display:flex;align-items:center;justify-content:center;font-weight:900;'
         f'font-size:0.85rem;border:1px solid {cor}55;flex-shrink:0;">{numero}</div>'
-        f'<div style="font-size:0.96rem;font-weight:850;color:#E2E8F0;line-height:1.2;min-width:0;">{titulo}</div>'
+        f'<div style="font-size:0.96rem;font-weight:850;color:var(--app-text);line-height:1.2;min-width:0;">{titulo}</div>'
         '</div>'
         f'{_status_chip(status, status_cor)}'
         '</div>'
-        f'<div style="font-size:0.78rem;color:#9CA3AF;line-height:1.42;margin:13px 0 12px;">{resumo}</div>'
+        f'<div style="font-size:0.78rem;color:var(--app-muted);line-height:1.42;margin:13px 0 12px;">{resumo}</div>'
         f'{rows}'
         '</div>'
     )
@@ -1159,12 +1192,12 @@ def _idade_modelo(modelo: dict) -> tuple[str, int | None]:
 
 def _card_lista_html(titulo: str, cor: str, corpo: str, rodape: str) -> str:
     return (
-        '<div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;'
+        '<div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;'
         'padding:16px 18px;">'
         f'<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;'
         f'color:{cor};font-weight:800;margin-bottom:10px;">{escape(titulo)}</div>'
         f'{corpo}'
-        + (f'<div style="font-size:0.76rem;color:#9CA3AF;margin-top:10px;">{escape(rodape)}</div>'
+        + (f'<div style="font-size:0.76rem;color:var(--app-muted);margin-top:10px;">{escape(rodape)}</div>'
            if rodape else "")
         + '</div>'
     )
@@ -1238,9 +1271,9 @@ def _secao_carteira_modelo(
     visiveis = tickers_todos[:_MAX_TICKERS_VISIVEIS]
     ocultos = len(tickers_todos) - len(visiveis)
     lista_html = (
-        '<div style="font-size:1.05rem;font-weight:850;color:#E2E8F0;line-height:1.55;">'
+        '<div style="font-size:1.05rem;font-weight:850;color:var(--app-text);line-height:1.55;">'
         + escape(", ".join(visiveis))
-        + (f' <span style="color:#9CA3AF;font-weight:700;">+{ocultos} outras</span>'
+        + (f' <span style="color:var(--app-muted);font-weight:700;">+{ocultos} outras</span>'
            if ocultos > 0 else "")
         + "</div>"
     )
@@ -1437,14 +1470,14 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
     with c1:
         st.markdown(
             f"""
-            <div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;
+            <div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
                         padding:16px 18px;">
                 <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
-                            color:#4A9EFF;font-weight:800;margin-bottom:10px;">FIIs selecionados</div>
-                <div style="font-size:1.05rem;font-weight:850;color:#E2E8F0;line-height:1.55;">
+                            color:var(--app-info);font-weight:800;margin-bottom:10px;">FIIs selecionados</div>
+                <div style="font-size:1.05rem;font-weight:850;color:var(--app-text);line-height:1.55;">
                     {tickers}
                 </div>
-                <div style="font-size:0.76rem;color:#9CA3AF;margin-top:10px;">
+                <div style="font-size:0.76rem;color:var(--app-muted);margin-top:10px;">
                     Diversificada por tipo (tijolo · papel · fof · híbrido), com teto por FII e por tipo.
                 </div>
             </div>
@@ -1458,10 +1491,10 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
             rows_html += _linha_kv(f"{p['ticker']} · {seg}", f"{p['peso'] * 100:.1f}%", _COR_FLUXO)
         st.markdown(
             f"""
-            <div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;
+            <div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
                         padding:16px 18px;">
                 <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
-                            color:#00C896;font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>
+                            color:var(--app-primary);font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>
                 {rows_html}
             </div>
             """,
@@ -1482,7 +1515,7 @@ def _secao_sugestoes_carteira(
         return
 
     st.markdown(
-        '<div class="dg-shell"><div style="border-top:1px solid #1E2533;'
+        '<div class="dg-shell"><div style="border-top:1px solid var(--app-border);'
         'margin:26px 0 6px;"></div></div>',
         unsafe_allow_html=True,
     )
@@ -1764,12 +1797,12 @@ def render() -> None:
                     pct = c["gasto"] / total_cats * 100 if total_cats else 0
                     st.markdown(
                         f'<div style="display:flex;justify-content:space-between;'
-                        f'align-items:center;padding:4px 0;border-bottom:1px solid #1A1F2E;">'
-                        f'<span style="font-size:0.79rem;color:#CBD5E0">'
+                        f'align-items:center;padding:4px 0;border-bottom:1px solid var(--app-border);">'
+                        f'<span style="font-size:0.79rem;color:var(--app-muted)">'
                         f'{escape(str(c["nome"]))}</span>'
-                        f'<span style="font-size:0.79rem;font-weight:600;color:#E2E8F0">'
+                        f'<span style="font-size:0.79rem;font-weight:600;color:var(--app-text)">'
                         f'{fmt_moeda(c["gasto"])} '
-                        f'<span style="color:#64748B;font-size:0.70rem">{pct:.1f}%</span>'
+                        f'<span style="color:var(--app-subtle);font-size:0.70rem">{pct:.1f}%</span>'
                         f'</span></div>',
                         unsafe_allow_html=True,
                     )
