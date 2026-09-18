@@ -56,6 +56,21 @@ _COR_ALERTA   = "#F6C90E"
 _COR_NEUTRO   = "#9CA3AF"
 _COR_ROXO     = "#9B59B6"
 
+# Em HTML as mesmas cores viram token, para acompanhar o tema claro; o Plotly
+# segue recebendo o literal, porque não resolve `var(--…)`.
+_TOKEN_POR_COR = {
+    _COR_POSITIVO: "var(--app-primary)",
+    _COR_NEGATIVO: "var(--app-danger)",
+    _COR_INFO: "var(--app-info)",
+    _COR_ALERTA: "var(--app-warning)",
+    _COR_NEUTRO: "var(--app-muted)",
+}
+
+
+def _cor_texto(cor: str) -> str:
+    """Traduz a cor semântica para o token do tema (texto e bordas em HTML)."""
+    return _TOKEN_POR_COR.get(str(cor).upper(), cor)
+
 
 _ICONES_B3_CDN = (
     "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones"
@@ -65,47 +80,47 @@ _ICONES_B3_CDN = (
 _FUND_CSS = """
 <style>
 .fund-card {
-    background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+    background:var(--app-surface-raised);border:1px solid var(--app-border);
     border-radius:14px;padding:16px 18px;margin-bottom:10px;transition:border-color .2s;
 }
 .fund-card:hover { border-color:rgba(0,200,150,0.35); }
 .fund-header { display:flex;justify-content:space-between;align-items:flex-start;
                margin-bottom:10px;gap:10px; }
-.fund-ticker { font-size:1.0rem;font-weight:700;color:#E2E8F0; }
-.fund-name   { font-size:0.71rem;color:#8b9ab0;margin-top:2px;max-width:200px; }
-.fund-price  { font-size:1.0rem;font-weight:700;color:#00C896;text-align:right; }
-.fund-chg-pos { font-size:0.70rem;color:#00C896;text-align:right; }
-.fund-chg-neg { font-size:0.70rem;color:#FC5C7D;text-align:right; }
-.fund-chg-neu { font-size:0.70rem;color:#9CA3AF;text-align:right; }
+.fund-ticker { font-size:1.0rem;font-weight:700;color:var(--app-text); }
+.fund-name   { font-size:0.71rem;color:var(--app-muted);margin-top:2px;max-width:200px; }
+.fund-price  { font-size:1.0rem;font-weight:700;color:var(--app-primary);text-align:right; }
+.fund-chg-pos { font-size:0.70rem;color:var(--app-primary);text-align:right; }
+.fund-chg-neg { font-size:0.70rem;color:var(--app-danger);text-align:right; }
+.fund-chg-neu { font-size:0.70rem;color:var(--app-muted);text-align:right; }
 .fund-row { display:flex;justify-content:space-between;align-items:center;
-            padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04); }
+            padding:4px 0;border-bottom:1px solid var(--app-border); }
 .fund-row:last-child { border-bottom:none; }
-.fund-key     { font-size:0.67rem;color:#8b9ab0; }
-.fund-val     { font-size:0.77rem;font-weight:600;color:#E2E8F0; }
-.fund-val-pos { font-size:0.77rem;font-weight:600;color:#00C896; }
-.fund-val-neg { font-size:0.77rem;font-weight:600;color:#FC5C7D; }
-.fund-val-warn{ font-size:0.77rem;font-weight:600;color:#F6C90E; }
-.fund-sec { font-size:0.63rem;font-weight:700;color:#8b9ab0;text-transform:uppercase;
+.fund-key     { font-size:0.67rem;color:var(--app-muted); }
+.fund-val     { font-size:0.77rem;font-weight:600;color:var(--app-text); }
+.fund-val-pos { font-size:0.77rem;font-weight:600;color:var(--app-primary); }
+.fund-val-neg { font-size:0.77rem;font-weight:600;color:var(--app-danger); }
+.fund-val-warn{ font-size:0.77rem;font-weight:600;color:var(--app-warning); }
+.fund-sec { font-size:0.63rem;font-weight:700;color:var(--app-muted);text-transform:uppercase;
             letter-spacing:.05em;padding:6px 0 2px;margin-top:4px;
-            border-top:1px solid rgba(255,255,255,0.06); }
+            border-top:1px solid var(--app-border); }
 .f-chip { display:inline-block;font-size:0.69rem;font-weight:600;
           padding:3px 10px;border-radius:20px;margin:2px 3px 2px 0; }
-.f-chip-green  { background:rgba(0,200,150,0.15);color:#00C896;border:1px solid rgba(0,200,150,0.3); }
-.f-chip-yellow { background:rgba(246,201,14,0.15);color:#F6C90E;border:1px solid rgba(246,201,14,0.3); }
-.f-chip-red    { background:rgba(252,92,125,0.15);color:#FC5C7D;border:1px solid rgba(252,92,125,0.3); }
-.f-chip-blue   { background:rgba(74,158,255,0.15);color:#4A9EFF;border:1px solid rgba(74,158,255,0.3); }
+.f-chip-green  { background:rgba(0,200,150,0.15);color:var(--app-primary);border:1px solid rgba(0,200,150,0.3); }
+.f-chip-yellow { background:rgba(246,201,14,0.15);color:var(--app-warning);border:1px solid rgba(246,201,14,0.3); }
+.f-chip-red    { background:rgba(252,92,125,0.15);color:var(--app-danger);border:1px solid rgba(252,92,125,0.3); }
+.f-chip-blue   { background:rgba(74,158,255,0.15);color:var(--app-info);border:1px solid rgba(74,158,255,0.3); }
 .f-chip-purple { background:rgba(155,89,182,0.15);color:#9B59B6;border:1px solid rgba(155,89,182,0.3); }
 .alert-item { border-left:3px solid;padding:10px 14px;margin-bottom:9px;
-              border-radius:0 8px 8px 0;background:rgba(255,255,255,0.03);
-              font-size:0.83rem;color:#c8d4e0;line-height:1.45; }
-.alert-red    { border-color:#FC5C7D; }
-.alert-yellow { border-color:#F6C90E; }
-.alert-green  { border-color:#00C896; }
-.alert-blue   { border-color:#4A9EFF; }
+              border-radius:0 8px 8px 0;background:var(--app-surface-raised);
+              font-size:0.83rem;color:var(--app-muted);line-height:1.45; }
+.alert-red    { border-color:var(--app-danger); }
+.alert-yellow { border-color:var(--app-warning); }
+.alert-green  { border-color:var(--app-primary); }
+.alert-blue   { border-color:var(--app-info); }
 .alert-lbl { font-size:0.67rem;font-weight:700;text-transform:uppercase;
              letter-spacing:.05em;margin-bottom:2px; }
-.lbl-risk { color:#FC5C7D; } .lbl-warn { color:#F6C90E; }
-.lbl-opp  { color:#00C896; } .lbl-info { color:#4A9EFF; }
+.lbl-risk { color:var(--app-danger); } .lbl-warn { color:var(--app-warning); }
+.lbl-opp  { color:var(--app-primary); } .lbl-info { color:var(--app-info); }
 </style>
 """
 
@@ -157,10 +172,10 @@ def _f_logo(ticker: str) -> str:
     return (
         f'<div style="position:relative;width:36px;height:36px;border-radius:8px;'
         f'background:rgba(0,200,150,0.2);display:flex;align-items:center;'
-        f'justify-content:center;font-size:0.72rem;font-weight:700;color:#00C896;'
+        f'justify-content:center;font-size:0.72rem;font-weight:700;color:var(--app-primary);'
         f'flex-shrink:0;">{esc[:3]}'
         f'<span style="position:absolute;inset:0;border-radius:8px;'
-        f'background:rgba(255,255,255,0.08) url(\'{url}\') center/contain no-repeat;'
+        f'background:var(--app-surface-raised) url(\'{url}\') center/contain no-repeat;'
         f'padding:3px;"></span></div>'
     )
 
@@ -755,14 +770,14 @@ def _build_corr_data(posicoes: list) -> dict:
 def _kpi_macro(titulo: str, valor: str, sub: str, cor: str) -> str:
     """Card compacto para 7 colunas (macro)."""
     return (
-        f'<div style="background:#12151E;border:1px solid #1E2533;'
+        f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
         f'border-radius:8px;padding:13px 11px 9px;height:100%;">'
         f'<div style="font-size:0.54rem;font-weight:800;text-transform:uppercase;'
-        f'letter-spacing:0.11em;color:#4A5568;margin-bottom:5px;">{titulo}</div>'
-        f'<div style="font-size:1.15rem;font-weight:800;color:{cor};'
+        f'letter-spacing:0.11em;color:var(--app-subtle);margin-bottom:5px;">{titulo}</div>'
+        f'<div style="font-size:1.15rem;font-weight:800;color:{_cor_texto(cor)};'
         f'letter-spacing:-0.02em;line-height:1.1;margin-bottom:3px;'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{valor}</div>'
-        f'<div style="font-size:0.62rem;color:#4A5568;line-height:1.3;">{sub}</div>'
+        f'<div style="font-size:0.62rem;color:var(--app-subtle);line-height:1.3;">{sub}</div>'
         f'</div>'
     )
 
@@ -771,18 +786,18 @@ def _kpi(titulo: str, valor: str, sub: str, cor: str, tag: str = "") -> str:
     tag_html = (
         f'<span style="font-size:0.65rem;font-weight:700;padding:1px 5px;'
         f'border-radius:3px;background:rgba(0,200,150,0.15);'
-        f'color:{_COR_POSITIVO};margin-bottom:4px;display:inline-block;">{tag}</span><br>'
+        f'color:{_cor_texto(_COR_POSITIVO)};margin-bottom:4px;display:inline-block;">{tag}</span><br>'
         if tag else ""
     )
     return (
-        f'<div style="background:#12151E;border:1px solid #1E2533;'
+        f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
         f'border-radius:10px;padding:18px 16px 14px;height:100%;">'
         f'<div style="font-size:0.60rem;font-weight:800;text-transform:uppercase;'
-        f'letter-spacing:0.13em;color:#4A5568;margin-bottom:8px;">{titulo}</div>'
+        f'letter-spacing:0.13em;color:var(--app-subtle);margin-bottom:8px;">{titulo}</div>'
         f'{tag_html}'
-        f'<div style="font-size:1.60rem;font-weight:800;color:{cor};'
+        f'<div style="font-size:1.60rem;font-weight:800;color:{_cor_texto(cor)};'
         f'letter-spacing:-0.02em;line-height:1.1;margin-bottom:6px;">{valor}</div>'
-        f'<div style="font-size:0.72rem;color:#4A5568;line-height:1.3;">{sub}</div>'
+        f'<div style="font-size:0.72rem;color:var(--app-subtle);line-height:1.3;">{sub}</div>'
         f'</div>'
     )
 
@@ -796,12 +811,12 @@ def _estado_item(tipo: str, titulo: str, texto: str) -> str:
     }
     cor, icone = cores.get(tipo, (_COR_NEUTRO, "·"))
     return (
-        f'<div style="border-left:3px solid {cor};padding:8px 12px;'
-        f'margin-bottom:8px;background:rgba(255,255,255,0.02);border-radius:0 6px 6px 0;">'
+        f'<div style="border-left:3px solid {_cor_texto(cor)};padding:8px 12px;'
+        f'margin-bottom:8px;background:var(--app-surface-raised);border-radius:0 6px 6px 0;">'
         f'<div style="font-size:0.65rem;font-weight:800;text-transform:uppercase;'
-        f'letter-spacing:0.1em;color:{cor};margin-bottom:3px;">'
+        f'letter-spacing:0.1em;color:{_cor_texto(cor)};margin-bottom:3px;">'
         f'{icone} {titulo}</div>'
-        f'<div style="font-size:0.80rem;color:#CBD5E0;">{texto}</div>'
+        f'<div style="font-size:0.80rem;color:var(--app-muted);">{texto}</div>'
         f'</div>'
     )
 
@@ -809,7 +824,7 @@ def _estado_item(tipo: str, titulo: str, texto: str) -> str:
 def _secao_titulo_orig(icone: str, titulo: str, sub: str = "") -> None:
     """Título de seção estilo app original (ícone grande + texto)."""
     sub_html = (
-        f'<div style="font-size:0.80rem;color:#718096;margin-top:2px;">{sub}</div>'
+        f'<div style="font-size:0.80rem;color:var(--app-subtle);margin-top:2px;">{sub}</div>'
         if sub else ""
     )
     st.markdown(
@@ -817,7 +832,7 @@ def _secao_titulo_orig(icone: str, titulo: str, sub: str = "") -> None:
         f'margin-top:24px;margin-bottom:12px;">'
         f'<span style="font-size:1.5rem">{icone}</span>'
         f'<div>'
-        f'<span style="font-size:1.30rem;font-weight:800;color:#E2E8F0;">{titulo}</span>'
+        f'<span style="font-size:1.30rem;font-weight:800;color:var(--app-text);">{titulo}</span>'
         f'{sub_html}'
         f'</div>'
         f'</div>',
@@ -1587,7 +1602,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         st.markdown(_kpi(
             "Patrimônio Total", fmt_moeda(total),
             f"{carteira['num_ativos']} posições ativas",
-            "#E2E8F0",
+            "var(--app-text)",
         ), unsafe_allow_html=True)
     with c2:
         st.markdown(_kpi(
@@ -1632,7 +1647,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             "Nº de Ativos",
             str(carteira["num_ativos"]),
             f"N efetivo: {n_efetivo}",
-            "#E2E8F0",
+            "var(--app-text)",
         ), unsafe_allow_html=True)
 
     # ── Visão Geral ───────────────────────────────────────────────────────────
@@ -1642,7 +1657,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
 
     with col_estado:
         st.markdown(
-            '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+            '<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
             'margin-bottom:10px;">🌐 Estado da Carteira</div>',
             unsafe_allow_html=True,
         )
@@ -1653,7 +1668,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
 
     with col_evolucao:
         st.markdown(
-            '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+            '<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
             'margin-bottom:10px;">📐 Evolução Patrimonial</div>',
             unsafe_allow_html=True,
         )
@@ -1680,7 +1695,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
 
     with col_radar:
         st.markdown(
-            '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+            '<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
             'margin-bottom:8px;">🎯 Radar de Risco</div>',
             unsafe_allow_html=True,
         )
@@ -1692,19 +1707,19 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
 
     with col_acoes:
         st.markdown(
-            '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+            '<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
             'margin-bottom:8px;">✅ Ações Sugeridas</div>',
             unsafe_allow_html=True,
         )
         sugestoes = _acoes_sugeridas(carteira, n_efetivo, dy)
         for s in sugestoes:
             st.markdown(
-                f'<div style="border-left:3px solid {s["cor"]};'
+                f'<div style="border-left:3px solid {_cor_texto(s["cor"])};'
                 f'padding:10px 12px;margin-bottom:10px;'
-                f'background:rgba(255,255,255,0.02);border-radius:0 6px 6px 0;">'
-                f'<div style="font-size:0.78rem;font-weight:700;color:{s["cor"]};'
+                f'background:var(--app-surface-raised);border-radius:0 6px 6px 0;">'
+                f'<div style="font-size:0.78rem;font-weight:700;color:{_cor_texto(s["cor"])};'
                 f'margin-bottom:3px;">{s["tag"]} {s["titulo"]}</div>'
-                f'<div style="font-size:0.78rem;color:#9CA3AF;">{s["texto"]}</div>'
+                f'<div style="font-size:0.78rem;color:var(--app-muted);">{s["texto"]}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -1719,7 +1734,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         col_donut, col_barras = st.columns([1, 1], gap="medium")
         with col_donut:
             st.markdown(
-                '<div style="font-size:0.83rem;color:#9CA3AF;'
+                '<div style="font-size:0.83rem;color:var(--app-muted);'
                 'margin-bottom:8px;">Por tipo de investimento</div>',
                 unsafe_allow_html=True,
             )
@@ -1729,7 +1744,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                             key="dash_donut")
         with col_barras:
             st.markdown(
-                '<div style="font-size:0.83rem;color:#9CA3AF;'
+                '<div style="font-size:0.83rem;color:var(--app-muted);'
                 'margin-bottom:8px;">Valores de mercado por tipo</div>',
                 unsafe_allow_html=True,
             )
@@ -1826,22 +1841,22 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         with col_leg:
             linhas_faixa = "".join(
                 f'<div style="display:flex;justify-content:space-between;gap:10px;'
-                f'padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05);">'
-                f'<span style="color:#CBD5E0;">{_html.escape(d["fator"])}</span>'
-                f'<span style="color:{_faixa_sensibilidade(d["exposicao"])[1]};'
+                f'padding:5px 0;border-bottom:1px solid var(--app-border);">'
+                f'<span style="color:var(--app-muted);">{_html.escape(d["fator"])}</span>'
+                f'<span style="color:{_cor_texto(_faixa_sensibilidade(d["exposicao"])[1])};'
                 f'font-weight:700;white-space:nowrap;">'
                 f'{d["exposicao"]:.0f}/100 · {_faixa_sensibilidade(d["exposicao"])[0]}'
                 f'</span></div>'
                 for d in sorted(deps, key=lambda d: -d["exposicao"])
             )
             st.markdown(
-                '<div style="font-size:0.76rem;color:#718096;padding-top:10px;">'
-                '<b style="color:#CBD5E0;">Leitura por fator</b>'
+                '<div style="font-size:0.76rem;color:var(--app-subtle);padding-top:10px;">'
+                '<b style="color:var(--app-muted);">Leitura por fator</b>'
                 f'{linhas_faixa}'
                 '<div style="margin-top:10px;">'
-                f'<span style="color:{_COR_NEGATIVO};">■</span> 70–100 alta · '
-                f'<span style="color:{_COR_ALERTA};">■</span> 50–69 moderada · '
-                f'<span style="color:{_COR_INFO};">■</span> 0–49 baixa'
+                f'<span style="color:{_cor_texto(_COR_NEGATIVO)};">■</span> 70–100 alta · '
+                f'<span style="color:{_cor_texto(_COR_ALERTA)};">■</span> 50–69 moderada · '
+                f'<span style="color:{_cor_texto(_COR_INFO)};">■</span> 0–49 baixa'
                 '</div></div>',
                 unsafe_allow_html=True,
             )
@@ -2188,7 +2203,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
         total_exibido = sum(vals_p)
         if visao_prov == "Anual":
             st.markdown(
-                f'<div style="font-size:0.78rem;color:{_COR_ALERTA};'
+                f'<div style="font-size:0.78rem;color:{_cor_texto(_COR_ALERTA)};'
                 f'font-weight:700;text-align:right;margin-top:-8px;">'
                 f'Total no período: R$ {total_exibido:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".") +
                 '</div>',
@@ -2209,7 +2224,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
 
 
 def _header_classe(cls_info: dict, renda_cls: float) -> None:
-    cor  = cls_info.get("cor", "#718096")
+    cor  = cls_info.get("cor", "var(--app-subtle)")
     n    = cls_info["num_ativos"]
     vm   = cls_info["valor_mercado"]
     ti   = cls_info["total_investido"]
@@ -2219,13 +2234,13 @@ def _header_classe(cls_info: dict, renda_cls: float) -> None:
     cor_rsc = _COR_POSITIVO if rsc >= 0 else _COR_NEGATIVO
     seta_rsc = "▲" if rsc >= 0 else "▼"
     st.markdown(
-        f'<div style="border-left:4px solid {cor};padding:8px 16px;'
-        f'background:rgba(255,255,255,0.02);border-radius:0 8px 8px 0;'
+        f'<div style="border-left:4px solid {_cor_texto(cor)};padding:8px 16px;'
+        f'background:var(--app-surface-raised);border-radius:0 8px 8px 0;'
         f'margin:24px 0 14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">'
-        f'<span style="font-size:1.05rem;font-weight:800;color:#E2E8F0;">{cls_info["nome"]}</span>'
-        f'<span style="font-size:0.75rem;color:#718096;">'
+        f'<span style="font-size:1.05rem;font-weight:800;color:var(--app-text);">{cls_info["nome"]}</span>'
+        f'<span style="font-size:0.75rem;color:var(--app-subtle);">'
         f'{n} ativo{"s" if n != 1 else ""} · {fmt_moeda(vm)} · {pct:.1f}% da carteira · '
-        f'<span style="color:{cor_rsc};">Ret. s/ custo {seta_rsc} {abs(rsc):.2f}%</span>'
+        f'<span style="color:{_cor_texto(cor_rsc)};">Ret. s/ custo {seta_rsc} {abs(rsc):.2f}%</span>'
         f'</span>'
         f'</div>',
         unsafe_allow_html=True,
@@ -2266,10 +2281,10 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     resultado_val = "—" if custo_ausente or not rentab_ok else f"{seta_r} {abs(rentab):.2f}%"
     retorno_val = "—" if not custo_comparavel_brl else f"{rsc:.2f}%"
     yoc_val = "—" if not custo_comparavel_brl or renda <= 0 else f"{yoc:.2f}%"
-    resultado_cor = "#718096" if custo_ausente else cor_r
-    retorno_cor = "#718096" if not custo_comparavel_brl else cor_rsc
+    resultado_cor = "var(--app-subtle)" if custo_ausente else cor_r
+    retorno_cor = "var(--app-subtle)" if not custo_comparavel_brl else cor_rsc
     yoc_cor = "#718096" if (not custo_comparavel_brl or renda <= 0) else _COR_ROXO
-    mercado_cor = "#CBD5E0" if custo_ausente else cor_vm
+    mercado_cor = "var(--app-muted)" if custo_ausente else cor_vm
 
     # Indicador da fonte e do frescor da cotação.
     cotacao_fonte = pos.get("cotacao_fonte", "snapshot")
@@ -2286,13 +2301,13 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     dif_val       = "—" if not custo_comparavel_brl else f"{dif_sign}{fmt_moeda(diferenca_r)}"
 
     metricas = [
-        ("Peso na carteira",              f"{pos['pct_carteira']:.2f}%",             "#CBD5E0"),
-        ("Quantidade",                    f"{pos['quantidade']:,.6f}".rstrip("0").rstrip(".") if "." in f"{pos['quantidade']:.6f}" else f"{pos['quantidade']:,.0f}".replace(",", "."), "#CBD5E0"),
-        (f"{fonte_icon} Cotação ({fonte_label}) {dot}", fmt_moeda(pos["preco_atual"]), "#CBD5E0"),
-        ("Preço médio (custo)",           (f"US$ {pos.get('preco_medio_moeda_original', 0):,.2f}" if custo_cambio_atual else fmt_moeda(pos["preco_medio"])), "#CBD5E0"),
-        (custo_label,                     custo_val,                                   "#CBD5E0"),
+        ("Peso na carteira",              f"{pos['pct_carteira']:.2f}%",             "var(--app-muted)"),
+        ("Quantidade",                    f"{pos['quantidade']:,.6f}".rstrip("0").rstrip(".") if "." in f"{pos['quantidade']:.6f}" else f"{pos['quantidade']:,.0f}".replace(",", "."), "var(--app-muted)"),
+        (f"{fonte_icon} Cotação ({fonte_label}) {dot}", fmt_moeda(pos["preco_atual"]), "var(--app-muted)"),
+        ("Preço médio (custo)",           (f"US$ {pos.get('preco_medio_moeda_original', 0):,.2f}" if custo_cambio_atual else fmt_moeda(pos["preco_medio"])), "var(--app-muted)"),
+        (custo_label,                     custo_val,                                   "var(--app-muted)"),
         ("Valor de mercado atual",        fmt_moeda(pos["valor_mercado"]),              mercado_cor),
-        ("Valoriz./Desvalorização (R$)",  dif_val,                                     dif_cor if custo_comparavel_brl else "#718096"),
+        ("Valoriz./Desvalorização (R$)",  dif_val,                                     dif_cor if custo_comparavel_brl else "var(--app-subtle)"),
         (f"Retorno mercado/custo ({pos.get('rentab_moeda', 'BRL')})", resultado_val,     resultado_cor),
         ("Renda recebida (12M)",          fmt_moeda(renda),                             _COR_ALERTA),
         ("Yield 12M s/ custo",            yoc_val,                                      yoc_cor),
@@ -2300,9 +2315,9 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     ]
     rows_html = "".join(
         f'<div style="display:flex;justify-content:space-between;padding:4px 0;'
-        f'border-bottom:1px solid #1A1F2E;font-size:0.76rem;">'
-        f'<span style="color:#718096;">{lbl}</span>'
-        f'<span style="color:{cv};font-weight:600;">{val}</span>'
+        f'border-bottom:1px solid var(--app-border);font-size:0.76rem;">'
+        f'<span style="color:var(--app-subtle);">{lbl}</span>'
+        f'<span style="color:{_cor_texto(cv)};font-weight:600;">{val}</span>'
         f'</div>'
         for lbl, val, cv in metricas
     )
@@ -2323,17 +2338,17 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
         f'</div>'
     )
     return (
-        f'<div style="background:#12151E;border:1px solid #1E2533;border-radius:12px;'
+        f'<div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;'
         f'padding:16px;margin-bottom:6px;">'
         f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
         f'{avatar_html}'
         f'<div style="overflow:hidden;">'
-        f'<div style="font-size:0.83rem;font-weight:800;color:#E2E8F0;'
+        f'<div style="font-size:0.83rem;font-weight:800;color:var(--app-text);'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{nome_curto}</div>'
-        f'<div style="font-size:0.68rem;color:#718096;">{pos["ticker"]}</div>'
+        f'<div style="font-size:0.68rem;color:var(--app-subtle);">{pos["ticker"]}</div>'
         f'</div></div>'
         f'<span style="font-size:0.58rem;font-weight:700;padding:2px 7px;border-radius:4px;'
-        f'background:{cor}33;color:{cor};text-transform:uppercase;letter-spacing:0.08em;'
+        f'background:{cor}33;color:{_cor_texto(cor)};text-transform:uppercase;letter-spacing:0.08em;'
         f'display:inline-block;margin-bottom:8px;">{pos["classe"]}</span>'
         f'<div>{rows_html}</div>'
         f'</div>'
@@ -2377,7 +2392,7 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
         st.markdown(_kpi("Custo / Investido", fmt_moeda(carteira["total_investido"]),
-                         "Custo histórico total aportado.", "#E2E8F0"),
+                         "Custo histórico total aportado.", "var(--app-text)"),
                     unsafe_allow_html=True)
     with c2:
         st.markdown(_kpi("Valor de Mercado Atual", fmt_moeda(carteira["total_mercado"]),
@@ -2593,7 +2608,7 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
         f'</div>'
         f'<div style="margin-bottom:8px;">{"".join(chips)}</div>'
         f'{rows}'
-        f'<p style="font-size:0.63rem;color:#3d4a5c;margin:7px 0 0;">'
+        f'<p style="font-size:0.63rem;color:var(--app-border-strong);margin:7px 0 0;">'
         f'Fundamentus · yfinance · {_datetime.now().strftime("%d/%m/%Y %H:%M")}</p>'
         f'</div>'
     )
@@ -2724,7 +2739,7 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
         f'</div>'
         f'<div style="margin-bottom:8px;">{"".join(chips)}</div>'
         f'{rows}'
-        f'<p style="font-size:0.63rem;color:#3d4a5c;margin:7px 0 0;">'
+        f'<p style="font-size:0.63rem;color:var(--app-border-strong);margin:7px 0 0;">'
         f'Fundamentus · yfinance · {_datetime.now().strftime("%d/%m/%Y %H:%M")}</p>'
         f'</div>'
     )
@@ -2769,13 +2784,13 @@ def _kpi_classe(cls: dict) -> str:
         f" · R$ {cls['valor_mercado']/1000:.0f}k"
     )
     return (
-        f'<div style="background:#12151E;border:1px solid #1E2533;'
+        f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
         f'border-radius:10px;padding:14px 12px 10px;height:100%;">'
         f'<div style="font-size:0.55rem;font-weight:800;text-transform:uppercase;'
-        f'letter-spacing:0.13em;color:#4A5568;margin-bottom:6px;">% {cls["nome"]}</div>'
-        f'<div style="font-size:1.50rem;font-weight:800;color:{cor};'
+        f'letter-spacing:0.13em;color:var(--app-subtle);margin-bottom:6px;">% {cls["nome"]}</div>'
+        f'<div style="font-size:1.50rem;font-weight:800;color:{_cor_texto(cor)};'
         f'letter-spacing:-0.02em;line-height:1.1;margin-bottom:4px;">{val}</div>'
-        f'<div style="font-size:0.68rem;color:#4A5568;">{sub}</div>'
+        f'<div style="font-size:0.68rem;color:var(--app-subtle);">{sub}</div>'
         f'</div>'
     )
 
@@ -2878,12 +2893,12 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     st.markdown(
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
         '<span style="font-size:2rem">🔍</span>'
-        '<h2 style="font-size:1.80rem;font-weight:800;color:#E2E8F0;margin:0;">'
+        '<h2 style="font-size:1.80rem;font-weight:800;color:var(--app-text);margin:0;">'
         'Análise do Portfólio</h2>'
         '</div>'
-        '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
+        '<p style="font-size:0.80rem;color:var(--app-muted);margin-bottom:20px;">'
         '📌 Indicadores quantitativos para apoio à tomada de decisão. '
-        '<b style="color:#CBD5E0;">Não constitui recomendação de investimento.</b> '
+        '<b style="color:var(--app-muted);">Não constitui recomendação de investimento.</b> '
         'Avalie sempre o contexto macro, a qualidade da gestão e seu perfil de risco.'
         '</p>',
         unsafe_allow_html=True,
@@ -2908,7 +2923,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         seta_r = "▲" if rentab >= 0 else "▼"
         with c1:
             st.markdown(_kpi("Valor Total Investido", fmt_moeda(total_inv),
-                             f"{carteira['num_ativos']} ativos na carteira", "#E2E8F0"),
+                             f"{carteira['num_ativos']} ativos na carteira", "var(--app-text)"),
                         unsafe_allow_html=True)
         with c2:
             st.markdown(_kpi("Valor de Mercado", fmt_moeda(total_mkt),
@@ -2949,12 +2964,12 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             def _dest_row(nome: str, valor_str: str, badge: str, cor: str) -> str:
                 return (
                     f'<div style="display:flex;justify-content:space-between;align-items:center;'
-                    f'padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">'
-                    f'<span style="font-size:0.82rem;font-weight:700;color:#E2E8F0;'
+                    f'padding:8px 0;border-bottom:1px solid var(--app-border);">'
+                    f'<span style="font-size:0.82rem;font-weight:700;color:var(--app-text);'
                     f'max-width:54%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
                     f'{_html.escape(nome)}</span>'
-                    f'<span style="font-size:0.80rem;font-weight:700;color:{cor};white-space:nowrap;">'
-                    f'{badge}&nbsp;<span style="font-size:0.72rem;color:#4A5568;font-weight:400;">'
+                    f'<span style="font-size:0.80rem;font-weight:700;color:{_cor_texto(cor)};white-space:nowrap;">'
+                    f'{badge}&nbsp;<span style="font-size:0.72rem;color:var(--app-subtle);font-weight:400;">'
                     f'{valor_str}</span></span>'
                     f'</div>'
                 )
@@ -2963,7 +2978,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
 
             with col_dv:
                 st.markdown(
-                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                    '<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
                     'margin-bottom:10px;">🏆 Maior valorização mercado/custo</div>',
                     unsafe_allow_html=True,
                 )
@@ -2980,7 +2995,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
 
             with col_dq:
                 st.markdown(
-                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                    '<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
                     'margin-bottom:10px;">📉 Maior queda mercado/custo</div>',
                     unsafe_allow_html=True,
                 )
@@ -2997,7 +3012,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
 
             with col_dp:
                 st.markdown(
-                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                    '<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
                     'margin-bottom:10px;">⚖️ Maior Peso</div>',
                     unsafe_allow_html=True,
                 )
@@ -3019,13 +3034,13 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             _secao_titulo_orig("⚠️", "Alertas de Concentração")
             for p in concentrados:
                 st.markdown(
-                    f'<div style="border-left:4px solid {_COR_ALERTA};padding:10px 14px;'
+                    f'<div style="border-left:4px solid {_cor_texto(_COR_ALERTA)};padding:10px 14px;'
                     f'margin-bottom:8px;background:rgba(246,201,14,0.05);'
                     f'border-radius:0 8px 8px 0;">'
                     f'<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;'
-                    f'letter-spacing:0.08em;color:{_COR_ALERTA};margin-bottom:3px;">'
+                    f'letter-spacing:0.08em;color:{_cor_texto(_COR_ALERTA)};margin-bottom:3px;">'
                     f'CONCENTRAÇÃO ELEVADA</div>'
-                    f'<div style="font-size:0.82rem;color:#CBD5E0;">'
+                    f'<div style="font-size:0.82rem;color:var(--app-muted);">'
                     f'{_html.escape(p["ticker"])} ({_html.escape(p["classe"])}) representa '
                     f'{p["pct_carteira"]:.1f}% da carteira. '
                     f'Posições acima de 10% ampliam o risco específico.</div>'
@@ -3058,7 +3073,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         _secao_titulo_orig("📊", "Concentração")
         col_cls, col_set = st.columns(2, gap="medium")
         with col_cls:
-            st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+            st.markdown('<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
                         'margin-bottom:10px;">Por Classe de Ativo</div>',
                         unsafe_allow_html=True)
             for cls in por_classe:
@@ -3068,22 +3083,22 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 st.markdown(
                     f'<div style="margin-bottom:10px;">'
                     f'<div style="display:flex;justify-content:space-between;'
-                    f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
+                    f'font-size:0.80rem;color:var(--app-muted);margin-bottom:4px;">'
                     f'<span style="display:flex;align-items:center;gap:6px;">'
                     f'<span style="width:8px;height:8px;border-radius:50%;'
                     f'background:{cls["cor"]};display:inline-block"></span>'
                     f'{cls["nome"]}</span>'
-                    f'<span style="font-weight:700;color:{barra_cor}">'
+                    f'<span style="font-weight:700;color:{_cor_texto(barra_cor)}">'
                     f'{cls["pct_carteira"]:.1f}%</span></div>'
-                    f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
+                    f'<div style="background:var(--app-border);border-radius:3px;height:5px;">'
                     f'<div style="background:{cls["cor"]};width:{w:.0f}%;'
                     f'height:100%;border-radius:3px;"></div></div>'
-                    f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
+                    f'<div style="font-size:0.70rem;color:var(--app-subtle);text-align:right;'
                     f'margin-top:2px;">{fmt_moeda(cls["valor_mercado"])}'
                     f' · {cls["num_ativos"]} ativo{"s" if cls["num_ativos"] != 1 else ""}'
                     f'</div></div>', unsafe_allow_html=True)
         with col_set:
-            st.markdown('<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+            st.markdown('<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
                         'margin-bottom:10px;">Por Setor</div>', unsafe_allow_html=True)
             if por_setor:
                 total_setor = sum(s["valor_mercado"] for s in por_setor) or 1
@@ -3095,13 +3110,13 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     st.markdown(
                         f'<div style="margin-bottom:10px;">'
                         f'<div style="display:flex;justify-content:space-between;'
-                        f'font-size:0.80rem;color:#CBD5E0;margin-bottom:4px;">'
+                        f'font-size:0.80rem;color:var(--app-muted);margin-bottom:4px;">'
                         f'<span>{s["nome"]}</span>'
-                        f'<span style="font-weight:700;color:{bc}">{pct_s:.1f}%</span></div>'
-                        f'<div style="background:#1E2533;border-radius:3px;height:5px;">'
+                        f'<span style="font-weight:700;color:{_cor_texto(bc)}">{pct_s:.1f}%</span></div>'
+                        f'<div style="background:var(--app-border);border-radius:3px;height:5px;">'
                         f'<div style="background:{bc};width:{w:.0f}%;'
                         f'height:100%;border-radius:3px;"></div></div>'
-                        f'<div style="font-size:0.70rem;color:#4A5568;text-align:right;'
+                        f'<div style="font-size:0.70rem;color:var(--app-subtle);text-align:right;'
                         f'margin-top:2px;">{fmt_moeda(s["valor_mercado"])}</div></div>',
                         unsafe_allow_html=True)
             else:
@@ -3219,7 +3234,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 st.markdown(_kpi(
                     "Valor de Mercado", fmt_moeda(total_mv_ts),
                     f"{len(tesouros)} títulos em carteira",
-                    "#E2E8F0",
+                    "var(--app-text)",
                 ), unsafe_allow_html=True)
             with c2:
                 st.markdown(_kpi(
@@ -3314,8 +3329,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         else (_COR_POSITIVO if mtm_titulo >= 0 else _COR_NEGATIVO)
                     )
                     celula_mtm = (
-                        f'  <div><div style="font-size:0.65rem;color:#718096;">MARCAÇÃO</div>'
-                        f'    <div style="font-size:0.85rem;font-weight:700;color:{cor_mtm_col};">'
+                        f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">MARCAÇÃO</div>'
+                        f'    <div style="font-size:0.85rem;font-weight:700;color:{_cor_texto(cor_mtm_col)};">'
                         f'{"—" if mtm_titulo is None else f"{mtm_titulo * 100:+.2f}%"}</div></div>'
                     )
                 else:
@@ -3324,45 +3339,45 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
 
                 # Card individual
                 st.markdown(
-                    f'<div style="background:#12151E;border:1px solid #1E2533;'
-                    f'border-left:4px solid {rec_cor};border-radius:10px;'
+                    f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
+                    f'border-left:4px solid {_cor_texto(rec_cor)};border-radius:10px;'
                     f'padding:16px 18px;margin-bottom:12px;">'
                     # Header
                     f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">'
                     f'  <div>'
-                    f'    <div style="font-size:1.05rem;font-weight:800;color:#E2E8F0;">'
+                    f'    <div style="font-size:1.05rem;font-weight:800;color:var(--app-text);">'
                     f'      {meta.label} {meta.ano_referencia or ""}'
                     f'    </div>'
-                    f'    <div style="font-size:0.72rem;color:#9CA3AF;margin-top:2px;">'
+                    f'    <div style="font-size:0.72rem;color:var(--app-muted);margin-top:2px;">'
                     f'      {p["ticker"]} · {prazo_str}'
                     f'    </div>'
                     f'  </div>'
                     f'  <div style="text-align:right;">'
-                    f'    <div style="font-size:0.65rem;font-weight:800;color:{_COR_INFO};'
+                    f'    <div style="font-size:0.65rem;font-weight:800;color:{_cor_texto(_COR_INFO)};'
                     f'      text-transform:uppercase;letter-spacing:0.06em;">'
                     f'      RETORNO MERCADO/CUSTO'
                     f'    </div>'
-                    f'    <div style="font-size:1.15rem;font-weight:800;color:{_COR_INFO};margin-top:4px;">'
+                    f'    <div style="font-size:1.15rem;font-weight:800;color:{_cor_texto(_COR_INFO)};margin-top:4px;">'
                     f'      {f"{retorno_pct:+.2f}%" if retorno_pct is not None else "—"}'
                     f'    </div>'
                     f'  </div>'
                     f'</div>'
                     # Grid 4 colunas
                     f'<div style="display:grid;grid-template-columns:repeat({colunas_grid},1fr);gap:10px;'
-                    f'  padding:8px 0;border-top:1px solid #1E2533;margin-bottom:8px;">'
-                    f'  <div><div style="font-size:0.65rem;color:#718096;">CUSTO</div>'
-                    f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{fmt_moeda(vi)}</div></div>'
-                    f'  <div><div style="font-size:0.65rem;color:#718096;">MERCADO</div>'
-                    f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{fmt_moeda(mv)}</div></div>'
-                    f'  <div><div style="font-size:0.65rem;color:#718096;">RESULTADO R$</div>'
-                    f'    <div style="font-size:0.85rem;font-weight:700;color:{cor_resultado};">{"+" if resultado_abs >= 0 else ""}{fmt_moeda(resultado_abs)}</div></div>'
-                    f'  <div><div style="font-size:0.65rem;color:#718096;">% NA CARTEIRA</div>'
-                    f'    <div style="font-size:0.85rem;font-weight:700;color:#CBD5E0;">{p["pct_carteira"]:.2f}%</div></div>'
+                    f'  padding:8px 0;border-top:1px solid var(--app-border);margin-bottom:8px;">'
+                    f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">CUSTO</div>'
+                    f'    <div style="font-size:0.85rem;font-weight:700;color:var(--app-muted);">{fmt_moeda(vi)}</div></div>'
+                    f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">MERCADO</div>'
+                    f'    <div style="font-size:0.85rem;font-weight:700;color:var(--app-muted);">{fmt_moeda(mv)}</div></div>'
+                    f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">RESULTADO R$</div>'
+                    f'    <div style="font-size:0.85rem;font-weight:700;color:{_cor_texto(cor_resultado)};">{"+" if resultado_abs >= 0 else ""}{fmt_moeda(resultado_abs)}</div></div>'
+                    f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">% NA CARTEIRA</div>'
+                    f'    <div style="font-size:0.85rem;font-weight:700;color:var(--app-muted);">{p["pct_carteira"]:.2f}%</div></div>'
                     f'{celula_mtm}'
                     f'</div>'
                     # Análise de suficiência, sem recomendação automática.
-                    f'<div style="font-size:0.80rem;color:#9CA3AF;line-height:1.5;">'
-                    f'  <strong style="color:{rec_cor};">{rec["icone"]} {rec["label"]}:</strong> {rec["msg"]}'
+                    f'<div style="font-size:0.80rem;color:var(--app-muted);line-height:1.5;">'
+                    f'  <strong style="color:{_cor_texto(rec_cor)};">{rec["icone"]} {rec["label"]}:</strong> {rec["msg"]}'
                     f'</div>'
                     f'</div>',
                     unsafe_allow_html=True,
@@ -3425,7 +3440,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 st.markdown(_kpi(
                     "Valor de Mercado", fmt_moeda(total_ext_brl),
                     f"{len(ext_pos)} ativos internacionais",
-                    "#E2E8F0",
+                    "var(--app-text)",
                 ), unsafe_allow_html=True)
             with c2:
                 st.markdown(_kpi(
@@ -3580,16 +3595,16 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     '<div style="background:rgba(252,92,125,.07);border-left:3px solid '
                     f'{_COR_NEGATIVO};border-radius:6px;padding:14px 18px;margin-bottom:10px;">'
                     '<div style="font-size:.70rem;font-weight:800;letter-spacing:.12em;'
-                    f'text-transform:uppercase;color:{_COR_NEGATIVO};margin-bottom:6px;">'
+                    f'text-transform:uppercase;color:{_cor_texto(_COR_NEGATIVO)};margin-bottom:6px;">'
                     'Cenário mais severo para esta carteira</div>'
-                    '<div style="font-size:0.95rem;color:#E2E8F0;line-height:1.65;">'
+                    '<div style="font-size:0.95rem;color:var(--app-text);line-height:1.65;">'
                     f'Se <b>{_html.escape(str(pior.get("cenario", "—")))}</b> '
                     f'({_html.escape(str(pior.get("data_ref", "")))}) acontecesse hoje, '
-                    f'a carteira cairia <b style="color:{_COR_NEGATIVO}">{perda_pct:.1f}%</b>'
+                    f'a carteira cairia <b style="color:{_cor_texto(_COR_NEGATIVO)}">{perda_pct:.1f}%</b>'
                     f' — de {fmt_moeda(valor_pre)} para <b>{fmt_moeda(valor_pos)}</b>, '
-                    f'uma perda de <b style="color:{_COR_NEGATIVO}">{fmt_moeda(perda_abs)}</b>. '
+                    f'uma perda de <b style="color:{_cor_texto(_COR_NEGATIVO)}">{fmt_moeda(perda_abs)}</b>. '
                     'Historicamente, um evento desse porte levou cerca de '
-                    f'<b style="color:{_COR_ALERTA}">{rec_m} meses</b> para ser recuperado.'
+                    f'<b style="color:{_cor_texto(_COR_ALERTA)}">{rec_m} meses</b> para ser recuperado.'
                     '</div></div>',
                     unsafe_allow_html=True,
                 )
@@ -3614,7 +3629,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 # ── Comparação entre cenários ─────────────────────────────────
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown(
-                    '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                    '<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
                     'margin-bottom:10px;">📉 Queda estimada por crise</div>',
                     unsafe_allow_html=True,
                 )
@@ -3669,7 +3684,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 if por_classe_stress:
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.markdown(
-                        '<div style="font-size:0.83rem;font-weight:700;color:#E2E8F0;'
+                        '<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
                         'margin-bottom:4px;">🎯 Onde a perda se concentra — '
                         f'{_html.escape(str(pior.get("cenario", "")))}</div>',
                         unsafe_allow_html=True,
@@ -3928,7 +3943,7 @@ def _bloco_tesouro_mtm() -> list:
     k1, k2, k3, k4 = st.columns(4, gap="small")
     with k1:
         st.markdown(_kpi("Bruto Hoje", fmt_moeda(bruto),
-                         f"Custo de {fmt_moeda(investido)}", "#E2E8F0"),
+                         f"Custo de {fmt_moeda(investido)}", "var(--app-text)"),
                     unsafe_allow_html=True)
     with k2:
         st.markdown(_kpi("Líquido se Resgatar Hoje", fmt_moeda(liquido),
