@@ -11,7 +11,10 @@ ninguém.
 
 A regra mora AQUI e só aqui. Este projeto já teve três cópias da mesma guarda
 com duas divergências entre elas; `tests/test_us_severidade_historica.py`
-verifica por AST que nenhum outro módulo compara os prefixos por conta própria.
+verifica por AST que nenhum outro módulo compara os prefixos por conta
+própria — sem exceção: a B3 mantinha uma segunda cópia desta tabela em
+`core/dossie_b3.py`, isenta da checagem, e as duas divergiram em duas
+entradas antes de alguém notar.
 
 Nada é silenciado: toda linha emitida continua visível e continua chegando ao
 parecer da LLM. O que muda é o cabeçalho sob o qual ela chega.
@@ -32,6 +35,21 @@ SEVERIDADES = (SEVERIDADE_RISCO, SEVERIDADE_CONTEXTO, SEVERIDADE_COBERTURA)
 _PREFIXO_SEVERIDADE: dict[str, str] = {
     "CONTEXTO:": SEVERIDADE_CONTEXTO,
     "COBERTURA:": SEVERIDADE_COBERTURA,
+    # Os dois abaixo só são emitidos pelo dossiê da B3 (`core/dossie_b3.py`),
+    # e ficam aqui mesmo assim: enquanto a B3 mantinha a própria cópia da
+    # tabela, as duas já haviam divergido justamente nestas duas entradas —
+    # o defeito que este módulo existe para impedir. Para os EUA são inertes.
+    #
+    # `MOMENTUM:` olha UM trimestre a/a. Condenar por um período isolado é o
+    # oposto da pergunta que interessa, que é a qualidade histórica. Medido no
+    # armazém local: 94 das 426 empresas da B3 estavam em bandeira vermelha SÓ
+    # por esta linha.
+    "MOMENTUM:": SEVERIDADE_CONTEXTO,
+    # `DADOS:` descreve defeito do NOSSO banco (provento divergente na mesma
+    # data-ex, DY do banco em desacordo com o recomputado). É o que não
+    # conseguimos verificar, não risco da empresa. Medido: 50 das 426 estavam
+    # em vermelho SÓ por ela.
+    "DADOS:": SEVERIDADE_COBERTURA,
 }
 
 TITULO_SEVERIDADE: dict[str, str] = {
