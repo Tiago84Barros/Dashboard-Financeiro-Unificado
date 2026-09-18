@@ -36,8 +36,10 @@ if not _APP_TEST_MODE:
     from design.componentes import mensagem_erro
     from design.tema import aplicar_tema
 
-    aplicar_tema()
     verificar_autenticacao()
+    from design.theme_selector import current_theme
+
+    aplicar_tema(current_theme())
 
 # ── Mapeamento: label da sidebar → módulo em views/ ──────────────────────────
 _ROTAS: dict[str, str] = {
@@ -61,6 +63,8 @@ with st.sidebar:
         st.caption(f"Conectado como {principal().get('name', '')}")
         if st.button("Sair / trocar usuário", key="app_sign_out"):
             encerrar_sessao()
+        from design.theme_selector import render_theme_selector
+        render_theme_selector()
     st.markdown(
         '<div class="app-brand">'
         '<div class="app-brand-mark" aria-hidden="true">📊</div>'

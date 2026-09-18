@@ -1,8 +1,8 @@
 """
-UI de upload e revisão de extratos bancários em PDF.
+UI de upload de extratos bancários em PDF.
 
 O upload fica em Configurações; os movimentos classificados são publicados em
-transactions e passam a aparecer no Controle Financeiro.
+transactions e a revisão acontece no Controle Financeiro.
 """
 from __future__ import annotations
 
@@ -13,9 +13,7 @@ import streamlit as st
 
 from core.bank_statement_import import (
     SUPPORTED_BANKS,
-    confirm_bank_statement_movement,
     get_bank_statement_categories,
-    get_bank_statement_review_rows,
     import_bank_statement_rows,
     preview_bank_statement_pdf,
 )
@@ -276,117 +274,15 @@ def _render_upload(*, show_header: bool = True) -> None:
         st.error(result.get("message", "Falha ao importar extrato."))
 
 
-def _review_label(row: dict) -> str:
-    value = fmt_moeda(row.get("valor") or 0.0)
-    status = row.get("status_classificacao") or "pendente"
-    desc = str(row.get("descricao_original") or "")[:64]
-    return f"{_fmt_date(row.get('data_movimento'))} · {value} · {status} · {desc}"
-
-
-def _category_label(category: dict) -> str:
-    return f"{category.get('nome')} ({category.get('tipo')})"
-
-
-def _render_review_queue() -> None:
-    st.markdown("### Revisão de movimentações importadas")
-    st.caption("Corrija categorias pendentes ou confirme sugestões usando apenas categorias já existentes no App4.")
-
-    c1, c2, c3 = st.columns([1, 1, 1], gap="small")
-    with c1:
-        status_filter = st.selectbox(
-            "Status",
-            ["pendente", "sugerida", "confirmada", "Todos"],
-            key="bank_statement_review_status",
-        )
-    with c2:
-        year_filter = st.number_input("Ano", min_value=2020, max_value=2100, value=2026, step=1, key="bank_statement_review_year")
-    with c3:
-        month_filter = st.selectbox(
-            "Mês",
-            ["Todos"] + list(range(1, 13)),
-            key="bank_statement_review_month",
-        )
-
-    rows = get_bank_statement_review_rows(
-        status=status_filter,
-        ano=int(year_filter) if year_filter else None,
-        mes=None if month_filter == "Todos" else int(month_filter),
-        limit=300,
-    )
-    if not rows:
-        st.caption("Nenhuma movimentação encontrada para os filtros atuais.")
-        return
-
-    df = pd.DataFrame(
-        [
-            {
-                "Data": _fmt_date(row.get("data_movimento")),
-                "Banco": row.get("banco"),
-                "Descrição": row.get("descricao_original"),
-                "Direção": row.get("direcao"),
-                "Categoria": row.get("categoria_confirmada_nome") or row.get("categoria_nome") or row.get("categoria_sugerida_texto") or "Pendente",
-                "Status": row.get("status_classificacao"),
-                "Valor (R$)": row.get("valor"),
-            }
-            for row in rows
-        ]
-    )
-    st.dataframe(
-        df,
-        hide_index=True,
-        width="stretch",
-        column_config={"Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")},
-    )
-
-    categories = get_bank_statement_categories()
-    if not categories:
-        st.warning("Categorias indisponíveis para confirmação.")
-        return
-
-    editable_rows = [row for row in rows if row.get("status_classificacao") in {"pendente", "sugerida"}]
-    if not editable_rows:
-        st.caption("Não há movimentos pendentes ou sugeridos para confirmar neste filtro.")
-        return
-
-    selected_idx = st.selectbox(
-        "Movimento para revisar",
-        range(len(editable_rows)),
-        format_func=lambda idx: _review_label(editable_rows[idx]),
-        key="bank_statement_review_row",
-    )
-    selected = editable_rows[selected_idx]
-
-    category_idx = st.selectbox(
-        "Categoria real do App4",
-        range(len(categories)),
-        format_func=lambda idx: _category_label(categories[idx]),
-        key="bank_statement_review_category",
-    )
-    col_rule, col_keyword = st.columns([1, 2], gap="small")
-    with col_rule:
-        save_rule = st.checkbox("Salvar regra", value=True, key="bank_statement_save_rule")
-    with col_keyword:
-        keyword = st.text_input(
-            "Palavra-chave da regra",
-            value=str(selected.get("descricao_original") or "").split(" R$")[0][:80],
-            key="bank_statement_rule_keyword",
-        )
-
-    if st.button("Confirmar classificação", type="primary", width="stretch", key="bank_statement_confirm_btn"):
-        ok, msg = confirm_bank_statement_movement(
-            selected["id"],
-            categories[category_idx]["id"],
-            save_rule=save_rule,
-            palavra_chave=keyword,
-        )
-        if ok:
-            st.success("Classificação confirmada e publicada no Controle Financeiro.")
-            st.rerun()
-        st.error(msg or "Falha ao confirmar classificação.")
-
-
 def render_upload_extrato_bancario(*, show_header: bool = True) -> None:
-    """Renderiza o fluxo exclusivo de upload/revisao de extratos bancarios."""
+    """Renderiza o upload de extratos bancarios. Revisao nao mora mais aqui.
+
+    A fila de revisao vivia logo abaixo do upload, e era uma segunda copia da
+    que ``views/controle_financeiro.py::_render_bank_statement_section`` ja
+    renderiza -- com filtros melhores e no lugar onde o movimento importa.
+    Aquela secao ate anunciava a divisao ("o upload fica em Configuracoes;
+    aqui entram conferencia, filtros e confirmacao") enquanto esta a
+    contradizia. Nenhuma capacidade saiu do app: confirmar classificacao e
+    salvar regra continuam em Controle Financeiro.
+    """
     _render_upload(show_header=show_header)
-    st.divider()
-    _render_review_queue()

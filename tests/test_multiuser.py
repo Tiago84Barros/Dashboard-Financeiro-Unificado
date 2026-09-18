@@ -304,3 +304,47 @@ render_user_accounts()
     app.run()
     assert not app.exception
     assert any(item.label == "Cadastrar usuário" for item in app.button)
+
+
+def test_lista_de_usuarios_recusa_quem_nao_e_admin(postgres, user_state):
+    """O guarda mora na consulta, não só no ``if`` da tela.
+
+    Nome e e-mail das outras pessoas são dado pessoal: esconder o bloco na
+    interface protege a interface. Quem chamar ``list_users`` de qualquer
+    outro lugar tem que levar ``PermissionError``.
+    """
+    login_as(user_state, ADMIN)
+    uid = accounts.create_user("Pessoa", "person@example.test", PASSWORD)
+    perfis = accounts.list_users()
+    assert {str(item["id"]) for item in perfis} == {ADMIN, uid}
+    assert all("password_hash" not in item for item in perfis)
+
+    login_as(user_state, OTHER)
+    with pytest.raises(PermissionError):
+        accounts.list_users()
+    user_state.clear()
+    with pytest.raises(PermissionError):
+        accounts.list_users()
+
+
+def test_usuarios_cadastrados_aparecem_so_para_o_admin(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setattr(settings, "ADMIN_USER_ID", ADMIN)
+    app = AppTest.from_string('''
+import streamlit as st
+import design.user_accounts as ui
+ui.list_users = lambda: [{"id": "11111111-1111-1111-1111-111111111111",
+                          "name": "Administrador teste",
+                          "email": "admin@example.test",
+                          "created_at": None, "active": True}]
+ui.render_registered_users()
+''')
+    app.session_state['_app4_user'] = {'id': OTHER, 'expires_at': time.time() + 100}
+    app.run(timeout=20)
+    assert not app.exception
+    assert len(app.dataframe) == 0
+    app.session_state['_app4_user'] = {'id': ADMIN, 'expires_at': time.time() + 100}
+    app.run(timeout=20)
+    assert not app.exception
+    assert len(app.dataframe) == 1
+

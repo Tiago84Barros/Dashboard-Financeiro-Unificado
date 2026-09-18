@@ -52,7 +52,15 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
             principal=lambda: dict(USUARIO_SINTETICO),
         ),
         "design.componentes": SimpleNamespace(mensagem_erro=lambda *_args: None),
-        "design.tema": SimpleNamespace(aplicar_tema=lambda: None),
+        "design.tema": SimpleNamespace(aplicar_tema=lambda theme="dark": None),
+        # Importado com o ``streamlit`` falso em sys.modules, o módulo real
+        # guardaria o falso no próprio ``st`` e o vazaria para todos os testes
+        # seguintes -- ``tests/test_user_theme.py`` quebrava com "module
+        # 'streamlit' has no attribute 'session_state'" só dentro da suíte.
+        "design.theme_selector": SimpleNamespace(
+            current_theme=lambda: "dark",
+            render_theme_selector=lambda: None,
+        ),
     }
     for chave, duble in overrides.items():
         stubs[chave.replace("_", ".", 1)] = duble

@@ -2,12 +2,12 @@
 views/configuracoes.py
 Configurações do sistema — cinco abas organizadas por finalidade.
 
+  🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
   🔁 Atualização de dados — o que o usuário sobe de arquivo, em duas sub-abas:
        💳 Controle Financeiro — fatura do cartão + extratos bancários
        📈 Investimentos       — importações B3, XP, Nomad
   🔄 Dados de mercado     — CVM, YFinance, Banco Central, macro (orquestração)
   🗄️ Banco de dados       — conexão, capacidade, schema e diagnóstico técnico
-  🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
   🔒 Segurança            — sessão e autenticação
 """
 from __future__ import annotations
@@ -42,61 +42,55 @@ def render() -> None:
         "Central de Configurações",
         "Importações, atualização de dados e integridade do ambiente em um único lugar.",
         "⚙️",
-        metadados=[("Áreas", "5 fluxos"), ("Operação", "Revisão antes de gravar")],
         eyebrow="Administração do app",
     )
     st.markdown(_CONFIG_CSS + _CARD_CSS, unsafe_allow_html=True)
-    _render_settings_overview()
 
-    tab_atualizacao, tab_dados, tab_banco, tab_conf, tab_seg = st.tabs([
+    tab_conf, tab_atualizacao, tab_dados, tab_banco, tab_seg = st.tabs([
+        "🎯 Grau de Confiança",
         "🔁 Atualização de dados",
         "🔄 Dados de mercado",
         "🗄️ Banco de dados",
-        "🎯 Grau de Confiança",
         "🔒 Segurança",
     ])
+
+    with tab_conf:
+        _render_tab_intro(
+            "Grau de Confiança",
+            "Quanto o app confia em cada seção, e a evidência por trás de cada "
+            "nota. Apoio analítico — não é recomendação.",
+            "Medição por seção",
+            "var(--app-primary, #00C896)",
+        )
+        _render_confianca()
 
     with tab_atualizacao:
         _render_atualizacao_de_dados()
 
     with tab_dados:
         _render_tab_intro(
-            "ORQUESTRAÇÃO",
             "Dados de mercado",
             "Acompanhe a atualização de cotações, fundamentos e indicadores macroeconômicos.",
             "Fontes monitoradas",
-            "#4A9EFF",
+            "var(--app-info, #4A9EFF)",
         )
         _render_atualizacao()
 
     with tab_banco:
         _render_tab_intro(
-            "INFRAESTRUTURA",
             "Banco de dados",
             "Verifique conexão, capacidade, schema e rotas controladas de importação.",
             "Diagnóstico técnico",
-            "#F6C90E",
+            "var(--app-warning, #F6C90E)",
         )
         _render_banco()
 
-    with tab_conf:
-        _render_tab_intro(
-            "QUALIDADE DO DADO",
-            "Grau de Confiança",
-            "Quanto o app confia em cada seção, e a evidência por trás de cada "
-            "nota. Apoio analítico — não é recomendação.",
-            "Medição por seção",
-            "#00C896",
-        )
-        _render_confianca()
-
     with tab_seg:
         _render_tab_intro(
-            "ACESSO E SESSÃO",
             "Segurança",
             "Revise a proteção do aplicativo e encerre sessões de forma explícita.",
             "Credenciais protegidas",
-            "#FC5C7D",
+            "var(--app-danger, #FC5C7D)",
         )
         _render_seguranca()
 
@@ -120,75 +114,56 @@ def _render_atualizacao_de_dados() -> None:
     ])
 
     with sub_controle:
-        _render_tab_intro(
-            "ENTRADAS FINANCEIRAS",
-            "Controle Financeiro",
-            "Importe faturas e extratos com prévia, classificação e proteção contra duplicidades.",
-            "CSV + PDF",
-            "#00C896",
-        )
         _render_controle_financeiro()
 
     with sub_invest:
-        _render_tab_intro(
-            "POSIÇÕES E MOVIMENTAÇÕES",
-            "Investimentos",
-            "Centralize arquivos da B3, XP e Nomad antes de atualizar posições e proventos.",
-            "B3 · XP · Nomad",
-            "#B084F6",
-        )
         _render_investimentos()
 
 
 def _render_confianca() -> None:
-    """Aba do Grau de Confiança.
+    """Aba do Grau de Confiança, a primeira da barra desde 17/09/2026.
 
-    Import tardio de propósito: a medição arrasta ``core.confianca_secao`` e as
-    leituras que ela faz. Quem abre Configurações para importar um extrato não
-    deve pagar por isso; a aba só carrega quando é aberta. O erro fica preso
-    aqui em vez de derrubar a página inteira de Configurações.
+    Import tardio de propósito: mantém ``core.confianca_secao`` e suas leituras
+    fora do custo de importar este módulo, e prende o erro aqui em vez de
+    derrubar a página inteira de Configurações.
+
+    O que o import tardio **não** faz é adiar a medição. ``st.tabs`` executa o
+    corpo de todas as abas em toda execução do script -- trocar de aba é
+    client-side e não gera rerun --, então esta medição já rodava a cada
+    abertura de Configurações quando a aba era a quarta. Foi por isso que
+    promovê-la à primeira posição não custou tempo de carga: não há nada a
+    economizar escondendo-a atrás de uma posição. Quem quiser de fato adiar
+    precisa de um portão explícito (um ``st.button``/``expander`` guardando a
+    chamada), não da ordem das abas.
     """
     from views.confianca import render_corpo
 
     render_corpo()
 
 
-def _render_settings_overview() -> None:
-    cards = [
-        ("01", "Importar", "Faturas, extratos e posições", "Arquivos validados antes da gravação"),
-        ("02", "Atualizar", "Mercado e indicadores", "Fontes acompanhadas por status"),
-        ("03", "Proteger", "Banco, acesso e sessão", "Operações sensíveis sempre explícitas"),
-    ]
-    html = "".join(
-        '<article class="cfg-overview-card">'
-        f'<span class="cfg-overview-index">{escape(index)}</span>'
-        f'<div class="cfg-overview-title">{escape(title)}</div>'
-        f'<div class="cfg-overview-copy">{escape(copy)}</div>'
-        f'<div class="cfg-overview-note">{escape(note)}</div>'
-        "</article>"
-        for index, title, copy, note in cards
-    )
-    st.markdown(
-        '<section class="cfg-overview" aria-label="Resumo das configurações">'
-        f"{html}</section>",
-        unsafe_allow_html=True,
-    )
-
-
 def _render_tab_intro(
-    eyebrow: str,
     title: str,
     description: str,
     badge: str,
     accent: str,
 ) -> None:
+    """Faixa de contexto da aba, em uma linha.
+
+    Era um bloco alto com sobretítulo, título e descrição empilhados -- e o
+    sobretítulo ("ORQUESTRAÇÃO") e o título repetiam o rótulo da aba logo
+    acima. Sobrou o que a aba não diz: a descrição, mais o selo à direita.
+    O sobretítulo saiu também da assinatura, para não ficar parâmetro morto
+    que alguém volta a preencher achando que aparece em algum lugar.
+
+    ``accent`` é uma **expressão CSS de cor**, não um literal: as chamadas
+    passam ``var(--app-primary, #00C896)`` e afins para que a faixa mude de tom
+    junto com o tema claro/escuro. Um literal aqui volta a fixar a cor escura
+    em cima do fundo branco.
+    """
     st.markdown(
         f'<section class="cfg-tab-intro" style="--cfg-accent:{escape(accent, quote=True)}">'
-        '<div class="cfg-tab-copy">'
-        f'<div class="cfg-tab-eyebrow">{escape(eyebrow)}</div>'
-        f'<div class="cfg-tab-title">{escape(title)}</div>'
-        f'<div class="cfg-tab-description">{escape(description)}</div>'
-        "</div>"
+        f'<span class="cfg-tab-title">{escape(title)}</span>'
+        f'<span class="cfg-tab-description">{escape(description)}</span>'
         f'<span class="cfg-tab-badge">{escape(badge)}</span>'
         "</section>",
         unsafe_allow_html=True,
@@ -287,93 +262,76 @@ _FRESHNESS_LABEL = {
 
 _CONFIG_CSS = """
 <style>
-.cfg-overview {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-    margin: 0 0 22px;
-}
-.cfg-overview-card {
-    position: relative;
-    overflow: hidden;
-    min-height: 118px;
-    padding: 16px 17px;
-    border: 1px solid rgba(148,163,184,.14);
-    border-radius: 14px;
-    background: linear-gradient(150deg, rgba(23,29,43,.94), rgba(15,19,29,.96));
-    box-shadow: 0 8px 24px rgba(0,0,0,.14);
-}
-.cfg-overview-index {
-    position: absolute;
-    top: 13px;
-    right: 14px;
-    color: rgba(74,158,255,.34);
-    font-size: 1.7rem;
-    font-weight: 900;
-    letter-spacing: -.06em;
-}
-.cfg-overview-title {
-    color: #F8FAFC;
-    font-size: .9rem;
-    font-weight: 800;
-}
-.cfg-overview-copy {
-    color: #A7B3C5;
-    font-size: .76rem;
-    line-height: 1.45;
-    margin-top: 7px;
-}
-.cfg-overview-note {
-    color: #64748B;
-    font-size: .66rem;
-    margin-top: 9px;
-}
+/* Cores por token (--app-*), nunca literais: ``design/tema.py`` define a paleta
+   escura e ``design/theme_light.py`` redefine os MESMOS nomes no :root do tema
+   claro. Escrevendo em cima dos tokens, esta página acompanha os dois temas
+   sozinha -- o caminho alternativo (repetir cada seletor em LIGHT_CSS com
+   !important) é o que já produziu a lista paralela que vive lá e sai de
+   sincronia a cada ajuste. */
 .cfg-tab-intro {
-    --cfg-accent: #4A9EFF;
+    --cfg-accent: var(--app-info, #4A9EFF);
     display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 18px;
-    margin: 18px 0 14px;
-    padding: 18px 20px;
-    border: 1px solid color-mix(in srgb, var(--cfg-accent) 25%, rgba(148,163,184,.14));
+    align-items: center;
+    gap: 10px;
+    margin: 14px 0 16px;
+    padding: 9px 14px;
+    border: 1px solid var(--app-border, rgba(148,163,184,.12));
     border-left: 3px solid var(--cfg-accent);
-    border-radius: 14px;
-    background:
-        radial-gradient(circle at 93% 0%, color-mix(in srgb, var(--cfg-accent) 12%, transparent), transparent 35%),
-        linear-gradient(150deg, rgba(22,28,41,.96), rgba(14,18,27,.96));
-}
-.cfg-tab-copy { min-width: 0; }
-.cfg-tab-eyebrow {
-    color: var(--cfg-accent);
-    font-size: .59rem;
-    font-weight: 850;
-    letter-spacing: .15em;
+    border-radius: 10px;
+    background: linear-gradient(90deg,
+        color-mix(in srgb, var(--cfg-accent) 7%, transparent),
+        var(--app-surface, #121722) 45%);
 }
 .cfg-tab-title {
-    color: #F8FAFC;
-    font-size: 1.12rem;
-    font-weight: 820;
-    letter-spacing: -.02em;
-    margin-top: 4px;
+    flex: 0 0 auto;
+    color: var(--app-text, #F1F5F9);
+    font-size: .78rem;
+    font-weight: 800;
+    letter-spacing: -.01em;
 }
 .cfg-tab-description {
-    max-width: 740px;
-    color: #94A3B8;
-    font-size: .76rem;
-    line-height: 1.5;
-    margin-top: 5px;
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--app-muted, #8A99AE);
+    font-size: .73rem;
+    line-height: 1.45;
 }
 .cfg-tab-badge {
     flex: 0 0 auto;
-    padding: 6px 10px;
-    border: 1px solid color-mix(in srgb, var(--cfg-accent) 30%, transparent);
+    padding: 3px 9px;
+    border: 1px solid color-mix(in srgb, var(--cfg-accent) 28%, transparent);
     border-radius: 999px;
     background: color-mix(in srgb, var(--cfg-accent) 9%, transparent);
-    color: #DCE7F5;
-    font-size: .65rem;
+    color: var(--app-text, #DCE7F5);
+    font-size: .62rem;
     font-weight: 720;
+    white-space: nowrap;
 }
+
+/* Sub-abas: pílulas, para nunca lerem como uma segunda fileira do mesmo
+   controle. Duas fileiras de abas idênticas empilhadas foi o que o usuário
+   descreveu como carregado -- a diferença tem que ser visual, não só de
+   posição. */
+.stTabs .stTabs [data-baseweb="tab-list"] {
+    gap: 6px;
+    margin: 12px 0 4px;
+    padding: 4px;
+    border-bottom: none;
+    border-radius: 11px;
+    background: var(--app-surface-raised, rgba(15,19,28,.6));
+    box-shadow: inset 0 0 0 1px var(--app-border, rgba(148,163,184,.10));
+}
+.stTabs .stTabs [data-baseweb="tab"] {
+    min-height: 34px;
+    padding: .34rem .85rem;
+    border-radius: 8px;
+    font-size: .75rem;
+}
+.stTabs .stTabs [aria-selected="true"] {
+    background: color-mix(in srgb, var(--app-primary, #00C896) 12%, transparent) !important;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-primary, #00C896) 26%, transparent);
+}
+.stTabs .stTabs [data-baseweb="tab-highlight"] { display: none; }
 .cfg-workflow-header {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -381,7 +339,7 @@ _CONFIG_CSS = """
     gap: 13px;
     padding-bottom: 14px;
     margin-bottom: 14px;
-    border-bottom: 1px solid rgba(148,163,184,.12);
+    border-bottom: 1px solid var(--app-border, rgba(148,163,184,.12));
 }
 .cfg-workflow-index {
     display: inline-flex;
@@ -389,21 +347,22 @@ _CONFIG_CSS = """
     justify-content: center;
     width: 38px;
     height: 38px;
-    border: 1px solid rgba(0,200,150,.24);
+    border: 1px solid color-mix(in srgb, var(--app-primary, #00C896) 24%, transparent);
     border-radius: 11px;
-    background: rgba(0,200,150,.08);
-    color: #00C896;
+    background: color-mix(in srgb, var(--app-primary, #00C896) 8%, transparent);
+    color: var(--app-primary, #00C896);
     font-size: .7rem;
     font-weight: 850;
 }
 .cfg-workflow-copy { min-width: 0; }
 .cfg-workflow-title {
-    color: #F1F5F9;
-    font-size: .93rem;
-    font-weight: 790;
+    color: var(--app-text, #F8FAFC);
+    font-size: 1.12rem;
+    font-weight: 820;
+    letter-spacing: -.015em;
 }
 .cfg-workflow-description {
-    color: #718096;
+    color: var(--app-subtle, #718096);
     font-size: .7rem;
     line-height: 1.45;
     margin-top: 3px;
@@ -416,16 +375,15 @@ _CONFIG_CSS = """
 }
 .cfg-workflow-meta span {
     padding: 5px 8px;
-    border: 1px solid rgba(148,163,184,.15);
+    border: 1px solid var(--app-border, rgba(148,163,184,.15));
     border-radius: 8px;
-    background: rgba(15,23,42,.56);
-    color: #94A3B8;
+    background: var(--app-surface-raised, rgba(15,23,42,.56));
+    color: var(--app-muted, #94A3B8);
     font-size: .61rem;
     font-weight: 680;
 }
 @media (max-width: 760px) {
-    .cfg-overview { grid-template-columns: 1fr; }
-    .cfg-tab-intro { align-items: flex-start; flex-direction: column; }
+    .cfg-tab-intro { align-items: flex-start; flex-direction: column; gap: 6px; }
     .cfg-workflow-header { grid-template-columns: auto minmax(0, 1fr); }
     .cfg-workflow-meta { grid-column: 1 / -1; justify-content: flex-start; }
 }
@@ -446,11 +404,11 @@ _CARD_CSS = """
     padding: 20px 22px;
     border: 1px solid var(--border);
     border-radius: 14px;
-    background: linear-gradient(145deg, var(--bg), rgba(17,24,39,.72));
-    box-shadow: 0 14px 30px rgba(0,0,0,.18);
+    background: linear-gradient(145deg, var(--bg), var(--app-surface, rgba(17,24,39,.72)));
+    box-shadow: var(--app-shadow, 0 14px 30px rgba(0,0,0,.18));
 }
 .upd-card-label {
-    color: #A8B3C7;
+    color: var(--app-muted, #A8B3C7);
     font-size: .78rem;
     font-weight: 800;
     letter-spacing: .08em;
@@ -465,7 +423,7 @@ _CARD_CSS = """
 }
 .upd-card-detail {
     margin-top: 12px;
-    color: #CBD5E1;
+    color: var(--app-muted, #CBD5E1);
     font-size: .9rem;
     line-height: 1.35;
 }
@@ -477,11 +435,23 @@ _CARD_CSS = """
 
 
 def _update_summary_card_html(label: str, value: str, detail: str = "", tone: str = "neutral") -> str:
+    # Tons por token, e nao por literal: o mesmo cartão aparece no tema claro,
+    # onde "#00D09C" sobre fundo branco fica ilegível. ``--app-primary`` e
+    # companhia ja trocam de valor com o tema, e o ``color-mix`` deriva o fundo
+    # e a borda do próprio tom, sem uma segunda tabela para manter em sincronia.
+    def _tom(token: str, fallback: str) -> tuple[str, str, str]:
+        cor = f"var({token}, {fallback})"
+        return (
+            cor,
+            f"color-mix(in srgb, {cor} 12%, transparent)",
+            f"color-mix(in srgb, {cor} 35%, transparent)",
+        )
+
     colors = {
-        "ok": ("#00D09C", "rgba(0,208,156,.12)", "rgba(0,208,156,.35)"),
-        "warn": ("#FFB020", "rgba(255,176,32,.12)", "rgba(255,176,32,.35)"),
-        "info": ("#4DA3FF", "rgba(77,163,255,.12)", "rgba(77,163,255,.35)"),
-        "neutral": ("#E5E7EB", "rgba(148,163,184,.10)", "rgba(148,163,184,.25)"),
+        "ok": _tom("--app-primary", "#00D09C"),
+        "warn": _tom("--app-warning", "#FFB020"),
+        "info": _tom("--app-info", "#4DA3FF"),
+        "neutral": _tom("--app-text", "#E5E7EB"),
     }
     accent, bg, border = colors.get(tone, colors["neutral"])
     detail_html = f'<div class="upd-card-detail">{detail}</div>' if detail else ""
@@ -1562,7 +1532,8 @@ def _render_import_result(summary: dict) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _render_seguranca() -> None:
-    from design.user_accounts import render_user_accounts
+    from core.user_context import is_admin
+    from design.user_accounts import render_registered_users, render_user_accounts
     render_user_accounts()
     with st.container(border=True, key="cfg_security_session"):
         _render_workflow_header(
@@ -1603,3 +1574,15 @@ def _render_seguranca() -> None:
                 import hashlib
                 h = hashlib.sha256(senha.encode()).hexdigest()
                 st.code(h)
+
+    # Fecha a página, e não o topo: o administrador chega aqui depois de ver o
+    # estado da sessão e da credencial. Quem não é administrador não vê nem o
+    # container -- ``render_registered_users`` sai sem desenhar nada.
+    if is_admin():
+        with st.container(border=True, key="cfg_security_users"):
+            _render_workflow_header(
+                "03", "Usuários cadastrados",
+                "Quem tem acesso ao aplicativo, com data de cadastro e situação.",
+                "Somente leitura", "Visível só ao admin",
+            )
+            render_registered_users()

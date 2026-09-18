@@ -701,10 +701,13 @@ hr { border-color: var(--app-border) !important; }
 """
 
 
-def aplicar_tema() -> None:
+def aplicar_tema(theme: str = "dark") -> None:
     """
     Injeta o CSS customizado no app.
     Deve ser chamado uma única vez, no início de app.py,
     após st.set_page_config().
     """
     st.markdown(_CSS, unsafe_allow_html=True)
+    if theme == "light":
+        from design.theme_light import LIGHT_CSS
+        st.markdown(LIGHT_CSS, unsafe_allow_html=True)
