@@ -125,13 +125,41 @@ def liquidez_diaria_b3(
     *,
     n_months: int = 6,
     min_observed_months: int = 3,
+    referencia=None,
 ) -> dict:
     """Estima ADTV com o volume financeiro oficial diário da B3.
 
     Soma o giro por mês, inclui como zero meses sem negócio e usa a mediana dos
-    últimos seis meses encerrados. O mês mais recente presente na fonte é sempre
+    últimos seis meses encerrados. O mês mais recente da janela é sempre
     excluído, pois um arquivo anual parcial não prova que o mês esteja completo.
     Retorna também a data máxima efetivamente usada para a linhagem.
+
+    ``referencia`` é o último pregão da FITA INTEIRA, e é o que ancora a janela
+    (A-135). Sem ela a janela seguia o último pregão DO PRÓPRIO TICKER, e isso
+    não media liquidez atual: media a liquidez que o fundo teve enquanto ainda
+    negociava. Medido em 18/09/2026 contra a fita que ia até 14/07/2026, 36
+    fundos publicavam número assim -- BBPO11 anunciava R$ 1,48 milhão/dia com a
+    janela encerrada em agosto de 2023, IRDM11 R$ 3,29 milhões/dia com a janela
+    em setembro de 2025. Os três maiores passavam folgados no piso de R$ 1
+    milhão/dia da política, isto é, entravam em carteira como líquidos sem ter
+    negociado por até três anos. O erro é justamente o que o piso existe para
+    impedir: recomendar o que o investidor não consegue vender.
+
+    Com a âncora no mercado, mês sem negócio dentro da janela deixa de ser
+    lacuna e passa a ser observação -- o valor pode ser ``0.0``, e zero medido é
+    um fato, não um vazio. Dois cuidados preservam a assimetria entre ausência
+    de negócio e ausência de dado:
+
+    * meses anteriores à primeira observação do ticker saem da janela em vez de
+      entrarem como zero. Fundo recém-listado não deixou de negociar no período
+      em que ainda não existia;
+    * ``min_observed_months`` passa a exigir LASTRO -- meses de janela em que o
+      fundo já estava listado --, não meses com negócio. Confundir os dois era o
+      que fazia "não negociou" ser indistinguível de "não deu para olhar".
+
+    ``lastro_months`` carrega essa contagem, e é ela que ``core.liquidez`` deve
+    consumir: usar ``observed_months`` faria o zero medido ser descartado como
+    se fosse falta de lastro.
     """
     import pandas as pd
 
@@ -146,24 +174,56 @@ def liquidez_diaria_b3(
         if pd.notna(parsed) and value is not None and value >= 0:
             rows.append((parsed.normalize(), value))
     if not rows:
-        return {"value": None, "available_at": None, "observed_months": 0}
+        return {"value": None, "available_at": None, "observed_months": 0,
+                "lastro_months": 0}
     frame = pd.DataFrame(rows, columns=["date", "financial_volume"])
-    latest_source_month = frame["date"].max().to_period("M")
-    cutoff_month = latest_source_month - 1
-    first_month = cutoff_month - (max(int(n_months), 1) - 1)
     frame["month"] = frame["date"].dt.to_period("M")
-    window = frame[(frame["month"] >= first_month) & (frame["month"] <= cutoff_month)]
+    ancora = pd.to_datetime(referencia, errors="coerce") if referencia is not None \
+        else pd.NaT
+    if pd.isna(ancora):
+        # Compatibilidade: sem referência a janela segue o próprio ticker, como
+        # antes do A-135. Quem decide precisa passar a âncora do mercado.
+        cutoff_month = frame["date"].max().to_period("M") - 1
+        first_month = cutoff_month - (max(int(n_months), 1) - 1)
+        window = frame[(frame["month"] >= first_month)
+                       & (frame["month"] <= cutoff_month)]
+        observed = int(window["month"].nunique())
+        if observed < max(int(min_observed_months), 1):
+            return {"value": None, "available_at": None,
+                    "observed_months": observed, "lastro_months": observed}
+        monthly = window.groupby("month")["financial_volume"].sum()
+        months = pd.period_range(first_month, cutoff_month, freq="M")
+        typical = float(monthly.reindex(months, fill_value=0.0).median()) / _PREGOES_MES
+        available = window["date"].max()
+        return {
+            "value": typical,
+            "available_at": available.date() if pd.notna(available) else None,
+            "observed_months": observed,
+            "lastro_months": observed,
+        }
+
+    cutoff_month = ancora.to_period("M") - 1
+    first_month = cutoff_month - (max(int(n_months), 1) - 1)
+    listado_desde = frame["month"].min()
+    meses = [m for m in pd.period_range(first_month, cutoff_month, freq="M")
+             if m >= listado_desde]
+    window = frame[frame["month"].isin(meses)]
     observed = int(window["month"].nunique())
-    if observed < max(int(min_observed_months), 1):
-        return {"value": None, "available_at": None, "observed_months": observed}
+    lastro = len(meses)
+    if lastro < max(int(min_observed_months), 1):
+        return {"value": None, "available_at": None,
+                "observed_months": observed, "lastro_months": lastro}
     monthly = window.groupby("month")["financial_volume"].sum()
-    months = pd.period_range(first_month, cutoff_month, freq="M")
-    typical = float(monthly.reindex(months, fill_value=0.0).median()) / _PREGOES_MES
-    available = window.loc[window["month"] <= cutoff_month, "date"].max()
+    typical = float(monthly.reindex(meses, fill_value=0.0).median()) / _PREGOES_MES
+    # Sem negócio na janela não há data de pregão para carimbar, e herdar a do
+    # cadastro faria a linhagem do zero apontar para a fonte que ele desmente.
+    # A data que sustenta o zero é até quando a fita foi observada.
+    available = window["date"].max() if not window.empty else ancora
     return {
         "value": typical,
         "available_at": available.date() if pd.notna(available) else None,
         "observed_months": observed,
+        "lastro_months": lastro,
     }
 
 

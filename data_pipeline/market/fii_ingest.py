@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 import core.brapi as brapi
 from core.dividend_types import sql_apenas_renda, sql_safra_canonica
+from core.fii_ticker import e_ticker_fii, sql_ticker_fii
 from core.fii_universo_vivo import registrar as registrar_universo_vivo
 from core.observacao_ausente import valor_observado
 from data_pipeline.market import fii as fz
@@ -170,7 +171,7 @@ def snapshot_methodology_v4() -> dict:
             FROM market.fiis f JOIN current_universe u USING (ticker)
             LEFT JOIN market.historical_prices h ON h.ticker=f.ticker
             WHERE u.active_status IN ('listed','active')
-              AND f.ticker ~ '^[A-Z]{4}11$' AND f.price > 0
+              AND """ + sql_ticker_fii("f.ticker") + """ AND f.price > 0
               AND f.tipo IN ('tijolo','papel','fof','hibrido')
             GROUP BY f.ticker, f.name, f.tipo, f.segmento_cvm, f.segmento, f.dy_12m,
                      f.pvp, f.liquidez_diaria, f.updated_at
@@ -377,7 +378,7 @@ def audit_methodology_v4_data() -> dict:
                 WITH latest AS (
                     SELECT DISTINCT ON (ticker) ticker, active_status
                     FROM market.fii_universe_history
-                    WHERE ticker ~ '^[A-Z]{4}11$'
+                    WHERE """ + sql_ticker_fii("ticker") + """
                     ORDER BY ticker, knowledge_at DESC, reference_date DESC
                 )
                 SELECT count(*) FROM market.fiis f JOIN latest u USING (ticker)
@@ -388,7 +389,7 @@ def audit_methodology_v4_data() -> dict:
                 WITH latest AS (
                     SELECT DISTINCT ON (ticker) ticker, active_status
                     FROM market.fii_universe_history
-                    WHERE ticker ~ '^[A-Z]{4}11$'
+                    WHERE """ + sql_ticker_fii("ticker") + """
                     ORDER BY ticker, knowledge_at DESC, reference_date DESC
                 )
                 SELECT count(*) FROM latest
@@ -1225,7 +1226,7 @@ def _refresh_pro_universe(engine, *, limit: int | None = None) -> dict:
     response = _fetch_fii_v2_batch("list", [], params={"limit": 100})
     response.payload["fiis"] = [
         row for row in (response.payload.get("fiis") or [])
-        if re.fullmatch(r"[A-Z]{4}11", str(row.get("symbol") or "").upper())
+        if e_ticker_fii(row.get("symbol"))
         and float(row.get("price") or 0) > 0
     ]
     if limit:
@@ -1460,7 +1461,7 @@ def ingest_v2_history(limit: int | None = None, tickers: list[str] | None = None
             SELECT f.ticker, max(h.date) FILTER (WHERE h.source='brapi_fii_v2') AS last_v2
             FROM market.fiis f
             LEFT JOIN market.historical_prices h ON h.ticker=f.ticker
-            WHERE f.ticker ~ '^[A-Z]{4}11$'
+            WHERE """ + sql_ticker_fii("f.ticker") + """
               AND f.price > 0 AND f.liquidez_diaria > 0
             GROUP BY f.ticker ORDER BY f.ticker
         """)).fetchall()
