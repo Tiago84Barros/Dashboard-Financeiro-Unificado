@@ -318,12 +318,10 @@ _DASHBOARD_STYLES = """
     border-radius: 16px !important;
     box-shadow: var(--app-shadow);
 }
-/* Cards de texto seguem o tema; os de gráfico mantêm a superfície escura do
-   Plotly, que o CSS não recolore. */
+/* Cards de texto e de gráfico seguem o mesmo tema: o Plotly agora é
+   recolorido em design/tema_canvas.py e a moldura não precisa mais escurecer. */
 .st-key-dg_executive_card,
-.st-key-dg_investment_card {
-    background: linear-gradient(160deg, var(--app-surface-raised), var(--app-surface));
-}
+.st-key-dg_investment_card,
 .st-key-dg_history_chart,
 .st-key-dg_categories_chart,
 .st-key-dg_yoy_chart,
@@ -331,7 +329,7 @@ _DASHBOARD_STYLES = """
 .st-key-dg_geography_chart,
 .st-key-dg_positions_chart,
 .st-key-dg_evolution_chart {
-    background: linear-gradient(160deg, rgba(20,25,38,.94), rgba(14,17,26,.96));
+    background: linear-gradient(160deg, var(--app-surface-raised), var(--app-surface));
 }
 
 @media (max-width: 1100px) {

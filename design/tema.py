@@ -707,7 +707,13 @@ def aplicar_tema(theme: str = "dark") -> None:
     Deve ser chamado uma única vez, no início de app.py,
     após st.set_page_config().
     """
+    from design.tema_canvas import instalar_adaptadores, registrar_tema
+
     st.markdown(_CSS, unsafe_allow_html=True)
+    # Gráficos e tabelas desenham em canvas e não enxergam o CSS: os
+    # adaptadores leem o tema da sessão na hora de renderizar cada elemento.
+    registrar_tema(theme)
+    instalar_adaptadores()
     if theme == "light":
         from design.theme_light import LIGHT_CSS
         st.markdown(LIGHT_CSS, unsafe_allow_html=True)
