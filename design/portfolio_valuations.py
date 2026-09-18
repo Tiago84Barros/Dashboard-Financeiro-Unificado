@@ -20,8 +20,8 @@ def _load(stocks, fiis):
     return data, unavailable, datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M UTC')
 
 
-_FUNDO_CARD = '#12151E'
-_BORDA_CARD = '#1E2533'
+_FUNDO_CARD = 'var(--app-surface)'
+_BORDA_CARD = 'var(--app-border)'
 
 
 def _card(titulo: str, valor: str, sub: str, cor: str) -> str:
@@ -30,20 +30,20 @@ def _card(titulo: str, valor: str, sub: str, cor: str) -> str:
         f'<div style="background:{_FUNDO_CARD};border:1px solid {_BORDA_CARD};'
         f'border-radius:10px;padding:14px 14px 12px;height:100%;">'
         f'<div style="font-size:0.58rem;font-weight:800;text-transform:uppercase;'
-        f'letter-spacing:0.12em;color:#4A5568;margin-bottom:6px;">{titulo}</div>'
+        f'letter-spacing:0.12em;color:var(--app-subtle);margin-bottom:6px;">{titulo}</div>'
         f'<div style="font-size:1.35rem;font-weight:800;color:{cor};'
         f'letter-spacing:-0.02em;line-height:1.1;margin-bottom:5px;">{valor}</div>'
-        f'<div style="font-size:0.68rem;color:#4A5568;line-height:1.3;">{sub}</div>'
+        f'<div style="font-size:0.68rem;color:var(--app-subtle);line-height:1.3;">{sub}</div>'
         f'</div>'
     )
 
 
 def _cor_cobertura(coverage: float) -> str:
     if coverage >= .80:
-        return '#E2E8F0'
+        return 'var(--app-text)'
     if coverage >= .50:
-        return '#F6C90E'
-    return '#9CA3AF'
+        return 'var(--app-warning)'
+    return 'var(--app-muted)'
 
 
 def render_portfolio_valuations(positions):
@@ -164,7 +164,7 @@ def render_valuations_tesouro(positions, ano_atual: int):
     composicao = resumo['por_indexador']
     principal = next(iter(composicao.items()), None)
     cartoes = [
-        ('Títulos distintos', str(resumo['titulos']), 'posições agregadas por código', '#E2E8F0'),
+        ('Títulos distintos', str(resumo['titulos']), 'posições agregadas por código', 'var(--app-text)'),
         ('Prazo médio',
          '—' if prazo is None else f'{prazo:.1f} anos',
          f"cobertura {resumo['cobertura_prazo']:.0%} do valor"
@@ -173,11 +173,11 @@ def render_valuations_tesouro(positions, ano_atual: int):
         ('Retorno mercado/custo',
          '—' if retorno is None else f'{retorno:+.2f}%',
          'acumulado desde o aporte, não taxa ao ano',
-         '#00C896' if (retorno or 0) >= 0 else '#FC5C7D'),
+         'var(--app-primary)' if (retorno or 0) >= 0 else 'var(--app-danger)'),
         ('Maior indexador',
          '—' if principal is None else f'{principal[1]:.0%}',
          '—' if principal is None else principal[0],
-         '#4A9EFF'),
+         'var(--app-info)'),
     ]
     for col, (titulo, valor, sub, cor) in zip(st.columns(len(cartoes)), cartoes):
         with col:

@@ -23,10 +23,10 @@ from core.controle import (
 )
 from core.utils import fmt_moeda
 
-_COR_RECEITA = "#00C896"
-_COR_DESPESA = "#FC5C7D"
-_COR_INVEST = "#4A9EFF"
-_COR_NEUTRO = "#9CA3AF"
+_COR_RECEITA = "var(--app-primary)"
+_COR_DESPESA = "var(--app-danger)"
+_COR_INVEST = "var(--app-info)"
+_COR_NEUTRO = "var(--app-muted)"
 _CC_FEE_TERMS = (
     "anuidade", "tarifa", "iof", "juros", "multa", "encargo",
     "rotativo", "mora",
@@ -45,16 +45,16 @@ def _norm_text(value: object) -> str:
 def _kpi_card(title: str, value: str, subtitle: str, color: str) -> str:
     return f"""
     <div style="
-        background:#111827;
-        border:1px solid #1F2937;
+        background:var(--app-surface);
+        border:1px solid var(--app-border);
         border-radius:8px;
         padding:14px 16px;
         min-height:96px;">
         <div style="font-size:0.70rem;font-weight:800;letter-spacing:0.12em;
-                    text-transform:uppercase;color:#7890B2;">{_safe(title)}</div>
+                    text-transform:uppercase;color:var(--app-muted);">{_safe(title)}</div>
         <div style="font-size:1.30rem;font-weight:900;color:{color};
                     margin-top:10px;line-height:1.1;">{_safe(value)}</div>
-        <div style="font-size:0.76rem;color:#52607A;margin-top:8px;
+        <div style="font-size:0.76rem;color:var(--app-subtle);margin-top:8px;
                     line-height:1.3;">{_safe(subtitle)}</div>
     </div>
     """
@@ -204,7 +204,7 @@ def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
 
     c5, c6, c7, c8 = st.columns(4, gap="small")
     with c5:
-        st.markdown(_kpi_card("Tarifas", fmt_moeda(upload_summary["tarifas"]), "Anuidade, IOF, juros, multa e encargos.", "#F6C90E"), unsafe_allow_html=True)
+        st.markdown(_kpi_card("Tarifas", fmt_moeda(upload_summary["tarifas"]), "Anuidade, IOF, juros, multa e encargos.", "var(--app-warning)"), unsafe_allow_html=True)
     with c6:
         pag_val = upload_summary.get("pagamentos", 0.0)
         est_val = upload_summary.get("estornos", 0.0)

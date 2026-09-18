@@ -380,6 +380,11 @@ def selo_de_frescor(modulo: str, dados: dict | None = None) -> None:
                    f"(alvo de atualização: {dados['alvo']} dia(s)).")
 
 
+def _tinta(token: str, pct: int = 12) -> str:
+    """Fundo derivado do proprio token, para acompanhar a troca de tema."""
+    return f"color-mix(in srgb, var({token}) {pct}%, transparent)"
+
+
 def badge_status(texto: str, tipo: str = "info") -> None:
     """
     Badge colorido inline.

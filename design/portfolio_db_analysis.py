@@ -13,11 +13,11 @@ from html import escape
 import streamlit as st
 
 _BADGE_CORES = {
-    "sucesso": "#00C896",
-    "info": "#4A9EFF",
-    "neutro": "#9CA3AF",
-    "alerta": "#F6C90E",
-    "erro": "#FC5C7D",
+    "sucesso": "var(--app-primary)",
+    "info": "var(--app-info)",
+    "neutro": "var(--app-muted)",
+    "alerta": "var(--app-warning)",
+    "erro": "var(--app-danger)",
 }
 
 _STATUS_FII = {
@@ -60,19 +60,19 @@ def _linha_html(linha: dict, extras: list[str]) -> str:
     subtitulo = escape(str(linha.get("nome") or linha.get("setor") or
                            linha.get("tipo") or ""))
     return (
-        f'<div style="background:#12151E;border:1px solid #1E2533;'
+        f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
         f'border-left:3px solid {cor};border-radius:10px;padding:12px 14px;'
         f'margin-bottom:8px;">'
         f'<div style="display:flex;justify-content:space-between;'
         f'align-items:baseline;gap:12px;">'
-        f'<div style="font-size:0.95rem;font-weight:800;color:#E2E8F0;">'
+        f'<div style="font-size:0.95rem;font-weight:800;color:var(--app-text);">'
         f'{escape(str(linha.get("ticker", "")))}'
-        f'<span style="font-size:0.68rem;font-weight:600;color:#4A5568;'
+        f'<span style="font-size:0.68rem;font-weight:600;color:var(--app-subtle);'
         f'margin-left:8px;">{subtitulo}</span></div>'
         f'<div style="font-size:1.15rem;font-weight:800;color:{cor};">{nota}'
-        f'<span style="font-size:0.62rem;color:#4A5568;font-weight:600;">/100</span>'
+        f'<span style="font-size:0.62rem;color:var(--app-subtle);font-weight:600;">/100</span>'
         f'</div></div>'
-        f'<div style="font-size:0.70rem;color:#8B95A5;margin-top:5px;'
+        f'<div style="font-size:0.70rem;color:var(--app-muted);margin-top:5px;'
         f'line-height:1.4;">{detalhe}</div>'
         f'</div>'
     )
@@ -171,14 +171,14 @@ def render_db_macro(dados: dict) -> None:
         texto = "—" if valor is None else f"{float(valor):.2f}"
         with col:
             st.markdown(
-                f'<div style="background:#12151E;border:1px solid #1E2533;'
+                f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
                 f'border-radius:10px;padding:14px 14px 12px;">'
                 f'<div style="font-size:0.58rem;font-weight:800;'
-                f'text-transform:uppercase;letter-spacing:0.12em;color:#4A5568;'
+                f'text-transform:uppercase;letter-spacing:0.12em;color:var(--app-subtle);'
                 f'margin-bottom:6px;">{escape(rotulo)}</div>'
-                f'<div style="font-size:1.35rem;font-weight:800;color:#E2E8F0;">'
+                f'<div style="font-size:1.35rem;font-weight:800;color:var(--app-text);">'
                 f'{texto}</div>'
-                f'<div style="font-size:0.68rem;color:#4A5568;">'
+                f'<div style="font-size:0.68rem;color:var(--app-subtle);">'
                 f'ano {escape(str(atual.get("ano", "—")))}</div>'
                 f'</div>', unsafe_allow_html=True)
     anos = dados.get("anos") or []

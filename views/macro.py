@@ -98,9 +98,9 @@ def render() -> None:
     # Juro real implícito
     juro_real = round((1 + _MACRO_REF["selic"] / 100) / (1 + _MACRO_REF["ipca_12m"] / 100) * 100 - 100, 2)
     st.markdown(
-        f'<div style="color:#9CA3AF;font-size:0.85rem;margin-top:4px">'
+        f'<div style="color:var(--app-muted);font-size:0.85rem;margin-top:4px">'
         f'Juro real implícito (SELIC / IPCA): '
-        f'<b style="color:{"#00C896" if juro_real > 0 else "#FC5C7D"}">'
+        f'<b style="color:{"var(--app-primary)" if juro_real > 0 else "var(--app-danger)"}">'
         f'{juro_real:+.2f}% a.a.</b>'
         f'</div>',
         unsafe_allow_html=True,

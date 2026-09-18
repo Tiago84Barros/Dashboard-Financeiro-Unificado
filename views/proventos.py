@@ -161,12 +161,12 @@ def render() -> None:
             indicador_linha(
                 f"{a['ticker']} · {a['nome'][:28]}",
                 fmt_moeda(a["total"]),
-                cor_valor="#E2E8F0",
+                cor_valor="var(--app-text)",
                 badge=f"{a['pct']:.1f}%",
                 tipo_badge="alerta" if a["pct"] > 30 else "neutro",
             )
             st.markdown(
-                f'<div style="text-align:right;font-size:0.73rem;color:#4A5568;'
+                f'<div style="text-align:right;font-size:0.73rem;color:var(--app-subtle);'
                 f'margin-top:-4px;margin-bottom:4px">'
                 f'{a["classe"]} · {a["num_eventos"]} evento{"s" if a["num_eventos"] != 1 else ""}'
                 f'</div>',
@@ -192,7 +192,7 @@ def render() -> None:
                 tipo_badge="neutro",
             )
             st.markdown(
-                f'<div style="text-align:right;font-size:0.73rem;color:#4A5568;'
+                f'<div style="text-align:right;font-size:0.73rem;color:var(--app-subtle);'
                 f'margin-top:-4px;margin-bottom:4px">'
                 f'{t["num_eventos"]} evento{"s" if t["num_eventos"] != 1 else ""}'
                 f'</div>',

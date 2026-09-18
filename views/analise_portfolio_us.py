@@ -205,10 +205,10 @@ def _render_macro(macro: dict) -> None:
         return
     entradas = macro.get("inputs") or {}
     observado = bool(macro.get("observado"))
-    selo = ('<span class="apb3-tag-pill" style="color:#34D399;">📡 observado'
+    selo = ('<span class="apb3-tag-pill" style="color:var(--app-primary);">📡 observado'
             + (f' · {macro.get("as_of")}' if macro.get("as_of") else "") + '</span>'
             if observado else
-            '<span class="apb3-tag-pill" style="color:#FBBF24;">📐 premissa de simulação</span>')
+            '<span class="apb3-tag-pill" style="color:var(--app-warning);">📐 premissa de simulação</span>')
     st.markdown(
         '<div class="apb3-section-title">🌐 Cenário Macroeconômico — Estados Unidos '
         f'{selo}</div>',
@@ -240,7 +240,7 @@ def _render_macro(macro: dict) -> None:
             for setor, valor in ordenados
         )
         st.markdown(
-            '<div style="font-size:.72rem;color:#718096;margin:-8px 0 6px;">'
+            '<div style="font-size:.72rem;color:var(--app-muted);margin:-8px 0 6px;">'
             'Impulso do regime por setor (-10 a +10)</div>' + chips,
             unsafe_allow_html=True,
         )
@@ -714,7 +714,7 @@ def _render_conclusao(port_analise: dict) -> None:
     st.markdown('<div class="apb3-section-title">🏁 Conclusão Estratégica</div>',
                 unsafe_allow_html=True)
     st.markdown(
-        f'<div class="apb3-report-qual" style="border-color:rgba(0,200,150,.25);">'
+        f'<div class="apb3-report-qual" style="border-color:color-mix(in srgb, var(--app-primary) 25%, transparent);">'
         f'{conclusao}</div>',
         unsafe_allow_html=True,
     )
@@ -969,7 +969,7 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
     st.markdown('<div class="apb3-section-title">💬 Tire Dúvidas sobre o Portfólio</div>',
                 unsafe_allow_html=True)
     st.markdown(
-        '<p style="font-size:0.78rem;color:#9CA3AF;margin-bottom:16px;">'
+        '<p style="font-size:0.78rem;color:var(--app-muted);margin-bottom:16px;">'
         'Pergunte sobre múltiplos (P/L, EV/EBIT, retorno do FCL), medianas por '
         'indústria, comparações com empresas <strong>fora</strong> da carteira, '
         'concentração setorial, sensibilidade ao Fed ou a lógica da seleção. A IA '
@@ -1032,15 +1032,15 @@ def render(show_header: bool = True) -> None:
         st.markdown(
             '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">'
             '<span style="font-size:2rem">🧠</span>'
-            '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
+            '<h1 style="font-size:2rem;font-weight:800;color:var(--app-text);margin:0;">'
             'Avaliação de Portfólio — Estados Unidos</h1>'
             '</div>',
             unsafe_allow_html=True,
         )
 
     st.markdown(
-        '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
-        '<strong style="color:#CBD5E1;">Etapa 3 de 3 · Avaliação do conjunto.</strong> '
+        '<p style="font-size:0.80rem;color:var(--app-muted);margin-bottom:20px;">'
+        '<strong style="color:var(--app-text);">Etapa 3 de 3 · Avaliação do conjunto.</strong> '
         'Julga a carteira criada na aba <strong>Criação de Portfólio</strong> como um '
         'todo — diversificação, concentração por ativo, indústria e setor, exposição a '
         'risco, geração de caixa e crescimento consolidados, qualidade contábil e '
@@ -1099,7 +1099,7 @@ def render(show_header: bool = True) -> None:
     ultima = status.get("last_update")
     usd_brl = _usd_brl_da_base()
     st.markdown(
-        '<div style="font-size:.76rem;color:#718096;margin:-8px 0 12px;line-height:1.7;">'
+        '<div style="font-size:.76rem;color:var(--app-muted);margin:-8px 0 12px;line-height:1.7;">'
         f'🗂️ <b>Base:</b> {escape(modo_txt)}'
         + (f' · última ingestão {escape(str(ultima)[:19])}' if ultima else
            ' · data de ingestão não informada')

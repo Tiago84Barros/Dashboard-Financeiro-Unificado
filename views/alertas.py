@@ -110,7 +110,7 @@ def render() -> None:
                     badge_status(texto_badge, tipo_badge)
                 st.caption(alerta["descricao"])
                 st.markdown(
-                    f'<span style="color:#4A5568;font-size:0.75rem">'
+                    f'<span style="color:var(--app-subtle);font-size:0.75rem">'
                     f'📁 {alerta["modulo"]} · 🕐 {alerta["data"]}</span>',
                     unsafe_allow_html=True,
                 )
