@@ -105,3 +105,81 @@ def test_integridade_nao_medida_quando_nada_pode_ser_julgado():
     comp = cs._componente_integridade_fii(investivel=100, tickers_flag=0,
                                           julgados=0, total=1000)
     assert comp.pct is None
+
+
+# --------------------------------------------------------------------------
+# Defeito 4 (A-136) -- o plano B morria com a transacao que o chamou.
+#
+# No Postgres, statement que falha aborta a transacao inteira: toda consulta
+# seguinte na mesma conexao devolve `InFailedSqlTransaction`. Como
+# `_integridade_fii_gravada` reusa a MESMA conexao para contar os acusados em
+# `market.fiis`, o fallback nunca produzia numero no Supabase -- justo a base
+# onde ele e a unica medicao possivel, porque a fita da B3 so existe no
+# armazem local. Medido em 18/09/2026: Integridade caia para `None` e o card
+# da secao ficava em 72,0% em vez de 81,3%.
+# --------------------------------------------------------------------------
+
+
+class _ConnPostgresFalso:
+    """Emula o contagio: apos falha, so volta a responder depois do rollback."""
+
+    def __init__(self, resposta):
+        self._resposta = resposta
+        self.abortada = False
+        self.rollbacks = 0
+        self.consultas = 0
+
+    def execute(self, clause, params=None):
+        if self.abortada:
+            raise RuntimeError("current transaction is aborted")
+        self.consultas += 1
+        if self.consultas == 1:  # o A-132 ao vivo: a fita nao existe aqui
+            self.abortada = True
+            raise RuntimeError('relation "market.fii_b3_security_history"'
+                               " does not exist")
+        return self._resposta
+
+    def rollback(self):
+        self.rollbacks += 1
+        self.abortada = False
+
+
+class _Escalar:
+    def __init__(self, valor):
+        self._valor = valor
+
+    def scalar(self):
+        return self._valor
+
+
+def _universo(investivel=433):
+    from core.universo_decisao import Universo
+    return Universo(modulo="Selecao de FIIs", nominal=1069,
+                    investivel=investivel, apto=389,
+                    exemplos_descartados=(), notas=(), minimo_absoluto=40)
+
+
+def test_fallback_de_integridade_sobrevive_a_transacao_abortada(monkeypatch):
+    """Sem o rollback, o plano B existe no codigo e nunca entrega numero."""
+    monkeypatch.setattr(cs, "carregar_medicao", lambda: {
+        "medido_em": "2026-09-18", "eventos_total": 21408,
+        "eventos_julgados": 15798, "tickers_flag": ["BBFI11", "FAMB11"]})
+    monkeypatch.setattr(cs, "_medicao_vencida", lambda _med: False)
+    conn = _ConnPostgresFalso(_Escalar(2))
+    comp = cs._integridade_fii(conn, _universo())
+    assert conn.rollbacks == 1, "a transacao abortada precisa ser desfeita"
+    assert comp.pct is not None, "o fallback tinha tudo para medir e nao mediu"
+    assert comp.pct == pytest.approx(100.0 * 431 / 433)
+
+
+def test_conexao_sem_rollback_nao_derruba_a_medicao(monkeypatch):
+    """Nem todo destino e Postgres: ausencia de `rollback` nao pode virar erro."""
+    monkeypatch.setattr(cs, "carregar_medicao", lambda: None)
+
+    class _SemRollback:
+        def execute(self, clause, params=None):
+            raise RuntimeError("sem fita")
+
+    comp = cs._integridade_fii(_SemRollback(), _universo())
+    assert comp.pct is None
+    assert "nao medido" in comp.evidencia

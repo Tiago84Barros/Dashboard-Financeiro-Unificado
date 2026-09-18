@@ -220,6 +220,12 @@ def _integridade_fii(conn, u: Universo) -> Componente:
     O `try` cobre a consulta e SO ela. Envolver o resto da funcao faria a
     falha permanente do Supabase engolir caminhos que nada tem a ver com ela
     ([[guarda-que-cobre-metade-da-funcao]]).
+
+    O `rollback` antes do plano B nao e zelo: no Postgres, statement que
+    falha aborta a transacao inteira, e toda consulta seguinte na mesma
+    conexao morre com `InFailedSqlTransaction`. Sem ele o fallback existia
+    no codigo e nunca produzia numero no Supabase -- a base onde ele e a
+    unica medicao possivel, porque a fita da B3 so mora no armazem local.
     """
     from sqlalchemy import text as _text
     try:
@@ -227,6 +233,10 @@ def _integridade_fii(conn, u: Universo) -> Componente:
     except Exception as exc:  # noqa: BLE001
         logger.info("A-132 ao vivo indisponivel (%s); tentando medicao gravada",
                     type(exc).__name__)
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         return _integridade_fii_gravada(conn, u)
     return _componente_integridade_fii(
         investivel=u.investivel,

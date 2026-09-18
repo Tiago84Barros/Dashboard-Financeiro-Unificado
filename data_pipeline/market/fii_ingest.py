@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 import core.brapi as brapi
 from core.dividend_types import sql_apenas_renda, sql_safra_canonica
+from core.fii_universo_vivo import registrar as registrar_universo_vivo
 from core.observacao_ausente import valor_observado
 from data_pipeline.market import fii as fz
 from data_pipeline.market import repository as repo
@@ -1639,7 +1640,8 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
     repo.reset_db_cols_cache()  # migração 020 pode ter sido aplicada com processo vivo
     prog = {"candidatos": 0, "fiis": 0, "etfs_ignorados": 0, "erros": 0,
             "gravados": 0, "ranking_aplicado": False, "cobertura": 0.0,
-            "snapshot_mensal": 0, "metricas_derivadas": 0}
+            "snapshot_mensal": 0, "metricas_derivadas": 0,
+            "universo_por_preco": 0}
     if engine is None:
         return {**prog, "erros": -1}
     with engine.connect() as conn:
@@ -1734,6 +1736,15 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
                 )
             prog["snapshot_mensal"] = _snapshot_score_mensal(
                 conn, ranked_by, ref) if apply_ranking else 0
+        # Prova de vida dos fundos que o endpoint Pro de listagem nunca viu.
+        # Em transacao propria: o portao de universo nao pode derrubar a
+        # gravacao do cadastro, nem o contrario.
+        try:
+            with engine.begin() as conn:
+                prog["universo_por_preco"] = registrar_universo_vivo(
+                    conn, calculated_at)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("prova de vida do universo: %s", exc)
     logger.info("market/fii ingest: %s", prog)
     return prog
 
