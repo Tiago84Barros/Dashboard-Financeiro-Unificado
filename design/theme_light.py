@@ -1,0 +1,121 @@
+"""Camada clara por página/sessão; não muda config global do Streamlit.
+
+Canvas (dataframes) e gráficos mantêm superfície escura de alto contraste:
+CSS não recolore seu conteúdo, nem inverte cores financeiras ou logotipos.
+"""
+
+LIGHT_CSS = """
+<style>
+:root {
+ --app-bg:#f5f7fb; --app-surface:#ffffff; --app-surface-raised:#eef2f7;
+ --app-border:#d1d9e4; --app-border-strong:#a5b4c7;
+ --app-text:#172033; --app-muted:#46566e; --app-subtle:#52627a;
+ --app-primary:#007e60; --app-info:#175eac; --app-danger:#b42342;
+ --app-warning:#875e00; --app-shadow:0 8px 24px rgba(30,45,70,.08);
+ color-scheme:light;
+}
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+ background:var(--app-bg)!important; color:var(--app-text)!important;
+}
+[data-testid="stHeader"], [data-testid="stBottom"],
+[data-testid="stBottomBlockContainer"] {
+ background:var(--app-bg)!important; color:var(--app-text)!important;
+}
+[data-testid="stSidebar"], [data-testid="stSidebarContent"] {
+ background:#edf2f8!important; color:var(--app-text)!important;
+}
+[data-testid="stMarkdownContainer"] :is(p,li,h1,h2,h3,h4,h5,h6),
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p,
+[data-testid="stMetricValue"], [data-testid="stMetricLabel"],
+[data-testid="stExpander"] summary, [data-testid="stCaptionContainer"] {
+ color:var(--app-text)!important;
+}
+[data-testid="stCaptionContainer"] p {color:var(--app-muted)!important;}
+[data-testid="stCaption"], [data-testid="stCaption"] p {color:var(--app-muted)!important;}
+/* "200MB per file" herda rgba(250,250,250,.6) e some no dropzone branco. */
+[data-testid="stFileUploaderDropzoneInstructions"] :is(span,small) {
+ color:var(--app-muted)!important;
+}
+[data-testid="stExpander"] :is(details,summary) {
+ background:var(--app-surface)!important; color:var(--app-text)!important;
+}
+[data-testid="stTextInputRootElement"], [data-testid="stTextInputField"],
+[data-testid="stNumberInput"] input,
+[data-testid="stSelectbox"] [role="group"],
+[data-testid="stSelectbox"] [role="combobox"],
+[data-testid="stSelectbox"] button, [role="listbox"], [role="option"] {
+ background:#fff!important; color:var(--app-text)!important;
+ border-color:var(--app-border)!important;
+}
+[data-testid="stSidebarCollapseButton"] button {color:var(--app-text)!important;}
+[data-testid="stSidebar"] .stRadio > div > label {
+ color:var(--app-muted)!important;
+}
+[data-testid="stSidebar"] .stRadio > div > label:has(input:checked) {
+ color:#005c46!important; background:#d8f3e9!important;
+}
+[data-testid="stMetric"], [data-testid="metric-container"],
+[data-testid="stExpander"], [data-testid="stChatMessage"],
+[data-testid="stFileUploaderDropzone"], [data-testid="stAlert"],
+[data-testid="stForm"] {
+ background:var(--app-surface)!important; border-color:var(--app-border)!important;
+ color:var(--app-text)!important;
+}
+[data-baseweb="input"], [data-baseweb="input"] input,
+[data-baseweb="base-input"],
+[data-baseweb="textarea"], textarea, [data-baseweb="select"] > div,
+[data-baseweb="select"] input, [data-baseweb="popover"] [role="listbox"],
+[data-baseweb="popover"] [role="option"], [data-baseweb="menu"],
+[data-baseweb="calendar"], [data-testid="stChatInput"] {
+ background:#fff!important; color:var(--app-text)!important;
+ border-color:var(--app-border)!important; caret-color:var(--app-text)!important;
+}
+input::placeholder, textarea::placeholder {color:#64748b!important;}
+[data-baseweb="tab"] {color:var(--app-muted)!important;}
+[data-baseweb="tab"][aria-selected="true"] {color:#00694f!important;}
+/* ``^=`` e não ``=``: o botão de um ``st.form`` chega como
+   kind="secondaryFormSubmit" / "primaryFormSubmit", e a igualdade exata deixava
+   "Alterar minha senha" e "Cadastrar usuário" com fundo escuro e texto escuro
+   em cima da página clara -- ilegível. */
+button[kind^="secondary"], button[kind^="tertiary"],
+[data-testid="stPopoverButton"] {
+ background:#fff!important; color:var(--app-text)!important;
+ border-color:var(--app-border)!important;
+}
+button[kind^="secondary"] p, button[kind^="tertiary"] p {color:var(--app-text)!important;}
+button[kind^="primary"] {background:#007e60!important;color:#fff!important;}
+button[kind^="primary"] p {color:#fff!important;}
+/* Olho de "mostrar senha": ícone herda o branco do tema escuro e some no campo
+   branco. */
+[data-testid="stTextInputRootElement"] button,
+[data-baseweb="input"] button {
+ background:transparent!important; color:var(--app-muted)!important;
+}
+button:disabled {opacity:.55;}
+:is(input,button,textarea,[role="combobox"]):focus-visible {
+ outline:2px solid #175eac!important; outline-offset:2px;
+}
+.app-brand, .app-page-hero, .app-page-meta,
+.b3-card, .b3-card-logo-wrap, .apb3-kpi, .apb3-macro, .apb3-logo-item,
+.fii-selection-card {
+ background:var(--app-surface)!important; border-color:var(--app-border)!important;
+ box-shadow:var(--app-shadow); color:var(--app-text)!important;
+}
+.app-brand-title, .app-page-title-row h1, .b3-card-ticker,
+.apb3-kpi-val, .apb3-macro-val, .apb3-logo-ticker {
+ color:var(--app-text)!important;
+}
+.app-brand-subtitle, .app-page-subtitle, .nav-section, .b3-card-nome,
+.b3-card-tag, .apb3-kpi-label, .apb3-kpi-sub, .apb3-macro-lbl,
+.apb3-logo-weight {color:var(--app-muted)!important;}
+.apb3-macro-up {color:#087548!important;}
+.apb3-macro-dn {color:#b42342!important;}
+/* Superfícies independentes: preserva cores dos dados e contraste dos canvas. */
+[data-testid="stDataFrame"], [data-testid="stDataEditor"],
+[data-testid="stPlotlyChart"], [data-testid="stVegaLiteChart"] {
+ background:#0e1117; border:1px solid var(--app-border);
+ border-radius:10px; padding:4px;
+}
+[data-testid="stCode"] {background:#0e1117;border-radius:10px;}
+</style>
+"""
