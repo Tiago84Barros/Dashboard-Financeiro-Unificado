@@ -1,6 +1,16 @@
 """Piso absoluto de qualidade do módulo EUA — casos do universo real."""
 import pandas as pd
 
+from core.us_advanced_lab import (
+    RISCO_ACCRUALS,
+    RISCO_ALAVANCAGEM,
+    RISCO_ALTMAN,
+    RISCO_FCF,
+    RISCO_LIQUIDEZ,
+    RISCO_MARGEM,
+    RISCO_PAYOUT,
+    RISCO_PIOTROSKI,
+)
 from core.us_quality_floor import (
     APROVADO,
     REPROVADO,
@@ -97,18 +107,29 @@ def test_o_piso_nao_define_limiar_proprio():
     tempo — o defeito que originou o piso. Se este teste falhar, alguém trouxe
     limiar numérico para dentro do piso.
     """
+    import ast
+    import re
     from pathlib import Path
+
     fonte = (Path(__file__).resolve().parents[1]
              / "core" / "us_quality_floor.py").read_text(encoding="utf-8")
-    corpo = fonte.split('"""', 2)[-1]          # ignora o docstring do módulo
-    import re
+
+    # Pela AST, não por texto: o que se proíbe é limiar no CÓDIGO. Docstring e
+    # comentário precisam poder nomear os critérios — é assim que a guarda de
+    # viabilidade explica o que cede e o que não cede. Filtrar por substring
+    # confundia a explicação com a régua e transformava documentar em defeito.
+    arvore = ast.parse(fonte)
+    for no in ast.walk(arvore):
+        if isinstance(no, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                           ast.ClassDef)) and ast.get_docstring(no) is not None:
+            no.body = no.body[1:]
+    corpo = ast.unparse(arvore)                # sem docstrings, sem comentários
+
     for termo in ("altman", "piotroski", "z_score", "sloan", "payout_ratio"):
-        linhas = [linha for linha in corpo.splitlines()
-                  if termo in linha.lower() and not linha.strip().startswith("#")]
+        linhas = [linha for linha in corpo.splitlines() if termo in linha.lower()]
         assert not linhas, f"limiar de {termo} vazou para o piso: {linhas}"
     # Nenhuma comparação numérica de métrica financeira no corpo executável.
-    assert not re.search(r"^\s*(?!#).*\b(risk_penalty|f_score)\b\s*[<>]=?",
-                         corpo, re.M)
+    assert not re.search(r"\b(risk_penalty|f_score)\b\s*[<>]=?", corpo)
 
 
 # ── Guarda do piso de score de entrada ───────────────────────────────────────
@@ -180,3 +201,126 @@ def test_guarda_nao_dispara_quando_ha_carteira():
     assert r["review_portfolio"]["items"]
     assert r["review_portfolio"]["unallocated_weight"] > 0
     assert not any("Nenhuma indústria aprovada" in w for w in r["warnings"])
+
+
+# -- Guarda de viabilidade e rede final ---------------------------------------
+# "Nunca deixar zerada a criacao de qualquer portfolio" e regra do projeto. Os
+# testes abaixo forcam o esvaziamento de verdade: sem eles, a guarda e a rede
+# nunca chegam a ser executadas pela suite.
+
+ACESSORIO = _frame([
+    {"symbol": "SOMA", "entry_status": "Excluída",
+     "risk_driver": f"{RISCO_ALTMAN}; {RISCO_PAYOUT}"},
+    {"symbol": "SOM2", "entry_status": "Excluída",
+     "risk_driver": f"{RISCO_ACCRUALS}; {RISCO_PIOTROSKI}"},
+    {"symbol": "ESTR", "entry_status": "Excluída",
+     "risk_driver": f"{RISCO_ALAVANCAGEM}; {RISCO_ALTMAN}"},
+    {"symbol": "MUDO", "entry_status": "Excluída",
+     "risk_driver": "sem alerta crítico"},
+])
+
+
+def test_industria_sem_ninguem_readmite_o_lider_quando_a_soma_e_acessoria():
+    """Todos excluídos só pela SOMA de sinais que sozinhos não excluem.
+
+    Deixar a indústria vazia aqui é perder representação por critério que o
+    próprio motor declara insuficiente isolado. A reprovação segue no log.
+    """
+    log: dict = {}
+    finais = apply_with_substitution(
+        ["SOMA"], [("SOMA", 90.0), ("SOM2", 70.0)], ACESSORIO,
+        {"SOMA": 0.1}, "Biotecnologia", log)
+
+    assert finais == ["SOMA"]
+    assert log["afrouxado_por_viabilidade"][0]["symbol"] == "SOMA"
+    assert not log.get("sem_substituto")
+    # A cessão não apaga a reprovação: ela continua registrada.
+    assert log["reprovados"][0]["symbol"] == "SOMA"
+
+
+def test_falha_estrutural_nunca_e_cedida():
+    """Alavancagem no meio dos motivos e a vaga fica vazia — é o que o piso
+    existe para barrar, e ceder aqui desligaria a proteção inteira."""
+    log: dict = {}
+    finais = apply_with_substitution(
+        ["ESTR"], [("ESTR", 90.0)], ACESSORIO, {"ESTR": 0.1}, "Aço", log)
+
+    assert finais == []
+    assert log["sem_substituto"][0]["symbol"] == "ESTR"
+    assert not log.get("afrouxado_por_viabilidade")
+
+
+def test_exclusao_sem_motivo_acessorio_nao_e_cedida():
+    """'Excluída' por score baixo traz 'sem alerta crítico' como motivo — não
+    cabe em RISCOS_ACESSORIOS e portanto não passa pela guarda."""
+    log: dict = {}
+    finais = apply_with_substitution(
+        ["MUDO"], [("MUDO", 90.0)], ACESSORIO, {"MUDO": 0.1}, "Varejo", log)
+    assert finais == []
+    assert log["sem_substituto"][0]["symbol"] == "MUDO"
+
+
+def test_substituto_aprovado_tem_precedencia_sobre_a_cessao():
+    """A cessão é o ÚLTIMO recurso: havendo nome aprovado na indústria, é ele
+    que entra — a guarda não pode virar porta de entrada preferencial."""
+    frame = pd.concat([ACESSORIO, UNIVERSO], ignore_index=True)
+    log: dict = {}
+    finais = apply_with_substitution(
+        ["SOMA"], [("SOMA", 90.0), ("GOOD", 80.0)], frame, {"SOMA": 0.1},
+        "Software", log)
+    assert finais == ["GOOD"]
+    assert not log.get("afrouxado_por_viabilidade")
+
+
+def test_carteira_nunca_sai_vazia_por_causa_do_piso():
+    """REDE FINAL. O piso reprova o universo inteiro e ainda assim sai carteira.
+
+    A guarda de viabilidade age por indústria e não sabe que aquela era a
+    última; só `select_industry_leaders` enxerga o conjunto. Carteira vazia é a
+    única saída que a regra do projeto proíbe — quem recebe a tela em branco
+    decide sem o motor, isto é, sem proteção nenhuma.
+    """
+    from core.us_portfolio_creation import (
+        USPortfolioCreationParams,
+        select_industry_leaders,
+    )
+
+    eligible = pd.DataFrame([
+        {"symbol": "ESTR", "industry_group": "Aço", "entry_score": 50.0,
+         "fundamental_score": 50.0, "entry_status": "Excluída",
+         "risk_driver": f"{RISCO_ALAVANCAGEM}; {RISCO_LIQUIDEZ}"},
+        {"symbol": "EST2", "industry_group": "Aço", "entry_score": 40.0,
+         "fundamental_score": 40.0, "entry_status": "Excluída",
+         "risk_driver": f"{RISCO_MARGEM}; {RISCO_FCF}"},
+    ])
+    audit = pd.DataFrame([{"industry_group": "Aço", "status": "Aprovada"}])
+
+    saida = select_industry_leaders(
+        eligible, audit, USPortfolioCreationParams(leaders_per_industry=1))
+
+    assert not saida.empty, "o piso zerou a carteira — regra do projeto violada"
+    assert saida.attrs["quality_floor_log"]["carteira_preservada"]
+    # A cessão é declarada na própria linha, não só no log.
+    assert saida["selection_reason"].str.contains("Carteira preservada").all()
+    # E a reprovação que a motivou continua legível.
+    assert saida.attrs["quality_floor_log"]["reprovados"]
+
+
+def test_rede_final_nao_dispara_quando_o_piso_deixa_alguem():
+    """Rede que aparece sempre não é rede: com um nome aprovado, ela cala."""
+    from core.us_portfolio_creation import (
+        USPortfolioCreationParams,
+        select_industry_leaders,
+    )
+
+    eligible = pd.DataFrame([
+        {"symbol": "GOOD", "industry_group": "Software", "entry_score": 80.0,
+         "fundamental_score": 70.0, "entry_status": "Observação",
+         "risk_driver": "sem alerta crítico"},
+    ])
+    audit = pd.DataFrame([{"industry_group": "Software", "status": "Aprovada"}])
+    saida = select_industry_leaders(
+        eligible, audit, USPortfolioCreationParams(leaders_per_industry=1))
+
+    assert list(saida["symbol"]) == ["GOOD"]
+    assert not saida.attrs["quality_floor_log"].get("carteira_preservada")

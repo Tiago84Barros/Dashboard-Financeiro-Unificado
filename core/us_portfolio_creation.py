@@ -483,12 +483,16 @@ def select_industry_leaders(
 
     floor_log: dict[str, list[dict]] = {}
     records = []
+    # Líderes ANTES do piso, por indústria. Só são usados se o piso tiver
+    # esvaziado TODAS as indústrias (ver a rede no fim da função).
+    sem_piso: list = []
     for industry, group in eligible[eligible["industry_group"].isin(approved)].groupby(
         "industry_group", dropna=False
     ):
         ranked = group.sort_values(
             ["entry_score", "fundamental_score"], ascending=False)
         leaders = ranked.head(max(1, int(params.leaders_per_industry))).copy()
+        sem_piso.append(leaders.copy())
 
         if params.apply_quality_floor:
             # A vaga da indústria é preservada: quem é reprovado sai e o próximo
@@ -510,9 +514,31 @@ def select_industry_leaders(
         leaders["selection_reason"] = "Liderança de score na indústria aprovada"
         records.append(leaders)
     if not records:
-        saida = pd.DataFrame()
-        saida.attrs["quality_floor_log"] = floor_log
-        return saida
+        # REDE FINAL. O piso reprovou o universo inteiro: mesmo a guarda de
+        # viabilidade de `us_quality_floor` age por indústria e não tem como
+        # saber que ela era a última. Entregar carteira vazia é a única
+        # saída que a regra do projeto proíbe — "nunca deixar zerada a
+        # criação de qualquer portfólio" —, porque quem recebe vazio não
+        # recebe proteção nenhuma: recebe a tela em branco e vai decidir
+        # sem o motor. A carteira volta a ser a PRÉ-PISO, e a cessão é
+        # declarada no log, não silenciada.
+        if not sem_piso:
+            saida = pd.DataFrame()
+            saida.attrs["quality_floor_log"] = floor_log
+            return saida
+        floor_log.setdefault("carteira_preservada", []).append({
+            "motivo": ("o piso de qualidade reprovou todas as indústrias "
+                       "aprovadas; a carteira foi remontada SEM o piso para "
+                       "não sair vazia — cada nome abaixo carrega a "
+                       "reprovação registrada em 'reprovados'"),
+            "industrias": int(len(sem_piso)),
+        })
+        for bloco in sem_piso:
+            bloco = bloco.copy()
+            bloco["selection_reason"] = (
+                "Carteira preservada: o piso de qualidade reprovaria "
+                "todos os nomes desta indústria")
+            records.append(bloco)
     candidates = pd.concat(records, ignore_index=True)
     candidates = candidates.sort_values(
         ["entry_score", "fundamental_score"], ascending=False
