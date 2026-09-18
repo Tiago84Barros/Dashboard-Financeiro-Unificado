@@ -13,36 +13,36 @@ from dataclasses import dataclass
 
 import streamlit as st
 
-from design.componentes import container_pagina
+from design.componentes import container_pagina, cor_token
 
 _CSS = """
 <style>
 .doc-intro {
-    background: linear-gradient(135deg, rgba(0,200,150,.10), rgba(74,158,255,.08));
-    border: 1px solid rgba(0,200,150,.22);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--app-primary) 10%, transparent), color-mix(in srgb, var(--app-info) 8%, transparent));
+    border: 1px solid color-mix(in srgb, var(--app-primary) 22%, transparent);
     border-radius: 10px;
     padding: 18px 20px;
     margin-bottom: 18px;
 }
 .doc-intro-title {
-    color: #E2E8F0;
+    color: var(--app-text);
     font-weight: 850;
     font-size: 1.05rem;
     margin-bottom: 6px;
 }
 .doc-intro-text {
-    color: #AEB8C8;
+    color: var(--app-muted);
     font-size: .86rem;
     line-height: 1.55;
 }
 .doc-flow-shell {
-    border: 1px solid #263247;
-    background: #101622;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface);
     border-radius: 10px;
     padding: 14px 14px 4px;
 }
 .doc-row-label {
-    color: #64748B;
+    color: var(--app-subtle);
     font-size: .68rem;
     letter-spacing: .12em;
     text-transform: uppercase;
@@ -50,41 +50,41 @@ _CSS = """
     margin: 2px 0 7px;
 }
 .doc-arrow {
-    color: #526176;
+    color: var(--app-subtle);
     text-align: center;
     font-weight: 800;
     font-size: 1.15rem;
     margin: 1px 0 5px;
 }
 .doc-detail {
-    background: #0C111B;
-    border: 1px solid #263247;
+    background: var(--app-surface);
+    border: 1px solid var(--app-border);
     border-radius: 10px;
     padding: 18px 20px;
 }
 .doc-detail-kicker {
-    color: #00C896;
+    color: var(--app-primary);
     font-size: .68rem;
     letter-spacing: .12em;
     text-transform: uppercase;
     font-weight: 850;
 }
 .doc-detail-title {
-    color: #F7FAFC;
+    color: var(--app-text);
     font-size: 1.25rem;
     font-weight: 900;
     margin: 4px 0 8px;
 }
 .doc-detail-body {
-    color: #B8C2D2;
+    color: var(--app-muted);
     line-height: 1.58;
     font-size: .88rem;
 }
 .doc-chip {
     display: inline-block;
-    border: 1px solid rgba(255,255,255,.12);
-    background: rgba(255,255,255,.045);
-    color: #D6DCE6;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface-raised);
+    color: var(--app-muted);
     border-radius: 999px;
     padding: 3px 9px;
     margin: 4px 5px 0 0;
@@ -92,7 +92,7 @@ _CSS = """
     font-weight: 750;
 }
 .doc-note {
-    color: #718096;
+    color: var(--app-subtle);
     font-size: .75rem;
     margin-top: 10px;
 }
@@ -103,19 +103,19 @@ _CSS = """
     margin-top: 12px;
 }
 .doc-card {
-    border: 1px solid #263247;
-    background: #111827;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface);
     border-radius: 10px;
     padding: 14px 16px;
 }
 .doc-card-title {
-    color: #E2E8F0;
+    color: var(--app-text);
     font-weight: 850;
     font-size: .92rem;
     margin-bottom: 5px;
 }
 .doc-card-text {
-    color: #AEB8C8;
+    color: var(--app-muted);
     line-height: 1.5;
     font-size: .80rem;
 }
@@ -128,10 +128,8 @@ _CSS = """
 .doc-indicator-card {
     position: relative;
     overflow: hidden;
-    border: 1px solid #28354A;
-    background:
-        linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0)),
-        #101722;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface);
     border-radius: 10px;
     padding: 16px 17px 15px;
     min-height: 270px;
@@ -143,7 +141,7 @@ _CSS = """
     top: 0;
     bottom: 0;
     width: 4px;
-    background: var(--accent, #00C896);
+    background: var(--accent, var(--app-primary));
 }
 .doc-indicator-top {
     display: flex;
@@ -153,15 +151,15 @@ _CSS = """
     margin-bottom: 10px;
 }
 .doc-indicator-name {
-    color: #F7FAFC;
+    color: var(--app-text);
     font-size: 1.08rem;
     font-weight: 900;
     line-height: 1.15;
 }
 .doc-indicator-group {
-    color: var(--accent, #00C896);
-    border: 1px solid color-mix(in srgb, var(--accent, #00C896) 42%, transparent);
-    background: color-mix(in srgb, var(--accent, #00C896) 13%, transparent);
+    color: var(--accent, var(--app-primary));
+    border: 1px solid color-mix(in srgb, var(--accent, var(--app-primary)) 42%, transparent);
+    background: color-mix(in srgb, var(--accent, var(--app-primary)) 13%, transparent);
     border-radius: 999px;
     padding: 3px 9px;
     font-size: .64rem;
@@ -171,12 +169,12 @@ _CSS = """
     white-space: nowrap;
 }
 .doc-field {
-    border-top: 1px solid rgba(148,163,184,.14);
+    border-top: 1px solid var(--app-border);
     padding-top: 9px;
     margin-top: 9px;
 }
 .doc-field-label {
-    color: #718096;
+    color: var(--app-subtle);
     font-size: .63rem;
     font-weight: 850;
     text-transform: uppercase;
@@ -184,18 +182,18 @@ _CSS = """
     margin-bottom: 3px;
 }
 .doc-field-text {
-    color: #C6D0DF;
+    color: var(--app-muted);
     font-size: .80rem;
     line-height: 1.48;
 }
 .doc-author-note {
-    color: #D7DEE9;
+    color: var(--app-muted);
     font-size: .78rem;
     line-height: 1.5;
     padding: 10px 11px;
     border-radius: 8px;
-    background: rgba(246,201,14,.07);
-    border: 1px solid rgba(246,201,14,.18);
+    background: color-mix(in srgb, var(--app-warning) 7%, transparent);
+    border: 1px solid color-mix(in srgb, var(--app-warning) 18%, transparent);
     margin-top: 10px;
 }
 .doc-statement-grid {
@@ -205,25 +203,25 @@ _CSS = """
     margin-top: 12px;
 }
 .doc-statement-card {
-    border: 1px solid #263247;
-    background: #0F1622;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface);
     border-radius: 10px;
     padding: 15px 16px;
 }
 .doc-statement-title {
-    color: #E2E8F0;
+    color: var(--app-text);
     font-weight: 900;
     font-size: .96rem;
     margin-bottom: 9px;
 }
 .doc-av-shell {
-    border: 1px solid #263247;
-    background: #0F1622;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface);
     border-radius: 10px;
     padding: 16px;
 }
 .doc-av-flow-title {
-    color: #E2E8F0;
+    color: var(--app-text);
     font-size: .82rem;
     font-weight: 850;
     text-transform: uppercase;
@@ -231,26 +229,26 @@ _CSS = """
     margin-bottom: 12px;
 }
 .doc-av-arrow {
-    color: #6B7A90;
+    color: var(--app-subtle);
     text-align: center;
     font-size: 1.35rem;
     font-weight: 900;
     margin: -2px 0 2px;
 }
 .doc-av-detail {
-    border: 1px solid #2B3A51;
+    border: 1px solid var(--app-border);
     background:
-        linear-gradient(180deg, rgba(0,200,150,.07), rgba(74,158,255,.03)),
-        #0B1019;
+        linear-gradient(180deg, color-mix(in srgb, var(--app-primary) 7%, transparent), color-mix(in srgb, var(--app-info) 3%, transparent)),
+        var(--app-surface);
     border-radius: 10px;
     padding: 18px 20px;
 }
 .doc-av-detail.score-final {
-    border-color: rgba(0,200,150,.55);
-    box-shadow: 0 0 0 1px rgba(0,200,150,.13), 0 0 34px rgba(0,200,150,.08);
+    border-color: color-mix(in srgb, var(--app-primary) 55%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-primary) 13%, transparent), 0 0 34px color-mix(in srgb, var(--app-primary) 8%, transparent);
 }
 .doc-av-kicker {
-    color: #00C896;
+    color: var(--app-primary);
     font-size: .68rem;
     font-weight: 900;
     letter-spacing: .12em;
@@ -258,18 +256,18 @@ _CSS = """
     margin-bottom: 3px;
 }
 .doc-av-title {
-    color: #F7FAFC;
+    color: var(--app-text);
     font-size: 1.38rem;
     font-weight: 950;
     margin-bottom: 8px;
 }
 .doc-av-section {
-    border-top: 1px solid rgba(148,163,184,.14);
+    border-top: 1px solid var(--app-border);
     padding-top: 10px;
     margin-top: 10px;
 }
 .doc-av-label {
-    color: #718096;
+    color: var(--app-subtle);
     font-size: .65rem;
     font-weight: 900;
     letter-spacing: .10em;
@@ -277,37 +275,37 @@ _CSS = """
     margin-bottom: 4px;
 }
 .doc-av-text {
-    color: #C9D3E2;
+    color: var(--app-muted);
     font-size: .86rem;
     line-height: 1.56;
 }
 .doc-av-impact {
-    border: 1px solid rgba(74,158,255,.22);
-    background: rgba(74,158,255,.07);
+    border: 1px solid color-mix(in srgb, var(--app-info) 22%, transparent);
+    background: color-mix(in srgb, var(--app-info) 7%, transparent);
     border-radius: 9px;
     padding: 11px 12px;
     margin-top: 11px;
 }
 .doc-mini-title {
-    color: #E2E8F0;
+    color: var(--app-text);
     font-weight: 850;
     font-size: .95rem;
     margin: 18px 0 8px;
 }
 .stButton > button {
     border-radius: 8px;
-    border: 1px solid #2D3A50;
-    background: #141B29;
-    color: #DCE5F2;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface);
+    color: var(--app-text);
     min-height: 54px;
     font-weight: 800;
     white-space: normal;
     line-height: 1.15;
 }
 .stButton > button:hover {
-    border-color: rgba(0,200,150,.55);
-    background: rgba(0,200,150,.10);
-    color: #F7FAFC;
+    border-color: color-mix(in srgb, var(--app-primary) 55%, transparent);
+    background: color-mix(in srgb, var(--app-primary) 10%, transparent);
+    color: var(--app-text);
 }
 </style>
 """
@@ -1400,7 +1398,11 @@ _GROUP_ACCENTS = {
     "Rentabilidade": "#00C896",
     "Margens": "#4A9EFF",
     "Dividendos": "#F6C90E",
-    "Valuation": "#B084F5",
+    # Roxo escurecido: os outros quatro sao tokens e acompanham o tema, este
+    # nao tem token e ficava fixo. #B084F5 rendia 2,81:1 sobre a pagina clara
+    # -- ilegivel -- contra 6,72:1 no escuro. #9B51E0 troca esse desequilibrio
+    # por 4,52:1 no claro e 4,18:1 no escuro, legivel nos dois.
+    "Valuation": "#9B51E0",
     "Solvencia": "#FC5C7D",
 }
 
@@ -1764,7 +1766,9 @@ def _render_indicadores() -> None:
 
     indicador_cards = []
     for item in indicadores:
-        accent = _GROUP_ACCENTS.get(item["Grupo"], "#00C896")
+        # Roxo de Valuation nao tem token; os outros quatro sao a paleta
+        # canonica e `cor_token` os troca pelo tom do tema em vigor.
+        accent = cor_token(_GROUP_ACCENTS.get(item["Grupo"], "#00C896"))
         indicador_cards.append(
             f'<div class="doc-indicator-card" style="--accent:{accent};">'
             '<div class="doc-indicator-top">'
