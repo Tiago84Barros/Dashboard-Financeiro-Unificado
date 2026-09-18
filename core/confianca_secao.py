@@ -27,7 +27,14 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
-from core.dividend_types import sql_apenas_renda
+from core.fii_integridade import (
+    SQL_PROVENTO_IMPLAUSIVEL,
+    VALIDADE_DIAS,
+    carregar_medicao,
+    flagrados_no_universo,
+    idade_dias,
+)
+from core.fii_integridade import vencida as _medicao_vencida
 from core.universo_decisao import Universo, universo_b3, universo_fii, universo_us
 
 logger = logging.getLogger(__name__)
@@ -174,84 +181,18 @@ class ConfiancaSecao:
 # --------------------------------------------------------------------------
 # A-132: provento de magnitude implausivel em FII.
 #
-# A versao anterior deste check media duas coisas erradas ao mesmo tempo.
+# A regra -- limiar, janela, SQL e predicado -- mora em `core/fii_integridade.py`
+# desde 18/09/2026, junto com o artefato que a leva para producao. Os nomes
+# ficam re-exportados aqui porque este modulo e quem os aplica.
 #
-# 1. O filtro de tipo era `upper(type) NOT IN ('AMORTIZACAO', 'REST CAP DIN')`
-#    escrito a mao. O dado grava `AMORTIZAÇÃO`, e `upper()` nao tira acento --
-#    a exclusao nunca disparou. As 588 amortizacoes do Supabase entravam como
-#    "provento implausivel", sendo que amortizacao devolve capital e e grande
-#    POR CONSTRUCAO. `core.dividend_types` ja existia dizendo exatamente isso;
-#    a regra foi duplicada em vez de importada, e a copia saiu errada.
-#
-# 2. Comparava `amount` com `f.price`, o preco de HOJE. Um fundo que amortizou
-#    quase todo o capital negocia hoje por uma fracao do que valia: RBDS11
-#    exibia rendimento de 2018 valendo 900% do preco de 2026 sem nada de errado
-#    no dado. O preco relevante e o da EPOCA do evento.
-#
-# Medido no Supabase em 26/08/2026: 66 fundos acusados viram 14.
-#
-# 3. (A-134, 02/09/2026) O preco da epoca saia de `market.historical_prices`,
-#    que NAO e preco negociado: e preco retroajustado por split. Comparar
-#    `amount` -- R$/cota do dia do evento, bruto -- com um preco reescalado por
-#    um grupamento posterior compara duas moedas diferentes. Onde o fundo
-#    grupou, o denominador encolhe e o rendimento parece enorme; onde
-#    desdobrou, cresce e o rendimento some. Agora o preco vem da fita oficial
-#    da B3 (`market.fii_b3_security_history`), a mesma serie que
-#    `core.liquidez` usa para contraditar o cadastro.
-#
-#    Medido no armazem local em 02/09/2026, sobre 21.151 eventos: 9 fundos
-#    acusados viram 6, e so DOIS sao os mesmos. Saem sete falsos positivos
-#    (BLMO11, CFII11, FYTO11, HGAG11, HGBS11, MCRE11, RDLI11) e entram quatro
-#    que o preco ajustado escondia (BBFI11, HGPO11, PRSN11, TSNC11); ficam
-#    FAMB11 e KNRE11. Onze dos treze fundos distintos estavam errados.
-#
-#    A troca CUSTA cobertura: 74,7% dos eventos julgados contra 79,5%, ou 1.029
-#    eventos a menos. Nao e o candle mensal que se perde por estar fora da
-#    janela de +-10 dias -- ele quase sempre cai dentro dela, porque ex-date de
-#    FII se concentra na virada do mes. O que se perde e fundo que
-#    `historical_prices` cobre e a fita da B3 nao. Julgar menos eventos com o
-#    preco certo vale mais do que julgar mais com a moeda errada, e a cobertura
-#    entra na evidencia justamente para esse desconto aparecer.
-#
-# Eventos sem preco na epoca NAO sao julgados -- nem limpos, nem sujos.
-# Conta-los como limpos infla a integridade com ausencia de evidencia, que e o
-# defeito A-124 em outra roupa.
+# Por que houve mudanca de casa: a serie de preco que o check precisa
+# (`market.fii_b3_security_history`, 243 MB) nao esta no Supabase. A consulta
+# ao vivo levanta `ProgrammingError` em TODA execucao publicada, e o
+# componente de peso 0,35 vinha saindo da media com a frase "nao medido:
+# ProgrammingError" -- que soa transitoria para um defeito permanente e nomeia
+# o passo errado. O caminho gravado abaixo resolve isso do mesmo jeito que
+# `core/us_survivorship.py`: quem tem o armazem mede, a tela le a medicao.
 # --------------------------------------------------------------------------
-LIMIAR_PROVENTO_SOBRE_PRECO = 0.30
-
-#: Janela, em dias, para achar o preco negociado em torno do ex-date. Precisa
-#: cobrir feriado prolongado e fundo de baixissima liquidez sem passar perto de
-#: um mes, que ja seria outra safra de preco.
-JANELA_PRECO_EPOCA_DIAS = 10
-
-SQL_PROVENTO_IMPLAUSIVEL = f"""
-WITH ev AS (
-  SELECT d.ticker, d.amount,
-         (SELECT h.close FROM market.fii_b3_security_history h
-           WHERE h.ticker = d.ticker AND h.close > 0
-             AND h.trade_date BETWEEN d.ex_date - {JANELA_PRECO_EPOCA_DIAS}
-                                  AND d.ex_date + {JANELA_PRECO_EPOCA_DIAS}
-           ORDER BY abs(h.trade_date - d.ex_date), h.trade_date,
-                    h.collected_at DESC, h.id DESC LIMIT 1) AS px_epoca
-    FROM market.dividends d
-    JOIN market.fiis f ON f.ticker = d.ticker
-   WHERE f.price > 0 AND d.amount > 0 AND d.ex_date IS NOT NULL
-     AND {sql_apenas_renda('d.type')})
-SELECT count(*) AS total,
-       count(*) FILTER (WHERE px_epoca IS NOT NULL) AS julgados,
-       count(DISTINCT ticker) FILTER (
-         WHERE px_epoca IS NOT NULL
-           AND amount > {LIMIAR_PROVENTO_SOBRE_PRECO} * px_epoca) AS tickers_flag
-  FROM ev
-"""
-
-
-def _provento_implausivel(amount: float | None,
-                          px_epoca: float | None) -> bool | None:
-    """``None`` quando nao ha preco da epoca: o evento nao pode ser julgado."""
-    if not px_epoca or px_epoca <= 0 or amount is None:
-        return None
-    return float(amount) > LIMIAR_PROVENTO_SOBRE_PRECO * float(px_epoca)
 
 
 def _componente_integridade_fii(investivel: int, tickers_flag: int,
@@ -271,6 +212,62 @@ def _componente_integridade_fii(investivel: int, tickers_flag: int,
         "Integridade", 100.0 * limpos / investivel, 0.35,
         f"{tickers_flag} fundos com provento implausivel ante o preco da epoca "
         f"(A-132); check cobre {cob:.0f}% dos {total} eventos de renda")
+
+
+def _integridade_fii(conn, u: Universo) -> Componente:
+    """A-132 ao vivo quando a fita da B3 existe nesta base; gravada quando nao.
+
+    O `try` cobre a consulta e SO ela. Envolver o resto da funcao faria a
+    falha permanente do Supabase engolir caminhos que nada tem a ver com ela
+    ([[guarda-que-cobre-metade-da-funcao]]).
+    """
+    from sqlalchemy import text as _text
+    try:
+        linha = conn.execute(_text(SQL_PROVENTO_IMPLAUSIVEL)).mappings().one()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("A-132 ao vivo indisponivel (%s); tentando medicao gravada",
+                    type(exc).__name__)
+        return _integridade_fii_gravada(conn, u)
+    return _componente_integridade_fii(
+        investivel=u.investivel,
+        tickers_flag=int(linha["tickers_flag"] or 0),
+        julgados=int(linha["julgados"] or 0),
+        total=int(linha["total"] or 0))
+
+
+def _integridade_fii_gravada(conn, u: Universo) -> Componente:
+    """O A-132 medido no armazem, aplicado ao universo investivel DESTA base.
+
+    O artefato guarda a lista de acusados, nao a contagem: o numerador sai de
+    `market.fiis` da mesma base que serve o denominador, senao a fracao
+    mistura duas safras ([[medicao-comparou-safras-diferentes]]).
+
+    Ausencia e vencimento NAO viram zero. Em media renormalizada `0.0` pune e
+    `None` e neutro ([[medicao-que-pune-a-evidencia]]), e um numero velho
+    apresentado como atual e pior do que a ausencia declarada.
+    """
+    med = carregar_medicao()
+    if med is None:
+        return Componente(
+            "Integridade", None, 0.35,
+            "nao medido: o historico de preco da B3 so existe no armazem "
+            "local e nao ha medicao gravada em data/fii_integridade.json "
+            "(rode scripts/medir_integridade_fii.py)")
+    if _medicao_vencida(med):
+        return Componente(
+            "Integridade", None, 0.35,
+            f"nao medido: medicao de {med['medido_em']} tem "
+            f"{idade_dias(med)} dias, acima dos {VALIDADE_DIAS} de validade "
+            "(rode scripts/medir_integridade_fii.py)")
+    flag = flagrados_no_universo(conn, med["tickers_flag"])
+    comp = _componente_integridade_fii(
+        investivel=u.investivel, tickers_flag=flag,
+        julgados=int(med["eventos_julgados"]), total=int(med["eventos_total"]))
+    if comp.pct is None:
+        return comp
+    return Componente(
+        comp.nome, comp.pct, comp.peso,
+        f"{comp.evidencia}; medido no armazem em {med['medido_em']}")
 
 
 def _dias_desde(valor) -> int | None:
@@ -393,15 +390,9 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
             # Integridade: proventos ja passam pelo filtro renda-vs-capital
             # (A-128) e pelo dedup de eco de classe (A-129). O que resta medir
             # e a fracao de aptos SEM evento de magnitude implausivel (A-132),
-            # comparado ao preco da EPOCA -- ver SQL_PROVENTO_IMPLAUSIVEL.
-            from sqlalchemy import text as _text
-            linha = conn.execute(_text(SQL_PROVENTO_IMPLAUSIVEL)).mappings().one()
+            # comparado ao preco da EPOCA -- ver core/fii_integridade.py.
             if u and u.investivel:
-                comps.append(_componente_integridade_fii(
-                    investivel=u.investivel,
-                    tickers_flag=int(linha["tickers_flag"] or 0),
-                    julgados=int(linha["julgados"] or 0),
-                    total=int(linha["total"] or 0)))
+                comps.append(_integridade_fii(conn, u))
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca FII: %s", exc)
         notas.append(f"medicao parcial: {type(exc).__name__}")
