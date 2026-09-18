@@ -29,8 +29,8 @@ from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
 from core.macro_data.database import get_local_macro_engine
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from data_pipeline.utils.date_utils import fmt_datetime_br
-from design.componentes import card_metrica
-from design.market_companies import render_company_logo
+from design.componentes import card_metrica, cor_token
+from design.market_companies import company_logo_html
 
 # ── Importa engine compartilhado de empresas_b3 ───────────────────────────────
 from views.empresas_b3 import (
@@ -220,30 +220,39 @@ def _load_adtv(meses: int = 6) -> dict[str, float]:
 _CSS = """
 <style>
 .pb3-seg-hdr {
-    font-size:1.05rem;font-weight:800;color:#E2E8F0;margin:24px 0 2px;
+    font-size:1.05rem;font-weight:800;color:var(--app-text);margin:24px 0 2px;
 }
 .pb3-seg-sub {
-    font-size:0.72rem;color:#4A5568;margin-bottom:10px;
+    font-size:0.72rem;color:var(--app-subtle);margin-bottom:10px;
 }
 .pb3-seg-val {
-    font-size:0.80rem;color:#9CA3AF;margin-bottom:12px;
+    font-size:0.80rem;color:var(--app-muted);margin-bottom:12px;
 }
 .pb3-emp-card {
-    background:#12151E;border:1px solid #1E2533;border-radius:12px;
+    background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
     padding:16px 16px 12px;text-align:center;
 }
-.pb3-emp-ticker { font-size:1.0rem;font-weight:800;color:#E2E8F0;margin:8px 0 2px; }
-.pb3-emp-nome   { font-size:0.68rem;color:#718096;margin-bottom:8px; }
-.pb3-emp-hist   { font-size:0.65rem;color:#4A5568;line-height:1.6; }
+.pb3-emp-ticker { font-size:1.0rem;font-weight:800;color:var(--app-text);margin:8px 0 2px; }
+.pb3-emp-nome   { font-size:0.68rem;color:var(--app-muted);margin-bottom:8px; }
+.pb3-emp-hist   { font-size:0.65rem;color:var(--app-subtle);line-height:1.6; }
 .pb3-emp-part   { font-size:1.10rem;font-weight:700;margin-top:8px; }
 .pb3-lider-card {
-    background:#12151E;border:1.5px solid rgba(0,200,150,.25);
+    background:var(--app-surface);
+    border:1.5px solid color-mix(in srgb, var(--app-primary) 25%, transparent);
     border-radius:12px;padding:20px 16px;text-align:center;
 }
-.pb3-lider-ticker { font-size:1.1rem;font-weight:800;color:#E2E8F0;margin:8px 0 2px; }
-.pb3-lider-motivo { font-size:0.65rem;color:#00C896;font-weight:700;
+.pb3-lider-ticker { font-size:1.1rem;font-weight:800;color:var(--app-text);margin:8px 0 2px; }
+.pb3-lider-motivo { font-size:0.65rem;color:var(--app-primary);font-weight:700;
                     text-transform:uppercase;letter-spacing:.08em; }
-.pb3-lider-ano    { font-size:0.68rem;color:#4A5568;margin-top:4px; }
+.pb3-lider-ano    { font-size:0.68rem;color:var(--app-subtle);margin-top:4px; }
+.pb3-logo {
+    width:44px;height:44px;border-radius:10px;margin:0 auto;
+    background:var(--app-surface-raised);display:flex;align-items:center;
+    justify-content:center;color:var(--app-muted);font-size:0.80rem;
+    font-weight:800;overflow:hidden;
+    /* Logo via background-image, nao via <img>: ver company_logo_html (A-012). */
+    background-repeat:no-repeat;background-position:center;background-size:76% 76%;
+}
 </style>
 """
 
@@ -1345,22 +1354,22 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
         anos_desde = ano_atual - ultimo if ultimo else 99
         cor_part = _COR_POS if anos_desde <= max_anos_lid else _COR_NEU
         with cols[j % 4]:
-            st.markdown('<div class="pb3-emp-card">', unsafe_allow_html=True)
-            render_company_logo(tk, _logo_url(tk), size=40)
             st.markdown(
+                f'<div class="pb3-emp-card">'
+                f'{company_logo_html(tk, _logo_url(tk), css_class="pb3-logo")}'
                 f'<div class="pb3-emp-ticker">{tk}</div>'
                 f'<div class="pb3-emp-nome">{nome}</div>'
                 f'<div class="pb3-emp-hist">'
                 f'{"{}x Líder: {}".format(n_lids, anos_str) if anos_lid else "Sem lideranças"}'
                 f'</div>'
-                f'<div class="pb3-emp-part" style="color:{cor_part};">'
+                f'<div class="pb3-emp-part" style="color:{cor_token(cor_part)};">'
                 f'{part*100:.1f}% participação'
                 f'</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
 
-    st.markdown("<hr style='margin:16px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:16px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
 
 
 def _render_paineis_app1(
@@ -1376,7 +1385,7 @@ def _render_paineis_app1(
     lideres_global = pd.DataFrame([row for r in resultados for row in r.get("lideres_rows", [])])
     selecionados = {p["tk"] for p in proximos_uniq}
 
-    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
     st.caption("Teste incremental: painéis analíticos equivalentes aos patches do app1.")
 
     with st.expander("🧩 Patch 1 — Régua de Convicção", expanded=False):
@@ -1398,6 +1407,9 @@ def _render_paineis_app1(
                 )
                 df_ano = df_ano.sort_values(
                     ["Score_Ajustado", "ticker"], ascending=[False, True])
+                # Escala literal de propósito: o Plotly desenha em canvas e
+                # não resolve `var(--…)`. No tema claro quem converte é
+                # `design/tema_canvas.py`, que precisa do valor resolvido.
                 fig = px.bar(
                     df_ano, x="ticker", y="Convicção", color="Convicção",
                     color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"],
@@ -1656,20 +1668,20 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
         """
         <style>
         .cf-header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin:4px 0 22px;}
-        .cf-title{font-size:2rem;font-weight:900;line-height:1.1;margin:0;color:#F8FAFC;}
-        .cf-subtitle{font-size:.88rem;color:#C4CBD5;margin:10px 0 0;}
-        .cf-pill{border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);border-radius:999px;padding:8px 14px;color:#D6DCE6;font-size:.78rem;font-weight:700;white-space:nowrap;}
-        .cf-rank{font-size:.86rem;color:#D6DCE6;margin:20px 0 2px;}
-        .cf-name{font-size:1.35rem;font-weight:900;color:#F8FAFC;margin-bottom:10px;}
-        .cf-card{border-radius:18px;padding:18px 20px;min-height:122px;margin-bottom:12px;border:1px solid rgba(255,255,255,.13);box-shadow:0 0 0 1px rgba(255,255,255,.04) inset;background:rgba(255,255,255,.045);}
-        .cf-card-label{font-size:.70rem;letter-spacing:.12em;text-transform:uppercase;color:#D1D5DB;font-weight:800;margin-bottom:12px;}
-        .cf-card-value{font-size:1.75rem;line-height:1;font-weight:900;color:#FFFFFF;margin-bottom:10px;}
-        .cf-card-extra{font-size:.78rem;color:#D1D5DB;line-height:1.35;}
-        .cf-card-income{background:rgba(37,99,235,.15);border-color:rgba(59,130,246,.35);}
-        .cf-card-yield{background:rgba(180,113,18,.18);border-color:rgba(245,158,11,.35);}
-        .cf-card-good{background:rgba(16,185,129,.15);border-color:rgba(34,197,94,.35);}
-        .cf-card-bad{background:rgba(239,68,68,.13);border-color:rgba(248,113,113,.32);}
-        .cf-card-ratio{background:rgba(148,163,184,.10);border-color:rgba(148,163,184,.24);}
+        .cf-title{font-size:2rem;font-weight:900;line-height:1.1;margin:0;color:var(--app-text);}
+        .cf-subtitle{font-size:.88rem;color:var(--app-muted);margin:10px 0 0;}
+        .cf-pill{border:1px solid var(--app-border);background:var(--app-surface-raised);border-radius:999px;padding:8px 14px;color:var(--app-muted);font-size:.78rem;font-weight:700;white-space:nowrap;}
+        .cf-rank{font-size:.86rem;color:var(--app-muted);margin:20px 0 2px;}
+        .cf-name{font-size:1.35rem;font-weight:900;color:var(--app-text);margin-bottom:10px;}
+        .cf-card{border-radius:18px;padding:18px 20px;min-height:122px;margin-bottom:12px;border:1px solid var(--app-border);background:var(--app-surface-raised);}
+        .cf-card-label{font-size:.70rem;letter-spacing:.12em;text-transform:uppercase;color:var(--app-muted);font-weight:800;margin-bottom:12px;}
+        .cf-card-value{font-size:1.75rem;line-height:1;font-weight:900;color:var(--app-text);margin-bottom:10px;}
+        .cf-card-extra{font-size:.78rem;color:var(--app-muted);line-height:1.35;}
+        .cf-card-income{background:color-mix(in srgb, var(--app-info) 12%, transparent);border-color:color-mix(in srgb, var(--app-info) 35%, transparent);}
+        .cf-card-yield{background:color-mix(in srgb, var(--app-warning) 14%, transparent);border-color:color-mix(in srgb, var(--app-warning) 35%, transparent);}
+        .cf-card-good{background:color-mix(in srgb, var(--app-primary) 12%, transparent);border-color:color-mix(in srgb, var(--app-primary) 35%, transparent);}
+        .cf-card-bad{background:color-mix(in srgb, var(--app-danger) 12%, transparent);border-color:color-mix(in srgb, var(--app-danger) 32%, transparent);}
+        .cf-card-ratio{background:var(--app-surface-raised);border-color:var(--app-border);}
         @media(max-width:700px){.cf-header{display:block}.cf-pill{display:inline-block;margin-top:12px}.cf-title{font-size:1.55rem}.cf-card-value{font-size:1.45rem}}
         </style>
         """,
@@ -1871,7 +1883,7 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
         c2.markdown(_quality_card("Máxima queda (5a)", _fmt_pct(row["max_drop_5y"], signed=True), "Pior queda do preço no período.", "cf-card-ratio"), unsafe_allow_html=True)
         c3.markdown(_quality_card("Fonte", "DB + YF", "Supabase (primário) + yfinance (fallback).", "cf-card-ratio"), unsafe_allow_html=True)
 
-        st.markdown("<hr style='border:0;border-top:1px solid rgba(255,255,255,.08);margin: 8px 0 18px;'>", unsafe_allow_html=True)
+        st.markdown("<hr style='border:0;border-top:1px solid var(--app-border);margin: 8px 0 18px;'>", unsafe_allow_html=True)
 
     st.caption(
         "Notas: crescimento usa inclinação log-linear anualizada quando há dados suficientes. "
@@ -1912,14 +1924,16 @@ def _render_perfil_configuracao() -> None:
 
     _ok = ativo != PERSONALIZADO and not alertas
     _cor = "#00C896" if _ok else ("#F6C90E" if alertas else "#4A9EFF")
+    _tok = cor_token(_cor)
     _selo = ativo if ativo != PERSONALIZADO else "Personalizada"
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:10px;'
         f'margin:4px 0 10px;">'
-        f'<span style="font-size:0.78rem;font-weight:700;color:#E2E8F0;">'
+        f'<span style="font-size:0.78rem;font-weight:700;color:var(--app-text);">'
         f'Perfil de configuração</span>'
         f'<span style="font-size:0.66rem;font-weight:700;letter-spacing:.04em;'
-        f'color:{_cor};border:1px solid {_cor}55;background:{_cor}14;'
+        f'color:{_tok};border:1px solid color-mix(in srgb, {_tok} 33%, transparent);'
+        f'background:color-mix(in srgb, {_tok} 8%, transparent);'
         f'border-radius:999px;padding:2px 9px;">{html.escape(_selo)}</span>'
         f'</div>',
         unsafe_allow_html=True,
@@ -2085,7 +2099,7 @@ def _render_saude_da_carteira(tickers: list[str], df_mult_todos: pd.DataFrame,
     if not saude.holdings:
         return
 
-    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
     _sec_hdr("🩺 Saúde das empresas selecionadas")
     st.caption(
@@ -2167,7 +2181,7 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
     n_medio = (len(todos_pares) / len(ics_universo)) if ics_universo else 0.0
     evidencia = universe_evidence(ics_universo, n_medio_ativos=n_medio)
 
-    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
     _sec_hdr("🔬 Evidência no universo — o teste com amplitude")
     st.caption(
@@ -2266,7 +2280,7 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
         route_summary,
     )
 
-    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
     _sec_hdr("💎 Rota de valor — distorção com solvência")
     st.caption(
@@ -2456,15 +2470,15 @@ def render(show_header: bool = True) -> None:
         st.markdown(
             '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">'
             '<span style="font-size:2rem">🚀</span>'
-            '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
+            '<h1 style="font-size:2rem;font-weight:800;color:var(--app-text);margin:0;">'
             'Criação de Portfólio B3</h1>'
             '</div>',
             unsafe_allow_html=True,
         )
 
     st.markdown(
-        '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
-        '<strong style="color:#CBD5E1;">Etapa 2 de 3 · Aplicação em escala.</strong> '
+        '<p style="font-size:0.80rem;color:var(--app-muted);margin-bottom:20px;">'
+        '<strong style="color:var(--app-text);">Etapa 2 de 3 · Aplicação em escala.</strong> '
         'Roda a metodologia validada na aba <strong>Análise Avançada</strong> em '
         '<strong>todos os segmentos</strong> da B3 de uma vez, identifica as empresas '
         'vencedoras de cada segmento e consolida uma carteira inicial multissetorial.'
@@ -3390,6 +3404,8 @@ def render(show_header: bool = True) -> None:
 
     df_tbl = pd.DataFrame(rows_tbl)
 
+    # Cores literais de propósito: a grade nativa é canvas e não resolve
+    # `var(--…)`. No tema claro quem converte é `design/tema_canvas.py`.
     def _cor_status(v: str) -> str:
         if "✅" in v:
             return "color: #00C896"
@@ -3423,7 +3439,7 @@ def render(show_header: bool = True) -> None:
 
     # ── SEGMENTOS APROVADOS ───────────────────────────────────────────────────
     if aprovados and mostrar_audit:
-        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                     unsafe_allow_html=True)
         _sec_hdr(f"✅ Segmentos Aprovados ({len(aprovados)})")
         for res in sorted(aprovados,
@@ -3438,7 +3454,7 @@ def render(show_header: bool = True) -> None:
     _render_rota_de_valor(df_mult_todos, df_set, taxa_selic_aa)
 
     # ── EMPRESAS LÍDERES PARA O PRÓXIMO ANO ──────────────────────────────────
-    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
     _sec_hdr(f"📋 Empresas líderes para o próximo ano ({ano_atual})")
     st.caption(f"Apenas segmentos aprovados · Para compra em {ano_atual}")
@@ -3992,9 +4008,9 @@ def render(show_header: bool = True) -> None:
                 _tk_html = html.escape(str(item["tk"]))
                 _nome_html = html.escape(str(item["nome"]))
                 with cols_p[j]:
-                    st.markdown('<div class="pb3-lider-card">', unsafe_allow_html=True)
-                    render_company_logo(item["tk"], _logo_url(item["tk"]), size=48)
                     st.markdown(
+                        f'<div class="pb3-lider-card">'
+                        f'{company_logo_html(item["tk"], _logo_url(item["tk"]), css_class="pb3-logo")}'
                         f'<div class="pb3-lider-ticker">({_tk_html})</div>'
                         f'<div class="pb3-emp-nome">{_nome_html}</div>'
                         f'{mot_html}'
@@ -4008,7 +4024,7 @@ def render(show_header: bool = True) -> None:
     # ── TRANSPARÊNCIA DO PISO ABSOLUTO ───────────────────────────────────────
     if _piso_ativo and (piso_log["reprovados"] or piso_log["sem_substituto"]
                         or piso_log["afrouxado_por_viabilidade"]):
-        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                     unsafe_allow_html=True)
         _sec_hdr("🚧 Piso absoluto de qualidade — reprovações e substituições")
         st.caption(
@@ -4054,7 +4070,7 @@ def render(show_header: bool = True) -> None:
 
     # ── TRANSPARÊNCIA DO GATE QUALITATIVO ────────────────────────────────────
     if _gate_ativo:
-        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                     unsafe_allow_html=True)
         _sec_hdr("🧠 Gate qualitativo (parecer LLM) — vetos e substituições")
         st.caption(
@@ -4084,7 +4100,7 @@ def render(show_header: bool = True) -> None:
 
     # ── TRANSPARÊNCIA DO PISO DE NEGOCIABILIDADE ─────────────────────────────
     if liq_trocas or liq_avisos:
-        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                     unsafe_allow_html=True)
         from core.b3_liquidity import formata_reais as _liq_reais
         _sec_hdr("💧 Negociabilidade — troca de classe da mesma empresa")
@@ -4117,7 +4133,7 @@ def render(show_header: bool = True) -> None:
 
     # ── TRANSPARÊNCIA DA DIVERSIFICAÇÃO POR CORRELAÇÃO ───────────────────────
     if diversificar_corr and proximos_uniq:
-        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                     unsafe_allow_html=True)
         _sec_hdr("🔗 Diversificação por correlação")
         if corr_diag.get("motivo_pulado"):
@@ -4197,7 +4213,7 @@ def render(show_header: bool = True) -> None:
                         st.markdown(f"• **{tk_a}** × **{tk_b}**: ρ = {rho:.2f}")
 
     if proximos_uniq:
-        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                     unsafe_allow_html=True)
         _sec_hdr("💾 Salvar como portfólio padrão")
         st.caption(
@@ -4293,7 +4309,7 @@ def render(show_header: bool = True) -> None:
 
     # ── DISTRIBUIÇÃO SETORIAL ────────────────────────────────────────────────
     if proximos_uniq:
-        st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                     unsafe_allow_html=True)
         _sec_hdr("🍕 Distribuição Setorial do Portfólio Sugerido")
 
@@ -4330,7 +4346,7 @@ def render(show_header: bool = True) -> None:
             "pb3_precos_all", pd.DataFrame()
         )
 
-    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
     _sec_hdr(f"📈 Desempenho parcial das selecionadas (ano atual: {ano_atual})")
     st.caption("Acompanhamento de aportes mensais de R$1.000 desde janeiro do ano atual.")
@@ -4370,7 +4386,7 @@ def render(show_header: bool = True) -> None:
                 if not df_perf.empty:
                     st.markdown(
                         f'<div style="font-weight:700;font-size:0.9rem;'
-                        f'color:#E2E8F0;margin-bottom:8px;">'
+                        f'color:var(--app-text);margin-bottom:8px;">'
                         f'Comparativo de desempenho parcial em {ano_atual}</div>',
                         unsafe_allow_html=True,
                     )
@@ -4411,7 +4427,7 @@ def _render_metodologia_portfolio() -> None:
     except Exception:
         return
 
-    st.markdown("<hr style='margin:24px 0;border-color:#1E2533;'>",
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
     _sec_hdr("🔬 Como chegamos a estas empresas — metodologia e referências")
     st.caption(
@@ -4428,7 +4444,7 @@ def _render_metodologia_portfolio() -> None:
             st.markdown(f"#### {etapa}")
             linhas = [
                 f"- **{m.nome}** — {m.o_que_faz}  \n"
-                f"  <span style='color:#94A3B8;font-size:0.85em'>📖 {m.referencia}</span>"
+                f"  <span style='color:var(--app-muted);font-size:0.85em'>📖 {m.referencia}</span>"
                 for m in metodos
             ]
             st.markdown("\n".join(linhas), unsafe_allow_html=True)
