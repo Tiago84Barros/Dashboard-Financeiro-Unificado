@@ -12,46 +12,46 @@ MARKET_COMPANIES_CSS = """
 <style>
 .b3-sector-hdr {
     font-size:0.92rem;font-weight:800;text-transform:uppercase;
-    letter-spacing:.10em;color:#E8FBF4;
-    background:linear-gradient(90deg,rgba(0,200,150,.18),rgba(0,200,150,.02));
-    border-left:4px solid #00C896;border-radius:0 8px 8px 0;
+    letter-spacing:.10em;color:var(--app-text);
+    background:linear-gradient(90deg,color-mix(in srgb, var(--app-primary) 18%, transparent),color-mix(in srgb, var(--app-primary) 2%, transparent));
+    border-left:4px solid var(--app-primary);border-radius:0 8px 8px 0;
     padding:10px 14px;margin:30px 0 14px;
     display:flex;align-items:center;gap:10px;
 }
 .b3-sector-count {
-    font-size:0.66rem;font-weight:700;color:#00C896;letter-spacing:.04em;
-    background:rgba(0,200,150,.14);border:1px solid rgba(0,200,150,.32);
+    font-size:0.66rem;font-weight:700;color:var(--app-primary);letter-spacing:.04em;
+    background:color-mix(in srgb, var(--app-primary) 14%, transparent);border:1px solid color-mix(in srgb, var(--app-primary) 32%, transparent);
     border-radius:999px;padding:2px 9px;
 }
 .b3-sector-hdr-none {
-    color:#9CA3AF;
-    background:linear-gradient(90deg,rgba(148,163,184,.12),rgba(148,163,184,.02));
-    border-left-color:#5A6678;
+    color:var(--app-muted);
+    background:linear-gradient(90deg,color-mix(in srgb, var(--app-muted) 12%, transparent),color-mix(in srgb, var(--app-muted) 2%, transparent));
+    border-left-color:var(--app-border-strong);
 }
 .b3-sector-hdr-none .b3-sector-count {
-    color:#9CA3AF;background:rgba(148,163,184,.12);border-color:rgba(148,163,184,.30);
+    color:var(--app-muted);background:color-mix(in srgb, var(--app-muted) 12%, transparent);border-color:var(--app-border-strong);
 }
 .b3-card {
-    background:#12151E;border:1px solid #1E2533;border-radius:12px;
+    background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
     padding:14px 14px 10px;height:100%;min-height:100px;
     transition:border-color .2s,transform .2s;
 }
-.b3-card:hover { border-color:rgba(0,200,150,.35); }
-.b3-card-selected { border-color:rgba(0,200,150,.55); }
+.b3-card:hover { border-color:color-mix(in srgb, var(--app-primary) 35%, transparent); }
+.b3-card-selected { border-color:color-mix(in srgb, var(--app-primary) 55%, transparent); }
 .b3-card-head { display:flex;align-items:center;gap:10px;margin-bottom:8px; }
 /* min-width:0 é o que deixa o ellipsis do nome funcionar dentro do flex. */
 .b3-card-idt { min-width:0;overflow:hidden;flex:1; }
 .b3-card-logo-wrap {
-    width:42px;height:42px;border-radius:9px;background:rgba(255,255,255,.06);
+    width:42px;height:42px;border-radius:9px;background:var(--app-surface-raised);
     display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;
-    color:#718096;font-size:.80rem;font-weight:800;overflow:hidden;
+    color:var(--app-muted);font-size:.80rem;font-weight:800;overflow:hidden;
     /* Logo via background-image, não via <img>: ver company_logo_html (A-012). */
     background-repeat:no-repeat;background-position:center;background-size:76% 76%;
 }
-.b3-card-ticker { font-size:0.88rem;font-weight:800;color:#E2E8F0; }
-.b3-card-nome   { font-size:0.70rem;color:#718096;margin-top:1px;
+.b3-card-ticker { font-size:0.88rem;font-weight:800;color:var(--app-text); }
+.b3-card-nome   { font-size:0.70rem;color:var(--app-muted);margin-top:1px;
                   overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.b3-card-tag    { font-size:0.62rem;color:#4A5568;line-height:1.35;
+.b3-card-tag    { font-size:0.62rem;color:var(--app-subtle);line-height:1.35;
                   min-height:1.7em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 </style>
 """
@@ -90,7 +90,7 @@ def render_market_tabs(*, state_key: str, key_prefix: str) -> int:
                 st.session_state[state_key] = idx
                 st.session_state[rolar_flag] = True
                 st.rerun()
-    st.markdown("<hr style='margin:4px 0 16px;border-color:#1E2533;'>",
+    st.markdown("<hr style='margin:4px 0 16px;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
     # pop: vale para o rerun da troca. Mantê-lo jogaria o usuário de volta ao
     # topo a cada interação dentro da aba.
@@ -146,8 +146,8 @@ def render_company_logo(ticker: str, url: str, *, size: int = 64) -> None:
             pass  # cai no placeholder abaixo — nunca propaga para a página
     st.markdown(
         f'<div style="width:{size}px;height:{size}px;border-radius:12px;'
-        'background:rgba(255,255,255,.06);display:flex;align-items:center;'
-        f'justify-content:center;color:#718096;font-size:{size * 0.32:.0f}px;'
+        'background:var(--app-surface-raised);display:flex;align-items:center;'
+        f'justify-content:center;color:var(--app-muted);font-size:{size * 0.32:.0f}px;'
         f'font-weight:800;">{inicial}</div>',
         unsafe_allow_html=True,
     )

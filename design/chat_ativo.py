@@ -51,12 +51,12 @@ _PLACEHOLDER = {
 def _card_html(titulo: str, texto: str, accent: str) -> str:
     """Card CSS em UM único bloco — moldura e conteúdo nunca se separam."""
     return (
-        f'<div style="background:#151A24;border:1px solid #232A36;'
+        f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
         f'border-left:3px solid {accent};border-radius:10px;padding:12px 14px;'
         f'margin:6px 0 12px;">'
-        f'<div style="font-size:.80rem;font-weight:700;color:#E2E8F0;'
+        f'<div style="font-size:.80rem;font-weight:700;color:var(--app-text);'
         f'margin-bottom:4px;">{escape(titulo)}</div>'
-        f'<div style="font-size:.75rem;color:#8B95A5;line-height:1.5;">'
+        f'<div style="font-size:.75rem;color:var(--app-muted);line-height:1.5;">'
         f'{escape(texto)}</div>'
         f'</div>'
     )
@@ -69,7 +69,9 @@ def render_chat_ativo(
     build_context: Callable[[str], str],
     nome: str = "",
     sugestoes: Sequence[str] | None = None,
-    accent: str = "#B084F6",
+    # Roxo escurecido: sem token, ficava fixo, e #B084F6 rende 2,8:1
+    # sobre a pagina clara -- ilegivel. #9B51E0 fica legivel nos dois.
+    accent: str = "#9B51E0",
 ) -> None:
     """Desenha a barra de chat no fim da aba de análise de um ativo.
 

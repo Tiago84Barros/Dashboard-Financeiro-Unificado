@@ -84,7 +84,7 @@ def selo_situacao(situacao: str) -> str:
 
 
 def selo_provedor(provedor: qz.Provedor) -> str:
-    cor = "#00C896" if provedor.disponivel else "#FC5C7D"
+    cor = "var(--app-primary)" if provedor.disponivel else "var(--app-danger)"
     icone = "●" if provedor.disponivel else "✕"
     rotulo = f"{provedor.nome}: {'no ar' if provedor.disponivel else 'fora do ar'}"
     return _selo(icone, rotulo, cor, provedor.descrever())
@@ -101,7 +101,7 @@ def linha_valor(valor: qz.Valor) -> str:
         extras.append(f"fonte: {valor.fonte}")
     if valor.observacao:
         extras.append(valor.observacao)
-    rodape = (f'<div class="app-kpi-delta" style="color:#9CA3AF">'
+    rodape = (f'<div class="app-kpi-delta" style="color:var(--app-muted)">'
               f'{_linha(" · ".join(extras))}</div>' if extras else "")
     return (
         '<div class="app-kpi-card" style="--app-kpi-accent:'
@@ -140,7 +140,7 @@ def barra_frescor(pn: P.Painel) -> None:
     selos = "".join(selo_frescor(f, pn.gerado_em) for f in pn.frescor)
     selos += "".join(selo_provedor(p) for p in pn.provedores)
     st.markdown(
-        '<div class="app-kpi-card" style="--app-kpi-accent:#4A9EFF">'
+        '<div class="app-kpi-card" style="--app-kpi-accent:var(--app-info)">'
         '<div class="app-kpi-label">Última atualização (fonte mais antiga)'
         '</div>'
         f'<div class="app-kpi-value">{_linha(texto)}</div>{selos}</div>',
@@ -156,7 +156,7 @@ def barra_frescor(pn: P.Painel) -> None:
 
 def cabecalho_bloco(bloco: qz.Bloco, agora: dt.datetime | None = None) -> None:
     partes = [f'<span class="app-section-title">{_linha(bloco.titulo)}</span>']
-    partes.append(_selo("◑", f"cobertura {bloco.cobertura:.0%}", "#4A9EFF",
+    partes.append(_selo("◑", f"cobertura {bloco.cobertura:.0%}", "var(--app-info)",
                         "fração dos componentes que foi possível medir"))
     if bloco.frescor is not None:
         partes.append(selo_frescor(bloco.frescor, agora))
@@ -199,17 +199,17 @@ def cartao_noticia(item: P.ItemNoticia) -> None:
     selo = selo_qualidade(item.qualidade_conteudo)
     verif = _selo("✓" if item.confirmado else "?",
                   "Confirmado" if item.confirmado else "Não confirmado",
-                  "#00C896" if item.confirmado else "#E8B84B",
+                  "var(--app-primary)" if item.confirmado else "var(--app-warning)",
                   item.estado_verificacao)
     marcas = ""
     for v in item.valores():
-        marcas += (f'<div class="app-kpi-delta" style="color:#9CA3AF">'
+        marcas += (f'<div class="app-kpi-delta" style="color:var(--app-muted)">'
                    f'{_linha(v.descrever())}</div>')
     link = (f'<div class="app-kpi-delta"><a href="{_linha(item.url, aspas=True)}"'
             ' target="_blank" rel="noopener">abrir na fonte</a></div>'
             if item.url else "")
     st.markdown(
-        '<div class="app-kpi-card" style="--app-kpi-accent:#4A9EFF">'
+        '<div class="app-kpi-card" style="--app-kpi-accent:var(--app-info)">'
         f'<div class="app-kpi-value">{_linha(item.titulo)}</div>'
         f'<div class="app-kpi-label">{_linha(item.carimbo)}</div>'
         f'{selo}{verif}{marcas}{link}</div>',
@@ -218,14 +218,15 @@ def cartao_noticia(item: P.ItemNoticia) -> None:
 
 def cartao_alerta(alerta: al.Alerta) -> None:
     ap = alerta.aparencia
-    cor = {0: "#9CA3AF", 1: "#4A9EFF", 2: "#E8B84B",
-           3: "#FC5C7D", 4: "#FC5C7D"}.get(alerta.nivel_codigo, "#9CA3AF")
+    cor = {0: "var(--app-muted)", 1: "var(--app-info)",
+           2: "var(--app-warning)", 3: "var(--app-danger)",
+           4: "var(--app-danger)"}.get(alerta.nivel_codigo, "var(--app-muted)")
     st.markdown(
         f'<div class="app-kpi-card" style="--app-kpi-accent:{cor}">'
         f'<div class="app-kpi-value">{_linha(alerta.titulo)}</div>'
         f'<div class="app-kpi-label">{_linha(alerta.corpo)}</div>'
         + _selo(ap["icone"], ap["rotulo"], cor, alerta.motivo_canal)
-        + f'<div class="app-kpi-delta" style="color:#9CA3AF">'
+        + f'<div class="app-kpi-delta" style="color:var(--app-muted)">'
           f'{_linha(alerta.motivo_canal)}</div></div>',
         unsafe_allow_html=True)
 
@@ -250,9 +251,10 @@ ROTULO_TRAVA: dict[str, str] = {
 #: distingue verde de vermelho lê ``⊘``, ``✓`` e ``·``, e lê também o rótulo
 #: "disparada" / "ok" / "não verificada" no ``title``.
 APARENCIA_TRAVA: dict[str, tuple[str, str, str]] = {
-    "disparada": ("⊘", "#D9534F", "trava disparada"),
-    "ok": ("✓", "#4CAF50", "verificada, não disparou"),
-    "nao_verificada": ("·", "#8A8A8A", "não verificada nesta execução"),
+    "disparada": ("⊘", "var(--app-danger)", "trava disparada"),
+    "ok": ("✓", "var(--app-primary)", "verificada, não disparou"),
+    "nao_verificada": ("·", "var(--app-subtle)",
+                       "não verificada nesta execução"),
 }
 
 
@@ -300,7 +302,7 @@ def barra_travas(estado) -> None:
     resumo = f"{verificadas} de {len(estado.travas)} verificadas"
     if bloqueios:
         resumo += f" · {len(bloqueios)} recurso(s) bloqueado(s)"
-    cor = "#D9534F" if bloqueios else "#4A9EFF"
+    cor = "var(--app-danger)" if bloqueios else "var(--app-info)"
     # Card inteiro num st.markdown só: div aberta num bloco e fechada em outro
     # vira moldura vazia (``memoria: card-css-bloco-unico-streamlit``).
     st.markdown(

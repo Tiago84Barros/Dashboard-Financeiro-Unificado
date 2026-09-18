@@ -71,78 +71,82 @@ _CSS = """
    sozinho de 4 → 2 → 1 conforme a largura disponível. */
 .apb3-kpi-row{display:grid;gap:12px;margin-bottom:20px;
               grid-template-columns:repeat(auto-fit,minmax(190px,1fr));}
-.apb3-kpi{display:flex;flex-direction:column;min-width:0;background:#12151E;
-           border:1px solid #1E2533;border-radius:12px;padding:16px 18px;}
+.apb3-kpi{display:flex;flex-direction:column;min-width:0;background:var(--app-surface);
+           border:1px solid var(--app-border);border-radius:12px;padding:16px 18px;}
 .apb3-kpi-label{font-size:.68rem;letter-spacing:.10em;text-transform:uppercase;
-                color:#718096;font-weight:700;margin-bottom:6px;line-height:1.35;
+                color:var(--app-muted);font-weight:700;margin-bottom:6px;line-height:1.35;
                 overflow-wrap:anywhere;}
 /* clamp: "MODERADA"/"CONSTRUTIVA" cabem em uma linha nas telas largas e
    encolhem sem estourar nas estreitas. anywhere quebra a palavra única, que é
    o caso que o white-space padrão não resolve. */
 .apb3-kpi-val{font-size:clamp(1.05rem,1.15rem + .8vw,1.55rem);font-weight:900;
-              color:#E2E8F0;line-height:1.18;overflow-wrap:anywhere;
+              color:var(--app-text);line-height:1.18;overflow-wrap:anywhere;
               margin-bottom:2px;}
-.apb3-kpi-sub{font-size:.72rem;color:#4A5568;margin-top:auto;padding-top:4px;
+.apb3-kpi-sub{font-size:.72rem;color:var(--app-subtle);margin-top:auto;padding-top:4px;
               line-height:1.4;overflow-wrap:anywhere;}
-.apb3-kpi-pos{border-color:rgba(34,197,94,.3);background:rgba(16,185,129,.08);}
-.apb3-kpi-neg{border-color:rgba(248,113,113,.3);background:rgba(239,68,68,.07);}
-.apb3-kpi-neu{border-color:rgba(148,163,184,.2);}
+/* Alta, baixa e atenção vinham do Tailwind (#34D399, #F87171, #FBBF24), não da
+   paleta do app. Convivia com o tema escuro sem chamar atenção e destoava dos
+   mesmos três estados nas outras telas; sobre a página clara o verde e o âmbar
+   do Tailwind sao claros demais para texto. Passam a ser os tokens semânticos. */
+.apb3-kpi-pos{border-color:color-mix(in srgb, var(--app-primary) 30%, transparent);background:color-mix(in srgb, var(--app-primary) 8%, transparent);}
+.apb3-kpi-neg{border-color:color-mix(in srgb, var(--app-danger) 30%, transparent);background:color-mix(in srgb, var(--app-danger) 7%, transparent);}
+.apb3-kpi-neu{border-color:var(--app-border-strong);}
 @media (max-width:720px){
   .apb3-kpi-row{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
   .apb3-kpi{padding:13px 14px;}
 }
 
 .apb3-macro-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px;}
-.apb3-macro{flex:1;min-width:120px;background:#0E1119;border:1px solid #1E2533;
+.apb3-macro{flex:1;min-width:120px;background:var(--app-surface);border:1px solid var(--app-border);
              border-radius:10px;padding:14px 16px;text-align:center;}
-.apb3-macro-lbl{font-size:.65rem;color:#9CA3AF;text-transform:uppercase;
+.apb3-macro-lbl{font-size:.65rem;color:var(--app-muted);text-transform:uppercase;
                 letter-spacing:.1em;margin-bottom:6px;font-weight:700;}
-.apb3-macro-val{font-size:1.30rem;font-weight:900;color:#E2E8F0;}
+.apb3-macro-val{font-size:1.30rem;font-weight:900;color:var(--app-text);}
 .apb3-macro-delta{font-size:.72rem;margin-top:4px;}
-.apb3-macro-up{color:#34D399;}
-.apb3-macro-dn{color:#F87171;}
-.apb3-macro-fl{color:#9CA3AF;}
+.apb3-macro-up{color:var(--app-primary);}
+.apb3-macro-dn{color:var(--app-danger);}
+.apb3-macro-fl{color:var(--app-muted);}
 
 .apb3-logo-grid{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px;}
 .apb3-logo-item{display:flex;flex-direction:column;align-items:center;
-                background:#12151E;border:1px solid #1E2533;border-radius:10px;
+                background:var(--app-surface);border:1px solid var(--app-border);border-radius:10px;
                 padding:10px 14px;min-width:88px;text-align:center;}
-.apb3-logo-ticker{font-size:.80rem;font-weight:800;color:#E2E8F0;margin-top:6px;}
-.apb3-logo-weight{font-size:.68rem;color:#4A5568;margin-top:2px;}
+.apb3-logo-ticker{font-size:.80rem;font-weight:800;color:var(--app-text);margin-top:6px;}
+.apb3-logo-weight{font-size:.68rem;color:var(--app-subtle);margin-top:2px;}
 .apb3-logo-badge{font-size:.60rem;font-weight:700;border-radius:999px;
                  padding:2px 8px;margin-top:4px;display:inline-block;}
-.apb3-badge-forte{background:rgba(34,197,94,.18);color:#34D399;border:1px solid rgba(34,197,94,.3);}
-.apb3-badge-moderada{background:rgba(245,158,11,.15);color:#FBBF24;border:1px solid rgba(245,158,11,.3);}
-.apb3-badge-fraca{background:rgba(239,68,68,.13);color:#F87171;border:1px solid rgba(248,113,113,.3);}
-.apb3-badge-default{background:rgba(148,163,184,.1);color:#9CA3AF;border:1px solid rgba(148,163,184,.2);}
+.apb3-badge-forte{background:color-mix(in srgb, var(--app-primary) 18%, transparent);color:var(--app-primary);border:1px solid color-mix(in srgb, var(--app-primary) 30%, transparent);}
+.apb3-badge-moderada{background:color-mix(in srgb, var(--app-warning) 15%, transparent);color:var(--app-warning);border:1px solid color-mix(in srgb, var(--app-warning) 30%, transparent);}
+.apb3-badge-fraca{background:color-mix(in srgb, var(--app-danger) 13%, transparent);color:var(--app-danger);border:1px solid color-mix(in srgb, var(--app-danger) 30%, transparent);}
+.apb3-badge-default{background:var(--app-border);color:var(--app-muted);border:1px solid var(--app-border-strong);}
 
 .apb3-alloc-grid{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px;}
-.apb3-alloc-card{flex:1;min-width:150px;max-width:200px;background:#12151E;
-                  border:1px solid #1E2533;border-radius:12px;padding:14px 16px;
+.apb3-alloc-card{flex:1;min-width:150px;max-width:200px;background:var(--app-surface);
+                  border:1px solid var(--app-border);border-radius:12px;padding:14px 16px;
                   text-align:center;}
-.apb3-alloc-ticker{font-size:.95rem;font-weight:800;color:#E2E8F0;margin:6px 0 2px;}
-.apb3-alloc-nome{font-size:.62rem;color:#718096;margin-bottom:8px;
+.apb3-alloc-ticker{font-size:.95rem;font-weight:800;color:var(--app-text);margin:6px 0 2px;}
+.apb3-alloc-nome{font-size:.62rem;color:var(--app-muted);margin-bottom:8px;
                   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
-.apb3-alloc-pct{font-size:1.45rem;font-weight:900;color:#00C896;}
+.apb3-alloc-pct{font-size:1.45rem;font-weight:900;color:var(--app-primary);}
 .apb3-alloc-delta{font-size:.70rem;margin-top:3px;}
 .apb3-alloc-acao{font-size:.62rem;font-weight:700;border-radius:999px;padding:2px 8px;
                   margin-top:6px;display:inline-block;}
-.apb3-acao-manter{background:rgba(148,163,184,.1);color:#9CA3AF;}
-.apb3-acao-aumentar{background:rgba(34,197,94,.15);color:#34D399;}
-.apb3-acao-reduzir{background:rgba(239,68,68,.13);color:#F87171;}
-.apb3-acao-revisar{background:rgba(245,158,11,.13);color:#FBBF24;}
+.apb3-acao-manter{background:var(--app-border);color:var(--app-muted);}
+.apb3-acao-aumentar{background:color-mix(in srgb, var(--app-primary) 15%, transparent);color:var(--app-primary);}
+.apb3-acao-reduzir{background:color-mix(in srgb, var(--app-danger) 13%, transparent);color:var(--app-danger);}
+.apb3-acao-revisar{background:color-mix(in srgb, var(--app-warning) 13%, transparent);color:var(--app-warning);}
 
-.apb3-section-title{font-size:1.15rem;font-weight:800;color:#E2E8F0;
+.apb3-section-title{font-size:1.15rem;font-weight:800;color:var(--app-text);
                      margin:28px 0 6px;display:flex;align-items:center;gap:8px;}
-.apb3-divider{border:none;border-top:1px solid #1E2533;margin:20px 0;}
+.apb3-divider{border:none;border-top:1px solid var(--app-border);margin:20px 0;}
 
-.apb3-report-qual{background:#0A0D15;border:1px solid #1E2533;border-radius:10px;
+.apb3-report-qual{background:var(--app-surface);border:1px solid var(--app-border);border-radius:10px;
                    padding:16px 18px;margin-bottom:12px;font-size:.82rem;
-                   color:#C4CBD5;line-height:1.6;}
+                   color:var(--app-muted);line-height:1.6;}
 .apb3-report-label{font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;
-                    color:#4A5568;font-weight:700;margin-bottom:4px;}
-.apb3-tag-pill{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);
-               border-radius:999px;padding:4px 12px;color:#D6DCE6;font-size:.72rem;
+                    color:var(--app-subtle);font-weight:700;margin-bottom:4px;}
+.apb3-tag-pill{border:1px solid var(--app-border);background:var(--app-surface-raised);
+               border-radius:999px;padding:4px 12px;color:var(--app-muted);font-size:.72rem;
                font-weight:700;display:inline-block;margin:3px;}
 </style>
 """
@@ -822,7 +826,7 @@ def _render_conclusao(port_analise: dict) -> None:
     st.markdown('<div class="apb3-section-title">🏁 Conclusão Estratégica</div>',
                 unsafe_allow_html=True)
     st.markdown(
-        f'<div class="apb3-report-qual" style="border-color:rgba(0,200,150,.25);">{conclusao}</div>',
+        f'<div class="apb3-report-qual" style="border-color:color-mix(in srgb, var(--app-primary) 25%, transparent);">{conclusao}</div>',
         unsafe_allow_html=True,
     )
 
@@ -1296,7 +1300,7 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
     st.markdown('<div class="apb3-section-title">💬 Tire Dúvidas sobre o Portfólio</div>',
                 unsafe_allow_html=True)
     st.markdown(
-        '<p style="font-size:0.78rem;color:#9CA3AF;margin-bottom:16px;">'
+        '<p style="font-size:0.78rem;color:var(--app-muted);margin-bottom:16px;">'
         'Pergunte sobre indicadores (DY, P/L, ROE…), médias da carteira, comparações '
         'com empresas <strong>fora</strong> da carteira, setores, ranking de múltiplos, '
         'a lógica da seleção, documentos CVM ou estratégia. A IA consulta a carteira, o '
@@ -1381,15 +1385,15 @@ def render(show_header: bool = True) -> None:
         st.markdown(
             '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">'
             '<span style="font-size:2rem">🧠</span>'
-            '<h1 style="font-size:2rem;font-weight:800;color:#E2E8F0;margin:0;">'
+            '<h1 style="font-size:2rem;font-weight:800;color:var(--app-text);margin:0;">'
             'Avaliação de Portfólio B3</h1>'
             '</div>',
             unsafe_allow_html=True,
         )
 
     st.markdown(
-        '<p style="font-size:0.80rem;color:#9CA3AF;margin-bottom:20px;">'
-        '<strong style="color:#CBD5E1;">Etapa 3 de 3 · Avaliação do conjunto.</strong> '
+        '<p style="font-size:0.80rem;color:var(--app-muted);margin-bottom:20px;">'
+        '<strong style="color:var(--app-text);">Etapa 3 de 3 · Avaliação do conjunto.</strong> '
         'Julga a carteira criada na aba <strong>Criação de Portfólio</strong> como um '
         'todo — diversificação, concentração por ativo e por setor, exposição a risco, '
         'dividendos e crescimento consolidados, qualidade média e adequação ao objetivo. '
@@ -1435,14 +1439,14 @@ def render(show_header: bool = True) -> None:
     # Cobertura RAG
     if n_com_docs > 0:
         st.markdown(
-            f'<div style="font-size:.76rem;color:#34D399;margin:-8px 0 12px;">'
+            f'<div style="font-size:.76rem;color:var(--app-primary);margin:-8px 0 12px;">'
             f'📄 {n_com_docs}/{len(items)} empresas com documentos CVM '
             f'({total_chunks:,} chunks) — RAG ativo</div>',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            '<div style="font-size:.76rem;color:#718096;margin:-8px 0 12px;">'
+            '<div style="font-size:.76rem;color:var(--app-muted);margin:-8px 0 12px;">'
             '📄 Sem documentos CVM — análise somente com dados quantitativos</div>',
             unsafe_allow_html=True,
         )

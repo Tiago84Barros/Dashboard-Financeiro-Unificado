@@ -207,7 +207,7 @@ def render() -> None:
             # Tabela de classes
             st.markdown(
                 '<div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;'
-                'letter-spacing:0.06em;color:#4A5568;margin-bottom:4px">Resumo por Classe</div>',
+                'letter-spacing:0.06em;color:var(--app-subtle);margin-bottom:4px">Resumo por Classe</div>',
                 unsafe_allow_html=True,
             )
             for cls in por_classe:
@@ -246,7 +246,7 @@ def render() -> None:
             # Tabela de setores
             st.markdown(
                 '<div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;'
-                'letter-spacing:0.06em;color:#4A5568;margin-bottom:4px">Resumo por Setor</div>',
+                'letter-spacing:0.06em;color:var(--app-subtle);margin-bottom:4px">Resumo por Setor</div>',
                 unsafe_allow_html=True,
             )
             for setor, cor in zip(por_setor, cores_set):
