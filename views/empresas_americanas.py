@@ -59,6 +59,7 @@ from design.componentes import (
     badge_status,
     card_metrica,
     container_pagina,
+    cor_token,
     estado_vazio,
     frescor_da_vitrine,
     secao_titulo,
@@ -78,11 +79,16 @@ _PLOT_LAYOUT = dict(
     margin=dict(l=18, r=18, t=42, b=18),
 )
 
+# Valores exatos da paleta do app, e não variantes próximas: é o que faz
+# `cor_token` reconhecê-los e trocá-los pelo token do tema. Antes desta tela
+# usava #FF5C7C, #FFC914 e #718096 — a um passo dos canônicos, perto demais
+# para alguém notar a diferença e longe demais para o mapa casar, o que
+# deixava o vermelho e o âmbar do tema escuro vazarem para a página clara.
 _COR_POS = "#00C896"
-_COR_NEG = "#FF5C7C"
+_COR_NEG = "#FC5C7D"
 _COR_INFO = "#4A9EFF"
-_COR_ALT = "#FFC914"
-_COR_NEU = "#718096"
+_COR_ALT = "#F6C90E"
+_COR_NEU = "#9CA3AF"
 
 _WEIGHTING_LABELS = {
     "score": "Pontuação fundamentalista",
@@ -196,12 +202,12 @@ def _frase_regra_pit() -> str:
 def _render_company_analysis_css() -> None:
     st.markdown("""
     <style>
-    .us-ind-card{background:#12151E;border:1px solid #1E2533;border-radius:12px;
-      padding:14px 16px;min-height:96px;margin-bottom:6px}
+    .us-ind-card{background:var(--app-surface);border:1px solid var(--app-border);
+      border-radius:12px;padding:14px 16px;min-height:96px;margin-bottom:6px}
     .us-ind-label{font-size:.64rem;font-weight:800;letter-spacing:.10em;
-      text-transform:uppercase;color:#52627D}
+      text-transform:uppercase;color:var(--app-subtle)}
     .us-ind-value{font-size:1.45rem;font-weight:800;margin:5px 0 2px}
-    .us-ind-sub{font-size:.66rem;color:#52627D}
+    .us-ind-sub{font-size:.66rem;color:var(--app-subtle)}
     </style>
     """, unsafe_allow_html=True)
 
@@ -322,14 +328,15 @@ def _analysis_card(label: str, value: str, subtitle: str,
     return (
         '<div class="us-ind-card">'
         f'<div class="us-ind-label">{html.escape(label)}</div>'
-        f'<div class="us-ind-value" style="color:{color}">{html.escape(value)}</div>'
+        f'<div class="us-ind-value" style="color:{cor_token(color)}">'
+        f'{html.escape(value)}</div>'
         f'<div class="us-ind-sub">{html.escape(subtitle)}</div></div>'
     )
 
 
 def _analysis_header(title: str) -> None:
     st.markdown(
-        f'<div style="font-size:.75rem;font-weight:700;color:#E2E8F0;'
+        f'<div style="font-size:.75rem;font-weight:700;color:var(--app-text);'
         f'margin:18px 0 8px">{title}</div>', unsafe_allow_html=True)
 
 
@@ -481,17 +488,18 @@ def _tab_empresa(status: dict) -> None:
         render_company_logo(symbol, us_logo_url(symbol), size=64)
     with identity_col:
         st.markdown(
-            f'<h2 style="font-size:1.60rem;font-weight:800;color:#E2E8F0;margin:0 0 4px">'
+            f'<h2 style="font-size:1.60rem;font-weight:800;color:var(--app-text);margin:0 0 4px">'
             f'{html.escape(symbol)} — {html.escape(str(row.get("name", "")))}</h2>'
-            f'<div style="font-size:.78rem;color:#718096">'
+            f'<div style="font-size:.78rem;color:var(--app-muted)">'
             f'{html.escape(str(row.get("sector", "—")))} · '
             f'{html.escape(str(row.get("industry", "—")))}</div>', unsafe_allow_html=True)
     with price_col:
         price_text = f"US$ {current_price:,.2f}" if current_price is not None else "—"
         st.markdown(
             '<div style="text-align:right;padding-top:8px">'
-            f'<div style="font-size:1.60rem;font-weight:800;color:{_COR_POS}">'
-            f'{price_text}</div><div style="font-size:.68rem;color:#4A5568">'
+            f'<div style="font-size:1.60rem;font-weight:800;color:{cor_token(_COR_POS)}">'
+            f'{price_text}</div>'
+            f'<div style="font-size:.68rem;color:var(--app-subtle)">'
             'Cotação no warehouse/snapshot</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -861,7 +869,12 @@ def _render_macro_dashboard(key_prefix: str = "us_macro") -> dict:
         drivers = pd.DataFrame({"Fator": list(macro["drivers"]),
                                 "Impacto": list(macro["drivers"].values())})
         fig = px.bar(drivers, x="Impacto", y="Fator", orientation="h",
-                     color="Impacto", color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"])
+                     # Escala literal de propósito: o Plotly desenha em
+                     # canvas e não resolve `var(--…)`. No tema claro quem
+                     # converte é `design/tema_canvas.py`, que precisa do
+                     # valor resolvido.
+                     color="Impacto",
+                     color_continuous_scale=["#FC5C7D", "#F6C90E", "#00C896"])
         fig.update_layout(**_PLOT_LAYOUT, height=280, coloraxis_showscale=False)
         st.plotly_chart(fig, width="stretch", key=f"{key_prefix}_chart")
     return macro
@@ -963,9 +976,10 @@ def _tab_avancada_unificada(status: dict) -> None:
     scored["symbol"] = scored["symbol"].astype(str).str.upper()
 
     st.markdown(
-        '<div style="background:rgba(56,189,248,.06);border-left:3px solid #38BDF8;'
+        '<div style="background:color-mix(in srgb, var(--app-info) 8%, transparent);'
+        'border-left:3px solid var(--app-info);'
         'border-radius:6px;padding:12px 16px;margin-bottom:12px;font-size:.84rem;'
-        'color:#CBD5E1"><strong>🔬 Etapa 1 de 3 · Banco de testes por indústria.</strong> '
+        'color:var(--app-text)"><strong>🔬 Etapa 1 de 3 · Banco de testes por indústria.</strong> '
         'Escolha uma indústria e valide filtros, indicadores e pontuações antes de '
         'aplicá-los em escala. As etapas seguintes são <strong>Criação de Portfólio</strong> '
         'e <strong>Avaliação de Portfólio</strong>.</div>', unsafe_allow_html=True)
@@ -1417,22 +1431,25 @@ def _render_us_lab_universe(entry: pd.DataFrame) -> None:
                         render_company_logo(symbol_raw, us_logo_url(symbol_raw), size=42)
                     with nome_col:
                         st.markdown(
-                            f'<div><strong style="color:#E2E8F0">{symbol}</strong><br>'
-                            f'<span style="font-size:.67rem;color:#718096">{name[:30]}</span></div>',
+                            f'<div><strong style="color:var(--app-text)">{symbol}</strong><br>'
+                            f'<span style="font-size:.67rem;color:var(--app-muted)">'
+                            f'{name[:30]}</span></div>',
                             unsafe_allow_html=True,
                         )
                     st.markdown(
                         '<div style="display:flex;justify-content:space-between;margin-top:10px">'
-                        '<span style="background:rgba(0,200,150,.12);color:#00C896;'
-                        'border-radius:14px;padding:3px 10px;font-size:.72rem;font-weight:800">'
-                        f'Score {score:.0f}</span><span style="font-size:.64rem;color:#52627D">'
+                        '<span style="background:color-mix(in srgb, var(--app-primary) 12%, transparent);'
+                        'color:var(--app-primary);border-radius:14px;padding:3px 10px;'
+                        'font-size:.72rem;font-weight:800">'
+                        f'Score {score:.0f}</span>'
+                        f'<span style="font-size:.64rem;color:var(--app-subtle)">'
                         f'{years_text}</span></div>', unsafe_allow_html=True)
 
 
 def _entry_detail_card(row: pd.Series) -> str:
     status = str(row.get("entry_status", "Observação"))
     colors = {"Aprovada": _COR_POS, "Observação": _COR_ALT, "Excluída": _COR_NEG}
-    color = colors.get(status, _COR_NEU)
+    color = cor_token(colors.get(status, _COR_NEU))
     base = float(row.get("score_base_adv", 0) or 0)
     entry = float(row.get("entry_score", 0) or 0)
     fundamental_entry = float(row.get("entry_score_fundamental", entry) or entry)
@@ -1446,29 +1463,38 @@ def _entry_detail_card(row: pd.Series) -> str:
     def bar(label: str, value: float, bar_color: str) -> str:
         width = max(0, min(100, value))
         return (f'<div style="display:grid;grid-template-columns:98px 1fr 34px;gap:8px;'
-                f'align-items:center;font-size:.67rem;color:#718096;margin:8px 0">'
-                f'<span>{label}</span><span style="background:#1E2533;height:7px;'
+                f'align-items:center;font-size:.67rem;color:var(--app-muted);'
+                f'margin:8px 0">'
+                f'<span>{label}</span>'
+                f'<span style="background:var(--app-surface-raised);height:7px;'
                 f'border-radius:5px;overflow:hidden"><i style="display:block;width:{width:.0f}%;'
                 f'height:100%;background:{bar_color};border-radius:5px"></i></span>'
-                f'<strong style="color:#CBD5E1;text-align:right">{value:.0f}</strong></div>')
+                f'<strong style="color:var(--app-text);text-align:right">{value:.0f}</strong></div>')
 
     return (
-        f'<div style="background:#12151E;border:1px solid {color}66;border-radius:13px;'
-        f'padding:16px;min-height:258px"><div style="display:flex;justify-content:space-between">'
-        f'<strong style="color:#E2E8F0">{html.escape(str(row.get("symbol", "")))}</strong>'
-        f'<span style="background:{color}18;color:{color};border:1px solid {color}66;'
+        f'<div style="background:var(--app-surface);border-radius:13px;'
+        f'border:1px solid color-mix(in srgb, {color} 40%, transparent);'
+        f'padding:16px;min-height:258px">'
+        f'<div style="display:flex;justify-content:space-between">'
+        f'<strong style="color:var(--app-text)">'
+        f'{html.escape(str(row.get("symbol", "")))}</strong>'
+        f'<span style="background:color-mix(in srgb, {color} 9%, transparent);'
+        f'color:{color};'
+        f'border:1px solid color-mix(in srgb, {color} 40%, transparent);'
         f'border-radius:7px;padding:4px 10px;font-size:.69rem;font-weight:800">{status}</span></div>'
-        f'<div style="font-size:.65rem;color:#52627D;margin:5px 0 12px">'
+        f'<div style="font-size:.65rem;color:var(--app-subtle);margin:5px 0 12px">'
         f'Base: {base:.0f} → Entrada fundamental: {fundamental_entry:.0f} → '
-        f'Contextual: <b style="color:#E2E8F0">{entry:.0f}</b>'
+        f'Contextual: <b style="color:var(--app-text)">{entry:.0f}</b>'
         + (f' ({macro_adjustment:+.1f} macro)' if pd.notna(macro_adjustment) else
            ' (macro sem cobertura)')
         + '</div>'
-        + bar("Qualidade", quality, _COR_INFO)
-        + bar("Consistência", growth, _COR_POS)
+        + bar("Qualidade", quality, cor_token(_COR_INFO))
+        + bar("Consistência", growth, cor_token(_COR_POS))
+        # Roxo sem token: é a terceira barra e não tem papel semântico na
+        # paleta. Tem contraste suficiente nos dois temas.
         + bar("Caixa", cash, "#9B51E0")
-        + f'<div style="font-size:.63rem;color:#52627D;margin-top:11px">'
-          f'Penalidade: <b style="color:{_COR_NEG}">−{float(row.get("risk_penalty", 0)):.0f} pts</b><br>'
+        + f'<div style="font-size:.63rem;color:var(--app-subtle);margin-top:11px">'
+          f'Penalidade: <b style="color:{cor_token(_COR_NEG)}">−{float(row.get("risk_penalty", 0)):.0f} pts</b><br>'
           f'{html.escape(str(row.get("risk_driver", "")))}</div></div>'
     )
 
@@ -2067,19 +2093,21 @@ def _portfolio_controls(scored: pd.DataFrame, prefix: str):
 def _render_us_portfolio_creation_css() -> None:
     st.markdown("""
     <style>
-    .us-pf-card{background:#12151E;border:1px solid #273142;border-radius:12px;
-      padding:14px 16px;min-height:196px;margin-bottom:8px}
+    .us-pf-card{background:var(--app-surface);border:1px solid var(--app-border);
+      border-radius:12px;padding:14px 16px;min-height:196px;margin-bottom:8px}
     .us-pf-top{display:flex;align-items:center;gap:10px;margin-bottom:9px}
     .us-pf-logo{width:44px;height:44px;border-radius:10px;object-fit:contain;
-      background:rgba(255,255,255,.06);padding:5px}
-    .us-pf-ticker{font-size:1rem;font-weight:800;color:#F8FAFC}
-    .us-pf-name{font-size:.70rem;color:#8292AE;white-space:nowrap;overflow:hidden;
-      text-overflow:ellipsis;max-width:210px}
-    .us-pf-meta{font-size:.67rem;color:#60708D;margin:4px 0 10px;min-height:32px}
+      background:var(--app-surface-raised);padding:5px}
+    .us-pf-ticker{font-size:1rem;font-weight:800;color:var(--app-text)}
+    .us-pf-name{font-size:.70rem;color:var(--app-muted);white-space:nowrap;
+      overflow:hidden;text-overflow:ellipsis;max-width:210px}
+    .us-pf-meta{font-size:.67rem;color:var(--app-muted);margin:4px 0 10px;
+      min-height:32px}
     .us-pf-row{display:flex;justify-content:space-between;font-size:.70rem;
-      color:#94A3B8;margin-top:5px}
-    .us-pf-row strong{color:#00C896}
-    .us-pf-industry{background:rgba(0,200,150,.07);border-left:3px solid #00C896;
+      color:var(--app-muted);margin-top:5px}
+    .us-pf-row strong{color:var(--app-primary)}
+    .us-pf-industry{background:color-mix(in srgb, var(--app-primary) 7%, transparent);
+      border-left:3px solid var(--app-primary);
       border-radius:6px;padding:11px 14px;margin:10px 0}
     </style>
     """, unsafe_allow_html=True)
@@ -2181,15 +2209,16 @@ def _render_perfil_us() -> None:
     ativo = identificar_perfil(atual)
     alertas = avaliar_configuracao(atual)
 
-    cor = ("#00C896" if ativo != PERSONALIZADO and not alertas
-           else "#F6C90E" if alertas else "#4A9EFF")
+    cor = cor_token("#00C896" if ativo != PERSONALIZADO and not alertas
+                    else "#F6C90E" if alertas else "#4A9EFF")
     selo = ativo if ativo != PERSONALIZADO else "Personalizada"
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:10px;margin:4px 0 10px">'
-        f'<span style="font-size:.78rem;font-weight:700;color:#E2E8F0">'
+        f'<span style="font-size:.78rem;font-weight:700;color:var(--app-text)">'
         f'Perfil de configuração</span>'
         f'<span style="font-size:.66rem;font-weight:700;letter-spacing:.04em;'
-        f'color:{cor};border:1px solid {cor}55;background:{cor}14;'
+        f'color:{cor};border:1px solid color-mix(in srgb, {cor} 33%, transparent);'
+        f'background:color-mix(in srgb, {cor} 8%, transparent);'
         f'border-radius:999px;padding:2px 9px">{html.escape(selo)}</span></div>',
         unsafe_allow_html=True)
 
@@ -2288,9 +2317,10 @@ def _tab_criacao_portfolio(status: dict) -> None:
 
     _render_us_portfolio_creation_css()
     st.markdown(
-        '<div style="background:rgba(56,189,248,.06);border-left:3px solid #38BDF8;'
+        '<div style="background:color-mix(in srgb, var(--app-info) 8%, transparent);'
+        'border-left:3px solid var(--app-info);'
         'border-radius:6px;padding:12px 16px;margin-bottom:12px;font-size:.84rem;'
-        'color:#CBD5E1"><strong>🚀 Etapa 2 de 3 · Aplicação em escala.</strong> '
+        'color:var(--app-text)"><strong>🚀 Etapa 2 de 3 · Aplicação em escala.</strong> '
         'Aplica a metodologia validada na Análise Avançada ao universo americano, '
         'audita as indústrias, seleciona seus líderes e monta uma carteira '
         'multissetorial. A carteira segue para <strong>Avaliação de Portfólio</strong>.'
