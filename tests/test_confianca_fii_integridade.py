@@ -30,6 +30,7 @@ import pytest
 
 from core import confianca_secao as cs
 from core.dividend_types import eh_renda
+from core.fii_integridade import provento_implausivel
 
 
 def test_amortizacao_acentuada_nao_e_renda():
@@ -80,15 +81,15 @@ def test_sql_usa_o_preco_negociado_e_nao_o_retroajustado():
     (3.00, 10.00, False),   # exatamente no limiar nao acusa
 ])
 def test_predicado_de_implausibilidade(amount, px, esperado):
-    assert cs._provento_implausivel(amount, px) is esperado
+    assert provento_implausivel(amount, px) is esperado
 
 
 def test_evento_sem_preco_da_epoca_nao_e_julgado():
     """A regra central do modulo aplicada aqui: o que nao foi medido nao vira
     'limpo'. Sao 10.018 dos 38.416 eventos — chama-los de limpos inflaria a
     integridade com ausencia de evidencia."""
-    assert cs._provento_implausivel(99.0, None) is None
-    assert cs._provento_implausivel(99.0, 0.0) is None
+    assert provento_implausivel(99.0, None) is None
+    assert provento_implausivel(99.0, 0.0) is None
 
 
 def test_cobertura_do_check_entra_na_evidencia():

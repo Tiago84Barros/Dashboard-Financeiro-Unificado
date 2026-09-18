@@ -1,0 +1,16 @@
+{
+  "medido_em": "2026-09-18",
+  "fonte": "armazem local: market.fii_b3_security_history",
+  "limiar_provento_sobre_preco": 0.3,
+  "janela_preco_epoca_dias": 10,
+  "eventos_total": 21408,
+  "eventos_julgados": 15798,
+  "tickers_flag": [
+    "BBFI11",
+    "FAMB11",
+    "HGPO11",
+    "KNRE11",
+    "PRSN11",
+    "TSNC11"
+  ]
+}
