@@ -9,13 +9,9 @@ elegíveis (65%) abriam o dossiê com pelo menos uma linha, todas sob o mesmo
 título. Uma bandeira que acende para dois terços do universo não distingue
 ninguém.
 
-A regra mora AQUI e só aqui, para os DOIS mercados. O prefixo nasceu na B3
-(`core/dossie_b3.py`) e o módulo dos EUA reescreveu a mesma tabela: em
-18/09/2026 havia de novo duas "fontes únicas" vivas, cada uma com seu teste de
-AST, e elas já divergiam — a da B3 classificava `MOMENTUM:` e `DADOS:`, a
-daqui não. As quatro entradas foram reunidas abaixo e `core/dossie_b3.py`
-passou a importar daqui; `tests/test_dossie_severidade.py` verifica por AST que
-nenhum outro módulo compara os prefixos por conta própria.
+A regra mora AQUI e só aqui. Este projeto já teve três cópias da mesma guarda
+com duas divergências entre elas; `tests/test_us_severidade_historica.py`
+verifica por AST que nenhum outro módulo compara os prefixos por conta própria.
 
 Nada é silenciado: toda linha emitida continua visível e continua chegando ao
 parecer da LLM. O que muda é o cabeçalho sob o qual ela chega.
@@ -36,16 +32,6 @@ SEVERIDADES = (SEVERIDADE_RISCO, SEVERIDADE_CONTEXTO, SEVERIDADE_COBERTURA)
 _PREFIXO_SEVERIDADE: dict[str, str] = {
     "CONTEXTO:": SEVERIDADE_CONTEXTO,
     "COBERTURA:": SEVERIDADE_COBERTURA,
-    # As duas seguintes só são emitidas pela B3 hoje, e vieram de lá com a
-    # medição que as motivou. `MOMENTUM:` olha UM trimestre a/a: condenar por
-    # um período isolado é o oposto de julgar a qualidade histórica — 94 das
-    # 426 empresas do armazém estavam em bandeira vermelha SÓ por esta linha.
-    "MOMENTUM:": SEVERIDADE_CONTEXTO,
-    # `DADOS:` descreve defeito do NOSSO banco (provento divergente na mesma
-    # data-ex, DY em desacordo com o recomputado). É o que não conseguimos
-    # verificar, não risco da empresa: 50 das 426 estavam em vermelho só por
-    # ela. Nenhuma das duas some do dossiê; muda o cabeçalho sob o qual chega.
-    "DADOS:": SEVERIDADE_COBERTURA,
 }
 
 TITULO_SEVERIDADE: dict[str, str] = {
@@ -80,4 +66,4 @@ def agrupa_flags_por_severidade(flags: Iterable[str] | None) -> dict[str, list[s
     grupos: dict[str, list[str]] = {s: [] for s in SEVERIDADES}
     for flag in flags or []:
         grupos[severidade_flag(flag)].append(flag)
-    return grupos
+    return grupos
