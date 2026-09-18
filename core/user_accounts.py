@@ -143,6 +143,25 @@ def create_user(name: str, email: str, password: str) -> str:
     return uid
 
 
+def list_users() -> list[dict]:
+    """Perfis cadastrados, para o administrador conferir quem tem acesso.
+
+    ``require_admin`` antes da consulta, e não só no formulário da tela: a
+    lista é dado pessoal de outras pessoas (nome e e-mail), e um gate que mora
+    apenas na interface protege a interface, não a função.
+
+    ``password_hash`` fica fora do SELECT de propósito -- quem lê a lista quer
+    saber quem entra, nunca a credencial.
+    """
+    require_admin()
+    with _engine().begin() as conn:
+        rows = conn.execute(text(
+            "SELECT id, name, email, created_at, active FROM profiles "
+            "ORDER BY active DESC, lower(name)"
+        )).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def change_password(old_password: str, new_password: str) -> None:
     uid = require_user()
     encoded = hash_password(new_password)

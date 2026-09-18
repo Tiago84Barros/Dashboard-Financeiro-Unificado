@@ -19,10 +19,27 @@ def _capture_markdown(monkeypatch):
 def test_configuracoes_has_responsive_professional_layout():
     source = (ROOT / "views" / "configuracoes.py").read_text(encoding="utf-8")
 
-    assert ".cfg-overview" in source
+    # Os três cards "Importar / Atualizar / Proteger" saíram em 17/09/2026:
+    # diziam em prosa o que as abas logo abaixo já dizem como navegação, e
+    # empurravam o conteúdo real para fora da primeira tela.
+    assert ".cfg-overview" not in source
     assert ".cfg-tab-intro" in source
+    # Sub-abas em pílula: duas fileiras de abas idênticas empilhadas foi o
+    # que se leu como tela carregada. A diferença é visual, não de posição.
+    assert '.stTabs .stTabs [data-baseweb="tab-list"]' in source
     assert ".cfg-workflow-header" in source
     assert "@media (max-width: 760px)" in source
+    # "Grau de Confiança" foi para a primeira posição em 17/09/2026. A ordem
+    # da barra tem que bater com a ordem dos corpos: st.tabs devolve as abas
+    # na ordem dos rótulos, e desencontrar as duas troca o conteúdo de lugar
+    # sem levantar erro nenhum.
+    ordem_rotulos = [r for r in ("🎯 Grau de Confiança", "🔁 Atualização de dados",
+                                 "🔄 Dados de mercado", "🗄️ Banco de dados",
+                                 "🔒 Segurança")]
+    posicoes = [source.index(f'"{r}"') for r in ordem_rotulos]
+    assert posicoes == sorted(posicoes), "ordem dos rótulos das abas mudou"
+    assert source.index("tab_conf, tab_atualizacao") < posicoes[0]
+
     # Abas de topo. "Controle" e "Investimentos" deixaram de ser abas irmãs
     # aqui em 06/09/2026: viraram sub-abas de "Atualização de dados", porque
     # são o mesmo gesto (subir arquivo, conferir, gravar) e disputavam a barra
@@ -43,7 +60,6 @@ def test_tab_intro_escapes_dynamic_content(monkeypatch):
     rendered = _capture_markdown(monkeypatch)
 
     configuracoes._render_tab_intro(
-        "ÁREA <script>",
         "Título <b>",
         "Descrição <img>",
         "Badge <svg>",
@@ -52,7 +68,6 @@ def test_tab_intro_escapes_dynamic_content(monkeypatch):
 
     html = "\n".join(rendered)
     assert "cfg-tab-intro" in html
-    assert "ÁREA &lt;script&gt;" in html
     assert "Título &lt;b&gt;" in html
     assert "Descrição &lt;img&gt;" in html
     assert "Badge &lt;svg&gt;" in html
