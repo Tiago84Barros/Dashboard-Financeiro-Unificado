@@ -33,6 +33,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.data_quality import clean_multiples_frame
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
+from core.fii_ticker import sql_ticker_fii as _sql_ticker_fii
 from core.liquidez import procedencia_liquidez
 from core.observacao_ausente import valor_observado
 
@@ -523,7 +524,7 @@ def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.Dat
 def load_fiis(segmento: str | None = None) -> pd.DataFrame:
     """Ranking de FIIs de market.fiis (score desc). Filtro opcional por segmento."""
     conditions = ["u.active_status IN ('listed','active')",
-                  "f.ticker ~ '^[A-Z]{4}11$'", "f.price > 0"]
+                  _sql_ticker_fii("f.ticker"), "f.price > 0"]
     params = {}
     if segmento:
         conditions.append("COALESCE(f.segmento_cvm, f.segmento) = :seg")
@@ -1382,7 +1383,7 @@ def load_fii_quality() -> pd.DataFrame:
             LIMIT 1
         ) universe ON TRUE
         WHERE universe.active_status IN ('listed','active')
-          AND f.ticker ~ '^[A-Z]{4}11$' AND f.price > 0
+          AND """ + _sql_ticker_fii("f.ticker") + """ AND f.price > 0
     """)
     if base.empty:
         return pd.DataFrame()
@@ -1482,17 +1483,26 @@ def load_fii_quality() -> pd.DataFrame:
                         if not dividends.empty else {})
         if not b3.empty:
             b3["ticker"] = _norm_ticker(b3["ticker"])
+            # A-135: a janela de liquidez se ancora no ultimo pregao da FITA,
+            # nao no do proprio fundo. Sem isso o numero publicado era a
+            # liquidez que o fundo teve enquanto negociava, com a janela parada
+            # no ano em que ele saiu -- e tres fundos entravam em carteira pelo
+            # piso de R$ 1 milhao/dia sem ter negociado ha ate tres anos.
+            referencia_fita = b3["date"].max()
             for tk, group in b3.groupby("ticker"):
                 ticker = str(tk)
                 if ticker in liquidity_candidates:
                     liquidity = _fz.liquidez_diaria_b3(list(zip(
                         group["date"], group["financial_volume"],
-                    )))
+                    )), referencia=referencia_fita)
                     if liquidity.get("value") is not None:
                         liquidity_map[ticker] = float(liquidity["value"])
                         liquidity_available[ticker] = liquidity.get("available_at")
+                        # Lastro, nao meses com negocio: zero medido tem lastro
+                        # de sobra e seria descartado pela contagem de negocios.
                         liquidity_months[ticker] = int(
-                            liquidity.get("observed_months") or 0)
+                            liquidity.get("lastro_months")
+                            or liquidity.get("observed_months") or 0)
                 if ticker not in series_candidates:
                     continue
                 price_history = _fz.latest_contiguous_history(
