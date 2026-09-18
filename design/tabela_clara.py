@@ -16,7 +16,6 @@ import html as _html
 import re
 
 import pandas as pd
-import streamlit as st
 
 from design.tema_canvas import clarear_css
 
