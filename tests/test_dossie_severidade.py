@@ -179,26 +179,41 @@ def _py_versionados() -> list[Path]:
     return [_RAIZ / p for p in out.stdout.splitlines() if p.strip()]
 
 
+_PREFIXOS = ("CONTEXTO:", "COBERTURA:", "MOMENTUM:", "DADOS:")
+
+
 def test_regra_de_prefixo_existe_uma_unica_vez_no_repositorio():
     """Três cópias da mesma guarda com duas divergências já aconteceram nesta
-    base. Quem quiser a severidade chama ``severidade_flag``; ninguém mais
-    compara os prefixos."""
+    base — e aconteceu de novo: o módulo dos EUA escreveu a própria tabela de
+    prefixos, sem `MOMENTUM:` nem `DADOS:`. Quem quiser a severidade chama
+    ``severidade_flag``; ninguém mais compara os prefixos.
+
+    O que conta como cópia é COMPARAR o prefixo — a tabela literal exata ou um
+    ``startswith``. EMITIR uma linha com o prefixo é o trabalho normal de quem
+    mede (``core/dossie_b3.py`` e ``core/us_dossie.py`` fazem isso), e a versão
+    anterior desta guarda proibia as duas coisas por aplicar ``.strip()`` no
+    literal: o ``"COBERTURA: "`` de um f-string ficava indistinguível da chave
+    ``"COBERTURA:"`` da tabela.
+    """
     culpados: list[str] = []
     for caminho in _py_versionados():
         # só código de produção: um teste PODE citar o prefixo como dado de
         # entrada (é o que este arquivo faz).
-        if "tests" in caminho.parts or caminho.name == "dossie_b3.py":
+        if "tests" in caminho.parts or caminho.name == "severidade_flags.py":
             continue
         try:
             arvore = ast.parse(caminho.read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError):
             continue
         for no in ast.walk(arvore):
-            if not isinstance(no, ast.Constant) or not isinstance(no.value, str):
-                continue
-            if no.value.strip() in ("CONTEXTO:", "COBERTURA:", "MOMENTUM:", "DADOS:"):
+            if isinstance(no, ast.Constant) and no.value in _PREFIXOS:
                 culpados.append(f"{caminho.relative_to(_RAIZ)}:{no.lineno}")
-    assert not culpados, f"prefixo comparado fora de core/dossie_b3.py: {culpados}"
+            elif (isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+                    and no.func.attr in ("startswith", "endswith")):
+                for arg in ast.walk(no):
+                    if isinstance(arg, ast.Constant) and arg.value in _PREFIXOS:
+                        culpados.append(f"{caminho.relative_to(_RAIZ)}:{no.lineno}")
+    assert not culpados, f"prefixo comparado fora de core/severidade_flags.py: {culpados}"
 
 
 # ── (6) resíduo do I-C: NaN em n_anos_payout não pode zerar a carteira ──────

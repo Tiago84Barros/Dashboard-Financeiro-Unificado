@@ -6,9 +6,6 @@ em cinco" e "um ano em cinco", que antes de 15/09/2026 saía com o mesmo texto.
 """
 from __future__ import annotations
 
-import ast
-import pathlib
-
 import core.us_dossie as ud
 import core.us_risco_historico as hist
 from core.severidade_flags import (
@@ -18,9 +15,6 @@ from core.severidade_flags import (
     agrupa_flags_por_severidade,
     severidade_flag,
 )
-
-RAIZ = pathlib.Path(__file__).resolve().parents[1]
-
 
 def _series(anos, *, fcf=None, equity=None, lucro=None):
     """Séries anuais mínimas para exercitar as condições por ano."""
@@ -152,25 +146,8 @@ def test_prompt_da_carteira_ensina_a_distincao():
 
 # ------------------------------------------------------------ fonte única
 
-def test_nenhum_outro_modulo_compara_os_prefixos():
-    """A regra mora em core/severidade_flags.py. Cópia é o defeito conhecido.
-
-    Verificado por AST, não por texto: o que se procura é uma comparação de
-    string com o prefixo (``startswith("CONTEXTO:")`` e afins) fora do módulo
-    dono da regra.
-    """
-    prefixos = {"CONTEXTO:", "COBERTURA:"}
-    culpados: list[str] = []
-    for caminho in list((RAIZ / "core").rglob("*.py")) + \
-            list((RAIZ / "views").rglob("*.py")):
-        if caminho.name in {"severidade_flags.py", "dossie_b3.py"}:
-            continue
-        arvore = ast.parse(caminho.read_text(encoding="utf-8"))
-        for no in ast.walk(arvore):
-            if (isinstance(no, ast.Call)
-                    and isinstance(no.func, ast.Attribute)
-                    and no.func.attr in {"startswith", "removeprefix"}):
-                for arg in no.args:
-                    if isinstance(arg, ast.Constant) and arg.value in prefixos:
-                        culpados.append(f"{caminho.name}:{no.lineno}")
-    assert not culpados, culpados
+# A unicidade da regra é verificada uma vez só, em
+# ``tests/test_dossie_severidade.py::test_regra_de_prefixo_existe_uma_unica_vez_no_repositorio``,
+# e vale para os dois mercados. A guarda que morava aqui era a segunda cópia de
+# si mesma: cobria só ``startswith`` e dois dos quatro prefixos, e dispensava
+# ``dossie_b3.py`` justamente enquanto ele mantinha a tabela concorrente.

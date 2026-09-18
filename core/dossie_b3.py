@@ -503,7 +503,7 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Severidade de uma linha de `red_flags` — FONTE ÚNICA
+# Severidade de uma linha de `red_flags` — importada da fonte única
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # `_checks` emite três coisas diferentes na MESMA lista: risco confirmado
@@ -519,61 +519,29 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
 # sinal para quem decide — uma bandeira que acende para 190 e só descreve 8
 # não distingue ninguém.
 #
-# A regra mora AQUI e só aqui. Este projeto já teve três cópias da mesma
-# guarda com duas divergências entre elas; `tests/test_dossie_severidade.py`
-# verifica por AST que nenhum outro módulo compara os prefixos por conta
-# própria.
+# A tabela de prefixos morava AQUI e o módulo dos EUA acabou escrevendo a
+# própria: duas "fontes únicas" que já divergiam (a de lá não classificava
+# `MOMENTUM:` nem `DADOS:`). A regra foi reunida em `core/severidade_flags.py`
+# e este módulo passou a importá-la; `tests/test_dossie_severidade.py` verifica
+# por AST que ninguém volta a comparar os prefixos por conta própria. Os nomes
+# seguem reexportados daqui porque as duas telas da B3 e o gate os importam
+# deste módulo.
+from core.severidade_flags import (  # noqa: E402  (bloco de severidade)
+    SEVERIDADE_COBERTURA,
+    SEVERIDADE_CONTEXTO,
+    SEVERIDADE_RISCO,
+    SEVERIDADES,
+    agrupa_flags_por_severidade,
+    severidade_flag,
+)
 
-SEVERIDADE_RISCO = "risco_confirmado"
-SEVERIDADE_CONTEXTO = "contexto_observado"
-SEVERIDADE_COBERTURA = "limitacao_cobertura"
-
-SEVERIDADES = (SEVERIDADE_RISCO, SEVERIDADE_CONTEXTO, SEVERIDADE_COBERTURA)
-
-#: Prefixo emitido por `_checks` → severidade. Sem prefixo conhecido a linha é
-#: risco confirmado: o default tem de ser o lado seguro, senão um prefixo novo
-#: some do radar de quem decide.
-_PREFIXO_SEVERIDADE: dict[str, str] = {
-    "CONTEXTO:": SEVERIDADE_CONTEXTO,
-    "COBERTURA:": SEVERIDADE_COBERTURA,
-    # `MOMENTUM:` olha UM trimestre a/a. Condenar por um período isolado é o
-    # oposto do que este ramo existe para fazer — a pergunta é a qualidade
-    # histórica. Medido no armazém: 94 das 426 empresas estavam em bandeira
-    # vermelha SÓ por esta linha. Ela continua visível e continua chegando ao
-    # parecer; o que muda é o cabeçalho sob o qual chega.
-    "MOMENTUM:": SEVERIDADE_CONTEXTO,
-    # `DADOS:` descreve defeito do NOSSO banco (provento divergente na mesma
-    # data-ex, DY do banco em desacordo com o recomputado). É o que não
-    # conseguimos verificar, não risco da empresa: marcar a companhia de
-    # perigosa por bug de ingestão nossa é a ponderação indevida que este ramo
-    # existe para corrigir. Medido: 50 das 426 estavam em vermelho SÓ por ela.
-    "DADOS:": SEVERIDADE_COBERTURA,
-}
-
-#: Cabeçalhos de exibição, compartilhados pelas duas telas.
+#: Cabeçalhos de exibição da B3, compartilhados pelas duas telas. O texto é
+#: editorial (o dos EUA é outro); a CLASSIFICAÇÃO é que é única.
 TITULO_SEVERIDADE: dict[str, str] = {
     SEVERIDADE_RISCO: "Red flags determinísticas — risco confirmado (verificadas em código)",
     SEVERIDADE_CONTEXTO: "Observações de contexto — medidas em código, não são risco confirmado",
     SEVERIDADE_COBERTURA: "Limitações de cobertura — o que os dados não permitem verificar",
 }
-
-
-def severidade_flag(flag: str) -> str:
-    """Severidade de UMA linha de ``red_flags``. Função pura, fonte única."""
-    texto = (flag or "").strip()
-    for prefixo, severidade in _PREFIXO_SEVERIDADE.items():
-        if texto.startswith(prefixo):
-            return severidade
-    return SEVERIDADE_RISCO
-
-
-def agrupa_flags_por_severidade(flags) -> dict[str, list[str]]:
-    """``red_flags`` → ``{severidade: [linhas]}``, com as três chaves sempre
-    presentes (na ordem de ``SEVERIDADES``), mesmo vazias."""
-    grupos: dict[str, list[str]] = {s: [] for s in SEVERIDADES}
-    for flag in flags or []:
-        grupos[severidade_flag(flag)].append(flag)
-    return grupos
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
