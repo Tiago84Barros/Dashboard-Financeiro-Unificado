@@ -24,8 +24,12 @@ from core.confianca_secao import (
 )
 from core.user_context import user_cache_data
 
-_COR = {"Alta": "#16a34a", "Media": "#d97706", "Baixa": "#dc2626",
-        "Nao medido": "#64748b"}
+# Alta/Media/Baixa vinham de uma quarta paleta (#16a34a, #d97706, #dc2626),
+# so desta tela. Sobre a pagina clara o verde e o ambar ficavam escuros
+# demais para acompanhar os mesmos tres estados no resto do app; passam a
+# ser os tokens semanticos, que ja mudam com o tema.
+_COR = {"Alta": "var(--app-primary)", "Media": "var(--app-warning)",
+        "Baixa": "var(--app-danger)", "Nao medido": "var(--app-subtle)"}
 
 _ROTULO_FAIXA = {"Alta": "Alta", "Media": "Média", "Baixa": "Baixa",
                  "Nao medido": "Não medido"}
@@ -38,7 +42,7 @@ def _pct(valor: float | None) -> str:
 def _card(sec: ConfiancaSecao) -> str:
     """Todo o card sai num único bloco HTML. Abrir a div num st.markdown e
     fechá-la em outro produz moldura vazia com o conteúdo fora da borda."""
-    cor = _COR.get(sec.faixa, "#64748b")
+    cor = _COR.get(sec.faixa, "var(--app-subtle)")
     linhas = []
     for c in sec.componentes:
         if c.medido:
@@ -46,26 +50,26 @@ def _card(sec: ConfiancaSecao) -> str:
         else:
             # Não medido é cinza e nomeado. Exibi-lo como 0% acusaria um defeito
             # que não foi observado; omiti-lo fingiria cobertura que não houve.
-            valor = '<span style="color:#64748b;font-style:italic">não medido</span>'
+            valor = '<span style="color:var(--app-subtle);font-style:italic">não medido</span>'
         linhas.append(
             '<div style="display:flex;justify-content:space-between;gap:12px;'
-            'padding:4px 0;border-bottom:1px solid rgba(148,163,184,.18)">'
+            'padding:4px 0;border-bottom:1px solid var(--app-border)">'
             f'<span style="flex:1">{html.escape(c.nome)}'
-            f'<span style="color:#94a3b8;font-size:.78rem;display:block">'
+            f'<span style="color:var(--app-muted);font-size:.78rem;display:block">'
             f'{html.escape(c.evidencia)}</span></span>{valor}</div>'
         )
     notas = "".join(
-        f'<div style="color:#94a3b8;font-size:.8rem;margin-top:6px">⚠ '
+        f'<div style="color:var(--app-muted);font-size:.8rem;margin-top:6px">⚠ '
         f'{html.escape(n)}</div>' for n in sec.notas)
     cobertura = ""
     if sec.cobertura_da_medicao < 1.0:
         cobertura = (
-            f'<div style="color:#94a3b8;font-size:.8rem;margin-top:6px">'
+            f'<div style="color:var(--app-muted);font-size:.8rem;margin-top:6px">'
             f'Percentual apoiado em {sec.cobertura_da_medicao * 100:.0f}% do peso '
             f'avaliado — o restante não pôde ser medido.</div>')
     return (
-        '<div style="border:1px solid rgba(148,163,184,.25);border-radius:12px;'
-        'padding:16px 18px;margin-bottom:14px;background:rgba(148,163,184,.06)">'
+        '<div style="border:1px solid var(--app-border-strong);border-radius:12px;'
+        'padding:16px 18px;margin-bottom:14px;background:var(--app-surface-raised)">'
         '<div style="display:flex;justify-content:space-between;align-items:baseline">'
         f'<div style="font-weight:700;font-size:1.02rem">{html.escape(sec.secao)}</div>'
         f'<div style="font-weight:700;font-size:1.35rem;color:{cor}">'
@@ -76,8 +80,9 @@ def _card(sec: ConfiancaSecao) -> str:
     )
 
 
-_SIMBOLO = {True: ("✓", "#16a34a"), False: ("✗", "#dc2626"),
-            None: ("—", "#64748b")}
+_SIMBOLO = {True: ("✓", "var(--app-primary)"),
+            False: ("✗", "var(--app-danger)"),
+            None: ("—", "var(--app-subtle)")}
 
 
 @user_cache_data(ttl=900, show_spinner=False)
@@ -142,15 +147,15 @@ def _tabela_rigor() -> None:
             celulas.append(
                 f'<td style="text-align:center;padding:8px 10px;vertical-align:top">'
                 f'<div style="color:{cor};font-weight:700;font-size:1.1rem">{simbolo}</div>'
-                f'<div style="color:#94a3b8;font-size:.72rem;line-height:1.25">'
+                f'<div style="color:var(--app-muted);font-size:.72rem;line-height:1.25">'
                 f'{html.escape(_resumo(detalhe))}</div></td>')
         linhas.append(
-            '<tr style="border-top:1px solid rgba(148,163,184,.18)">'
+            '<tr style="border-top:1px solid var(--app-border)">'
             f'<td style="padding:8px 10px;font-weight:600;font-size:.85rem">'
             f'{html.escape(dim)}</td>' + "".join(celulas) + '</tr>')
     st.markdown(
-        '<div style="border:1px solid rgba(148,163,184,.25);border-radius:12px;'
-        'padding:8px 10px;background:rgba(148,163,184,.06);overflow-x:auto">'
+        '<div style="border:1px solid var(--app-border-strong);border-radius:12px;'
+        'padding:8px 10px;background:var(--app-surface-raised);overflow-x:auto">'
         '<table style="width:100%;border-collapse:collapse">'
         f'<tr><th style="text-align:left;padding:8px 10px"></th>{cabecalho}</tr>'
         + "".join(linhas) + '</table></div>',
@@ -178,14 +183,14 @@ def render_corpo() -> None:
     cor_geral = _COR["Alta" if (geral or 0) >= FAIXA_ALTA else
                      "Media" if (geral or 0) >= FAIXA_MEDIA else "Baixa"]
     st.markdown(
-        '<div style="border:1px solid rgba(148,163,184,.25);border-radius:14px;'
+        '<div style="border:1px solid var(--app-border-strong);border-radius:14px;'
         'padding:20px;margin-bottom:20px;text-align:center;'
-        'background:rgba(148,163,184,.08)">'
-        '<div style="color:#94a3b8;font-size:.85rem;letter-spacing:.06em">'
+        'background:var(--app-surface-raised)">'
+        '<div style="color:var(--app-muted);font-size:.85rem;letter-spacing:.06em">'
         'CONFIANÇA GERAL DO APLICATIVO</div>'
         f'<div style="font-size:2.6rem;font-weight:800;color:{cor_geral}">'
         f'{_pct(geral)}</div>'
-        '<div style="color:#94a3b8;font-size:.8rem">média das seções, ponderada '
+        '<div style="color:var(--app-muted);font-size:.8rem">média das seções, ponderada '
         'pelo quanto de cada uma foi efetivamente medido</div></div>',
         unsafe_allow_html=True,
     )
