@@ -263,3 +263,57 @@ def test_cvm_archive_uses_last_good_cache_on_interrupted_stream(
     assert archive is not None
     assert archive.from_cache is True
     assert archive.content == b"PKlast-good"
+
+
+def test_monthly_publishes_manager_exposure_with_delivery_date():
+    """A gestora tem de vir do informe, com knowledge_at da entrega.
+
+    Antes disso a dimensao `manager` so existia no estado corrente da brapi
+    (desde 2025-08, knowledge_at de 2026-07), entao toda decisao PIT anterior
+    enxergava cobertura zero e o universo elegivel desabava.
+    """
+    general = (
+        "CNPJ_Fundo_Classe;Data_Referencia;Versao;Data_Entrega;"
+        "Nome_Administrador;CNPJ_Administrador\n"
+        "12.345.678/0001-00;2021-01-01;1;2021-02-12;"
+        "RIO BRAVO INVESTIMENTOS DTVM LTDA;72600026000181\n")
+    complement = (
+        "CNPJ_Fundo_Classe;Data_Referencia;Versao;Valor_Patrimonial_Cotas\n"
+        "12.345.678/0001-00;2021-01-01;1;80\n")
+    parsed = parse_archive(_archive("monthly", {
+        "inf_mensal_fii_geral_2021.csv": general,
+        "inf_mensal_fii_complemento_2021.csv": complement,
+    }, year=2021), {"12345678000100": "TEST11"}, 7)
+    managers = [row for row in parsed["exposures"]
+                if row["exposure_type"] == "manager"]
+    assert len(managers) == 1
+    row = managers[0]
+    # mesmo formato que a brapi ja grava: CNPJ so com digitos
+    assert row["exposure_name"] == "72600026000181"
+    assert row["exposure_weight"] == 1.0
+    assert row["knowledge_at"].startswith("2021-02-1")
+    assert row["availability_quality"] == "verified_publication"
+    assert "RIO BRAVO" in row["metadata_json"]
+
+
+def test_monthly_manager_falls_back_to_name_when_cnpj_missing():
+    general = (
+        "CNPJ_Fundo_Classe;Data_Referencia;Versao;Data_Entrega;"
+        "Nome_Administrador;CNPJ_Administrador\n"
+        "12.345.678/0001-00;2018-03-01;1;2018-04-10;BANCO XPTO DTVM;\n")
+    parsed = parse_archive(_archive("monthly", {
+        "inf_mensal_fii_geral_2018.csv": general,
+    }, year=2018), {"12345678000100": "TEST11"}, 7)
+    managers = [row for row in parsed["exposures"]
+                if row["exposure_type"] == "manager"]
+    assert [row["exposure_name"] for row in managers] == ["BANCO XPTO DTVM"]
+
+
+def test_monthly_without_administrator_publishes_no_manager():
+    general = ("CNPJ_Fundo_Classe;Data_Referencia;Versao;Data_Entrega\n"
+               "12.345.678/0001-00;2019-05-01;1;2019-06-10\n")
+    parsed = parse_archive(_archive("monthly", {
+        "inf_mensal_fii_geral_2019.csv": general,
+    }, year=2019), {"12345678000100": "TEST11"}, 7)
+    assert not [row for row in parsed["exposures"]
+                if row["exposure_type"] == "manager"]

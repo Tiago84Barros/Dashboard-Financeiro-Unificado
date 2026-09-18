@@ -26,6 +26,12 @@ APPLICABLE_TYPES = {
     "issuer": {"papel", "hibrido"},
     "debtor": {"papel", "hibrido"},
     "indexer": {"papel", "hibrido"},
+    # O administrador nao depende do tipo do fundo: todo FII tem um,
+    # e a concentracao por gestora e risco em tijolo, papel, FoF e
+    # hibrido igualmente. Sem esta entrada `dimension_is_applicable`
+    # devolvia False para qualquer fundo, a cobertura da dimensao era
+    # sempre 0 e o teto `max_manager` nunca chegava a ser imposto.
+    "manager": {"tijolo", "papel", "fof", "hibrido"},
 }
 REQUIRED_DIMENSIONS = ("sector", "issuer")
 SUPPLEMENTARY_DIMENSIONS = ("tenant", "debtor", "indexer", "region")

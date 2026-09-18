@@ -98,10 +98,12 @@ class PortfolioPolicy:
     data_quality_bonus: float = .06
     min_distinct_types: int = 2
     max_single_type: float = .70
-    # Dimensões cuja identidade tem histórico PIT verificável nas fontes
-    # estruturadas. Gestor só possui primeira observação em 2026 no warehouse;
-    # continua limitado na carteira atual quando coberto, mas não pode ser
-    # exigido retroativamente sem introduzir look-ahead.
+    # Dimensões cuja AUSÊNCIA reprova a carteira. Gestor ficou de fora
+    # enquanto só existia no estado corrente da brapi; o informe mensal da
+    # CVM passou a dar histórico desde 2016 com data de entrega própria, e o
+    # teto `max_manager` já volta a ser imposto por isso. Promover gestor a
+    # dimensão exigida é decisão de política à parte: reprova carteira por
+    # falta de cadastro, não por concentração.
     required_dimensions: tuple[str, ...] = ("sector", "issuer")
     # Limite de incerteza da carteira de diligência. O antigo .30 exigia
     # confiança ponderada >=70% e tornava o LP inviável no universo real,

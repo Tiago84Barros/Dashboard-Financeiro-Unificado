@@ -94,3 +94,17 @@ def test_missing_hybrid_composition_preserves_conservative_applicability():
 
     assert dimension_is_applicable(row, "region") is True
     assert dimension_is_applicable(row, "debtor") is True
+
+
+def test_manager_dimension_is_applicable_to_every_fii_type():
+    """`max_manager` so morde se a dimensao for aplicavel a algum fundo.
+
+    Sem `manager` em APPLICABLE_TYPES a mascara de aplicabilidade era zero
+    em qualquer carteira, a cobertura caia para 0.0 e o teto de
+    concentracao por gestora era descartado antes de virar restricao.
+    """
+    for fii_type in ("tijolo", "papel", "fof", "hibrido"):
+        row = {"ticker": "XPTO11", "tipo": fii_type,
+               "manager": "61809182000130"}
+        assert dimension_is_applicable(row, "manager") is True, fii_type
+

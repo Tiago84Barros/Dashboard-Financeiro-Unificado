@@ -1,4 +1,4 @@
-"""Reprocessa informes trimestrais CVM no warehouse local com parser atual."""
+"""Reprocessa informes estruturados da CVM no warehouse local com o parser atual."""
 from __future__ import annotations
 
 import argparse
@@ -15,6 +15,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--years", type=int, default=11)
     parser.add_argument(
+        "--kinds",
+        default="quarterly",
+        help="tipos de arquivo separados por virgula (monthly, quarterly, "
+             "annual, financials, eventual); o padrao preserva o trimestral",
+    )
+    parser.add_argument(
         "--skip-postprocess",
         action="store_true",
         help=(
@@ -26,8 +32,18 @@ def main() -> int:
 
     from core.config import settings
     from core.database import get_engine, get_session_factory
-    from data_pipeline.market.fii_cvm_structured import ingest_cvm_structured
+    from data_pipeline.market.fii_cvm_structured import (
+        ARCHIVES,
+        ingest_cvm_structured,
+    )
     from scripts.publish_fii_selection_from_local import _warehouse_url
+
+    kinds = tuple(part.strip() for part in args.kinds.split(",") if part.strip())
+    desconhecidos = sorted(set(kinds) - set(ARCHIVES))
+    if desconhecidos or not kinds:
+        print(json.dumps({"status": "failed",
+                          "errors": [f"kinds invalidos: {desconhecidos or kinds}"]}))
+        return 1
 
     local_url = _warehouse_url()
     settings.SUPABASE_UNIFICADO_URL = local_url
@@ -37,7 +53,7 @@ def main() -> int:
     get_session_factory.clear()
     result = ingest_cvm_structured(
         years=max(int(args.years), 1),
-        kinds=("quarterly",),
+        kinds=kinds,
         run_postprocess=not args.skip_postprocess,
     )
     summary = {

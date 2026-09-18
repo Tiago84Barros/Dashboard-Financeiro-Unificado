@@ -27,7 +27,7 @@ from data_pipeline.market.fii_sources import metric_observation
 SOURCE = "cvm_dados_abertos"
 ROOT = "https://dados.cvm.gov.br/dados/FII/DOC"
 PARSER_NAME = "cvm_fii_structured"
-PARSER_VERSION = "1.5.0"
+PARSER_VERSION = "1.6.0"
 PARSER_SCHEMA_VERSION = "cvm-fii-structured-v2"
 ARCHIVES = {
     "monthly": ("INF_MENSAL", "inf_mensal_fii_{year}.zip"),
@@ -426,6 +426,22 @@ def parse_monthly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
         }
         exposures.extend(_exposures(context, "asset_class", classes, source=source,
                                     raw_payload_id=raw_payload_id))
+        # A dimensao `manager` so existia no estado corrente da brapi (desde
+        # 2025-08, knowledge_at de 2026-07). O informe mensal traz o mesmo
+        # administrador desde 2016 com data de entrega propria, entao a
+        # cobertura deixa de ser zero em toda decisao anterior.
+        general = context.get("general") or {}
+        cnpj_admin = _digits(general.get("CNPJ_Administrador"))
+        nome_admin = _text(general.get("Nome_Administrador"))
+        manager = cnpj_admin or nome_admin
+        if manager:
+            exposures.extend(_exposures(
+                context, "manager", {manager: 1.0}, source=source,
+                raw_payload_id=raw_payload_id,
+                metadata={"administrator_name": nome_admin,
+                          "administrator_cnpj": cnpj_admin or None,
+                          "source_url": archive.url,
+                          "archive_sha256": archive.sha256}))
     return {"observations": observations, "exposures": exposures,
             "documents": [], "contexts": len(contexts)}
 
