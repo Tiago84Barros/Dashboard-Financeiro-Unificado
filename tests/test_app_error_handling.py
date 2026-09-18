@@ -74,6 +74,10 @@ class _FakeStreamlit(ModuleType):
     def radio(self, _label, options, **_kwargs):
         return self.selected_menu
 
+    def button(self, *_args, **_kwargs):
+        # Ninguém clica em "Sair" durante o teste do roteador.
+        return False
+
     def divider(self):
         pass
 
@@ -115,7 +119,8 @@ def test_excecao_ao_carregar_modulo_nao_vaza_para_a_tela_e_log_recebe_detalhe(
 
     monkeypatch.setitem(sys.modules, "streamlit", fake_st)
     monkeypatch.setitem(
-        sys.modules, "core.auth", SimpleNamespace(verificar_autenticacao=lambda: None)
+        sys.modules, "core.auth",
+        SimpleNamespace(verificar_autenticacao=lambda: None, encerrar_sessao=lambda: None)
     )
     monkeypatch.setitem(
         sys.modules, "core.config", SimpleNamespace(settings=SimpleNamespace(validate=lambda: []))
@@ -125,7 +130,20 @@ def test_excecao_ao_carregar_modulo_nao_vaza_para_a_tela_e_log_recebe_detalhe(
         "design.componentes",
         SimpleNamespace(mensagem_erro=fake_mensagem_erro),
     )
-    monkeypatch.setitem(sys.modules, "design.tema", SimpleNamespace(aplicar_tema=lambda: None))
+    monkeypatch.setitem(sys.modules, "design.tema", SimpleNamespace(aplicar_tema=lambda theme="dark": None))
+    # ``design.theme_selector`` também entra dublado: importado com o ``streamlit``
+    # falso em sys.modules, ele guardaria o módulo falso no próprio ``st`` e o
+    # vazaria para todos os testes seguintes ("no attribute 'session_state'").
+    # A barra lateral passou a saudar quem está logado; sem este dublê o
+    # roteador nem chega a ser exercitado.
+    monkeypatch.setitem(
+        sys.modules, "core.user_context",
+        SimpleNamespace(principal=lambda: {"id": "A", "name": "Teste"}, require_user=lambda: "A"),
+    )
+    monkeypatch.setitem(
+        sys.modules, "design.theme_selector",
+        SimpleNamespace(current_theme=lambda: "dark", render_theme_selector=lambda: None),
+    )
     monkeypatch.setattr(importlib, "import_module", fake_import_module)
 
     with caplog.at_level(logging.ERROR):
@@ -172,7 +190,8 @@ def test_modulo_carregado_com_sucesso_nao_aciona_o_handler_de_erro(monkeypatch, 
 
     monkeypatch.setitem(sys.modules, "streamlit", fake_st)
     monkeypatch.setitem(
-        sys.modules, "core.auth", SimpleNamespace(verificar_autenticacao=lambda: None)
+        sys.modules, "core.auth",
+        SimpleNamespace(verificar_autenticacao=lambda: None, encerrar_sessao=lambda: None)
     )
     monkeypatch.setitem(
         sys.modules, "core.config", SimpleNamespace(settings=SimpleNamespace(validate=lambda: []))
@@ -184,7 +203,20 @@ def test_modulo_carregado_com_sucesso_nao_aciona_o_handler_de_erro(monkeypatch, 
             (titulo, detalhe)
         )),
     )
-    monkeypatch.setitem(sys.modules, "design.tema", SimpleNamespace(aplicar_tema=lambda: None))
+    monkeypatch.setitem(sys.modules, "design.tema", SimpleNamespace(aplicar_tema=lambda theme="dark": None))
+    # ``design.theme_selector`` também entra dublado: importado com o ``streamlit``
+    # falso em sys.modules, ele guardaria o módulo falso no próprio ``st`` e o
+    # vazaria para todos os testes seguintes ("no attribute 'session_state'").
+    # A barra lateral passou a saudar quem está logado; sem este dublê o
+    # roteador nem chega a ser exercitado.
+    monkeypatch.setitem(
+        sys.modules, "core.user_context",
+        SimpleNamespace(principal=lambda: {"id": "A", "name": "Teste"}, require_user=lambda: "A"),
+    )
+    monkeypatch.setitem(
+        sys.modules, "design.theme_selector",
+        SimpleNamespace(current_theme=lambda: "dark", render_theme_selector=lambda: None),
+    )
     monkeypatch.setattr(importlib, "import_module", lambda _name: fake_view)
 
     with caplog.at_level(logging.ERROR):
