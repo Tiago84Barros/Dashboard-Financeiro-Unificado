@@ -20,9 +20,7 @@ revertida (verificado por mutação, registrada no relatório da rodada).
 """
 from __future__ import annotations
 
-import ast
 import inspect
-import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -170,35 +168,15 @@ def test_analise_portfolio_b3_poe_bandeira_so_no_risco_confirmado():
     assert 'for f_ in _grupos[SEVERIDADE_COBERTURA]:\n                st.caption(f_)' in fonte
 
 
-# ── (5) unicidade da regra, verificada por AST ──────────────────────────────
-
-def _py_versionados() -> list[Path]:
-    out = subprocess.run(
-        ["git", "ls-files", "*.py"], cwd=_RAIZ, capture_output=True, text=True,
-    )
-    return [_RAIZ / p for p in out.stdout.splitlines() if p.strip()]
-
-
-def test_regra_de_prefixo_existe_uma_unica_vez_no_repositorio():
-    """Três cópias da mesma guarda com duas divergências já aconteceram nesta
-    base. Quem quiser a severidade chama ``severidade_flag``; ninguém mais
-    compara os prefixos."""
-    culpados: list[str] = []
-    for caminho in _py_versionados():
-        # só código de produção: um teste PODE citar o prefixo como dado de
-        # entrada (é o que este arquivo faz).
-        if "tests" in caminho.parts or caminho.name == "dossie_b3.py":
-            continue
-        try:
-            arvore = ast.parse(caminho.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
-        for no in ast.walk(arvore):
-            if not isinstance(no, ast.Constant) or not isinstance(no.value, str):
-                continue
-            if no.value.strip() in ("CONTEXTO:", "COBERTURA:", "MOMENTUM:", "DADOS:"):
-                culpados.append(f"{caminho.relative_to(_RAIZ)}:{no.lineno}")
-    assert not culpados, f"prefixo comparado fora de core/dossie_b3.py: {culpados}"
+# ── (5) unicidade da regra ──────────────────────────────────────────────────
+# A guarda de cópia única vive em
+# `tests/test_us_severidade_historica.py::test_nenhum_outro_modulo_compara_os_prefixos`,
+# e só lá. Havia uma segunda aqui, e as duas se anulavam: esta isentava
+# `dossie_b3.py` por nome e a de lá isentava `severidade_flags.py`, então cada
+# cópia da tabela era vigiada por uma guarda que a outra dispensava. Esta
+# ainda varria CONSTANTE CRUA, que não distingue comparar de emitir: o
+# f-string `f"COBERTURA: {texto}"` de `core/us_dossie.py` é uma emissão
+# legítima e era acusado como cópia de regra.
 
 
 # ── (6) resíduo do I-C: NaN em n_anos_payout não pode zerar a carteira ──────

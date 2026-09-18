@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import subprocess
 
 import core.us_dossie as ud
 import core.us_risco_historico as hist
@@ -152,25 +153,47 @@ def test_prompt_da_carteira_ensina_a_distincao():
 
 # ------------------------------------------------------------ fonte única
 
+def _py_versionados() -> list[pathlib.Path]:
+    """Só o que está versionado: `local_staging/` e afins não são código."""
+    out = subprocess.run(
+        ["git", "ls-files", "*.py"], cwd=RAIZ, capture_output=True, text=True,
+    )
+    return [RAIZ / p for p in out.stdout.splitlines() if p.strip()]
+
 def test_nenhum_outro_modulo_compara_os_prefixos():
     """A regra mora em core/severidade_flags.py. Cópia é o defeito conhecido.
 
-    Verificado por AST, não por texto: o que se procura é uma comparação de
-    string com o prefixo (``startswith("CONTEXTO:")`` e afins) fora do módulo
-    dono da regra.
+    Esta é a guarda ÚNICA do repositório inteiro, e é assim de propósito:
+    havia duas — uma aqui, varrendo `core/` e `views/`, outra em
+    `tests/test_dossie_severidade.py`, varrendo tudo — e cada uma isentava
+    por nome de arquivo justamente o módulo que a outra vigiava. As duas
+    tabelas de prefixo divergiram em `MOMENTUM:` e `DADOS:` sem que nenhuma
+    das duas guardas acusasse.
+
+    Verificado por AST, não por texto: o que se procura é uma COMPARAÇÃO de
+    string com o prefixo (``startswith("CONTEXTO:")`` e afins). Varrer
+    constante crua não serve — um f-string que EMITE ``COBERTURA: {texto}``
+    tem o mesmo literal e não é cópia de regra nenhuma.
     """
-    prefixos = {"CONTEXTO:", "COBERTURA:"}
+    prefixos = {"CONTEXTO:", "COBERTURA:", "MOMENTUM:", "DADOS:"}
     culpados: list[str] = []
-    for caminho in list((RAIZ / "core").rglob("*.py")) + \
-            list((RAIZ / "views").rglob("*.py")):
-        if caminho.name in {"severidade_flags.py", "dossie_b3.py"}:
+    for caminho in _py_versionados():
+        # Um teste PODE comparar o prefixo: é dado de entrada dele.
+        # Fora isso, a única isenção é o dono da regra — a isenção por nome
+        # de arquivo é o que deixou a divergência viver.
+        if "tests" in caminho.parts or caminho.name == "severidade_flags.py":
             continue
-        arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+        try:
+            arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
         for no in ast.walk(arvore):
             if (isinstance(no, ast.Call)
                     and isinstance(no.func, ast.Attribute)
                     and no.func.attr in {"startswith", "removeprefix"}):
                 for arg in no.args:
                     if isinstance(arg, ast.Constant) and arg.value in prefixos:
-                        culpados.append(f"{caminho.name}:{no.lineno}")
+                        culpados.append(
+                            f"{caminho.relative_to(RAIZ)}:{no.lineno}"
+                        )
     assert not culpados, culpados
