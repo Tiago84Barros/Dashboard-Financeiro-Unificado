@@ -375,8 +375,9 @@ def test_protocolo_pit_declara_a_protecao_cedida_na_safra():
     assert "42 de 70" in card
     assert "60%" in card
     assert "não é ausência de risco" in card
-    # Verde é o vocabulário de "sem ressalva" nesta tela.
-    assert "#00C896" not in card
+    # Verde é o vocabulário de "sem ressalva" nesta tela; desde a
+    # tokenização do tema ele sai como var(--app-primary).
+    assert "var(--app-primary)" not in card
 
 
 def test_protocolo_pit_sem_cessao_continua_aprovado_sem_ressalva():
@@ -385,7 +386,7 @@ def test_protocolo_pit_sem_cessao_continua_aprovado_sem_ressalva():
         "concession_period_fraction": 0.0,
     }})
 
-    assert "#00C896" in card
+    assert "var(--app-primary)" in card
     assert "cedida" not in card
 
 

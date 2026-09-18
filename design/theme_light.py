@@ -1,8 +1,12 @@
 """Camada clara por página/sessão; não muda config global do Streamlit.
 
-Canvas (dataframes) e gráficos mantêm superfície escura de alto contraste:
-CSS não recolore seu conteúdo, nem inverte cores financeiras ou logotipos.
+O que é desenhado em canvas não obedece a CSS: gráficos e tabelas passam pelos
+adaptadores de ``design/tema_canvas.py`` (Plotly/Vega) e
+``design/tabela_clara.py`` (``st.dataframe`` reemitido como HTML). Segue
+escuro só o que depende da grade nativa: ``st.data_editor`` e as tabelas que o
+HTML não dá conta (seleção, tamanho).
 """
+from design.tabela_clara import CSS_TABELA
 
 LIGHT_CSS = """
 <style>
@@ -110,12 +114,20 @@ button:disabled {opacity:.55;}
 .apb3-logo-weight {color:var(--app-muted)!important;}
 .apb3-macro-up {color:#087548!important;}
 .apb3-macro-dn {color:#b42342!important;}
-/* Superfícies independentes: preserva cores dos dados e contraste dos canvas. */
-[data-testid="stDataFrame"], [data-testid="stDataEditor"],
+/* Gráficos: as cores dos dados vêm de design/tema_canvas.py. O fundo fica
+   transparente de propósito -- muitos já moram dentro de um card, e uma
+   segunda caixa branca com borda viraria moldura dentro de moldura. */
 [data-testid="stPlotlyChart"], [data-testid="stVegaLiteChart"] {
- background:#0e1117; border:1px solid var(--app-border);
+ background:transparent;
+}
+/* A grade do dataframe/editor é canvas: o Streamlit a desenha com o tema do
+   config (escuro). A moldura clara evita a borda preta solta na página. */
+[data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+ background:var(--app-surface); border:1px solid var(--app-border);
  border-radius:10px; padding:4px;
 }
 [data-testid="stCode"] {background:#0e1117;border-radius:10px;}
 </style>
 """
+
+LIGHT_CSS = LIGHT_CSS.replace("</style>", CSS_TABELA + "</style>")
