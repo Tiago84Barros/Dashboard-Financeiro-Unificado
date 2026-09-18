@@ -137,14 +137,24 @@ def fotos_do_banco(conn) -> dict[date, set[str]]:
     pode virar insumo para derivar outra saida. Fotos marcadas `limitado` pela
     ingestao tambem ficam de fora -- o piso de cobertura ja as barraria, mas uma
     coleta de teste que por acaso passe do piso continuaria sendo teste.
+
+    Observacao de vida por preco (`core/fii_universo_vivo.py`) tambem fica de
+    fora, e por um motivo diferente dos outros dois: ela nao e foto de
+    listagem. Prova que o fundo estava vivo, nunca que outro saiu -- fundo
+    iliquido passa pregoes sem negocio. Trata-la como foto dataria saida por
+    iliquidez.
     """
     from sqlalchemy import text
+
+    from core.fii_universo_vivo import QUALIDADE as _VIDA
 
     fotos: dict[date, set[str]] = {}
     linhas = conn.execute(text(
         "SELECT reference_date, ticker FROM market.fii_universe_history "
         "WHERE active_status IN ('listed','active') "
-        "  AND coalesce(metadata_json->>'limitado', 'false') <> 'true'"))
+        "  AND coalesce(availability_quality, '') <> :vida "
+        "  AND coalesce(metadata_json->>'limitado', 'false') <> 'true'"),
+        {"vida": _VIDA})
     for referencia, ticker in linhas:
         fotos.setdefault(referencia, set()).add(str(ticker))
     return fotos
