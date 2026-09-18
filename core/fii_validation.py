@@ -435,6 +435,14 @@ def robust_optimizer_point_in_time_backtest(
                 "candidate_pool": optimized.get("candidate_pool")
                 or (optimized.get("feasibility_diagnostics") or {}).get("candidate_pool")
                 or {},
+                # Sem isto o motivo fica legivel e a causa nao: "menos de N
+                # categorias elegiveis" nao diz QUAIS tipos existiam naquela
+                # data, e diagnosticar exigia reconstruir a safra inteira
+                # fora do motor. A contagem ja esta calculada em
+                # `_adaptive_type_bands`; so estava sendo descartada.
+                "available_by_type": (
+                    optimized.get("feasibility_diagnostics") or {}
+                ).get("available_by_type") or {},
             })
             continue
         attempted_optimizer += 1

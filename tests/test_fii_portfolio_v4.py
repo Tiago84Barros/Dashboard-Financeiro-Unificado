@@ -735,3 +735,24 @@ def test_piso_padrao_nao_excede_o_teto_quando_top_n_e_pequeno():
     # pega essa regressão; só a ausência de nota pega.
     assert not [n for n in (resultado.get("viability_notes") or [])
                 if "piso de cardinalidade cedido" in n]
+
+
+def test_bloqueio_por_falta_de_categoria_publica_a_contagem_por_tipo():
+    """O motivo sem a contagem nao diz QUAL tipo faltou.
+
+    `core.fii_validation` grava `available_by_type` no relatorio de falhas do
+    backtest PIT lendo `feasibility_diagnostics`. Se essa chave sumir daqui,
+    o relatorio passa a gravar `{}` sem nenhum erro, e diagnosticar um periodo
+    bloqueado volta a exigir reconstruir a safra inteira fora do motor.
+    """
+    rows = [_candidate(i, "tijolo") for i in range(6)]
+    scenario = MacroScenario(selic=11, ipca=4, selic_change_12m=-2.5)
+
+    resultado = optimize_diligence_portfolio(
+        rows, scenario, policy=PortfolioPolicy(min_distinct_types=2))
+
+    assert resultado["status"] == "blocked"
+    diagnostics = resultado.get("feasibility_diagnostics") or {}
+    assert diagnostics.get("available_by_type") == {
+        "tijolo": 6, "papel": 0, "fof": 0, "hibrido": 0,
+    }
