@@ -67,3 +67,26 @@ def test_universo_folgado_nao_cede_nada():
 
     assert resultado["items"]
     assert "shape_cession" not in resultado
+
+
+def test_aperto_de_forma_nunca_reduz_a_carteira():
+    """A busca pelo menor grau nao pode comprar selo com concentracao.
+
+    O otimizador é substituido por um que devolve carteira em qualquer grau,
+    mas com menos ativos quando a forma aperta. Sem a guarda, a busca fica
+    com a carteira de 2 ativos porque ela cede menos; com ela, fica com a de
+    quatro.
+    """
+    from core.fii_portfolio_v4 import PortfolioPolicy, _cessao_minima_de_forma
+
+    def tentar(politica):
+        apertado = float(politica.max_asset) < 0.9
+        pesos = [0.5, 0.5] if apertado else [0.25] * 4
+        return {"items": [{"ticker": f"X{i}11", "weight": w}
+                          for i, w in enumerate(pesos)]}
+
+    cessao, melhor = _cessao_minima_de_forma(
+        PortfolioPolicy(max_asset=0.15), tentar)
+    assert len(melhor["items"]) == 4
+    assert max(i["weight"] for i in melhor["items"]) == 0.25
+    assert cessao["teto por ativo"] > 0.0
