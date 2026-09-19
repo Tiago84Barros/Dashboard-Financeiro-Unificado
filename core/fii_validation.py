@@ -333,6 +333,12 @@ def robust_optimizer_point_in_time_backtest(
     concession_details: list[dict[str, Any]] = []
     missing_macro_periods = 0
     optimizer_input_skips = 0
+    # Um periodo em que o otimizador ENTREGOU carteira e a publicacao foi
+    # recusada nao e a mesma coisa que um periodo em que ele nao entregou
+    # nada. Os dois contam contra a fracao viavel -- do ponto de vista de quem
+    # investia naquele mes, o sistema nao tinha carteira para dar --, mas a
+    # causa e outra, e o bloqueador precisa dizer qual delas predomina.
+    publicacao_recusada: list[str] = []
     optimizer_failures: list[dict[str, Any]] = []
 
     def payload(value: Any) -> dict[str, Any]:
@@ -455,6 +461,8 @@ def robust_optimizer_point_in_time_backtest(
                 optimizer_input_skips += 1
             else:
                 attempted_optimizer += 1
+                if optimized.get("items"):
+                    publicacao_recusada.append(decision.date().isoformat())
             optimizer_failures.append({
                 "decision_date": decision.date().isoformat(),
                 "reason": " · ".join(
@@ -640,6 +648,8 @@ def robust_optimizer_point_in_time_backtest(
             "excecao": _metricas_da_coorte(
                 result[result["carteira_de_excecao"].astype(bool)]),
         },
+        "optimizer_attempted_periods": attempted_optimizer,
+        "optimizer_successful_periods": successful_optimizer,
         "optimizer_feasible_fraction": (
             successful_optimizer / attempted_optimizer if attempted_optimizer else 0.0
         ),
@@ -648,6 +658,10 @@ def robust_optimizer_point_in_time_backtest(
             if attempted_optimizer + optimizer_input_skips else 0.0
         ),
         "optimizer_input_skipped_periods": optimizer_input_skips,
+        # Diagnostico, nao portao: a fracao viavel ja cobra esses periodos. O
+        # que isto acrescenta e a causa, para a limitacao publicada nao culpar
+        # o otimizador por uma recusa que foi de transparencia.
+        "publication_refused_periods": list(publicacao_recusada),
         "constraint_violation_periods": constraint_violation_periods,
         "constraint_violation_details": constraint_violation_details,
         "concession_periods": concession_periods,
@@ -727,7 +741,23 @@ def validate_methodology(backtest: dict[str, Any], regime_results: dict[str, Any
         float(backtest.get("optimizer_feasible_fraction") or 0)
         < thresholds.min_optimizer_feasible_fraction
     ):
-        blockers.append("otimizador robusto inviável em períodos históricos demais")
+        recusados = list(backtest.get("publication_refused_periods") or ())
+        vazios = (int(backtest.get("optimizer_attempted_periods") or 0)
+                  - int(backtest.get("optimizer_successful_periods") or 0)
+                  - len(recusados))
+        if recusados and len(recusados) >= max(vazios, 1):
+            # A causa dominante nao e o otimizador: ele montou carteira e o
+            # portao de transparencia recusou publicar. Dizer "inviavel" aqui
+            # manda procurar defeito no motor errado.
+            blockers.append(
+                "períodos históricos demais sem carteira publicável — "
+                f"{len(recusados)} deles com carteira montada e publicação "
+                "recusada por cobertura de dimensão obrigatória ausente "
+                f"({recusados[0]} a {recusados[-1]})"
+            )
+        else:
+            blockers.append(
+                "otimizador robusto inviável em períodos históricos demais")
     if int(backtest.get("constraint_violation_periods") or 0) > 0:
         blockers.append("otimizador produziu violações de restrições no walk-forward")
     if "mean_correlation_coverage" in backtest and (

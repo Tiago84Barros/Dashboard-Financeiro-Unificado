@@ -136,8 +136,35 @@ def montar_carteira_com_concessao(
             atuais, atual = menores, candidato
         return atuais, atual
 
-    melhor: tuple[dict, Sequence[dict]] | None = None
-    for quantidade in range(len(fila) + 1):
+    # Um prefixo cujo conjunto inteiro tem menos fundos que
+    # `policy.max_assets` NAO pode ser viavel: `_viavel` cobra cardinalidade
+    # cheia e o otimizador nao seleciona mais ativos do que existem
+    # candidatos. E aritmetica, nao heuristica -- a varredura pode comecar no
+    # primeiro prefixo que satisfaz a desigualdade sem trocar o vencedor,
+    # porque o menor prefixo viavel continua sendo exatamente o mesmo.
+    # Medido na tela com renda recorrente em 12%: 5 estritos e fila de 24
+    # faziam 13 montagens completas em 435 s, e a primeira que podia dar certo
+    # era a nona. Com o pulo sao 5 montagens em 167 s, mesma carteira.
+    primeiro_possivel = max(0, int(policy.max_assets) - len(estritos))
+    if primeiro_possivel > len(fila):
+        # Nem a fila inteira alcanca a cardinalidade cheia. Nenhum prefixo e
+        # viavel e a varredura serve so para escolher a melhor tentativa,
+        # entao ela continua inteira -- e o regime das carteiras colapsadas, e
+        # ali cada tentativa e barata porque ha poucos candidatos.
+        ordem = list(range(len(fila) + 1))
+    else:
+        # A tentativa estrita continua sendo a PRIMEIRA, sempre. Ela e o
+        # conjunto preferido, e o que a nota de viabilidade publica como ponto
+        # de partida e e o que a pontuacao tem de ver sozinha; comprar uma
+        # montagem para preservar isso e barato ao lado de pular as outras.
+        # Os prefixos intermediarios pulados voltam DEPOIS, e so se nada for
+        # viavel: ali eles nao disputam viabilidade, disputam o `melhor`, e
+        # deixa-los de fora trocaria a carteira entregue no caso extremo.
+        ordem = ([0] + list(range(max(1, primeiro_possivel), len(fila) + 1))
+                 + list(range(1, primeiro_possivel)))
+
+    melhor: tuple[dict, Sequence[dict], tuple[int, int]] | None = None
+    for quantidade in ordem:
         readmitidos = fila[:quantidade]
         resultado = _tentar(readmitidos)
         itens = _registrar(readmitidos, resultado)
@@ -147,11 +174,14 @@ def montar_carteira_com_concessao(
             return _anotar(resultado, readmitidos, fila, tentativas)
         # Mantém a tentativa com mais ativos: se nem a concessão inteira
         # viabilizar a cardinalidade cheia, a carteira ainda não pode voltar
-        # vazia — e a preferência pelo estrito sobrevive ao empate, porque só
-        # trocamos quando o número de ativos cresce.
-        if melhor is None or len(itens) > len(melhor[0].get("items") or []):
-            melhor = (resultado, readmitidos)
-    resultado, readmitidos = melhor if melhor else ({}, ())
+        # vazia — e no empate vence quem readmitiu menos. O desempate é
+        # explícito porque a ordem de visita deixou de ser crescente: confiar
+        # nela para preferir o estrito era uma dependência invisível que a
+        # reordenação acima quebraria em silêncio.
+        chave = (len(itens), -quantidade)
+        if melhor is None or chave > melhor[2]:
+            melhor = (resultado, readmitidos, chave)
+    resultado, readmitidos = (melhor[0], melhor[1]) if melhor else ({}, ())
     if readmitidos and (resultado.get("items") or []):
         # Nenhuma tentativa fechou a cardinalidade cheia. A carteira não volta
         # vazia, mas também não publica cessão inútil: poda contra "não perder

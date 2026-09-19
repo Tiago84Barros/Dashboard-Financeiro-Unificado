@@ -31,6 +31,12 @@ from core.chat_memory import (
     visible_chat_history,
 )
 from core.fii_carteira_protegida import montar_carteira_com_concessao
+from core.fii_exigencia_cedente import (
+    ajustar_politica_de_carteira,
+    ceder_exigencia_ate_diversificar,
+    nota_de_cessao,
+    nota_de_concentracao,
+)
 from core.fii_integrated_model import (
     INTEGRATED_MODEL_VERSION,
     ColunasDeElegibilidadeAusentes,
@@ -2122,8 +2128,22 @@ def _carteira_integrada(preferences: dict):
         return None
 
     try:
-        eligible_rows, eligibility = apply_integrated_eligibility(
-            inputs.to_dict("records") if not inputs.empty else [], eligibility_policy)
+        # Os controles da barra lateral são portões duros, e nenhuma das
+        # cessões a jusante consegue aumentar o conjunto que eles deixaram —
+        # todas trabalham dentro dele. Quando o próprio aperto do usuário
+        # esvazia o universo, quem cede é a exigência dele, em degraus e nunca
+        # além do padrão validado da casa. A escada escolhe CONTANDO
+        # candidatos; o otimizador continua rodando uma vez só.
+        # A elegibilidade vai explícita, e não pelo padrão do módulo, para que
+        # continue sendo ESTE nome o ponto de injeção da tela: os testes de
+        # apresentação substituem `views.fiis.apply_integrated_eligibility`
+        # para montar universos de fixture, e um default resolvido lá dentro
+        # deixaria a substituição sem efeito — sem erro nenhum, só cobertura
+        # fantasma.
+        universo = ceder_exigencia_ate_diversificar(
+            inputs.to_dict("records") if not inputs.empty else [],
+            eligibility_policy,
+            elegibilidade=apply_integrated_eligibility)
     except ColunasDeElegibilidadeAusentes as erro:
         # Coluna ausente era lida como métrica ausente e reprovava todo mundo:
         # a tela mostrava "0 elegíveis" com cara de veredito. Aqui a falha de
@@ -2136,14 +2156,31 @@ def _carteira_integrada(preferences: dict):
         )
         st.session_state.pop("fii_port", None)
         return None
+    eligible_rows, eligibility = universo.elegiveis, universo.relatorio
+    # A carteira tem de ser montada sob a exigência que de fato selecionou o
+    # universo. Ceder a liquidez aqui e não na política de carteira readmitiria
+    # o fundo só para o MILP barrá-lo por iliquidez adiante.
+    portfolio_policy = ajustar_politica_de_carteira(
+        portfolio_policy, universo.politica)
     _aviso_de_idade_da_vitrine(inputs)
     st.markdown(_info_card_html(
         "Universo elegível",
         f"{eligibility['eligible_count']} de {eligibility['universe_count']} FIIs passaram "
-        "pelos filtros escolhidos. Ausências em métricas exigidas reprovam o ativo; não recebem "
+        "pelos filtros "
+        + ("escolhidos" if not universo.cedeu else "efetivamente aplicados")
+        + ". Ausências em métricas exigidas reprovam o ativo; não recebem "
         "nota neutra.",
         accent="#4A9EFF" if eligible_rows else "#FC5C7D",
     ), unsafe_allow_html=True)
+    if universo.cedeu:
+        # A cessão aparece antes da carteira, não em nota de rodapé: quem lê a
+        # composição precisa saber que ela foi montada sob exigência menor do
+        # que a que pediu, e sob qual exatamente.
+        st.markdown(_info_card_html(
+            "Exigência cedida para diversificar",
+            nota_de_cessao(universo),
+            accent="#F7B733",
+        ), unsafe_allow_html=True)
     # A contagem por motivo volta à tela: sem ela, "0 de 394" foi lido como
     # "todos os fundos são ruins" quando a causa era leitura de dado. Um número
     # de exclusão sem o motivo não é diagnóstico, é veredito sem processo.
@@ -2283,6 +2320,14 @@ def _carteira_integrada(preferences: dict):
         # Mesmos ativos e pesos do motor de proteção; só completa o contrato
         # de apresentação para reutilizar todo o painel detalhado abaixo.
         macro_snapshot = None
+    # A concentração se mede nos ativos ENTREGUES, não nos candidatos: o
+    # otimizador pode devolver menos do que recebeu, e foi exatamente assim
+    # que uma carteira de um único FII chegou à tela sem nenhum aviso.
+    _concentracao = nota_de_concentracao(universo, len(result["items"]))
+    if _concentracao:
+        st.markdown(_info_card_html(
+            "Diversificação abaixo do piso", _concentracao, accent="#FC5C7D",
+        ), unsafe_allow_html=True)
     partial_review = bool(result.get("is_partial_review"))
     allocated_weight = sum(item["weight"] for item in result["items"])
     if partial_review:

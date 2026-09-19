@@ -11,8 +11,10 @@ import inspect
 import re
 from pathlib import Path
 
+import core.fii_exigencia_cedente as fii_exigencia_cedente
 import views.fiis as fiis
 from core.fii_carteira_protegida import STATUS_READMITIDO
+from core.fii_integrated_model import apply_integrated_eligibility
 
 _RAIZ = Path(__file__).resolve().parents[1]
 _BRUTO = (_RAIZ / "views" / "fiis.py").read_text(encoding="utf-8")
@@ -346,9 +348,22 @@ def test_gate_de_publicacao_da_carteira_intacto():
 
 def test_pipeline_de_selecao_preservado():
     corpo = inspect.getsource(fiis._carteira_integrada)
-    for etapa in ("apply_integrated_eligibility(", "score_fiis_by_type(",
+    for etapa in ("ceder_exigencia_ate_diversificar(", "score_fiis_by_type(",
                   "evaluate_publication_gate("):
         assert etapa in corpo, etapa
+    # A elegibilidade deixou de ser chamada direto e passou a ir POR DENTRO da
+    # escada de cessão, que a executa uma vez por degrau. A checagem segue o
+    # motor até lá: o nome tem de continuar sendo entregue pela tela — é ele
+    # que os testes de apresentação substituem — e a escada tem de continuar
+    # sendo quem o chama.
+    assert "elegibilidade=apply_integrated_eligibility" in corpo
+    # E a escada tem de aplicar a elegibilidade DE VERDADE por padrão: uma
+    # escada que caísse num stub contaria candidatos de mentira e escolheria o
+    # degrau errado sem nunca falhar.
+    padrao = inspect.signature(
+        fii_exigencia_cedente.ceder_exigencia_ate_diversificar
+    ).parameters["elegibilidade"].default
+    assert padrao is apply_integrated_eligibility
 
 
 def test_score_do_universo_continua_igual():
