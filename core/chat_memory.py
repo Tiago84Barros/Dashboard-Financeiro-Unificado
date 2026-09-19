@@ -25,6 +25,20 @@ def _owner_namespace() -> str:
     return "user-v2:" + require_user()
 
 
+def _identidade_ou_anonimo(owner_key: str | None) -> str | None:
+    """Sessão sem login devolve None: a tela segue de pé, sem memória durável.
+
+    A falta de identidade não é falha de persistência — é o estado normal de
+    quem ainda não entrou. Só esse caso vira None; qualquer outro erro sobe.
+    """
+    if owner_key:
+        return owner_key
+    try:
+        return _owner_namespace()
+    except PermissionError:
+        return None
+
+
 def _connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=3)
@@ -75,7 +89,13 @@ def load_chat_history(
         state = st.session_state
     state_key = session_key or conversation_key
     marker_key = f"_chat_memory_loaded_for:{state_key}"
-    identity = owner_key or _owner_namespace()
+    identity = _identidade_ou_anonimo(owner_key)
+    if identity is None:
+        # Sem login não há o que restaurar, e derrubar a tela aqui apagaria
+        # a página inteira por causa de um painel lateral.
+        state.setdefault(state_key, [])
+        state.setdefault(f"_chat_visible_start:{state_key}", 0)
+        return state[state_key]
     marker = (identity, conversation_key)
     existing = state.get(state_key, [])
     if state.get(marker_key) == marker:
@@ -120,8 +140,12 @@ def save_chat_history(
     if state is None:
         import streamlit as st
         state = st.session_state
-    identity = owner_key or _owner_namespace()
+    identity = _identidade_ou_anonimo(owner_key)
     state_key = session_key or conversation_key
+    if identity is None:
+        # Conversa de visitante vive só na sessão; nada é gravado no disco.
+        state[state_key] = messages[-len(history):] if history else []
+        return history
     marker = (identity, conversation_key)
     previous = state.get(f"_chat_memory_loaded_for:{state_key}")
     if previous is not None and previous != marker:
@@ -173,7 +197,10 @@ def clear_chat_history(
         import streamlit as st
         state = st.session_state
     state_key = session_key or conversation_key
-    identity = owner_key or _owner_namespace()
+    identity = _identidade_ou_anonimo(owner_key)
+    if identity is None:
+        _limpa_sessao(state, state_key)
+        return
     try:
         if path is None:
             from core.chat_repository import clear
@@ -187,6 +214,10 @@ def clear_chat_history(
     except Exception:
         _persistence_warning()
         raise RuntimeError("A memória não foi apagada. Tente novamente.") from None
+    _limpa_sessao(state, state_key)
+
+
+def _limpa_sessao(state: MutableMapping[str, Any], state_key: str) -> None:
     state.pop(state_key, None)
     state.pop(f"_chat_memory_loaded_for:{state_key}", None)
     state.pop(f"_chat_memory_read_failed:{state_key}", None)

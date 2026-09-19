@@ -51,6 +51,16 @@ LIGHT_CSS = """
  background:#fff!important; color:var(--app-text)!important;
  border-color:var(--app-border)!important;
 }
+/* Entre `stBottom` e `stBottomBlockContainer` ha uma div sem testid que fica
+   com o fundo do config (escuro): era uma faixa preta atravessando o rodape
+   das telas com chat. A seta de enviar herda o branco translucido e some. */
+[data-testid="stBottom"] > div {background:var(--app-bg)!important;}
+[data-testid="stChatInputSubmitButton"] {color:var(--app-muted)!important;}
+/* A casca interna do campo de chat tem fundo proprio (escuro) e sobrevivia
+   mesmo com o `stChatInput` pintado de branco: era uma caixa preta no rodape. */
+[data-testid="stChatInput"] > div {
+ background-color:var(--app-surface)!important; border-color:var(--app-border)!important;
+}
 [data-testid="stSidebarCollapseButton"] button {color:var(--app-text)!important;}
 [data-testid="stSidebar"] .stRadio > div > label {
  color:var(--app-muted)!important;
@@ -88,6 +98,45 @@ button[kind^="secondary"], button[kind^="tertiary"],
 }
 button[kind^="secondary"] p, button[kind^="tertiary"] p {color:var(--app-text)!important;}
 button[kind^="primary"] {background:#007e60!important;color:#fff!important;}
+/* `st.link_button` sai como <a>, nao como <button>: as regras por `kind^=`
+   acima nao o alcancam e ele ficava preto com texto branco na pagina clara. */
+a[data-testid="stBaseLinkButton-secondary"],
+a[data-testid="stBaseLinkButton-tertiary"] {
+ background:#fff!important; color:var(--app-text)!important;
+ border-color:var(--app-border)!important;
+}
+/* Caixa, bolinha, chave e barra nativas sao desenhadas com o tema do config
+   (escuro): na pagina branca viram quadrado e ponto pretos, chave invisivel e
+   trilho preto. Sempre `background-color`, nunca o atalho `background`: a
+   marca de "marcado" chega como background-image e o atalho a apagaria. */
+[data-baseweb="checkbox"] > span:first-child {
+ background-color:#fff!important; border-color:var(--app-border-strong)!important;
+}
+[data-baseweb="checkbox"]:has(input:checked) > span:first-child {
+ background-color:var(--app-primary)!important; border-color:var(--app-primary)!important;
+}
+[data-baseweb="checkbox"] > div:first-child {
+ background-color:var(--app-border-strong)!important;
+}
+[data-baseweb="checkbox"]:has(input:checked) > div:first-child {
+ background-color:var(--app-primary)!important;
+}
+[data-baseweb="radio"] > div:first-child > div {background-color:#fff!important;}
+[data-baseweb="radio"]:has(input:checked) > div:first-child {
+ background-color:var(--app-primary)!important;
+}
+[data-baseweb="radio"]:has(input:checked) > div:first-child > div {
+ background-color:#fff!important;
+}
+[data-testid="stNumberInputStepUp"], [data-testid="stNumberInputStepDown"] {
+ background-color:var(--app-surface-raised)!important; color:var(--app-text)!important;
+}
+[data-baseweb="progress-bar"], [data-baseweb="progress-bar"] > div > div {
+ background-color:var(--app-surface-raised)!important;
+}
+/* `design/tema.py` pinta o trilho da barra com #2D3748 fixo; no claro sobra
+   uma faixa escura sob o preenchimento verde. */
+.stProgress > div {background-color:var(--app-surface-raised)!important;}
 button[kind^="primary"] p {color:#fff!important;}
 /* Olho de "mostrar senha": ícone herda o branco do tema escuro e some no campo
    branco. */
