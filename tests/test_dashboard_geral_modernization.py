@@ -55,10 +55,31 @@ def test_kpi_grid_uses_deterministic_financial_inputs(monkeypatch):
     assert "R$ 342.924,59" in html
     assert "R$ 688.080,92" not in html
     assert "Valor de mercado consolidado · 33 ativos" in html
-    assert "R$ 3.000,00" in html
-    assert "30,00%" in html
+    # Saldo = receitas - despesas; o aporte de 2.000 é alocação da sobra e não
+    # entra como saída (por isso 5.000, e poupança de 50%).
+    assert "R$ 5.000,00" in html
+    assert "50,00%" in html
     assert "+7.25%" in html
     assert "atingida" in html
+
+
+def test_kpi_grid_marca_aporte_acima_da_sobra_sem_pintar_deficit(monkeypatch):
+    """Despesas abaixo da renda + aporte alto: saldo positivo, cor de alocação."""
+    rendered = _capture_markdown(monkeypatch)
+
+    dashboard._render_kpi_grid(
+        {"total": 0, "delta_mes_pct": None},
+        receitas=27_636.02,
+        despesas=25_577.70,
+        investimentos=10_000.0,
+        carteira={},
+    )
+
+    html = "\n".join(rendered)
+    assert "R$ 2.058,32" in html
+    assert "-R$" not in html
+    assert dashboard._COR_PATRIMONIO in html
+    assert "aportes acima da sobra" in html
 
 
 def test_kpi_grid_handles_zero_revenue_without_division_error(monkeypatch):

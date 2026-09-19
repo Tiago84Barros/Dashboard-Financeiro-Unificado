@@ -54,6 +54,7 @@ from core.controle import (
     get_transacoes_filtradas,
     inserir_transacao,
 )
+from core.controle_indicadores import indicadores_caixa
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import (
@@ -104,6 +105,20 @@ _CORES_CAT = [
     "#FC5C7D", "#F6C90E", "#4A9EFF", "#00C896", "#9B59B6",
     "#FF6B35", "#1ABC9C", "#E67E22", "#3498DB", "#E91E63",
 ]
+
+
+def _cor_saldo_caixa(status: str) -> str:
+    """Cor do saldo pelo estado do caixa, não pelo sinal do número.
+
+    Vermelho só quando o consumo supera a renda (déficit de verdade). Azul
+    quando despesas + aportes passam da renda sem déficit de consumo: é
+    alocação, não gasto. Verde no restante.
+    """
+    if status == "deficit":
+        return _COR_DESPESA
+    if status == "aportes_excedem_sobra":
+        return _COR_INVEST
+    return _COR_RECEITA
 
 
 def _tipo_tx_label(tx: dict) -> str:
@@ -498,18 +513,20 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                    investido_mes: float = 0.0) -> None:
     receitas     = d["receitas"]
     despesas     = d["despesas"]
-    # Saldo = receitas - despesas - investimentos (alinhado com isolado)
-    saldo        = round(receitas - despesas - investido_mes, 2)
-    # Comprometida = (despesas + investimentos) / receitas (alinhado com isolado)
-    comprometido = round((despesas + investido_mes) / receitas * 100, 1) if receitas > 0 else 0.0
-    cor_saldo    = _COR_RECEITA if saldo >= 0 else _COR_DESPESA
+    indicadores = indicadores_caixa(receitas, despesas, investido_mes)
+    saldo = indicadores["saldo"]
+    comprometido = indicadores["comprometido_pct"]
+    cor_saldo = _cor_saldo_caixa(indicadores["status"])
     cor_comp     = (
+        _COR_NEUTRO if comprometido is None else
         _COR_RECEITA if comprometido < 60 else
         "#F6C90E"    if comprometido < 80 else
         _COR_DESPESA
     )
 
-    desc_saldo = f"{'Sobrou' if saldo >= 0 else 'Déficit'} dinheiro este mês."
+    desc_saldo = "Receitas − despesas; aportes não são despesas."
+    if indicadores["status"] == "aportes_excedem_sobra":
+        desc_saldo += " Despesas + aportes superam a renda, sem déficit de consumo."
     if investido_mes > 0:
         desc_saldo += f" Investido no mês: {fmt_moeda(investido_mes)}"
 
@@ -524,7 +541,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
     with c2:
         st.markdown(_kpi_card(
             "Despesas do Mês", fmt_moeda(despesas),
-            "Somatório de todas as saídas no período.",
+            "Despesas de caixa no período, sem aportes em investimentos.",
             _COR_DESPESA,
         ), unsafe_allow_html=True)
     with c3:
@@ -537,7 +554,8 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
         st.markdown(_kpi_card(
             "Renda Comprometida",
             fmt_percentual(comprometido, sinal=False),
-            "Considera despesas + investimentos em relação à renda do mês.",
+            "Despesas de caixa / renda do mês; exclui investimentos."
+            if comprometido is not None else "Sem renda positiva para calcular a porcentagem.",
             cor_comp,
         ), unsafe_allow_html=True)
 
@@ -821,10 +839,9 @@ def _tab_analises(
     despesas = d["despesas"]
     cats     = d["categorias"]
 
-    # saldo e taxa de poupança subtraem investimentos (igual ao isolado)
-    saldo         = round(receitas - despesas - investido_mes, 2)
-    taxa_poupanca = round((receitas - despesas - investido_mes) / receitas * 100, 1) \
-                    if receitas > 0 else 0.0
+    indicadores = indicadores_caixa(receitas, despesas, investido_mes)
+    saldo = indicadores["saldo"]
+    taxa_poupanca = indicadores["poupanca_pct"]
     maior_cat     = cats[0] if cats else None
 
     col_m1, col_m2, col_m3, col_m4 = st.columns(4, gap="small")
@@ -832,9 +849,11 @@ def _tab_analises(
         st.markdown(_kpi_card(
             "Taxa de Poupança",
             fmt_percentual(taxa_poupanca, sinal=False),
-            "Meta recomendada: 30% da renda.",
+            "Renda não consumida / renda · meta de referência: 30%."
+            if taxa_poupanca is not None else "Sem renda positiva para calcular a taxa.",
+            _COR_NEUTRO if taxa_poupanca is None else
             _COR_RECEITA if taxa_poupanca >= 30 else
-            "#F6C90E" if taxa_poupanca >= 15 else _COR_DESPESA,
+            "#F6C90E"    if taxa_poupanca >= 15 else _COR_DESPESA,
         ), unsafe_allow_html=True)
     with col_m2:
         st.markdown(_kpi_card(
@@ -857,8 +876,8 @@ def _tab_analises(
         st.markdown(_kpi_card(
             "Saldo Acumulado",
             fmt_moeda(saldo),
-            "Receitas − Despesas − Investimentos no período selecionado.",
-            _COR_RECEITA if saldo >= 0 else _COR_DESPESA,
+            "Receitas − despesas no período; aportes não reduzem este saldo.",
+            _cor_saldo_caixa(indicadores["status"]),
         ), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
