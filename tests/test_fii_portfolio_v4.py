@@ -155,14 +155,40 @@ def test_turnover_penalty_retains_feasible_previous_holdings():
 
 
 def test_missing_exposure_coverage_blocks_publication():
+    """Opacidade na carteira barra a publicacao, mesmo com cessao de forma.
+
+    ``sector`` so e aplicavel a tijolo e hibrido. Tirar o setor destes deixa a
+    carteira efetivamente opaca: a cessao de forma pode faze-la existir, mas
+    nao pode faze-la transparente, e o portao de publicacao e reavaliado
+    contra a politica original.
+    """
     types = ["tijolo", "papel", "fof", "hibrido"] * 3
     rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
-    for row in rows[:8]:
-        row.pop("sector")
+    for row in rows:
+        if row["tipo"] in {"tijolo", "hibrido"}:
+            row.pop("sector", None)
     result = optimize_diligence_portfolio(rows, MacroScenario(selic=12, ipca=5),
                                           policy=PortfolioPolicy(max_assets=12))
     assert not result["can_publish"]
     assert "sector" in result.get("unresolved_dimensions", [])
+
+
+def test_opacidade_fora_da_carteira_nao_barra_publicacao():
+    """Universo opaco nao condena uma carteira que ficou transparente.
+
+    Aqui a falta de ``sector`` cai sobre papel e FoF, tipos a que a dimensao
+    nem se aplica. A carteira montada e integralmente coberta, e barrar a
+    publicacao seria punir o portfolio pelo que ficou de fora dele.
+    """
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    for row in rows:
+        if row["tipo"] in {"papel", "fof"}:
+            row.pop("sector", None)
+    result = optimize_diligence_portfolio(rows, MacroScenario(selic=12, ipca=5),
+                                          policy=PortfolioPolicy(max_assets=12))
+    assert result["items"]
+    assert result["dimension_coverage"]["sector"]["coverage"] == 1.0
 
 
 def test_preselection_reserves_documented_assets_for_required_coverage():

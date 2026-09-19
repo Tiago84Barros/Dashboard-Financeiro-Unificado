@@ -6,7 +6,8 @@ presume concentração zero por ausência de dados.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Iterable
 
 import numpy as np
@@ -850,7 +851,7 @@ def portfolio_constraint_violations(
     return tuple(dict.fromkeys(violations))
 
 
-def optimize_diligence_portfolio(
+def _optimize_sob_politica(
     scored_rows: Iterable[dict], scenario: MacroScenario, *, policy: PortfolioPolicy | None = None,
     correlation_matrix: dict[str, dict[str, float]] | None = None,
     correlation_penalty: float = 0.0,
@@ -1238,6 +1239,200 @@ def optimize_diligence_portfolio(
         "protecao_excedida": list(protecao_excedida),
         "policy": asdict(policy), "solver": str(result.message),
     }
+
+
+# Grupos de FORMA que a cessao pode afrouxar, e como. "abre" eleva um teto
+# rumo a 100%; "fecha" baixa um piso rumo a zero. Nada aqui e portao de risco:
+# liquidez, historico, drawdown, faixa de P/VP e teto de plausibilidade do DY
+# filtram o universo ANTES do otimizador e nunca entram nesta tabela. Tambem
+# ficam fora `max_illiquid`, `max_weighted_uncertainty` e `min_distinct_types`:
+# medido nos 121 periodos do backtest PIT, nenhum dos tres e o limite que
+# prende, entao cede-los devolveria risco sem comprar viabilidade nenhuma.
+GRUPOS_DE_FORMA: dict[str, tuple[str, str]] = {
+    "teto por ativo": ("max_asset", "abre"),
+    "cobertura de dimensao": ("min_dimension_coverage", "fecha"),
+    **{f"concentracao por {dimensao}": (atributo, "abre")
+       for dimensao, atributo in LIMITS.items()},
+}
+# Uma carteira cedida continua sendo entregue -- "nunca deixar zerada a criacao
+# de qualquer portfolio" nao admite excecao -- mas acima de certo ponto ela
+# deixa de estar sob o padrao de diversificacao da casa e passa a ser declarada
+# como excecao. O selo nao olha o GRAU da cessao, que e grandeza interna, e sim
+# o que a carteira entregue de fato parece: os dois sintomas que o investidor
+# sente sao concentracao e cardinalidade. Medidos nos 44 periodos resgatados do
+# backtest PIT: maior posicao mediana de 34,9% com 12 periodos acima de 40%, e
+# 13 periodos entregando menos de 5 ativos.
+FATOR_DE_EXCECAO = 2.0  # multiplo do teto por ativo da politica ORIGINAL
+MINIMO_DE_ATIVOS_SEM_SELO = 5
+
+
+def _politica_cedida(policy: PortfolioPolicy,
+                     cessao: dict[str, float]) -> PortfolioPolicy:
+    """Aplica o grau de cessao de cada grupo de forma sobre a politica."""
+    mudancas: dict[str, float] = {}
+    for grupo, (atributo, modo) in GRUPOS_DE_FORMA.items():
+        grau = float(cessao.get(grupo) or 0.0)
+        if grau <= 0.0:
+            continue
+        base = float(getattr(policy, atributo))
+        mudancas[atributo] = (
+            base + grau * (1.0 - base) if modo == "abre" else base * (1.0 - grau)
+        )
+    return replace(policy, **mudancas) if mudancas else policy
+
+
+def _cessao_minima_de_forma(
+    policy: PortfolioPolicy,
+    tentar: Callable[[PortfolioPolicy], dict[str, Any]],
+    *,
+    iteracoes: int = 8,
+) -> tuple[dict[str, float], dict[str, Any]] | None:
+    """Menor afrouxamento de forma que faz a carteira existir, por grupo.
+
+    Busca binaria no grau comum a todos os grupos e, em seguida, um re-aperto
+    grupo a grupo: cada limite que nao era necessario volta ao valor original.
+    Sem o re-aperto a carteira cederia em dimensoes que nunca prenderam, e a
+    nota publicada acusaria risco que o investidor nao chegou a correr.
+
+    Devolve ``None`` quando nem a forma inteiramente aberta produz carteira.
+    Nenhum afrouxamento de forma resolve esse caso: ou nao ha FII passando os
+    portoes de risco, ou falta uma exigencia que nao e de forma. Ceder ali
+    exigiria abrir um portao de risco, e portao de risco nao cede.
+    """
+    grupos = list(GRUPOS_DE_FORMA)
+
+    def _tenta(grau_por_grupo: dict[str, float]) -> dict[str, Any] | None:
+        resultado = tentar(_politica_cedida(policy, grau_por_grupo))
+        return resultado if (resultado.get("items") or []) else None
+
+    melhor = _tenta({grupo: 1.0 for grupo in grupos})
+    if melhor is None:
+        return None
+
+    baixo, alto = 0.0, 1.0
+    for _ in range(iteracoes):
+        meio = (baixo + alto) / 2
+        tentativa = _tenta({grupo: meio for grupo in grupos})
+        if tentativa is not None:
+            alto, melhor = meio, tentativa
+        else:
+            baixo = meio
+
+    cessao = {grupo: alto for grupo in grupos}
+    for grupo in grupos:
+        candidata = dict(cessao, **{grupo: 0.0})
+        tentativa = _tenta(candidata)
+        if tentativa is not None:
+            cessao, melhor = candidata, tentativa
+    return {g: v for g, v in cessao.items() if v > 1e-9}, melhor
+
+
+def optimize_diligence_portfolio(
+    scored_rows: Iterable[dict], scenario: MacroScenario, *,
+    policy: PortfolioPolicy | None = None, **kwargs: Any,
+) -> dict[str, Any]:
+    """Monta a carteira e, se as regras de forma a esvaziarem, cede o minimo.
+
+    O motor corre duas vezes no maximo. Na primeira, sob a politica cheia. Se
+    ela devolver carteira, nada muda. Se devolver vazio, a inviabilidade e
+    atacada onde ela nasce: as regras de FORMA -- tetos de concentracao,
+    cobertura de dimensao e teto por ativo -- cedem pelo minimo necessario, e
+    so as que efetivamente prendiam.
+
+    Medido nos 121 periodos do backtest PIT: 70 montavam sob a politica cheia,
+    48 vinham vazios e 3 falhavam por coluna ausente. Dos 48, **44 eram
+    inviabilidade de forma** -- resolvem sem tocar em portao de risco nenhum.
+    Os 4 restantes tem universo literalmente vazio, e para esses a saida
+    honesta continua sendo dizer que nao ha FII investivel na data.
+    """
+    linhas = [dict(linha) for linha in scored_rows]
+    policy = policy or PortfolioPolicy()
+
+    def tentar(politica: PortfolioPolicy) -> dict[str, Any]:
+        return _optimize_sob_politica(
+            linhas, scenario, policy=politica, **kwargs)
+
+    resultado = tentar(policy)
+    if resultado.get("items"):
+        return resultado
+
+    cedida = _cessao_minima_de_forma(policy, tentar)
+    if cedida is None:
+        # Nem a forma inteiramente aberta produz carteira. Ou nenhum FII
+        # passou os portoes de risco, ou o que sobrou nao satisfaz uma
+        # exigencia que NAO e de forma -- tipos distintos, por exemplo. Um
+        # bloqueio aqui e informacao, nao falha: inventar carteira exigiria
+        # afrouxar justamente o que protege o investidor.
+        resultado = dict(resultado)
+        resultado["shape_cession"] = {
+            "grau": 0.0, "grupos": {},
+            "nivel": ("sem universo investivel" if not linhas
+                      else "forma aberta e ainda inviavel"),
+        }
+        return resultado
+
+    cessao, final = cedida
+    grau = max(cessao.values(), default=0.0)
+    efetiva = _politica_cedida(policy, cessao)
+    itens = list(final.get("items") or ())
+    maior_posicao = max((_num(item.get("weight")) for item in itens), default=0.0)
+    nivel = "excecao" if (
+        maior_posicao > FATOR_DE_EXCECAO * float(policy.max_asset)
+        or len(itens) < MINIMO_DE_ATIVOS_SEM_SELO
+    ) else "leve"
+    final = dict(final)
+    # Ceder cobertura nao torna a carteira transparente: baixar o minimo so
+    # apaga o bloqueio que denunciava a opacidade. A carteira continua sendo
+    # entregue -- "nunca zerar" nao admite excecao --, mas o portao de
+    # publicacao e reavaliado contra a politica ORIGINAL, e volta a barrar.
+    if "cobertura de dimensao" in cessao:
+        opacas = sorted(
+            dimensao for dimensao in policy.required_dimensions
+            if float((final.get("dimension_coverage") or {})
+                     .get(dimensao, {}).get("coverage") or 0.0)
+            < policy.min_dimension_coverage
+        )
+        if opacas:
+            final["blockers"] = list(dict.fromkeys(
+                list(final.get("blockers") or ())
+                + ["exposicoes obrigatorias sem cobertura suficiente: "
+                   + ", ".join(opacas)]))
+            final["unresolved_critical_dimensions"] = opacas
+            final["unresolved_dimensions"] = sorted(
+                set(final.get("unresolved_dimensions") or ()) | set(opacas))
+            final["can_publish"] = False
+            final["status"] = "diligence_only"
+    final["shape_cession"] = {
+        "grau": round(float(grau), 4),
+        "nivel": nivel,
+        "grupos": {grupo: round(float(valor), 4)
+                   for grupo, valor in sorted(cessao.items())},
+        "limites_efetivos": {
+            GRUPOS_DE_FORMA[grupo][0]: float(
+                getattr(efetiva, GRUPOS_DE_FORMA[grupo][0]))
+            for grupo in sorted(cessao)
+        },
+        "maior_posicao": round(float(maior_posicao), 4),
+        # ``policy`` no payload e a politica EFETIVA -- e o que o otimizador
+        # realmente imposto, e e contra ela que as violacoes foram medidas.
+        # Sem guardar a original ao lado, a tela leria o teto cedido como se
+        # fosse o padrao da casa, e a cessao sumiria de vista.
+        "policy_original": asdict(policy),
+    }
+    aviso = (
+        "carteira de excecao: o universo desta data nao comportava a "
+        f"diversificacao exigida; a maior posicao ficou em {maior_posicao:.1%}"
+        if nivel == "excecao" else
+        "limites de forma cedidos pelo minimo necessario para a carteira existir"
+    )
+    final["viability_notes"] = list(final.get("viability_notes") or ()) + [
+        aviso + " (" + ", ".join(
+            f"{grupo}: {getattr(policy, GRUPOS_DE_FORMA[grupo][0]):.0%} -> "
+            f"{getattr(efetiva, GRUPOS_DE_FORMA[grupo][0]):.0%}"
+            for grupo in sorted(cessao)
+        ) + ")"
+    ]
+    return final
 
 
 def evaluate_rebalance_triggers(current: dict, proposed: dict, *, costs: float = .0025) -> list[str]:

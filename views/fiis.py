@@ -988,6 +988,32 @@ def _avisos_de_cessao_de_protecao(result: dict) -> list[str]:
     ausência de risco, e nota agregada não diz de quem é o risco.
     """
     avisos: list[str] = []
+    cessao = result.get("shape_cession") or {}
+    if cessao.get("nivel") == "excecao":
+        # Qualificar em vez de rebaixar: a carteira sai, com o numero na mao.
+        # Esconde-la nao informa nada; entrega-la calada informa errado.
+        avisos.append(
+            "CARTEIRA DE EXCEÇÃO — o universo desta data não comportava a "
+            "diversificação exigida. Os limites de forma foram cedidos em até "
+            f"{float(cessao.get('grau') or 0.0):.0%} e a maior posição ficou "
+            f"em {float(cessao.get('maior_posicao') or 0.0):.1%}. A carteira é "
+            "entregue porque recusar-se a montá-la não informaria nada, mas "
+            "ela não está sob o padrão de diversificação da casa."
+        )
+    elif cessao.get("grupos"):
+        avisos.append(
+            "Limites de forma cedidos pelo mínimo necessário para a carteira "
+            f"existir ({', '.join(sorted(cessao['grupos']))}); a maior posição "
+            f"ficou em {float(cessao.get('maior_posicao') or 0.0):.1%}. "
+            "Nenhum portão de risco foi cedido."
+        )
+    elif cessao.get("nivel") in {"sem universo investivel",
+                                 "forma aberta e ainda inviavel"}:
+        avisos.append(
+            "Nenhuma carteira foi montada nesta data: nem abrindo inteiramente "
+            "os limites de forma o universo produz portfólio. Ceder aqui "
+            "exigiria afrouxar um portão de risco, e portão de risco não cede."
+        )
     if result.get("viability_notes"):
         avisos.append(
             "Proteção ajustada para preservar a viabilidade da carteira: "
