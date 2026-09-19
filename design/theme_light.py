@@ -25,6 +25,19 @@ LIGHT_CSS = """
 [data-testid="stBottomBlockContainer"] {
  background:var(--app-bg)!important; color:var(--app-text)!important;
 }
+/* Ícones e rótulos do cabeçalho (status "Stop", Share, ajuda, menu) chegam
+   em branco do tema do config e somem na barra clara. `currentColor` cobre
+   o SVG que herda a cor; quem já vem preto não muda. */
+[data-testid="stHeader"] :is(button,span,svg,path,circle),
+[data-testid="stToolbar"] :is(button,span,svg,path,circle) {
+ color:var(--app-text)!important;
+}
+[data-testid="stHeader"] svg, [data-testid="stToolbar"] svg {fill:currentColor!important;}
+/* Enquanto um recálculo longo roda, o Streamlit desbota o render anterior
+   (`opacity:.33`). No escuro mal aparece; no branco a tela inteira parece
+   apagada e o usuário lê isso como defeito. Desbotar menos mantém o aviso —
+   quem diz que está rodando é o status do cabeçalho, agora visível. */
+[data-testid="stElementContainer"][data-stale="true"] {opacity:.88!important;}
 [data-testid="stSidebar"], [data-testid="stSidebarContent"] {
  background:#edf2f8!important; color:var(--app-text)!important;
 }
