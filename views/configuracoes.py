@@ -717,6 +717,15 @@ def _render_banco() -> None:
             else:
                 st.warning("OWNER_USER_ID ausente")
 
+        # Os avisos de ambiente ficavam na sidebar, embaixo do menu, em todas
+        # as telas. Saiu de la (ver ``app.py``) e chegou aqui: e diagnostico
+        # tecnico, e esta aba so existe para quem administra o app.
+        avisos_ambiente = settings.validate()
+        if avisos_ambiente:
+            with st.expander(f"Avisos de ambiente ({len(avisos_ambiente)})"):
+                for aviso in avisos_ambiente:
+                    st.warning(aviso, icon="⚠️")
+
         if not status["configurado"]:
             st.info(
                 "Adicione `SUPABASE_UNIFICADO_URL` no arquivo **.env** local "

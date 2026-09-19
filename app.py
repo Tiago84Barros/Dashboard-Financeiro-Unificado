@@ -110,12 +110,22 @@ with st.sidebar:
         key="app_main_navigation",
     )
 
-    avisos = [] if _APP_TEST_MODE else settings.validate()
-    if avisos:
-        st.divider()
-        st.markdown('<div class="nav-section">Ambiente</div>', unsafe_allow_html=True)
-        for aviso in avisos:
-            st.caption(f"⚠️ {aviso}")
+    # Os avisos de ambiente (chave de API ausente, variavel nao configurada)
+    # sairam da sidebar a pedido do dono do app: sao detalhe de operacao, nao
+    # informacao de uso, e apareciam embaixo do menu em todas as telas. Nao
+    # foram descartados -- continuam no log de quem opera e na aba
+    # Configuracoes > Banco de dados, que so o admin ve.
+    # O script inteiro reexecuta a cada rerun, entao a marca de "ja avisei"
+    # precisa morar na sessao -- variavel de modulo voltaria ao inicial e o log
+    # repetiria o mesmo aviso dezenas de vezes. ``getattr`` porque o modo
+    # sintetico e os testes trocam ``streamlit`` por um dublê sem session_state.
+    _sessao = getattr(st, "session_state", None)
+    _ja_avisou = _sessao is not None and _sessao.get("_avisos_ambiente_logados")
+    if not _APP_TEST_MODE and not _ja_avisou:
+        if _sessao is not None:
+            _sessao["_avisos_ambiente_logados"] = True
+        for aviso in settings.validate():
+            logger.warning("ambiente: %s", aviso)
 
 # ── Roteamento ────────────────────────────────────────────────────────────────
 modulo_nome = _ROTAS.get(menu)
