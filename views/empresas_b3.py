@@ -102,17 +102,17 @@ _CSS = """
 .b3-ind-sub   { font-size:0.66rem;color:var(--app-subtle);margin-top:3px; }
 .b3-score-badge { display:inline-block;padding:2px 8px;border-radius:12px;
                   font-size:0.72rem;font-weight:700; }
-.b3-score-high  { background:rgba(0,200,150,.15);color:var(--app-primary); }
-.b3-score-mid   { background:rgba(246,201,14,.15);color:var(--app-warning); }
-.b3-score-low   { background:rgba(252,92,125,.15);color:var(--app-danger); }
+.b3-score-high  { background:color-mix(in srgb, var(--app-primary) 15%, transparent);color:var(--app-primary); }
+.b3-score-mid   { background:color-mix(in srgb, var(--app-warning) 15%, transparent);color:var(--app-warning); }
+.b3-score-low   { background:color-mix(in srgb, var(--app-danger) 15%, transparent);color:var(--app-danger); }
 /* Score de Entrada */
-.b3-entrada-aprovada   { background:rgba(0,200,150,.12);border:1px solid rgba(0,200,150,.30);
+.b3-entrada-aprovada   { background:color-mix(in srgb, var(--app-primary) 12%, transparent);border:1px solid color-mix(in srgb, var(--app-primary) 30%, transparent);
                           color:var(--app-primary);border-radius:6px;padding:3px 10px;
                           font-size:0.72rem;font-weight:800; }
-.b3-entrada-observacao { background:rgba(246,201,14,.12);border:1px solid rgba(246,201,14,.30);
+.b3-entrada-observacao { background:color-mix(in srgb, var(--app-warning) 12%, transparent);border:1px solid color-mix(in srgb, var(--app-warning) 30%, transparent);
                           color:var(--app-warning);border-radius:6px;padding:3px 10px;
                           font-size:0.72rem;font-weight:800; }
-.b3-entrada-excluida   { background:rgba(252,92,125,.12);border:1px solid rgba(252,92,125,.30);
+.b3-entrada-excluida   { background:color-mix(in srgb, var(--app-danger) 12%, transparent);border:1px solid color-mix(in srgb, var(--app-danger) 30%, transparent);
                           color:var(--app-danger);border-radius:6px;padding:3px 10px;
                           font-size:0.72rem;font-weight:800; }
 .b3-engine-row { display:flex;align-items:center;gap:6px;margin-bottom:4px;
@@ -4309,7 +4309,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         return
 
     st.markdown(
-        '<div style="background:rgba(56,189,248,.06);border-left:3px solid #38BDF8;'
+        '<div style="background:color-mix(in srgb, var(--app-info) 6%, transparent);border-left:3px solid #38BDF8;'
         'border-radius:6px;padding:12px 16px;margin-bottom:12px;font-size:0.84rem;'
         'color:var(--app-muted);">'
         '<strong>🔬 Etapa 1 de 3 · Banco de testes por segmento.</strong> '
@@ -5976,7 +5976,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 with cols_e[j]:
                     st.markdown(
                         f'<div class="b3-card" style="border-color:'
-                        f'{"rgba(0,200,150,.30)" if stat=="Aprovada" else "rgba(246,201,14,.20)" if stat=="Observação" else "rgba(252,92,125,.20)"}'
+                        f'{"color-mix(in srgb, var(--app-primary) 30%, transparent)" if stat=="Aprovada" else "color-mix(in srgb, var(--app-warning) 20%, transparent)" if stat=="Observação" else "color-mix(in srgb, var(--app-danger) 20%, transparent)"}'
                         f';">'
                         f'<div style="display:flex;justify-content:space-between;'
                         f'align-items:flex-start;margin-bottom:8px;">'
@@ -6598,9 +6598,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     if pd.isna(v):
                         styles.append("")
                     elif (v >= q75 and not is_inv) or (v <= q25 and is_inv):
-                        styles.append("background-color:rgba(0,200,150,.15);color:#00C896")
+                        styles.append("background-color:color-mix(in srgb, var(--app-primary) 15%, transparent);color:#00C896")
                     elif (v <= q25 and not is_inv) or (v >= q75 and is_inv):
-                        styles.append("background-color:rgba(252,92,125,.15);color:#FC5C7D")
+                        styles.append("background-color:color-mix(in srgb, var(--app-danger) 15%, transparent);color:#FC5C7D")
                     else:
                         styles.append("")
                 return styles

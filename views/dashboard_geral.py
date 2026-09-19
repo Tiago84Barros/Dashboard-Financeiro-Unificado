@@ -87,11 +87,11 @@ _DASHBOARD_STYLES = """
     border: 1px solid var(--dg-border);
     border-radius: 20px;
     background:
-        radial-gradient(circle at 88% 8%, rgba(74,158,255,.20), transparent 34%),
-        radial-gradient(circle at 8% 105%, rgba(0,200,150,.13), transparent 36%),
+        radial-gradient(circle at 88% 8%, color-mix(in srgb, var(--app-info) 20%, transparent), transparent 34%),
+        radial-gradient(circle at 8% 105%, color-mix(in srgb, var(--app-primary) 13%, transparent), transparent 36%),
         linear-gradient(145deg, var(--app-surface-raised) 0%,
             var(--app-surface) 58%, var(--app-bg) 100%);
-    box-shadow: 0 18px 46px rgba(0,0,0,.27), inset 0 1px 0 rgba(255,255,255,.045);
+    box-shadow: 0 18px 46px rgba(0,0,0,.27), inset 0 1px 0 var(--app-surface-raised);
 }
 .dg-hero::after {
     content: "";
@@ -100,7 +100,7 @@ _DASHBOARD_STYLES = """
     height: 230px;
     right: -120px;
     bottom: -155px;
-    border: 1px solid rgba(74,158,255,.22);
+    border: 1px solid color-mix(in srgb, var(--app-info) 22%, transparent);
     border-radius: 50%;
 }
 .dg-eyebrow {
@@ -273,9 +273,9 @@ _DASHBOARD_STYLES = """
     gap: .75rem;
     padding: .85rem 1rem;
     margin: .85rem 0 1.35rem;
-    border: 1px solid rgba(74,158,255,.18);
+    border: 1px solid color-mix(in srgb, var(--app-info) 18%, transparent);
     border-radius: 12px;
-    background: rgba(74,158,255,.055);
+    background: color-mix(in srgb, var(--app-info) 6%, transparent);
 }
 .dg-callout-icon {
     color: var(--app-info);
