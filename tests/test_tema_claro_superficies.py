@@ -59,3 +59,52 @@ def test_controle_financeiro_nao_pinta_html_com_cromo_escuro():
         and any(cor.lower() in linha.lower() for cor in _CROMO_ESCURO)
     ]
     assert not sujas, "literais do tema escuro em HTML:\n" + "\n".join(sujas)
+
+
+def _selectores_escuros_do_tema_base() -> dict[str, str]:
+    """Seletores que ``design/tema.py`` pinta com cromo escuro fixo.
+
+    Sai de quem escreve a cor, não de uma lista: o mapa de ``tema_canvas`` já
+    enumera o cromo escuro do app, e qualquer regra nova cai aqui sozinha.
+    """
+    from design.tema_canvas import _CROMO
+
+    escuros = {cor.lower() for cor in _CROMO}
+    fonte = (RAIZ / "design" / "tema.py").read_text(encoding="utf-8")
+    achados: dict[str, str] = {}
+    for seletor, corpo in re.findall(r"([^{}]+)\{([^{}]*)\}", fonte):
+        cor = re.search(r"background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8})", corpo)
+        if cor and cor.group(1).lower() in escuros:
+            achados[seletor.strip().splitlines()[-1].strip()] = cor.group(1)
+    assert achados, "nenhuma superfície escura encontrada — o padrão de tema.py mudou"
+    return achados
+
+
+def test_tema_claro_cobre_toda_superficie_escura_do_tema_base():
+    """O trilho da barra de progresso ficava #2D3748 sob o preenchimento verde.
+
+    O tema claro redefine tokens, mas cor literal cravada em ``tema.py`` não
+    depende de token nenhum: só um seletor equivalente no claro a desfaz.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    faltando = [
+        f"{seletor} ({cor})"
+        for seletor, cor in _selectores_escuros_do_tema_base().items()
+        if seletor not in LIGHT_CSS
+    ]
+    assert not faltando, f"sem override no tema claro: {faltando}"
+
+
+def test_tema_claro_pinta_a_casca_interna_do_chat_e_o_rodape():
+    """Faixa preta no rodapé: o fundo estava em divs que ninguém alcançava.
+
+    Nem o ``stChatInput`` nem o ``stBottom`` carregam a cor — quem carrega é a
+    div interna de cada um, sem ``data-testid`` para servir de alvo.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    for seletor in ('[data-testid="stBottom"] > div',
+                    '[data-testid="stChatInput"] > div',
+                    '[data-testid="stChatInputSubmitButton"]'):
+        assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
