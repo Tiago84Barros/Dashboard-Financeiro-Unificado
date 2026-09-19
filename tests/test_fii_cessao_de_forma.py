@@ -9,9 +9,7 @@ ele, a saida honesta e dizer que nao ha ativo investivel na data.
 
 from core.fii_methodology import MacroScenario
 from core.fii_portfolio_v4 import PortfolioPolicy, optimize_diligence_portfolio
-
 from tests.test_fii_portfolio_v4 import _candidate
-
 
 CENARIO = MacroScenario(selic=12, ipca=5)
 

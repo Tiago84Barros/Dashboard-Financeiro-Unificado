@@ -9,6 +9,7 @@ from contextlib import contextmanager
 import pytest
 
 import views.controle_financeiro as cf
+from design.componentes import cor_token
 
 # Cenário do mês de setembro/2026 relatado pelo usuário: as despesas ficam
 # abaixo da renda e o aporte de R$ 10 mil é que faz a soma passar da entrada.
@@ -58,7 +59,8 @@ def test_aporte_acima_da_sobra_nao_pinta_deficit(monkeypatch):
 
     assert "R$ 2.058,32" in html          # saldo = receitas − despesas
     assert "-R$ 7.941,68" not in html     # o valor antigo, com o aporte subtraído
-    assert cf._COR_INVEST in html         # azul: alocação, não déficit
+    # O card sai com o token do tema, não com o literal: ver `cor_token`.
+    assert cor_token(cf._COR_INVEST) in html   # azul: alocação, não déficit
     assert "92,55%" in html                # renda comprometida só de despesas
     assert "128,70%" not in html
     assert "Investido no mês: R$ 10.000,00" in html
@@ -68,21 +70,21 @@ def test_despesa_acima_da_renda_continua_vermelha(monkeypatch):
     html = _render(monkeypatch, _RECEITAS, 30_000.0, _APORTE)
 
     assert "-R$ 2.363,98" in html
-    assert cf._COR_DESPESA in html
+    assert cor_token(cf._COR_DESPESA) in html
 
 
 def test_sobra_maior_que_o_aporte_fica_verde(monkeypatch):
     html = _render(monkeypatch, _RECEITAS, 20_000.0, 2_000.0)
 
     assert "R$ 7.636,02" in html
-    assert cf._COR_RECEITA in html
+    assert cor_token(cf._COR_RECEITA) in html
 
 
 def test_renda_zero_nao_quebra_o_card_de_comprometimento(monkeypatch):
     html = _render(monkeypatch, 0.0, 500.0, 0.0)
 
     assert "Sem renda positiva" in html
-    assert cf._COR_NEUTRO in html
+    assert cor_token(cf._COR_NEUTRO) in html
 
 
 @pytest.mark.parametrize("aporte", [0.0, 5_000.0, 50_000.0])

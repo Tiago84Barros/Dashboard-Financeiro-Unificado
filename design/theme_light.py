@@ -100,10 +100,18 @@ button:disabled {opacity:.55;}
  outline:2px solid #175eac!important; outline-offset:2px;
 }
 .app-brand, .app-page-hero, .app-page-meta,
-.b3-card, .b3-card-logo-wrap, .apb3-kpi, .apb3-macro, .apb3-logo-item,
+.b3-card, .apb3-kpi, .apb3-macro, .apb3-logo-item,
 .fii-selection-card {
  background:var(--app-surface)!important; border-color:var(--app-border)!important;
  box-shadow:var(--app-shadow); color:var(--app-text)!important;
+}
+/* A placa do logo recebe a imagem como `background-image` inline (ver
+   design/market_companies.py::company_logo_html). O atalho `background` com
+   !important zera essa imagem — estilo inline perde para !important — e a
+   placa ficava vazia no claro. Aqui muda só a cor de fundo. */
+.b3-card-logo-wrap {
+ background-color:var(--app-surface-raised)!important;
+ color:var(--app-muted)!important;
 }
 .app-brand-title, .app-page-title-row h1, .b3-card-ticker,
 .apb3-kpi-val, .apb3-macro-val, .apb3-logo-ticker {
