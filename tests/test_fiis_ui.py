@@ -458,3 +458,43 @@ def test_card_de_renda_recorrente_sem_dado_nao_mostra_zero():
     assert "0.0%" not in card
     assert "—" in card
 
+
+
+def test_carteira_de_excecao_declara_o_grau_e_a_maior_posicao():
+    """Grau de cessao e maior posicao tem de chegar a tela, nao so ao payload.
+
+    Qualificar em vez de rebaixar so funciona se a qualificacao aparecer:
+    carteira de excecao entregue em silencio informa errado.
+    """
+    avisos = fiis._avisos_de_cessao_de_protecao({
+        "shape_cession": {"nivel": "excecao", "grau": .62,
+                          "maior_posicao": .625,
+                          "grupos": {"concentracao por region": .62}},
+    })
+
+    assert len(avisos) == 1
+    assert "CARTEIRA DE EXCEÇÃO" in avisos[0]
+    assert "62%" in avisos[0] and "62.5%" in avisos[0]
+
+
+def test_cessao_leve_nomeia_os_grupos_e_nega_cessao_de_risco():
+    avisos = fiis._avisos_de_cessao_de_protecao({
+        "shape_cession": {"nivel": "leve", "grau": .12,
+                          "maior_posicao": .25,
+                          "grupos": {"concentracao por region": .12,
+                                     "teto por ativo": .12}},
+    })
+
+    assert len(avisos) == 1
+    assert "concentracao por region, teto por ativo" in avisos[0]
+    assert "Nenhum portão de risco foi cedido" in avisos[0]
+
+
+def test_bloqueio_sem_universo_investivel_e_declarado_na_tela():
+    avisos = fiis._avisos_de_cessao_de_protecao({
+        "shape_cession": {"nivel": "sem universo investivel",
+                          "grau": 0.0, "grupos": {}},
+    })
+
+    assert len(avisos) == 1
+    assert "portão de risco não cede" in avisos[0]
