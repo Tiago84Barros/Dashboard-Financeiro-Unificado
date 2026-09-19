@@ -2639,6 +2639,62 @@ def _render_portfolio_version_history(key: str) -> None:
 
 # ── Tab 4: Backtest ───────────────────────────────────────────────────────────
 
+def _cards_por_padrao(curvas: dict) -> None:
+    """Separa o desempenho das carteiras sob o padrão da casa e das de exceção.
+
+    A curva de manchete inclui as duas — elas foram entregues, e omitir a de
+    exceção mediria uma estratégia que ninguém correu. Mas se o excesso vier
+    da concentração das carteiras de exceção, a manchete credita à
+    metodologia um prêmio que é de risco cedido. Só a separação mostra isso.
+    """
+    casa = curvas.get("padrao_da_casa") or {}
+    excecao = curvas.get("excecao") or {}
+    if not int(casa.get("periods") or 0) and not int(excecao.get("periods") or 0):
+        return
+
+    st.markdown("#### Padrão da casa × carteiras de exceção")
+    for titulo, cor, dados, nota in (
+        ("Sob o padrão da casa", "#00C896", casa,
+         "limites de forma íntegros ou cedidos levemente"),
+        ("Carteiras de exceção", "#F6C90E", excecao,
+         "maior posição acima de 2× o teto, ou menos de 5 ativos"),
+    ):
+        periodos = int(dados.get("periods") or 0)
+        if not periodos:
+            st.caption(f"**{titulo}** — nenhum período nesta coorte.")
+            continue
+        excesso = dados.get("mean_excess")
+        colunas = st.columns(4)
+        colunas[0].markdown(
+            _kpi_html(titulo, f"{periodos} períodos", sub=nota,
+                      sub_color="#4A5568", accent=cor),
+            unsafe_allow_html=True)
+        colunas[1].markdown(
+            _kpi_html("Retorno médio",
+                      f"{float(dados.get('mean_return') or 0):+.2%}",
+                      sub="por período", sub_color="#4A5568", accent=cor),
+            unsafe_allow_html=True)
+        colunas[2].markdown(
+            _kpi_html("Excesso sobre o IFIX",
+                      "—" if excesso is None or pd.isna(excesso)
+                      else f"{float(excesso):+.2%}",
+                      sub="por período", sub_color="#4A5568", accent=cor),
+            unsafe_allow_html=True)
+        colunas[3].markdown(
+            _kpi_html("Pior queda",
+                      f"{float(dados.get('max_drawdown_concatenado') or 0):.1%}",
+                      sub="curva concatenada", sub_color="#4A5568", accent=cor),
+            unsafe_allow_html=True)
+    st.caption(
+        "Os períodos de cada coorte **não são contíguos**: a curva compõe "
+        "meses salteados e responde *como se comportaram estas carteiras*, "
+        "não *quanto eu teria ganho*. O mês que ficou de fora não vira caixa "
+        "nem índice — ele simplesmente não existe nessa curva. Por isso a "
+        "queda máxima aparece como concatenada, e a validação da metodologia "
+        "continua sendo julgada pela curva completa."
+    )
+
+
 def _tab_backtest() -> None:
     st.subheader("Validação point-in-time da metodologia")
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
@@ -2682,6 +2738,8 @@ def _tab_backtest() -> None:
             "inventamos a perda, que pode ser buraco de dado, mas ela também "
             "não rende o que os fundos sobreviventes renderam."
         )
+
+    _cards_por_padrao(pit.get("curvas_por_padrao") or {})
 
     blockers = validation.get("blockers") or []
     if blockers:

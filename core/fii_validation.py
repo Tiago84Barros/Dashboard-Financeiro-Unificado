@@ -238,6 +238,37 @@ def point_in_time_backtest(
     }
 
 
+def _metricas_da_coorte(bloco: pd.DataFrame) -> dict[str, Any]:
+    """Desempenho de um subconjunto de periodos, com a curva declarada.
+
+    Os periodos de uma coorte nao sao contiguos. Compor ``1 + r`` sobre eles
+    responde "como se comportaram estas carteiras", nao "quanto eu teria
+    ganho": o mes que ficou de fora nao vira caixa nem benchmark, ele
+    simplesmente nao existe nesta curva. Por isso o drawdown sai com nome
+    proprio -- ``max_drawdown_concatenado`` --, para nao ser lido como o
+    drawdown de uma estrategia que alguem poderia ter seguido.
+    """
+    if bloco.empty:
+        return {"periods": 0}
+    excess = bloco["portfolio_return"] - bloco["benchmark_return"]
+    validos = excess.dropna()
+    curva = (1.0 + bloco["portfolio_return"]).cumprod()
+    drawdown = curva / curva.cummax() - 1.0
+    return {
+        "periods": int(len(bloco)),
+        "mean_return": float(bloco["portfolio_return"].mean()),
+        "mean_benchmark": float(bloco["benchmark_return"].mean()),
+        "mean_excess": float(excess.mean()),
+        "excess_bootstrap": bootstrap_mean_ci(excess),
+        "annualized_turnover": float(bloco["turnover"].mean() * 12),
+        "max_drawdown_concatenado": float(drawdown.min()),
+        "information_ratio": (
+            float(validos.mean() / validos.std(ddof=1) * math.sqrt(12))
+            if len(validos) > 1 and validos.std(ddof=1) > 0 else float("nan")
+        ),
+    }
+
+
 def robust_optimizer_point_in_time_backtest(
     snapshots: pd.DataFrame, returns: pd.DataFrame, benchmark: pd.Series,
     macro_scenarios: dict[str, dict[str, float]], *,
@@ -526,6 +557,13 @@ def robust_optimizer_point_in_time_backtest(
             },
             "protecao_cedida": cessao,
             "viability_notes": notas_de_viabilidade,
+            # Sob o padrao da casa ou nao: a cessao de forma leve mantem a
+            # carteira dentro do padrao de diversificacao; a de excecao nao.
+            # Guardado por periodo porque a distincao so e util se a curva
+            # puder ser refeita sem ela.
+            "carteira_de_excecao": str(
+                (optimized.get("shape_cession") or {}).get("nivel") or ""
+            ) == "excecao",
         })
         if cessao:
             concession_periods += 1
@@ -591,6 +629,17 @@ def robust_optimizer_point_in_time_backtest(
         ),
         "max_drawdown": float(drawdown.min()),
         "information_ratio": information_ratio,
+        # A carteira de excecao entra na curva de manchete acima -- ela foi
+        # entregue, e omiti-la seria medir uma estrategia que ninguem correu.
+        # Mas ela nao esta sob o padrao de diversificacao da casa, entao o
+        # desempenho das duas coortes sai separado. Se a de excecao rende
+        # mais, o premio esta vindo da concentracao, e isso precisa aparecer.
+        "curvas_por_padrao": {
+            "padrao_da_casa": _metricas_da_coorte(
+                result[~result["carteira_de_excecao"].astype(bool)]),
+            "excecao": _metricas_da_coorte(
+                result[result["carteira_de_excecao"].astype(bool)]),
+        },
         "optimizer_feasible_fraction": (
             successful_optimizer / attempted_optimizer if attempted_optimizer else 0.0
         ),

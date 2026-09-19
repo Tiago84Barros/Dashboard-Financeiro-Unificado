@@ -46,6 +46,7 @@ def main() -> int:
         "optimizer_feasible_fraction": metrics.get("optimizer_feasible_fraction"),
         "constraint_violation_periods": metrics.get("constraint_violation_periods"),
         "mean_correlation_coverage": metrics.get("mean_correlation_coverage"),
+        "curvas_por_padrao": metrics.get("curvas_por_padrao"),
         "blockers": result.get("blockers") or [],
     }
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))

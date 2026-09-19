@@ -1260,8 +1260,23 @@ GRUPOS_DE_FORMA: dict[str, tuple[str, str]] = {
 # como excecao. O selo nao olha o GRAU da cessao, que e grandeza interna, e sim
 # o que a carteira entregue de fato parece: os dois sintomas que o investidor
 # sente sao concentracao e cardinalidade. Medidos nos 44 periodos resgatados do
-# backtest PIT: maior posicao mediana de 34,9% com 12 periodos acima de 40%, e
-# 13 periodos entregando menos de 5 ativos.
+# backtest PIT, com o refino e a guarda de diversificacao ligados: maior
+# posicao mediana de 28,6% com 4 periodos acima de 40%, e 13 periodos
+# entregando menos de 5 ativos -- 19 carteiras de excecao contra 25 leves.
+# Sem a guarda os mesmos 44 periodos davam 34,8% de mediana e 29 excecoes: o
+# refino sozinho melhorava o grau declarado e piorava a carteira.
+# O refino e sequencial, entao a ordem decide quem fica mais apertado: o
+# primeiro grupo e minimizado com todos os outros ainda folgados. O teto por
+# ativo vem primeiro porque concentracao numa posicao unica e o que o
+# investidor sente -- e porque ele prendeu nos 44 periodos resgatados, contra
+# 40 do issuer e 9 da cobertura. A cobertura vem por ultimo: e a unica cujo
+# afrouxamento nao redistribui peso, so apaga um bloqueio.
+ORDEM_DE_REFINO: tuple[str, ...] = (
+    "teto por ativo",
+    *(f"concentracao por {dimensao}" for dimensao in LIMITS),
+    "cobertura de dimensao",
+)
+
 FATOR_DE_EXCECAO = 2.0  # multiplo do teto por ativo da politica ORIGINAL
 MINIMO_DE_ATIVOS_SEM_SELO = 5
 
@@ -1289,10 +1304,22 @@ def _cessao_minima_de_forma(
 ) -> tuple[dict[str, float], dict[str, Any]] | None:
     """Menor afrouxamento de forma que faz a carteira existir, por grupo.
 
-    Busca binaria no grau comum a todos os grupos e, em seguida, um re-aperto
-    grupo a grupo: cada limite que nao era necessario volta ao valor original.
+    Tres passos. Busca binaria no grau comum a todos os grupos; re-aperto
+    grupo a grupo, que devolve ao valor original cada limite que nao era
+    necessario; e refino grupo a grupo, que leva cada limite remanescente ao
+    menor valor que ainda produz carteira.
+
     Sem o re-aperto a carteira cederia em dimensoes que nunca prenderam, e a
-    nota publicada acusaria risco que o investidor nao chegou a correr.
+    nota publicada acusaria risco que o investidor nao chegou a correr. Sem o
+    refino ela cederia na medida do grupo mais exigente, e a diferenca vira
+    cessao declarada sem necessidade.
+
+    Os tres passos apertam a FORMA, e apertar a forma pode custar ativo: a
+    primeira versao deste refino baixou a mediana de 6 para 5 ativos enquanto
+    melhorava o selo. Por isso todo aperto passa por ``_nao_piora``. O piso de
+    diversificacao nao sai do grau cedido, sai dessa guarda: nenhuma etapa
+    entrega uma carteira com menos ativos ou com posicao maior do que a que ja
+    estava em maos.
 
     Devolve ``None`` quando nem a forma inteiramente aberta produz carteira.
     Nenhum afrouxamento de forma resolve esse caso: ou nao ha FII passando os
@@ -1305,6 +1332,23 @@ def _cessao_minima_de_forma(
         resultado = tentar(_politica_cedida(policy, grau_por_grupo))
         return resultado if (resultado.get("items") or []) else None
 
+    def _diversificacao(resultado: dict[str, Any]) -> tuple[int, float]:
+        itens = list(resultado.get("items") or ())
+        maior = max((_num(item.get("weight")) for item in itens), default=1.0)
+        return len(itens), maior
+
+    def _nao_piora(candidata: dict[str, Any], base: dict[str, Any]) -> bool:
+        """Apertar a forma so vale se a carteira nao ficar menos diversificada.
+
+        Ceder menos e o objetivo declarado, mas o que protege o investidor e a
+        carteira, nao o numero no selo. Medido na safra: sem esta guarda o
+        refino levava a mediana de 6 para 5 ativos e punha duas carteiras a
+        mais abaixo de cinco -- comprava um selo melhor com concentracao real.
+        """
+        n_c, maior_c = _diversificacao(candidata)
+        n_b, maior_b = _diversificacao(base)
+        return n_c >= n_b and maior_c <= maior_b + 1e-9
+
     melhor = _tenta({grupo: 1.0 for grupo in grupos})
     if melhor is None:
         return None
@@ -1313,7 +1357,7 @@ def _cessao_minima_de_forma(
     for _ in range(iteracoes):
         meio = (baixo + alto) / 2
         tentativa = _tenta({grupo: meio for grupo in grupos})
-        if tentativa is not None:
+        if tentativa is not None and _nao_piora(tentativa, melhor):
             alto, melhor = meio, tentativa
         else:
             baixo = meio
@@ -1322,8 +1366,27 @@ def _cessao_minima_de_forma(
     for grupo in grupos:
         candidata = dict(cessao, **{grupo: 0.0})
         tentativa = _tenta(candidata)
-        if tentativa is not None:
+        if tentativa is not None and _nao_piora(tentativa, melhor):
             cessao, melhor = candidata, tentativa
+
+    # Grau comum e um atalho: ele cede TODO grupo que sobreviveu ao re-aperto
+    # na mesma medida, e a medida e a do grupo mais exigente. Quem precisava
+    # de pouco recebe muito, e o excesso vira concentracao que o investidor
+    # carrega sem precisar. Refinar grupo a grupo custa algumas resolucoes do
+    # otimizador e devolve o piso de diversificacao: cada limite para no menor
+    # valor que ainda produz carteira.
+    for grupo in ORDEM_DE_REFINO:
+        if cessao.get(grupo, 0.0) <= 0.0:
+            continue
+        piso, teto = 0.0, cessao[grupo]
+        for _ in range(iteracoes - 1):
+            meio = (piso + teto) / 2
+            tentativa = _tenta(dict(cessao, **{grupo: meio}))
+            if tentativa is not None and _nao_piora(tentativa, melhor):
+                teto, melhor = meio, tentativa
+            else:
+                piso = meio
+        cessao[grupo] = teto
     return {g: v for g, v in cessao.items() if v > 1e-9}, melhor
 
 
