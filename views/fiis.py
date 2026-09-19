@@ -124,7 +124,7 @@ _CSS = """
 .fii-kpi .sub { font-size:0.68rem;font-weight:700;margin-top:4px; }
 .fii-card { background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
             padding:12px 14px 10px;height:100%;transition:border-color .2s; }
-.fii-card:hover { border-color:rgba(0,200,150,.35); }
+.fii-card:hover { border-color:color-mix(in srgb, var(--app-primary) 35%, transparent); }
 .fii-head { display:flex;align-items:center;gap:10px;margin-bottom:6px; }
 /* min-width:0 é o que deixa o ellipsis do nome funcionar dentro do flex. */
 .fii-idt { min-width:0;overflow:hidden;flex:1; }
@@ -146,9 +146,9 @@ _CSS = """
 .fii-mini .lbl { display:block;font-size:0.54rem;font-weight:700;text-transform:uppercase;
                  letter-spacing:.06em;color:var(--app-subtle); }
 .fii-mini .val { display:block;font-size:0.86rem;font-weight:800;color:var(--app-text);line-height:1.2; }
-.fii-sc-high { background:rgba(0,200,150,.15);color:var(--app-primary); }
-.fii-sc-mid  { background:rgba(246,201,14,.15);color:var(--app-warning); }
-.fii-sc-low  { background:rgba(252,92,125,.15);color:var(--app-danger); }
+.fii-sc-high { background:color-mix(in srgb, var(--app-primary) 15%, transparent);color:var(--app-primary); }
+.fii-sc-mid  { background:color-mix(in srgb, var(--app-warning) 15%, transparent);color:var(--app-warning); }
+.fii-sc-low  { background:color-mix(in srgb, var(--app-danger) 15%, transparent);color:var(--app-danger); }
 .fii-info-card { background:linear-gradient(145deg,var(--app-surface),var(--app-bg));border:1px solid var(--app-border);
                  border-left:3px solid var(--app-info);border-radius:12px;padding:13px 15px;
                  margin:8px 0 12px;color:var(--app-muted);font-size:.78rem;line-height:1.5; }
@@ -173,7 +173,7 @@ _CSS = """
 .fii-selection-card summary:hover { background:var(--app-surface-raised); }
 .fii-selection-head { display:flex;align-items:center;justify-content:space-between;gap:8px; }
 .fii-selection-ticker { color:var(--app-text);font-size:1rem;font-weight:850; }
-.fii-selection-rank { color:var(--app-primary);background:rgba(0,200,150,.12);border-radius:12px;
+.fii-selection-rank { color:var(--app-primary);background:color-mix(in srgb, var(--app-primary) 12%, transparent);border-radius:12px;
                       padding:3px 8px;font-size:.64rem;font-weight:800;white-space:nowrap; }
 .fii-selection-meta { color:var(--app-subtle);font-size:.68rem;margin-top:3px; }
 .fii-selection-body { border-top:1px solid var(--app-border);padding:11px 14px 13px;color:var(--app-muted);
@@ -188,7 +188,7 @@ _CSS = """
                       padding:6px 8px;color:var(--app-muted);font-size:.68rem; }
 .fii-selection-evidence { color:var(--app-subtle);border-top:1px dashed var(--app-border);margin-top:9px;
                           padding-top:7px;font-size:.64rem; }
-.fii-selection-caveat { background:rgba(246,201,14,.07);border:1px solid rgba(246,201,14,.18);
+.fii-selection-caveat { background:color-mix(in srgb, var(--app-warning) 7%, transparent);border:1px solid color-mix(in srgb, var(--app-warning) 18%, transparent);
                         border-radius:8px;padding:7px 9px;margin-top:7px;color:var(--app-warning); }
 @media (max-width: 800px) { .fii-scenario-grid,.fii-selection-facts {
                             grid-template-columns:repeat(1,minmax(0,1fr)); } }

@@ -83,7 +83,7 @@ _FUND_CSS = """
     background:var(--app-surface-raised);border:1px solid var(--app-border);
     border-radius:14px;padding:16px 18px;margin-bottom:10px;transition:border-color .2s;
 }
-.fund-card:hover { border-color:rgba(0,200,150,0.35); }
+.fund-card:hover { border-color:color-mix(in srgb, var(--app-primary) 35%, transparent); }
 .fund-header { display:flex;justify-content:space-between;align-items:flex-start;
                margin-bottom:10px;gap:10px; }
 .fund-ticker { font-size:1.0rem;font-weight:700;color:var(--app-text); }
@@ -105,10 +105,10 @@ _FUND_CSS = """
             border-top:1px solid var(--app-border); }
 .f-chip { display:inline-block;font-size:0.69rem;font-weight:600;
           padding:3px 10px;border-radius:20px;margin:2px 3px 2px 0; }
-.f-chip-green  { background:rgba(0,200,150,0.15);color:var(--app-primary);border:1px solid rgba(0,200,150,0.3); }
-.f-chip-yellow { background:rgba(246,201,14,0.15);color:var(--app-warning);border:1px solid rgba(246,201,14,0.3); }
-.f-chip-red    { background:rgba(252,92,125,0.15);color:var(--app-danger);border:1px solid rgba(252,92,125,0.3); }
-.f-chip-blue   { background:rgba(74,158,255,0.15);color:var(--app-info);border:1px solid rgba(74,158,255,0.3); }
+.f-chip-green  { background:color-mix(in srgb, var(--app-primary) 15%, transparent);color:var(--app-primary);border:1px solid color-mix(in srgb, var(--app-primary) 30%, transparent); }
+.f-chip-yellow { background:color-mix(in srgb, var(--app-warning) 15%, transparent);color:var(--app-warning);border:1px solid color-mix(in srgb, var(--app-warning) 30%, transparent); }
+.f-chip-red    { background:color-mix(in srgb, var(--app-danger) 15%, transparent);color:var(--app-danger);border:1px solid color-mix(in srgb, var(--app-danger) 30%, transparent); }
+.f-chip-blue   { background:color-mix(in srgb, var(--app-info) 15%, transparent);color:var(--app-info);border:1px solid color-mix(in srgb, var(--app-info) 30%, transparent); }
 .f-chip-purple { background:rgba(155,89,182,0.15);color:#9B59B6;border:1px solid rgba(155,89,182,0.3); }
 .alert-item { border-left:3px solid;padding:10px 14px;margin-bottom:9px;
               border-radius:0 8px 8px 0;background:var(--app-surface-raised);
@@ -171,7 +171,7 @@ def _f_logo(ticker: str) -> str:
     url   = _html.escape(f"{_ICONES_B3_CDN}/{base}.png", quote=True)
     return (
         f'<div style="position:relative;width:36px;height:36px;border-radius:8px;'
-        f'background:rgba(0,200,150,0.2);display:flex;align-items:center;'
+        f'background:color-mix(in srgb, var(--app-primary) 20%, transparent);display:flex;align-items:center;'
         f'justify-content:center;font-size:0.72rem;font-weight:700;color:var(--app-primary);'
         f'flex-shrink:0;">{esc[:3]}'
         f'<span style="position:absolute;inset:0;border-radius:8px;'
@@ -785,7 +785,7 @@ def _kpi_macro(titulo: str, valor: str, sub: str, cor: str) -> str:
 def _kpi(titulo: str, valor: str, sub: str, cor: str, tag: str = "") -> str:
     tag_html = (
         f'<span style="font-size:0.65rem;font-weight:700;padding:1px 5px;'
-        f'border-radius:3px;background:rgba(0,200,150,0.15);'
+        f'border-radius:3px;background:color-mix(in srgb, var(--app-primary) 15%, transparent);'
         f'color:{_cor_texto(_COR_POSITIVO)};margin-bottom:4px;display:inline-block;">{tag}</span><br>'
         if tag else ""
     )
@@ -3035,7 +3035,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             for p in concentrados:
                 st.markdown(
                     f'<div style="border-left:4px solid {_cor_texto(_COR_ALERTA)};padding:10px 14px;'
-                    f'margin-bottom:8px;background:rgba(246,201,14,0.05);'
+                    f'margin-bottom:8px;background:color-mix(in srgb, var(--app-warning) 5%, transparent);'
                     f'border-radius:0 8px 8px 0;">'
                     f'<div style="font-size:0.67rem;font-weight:700;text-transform:uppercase;'
                     f'letter-spacing:0.08em;color:{_cor_texto(_COR_ALERTA)};margin-bottom:3px;">'
@@ -3592,7 +3592,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 # é "quanto eu perderia e em quanto tempo volto", e a tabela
                 # sozinha não respondia isso sem o leitor montar a conta.
                 st.markdown(
-                    '<div style="background:rgba(252,92,125,.07);border-left:3px solid '
+                    '<div style="background:color-mix(in srgb, var(--app-danger) 7%, transparent);border-left:3px solid '
                     f'{_COR_NEGATIVO};border-radius:6px;padding:14px 18px;margin-bottom:10px;">'
                     '<div style="font-size:.70rem;font-weight:800;letter-spacing:.12em;'
                     f'text-transform:uppercase;color:{_cor_texto(_COR_NEGATIVO)};margin-bottom:6px;">'
