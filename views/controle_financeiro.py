@@ -61,12 +61,16 @@ from design.componentes import (
     abas_secao,
     badge_status,
     container_pagina,
+    cor_token,
 )
 
 # Chat "Analista Financeiro Pessoal" (aba Análises) — importado localmente na
 # função de render para não pesar no carregamento das demais abas/reruns.
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
+# As quatro cores semanticas ficam literais porque tambem entram no Plotly,
+# que nao resolve `var(--…)`. Ao virarem HTML passam por `cor_token`, que
+# devolve o token equivalente — e dai acompanham a troca de tema.
 _COR_RECEITA = "#00C896"
 _COR_DESPESA = "#FC5C7D"
 _COR_INVEST  = "#4A9EFF"
@@ -163,21 +167,21 @@ def _is_credit_card_invoice_source(value: object) -> bool:
 
 def _kpi_card(titulo: str, valor: str, descricao: str, cor: str) -> str:
     return (
-        f'<div style="background:#12151E;border:1px solid #1E2533;'
+        f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
         f'border-radius:10px;padding:20px 18px 16px;height:100%;">'
         f'<div style="font-size:0.62rem;font-weight:800;text-transform:uppercase;'
-        f'letter-spacing:0.14em;color:#718096;margin-bottom:10px;">{titulo}</div>'
-        f'<div style="font-size:clamp(1.10rem,2.2vw,1.70rem);font-weight:800;color:{cor};'
+        f'letter-spacing:0.14em;color:var(--app-muted);margin-bottom:10px;">{titulo}</div>'
+        f'<div style="font-size:clamp(1.10rem,2.2vw,1.70rem);font-weight:800;color:{cor_token(cor)};'
         f'letter-spacing:-0.02em;line-height:1.1;margin-bottom:8px;'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{valor}</div>'
-        f'<div style="font-size:0.73rem;color:#4A5568;line-height:1.35;">{descricao}</div>'
+        f'<div style="font-size:0.73rem;color:var(--app-subtle);line-height:1.35;">{descricao}</div>'
         f'</div>'
     )
 
 
 def _secao_titulo(icone: str, titulo: str) -> None:
     st.markdown(
-        f'<div style="font-size:0.90rem;font-weight:700;color:#E2E8F0;'
+        f'<div style="font-size:0.90rem;font-weight:700;color:var(--app-text);'
         f'margin-bottom:8px;">{icone} {titulo}</div>',
         unsafe_allow_html=True,
     )
@@ -370,7 +374,7 @@ def _sidebar_render(ano: int, mes: int) -> None:
     # ── Filtros ───────────────────────────────────────────────────────────────
     st.sidebar.markdown(
         '<div style="font-size:0.68rem;font-weight:800;text-transform:uppercase;'
-        'letter-spacing:0.12em;color:#9CA3AF;margin-bottom:8px;margin-top:4px;">'
+        'letter-spacing:0.12em;color:var(--app-muted);margin-bottom:8px;margin-top:4px;">'
         'Filtros</div>',
         unsafe_allow_html=True,
     )
@@ -381,7 +385,7 @@ def _sidebar_render(ano: int, mes: int) -> None:
     # ── Novo lançamento ───────────────────────────────────────────────────────
     st.sidebar.markdown(
         '<div style="font-size:0.68rem;font-weight:800;text-transform:uppercase;'
-        'letter-spacing:0.12em;color:#4A9EFF;margin-bottom:10px;">'
+        'letter-spacing:0.12em;color:var(--app-info);margin-bottom:10px;">'
         'Novo lançamento</div>',
         unsafe_allow_html=True,
     )
@@ -575,9 +579,9 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
             if receitas > 0:
                 st.markdown(
                     '<div style="display:grid;grid-template-columns:1fr 110px 90px;'
-                    'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
+                    'gap:4px;padding:5px 10px;background:var(--app-bg);border-radius:4px 4px 0 0;'
                     'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
-                    'letter-spacing:0.1em;color:#4A5568;">'
+                    'letter-spacing:0.1em;color:var(--app-subtle);">'
                     '<span>Categoria</span>'
                     '<span style="text-align:right">Valor</span>'
                     '<span style="text-align:right">% renda</span>'
@@ -588,12 +592,12 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                     pct_r = round(cat["gasto"] / receitas * 100, 1)
                     st.markdown(
                         f'<div style="display:grid;grid-template-columns:1fr 110px 90px;'
-                        f'gap:4px;padding:5px 10px;background:#12151E;'
-                        f'border-bottom:1px solid #1A1F2E;font-size:0.80rem;">'
-                        f'<span style="color:#CBD5E0">{cat["nome"]}</span>'
-                        f'<span style="text-align:right;color:{_COR_DESPESA};font-weight:700">'
+                        f'gap:4px;padding:5px 10px;background:var(--app-surface);'
+                        f'border-bottom:1px solid var(--app-border);font-size:0.80rem;">'
+                        f'<span style="color:var(--app-text)">{cat["nome"]}</span>'
+                        f'<span style="text-align:right;color:{cor_token(_COR_DESPESA)};font-weight:700">'
                         f'{fmt_moeda(cat["gasto"])}</span>'
-                        f'<span style="text-align:right;color:#718096">{pct_r:.1f}%</span>'
+                        f'<span style="text-align:right;color:var(--app-muted)">{pct_r:.1f}%</span>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
@@ -636,7 +640,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
             )
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:var(--app-border);'>", unsafe_allow_html=True)
 
     # ── Últimos Lançamentos (igual ao original) ───────────────────────────────
     _secao_titulo("📋", "Últimos Lançamentos")
@@ -656,9 +660,9 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
         st.markdown(
             '<div style="display:grid;'
             'grid-template-columns:80px 1fr 150px 80px 130px 100px;'
-            'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
+            'gap:4px;padding:5px 10px;background:var(--app-bg);border-radius:4px 4px 0 0;'
             'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
-            'letter-spacing:0.1em;color:#4A5568;">'
+            'letter-spacing:0.1em;color:var(--app-subtle);">'
             '<span>Data</span><span>Descrição</span>'
             '<span style="text-align:center">Categoria</span>'
             '<span style="text-align:center">Tipo</span>'
@@ -673,19 +677,19 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
             st.markdown(
                 f'<div style="display:grid;'
                 f'grid-template-columns:80px 1fr 150px 80px 130px 100px;'
-                f'gap:4px;padding:6px 10px;background:#12151E;'
-                f'border-bottom:1px solid #1A1F2E;font-size:0.81rem;align-items:center;">'
-                f'<span style="color:#718096">{tx["data_fmt"]}</span>'
-                f'<span style="color:#CBD5E0" title="{tx["descricao"]}">'
+                f'gap:4px;padding:6px 10px;background:var(--app-surface);'
+                f'border-bottom:1px solid var(--app-border);font-size:0.81rem;align-items:center;">'
+                f'<span style="color:var(--app-muted)">{tx["data_fmt"]}</span>'
+                f'<span style="color:var(--app-text)" title="{tx["descricao"]}">'
                 f'{tx["descricao"][:38]}</span>'
-                f'<span style="text-align:center;background:#1E2533;border-radius:4px;'
-                f'padding:2px 6px;font-size:0.70rem;color:{_COR_NEUTRO}">'
+                f'<span style="text-align:center;background:var(--app-surface-raised);border-radius:4px;'
+                f'padding:2px 6px;font-size:0.70rem;color:{cor_token(_COR_NEUTRO)}">'
                 f'{tx["categoria"]}</span>'
-                f'<span style="text-align:center;font-size:0.72rem;font-weight:700;color:{cor}">'
+                f'<span style="text-align:center;font-size:0.72rem;font-weight:700;color:{cor_token(cor)}">'
                 f'{tipo_label}</span>'
-                f'<span style="text-align:right;font-weight:700;color:{cor}">'
+                f'<span style="text-align:right;font-weight:700;color:{cor_token(cor)}">'
                 f'{tx["valor_fmt"]}</span>'
-                f'<span style="text-align:center;font-size:0.72rem;color:#4A5568">'
+                f'<span style="text-align:center;font-size:0.72rem;color:var(--app-subtle)">'
                 f'{tx["conta"]}</span>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -918,7 +922,7 @@ def _tab_analises(
         st.caption(f"Sem despesas registradas em {_ano_dist}.")
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:var(--app-border);'>", unsafe_allow_html=True)
 
     # ── Comparativo Ano a Ano (YOY) — do app original ─────────────────────────
     _secao_titulo("📅", "Comparativo Ano a Ano")
@@ -1032,7 +1036,7 @@ def _tab_analises(
 
     # ── Analista Financeiro Pessoal (chat com IA) ─────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:var(--app-border);'>", unsafe_allow_html=True)
     _render_chat_financeiro(
         d, historico, hist_anual, gastos_cartao, investido_mes,
         evolucao or {}, ano_ref or _date.today().year, mes_ref or _date.today().month,
@@ -1082,9 +1086,9 @@ def _render_chat_financeiro(
 
     _secao_titulo("🤖", "Analista Financeiro Pessoal (IA)")
     st.markdown(
-        '<p style="color:#718096;font-size:0.82rem;margin-top:2px;margin-bottom:12px;">'
+        '<p style="color:var(--app-muted);font-size:0.82rem;margin-top:2px;margin-bottom:12px;">'
         'Converse em linguagem natural sobre suas receitas, despesas, investimentos, '
-        'saldo e fluxo de caixa. A IA usa <b style="color:#E2E8F0">apenas os seus dados</b> '
+        'saldo e fluxo de caixa. A IA usa <b style="color:var(--app-text)">apenas os seus dados</b> '
         '(mês selecionado, histórico mensal e anual, categorias e cartão), mostra os '
         'cálculos e sinaliza quando algo é estimativa ou projeção.</p>',
         unsafe_allow_html=True,
@@ -1435,9 +1439,9 @@ def _tab_tabelas(d: dict) -> None:
     st.markdown(
         '<div style="display:grid;'
         'grid-template-columns:90px 1fr 150px 80px 130px 80px;'
-        'gap:4px;padding:5px 10px;background:#0E1117;border-radius:4px 4px 0 0;'
+        'gap:4px;padding:5px 10px;background:var(--app-bg);border-radius:4px 4px 0 0;'
         'font-size:0.63rem;font-weight:700;text-transform:uppercase;'
-        'letter-spacing:0.1em;color:#4A5568;">'
+        'letter-spacing:0.1em;color:var(--app-subtle);">'
         '<span>Data</span><span>Descrição</span>'
         '<span style="text-align:center">Categoria</span>'
         '<span style="text-align:center">Tipo</span>'
@@ -1453,20 +1457,20 @@ def _tab_tabelas(d: dict) -> None:
         st.markdown(
             f'<div style="display:grid;'
             f'grid-template-columns:90px 1fr 150px 80px 130px 80px;'
-            f'gap:4px;padding:6px 10px;background:#12151E;'
-            f'border-bottom:1px solid #1A1F2E;'
+            f'gap:4px;padding:6px 10px;background:var(--app-surface);'
+            f'border-bottom:1px solid var(--app-border);'
             f'font-size:0.81rem;align-items:center;">'
-            f'<span style="color:#718096">{tx["data_fmt"]}</span>'
-            f'<span style="color:#CBD5E0" title="{tx["descricao"]}">'
+            f'<span style="color:var(--app-muted)">{tx["data_fmt"]}</span>'
+            f'<span style="color:var(--app-text)" title="{tx["descricao"]}">'
             f'{tx["descricao"][:38]}</span>'
-            f'<span style="text-align:center;background:#1E2533;border-radius:4px;'
-            f'padding:2px 5px;font-size:0.70rem;color:{_COR_NEUTRO}">'
+            f'<span style="text-align:center;background:var(--app-surface-raised);border-radius:4px;'
+            f'padding:2px 5px;font-size:0.70rem;color:{cor_token(_COR_NEUTRO)}">'
             f'{tx["categoria"]}</span>'
-            f'<span style="text-align:center;font-size:0.72rem;font-weight:700;color:{cor}">'
+            f'<span style="text-align:center;font-size:0.72rem;font-weight:700;color:{cor_token(cor)}">'
             f'{tipo_label}</span>'
-            f'<span style="text-align:right;font-weight:700;color:{cor}">'
+            f'<span style="text-align:right;font-weight:700;color:{cor_token(cor)}">'
             f'{tx["valor_fmt"]}</span>'
-            f'<span style="text-align:center;font-size:0.72rem;color:#4A5568">'
+            f'<span style="text-align:center;font-size:0.72rem;color:var(--app-subtle)">'
             f'{tx["conta"]}</span>'
             f'</div>',
             unsafe_allow_html=True,
@@ -2693,11 +2697,11 @@ def _render_cartao_a_revisar(df_all: pd.DataFrame) -> None:
     pend = pend.sort_values("valor_abs", ascending=False)
     n = len(pend)
     st.markdown(
-        f'<div style="background:#2A1A12;border:1px solid #7A4A28;border-radius:10px;'
+        f'<div style="background:color-mix(in srgb, var(--app-warning) 14%, transparent);border:1px solid color-mix(in srgb, var(--app-warning) 38%, transparent);border-radius:10px;'
         f'padding:12px 16px;margin-bottom:12px;">'
-        f'<span style="font-size:0.95rem;font-weight:800;color:#F6C90E;">'
+        f'<span style="font-size:0.95rem;font-weight:800;color:var(--app-warning);">'
         f'🏷️ {n} lançamento(s) a categorizar</span>'
-        f'<span style="color:#B8A98C;font-size:0.8rem;">'
+        f'<span style="color:var(--app-muted);font-size:0.8rem;">'
         f' — o importador não reconheceu o estabelecimento. Escolha a categoria e, '
         f'se marcar “criar regra”, as próximas faturas desse estabelecimento entram '
         f'nela automaticamente.</span></div>',
@@ -2770,9 +2774,9 @@ def _render_cartao_a_revisar(df_all: pd.DataFrame) -> None:
 
 def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     st.markdown(
-        '<h2 style="font-size:1.45rem;font-weight:800;color:#E2E8F0;margin-bottom:0;">'
+        '<h2 style="font-size:1.45rem;font-weight:800;color:var(--app-text);margin-bottom:0;">'
         'Cartao de Credito</h2>'
-        '<p style="color:#718096;font-size:0.86rem;margin-top:4px;">'
+        '<p style="color:var(--app-muted);font-size:0.86rem;margin-top:4px;">'
         'Controle mensal da fatura, categorias de consumo, parcelas, estornos e tarifas.</p>',
         unsafe_allow_html=True,
     )
@@ -2902,7 +2906,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
 
     # ── Analista Financeiro do Cartão (chat com IA) ───────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#1E2533;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:var(--app-border);'>", unsafe_allow_html=True)
     _render_chat_cartao(df, df_all, filters)
 
 
@@ -2940,8 +2944,8 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
 
     _secao_titulo("🤖", "Analista Financeiro do Cartão (IA)")
     st.markdown(
-        '<p style="color:#718096;font-size:0.82rem;margin-top:2px;margin-bottom:12px;">'
-        'Converse sobre a sua <b style="color:#E2E8F0">fatura</b>: categorias, '
+        '<p style="color:var(--app-muted);font-size:0.82rem;margin-top:2px;margin-bottom:12px;">'
+        'Converse sobre a sua <b style="color:var(--app-text)">fatura</b>: categorias, '
         'estabelecimentos, assinaturas recorrentes, parcelas e projeções. A IA usa '
         'apenas os lançamentos do cartão (respeitando os filtros acima), mostra os '
         'cálculos e sinaliza quando algo é estimativa.</p>',
