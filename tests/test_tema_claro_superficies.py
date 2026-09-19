@@ -108,3 +108,19 @@ def test_tema_claro_pinta_a_casca_interna_do_chat_e_o_rodape():
                     '[data-testid="stChatInput"] > div',
                     '[data-testid="stChatInputSubmitButton"]'):
         assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
+
+
+def test_tema_claro_alcanca_cabecalho_e_o_desbote_de_recalculo():
+    """Duas coisas que o usuário lê como "layout quebrado" no claro.
+
+    O cabeçalho (status "Stop", Share, ajuda, menu) vem branco do tema do
+    config e some na barra clara. E o Streamlit desbota o render anterior a
+    ``opacity:.33`` enquanto recalcula: no escuro passa, no branco a tela
+    inteira parece apagada — e a Seleção de FIIs recalcula por minutos.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    for seletor in ('[data-testid="stHeader"] :is(button,span,svg,path,circle)',
+                    '[data-testid="stToolbar"] :is(button,span,svg,path,circle)',
+                    '[data-testid="stElementContainer"][data-stale="true"]'):
+        assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
