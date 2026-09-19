@@ -21,6 +21,7 @@ import streamlit as st
 from core.b3_portfolio_model import load_active_b3_portfolio_model
 from core.config import settings
 from core.controle import get_gastos_categoria_anual, get_historico_anual
+from core.controle_indicadores import indicadores_caixa
 from core.financeiro import get_visao_geral, patrimonio_investido_confiavel
 from core.investimentos import (
     get_carteira,
@@ -51,6 +52,27 @@ _TOKEN_POR_COR = {
     _COR_NEGATIVO: "var(--app-danger)",
     _COR_NEUTRO: "var(--app-muted)",
 }
+
+
+#: Rótulo curto do estado do caixa, para o detalhe dos KPIs.
+_ROTULO_STATUS_CAIXA = {
+    "deficit": "déficit de caixa",
+    "aportes_excedem_sobra": "positivo · aportes acima da sobra",
+    "equilibrio": "em equilíbrio",
+    "superavit": "positivo",
+}
+
+
+def _cor_saldo_caixa(status: str) -> str:
+    """Mesma regra da tela de Controle Financeiro: vermelho só em déficit de
+    consumo; azul quando despesas + aportes passam da renda (alocação, não
+    gasto); verde no restante."""
+    if status == "deficit":
+        return _COR_NEGATIVO
+    if status == "aportes_excedem_sobra":
+        return _COR_PATRIMONIO
+    return _COR_FLUXO
+
 
 _CORES_CAT = [
     "#4C9BE8", "#E84C9B", "#F5A623", "#2ECC71", "#A855F7",
@@ -423,12 +445,13 @@ def _render_kpi_grid(
     carteira: dict,
 ) -> None:
     """Quatro indicadores essenciais, em CSS Grid responsivo."""
-    saldo = receitas - despesas - investimentos
-    taxa = (saldo / receitas * 100) if receitas > 0 else 0.0
+    ind = indicadores_caixa(receitas, despesas, investimentos)
+    saldo = ind["saldo"]
+    taxa = ind["poupanca_pct"] or 0.0
     rentab = float(carteira.get("rentabilidade_total_pct") or 0)
     patrimonio_investido = patrimonio_investido_confiavel(carteira, pat)
     num_ativos = int(carteira.get("num_ativos") or 0)
-    saldo_cor = _COR_FLUXO if saldo >= 0 else _COR_NEGATIVO
+    saldo_cor = _cor_saldo_caixa(ind["status"])
     taxa_cor = _COR_FLUXO if taxa >= 30 else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO
     rentab_cor = _COR_FLUXO if rentab >= 0 else _COR_NEGATIVO
     patrimonio_valor = (
@@ -453,9 +476,10 @@ def _render_kpi_grid(
         _kpi_html(
             "Saldo líquido do mês",
             fmt_moeda(saldo),
-            f'Receitas menos despesas e aportes · <strong style="color:{saldo_cor}">'
-            f'{"positivo" if saldo >= 0 else "negativo"}</strong>',
-            "↗" if saldo >= 0 else "↘",
+            f'Receitas menos despesas (aportes não são despesa) · '
+            f'<strong style="color:{saldo_cor}">{_ROTULO_STATUS_CAIXA[ind["status"]]}'
+            f'</strong>',
+            "↘" if ind["status"] == "deficit" else "↗",
             saldo_cor,
         ),
         _kpi_html(
@@ -560,11 +584,12 @@ def _divisor() -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _card_fluxo(receitas: float, despesas: float, investimentos: float) -> None:
-    saldo     = receitas - despesas - investimentos
-    taxa      = round(saldo / receitas * 100, 1) if receitas > 0 else 0.0
-    cor_saldo = _COR_FLUXO if saldo >= 0 else _COR_NEGATIVO
+    ind       = indicadores_caixa(receitas, despesas, investimentos)
+    saldo     = ind["saldo"]
+    taxa      = round(ind["poupanca_pct"] or 0.0, 1)
+    cor_saldo = _cor_saldo_caixa(ind["status"])
     cor_taxa  = _COR_FLUXO if taxa >= 30 else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO
-    taxa_w    = min(taxa / 30.0 * 100, 100)
+    taxa_w    = min(max(taxa, 0.0) / 30.0 * 100, 100)
 
     corpo = (
         _label_card("📊 Fluxo Real do Mês", _COR_FLUXO)
@@ -572,7 +597,7 @@ def _card_fluxo(receitas: float, despesas: float, investimentos: float) -> None:
         + _linha_kv("↓ Despesas",     fmt_moeda(despesas),     _COR_NEGATIVO)
         + _linha_kv("📈 Investido",   fmt_moeda(investimentos), _COR_INVEST)
         + _divisor()
-        + _titulo_valor("Saldo do mês (líquido)", fmt_moeda(saldo), cor_saldo)
+        + _titulo_valor("Saldo do mês (receitas − despesas)", fmt_moeda(saldo), cor_saldo)
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
         + '<span style="font-size:0.78rem;color:var(--app-subtle)">Taxa de poupança</span>'
         + f'<span style="font-size:0.88rem;font-weight:700;color:{cor_taxa}">'
@@ -978,8 +1003,10 @@ def _secao_resumo_modulos(
     fiis_port: list[dict],
     fiis_salvo: bool,
 ) -> None:
-    saldo_mes = receitas_mes - despesas_mes - investimentos_mes
-    taxa_poupanca = (saldo_mes / receitas_mes * 100) if receitas_mes > 0 else 0.0
+    ind_caixa = indicadores_caixa(receitas_mes, despesas_mes, investimentos_mes)
+    saldo_mes = ind_caixa["saldo"]
+    taxa_poupanca = ind_caixa["poupanca_pct"] or 0.0
+    cor_saldo_mes = _cor_saldo_caixa(ind_caixa["status"])
     rentab = float(carteira.get("rentabilidade_total_pct") or 0)
     b3_status, b3_status_cor, b3_linhas = _resumo_modelo_b3(modelo_b3)
     us_status, us_status_cor, us_linhas = _resumo_modelo_us(modelo_us)
@@ -999,11 +1026,11 @@ def _secao_resumo_modulos(
                 "Controle Financeiro",
                 "Fluxo do mês, despesas por categoria e comparação anual.",
                 "Mensal",
-                _COR_FLUXO if saldo_mes >= 0 else _COR_NEGATIVO,
+                cor_saldo_mes,
                 [
                     ("Receitas", fmt_moeda(receitas_mes), _COR_FLUXO),
                     ("Despesas", fmt_moeda(despesas_mes), _COR_NEGATIVO),
-                    ("Saldo líquido", fmt_moeda(saldo_mes), _COR_FLUXO if saldo_mes >= 0 else _COR_NEGATIVO),
+                    ("Saldo líquido", fmt_moeda(saldo_mes), cor_saldo_mes),
                     ("Taxa de poupança", fmt_percentual(taxa_poupanca, sinal=False), _COR_ALERTA if taxa_poupanca < 30 else _COR_FLUXO),
                 ],
                 _COR_FLUXO,
@@ -1717,12 +1744,15 @@ def render() -> None:
     with col2, st.container(border=True, key="dg_investment_card"):
         _card_investimentos(pat, classes, aportado_ano)
 
-    saldo_mes = receitas_mes - despesas_mes - investimentos_mes
-    leitura = (
-        "O caixa fechou positivo após despesas e aportes."
-        if saldo_mes >= 0
-        else "As saídas e os aportes superaram as receitas no período."
-    )
+    _ind_leitura = indicadores_caixa(receitas_mes, despesas_mes, investimentos_mes)
+    leitura = {
+        "deficit": "As despesas superaram as receitas no período: houve déficit de caixa.",
+        "aportes_excedem_sobra": (
+            "As despesas ficaram abaixo das receitas; o que passou da renda foi "
+            "aporte em investimentos, não consumo."
+        ),
+        "equilibrio": "Receitas e despesas se anularam no período.",
+    }.get(_ind_leitura["status"], "As despesas ficaram abaixo das receitas: sobrou caixa no mês.")
     st.markdown(
         '<div class="dg-shell"><div class="dg-callout">'
         '<div class="dg-callout-icon" aria-hidden="true">◎</div>'

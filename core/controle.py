@@ -2066,11 +2066,10 @@ def _historico_anual_mock() -> dict:
     por_ano = {
         a: {
             **_MOCK_YOY[a],
+            # Saldo do ano = receitas − despesas. Aporte é alocação da sobra,
+            # não consumo, e por isso não entra aqui.
             "saldo": round(
-                _MOCK_YOY[a]["receitas"]
-                - _MOCK_YOY[a]["despesas"]
-                - _MOCK_YOY[a]["investimentos"],
-                2,
+                _MOCK_YOY[a]["receitas"] - _MOCK_YOY[a]["despesas"], 2
             ),
         }
         for a in anos
@@ -2104,11 +2103,9 @@ def _historico_anual_real() -> dict:
         }
 
     for a in por_ano:
+        # Saldo do ano = receitas − despesas (aportes não são despesa).
         por_ano[a]["saldo"] = round(
-            por_ano[a]["receitas"]
-            - por_ano[a]["despesas"]
-            - por_ano[a]["investimentos"],
-            2,
+            por_ano[a]["receitas"] - por_ano[a]["despesas"], 2
         )
         por_ano[a]["receitas"]      = round(por_ano[a]["receitas"], 2)
         por_ano[a]["despesas"]      = round(por_ano[a]["despesas"], 2)

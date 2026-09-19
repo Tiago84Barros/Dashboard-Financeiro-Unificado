@@ -21,6 +21,8 @@ from __future__ import annotations
 import unicodedata
 from datetime import date as _date
 
+from core.controle_indicadores import indicadores_caixa
+
 _MESES_PT = {
     1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
     7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
@@ -106,8 +108,10 @@ def build_financas_chat_context(
     categorias = dados_mes.get("categorias", []) or []
     fonte = dados_mes.get("data_source", "mock")
 
-    saldo = round(receitas - despesas - float(investido_mes or 0), 2)
-    taxa_poupanca = round(saldo / receitas * 100, 1) if receitas > 0 else 0.0
+    _ind = indicadores_caixa(receitas, despesas, float(investido_mes or 0))
+    saldo = round(_ind["saldo"], 2)
+    taxa_poupanca = round(_ind["poupanca_pct"] or 0.0, 1)
+    comprometido = round(_ind["comprometido_pct"] or 0.0, 1)
 
     # ── Essencial vs não essencial (mês selecionado) ─────────────────────────
     ess = {"essencial": 0.0, "nao_essencial": 0.0, "nao_classificada": 0.0}
@@ -154,6 +158,7 @@ def build_financas_chat_context(
         "investido_mes": round(float(investido_mes or 0), 2),
         "saldo_mes": saldo,
         "taxa_poupanca_pct": taxa_poupanca,
+        "renda_comprometida_pct": comprometido,
         "categorias_mes": cats_mes,
         "categorias_anual": cats_anual,
         "fluxo_mensal": fluxo_mensal,
@@ -180,8 +185,12 @@ def build_financas_chat_context(
     L.append(f"  Receitas: {_brl(receitas)}")
     L.append(f"  Despesas (exclui compras no cartão de crédito): {_brl(despesas)}")
     L.append(f"  Investimentos/aportes no mês: {_brl(investido_mes)}")
-    L.append(f"  Saldo do mês (Receitas − Despesas − Investimentos): {_brl(saldo)}")
+    L.append(f"  Saldo do mês (Receitas − Despesas): {_brl(saldo)}")
+    L.append(f"  Renda comprometida (Despesas / Receitas): {_pct(comprometido)}")
     L.append(f"  Taxa de poupança: {_pct(taxa_poupanca)} (meta de referência: 30%)")
+    L.append("  Aporte em investimento é alocação da sobra, não despesa: não entra "
+             "no saldo nem na renda comprometida. Só há déficit quando as despesas "
+             "superam as receitas.")
     L.append(f"  Nº de lançamentos: {dados_mes.get('num_transacoes', 0)}")
 
     L.append("")
@@ -256,7 +265,9 @@ def build_financas_chat_context(
     L.append("DEFINIÇÕES IMPORTANTES:")
     L.append("  - 'Despesas' do mês EXCLUEM compras no cartão de crédito (elas viram")
     L.append("    fatura futura e vivem em outra aba). Não confunda fluxo do mês com fatura.")
-    L.append("  - 'Saldo do mês' já subtrai os investimentos/aportes.")
+    L.append("  - 'Saldo do mês' é Receitas − Despesas. Aporte em investimento NÃO")
+    L.append("    é despesa: é alocação da sobra de caixa e não reduz o saldo nem")
+    L.append("    entra na renda comprometida. Déficit só existe se Despesas > Receitas.")
     L.append("  - Valores em Reais (BRL).")
 
     return "\n".join(L), chart_meta
