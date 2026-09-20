@@ -3,12 +3,11 @@ views/dashboard_geral.py  — v4
 Visão Geral consolidada: dados reais do DB, 3 domínios.
 
 Ordem das seções (fatos primeiro, referências depois):
-  1 — Visão executiva: fluxo do mês · carteira investida
-  2 — Resumo por área (Controle Financeiro · Investimentos · B3 · EUA · FIIs)
+  1 — Resumo por área (Controle Financeiro · Investimentos · B3 · EUA · FIIs)
+  2 — Histórico do controle financeiro (6 meses)
   3 — Raio X do portfólio investido
-  4 — Histórico mensal (6 meses)
-  5 — Despesas por categoria | Comparativo Ano a Ano
-  6 — Sugestões de carteira (B3 · EUA · FIIs) — sempre por último
+  4 — Despesas por categoria | Comparativo Ano a Ano
+  5 — Detalhes da carteira recomendada (B3 · EUA · FIIs) — sempre por último
 """
 from datetime import date as _date
 from datetime import datetime as _datetime
@@ -310,10 +309,6 @@ _DASHBOARD_STYLES = """
     line-height: 1.5;
 }
 .dg-callout-copy strong { color: var(--dg-text); }
-.dg-exec-detail {
-    min-height: 246px;
-    padding: .35rem .25rem .15rem;
-}
 .dg-chart-label {
     display: flex;
     align-items: center;
@@ -327,8 +322,6 @@ _DASHBOARD_STYLES = """
 }
 
 /* Containers nativos da página; evita divs HTML "abertas" entre elementos Streamlit. */
-.st-key-dg_executive_card,
-.st-key-dg_investment_card,
 .st-key-dg_history_chart,
 .st-key-dg_categories_chart,
 .st-key-dg_yoy_chart,
@@ -342,8 +335,6 @@ _DASHBOARD_STYLES = """
 }
 /* Cards de texto e de gráfico seguem o mesmo tema: o Plotly agora é
    recolorido em design/tema_canvas.py e a moldura não precisa mais escurecer. */
-.st-key-dg_executive_card,
-.st-key-dg_investment_card,
 .st-key-dg_history_chart,
 .st-key-dg_categories_chart,
 .st-key-dg_yoy_chart,
@@ -547,92 +538,6 @@ def _linha_kv(label: str, valor: str, cor_val: str = "var(--app-text)") -> str:
         f'text-align:right;white-space:nowrap;">{valor}</span>'
         '</div>'
     )
-
-
-def _barra(pct: float, cor: str) -> str:
-    w = min(pct, 100)
-    return f"""
-    <div style="background:var(--app-surface-raised);border-radius:4px;height:5px;overflow:hidden;margin-top:4px">
-        <div style="background:{cor};width:{w:.0f}%;height:100%;border-radius:4px"></div>
-    </div>"""
-
-
-def _card(borda_cor: str, corpo_html: str) -> None:
-    st.markdown(
-        f'<div class="dg-shell"><div class="dg-exec-detail" '
-        f'style="border-top:2px solid {escape(borda_cor)}">{corpo_html}</div></div>',
-        unsafe_allow_html=True,
-    )
-
-
-def _label_card(texto: str, cor: str) -> str:
-    return (f'<div style="font-size:0.65rem;font-weight:800;text-transform:uppercase;'
-            f'letter-spacing:0.14em;color:{cor};margin-bottom:14px">{texto}</div>')
-
-
-def _titulo_valor(label: str, valor: str, cor: str = "var(--app-text)") -> str:
-    return (f'<div style="font-size:0.78rem;color:var(--app-subtle);margin-bottom:2px">{label}</div>'
-            f'<div style="font-size:1.75rem;font-weight:800;color:{_cor_texto(cor)};'
-            f'letter-spacing:0;margin-bottom:14px;line-height:1">{valor}</div>')
-
-
-def _divisor() -> str:
-    return '<div style="border-top:1px solid var(--app-border);margin:12px 0"></div>'
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CARDS
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _card_fluxo(receitas: float, despesas: float, investimentos: float) -> None:
-    ind       = indicadores_caixa(receitas, despesas, investimentos)
-    saldo     = ind["saldo"]
-    taxa      = round(ind["poupanca_alocada_pct"] or 0.0, 1)
-    cor_saldo = _cor_saldo_caixa(ind["status"])
-    cor_taxa  = _COR_FLUXO if taxa >= 30 else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO
-    taxa_w    = min(max(taxa, 0.0) / 30.0 * 100, 100)
-
-    corpo = (
-        _label_card("📊 Fluxo Real do Mês", _COR_FLUXO)
-        + _linha_kv("↑ Receitas",     fmt_moeda(receitas),     _COR_FLUXO)
-        + _linha_kv("↓ Despesas",     fmt_moeda(despesas),     _COR_NEGATIVO)
-        + _linha_kv("📈 Investido",   fmt_moeda(investimentos), _COR_INVEST)
-        + _divisor()
-        + _titulo_valor("Saldo do mês (receitas − despesas)", fmt_moeda(saldo), cor_saldo)
-        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
-        + '<span style="font-size:0.78rem;color:var(--app-subtle)">Taxa de poupança '
-        + '<span style="font-size:0.70rem">(sobra + aportes)</span></span>'
-        + f'<span style="font-size:0.88rem;font-weight:700;color:{cor_taxa}">'
-        + f'{fmt_percentual(taxa, sinal=False)} '
-        + '<span style="font-size:0.70rem;color:var(--app-subtle)">/ meta 30%</span></span></div>'
-        + _barra(taxa_w, cor_taxa)
-    )
-    _card(_COR_FLUXO, corpo)
-
-
-def _card_investimentos(pat: dict, classes: list, aportado_ano: float) -> None:
-    total_inv = pat["investido"]
-    n_classes = len(classes)
-
-    linhas = ""
-    for c in classes[:4]:
-        linhas += _linha_kv(
-            f'<span style="display:inline-flex;align-items:center;gap:6px;">'
-            f'<span style="width:7px;height:7px;border-radius:50%;background:{c["cor"]};'
-            f'display:inline-block"></span>{c["nome"]}'
-            f'<span style="font-size:0.72rem;color:var(--app-subtle)">{c["pct_carteira"]:.1f}%</span></span>',
-            fmt_moeda(c["valor"]),
-        )
-
-    corpo = (
-        _label_card("📈 Investimentos", _COR_INVEST)
-        + _titulo_valor("Patrimônio Investido", fmt_moeda(total_inv), _COR_INVEST)
-        + linhas
-        + _divisor()
-        + _linha_kv("Aportado em 2026", fmt_moeda(aportado_ano), _COR_FLUXO)
-        + _linha_kv("Classes de ativos", str(n_classes))
-    )
-    _card(_COR_INVEST, corpo)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -855,6 +760,22 @@ def _status_chip(texto: str, cor: str) -> str:
     )
 
 
+#: Selo dos módulos cuja saída é uma carteira sugerida pelo próprio app — e não
+#: um fato da vida financeira do usuário, como o caixa do mês e a carteira real.
+SELO_CARTEIRA_RECOMENDADA = "Carteira recomendada pelo app"
+
+
+def _selo_html(texto: str, cor: str) -> str:
+    return (
+        '<div style="display:inline-flex;align-items:center;gap:6px;margin-top:12px;'
+        'padding:3px 10px;border-radius:999px;'
+        f'background:{cor}1F;border:1px solid {cor}66;color:{_cor_texto(cor)};'
+        'font-size:0.62rem;font-weight:800;text-transform:uppercase;'
+        'letter-spacing:0.11em;line-height:1.5;">'
+        f'<span aria-hidden="true">★</span>{escape(texto)}</div>'
+    )
+
+
 def _modulo_card(
     numero: str,
     titulo: str,
@@ -863,8 +784,11 @@ def _modulo_card(
     status_cor: str,
     linhas: list[tuple[str, str, str]],
     cor: str,
+    selo: str = "",
 ) -> str:
     rows = "".join(_linha_kv(label, valor, valor_cor) for label, valor, valor_cor in linhas)
+    selo_html = _selo_html(selo, cor) if selo else ""
+    margem_resumo = "8px 0 12px" if selo else "13px 0 12px"
     return (
         '<div style="background:linear-gradient(180deg,var(--app-surface-raised) 0%,var(--app-surface) 100%);'
         f'border:1px solid var(--app-border);border-left:4px solid {cor};'
@@ -879,7 +803,9 @@ def _modulo_card(
         '</div>'
         f'{_status_chip(status, status_cor)}'
         '</div>'
-        f'<div style="font-size:0.78rem;color:var(--app-muted);line-height:1.42;margin:13px 0 12px;">{resumo}</div>'
+        f'{selo_html}'
+        f'<div style="font-size:0.78rem;color:var(--app-muted);line-height:1.42;'
+        f'margin:{margem_resumo};">{resumo}</div>'
         f'{rows}'
         '</div>'
     )
@@ -1071,6 +997,7 @@ def _secao_resumo_modulos(
                 b3_status_cor,
                 b3_linhas,
                 _COR_PATRIMONIO,
+                selo=SELO_CARTEIRA_RECOMENDADA,
             ),
             unsafe_allow_html=True,
         )
@@ -1084,6 +1011,7 @@ def _secao_resumo_modulos(
                 us_status_cor,
                 us_linhas,
                 _COR_INVEST,
+                selo=SELO_CARTEIRA_RECOMENDADA,
             ),
             unsafe_allow_html=True,
         )
@@ -1101,6 +1029,7 @@ def _secao_resumo_modulos(
                 fii_status_cor,
                 fii_linhas,
                 _COR_ALERTA,
+                selo=SELO_CARTEIRA_RECOMENDADA,
             ),
             unsafe_allow_html=True,
         )
@@ -1531,6 +1460,34 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
     st.markdown("<br>", unsafe_allow_html=True)
 
 
+def _destaque_carteira_recomendada() -> None:
+    """Abre o último bloco do dashboard.
+
+    As três seções que vêm depois (B3 · EUA · FIIs) são o detalhamento das
+    carteiras que o app recomenda — as mesmas marcadas com o selo no
+    “Resumo por área”. O destaque existe para que ninguém leia esses pesos
+    como posição real da carteira investida, que está acima.
+    """
+    st.markdown(
+        '<div class="dg-shell">'
+        f'<div style="border:1px solid {_COR_PATRIMONIO}55;border-left:5px solid '
+        f'{_COR_PATRIMONIO};border-radius:14px;padding:16px 20px;margin:10px 0 18px;'
+        f'background:linear-gradient(90deg,{_COR_PATRIMONIO}14 0%,'
+        'var(--app-surface) 70%);">'
+        f'<div style="font-size:0.64rem;font-weight:800;text-transform:uppercase;'
+        f'letter-spacing:0.14em;color:{_cor_texto(_COR_PATRIMONIO)};margin-bottom:6px;">'
+        '★ Recomendação do aplicativo</div>'
+        '<div style="font-size:1.24rem;font-weight:850;color:var(--app-text);'
+        'line-height:1.25;">Detalhes da carteira recomendada</div>'
+        '<div style="font-size:0.80rem;color:var(--app-muted);margin-top:5px;'
+        'line-height:1.45;">Composição sugerida por Empresas B3, Empresas '
+        'Americanas e Seleção de FIIs. São referências analíticas — não são '
+        'a sua posição investida nem garantia de resultado.</div>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _secao_sugestoes_carteira(
     modelo_b3: dict,
     modelo_us: dict,
@@ -1546,6 +1503,7 @@ def _secao_sugestoes_carteira(
         'margin:26px 0 6px;"></div></div>',
         unsafe_allow_html=True,
     )
+    _destaque_carteira_recomendada()
     _secao_portfolio_modelo_b3(modelo_b3)
     _secao_portfolio_modelo_us(modelo_us)
     _secao_fiis_sugeridos(fiis_port, fiis_salvo)
@@ -1732,20 +1690,12 @@ def render() -> None:
         carteira,
     )
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 1 — Visão executiva
+    # BLOCO 0 — Leitura do mês
     # ══════════════════════════════════════════════════════════════════════════
-    _titulo_secao(
-        "⚡", "Visão executiva",
-        "Resumo direto do caixa do mês e da carteira investida",
-        _COR_PATRIMONIO,
-    )
-
-    col1, col2 = st.columns(2, gap="medium")
-    with col1, st.container(border=True, key="dg_executive_card"):
-        _card_fluxo(receitas_mes, despesas_mes, investimentos_mes)
-    with col2, st.container(border=True, key="dg_investment_card"):
-        _card_investimentos(pat, classes, aportado_ano)
-
+    # Os dois cards executivos saíram daqui: repetiam o grid de KPIs acima
+    # (saldo, taxa de poupança, patrimônio) e os cards de Controle Financeiro e
+    # Investimentos do "Resumo por área". A leitura fica — é texto, e carrega a
+    # ressalva de que o que vem abaixo é referência analítica, não garantia.
     _ind_leitura = indicadores_caixa(receitas_mes, despesas_mes, investimentos_mes)
     leitura = {
         "deficit": "As despesas superaram as receitas no período: houve déficit de caixa.",
@@ -1765,7 +1715,7 @@ def render() -> None:
     )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 2 — Mapa dos módulos do app
+    # BLOCO 1 — Mapa dos módulos do app
     # ══════════════════════════════════════════════════════════════════════════
     _secao_resumo_modulos(
         receitas_mes,
@@ -1782,16 +1732,11 @@ def render() -> None:
     )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 3 — Raio X do portfólio investido
-    # ══════════════════════════════════════════════════════════════════════════
-    _secao_raio_x_portfolio(carteira, evolucao_inv, classes)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 4 — Histórico 6 meses
+    # BLOCO 2 — Histórico do controle financeiro
     # ══════════════════════════════════════════════════════════════════════════
     _titulo_secao(
-        "💹", "Histórico mensal (6 meses)",
-        "Receitas · Despesas · Investimentos por mês", _COR_FLUXO,
+        "💹", "Histórico do controle financeiro",
+        "Receitas · Despesas · Investimentos por mês (últimos 6 meses)", _COR_FLUXO,
     )
     with st.container(border=True, key="dg_history_chart"):
         if hist6:
@@ -1803,6 +1748,11 @@ def render() -> None:
             )
         else:
             st.caption("Sem histórico disponível.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BLOCO 3 — Raio X do portfólio investido
+    # ══════════════════════════════════════════════════════════════════════════
+    _secao_raio_x_portfolio(carteira, evolucao_inv, classes)
 
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 5 — Distribuição de despesas | Comparativo Ano a Ano
@@ -1872,7 +1822,7 @@ def render() -> None:
                 st.caption("Sem histórico anual disponível.")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 6 — Sugestões de carteira (fecham o dashboard)
+    # BLOCO 5 — Detalhes da carteira recomendada (fecham o dashboard)
     # ══════════════════════════════════════════════════════════════════════════
     # Ficam por último de propósito: o que está acima são FATOS do período
     # (caixa, carteira investida, histórico); o que vem aqui são REFERÊNCIAS
