@@ -6,6 +6,7 @@ passa a ser desenhado com widgets nativos, e o teste guarda o contrato que a
 gravação depende: o quadro devolvido tem de trazer as mesmas colunas que o
 ``st.data_editor`` devolveria, com os mesmos nomes.
 """
+import ast
 import inspect
 from datetime import date
 from types import SimpleNamespace
@@ -106,3 +107,110 @@ def test_editor_claro_escapa_o_estabelecimento(_st_falso):
     assert "&lt;b&gt;LOJA&lt;/b&gt;" in marcacao
     # O valor gravado continua sendo o texto original, não o escapado.
     assert saida.iloc[0]["Descrição"] == "<b>LOJA</b>"
+
+
+def test_nenhum_titulo_de_secao_repete_a_palavra_como_icone():
+    """O 1º argumento de _secao_titulo é ícone, não texto.
+
+    Passar uma palavra ali imprimia "Resumo Resumo executivo da fatura" — o
+    rótulo dobrado. A checagem é estrutural (AST) porque a tela tem 18 chamadas
+    e a próxima a nascer também precisa cair na regra.
+    """
+    arvore = ast.parse(inspect.getsource(cf))
+    for no in ast.walk(arvore):
+        if (isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+                and no.func.id == "_secao_titulo" and no.args):
+            icone = no.args[0]
+            if (isinstance(icone, ast.Constant) and isinstance(icone.value, str)
+                    and icone.value):
+                assert not icone.value.isascii(), (
+                    f"linha {no.lineno}: ícone '{icone.value}' é texto e dobra o título")
+
+
+def test_fatura_detalhada_escolhe_a_grade_pelo_tema_da_sessao():
+    fonte = inspect.getsource(cf._editor_cartao_detalhado)
+    assert "no_claro()" in fonte
+    assert "_editor_detalhado_claro" in fonte
+    assert "_editor_detalhado_escuro" in fonte
+    assert "st.data_editor" not in fonte
+    # O seletor de página tem de ficar FORA do form: dentro dele o Streamlit só
+    # leria a troca no submit, e a página nunca mudaria.
+    assert fonte.index("_pagina_detalhado(") < fonte.index('with st.form("cc_detail_editor_form"')
+
+
+class _ColunaDetalhe:
+    """Widgets que devolvem o valor de entrada, menos a descrição (editada)."""
+
+    def markdown(self, html, **kw):
+        pass
+
+    def date_input(self, _rotulo, value=None, **kw):
+        return value
+
+    def text_input(self, _rotulo, value="", **kw):
+        return "EDITADO"
+
+    def selectbox(self, _rotulo, opcoes, index=0, **kw):
+        return opcoes[index]
+
+    def number_input(self, _rotulo, value=0, **kw):
+        return value
+
+
+def _df_detalhe():
+    linhas = []
+    for n in range(3):
+        linhas.append({
+            "ID": f"tx-{n}", "Vencimento": date(2026, 9, 10), "Compra": date(2026, 9, 3),
+            "Descrição": f"LOJA {n}", "Categoria": "Alimentação", "Cartão": "Nubank",
+            "Valor": 10.0 + n, "Parc. atual": 1, "Parc. total": 1, "Status": "settled",
+        })
+    return pd.DataFrame(linhas)
+
+
+def test_editor_detalhado_claro_devolve_o_quadro_inteiro(monkeypatch):
+    """Só a página visível é editada; o resto volta idêntico.
+
+    O laço de gravação compara linha a linha contra a entrada e grava o que
+    divergir — se as linhas fora da página não voltassem iguais, trocar de
+    página reescreveria a fatura toda.
+    """
+    monkeypatch.setattr(cf, "st", SimpleNamespace(
+        columns=lambda larguras, **kw: [_ColunaDetalhe() for _ in larguras],
+        markdown=lambda html, **kw: None))
+    df_edit = _df_detalhe()
+
+    edited = cf._editor_detalhado_claro(
+        df_edit, range(1, 2), ["Alimentação"], ["Nubank"], ["settled"])
+
+    assert list(edited.columns) == list(df_edit.columns)
+    assert len(edited) == len(df_edit)
+    assert edited.iloc[1]["Descrição"] == "EDITADO"
+    for fora in (0, 2):
+        assert edited.iloc[fora].to_dict() == df_edit.iloc[fora].to_dict()
+
+
+def test_editor_detalhado_claro_aceita_listas_de_opcoes_vazias(monkeypatch):
+    monkeypatch.setattr(cf, "st", SimpleNamespace(
+        columns=lambda larguras, **kw: [_ColunaDetalhe() for _ in larguras],
+        markdown=lambda html, **kw: None))
+    edited = cf._editor_detalhado_claro(_df_detalhe(), range(3), [], [], ["settled"])
+    assert edited.iloc[0]["Categoria"] == "Sem categoria"
+    assert edited.iloc[0]["Cartão"] == "Sem cartao"
+
+
+def test_paginacao_do_editor_claro_limita_as_linhas_desenhadas(monkeypatch):
+    registro = {}
+
+    def selectbox(_rotulo, opcoes, **kw):
+        registro["opcoes"] = opcoes
+        return opcoes[0]
+
+    monkeypatch.setattr(cf, "st", SimpleNamespace(selectbox=selectbox))
+    # Poucas linhas: nem seletor, nem corte.
+    assert list(cf._pagina_detalhado(5)) == list(range(5))
+    assert "opcoes" not in registro
+    # Fatura grande: a primeira página para no tamanho da página.
+    total = cf._DETALHE_POR_PAGINA * 4 + 7
+    assert list(cf._pagina_detalhado(total)) == list(range(cf._DETALHE_POR_PAGINA))
+    assert len(registro["opcoes"]) == 5
