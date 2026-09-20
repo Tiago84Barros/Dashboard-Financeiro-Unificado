@@ -33,6 +33,75 @@ def test_aporte_nao_muda_saldo_poupanca_nem_comprometimento():
         assert before[key] == after[key]
 
 
+# ── Taxa de poupança exibida: sobra do mês + aporte, com teto na renda ────────
+
+@pytest.mark.parametrize("renda,despesa,aporte,esperado,no_teto", [
+    # Aporte cabe na sobra: ele soma à taxa sem encostar no teto.
+    (10000, 8000, 1000, 30.0, False),
+    # Aporte maior que a sobra (caixa de meses anteriores), ainda abaixo da renda.
+    (10000, 8000, 5000, 70.0, False),
+    # Aporte tão grande que sobra + aporte passa da renda: trava em 100%.
+    (10000, 8000, 9000, 100.0, True),
+    (10000, 0, 30000, 100.0, True),
+    # Sem aporte, a taxa exibida é a própria renda não consumida.
+    (10000, 8000, 0, 20.0, False),
+    # Resgate (aporte negativo) reduz a taxa: saiu dinheiro da alocação.
+    (10000, 8000, -1000, 10.0, False),
+    # Déficit continua negativo; o teto é só superior.
+    (10000, 12000, 0, -20.0, False),
+])
+def test_poupanca_alocada_soma_aporte_e_para_no_teto_da_renda(
+    renda, despesa, aporte, esperado, no_teto
+):
+    """O usuário aporta com caixa que sobrou de meses anteriores, então o mês pode
+    alocar mais do que sobrou nele. A taxa soma o aporte, mas não pode passar de
+    100% da renda — acima disso o dinheiro não veio da renda do mês."""
+    result = indicadores_caixa(renda, despesa, aporte)
+    assert result["poupanca_alocada_pct"] == pytest.approx(esperado)
+    assert result["poupanca_no_teto"] is no_teto
+
+
+def test_poupanca_alocada_sem_renda_nao_inventa_taxa():
+    result = indicadores_caixa(0, 0, 500)
+    assert result["poupanca_alocada_pct"] is None
+    assert result["poupanca_no_teto"] is False
+
+
+def test_poupanca_alocada_nao_contamina_a_renda_nao_consumida():
+    """`poupanca_pct` mede consumo e não pode enxergar o aporte; quem soma o
+    aporte é a taxa exibida. Confundir as duas reescreve o indicador de consumo."""
+    sem_aporte = indicadores_caixa(10000, 8000, 0)
+    com_aporte = indicadores_caixa(10000, 8000, 5000)
+    assert sem_aporte["poupanca_pct"] == com_aporte["poupanca_pct"]
+    assert com_aporte["poupanca_alocada_pct"] > com_aporte["poupanca_pct"]
+
+
+def test_telas_exibem_a_taxa_com_aporte_e_nao_a_renda_nao_consumida():
+    """Três telas mostram 'Taxa de poupança' com o mesmo rótulo; se uma delas ler
+    a chave antiga, o mesmo mês aparece com dois números diferentes no app."""
+    import ast
+    import pathlib
+
+    for caminho, funcoes in (
+        ("views/dashboard_geral.py",
+         {"_render_kpi_grid", "_card_fluxo", "_secao_resumo_modulos"}),
+        ("views/controle_financeiro.py", {"_tab_analises"}),
+    ):
+        arvore = ast.parse(pathlib.Path(caminho).read_text(encoding="utf-8"))
+        for no in ast.walk(arvore):
+            if not (isinstance(no, ast.FunctionDef) and no.name in funcoes):
+                continue
+            chaves = {
+                sub.slice.value
+                for sub in ast.walk(no)
+                if isinstance(sub, ast.Subscript)
+                and isinstance(sub.slice, ast.Constant)
+                and isinstance(sub.slice.value, str)
+            }
+            assert "poupanca_alocada_pct" in chaves, f"{caminho}:{no.name}"
+            assert "poupanca_pct" not in chaves, f"{caminho}:{no.name}"
+
+
 @pytest.mark.parametrize("renda,despesa,aporte", [(None, 10, 0), (10, None, 0),
     (10, 0, float("nan")), (float("inf"), 0, 0), (-1, 0, 0), (10, -1, 0)])
 def test_rejeita_dados_ausentes_nao_finitos_ou_totais_negativos(renda, despesa, aporte):

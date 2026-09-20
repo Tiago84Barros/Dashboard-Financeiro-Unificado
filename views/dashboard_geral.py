@@ -447,7 +447,7 @@ def _render_kpi_grid(
     """Quatro indicadores essenciais, em CSS Grid responsivo."""
     ind = indicadores_caixa(receitas, despesas, investimentos)
     saldo = ind["saldo"]
-    taxa = ind["poupanca_pct"] or 0.0
+    taxa = ind["poupanca_alocada_pct"] or 0.0
     rentab = float(carteira.get("rentabilidade_total_pct") or 0)
     patrimonio_investido = patrimonio_investido_confiavel(carteira, pat)
     num_ativos = int(carteira.get("num_ativos") or 0)
@@ -485,7 +485,8 @@ def _render_kpi_grid(
         _kpi_html(
             "Taxa de poupança",
             fmt_percentual(taxa, sinal=False),
-            f'Meta de referência: 30% · <strong style="color:{taxa_cor}">'
+            f'Sobra do mês + aportes{" · no teto da renda" if ind["poupanca_no_teto"] else ""}'
+            f' · meta 30% · <strong style="color:{taxa_cor}">'
             f'{"atingida" if taxa >= 30 else "em acompanhamento"}</strong>',
             "%",
             taxa_cor,
@@ -586,7 +587,7 @@ def _divisor() -> str:
 def _card_fluxo(receitas: float, despesas: float, investimentos: float) -> None:
     ind       = indicadores_caixa(receitas, despesas, investimentos)
     saldo     = ind["saldo"]
-    taxa      = round(ind["poupanca_pct"] or 0.0, 1)
+    taxa      = round(ind["poupanca_alocada_pct"] or 0.0, 1)
     cor_saldo = _cor_saldo_caixa(ind["status"])
     cor_taxa  = _COR_FLUXO if taxa >= 30 else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO
     taxa_w    = min(max(taxa, 0.0) / 30.0 * 100, 100)
@@ -599,7 +600,8 @@ def _card_fluxo(receitas: float, despesas: float, investimentos: float) -> None:
         + _divisor()
         + _titulo_valor("Saldo do mês (receitas − despesas)", fmt_moeda(saldo), cor_saldo)
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">'
-        + '<span style="font-size:0.78rem;color:var(--app-subtle)">Taxa de poupança</span>'
+        + '<span style="font-size:0.78rem;color:var(--app-subtle)">Taxa de poupança '
+        + '<span style="font-size:0.70rem">(sobra + aportes)</span></span>'
         + f'<span style="font-size:0.88rem;font-weight:700;color:{cor_taxa}">'
         + f'{fmt_percentual(taxa, sinal=False)} '
         + '<span style="font-size:0.70rem;color:var(--app-subtle)">/ meta 30%</span></span></div>'
@@ -1005,7 +1007,7 @@ def _secao_resumo_modulos(
 ) -> None:
     ind_caixa = indicadores_caixa(receitas_mes, despesas_mes, investimentos_mes)
     saldo_mes = ind_caixa["saldo"]
-    taxa_poupanca = ind_caixa["poupanca_pct"] or 0.0
+    taxa_poupanca = ind_caixa["poupanca_alocada_pct"] or 0.0
     cor_saldo_mes = _cor_saldo_caixa(ind_caixa["status"])
     rentab = float(carteira.get("rentabilidade_total_pct") or 0)
     b3_status, b3_status_cor, b3_linhas = _resumo_modelo_b3(modelo_b3)
