@@ -126,7 +126,7 @@ def test_portfolio_suggestions_render_after_every_other_section():
     corpo = inspect.getsource(dashboard.render)
     posicao_sugestoes = corpo.index("_secao_sugestoes_carteira(")
     for anterior in ("_render_kpi_grid(", "_secao_resumo_modulos(",
-                     "_secao_raio_x_portfolio(", "Histórico mensal (6 meses)",
+                     "_secao_raio_x_portfolio(", "Histórico do controle financeiro",
                      "Comparativo Ano a Ano"):
         assert corpo.index(anterior) < posicao_sugestoes, anterior
     assert corpo.rstrip().endswith("_secao_sugestoes_carteira(modelo_b3, modelo_us, "
@@ -172,3 +172,57 @@ def test_model_company_list_is_not_silently_truncated(monkeypatch):
     assert "TK00" in html and f"TK{dashboard._MAX_TICKERS_VISIVEIS - 1:02d}" in html
     assert "+4 outras" in html
     assert f"{dashboard._MAX_PESOS_VISIVEIS} maiores pesos de {total} empresas." in html
+
+
+def test_executive_summary_cards_are_gone():
+    """Os quadros da "Visão executiva" repetiam o grid de KPIs e os cards de
+    Controle Financeiro/Investimentos do "Resumo por área"; foram removidos."""
+    fonte = Path(dashboard.__file__).read_text(encoding="utf-8")
+    assert "Visão executiva" not in fonte
+    for morto in ("_card_fluxo", "_card_investimentos", "dg_executive_card",
+                  "dg_investment_card"):
+        assert morto not in fonte, morto
+    # A ressalva do mês continua: era o único conteúdo não redundante do bloco.
+    assert "Leitura do mês." in inspect.getsource(dashboard.render)
+
+
+def test_cash_history_renders_before_portfolio_xray():
+    """Controle financeiro primeiro, carteira depois — a ordem que o usuário pediu."""
+    corpo = inspect.getsource(dashboard.render)
+    assert (corpo.index("Histórico do controle financeiro")
+            < corpo.index("_secao_raio_x_portfolio("))
+
+
+def test_recommended_portfolio_modules_carry_the_badge():
+    """B3, EUA e FIIs produzem sugestão do app, não fato da vida financeira;
+    sem o selo o usuário lê os três como se fossem posição real."""
+    corpo = inspect.getsource(dashboard._secao_resumo_modulos)
+    assert corpo.count("selo=SELO_CARTEIRA_RECOMENDADA") == 3
+    for modulo in ("Empresas B3", "Empresas Americanas", "Seleção de FIIs"):
+        trecho = corpo[corpo.index(f'"{modulo}"'):]
+        assert "selo=SELO_CARTEIRA_RECOMENDADA" in trecho[:trecho.index("),")], modulo
+    html = dashboard._modulo_card(
+        "3", "Empresas B3", "resumo", "Ativa", dashboard._COR_FLUXO,
+        [("Empresas", "10", dashboard._COR_FLUXO)], dashboard._COR_PATRIMONIO,
+        selo=dashboard.SELO_CARTEIRA_RECOMENDADA,
+    )
+    assert dashboard.SELO_CARTEIRA_RECOMENDADA in html
+    assert dashboard.SELO_CARTEIRA_RECOMENDADA not in dashboard._modulo_card(
+        "1", "Controle Financeiro", "resumo", "Mensal", dashboard._COR_FLUXO,
+        [("Receitas", "R$ 1", dashboard._COR_FLUXO)], dashboard._COR_FLUXO,
+    )
+
+
+def test_recommended_portfolio_detail_has_a_heading(monkeypatch):
+    """O último bloco abre com destaque próprio: os pesos ali são referência
+    analítica, não a posição investida mostrada acima."""
+    corpo = inspect.getsource(dashboard._secao_sugestoes_carteira)
+    for secao in ("_secao_portfolio_modelo_b3(", "_secao_portfolio_modelo_us(",
+                  "_secao_fiis_sugeridos("):
+        assert corpo.index("_destaque_carteira_recomendada()") < corpo.index(secao), secao
+
+    rendered = _capture_markdown(monkeypatch)
+    dashboard._destaque_carteira_recomendada()
+    html = "\n".join(rendered)
+    assert "Detalhes da carteira recomendada" in html
+    assert "não são a sua posição investida" in html.replace("\n", "")

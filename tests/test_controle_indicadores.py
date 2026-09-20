@@ -84,13 +84,15 @@ def test_telas_exibem_a_taxa_com_aporte_e_nao_a_renda_nao_consumida():
 
     for caminho, funcoes in (
         ("views/dashboard_geral.py",
-         {"_render_kpi_grid", "_card_fluxo", "_secao_resumo_modulos"}),
+         {"_render_kpi_grid", "_secao_resumo_modulos"}),
         ("views/controle_financeiro.py", {"_tab_analises"}),
     ):
         arvore = ast.parse(pathlib.Path(caminho).read_text(encoding="utf-8"))
+        vistas = set()
         for no in ast.walk(arvore):
             if not (isinstance(no, ast.FunctionDef) and no.name in funcoes):
                 continue
+            vistas.add(no.name)
             chaves = {
                 sub.slice.value
                 for sub in ast.walk(no)
@@ -100,6 +102,9 @@ def test_telas_exibem_a_taxa_com_aporte_e_nao_a_renda_nao_consumida():
             }
             assert "poupanca_alocada_pct" in chaves, f"{caminho}:{no.name}"
             assert "poupanca_pct" not in chaves, f"{caminho}:{no.name}"
+        # Função renomeada ou removida faz o laço acima rodar zero vez e o teste
+        # passar sem exercitar nada; o que falta tem de aparecer como falha.
+        assert vistas == funcoes, f"{caminho}: não encontradas {funcoes - vistas}"
 
 
 @pytest.mark.parametrize("renda,despesa,aporte", [(None, 10, 0), (10, None, 0),
