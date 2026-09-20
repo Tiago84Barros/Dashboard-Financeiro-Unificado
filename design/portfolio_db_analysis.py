@@ -135,20 +135,11 @@ def render_db_analysis(classe: str, dados: dict) -> None:
     }.get(classe, "O ativo não está no universo consultado.")
     _rodape_ausentes(dados.get("ausentes"), explicacao)
 
-    rodape = [f"Fonte: {dados['fonte']}" if dados.get("fonte") else "",
-              f"Referência: {dados['referencia']}" if dados.get("referencia") else ""]
-    st.caption(" · ".join(p for p in rodape if p))
-    if classe == "acoes":
+    if classe == "acoes" and not dados.get("crescimento_apurado", True):
         st.caption(
-            "Nota das seis trilhas de `core.b3_company_score`, a mesma "
-            "decomposição do painel individual de Empresas B3 — não é o "
-            "ranking da Análise Avançada, que pondera por setor. O percentil "
-            "é medido contra o universo inteiro, não contra o setor."
-            + ("" if dados.get("crescimento_apurado", True) else
-               " O histórico não veio nesta sessão: a trilha de crescimento "
-               "ficou sem cobertura e a nota encolheu para o neutro — é perda "
-               "de convicção, não penalidade.")
-        )
+            "O histórico não veio nesta sessão: a trilha de crescimento ficou "
+            "sem cobertura e a nota encolheu para o neutro — é perda de "
+            "convicção, não penalidade.")
     elif classe == "fiis" and not dados.get("validacao_aplicavel", False):
         st.caption("A metodologia de FIIs está sem validação point-in-time "
                    "aprovada nesta sessão: as notas servem para diligência, "

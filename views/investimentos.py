@@ -2899,16 +2899,11 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
 
     # ── Header ────────────────────────────────────────────────────────────────
     st.markdown(
-        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">'
         '<span style="font-size:2rem">🔍</span>'
         '<h2 style="font-size:1.80rem;font-weight:800;color:var(--app-text);margin:0;">'
         'Análise do Portfólio</h2>'
-        '</div>'
-        '<p style="font-size:0.80rem;color:var(--app-muted);margin-bottom:20px;">'
-        '📌 Indicadores quantitativos para apoio à tomada de decisão. '
-        '<b style="color:var(--app-muted);">Não constitui recomendação de investimento.</b> '
-        'Avalie sempre o contexto macro, a qualidade da gestão e seu perfil de risco.'
-        '</p>',
+        '</div>',
         unsafe_allow_html=True,
     )
 

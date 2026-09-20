@@ -1047,10 +1047,6 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         avisos_dados.append(
             f"{n_stale} cotação(ões) excedem o limite de frescor e foram marcadas como desatualizadas."
         )
-    if data_ref_min and data_ref_max and data_ref_min != data_ref_max:
-        avisos_dados.append(
-            f"A carteira combina datas de referência entre {data_ref_min:%d/%m/%Y} e {data_ref_max:%d/%m/%Y}."
-        )
 
     return {
         "total_investido":         round(total_investido, 2),
