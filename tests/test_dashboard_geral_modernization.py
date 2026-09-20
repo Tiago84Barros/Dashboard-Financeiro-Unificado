@@ -193,6 +193,19 @@ def test_cash_history_renders_before_portfolio_xray():
             < corpo.index("_secao_raio_x_portfolio("))
 
 
+def test_cash_cluster_keeps_categories_and_yoy_under_the_history_chart():
+    """Despesas por categoria e Comparativo Ano a Ano saem do mesmo caixa que o
+    histórico: ficam no cluster dele, logo abaixo do gráfico, e não depois do
+    Raio X (que fala de carteira investida, outro assunto)."""
+    corpo = inspect.getsource(dashboard.render)
+    grafico = corpo.index('key="dg_history_plot"')
+    raio_x = corpo.index("_secao_raio_x_portfolio(")
+    for rotulo in ("Despesas por categoria", "Comparativo Ano a Ano",
+                   'key="dg_categories_chart"', 'key="dg_yoy_chart"'):
+        posicao = corpo.index(rotulo)
+        assert grafico < posicao < raio_x, rotulo
+
+
 def test_recommended_portfolio_modules_carry_the_badge():
     """B3, EUA e FIIs produzem sugestão do app, não fato da vida financeira;
     sem o selo o usuário lê os três como se fossem posição real."""
