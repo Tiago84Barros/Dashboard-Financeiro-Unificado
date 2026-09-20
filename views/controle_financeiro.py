@@ -56,7 +56,7 @@ from core.controle import (
 )
 from core.controle_indicadores import indicadores_caixa
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
-from core.utils import fmt_moeda, fmt_percentual
+from core.utils import escapar_cifrao, fmt_moeda, fmt_percentual
 from design.componentes import (
     abas_secao,
     badge_status,
@@ -1137,7 +1137,7 @@ def _render_chat_financeiro(
     history = load_chat_history(_memory_key, session_key="cf_chat_history")
     for msg in visible_chat_history(history, "cf_chat_history"):
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            st.markdown(escapar_cifrao(msg["content"]))
             for direc in msg.get("_charts", []) or []:
                 try:
                     render_financas_charts([direc], msg.get("_chart_meta", {}))
@@ -1182,7 +1182,7 @@ def _render_chat_financeiro(
                 aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
                 resposta = f"Não foi possível consultar a IA agora: {exc}"
-        st.markdown(resposta)
+        st.markdown(escapar_cifrao(resposta))
         if aviso_ancoragem:
             st.caption(aviso_ancoragem)
         desenhados = 0
@@ -2998,7 +2998,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
     history = load_chat_history(_memory_key, session_key="cc_chat_history")
     for msg in visible_chat_history(history, "cc_chat_history"):
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            st.markdown(escapar_cifrao(msg["content"]))
             for direc in msg.get("_charts", []) or []:
                 try:
                     render_financas_charts([direc], msg.get("_chart_meta", {}))
@@ -3042,7 +3042,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                 aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
                 resposta = f"Não foi possível consultar a IA agora: {exc}"
-        st.markdown(resposta)
+        st.markdown(escapar_cifrao(resposta))
         if aviso_ancoragem:
             st.caption(aviso_ancoragem)
         desenhados = 0

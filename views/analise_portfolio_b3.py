@@ -56,6 +56,7 @@ from core.rag_b3 import (
     get_cobertura_docs,
     retrieve_chunks,
 )
+from core.utils import escapar_cifrao
 from design.market_companies import render_company_logo
 from views.empresas_b3 import _logo_url
 
@@ -1319,7 +1320,7 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
     history = load_chat_history(_memory_key, session_key="apb3_chat_history")
     for msg in visible_chat_history(history, "apb3_chat_history"):
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            st.markdown(escapar_cifrao(msg["content"]))
 
     user_input = st.chat_input("Pergunte sobre o portfólio…", key="apb3_chat_input")
     if user_input:
@@ -1363,7 +1364,7 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
                         )
                 except Exception as exc:
                     resposta = f"Erro ao consultar LLM: {exc}"
-            st.markdown(resposta)
+            st.markdown(escapar_cifrao(resposta))
             if chart_directives:
                 try:
                     render_charts_from_directives(chart_directives, chart_meta)

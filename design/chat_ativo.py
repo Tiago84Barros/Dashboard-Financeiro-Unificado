@@ -20,6 +20,7 @@ from core.chat_memory import (
 )
 from core.llm_ativo import chat_com_ativo
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
+from core.utils import escapar_cifrao
 
 _PROVEDOR_LABEL = {"openai": "OpenAI", "gemini": "Gemini", "openrouter": "OpenRouter"}
 
@@ -136,7 +137,7 @@ def render_chat_ativo(
     historico = load_chat_history(memory_key, session_key=hist_key)
     for mensagem in visible_chat_history(historico, hist_key):
         with st.chat_message(mensagem["role"]):
-            st.markdown(mensagem["content"])
+            st.markdown(escapar_cifrao(mensagem["content"]))
 
     digitada = st.chat_input(
         _PLACEHOLDER.get(mercado, _PLACEHOLDER["b3"]).format(tk=tk),
@@ -148,7 +149,7 @@ def render_chat_ativo(
 
     historico.append({"role": "user", "content": pergunta})
     with st.chat_message("user"):
-        st.markdown(pergunta)
+        st.markdown(escapar_cifrao(pergunta))
     with st.chat_message("assistant"):
         with st.spinner(f"Consultando os dados de {tk}, pares e qualidade…"):
             try:
@@ -157,7 +158,7 @@ def render_chat_ativo(
                                           mercado=mercado, ticker=tk)
             except Exception as exc:  # provedor fora do ar, timeout, dado ausente
                 resposta = f"Não foi possível consultar a LLM neste momento: {exc}"
-        st.markdown(resposta)
+        st.markdown(escapar_cifrao(resposta))
         st.caption("Análise educacional baseada nos dados disponíveis; "
                    "não constitui recomendação de compra ou venda.")
     historico.append({"role": "assistant", "content": resposta})
