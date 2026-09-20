@@ -196,7 +196,7 @@ def test_editor_detalhado_claro_aceita_listas_de_opcoes_vazias(monkeypatch):
         markdown=lambda html, **kw: None))
     edited = cf._editor_detalhado_claro(_df_detalhe(), range(3), [], [], ["settled"])
     assert edited.iloc[0]["Categoria"] == "Sem categoria"
-    assert edited.iloc[0]["Cartão"] == "Sem cartao"
+    assert edited.iloc[0]["Cartão"] == "Sem cartão"
 
 
 def test_paginacao_do_editor_claro_limita_as_linhas_desenhadas(monkeypatch):

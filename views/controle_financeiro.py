@@ -1758,7 +1758,7 @@ def _to_timestamp(value: object) -> object:
 def _extract_card_final(description: object) -> str:
     desc = str(description or "")
     match = re.search(r"Cart\S*\s+(\d{4})", desc, flags=re.IGNORECASE)
-    return match.group(1) if match else "Nao informado"
+    return match.group(1) if match else "Não informado"
 
 
 def _clean_card_description(description: object) -> str:
@@ -1883,13 +1883,13 @@ def _prepare_subscriptions(df: pd.DataFrame) -> list[dict]:
             "Categoria": str(cat.iloc[0]) if not cat.empty else "-",
             "Total (R$)": round(total, 2),
             "Meses": n_meses,
-            "Media mensal": round(total / n_meses, 2),
+            "Média mensal": round(total / n_meses, 2),
             "Lancamentos": int(len(grupo)),
             "Ativa": ativa,
             "Ultima cobranca": f"{_MESES_PT.get(ult_mes, '')}/{ult_ano}" if last_ord else "-",
         })
     # Ativas primeiro, depois por custo mensal.
-    linhas.sort(key=lambda x: (not x["Ativa"], -x["Media mensal"]))
+    linhas.sort(key=lambda x: (not x["Ativa"], -x["Média mensal"]))
     return linhas
 
 
@@ -2022,7 +2022,7 @@ def _card_rows_dataframe(transacoes: list[dict]) -> pd.DataFrame:
             "estabelecimento": estabelecimento,
             "estabelecimento_norm": estabelecimento_norm,
             "categoria": tx.get("categoria") or "Sem categoria",
-            "conta": tx.get("conta") or "Sem cartao",
+            "conta": tx.get("conta") or "Sem cartão",
             "final_cartao": _extract_card_final(desc),
             "tipo_lancamento": movement,
             "valor_original": amount,
@@ -2071,25 +2071,25 @@ def _render_card_filters(df: pd.DataFrame, selected_year: int, selected_month: i
         year = st.selectbox("Ano", year_options, index=year_options.index(default_year), key="cc_filter_year")
     with c2:
         month = st.selectbox(
-            "Mes de referencia",
+            "Mês de referência",
             month_options,
             index=month_options.index(default_month_label) if default_month_label in month_options else 0,
             key="cc_filter_month",
         )
     with c3:
-        card = st.selectbox("Final do cartao", card_options, key="cc_filter_card")
+        card = st.selectbox("Final do cartão", card_options, key="cc_filter_card")
     with c4:
         category = st.selectbox("Categoria", cat_options, key="cc_filter_category")
 
     c5, c6, c7, c8 = st.columns([1.2, 1.8, 1.2, 1.3], gap="small")
     with c5:
-        movement = st.selectbox("Tipo de lancamento", type_options, key="cc_filter_type")
+        movement = st.selectbox("Tipo de lançamento", type_options, key="cc_filter_type")
     with c6:
-        search = st.text_input("Buscar por descricao", placeholder="Ex: mercado, smiles, anuidade...", key="cc_filter_search")
+        search = st.text_input("Buscar por descrição", placeholder="Ex: mercado, smiles, anuidade...", key="cc_filter_search")
     with c7:
         only_installments = st.checkbox("Apenas parceladas", key="cc_filter_installments")
     with c8:
-        min_value = st.number_input("Valor minimo", min_value=0.0, value=0.0, step=50.0, key="cc_filter_min_value")
+        min_value = st.number_input("Valor mínimo", min_value=0.0, value=0.0, step=50.0, key="cc_filter_min_value")
 
     return {
         "year": year,
@@ -2128,7 +2128,7 @@ def _apply_card_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
 def _prepare_category_analysis(df: pd.DataFrame) -> pd.DataFrame:
     compras = df[df["tipo_lancamento"] == "compra"]
     if compras.empty:
-        return pd.DataFrame(columns=["Categoria", "Total (R$)", "Transacoes", "Ticket medio", "% compras"])
+        return pd.DataFrame(columns=["Categoria", "Total (R$)", "Transações", "Ticket médio", "% compras"])
     total = compras["valor_fatura"].sum() or 1.0
     out = (
         compras.groupby("categoria", as_index=False)
@@ -2139,8 +2139,8 @@ def _prepare_category_analysis(df: pd.DataFrame) -> pd.DataFrame:
     return out.rename(columns={
         "categoria": "Categoria",
         "total": "Total (R$)",
-        "transacoes": "Transacoes",
-        "ticket": "Ticket medio",
+        "transacoes": "Transações",
+        "ticket": "Ticket médio",
         "pct": "% compras",
     })
 
@@ -2149,8 +2149,8 @@ def _prepare_merchant_analysis(df: pd.DataFrame) -> pd.DataFrame:
     compras = df[df["tipo_lancamento"] == "compra"]
     if compras.empty:
         return pd.DataFrame(columns=[
-            "Estabelecimento", "Categoria principal", "Total (R$)", "Transacoes",
-            "Maior compra", "% compras", "Recorrencia", "Meses recorrentes",
+            "Estabelecimento", "Categoria principal", "Total (R$)", "Transações",
+            "Maior compra", "% compras", "Recorrência", "Meses recorrentes",
         ])
     total = compras["valor_fatura"].sum() or 1.0
     out = (
@@ -2171,14 +2171,14 @@ def _prepare_merchant_analysis(df: pd.DataFrame) -> pd.DataFrame:
         "estabelecimento": "Estabelecimento",
         "categoria": "Categoria principal",
         "total": "Total (R$)",
-        "transacoes": "Transacoes",
+        "transacoes": "Transações",
         "maior": "Maior compra",
-        "recorrencia": "Recorrencia",
+        "recorrencia": "Recorrência",
         "meses_recorrentes": "Meses recorrentes",
         "pct": "% compras",
     })[[
-        "Estabelecimento", "Categoria principal", "Total (R$)", "Transacoes",
-        "Maior compra", "% compras", "Recorrencia", "Meses recorrentes",
+        "Estabelecimento", "Categoria principal", "Total (R$)", "Transações",
+        "Maior compra", "% compras", "Recorrência", "Meses recorrentes",
     ]]
 
 
@@ -2186,8 +2186,8 @@ def _prepare_recurring_analysis(df: pd.DataFrame) -> pd.DataFrame:
     base = df[(df["tipo_lancamento"] == "compra") & (df["possivel_recorrente"])].copy()
     if base.empty:
         return pd.DataFrame(columns=[
-            "Estabelecimento", "Categoria principal", "Recorrencia",
-            "Meses", "Transacoes", "Valor medio", "Total (R$)",
+            "Estabelecimento", "Categoria principal", "Recorrência",
+            "Meses", "Transações", "Valor médio", "Total (R$)",
         ])
     out = (
         base.groupby("estabelecimento_norm", as_index=False)
@@ -2206,14 +2206,14 @@ def _prepare_recurring_analysis(df: pd.DataFrame) -> pd.DataFrame:
     return out.rename(columns={
         "estabelecimento": "Estabelecimento",
         "categoria": "Categoria principal",
-        "recorrencia": "Recorrencia",
+        "recorrencia": "Recorrência",
         "meses": "Meses",
-        "transacoes": "Transacoes",
-        "valor_medio": "Valor medio",
+        "transacoes": "Transações",
+        "valor_medio": "Valor médio",
         "total": "Total (R$)",
     })[[
-        "Estabelecimento", "Categoria principal", "Recorrencia",
-        "Meses", "Transacoes", "Valor medio", "Total (R$)",
+        "Estabelecimento", "Categoria principal", "Recorrência",
+        "Meses", "Transações", "Valor médio", "Total (R$)",
     ]]
 
 
@@ -2224,7 +2224,7 @@ def _prepare_future_invoice_projection(df: pd.DataFrame, months: int = 6) -> pd.
         & (df["parcelas_restantes"] > 0)
     ].copy()
     if parcelas.empty:
-        return pd.DataFrame(columns=["Mes", "Valor projetado", "Parcelas futuras"])
+        return pd.DataFrame(columns=["Mês", "Valor projetado", "Parcelas futuras"])
 
     rows = []
     for _, row in parcelas.iterrows():
@@ -2236,18 +2236,18 @@ def _prepare_future_invoice_projection(df: pd.DataFrame, months: int = 6) -> pd.
             future = due + pd.DateOffset(months=offset)
             rows.append({
                 "ano_mes": future.strftime("%Y-%m"),
-                "Mes": f"{_MESES_PT[int(future.month)]}/{int(future.year)}",
+                "Mês": f"{_MESES_PT[int(future.month)]}/{int(future.year)}",
                 "Valor projetado": float(row["valor_fatura"]),
                 "Parcelas futuras": 1,
             })
     if not rows:
-        return pd.DataFrame(columns=["Mes", "Valor projetado", "Parcelas futuras"])
+        return pd.DataFrame(columns=["Mês", "Valor projetado", "Parcelas futuras"])
     return (
         pd.DataFrame(rows)
-        .groupby(["ano_mes", "Mes"], as_index=False)
+        .groupby(["ano_mes", "Mês"], as_index=False)
         .agg({"Valor projetado": "sum", "Parcelas futuras": "sum"})
         .sort_values("ano_mes")
-        [["Mes", "Valor projetado", "Parcelas futuras"]]
+        [["Mês", "Valor projetado", "Parcelas futuras"]]
     )
 
 
@@ -2256,7 +2256,7 @@ def _prepare_installment_analysis(df: pd.DataFrame) -> pd.DataFrame:
     if parcelas.empty:
         return pd.DataFrame(columns=[
             "Estabelecimento", "Categoria", "Final", "Parcela atual",
-            "Total parcelas", "Valor no mes", "Restantes", "Pendente estimado",
+            "Total parcelas", "Valor no mês", "Restantes", "Pendente estimado",
         ])
     out = (
         parcelas.groupby("installment_group", as_index=False)
@@ -2278,7 +2278,7 @@ def _prepare_installment_analysis(df: pd.DataFrame) -> pd.DataFrame:
         "final": "Final",
         "parcela_atual": "Parcela atual",
         "total_parcelas": "Total parcelas",
-        "valor_mes": "Valor no mes",
+        "valor_mes": "Valor no mês",
         "restantes": "Restantes",
         "pendente": "Pendente estimado",
     }).drop(columns=["installment_group"], errors="ignore")
@@ -2287,13 +2287,13 @@ def _prepare_installment_analysis(df: pd.DataFrame) -> pd.DataFrame:
 def _prepare_non_consumption(df: pd.DataFrame) -> pd.DataFrame:
     base = df[df["tipo_lancamento"].isin(["tarifa", "estorno", "pagamento", "ajuste"])].copy()
     if base.empty:
-        return pd.DataFrame(columns=["Data", "Tipo", "Descricao", "Categoria", "Valor (R$)"])
+        return pd.DataFrame(columns=["Data", "Tipo", "Descrição", "Categoria", "Valor (R$)"])
     base["Data"] = base["data_compra"].dt.strftime("%d/%m/%Y")
     base["Tipo"] = base["tipo_lancamento"].str.title()
-    base["Descricao"] = base["estabelecimento"]
+    base["Descrição"] = base["estabelecimento"]
     base["Categoria"] = base["categoria"]
     base["Valor (R$)"] = base["valor_abs"]
-    return base[["Data", "Tipo", "Descricao", "Categoria", "Valor (R$)"]].sort_values("Valor (R$)", ascending=False)
+    return base[["Data", "Tipo", "Descrição", "Categoria", "Valor (R$)"]].sort_values("Valor (R$)", ascending=False)
 
 
 def _summary_credit_card(df: pd.DataFrame) -> dict:
@@ -2350,19 +2350,19 @@ def _render_summary_cards(df: pd.DataFrame) -> None:
         st.markdown(_kpi_card("Total de compras reais", fmt_moeda(s["total_compras"]), f"{s['compras_qtd']} compra(s) no filtro.", _COR_DESPESA), unsafe_allow_html=True)
     with c2:
         color = _COR_DESPESA if s["total_liquido"] >= 0 else _COR_RECEITA
-        st.markdown(_kpi_card("Total liquido da fatura", fmt_moeda(s["total_liquido"]), "Compras + tarifas - estornos - pagamentos.", color), unsafe_allow_html=True)
+        st.markdown(_kpi_card("Total líquido da fatura", fmt_moeda(s["total_liquido"]), "Compras + tarifas - estornos - pagamentos.", color), unsafe_allow_html=True)
     with c3:
-        st.markdown(_kpi_card("Ticket medio", fmt_moeda(s["ticket_medio"]), "Exclui pagamentos, estornos e tarifas.", _COR_NEUTRO), unsafe_allow_html=True)
+        st.markdown(_kpi_card("Ticket médio", fmt_moeda(s["ticket_medio"]), "Exclui pagamentos, estornos e tarifas.", _COR_NEUTRO), unsafe_allow_html=True)
     with c4:
         st.markdown(_kpi_card("Maior compra", fmt_moeda(s["maior_valor"]), _safe(s["maior_desc"][:42]), "#F6C90E"), unsafe_allow_html=True)
 
     c5, c6, c7, c8 = st.columns(4, gap="small")
     with c5:
-        st.markdown(_kpi_card("Compras parceladas", fmt_moeda(s["parceladas_total"]), f"{s['parceladas_qtd']} lancamento(s) parcelado(s).", _COR_INVEST), unsafe_allow_html=True)
+        st.markdown(_kpi_card("Compras parceladas", fmt_moeda(s["parceladas_total"]), f"{s['parceladas_qtd']} lançamento(s) parcelado(s).", _COR_INVEST), unsafe_allow_html=True)
     with c6:
         st.markdown(_kpi_card("Tarifas e encargos", fmt_moeda(s["tarifas"]), "Anuidade, IOF, juros, multa e tarifas.", "#F6C90E"), unsafe_allow_html=True)
     with c7:
-        st.markdown(_kpi_card("Estornos", fmt_moeda(s["estornos"]), "Creditos abatidos na fatura.", _COR_RECEITA), unsafe_allow_html=True)
+        st.markdown(_kpi_card("Estornos", fmt_moeda(s["estornos"]), "Créditos abatidos na fatura.", _COR_RECEITA), unsafe_allow_html=True)
     with c8:
         st.markdown(_kpi_card("Categoria dominante", _safe(s["categoria_dominante"][:24]), f"{s['categoria_pct']:.1f}% das compras reais.", _COR_NEUTRO), unsafe_allow_html=True)
 
@@ -2450,7 +2450,7 @@ def _fig_monthly_evolution(df: pd.DataFrame) -> go.Figure:
 
 def _fig_future_projection(projection_df: pd.DataFrame) -> go.Figure:
     fig = go.Figure(go.Bar(
-        x=projection_df["Mes"],
+        x=projection_df["Mês"],
         y=projection_df["Valor projetado"],
         marker_color=_COR_INVEST,
         opacity=0.88,
@@ -2519,7 +2519,7 @@ def _render_credit_card_insights(
     projection_df: pd.DataFrame | None = None,
 ) -> None:
     if df.empty:
-        st.info("Nao ha lancamentos no filtro atual para gerar insights.")
+        st.info("Não há lançamentos no filtro atual para gerar insights.")
         return
 
     s = _summary_credit_card(df)
@@ -2536,14 +2536,14 @@ def _render_credit_card_insights(
 
     if projection_df is not None and not projection_df.empty:
         peak = projection_df.sort_values("Valor projetado", ascending=False).iloc[0]
-        insights.append(("info", f"Parcelas ja contratadas projetam {fmt_moeda(peak['Valor projetado'])} para {peak['Mes']}."))
+        insights.append(("info", f"Parcelas já contratadas projetam {fmt_moeda(peak['Valor projetado'])} para {peak['Mês']}."))
 
     recorrentes = _prepare_recurring_analysis(df)
     if not recorrentes.empty:
         top = recorrentes.iloc[0]
-        insights.append(("info", f"Gasto recorrente detectado: {_safe(top['Estabelecimento'])} aparece em {int(top['Meses'])} mes(es), somando {fmt_moeda(top['Total (R$)'])}."))
+        insights.append(("info", f"Gasto recorrente detectado: {_safe(top['Estabelecimento'])} aparece em {int(top['Meses'])} mês(es), somando {fmt_moeda(top['Total (R$)'])}."))
     if not insights:
-        insights.append(("success", "Nenhum alerta relevante no filtro atual. A fatura esta bem segmentada entre consumo, ajustes e parcelas."))
+        insights.append(("success", "Nenhum alerta relevante no filtro atual. A fatura está bem segmentada entre consumo, ajustes e parcelas."))
 
     for level, message in insights[:5]:
         if level == "warning":
@@ -2610,7 +2610,7 @@ def _editor_detalhado_claro(
     """
     # Mesmo recuo da grade escura: lista vazia deixaria o selectbox sem valor.
     cat_nomes = cat_nomes or ["Sem categoria"]
-    conta_nomes = conta_nomes or ["Sem cartao"]
+    conta_nomes = conta_nomes or ["Sem cartão"]
 
     edited = df_edit.copy()
     for posicao, i in enumerate(fatia):
@@ -2674,7 +2674,7 @@ def _editor_detalhado_escuro(
             "Categoria":  st.column_config.SelectboxColumn(
                 "Categoria", options=cat_nomes if cat_nomes else ["Sem categoria"]),
             "Cartão":     st.column_config.SelectboxColumn(
-                "Cartão", options=conta_nomes if conta_nomes else ["Sem cartao"]),
+                "Cartão", options=conta_nomes if conta_nomes else ["Sem cartão"]),
             "Valor":      st.column_config.NumberColumn("Valor (R$)", format="%.2f", step=0.01, min_value=0.0),
             "Parc. atual": st.column_config.NumberColumn("Parc. atual", format="%d", step=1, min_value=1),
             "Parc. total": st.column_config.NumberColumn("Parc. total", format="%d", step=1, min_value=1),
@@ -2713,7 +2713,7 @@ def _editor_cartao_detalhado(detail: pd.DataFrame) -> None:
             "Compra":       comp.date() if pd.notna(comp) else None,
             "Descrição":    str(tx.get("descricao") or ""),
             "Categoria":    tx.get("categoria") or "Sem categoria",
-            "Cartão":       tx.get("conta") or "Sem cartao",
+            "Cartão":       tx.get("conta") or "Sem cartão",
             "Valor":        round(abs(float(tx.get("valor_original") or 0.0)), 2),
             "Parc. atual":  int(tx.get("installment_current") or 1),
             "Parc. total":  int(tx.get("installment_total") or 1),
@@ -2968,7 +2968,7 @@ def _render_cartao_a_revisar(df_all: pd.DataFrame) -> None:
 def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     st.markdown(
         '<h2 style="font-size:1.45rem;font-weight:800;color:var(--app-text);margin-bottom:0;">'
-        'Cartao de Credito</h2>'
+        'Cartão de Crédito</h2>'
         '<p style="color:var(--app-muted);font-size:0.86rem;margin-top:4px;">'
         'Controle mensal da fatura, categorias de consumo, parcelas, estornos e tarifas.</p>',
         unsafe_allow_html=True,
@@ -2978,7 +2978,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     df_all = _card_rows_dataframe(all_cc_txs)
 
     if df_all.empty:
-        st.info("Importe uma fatura em Configurações > Fatura do Cartão para visualizar os indicadores e graficos do cartao.")
+        st.info("Importe uma fatura em Configurações > Fatura do Cartão para visualizar os indicadores e gráficos do cartão.")
         return
 
     # Itens que o importador não soube classificar → o usuário define a categoria.
@@ -2989,7 +2989,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     df = _apply_card_filters(df_all, filters)
 
     if df.empty:
-        st.warning("Nenhum lancamento encontrado para os filtros selecionados.")
+        st.warning("Nenhum lançamento encontrado para os filtros selecionados.")
         return
 
     _secao_titulo("🧾", "Resumo executivo da fatura")
@@ -3002,7 +3002,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     _secao_titulo("📊", "Gráficos principais")
     col_cat, col_top = st.columns(2, gap="medium")
     with col_cat:
-        st.markdown("**Distribuicao dos gastos por categoria**")
+        st.markdown("**Distribuição dos gastos por categoria**")
         if cat_df.empty:
             st.caption("Sem compras reais no filtro atual.")
         else:
@@ -3031,10 +3031,10 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
         with col_parc_chart:
             st.plotly_chart(_fig_horizontal_bar(installment_df, "Estabelecimento", "Pendente estimado", _COR_INVEST, height=320), width="stretch", config={"displayModeBar": False})
         with col_parc_table:
-            _render_money_dataframe(installment_df.head(12), ["Valor no mes", "Pendente estimado"])
-        st.markdown("**Projecao de faturas futuras pelas parcelas restantes**")
+            _render_money_dataframe(installment_df.head(12), ["Valor no mês", "Pendente estimado"])
+        st.markdown("**Projeção de faturas futuras pelas parcelas restantes**")
         if projection_df.empty:
-            st.caption("Nao ha parcelas futuras a projetar no filtro atual.")
+            st.caption("Não há parcelas futuras a projetar no filtro atual.")
         else:
             col_proj_chart, col_proj_table = st.columns([1, 1], gap="medium")
             with col_proj_chart:
@@ -3058,12 +3058,12 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     _secao_titulo("📈", "Evolução mensal dos gastos no cartão")
     monthly_points = df[df["tipo_lancamento"] == "compra"]["ano_mes"].nunique()
     if monthly_points < 2:
-        st.caption("Ainda nao ha meses suficientes para comparar a evolucao.")
+        st.caption("Ainda não há meses suficientes para comparar a evolução.")
     else:
         st.plotly_chart(_fig_monthly_evolution(df), width="stretch", config={"displayModeBar": False})
 
     st.markdown("<br>", unsafe_allow_html=True)
-    with st.expander("Tabela detalhada de lancamentos", expanded=False):
+    with st.expander("Tabela detalhada de lançamentos", expanded=False):
         detail = df.sort_values(["data_vencimento", "data_compra"], ascending=[False, False]).copy()
 
         modo_edicao = st.toggle(
@@ -3079,14 +3079,17 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
             detail["Compra"] = detail["data_compra"].dt.strftime("%d/%m/%Y")
             detail["Tipo"] = detail["tipo_lancamento"].str.title()
             detail["Valor fatura"] = detail["valor_fatura"]
-            detail["Recorrencia"] = detail["recorrencia_status"].str.title()
+            # O status é chave interna ("possivel"); .title() a publicava sem
+            # acento na tabela. O rótulo é traduzido só aqui, na exibição.
+            detail["Recorrência"] = detail["recorrencia_status"].map(
+                {"recorrente": "Recorrente", "possivel": "Possível"}).fillna("—")
             cols = [
                 "Vencimento", "Compra", "final_cartao", "Tipo", "estabelecimento",
-                "categoria", "installment_label", "Recorrencia", "Valor fatura", "source",
+                "categoria", "installment_label", "Recorrência", "Valor fatura", "source",
             ]
             display = detail[cols].rename(columns={
                 "final_cartao": "Final",
-                "estabelecimento": "Descricao",
+                "estabelecimento": "Descrição",
                 "categoria": "Categoria",
                 "installment_label": "Parcela",
                 "source": "Origem",

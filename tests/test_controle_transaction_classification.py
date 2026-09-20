@@ -316,7 +316,7 @@ def test_credit_card_merchant_normalization_groups_noisy_names():
     merchants = _prepare_merchant_analysis(df)
 
     assert len(merchants) == 1
-    assert merchants.iloc[0]["Transacoes"] == 2
+    assert merchants.iloc[0]["Transações"] == 2
     assert merchants.iloc[0]["Total (R$)"] == 200
 
 
@@ -336,7 +336,7 @@ def test_credit_card_recurrence_requires_more_than_same_month_duplicates():
     rec = _prepare_recurring_analysis(recurring)
 
     assert len(rec) == 1
-    assert rec.iloc[0]["Recorrencia"] == "recorrente"
+    assert rec.iloc[0]["Recorrência"] == "recorrente"
     assert rec.iloc[0]["Meses"] == 3
 
 
@@ -347,7 +347,7 @@ def test_credit_card_future_projection():
     ])
     projection = _prepare_future_invoice_projection(df)
 
-    assert list(projection["Mes"]) == ["Jun/2026", "Jul/2026"]
+    assert list(projection["Mês"]) == ["Jun/2026", "Jul/2026"]
     assert list(projection["Valor projetado"]) == [500, 500]
 
 
@@ -365,7 +365,7 @@ def test_credit_card_installment_analysis_hides_internal_group_id():
         "Final",
         "Parcela atual",
         "Total parcelas",
-        "Valor no mes",
+        "Valor no mês",
         "Restantes",
         "Pendente estimado",
     ]
