@@ -2554,10 +2554,142 @@ def _render_credit_card_insights(
             st.info(message)
 
 
+_DETALHE_POR_PAGINA = 10
+# Nove campos editaveis nao cabem numa linha so: a 1180px as datas viravam
+# "10/09/2(" e a categoria, "Alimen...". Cada lancamento ocupa duas linhas.
+_DETALHE_LINHA_A = [1.2, 1.2, 3.2, 1.4]
+_DETALHE_LINHA_B = [2.0, 1.8, 0.9, 0.9, 1.4]
+
+
+def _indice_opcao(opcoes: list, valor) -> int:
+    """Posicao do valor atual na lista; 0 quando ele nao esta la."""
+    try:
+        return opcoes.index(valor)
+    except ValueError:
+        return 0
+
+
+def _pagina_detalhado(total: int) -> range:
+    """Faixa de linhas visivel no editor claro.
+
+    Cada lancamento custa nove widgets nativos, e a fatura inteira de uma vez
+    deixa a tela lenta. O seletor fica FORA do form de proposito: dentro dele o
+    Streamlit so leria a troca de pagina no submit.
+    """
+    if total <= _DETALHE_POR_PAGINA:
+        return range(total)
+    paginas = (total + _DETALHE_POR_PAGINA - 1) // _DETALHE_POR_PAGINA
+    rotulos = [
+        f"{p * _DETALHE_POR_PAGINA + 1}–"
+        f"{min((p + 1) * _DETALHE_POR_PAGINA, total)} de {total}"
+        for p in range(paginas)
+    ]
+    escolhida = st.selectbox(
+        "Linhas", rotulos, key="cc_detail_pagina",
+        help="A gravação salva o que você alterou nesta página.",
+    )
+    p = rotulos.index(escolhida)
+    return range(p * _DETALHE_POR_PAGINA, min((p + 1) * _DETALHE_POR_PAGINA, total))
+
+
+def _editor_detalhado_claro(
+    df_edit: pd.DataFrame, fatia: range,
+    cat_nomes: list, conta_nomes: list, status_opcoes: list,
+) -> pd.DataFrame:
+    """
+    Fatura detalhada desenhada com widgets nativos, para o tema claro.
+
+    Mesmo motivo do painel "a categorizar": o ``st.data_editor`` pinta num canvas
+    cujas cores vem do tema do config (escuro), e CSS nao alcanca — medido
+    injetando as ``--gdg-*`` no container do grid, que passam a valer sem que o
+    canvas mude de cor.
+
+    Devolve o quadro INTEIRO, nao so a pagina visivel: as linhas de fora voltam
+    identicas as de entrada, e o laco de gravacao — que grava apenas o que
+    diverge da entrada — simplesmente nao as ve.
+    """
+    # Mesmo recuo da grade escura: lista vazia deixaria o selectbox sem valor.
+    cat_nomes = cat_nomes or ["Sem categoria"]
+    conta_nomes = conta_nomes or ["Sem cartao"]
+
+    edited = df_edit.copy()
+    for posicao, i in enumerate(fatia):
+        r = df_edit.iloc[i]
+        tx_id = str(r["ID"])
+        if posicao:
+            st.markdown(
+                '<hr style="border:none;border-top:1px solid var(--app-border);'
+                'margin:10px 0 4px;">',
+                unsafe_allow_html=True,
+            )
+        c_venc, c_comp, c_desc, c_valor = st.columns(_DETALHE_LINHA_A, gap="small")
+        edited.at[i, "Vencimento"] = c_venc.date_input(
+            "Vencimento", value=r["Vencimento"], format="DD/MM/YYYY",
+            key=f"cc_det_venc_{tx_id}")
+        edited.at[i, "Compra"] = c_comp.date_input(
+            "Compra", value=r["Compra"], format="DD/MM/YYYY",
+            key=f"cc_det_comp_{tx_id}")
+        edited.at[i, "Descrição"] = c_desc.text_input(
+            "Descrição", value=str(r["Descrição"]),
+            key=f"cc_det_desc_{tx_id}")
+        edited.at[i, "Valor"] = c_valor.number_input(
+            "Valor (R$)", value=float(r["Valor"]), min_value=0.0, step=0.01,
+            format="%.2f", key=f"cc_det_valor_{tx_id}")
+
+        c_cat, c_cartao, c_pa, c_pt, c_status = st.columns(_DETALHE_LINHA_B, gap="small")
+        edited.at[i, "Categoria"] = c_cat.selectbox(
+            "Categoria", cat_nomes, index=_indice_opcao(cat_nomes, r["Categoria"]),
+            key=f"cc_det_cat_{tx_id}")
+        edited.at[i, "Cartão"] = c_cartao.selectbox(
+            "Cartão", conta_nomes, index=_indice_opcao(conta_nomes, r["Cartão"]),
+            key=f"cc_det_conta_{tx_id}")
+        edited.at[i, "Parc. atual"] = c_pa.number_input(
+            "Parcela", value=int(r["Parc. atual"]), min_value=1, step=1, format="%d",
+            key=f"cc_det_pa_{tx_id}")
+        edited.at[i, "Parc. total"] = c_pt.number_input(
+            "de", value=int(r["Parc. total"]), min_value=1, step=1, format="%d",
+            key=f"cc_det_pt_{tx_id}")
+        edited.at[i, "Status"] = c_status.selectbox(
+            "Status", status_opcoes, index=_indice_opcao(status_opcoes, r["Status"]),
+            key=f"cc_det_status_{tx_id}")
+    return edited
+
+
+def _editor_detalhado_escuro(
+    df_edit: pd.DataFrame,
+    cat_nomes: list, conta_nomes: list, status_opcoes: list,
+) -> pd.DataFrame:
+    """Grade nativa do tema escuro — o canvas ja nasce com as cores certas."""
+    return st.data_editor(
+        df_edit,
+        num_rows="fixed",
+        hide_index=True,
+        width="stretch",
+        key="cc_detail_editor",
+        column_config={
+            "ID": None,
+            "Vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+            "Compra":     st.column_config.DateColumn("Compra", format="DD/MM/YYYY"),
+            "Descrição":  st.column_config.TextColumn("Descrição"),
+            "Categoria":  st.column_config.SelectboxColumn(
+                "Categoria", options=cat_nomes if cat_nomes else ["Sem categoria"]),
+            "Cartão":     st.column_config.SelectboxColumn(
+                "Cartão", options=conta_nomes if conta_nomes else ["Sem cartao"]),
+            "Valor":      st.column_config.NumberColumn("Valor (R$)", format="%.2f", step=0.01, min_value=0.0),
+            "Parc. atual": st.column_config.NumberColumn("Parc. atual", format="%d", step=1, min_value=1),
+            "Parc. total": st.column_config.NumberColumn("Parc. total", format="%d", step=1, min_value=1),
+            "Status":     st.column_config.SelectboxColumn("Status", options=status_opcoes),
+        },
+    )
+
+
 def _editor_cartao_detalhado(detail: pd.DataFrame) -> None:
     """
-    Editor in-place da fatura de cartão: st.data_editor + gravação via
-    atualizar_transacao_cartao. Grava apenas as linhas alteradas.
+    Editor in-place da fatura de cartão: grava via atualizar_transacao_cartao,
+    e apenas as linhas alteradas.
+
+    A grade em si depende do tema da sessão (ver _editor_detalhado_claro): as
+    duas versões devolvem o mesmo quadro, então a gravação abaixo é uma só.
 
     Campos editáveis (armazenados no banco): Vencimento, Compra, Descrição,
     Categoria, Cartão, Valor, Parcela atual/total e Status. As colunas derivadas
@@ -2595,28 +2727,16 @@ def _editor_cartao_detalhado(detail: pd.DataFrame) -> None:
         "(Tipo, Recorrência, Final, Valor fatura) recalculam sozinhas."
     )
 
+    if no_claro():
+        fatia = _pagina_detalhado(len(df_edit))
+
     with st.form("cc_detail_editor_form", clear_on_submit=False):
-        edited = st.data_editor(
-            df_edit,
-            num_rows="fixed",
-            hide_index=True,
-            width="stretch",
-            key="cc_detail_editor",
-            column_config={
-                "ID": None,
-                "Vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
-                "Compra":     st.column_config.DateColumn("Compra", format="DD/MM/YYYY"),
-                "Descrição":  st.column_config.TextColumn("Descrição"),
-                "Categoria":  st.column_config.SelectboxColumn(
-                    "Categoria", options=cat_nomes if cat_nomes else ["Sem categoria"]),
-                "Cartão":     st.column_config.SelectboxColumn(
-                    "Cartão", options=conta_nomes if conta_nomes else ["Sem cartao"]),
-                "Valor":      st.column_config.NumberColumn("Valor (R$)", format="%.2f", step=0.01, min_value=0.0),
-                "Parc. atual": st.column_config.NumberColumn("Parc. atual", format="%d", step=1, min_value=1),
-                "Parc. total": st.column_config.NumberColumn("Parc. total", format="%d", step=1, min_value=1),
-                "Status":     st.column_config.SelectboxColumn("Status", options=status_opcoes),
-            },
-        )
+        if no_claro():
+            edited = _editor_detalhado_claro(
+                df_edit, fatia, cat_nomes, conta_nomes, status_opcoes)
+        else:
+            edited = _editor_detalhado_escuro(
+                df_edit, cat_nomes, conta_nomes, status_opcoes)
         salvar = st.form_submit_button("Salvar alterações", type="primary")
 
     if not salvar:
@@ -2872,14 +2992,14 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
         st.warning("Nenhum lancamento encontrado para os filtros selecionados.")
         return
 
-    _secao_titulo("Resumo", "Resumo executivo da fatura")
+    _secao_titulo("🧾", "Resumo executivo da fatura")
     _render_summary_cards(df)
     st.markdown("<br>", unsafe_allow_html=True)
 
     cat_df = _prepare_category_analysis(df)
     merchant_df = _prepare_merchant_analysis(df)
 
-    _secao_titulo("Graficos", "Graficos principais")
+    _secao_titulo("📊", "Gráficos principais")
     col_cat, col_top = st.columns(2, gap="medium")
     with col_cat:
         st.markdown("**Distribuicao dos gastos por categoria**")
@@ -2901,7 +3021,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
         st.plotly_chart(_fig_horizontal_bar(merchant_df, "Estabelecimento", "Total (R$)", _COR_INVEST, height=360), width="stretch", config={"displayModeBar": False})
 
     st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo("Parcelas", "Compras parceladas")
+    _secao_titulo("🔁", "Compras parceladas")
     installment_df = _prepare_installment_analysis(df)
     projection_df = _prepare_future_invoice_projection(df)
     if installment_df.empty:
@@ -2923,7 +3043,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
                 _render_money_dataframe(projection_df, ["Valor projetado"])
 
     st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo("Ajustes", "Tarifas, estornos e pagamentos")
+    _secao_titulo("⚖️", "Tarifas, estornos e pagamentos")
     non_df = _prepare_non_consumption(df)
     if non_df.empty:
         st.caption("Nenhuma tarifa, estorno, pagamento ou ajuste no filtro atual.")
@@ -2935,7 +3055,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
             _render_money_dataframe(non_df.head(20), ["Valor (R$)"])
 
     st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo("Evolucao", "Evolucao mensal dos gastos no cartao")
+    _secao_titulo("📈", "Evolução mensal dos gastos no cartão")
     monthly_points = df[df["tipo_lancamento"] == "compra"]["ano_mes"].nunique()
     if monthly_points < 2:
         st.caption("Ainda nao ha meses suficientes para comparar a evolucao.")
@@ -2974,7 +3094,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
             _render_money_dataframe(display, ["Valor fatura"])
 
     st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo("Insights", "Insights automaticos")
+    _secao_titulo("💡", "Insights automáticos")
     _render_credit_card_insights(df, projection_df)
 
     # ── Analista Financeiro do Cartão (chat com IA) ───────────────────────────
