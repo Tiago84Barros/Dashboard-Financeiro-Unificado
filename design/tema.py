@@ -204,6 +204,7 @@ hr {
     --app-info: #4A9EFF;
     --app-danger: #FC5C7D;
     --app-warning: #F6C90E;
+    --app-accent: #C084FC;
     --app-radius-sm: 10px;
     --app-radius-md: 14px;
     --app-radius-lg: 20px;

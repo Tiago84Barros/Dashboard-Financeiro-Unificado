@@ -126,7 +126,7 @@ def test_portfolio_suggestions_render_after_every_other_section():
     corpo = inspect.getsource(dashboard.render)
     posicao_sugestoes = corpo.index("_secao_sugestoes_carteira(")
     for anterior in ("_render_kpi_grid(", "_secao_resumo_modulos(",
-                     "_secao_raio_x_portfolio(", "Histórico do controle financeiro",
+                     "_secao_raio_x_portfolio(", "Evolução financeira",
                      "Comparativo Ano a Ano"):
         assert corpo.index(anterior) < posicao_sugestoes, anterior
     assert corpo.rstrip().endswith("_secao_sugestoes_carteira(modelo_b3, modelo_us, "
@@ -189,7 +189,7 @@ def test_executive_summary_cards_are_gone():
 def test_cash_history_renders_before_portfolio_xray():
     """Controle financeiro primeiro, carteira depois — a ordem que o usuário pediu."""
     corpo = inspect.getsource(dashboard.render)
-    assert (corpo.index("Histórico do controle financeiro")
+    assert (corpo.index("Evolução financeira")
             < corpo.index("_secao_raio_x_portfolio("))
 
 
@@ -239,3 +239,40 @@ def test_recommended_portfolio_detail_has_a_heading(monkeypatch):
     html = "\n".join(rendered)
     assert "Detalhes da carteira recomendada" in html
     assert "não são a sua posição investida" in html.replace("\n", "")
+
+
+def test_os_tres_blocos_de_conclusao_abrem_na_mesma_faixa():
+    """Caixa, posição investida e carteira recomendada abrem igual.
+
+    A faixa não é enfeite: ela carrega o rótulo que diz se o número abaixo
+    é fato do dinheiro do usuário ou sugestão do app. Um dos três voltando
+    para o título simples reabre a leitura de "peso sugerido = posição real".
+    """
+    blocos = (
+        (dashboard.render, "◆ Controle financeiro", "Evolução financeira"),
+        (dashboard._secao_raio_x_portfolio, "◆ Sua posição investida",
+         "Raio X do portfólio investido"),
+        (dashboard._destaque_carteira_recomendada,
+         "★ Recomendação do aplicativo", "Detalhes da carteira recomendada"),
+    )
+    for funcao, rotulo, titulo in blocos:
+        fonte = inspect.getsource(funcao)
+        chamada = fonte[fonte.index("_faixa_destaque("):]
+        assert rotulo in chamada, rotulo
+        assert titulo in chamada, titulo
+        # E nenhum deles volta ao título simples: a faixa é a única abertura.
+        assert f'"{titulo}"' not in fonte.replace(chamada, ""), titulo
+
+
+def test_faixa_de_destaque_escapa_o_conteudo_e_segue_o_tema(monkeypatch):
+    rendered = _capture_markdown(monkeypatch)
+    dashboard._faixa_destaque(
+        "◆ Rótulo", "<b>Título</b>", "Descrição & cia", dashboard._COR_FLUXO)
+    html = "\n".join(rendered)
+    assert "&lt;b&gt;Título&lt;/b&gt;" in html
+    assert "<b>Título</b>" not in html
+    assert "Descrição &amp; cia" in html
+    # Fundo e texto saem de token: é o que acompanha o tema claro.
+    assert "var(--app-surface)" in html
+    assert "var(--app-text)" in html
+    assert "var(--app-primary)" in html
