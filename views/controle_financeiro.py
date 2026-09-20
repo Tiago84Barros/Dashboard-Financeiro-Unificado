@@ -845,7 +845,7 @@ def _tab_analises(
 
     indicadores = indicadores_caixa(receitas, despesas, investido_mes)
     saldo = indicadores["saldo"]
-    taxa_poupanca = indicadores["poupanca_pct"]
+    taxa_poupanca = indicadores["poupanca_alocada_pct"]
     maior_cat     = cats[0] if cats else None
 
     col_m1, col_m2, col_m3, col_m4 = st.columns(4, gap="small")
@@ -853,7 +853,9 @@ def _tab_analises(
         st.markdown(_kpi_card(
             "Taxa de Poupança",
             fmt_percentual(taxa_poupanca, sinal=False),
-            "Renda não consumida / renda · meta de referência: 30%."
+            ("(Sobra do mês + aportes) / renda, com teto na renda"
+             + (" · no teto" if indicadores["poupanca_no_teto"] else "")
+             + " · meta de referência: 30%.")
             if taxa_poupanca is not None else "Sem renda positiva para calcular a taxa.",
             _COR_NEUTRO if taxa_poupanca is None else
             _COR_RECEITA if taxa_poupanca >= 30 else

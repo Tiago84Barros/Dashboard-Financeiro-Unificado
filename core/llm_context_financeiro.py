@@ -110,7 +110,8 @@ def build_financas_chat_context(
 
     _ind = indicadores_caixa(receitas, despesas, float(investido_mes or 0))
     saldo = round(_ind["saldo"], 2)
-    taxa_poupanca = round(_ind["poupanca_pct"] or 0.0, 1)
+    taxa_poupanca = round(_ind["poupanca_alocada_pct"] or 0.0, 1)
+    taxa_nao_consumida = round(_ind["poupanca_pct"] or 0.0, 1)
     comprometido = round(_ind["comprometido_pct"] or 0.0, 1)
 
     # ── Essencial vs não essencial (mês selecionado) ─────────────────────────
@@ -158,6 +159,8 @@ def build_financas_chat_context(
         "investido_mes": round(float(investido_mes or 0), 2),
         "saldo_mes": saldo,
         "taxa_poupanca_pct": taxa_poupanca,
+        "taxa_renda_nao_consumida_pct": taxa_nao_consumida,
+        "poupanca_no_teto": _ind["poupanca_no_teto"],
         "renda_comprometida_pct": comprometido,
         "categorias_mes": cats_mes,
         "categorias_anual": cats_anual,
@@ -188,6 +191,12 @@ def build_financas_chat_context(
     L.append(f"  Saldo do mês (Receitas − Despesas): {_brl(saldo)}")
     L.append(f"  Renda comprometida (Despesas / Receitas): {_pct(comprometido)}")
     L.append(f"  Taxa de poupança: {_pct(taxa_poupanca)} (meta de referência: 30%)")
+    L.append("    Definição: (Saldo do mês + aportes) / Receitas, com teto na própria "
+             "renda — o aporte pode vir de caixa guardado em meses anteriores, e o teto "
+             "impede que dinheiro de fora do mês passe de 100%."
+             + (" O teto está ativo neste mês." if _ind["poupanca_no_teto"] else ""))
+    L.append(f"    Só a renda não consumida (Saldo / Receitas), sem os aportes: "
+             f"{_pct(taxa_nao_consumida)}")
     L.append("  Aporte em investimento é alocação da sobra, não despesa: não entra "
              "no saldo nem na renda comprometida. Só há déficit quando as despesas "
              "superam as receitas.")

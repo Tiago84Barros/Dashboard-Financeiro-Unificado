@@ -56,9 +56,12 @@ def test_kpi_grid_uses_deterministic_financial_inputs(monkeypatch):
     assert "R$ 688.080,92" not in html
     assert "Valor de mercado consolidado · 33 ativos" in html
     # Saldo = receitas - despesas; o aporte de 2.000 é alocação da sobra e não
-    # entra como saída (por isso 5.000, e poupança de 50%).
+    # entra como saída (por isso 5.000). A taxa de poupança exibida soma o aporte
+    # à sobra: (5.000 + 2.000) / 10.000 = 70%, abaixo do teto da renda.
     assert "R$ 5.000,00" in html
-    assert "50,00%" in html
+    assert "70,00%" in html
+    assert "Sobra do mês + aportes" in html
+    assert "no teto da renda" not in html
     assert "+7.25%" in html
     assert "atingida" in html
 
