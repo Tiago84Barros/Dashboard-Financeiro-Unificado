@@ -54,7 +54,8 @@ import logging
 from collections import defaultdict
 
 from core.config import settings
-from core.currency_returns import retorno_moeda_origem
+from core.currency_returns import retorno_em_brl, retorno_moeda_origem
+from core.fx_aquisicao import cambio_medio_de_aquisicao, taxa_para
 from core.market_freshness import classificar_cotacao, intervalo_referencia
 from core.user_context import user_cache_data
 
@@ -432,12 +433,28 @@ def _get_usd_brl_live() -> float | None:
     return None
 
 
-def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
+def _sem_cambio_historico(posicoes: list) -> list[str]:
+    """Tickers cujo retorno em BRL é desconhecido, na ordem em que aparecem.
+
+    A lista existe para que o aviso da tela nomeie as posições em vez de
+    afirmar genericamente que "falta câmbio". Texto de limitação que não
+    deriva da medição continua soando verdadeiro depois que a causa some.
+    """
+    return [str(p.get("ticker") or "?") for p in posicoes
+            if p.get("retorno_brl_disponivel") is False]
+
+
+def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list,
+                                  fx_compra: dict | None = None) -> None:
     """Acrescenta posições USD fora do snapshot XP (ETFs Nomad) ao dict de carteira.
 
     Somente ativos com currency='USD' chegam aqui (filtro no SQL).
-    Converte USD→BRL usando: taxa do asset_quotes (USDBRL) ou yfinance como fallback.
-    Recalcula totais e pct_carteira ao final.
+
+    O **valor de mercado** usa o câmbio de hoje; o **custo** usa o câmbio da
+    data de cada compra, vindo de ``fx_compra`` (ver core.fx_aquisicao). São
+    taxas diferentes de propósito: é essa diferença que faz o retorno em BRL
+    existir. Sem ``fx_compra`` para o ticker, o custo volta a ser estimado pelo
+    câmbio de hoje e a posição declara que seu retorno em BRL é desconhecido.
     """
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
@@ -481,10 +498,13 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
             else "custo_fallback"
         )
 
-        # Converte tudo para BRL
+        # Converte tudo para BRL. O custo tem taxa própria: a da aquisição.
         custo_usd = ti_raw if ti_raw > 0 else pm_raw * qty
-        pm       = pm_raw  * fx_rate
-        ti       = custo_usd * fx_rate
+        taxa_aquisicao = taxa_para(fx_compra or {}, ticker)
+        custo_historico = taxa_aquisicao is not None
+        taxa_custo = taxa_aquisicao if custo_historico else fx_rate
+        pm       = pm_raw  * taxa_custo
+        ti       = custo_usd * taxa_custo
         pr_atual = pr_raw  * fx_rate
 
         if ti <= 0:
@@ -494,6 +514,8 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
         valor_atual_usd = qty * pr_raw
         retorno_local = retorno_moeda_origem(valor_atual_usd, custo_usd)
         rentab = round(retorno_local * 100, 2) if retorno_local is not None else None
+        retorno_brl = retorno_em_brl(valor_atual_usd, custo_usd, fx_rate,
+                                     taxa_custo if custo_historico else None)
         classe_raw = "etf_intl"
 
         novas.append({
@@ -510,9 +532,10 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
             "total_investido_moeda_original": round(custo_usd, 2),
             "preco_atual_moeda_original": round(pr_raw, 6),
             "fx_rate_atual": fx_rate,
-            "fx_rate_compra": None,
-            "custo_estimado":  True,
-            "custo_fonte":     "cambio_atual_estimado",
+            "fx_rate_compra": taxa_aquisicao,
+            "custo_estimado":  not custo_historico,
+            "custo_fonte":     ("cambio_historico_compras" if custo_historico
+                                else "cambio_atual_estimado"),
             "cotacao_fonte":   cotacao_fonte,
             "cotacao_timestamp": cotacao_ts,
             "data_referencia": cotacao_ts,
@@ -521,8 +544,9 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
             "diferenca_reais": round(vm - ti, 2),
             "rentab_pct":      rentab,
             "rentab_moeda":    ccy,
-            "rentab_brl_pct":  None,
-            "retorno_brl_disponivel": False,
+            "rentab_brl_pct":  (round(retorno_brl * 100, 2)
+                                if retorno_brl is not None else None),
+            "retorno_brl_disponivel": retorno_brl is not None,
             "pct_carteira":    0.0,
             "cor":             _CLASS_COR.get(classe_raw, "#4A9EFF"),
         })
@@ -545,9 +569,9 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list) -> None:
     carteira["rentabilidade_total_pct"] = round(
         (vm_total - ti_total) / ti_total * 100, 2
     ) if ti_total > 0 else 0.0
-    carteira["rentabilidade_total_disponivel"] = not any(
-        p.get("retorno_brl_disponivel") is False for p in carteira["posicoes"]
-    )
+    sem_cambio = _sem_cambio_historico(carteira["posicoes"])
+    carteira["posicoes_sem_cambio_historico"] = sem_cambio
+    carteira["rentabilidade_total_disponivel"] = not sem_cambio
     carteira["n_cotacoes_live"] = sum(
         1 for p in carteira["posicoes"] if p.get("cotacao_fonte") == "live"
     )
@@ -609,6 +633,7 @@ def _carteira_real() -> dict:
             rows = conn.execute(text(_SQL_POSICOES_SNAPSHOT), {"uid": owner}).fetchall()
             if rows:
                 tx_costs = _calcular_custos_transacoes(conn, owner)
+                fx_compra = cambio_medio_de_aquisicao(conn, owner)
                 carteira = _montar_carteira_snapshot(rows, tx_costs)
                 # Adiciona posições que existem em portfolio_positions mas NÃO
                 # no snapshot XP (ex: ETFs Nomad — SPY, IEFA — importados via PDF).
@@ -616,9 +641,10 @@ def _carteira_real() -> dict:
                     text(_SQL_POSICOES_EXTRAS_FORA_SNAPSHOT), {"uid": owner}
                 ).fetchall()
                 if extra_rows:
-                    _adicionar_extras_ao_snapshot(carteira, extra_rows)
+                    _adicionar_extras_ao_snapshot(carteira, extra_rows, fx_compra)
                 return carteira
         rows = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
+        fx_compra = cambio_medio_de_aquisicao(conn, owner)
 
     if not rows:
         raise RuntimeError(
@@ -657,10 +683,13 @@ def _carteira_real() -> dict:
                 f"{r.ticker}: posição USD sem USD/BRL válido, excluída da avaliação consolidada."
             )
             continue
+        # Custo converte pelo câmbio da compra; mercado, pelo de hoje.
+        taxa_aquisicao = (taxa_para(fx_compra, r.ticker) if ccy == "USD" else None)
         if ccy == "USD":
             preco_atual *= fx_rate
-            pm *= fx_rate
-            ti *= fx_rate
+            taxa_custo = taxa_aquisicao if taxa_aquisicao is not None else fx_rate
+            pm *= taxa_custo
+            ti *= taxa_custo
 
         vm     = round(qty * preco_atual, 2)
         if ccy == "USD":
@@ -668,8 +697,13 @@ def _carteira_real() -> dict:
                 qty * preco_atual_original, total_investido_original
             )
             rentab = round(retorno_local * 100, 2) if retorno_local is not None else None
-            rentab_brl = None
-            retorno_brl_disponivel = False
+            retorno_brl = retorno_em_brl(
+                qty * preco_atual_original, total_investido_original,
+                fx_rate, taxa_aquisicao,
+            )
+            rentab_brl = (round(retorno_brl * 100, 2)
+                          if retorno_brl is not None else None)
+            retorno_brl_disponivel = retorno_brl is not None
         else:
             rentab = round((vm - ti) / ti * 100, 2) if ti > 0 else None
             rentab_brl = rentab
@@ -711,7 +745,7 @@ def _carteira_real() -> dict:
             "total_investido_moeda_original": total_investido_original,
             "preco_atual_moeda_original": preco_atual_original,
             "fx_rate_atual": fx_rate if ccy == "USD" else None,
-            "fx_rate_compra": None,
+            "fx_rate_compra": taxa_aquisicao,
             "pct_carteira":      0.0,
             "cor":               _CLASS_COR.get(classe_raw, "#718096"),
         })
@@ -740,9 +774,8 @@ def _carteira_real() -> dict:
         "total_mercado":           round(total_mercado, 2),
         "diferenca_reais":         diferenca_total,
         "rentabilidade_total_pct": rentabilidade_total,
-        "rentabilidade_total_disponivel": not any(
-            p.get("retorno_brl_disponivel") is False for p in posicoes
-        ),
+        "rentabilidade_total_disponivel": not _sem_cambio_historico(posicoes),
+        "posicoes_sem_cambio_historico": _sem_cambio_historico(posicoes),
         "num_ativos":              len(posicoes),
         "cotacoes_disponiveis":    cotacoes_disponiveis,
         "n_cotacoes_live":         n_live,

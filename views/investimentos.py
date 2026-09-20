@@ -305,7 +305,10 @@ def _estado_carteira(carteira: dict, n_efetivo: float, pct_ext: float) -> list:
             "titulo": "DADO INSUFICIENTE",
             "texto": (
                 "Retorno consolidado em BRL indisponível: falta o câmbio histórico "
-                "de aquisição de ao menos uma posição internacional."
+                "de aquisição de " + (
+                    ", ".join(carteira.get("posicoes_sem_cambio_historico") or [])
+                    or "ao menos uma posição internacional"
+                ) + "."
             ),
         })
     elif rentab > 0:
@@ -2940,7 +2943,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 "Retorno Mercado/Custo",
                 f"{seta_r} {abs(rentab):.1f}%" if _rent_total_ok else "Indisponível em BRL",
                 ("Não inclui proventos nem ajusta aportes/resgates" if _rent_total_ok else
-                 "Falta câmbio histórico de aquisição em posição USD"),
+                 "Falta câmbio histórico de aquisição: " + (
+                     ", ".join(carteira.get("posicoes_sem_cambio_historico") or [])
+                     or "posição USD")),
                 cor_r if _rent_total_ok else _COR_NEUTRO,
             ),
                         unsafe_allow_html=True)
@@ -3466,7 +3471,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     "Retorno em BRL",
                     f"{seta_ext} {abs(rentab_ext):.2f}%" if rentab_ext_disponivel else "Indisponível",
                     ("Mercado − custo histórico / custo" if rentab_ext_disponivel else
-                     "Falta câmbio histórico de aquisição"),
+                     "Falta câmbio histórico de aquisição: " + ", ".join(
+                         p["ticker"] for p in ext_pos
+                         if p.get("retorno_brl_disponivel") is False)),
                     cor_rent_ext if rentab_ext_disponivel else _COR_NEUTRO,
                 ), unsafe_allow_html=True)
             with c4:
