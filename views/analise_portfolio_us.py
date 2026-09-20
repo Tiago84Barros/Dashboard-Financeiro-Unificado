@@ -65,6 +65,7 @@ from core.us_macro import (
     evaluate_macro,
 )
 from core.us_portfolio_model import load_active_us_portfolio_model
+from core.utils import escapar_cifrao
 from design.market_companies import render_company_logo
 
 # CSS compartilhado com a aba B3: o visual das duas telas é o mesmo contrato,
@@ -989,7 +990,7 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
     historico = load_chat_history(_memory_key, session_key=_CHAT)
     for msg in visible_chat_history(historico, _CHAT):
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            st.markdown(escapar_cifrao(msg["content"]))
 
     pergunta = st.chat_input("Pergunte sobre o portfólio…", key="apus_chat_input")
     if not pergunta:
@@ -997,7 +998,7 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
 
     historico.append({"role": "user", "content": pergunta})
     with st.chat_message("user"):
-        st.markdown(pergunta)
+        st.markdown(escapar_cifrao(pergunta))
 
     with st.chat_message("assistant"):
         with st.spinner("Consultando carteira, universo americano e indústrias…"):
@@ -1015,7 +1016,7 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
                 resposta = chat_com_portfolio(contexto, historico[:-1], pergunta)
             except Exception as exc:  # noqa: BLE001
                 resposta = f"Erro ao consultar LLM: {exc}"
-        st.markdown(resposta)
+        st.markdown(escapar_cifrao(resposta))
 
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(_memory_key, historico, session_key=_CHAT)

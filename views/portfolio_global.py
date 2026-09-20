@@ -50,6 +50,7 @@ from core.portfolio.repository import (
     save_allocation_targets,
 )
 from core.rebalancing import CalendarRebalance
+from core.utils import escapar_cifrao
 from design.componentes import card_metrica
 from design.market_companies import render_company_logo
 from design.portfolio_global_cards import card_papel_html, card_recomendacao_html
@@ -1359,7 +1360,7 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
     historico = load_chat_history(_memory_key, session_key=_CHAVE_CHAT)
     for mensagem in visible_chat_history(historico, _CHAVE_CHAT):
         with st.chat_message(mensagem["role"]):
-            st.markdown(mensagem["content"])
+            st.markdown(escapar_cifrao(mensagem["content"]))
 
     pergunta = st.chat_input(
         "Pergunte sobre a alocação, o risco ou as recomendações…",
@@ -1370,7 +1371,7 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
 
     historico.append({"role": "user", "content": pergunta})
     with st.chat_message("user"):
-        st.markdown(pergunta)
+        st.markdown(escapar_cifrao(pergunta))
 
     with st.chat_message("assistant"):
         with st.spinner("Consultando os dados do patrimônio consolidado…"):
@@ -1383,7 +1384,7 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
             except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
                 logger.exception("Falha no chat do portfolio global")
                 resposta = f"Erro ao consultar a LLM: {exc}"
-        st.markdown(resposta)
+        st.markdown(escapar_cifrao(resposta))
 
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(_memory_key, historico, session_key=_CHAVE_CHAT)

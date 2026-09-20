@@ -3,6 +3,7 @@ core/utils.py
 Formatadores e helpers de apresentação reutilizados por páginas e componentes.
 Sem dependências de Streamlit — testável de forma isolada.
 """
+import re as _re
 
 
 def fmt_moeda(valor: float, simbolo: str = "R$", casas: int = 2) -> str:
@@ -72,3 +73,41 @@ def delta_str(valor_atual: float, valor_anterior: float, fmt: str = "percentual"
     else:
         texto = fmt_moeda(diff)
     return texto, positivo
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cifrão em texto livre de chat
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TRECHO_CODIGO = _re.compile(r"```.*?```|``.+?``|`[^`\n]+`", _re.DOTALL)
+
+
+def escapar_cifrao(texto: str) -> str:
+    """Impede que ``R$ 1.000,00 ... R$ 23,92`` vire fórmula LaTeX na tela.
+
+    O ``st.markdown`` do Streamlit entrega ``$...$`` ao KaTeX. Num app em reais
+    isso não é caso de borda: qualquer resposta que cite dois valores fecha um
+    par de delimitadores, e o trecho entre eles — o valor, o nome do papel, o
+    que estiver ali — desaparece do texto e reaparece como matemática. O
+    sintoma não parece erro de renderização; parece a LLM tendo escrito outra
+    coisa.
+
+    Escapa só fora de código: dentro de crase o cifrão é literal para o
+    Markdown e nunca chegou ao KaTeX, então acrescentar a barra ali seria
+    inventar um caractere que o usuário veria na tela.
+
+    ``$`` já escapado fica como está — escapar duas vezes imprime a barra.
+    """
+    if not texto:
+        return texto or ""
+
+    def _fora(trecho: str) -> str:
+        return _re.sub(r"(?<!\\)\$", r"\\$", trecho)
+
+    saida, fim = [], 0
+    for achado in _TRECHO_CODIGO.finditer(texto):
+        saida.append(_fora(texto[fim:achado.start()]))
+        saida.append(achado.group(0))
+        fim = achado.end()
+    saida.append(_fora(texto[fim:]))
+    return "".join(saida)
