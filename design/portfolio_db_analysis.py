@@ -221,3 +221,22 @@ def carregar_macro() -> dict:
     from core.portfolio_db_analysis import analise_tesouro_db
 
     return analise_tesouro_db()
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def carregar_documentos(classe: str, chaves: tuple) -> dict:
+    """Evidência documental da classe (CVM/IPE ou notícias), cacheada.
+
+    Meia hora de TTL: é leitura de acervo já publicado, e o dossiê pode ser
+    gerado várias vezes seguidas enquanto o usuário refaz a pergunta.
+    """
+    from core.carteira_documentos import documentos_da_classe
+
+    engine = None
+    try:
+        from core.database import get_engine
+
+        engine = get_engine()
+    except Exception:  # noqa: BLE001 - ausência vira erro declarado lá dentro
+        engine = None
+    return documentos_da_classe(classe, chaves, engine=engine)

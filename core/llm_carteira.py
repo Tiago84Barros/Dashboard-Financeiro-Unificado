@@ -30,18 +30,32 @@ _ESCOPOS = {
 }
 
 
-def chat_com_carteira(context: str, history: Iterable[dict], user_message: str,
-                      *, classe: str, model: str | None = None) -> str:
-    """Responde sobre uma classe da carteira usando só o contexto auditável."""
-    escopo = _ESCOPOS.get(str(classe or "").lower(), _ESCOPOS["acoes"])
-    system = (
-        "Você é um analista quantitativo sênior conversando com o dono desta "
-        f"carteira sobre {escopo} Responda em português do Brasil.\n\n"
+def escopo_da_classe(classe: str) -> str:
+    """O parágrafo de escopo da classe — fonte única para chat e dossiê."""
+    return _ESCOPOS.get(str(classe or "").lower(), _ESCOPOS["acoes"])
+
+
+def regras_da_analise() -> str:
+    """As regras que valem em TODA a aba Análise — chat e dossiê.
+
+    A regra 7 já foi o oposto do que é hoje: proibia recomendação personalizada
+    de compra, venda, alocação e preço-alvo. O dono da carteira pediu a
+    recomendação de volta, e ela voltou presa: tem que citar o que no contexto
+    a sustenta e o que falta de dado. Recomendação sem lastro declarado é pior
+    que recomendação nenhuma, porque parece igual.
+
+    Uma função só, lida pelos dois chamadores, porque guarda duplicada diverge
+    — e divergir aqui significa o chat permitir o que o dossiê proíbe na mesma
+    aba, sem que nada quebre.
+    """
+    return (
         "REGRAS OBRIGATÓRIAS:\n"
         "1. Use como fatos somente o que está no CONTEXTO DA CLASSE. Não invente "
         "cotação, múltiplo, dividendo, vencimento, nota, evento ou notícia.\n"
-        "2. O contexto traz PESOS percentuais, não valores em reais. Nunca "
-        "estime, peça ou deduza o patrimônio do usuário.\n"
+        "2. Trabalhe com os pesos percentuais. Valores em reais só existem se o "
+        "contexto os trouxer; quando não trouxer, não estime, não peça e não "
+        "deduza o patrimônio do usuário. Mesmo quando trouxer, ele cobre apenas "
+        "esta classe — nunca fale do patrimônio total.\n"
         "3. Separe explicitamente fato observado, comparação quantitativa e "
         "inferência sua.\n"
         "4. Toda média vem com cobertura. Se a cobertura for parcial, diga isso "
@@ -49,10 +63,25 @@ def chat_com_carteira(context: str, history: Iterable[dict], user_message: str,
         "5. Ausência de dado não é zero, não é neutro e não é risco baixo. "
         "Ativo sem nota no universo não é ativo mediano.\n"
         "6. Concentração, correlação e desempenho passado não são previsão.\n"
-        "7. Não emita recomendação personalizada de compra, venda ou alocação, "
-        "nem preço-alvo. A saída é apoio à análise, e o usuário decide.\n"
+        "7. Recomendação de compra, venda, peso ou substituição é permitida e "
+        "esperada, sob três condições, todas obrigatórias: cite o que no "
+        "contexto a sustenta; diga o que falta de dado e como isso mudaria a "
+        "conclusão; e deixe claro que a decisão é do usuário. Recomendação sem "
+        "o lastro citado é proibida. Preço-alvo só se o contexto trouxer a base "
+        "para calculá-lo — caso contrário, diga que não há base.\n"
         "8. Se a pergunta não puder ser respondida com o contexto, diga qual "
-        "dado falta e como ele mudaria a conclusão.\n\n"
+        "dado falta e como ele mudaria a conclusão."
+    )
+
+
+def chat_com_carteira(context: str, history: Iterable[dict], user_message: str,
+                      *, classe: str, model: str | None = None) -> str:
+    """Responde sobre uma classe da carteira usando só o contexto auditável."""
+    system = (
+        "Você é um analista quantitativo sênior conversando com o dono desta "
+        f"carteira sobre {escopo_da_classe(classe)} Responda em português do "
+        "Brasil.\n\n"
+        f"{regras_da_analise()}\n\n"
         "FORMATO: responda diretamente à pergunta. Quando útil, use as seções "
         "**Resposta objetiva**, **Evidências**, **Riscos e contrapontos** e "
         "**Dados ausentes**. Evite texto genérico de manual.\n\n"

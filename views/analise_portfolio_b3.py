@@ -1326,7 +1326,7 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
     if user_input:
         history.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
-            st.markdown(user_input)
+            st.markdown(escapar_cifrao(user_input))
 
         with st.chat_message("assistant"):
             chart_directives: list[dict] = []

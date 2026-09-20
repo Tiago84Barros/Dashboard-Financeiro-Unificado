@@ -21,6 +21,7 @@ from core.chat_memory import (
 )
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_carteira import chat_com_carteira
+from core.llm_dossie_carteira import gerar_dossie_classe
 from core.utils import escapar_cifrao
 
 _PROVEDOR_LABEL = {"openai": "OpenAI", "gemini": "Gemini", "openrouter": "OpenRouter"}
@@ -58,6 +59,17 @@ _PLACEHOLDER = {
 _TITULO = {"acoes": "suas ações", "fiis": "seus FIIs",
            "tesouro": "seu Tesouro Direto", "exterior": "sua posição no exterior"}
 
+_DOSSIE_LABEL = {
+    "acoes": "Concentração setorial, comparação com pares da B3, substituições "
+             "e plano de aporte.",
+    "fiis": "Concentração por tipo e segmento, comparação com pares do mesmo "
+            "tipo, substituições e plano de aporte.",
+    "tesouro": "Concentração por indexador e vencimento, prazo contra objetivo, "
+               "juro real e a escolha do próximo aporte.",
+    "exterior": "Concentração setorial e cambial, comparação com pares do "
+                "universo americano e plano de aporte.",
+}
+
 
 def _card_html(titulo: str, texto: str, accent: str) -> str:
     """Card CSS em UM único bloco — moldura e conteúdo nunca se separam."""
@@ -77,7 +89,7 @@ def render_chat_carteira(
     *,
     classe: str,
     tickers: Sequence[str],
-    build_context: Callable[[str], str],
+    build_context: Callable[..., str],
     sugestoes: Sequence[str] | None = None,
     # Roxo escurecido: sem token, ficava fixo, e #B084F6 rende 2,8:1
     # sobre a pagina clara -- ilegivel. #9B51E0 fica legivel nos dois.
@@ -85,8 +97,9 @@ def render_chat_carteira(
 ) -> None:
     """Desenha a barra de chat no fim de uma sub-aba da Análise do Portfólio.
 
-    ``build_context`` recebe a pergunta e devolve o contexto auditável; só é
-    chamado quando existe pergunta, para não pagar o custo a cada rerun.
+    ``build_context`` recebe a pergunta e o sinalizador ``valores_reais`` e
+    devolve o contexto auditável; só é chamado quando existe pergunta ou quando
+    o dossiê é pedido, para não pagar o custo a cada rerun.
     """
     classe = str(classe or "acoes").lower()
     presentes = tuple(sorted({str(t or "").strip().upper() for t in (tickers or ()) if t}))
@@ -95,15 +108,6 @@ def render_chat_carteira(
 
     st.markdown("---")
     st.markdown(f"#### 💬 Converse sobre {_TITULO.get(classe, 'esta classe')}")
-    st.markdown(_card_html(
-        f"Chat focado em {len(presentes)} ativo(s) desta classe",
-        "A resposta usa apenas o que esta aba carregou: composição em percentual, "
-        "médias com a respectiva cobertura e as notas do universo do banco. "
-        "Valores em reais e quantidades não são enviados, e o que falta de dado "
-        "é declarado em vez de preenchido.",
-        accent,
-    ), unsafe_allow_html=True)
-
     if not llm_disponivel():
         st.info("Nenhum provedor LLM configurado. Adicione OPENAI_API_KEY ou "
                 "GEMINI_API_KEY para conversar sobre esta classe.")
@@ -123,7 +127,32 @@ def render_chat_carteira(
         st.session_state.pop(hist_key, None)
     st.session_state[sig_key] = signature
 
-    _, col_limpar = st.columns([5, 1])
+    # Reais são opt-in e ficam DESMARCADOS por padrão: o contexto trabalha com
+    # percentuais. Marcado, vai o valor de mercado por posição desta classe —
+    # nunca o patrimônio consolidado, nunca as outras classes.
+    valores_reais = st.checkbox(
+        "Enviar os valores em reais desta classe à LLM",
+        key=f"chat_carteira_{classe}_reais", value=False,
+        help="Desmarcado, a LLM vê só percentuais. Marcado, ela vê o valor de "
+             "mercado de cada posição desta classe — e só desta classe.")
+
+    st.markdown(_card_html(
+        f"Chat focado em {len(presentes)} ativo(s) desta classe",
+        "A resposta usa apenas o que esta aba carregou: composição em percentual, "
+        "médias com a respectiva cobertura e as notas do universo do banco. "
+        + ("Os valores em reais desta classe vão junto; o patrimônio total e as "
+           "outras classes não."
+           if valores_reais else
+           "Valores em reais e quantidades não são enviados.")
+        + " O que falta de dado é declarado em vez de preenchido.",
+        accent,
+    ), unsafe_allow_html=True)
+
+    col_dossie, _, col_limpar = st.columns([2, 3, 1])
+    with col_dossie:
+        gerar = st.button("📑 Gerar dossiê da classe",
+                          key=f"chat_carteira_{classe}_dossie", width="stretch",
+                          help=_DOSSIE_LABEL.get(classe, ""))
     with col_limpar:
         if st.button("🗑️ Limpar chat", key=f"chat_carteira_{classe}_clear",
                      width="stretch"):
@@ -145,6 +174,26 @@ def render_chat_carteira(
         with st.chat_message(mensagem["role"]):
             st.markdown(escapar_cifrao(mensagem["content"]))
 
+    if gerar:
+        pedido = "Gerar o dossiê completo desta classe."
+        historico.append({"role": "user", "content": pedido})
+        with st.chat_message("user"):
+            st.markdown(pedido)
+        with st.chat_message("assistant"):
+            with st.spinner("Montando o dossiê — concentração, pares, "
+                            "substituições, tributação e plano de aporte…"):
+                try:
+                    contexto = build_context(pedido, valores_reais=valores_reais)
+                    resposta = gerar_dossie_classe(contexto, classe=classe)
+                except Exception as exc:  # provedor fora do ar, timeout, dado ausente
+                    resposta = f"Não foi possível gerar o dossiê agora: {exc}"
+            st.markdown(escapar_cifrao(resposta))
+            st.caption("Análise educacional baseada nos dados carregados nesta "
+                       "aba. A decisão é sua.")
+        historico.append({"role": "assistant", "content": resposta})
+        save_chat_history(memory_key, historico, session_key=hist_key)
+        return
+
     digitada = st.chat_input(
         _PLACEHOLDER.get(classe, _PLACEHOLDER["acoes"]),
         key=f"chat_carteira_{classe}_input",
@@ -159,13 +208,13 @@ def render_chat_carteira(
     with st.chat_message("assistant"):
         with st.spinner("Consultando composição, médias e universo do banco…"):
             try:
-                contexto = build_context(pergunta)
+                contexto = build_context(pergunta, valores_reais=valores_reais)
                 resposta = chat_com_carteira(contexto, historico[:-1], pergunta,
                                              classe=classe)
             except Exception as exc:  # provedor fora do ar, timeout, dado ausente
                 resposta = f"Não foi possível consultar a LLM neste momento: {exc}"
         st.markdown(escapar_cifrao(resposta))
-        st.caption("Análise educacional baseada nos dados disponíveis; "
-                   "não constitui recomendação de compra ou venda.")
+        st.caption("Análise educacional baseada nos dados carregados nesta "
+                   "aba. A decisão é sua.")
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(memory_key, historico, session_key=hist_key)

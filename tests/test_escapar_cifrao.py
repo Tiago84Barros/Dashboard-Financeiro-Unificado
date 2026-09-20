@@ -28,10 +28,12 @@ _TELAS_COM_CHAT = (
     "views/analise_portfolio_b3.py",
     "views/controle_financeiro.py",
     "views/portfolio_global.py",
+    "views/fiis.py",
 )
 
 # Nomes cujo conteúdo é texto livre — do usuário ou da LLM — e não HTML nosso.
-_TEXTO_LIVRE = {"resposta", "pergunta", "content"}
+_TEXTO_LIVRE = {"resposta", "pergunta", "content", "answer",
+                "user_input", "texto"}
 
 
 # ── comportamento ────────────────────────────────────────────────────────────

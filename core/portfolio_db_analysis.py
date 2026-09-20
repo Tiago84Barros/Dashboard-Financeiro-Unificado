@@ -33,6 +33,47 @@ def _percentil(valores, alvo) -> float | None:
     return sum(1 for v in validos if v < alvo) / len(validos)
 
 
+def _pares_do_universo(candidatos, *, carregados, grupos,
+                       por_grupo: int = 3, teto: int = 12) -> list[dict]:
+    """Melhores ativos do universo que o usuário NÃO tem, no mesmo grupo.
+
+    O universo inteiro já foi pontuado para responder pelos ativos da carteira
+    — os demais eram descartados. Aproveitá-los aqui não custa consulta
+    nenhuma.
+
+    ``grupos`` são os setores (ações, exterior) ou tipos (FII) dos ativos que o
+    usuário já tem: a comparação só é honesta dentro do grupo, porque trocar
+    uma elétrica por um banco muda a exposição em vez de melhorar a qualidade.
+    O teto por grupo existe para que um setor com 80 empresas não expulse os
+    outros do contexto.
+
+    Determinismo: desempate por ticker. Ordenação parcial já produziu saídas
+    diferentes para a mesma entrada neste projeto.
+    """
+    alvo = {str(g or "").strip() for g in grupos if str(g or "").strip()}
+    if not alvo:
+        return []
+    tidos = {str(t or "").strip().upper() for t in carregados}
+    elegiveis = [
+        c for c in candidatos
+        if str(c.get("ticker") or "").upper() not in tidos
+        and str(c.get("grupo") or "").strip() in alvo
+        and _float(c.get("score")) is not None
+    ]
+    elegiveis.sort(key=lambda c: (-(_float(c.get("score")) or 0.0), c["ticker"]))
+    vistos: dict[str, int] = {}
+    saida: list[dict] = []
+    for c in elegiveis:
+        grupo = str(c.get("grupo") or "").strip()
+        if vistos.get(grupo, 0) >= por_grupo:
+            continue
+        vistos[grupo] = vistos.get(grupo, 0) + 1
+        saida.append(c)
+        if len(saida) >= teto:
+            break
+    return saida
+
+
 def _float(value):
     try:
         value = float(value)
@@ -69,7 +110,8 @@ def analise_acoes_db(tickers) -> dict:
     comparáveis entre si.
     """
     alvos = _limpa_tickers(tickers)
-    saida = {"linhas": [], "universo": 0, "ausentes": alvos, "erro": None,
+    saida = {"linhas": [], "universo": 0, "ausentes": alvos, "pares": [],
+             "erro": None,
              "fonte": "public.multiplos + public.setores (Supabase)",
              "referencia": "universo B3"}
     if not alvos:
@@ -145,10 +187,21 @@ def analise_acoes_db(tickers) -> dict:
                 "trilhas": trilhas,
             })
         linhas.sort(key=lambda r: (r["score"] is None, -(r["score"] or 0), r["ticker"]))
+        candidatos = [
+            {"ticker": str(r.get("Ticker") or "").upper(),
+             "nome": str(r.get("nome_empresa") or "") or None,
+             "score": _float(r.get("score")),
+             "grupo": str(r.get("SETOR") or "").strip() or None,
+             "cobertura": _float(r.get("coverage"))}
+            for r in scored.to_dict("records")
+        ]
         saida.update({"linhas": linhas, "universo": int(len(scored)),
                       "ausentes": ausentes,
                       "referencia": f"universo B3 · {len(scored)} empresas",
-                      "crescimento_apurado": crescimento_apurado})
+                      "crescimento_apurado": crescimento_apurado,
+                      "pares": _pares_do_universo(
+                          candidatos, carregados=alvos,
+                          grupos=[x.get("setor") for x in linhas])})
         return saida
     except Exception:
         saida["erro"] = _SEM_BANCO
@@ -158,7 +211,8 @@ def analise_acoes_db(tickers) -> dict:
 def analise_fiis_db(tickers) -> dict:
     """Nota por tipo de FII, confiança e status de publicação — motor de Seleção de FIIs."""
     alvos = _limpa_tickers(tickers)
-    saida = {"linhas": [], "universo": 0, "ausentes": alvos, "erro": None,
+    saida = {"linhas": [], "universo": 0, "ausentes": alvos, "pares": [],
+             "erro": None,
              "fonte": "market.fii_selection_inputs (snapshot auditável)",
              "referencia": "pares do mesmo tipo"}
     if not alvos:
@@ -213,10 +267,22 @@ def analise_fiis_db(tickers) -> dict:
                 "pares_tipo": len(notas_por_tipo.get(tipo, [])),
             })
         linhas.sort(key=lambda r: (r["score"] is None, -(r["score"] or 0), r["ticker"]))
+        candidatos = [
+            {"ticker": str(r.get("ticker") or "").upper(),
+             "nome": str(r.get("segmento") or "") or None,
+             "score": _float(r.get("type_score")),
+             "grupo": str(r.get("tipo") or "").strip() or None,
+             "cobertura": _float(r.get("coverage")),
+             "status_publicacao": str(r.get("publication_status") or "") or None}
+            for r in scored
+        ]
         saida.update({"linhas": linhas, "universo": len(scored), "ausentes": ausentes,
                       "referencia": f"{len(scored)} FIIs pontuados · "
                                     f"metodologia {METHODOLOGY_VERSION}",
-                      "validacao_aplicavel": aplicavel})
+                      "validacao_aplicavel": aplicavel,
+                      "pares": _pares_do_universo(
+                          candidatos, carregados=alvos,
+                          grupos=[x.get("tipo") for x in linhas])})
         return saida
     except Exception:
         saida["erro"] = _SEM_BANCO
@@ -232,7 +298,8 @@ def analise_exterior_db(symbols) -> dict:
     exibir cobertura baixa sem explicação.
     """
     alvos = _limpa_tickers(symbols)
-    saida = {"linhas": [], "universo": 0, "ausentes": alvos, "erro": None,
+    saida = {"linhas": [], "universo": 0, "ausentes": alvos, "pares": [],
+             "erro": None,
              "fundamentos": {}, "fonte": "market_us (vitrine de scores)",
              "referencia": "universo de ações dos EUA"}
     if not alvos:
@@ -284,9 +351,20 @@ def analise_exterior_db(symbols) -> dict:
                 if coluna not in ("symbol", "score", "coverage")
             }
         linhas.sort(key=lambda r: (r["score"] is None, -(r["score"] or 0), r["ticker"]))
+        candidatos = [
+            {"ticker": str(r.get("symbol") or "").upper(),
+             "nome": str(r.get("company_name") or r.get("name") or "") or None,
+             "score": _float(r.get("score")),
+             "grupo": str(r.get("sector") or "").strip() or None,
+             "cobertura": _float(r.get("coverage"))}
+            for r in universo.to_dict("records")
+        ]
         saida.update({"linhas": linhas, "universo": int(len(universo)),
                       "ausentes": ausentes, "fundamentos": fundamentos,
-                      "referencia": f"universo de ações dos EUA · {len(universo)} empresas"})
+                      "referencia": f"universo de ações dos EUA · {len(universo)} empresas",
+                      "pares": _pares_do_universo(
+                          candidatos, carregados=alvos,
+                          grupos=[x.get("setor") for x in linhas])})
         return saida
     except Exception:
         saida["erro"] = _SEM_BANCO
