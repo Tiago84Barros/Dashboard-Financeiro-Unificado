@@ -1134,27 +1134,46 @@ def _render_import_generica(url_fonte: str) -> None:
 # Importação de Investimentos (B3 Negociação, B3 Movimentação, XP, Nomad)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
-    {
+# Os dois extratos da B3 não têm bloco próprio: eles entram pelo uploader
+# único "Dados Históricos B3", que descobre o tipo de cada arquivo pelo nome
+# da aba (data_pipeline/importers/investments/b3_sniffer.py). Os cfg seguem
+# aqui, com os mesmos campos dos demais, porque `_executar_importacao_
+# investimento` é compartilhada — e é ela que mantém `data_update_logs` e
+# `data_freshness_status` registrando as duas fontes separadamente.
+#
+# `skip_recompute` existe porque um lote pode trazer vários arquivos: o
+# recálculo da carteira roda uma vez no fim, não uma vez por arquivo.
+_B3_JOBS: dict[str, dict[str, str]] = {
+    "b3_neg": {
         "key":         "b3_neg",
-        "label":       "B3 — Negociação (.xlsx)",
-        "help":        "investidor.b3.com.br → Extratos e Informativos → Negociação",
+        "label":       "B3 — Negociação",
         "file_types":  "xlsx",
         "parser_attr": "parse_b3_negociacao",
         "job_name":    "import_b3_negociacao",
         "table_name":  "investment_transactions",
         "source_name": "B3 — Negociação (manual)",
+        "skip_recompute": True,
     },
-    {
+    "b3_mov": {
         "key":         "b3_mov",
-        "label":       "B3 — Movimentação (.xlsx)",
-        "help":        "investidor.b3.com.br → Extratos e Informativos → Movimentação",
+        "label":       "B3 — Movimentação",
         "file_types":  "xlsx",
         "parser_attr": "parse_b3_movimentacao",
         "job_name":    "import_b3_movimentacao",
         "table_name":  "dividends, investment_transactions",
         "source_name": "B3 — Movimentação (manual)",
+        "skip_recompute": True,
     },
+}
+
+# Ordem de execução do lote, independente da ordem em que os arquivos foram
+# soltos no uploader: Negociação é a fonte canônica das compras e vendas, e
+# ordem fixa garante que o mesmo conjunto de arquivos produza sempre o mesmo
+# resultado.
+_B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov")
+
+
+_INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
     {
         "key":         "xp_csl",
         "label":       "XP — Relatório Consolidado (.xlsx)",
@@ -1221,6 +1240,9 @@ def _render_import_investimentos() -> None:
         icon="🔒",
     )
 
+    _render_import_b3()
+    st.markdown("")
+
     for cfg in _INVESTIMENTO_UPLOADS:
         _render_import_block(cfg)
         st.markdown("")  # respiro entre blocos
@@ -1278,6 +1300,202 @@ def _render_import_investimentos() -> None:
             else:
                 st.error(f"Falha: {rec.get('error', 'erro desconhecido')}")
 
+
+
+def planejar_lote_b3(
+    arquivos: list[tuple[str, bytes]],
+    detector=None,
+    listar_abas=None,
+) -> tuple[list[tuple[str, str, bytes]], list[tuple[str, list[str]]]]:
+    """Separa os arquivos da B3 por tipo detectado, em ordem canônica.
+
+    Devolve `(planejados, recusados)`:
+      * `planejados` — `[(chave, nome, bytes), …]` já ordenado por `_B3_ORDEM`,
+        preservando a ordem de upload dentro de cada tipo.
+      * `recusados`  — `[(nome, abas_encontradas), …]` para os arquivos sem
+        assinatura conhecida. Eles não chegam a nenhum parser.
+
+    Função pura (sem banco, sem Streamlit) justamente para que a ordem de
+    execução possa ser testada sem infraestrutura.
+    """
+    if detector is None or listar_abas is None:
+        from data_pipeline.importers.investments.b3_sniffer import (
+            detect,
+            sheet_names,
+        )
+        detector = detector or detect
+        listar_abas = listar_abas or sheet_names
+
+    por_tipo: dict[str, list[tuple[str, bytes]]] = {k: [] for k in _B3_ORDEM}
+    recusados: list[tuple[str, list[str]]] = []
+
+    for nome, dados in arquivos:
+        chave = detector(dados)
+        if chave in por_tipo:
+            por_tipo[chave].append((nome, dados))
+        else:
+            recusados.append((nome, listar_abas(dados)))
+
+    planejados = [
+        (chave, nome, dados)
+        for chave in _B3_ORDEM
+        for nome, dados in por_tipo[chave]
+    ]
+    return planejados, recusados
+
+
+def _consolidar_resultados_b3(resultados: list[tuple[str, str, dict]]) -> dict:
+    """Soma os resumos de um lote num único resumo, para exibição."""
+    contadores = (
+        "records_imported",
+        "transactions_imported",
+        "incomes_imported",
+        "positions_imported",
+        "duplicates_skipped",
+        "rows_skipped",
+    )
+    total: dict = {k: 0 for k in contadores}
+    total["errors"] = []
+    status_vistos: set[str] = set()
+
+    for _chave, nome, summary in resultados:
+        for k in contadores:
+            total[k] += int(summary.get(k, 0) or 0)
+        status_vistos.add(summary.get("status", "failed"))
+        for erro in (summary.get("errors") or []):
+            total["errors"].append(f"{nome}: {erro}")
+
+    if status_vistos <= {"success"}:
+        total["status"] = "success"
+    elif "success" in status_vistos or "partial_success" in status_vistos:
+        total["status"] = "partial_success"
+    else:
+        total["status"] = "failed"
+
+    total["source"] = "Dados Históricos B3"
+    return total
+
+
+def _executar_lote_b3(arquivos: list[tuple[str, bytes]]) -> dict:
+    """Detecta, importa em ordem fixa e recalcula a carteira uma única vez."""
+    from datetime import datetime
+
+    planejados, recusados = planejar_lote_b3(arquivos)
+
+    resultados: list[tuple[str, str, dict]] = []
+    for chave, nome, dados in planejados:
+        summary = _executar_importacao_investimento(_B3_JOBS[chave], dados)
+        resultados.append((chave, nome, summary))
+
+    consolidado = _consolidar_resultados_b3(resultados)
+    consolidado["_por_arquivo"] = [
+        (nome, _B3_JOBS[chave]["label"], summary)
+        for chave, nome, summary in resultados
+    ]
+    consolidado["_recusados"] = recusados
+    consolidado["_executed_at_local"] = datetime.now().strftime(
+        "%d/%m/%Y %H:%M:%S"
+    )
+
+    # Recálculo da carteira: uma vez por lote, e só se alguma operação entrou.
+    if consolidado["transactions_imported"] > 0 and settings.OWNER_USER_ID:
+        from core.database import get_engine
+        from data_pipeline.importers.investments.positions import (
+            recompute_for_user,
+        )
+        engine = get_engine()
+        if engine is not None:
+            consolidado["_positions_recompute"] = recompute_for_user(
+                engine, settings.OWNER_USER_ID
+            )
+
+    return consolidado
+
+
+def _render_import_b3() -> None:
+    """Uploader único dos extratos da B3 — o tipo sai do próprio arquivo."""
+    with st.container(border=True):
+        st.markdown("**📊 Dados Históricos B3 (.xlsx)**")
+        st.caption(
+            "investidor.b3.com.br → Extratos e Informativos → Negociação "
+            "**ou** Movimentação. Envie quantos arquivos quiser, dos dois "
+            "tipos misturados — o app identifica cada um pelo conteúdo."
+        )
+
+        col_up, col_btn = st.columns([3, 1])
+        with col_up:
+            uploaded = st.file_uploader(
+                "Arquivos",
+                type=["xlsx"],
+                key="_inv_upl_b3_unificado",
+                label_visibility="collapsed",
+                accept_multiple_files=True,
+            )
+        n_files = len(uploaded) if uploaded else 0
+
+        with col_btn:
+            btn_label = (
+                "Importar" if n_files <= 1 else f"Importar {n_files} arquivos"
+            )
+            run = st.button(
+                btn_label,
+                type="primary",
+                width="stretch",
+                key="_inv_btn_b3_unificado",
+                disabled=n_files == 0,
+            )
+
+        result_key = "_inv_result_b3_unificado"
+        if run and n_files:
+            payload = [(f.name, f.getvalue()) for f in uploaded]
+            spinner_msg = (
+                f"Importando {n_files} arquivos da B3…"
+                if n_files > 1 else "Importando arquivo da B3…"
+            )
+            with st.spinner(spinner_msg):
+                st.session_state[result_key] = _executar_lote_b3(payload)
+            if st.session_state[result_key].get("status") in (
+                "success", "partial_success"
+            ):
+                st.cache_data.clear()
+
+        if st.session_state.get(result_key):
+            _render_resultado_lote_b3(st.session_state[result_key])
+
+
+def _render_resultado_lote_b3(consolidado: dict) -> None:
+    """Resumo do lote: recusados, totais e detalhe por arquivo."""
+    recusados = consolidado.get("_recusados") or []
+    por_arquivo = consolidado.get("_por_arquivo") or []
+
+    if recusados:
+        st.markdown("")
+        st.warning(
+            f"⚠️ {len(recusados)} arquivo(s) não reconhecido(s) — nenhum dado "
+            "deles foi gravado."
+        )
+        for nome, abas in recusados:
+            detalhe = ", ".join(abas) if abas else "não foi possível abrir"
+            st.caption(f"• **{nome}** — abas encontradas: {detalhe}")
+
+    if not por_arquivo:
+        if not recusados:
+            st.info("⚪ Nenhum arquivo foi importado.")
+        return
+
+    _render_import_result(consolidado)
+
+    with st.expander(f"Detalhe por arquivo ({len(por_arquivo)})"):
+        for nome, label, summary in por_arquivo:
+            icone = "✅" if summary.get("status") == "success" else (
+                "🟡" if summary.get("status") == "partial_success" else "❌"
+            )
+            st.caption(
+                f"{icone} **{nome}** → {label} · "
+                f"{summary.get('records_imported', 0)} novos · "
+                f"{summary.get('duplicates_skipped', 0)} duplicados · "
+                f"{summary.get('rows_skipped', 0)} ignorados"
+            )
 
 
 def _render_import_block(cfg: dict) -> None:
@@ -1438,8 +1656,11 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
 
     # Recalcula portfolio_positions automaticamente se gravamos novas
     # operacoes — assim a Carteira reflete imediatamente o que foi importado.
+    # `skip_recompute` marca as fontes que entram por lote (B3): o recálculo
+    # roda uma vez no fim do lote, não uma vez por arquivo.
     if (
-        summary.get("status") in ("success", "partial_success")
+        not cfg.get("skip_recompute")
+        and summary.get("status") in ("success", "partial_success")
         and int(summary.get("transactions_imported", 0)) > 0
         and settings.OWNER_USER_ID
     ):
