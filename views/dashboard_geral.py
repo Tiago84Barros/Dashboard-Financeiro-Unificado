@@ -4,8 +4,8 @@ Visão Geral consolidada: dados reais do DB, 3 domínios.
 
 Ordem das seções (fatos primeiro, referências depois):
   1 — Resumo por área (Controle Financeiro · Investimentos · B3 · EUA · FIIs)
-  2 — Histórico do controle financeiro (6 meses · despesas por categoria ·
-      comparativo ano a ano — o mesmo cluster, tudo vindo do caixa)
+  2 — Evolução financeira (6 meses · despesas por categoria · comparativo
+      ano a ano — o mesmo cluster, tudo vindo do caixa)
   3 — Raio X do portfólio investido
   4 — Detalhes da carteira recomendada (B3 · EUA · FIIs) — sempre por último
 """
@@ -49,6 +49,7 @@ _TOKEN_POR_COR = {
     _COR_FLUXO: "var(--app-primary)",
     _COR_ALERTA: "var(--app-warning)",
     _COR_NEGATIVO: "var(--app-danger)",
+    _COR_INVEST: "var(--app-accent)",
     _COR_NEUTRO: "var(--app-muted)",
 }
 
@@ -1065,9 +1066,12 @@ def _secao_raio_x_portfolio(carteira: dict, evolucao: dict, classes: list) -> No
     )[:5])
     rentab = float(carteira.get("rentabilidade_total_pct") or 0)
 
-    _titulo_secao(
-        "📌", "Raio X do portfólio investido",
-        "Alocação, diversificação, concentração e evolução do patrimônio", _COR_INVEST,
+    _faixa_destaque(
+        "◆ Sua posição investida",
+        "Raio X do portfólio investido",
+        "Alocação, diversificação, concentração e evolução do patrimônio — "
+        "apurados sobre o que você tem de fato em carteira.",
+        _COR_INVEST,
     )
 
     m1, m2, m3, m4 = st.columns(4, gap="small")
@@ -1460,6 +1464,33 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
     st.markdown("<br>", unsafe_allow_html=True)
 
 
+def _faixa_destaque(rotulo: str, titulo: str, descricao: str, cor: str) -> None:
+    """Abertura de bloco em faixa — o degrau acima de ``_titulo_secao``.
+
+    Os tres blocos que o dashboard entrega como conclusao (o caixa do periodo,
+    a posicao investida e as carteiras recomendadas) abrem assim. A faixa
+    carrega o ``rotulo`` justamente para dizer de onde o numero vem: fato do
+    seu dinheiro ou sugestao do app. Sem essa distincao, os pesos da carteira
+    recomendada passam a ser lidos como posicao real.
+    """
+    st.markdown(
+        '<div class="dg-shell">'
+        f'<div style="border:1px solid {escape(cor)}55;border-left:5px solid '
+        f'{escape(cor)};border-radius:14px;padding:16px 20px;margin:10px 0 18px;'
+        f'background:linear-gradient(90deg,{escape(cor)}14 0%,'
+        'var(--app-surface) 70%);">'
+        f'<div style="font-size:0.64rem;font-weight:800;text-transform:uppercase;'
+        f'letter-spacing:0.14em;color:{escape(_cor_texto(cor))};margin-bottom:6px;">'
+        f'{escape(rotulo)}</div>'
+        '<div style="font-size:1.24rem;font-weight:850;color:var(--app-text);'
+        f'line-height:1.25;">{escape(titulo)}</div>'
+        '<div style="font-size:0.80rem;color:var(--app-muted);margin-top:5px;'
+        f'line-height:1.45;">{escape(descricao)}</div>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _destaque_carteira_recomendada() -> None:
     """Abre o último bloco do dashboard.
 
@@ -1468,23 +1499,13 @@ def _destaque_carteira_recomendada() -> None:
     “Resumo por área”. O destaque existe para que ninguém leia esses pesos
     como posição real da carteira investida, que está acima.
     """
-    st.markdown(
-        '<div class="dg-shell">'
-        f'<div style="border:1px solid {_COR_PATRIMONIO}55;border-left:5px solid '
-        f'{_COR_PATRIMONIO};border-radius:14px;padding:16px 20px;margin:10px 0 18px;'
-        f'background:linear-gradient(90deg,{_COR_PATRIMONIO}14 0%,'
-        'var(--app-surface) 70%);">'
-        f'<div style="font-size:0.64rem;font-weight:800;text-transform:uppercase;'
-        f'letter-spacing:0.14em;color:{_cor_texto(_COR_PATRIMONIO)};margin-bottom:6px;">'
-        '★ Recomendação do aplicativo</div>'
-        '<div style="font-size:1.24rem;font-weight:850;color:var(--app-text);'
-        'line-height:1.25;">Detalhes da carteira recomendada</div>'
-        '<div style="font-size:0.80rem;color:var(--app-muted);margin-top:5px;'
-        'line-height:1.45;">Composição sugerida por Empresas B3, Empresas '
-        'Americanas e Seleção de FIIs. São referências analíticas — não são '
-        'a sua posição investida nem garantia de resultado.</div>'
-        '</div></div>',
-        unsafe_allow_html=True,
+    _faixa_destaque(
+        "★ Recomendação do aplicativo",
+        "Detalhes da carteira recomendada",
+        "Composição sugerida por Empresas B3, Empresas Americanas e Seleção "
+        "de FIIs. São referências analíticas — não são a sua posição investida "
+        "nem garantia de resultado.",
+        _COR_PATRIMONIO,
     )
 
 
@@ -1732,11 +1753,14 @@ def render() -> None:
     )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 2 — Histórico do controle financeiro
+    # BLOCO 2 — Evolução financeira (o caixa do período)
     # ══════════════════════════════════════════════════════════════════════════
-    _titulo_secao(
-        "💹", "Histórico do controle financeiro",
-        "Receitas · Despesas · Investimentos por mês (últimos 6 meses)", _COR_FLUXO,
+    _faixa_destaque(
+        "◆ Controle financeiro",
+        "Evolução financeira",
+        "Receitas, despesas e investimentos dos últimos 6 meses, as categorias "
+        "que mais pesam no ano e o comparativo ano a ano.",
+        _COR_FLUXO,
     )
     with st.container(border=True, key="dg_history_chart"):
         if hist6:
