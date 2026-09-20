@@ -4,10 +4,10 @@ Visão Geral consolidada: dados reais do DB, 3 domínios.
 
 Ordem das seções (fatos primeiro, referências depois):
   1 — Resumo por área (Controle Financeiro · Investimentos · B3 · EUA · FIIs)
-  2 — Histórico do controle financeiro (6 meses)
+  2 — Histórico do controle financeiro (6 meses · despesas por categoria ·
+      comparativo ano a ano — o mesmo cluster, tudo vindo do caixa)
   3 — Raio X do portfólio investido
-  4 — Despesas por categoria | Comparativo Ano a Ano
-  5 — Detalhes da carteira recomendada (B3 · EUA · FIIs) — sempre por último
+  4 — Detalhes da carteira recomendada (B3 · EUA · FIIs) — sempre por último
 """
 from datetime import date as _date
 from datetime import datetime as _datetime
@@ -1749,14 +1749,10 @@ def render() -> None:
         else:
             st.caption("Sem histórico disponível.")
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 3 — Raio X do portfólio investido
-    # ══════════════════════════════════════════════════════════════════════════
-    _secao_raio_x_portfolio(carteira, evolucao_inv, classes)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 5 — Distribuição de despesas | Comparativo Ano a Ano
-    # ══════════════════════════════════════════════════════════════════════════
+    # ──────────────────────────────────────────────────────────────────────
+    # Mesmo cluster: os dois recortes abaixo tambem saem do controle
+    # financeiro — despesas do ano corrente e o acumulado ano a ano.
+    # ──────────────────────────────────────────────────────────────────────
     col_cats, col_yoy = st.columns(2, gap="medium")
 
     with col_cats:
@@ -1822,7 +1818,12 @@ def render() -> None:
                 st.caption("Sem histórico anual disponível.")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # BLOCO 5 — Detalhes da carteira recomendada (fecham o dashboard)
+    # BLOCO 3 — Raio X do portfólio investido
+    # ══════════════════════════════════════════════════════════════════════════
+    _secao_raio_x_portfolio(carteira, evolucao_inv, classes)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BLOCO 4 — Detalhes da carteira recomendada (fecham o dashboard)
     # ══════════════════════════════════════════════════════════════════════════
     # Ficam por último de propósito: o que está acima são FATOS do período
     # (caixa, carteira investida, histórico); o que vem aqui são REFERÊNCIAS
