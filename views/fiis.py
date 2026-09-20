@@ -66,6 +66,7 @@ from core.llm_fii import chat_com_fiis
 from core.macro_cenario import CenarioObservado, cenario_macro_observado
 from core.macro_data.database import get_local_macro_engine
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
+from core.utils import escapar_cifrao
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.chat_ativo import render_chat_ativo
@@ -1251,7 +1252,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
     history = load_chat_history(memory_key, session_key="fii_chat_history")
     for message in visible_chat_history(history, "fii_chat_history"):
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+            st.markdown(escapar_cifrao(message["content"]))
 
     typed_input = st.chat_input(
         "Pergunte sobre os FIIs ou sobre a carteira…", key="fii_chat_input")
@@ -1261,7 +1262,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
 
     history.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(escapar_cifrao(user_input))
     with st.chat_message("assistant"):
         with st.spinner("Consultando seleção, pares, cenário e qualidade dos dados…"):
             try:
@@ -1279,7 +1280,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 answer = chat_com_fiis(context, history[:-1], user_input)
             except Exception as exc:
                 answer = f"Não foi possível consultar a LLM neste momento: {exc}"
-        st.markdown(answer)
+        st.markdown(escapar_cifrao(answer))
         st.caption("Análise educacional baseada nos dados disponíveis; não constitui recomendação.")
     history.append({"role": "assistant", "content": answer})
     save_chat_history(memory_key, history, session_key="fii_chat_history")

@@ -2835,6 +2835,7 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
     from design.chat_carteira import render_chat_carteira
     from design.portfolio_db_analysis import (
         carregar_db,
+        carregar_documentos,
         carregar_macro,
         render_db_analysis,
         render_db_macro,
@@ -2861,14 +2862,18 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
         db = carregar_db(classe, chaves)
         render_db_analysis(classe, db)
 
-    render_chat_carteira(
-        classe=classe,
-        tickers=tickers,
-        build_context=lambda _pergunta: build_carteira_classe_context(
+    def _contexto(_pergunta, *, valores_reais: bool = False) -> str:
+        # Os documentos só são lidos quando a LLM vai ser chamada — a aba
+        # inteira não paga a consulta ao acervo em cada rerun.
+        return build_carteira_classe_context(
             classe, posicoes_classe, valuations=valuations, db=db,
             tesouro=tesouro, macro=macro, fundamentos=fundamentos,
-        ),
-    )
+            documentos=carregar_documentos(classe, chaves),
+            valores_reais=valores_reais,
+        )
+
+    render_chat_carteira(classe=classe, tickers=tickers,
+                         build_context=_contexto)
 
 
 def _tab_analise(carteira: dict, proventos: dict) -> None:
@@ -3133,9 +3138,16 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         def _base(t: str) -> str:
             return t[:-1] if t.endswith("F") and len(t) > 4 else t
 
+        # A sub-aba Exterior separa por país e moeda; esta separa pela string
+        # da classe. Uma ação estrangeira cuja classe contenha "Ações" caía nas
+        # DUAS — e no dossiê isso não é cosmético: a concentração setorial sairia
+        # sobre um universo misturado e os pares viriam da B3 para um papel
+        # americano.
         acoes = [p for p in posicoes
-                 if "ação" in p["classe"].lower() or "ações" in p["classe"].lower()
-                 or "acoes" in p["classe"].lower() or p["classe"].lower() == "ações br"]
+                 if ("ação" in p["classe"].lower() or "ações" in p["classe"].lower()
+                     or "acoes" in p["classe"].lower()
+                     or p["classe"].lower() == "ações br")
+                 and not _is_exterior_position(p)]
 
         if not acoes:
             st.info("Sem posições de ações na carteira.", icon="📈")

@@ -1156,7 +1156,7 @@ def _render_chat_financeiro(
 
     history.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(escapar_cifrao(user_input))
 
     with st.chat_message("assistant"):
         chart_directives: list[dict] = []
@@ -3014,7 +3014,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
 
     history.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(escapar_cifrao(user_input))
 
     with st.chat_message("assistant"):
         chart_directives: list[dict] = []

@@ -2,11 +2,13 @@
 
 Duas decisões deliberadas:
 
-* **Peso, não saldo.** O contexto enviado ao provedor de LLM traz a
-  participação percentual de cada ativo dentro da classe, nunca o valor em
-  reais nem a quantidade. O percentual é o que responde às perguntas de
-  concentração e exposição; o saldo é dado pessoal e sair daqui é publicá-lo
-  num serviço externo sem que isso melhore a resposta.
+* **Peso por padrão, saldo só a pedido.** O contexto traz a participação
+  percentual de cada ativo dentro da classe. O percentual é o que responde às
+  perguntas de concentração e exposição, e o saldo é dado pessoal: mandá-lo
+  para um serviço externo sem necessidade é publicá-lo. Quando o dono da
+  carteira marca o toggle da sub-aba, ``valores_reais`` liga e o valor de
+  mercado **por posição daquela classe** entra — o patrimônio consolidado e as
+  outras classes continuam fora em qualquer caso.
 * **Ausência declarada.** Cobertura, ativos sem dado e universo indisponível
   entram no texto. Média calculada sobre metade da classe e média calculada
   sobre a classe inteira não podem chegar à LLM com a mesma cara.
@@ -47,6 +49,91 @@ def _pesos(posicoes) -> list[tuple[str, float]]:
         return []
     return sorted(((t, v / total) for t, v in acumulado.items()),
                   key=lambda par: (-par[1], par[0]))
+
+
+def _valores(posicoes) -> list[tuple[str, float]]:
+    acumulado: dict[str, float] = {}
+    for pos in posicoes or ():
+        valor = _n(pos.get("valor_mercado")) or 0.0
+        if valor <= 0:
+            continue
+        ticker = str(pos.get("ticker") or "").strip().upper()
+        acumulado[ticker] = acumulado.get(ticker, 0.0) + valor
+    return sorted(acumulado.items(), key=lambda par: (-par[1], par[0]))
+
+
+def _bloco_valores(posicoes) -> list[str]:
+    """Valor de mercado por posição — só quando o dono da carteira pediu.
+
+    Vai o valor de cada ativo DESTA classe e nada mais. O total da classe é
+    derivável da soma, e isso é aceito; o que não sai é o patrimônio
+    consolidado nem qualquer posição de outra classe.
+    """
+    valores = _valores(posicoes)
+    if not valores:
+        return []
+    linhas = ["VALOR DE MERCADO POR POSIÇÃO (enviado a pedido do dono da "
+              "carteira; cobre SOMENTE esta classe):"]
+    linhas += [f"- {ticker}: R$ {valor:,.2f}".replace(",", "@")
+               .replace(".", ",").replace("@", ".") for ticker, valor in valores]
+    linhas.append("- O patrimônio total do usuário NÃO está neste contexto e "
+                  "não pode ser estimado a partir daqui: as demais classes "
+                  "ficaram de fora.")
+    return linhas
+
+
+def _bloco_pares(pares, rotulo: str) -> list[str]:
+    """Candidatos de fora da carteira, do mesmo grupo dos que estão dentro."""
+    if not pares:
+        return []
+    linhas = [f"PARES DO UNIVERSO FORA DA CARTEIRA — {rotulo} (mesmo "
+              "setor/tipo dos ativos que o usuário tem, ordenados por nota):"]
+    for par in pares:
+        partes = [f"- {par['ticker']}"]
+        if par.get("nome"):
+            partes.append(str(par["nome"]))
+        score = _n(par.get("score"))
+        if score is not None:
+            partes.append(f"nota {score:.1f}/100")
+        if par.get("grupo"):
+            partes.append(f"grupo {par['grupo']}")
+        cobertura = _n(par.get("cobertura"))
+        if cobertura is not None:
+            partes.append(f"cobertura {cobertura:.0f}%" if cobertura > 1
+                          else f"cobertura {cobertura:.0%}")
+        if par.get("status_publicacao"):
+            partes.append(f"status {par['status_publicacao']}")
+        linhas.append(" | ".join(partes))
+    linhas.append("- Estes ativos NÃO estão na carteira. A nota vem do mesmo "
+                  "motor que pontuou os que estão, então é comparável; ela não "
+                  "leva em conta preço de entrada, liquidez do dia nem o "
+                  "objetivo do usuário.")
+    return linhas
+
+
+def _bloco_documentos(documentos) -> list[str]:
+    """Evidência documental — CVM/IPE ou notícias, conforme a classe."""
+    if not documentos:
+        return []
+    if documentos.get("erro"):
+        return ["EVIDÊNCIA DOCUMENTAL: " + str(documentos["erro"]) +
+                " Não conclua nada sobre eventos recentes a partir daqui."]
+    itens = list(documentos.get("itens") or ())
+    if not itens and documentos.get("nota"):
+        # Classe sem corpus (Tesouro). Dizer "nada na janela" aqui seria
+        # sugerir uma janela que não existe.
+        return ["EVIDÊNCIA DOCUMENTAL: " + str(documentos["nota"])]
+    if not itens:
+        return ["EVIDÊNCIA DOCUMENTAL: nenhum documento ou notícia na janela "
+                "coletada para estes ativos. Isso significa fora da janela de "
+                "coleta, NÃO ausência de fato relevante."]
+    linhas = [f"EVIDÊNCIA DOCUMENTAL — {documentos.get('fonte', 'fonte não declarada')}:"]
+    linhas += [f"- {item}" for item in itens]
+    sem = list(documentos.get("sem_corpus") or ())
+    if sem:
+        linhas.append("- Sem nenhum documento na janela: " + ", ".join(sem) +
+                      ". Trate como desconhecido, não como 'nada aconteceu'.")
+    return linhas
 
 
 def _bloco_valuations(valuations) -> list[str]:
@@ -148,6 +235,8 @@ def build_carteira_classe_context(
     tesouro=None,
     macro=None,
     fundamentos=None,
+    documentos=None,
+    valores_reais: bool = False,
 ) -> str:
     """Monta o contexto textual de uma sub-aba da Análise do Portfólio."""
     rotulo = CLASS_LABELS.get(classe, classe)
@@ -156,14 +245,19 @@ def build_carteira_classe_context(
         f"CLASSE ANALISADA: {rotulo}",
         f"Ativos com posição: {len(pesos)}",
         "",
-        "COMPOSIÇÃO DENTRO DA CLASSE (participação percentual; valores em reais "
-        "não são enviados):",
+        # O parêntese acompanha o toggle: dizer "valores não são enviados"
+        # logo acima de um bloco que os traz é contradizer o próprio contexto.
+        "COMPOSIÇÃO DENTRO DA CLASSE (participação percentual"
+        + ("):" if valores_reais else "; valores em reais não são enviados):"),
     ]
     blocos += [f"- {ticker}: {peso:.1%}" for ticker, peso in pesos] or ["- nenhuma posição"]
     if pesos:
         blocos.append(f"- Maior posição: {pesos[0][0]} com {pesos[0][1]:.1%} da classe")
         blocos.append("- Soma das cinco maiores: "
                       f"{sum(p for _, p in pesos[:5]):.1%}")
+    if valores_reais:
+        blocos.append("")
+        blocos += _bloco_valores(posicoes)
     blocos.append("")
     if classe == "tesouro":
         blocos += _bloco_tesouro(tesouro, macro)
@@ -171,6 +265,16 @@ def build_carteira_classe_context(
         blocos += _bloco_valuations(valuations)
     blocos.append("")
     blocos += _bloco_db(db, rotulo)
+
+    pares = (db or {}).get("pares") if isinstance(db, dict) else None
+    if pares:
+        blocos.append("")
+        blocos += _bloco_pares(pares, rotulo)
+
+    documental = _bloco_documentos(documentos)
+    if documental:
+        blocos.append("")
+        blocos += documental
 
     if fundamentos:
         blocos.append("")
