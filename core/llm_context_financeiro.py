@@ -367,7 +367,7 @@ def build_cartao_chat_context(
         for x in (evolucao_mensal or [])
     ]
     proj_meta = [
-        {"label": str(g(p, "Mes", default="")),
+        {"label": str(g(p, "Mês", "Mes", default="")),
          "total": round(float(g(p, "Valor projetado", default=0) or 0), 2)}
         for p in (projecao or [])
     ]
@@ -375,7 +375,7 @@ def build_cartao_chat_context(
     # Só ATIVAS entram no gráfico (assinaturas em uso hoje).
     assin_meta = [
         {"nome": str(g(a, "Assinatura", default="—")),
-         "gasto": round(float(g(a, "Media mensal", default=0) or 0), 2)}
+         "gasto": round(float(g(a, "Média mensal", "Media mensal", default=0) or 0), 2)}
         for a in (assinaturas or []) if a.get("Ativa", True)
     ]
 
@@ -427,7 +427,7 @@ def build_cartao_chat_context(
     if ativas:
         total_mes = 0.0
         for a in ativas:
-            media = float(g(a, "Media mensal", default=0) or 0)
+            media = float(g(a, "Média mensal", "Media mensal", default=0) or 0)
             total_mes += media
             L.append(f"  {g(a, 'Assinatura', default='—')}: ~{_brl(media)}/mês "
                      f"(categoria: {g(a, 'Categoria', default='-')}; "
