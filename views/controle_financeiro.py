@@ -63,6 +63,7 @@ from design.componentes import (
     container_pagina,
     cor_token,
 )
+from design.tema_canvas import no_claro
 
 # Chat "Analista Financeiro Pessoal" (aba Análises) — importado localmente na
 # função de render para não pesar no carregamento das demais abas/reruns.
@@ -180,9 +181,10 @@ def _kpi_card(titulo: str, valor: str, descricao: str, cor: str) -> str:
 
 
 def _secao_titulo(icone: str, titulo: str) -> None:
+    rotulo = f"{icone} {titulo}" if icone else titulo
     st.markdown(
         f'<div style="font-size:0.90rem;font-weight:700;color:var(--app-text);'
-        f'margin-bottom:8px;">{icone} {titulo}</div>',
+        f'margin-bottom:8px;">{rotulo}</div>',
         unsafe_allow_html=True,
     )
 
@@ -2683,6 +2685,87 @@ def _editor_cartao_detalhado(detail: pd.DataFrame) -> None:
         st.info("Nenhuma alteração detectada.")
 
 
+_REVISAR_COLS = [1.0, 2.5, 1.0, 1.9, 0.9]
+_REVISAR_CABECALHO = ("Compra", "Estabelecimento", "Valor (R$)", "Categoria", "Criar regra")
+
+
+def _celula_revisar(texto: str, alinhamento: str = "left") -> str:
+    return (
+        f'<div style="font-size:0.84rem;color:var(--app-text);padding:9px 2px;'
+        f'border-bottom:1px solid var(--app-border);text-align:{alinhamento};'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{texto}</div>'
+    )
+
+
+def _editor_a_revisar_escuro(df_edit: pd.DataFrame, opcoes_cat: list) -> pd.DataFrame:
+    """Grade nativa do tema escuro — o canvas ja nasce com as cores certas."""
+    return st.data_editor(
+        df_edit,
+        hide_index=True,
+        width="stretch",
+        num_rows="fixed",
+        key="cc_revisar_editor",
+        column_config={
+            "ID": None,
+            "Data":  st.column_config.DateColumn("Compra", format="DD/MM/YYYY", disabled=True),
+            "Descrição": st.column_config.TextColumn("Estabelecimento", disabled=True),
+            "Valor": st.column_config.NumberColumn("Valor (R$)", format="%.2f", disabled=True),
+            "Categoria": st.column_config.SelectboxColumn("Categoria", options=opcoes_cat, required=True),
+            "Criar regra": st.column_config.CheckboxColumn(
+                "Criar regra", help="Aprende estabelecimento → categoria para as próximas faturas."),
+        },
+    )
+
+
+def _editor_a_revisar_claro(df_edit: pd.DataFrame, opcoes_cat: list) -> pd.DataFrame:
+    """
+    Versao do painel "a categorizar" desenhada com widgets nativos.
+
+    O ``st.data_editor`` pinta a grade num canvas cujas cores o Streamlit escreve
+    a partir do tema do config (escuro) — nenhuma regra de CSS a alcanca, mesmo
+    motivo que levou design/tabela_clara.py a reemitir ``st.dataframe`` como HTML.
+    Aqui cada linha vira selectbox/checkbox, que obedecem a camada clara.
+
+    Devolve um quadro com as mesmas colunas que o ``st.data_editor`` devolveria,
+    para que o laco de gravacao siga sendo um so.
+    """
+    cabecalho = st.columns(_REVISAR_COLS, gap="small")
+    for coluna, titulo in zip(cabecalho, _REVISAR_CABECALHO):
+        coluna.markdown(
+            f'<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;'
+            f'text-transform:uppercase;color:var(--app-muted);padding-bottom:6px;'
+            f'border-bottom:1px solid var(--app-border);">{html.escape(titulo)}</div>',
+            unsafe_allow_html=True,
+        )
+
+    escolhas = []
+    for _, r in df_edit.iterrows():
+        tx_id = str(r["ID"])
+        c_data, c_desc, c_valor, c_cat, c_regra = st.columns(_REVISAR_COLS, gap="small")
+        data_txt = r["Data"].strftime("%d/%m/%Y") if r["Data"] is not None else "—"
+        descricao = str(r["Descrição"])
+        c_data.markdown(_celula_revisar(data_txt), unsafe_allow_html=True)
+        c_desc.markdown(_celula_revisar(html.escape(descricao)), unsafe_allow_html=True)
+        c_valor.markdown(
+            _celula_revisar(f'{float(r["Valor"]):,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."), "right"),
+            unsafe_allow_html=True,
+        )
+        categoria = c_cat.selectbox(
+            "Categoria", opcoes_cat, index=opcoes_cat.index(REVIEW_SENTINEL),
+            key=f"cc_rev_cat_{tx_id}", label_visibility="collapsed",
+        )
+        criar_regra = c_regra.checkbox(
+            "Criar regra", value=True, key=f"cc_rev_regra_{tx_id}",
+            label_visibility="collapsed",
+            help="Aprende estabelecimento → categoria para as próximas faturas.",
+        )
+        escolhas.append({
+            "ID": tx_id, "Data": r["Data"], "Descrição": descricao,
+            "Valor": r["Valor"], "Categoria": categoria, "Criar regra": criar_regra,
+        })
+    return pd.DataFrame(escolhas, columns=list(df_edit.columns))
+
+
 def _render_cartao_a_revisar(df_all: pd.DataFrame) -> None:
     """
     Painel de revisão dos lançamentos que o importador não soube categorizar
@@ -2725,22 +2808,10 @@ def _render_cartao_a_revisar(df_all: pd.DataFrame) -> None:
     df_edit = pd.DataFrame(rows)
 
     with st.form("cc_revisar_form", clear_on_submit=False):
-        edited = st.data_editor(
-            df_edit,
-            hide_index=True,
-            width="stretch",
-            num_rows="fixed",
-            key="cc_revisar_editor",
-            column_config={
-                "ID": None,
-                "Data":  st.column_config.DateColumn("Compra", format="DD/MM/YYYY", disabled=True),
-                "Descrição": st.column_config.TextColumn("Estabelecimento", disabled=True),
-                "Valor": st.column_config.NumberColumn("Valor (R$)", format="%.2f", disabled=True),
-                "Categoria": st.column_config.SelectboxColumn("Categoria", options=opcoes_cat, required=True),
-                "Criar regra": st.column_config.CheckboxColumn(
-                    "Criar regra", help="Aprende estabelecimento → categoria para as próximas faturas."),
-            },
-        )
+        if no_claro():
+            edited = _editor_a_revisar_claro(df_edit, opcoes_cat)
+        else:
+            edited = _editor_a_revisar_escuro(df_edit, opcoes_cat)
         salvar = st.form_submit_button("Salvar categorizações", type="primary")
 
     if not salvar:
@@ -2793,7 +2864,7 @@ def _tab_cartao(d: dict, selected_year: int, selected_month: int) -> None:
     # Itens que o importador não soube classificar → o usuário define a categoria.
     _render_cartao_a_revisar(df_all)
 
-    _secao_titulo("Filtros", "Cabecalho e filtros")
+    _secao_titulo("", "Filtro")
     filters = _render_card_filters(df_all, selected_year, selected_month)
     df = _apply_card_filters(df_all, filters)
 

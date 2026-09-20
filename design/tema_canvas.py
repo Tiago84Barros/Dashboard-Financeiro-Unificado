@@ -328,7 +328,13 @@ def tema_da_sessao() -> str:
         return "dark"
 
 
-def _no_claro() -> bool:
+def no_claro() -> bool:
+    """Tema claro ativo nesta sessao.
+
+    Publica porque quem desenha em canvas (data_editor, por exemplo) precisa
+    escolher outro caminho de renderizacao, e uma so definicao evita que a
+    checagem seja reescrita em cada tela.
+    """
     return tema_da_sessao() == "light"
 
 
@@ -343,7 +349,7 @@ def instalar_adaptadores() -> None:
     plotly_original = DeltaGenerator.plotly_chart
 
     def plotly_chart(self, figure_or_data, *args, **kwargs):
-        if _no_claro():
+        if no_claro():
             if hasattr(figure_or_data, "update_layout"):
                 clarear_figura(figure_or_data)
             # Sem isto o Streamlit reaplica o template escuro por cima.
@@ -353,7 +359,7 @@ def instalar_adaptadores() -> None:
     dataframe_original = DeltaGenerator.dataframe
 
     def dataframe(self, data=None, *args, **kwargs):
-        if _no_claro() and not args:
+        if no_claro() and not args:
             from design.tabela_clara import renderizar
             try:
                 if renderizar(self, data, kwargs):
@@ -365,7 +371,7 @@ def instalar_adaptadores() -> None:
     altair_original = VegaChartsMixin._altair_chart
 
     def _altair_chart(self, *args, **kwargs):
-        if _no_claro():
+        if no_claro():
             kwargs["theme"] = None
         return altair_original(self, *args, **kwargs)
 
