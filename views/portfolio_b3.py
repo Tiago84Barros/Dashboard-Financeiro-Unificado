@@ -4450,7 +4450,7 @@ def render(show_header: bool = True) -> None:
 
     render_safras(
         resultados,
-        st.session_state.get("pb3_precos_all", pd.DataFrame()),
+        df_precos_all,
         selic_por_ano=selic_macro,
         taxa_selic_aa=taxa_selic_aa,
     )

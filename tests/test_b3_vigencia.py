@@ -78,17 +78,19 @@ def _nomes_atribuidos(caminho: Path) -> set[str]:
 
 def test_mes_de_rebalance_definido_num_lugar_so():
     """Guarda duplicada nao fica igual: tres copias da regra de abril ja
-    existiram e uma delas (o grafico) ficou para tras. O caminho e resolvido
+    existiram e uma delas (o grafico) ficou para tras, e uma lista branca
+    de arquivos ja perdeu a chave nao prevista noutro guarda desta base
+    (nota de memoria `lista-branca-perde-a-chave-nao-prevista`). Por isso a
+    lista aqui e derivada da estrutura -- todo .py de views/ e core/ --
+    em vez de mais um nome de arquivo escrito a mao. O caminho e resolvido
     a partir da raiz do pacote, nao por `parts` de caminho absoluto --
     filtro por caminho absoluto nao visita nada dentro de worktree."""
-    suspeitos = [
-        RAIZ / "views" / "portfolio_b3.py",
-        RAIZ / "views" / "empresas_b3.py",
-        RAIZ / "core" / "b3_safras.py",
-    ]
-    for caminho in suspeitos:
-        if not caminho.exists():
-            continue
+    permitido = RAIZ / "core" / "b3_vigencia.py"
+    pastas = [RAIZ / "views", RAIZ / "core"]
+    caminhos = [c for pasta in pastas for c in sorted(pasta.rglob("*.py"))
+                if c != permitido]
+    assert caminhos, "a varredura de views/ e core/ nao encontrou nada"
+    for caminho in caminhos:
         definidos = {n for n in _nomes_atribuidos(caminho)
                      if "REBAL" in n.upper() and "MONTH" in n.upper()}
         assert not definidos, (
