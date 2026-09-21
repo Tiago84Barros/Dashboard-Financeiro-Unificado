@@ -106,9 +106,13 @@ def test_peso_sem_preco_rende_zero_e_e_reportado():
 
 
 def test_selic_da_janela_cruza_dois_anos():
-    """A janela abril/2024 a marco/2025 pega 9 meses de 2024 e 3 de 2025,
+    """A janela abril/2024 a marco/2025 pega 8 meses de 2024 e 3 de 2025,
     cada um com sua PROPRIA taxa -- usar so o ano do inicio continuaria
-    passando se as duas taxas fossem iguais."""
+    passando se as duas taxas fossem iguais. Sao 8 e nao 9: o primeiro
+    preco real e 30/04 (nao dia 1), e a Selic composta a partir do
+    `inicio_mercado` -- `pd.date_range(..., freq="MS")` a partir de um dia
+    que nao e inicio de mes pula o mes corrente inteiro (mesma regra que
+    ja valia para o `corte` do outro lado da janela)."""
     df = _precos(pd.date_range("2024-04-30", "2025-03-31", freq="ME"),
                  {"AAAA3": [10.0] * 12})
     carteira = SafraCarteira(
@@ -119,7 +123,7 @@ def test_selic_da_janela_cruza_dois_anos():
     out = retorno_da_safra(carteira, df,
                            selic_por_ano={2024: 0.12, 2025: 0.10},
                            taxa_selic_aa=0.0)
-    esperado = (1.12 ** (9 / 12)) * (1.10 ** (3 / 12)) - 1.0
+    esperado = (1.12 ** (8 / 12)) * (1.10 ** (3 / 12)) - 1.0
     assert out["retorno_selic"] == pytest.approx(esperado, abs=0.001)
     assert out["selic_anos_estimados"] == []
 
@@ -138,14 +142,19 @@ def test_selic_com_ano_ausente_ou_none_cai_no_fallback_e_e_reportado():
     out = retorno_da_safra(carteira, df,
                            selic_por_ano={2025: None},  # 2024 ausente
                            taxa_selic_aa=0.10)
-    esperado = 1.10 ** 1.0 - 1.0
+    # 11 meses (nao 12): o inicio_mercado e 30/04, e freq="MS" a partir de
+    # um dia que nao e inicio de mes pula o mes corrente -- ver o
+    # comentario de test_selic_da_janela_cruza_dois_anos.
+    esperado = 1.10 ** (11 / 12) - 1.0
     assert out["retorno_selic"] == pytest.approx(esperado, abs=0.001)
     assert out["selic_anos_estimados"] == [2024, 2025]
 
 
 def test_selic_da_safra_parcial_para_no_corte():
     """Safra incompleta so tem preco ate agosto/2026 -- a Selic tem que
-    comparar os mesmos 5 meses, nao os 12 da janela inteira."""
+    comparar os mesmos meses, nao os 12 da janela inteira. Sao 4 (maio a
+    agosto), nao 5: o inicio_mercado e 30/04, e `freq="MS"` a partir de um
+    dia que nao e inicio de mes pula o mes corrente."""
     df = _precos(pd.date_range("2026-04-30", "2026-08-31", freq="ME"),
                  {"AAAA3": [10.0, 10.5, 11.0, 11.5, 12.0]})
     carteira = SafraCarteira(
@@ -156,7 +165,7 @@ def test_selic_da_safra_parcial_para_no_corte():
     out = retorno_da_safra(carteira, df,
                            selic_por_ano={2026: 0.12, 2027: 0.12},
                            taxa_selic_aa=0.0)
-    esperado = 1.12 ** (5 / 12) - 1.0
+    esperado = 1.12 ** (4 / 12) - 1.0
     assert out["retorno_selic"] == pytest.approx(esperado, abs=0.001)
 
 
@@ -222,8 +231,55 @@ def test_tabela_vazia_tem_colunas_e_empty():
         "Safra", "Exercício-base", "Janela", "Completa", "Segmentos",
         "Ativos", "Maiores posições", "Estratégia (%)", "Equal-weight (%)",
         "Selic (%)", "Excesso s/ Selic (pp)", "Peso sem preço (%)",
+        "Universo com preço",
     ]
     assert tabela.attrs["safras_completas"] == []
+    assert tabela.attrs["selic_anos_estimados_por_safra"] == {}
+
+
+def test_mercado_comecando_atrasado_nao_zera_a_safra():
+    """Se o feed de precos inteiro so comeca depois do inicio civil da
+    safra (atraso de ingestao, nao delisting de um papel so), a tolerancia
+    da ponta inicial tem que ancorar no inicio_mercado -- senao TODO
+    ticker reprova o piso de proximidade por um problema de cobertura de
+    dado que nao e dele. Sem a correcao, d0=31/05 fica a 60 dias do inicio
+    civil (01/04), estoura os 45 dias de tolerancia e a safra inteira sai
+    com peso_ausente=1.0 e retorno 0.0."""
+    df = _precos(["2024-05-31", "2025-03-31"], {"AAAA3": [10.0, 17.5]})
+    carteira = SafraCarteira(
+        safra=2024, ano_base=2023,
+        inicio=pd.Timestamp("2024-04-01"), fim=pd.Timestamp("2025-03-31"),
+        completa=True, pesos={"AAAA3": 1.0}, universo=("AAAA3",), segmentos=1,
+    )
+    out = retorno_da_safra(carteira, df, selic_por_ano={}, taxa_selic_aa=0.0)
+    assert out["peso_ausente"] == pytest.approx(0.0)
+    assert out["retorno_estrategia"] == pytest.approx(0.75)
+
+
+def test_linha_toda_nan_no_fim_nao_vira_corte():
+    """`reindex`/`asfreq` sobre o calendario cheio deixa linha 100% NaN
+    depois do ultimo pregao real -- o corte tem que parar no ultimo dado
+    de verdade, nao no ultimo dia do calendario. Sem o `dropna(how="all")`
+    em `_janela_de_mercado`, o corte seria 31/03/2025 (a linha vazia) em
+    vez de 31/08/2024 (o ultimo preco real), e a Selic contaria meses que
+    nenhum papel negociou."""
+    df = _precos(
+        ["2024-04-30", "2024-08-31", "2025-03-31"],
+        {"AAAA3": [10.0, 15.0, np.nan]},
+    )
+    carteira = SafraCarteira(
+        safra=2024, ano_base=2023,
+        inicio=pd.Timestamp("2024-04-01"), fim=pd.Timestamp("2025-03-31"),
+        completa=False, pesos={"AAAA3": 1.0}, universo=("AAAA3",), segmentos=1,
+    )
+    out = retorno_da_safra(carteira, df,
+                           selic_por_ano={2024: 0.12, 2025: 0.12},
+                           taxa_selic_aa=0.0)
+    # maio, junho, julho, agosto -- de 30/04 (inicio_mercado) a 31/08 (corte
+    # real). Se a linha 100% NaN de 31/03/2025 contasse como pregao, o
+    # corte iria ate marco/2025 e o numero de meses seria bem maior.
+    esperado = 1.12 ** (4 / 12) - 1.0
+    assert out["retorno_selic"] == pytest.approx(esperado, abs=0.001)
 
 
 def test_tabela_exclui_safra_incompleta_das_medias():
@@ -238,3 +294,32 @@ def test_tabela_exclui_safra_incompleta_das_medias():
     assert bool(tabela.loc[tabela["Safra"] == 2024, "Completa"].iloc[0])
     assert tabela.attrs["safras_completas"] == [2024]
     assert 2026 not in tabela.attrs["safras_completas"]
+
+
+def test_tabela_reporta_cobertura_do_universo_e_anos_estimados_da_selic():
+    """`retorno_da_safra` calcula `n_universo_total`/`n_universo_com_preco`
+    e `selic_anos_estimados`, mas quem le a tela e `tabela_de_safras` --
+    sem essa ponte a Task 5 nao tem como avisar cobertura baixa nem qual
+    trecho da Selic veio do fallback."""
+    res = [_resultado("A", {2024: ["AAAA3"]}, {2024: {"AAAA3": 1.0}},
+                      ["AAAA3", "BBBB3"])]
+    df = _precos(["2024-04-30", "2025-03-31"],
+                 {"AAAA3": [10.0, 20.0], "BBBB3": [np.nan, np.nan]})
+    tabela = tabela_de_safras(res, df, selic_por_ano={2025: None},
+                              taxa_selic_aa=0.10, hoje=HOJE)
+    linha = tabela.loc[tabela["Safra"] == 2024].iloc[0]
+    assert linha["Universo com preço"] == "1/2"
+    assert tabela.attrs["selic_anos_estimados_por_safra"][2024] == [2024, 2025]
+
+
+def test_tabela_nao_tem_coluna_vazia_por_chave_desalinhada():
+    """Cada coluna declarada em COLUNAS_TABELA tem que vir preenchida.
+    `pd.DataFrame(linhas, columns=COLUNAS_TABELA)` so mostra o que
+    COLUNAS_TABELA declara -- uma chave nova no dict da linha sem entrar
+    na lista some em silencio, e uma coluna na lista sem a chave
+    correspondente no dict fica cheia de NaN sem erro nenhum."""
+    res = [_resultado("A", {2024: ["AAAA3"]}, {2024: {"AAAA3": 1.0}}, ["AAAA3"])]
+    df = _precos(["2024-04-30", "2025-03-31"], {"AAAA3": [10.0, 20.0]})
+    tabela = tabela_de_safras(res, df, selic_por_ano={}, taxa_selic_aa=0.0,
+                              hoje=HOJE)
+    assert not tabela.isna().any().any()

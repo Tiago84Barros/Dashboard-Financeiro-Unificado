@@ -35,6 +35,33 @@ Regras de medicao do retorno (rodada de correcao 1, revisao de codigo):
   `selic_anos_estimados`, para a tela poder avisar que aquele trecho nao
   veio do dado observado.
 
+Regras de medicao do retorno (rodada de correcao 2, revisao de codigo):
+
+- **As duas pontas da janela vem do mercado, nao so a final.** Se o feed
+  de precos comeca depois do inicio civil da safra (atraso de ingestao, o
+  mesmo `df_precos` inteiro para todo mundo -- nao delisting de um papel
+  so), ancorar a tolerancia da ponta inicial no calendario reprovaria TODO
+  ticker por um problema de cobertura de dado. `_janela_de_mercado`
+  devolve `(inicio_mercado, corte)`, os dois lidos da serie inteira; os
+  dois alimentam a tolerancia de `_preco_nas_pontas` E o `pd.date_range`
+  da Selic -- antes so o `corte` vinha do mercado e o `inicio` cru, essa
+  assimetria inflava a Selic quando a primeira cotacao real caia depois do
+  dia 1 do mes (o caso comum: dado mensal com data no fim do mes deixava o
+  mes parcial inicial de fora do preco mas dentro da Selic).
+- **Linha 100% sem cotacao nao e pregao.** `_janela_de_mercado` descarta
+  linhas onde nenhum ticker tem preco (`dropna(how="all")`) antes de olhar
+  o indice. Sem isso, um `df_precos` vindo de `reindex`/`asfreq` sobre o
+  calendario cheio faria o corte parar no ultimo dia do calendario, nao no
+  ultimo dia com dado de verdade -- reabrindo por outra porta o mesmo
+  descasamento Selic-vs-bolsa que o corte de mercado existe para fechar.
+- **A cobertura do universo chega na tabela, nao so no dict interno.**
+  `tabela_de_safras` tinha `n_universo_total`/`n_universo_com_preco`
+  calculados em `retorno_da_safra` e nunca expostos -- a Task 5 so
+  consome a tabela. Agora a coluna "Universo com preço" traz `n/total`
+  (nao percentual: 3/4 e 300/400 sao coberturas bem diferentes que um "75%"
+  sozinho esconde) e `tabela.attrs["selic_anos_estimados_por_safra"]`
+  traz o dict `{safra: [anos]}` inteiro, nao so o ultimo calculado.
+
 Modulo puro: sem streamlit, sem banco. Coberto por tests/test_b3_safras.py.
 """
 from __future__ import annotations
@@ -53,7 +80,7 @@ TOLERANCIA_DIAS = 45
 COLUNAS_TABELA = [
     "Safra", "Exercício-base", "Janela", "Completa", "Segmentos", "Ativos",
     "Maiores posições", "Estratégia (%)", "Equal-weight (%)", "Selic (%)",
-    "Excesso s/ Selic (pp)", "Peso sem preço (%)",
+    "Excesso s/ Selic (pp)", "Peso sem preço (%)", "Universo com preço",
 ]
 
 
@@ -149,37 +176,50 @@ def carteiras_por_safra(resultados: list[dict], *,
     return saida
 
 
-def _corte_de_mercado(df_precos: pd.DataFrame, inicio: pd.Timestamp,
-                      fim: pd.Timestamp) -> pd.Timestamp:
-    """Ultima data da serie inteira (nao do papel) dentro da janela.
+def _janela_de_mercado(df_precos: pd.DataFrame, inicio: pd.Timestamp,
+                       fim: pd.Timestamp) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Primeira e ultima data da serie inteira (nao do papel) dentro da
+    janela -- as duas pontas da comparacao vem do mercado, nao do
+    calendario da safra.
 
-    E uma propriedade da safra, nao do ativo -- a ancora da ponta final
-    tem que vir do mercado. `min(fim, ...)` porque, com dado completo, essa
-    ultima data ja e o proprio `fim`; numa safra parcial ela para antes.
+    `dropna(how="all")` descarta linha onde NENHUM ticker tem cotacao
+    antes de olhar o indice: senao um `df_precos` vindo de
+    `reindex`/`asfreq` sobre o calendario cheio faria o corte parar no
+    ultimo dia do calendario, nao no ultimo dia com dado de verdade.
+
+    `inicio_mercado = max(inicio, primeira data dentro da janela)` e
+    `corte = min(fim, ultima data dentro da janela)`: com dado completo os
+    dois colapsam em `inicio`/`fim`; numa safra parcial, ou com o feed
+    comecando depois do inicio civil, eles se afastam.
     """
-    dentro = df_precos.index[(df_precos.index >= inicio) & (df_precos.index <= fim)]
+    validas = df_precos.dropna(how="all")
+    dentro = validas.index[(validas.index >= inicio) & (validas.index <= fim)]
     if len(dentro) == 0:
-        return fim
-    return min(fim, dentro.max())
+        return inicio, fim
+    return max(inicio, dentro.min()), min(fim, dentro.max())
 
 
-def _preco_nas_pontas(serie: pd.Series, inicio: pd.Timestamp,
+def _preco_nas_pontas(serie: pd.Series, inicio_mercado: pd.Timestamp,
                       corte: pd.Timestamp) -> tuple[float, float] | None:
     """Primeiro e ultimo preco valido DENTRO da janela, com as pontas perto
-    do inicio e do corte da safra (tolerancia de `TOLERANCIA_DIAS`).
+    do inicio e do corte de mercado da safra (tolerancia de
+    `TOLERANCIA_DIAS`).
 
     Sem o piso de proximidade, um papel que negociou em abril e maio e
     parou entregaria o retorno de um mes rotulado como o retorno da safra
     inteira -- e em quem foi deslistado esse vies e sistematicamente para
-    cima.
+    cima. A tolerancia da ponta inicial usa `inicio_mercado` (nao o
+    inicio civil): se o feed inteiro so comeca depois do inicio da safra,
+    isso e cobertura de dado, nao liquidez do papel, e nao pode reprovar
+    todo mundo.
     """
-    dentro = serie[(serie.index >= inicio) & (serie.index <= corte)].dropna()
+    dentro = serie[(serie.index >= inicio_mercado) & (serie.index <= corte)].dropna()
     dentro = dentro[dentro > 0]
     if len(dentro) < 2:
         return None
     d0, d1 = dentro.index[0], dentro.index[-1]
     tolerancia = pd.Timedelta(days=TOLERANCIA_DIAS)
-    if (d0 - inicio) > tolerancia or (corte - d1) > tolerancia:
+    if (d0 - inicio_mercado) > tolerancia or (corte - d1) > tolerancia:
         return None
     return float(dentro.iloc[0]), float(dentro.iloc[-1])
 
@@ -219,17 +259,18 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
     media do equal-weight -- nao e omitido dela. Omitir puniria so a
     estrategia e deixaria o benchmark mais forte que o mercado real.
 
-    A Selic e composta so ate o `corte` de mercado da safra (ver
-    `_corte_de_mercado`), que para antes do `fim` numa safra parcial --
-    do contrario a linha compararia 5 meses de bolsa com 12 de CDI.
+    A Selic e composta so ate o `corte` de mercado da safra e a partir do
+    `inicio_mercado` (ver `_janela_de_mercado`), que se afastam do
+    `inicio`/`fim` civis numa safra parcial ou com feed atrasado -- do
+    contrario a linha compararia 5 meses de bolsa com 12 de CDI.
     """
     inicio, fim = carteira.inicio, carteira.fim
-    corte = _corte_de_mercado(df_precos, inicio, fim)
+    inicio_mercado, corte = _janela_de_mercado(df_precos, inicio, fim)
 
     retorno_est = 0.0
     peso_ausente = 0.0
     for tk, peso in carteira.pesos.items():
-        pontas = (_preco_nas_pontas(df_precos[tk], inicio, corte)
+        pontas = (_preco_nas_pontas(df_precos[tk], inicio_mercado, corte)
                   if tk in df_precos.columns else None)
         if pontas is None:
             peso_ausente += float(peso)
@@ -240,7 +281,7 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
     retornos_ew: list[float] = []
     n_com_preco = 0
     for tk in carteira.universo:
-        pontas = (_preco_nas_pontas(df_precos[tk], inicio, corte)
+        pontas = (_preco_nas_pontas(df_precos[tk], inicio_mercado, corte)
                   if tk in df_precos.columns else None)
         if pontas is not None:
             p0, p1 = pontas
@@ -251,7 +292,7 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
     retorno_ew = float(np.mean(retornos_ew)) if retornos_ew else float("nan")
 
     retorno_selic, selic_anos_estimados = _retorno_selic(
-        inicio, corte, selic_por_ano or {}, taxa_selic_aa)
+        inicio_mercado, corte, selic_por_ano or {}, taxa_selic_aa)
     return {
         "retorno_estrategia": retorno_est,
         "retorno_equal_weight": retorno_ew,
@@ -260,9 +301,6 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
         "excesso_equal_weight": (retorno_est - retorno_ew
                                  if np.isfinite(retorno_ew) else float("nan")),
         "peso_ausente": peso_ausente,
-        # n_universo = denominador do equal-weight (universo inteiro, C-1);
-        # mantido por compatibilidade ao lado dos dois nomes explicitos.
-        "n_universo": len(carteira.universo),
         "n_universo_total": len(carteira.universo),
         "n_universo_com_preco": n_com_preco,
         "selic_anos_estimados": selic_anos_estimados,
@@ -280,9 +318,15 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     (`COLUNAS_TABELA`) -- `pd.DataFrame([])` sem colunas faz qualquer leitor
     de `tabela["Safra"]` estourar `KeyError` em vez de achar um quadro
     vazio bem-formado.
+
+    `attrs["selic_anos_estimados_por_safra"]` leva o dict `{safra: [anos]}`
+    inteiro -- sem isso so a ultima safra calculada sobreviveria fora do
+    loop, e a tela nao teria como avisar por safra qual trecho da Selic
+    veio do fallback.
     """
     linhas: list[dict] = []
     completas: list[int] = []
+    selic_estimados_por_safra: dict[int, list[int]] = {}
     for carteira in carteiras_por_safra(resultados, hoje=hoje):
         metricas = retorno_da_safra(carteira, df_precos,
                                     selic_por_ano=selic_por_ano,
@@ -302,10 +346,15 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "Selic (%)": round(metricas["retorno_selic"] * 100, 1),
             "Excesso s/ Selic (pp)": round(metricas["excesso_selic"] * 100, 1),
             "Peso sem preço (%)": round(metricas["peso_ausente"] * 100, 1),
+            "Universo com preço": (
+                f"{metricas['n_universo_com_preco']}/{metricas['n_universo_total']}"
+            ),
         })
         if carteira.completa:
             completas.append(carteira.safra)
+        selic_estimados_por_safra[carteira.safra] = metricas["selic_anos_estimados"]
 
     tabela = pd.DataFrame(linhas, columns=COLUNAS_TABELA)
     tabela.attrs["safras_completas"] = completas
+    tabela.attrs["selic_anos_estimados_por_safra"] = selic_estimados_por_safra
     return tabela
