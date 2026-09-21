@@ -124,3 +124,21 @@ def test_tema_claro_alcanca_cabecalho_e_o_desbote_de_recalculo():
                     '[data-testid="stToolbar"] :is(button,span,svg,path,circle)',
                     '[data-testid="stElementContainer"][data-stale="true"]'):
         assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
+
+
+def test_tema_claro_alcanca_a_tabela_markdown_da_resposta_da_llm():
+    """Tabela da LLM saía branca no branco, dentro e fora da bolha do chat.
+
+    Duas causas independentes, medidas no preview: ``stChatMessageContent``
+    traz ``color:rgb(250,250,250)`` do tema do config e a tabela herdava (o
+    parágrafo escapava porque a regra de ``stMarkdownContainer`` enumera ``p``
+    e não alcança ``th``/``td``); e a grade nativa é ``rgba(250,250,250,.1)``,
+    invisível sobre fundo claro mesmo com o texto legível.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    for seletor in ('[data-testid="stChatMessageContent"]',
+                    '[data-testid="stMarkdownContainer"] :is(table,th,td)',
+                    '[data-testid="stMarkdownContainer"] table :is(th,td)',
+                    '[data-testid="stMarkdownContainer"] table thead th'):
+        assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
