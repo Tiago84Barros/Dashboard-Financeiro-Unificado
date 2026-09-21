@@ -1218,6 +1218,11 @@ def _processar_segmento(
         "ano_ref_score": ano_ref_score,
         "lids_prox": lids_prox,
         "pesos_prox": pesos_prox,
+        # Carteira historica por safra. Ja eram PIT (score com lag=1, dados
+        # ate N-1) mas morriam dentro desta funcao -- por isso nunca houve
+        # tela mostrando quem entrou na carteira de cada ano.
+        "lids_por_ano": lids_por_ano,
+        "pesos_por_ano": pesos_por_ano,
         "contrib_est": contrib_est,
         "ticker_maior_part": max(contrib_est, key=contrib_est.get) if contrib_est else None,
         "score_rows": score_rows,
@@ -3109,7 +3114,9 @@ def render(show_header: bool = True) -> None:
     # Resultados ficam em session_state e sobrevivem a deploys. Execuções feitas
     # antes do overhaul (holdout OOS + FDR) não têm as chaves _oos e quebrariam o
     # render. Detecta o schema antigo, descarta e pede novo "Rodar".
-    if resultados and any("val_est_oos" not in r for r in resultados):
+    if resultados and any(
+        "val_est_oos" not in r or "lids_por_ano" not in r for r in resultados
+    ):
         for _k in (
             "pb3_resultados", "pb3_df_set", "pb3_precos_all",
             "pb3_quality_summary", "pb3_quality_audit", "pb3_hist_audit",
