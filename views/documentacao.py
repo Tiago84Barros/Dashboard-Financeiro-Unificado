@@ -1953,6 +1953,165 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
 )
 
 
+FLOW_CONFIGURACOES = FlowSpec(
+    key="configuracoes",
+    title="Configurações — o que você ajusta, o que você sobe e o que você audita",
+    subtitle=(
+        "A Central de Configurações reúne quatro tarefas diferentes sob a mesma barra: "
+        "preferência da conta, entrada de arquivo, diagnóstico do ambiente e segurança. "
+        "Saber qual aba faz o quê evita procurar o upload no lugar errado."
+    ),
+    rows=(
+        ("Preferências", ("cfg_tema", "cfg_trocar_usuario", "cfg_memoria_llm")),
+        ("Entrada de arquivo", ("cfg_fatura", "cfg_extrato", "cfg_carteira")),
+        ("Diagnóstico", ("cfg_confianca", "cfg_mercado", "cfg_banco")),
+        ("Segurança", ("cfg_sessao", "cfg_usuarios")),
+    ),
+    default="cfg_tema",
+    nodes={
+        "cfg_tema": _node(
+            "cfg_tema", "Tema do aplicativo", "Preferências",
+            "Escolha entre o tema escuro e o claro. A escolha é gravada na conta e "
+            "vale nas próximas aberturas, em qualquer tela.",
+            (
+                "Aba ⚙️ Geral, primeiro bloco",
+                "Escolha gravada por usuário",
+                "O seletor morava na barra lateral até 21/09/2026",
+            ),
+            "O tema é preferência de quem usa, e preferência pertence à conta — não ao "
+            "menu de navegação, onde disputava espaço com as rotas do app.",
+        ),
+        "cfg_trocar_usuario": _node(
+            "cfg_trocar_usuario", "Trocar de usuário", "Preferências",
+            "Encerra a sessão deste navegador e devolve a tela de entrada. Exige marcar "
+            "uma confirmação explícita antes do botão ficar disponível.",
+            (
+                "Aba ⚙️ Geral, segundo bloco",
+                "Confirmação obrigatória antes de sair",
+                "Limpa a sessão inteira do navegador",
+            ),
+            "Sair apaga tudo o que a sessão guardava em memória, inclusive filtros e "
+            "prévias ainda não gravadas. Por isso a saída pede confirmação em vez de "
+            "acontecer num clique solto.",
+        ),
+        "cfg_memoria_llm": _node(
+            "cfg_memoria_llm", "Memória da LLM", "Preferências",
+            "Apaga o histórico de conversa com o assistente — de uma seção específica "
+            "ou de todas. A contagem aparece antes do clique.",
+            (
+                "Aba ⚙️ Geral, terceiro bloco",
+                "Contagem de conversas exibida antes de apagar",
+                "Limpa o banco e também a sessão aberta",
+            ),
+            "Apagar só o banco deixaria a conversa viva na tela até o próximo recarregamento, "
+            "e o usuário concluiria que a limpeza falhou. As duas cópias somem juntas.",
+        ),
+        "cfg_fatura": _node(
+            "cfg_fatura", "Fatura do cartão", "Entrada de arquivo",
+            "Sobe o CSV da fatura, confere vencimento, conta e lançamentos na prévia e só "
+            "então grava. É a entrada do fluxo futuro do cartão.",
+            (
+                "Aba 🔁 Atualização de dados › 💳 Controle Financeiro",
+                "Arquivo CSV, com prévia antes de gravar",
+                "Alimenta a aba Cartão, não o fluxo do mês",
+            ),
+            "A fatura projeta o que ainda vai ser pago. Somá-la ao caixa do mês mistura duas "
+            "linhas do tempo diferentes, e foi por isso que as duas entradas seguem separadas.",
+        ),
+        "cfg_extrato": _node(
+            "cfg_extrato", "Extrato bancário", "Entrada de arquivo",
+            "Sobe o PDF do extrato e revisa direção, valor e categoria de cada movimento "
+            "antes da importação.",
+            (
+                "Aba 🔁 Atualização de dados › 💳 Controle Financeiro",
+                "Arquivo PDF, com revisão linha a linha",
+                "Alimenta os movimentos do mês",
+            ),
+            "Extrato importado sem revisão inverte sinal e erra categoria em silêncio: o total "
+            "fecha e a leitura por categoria fica errada. A conferência é parte da importação.",
+        ),
+        "cfg_carteira": _node(
+            "cfg_carteira", "Arquivos da carteira", "Entrada de arquivo",
+            "Importa os arquivos de negociação da corretora — seleciona a instituição, "
+            "valida a prévia e atualiza a carteira consolidada.",
+            (
+                "Aba 🔁 Atualização de dados › 📈 Investimentos",
+                "Formatos CSV, XLSX e PDF conforme a origem",
+                "Exige banco conectado",
+            ),
+            "O nome do arquivo às vezes carrega parte da chave — a data do lote, por exemplo. "
+            "Por isso a importação lê os arquivos um a um, e não como um bloco único de bytes.",
+        ),
+        "cfg_confianca": _node(
+            "cfg_confianca", "Grau de Confiança", "Diagnóstico",
+            "Mostra quanto o app confia em cada seção e a evidência por trás de cada nota. "
+            "A tela lê a última medição gravada e só remede quando você clica.",
+            (
+                "Aba 🎯 Grau de Confiança, a primeira da barra",
+                "Nota por seção, com o detalhe por critério",
+                "Apoio analítico — não é recomendação",
+            ),
+            "Medir a cada abertura custava uma varredura inteira do banco por clique de menu. "
+            "Ler a última medição e remedir sob comando deixa o custo onde a decisão está.",
+        ),
+        "cfg_mercado": _node(
+            "cfg_mercado", "Dados de mercado", "Diagnóstico",
+            "Acompanha cotações, fundamentos e indicadores macroeconômicos: quantas fontes "
+            "estão em dia, quantas pedem atenção e quando foi a última atualização.",
+            (
+                "Aba 🔄 Dados de mercado",
+                "Cotações e indicadores diários; macro consolidado mensal",
+                "Documentos corporativos, semanais",
+            ),
+            "Transações, operações e proventos ficam de fora de propósito: eles vêm do arquivo "
+            "que você sobe ou do lançamento manual, e não de coleta automática.",
+        ),
+        "cfg_banco": _node(
+            "cfg_banco", "Banco de dados", "Diagnóstico",
+            "Conexão, capacidade e schema do banco publicado, além das rotas controladas de "
+            "importação. Diagnóstico técnico, sem conteúdo financeiro.",
+            (
+                "Aba 🗄️ Banco de dados",
+                "Estado da conexão e avisos de ambiente",
+                "Uso do espaço e maiores tabelas",
+            ),
+            "O plano gratuito da nuvem tem teto de espaço, e estourar o teto derruba a leitura "
+            "do app inteiro. Ver a margem antes de publicar carga nova é o que evita a parada.",
+        ),
+        "cfg_sessao": _node(
+            "cfg_sessao", "Proteção e sessão", "Segurança",
+            "Confirma se o acesso está protegido por senha, se a sessão deste navegador está "
+            "autenticada e gera o hash da credencial do aplicativo.",
+            (
+                "Aba 🔒 Segurança, blocos 01 e 02",
+                "Hash gerado localmente, em SHA-256",
+                "Somente o hash vai para o arquivo de segredos",
+            ),
+            "Senha em texto puro dentro da configuração vaza junto com qualquer cópia do "
+            "ambiente. O aplicativo guarda o resumo criptográfico, e nunca a senha.",
+        ),
+        "cfg_usuarios": _node(
+            "cfg_usuarios", "Usuários cadastrados", "Segurança",
+            "Lista quem tem acesso ao aplicativo, com data de cadastro e situação. Somente "
+            "leitura, e visível apenas para quem administra.",
+            (
+                "Aba 🔒 Segurança, bloco 03",
+                "Data de cadastro e situação por usuário",
+                "Quem não administra não vê o bloco",
+            ),
+            "A lista fecha a página, e não abre: o administrador chega nela depois de conferir "
+            "o estado da sessão e da credencial.",
+        ),
+    },
+    notes=(
+        "Quem não administra o app vê uma versão reduzida desta tela, com duas abas: "
+        "importar os próprios dados e a própria conta.",
+        "As duas entradas do Controle Financeiro são irmãs na mesma sub-aba, mas nunca se "
+        "somam: a fatura é fluxo futuro e o extrato é o mês corrente.",
+    ),
+)
+
+
 FLOWS = (
     FLOW_ANALISE_AVANCADA,
     FLOW_SIMULADOR,
@@ -1964,6 +2123,7 @@ FLOWS = (
     FLOW_EMPRESAS_EUA,
     FLOW_PORTFOLIO_GLOBAL,
     FLOW_QUALIDADE_DADOS,
+    FLOW_CONFIGURACOES,
 )
 
 
@@ -2283,6 +2443,11 @@ def _generic_flow_detail(flow: FlowSpec, node: FlowNode) -> dict[str, str]:
             "Afeta a nota de confiança da seção, o rótulo que o app usa para afirmar algo "
             "e as limitações que cada painel declara."
         )
+    elif flow.key == "configuracoes":
+        detail["impacto"] = (
+            "Afeta o que entra no banco pela sua mão, a preferência gravada na conta e o "
+            "diagnóstico que você consulta antes de confiar num painel."
+        )
     return detail
 
 
@@ -2601,6 +2766,7 @@ def render() -> None:
         "Empresas Americanas",
         "Portfólio Global",
         "Qualidade dos dados",
+        "Configurações",
         "Indicadores",
     ]
     tabs = st.tabs(tab_labels)
@@ -2626,4 +2792,6 @@ def render() -> None:
     with tabs[9]:
         _render_flow(FLOW_QUALIDADE_DADOS)
     with tabs[10]:
+        _render_flow(FLOW_CONFIGURACOES)
+    with tabs[11]:
         _render_indicadores()
