@@ -2,8 +2,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import core.b3_safras as b3_safras
 from core.b3_safras import (
     SafraCarteira,
+    _dias_por_ano_civil,
     carteiras_por_safra,
     retorno_da_safra,
     tabela_de_safras,
@@ -259,10 +261,10 @@ def test_tabela_vazia_tem_colunas_e_empty():
                               taxa_selic_aa=0.0, hoje=HOJE)
     assert tabela.empty
     assert list(tabela.columns) == [
-        "Safra", "Exercício-base", "Janela", "Completa", "Segmentos",
-        "Ativos", "Maiores posições", "Estratégia (%)", "Equal-weight (%)",
-        "Selic (%)", "Excesso s/ Selic (pp)", "Peso sem preço (%)",
-        "Universo com preço",
+        "Safra", "Exercício-base", "Janela", "Completa", "Mensurável",
+        "Segmentos", "Ativos", "Maiores posições", "Estratégia (%)",
+        "Equal-weight (%)", "Selic (%)", "Excesso s/ Selic (pp)",
+        "Peso sem preço (%)", "Universo com preço",
     ]
     assert tabela.attrs["safras_completas"] == []
     assert tabela.attrs["selic_anos_estimados_por_safra"] == {}
@@ -360,3 +362,185 @@ def test_tabela_nao_tem_coluna_vazia_por_chave_desalinhada():
     tabela = tabela_de_safras(res, df, selic_por_ano={}, taxa_selic_aa=0.0,
                               hoje=HOJE)
     assert not tabela.isna().any().any()
+
+
+# ---------------------------------------------------------------------------
+# Rodada de correção 4
+# ---------------------------------------------------------------------------
+
+
+def test_safra_sem_nenhum_pregao_nao_e_mensuravel():
+    """Janela 100% NaN: nenhum pregao medido, entao NENHUM retorno pode sair
+    com numero.
+
+    Sem a correcao, `_janela_de_mercado` recaia nas pontas CIVIS
+    (01/04/2024 a 31/03/2025 = 364 dias corridos) e a Selic capitalizava a
+    janela inteira contra estrategia 0,0 e equal-weight 0,0:
+    `1.12 ** (364/365) - 1 = 0.11965`, ou seja `Excesso s/ Selic = -12,0 pp`
+    (o `round(-0.11965*100, 1)`) sem um unico preco observado -- na tela,
+    indistinguivel de uma safra real que perdeu 12 pontos.
+
+    `peso_ausente` e a cobertura continuam saindo com numero: sao contagem
+    do observado, nao retorno fabricado.
+    """
+    df = _precos(["2024-04-30", "2025-03-31"],
+                 {"AAAA3": [np.nan, np.nan], "BBBB3": [np.nan, np.nan]})
+    carteira = SafraCarteira(
+        safra=2024, ano_base=2023,
+        inicio=pd.Timestamp("2024-04-01"), fim=pd.Timestamp("2025-03-31"),
+        completa=True, pesos={"AAAA3": 0.5, "BBBB3": 0.5},
+        universo=("AAAA3", "BBBB3"), segmentos=1,
+    )
+    out = retorno_da_safra(carteira, df,
+                           selic_por_ano={2024: 0.12, 2025: 0.12},
+                           taxa_selic_aa=0.0)
+    assert out["mensuravel"] is False
+    assert out["retorno_estrategia"] is None
+    assert out["retorno_equal_weight"] is None
+    assert out["retorno_selic"] is None
+    assert out["excesso_selic"] is None
+    assert out["excesso_equal_weight"] is None
+    assert out["selic_anos_estimados"] == []
+    # contagem do observado: segue saindo com numero
+    assert out["peso_ausente"] == pytest.approx(1.0)
+    assert out["n_universo_total"] == 2
+    assert out["n_universo_com_preco"] == 0
+
+
+def test_df_de_precos_vazio_tambem_nao_e_mensuravel():
+    """Mesma regra pela outra porta: quadro sem nenhuma linha (falha de
+    leitura, universo sem cobertura no banco). Sem a correcao a safra saia
+    com `Excesso s/ Selic = -12,0 pp` pela mesma conta da janela civil."""
+    carteira = SafraCarteira(
+        safra=2024, ano_base=2023,
+        inicio=pd.Timestamp("2024-04-01"), fim=pd.Timestamp("2025-03-31"),
+        completa=True, pesos={"AAAA3": 1.0}, universo=("AAAA3",), segmentos=1,
+    )
+    out = retorno_da_safra(carteira, _precos([], {}),
+                           selic_por_ano={2024: 0.12, 2025: 0.12},
+                           taxa_selic_aa=0.0)
+    assert out["mensuravel"] is False
+    assert out["retorno_selic"] is None
+    assert out["excesso_selic"] is None
+    assert out["n_universo_com_preco"] == 0
+
+
+def test_universo_vazio_nao_publica_equal_weight_fabricado():
+    """NOVO-2: `tickers=[]` deixava `retornos_ew` vazio e publicava
+    `Equal-weight (%) = NaN` numa linha que, no resto, parecia medida.
+
+    Sem universo nao ha mercado contra o qual comparar -- a safra cai no
+    MESMO caminho de "nao mensuravel" de NOVO-1, em vez de inventar uma
+    segunda gramatica so para essa coluna. O criterio
+    `n_universo_com_preco == 0` cobre os dois casos porque `universo` e,
+    por construcao de `carteiras_por_safra`, superconjunto de `pesos`.
+    """
+    res = [_resultado("A", {2024: ["AAAA3"]}, {2024: {"AAAA3": 1.0}}, [])]
+    df = _precos(["2024-04-30", "2025-03-31"], {"AAAA3": [10.0, 20.0]})
+
+    (carteira,) = carteiras_por_safra(res, hoje=HOJE)
+    assert carteira.universo == ()
+    out = retorno_da_safra(carteira, df, selic_por_ano={}, taxa_selic_aa=0.0)
+    assert out["mensuravel"] is False
+    assert out["retorno_equal_weight"] is None
+    assert out["excesso_equal_weight"] is None
+
+    tabela = tabela_de_safras(res, df, selic_por_ano={}, taxa_selic_aa=0.0,
+                              hoje=HOJE)
+    linha = tabela.loc[tabela["Safra"] == 2024].iloc[0]
+    assert bool(linha["Mensurável"]) is False
+    assert pd.isna(linha["Equal-weight (%)"])
+    assert tabela.attrs["safras_completas"] == []
+
+
+def test_tabela_marca_safra_nao_mensuravel_e_a_exclui_das_medias():
+    """A safra 2024 tem janela civil FECHADA (`Completa` segue True), mas
+    nenhum pregao observado. A linha precisa aparecer marcada e ficar fora
+    de `safras_completas` -- se entrar, a media da Task 5 soma um numero
+    que nunca foi medido. A safra 2025, com preco de verdade, fica.
+
+    2025 e medida de 30/04/2025 (primeiro preco real dentro da janela) a
+    31/03/2026: 10,0 -> 12,0 da +20,0% na estrategia e no equal-weight
+    (universo de um ticker so), com Selic zerada (`taxa_selic_aa=0.0` e
+    2026 fora de `selic_por_ano`).
+    """
+    res = [_resultado("A", {2024: ["AAAA3"], 2025: ["AAAA3"]},
+                      {2024: {"AAAA3": 1.0}, 2025: {"AAAA3": 1.0}}, ["AAAA3"])]
+    df = _precos(["2024-04-30", "2025-03-31", "2025-04-30", "2026-03-31"],
+                 {"AAAA3": [np.nan, np.nan, 10.0, 12.0]})
+    tabela = tabela_de_safras(res, df, selic_por_ano={}, taxa_selic_aa=0.0,
+                              hoje=HOJE)
+
+    nao_medida = tabela.loc[tabela["Safra"] == 2024].iloc[0]
+    assert bool(nao_medida["Completa"]) is True
+    assert bool(nao_medida["Mensurável"]) is False
+    assert nao_medida["Universo com preço"] == "0/1"
+    for coluna in ("Estratégia (%)", "Equal-weight (%)", "Selic (%)",
+                   "Excesso s/ Selic (pp)"):
+        assert pd.isna(nao_medida[coluna]), coluna
+
+    medida = tabela.loc[tabela["Safra"] == 2025].iloc[0]
+    assert bool(medida["Mensurável"]) is True
+    assert medida["Estratégia (%)"] == pytest.approx(20.0)
+    assert medida["Equal-weight (%)"] == pytest.approx(20.0)
+
+    assert tabela.attrs["safras_completas"] == [2025]
+
+
+def test_tabela_desalinhada_de_colunas_tabela_levanta_nas_duas_direcoes(
+        monkeypatch):
+    """A guarda de `tabela_de_safras` fecha as DUAS direcoes do
+    desalinhamento, e cada uma some em silencio sem ela:
+
+    - coluna declarada sem chave no dict -> `pd.DataFrame(..., columns=...)`
+      entrega uma coluna 100% NaN;
+    - chave no dict sem coluna declarada -> o DataFrame simplesmente
+      descarta o dado, e a Task 5 nunca sabe que ele existiu.
+    """
+    res = [_resultado("A", {2024: ["AAAA3"]}, {2024: {"AAAA3": 1.0}}, ["AAAA3"])]
+    df = _precos(["2024-04-30", "2025-03-31"], {"AAAA3": [10.0, 20.0]})
+    declaradas = list(b3_safras.COLUNAS_TABELA)
+
+    # direcao 1: COLUNAS_TABELA pede uma coluna que a linha nao monta.
+    monkeypatch.setattr(b3_safras, "COLUNAS_TABELA",
+                        [*declaradas, "Coluna Fantasma"])
+    with pytest.raises(ValueError, match="Coluna Fantasma"):
+        tabela_de_safras(res, df, selic_por_ano={}, taxa_selic_aa=0.0,
+                         hoje=HOJE)
+
+    # direcao 2: a linha monta uma chave que COLUNAS_TABELA nao declara.
+    monkeypatch.setattr(b3_safras, "COLUNAS_TABELA",
+                        [c for c in declaradas if c != "Selic (%)"])
+    with pytest.raises(ValueError, match="Selic"):
+        tabela_de_safras(res, df, selic_por_ano={}, taxa_selic_aa=0.0,
+                         hoje=HOJE)
+
+
+def test_dias_por_ano_civil_reparte_a_virada_do_ano():
+    """Derivacao a mao do intervalo `[30/04/2024, 31/03/2025)`, que tem 335
+    dias corridos. Pedaco de 2024 = `[30/04, 01/01/2025)`: o resto de abril
+    (1 dia, o proprio 30/04) + maio 31 + junho 30 + julho 31 + agosto 31 +
+    setembro 30 + outubro 31 + novembro 30 + dezembro 31 = 246. Pedaco de
+    2025 = `[01/01, 31/03)`: janeiro 31 + fevereiro 28 + marco 30 (o dia
+    31/03 e o fim exclusivo) = 89. E 246 + 89 = 335."""
+    assert _dias_por_ano_civil(
+        pd.Timestamp("2024-04-30"), pd.Timestamp("2025-03-31")
+    ) == {2024: 246, 2025: 89}
+
+
+def test_dias_por_ano_civil_acusa_erro_em_vez_de_travar(monkeypatch):
+    """NOVO-3: o off-by-one natural aqui e escrever `min(fim, fim_do_ano)`
+    sem o `+ 1 day`. Com o `while` aberto da rodada 3 o cursor parava em
+    31/12 e nunca mais avancava: a SUITE TRAVAVA em laco infinito em vez de
+    ficar vermelha (aconteceu de verdade com o revisor). O laco limitado a
+    um pedaco por ano civil transforma isso em `ValueError` -- termina, e
+    diz onde parou."""
+    def _virada_com_off_by_one(cursor, fim):
+        fim_do_ano = pd.Timestamp(year=cursor.year, month=12, day=31)
+        return min(fim, fim_do_ano)
+
+    monkeypatch.setattr(b3_safras, "_proxima_virada_de_ano",
+                        _virada_com_off_by_one)
+    with pytest.raises(ValueError, match="nao cobriu a janela inteira"):
+        _dias_por_ano_civil(pd.Timestamp("2024-04-30"),
+                            pd.Timestamp("2025-03-31"))

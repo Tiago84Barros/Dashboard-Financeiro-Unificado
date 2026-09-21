@@ -80,6 +80,46 @@ Regras de medicao do retorno (rodada de correcao 3, revisao de codigo):
   direcoes do desalinhamento (coluna declarada sem chave, e chave nova sem
   coluna) no mesmo lugar onde o bug nasceria.
 
+Regras de medicao do retorno (rodada de correcao 4, revisao de codigo):
+
+- **Safra sem nenhum pregao observado NAO e mensuravel.** Quando
+  `n_universo_com_preco == 0` (df vazio, janela 100% NaN, ou nenhum ticker
+  do universo com coluna de preco), `_janela_de_mercado` recai nas pontas
+  CIVIS e a Selic capitalizava a janela inteira contra uma estrategia e um
+  equal-weight zerados -- a linha publicava algo como
+  `Excesso s/ Selic = -12,0 pp` sem UM UNICO pregao medido, indistinguivel
+  na tela de uma safra real que perdeu 12 pontos. Agora `retorno_estrategia`,
+  `retorno_equal_weight`, `retorno_selic`, `excesso_selic` e
+  `excesso_equal_weight` saem como `None` (e `NaN` nas colunas), e o dict
+  ganha `mensuravel: bool`.
+
+  Isso NAO contradiz a regra "ticker sem preco rende zero, nao redistribuir
+  entre sobreviventes": aquela regra fala de um ticker ausente DENTRO de
+  uma janela mensuravel. Uma janela em que nenhum ativo foi observado nao e
+  esse caso -- nao ha o que medir. `peso_ausente` e `n_universo_*` continuam
+  saindo com numero, porque sao contagem do observado, nao retorno fabricado.
+
+  O criterio e `n_universo_com_preco > 0` (e nao "algum ticker de `pesos`
+  com preco") porque `universo` e, por construcao de `carteiras_por_safra`,
+  superconjunto das chaves de `pesos`: os lideres vem dos `tickers` do
+  mesmo segmento. Universo vazio (`tickers=[]`) cai no mesmo caminho, em
+  vez de publicar `Equal-weight (%) = NaN` sozinho numa linha que parece
+  medida.
+
+- **A marcacao e a exclusao reaproveitam a gramatica da safra parcial.**
+  A coluna `"Mensurável"` (bool) fica ao lado de `"Completa"`, e
+  `attrs["safras_completas"]` exige `completa AND mensuravel` -- uma safra
+  de janela civil fechada mas sem pregao nenhum nao pode entrar nas medias
+  da Task 5. Duas colunas booleanas, uma lista de agregaveis: a tela nao
+  precisa aprender uma segunda gramatica de "nao conte esta linha".
+
+- **`_dias_por_ano_civil` tem trava de progresso.** O laco era um `while`
+  aberto: um off-by-one natural (`min(fim, fim_do_ano)` sem o `+1 day`)
+  parava de avancar e a SUITE TRAVAVA em laco infinito em vez de ficar
+  vermelha. Agora o laco e limitado a um pedaco por ano civil da janela e,
+  se sobrar janela sem cobrir, levanta `ValueError` -- o erro aparece como
+  erro.
+
 Modulo puro: sem streamlit, sem banco. Coberto por tests/test_b3_safras.py.
 """
 from __future__ import annotations
@@ -96,9 +136,10 @@ from core.b3_vigencia import ano_base_do_score, janela_de_vigencia, safra_comple
 TOLERANCIA_DIAS = 45
 
 COLUNAS_TABELA = [
-    "Safra", "Exercício-base", "Janela", "Completa", "Segmentos", "Ativos",
-    "Maiores posições", "Estratégia (%)", "Equal-weight (%)", "Selic (%)",
-    "Excesso s/ Selic (pp)", "Peso sem preço (%)", "Universo com preço",
+    "Safra", "Exercício-base", "Janela", "Completa", "Mensurável",
+    "Segmentos", "Ativos", "Maiores posições", "Estratégia (%)",
+    "Equal-weight (%)", "Selic (%)", "Excesso s/ Selic (pp)",
+    "Peso sem preço (%)", "Universo com preço",
 ]
 
 
@@ -242,19 +283,43 @@ def _preco_nas_pontas(serie: pd.Series, inicio_mercado: pd.Timestamp,
     return float(dentro.iloc[0]), float(dentro.iloc[-1])
 
 
+def _proxima_virada_de_ano(cursor: pd.Timestamp,
+                           fim: pd.Timestamp) -> pd.Timestamp:
+    """Fim do pedaco de `[cursor, fim)` que ainda cabe no ano de `cursor`.
+
+    O `+1 day` sobre 31/12 e o que faz o cursor SAIR do ano corrente: sem
+    ele o proximo passo volta a apontar para a mesma data e o laco nao
+    progride (ver `_dias_por_ano_civil`).
+    """
+    fim_do_ano = pd.Timestamp(year=cursor.year, month=12, day=31)
+    return min(fim, fim_do_ano + pd.Timedelta(days=1))
+
+
 def _dias_por_ano_civil(inicio: pd.Timestamp, fim: pd.Timestamp) -> dict[int, int]:
     """Reparte os dias corridos de `[inicio, fim)` pelo ano civil de cada um.
 
     A janela pode cruzar a virada do ano; cada pedaco tem que ir para o
     ano certo para a Selic compor com a taxa daquele ano.
+
+    O laco e LIMITADO a um pedaco por ano civil da janela, e o que sobrar
+    sem cobrir vira `ValueError`. Um `while` aberto transformava um
+    off-by-one em `_proxima_virada_de_ano` (o classico `min(fim,
+    fim_do_ano)` sem o `+1 day`) em laco infinito: a suite TRAVAVA em vez
+    de ficar vermelha, e travamento nao aponta para o defeito.
     """
     dias: dict[int, int] = {}
     cursor = inicio
-    while cursor < fim:
-        fim_do_ano = pd.Timestamp(year=cursor.year, month=12, day=31)
-        proximo = min(fim, fim_do_ano + pd.Timedelta(days=1))
+    for _ in range(inicio.year, fim.year + 1):
+        if cursor >= fim:
+            break
+        proximo = _proxima_virada_de_ano(cursor, fim)
         dias[cursor.year] = dias.get(cursor.year, 0) + (proximo - cursor).days
         cursor = proximo
+    if cursor < fim:
+        raise ValueError(
+            "_dias_por_ano_civil nao cobriu a janela inteira -- parou em "
+            f"{cursor} com fim={fim}; _proxima_virada_de_ano nao progrediu"
+        )
     return dias
 
 
@@ -308,15 +373,25 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
     `inicio_mercado` (ver `_janela_de_mercado`), que se afastam do
     `inicio`/`fim` civis numa safra parcial ou com feed atrasado -- do
     contrario a linha compararia 5 meses de bolsa com 12 de CDI.
+
+    Se NENHUM ticker do universo foi observado na janela
+    (`n_universo_com_preco == 0`), a safra nao e mensuravel: os cinco
+    retornos saem `None` e `mensuravel` e `False`. Publicar numero ali
+    seria capitalizar a Selic contra dois zeros e chamar o resultado de
+    "excesso" -- um valor fabricado sem um unico pregao medido.
     """
     inicio, fim = carteira.inicio, carteira.fim
     inicio_mercado, corte = _janela_de_mercado(df_precos, inicio, fim)
 
+    def _pontas(tk: str) -> tuple[float, float] | None:
+        if tk not in df_precos.columns:
+            return None
+        return _preco_nas_pontas(df_precos[tk], inicio_mercado, corte)
+
     retorno_est = 0.0
     peso_ausente = 0.0
     for tk, peso in carteira.pesos.items():
-        pontas = (_preco_nas_pontas(df_precos[tk], inicio_mercado, corte)
-                  if tk in df_precos.columns else None)
+        pontas = _pontas(tk)
         if pontas is None:
             peso_ausente += float(peso)
             continue
@@ -326,16 +401,35 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
     retornos_ew: list[float] = []
     n_com_preco = 0
     for tk in carteira.universo:
-        pontas = (_preco_nas_pontas(df_precos[tk], inicio_mercado, corte)
-                  if tk in df_precos.columns else None)
+        pontas = _pontas(tk)
         if pontas is not None:
             p0, p1 = pontas
             retornos_ew.append(p1 / p0 - 1.0)
             n_com_preco += 1
         else:
             retornos_ew.append(0.0)  # simetrico a estrategia: lacuna rende 0
-    retorno_ew = float(np.mean(retornos_ew)) if retornos_ew else float("nan")
 
+    # Contagem do observado: vale tanto na safra mensuravel quanto na que
+    # nao foi medida -- e o que a coluna "Universo com preço" mostra.
+    cobertura = {
+        "peso_ausente": peso_ausente,
+        "n_universo_total": len(carteira.universo),
+        "n_universo_com_preco": n_com_preco,
+    }
+
+    if n_com_preco == 0:
+        return {
+            "retorno_estrategia": None,
+            "retorno_equal_weight": None,
+            "retorno_selic": None,
+            "excesso_selic": None,
+            "excesso_equal_weight": None,
+            "selic_anos_estimados": [],
+            "mensuravel": False,
+            **cobertura,
+        }
+
+    retorno_ew = float(np.mean(retornos_ew))
     retorno_selic, selic_anos_estimados = _retorno_selic(
         inicio_mercado, corte, selic_por_ano or {}, taxa_selic_aa)
     return {
@@ -345,11 +439,21 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
         "excesso_selic": retorno_est - retorno_selic,
         "excesso_equal_weight": (retorno_est - retorno_ew
                                  if np.isfinite(retorno_ew) else float("nan")),
-        "peso_ausente": peso_ausente,
-        "n_universo_total": len(carteira.universo),
-        "n_universo_com_preco": n_com_preco,
         "selic_anos_estimados": selic_anos_estimados,
+        "mensuravel": True,
+        **cobertura,
     }
+
+
+def _pct(valor: float | None) -> float:
+    """Fracao -> percentual com 1 casa; `None` (safra nao mensuravel) -> NaN.
+
+    `round(None * 100, 1)` estouraria TypeError; e o pior seria "consertar"
+    com `0.0`, que publica um numero onde nao houve medicao nenhuma.
+    """
+    if valor is None:
+        return float("nan")
+    return round(float(valor) * 100, 1)
 
 
 def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
@@ -368,6 +472,11 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     inteiro -- sem isso so a ultima safra calculada sobreviveria fora do
     loop, e a tela nao teria como avisar por safra qual trecho da Selic
     veio do fallback.
+
+    Uma safra sem nenhum pregao observado sai com `Mensurável = False` e
+    `NaN` nas colunas de retorno, e fica fora de `safras_completas` mesmo
+    com a janela civil fechada -- mesma gramatica da safra vigente, para a
+    tela nao ter duas maneiras diferentes de dizer "nao conte esta linha".
     """
     linhas: list[dict] = []
     completas: list[int] = []
@@ -383,14 +492,15 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "Exercício-base": carteira.ano_base,
             "Janela": f"{carteira.inicio:%m/%Y} a {carteira.fim:%m/%Y}",
             "Completa": carteira.completa,
+            "Mensurável": bool(metricas["mensuravel"]),
             "Segmentos": carteira.segmentos,
             "Ativos": len(carteira.pesos),
             "Maiores posições": ", ".join(f"{tk} {p:.0%}" for tk, p in maiores),
-            "Estratégia (%)": round(metricas["retorno_estrategia"] * 100, 1),
-            "Equal-weight (%)": round(metricas["retorno_equal_weight"] * 100, 1),
-            "Selic (%)": round(metricas["retorno_selic"] * 100, 1),
-            "Excesso s/ Selic (pp)": round(metricas["excesso_selic"] * 100, 1),
-            "Peso sem preço (%)": round(metricas["peso_ausente"] * 100, 1),
+            "Estratégia (%)": _pct(metricas["retorno_estrategia"]),
+            "Equal-weight (%)": _pct(metricas["retorno_equal_weight"]),
+            "Selic (%)": _pct(metricas["retorno_selic"]),
+            "Excesso s/ Selic (pp)": _pct(metricas["excesso_selic"]),
+            "Peso sem preço (%)": _pct(metricas["peso_ausente"]),
             "Universo com preço": (
                 f"{metricas['n_universo_com_preco']}/{metricas['n_universo_total']}"
             ),
@@ -403,7 +513,9 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                 f"faltando={faltando} sobrando={sobrando}"
             )
         linhas.append(linha)
-        if carteira.completa:
+        # Mesma exclusao da safra vigente: janela civil fechada nao basta,
+        # a janela tambem precisa ter sido medida para entrar em media.
+        if carteira.completa and metricas["mensuravel"]:
             completas.append(carteira.safra)
         selic_estimados_por_safra[carteira.safra] = metricas["selic_anos_estimados"]
 
