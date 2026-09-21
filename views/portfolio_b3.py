@@ -25,6 +25,14 @@ from core.b3_portfolio_model import (
 from core.b3_renda_sustentavel import (
     enrich_decision_universe as _enrich_decision_universe,
 )
+from core.b3_vigencia import (
+    REBAL_MONTH as _REBAL_MONTH,
+)
+from core.b3_vigencia import (  # noqa: F401 -- consumidas na Task 2
+    ano_base_do_score,
+    janela_de_vigencia,
+    safra_vigente_em,
+)
 from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
 from core.macro_data.database import get_local_macro_engine
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
@@ -41,7 +49,6 @@ from views.empresas_b3 import (
     _COR_POS,
     _DIV_POR_ACAO_MAX,
     _GAMMA_DEF,
-    _REBAL_MONTH,
     _SOFT_DEF,
     PITCoverage,
     _aplicar_cheapness,

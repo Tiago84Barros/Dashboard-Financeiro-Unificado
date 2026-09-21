@@ -32,6 +32,7 @@ import core.market_read as _mr  # séries do market.* (preços mensais ajustados
 from core.b3_methodology import SCORE_VERSION
 from core.b3_renda_sustentavel import enrich_decision_universe
 from core.b3_slopes import SLOPE_COLS, compute_slope_log, enrich_com_slopes
+from core.b3_vigencia import REBAL_MONTH as _REBAL_MONTH
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
 from core.validacao_motor import validacao_b3
@@ -2071,12 +2072,6 @@ _CAP_GRID   = (0.20, 0.25, 0.30)
 _SOFT_GRID  = (0.03, 0.05, 0.08)
 _GAMMA_DEF, _CAP_DEF, _SOFT_DEF = 0.90, 0.25, 0.05
 _CAL_SHRINK = 0.40   # shrinkage 40 % em direção ao default
-# Mês do rebalance anual do backtest (auditoria 2026-07): balanços FY N−1
-# são publicados até 31/03 (CVM) — rebalancear em JANEIRO antecipava 2-4
-# meses de informação contábil. Abril é o primeiro mês realista.
-_REBAL_MONTH = 4
-
-
 def _calibrate_gamma_cap_soft(
     df_precos: pd.DataFrame,
     df_scored: pd.DataFrame,
