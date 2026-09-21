@@ -160,3 +160,34 @@ misturados, e o app diz o que reconheceu em cada um antes de gravar.
 
 Nenhum dado existente é afetado. Nenhum importador muda. Nada que já era
 possível deixa de ser.
+
+---
+
+## Emenda — 2026-09-21: o Consolidado da XP entra também
+
+A seção **Escopo** acima deixou o XP Consolidado de fora por uma razão que não
+se sustentou: a marca no nome do arquivo. O relatório carrega o nome da XP,
+mas é emitido de dentro do investidor.b3.com.br e chega ao usuário no mesmo
+download que os outros dois. Separar o lote por marca é pedir que ele saiba
+algo que o arquivo já diz.
+
+O que mudou, e o que **não** mudou:
+
+- `b3_sniffer.py` ganha duas assinaturas para o mesmo tipo, `"POSICAO - "` e
+  `"PROVENTOS RECEBIDOS"`. São duas porque as abas são independentes: um
+  consolidado de mês sem posição aberta ainda traz a de proventos. O hífen em
+  `"POSICAO - "` é o que impede o marcador de casar com qualquer aba que
+  mencione posição.
+- `_B3_ORDEM` passa a `("b3_neg", "b3_mov", "xp_csl")`. O Consolidado vem por
+  último porque a aba "Proventos Recebidos" deduplica contra os proventos da
+  Movimentação — antes dela, um mês coberto pelos dois arquivos gravaria o
+  provento duas vezes, e a tela não mostraria erro nenhum.
+- O lote passa `(nome, bytes)` para quem declara `needs_filename`.
+  `_parse_report_date` infere a data do snapshot do nome do arquivo; só com os
+  bytes todo relatório cairia em `date.today()`, e como `report_date` compõe a
+  chave única de `portfolio_position_snapshots`, um histórico inteiro viraria
+  um único snapshot sobrescrito — sem erro, sem linha a menos, só a data
+  errada.
+- Nenhum parser mudou. Nenhum schema mudou. O Tesouro Direto (Consolidado e
+  Analítico) e a Nomad seguem com bloco próprio: os arquivos deles não saem da
+  B3, e o Tesouro tem parser distinto do Consolidado.
