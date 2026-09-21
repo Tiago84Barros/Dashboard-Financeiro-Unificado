@@ -608,8 +608,8 @@ def test_tabela_exclui_safra_incompleta_das_medias():
     tabela = tabela_de_safras(res, df, selic_por_ano={}, taxa_selic_aa=0.0,
                               hoje=HOJE)
     assert set(tabela["Safra"]) == {2024, 2026}
-    assert tabela.loc[tabela["Safra"] == 2026, "Completa"].iloc[0] is np.False_ \
-        or not bool(tabela.loc[tabela["Safra"] == 2026, "Completa"].iloc[0])
+    assert not bool(tabela.loc[tabela["Safra"] == 2026, "Completa"].iloc[0])
+    assert bool(tabela.loc[tabela["Safra"] == 2024, "Completa"].iloc[0])
     assert tabela.attrs["safras_completas"] == [2024]
     assert 2026 not in tabela.attrs["safras_completas"]
 ```
@@ -1156,7 +1156,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
     juntaria as tres e leria como previsao um resultado que a amostra nao
     sustenta: ordenar nao e superar.
     """
-    from core.b3_evidence import evidence_label, classify_evidence
+    from core.b3_evidence import classify_evidence, evidence_label
     from core.b3_safras import bootstrap_excesso, fragilidade_leave_one_out
 
     st.markdown(
