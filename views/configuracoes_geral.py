@@ -3,6 +3,7 @@ views/configuracoes_geral.py
 Aba "Geral" de Configurações — o que era da sidebar, mais o que não tinha lugar.
 
   🎨 Tema              — a preferência visual da conta
+  🏷️ Categorias        — as opções do lançamento manual do Controle Financeiro
   👤 Trocar de usuário — encerrar a sessão deste navegador
   🧹 Memória da LLM    — apagar o histórico de conversa, por seção
 
@@ -20,16 +21,20 @@ from html import escape
 
 import streamlit as st
 
+from core import categorias as cat_repo
 from core import chat_repository
 from core.auth import encerrar_sessao
 
 _CONFIRMA_SAIDA = "cfg_geral_confirma_saida"
 _SECAO_LLM = "cfg_geral_secao_llm"
 _TODAS = "__todas__"
+_TIPO_CAT = "cfg_geral_tipo_categoria"
+_NOME_CAT = "cfg_geral_nome_categoria"
 
 
 def render() -> None:
     _render_tema()
+    _render_categorias()
     _render_trocar_usuario()
     _render_memoria_llm()
 
@@ -50,6 +55,74 @@ def _render_tema() -> None:
         render_theme_selector()
 
 
+# -- categorias do Controle Financeiro ----------------------------------------
+
+_ROTULO_TIPO = {"entrada": "Entrada", "saida": "Saída",
+                "investimento": "Investimento"}
+
+
+def _render_categorias() -> None:
+    """Criar e arquivar as categorias do lançamento manual.
+
+    Arquivar, nunca apagar: a linha some do seletor e os lançamentos antigos
+    continuam classificados nela. Apagar levaria a classificação junto, e não
+    há como voltar atrás.
+    """
+    with st.container(border=True, key="cfg_geral_categorias"):
+        _cabecalho(
+            "02", "🏷️ Categorias do Controle Financeiro",
+            "As opções que aparecem ao lançar entrada, saída ou investimento.",
+        )
+        tipo = st.selectbox(
+            "Tipo", list(cat_repo.TIPOS), key=_TIPO_CAT,
+            format_func=lambda t: _ROTULO_TIPO.get(t, t),
+        )
+        try:
+            atuais = cat_repo.listar(tipo)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Não foi possível ler as categorias: {exc}")
+            return
+
+        # Categoria oferecida pelo seletor mas ausente do banco grava
+        # lançamento SEM categoria. Antes isso acontecia calado; aqui tem nome.
+        sem_banco = [c["nome"] for c in atuais if c["id"] is None]
+        if sem_banco:
+            st.warning(
+                "Estas ainda não existem no banco e gravam lançamento sem "
+                f"categoria: {', '.join(sem_banco)}. Rode a migration 072 "
+                "(`supabase_unificado/schema/072_categorias.sql`) no Supabase."
+            )
+
+        st.caption(f"{len(atuais)} categoria(s) em {_ROTULO_TIPO.get(tipo, tipo)}: "
+                   + ", ".join(c["nome"] for c in atuais))
+
+        nome = st.text_input("Nova categoria", key=_NOME_CAT,
+                             placeholder="Ex.: Previdência")
+        if st.button("➕ Criar categoria", key="cfg_geral_criar_cat",
+                     type="primary", disabled=not nome.strip()):
+            ok, msg = cat_repo.criar(nome, tipo)
+            (st.success if ok else st.error)(msg)
+            if ok:
+                st.rerun()
+
+        minhas = [c for c in atuais if c.get("minha") and c["id"]]
+        if minhas:
+            alvo = st.selectbox(
+                "Arquivar uma categoria criada por você",
+                [c["id"] for c in minhas], key=f"cfg_geral_arquivar_{tipo}",
+                format_func=lambda cid: next(
+                    c["nome"] for c in minhas if c["id"] == cid),
+            )
+            if st.button("📦 Arquivar", key="cfg_geral_arquivar_btn"):
+                ok, msg = cat_repo.arquivar(alvo)
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    st.rerun()
+        else:
+            st.caption("Você ainda não criou nenhuma categoria deste tipo. "
+                       "As de sistema não podem ser arquivadas.")
+
+
 # -- trocar de usuário --------------------------------------------------------
 
 def _render_trocar_usuario() -> None:
@@ -57,7 +130,7 @@ def _render_trocar_usuario() -> None:
 
     with st.container(border=True, key="cfg_geral_usuario"):
         _cabecalho(
-            "02", "👤 Trocar de usuário",
+            "03", "👤 Trocar de usuário",
             "Encerra a sessão deste navegador e volta para a tela de entrada.",
         )
         nome = str(principal().get("name") or principal().get("email") or "")
@@ -80,7 +153,7 @@ def _render_trocar_usuario() -> None:
 def _render_memoria_llm() -> None:
     with st.container(border=True, key="cfg_geral_llm"):
         _cabecalho(
-            "03", "🧹 Limpar histórico da LLM",
+            "04", "🧹 Limpar histórico da LLM",
             "Escolha a seção cuja conversa deve ser apagada. Nada é apagado "
             "sem a escolha e o clique.",
         )

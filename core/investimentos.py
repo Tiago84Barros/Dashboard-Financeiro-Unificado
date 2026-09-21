@@ -53,6 +53,7 @@ _SETOR_SCHEMA:   { nome, valor_mercado, pct_carteira }
 import logging
 from collections import defaultdict
 
+from core.categorias import SQL_INVESTIMENTO
 from core.config import settings
 from core.currency_returns import retorno_em_brl, retorno_moeda_origem
 from core.fx_aquisicao import cambio_medio_de_aquisicao, taxa_para
@@ -1115,12 +1116,10 @@ _MESES_PT_CF = {
     9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
 }
 
-_INVESTMENT_CATEGORY_SQL = (
-    "'Investimento','Investimentos','Aporte em Investimento',"
-    "'Renda Fixa','Renda Variavel','Renda Variável','Exterior',"
-    "'Reserva de Despesa','Tesouro Direto','Ações','Acoes','FIIs','FII',"
-    "'Fundos Imobiliários','Fundos Imobiliarios','Cripto','Criptoativos','Criptomoedas'"
-)
+# Fonte única em ``core/categorias.py``: este literal existia em DUAS cópias
+# byte-a-byte (aqui e em ``core/investimentos.py``) e um ``frozenset`` que não
+# batia com elas (``memoria: guarda-duplicada-diverge``).
+_INVESTMENT_CATEGORY_SQL = SQL_INVESTIMENTO
 
 # Consulta própria para não herdar a v_monthly_cashflow, que classifica por sinal.
 _SQL_CASHFLOW = f"""

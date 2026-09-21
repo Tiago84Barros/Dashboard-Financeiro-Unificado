@@ -49,12 +49,16 @@ Schema da list retornada por get_transacoes_filtradas():
 import io
 import logging
 import re
-import unicodedata
 import uuid
 from collections import Counter
 from datetime import date as _date
 from typing import Optional
 
+from core.categorias import (
+    CHAVES_DE_INVESTIMENTO,
+    SQL_INVESTIMENTO,
+    normalizar,
+)
 from core.config import settings
 from core.import_guard import acquire_transaction_import_lock
 from core.user_context import user_cache_data
@@ -67,43 +71,25 @@ _MESES_PT = {
     9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
 }
 
-_INVESTMENT_CATEGORY_KEYS = frozenset({
-    "investimento",
-    "investimentos",
-    "aporte investimento",
-    "aporte em investimento",
-    "renda fixa",
-    "renda variavel",
-    "exterior",
-    "reserva de despesa",
-    "tesouro direto",
-    "acoes",
-    "acao",
-    "fiis",
-    "fii",
-    "fundos imobiliarios",
-    "fundo imobiliario",
-    "cripto",
-    "criptoativos",
-    "criptomoedas",
-})
+# As três formas de "é investimento" — o conjunto normalizado, o literal SQL e
+# a lista de nomes — saíam de três definições que não batiam entre si: o
+# conjunto conhecia ``acao``, ``aporte investimento`` e ``fundo imobiliario``,
+# que o literal SQL não citava, e o literal tinha cópia byte-a-byte em
+# ``core/investimentos.py`` (``memoria: guarda-duplicada-diverge``). Agora as
+# três derivam de ``NOMES_DE_INVESTIMENTO``, em ``core/categorias.py``.
+_INVESTMENT_CATEGORY_KEYS = CHAVES_DE_INVESTIMENTO
 
-_INVESTMENT_CATEGORY_SQL = (
-    "'Investimento','Investimentos','Aporte em Investimento',"
-    "'Renda Fixa','Renda Variavel','Renda Variável','Exterior',"
-    "'Reserva de Despesa','Tesouro Direto','Ações','Acoes','FIIs','FII',"
-    "'Fundos Imobiliários','Fundos Imobiliarios','Cripto','Criptoativos','Criptomoedas'"
-)
+_INVESTMENT_CATEGORY_SQL = SQL_INVESTIMENTO
 
 
 def _norm_text(value: object) -> str:
-    """Normaliza texto de categoria/tipo para comparação robusta."""
-    if value is None:
-        return ""
-    text = unicodedata.normalize("NFKD", str(value))
-    text = text.encode("ascii", "ignore").decode("ascii")
-    text = text.replace("_", " ").replace("-", " ").strip().casefold()
-    return " ".join(text.split())
+    """Normaliza texto de categoria/tipo para comparação robusta.
+
+    Delega para ``core.categorias.normalizar``: as CHAVES de investimento são
+    normalizadas lá, e um normalizador diferente de cada lado faria a chave
+    gravada nunca casar com o texto consultado.
+    """
+    return normalizar(value)
 
 
 def is_investment_category(category: object) -> bool:
@@ -111,9 +97,23 @@ def is_investment_category(category: object) -> bool:
     norm = _norm_text(category)
     if not norm:
         return False
-    return norm in _INVESTMENT_CATEGORY_KEYS or (
-        "invest" in norm and "dividendo" not in norm
-    )
+    if norm in _INVESTMENT_CATEGORY_KEYS:
+        return True
+    # A heurística existe para nome livre ("Investimento CDB", "Investimentos
+    # 2026") que a lista fechada não prevê. Ela precisa das duas exclusões:
+    #
+    # - ``dividendo``: é rendimento do investimento, não aporte;
+    # - ``resgate``/``retirada``: é o caminho INVERSO. "Resgate de
+    #   Investimento" existe como categoria no banco e passava por aqui — a
+    #   saída era somada ao total investido junto com a entrada, e o número
+    #   resultante não era nem um nem outro
+    #   (``memoria: convencao-nao-pode-apagar-o-observado``). O caminho em SQL
+    #   nunca teve esse defeito, porque compara com a lista fechada: as duas
+    #   definições discordavam, e só uma delas estava certa.
+    if "invest" not in norm:
+        return False
+    return not any(termo in norm for termo in
+                   ("dividendo", "resgate", "retirada"))
 
 
 def canonical_transaction_type(

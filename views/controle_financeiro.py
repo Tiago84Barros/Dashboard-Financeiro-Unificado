@@ -32,6 +32,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core.card_categorization import REVIEW_SENTINEL, categorias_disponiveis
+from core.categorias import listar as listar_categorias
 from core.chat_memory import (
     clear_chat_history,
     conversation_key,
@@ -92,19 +93,6 @@ _MANUAL_CARD_TERMS = ("cartao", "credito", "fatura")
 # fatura a partir da conta) — não é consumo de cartão, então é isenta do bloqueio.
 _MANUAL_CARD_ALLOWED = {"pagamento de cartao"}
 _CC_IMPORTED_SOURCES = {"csv"}
-
-# Categorias pré-definidas por tipo (igual ao app original)
-_CAT_ENTRADA = [
-    "Salário", "Renda Extra", "Dividendos", "Reembolso", "Outros",
-]
-_CAT_SAIDA = [
-    "Mercado", "Compras", "Condomínio", "Luz", "Internet", "Transporte",
-    "Combustível", "Saúde", "Despesas Domésticas", "Lazer", "Assinaturas",
-    "Educação", "Restaurante", "Financiamento", "Pagamento de Cartão", "Outros",
-]
-_CAT_INVESTIMENTO = [
-    "Renda Fixa", "Renda Variável", "Exterior", "Reserva de Despesa", "Outros",
-]
 
 _CORES_CAT = [
     "#FC5C7D", "#F6C90E", "#4A9EFF", "#00C896", "#9B59B6",
@@ -417,21 +405,31 @@ def _sidebar_render(ano: int, mes: int) -> None:
     # 3) FORMULÁRIO (limpa após salvar)
     with st.sidebar.form("form_nova_tx", clear_on_submit=True):
 
-        # Categorias pré-definidas por tipo (mais opções do DB como fallback)
-        if t_type == "entrada":
-            cat_preset = _CAT_ENTRADA
-        elif t_type == "saida":
-            cat_preset = _CAT_SAIDA
-        else:
-            cat_preset = _CAT_INVESTIMENTO
-
+        # As categorias vêm do BANCO, filtradas pelo tipo escolhido. Eram um
+        # literal aqui, e o literal não batia com o banco: `Dividendos`,
+        # `Restaurante` e `Reserva de Despesa` não existiam como categoria, e
+        # escolher um deles gravava o lançamento SEM categoria — o
+        # `next(...)` lá embaixo devolvia `None` e o insert seguia feliz.
+        # `Outros` existia só como despesa, e a busca por nome ignorava o
+        # tipo: uma ENTRADA em "Outros" recebia a categoria de DESPESA.
+        # Criar categoria nova é em Configurações → Geral.
+        cat_opcoes = listar_categorias(t_type)
         cat_idx = st.selectbox(
             "Categoria",
-            range(len(cat_preset)),
-            format_func=lambda i: cat_preset[i],
+            range(len(cat_opcoes)),
+            format_func=lambda i: cat_opcoes[i]["nome"],
             key="cf_sb_cat",
         )
-        cat_escolhida = cat_preset[cat_idx]
+        cat_escolhida_dict = cat_opcoes[cat_idx] if cat_opcoes else {"id": None, "nome": ""}
+        cat_escolhida = cat_escolhida_dict["nome"]
+        if cat_escolhida_dict["id"] is None and cat_escolhida:
+            # Nome que o seletor oferece mas o banco não tem: a migration 072
+            # ainda não rodou. Dizer isto é o ponto — o comportamento antigo
+            # era gravar sem categoria e não avisar ninguém.
+            st.caption(
+                f"⚠️ “{cat_escolhida}” ainda não existe no banco; o lançamento "
+                "ficará sem categoria. Rode a migration 072 no Supabase."
+            )
 
         data_tx = st.date_input(
             "Data",
@@ -485,10 +483,10 @@ def _sidebar_render(ano: int, mes: int) -> None:
             st.sidebar.warning("Nenhuma conta de movimentação configurada.")
             return
 
-        # Resolve category_id (busca pelo nome no DB; None se não encontrar)
-        cats_db    = opcoes.get("categorias", [])
-        cat_match  = next((c for c in cats_db if c["nome"] == categoria_final), None)
-        cat_id     = cat_match["id"] if cat_match else None
+        # O id vem do próprio item escolhido: buscar de novo pelo NOME, na
+        # lista de todos os tipos, era o que fazia uma entrada em "Outros"
+        # pegar a categoria de despesa de mesmo nome.
+        cat_id = cat_escolhida_dict["id"]
 
         # Tipo para o banco (investimento preservado como tipo próprio)
         _MAP_TIPO = {"entrada": "income", "saida": "expense", "investimento": "investment"}
