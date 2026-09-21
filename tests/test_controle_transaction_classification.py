@@ -3,6 +3,7 @@ from datetime import date
 from types import SimpleNamespace
 
 import core.controle as controle
+from core.categorias import SEED
 from core.controle import (
     _SQL_DIVIDAS_CC,
     _SQL_HISTORICO_CC_MENSAL,
@@ -13,9 +14,6 @@ from core.controle import (
     parse_fatura_cartao_csv,
 )
 from views.controle_financeiro import (
-    _CAT_ENTRADA,
-    _CAT_INVESTIMENTO,
-    _CAT_SAIDA,
     _FORMAS_PGTO_SAIDA,
     _card_rows_dataframe,
     _is_credit_card_invoice_source,
@@ -94,17 +92,18 @@ def test_table_filters_use_canonical_type_not_amount_sign():
 def test_manual_sidebar_allows_only_account_payment_flow():
     assert _FORMAS_PGTO_SAIDA == ["Conta"]
     # "Pagamento de Cartão" é permitida: quitação mensal da fatura via conta.
-    assert "Pagamento de Cartão" in _CAT_SAIDA
+    assert "Pagamento de Cartão" in SEED["saida"]
     assert not any("cart" in item.lower() for item in _FORMAS_PGTO_SAIDA)
     assert not any("pix" in item.lower() for item in _FORMAS_PGTO_SAIDA)
     assert not any("dinheiro" in item.lower() for item in _FORMAS_PGTO_SAIDA)
 
 
 def test_manual_sidebar_uses_only_outros_not_outra_category():
-    manual_categories = _CAT_ENTRADA + _CAT_SAIDA + _CAT_INVESTIMENTO
-    assert "Outros" in _CAT_ENTRADA
-    assert "Outros" in _CAT_SAIDA
-    assert "Outros" in _CAT_INVESTIMENTO
+    # A lista saiu da view e virou ``core.categorias.SEED``: a view lê o BANCO,
+    # e o SEED é o chão que a migration 072 garante existir lá.
+    manual_categories = [n for nomes in SEED.values() for n in nomes]
+    for tipo in ("entrada", "saida", "investimento"):
+        assert "Outros" in SEED[tipo]
     assert "Outra" not in manual_categories
     assert not any(item.strip().casefold() == "outra" for item in manual_categories)
 

@@ -29,7 +29,7 @@ de Configurações, e tirar da sidebar o que migrar.
 | Seletor de tema | `app.py:68` → `design/theme_selector.py` |
 | Trocar usuário | `app.py:66` → `core/auth.py::encerrar_sessao()` |
 | Listas de categoria | **literais Python** em `views/controle_financeiro.py:97-107` |
-| Categorias no banco | `categories` — 57 `expense`, 9 `transfer`, 7 `income`, **0 `investment`** |
+| Categorias no banco | `categories` — 57 `expense`, 9 `transfer`, 7 `income`, **0 `investment`**; 4 das `transfer` são de investimento (ver PR 3) |
 | "O que é investimento" | `_INVESTMENT_CATEGORY_SQL` — **duas cópias** (`core/controle.py:91`, `core/investimentos.py:1118`) |
 | Memória da LLM | `core/chat_repository.py` — chave `prefixo:sha256(contexto)[:24]` |
 
@@ -170,52 +170,91 @@ navegação.
 
 ### PR 3 — Categorias configuráveis, e uma só definição de "investimento"
 
-**Migration `072_categorias_investimento.sql`:**
+> **Corrigido em 21/09/2026, durante a implementação.** O plano original mandava
+> semear as categorias de investimento por `INSERT`, apoiado na leitura "0
+> `investment`" da tabela acima. O banco vivo desmentiu: `Exterior`,
+> `Renda Fixa`, `Renda Variável` e `Aporte em Investimento` **já existem**, como
+> `type = 'transfer'`, e **21 lançamentos apontam para elas**. Inserir cópias
+> criaria duas `Exterior` e partiria o histórico em duas fatias que nenhuma tela
+> soma. O que vale é o parágrafo abaixo.
 
-- Reconcilia o DDL com o banco real: recria os `CHECK` de `categories.type` e
-  `transactions.type` incluindo `'investment'`.
-- Idempotente (`DROP CONSTRAINT IF EXISTS` antes de `ADD`), porque no banco vivo
-  eles não existem e no banco novo existem.
+**Migration `072_categorias.sql`** (roda à mão no SQL Editor do Supabase,
+idempotente, tudo dentro de um `BEGIN/COMMIT`):
 
-**`core/categorias.py`** (módulo novo):
+1. `active BOOLEAN NOT NULL DEFAULT TRUE` em `categories`. Não existia, e sem ela
+   tirar uma categoria do seletor só seria possível APAGANDO a linha — junto com
+   a classificação dos lançamentos que a usam.
+2. **Retipar, não inserir**: `UPDATE categories SET type = 'investment'` nas
+   quatro linhas `transfer` acima. Como a agregação classifica por `c.name` e por
+   `t.type`, e **nunca** por `categories.type`, retipar não move nenhum número.
+   `Resgate de Investimento` fica em `transfer` de propósito — é o caminho
+   inverso do aporte, e somá-lo ao aporte dá um número que não é nenhum dos dois
+   (`memoria: convencao-nao-pode-apagar-o-observado`). Um teste lê o texto da
+   migration e prova que o resgate não está no `UPDATE`.
+3. `INSERT` só dos cinco pares `(nome, tipo)` que realmente faltavam:
+   `Dividendos`/`income`, `Outros`/`income`, `Restaurante`/`expense`,
+   `Reserva de Despesa`/`investment`, `Outros`/`investment`.
+4. Índice único por `(COALESCE(user_id, uuid-zero), lower(name), type)` —
+   `NULL` nunca conflita com `NULL`, então sem o `COALESCE` as categorias de
+   sistema poderiam ser duplicadas à vontade.
+5. Os `CHECK` passam a **existir de fato**, com os valores que o banco contém:
+   `'investment'` nos dois `type` e `'csv_migration'` em `transactions.source`
+   (o `source` declarado no `002` também já não descrevia o dado gravado).
 
-- `listar(tipo) -> list[Categoria]` — `user_id = :uid OR user_id IS NULL`.
-- `criar(nome, tipo)` — normaliza, rejeita duplicata por nome normalizado dentro
-  do tipo, grava com `user_id = :uid`.
-- `arquivar(id)` — não apaga. Categoria em uso por transação não pode sumir sem
-  levar histórico junto; a regra do CLAUDE.md é não apagar funcionalidade sem
-  validação, e o mesmo vale para dado.
-- `SEED` com as listas atuais de `views/controle_financeiro.py:97-107`, aplicado
-  a quem ainda não tem categoria daquele tipo. Ninguém perde categoria.
+**Três defeitos silenciosos do formulário, fechados aqui.** Nenhum corrompe dado
+hoje (0 `category_id` nulo, 0 lançamento em resgate); todos eram latentes:
 
-**`views/controle_financeiro.py`**: os três literais saem; o `selectbox` passa a
-ler `listar(tipo)`.
+- `Dividendos`, `Restaurante` e `Reserva de Despesa` estavam no literal do
+  seletor e **não existiam** como categoria: escolher um gravava
+  `category_id = NULL`, calado.
+- `Outros` existia só como `expense`, e o `next(...)` que resolvia o id ignorava
+  o tipo — uma **entrada** "Outros" recebia a categoria de **despesa**.
+- `is_investment_category("Resgate de Investimento")` devolvia `True`: a
+  heurística casava `"invest" in norm`. O caminho SQL, de lista fechada,
+  devolvia `False`. As duas definições discordavam, e um resgate entraria em
+  "Investido no mês".
 
-**A unificação, que é o motivo de este PR andar sozinho.** Hoje
-`_INVESTMENT_CATEGORY_SQL` é um literal com 19 nomes, duplicado em dois módulos.
-Ele **não** afeta o lançamento manual — esse é carregado por
-`t.type = 'investment'`. Ele afeta **todo lançamento importado**: extrato
-bancário entra como `expense`, e é só pelo nome que vira aporte
-(`core/controle.py:319-344`).
+**`core/categorias.py`** (módulo novo), com duas responsabilidades distintas:
 
-Consequência de deixar como está: criar "Cripto Exchange" na aba nova, importar
-um extrato com aporte nessa categoria, e o valor é contado como **despesa**. Sem
-erro, sem linha a menos. É `memoria: guarda-duplicada-diverge` combinado com
-`memoria: guarda-no-consumidor-nao-cobre-os-outros`.
+- `listar(tipo)` / `criar(nome, tipo)` / `arquivar(id)` sobre `categories`.
+  `listar` devolve `{"id", "nome", "minha"}`; `id = None` marca nome do `SEED`
+  que o banco ainda não tem, e a tela diz isso em vez de gravar sem categoria.
+  Como a coluna `active` só chega com a migration, a leitura tem duas formas e
+  a segunda roda em **conexão nova** (`memoria: fallback-morre-com-a-transacao-abortada`).
+- `NOMES_DE_INVESTIMENTO` e as duas formas derivadas dela (`SQL_INVESTIMENTO`,
+  `CHAVES_DE_INVESTIMENTO`). É **constante, não consulta**: se a lista viesse do
+  banco, criar uma categoria reclassificaria histórico já fechado sem ninguém
+  pedir. Categoria nova entra no agregado pelo `transactions.type`, que o
+  formulário já grava como `investment`.
 
-Então as duas cópias são substituídas por **uma** função em `core/categorias.py`
-que deriva a lista de `categories WHERE type = 'investment'`, e os dois módulos
-passam a chamá-la.
+**`views/controle_financeiro.py`**: os três literais saem; o `selectbox` lê
+`listar(tipo)` e o id vem da própria opção escolhida, não de uma busca por nome.
+
+**A unificação, que é o motivo de este PR andar sozinho.** Havia **três**
+definições de "é investimento": duas cópias byte-a-byte do literal SQL
+(`core/controle.py`, `core/investimentos.py`) e um `frozenset` normalizado que
+não batia com elas — ele conhecia `acao`, `aporte investimento` e
+`fundo imobiliario`, que o SQL não citava. O literal não afeta o lançamento
+manual (esse é classificado por `t.type = 'investment'`); afeta **todo
+lançamento importado**, que entra como `expense` e só vira aporte pelo nome
+(`core/controle.py:319-344`). É `memoria: guarda-duplicada-diverge` combinado
+com `memoria: guarda-no-consumidor-nao-cobre-os-outros`.
 
 **Testes:**
-- Categoria de investimento criada pelo usuário é reconhecida como aporte por
-  `get_historico_anual` **e** pelo caminho de `core/investimentos.py` — o teste
-  compara os dois caminhos, porque foi a divergência entre eles que criou o risco.
-- Não sobra nenhum literal de nome de categoria de investimento no código
-  (checagem por AST/grep, não por comportamento — `memoria: guarda-duplicada-diverge`).
-- `criar` rejeita duplicata ignorando acento e caixa ("Renda Variavel" x "Renda Variável").
-- Seed não duplica quando roda duas vezes.
-- Migration é idempotente contra banco com e sem a constraint.
+- Nenhuma segunda cópia da lista no repositório — checagem por leitura do
+  código-fonte, não por comportamento: duas cópias idênticas hoje passam em
+  qualquer teste de comportamento e divergem amanhã.
+- Piso de regressão: cada um dos 18 nomes do SQL antigo e cada chave do
+  `frozenset` antigo continuam classificados como aporte. A lista pode crescer;
+  encolher é mudança silenciosa em histórico fechado.
+- `Resgate de Investimento` não é aporte por nenhum dos dois caminhos.
+- `listar` marca com `id = None` o nome do seed que falta no banco, não duplica
+  por acento, e devolve o seed inteiro quando as duas leituras falham.
+- `criar` rejeita duplicata ignorando acento e caixa; `arquivar` recusa
+  categoria de sistema.
+- A view não tem mais os três literais e chama `listar_categorias` (AST).
+- O texto da migration não retipa o resgate, cita `investment` e
+  `csv_migration`, e insere os nomes que o `SEED` promete.
 
 ## Fora de escopo
 
