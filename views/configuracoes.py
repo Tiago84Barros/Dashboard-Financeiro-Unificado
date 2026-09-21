@@ -1134,12 +1134,16 @@ def _render_import_generica(url_fonte: str) -> None:
 # Importação de Investimentos (B3 Negociação, B3 Movimentação, XP, Nomad)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Os dois extratos da B3 não têm bloco próprio: eles entram pelo uploader
-# único "Dados Históricos B3", que descobre o tipo de cada arquivo pelo nome
-# da aba (data_pipeline/importers/investments/b3_sniffer.py). Os cfg seguem
-# aqui, com os mesmos campos dos demais, porque `_executar_importacao_
-# investimento` é compartilhada — e é ela que mantém `data_update_logs` e
-# `data_freshness_status` registrando as duas fontes separadamente.
+# Os três extratos emitidos pelo investidor.b3.com.br não têm bloco próprio:
+# entram pelo uploader único "Dados Históricos B3", que descobre o tipo de
+# cada arquivo pelo nome da aba (data_pipeline/importers/investments/
+# b3_sniffer.py). O Relatório Consolidado carrega o nome da XP, mas sai do
+# mesmo lugar que os outros dois e chega ao usuário no mesmo download — pedir
+# que ele separe o lote por marca é pedir que ele saiba algo que o arquivo já
+# diz. Os cfg seguem aqui, com os mesmos campos dos demais, porque
+# `_executar_importacao_investimento` é compartilhada — e é ela que mantém
+# `data_update_logs` e `data_freshness_status` registrando as três fontes
+# separadamente.
 #
 # `skip_recompute` existe porque um lote pode trazer vários arquivos: o
 # recálculo da carteira roda uma vez no fim, não uma vez por arquivo.
@@ -1164,30 +1168,36 @@ _B3_JOBS: dict[str, dict[str, str]] = {
         "source_name": "B3 — Movimentação (manual)",
         "skip_recompute": True,
     },
-}
-
-# Ordem de execução do lote, independente da ordem em que os arquivos foram
-# soltos no uploader: Negociação é a fonte canônica das compras e vendas, e
-# ordem fixa garante que o mesmo conjunto de arquivos produza sempre o mesmo
-# resultado.
-_B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov")
-
-
-_INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
-    {
+    # `needs_filename` não é cosmético: `_parse_report_date` infere a data do
+    # snapshot do NOME do arquivo (mensal-2026-janeiro → 31/01/2026). Entregar
+    # só os bytes faria todo relatório cair em `date.today()`, e a chave única
+    # de `portfolio_position_snapshots` inclui `report_date` — um histórico
+    # inteiro viraria um único snapshot sobrescrito, sem erro visível.
+    "xp_csl": {
         "key":         "xp_csl",
-        "label":       "XP — Relatório Consolidado (.xlsx)",
-        "help":        "Relatórios consolidados mensais ou anuais exportados pela "
-                       "XP. Aceita vários arquivos de uma vez — cada um cria um "
-                       "snapshot da carteira na data inferida do nome do arquivo.",
+        "label":       "XP — Relatório Consolidado",
         "file_types":  "xlsx",
         "parser_attr": "parse_xp_consolidado",
         "job_name":    "import_xp_consolidado",
         "table_name":  "portfolio_position_snapshots",
         "source_name": "XP — Consolidado (manual)",
         "needs_filename": True,
-        "multi_file":  True,
+        "skip_recompute": True,
     },
+}
+
+# Ordem de execução do lote, independente da ordem em que os arquivos foram
+# soltos no uploader: Negociação é a fonte canônica das compras e vendas, e
+# ordem fixa garante que o mesmo conjunto de arquivos produza sempre o mesmo
+# resultado.
+#
+# O Consolidado vem por último porque a aba "Proventos Recebidos" deduplica
+# contra os proventos da Movimentação: rodando antes dela, o lote gravaria o
+# mesmo provento duas vezes quando os dois arquivos cobrissem o mesmo mês.
+_B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov", "xp_csl")
+
+
+_INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
     {
         "key":         "tesouro_direto",
         "label":       "Tesouro Direto — Extrato Consolidado (.xlsx)",
@@ -1233,7 +1243,7 @@ _INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
 
 
 def _render_import_investimentos() -> None:
-    """Seção de importação manual de investimentos (B3, XP, Nomad)."""
+    """Seção de importação manual de investimentos (B3, Tesouro, Nomad)."""
     st.info(
         "🔒 A importação usa apenas arquivos exportados. O app **não solicita "
         "senha** da B3, XP, Nomad ou banco.",
@@ -1384,7 +1394,9 @@ def _executar_lote_b3(arquivos: list[tuple[str, bytes]]) -> dict:
 
     resultados: list[tuple[str, str, dict]] = []
     for chave, nome, dados in planejados:
-        summary = _executar_importacao_investimento(_B3_JOBS[chave], dados)
+        cfg = _B3_JOBS[chave]
+        payload = (nome, dados) if cfg.get("needs_filename") else dados
+        summary = _executar_importacao_investimento(cfg, payload)
         resultados.append((chave, nome, summary))
 
     consolidado = _consolidar_resultados_b3(resultados)
@@ -1417,9 +1429,10 @@ def _render_import_b3() -> None:
     with st.container(border=True):
         st.markdown("**📊 Dados Históricos B3 (.xlsx)**")
         st.caption(
-            "investidor.b3.com.br → Extratos e Informativos → Negociação "
-            "**ou** Movimentação. Envie quantos arquivos quiser, dos dois "
-            "tipos misturados — o app identifica cada um pelo conteúdo."
+            "investidor.b3.com.br → Extratos e Informativos → Negociação, "
+            "Movimentação **ou** Relatório Consolidado (o da XP). Envie "
+            "quantos arquivos quiser, dos três tipos misturados — o app "
+            "identifica cada um pelo conteúdo."
         )
 
         col_up, col_btn = st.columns([3, 1])
