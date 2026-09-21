@@ -129,12 +129,15 @@ def _render_confianca() -> None:
 
     O que o import tardio **não** faz é adiar a medição. ``st.tabs`` executa o
     corpo de todas as abas em toda execução do script -- trocar de aba é
-    client-side e não gera rerun --, então esta medição já rodava a cada
-    abertura de Configurações quando a aba era a quarta. Foi por isso que
-    promovê-la à primeira posição não custou tempo de carga: não há nada a
-    economizar escondendo-a atrás de uma posição. Quem quiser de fato adiar
-    precisa de um portão explícito (um ``st.button``/``expander`` guardando a
-    chamada), não da ordem das abas.
+    client-side e não gera rerun --, então esta medição rodava a cada abertura
+    de Configurações, tanto quando a aba era a quarta quanto depois de ela
+    virar a primeira: não há nada a economizar escondendo-a atrás de uma
+    posição.
+
+    O portão explícito que faltava existe desde 21/09/2026 e mora em
+    ``views/confianca.py``: a tela lê a última medição gravada em
+    ``confianca_snapshots`` e só remede quando o usuário clica. Abrir esta aba
+    passou a custar uma consulta de uma linha.
     """
     from views.confianca import render_corpo
 

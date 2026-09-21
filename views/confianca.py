@@ -8,6 +8,12 @@ decisão nenhuma. Esta tela é a porta de entrada do relatório.
 O que ela promete é limitado de propósito: informa a qualidade do DADO que
 sustenta cada seção. Não é previsão, não é recomendação e não substitui
 decisão humana nem aconselhamento profissional.
+
+Desde 21/09/2026 a tela **lê** a última medição gravada em
+``confianca_snapshots`` e só remede quando o usuário pede. Ela vive dentro de
+uma aba, e ``st.tabs`` executa o corpo de todas as abas em toda execução do
+script: enquanto ``relatorio()`` era chamado daqui, abrir Configurações para
+qualquer outra coisa pagava as sete seções e os três motores.
 """
 from __future__ import annotations
 
@@ -15,6 +21,7 @@ import html
 
 import streamlit as st
 
+from core import confianca_snapshot
 from core.confianca_secao import (
     FAIXA_ALTA,
     FAIXA_MEDIA,
@@ -112,17 +119,18 @@ def _resumo(detalhe: object, limite: int = 420) -> str:
     return texto if len(texto) <= limite else texto[:limite - 1].rstrip() + "…"
 
 
-def _tabela_rigor() -> None:
+def _tabela_rigor(dados: dict | None) -> None:
     """Por que as três notas não são comparáveis entre si.
 
     A casca visual é a mesma nas três abas, e isso sugere que 80 no FII vale o
     mesmo que 80 nos EUA. Não vale: cada motor venceu um conjunto diferente de
     condições. Até 28/08/2026 cada um declarava só as perguntas que respondia,
     e o que menos perguntava marcava a melhor nota de metodologia.
+
+    Recebe os dados em vez de medi-los: a tabela vem do mesmo snapshot das
+    seções, e medir aqui reabriria o caminho que o botão fechou.
     """
-    try:
-        dados = _rigor()
-    except Exception:  # noqa: BLE001
+    if not dados:
         return
     motores = dados.get("motores") or {}
     if not motores:
@@ -169,6 +177,55 @@ def _tabela_rigor() -> None:
     )
 
 
+def _medir_e_gravar() -> None:
+    """A medição cara, e o único caminho que a dispara.
+
+    Fica atrás do botão porque ``st.tabs`` não adia nada: o Streamlit executa o
+    corpo de todas as abas em toda execução do script. Enquanto esta função era
+    chamada direto do corpo da tela, abrir Configurações para mexer em qualquer
+    outra coisa pagava as sete seções e os três motores.
+    """
+    with st.spinner("Medindo cada seção — isto consulta o banco e demora."):
+        secoes = relatorio()
+        # O rigor é cacheado por 15 min, mas um recálculo pedido à mão quer o
+        # número de agora: servir o cache aqui gravaria no snapshot novo uma
+        # metade velha, e o carimbo diria que as duas são da mesma hora.
+        _rigor.clear()
+        try:
+            rigor = _rigor()
+        except Exception:  # noqa: BLE001
+            rigor = None
+        confianca_snapshot.gravar(secoes, rigor)
+
+
+def _carimbo(medido_em) -> None:
+    """Quando a medição foi feita, e o aviso quando ela envelheceu.
+
+    A idade é requisito, não enfeite: um snapshot de três semanas marcando
+    "Alta" soa como rigor e já pode ser falso. O texto sai de ``medido_em``,
+    nunca de uma frase fixa — frase fixa envelhece invertida.
+    """
+    quando = medido_em.astimezone()
+    velha = confianca_snapshot.vencida(medido_em)
+    cor = "var(--app-warning)" if velha else "var(--app-muted)"
+    aviso = ""
+    if velha:
+        aviso = (
+            '<div style="color:var(--app-warning);font-size:.82rem;margin-top:4px">'
+            f'⚠ Medição de mais de {confianca_snapshot.VALIDADE_DIAS} dias. '
+            'Vitrines, safras e ingestões mudaram desde então; recalcule antes '
+            'de usar estes números para decidir.</div>')
+    st.markdown(
+        '<div style="border:1px solid var(--app-border);border-radius:10px;'
+        'padding:10px 14px;margin-bottom:14px;background:var(--app-surface)">'
+        f'<div style="color:{cor};font-size:.85rem">Medido em '
+        f'<strong>{quando.strftime("%d/%m/%Y %H:%M")}</strong> '
+        f'({html.escape(confianca_snapshot.rotulo_idade(medido_em))}).</div>'
+        + aviso + '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_corpo() -> None:
     """O conteúdo da tela, sem título nem legenda.
 
@@ -176,8 +233,30 @@ def render_corpo() -> None:
     próprio cabeçalho; repetir ``st.title`` dentro da aba duplicaria o título
     da página.
     """
-    with st.spinner("Medindo cada seção..."):
-        secoes = relatorio()
+    snap = confianca_snapshot.carregar_ultimo()
+
+    if st.button("🔄 Recalcular agora", key="confianca_recalcular",
+                 type="primary" if snap is None else "secondary"):
+        try:
+            _medir_e_gravar()
+        except confianca_snapshot.TabelaAusente as exc:
+            # Falhar calado aqui seria o pior desfecho possível: o usuário
+            # pagaria a medicão inteira e voltaria para a mesma tela vazia.
+            st.error(str(exc))
+            return
+        st.rerun()
+
+    if snap is None:
+        st.info(
+            "Nenhuma medição gravada ainda. Medir consulta o banco em todas as "
+            "seções e leva alguns minutos, por isso não acontece sozinho ao "
+            "abrir esta aba — clique em **Recalcular agora** quando quiser o "
+            "número."
+        )
+        return
+
+    secoes, rigor, medido_em = snap
+    _carimbo(medido_em)
     geral = confianca_global(secoes)
 
     cor_geral = _COR["Alta" if (geral or 0) >= FAIXA_ALTA else
@@ -200,7 +279,7 @@ def render_corpo() -> None:
         (col_esq if i % 2 == 0 else col_dir).markdown(
             _card(sec), unsafe_allow_html=True)
 
-    _tabela_rigor()
+    _tabela_rigor(rigor)
 
     st.markdown("### Como ler")
     st.markdown(
