@@ -17,6 +17,8 @@ from datetime import date
 import pytest
 
 from data_pipeline.importers.investments.b3_posicao_detalhada import (
+    chave_provisionado,
+    chave_snapshot,
     cotas_por_divisao,
     extrair_data_foto,
     numero_br,
@@ -311,3 +313,61 @@ def test_tipo_provento_juros_vence_dividendo_na_ordem():
     """
     assert tipo_provento("JUROS SOBRE CAPITAL PROPRIO") == "jcp"
     assert tipo_provento("JUROS SOBRE CAPITAL PROPRIO") != "dividend"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chaves de unicidade
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_chave_snapshot_nao_depende_da_quantidade():
+    """A foto de hoje à tarde SOBRESCREVE a de hoje de manhã.
+
+    O cabeçalho do extrato traz hora, então duas exportações do mesmo dia são
+    normais — e entre elas a quantidade pode ter mudado. Com o valor dentro
+    da chave, as duas virariam linhas separadas do mesmo ativo na mesma data,
+    e somar `market_value` por data contaria o papel duas vezes. Nenhum erro
+    apareceria: só um patrimônio maior.
+    """
+    assert (chave_snapshot(date(2026, 9, 21), "BBAS3", "ACOES")
+            == chave_snapshot(date(2026, 9, 21), "BBAS3", "ACOES"))
+
+
+def test_chave_snapshot_separa_comprado_de_alugado():
+    """DEXP3 em "Ações" e DEXP3 em "Aluguel" são posições opostas.
+
+    As duas têm o mesmo ticker e o mesmo `asset_type` "stock". Sem a
+    categoria na chave, a posição tomada em empréstimo (negativa) apagaria a
+    comprada.
+    """
+    assert (chave_snapshot(date(2026, 9, 21), "DEXP3", "ACOES")
+            != chave_snapshot(date(2026, 9, 21), "DEXP3", "ALUGUEL"))
+
+
+def test_chave_snapshot_separa_datas():
+    assert (chave_snapshot(date(2026, 9, 21), "BBAS3", "ACOES")
+            != chave_snapshot(date(2026, 9, 20), "BBAS3", "ACOES"))
+
+
+def test_chave_provisionado_separa_eventos_na_mesma_previsao():
+    """PETR3 tem DIVI e JURO com a mesma data de pagamento previsto."""
+    d, p = date(2026, 9, 21), date(2026, 12, 21)
+    assert (chave_provisionado(d, "PETR3", "DIVI", p, 1)
+            != chave_provisionado(d, "PETR3", "JURO", p, 1))
+
+
+def test_chave_provisionado_nao_depende_do_valor():
+    """Valor provisionado é revisado entre extratos — é conteúdo, não chave.
+
+    Com o bruto na chave, a revisão de R$ 51,40 para R$ 53,00 não corrigiria
+    a linha: criaria uma segunda, e a renda futura apareceria somada.
+    """
+    d, p = date(2026, 9, 21), date(2026, 12, 21)
+    assert (chave_provisionado(d, "PETR3", "DIVI", p, 1)
+            == chave_provisionado(d, "PETR3", "DIVI", p, 1))
+
+
+def test_chave_provisionado_desempata_trio_repetido():
+    """Duas parcelas do mesmo evento na mesma data não podem colapsar."""
+    d, p = date(2026, 9, 21), date(2026, 12, 21)
+    assert (chave_provisionado(d, "PETR3", "DIVI", p, 1)
+            != chave_provisionado(d, "PETR3", "DIVI", p, 2))
