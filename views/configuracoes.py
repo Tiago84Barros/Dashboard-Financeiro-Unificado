@@ -1213,45 +1213,62 @@ _B3_JOBS: dict[str, dict[str, str]] = {
 _B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov", "xp_csl")
 
 
-_INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
-    {
+# Jobs do lote do Tesouro Direto. Mesma mecânica dos extratos da B3: um único
+# uploader recebe os dois documentos misturados e o tipo sai do conteúdo, não da
+# caixa que o usuário escolheu.
+#
+# Eles não são substitutos um do outro. O Consolidado é a fotografia da posição
+# e alimenta `portfolio_position_snapshots`; o Analítico é um arquivo por título
+# e é o único que traz taxa contratada e data de aplicação de cada lote
+# (`tesouro_lots`). Quem tem só o Consolidado não consegue marcar a mercado.
+_TESOURO_JOBS: dict[str, dict] = {
+    "tesouro_direto": {
         "key":         "tesouro_direto",
-        "label":       "Tesouro Direto — Extrato Consolidado (.xlsx)",
-        "help":        "Extrato Consolidado mensal do Tesouro Direto. "
-                       "Títulos já cobertos por operações importadas da B3 "
-                       "são recusados para evitar duplicidade.",
+        "label":       "Tesouro Direto — Extrato Consolidado",
         "file_types":  "xlsx",
         "parser_attr": "parse_tesouro_direto",
         "job_name":    "import_tesouro_direto",
         "table_name":  "portfolio_position_snapshots",
         "source_name": "Tesouro Direto — Extrato Consolidado (manual)",
     },
-    {
+    "tesouro_analitico": {
         "key":         "tesouro_analitico",
-        "label":       "Tesouro Direto — Extrato Analítico (.xlsx)",
-        "help":        "Extrato Analítico por título (um arquivo por título; "
-                       "aceita vários de uma vez). É o único documento que traz "
-                       "a taxa contratada e a data de liquidação de cada "
-                       "aplicação — sem ele o app não consegue marcar a "
-                       "mercado, só repetir a rentabilidade que o extrato já "
-                       "imprime.",
+        "label":       "Tesouro Direto — Extrato Analítico",
         "file_types":  "xlsx",
         "parser_attr": "parse_tesouro_analitico",
         "job_name":    "import_tesouro_analitico",
         "table_name":  "tesouro_lots",
         "source_name": "Tesouro Direto — Extrato Analítico (manual)",
-        "multi_file":  True,
+        # O parser não infere nada do nome, mas o usa como rótulo em toda
+        # mensagem de erro. Entregando só os bytes, um lote de dez títulos
+        # reportaria dez falhas todas chamadas "extrato.xlsx" — e o usuário
+        # não saberia qual arquivo reenviar.
+        "needs_filename": True,
     },
+}
+
+# Ordem fixa de execução do lote, independente da ordem de upload. Os dois
+# gravam em tabelas diferentes e não disputam linha nenhuma, então a ordem aqui
+# não protege contra duplicidade — ela garante que o mesmo conjunto de arquivos
+# produza sempre o mesmo resultado e o mesmo relatório na tela.
+_TESOURO_ORDEM: tuple[str, ...] = ("tesouro_direto", "tesouro_analitico")
+
+
+_INVESTIMENTO_UPLOADS: list[dict[str, str]] = [
     {
         "key":         "nomad",
-        "label":       "Nomad — Notas (.pdf)",
-        "help":        "PDFs de negociação exportados pela Nomad. Aceita "
-                       "vários arquivos de uma vez — todos são importados no "
-                       "mesmo lote, com resumo consolidado.",
+        "label":       "🌎 Dados Históricos Internacionais (.pdf)",
+        "help":        "Notas de negociação em PDF exportadas pela Nomad. "
+                       "Aceita vários arquivos de uma vez — todos são "
+                       "importados no mesmo lote, com resumo consolidado.",
         "file_types":  "pdf",
         "parser_attr": "parse_nomad_pdf",
         "job_name":    "import_nomad_pdf",
         "table_name":  "investment_transactions",
+        # O rótulo visível mudou; `source_name` NÃO muda. Ele é a chave que
+        # `data_update_logs` e `data_freshness_status` já carregam — renomeá-lo
+        # abriria uma segunda linha de histórico e a primeira ficaria congelada
+        # na data da última importação, parecendo fonte abandonada.
         "source_name": "Nomad — Notas PDF (manual)",
         "multi_file":  True,
     },
@@ -1267,6 +1284,9 @@ def _render_import_investimentos() -> None:
     )
 
     _render_import_b3()
+    st.markdown("")
+
+    _render_import_tesouro()
     st.markdown("")
 
     for cfg in _INVESTIMENTO_UPLOADS:
@@ -1328,31 +1348,26 @@ def _render_import_investimentos() -> None:
 
 
 
-def planejar_lote_b3(
+def planejar_lote(
     arquivos: list[tuple[str, bytes]],
-    detector=None,
-    listar_abas=None,
+    ordem: tuple[str, ...],
+    detector,
+    listar_abas,
 ) -> tuple[list[tuple[str, str, bytes]], list[tuple[str, list[str]]]]:
-    """Separa os arquivos da B3 por tipo detectado, em ordem canônica.
+    """Separa arquivos por tipo detectado, em ordem canônica.
 
     Devolve `(planejados, recusados)`:
-      * `planejados` — `[(chave, nome, bytes), …]` já ordenado por `_B3_ORDEM`,
+      * `planejados` — `[(chave, nome, bytes), …]` já ordenado por `ordem`,
         preservando a ordem de upload dentro de cada tipo.
       * `recusados`  — `[(nome, abas_encontradas), …]` para os arquivos sem
         assinatura conhecida. Eles não chegam a nenhum parser.
 
     Função pura (sem banco, sem Streamlit) justamente para que a ordem de
-    execução possa ser testada sem infraestrutura.
+    execução possa ser testada sem infraestrutura. Uma chave que o detector
+    devolva e que não esteja em `ordem` cai em recusados: a lista de ordem é
+    quem decide o que este lote sabe importar.
     """
-    if detector is None or listar_abas is None:
-        from data_pipeline.importers.investments.b3_sniffer import (
-            detect,
-            sheet_names,
-        )
-        detector = detector or detect
-        listar_abas = listar_abas or sheet_names
-
-    por_tipo: dict[str, list[tuple[str, bytes]]] = {k: [] for k in _B3_ORDEM}
+    por_tipo: dict[str, list[tuple[str, bytes]]] = {k: [] for k in ordem}
     recusados: list[tuple[str, list[str]]] = []
 
     for nome, dados in arquivos:
@@ -1364,13 +1379,47 @@ def planejar_lote_b3(
 
     planejados = [
         (chave, nome, dados)
-        for chave in _B3_ORDEM
+        for chave in ordem
         for nome, dados in por_tipo[chave]
     ]
     return planejados, recusados
 
 
-def _consolidar_resultados_b3(resultados: list[tuple[str, str, dict]]) -> dict:
+def planejar_lote_b3(
+    arquivos: list[tuple[str, bytes]],
+    detector=None,
+    listar_abas=None,
+) -> tuple[list[tuple[str, str, bytes]], list[tuple[str, list[str]]]]:
+    """`planejar_lote` com o detector dos extratos da B3."""
+    if detector is None or listar_abas is None:
+        from data_pipeline.importers.investments.b3_sniffer import (
+            detect,
+            sheet_names,
+        )
+        detector = detector or detect
+        listar_abas = listar_abas or sheet_names
+    return planejar_lote(arquivos, _B3_ORDEM, detector, listar_abas)
+
+
+def planejar_lote_tesouro(
+    arquivos: list[tuple[str, bytes]],
+    detector=None,
+    listar_abas=None,
+) -> tuple[list[tuple[str, str, bytes]], list[tuple[str, list[str]]]]:
+    """`planejar_lote` com o detector dos extratos do Tesouro Direto."""
+    if detector is None or listar_abas is None:
+        from data_pipeline.importers.investments.tesouro_sniffer import (
+            detect,
+            sheet_names,
+        )
+        detector = detector or detect
+        listar_abas = listar_abas or sheet_names
+    return planejar_lote(arquivos, _TESOURO_ORDEM, detector, listar_abas)
+
+
+def _consolidar_resultados_lote(
+    resultados: list[tuple[str, str, dict]], fonte: str,
+) -> dict:
     """Soma os resumos de um lote num único resumo, para exibição."""
     contadores = (
         "records_imported",
@@ -1398,26 +1447,32 @@ def _consolidar_resultados_b3(resultados: list[tuple[str, str, dict]]) -> dict:
     else:
         total["status"] = "failed"
 
-    total["source"] = "Dados Históricos B3"
+    total["source"] = fonte
     return total
 
 
-def _executar_lote_b3(arquivos: list[tuple[str, bytes]]) -> dict:
+def _consolidar_resultados_b3(resultados: list[tuple[str, str, dict]]) -> dict:
+    """`_consolidar_resultados_lote` com o rótulo do lote da B3."""
+    return _consolidar_resultados_lote(resultados, "Dados Históricos B3")
+
+
+def _executar_lote(arquivos: list[tuple[str, bytes]], lote: dict) -> dict:
     """Detecta, importa em ordem fixa e recalcula a carteira uma única vez."""
     from datetime import datetime
 
-    planejados, recusados = planejar_lote_b3(arquivos)
+    jobs = lote["jobs"]
+    planejados, recusados = lote["planejador"](arquivos)
 
     resultados: list[tuple[str, str, dict]] = []
     for chave, nome, dados in planejados:
-        cfg = _B3_JOBS[chave]
+        cfg = jobs[chave]
         payload = (nome, dados) if cfg.get("needs_filename") else dados
         summary = _executar_importacao_investimento(cfg, payload)
         resultados.append((chave, nome, summary))
 
-    consolidado = _consolidar_resultados_b3(resultados)
+    consolidado = _consolidar_resultados_lote(resultados, lote["fonte"])
     consolidado["_por_arquivo"] = [
-        (nome, _B3_JOBS[chave]["label"], summary)
+        (nome, jobs[chave]["label"], summary)
         for chave, nome, summary in resultados
     ]
     consolidado["_recusados"] = recusados
@@ -1426,6 +1481,8 @@ def _executar_lote_b3(arquivos: list[tuple[str, bytes]]) -> dict:
     )
 
     # Recálculo da carteira: uma vez por lote, e só se alguma operação entrou.
+    # O lote do Tesouro grava snapshot e lote, não operação — ele passa reto
+    # por aqui sem precisar de exceção própria.
     if consolidado["transactions_imported"] > 0 and settings.OWNER_USER_ID:
         from core.database import get_engine
         from data_pipeline.importers.investments.positions import (
@@ -1440,23 +1497,59 @@ def _executar_lote_b3(arquivos: list[tuple[str, bytes]]) -> dict:
     return consolidado
 
 
-def _render_import_b3() -> None:
-    """Uploader único dos extratos da B3 — o tipo sai do próprio arquivo."""
+def _executar_lote_b3(arquivos: list[tuple[str, bytes]]) -> dict:
+    return _executar_lote(arquivos, _LOTE_B3)
+
+
+def _executar_lote_tesouro(arquivos: list[tuple[str, bytes]]) -> dict:
+    return _executar_lote(arquivos, _LOTE_TESOURO)
+
+
+_LOTE_B3: dict = {
+    "key":        "b3_unificado",
+    "titulo":     "📊 Dados Históricos B3 (.xlsx)",
+    "caption":    "investidor.b3.com.br → Extratos e Informativos → "
+                  "Negociação, Movimentação **ou** Relatório Consolidado (o "
+                  "da XP). Envie quantos arquivos quiser, dos três tipos "
+                  "misturados — o app identifica cada um pelo conteúdo.",
+    "file_types": ["xlsx"],
+    "fonte":      "Dados Históricos B3",
+    "assunto":    "da B3",
+    "jobs":       _B3_JOBS,
+    "planejador": planejar_lote_b3,
+}
+
+_LOTE_TESOURO: dict = {
+    "key":        "tesouro_unificado",
+    "titulo":     "🏦 Dados Históricos Tesouro Direto (.xlsx)",
+    "caption":    "tesourodireto.com.br → Meus Investimentos → Extrato "
+                  "Consolidado **ou** Extrato Analítico (um por título). "
+                  "Envie quantos arquivos quiser, dos dois tipos misturados "
+                  "— o app identifica cada um pelo conteúdo. O Consolidado "
+                  "dá a posição; o Analítico é o único que traz a taxa "
+                  "contratada e a data de cada aplicação, sem as quais não "
+                  "há marcação a mercado. Títulos já cobertos por operações "
+                  "importadas da B3 são recusados para evitar duplicidade.",
+    "file_types": ["xlsx"],
+    "fonte":      "Dados Históricos Tesouro Direto",
+    "assunto":    "do Tesouro Direto",
+    "jobs":       _TESOURO_JOBS,
+    "planejador": planejar_lote_tesouro,
+}
+
+
+def _render_import_lote(lote: dict) -> None:
+    """Uploader único de um lote — o tipo de cada arquivo sai do conteúdo."""
     with st.container(border=True):
-        st.markdown("**📊 Dados Históricos B3 (.xlsx)**")
-        st.caption(
-            "investidor.b3.com.br → Extratos e Informativos → Negociação, "
-            "Movimentação **ou** Relatório Consolidado (o da XP). Envie "
-            "quantos arquivos quiser, dos três tipos misturados — o app "
-            "identifica cada um pelo conteúdo."
-        )
+        st.markdown(f"**{lote['titulo']}**")
+        st.caption(lote["caption"])
 
         col_up, col_btn = st.columns([3, 1])
         with col_up:
             uploaded = st.file_uploader(
                 "Arquivos",
-                type=["xlsx"],
-                key="_inv_upl_b3_unificado",
+                type=lote["file_types"],
+                key=f"_inv_upl_{lote['key']}",
                 label_visibility="collapsed",
                 accept_multiple_files=True,
             )
@@ -1470,29 +1563,37 @@ def _render_import_b3() -> None:
                 btn_label,
                 type="primary",
                 width="stretch",
-                key="_inv_btn_b3_unificado",
+                key=f"_inv_btn_{lote['key']}",
                 disabled=n_files == 0,
             )
 
-        result_key = "_inv_result_b3_unificado"
+        result_key = f"_inv_result_{lote['key']}"
         if run and n_files:
             payload = [(f.name, f.getvalue()) for f in uploaded]
             spinner_msg = (
-                f"Importando {n_files} arquivos da B3…"
-                if n_files > 1 else "Importando arquivo da B3…"
+                f"Importando {n_files} arquivos {lote['assunto']}…"
+                if n_files > 1 else f"Importando arquivo {lote['assunto']}…"
             )
             with st.spinner(spinner_msg):
-                st.session_state[result_key] = _executar_lote_b3(payload)
+                st.session_state[result_key] = _executar_lote(payload, lote)
             if st.session_state[result_key].get("status") in (
                 "success", "partial_success"
             ):
                 st.cache_data.clear()
 
         if st.session_state.get(result_key):
-            _render_resultado_lote_b3(st.session_state[result_key])
+            _render_resultado_lote(st.session_state[result_key])
 
 
-def _render_resultado_lote_b3(consolidado: dict) -> None:
+def _render_import_b3() -> None:
+    _render_import_lote(_LOTE_B3)
+
+
+def _render_import_tesouro() -> None:
+    _render_import_lote(_LOTE_TESOURO)
+
+
+def _render_resultado_lote(consolidado: dict) -> None:
     """Resumo do lote: recusados, totais e detalhe por arquivo."""
     recusados = consolidado.get("_recusados") or []
     por_arquivo = consolidado.get("_por_arquivo") or []
