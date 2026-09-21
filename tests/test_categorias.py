@@ -52,17 +52,35 @@ _CHAVES_ANTIGAS = frozenset({
 
 # -- uma definição só ---------------------------------------------------------
 
+def _fontes_do_repositorio():
+    """Os ``.py`` do repositório, sem os deste teste nem os do módulo dono.
+
+    O caminho é relativizado ANTES de filtrar: rodando de um worktree
+    (``.claude/worktrees/...``), ``caminho.parts`` carrega o prefixo do worktree
+    e um filtro sobre ele esconde o repositório INTEIRO — o teste passa local e
+    reprova no CI, sem nada a ver com o diff
+    (``memoria: worktree-sem-env-passa-por-limpo``).
+    """
+    for caminho in RAIZ.rglob("*.py"):
+        relativo = caminho.relative_to(RAIZ)
+        if relativo.parts[0] in {".claude", ".venv", "venv", "build"}:
+            continue
+        if caminho.name in {"categorias.py", "test_categorias.py"}:
+            continue
+        yield relativo.as_posix(), caminho.read_text(
+            encoding="utf-8", errors="ignore")
+
+
 def test_o_literal_de_investimento_nao_tem_segunda_copia():
-    """Marcador improvável de aparecer por acaso: se ele existe fora de
-    ``core/categorias.py``, alguém recolou a lista."""
-    marcador = "'Tesouro Direto'"
-    culpados = [
-        caminho.relative_to(RAIZ).as_posix()
-        for caminho in RAIZ.rglob("*.py")
-        if ".claude" not in caminho.parts
-        and caminho.name not in {"categorias.py", "test_categorias.py"}
-        and marcador in caminho.read_text(encoding="utf-8", errors="ignore")
-    ]
+    """Um nome solto é coincidência — ``core/portfolio_valuations.py`` rotula
+    uma classe de ativo de ``'Tesouro Direto'`` e não tem nada com isto. Cinco
+    nomes da mesma lista no mesmo arquivo é recolagem."""
+    culpados = {
+        relativo: presentes
+        for relativo, fonte in _fontes_do_repositorio()
+        if len(presentes := [n for n in cat.NOMES_DE_INVESTIMENTO
+                             if f"'{n}'" in fonte or f'"{n}"' in fonte]) >= 5
+    }
     assert not culpados, f"segunda cópia da lista de investimento: {culpados}"
 
 
