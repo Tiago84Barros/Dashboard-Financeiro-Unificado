@@ -31,9 +31,16 @@ from .xlsx_probe import sheet_names
 # "Proventos Recebidos", e reconhecer só "POSICAO - " o recusaria. O hífen em
 # "POSICAO - " não é decoração: sem ele o marcador casaria com qualquer aba
 # que mencionasse posição, inclusive de origens que não têm parser aqui.
+# "SUA CARTEIRA" e a aba unica do extrato "Posicao Detalhada" da Area do
+# Investidor. Ele nao tem nada em comum com o Consolidado da XP alem de ser
+# uma foto da carteira: uma aba so, sete secoes empilhadas com colunas
+# diferentes. A assinatura e o nome da aba porque e a unica coisa estavel --
+# o nome do ARQUIVO exportado e sempre "PosicaoDetalhada.xlsx", igual para
+# qualquer data, e a data vive dentro do cabecalho.
 _ASSINATURAS: list[tuple[str, str]] = [
     ("NEGOCIACAO", "b3_neg"),
     ("MOVIMENTACAO", "b3_mov"),
+    ("SUA CARTEIRA", "b3_pos"),
     ("POSICAO - ", "xp_csl"),
     ("PROVENTOS RECEBIDOS", "xp_csl"),
 ]
@@ -42,7 +49,7 @@ __all__ = ["detect", "sheet_names"]
 
 
 def detect(file_bytes: bytes) -> str | None:
-    """Devolve "b3_neg", "b3_mov", "xp_csl" ou None.
+    """Devolve "b3_neg", "b3_mov", "b3_pos", "xp_csl" ou None.
 
     None cobre tanto "é um xlsx válido de outra origem" quanto "não consegui
     abrir": em ambos os casos a resposta certa é recusar o arquivo em vez de

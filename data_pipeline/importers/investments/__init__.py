@@ -6,6 +6,7 @@ Importadores manuais de dados de investimento.
 Fontes suportadas:
   - b3_negociacao   B3 Área do Investidor → Negociação (.xlsx)
   - b3_movimentacao B3 Área do Investidor → Movimentação (.xlsx)
+  - b3_posicao_detalhada B3 Área do Investidor → Posição Detalhada (.xlsx)
   - xp_consolidado  XP Investimentos → Posição Consolidada (.xlsx) — stub
   - tesouro_analitico Tesouro Direto → Extrato Analítico por título (.xlsx)
   - nomad_pdf       Nomad → notas de corretagem (.pdf) — stub
@@ -25,6 +26,7 @@ from typing import Any
 __all__ = [
     "parse_b3_negociacao",
     "parse_b3_movimentacao",
+    "parse_b3_posicao_detalhada",
     "parse_xp_consolidado",
     "parse_tesouro_direto",
     "parse_tesouro_analitico",
@@ -40,6 +42,18 @@ def parse_b3_negociacao(file_bytes: bytes, engine) -> dict[str, Any]:
 def parse_b3_movimentacao(file_bytes: bytes, engine) -> dict[str, Any]:
     from .b3_movimentacao import parse
     return parse(file_bytes, engine)
+
+
+def parse_b3_posicao_detalhada(
+    payload: "bytes | tuple[str, bytes]", engine,
+) -> dict[str, Any]:
+    """Extrato "Posição Detalhada" — foto da carteira num instante.
+
+    Aceita (filename, bytes) por simetria com o lote, mas ignora o nome: a
+    data da foto vem de dentro do arquivo, do cabeçalho "Conta: … | DD/MM/AAAA".
+    """
+    from .b3_posicao_detalhada import parse
+    return parse(payload, engine)
 
 
 def parse_xp_consolidado(

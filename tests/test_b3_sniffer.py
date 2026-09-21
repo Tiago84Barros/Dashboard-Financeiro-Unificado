@@ -46,6 +46,9 @@ def _xlsx(*abas: str) -> bytes:
         (("Posicao - Acoes",), "xp_csl"),     # export sem acento
         # Consolidado de mês sem posição aberta: só a aba de proventos.
         (("Proventos Recebidos",), "xp_csl"),
+        # Posição Detalhada da Área do Investidor: aba única.
+        (("Sua carteira",), "b3_pos"),
+        (("SUA CARTEIRA",), "b3_pos"),
     ],
 )
 def test_detect_reconhece_assinaturas(abas, esperado):

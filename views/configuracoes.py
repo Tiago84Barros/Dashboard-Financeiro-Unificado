@@ -1184,6 +1184,20 @@ _B3_JOBS: dict[str, dict[str, str]] = {
         "source_name": "B3 — Movimentação (manual)",
         "skip_recompute": True,
     },
+    # Sem `needs_filename`: o extrato Posição Detalhada carrega a data no
+    # cabeçalho ("Conta: … | 21/09/2026, 18:45"), e o nome exportado é sempre
+    # "PosicaoDetalhada.xlsx" — inferir a data do nome daria a mesma data para
+    # todo extrato, e `report_date` está na chave única do snapshot.
+    "b3_pos": {
+        "key":         "b3_pos",
+        "label":       "B3 — Posição Detalhada",
+        "file_types":  "xlsx",
+        "parser_attr": "parse_b3_posicao_detalhada",
+        "job_name":    "import_b3_posicao_detalhada",
+        "table_name":  "portfolio_position_snapshots",
+        "source_name": "B3 — Posição Detalhada (manual)",
+        "skip_recompute": True,
+    },
     # `needs_filename` não é cosmético: `_parse_report_date` infere a data do
     # snapshot do NOME do arquivo (mensal-2026-janeiro → 31/01/2026). Entregar
     # só os bytes faria todo relatório cair em `date.today()`, e a chave única
@@ -1210,7 +1224,9 @@ _B3_JOBS: dict[str, dict[str, str]] = {
 # O Consolidado vem por último porque a aba "Proventos Recebidos" deduplica
 # contra os proventos da Movimentação: rodando antes dela, o lote gravaria o
 # mesmo provento duas vezes quando os dois arquivos cobrissem o mesmo mês.
-_B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov", "xp_csl")
+# A Posição Detalhada é uma foto e não deduplica contra nada: entra por
+# último, junto do Consolidado, depois das duas fontes de evento.
+_B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov", "xp_csl", "b3_pos")
 
 
 # Jobs do lote do Tesouro Direto. Mesma mecânica dos extratos da B3: um único
@@ -1509,9 +1525,13 @@ _LOTE_B3: dict = {
     "key":        "b3_unificado",
     "titulo":     "📊 Dados Históricos B3 (.xlsx)",
     "caption":    "investidor.b3.com.br → Extratos e Informativos → "
-                  "Negociação, Movimentação **ou** Relatório Consolidado (o "
-                  "da XP). Envie quantos arquivos quiser, dos três tipos "
-                  "misturados — o app identifica cada um pelo conteúdo.",
+                  "Negociação, Movimentação, Relatório Consolidado (o da XP) "
+                  "**ou** Posição Detalhada. Envie quantos arquivos quiser, "
+                  "dos quatro tipos misturados — o app identifica cada um "
+                  "pelo conteúdo. A Posição Detalhada é uma foto da carteira: "
+                  "linha sem quantidade (CDB, fundo fechado) e ativo já "
+                  "vendido não entram, e a seção Custódia Remunerada é "
+                  "ignorada porque repete as mesmas ações de \"Ações\".",
     "file_types": ["xlsx"],
     "fonte":      "Dados Históricos B3",
     "assunto":    "da B3",
@@ -1706,6 +1726,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     from data_pipeline.importers.investments import (
         parse_b3_movimentacao,
         parse_b3_negociacao,
+        parse_b3_posicao_detalhada,
         parse_nomad_pdf,
         parse_tesouro_analitico,
         parse_tesouro_direto,
@@ -1720,6 +1741,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     parsers = {
         "parse_b3_negociacao":   parse_b3_negociacao,
         "parse_b3_movimentacao": parse_b3_movimentacao,
+        "parse_b3_posicao_detalhada": parse_b3_posicao_detalhada,
         "parse_xp_consolidado":  parse_xp_consolidado,
         "parse_tesouro_direto":  parse_tesouro_direto,
         "parse_tesouro_analitico": parse_tesouro_analitico,

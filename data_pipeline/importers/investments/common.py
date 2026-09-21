@@ -85,8 +85,14 @@ def to_float_br(value: Any) -> float | None:
     s = str(value).strip()
     if not s or s in ("-", "None"):
         return None
-    # Limpa moeda, espaços e sinais simples
-    s = s.replace("R$", "").replace(" ", "").strip()
+    # Limpa moeda e TODO espaço, inclusive o não-quebrável.
+    #
+    # `.strip()` não basta: em "-R$ 124,10" o espaço fica no MEIO, entre o
+    # sinal e o número, e sobra "- 124,10", que `float()` recusa. O valor
+    # negativo virava None sem erro -- e None, num importador, é "essa coluna
+    # não veio", não "não consegui ler". Positivos escapavam porque neles o
+    # espaço cai na borda e o `strip()` alcança.
+    s = "".join(s.replace("R$", "").split())
     # Heurística: se tem vírgula, tratamos como decimal BR
     if "," in s:
         s = s.replace(".", "").replace(",", ".")
