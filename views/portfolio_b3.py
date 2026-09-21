@@ -73,6 +73,7 @@ from views.empresas_b3 import (
     _yf_multiplos_dividendos,
     _yf_trailing12m_divs,
 )
+from views.portfolio_b3_safras import render_safras
 
 _MIN_MARKET_CAP_COVERAGE = 0.80
 _MIN_ADTV_COVERAGE = 0.70
@@ -4446,6 +4447,13 @@ def render(show_header: bool = True) -> None:
             st.caption("Não foi possível baixar preços para as empresas selecionadas.")
     else:
         st.caption("Nenhuma empresa selecionada para mostrar desempenho.")
+
+    render_safras(
+        resultados,
+        st.session_state.get("pb3_precos_all", pd.DataFrame()),
+        selic_por_ano=selic_macro,
+        taxa_selic_aa=taxa_selic_aa,
+    )
 
     # ── Metodologia e referências científicas ────────────────────────────────
     _render_metodologia_portfolio()
