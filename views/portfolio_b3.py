@@ -28,7 +28,7 @@ from core.b3_renda_sustentavel import (
 from core.b3_vigencia import (
     REBAL_MONTH as _REBAL_MONTH,
 )
-from core.b3_vigencia import (  # noqa: F401 -- consumidas na Task 2
+from core.b3_vigencia import (
     ano_base_do_score,
     janela_de_vigencia,
     safra_vigente_em,
@@ -4355,16 +4355,35 @@ def render(show_header: bool = True) -> None:
 
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
-    _sec_hdr(f"📈 Desempenho parcial das selecionadas (ano atual: {ano_atual})")
-    st.caption("Acompanhamento de aportes mensais de R$1.000 desde janeiro do ano atual.")
+    _hoje_vig = pd.Timestamp.now()
+    _safra_vig = safra_vigente_em(_hoje_vig)
+    _ini_vig, _fim_vig = janela_de_vigencia(_safra_vig)
+    _sec_hdr(
+        f"📈 Desempenho da safra {_safra_vig} "
+        f"(balanços de {ano_base_do_score(_safra_vig)})"
+    )
+    st.caption(
+        f"Aportes mensais de R$1.000 desde **abril/{_safra_vig}**, quando a "
+        f"safra entrou em vigor. A janela vai até {_fim_vig:%m/%Y}. Antes de "
+        "abril a carteira não existia: os balanços do exercício-base só são "
+        "públicos até 31/03, e começar em janeiro mostraria o desempenho de "
+        "uma carteira que ninguém poderia ter montado."
+    )
+    st.caption(
+        "⚠️ Look-ahead residual: a carteira aqui simulada usa o piso de "
+        "liquidez e a diversificação por correlação com dados de **hoje**, "
+        "não de abril. A distorção é a do intervalo abril→hoje, não a do ano "
+        "inteiro — mas não é zero."
+    )
 
     if proximos_uniq:
         tks_prox = tuple(sorted({p["tk"] for p in proximos_uniq}))
         df_prec_prox = _batch_yf_precos_mensais(tks_prox, period="1y")
 
         if not df_prec_prox.empty:
-            data_ini_ano = pd.Timestamp(ano_atual, 1, 1)
-            df_ano = df_prec_prox[df_prec_prox.index >= data_ini_ano].copy()
+            df_ano = df_prec_prox[
+                (df_prec_prox.index >= _ini_vig) & (df_prec_prox.index <= _fim_vig)
+            ].copy()
             if not df_ano.empty:
                 aporte_sim  = 1000.0
                 taxa_m_sim  = (1 + taxa_selic_aa) ** (1 / 12) - 1
@@ -4394,7 +4413,7 @@ def render(show_header: bool = True) -> None:
                     st.markdown(
                         f'<div style="font-weight:700;font-size:0.9rem;'
                         f'color:var(--app-text);margin-bottom:8px;">'
-                        f'Comparativo de desempenho parcial em {ano_atual}</div>',
+                        f'Safra {_safra_vig} — abril/{_safra_vig} em diante</div>',
                         unsafe_allow_html=True,
                     )
                     melt_p = df_perf.melt("Data", var_name="Carteira",
@@ -4412,7 +4431,10 @@ def render(show_header: bool = True) -> None:
                                     config={"displayModeBar": False},
                                     key="pb3_perf_chart")
             else:
-                st.caption("Dados insuficientes para o ano atual.")
+                st.caption(
+                    f"Sem preços mensais na janela da safra {_safra_vig} "
+                    f"(a partir de abril/{_safra_vig})."
+                )
         else:
             st.caption("Não foi possível baixar preços para as empresas selecionadas.")
     else:
