@@ -93,3 +93,40 @@ def _sem_armazem_macro(monkeypatch):
     except Exception:  # o modulo pode nao existir neste checkout
         return
     monkeypatch.setattr(macro_db, "get_local_macro_engine", lambda: None)
+
+
+# ── nenhum teste herda a leitura em voo de outro ─────────────────────────────
+# `core.market_read._FII_SNAPSHOT_JOB` e um slot global do processo, e a leitura
+# real o preenche sem esperar (`timeout_seconds=0`) quando o artefato local
+# responde: o worker segue lendo o Supabase por mais de 30 s depois que o teste
+# que o disparou ja terminou. O teste seguinte que chamasse o carregador recebia
+# o resultado DELE -- 433 linhas reais ou um quadro vazio --, e seus
+# `monkeypatch` de engine e `read_sql_query` viravam decoracao.
+#
+# Medido em 20/09/2026: `tests/test_market_read_failures.py` passava 38/38
+# isolado e falhava de 2 a 5 testes dentro da suite, com o conjunto mudando
+# entre execucoes do MESMO commit. O que decidia era se o worker ainda estava
+# vivo -- ou seja, quanto tempo a suite levou --, e nao o que o teste pediu.
+#
+# Abandonar o worker e seguro: a thread e daemon e a fila e privada dela.
+@pytest.fixture(autouse=True)
+def _sem_leitura_de_snapshot_herdada():
+    try:
+        import core.market_read as mr
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    _limpar(mr)
+    yield
+    _limpar(mr)
+
+
+def _limpar(mr) -> None:
+    mr._reset_fii_snapshot_memory_cache()
+    # O cache do Streamlit por cima e outro canal entre testes, e com TTL de
+    # 900 s numa suite que leva entre 844 s e 906 s ele expira -- ou nao --
+    # conforme a duracao da execucao, nao conforme o que o teste pediu.
+    try:
+        mr._load_fii_methodology_inputs_cached.clear()
+    except Exception:
+        pass

@@ -761,13 +761,28 @@ def _fresh_fii_snapshot_fallback(reason: str, attempts: int) -> pd.DataFrame | N
 
 
 def _reset_fii_snapshot_memory_cache() -> None:
-    """Limpa somente o último snapshot verificado mantido no processo."""
+    """Limpa o snapshot verificado E abandona a leitura em voo.
+
+    Preservar o worker vivo fazia este reset não resetar. Quem chama quer a
+    PRÓXIMA leitura, não a que já estava correndo: `_clear_fii_methodology_inputs_cache`
+    e `scripts/verificar_frescor_vitrines.py` limpam justamente para reler a
+    vitrine, e herdavam o resultado da leitura anterior.
+
+    Na suíte o preço era outro e maior. A leitura real dispara o worker sem
+    esperar (`timeout_seconds=0`) quando o artefato local responde, e ele segue
+    lendo o Supabase por mais de 30 s. Qualquer teste que chamasse o carregador
+    nesse intervalo recebia o resultado DELE -- 433 linhas reais ou um quadro
+    vazio -- e seus `monkeypatch` de engine e `read_sql_query` viravam decoração.
+    Como o que decidia era se o worker ainda estava vivo, e não o que o teste
+    pediu, o conjunto de falhas mudava conforme a duração da suíte.
+
+    Abandonar é seguro: a thread é daemon e a fila é privada dela.
+    """
     global _FII_SNAPSHOT_LAST_GOOD, _FII_SNAPSHOT_LAST_GOOD_AT, _FII_SNAPSHOT_JOB
     with _FII_SNAPSHOT_LOCK:
         _FII_SNAPSHOT_LAST_GOOD = None
         _FII_SNAPSHOT_LAST_GOOD_AT = None
-        if _FII_SNAPSHOT_JOB is not None and not _FII_SNAPSHOT_JOB[0].is_alive():
-            _FII_SNAPSHOT_JOB = None
+        _FII_SNAPSHOT_JOB = None
 
 
 def _read_fii_selection_snapshot(eng, page_size: int) -> pd.DataFrame:
