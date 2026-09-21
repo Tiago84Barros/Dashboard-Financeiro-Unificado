@@ -3,6 +3,7 @@ from datetime import date
 from types import SimpleNamespace
 
 import core.controle as controle
+from core.categorias import SEED
 from core.controle import (
     _SQL_DIVIDAS_CC,
     _SQL_HISTORICO_CC_MENSAL,
@@ -12,7 +13,6 @@ from core.controle import (
     importar_fatura_cartao_csv,
     parse_fatura_cartao_csv,
 )
-from core.categorias import SEED
 from views.controle_financeiro import (
     _FORMAS_PGTO_SAIDA,
     _card_rows_dataframe,
