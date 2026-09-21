@@ -74,6 +74,23 @@ LIGHT_CSS = """
 [data-testid="stChatInput"] > div {
  background-color:var(--app-surface)!important; border-color:var(--app-border)!important;
 }
+/* A bolha do chat tem fundo branco, mas `stChatMessageContent` traz
+   `color:rgb(250,250,250)` do tema do config. Paragrafo escapava porque a
+   regra de `stMarkdownContainer` acima enumera `p`; a tabela que a LLM devolve
+   em markdown nao esta na enumeracao e herdava o branco -- texto branco sobre
+   bolha branca. Pintar o contentor resolve por heranca, sem `*`, que apagaria
+   cor proposital (verde/vermelho) de trechos do texto. */
+[data-testid="stChatMessageContent"] {color:var(--app-text)!important;}
+/* A grade nativa da tabela markdown e rgba(250,250,250,.1): no escuro dava o
+   fio claro, no branco some. Sem grade e sem cabecalho destacado a tabela vira
+   um bloco em branco mesmo com o texto legivel. */
+[data-testid="stMarkdownContainer"] :is(table,th,td) {
+ border-color:var(--app-border)!important;
+}
+[data-testid="stMarkdownContainer"] table :is(th,td) {color:var(--app-text)!important;}
+[data-testid="stMarkdownContainer"] table thead th {
+ background-color:var(--app-surface-raised)!important;
+}
 [data-testid="stSidebarCollapseButton"] button {color:var(--app-text)!important;}
 [data-testid="stSidebar"] .stRadio > div > label {
  color:var(--app-muted)!important;
