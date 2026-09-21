@@ -191,3 +191,9 @@ O que mudou, e o que **não** mudou:
 - Nenhum parser mudou. Nenhum schema mudou. O Tesouro Direto (Consolidado e
   Analítico) e a Nomad seguem com bloco próprio: os arquivos deles não saem da
   B3, e o Tesouro tem parser distinto do Consolidado.
+
+> **Atualização em 21/09/2026.** A linha acima deixou de valer: o Tesouro
+> Direto passou a ter lote unificado com a mesma mecânica (detecção por
+> conteúdo, ordem fixa, resumo consolidado) e o bloco da Nomad virou "Dados
+> Históricos Internacionais". Ver
+> `2026-09-21-lote-tesouro-e-rotulo-internacional-design.md`.
