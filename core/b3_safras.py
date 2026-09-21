@@ -62,6 +62,24 @@ Regras de medicao do retorno (rodada de correcao 2, revisao de codigo):
   sozinho esconde) e `tabela.attrs["selic_anos_estimados_por_safra"]`
   traz o dict `{safra: [anos]}` inteiro, nao so o ultimo calculado.
 
+Regras de medicao do retorno (rodada de correcao 3, revisao de codigo):
+
+- **A Selic capitaliza por dias corridos, nao por fronteira de mes.**
+  Contar fronteiras de mes em `pd.date_range(..., freq="MS")` so acerta
+  quando o indice de `df_precos` e fim de mes; com indice de inicio de mes
+  (o fallback `yf.download(..., interval="1mo")` de
+  `views/empresas_b3.py:497,504` devolve isso) o mesmo "12 meses" escondia
+  quase 1 pp de diferenca real. `_dias_por_ano_civil` reparte
+  `(corte - inicio_mercado)` em dias corridos por ano civil, e cada pedaco
+  capitaliza `(1 + taxa_aa) ** (dias / 365.0)` -- estavel a convencao do
+  indice, coberto por
+  `test_selic_e_estavel_entre_convencao_fim_de_mes_e_inicio_de_mes`.
+- **A linha da tabela e validada contra `COLUNAS_TABELA` no ponto em que e
+  montada.** `tabela_de_safras` levanta `ValueError` se o dict da linha
+  tiver uma chave a mais ou a menos que `COLUNAS_TABELA` -- fecha as duas
+  direcoes do desalinhamento (coluna declarada sem chave, e chave nova sem
+  coluna) no mesmo lugar onde o bug nasceria.
+
 Modulo puro: sem streamlit, sem banco. Coberto por tests/test_b3_safras.py.
 """
 from __future__ import annotations
@@ -224,27 +242,54 @@ def _preco_nas_pontas(serie: pd.Series, inicio_mercado: pd.Timestamp,
     return float(dentro.iloc[0]), float(dentro.iloc[-1])
 
 
+def _dias_por_ano_civil(inicio: pd.Timestamp, fim: pd.Timestamp) -> dict[int, int]:
+    """Reparte os dias corridos de `[inicio, fim)` pelo ano civil de cada um.
+
+    A janela pode cruzar a virada do ano; cada pedaco tem que ir para o
+    ano certo para a Selic compor com a taxa daquele ano.
+    """
+    dias: dict[int, int] = {}
+    cursor = inicio
+    while cursor < fim:
+        fim_do_ano = pd.Timestamp(year=cursor.year, month=12, day=31)
+        proximo = min(fim, fim_do_ano + pd.Timedelta(days=1))
+        dias[cursor.year] = dias.get(cursor.year, 0) + (proximo - cursor).days
+        cursor = proximo
+    return dias
+
+
 def _retorno_selic(inicio: pd.Timestamp, fim: pd.Timestamp,
                    selic_por_ano: dict[int, float],
                    taxa_selic_aa: float) -> tuple[float, list[int]]:
-    """Composto mes a mes, com a taxa do ano de cada mes -- a janela cruza
-    dois anos civis e usar a taxa de um so deles distorce o benchmark.
+    """Composto por FRACAO DE ANO em dias corridos, com a taxa do ano de
+    cada pedaco -- a janela cruza dois anos civis e usar a taxa de um so
+    deles distorce o benchmark.
+
+    Contar fronteiras de mes (`pd.date_range(..., freq="MS")`, a versao
+    anterior) acerta so quando o indice de precos e fim de mes, mas o
+    resultado depende da convencao do quadro que chega -- e nem sempre e
+    fim de mes: `yf.download(..., interval="1mo")` devolve indice de INICIO
+    de mes (ver `views/empresas_b3.py:497,504`), e nesse caso 12 fronteiras
+    de mes por um lado e por outro escondiam quase um ponto percentual de
+    diferenca real em dias corridos por tras do mesmo "12 meses". Medir em
+    `(fim - inicio).days / 365.0` e estavel a convencao do indice.
 
     Devolve tambem os anos que cairam no fallback `taxa_selic_aa` (ano
     ausente do dict OU com valor `None` explicito) -- sem isso o numero sai
     igual ao de um ano observado e ninguem sabe que parte veio do default.
     """
+    if fim <= inicio:
+        return 0.0, []
     acumulado = 1.0
     anos_estimados: list[int] = []
-    for mes in pd.date_range(inicio, fim, freq="MS"):
-        ano = int(mes.year)
+    for ano, dias in sorted(_dias_por_ano_civil(inicio, fim).items()):
         valor = selic_por_ano.get(ano)
         if ano in selic_por_ano and valor is not None:
             taxa_aa = float(valor)
         else:
             taxa_aa = float(taxa_selic_aa or 0.0)
             anos_estimados.append(ano)
-        acumulado *= (1.0 + taxa_aa) ** (1.0 / 12.0)
+        acumulado *= (1.0 + taxa_aa) ** (dias / 365.0)
     return acumulado - 1.0, sorted(set(anos_estimados))
 
 
@@ -333,7 +378,7 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                                     taxa_selic_aa=taxa_selic_aa)
         maiores = sorted(carteira.pesos.items(),
                          key=lambda kv: (-kv[1], kv[0]))[:5]
-        linhas.append({
+        linha = {
             "Safra": carteira.safra,
             "Exercício-base": carteira.ano_base,
             "Janela": f"{carteira.inicio:%m/%Y} a {carteira.fim:%m/%Y}",
@@ -349,7 +394,15 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "Universo com preço": (
                 f"{metricas['n_universo_com_preco']}/{metricas['n_universo_total']}"
             ),
-        })
+        }
+        faltando = set(COLUNAS_TABELA) - set(linha)
+        sobrando = set(linha) - set(COLUNAS_TABELA)
+        if faltando or sobrando:
+            raise ValueError(
+                "linha da tabela desalinhada de COLUNAS_TABELA -- "
+                f"faltando={faltando} sobrando={sobrando}"
+            )
+        linhas.append(linha)
         if carteira.completa:
             completas.append(carteira.safra)
         selic_estimados_por_safra[carteira.safra] = metricas["selic_anos_estimados"]
