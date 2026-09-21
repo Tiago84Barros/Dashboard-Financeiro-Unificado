@@ -1,10 +1,10 @@
 """
-views/documentacao.py
-Documentacao visual do App 4.
+views/documentação.py
+Documentação visual do App 4.
 
 Cria fluxogramas interativos para explicar as partes mais complexas do app:
-analise avancada, simulador/criacao de portfolio B3, analise de portfolio e
-dicionario de indicadores/demonstracoes financeiras.
+análise avançada, simulador/criação de portfólio B3, análise de portfólio e
+dicionário de indicadores/demonstrações financeiras.
 """
 from __future__ import annotations
 
@@ -345,17 +345,17 @@ def _node(
 
 FLOW_ANALISE_AVANCADA = FlowSpec(
     key="analise_avancada",
-    title="Analise avancada de empresas B3",
+    title="Análise avançada de empresas B3",
     subtitle=(
-        "Mostra como o app transforma dados brutos de empresas em score comparavel, "
-        "ranking, simulacao historica e uma leitura de entrada."
+        "Mostra como o app transforma dados brutos de empresas em score comparável, "
+        "ranking, simulação histórica e uma leitura de entrada."
     ),
     rows=(
         ("Universo", ("setores", "multiplos", "dre_macro")),
         ("Tratamento", ("limpeza", "slopes", "pesos_setoriais")),
         ("Score", ("percentis", "ajustes", "score_final")),
-        ("Validacao", ("backtest", "calibracao", "score_entrada")),
-        ("Saida", ("ranking", "explicacao")),
+        ("Validação", ("backtest", "calibracao", "score_entrada")),
+        ("Saída", ("ranking", "explicacao")),
     ),
     default="setores",
     nodes={
@@ -367,79 +367,79 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
                 "Ticker, empresa, setor, subsetor e segmento",
                 "Base para comparar empresas com pares semelhantes",
             ),
-            "Sem agrupamento setorial, bancos, varejo, energia e tecnologia seriam comparados como se tivessem a mesma estrutura economica.",
+            "Sem agrupamento setorial, bancos, varejo, energia e tecnologia seriam comparados como se tivessem a mesma estrutura econômica.",
         ),
         "multiplos": _node(
-            "multiplos", "Multiplos historicos", "Entrada",
+            "multiplos", "Múltiplos históricos", "Entrada",
             "Busca indicadores fundamentalistas anuais, com fallback web quando o banco tem lacunas ou outliers.",
             (
                 "ROE, ROIC, margens, DY, P/L, P/VP, EV/EBIT",
-                "Historico por ano",
+                "Histórico por ano",
                 "Auditoria de campos substituidos por Fundamentus",
             ),
-            "Os multiplos sao a primeira camada quantitativa: condensam preco, lucro, patrimonio, dividendos e rentabilidade do capital.",
+            "Os múltiplos são a primeira camada quantitativa: condensam preço, lucro, patrimônio, dividendos e rentabilidade do capital.",
         ),
         "dre_macro": _node(
             "dre_macro", "DRE e macro", "Entrada",
-            "Combina demonstracoes financeiras e contexto macroeconomico usado nos ajustes de qualidade e risco.",
+            "Combina demonstrações financeiras e contexto macroeconômico usado nos ajustes de qualidade e risco.",
             (
-                "Receita, EBITDA, EBIT, lucro, divida e caixa",
-                "Selic, IPCA, cambio e PIB",
-                "Historico com publication lag para evitar olhar o futuro",
+                "Receita, EBITDA, EBIT, lucro, dívida e caixa",
+                "Selic, IPCA, câmbio e PIB",
+                "Histórico com publication lag para evitar olhar o futuro",
             ),
-            "A empresa nao existe no vacuo: crescimento, margem e endividamento precisam ser lidos junto com juros, inflacao e ciclo economico.",
+            "A empresa não existe no vácuo: crescimento, margem e endividamento precisam ser lidos junto com juros, inflação e ciclo econômico.",
         ),
         "limpeza": _node(
-            "limpeza", "Limpeza e saneamento", "Preparacao",
-            "Remove valores impossiveis, padroniza escalas percentuais e reduz distorcoes de dados contaminados.",
+            "limpeza", "Limpeza e saneamento", "Preparação",
+            "Remove valores impossíveis, padroniza escalas percentuais e reduz distorções de dados contaminados.",
             (
-                "Faixas aceitaveis por indicador",
+                "Faixas aceitáveis por indicador",
                 "DY contaminado ou fora de escala",
-                "Imputacao por mediana do grupo quando ha lacunas",
+                "Imputação por mediana do grupo quando há lacunas",
             ),
-            "Evita que uma empresa ganhe ou perca score por erro de dado, e nao por qualidade economica real.",
+            "Evita que uma empresa ganhe ou perca score por erro de dado, e não por qualidade econômica real.",
         ),
         "slopes": _node(
-            "slopes", "Tendencias historicas", "Preparacao",
-            "Calcula slopes log-lineares para medir a direcao de ROE, ROIC e margens ao longo do tempo.",
+            "slopes", "Tendências históricas", "Preparação",
+            "Calcula slopes log-lineares para medir a direção de ROE, ROIC e margens ao longo do tempo.",
             (
                 "ROE_slope_log",
                 "ROIC_slope_log",
-                "Margem_Liquida_slope_log",
+                "Margem_Líquida_slope_log",
                 "Margem_Operacional_slope_log",
             ),
-            "Uma foto atual pode enganar; a tendencia mostra se a qualidade esta melhorando, piorando ou apenas parecendo boa.",
+            "Uma foto atual pode enganar; a tendência mostra se a qualidade esta melhorando, piorando ou apenas parecendo boa.",
         ),
         "pesos_setoriais": _node(
-            "pesos_setoriais", "Pesos por setor", "Preparacao",
-            "Escolhe pesos diferentes por tipo de negocio: financeiro, energia, consumo, saude, utilidade publica e outros.",
+            "pesos_setoriais", "Pesos por setor", "Preparação",
+            "Escolhe pesos diferentes por tipo de negócio: financeiro, energia, consumo, saúde, utilidade publica e outros.",
             (
                 "ROE mais relevante em bancos",
                 "DY e endividamento mais fortes em utilities",
-                "ROIC e margens mais importantes em negocios industriais",
-                "Peso de barganha opcional: P/L, P/VP, EV/EBIT (menor e melhor)",
+                "ROIC e margens mais importantes em negócios industriais",
+                "Peso de barganha opcional: P/L, P/VP, EV/EBIT (menor é melhor)",
             ),
-            "O mesmo indicador nao tem o mesmo significado em todos os setores; a ponderacao respeita a economia de cada negocio, e o peso de barganha permite misturar qualidade com preco (comprar boa empresa barata).",
+            "O mesmo indicador não tem o mesmo significado em todos os setores; a ponderação respeita a economia de cada negócio, e o peso de barganha permite misturar qualidade com preço (comprar boa empresa barata).",
         ),
         "percentis": _node(
             "percentis", "Percentis entre pares", "Score",
-            "Converte cada indicador em posicao relativa dentro do grupo comparavel.",
+            "Converte cada indicador em posição relativa dentro do grupo comparável.",
             (
                 "Rank percentual",
-                "Indicadores em que maior e melhor",
-                "Indicadores em que menor e melhor, como P/L, P/VP, EV/EBIT e endividamento",
+                "Indicadores em que maior é melhor",
+                "Indicadores em que menor é melhor, como P/L, P/VP, EV/EBIT e endividamento",
             ),
-            "A pergunta principal vira: esta empresa e melhor ou pior que seus pares no indicador certo?",
+            "A pergunta principal vira: esta empresa é melhor ou pior que seus pares no indicador certo?",
         ),
         "ajustes": _node(
             "ajustes", "Ajustes de risco", "Score",
-            "Aplica penalidades e ajustes para reduzir concentracao, dados frageis, crowding e sensibilidade macro.",
+            "Aplica penalidades e ajustes para reduzir concentração, dados frágeis, crowding e sensibilidade macro.",
             (
-                "Winsorizacao",
+                "Winsorização",
                 "Penalidade por valores extremos ou dados insuficientes",
-                "Ajuste macro e crowding em multiplos",
+                "Ajuste macro e crowding em múltiplos",
             ),
-            "A camada protege o ranking contra historias bonitas demais que dependem de uma unica variavel ou de um dado instavel.",
+            "A camada protege o ranking contra histórias bonitas demais que dependem de uma única variável ou de um dado instável.",
         ),
         "score_final": _node(
             "score_final", "Score final", "Score",
@@ -447,62 +447,62 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
             (
                 "Score bruto",
                 "Score ajustado",
-                "Versao do score para auditoria",
+                "Versão do score para auditoria",
             ),
-            "O score nao substitui analise, mas cria uma triagem objetiva e repetivel para encontrar candidatos.",
+            "O score não substitui análise, mas cria uma triagem objetiva e repetível para encontrar candidatos.",
         ),
         "backtest": _node(
-            "backtest", "Backtest mensal", "Validacao",
-            "Simula aportes mensais usando os scores disponiveis no periodo correto, sem usar dados futuros.",
+            "backtest", "Backtest mensal", "Validação",
+            "Simula aportes mensais usando os scores disponíveis no período correto, sem usar dados futuros.",
             (
                 "Publication lag = 1 (point-in-time)",
                 "Aportes mensais com custos",
-                "Pesos Iguais = referencia de habilidade (macro-neutra)",
-                "Selic = diagnostico de timing (nao criterio)",
+                "Pesos Iguais = referência de habilidade (macro-neutra)",
+                "Selic = diagnóstico de timing (não critério)",
                 "Rank-IC: score preve o retorno do ano seguinte",
             ),
-            "Bater os Pesos Iguais mostra habilidade de selecao mesmo em ciclo ruim (se o setor caiu, os pares cairam junto); a Selic e apenas referencia de timing, nao de qualidade.",
+            "Bater os Pesos Iguais mostra habilidade de seleção mesmo em ciclo ruim (se o setor caiu, os pares cairam junto); a Selic é apenas referência de timing, não de qualidade.",
         ),
         "calibracao": _node(
-            "calibracao", "Calibracao", "Validacao",
-            "Testa parametros de peso, limite maximo e suavizacao para evitar carteiras concentradas ou superajustadas.",
+            "calibracao", "Calibração", "Validação",
+            "Testa parâmetros de peso, limite máximo e suavização para evitar carteiras concentradas ou superajustadas.",
             (
                 "Gamma",
                 "Cap por ativo",
                 "Soft cap",
                 "Walk-forward e shrinkage para defaults",
             ),
-            "A calibracao tenta equilibrar retorno, volatilidade, drawdown e custos de transacao.",
+            "A calibração tenta equilibrar retorno, volatilidade, drawdown e custos de transação.",
         ),
         "score_entrada": _node(
-            "score_entrada", "Score de entrada", "Validacao",
+            "score_entrada", "Score de entrada", "Validação",
             "Combina qualidade, valor, risco e contexto macro para classificar o momento de compra.",
             (
-                "Composicao avancada",
+                "Composição avançada",
                 "Status de entrada",
-                "Explicacao textual da nota",
+                "Explicação textual da nota",
             ),
             "Uma boa empresa pode estar cara, alavancada ou em momento ruim; o score de entrada separa qualidade de oportunidade.",
         ),
         "ranking": _node(
-            "ranking", "Ranking e lideres", "Saida",
+            "ranking", "Ranking e líderes", "Saída",
             "Exibe as empresas mais fortes por segmento e permite auditoria dos motivos.",
             (
                 "Tabela comparativa",
-                "Lideres por score",
+                "Líderes por score",
                 "Indicadores que mais puxaram a nota",
             ),
-            "O usuario sai da caixa-preta e consegue ver por que uma empresa apareceu acima de outra.",
+            "O usuário sai da caixa-preta e consegue ver por que uma empresa apareceu acima de outra.",
         ),
         "explicacao": _node(
-            "explicacao", "Explicacao visual", "Saida",
-            "Mostra tabelas, graficos, status e alertas para transformar calculo em entendimento.",
+            "explicacao", "Explicação visual", "Saída",
+            "Mostra tabelas, gráficos, status e alertas para transformar cálculo em entendimento.",
             (
-                "Graficos Plotly",
+                "Gráficos Plotly",
                 "Cards de status",
-                "Auditorias de dados e parametros",
+                "Auditorias de dados e parâmetros",
             ),
-            "A tela existe para que o usuario consiga discordar do modelo com informacao, nao apenas aceitar um numero.",
+            "A tela existe para que o usuário consiga discordar do modelo com informação, não apenas aceitar um número.",
         ),
     },
 )
@@ -726,114 +726,114 @@ ORDEM_ANALISE_AVANCADA = (
 
 FLOW_CRIACAO_PORTFOLIO = FlowSpec(
     key="criacao_portfolio",
-    title="Criacao de portfolio B3",
+    title="Criação de portfólio B3",
     subtitle=(
         "Fluxo inspirado nos seus rascunhos: setores, subsetores e segmentos entram no motor; "
-        "o app encontra lideres, testa desempenho e salva uma carteira modelo."
+        "o app encontra líderes, testa desempenho e salva uma carteira modelo."
     ),
     rows=(
         ("Dados", ("setores_cp", "historico_cp", "macro_cp")),
-        ("Segmentacao", ("setor_cp", "subsetor_cp", "segmento_cp")),
+        ("Segmentação", ("setor_cp", "subsetor_cp", "segmento_cp")),
         ("Motor", ("variacao_cp", "score_cp", "lideres_cp")),
-        ("Simulacao", ("backtest_cp", "comparacao_cp", "aprovacao_cp")),
-        ("Portfolio", ("pesos_cp", "salvar_cp")),
+        ("Simulação", ("backtest_cp", "comparacao_cp", "aprovacao_cp")),
+        ("Portfólio", ("pesos_cp", "salvar_cp")),
     ),
     default="setores_cp",
     nodes={
         "setores_cp": _node(
             "setores_cp", "Escolha do universo", "Dados",
             "Carrega todas as empresas B3 cobertas e organiza por setor, subsetor e segmento.",
-            ("load_setores()", "Tickers elegiveis", "Nome da empresa e classificacao setorial"),
-            "E o ponto de partida para que cada empresa seja julgada dentro de um grupo economico justo.",
+            ("load_setores()", "Tickers elegíveis", "Nome da empresa e classificação setorial"),
+            "E o ponto de partida para que cada empresa seja julgada dentro de um grupo econômico justo.",
         ),
         "historico_cp": _node(
-            "historico_cp", "Historico de indicadores", "Dados",
-            "Busca multiplos e DRE historicos para cada ticker, exigindo um minimo de anos validos.",
-            ("load_multiplos_todos()", "load_multiplos_historico_batch()", "Historico DRE minimo"),
-            "Sem historico suficiente, o modelo evita aprovar segmentos que parecem bons por uma unica observacao.",
+            "historico_cp", "Histórico de indicadores", "Dados",
+            "Busca múltiplos e DRE históricos para cada ticker, exigindo um mínimo de anos validos.",
+            ("load_múltiplos_todos()", "load_múltiplos_histórico_batch()", "Histórico DRE mínimo"),
+            "Sem histórico suficiente, o modelo evita aprovar segmentos que parecem bons por uma única observação.",
         ),
         "macro_cp": _node(
-            "macro_cp", "Cenario macro", "Dados",
-            "Carrega Selic e demais variaveis macro para simular benchmark e ajustar o score.",
-            ("load_selic_macro()", "load_macro_history()", "Taxa Selic media de fallback"),
-            "A comparacao contra Selic e essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
+            "macro_cp", "Cenário macro", "Dados",
+            "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score.",
+            ("load_selic_macro()", "load_macro_history()", "Taxa Selic média de fallback"),
+            "A comparação contra Selic e essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),
         "setor_cp": _node(
-            "setor_cp", "Setor", "Segmentacao",
-            "Primeiro nivel de agrupamento: bancos, energia, consumo, materiais, saude e outros.",
-            ("Pesos setoriais", "Comparacao ampla", "Contexto de negocio"),
+            "setor_cp", "Setor", "Segmentação",
+            "Primeiro nível de agrupamento: bancos, energia, consumo, materiais, saúde e outros.",
+            ("Pesos setoriais", "Comparação ampla", "Contexto de negócio"),
             "Define quais indicadores recebem mais peso.",
         ),
         "subsetor_cp": _node(
-            "subsetor_cp", "Subsetor", "Segmentacao",
-            "Nivel intermediario que refina empresas com dinamicas economicas parecidas.",
+            "subsetor_cp", "Subsetor", "Segmentação",
+            "Nível intermediário que refina empresas com dinâmicas econômicas parecidas.",
             ("Grupo operacional", "Filtro de comparabilidade", "Fallback quando segmento e pequeno"),
-            "Ajuda a evitar comparacoes grosseiras dentro de setores grandes.",
+            "Ajuda a evitar comparações grosseiras dentro de setores grandes.",
         ),
         "segmento_cp": _node(
-            "segmento_cp", "Segmento", "Segmentacao",
-            "Menor unidade do motor: cada segmento passa por score, lideres e backtest.",
-            ("Tickers do segmento", "Score anual", "Historico de lideranca"),
-            "E a camada mais proxima do desenho manual: segmento gera variaveis, score, empresas e lider.",
+            "segmento_cp", "Segmento", "Segmentação",
+            "Menor unidade do motor: cada segmento passa por score, líderes e backtest.",
+            ("Tickers do segmento", "Score anual", "Histórico de liderança"),
+            "E a camada mais próxima do desenho manual: segmento gera variáveis, score, empresas e líder.",
         ),
         "variacao_cp": _node(
-            "variacao_cp", "Variaveis do segmento", "Motor",
+            "variacao_cp", "Variáveis do segmento", "Motor",
             "Seleciona indicadores relevantes e calcula score ano a ano com lag de "
-            "publicacao, respeitando a data em que cada dado ficou disponivel (point-in-time).",
-            ("Pesos do setor", "Snapshot ate N-1", "AvailableAt (vintages) <= abril do ano", "Indicadores saneados"),
-            "Garante que o modelo de compra em um ano so use dados que ja existiam "
+            "publicação, respeitando a data em que cada dado ficou disponível (point-in-time).",
+            ("Pesos do setor", "Snapshot até N-1", "AvailableAt (vintages) <= abril do ano", "Indicadores saneados"),
+            "Garante que o modelo de compra em um ano só use dados que já existiam "
             "naquela data — sem look-ahead bias.",
         ),
         "score_cp": _node(
             "score_cp", "Score e pesos", "Motor",
-            "Ordena empresas, aplica penalidade de lideranca recorrente e calcula pesos proporcionais ao score.",
-            ("Decay penalty", "Heuristica top-N", "Gamma tilt", "Cap e soft cap"),
-            "O objetivo e escolher lideres sem deixar a carteira virar uma aposta concentrada em uma unica empresa.",
+            "Ordena empresas, aplica penalidade de liderança recorrente e calcula pesos proporcionais ao score.",
+            ("Decay penalty", "Heurística top-N", "Gamma tilt", "Cap e soft cap"),
+            "O objetivo e escolher líderes sem deixar a carteira virar uma aposta concentrada em uma única empresa.",
         ),
         "lideres_cp": _node(
-            "lideres_cp", "Lideres", "Motor",
-            "Identifica a melhor empresa, e opcionalmente a maior participacao historica quando ainda faz sentido.",
-            ("Lider por score", "Maior participacao", "Recencia de lideranca", "Rank atual"),
-            "Une desempenho quantitativo com continuidade historica do segmento.",
+            "lideres_cp", "Líderes", "Motor",
+            "Identifica a melhor empresa, e opcionalmente a maior participação histórica quando ainda faz sentido.",
+            ("Líder por score", "Maior participação", "Recência de liderança", "Rank atual"),
+            "Une desempenho quantitativo com continuidade histórica do segmento.",
         ),
         "backtest_cp": _node(
-            "backtest_cp", "Simulacao mensal", "Simulacao",
-            "Reconstrui aportes mensais nos lideres de cada ano e reinveste dividendos quando ha dados.",
-            ("Precos mensais yfinance", "Dividendos mensais", "Aporte mensal", "Rebalanceamento anual dos novos aportes"),
-            "Transforma a ideia em uma trilha de patrimonio acumulado.",
+            "backtest_cp", "Simulação mensal", "Simulação",
+            "Reconstrui aportes mensais nos líderes de cada ano e reinveste dividendos quando há dados.",
+            ("Preços mensais yfinance", "Dividendos mensais", "Aporte mensal", "Rebalanceamento anual dos novos aportes"),
+            "Transforma a ideia em uma trilha de patrimônio acumulado.",
         ),
         "comparacao_cp": _node(
-            "comparacao_cp", "Comparacao", "Simulacao",
-            "Compara o patrimonio da estrategia com Tesouro Selic e equal-weight do proprio "
-            "segmento — tanto no historico cheio quanto no holdout final de ~24 meses, que e a base da aprovacao.",
-            ("Valor estrategia", "Valor Selic", "Valor equal-weight", "Margens no historico", "Margens no holdout OOS ~24m"),
-            "Uma empresa lider precisa provar valor contra alternativas simples — e, sobretudo, "
-            "fora da janela usada para desenvolver a estrategia.",
+            "comparacao_cp", "Comparação", "Simulação",
+            "Compara o patrimônio da estratégia com Tesouro Selic e equal-weight do próprio "
+            "segmento — tanto no histórico cheio quanto no holdout final de ~24 meses, que é a base da aprovação.",
+            ("Valor estratégia", "Valor Selic", "Valor equal-weight", "Margens no histórico", "Margens no holdout OOS ~24m"),
+            "Uma empresa líder precisa provar valor contra alternativas simples — e, sobretudo, "
+            "fora da janela usada para desenvolver a estratégia.",
         ),
         "aprovacao_cp": _node(
-            "aprovacao_cp", "Aprovacao do segmento", "Simulacao",
-            "Aprova por HABILIDADE DE SELECAO: bater o Equal-Weight do proprio "
-            "segmento com significancia estatistica no holdout OOS de ~24 meses. "
-            "Neutro ao macro — se o cenario derrubou o segmento todo, o EW caiu junto.",
-            ("Significancia vs Equal-Weight (p-value OOS + FDR q <= 10%)",
+            "aprovacao_cp", "Aprovação do segmento", "Simulação",
+            "Aprova por HABILIDADE DE SELEÇÃO: bater o Equal-Weight do próprio "
+            "segmento com significância estatística no holdout OOS de ~24 meses. "
+            "Neutro ao macro — se o cenário derrubou o segmento todo, o EW caiu junto.",
+            ("Significância vs Equal-Weight (p-value OOS + FDR q <= 10%)",
              "Rank-IC >= 2 anos positivo (qualidade preve retorno)",
              "Margem vs EW (piso de magnitude opcional)",
-             "Margem vs Selic = DIAGNOSTICO (nao reprova)", "Recencia de lideranca"),
-            "So entram segmentos cujos lideres superaram os pares (habilidade), com "
-            "evidencia preditiva (Rank-IC) e significancia fora da amostra. Bater a "
-            "Selic e decisao de timing do investidor, nao criterio de qualidade.",
+             "Margem vs Selic = DIAGNÓSTICO (não reprova)", "Recência de liderança"),
+            "Só entram segmentos cujos líderes superaram os pares (habilidade), com "
+            "evidência preditiva (Rank-IC) e significância fora da amostra. Bater a "
+            "Selic e decisão de timing do investidor, não critério de qualidade.",
         ),
         "pesos_cp": _node(
-            "pesos_cp", "Montagem do portfolio", "Portfolio",
+            "pesos_cp", "Montagem do portfólio", "Portfólio",
             "Remove duplicatas, consolida motivos e distribui empresas selecionadas por peso e setor.",
-            ("Lista de empresas lideres", "Score medio", "Alpha medio", "Distribuicao setorial"),
-            "E a transicao do motor por segmento para uma carteira unica e acionavel.",
+            ("Lista de empresas líderes", "Score médio", "Alpha médio", "Distribuição setorial"),
+            "E a transição do motor por segmento para uma carteira única e acionável.",
         ),
         "salvar_cp": _node(
-            "salvar_cp", "Salvar modelo", "Portfolio",
-            "Persiste a carteira sugerida como portfolio B3 ativo do usuario.",
-            ("b3_portfolio_models", "b3_portfolio_model_items", "Parametros e metricas JSON"),
-            "Esse registro vira a base da analise qualitativa e aparece no Dashboard Geral.",
+            "salvar_cp", "Salvar modelo", "Portfólio",
+            "Persiste a carteira sugerida como portfólio B3 ativo do usuário.",
+            ("b3_portfolio_models", "b3_portfolio_model_items", "Parâmetros e métricas JSON"),
+            "Esse registro vira a base da análise qualitativa e aparece no Dashboard Geral.",
         ),
     },
 )
@@ -841,13 +841,13 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
 
 FLOW_SIMULADOR = FlowSpec(
     key="simulador_portfolio",
-    title="Modelo de simulacao de portfolio",
+    title="Modelo de simulação de portfólio",
     subtitle=(
-        "Mostra como o app transforma lideres por segmento em trajetorias de patrimonio, "
-        "com aportes, dividendos, benchmarks e regras de aprovacao."
+        "Mostra como o app transforma líderes por segmento em trajetórias de patrimônio, "
+        "com aportes, dividendos, benchmarks e regras de aprovação."
     ),
     rows=(
-        ("Preparacao", ("precos_sp", "dividendos_sp", "aportes_sp")),
+        ("Preparação", ("precos_sp", "dividendos_sp", "aportes_sp")),
         ("Carteiras paralelas", ("estrategia_sp", "selic_sp", "equal_weight_sp")),
         ("Tempo", ("rebalance_sp", "cotas_sp", "custos_sp")),
         ("Resultado", ("montante_sp", "margem_sp", "stress_sp")),
@@ -855,78 +855,78 @@ FLOW_SIMULADOR = FlowSpec(
     default="precos_sp",
     nodes={
         "precos_sp": _node(
-            "precos_sp", "Precos mensais", "Preparacao",
+            "precos_sp", "Preços mensais", "Preparação",
             "Le fechamentos mensais AJUSTADOS (retorno total) do banco market.* "
-            "(market.historical_prices); cai no yfinance so se o market.* nao estiver ativo.",
-            ("_batch_yf_precos_mensais()", "Colunas por ticker", "adjusted_close (retorno total)"),
-            "Preco ajustado e a ponte entre score teorico e retorno realmente simulado.",
+            "(market.historical_prices); cai no yfinance só se o market.* não estiver ativo.",
+            ("_batch_yf_preços_mensais()", "Colunas por ticker", "adjusted_close (retorno total)"),
+            "Preço ajustado é a ponte entre score teórico e retorno realmente simulado.",
         ),
         "dividendos_sp": _node(
-            "dividendos_sp", "Dividendos", "Preparacao",
-            "Nao ha passo separado de dividendos: o preco ajustado (adjusted_close) ja "
+            "dividendos_sp", "Dividendos", "Preparação",
+            "Não há passo separado de dividendos: o preço ajustado (adjusted_close) já "
             "embute proventos e splits reinvestidos, evitando dupla contagem.",
-            ("adjusted_close", "Proventos ja embutidos", "Sem reinvestimento duplicado"),
-            "Reinvestir dividendos por cima do preco ajustado contaria os proventos duas vezes.",
+            ("adjusted_close", "Proventos já embutidos", "Sem reinvestimento duplicado"),
+            "Reinvestir dividendos por cima do preço ajustado contaria os proventos duas vezes.",
         ),
         "aportes_sp": _node(
-            "aportes_sp", "Aporte mensal", "Preparacao",
-            "Todo mes o simulador injeta novo capital na estrategia, Selic e equal-weight.",
-            ("Aporte configuravel", "Cotas compradas", "Mes a mes"),
-            "A simulacao representa acumulacao recorrente, nao apenas uma compra unica.",
+            "aportes_sp", "Aporte mensal", "Preparação",
+            "Todo mês o simulador injeta novo capital na estratégia, Selic e equal-weight.",
+            ("Aporte configurável", "Cotas compradas", "Mês a mês"),
+            "A simulação representa acumulação recorrente, não apenas uma compra única.",
         ),
         "estrategia_sp": _node(
-            "estrategia_sp", "Estrategia", "Carteiras paralelas",
-            "Compra os lideres definidos pelo score do segmento, com pesos ajustados por score e limites.",
-            ("Lideres por ano", "Pesos por score", "Cap por ativo", "Soft cap"),
+            "estrategia_sp", "Estratégia", "Carteiras paralelas",
+            "Compra os líderes definidos pelo score do segmento, com pesos ajustados por score e limites.",
+            ("Líderes por ano", "Pesos por score", "Cap por ativo", "Soft cap"),
             "Mostra o resultado da tese principal do modelo.",
         ),
         "selic_sp": _node(
             "selic_sp", "Tesouro Selic", "Carteiras paralelas",
             "Acumula o mesmo aporte pela taxa Selic mensalizada de cada ano.",
             ("Selic anual", "Taxa mensal equivalente", "Benchmark de baixo risco"),
-            "E a barra minima para justificar risco de acoes no contexto brasileiro.",
+            "E a barra mínima para justificar risco de ações no contexto brasileiro.",
         ),
         "equal_weight_sp": _node(
             "equal_weight_sp", "Equal-weight", "Carteiras paralelas",
-            "Distribui aportes igualmente entre todos os ativos disponiveis do segmento.",
+            "Distribui aportes igualmente entre todos os ativos disponíveis do segmento.",
             ("Todos os tickers do segmento", "Mesmo peso", "Benchmark simples"),
-            "Se o score nao vence uma regra simples, talvez ele esteja apenas complicando o obvio.",
+            "Se o score não vence uma regra simples, talvez ele esteja apenas complicando o óbvio.",
         ),
         "rebalance_sp": _node(
             "rebalance_sp", "Virada de ano", "Tempo",
-            "No ano novo, o motor recalcula os lideres com dados disponiveis ate o ano anterior.",
-            ("Publication lag", "Troca de lideres", "Novos pesos para novos aportes"),
-            "Evita usar demonstracoes financeiras que ainda nao tinham sido publicadas.",
+            "No ano novo, o motor recalcula os líderes com dados disponíveis até o ano anterior.",
+            ("Publication lag", "Troca de líderes", "Novos pesos para novos aportes"),
+            "Evita usar demonstrações financeiras que ainda não tinham sido publicadas.",
         ),
         "cotas_sp": _node(
             "cotas_sp", "Cotas acumuladas", "Tempo",
-            "O simulador acumula quantidade de acoes por ticker e marca a mercado no fim da serie.",
-            ("Cotas da estrategia", "Cotas equal-weight", "Valor final por ticker"),
-            "Permite ver quais empresas explicaram o patrimonio final.",
+            "O simulador acumula quantidade de ações por ticker e marca a mercado no fim da série.",
+            ("Cotas da estratégia", "Cotas equal-weight", "Valor final por ticker"),
+            "Permite ver quais empresas explicaram o patrimônio final.",
         ),
         "custos_sp": _node(
             "custos_sp", "Custos e limites", "Tempo",
-            "A analise avancada tambem possui suporte para overhead de transacao, limites e Markowitz.",
-            ("Corretagem/spread/IR estimados", "Cap de concentracao", "Min-variance hibrido"),
-            "Custos e concentracao impedem que o backtest fique bonito demais e pouco executavel.",
+            "A análise avançada também possui suporte para overhead de transação, limites e Markowitz.",
+            ("Corretagem/spread/IR estimados", "Cap de concentração", "Min-variance híbrido"),
+            "Custos e concentração impedem que o backtest fique bonito demais e pouco executável.",
         ),
         "montante_sp": _node(
             "montante_sp", "Montante final", "Resultado",
-            "Calcula o valor acumulado de cada carteira paralela no fim da simulacao.",
-            ("Valor estrategia", "Valor Selic", "Valor equal-weight", "Contribuicao por ativo"),
-            "E o numero que aparece no desenho como montante antes da comparacao.",
+            "Calcula o valor acumulado de cada carteira paralela no fim da simulação.",
+            ("Valor estratégia", "Valor Selic", "Valor equal-weight", "Contribuição por ativo"),
+            "E o número que aparece no desenho como montante antes da comparação.",
         ),
         "margem_sp": _node(
             "margem_sp", "Margens", "Resultado",
             "Transforma montantes em alpha percentual para aprovar ou reprovar segmentos.",
             ("Alpha vs Selic", "Alpha vs equal-weight", "Tabela de auditoria"),
-            "Ajuda o usuario a entender nao so quem ganhou, mas por quanto ganhou.",
+            "Ajuda o usuário a entender não só quem ganhou, mas por quanto ganhou.",
         ),
         "stress_sp": _node(
             "stress_sp", "Stress tests", "Resultado",
-            "Na aba Analise de Investimentos, a carteira atual tambem pode passar por choques historicos.",
-            ("Cenarios adversos", "Perda estimada", "Tempo de recuperacao"),
-            "E a ponte entre retorno esperado e risco suportavel.",
+            "Na aba Análise de Investimentos, a carteira atual também pode passar por choques históricos.",
+            ("Cenários adversos", "Perda estimada", "Tempo de recuperação"),
+            "E a ponte entre retorno esperado e risco suportável.",
         ),
     },
 )
@@ -934,93 +934,93 @@ FLOW_SIMULADOR = FlowSpec(
 
 FLOW_ANALISE_PORTFOLIO = FlowSpec(
     key="analise_portfolio",
-    title="Analise qualitativa de portfolio B3",
+    title="Análise qualitativa de portfólio B3",
     subtitle=(
-        "Explica como a carteira salva e enriquecida com dados, documentos e LLM para gerar relatorio, "
-        "redistribuicao de pesos e conversa com o portfolio."
+        "Explica como a carteira salva e enriquecida com dados, documentos e LLM para gerar relatório, "
+        "redistribuição de pesos e conversa com o portfólio."
     ),
     rows=(
         ("Base", ("modelo_ap", "items_ap", "macro_ap")),
         ("Enriquecimento", ("multiplos_ap", "dre_ap", "rag_ap")),
         ("LLM", ("empresa_ap", "portfolio_ap", "json_ap")),
-        ("Decisao", ("pesos_ap", "relatorio_ap", "chat_ap")),
+        ("Decisão", ("pesos_ap", "relatorio_ap", "chat_ap")),
     ),
     default="modelo_ap",
     nodes={
         "modelo_ap": _node(
-            "modelo_ap", "Portfolio salvo", "Base",
-            "Carrega o portfolio B3 ativo salvo na criacao de portfolio.",
-            ("load_active_b3_portfolio_model()", "Parametros", "Metricas", "Ano-base"),
-            "Sem uma carteira modelo salva, a analise qualitativa nao tem composicao para avaliar.",
+            "modelo_ap", "Portfólio salvo", "Base",
+            "Carrega o portfólio B3 ativo salvo na criação de portfólio.",
+            ("load_active_b3_portfólio_model()", "Parâmetros", "Métricas", "Ano-base"),
+            "Sem uma carteira modelo salva, a análise qualitativa não tem composição para avaliar.",
         ),
         "items_ap": _node(
             "items_ap", "Empresas e pesos", "Base",
-            "Organiza cada ativo com ticker, nome, setor, peso, score e alpha historico.",
+            "Organiza cada ativo com ticker, nome, setor, peso, score e alpha histórico.",
             ("Itens do modelo", "Pesos originais", "Score quantitativo", "Alpha vs Selic"),
-            "Essa e a fotografia quantitativa antes de chamar a camada qualitativa.",
+            "Essa é a fotografia quantitativa antes de chamar a camada qualitativa.",
         ),
         "macro_ap": _node(
             "macro_ap", "Macro atual", "Base",
-            "Exibe e injeta no prompt Selic, IPCA, cambio, PIB e variacoes recentes.",
+            "Exibe e injeta no prompt Selic, IPCA, câmbio, PIB e variações recentes.",
             ("load_macro_history()", "Cards macro", "Contexto para sensibilidade setorial"),
-            "A mesma carteira pode ser excelente ou perigosa dependendo do regime de juros, inflacao e cambio.",
+            "A mesma carteira pode ser excelente ou perigosa dependendo do regime de juros, inflação e câmbio.",
         ),
         "multiplos_ap": _node(
-            "multiplos_ap", "Multiplos recentes", "Enriquecimento",
-            "Carrega historico de multiplos de cada empresa para o prompt e para auditoria.",
-            ("load_multiplos_historico_batch()", "Ultimos 3 anos", "ROE, ROIC, margens, DY, valuation"),
-            "Da ao LLM a base numerica de rentabilidade, preco e balanco.",
+            "multiplos_ap", "Múltiplos recentes", "Enriquecimento",
+            "Carrega histórico de múltiplos de cada empresa para o prompt e para auditoria.",
+            ("load_múltiplos_histórico_batch()", "Últimos 3 anos", "ROE, ROIC, margens, DY, valuation"),
+            "Da ao LLM a base numérica de rentabilidade, preço e balanço.",
         ),
         "dre_ap": _node(
             "dre_ap", "DRE", "Enriquecimento",
-            "Busca demonstracoes financeiras por empresa para mostrar crescimento, lucro, EBITDA e divida.",
-            ("load_financials_batch()", "Receita", "EBITDA", "Lucro", "Divida"),
+            "Busca demonstrações financeiras por empresa para mostrar crescimento, lucro, EBITDA e dívida.",
+            ("load_financials_batch()", "Receita", "EBITDA", "Lucro", "Dívida"),
             "Ajuda a diferenciar empresa barata de empresa deteriorando.",
         ),
         "rag_ap": _node(
             "rag_ap", "Documentos CVM/IPE", "Enriquecimento",
-            "Recupera trechos relevantes de documentos corporativos para enriquecer a analise.",
+            "Recupera trechos relevantes de documentos corporativos para enriquecer a análise.",
             ("retrieve_chunks()", "format_rag_context()", "Cobertura documental"),
-            "Acrescenta fatos textuais que nao aparecem nos multiplos, como eventos, riscos e comunicados.",
+            "Acrescenta fatos textuais que não aparecem nos múltiplos, como eventos, riscos e comunicados.",
         ),
         "empresa_ap": _node(
-            "empresa_ap", "Analise por empresa", "LLM",
-            "Chama o modelo para cada ativo e pede perspectiva, riscos, catalisadores, confianca e alocacao sugerida.",
-            ("analisar_empresa()", "JSON estruturado", "Perspectiva forte/moderada/fraca", "Acao sugerida"),
-            "Transforma dados quantitativos em uma tese legivel e comparavel por ativo.",
+            "empresa_ap", "Análise por empresa", "LLM",
+            "Chama o modelo para cada ativo e pede perspectiva, riscos, catalisadores, confiança e alocação sugerida.",
+            ("analisar_empresa()", "JSON estruturado", "Perspectiva forte/moderada/fraca", "Ação sugerida"),
+            "Transforma dados quantitativos em uma tese legível e comparável por ativo.",
         ),
         "portfolio_ap": _node(
-            "portfolio_ap", "Analise consolidada", "LLM",
-            "Depois das empresas, o LLM avalia o portfolio como conjunto.",
-            ("analisar_portfolio()", "Qualidade da carteira", "Perspectiva 12m", "Pontos fortes e fracos"),
-            "Uma boa lista de empresas nao garante uma boa carteira; o conjunto precisa ser coerente.",
+            "portfolio_ap", "Análise consolidada", "LLM",
+            "Depois das empresas, o LLM avalia o portfólio como conjunto.",
+            ("analisar_portfólio()", "Qualidade da carteira", "Perspectiva 12m", "Pontos fortes e fracos"),
+            "Uma boa lista de empresas não garante uma boa carteira; o conjunto precisa ser coerente.",
         ),
         "json_ap": _node(
-            "json_ap", "Fallback e validacao", "LLM",
-            "A resposta e parseada como JSON; se falhar, o app usa fallback estruturado para nao quebrar a tela.",
-            ("_parse_json()", "Fallback empresa", "Fallback portfolio"),
-            "Mantem a experiencia estavel mesmo quando a IA responde fora do formato esperado.",
+            "json_ap", "Fallback e validação", "LLM",
+            "A resposta e parseada como JSON; se falhar, o app usa fallback estruturado para não quebrar a tela.",
+            ("_parse_json()", "Fallback empresa", "Fallback portfólio"),
+            "Mantém a experiência estável mesmo quando a IA responde fora do formato esperado.",
         ),
         "pesos_ap": _node(
-            "pesos_ap", "Redistribuicao", "Decisao",
-            "Combina score quantitativo, score qualitativo, confianca, alpha, perspectiva e a "
-            "corroboracao entre banco e web para sugerir novos pesos.",
+            "pesos_ap", "Redistribuição", "Decisão",
+            "Combina score quantitativo, score qualitativo, confiança, alpha, perspectiva e a "
+            "corroboração entre banco e web para sugerir novos pesos.",
             ("60% quanti + 40% quali", "Multiplicador por perspectiva",
-             "Modelo unico (sem escolha de modo)", "Corroboracao banco x web",
+             "Modelo único (sem escolha de modo)", "Corroboração banco x web",
              "Min 2% e max 25% por ativo"),
-            "Ajuda a transformar analise em acao: manter, aumentar, reduzir ou revisar.",
+            "Ajuda a transformar análise em ação: manter, aumentar, reduzir ou revisar.",
         ),
         "relatorio_ap": _node(
-            "relatorio_ap", "Relatorio", "Decisao",
-            "Mostra sintese executiva, papel dos ativos, riscos, catalisadores e conclusao estrategica.",
-            ("Relatorio consolidado", "Cards de alocacao", "Tags de riscos e catalisadores"),
-            "Entrega uma leitura de gestor, nao apenas uma tabela.",
+            "relatorio_ap", "Relatório", "Decisão",
+            "Mostra síntese executiva, papel dos ativos, riscos, catalisadores e conclusão estratégica.",
+            ("Relatório consolidado", "Cards de alocação", "Tags de riscos e catalisadores"),
+            "Entrega uma leitura de gestor, não apenas uma tabela.",
         ),
         "chat_ap": _node(
-            "chat_ap", "Chat com portfolio", "Decisao",
-            "Permite tirar duvidas sobre a carteira usando o contexto ja montado.",
-            ("chat_com_portfolio()", "Historico da conversa", "Contexto do portfolio"),
-            "Fecha o ciclo educativo: o usuario pode perguntar por que algo foi sugerido.",
+            "chat_ap", "Chat com portfólio", "Decisão",
+            "Permite tirar dúvidas sobre a carteira usando o contexto já montado.",
+            ("chat_com_portfólio()", "Histórico da conversa", "Contexto do portfólio"),
+            "Fecha o ciclo educativo: o usuário pode perguntar por que algo foi sugerido.",
         ),
     },
 )
@@ -1028,90 +1028,90 @@ FLOW_ANALISE_PORTFOLIO = FlowSpec(
 
 FLOW_INVESTIMENTOS = FlowSpec(
     key="analise_investimentos",
-    title="Analise da carteira atual de investimentos",
+    title="Análise da carteira atual de investimentos",
     subtitle=(
-        "Mostra como a aba Investimentos le a carteira real, consolida posicoes e apresenta risco, "
-        "distribuicao, exposicao macro e stress tests."
+        "Mostra como a aba Investimentos le a carteira real, consolida posições e apresenta risco, "
+        "distribuição, exposição macro e stress tests."
     ),
     rows=(
         ("Fontes", ("positions_ai", "quotes_ai", "dividends_ai")),
-        ("Consolidacao", ("snapshot_ai", "classes_ai", "setores_ai")),
-        ("Analise", ("rentabilidade_ai", "risco_ai", "stress_ai")),
-        ("Saida", ("dashboard_ai", "tabelas_ai", "alertas_ai")),
+        ("Consolidação", ("snapshot_ai", "classes_ai", "setores_ai")),
+        ("Análise", ("rentabilidade_ai", "risco_ai", "stress_ai")),
+        ("Saída", ("dashboard_ai", "tabelas_ai", "alertas_ai")),
     ),
     default="positions_ai",
     nodes={
         "positions_ai": _node(
-            "positions_ai", "Posicoes", "Fontes",
-            "Le portfolio_positions ou snapshots importados da corretora para montar a carteira atual.",
-            ("Quantidade", "Preco medio", "Total investido", "Moeda"),
-            "E a base patrimonial: sem posicao correta, toda analise fica torta.",
+            "positions_ai", "Posições", "Fontes",
+            "Le portfólio_positions ou snapshots importados da corretora para montar a carteira atual.",
+            ("Quantidade", "Preço médio", "Total investido", "Moeda"),
+            "E a base patrimonial: sem posição correta, toda análise fica torta.",
         ),
         "quotes_ai": _node(
-            "quotes_ai", "Cotacoes", "Fontes",
-            "Busca a cotacao mais recente de cada ativo e converte USD quando necessario.",
-            ("asset_quotes", "Preco atual", "FX USD/BRL", "Fallbacks"),
+            "quotes_ai", "Cotações", "Fontes",
+            "Busca a cotação mais recente de cada ativo e converte USD quando necessário.",
+            ("asset_quotes", "Preço atual", "FX USD/BRL", "Fallbacks"),
             "Marca a carteira a mercado e permite comparar custo com valor atual.",
         ),
         "dividends_ai": _node(
             "dividends_ai", "Proventos", "Fontes",
-            "Carrega dividendos e JCP para mostrar renda, yield on cost e historico.",
+            "Carrega dividendos e JCP para mostrar renda, yield on cost e histórico.",
             ("dividends", "Eventos", "YoC", "Proventos por ativo"),
             "Renda recebida e parte relevante do retorno total.",
         ),
         "snapshot_ai": _node(
-            "snapshot_ai", "Snapshot consolidado", "Consolidacao",
-            "Agrupa tickers fracionarios, reconcilia custo e posicao e classifica ativos.",
-            ("BBAS3 + BBAS3F", "Venda parcial", "Historico incompleto", "Tesouro por prefixo"),
-            "Resolve detalhes operacionais antes de mostrar numeros finais.",
+            "snapshot_ai", "Snapshot consolidado", "Consolidação",
+            "Agrupa tickers fracionários, reconcilia custo e posição e classifica ativos.",
+            ("BBAS3 + BBAS3F", "Venda parcial", "Histórico incompleto", "Tesouro por prefixo"),
+            "Resolve detalhes operacionais antes de mostrar números finais.",
         ),
         "classes_ai": _node(
-            "classes_ai", "Classes", "Consolidacao",
-            "Agrupa por Acoes BR, FII, ETF, Tesouro, Renda Fixa, Exterior e outros.",
+            "classes_ai", "Classes", "Consolidação",
+            "Agrupa por Ações BR, FII, ETF, Tesouro, Renda Fixa, Exterior e outros.",
             ("Valor por classe", "Percentual da carteira", "Rentabilidade por classe"),
-            "Ajuda a enxergar a alocacao antes de olhar ativo por ativo.",
+            "Ajuda a enxergar a alocação antes de olhar ativo por ativo.",
         ),
         "setores_ai": _node(
-            "setores_ai", "Setores", "Consolidacao",
-            "Agrupa acoes e FIIs por setor para medir concentracao economica.",
+            "setores_ai", "Setores", "Consolidação",
+            "Agrupa ações e FIIs por setor para medir concentração econômica.",
             ("Setor", "Valor de mercado", "Percentual da carteira"),
             "Duas empresas diferentes podem ter o mesmo risco setorial escondido.",
         ),
         "rentabilidade_ai": _node(
-            "rentabilidade_ai", "Rentabilidade", "Analise",
-            "Calcula retorno sobre custo, evolucao patrimonial e comparacoes internas.",
-            ("Rentabilidade total", "TWRR/evolucao", "Top 10 contribuidores"),
-            "Mostra se a carteira esta ganhando dinheiro e onde.",
+            "rentabilidade_ai", "Rentabilidade", "Análise",
+            "Calcula retorno sobre custo, evolução patrimonial e comparações internas.",
+            ("Rentabilidade total", "TWRR/evolução", "Top 10 contribuidores"),
+            "Mostra se a carteira está ganhando dinheiro e onde.",
         ),
         "risco_ai": _node(
-            "risco_ai", "Risco e concentracao", "Analise",
-            "Mede concentracao por ativo, classe e setor, alem de indicadores de dependencia macro.",
-            ("Top 1", "Top 5", "HHI", "Dependencias macro"),
+            "risco_ai", "Risco e concentração", "Análise",
+            "Mede concentração por ativo, classe e setor, além de indicadores de dependência macro.",
+            ("Top 1", "Top 5", "HHI", "Dependências macro"),
             "Ajuda a ver riscos que uma rentabilidade positiva pode esconder.",
         ),
         "stress_ai": _node(
-            "stress_ai", "Stress tests", "Analise",
-            "Aplica choques historicos simplificados para estimar perda e recuperacao.",
-            ("Crises historicas", "Perda percentual", "Perda em R$", "Tempo de recuperacao"),
+            "stress_ai", "Stress tests", "Análise",
+            "Aplica choques históricos simplificados para estimar perda e recuperação.",
+            ("Crises históricas", "Perda percentual", "Perda em R$", "Tempo de recuperação"),
             "Responde a pergunta que importa no susto: quanto isso pode cair?",
         ),
         "dashboard_ai": _node(
-            "dashboard_ai", "Dashboard", "Saida",
-            "Resume patrimonio, retorno, proventos, distribuicao e alertas visuais.",
-            ("KPIs", "Graficos", "Badges de fonte", "Atualizacao"),
-            "Da uma visao rapida para quem quer decidir o proximo passo.",
+            "dashboard_ai", "Dashboard", "Saída",
+            "Resume patrimônio, retorno, proventos, distribuição e alertas visuais.",
+            ("KPIs", "Gráficos", "Badges de fonte", "Atualização"),
+            "Da uma visão rápida para quem quer decidir o próximo passo.",
         ),
         "tabelas_ai": _node(
-            "tabelas_ai", "Tabelas", "Saida",
-            "Permite auditar cada posicao com quantidade, preco medio, mercado, lucro e participacao.",
-            ("Carteira detalhada", "Filtros", "Ordenacao", "Download visual via dataframe"),
-            "A transparencia fica no nivel do ativo.",
+            "tabelas_ai", "Tabelas", "Saída",
+            "Permite auditar cada posição com quantidade, preço médio, mercado, lucro e participação.",
+            ("Carteira detalhada", "Filtros", "Ordenação", "Download visual via dataframe"),
+            "A transparência fica no nível do ativo.",
         ),
         "alertas_ai": _node(
-            "alertas_ai", "Alertas", "Saida",
-            "Aponta concentracao, falta de cotacao, queda, dependencia e outras situacoes relevantes.",
-            ("Severidade", "Mensagem", "Modulo de origem"),
-            "Transforma analise em lista de pontos que merecem atencao.",
+            "alertas_ai", "Alertas", "Saída",
+            "Aponta concentração, falta de cotação, queda, dependência e outras situações relevantes.",
+            ("Severidade", "Mensagem", "Módulo de origem"),
+            "Transforma análise em lista de pontos que merecem atenção.",
         ),
     },
 )
@@ -1121,112 +1121,834 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
     key="controle_financeiro",
     title="Controle financeiro",
     subtitle=(
-        "Mostra como o app separa o dinheiro que ja entrou/saiu no mes (fluxo de "
-        "caixa) da fatura futura do cartao (fluxo a vencer) — duas naturezas que "
+        "Mostra como o app separa o dinheiro que já entrou/saiu no mês (fluxo de "
+        "caixa) da fatura futura do cartão (fluxo a vencer) — duas naturezas que "
         "nunca se misturam."
     ),
     rows=(
         ("Entrada", ("lanc_manual", "extrato", "fatura_cc")),
-        ("Classificacao", ("conta", "categoria")),
+        ("Classificação", ("conta", "categoria")),
         ("Natureza do fluxo", ("fluxo_caixa", "fluxo_futuro")),
-        ("Visualizacao", ("abas", "graficos")),
+        ("Visualização", ("abas", "graficos")),
     ),
     default="lanc_manual",
     nodes={
         "lanc_manual": _node(
-            "lanc_manual", "Lancamento manual", "Entrada",
-            "Barra lateral: voce registra entradas, saidas e investimentos do mes corrente.",
+            "lanc_manual", "Lançamento manual", "Entrada",
+            "Barra lateral: você registra entradas, saídas e investimentos do mês corrente.",
             (
-                "Tipo: entrada / saida / investimento",
-                "Valor, data, categoria e descricao",
+                "Tipo: entrada / saída / investimento",
+                "Valor, data, categoria e descrição",
                 "Grava source='manual'",
             ),
-            "E dinheiro que entra e sai no ato do lancamento — fluxo de caixa do presente.",
+            "E dinheiro que entra e sai no ato do lançamento — fluxo de caixa do presente.",
         ),
         "extrato": _node(
-            "extrato", "Importacao de extrato", "Entrada",
-            "Configuracoes > Extratos Bancarios: importa os movimentos reais da conta e classifica automaticamente.",
+            "extrato", "Importação de extrato", "Entrada",
+            "Configurações > Atualização de dados > Controle Financeiro > Extrato bancário: "
+            "sobe o PDF do banco, confere direção, valor e categoria de cada movimento e grava.",
             (
-                "Movimentos do banco (CSV/PDF)",
-                "Classificacao automatica por regras",
+                "Extrato do banco em PDF",
+                "Prévia revisável antes de gravar",
+                "Classificação automática por regras",
                 "Grava source='import'",
             ),
-            "Dinheiro que JA saiu da conta tambem e fluxo de caixa, ainda que nao digitado a mao.",
+            "Dinheiro que JÁ saiu da conta também é fluxo de caixa, ainda que não digitado a mão.",
         ),
         "fatura_cc": _node(
-            "fatura_cc", "Upload da fatura (cartao)", "Entrada",
-            "Aba Cartao de Credito: sobe a fatura CSV do cartao, com compras, parcelas e estornos.",
+            "fatura_cc", "Upload da fatura (cartão)", "Entrada",
+            "Configurações > Atualização de dados > Controle Financeiro > Fatura do cartão: "
+            "sobe o CSV, revisa vencimento, conta e lançamentos, e só então publica a fatura. "
+            "A aba Cartão de Crédito passou a ser só leitura do que foi publicado.",
             (
                 "Compras da fatura, parcelas, estornos",
                 "Conta do tipo credit_card",
+                "Revisão de vencimento e conta antes de publicar",
                 "Grava source='csv'",
             ),
-            "E dinheiro que ainda NAO saiu (fatura a vencer) — fluxo futuro, nao do mes corrente.",
+            "E dinheiro que ainda NÃO saiu (fatura a vencer) — fluxo futuro, não do mês corrente.",
         ),
         "conta": _node(
-            "conta", "Resolucao de conta", "Classificacao",
-            "O lancamento manual e gravado na Conta Corrente (checking), nunca em conta de investimento.",
+            "conta", "Resolução de conta", "Classificação",
+            "O lançamento manual e gravado na Conta Corrente (checking), nunca em conta de investimento.",
             (
                 "Prioriza type='checking'",
-                "Exclui contas de cartao de credito",
-                "Fallback seguro se nao houver checking",
+                "Exclui contas de cartão de crédito",
+                "Fallback seguro se não houver checking",
             ),
-            "Fluxo de caixa e movimentacao da conta corrente — nao aporte em investimento como B3/XP.",
+            "Fluxo de caixa e movimentação da conta corrente — não aporte em investimento como B3/XP.",
         ),
         "categoria": _node(
-            "categoria", "Categorias", "Classificacao",
-            "Classifica cada lancamento; 'Pagamento de Cartao' representa a quitacao da fatura pela conta.",
+            "categoria", "Categorias", "Classificação",
+            "Classifica cada lançamento; 'Pagamento de Cartão' representa a quitação da fatura pela conta.",
             (
-                "Entrada / saida / investimento",
-                "'Pagamento de Cartao' permitido no manual",
-                "Bloqueia consumo de cartao digitado a mao",
+                "Entrada / saída / investimento",
+                "'Pagamento de Cartão' permitido no manual",
+                "Bloqueia consumo de cartão digitado a mão",
             ),
-            "Separa a QUITACAO da fatura (fluxo de caixa) do CONSUMO do cartao (que vem so do CSV).",
+            "Separa a QUITAÇÃO da fatura (fluxo de caixa) do CONSUMO do cartão (que vem só do CSV).",
         ),
         "fluxo_caixa": _node(
             "fluxo_caixa", "Fluxo de caixa (presente)", "Natureza do fluxo",
-            "Reune lancamentos manuais + extrato: tudo que ja entrou ou saiu da conta no mes.",
+            "Reúne lançamentos manuais + extrato: tudo que já entrou ou saiu da conta no mês.",
             (
                 "source 'manual' + 'import'",
-                "Dinheiro ja movimentado",
+                "Dinheiro já movimentado",
                 "Base do Dashboard e das Tabelas",
             ),
-            "E a foto do dinheiro real do mes corrente — o que voce de fato tem.",
+            "E a foto do dinheiro real do mês corrente — o que você de fato tem.",
         ),
         "fluxo_futuro": _node(
-            "fluxo_futuro", "Cartao de credito (futuro)", "Natureza do fluxo",
-            "A fatura CSV vive isolada: dinheiro que ainda vai sair, com projecao e parcelas.",
+            "fluxo_futuro", "Cartão de crédito (futuro)", "Natureza do fluxo",
+            "A fatura CSV vive isolada: dinheiro que ainda vai sair, com projeção e parcelas.",
             (
                 "source 'csv' + conta credit_card",
-                "Fluxo a vencer (nao saiu ainda)",
-                "Exclusivo da aba Cartao de Credito",
+                "Fluxo a vencer (não saiu ainda)",
+                "Exclusivo da aba Cartão de Crédito",
             ),
             "Natureza diferente do fluxo de caixa — parecem iguais, mas nunca se misturam.",
         ),
         "abas": _node(
-            "abas", "Abas e filtros", "Visualizacao",
-            "Navegacao: Dashboard, Analises, Tabelas e Cartao de Credito, com filtros e edicao.",
+            "abas", "Abas e filtros", "Visualização",
+            "Navegação: Dashboard, Análises, Tabelas e Cartão de Crédito, com filtros e edição.",
             (
-                "KPIs do mes (renda, despesa, saldo)",
-                "Filtros: categoria / ano / mes / dia",
-                "Tabela editavel dos lancamentos",
+                "KPIs do mês (renda, despesa, saldo)",
+                "Filtros: categoria / ano / mês / dia",
+                "Tabela editável dos lançamentos",
             ),
-            "Consultar, filtrar e corrigir os lancamentos sem sair da tela.",
+            "Consultar, filtrar e corrigir os lançamentos sem sair da tela.",
         ),
         "graficos": _node(
-            "graficos", "Graficos e analises", "Visualizacao",
-            "Gastos por categoria, historico de 6 meses e pagamento de cartao mensal (so fluxo de caixa).",
+            "graficos", "Gráficos e análises", "Visualização",
+            "Gastos por categoria, histórico de 6 meses e pagamento de cartão mensal (só fluxo de caixa).",
             (
-                "Gastos por categoria (mes)",
-                "Historico Receitas x Despesas x Investimentos",
-                "Pagamento de cartao mensal (exclui fatura CSV)",
+                "Gastos por categoria (mês)",
+                "Histórico Receitas x Despesas x Investimentos",
+                "Pagamento de cartão mensal (exclui fatura CSV)",
             ),
-            "Analisar tendencias sem misturar fluxo de caixa com a fatura futura do cartao.",
+            "Analisar tendências sem misturar fluxo de caixa com a fatura futura do cartão.",
         ),
     },
     notes=(
-        "Regra de ouro: fluxo de caixa (manual + extrato) e cartao de credito "
-        "(fatura CSV) sao independentes e NUNCA se misturam.",
+        "Regra de ouro: fluxo de caixa (manual + extrato) e cartão de crédito "
+        "(fatura CSV) são independentes e NUNCA se misturam.",
+    ),
+)
+
+
+FLOW_SELECAO_FIIS = FlowSpec(
+    key="selecao_fiis",
+    title="Seleção de FIIs — da vitrine publicada a carteira-modelo",
+    subtitle=(
+        "Como o app pontua fundos imobiliarios, mede a própria confiança e decide "
+        "se o que sai na tela é uma Carteira-Modelo ou apenas uma Lista de Diligência."
+    ),
+    rows=(
+        ("Universo", ("vitrine_fii", "tipos_fii", "integridade_fii")),
+        ("Métricas", ("renda_fii", "valuation_fii", "risco_fii", "governanca_fii")),
+        ("Score", ("percentil_fii", "cobertura_fii", "confianca_fii")),
+        ("Validação", ("pit_fii", "gate_fii")),
+        ("Carteira", ("preferencias_fii", "otimizacao_fii", "monitor_fii")),
+    ),
+    default="vitrine_fii",
+    nodes={
+        "vitrine_fii": _node(
+            "vitrine_fii", "Vitrine publicada", "Universo",
+            "A tela não calcula nada ao vivo: ela le uma vitrine já publicada, gerada no "
+            "armazém local e enviada para o banco de produção com data e versão de metodologia.",
+            (
+                "Snapshot com versão de metodologia e data de geração",
+                "Selo de frescor: cadência alvo x limite de validade",
+                "Publicação manual ou pela rotina noturna",
+            ),
+            "Você sabe de QUANDO e o número que está lendo. Vitrine antiga aparece "
+            "como selo vencido, em vez de passar por dado atual.",
+        ),
+        "tipos_fii": _node(
+            "tipos_fii", "Tipo do fundo", "Universo",
+            "Cada fundo é classificado em tijolo, papel, FoF ou híbrido — e o tipo decide "
+            "QUAIS métricas fazem sentido e com que peso entram no score.",
+            (
+                "Tijolo: vacância, WAULT, concentração de inquilinos, cap rate",
+                "Papel: indexadores, inadimplência, LTV da carteira",
+                "FoF e híbrido: composição e dupla camada de taxa",
+            ),
+            "Cobrar vacância de um fundo de papel não mede nada. O tipo evita comparar "
+            "fundos que vivem de coisas diferentes com a mesma régua.",
+        ),
+        "integridade_fii": _node(
+            "integridade_fii", "Integridade da leitura", "Universo",
+            "Antes de pontuar, o app confere se o quadro lido tem as colunas esperadas. "
+            "Quadro sem coluna e falha de leitura, não fundo inelegível.",
+            (
+                "Checagem de colunas obrigatórias",
+                "Erro de leitura levanta erro, não vira lista vazia",
+                "Aba Revisão de dados expoe as lacunas por fundo",
+            ),
+            "Já aconteceu de uma falha de leitura virar 'todos os fundos são inelegíveis'. "
+            "Erro tem que parecer erro.",
+        ),
+        "renda_fii": _node(
+            "renda_fii", "Renda e recorrência", "Métricas",
+            "Não basta o dividend yield do mês: o motor olha o yield recorrente, o crescimento "
+            "da renda por cota em 3 anos e quanto dessa renda se repete.",
+            (
+                "DY recorrente (descontando eventos não repetíveis)",
+                "Crescimento da renda por cota em 3 anos",
+                "Recorrência: fração da renda que se repete",
+            ),
+            "Um fundo que vendeu um imóvel e distribuiu o ganho mostra yield alto uma vez só. "
+            "Separar recorrente de extraordinário evita comprar um evento passado.",
+        ),
+        "valuation_fii": _node(
+            "valuation_fii", "Preço e valor patrimonial", "Métricas",
+            "P/VP entra como ALVO, não como 'quanto menor melhor': desconto grande demais "
+            "costuma ser o mercado precificando um problema que o balanço ainda não mostra.",
+            (
+                "P/VP com faixa-alvo, não monotônico",
+                "VPA vindo da fonte regulatória",
+                "Preço de mercado com prazo de validade próprio",
+            ),
+            "Ordenar por 'P/VP mais baixo' é uma armadilha clássica: a ponta barata concentra "
+            "fundos com vacância alta ou crédito problematico.",
+        ),
+        "risco_fii": _node(
+            "risco_fii", "Liquidez e risco", "Métricas",
+            "Liquidez diária, drawdown máximo e tendência de retorno total, sempre com a "
+            "janela ancorada no calendário do mercado — nunca no último dia do próprio fundo.",
+            (
+                "Liquidez diária média em janela recente",
+                "Drawdown máximo e tendência de retorno total",
+                "Janela ancorada na última data do mercado",
+            ),
+            "Ancorar a janela no próprio ativo faz um fundo parado há anos exibir liquidez "
+            "com cara de fresca. A âncora precisa vir de fora.",
+        ),
+        "governanca_fii": _node(
+            "governanca_fii", "Governança e estrutura", "Métricas",
+            "Peso pequeno, mas presente: taxas, alavancagem, histórico do gestor e "
+            "concentração por administradora entram no score e no teto da carteira.",
+            (
+                "Taxa de administração e de performance",
+                "Alavancagem e obrigações a pagar",
+                "Teto por gestora e por administradora na carteira",
+            ),
+            "Concentrar a carteira inteira numa única administradora é um risco que "
+            "nenhuma métrica de renda mostra.",
+        ),
+        "percentil_fii": _node(
+            "percentil_fii", "Nota por percentil", "Score",
+            "Cada métrica vira percentil DENTRO do tipo do fundo e as notas são combinadas "
+            "por média ponderada. Valor ausente nunca vira zero.",
+            (
+                "Percentil calculado dentro do tipo (tijolo x papel x FoF)",
+                "Média ponderada renormalizada sobre o que foi medido",
+                "Ausente = fora da média, nunca zero",
+            ),
+            "Converter ausência em zero pune quem não publicou o dado como se tivesse "
+            "publicado o pior número possível.",
+        ),
+        "cobertura_fii": _node(
+            "cobertura_fii", "Cobertura da nota", "Score",
+            "Junto da nota vem quanto do peso total foi efetivamente medido naquele fundo. "
+            "Nota de 80 com 40% de cobertura não é a mesma coisa que 80 com 90%.",
+            (
+                "Fração do peso total efetivamente medida",
+                "Exibida ao lado da nota, não escondida",
+                "Piso de cobertura para entrar na carteira",
+            ),
+            "Sem cobertura ao lado, a nota mais alta tende a ser a do fundo com MENOS "
+            "dado — porque sobra só o que ele tem de bom.",
+        ),
+        "confianca_fii": _node(
+            "confianca_fii", "Confiança por fundo", "Score",
+            "Além da cobertura, cada fundo carrega uma confiança própria: idade do dado, "
+            "procedência da fonte e concordância entre fontes quando há mais de uma.",
+            (
+                "Idade do dado por métrica, com validade própria",
+                "Procedência: qual fonte respondeu por aquele número",
+                "Conciliação entre fontes quando existe duplicidade",
+            ),
+            "Confiança é por ativo. Uma média geral alta pode conviver com fundos "
+            "individualmente mal cobertos dentro da mesma tela.",
+        ),
+        "pit_fii": _node(
+            "pit_fii", "Validação point-in-time", "Validação",
+            "A aba Retrospectiva refaz a seleção safra a safra usando SÓ o que era "
+            "conhecido naquela data e mede o que a regra teria escolhido.",
+            (
+                "Safras reconstruidas com dado da época",
+                "Mínimo metodologico de períodos para valer",
+                "Snapshots verificados e contados na tela",
+            ),
+            "Sem point-in-time, o backtest lê o futuro e aprova qualquer regra. Mudar a "
+            "versão de metodologia sem reconstruir a safra desliga o backtest em silêncio.",
+        ),
+        "gate_fii": _node(
+            "gate_fii", "Portão de publicação", "Validação",
+            "O app só chama o resultado de Carteira-Modelo se passar no portão: cobertura "
+            "mínima, confiança mediana e validação PIT em dia. Senão, sai como Lista de Diligência.",
+            (
+                "Cobertura mínima do universo",
+                "Confiança mediana acima do piso",
+                "Validação PIT válida para a versão corrente",
+            ),
+            "É a diferença entre 'isto foi validado' e 'isto é um ponto de partida para "
+            "você investigar'. O rótulo muda porque a evidência mudou.",
+        ),
+        "preferencias_fii": _node(
+            "preferencias_fii", "Suas preferências", "Carteira",
+            "Você define número de ativos, tetos por tipo, por gestora e por administradora, "
+            "e o piso de liquidez. A regra sai da sua mão, não de um padrão escondido.",
+            (
+                "Quantidade de ativos e pesos mínimo/máximo",
+                "Tetos por tipo, gestora e administradora",
+                "Piso de liquidez diária",
+            ),
+            "Teto que você não viu é premissa de quem escreveu o código — e envelhece "
+            "sem parecer errado.",
+        ),
+        "otimizacao_fii": _node(
+            "otimizacao_fii", "Montagem da carteira", "Carteira",
+            "A otimização busca a melhor combinação dentro dos SEUS limites. Quando os "
+            "limites se contradizem, o app avisa qual deles esvaziou a carteira.",
+            (
+                "Otimização com restrições de peso e de grupo",
+                "Diagnóstico quando a restrição é inalcançável",
+                "Cessão controlada da forma, nunca do risco",
+            ),
+            "Carteira vazia quase nunca é falta de ativo bom: é teto inalcançável. "
+            "O app precisa dizer QUAL limite travou, não devolver uma lista em branco.",
+        ),
+        "monitor_fii": _node(
+            "monitor_fii", "Acompanhamento", "Carteira",
+            "Depois de montada, a carteira é reavaliada a cada nova safra: o que caiu de "
+            "nota, o que perdeu liquidez e o que saiu do universo.",
+            (
+                "Comparação entre safras",
+                "Entradas e saídas do universo elegível",
+                "Alerta de fundo que deixou de cumprir o piso",
+            ),
+            "Painel que só ganha ativos e nunca perde é assinatura de amostra sobrevivente. "
+            "Contar as saídas é o teste barato.",
+        ),
+    },
+    notes=(
+        "Carteira-Modelo e Lista de Diligência não são sinônimos: a primeira passou no "
+        "portão de publicação, a segunda não — e a tela diz qual das duas você está vendo.",
+    ),
+)
+
+
+FLOW_EMPRESAS_EUA = FlowSpec(
+    key="empresas_eua",
+    title="Empresas Americanas — do arquivo da SEC ao ranking",
+    subtitle=(
+        "O módulo dos EUA repete a casca da B3, mas com outra fonte, outro universo "
+        "e outra forma de medir crescimento."
+    ),
+    rows=(
+        ("Universo", ("sec_universo", "so_acoes", "vitrine_us")),
+        ("Métricas", ("gaap_us", "trilhas_us", "crescimento_us")),
+        ("Score", ("percentil_industria_us", "cobertura_us", "piso_us")),
+        ("Validação", ("pit_us", "saidas_us")),
+        ("Aplicação", ("avancada_us", "carteira_us", "avaliacao_us")),
+    ),
+    default="sec_universo",
+    nodes={
+        "sec_universo": _node(
+            "sec_universo", "Arquivos da SEC", "Universo",
+            "A base vem dos próprios arquivos entregues a SEC (10-K, 10-Q, 8-K), não de "
+            "um provedor que já mastigou o número.",
+            (
+                "10-K e 10-Q: demonstrações auditadas",
+                "8-K: eventos, inclusive saída de bolsa",
+                "Preço de mercado complementado por fonte de cotação",
+            ),
+            "Número mastigado por terceiro traz o critério do terceiro junto. Ir na fonte "
+            "custa mais trabalho e devolve a procedência.",
+        ),
+        "so_acoes": _node(
+            "so_acoes", "Só ações operacionais", "Universo",
+            "REIT, fundo, SPAC e classe preferencial ficam de fora. A regra é única e "
+            "centralizada, para não divergir entre telas.",
+            (
+                "Exclui REIT, fundo, SPAC e preferencial",
+                "Regra única em um só lugar do código",
+                "Imobiliário operacional continua dentro",
+            ),
+            "Um REIT não se compara a uma indústria pelos mesmos múltiplos. E o código do "
+            "setor não separa REIT de incorporadora — quem separa é a eleição fiscal no 10-K.",
+        ),
+        "vitrine_us": _node(
+            "vitrine_us", "Vitrine publicada", "Universo",
+            "Como nos FIIs, a tela le uma vitrine publicada com versão de metodologia. "
+            "Trocar a versão sem republicar deixa a tela lendo safra que não existe mais.",
+            (
+                "Versão de metodologia gravada na vitrine",
+                "Selo de frescor na cabeça da tela",
+                "Republicação a cada mudança de versão",
+            ),
+            "Já custou caro: vitrine sem as colunas novas zerou o ranking inteiro sem "
+            "levantar um único erro.",
+        ),
+        "gaap_us": _node(
+            "gaap_us", "Contabilidade americana", "Métricas",
+            "As linhas vem em US GAAP, que não casa linha a linha com o padrão brasileiro. "
+            "O app trabalha com os conceitos da fonte, sem forcar equivalência.",
+            (
+                "Linhas em US GAAP, na moeda de reporte",
+                "Sem tradução forcada para o plano de contas da B3",
+                "Faixa de validação registra o valor recusado",
+            ),
+            "Forcar equivalência entre padrões contábeis cria comparação que parece válida "
+            "e não é. Melhor duas réguas honestas que uma régua falsa.",
+        ),
+        "trilhas_us": _node(
+            "trilhas_us", "Trilhas de fatores", "Métricas",
+            "As métricas se agrupam em trilhas: qualidade, crescimento, solidez, eficiência "
+            "de capital, valuation e retorno ao acionista.",
+            (
+                "Qualidade, crescimento e solidez",
+                "Eficiência de capital e valuation",
+                "Retorno ao acionista (dividendo e recompra)",
+            ),
+            "Agrupar evita que dez métricas correlacionadas da mesma familia dominem o "
+            "score só por serem muitas.",
+        ),
+        "crescimento_us": _node(
+            "crescimento_us", "Crescimento por inclinação", "Métricas",
+            "Crescimento é medido pela inclinação da regressão da série, não por CAGR de "
+            "ponta a ponta — e a qualidade do ajuste é publicada junto.",
+            (
+                "Inclinação da regressão sobre a série inteira",
+                "Qualidade do ajuste publicada ao lado",
+                "Pesos ajustados para o setor financeiro",
+            ),
+            "CAGR usa dois pontos e ignora o caminho. Duas empresas com o mesmo CAGR podem "
+            "ter uma série estável e outra totalmente errática.",
+        ),
+        "percentil_industria_us": _node(
+            "percentil_industria_us", "Percentil na indústria", "Score",
+            "A nota de cada métrica é o percentil dentro da indústria, não no universo "
+            "inteiro. Qualidade é relativa ao segmento.",
+            (
+                "Percentil dentro da indústria",
+                "Piso de quantidade de pares para o percentil valer",
+                "Substituição dentro do mesmo segmento",
+            ),
+            "Comparar margem de software com margem de varejo alimentar produz um ranking "
+            "que só mede em que setor a empresa esta.",
+        ),
+        "cobertura_us": _node(
+            "cobertura_us", "Cobertura e confiança", "Score",
+            "Mesma regra dos FIIs: a fração do peso efetivamente medida sai ao lado da nota, "
+            "e ausência nunca vira zero.",
+            (
+                "Fração do peso medida por empresa",
+                "Procedência por métrica",
+                "Ausente fora da média, nunca zero",
+            ),
+            "Sem isso, a empresa com menos divulgação sobe no ranking por falta de "
+            "informação contraria.",
+        ),
+        "piso_us": _node(
+            "piso_us", "Piso de qualidade", "Score",
+            "Empresas abaixo do piso de cobertura ou com sinal eliminatório saem do "
+            "ranking — mas a tela diz quantas saíram e por que.",
+            (
+                "Piso de cobertura para entrar no ranking",
+                "Sinais eliminatórios explicitos",
+                "Contagem de excluidos visível",
+            ),
+            "Portão que só podia dar False nunca é revisto. No dia em que a fonte chega, "
+            "ele promove a base inteira de uma vez.",
+        ),
+        "pit_us": _node(
+            "pit_us", "Painel point-in-time", "Validação",
+            "Safras reconstruidas com o dado conhecido na época, para medir se a ordenação "
+            "do motor antecipou alguma coisa.",
+            (
+                "Safras com dado da época",
+                "Poder de ordenação medido separado do excesso de retorno",
+                "Republicado a cada mudança de versão",
+            ),
+            "Ordenar bem não é superar o mercado. São duas medidas diferentes, e dizer que "
+            "o motor 'funciona' exige dizer qual das duas foi medida.",
+        ),
+        "saidas_us": _node(
+            "saidas_us", "Saídas de bolsa", "Validação",
+            "Empresas que saíram da bolsa entram no painel. Aquisição e falência são "
+            "desfechos opostos e não podem receber o mesmo retorno.",
+            (
+                "Saídas lidas do item do 8-K",
+                "Aquisição separada de falência",
+                "Retorno publicado como banda, não como ponto",
+            ),
+            "Zero deslistagem em 16 anos não é limpeza: é assinatura de universo "
+            "sobrevivente, e infla todo retorno histórico.",
+        ),
+        "avancada_us": _node(
+            "avancada_us", "Análise avançada", "Aplicação",
+            "O laboratório equivalente ao da B3: mexer em pesos, ver o efeito no ranking "
+            "e comparar com o comportamento fora da amostra.",
+            (
+                "Pesos ajustáveis por trilha",
+                "Efeito imediato no ranking",
+                "Comparação dentro e fora da amostra",
+            ),
+            "Ver o ranking mudar quando você mexe no peso mostra de quanto julgamento "
+            "aquele resultado depende.",
+        ),
+        "carteira_us": _node(
+            "carteira_us", "Criação de portfólio", "Aplicação",
+            "Segunda etapa: transformar o ranking em carteira, com limites por setor e "
+            "por ativo definidos por você.",
+            (
+                "Limites por setor e por ativo",
+                "Piso de liquidez",
+                "Diagnóstico de restrição inalcançável",
+            ),
+            "O ranking ordena; a carteira precisa caber em limites. São decisões diferentes.",
+        ),
+        "avaliacao_us": _node(
+            "avaliacao_us", "Avaliação de portfólio", "Aplicação",
+            "Terceira etapa: submeter a carteira pronta as mesmas métricas de risco, "
+            "concentração e fatores.",
+            (
+                "Risco e concentração da carteira montada",
+                "Exposição por fator",
+                "Comparação com a carteira atual",
+            ),
+            "Carteira montada por ranking pode concentrar fator sem ninguém perceber. "
+            "A avaliação existe para mostrar isso ANTES do aporte.",
+        ),
+    },
+    notes=(
+        "O universo americano do app é de ações operacionais. REIT, fundo, SPAC e "
+        "preferencial ficam de fora por regra, não por falta de dado.",
+    ),
+)
+
+
+FLOW_PORTFOLIO_GLOBAL = FlowSpec(
+    key="portfolio_global",
+    title="Portfólio Global — tudo o que você tem, numa visão só",
+    subtitle=(
+        "Junta B3, FIIs, renda fixa e exterior num único retrato: concentração, fatores, "
+        "risco, papel de cada ativo e o que fazer com o próximo aporte."
+    ),
+    rows=(
+        ("Consolidação", ("snapshots_pg", "alvos_pg", "cambio_pg")),
+        ("Estrutura", ("concentracao_pg", "correlacao_pg", "fatores_pg")),
+        ("Risco", ("risco_pg", "papeis_pg", "qualidade_pg")),
+        ("Ação", ("recomendacoes_pg", "aporte_pg", "chat_pg")),
+    ),
+    default="snapshots_pg",
+    nodes={
+        "snapshots_pg": _node(
+            "snapshots_pg", "Consolidação das posições", "Consolidação",
+            "Lê as posições de todas as classes e monta uma tabela única com classe, "
+            "país, moeda, setor e símbolo.",
+            (
+                "Ações, FIIs, renda fixa e exterior na mesma tabela",
+                "Classe, país, moeda, setor e símbolo por posição",
+                "Aviso explicito para setor não mapeado",
+            ),
+            "Avaliar cada classe na sua própria tela esconde a concentração que só aparece "
+            "quando tudo esta junto.",
+        ),
+        "alvos_pg": _node(
+            "alvos_pg", "Alocação-alvo", "Consolidação",
+            "Você define o alvo por classe num editor. O app compara alvo com o real e "
+            "avisa quando existe alvo sem nenhuma posição correspondente.",
+            (
+                "Editor de alvo por classe",
+                "Desvio entre alvo e posição atual",
+                "Aviso de classe com alvo e sem posição",
+            ),
+            "Alvo sem posição costuma ser intenção esquecida. Vale aparecer como aviso, "
+            "não sumir silenciosamente da conta.",
+        ),
+        "cambio_pg": _node(
+            "cambio_pg", "Moeda", "Consolidação",
+            "Posição em moeda estrangeira é convertida para comparar, mas a moeda de "
+            "origem continua registrada como dimensão própria.",
+            (
+                "Conversão para moeda de referência",
+                "Moeda de origem preservada como dimensão",
+                "Exposição cambial medida separadamente",
+            ),
+            "Converter tudo e esquecer a moeda apaga um risco real: a carteira pode estar "
+            "diversificada em ativo e concentrada em dólar.",
+        ),
+        "concentracao_pg": _node(
+            "concentracao_pg", "Concentração", "Estrutura",
+            "Índice de concentração e número efetivo de posições em cinco dimensões: "
+            "classe, país, moeda, setor e ativo.",
+            (
+                "Concentração por classe, país, moeda, setor e ativo",
+                "Número efetivo de posições",
+                "Maiores posições por dimensão, em cards",
+            ),
+            "Ter 30 ativos não significa ter 30 apostas. O número efetivo mostra quantas "
+            "posições realmente independentes existem.",
+        ),
+        "correlacao_pg": _node(
+            "correlacao_pg", "Correlação", "Estrutura",
+            "Correlação calculada em janela comum entre os ativos, para não comparar "
+            "séries de tamanhos diferentes.",
+            (
+                "Janela comum entre os ativos comparados",
+                "Série mensal de retorno",
+                "Ativo sem série suficiente fica de fora, declarado",
+            ),
+            "Correlação em janelas heterogêneas mistura regimes diferentes e produz um "
+            "número que não descreve período nenhum.",
+        ),
+        "fatores_pg": _node(
+            "fatores_pg", "Exposição a fatores", "Estrutura",
+            "A carteira é projetada contra fatores representados por fundos negociados em "
+            "bolsa: dólar, inflação, juros, mercado local, ouro e small cap.",
+            (
+                "Fatores representados por ETFs reais, não índices teoricos",
+                "Small cap medido como diferença contra o mercado",
+                "Exposição por fator e por ativo",
+            ),
+            "Usar ETF negociável como representante mantém o fator investível: é uma "
+            "exposição que você poderia de fato ter.",
+        ),
+        "risco_pg": _node(
+            "risco_pg", "Perda esperada na cauda", "Risco",
+            "Risco calculado pelo percentil empírico da série observada — sem supor "
+            "distribuição normal — com contribuição marginal por ativo.",
+            (
+                "VaR e CVaR históricos, por percentil empírico",
+                "Contribuição marginal de cada ativo",
+                "Pesos renormalizados sobre quem tem série",
+            ),
+            "Supor normalidade subestima a cauda justo onde ela importa. A série observada "
+            "já carrega as crises que aconteceram.",
+        ),
+        "papeis_pg": _node(
+            "papeis_pg", "Papel de cada ativo", "Risco",
+            "Cada posição recebe um papel — renda, crescimento, hedge cambial, proteção "
+            "contra inflação, reserva de valor, baixa volatilidade ou diversificação.",
+            (
+                "Papel atribuido com evidência numérica",
+                "Indeterminado carrega a causa nomeada",
+                "Cobertura de papeis na carteira",
+            ),
+            "Papel sem evidência é rótulo. Quando não dá para determinar, dizer POR QUE "
+            "vale mais que chutar uma categoria.",
+        ),
+        "qualidade_pg": _node(
+            "qualidade_pg", "Qualidade do retrato", "Risco",
+            "Quanto da carteira tem série de preço, setor mapeado e papel determinado. "
+            "O retrato declara a própria cobertura.",
+            (
+                "Fração com série de preço disponível",
+                "Posições sem setor ou sem papel",
+                "Impacto da lacuna sobre cada painel",
+            ),
+            "Uma medida de risco que cobre 60% da carteira não é a medida de risco da "
+            "carteira — e precisa dizer isso.",
+        ),
+        "recomendacoes_pg": _node(
+            "recomendacoes_pg", "Recomendações", "Ação",
+            "Os sinais viram inclinação no peso-alvo, passam pelos tetos por ativo e por "
+            "classe, e só então viram sugestão de movimento com custo estimado.",
+            (
+                "Sinal inclina o peso-alvo, não decide sozinho",
+                "Teto por ativo e por classe sobre o resultado acumulado",
+                "Custo de transação entra na decisão",
+            ),
+            "Movimento menor que o custo de fazer vira 'manter'. E quando o custo não esta "
+            "calibrado, a resposta também é 'manter'.",
+        ),
+        "aporte_pg": _node(
+            "aporte_pg", "Aporte do mês", "Ação",
+            "Responde a pergunta prática: com R$ X para aportar, onde o dinheiro vai? "
+            "Converge para o alvo comprando, sem vender nada.",
+            (
+                "Só compra: nunca sugere venda para rebalancear",
+                "Prioriza as classes mais abaixo do alvo",
+                "Respeita lote e valor mínimo",
+            ),
+            "Rebalanceamento teórico vende para acertar o peso. Quem só aporta não faz "
+            "isso — e a conta precisa ser a do aportador.",
+        ),
+        "chat_pg": _node(
+            "chat_pg", "Conversa sobre a carteira", "Ação",
+            "Por último, e de propósito: a conversa com o modelo recebe os painéis já "
+            "calculados, em vez de recalcular por conta própria.",
+            (
+                "Recebe os números já apurados nos painéis",
+                "Fica por último na tela, depois da evidência",
+                "Não substitui os painéis",
+            ),
+            "O modelo comenta o que foi medido. Se ele estivesse antes dos painéis, a "
+            "conversa viraria a evidência — e ela não é.",
+        ),
+    },
+    notes=(
+        "Nenhum painel do Portfólio Global executa ordem. Tudo aqui termina em sugestão "
+        "com custo estimado, para você decidir.",
+    ),
+)
+
+
+FLOW_QUALIDADE_DADOS = FlowSpec(
+    key="qualidade_dados",
+    title="Qualidade dos dados — de onde vem o número e quanto ele vale",
+    subtitle=(
+        "Como o app separa armazém local de vitrine publicada, mede a própria confiança "
+        "por seção e recusa transformar o que não foi medido em nota cheia."
+    ),
+    rows=(
+        ("Origem", ("armazem_local", "vitrine_publicada", "frescor")),
+        ("Medição", ("confiabilidade", "abrangencia", "nao_medido")),
+        ("Portões", ("gate_publicacao", "validacao_pit", "piso_qualidade")),
+        ("Leitura", ("onde_ver", "limites")),
+    ),
+    default="armazem_local",
+    nodes={
+        "armazem_local": _node(
+            "armazem_local", "Armazém local", "Origem",
+            "O histórico pesado — séries de preço, observações de crédito, arquivos "
+            "regulatórios — mora num banco local, fora da nuvem.",
+            (
+                "Séries diárias e mensais completas",
+                "Arquivos brutos e observações de crédito",
+                "Não é alcançável pelo app publicado",
+            ),
+            "O plano gratuito da nuvem tem limite de espaço. Guardar o histórico fora dela "
+            "é o que permite manter série longa sem cortar ativo.",
+        ),
+        "vitrine_publicada": _node(
+            "vitrine_publicada", "Vitrine publicada", "Origem",
+            "Do armazém sai um resumo — a vitrine — que é publicado na nuvem. É ela que a "
+            "tela le. O cálculo pesado já aconteceu antes.",
+            (
+                "Resumo gerado a partir do armazém",
+                "Publicado com data e versão de metodologia",
+                "A tela le a vitrine, não recalcula",
+            ),
+            "Separar geração de leitura deixa a tela rápida e torna auditável QUANDO cada "
+            "número foi produzido.",
+        ),
+        "frescor": _node(
+            "frescor", "Selo de frescor", "Origem",
+            "Cada vitrine carrega uma cadência alvo e um limite de validade. O selo no "
+            "topo da tela compara a data da publicação com esses dois prazos.",
+            (
+                "Cadência alvo: de quanto em quanto tempo deveria atualizar",
+                "Limite de validade: a partir de quando esta velho",
+                "Selo visível na cabeça da tela",
+            ),
+            "Dado velho não levanta erro — ele só fica parado. Sem selo, parado é "
+            "indistinguível de atualizado.",
+        ),
+        "confiabilidade": _node(
+            "confiabilidade", "Confiabilidade", "Medição",
+            "Primeiro eixo, de peso alto: o quanto a fonte, a validação e a conciliação "
+            "sustentam o número daquela seção.",
+            (
+                "Procedência da fonte por métrica",
+                "Validação e conciliação entre fontes",
+                "Idade do dado dentro da própria validade",
+            ),
+            "E a pergunta 'da para confiar neste número?', separada da pergunta 'quantos "
+            "ativos ele cobre?'.",
+        ),
+        "abrangencia": _node(
+            "abrangencia", "Abrangência", "Medição",
+            "Segundo eixo, de peso baixo: quantos ativos da seção estão efetivamente "
+            "cobertos pela medição.",
+            (
+                "Fração do universo coberta",
+                "Peso deliberadamente menor que o da confiabilidade",
+                "Lacuna de ingestão aparece aqui primeiro",
+            ),
+            "Cobrir muito com fonte fraca é pior que cobrir menos com fonte forte. Por isso "
+            "os dois eixos não tem o mesmo peso.",
+        ),
+        "nao_medido": _node(
+            "nao_medido", "O que não foi medido", "Medição",
+            "Critério sem medição sai como NÃO MEDIDO e fica de FORA da média ponderada. "
+            "Nunca entra como zero nem como cem.",
+            (
+                "Não medido sai da média, e não vira nota",
+                "A tela declara quantos critérios ficaram de fora",
+                "Média renormalizada sobre o que sobrou",
+            ),
+            "Zero pune quem não mediu como se tivesse medido o pior. Cem premia a "
+            "ignorância. As duas saídas mentem — a terceira é declarar.",
+        ),
+        "gate_publicacao": _node(
+            "gate_publicacao", "Portão de publicação", "Portões",
+            "Antes de chamar um resultado de recomendação, o app checa cobertura, confiança "
+            "mediana e validação. Reprovou, o rótulo muda.",
+            (
+                "Cobertura mínima do universo",
+                "Confiança mediana acima do piso",
+                "Rótulo de diligência quando reprova",
+            ),
+            "Não é censura: o resultado continua visível. O que muda é a afirmação que o "
+            "app faz sobre ele.",
+        ),
+        "validacao_pit": _node(
+            "validacao_pit", "Validação point-in-time", "Portões",
+            "As retrospectivas usam SÓ o que era conhecido em cada data. Versão de "
+            "metodologia nova exige safra nova.",
+            (
+                "Safras reconstruidas com dado da época",
+                "Mínimo de períodos para a validação valer",
+                "Versão sem safra correspondente desliga o painel",
+            ),
+            "Backtest que le o futuro aprova qualquer regra. E painel vazio precisa dizer "
+            "o motivo, em vez de parecer 'sem dado'.",
+        ),
+        "piso_qualidade": _node(
+            "piso_qualidade", "Pisos e faixas", "Portões",
+            "Acima de 75 a seção é considerada de confiança alta; entre 55 e 75, média; "
+            "abaixo disso, baixa — e a faixa aparece junto do número.",
+            (
+                "Faixa alta a partir de 75",
+                "Faixa média a partir de 55",
+                "Faixa exibida junto da nota",
+            ),
+            "Nota isolada não diz se é boa. A faixa dá a escala sem exigir que você decore "
+            "o critério.",
+        ),
+        "onde_ver": _node(
+            "onde_ver", "Onde ver isso", "Leitura",
+            "A aba Grau de Confiança, dentro de Configurações, mostra a nota por seção e "
+            "o detalhe critério a critério.",
+            (
+                "Configurações > Grau de Confiança",
+                "Nota por seção do app",
+                "Detalhe por critério, com o que não foi medido",
+            ),
+            "Medida de qualidade que não tem porta de entrada é decoração. Ela precisa "
+            "estar a um clique da tela que você usa.",
+        ),
+        "limites": _node(
+            "limites", "Limitações declaradas", "Leitura",
+            "Cada painel carrega as próprias limitações, derivadas da medição — não de um "
+            "texto fixo que envelhece sem avisar.",
+            (
+                "Limitação derivada do que foi medido",
+                "Texto revisto quando a medição muda",
+                "Documentação e Configurações não fazem afirmação de confiança",
+            ),
+            "Aviso escrito a mão envelhece invertido: vira falso e continua soando como "
+            "rigor. Por isso a limitação sai da medição.",
+        ),
+    },
+    notes=(
+        "Regra que atravessa o app inteiro: o que não foi medido não vira 100 — e "
+        "também não vira 0. Vira uma declaração.",
     ),
 )
 
@@ -1238,6 +1960,10 @@ FLOWS = (
     FLOW_ANALISE_PORTFOLIO,
     FLOW_INVESTIMENTOS,
     FLOW_CONTROLE_FINANCEIRO,
+    FLOW_SELECAO_FIIS,
+    FLOW_EMPRESAS_EUA,
+    FLOW_PORTFOLIO_GLOBAL,
+    FLOW_QUALIDADE_DADOS,
 )
 
 
@@ -1245,152 +1971,152 @@ INDICADORES = [
     {
         "Grupo": "Rentabilidade",
         "Indicador": "ROE",
-        "O que mede": "Lucro liquido dividido pelo patrimonio liquido.",
-        "Importancia": "Mostra quanto retorno a empresa gera sobre o capital dos acionistas.",
-        "Leitura": "Maior costuma ser melhor, mas precisa ser sustentavel e nao vir apenas de alavancagem.",
-        "Autores": "Graham e Buffett tratam retorno consistente sobre capital como sinal de qualidade; Lynch compara esse retorno com crescimento, divida e preco.",
+        "O que mede": "Lucro líquido dividido pelo patrimônio líquido.",
+        "Importância": "Mostra quanto retorno a empresa gera sobre o capital dos acionistas.",
+        "Leitura": "Maior costuma ser melhor, mas precisa ser sustentável e não vir apenas de alavancagem.",
+        "Autores": "Graham e Buffett tratam retorno consistente sobre capital como sinal de qualidade; Lynch compara esse retorno com crescimento, dívida e preço.",
     },
     {
         "Grupo": "Rentabilidade",
         "Indicador": "ROIC",
-        "O que mede": "Retorno sobre o capital investido na operacao.",
-        "Importancia": "Ajuda a medir eficiencia economica do negocio independentemente da estrutura de financiamento.",
+        "O que mede": "Retorno sobre o capital investido na operação.",
+        "Importância": "Ajuda a medir eficiência econômica do negócio independentemente da estrutura de financiamento.",
         "Leitura": "ROIC alto e recorrente sugere vantagem competitiva; ROIC em queda pode indicar perda de moat ou ciclo ruim.",
-        "Autores": "Damodaran e Greenblatt dao grande peso ao retorno sobre capital para separar empresas excelentes de negocios medianos.",
+        "Autores": "Damodaran e Greenblatt dao grande peso ao retorno sobre capital para separar empresas excelentes de negócios medianos.",
     },
     {
         "Grupo": "Rentabilidade",
         "Indicador": "ROA",
-        "O que mede": "Lucro liquido dividido pelos ativos totais.",
-        "Importancia": "Mostra eficiencia no uso dos ativos, util para empresas intensivas em capital.",
-        "Leitura": "Deve ser comparado dentro do setor; bancos e industrias tem bases de ativos muito diferentes.",
-        "Autores": "Graham reforca comparacao historica e setorial para evitar conclusoes por numeros isolados.",
+        "O que mede": "Lucro líquido dividido pelos ativos totais.",
+        "Importância": "Mostra eficiência no uso dos ativos, útil para empresas intensivas em capital.",
+        "Leitura": "Deve ser comparado dentro do setor; bancos e indústrias tem bases de ativos muito diferentes.",
+        "Autores": "Graham reforca comparação histórica e setorial para evitar conclusões por números isolados.",
     },
     {
         "Grupo": "Margens",
-        "Indicador": "Margem Liquida",
-        "O que mede": "Lucro liquido como percentual da receita.",
-        "Importancia": "Resume quanto da venda vira lucro depois de custos, despesas, juros e impostos.",
-        "Leitura": "Margem alta e estavel indica poder de precificacao; margem volatil exige cautela.",
-        "Autores": "Lynch procura entender a historia operacional por tras das margens; Buffett valoriza negocios com poder de preco.",
+        "Indicador": "Margem Líquida",
+        "O que mede": "Lucro líquido como percentual da receita.",
+        "Importância": "Resume quanto da venda vira lucro depois de custos, despesas, juros e impostos.",
+        "Leitura": "Margem alta e estável indica poder de precificação; margem volátil exige cautela.",
+        "Autores": "Lynch procura entender a história operacional por trás das margens; Buffett valoriza negócios com poder de preço.",
     },
     {
         "Grupo": "Margens",
         "Indicador": "Margem Operacional",
         "O que mede": "Resultado operacional dividido pela receita.",
-        "Importancia": "Isola a qualidade da operacao antes de efeitos financeiros e impostos.",
-        "Leitura": "Boa para comparar eficiencia entre pares do mesmo setor.",
-        "Autores": "Damodaran usa margens e crescimento para estimar qualidade operacional e valor intrinseco.",
+        "Importância": "Isola a qualidade da operação antes de efeitos financeiros e impostos.",
+        "Leitura": "Boa para comparar eficiência entre pares do mesmo setor.",
+        "Autores": "Damodaran usa margens e crescimento para estimar qualidade operacional e valor intrínseco.",
     },
     {
         "Grupo": "Dividendos",
         "Indicador": "DY",
-        "O que mede": "Dividendos pagos nos ultimos 12 meses divididos pelo preco.",
-        "Importancia": "Mostra a renda de dividendos em relacao ao preco pago.",
-        "Leitura": "DY alto pode ser oportunidade ou alerta de lucro nao recorrente e preco deprimido.",
-        "Autores": "Siegel destaca dividendos no retorno de longo prazo; Graham gostava de historico consistente, nao de yield isolado.",
+        "O que mede": "Dividendos pagos nos últimos 12 meses divididos pelo preço.",
+        "Importância": "Mostra a renda de dividendos em relação ao preço pago.",
+        "Leitura": "DY alto pode ser oportunidade ou alerta de lucro não recorrente e preço deprimido.",
+        "Autores": "Siegel destaca dividendos no retorno de longo prazo; Graham gostava de histórico consistente, não de yield isolado.",
     },
     {
         "Grupo": "Dividendos",
         "Indicador": "Payout",
         "O que mede": "Percentual do lucro distribuido como dividendos/JCP.",
-        "Importancia": "Mostra quanto lucro e retido para reinvestimento versus distribuido.",
-        "Leitura": "Payout muito alto pode limitar crescimento ou ser insustentavel; em utilities pode ser normal.",
+        "Importância": "Mostra quanto lucro e retido para reinvestimento versus distribuido.",
+        "Leitura": "Payout muito alto pode limitar crescimento ou ser insustentável; em utilities pode ser normal.",
         "Autores": "Lynch sugere olhar a capacidade de reinvestimento; Damodaran separa empresas maduras de empresas de crescimento.",
     },
     {
         "Grupo": "Valuation",
         "Indicador": "P/L",
-        "O que mede": "Preco da acao dividido pelo lucro por acao.",
-        "Importancia": "Indica quantos anos de lucro o investidor esta pagando, em termos simplificados.",
-        "Leitura": "Menor pode ser mais barato, mas tambem pode indicar risco, ciclo ou lucro temporario.",
-        "Autores": "Graham usa multiplos com margem de seguranca; Lynch popularizou relacionar P/L com crescimento esperado.",
+        "O que mede": "Preço da ação dividido pelo lucro por ação.",
+        "Importância": "Indica quantos anos de lucro o investidor esta pagando, em termos simplificados.",
+        "Leitura": "Menor pode ser mais barato, mas também pode indicar risco, ciclo ou lucro temporário.",
+        "Autores": "Graham usa múltiplos com margem de segurança; Lynch popularizou relacionar P/L com crescimento esperado.",
     },
     {
         "Grupo": "Valuation",
         "Indicador": "P/VP",
-        "O que mede": "Valor de mercado dividido pelo patrimonio liquido.",
-        "Importancia": "Ajuda a avaliar preco versus base contabil, especialmente bancos e negocios patrimoniais.",
-        "Leitura": "Baixo pode indicar desconto ou baixa rentabilidade; alto exige ROE superior e sustentavel.",
-        "Autores": "Graham usava valor patrimonial como ancora defensiva; Buffett aceita pagar mais por negocios superiores.",
+        "O que mede": "Valor de mercado dividido pelo patrimônio líquido.",
+        "Importância": "Ajuda a avaliar preço versus base contábil, especialmente bancos e negócios patrimoniais.",
+        "Leitura": "Baixo pode indicar desconto ou baixa rentabilidade; alto exige ROE superior e sustentável.",
+        "Autores": "Graham usava valor patrimonial como âncora defensiva; Buffett aceita pagar mais por negócios superiores.",
     },
     {
         "Grupo": "Valuation",
         "Indicador": "EV/EBIT",
         "O que mede": "Valor da firma dividido pelo lucro operacional.",
-        "Importancia": "Compara preco do negocio inteiro, incluindo divida, com resultado operacional.",
-        "Leitura": "Util para comparar empresas com estruturas de capital diferentes.",
+        "Importância": "Compara preço do negócio inteiro, incluindo dívida, com resultado operacional.",
+        "Leitura": "Útil para comparar empresas com estruturas de capital diferentes.",
         "Autores": "Greenblatt usa rendimento operacional sobre valor da firma como uma de suas ideias centrais.",
     },
     {
         "Grupo": "Valuation",
         "Indicador": "P/FCO",
-        "O que mede": "Preco dividido pelo fluxo de caixa operacional.",
-        "Importancia": "Avalia preco contra caixa gerado pela operacao, reduzindo distorcoes contabeis do lucro.",
+        "O que mede": "Preço dividido pelo fluxo de caixa operacional.",
+        "Importância": "Avalia preço contra caixa gerado pela operação, reduzindo distorções contábeis do lucro.",
         "Leitura": "Pode ser mais robusto que P/L em empresas com lucro contabel volátil.",
-        "Autores": "Buffett e Munger enfatizam caixa e economia real do negocio acima de lucro meramente contabil.",
+        "Autores": "Buffett e Munger enfatizam caixa e economia real do negócio acima de lucro meramente contábil.",
     },
     {
-        "Grupo": "Solvencia",
+        "Grupo": "Solvência",
         "Indicador": "Endividamento Total",
-        "O que mede": "Divida em relacao a capital, patrimonio ou metrica equivalente usada no banco.",
-        "Importancia": "Mostra fragilidade financeira e sensibilidade a juros.",
-        "Leitura": "Menor tende a ser melhor, mas concessoes, utilities e bancos exigem leitura setorial.",
-        "Autores": "Graham valorizava balancos fortes; Marks reforca que risco aparece quando divida encontra ciclo adverso.",
+        "O que mede": "Dívida em relação a capital, patrimônio ou métrica equivalente usada no banco.",
+        "Importância": "Mostra fragilidade financeira e sensibilidade a juros.",
+        "Leitura": "Menor tende a ser melhor, mas concessões, utilities e bancos exigem leitura setorial.",
+        "Autores": "Graham valorizava balanços fortes; Marks reforca que risco aparece quando dívida encontra ciclo adverso.",
     },
     {
-        "Grupo": "Solvencia",
+        "Grupo": "Solvência",
         "Indicador": "Liquidez Corrente",
         "O que mede": "Ativos circulantes divididos por passivos circulantes.",
-        "Importancia": "Indica folga de curto prazo para cumprir obrigacoes.",
+        "Importância": "Indica folga de curto prazo para cumprir obrigações.",
         "Leitura": "Muito baixa pode sinalizar aperto; muito alta pode indicar capital parado.",
-        "Autores": "Graham via liquidez como camada de protecao para o investidor defensivo.",
+        "Autores": "Graham via liquidez como camada de proteção para o investidor defensivo.",
     },
 ]
 
 
 DEMONSTRACOES = [
     {
-        "Demonstracao": "DRE",
-        "Componentes": "Receita, custos, despesas, EBITDA, EBIT, lucro liquido.",
-        "Importancia": "Mostra a formacao do lucro e a eficiencia operacional.",
-        "Cuidados": "Lucro pode ser afetado por nao recorrentes, ciclo, cambio e efeitos contabeis.",
+        "Demonstração": "DRE",
+        "Componentes": "Receita, custos, despesas, EBITDA, EBIT, lucro líquido.",
+        "Importância": "Mostra a formação do lucro e a eficiência operacional.",
+        "Cuidados": "Lucro pode ser afetado por não recorrentes, ciclo, câmbio e efeitos contábeis.",
     },
     {
-        "Demonstracao": "Balanco Patrimonial",
-        "Componentes": "Ativos, passivos, patrimonio liquido, divida, caixa e capital de giro.",
-        "Importancia": "Mostra estrutura financeira, solvencia e base de capital.",
-        "Cuidados": "Patrimonio contabil pode subestimar marcas fortes ou superestimar ativos ruins.",
+        "Demonstração": "Balanço Patrimonial",
+        "Componentes": "Ativos, passivos, patrimônio líquido, dívida, caixa e capital de giro.",
+        "Importância": "Mostra estrutura financeira, solvência e base de capital.",
+        "Cuidados": "Patrimônio contábil pode subestimar marcas fortes ou superestimar ativos ruins.",
     },
     {
-        "Demonstracao": "Fluxo de Caixa",
-        "Componentes": "FCO, FCI, FCF, capex, variacao de caixa.",
-        "Importancia": "Mostra se o lucro vira dinheiro e quanto sobra para crescer, pagar divida ou distribuir.",
-        "Cuidados": "Fluxo de um ano isolado pode ser distorcido por capital de giro ou eventos extraordinarios.",
+        "Demonstração": "Fluxo de Caixa",
+        "Componentes": "FCO, FCI, FCF, capex, variação de caixa.",
+        "Importância": "Mostra se o lucro vira dinheiro e quanto sobra para crescer, pagar dívida ou distribuir.",
+        "Cuidados": "Fluxo de um ano isolado pode ser distorcido por capital de giro ou eventos extraordinários.",
     },
     {
-        "Demonstracao": "Historico de Dividendos",
-        "Componentes": "Dividendos, JCP, frequencia, yield on cost e payout.",
-        "Importancia": "Ajuda a medir disciplina de capital e retorno ao acionista.",
+        "Demonstração": "Histórico de Dividendos",
+        "Componentes": "Dividendos, JCP, frequência, yield on cost e payout.",
+        "Importância": "Ajuda a medir disciplina de capital e retorno ao acionista.",
         "Cuidados": "Dividendos altos sem lucro e caixa recorrentes podem ser armadilha.",
     },
     {
-        "Demonstracao": "Contexto Macro",
-        "Componentes": "Selic, IPCA, cambio e PIB.",
-        "Importancia": "Ajusta a leitura de valuation, divida, crescimento e atratividade relativa da renda fixa.",
-        "Cuidados": "Macro nao deve substituir a analise da empresa, mas pode mudar o preco justo e o risco.",
+        "Demonstração": "Contexto Macro",
+        "Componentes": "Selic, IPCA, câmbio e PIB.",
+        "Importância": "Ajusta a leitura de valuation, dívida, crescimento e atratividade relativa da renda fixa.",
+        "Cuidados": "Macro não deve substituir a análise da empresa, mas pode mudar o preço justo e o risco.",
     },
 ]
 
 
 AUTORES = [
-    ("Benjamin Graham", "Margem de seguranca, balanco forte, lucros consistentes e preco razoavel antes de otimismo."),
-    ("Warren Buffett e Charlie Munger", "Qualidade do negocio, retorno sobre capital, vantagem competitiva e caixa real no longo prazo."),
-    ("Peter Lynch", "Entender a historia da empresa, crescimento, P/L em relacao ao crescimento, divida e dividendos."),
-    ("Aswath Damodaran", "Valor depende de fluxo de caixa, crescimento, risco e reinvestimento; multiplos precisam de narrativa."),
-    ("Joel Greenblatt", "Combinar qualidade do negocio com preco pago, usando retorno sobre capital e rendimento operacional."),
+    ("Benjamin Graham", "Margem de segurança, balanço forte, lucros consistentes e preço razoável antes de otimismo."),
+    ("Warren Buffett e Charlie Munger", "Qualidade do negócio, retorno sobre capital, vantagem competitiva e caixa real no longo prazo."),
+    ("Peter Lynch", "Entender a história da empresa, crescimento, P/L em relação ao crescimento, dívida e dividendos."),
+    ("Aswath Damodaran", "Valor depende de fluxo de caixa, crescimento, risco e reinvestimento; múltiplos precisam de narrativa."),
+    ("Joel Greenblatt", "Combinar qualidade do negócio com preço pago, usando retorno sobre capital e rendimento operacional."),
     ("Howard Marks", "Risco, ciclos, margem para erro e disciplina importam tanto quanto retorno projetado."),
-    ("Jeremy Siegel", "Dividendos, reinvestimento e horizonte longo explicam parte importante do retorno das acoes."),
+    ("Jeremy Siegel", "Dividendos, reinvestimento e horizonte longo explicam parte importante do retorno das ações."),
 ]
 
 
@@ -1403,7 +2129,7 @@ _GROUP_ACCENTS = {
     # -- ilegivel -- contra 6,72:1 no escuro. #9B51E0 troca esse desequilibrio
     # por 4,52:1 no claro e 4,18:1 no escuro, legivel nos dois.
     "Valuation": "#9B51E0",
-    "Solvencia": "#FC5C7D",
+    "Solvência": "#FC5C7D",
 }
 
 
@@ -1421,81 +2147,81 @@ def _flow_sequence(flow: FlowSpec) -> tuple[tuple[str, str], ...]:
 
 _FLOW_DETAIL_OVERRIDES = {
     "aportes_sp": {
-        "formula": "Capital novo do mes = aporte mensal configurado\nCotas compradas = aporte mensal / preco do ativo",
-        "exemplo": "Aporte mensal = R$ 1.000\nPreco do ativo = R$ 25\nCotas compradas = 1.000 / 25 = 40 cotas",
-        "interpretacao": "O simulador reproduz acumulacao recorrente, aproximando a experiencia de quem investe todo mes.",
+        "formula": "Capital novo do mês = aporte mensal configurado\nCotas compradas = aporte mensal / preço do ativo",
+        "exemplo": "Aporte mensal = R$ 1.000\nPreço do ativo = R$ 25\nCotas compradas = 1.000 / 25 = 40 cotas",
+        "interpretacao": "O simulador reproduz acumulação recorrente, aproximando a experiência de quem investe todo mês.",
     },
     "selic_sp": {
-        "formula": "Valor acumulado = valor anterior x (1 + taxa Selic mensal) + aporte do mes",
+        "formula": "Valor acumulado = valor anterior x (1 + taxa Selic mensal) + aporte do mês",
         "exemplo": "Valor anterior = R$ 10.000\nSelic mensal = 0,80%\nAporte = R$ 1.000\nValor = 10.000 x 1,008 + 1.000 = R$ 11.080",
-        "interpretacao": "A estrategia de acoes precisa superar uma alternativa simples de renda fixa para justificar o risco.",
+        "interpretacao": "A estratégia de ações precisa superar uma alternativa simples de renda fixa para justificar o risco.",
     },
     "montante_sp": {
-        "formula": "Montante final = soma(cotas do ativo x preco final do ativo) + caixa residual",
+        "formula": "Montante final = soma(cotas do ativo x preço final do ativo) + caixa residual",
         "exemplo": "Ativo A: 100 cotas x R$ 30 = R$ 3.000\nAtivo B: 80 cotas x R$ 25 = R$ 2.000\nMontante final = R$ 5.000",
-        "interpretacao": "O montante mostra o patrimonio acumulado da carteira ao fim da simulacao.",
+        "interpretacao": "O montante mostra o patrimônio acumulado da carteira ao fim da simulação.",
     },
     "margem_sp": {
-        "formula": "Margem vs benchmark = ((montante da estrategia - montante benchmark) / montante benchmark) x 100",
-        "exemplo": "Estrategia = R$ 120.000\nSelic = R$ 100.000\nMargem = ((120.000 - 100.000) / 100.000) x 100 = 20%",
-        "interpretacao": "A margem indica quanto a estrategia adicionou ou perdeu em relacao a uma alternativa comparavel.",
+        "formula": "Margem vs benchmark = ((montante da estratégia - montante benchmark) / montante benchmark) x 100",
+        "exemplo": "Estratégia = R$ 120.000\nSelic = R$ 100.000\nMargem = ((120.000 - 100.000) / 100.000) x 100 = 20%",
+        "interpretacao": "A margem indica quanto a estratégia adicionou ou perdeu em relação a uma alternativa comparável.",
     },
     "backtest_cp": {
         "formula": "Retorno acumulado = ((valor final - total aportado) / total aportado) x 100",
         "exemplo": "Total aportado = R$ 60.000\nValor final = R$ 78.000\nRetorno acumulado = ((78.000 - 60.000) / 60.000) x 100 = 30%",
-        "interpretacao": "O backtest traduz a selecao dos lideres em uma trilha historica de patrimonio.",
+        "interpretacao": "O backtest traduz a seleção dos líderes em uma trilha histórica de patrimônio.",
     },
     "comparacao_cp": {
-        "formula": "Alpha = retorno da estrategia - retorno do benchmark",
-        "exemplo": "Retorno da estrategia = 18%\nRetorno Selic = 11%\nAlpha = 18% - 11% = 7 p.p.",
-        "interpretacao": "A comparacao mostra se a carteira criada gerou retorno adicional depois de considerar alternativas simples.",
+        "formula": "Alpha = retorno da estratégia - retorno do benchmark",
+        "exemplo": "Retorno da estratégia = 18%\nRetorno Selic = 11%\nAlpha = 18% - 11% = 7 p.p.",
+        "interpretacao": "A comparação mostra se a carteira criada gerou retorno adicional depois de considerar alternativas simples.",
     },
     "aprovacao_cp": {
-        "formula": "Segmento aprovado se margem minima, recencia e criterios de benchmark forem atendidos",
-        "exemplo": "Margem minima exigida = 5 p.p.\nMargem observada = 8 p.p.\nUltima lideranca recente = sim\nResultado: segmento aprovado",
-        "interpretacao": "A aprovacao impede que um segmento entre na carteira apenas por um resultado isolado.",
+        "formula": "Segmento aprovado se margem mínima, recência e critérios de benchmark forem atendidos",
+        "exemplo": "Margem mínima exigida = 5 p.p.\nMargem observada = 8 p.p.\nUltima liderança recente = sim\nResultado: segmento aprovado",
+        "interpretacao": "A aprovação impede que um segmento entre na carteira apenas por um resultado isolado.",
     },
     "pesos_cp": {
         "formula": "Peso do ativo = score relativo do ativo / soma dos scores selecionados",
         "exemplo": "Empresa A score 80, Empresa B score 70\nPeso A = 80 / (80 + 70) = 53,3%",
-        "interpretacao": "Empresas mais fortes recebem mais peso, mas a carteira ainda respeita limites de concentracao.",
+        "interpretacao": "Empresas mais fortes recebem mais peso, mas a carteira ainda respeita limites de concentração.",
     },
     "items_ap": {
-        "formula": "Participacao do ativo = valor de mercado do ativo / valor total do portfolio",
-        "exemplo": "Valor do ativo = R$ 12.000\nPortfolio total = R$ 100.000\nParticipacao = 12.000 / 100.000 = 12%",
-        "interpretacao": "A participacao mostra o tamanho real de cada tese dentro da carteira salva.",
+        "formula": "Participação do ativo = valor de mercado do ativo / valor total do portfólio",
+        "exemplo": "Valor do ativo = R$ 12.000\nPortfólio total = R$ 100.000\nParticipação = 12.000 / 100.000 = 12%",
+        "interpretacao": "A participação mostra o tamanho real de cada tese dentro da carteira salva.",
     },
     "pesos_ap": {
         "formula": "Score combinado = (score quantitativo x 60%) + (score qualitativo x 40%)",
         "exemplo": "Score quanti = 80\nScore quali = 70\nScore combinado = 80 x 0,60 + 70 x 0,40 = 76",
-        "interpretacao": "A redistribuicao combina dados historicos do banco, leitura qualitativa da LLM "
+        "interpretacao": "A redistribuição combina dados históricos do banco, leitura qualitativa da LLM "
                          "e uma segunda fonte na web (Fundamentus/Status Invest) para sugerir novos pesos. "
-                         "Indicador em que as duas fontes divergem reduz o peso da empresa em ate 10%.",
+                         "Indicador em que as duas fontes divergem reduz o peso da empresa em até 10%.",
     },
     "snapshot_ai": {
-        "formula": "Valor de mercado = quantidade consolidada x cotacao atual",
-        "exemplo": "Quantidade = 300\nCotacao atual = R$ 18\nValor de mercado = 300 x 18 = R$ 5.400",
-        "interpretacao": "O snapshot transforma operacoes dispersas em uma posicao unica e auditavel.",
+        "formula": "Valor de mercado = quantidade consolidada x cotação atual",
+        "exemplo": "Quantidade = 300\nCotação atual = R$ 18\nValor de mercado = 300 x 18 = R$ 5.400",
+        "interpretacao": "O snapshot transforma operações dispersas em uma posição única e auditável.",
     },
     "classes_ai": {
         "formula": "Peso da classe = valor da classe / valor total da carteira",
-        "exemplo": "Acoes BR = R$ 45.000\nCarteira total = R$ 150.000\nPeso = 45.000 / 150.000 = 30%",
-        "interpretacao": "A leitura por classe revela a arquitetura da carteira antes da analise por ativo.",
+        "exemplo": "Ações BR = R$ 45.000\nCarteira total = R$ 150.000\nPeso = 45.000 / 150.000 = 30%",
+        "interpretacao": "A leitura por classe revela a arquitetura da carteira antes da análise por ativo.",
     },
     "rentabilidade_ai": {
         "formula": "Rentabilidade = ((valor atual + proventos - custo total) / custo total) x 100",
         "exemplo": "Valor atual = R$ 11.000\nProventos = R$ 500\nCusto = R$ 10.000\nRentabilidade = ((11.000 + 500 - 10.000) / 10.000) x 100 = 15%",
-        "interpretacao": "A rentabilidade considera ganho de capital e renda recebida quando os dados estao disponiveis.",
+        "interpretacao": "A rentabilidade considera ganho de capital e renda recebida quando os dados estão disponíveis.",
     },
     "risco_ai": {
-        "formula": "Concentracao Top 5 = soma dos pesos dos 5 maiores ativos",
-        "exemplo": "Pesos dos 5 maiores = 18% + 14% + 10% + 8% + 6%\nConcentracao Top 5 = 56%",
-        "interpretacao": "Quanto maior a concentracao, maior a dependencia de poucas posicoes.",
+        "formula": "Concentração Top 5 = soma dos pesos dos 5 maiores ativos",
+        "exemplo": "Pesos dos 5 maiores = 18% + 14% + 10% + 8% + 6%\nConcentração Top 5 = 56%",
+        "interpretacao": "Quanto maior a concentração, maior a dependência de poucas posições.",
     },
     "stress_ai": {
-        "formula": "Perda estimada = valor atual da carteira x choque do cenario",
+        "formula": "Perda estimada = valor atual da carteira x choque do cenário",
         "exemplo": "Carteira = R$ 200.000\nChoque = -18%\nPerda estimada = 200.000 x 18% = R$ 36.000",
-        "interpretacao": "O stress test ajuda a medir se a carteira e compativel com o risco que o usuario suporta.",
+        "interpretacao": "O stress test ajuda a medir se a carteira e compativel com o risco que o usuário suporta.",
     },
 }
 
@@ -1503,14 +2229,14 @@ _FLOW_DETAIL_OVERRIDES = {
 def _generic_flow_detail(flow: FlowSpec, node: FlowNode) -> dict[str, str]:
     dados = "\n".join(f"- {item}" for item in node.contains)
     formula = (
-        "Saida da etapa = dados validados + regra da etapa + passagem para a proxima camada\n"
+        "Saída da etapa = dados validados + regra da etapa + passagem para a próxima camada\n"
         f"Camada atual = {node.layer}"
     )
     exemplo = (
         f"Etapa: {node.title}\n"
-        f"Entrada: informacoes da camada {node.layer}\n"
+        f"Entrada: informações da camada {node.layer}\n"
         f"Processamento: {node.summary}\n"
-        "Saida: dado organizado para a proxima etapa do fluxo."
+        "Saída: dado organizado para a próxima etapa do fluxo."
     )
     detail = {
         "titulo": node.title,
@@ -1520,23 +2246,43 @@ def _generic_flow_detail(flow: FlowSpec, node: FlowNode) -> dict[str, str]:
         "exemplo": exemplo,
         "interpretacao": node.why,
         "impacto": (
-            "Define a qualidade da informacao que avanca no fluxo e influencia a confiabilidade "
-            "das conclusoes seguintes."
+            "Define a qualidade da informação que avança no fluxo e influencia a confiabilidade "
+            "das conclusões seguintes."
         ),
         "limitacao": (
             "Esta etapa deve ser lida dentro do contexto do fluxo completo. Dados incompletos, "
-            "defasados ou muito concentrados podem distorcer a conclusao."
+            "defasados ou muito concentrados podem distorcer a conclusão."
         ),
     }
     detail.update(_FLOW_DETAIL_OVERRIDES.get(node.id, {}))
     if flow.key == "simulador_portfolio":
-        detail["impacto"] = "Afeta o patrimonio simulado, a comparacao com benchmarks e a aprovacao historica da estrategia."
+        detail["impacto"] = "Afeta o patrimônio simulado, a comparação com benchmarks e a aprovação histórica da estratégia."
     elif flow.key == "criacao_portfolio":
-        detail["impacto"] = "Afeta a selecao dos lideres, a distribuicao de pesos e a carteira modelo que sera salva."
+        detail["impacto"] = "Afeta a seleção dos líderes, a distribuição de pesos e a carteira modelo que será salva."
     elif flow.key == "analise_portfolio":
-        detail["impacto"] = "Afeta a leitura qualitativa, a redistribuicao sugerida e o relatorio final do portfolio."
+        detail["impacto"] = "Afeta a leitura qualitativa, a redistribuição sugerida e o relatório final do portfólio."
     elif flow.key == "analise_investimentos":
-        detail["impacto"] = "Afeta os KPIs, os graficos, os alertas e a interpretacao da carteira atual."
+        detail["impacto"] = "Afeta os KPIs, os gráficos, os alertas e a interpretação da carteira atual."
+    elif flow.key == "selecao_fiis":
+        detail["impacto"] = (
+            "Afeta a nota do fundo, a cobertura declarada ao lado dela e se o resultado "
+            "sai rotulado como Carteira-Modelo ou como Lista de Diligência."
+        )
+    elif flow.key == "empresas_eua":
+        detail["impacto"] = (
+            "Afeta o percentil da empresa dentro da indústria, a entrada dela no ranking "
+            "e o que a retrospectiva point-in-time consegue medir."
+        )
+    elif flow.key == "portfolio_global":
+        detail["impacto"] = (
+            "Afeta o retrato consolidado da carteira, as medidas de concentração e risco "
+            "e a sugestão de destino do próximo aporte."
+        )
+    elif flow.key == "qualidade_dados":
+        detail["impacto"] = (
+            "Afeta a nota de confiança da seção, o rótulo que o app usa para afirmar algo "
+            "e as limitações que cada painel declara."
+        )
     return detail
 
 
@@ -1551,8 +2297,8 @@ def _render_flow(flow: FlowSpec) -> None:
             <div class="doc-intro-title">{html.escape(flow.title)}</div>
             <div class="doc-intro-text">
                 {html.escape(flow.subtitle)}
-                Cada bloco e clicavel e atualiza o painel explicativo com objetivo, dados,
-                regra de calculo, exemplo, interpretacao e cuidados de leitura.
+                Cada bloco é clicável e atualiza o painel explicativo com objetivo, dados,
+                regra de cálculo, exemplo, interpretação e cuidados de leitura.
             </div>
         </div>
         """,
@@ -1567,7 +2313,7 @@ def _render_flow(flow: FlowSpec) -> None:
     col_fluxo, col_detalhe = st.columns([1.05, 1.45], gap="large")
     with col_fluxo:
         st.markdown(
-            '<div class="doc-av-shell"><div class="doc-av-flow-title">Sequencia do fluxo</div>',
+            '<div class="doc-av-shell"><div class="doc-av-flow-title">Sequência do fluxo</div>',
             unsafe_allow_html=True,
         )
         for idx, (node_id, label) in enumerate(sequence):
@@ -1601,13 +2347,13 @@ def _render_flow(flow: FlowSpec) -> None:
         _render_av_field("Objetivo", etapa["objetivo"])
         _render_av_field("Dados utilizados", etapa["dados"])
 
-        st.markdown('<div class="doc-av-section"><div class="doc-av-label">Formula matematica ou regra de calculo</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="doc-av-section"><div class="doc-av-label">Fórmula matemática ou regra de cálculo</div></div>', unsafe_allow_html=True)
         st.code(etapa["formula"], language="text")
 
-        st.markdown('<div class="doc-av-section"><div class="doc-av-label">Exemplo numerico simplificado</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="doc-av-section"><div class="doc-av-label">Exemplo numérico simplificado</div></div>', unsafe_allow_html=True)
         st.code(etapa["exemplo"], language="text")
 
-        _render_av_field("Interpretacao", etapa["interpretacao"])
+        _render_av_field("Interpretação", etapa["interpretacao"])
         st.markdown(
             f"""
             <div class="doc-av-impact">
@@ -1738,18 +2484,18 @@ def _render_indicadores() -> None:
     st.markdown(
         """
         <div class="doc-intro">
-            <div class="doc-intro-title">Dicionario de indicadores e demonstracoes</div>
+            <div class="doc-intro-title">Dicionário de indicadores e demonstrações</div>
             <div class="doc-intro-text">
-                Esta aba traduz os indicadores usados no App 4 para uma linguagem pratica:
-                o que cada numero mede, por que ele importa, como interpretar e que tipo de
-                cuidado autores classicos costumam recomendar.
+                Esta aba traduz os indicadores usados no App 4 para uma linguagem prática:
+                o que cada número mede, por que ele importa, como interpretar e que tipo de
+                cuidado autores clássicos costumam recomendar.
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="doc-mini-title">Indicadores usados no score e nas analises</div>', unsafe_allow_html=True)
+    st.markdown('<div class="doc-mini-title">Indicadores usados no score e nas análises</div>', unsafe_allow_html=True)
     grupos = ["Todos"] + sorted({item["Grupo"] for item in INDICADORES})
     grupo = st.radio(
         "Grupo",
@@ -1780,8 +2526,8 @@ def _render_indicadores() -> None:
             f'<div class="doc-field-text">{html.escape(item["O que mede"])}</div>'
             '</div>'
             '<div class="doc-field">'
-            '<div class="doc-field-label">Importancia na analise</div>'
-            f'<div class="doc-field-text">{html.escape(item["Importancia"])}</div>'
+            '<div class="doc-field-label">Importância na análise</div>'
+            f'<div class="doc-field-text">{html.escape(item["Importância"])}</div>'
             '</div>'
             '<div class="doc-field">'
             '<div class="doc-field-label">Como interpretar</div>'
@@ -1795,19 +2541,19 @@ def _render_indicadores() -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="doc-mini-title">Demonstracoes financeiras e bases auxiliares</div>', unsafe_allow_html=True)
+    st.markdown('<div class="doc-mini-title">Demonstrações financeiras e bases auxiliares</div>', unsafe_allow_html=True)
     demonstracao_cards = []
     for item in DEMONSTRACOES:
         demonstracao_cards.append(
             '<div class="doc-statement-card">'
-            f'<div class="doc-statement-title">{html.escape(item["Demonstracao"])}</div>'
+            f'<div class="doc-statement-title">{html.escape(item["Demonstração"])}</div>'
             '<div class="doc-field">'
             '<div class="doc-field-label">Componentes</div>'
             f'<div class="doc-field-text">{html.escape(item["Componentes"])}</div>'
             '</div>'
             '<div class="doc-field">'
-            '<div class="doc-field-label">Importancia</div>'
-            f'<div class="doc-field-text">{html.escape(item["Importancia"])}</div>'
+            '<div class="doc-field-label">Importância</div>'
+            f'<div class="doc-field-text">{html.escape(item["Importância"])}</div>'
             '</div>'
             '<div class="doc-field">'
             '<div class="doc-field-label">Cuidados</div>'
@@ -1831,7 +2577,7 @@ def _render_indicadores() -> None:
     st.markdown(
         '<div class="doc-mini-title">Como os autores entram na leitura</div>'
         f'<div class="doc-card-grid">{"".join(cards)}</div>'
-        '<div class="doc-note">As notas acima sao sinteses interpretativas, nao citacoes literais.</div>',
+        '<div class="doc-note">As notas acima são sínteses interpretativas, não citações literais.</div>',
         unsafe_allow_html=True,
     )
 
@@ -1846,11 +2592,15 @@ def render() -> None:
 
     tab_labels = [
         "Controle financeiro",
-        "Análise avançada",
-        "Simulador",
-        "Criação de portfólio",
-        "Análise de portfólio",
         "Carteira atual",
+        "Análise avançada (B3)",
+        "Simulador (B3)",
+        "Criação de portfólio (B3)",
+        "Análise de portfólio (B3)",
+        "Seleção de FIIs",
+        "Empresas Americanas",
+        "Portfólio Global",
+        "Qualidade dos dados",
         "Indicadores",
     ]
     tabs = st.tabs(tab_labels)
@@ -1858,14 +2608,22 @@ def render() -> None:
     with tabs[0]:
         _render_flow(FLOW_CONTROLE_FINANCEIRO)
     with tabs[1]:
-        render_fluxograma_analise_avancada()
-    with tabs[2]:
-        _render_flow(FLOW_SIMULADOR)
-    with tabs[3]:
-        _render_flow(FLOW_CRIACAO_PORTFOLIO)
-    with tabs[4]:
-        _render_flow(FLOW_ANALISE_PORTFOLIO)
-    with tabs[5]:
         _render_flow(FLOW_INVESTIMENTOS)
+    with tabs[2]:
+        render_fluxograma_analise_avancada()
+    with tabs[3]:
+        _render_flow(FLOW_SIMULADOR)
+    with tabs[4]:
+        _render_flow(FLOW_CRIACAO_PORTFOLIO)
+    with tabs[5]:
+        _render_flow(FLOW_ANALISE_PORTFOLIO)
     with tabs[6]:
+        _render_flow(FLOW_SELECAO_FIIS)
+    with tabs[7]:
+        _render_flow(FLOW_EMPRESAS_EUA)
+    with tabs[8]:
+        _render_flow(FLOW_PORTFOLIO_GLOBAL)
+    with tabs[9]:
+        _render_flow(FLOW_QUALIDADE_DADOS)
+    with tabs[10]:
         _render_indicadores()
