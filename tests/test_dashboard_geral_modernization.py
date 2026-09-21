@@ -241,14 +241,16 @@ def test_recommended_portfolio_detail_has_a_heading(monkeypatch):
     assert "não são a sua posição investida" in html.replace("\n", "")
 
 
-def test_os_tres_blocos_de_conclusao_abrem_na_mesma_faixa():
-    """Caixa, posição investida e carteira recomendada abrem igual.
+def test_os_blocos_de_conclusao_abrem_na_mesma_faixa():
+    """Mapa, caixa, posição investida e carteira recomendada abrem igual.
 
     A faixa não é enfeite: ela carrega o rótulo que diz se o número abaixo
-    é fato do dinheiro do usuário ou sugestão do app. Um dos três voltando
+    é fato do dinheiro do usuário ou sugestão do app. Um dos blocos voltando
     para o título simples reabre a leitura de "peso sugerido = posição real".
     """
     blocos = (
+        (dashboard._secao_resumo_modulos, "◆ Mapa do aplicativo",
+         "Resumo por área"),
         (dashboard.render, "◆ Controle financeiro", "Evolução financeira"),
         (dashboard._secao_raio_x_portfolio, "◆ Sua posição investida",
          "Raio X do portfólio investido"),

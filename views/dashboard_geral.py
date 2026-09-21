@@ -941,9 +941,11 @@ def _secao_resumo_modulos(
     us_status, us_status_cor, us_linhas = _resumo_modelo_us(modelo_us)
     fii_status, fii_status_cor, fii_linhas = _resumo_fiis(fiis_port, fiis_salvo)
 
-    _titulo_secao(
-        "🧭", "Resumo por área",
-        "Organização lógica do app: caixa primeiro, carteira depois, seleção por critérios em seguida",
+    _faixa_destaque(
+        "◆ Mapa do aplicativo",
+        "Resumo por área",
+        "Organização lógica do app: caixa primeiro, carteira depois, seleção "
+        "por critérios em seguida.",
         _COR_PATRIMONIO,
     )
 
@@ -1467,11 +1469,11 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
 def _faixa_destaque(rotulo: str, titulo: str, descricao: str, cor: str) -> None:
     """Abertura de bloco em faixa — o degrau acima de ``_titulo_secao``.
 
-    Os tres blocos que o dashboard entrega como conclusao (o caixa do periodo,
-    a posicao investida e as carteiras recomendadas) abrem assim. A faixa
-    carrega o ``rotulo`` justamente para dizer de onde o numero vem: fato do
-    seu dinheiro ou sugestao do app. Sem essa distincao, os pesos da carteira
-    recomendada passam a ser lidos como posicao real.
+    Os quatro blocos que estruturam o dashboard (o mapa do app, o caixa do
+    periodo, a posicao investida e as carteiras recomendadas) abrem assim. A
+    faixa carrega o ``rotulo`` justamente para dizer o que vem abaixo: mapa,
+    fato do seu dinheiro ou sugestao do app. Sem essa distincao, os pesos da
+    carteira recomendada passam a ser lidos como posicao real.
     """
     st.markdown(
         '<div class="dg-shell">'
