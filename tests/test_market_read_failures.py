@@ -1,4 +1,6 @@
 import datetime as dt
+import queue
+import threading
 import time
 
 import pandas as pd
@@ -281,3 +283,61 @@ def test_failed_methodology_input_is_not_retained_in_streamlit_cache(monkeypatch
 
     assert result.attrs["load_error"] == "snapshot_query_failed"
     assert loader.clear_calls == 1
+
+
+# ── o worker de uma leitura não pode responder pela leitura seguinte ────────
+# Em 20/09/2026 estes testes falhavam de forma intermitente dentro da suíte e
+# passavam 38/38 isolados. Não era cache do Streamlit: `_load_fii_selection_snapshot`
+# não é decorada. Era `_FII_SNAPSHOT_JOB`, global do processo e disparado sem
+# espera (`timeout_seconds=0`) quando o artefato local responde. O worker segue
+# lendo o Supabase por mais de 30 s; qualquer teste que chamasse o carregador
+# nesse intervalo recebia o resultado DELE -- 433 linhas reais ou um quadro
+# vazio --, e os `monkeypatch` de engine e `read_sql_query` viravam decoração.
+# A intermitência acompanhava a duração da suíte porque o que decidia era se o
+# worker ainda estava vivo, não o que o teste pediu.
+
+
+def _job_travado(rows: int = 433):
+    """Instala um worker vivo, como o que a leitura real deixa para trás."""
+    liberar = threading.Event()
+    fila: queue.Queue = queue.Queue(maxsize=1)
+
+    def alheio():
+        liberar.wait(30)
+        fila.put(_snapshot_frame(rows))
+
+    worker = threading.Thread(target=alheio, name="worker-alheio", daemon=True)
+    worker.start()
+    market_read._FII_SNAPSHOT_JOB = (worker, fila)
+    return liberar, worker
+
+
+def test_reset_abandona_o_worker_em_voo():
+    """Reset que preserva job vivo não reseta: o próximo leitor herda o antigo."""
+    liberar, worker = _job_travado()
+    try:
+        market_read._reset_fii_snapshot_memory_cache()
+        assert market_read._FII_SNAPSHOT_JOB is None
+    finally:
+        liberar.set()
+        worker.join(timeout=5)
+
+
+def test_worker_herdado_nao_sequestra_a_leitura_seguinte(monkeypatch):
+    """O que o teste monkeypatchou é o que o carregador tem que ler."""
+    liberar, worker = _job_travado()
+    try:
+        market_read._reset_fii_snapshot_memory_cache()
+        monkeypatch.setattr(market_read, "_fii_snapshot_engine", lambda: _Engine())
+        monkeypatch.setattr(
+            market_read.pd, "read_sql_query", lambda *a, **k: _snapshot_frame(),
+        )
+
+        frame = market_read._load_fii_selection_snapshot()
+
+        assert len(frame) == 3
+        assert frame.attrs["snapshot_source"] == "database"
+    finally:
+        liberar.set()
+        worker.join(timeout=5)
+        market_read._reset_fii_snapshot_memory_cache()

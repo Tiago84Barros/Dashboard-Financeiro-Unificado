@@ -17,8 +17,6 @@ de quebra prova que o motor não conhece nenhuma API concreta.
 """
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from core.noticias import coleta, frescor_noticias, portoes, rate_limit, taxonomia
@@ -349,20 +347,28 @@ def test_dentro_da_cadencia_o_job_nao_consulta_ninguem(monkeypatch):
     assert resultado["records_inserted"] == 0
 
 
-def test_o_job_devolve_o_contrato_que_o_orquestrador_aceita(tmp_path,
-                                                            monkeypatch):
-    """Status fora do conjunto vira "failed" e o motivo real se perde."""
+def test_o_job_devolve_o_contrato_que_o_orquestrador_aceita(monkeypatch):
+    """Status fora do conjunto vira "failed" e o motivo real se perde.
+
+    O freio era carimbado em ``frescor_noticias.CAMINHO_PADRAO``, o JSON local
+    que ``run()`` deixou de ler quando o estado passou para ``estado_coleta``.
+    O patch continuava verde e nao freava nada: o job seguia para a coleta de
+    verdade, e ``ec.ler``/``ec.travar`` abriam o Supabase de producao -- schema
+    garantido e advisory lock tomado -- de dentro de uma suite que se declara
+    offline. O resultado passava a depender de quando o job de producao rodou
+    pela ultima vez, e este teste entrou no mesmo padrao intermitente dos de
+    ``market_read``. O carimbo agora e injetado onde o job de fato le.
+    """
+    from core.noticias import cadencia as cad
+    from core.noticias import estado_coleta as ec
     from data_pipeline.jobs import update_noticias
 
-    caminho = tmp_path / "coleta.json"
-    caminho.write_text(json.dumps({
-        update_noticias.JOB_NAME: {
-            "ultimo_sucesso": frescor_noticias.agora_utc().isoformat(),
-        }
-    }), encoding="utf-8")
-    monkeypatch.setattr(frescor_noticias, "CAMINHO_PADRAO", caminho)
+    agora = frescor_noticias.agora_utc()
+    monkeypatch.setattr(ec, "ler", lambda **kw: ec.EstadoGlobal(
+        modo=cad.MODO_NORMAL, ultima_tentativa=agora, ultimo_sucesso=agora,
+        disponivel=True))
 
-    resultado = update_noticias.run()
+    resultado = update_noticias.run(agora=agora)
 
     assert set(resultado) == {
         "status", "table_name", "source_name", "job_name",
