@@ -130,20 +130,33 @@ seção tem **N** conversas (uma por assinatura de contexto — conjunto de tick
 símbolos, `_ctx_sig`), então apagar por chave exata limparia uma e deixaria as
 outras de pé, parecendo ter funcionado.
 
-As seis seções e seus prefixos, lidos do código:
+As **oito** seções e seus prefixos, lidos do código (`grep conversation_key`):
 
-| Seção | Prefixo |
-|---|---|
-| Controle Financeiro | `controle_financeiro` |
-| Cartão de Crédito | `cartao_credito` |
-| Análise de Portfólio B3 | `apb3` |
-| Análise de Portfólio EUA | `apus` |
-| Seleção de FIIs | `fii_portfolio` |
-| Portfólio Global | `portfolio_global` |
+| Seção | Prefixo | Chave de sessão |
+|---|---|---|
+| Controle Financeiro | `controle_financeiro` | `cf_chat_history` |
+| Cartão de Crédito | `cartao_credito` | `cc_chat_history` |
+| Análise de Portfólio B3 | `apb3` | `apb3_chat_history` |
+| Análise de Portfólio EUA | `apus` | `apus_chat_history` |
+| Seleção de FIIs | `fii_portfolio` | `fii_chat_history` |
+| Portfólio Global | `portfolio_global` | `portfolio_global_chat_historico` |
+| Ativo individual (B3, EUA e FIIs) | `chat_ativo` | `chat_ativo_*` |
+| Carteira por classe | `chat_carteira` | `chat_carteira_*` |
 
-O mapa mora em **um** lugar (`core/chat_repository.py`), e um teste deriva os
-prefixos das chamadas reais de `conversation_key` no código-fonte — lista escrita
-à mão envelhece calada quando alguém adiciona um chat.
+**A primeira versão deste spec listava seis.** Faltavam `chat_ativo`
+(`design/chat_ativo.py:112`, usado por Empresas B3, Empresas Americanas e
+Seleção de FIIs) e `chat_carteira` (`design/chat_carteira.py:125`, usado por
+Investimentos). Escrever a lista à mão errou na primeira tentativa, que é
+exatamente o que o teste abaixo existe para impedir.
+
+O mapa mora em **um** lugar (`core/chat_repository.py::SECOES`), e dois testes o
+conferem contra o código-fonte: os prefixos, derivados das chamadas reais de
+`conversation_key`, e as chaves de sessão, derivadas dos `session_key=` passados
+a `load/save/clear_chat_history`.
+
+**A limpeza é do banco e da sessão.** Apagar só a preferência deixaria a tela
+aberta ainda exibindo o histórico morto — e regravando-o na mensagem seguinte,
+porque o `save` parte do que está em `st.session_state`.
 
 **Sidebar** (`app.py`): saem o `selectbox` de tema e o botão "Sair / trocar
 usuário". Sai também `Conectado como X`, conforme escolhido. Fica marca +

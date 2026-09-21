@@ -1,7 +1,8 @@
 """
 views/configuracoes.py
-Configurações do sistema — cinco abas organizadas por finalidade.
+Configurações do sistema — seis abas organizadas por finalidade.
 
+  ⚙️ Geral                — tema, troca de usuário e memória da LLM
   🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
   🔁 Atualização de dados — o que o usuário sobe de arquivo, em duas sub-abas:
        💳 Controle Financeiro — fatura do cartão + extratos bancários
@@ -23,6 +24,7 @@ from core.config import settings
 from core.database import get_database_storage_status, get_db_status
 from design.componentes import card_metrica, container_pagina
 from views.bank_statement_upload import render_upload_extrato_bancario
+from views.configuracoes_geral import render as render_geral
 from views.credit_card_invoice_upload import render_upload_fatura_cartao
 
 
@@ -46,13 +48,24 @@ def render() -> None:
     )
     st.markdown(_CONFIG_CSS + _CARD_CSS, unsafe_allow_html=True)
 
-    tab_conf, tab_atualizacao, tab_dados, tab_banco, tab_seg = st.tabs([
+    tab_geral, tab_conf, tab_atualizacao, tab_dados, tab_banco, tab_seg = st.tabs([
+        "⚙️ Geral",
         "🎯 Grau de Confiança",
         "🔁 Atualização de dados",
         "🔄 Dados de mercado",
         "🗄️ Banco de dados",
         "🔒 Segurança",
     ])
+
+    with tab_geral:
+        _render_tab_intro(
+            "Geral",
+            "Tema do aplicativo, troca de usuário e limpeza da memória da LLM. "
+            "O tema e a saída moravam na sidebar até 21/09/2026.",
+            "Preferências da conta",
+            "var(--app-info, #4A9EFF)",
+        )
+        render_geral()
 
     with tab_conf:
         _render_tab_intro(
