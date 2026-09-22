@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.data_reconciliacao as _recon
+from core.b3_evidence import sinal_significante, teste_t_unilateral
 from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
 from core.b3_portfolio_model import (
     list_b3_portfolio_model_versions,
@@ -1009,7 +1010,11 @@ def _processar_segmento(
     rank_ic_mean = float("nan")
     rank_ic_years = 0
     rank_ic_tstat = float("nan")
-    p_value_ic = 1.0
+    # `None` = o teste do sinal NAO foi feito, que e diferente de "foi feito
+    # e nao deu significancia" (p = 1,0). Quem le trata a ausencia por
+    # `core.b3_evidence.sinal_significante` -- sem inventar aprovacao nem
+    # reprovacao por evidencia contra.
+    p_value_ic: float | None = None
     wf_hit_rate = float("nan")
     contrib_est: dict[str, float] = {}
     pit_validacao = PITCoverage()
@@ -1163,16 +1168,17 @@ def _processar_segmento(
             # sobre os ICs anuais (H0: IC médio = 0). É macro-neutro e de alta
             # amplitude (Grinold-Kahn) — muito mais robusto que o p-value do
             # retorno de 24m. p_value_ic é a chance de o poder preditivo ser sorte.
-            if len(ic_values) >= 2:
-                _ic = np.asarray(ic_values, dtype=float)
-                _sd = float(_ic.std(ddof=1))
-                if _sd > 0:
-                    rank_ic_tstat = float(_ic.mean() / (_sd / np.sqrt(len(_ic))))
-                    from scipy.stats import t as _tdist
-                    p_value_ic = float(_tdist.sf(rank_ic_tstat, df=len(_ic) - 1))
-                elif _ic.mean() > 0:
-                    rank_ic_tstat = float("inf")
-                    p_value_ic = 0.0
+            # A conta mora em `core.b3_evidence.teste_t_unilateral` -- a MESMA
+            # que o Bloco 3 das safras e o bloco "Evidencia no universo"
+            # chamam. Esta era a QUARTA copia dela, e a unica que DECIDE: ela
+            # ficou com a guarda ABSOLUTA (`sd > 0`) que as outras tres
+            # abandonaram e gravava `p_value_ic = 0.0` com `t = inf` quando
+            # dois anos davam Rank-IC identico e positivo -- certeza absoluta
+            # onde nao ha grau de liberdade para afirmar nada. Sem dispersao
+            # real nao ha p-valor, e o caminho passa a dizer isso (`None`).
+            _t_ic, _p_ic = teste_t_unilateral(ic_values)
+            if _t_ic is not None and _p_ic is not None:
+                rank_ic_tstat, p_value_ic = float(_t_ic), float(_p_ic)
 
     total_lids = sum(len(v) for v in liderancas_hist.values())
     participacao = {
@@ -3195,7 +3201,12 @@ def render(show_header: bool = True) -> None:
                 return False
             if usar_gate_sinal:
                 # Significância do SINAL (Rank-IC) — Grinold-Kahn, macro-neutra.
-                if float(res.get("p_value_ic", 1.0)) >= 0.10:
+                # Regra compartilhada: ausência de p-valor (sem dispersão entre
+                # os Rank-ICs anuais) NÃO aprova — num modo que exige prova
+                # positiva, "não deu para testar" não é prova — e também não é
+                # evidência contra: a coluna Situação sai "🟡 Inconclusivo",
+                # nunca "❌ Reprovado (evidência contra)".
+                if not sinal_significante(res.get("p_value_ic")):
                     return False
             else:
                 # Significância do RETORNO de 24m + correção FDR.
@@ -3396,7 +3407,13 @@ def render(show_header: bool = True) -> None:
                 if np.isfinite(float(res.get("rank_ic_mean", float("nan"))))
                 else None
             ),
-            "valor-p do sinal (Rank-IC)": round(float(res.get("p_value_ic", 1.0)), 4),
+            # Sem dispersão entre os Rank-ICs anuais não houve teste: a
+            # célula fica VAZIA em vez de publicar 1,0, que seria afirmar
+            # "testei e não deu" sobre um teste que não aconteceu.
+            "valor-p do sinal (Rank-IC)": (
+                round(float(res["p_value_ic"]), 4)
+                if res.get("p_value_ic") is not None else None
+            ),
             "Anos batendo pares (%)": (
                 round(float(res["wf_hit_rate"]) * 100, 0)
                 if np.isfinite(float(res.get("wf_hit_rate", float("nan"))))

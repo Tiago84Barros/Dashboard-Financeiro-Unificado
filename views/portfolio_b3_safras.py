@@ -14,6 +14,7 @@ dentro da suíte completa no CI, nunca isolado (nota de memória
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -253,7 +254,8 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
         )
 
 
-def _ics_por_ano(resultados: list[dict]) -> dict[int, float]:
+def _ics_por_ano(resultados: list[dict],
+                 pares: list[tuple] | None = None) -> dict[int, float]:
     """Um Rank-IC por ANO sobre o universo agrupado (rodada 2, A-1).
 
     Usa `pooled_yearly_ics`, a MESMA redução que `_render_evidencia_universo`
@@ -268,7 +270,12 @@ def _ics_por_ano(resultados: list[dict]) -> dict[int, float]:
     """
     from core.b3_pooled_evidence import pooled_yearly_ics
 
-    pares = _pares_de_ic(resultados)
+    # `pares` entra pronto quando quem chama ja os tem: a lista e a mais
+    # larga do bloco (todos os ativos x todos os anos x todos os
+    # segmentos) e `_expectativa` precisava dela para a limitacao, entao
+    # percorre-la duas vezes era trabalho duplicado, nao seguranca.
+    if pares is None:
+        pares = _pares_de_ic(resultados)
     return pooled_yearly_ics(pares) if pares else {}
 
 
@@ -288,6 +295,41 @@ def _pares_de_ic(resultados: list[dict]) -> list[tuple]:
     return pares
 
 
+def _observacoes_por_ano(pares: list[tuple]) -> dict[int, int]:
+    """Quantas observacoes finitas cada ano trouxe — o mesmo filtro que
+    `pooled_yearly_ics` aplica antes de exigir `MIN_ATIVOS_ANO`.
+
+    Existe para a mensagem de limitacao DERIVAR a causa em vez de assumir
+    uma delas: o ano tambem e descartado quando os postos sao degenerados
+    (score ou retorno identico no ano inteiro), e a frase que culpava
+    sempre o minimo de ativos se contradizia — com 6 pares num unico ano
+    ela imprimia "6 observacao(oes) chegaram, mas nenhum ano juntou os 5
+    ativos minimos".
+    """
+    contagem: dict[int, int] = {}
+    for item in pares or []:
+        try:
+            ano, score, retorno = int(item[0]), float(item[1]), float(item[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not (np.isfinite(score) and np.isfinite(retorno)):
+            continue
+        contagem[ano] = contagem.get(ano, 0) + 1
+    return contagem
+
+
+def _fmt_p(valor: float) -> str:
+    """p-valor em formato que preserva a ORDEM DE GRANDEZA.
+
+    Com `.3f` fixo, 2.255 dos 13.040 casos robustos de uma amostragem de
+    20.000 (17,3% dos selos verdes) imprimiam "entre 0.000 e 0.000": as
+    bandas reais desses casos estao na casa de 1e-7, e o "por quanto
+    passou" — que saiu do tooltip justamente para ser lido — virava zero
+    visual. Abaixo de 0,001 a notacao cientifica diz o que o `.3f` apaga.
+    """
+    return f"{valor:.1e}" if abs(valor) < 0.001 else f"{valor:.3f}"
+
+
 def _texto_banda_p(loo: dict) -> str:
     """Margem medida do leave-one-out: a banda de p-valores das
     subamostras contra `alpha`. Contagem diz quantos viram; só a banda diz
@@ -295,8 +337,8 @@ def _texto_banda_p(loo: dict) -> str:
     baixo, alto = loo.get("p_banda", (None, None))
     if baixo is None or alto is None:
         return ""
-    return (f"Tirando um ano de cada vez, o p-valor fica entre {baixo:.3f} e "
-            f"{alto:.3f} (α = {loo['alpha']:.2f}).")
+    return (f"Tirando um ano de cada vez, o p-valor fica entre "
+            f"{_fmt_p(baixo)} e {_fmt_p(alto)} (α = {loo['alpha']:.2f}).")
 
 
 def _ajuda_ordena(veredito) -> str:
@@ -392,7 +434,7 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
     )
 
     pares = _pares_de_ic(resultados)
-    ics_por_ano = _ics_por_ano(resultados)
+    ics_por_ano = _ics_por_ano(resultados, pares)
     anos = sorted(ics_por_ano)
     ic_values = [ics_por_ano[ano] for ano in anos]
 
@@ -444,11 +486,29 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
             "por segmento — usá-la multiplicaria a mesma evidência pelo "
             "número de segmentos e inflaria a significância por √k.")
     else:
-        limitacao_ev = (
-            f"Veredito não publicado: {len(pares)} observação(ões) (ano, "
-            "score, retorno) chegaram, mas nenhum ano juntou os "
-            f"{MIN_ATIVOS_ANO} ativos mínimos com score e retorno — sem isso "
-            "o Rank-IC do ano não é calculável.")
+        # A-2: a causa sai da MEDIÇÃO. `pooled_yearly_ics` descarta o ano
+        # por duas razões opostas — menos de `MIN_ATIVOS_ANO` observações,
+        # ou postos degenerados (score ou retorno idêntico no ano inteiro,
+        # `rank.std() <= 0`). A frase culpava sempre a primeira e chegava a
+        # contradizer o próprio número que imprimia: com 6 pares num único
+        # ano ela dizia que "nenhum ano juntou os 5 ativos mínimos".
+        com_ativos = sorted(ano for ano, n in _observacoes_por_ano(pares).items()
+                            if n >= MIN_ATIVOS_ANO)
+        if not com_ativos:
+            limitacao_ev = (
+                f"Veredito não publicado: {len(pares)} observação(ões) (ano, "
+                "score, retorno) chegaram, mas nenhum ano juntou os "
+                f"{MIN_ATIVOS_ANO} ativos mínimos com score e retorno — sem "
+                "isso o Rank-IC do ano não é calculável.")
+        else:
+            lista = ", ".join(str(ano) for ano in com_ativos)
+            limitacao_ev = (
+                f"Veredito não publicado: {len(pares)} observação(ões) (ano, "
+                f"score, retorno) chegaram e {len(com_ativos)} ano(s) "
+                f"({lista}) juntaram os {MIN_ATIVOS_ANO} ativos mínimos, mas "
+                "em todos eles os postos são degenerados — score ou retorno "
+                "idêntico no ano inteiro —, e sem variação nos postos o "
+                "Rank-IC do ano não é calculável.")
 
     n_banda = len(excessos)
     if baixo is not None:
@@ -478,21 +538,24 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
             "n=4), então o número existiria sem carregar informação")
     else:
         texto_frag = f"{loo['safras_que_viram']} de {n_loo} anos"
+        # A banda NAO se repete aqui: ela ja vai em `nota_fragilidade`,
+        # que a view publica em `st.caption`. Repetida no `ajuda` (o
+        # `title=` do card), quem passava o mouse lia a mesma frase duas
+        # vezes -- e o tooltip nao e onde a margem precisa estar.
         if loo["robusto"]:
             positivo_frag = True
-            ajuda_frag = _frase(f"Nenhum dos {n_loo} anos derruba o veredito.",
-                                _texto_banda_p(loo))
+            ajuda_frag = f"Nenhum dos {n_loo} anos derruba o veredito."
         elif loo["safras_que_viram"] > 0:
             positivo_frag = False
-            ajuda_frag = _frase("Quantos anos precisam sair para o veredito "
-                                "virar.", _texto_banda_p(loo))
+            ajuda_frag = ("Quantos anos precisam sair para o veredito "
+                          "virar.")
         elif not loo["conclusivo"]:
             positivo_frag = None
-            ajuda_frag = _frase(
+            ajuda_frag = (
                 "Nesta amostra, remover um ano não é capaz de mudar o "
                 "veredito — e o veredito é inconclusivo. Zero aqui é "
                 "insensibilidade do teste sobre uma não-conclusão, não "
-                "robustez.", _texto_banda_p(loo))
+                "robustez.")
         else:
             # N-1: zero viradas sobre veredito CONCLUSIVO, sem selo verde.
             # O ramo anterior afirmava "o veredito é inconclusivo" ao lado
@@ -506,17 +569,29 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
                 "os Rank-ICs e o p-valor nem existe nelas"
                 if sem_p else
                 f"a banda de p-valores atravessa α = {loo['alpha']:.2f}")
-            ajuda_frag = _frase(
+            ajuda_frag = (
                 f"Nenhum dos {n_loo} anos derruba o veredito "
                 f"({veredito.rotulo}), mas a margem não sustenta selo: "
                 f"{causa}. A contagem diz que nenhum ano virou; sem margem, "
-                "ela não diz por quanto.", _texto_banda_p(loo))
+                "ela não diz por quanto.")
 
     # A banda de p-valores é o "por quanto passou" — e é ela que impede o
     # selo verde de ser lido como salvaguarda testada. Vai em texto
     # VISÍVEL: no `ajuda` ela virava `title=` do card, tooltip de hover, e
     # o usuário via "0 de 8 anos" em verde e mais nada.
     nota_frag = _texto_banda_p(loo) if loo["medido"] else ""
+    if loo["medido"] and not nota_frag:
+        # A-5: `p_banda == (None, None)` é o ÚNICO ramo em que a banda de
+        # fato reprova o selo — e era justamente nele que `nota_fragilidade`
+        # ficava vazia e a explicação da margem ausente vivia só no
+        # tooltip, o oposto do que a banda saiu do `ajuda=` para fazer.
+        sem_banda = sum(1 for p in loo["p_loo"] if p is None)
+        nota_frag = (
+            f"A margem não foi calculável: {sem_banda} das {n_loo} "
+            "subamostras do leave-one-out ficam sem dispersão entre os "
+            "Rank-ICs, e sem dispersão não há p-valor — o selo não é "
+            "publicado porque a conclusão não tem por quanto, não porque "
+            "ela tenha caído.")
     # N-5: as duas contagens da tela medem coisas diferentes e ficavam
     # lado a lado sem explicação — "Safras medidas: N" (janela fechada com
     # pregão) contra "0 de M anos" (anos com Rank-IC calculável).
@@ -531,7 +606,6 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
     return {
         "ic_values": ic_values,
         "anos": anos,
-        "pares": len(pares),
         "veredito": veredito,
         "ajuda_ordena": _ajuda_ordena(veredito),
         "nota_independencia": _nota_independencia(anos),

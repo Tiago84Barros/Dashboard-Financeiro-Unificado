@@ -128,6 +128,32 @@ def teste_t_unilateral(observacoes: list[float] | np.ndarray | None
     return (estatistica, float(_t_student.sf(estatistica, df=n - 1)))
 
 
+def sinal_significante(p_value: float | None, *, alpha: float = 0.10) -> bool:
+    """O portão do sinal aprova apenas significância DEMONSTRADA.
+
+    ``p_value is None`` é o que ``teste_t_unilateral`` devolve quando não há
+    dispersão real entre os Rank-ICs anuais: não existe teste, logo não
+    existe significância demonstrada, e num portão que exige prova positiva
+    a resposta é ``False``.
+
+    Isso **não** é evidência contra o segmento, e os dois lados foram
+    medidos antes da escolha. Quem classifica o estado é
+    ``classify_evidence``, que com o mesmo ``None`` devolve
+    ``inconclusivo`` (não bloqueante) — a tela imprime "🟡 Inconclusivo",
+    nunca "❌ Reprovado (evidência contra)". O outro lado, fabricar o
+    p-valor, era o que a cópia da tela fazia até 2026-09: com ``sd == 0`` e
+    média > 0 ela gravava ``p = 0.0`` e ``t = inf``, isto é, certeza
+    absoluta exatamente onde não há grau de liberdade para afirmar nada.
+    Sob postos independentes (sem nenhuma habilidade preditiva, 20.000
+    sorteios por tamanho) isso alcança 2,7% dos segmentos de 5 ativos com
+    2 anos de Rank-IC.
+    """
+    if p_value is None:
+        return False
+    valor = float(p_value)
+    return bool(np.isfinite(valor) and valor < alpha)
+
+
 def minimum_detectable_effect(observacoes: list[float] | np.ndarray, *,
                               alpha: float = 0.10, power: float = 0.80
                               ) -> float | None:

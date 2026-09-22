@@ -21,6 +21,7 @@ from views.portfolio_b3_safras import (
     _CORES_SERIE,
     _column_config_retorno,
     _expectativa,
+    _fmt_p,
     _grafico_barras,
     _legenda_resumo,
     _resumo_safras,
@@ -709,11 +710,19 @@ def test_card_de_fragilidade_publica_a_banda_de_p_valores():
 
     baixo, alto = out["loo"]["p_banda"]
     assert baixo is not None and alto <= baixo + 1
-    ajuda = out["ajuda_fragilidade"]
-    assert f"{baixo:.3f}" in ajuda and f"{alto:.3f}" in ajuda, (
-        f"a banda medida nao chegou ao card: {ajuda!r}"
+    # A-6: a banda sai UMA vez, no texto visivel. Ate a rodada 3 ela era
+    # montada duas vezes -- no `st.caption` e no `ajuda=`, que `card_metrica`
+    # vira `title=` -- e duas copias do mesmo texto divergem em silencio
+    # (nota de memoria `guarda-duplicada-diverge`).
+    nota = out["nota_fragilidade"]
+    assert _fmt_p(baixo) in nota and _fmt_p(alto) in nota, (
+        f"a banda medida nao chegou ao card: {nota!r}"
     )
-    assert "α = 0.10" in ajuda
+    assert "α = 0.10" in nota
+    assert "α = 0.10" not in out["ajuda_fragilidade"], (
+        "a banda voltou a ser duplicada no tooltip: "
+        f"{out['ajuda_fragilidade']!r}"
+    )
 
 
 def test_premissa_de_independencia_sai_em_texto_visivel_nao_em_tooltip():
@@ -885,7 +894,7 @@ def test_banda_de_p_valores_e_publicada_em_texto_visivel():
 
     baixo, alto = out["loo"]["p_banda"]
     nota = out["nota_fragilidade"]
-    assert f"{baixo:.3f}" in nota and f"{alto:.3f}" in nota, (
+    assert _fmt_p(baixo) in nota and _fmt_p(alto) in nota, (
         f"a banda medida nao chegou ao texto visivel: {nota!r}"
     )
     assert "α = 0.10" in nota
@@ -956,3 +965,114 @@ def test_textos_do_bloco_nao_deixam_espaco_orfao():
             texto = out[chave]
             assert texto == texto.strip(), f"{chave} com espaco nas pontas"
             assert "  " not in texto, f"{chave} com espaco duplo: {texto!r}"
+
+
+# ── Rodada de correção 4 da Task 6 (A-2, A-3, A-5, A-6) ──
+
+
+def test_banda_de_p_valores_preserva_a_ordem_de_grandeza():
+    """A-3: com `.3f` fixo, 2.255 dos 13.040 casos robustos de 20.000
+    amostras (17,3% dos selos verdes) imprimiam "entre 0.000 e 0.000" —
+    as bandas desses casos estão na casa de 1e-7. O "por quanto passou"
+    saiu do tooltip na rodada 3 justamente para ser lido; publicá-lo como
+    zero visual devolve o selo verde sem a margem, que é o defeito que a
+    rodada 3 fechou.
+
+    A amostra abaixo é exatamente um desses casos."""
+    out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
+                       _tabela_medida())
+
+    baixo, alto = out["loo"]["p_banda"]
+    assert 0 < baixo < 1e-3 and 0 < alto < 1e-3, (
+        f"a amostra deixou de exercitar a faixa medida: {baixo}, {alto}"
+    )
+    nota = out["nota_fragilidade"]
+    assert "0.000" not in nota, (
+        f"a banda voltou a ser publicada como zero visual: {nota!r}"
+    )
+    assert _fmt_p(baixo) in nota and _fmt_p(alto) in nota, nota
+
+    # e o formato não troca a notação onde o `.3f` já dizia a verdade
+    assert _fmt_p(0.05) == "0.050" and _fmt_p(0.10) == "0.100"
+    assert "e-" in _fmt_p(9.1e-07)
+
+
+def test_margem_ausente_e_publicada_em_texto_visivel_nao_so_no_tooltip():
+    """A-5: `p_banda == (None, None)` é o ÚNICO ramo em que a banda de
+    fato reprova o selo — e era justamente nele que `nota_fragilidade`
+    ficava `""` e a razão vivia só no `ajuda=`, isto é, no `title=` do
+    card: tooltip de hover, inexistente no toque. O oposto do que a
+    rodada 3 consertou, no ramo que mais precisa."""
+    pares = (_pares_exatos(2000, -0.1) + _pares_exatos(2001, -0.1)
+             + _pares_exatos(2002, -0.1) + _pares_exatos(2003, -0.5))
+    out = _expectativa([{"segmento": "S", "ic_pairs": pares}],
+                       _tabela_medida())
+
+    assert out["loo"]["medido"] is True
+    assert out["loo"]["p_banda"] == (None, None)
+
+    nota = out["nota_fragilidade"]
+    assert nota, "o unico ramo em que a banda morde nao publica razao nenhuma"
+    assert "sem dispersão" in nota, (
+        f"a razao da margem ausente nao foi derivada da medicao: {nota!r}"
+    )
+    sem_banda = sum(1 for v in out["loo"]["p_loo"] if v is None)
+    assert sem_banda > 0 and str(sem_banda) in nota, (
+        f"a nota nao cita quantas subamostras ficaram sem p-valor: {nota!r}"
+    )
+
+
+def test_limitacao_nao_culpa_o_minimo_de_ativos_quando_os_anos_o_alcancaram():
+    """A-2: `pooled_yearly_ics` descarta o ano por DUAS razões opostas —
+    menos de `MIN_ATIVOS_ANO` observações, ou postos degenerados. A frase
+    culpava sempre a primeira e contradizia o próprio número que imprimia:
+    com 6 pares num único ano saía "6 observação(ões) chegaram, mas nenhum
+    ano juntou os 5 ativos mínimos"."""
+    degenerados = [(2020, 1.0, 1.0) for _ in range(6)]
+    out = _expectativa(
+        [{"segmento": "S", "rank_ic_values": [0.3], "ic_pairs": degenerados}],
+        _tabela_medida())
+
+    assert out["ic_values"] == []
+    limitacao = out["limitacao_evidencia"]
+    assert "6 observação(ões)" in limitacao, limitacao
+    assert "nenhum ano juntou" not in limitacao, (
+        f"a frase contradiz o proprio numero que imprime: {limitacao!r}"
+    )
+    assert "postos" in limitacao and "2020" in limitacao, (
+        f"a causa nao foi derivada da medicao: {limitacao!r}"
+    )
+
+    # e a outra causa continua sendo nomeada quando é ela que vale
+    poucos = _expectativa(
+        [{"segmento": "S", "ic_pairs": [(2020, float(i), float(i))
+                                        for i in range(3)]}],
+        _tabela_medida())
+    assert "5 ativos mínimos" in poucos["limitacao_evidencia"]
+
+
+def test_pares_de_ic_e_percorrido_uma_vez_so_por_expectativa():
+    """A-6: `_expectativa` precisava dos pares para a limitação e chamava
+    `_ics_por_ano`, que os montava de novo — a lista mais larga do bloco
+    (todos os ativos × todos os anos × todos os segmentos) percorrida duas
+    vezes por render, sem nenhuma segurança em troca."""
+    import views.portfolio_b3_safras as modulo
+
+    original = modulo._pares_de_ic
+    chamadas = []
+
+    def contando(resultados):
+        chamadas.append(1)
+        return original(resultados)
+
+    modulo._pares_de_ic = contando
+    try:
+        out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
+                           _tabela_medida())
+    finally:
+        modulo._pares_de_ic = original
+
+    assert out["ic_values"], "o teste precisa do caminho que de fato mede"
+    assert len(chamadas) == 1, (
+        f"os pares foram montados {len(chamadas)} vezes por render"
+    )

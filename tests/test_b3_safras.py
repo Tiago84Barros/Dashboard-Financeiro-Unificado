@@ -805,6 +805,30 @@ def test_a_conta_do_teste_t_mora_em_um_modulo_so():
                         "-- o fallback troca a distribuicao em silencio"
                     )
 
+    # Rodada 4 (A-1): o nome deste teste afirma unicidade GLOBAL e ele
+    # media so `core/`. Foi exatamente sob essa afirmacao que a QUARTA
+    # copia do teste t sobreviveu em `views/portfolio_b3.py` -- com a
+    # guarda ABSOLUTA (`sd > 0`) que as outras tres abandonaram e com um
+    # `p_value_ic = 0.0` literal quando dois anos davam Rank-IC identico e
+    # positivo. Um teste cujo nome afirma unicidade global tem que medir
+    # unicidade global. `ttest_1samp` segue permitido: e outro teste (o
+    # p-valor do retorno de 24m), nao a distribuicao do teste t do sinal.
+    for vista in ("portfolio_b3.py", "portfolio_b3_safras.py"):
+        caminho = Path(__file__).parents[1] / "views" / vista
+        arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+        for no in ast.walk(arvore):
+            if not isinstance(no, ast.ImportFrom):
+                continue
+            if not (no.module or "").startswith("scipy"):
+                continue
+            proibidos = {a.name for a in no.names} & {"t", "norm"}
+            assert not proibidos, (
+                f"views/{vista} importa a distribuicao {sorted(proibidos)} "
+                "direto do scipy -- a conta do teste t tem que vir de "
+                "core.b3_evidence.teste_t_unilateral, senao a guarda de "
+                "dispersao volta a ser copia que diverge"
+            )
+
 
 # ── Rodada de correção 2 da Task 6 — margem medida e zero conclusivo ──
 
@@ -919,6 +943,21 @@ def test_os_dois_blocos_da_tela_nao_divergem_sobre_os_mesmos_ics_anuais():
             f"os dois blocos divergem sobre {ic}: Bloco 3 diz "
             f"{bloco3.estado!r} e o universo diz {universo.estado!r}"
         )
+        # Rodada 4 (A-4): comparar so o ESTADO deixa passar divergencia no
+        # NUMERO -- e a outra tela publica o p-valor num card, com tres
+        # casas. Dois caminhos que concordam no rotulo e discordam no
+        # p-valor publicam a mesma conclusao com margens diferentes.
+        p_bloco3 = _p_valor_unilateral(ic)
+        p_universo = universo.p_value
+        assert (p_bloco3 is None) == (p_universo is None), (
+            f"um caminho testou e o outro nao sobre {ic}: Bloco 3 diz "
+            f"{p_bloco3!r} e o universo diz {p_universo!r}"
+        )
+        if p_bloco3 is not None:
+            assert p_bloco3 == pytest.approx(p_universo, rel=1e-12), (
+                f"os dois blocos divergem no p-valor sobre {ic}: "
+                f"{p_bloco3!r} contra {p_universo!r}"
+            )
 
 
 def test_implicacao_da_banda_de_um_lado_e_presa_por_teste_nao_por_docstring():
@@ -948,4 +987,71 @@ def test_implicacao_da_banda_de_um_lado_e_presa_por_teste_nao_por_docstring():
     assert vistos["conclusivo_sem_virada"] > 500, (
         "a amostragem nao exercitou o caso que a implicacao descreve "
         f"({vistos['conclusivo_sem_virada']} casos)"
+    )
+
+
+# ── Rodada de correção 4 da Task 6 (A-1): a quarta cópia, a que DECIDE ──
+
+
+def _arvore_da_tela_b3():
+    import ast
+    from pathlib import Path
+
+    caminho = Path(__file__).parents[1] / "views" / "portfolio_b3.py"
+    return ast.parse(caminho.read_text(encoding="utf-8"))
+
+
+def test_a_tela_da_b3_nao_fabrica_p_valor_do_rank_ic():
+    """A-1: a cópia da tela gravava `p_value_ic = 0.0` (e `t = inf`) quando
+    a dispersão entre os Rank-ICs anuais era zero — certeza absoluta
+    exatamente onde não há grau de liberdade para afirmar nada. Medido pelo
+    revisor sob postos independentes (20.000 sorteios por tamanho): 2,7%
+    dos segmentos de 5 ativos, 1,8% com 6, 0,9% com 8.
+
+    Constante nenhuma pode ser atribuída a `p_value_ic`: sem dispersão real
+    não existe p-valor, e o valor que diz isso é `None`. `1.0` também é
+    fabricar — afirma "testei e não deu" sobre um teste que não houve.
+
+    Inspeção por AST: o defeito é a EXISTÊNCIA de uma segunda conta, e duas
+    contas que hoje coincidem passam em qualquer teste de comportamento
+    (`guarda-duplicada-diverge`)."""
+    import ast
+
+    for no in ast.walk(_arvore_da_tela_b3()):
+        alvos = []
+        if isinstance(no, ast.Assign):
+            alvos = no.targets
+        elif isinstance(no, ast.AnnAssign):
+            alvos = [no.target]
+        if not any(isinstance(a, ast.Name) and a.id == "p_value_ic"
+                   for a in alvos):
+            continue
+        valor = getattr(no, "value", None)
+        if valor is None:
+            continue
+        assert not (isinstance(valor, ast.Constant)
+                    and isinstance(valor.value, (int, float))), (
+            f"views/portfolio_b3.py volta a fabricar p_value_ic = "
+            f"{valor.value!r} na linha {no.lineno} -- sem dispersao real "
+            "nao ha p-valor, e quem diz isso e `None`"
+        )
+
+
+def test_o_portao_de_aprovacao_da_b3_usa_a_regra_compartilhada_do_sinal():
+    """A-1, o que torna esta cópia diferente das outras três: este p-valor
+    DECIDE (portão de aprovação do modo "sinal"), não só exibe. A regra da
+    ausência tem que ser a compartilhada — `core.b3_evidence.
+    sinal_significante` —, não uma quarta variante escrita inline: a
+    comparação antiga (`p >= alpha` reprova) APROVAVA silenciosamente
+    tanto `None` quanto `nan`, que não são p-valores."""
+    import ast
+
+    aprovado = next(
+        no for no in ast.walk(_arvore_da_tela_b3())
+        if isinstance(no, ast.FunctionDef) and no.name == "_aprovado")
+    chamadas = {no.func.id for no in ast.walk(aprovado)
+                if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
+    assert "sinal_significante" in chamadas, (
+        "o portao voltou a decidir sobre o p-valor do sinal por conta "
+        f"propria -- chamadas encontradas: {sorted(chamadas)}"
     )
