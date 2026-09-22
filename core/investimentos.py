@@ -308,11 +308,26 @@ _SQL_POSICOES_SNAPSHOT = """
                 PARTITION BY pps.asset_id
                 ORDER BY
                     pps.report_date DESC,
+                    -- Desempate SO quando o mesmo ativo aparece na MESMA
+                    -- data em duas origens (report_date DESC vem antes). A
+                    -- ordem e por autoridade da fonte, nao por antiguidade
+                    -- do importador:
+                    --   tesouro_direto       -- unica fonte com o titulo
+                    --   b3_posicao_detalhada -- custodia central, TODAS as
+                    --                           corretoras
+                    --   xp_consolidado       -- uma corretora
+                    --   xp_positions         -- legado
+                    -- ELSE existe so para nao quebrar com dado antigo. Uma
+                    -- origem NOVA que caia nele perde todo empate em
+                    -- silencio, entao test_prioridade_fonte_snapshot.py
+                    -- falha quando um importador grava source_table que nao
+                    -- esta nomeado aqui.
                     CASE pps.effective_source_table
                         WHEN 'tesouro_direto' THEN 0
-                        WHEN 'xp_consolidado' THEN 1
-                        WHEN 'xp_positions' THEN 2
-                        ELSE 3
+                        WHEN 'b3_posicao_detalhada' THEN 1
+                        WHEN 'xp_consolidado' THEN 2
+                        WHEN 'xp_positions' THEN 3
+                        ELSE 4
                     END,
                     pps.source_system,
                     pps.effective_source_table
