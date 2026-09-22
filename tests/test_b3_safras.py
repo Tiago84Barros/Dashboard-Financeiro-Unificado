@@ -813,21 +813,58 @@ def test_a_conta_do_teste_t_mora_em_um_modulo_so():
     # positivo. Um teste cujo nome afirma unicidade global tem que medir
     # unicidade global. `ttest_1samp` segue permitido: e outro teste (o
     # p-valor do retorno de 24m), nao a distribuicao do teste t do sinal.
+    # Rodada 5 (N-1): a varredura das views reconhecia UMA forma de import
+    # (`from scipy.stats import t`) e deixava passar justamente as duas
+    # usadas no resto do repositorio -- `from scipy import stats` e
+    # `import scipy.stats as X` --, que trazem `t` e `norm` sem nomea-los.
+    # Era guarda parcial dentro do teste escrito CONTRA guarda parcial:
+    # lista de formas imaginadas no lugar da estrutura que de fato importa
+    # (`verificador-e-escritor-listas-diferentes`). A checagem agora resolve
+    # o nome local de QUALQUER import de scipy para o caminho pontuado --
+    # `ast.Import` com e sem `asname`, `ast.ImportFrom` de qualquer modulo
+    # sob `scipy`, e o import diferido dentro de funcao, que `ast.walk`
+    # visita igual.
+    # Reprovado = o namespace inteiro (traz `t`/`norm` sem cita-los) ou as
+    # distribuicoes nomeadas. Nao ha um terceiro conjunto de "usos por
+    # alias" a checar: toda forma de alcancar `scipy.stats.t` liga um nome
+    # local a um destes destinos, e um ramo que nunca pode ser verdadeiro
+    # e um portao que so da False.
+    proibidos = {"scipy", "scipy.stats", "scipy.stats.t", "scipy.stats.norm"}
+
     for vista in ("portfolio_b3.py", "portfolio_b3_safras.py"):
         caminho = Path(__file__).parents[1] / "views" / vista
         arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+        alias: dict[str, str] = {}
         for no in ast.walk(arvore):
-            if not isinstance(no, ast.ImportFrom):
-                continue
-            if not (no.module or "").startswith("scipy"):
-                continue
-            proibidos = {a.name for a in no.names} & {"t", "norm"}
-            assert not proibidos, (
-                f"views/{vista} importa a distribuicao {sorted(proibidos)} "
-                "direto do scipy -- a conta do teste t tem que vir de "
-                "core.b3_evidence.teste_t_unilateral, senao a guarda de "
-                "dispersao volta a ser copia que diverge"
-            )
+            if isinstance(no, ast.Import):
+                for apelido in no.names:
+                    if apelido.name.split(".")[0] != "scipy":
+                        continue
+                    # `import scipy.stats` liga o nome `scipy`;
+                    # `import scipy.stats as X` liga `X` a `scipy.stats`.
+                    alias[apelido.asname or apelido.name.split(".")[0]] = (
+                        apelido.name if apelido.asname
+                        else apelido.name.split(".")[0])
+            elif isinstance(no, ast.ImportFrom):
+                modulo = no.module or ""
+                if modulo.split(".")[0] != "scipy":
+                    continue
+                for apelido in no.names:
+                    alias[apelido.asname or apelido.name] = (
+                        f"{modulo}.{apelido.name}")
+
+        alcancados = sorted({destino for destino in alias.values()
+                             if destino in proibidos})
+        assert not alcancados, (
+            f"views/{vista} alcanca {alcancados} "
+            "do scipy -- a conta do teste t tem que vir de "
+            "core.b3_evidence.teste_t_unilateral, senao a guarda de "
+            "dispersao volta a ser copia que diverge. Importar o namespace "
+            "`scipy` ou `scipy.stats` conta: ele traz `t` e `norm` sem "
+            "nomea-los, que foi como as tres formas escaparam da varredura "
+            "anterior. Funcao nomeada de outro teste (ttest_1samp) e "
+            "permitida."
+        )
 
 
 # ── Rodada de correção 2 da Task 6 — margem medida e zero conclusivo ──
@@ -1054,4 +1091,55 @@ def test_o_portao_de_aprovacao_da_b3_usa_a_regra_compartilhada_do_sinal():
     assert "sinal_significante" in chamadas, (
         "o portao voltou a decidir sobre o p-valor do sinal por conta "
         f"propria -- chamadas encontradas: {sorted(chamadas)}"
+    )
+
+
+# ── Rodada 5 da Task 6 (N-6): a legenda tem que cobrir os TRES desfechos ──
+
+
+def test_a_legenda_do_gate_de_sinal_descreve_os_tres_desfechos():
+    """N-6: a rodada 4 criou um terceiro desfecho no portao do sinal --
+    sem dispersao entre os Rank-ICs anuais nao ha p-valor, e `None` nao
+    aprova e tambem nao reprova (sai "Inconclusivo", nunca "evidencia
+    contra"). A legenda da tela seguia descrevendo dois, e uma legenda que
+    descreve menos desfechos do que o motor produz e a versao visivel do
+    `aviso-que-envelhece-invertido`: o texto continua soando exato depois
+    de ter deixado de ser.
+
+    O teste prende os dois lados juntos -- que o motor produz mesmo o
+    terceiro desfecho, e que a legenda o menciona -- para que a frase nao
+    passe a descrever um comportamento que nao existe nem deixe de
+    descrever um que existe."""
+    import ast
+
+    from core.b3_evidence import (
+        CONTRA,
+        INCONCLUSIVO,
+        classify_evidence,
+        sinal_significante,
+    )
+
+    # 1) o terceiro desfecho existe de fato: Rank-ICs anuais identicos ->
+    #    sem dispersao -> sem p-valor -> nao aprova, e NAO e evidencia contra
+    veredito = classify_evidence(ic_values=[0.20, 0.20, 0.20], p_value=None)
+    assert sinal_significante(None) is False
+    assert veredito.estado == INCONCLUSIVO and veredito.estado != CONTRA
+    assert veredito.bloqueante is False
+
+    # 2) a legenda do modo "Sinal fundamental" menciona esse terceiro caso
+    textos = [no.value.value for no in ast.walk(_arvore_da_tela_b3())
+              if isinstance(no, ast.Assign)
+              and any(isinstance(a, ast.Name) and a.id == "_modo_txt"
+                      for a in no.targets)
+              and isinstance(no.value, ast.Constant)
+              and isinstance(no.value.value, str)]
+    legenda = next(t for t in textos
+                   if t.startswith("**Critério: Sinal fundamental"))
+    assert "sem valor-p" in legenda, (
+        "a legenda do critério de sinal não diz o que acontece quando não "
+        "há valor-p -- o motor produz esse desfecho desde a rodada 4"
+    )
+    assert "evidência" in legenda and "medição" in legenda, (
+        "a legenda tem que dizer que a ausência de valor-p é ausência de "
+        "MEDIÇÃO, não evidência contra o segmento"
     )

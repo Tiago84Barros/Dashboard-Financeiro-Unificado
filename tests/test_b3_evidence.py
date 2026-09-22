@@ -151,3 +151,33 @@ def test_sinal_significante_e_o_mesmo_alpha_de_classify_evidence():
     for p in (0.001, 0.05, 0.099, 0.10, 0.3, 0.9):
         estado = classify_evidence(ic_values=[0.3, 0.25, 0.28], p_value=p).estado
         assert sinal_significante(p) is (estado == A_FAVOR), p
+
+
+def test_classify_evidence_chama_a_regra_em_vez_de_repeti_la():
+    """N-4: `classify_evidence` repetia INLINE a regra que
+    `sinal_significante` centraliza (`p is not None and isfinite(p) and
+    p < alpha`). Enquanto era cópia, o teste acima só prendia o
+    comportamento de hoje — duas cópias que coincidem passam em qualquer
+    teste de comportamento e divergem na próxima edição
+    (`guarda-duplicada-diverge`). Foi exatamente assim que a guarda de
+    dispersão virou duas cópias com vereditos opostos sobre os MESMOS
+    Rank-ICs.
+
+    Inspeção por AST: o que se prende aqui é a EXISTÊNCIA de uma única
+    conta, não o valor que ela devolve hoje."""
+    import ast
+    from pathlib import Path
+
+    arvore = ast.parse((Path(__file__).parents[1] / "core" / "b3_evidence.py")
+                       .read_text(encoding="utf-8"))
+    alvo = next(no for no in ast.walk(arvore)
+                if isinstance(no, ast.FunctionDef)
+                and no.name == "classify_evidence")
+    chamadas = {no.func.id for no in ast.walk(alvo)
+                if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
+    assert "sinal_significante" in chamadas, (
+        "core/b3_evidence.py::classify_evidence voltou a decidir "
+        "significância por conta própria -- a regra do portão do sinal "
+        "mora em `sinal_significante` e tem que ser CHAMADA, senão o "
+        "portão da tela e o estado publicado podem divergir"
+    )

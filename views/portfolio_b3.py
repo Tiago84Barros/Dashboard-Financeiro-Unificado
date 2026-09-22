@@ -3300,7 +3300,16 @@ def render(show_header: bool = True) -> None:
         _modo_txt = (
             "**Critério: Sinal fundamental (Rank-IC).** A aprovação exige que o poder "
             "preditivo (Rank-IC) seja estatisticamente significativo — **valor-p do "
-            "sinal ≤ 10%** — medido em muitos anos × nomes (macro-neutro, alto poder). "
+            "sinal abaixo de 10%** — medido em muitos anos × nomes (macro-neutro, alto "
+            "poder). São **três** desfechos, não dois: **(1)** valor-p abaixo de 10% → "
+            "aprova; **(2)** valor-p de 10% ou mais → não aprova, porque o Rank-IC "
+            "médio não se distingue do acaso nesta amostra; **(3)** **sem valor-p** → "
+            "os Rank-ICs anuais não variaram o bastante entre si para estimar o "
+            "erro-padrão, então **o teste não chegou a ser feito**. No terceiro caso o "
+            "segmento também não é aprovado — um critério que exige prova positiva não "
+            "aprova sem teste —, mas isso é **ausência de medição, não evidência "
+            "contra**: a Situação sai 🟡 *Inconclusivo (sem significância)*, nunca "
+            "❌ *Reprovado (evidência contra)* por esse motivo. "
             "O valor-p do retorno de 24m vira **diagnóstico** e não reprova."
         )
     else:

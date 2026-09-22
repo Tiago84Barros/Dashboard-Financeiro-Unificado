@@ -216,7 +216,11 @@ def classify_evidence(*,
              "ao contrário do retorno realizado."),
             anos, mde, True)
 
-    significativo = p_value is not None and np.isfinite(p_value) and p_value < alpha
+    # Rodada 5 (N-4): a mesma regra que `sinal_significante` centraliza,
+    # chamada e nao repetida. Enquanto era copia inline, nada impedia
+    # o portao da tela e o classificador de divergirem na proxima
+    # edicao -- foi assim que a guarda de dispersao virou duas copias.
+    significativo = sinal_significante(p_value, alpha=alpha)
     if significativo and media > 0:
         return EvidenceVerdict(
             A_FAVOR, "significante",
